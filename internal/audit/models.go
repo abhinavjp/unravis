@@ -366,6 +366,14 @@ type VolumeBucket struct {
 	Count      int64     `json:"count"`
 }
 
+// RecordLight is the three light totals of one call for list rows.
+// A nil number means "not recorded", never zero.
+type RecordLight struct {
+	SQLMs   *float64 `json:"sqlMs"`
+	RedisMs *float64 `json:"redisMs"`
+	HTTPMs  *float64 `json:"httpMs"`
+}
+
 type RequestRecord struct {
 	ID                  string     `json:"id"`
 	SourceID            string     `json:"sourceId"`
@@ -394,6 +402,8 @@ type RequestRecord struct {
 	CreatedOn        *time.Time `json:"createdOn,omitempty"`
 	UpdatedOn        *time.Time `json:"updatedOn,omitempty"`
 	PollingTypeRaw   string     `json:"pollingTypeRaw,omitempty"`
+	// Light holds the light totals of list rows. A nil block means not recorded.
+	Light *RecordLight `json:"light,omitempty"`
 }
 
 // RequestRecord's last seven fields are additive audit evidence for the table,
@@ -417,6 +427,7 @@ type RecordDetail struct {
 	State        string  `json:"state"`
 	PendingAsync bool    `json:"pendingAsync,omitempty"`
 	Payload      Payload `json:"payload"`
+	Perf *RecordPerf `json:"perf"`
 }
 
 type PageInput struct {

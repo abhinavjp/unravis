@@ -1,6 +1,8 @@
 import { createInvestigationSnapshot, parseInvestigationSnapshot, type InvestigationSnapshot } from './investigation';
 import type { Query, RecentConnection, Source } from './types';
 import { reasonText } from './copy/importCopy';
+import { parseStoredWindows, pickWindowFields, type WindowFields } from './tracing/windows';
+import { parseStoredSourceChoice, sourceChoiceOf, type SourceSelection, type StoredSourceChoice } from './tracing/sources';
 
 /**
  * The case workspace: what a case needs to open the way it was left. Which saved MongoDB connection and databases it used, and the
@@ -22,6 +24,10 @@ export interface Workspace {
   v: 1;
   mongo?: { savedConnectionId: string; databases: WorkspaceDatabase[] };
   investigation?: InvestigationSnapshot;
+  /** The timeline's incident window and comparison period, as the picker holds them (UTC `YYYY-MM-DDTHH:mm`), kept when Start tracing is pressed. */
+  windows?: WindowFields;
+  /** The timeline's chosen sources (ids only). Left out, every source is traced. */
+  traceSources?: StoredSourceChoice;
 }
 
 /** The key names the server refuses at any depth, compared after keeping only lower-case letters and digits (case, underscores, hyphens and spaces do not matter). */
@@ -103,6 +109,10 @@ export interface BuildInput {
   savedIdOf: (source: Source) => string;
   /** The last workspace this case is known to hold. Its connection is kept when no source can name its saved connection. */
   previous: Workspace | null;
+  /** The timeline windows to keep. Left out (undefined), the ones already on record stay; null clears them. */
+  windows?: WindowFields | null;
+  /** The timeline's source choice to keep. Left out (undefined), the one on record stays; null (or "all") clears it. */
+  traceSources?: SourceSelection | null;
 }
 
 const databaseOf = (source: Source): WorkspaceDatabase => ({
@@ -135,6 +145,12 @@ export function buildWorkspace(input: BuildInput): Workspace | null {
   else if (input.previous?.mongo) workspace.mongo = { savedConnectionId: input.previous.mongo.savedConnectionId, databases: input.previous.mongo.databases.map(item => ({ ...item })) };
   // A filter the person typed that holds an address (a URL fragment) is left out; the rest of the save goes through.
   workspace.investigation = withoutAddressText(createInvestigationSnapshot(input.query, input.sources, input.zone, input.targetMs, input.intent));
+  const windows = input.windows === undefined ? input.previous?.windows ?? null : input.windows;
+  const kept = windows ? parseStoredWindows(windows) : null;
+  if (kept) workspace.windows = pickWindowFields(kept);
+  const choice = input.traceSources === undefined ? (input.previous?.traceSources ? parseStoredSourceChoice(input.previous.traceSources) : null) : input.traceSources;
+  const keptChoice = choice ? sourceChoiceOf(choice) : null;
+  if (keptChoice) workspace.traceSources = keptChoice;
   return findForbiddenKey(workspace) || findAddressText(workspace) ? null : workspace;
 }
 
@@ -177,6 +193,11 @@ export function parseWorkspace(raw: unknown): Workspace | null {
       const investigation = parseInvestigationSnapshot(JSON.stringify(value.investigation));
       if (investigation) workspace.investigation = investigation;
     }
+    const windows = parseStoredWindows(value.windows);
+    if (windows) workspace.windows = windows;
+    const choice = parseStoredSourceChoice(value.traceSources);
+    const keptChoice = choice ? sourceChoiceOf(choice) : null;
+    if (keptChoice) workspace.traceSources = keptChoice;
   } catch { /* a value that cannot be read is the same as none */ }
   return workspace;
 }

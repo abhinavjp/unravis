@@ -16,14 +16,15 @@ import { forgetSavedRecord, forgetSourceSaved, registerSourceSaved, resolveSaved
 import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './types';
 import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './breakdown';
 import type { RunningImport } from './cases';
-import { afterUnlock, CASE_TRACING_MARK, createRoute, go as moveScreen, historyStep, initialScreen, isHistoryScreen, leavesCaseWork, parseScreenMark, setupReturn, type Screen } from './screenFlow';
+import { afterUnlock, CASE_CALL_MARK, CASE_TRACING_MARK, createRoute, go as moveScreen, historyStep, initialScreen, isCallMark, isHistoryScreen, leavesCaseWork, parseScreenMark, setupReturn, type Screen } from './screenFlow';
 import { onCasesLocked } from './lockSignal';
 import { requestCase, requestFilesView } from './startIntent';
 import { CASE_RESTORE_TEXT, restoreFailureNote } from './copy/caseRestoreCopy';
 import { isSourceExists } from './wizardAuditAdd';
 import { holdLedger, setLedgerCase } from './ledgerStore.svelte';
-import { forgetSources } from './tracing/sources';
-import { forgetWindows } from './tracing/windows';
+import { parseCallTarget, encodeCallTarget, withCall, type SlowCallTarget } from './drill/callTarget';
+import { forgetSources, parseStoredSourceChoice, type SourceSelection } from './tracing/sources';
+import { forgetWindows, parseStoredWindows, pickWindowFields, type WindowFields } from './tracing/windows';
 import { getMasterKeyStatus, lockMasterKey } from './masterKeyApi';
 import type { KeyStatus, LockState } from './masterKey';
 import { KEY_TEXT } from './copy/masterKeyCopy';
@@ -92,6 +93,10 @@ let dpapiCases = $state(0);
 let lockError = $state('');
 // A quiet status line when the case's workspace could not be saved because an import is running on it; cleared by the next save that goes through.
 let workspaceNote = $state('');
+// The timeline windows this case keeps (set when Start tracing is pressed, read back with the case workspace); null when none were kept.
+let savedWindows = $state<WindowFields | null>(null);
+// The timeline's chosen sources this case keeps (null: every source).
+let savedTraceSources = $state<SourceSelection | null>(null);
 // Where a successful unlock returns to: the screen that was interrupted, or the first screen the person would have had.
 let unlockOrigin: Screen | null = null;
 // Where set-up was opened from ('case' returns there; anything else returns to the start screen). Read once on the way out of set-up.
@@ -111,16 +116,30 @@ let activeCaseId = $state(storedCase());
 // Which page of the case this tab was on ('case' or 'tracing'), so a reload goes back to the case page, or its timeline, instead of the first screen.
 // The case id itself stays in ACTIVE_CASE_KEY; this holds only the word. Written while the case page shows and cleared when the work moves elsewhere.
 const CASE_VIEW_KEY = 'unravis.caseView';
-function storedCaseView(write?: 'case' | 'tracing' | ''): string {
+const CALL_TARGET_KEY = 'unravis.callTarget';
+function storedCaseView(write?: 'case' | 'tracing' | 'call' | ''): string {
   try {
     if (typeof sessionStorage === 'undefined') return '';
-    if (write === undefined) { const value = sessionStorage.getItem(CASE_VIEW_KEY); return value === 'case' || value === 'tracing' ? value : ''; }
+    if (write === undefined) { const value = sessionStorage.getItem(CASE_VIEW_KEY); return value === 'case' || value === 'tracing' || value === 'call' ? value : ''; }
     if (write) sessionStorage.setItem(CASE_VIEW_KEY, write); else sessionStorage.removeItem(CASE_VIEW_KEY);
   } catch { /* storage blocked: the page is simply not remembered */ }
   return '';
 }
+// The slow call open on the Slow call screen, kept for this tab so a reload brings the screen back without searching again.
+function storedCallTarget(write?: SlowCallTarget | null): SlowCallTarget | null {
+  try {
+    if (typeof sessionStorage === 'undefined') return null;
+    if (write === undefined) return parseCallTarget(sessionStorage.getItem(CALL_TARGET_KEY));
+    if (write) sessionStorage.setItem(CALL_TARGET_KEY, encodeCallTarget(write)); else sessionStorage.removeItem(CALL_TARGET_KEY);
+  } catch { /* storage blocked: the call is simply not remembered */ }
+  return null;
+}
 // The case whose Investigation Timeline is open on the case page ('' when none). Lives here, not in the page, so Back and Forward can open and close it.
 let tracingCase = $state('');
+// The slow call open on the Slow call screen, one level under the timeline (null when none).
+let slowCall = $state<SlowCallTarget | null>(null);
+// The last call the screen showed, kept past Back and Esc so Browser Forward can reopen it. Cleared on a case switch, when the timeline closes, or when a new call opens.
+let lastSlowCall: SlowCallTarget | null = null;
 // The bar the Investigation Timeline handed to the analysis, with a sentence for an empty analysis ('' when there is none to say).
 let tracingHandoff = $state.raw<{ start: number; end: number; text: string } | null>(null);
 // Opening a case restores what it saved: its MongoDB connection and databases, then its filters (see caseWorkspace.ts). 'working' is the quiet
@@ -197,6 +216,7 @@ let sidePanelReturnFocus: HTMLElement | null = null;
 // The "Import files" popup, centred over the page. It is not a side panel, but `panels.sidePanel` still reads 'import' while it is open
 // (see `panels`), so the pages that re-read their files when the import closes keep working.
 let importPopup = $state<{ caseId: string; caseTitle: string; retryServerName: string | null } | null>(null);
+let drillOpen = $state(false);
 let importPopupReturnFocus: HTMLElement | null = null;
 // The one line the start screen shows after Import was asked for with no case open (see showImportPopup).
 // On until a case is opened (setActiveCase) or the line is dismissed on the start screen.
@@ -532,8 +552,8 @@ export function go(to: Screen): boolean {
 }
 // The case page is remembered for a reload; the other working screens forget it. The key screens (unlock, set-up) keep it, as they return to the case.
 function noteCaseView(to: Screen) {
-  if (to === 'case') storedCaseView(tracingCase ? 'tracing' : 'case');
-  else if (to === 'start' || to === 'create' || to === 'running') { tracingCase = ''; storedCaseView(''); }
+  if (to === 'case') storedCaseView(slowCall ? 'call' : tracingCase ? 'tracing' : 'case');
+  else if (to === 'start' || to === 'create' || to === 'running') { tracingCase = ''; slowCall = null; lastSlowCall = null; storedCallTarget(null); storedCaseView(''); }
 }
 // A move to start, case, create or the analysis gets a browser history entry once no drawer entry is open (see lib/screenFlow.ts historyStep).
 function noteScreenHistory(from: Screen, to: Screen) {
@@ -545,6 +565,8 @@ function noteScreenHistory(from: Screen, to: Screen) {
     if (step !== 'none') marker.markScreen(to, step === 'replace');
     // A reload on the timeline: the case entry is marked first, then the timeline gets its own, so Back returns to the case page.
     if (to === 'case' && tracingCase && tracingCase === activeCaseId) marker.markScreen(CASE_TRACING_MARK);
+    // A reload on the Slow call screen: the timeline entry is marked first, then the call gets its own, so Back climbs one level at a time.
+    if (to === 'case' && slowCall && tracingCase === activeCaseId) marker.markScreen(CASE_CALL_MARK);
   });
 }
 // Back or Forward landed on an entry marked with another screen: go there through the same move table. Key screens are never stepped onto or off.
@@ -562,10 +584,17 @@ function followHistoryMark(mark: string) {
   stepScreenFromHistory(wanted);
   // The case page shows its timeline exactly when the entry says so.
   if (wanted === 'case' && screen === 'case') setTracing(tracing && activeCaseId ? activeCaseId : '');
+  // The Slow call screen shows exactly when the entry is its mark: Back from it lands on the timeline mark and closes it, Forward reopens it.
+  if (isCallMark(mark) && screen === 'case') {
+    slowCall = slowCall ?? lastSlowCall ?? storedCallTarget();
+    if (slowCall && slowCall.caseId !== activeCaseId) slowCall = null;
+  } else slowCall = null;
+  if (screen === 'case') { storedCaseView(slowCall ? 'call' : tracingCase ? 'tracing' : 'case'); storedCallTarget(slowCall); }
 }
 function setTracing(id: string) {
   if (tracingCase === id) return;
   tracingCase = id;
+  if (!id) { slowCall = null; lastSlowCall = null; storedCallTarget(null); }
   if (screen === 'case') storedCaseView(id ? 'tracing' : 'case');
 }
 /** From the case page to its Investigation Timeline. It takes a history step, so Back returns to the case page and Forward to the timeline. */
@@ -587,6 +616,43 @@ export function closeTracing() {
     if (!marker.stepBack('case')) marker.markScreen('case');
   });
 }
+/** Opens the Slow call screen one history step under the timeline. */
+export function openSlowCall(target: SlowCallTarget) {
+  if (screen !== 'case' || !activeCaseId || target.caseId !== activeCaseId || tracingCase !== activeCaseId) return;
+  const marker = viewHistory, drawers = drawerHistory;
+  if (!marker || !drawers) return;
+  drawers.whenClear(() => {
+    slowCall = target;
+    lastSlowCall = target;
+    storedCallTarget(target);
+    storedCaseView('call');
+    marker.markScreen(CASE_CALL_MARK);
+  });
+}
+/**
+ * Leaves the Slow call screen for the timeline, one level up. By default it steps back one history entry (the browser's Back),
+ * which is asynchronous. With `{ handoff: true }` it does not step back: the call entry is replaced in place by the timeline entry,
+ * so the caller can open another view straight after without a pending back step racing it.
+ */
+export function closeSlowCall(options?: { handoff?: boolean }) {
+  if (!slowCall) return;
+  const handoff = options?.handoff === true;
+  slowCall = null;
+  if (handoff) lastSlowCall = null;
+  storedCallTarget(null);
+  storedCaseView('tracing');
+  const marker = viewHistory;
+  if (!marker) return;
+  if (handoff) { marker.markScreen(CASE_TRACING_MARK, true); return; }
+  if (!marker.stepBack(CASE_TRACING_MARK)) marker.markScreen(CASE_TRACING_MARK);
+}
+/** Remembers which call the screen found, so a reload does not search again. */
+export function noteSlowCall(call: { sourceId: string; id: string }) {
+  if (!slowCall) return;
+  slowCall = withCall(slowCall, call);
+  lastSlowCall = slowCall;
+  storedCallTarget(slowCall);
+}
 // Reads the key state once the app info is in, then picks the first screen. A status that cannot be read is treated as "no key" for routing.
 async function chooseFirstScreen(demo: boolean, resume: boolean) {
   let lock: LockState | 'unknown' = 'unknown';
@@ -598,6 +664,11 @@ async function chooseFirstScreen(demo: boolean, resume: boolean) {
   const remembered = activeCaseId ? storedCaseView() : '';
   const caseView = remembered !== '';
   if (remembered === 'tracing' && !deepLink) tracingCase = activeCaseId;
+  if (remembered === 'call' && !deepLink) {
+    tracingCase = activeCaseId;
+    const saved = storedCallTarget();
+    if (saved && saved.caseId === activeCaseId) slowCall = saved; else storedCaseView('tracing');
+  }
   const target = initialScreen({ demo, deepLink, resume, lock, caseView });
   if (lock === 'locked' || lock === 'damaged') unlockOrigin = initialScreen({ demo, deepLink, resume, lock: 'unlocked', caseView });
   go(target);
@@ -677,9 +748,26 @@ const workspaceSaver = createWorkspaceSaver({
 /** Saves the case's workspace after a quiet pause. Does nothing in the demo, with no case, or until the case's own workspace was read. */
 function queueWorkspaceSave() {
   if (!saveAllowed(activeCaseId)) return;
-  const workspace = buildWorkspace({ query: cloneQuery(), sources, zone, targetMs, intent: investigationIntent, savedIdOf: source => savedIdFor(source, recentConnections), previous: workspaceBaseline });
+  const workspace = buildWorkspace({ query: cloneQuery(), sources, zone, targetMs, intent: investigationIntent, savedIdOf: source => savedIdFor(source, recentConnections), previous: workspaceBaseline, windows: savedWindows, traceSources: savedTraceSources });
   if (!workspace) return;
   queueWorkspace(workspaceSaver, activeCaseId, workspaceBaseline, workspace); // back to what the case holds also drops an older change still waiting
+}
+/**
+ * Keeps the timeline's windows with the case, so the next visit (even after the app was closed) opens with them. Only usable windows are kept;
+ * the save is the same quiet one as the filters (not in the demo, not for a closed case, not before the case's own note was read).
+ */
+function rememberWindows(fields: WindowFields) {
+  const kept = parseStoredWindows(fields);
+  if (!kept) return;
+  savedWindows = pickWindowFields(kept);
+  queueWorkspaceSave();
+}
+/** Keeps the timeline's chosen sources (ids only) with the case. "All" is the default, so it clears the kept choice. Same quiet save as the windows. */
+function rememberTraceSources(selection: SourceSelection) {
+  const kept = selection.mode === 'all' ? null : parseStoredSourceChoice(selection.mode === 'none' ? { mode: 'none' } : { mode: 'some', ids: selection.ids });
+  if (JSON.stringify(kept) === JSON.stringify(savedTraceSources)) return;
+  savedTraceSources = kept;
+  queueWorkspaceSave();
 }
 /** Puts a saved investigation on the page: the filters, the chosen sources, the zone; the old results and details go. */
 function applyWorkspaceInvestigation(snapshot: InvestigationSnapshot | null) {
@@ -740,7 +828,7 @@ async function restoreCaseWorkspace(id: string) {
   tabInvestigationHeld = false;
   const run = ++restoreSequence;
   const alive = () => run === restoreSequence && activeCaseId === id;
-  restoredCaseId = ''; workspaceBaseline = null; pendingRestore = null;
+  restoredCaseId = ''; workspaceBaseline = null; pendingRestore = null; savedWindows = null; savedTraceSources = null;
   workspaceSaver.cancel(); workspaceSaver.forget();
   const ctx: RestoreRun = { id, run, workspace: null, keepTab, databases: [], recent: null };
   restoreRun = ctx;
@@ -750,7 +838,7 @@ async function restoreCaseWorkspace(id: string) {
   try { workspace = parseWorkspace(await api.caseWorkspace(id)); } catch { if (alive()) { restoreRun = null; setRestore('idle'); } return; }
   if (!alive()) return;
   if (!workspace) { restoreRun = null; setRestore('idle'); return; }
-  ctx.workspace = workspace;
+  ctx.workspace = workspace; savedWindows = workspace.windows ?? null; savedTraceSources = workspace.traceSources ? parseStoredSourceChoice(workspace.traceSources) : null;
   const mongo = workspace.mongo;
   if (!mongo) { finishRestore(id, workspace, keepTab); return; }
   try {
@@ -835,11 +923,13 @@ export function setActiveCase(id: string, options: { restore?: boolean } = {}) {
   // What waits to be saved belongs to the case being left, so it goes now; the new case starts with nothing restored.
   workspaceSaver.flush();
   restoreSequence++;
-  restoredCaseId = ''; workspaceBaseline = null; pendingRestore = null; restoreRun = null;
+  restoredCaseId = ''; workspaceBaseline = null; pendingRestore = null; restoreRun = null; savedWindows = null; savedTraceSources = null;
   setRestore('idle');
   activeCaseId = id;
   if (id) importCaseHint = false;
   if (tracingCase !== id) tracingCase = '';
+  if (slowCall && slowCall.caseId !== id) { slowCall = null; storedCallTarget(null); }
+  if (lastSlowCall && lastSlowCall.caseId !== id) lastSlowCall = null;
   storedCase(id);
   setLedgerCase(id);
   // Already on the case or the analysis (the import drawer picks a case here), so no screen change will start the restore: start it now.
@@ -1578,6 +1668,8 @@ export function onWindowKey(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.defaultPrevented) return;
   // The import popup handles its own Esc (it asks before it closes), so the page behind it must not step up.
   if (importPopup) return;
+  // The drill pop-up handles its own Esc, so the page behind it must not step up either.
+  if (drillOpen) return;
   // A drawer closes on Esc even when focus is on the page itself (after a click on the page behind it); one with focus inside handles its own Esc.
   if (glossaryOpen) { void closeGlossary(); return; }
   if (coverageSource) { void closeCoverage(); return; }
@@ -1586,15 +1678,17 @@ export function onWindowKey(event: KeyboardEvent) {
   const target = event.target;
   if (target instanceof HTMLElement && (target.tagName === 'SELECT' || target.closest('.popover'))) return;
   // An open menu or the filters panel closes first; only then does Esc step one level up.
-  const open = document.querySelector<HTMLDetailsElement>('details.menu[open], details.more-filters[open]');
+  const open = Array.from(document.querySelectorAll<HTMLDetailsElement>('details.menu[open], details.more-filters[open]')).find((d) => !d.closest('[hidden]')) ?? null;
   const inside = open != null && target instanceof HTMLElement && open.contains(target);
   const loose = !(target instanceof HTMLElement) || target === document.body;
   if (open && (inside || loose)) { open.open = false; open.querySelector<HTMLElement>('summary')?.focus(); return; }
+  if (slowCall) { closeSlowCall(); return; }
   stepUpOnce();
 }
 // A scope change (range chip, request type, source, filter) only marks the analysis on screen as out of date (runHint); the Run analysis button starts the run.
 export function onScopeChange() { error = ''; }
 /** A chosen hour of the hour grid becomes the primary window, with the hour before it as the reference. */
+export function setDrillOpen(v: boolean) { drillOpen = v; }
 export function setWindowFromHour(window: RollupWindow) { tracingHandoff = null; Object.assign(query, hourWindowQuery(window)); controlsResetKey++; onScopeChange(); }
 /** Remember what to say if the analysis on this just-set bar window is empty. Call after setWindowFromHour; an empty text clears it. */
 export function setTracingHandoff(window: RollupWindow, text: string) {
@@ -1762,11 +1856,16 @@ export const app = {
   get screen() { return screen; },
   get activeCaseId() { return activeCaseId; },
   get tracingCase() { return tracingCase; },
+  get slowCall() { return slowCall; },
   get tracingHandoff() { return tracingHandoff; },
   get lockState() { return lockState; },
   get dpapiCases() { return dpapiCases; },
   get lockError() { return lockError; }, set lockError(value) { lockError = value; },
   get workspaceNote() { return workspaceNote; }, set workspaceNote(value) { workspaceNote = value; },
+  get savedWindows() { return savedWindows; },
+  get savedTraceSources() { return savedTraceSources; },
+  rememberTraceSources,
+  rememberWindows,
   get importCaseHint() { return importCaseHint; }, set importCaseHint(value) { importCaseHint = value; },
   get firstRun() { return firstRun; },
   get maxSources() { return maxSources; },

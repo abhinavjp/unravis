@@ -1,5 +1,5 @@
 import type { LintEntry } from '../copy/copylint';
-import type { TracingResponse, TracingSourceRef } from './model';
+import type { ReconnectAction, TracingResponse, TracingSourceRef } from './model';
 
 /**
  * The "Sources traced" picker of the Investigation Timeline (the chip row of the wireframe's timeline toolbar). Pure module, no
@@ -16,6 +16,7 @@ export interface SourceChip {
   id: string;
   label: string;
   kind: SourceKind;
+  noFile?: true;
 }
 
 export type SourceSelection = { mode: 'all' } | { mode: 'none' } | { mode: 'some'; ids: string[] };
@@ -31,7 +32,9 @@ export const SOURCES_TEXT = {
   clearAll: 'Clear all',
   savedNotConnected: 'saved, not connected',
   connect: 'Connect',
-  connectTitle: 'Connect this database so its requests can be read.',
+  connectTitle: 'Connect this database so its requests can be read. If its password is saved, Unravis connects it by itself when you start tracing.',
+  reconnecting: 'Reconnecting saved databases…',
+  reconnectingTitle: 'Unravis is opening the saved databases whose password is saved, so you do not have to press Connect.',
   noneSelected: 'No sources are selected, so nothing is traced. Choose at least one source.',
   laneUnselected: 'No source for this lane is selected.',
   readLabel: 'Read',
@@ -41,7 +44,9 @@ export const SOURCES_TEXT = {
   kindIis: 'IIS',
   kindFile: 'File',
   capNote: 'At most 50 sources can be traced at once. Switch one off first.',
-  newNotOn: 'The new file’s source was not switched on. 50 sources are already on.'
+  newNotOn: 'The new file’s source was not switched on. 50 sources are already on.',
+  notImported: 'not imported',
+  notImportedTitle: 'This file is listed but was never imported, so the timeline holds nothing from it. Import it to see its events.'
 } as const;
 
 const KIND_WORD: Record<SourceKind, string> = {
@@ -50,6 +55,31 @@ const KIND_WORD: Record<SourceKind, string> = {
   iis: SOURCES_TEXT.kindIis,
   file: SOURCES_TEXT.kindFile
 };
+
+/** What to do next, by the action the server named. The page never reads the reason text to choose this. */
+export const RECONNECT_NEXT: Record<ReconnectAction, string> = {
+  connect: 'Press Connect and enter the password.',
+  retry: 'Press Start tracing again.',
+  'start-keeper': 'Start the Unravis Key Keeper service, then press Start tracing again.',
+  'remove-source': 'Remove a source, then press Start tracing again.'
+};
+
+/** "Could not reconnect Payroll: the password was not accepted. Press Connect and enter the password." The reason is the server's plain sentence fragment. */
+export function reconnectFailedText(name: string, reason: string, action: ReconnectAction = 'connect'): string {
+  const why = reason.trim().replace(/[.\s]+$/, '');
+  return `Could not reconnect ${name}: ${why}. ${RECONNECT_NEXT[action]}`;
+}
+
+/**
+ * The saved databases that are still closed: the saved names no open audit source answers to (by its name or label). The "Reconnecting"
+ * line shows only while there is one, so a case whose databases are all open never says it is reconnecting.
+ */
+export function savedStillClosed(saved: string[], chips: SourceChip[], open: { label: string }[] = []): string[] {
+  const names = new Set<string>();
+  for (const chip of chips) if (chip.kind === 'audit') names.add(chip.label.trim().toLowerCase());
+  for (const ref of open) names.add(ref.label.trim().toLowerCase());
+  return saved.filter((name) => !names.has(name.trim().toLowerCase()));
+}
 
 /** The chip text as the wireframe words it: the kind, a dot, then the name ("API audit · Orders"). */
 export const chipText = (chip: SourceChip): string => `${KIND_WORD[chip.kind]} · ${chip.label}`;
@@ -158,7 +188,7 @@ export function chipsOf(res: TracingResponse): SourceChip[] {
   const add = (ref: TracingSourceRef, kind: SourceKind) => {
     if (seen.has(ref.sourceId)) return;
     seen.add(ref.sourceId);
-    out.push({ id: ref.sourceId, label: ref.label || ref.sourceId, kind });
+    out.push({ id: ref.sourceId, label: ref.label || ref.sourceId, kind, ...(ref.noFile ? { noFile: true as const } : {}) });
   };
   for (const ref of res.auditSources) add(ref, 'audit');
   for (const ref of res.sources) add(ref, kindOfFile(res, ref));
@@ -210,7 +240,7 @@ export function loadSources(caseId: string, storage?: Pick<Storage, 'getItem'>):
         if (typeof item !== 'object' || item === null) continue;
         const chip = item as Record<string, unknown>;
         if (typeof chip.id === 'string' && chip.id !== '' && typeof chip.label === 'string' && KINDS.includes(chip.kind as SourceKind)) {
-          chips.push({ id: chip.id, label: chip.label, kind: chip.kind as SourceKind });
+          chips.push({ id: chip.id, label: chip.label, kind: chip.kind as SourceKind, ...(chip.noFile === true ? { noFile: true as const } : {}) });
         }
       }
     }
@@ -261,5 +291,39 @@ export const sourcesCopyEntries = (): LintEntry[] => [
   ...Object.entries(SOURCES_TEXT).map(([id, text]) => ({ id: 'tracingSources.' + id, text })),
   { id: 'tracingSources.summaryAll', text: sourcesSummary(ALL_SOURCES, [{ id: 'a', label: 'A', kind: 'audit' }, { id: 'b', label: 'B', kind: 'sql' }]) },
   { id: 'tracingSources.summarySome', text: sourcesSummary({ mode: 'some', ids: ['a'] }, [{ id: 'a', label: 'A', kind: 'audit' }, { id: 'b', label: 'B', kind: 'sql' }]) },
-  { id: 'tracingSources.summaryNone', text: sourcesSummary(NO_SOURCES, []) }
+  { id: 'tracingSources.summaryNone', text: sourcesSummary(NO_SOURCES, []) },
+  { id: 'tracingSources.reconnectFailed', text: reconnectFailedText('Payroll', 'the password was not accepted') },
+  { id: 'tracingSources.reconnectKeeper', text: reconnectFailedText('Payroll', 'the Unravis Key Keeper service is not running', 'start-keeper') },
+  { id: 'tracingSources.reconnectRemove', text: reconnectFailedText('Payroll', 'the most sources are already open', 'remove-source') },
+  { id: 'tracingSources.reconnectRetry', text: reconnectFailedText('Payroll', 'there was not enough time to try', 'retry') }
 ];
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// The choice as the case keeps it on the server (so it survives closing the app). Only the ids are kept, never a label or an address.
+// "All" is the default and is kept as nothing.
+
+export interface StoredSourceChoice { mode: 'none' | 'some'; ids?: string[] }
+
+const MAX_KEPT_IDS = 50;
+
+/** The kept choice as a selection, or null when it is missing, is "all" or cannot be read. */
+export function parseStoredSourceChoice(value: unknown): SourceSelection | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record.mode === 'none') return NO_SOURCES;
+  if (record.mode === 'some' && Array.isArray(record.ids)) {
+    const ids = record.ids.filter((id): id is string => typeof id === 'string' && id !== '' && id.length <= 200 && !id.includes('://')).slice(0, MAX_KEPT_IDS);
+    return ids.length > 0 ? { mode: 'some', ids } : null;
+  }
+  return null;
+}
+
+/** What to keep of a selection: nothing for "all". */
+export function sourceChoiceOf(selection: SourceSelection): StoredSourceChoice | null {
+  if (selection.mode === 'none') return { mode: 'none' };
+  if (selection.mode === 'some') {
+    const kept = parseStoredSourceChoice({ mode: 'some', ids: selection.ids });
+    return kept && kept.mode === 'some' ? { mode: 'some', ids: kept.ids } : null;
+  }
+  return null;
+}

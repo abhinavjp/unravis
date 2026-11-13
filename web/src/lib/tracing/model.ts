@@ -32,7 +32,7 @@ export interface TracingWindow {
 }
 
 /** Sent per lane and at the top level, exactly as the server sends it. */
-export interface TracingSourceRef { sourceId: string; label: string }
+export interface TracingSourceRef { sourceId: string; label: string; noFile?: true }
 
 /**
  * The server bucket is `{start,count,errors?}`; SQL and IIS have no 5xx, so `errors` is absent there and
@@ -56,6 +56,8 @@ export interface TracingBucket {
   timedCount?: number;
   /** The slowest timed request in the bucket; absent when none did. */
   maxMs?: number;
+  /** Total time of the calls that started in this step, in ms. Missing = not recorded. */
+  busyMs?: number | null;
 }
 
 export interface TracingLane {
@@ -88,7 +90,25 @@ export interface TracingLane {
   sourcesRead?: TracingSourceRef[];
   /** Audit databases the case saved that no open connection carries, by saved name (the audit lane only). */
   savedNotConnected?: string[];
+  importedFrom?: string;
+  importedTo?: string;
+  /** True when the server says some imported files have no recorded range (set only with an accepted importedFrom/importedTo). */
+  importedPartial?: true;
+  /** Length in seconds of the blocks this lane was saved in (Query Store). Missing = same as the step. */
+  blockSeconds?: number;
+  /** The server's raw `reasonCode` text when it sent a non-empty one (`incompleteReason` and `emptyBecause` are its narrowed forms). */
+  reasonCode?: string;
+  /** The events the server sent on this lane; absent when none were sent or none were readable. */
+  events?: TracingLaneEvent[];
 }
+
+/** One event on a lane, as the Slow call screen reads it. */
+export interface TracingLaneEvent { id: string; label: string; start: string; end: string; durationMs: number | null; kind?: string }
+
+/** What to do next: press Connect, start tracing again, start the key keeper, or remove a source. The server decides; the page never reads the reason text. */
+export type ReconnectAction = 'connect' | 'retry' | 'start-keeper' | 'remove-source';
+/** One saved database that could not be reopened by itself: its saved name and a short plain reason (no address, no password). */
+export interface ReconnectFailure { name: string; reason: string; action: ReconnectAction }
 
 export interface TracingResponse {
   window: TracingWindow;
@@ -103,6 +123,8 @@ export interface TracingResponse {
   auditSources: TracingSourceRef[];
   /** Audit databases the case saved that no open connection carries; empty when the request did not list them. */
   savedNotConnected: string[];
+  /** Saved databases Unravis tried to open again by itself and could not, with the plain reason; absent when none failed. */
+  reconnectFailed?: ReconnectFailure[];
   /** Echoed only when it was sent, so the caller compares it with the seq it sent, not with a field it may lack. */
   requestSeq?: number;
 }
@@ -163,7 +185,9 @@ const unreadable = (): CaseApiError => new CaseApiError('The server sent an answ
 
 function parseSourceRef(value: unknown): TracingSourceRef | null {
   if (!isObject(value) || !isText(value.sourceId) || !isText(value.label)) return null;
-  return { sourceId: value.sourceId, label: value.label };
+  const ref: TracingSourceRef = { sourceId: value.sourceId, label: value.label };
+  if (value.noFile === true) ref.noFile = true;
+  return ref;
 }
 
 /** Defaults to `[]`: an entry that is not the documented shape is dropped rather than failing the whole response. */
@@ -192,7 +216,18 @@ function parseBucket(value: unknown): TracingBucket | null {
   if (isNumber(value.timedCount)) bucket.timedCount = value.timedCount;
   if (isNumber(value.maxMs)) bucket.maxMs = value.maxMs;
   if (value.complete === false) bucket.complete = false;
+  if (isNumber(value.busyMs) && value.busyMs >= 0) bucket.busyMs = value.busyMs;
   return bucket;
+}
+
+/** One lane event the server sent, kept only when its id, label and times are readable; the duration is null when the server had none. */
+function parseLaneEvent(value: unknown): TracingLaneEvent | null {
+  if (!isObject(value) || !isText(value.id) || !isText(value.label)) return null;
+  if (!isText(value.start) || !isParseableDate(value.start) || !isText(value.end) || !isParseableDate(value.end)) return null;
+  if (value.durationMs !== null && value.durationMs !== undefined && !(isNumber(value.durationMs) && value.durationMs >= 0)) return null;
+  const event: TracingLaneEvent = { id: value.id, label: value.label, start: value.start, end: value.end, durationMs: isNumber(value.durationMs) ? value.durationMs : null };
+  if (isText(value.kind) && value.kind !== '') event.kind = value.kind;
+  return event;
 }
 
 function parseBuckets(value: unknown): TracingBucket[] | null {
@@ -239,7 +274,34 @@ function parseLane(value: unknown): TracingLane | null {
   if (read.length > 0) lane.sourcesRead = read;
   const saved = parseNames(value.savedNotConnected);
   if (saved.length > 0) lane.savedNotConnected = saved;
+  if (isText(value.importedFrom) && isText(value.importedTo)
+    && isParseableDate(value.importedFrom) && isParseableDate(value.importedTo)) {
+    lane.importedFrom = value.importedFrom;
+    lane.importedTo = value.importedTo;
+    if (value.importedPartial === true) lane.importedPartial = true;
+  }
+  if (isNumber(value.blockSeconds) && value.blockSeconds > 0) lane.blockSeconds = value.blockSeconds;
+  if (isText(value.reasonCode) && value.reasonCode !== '') lane.reasonCode = value.reasonCode;
+  if (Array.isArray(value.events)) {
+    const events = value.events.map(parseLaneEvent).filter((e): e is TracingLaneEvent => e !== null);
+    if (events.length > 0) lane.events = events;
+  }
   return lane;
+}
+
+function parseReconnectAction(value: unknown): ReconnectAction {
+  return value === 'retry' || value === 'start-keeper' || value === 'remove-source' ? value : 'connect';
+}
+
+/** At most eight entries (the most sources that can be open), each with a non-empty name and reason; anything else is dropped. */
+function parseReconnectFailures(value: unknown): ReconnectFailure[] {
+  if (!Array.isArray(value)) return [];
+  const out: ReconnectFailure[] = [];
+  for (const item of value) {
+    if (out.length >= 8) break;
+    if (isObject(item) && isText(item.name) && item.name !== '' && isText(item.reason) && item.reason !== '') out.push({ name: item.name, reason: item.reason, action: parseReconnectAction(item.action) });
+  }
+  return out;
 }
 
 function parseWindow(value: unknown): TracingWindow | null {
@@ -269,6 +331,7 @@ export function parseTracing(raw: unknown): TracingResponse {
     ? raw.mixedConsistency
     : lanes.some((lane) => lane.consistency === 'live-non-snapshot');
   const truncated = typeof raw.truncated === 'boolean' ? raw.truncated : lanes.some((lane) => lane.truncated);
+  const reconnectFailed = parseReconnectFailures(raw.reconnectFailed);
   return {
     window,
     lanes,
@@ -279,6 +342,7 @@ export function parseTracing(raw: unknown): TracingResponse {
     warnings: Array.isArray(raw.warnings) ? raw.warnings.filter(isText) : [],
     auditSources: parseSourceRefs(raw.auditSources),
     savedNotConnected: parseNames(raw.savedNotConnected),
+    ...(reconnectFailed.length > 0 ? { reconnectFailed } : {}),
     requestSeq: isNumber(raw.requestSeq) ? raw.requestSeq : undefined
   };
 }

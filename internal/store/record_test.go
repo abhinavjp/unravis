@@ -23,6 +23,12 @@ var schemaFieldNames = []string{
 	"AuditCreateTime", "ApiTime", "PayloadRecordTime",
 }
 
+var perfProjectionKeys = []string{
+	"_perfHitCount", "_perfFilterTotalMs", "_perfSqlCount", "_perfSqlMs", "_perfRedisCount", "_perfRedisMs",
+	"_perfHttpCount", "_perfHttpMs", "_perfFilters", "_perfSlowSql", "_perfSlowHttp", "_perfSteps",
+	"_perfPressure", "_perfTextStored",
+}
+
 type legacyFlagClient struct{ *fakeClient }
 
 func (legacyFlagClient) isLegacy() bool { return true }
@@ -49,10 +55,11 @@ func TestRecordProjectionListsOnlySchemaFields(t *testing.T) {
 		got = append(got, field.Key)
 	}
 	want := append([]string(nil), schemaFieldNames...)
+	want = append(want, perfProjectionKeys...)
 	sort.Strings(got)
 	sort.Strings(want)
-	if len(schemaFieldNames) != 21 || !reflect.DeepEqual(got, want) {
-		t.Fatalf("projection keys = %v, want exactly the 21 schema fields %v", got, want)
+	if len(schemaFieldNames) != 21 || len(perfProjectionKeys) != 14 || !reflect.DeepEqual(got, want) {
+		t.Fatalf("projection keys = %v, want exactly the 21 schema fields plus the 14 _perf keys %v", got, want)
 	}
 }
 

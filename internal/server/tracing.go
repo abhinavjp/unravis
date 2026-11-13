@@ -55,6 +55,9 @@ const (
 	tracingReasonNotImported = "not-imported"
 	tracingReasonSkipped     = "import-skipped"
 	tracingNotImportedMsg    = "The files listed for this lane have not been imported into this case, so it holds none of their events. Import them to see this lane."
+	// The database lane is also filled by a saved Query Store day, and the Timeline never opens a connection itself, so its words
+	// say what is missing and where to add it.
+	tracingSQLNotImportedMsg = "No database data is saved in this case for this window. The Timeline shows saved data only and never connects by itself. In the case's Sources, import the listed SQL file or use \"Read this day\" on the SQL connection."
 	tracingSkippedMsg        = "The files imported for this lane were set aside, so the case holds none of their events."
 )
 
@@ -409,6 +412,9 @@ type tracingBucket struct {
 	P50Ms    *float64 `json:"p50Ms,omitempty"`
 	P95Ms    *float64 `json:"p95Ms,omitempty"`
 	MaxMs    *float64 `json:"maxMs,omitempty"`
+	// BusyMs is the summed duration, in milliseconds, of the calls that started in this bucket.
+	// Nil means it was not recorded; it is never a stand-in zero.
+	BusyMs *float64 `json:"busyMs,omitempty"`
 	Clipped  bool     `json:"clipped"`
 	Complete bool     `json:"complete"`
 }
@@ -456,6 +462,12 @@ type tracingLane struct {
 	// open connection carries, by saved name (the audit lane only).
 	SourcesRead       []tracingRef `json:"sourcesRead,omitempty"`
 	SavedNotConnected []string     `json:"savedNotConnected,omitempty"`
+	ImportedFrom      *time.Time   `json:"importedFrom,omitempty"` // earliest time in the lane's imported files
+	ImportedTo        *time.Time   `json:"importedTo,omitempty"`   // latest time in the lane's imported files
+	ImportedPartial   bool         `json:"importedPartial,omitempty"` // some imported file has no recorded time range
+	// BlockSeconds is the length of the blocks this lane's source saved its numbers in, when it is
+	// longer than the bucket (Query Store). Zero means not known or same as the bucket.
+	BlockSeconds int `json:"blockSeconds,omitempty"`
 }
 
 type tracingResponse struct {
@@ -475,6 +487,9 @@ type tracingResponse struct {
 	// out when the request did not list audit sources.
 	AuditSources      []tracingRef `json:"auditSources,omitempty"`
 	SavedNotConnected []string     `json:"savedNotConnected,omitempty"`
+	// ReconnectFailed are the saved audit databases Unravis tried to open again for this request and could not: the page says why
+	// and offers Connect. Left out when nothing failed or nothing was tried.
+	ReconnectFailed []tracingReconnectFail `json:"reconnectFailed,omitempty"`
 }
 
 // tracingLaneRank orders lanes in the answer: audit, sql, iis, then any other.
@@ -610,6 +625,11 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 			lanes = append(lanes, lane)
 			continue
 		}
+		if sp := src.span[key]; sp != nil && sp.known {
+			from, to := sp.from, sp.to
+			lane.ImportedFrom, lane.ImportedTo = &from, &to
+			lane.ImportedPartial = sp.partial
+		}
 		if lane.State == calltrace.StateNoData {
 			lane.ReasonCode, lane.Reason = emptyLaneReason(key, src)
 		}
@@ -628,6 +648,8 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 // set aside. Both are empty when the selection holds nothing for the lane.
 func emptyLaneReason(key string, src laneSources) (code, text string) {
 	switch {
+	case src.notImported[key] > 0 && key == "sql":
+		return tracingReasonNotImported, tracingSQLNotImportedMsg
 	case src.notImported[key] > 0:
 		return tracingReasonNotImported, tracingNotImportedMsg
 	case src.skipped[key] > 0:
@@ -646,8 +668,38 @@ type laneSources struct {
 	unchecked   map[string]bool      // lane key -> a selected file has no confirmed rule
 	asOf        map[string]time.Time // lane key -> latest Imported
 	selectedIDs map[int64]bool
-	notImported map[string]int // lane key -> selected sources whose file was never imported
-	skipped     map[string]int // lane key -> selected imports that were quarantined or failed
+	notImported map[string]int           // lane key -> selected sources whose file was never imported
+	skipped     map[string]int           // lane key -> selected imports that were quarantined or failed
+	span        map[string]*importedSpan // lane key -> time range of its imported files
+}
+
+// importedSpan is the earliest and latest time held by a lane's imported files.
+// known means at least one file had a recorded range. partial is set when some
+// file had none, so the shown range is never presented as the whole.
+type importedSpan struct {
+	from, to time.Time
+	known    bool
+	seen     bool
+	partial  bool
+}
+
+func (s *importedSpan) add(first, last *time.Time) {
+	if first == nil || last == nil {
+		s.partial, s.seen = true, true
+		return
+	}
+	f, l := first.UTC(), last.UTC()
+	if !s.known {
+		s.from, s.to, s.known, s.seen = f, l, true, true
+		return
+	}
+	s.seen = true
+	if f.Before(s.from) {
+		s.from = f
+	}
+	if l.After(s.to) {
+		s.to = l
+	}
 }
 
 // resolveLaneSources maps the selected sources to imports and works out, per
@@ -691,6 +743,7 @@ func resolveLaneSources(ctx context.Context, c casestore.Case, sel tracingSelect
 	out.selectedIDs = map[int64]bool{}
 	out.notImported = notImported
 	out.skipped = map[string]int{}
+	out.span = map[string]*importedSpan{}
 	notLane := false
 	for _, rec := range recs {
 		ref, picked := refByImport[rec.ID]
@@ -715,6 +768,12 @@ func resolveLaneSources(ctx context.Context, c casestore.Case, sel tracingSelect
 		}
 		out.infos = append(out.infos, info)
 		out.selectedIDs[rec.ID] = true
+		sp := out.span[lane]
+		if sp == nil {
+			sp = &importedSpan{}
+			out.span[lane] = sp
+		}
+		sp.add(rec.Quality.CoverageFirst, rec.Quality.CoverageLast)
 		nameLane[rec.Importer] = lane
 		if v, seen := nameValid[rec.Importer]; !seen {
 			nameValid[rec.Importer] = info.Validated
@@ -903,7 +962,7 @@ func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *t
 				acc = &latencyAcc{}
 				timing[bt.Index] = acc
 			}
-			acc.add([]audit.RollupWireBin{{Bin: bt.Bin, Count: bt.Count, Min: bt.Min, Max: bt.Max}})
+			acc.add([]audit.RollupWireBin{{Bin: bt.Bin, Count: bt.Count, Sum: bt.Sum, Min: bt.Min, Max: bt.Max}})
 		}
 		// Buckets are in axis order but skip unusable cells, so find each by its start.
 		idx := map[time.Time]int{}
@@ -919,6 +978,8 @@ func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *t
 			}
 			if acc := timing[k]; acc != nil {
 				lane.Buckets[i].TimedCount, lane.Buckets[i].P50Ms, lane.Buckets[i].P95Ms, lane.Buckets[i].MaxMs = acc.figures()
+				// The IIS log writes the time a request ENDED, so this busy time sits in the step the request ended in (the API lane counts the step it started in).
+				lane.Buckets[i].BusyMs = acc.busy()
 			}
 		}
 	}
@@ -1024,6 +1085,13 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 	// Audit sources are checked against the listing before anything is read. An
 	// unlisted explicit id is a 404; a listing failure gives an incomplete audit
 	// lane plus a warning (below). No id or error text is kept.
+	// Saved audit databases that were open before a restart are opened again first (bounded; a failure never fails the trace), so the
+	// listing below already holds them. A request that names only case files lists no audit sources, so nothing is reopened for it.
+	var reconnectFailed []tracingReconnectFail
+	if (!sel.Explicit || len(sel.AuditIDs) > 0) && len(sel.SavedAudit) > 0 {
+		// Only the databases this case saved are reopened; the others wait for the start-up pass or for the person.
+		reconnectFailed = h.reconnectSaved(ctx, tracingReconnectBudget, sel.SavedAudit)
+	}
 	auditRefs, auditItems, auditWarn, auditErr := selectAuditSourcesListed(ctx, h.repo, sel.Explicit, sel.AuditIDs)
 	if errors.Is(auditErr, errUnknownAuditSource) {
 		writeCaseFailure(w, http.StatusNotFound, "unknown-source", tracingUnknownMsg)
@@ -1047,11 +1115,44 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 		writeStoreError(w, err)
 		return
 	}
+	// The api-seen fallback reads the live audit repository (one SQLBusy call per
+	// request, only when the SQL lane would otherwise be empty). The reader is
+	// asserted once, like the audit lane's RollupReader below; a repository that
+	// does not implement it leaves the lane untouched.
+	sqlBusy, _ := h.repo.(audit.SQLBusyReader)
 	for _, lane := range lanes {
-		if lane.Key == calltrace.LaneSQL && lane.State == calltrace.StateNoData && lane.Disabled == "" {
+		if lane.Key == calltrace.LaneSQL && lane.Disabled == "" && (lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange || lane.State == calltrace.StateEvents) {
 			if held, ok := tracingHeldSQLLane(ctx, unwrapCase(c), axis, now); ok {
-				lane = held
+				if lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange {
+					imported := lane
+					lane = held
+					// The imported files' time range stays on the lane the owner sees.
+					if lane.ImportedFrom == nil {
+						lane.ImportedFrom = imported.ImportedFrom
+					}
+					if lane.ImportedTo == nil {
+						lane.ImportedTo = imported.ImportedTo
+					}
+					if !lane.ImportedPartial {
+						lane.ImportedPartial = imported.ImportedPartial
+					}
+				} else if layered, did := layerSQLLane(lane, held); did {
+					lane = layered
+				}
 			}
+		}
+		lane, err = tracingQSFileLane(ctx, unwrapCase(c), axis, sel, lane)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		lane, err = tracingAPISseenLane(ctx, sqlBusy, axis, lane, time.Now)
+		if err != nil {
+			if r.Context().Err() != nil {
+				return // the client went away; nothing to write
+			}
+			writeRepoError(w, err)
+			return
 		}
 		appendLane(&resp, lane)
 	}
@@ -1063,6 +1164,7 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 		resp.AuditSources = auditListingRefs(auditItems)
 		savedNot = savedNotConnectedNames(sel.SavedAudit, auditItems)
 		resp.SavedNotConnected = savedNot
+		resp.ReconnectFailed = reconnectFailedFor(reconnectFailed, auditItems)
 	}
 	// The selection warnings come first, then the lane ones, then the audit ones.
 	resp.Warnings = append(append(make([]string, 0, len(sel.Warnings)+len(warns)+2), sel.Warnings...), warns...)
@@ -1094,7 +1196,22 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 	case len(savedNot) > 0:
 		// The case saved audit databases but none is open: the lane says so instead
 		// of leaving the audit rows out as if nothing had been asked.
-		appendLane(&resp, auditSavedOnlyLane(now, savedNot))
+		lane := auditSavedOnlyLane(now, savedNot)
+		if reason, said := reconnectFailedReason(resp.ReconnectFailed, savedNot); reason != "" {
+			lane.Reason = reason
+			// The lane says it, so the notes under the chart do not repeat it.
+			rest := make([]tracingReconnectFail, 0, len(resp.ReconnectFailed))
+			for _, f := range resp.ReconnectFailed {
+				if f != *said {
+					rest = append(rest, f)
+				}
+			}
+			resp.ReconnectFailed = rest
+			if len(rest) == 0 {
+				resp.ReconnectFailed = nil
+			}
+		}
+		appendLane(&resp, lane)
 	}
 	finishTracingMeta(&resp)
 	writeJSON(w, http.StatusOK, resp, maxResponseBytes)

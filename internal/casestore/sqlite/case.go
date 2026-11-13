@@ -1370,7 +1370,7 @@ func (c *Case) BucketCounts(ctx context.Context, q casestore.BucketQuery) (cases
 	if q.CountTimings {
 		// The response times: counts per log bin with the fastest and slowest of
 		// each, over the rows that have a duration.
-		timingQuery = "SELECT (ts_ms - ?) / ? AS b, source, import_id, " + timingBinExpr + " AS bin, COUNT(*), MIN(duration_ms), MAX(duration_ms) FROM events WHERE " +
+		timingQuery = "SELECT (ts_ms - ?) / ? AS b, source, import_id, " + timingBinExpr + " AS bin, COUNT(*), MIN(duration_ms), MAX(duration_ms), SUM(duration_ms) FROM events WHERE " +
 			strings.Join(append(append([]string(nil), where...), "duration_ms IS NOT NULL"), " AND ") +
 			" GROUP BY b, source, import_id, bin ORDER BY b, source, import_id, bin"
 	}
@@ -1506,7 +1506,7 @@ func (c *Case) timingChunk(ctx context.Context, db queryer, query string, args [
 	var out []casestore.BucketTiming
 	for rows.Next() {
 		var bt casestore.BucketTiming
-		if err := rows.Scan(&bt.Index, &bt.Source, &bt.ImportID, &bt.Bin, &bt.Count, &bt.Min, &bt.Max); err != nil {
+		if err := rows.Scan(&bt.Index, &bt.Source, &bt.ImportID, &bt.Bin, &bt.Count, &bt.Min, &bt.Max, &bt.Sum); err != nil {
 			return nil, c.noteDamage(err)
 		}
 		out = append(out, bt)

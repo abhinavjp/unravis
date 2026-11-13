@@ -22,7 +22,7 @@ var recordSchemaFields = []string{
 }
 
 // recordPipeline fetches one document by _id with an explicit projection of the
-// 21 schema fields. It uses only operators available in MongoDB 3.4, so modern
+// 21 schema fields plus the 14 flat _perf* keys (see record_perf.go). It uses only operators available in MongoDB 3.4, so modern
 // and legacy sources share it. Metadata strings are capped with $substrCP using
 // the same caps and helper as the legacy metadata scan, so one oversized
 // UserAgent or URL cannot push the response over its byte limit and hide the
@@ -37,6 +37,7 @@ func recordPipeline(id bson.ObjectID) mongo.Pipeline {
 		bson.E{Key: "RequestPayload", Value: boundedPayloadExpr("$RequestPayload")},
 		bson.E{Key: "ResponsePayload", Value: boundedPayloadExpr("$ResponsePayload")},
 	)
+	projection = append(projection, recordPerfProjection()...)
 	return mongo.Pipeline{
 		bson.D{{Key: "$match", Value: bson.D{{Key: "_id", Value: id}}}},
 		bson.D{{Key: "$limit", Value: 1}},
@@ -105,6 +106,7 @@ func (s *Store) Record(ctx context.Context, input audit.RecordInput) (audit.Reco
 		State:        record.State,
 		PendingAsync: record.PendingAsync,
 		Payload:      fitPayload(payload),
+		Perf:         decodeRecordPerf(raw),
 	}, nil
 }
 

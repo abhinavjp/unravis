@@ -36,7 +36,57 @@ const (
 // laneQSMaxRows is how many query and plan rows the stats read returns. A full batch means busier queries were kept and quieter ones cut off.
 const laneQSMaxRows = 3000
 
-func qLaneQSStats(req LaneRequest) string {
+// A window of any length is read in slices of laneSliceLen, so no single Query Store query has to scan more than a few days of intervals and each
+// can be stopped on its own (laneQueryTimeout). A window no longer than one slice is read by exactly one stats query and one intervals query.
+const (
+	laneSliceLen     = 72 * time.Hour
+	laneQueryTimeout = 60 * time.Second
+)
+
+// laneSlices cuts a window into consecutive spans of at most laneSliceLen.
+func laneSlices(w Window) []Window {
+	var out []Window
+	for s := w.Start; s.Before(w.End); s = s.Add(laneSliceLen) {
+		out = append(out, Window{Start: s, End: minTime(s.Add(laneSliceLen), w.End)})
+	}
+	return out
+}
+
+func minTime(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
+}
+
+// laneBatches pairs the n-th slice of the reference window with the n-th slice of the incident window, so each batch reads both windows a little.
+func laneBatches(req LaneRequest) [][]Window {
+	ref, inc := laneSlices(req.Reference), laneSlices(req.Incident)
+	n := max(len(ref), len(inc))
+	out := make([][]Window, 0, n)
+	for i := 0; i < n; i++ {
+		var spans []Window
+		if i < len(ref) {
+			spans = append(spans, ref[i])
+		}
+		if i < len(inc) {
+			spans = append(spans, inc[i])
+		}
+		out = append(out, spans)
+	}
+	return out
+}
+
+// qsSpans is the WHERE condition that keeps the intervals starting inside any of the spans.
+func qsSpans(spans []Window) string {
+	parts := make([]string, 0, len(spans))
+	for _, w := range spans {
+		parts = append(parts, `(i.start_time >= `+sqlOffsetLit(w.Start)+` AND i.start_time < `+sqlOffsetLit(w.End)+`)`)
+	}
+	return strings.Join(parts, ` OR `)
+}
+
+func qLaneQSStats(req LaneRequest, spans []Window) string {
 	incStart := sqlOffsetLit(req.Incident.Start)
 	return `/* unravis:qs_stats */ SELECT TOP ` + fmt.Sprint(laneQSMaxRows) + ` q.query_id, p.plan_id, ` +
 		`CASE WHEN i.start_time >= ` + incStart + ` THEN 'inc' ELSE 'ref' END AS win, ` +
@@ -46,21 +96,19 @@ func qLaneQSStats(req LaneRequest) string {
 		`FROM sys.query_store_runtime_stats rs ` +
 		`JOIN sys.query_store_runtime_stats_interval i ON i.runtime_stats_interval_id = rs.runtime_stats_interval_id ` +
 		`JOIN sys.query_store_plan p ON p.plan_id = rs.plan_id JOIN sys.query_store_query q ON q.query_id = p.query_id ` +
-		`WHERE (i.start_time >= ` + sqlOffsetLit(req.Reference.Start) + ` AND i.start_time < ` + sqlOffsetLit(req.Reference.End) + `) ` +
-		`OR (i.start_time >= ` + incStart + ` AND i.start_time < ` + sqlOffsetLit(req.Incident.End) + `) ` +
+		`WHERE ` + qsSpans(spans) + ` ` +
 		`GROUP BY q.query_id, p.plan_id, CASE WHEN i.start_time >= ` + incStart + ` THEN 'inc' ELSE 'ref' END ` +
 		`ORDER BY SUM(rs.count_executions) DESC`
 }
 
-func qLaneQSIntervals(req LaneRequest) string {
+func qLaneQSIntervals(req LaneRequest, spans []Window) string {
 	incStart := sqlOffsetLit(req.Incident.Start)
 	return `/* unravis:qs_intervals */ SELECT i.start_time, SUM(rs.count_executions) AS execs, ` +
 		`SUM(rs.avg_duration * rs.count_executions) / NULLIF(SUM(rs.count_executions), 0) / 1000.0 AS avg_ms, ` +
 		`MAX(rs.max_duration) / 1000.0 AS max_ms, ` +
 		`CASE WHEN i.start_time >= ` + incStart + ` THEN 'inc' ELSE 'ref' END AS win ` +
 		`FROM sys.query_store_runtime_stats rs JOIN sys.query_store_runtime_stats_interval i ON i.runtime_stats_interval_id = rs.runtime_stats_interval_id ` +
-		`WHERE (i.start_time >= ` + sqlOffsetLit(req.Reference.Start) + ` AND i.start_time < ` + sqlOffsetLit(req.Reference.End) + `) ` +
-		`OR (i.start_time >= ` + incStart + ` AND i.start_time < ` + sqlOffsetLit(req.Incident.End) + `) ` +
+		`WHERE ` + qsSpans(spans) + ` ` +
 		`GROUP BY i.start_time ORDER BY i.start_time`
 }
 
@@ -148,7 +196,11 @@ func RunSQLLane(ctx context.Context, q Queryer, label string, req LaneRequest, n
 		if ctx.Err() != nil {
 			c = LaneCheck{State: StateFailed, Summary: "The run stopped before this check ran."}
 		} else {
-			cctx, cancel := context.WithTimeout(ctx, checkTimeout)
+			// Query Store reads a long window slice by slice and gives each query its own time limit.
+			cctx, cancel := ctx, context.CancelFunc(func() {})
+			if st.id != CheckQueryStore {
+				cctx, cancel = context.WithTimeout(ctx, checkTimeout)
+			}
 			c = st.run(cctx)
 			cancel()
 		}
@@ -401,8 +453,7 @@ type qsOutcome struct {
 
 // evalLaneQueryStore compares the two windows. Plans are compared per query: a plan seen only in the incident, together with a duration at least
 // twice the reference, is a regression (D3); the same plans with reads and duration both at least twice as high is growth (D15).
-func evalLaneQueryStore(opt qsOptions, first time.Time, hasFirst bool, stats, intervals []Row, req LaneRequest) qsOutcome {
-	truncated := len(stats) >= laneQSMaxRows
+func evalLaneQueryStore(opt qsOptions, first time.Time, hasFirst bool, stats, intervals []Row, truncated bool, req LaneRequest) qsOutcome {
 	out := qsOutcome{answers: map[string]string{}}
 	ref, inc := qsGroup(stats, "ref"), qsGroup(stats, "inc")
 	if len(inc) == 0 {
@@ -563,36 +614,89 @@ func qsOnset(intervals []Row, req LaneRequest) *time.Time {
 	return nil
 }
 
+// queryStoreOf names the state Query Store reported, from the options row the check already reads. A database with no options row, or a state this
+// code does not switch on, is "unknown".
+func queryStoreOf(opt qsOptions) *LaneQueryStore {
+	qs := &LaneQueryStore{State: QSStateUnknown}
+	if !opt.found {
+		return qs
+	}
+	switch opt.state {
+	case "OFF":
+		qs.State = QSStateOff
+	case "READ_ONLY":
+		qs.State = QSStateReadOnly
+	case "READ_WRITE":
+		qs.State = QSStateOn
+	}
+	if opt.intervalMin > 0 {
+		qs.IntervalMinutes = int(opt.intervalMin)
+	}
+	return qs
+}
+
 func (s *sqlLane) checkQueryStore(ctx context.Context) LaneCheck {
 	if s.req.Database == "" {
 		return LaneCheck{State: StateNotYet, Summary: "Pick the application database. Query Store is read one database at a time."}
 	}
-	optRows, err := s.q.Query(ctx, qLaneQSOptions)
+	// Every query gets its own time limit, so one slow slice stops alone and a long window is not cut by a limit meant for one query.
+	query := func(text string, limit time.Duration) ([]Row, error) {
+		qctx, cancel := context.WithTimeout(ctx, limit)
+		defer cancel()
+		return s.q.Query(qctx, text)
+	}
+	optRows, err := query(qLaneQSOptions, checkTimeout)
 	if err != nil {
+		state := QSStateUnknown
+		if classify(err) == reasonPermission {
+			state = QSStateDenied
+		}
+		s.b.res.QueryStore = &LaneQueryStore{State: state}
 		return s.failed(CheckQueryStore, err, s.req.Database)
 	}
 	opt := evalQSOptions(optRows)
+	s.b.res.QueryStore = queryStoreOf(opt)
 	if !opt.found || opt.state == "OFF" || opt.state == "ERROR" || opt.state == "" {
 		fix := GrantFix{Permission: "Query Store switched on", Script: QueryStoreOnScript(s.req.Database)}
 		return LaneCheck{State: StateNotYet, Summary: "Query Store is switched off in this database, so it holds no plans or timings. The script below, run by the database owner, switches it on; it only helps for incidents after that.", Fix: &fix}
 	}
 	var first time.Time
 	hasFirst := false
-	if rows, err := s.q.Query(ctx, qLaneQSFirst); err == nil && len(rows) > 0 {
+	if rows, err := query(qLaneQSFirst, checkTimeout); err == nil && len(rows) > 0 {
 		first, hasFirst = rowTime(rows[0]["first_start"])
 		first = first.UTC()
+		if hasFirst {
+			f := first
+			s.b.res.QueryStore.FirstData = &f
+		}
 	} else if err != nil {
 		return s.failed(CheckQueryStore, err, s.req.Database)
 	}
-	stats, err := s.q.Query(ctx, qLaneQSStats(s.req))
-	if err != nil {
-		return s.failed(CheckQueryStore, err, s.req.Database)
+	// The windows are read in slices. Rows of the same query and plan from different slices are added together by qsGroup, and the intervals of
+	// different slices never overlap, so the slices are simply joined.
+	var stats, intervals []Row
+	truncated := false
+	batches := laneBatches(s.req)
+	for _, spans := range batches {
+		if err := ctx.Err(); err != nil {
+			return s.failed(CheckQueryStore, err, s.req.Database)
+		}
+		rows, err := query(qLaneQSStats(s.req, spans), laneQueryTimeout)
+		if err != nil {
+			return s.failed(CheckQueryStore, err, s.req.Database)
+		}
+		truncated = truncated || len(rows) >= laneQSMaxRows
+		stats = append(stats, rows...)
+		rows, err = query(qLaneQSIntervals(s.req, spans), laneQueryTimeout)
+		if err != nil {
+			return s.failed(CheckQueryStore, err, s.req.Database)
+		}
+		intervals = append(intervals, rows...)
 	}
-	intervals, err := s.q.Query(ctx, qLaneQSIntervals(s.req))
-	if err != nil {
-		return s.failed(CheckQueryStore, err, s.req.Database)
+	o := evalLaneQueryStore(opt, first, hasFirst, stats, intervals, truncated, s.req)
+	if len(batches) > 1 && o.check.State == StateReady {
+		o.check.Summary += " The windows were read in " + fmtInt(float64(len(batches))) + " slices of up to 3 days."
 	}
-	o := evalLaneQueryStore(opt, first, hasFirst, stats, intervals, s.req)
 	s.b.setSeries(seriesOf(intervals))
 	if o.check.State == StateReady {
 		for id, v := range o.answers {

@@ -84,6 +84,8 @@ type BucketTiming struct {
 	Bin      int
 	Count    int64
 	Min, Max float64
+	// Sum is the summed duration in milliseconds of the timed events in this bucket.
+	Sum float64
 }
 
 // IsClientErrorStatus reports whether v is a 4xx HTTP status: exactly three
@@ -221,6 +223,7 @@ func CountBucketsScan(ctx context.Context, c Case, q BucketQuery) (BucketResult,
 					timings[tk] = bt
 				}
 				bt.Count++
+				bt.Sum += *ev.DurationMs
 				bt.Min, bt.Max = min(bt.Min, *ev.DurationMs), max(bt.Max, *ev.DurationMs)
 			}
 		}

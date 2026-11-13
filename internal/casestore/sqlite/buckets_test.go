@@ -729,3 +729,63 @@ func TestBucketCountsClientErrorsHonourExclude(t *testing.T) {
 		}
 	}
 }
+
+// The GROUP BY returns the exact sum of the durations of each timing group, the
+// same as the scan fallback; events without a duration add nothing.
+func TestBucketCountsTimingSumExact(t *testing.T) {
+	s, _ := newTestStore(t)
+	info := mustCreate(t, s, "timing-sum")
+	c := mustOpen(t, s, info.ID)
+	evs := tEvents(c, "s", 4)
+	durs := []*float64{nil, nil, nil, nil}
+	a, b, d := 1000.0, 2000.0, 500.0
+	durs[0], durs[1], durs[3] = &a, &b, &d // event 2 has no duration
+	for i := range evs {
+		evs[i].Source = "imp-s"
+		evs[i].EvidenceID = evidence.EventID(string(c.Info().ID), "imp-s", "s", evs[i].Line, 0)
+		evs[i].Start = testBase.Add(time.Duration(i) * time.Second)
+		if i == 3 {
+			evs[i].Start = testBase.Add(15 * time.Second) // the next cell
+		}
+		evs[i].End = evs[i].Start.Add(500 * time.Millisecond)
+		evs[i].DurationMs = durs[i]
+	}
+	meta := tMeta("s.csv")
+	meta.Importer = "imp-s"
+	if _, err := c.Import(context.Background(), meta, tBody("s"), tRun(evs)); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	q := casestore.BucketQuery{
+		AxisStart: testBase, From: testBase, To: testBase.Add(40 * time.Second), WidthMs: 10_000,
+		Sources: []string{"imp-s"}, CountTimings: true,
+	}
+	got, err := c.BucketCounts(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sums := map[int]float64{}
+	for _, tm := range got.Timings {
+		if tm.Count <= 0 || tm.Sum < tm.Min || tm.Sum > tm.Max*float64(tm.Count) {
+			t.Fatalf("bad timing row %+v", tm)
+		}
+		sums[tm.Index] += tm.Sum
+	}
+	if len(sums) != 2 || sums[0] != 3000 || sums[1] != 500 {
+		t.Fatalf("sums per cell = %v, want cell 0: 3000, cell 1: 500", sums)
+	}
+	scan, err := casestore.CountBucketsScan(ctx, c, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var scanTotal, gotTotal float64
+	for _, tm := range scan.Timings {
+		scanTotal += tm.Sum
+	}
+	for _, tm := range got.Timings {
+		gotTotal += tm.Sum
+	}
+	if scanTotal != gotTotal || gotTotal != 3500 {
+		t.Fatalf("sum SQL=%v scan=%v, want 3500", gotTotal, scanTotal)
+	}
+}

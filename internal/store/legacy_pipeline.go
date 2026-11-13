@@ -97,7 +97,27 @@ func legacyMetadataPipeline(pipeline mongo.Pipeline) mongo.Pipeline {
 // legacyRowMetadataPipeline is legacyMetadataPipeline for request rows: it also
 // projects the audit-evidence columns.
 func legacyRowMetadataPipeline(pipeline mongo.Pipeline) mongo.Pipeline {
-	return legacyMetadataPipelineFor(pipeline, legacyRowMetadataFields)
+	metadata := legacyMetadataPipelineFor(pipeline, legacyRowMetadataFields)
+	if len(metadata) == 0 {
+		return metadata
+	}
+	last := len(metadata) - 1
+	projection := append(bson.D(nil), metadata[last][0].Value.(bson.D)...)
+	for _, field := range lightProjection() {
+		found := false
+		for _, existing := range projection {
+			if existing.Key == field.Key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			projection = append(projection, field)
+		}
+	}
+	rows := append(mongo.Pipeline(nil), metadata...)
+	rows[last] = bson.D{{Key: "$project", Value: projection}}
+	return rows
 }
 
 func legacyMetadataPipelineFor(pipeline mongo.Pipeline, fields []string) mongo.Pipeline {
@@ -551,6 +571,7 @@ func readLegacyRequestRowsOrdered(ctx context.Context, p *profile, q audit.Query
 			RequestKB: record.RequestKB, ResponseKB: record.ResponseKB,
 			UserID: record.UserID, UserIP: record.UserIP, UserAgent: record.UserAgent, UIVersion: record.UIVersion,
 			CreatedOn: record.CreatedOn, UpdatedOn: record.UpdatedOn, PollingTypeRaw: record.PollingTypeRaw,
+			Light: decodeRecordLight(raw.Lookup("_perfSqlMs"), raw.Lookup("_perfRedisMs"), raw.Lookup("_perfHttpMs")),
 		}, at: *record.At, object: record.ID}
 		if slow != nil {
 			value := audit.RequestMetric(row.request, q.Metric)

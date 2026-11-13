@@ -22,7 +22,7 @@ const (
 	tracingAuditCapWarn  = "Only the first 50 audit sources are shown."
 	tracingAuditListWarn = "The audit sources could not be listed, so the audit lane was not read."
 
-	tracingAuditSavedOnlyMsg = "This case saved audit databases that are not connected on this computer, so no API requests were read."
+	tracingAuditSavedOnlyMsg = "This case saved audit databases that are not connected on this computer, so no API requests were read. Unravis reconnects a saved database by itself only when its password is saved. Otherwise press Connect next to it in the Sources row, enter the password, then press Start tracing again."
 	tracingAuditNoReaderMsg = "The audit source cannot be read here."
 	tracingAuditBroadMsg    = "The audit source reads at most 24 hours unless broad scans are allowed, so this window was not read."
 	tracingAuditTimeoutMsg  = "The audit read ran out of time; nothing was shortened."
@@ -55,6 +55,8 @@ type auditBucket struct {
 	Count, Errors int64
 	Timed         int64
 	P50Ms, P95Ms, MaxMs *float64
+	// BusyMs is the summed duration in ms of the timed calls (nil when none).
+	BusyMs *float64
 }
 
 // auditLaneRead is what readAuditLane found. ReasonCode is empty for a complete
@@ -352,6 +354,7 @@ func readAuditLane(ctx context.Context, reader audit.RollupReader, sourceIDs []s
 		}
 		b := auditBucket{Start: from, End: to, Clipped: clipped, Count: c.count, Errors: c.errs}
 		b.Timed, b.P50Ms, b.P95Ms, b.MaxMs = c.lat.figures()
+		b.BusyMs = c.lat.busy()
 		out.Buckets = append(out.Buckets, b)
 	}
 	return out
@@ -392,7 +395,7 @@ func auditLaneToWire(read auditLaneRead, sourceLabels []tracingRef) tracingLane 
 		errs := b.Errors
 		lane.Buckets = append(lane.Buckets, tracingBucket{
 			Start: b.Start.UTC(), End: b.End.UTC(), Count: b.Count, Errors: &errs,
-			TimedCount: b.Timed, P50Ms: b.P50Ms, P95Ms: b.P95Ms, MaxMs: b.MaxMs,
+			TimedCount: b.Timed, P50Ms: b.P50Ms, P95Ms: b.P95Ms, MaxMs: b.MaxMs, BusyMs: b.BusyMs,
 			Clipped: b.Clipped, Complete: read.Complete || !b.End.After(read.ReadThrough),
 		})
 	}

@@ -14,6 +14,7 @@
   import IisGuide from './IisGuide.svelte';
   import FileGuides from './FileGuides.svelte';
   import ZoneChoice from './ZoneChoice.svelte';
+  import ComputerFix from './ComputerFix.svelte';
 
   // The "Import files" panel of the sources step (gap G8, wireframe w37/w38). The person chooses many files or a folder, or drops files here.
   // Every row shows what the file name suggests (changeable), the time zone its times are in, and its size. "Add" turns the rows into
@@ -219,6 +220,13 @@
     staging.setList(list.map((item) => (item.id === id ? { ...item, host } : item)));
   }
 
+  // The computer the file names was added to the list: pick it for the file (a kind that offers the pick but reads the name from the file needs none) and send the file again.
+  function fixedComputer(item: StagedFile, label: string) {
+    if (hostNeed(item.choice) === 'optional') { onRetry?.(item); return; }
+    setHost(item.id, label);
+    onRetry?.({ ...item, host: label });
+  }
+
   // The rows move up when one goes, so the second click of a double click would land on the next row's Remove and drop a second file. A click
   // that is the second (or later) of a quick series is left alone; a keyboard press (detail 0) and a click on its own count as one remove.
   function onRemoveClick(event: MouseEvent, id: number) {
@@ -381,7 +389,9 @@
                     {:else}
                       <span class="verdict {result.outcome.verdict}">{verdictLabel(result.outcome.verdict)}</span>
                       <span class="why">{batchReasonText(result.outcome)}</span>
-                      {#if result.outcome.verdict === 'rejected' && canRetry(item)}
+                      {#if result.outcome.verdict === 'rejected' && result.outcome.reason === 'unknown-host' && (result.outcome.serverName ?? '') !== '' && canRetry(item)}
+                        <ComputerFix kind={item.choice} serverName={result.outcome.serverName ?? ''} fileName={item.name} disabled={busy} onFixed={(label) => fixedComputer(item, label)} />
+                      {:else if result.outcome.verdict === 'rejected' && canRetry(item)}
                         <button type="button" class="quiet-button" disabled={busy} aria-label={BATCH_TEXT.tryAgain + ': ' + item.name} onclick={() => { if (canRetry(item)) onRetry?.(item); }}>{BATCH_TEXT.tryAgain}</button>
                       {/if}
                     {/if}

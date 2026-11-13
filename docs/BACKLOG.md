@@ -1,0 +1,82 @@
+# Unravis backlog and checklist
+
+One shared list for every chat and session. Open it before starting work and tick items when they are done and verified.
+
+## How to use this file
+
+- **Add an item:** append one line under the right section. Format: `- [ ] **BL-NNN** Title. One line of why or what. (source: chat/date)`. Take the next free number.
+- **Tick an item:** change `[ ]` to `[x]` only when it works on the real data path (project rule in `CLAUDE.md`) and add `(done YYYY-MM-DD, rcNN)` at the end. Say plainly if it is verified on live data or not: `live-verified` or `demo-only-verified`.
+- **Never delete an item.** If it is dropped, change it to `[~]` and write why.
+- **Deferred** means the owner said "not now", with the reason. Do not build a deferred item without the owner's go.
+- Keep each line short. Detail goes in the plan under `.forge/<work-item>/`.
+
+Legend: `[ ]` open, `[x]` done, `[~]` dropped.
+
+## Planned now (owner wants these built)
+
+### Slow call pop-up (plan: `.forge/investigation-timeline/drill/plan.md`)
+- [x] **BL-001** Hide SQL, Redis and web-call rows in the pop-up when not recorded. (done 2026-11-12)
+- [x] **BL-002** One horizontal API breakdown bar on the Overview tab. (done 2026-11-12)
+- [x] **BL-003** One-click add-computer wizard. (done in code and tests; no add-computer e2e yet)
+- [x] **BL-004** First-time case create reads the database automatically. (done in code)
+- [ ] **BL-005** Wireframe v2.1 signed off by the owner (Overview, Nearby calls, Nearby activity, variant pick). v2.1 sent 2026-11-12: running-at-once lanes, source label per lane, coverage strip, 8 database states.
+  - v3 note 2026-11-12: the surface changed from a pop-up to a full-page workspace under the nav bar (see BL-019). Wireframe v3 has three layouts to pick from: W1 Workbench (recommended), W2 Pinned subject, W3 Pinned timeline + sections. The owner picks the layout and says whether Nearby calls and Nearby activity stay separate or merge. v3 shows demo data only; nothing is wired.
+  - Lane-visibility note 2026-11-13 (owner: "can't see API, SQL and IIS together"): the three lanes must show together with no inner scrolling. Wireframe fix: compact lane labels, one-line legend, window control then timeline first, call facts below, timeline pinned while the page scrolls. Measured fits at 1440x800 and 1100x760 in W1/W2/W3. Real screen must keep this rule. Demo data only.
+  - Minimap note 2026-11-13: the whole-hour overview strip was researched against Chrome DevTools, Grafana, Datadog, Jaeger, Zipkin, Kibana and Sentry (`.forge/investigation-timeline/drill/research/minimap-overview-research.md`). Verdict: keep, but redesign for beginners. Done in the wireframe: plain-words caption, per-row peak and time, "this call" label, hatch legend, hover text per minute, Earlier / Later / Back buttons, strip hidden when the window already shows the whole hour. Owner still to confirm. Demo data only.
+- [ ] **BL-019** Slow call becomes a full-page screen (not a pop-up): a new screen in `screenFlow.ts`/appState opened with `go()`, an address in `lib/wayfinding.ts` so Back/Esc climb one level, replacing the `DrillPopup` mount in `TracingPaper.svelte`. One window control (±5 to ±60 min, Custom, drag on the minimap) drives the chart, both lists and the details. Build after the owner picks the layout (BL-005). (source: chat 2026-11-12)
+- [ ] **BL-006** Step A1b: light per-call totals (database, Redis, web-call ms) in list data. Needs the real field names from `GET /api/sources/{id}/fields`, then wire them into `recordPerfFields` (`internal/store/record_perf.go`; only `_perfFilterTotalMs` and `_perfFilters` are wired so far).
+- [ ] **BL-007** Step A3: the Everyone / Only user / Only API filter buttons.
+- [ ] **BL-008** Step A6: the "Nearby calls" tab (±15 min, widen to 30/60/120, 100 rows, ask the server for more).
+- [ ] **BL-009** "Nearby activity" tab: API, web server (IIS) and database lanes on one time axis, matched by time only.
+- [ ] **BL-010** Lane height and y-axis as "calls running at once" (Little's law) instead of calls started per minute. Needs total busy seconds per minute from the server; check that the activity endpoint returns every call's duration, not only slow ones.
+- [ ] **BL-011** Database lane source label ("Query Store (live)", "Query Store file imported <date>", "Seen by the API", "Not recorded") and a coverage strip that shows gaps as gaps, never as zero.
+- [ ] **BL-012** Query Store states in the lane: off, read-only since a time, switched on only after the window, permission denied, outside retention. The app never switches it on itself; only the existing owner script.
+- [ ] **BL-013** Wire the Query Store export-file importer into the database lane as a source.
+- [ ] **BL-014** Database time as the API saw it: sum the per-call SQL ms per minute as a fallback lane when Query Store is off (needs BL-006).
+- [ ] **BL-015** `system_health` and ERRORLOG event markers on the database lane when it has no history.
+- [ ] **BL-016** Possible small improvement: read older Query Store history when the state is OFF (unverified that it stays readable).
+- [ ] **BL-017** Copy for all of the above: new keys in `web/src/lib/drill/drillCopy.ts` (for example the wider-window ask text), update `web/tests/drill.copy.test.cjs` counts, and check messages and tooltips for a first-time investigator.
+- [ ] **BL-018** Rebuild and install the local installer (next is rc.35) and report what is live-verified.
+
+### Other owed work
+- [ ] **BL-020** Correct the source cap from 50 to 8.
+- [ ] **BL-021** Inline fixes still owed from earlier rounds.
+- [ ] **BL-022** "Other work" semantics in the breakdown.
+- [ ] **BL-023** D3: Breakdown, Reveal, SEC-D3 security review on Opus, A8.
+- [ ] **BL-024** SQL packets S1 to S5.
+- [ ] **BL-025** e2e TSQL-03 (not run) and an add-computer e2e.
+
+## Blackbox expansion (in the backlog; design and reviews done, nothing built)
+
+Owner ruling 2026-11-13: nothing here is "deferred": an item is either in the backlog or dropped. This replaces the 2026-11-12 "wait for the owner's go" ruling for the Blackbox. The owner said not to implement yet: first finalize the backlog and conditions. Conditions every item must meet, the order, and the SQL security review are in `docs/research/blackbox-expansion-prioritised.md` and `docs/research/blackbox-sql-security-review.md`. Items marked [Must] come first.
+
+- [ ] **BL-100** Blackbox SQL performance-counter group (Batch Requests/sec, User Connections, Lock Waits/sec, Processes Blocked). No SQL login needed, only host counter access. Needs a change to the Blackbox recorder, which today reads only its own machine. (source: Query Store chat, 2026-11-12)
+- [ ] **BL-101** Blackbox sampler of `dm_exec_requests` and sessions every 15 s: running at once by wait type, blocking. Needs `VIEW SERVER PERFORMANCE STATE` (`VIEW SERVER STATE` before SQL 2022), no stored password. Opus security review done 2026-11-13: allowed with conditions C1-C14 (BL-123, BL-124); output only wait type, counts, max wait ms, blocked and head-blocker counts. (source: same)
+- [ ] **BL-102** Blackbox sampler of wait-stats deltas every 60 s, top 20, benign waits filtered, no query text. Query-stats deltas dropped by the security review (scans the whole plan cache, unbounded state; Query Store already holds that history). Same conditions as BL-101. (source: same)
+- [ ] **BL-103** Show Blackbox SQL data as a lane source with its own label ("Blackbox sampling every 15 s since <date>") once BL-100 or BL-101 exist. (source: same)
+
+### Blackbox expansion (research 2026-11-13; MoSCoW, order and open questions in `docs/research/blackbox-expansion-prioritised.md`)
+Scope rule from the owner: per-process detail only for the app pools and services the owner selects (payroll APIs, email service). Servers run a mix of .NET Framework 4.7.2 and .NET 10 (phased migration), so the runtime is detected per process automatically. The Blackbox must stay light (BL-122) and never pause, restart or dump a process.
+- [ ] **BL-104** [Must] HTTP.sys kernel queue sampler per app pool. Sample `\HTTP Service Request Queues(*)\CurrentQueueSize`, `MaxQueueItemAge`, `RejectedRequests`, `ArrivalRate` every 15 s to prove queueing before w3wp.exe. (source: research, 2026-11-13)
+- [ ] **BL-105** [Must] Command-line-free PID resolver for IIS app pools and Windows services. Map w3wp.exe PIDs via `W3SVC_W3WP` (`<PID>_<AppPoolName>`) and services via `QueryServiceStatusEx`; key on (PID, creation time) so recycles, PID reuse and `w3wp#N` shifts are safe. Also detect each process's runtime on its own: `clr.dll` loaded = .NET Framework, `coreclr.dll`/`hostfxr.dll` = .NET 10; re-check only when the process set changes. A .NET 10 pool may be in-process (inside w3wp.exe) or out-of-process (a child dotnet/app exe): handle both. (source: research, 2026-11-13)
+- [ ] **BL-106** [Must] IIS worker-process active requests, threads and WAS ping latency for selected app pools every 15 s. (source: research, 2026-11-13)
+- [ ] **BL-107** [Must] Extend BL-100 with no-login SQL counters: Memory Grants Pending, Page life expectancy, Free list stalls/sec, SQL (Re-)Compilations/sec, Deadlocks/sec, Lock Wait Time, Log Flush Wait Time, Forwarded Records/sec; default and named instances (`MSSQL$<name>:`). (source: research, 2026-11-13)
+- [ ] **BL-108** [Must] Disk read/write latency split, IOPS, split IO, processor queue length and privileged/DPC/interrupt CPU time every 15 s. (source: research, 2026-11-13)
+- [ ] **BL-109** [Should, used for .NET Framework 4.7.2 targets] Per-process CLR counters for selected targets: GC heap and generation sizes, % time in GC, allocation rate, contention, threads, exceptions/sec. (source: research, 2026-11-13)
+- [ ] **BL-110** [Should, used for .NET 10 targets] Per-process EventPipe collector for selected targets (System.Runtime and AspNetCore.Hosting counters) with no restart. First prove on a real app pool that SYSTEM can open `\\.\pipe\dotnet-diagnostic-{pid}` (not confirmed) and measure the overhead inside the target; if either fails, fall back to Process counters plus `GetProcessMemoryInfo` for .NET 10. (source: research, 2026-11-13)
+- [ ] **BL-111** [Should] Windows event log tailer without message text: disk, commit and port exhaustion, WAS recycle and application crash event IDs. (source: research, 2026-11-13)
+- [ ] **BL-112** [Should] TCP retransmit, reset, outbound queue and TCP state counts (no remote addresses) every 15 s. (source: research, 2026-11-13)
+- [ ] **BL-113** [Could, VMs only] Hyper-V and VMware CPU steal and memory ballooning counters. (source: research, 2026-11-13)
+- [ ] **BL-114** [Should, .NET Framework hosts] Classic ASP.NET Requests Queued/Current/Rejected, Request Wait Time, Application Restarts. (source: research, 2026-11-13)
+- [ ] **BL-115** [Should] Hard page faults, kernel pool bytes and pagefile usage. (source: research, 2026-11-13)
+- [ ] **BL-116** [Should] Per-process I/O, pagefile bytes, virtual bytes and elapsed time for selected targets. (source: research, 2026-11-13)
+- [ ] **BL-117** [Must] Owner-selected targets (app pools and services) in `blackbox.json` plus install-wizard picker; show "not running" or "not found" with metrics left out, never 0; change the machine-wide busiest list as in BL-125. Selected targets are detected, not typed, where possible (running pools and services offered in the wizard). (source: research, 2026-11-13)
+- [ ] **BL-118** [Should] SQL DMV sampler: schedulers (VISIBLE ONLINE only, summed in SQL), resource semaphores deltas every 15 s, tempdb page totals every 60 s. Allowed with conditions C1-C14 by the security review. (source: research, 2026-11-13)
+- [ ] **BL-119** [Should] SQL DMV 60 s sampler: `dm_io_virtual_file_stats` deltas by database_id and file_id (TOP 256, no file paths, no names), AG replica state only when `IsHadrEnabled=1` (no replica server names). Same conditions as BL-118. (source: research, 2026-11-13)
+- [ ] **BL-120** [Could] Crash-dump file catalogue (name, size, time, target; never the content), checked with the existing 5-minute log scan. Owner ruling 2026-11-13: the Blackbox never creates dumps. (source: research, 2026-11-13)
+- [ ] **BL-121** [Must] Counter engine rules: English counter names, two baseline samples before any rate, valid-status check on every reading, multi-core CPU not capped at 100. Prerequisite for the counter items. (source: research, 2026-11-13)
+- [ ] **BL-122** [Must] Blackbox self-budget and self-throttle. Targets: under 0.5% of one core on average, under 50 MB working set, each counter group done within 1 s (else skipped and marked "skipped: slow"), below-normal priority, nothing attached to any target. When over budget: skip optional groups first, then widen the interval to 30 then 60 s, and step back after 10 calm cycles. A benchmark test with fake readers must pass before any new group ships. Counters: add specific counters once and reuse the query handle; re-expand wildcards only when the process set changes. (source: chat 2026-11-13)
+- [ ] **BL-123** [Must for BL-101/102/118/119] Blackbox changes the SQL review says must come first: SQL runs in its own small service `UnravisBlackboxSql` (same exe, own service account `NT SERVICE\UnravisBlackboxSql`, so a hung SQL call cannot stall host sampling); SQL data goes to a folder only that account, SYSTEM and Administrators can read (today the recordings folder is readable by every local user); fixed error codes only, never driver text; no SQL data over plain HTTP; local SQL only (remote SQL rejected). (source: security review, 2026-11-13)
+- [ ] **BL-124** [Must for BL-101/102/118/119] SQL sampler controls C1-C14 as tests: allowlisted fixed statements and a lint test, lock timeout and low deadlock priority, query timeouts, one connection, row caps, back-off and auto-off that survives service restarts, rights-ceiling check (not sysadmin) at every connect, fixed output struct, owner-run grant script and a printed revoke. Full list in `docs/research/blackbox-sql-security-review.md`. (source: security review, 2026-11-13)
+- [ ] **BL-125** [Should] Busiest-process list shape: top 10 by CPU plus top 5 by memory (merged, no duplicates, Idle left out), plus every selected target always listed even when idle. Same CPU cost as today (all processes are read to rank them), smaller files than the current 20. Check Step 5 still finds the web-server row. (source: chat 2026-11-13)
+- [ ] **BL-126** [Could] Owner-started "memory sampling mode" for one selected target: for a set time, log `GCAllocationTick` type names with `GCHeapStats` to show what is being allocated (churn, not what is retained). Off by default, time-boxed, shows its cost before it starts. No dumps. (source: research, 2026-11-13)

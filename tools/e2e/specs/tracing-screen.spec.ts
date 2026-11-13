@@ -526,7 +526,7 @@ test.describe('time zone', () => {
     const group = page.getByRole('group', { name: 'Show times in' });
     await group.getByRole('button', { name: /^Local/ }).click();
     await expect(page.locator('.axcap')).not.toContainText('Time (UTC).');
-    await expect(page.locator('.axtick').first()).toHaveText(/^19 Oct 21:00 /);
+    await expect(page.locator('.axtick').first()).toHaveText(/^19 Oct (20:30|21:00) /); // the same instant as 15:00 UTC; which round step shows depends on the plot width
     // The picker still says UTC and still holds the UTC times typed.
     await expect(page.getByText('Times are typed in UTC.')).toBeVisible();
     await expect(pickerButton(page, 'incident')).toContainText('19 Oct 2026 15:00 → 18:00');

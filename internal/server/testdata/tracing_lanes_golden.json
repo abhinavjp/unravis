@@ -476,7 +476,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       },
       {
         "key": "iis",
@@ -590,6 +592,7 @@
             "p50Ms": 80.09,
             "p95Ms": 4915.01,
             "maxMs": 5000,
+            "busyMs": 5080,
             "clipped": false,
             "complete": true
           },
@@ -755,6 +758,7 @@
             "p50Ms": 12,
             "p95Ms": 12,
             "maxMs": 12,
+            "busyMs": 12,
             "clipped": false,
             "complete": true
           },
@@ -1062,7 +1066,9 @@
             "kind": "iis-httperr"
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [
@@ -1551,7 +1557,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       },
       {
         "key": "iis",
@@ -1783,6 +1791,7 @@
             "p50Ms": 80.09,
             "p95Ms": 4915.01,
             "maxMs": 5000,
+            "busyMs": 5080,
             "clipped": false,
             "complete": true
           },
@@ -1948,6 +1957,7 @@
             "p50Ms": 12,
             "p95Ms": 12,
             "maxMs": 12,
+            "busyMs": 12,
             "clipped": false,
             "complete": true
           },
@@ -2219,7 +2229,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [],
@@ -2358,6 +2370,7 @@
             "p50Ms": 80.09,
             "p95Ms": 4915.01,
             "maxMs": 5000,
+            "busyMs": 5080,
             "clipped": false,
             "complete": true
           },
@@ -2523,6 +2536,7 @@
             "p50Ms": 12,
             "p95Ms": 12,
             "maxMs": 12,
+            "busyMs": 12,
             "clipped": false,
             "complete": true
           },
@@ -2794,7 +2808,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [
@@ -3281,7 +3297,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       },
       {
         "key": "iis",
@@ -3411,6 +3429,7 @@
             "p50Ms": 1,
             "p95Ms": 1,
             "maxMs": 1,
+            "busyMs": 50010,
             "clipped": false,
             "complete": true
           },
@@ -4549,7 +4568,9 @@
             "win32": null
           }
         ],
-        "hidden": 49940
+        "hidden": 49940,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [],
@@ -5034,7 +5055,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       },
       {
         "key": "iis",
@@ -5144,6 +5167,7 @@
             "p50Ms": 80.09,
             "p95Ms": 4915.01,
             "maxMs": 5000,
+            "busyMs": 5080,
             "clipped": false,
             "complete": true
           },
@@ -5309,6 +5333,7 @@
             "p50Ms": 12,
             "p95Ms": 12,
             "maxMs": 12,
+            "busyMs": 12,
             "clipped": false,
             "complete": true
           },
@@ -5580,7 +5605,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [],

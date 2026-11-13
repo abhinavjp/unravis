@@ -28,6 +28,7 @@ import (
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/datadir"
+	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/instance"
 	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/mcp"
@@ -44,7 +45,7 @@ const (
 	// address is printed and written to the session file for --mcp.
 	defaultPort      = 0
 	httpReadTimeout  = 35 * time.Second
-	httpWriteTimeout = httpReadTimeout + audit.OperationTimeout + 10*time.Second
+	httpWriteTimeout = httpReadTimeout + max(audit.OperationTimeout, dbhealth.LaneRunTimeout) + 10*time.Second
 )
 
 // stdout is where --version prints. Tests swap it.
@@ -238,6 +239,16 @@ func run(args []string, getenv func(string) string) error {
 		serverOptions = append(serverOptions, server.WithLogger(logFile.Logger), server.WithLogDir(logFile.Dir))
 	}
 	served := server.New(wired.repo, explorer.Assets(), token, f.demo, serverOptions...)
+	if !f.demo {
+		// Open the saved databases whose password is saved, a few at a time and with a time limit, so a slow one never holds the app back.
+		// It stops on Ctrl+C or a quit signal, and the deferred wait below ends it before the repository closes.
+		reconnected := make(chan struct{})
+		go func() {
+			defer close(reconnected)
+			server.ReconnectSavedSources(signalContext, served, server.StartupReconnectBudget)
+		}()
+		defer func() { cancel(); <-reconnected }()
+	}
 	reo := newReopener(served, localURL)
 	defer server.LogAnalyzeRepeats(served)
 	// Registered after the case store's close, so it runs first: background
@@ -325,6 +336,9 @@ func wireData(f runFlags, demoCfg demoSettings, getenv func(string) string) (dat
 		saved = wireSaved(getenv, storageFor(getenv))
 		repo = saved.auditRepo(store.New(storeOptions(f)...))
 		serverOptions = append(serverOptions, saved.options...)
+		if links := openSourceLinks(getenv); links != nil {
+			serverOptions = append(serverOptions, server.WithSourceLinks(links))
+		}
 	}
 	hypotheses, ledgerErr := openLedger(f.demo, getenv)
 	if ledgerErr != nil {

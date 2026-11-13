@@ -61,6 +61,26 @@ export const READ_TEXT = {
   tipUnread: 'This period was not read. That is not the same as no traffic.'
 } as const;
 
+export const COVER_TEXT = {
+  outside: (from: string, to: string): string => `Imported files cover ${from} to ${to}; nothing falls inside this window.`,
+  some: (from: string, to: string): string => `Some imported files cover ${from} to ${to}; the other files have no recorded range.`
+} as const;
+
+/** The sentence for a lane whose imported files all sit outside the window, or '' when it does not apply. */
+export function laneImportedLine(lane: TracingLane, window: TracingWindow, at: (v: string) => string): string {
+  if (lane.disabled || !lane.importedFrom || !lane.importedTo) return '';
+  const from = Date.parse(lane.importedFrom);
+  const to = Date.parse(lane.importedTo);
+  const start = Date.parse(window.start);
+  const end = Date.parse(window.end);
+  const outside = to < start || from >= end;
+  const emptyEvents = lane.state === 'events' && lane.scanned === 0 && !lane.buckets.some((b) => b.count > 0);
+  // A window that falls in a gap between two files is inside the combined range: the sentence would mislead, so the older line stays.
+  if (!outside || (lane.state !== 'out-of-range' && !emptyEvents)) return '';
+  const cover = lane.importedPartial ? COVER_TEXT.some : COVER_TEXT.outside;
+  return cover(at(lane.importedFrom), at(lane.importedTo));
+}
+
 /**
  * True when the server did not read the lane in full: it was refused, cut short, capped or failed, or a chunked read stopped before
  * its last day. A lane like that must never be taken for "no events": what it did not read is unknown. A lane switched off for its
@@ -146,6 +166,8 @@ export const laneCopyEntries = (): LintEntry[] => {
   const at = () => '5 Oct 00:00';
   return [
     ...Object.entries(READ_TEXT).map(([id, text]) => ({ id: 'tracingRead.' + id, text })),
+    { id: 'tracingRead.coverOutside', text: COVER_TEXT.outside('1 Jan 00:00', '1 Jan 01:00') },
+    { id: 'tracingRead.coverSome', text: COVER_TEXT.some('1 Jan 00:00', '1 Jan 01:00') },
     { id: 'tracingRead.chunkLine', text: laneChunkLine(lane, at) },
     { id: 'tracingRead.partial', text: laneReadLine(lane, at) },
     { id: 'tracingRead.none', text: laneReadLine({ ...lane, chunksRead: 0, readThrough: undefined }, at) },

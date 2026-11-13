@@ -492,6 +492,9 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 		endIndex = len(rows)
 	}
 	page := Page{Rows: append([]RequestRecord(nil), rows[offset:endIndex]...), Sources: make([]SourceResult, 0, len(input.Query.SourceIDs))}
+	for i := range page.Rows {
+		page.Rows[i] = d.withLight(page.Rows[i])
+	}
 	for _, id := range input.Query.SourceIDs {
 		if !keyed || id == fields[0] {
 			page.Sources = append(page.Sources, SourceResult{SourceID: id, OK: true, Version: "demo"})
@@ -585,10 +588,10 @@ func (d *demoRepository) Record(ctx context.Context, input RecordInput) (RecordD
 	if err := ctx.Err(); err != nil {
 		return RecordDetail{}, err
 	}
-	for _, r := range d.records {
+	for i, r := range d.records {
 		if r.ID == input.ID && r.SourceID == input.SourceID {
 			r.State = demoState(r)
-			return RecordDetail{RequestRecord: r, State: r.State, Payload: Payload{Request: "Illustrative demo request for " + r.ID, Response: "Illustrative demo response for " + r.ID}}, nil
+			return RecordDetail{RequestRecord: r, State: r.State, Perf: demoPerf(r, i), Payload: Payload{Request: "Illustrative demo request for " + r.ID, Response: "Illustrative demo response for " + r.ID}}, nil
 		}
 	}
 	return RecordDetail{}, fmt.Errorf("%w: request was not found", ErrNotFound)
@@ -603,6 +606,89 @@ func (d *demoRepository) hasSource(id string) bool {
 		}
 	}
 	return false
+}
+
+// demoPerf returns the deterministic perf block of a demo record. Records whose
+// id hash is odd get nil ("not recorded"); the id hash alone picks them, and
+// TextStored follows the record's position in the list (every fourth). Every
+// part is 5% to 20% of the record's duration, so sql + redis + http + filters
+// never exceed 80% of it.
+func demoPerf(r RequestRecord, index int) *RecordPerf {
+	sum := sha256.Sum256([]byte(r.SourceID + "\x00" + r.ID))
+	if sum[0]%2 != 0 {
+		return nil
+	}
+	gen := &demoPerfBytes{sum: sum}
+	duration := 100.0
+	if r.DurationMs != nil && *r.DurationMs > 0 {
+		duration = *r.DurationMs
+	}
+	ms := func() *float64 { v := duration * float64(gen.next()%16+5) / 100; return &v }
+	count := func() *float64 { v := float64(gen.next()%20 + 1); return &v }
+	value := func() *float64 { v := float64(gen.next()%100) / 10; return &v }
+	textStored := index%4 == 0
+	filterTotal := ms()
+	tenantMs, windowMs := *filterTotal*0.6, *filterTotal*0.4
+	return &RecordPerf{
+		HitCount:      count(),
+		FilterTotalMs: filterTotal,
+		SQLCount:      count(),
+		SQLMs:         ms(),
+		RedisCount:    count(),
+		RedisMs:       ms(),
+		HTTPCount:     count(),
+		HTTPMs:        ms(),
+		Filters:       []PerfNamed{{Name: "tenant", Ms: &tenantMs}, {Name: "date-window", Ms: &windowMs}},
+		SlowSQL:       []PerfSlow{{Count: count(), Ms: ms()}, {Count: count(), Ms: ms()}, {Count: count(), Ms: ms()}},
+		SlowHTTP:      []PerfSlow{{Count: count(), Ms: ms()}, {Count: count(), Ms: ms()}},
+		Steps:         []PerfNamed{{Name: "auth", Ms: ms()}, {Name: "query", Ms: ms()}, {Name: "shape", Ms: ms()}},
+		Pressure:      []PerfValue{{Name: "cpu", Value: value()}, {Name: "memory", Value: value()}, {Name: "threads", Value: value()}},
+		TextStored:    &textStored,
+	}
+}
+
+// demoLight returns the light totals of a demo list row. The numbers come from
+// demoPerf, so a row shows the same totals as its detail. It returns nil
+// ("not recorded") when the detail has no perf block and for every seventh row,
+// so the demo shows rows without the block.
+func demoLight(r RequestRecord, index int) *RecordLight {
+	if index%7 == 6 {
+		return nil
+	}
+	p := demoPerf(r, index)
+	if p == nil {
+		return nil
+	}
+	return &RecordLight{SQLMs: p.SQLMs, RedisMs: p.RedisMs, HTTPMs: p.HTTPMs}
+}
+
+// withLight returns the row with its light totals set. The row's position in
+// d.records is its index, the same one Record gives demoPerf. A row that is not
+// in d.records is returned unchanged.
+func (d *demoRepository) withLight(r RequestRecord) RequestRecord {
+	for i := range d.records {
+		if d.records[i].ID == r.ID && d.records[i].SourceID == r.SourceID {
+			r.Light = demoLight(r, i)
+			break
+		}
+	}
+	return r
+}
+
+// demoPerfBytes yields deterministic bytes from a SHA-256 chain.
+type demoPerfBytes struct {
+	sum [32]byte
+	pos int
+}
+
+func (g *demoPerfBytes) next() uint8 {
+	if g.pos == len(g.sum) {
+		g.sum = sha256.Sum256(g.sum[:])
+		g.pos = 0
+	}
+	b := g.sum[g.pos]
+	g.pos++
+	return b
 }
 
 func decodeCohortKey(key string) ([5]string, error) {

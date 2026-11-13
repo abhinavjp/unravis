@@ -159,7 +159,7 @@ func (d *demoRepository) Slowest(ctx context.Context, input PageInput) (Page, er
 				continue
 			}
 		}
-		p.Rows = append(p.Rows, r)
+		p.Rows = append(p.Rows, d.withLight(r))
 	}
 	sort.Slice(p.Rows, func(i, j int) bool {
 		a, b := p.Rows[i], p.Rows[j]

@@ -25,11 +25,11 @@ async function openTimeline(page: Page): Promise<void> {
   await expect(page.locator('.tracing-chart')).toBeVisible();
 }
 
-/** Sets the windows and presses Refresh timeline, then waits for the answer. */
+/** Sets the windows and presses Start tracing, then waits for the answer. */
 async function readWindow(page: Page, win: readonly [string, string, string, string]): Promise<void> {
   await fillWindows(page, win);
   const answered = page.waitForResponse((r) => isTrace(r.request()));
-  await page.getByTestId('trace-sources').getByRole('button', { name: 'Refresh timeline' }).click();
+  await page.getByTestId('trace-sources').getByRole('button', { name: 'Start tracing' }).click();
   await answered;
   await expect(page.locator('.tracing-chart')).toBeVisible();
 }
@@ -273,7 +273,7 @@ test('TLF-09: the SQL lane shows statements per interval, an average-time line a
   await expect(sql.locator('.mark.flagged')).toHaveCount(1);
   const legend = page.getByTestId('sql-legend');
   await expect(legend).toContainText('Statements run per interval');
-  await expect(legend).toContainText('Average time');
-  await expect(legend).toContainText('Slowest statement in the interval');
+  await expect(legend).toContainText('Slowest statement');
+  await expect(legend).toContainText('Far slower than usual');
   await expect(page.getByTestId('sql-outlier-note')).toContainText('30 s');
 });

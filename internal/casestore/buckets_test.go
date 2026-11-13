@@ -215,3 +215,51 @@ func TestCountBucketsFallsBackToScan(t *testing.T) {
 		}
 	})
 }
+
+// Timings carry the summed duration of their events. Events with no duration add
+// nothing, two cells do not mix, and a cell with no timed event has no timing row.
+func TestCountBucketsScanTimingSum(t *testing.T) {
+	type ev struct {
+		cell int
+		dur  *float64
+	}
+	evs := []ev{
+		{0, fl(1000)}, {0, fl(2000)}, {0, nil}, // cell 0: 3000, one event without a duration
+		{1, fl(500)}, {1, fl(500)}, // cell 1: same bin, 1000
+		{2, nil}, // cell 2: counted, but nothing timed
+	}
+	g := &genCase{n: len(evs), make: func(i int) evidence.Event {
+		return evidence.Event{Kind: "req", Source: "src", DurationMs: evs[i].dur,
+			Start: bucketT0.Add(time.Duration(evs[i].cell)*10*time.Second + time.Duration(i)*time.Millisecond)}
+	}}
+	q := casestore.BucketQuery{
+		AxisStart: bucketT0, From: bucketT0, To: bucketT0.Add(40 * time.Second), WidthMs: 10_000,
+		Sources: []string{"src"}, CountTimings: true,
+	}
+	res, err := casestore.CountBucketsScan(context.Background(), g, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sums := map[int]float64{}
+	timed := map[int]int64{}
+	for _, tm := range res.Timings {
+		sums[tm.Index] += tm.Sum
+		timed[tm.Index] += tm.Count
+	}
+	if sums[0] != 3000 || timed[0] != 2 {
+		t.Fatalf("cell 0 sum=%v timed=%d, want 3000 and 2", sums[0], timed[0])
+	}
+	if sums[1] != 1000 || timed[1] != 2 {
+		t.Fatalf("cell 1 sum=%v timed=%d, want 1000 and 2", sums[1], timed[1])
+	}
+	if _, has := sums[2]; has || sums[3] != 0 {
+		t.Fatalf("cells 2 and 3 have timing rows or a sum: %+v", res.Timings)
+	}
+	var total int64
+	for _, bc := range res.Counts {
+		total += bc.Count
+	}
+	if total != 6 || res.Total != 6 {
+		t.Fatalf("counts total = %d (Total %d), want 6", total, res.Total)
+	}
+}

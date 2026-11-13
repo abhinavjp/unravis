@@ -212,6 +212,7 @@ func (h *handler) rememberInKeeper(w http.ResponseWriter, r *http.Request, k kee
 		writeRememberError(w, err)
 		return
 	}
+	h.promotePending()
 	writeJSON(w, http.StatusOK, item, maxResponseBytes)
 }
 
@@ -247,6 +248,7 @@ func (h *handler) addHeldSource(w http.ResponseWriter, r *http.Request, ka keepe
 		return
 	}
 	h.rollups.clear()
+	h.noteOpenedSource(item, input.SavedConnectionID, audit.ConnectionInput{})
 	writeJSON(w, http.StatusCreated, heldSourceDTO{Source: item, Keeper: keeper.HeldByKeeper}, maxResponseBytes)
 }
 

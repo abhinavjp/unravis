@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { fetchTracing, nextRequestSeq, tracingErrorText, type TracingLaneKey, type TracingResponse } from '../lib/tracing/model';
-  import { WINDOW_TEXT, checkWindows, defaultWindows, fixOverlap, windowHasNoData, windowIsEmpty, windowNow, loadWindows, saveWindows, type WindowFields } from '../lib/tracing/windows';
+  import { WINDOW_TEXT, checkWindows, defaultWindows, fixOverlap, windowHasNoData, windowIsEmpty, windowNow, loadWindows, pickWindowFields, saveWindows, type WindowFields } from '../lib/tracing/windows';
   import { TRACING_TEXT } from '../lib/copy/tracingCopy';
   import { WAIT_TEXT } from '../lib/copy/waitCopy';
   import { createSlowRead } from '../lib/slowRead.svelte';
@@ -13,20 +13,35 @@
   import TraceSources from './TraceSources.svelte';
   import { CaseApiError, listImports } from '../lib/cases';
   import { listSourceTags } from '../lib/caseTagsApi';
-  import { ALL_SOURCES, NO_SOURCES, SOURCES_TEXT, composeSourceIds, fileSourceIds, loadSources, mergeUniverse, saveSources, switchOnNew, toggleOutcome, unselectedLanes, type SourceSelection, type SourceUniverse } from '../lib/tracing/sources';
+  import { ALL_SOURCES, NO_SOURCES, SOURCES_TEXT, composeSourceIds, fileSourceIds, reconnectFailedText, savedStillClosed, loadSources, mergeUniverse, saveSources, switchOnNew, toggleOutcome, unselectedLanes, type SourceSelection, type SourceUniverse } from '../lib/tracing/sources';
   import { allLanesVisible, toggleLane } from '../lib/tracing/toolbar';
   import { exportScrub } from '../lib/exportScrub.svelte';
   import { timeZone } from '../lib/timeZone.svelte';
   import { handOffBucket, otherLanesNote, slotToBucket, HANDOFF_TEXT } from '../lib/tracing/handoff';
-  import { app, panels, setTracingHandoff, setWindowFromHour, openAnalysis, openCaseImport, openConnections } from '../lib/appState.svelte';
+  import { app, panels, setTracingHandoff, setWindowFromHour, openAnalysis, openCaseImport, openConnections, openSlowCall, closeSlowCall, noteSlowCall } from '../lib/appState.svelte';
   import { TZ_NOTICE_TEXT } from '../lib/copy/sourcesListCopy';
   import { requestSourcesList } from '../lib/sourcesNav.svelte';
+  import { api } from '../lib/api';
+  import { fetchLaneDays, runProblem, runSqlLane } from '../lib/lanes';
+  import { decideSqlRead, pickSqlSource, readKey, windowsOfBody, type SqlAutoVerdict, type SqlSource, type SqlStatusKind } from '../lib/tracing/sqlAuto';
+  import { SQL_AUTO_TEXT } from '../lib/copy/sqlAutoCopy';
+  import SqlLaneStatus from './SqlLaneStatus.svelte';
+  import { lazyComponent } from '../lib/lazy';
+
+  import { makeCallTarget } from '../lib/drill/callTarget';
+
+  const SlowCallScreen = lazyComponent(() => import('./SlowCallScreen.svelte'));
+  // Kept as a variable: a new run clears it (the Slow call screen itself is opened through the app state).
+  let drillSlot = $state<number | null>(null);
 
   // The Investigation Timeline screen shell (WP-16b): one request on open, a loading state with Cancel, a plain
   // error with Try again, and four stable regions (windows, toolbar, chart, notes) that later packets fill in.
   // `readOnly` disables the window inputs and Start tracing (read in the template below). `closed` only adds the one line saying the case cannot be changed: the timeline reads, so a closed case is a viewer, not locked.
   // `title` names the case being traced (shown as text under the heading).
   let { caseId, title = '', closed = false, readOnly = false, onClose }: { caseId: string; title?: string; closed?: boolean; readOnly?: boolean; onClose: () => void } = $props();
+
+  // While the Slow call screen is open for this case the timeline stays mounted but hidden, so Back returns to it as it was.
+  const callShown = $derived(!!app.slowCall && app.slowCall.caseId === caseId);
 
   type Status = 'idle' | 'loading' | 'ready' | 'error';
   let status = $state<Status>('idle');
@@ -57,7 +72,8 @@
   // The window picker (WP-22): times are typed in UTC; the server gets the checked ISO strings only.
   // In demo mode the default window counts back from the data reference time, not the real clock.
   // Windows typed earlier for this case in this tab come back after a reload; only typing keeps them, so the defaults still move with the clock.
-  const startingWindows = (): WindowFields => loadWindows(caseId) ?? defaultWindows(windowNow(app.info, Date.now()));
+  // Order: what was typed in this tab, then the windows the case kept when Start tracing was last pressed (they survive closing the app), then the last hour.
+  const startingWindows = (): WindowFields => loadWindows(caseId) ?? (app.savedWindows ? { ...app.savedWindows } : null) ?? defaultWindows(windowNow(app.info, Date.now()));
   let fields = $state<WindowFields>(startingWindows());
   let problems = $state<string[]>([]);
   let invalidFields = $state<(keyof WindowFields)[]>([]);
@@ -73,7 +89,7 @@
     if (before) { fields.referenceStart = before.start; fields.referenceEnd = before.end; }
   }
   // The "Quick range" chips above the windows (the wireframe's row): the same ranges as the popover. A chip sets the incident window and the equal
-  // period right before it; it does not read by itself (Start tracing or Refresh timeline does), like the popover's quick ranges.
+  // period right before it; it does not read by itself (Start tracing does), like the popover's quick ranges.
   let appliedQuick = $state.raw<QuickRange | null>(null);
   const quickChips = $derived(incidentQuickChips(pickerNow()));
   // Pressed while the boxes still hold what that chip set, or (for a fresh screen) the ranges that match the clock right now.
@@ -91,12 +107,14 @@
   const echoUtc = (start: string, end: string): string => (start && end ? `UTC ${start}:00Z – ${end}:00Z` : `UTC ${WINDOW_TEXT.metaUnset}`);
   // The "Sources traced" choice (kept per case in this tab) and the sources the case is known to have. Nothing selected reads nothing.
   const startingSources = () => loadSources(caseId);
-  let selection = $state.raw<SourceSelection>(startingSources()?.selection ?? ALL_SOURCES);
+  let selection = $state.raw<SourceSelection>(startingSources()?.selection ?? app.savedTraceSources ?? ALL_SOURCES);
   let universe = $state.raw<SourceUniverse>(startingSources()?.universe ?? { chips: [], saved: [] });
   // Said when a source cannot be switched on because 50 are on already; cleared by the next change of the choice.
   let capNote = $state('');
   const nothingSelected = $derived(composeSourceIds(selection).nothing);
   const offLanes = $derived(unselectedLanes(selection, universe.chips));
+  // Saved databases no open audit source answers to yet: only then does the page say it is reconnecting.
+  const closedSaved = $derived(savedStillClosed(universe.saved, universe.chips, result?.auditSources ?? []));
   // A lane the server left empty for a time zone that was not checked (packet P11). The notice names the lanes and leads to the Sources list.
   const uncheckedLanes = $derived(result ? result.lanes.filter((lane) => lane.state === 'clock-unchecked' || lane.disabled === 'tz-rule').map((lane) => lane.label) : []);
   async function seeSources() {
@@ -130,6 +148,7 @@
     lastBody = body;
     handoffNote = '';
     cancelled = false;
+    drillSlot = null;
     controller?.abort();
     const mine = new AbortController();
     controller = mine;
@@ -143,6 +162,7 @@
       chartFocus = null;
       shownBody = body;
       status = 'ready';
+      void maybeReadSql(body);
     } catch (error) {
       if (mine.signal.aborted) return;
       // A superseded or cancelled read can surface as an ordinary error (the body read becomes a CaseApiError): the signal decides.
@@ -150,7 +170,7 @@
       // A kept choice can name a source the case no longer has (the server answers 404): read everything once instead of failing.
       if (mayFallBack && wanted.ids.length > 0 && error instanceof CaseApiError && error.status === 404) {
         selection = ALL_SOURCES;
-        saveSources(caseId, selection, universe);
+        saveSources(caseId, selection, universe); app.rememberTraceSources(selection);
         await run(body, false);
         return;
       }
@@ -160,16 +180,125 @@
     }
   }
 
+  // The database for this window (P5). After the chart has loaded, the case's SQL source (the connection its newest saved SQL day came from, or the only
+  // saved connection) is read once for the window through the existing read-only lane call, saved in the case, and the chart is read again. The Timeline
+  // itself never opens a connection: nothing is read in the demo, on a closed or read-only case, with the toggle off, or for a login that needs its password typed.
+  const autoKey = () => `unravis.sqlAuto.${caseId}`;
+  const startingAuto = (): boolean => { try { return localStorage.getItem(autoKey()) !== 'off'; } catch { return true; } };
+  let sqlOn = $state(startingAuto());
+  let sqlKind = $state<SqlStatusKind | null>(null);
+  let sqlSource = $state.raw<SqlSource | null>(null);
+  let sqlReason = $state('');
+  let sqlReading = false;
+  let sqlSeq = 0;
+  const sqlReadKeys = new Set<string>();
+  let sqlController: AbortController | null = null;
+
+  async function maybeReadSql(body: ReturnType<typeof checkWindows>['body'], confirmed = false) {
+    const inert = !!app.info?.demo || closed || readOnly;
+    if (inert) { sqlKind = null; return; }
+    if (sqlReading) return;
+    if (offLanes.includes('sql')) { sqlKind = null; return; }
+    const seq = ++sqlSeq;
+    let source: SqlSource | null = null;
+    let verdict: SqlAutoVerdict;
+    try {
+      const [days, saved] = await Promise.all([fetchLaneDays(caseId), api.sqlConnections()]);
+      if (seq !== sqlSeq) return;
+      source = pickSqlSource(days, Array.isArray(saved) ? saved : []);
+      const windows = windowsOfBody(body);
+      verdict = decideSqlRead({ source, days, incident: windows?.incident ?? null, reference: windows?.reference ?? null, demo: false, closed: false, enabled: sqlOn || confirmed });
+    } catch {
+      if (seq === sqlSeq) sqlKind = null;
+      return;
+    }
+    sqlSource = source;
+    sqlReason = '';
+    if (!source) { sqlKind = null; return; }
+    if (verdict.kind === 'covered') { sqlKind = source.remembered ? 'kept' : null; return; }
+    if (verdict.kind === 'overlap') { sqlKind = 'overlap'; return; }
+    if (verdict.kind === 'skip') { sqlKind = verdict.why === 'password' ? 'password' : verdict.why === 'off' ? 'suggest' : null; return; }
+    // The window still needs the database, so it is read now (owner rule, Nov 12): a case that has never read it reads its only saved connection
+    // on the first Timeline load too, without a click. The toggle, the password, demo, closed and read-only guards above still stop it.
+    const key = readKey(source, verdict.incident);
+    if (!confirmed && sqlReadKeys.has(key)) return;
+    sqlReadKeys.add(key);
+    sqlReading = true;
+    sqlKind = 'reading';
+    sqlController = new AbortController();
+    const mine = sqlController;
+    try {
+      const out = await runSqlLane(caseId, { savedId: source.connectionId, database: source.database }, { incident: verdict.incident, reference: verdict.reference }, mine.signal);
+      if (mine.signal.aborted) return;
+      sqlReading = false;
+      if (!out.saved) { sqlKind = 'failed'; sqlReason = SQL_AUTO_TEXT.saveFailed(out.saveError || ''); return; }
+      sqlKind = 'kept';
+      void run(lastBody ?? body ?? undefined);
+    } catch (error) {
+      if (mine.signal.aborted) return;
+      sqlReading = false;
+      sqlKind = 'failed';
+      sqlReason = runProblem(error).text;
+    } finally {
+      if (sqlController === mine) sqlReading = false;
+    }
+  }
+  const readSqlNow = () => { void maybeReadSql(shownBody ?? lastBody, true); };
+  function setSqlOn(on: boolean) {
+    sqlOn = on;
+    try { localStorage.setItem(autoKey(), on ? 'on' : 'off'); } catch { /* the choice only lasts while this screen is open */ }
+    void maybeReadSql(shownBody ?? lastBody);
+  }
+
   function startTracing() {
     const check = checkWindows(fields);
     problems = check.errors;
     invalidFields = check.invalid;
     overlapping = check.overlap;
-    if (check.body) void run(check.body);
+    if (check.body) {
+      app.rememberWindows(fields); // Start tracing keeps the windows with the case, so they are not picked again next time
+      void run(check.body);
+    }
   }
 
-  // Refresh timeline: the same read as Start tracing (same checks, same windows and sources), only usable once a first read has come back.
-  const canRefresh = $derived(!readOnly && status !== 'loading' && (result !== null || status === 'error') && !nothingSelected);
+  // The case's kept windows can arrive after this screen opened (the case is still being restored). Unless the person already typed or picked
+  // something, they replace the last-hour default and the screen reads again with them.
+  $effect(() => {
+    const saved = app.savedWindows;
+    if (!saved) return;
+    untrack(() => {
+      if (edited || readOnly || loadWindows(caseId) !== null) return;
+      if (JSON.stringify(pickWindowFields(fields)) === JSON.stringify(saved)) return;
+      fields = { ...saved };
+      overlapping = checkWindows(fields).overlap;
+      void run();
+    });
+  });
+
+  // The same for the case's kept source choice: it replaces "all sources" only while nothing was chosen here, and the screen reads again with it.
+  $effect(() => {
+    const saved = app.savedTraceSources;
+    if (!saved) return;
+    untrack(() => {
+      if (readOnly || selection.mode !== 'all' || loadSources(caseId) !== null) return;
+      selection = saved;
+      void run(lastBody ?? undefined);
+    });
+  });
+
+  // A source connected while this screen is open (the Connect button of a saved audit database, or one added from the header) is read at once,
+  // with the windows of the last read, so the chart does not stay without it until the person presses Start tracing.
+  let knownSourceIds: Set<string> | null = null;
+  $effect(() => {
+    const ids = app.sources.map((source) => source.id);
+    untrack(() => {
+      const before = knownSourceIds;
+      knownSourceIds = new Set(ids);
+      if (before === null || !ids.some((id) => !before.has(id))) return;
+      if (readOnly || composeSourceIds(selection).nothing) return;
+      void run(lastBody ?? undefined);
+    });
+  });
   // The windows in the boxes differ from the ones the chart on screen was read for.
   const windowsChanged = $derived.by(() => {
     if (!result || !shownBody) return false;
@@ -194,7 +323,7 @@
         const known = new Set(universe.chips.map((chip) => chip.id));
         const out = switchOnNew(selection, fileSourceIds(tags, imports).filter((id) => !known.has(id)));
         capNote = out.refused ? SOURCES_TEXT.newNotOn : '';
-        if (out.selection !== selection) { selection = out.selection; saveSources(caseId, selection, universe); }
+        if (out.selection !== selection) { selection = out.selection; saveSources(caseId, selection, universe); app.rememberTraceSources(selection); }
       } catch { /* the choice stays as it is */ }
     }
     void run(lastBody ?? undefined);
@@ -204,6 +333,7 @@
   function changeSelection(next: SourceSelection) {
     selection = next;
     saveSources(caseId, next, universe);
+    app.rememberTraceSources(next);
     void run(lastBody ?? undefined);
     capNote = '';
   }
@@ -263,6 +393,45 @@
     if (!ok) handoffNote = HANDOFF_TEXT.empty;
   }
 
+  function openCall(slot: number) {
+    void drillSlot; // drillSlot is only ever cleared now (run() reset); this read keeps it a live variable for svelte-check
+    if (!result) return;
+    const target = makeCallTarget(caseId, result.window, slot, result.lanes.find((l) => l.key === 'audit'), result.sources);
+    if (target) { returnSlot = slot; openSlowCall(target); }
+  }
+
+  // Open in Analysis: the analysis window is the call's own slot (start and end kept in the target), never the slot number read on the current result,
+  // because after a reload the grid can be a different one. The call is cleared in place (no history step back) before the analysis opens.
+  function openAnalysisFromCall() {
+    const target = app.slowCall;
+    if (!target) return;
+    handoffNote = '';
+    cancelled = false;
+    const bucket = { start: target.start, end: target.end };
+    const shown = result;
+    const sameGrid = !!shown && slotToBucket(shown, visible, target.slot)?.start === target.start;
+    closeSlowCall({ handoff: true });
+    const ok = handOffBucket(bucket, {
+      setWindow: (window) => { setWindowFromHour(window); setTracingHandoff(window, shown && sameGrid ? otherLanesNote(shown, visible, target.slot) : ''); },
+      open: openAnalysis
+    });
+    if (!ok) handoffNote = HANDOFF_TEXT.empty;
+  }
+
+  // When the Slow call screen closes (Back, Esc, crumb) the timeline is shown again and focus goes to the slot that was opened (or the chart after a reload).
+  let returnSlot: number | null = null;
+  let callWasShown = false;
+  $effect(() => {
+    const shown = callShown;
+    const wasShown = callWasShown;
+    callWasShown = shown;
+    if (!wasShown || shown) return;
+    void tick().then(() => {
+      if (returnSlot !== null && result) chartFocus = { slot: returnSlot, token: ++focusToken };
+      else chartRegion?.focus();
+    });
+  });
+
   // The screen takes focus once when it opens (the button that opened it is gone), so a keyboard or screen-reader user starts at its heading.
   // Only when nothing else holds focus: later runs, Try again and Cancel never move it.
   let headingEl: HTMLHeadingElement | undefined;
@@ -271,10 +440,10 @@
     if (!active || active === document.body) headingEl?.focus();
     void run();
   });
-  onDestroy(() => { controller?.abort(); });
+  onDestroy(() => { controller?.abort(); sqlController?.abort(); sqlSeq++; });
 </script>
 
-<section class="tracing-paper" aria-labelledby="tp-title">
+<section class="tracing-paper" aria-labelledby="tp-title" hidden={callShown}>
   <h2 id="tp-title" tabindex="-1" bind:this={headingEl}>{TRACING_TEXT.heading}</h2>
   {#if title}<p class="case-name" data-testid="tp-case-name">{title}</p>{/if}
   <div class="actions"><button type="button" class="secondary-button" data-testid="tp-case-home" onclick={onClose}><span aria-hidden="true">&larr;</span> {TRACING_TEXT.backToCase}</button></div>
@@ -284,7 +453,7 @@
   <div class="trgrid" class:hasrail={showRail}>
   <div class="trtop">
   <!-- One card for everything that chooses what the chart shows (the wireframe's `Choose what to show` card): the quick ranges, the two windows,
-       the UTC echo, the sources row with Add evidence and Refresh timeline, then the notices. -->
+       the UTC echo, the sources row with Start tracing and Add evidence, then the notices. -->
   <section class="card trctl" aria-label={WINDOW_TEXT.controlsLabel} data-testid="tp-controls">
   <div data-region="windows" class="windows">
     <div class="quick-row" role="group" aria-label={WINDOW_TEXT.quickRow} data-testid="tp-quick-row">
@@ -328,9 +497,8 @@
       onConnect={() => void openConnections('new')}>
       {#snippet actions()}
         <!-- Start tracing submits the windows form above (the form attribute), so Enter in a date box still starts it. -->
-        <button type="submit" form="tp-window-form" class="primary-button" disabled={readOnly || status === 'loading'}>{WINDOW_TEXT.startTracing}</button>
+        <button type="submit" form="tp-window-form" class="primary-button" title={WINDOW_TEXT.startTitle} disabled={readOnly || status === 'loading'}>{WINDOW_TEXT.startTracing}</button>
         <button type="button" class="secondary-button" title={WINDOW_TEXT.addEvidenceTitle} aria-haspopup="dialog" disabled={closed || readOnly} onclick={openCaseImport}>{WINDOW_TEXT.addEvidence}</button>
-        <button type="button" class="secondary-button" title={WINDOW_TEXT.refreshTitle} disabled={!canRefresh} onclick={startTracing}>{WINDOW_TEXT.refresh}</button>
       {/snippet}
     </TraceSources>
     {#if capNote !== ''}<p class="empty-hint" role="status" data-testid="tp-source-cap">{capNote}</p>{/if}
@@ -357,6 +525,9 @@
   </div>
   </div>
   <div class="trbot">
+  {#if sqlKind && sqlSource}
+    <SqlLaneStatus kind={sqlKind} source={sqlSource.label} reason={sqlReason} enabled={sqlOn} onToggle={setSqlOn} onRead={readSqlNow} onOpenSources={() => void seeSources()} />
+  {/if}
   <div data-region="chart" class="chart-region" role="region" aria-label={TRACING_TEXT.chartLabel} tabindex="-1" bind:this={chartRegion}>
     {#if nothingSelected}
       <p role="status" class="none-selected" data-testid="tp-none-selected">{SOURCES_TEXT.noneSelected}</p>
@@ -370,6 +541,7 @@
       </div>
     {:else if status === 'loading' && !result}
       <p role="status">{waiting.slow ? WAIT_TEXT.stillReading : TRACING_TEXT.readingWindow}</p>
+      {#if closedSaved.length > 0}<p role="status" class="reconnecting" title={SOURCES_TEXT.reconnectingTitle} data-testid="tp-reconnecting">{SOURCES_TEXT.reconnecting}</p>{/if}
       <button type="button" class="secondary-button" title={WAIT_TEXT.cancelTitle} onclick={() => void keepFocusInChart(cancel)}>{TRACING_TEXT.cancel}</button>
     {:else}
       {#if result}
@@ -390,11 +562,12 @@
           <div class="card chartcard">
           <div class="chart-hold" aria-busy={status === 'loading' ? 'true' : undefined}>
             <div inert={status === 'loading'}>
-              <TracingChart response={result} zone={timeZone.zone} {visible} onSelect={onBarSelect} focus={chartFocus} unselected={offLanes} {readOnly} onAddFiles={openCaseImport} />
+              <TracingChart response={result} zone={timeZone.zone} {visible} onSelect={onBarSelect} focus={chartFocus} unselected={offLanes} {readOnly} onAddFiles={openCaseImport} onDiamond={openCall} />
             </div>
             {#if status === 'loading'}
               <div class="chart-veil">
                 <p role="status">{waiting.slow ? WAIT_TEXT.stillReading : TRACING_TEXT.readingWindow}</p>
+                {#if closedSaved.length > 0}<p role="status" class="reconnecting" title={SOURCES_TEXT.reconnectingTitle}>{SOURCES_TEXT.reconnecting}</p>{/if}
                 <button type="button" class="secondary-button" title={WAIT_TEXT.cancelTitle} onclick={() => void keepFocusInChart(cancel)}>{TRACING_TEXT.cancel}</button>
               </div>
             {/if}
@@ -408,6 +581,9 @@
     <!-- Below the chart, so saying "Cancelled" never pushes the chart down. -->
     {#if cancelled && status !== 'loading' && status !== 'error'}<p role="status" class="cancel-note">{result ? WINDOW_TEXT.cancelledKept : WINDOW_TEXT.cancelledNone}</p>{/if}
     {#if handoffNote}<p role="status">{handoffNote}</p>{/if}
+    {#if status !== 'loading' && result?.reconnectFailed}
+      {#each result.reconnectFailed as failed, at (at)}<p role="status" class="reconnect-failed" data-testid="tp-reconnect-failed">{reconnectFailedText(failed.name, failed.reason, failed.action)}</p>{/each}
+    {/if}
   </div>
   </div>
   {#if showRail && result}
@@ -416,11 +592,21 @@
   </div>
 </section>
 
+{#if callShown && app.slowCall}
+  {#key app.slowCall.slot}
+    <SlowCallScreen target={app.slowCall} zone={timeZone.zone} demo={!!app.info?.demo}
+      onBack={() => closeSlowCall()}
+      onFound={(call) => noteSlowCall(call)}
+      onOpenAnalysis={() => openAnalysisFromCall()} />
+  {/key}
+{/if}
+
 <style>
   .tracing-paper {
     display: grid;
     gap: 16px;
   }
+  .tracing-paper[hidden] { display: none; }
   /* The wireframe's grid: the controls and the chart in one column; with the rail, a 340px column to their right that stays in view while the page scrolls. Below 1480px the rail follows the chart, so the chart keeps the full width on ordinary screens. */
   .trgrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; min-width: 0; }
   .trtop, .trbot { display: grid; gap: 24px; min-width: 0; align-content: start; grid-template-columns: minmax(0, 1fr); }

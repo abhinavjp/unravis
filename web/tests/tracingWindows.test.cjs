@@ -166,7 +166,8 @@ test('TracingPaper starts exactly one request on open and one per Start tracing'
   assert.equal((paperSource.match(/fetchTracing\(/g) || []).length, 1);
   // The mount also moves focus to the heading (UI-R5-01) before its one request.
   assert.match(paperSource, /onMount\(\(\) => \{[^}]*headingEl\?\.focus\(\);\s*void run\(\);\s*\}\)/);
-  assert.equal((paperSource.match(/void run\(\);/g) || []).length, 1);
+  // The second is the late-arriving saved windows of the case (they replace the default when the restore finishes after the screen opened).
+  assert.equal((paperSource.match(/void run\(\);/g) || []).length, 2);
 });
 
 test('a date with year 0001 is named, not reported as missing (UI-R2-10)', () => {
@@ -238,4 +239,29 @@ test('erasing a case drops its kept windows, and only its own (P5)', () => {
   assert.equal(store.has('unravis.tracing.sources.c1'), true, 'only the windows key goes');
   assert.doesNotThrow(() => windows.forgetWindows('c1', { removeItem: () => { throw new Error('blocked'); } }));
   assert.doesNotThrow(() => windows.forgetWindows('', storage), 'an empty id removes nothing');
+});
+
+// ---- the saved windows of a case (kept on the server so they survive a restart) ----
+
+const GOOD = fields('2026-10-23T19:00', '2026-10-23T20:00', '2026-10-23T18:00', '2026-10-23T19:00');
+
+test('stored windows come back only when all four are real and the check passes', () => {
+  assert.deepEqual(windows.parseStoredWindows({ ...GOOD }), GOOD);
+  assert.deepEqual(windows.parseStoredWindows({ ...GOOD, extra: 'x' }), GOOD, 'unknown keys are ignored');
+  for (const bad of [null, undefined, 5, 'x', [], {}, { ...GOOD, incidentStart: 'nope' }, { ...GOOD, referenceEnd: 7 }, { ...GOOD, incidentEnd: '2026-10-23T18:00' }, { ...GOOD, incidentStart: '2020-01-01T00:00' }]) {
+    assert.equal(windows.parseStoredWindows(bad), null, JSON.stringify(bad));
+  }
+});
+
+test('pickWindowFields copies only the four window fields', () => {
+  const picked = windows.pickWindowFields({ ...GOOD, junk: 1 });
+  assert.deepEqual(Object.keys(picked).sort(), ['incidentEnd', 'incidentStart', 'referenceEnd', 'referenceStart']);
+});
+
+test('the timeline remembers the windows on Start tracing and picks up late-arriving saved ones', () => {
+  const screen = read('src/components/TracingPaper.svelte');
+  const start = screen.slice(screen.indexOf('function startTracing'));
+  assert.match(start.slice(0, 700), /app\.rememberWindows\(fields\)/);
+  assert.match(screen, /app\.savedWindows/);
+  assert.match(screen, /loadWindows\(caseId\) \?\? \(app\.savedWindows/);
 });

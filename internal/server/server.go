@@ -70,6 +70,10 @@ type handler struct {
 	bb *blackboxHub
 	// keeper is the key keeper wiring for the shared layout (nil in the per-user layout, see WithKeeper).
 	keeper *KeeperHub
+	// links remembers which saved audit sources were open so they are reopened after a restart (nil when not wired, see WithSourceLinks).
+	links sourceLinkStore
+	// reconn is the state of the reopening pass (see reconnect.go).
+	reconn reconnectState
 
 	casesState
 
@@ -419,6 +423,7 @@ func (h *handler) rememberConnection(w http.ResponseWriter, r *http.Request) {
 		writeRememberError(w, err)
 		return
 	}
+	h.promotePending()
 	h.event(r, "source_saved", "kind", "mongo")
 	writeJSON(w, http.StatusOK, item, maxResponseBytes)
 }
@@ -483,6 +488,9 @@ func (h *handler) deleteRecent(w http.ResponseWriter, r *http.Request, id string
 	}
 	if err := h.history.Delete(decoded); err != nil {
 		if errors.Is(err, history.ErrNotFound) {
+			if h.links != nil {
+				_ = h.links.Forget(decoded) // already gone: nothing may be reopened from it
+			}
 			writeError(w, http.StatusNotFound, "Saved connection was not found.")
 			return
 		}
@@ -491,6 +499,9 @@ func (h *handler) deleteRecent(w http.ResponseWriter, r *http.Request, id string
 		}
 		writeError(w, http.StatusServiceUnavailable, "Saved connection could not be removed.")
 		return
+	}
+	if h.links != nil {
+		_ = h.links.Forget(decoded)
 	}
 	h.event(r, "connection_forgotten", "kind", "mongo")
 	w.WriteHeader(http.StatusNoContent)
@@ -603,6 +614,7 @@ func (h *handler) addSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.rollups.clear()
+	h.noteOpenedSource(item, conn.SavedConnectionID, conn)
 	h.event(r, "source_added", "source_id", item.ID)
 	writeJSON(w, http.StatusCreated, item, maxResponseBytes)
 }
@@ -615,7 +627,10 @@ func (h *handler) deleteSource(w http.ResponseWriter, r *http.Request, id string
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
+	// The link goes first, so a reconnect pass that starts now cannot reopen the source being removed; it comes back if the delete fails.
+	restoreLink := h.dropLinkOfSource(ctx, decoded)
 	if err := h.repo.DeleteSource(ctx, decoded); err != nil {
+		restoreLink()
 		if errors.Is(err, audit.ErrInvalidInput) && strings.Contains(err.Error(), "demo sources are fixed") {
 			writeError(w, http.StatusBadRequest, "Demo sources are built in and cannot be removed.")
 			return

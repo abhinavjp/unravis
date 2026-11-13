@@ -3,7 +3,10 @@ import { expect, type Page } from '@playwright/test';
 
 /** Go to the start screen (the explorer opens first; Home is in the header). */
 export async function goHome(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'All cases', exact: true }).click();
+  // A fresh window can already be on the start screen, where "All cases" does not exist.
+  if (!(await page.locator('#start-title').isVisible())) {
+    await page.getByRole('button', { name: /^All cases/ }).first().click();
+  }
   await expect(page.locator('#start-title')).toBeVisible();
 }
 

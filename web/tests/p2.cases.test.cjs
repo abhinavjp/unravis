@@ -231,6 +231,38 @@ test('IP-19: the file adapter uses the existing check to recover a refused file 
   });
 });
 
+test('IP-21: the drawer import runner attaches the file computer to an unknown-host refusal, so the drawer can offer the one-click add', async () => {
+  const refused = (reason) => ({ status: 202, body: { id: 'a'.repeat(32), state: 'failed', status: 422, failure: { reason } } });
+  const checked = (verdict, serverName) => ({ status: 202, body: {
+    id: 'b'.repeat(32), kind: 'check', state: 'done',
+    result: { files: [{ key: 'retry', name: 'u_ex261019.log', verdict, serverName }] }
+  } });
+  const item = { key: 'k1', file: new File(['synthetic'], 'u_ex261019.log'), importer: 'iis-w3c', host: '', supplied: {} };
+  await withServer([refused('unknown-host'), checked('needs-computer', 'iis_missing')], async ({ calls }) => {
+    const [{ outcome: verdict }] = await cases.runImportQueue([item], cases.importRunner(CASE_ID, 'ack'), { sleep: async () => {} });
+    assert.equal(verdict.reason, 'unknown-host');
+    assert.equal(verdict.serverName, 'iis_missing');
+    assert.equal(calls.length, 2);
+  });
+  for (const response of [checked('no-computer', ''), { status: 500, body: {} }]) {
+    await withServer([refused('unknown-host'), response], async () => {
+      const [{ outcome: verdict }] = await cases.runImportQueue([item], cases.importRunner(CASE_ID, 'ack'), { sleep: async () => {} });
+      assert.equal(verdict.reason, 'unknown-host');
+      assert.equal(verdict.serverName, undefined, 'no name read: the drawer keeps its ordinary Try again');
+    });
+  }
+});
+
+test('IP-21: the one-click add-computer fix is wired into the create screen and the import drawer, not only the edit flow', () => {
+  const progress = read('src/components/wizard/CreateProgress.svelte');
+  const panel = read('src/components/wizard/ImportFilesPanel.svelte');
+  const fix = read('src/components/wizard/ComputerFix.svelte');
+  assert.match(progress, /<ComputerFix /);
+  assert.match(panel, /<ComputerFix /);
+  assert.match(fix, /data-fix="computer"/);
+  assert.match(fix, /saveHost\(/);
+});
+
 test('IP-19: a fresh retry popup opens Check immediately and returns to Choose after the fix', () => {
   const { createPopupState } = load('src/lib/components/importPopup/popupState.svelte.ts');
   const popup = createPopupState();

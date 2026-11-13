@@ -15,6 +15,58 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
+func TestLegacyRequestLightReader(t *testing.T) {
+	testRequestsLightReader(t, true)
+}
+
+func TestLegacyRowLightProjectionPreservesSummaryAndScanStages(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	input := requestPipeline(q, [5]string{}, "src", nil, 11)
+	summary := legacyMetadataPipeline(input)
+	encode := func(pipeline mongo.Pipeline) string {
+		encoded, err := bson.MarshalExtJSON(bson.D{{Key: "pipeline", Value: pipeline}}, false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(encoded)
+	}
+	before := encode(summary)
+	for _, original := range []mongo.Pipeline{input, summary} {
+		rows := legacyRowMetadataPipeline(original)
+		var stages []string
+		for _, stage := range rows {
+			stages = append(stages, stage[0].Key)
+		}
+		if !reflect.DeepEqual(stages, []string{"$match", "$sort", "$limit", "$project"}) {
+			t.Fatalf("legacy row stages = %v", stages)
+		}
+		t.Logf("stages: %v", stages)
+		if !reflect.DeepEqual(rows[:3], summary[:3]) {
+			t.Fatal("legacy match, sort or scan cap changed")
+		}
+		projection := rows[3][0].Value.(bson.D)
+		assertLightProjection(t, projection)
+		base := summary[3][0].Value.(bson.D)
+		if len(projection) != len(base)+3 || !reflect.DeepEqual(projection[:len(base)], base) {
+			t.Fatal("legacy base metadata projection changed")
+		}
+		if encode(legacyRowMetadataPipeline(rows)) != encode(rows) {
+			t.Fatal("legacy row projection must be idempotent")
+		}
+		if encode(summary) != before || encode(legacyMetadataPipeline(input)) != before {
+			t.Fatal("legacy summary projection was mutated")
+		}
+		for _, forbidden := range []string{"$toDouble", "$convert", "$expr", "$set", "$lookup", "RequestPayload", "ResponsePayload", "RequestHeaders", "ResponseHeaders"} {
+			if strings.Contains(encode(rows), forbidden) {
+				t.Fatalf("legacy row pipeline contains %s", forbidden)
+			}
+		}
+	}
+	if strings.Contains(before, "_perf") {
+		t.Fatal("generic summary must not project light totals")
+	}
+}
+
 func TestRewriteLegacyPipelineUsesBoundedMetadataOnlyProjection(t *testing.T) {
 	q := audit.Query{BucketSeconds: 30, Metric: "api", Kind: "all", Outcome: "all"}
 	input := buildPipeline(q, time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC), time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC))

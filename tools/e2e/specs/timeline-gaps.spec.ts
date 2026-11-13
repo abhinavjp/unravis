@@ -1,7 +1,7 @@
 // The Investigation Timeline against the tracing-paper wireframe, the last gaps: one controls card, the UTC readout under the pickers,
 // 12-hour time boxes, "Each bar = ..." under the chart, and the Suspects rail. The demo clock is 2026-10-20T09:00Z, so the default
 // incident window is 08:00-09:00 UTC and the default comparison period 07:00-08:00; the demo audit lane (read live) rises at 08:30.
-//   TLGAP-01  The quick ranges, both windows, the UTC readout, the Sources traced row, Add evidence and Refresh timeline are in ONE card;
+//   TLGAP-01  The quick ranges, both windows, the UTC readout, the Sources traced row, Add evidence and Start tracing are in ONE card;
 //             the chart is outside it; the readout sits under the windows and above the sources row.
 //   TLGAP-02  The UTC readout names both periods in UTC, follows a quick range and a typed window, and sends no trace by itself.
 //   TLGAP-03  The time boxes are 12-hour (hour 1-12, minute, AM or PM): 22:30 is 10 : 30 PM, the readout and the button follow.
@@ -43,9 +43,9 @@ function countTraces(page: Page): { count: () => number } {
 const card = (page: Page) => page.locator('section.card.trctl');
 const rail = (page: Page) => page.getByTestId('sus-rail');
 const suspect = (page: Page, id: string) => rail(page).locator(`[data-sus="${id}"]`);
-const refresh = (page: Page) => page.getByTestId('trace-sources').getByRole('button', { name: 'Refresh timeline' });
+const refresh = (page: Page) => page.getByTestId('trace-sources').getByRole('button', { name: 'Start tracing' });
 
-/** Presses Refresh timeline and waits for the answer. */
+/** Presses Start tracing and waits for the answer. */
 async function refreshAndWait(page: Page): Promise<void> {
   const answered = page.waitForResponse((r) => isTrace(r.request()));
   await refresh(page).click();
@@ -71,7 +71,7 @@ test('TLGAP-01: the quick ranges, the windows, the readout and the Sources trace
   await expect(card(page).getByTestId('tp-metaline')).toBeVisible();
   await expect(card(page).getByTestId('trace-sources')).toBeVisible();
   await expect(card(page).getByRole('button', { name: 'Add evidence' })).toBeVisible();
-  await expect(card(page).getByRole('button', { name: 'Refresh timeline' })).toBeVisible();
+  await expect(card(page).getByRole('button', { name: 'Start tracing' })).toBeVisible();
   await expect(card(page).locator('.tracing-chart')).toHaveCount(0);
   // Top to bottom: quick range, windows, readout, sources row.
   const y = async (loc: Locator) => (await loc.boundingBox())!.y;
