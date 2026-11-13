@@ -30,7 +30,7 @@ func sqlEnumPDHObjectsPlatform() ([]string, error) {
 	buf := make([]uint16, n)
 	// bRefresh=TRUE re-reads the object list so newly installed instances show
 	// up without a process restart.
-	r, _, _ = procPdhEnumObjects.Call(0, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&n)), pdhDetailWizard, 1)
+	r, _, _ = procPdhEnumObjects.Call(0, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&n)), pdhDetailWizard, 0)
 	if r != 0 {
 		return nil, fmt.Errorf("PdhEnumObjects: 0x%x", r)
 	}
