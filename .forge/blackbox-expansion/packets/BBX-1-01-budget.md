@@ -55,3 +55,11 @@ No for the logic. The 0.5%/50 MB/1 s thresholds are verified on real hardware in
 
 ## Report back
 Files changed, each checklist item ticked or failed with output, anything unconfirmed. Write the full report to `.forge/blackbox-expansion/reports/BBX-1-01.md`.
+
+## Fix round 1 (batch review findings — MUST apply)
+The Ultimate batch review found a HIGH livelock and a LOW contract gap. Apply both:
+
+1. HIGH — slow marks never clear, so one slow group permanently pins the interval at 60 s and keeps optional groups off forever (a skipped group never runs, never reports a fast timing, never clears its mark). FIX: make a slow mark a ONE-CYCLE skip that is consumed so the group is re-probed. Add `func (b *Budget) NoteSkipped(name string)` that removes `name` from the slow set. The group collector (BBX-1-05) calls `NoteSkipped(name)` whenever it skips a group because it is slow. After consumption, if self usage is calm, `Cycle()` steps back normally. A genuinely slow group is re-marked each time it runs slow, so it is skipped every other cycle (acceptable self-throttle) but can never permanently pin the budget. Add a test `TestSlowGroupReprobesAfterSkip`: mark slow, NoteSkipped, then under-budget SelfUsage + 10 calm Cycles → interval steps back to base and SlowGroups is empty.
+2. LOW — `Cycle()` must honour "(or a mandatory group is slow)" immediate-widen. FIX: change the signature to `func (b *Budget) GroupTiming(name string, d time.Duration, optional bool)`. Track whether each slow group is optional. In `Cycle()`, widen immediately when a slow MANDATORY group exists OR skipOptional is already true; when only optional groups are slow, skip optional first (widen on the next over cycle). Add `TestMandatorySlowWidensImmediately`.
+
+Keep everything else (ladder 15/30/60, 10-calm step-back, never below base, zero-alloc Cycle, no clock/Windows/goroutine). Update the existing tests to the new GroupTiming signature. Re-run the FULL checklist and append the fix output to the report.

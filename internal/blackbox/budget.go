@@ -29,7 +29,7 @@ type Budget struct {
 	calm         int
 	overBudget   bool
 	skipOptional bool
-	slow         map[string]struct{}
+	slow         map[string]bool // name -> optional flag of the slow group
 }
 
 // NewBudget starts effective at base. The widen ladder stays 15/30/60; the
@@ -38,17 +38,27 @@ func NewBudget(baseInterval int) *Budget {
 	return &Budget{
 		base:      baseInterval,
 		effective: baseInterval,
-		slow:      make(map[string]struct{}),
+		slow:      make(map[string]bool),
 	}
 }
 
 // GroupTiming records a group's last duration. Over budgetMaxGroup marks it
-// slow (skipped next cycle); a fast timing clears the mark. The map is reused.
-func (b *Budget) GroupTiming(name string, d time.Duration) {
+// slow (skipped next cycle until the mark is consumed); a fast timing clears
+// the mark. optional records the group's optionality so Cycle can widen
+// immediately for a slow mandatory group. The map is reused.
+func (b *Budget) GroupTiming(name string, d time.Duration, optional bool) {
 	if d > budgetMaxGroup {
-		b.slow[name] = struct{}{}
+		b.slow[name] = optional
 		return
 	}
+	delete(b.slow, name)
+}
+
+// NoteSkipped consumes a group's slow mark once the collector has skipped it,
+// making the mark a one-cycle skip: the group is re-probed next cycle instead
+// of being pinned slow forever. A genuinely slow group is re-marked by
+// GroupTiming each time it runs slow.
+func (b *Budget) NoteSkipped(name string) {
 	delete(b.slow, name)
 }
 
@@ -58,16 +68,17 @@ func (b *Budget) SelfUsage(cpuPctOfOneCore float64, workingSetBytes uint64) {
 }
 
 // Cycle advances the machine one tick. Over budget or any slow group first
-// skips optional groups, then widens one ladder step on later such cycles.
+// skips optional groups and widens one ladder step when optional groups are
+// already skipped OR a slow mandatory group exists (immediate widen); with
+// only optional groups slow, widening happens on the next such cycle.
 // Otherwise it counts calm cycles and, after budgetCalmCycles of them, steps
 // back one interval and re-enables optional groups.
 func (b *Budget) Cycle() {
 	if b.overBudget || len(b.slow) > 0 {
-		if b.skipOptional {
+		if b.skipOptional || b.mandatorySlow() {
 			b.widen()
-		} else {
-			b.skipOptional = true
 		}
+		b.skipOptional = true
 		b.calm = 0
 		return
 	}
@@ -77,6 +88,17 @@ func (b *Budget) Cycle() {
 		b.skipOptional = false
 		b.calm = 0
 	}
+}
+
+// mandatorySlow reports whether any group currently marked slow is
+// mandatory. It only reads the reused slow map, so it allocates nothing.
+func (b *Budget) mandatorySlow() bool {
+	for _, optional := range b.slow {
+		if !optional {
+			return true
+		}
+	}
+	return false
 }
 
 // widen moves up to the next ladder rung above effective, capped at 60.

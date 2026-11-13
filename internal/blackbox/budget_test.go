@@ -29,7 +29,7 @@ func TestBudgetStartsAtBase(t *testing.T) {
 
 func TestBudgetSlowGroupSkipsAndMarks(t *testing.T) {
 	b := NewBudget(15)
-	b.GroupTiming("http", 1500*time.Millisecond)
+	b.GroupTiming("http", 1500*time.Millisecond, false)
 	if got := b.SlowGroups(); !reflect.DeepEqual(got, []string{"http"}) {
 		t.Fatalf("SlowGroups = %v, want [http]", got)
 	}
@@ -42,9 +42,10 @@ func TestBudgetSlowGroupSkipsAndMarks(t *testing.T) {
 	if b.GroupSkipped("db", false) {
 		t.Fatal("fast group db reported skipped")
 	}
-	// Names come back sorted, not in insertion order.
-	b.GroupTiming("zeta", 2*time.Second)
-	b.GroupTiming("alpha", 2*time.Second)
+	// Names come back sorted, not in insertion order; both optional and
+	// mandatory groups are marked.
+	b.GroupTiming("zeta", 2*time.Second, true)
+	b.GroupTiming("alpha", 2*time.Second, true)
 	if got := b.SlowGroups(); !reflect.DeepEqual(got, []string{"alpha", "http", "zeta"}) {
 		t.Fatalf("SlowGroups = %v, want sorted [alpha http zeta]", got)
 	}
@@ -180,8 +181,8 @@ func TestBudgetWSOver(t *testing.T) {
 
 func TestBudgetFastGroupClearsSlow(t *testing.T) {
 	b := NewBudget(15)
-	b.GroupTiming("http", 1500*time.Millisecond)
-	b.GroupTiming("http", 500*time.Millisecond)
+	b.GroupTiming("http", 1500*time.Millisecond, false)
+	b.GroupTiming("http", 500*time.Millisecond, false)
 	if got := b.SlowGroups(); len(got) != 0 {
 		t.Fatalf("fast timing left slow groups %v", got)
 	}
@@ -189,13 +190,101 @@ func TestBudgetFastGroupClearsSlow(t *testing.T) {
 		t.Fatal("cleared group still skipped")
 	}
 	// Exactly at the limit is not slow; just over is.
-	b.GroupTiming("db", budgetMaxGroup)
+	b.GroupTiming("db", budgetMaxGroup, true)
 	if len(b.SlowGroups()) != 0 {
 		t.Fatal("timing exactly at budgetMaxGroup marked slow")
 	}
-	b.GroupTiming("db", budgetMaxGroup+1)
+	b.GroupTiming("db", budgetMaxGroup+1, true)
 	if got := b.SlowGroups(); !reflect.DeepEqual(got, []string{"db"}) {
 		t.Fatalf("SlowGroups = %v, want [db]", got)
+	}
+}
+
+// TestSlowGroupReprobesAfterSkip checks the livelock fix: a slow mark is a
+// one-cycle skip consumed by NoteSkipped, so a skipped group is re-probed and
+// can never permanently pin the interval.
+func TestSlowGroupReprobesAfterSkip(t *testing.T) {
+	b := NewBudget(15)
+	b.GroupTiming("http", 1500*time.Millisecond, false) // mandatory slow
+	b.Cycle()                                           // widens immediately to 30
+	if got := b.EffectiveInterval(); got != 30 {
+		t.Fatalf("effective = %d, want 30 after mandatory slow cycle", got)
+	}
+	if !b.GroupSkipped("http", false) {
+		t.Fatal("slow group not marked for skip")
+	}
+	// The collector skips the group this cycle and consumes the mark.
+	b.NoteSkipped("http")
+	if got := b.SlowGroups(); len(got) != 0 {
+		t.Fatalf("NoteSkipped left slow groups %v, want empty", got)
+	}
+	if b.GroupSkipped("http", false) {
+		t.Fatal("consumed group still skipped; it would never be re-probed")
+	}
+	// Under budget with no slow marks: 10 calm cycles step back to base.
+	b.SelfUsage(0.1, wsBytes(1))
+	for i := 0; i < budgetCalmCycles; i++ {
+		b.Cycle()
+	}
+	if got := b.EffectiveInterval(); got != 15 {
+		t.Fatalf("after 10 calm effective = %d, want base 15", got)
+	}
+	if got := b.SlowGroups(); len(got) != 0 {
+		t.Fatalf("SlowGroups = %v, want empty", got)
+	}
+	if b.SkipOptional() {
+		t.Fatal("optional groups not re-enabled after step-back")
+	}
+	// A genuinely slow group is re-marked when it runs slow again.
+	b.GroupTiming("http", 2*time.Second, false)
+	if got := b.SlowGroups(); !reflect.DeepEqual(got, []string{"http"}) {
+		t.Fatalf("re-probed slow group not re-marked: %v", got)
+	}
+}
+
+// TestMandatorySlowWidensImmediately checks that a slow MANDATORY group
+// widens on the first over cycle, while an optional-only slow group skips
+// optional first and widens on the next over cycle.
+func TestMandatorySlowWidensImmediately(t *testing.T) {
+	b := NewBudget(15)
+	b.GroupTiming("core", 1500*time.Millisecond, false) // mandatory
+	b.Cycle()
+	if got := b.EffectiveInterval(); got != 30 {
+		t.Fatalf("mandatory slow: first cycle effective = %d, want 30", got)
+	}
+	if !b.SkipOptional() {
+		t.Fatal("mandatory slow: optional groups not skipped")
+	}
+	b.Cycle()
+	if got := b.EffectiveInterval(); got != 60 {
+		t.Fatalf("mandatory slow: second cycle effective = %d, want 60", got)
+	}
+	b.Cycle()
+	if got := b.EffectiveInterval(); got != 60 {
+		t.Fatalf("mandatory slow: effective = %d, want cap 60", got)
+	}
+
+	// Optional-only slow: skip optional first, widen on the next over cycle.
+	o := NewBudget(15)
+	o.GroupTiming("opt", 1500*time.Millisecond, true)
+	o.Cycle()
+	if !o.SkipOptional() {
+		t.Fatal("optional slow: optional groups not skipped")
+	}
+	if got := o.EffectiveInterval(); got != 15 {
+		t.Fatalf("optional slow: first cycle widened to %d, want base 15", got)
+	}
+	o.Cycle()
+	if got := o.EffectiveInterval(); got != 30 {
+		t.Fatalf("optional slow: second cycle effective = %d, want 30", got)
+	}
+
+	// A mandatory slow group widens immediately from a non-15 base too.
+	m := NewBudget(30)
+	m.GroupTiming("core", 2*time.Second, false)
+	m.Cycle()
+	if got := m.EffectiveInterval(); got != 60 {
+		t.Fatalf("base 30 mandatory slow: effective = %d, want 60", got)
 	}
 }
 
@@ -210,5 +299,10 @@ func TestBudgetCycleAllocatesNothing(t *testing.T) {
 	calm := NewBudget(15)
 	if n := testing.AllocsPerRun(200, func() { calm.Cycle() }); n != 0 {
 		t.Fatalf("calm Cycle allocated %v per call, want 0", n)
+	}
+	slow := NewBudget(15)
+	slow.GroupTiming("core", 2*time.Second, false) // exercises mandatorySlow + widen
+	if n := testing.AllocsPerRun(200, func() { slow.Cycle() }); n != 0 {
+		t.Fatalf("mandatory-slow Cycle allocated %v per call, want 0", n)
 	}
 }

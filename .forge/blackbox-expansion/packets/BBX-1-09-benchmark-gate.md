@@ -7,12 +7,12 @@ Add a benchmark + gate test proving a full budgeted tick with fake counter reade
 
 ## Context
 - New file `internal/blackbox/budget_bench_test.go`. Package `blackbox`.
-- Uses: `Engine`/`CounterSource`/`Reading` (engine.go), `Budget` (budget.go), `NewGroupCollector`/`Group`/`BuildGroups` (groups.go), `Sample` (sample.go).
+- Uses: `Engine`/`CounterSource`/`CounterReading` (engine.go — the reading type is `CounterReading`, renamed from `Reading` to avoid a clash with reader.go), `Budget` (budget.go), `NewGroupCollector`/`Group`/`BuildGroups` (groups.go), `Sample` (sample.go).
 - Fake pattern to follow: `fakeSource`/`fakeExtras` in `collector_test.go:13-58`; budget precedent `internal/sampler/bench_test.go:26 BenchmarkTick` + `TestTickStaysInTheBudget` (fails > 15 ms/tick).
 - Rules that apply: **under 0.5% of one core on average** → at a 15 s interval that is 75 ms of CPU per tick; **under 50 MB**; **each group within 1 s**; **a benchmark test with fake readers must pass before any new group ships** (BL-122).
 
 ## Do
-1. Build a `fakeCounterSource` implementing `CounterSource`: returns a fixed slice of ~200 valid `Reading`s (mix of gauges and rates) with Status 0; `Close()` nil. No real PDH.
+1. Build a `fakeCounterSource` implementing `CounterSource`: returns a fixed slice of ~200 valid `CounterReading`s (mix of gauges and rates) with Status 0; `Close()` nil. No real PDH.
 2. Build 6 fake groups (implement `Group`) that each run the engine over a subset of readings and return a small group struct (e.g. &TCPGroup, &MemPressureGroup). Mark 2 optional, 4 mandatory. Register them in the test (do not pollute the production registry — construct `[]Group` directly and pass to `NewGroupCollector`).
 3. `BenchmarkBudgetTick(b *testing.B)` — one inner host fake collector + the 6 groups + a real Budget; each iteration calls `groupCollector.Collect(now)`; report ns/op and allocs/op (`b.ReportAllocs()`).
 4. `TestBudgetTickStaysInTheBudget(t *testing.T)` — run N=200 ticks with the fake source; measure total wall/monotonic time; FAIL if average > 75 ms/tick (0.5% of one core at 15 s). Also assert per-tick allocations are bounded (e.g. < 400 allocs/tick — tune to the real figure and record it in the report; the assertion must be stable, not flaky).
