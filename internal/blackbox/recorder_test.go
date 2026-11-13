@@ -343,6 +343,130 @@ func TestRecorderIncompletePassWithoutDiskReadingKeepsPauseState(t *testing.T) {
 	}
 }
 
+// --- BBX-1-07: the budgeted tick loop ---
+
+// TestTickFeedsBudget: a fake self-reading over budget must widen a real
+// Budget's effective interval, and the tick must keep sampling.
+func TestTickFeedsBudget(t *testing.T) {
+	g := newRig(t, nil)
+	b := NewBudget(15)
+	g.r.o.Budget = b
+	g.r.o.SelfUsage = func() (float64, uint64, bool) { return 5, 100 << 20, true }
+	g.r.Tick(g.clk.t)
+	g.tick(15 * time.Second)
+	if got := b.EffectiveInterval(); got != 30 {
+		t.Fatalf("effective interval = %d, want widened to 30", got)
+	}
+	if n := g.s.Manifest().SampleCount(); n != 2 {
+		t.Fatalf("samples %d, want 2: the budget must not block the tick", n)
+	}
+}
+
+// TestTickBudgetNilSafe: nil Budget and nil SelfUsage leave the tick unchanged;
+// a Budget with nil SelfUsage still cycles without a measurement.
+func TestTickBudgetNilSafe(t *testing.T) {
+	g := newRig(t, nil)
+	g.r.Tick(g.clk.t)
+	g.tick(15 * time.Second)
+	if n := g.s.Manifest().SampleCount(); n != 2 {
+		t.Fatalf("samples %d, want 2", n)
+	}
+	b := NewBudget(15)
+	g.r.o.Budget = b // SelfUsage stays nil
+	g.tick(15 * time.Second)
+	if got := b.EffectiveInterval(); got != 15 {
+		t.Fatalf("effective interval = %d, want base 15", got)
+	}
+	if n := g.s.Manifest().SampleCount(); n != 3 {
+		t.Fatalf("samples %d, want 3", n)
+	}
+}
+
+// TestTickSelfUsageNotOKSkipsUpdate: a missing reading (ok=false) skips the
+// budget update, never 0-as-fact: the over-budget flag from the previous
+// reading survives and the interval still widens.
+func TestTickSelfUsageNotOKSkipsUpdate(t *testing.T) {
+	g := newRig(t, nil)
+	b := NewBudget(15)
+	g.r.o.Budget = b
+	calls := 0
+	g.r.o.SelfUsage = func() (float64, uint64, bool) {
+		calls++
+		if calls == 1 {
+			return 5, 100 << 20, true
+		}
+		return 0, 0, false
+	}
+	g.r.Tick(g.clk.t)
+	g.tick(15 * time.Second)
+	if got := b.EffectiveInterval(); got != 30 {
+		t.Fatalf("effective interval = %d, want 30: a missing reading cleared the budget (0-as-fact)", got)
+	}
+}
+
+// TestEffectiveInterval table-tests the helper Run uses for the ticker reset.
+func TestEffectiveInterval(t *testing.T) {
+	widened := NewBudget(5)
+	widened.SelfUsage(5, 100<<20)
+	widened.Cycle()
+	widened.Cycle() // 5 -> 15
+	cases := []struct {
+		name string
+		b    *Budget
+		base int
+		want int
+	}{
+		{"nil budget falls back to base", nil, 15, 15},
+		{"fresh budget is at base", NewBudget(30), 30, 30},
+		{"widened budget wins over base", widened, 5, 15},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := effectiveInterval(tc.b, tc.base); got != tc.want {
+				t.Fatalf("effectiveInterval = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunResetsInterval: with the own ticker (not o.Ticks), the first tick
+// comes at the base interval and the ticker is then reset to the budget's
+// widened effective interval, so no second tick arrives at the old cadence.
+// The o.Ticks injection path is untouched (TestRecorderRunStopsCleanly).
+func TestRunResetsInterval(t *testing.T) {
+	g := newRig(t, func(c *Config) { c.IntervalSeconds = 1 })
+	b := NewBudget(1)
+	b.SelfUsage(5, 100<<20)
+	b.Cycle()
+	b.Cycle() // 1 -> 15
+	if b.EffectiveInterval() != 15 {
+		t.Fatalf("precondition: effective = %d, want 15", b.EffectiveInterval())
+	}
+	g.r = NewRecorder(RecorderOptions{Config: g.r.o.Config, Store: g.s, Collector: g.col, Disk: g.disk,
+		RunID: "run1", Now: time.Now, Budget: b})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- g.r.Run(ctx) }()
+	// First tick at the base 1 s, not the widened 15 s.
+	deadline := time.Now().Add(5 * time.Second)
+	for g.s.Manifest().SampleCount() < 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n := g.s.Manifest().SampleCount(); n < 2 {
+		t.Fatalf("first tick never came: %d samples", n)
+	}
+	// Reset to 15 s: the old 1 s cadence must not fire again.
+	time.Sleep(2500 * time.Millisecond)
+	if n := g.s.Manifest().SampleCount(); n != 2 {
+		t.Fatalf("samples %d, want 2: ticker not reset to the effective interval", n)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Review F6.5: the pass right after a forward clock jump keeps the history.
 func TestRecorderForwardClockJumpDoesNotAgeOutHistoryInThatPass(t *testing.T) {
 	old := t0.Add(-3 * 24 * time.Hour) // inside keepDays until the clock jumps

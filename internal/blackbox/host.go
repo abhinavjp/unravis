@@ -83,11 +83,20 @@ func RunHost(ctx context.Context, o HostOptions) error {
 		}
 		col = hc
 	}
+	// Below-normal priority, once, best-effort: a failure is not logged and
+	// never stops recording.
+	_ = SetBelowNormalPriority()
+	budget := NewBudget(cfg.IntervalSeconds)
+	// Targets and ProcessSetChanged stay nil until the resolver is wired
+	// (BBX-1-11); machine-wide groups still build.
+	groups := BuildGroups(GroupDeps{Config: cfg, Cores: CoreCount()})
+	col = NewGroupCollector(col, groups, budget)
 	disk := o.Disk
 	if disk == nil {
 		disk = OSDisk{}
 	}
-	rec := NewRecorder(RecorderOptions{Config: cfg, Store: store, Collector: col, Disk: disk, RunID: runID, Now: o.Now, Ticks: o.Ticks})
+	rec := NewRecorder(RecorderOptions{Config: cfg, Store: store, Collector: col, Disk: disk, RunID: runID,
+		Now: o.Now, Ticks: o.Ticks, Budget: budget, SelfUsage: SelfUsage})
 	srv := NewServer(ServerOptions{Store: store, Recorder: rec, Config: cfg, Keys: keys, Now: o.Now})
 
 	srvDone := make(chan struct{})
