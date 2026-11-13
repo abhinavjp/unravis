@@ -83,8 +83,10 @@ func dotnetChildren(procs []ProcInfo, parentPID uint32) []ProcInfo {
 }
 
 // Resolver builds the process inventory and detects runtimes. Modules are read
-// only when the process set changes, and only for keys not already cached. The
-// snapshot and module loader are injected so tests need no Windows.
+// only when the process set changes, and only for keys not already cached —
+// except keys with Start==0 (creation time unreadable), which are never cached
+// and re-read on every Inventory. The snapshot and module loader are injected
+// so tests need no Windows.
 type Resolver struct {
 	snapshotFn    func() ([]ProcInfo, error)
 	loadModulesFn func(pid uint32) ([]string, error)
@@ -103,10 +105,14 @@ func NewResolver() *Resolver {
 }
 
 // Inventory snapshots the processes and fills Runtime. When the process set is
-// unchanged it reuses cached runtimes and reads no modules. When it changes it
-// loads modules only for keys not cached (a recycled PID has a new start, so a
-// new key). An access-denied module read leaves Runtime 0 (unknown), never a
-// guess, and is not cached so a later set change retries it.
+// unchanged it reuses cached runtimes and reads no modules for keys with a real
+// Start. Keys with Start==0 (creation time unreadable) are never cached — their
+// identity would degenerate to PID alone, so modules are re-read on every
+// Inventory and a recycled, still-unopenable PID cannot inherit a stale
+// runtime. When the set changes it loads modules only for real-Start keys not
+// cached (a recycled PID has a new start, so a new key). An access-denied
+// module read leaves Runtime 0 (unknown), never a guess, and is not cached so
+// a later set change retries it.
 func (r *Resolver) Inventory() ([]ProcInfo, error) {
 	procs, err := r.snapshotFn()
 	if err != nil {
@@ -119,6 +125,11 @@ func (r *Resolver) Inventory() ([]ProcInfo, error) {
 
 	if !processSetChanged(r.last, keys) {
 		for i := range procs {
+			if keys[i].start == 0 {
+				// Never cached: re-read modules on every Inventory.
+				r.detectRuntime(&procs[i])
+				continue
+			}
 			procs[i].Runtime = r.cached[keys[i]]
 		}
 		return procs, nil
@@ -127,6 +138,13 @@ func (r *Resolver) Inventory() ([]ProcInfo, error) {
 	next := make(map[procKey]uint8, len(keys))
 	for i := range procs {
 		k := keys[i]
+		if k.start == 0 {
+			// Creation time unreadable: (pid, 0) would make identity PID
+			// alone. Treat as always changed — re-read modules and never
+			// store this key in the cache.
+			r.detectRuntime(&procs[i])
+			continue
+		}
 		rt, ok := r.cached[k]
 		if !ok {
 			mods, err := r.loadModulesFn(procs[i].PID)
@@ -143,4 +161,16 @@ func (r *Resolver) Inventory() ([]ProcInfo, error) {
 	r.last = keys
 	r.cached = next
 	return procs, nil
+}
+
+// detectRuntime reads one process's modules and fills Modules/Runtime. A failed
+// read leaves Runtime 0 (unknown, never a guess). Used for Start==0 keys, which
+// are never cached.
+func (r *Resolver) detectRuntime(p *ProcInfo) {
+	mods, err := r.loadModulesFn(p.PID)
+	if err != nil {
+		return
+	}
+	p.Modules = mods
+	p.Runtime = classifyRuntime(mods)
 }

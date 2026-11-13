@@ -174,3 +174,78 @@ func TestResolverAccessDeniedUnknown(t *testing.T) {
 		t.Fatalf("access denied must yield runtime 0 (unknown), got %d", got[0].Runtime)
 	}
 }
+
+// TestResolverNoCacheWhenStartZero guards the fix: an unopenable process has
+// Start 0, so its key (pid, 0) would degenerate identity to PID alone. Such
+// keys are never cached — modules are re-loaded on every Inventory even when
+// the PID is unchanged, so a recycled PID that is also unopenable picks up its
+// new runtime instead of inheriting a stale one. Keys with a real Start keep
+// being cached.
+func TestResolverNoCacheWhenStartZero(t *testing.T) {
+	procs := []ProcInfo{
+		{PID: 300, ParentPID: 4, Start: 0, Name: "protected.exe"}, // unopenable: Start 0
+		{PID: 400, ParentPID: 4, Start: 4000, Name: "w3wp.exe"},   // real Start: cached
+	}
+	var loads []uint32
+	modules300 := []string{"clr.dll"} // PID 300 starts as .NET Framework
+	r := NewResolver()
+	r.snapshotFn = func() ([]ProcInfo, error) {
+		out := make([]ProcInfo, len(procs))
+		copy(out, procs)
+		return out, nil
+	}
+	r.loadModulesFn = func(pid uint32) ([]string, error) {
+		loads = append(loads, pid)
+		switch pid {
+		case 300:
+			return modules300, nil
+		case 400:
+			return []string{"clr.dll"}, nil
+		}
+		return nil, errors.New("unexpected pid")
+	}
+
+	// First inventory: both keys new -> two module loads.
+	got, err := r.Inventory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loads) != 2 {
+		t.Fatalf("first inventory: want 2 loads, got %d (%v)", len(loads), loads)
+	}
+	if got[0].Runtime != 1 || got[1].Runtime != 1 {
+		t.Fatalf("runtimes = %d,%d want 1,1", got[0].Runtime, got[1].Runtime)
+	}
+
+	// Same set, same PID: the Start==0 key must still re-load modules; the
+	// real-Start key is reused from cache.
+	loads = nil
+	got, err = r.Inventory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loads) != 1 || loads[0] != 300 {
+		t.Fatalf("unchanged set: want 1 load of PID 300 (Start 0), got %v", loads)
+	}
+	if got[0].Runtime != 1 || got[1].Runtime != 1 {
+		t.Fatalf("runtimes = %d,%d want 1,1", got[0].Runtime, got[1].Runtime)
+	}
+
+	// Recycle: same PID 300, still unopenable (Start 0), now a .NET 10 target.
+	// The runtime change must be picked up, not masked by a stale cache entry.
+	modules300 = []string{"coreclr.dll"}
+	loads = nil
+	got, err = r.Inventory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loads) != 1 || loads[0] != 300 {
+		t.Fatalf("recycled unopenable PID: want 1 load of PID 300, got %v", loads)
+	}
+	if got[0].Runtime != 2 {
+		t.Fatalf("runtime after recycle = %d, want 2 (must not inherit stale Framework)", got[0].Runtime)
+	}
+	if got[1].Runtime != 1 {
+		t.Fatalf("real-Start runtime = %d, want 1 (still cached)", got[1].Runtime)
+	}
+}
