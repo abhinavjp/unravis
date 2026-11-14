@@ -977,9 +977,9 @@ func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *t
 		}
 		for i := range lane.Buckets {
 			k := idx[lane.Buckets[i].Start]
-			if n := clientCell[k]; n > 0 {
-				lane.Buckets[i].ClientErrors = &n
-			}
+			// Always sent, 0 where no 4xx was found: 0 means counted and none, a missing key means not counted.
+			n := clientCell[k]
+			lane.Buckets[i].ClientErrors = &n
 			if acc := timing[k]; acc != nil {
 				lane.Buckets[i].TimedCount, lane.Buckets[i].P50Ms, lane.Buckets[i].P95Ms, lane.Buckets[i].MaxMs = acc.figures()
 				// The IIS log writes the time a request ENDED, so this busy time sits in the step the request ended in (the API lane counts the step it started in).
@@ -1010,6 +1010,7 @@ func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *t
 			for i := range lane.Buckets {
 				if !lane.Buckets[i].Start.Before(res.DoneTo) {
 					lane.Buckets[i].Complete = false
+					lane.Buckets[i].ClientErrors = nil // not counted, so not shown as 0
 				}
 			}
 		}

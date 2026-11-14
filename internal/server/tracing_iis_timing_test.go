@@ -85,7 +85,7 @@ func TestTracingIISLaneWithoutDurationsHasNoTiming(t *testing.T) {
 		var out tracingResponse
 		decodeBody(t, res, &out)
 		for _, b := range tracingLaneOf(t, out, "iis").Buckets {
-			if b.TimedCount != 0 || b.P95Ms != nil || b.MaxMs != nil || b.ClientErrors != nil {
+			if b.TimedCount != 0 || b.P95Ms != nil || b.MaxMs != nil || b.ClientErrors == nil || *b.ClientErrors != 0 { // 4xx is counted: 0, not missing
 				t.Errorf("bucket carries figures it has no data for: %+v", b)
 			}
 		}
