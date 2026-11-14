@@ -106,7 +106,9 @@ func (h *handler) postImportCheck(w http.ResponseWriter, r *http.Request, raw st
 	}
 	h.event(r, "import_check_started")
 	limit := h.uploadCap(nil)
-	total := limit * checkBodyFactor
+	// The spool must not exceed what one case can hold: limit*checkBodyFactor
+	// alone allows up to 16 GiB, but a case holds at most MaxCaseBytes (4 GiB).
+	total := min(limit*checkBodyFactor, casestore.DefaultCaps.MaxCaseBytes)
 	if r.ContentLength > total {
 		writeCaseFailure(w, http.StatusRequestEntityTooLarge, "request-too-large", "The upload is larger than the cap.")
 		return
