@@ -103,6 +103,7 @@ export const DRILL_TEXT = {
   legendShape: 'Faint shape = how many were running at once',
   legendHatched: 'Hatched = not recorded, which is unknown, not zero',
   legendCall: 'Red column = while this call was running',
+  legendHow: 'What the shapes mean',
   legendOutside: 'This call is outside the window you are looking at',
   // overview strip (minimap)
   mapHidden: 'The big chart already shows the whole strip, so there is nothing to move. Pick a shorter window above and the strip comes back here.',

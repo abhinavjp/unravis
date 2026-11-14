@@ -350,42 +350,47 @@
     <span class="scall-zone">{zoneName}</span>
   </div>
 
-  <div class="scall-readout" data-testid="scall-readout" aria-live="polite">
-    <p class="read-title">
-      {DRILL_TEXT.readTitle}{#if current}
-        · {formatTime(current.stepStart, { zone })}{#if current.isThisCall} {DRILL_TEXT.readThisCall}{/if}{/if}
-    </p>
-    {#if current}
-      <ul class="read-rows">
-        {#if shown.api}
-          <li>{DRILL_TEXT.readApi(fmtAt(current.api))}</li>
-          <li>{DRILL_TEXT.readP95(fmtP95(current.api))}</li>
-        {/if}
-        {#if shown.iis}
-          <li>{DRILL_TEXT.readIis(fmtAt(current.iis))}</li>
-          <li>{refusedLine(current.iis)}</li>
-        {/if}
-        {#if shown.db}
-          <li>{dbLine(current.db)}</li>
-        {/if}
-      </ul>
+  <div class="scall-readout" class:idle={!current && pinnedMs === null} data-testid="scall-readout" aria-live="polite">
+    {#if current || pinnedMs !== null}
+      <p class="read-title">
+        {DRILL_TEXT.readTitle}{#if current}
+          · {formatTime(current.stepStart, { zone })}{#if current.isThisCall} {DRILL_TEXT.readThisCall}{/if}{/if}
+      </p>
+      {#if current}
+        <ul class="read-rows">
+          {#if shown.api}
+            <li>{DRILL_TEXT.readApi(fmtAt(current.api))}</li>
+            <li>{DRILL_TEXT.readP95(fmtP95(current.api))}</li>
+          {/if}
+          {#if shown.iis}
+            <li>{DRILL_TEXT.readIis(fmtAt(current.iis))}</li>
+            <li>{refusedLine(current.iis)}</li>
+          {/if}
+          {#if shown.db}
+            <li>{dbLine(current.db)}</li>
+          {/if}
+        </ul>
+      {/if}
     {/if}
     <p class="read-hint" id="scall-hint-{patternId}">{hint}</p>
   </div>
 
-  <ul class="scall-legend" data-testid="scall-legend">
-    <li>{DRILL_TEXT.legendWidth}</li>
-    <li>{DRILL_TEXT.legendShape}</li>
-    <li>{DRILL_TEXT.legendHatched}</li>
-    <li>{DRILL_TEXT.legendCall}</li>
-  </ul>
+  <details class="scall-legend-more">
+    <summary>{DRILL_TEXT.legendHow}</summary>
+    <ul class="scall-legend" data-testid="scall-legend">
+      <li>{DRILL_TEXT.legendWidth}</li>
+      <li>{DRILL_TEXT.legendShape}</li>
+      <li>{DRILL_TEXT.legendHatched}</li>
+      <li>{DRILL_TEXT.legendCall}</li>
+    </ul>
+  </details>
 </div>
 
 <style>
   .scall-wrap {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 10px;
     min-width: 0;
   }
   .scall-defs {
@@ -432,7 +437,7 @@
     flex: none;
     gap: 10px;
     align-items: baseline;
-    padding: 3px 8px 0;
+    padding: 6px 10px 0;
     font-size: 12px;
     line-height: 16px;
     white-space: nowrap;
@@ -538,11 +543,17 @@
     font-size: 10px;
   }
   .scall-readout {
-    padding: 6px 8px;
+    padding: 8px 10px;
     border: 1px solid var(--line-soft);
     background: var(--surface-2);
     font-size: 12px;
     color: var(--text);
+  }
+  /* Idle: just the one-line hint, no box, so the pinned block stays short. */
+  .scall-readout.idle {
+    padding: 0;
+    border: 0;
+    background: none;
   }
   .scall-readout p,
   .scall-readout ul {
@@ -561,11 +572,18 @@
   .read-hint {
     color: var(--text-2);
   }
+  .scall-legend-more {
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .scall-legend-more summary {
+    cursor: pointer;
+  }
   .scall-legend {
     display: flex;
     flex-wrap: wrap;
     gap: 2px 16px;
-    margin: 0;
+    margin: 6px 0 0;
     padding: 0;
     list-style: none;
     font-size: 11px;

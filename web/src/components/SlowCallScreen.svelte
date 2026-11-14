@@ -381,7 +381,9 @@
             {#if bench.s.slowRowsFailed}
               <p class="note" role="status" data-testid="scall-slowrows-failed">{DRILL_TEXT.slowRowsFailed}</p>
             {/if}
-            <CallMinimap
+          </div>
+
+          <CallMinimap
               rows={bench.mapRows}
               overview={bench.over}
               win={bench.bounds}
@@ -392,10 +394,9 @@
               onPreview={(c) => controller?.preview(centreOn(bench.s.callStartMs, bench.s.window, c))}
               onCommit={(c) => controller?.commit(centreOn(bench.s.callStartMs, bench.s.window, c))}
             />
-            {#if bench.s.overviewFailed}
-              <p class="note" role="status" data-testid="scall-overview-failed">{DRILL_TEXT.overviewFailed}</p>
-            {/if}
-          </div>
+          {#if bench.s.overviewFailed}
+            <p class="note" role="status" data-testid="scall-overview-failed">{DRILL_TEXT.overviewFailed}</p>
+          {/if}
 
           <div class="scall-thiscall" data-testid="scall-thiscall">
             <DrillOverview record={bench.record} />
@@ -471,7 +472,7 @@
 </section>
 
 <style>
-  .slow-call { display: grid; gap: 16px; padding: 16px 20px; color: var(--text); }
+  .slow-call { display: grid; gap: 20px; padding: 16px 24px 24px; color: var(--text); }
   .scall-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
   .scall-crumb { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 13px; }
   .scall-head h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -.01em; outline: none; }
@@ -483,12 +484,13 @@
   .note { margin: 0; color: var(--text-2); font-size: 13px; }
   .problem { display: grid; justify-items: start; gap: 12px; padding: 12px; background: var(--surface-2); border: 1px solid var(--warn); border-radius: var(--radius); }
   .problem p { margin: 0; font-size: 13px; }
-  .scall-thiscall { padding: 16px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+  .scall-thiscall { padding: 18px 22px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 
   /* Layout W1: the main column (window bar, pinned timeline, facts, lists) and the inspector on the right. Nothing here scrolls on its own. */
-  [data-layout='w1'].scall-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
-  [data-layout='w1'] .scall-main { --scall-lane-h: clamp(72px, calc((100vh - 540px) / 3), 132px); display: grid; gap: 8px; min-width: 0; }
-  [data-layout='w1'] .scall-pin { position: sticky; top: 0; z-index: 2; display: grid; gap: 8px; padding-bottom: 8px; background: var(--bg); }
+  [data-layout='w1'].scall-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+  [data-layout='w1'] .scall-main { --scall-lane-h: clamp(72px, calc((100vh - 540px) / 3), 132px); display: grid; gap: 16px; min-width: 0; }
+  /* The timeline scrolls with the page (no sticky overlay), so facts and lists never slide behind the charts and get clipped. */
+  [data-layout='w1'] .scall-pin { display: grid; gap: 10px; }
   [data-layout='w1'] .scall-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
   [data-layout='w1'] .tab { padding: 10px 12px; color: var(--text-2); background: none; border: 0; border-bottom: 2px solid transparent; font-size: 13px; font-weight: 600; cursor: pointer; }
   [data-layout='w1'] .tab[aria-selected='true'] { color: var(--text); border-bottom-color: var(--accent); }

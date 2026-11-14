@@ -53,9 +53,10 @@ test('layout W1: all six children are imported and used once, in the work order 
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'DOM order');
 });
 
-test('the pinned timeline and the lane-fit rule are in the styles, and nothing scrolls on its own', () => {
+test('the timeline is in normal flow (no sticky overlay) and the lane-fit rule holds; nothing scrolls on its own', () => {
   const style = (source.match(/<style[\s\S]*?<\/style>/) || [''])[0];
-  assert.ok(style.includes('position: sticky'));
+  // Owner report: facts and lists scrolled behind a sticky chart block and were clipped. The timeline now scrolls with the page.
+  assert.ok(!/position:\s*sticky/.test(style));
   assert.ok(style.includes('--scall-lane-h'));
   assert.ok(!/overflow(-[xy])?\s*:\s*(auto|scroll)/.test(source));
   assert.ok(!/\bheight\s*:\s*\d/.test((style.match(/\.scall-(main|pin|grid)[^{]*\{[^}]*\}/g) || []).join(' ')));
