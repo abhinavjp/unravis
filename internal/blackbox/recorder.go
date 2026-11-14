@@ -2,8 +2,10 @@ package blackbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +29,34 @@ const (
 	// the steady clock between two ticks, it is recorded as an event.
 	clockJumpSeconds = 2.0
 )
+
+// Fixed event codes (C10): events never carry err.Error(), driver text, file
+// paths or instance names — the manifest is persisted and ships in snapshots.
+const (
+	codeCollectFailed      = "collect-failed"
+	codeWriteFailed        = "write-failed"
+	codeHousekeepingFailed = "housekeeping-failed"
+)
+
+// eventCode maps a failure to a fixed event code: a known cause gets a
+// specific code, anything else the generic collect code (the write and
+// housekeeping paths substitute their own generic code). It never returns
+// err.Error().
+func eventCode(err error) string {
+	switch {
+	case errors.Is(err, os.ErrPermission):
+		return "permission-denied"
+	case isDiskFull(err):
+		return "disk-full"
+	default:
+		return codeCollectFailed
+	}
+}
+
+// housekeepFn is the housekeeping pass, unchanged. Tests replace it to stand
+// for a pass that fails outright (Store.Housekeep reports blocked removals via
+// Skipped and does not itself return errors).
+var housekeepFn = (*Store).Housekeep
 
 // RecorderOptions wire the recorder to its parts. Tests replace Now, Mono and
 // Ticks; the service uses the defaults.
@@ -177,7 +207,7 @@ func (r *Recorder) Tick(now time.Time) {
 	s, err := r.o.Collector.Collect(now)
 	if err != nil {
 		if r.collectOK {
-			r.o.Store.Event(EventCollectFailed, err.Error())
+			r.o.Store.Event(EventCollectFailed, eventCode(err))
 		}
 		r.collectOK = false
 		return
@@ -208,7 +238,11 @@ func (r *Recorder) Tick(now time.Time) {
 		r.forceHK = true // a full disk is the usual reason: free some space now
 		r.mu.Unlock()
 		if first {
-			r.o.Store.Event(EventWriteFailed, err.Error())
+			code := eventCode(err)
+			if code == codeCollectFailed {
+				code = codeWriteFailed
+			}
+			r.o.Store.Event(EventWriteFailed, code)
 		}
 		return
 	}
@@ -264,9 +298,13 @@ func (r *Recorder) housekeep(now time.Time) {
 		// the age rule out for this pass; size and free space still apply.
 		lim.SkipAge, r.clockFwd = true, false
 	}
-	res, err := r.o.Store.Housekeep(lim, r.o.Disk, now)
+	res, err := housekeepFn(r.o.Store, lim, r.o.Disk, now)
 	if err != nil {
-		r.o.Store.Event(EventHousekeeping, "housekeeping failed: "+err.Error())
+		code := eventCode(err)
+		if code == codeCollectFailed {
+			code = codeHousekeepingFailed
+		}
+		r.o.Store.Event(EventHousekeeping, code)
 	}
 	if res.Incomplete() {
 		// A file held open by a reader cannot be removed; it is tried again

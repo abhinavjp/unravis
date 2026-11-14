@@ -3,10 +3,12 @@ package blackbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -532,4 +534,177 @@ func TestRecorderForwardClockJumpDoesNotAgeOutHistoryInThatPass(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(g.s.Dir(), FileNameFor(old))); err == nil {
 		t.Fatal("age rule never came back")
 	}
+}
+
+// --- BBX-5-03: events carry fixed codes, never error text ---
+
+// secretEventText stands for driver text with a path and an instance name. No
+// part of it may reach the manifest: the manifest ships in snapshots.
+const secretEventText = `secret driver text C:\instances\MSSQL$PROD1`
+
+// codeFailWriter fails writes with the injected error while fail is set. The
+// embedded file keeps Seek/Truncate/Sync/Close working, so rollback stays clean.
+type codeFailWriter struct {
+	*os.File
+	fail *bool
+	err  error
+}
+
+func (w codeFailWriter) Write(b []byte) (int, error) {
+	if *w.fail {
+		return 0, w.err
+	}
+	return w.File.Write(b)
+}
+
+// fixedEvents counts the events of one kind and fails unless every detail is
+// exactly the fixed code want.
+func fixedEvents(t *testing.T, m Manifest, kind, want string) int {
+	t.Helper()
+	n := 0
+	for _, e := range m.Events {
+		if e.Kind != kind {
+			continue
+		}
+		n++
+		if e.Detail != want {
+			t.Fatalf("%s event detail = %q, want fixed code %q", kind, e.Detail, want)
+		}
+	}
+	return n
+}
+
+func TestCollectFailureFixedCode(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"generic", errors.New(secretEventText), "collect-failed"},
+		{"permission", &os.PathError{Op: "read", Path: "secret", Err: os.ErrPermission}, "permission-denied"},
+		{"disk full", errors.New("There is not enough space on the disk."), "disk-full"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newRig(t, nil)
+			g.col.err = tc.err
+			g.r.Tick(g.clk.t)
+			g.tick(15 * time.Second)
+			g.tick(15 * time.Second)
+			// First failure only: one event, a fixed code, never the error text.
+			if n := fixedEvents(t, g.s.Manifest(), EventCollectFailed, tc.want); n != 1 {
+				t.Fatalf("collect-failed events = %d, want 1 (first-failure dedup)", n)
+			}
+			g.col.err = nil
+			g.tick(15 * time.Second)
+			if g.s.Manifest().SampleCount() != 1 {
+				t.Fatal("did not recover")
+			}
+		})
+	}
+}
+
+func TestWriteFailureFixedCode(t *testing.T) {
+	g := newRig(t, nil)
+	fail := true
+	g.s.wrapFile = func(f *os.File) recFile {
+		return codeFailWriter{File: f, fail: &fail, err: errors.New(secretEventText)}
+	}
+	g.r.Tick(g.clk.t)        // first write fails
+	g.tick(15 * time.Second) // still failing: no second event
+	if n := fixedEvents(t, g.s.Manifest(), EventWriteFailed, "write-failed"); n != 1 {
+		t.Fatalf("write-failed events = %d, want 1 (first-failure dedup)", n)
+	}
+	if g.r.Status(g.clk.t).WriteOK {
+		t.Fatal("write failure not reported")
+	}
+	fail = false // space comes back
+	g.tick(15 * time.Second)
+	if !g.r.Status(g.clk.t).WriteOK || g.s.Manifest().SampleCount() != 1 {
+		t.Fatalf("no recovery: %d samples", g.s.Manifest().SampleCount())
+	}
+}
+
+func TestHousekeepingFailureFixedCode(t *testing.T) {
+	g := newRig(t, nil)
+	orig := housekeepFn
+	housekeepFn = func(s *Store, l Limits, d DiskSpace, now time.Time) (Housekeeping, error) {
+		return Housekeeping{}, errors.New(secretEventText)
+	}
+	t.Cleanup(func() { housekeepFn = orig })
+	g.r.Tick(g.clk.t)
+	if n := fixedEvents(t, g.s.Manifest(), EventHousekeeping, "housekeeping-failed"); n != 1 {
+		t.Fatalf("housekeeping events = %d, want 1", n)
+	}
+	// A failed pass must not stop the sampling.
+	if g.s.Manifest().SampleCount() != 1 {
+		t.Fatal("no sample after a failed housekeeping pass")
+	}
+}
+
+func TestEventCodeNeverRaw(t *testing.T) {
+	fixed := map[string]bool{
+		"collect-failed": true, "write-failed": true, "housekeeping-failed": true,
+		"disk-full": true, "permission-denied": true,
+	}
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{errors.New("secret path X"), "collect-failed"},
+		{fmt.Errorf("wrapped: %w", errors.New(secretEventText)), "collect-failed"},
+		{os.ErrPermission, "permission-denied"},
+		{syscall.ENOSPC, "disk-full"},
+		{errors.New("There is not enough space on the disk."), "disk-full"},
+	}
+	for _, tc := range cases {
+		got := eventCode(tc.err)
+		if !fixed[got] {
+			t.Fatalf("eventCode(%v) = %q, not a fixed code", tc.err, got)
+		}
+		if got != tc.want {
+			t.Fatalf("eventCode(%v) = %q, want %q", tc.err, got, tc.want)
+		}
+		if got == tc.err.Error() {
+			t.Fatalf("eventCode returned the raw error text %q", got)
+		}
+	}
+}
+
+func TestNoErrorTextInManifest(t *testing.T) {
+	g := newRig(t, nil)
+	// A collect failure.
+	g.col.err = errors.New(secretEventText)
+	g.r.Tick(g.clk.t)
+	g.col.err = nil
+	// A write failure through the wrapFile seam.
+	fail := true
+	g.s.wrapFile = func(f *os.File) recFile {
+		return codeFailWriter{File: f, fail: &fail, err: errors.New(secretEventText)}
+	}
+	g.tick(15 * time.Second)
+	fail = false
+	// A housekeeping failure.
+	orig := housekeepFn
+	housekeepFn = func(s *Store, l Limits, d DiskSpace, now time.Time) (Housekeeping, error) {
+		return Housekeeping{}, errors.New(secretEventText)
+	}
+	t.Cleanup(func() { housekeepFn = orig })
+	g.tick(60 * time.Second)
+
+	// The serialized manifest is what ships in snapshots: no substring of the
+	// injected driver text, path or instance name may be in it.
+	data, err := os.ReadFile(filepath.Join(g.s.Dir(), ManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, frag := range []string{secretEventText, "secret driver text", `C:\instances`, "MSSQL$PROD1"} {
+		if strings.Contains(string(data), frag) {
+			t.Fatalf("manifest leaks error text %q:\n%s", frag, data)
+		}
+	}
+	m := g.s.Manifest()
+	fixedEvents(t, m, EventCollectFailed, "collect-failed")
+	fixedEvents(t, m, EventWriteFailed, "write-failed")
+	fixedEvents(t, m, EventHousekeeping, "housekeeping-failed")
 }
