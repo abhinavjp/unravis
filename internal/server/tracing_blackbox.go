@@ -26,10 +26,30 @@ const (
 	// tracingBlackboxLabel is the fixed sentence; the date is the recording's
 	// first sample. The sampling cadence is the Blackbox's fixed 15 s.
 	tracingBlackboxLabel = "Blackbox sampling every 15 s since "
+	// bbLaneGapWarning mirrors the host lane's incomplete-read warning (see
+	// applyBlackboxLane), without the Blackbox name or any error text.
+	bbLaneGapWarning = "Part of the Blackbox could not be read to the end. What was read is used, and the rest counts as a gap."
+)
+
+// The counters come from an untrusted recording, so every input of the block
+// count is bounded before it can reach an int64. A real SQL Server never
+// approaches these; a reading beyond them is corrupt, not activity, and is
+// skipped rather than turned into a negative or wrapped count.
+const (
+	// bbSQLMaxRate bounds one instance's batch requests/sec.
+	bbSQLMaxRate = 1e12
+	// bbSQLMaxInterval bounds the manifest's sampling interval in seconds; an
+	// interval outside 1..3600 falls back to the fixed 15 s cadence.
+	bbSQLMaxInterval = 3600
+	// bbSQLMaxCount bounds a sample's request count and the lane's running sums,
+	// so rate x interval can never overflow int64 (a float beyond it is skipped,
+	// never converted).
+	bbSQLMaxCount = 1e15
 )
 
 // bbSQLRate sums the batch requests/sec of the instances that recorded it. ok is
 // false when no instance carries the reading: a missing reading is never a 0.
+// An absurd or non-finite reading is skipped the same way, never summed.
 func bbSQLRate(s blackbox.Sample) (float64, bool) {
 	if s.SQLHost == nil {
 		return 0, false
@@ -37,7 +57,7 @@ func bbSQLRate(s blackbox.Sample) (float64, bool) {
 	rate, any := 0.0, false
 	for _, inst := range s.SQLHost.Instances {
 		v := inst.BatchRequestsPerSec
-		if v == nil || *v < 0 || math.IsNaN(*v) || math.IsInf(*v, 0) {
+		if v == nil || *v < 0 || *v > bbSQLMaxRate || math.IsNaN(*v) || math.IsInf(*v, 0) {
 			continue
 		}
 		rate += *v
@@ -86,23 +106,25 @@ func (h *handler) bbLaneEntry(ctx context.Context, c casestore.Case) (bbsaved.En
 }
 
 // bbLaneSamples reads the window's samples of one saved Blackbox and keeps only
-// those carrying a batch-request reading. first is the recording's first sample
-// (the manifest's, else the window's oldest). ok is false when nothing could be
-// read or no sample carries the reading: the lane then falls through, quietly.
-func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis tracingAxis) (kept []blackbox.Sample, interval int, first time.Time, ok bool) {
+// those carrying a batch-request reading. first and last are the recording's
+// coverage (the manifest's first and last sample, else the window's oldest and
+// newest kept sample); rep says what the read could not get. ok is false when
+// nothing could be read or no sample carries the reading: the lane then falls
+// through, quietly.
+func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis tracingAxis) (kept []blackbox.Sample, interval int, first, last time.Time, rep blackbox.ReadReport, ok bool) {
 	ctx, cancel := context.WithTimeout(ctx, bbReadTimeout)
 	defer cancel()
 	src, err := h.bb.source(e)
 	if err != nil {
-		return nil, 0, time.Time{}, false
+		return nil, 0, time.Time{}, time.Time{}, rep, false
 	}
 	rd, err := blackbox.ProbeSource(ctx, src, h.bb.now)
 	if err != nil {
-		return nil, 0, time.Time{}, false
+		return nil, 0, time.Time{}, time.Time{}, rep, false
 	}
-	samples, _, err := blackbox.ReadSamples(ctx, src, rd.Manifest, axis.Start, axis.End)
+	samples, rep, err := blackbox.ReadSamples(ctx, src, rd.Manifest, axis.Start, axis.End)
 	if err != nil {
-		return nil, 0, time.Time{}, false
+		return nil, 0, time.Time{}, time.Time{}, rep, false
 	}
 	for _, s := range samples {
 		if _, has := bbSQLRate(s); has {
@@ -110,17 +132,21 @@ func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis traci
 		}
 	}
 	if len(kept) == 0 {
-		return nil, 0, time.Time{}, false
+		return nil, 0, time.Time{}, time.Time{}, rep, false
 	}
 	interval = rd.Manifest.IntervalSeconds
-	if interval <= 0 {
+	if interval < 1 || interval > bbSQLMaxInterval {
 		interval = blackbox.DefaultIntervalSecond
 	}
 	first = kept[0].T
 	if rd.Manifest.FirstSample != nil && !rd.Manifest.FirstSample.IsZero() {
 		first = rd.Manifest.FirstSample.UTC()
 	}
-	return kept, interval, first, true
+	last = kept[len(kept)-1].T
+	if rd.Manifest.LastSample != nil && !rd.Manifest.LastSample.IsZero() {
+		last = rd.Manifest.LastSample.UTC()
+	}
+	return kept, interval, first, last, rep, true
 }
 
 // blackboxSQLLane fills the SQL lane from the case's Blackbox sampling and
@@ -128,7 +154,10 @@ func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis traci
 // source chain runs unchanged. Each block counts the batch requests of its
 // samples: the recorded per-second rate times the sampling interval, summed
 // over the instances that recorded it. A read is bounded by bbReadTimeout and
-// the reader's own file cap; nothing is kept between requests.
+// the reader's own file cap; nothing is kept between requests. Time the
+// recording does not cover is a gap, never a zero: a read that lost files or a
+// window beyond the recording's first/last sample leaves the lane (and the
+// buckets it cannot speak for) incomplete, the way the qs-file lane does.
 func (h *handler) blackboxSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane tracingLane) (tracingLane, bool) {
 	if axis.WidthMs <= 0 {
 		return lane, false
@@ -137,7 +166,7 @@ func (h *handler) blackboxSQLLane(ctx context.Context, c casestore.Case, axis tr
 	if !ok {
 		return lane, false
 	}
-	kept, interval, first, ok := h.bbLaneSamples(ctx, e, axis)
+	kept, interval, first, last, rep, ok := h.bbLaneSamples(ctx, e, axis)
 	if !ok {
 		return lane, false
 	}
@@ -145,13 +174,22 @@ func (h *handler) blackboxSQLLane(ctx context.Context, c casestore.Case, axis tr
 	var total int64
 	for _, s := range kept {
 		rate, _ := bbSQLRate(s)
-		n := int64(math.Round(rate * float64(interval)))
+		// The count stays a float64 until it is proven to fit: an untrusted
+		// rate times interval must never reach an out-of-range int64 conversion.
+		n := math.Round(rate * float64(interval))
+		if n < 0 || n > bbSQLMaxCount {
+			continue
+		}
 		k := int((s.T.UnixMilli() - axis.AxisStart.UnixMilli()) / axis.WidthMs)
 		if k < 0 || k >= axis.Buckets {
 			continue
 		}
-		perCell[k] += n
-		total += n
+		ni := int64(n)
+		if perCell[k] > bbSQLMaxCount-ni || total > bbSQLMaxCount-ni {
+			continue
+		}
+		perCell[k] += ni
+		total += ni
 	}
 	since := first.UTC()
 	lane.Label = "SQL Server"
@@ -163,6 +201,23 @@ func (h *handler) blackboxSQLLane(ctx context.Context, c casestore.Case, axis tr
 	lane.Scanned = total
 	lane.Sources = []tracingRef{{SourceID: tracingReasonBlackbox, Label: tracingBlackboxLabel + since.Format("2 Jan 2006")}}
 	lane.Buckets = tracingBuckets(axis, perCell, nil)
+	// A bucket the recording's coverage does not span is a gap, not zero
+	// activity: it keeps whatever was read but is never called complete.
+	for i := range lane.Buckets {
+		if lane.Buckets[i].Start.Before(first) || lane.Buckets[i].End.After(last) {
+			lane.Buckets[i].Complete = false
+			lane.Complete = false
+		}
+	}
+	// A read that lost files cannot speak for any bucket: the samples read
+	// before the drop are kept, the rest counts as a gap (the host lane's rule).
+	if rep.Incomplete() {
+		lane.Complete = false
+		lane.Reason = bbLaneGapWarning
+		for i := range lane.Buckets {
+			lane.Buckets[i].Complete = false
+		}
+	}
 	lane.Events = []tracingEvent{} // numeric activity only: no query text
 	lane.Hidden = 0
 	lane.BlockSeconds = 0
