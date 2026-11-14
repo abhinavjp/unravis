@@ -14,9 +14,6 @@ import (
 	"regexp"
 )
 
-// Row is one result row keyed by SQL column name (the Queryer row type).
-type Row = map[string]any
-
 // C6 per-kind row caps. The SQL already uses TOP n where stated; decodeRows
 // stops at n+1 and marks truncated. Never dbhealth's 5000 cap.
 const (
