@@ -66,6 +66,10 @@ Legend: `[ ]` open, `[x]` done, `[~]` dropped.
 - [ ] **BL-042** `RunSQLLane` and `RunMongoLane` do not call `Validate` on their request, unlike the other lane runners. Add the call and a test. (source: PR #2 review, 2026-11-15)
 - [ ] **BL-043** UI warning when the chosen window is longer than 90 days (it may be slow or cut short). Plain-words copy; update the copy test counts. (source: PR #2 review, 2026-11-15)
 - [ ] **BL-044** BL-029 follow-on: filter the api-seen `SQLBusy` read by the leased source ids too, so it never sums a source that is not selected. (source: PR #2 review, 2026-11-15)
+- [ ] **BL-045** DATA-12: add a partial index for 4xx IIS rows (like `ev_err_ts`) in `schema.go` (`timelineIndexSQL`, `timelineIndexNames`) and update the index-name list asserted in `timeline_index_test.go`. It changes index builds on existing cases, so it needs the owner's go. (source: PR #2 review DATA-12, 2026-11-15; needs owner)
+- [ ] **BL-046** DATA-15: other callers of `laneHeld` (the lane list and `applyLaneRuns` in `lanes.go`) still decode every saved health run on each request. Reuse the decode cache from the Timeline's held SQL lane. (source: PR #2 review DATA-15 follow-up, 2026-11-15)
+- [ ] **BL-047** Cleanup after FIX-34: the unused `drillOpen` stub in `web/tests/slowcall.esc.test.cjs` and the unused exports in `drillCopy.ts`; also the stale comment in `lane_sql_test.go` ("A window has no length limit"; the limit is 90 days). (source: PR #2 review, 2026-11-15)
+- [ ] **BL-048** DATA-13: the web does not draw `importedPartial` when no imported range is known, so a lane with range-less or never-imported files is flagged in the data only. Show a plain-words note on the lane. (source: PR #2 review FIX-25 follow-up, 2026-11-15)
 
 ## Blackbox expansion (in the backlog; design and reviews done, nothing built)
 
