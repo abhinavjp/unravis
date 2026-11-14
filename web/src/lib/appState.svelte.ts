@@ -1699,7 +1699,8 @@ export function onWindowKey(event: KeyboardEvent) {
   if (sidePanel) { void closeSidePanel(); return; }
   if (connectionsOpen) { void closeConnections(); return; }
   const target = event.target;
-  if (target instanceof HTMLElement && (target.tagName === 'SELECT' || target.closest('.popover'))) return;
+  // Esc inside a text field belongs to the field (the Custom window boxes, any INPUT/TEXTAREA/contenteditable): it stays with the field and never closes the screen. SELECT and .popover keep their own exemption.
+  if (target instanceof HTMLElement && (target.tagName === 'SELECT' || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || target.closest('.popover'))) return;
   // An open menu or the filters panel closes first; only then does Esc step one level up.
   const open = Array.from(document.querySelectorAll<HTMLDetailsElement>('details.menu[open], details.more-filters[open]')).find((d) => !d.closest('[hidden]')) ?? null;
   const inside = open != null && target instanceof HTMLElement && open.contains(target);
