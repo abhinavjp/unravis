@@ -55,5 +55,9 @@ Define the fixed output structs for every SQL sample, decode rows into them reje
 ## Live-check needed?
 YES — owner confirms on a real SQL Server that decoded samples contain only allowed fields. Fake tests verify shape only.
 
+## Review-pinned requirements (Ultimate SQL gate, wave 7 — MUST apply)
+- Empty wait type: `bb:requests` emits `''` for running (non-waiting) requests (ISNULL(wait_type,'')). The C9 regex `^[A-Z0-9_]{1,60}$` rejects `''`, which would reject nearly every requests row on a healthy server and cascade into C7 auto-off. Handle this WITHOUT loosening the general regex: in the requests decode path, map an empty wait type to a fixed sentinel that passes the regex (e.g. `RUNNING`) before validation. Keep the strict regex for all other wait types. Add a test: a `''` wait type row decodes to the sentinel and is NOT rejected.
+- FileStats size field: `bb:filestats` selects `size_on_disk_bytes` (BBX-5-05). Add `SizeOnDiskBytes uint64 `json:"sizeOnDiskBytes,omitempty"`` to the FileStats struct so decodeRows does not reject the column (C9 allows KB/bytes; numeric, harmless). Add it to the filestats test rows.
+
 ## Report back
 Files changed, each checklist item ticked or failed with output, anything unconfirmed. Full report to `.forge/blackbox-expansion/reports/BBX-5-09.md`.

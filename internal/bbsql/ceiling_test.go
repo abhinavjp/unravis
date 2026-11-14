@@ -72,7 +72,7 @@ func assertTooManyRights(t *testing.T, err error) {
 // STATE}, no privileged role -> ok, with only the two allowlisted control queries.
 func TestCeilingAllowsMinimal(t *testing.T) {
 	f := minimalCeiling()
-	if err := CheckCeiling(f); err != nil {
+	if err := CheckCeiling(context.Background(), f); err != nil {
 		t.Fatalf("minimal login refused: %v", err)
 	}
 	if len(f.sent) != 2 {
@@ -85,7 +85,7 @@ func TestCeilingAllowsMinimal(t *testing.T) {
 	}
 	empty := minimalCeiling()
 	empty.perms = nil // the empty set is a subset of the ceiling too
-	if err := CheckCeiling(empty); err != nil {
+	if err := CheckCeiling(context.Background(), empty); err != nil {
 		t.Fatalf("empty permission set refused: %v", err)
 	}
 }
@@ -100,13 +100,13 @@ func roleWith(name string, flag int64) Row {
 func TestCeilingRefusesSysadmin(t *testing.T) {
 	f := minimalCeiling()
 	f.role = []Row{roleWith("sysadmin", 1)}
-	assertTooManyRights(t, CheckCeiling(f))
+	assertTooManyRights(t, CheckCeiling(context.Background(), f))
 }
 
 func TestCeilingRefusesSecurityadmin(t *testing.T) {
 	f := minimalCeiling()
 	f.role = []Row{roleWith("securityadmin", 1)}
-	assertTooManyRights(t, CheckCeiling(f))
+	assertTooManyRights(t, CheckCeiling(context.Background(), f))
 }
 
 // TestCeilingRefusesEveryPrivilegedRole: each fixed server role that carries
@@ -121,7 +121,7 @@ func TestCeilingRefusesEveryPrivilegedRole(t *testing.T) {
 			f := minimalCeiling()
 			f.perms = nil // nothing outside the ceiling was granted directly
 			f.role = []Row{roleWith(role, 1)}
-			assertTooManyRights(t, CheckCeiling(f))
+			assertTooManyRights(t, CheckCeiling(context.Background(), f))
 			// The refusal must come from the role flag alone: no permission row
 			// was returned, so only the membership check can have refused.
 			if len(f.sent) != 1 {
@@ -132,7 +132,7 @@ func TestCeilingRefusesEveryPrivilegedRole(t *testing.T) {
 			other := minimalCeiling()
 			other.perms = nil
 			other.role = []Row{roleWith(role, 2)}
-			assertTooManyRights(t, CheckCeiling(other))
+			assertTooManyRights(t, CheckCeiling(context.Background(), other))
 		})
 	}
 }
@@ -147,7 +147,7 @@ func TestCeilingAllowsOnlyAllowedPerms(t *testing.T) {
 		{"permission_name": "VIEW SERVER STATE"},
 		{"permission_name": "VIEW SERVER PERFORMANCE STATE"},
 	}
-	if err := CheckCeiling(f); err != nil {
+	if err := CheckCeiling(context.Background(), f); err != nil {
 		t.Fatalf("the four allowed permissions with no roles were refused: %v", err)
 	}
 	if len(f.sent) != 2 {
@@ -214,17 +214,17 @@ func TestCeilingRefusesControlServer(t *testing.T) {
 	f := minimalCeiling()
 	// bb:ceiling_perms returns only rights outside the ceiling.
 	f.perms = []Row{{"permission_name": "CONTROL SERVER"}}
-	assertTooManyRights(t, CheckCeiling(f))
+	assertTooManyRights(t, CheckCeiling(context.Background(), f))
 }
 
 func TestCeilingRefusesExtraPermission(t *testing.T) {
 	f := minimalCeiling()
 	f.perms = []Row{{"permission_name": "ALTER ANY DATABASE"}}
-	assertTooManyRights(t, CheckCeiling(f))
+	assertTooManyRights(t, CheckCeiling(context.Background(), f))
 	// An extra right is refused even when an allowed right rides along.
 	mixed := minimalCeiling()
 	mixed.perms = []Row{{"permission_name": "CONTROL SERVER"}, {"permission_name": "CONNECT SQL"}}
-	assertTooManyRights(t, CheckCeiling(mixed))
+	assertTooManyRights(t, CheckCeiling(context.Background(), mixed))
 }
 
 // ceilingFailCase is one unreadable-result mutation for TestCeilingFailsClosed.
@@ -267,7 +267,7 @@ func TestCeilingFailsClosed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := minimalCeiling()
 			tc.mut(f)
-			err := CheckCeiling(f)
+			err := CheckCeiling(context.Background(), f)
 			if err == nil {
 				t.Fatal("unreadable ceiling result passed")
 			}

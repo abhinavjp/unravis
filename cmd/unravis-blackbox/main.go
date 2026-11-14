@@ -73,8 +73,8 @@ type deps struct {
 	snapOpt  blackbox.SnapshotOptions
 	driveOK  func(root string) bool
 	sqlMgr   *blackbox.SQLManager
-	// sqlRun is the SQL runner of the sql-service mode. Until BBX-5-10 lands it
-	// is runSQLStub; the runner packet replaces the stub, not the mode.
+	// sqlRun is the SQL runner of the sql-service mode (BBX-5-10). Tests inject
+	// a fake; realDeps binds the real runner in sqlrunner.go.
 	sqlRun func(ctx context.Context, o sqlRunOptions) error
 	// elev is the Windows elevate helper. No command here may use it (C14):
 	// this program IS the helper, and the SQL grant is run by the owner in
@@ -91,7 +91,7 @@ func realDeps() deps {
 		// create the SQL service as LocalSystem. RevokeScript stays empty: the
 		// remove-sql command prints the script through the answer writer.
 		sqlMgr: &blackbox.SQLManager{Svc: blackbox.WinService{}, Env: blackbox.OSEnv{}},
-		sqlRun: runSQLStub,
+		sqlRun: runSQLServiceLoop,
 		disk:   disk,
 		exeDir: func() string {
 			p, err := blackbox.OSEnv{}.ExePath()
@@ -421,17 +421,6 @@ type sqlRunOptions struct {
 	Config blackbox.Config
 	Dir    string
 	Log    func(string, ...any)
-}
-
-// runSQLStub stands in for the SQL runner (BBX-5-10, internal/bbsql) until it
-// lands: it opens no connection, runs no SQL, starts no server, and waits for
-// the stop signal. The runner packet replaces this stub.
-func runSQLStub(ctx context.Context, o sqlRunOptions) error {
-	if o.Log != nil {
-		o.Log("the SQL runner is not part of this build yet; waiting for stop")
-	}
-	<-ctx.Done()
-	return nil
 }
 
 // runSQLService loads the settings and runs the SQL runner until ctx is done.

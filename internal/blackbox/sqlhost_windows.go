@@ -9,6 +9,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// Reuses the lazy pdh.dll declared in extras_windows.go (same package); only
+// the object-enumeration proc is new (same pattern as pdh_windows.go).
+var procPdhEnumObjects = pdh.NewProc("PdhEnumObjectsW")
+
 // sqlEnumPDHObjectsPlatform enumerates the local machine's PDH object names via
 // PdhEnumObjectsW (lazy pdh.dll). It is the Windows default of the discovery
 // seam in sqlhost.go; off Windows the twin in sqlhost_other.go reports no PDH

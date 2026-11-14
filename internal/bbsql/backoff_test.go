@@ -198,6 +198,37 @@ func TestSlowDemotion(t *testing.T) {
 	}
 }
 
+func TestSlowDemotionSurvivesSuccess(t *testing.T) {
+	s := NewState()
+	for i := 0; i < 3; i++ {
+		s.OnSlow(8*time.Second, 15*time.Second)
+	}
+	if s.Interval != DemotedInterval {
+		t.Fatalf("setup: interval = %v, want %v", s.Interval, DemotedInterval)
+	}
+	// Still slow: a success must not undo the demotion on its own, or the
+	// service would sample a struggling instance every 15 s again.
+	for i := 0; i < 3; i++ {
+		s.OnSuccess()
+		if s.Interval != DemotedInterval {
+			t.Fatalf("success %d while slow: interval = %v, want %v", i, s.Interval, DemotedInterval)
+		}
+		s.OnSlow(8*time.Second, 15*time.Second)
+	}
+	// The instance calmed: one fast sample clears the strikes, and the cadence
+	// then steps back down to base over the following successes.
+	s.OnSlow(time.Second, 15*time.Second)
+	if s.SlowStrikes != 0 {
+		t.Fatalf("fast sample did not clear strikes: %d", s.SlowStrikes)
+	}
+	for _, want := range []time.Duration{30 * time.Second, BaseInterval} {
+		s.OnSuccess()
+		if s.Interval != want {
+			t.Fatalf("recovery: interval = %v, want %v", s.Interval, want)
+		}
+	}
+}
+
 func TestSuccessRecoversBackoff(t *testing.T) {
 	s := NewState()
 	for i := 0; i < 3; i++ {

@@ -3,6 +3,7 @@ package bbsql
 import (
 	"context"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -11,7 +12,7 @@ import (
 // control queries (BBX-5-07). The lint below runs over every entry in
 // Statements (so a later fixed addition, e.g. the bb:hadr guard from
 // BBX-5-14, is linted too) while this list pins the nine.
-var requiredIDs = []string{"bb:requests", "bb:waits", "bb:schedulers", "bb:semaphores", "bb:tempdb", "bb:filestats", "bb:ag", "bb:ceiling_role", "bb:ceiling_perms"}
+var requiredIDs = []string{"bb:requests", "bb:waits", "bb:schedulers", "bb:semaphores", "bb:tempdb", "bb:filestats", "bb:ag", "bb:hadr", "bb:ceiling_role", "bb:ceiling_perms"}
 
 // bannedColumns are exfiltration tokens: a case-insensitive substring match
 // anywhere in the text (literals included) is forbidden.
@@ -249,6 +250,52 @@ func TestNoBannedTokenInOutput(t *testing.T) {
 					t.Errorf("%q: output column %q contains banned %q", id, c, b)
 				}
 			}
+		}
+	}
+}
+
+// topRe finds the C6 row cap written into the SQL text itself.
+var topRe = regexp.MustCompile(`(?i)\bTOP ([0-9]+)\b`)
+
+// TestEveryStatementHasItsOwnRowCap proves L9 of the wave-10 review: the C6 cap
+// a reader stops at comes from statementCap, and the SQL carries its own TOP n,
+// so the two must agree for every allowlisted statement. An entry missing from
+// statementCap silently falls to the default of 1 - which for a row-returning
+// sampler means the sample is truncated to one row and nobody notices - so this
+// test fails on that, and fails on a TOP n that disagrees with the Go cap.
+func TestEveryStatementHasItsOwnRowCap(t *testing.T) {
+	if len(Statements) != len(requiredIDs) {
+		t.Fatalf("allowlist has %d entries but requiredIDs pins %d", len(Statements), len(requiredIDs))
+	}
+	for id, text := range Statements {
+		m := topRe.FindStringSubmatch(text)
+		rowCap := statementCap(text)
+		if m == nil {
+			// No TOP is only honest when the statement answers with exactly one
+			// row by construction: a SUM with no GROUP BY (so the aggregate is
+			// the whole reply) or a scalar select that reads no table at all.
+			// Anything else with a FROM and no TOP could return any number of
+			// rows, and the reader would silently keep one.
+			if strings.Contains(text, " FROM ") && !strings.Contains(text, "SUM(") {
+				t.Errorf("%q: no TOP n, so its row count is not bounded in SQL", id)
+			}
+			if strings.Contains(text, "GROUP BY") {
+				t.Errorf("%q: grouped select without TOP n can return any number of rows", id)
+			}
+			if rowCap != CapSingleRow {
+				t.Errorf("%q: cap-less statement gets %d, want %d", id, rowCap, CapSingleRow)
+			}
+			continue
+		}
+		want, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatalf("%q: unreadable TOP %q", id, m[1])
+		}
+		if rowCap != want {
+			t.Errorf("%q: TOP %d in SQL but statementCap is %d - the reader and the query disagree", id, want, rowCap)
+		}
+		if strings.Count(text, "TOP ") != 1 {
+			t.Errorf("%q: more than one TOP n, so the reader cap cannot be proven", id)
 		}
 	}
 }

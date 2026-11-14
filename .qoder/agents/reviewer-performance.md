@@ -1,7 +1,7 @@
 ---
 name: reviewer-performance
 description: Batch reviewer (Performance tier) for finished waves of non-security Blackbox packets. Reports only real problems, ranked, with file and line. Read-only — never changes code.
-model: performance
+model: Qwen4-max-preview
 tools: Read, Bash, Grep, Glob
 ---
 

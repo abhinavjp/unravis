@@ -52,8 +52,10 @@ var ceilingRoles = []string{
 // membership in ANY of ceilingRoles, or any server permission outside
 // ceilingAllowed. Only the two fixed control statements are sent, through the
 // allowlisted Query path; any failure or unreadable result fails closed.
-func CheckCeiling(q Queryer) error {
-	ctx := context.Background()
+// ctx is the caller's tick budget: the C4 whole-tick limit has to cover the
+// control queries too, otherwise a tick can spend 5 s on samples plus 6 s on
+// rights checks and the "one tick, one budget" claim is false.
+func CheckCeiling(ctx context.Context, q Queryer) error {
 	roleText, ok := Statement("bb:ceiling_role")
 	if !ok {
 		return errCeilingUnreadable

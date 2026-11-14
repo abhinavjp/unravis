@@ -58,5 +58,8 @@ Add the same-exe SQL run mode and install/remove commands, and PRINT the owner-r
 ## Live-check needed?
 YES — owner runs install-sql on a real server, runs the printed grant in SSMS, starts the service, and confirms it connects with only the granted rights. Fake tests verify the app never grants.
 
+## Review-pinned requirement (Ultimate SQL gate, wave 7 — MUST apply)
+Wire `SQLManager` to `blackbox.WinService{}` DIRECTLY. Do NOT route through `internal/setup/plan.go:549-551`'s `bbSvc` adapter — it copies only Name/DisplayName/Description/ExePath/Args and DROPS `Account`/`SIDUnrestricted`, which would create the SQL service as LocalSystem (breaking the own-virtual-account rule and making the SID-granted DACL pointless). Add a test asserting the created SQL service spec carries `Account = NT SERVICE\UnravisBlackboxSql` and `SIDUnrestricted` (use fakeSvc to record the spec).
+
 ## Report back
 Files changed, each checklist item ticked or failed with output, anything unconfirmed. Full report to `.forge/blackbox-expansion/reports/BBX-5-02.md`.

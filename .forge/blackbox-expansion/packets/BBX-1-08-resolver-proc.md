@@ -53,3 +53,6 @@ YES — owner confirms on a real server: a .NET Framework w3wp shows clr.dll (ru
 
 ## Report back
 Files changed, each checklist item ticked or failed with output, anything unconfirmed. Full report to `.forge/blackbox-expansion/reports/BBX-1-08.md`.
+
+## Fix round 1 (batch review finding — MUST apply)
+LOW — identity degenerates to PID-alone when creation time is unreadable. Unopenable processes are keyed (pid, 0); the cache then reuses that key, so a recycled PID that is also unopenable inherits a stale runtime (e.g. Framework counters aimed at a .NET 10 target). FIX: do NOT cache runtime for keys with Start==0 — re-read modules for Start==0 keys on every Inventory (treat them as always-changed). Keep caching for keys with a real Start. Add a test `TestResolverNoCacheWhenStartZero`: an unopenable process (Start 0) re-loads modules each Inventory even when the PID is unchanged, so a runtime change is picked up. Re-run the full checklist and append the fix output to the report. Do NOT touch other files; do NOT git commit.

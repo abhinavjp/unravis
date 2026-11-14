@@ -1,7 +1,7 @@
 ---
 name: reviewer-ultimate
 description: High-risk batch reviewer (Ultimate tier) for anything touching SQL, credentials, service accounts, ACLs, the HTTP endpoint, process access, or the footprint budget. Also the final whole-PR review. Reports ranked, evidence-backed findings. Read-only.
-model: ultimate
+model: Qwen4-max-preview
 tools: Read, Bash, Grep, Glob
 ---
 

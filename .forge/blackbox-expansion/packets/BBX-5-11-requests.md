@@ -43,5 +43,8 @@ Every 15 s, sample `dm_exec_requests`/sessions into running-at-once by wait type
 ## Live-check needed?
 YES — owner runs bb:requests on a real SQL Server under load and confirms wait-type counts match `dm_exec_requests` totals, with no forbidden columns. Fake tests verify decode only.
 
+## Review-pinned requirement (Ultimate SQL gate, wave 7 — MUST apply)
+`bb:requests` emits `''` wait type for running (non-waiting) requests. Map the empty wait type to the fixed sentinel `RUNNING` (consistent with BBX-5-09) so it passes the C9 regex and is not rejected; do NOT loosen the regex. Add a test that a `''` wait-type row decodes to `RUNNING`.
+
 ## Report back
 Files changed, each checklist item ticked or failed with output, anything unconfirmed. Full report to `.forge/blackbox-expansion/reports/BBX-5-11.md`.

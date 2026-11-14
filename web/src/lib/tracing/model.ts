@@ -98,6 +98,8 @@ export interface TracingLane {
   blockSeconds?: number;
   /** The server's raw `reasonCode` text when it sent a non-empty one (`incompleteReason` and `emptyBecause` are its narrowed forms). */
   reasonCode?: string;
+  /** RFC3339: when this lane's own source began recording — the Blackbox's first sample. Absent when the server sent none. */
+  since?: string;
   /** The events the server sent on this lane; absent when none were sent or none were readable. */
   events?: TracingLaneEvent[];
 }
@@ -282,6 +284,8 @@ function parseLane(value: unknown): TracingLane | null {
   }
   if (isNumber(value.blockSeconds) && value.blockSeconds > 0) lane.blockSeconds = value.blockSeconds;
   if (isText(value.reasonCode) && value.reasonCode !== '') lane.reasonCode = value.reasonCode;
+  // When the lane comes from the Blackbox recorder the server also says when its recording began; a date it cannot be read as a date is dropped.
+  if (isText(value.since) && isParseableDate(value.since)) lane.since = value.since;
   if (Array.isArray(value.events)) {
     const events = value.events.map(parseLaneEvent).filter((e): e is TracingLaneEvent => e !== null);
     if (events.length > 0) lane.events = events;

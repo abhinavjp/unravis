@@ -75,13 +75,13 @@ func CheckLocalTarget(server string) error {
 	return &Error{CodeRemoteTarget, "Only the local SQL Server can be monitored."}
 }
 
-// ConnConfig: the local target plus the per-query budget (3 s / 5 s) the
-// runner passes to Query. The optional trust anchors let the OWNER supply the
-// local instance's certificate so encrypt=true can verify it; with no anchor
-// the default self-signed cert still fails closed (connect-failed).
+// ConnConfig: the local target plus the owner's trust anchors, which let
+// encrypt=true verify the local instance's certificate; with no anchor the
+// default self-signed cert still fails closed (connect-failed). The per-query
+// C4 budgets (3 s / 5 s) are NOT configurable: the runner derives them from
+// each sampler's cadence, so a config file cannot widen a timeout.
 type ConnConfig struct {
-	Server       string
-	QueryTimeout time.Duration
+	Server string
 	// ServerCertificate is the absolute path to the instance certificate PEM.
 	// The driver byte-pins it (serverCertificate=<path>): the handshake only
 	// succeeds when the server presents exactly this certificate. Mutually
@@ -185,13 +185,19 @@ func connDSN(cfg ConnConfig) (string, error) {
 	return u.String(), nil
 }
 
+// ConnMaxLifetime is the C5 connection lifetime. It is exported because the
+// runner has to know when database/sql is allowed to have re-created the
+// physical connection on its own: a silent recycle is a new connect, and the
+// rights ceiling must be re-proven at a new connect.
+const ConnMaxLifetime = time.Hour
+
 // C5: exactly one connection, one idle kept, recycled after one hour.
 type poolSettings struct {
 	maxOpen, maxIdle int
 	maxLifetime      time.Duration
 }
 
-var pool = poolSettings{maxOpen: 1, maxIdle: 1, maxLifetime: time.Hour}
+var pool = poolSettings{maxOpen: 1, maxIdle: 1, maxLifetime: ConnMaxLifetime}
 
 func applyPool(db *sql.DB, p poolSettings) {
 	db.SetMaxOpenConns(p.maxOpen)
@@ -270,6 +276,14 @@ func Open(cfg ConnConfig) (*sql.DB, error) {
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
+		// C7 needs this distinction: a refused login or a missing grant is
+		// terminal for the service (auto-off, owner-only re-enable), while an
+		// instance that is simply down or slow must only back off. Classify
+		// gives fixed sentences for both; anything it cannot place stays a
+		// plain connect failure, and driver text never travels with it (C10).
+		if e := Classify(err); e.Code != CodeFailed {
+			return nil, e
+		}
 		return nil, &Error{CodeConnect, "Could not connect to the local SQL Server."}
 	}
 	return db, nil
@@ -302,12 +316,12 @@ func (d DBQueryer) Query(ctx context.Context, text string) ([]Row, error) {
 	}
 	rows, err := d.DB.QueryContext(ctx, text)
 	if err != nil {
-		return nil, fixedQueryError(ctx)
+		return nil, fixedQueryError(ctx, err)
 	}
 	defer rows.Close()
 	cols, err := rows.Columns()
 	if err != nil {
-		return nil, &Error{CodeQuery, "The query result could not be read."}
+		return nil, fixedQueryError(ctx, err)
 	}
 	var out []Row
 	for rows.Next() {
@@ -333,15 +347,23 @@ func (d DBQueryer) Query(ctx context.Context, text string) ([]Row, error) {
 	}
 	rows.Close() // early close: the rest of the result set is not fetched
 	if err := rows.Err(); err != nil {
-		return nil, fixedQueryError(ctx)
+		return nil, fixedQueryError(ctx, err)
 	}
 	return out, nil
 }
 
 // fixedQueryError maps a driver failure to a fixed code, never driver text.
-func fixedQueryError(ctx context.Context) error {
+// The classification runs HERE, at the seam, because C7 needs the difference
+// between "the login lacks a grant" and "the server is down": a permission or
+// login failure goes straight to auto-off, while an ordinary query failure
+// backs off and retries. Classify returns only fixed sentences, so C10 holds.
+// An unclassifiable driver error keeps the generic query code.
+func fixedQueryError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return &Error{CodeTimeout, "The query did not finish within its time limit."}
+	}
+	if e := Classify(err); e.Code != CodeFailed {
+		return e
 	}
 	return &Error{CodeQuery, "The query could not be run."}
 }
@@ -361,7 +383,7 @@ func Query(ctx context.Context, q Queryer, text string, timeout time.Duration) (
 		if errors.As(err, &e) {
 			return nil, e
 		}
-		return nil, fixedQueryError(qctx)
+		return nil, fixedQueryError(qctx, err)
 	}
 	// C6 defense in depth: even a Queryer that over-returns is capped at
 	// cap+1 here; DBQueryer already stops at the boundary itself.

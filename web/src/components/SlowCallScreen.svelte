@@ -195,6 +195,7 @@
         laneReasonCode: toLaneIn(sqlLane)?.reasonCode ?? '',
         laneHasShape: lanes.sql.hasShape,
         laneAsOf: sqlLane?.asOf || null,
+        laneSince: sqlLane?.since || null,
         blockSeconds: lanes.sql.blockSeconds,
         queryStore: savedDay?.lane?.queryStore ?? null,
         hasEvents: s.events.some((e) => SQL_EVENT_SOURCES.includes(e.source) && Date.parse(e.start) >= bounds.start && Date.parse(e.start) <= bounds.end),

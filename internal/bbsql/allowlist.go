@@ -21,7 +21,8 @@ const stmtRequests = setPrefix + `SELECT TOP 256 ISNULL(r.wait_type, N'') AS wai
 FROM sys.dm_exec_requests AS r
 LEFT JOIN sys.dm_exec_requests AS b ON b.session_id = r.blocking_session_id
 WHERE r.session_id <> @@SPID
-GROUP BY ISNULL(r.wait_type, N'') /* unravis:bb:requests */`
+GROUP BY ISNULL(r.wait_type, N'')
+ORDER BY COUNT(*) DESC /* unravis:bb:requests */`
 
 // bb:waits (BL-102): top 20 cumulative waits, benign waits filtered. The filter
 // LIST is reused from internal/dbhealth/sql.go:101-112 (no query-text code).
@@ -46,7 +47,8 @@ WHERE status = N'VISIBLE ONLINE' /* unravis:bb:schedulers */`
 // bb:semaphores (BL-118): query resource semaphore counts; deltas computed in
 // Go. TOP 16 is the C6 cap in SQL (defense in depth; the reader stops at 17).
 const stmtSemaphores = setPrefix + `SELECT TOP 16 resource_semaphore_id, grantee_count, waiter_count, forced_grant_count, timeout_count
-FROM sys.dm_exec_query_resource_semaphores /* unravis:bb:semaphores */`
+FROM sys.dm_exec_query_resource_semaphores
+ORDER BY resource_semaphore_id /* unravis:bb:semaphores */`
 
 // bb:tempdb (BL-118): tempdb page totals summed in SQL, no per-session ids.
 const stmtTempdb = setPrefix + `SELECT SUM(internal_objects_alloc_page_count) AS internal_pages,
@@ -56,13 +58,21 @@ FROM sys.dm_db_session_space_usage /* unravis:bb:tempdb */`
 // bb:filestats (BL-119): per-file I/O stalls, ids only (no sys.master_files join,
 // no paths/names); deltas computed in Go.
 const stmtFilestats = setPrefix + `SELECT TOP 256 database_id, file_id, io_stall_read_ms, io_stall_write_ms, num_of_reads, num_of_writes, size_on_disk_bytes
-FROM sys.dm_io_virtual_file_stats(NULL, NULL) /* unravis:bb:filestats */`
+FROM sys.dm_io_virtual_file_stats(NULL, NULL)
+ORDER BY database_id, file_id /* unravis:bb:filestats */`
 
 // bb:ag (BL-119): AG database replica state, gated by IsHadrEnabled in Go. No
 // sys.availability_replicas and no replica server names; ids/enum only.
 // TOP 64 is the C6 cap in SQL (defense in depth; the reader stops at 65).
 const stmtAG = setPrefix + `SELECT TOP 64 database_id, synchronization_state
-FROM sys.dm_hadr_database_replica_states /* unravis:bb:ag */`
+FROM sys.dm_hadr_database_replica_states
+ORDER BY database_id /* unravis:bb:ag */`
+
+// bb:hadr is the guard for bb:ag. SERVERPROPERTY answers on every 2012+
+// instance, so an instance with no availability groups never has an AG DMV
+// queried: the gate returns one row with hadr = 1 only when IsHadrEnabled is
+// on, and the runner skips bb:ag otherwise. No DMV, no names.
+const stmtHadr = setPrefix + `SELECT TOP 1 CAST(SERVERPROPERTY('IsHadrEnabled') AS int) AS hadr /* unravis:bb:hadr */`
 
 // bb:ceiling_role (BL-124): C8 control query — fixed server-role membership
 // flags only (0/1); no login, host or session data. Every role listed here
@@ -96,7 +106,8 @@ const stmtCeilingRole = setPrefix + `SELECT IS_SRVROLEMEMBER(N'sysadmin') AS sys
 const stmtCeilingPerms = setPrefix + `SELECT TOP 2 permission_name
 FROM sys.server_permissions
 WHERE grantee_principal_id = SUSER_ID()
-  AND permission_name NOT IN (N'CONNECT SQL', N'VIEW ANY DATABASE', N'VIEW SERVER STATE', N'VIEW SERVER PERFORMANCE STATE') /* unravis:bb:ceiling_perms */`
+  AND permission_name NOT IN (N'CONNECT SQL', N'VIEW ANY DATABASE', N'VIEW SERVER STATE', N'VIEW SERVER PERFORMANCE STATE')
+ORDER BY permission_name /* unravis:bb:ceiling_perms */`
 
 // Statements is the complete allowlist and the single source of truth for what
 // may be sent. Values are fixed constants; a later packet may add more fixed
@@ -109,6 +120,7 @@ var Statements = map[string]string{
 	"bb:tempdb":        stmtTempdb,
 	"bb:filestats":     stmtFilestats,
 	"bb:ag":            stmtAG,
+	"bb:hadr":          stmtHadr,
 	"bb:ceiling_role":  stmtCeilingRole,
 	"bb:ceiling_perms": stmtCeilingPerms,
 }

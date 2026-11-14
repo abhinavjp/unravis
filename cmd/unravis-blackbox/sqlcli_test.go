@@ -241,7 +241,8 @@ func TestGrantScriptLint(t *testing.T) {
 		}
 		if !strings.HasPrefix(l, "CREATE LOGIN [NT SERVICE\\UNRAVISBLACKBOXSQL] FROM WINDOWS") &&
 			!strings.HasPrefix(l, "GRANT VIEW SERVER PERFORMANCE STATE TO ") &&
-			!strings.HasPrefix(l, "GRANT VIEW SERVER STATE TO ") {
+			!strings.HasPrefix(l, "GRANT VIEW SERVER STATE TO ") &&
+			!strings.HasPrefix(l, "GRANT VIEW ANY DATABASE TO ") {
 			t.Fatalf("grant script line is not an allowed statement: %q", line)
 		}
 	}
@@ -259,8 +260,27 @@ func TestGrantScriptLint(t *testing.T) {
 			continue
 		}
 		if !strings.HasPrefix(l, "REVOKE VIEW SERVER PERFORMANCE STATE FROM ") &&
+			!strings.HasPrefix(l, "REVOKE VIEW ANY DATABASE FROM ") &&
 			!strings.HasPrefix(l, "DROP LOGIN [NT SERVICE\\UNRAVISBLACKBOXSQL]") {
 			t.Fatalf("revoke script line is not an allowed statement: %q", line)
+		}
+	}
+	// The grant must name every right the samplers actually need, and each one
+	// must stay inside the C8 ceiling's allowed set {CONNECT SQL, VIEW ANY
+	// DATABASE, VIEW SERVER STATE, VIEW SERVER PERFORMANCE STATE}. Without VIEW
+	// ANY DATABASE the per-file statistics (BL-119) answer for the system
+	// databases only, so a login that satisfies the ceiling can still be
+	// under-granted for a sample - which is why the grant is pinned here and
+	// not left to the reader of the doc.
+	for _, need := range []string{"GRANT VIEW SERVER PERFORMANCE STATE TO [NT SERVICE\\UnravisBlackboxSql];",
+		"GRANT VIEW ANY DATABASE TO [NT SERVICE\\UnravisBlackboxSql];"} {
+		if !strings.Contains(grantScript, need) {
+			t.Errorf("the grant script is missing %q", need)
+		}
+	}
+	for _, outside := range []string{"CONTROL SERVER", "ALTER TRACE", "VIEW DEFINITION"} {
+		if strings.Contains(strings.ToUpper(grantScript), strings.ToUpper(outside)) {
+			t.Errorf("the grant asks for %q, which is outside the C8 ceiling", outside)
 		}
 	}
 	// The revoke covers both SQL generations: the performance-state right and a

@@ -23,6 +23,7 @@ const (
 	CodeNetwork        = "network"
 	CodeTLS            = "tls"
 	CodeTooManyRights  = "too-many-rights"
+	CodeDiskLow        = "disk-low"
 	CodeFailed         = "failed"
 )
 

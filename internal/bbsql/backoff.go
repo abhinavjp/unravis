@@ -41,17 +41,24 @@ type State struct {
 // NewState returns the initial on state at the base interval.
 func NewState() State { return State{Interval: BaseInterval, State: StateOn} }
 
-// OnSuccess recovers back-off one step toward the base interval and resets
-// the counters. It never clears AutoOff: auto-off is owner-only.
+// OnSuccess recovers back-off one step toward the base interval and clears the
+// failure count. It never clears AutoOff: auto-off is owner-only. It also never
+// steps below the slow floor: three slow samples demoted the 15 s items, and one
+// lucky success must not undo that demotion on its own. SlowStrikes is not
+// reset here either - only a genuinely fast sample (OnSlow) calms the instance,
+// and once it does, recovery proceeds back down to BaseInterval.
 func (s *State) OnSuccess() {
 	if s.AutoOff {
 		return
 	}
 	s.Failures = 0
-	s.SlowStrikes = 0
+	floor := BaseInterval
+	if s.SlowStrikes > 0 {
+		floor = DemotedInterval
+	}
 	s.Interval /= 2
-	if s.Interval < BaseInterval {
-		s.Interval = BaseInterval
+	if s.Interval < floor {
+		s.Interval = floor
 	}
 	s.State = StateOn
 }

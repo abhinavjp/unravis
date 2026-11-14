@@ -25,10 +25,22 @@ const (
 	CapTempdb     = 1   // summed in SQL
 	CapFileStats  = 256 // TOP 256 in bb:filestats
 	CapAG         = 64  // TOP 64 in bb:ag
+	// CapCeilingPerms mirrors the TOP 2 in bb:ceiling_perms: two permissions
+	// outside the ceiling are already a refusal, so the query never needs to
+	// report more, and the reader must not silently stop below what is sent.
+	CapCeilingPerms = 2
+	// CapSingleRow is the bound of a statement that answers with exactly one
+	// row by construction (a TOP 1 guard, or a scalar/SUM select with no GROUP
+	// BY). Listed per statement, never by falling through: a statement that
+	// forgets its own cap would otherwise be read as one row and silently
+	// truncated.
+	CapSingleRow = 1
 )
 
 // statementCap maps an allowlisted statement to its C6 row cap. Unknown text
 // gets the smallest cap (fail closed); the send gates only pass known text.
+// TestEveryStatementHasItsOwnRowCap proves this table agrees with the TOP n
+// written into each statement.
 func statementCap(text string) int {
 	switch text {
 	case stmtRequests:
@@ -45,8 +57,12 @@ func statementCap(text string) int {
 		return CapFileStats
 	case stmtAG:
 		return CapAG
+	case stmtCeilingPerms:
+		return CapCeilingPerms
+	case stmtHadr, stmtCeilingRole:
+		return CapSingleRow
 	default:
-		return 1
+		return CapSingleRow
 	}
 }
 
@@ -137,6 +153,7 @@ var columnKeys = map[string]string{
 	"waiter_count": "waiters", "forced_grant_count": "forced", "timeout_count": "timeouts",
 	"internal_pages": "internalPages", "user_pages": "userPages",
 	"database_id": "databaseId", "file_id": "fileId",
+	"hadr":             "hadr",
 	"io_stall_read_ms": "readStallMs", "io_stall_write_ms": "writeStallMs",
 	"num_of_reads": "reads", "num_of_writes": "writes", "size_on_disk_bytes": "sizeOnDiskBytes",
 	"synchronization_state": "syncState",

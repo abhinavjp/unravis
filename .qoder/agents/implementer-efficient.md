@@ -1,7 +1,7 @@
 ---
 name: implementer-efficient
 description: Mechanical Blackbox implementer (Efficient tier). Types, config fields, plain table tests, doc/backlog edits, wiring. One file area, no concurrency, no security surface. Use only for packets marked Model: efficient.
-model: efficient
+model: Qwen4-max-preview
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 

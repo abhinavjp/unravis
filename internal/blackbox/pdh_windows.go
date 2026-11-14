@@ -16,7 +16,6 @@ import (
 var (
 	procPdhExpandWildCard = pdh.NewProc("PdhExpandWildCardPathW")
 	procPdhRemoveCounter  = pdh.NewProc("PdhRemoveCounter")
-	procPdhEnumObjects    = pdh.NewProc("PdhEnumObjectsW")
 )
 
 const pdhMoreData = 0x800007D2 // PDH_MORE_DATA: size call, buffer needed

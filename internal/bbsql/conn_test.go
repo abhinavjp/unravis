@@ -89,7 +89,7 @@ func TestOpenOneConnection(t *testing.T) {
 	}
 	defer func() { openDB = old }()
 
-	db, err := Open(ConnConfig{Server: `.\SQL2022`, QueryTimeout: 3 * time.Second})
+	db, err := Open(ConnConfig{Server: `.\SQL2022`})
 	if err != nil {
 		t.Fatalf("Open local: %v", err)
 	}

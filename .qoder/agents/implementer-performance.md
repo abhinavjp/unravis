@@ -1,7 +1,7 @@
 ---
 name: implementer-performance
 description: Standard Blackbox implementer (Performance tier). Logic packets: counter engine, resolver, PDH/EventPipe readers, ring buffers, throttling, SQL reader, ranking. Also any packet an Efficient implementer failed once. Use for packets marked Model: performance.
-model: performance
+model: Qwen4-max-preview
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 

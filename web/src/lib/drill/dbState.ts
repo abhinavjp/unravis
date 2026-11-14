@@ -4,7 +4,7 @@ import { DRILL_TEXT } from './drillCopy';
  * Which state the Database lane is in on the Slow call screen, and the words that go with it.
  * Pure: it only decides from data the app already has. All text comes from DRILL_TEXT.
  */
-export type DbStateKey = 'qs' | 'qsfile' | 'api' | 'off' | 'ro' | 'late' | 'denied' | 'events' | 'notread';
+export type DbStateKey = 'qs' | 'qsfile' | 'api' | 'off' | 'ro' | 'late' | 'denied' | 'events' | 'notread' | 'blackbox';
 
 export const DB_STATE_KEYS: readonly DbStateKey[] = ['qs', 'qsfile', 'api', 'off', 'ro', 'late', 'denied', 'events', 'notread'];
 
@@ -15,10 +15,12 @@ export interface QueryStoreInfo {
 }
 
 export interface DbStateInput {
-  /** Tracing SQL lane reason code: 'held-sql' | 'layered-sql' | 'qs-file' | 'api-seen' | '' ... */
+  /** Tracing SQL lane reason code: 'held-sql' | 'layered-sql' | 'qs-file' | 'api-seen' | 'blackbox' | '' ... */
   laneReasonCode: string;
   laneHasShape: boolean;
   laneAsOf: string | null;
+  /** When the lane's own source is the Blackbox recorder: the server's `since`, the first sample it kept. Null when it said none. */
+  laneSince: string | null;
   blockSeconds: number | null;
   /** Newest saved SQL lane day, null when none. */
   queryStore: QueryStoreInfo | null;
@@ -52,6 +54,7 @@ const SHAPE: Record<DbStateKey, DbStateView['shape']> = {
   qsfile: 'blocks',
   ro: 'blocks',
   late: 'blocks',
+  blackbox: 'blocks',
   api: 'apiseen',
   events: 'markers',
   off: 'none',
@@ -63,6 +66,9 @@ const SHAPE: Record<DbStateKey, DbStateView['shape']> = {
  *  it matches no rule below, so the lane falls through to what the data shows, and ends at `notread`. */
 function pickKey(input: DbStateInput): DbStateKey {
   if (input.pretend) return input.pretend;
+  // The server named this lane's own source: the Blackbox recorder holds it, whatever Query Store itself is doing.
+  // It only counts when the lane actually has something drawn, so an empty lane never claims a source (never a zero lane).
+  if (input.laneReasonCode === 'blackbox' && input.laneHasShape) return 'blackbox';
   const qs = input.queryStore;
   if (qs?.state === 'denied') return 'denied';
   if (qs?.state === 'off') return input.hasEvents ? 'events' : 'off';
@@ -83,6 +89,7 @@ export function dbState(input: DbStateInput, fmt: DbStateFormat): DbStateView {
   const T = DRILL_TEXT;
   const minutes = input.blockSeconds != null && input.blockSeconds > 0 ? Math.max(1, Math.round(input.blockSeconds / 60)) : SAMPLE_BLOCK_MINUTES;
   const date = input.laneAsOf ? fmt.date(input.laneAsOf) : SAMPLE_DATE;
+  const since = input.laneSince ? fmt.date(input.laneSince) : SAMPLE_DATE;
   const firstData = input.queryStore?.firstData;
   const time = firstData ? fmt.time(firstData) : SAMPLE_TIME;
   const shape = SHAPE[key];
@@ -103,6 +110,8 @@ export function dbState(input: DbStateInput, fmt: DbStateFormat): DbStateView {
       return { key, source: T.dbSrcNone, message: T.dbMsgDenied, short: T.dbShortDenied, shape };
     case 'events':
       return { key, source: T.dbSrcEvents, message: T.dbMsgEvents, short: T.dbShortEvents, shape };
+    case 'blackbox':
+      return { key, source: T.dbSrcBlackbox(since), message: T.dbMsgBlackbox, short: T.dbShortBlackbox, shape };
     case 'notread':
       return { key, source: T.dbSrcNone, message: T.dbMsgNotRead, short: T.notRecorded, shape };
   }
