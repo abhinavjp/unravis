@@ -178,6 +178,15 @@ func tracingQSFileLane(ctx context.Context, c casestore.Case, axis tracingAxis, 
 		}
 	}
 	if intervals == 0 {
+		// A capped or timed-out read may have run out before reaching the window: say so, not "no data".
+		if capped {
+			lane.Complete, lane.Truncated = false, true
+			lane.Reason = strings.SplitN(tracingRowCapMsg, ";", 2)[0] + "; Query Store figures from the imported file may be missing."
+		}
+		if timedOut {
+			lane.Complete, lane.Truncated = false, true
+			lane.Reason = strings.TrimSpace(lane.Reason + " " + tracingTimeoutMsg)
+		}
 		return lane, nil
 	}
 	cells, blockSeconds := qsFileBuckets(events, axis)
