@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'appState.svelte.ts'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'appState.svelte.ts'), 'utf8').replace(/\r\n/g, '\n');
 
 test('drillOpen state and setter exist, and it is not a modal term', () => {
   assert.ok(src.includes('let drillOpen = $state(false);'), 'drillOpen state missing');

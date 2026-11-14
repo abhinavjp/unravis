@@ -219,3 +219,115 @@ func TestHeldSQLLaneZeroExecutionsGiveZeroBusy(t *testing.T) {
 		t.Errorf("two points in one bucket busyMs %v, want 2500", b.BusyMs)
 	}
 }
+
+// heldSQLTwoRunCase is a case holding two saved SQL days of the SAME source, newest first, each with the
+// given Query Store points. Neither run carries a Key, so both fall back to source = kind|label|database
+// ("sql|sql|AuditDb|") and share it: a T they both hold must be counted once, the newest day's value winning.
+func heldSQLTwoRunCase(t *testing.T, newer, older []dbhealth.LaneSeriesPoint) *healthyCase {
+	t.Helper()
+	inc := dbhealth.Window{Start: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC), End: time.Date(2026, 10, 20, 11, 0, 0, 0, time.UTC)}
+	day := func(series []dbhealth.LaneSeriesPoint) casestore.HealthRun {
+		run := laneReportJSON(t, "sql", "AuditDb", inc, nil, nil)
+		var rep dbhealth.Report
+		if err := json.Unmarshal(run.Report, &rep); err != nil {
+			t.Fatal(err)
+		}
+		rep.Lane.Series = series
+		enc, err := json.Marshal(rep)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run.Report = enc
+		return run
+	}
+	// newest first, the order laneHeld returns and tracingHeldSQLLane walks.
+	return &healthyCase{stubTraceCase: &stubTraceCase{}, runs: []casestore.HealthRun{day(newer), day(older)}}
+}
+
+func heldSQLTwoRunLane(t *testing.T, newer, older []dbhealth.LaneSeriesPoint) tracingLane {
+	t.Helper()
+	c := heldSQLTwoRunCase(t, newer, older)
+	axis := newTracingAxis(time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC), time.Date(2026, 10, 20, 11, 0, 0, 0, time.UTC))
+	lane, ok := tracingHeldSQLLane(context.Background(), c, axis, time.Now())
+	if !ok {
+		t.Fatal("no lane drawn from the two saved days")
+	}
+	return lane
+}
+
+// Two saved days of one source can share a T (their incident windows differ but their reference times
+// overlap). The shared T is counted once with the newest day's figures — never summed — while a T only the
+// older day holds is kept. This is the DATA-03 overlap proof.
+func TestHeldSQLLaneOverlappingRunsDedupeByTNewestWins(t *testing.T) {
+	t0 := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC).Unix()
+	newer := []dbhealth.LaneSeriesPoint{{T: t0, Execs: 100, AvgMs: 20, MaxMs: 90}}
+	older := []dbhealth.LaneSeriesPoint{
+		{T: t0, Execs: 50, AvgMs: 10, MaxMs: 40},      // same T as the newer day: must be dropped
+		{T: t0 + 900, Execs: 30, AvgMs: 5, MaxMs: 15}, // a T only the older day holds: must be kept
+	}
+	lane := heldSQLTwoRunLane(t, newer, older)
+
+	// Scanned is the deduped total: 100 (shared T, newer) + 30 (older-only) = 130, not the 180 a sum gives.
+	if lane.Scanned != 130 {
+		t.Fatalf("scanned %d, want 130 (deduped, newest wins)", lane.Scanned)
+	}
+	// The shared-T bucket holds ONLY the newer day's contribution, never the sum (150 execs / 2500 busy).
+	shared := heldBucketAt(t, lane, t0)
+	if shared.Count != 100 || shared.TimedCount != 100 {
+		t.Fatalf("shared bucket count %d timed %d, want 100 (newer only)", shared.Count, shared.TimedCount)
+	}
+	if shared.BusyMs == nil || *shared.BusyMs != 2000 {
+		t.Fatalf("shared bucket busyMs %v, want 2000 (newer only, not 2500)", shared.BusyMs)
+	}
+	if shared.AvgMs == nil || *shared.AvgMs != 20 {
+		t.Fatalf("shared bucket avgMs %v, want 20 (newer only)", shared.AvgMs)
+	}
+	if shared.MaxMs == nil || *shared.MaxMs != 90 {
+		t.Fatalf("shared bucket maxMs %v, want 90 (newer only)", shared.MaxMs)
+	}
+	// A T only the older day holds still appears, with its own figures.
+	olderOnly := heldBucketAt(t, lane, t0+900)
+	if olderOnly.TimedCount != 30 || olderOnly.BusyMs == nil || *olderOnly.BusyMs != 150 {
+		t.Fatalf("older-only bucket %+v, want timed 30 busy 150", olderOnly)
+	}
+}
+
+// Newest wins even when the newer day's shared T ran nothing: its 0 replaces the older non-zero (no fall
+// back), so the bucket is busy 0 with no average and the older day's executions are not added. A T only the
+// older day holds keeps the lane non-empty so it is drawn at all.
+func TestHeldSQLLaneOverlappingRunsNewestZeroExecsWins(t *testing.T) {
+	t0 := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC).Unix()
+	newer := []dbhealth.LaneSeriesPoint{{T: t0, Execs: 0, AvgMs: 0}}
+	older := []dbhealth.LaneSeriesPoint{
+		{T: t0, Execs: 80, AvgMs: 25},      // shared T, older non-zero: must be dropped, not fallen back to
+		{T: t0 + 900, Execs: 10, AvgMs: 5}, // older-only: keeps the lane non-empty
+	}
+	lane := heldSQLTwoRunLane(t, newer, older)
+	if lane.Scanned != 10 {
+		t.Fatalf("scanned %d, want 10 (the older shared-T 80 must not be counted)", lane.Scanned)
+	}
+	shared := heldBucketAt(t, lane, t0)
+	if shared.BusyMs == nil || *shared.BusyMs != 0 || shared.AvgMs != nil || shared.TimedCount != 0 {
+		t.Fatalf("shared bucket %+v, want busy 0, no average, timed 0 (newer 0 wins)", shared)
+	}
+}
+
+// Dedupe is by exact T, not by bucket: two days holding DIFFERENT T that fall in the SAME bucket are both
+// kept and added. (The single-run "two blocks in one bucket" case above asserts the same within one day.)
+func TestHeldSQLLaneDifferentTSameBucketStillAdds(t *testing.T) {
+	t0 := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC).Unix()
+	// t0 and t0+1 are one second apart: the same 60 s bucket, different T. Both must count.
+	newer := []dbhealth.LaneSeriesPoint{{T: t0, Execs: 100, AvgMs: 20}}
+	older := []dbhealth.LaneSeriesPoint{{T: t0 + 1, Execs: 50, AvgMs: 10}}
+	lane := heldSQLTwoRunLane(t, newer, older)
+	if lane.Scanned != 150 {
+		t.Fatalf("scanned %d, want 150 (different T in one bucket both add)", lane.Scanned)
+	}
+	b := heldBucketAt(t, lane, t0)
+	if b.TimedCount != 150 {
+		t.Fatalf("bucket timed %d, want 150", b.TimedCount)
+	}
+	if b.BusyMs == nil || *b.BusyMs != 2500 {
+		t.Fatalf("bucket busyMs %v, want 2500 (100*20 + 50*10)", b.BusyMs)
+	}
+}

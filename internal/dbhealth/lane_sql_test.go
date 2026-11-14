@@ -576,9 +576,9 @@ func TestLaneRequestValidate(t *testing.T) {
 		t.Fatalf("valid request refused: %v", err)
 	}
 	cases := map[string]LaneRequest{
-		"empty":         {},
-		"reverse":       {Incident: Window{laneInc.End, laneInc.Start}, Reference: laneRef},
-		"overlap":       {Incident: laneInc, Reference: Window{laneInc.Start.Add(-time.Hour), laneInc.Start.Add(time.Hour)}},
+		"empty":   {},
+		"reverse": {Incident: Window{laneInc.End, laneInc.Start}, Reference: laneRef},
+		"overlap": {Incident: laneInc, Reference: Window{laneInc.Start.Add(-time.Hour), laneInc.Start.Add(time.Hour)}},
 	}
 	for name, r := range cases {
 		if r.Validate() == nil {

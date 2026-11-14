@@ -20,7 +20,9 @@ audit lane empty there is **no diamond that opens the screen on this live case**
 is `LIVE: could not check` and was verified on the demo instead. Connecting the saved audit database (entering its
 password) is the owner's decision; it was not done here.
 
-Live evidence shot: `shots/live-timeline-lanes-1440x800.png` (three lanes, live SQL + IIS data, hatched audit lane).
+Live evidence shot: the live-case capture was removed from this public repo for hygiene (SEC-01), so no image is
+published here. What it showed (three lanes, live SQL + IIS data, hatched audit lane) is recorded in the surrounding
+text: the live lane counts are in "The live limitation" above and in the closing lists below.
 
 ## The twelve items
 

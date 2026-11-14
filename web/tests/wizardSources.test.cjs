@@ -590,7 +590,7 @@ test('a tested MongoDB connection holds its audit collection, and a blank one me
 });
 
 test('a case made by the create guide adopts its new sources and starts the analysis', () => {
-  const state = fs.readFileSync(path.join(root, 'src/lib/appState.svelte.ts'), 'utf8');
+  const state = fs.readFileSync(path.join(root, 'src/lib/appState.svelte.ts'), 'utf8').replace(/\r\n/g, '\n');
   const body = state.slice(state.indexOf('export async function openCreatedCase'));
   const fn = body.slice(0, body.indexOf('\n}\n'));
   assert.match(fn, /api\.sources\(\)/, 'reloads the source list the guide changed on the server');

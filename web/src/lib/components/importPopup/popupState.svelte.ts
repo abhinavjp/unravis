@@ -525,9 +525,10 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
     },
     importMore() { clearSession(); },
     openTimeline() { s.timeline = true; s.closed = true; },
-    // The import is not left by accident: the close button, Esc and a click outside wait until it ends or Cancel is pressed.
+    // The import is not left by accident: while a file is still importing or stopping (Cancel pressed, the file being sent still
+    // finishing), the close button, Esc and a click outside wait, so the popup stays open and that file's outcome is not lost.
     requestClose() {
-      if (s.importing) return;
+      if (s.importing || s.stopping) return;
       if (s.listedFiles() > 0 && s.step !== 3) { s.discard = true; s.focus = 'keep'; }
       else s.closed = true;
     },

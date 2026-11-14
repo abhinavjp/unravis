@@ -71,11 +71,11 @@ func TestCountBucketsScanHalfOpen(t *testing.T) {
 	from := bucketT0
 	to := from.Add(1500 * time.Millisecond)
 	times := []time.Time{
-		from.Add(-time.Millisecond),                          // before From: not counted
-		from,                                                 // cell 0
+		from.Add(-time.Millisecond), // before From: not counted
+		from,                        // cell 0
 		from.Add(time.Duration(widthMs-1) * time.Millisecond), // cell 0
 		from.Add(time.Duration(widthMs) * time.Millisecond),   // cell 1
-		to,                                                    // at To: not counted
+		to, // at To: not counted
 	}
 	g := &genCase{n: len(times), make: func(i int) evidence.Event {
 		return evidence.Event{Kind: "load", Source: "src", Start: times[i], Value: fl(1)}

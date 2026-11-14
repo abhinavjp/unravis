@@ -21,11 +21,13 @@ import (
 
 const tracingReasonAPISseen = "api-seen"
 
-// apiSeenBuckets reads the stored database time per step from the audit source
-// and maps each step onto its axis cell. The repository (P-38) merges every
-// connected source internally and sums BusyMs/Calls per step, so this calls
-// SQLBusy ONCE with the axis window; there is no per-source loop and no source
-// filter (SQLBusyInput carries no SourceIDs, frozen by P-37).
+// apiSeenBuckets reads the stored database time per step from the selected audit
+// sources and maps each step onto its axis cell. The repository (P-38) merges the
+// selected sources internally and sums BusyMs/Calls per step, so this calls SQLBusy
+// ONCE with the axis window and the selected audit source ids (DATA-02); there is
+// no per-source loop here. sourceIDs are the audit ids the trace selected — the
+// same ids the audit lane reads, not SQL/IIS import ids; empty leaves the repository
+// reading every connected source.
 //
 // recorded is false when the source does not store the number at all, or when the
 // window cannot be read in one bounded call (a step length outside the allowed
@@ -33,11 +35,11 @@ const tracingReasonAPISseen = "api-seen"
 // state. A read error is returned unchanged (fail-closed) for the caller to map.
 // MaxMs and AvgMs stay nil: the stored number is a per-step timed total, not a
 // per-call distribution, so no maximum or average is invented from it.
-func apiSeenBuckets(ctx context.Context, reader audit.SQLBusyReader, axis tracingAxis) (map[int]*tracingBucket, bool, error) {
+func apiSeenBuckets(ctx context.Context, reader audit.SQLBusyReader, sourceIDs []string, axis tracingAxis) (map[int]*tracingBucket, bool, error) {
 	if reader == nil || axis.WidthMs <= 0 {
 		return nil, false, nil
 	}
-	in := audit.SQLBusyInput{Start: axis.Start, End: axis.End, BucketSeconds: int(axis.WidthMs / 1000)}
+	in := audit.SQLBusyInput{Start: axis.Start, End: axis.End, BucketSeconds: int(axis.WidthMs / 1000), SourceIDs: sourceIDs}
 	// One bounded call only. A window the frozen SQLBusy contract cannot answer
 	// (its step set is 60/300/600/900 s, at most 31 days and 120 steps) is left
 	// unread rather than turned into a request error: the lane stays as it was.
@@ -88,8 +90,10 @@ func apiSeenBuckets(ctx context.Context, reader audit.SQLBusyReader, axis tracin
 // The lane is stamped as a live read (origin "live", consistency "live-non-snapshot",
 // asOf the read time), like the audit lane, because api-seen reads the live audit
 // source rather than a stored case copy. now is the read clock (a parameter so a
-// test can fix it). A read error is returned unchanged with the lane untouched.
-func tracingAPISseenLane(ctx context.Context, reader audit.SQLBusyReader, axis tracingAxis, lane tracingLane, now func() time.Time) (tracingLane, error) {
+// test can fix it). sourceIDs are the selected audit source ids, forwarded to the
+// reader so only those sources contribute (DATA-02). A read error is returned
+// unchanged with the lane untouched.
+func tracingAPISseenLane(ctx context.Context, reader audit.SQLBusyReader, sourceIDs []string, axis tracingAxis, lane tracingLane, now func() time.Time) (tracingLane, error) {
 	if lane.Key != calltrace.LaneSQL || lane.Disabled != "" || lane.State == calltrace.StateClockUnchecked ||
 		lane.ReasonCode == tracingReasonHeldSQL || lane.ReasonCode == tracingReasonLayeredSQL || lane.ReasonCode == tracingReasonQSFile {
 		return lane, nil
@@ -103,7 +107,7 @@ func tracingAPISseenLane(ctx context.Context, reader audit.SQLBusyReader, axis t
 			return lane, nil
 		}
 	}
-	cells, recorded, err := apiSeenBuckets(ctx, reader, axis)
+	cells, recorded, err := apiSeenBuckets(ctx, reader, sourceIDs, axis)
 	if err != nil {
 		return lane, err
 	}
