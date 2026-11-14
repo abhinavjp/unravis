@@ -45,6 +45,12 @@ type sourceLinkStore interface {
 	Forget(savedConnectionID string) error
 }
 
+// scopedLinkRemover is a links store that can drop one saved connection's link without touching another's. The real store (sourcelinks.Store)
+// has it; Remove alone cannot tell two saved connections apart when a source has no selection key.
+type scopedLinkRemover interface {
+	RemoveScoped(savedConnectionID, selectionKey, database, collection string) error
+}
+
 // WithSourceLinks turns on reopening saved audit sources. Without it nothing is remembered and nothing is reopened.
 func WithSourceLinks(store sourceLinkStore) Option {
 	return func(h *handler) {
@@ -106,11 +112,59 @@ func addressOnly(uri string) string {
 	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
 		end = i
 	}
+	// A password with an unescaped "/" ends the authority too early ("user:pw/more@host"). When the text before the first "/" looks like
+	// a login and an "@" follows before any "?" or "#", the real login runs up to the last such "@".
+	if at := slashPasswordEnd(rest, end); at >= 0 {
+		rest = rest[at+1:]
+		end = len(rest)
+		if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+			end = i
+		}
+	}
 	authority := rest[:end]
 	if at := strings.LastIndex(authority, "@"); at >= 0 {
 		authority = authority[at+1:]
 	}
 	return uri[:scheme+3] + authority + rest[end:]
+}
+
+// slashPasswordEnd returns the index in rest of the "@" that ends a login whose password holds a "/", or -1. end is where the authority
+// would end by the plain URL rule. It says yes only when the text up to the first "/" has no "@" and reads as a login ("user:pw", not a
+// host list "host:27017"), or when a database name between that "/" and the "@" would hold a "/" (a database name never does).
+func slashPasswordEnd(rest string, end int) int {
+	if end >= len(rest) || rest[end] != '/' || strings.Contains(rest[:end], "@") {
+		return -1
+	}
+	stop := len(rest)
+	if i := strings.IndexAny(rest, "?#"); i >= 0 {
+		stop = i
+	}
+	at := strings.LastIndex(rest[:stop], "@")
+	if at <= end {
+		return -1
+	}
+	if strings.Contains(rest[end+1:at], "/") {
+		return at
+	}
+	authority := rest[:end]
+	colon := strings.LastIndex(authority, ":")
+	if colon < 0 {
+		return -1
+	}
+	tail := authority[colon+1:]
+	if tail == "" || strings.Contains(tail, "]") || allDigits(tail) {
+		return -1
+	}
+	return at
+}
+
+func allDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 func sameAddress(rec history.Recent, c audit.ConnectionInput) bool {
@@ -173,40 +227,53 @@ func (h *handler) promotePending() {
 	h.reconn.pending = kept
 }
 
-// sourceKeyOf finds the stable key, database and collection of an open source by its id. deleteSource calls it before the delete,
-// while the source can still be looked up, so the link of a source the person removed can be dropped afterwards.
-func (h *handler) sourceKeyOf(ctx context.Context, id string) (key, database, collection string, found bool) {
+// openSourceByID finds an open source by its id. deleteSource calls it before the delete, while the source can still be looked up, so
+// the link of a source the person removed can be dropped afterwards.
+func (h *handler) openSourceByID(ctx context.Context, id string) (audit.Source, bool) {
 	if h.links == nil || h.demo {
-		return "", "", "", false
+		return audit.Source{}, false
 	}
 	items, err := h.repo.Sources(ctx)
 	if err != nil {
-		return "", "", "", false
+		return audit.Source{}, false
 	}
 	for _, s := range items {
 		if s.ID == id {
-			return s.SelectionKey, s.Database, s.Collection, true
+			return s, true
 		}
 	}
-	return "", "", "", false
+	return audit.Source{}, false
+}
+
+// linkBelongsToSource says whether a link names the open source. The selection key names it when there is one; otherwise the database
+// and collection do, and the connection's label tells two saved connections that share them apart.
+func linkBelongsToSource(l sourcelinks.Link, src audit.Source) bool {
+	if src.SelectionKey != "" {
+		return l.SelectionKey == src.SelectionKey
+	}
+	if l.Database != src.Database || l.Collection != src.Collection {
+		return false
+	}
+	return src.ConnectionLabel == "" || l.ConnectionLabel == src.ConnectionLabel
 }
 
 // dropLinkOfSource removes the link of an open source before it is deleted, and returns a function that puts it back if the delete
 // fails. With no link store, or no such source, it does nothing.
 func (h *handler) dropLinkOfSource(ctx context.Context, id string) (restore func()) {
-	key, database, collection, found := h.sourceKeyOf(ctx, id)
+	src, found := h.openSourceByID(ctx, id)
 	if !found {
 		return func() {}
 	}
 	var held []sourcelinks.Link
-	if all, err := h.links.List(); err == nil {
+	all, listErr := h.links.List()
+	if listErr == nil {
 		for _, l := range all {
-			if (key != "" && l.SelectionKey == key) || (key == "" && l.Database == database && l.Collection == collection) {
+			if linkBelongsToSource(l, src) {
 				held = append(held, l)
 			}
 		}
 	}
-	h.forgetOpenedSource(key, database, collection)
+	h.forgetOpenedSource(src, held, listErr == nil)
 	return func() {
 		for _, l := range held {
 			_ = h.links.Add(l)
@@ -214,16 +281,26 @@ func (h *handler) dropLinkOfSource(ctx context.Context, id string) (restore func
 	}
 }
 
-// forgetOpenedSource drops the link (and any waiting address) of a source the person removed.
-func (h *handler) forgetOpenedSource(key, database, collection string) {
+// forgetOpenedSource drops the links in held (and any waiting address) of a source the person removed. Each link is dropped for its own
+// saved connection, so another saved connection that shares the database and collection keeps its link. listed says held is the
+// complete answer; a store that cannot drop one connection's link at a time falls back to the older Remove.
+func (h *handler) forgetOpenedSource(src audit.Source, held []sourcelinks.Link, listed bool) {
 	if h.links == nil {
 		return
 	}
-	_ = h.links.Remove(key, database, collection)
+	if scoped, ok := h.links.(scopedLinkRemover); ok {
+		if listed {
+			for _, l := range held {
+				_ = scoped.RemoveScoped(l.SavedConnectionID, l.SelectionKey, l.Database, l.Collection)
+			}
+		}
+	} else {
+		_ = h.links.Remove(src.SelectionKey, src.Database, src.Collection)
+	}
 	h.reconn.mu.Lock()
 	kept := h.reconn.pending[:0]
 	for _, p := range h.reconn.pending {
-		if !((key != "" && p.link.SelectionKey == key) || (key == "" && p.link.Database == database && p.link.Collection == collection)) {
+		if !linkBelongsToSource(p.link, src) {
 			kept = append(kept, p)
 		}
 	}
@@ -324,6 +401,11 @@ func (h *handler) reconnectPass(ctx context.Context, budget time.Duration, only 
 			out = append(out, outOfTime(l))
 			continue
 		}
+		// The person may have removed this source since the list above was read. Look again right before opening, so a removed
+		// source is not brought back; the link is the person's record of what they want open.
+		if !h.linkStillSaved(l) {
+			continue
+		}
 		each, stop := context.WithTimeout(ctx, reconnectEachTimeout)
 		err := h.openSavedLink(each, l, rec)
 		stop()
@@ -345,6 +427,21 @@ func (h *handler) reconnectPass(ctx context.Context, budget time.Duration, only 
 		h.rollups.clear()
 	}
 	return out
+}
+
+// linkStillSaved says whether the link is still in the links file. A file that cannot be read counts as "no": nothing is opened on a
+// guess.
+func (h *handler) linkStillSaved(l sourcelinks.Link) bool {
+	now, err := h.links.List()
+	if err != nil {
+		return false
+	}
+	for _, n := range now {
+		if linkKey(n) == linkKey(l) {
+			return true
+		}
+	}
+	return false
 }
 
 func outOfTime(l sourcelinks.Link) tracingReconnectFail {
