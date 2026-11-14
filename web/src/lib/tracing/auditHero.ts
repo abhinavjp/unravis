@@ -15,14 +15,30 @@ export const HERO_TEXT = {
   legendRequests: 'Requests per interval',
   legendBridge: 'No timed requests between',
   legendSlowest: 'Slowest request in the interval',
+  legendWebRequests: 'Web-server requests per interval',
+  legendRefused: 'Refused or not found (4xx)',
+  legendFailed: 'Failed (5xx)',
   tipNoTiming: 'No timed requests',
   tipSlowest: 'Slowest request:',
   tipOutlier: 'far above the usual P95',
+  // The SQL lane (saved Query Store figures): its line is the average time, never a percentile.
+  legendSqlStatements: 'Statements run per interval',
+  legendSqlLine: 'Slowest statement',
+  legendSqlSlowest: 'Far slower than usual',
+  tipSqlAverage: 'Average time:',
+  tipSqlSlowest: 'Slowest statement:',
+  tipSqlOutlier: 'far above the usual',
+  sqlOutlierOne: (top: string): string =>
+    `One red diamond: a statement far slower than usual, up to ${top}. It shows when, not which statement or why.`,
+  sqlOutlierMany: (count: number, top: string): string =>
+    `${count} red diamonds: statements far slower than usual, up to ${top}. They show when, not which statement or why.`,
   empty: 'No timed requests in this view.',
+  webRefused: (refused: number, total: number): string =>
+    `${refused.toLocaleString('en-GB')} of ${total.toLocaleString('en-GB')} web-server requests in this view were refused or not found (4xx), the amber part of each bar.`,
   outlierOne: (top: string): string =>
-    `One interval holds a request far slower than usual, up to ${top}. It is marked with a red diamond. This shows when slow requests happened; it does not show why.`,
+    `One red diamond: a request far slower than usual, up to ${top}. It shows when, not why.`,
   outlierMany: (count: number, top: string): string =>
-    `${count} intervals hold a request far slower than usual, up to ${top}. They are marked with a red diamond. This shows when slow requests happened; it does not show why.`
+    `${count} red diamonds: requests far slower than usual, up to ${top}. They show when, not why.`
 } as const;
 
 /** One point of the hero layer, placed by percentage of the plot box. `index` is the absolute slot index. */
@@ -125,7 +141,8 @@ export function heroLayout(
   const dots: HeroDot[] = slots.flatMap((slot, k) =>
     slot.latency === null ? [] : [{ index: range.from + k, leftPct: xOf(k), bottomPct: (slot.latency / maxMs) * 100, ms: slot.latency }]);
 
-  const outliers = heroOutliers(slots);
+  // Only the single worst diamond carries a number; the rest are read from the axis, so labels never pile up.
+  const outliers = heroOutliers(slots, 1);
   const flagged = new Set(outliers.flagged);
   const labelled = new Set(outliers.labelled);
   const marks: HeroMark[] = slots.flatMap((slot, k) => {
@@ -145,6 +162,13 @@ export function heroLayout(
     topFlaggedMs,
     typical: outliers.typical
   };
+}
+
+/** The same sentence for the SQL lane, which speaks of statements. */
+export function heroSqlSentence(layout: HeroLayout): string {
+  if (layout.flaggedCount === 0 || layout.topFlaggedMs === null) return '';
+  const top = axisDuration(layout.topFlaggedMs);
+  return layout.flaggedCount === 1 ? HERO_TEXT.sqlOutlierOne(top) : HERO_TEXT.sqlOutlierMany(layout.flaggedCount, top);
 }
 
 /** The sentence under the chart about the flagged diamonds; '' when nothing is flagged. */

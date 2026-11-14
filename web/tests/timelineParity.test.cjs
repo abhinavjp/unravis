@@ -81,22 +81,30 @@ test('quickRangeIsActive is true only for an exact match of all four fields', ()
 
 test('the new window words are present and not empty', () => {
   const t = windows.WINDOW_TEXT;
-  for (const key of ['quickRow', 'incidentHeading', 'incidentHelp', 'referenceHeading', 'referenceHeadingNote', 'referenceHelp', 'refresh', 'addEvidence', 'stale']) {
+  for (const key of ['quickRow', 'incidentHeading', 'incidentHelp', 'referenceHeading', 'referenceHeadingNote', 'referenceHelp', 'addEvidence', 'stale']) {
     assert.equal(typeof t[key], 'string', key);
     assert.ok(t[key].length > 0, key + ' is not empty');
   }
   assert.equal(t.quickRow, 'Quick range');
   assert.equal(t.incidentHeading, 'Investigation window');
-  assert.equal(t.refresh, 'Refresh timeline');
+  assert.equal(t.startTracing, 'Start tracing');
+  assert.ok(!('refresh' in t), 'there is one button to read the timeline, not two');
   assert.equal(t.addEvidence, 'Add evidence');
 });
 
 test('wiring: the screen draws the chip row, the two buttons, and keeps the hidden legends', () => {
   const paper = read('src/components/TracingPaper.svelte');
   assert.ok(paper.includes('data-testid="tp-quick-row"'), 'the Quick range row carries its test id');
-  assert.ok(paper.includes('WINDOW_TEXT.refresh'), 'the Refresh timeline button uses the shared words');
+  assert.ok(paper.includes('WINDOW_TEXT.startTracing'), 'the Start tracing button uses the shared words');
   assert.ok(paper.includes('WINDOW_TEXT.addEvidence'), 'the Add evidence button uses the shared words');
   assert.ok(paper.includes('openCaseImport'), 'Add evidence opens the import drawer');
   assert.ok(paper.includes('<legend class="visually-hidden">{WINDOW_TEXT.incidentLabel}</legend>'), 'the incident legend is hidden but still names the group');
   assert.ok(paper.includes('<legend class="visually-hidden">{WINDOW_TEXT.referenceLabel}</legend>'), 'the comparison legend is hidden but still names the group');
+});
+
+test('wiring: a source connected while the screen is open is read at once, with the last windows', () => {
+  const paper = read('src/components/TracingPaper.svelte');
+  assert.ok(paper.includes('app.sources.map((source) => source.id)'), 'the screen watches the ids of the open audit sources');
+  assert.ok(/void run\(lastBody \?\? undefined\);/.test(paper), 'a new source id re-reads with the windows of the last read');
+  assert.ok(!paper.includes('canRefresh'), 'the second read button is gone');
 });

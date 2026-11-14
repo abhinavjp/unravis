@@ -510,7 +510,7 @@ func (h hangReadAccess) Open(string) (io.ReadCloser, error) {
 type blockedReader struct{ release chan struct{} }
 
 func (b blockedReader) Read(p []byte) (int, error) { <-b.release; return 0, io.EOF }
-func (b blockedReader) Close() error              { return nil }
+func (b blockedReader) Close() error               { return nil }
 
 // A dead share must not hold a read past its time limit (F2): the call comes back
 // as Unreachable when the context ends, whatever the file system is doing.

@@ -29,7 +29,7 @@
   function momentLine(suspect: Suspect): string {
     if (suspect.momentSlot == null || !suspect.momentLane) return '';
     const ms = momentStartMs(response, suspect.momentSlot);
-    return ms == null ? '' : SUSPECT_TEXT.moment(LANE_NAME[suspect.momentLane], formatTime(ms, { zone, precision: 'minute', year: showYear }));
+    return ms == null ? '' : SUSPECT_TEXT.moment(LANE_NAME[suspect.momentLane], formatTime(ms, { zone, precision: 'minute', year: showYear }), suspect.momentWhat);
   }
 
   // "See all" and "Show fewer" swap the list under the pressed button: the button stays, so focus stays on it.

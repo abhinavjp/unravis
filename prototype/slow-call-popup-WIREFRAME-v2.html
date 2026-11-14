@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slow call popup wireframe v2 — Unravis</title>
+<style>
+/* PROTOTYPE v2, throwaway, not shipped. Question: what should the "Nearby activity" tab of the Slow call pop-up look like?
+   Based on industry research: swimlanes on one shared time axis (Chrome DevTools, Grafana shared crosshair), an event list around an anchor with a
+   ±N window (Kibana surrounding documents, Splunk Nearby Events), and an overview strip that moves the window (Query Store, DevTools).
+   Three variants, switch with ?variant=P1|P2|P3, the pill at the bottom, or the left/right arrow keys.
+   Tokens copied from web/src/brand/tokens.css. All numbers are invented. */
+:root{
+  color-scheme:dark;
+  --lane-audit:#3fd6b0; --lane-sql:#c58bd6; --lane-iis:#e3a23c;
+  --bg:#050807; --surface:#0a0f0d; --surface-2:#101714;
+  --line:#1a2621; --line-soft:#131c18; --control-line:#6b8478;
+  --text:#eef3f1; --text-2:#93a39b;
+  --accent:#3fd6b0; --accent-ink:#03130e;
+  --warn:#e3b341; --bad:#ff7b72; --focus:#7ff0d0;
+  --font:"IBM Plex Sans","Segoe UI Variable Text",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"Cascadia Code",Consolas,monospace;
+  --radius:2px;
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    color-scheme:light;
+    --lane-audit:#0b6b57; --lane-sql:#9956a1; --lane-iis:#ad6511;
+    --bg:#f5f5f3; --surface:#ffffff; --surface-2:#eeeeeb;
+    --line:#d9d9d4; --line-soft:#e8e8e4; --control-line:#74808f;
+    --text:#16191d; --text-2:#4a525c;
+    --accent:#0b6b57; --accent-ink:#ffffff;
+    --warn:#96600a; --bad:#b02a3d; --focus:#0b6b57;
+  }
+}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --lane-audit:#0b6b57; --lane-sql:#9956a1; --lane-iis:#ad6511;
+  --bg:#f5f5f3; --surface:#ffffff; --surface-2:#eeeeeb;
+  --line:#d9d9d4; --line-soft:#e8e8e4; --control-line:#74808f;
+  --text:#16191d; --text-2:#4a525c;
+  --accent:#0b6b57; --accent-ink:#ffffff;
+  --warn:#96600a; --bad:#b02a3d; --focus:#0b6b57;
+}
+*{box-sizing:border-box}
+html{overflow-x:hidden}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 var(--font);min-height:100vh;overflow-x:hidden;
+  padding-top:24px;padding-bottom:96px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.page-note{max-width:860px;margin:0 auto 14px;color:var(--text-2);font-size:13px}
+.page-note b{color:var(--text)}
+.page-note .tag{display:inline-block;margin-right:6px;padding:1px 6px;border:1px solid var(--warn);color:var(--warn);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.popup{width:min(860px,100%);margin:0 auto;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 24px 64px color-mix(in srgb,var(--bg) 70%,transparent)}
+.popup-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:16px 20px 12px;border-bottom:1px solid var(--line)}
+.popup-head h2{margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em}
+.head-actions{display:flex;gap:8px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:8px 14px;border-radius:var(--radius);font:600 13px var(--font);cursor:pointer;color:var(--text);background:transparent;border:1px solid var(--line)}
+.btn:hover{border-color:var(--text-2);background:var(--surface-2)}
+.btn.sm{min-height:30px;padding:4px 10px;font-size:12.5px}
+button:focus-visible,tr:focus-visible,input:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.tabbar{display:flex;gap:4px;padding:0 20px;border-bottom:1px solid var(--line-soft);overflow-x:auto}
+.tab{padding:10px 12px;color:var(--text-2);background:none;border:0;border-bottom:2px solid transparent;font:600 13px var(--font);cursor:pointer;white-space:nowrap}
+.tab[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
+.tab .new{margin-left:6px;padding:0 5px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent-ink);background:var(--accent)}
+.body{padding:18px 20px;display:grid;gap:16px;min-width:0}
+.body > *{min-width:0}
+section h3{margin:0 0 4px;font-size:13px;font-weight:600;letter-spacing:.02em}
+.hint{margin:0 0 10px;color:var(--text-2);font-size:12.5px}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:0}
+.facts div{padding:8px 10px;background:var(--surface-2);border:1px solid var(--line-soft)}
+.facts dt{font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:.06em}
+.facts dd{margin:2px 0 0;font:500 14px var(--mono)}
+.bar{display:flex;height:14px;width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.seg{display:block;height:100%;min-width:2px}
+.seg.f,.sw.f{background:var(--accent)} .seg.o,.sw.o{background:var(--text-2)}
+.rows{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:6px}
+.rows li{display:flex;align-items:center;gap:8px;font-size:13px}
+.sw{flex:0 0 auto;width:10px;height:10px;border-radius:2px}
+.rows .v{margin-left:auto;font:500 13px var(--mono)}
+.rows .pct{width:44px;text-align:right;color:var(--text-2);font:12px var(--mono)}
+.callout{margin:0;padding:10px 12px;background:var(--surface-2);border:1px solid var(--line);border-left:3px solid var(--warn);font-size:12.5px;color:var(--text-2)}
+.callout b{color:var(--text)}
+
+/* toolbar */
+.toolbar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:4px 10px;background:transparent;color:var(--text);border:1px solid var(--line);border-radius:var(--radius);font:600 12.5px var(--font);cursor:pointer}
+.chip[aria-pressed="true"]{border-color:var(--text-2);background:var(--surface-2)}
+.chip[aria-pressed="false"]{color:var(--text-2);text-decoration:line-through}
+.chip .dot{width:9px;height:9px;border-radius:50%}
+.seg-ctl{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.seg-ctl button{min-height:30px;padding:4px 12px;background:transparent;color:var(--text-2);border:0;border-right:1px solid var(--line);font:600 12.5px var(--font);cursor:pointer}
+.seg-ctl button:last-child{border-right:0}
+.seg-ctl button[aria-pressed="true"]{background:var(--surface-2);color:var(--text)}
+.custom{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:8px;padding:8px 10px;border:1px solid var(--line);background:var(--surface-2);font-size:12.5px}
+.custom label{display:inline-flex;align-items:center;gap:6px;color:var(--text-2)}
+.custom input{width:64px;min-height:30px;padding:4px 8px;background:var(--surface);color:var(--text);border:1px solid var(--control-line);border-radius:var(--radius);font:500 13px var(--mono)}
+.vname{margin:8px 0 0;color:var(--text-2);font-size:12px}
+.vname b{color:var(--text)}
+.winline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:0 0 8px;font-size:12.5px;color:var(--text-2)}
+.winline b{color:var(--text);font-family:var(--mono);font-weight:500}
+
+.lane-tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}
+.lane-tag i{width:8px;height:8px;border-radius:50%}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;color:var(--text-2);font-size:12px;margin:6px 0 0}
+.empty{padding:14px;color:var(--text-2);font-size:12.5px;border:1px dashed var(--line);text-align:center}
+
+/* lanes */
+.gantt{border:1px solid var(--line);background:var(--surface-2);position:relative}
+.g-lane{display:grid;grid-template-columns:128px minmax(0,1fr);border-bottom:1px solid var(--line)}
+.g-lane:last-child{border-bottom:0}
+.lane-label{padding:10px 12px;border-right:1px solid var(--line);font-size:12.5px;font-weight:600;display:flex;flex-direction:column;gap:2px}
+.lane-label small{font-weight:400;color:var(--text-2);font-size:11.5px}
+.lane-label .k{display:inline-block;width:9px;height:9px;margin-right:6px;border-radius:50%}
+.g-track{position:relative;overflow:hidden}
+.g-track svg.area{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.g-grid{position:absolute;top:0;bottom:0;width:0;border-left:1px solid var(--line-soft);pointer-events:none}
+.g-band{position:absolute;top:0;bottom:0;background:color-mix(in srgb,var(--bad) 14%,transparent);border-left:1px solid var(--bad);border-right:1px solid var(--bad);pointer-events:none;min-width:2px}
+.g-bar{position:absolute;height:18px;min-width:4px;border:0;border-radius:2px;padding:0;cursor:pointer;opacity:.88}
+.g-bar:hover{opacity:1}
+.g-bar.this{outline:2px solid var(--bad);outline-offset:1px;opacity:1}
+.g-bar[aria-pressed="true"]{outline:2px solid var(--focus);outline-offset:1px;opacity:1}
+.axis{display:grid;grid-template-columns:128px minmax(0,1fr)}
+.dticks{position:relative;height:20px}
+.dticks span{position:absolute;top:4px;transform:translateX(-50%);font:11px var(--mono);color:var(--text-2);white-space:nowrap}
+.xh{position:absolute;top:0;bottom:0;width:0;border-left:1px solid var(--text);pointer-events:none;display:none;z-index:2}
+.xh.pin{border-left-color:var(--focus);border-left-width:2px}
+.readout{min-height:58px;border:1px solid var(--line);padding:10px 12px;font-size:13px;margin-top:10px;display:grid;gap:6px}
+.readout b{font-family:var(--mono);font-weight:500}
+.readout .ev{display:flex;gap:10px;font-size:12.5px;flex-wrap:wrap}
+.sumline{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px}
+.sumline b{font-family:var(--mono);font-weight:500}
+.dbox{border:1px solid var(--line);padding:12px;display:grid;gap:8px}
+.dbox h4{margin:0;font-size:14px}
+
+/* overview (P3) */
+.ov{position:relative;border:1px solid var(--line);background:var(--surface-2);cursor:grab;touch-action:none;user-select:none}
+.ov.drag{cursor:grabbing}
+.ov-row{display:grid;grid-template-columns:128px minmax(0,1fr);align-items:end;height:20px;border-bottom:1px solid var(--line-soft)}
+.ov-row:last-of-type{border-bottom:0}
+.ov-row span.n{padding:0 12px;font-size:11.5px;color:var(--text-2);align-self:center;white-space:nowrap}
+.ov-cells{display:flex;align-items:flex-end;height:100%;gap:1px;padding:0 0}
+.ov-cells i{flex:1;min-width:0;background:currentColor;opacity:.6}
+.ov-grid{position:absolute;top:0;bottom:0;left:128px;right:0;pointer-events:none}
+.ov-win{position:absolute;top:0;bottom:0;border:2px solid var(--focus);background:color-mix(in srgb,var(--focus) 10%,transparent)}
+.ov-call{position:absolute;top:0;bottom:0;width:0;border-left:2px solid var(--bad)}
+.ov-axis{display:grid;grid-template-columns:128px minmax(0,1fr)}
+.ov-axis .ticks{position:relative;height:18px}
+.ov-axis .ticks span{position:absolute;top:3px;transform:translateX(-50%);font:11px var(--mono);color:var(--text-2);white-space:nowrap}
+
+/* list */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--text-2);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:7px 8px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+td.t,td.g{font-family:var(--mono);white-space:nowrap;color:var(--text-2)}
+td.d{font-family:var(--mono);white-space:nowrap;text-align:right}
+tbody tr[data-ev]{cursor:pointer}
+tbody tr[data-ev]:hover td{background:var(--surface-2)}
+tr.this td{background:color-mix(in srgb,var(--bad) 12%,transparent)}
+tr.this td:first-child{box-shadow:inset 2px 0 var(--bad)}
+tr.sel td{background:color-mix(in srgb,var(--focus) 14%,transparent)}
+.scroll{overflow-x:auto;border:1px solid var(--line);max-height:340px;overflow-y:auto}
+
+/* chart explainer, axis titles, nearby calls */
+.explain{border:1px solid var(--line);background:var(--surface-2);padding:0;margin:0 0 10px;font-size:12.5px}
+.explain summary{cursor:pointer;padding:8px 12px;font-weight:600;font-size:13px;list-style:none}
+.explain summary::-webkit-details-marker{display:none}
+.explain summary::before{content:"▸ ";color:var(--text-2)}
+.explain[open] summary::before{content:"▾ "}
+.explain ul{margin:0;padding:0 12px 10px 28px;display:grid;gap:5px;color:var(--text-2)}
+.explain li b{color:var(--text)}
+.axlab{padding:2px 12px;font-size:11.5px;color:var(--text-2);font-weight:600}
+.axtitle{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 12px;font-size:11.5px;color:var(--text-2);padding:0 0 4px}
+.axtitle b{color:var(--text);font-weight:600}
+.yscale{display:block;margin-top:4px;font:11px var(--mono);color:var(--text-2)}
+.protoctl{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 10px;border:1px dashed var(--warn);font-size:12px;color:var(--text-2)}
+.protoctl .tag{color:var(--warn);font-weight:600;letter-spacing:.06em;text-transform:uppercase;font-size:11px}
+.btns{display:flex;flex-wrap:wrap;gap:6px}
+.btn.on{border-color:var(--text-2);background:var(--surface-2)}
+.nc-status{min-height:20px;margin:8px 0 0;font-size:12.5px;color:var(--text-2)}
+.nc-status.bad{color:var(--bad)}
+.nc-status.ok{color:var(--text)}
+td.nr{font:11.5px var(--font);color:var(--text-2);white-space:nowrap}
+tr.fresh td:first-child{box-shadow:inset 2px 0 var(--accent)}
+.badge{display:inline-block;margin-left:6px;padding:0 5px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent-ink);background:var(--accent)}
+
+/* v2.1: not-recorded hatching, coverage strip, source labels */
+.hatch{background-image:repeating-linear-gradient(135deg,transparent 0 5px,color-mix(in srgb,var(--text-2) 38%,transparent) 5px 6px)}
+.g-nodata{position:absolute;top:0;bottom:0;pointer-events:none;border-left:1px dashed var(--line)}
+.g-note{position:absolute;top:0;bottom:0;display:flex;align-items:center;justify-content:center;pointer-events:none;padding:0 6px}
+.g-note span{background:var(--surface);border:1px solid var(--line);padding:3px 8px;font-size:11.5px;color:var(--text);text-align:center;max-width:100%}
+.lane-label .src{font-weight:400;font-size:11px;color:var(--text-2);line-height:1.3}
+.g-bar.mk{width:11px!important;height:11px!important;min-width:0;margin-left:-5px;transform:rotate(45deg)}
+.hsw{display:inline-block;width:14px;height:9px;vertical-align:-1px;margin-right:5px;border:1px solid var(--line)}
+.cov{margin:10px 0 0;display:grid;gap:4px}
+.cov .hint{margin:0 0 2px}
+.cov-row{display:grid;grid-template-columns:128px minmax(0,1fr);align-items:center;gap:0}
+.cov-row .n{padding:0 12px;font-size:11.5px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cov-bar{position:relative;height:10px;background:color-mix(in srgb,var(--c) 55%,transparent);overflow:hidden}
+.cov-bar .hatch{position:absolute;top:0;bottom:0;background-color:var(--surface)}
+.ov-cells i.nd{background:transparent!important;background-image:repeating-linear-gradient(135deg,transparent 0 3px,color-mix(in srgb,var(--text-2) 45%,transparent) 3px 4px);height:100%!important}
+/* switcher */
+.switcher{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:50;display:flex;align-items:center;gap:6px;padding:6px 8px;background:#f4f4f2;color:#111;border-radius:999px;box-shadow:0 6px 24px rgb(0 0 0 / 45%);font:600 13px var(--font)}
+.switcher button{width:32px;height:32px;border:0;border-radius:50%;background:#111;color:#fff;font-size:16px;cursor:pointer}
+.switcher span{min-width:190px;text-align:center;padding:0 6px}
+.switcher button:focus-visible{outline:2px solid #0b6b57;outline-offset:2px}
+[hidden]{display:none!important}
+@media (max-width:640px){
+  .g-lane,.axis,.ov-row,.ov-axis,.cov-row{grid-template-columns:84px minmax(0,1fr)}
+  .ov-grid{left:84px}
+  .popup-head,.body,.tabbar{padding-left:14px;padding-right:14px}
+  .switcher span{min-width:130px}
+}
+</style>
+</head>
+<body>
+
+<p class="page-note"><span class="tag">Prototype v2.1</span><b>Changed in v2.1:</b> lane height now means <b>how many were running at once</b> (not how many started); every lane names its <b>source</b>; a <b>coverage strip</b> shows where a source has no data (hatched, never drawn as zero); and a prototype-only switch at the bottom of Nearby activity pretends the database source is Query Store live / file / seen by the API / off / read-only / switched on late / permission denied / event markers only. Only what the app can already read is used; nothing needs a new collector. <b>Slow call pop-up: two new tabs.</b> <b>Nearby calls</b> is the exact table of API calls around this one (filter by user or API, widen the window). <b>Nearby activity</b> is the picture across API, web server (IIS) and database. Each chart has a "How to read this chart" box and titled axes. SQL, IIS and API logs share no request ID, so the picture lines them up by <b>time only</b>. P1 is the plain lane timeline plus a list, P2 adds a hover line that reads every lane at once, P3 adds a whole-hour strip you drag to move the window. Window: ±5, ±10, ±15 or custom before/after. Use the pill (or ← → keys) to flip. Numbers are invented; nothing is wired to the app.</p>
+
+<div class="popup" role="dialog" aria-label="Slow call">
+  <div class="popup-head">
+    <h2>Slow call</h2>
+    <div class="head-actions"><button class="btn" type="button">Open in Analysis</button><button class="btn" type="button">Close</button></div>
+  </div>
+  <div class="tabbar" role="tablist" aria-label="Call details">
+    <button class="tab" role="tab" id="t-overview" aria-selected="false" aria-controls="p-overview" type="button">Overview</button>
+    <button class="tab" role="tab" id="t-calls" aria-selected="false" aria-controls="p-calls" type="button">Nearby calls</button>
+    <button class="tab" role="tab" id="t-activity" aria-selected="true" aria-controls="p-activity" type="button">Nearby activity<span class="new">new</span></button>
+  </div>
+
+  <div class="body" role="tabpanel" id="p-overview" aria-labelledby="t-overview" hidden>
+    <section>
+      <h3>About this call</h3>
+      <dl class="facts">
+        <div><dt>Endpoint</dt><dd>Payroll / RunMonthly</dd></div>
+        <div><dt>Status code</dt><dd>200</dd></div>
+        <div><dt>Started</dt><dd>12 Nov 2026, 10:14:07</dd></div>
+        <div><dt>Total time</dt><dd>8.4 s</dd></div>
+      </dl>
+    </section>
+    <section>
+      <h3>Where the time went</h3>
+      <p class="hint">One bar is the whole call. Database, cache and outside web calls are not recorded per call yet, so they sit inside "Everything else".</p>
+      <div class="bar" role="img" aria-label="One bar showing the share of the call spent in filters and in everything else">
+        <span class="seg f" style="width:6%"></span><span class="seg o" style="width:94%"></span>
+      </div>
+      <ul class="rows">
+        <li><span class="sw f"></span>Filters<span class="v">520 ms</span><span class="pct">6%</span></li>
+        <li><span class="sw o"></span>Everything else<span class="v">7.9 s</span><span class="pct">94%</span></li>
+      </ul>
+    </section>
+    <p class="callout"><b>Tip:</b> to see what the database and the web server were doing around this call, open the <b>Nearby activity</b> tab.</p>
+  </div>
+
+  <div class="body" role="tabpanel" id="p-calls" aria-labelledby="t-calls" hidden>
+    <section>
+      <h3>Nearby calls</h3>
+      <p class="hint">The other API calls that started close to this one, with how much of each call's time went to the database, the cache (Redis) and outside web calls. Only API calls are listed here. For the web server and the database, use Nearby activity.</p>
+      <p class="winline" id="ncAround"></p>
+      <div class="toolbar">
+        <div class="chips" role="group" aria-label="Narrow the list" id="ncChips"></div>
+        <div class="btns" role="group" aria-label="How far around the call to look" id="ncWiden"></div>
+      </div>
+      <p class="nc-status" id="ncStatus" aria-live="polite"></p>
+    </section>
+    <div id="ncList"></div>
+    <p class="callout"><b>Reading the times:</b> "not recorded" means the server did not save that number for that call. It does not mean zero. The list holds at most 100 calls.</p>
+    <p class="hint" style="margin:8px 0 0"><b>Needs an addition:</b> the Database, Redis and Web calls columns come from per-call totals that the list does not carry yet (planned step A1b). Until then they read "not recorded".</p>
+    <div class="protoctl"><span class="tag">Prototype only</span><span>Pretend the server:</span>
+      <div class="btns" id="ncMode" role="group" aria-label="Prototype: what the server does when asked"></div></div>
+  </div>
+
+  <div class="body" role="tabpanel" id="p-activity" aria-labelledby="t-activity">
+    <section>
+      <h3>Nearby activity</h3>
+      <p class="hint">What else was going on around this call: other API calls, the web server (IIS) and the database. These are three separate logs, so they line up by time only.</p>
+      <div class="toolbar">
+        <div class="chips" role="group" aria-label="Show these sources">
+          <button class="chip" type="button" data-lane="api" aria-pressed="true"><span class="dot" style="background:var(--lane-audit)"></span>API calls</button>
+          <button class="chip" type="button" data-lane="iis" aria-pressed="true"><span class="dot" style="background:var(--lane-iis)"></span>Web server (IIS)</button>
+          <button class="chip" type="button" data-lane="sql" aria-pressed="true"><span class="dot" style="background:var(--lane-sql)"></span>Database</button>
+        </div>
+        <div class="seg-ctl" role="group" aria-label="Time around the call">
+          <button type="button" data-win="5" aria-pressed="false">±5 min</button>
+          <button type="button" data-win="10" aria-pressed="false">±10 min</button>
+          <button type="button" data-win="15" aria-pressed="true">±15 min</button>
+          <button type="button" data-win="custom" aria-pressed="false">Custom</button>
+        </div>
+      </div>
+      <div class="custom" id="custom" hidden>
+        <label>Before the call <input type="number" id="cb" min="1" max="30" step="1" value="15" inputmode="numeric" aria-label="Minutes before the call"> min</label>
+        <label>After the call <input type="number" id="ca" min="1" max="30" step="1" value="15" inputmode="numeric" aria-label="Minutes after the call"> min</label>
+        <span class="hint" style="margin:0">1 to 30 minutes each side.</span>
+      </div>
+      <p class="vname" id="vname"></p>
+    </section>
+    <div id="viz"></div>
+    <p class="callout"><b>What this does not show:</b> which database statement or web request belonged to this exact call. The sources are read separately, so this view shows what was happening at the same time, not a proven cause.</p>
+    <div class="protoctl"><span class="tag">Prototype only</span><span>Pretend the database source is:</span>
+      <div class="btns" id="dbMode" role="group" aria-label="Prototype: database source and state"></div></div>
+  </div>
+</div>
+
+<div class="switcher" role="group" aria-label="Prototype variant (not part of the design)">
+  <button type="button" id="prev" aria-label="Previous variant">←</button>
+  <span id="vlabel"></span>
+  <button type="button" id="next" aria-label="Next variant">→</button>
+</div>
+
+<script>
+const BASE = 9*3600 + 44*60;          // 09:44:00, data runs 61 minutes to 10:45
+const END = 61*60, MIN = 61;
+const CALLSTART = 30*60 + 7, CALLMS = 8400, CALLEND = CALLSTART + CALLMS/1000;   // 10:14:07
+const LANES = {
+  api: {name:'API calls', color:'var(--lane-audit)', tag:'API call', unit:'running at once'},
+  iis: {name:'Web server (IIS)', color:'var(--lane-iis)', tag:'Web server', unit:'running at once'},
+  sql: {name:'Database', color:'var(--lane-sql)', tag:'Database', unit:'running at once (average)'}
+};
+const VARIANTS = [
+  {key:'P1', name:'Lanes + list', blurb:'One row per source on a shared time axis, bars as long as each thing took, the shaded column is this call. Click a bar or a list row to see how it relates to this call.'},
+  {key:'P2', name:'Lanes + hover line + list', blurb:'P1 plus faint busy-ness behind each lane and a hover line: move the mouse and every source is read at that moment. Click to pin it.'},
+  {key:'P3', name:'Hour strip + lanes + list', blurb:'P1 plus the whole hour at the top. Drag the highlighted window to look earlier or later than the call; "Back to this call" snaps it back.'}
+];
+// The database is read from Query Store, which saves one summary per interval (15 minutes here), not per statement and not per minute.
+const SQLIV = [
+  {t:60,   len:900, n:180, avg:420,  max:1900, text:'Database, 09:45 to 10:00 block'},
+  {t:960,  len:900, n:530, avg:2100, max:9800, text:'Database, 10:00 to 10:15 block'},
+  {t:1860, len:900, n:210, avg:480,  max:2200, text:'Database, 10:15 to 10:30 block'},
+  {t:2760, len:900, n:340, avg:1250, max:6100, text:'Database, 10:30 to 10:45 block'}
+];
+const sqlAvgAt = t => (SQLIV.find(b => t >= b.t && t < b.t + b.len) || SQLIV[0]).avg;
+// invented data, minute buckets from 09:44. The call is in minute 30.
+const series = {api:[], iis:[], sql:[], err:[]};
+for (let i = 0; i < MIN; i++) {
+  const d = i - 30, n = (i*37) % 5;
+  series.api.push(Math.round(3 + n*0.6 + 9*Math.exp(-Math.pow(d/4, 2)) + 4*Math.exp(-Math.pow((i - 52)/3, 2))));
+  series.iis.push(Math.round(600 + n*40 + 9000*Math.exp(-Math.pow(d/2.5, 2)) + 2500*Math.exp(-Math.pow((i - 8)/2, 2))));
+  series.sql.push(sqlAvgAt(i*60 + 30));
+  series.err.push({29:2, 30:3, 31:1, 8:1}[i] || 0);
+}
+// "Running at once" per minute (Little's law: arrivals x time each one stays). API is exact from start + duration, IIS from the 1 s log.
+const conc = {api:[], iis:[], apisql:[]};
+for (let i = 0; i < MIN; i++) {
+  const d = i - 30, n = (i*37) % 5;
+  conc.api.push(Math.round(2 + n*0.5 + 8*Math.exp(-Math.pow(d/4, 2)) + 3*Math.exp(-Math.pow((i - 52)/3, 2))));
+  conc.iis.push(Math.round(1 + n*0.4 + 7*Math.exp(-Math.pow(d/2.5, 2)) + 2*Math.exp(-Math.pow((i - 8)/2, 2))));
+  conc.apisql.push(Math.round((0.2 + n*0.05 + 1.6*Math.exp(-Math.pow(d/3, 2)))*10)/10);   // time the API's own calls spent inside the database
+}
+// Where the database picture can come from, using only what the app can already read. cov = time ranges (seconds from 09:44) that have data.
+const DB = {
+  qs:{btn:'Query Store, live', src:'Query Store (live)', kind:'blocks', cov:[[0, END]], short:'',
+    msg:'Read live from Query Store. It saves one summary per 15-minute block, so the database shape moves in steps and has no exact second.'},
+  qsfile:{btn:'Query Store file', src:'Query Store file imported 11 Nov 2026', kind:'blocks', cov:[[0, END]], short:'',
+    msg:'Read from a Query Store export file that was imported on 11 Nov 2026 (no live connection needed). Same 15-minute blocks as live; it ends where the export ended.'},
+  api:{btn:'Seen by the API', src:'Seen by the API (time inside the database)', kind:'apiseen', cov:[[0, END]], short:'',
+    msg:'Query Store has no data for this period, so this lane shows the time this API\'s own calls spent inside the database. It leaves out other apps and anything the API did not log, so it can read lower than the real database load.'},
+  off:{btn:'Query Store off', src:'Not recorded', kind:'none', cov:[], short:'Not recorded: Query Store is off',
+    msg:'Query Store is switched off on this database, so it saved no history. Switching it on needs the database owner (the script is in Setup); Unravis never switches it on itself. The period before it is switched on cannot be filled in.'},
+  ro:{btn:'Read-only since 10:05', src:'Query Store (live), read-only since 10:05', kind:'blocks', cov:[[0, 1260]], short:'Not recorded: Query Store went read-only at 10:05',
+    msg:'Query Store went read-only at 10:05 (it stops saving new history, usually because its storage filled up). Everything before 10:05 is shown; nothing after it was saved.'},
+  late:{btn:'Switched on 10:30', src:'Query Store (live), switched on 10:30', kind:'blocks', cov:[[2760, END]], short:'Not recorded: Query Store was off',
+    msg:'Query Store was switched on at 10:30, after this call. Nothing earlier was saved, so the call\'s time is unknown, not zero.'},
+  denied:{btn:'Permission denied', src:'Not recorded', kind:'none', cov:[], short:'Not recorded: no permission',
+    msg:'The saved database login is not allowed to read Query Store (it needs the VIEW DATABASE STATE permission). Ask the database owner, or add a login that has it.'},
+  events:{btn:'Event markers only', src:'SQL Server event log (system_health), markers only', kind:'markers', cov:[], short:'Not recorded: only events, no volumes',
+    msg:'Only SQL Server\'s own event log is available. It shows moments such as deadlocks and long blocking, but not how busy the database was, so there is no shape. Markers are not a proof of cause.'}
+};
+const dbS = () => DB[st.dbSrc];
+const covOf = k => k === 'sql' ? dbS().cov : [[0, END]];
+const gaps = k => { let cur = 0; const out = []; covOf(k).forEach(([a, b]) => { if (a > cur) out.push([cur, a]); cur = Math.max(cur, b); }); if (cur < END) out.push([cur, END]); return out; };
+function concAt(k, m) {   // running at once in minute m, or null when the source has no data for it
+  const t = m*60 + 30;
+  if (k !== 'sql') return conc[k][m];
+  const s = dbS();
+  if (s.kind === 'apiseen') return conc.apisql[m];
+  if (s.kind !== 'blocks' || !s.cov.some(([a, b]) => t >= a && t < b)) return null;
+  const b = SQLIV.find(x => t >= x.t && t < x.t + x.len);
+  return b ? b.n*b.avg/1000/b.len : null;   // executions x average time / block length
+}
+const concSeries = k => Array.from({length:MIN}, (_, m) => concAt(k, m));
+const median = a => { const v = a.filter(x => x !== null).sort((x, y) => x - y); return v.length ? v[Math.floor(v.length/2)] : null; };
+const fmtConc = v => v === null ? 'not recorded' : (v < 10 && v !== Math.round(v) ? v.toFixed(1) : String(Math.round(v)));
+const srcLabel = k => k === 'api' ? 'API audit records' : k === 'iis' ? 'imported web server logs (IIS)' : dbS().src;
+const OLD = [   // t from the first wireframe (09:59 base), shifted by +900 s
+  {t:260,  lane:'sql', text:'UPDATE Payroll.Run SET … (2 runs)', ms:900},
+  {t:402,  lane:'api', text:'Payroll / LoadEmployees · user 3', ms:1200},
+  {t:550,  lane:'iis', text:'GET /api/payroll/status · 200', ms:800},
+  {t:821,  lane:'sql', text:'UPDATE Payroll.Run SET … (3 runs)', ms:2100},
+  {t:892,  lane:'api', text:'Payroll / LoadEmployees · user 7', ms:1900},
+  {t:903,  lane:'iis', text:'POST /api/payroll/run · 502', ms:30000},
+  {t:907,  lane:'api', text:'This call · Payroll / RunMonthly', ms:8400, call:true},
+  {t:909,  lane:'sql', text:'SELECT … FROM Payroll.Slip JOIN … (41 runs)', ms:3600},
+  {t:912,  lane:'iis', text:'GET /api/payroll/status · 503', ms:12200},
+  {t:940,  lane:'api', text:'Payroll / RunMonthly · user 9', ms:5100},
+  {t:990,  lane:'api', text:'Payroll / RunMonthly · user 12', ms:7700},
+  {t:1022, lane:'sql', text:'EXEC Payroll.Recalc … (2 runs)', ms:1400},
+  {t:1040, lane:'iis', text:'POST /api/payroll/run · 504', ms:30000},
+  {t:1335, lane:'api', text:'Payroll / LoadEmployees · user 4', ms:1100},
+  {t:1550, lane:'sql', text:'SELECT … FROM Payroll.Slip (6 runs)', ms:700},
+  {t:884,  lane:'api', text:'Payroll / LoadEmployees · user 5', ms:2600},
+  {t:896,  lane:'sql', text:'SELECT … FROM Payroll.Emp (12 runs)', ms:1400},
+  {t:899,  lane:'api', text:'Payroll / RunMonthly · user 2', ms:3200},
+  {t:905,  lane:'sql', text:'UPDATE Payroll.Lock SET … (1 run)', ms:600},
+  {t:914,  lane:'sql', text:'EXEC Payroll.Recalc … (4 runs)', ms:2400},
+  {t:915,  lane:'api', text:'Payroll / LoadEmployees · user 8', ms:2100},
+  {t:921,  lane:'iis', text:'GET /api/payroll/status · 503', ms:9000},
+  {t:925,  lane:'api', text:'Payroll / RunMonthly · user 11', ms:4500}
+].map(e => ({...e, t:e.t + 900}));
+const EXTRA = [   // further away from the call
+  {t:150,  lane:'api', text:'Payroll / LoadEmployees · user 3', ms:1500},
+  {t:470,  lane:'iis', text:'GET /api/payroll/status · 503', ms:11000},
+  {t:480,  lane:'iis', text:'POST /api/payroll/run · 504', ms:30000},
+  {t:700,  lane:'sql', text:'UPDATE Payroll.Run SET … (2 runs)', ms:1100},
+  {t:2700, lane:'api', text:'Payroll / RunMonthly · user 14', ms:6200},
+  {t:2955, lane:'sql', text:'SELECT … FROM Payroll.Slip (9 runs)', ms:2900},
+  {t:3140, lane:'api', text:'Payroll / RunMonthly · user 6', ms:7400},
+  {t:3180, lane:'sql', text:'EXEC Payroll.Recalc … (8 runs)', ms:3300},
+  {t:3200, lane:'iis', text:'GET /api/payroll/status · 503', ms:8800},
+  {t:3420, lane:'api', text:'Payroll / LoadEmployees · user 2', ms:1300}
+];
+// The web server log keeps the status class only (4xx / 5xx), no URL or method, so rows say "Web request".
+const iisText = t => /\b5\d\d$/.test(t) ? 'Web request · 5xx' : /\b4\d\d$/.test(t) ? 'Web request · 4xx' : 'Web request';
+let events = [], CALLID = 0;
+const st = {variant:'P2', before:15, after:15, custom:false, lanes:{api:true, iis:true, sql:true}, selEv:0, pin:null, center:null, drag:false, dbSrc:'qs'};
+function buildEvents() {   // the database events depend on which source is pretended
+  const s = dbS(), sqlEv = [];
+  if (s.kind === 'blocks') SQLIV.forEach(b => s.cov.forEach(([a, z]) => {
+    const lo = Math.max(b.t, a), hi = Math.min(b.t + b.len, z);
+    if (hi > lo) sqlEv.push({t:lo, lane:'sql', iv:true, ms:(hi - lo)*1000, n:b.n, avg:b.avg, max:b.max, text:hi - lo < b.len ? `Database, ${fmtHM(lo)} to ${fmtHM(hi)} (part of a block)` : b.text});
+  }));
+  if (s.kind === 'markers') sqlEv.push({t:28*60 + 40, lane:'sql', mk:true, ms:1000, text:'Deadlock (SQL Server event log)'}, {t:32*60, lane:'sql', mk:true, ms:1000, text:'Blocked process, 31 s (SQL Server event log)'});
+  events = [...OLD, ...EXTRA].filter(e => e.lane !== 'sql').map(e => e.lane === 'iis' ? {...e, text:iisText(e.text)} : e).concat(sqlEv).sort((a, b) => a.t - b.t);
+  events.forEach((e, i) => { e.id = i; });
+  CALLID = events.find(e => e.call).id;
+}
+
+const pad = n => String(n).padStart(2, '0');
+const fmtT = t => { const s = BASE + Math.round(t); return pad(Math.floor(s/3600)) + ':' + pad(Math.floor(s%3600/60)) + ':' + pad(s%60); };
+const fmtHM = t => fmtT(t).slice(0, -3);
+const fmtMs = ms => ms >= 1000 ? (ms/1000).toFixed(1) + ' s' : ms + ' ms';
+const dur = s => { s = Math.round(Math.abs(s)); return s < 60 ? s + ' s' : Math.floor(s/60) + ' m ' + pad(s%60) + ' s'; };
+const endOf = e => e.t + e.ms/1000;
+const active = () => Object.keys(LANES).filter(k => st.lanes[k]);
+const laneTag = k => `<span class="lane-tag"><i style="background:${LANES[k].color}"></i>${LANES[k].tag}</span>`;
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const tookText = e => e.mk ? 'event' : e.iv ? `avg ${fmtMs(e.avg)} · slowest ${fmtMs(e.max)}` : fmtMs(e.ms);
+buildEvents(); st.selEv = CALLID;
+
+function range() {
+  const len = (st.before + st.after)*60;
+  let T0, T1;
+  if (st.center === null) { T0 = CALLSTART - st.before*60; T1 = CALLSTART + st.after*60; }
+  else { T0 = st.center - len/2; T1 = st.center + len/2; }
+  if (T0 < 0) { T0 = 0; T1 = len; }
+  if (T1 > END) { T1 = END; T0 = END - len; }
+  return {T0, T1, span:T1 - T0};
+}
+const inWin = e => { const {T0, T1} = range(); return endOf(e) >= T0 && e.t <= T1 && st.lanes[e.lane]; };
+const callInWin = () => { const {T0, T1} = range(); return CALLEND >= T0 && CALLSTART <= T1; };
+function gapText(e) {
+  if (e.call) return 'this call';
+  if (e.t < CALLEND && endOf(e) > CALLSTART) return 'during';
+  return e.t >= CALLEND ? '+' + dur(e.t - CALLEND) : '−' + dur(CALLSTART - endOf(e));
+}
+function niceTicks(T0, T1) {
+  const span = (T1 - T0)/60, step = [1, 2, 5, 10, 15, 30].find(s => span/s <= 7) || 30, out = [];
+  for (let m = Math.ceil(T0/60/step)*step; m*60 <= T1; m += step) out.push(m*60);
+  return out;
+}
+
+/* ---------- shared pieces ---------- */
+function axisHtml(T0, T1) {
+  const span = T1 - T0;
+  return '<div class="axis"><span class="axlab">Time of day →</span><div class="dticks">' + niceTicks(T0, T1).map(t => `<span style="left:${(t - T0)/span*100}%">${fmtHM(t)}</span>`).join('') + '</div></div>' +
+    `<div class="axis"><span></span><div class="axtitle"><span>starts ${fmtHM(T0)}</span><b>Time of day, hours:minutes, 24-hour clock</b><span>ends ${fmtHM(T1)}</span></div></div>`;
+}
+function explainHtml(withArea) {
+  return '<details class="explain" open><summary>How to read this chart</summary><ul>' +
+    '<li><b>Left to right is time of day</b> on a 24-hour clock (10:14 is a quarter past ten in the morning, 22:14 is the evening). Earlier is on the left. The labels under the chart are hours:minutes.</li>' +
+    '<li><b>Each coloured bar is one slow thing.</b> Where it starts is when it started. How wide it is, is how long it took. Up and down inside a row means nothing: bars only stack so they do not cover each other.</li>' +
+    (withArea ? '<li><b>The faint shape behind each row is how many were running at the same moment.</b> Tall means a pile-up (many at once), not many starting. The top of the row is the most at once in this hour (the number is on the left), the bottom is zero.</li>' : '') +
+    '<li><b>Hatched stripes mean nothing was recorded</b> for that source at that time. That is unknown, not zero: the source may be off or may not reach back that far. The label on each row says where its data comes from.</li>' +
+    '<li><b>The red column is when this call was running.</b> Anything under it was happening at the same time.</li></ul></details>';
+}
+function lanesHtml(withArea) {
+  const {T0, T1, span} = range(), ks = active();
+  if (!ks.length) return '<div class="empty">Pick at least one source above.</div>';
+  const minW = span*0.007, pct = t => (Math.max(T0, Math.min(T1, t)) - T0)/span*100, ticks = niceTicks(T0, T1);
+  let h = '<div class="gantt" id="gantt">';
+  ks.forEach(k => {
+    const list = events.filter(e => e.lane === k && endOf(e) >= T0 && e.t <= T1), rowEnd = [];
+    const placed = list.map(e => {
+      let r = rowEnd.findIndex(x => x <= e.t); if (r < 0) { r = rowEnd.length; rowEnd.push(0); }
+      rowEnd[r] = Math.max(endOf(e), e.t + minW) + span*0.004; return {e, r};
+    });
+    const rows = Math.max(1, rowEnd.length);
+    let area = '';
+    const cs = concSeries(k), mxc = Math.max(1, ...cs.filter(v => v !== null));
+    if (withArea) {
+      const m0 = Math.max(0, Math.floor(T0/60) - 1), m1 = Math.min(MIN - 1, Math.ceil(T1/60) + 1);
+      let run = [], shapes = '';
+      const flush = () => { if (run.length) { const x0 = run[0].split(',')[0], x1 = run[run.length - 1].split(',')[0]; shapes += `<polygon points="${x0},100 ${run.join(' ')} ${x1},100" fill="${LANES[k].color}" opacity=".16"/><polyline points="${run.join(' ')}" fill="none" stroke="${LANES[k].color}" stroke-width="1" opacity=".5" vector-effect="non-scaling-stroke"/>`; } run = []; };
+      for (let m = m0; m <= m1; m++) { if (cs[m] === null) flush(); else run.push(((m*60 + 30 - T0)/span*100).toFixed(2) + ',' + (100 - cs[m]/mxc*88).toFixed(1)); }
+      flush();
+      area = `<svg class="area" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${shapes}</svg>`;
+    }
+    // hatched stripes where the source has no data: unknown, not zero
+    const gp = gaps(k).map(([a, b]) => [Math.max(a, T0), Math.min(b, T1)]).filter(([a, b]) => b > a);
+    const nodata = gp.map(([a, b]) => `<span class="g-nodata hatch" style="left:${pct(a)}%;width:${pct(b) - pct(a)}%"></span>`).join('');
+    const gapShare = gp.reduce((s, [a, b]) => s + (b - a), 0)/span, big = gp.slice().sort((x, y) => (y[1] - y[0]) - (x[1] - x[0]))[0];
+    const note = k === 'sql' && gp.length && gapShare >= 0.28 && dbS().short ? `<span class="g-note" style="left:${pct(big[0])}%;width:${pct(big[1]) - pct(big[0])}%"><span>${esc(dbS().short)}</span></span>` : '';
+    const bars = placed.map(({e, r}) => {
+      const l = pct(e.t), w = Math.max(pct(endOf(e)) - l, 0.4);
+      return `<button type="button" class="g-bar ${e.call ? 'this' : ''} ${e.mk ? 'mk' : ''}" data-ev="${e.id}" aria-pressed="${e.id === st.selEv}" aria-label="${LANES[k].tag}: ${esc(e.text)}, ${tookText(e)}, ${gapText(e)}" title="${fmtT(e.t)} · ${esc(e.text)} · ${tookText(e)}" style="left:${l}%;width:${w}%;top:${8 + r*26}px;background:${LANES[k].color}"></button>`;
+    }).join('');
+    const grid = ticks.map(t => `<span class="g-grid" style="left:${(t - T0)/span*100}%"></span>`).join('');
+    const band = callInWin() ? `<span class="g-band" style="left:${pct(CALLSTART)}%;width:${Math.max(pct(CALLEND) - pct(CALLSTART), 0.3)}%"></span>` : '';
+    const dbNone = k === 'sql' && !dbS().cov.length && dbS().kind !== 'apiseen';
+    const small = k === 'sql' ? (dbS().kind === 'blocks' ? 'saved in 15-minute blocks' : dbS().kind === 'apiseen' ? 'API calls only' : dbS().kind === 'markers' ? 'events only, no volumes' : 'not recorded') : list.length ? list.length + ' slow in this window' : 'nothing slow here';
+    const yscale = withArea && !dbNone ? `<small class="yscale">Shape: 0 to ${fmtConc(mxc)} at once</small>` : '';
+    h += `<div class="g-lane"><div class="lane-label"><span><i class="k" style="background:${LANES[k].color}"></i>${LANES[k].name}</span><small class="src">Source: ${esc(srcLabel(k))}</small><small>${small}</small>${yscale}</div>` +
+      `<div class="g-track" style="height:${Math.max(rows*26 + 14, withArea ? 64 : 0, gp.length ? 56 : 0)}px">${area}${grid}${nodata}${band}${bars}${note}<span class="xh"></span></div></div>`;
+  });
+  return explainHtml(withArea) + h + '</div>' + axisHtml(T0, T1) + coverageHtml(T0, T1) + sourceNoteHtml() +
+    '<p class="legend"><span>Bar width = how long it took</span>' + (withArea ? '<span>Faint shape = how many were running at once</span>' : '') + '<span><i class="hsw hatch"></i>Hatched = not recorded, which is unknown, not zero</span>' + `<span>${callInWin() ? 'Red column = while this call was running · red outline = this call' : 'This call is outside the window you are looking at'}</span></p>`;
+}
+function coverageHtml(T0, T1) {   // what each source actually has for the whole hour
+  const rows = active().map(k => `<div class="cov-row"><span class="n">${LANES[k].name}</span><div class="cov-bar" style="--c:${LANES[k].color}" title="${esc(srcLabel(k))}">${gaps(k).map(([a, b]) => `<span class="hatch" style="left:${a/END*100}%;width:${(b - a)/END*100}%"></span>`).join('')}<span class="g-nodata" style="left:${T0/END*100}%;width:${(T1 - T0)/END*100}%;border:1px solid var(--text-2);border-width:0 1px;background:transparent"></span></div></div>`).join('');
+  return `<div class="cov"><p class="hint">Data coverage for the whole hour (the outlined part is the window above). Hatched means that source has nothing recorded for that time.</p>${rows}</div>`;
+}
+function sourceNoteHtml() {
+  if (!st.lanes.sql) return '';
+  return `<p class="hint" style="margin:8px 0 0"><b>Database:</b> ${esc(dbS().msg)}</p>`;
+}
+function detailHtml() {
+  const s = events[st.selEv] || events[CALLID];
+  const over = events.filter(e => !e.call && st.lanes[e.lane] && e.t < CALLEND && endOf(e) > CALLSTART);
+  let rel;
+  if (s.call) rel = over.length ? `While it ran (${fmtT(CALLSTART)} to ${fmtT(CALLEND)}), ${over.length} other thing${over.length === 1 ? ' was' : 's were'} also running (listed below, marked "during").` : 'Nothing else slow was running while this call ran.';
+  else if (s.t < CALLEND && endOf(s) > CALLSTART) rel = 'This overlapped this call.';
+  else rel = s.t >= CALLEND ? `Started ${dur(s.t - CALLEND)} after this call finished.` : `Finished ${dur(CALLSTART - endOf(s))} before this call started.`;
+  const par = [];
+  if (s.call) {
+    const m = Math.floor((CALLSTART + CALLMS/2000)/60);
+    ['api', 'iis', 'sql'].filter(k => st.lanes[k]).forEach(k => {
+      const v = concAt(k, m), med = median(concSeries(k));
+      par.push(v === null ? `${LANES[k].name}: not recorded` : `${LANES[k].name}: ${fmtConc(v)} at once (usually ${fmtConc(med)} at this hour)`);
+    });
+  }
+  const parLine = par.length ? `<p class="hint" style="margin:0 0 4px"><b>While this call ran:</b> ${par.map(esc).join(' · ')}</p>` : '';
+  if (s.mk) return `<div class="dbox"><h4>${esc(s.text)}</h4><div class="sumline"><span>${laneTag(s.lane)}</span><span>Happened <b>${fmtT(s.t)}</b></span></div><p class="hint" style="margin:0">An event marker has no length and no volume. It happened at about the same time as this call, which is not proof it caused anything.</p></div>`;
+  return `<div class="dbox"><h4>${s.call ? '<b>' + esc(s.text) + '</b>' : esc(s.text)}</h4>${parLine}<div class="sumline"><span>${laneTag(s.lane)}</span>${s.iv ? `<span>Block <b>${fmtHM(s.t)} to ${fmtHM(endOf(s))}</b></span><span>Statements <b>${s.n}</b></span><span>Average <b>${fmtMs(s.avg)}</b></span><span>Slowest <b>${fmtMs(s.max)}</b></span>` : `<span>Started <b>${fmtT(s.t)}</b></span><span>Took <b>${fmtMs(s.ms)}</b></span><span>Ended <b>${fmtT(endOf(s))}</b></span>`}</div><p class="hint" style="margin:0">${rel}</p></div>`;
+}
+function listHtml() {
+  const list = events.filter(inWin);
+  let h = `<h3 style="margin:0 0 6px;font-size:13px">What happened, in time order <span style="font-weight:400;color:var(--text-2)">(${list.length})</span></h3>`;
+  if (!list.length) return h + '<div class="empty">Nothing slow was recorded for these sources in this window.</div>';
+  return h + '<div class="scroll"><table><thead><tr><th>Time</th><th>From this call</th><th>Source</th><th>What</th><th style="text-align:right">Took</th></tr></thead><tbody>' +
+    list.map(e => `<tr data-ev="${e.id}" tabindex="0" class="${(e.call ? 'this ' : '') + (e.id === st.selEv ? 'sel' : '')}" aria-selected="${e.id === st.selEv}"><td class="t">${fmtT(e.t)}</td><td class="g">${gapText(e)}</td><td>${laneTag(e.lane)}</td><td>${e.call ? '<b>' + esc(e.text) + '</b>' : esc(e.text)}</td><td class="d">${tookText(e)}</td></tr>`).join('') +
+    '</tbody></table></div>';
+}
+function winLine() {
+  const {T0, T1} = range(), shifted = st.center !== null;
+  return `<p class="winline"><span>Showing <b>${fmtHM(T0)}</b> to <b>${fmtHM(T1)}</b></span><span>(${st.before} min before, ${st.after} min after this call${shifted ? ', moved' : ''})</span>${shifted ? '<button type="button" class="btn sm" id="back">Back to this call</button>' : ''}</p>`;
+}
+function readoutHtml(t, note) {
+  const m = Math.max(0, Math.min(MIN - 1, Math.floor(t/60))), sum = [];
+  if (st.lanes.api) sum.push(`<span>API calls running at once <b>${fmtConc(concAt('api', m))}</b></span>`);
+  if (st.lanes.iis) sum.push(`<span>Web requests running at once <b>${fmtConc(concAt('iis', m))}</b></span><span>slowest 5% (P95) <b>${fmtMs(series.iis[m])}</b></span><span>refused or failed (4xx/5xx) <b>${series.err[m]}</b></span>`);
+  if (st.lanes.sql) { const v = concAt('sql', m); sum.push(v === null ? `<span>Database <b>not recorded</b></span>` : `<span>Database running at once (average) <b>${fmtConc(v)}</b></span>`); }
+  const list = events.filter(e => Math.floor(e.t/60) === m && st.lanes[e.lane]), shown = list.slice(0, 4);
+  return `<b>${fmtHM(m*60)} to ${fmtHM(m*60 + 60)}${m === 30 ? ' (this call)' : ''}</b> <span class="hint">${note}</span><div class="sumline">${sum.join('')}</div>` +
+    (shown.length ? shown.map(e => `<div class="ev"><span class="t">${fmtT(e.t)}</span>${laneTag(e.lane)}<span>${e.call ? '<b>' + esc(e.text) + '</b>' : esc(e.text)}</span><span class="d">${tookText(e)}</span></div>`).join('') + (list.length > 4 ? `<span class="hint">and ${list.length - 4} more, see the list below</span>` : '') : '<span class="hint">Nothing slow was recorded in this minute. The numbers above still count every call.</span>');
+}
+function overviewHtml() {
+  const ks = active(), {T0, T1} = range();
+  if (!ks.length) return '';
+  const rowsH = ks.map(k => {
+    const cs = concSeries(k), mx = Math.max(1, ...cs.filter(v => v !== null));
+    return `<div class="ov-row" style="color:${LANES[k].color}"><span class="n" style="color:var(--text-2)">${LANES[k].name}</span><div class="ov-cells">${cs.map(v => v === null ? '<i class="nd hatch"></i>' : `<i style="height:${Math.round(12 + v/mx*88)}%"></i>`).join('')}</div></div>`;
+  }).join('');
+  const ticks = [0, 10, 20, 30, 40, 50, 60].map(m => `<span style="left:${m/MIN*100}%">${fmtHM(m*60)}</span>`).join('');
+  return `<p class="hint" style="margin:0 0 6px">The whole hour. Left to right is time of day. Each little column is one minute, and its height is how many were running at once in that minute, compared with that source's own busiest minute (the database is saved in 15-minute blocks, so it moves in steps). Hatched columns mean nothing was recorded. Drag the outlined window, or click anywhere, to look earlier or later.</p><div class="ov" id="ov">${rowsH}<div class="ov-grid"><span class="ov-call" style="left:${CALLSTART/END*100}%"></span><span class="ov-win" style="left:${T0/END*100}%;width:${(T1 - T0)/END*100}%"></span></div></div><div class="ov-axis"><span></span><div class="ticks">${ticks}</div></div><div class="ov-axis"><span></span><div class="axtitle" style="padding-top:2px"><span>starts ${fmtHM(0)}</span><b>Time of day, hours:minutes, 24-hour clock</b><span>ends ${fmtHM(END)}</span></div></div>`;
+}
+
+/* ---------- variants ---------- */
+const VIEW = {
+  P1: () => winLine() + lanesHtml(false) + detailHtml() + listHtml(),
+  P2: () => winLine() + lanesHtml(true) + '<div class="readout" id="readout" aria-live="polite">' + readoutHtml(CALLSTART, 'hover the lanes to read any moment, click to pin') + '</div>' + detailHtml() + listHtml(),
+  P3: () => overviewHtml() + winLine() + lanesHtml(false) + detailHtml() + listHtml()
+};
+
+/* ---------- wiring ---------- */
+function render() {
+  const v = VARIANTS.find(x => x.key === st.variant);
+  document.getElementById('vlabel').textContent = v.key + ' · ' + v.name;
+  document.getElementById('vname').innerHTML = '<b>' + v.key + ', ' + v.name + ':</b> ' + v.blurb;
+  document.getElementById('viz').innerHTML = active().length ? VIEW[v.key]() : '<div class="empty">Pick at least one source above.</div>';
+  if (v.key === 'P2' && st.pin !== null) showX(st.pin, true);
+}
+function syncWin() {
+  document.querySelectorAll('.seg-ctl button').forEach(x => {
+    const on = x.dataset.win === 'custom' ? st.custom : (!st.custom && Number(x.dataset.win) === st.before && st.before === st.after);
+    x.setAttribute('aria-pressed', String(on));
+  });
+  document.getElementById('custom').hidden = !st.custom;
+  document.getElementById('cb').value = st.before; document.getElementById('ca').value = st.after;
+}
+const tabs = [...document.querySelectorAll('.tab')];
+function showTab(id) { tabs.forEach(t => { const on = t.id === id; t.setAttribute('aria-selected', String(on)); document.getElementById(t.getAttribute('aria-controls')).hidden = !on; }); }
+function setVariant(k, fromUser) {
+  st.variant = k; st.pin = null; st.center = null; st.selEv = CALLID;
+  if (fromUser) showTab('t-activity');
+  try { const u = new URL(location.href); u.searchParams.set('variant', k); history.replaceState(null, '', u); } catch (e) {}
+  syncWin(); render();
+}
+function cycle(d) { const i = VARIANTS.findIndex(x => x.key === st.variant); setVariant(VARIANTS[(i + d + VARIANTS.length) % VARIANTS.length].key, true); }
+tabs.forEach(t => t.addEventListener('click', () => showTab(t.id)));
+document.getElementById('prev').addEventListener('click', () => cycle(-1));
+document.getElementById('next').addEventListener('click', () => cycle(1));
+document.addEventListener('keydown', e => {
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) return;
+  if (e.key === 'ArrowLeft') cycle(-1); else if (e.key === 'ArrowRight') cycle(1);
+});
+document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
+  st.lanes[c.dataset.lane] = c.getAttribute('aria-pressed') !== 'true';
+  c.setAttribute('aria-pressed', String(st.lanes[c.dataset.lane])); render();
+}));
+document.querySelectorAll('.seg-ctl button').forEach(b => b.addEventListener('click', () => {
+  if (b.dataset.win === 'custom') st.custom = true; else { st.custom = false; st.before = st.after = Number(b.dataset.win); }
+  st.pin = null; syncWin(); render();
+}));
+['cb', 'ca'].forEach(id => document.getElementById(id).addEventListener('input', e => {
+  const v = Math.round(Number(e.target.value)); if (!Number.isFinite(v) || v < 1) return;
+  const n = Math.min(30, v); if (id === 'cb') st.before = n; else st.after = n;
+  st.pin = null; document.getElementById('viz').innerHTML = ''; render();
+}));
+['cb', 'ca'].forEach(id => document.getElementById(id).addEventListener('change', () => syncWin()));
+
+const viz = document.getElementById('viz');
+function ovMove(ev) {
+  const ov = document.getElementById('ov'); if (!ov) return;
+  const g = ov.querySelector('.ov-grid').getBoundingClientRect(), f = Math.max(0, Math.min(1, (ev.clientX - g.left)/g.width));
+  st.center = f*END; st.pin = null; render();
+}
+viz.addEventListener('pointerdown', e => {
+  if (st.variant !== 'P3' || !e.target.closest('#ov')) return;
+  st.drag = true; try { viz.setPointerCapture(e.pointerId); } catch (x) {} ovMove(e); document.getElementById('ov').classList.add('drag');
+});
+viz.addEventListener('pointerup', () => { st.drag = false; const o = document.getElementById('ov'); if (o) o.classList.remove('drag'); });
+viz.addEventListener('click', e => {
+  if (e.target.closest('#back')) { st.center = null; render(); return; }
+  const it = e.target.closest('[data-ev]'); if (it) { st.selEv = Number(it.dataset.ev); render(); return; }
+  if (st.variant === 'P2' && e.target.closest('#gantt') && !e.target.closest('.g-bar')) { const t = tAt(e); if (t === null) return; st.pin = st.pin !== null && Math.abs(st.pin - t) < range().span*0.01 ? null : t; render(); }
+});
+viz.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('tr[data-ev]')) { st.selEv = Number(e.target.dataset.ev); render(); const r = viz.querySelector('tr.sel'); if (r) r.focus(); } });
+function tAt(ev) {
+  const tr = document.querySelector('#gantt .g-track'); if (!tr) return null;
+  const r = tr.getBoundingClientRect(), f = (ev.clientX - r.left)/r.width; if (f < 0 || f > 1) return null;
+  const {T0, span} = range(); return T0 + f*span;
+}
+function showX(t, pin) {
+  const {T0, span} = range();
+  document.querySelectorAll('#gantt .xh').forEach(x => { x.style.display = t === null ? 'none' : 'block'; x.classList.toggle('pin', !!pin); if (t !== null) x.style.left = (t - T0)/span*100 + '%'; });
+}
+viz.addEventListener('pointermove', e => {
+  if (st.variant === 'P3' && st.drag) { ovMove(e); return; }
+  if (st.variant !== 'P2' || !e.target.closest('#gantt')) return;
+  const t = tAt(e), ro = document.getElementById('readout'); if (t === null || !ro) return;
+  showX(t, false); ro.innerHTML = readoutHtml(t, st.pin !== null ? 'moving; a pinned line is shown after you leave' : 'hover the lanes to read any moment, click to pin');
+});
+viz.addEventListener('pointerleave', () => { if (st.variant === 'P2' && !st.drag) render(); });
+/* ---------- Nearby calls: precise, API only (planned slice A6) ---------- */
+const CALL_API = 'Payroll / RunMonthly', CALL_USER = 7;
+const parseCall = e => { if (e.call) return {api:CALL_API, user:CALL_USER}; const m = /^(.*) · user (\d+)$/.exec(e.text); return m ? {api:m[1], user:Number(m[2])} : null; };
+const LOADED = events.filter(e => e.lane === 'api').map(e => ({id:'e' + e.id, t:e.t, ms:e.ms, call:!!e.call, ...parseCall(e)}));
+// Calls the first load did not include; the server only sends them when asked for one user or one API.
+const MORE = [
+  {t:1010, api:'Payroll / LoadEmployees', user:7, ms:1700}, {t:1260, api:'Payroll / LoadSlips', user:7, ms:2200},
+  {t:1650, api:'Payroll / LoadEmployees', user:7, ms:1400}, {t:2100, api:CALL_API, user:7, ms:6900}, {t:2500, api:'Payroll / LoadSlips', user:7, ms:1900},
+  {t:1500, api:CALL_API, user:15, ms:5800}, {t:1980, api:CALL_API, user:4, ms:4900}, {t:2250, api:CALL_API, user:9, ms:6100},
+  {t:2600, api:CALL_API, user:11, ms:5200}, {t:2950, api:CALL_API, user:2, ms:7300}
+].map((e, i) => ({...e, id:'m' + i, fresh:true}));
+// Per-call database, cache and outside web time. Null = the server did not save it. Needs the planned light-totals addition.
+const perfOf = r => { if (r.call || /[0369]$/.test(r.id)) return null; const k = (r.t % 7) + 2; return {sql:Math.round(r.ms*k/40), redis:Math.round(r.ms*k/400), http:(r.t % 3) ? Math.round(r.ms*k/60) : 0}; };
+const nc = {chip:'all', w:15, status:'', cls:'', mode:'works', fetched:{user:false, api:false}, token:0, timer:null};
+const ncMatch = r => nc.chip === 'user' ? r.user === CALL_USER : nc.chip === 'api' ? r.api === CALL_API : true;
+const ncInWin = r => Math.abs(r.t - CALLSTART) <= nc.w*60;
+function ncRows() {
+  const pool = [...LOADED, ...MORE.filter(r => (nc.fetched.user && r.user === CALL_USER) || (nc.fetched.api && r.api === CALL_API))];
+  return pool.filter(r => ncMatch(r) && ncInWin(r)).sort((a, b) => a.t - b.t);
+}
+const ncLoadedCount = () => LOADED.filter(r => ncMatch(r) && ncInWin(r)).length;
+function ncStatus(text, cls, html) { const s = document.getElementById('ncStatus'); s.className = 'nc-status' + (cls ? ' ' + cls : ''); s.innerHTML = html || esc(text); }
+function ncRender() {
+  const rows = ncRows(), T0 = CALLSTART - nc.w*60, T1 = CALLSTART + nc.w*60;
+  document.getElementById('ncAround').innerHTML = `Calls from <b>${fmtHM(T0)}</b> to <b>${fmtHM(T1)}</b> · ${rows.length} call${rows.length === 1 ? '' : 's'} in this list`;
+  const chips = [['all', 'Everyone'], ['user', `Only user ${CALL_USER}`], ['api', `Only ${CALL_API}`]];
+  document.getElementById('ncChips').innerHTML = chips.map(([k, l]) => `<button class="btn${nc.chip === k ? ' on' : ''}" type="button" data-chip="${k}" aria-pressed="${nc.chip === k}">${esc(l)}</button>`).join('');
+  const widths = [30, 60, 120].filter(m => m > nc.w);
+  document.getElementById('ncWiden').innerHTML = (nc.w > 15 ? '<button class="btn" type="button" data-w="15">Back to 15 minutes</button>' : '') + widths.map(m => `<button class="btn" type="button" data-w="${m}">Widen to ${m} minutes</button>`).join('');
+  const body = rows.map(r => {
+    const p = perfOf(r), gap = r.call ? 'this call' : r.t >= CALLEND ? '+' + dur(r.t - CALLEND) : r.t > CALLSTART ? 'during' : '−' + dur(CALLSTART - (r.t + r.ms/1000));
+    const perf = p ? `<td class="d">${fmtMs(p.sql)}</td><td class="d">${fmtMs(p.redis)}</td><td class="d">${fmtMs(p.http)}</td>` : '<td class="nr" colspan="3">not recorded</td>';
+    return `<tr class="${(r.call ? 'this ' : '') + (r.fresh ? 'fresh' : '')}"><td class="t">${fmtT(r.t)}</td><td class="g">${gap}</td><td class="t">${r.user}</td><td>${r.call ? '<b>' + esc(r.api) + ' (this call)</b>' : esc(r.api)}</td><td class="d">${fmtMs(r.ms)}</td>${perf}</tr>`;
+  }).join('');
+  const others = rows.filter(r => !r.call).length;
+  document.getElementById('ncList').innerHTML = `<div class="scroll"><table><thead><tr><th>Time</th><th>From this call</th><th>User</th><th>API</th><th style="text-align:right">Took</th><th style="text-align:right">Database</th><th style="text-align:right">Redis</th><th style="text-align:right">Web calls</th></tr></thead><tbody>${body}</tbody></table></div>` + (others ? '' : `<div class="empty">${DRILL_NO_NEARBY}</div>`);
+  document.getElementById('ncMode').innerHTML = [['works', 'Answers'], ['fails', 'Fails'], ['more', 'Has more than 100']].map(([k, l]) => `<button class="btn${nc.mode === k ? ' on' : ''}" type="button" data-mode="${k}" aria-pressed="${nc.mode === k}">${l}</button>`).join('');
+}
+const DRILL_NO_NEARBY = 'No other calls in this window.';
+function ncAsk(kind) {   // kind: 'user' | 'api'
+  const mine = ++nc.token; clearTimeout(nc.timer);
+  if (nc.fetched[kind] && nc.mode !== 'fails') { ncStatus(ncDone(kind), 'ok'); return; }
+  ncStatus(kind === 'user' ? "Asking the server for all of this user's calls..." : 'Asking the server for all calls to this API...');
+  const before = ncLoadedCount();
+  nc.timer = setTimeout(() => {
+    if (mine !== nc.token) return;   // the owner clicked something else: this answer is stale
+    if (nc.mode === 'fails') { ncStatus('', 'bad', 'The server could not be asked. The list shows only the calls already loaded. <button class="btn" type="button" data-retry="' + kind + '">Try again</button>'); return; }
+    nc.fetched[kind] = true; ncRender();
+    const total = ncRows().length;
+    ncStatus(nc.mode === 'more' ? `Showing 100 of more` : (total - before > 0 ? `${total} calls, ${total - before} more than loaded` : `${total} calls, none more than loaded`), 'ok');
+  }, 800);
+}
+const ncDone = () => { const total = ncRows().length; return nc.mode === 'more' ? 'Showing 100 of more' : `${total} calls, ${total - ncLoadedCount()} more than loaded`; };
+function ncWiden(m) {
+  const mine = ++nc.token; clearTimeout(nc.timer); nc.w = m; ncRender();
+  if (m === 15) { ncStatus(''); return; }
+  ncStatus('Asking the server for calls in this wider window...');
+  nc.timer = setTimeout(() => { if (mine !== nc.token) return; ncStatus(nc.mode === 'more' ? 'Showing 100 of more' : `${ncRows().length} calls from ${fmtHM(CALLSTART - m*60)} to ${fmtHM(CALLSTART + m*60)}`, 'ok'); }, 600);
+}
+document.getElementById('p-calls').addEventListener('click', e => {
+  const c = e.target.closest('[data-chip]'), w = e.target.closest('[data-w]'), m = e.target.closest('[data-mode]'), r = e.target.closest('[data-retry]');
+  if (c) { nc.chip = c.dataset.chip; ncRender(); if (nc.chip === 'all') { ++nc.token; clearTimeout(nc.timer); ncStatus(''); } else ncAsk(nc.chip); }
+  else if (w) ncWiden(Number(w.dataset.w));
+  else if (m) { nc.mode = m.dataset.mode; ncRender(); }
+  else if (r) ncAsk(r.dataset.retry);
+});
+ncRender();
+
+let q = null; try { q = new URLSearchParams(location.search).get('variant'); } catch (e) {}
+const dbBox = document.getElementById('dbMode');
+function dbBtns() { dbBox.innerHTML = Object.keys(DB).map(k => `<button type="button" class="btn sm" data-db="${k}" aria-pressed="${k === st.dbSrc}">${esc(DB[k].btn)}</button>`).join(''); }
+dbBox.addEventListener('click', e => {
+  const b = e.target.closest('[data-db]'); if (!b) return;
+  st.dbSrc = b.dataset.db; buildEvents(); st.selEv = CALLID; st.pin = null; dbBtns(); render();
+});
+dbBtns();
+setVariant(VARIANTS.some(v => v.key === q) ? q : 'P2', false);
+</script>
+</body>
+</html>

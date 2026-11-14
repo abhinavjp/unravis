@@ -1,6 +1,6 @@
 /**
  * The Suspects rail of the Investigation Timeline (the wireframe's right-hand panel), worked out in the browser from the one answer the
- * timeline already holds: per lane, the event counts in each bar. Pure TypeScript; the panel is `SuspectsRail.svelte`.
+ * timeline already holds: per lane, the event counts in each bar, and where a lane has them the call times in each bar. Pure TypeScript; the panel is `SuspectsRail.svelte`.
  *
  * The rules are the wireframe's: a suspect names the readings it MUST have and the ones it should EXPECT. A reading is yes, no or
  * unknown. A "no" on a must-reading rules the suspect out (green); an unknown one means it cannot be tested yet (grey, with what it
@@ -8,12 +8,15 @@
  * to date each tier. No suspect is called a cause and nothing is scored.
  *
  * What this build can honestly read is narrower than the wireframe's synthetic data, so most readings are "unknown" and say so:
- *  - arrivalsUp (API audit) and sqlUp (slow database calls) compare event counts per bar in the first half of the window with the second half;
+ *  - arrivalsUp (API audit) compares event counts per bar in the first half of the window with the second half;
+ *  - sqlUp compares the average statement time of the saved SQL day (or the count of imported slow-call events when that is all there is);
+ *  - auditUp, p50Flat and allSlow compare call times: the audit's slow end and median, the web server's slow end, the database's average;
  *  - clockSkew reads the lane states (a lane switched off until its time zone is checked);
  *  - auditDip compares audit calls per IIS request between the two halves.
- * The server sends no call times and the response covers the incident window only, so nothing here is compared with the reference period.
+ * The response covers the incident window only, so nothing here is compared with the reference period.
  */
-import type { TracingLane, TracingLaneKey, TracingResponse } from './model';
+import type { TracingBucket, TracingLane, TracingLaneKey, TracingResponse } from './model';
+import { axisDuration } from '../chartScale';
 import { LANE_NAME, barsFor, laneNote, laneNotFullyRead, slotGrid, slotOutside, slotStartMs, unreadSlots, type SlotGrid } from './lanes';
 import {
   CATALOGUE_TOTAL, RESULT_TEXT, RESULT_WHY, SIGNAL_TEXT, SIGNAL_UNKNOWN, SIGNAL_WHY, SUSPECT_ENTRY_TEXT
@@ -29,7 +32,7 @@ export const SUSPECT_RULES = { riseRatio: 1.5, minEvents: 30, minBars: 4, dipSha
 /** The data-quality checks stay above the list while they are not green. */
 export const PINNED_IDS: readonly string[] = ['Q1', 'Q2'];
 
-interface Signal { v: SignalValue; why: string; momentSlot?: number }
+interface Signal { v: SignalValue; why: string; momentSlot?: number; what?: 'count' | 'time' }
 
 interface CatalogueEntry { id: string; group: string; must: string[]; expect?: string[] }
 
@@ -78,8 +81,10 @@ export interface Suspect {
   needs: string;
   /** The absolute slot of the chart where a rising reading of this suspect begins, or null when none could be dated. */
   momentSlot: number | null;
-  /** The lane whose count that moment belongs to. */
+  /** The lane whose reading that moment belongs to. */
   momentLane: TracingLaneKey | null;
+  /** Whether that moment is a rise in event count or in call time. */
+  momentWhat: 'count' | 'time';
   order: number;
 }
 
@@ -157,6 +162,112 @@ function laneRise(g: SlotGrid, response: TracingResponse, key: TracingLaneKey): 
   return read.ok ? riseOf(read.series, LANE_NAME[key]) : read.signal;
 }
 
+// Call times: the same two-halves test, read from the per-bar times a lane carries (the audit's P50 and P95, the web server's P95, the
+// saved SQL day's average). A bar weighs as much as it has timed requests, so a quiet bar does not outweigh a busy one.
+
+type TimeKind = 'avg' | 'p50' | 'p95';
+interface TimeSeries { idx: number[]; values: number[]; weights: number[] }
+type TimeRead = { ok: true; series: TimeSeries } | { ok: false; signal: Signal };
+
+const TIME_WORD: Record<TimeKind, string> = { avg: 'average time per statement', p50: 'median time', p95: 'slow-end time (P95)' };
+
+function timeOf(bucket: TracingBucket, kind: TimeKind): number | null {
+  const value = kind === 'avg' ? bucket.avgMs : kind === 'p50' ? bucket.p50Ms : bucket.p95Ms;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function readTimes(g: SlotGrid, lane: TracingLane | undefined, key: TracingLaneKey, kind: TimeKind): TimeRead {
+  const name = LANE_NAME[key];
+  if (!lane) return { ok: false, signal: unknown(SIGNAL_WHY.laneMissing(name)) };
+  if (lane.disabled) return { ok: false, signal: unknown(SIGNAL_WHY.laneZone(name)) };
+  if (lane.state === 'no-data') return { ok: false, signal: unknown(SIGNAL_WHY.laneNoFile(name)) };
+  if (lane.state !== 'events') return { ok: false, signal: unknown(SIGNAL_WHY.laneNotEvents(name, laneNote(lane))) };
+  if (laneNotFullyRead(lane)) return { ok: false, signal: unknown(SIGNAL_WHY.laneNotFull(name)) };
+  const unread = unreadSlots(g, lane);
+  const slots = new Map<number, { sum: number; weight: number }>();
+  let timed = 0;
+  for (const bucket of lane.buckets) {
+    const startMs = Date.parse(bucket.start);
+    if (!Number.isFinite(startMs)) continue;
+    const i = Math.floor((startMs - g.firstMs) / g.widthMs);
+    if (i < 0 || i >= g.n || slotOutside(g, i) || unread.has(i)) continue;
+    const value = timeOf(bucket, kind);
+    const weight = bucket.timedCount ?? bucket.count;
+    if (value === null || !(weight > 0)) continue;
+    const slot = slots.get(i) ?? { sum: 0, weight: 0 };
+    slot.sum += value * weight;
+    slot.weight += weight;
+    slots.set(i, slot);
+    timed += weight;
+  }
+  const idx = [...slots.keys()].sort((a, b) => a - b);
+  if (timed < SUSPECT_RULES.minEvents) return { ok: false, signal: unknown(SIGNAL_WHY.timeTooFew(name, TIME_WORD[kind], timed)) };
+  if (idx.length < SUSPECT_RULES.minBars) return { ok: false, signal: unknown(SIGNAL_WHY.timeTooShort(name)) };
+  const cells = idx.map((i) => slots.get(i) as { sum: number; weight: number });
+  return { ok: true, series: { idx, values: cells.map((c) => c.sum / c.weight), weights: cells.map((c) => c.weight) } };
+}
+
+const weightedMean = (values: number[], weights: number[]): number => {
+  const total = sum(weights);
+  return total > 0 ? values.reduce((acc, v, k) => acc + v * weights[k], 0) / total : 0;
+};
+
+/** "Up": the call time of the second half is at least `riseRatio` times that of the first. Dated at the onset bar, as the count rise is. */
+function timeRiseOf(series: TimeSeries, laneName: string, kind: TimeKind): Signal {
+  const mid = Math.floor(series.values.length / 2);
+  const before = weightedMean(series.values.slice(0, mid), series.weights.slice(0, mid));
+  const after = weightedMean(series.values.slice(mid), series.weights.slice(mid));
+  const ratio = before > 0 ? after / before : after > 0 ? Infinity : 1;
+  const beforeText = axisDuration(before);
+  const afterText = axisDuration(after);
+  const ratioText = Number.isFinite(ratio) ? two(ratio) : 'more than any';
+  if (!(ratio >= SUSPECT_RULES.riseRatio)) {
+    return { v: 'no', what: 'time', why: SIGNAL_WHY.timeSteady(laneName, TIME_WORD[kind], beforeText, afterText, ratioText) };
+  }
+  const up = (value: number): boolean => (before > 0 ? value >= before * SUSPECT_RULES.riseRatio : value > 0);
+  let at = -1;
+  for (let j = 0; j < series.values.length; j++) {
+    if (!up(series.values[j])) continue;
+    if (at < 0) at = j;
+    if (j + 1 >= series.values.length || up(series.values[j + 1])) { at = j; break; }
+  }
+  const slot = series.idx[at >= 0 ? at : mid];
+  return { v: 'yes', what: 'time', momentSlot: slot, why: SIGNAL_WHY.timeRise(laneName, TIME_WORD[kind], beforeText, afterText, ratioText) };
+}
+
+function timeRise(g: SlotGrid, response: TracingResponse, key: TracingLaneKey, kind: TimeKind): Signal {
+  const read = readTimes(g, findLane(response, key), key, kind);
+  return read.ok ? timeRiseOf(read.series, LANE_NAME[key], kind) : read.signal;
+}
+
+/** The database reading: the saved SQL day carries an average time per bar, so read that; imported slow-call events carry counts only. */
+function sqlReading(g: SlotGrid, response: TracingResponse): Signal {
+  const lane = findLane(response, 'sql');
+  const timed = !!lane && lane.buckets.some((bucket) => typeof bucket.avgMs === 'number');
+  return timed ? timeRise(g, response, 'sql', 'avg') : laneRise(g, response, 'sql');
+}
+
+/** The median reading is "flat" when the typical call did NOT slow. A median that moved says the whole mix slowed, not only the slow end. */
+function medianFlat(g: SlotGrid, response: TracingResponse): Signal {
+  const read = readTimes(g, findLane(response, 'audit'), 'audit', 'p50');
+  if (!read.ok) return read.signal;
+  const moved = timeRiseOf(read.series, LANE_NAME.audit, 'p50');
+  const mid = Math.floor(read.series.values.length / 2);
+  const before = axisDuration(weightedMean(read.series.values.slice(0, mid), read.series.weights.slice(0, mid)));
+  const after = axisDuration(weightedMean(read.series.values.slice(mid), read.series.weights.slice(mid)));
+  return moved.v === 'no' ? { v: 'yes', why: SIGNAL_WHY.medianFlat(before, after) } : { v: 'no', why: SIGNAL_WHY.medianMoved(before, after) };
+}
+
+/** All three tiers slowed: yes when the API, the web server and the database each rose; no when any of them held. */
+function allSlowReading(audit: Signal, iis: Signal, sql: Signal): Signal {
+  const tiers: Array<[string, Signal]> = [[LANE_NAME.audit, audit], [LANE_NAME.iis, iis], [LANE_NAME.sql, sql]];
+  const held = tiers.find(([, signal]) => signal.v === 'no');
+  if (held) return { v: 'no', why: SIGNAL_WHY.allSlowNo(held[0]) };
+  const missing = tiers.find(([, signal]) => signal.v === 'unknown');
+  if (missing) return unknown(missing[1].why);
+  return { v: 'yes', why: SIGNAL_WHY.allSlowYes };
+}
+
 function clockReading(response: TracingResponse): Signal {
   const off = response.lanes.filter((lane) => lane.disabled || lane.state === 'clock-unchecked');
   if (off.length > 0) return { v: 'yes', why: SIGNAL_WHY.clockYes(off.map((lane) => LANE_NAME[lane.key]).join(', ')) };
@@ -189,11 +300,17 @@ function readSignals(response: TracingResponse): Record<string, Signal> {
   if (!g) {
     out.arrivalsUp = unknown(SIGNAL_UNKNOWN);
     out.sqlUp = unknown(SIGNAL_UNKNOWN);
+    out.auditUp = unknown(SIGNAL_UNKNOWN);
+    out.p50Flat = unknown(SIGNAL_UNKNOWN);
+    out.allSlow = unknown(SIGNAL_UNKNOWN);
     out.auditDip = unknown(SIGNAL_UNKNOWN);
     return out;
   }
   out.arrivalsUp = laneRise(g, response, 'audit');
-  out.sqlUp = laneRise(g, response, 'sql');
+  out.sqlUp = sqlReading(g, response);
+  out.auditUp = timeRise(g, response, 'audit', 'p95');
+  out.p50Flat = medianFlat(g, response);
+  out.allSlow = allSlowReading(out.auditUp, timeRise(g, response, 'iis', 'p95'), out.sqlUp);
   out.auditDip = dipReading(g, response);
   return out;
 }
@@ -201,7 +318,7 @@ function readSignals(response: TracingResponse): Record<string, Signal> {
 // ---------------------------------------------------------------------------------------------------------------------------------
 // The wireframe's colour rule.
 
-const MOMENT_LANE: Record<string, TracingLaneKey> = { arrivalsUp: 'audit', sqlUp: 'sql' };
+const MOMENT_LANE: Record<string, TracingLaneKey> = { arrivalsUp: 'audit', auditUp: 'audit', sqlUp: 'sql' };
 
 export function evaluateSuspects(response: TracingResponse): Suspect[] {
   const signals = readSignals(response);
@@ -211,10 +328,11 @@ export function evaluateSuspects(response: TracingResponse): Suspect[] {
     const evidence: EvidenceRow[] = [];
     let momentSlot: number | null = null;
     let momentLane: TracingLaneKey | null = null;
+    let momentWhat: 'count' | 'time' = 'count';
     const take = (name: string, role: 'must' | 'expect'): Signal => {
       const signal = read(name);
       evidence.push({ signal: SIGNAL_TEXT[name], role, value: signal.v, why: signal.why });
-      if (momentSlot == null && signal.v === 'yes' && signal.momentSlot != null) { momentSlot = signal.momentSlot; momentLane = MOMENT_LANE[name] ?? null; }
+      if (momentSlot == null && signal.v === 'yes' && signal.momentSlot != null) { momentSlot = signal.momentSlot; momentLane = MOMENT_LANE[name] ?? null; momentWhat = signal.what ?? 'count'; }
       return signal;
     };
     const must = entry.must.map((name) => take(name, 'must'));
@@ -229,7 +347,7 @@ export function evaluateSuspects(response: TracingResponse): Suspect[] {
     else if (missing) { colour = 'grey'; result = RESULT_TEXT.cannot; why = RESULT_WHY.cannot(missing.why); }
     else if (expectNo) { colour = 'orange'; result = RESULT_TEXT.partly; why = RESULT_WHY.partlyExpect(expectNo.why); }
     else { colour = 'orange'; result = RESULT_TEXT.consistent; why = RESULT_WHY.consistent(must[must.length - 1].why); }
-    return { id: entry.id, group: entry.group, title: text.title, colour, result, why, evidence, check: text.check, overturn: text.overturn, needs: text.needs, momentSlot, momentLane, order };
+    return { id: entry.id, group: entry.group, title: text.title, colour, result, why, evidence, check: text.check, overturn: text.overturn, needs: text.needs, momentSlot, momentLane, momentWhat, order };
   });
 }
 

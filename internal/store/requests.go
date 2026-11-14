@@ -54,6 +54,9 @@ type requestDocument struct {
 	CreatedOn           *time.Time    `bson:"createdOn"`
 	UpdatedOn           *time.Time    `bson:"updatedOn"`
 	PollingTypeRaw      string        `bson:"pollingTypeRaw"`
+	PerfSQLMs           bson.RawValue `bson:"_perfSqlMs"`
+	PerfRedisMs         bson.RawValue `bson:"_perfRedisMs"`
+	PerfHTTPMs          bson.RawValue `bson:"_perfHttpMs"`
 }
 
 type pageRow struct {
@@ -274,6 +277,7 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 						RequestKB: doc.RequestKB, ResponseKB: doc.ResponseKB,
 						UserID: doc.UserID, UserIP: doc.UserIP, UserAgent: doc.UserAgent, UIVersion: doc.UIVersion,
 						CreatedOn: doc.CreatedOn, UpdatedOn: doc.UpdatedOn, PollingTypeRaw: doc.PollingTypeRaw,
+						Light: decodeRecordLight(doc.PerfSQLMs, doc.PerfRedisMs, doc.PerfHTTPMs),
 					}, at: *doc.InitiatedAt, object: doc.ID})
 				}
 				if err == nil {
@@ -478,12 +482,14 @@ func requestPipelineOrdered(q audit.Query, cohort [5]string, state string, summa
 	stages = append(stages,
 		bson.D{{Key: "$sort", Value: bson.D{{Key: "_auditAt", Value: direction}, {Key: "_id", Value: direction}}}},
 		bson.D{{Key: "$limit", Value: limit}},
-		bson.D{{Key: "$project", Value: bson.D{
+		// summary selects row membership, not a summary projection: both modes
+		// feed requestDocument and carry the same light totals.
+		bson.D{{Key: "$project", Value: append(bson.D{
 			{Key: "_id", Value: 1}, {Key: "sourceId", Value: sourceID}, {Key: "controller", Value: stringExpr("$ControllerName")}, {Key: "action", Value: stringExpr("$ActionName")}, {Key: "kind", Value: "$_auditKind"}, {Key: "outcome", Value: "$_auditOutcome"}, {Key: "state", Value: "$_auditState"}, {Key: "status", Value: stringExpr("$StatusCode")}, {Key: "url", Value: stringExpr("$RequestMainUrl")}, {Key: "initiatedAt", Value: "$_auditAt"}, {Key: "completedAt", Value: "$_auditCompleted"}, {Key: "durationMs", Value: duration},
 			{Key: "apiTimeMs", Value: numberExpr("$ApiTime")}, {Key: "auditCreateTimeMs", Value: numberExpr("$AuditCreateTime")}, {Key: "payloadRecordTimeMs", Value: numberExpr("$PayloadRecordTime")}, {Key: "requestKB", Value: numberExprDefault("$RequestLengthInKiloBytes")}, {Key: "responseKB", Value: numberExprDefault("$ResponseLengthInKiloBytes")},
-				{Key: "userId", Value: userIDExpr("$UserId")}, {Key: "userIp", Value: cappedStringExpr("$UserIp", "UserIp")}, {Key: "userAgent", Value: cappedStringExpr("$UserAgent", "UserAgent")}, {Key: "uiVersion", Value: cappedStringExpr("$PayrollUIVersion", "PayrollUIVersion")},
-				{Key: "createdOn", Value: dateOnlyExpr("$CreatedOn")}, {Key: "updatedOn", Value: dateOnlyExpr("$UpdatedOn")}, {Key: "pollingTypeRaw", Value: stringExpr("$RequestPollingType")},
-		}}},
+			{Key: "userId", Value: userIDExpr("$UserId")}, {Key: "userIp", Value: cappedStringExpr("$UserIp", "UserIp")}, {Key: "userAgent", Value: cappedStringExpr("$UserAgent", "UserAgent")}, {Key: "uiVersion", Value: cappedStringExpr("$PayrollUIVersion", "PayrollUIVersion")},
+			{Key: "createdOn", Value: dateOnlyExpr("$CreatedOn")}, {Key: "updatedOn", Value: dateOnlyExpr("$UpdatedOn")}, {Key: "pollingTypeRaw", Value: stringExpr("$RequestPollingType")},
+		}, lightProjection()...)}},
 	)
 	return stages
 }

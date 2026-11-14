@@ -396,7 +396,11 @@ func (d demoSeeder) seed(ctx context.Context) error {
 		// 09:00-10:00 UTC the day before the demo clock.
 		{demoCaseTracingID, "Orders API stall, 19 October", 1 * day,
 			func(ctx context.Context, c casestore.Case, created time.Time) error {
-				return d.importTracing(ctx, c, created)
+				if err := d.importTracing(ctx, c, created); err != nil {
+					return err
+				}
+				// One saved SQL day with a Query Store series around the stall, so the database lane draws.
+				return d.laneDayQueryStore(ctx, c, created.Add(40*time.Minute))
 			}},
 	}
 	for _, step := range steps {
@@ -488,6 +492,56 @@ func (d demoSeeder) laneDayNothingRead(ctx context.Context, c casestore.Case, at
 	} {
 		lane.Checks = append(lane.Checks, dbhealth.LaneCheck{ID: ck.id, Title: ck.title, State: dbhealth.StateNotYet, Summary: why})
 		rep.Findings = append(rep.Findings, dbhealth.Finding{ID: ck.id, Title: ck.title, Status: dbhealth.Unavailable, Summary: why})
+	}
+	rep.Lane = &lane
+	enc, err := json.Marshal(rep)
+	if err != nil {
+		return err
+	}
+	_, err = hs.AddHealthRun(ctx, casestore.HealthRun{Kind: "sql", Label: rep.Label, Status: string(rep.Overall), Report: enc, Key: server.LaneDayKey("sql", rep)})
+	return err
+}
+
+// laneDayQueryStore keeps one SQL Server day in which every check read well and Query Store held a 15-minute series around the stall of the tracing
+// case. The stall is the one the case's imported events show: the HTTP.sys QueueFull lines at 09:20 and 09:21 and the slow-op warnings at 09:20 and
+// 09:38 on the day before the demo clock, so the two blocks that start at 09:15 and 09:30 carry the slow numbers. It is saved through the same
+// call a real lane read uses (AddHealthRun under server.LaneDayKey). Demo only: nothing here came from a server.
+func (d demoSeeder) laneDayQueryStore(ctx context.Context, c casestore.Case, at time.Time) error {
+	hs, ok := c.(casestore.HealthStore)
+	if !ok {
+		return errors.New("the demo case cannot keep a SQL Server day")
+	}
+	d.clock.set(at)
+	base := d.now.Add(-1 * day).UTC().Truncate(time.Hour) // the same hour importTracing uses
+	const interval = 15 * time.Minute
+	firstData := d.now.UTC().Add(-7 * day)
+	lane := dbhealth.LaneResult{
+		Incident:   dbhealth.Window{Start: base, End: base.Add(time.Hour)},
+		Reference:  dbhealth.Window{Start: base.Add(-90 * time.Minute), End: base},
+		Era:        "2022",
+		Sources:    []string{"SQL Server"},
+		QueryStore: &dbhealth.LaneQueryStore{State: dbhealth.QSStateOn, FirstData: &firstData, IntervalMinutes: int(interval / time.Minute)},
+	}
+	// Four hours in 15-minute blocks, 07:30 to 11:30: 16 blocks, the stall in the 8th and 9th.
+	start := base.Add(-90 * time.Minute)
+	stallA, stallB := base.Add(15*time.Minute), base.Add(30*time.Minute)
+	for i := 0; i < 16; i++ {
+		t := start.Add(time.Duration(i) * interval)
+		p := dbhealth.LaneSeriesPoint{T: t.Unix(), Execs: 1200, AvgMs: 8, MaxMs: 60}
+		if t.Equal(stallA) || t.Equal(stallB) {
+			p = dbhealth.LaneSeriesPoint{T: t.Unix(), Execs: 900, AvgMs: 240, MaxMs: 9000}
+		}
+		lane.Series = append(lane.Series, p)
+	}
+	rep := dbhealth.Report{Kind: "sql", Label: "SQL Server", Database: "AuditDb", Version: "16.0", StartedAt: at, FinishedAt: at, Overall: dbhealth.OK}
+	for _, ck := range []struct{ id, title, summary string }{
+		{dbhealth.CheckServer, "Server start and thread pool", "The server answered and its start time was read."},
+		{dbhealth.CheckErrorLog, "Error log", "The error log for these hours was read."},
+		{dbhealth.CheckQueryStore, "Query Store", "Query Store is on and kept 15-minute blocks for these hours."},
+		{dbhealth.CheckAgentJobs, "Agent jobs and backups", "The job and backup history for these hours was read."},
+	} {
+		lane.Checks = append(lane.Checks, dbhealth.LaneCheck{ID: ck.id, Title: ck.title, State: dbhealth.StateReady, Summary: ck.summary})
+		rep.Findings = append(rep.Findings, dbhealth.Finding{ID: ck.id, Title: ck.title, Status: dbhealth.OK, Summary: ck.summary})
 	}
 	rep.Lane = &lane
 	enc, err := json.Marshal(rep)

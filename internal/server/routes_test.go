@@ -63,6 +63,7 @@ var routeCases = []routeCase{
 	{"/api/update-check", "/api/update-check", "POST"},
 	{"/api/sources", "/api/sources", "GET, POST"},
 	{"/api/sources/{id}/schema", "/api/sources/s/schema", "GET"},
+	{"/api/sources/{id}/fields", "/api/sources/s/fields", "GET"},
 	{"/api/sources/{id}/coverage", "/api/sources/s/coverage", "GET"},
 	{"/api/sources/{id}/stats", "/api/sources/s/stats", "GET"},
 	{"/api/sources/{id}", "/api/sources/s", "DELETE"},

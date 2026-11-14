@@ -6,7 +6,7 @@
   import type { TracingLane, TracingLaneKey, TracingResponse } from '../lib/tracing/model';
   import {
     LANE_ASK, LANE_NAME, LANE_ORDER, MIXED_NOTE, PANEL_TITLE, READ_TEXT,
-    anyLaneCutShort, axisCaption, barHeightPct, barMax, barSizeParts, barsFor, hasAnyData, isLaneVisible, laneChunkLine, laneCutShort, laneDrawsBars, laneNote, laneNoteTone, laneStatusLineFor,
+    anyLaneCutShort, axisCaption, barHeightPct, barMax, barSizeParts, barsFor, hasAnyData, isLaneVisible, laneChunkLine, laneCutShort, laneDrawsBars, laneNote, laneNoteTone, laneImportedLine, laneStatusLineFor,
     outsideSlots, readSummary, showsProvenance, slotGrid, slotOutside, slotStartMs, tickBottomPct, truncatedNote, unreadRuns, unreadSlots, widthLabel, yTicks, type Bar
   } from '../lib/tracing/lanes';
   import { formatTime } from '../lib/time';
@@ -21,10 +21,11 @@
     isZoomed, rangeFromDrag, stepSlot, axisTicks, zoomFocus, zoomIn, zoomOut, zoomedText,
     type Percentile, type ZoomRange
   } from '../lib/tracing/canvas';
-  import { HERO_TEXT, heroLayout, heroSentence } from '../lib/tracing/auditHero';
+  import { HERO_TEXT, heroLayout, heroSentence, heroSqlSentence, type HeroLayout } from '../lib/tracing/auditHero';
   import { axisDuration } from '../lib/chartScale';
+  import { hitFlagged, type FlagMark } from '../lib/drill/hit';
 
-  let { response, zone, onSelect, focus = null, visible = {}, unselected = [], readOnly = false, onAddFiles }: {
+  let { response, zone, onSelect, focus = null, visible = {}, unselected = [], readOnly = false, onAddFiles, onDiamond }: {
     response: TracingResponse;
     zone: string;
     onSelect?: (slotIndex: number) => void;
@@ -37,6 +38,8 @@
     readOnly?: boolean;
     // Opens the case's Add data panel. Without it (or on a case that cannot be changed) a lane with no file offers no button.
     onAddFiles?: () => void;
+    // Opens the drill-in for a flagged (red diamond) slowest request in the API lane: a click on the diamond, or Shift+Enter on its bucket. Without it the chart behaves as before.
+    onDiamond?: (slot: number) => void;
   } = $props();
 
   const SWATCH_STYLE: Record<TracingLaneKey, string> = {
@@ -49,6 +52,11 @@
   // The year is printed when the window is not in the current year or spans two years; otherwise the compact form stays.
   const showYear = $derived(grid ? needsYear(grid.firstMs, grid.firstMs + grid.n * grid.widthMs - 1, zone) : false);
   const at = (value: string | number): string => formatTime(value, { zone, precision: 'minute', year: showYear });
+  // Imported-range ends: the year is also printed when that date's year differs from the window's.
+  function spanAt(value: string): string {
+    const year = showYear || (grid ? needsYear(grid.firstMs, Date.parse(value), zone) : false);
+    return formatTime(value, { zone, precision: 'minute', year });
+  }
   const orderedLanes = $derived(
     LANE_ORDER.filter((key) => isLaneVisible(visible, key))
       .map((key) => response.lanes.find((lane) => lane.key === key))
@@ -74,9 +82,10 @@
     return map;
   });
   const readLines = $derived(readSummary(response.lanes, at));
-  const statusLine = (lane: TracingLane): string => laneStatusLineFor(lane, unselected, SOURCES_TEXT.laneUnselected);
+  const importedLine = (lane: TracingLane): string => laneImportedLine(lane, response.window, spanAt);
+  const statusLine = (lane: TracingLane): string => importedLine(lane) || laneStatusLineFor(lane, unselected, SOURCES_TEXT.laneUnselected);
   function drawsBars(lane: TracingLane): boolean {
-    return !!grid && laneDrawsBars(lane, laneBars.get(lane.key)?.bars.length ?? 0);
+    return !!grid && !importedLine(lane) && laneDrawsBars(lane, laneBars.get(lane.key)?.bars.length ?? 0);
   }
   const hasData = $derived(hasAnyData(grid, response.lanes));
 
@@ -97,9 +106,44 @@
   // "x,y" run format of latencySegments() in canvas.ts, drawn in the same 0..100 box over the bars.
   let percentile = $state<Percentile>('p95');
   const auditLane = $derived(response.lanes.find((lane) => lane.key === 'audit'));
+  const iisLane = $derived(response.lanes.find((lane) => lane.key === 'iis'));
   const latencyAvailable = $derived(!!auditLane && hasLatency(auditLane.buckets, percentile));
   const hero = $derived(grid ? heroLayout(auditLane?.buckets ?? [], grid, range, percentile) : null);
+  // The IIS lane gets the same layer from its own response times (time-taken); a lane without any draws none.
+  const webHero = $derived(grid ? heroLayout(iisLane?.buckets ?? [], grid, range, percentile) : null);
+  // The SQL lane drawn from saved Query Store figures: bars are statements per interval and the line is the SLOWEST statement
+  // in each interval, on one scale with the red diamonds (fed through the same layout as a P95 value, but always labelled
+  // "Slowest statement", never as a percentile). The average stays in the hover tooltip: on this scale it sits flat at the bottom.
+  const sqlLane = $derived(response.lanes.find((lane) => lane.key === 'sql'));
+  const sqlHero = $derived(
+    grid && sqlLane?.buckets.some((b) => b.avgMs !== undefined || b.maxMs !== undefined)
+      ? heroLayout(sqlLane.buckets.map((b) => {
+          const slowest = b.maxMs ?? b.avgMs;
+          return slowest === undefined ? b : { ...b, p95Ms: slowest };
+        }), grid, range, 'p95')
+      : null
+  );
+  const sqlPeakMs = $derived(sqlHero && sqlHero.dots.length > 0 ? Math.max(...sqlHero.dots.map((dot) => dot.ms)) : 0);
   const heroPeakMs = $derived(hero && hero.dots.length > 0 ? Math.max(...hero.dots.map((dot) => dot.ms)) : 0);
+  const webPeakMs = $derived(webHero && webHero.dots.length > 0 ? Math.max(...webHero.dots.map((dot) => dot.ms)) : 0);
+  /** The hero layer a lane draws, or null when it draws none (no timed requests, or not a lane with one). */
+  function heroOf(key: TracingLaneKey): HeroLayout | null {
+    const layout = key === 'audit' ? hero : key === 'iis' ? webHero : key === 'sql' ? sqlHero : null;
+    return layout && layout.maxMs > 0 ? layout : null;
+  }
+  function peakOf(key: TracingLaneKey): number { return key === 'iis' ? webPeakMs : key === 'sql' ? sqlPeakMs : heroPeakMs; }
+  /** The line's name: SQL draws an average, the others the chosen percentile. */
+  function lineName(key: TracingLaneKey): string { return key === 'sql' ? HERO_TEXT.legendSqlLine : PERCENTILE_LABEL[percentile]; }
+  // What the IIS lane's bars hold in the visible slots: the 4xx answers and 5xx answers, for the legend and the sentence under the chart.
+  const webTotals = $derived.by(() => {
+    const bars = laneBars.get('iis')?.bars ?? [];
+    let total = 0, refused = 0, failed = 0;
+    for (const bar of bars) {
+      if (!inRange(bar.index)) continue;
+      total += bar.count; refused += bar.clientErrors; failed += bar.errors;
+    }
+    return { total, refused, failed };
+  });
 
   // Axis: the grey "outside your window" dashes and the time labels, thinned to the measured plot width so they never overlap.
   const outside = $derived(grid ? outsideSlots(grid, range.from, range.to) : []);
@@ -155,6 +199,22 @@
     untrack(() => revealSlot(target.slot));
   });
 
+  // Whether the API lane's slowest request in this slot is a flagged one (a red diamond).
+  function auditMarkFlagged(slot: number): boolean { return !!hero?.marks.some((mark) => mark.index === slot && mark.flagged); }
+  // The slot of the red diamond under the pointer in the API lane (6 px of slack), or null.
+  function diamondAt(event: MouseEvent): number | null {
+    const nodes = overlayEl?.parentElement?.querySelectorAll<HTMLElement>('.panel[data-lane="audit"] .mark.flagged');
+    if (!nodes) return null;
+    const rects: FlagMark[] = [];
+    nodes.forEach((node) => {
+      const slot = Number(node.dataset.slot);
+      if (!Number.isInteger(slot)) return;
+      const box = node.getBoundingClientRect();
+      rects.push({ slot, left: box.left, top: box.top, right: box.right, bottom: box.bottom });
+    });
+    return hitFlagged(rects, event.clientX, event.clientY, 6);
+  }
+
   function onOverlayKey(event: KeyboardEvent) {
     if (!grid) return;
     // Browser shortcuts (page zoom with Ctrl or Cmd and + - 0, Alt navigation) are not ours.
@@ -164,7 +224,7 @@
     else if (event.key === 'ArrowRight') { event.preventDefault(); selectedSlot = stepSlot(range, current ?? range.from, 1, isOutside); }
     else if (event.key === 'Home') { event.preventDefault(); selectedSlot = edgeSlot(range, 'first', isOutside); }
     else if (event.key === 'End') { event.preventDefault(); selectedSlot = edgeSlot(range, 'last', isOutside); }
-    else if (event.key === 'Enter') { event.preventDefault(); if (current != null) onSelect?.(current); }
+    else if (event.key === 'Enter') { event.preventDefault(); if (current != null) { if (event.shiftKey && onDiamond && auditMarkFlagged(current)) onDiamond(current); else onSelect?.(current); } }
     else if (event.key === 'Escape' && tipSlot != null) { event.preventDefault(); event.stopPropagation(); hideTip(); return; }
     else if (event.key === '+' || event.key === '=') { event.preventDefault(); doZoomIn(); return; }
     else if (event.key === '-' || event.key === '_') { event.preventDefault(); doZoomOut(); return; }
@@ -197,6 +257,7 @@
     const start = slotStartMs(grid, slot);
     if (unreadByLane.get(lane.key)?.has(slot)) return [`${at(start)} to ${at(start + grid.widthMs)}`, READ_TEXT.tipUnread];
     const lines = barTipLines({
+      clientErrors: bar?.clientErrors ?? 0,
       key: lane.key,
       startText: at(start),
       endText: at(start + grid.widthMs),
@@ -207,13 +268,15 @@
       asOfText: showsProvenance(lane) ? at(lane.asOf) : '',
       note: lane.state === 'incomplete' || laneCutShort(lane) ? laneNote(lane) : ''
     });
-    if (lane.key === 'audit' && hero) {
-      const dot = hero.dots.find((d) => d.index === slot);
-      const mark = hero.marks.find((m) => m.index === slot);
-      const timing = [dot ? `${PERCENTILE_LABEL[percentile]}: ${axisDuration(dot.ms)}` : HERO_TEXT.tipNoTiming];
-      if (mark) timing.push(`${HERO_TEXT.tipSlowest} ${axisDuration(mark.ms)}${mark.flagged ? ` (${HERO_TEXT.tipOutlier})` : ''}`);
+    const laneHero = heroOf(lane.key);
+    if (laneHero) {
+      const dot = laneHero.dots.find((d) => d.index === slot);
+      const mark = laneHero.marks.find((m) => m.index === slot);
+      const isSql = lane.key === 'sql';
+      const timing = [dot ? `${isSql ? HERO_TEXT.tipSqlAverage : `${PERCENTILE_LABEL[percentile]}:`} ${axisDuration(dot.ms)}` : HERO_TEXT.tipNoTiming];
+      if (mark) timing.push(`${isSql ? HERO_TEXT.tipSqlSlowest : HERO_TEXT.tipSlowest} ${axisDuration(mark.ms)}${mark.flagged ? ` (${isSql ? HERO_TEXT.tipSqlOutlier : HERO_TEXT.tipOutlier})` : ''}`);
       // Right after the request count line (the time range is line 0, the count line 1).
-      lines.splice(2, 0, ...timing);
+      if ((bar?.count ?? 0) > 0) lines.splice(2, 0, ...timing);
     }
     return lines;
   }
@@ -313,6 +376,10 @@
     const fromColumn = column ? Number(column.dataset.slot) : Number.NaN;
     const slot = Number.isInteger(fromColumn) ? fromColumn : slotAt(event);
     if (slot < 0) return;
+    if (onDiamond) {
+      const diamond = diamondAt(event);
+      if (diamond != null) { onDiamond(diamond); return; }
+    }
     // Finger or pen: the first tap on a bar shows its counts and keeps them; tapping the same bar again opens the analysis.
     if (touch && !(tipFromTouch && tipSlot === slot)) { showTouchTip(slot, event); return; }
     selectAt(slot);
@@ -394,6 +461,38 @@
 
 <svelte:window onkeydown={onWindowKey} />
 
+{#snippet legendFor(key: TracingLaneKey)}
+  <!-- One small key per lane, in the lane's own header: what its bars, line and red diamonds mean, and nothing else. -->
+  {#if key === 'audit' && heroOf('audit')}
+    <div class="hero-legend">
+      <span><i class="swatch-bar" aria-hidden="true"></i>{HERO_TEXT.legendRequests}</span>
+      <span><i class="swatch-line" aria-hidden="true"></i>{PERCENTILE_LABEL[percentile]}</span>
+      {#if hero && hero.bridge.length > 0}
+        <span><i class="swatch-bridge" aria-hidden="true"></i>{HERO_TEXT.legendBridge}</span>
+      {/if}
+      <span><i class="swatch-mark" aria-hidden="true"></i>{HERO_TEXT.legendSlowest}</span>
+    </div>
+  {:else if key === 'sql' && heroOf('sql')}
+    <div class="hero-legend sql-legend" data-testid="sql-legend">
+      <span><i class="swatch-bar swatch-sql" aria-hidden="true"></i>{HERO_TEXT.legendSqlStatements}</span>
+      <span><i class="swatch-line" aria-hidden="true"></i>{HERO_TEXT.legendSqlLine}</span>
+      <span><i class="swatch-mark" aria-hidden="true"></i>{HERO_TEXT.legendSqlSlowest}</span>
+    </div>
+  {:else if key === 'iis' && heroOf('iis')}
+    <div class="hero-legend web-legend" data-testid="web-legend">
+      <span><i class="swatch-bar swatch-web" aria-hidden="true"></i>{HERO_TEXT.legendWebRequests}</span>
+      {#if webTotals.refused > 0}
+        <span><i class="swatch-warn" aria-hidden="true"></i>{HERO_TEXT.legendRefused}</span>
+      {/if}
+      {#if webTotals.failed > 0}
+        <span><i class="swatch-fail" aria-hidden="true"></i>{HERO_TEXT.legendFailed}</span>
+      {/if}
+      <span><i class="swatch-line" aria-hidden="true"></i>{PERCENTILE_LABEL[percentile]}</span>
+      <span><i class="swatch-mark" aria-hidden="true"></i>{HERO_TEXT.legendSlowest}</span>
+    </div>
+  {/if}
+{/snippet}
+
 <div class="tracing-chart">
   {#if barSize}<p class="bar-size" data-testid="bar-size"><b>{barSize.lead}</b>{barSize.rest}</p>{/if}
   {#if response.mixedConsistency}
@@ -447,7 +546,7 @@
       <!-- Not a tab stop: it has no action. The name and the hint stay available to screen readers, and the hint shows on hover. -->
       <div class="lane-label" role="group" aria-label={LANE_NAME[lane.key]} aria-describedby="tc-hint-{lane.key}" data-truncated={lane.truncated ? 'true' : undefined} style="--row:{laneIndex + 1}">
         <span class="lane-title"><span class="swatch" style={SWATCH_STYLE[lane.key]} aria-hidden="true"></span><strong>{LANE_NAME[lane.key]}</strong></span>
-        <small>{LANE_ASK[lane.key]}</small>
+        <small class="ask">{LANE_ASK[lane.key]}</small>
         {#if showsProvenance(lane)}
           <small class="origin">{lane.origin === 'live' ? TOOLTIP_TEXT.readJustNow : TOOLTIP_TEXT.fromSavedLogs} · {at(lane.asOf)}</small>
         {/if}
@@ -476,8 +575,11 @@
           </div>
         {/if}
       </div>
-      <div class="panel" data-lane={lane.key} data-state={lane.state} data-disabled={lane.disabled ?? undefined} data-hero={lane.key === 'audit' && hero && hero.maxMs > 0 ? 'true' : undefined} style="--row:{laneIndex + 1}">
-        <p class="panel-title">{PANEL_TITLE[lane.key]}</p>
+      <div class="panel" data-lane={lane.key} data-state={lane.state} data-disabled={lane.disabled ?? undefined} data-hero={heroOf(lane.key) ? 'true' : undefined} style="--row:{laneIndex + 1}">
+        <div class="panel-head">
+          <p class="panel-title">{PANEL_TITLE[lane.key]}</p>
+          {#if drawBars}{@render legendFor(lane.key)}{/if}
+        </div>
         {#if drawBars}
           <!-- The note sits above the bars so the bars stay at the panel's bottom, level with the axis "0". -->
           {#if lane.state === 'incomplete' || laneCutShort(lane)}
@@ -504,30 +606,38 @@
             {/each}
             {#each bars as bar (bar.index)}
               <div class="bar" class:nonzero={bar.count > 0} style="left:{leftPct(bar.index)}%;width:calc({widthPct}% - 1px);height:{barHeightPct(bar.count, max)}%">
+                {#if bar.count > 0 && bar.clientErrors > 0}
+                  <div class="bar-warn" data-testid="bar-warn" style="height:{(bar.clientErrors / bar.count) * 100}%"></div>
+                {/if}
                 {#if bar.count > 0 && bar.errors > 0}
                   <div class="bar-err" style="height:{(bar.errors / bar.count) * 100}%"></div>
                 {/if}
               </div>
             {/each}
-            {#if lane.key === 'audit' && hero && hero.maxMs > 0}
+            {#if heroOf(lane.key)}
+              {@const h = heroOf(lane.key) as HeroLayout}
               <svg class="latency" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" data-percentile={percentile}>
-                {#each hero.bridge as points, k (k)}
+                {#each h.bridge as points, k (k)}
                   <polyline class="bridge" {points} fill="none" />
                 {/each}
-                {#each hero.line as points, k (k)}
+                {#each h.line as points, k (k)}
                   <polyline class="p95" {points} fill="none" />
                 {/each}
               </svg>
-              {#each hero.dots as dot (dot.index)}
-                <span class="dot" aria-hidden="true" style="left:{dot.leftPct}%;bottom:{dot.bottomPct}%"></span>
-              {/each}
-              {#each hero.marks as mark (mark.index)}
-                <span class="mark" class:flagged={mark.flagged} aria-hidden="true" style="left:{mark.leftPct}%;bottom:{mark.bottomPct}%"></span>
+              {#if lane.key !== 'sql'}
+                {#each h.dots as dot (dot.index)}
+                  <span class="dot" aria-hidden="true" style="left:{dot.leftPct}%;bottom:{dot.bottomPct}%"></span>
+                {/each}
+              {/if}
+              {#each h.marks as mark (mark.index)}
+                {#if lane.key !== 'sql' || mark.flagged}
+                  <span class="mark" class:flagged={mark.flagged} data-slot={mark.index} aria-hidden="true" style="left:{mark.leftPct}%;bottom:{mark.bottomPct}%"></span>
+                {/if}
                 {#if mark.labelled}
                   <span class="mark-label" aria-hidden="true" style="left:{mark.leftPct}%;bottom:{mark.bottomPct}%">{mark.text}</span>
                 {/if}
               {/each}
-              <span class="latency-max">{PERCENTILE_LABEL[percentile]}: up to {formatDuration(heroPeakMs > 0 ? heroPeakMs : hero.maxMs)}</span>
+              <span class="latency-max">{lineName(lane.key)}: up to {formatDuration(peakOf(lane.key) > 0 ? peakOf(lane.key) : h.maxMs)}</span>
             {/if}
           </div>
         {:else}
@@ -539,11 +649,12 @@
           </div>
         {/if}
       </div>
-      <div class="axis axis-right" style="--row:{laneIndex + 1}">
-        {#if lane.key === 'audit' && hero && hero.maxMs > 0}
-          <span class="y-title">slowness ({PERCENTILE_LABEL[percentile]})</span>
+      <div class="axis axis-right" data-lane={lane.key} style="--row:{laneIndex + 1}">
+        {#if heroOf(lane.key)}
+          {@const h = heroOf(lane.key) as HeroLayout}
+          <span class="y-title">slowness ({lineName(lane.key)})</span>
           <div class="scale">
-            {#each hero.ticks as tick (tick.ms)}
+            {#each h.ticks as tick (tick.ms)}
               {#if tick.bottomPct === 100}
                 <span class="tick tick-top">{axisDuration(tick.ms)}</span>
               {:else if tick.bottomPct === 0}
@@ -608,17 +719,20 @@
 
   <span class="sr-only" aria-live="polite" aria-atomic="true">{liveText}</span>
 
-  {#if hero && hero.maxMs > 0}
-    {@const sentence = heroSentence(hero)}
-    <div class="hero-legend">
-      <span><i class="swatch-bar" aria-hidden="true"></i>{HERO_TEXT.legendRequests}</span>
-      <span><i class="swatch-line" aria-hidden="true"></i>{PERCENTILE_LABEL[percentile]}</span>
-      {#if hero.bridge.length > 0}
-        <span><i class="swatch-bridge" aria-hidden="true"></i>{HERO_TEXT.legendBridge}</span>
-      {/if}
-      <span><i class="swatch-mark" aria-hidden="true"></i>{HERO_TEXT.legendSlowest}</span>
-    </div>
+  {#if heroOf('audit')}
+    {@const sentence = heroSentence(heroOf('audit') as HeroLayout)}
     {#if sentence}<p class="hero-note" data-testid="hero-note">{sentence}</p>{/if}
+  {/if}
+
+  {#if heroOf('sql')}
+    {@const sqlSentence = heroSqlSentence(heroOf('sql') as HeroLayout)}
+    {#if sqlSentence}<p class="hero-note" data-testid="sql-outlier-note">{sqlSentence}</p>{/if}
+  {/if}
+
+  {#if heroOf('iis')}
+    {@const webSentence = heroSentence(heroOf('iis') as HeroLayout)}
+    {#if webTotals.refused > 0}<p class="hero-note" data-testid="web-note">{HERO_TEXT.webRefused(webTotals.refused, webTotals.total)}</p>{/if}
+    {#if webSentence}<p class="hero-note" data-testid="web-outlier-note">{webSentence}</p>{/if}
   {/if}
 
   {#if grid}
@@ -643,7 +757,7 @@
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
   /* The label column is capped so the plot gets the rest; the right column holds the API lane's latency axis. */
-  .lanes-grid { --bars-h: 120px; position: relative; display: grid; grid-template-columns: minmax(7rem, 9.5rem) 4.2rem minmax(0, 1fr) 4.2rem; column-gap: var(--space-3); row-gap: var(--space-2); align-items: stretch; min-width: 0; }
+  .lanes-grid { --bars-h: 150px; position: relative; display: grid; grid-template-columns: minmax(6.5rem, 8.5rem) 3rem minmax(0, 1fr) 3rem; column-gap: var(--space-2); row-gap: var(--space-4); align-items: stretch; min-width: 0; }
 
   .lane-label, .axis, .panel, .axisrow { grid-row: var(--row); }
   .lane-label { grid-column: 1; display: grid; gap: 2px; align-content: start; min-width: 0; }
@@ -654,20 +768,23 @@
   .hint { display: none; position: absolute; left: 0; top: 100%; z-index: 3; width: max-content; max-width: 22rem; padding: var(--space-2); color: var(--text); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); }
   .lane-label:hover .hint, .lane-label:focus-within .hint { display: block; }
   .lane-label .origin { color: var(--text-2); }
+  /* The one-line question stays for screen readers; the lane name and its panel title already say it on screen. */
+  .lane-label .ask { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-  .axis { position: relative; grid-column: 2; min-height: 150px; font-size: var(--fs-1); color: var(--text-2); }
+  .axis { position: relative; grid-column: 2; min-height: 200px; font-size: var(--fs-1); color: var(--text-2); }
   .axis-right { grid-column: 4; }
   /* The scale box is as tall as the bars and sits on the panel's bottom padding, so "0" is level with the bars' baseline. */
   .axis .scale { position: absolute; left: 0; right: 0; bottom: calc(var(--space-1) + var(--hairline-width)); height: var(--bars-h); }
   .axis .tick { position: absolute; right: var(--space-1); }
   .axis .tick-top { top: 0; }
   .axis .tick-bottom { bottom: 0; }
-  .axis .y-title { position: absolute; left: 0; top: 50%; margin: 0; color: var(--text-2); font-size: var(--fs-1); white-space: nowrap; writing-mode: vertical-rl; transform: translateY(-50%) rotate(180deg); }
-  .axis-right .y-title { left: auto; right: 0; }
+  /* The rotated axis titles were the hardest text on the screen to read; the panel title and legend say the same. Kept for screen readers. */
+  .axis .y-title { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .axis-right .tick { right: auto; left: var(--space-1); color: var(--lane-audit); }
 
-  .panel { grid-column: 3; position: relative; min-height: 150px; display: flex; flex-direction: column; justify-content: flex-end; padding: var(--space-1) 0; background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
-  .panel-title { margin: 0 0 auto; padding: 0 var(--space-2); color: var(--text-2); font-size: var(--fs-2); }
+  .panel { grid-column: 3; position: relative; min-height: 200px; display: flex; flex-direction: column; justify-content: flex-end; padding: var(--space-2) 0 var(--space-1); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+  .panel-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-4); margin: 0 0 auto; padding: 0 var(--space-3); }
+  .panel-title { margin: 0; color: var(--text); font-size: var(--fs-3); font-weight: 600; }
   .bars { position: relative; flex: none; height: var(--bars-h); margin-top: var(--space-1); }
   .hgrid, .vgrid { position: absolute; inset: 0; pointer-events: none; }
   .hgrid span { position: absolute; left: 0; right: 0; height: 1px; background: color-mix(in srgb, var(--line) 70%, transparent); }
@@ -677,9 +794,13 @@
   .bar.nonzero { min-height: 2px; }
   .panel[data-lane='audit'] .bar { background: var(--lane-audit); }
   .panel[data-hero='true'] .bar { background: color-mix(in srgb, var(--lane-audit) 30%, transparent); }
+  .panel[data-hero='true'][data-lane='iis'] .bar { background: color-mix(in srgb, var(--lane-iis) 30%, transparent); }
+  .panel[data-hero='true'][data-lane='sql'] .bar { background: color-mix(in srgb, var(--lane-sql) 30%, transparent); }
   .panel[data-lane='sql'] .bar { background: var(--lane-sql); }
   .panel[data-lane='iis'] .bar { background: var(--lane-iis); }
   /* Errors differ from the bar by pattern and lightness, not hue alone: stripes of the page background (at least 3:1 against every lane colour, both themes) and --bad. */
+  /* 4xx answers: an amber block at the foot of the bar; a 5xx stripe, when there is one, sits over it. */
+  .bar-warn { position: absolute; bottom: 0; left: 0; right: 0; min-height: 2px; background: var(--warn); }
   .bar-err { position: absolute; bottom: 0; left: 0; right: 0; min-height: 2px; background: repeating-linear-gradient(135deg, var(--bad) 0 2px, var(--bg) 2px 4px); }
   /* A period that was not read: hatched in the panel's own colours and labelled, so it can never be taken for a quiet one. */
   .unread { position: absolute; top: 0; bottom: 0; display: grid; place-items: center; overflow: hidden; color: var(--text-2); background: repeating-linear-gradient(135deg, var(--line) 0 1px, transparent 1px 6px); border-left: var(--hairline-width) dashed var(--line); border-right: var(--hairline-width) dashed var(--line); font-size: var(--fs-2); pointer-events: none; }
@@ -715,18 +836,23 @@
   .latency { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
   .latency .p95 { stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
   .latency .bridge { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 4; opacity: .7; vector-effect: non-scaling-stroke; }
-  .latency-max { position: absolute; top: 0; right: var(--space-1); color: var(--text-2); font-size: var(--fs-2); pointer-events: none; }
+  /* The top tick on the slowness axis already says this; kept for screen readers. */
+  .latency-max { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; pointer-events: none; }
   .dot, .mark, .mark-label { position: absolute; pointer-events: none; }
   .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); transform: translate(-50%, 50%); }
   .mark { width: 6px; height: 6px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--accent); background: transparent; transform: translate(-50%, 50%); }
   .mark.flagged { width: 11px; height: 11px; border: 0; border-radius: 0; background: var(--bad); transform: translate(-50%, 50%) rotate(45deg); }
   .mark-label { color: var(--text-2); font-size: var(--fs-2); white-space: nowrap; transform: translate(8px, calc(-100% - 6px)); }
-  .hero-legend { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); align-items: center; color: var(--text-2); font-size: var(--fs-2); }
+  .hero-legend { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); align-items: center; color: var(--text-2); font-size: var(--fs-2); }
   .hero-legend span { display: inline-flex; gap: var(--space-1); align-items: center; }
   .hero-legend i { flex: none; width: 10px; height: 10px; border-radius: 50%; }
   .hero-legend .swatch-bar { background: color-mix(in srgb, var(--lane-audit) 30%, transparent); border-radius: 2px; }
   .hero-legend .swatch-line { height: 0; width: 14px; border-radius: 0; border-top: 2px solid var(--accent); }
   .hero-legend .swatch-bridge { height: 0; width: 14px; border-radius: 0; border-top: 1.5px dashed var(--accent); opacity: .7; }
+  .hero-legend .swatch-web { background: color-mix(in srgb, var(--lane-iis) 30%, transparent); }
+  .hero-legend .swatch-sql { background: color-mix(in srgb, var(--lane-sql) 30%, transparent); }
+  .hero-legend .swatch-warn { border-radius: 2px; background: var(--warn); }
+  .hero-legend .swatch-fail { border-radius: 2px; background: repeating-linear-gradient(135deg, var(--bad) 0 2px, var(--bg) 2px 4px); }
   .hero-legend .swatch-mark { width: 8px; height: 8px; border-radius: 0; background: var(--bad); transform: rotate(45deg); }
   .hero-note { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
   .zoom-note { color: var(--text-2); }

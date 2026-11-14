@@ -9,6 +9,8 @@
 //   TSRC-06  A saved audit database that is not connected is listed as "saved, not connected", on its lane too, and Connect opens the connect flow.
 //   TSRC-07  A SQL or IIS lane with no file says to add a file, and Add files opens the Import files popup.
 //   TSRC-09  Files listed for a lane but never imported: the lane says they were not imported, and Add files still opens the Import files popup.
+//   TSRC-11  A source that was never imported says so on its chip (flag and tooltip).
+//   TSRC-12  A lane whose imported files sit outside the window says what they cover.
 //   TSRC-08  Screenshots for the review: light, dark and 375 px wide, with the chunked read, the saved database and the empty SQL / IIS lanes.
 import { test, expect, type Page, type Request } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
@@ -305,6 +307,182 @@ test('TSRC-09: files listed for a SQL or IIS lane but never imported are called 
     await expect(page.locator(`.panel[data-lane=${lane}] [data-testid=lane-add-files]`)).toBeVisible();
   }
   await page.locator('.panel[data-lane=iis] [data-testid=lane-add-files]').click();
+  await expect(page.getByRole('dialog', { name: 'Import files' })).toBeVisible();
+});
+
+test('TSRC-11: a source that was never imported says so on its chip', async ({ page }) => {
+  let sourceId = '';
+  await answerWith(page, (body) => {
+    body.sources[0].noFile = true;
+    sourceId = body.sources[0].sourceId;
+  });
+  await openTimeline(page);
+  await expect(row(page)).toBeVisible();
+  await expect.poll(() => sourceId, { message: 'the answer carried a file source' }).not.toBe('');
+  const flagged = chip(page, sourceId);
+  await expect(flagged.getByTestId('chip-not-imported')).toHaveText(/not imported/);
+  await expect(flagged).toHaveAttribute('title', /never imported/);
+});
+
+test('TSRC-12: a lane whose files sit outside the window says what they cover', async ({ page }) => {
+  await answerWith(page, (body) => {
+    const iis = body.lanes.find((lane: Body) => lane.key === 'iis');
+    Object.assign(iis, { state: 'out-of-range', scanned: 0, buckets: [], events: [], importedFrom: '2001-01-01T00:00:00Z', importedTo: '2001-01-01T01:00:00Z' });
+  });
+  await openTimeline(page);
+  const panel = page.locator('.panel[data-lane="iis"]');
+  await expect(panel).toHaveAttribute('data-state', 'out-of-range');
+  await expect(panel.getByTestId('lane-status')).toContainText('nothing falls inside this window');
+  await expect(panel.getByTestId('lane-status')).toContainText('Imported files cover');
+});
+
+test('TSRC-13: a lane whose files cover only part of the window says what they cover', async ({ page }) => {
+  await answerWith(page, (body) => {
+    const iis = body.lanes.find((lane: Body) => lane.key === 'iis');
+    Object.assign(iis, { state: 'out-of-range', scanned: 0, buckets: [], events: [], importedFrom: '2001-01-01T00:00:00Z', importedTo: '2001-01-02T00:00:00Z', importedPartial: true });
+  });
+  await openTimeline(page);
+  const panel = page.locator('.panel[data-lane="iis"]');
+  await expect(panel).toContainText('Some imported files cover');
+  await expect(panel).toContainText('2001');
+});
+
+test('TSRC-14: a source that was never imported cannot be switched on, and the chip says why', async ({ page }) => {
+  let sourceId = '';
+  await answerWith(page, (body) => {
+    body.sources[0].noFile = true;
+    sourceId = body.sources[0].sourceId;
+  });
+  await openTimeline(page);
+  await expect(row(page)).toBeVisible();
+  await expect.poll(() => sourceId, { message: 'the answer carried a file source' }).not.toBe('');
+  await expect(chip(page, sourceId)).toBeDisabled();
+  await expect(page.getByTestId('chip-not-imported-reason')).toBeVisible();
+});
+
+// ---- TSQL: the Timeline reading the saved database for its window (P5). Every answer is mocked; the page and the requests it sends are the code under test.
+//   TSQL-01  A case that remembers its database reads it once per new window, says so, and does not read the same window again.
+//   TSQL-02  A failed read says why; Try again reads once more.
+//   TSQL-03  The only saved connection of a case that never read it is offered with a button, never read unasked.
+//   TSQL-04  Toggle off: nothing is read, it is offered instead, and the choice survives a reload.
+//   TSQL-05  A kept day that crosses the window without being the same is named; nothing is read.
+//   TSQL-06  In the demo the Timeline never reads a database and shows no database line.
+//   TSRC-10  A SQL lane whose files were never imported says so, and Add files opens Import files.
+type SqlMock = { posts: Body[]; days: Body[] };
+const CONNECTION = { id: 'c1', label: 'Sandbox', server: 'sandbox-host', host: 'sandbox-host', port: 1433, auth: 'windows', username: '', database: 'Brain', encrypt: true, trustServerCertificate: true, hasPassword: false, savedAt: '2026-10-01T00:00:00Z' };
+const keptDay = (incident: { start: string; end: string }): Body => ({ id: 1, at: '2026-10-23T10:00:00Z', kind: 'sql', label: 'Sandbox', database: 'Brain', state: 'Ready', incident, reference: incident, lane: null });
+const EARLY = { start: '2026-01-01T00:00:00Z', end: '2026-01-02T00:00:00Z' };
+
+/** Mocks info (demo or not), the saved connections, the case's lane days and the SQL read. `fail` answers the first reads with those statuses. */
+async function mockSql(page: Page, opts: { connections?: Body[]; days?: Body[]; fail?: number[]; demo?: boolean } = {}): Promise<SqlMock> {
+  const mock: SqlMock = { posts: [], days: [...(opts.days ?? [])] };
+  const failures = [...(opts.fail ?? [])];
+  await page.route('**/api/info', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.demo = opts.demo ?? false;
+    await route.fulfill({ response, json: body });
+  });
+  await page.route('**/api/sql-connections', (route) => route.request().method() === 'GET' ? route.fulfill({ json: opts.connections ?? [CONNECTION] }) : route.continue());
+  await page.route('**/api/cases/*/lanes', (route) => route.request().method() === 'GET' ? route.fulfill({ json: { days: mock.days } }) : route.continue());
+  await page.route('**/api/cases/*/lanes/sql', async (route) => {
+    const body = JSON.parse(route.request().postData() ?? '{}');
+    mock.posts.push(body);
+    const status = failures.shift();
+    if (status) return route.fulfill({ status, json: { error: 'The server did not answer.' } });
+    mock.days.push(keptDay(body.incident));
+    await route.fulfill({ json: { saved: true, saveError: '', state: 'Ready', run: { id: mock.days.length, at: '2026-10-23T10:00:00Z', kind: 'sql', label: 'Sandbox', report: { database: 'Brain', lane: null } } } });
+  });
+  // The app read its info before these routes existed: read it again, so the page sees the answer above.
+  await page.reload();
+  await expect(page.getByRole('button', { name: /^Open case / }).first().or(page.getByRole('button', { name: /^All cases/ }))).toBeVisible();
+  return mock;
+}
+const sqlLine = (page: Page) => page.locator('[data-testid=sql-auto]');
+
+test('TSQL-01: a case that remembers its database reads it once for a new window, says so, and does not read the same window again', async ({ page, allow }) => {
+  allow(/503 \(Service Unavailable\) \| \/api\/cases\/[^/]+\/workspace/, 'the page is told it is not the demo while the backend is, so the workspace save is refused');
+  const mock = await mockSql(page, { days: [keptDay(EARLY)] });
+  await openTimeline(page);
+  await expect(sqlLine(page)).toHaveAttribute('data-kind', 'kept');
+  expect(mock.posts, 'the first window was read once').toHaveLength(1);
+  expect(mock.posts[0]).toMatchObject({ savedId: 'c1', database: 'Brain' });
+  await traceEleven(page);
+  await expect(sqlLine(page)).toHaveAttribute('data-kind', 'kept');
+  await expect.poll(() => mock.posts.length, { message: 'a second window is a second read' }).toBe(2);
+  expect(mock.posts[1].incident.start).toBe('2026-10-08T00:00:00.000Z');
+  await page.getByRole('button', { name: 'Start tracing' }).click();
+  await expect(sqlLine(page)).toHaveAttribute('data-kind', 'kept');
+  expect(mock.posts, 'the same window again is not read again').toHaveLength(2);
+});
+
+test('TSQL-02: a read that fails says why and Try again reads once more', async ({ page, allow }) => {
+  allow(/503 \(Service Unavailable\) \| \/api\/cases\/[^/]+\/workspace/, 'the page is told it is not the demo while the backend is, so the workspace save is refused');
+  allow(/429 .*\/lanes\/sql/, 'the mock refuses the first read on purpose');
+  const mock = await mockSql(page, { days: [keptDay(EARLY)], fail: [429] });
+  await openTimeline(page);
+  await expect(sqlLine(page)).toHaveAttribute('data-kind', 'failed');
+  await expect(sqlLine(page)).toContainText('The database could not be read');
+  expect(mock.posts).toHaveLength(1);
+  await page.locator('[data-testid=sql-auto-retry]').click();
+  await expect(sqlLine(page)).toHaveAttribute('data-kind', 'kept');
+  expect(mock.posts).toHaveLength(2);
+});
+
+test('TSQL-03: the only saved connection of a case that never read it is read on the first load, without a click', async ({ page, allow }) => {
+  allow(/503 \(Service Unavailable\) \| \/api\/cases\/[^/]+\/workspace/, 'the page is told it is not the demo while the backend is, so the workspace save is refused');
+  const mock = await mockSql(page);
+  await openTimeline(page);
+  await expect(sqlLine(page)).toHaveAttribute('data-kind', 'kept');
+  expect(mock.posts, 'read once, automatically').toHaveLength(1);
+  expect(mock.posts[0]).toMatchObject({ savedId: 'c1', database: 'Brain' });
+});
+
+test('TSQL-04: with the toggle off nothing is read, it is offered instead, and the choice survives a reload', async ({ page, allow }) => {
+  allow(/503 \(Service Unavailable\) \| \/api\/cases\/[^/]+\/workspace/, 'the page is told it is not the demo while the backend is, so the workspace save is refused');
+  const mock = await mockSql(page, { days: [keptDay(EARLY)] });
+  await openTimeline(page);
+  await expect(sqlLine(page)).toHaveAttribute('data-kind', 'kept');
+  await page.locator('[data-testid=sql-auto-toggle]').uncheck();
+  await traceEleven(page);
+  await expect(sqlLine(page)).toHaveAttribute('data-kind', 'suggest');
+  expect(mock.posts, 'only the first window was read').toHaveLength(1);
+  await openTimeline(page);
+  await expect(page.locator('[data-testid=sql-auto-toggle]')).not.toBeChecked();
+});
+
+test('TSQL-05: a kept day that crosses the window without being the same is named, and the database is not read', async ({ page, allow }) => {
+  allow(/503 \(Service Unavailable\) \| \/api\/cases\/[^/]+\/workspace/, 'the page is told it is not the demo while the backend is, so the workspace save is refused');
+  const mock = await mockSql(page, { days: [keptDay({ start: '2026-10-10T00:00:00Z', end: '2026-10-12T00:00:00Z' })] });
+  await openTimeline(page);
+  // The window the page opens on is not the kept day, so it is read once; wait for that before counting.
+  await expect(sqlLine(page)).toHaveAttribute('data-kind', 'kept');
+  const before = mock.posts.length;
+  await traceEleven(page);
+  await expect(sqlLine(page)).toHaveAttribute('data-kind', 'overlap');
+  await expect(sqlLine(page)).toContainText('overlaps these times without being the same');
+  expect(mock.posts.length, 'no read for the crossing window').toBe(before);
+});
+
+test('TSQL-06: in the demo the Timeline never reads a database and shows no database line', async ({ page }) => {
+  const mock = await mockSql(page, { demo: true, days: [keptDay(EARLY)] });
+  await openTimeline(page);
+  await expect(page.locator('[data-testid=trace-sources]')).toBeVisible();
+  await expect(sqlLine(page)).toHaveCount(0);
+  expect(mock.posts).toHaveLength(0);
+});
+
+test('TSRC-10: a SQL lane with no saved database data says what the Timeline does and does not do', async ({ page }) => {
+  const words = 'No database data is saved in this case for this window. The Timeline shows saved data only and never connects by itself. In the case\'s Sources, import the listed SQL file or use "Read this day" on the SQL connection.';
+  await answerWith(page, (body) => {
+    noSqlOrIisFile(body);
+    const sql = body.lanes.find((lane: Body) => lane.key === 'sql');
+    sql.reasonCode = 'not-imported'; sql.reason = words;
+  });
+  await openTimeline(page);
+  const status = page.locator('.panel[data-lane=sql] [data-testid=lane-status]');
+  await expect(status).toContainText('No database data is saved in this case for this window');
+  await page.locator('.panel[data-lane=sql] [data-testid=lane-add-files]').click();
   await expect(page.getByRole('dialog', { name: 'Import files' })).toBeVisible();
 });
 

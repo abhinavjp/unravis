@@ -476,7 +476,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       },
       {
         "key": "iis",
@@ -586,6 +588,11 @@
             "end": "2026-03-10T10:11:00Z",
             "count": 2,
             "errors": 1,
+            "timedCount": 2,
+            "p50Ms": 80.09,
+            "p95Ms": 4915.01,
+            "maxMs": 5000,
+            "busyMs": 5080,
             "clipped": false,
             "complete": true
           },
@@ -746,6 +753,12 @@
             "end": "2026-03-10T10:31:00Z",
             "count": 1,
             "errors": 0,
+            "clientErrors": 1,
+            "timedCount": 1,
+            "p50Ms": 12,
+            "p95Ms": 12,
+            "maxMs": 12,
+            "busyMs": 12,
             "clipped": false,
             "complete": true
           },
@@ -1053,7 +1066,9 @@
             "kind": "iis-httperr"
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [
@@ -1542,7 +1557,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       },
       {
         "key": "iis",
@@ -1770,6 +1787,11 @@
             "end": "2026-03-10T10:11:00Z",
             "count": 2,
             "errors": 1,
+            "timedCount": 2,
+            "p50Ms": 80.09,
+            "p95Ms": 4915.01,
+            "maxMs": 5000,
+            "busyMs": 5080,
             "clipped": false,
             "complete": true
           },
@@ -1930,6 +1952,12 @@
             "end": "2026-03-10T10:31:00Z",
             "count": 1,
             "errors": 0,
+            "clientErrors": 1,
+            "timedCount": 1,
+            "p50Ms": 12,
+            "p95Ms": 12,
+            "maxMs": 12,
+            "busyMs": 12,
             "clipped": false,
             "complete": true
           },
@@ -2201,7 +2229,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [],
@@ -2336,6 +2366,11 @@
             "end": "2026-03-10T10:11:00Z",
             "count": 2,
             "errors": 1,
+            "timedCount": 2,
+            "p50Ms": 80.09,
+            "p95Ms": 4915.01,
+            "maxMs": 5000,
+            "busyMs": 5080,
             "clipped": false,
             "complete": true
           },
@@ -2496,6 +2531,12 @@
             "end": "2026-03-10T10:31:00Z",
             "count": 1,
             "errors": 0,
+            "clientErrors": 1,
+            "timedCount": 1,
+            "p50Ms": 12,
+            "p95Ms": 12,
+            "maxMs": 12,
+            "busyMs": 12,
             "clipped": false,
             "complete": true
           },
@@ -2767,7 +2808,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [
@@ -3254,7 +3297,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       },
       {
         "key": "iis",
@@ -3380,6 +3425,11 @@
             "end": "2026-03-10T10:01:00Z",
             "count": 50010,
             "errors": 0,
+            "timedCount": 50010,
+            "p50Ms": 1,
+            "p95Ms": 1,
+            "maxMs": 1,
+            "busyMs": 50010,
             "clipped": false,
             "complete": true
           },
@@ -4518,7 +4568,9 @@
             "win32": null
           }
         ],
-        "hidden": 49940
+        "hidden": 49940,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [],
@@ -5003,7 +5055,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       },
       {
         "key": "iis",
@@ -5109,6 +5163,11 @@
             "end": "2026-03-10T10:11:00Z",
             "count": 2,
             "errors": 1,
+            "timedCount": 2,
+            "p50Ms": 80.09,
+            "p95Ms": 4915.01,
+            "maxMs": 5000,
+            "busyMs": 5080,
             "clipped": false,
             "complete": true
           },
@@ -5269,6 +5328,12 @@
             "end": "2026-03-10T10:31:00Z",
             "count": 1,
             "errors": 0,
+            "clientErrors": 1,
+            "timedCount": 1,
+            "p50Ms": 12,
+            "p95Ms": 12,
+            "maxMs": 12,
+            "busyMs": 12,
             "clipped": false,
             "complete": true
           },
@@ -5540,7 +5605,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [],

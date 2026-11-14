@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/importer"
 )
@@ -43,6 +44,13 @@ type BucketQuery struct {
 	Kinds               []string
 	CountErrors         bool
 	ErrorExcludeSources []string
+	// CountClientErrors asks for BucketCount.ClientErrors too: the events of a
+	// cell whose status is exactly three ASCII digits starting with 4. The
+	// ErrorExcludeSources never count here either.
+	CountClientErrors bool
+	// CountTimings asks for BucketResult.Timings: the response times (the
+	// events' duration_ms) of each cell, as counts per log-scale bin.
+	CountTimings bool
 	// MaxTime lowers the time budget of the store's own GROUP BY (default and
 	// ceiling MaxScanTime, 10 s). Zero means the default. When it passes, the
 	// answer holds the cells counted so far and sets Partial and TimedOut.
@@ -60,6 +68,30 @@ type BucketCount struct {
 	// Errors is how many of Count have a 5xx status; it is filled only when the
 	// query set CountErrors.
 	Errors int64
+	// ClientErrors is how many of Count have a 4xx status; it is filled only when
+	// the query set CountClientErrors.
+	ClientErrors int64
+}
+
+// BucketTiming is the response times of one cell for one importer, for the
+// events that have a duration: Count of them fall in log bin Bin (the 1.1^k
+// bins of audit.BinIndex), the fastest and slowest of those being Min and Max
+// in milliseconds.
+type BucketTiming struct {
+	Index    int
+	Source   string
+	ImportID int64
+	Bin      int
+	Count    int64
+	Min, Max float64
+	// Sum is the summed duration in milliseconds of the timed events in this bucket.
+	Sum float64
+}
+
+// IsClientErrorStatus reports whether v is a 4xx HTTP status: exactly three
+// ASCII digits, the first one 4.
+func IsClientErrorStatus(v string) bool {
+	return len(v) == 3 && v[0] == '4' && v[1] >= '0' && v[1] <= '9' && v[2] >= '0' && v[2] <= '9'
 }
 
 // IsServerErrorStatus reports whether v is a 5xx HTTP status: exactly three
@@ -78,6 +110,7 @@ func IsServerErrorStatus(v string) bool {
 // when the store cannot say.
 type BucketResult struct {
 	Counts   []BucketCount
+	Timings  []BucketTiming // only when the query set CountTimings
 	Total    int64
 	Scanned  int64
 	Partial  bool
@@ -150,6 +183,12 @@ func CountBucketsScan(ctx context.Context, c Case, q BucketQuery) (BucketResult,
 	}
 	counts := map[cell]int64{}
 	errCounts := map[cell]int64{}
+	clientCounts := map[cell]int64{}
+	type timeKey struct {
+		cell cell
+		bin  int
+	}
+	timings := map[timeKey]*BucketTiming{}
 	excluded := make(map[string]bool, len(q.ErrorExcludeSources))
 	for _, s := range q.ErrorExcludeSources {
 		excluded[s] = true
@@ -171,6 +210,22 @@ func CountBucketsScan(ctx context.Context, c Case, q BucketQuery) (BucketResult,
 		counts[k]++
 		if q.CountErrors && !excluded[ev.Source] && IsServerErrorStatus(ev.Attrs["status"]) {
 			errCounts[k]++
+		}
+		if q.CountClientErrors && !excluded[ev.Source] && IsClientErrorStatus(ev.Attrs["status"]) {
+			clientCounts[k]++
+		}
+		if q.CountTimings && ev.DurationMs != nil {
+			if bin := audit.BinIndex(*ev.DurationMs); bin >= 0 {
+				tk := timeKey{k, bin}
+				bt := timings[tk]
+				if bt == nil {
+					bt = &BucketTiming{Index: k.index, Source: k.source, Bin: bin, Min: *ev.DurationMs, Max: *ev.DurationMs}
+					timings[tk] = bt
+				}
+				bt.Count++
+				bt.Sum += *ev.DurationMs
+				bt.Min, bt.Max = min(bt.Min, *ev.DurationMs), max(bt.Max, *ev.DurationMs)
+			}
 		}
 		return nil
 	})
@@ -196,8 +251,21 @@ func CountBucketsScan(ctx context.Context, c Case, q BucketQuery) (BucketResult,
 	res := BucketResult{Counts: make([]BucketCount, len(cells)), Scanned: scanned, Partial: partial}
 	for i, k := range cells {
 		n := counts[k]
-		res.Counts[i] = BucketCount{Index: k.index, Source: k.source, Count: n, Errors: errCounts[k]}
+		res.Counts[i] = BucketCount{Index: k.index, Source: k.source, Count: n, Errors: errCounts[k], ClientErrors: clientCounts[k]}
 		res.Total += n
 	}
+	for _, bt := range timings {
+		res.Timings = append(res.Timings, *bt)
+	}
+	sort.Slice(res.Timings, func(i, j int) bool {
+		a, b := res.Timings[i], res.Timings[j]
+		if a.Index != b.Index {
+			return a.Index < b.Index
+		}
+		if a.Source != b.Source {
+			return a.Source < b.Source
+		}
+		return a.Bin < b.Bin
+	})
 	return res, nil
 }

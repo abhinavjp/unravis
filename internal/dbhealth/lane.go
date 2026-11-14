@@ -56,11 +56,12 @@ func (r LaneRequest) Validate() error {
 	if r.Reference.End.After(r.Incident.Start) {
 		return errors.New("the reference window must end before the incident window starts")
 	}
-	if r.Incident.End.Sub(r.Incident.Start) > 14*24*time.Hour || r.Reference.End.Sub(r.Reference.Start) > 14*24*time.Hour {
-		return errors.New("a window can be at most 14 days long")
-	}
 	return nil
 }
+
+// LaneRunTimeout bounds one whole lane run. A long window (a month or more) is read in slices, each with its own time limit, so the run as a
+// whole is allowed to take much longer than one query.
+const LaneRunTimeout = 20 * time.Minute
 
 // LaneCheck is one check's outcome. Fix is set when the state is "Cannot test yet" because of a missing grant or a switched-off feature.
 type LaneCheck struct {
@@ -82,7 +83,44 @@ type LaneResult struct {
 	Onset     *time.Time        `json:"onset,omitempty"`
 	Sources   []string          `json:"sources,omitempty"`
 	Guide     *ProfilerGuide    `json:"guide,omitempty"` // Mongo only: set when the profiler is off
+	// Series is the Query Store interval series of both windows (SQL only): the
+	// Timeline draws the SQL lane from it when no SQL file was imported.
+	Series []LaneSeriesPoint `json:"series,omitempty"`
+	// QueryStore says what state Query Store was in when the lane read it (SQL only).
+	QueryStore *LaneQueryStore `json:"queryStore,omitempty"`
 }
+
+// Query Store states a lane day can carry.
+const (
+	QSStateOn       = "on"
+	QSStateOff      = "off"
+	QSStateReadOnly = "read-only"
+	QSStateDenied   = "denied"
+	QSStateUnknown  = "unknown"
+)
+
+// LaneQueryStore is what the lane read learned about Query Store on the database.
+type LaneQueryStore struct {
+	// State is one of "on", "off", "read-only", "denied", "unknown".
+	State string `json:"state"`
+	// FirstData is the start of the oldest saved block, when one was found.
+	FirstData *time.Time `json:"firstData,omitempty"`
+	// IntervalMinutes is the block length Query Store is set to, when known.
+	IntervalMinutes int `json:"intervalMinutes,omitempty"`
+}
+
+// LaneSeriesPoint is one Query Store interval: when it started, how many
+// statements ran in it, and their average and slowest duration in milliseconds.
+// The field names are short because a month-long window holds thousands of them.
+type LaneSeriesPoint struct {
+	T     int64   `json:"t"`           // interval start, Unix seconds
+	Execs int64   `json:"n"`           // executions
+	AvgMs float64 `json:"a"`           // average duration (ms), weighted by executions
+	MaxMs float64 `json:"m,omitempty"` // slowest single execution (ms)
+}
+
+// laneSeriesCap bounds the saved series so a report stays far under MaxHealthReport.
+const laneSeriesCap = 3000
 
 // State is the lane's readiness: Ready when every check ran, Partly ready when some did, otherwise Cannot test yet (or Failed when every check failed).
 func (l LaneResult) State() string {
@@ -133,6 +171,39 @@ func (b *laneBuilder) setOnset(t time.Time) {
 	if b.onset == nil || t.Before(*b.onset) {
 		b.onset = &t
 	}
+}
+
+// setSeries keeps the interval series for the saved report, oldest first and at
+// most laneSeriesCap points. A longer series is thinned evenly over the whole
+// span (neighbouring points are merged), never cut at one end.
+func (b *laneBuilder) setSeries(pts []LaneSeriesPoint) {
+	sort.Slice(pts, func(i, j int) bool { return pts[i].T < pts[j].T })
+	b.res.Series = downsampleSeries(pts, laneSeriesCap)
+}
+
+// downsampleSeries merges neighbouring points in equal groups until at most limit remain: executions add up, the average is weighted by executions,
+// the slowest stays the slowest and the group starts where its first point did.
+func downsampleSeries(pts []LaneSeriesPoint, limit int) []LaneSeriesPoint {
+	if limit <= 0 || len(pts) <= limit {
+		return pts
+	}
+	group := (len(pts) + limit - 1) / limit
+	out := make([]LaneSeriesPoint, 0, (len(pts)+group-1)/group)
+	for i := 0; i < len(pts); i += group {
+		end := min(i+group, len(pts))
+		p := LaneSeriesPoint{T: pts[i].T}
+		var sumMs float64
+		for _, q := range pts[i:end] {
+			p.Execs += q.Execs
+			sumMs += q.AvgMs * float64(q.Execs)
+			p.MaxMs = max(p.MaxMs, q.MaxMs)
+		}
+		if p.Execs > 0 {
+			p.AvgMs = round1(sumMs / float64(p.Execs))
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (b *laneBuilder) source(name string) { b.sources[name] = true }

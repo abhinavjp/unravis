@@ -12,9 +12,9 @@ export const SUSPECT_TEXT = {
   heading: 'Suspects',
   label: 'Suspects',
   lead: 'Suspects, not causes. Nothing here says why it happened.',
-  scope: 'This list reads only what the timeline holds: event counts for each lane. It compares the first half of the window with the second half.',
+  scope: 'This list reads only what the timeline holds: event counts for each lane, and call times where a lane has them. It compares the first half of the window with the second half.',
   noRise: 'No meaningful rise was found in this window, so no suspect is ranked.',
-  noRed: 'Red needs call times to show which part slowed first. The timeline holds counts only, so nothing is red here.',
+  noRed: 'Red needs the part that slowed first to be clearly known. This list compares two halves of the window, so nothing is red here.',
   nothingToRead: 'No lane has events in this window, so no suspect can be tested. Add evidence or choose another window.',
   legendLabel: 'What the colours mean',
   red: 'Red',
@@ -47,8 +47,8 @@ export const SUSPECT_TEXT = {
   cheapest: 'Cheapest check:',
   overturn: 'What would overturn it:',
   needs: 'Needs:',
-  moment: (lane: string, time: string) => `The ${lane} count first rose at ${time}.`,
-  evidenceCaveat: 'This reading comes from the timeline counts only.'
+  moment: (lane: string, time: string, what: 'count' | 'time' = 'count') => `The ${lane} ${what} first rose at ${time}.`,
+  evidenceCaveat: 'This reading comes from the timeline: counts, and call times where a lane has them.'
 } as const;
 
 export const RESULT_TEXT = {
@@ -68,7 +68,7 @@ export const RESULT_WHY = {
 } as const;
 
 /** What a signal says when the timeline cannot read it. */
-export const SIGNAL_UNKNOWN = 'The timeline holds counts only. This reading is not there yet.';
+export const SIGNAL_UNKNOWN = 'The timeline holds nothing for this reading yet.';
 
 /** The sentences the four readings the timeline can make give back. Every figure is passed in; none is invented here. */
 export const SIGNAL_WHY = {
@@ -84,6 +84,16 @@ export const SIGNAL_WHY = {
   riseFromNone: (lane: string, after: string) => `${lane}: no events in the first half, ${after} per bar in the second half.`,
   steady: (lane: string, before: string, after: string, ratio: string) =>
     `${lane}: events per bar went from ${before} in the first half to ${after} in the second half (x${ratio}). A rise counts at x1.5.`,
+  timeTooFew: (lane: string, what: string, n: number) => `${lane} has call times for only ${n} requests in the window. A ${what} reading needs at least 30.`,
+  timeTooShort: (lane: string) => `${lane} has call times in too few bars to compare two halves.`,
+  timeRise: (lane: string, what: string, before: string, after: string, ratio: string) =>
+    `${lane}: ${what} went from ${before} in the first half to ${after} in the second half (x${ratio}). A rise counts at x1.5.`,
+  timeSteady: (lane: string, what: string, before: string, after: string, ratio: string) =>
+    `${lane}: ${what} went from ${before} in the first half to ${after} in the second half (x${ratio}). A rise counts at x1.5.`,
+  medianFlat: (before: string, after: string) => `The typical API call took ${before} in the first half and ${after} in the second half. It did not slow.`,
+  medianMoved: (before: string, after: string) => `The typical API call took ${before} in the first half and ${after} in the second half. It slowed.`,
+  allSlowYes: 'The API, the web server and the database each slowed in the second half.',
+  allSlowNo: (lane: string) => `${lane} did not slow, so the three did not slow together.`,
   clockYes: (lanes: string) => `Switched off until the time zone is checked: ${lanes}.`,
   clockNo: 'No lane was switched off for its time zone. Calls that end before they start are not checked here.',
   clockNone: 'No lane could be read, so the time zones were not checked.',
@@ -111,7 +121,7 @@ export const SIGNAL_TEXT: Record<string, string> = {
   appPoolFail: 'Application-pool unavailable or worker failure rows',
   recvTimeout: 'Header or body receive timeouts (HTTP.sys)',
   drain: 'Slow clients drop off, or outside time is up while the app is flat',
-  sqlUp: 'Slow database calls (over 1 s) up 50% or more',
+  sqlUp: 'Database calls up 50% or more (average time, or slow-call count)',
   blocking: 'Blocked-process reports rose',
   lockWait: 'The top server wait is a lock wait',
   deadlocks: 'Deadlock storm (5 or more reports, and twice the earlier rate)',
@@ -178,7 +188,8 @@ export const suspectsCopyEntries = (): LintEntry[] => {
     { id: 'suspects.notShown', text: SUSPECT_TEXT.notShown(18) },
     { id: 'suspects.summary', text: SUSPECT_TEXT.summary(26, 0, 1, 22, 3) },
     { id: 'suspects.showOnChartLabel', text: SUSPECT_TEXT.showOnChartLabel('L1') },
-    { id: 'suspects.moment', text: SUSPECT_TEXT.moment('API requests (audit log)', '20 Oct 09:42') }
+    { id: 'suspects.moment', text: SUSPECT_TEXT.moment('API requests (audit log)', '20 Oct 09:42') },
+    { id: 'suspects.momentTime', text: SUSPECT_TEXT.moment('Database (SQL Server)', '20 Oct 09:42', 'time') }
   ];
   const why = [
     RESULT_WHY.contradicted('Slow database calls did not rise.'), RESULT_WHY.cannot(SIGNAL_UNKNOWN), RESULT_WHY.partlyUnknown(SIGNAL_UNKNOWN),
@@ -190,7 +201,10 @@ export const suspectsCopyEntries = (): LintEntry[] => {
     SIGNAL_WHY.laneNotFull(lane), SIGNAL_WHY.laneZone(lane), SIGNAL_WHY.tooFew(lane, 12), SIGNAL_WHY.tooShort(lane),
     SIGNAL_WHY.rise(lane, '12.5', '31.0', '2.5'), SIGNAL_WHY.riseFromNone(lane, '31.0'), SIGNAL_WHY.steady(lane, '12.5', '13.0', '1.0'),
     SIGNAL_WHY.clockYes(lane), SIGNAL_WHY.clockNo, SIGNAL_WHY.clockNone, SIGNAL_WHY.dipNeedBoth, SIGNAL_WHY.dipYes('0.80', '0.40'),
-    SIGNAL_WHY.dipNo('0.80', '0.78')
+    SIGNAL_WHY.dipNo('0.80', '0.78'), SIGNAL_WHY.timeTooFew(lane, 'average time', 12), SIGNAL_WHY.timeTooShort(lane),
+    SIGNAL_WHY.timeRise('Database (SQL Server)', 'average time per statement', '120 ms', '310 ms', '2.58'),
+    SIGNAL_WHY.timeSteady('Web server (IIS)', 'response time (P95)', '420 ms', '450 ms', '1.07'),
+    SIGNAL_WHY.medianFlat('180 ms', '190 ms'), SIGNAL_WHY.medianMoved('180 ms', '420 ms'), SIGNAL_WHY.allSlowYes, SIGNAL_WHY.allSlowNo('Web server (IIS)')
   ].map((text, i) => ({ id: 'suspects.signalWhy.' + i, text }));
   const labels = Object.entries(SIGNAL_TEXT).map(([key, text]) => ({ id: 'suspects.signal.' + key, text }));
   const results = Object.entries(RESULT_TEXT).map(([key, text]) => ({ id: 'suspects.result.' + key, text }));

@@ -27,6 +27,7 @@ export interface ProfilerGuide { title: string; why: string; cost: string; steps
 export interface LaneResult {
   incident: LaneWindow; reference: LaneWindow; era: string; checks: LaneCheck[]; answers: Record<string, string>;
   onset: string; sources: string[]; guide: ProfilerGuide | null; state: LaneState;
+  queryStore?: { state: 'on' | 'off' | 'read-only' | 'denied' | 'unknown'; firstData?: string | null; intervalMinutes?: number | null } | null;
 }
 export interface LaneDay { id: number; at: string; kind: 'sql' | 'mongo'; label: string; database: string; state: LaneState; incident: LaneWindow; reference: LaneWindow; lane: LaneResult | null }
 
@@ -54,11 +55,26 @@ export function toLane(raw: unknown): LaneResult | null {
   });
   const answers: Record<string, string> = {};
   for (const [id, v] of Object.entries(obj(r.answers))) if (typeof v === 'string') answers[id] = v;
-  return {
+  const lane: LaneResult = {
     incident: toWindow(r.incident), reference: toWindow(r.reference), era: str(r.era), checks, answers, onset: str(r.onset), sources: strs(r.sources),
     guide: toGuide(r.guide), state: overallState(checks)
   };
+  const queryStore = toQueryStore(r.queryStore);
+  if (queryStore) lane.queryStore = queryStore;
+  return lane;
 }
+
+const QUERY_STORE_STATES = ['on', 'off', 'read-only', 'denied', 'unknown'] as const;
+/** Query Store state of a SQL lane. An unknown state word or a non-object is dropped (undefined), never replaced by a made-up state. */
+const toQueryStore = (v: unknown): LaneResult['queryStore'] => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
+  const q = obj(v);
+  const state = QUERY_STORE_STATES.find((s) => s === q.state);
+  if (!state) return undefined;
+  const firstData = typeof q.firstData === 'string' && !Number.isNaN(Date.parse(q.firstData)) ? q.firstData : null;
+  const intervalMinutes = typeof q.intervalMinutes === 'number' && Number.isFinite(q.intervalMinutes) && q.intervalMinutes > 0 ? q.intervalMinutes : null;
+  return { state, firstData, intervalMinutes };
+};
 
 /** The word for a whole lane: Ready when every check is, Failed when every check failed, Cannot test yet when none could run, otherwise Partly ready. */
 export function overallState(checks: LaneCheck[]): LaneState {

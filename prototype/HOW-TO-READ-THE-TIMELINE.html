@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How to read the Investigation Timeline</title>
+<style>
+:root{
+  --bg:#FBF7F0; --card:#FFFFFF; --ink:#14213D; --ink2:#4A5675; --line:#E4DBCB; --accent:#C2410C; --accent-bg:#FDEBDD;
+  --red:#B42318; --red-bg:#FDE7E4; --org:#B45309; --org-bg:#FEF0D6; --grn:#1B7F46; --grn-bg:#DDF3E6; --gry:#5B6477; --gry-bg:#E9EBF0;
+  --navy:#14213D; --navy-ink:#FBF7F0; --chart:#2F5DA8; --chart2:#9DB4DB;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0F1626; --card:#18223A; --ink:#F2EEE6; --ink2:#AEB8D0; --line:#2C3957; --accent:#F59E5B; --accent-bg:#3A2A1E;
+  --red:#FF8A80; --red-bg:#3F1D1F; --org:#F5B04C; --org-bg:#3A2D14; --grn:#6FD59B; --grn-bg:#15352A; --gry:#B3BBCC; --gry-bg:#27314A;
+  --navy:#0B1020; --navy-ink:#F2EEE6; --chart:#7FA6E8; --chart2:#3B5280; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0F1626; --card:#18223A; --ink:#F2EEE6; --ink2:#AEB8D0; --line:#2C3957; --accent:#F59E5B; --accent-bg:#3A2A1E;
+  --red:#FF8A80; --red-bg:#3F1D1F; --org:#F5B04C; --org-bg:#3A2D14; --grn:#6FD59B; --grn-bg:#15352A; --gry:#B3BBCC; --gry-bg:#27314A;
+  --navy:#0B1020; --navy-ink:#F2EEE6; --chart:#7FA6E8; --chart2:#3B5280; color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "DM Sans",system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
+  padding-block:0 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:28px}
+h1,h2,h3{font-family:"Rubik","DM Sans",system-ui,sans-serif;text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(30px,6vw,46px)}
+h2{font-size:clamp(22px,4vw,28px)}
+p{margin:0}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.hero{background:var(--navy);color:var(--navy-ink);border-radius:0 0 28px 28px;padding:44px 24px 36px;margin:0 calc(-1 * max(16px,env(safe-area-inset-left,0px)));
+  padding-left:max(24px,env(safe-area-inset-left,0px));padding-right:max(24px,env(safe-area-inset-right,0px))}
+.hero .in{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.hero p{color:#C9D3EA;font-size:18px;max-width:60ch}
+.hero .eyebrow{color:#F2A65A}
+.route{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
+.route a{color:var(--navy-ink);text-decoration:none;background:#24365F;border-radius:999px;padding:7px 14px;font-weight:700;font-size:14px}
+.route a:hover{background:#2f4678}
+.route i{color:#F2A65A;font-style:normal}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.step-h{display:flex;gap:14px;align-items:center}
+.num{flex:none;width:46px;height:46px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font:700 22px "Rubik",system-ui,sans-serif}
+.q{font-size:15px;color:var(--ink2);font-weight:600}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.cell{border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.cell b{font-size:11px;letter-spacing:.12em;text-transform:uppercase}
+.where{background:var(--gry-bg)} .where b{color:var(--gry)}
+.look{background:var(--org-bg)} .look b{color:var(--org)}
+.means{background:var(--grn-bg)} .means b{color:var(--grn)}
+.demo{border-left:4px solid var(--accent);background:var(--accent-bg);border-radius:0 12px 12px 0;padding:12px 16px}
+.demo b{color:var(--accent)}
+.tip{border:1px dashed var(--line);border-radius:12px;padding:10px 14px;color:var(--ink2);font-size:15px}
+.chip{display:inline-block;border-radius:999px;padding:2px 11px;font-weight:700;font-size:13px;white-space:nowrap}
+.c-red{background:var(--red-bg);color:var(--red)} .c-org{background:var(--org-bg);color:var(--org)}
+.c-grn{background:var(--grn-bg);color:var(--grn)} .c-gry{background:var(--gry-bg);color:var(--gry)}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:15px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink2)}
+td.n{font:600 16px "Rubik",system-ui,sans-serif;white-space:nowrap}
+svg{max-width:100%;height:auto;display:block}
+.sus{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.s{border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.s h3{font-size:16px}
+.s.r{background:var(--red-bg)} .s.o{background:var(--org-bg)} .s.g{background:var(--grn-bg)} .s.y{background:var(--gry-bg)}
+.big{font:700 clamp(26px,5vw,36px) "Rubik",system-ui,sans-serif;color:var(--accent)}
+.recipe{counter-reset:r;display:flex;flex-direction:column;gap:10px;padding:0;margin:0;list-style:none}
+.recipe li{counter-increment:r;display:flex;gap:12px;align-items:flex-start}
+.recipe li::before{content:counter(r);flex:none;width:28px;height:28px;border-radius:50%;background:var(--navy);color:var(--navy-ink);display:grid;place-items:center;font-weight:700;font-size:14px;margin-top:1px}
+.end{background:var(--navy);color:var(--navy-ink);border-radius:24px;padding:26px;display:flex;flex-direction:column;gap:12px}
+.end .eyebrow{color:#F2A65A}
+.end p{color:#C9D3EA}
+.end b{color:#fff}
+.warn{background:var(--org-bg);border-radius:16px;padding:16px 18px;color:var(--ink)}
+.warn ul{margin:8px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
+@media (max-width:640px){.trio,.sus{grid-template-columns:1fr}.hero{padding-top:32px}}
+</style>
+</head>
+<body>
+<div class="hero"><div class="in">
+  <p class="eyebrow">Unravis · Investigation Timeline wireframe</p>
+  <h1>A slowdown shows up. How do you get to the answer?</h1>
+  <p>Six moves, in order. Each one answers one question and hands you to the next. Walk them with the demo case <b>Payroll.Run slowdown, 20 Oct</b>.</p>
+  <div class="route" aria-label="The six moves">
+    <a href="#s1">1 When?</a><i>→</i><a href="#s2">2 How big?</a><i>→</i><a href="#s3">3 Which layer?</a><i>→</i><a href="#s4">4 Which suspect?</a><i>→</i><a href="#s5">5 Which call?</a><i>→</i><a href="#s6">6 Prove it</a>
+  </div>
+</div></div>
+
+<div class="wrap">
+
+<!-- MAP -->
+<section class="card" aria-label="The whole idea">
+  <p class="eyebrow">The whole idea in one picture</p>
+  <svg viewBox="0 0 760 150" role="img" aria-label="Funnel from the whole window down to one suspect and one check">
+    <g font-family="Rubik, system-ui, sans-serif" font-size="14" font-weight="700">
+      <rect x="4" y="10" width="170" height="130" rx="16" fill="var(--gry-bg)"/><text x="20" y="40" fill="var(--gry)">Everything</text>
+      <text x="20" y="62" font-size="12" font-weight="500" fill="var(--ink2)">2 h 30 min, 3 layers,</text><text x="20" y="80" font-size="12" font-weight="500" fill="var(--ink2)">26 suspects</text>
+      <path d="M180 75h30" stroke="var(--accent)" stroke-width="3" marker-end="url(#a)"/>
+      <rect x="216" y="25" width="150" height="100" rx="16" fill="var(--org-bg)"/><text x="230" y="55" fill="var(--org)">One layer</text>
+      <text x="230" y="77" font-size="12" font-weight="500" fill="var(--ink2)">the one that moved</text><text x="230" y="95" font-size="12" font-weight="500" fill="var(--ink2)">first (database)</text>
+      <path d="M372 75h30" stroke="var(--accent)" stroke-width="3" marker-end="url(#a)"/>
+      <rect x="408" y="40" width="150" height="70" rx="16" fill="var(--red-bg)"/><text x="422" y="68" fill="var(--red)">One suspect</text>
+      <text x="422" y="90" font-size="12" font-weight="500" fill="var(--ink2)">Blocking chain (D1)</text>
+      <path d="M564 75h30" stroke="var(--accent)" stroke-width="3" marker-end="url(#a)"/>
+      <rect x="600" y="52" width="150" height="46" rx="16" fill="var(--grn-bg)"/><text x="614" y="80" fill="var(--grn)">One check</text>
+    </g>
+    <defs><marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker></defs>
+  </svg>
+  <p class="tip"><b>Mantra:</b> compare to before → find which layer moved first → read the suspect it points to → run the one cheap check. The page does the sorting. You do the judging.</p>
+</section>
+
+<!-- 1 -->
+<section class="card" id="s1">
+  <div class="step-h"><div class="num">1</div><div><h2>Set the two windows</h2><p class="q">Question: <i>when was it bad, and compared with what?</i></p></div></div>
+  <div class="trio">
+    <div class="cell where"><b>Where</b><span>Top of the page: <b>Investigation window</b> and <b>Compare it with</b> boxes. Check the <b>UTC</b> label.</span></div>
+    <div class="cell look"><b>Look for</b><span>Problem box = when users complained. Comparison box = an equal stretch just before. The demo uses 09:00–11:30 against 06:30–09:00.</span></div>
+    <div class="cell means"><b>It means</b><span>Every “times the comparison period” on the page is <i>problem ÷ comparison</i>. Wrong windows, wrong answers.</span></div>
+  </div>
+  <p class="demo"><b>Demo:</b> both windows are 2 h 30 min, so counts compare like for like. The default <i>Last hour</i> would show different numbers (about 1,779 requests, 389 ms), because it misses the incident.</p>
+  <p class="tip">The comparison period is only a yardstick. It may not have been healthy. If it was also slow, the ratios shrink.</p>
+</section>
+
+<!-- 2 -->
+<section class="card" id="s2">
+  <div class="step-h"><div class="num">2</div><div><h2>Read the seven numbers</h2><p class="q">Question: <i>is it real, and how big?</i></p></div></div>
+  <div class="trio">
+    <div class="cell where"><b>Where</b><span>Row called <b>Overall figures</b>, just under the sources.</span></div>
+    <div class="cell look"><b>Look for</b><span>The small line under each number: <b>“x times the comparison period”</b>. Red means 1.5× or more.</span></div>
+    <div class="cell means"><b>It means</b><span>Big ratios tell you <i>what</i> got worse. The size order hints <i>where</i>.</span></div>
+  </div>
+  <div class="tbl"><table>
+    <tr><th>Tile</th><th>Demo</th><th>Read it as</th></tr>
+    <tr><td>Requests to the application</td><td class="n">4,216 · 1.1×</td><td>Traffic about the same. <b>Not a surge.</b></td></tr>
+    <tr><td>Slow-request time (P95)</td><td class="n">522 ms · 2.4×</td><td>The slowest 1 in 20 requests is 2.4 times slower. <b>Users feel this.</b></td></tr>
+    <tr><td>App server errors (5xx)</td><td class="n">185 · 4.4%</td><td>185 ÷ 4,216. “Cannot compare” = the earlier period has too few errors for a fair ratio. Read the 4.4% on its own.</td></tr>
+    <tr><td>Web server errors (IIS 5xx)</td><td class="n">210 · 4.4%</td><td>Same story one layer out. The web server also fails.</td></tr>
+    <tr><td>Slow web requests (IIS P95)</td><td class="n">1046 ms · 4.0×</td><td>Slower again at the front door.</td></tr>
+    <tr><td>Slow database calls (&gt; 1 s)</td><td class="n">2,005 · 14.6×</td><td>2,005 of 5,059 calls = <b>40%</b>. The biggest jump on the page.</td></tr>
+    <tr><td>Database errors · blocking</td><td class="n">130 · 15</td><td>Failed calls, then reports of calls stuck waiting on each other.</td></tr>
+  </table></div>
+  <p class="demo"><b>Demo reading:</b> traffic flat, everything slower, the database most (14.6×). That is a <b>pull toward the bottom layer</b>, not proof.</p>
+  <p class="tip">P95 = the speed that 95 of every 100 requests beat. It shows what the slow tail feels like and ignores one-off outliers.</p>
+</section>
+
+<!-- 3 -->
+<section class="card" id="s3">
+  <div class="step-h"><div class="num">3</div><div><h2>Find which layer moved first</h2><p class="q">Question: <i>where did it start?</i></p></div></div>
+  <div class="trio">
+    <div class="cell where"><b>Where</b><span>Three lanes under the tiles: <b>API audit</b>, <b>Database</b>, <b>Web server (IIS)</b>. They share one time axis.</span></div>
+    <div class="cell look"><b>Look for</b><span>The moment each lane’s line or bars <b>jump away from the dashed comparison line</b>. Which lane jumps earliest?</span></div>
+    <div class="cell means"><b>It means</b><span>Trouble travels up the stack: database → app → web. The earliest mover sits closest to the cause.</span></div>
+  </div>
+  <svg viewBox="0 0 760 230" role="img" aria-label="Sketch of three lanes: the database jumps at 09:11, the API at 09:14, and the web server shortly after">
+    <g font-family="DM Sans, system-ui, sans-serif" font-size="12" fill="var(--ink2)">
+      <text x="4" y="30" font-weight="700" fill="var(--ink)">Web server</text>
+      <text x="4" y="108" font-weight="700" fill="var(--ink)">API</text>
+      <text x="4" y="186" font-weight="700" fill="var(--ink)">Database</text>
+      <g stroke="var(--line)"><line x1="110" y1="60" x2="750" y2="60"/><line x1="110" y1="138" x2="750" y2="138"/><line x1="110" y1="216" x2="750" y2="216"/></g>
+      <g stroke="var(--chart2)" stroke-dasharray="5 4" fill="none"><path d="M110 50H750"/><path d="M110 128H750"/><path d="M110 206H750"/></g>
+      <g stroke="var(--chart)" stroke-width="3" fill="none" stroke-linejoin="round">
+        <path d="M110 50H300L320 40 330 24H750"/>
+        <path d="M110 128H265L285 112 295 102H750"/>
+        <path d="M110 206H225L240 170 250 150H750"/>
+      </g>
+      <g stroke="var(--accent)" stroke-width="2"><line x1="240" y1="4" x2="240" y2="222"/><line x1="285" y1="4" x2="285" y2="222" stroke-dasharray="4 3"/></g>
+      <text x="244" y="14" fill="var(--accent)" font-weight="700">09:11 database</text>
+      <text x="289" y="14" fill="var(--accent)" font-weight="700" dx="14">09:14 API</text>
+      <text x="520" y="196" fill="var(--ink2)">dashed = comparison period</text>
+      <text x="520" y="224" fill="var(--ink2)">time →</text>
+    </g>
+  </svg>
+  <p class="demo"><b>Demo:</b> database lane lifts first (09:11), API follows (09:14), web server later. <b>Order: DB → API → web.</b> The database is the lead suspect.</p>
+  <div class="tbl"><table>
+    <tr><th>Lane</th><th>Charts inside it</th><th>What “bad” looks like</th></tr>
+    <tr><td>API audit</td><td>Requests per bar with a P95 line</td><td>P95 line climbs above the dashed one</td></tr>
+    <tr><td>Database</td><td>Slow (&gt; 1 s) and failed calls · P95 · blocking and deadlocks</td><td>Slow-call bars and blocking marks appear</td></tr>
+    <tr><td>Web server</td><td>Requests by result (OK / 4xx / 5xx) · P95 · connection errors</td><td>Red 5xx share grows in the stack</td></tr>
+  </table></div>
+  <p class="tip"><b>How to look:</b> hover a bar to compare all three at that moment. Click a bar (or use ← →) to lock a 5-minute slice. Each bar is 5 minutes, so “09:11” really means “the 09:10 bar”.</p>
+  <p class="tip">Sources were read at different times (API now, SQL and IIS from saved logs). Compare shapes and timing. Do not expect totals to match.</p>
+</section>
+
+<!-- 4 -->
+<section class="card" id="s4">
+  <div class="step-h"><div class="num">4</div><div><h2>Let the suspect list narrow it</h2><p class="q">Question: <i>which known cause fits this pattern?</i></p></div></div>
+  <div class="trio">
+    <div class="cell where"><b>Where</b><span><b>Suspects</b> panel on the right. Starts with <i>“Checked 26 suspects: …”</i></span></div>
+    <div class="cell look"><b>Look for</b><span>The colour, then the one-line reason, then <b>“Its tier first moved at…”</b>.</span></div>
+    <div class="cell means"><b>It means</b><span>Suspects, <b>not causes</b>. Each is a known failure pattern checked against your data.</span></div>
+  </div>
+  <p><span class="chip c-red">Red</span> <span class="chip c-org">Orange</span> <span class="chip c-grn">Green</span> <span class="chip c-gry">Grey</span></p>
+  <div class="sus">
+    <div class="s r"><span class="chip c-red">Red · most likely</span><h3>D1 Blocking chain</h3><span>11 blocked-process reports vs 0 before. Its tier (SQL) moved first, 09:11.</span></div>
+    <div class="s o"><span class="chip c-org">Orange · likely</span><h3>L2 Mix shift</h3><span>Partly fits: the median also slowed (219 vs 92 ms), and a pure mix shift would not do that. API moved 09:14.</span></div>
+    <div class="s y"><span class="chip c-gry">Grey · cannot test</span><h3>S2 Thread-pool, S5, M11…</h3><span>Needed data is missing (.NET counters, MongoDB profiler). <b>Grey is never a pass.</b></span></div>
+    <div class="s g"><span class="chip c-grn">Green · ruled out</span><h3>19 others</h3><span>The data we have says no. Ignore them for now.</span></div>
+  </div>
+  <p class="demo"><b>Demo:</b> 1 red, 1 orange, 5 grey, 19 green. Red also matches step 3: the earliest tier is the database.</p>
+  <p class="tip">Press <b>See all (26)</b> to list every suspect, including the green ones, and open any card to see its reasons.</p>
+</section>
+
+<!-- 5 -->
+<section class="card" id="s5">
+  <div class="step-h"><div class="num">5</div><div><h2>Find the guilty call</h2><p class="q">Question: <i>which operation got worse, not just which is slow?</i></p></div></div>
+  <div class="trio">
+    <div class="cell where"><b>Where</b><span>Press <b>Open the analysis</b>, then the <b>Where is it?</b> button. Use the <b>Biggest change</b> tab.</span></div>
+    <div class="cell look"><b>Look for</b><span>The <b>change vs comparison period</b> column (4.9×). Ignore who is slowest.</span></div>
+    <div class="cell means"><b>It means</b><span>An operation that is slow <i>every day</i> is not the news. One that jumped is.</span></div>
+  </div>
+  <div class="tbl"><table>
+    <tr><th>Operation</th><th>Requests</th><th>P95</th><th>Change</th><th>5xx</th></tr>
+    <tr><td>Payroll.Export</td><td class="n">72</td><td class="n">2397 ms</td><td class="n">1.0×</td><td class="n">–</td></tr>
+    <tr><td><b>Payroll.Run</b></td><td class="n">1,053</td><td class="n">1181 ms</td><td class="n"><span class="chip c-red">4.9×</span></td><td class="n">134</td></tr>
+    <tr><td>Timesheet.Submit</td><td class="n">599</td><td class="n">434 ms</td><td class="n">2.1×</td><td class="n">35</td></tr>
+    <tr><td>Employees.List</td><td class="n">1,478</td><td class="n">181 ms</td><td class="n">1.0×</td><td class="n">16</td></tr>
+  </table></div>
+  <p class="demo"><b>Demo:</b> Payroll.Export is the slowest, but it always is (1.0×). <b>Payroll.Run is the culprit:</b> 4.9×, many requests, 134 of the 185 5xx. The headline says the same: <i>“The biggest rise is in Payroll.Run: its P95 is 4.9 times…”</i></p>
+  <p class="tip">Trap to avoid: sorting by <i>Slowest</i>. Use <i>Biggest change</i>, or you chase a job that was always slow.</p>
+</section>
+
+<!-- 6 -->
+<section class="card" id="s6">
+  <div class="step-h"><div class="num">6</div><div><h2>Prove it with the evidence table</h2><p class="q">Question: <i>can I trust the red card?</i></p></div></div>
+  <div class="trio">
+    <div class="cell where"><b>Where</b><span>On a suspect card: <b>Evidence and checks</b>.</span></div>
+    <div class="cell look"><b>Look for</b><span>Rows tagged <b>Must</b> (core reading) and <b>Expect</b> (normally comes along). Then <b>Cheapest check</b> and <b>What would overturn it</b>.</span></div>
+    <div class="cell means"><b>It means</b><span>All Musts “Yes” = red. A Must “No” = ruled out. A Must unreadable = grey.</span></div>
+  </div>
+  <div class="tbl"><table>
+    <tr><th>Signal (D1 Blocking chain)</th><th>Role</th><th>Reading</th><th>Why</th></tr>
+    <tr><td>Database call time (P95) up</td><td>Must</td><td><span class="chip c-grn">Yes</span></td><td>1795 ms vs 70 ms (≈ 25.7×). Counts at +30% and +100 ms.</td></tr>
+    <tr><td>Blocked-process reports rose</td><td>Must</td><td><span class="chip c-grn">Yes</span></td><td>11 vs 0 in the comparison period.</td></tr>
+    <tr><td>Top server wait is a lock wait</td><td>Expect</td><td><span class="chip c-grn">Yes</span></td><td>Top wait is LCK_M_X (an exclusive lock).</td></tr>
+  </table></div>
+  <p class="demo"><b>Do the cheapest check:</b> open the blocking snapshot or blocked-process report and find the <b>head blocker</b>, the one session everyone else waits for. <b>It would be overturned if</b> there were no lock waits at all.</p>
+</section>
+
+<!-- RECIPE + END -->
+<section class="card">
+  <p class="eyebrow">Do it yourself, by hand</p>
+  <h2>The recipe, with the arithmetic</h2>
+  <ol class="recipe">
+    <li><span><b>Pick two equal windows.</b> Problem 09:00–11:30, comparison 06:30–09:00.</span></li>
+    <li><span><b>Ratio = problem ÷ comparison.</b> 522 ÷ 220 ≈ 2.4×. Red from 1.5×.</span></li>
+    <li><span><b>Share = count ÷ total.</b> 185 ÷ 4,216 = 4.4% errors. 2,005 ÷ 5,059 = 40% slow DB calls.</span></li>
+    <li><span><b>Order the layers by first jump.</b> Earliest line leaving its dashed baseline wins: database 09:11, API 09:14.</span></li>
+    <li><span><b>Match the suspect.</b> Take the red card whose tier is the earliest, and read its table.</span></li>
+    <li><span><b>Pick the operation by change, not speed.</b> Payroll.Run 4.9×.</span></li>
+    <li><span><b>Run the one cheap check.</b> Head blocker in the blocking report.</span></li>
+  </ol>
+</section>
+
+<section class="end">
+  <p class="eyebrow">Where you land</p>
+  <h2>The conclusion the page reaches</h2>
+  <p><b>Production only.</b> The orders database slowed first (09:11, about 25×, 40% of calls over 1 s) with <b>11 blocked-process reports</b> against none before. The API followed at 09:14 and the web server after. The hurt operation is <b>Payroll.Run (4.9×)</b>. Best-fit suspect: <b>D1 blocking chain</b>. Next move: find the head blocker. It is a lead, not a verdict.</p>
+</section>
+
+<section class="warn">
+  <b>Keep these honest</b>
+  <ul>
+    <li>Colours are <b>prototype defaults</b> (1.5×, 2% errors, 25% slow). They are not yet backed by real incident data.</li>
+    <li>Earliest-to-move is a <b>strong hint, not proof</b>. Bars are 5 minutes wide and clocks can differ.</li>
+    <li>The numbers are demo data for the wireframe. The real product will fetch each from a named source.</li>
+    <li>The wireframe shows 26 suspects. The real product plans 44.</li>
+  </ul>
+</section>
+
+</div>
+</body>
+</html>

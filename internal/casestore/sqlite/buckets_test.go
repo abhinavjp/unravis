@@ -609,3 +609,183 @@ func TestBucketCountsReadOneSnapshot(t *testing.T) {
 		}
 	}
 }
+
+// With CountClientErrors and CountTimings the GROUP BY counts the 4xx rows like
+// the scan fallback does, and returns every timed event once, in a log bin whose
+// Min and Max bracket the event's duration.
+func TestBucketCountsClientErrorsAndTimings(t *testing.T) {
+	s, _ := newTestStore(t)
+	info := mustCreate(t, s, "timing-buckets")
+	c := mustOpen(t, s, info.ID)
+	evs := tEvents(c, "t", 40)
+	statuses := []string{"200", "404", "401", "503", "", "4xx", "4000", "-", "409"}
+	var want4xx int64
+	var wantTimed int64
+	for i := range evs {
+		evs[i].Source = "imp-t"
+		evs[i].EvidenceID = evidence.EventID(string(c.Info().ID), "imp-t", "t", evs[i].Line, 0)
+		st := statuses[i%len(statuses)]
+		evs[i].Attrs = nil
+		if st != "" {
+			evs[i].Attrs = map[string]string{"status": st}
+		}
+		if casestore.IsClientErrorStatus(st) {
+			want4xx++
+		}
+		if i%5 != 4 { // every fifth event has no duration
+			d := float64(i*40 + 3)
+			evs[i].DurationMs = &d
+			wantTimed++
+		} else {
+			evs[i].DurationMs = nil
+		}
+	}
+	meta := tMeta("t.csv")
+	meta.Importer = "imp-t"
+	if _, err := c.Import(context.Background(), meta, tBody("t"), tRun(evs)); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	q := casestore.BucketQuery{
+		AxisStart: testBase, From: testBase, To: testBase.Add(40 * time.Second), WidthMs: 10_000,
+		Sources: []string{"imp-t"}, CountClientErrors: true, CountTimings: true,
+	}
+	got, err := c.BucketCounts(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, err := casestore.CountBucketsScan(ctx, c, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sum, scanSum int64
+	for _, bc := range got.Counts {
+		sum += bc.ClientErrors
+	}
+	for _, bc := range scan.Counts {
+		scanSum += bc.ClientErrors
+	}
+	if sum != want4xx || scanSum != want4xx || want4xx == 0 {
+		t.Fatalf("client errors = %d (scan %d), want %d", sum, scanSum, want4xx)
+	}
+
+	var timed int64
+	for _, tm := range got.Timings {
+		timed += tm.Count
+		if tm.Count <= 0 || tm.Min > tm.Max || tm.Bin < 0 || tm.Bin > 193 || tm.ImportID == 0 || tm.Source != "imp-t" {
+			t.Fatalf("bad timing row %+v", tm)
+		}
+	}
+	if timed != wantTimed {
+		t.Fatalf("timed events = %d, want %d", timed, wantTimed)
+	}
+
+	q.CountClientErrors, q.CountTimings = false, false
+	off, err := c.BucketCounts(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(off.Timings) != 0 {
+		t.Fatalf("Timings = %d rows without CountTimings", len(off.Timings))
+	}
+	for _, bc := range off.Counts {
+		if bc.ClientErrors != 0 {
+			t.Fatalf("ClientErrors = %d without CountClientErrors", bc.ClientErrors)
+		}
+	}
+}
+
+// An excluded source never counts a 4xx, as for 5xx.
+func TestBucketCountsClientErrorsHonourExclude(t *testing.T) {
+	s, _ := newTestStore(t)
+	info := mustCreate(t, s, "exclude-4xx")
+	c := mustOpen(t, s, info.ID)
+	evs := tEvents(c, "x", 10)
+	for i := range evs {
+		evs[i].Source = "imp-x"
+		evs[i].EvidenceID = evidence.EventID(string(c.Info().ID), "imp-x", "x", evs[i].Line, 0)
+		evs[i].Attrs = map[string]string{"status": "404"}
+	}
+	meta := tMeta("x.csv")
+	meta.Importer = "imp-x"
+	if _, err := c.Import(context.Background(), meta, tBody("x"), tRun(evs)); err != nil {
+		t.Fatal(err)
+	}
+	q := casestore.BucketQuery{
+		AxisStart: testBase, From: testBase, To: testBase.Add(20 * time.Second), WidthMs: 10_000,
+		Sources: []string{"imp-x"}, CountClientErrors: true, ErrorExcludeSources: []string{"imp-x"},
+	}
+	got, err := c.BucketCounts(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Total != 10 {
+		t.Fatalf("total = %d, want 10", got.Total)
+	}
+	for _, bc := range got.Counts {
+		if bc.ClientErrors != 0 {
+			t.Fatalf("excluded source counted 4xx: %+v", bc)
+		}
+	}
+}
+
+// The GROUP BY returns the exact sum of the durations of each timing group, the
+// same as the scan fallback; events without a duration add nothing.
+func TestBucketCountsTimingSumExact(t *testing.T) {
+	s, _ := newTestStore(t)
+	info := mustCreate(t, s, "timing-sum")
+	c := mustOpen(t, s, info.ID)
+	evs := tEvents(c, "s", 4)
+	durs := []*float64{nil, nil, nil, nil}
+	a, b, d := 1000.0, 2000.0, 500.0
+	durs[0], durs[1], durs[3] = &a, &b, &d // event 2 has no duration
+	for i := range evs {
+		evs[i].Source = "imp-s"
+		evs[i].EvidenceID = evidence.EventID(string(c.Info().ID), "imp-s", "s", evs[i].Line, 0)
+		evs[i].Start = testBase.Add(time.Duration(i) * time.Second)
+		if i == 3 {
+			evs[i].Start = testBase.Add(15 * time.Second) // the next cell
+		}
+		evs[i].End = evs[i].Start.Add(500 * time.Millisecond)
+		evs[i].DurationMs = durs[i]
+	}
+	meta := tMeta("s.csv")
+	meta.Importer = "imp-s"
+	if _, err := c.Import(context.Background(), meta, tBody("s"), tRun(evs)); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	q := casestore.BucketQuery{
+		AxisStart: testBase, From: testBase, To: testBase.Add(40 * time.Second), WidthMs: 10_000,
+		Sources: []string{"imp-s"}, CountTimings: true,
+	}
+	got, err := c.BucketCounts(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sums := map[int]float64{}
+	for _, tm := range got.Timings {
+		if tm.Count <= 0 || tm.Sum < tm.Min || tm.Sum > tm.Max*float64(tm.Count) {
+			t.Fatalf("bad timing row %+v", tm)
+		}
+		sums[tm.Index] += tm.Sum
+	}
+	if len(sums) != 2 || sums[0] != 3000 || sums[1] != 500 {
+		t.Fatalf("sums per cell = %v, want cell 0: 3000, cell 1: 500", sums)
+	}
+	scan, err := casestore.CountBucketsScan(ctx, c, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var scanTotal, gotTotal float64
+	for _, tm := range scan.Timings {
+		scanTotal += tm.Sum
+	}
+	for _, tm := range got.Timings {
+		gotTotal += tm.Sum
+	}
+	if scanTotal != gotTotal || gotTotal != 3500 {
+		t.Fatalf("sum SQL=%v scan=%v, want 3500", gotTotal, scanTotal)
+	}
+}

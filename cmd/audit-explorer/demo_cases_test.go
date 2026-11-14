@@ -667,6 +667,9 @@ func TestDemoCasesSeedOneNothingReadLaneDay(t *testing.T) {
 			t.Fatalf("decode %s: %v: %s", id, err, res.Body)
 		}
 		held[id] = len(out.Days)
+		if id == string(demoCaseTracingID) {
+			continue // its one day is the Query Store day, checked in TestDemoTracingCaseHoldsOneQueryStoreDay
+		}
 		for _, l := range out.Days {
 			if l.Kind != "sql" || len(l.Lane.Checks) == 0 {
 				t.Fatalf("%s: unexpected lane %+v", id, l)
@@ -680,12 +683,57 @@ func TestDemoCasesSeedOneNothingReadLaneDay(t *testing.T) {
 	}
 	for id, n := range held {
 		want := 0
-		if id == string(demoCaseFailedID) {
+		if id == string(demoCaseFailedID) || id == string(demoCaseTracingID) {
 			want = 1
 		}
 		if n != want {
 			t.Errorf("case %s holds %d lane days, want %d", id, n, want)
 		}
+	}
+}
+
+// The Orders API stall case holds one saved SQL day with a Query Store series
+// around the stall; another demo case with a working copy holds none.
+func TestDemoTracingCaseHoldsOneQueryStoreDay(t *testing.T) {
+	h, closeCases := seededServer(t, t.TempDir())
+	defer closeCases()
+	type day struct {
+		Lane struct {
+			Series     []map[string]any `json:"series"`
+			QueryStore *struct {
+				State string `json:"state"`
+			} `json:"queryStore"`
+		} `json:"lane"`
+	}
+	days := func(id string) []day {
+		req := httptest.NewRequest(http.MethodGet, "/api/cases/"+id+"/lanes", nil)
+		req.Host = "127.0.0.1:8765"
+		req.Header.Set("X-Audit-Token", demoTestToken)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("GET lanes for %s = %d: %s", id, res.Code, res.Body)
+		}
+		var out struct {
+			Days []day `json:"days"`
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode %s: %v: %s", id, err, res.Body)
+		}
+		return out.Days
+	}
+	got := days(string(demoCaseTracingID))
+	if len(got) != 1 {
+		t.Fatalf("the stall case holds %d lane days, want 1", len(got))
+	}
+	if got[0].Lane.QueryStore == nil || got[0].Lane.QueryStore.State != "on" {
+		t.Fatalf("the stall case's day has Query Store %+v, want on", got[0].Lane.QueryStore)
+	}
+	if n := len(got[0].Lane.Series); n < 16 {
+		t.Fatalf("the stall case's day has %d series points, want at least 16", n)
+	}
+	if n := len(days(string(demoCaseOpenID))); n != 0 {
+		t.Errorf("the open demo case holds %d lane days, want 0", n)
 	}
 }
 
@@ -745,7 +793,8 @@ func TestDemoTracingCaseFillsSQLAndIISLanes(t *testing.T) {
 	if len(out.Lanes) != 2 || out.Lanes[0].Key != "sql" || out.Lanes[1].Key != "iis" {
 		t.Fatalf("lanes %+v", out.Lanes)
 	}
-	wantSums := map[string]int64{"sql": 18, "iis": 51}
+	// The sql bars are the saved Query Store day (1200+900+900+1200 runs in the hour); the 18 slow-op events lie on top of them.
+	wantSums := map[string]int64{"sql": 4200, "iis": 51}
 	for _, lane := range out.Lanes {
 		if lane.State != "events" || lane.Origin != "case" {
 			t.Errorf("%s: state %q origin %q, want events and case", lane.Key, lane.State, lane.Origin)
@@ -753,6 +802,9 @@ func TestDemoTracingCaseFillsSQLAndIISLanes(t *testing.T) {
 		var sum int64
 		for _, b := range lane.Buckets {
 			sum += b.Count
+		}
+		if lane.Key == "sql" && len(lane.Events) != 18 {
+			t.Errorf("sql lane has %d events, want 18", len(lane.Events))
 		}
 		if sum != wantSums[lane.Key] {
 			t.Errorf("%s: bucket sum %d, want %d", lane.Key, sum, wantSums[lane.Key])

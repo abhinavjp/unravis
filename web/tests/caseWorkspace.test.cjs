@@ -570,3 +570,54 @@ test('nothing sent to the case can carry a login: the workspace builder is the o
   const sends = state.match(/saveCaseWorkspace\([^)]*\)/g) ?? [];
   assert.equal(sends.length, 1);
 });
+
+// ---- the saved windows ----
+
+const WIN = { incidentStart: '2026-10-23T19:00', incidentEnd: '2026-10-23T20:00', referenceStart: '2026-10-23T18:00', referenceEnd: '2026-10-23T19:00' };
+
+test('saved windows round-trip through build and parse, and stay clear of forbidden keys', () => {
+  const workspace = build([src('a', 'orders')], undefined, { windows: WIN });
+  assert.deepEqual(workspace.windows, WIN);
+  assert.equal(W.findForbiddenKey(workspace), null);
+  assert.doesNotMatch(JSON.stringify(workspace), /:\/\//);
+  assert.deepEqual(W.parseWorkspace(JSON.parse(JSON.stringify(workspace))).windows, WIN);
+});
+
+test('malformed saved windows are dropped, never trusted', () => {
+  assert.equal(build([src('a', 'orders')], undefined, { windows: { ...WIN, incidentStart: 'x' } }).windows, undefined);
+  assert.equal(W.parseWorkspace({ v: 1, windows: { incidentStart: 1 } })?.windows, undefined);
+  assert.equal(W.parseWorkspace({ v: 1, windows: 'nope' })?.windows, undefined);
+});
+
+test('other saves keep the saved windows, and null clears them', () => {
+  const previous = W.parseWorkspace({ v: 1, windows: WIN });
+  assert.deepEqual(build([src('a', 'orders')], undefined, { previous }).windows, WIN);
+  assert.equal(build([src('a', 'orders')], undefined, { previous, windows: null }).windows, undefined);
+});
+
+// ---- the saved source choice ----
+
+const SOURCES_SOME = { mode: 'some', ids: ['aud-1', 'sql-2'] };
+
+test('a saved source choice round-trips, stays clear of forbidden keys, and "all" is stored as nothing', () => {
+  const workspace = build([src('a', 'orders')], undefined, { traceSources: SOURCES_SOME });
+  assert.deepEqual(workspace.traceSources, SOURCES_SOME);
+  assert.equal(W.findForbiddenKey(workspace), null);
+  assert.doesNotMatch(JSON.stringify(workspace), /:\/\//);
+  assert.deepEqual(W.parseWorkspace(JSON.parse(JSON.stringify(workspace))).traceSources, SOURCES_SOME);
+  assert.deepEqual(build([src('a', 'orders')], undefined, { traceSources: { mode: 'none' } }).traceSources, { mode: 'none' });
+  assert.equal(build([src('a', 'orders')], undefined, { traceSources: { mode: 'all' } }).traceSources, undefined);
+});
+
+test('malformed saved source choices are dropped, never trusted', () => {
+  assert.equal(W.parseWorkspace({ v: 1, traceSources: 'nope' })?.traceSources, undefined);
+  assert.equal(W.parseWorkspace({ v: 1, traceSources: { mode: 'some', ids: [] } })?.traceSources, undefined);
+  assert.equal(W.parseWorkspace({ v: 1, traceSources: { mode: 'some', ids: [1, 'mongodb://x'] } })?.traceSources, undefined);
+  assert.equal(W.parseWorkspace({ v: 1, traceSources: { mode: 'weird' } })?.traceSources, undefined);
+});
+
+test('other saves keep the saved source choice, and null clears it', () => {
+  const previous = W.parseWorkspace({ v: 1, traceSources: SOURCES_SOME });
+  assert.deepEqual(build([src('a', 'orders')], undefined, { previous }).traceSources, SOURCES_SOME);
+  assert.equal(build([src('a', 'orders')], undefined, { previous, traceSources: null }).traceSources, undefined);
+});

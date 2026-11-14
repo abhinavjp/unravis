@@ -67,6 +67,8 @@ export interface BarTipInput {
   /** How many events the bucket holds, and (audit and IIS only) how many were 5xx answers. */
   count: number;
   errors: number;
+  /** The IIS lane only: how many were 4xx answers (refused or not found); 0 or absent when none. */
+  clientErrors?: number;
   /** Where the events came from, and for a saved read how fresh it is ('' when unknown). */
   origin: 'live' | 'case';
   asOfText: string;
@@ -91,6 +93,11 @@ export function barTipLines(input: BarTipInput): string[] {
     if ((input.key === 'audit' || input.key === 'iis') && input.errors > 0) {
       lines.push(`${formatCount(input.errors)} server error${input.errors === 1 ? '' : 's'} (5xx)`);
       lines.push(explain('status.5xx'));
+    }
+    if (input.key === 'iis' && (input.clientErrors ?? 0) > 0) {
+      const refused = input.clientErrors as number;
+      lines.push(`${formatCount(refused)} refused or not found (4xx)`);
+      lines.push(explain('status.4xx'));
     }
     if (input.key === 'iis') lines.push(explain('iis.point'));
   }

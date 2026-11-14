@@ -236,6 +236,28 @@ func timelineLate(ctx context.Context, tx queryRower, importID int64) bool {
 	return err == nil // a row from an earlier import: the case is not new
 }
 
+// mergeBucketClientErrors is mergeBucketErrors for the 4xx cells: it sets
+// ClientErrors on the cells of counts from cl.
+func mergeBucketClientErrors(counts, cl []casestore.BucketCount) {
+	type cell struct {
+		idx int
+		src string
+		imp int64
+	}
+	if len(cl) == 0 {
+		return
+	}
+	at := make(map[cell]int, len(counts))
+	for i, bc := range counts {
+		at[cell{bc.Index, bc.Source, bc.ImportID}] = i
+	}
+	for _, e := range cl {
+		if i, ok := at[cell{e.Index, e.Source, e.ImportID}]; ok {
+			counts[i].ClientErrors = min(e.Count, counts[i].Count)
+		}
+	}
+}
+
 // mergeBucketErrors sets Errors on the cells of counts from errs, the cells of
 // the error query (their Count is the number of errors). Both come from the same
 // window and filters, so every error cell is also a count cell.

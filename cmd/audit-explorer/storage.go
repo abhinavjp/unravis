@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 
 	"api-audit-explorer/internal/audit"
@@ -14,6 +15,7 @@ import (
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/server"
+	"api-audit-explorer/internal/sourcelinks"
 	"api-audit-explorer/internal/sqlconn"
 )
 
@@ -92,6 +94,28 @@ func (w savedWiring) auditRepo(local audit.Repository) audit.Repository {
 		return local
 	}
 	return keeper.NewAuditRouter(local, w.keeper)
+}
+
+// openSourceLinks opens the file that remembers which audit sources were open, so they open again after a restart. It holds names and
+// ids only, never a password, and is the person's own in both layouts. If it cannot be opened the app still runs; sources just do not
+// come back by themselves.
+func openSourceLinks(getenv func(string) string) *sourcelinks.Store {
+	dir, err := mcp.SessionDir(getenv)
+	if err != nil {
+		log.Printf("Saved databases will not reopen by themselves: %v", err)
+		return nil
+	}
+	protector, err := sealedfile.CurrentUser()
+	if err != nil {
+		log.Printf("Saved databases will not reopen by themselves: encrypted storage is unavailable")
+		return nil
+	}
+	links, err := sourcelinks.New(filepath.Join(dir, "sourcelinks.dat"), protector)
+	if err != nil {
+		log.Printf("Saved databases will not reopen by themselves: %v", err)
+		return nil
+	}
+	return links
 }
 
 // wireSaved attaches the saved SQL and MongoDB connections. Per user, they are the sealed per-user files as before. Shared, every saved

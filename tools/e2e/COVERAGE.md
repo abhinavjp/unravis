@@ -508,3 +508,9 @@ The archive suite runs before a release and on a schedule, not in the default ru
 | HAND-17 | tracing-handoff.spec.ts | covered |
 | HAND-18 | tracing-handoff.spec.ts | covered (a real mouse click on a bar reaches the column) |
 | HAND-19 | tracing-handoff.spec.ts | covered (under 480px lane labels do not overlap their panels) |
+| SCALL-01 | slow-call-screen.spec.ts | covered |
+| SCALL-02 | slow-call-screen.spec.ts | covered |
+| SCALL-03 | slow-call-screen.spec.ts | covered |
+| SCALL-04 | slow-call-screen.spec.ts | covered |
+| SCALL-05 | slow-call-screen.spec.ts | covered |
+| SCALL-06 | slow-call-screen.spec.ts | covered |

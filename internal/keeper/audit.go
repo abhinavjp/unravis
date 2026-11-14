@@ -511,6 +511,13 @@ func (b *Backend) registerAudit(s *Server) {
 		}
 		return reader.SampleSchema(ctx, in.SourceID, in.N)
 	}))
+	s.Handle(OpAuditFields, classAudit, auditQueryTimeout, auditRead(b, func(ctx context.Context, r HostedRepo, in AuditSchemaInput) (any, error) {
+		reader, ok := r.(audit.FieldPathSampler)
+		if !ok {
+			return nil, errAuditUnavailable
+		}
+		return reader.SampleFieldPaths(ctx, in.SourceID)
+	}))
 }
 
 var errAuditUnavailable = &WireError{Code: CodeAudit, Message: auditFailedText, Detail: json.RawMessage(`{"kinds":["patterns-unavailable"]}`)}

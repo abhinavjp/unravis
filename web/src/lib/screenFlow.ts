@@ -117,8 +117,12 @@ export function historyStep(from: Screen, to: Screen, shown: string): HistorySte
 
 /** History mark of the case page while its Investigation Timeline is open, so Back returns to the case page and Forward to the timeline. */
 export const CASE_TRACING_MARK = 'case/tracing';
+/** History mark of the Slow call screen, one level under the timeline, so Back returns to the timeline. */
+export const CASE_CALL_MARK = 'case/tracing/call';
+/** True when a history mark stands for the Slow call screen. */
+export function isCallMark(mark: string): boolean { return mark === CASE_CALL_MARK; }
 
 /** Reads a history mark: the screen it stands for and whether the case page shows its timeline. */
 export function parseScreenMark(mark: string): { screen: string; tracing: boolean } {
-  return mark === CASE_TRACING_MARK ? { screen: 'case', tracing: true } : { screen: mark, tracing: false };
+  return mark === CASE_TRACING_MARK || mark === CASE_CALL_MARK ? { screen: 'case', tracing: true } : { screen: mark, tracing: false };
 }

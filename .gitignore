@@ -11,3 +11,14 @@
 /tools/screens/node_modules/
 /tools/screens/test-results/
 /tools/screens/playwright-report/
+
+# Local investigation scratch and machine config — never commit (public repo).
+# sql/ holds customer-data extracts and probe scripts; the one tracked
+# sql/incident_2026-10-22.sql stays tracked (gitignore does not untrack).
+/sql/
+/.mcp.json
+/.claude/
+/unravis-review-pack.zip
+# e2e scratch logs/results (direct children only; fixtures/files/*.txt stay tracked)
+/tools/e2e/*.txt
+/tools/e2e/test-results-*/

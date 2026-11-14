@@ -2,6 +2,7 @@ package dbhealth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -322,6 +323,79 @@ func TestSQLLaneQueryStoreNeedsADatabase(t *testing.T) {
 	}
 }
 
+func TestSQLLaneQueryStoreStateEachWay(t *testing.T) {
+	opts := func(state string) []Row {
+		return []Row{{"actual_state_desc": state, "desired_state_desc": state, "readonly_reason": int64(0), "interval_length_minutes": int64(15)}}
+	}
+	for _, tc := range []struct {
+		name  string
+		setup func(q *fakeQ)
+		want  string
+	}{
+		{"on", func(q *fakeQ) {}, QSStateOn},
+		{"off", func(q *fakeQ) { q.by["unravis:qs_options"] = opts("OFF") }, QSStateOff},
+		{"read-only", func(q *fakeQ) { q.by["unravis:qs_options"] = opts("READ_ONLY") }, QSStateReadOnly},
+		{"denied", func(q *fakeQ) {
+			q.err = map[string]error{"unravis:qs_options": errors.New("The user does not have permission to perform this action.")}
+		}, QSStateDenied},
+		{"no options row", func(q *fakeQ) { q.by["unravis:qs_options"] = nil }, QSStateUnknown},
+		{"read failed", func(q *fakeQ) { q.err = map[string]error{"unravis:qs_options": errors.New("connection reset by peer")} }, QSStateUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := healthySQL("16.0.1")
+			tc.setup(&q)
+			r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+			if r.Lane.QueryStore == nil || r.Lane.QueryStore.State != tc.want {
+				t.Fatalf("queryStore = %+v, want state %s", r.Lane.QueryStore, tc.want)
+			}
+		})
+	}
+}
+
+func TestSQLLaneQueryStoreCarriesFirstDataAndBlockLength(t *testing.T) {
+	q := healthySQL("16.0.1")
+	r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	qs := r.Lane.QueryStore
+	if qs == nil || qs.FirstData == nil || !qs.FirstData.Equal(at(2, 0, 0)) || qs.IntervalMinutes != 15 {
+		t.Fatalf("queryStore = %+v", qs)
+	}
+	// No first-data row: the time is left out, the state still stands.
+	q.by["unravis:qs_first"] = nil
+	r = RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if qs = r.Lane.QueryStore; qs == nil || qs.State != QSStateOn || qs.FirstData != nil {
+		t.Fatalf("queryStore without first data = %+v", qs)
+	}
+	// Switched off: the first-data query never runs, so there is no time.
+	q.by["unravis:qs_options"] = []Row{{"actual_state_desc": "OFF", "interval_length_minutes": int64(60)}}
+	r = RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if qs = r.Lane.QueryStore; qs == nil || qs.State != QSStateOff || qs.FirstData != nil || qs.IntervalMinutes != 60 {
+		t.Fatalf("queryStore off = %+v", qs)
+	}
+}
+
+func TestLaneQueryStoreJSONIsOptional(t *testing.T) {
+	// A day saved before this field existed loads with no Query Store object.
+	var old LaneResult
+	if err := json.Unmarshal([]byte(`{"incident":{"start":"2026-10-20T10:00:00Z","end":"2026-10-20T11:00:00Z"},"reference":{"start":"2026-10-19T10:00:00Z","end":"2026-10-19T11:00:00Z"},"checks":[]}`), &old); err != nil || old.QueryStore != nil {
+		t.Fatalf("old document: err %v, queryStore %+v", err, old.QueryStore)
+	}
+	// With no object the key is left out, so an older reader sees the same document as before.
+	b, err := json.Marshal(LaneResult{})
+	if err != nil || strings.Contains(string(b), "queryStore") {
+		t.Fatalf("nil queryStore marshalled: %s (%v)", b, err)
+	}
+	// A new document round-trips.
+	first := at(2, 0, 0)
+	b, err = json.Marshal(LaneResult{QueryStore: &LaneQueryStore{State: QSStateReadOnly, FirstData: &first, IntervalMinutes: 30}})
+	if err != nil || !strings.Contains(string(b), `"queryStore":{"state":"read-only","firstData":"2026-10-02T00:00:00Z","intervalMinutes":30}`) {
+		t.Fatalf("marshal = %s (%v)", b, err)
+	}
+	var back LaneResult
+	if err := json.Unmarshal(b, &back); err != nil || back.QueryStore == nil || back.QueryStore.State != QSStateReadOnly {
+		t.Fatalf("round trip: %v %+v", err, back.QueryStore)
+	}
+}
+
 func TestSQLLaneAgentJobOverlap(t *testing.T) {
 	q := healthySQL("16.0.1")
 	// A nightly job from 09:50 for 20 minutes (hhmmss 2000) overlaps the 10:00 start.
@@ -505,13 +579,86 @@ func TestLaneRequestValidate(t *testing.T) {
 		"empty":         {},
 		"reverse":       {Incident: Window{laneInc.End, laneInc.Start}, Reference: laneRef},
 		"overlap":       {Incident: laneInc, Reference: Window{laneInc.Start.Add(-time.Hour), laneInc.Start.Add(time.Hour)}},
-		"too long":      {Incident: Window{laneInc.Start, laneInc.Start.Add(15 * 24 * time.Hour)}, Reference: laneRef},
-		"reference far": {Incident: laneInc, Reference: Window{laneRef.Start.Add(-15 * 24 * time.Hour), laneRef.End}},
 	}
 	for name, r := range cases {
 		if r.Validate() == nil {
 			t.Errorf("%s accepted", name)
 		}
+	}
+}
+
+// A window has no length limit: a month (or a 4-week pattern with a long reference) is accepted.
+func TestLaneRequestValidateAcceptsLongWindows(t *testing.T) {
+	long := LaneRequest{
+		Incident:  Window{laneInc.Start, laneInc.Start.Add(30 * 24 * time.Hour)},
+		Reference: Window{laneRef.Start.Add(-60 * 24 * time.Hour), laneRef.End},
+	}
+	if err := long.Validate(); err != nil {
+		t.Fatalf("a long window was refused: %v", err)
+	}
+}
+
+func countingQ(inner Queryer, counts map[string]int) Queryer {
+	return recordingQ{inner: inner, fn: func(s string) {
+		for _, tag := range []string{"unravis:qs_stats", "unravis:qs_intervals"} {
+			if strings.Contains(s, tag) {
+				counts[tag]++
+			}
+		}
+	}}
+}
+
+func TestSQLLaneShortWindowReadsQueryStoreOnce(t *testing.T) {
+	counts := map[string]int{}
+	RunSQLLane(context.Background(), countingQ(healthySQL("16.0.1"), counts), "Prod", laneReq, fixedNow)
+	if counts["unravis:qs_stats"] != 1 || counts["unravis:qs_intervals"] != 1 {
+		t.Fatalf("a short window is one read each: %v", counts)
+	}
+}
+
+func TestSQLLaneMonthWindowIsReadInSlices(t *testing.T) {
+	req := laneReq
+	req.Incident = Window{laneInc.Start, laneInc.Start.Add(30 * 24 * time.Hour)}
+	counts := map[string]int{}
+	r := RunSQLLane(context.Background(), countingQ(healthySQL("16.0.1"), counts), "Prod", req, fixedNow)
+	if counts["unravis:qs_stats"] < 10 || counts["unravis:qs_stats"] != counts["unravis:qs_intervals"] {
+		t.Fatalf("a month should be read in several slices: %v", counts)
+	}
+	c := checkByID(t, r, CheckQueryStore)
+	if c.State != StateReady || !strings.Contains(c.Summary, "slices of up to 3 days") {
+		t.Fatalf("state %s, summary %s", c.State, c.Summary)
+	}
+}
+
+func TestDownsampleSeriesKeepsTheWholeSpan(t *testing.T) {
+	var pts []LaneSeriesPoint
+	var execs int64
+	for i := 0; i < 10; i++ {
+		pts = append(pts, LaneSeriesPoint{T: int64(1000 + i*60), Execs: 10, AvgMs: float64(10 * (i + 1)), MaxMs: float64(i)})
+		execs += 10
+	}
+	out := downsampleSeries(pts, 4)
+	if len(out) > 4 {
+		t.Fatalf("%d points, want at most 4", len(out))
+	}
+	if out[0].T != pts[0].T {
+		t.Errorf("first point moved: %d", out[0].T)
+	}
+	var got int64
+	var maxMs float64
+	for _, p := range out {
+		got += p.Execs
+		maxMs = max(maxMs, p.MaxMs)
+	}
+	if got != execs || maxMs != 9 {
+		t.Errorf("execs %d (want %d), max %v (want 9)", got, execs, maxMs)
+	}
+	// The first group holds points 0..2: weighted average of 10, 20, 30 is 20.
+	if out[0].AvgMs != 20 {
+		t.Errorf("weighted average = %v, want 20", out[0].AvgMs)
+	}
+	if kept := downsampleSeries(pts, 10); len(kept) != 10 {
+		t.Errorf("a series within the limit must be left alone, got %d", len(kept))
 	}
 }
 
