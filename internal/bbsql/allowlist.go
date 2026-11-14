@@ -11,7 +11,8 @@ const setPrefix = "SET NOCOUNT ON; SET LOCK_TIMEOUT 1000; SET DEADLOCK_PRIORITY 
 // bb:requests (BL-101): running-at-once grouped by wait type, own session
 // excluded. The self-join identifies head blockers (a blocker that is not
 // itself blocked) without a second SELECT. Only counts/ms/wait type are output.
-const stmtRequests = setPrefix + `SELECT ISNULL(r.wait_type, N'') AS wait_type,
+// TOP 256 is the C6 cap in SQL (defense in depth; the reader stops at 257).
+const stmtRequests = setPrefix + `SELECT TOP 256 ISNULL(r.wait_type, N'') AS wait_type,
   COUNT(*) AS tasks,
   MAX(r.wait_time_ms) AS max_wait_ms,
   SUM(CASE WHEN r.blocking_session_id > 0 THEN 1 ELSE 0 END) AS blocked,
@@ -42,8 +43,9 @@ const stmtSchedulers = setPrefix + `SELECT SUM(current_tasks_count) AS current_t
 FROM sys.dm_os_schedulers
 WHERE status = N'VISIBLE ONLINE' /* unravis:bb:schedulers */`
 
-// bb:semaphores (BL-118): query resource semaphore counts; deltas computed in Go.
-const stmtSemaphores = setPrefix + `SELECT resource_semaphore_id, grantee_count, waiter_count, forced_grant_count, timeout_count
+// bb:semaphores (BL-118): query resource semaphore counts; deltas computed in
+// Go. TOP 16 is the C6 cap in SQL (defense in depth; the reader stops at 17).
+const stmtSemaphores = setPrefix + `SELECT TOP 16 resource_semaphore_id, grantee_count, waiter_count, forced_grant_count, timeout_count
 FROM sys.dm_exec_query_resource_semaphores /* unravis:bb:semaphores */`
 
 // bb:tempdb (BL-118): tempdb page totals summed in SQL, no per-session ids.
@@ -58,7 +60,8 @@ FROM sys.dm_io_virtual_file_stats(NULL, NULL) /* unravis:bb:filestats */`
 
 // bb:ag (BL-119): AG database replica state, gated by IsHadrEnabled in Go. No
 // sys.availability_replicas and no replica server names; ids/enum only.
-const stmtAG = setPrefix + `SELECT database_id, synchronization_state
+// TOP 64 is the C6 cap in SQL (defense in depth; the reader stops at 65).
+const stmtAG = setPrefix + `SELECT TOP 64 database_id, synchronization_state
 FROM sys.dm_hadr_database_replica_states /* unravis:bb:ag */`
 
 // Statements is the complete allowlist and the single source of truth for what

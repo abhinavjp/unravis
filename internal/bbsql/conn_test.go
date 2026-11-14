@@ -208,7 +208,7 @@ func TestQueryTimeout(t *testing.T) {
 // on, the C4 5 s timeouts, and NO credentials, and that the driver parses it.
 func TestAppNameAndEncrypt(t *testing.T) {
 	for _, server := range []string{".", "(local)", "localhost", "127.0.0.1", "::1", `.\SQL2022`, "lpc:."} {
-		dsn, err := connDSN(server)
+		dsn, err := connDSN(ConnConfig{Server: server})
 		if err != nil {
 			t.Fatalf("connDSN(%q): %v", server, err)
 		}
@@ -248,7 +248,7 @@ func TestAppNameAndEncrypt(t *testing.T) {
 			t.Errorf("%q: driver timeouts = %v/%v; want 5s/5s", server, cfg.DialTimeout, cfg.ConnTimeout)
 		}
 	}
-	dsn, err := connDSN(`localhost\SQLEXPRESS`)
+	dsn, err := connDSN(ConnConfig{Server: `localhost\SQLEXPRESS`})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestAppNameAndEncrypt(t *testing.T) {
 	if err != nil || u.Path != "/SQLEXPRESS" {
 		t.Fatalf("instance not in DSN path: %q (%v)", dsn, err)
 	}
-	if _, err := connDSN("sqlserver.prod"); err == nil {
+	if _, err := connDSN(ConnConfig{Server: "sqlserver.prod"}); err == nil {
 		t.Fatal("connDSN built a DSN for a remote target")
 	}
 }

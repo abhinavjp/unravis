@@ -384,3 +384,63 @@ func TestTargetsRoundTrip(t *testing.T) {
 		t.Fatalf("empty targets must be omitted:\n%s", b)
 	}
 }
+
+// TestProbeTrustAnchor proves the SQL trust-anchor config shape: absolute
+// credential-free PEM/DER paths, the CA pair set together, the two anchor
+// modes never mixed, and a plain host name. The probe stays off throughout.
+func TestProbeTrustAnchor(t *testing.T) {
+	certPath := filepath.Join(t.TempDir(), "sql.pem")
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	base := Default()
+	base.Name = "web-01"
+
+	ok := []Probe{
+		{}, // no anchor: default self-signed still fails closed at connect
+		{ServerCertificate: certPath},
+		{Certificate: caPath, HostNameInCertificate: "sql.local"},
+	}
+	for i, p := range ok {
+		c := base
+		c.Probe = p
+		if err := c.Validate(); err != nil {
+			t.Errorf("case %d: valid anchor refused: %v", i, err)
+		}
+	}
+
+	bad := []Probe{
+		{ServerCertificate: "sql.pem"},                              // relative
+		{ServerCertificate: filepath.Join(t.TempDir(), "sql.txt")},  // wrong ext
+		{ServerCertificate: certPath + ";password=x"},               // credentials
+		{ServerCertificate: certPath + "user id=sa"},                // credentials
+		{Certificate: "ca.pem", HostNameInCertificate: "sql.local"}, // relative CA
+		{Certificate: caPath},                                       // half pair
+		{HostNameInCertificate: "sql.local"},                        // half pair
+		{Certificate: caPath, HostNameInCertificate: "sa:pw@host"},  // credential host
+		{Certificate: caPath, HostNameInCertificate: "bad name"},    // not a host
+		{ServerCertificate: certPath, Certificate: caPath, HostNameInCertificate: "sql.local"}, // mixed
+	}
+	for i, p := range bad {
+		c := base
+		c.Probe = p
+		if err := c.Validate(); err == nil {
+			t.Errorf("case %d: bad anchor accepted: %+v", i, p)
+		} else if !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("case %d: err = %v; want ErrInvalidConfig", i, err)
+		}
+	}
+
+	// The anchors round-trip through blackbox.json and stay off-by-default.
+	c := base
+	c.Probe = Probe{Certificate: caPath, HostNameInCertificate: "sql.local"}
+	b, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseConfig(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Probe != c.Probe || got.Probe.Enabled {
+		t.Fatalf("probe round trip changed: %+v", got.Probe)
+	}
+}

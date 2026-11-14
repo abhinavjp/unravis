@@ -64,9 +64,63 @@ type Record struct {
 }
 
 // Probe is the SQL probe block. The probe is not part of Release 1: the block
-// stays in the file, off and empty, so a later release can fill it.
+// stays in the file, off and empty, so a later release can fill it. The trust
+// anchor fields are the owner-supplied certificate the SQL connection verifies
+// (encrypt stays on); they map onto bbsql.ConnConfig when the runner opens the
+// connection. With no anchor a default self-signed cert fails closed.
 type Probe struct {
 	Enabled bool `json:"enabled"`
+	// ServerCertificate is the absolute path to the local SQL instance
+	// certificate PEM (.pem/.der). The driver byte-pins it. Mutually exclusive
+	// with Certificate.
+	ServerCertificate string `json:"serverCertificate,omitempty"`
+	// Certificate is the absolute path to the CA PEM (.pem/.der) that issued
+	// the instance certificate; chain validation. Paired with
+	// HostNameInCertificate.
+	Certificate string `json:"certificate,omitempty"`
+	// HostNameInCertificate is the name the CA-issued certificate must carry.
+	HostNameInCertificate string `json:"hostNameInCertificate,omitempty"`
+}
+
+// validateTrust checks the owner-supplied SQL trust anchors: absolute
+// credential-free PEM/DER paths, the CA pair set together, the two anchor
+// modes never mixed, and a plain host name (no credentials can ride along).
+func (p Probe) validateTrust() error {
+	for _, f := range []struct{ name, path string }{
+		{"probe.serverCertificate", p.ServerCertificate},
+		{"probe.certificate", p.Certificate},
+	} {
+		if f.path == "" {
+			continue
+		}
+		if !filepath.IsAbs(f.path) {
+			return invalidf(`%q must be a full path`, f.name)
+		}
+		switch strings.ToLower(filepath.Ext(f.path)) {
+		case ".pem", ".der":
+		default:
+			return invalidf(`%q must be a .pem or .der file`, f.name)
+		}
+		if strings.ContainsAny(f.path, ";=@'\"\t\r\n") {
+			return invalidf(`%q must not carry credentials`, f.name)
+		}
+		lower := strings.ToLower(f.path)
+		for _, tok := range []string{"password", "user id", "pwd"} {
+			if strings.Contains(lower, tok) {
+				return invalidf(`%q must not carry credentials`, f.name)
+			}
+		}
+	}
+	if p.ServerCertificate != "" && p.Certificate != "" {
+		return invalidf(`"probe.serverCertificate" and "probe.certificate" cannot both be set`)
+	}
+	if (p.Certificate == "") != (p.HostNameInCertificate == "") {
+		return invalidf(`"probe.certificate" and "probe.hostNameInCertificate" must be set together`)
+	}
+	if p.HostNameInCertificate != "" && !hostNameRe.MatchString(p.HostNameInCertificate) {
+		return invalidf(`"probe.hostNameInCertificate" must be a host name`)
+	}
+	return nil
 }
 
 // Target is one owner-selected app pool or Windows service for per-process detail.
@@ -234,6 +288,9 @@ func (c Config) Validate() error {
 	}
 	if c.Probe.Enabled {
 		return invalidf(`"probe.enabled" must be false: the SQL probe is not part of this release`)
+	}
+	if err := c.Probe.validateTrust(); err != nil {
+		return err
 	}
 	return nil
 }

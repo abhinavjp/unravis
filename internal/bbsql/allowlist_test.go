@@ -83,6 +83,22 @@ func TestLintC2(t *testing.T) {
 	}
 }
 
+// TestLintTOPCaps pins the C6 defense-in-depth TOP n on the row-returning
+// statements; the reader also stops at cap+1, so the cap holds at both ends.
+func TestLintTOPCaps(t *testing.T) {
+	for id, want := range map[string]string{
+		"bb:requests":   "SELECT TOP 256 ",
+		"bb:waits":      "SELECT TOP 20 ",
+		"bb:semaphores": "SELECT TOP 16 ",
+		"bb:filestats":  "SELECT TOP 256 ",
+		"bb:ag":         "SELECT TOP 64 ",
+	} {
+		if !strings.Contains(Statements[id], want) {
+			t.Errorf("%s: missing %q", id, want)
+		}
+	}
+}
+
 // TestAllowlistExact proves IsAllowed accepts each constant and refuses any
 // mutation (added space, token, newline, case change, or a second SELECT).
 func TestAllowlistExact(t *testing.T) {

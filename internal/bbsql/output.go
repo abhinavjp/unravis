@@ -14,17 +14,41 @@ import (
 	"regexp"
 )
 
-// C6 per-kind row caps. The SQL already uses TOP n where stated; decodeRows
-// stops at n+1 and marks truncated. Never dbhealth's 5000 cap.
+// C6 per-kind row caps. Every row-returning statement carries TOP n in SQL
+// (defense in depth); the reader stops at n+1 and decodeRows keeps n and
+// marks truncated. Never dbhealth's 5000 cap.
 const (
-	CapRequests   = 256
+	CapRequests   = 256 // TOP 256 in bb:requests
 	CapWaits      = 20  // TOP 20 in bb:waits
 	CapSchedulers = 1   // summed in SQL
-	CapSemaphores = 16
+	CapSemaphores = 16  // TOP 16 in bb:semaphores
 	CapTempdb     = 1   // summed in SQL
 	CapFileStats  = 256 // TOP 256 in bb:filestats
-	CapAG         = 64
+	CapAG         = 64  // TOP 64 in bb:ag
 )
+
+// statementCap maps an allowlisted statement to its C6 row cap. Unknown text
+// gets the smallest cap (fail closed); the send gates only pass known text.
+func statementCap(text string) int {
+	switch text {
+	case stmtRequests:
+		return CapRequests
+	case stmtWaits:
+		return CapWaits
+	case stmtSchedulers:
+		return CapSchedulers
+	case stmtSemaphores:
+		return CapSemaphores
+	case stmtTempdb:
+		return CapTempdb
+	case stmtFilestats:
+		return CapFileStats
+	case stmtAG:
+		return CapAG
+	default:
+		return 1
+	}
+}
 
 // WaitTypeRunning is the fixed sentinel for running (non-waiting) requests:
 // bb:requests emits '' (ISNULL(wait_type,'')), which the strict C9 regex
