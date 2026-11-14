@@ -1,12 +1,8 @@
-# Normalise line endings: store LF and check out LF.
-# Fixes the CRLF-only test helpers that broke CI on windows-2022 (CI-01).
-* text=auto eol=lf
-
-# Windows batch files must keep CRLF.
-*.bat text eol=crlf
-*.cmd text eol=crlf
-
 # Binary assets — never normalise line endings or diff.
+# Text files keep the repository's existing checkout behaviour (core.autocrlf);
+# the web test helpers normalise CRLF->LF at their read point, so they pass on
+# both a CRLF (windows CI) and an LF checkout. Do not add a global text/eol rule:
+# the help/guide content is deliberately CRLF and its tests assert that.
 *.png binary
 *.ico binary
 *.jpg binary
