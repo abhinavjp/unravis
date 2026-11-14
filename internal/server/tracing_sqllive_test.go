@@ -104,6 +104,9 @@ func TestHeldSQLLaneKeepsImportedRange(t *testing.T) {
 	}
 }
 
+// heldSQLTestNow is the fixed "now" the saved-day lane tests pass in, so no result depends on the wall clock.
+var heldSQLTestNow = time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+
 // heldSQLCase is a case holding one saved SQL day with the given Query Store points and recorded block length.
 func heldSQLCase(t *testing.T, series []dbhealth.LaneSeriesPoint, intervalMin int) *healthyCase {
 	t.Helper()
@@ -129,7 +132,7 @@ func heldSQLTestLane(t *testing.T, series []dbhealth.LaneSeriesPoint, intervalMi
 	t.Helper()
 	c := heldSQLCase(t, series, intervalMin)
 	axis := newTracingAxis(time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC), time.Date(2026, 10, 20, 11, 0, 0, 0, time.UTC))
-	lane, ok := tracingHeldSQLLane(context.Background(), c, axis, time.Now())
+	lane, ok := tracingHeldSQLLane(context.Background(), c, axis, heldSQLTestNow)
 	if !ok {
 		t.Fatal("no lane drawn from the saved day")
 	}
@@ -248,7 +251,7 @@ func heldSQLTwoRunLane(t *testing.T, newer, older []dbhealth.LaneSeriesPoint) tr
 	t.Helper()
 	c := heldSQLTwoRunCase(t, newer, older)
 	axis := newTracingAxis(time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC), time.Date(2026, 10, 20, 11, 0, 0, 0, time.UTC))
-	lane, ok := tracingHeldSQLLane(context.Background(), c, axis, time.Now())
+	lane, ok := tracingHeldSQLLane(context.Background(), c, axis, heldSQLTestNow)
 	if !ok {
 		t.Fatal("no lane drawn from the two saved days")
 	}
