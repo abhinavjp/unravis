@@ -4,12 +4,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'appState.svelte.ts'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'appState.svelte.ts'), 'utf8').replace(/\r\n/g, '\n');
 
-function body(startText) {
-  const start = src.indexOf(startText);
+function body(startText, text = src) {
+  const norm = text.replace(/\r\n/g, '\n');
+  const start = norm.indexOf(startText);
   assert.ok(start >= 0, `${startText} missing`);
-  return src.slice(start, src.indexOf('\n}\n', start));
+  return norm.slice(start, norm.indexOf('\n}\n', start));
 }
 
 test('the call target key and the three functions exist', () => {
@@ -121,4 +122,14 @@ test('the timeline hand-off runs the window it set when the analysis opens (P46-
 test('Esc skips an open menu inside a hidden part of the page', () => {
   const keys = body('export function onWindowKey(');
   assert.ok(keys.includes(".find((d) => !d.closest('[hidden]'))"), 'hidden menus must be skipped');
+});
+
+test('CI-01: body() isolates the closing branch on a CRLF checkout', () => {
+  const raw = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'appState.svelte.ts'), 'utf8');
+  const crlf = raw.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n');
+  assert.equal(crlf.indexOf('\n}\n'), -1, 'sanity: raw CRLF has no LF-only close marker (the original CI bug)');
+  const tracing = body('function setTracing', crlf);
+  const closed = tracing.slice(tracing.indexOf('if (!id)'));
+  assert.ok(closed.includes('slowCall = null; lastSlowCall = null;'), 'the closing branch is isolated on CRLF');
+  assert.ok(!closed.includes('storedCallTarget'), 'CRLF must not let the closing branch swallow later storedCallTarget text');
 });

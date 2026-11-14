@@ -22,3 +22,5 @@
 # e2e scratch logs/results (direct children only; fixtures/files/*.txt stay tracked)
 /tools/e2e/*.txt
 /tools/e2e/test-results-*/
+# PR2 review-fix orchestration scratch (plan, packets, reports, state) — local only.
+/.forge/pr2-review-fixes/
