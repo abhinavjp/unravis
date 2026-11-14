@@ -44,6 +44,7 @@ const (
 	maxMinFree     = 50
 	maxLogPaths    = 20
 	maxNameLen     = 63
+	maxTargets     = 32
 	maxConfigBytes = 1 << 20
 )
 
@@ -68,6 +69,12 @@ type Probe struct {
 	Enabled bool `json:"enabled"`
 }
 
+// Target is one owner-selected app pool or Windows service for per-process detail.
+type Target struct {
+	Kind string `json:"kind"` // "appPool" or "service"
+	Name string `json:"name"`
+}
+
 // Config is blackbox.json.
 type Config struct {
 	Name            string   `json:"name"`
@@ -81,6 +88,7 @@ type Config struct {
 	Record          Record   `json:"record"`
 	LogPaths        []string `json:"logPaths"`
 	Probe           Probe    `json:"probe"`
+	Targets         []Target `json:"targets,omitempty"`
 }
 
 // DefaultLogPaths are the folders the logs catalogue looks in when blackbox.json
@@ -202,6 +210,27 @@ func (c Config) Validate() error {
 		if !filepath.IsAbs(p) {
 			return invalidf(`"logPaths" entry %q must be a full path`, p)
 		}
+	}
+	if len(c.Targets) > maxTargets {
+		return invalidf("too many targets (max %d)", maxTargets)
+	}
+	seen := make(map[Target]bool, len(c.Targets))
+	for _, target := range c.Targets {
+		if target.Kind != "appPool" && target.Kind != "service" {
+			return invalidf("target kind must be appPool or service")
+		}
+		if target.Name == "" || len(target.Name) > 128 || strings.ContainsAny(target.Name, `\/:*?"<>|`) {
+			return invalidf("target name has invalid characters")
+		}
+		for _, r := range target.Name {
+			if r < 0x20 {
+				return invalidf("target name has invalid characters")
+			}
+		}
+		if seen[target] {
+			return invalidf("duplicate target")
+		}
+		seen[target] = true
 	}
 	if c.Probe.Enabled {
 		return invalidf(`"probe.enabled" must be false: the SQL probe is not part of this release`)
