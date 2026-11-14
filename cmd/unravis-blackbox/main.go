@@ -291,12 +291,14 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		return runForeground(paths, d, ans, stderr)
 	case "install-sql":
 		// Creates the service and PRINTS the grant; it never runs SQL, never
-		// grants and never calls the elevate helper (C14).
+		// grants and never calls the elevate helper (C14). The service is bound
+		// to the exact config validated here, so it locks and uses the same
+		// folder (BBX-5-02 fix: no hardcoded program-folder config divergence).
 		cfg, err := loadInstalledConfig(paths.ConfigPath)
 		if err != nil {
 			return ans.fail(err)
 		}
-		if err := d.sqlMgr.InstallSQL(cfg); err != nil {
+		if err := d.sqlMgr.InstallSQL(cfg, paths.ConfigPath); err != nil {
 			return ans.fail(err)
 		}
 		return ans.ok("The "+blackbox.SQLServiceName+" service is installed and running.\n\nRun this grant in SSMS as an admin (the Blackbox never runs it for you):\n"+grantScript,

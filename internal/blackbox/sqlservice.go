@@ -87,9 +87,17 @@ func sqlSDDL(sid string) string {
 // its data folder to SYSTEM, Administrators and that service SID. The host
 // service, its account and the recordings folder ACL are left as they are.
 // Whatever it did is undone when a step fails.
-func (m *SQLManager) InstallSQL(cfg Config) (err error) {
+//
+// configPath is the settings file the caller validated cfg from. The service is
+// registered with EXACTLY that path (no hardcoded program-folder copy), so it
+// reads the same cfg.Folder whose SQL subfolder is locked below: the folder the
+// service actually uses is always the folder that was locked (BBX-5-02 fix).
+func (m *SQLManager) InstallSQL(cfg Config, configPath string) (err error) {
 	if err := cfg.Validate(); err != nil {
 		return err
+	}
+	if strings.TrimSpace(configPath) == "" {
+		return &InstallError{Reason: ReasonOther, Message: "The SQL service needs the settings file it was installed with (--config)."}
 	}
 	if !m.Env.IsAdmin() {
 		return msgNoAdmin()
@@ -128,14 +136,16 @@ func (m *SQLManager) InstallSQL(cfg Config) (err error) {
 		return folderErr(derr)
 	}
 	// Lock the folder before the service exists, so no SQL data is ever written
-	// somewhere ordinary users can read.
+	// somewhere ordinary users can read. The service below is bound to configPath,
+	// the very file cfg was validated from, so this locked folder is exactly the
+	// one the service will use.
 	if serr := sec.SecureSQLDir(dir, sid); serr != nil {
 		return folderErr(serr)
 	}
 	spec := ServiceSpec{Name: SQLServiceName, DisplayName: "Unravis Blackbox SQL",
 		Description: "Reads SQL Server performance counters for the Blackbox, in its own process and under its own virtual account. The owner grants its SQL rights.",
 		ExePath:     filepath.Join(progDir, InstalledExeName),
-		Args:        []string{"sql-service", "--config", filepath.Join(progDir, ConfigFileName)},
+		Args:        []string{"sql-service", "--config", configPath},
 		Account:     SQLServiceAccount, SIDUnrestricted: true}
 	if cerr := m.Svc.Create(spec); cerr != nil {
 		return &InstallError{Reason: ReasonOther, Message: "Windows would not create the service: " + cerr.Error(), Cause: cerr}

@@ -48,6 +48,9 @@ func newSQLRig(t *testing.T) *sqlRig {
 
 func (g *sqlRig) sqlDir() string { return filepath.Join(g.cfg.Folder, SQLDataSubdir) }
 
+// configPath is the installed settings file the SQL service is bound to.
+func (g *sqlRig) configPath() string { return filepath.Join(g.env.prog, ConfigFileName) }
+
 // The SQL data folder is readable only by SYSTEM, Administrators and the SQL
 // service SID: never BUILTIN\Users, never Everyone (BL-123).
 func TestSQLSDDLNoUsers(t *testing.T) {
@@ -104,7 +107,7 @@ func TestSQLServiceSID(t *testing.T) {
 // carries no secret on its command line.
 func TestInstallSQLUsesAccount(t *testing.T) {
 	g := newSQLRig(t)
-	if err := g.m.InstallSQL(g.cfg); err != nil {
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
 		t.Fatal(err)
 	}
 	spec := g.svc.spec
@@ -138,11 +141,49 @@ func TestInstallSQLUsesAccount(t *testing.T) {
 	}
 }
 
+// The service is registered with the EXACT config path it was given — never a
+// hardcoded program-folder copy — and the locked folder is the SQL folder of
+// that same config (BBX-5-02 fix: the service must not read an unlocked folder).
+func TestInstallSQLBindsGivenConfigPath(t *testing.T) {
+	g := newSQLRig(t)
+	// A non-default config path, different from progDir/blackbox.json.
+	other := filepath.Join(t.TempDir(), "other-blackbox.json")
+	if err := g.m.InstallSQL(g.cfg, other); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"sql-service", "--config", other}
+	if got := g.svc.spec.Args; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("service args %v, want %v", got, want)
+	}
+	if strings.Contains(strings.Join(g.svc.spec.Args, " "), filepath.Join(g.env.prog, ConfigFileName)) {
+		t.Fatalf("the service fell back to the hardcoded program-folder config: %v", g.svc.spec.Args)
+	}
+	sid, err := sqlServiceSID(SQLServiceName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.env.sqlLocked) != 1 || g.env.sqlLocked[0] != g.sqlDir()+" "+sid {
+		t.Fatalf("the SQL folder of the given config was not locked: %v", g.env.sqlLocked)
+	}
+}
+
+// An empty config path is refused before anything is changed: the service must
+// always be bound to a real settings file (BBX-5-02 fix).
+func TestInstallSQLRefusesEmptyConfigPath(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.InstallSQL(g.cfg, ""); installReason(t, err) != ReasonOther {
+		t.Fatalf("%v", err)
+	}
+	if len(g.svc.calls) != 0 || len(g.env.sqlLocked) != 0 {
+		t.Fatalf("something was changed on an empty config path: %v %v", g.svc.calls, g.env.sqlLocked)
+	}
+}
+
 // Only the new sql subfolder is locked down; the host recordings folder ACL and
 // the host service are left exactly as they were.
 func TestInstallSQLLocksFolder(t *testing.T) {
 	g := newSQLRig(t)
-	if err := g.m.InstallSQL(g.cfg); err != nil {
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
 		t.Fatal(err)
 	}
 	sid, err := sqlServiceSID(SQLServiceName)
@@ -184,7 +225,7 @@ func TestInstallSQLUndoOnFailure(t *testing.T) {
 	t.Run("create fails", func(t *testing.T) {
 		g := newSQLRig(t)
 		g.m.Svc = &createFailSvc{fakeSvc: g.svc, err: errors.New("access denied")}
-		if err := g.m.InstallSQL(g.cfg); err == nil {
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); err == nil {
 			t.Fatal("install should fail")
 		}
 		gone(t, g)
@@ -192,7 +233,7 @@ func TestInstallSQLUndoOnFailure(t *testing.T) {
 	t.Run("start fails", func(t *testing.T) {
 		g := newSQLRig(t)
 		g.svc.startErr = errors.New("boom")
-		if err := g.m.InstallSQL(g.cfg); err == nil {
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); err == nil {
 			t.Fatal("install should fail")
 		}
 		if g.svc.did("delete") != 1 {
@@ -203,7 +244,7 @@ func TestInstallSQLUndoOnFailure(t *testing.T) {
 	t.Run("the lock fails", func(t *testing.T) {
 		g := newSQLRig(t)
 		g.env.sqlErr = errors.New("access denied")
-		if err := g.m.InstallSQL(g.cfg); err == nil {
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); err == nil {
 			t.Fatal("install should fail")
 		}
 		if g.svc.did("create") != 0 {
@@ -221,7 +262,7 @@ func TestInstallSQLUndoOnFailure(t *testing.T) {
 			t.Fatal(err)
 		}
 		g.m.Svc = &createFailSvc{fakeSvc: g.svc, err: errors.New("access denied")}
-		if err := g.m.InstallSQL(g.cfg); err == nil {
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); err == nil {
 			t.Fatal("install should fail")
 		}
 		if _, err := os.Stat(mine); err != nil {
@@ -234,7 +275,7 @@ func TestInstallSQLUndoOnFailure(t *testing.T) {
 // goes only when it was asked for.
 func TestRemoveSQLConfirm(t *testing.T) {
 	g := newSQLRig(t)
-	if err := g.m.InstallSQL(g.cfg); err != nil {
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
 		t.Fatal(err)
 	}
 	data := filepath.Join(g.sqlDir(), "sql-data.ndjson")
@@ -264,7 +305,7 @@ func TestRemoveSQLConfirm(t *testing.T) {
 
 	// Asked for: only <folder>\sql goes, never the recordings folder itself.
 	g2 := newSQLRig(t)
-	if err := g2.m.InstallSQL(g2.cfg); err != nil {
+	if err := g2.m.InstallSQL(g2.cfg, g2.configPath()); err != nil {
 		t.Fatal(err)
 	}
 	g2.m.DeleteData = true
@@ -294,17 +335,17 @@ func TestRemoveSQLConfirm(t *testing.T) {
 func TestSQLInstallRefusesNoAdminAndASecondService(t *testing.T) {
 	g := newSQLRig(t)
 	g.env.admin = false
-	if err := g.m.InstallSQL(g.cfg); installReason(t, err) != ReasonNoAdmin {
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); installReason(t, err) != ReasonNoAdmin {
 		t.Fatalf("%v", err)
 	}
 	if len(g.svc.calls) != 0 || len(g.env.sqlLocked) != 0 {
 		t.Fatalf("something was changed without administrator rights: %v %v", g.svc.calls, g.env.sqlLocked)
 	}
 	g.env.admin = true
-	if err := g.m.InstallSQL(g.cfg); err != nil {
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
 		t.Fatal(err)
 	}
-	err := g.m.InstallSQL(g.cfg)
+	err := g.m.InstallSQL(g.cfg, g.configPath())
 	if installReason(t, err) != ReasonExists {
 		t.Fatalf("%v", err)
 	}

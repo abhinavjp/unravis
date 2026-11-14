@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -160,6 +161,7 @@ func TestRevokeScriptPrinted(t *testing.T) {
 	}
 	for _, must := range []string{
 		`REVOKE VIEW SERVER PERFORMANCE STATE FROM [NT SERVICE\UnravisBlackboxSql];`,
+		`-- REVOKE VIEW SERVER STATE FROM [NT SERVICE\UnravisBlackboxSql];`,
 		`DROP LOGIN [NT SERVICE\UnravisBlackboxSql];`,
 	} {
 		if !strings.Contains(out, must) {
@@ -261,6 +263,11 @@ func TestGrantScriptLint(t *testing.T) {
 			t.Fatalf("revoke script line is not an allowed statement: %q", line)
 		}
 	}
+	// The revoke covers both SQL generations: the performance-state right and a
+	// commented VIEW SERVER STATE alternative for SQL 2019 and older (BBX-5-02).
+	if !strings.Contains(revokeScript, "-- REVOKE VIEW SERVER STATE FROM ") {
+		t.Fatal("the revoke does not offer the SQL 2019-and-older VIEW SERVER STATE alternative")
+	}
 }
 
 // Review-pinned: the created SQL service spec carries the virtual account and
@@ -287,9 +294,50 @@ func TestInstallSQLSpecAccountAndSID(t *testing.T) {
 	if len(g.env.locked) != 1 || !strings.HasPrefix(g.env.locked[0], blackbox.SQLDataDir(filepath.Join(g.dir, "rec"))+" S-1-5-80-") {
 		t.Fatalf("the SQL folder was not locked to the service SID: %v", g.env.locked)
 	}
+	// The default install binds the service to the installed config it validated.
+	wantArgs := []string{"sql-service", "--config", filepath.Join(g.env.prog, defaultConfigName)}
+	if !reflect.DeepEqual(spec.Args, wantArgs) {
+		t.Fatalf("service args %v, want the installed config %v", spec.Args, wantArgs)
+	}
 	// The real deps wire the Windows service manager directly (both platforms).
 	if _, ok := realDeps().sqlMgr.Svc.(blackbox.WinService); !ok {
 		t.Fatalf("SQLManager is wired to %T, want blackbox.WinService (the bbSvc adapter drops Account/SIDUnrestricted)", realDeps().sqlMgr.Svc)
+	}
+}
+
+// install-sql --config <other> registers the service against that EXACT config
+// and locks the SQL folder of that config — never the default installed copy.
+// The service must not read a folder that was never locked (BBX-5-02 fix).
+func TestInstallSQLConfigPathBoundToService(t *testing.T) {
+	g := newSQLRig(t)
+	// A second, non-default config with its own recordings folder.
+	otherFolder := filepath.Join(g.dir, "other-rec")
+	other := blackbox.Default()
+	other.Name = "box-1"
+	other.Folder = otherFolder
+	otherPath := filepath.Join(g.dir, "other-blackbox.json")
+	if err := blackbox.SaveConfig(otherPath, other, false); err != nil {
+		t.Fatal(err)
+	}
+	c, out, errs := g.do("install-sql", "--config", otherPath)
+	if c != 0 {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	// The service is registered against the exact config that was validated.
+	want := []string{"sql-service", "--config", otherPath}
+	if !reflect.DeepEqual(g.svc.spec.Args, want) {
+		t.Fatalf("service args %v, want %v", g.svc.spec.Args, want)
+	}
+	// The locked folder is the SQL folder of THAT config, not the default one.
+	if len(g.env.locked) != 1 || !strings.HasPrefix(g.env.locked[0], blackbox.SQLDataDir(otherFolder)+" S-1-5-80-") {
+		t.Fatalf("the SQL folder of the given config was not locked: %v", g.env.locked)
+	}
+	if strings.Contains(g.env.locked[0], blackbox.SQLDataDir(filepath.Join(g.dir, "rec"))) {
+		t.Fatal("the default folder was locked instead of the given config's folder")
+	}
+	// Nothing executed: no SQL, no elevate helper, no host recorder.
+	if g.runner.calls != 0 || len(g.elev.calls) != 0 || g.hostRuns != 0 {
+		t.Fatalf("install-sql executed something: %d %v %d", g.runner.calls, g.elev.calls, g.hostRuns)
 	}
 }
 

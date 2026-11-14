@@ -12,4 +12,8 @@ GRANT VIEW SERVER PERFORMANCE STATE TO [NT SERVICE\UnravisBlackboxSql];
 
 const revokeScript = `-- Stop the service first, then run in SSMS:
 REVOKE VIEW SERVER PERFORMANCE STATE FROM [NT SERVICE\UnravisBlackboxSql];
+-- SQL Server 2019 and older have no VIEW SERVER PERFORMANCE STATE: the grant
+-- used VIEW SERVER STATE there. Revoke whichever right was granted (uncomment
+-- the matching line and remove the other):
+-- REVOKE VIEW SERVER STATE FROM [NT SERVICE\UnravisBlackboxSql];
 DROP LOGIN [NT SERVICE\UnravisBlackboxSql];`
