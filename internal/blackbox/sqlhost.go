@@ -86,8 +86,47 @@ func buildSQLHostTargets(prefixes []string) (paths []string, specs []CounterSpec
 	return paths, specs, targets
 }
 
-// sqlHostGroup samples every discovered SQL instance over one reused PDH query.
-// Instances are re-discovered only when the process set changes, never per tick.
+// sqlHostMultiSource aggregates several per-instance counter sources into one
+// CounterSource (W4-06). A source that fails to collect is skipped so the other
+// instances stay readable; only when every source fails is an error returned.
+// Close releases every underlying source.
+type sqlHostMultiSource struct {
+	srcs []CounterSource
+}
+
+func (m *sqlHostMultiSource) Collect() ([]CounterReading, error) {
+	var out []CounterReading
+	var lastErr error
+	ok := 0
+	for _, s := range m.srcs {
+		r, err := s.Collect()
+		if err != nil {
+			lastErr = err
+			continue // one unavailable instance must not suppress the others
+		}
+		ok++
+		out = append(out, r...)
+	}
+	if ok == 0 && lastErr != nil {
+		return nil, lastErr
+	}
+	return out, nil
+}
+
+func (m *sqlHostMultiSource) Close() error {
+	var firstErr error
+	for _, s := range m.srcs {
+		if err := s.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// sqlHostGroup samples every discovered SQL instance. Instances are re-discovered
+// only when the process set changes (or a bounded retry for unavailable counters
+// comes due), never per tick. Each instance gets its own source so one bad
+// counter/instance cannot suppress the rest (W4-06).
 type sqlHostGroup struct {
 	src      CounterSource
 	engine   *Engine
@@ -96,22 +135,31 @@ type sqlHostGroup struct {
 	discover func() ([]string, error)
 	changed  func() bool
 	cores    int
+	// W4-06 partial availability: paths that could not be added, the fixed
+	// per-instance diagnostics, and the bounded retry state for recovering them.
+	missing  []string
+	unavail  map[string]string
+	next     time.Time
+	failures int
 }
 
 func (g *sqlHostGroup) Name() string   { return "sqlHost" }
 func (g *sqlHostGroup) Optional() bool { return true }
 
-// newSQLHostGroup is the factory: discover instances, build the PDH source and
-// engine. A PDH error (e.g. non-Windows) returns the error so BuildGroups skips
-// the group. No SQL login is opened — host counters only.
+// newSQLHostGroup is the factory: discover instances, build the PDH sources and
+// engine. Readable counters/instances are preserved even when some are
+// unavailable (W4-06). Only when NOTHING can be read does it return a fixed
+// error, so BuildGroups keeps a dormant bounded-retry (lazyGroup) slot and the
+// group can recover without a recorder restart. No SQL login is opened — host
+// counters only, and no raw provider text is returned.
 func newSQLHostGroup(d GroupDeps) (Group, error) {
 	g := &sqlHostGroup{discover: discoverSQLInstances, changed: d.ProcessSetChanged, cores: d.Cores}
 	prefixes, err := g.discover()
 	if err != nil {
-		return nil, err
+		return nil, errSQLHostUnavailable
 	}
 	if err := g.rebuild(prefixes); err != nil {
-		return nil, err
+		return nil, errSQLHostUnavailable
 	}
 	return g, nil
 }
@@ -120,53 +168,139 @@ func newSQLHostGroup(d GroupDeps) (Group, error) {
 // the group never depends on PDH directly. Defaults to the real PDH source.
 var sqlHostNewSource = func(paths []string) (CounterSource, error) { return NewPDHSource(paths) }
 
-// rebuild (re)builds the source, engine and target map for a prefix list. It
-// closes any prior source so handles are reused, never leaked.
+// rebuild (re)builds the sources, engine and target map for a prefix list. Each
+// instance gets its own source; if an instance's full counter set cannot be
+// added, its readable counters are preserved by probing per counter and building
+// a source from just those (W4-06). Only when no instance yields a readable
+// counter does it return a fixed error. It closes any prior source so handles
+// are reused, never leaked, and reconciles the engine so unchanged counters keep
+// their rate baselines.
 func (g *sqlHostGroup) rebuild(prefixes []string) error {
-	paths, specs, targets := buildSQLHostTargets(prefixes)
-	src, err := sqlHostNewSource(paths)
-	if err != nil {
-		return err
+	var srcs []CounterSource
+	var readable []string
+	var missing []string
+	unavail := make(map[string]string)
+	for _, prefix := range prefixes {
+		paths, _, _ := buildSQLHostTargets([]string{prefix})
+		src, err := sqlHostNewSource(paths)
+		if err == nil {
+			srcs = append(srcs, src)
+			readable = append(readable, paths...)
+			continue
+		}
+		// The instance's full set failed (one unsupported counter or a transient
+		// provider error). Preserve its readable counters: probe each counter,
+		// then build one source from the readable subset.
+		var good []string
+		for _, p := range paths {
+			cs, cerr := sqlHostNewSource([]string{p})
+			if cerr == nil {
+				_ = cs.Close()
+				good = append(good, p)
+			} else {
+				missing = append(missing, p)
+			}
+		}
+		if len(good) > 0 {
+			s, serr := sqlHostNewSource(good)
+			if serr == nil {
+				srcs = append(srcs, s)
+				readable = append(readable, good...)
+				continue
+			}
+			missing = append(missing, good...)
+		}
+		unavail[sqlInstanceLabel(prefix)] = sqlHostUnavailableCode
+	}
+	// No discovered instance at all is a valid empty group (SQL may be installed
+	// later); it re-discovers on a process-set change. Had instances but none
+	// readable is a transient failure -> fixed error -> dormant lazyGroup retry.
+	if len(srcs) == 0 && len(prefixes) > 0 {
+		return errSQLHostUnavailable
 	}
 	if g.src != nil {
 		_ = g.src.Close()
 	}
-	g.src = src
-	// A new query handle means new PDH baselines, so the engine starts fresh too.
-	// Collect only calls this when the instance set actually changed.
-	g.engine = NewEngine(specs, g.cores)
+	// Build specs/targets for only the readable paths; an unreadable counter has
+	// no spec and stays missing, never 0.
+	allPaths, allSpecs, allTargets := buildSQLHostTargets(prefixes)
+	readableSet := make(map[string]bool, len(readable))
+	for _, p := range readable {
+		readableSet[p] = true
+	}
+	var specs []CounterSpec
+	targets := make(map[string]sqlHostTarget)
+	for i, p := range allPaths {
+		if readableSet[p] {
+			specs = append(specs, allSpecs[i])
+			targets[p] = allTargets[p]
+		}
+	}
+	g.src = &sqlHostMultiSource{srcs: srcs}
+	// Reconcile (not a fresh engine) so counters that stayed readable keep their
+	// rate baselines across a rebuild (W4-04/W4-06).
+	g.engine = reconcileEngine(g.engine, specs, g.cores)
 	g.targets = targets
 	g.prefixes = slices.Clone(prefixes)
+	g.missing = missing
+	g.unavail = unavail
 	return nil
 }
 
-// Collect samples one tick. It re-discovers instances only on a process-set
-// change, then folds valid emitted fields into per-instance rows. An instance
-// with no valid counter is omitted; no valid instance yields a nil group.
+// Collect samples one tick. It re-discovers instances on a process-set change,
+// and retries unavailable counters on a bounded backoff independent of unrelated
+// churn (W4-06). An unrelated process arrival does not rebuild the query, so
+// healthy rates are not re-primed (W4-04). It folds valid emitted fields into
+// per-instance rows; an instance with no valid counter is omitted, and no valid
+// instance yields a nil group. Availability failures use fixed codes, never raw
+// provider text.
 func (g *sqlHostGroup) Collect(now time.Time, dt float64) (any, error) {
-	if g.changed != nil && g.changed() {
-		prefixes, err := g.discover()
-		if err != nil {
-			return nil, err
-		}
-		// An unrelated process arrival must not rebuild the query: that would
-		// re-prime every SQL rate on a busy host (W1-02 / W4-04). Only a changed
-		// instance set is worth new handles.
-		if !slices.Equal(prefixes, g.prefixes) {
-			if err := g.rebuild(prefixes); err != nil {
-				return nil, err
+	changed := g.changed != nil && g.changed()
+	retryDue := len(g.missing) > 0 && !now.Before(g.next)
+	if changed || retryDue {
+		prefixes, derr := g.discover()
+		if derr == nil {
+			// Only a changed instance set or recovering missing counters is worth
+			// new handles; an unchanged healthy set keeps its baselines.
+			if !slices.Equal(prefixes, g.prefixes) || len(g.missing) > 0 {
+				if rerr := g.rebuild(prefixes); rerr != nil && g.src == nil {
+					return nil, errSQLHostUnavailable
+				}
 			}
+		} else if g.src == nil {
+			return nil, errSQLHostUnavailable
 		}
+		if len(g.missing) > 0 {
+			g.failures++
+			g.next = now.Add(groupRetryDelay(g.failures))
+		} else {
+			g.failures = 0
+			g.next = time.Time{}
+		}
+	}
+	if g.src == nil {
+		return nil, errSQLHostUnavailable
 	}
 	readings, err := g.src.Collect()
 	if err != nil {
-		return nil, err
+		return nil, errSQLHostUnavailable
 	}
 	grp := g.build(g.engine.Process(now, readings))
 	if grp == nil {
 		return nil, nil // untyped nil: no valid instance, group omitted
 	}
 	return grp, nil
+}
+
+// availability returns the fixed availability diagnostics for instances that
+// could not be read (W4-06): instance label -> fixed code. An empty map means
+// every discovered instance is readable. Never raw provider text.
+func (g *sqlHostGroup) availability() map[string]string {
+	out := make(map[string]string, len(g.unavail))
+	for k, v := range g.unavail {
+		out[k] = v
+	}
+	return out
 }
 
 // build folds emitted path->value pairs into instances. Only paths the engine
@@ -217,6 +351,15 @@ var discoverSQLInstances = enumSQLInstancesPDH
 
 // errSQLHostNoPDH is returned off Windows where PDH counters do not exist.
 var errSQLHostNoPDH = errors.New("SQL host counters are Windows only")
+
+// errSQLHostUnavailable is the fixed code for a SQL host group that could not
+// read any counter (W4-06). It carries no provider text; BuildGroups turns it
+// into a dormant bounded-retry slot and the collector names the group in Missing.
+var errSQLHostUnavailable = errors.New("SQL host counters unavailable")
+
+// sqlHostUnavailableCode is the fixed per-instance availability diagnostic for
+// an instance whose counters could not be read (W4-06). Never provider text.
+const sqlHostUnavailableCode = "unavailable"
 
 // enumSQLInstancesPDH enumerates PDH objects and keeps the SQL instance prefixes.
 func enumSQLInstancesPDH() ([]string, error) {
