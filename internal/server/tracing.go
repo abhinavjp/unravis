@@ -625,11 +625,15 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 			lanes = append(lanes, lane)
 			continue
 		}
-		if sp := src.span[key]; sp != nil && sp.known {
+		sp := src.span[key]
+		if sp != nil && sp.known {
 			from, to := sp.from, sp.to
 			lane.ImportedFrom, lane.ImportedTo = &from, &to
-			lane.ImportedPartial = sp.partial
 		}
+		// Partial also when no file has a recorded range (nothing to show, yet the
+		// files are not described), and when a listed file was never imported (the
+		// range shown is then not the whole of what the owner listed).
+		lane.ImportedPartial = (sp != nil && sp.partial) || src.notImported[key] > 0
 		if lane.State == calltrace.StateNoData {
 			lane.ReasonCode, lane.Reason = emptyLaneReason(key, src)
 		}
