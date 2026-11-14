@@ -1,6 +1,7 @@
 <script lang="ts">
   import { DRILL_TEXT } from '../lib/drill/drillCopy';
   import { chipAvailable, gapLabel, isThisCall, lightCells, type CallRef, type NearbyChip, type NearbyRow } from '../lib/drill/nearbyCalls';
+  import { capRows } from '../lib/drill/callLanes';
   import { formatMs } from '../lib/drill/overview';
   import { formatTime } from '../lib/time';
 
@@ -37,6 +38,8 @@
 
   const hintFrom = $derived(formatTime(start, { zone, date: false, precision: 'minute', suffix: false }));
   const hintTo = $derived(formatTime(end, { zone, date: false, precision: 'minute', suffix: false }));
+  // Only the first rows are drawn, so a very long window stays quick; the rest are counted in a note.
+  const capped = $derived(capRows(rows));
   const apiName = $derived(`${call.controller}.${call.action}`);
 
   function chipLabel(c: NearbyChip): string {
@@ -108,7 +111,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each rows as row (row.sourceId + '|' + row.id)}
+        {#each capped.rows as row (row.sourceId + '|' + row.id)}
           {@const light = lightCells(row)}
           {@const own = isThisCall(row, call)}
           <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -140,8 +143,11 @@
     </table>
   {/if}
 
+  {#if capped.capped}
+    <p class="status" data-testid="scall-nearby-capped">{DRILL_TEXT.rowsCapped(capped.rows.length, capped.total)}</p>
+  {/if}
   {#if truncated}
-    <p class="status" data-testid="scall-nearby-truncated">{DRILL_TEXT.truncated(rows.length)}</p>
+    <p class="status" data-testid="scall-nearby-truncated">{DRILL_TEXT.truncated(capped.rows.length)}</p>
   {/if}
 </section>
 

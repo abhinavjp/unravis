@@ -94,6 +94,8 @@ export const DRILL_TEXT = {
   unitAtOnceAvg: 'running at once (average)',
   laneSlow: (n: number): string => (n === 1 ? '1 slow in this window' : `${n} slow in this window`),
   laneNothingSlow: 'nothing slow here',
+  laneNotSelected: 'not selected for this case',
+  laneReadFailed: 'could not be read',
   laneShape: (n: string): string => `Shape: 0 to ${n} at once`,
   laneBlocks: (m: number): string => `saved in ${m}-minute blocks`,
   laneApiOnly: 'API calls only',
@@ -198,6 +200,7 @@ export const DRILL_TEXT = {
   windowCalls: (n: number, from: string, to: string): string => `${n} calls from ${from} to ${to}`,
   allHeading: (n: number): string => `What happened, in time order (${n})`,
   allEmpty: 'Nothing slow was recorded for these sources in this window.',
+  rowsCapped: (shown: number, total: number): string => `Showing the first ${shown} of ${total}`,
   // failure and gap lines
   chipUserNone: 'Same user: not recorded',
   chipApiNone: 'Same endpoint: not recorded',
@@ -277,6 +280,7 @@ const SAMPLE = {
   nearbyHint: ['10:00', '10:30', 12] as const,
   windowCalls: [12, '10:00', '10:30'] as const,
   allHeading: 12,
+  rowsCapped: [200, 450] as const,
   rangeTo: ['10:00', '10:30'] as const
 } as const;
 
@@ -325,6 +329,7 @@ export const drillCopyEntries = (): LintEntry[] => {
     ['nearbyHint', DRILL_TEXT.nearbyHint(...SAMPLE.nearbyHint)],
     ['windowCalls', DRILL_TEXT.windowCalls(...SAMPLE.windowCalls)],
     ['allHeading', DRILL_TEXT.allHeading(SAMPLE.allHeading)],
+    ['rowsCapped', DRILL_TEXT.rowsCapped(...SAMPLE.rowsCapped)],
     ['rangeTo', DRILL_TEXT.rangeTo(...SAMPLE.rangeTo)]
   ];
   for (const [key, text] of fns) entries.push({ id: 'drill.' + key, text });

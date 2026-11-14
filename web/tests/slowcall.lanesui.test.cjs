@@ -43,7 +43,7 @@ test('the three lanes are drawn with their own tokens', () => {
 test('every part of the chart is present', () => {
   for (const needle of [
     'class="gap"', 'class="thiscall"', 'class="bar"', 'class="shape"', 'scall-readout', 'scall-legend', 'scall-db-source',
-    'preserveAspectRatio="none"', '<pattern', 'role="button"', 'tabindex="0"', 'aria-live="polite"', 'data-key'
+    'preserveAspectRatio="none"', '<pattern', 'role="button"', 'tabindex="0"', 'aria-live="off"', 'data-key'
   ]) {
     assert.ok(source.includes(needle), `has ${needle}`);
   }
@@ -58,8 +58,9 @@ test('hover, pin and keyboard are wired', () => {
   assert.match(source, /onpointermove=\{onMove\}/);
   assert.match(source, /onpointerleave=\{onLeave\}/);
   assert.match(source, /onclick=\{onClick\}/);
-  assert.match(source, /onReadout\(readoutFor\(hoverMs\), false\)/);
-  assert.match(source, /onReadout\(readoutFor\(pinnedMs\), true\)/);
+  assert.match(source, /emit\(readoutFor\(hoverMs\), false\)/);
+  assert.match(source, /emit\(readoutFor\(pinnedMs\), true\)/);
+  assert.match(source, /onReadout\(value, pinned\)/);
   assert.match(source, /'ArrowLeft'/);
   assert.match(source, /'ArrowRight'/);
   assert.match(source, /e\.key === 'Enter' \|\| e\.key === ' '/);

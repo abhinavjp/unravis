@@ -5,7 +5,7 @@
 
 <script lang="ts">
   import { DRILL_TEXT } from '../lib/drill/drillCopy';
-  import { formatAtOnce, type CallLane, type LaneBar, type LaneCell } from '../lib/drill/callLanes';
+  import { formatAtOnce, laneGapText, sameReadout, type CallLane, type LaneBar, type LaneCell } from '../lib/drill/callLanes';
   import { readoutAt, type Readout, type SourceItem } from '../lib/drill/callReadout';
   import { formatDuration } from '../lib/format';
   import { formatTime, zoneAbbreviation } from '../lib/time';
@@ -190,17 +190,25 @@
     return start + frac * span;
   }
 
+  // The parent is told only when the readout changes, not on every pointer move inside the same step.
+  let sent: { value: Readout | null; pinned: boolean } | null = null;
+  function emit(value: Readout | null, pinned: boolean) {
+    if (sent && sent.pinned === pinned && sameReadout(sent.value, value)) return;
+    sent = { value, pinned };
+    onReadout(value, pinned);
+  }
+
   function onMove(e: PointerEvent) {
     hoverMs = timeAt(e);
-    onReadout(readoutFor(hoverMs), false);
+    emit(readoutFor(hoverMs), false);
   }
   function onClick(e: MouseEvent) {
     pinnedMs = timeAt(e);
-    onReadout(readoutFor(pinnedMs), true);
+    emit(readoutFor(pinnedMs), true);
   }
   function onLeave() {
     hoverMs = null;
-    onReadout(pinnedReadout, pinnedMs !== null);
+    emit(pinnedReadout, pinnedMs !== null);
   }
   function onKey(e: KeyboardEvent) {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
@@ -208,7 +216,7 @@
     const base = pinnedMs ?? Math.min(end, Math.max(start, (call.startMs + call.endMs) / 2));
     const next = Math.min(end - 1, Math.max(start, base + (e.key === 'ArrowRight' ? stepMs : -stepMs)));
     pinnedMs = next;
-    onReadout(readoutFor(next), true);
+    emit(readoutFor(next), true);
   }
 
   function pick(e: Event, key: string) {
@@ -240,8 +248,24 @@
       if (db.shape === 'none' || db.shape === 'markers' || !lane.peak) return db.short;
       return `${DRILL_TEXT.laneShape(formatAtOnce(lane.peak.atOnce))} · ${db.short}`;
     }
-    return lane.peak ? DRILL_TEXT.laneShape(formatAtOnce(lane.peak.atOnce)) : DRILL_TEXT.notRecorded;
+    // No numbers: say why in plain words (not selected, could not be read, or not recorded). Never a 0.
+    return lane.peak ? DRILL_TEXT.laneShape(formatAtOnce(lane.peak.atOnce)) : laneGapText(lane.gap);
   };
+
+  // The readout lines in one place, so the screen and the quiet announcement say the same thing.
+  function readLines(r: Readout): string[] {
+    const lines: string[] = [];
+    if (shown.api) lines.push(DRILL_TEXT.readApi(fmtAt(r.api)), DRILL_TEXT.readP95(fmtP95(r.api)));
+    if (shown.iis) lines.push(DRILL_TEXT.readIis(fmtAt(r.iis)), refusedLine(r.iis));
+    if (shown.db) lines.push(dbLine(r.db));
+    return lines;
+  }
+  // Spoken only when a point is pinned (click or arrow keys), never while the pointer moves.
+  const pinnedAnnouncement = $derived(
+    pinnedMs !== null && pinnedReadout
+      ? [`${DRILL_TEXT.readTitle} · ${formatTime(pinnedReadout.stepStart, { zone })}`, ...readLines(pinnedReadout)].join('. ')
+      : ''
+  );
 </script>
 
 <div class="scall-wrap">
@@ -262,7 +286,7 @@
     class="scall-lanes"
     data-testid="scall-lanes"
     aria-busy={loading}
-    role="application"
+    role="group"
     aria-label={DRILL_TEXT.timelineTitle}
     aria-describedby="scall-hint-{patternId}"
     tabindex="0"
@@ -350,7 +374,7 @@
     <span class="scall-zone">{zoneName}</span>
   </div>
 
-  <div class="scall-readout" class:idle={!current && pinnedMs === null} data-testid="scall-readout" aria-live="polite">
+  <div class="scall-readout" class:idle={!current && pinnedMs === null} data-testid="scall-readout" aria-live="off">
     {#if current || pinnedMs !== null}
       <p class="read-title">
         {DRILL_TEXT.readTitle}{#if current}
@@ -358,22 +382,15 @@
       </p>
       {#if current}
         <ul class="read-rows">
-          {#if shown.api}
-            <li>{DRILL_TEXT.readApi(fmtAt(current.api))}</li>
-            <li>{DRILL_TEXT.readP95(fmtP95(current.api))}</li>
-          {/if}
-          {#if shown.iis}
-            <li>{DRILL_TEXT.readIis(fmtAt(current.iis))}</li>
-            <li>{refusedLine(current.iis)}</li>
-          {/if}
-          {#if shown.db}
-            <li>{dbLine(current.db)}</li>
-          {/if}
+          {#each readLines(current) as line}
+            <li>{line}</li>
+          {/each}
         </ul>
       {/if}
     {/if}
     <p class="read-hint" id="scall-hint-{patternId}">{hint}</p>
   </div>
+  <p class="visually-hidden" role="status" aria-live="polite" data-testid="scall-pinned-live">{pinnedAnnouncement}</p>
 
   <details class="scall-legend-more">
     <summary>{DRILL_TEXT.legendHow}</summary>
