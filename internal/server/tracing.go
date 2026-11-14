@@ -468,6 +468,9 @@ type tracingLane struct {
 	// BlockSeconds is the length of the blocks this lane's source saved its numbers in, when it is
 	// longer than the bucket (Query Store). Zero means not known or same as the bucket.
 	BlockSeconds int `json:"blockSeconds,omitempty"`
+	// Since is when the lane's source began recording: the first sample of the
+	// Blackbox sampling (the blackbox SQL lane only). Omitted when unknown.
+	Since *time.Time `json:"since,omitempty"`
 }
 
 type tracingResponse struct {
@@ -1121,7 +1124,15 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 	// does not implement it leaves the lane untouched.
 	sqlBusy, _ := h.repo.(audit.SQLBusyReader)
 	for _, lane := range lanes {
-		if lane.Key == calltrace.LaneSQL && lane.Disabled == "" && (lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange || lane.State == calltrace.StateEvents) {
+		// BBX-5-16: the case's Blackbox sampling is the database lane's source
+		// when it carries SQL host counters for the window. Without them the
+		// held / qs-file / api-seen chain below runs unchanged.
+		if lane.Key == calltrace.LaneSQL && lane.Disabled == "" && lane.State != calltrace.StateClockUnchecked {
+			if bb, ok := h.blackboxSQLLane(ctx, unwrapCase(c), axis, lane); ok {
+				lane = bb
+			}
+		}
+		if lane.Key == calltrace.LaneSQL && lane.Disabled == "" && lane.ReasonCode != tracingReasonBlackbox && (lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange || lane.State == calltrace.StateEvents) {
 			if held, ok := tracingHeldSQLLane(ctx, unwrapCase(c), axis, now); ok {
 				if lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange {
 					imported := lane

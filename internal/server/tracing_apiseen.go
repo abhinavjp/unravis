@@ -15,9 +15,9 @@ import (
 // screen never starts a database read. The screen's sentence comes from dbState
 // (P-07 maps api-seen to state "api"), so no new copy is written here.
 //
-// Precedence: saved live day (held-sql / layered-sql) > Query Store file (qs-file)
-// > api-seen > nothing. This file only fills the last case and never displaces a
-// better source.
+// Precedence: Blackbox sampling (blackbox) > saved live day (held-sql /
+// layered-sql) > Query Store file (qs-file) > api-seen > nothing. This file only
+// fills the last case and never displaces a better source.
 
 const tracingReasonAPISseen = "api-seen"
 
@@ -91,7 +91,7 @@ func apiSeenBuckets(ctx context.Context, reader audit.SQLBusyReader, axis tracin
 // test can fix it). A read error is returned unchanged with the lane untouched.
 func tracingAPISseenLane(ctx context.Context, reader audit.SQLBusyReader, axis tracingAxis, lane tracingLane, now func() time.Time) (tracingLane, error) {
 	if lane.Key != calltrace.LaneSQL || lane.Disabled != "" || lane.State == calltrace.StateClockUnchecked ||
-		lane.ReasonCode == tracingReasonHeldSQL || lane.ReasonCode == tracingReasonLayeredSQL || lane.ReasonCode == tracingReasonQSFile {
+		lane.ReasonCode == tracingReasonHeldSQL || lane.ReasonCode == tracingReasonLayeredSQL || lane.ReasonCode == tracingReasonQSFile || lane.ReasonCode == tracingReasonBlackbox {
 		return lane, nil
 	}
 	if reader == nil {
