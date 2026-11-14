@@ -105,6 +105,12 @@ func tracingHeldSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis,
 		filled bool
 	}
 	cells := map[int]*acc{}
+	// seen holds each T already counted. The runs are newest first, so the newest run's value wins for a
+	// shared T (including 0, with no fall back to the older); a duplicate T is skipped before it touches
+	// cells, total or allT. Two saved days of one source can share a T because their incident windows differ
+	// while their reference times overlap (DATA-03). Keyed by exact T, never by bucket: different T in one
+	// bucket are legitimate and still add.
+	seen := map[int64]struct{}{}
 	var total int64
 	asOf := sqlRuns[0].Run.At
 	label := sqlRuns[0].Report.Label
@@ -118,6 +124,10 @@ func tracingHeldSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis,
 			intervalMin = qs.IntervalMinutes
 		}
 		for _, p := range lr.Report.Lane.Series {
+			if _, dup := seen[p.T]; dup {
+				continue
+			}
+			seen[p.T] = struct{}{}
 			allT = append(allT, p.T)
 			ms := p.T * 1000
 			if ms < axis.Start.UnixMilli() || ms >= axis.End.UnixMilli() {
