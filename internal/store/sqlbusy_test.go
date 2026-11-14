@@ -217,9 +217,9 @@ func TestSQLBusySumsAcrossSourcesAndDropsBadBins(t *testing.T) {
 		return []any{
 			sqlBusyDoc(t, t0, 100.0, 2),
 			sqlBusyDoc(t, t1, 200.0, 1),
-			sqlBusyDoc(t, t2, -5.0, 4),          // negative: dropped
-			sqlBusyDoc(t, t3, math.NaN(), 9),    // NaN: dropped
-			sqlBusyDoc(t, t3, math.Inf(1), 9),   // infinite: dropped
+			sqlBusyDoc(t, t2, -5.0, 4),        // negative: dropped
+			sqlBusyDoc(t, t3, math.NaN(), 9),  // NaN: dropped
+			sqlBusyDoc(t, t3, math.Inf(1), 9), // infinite: dropped
 		}, nil
 	}, "one", "two")
 

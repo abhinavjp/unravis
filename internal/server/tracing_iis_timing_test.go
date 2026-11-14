@@ -91,4 +91,3 @@ func TestTracingIISLaneWithoutDurationsHasNoTiming(t *testing.T) {
 		}
 	})
 }
-

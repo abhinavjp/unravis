@@ -20,8 +20,8 @@ const (
 		`CAST(ISNULL(SERVERPROPERTY('IsHadrEnabled'), -1) AS int) AS hadr, DATEDIFF(MINUTE, GETUTCDATE(), GETDATE()) AS utc_offset_min`
 	qLaneServer = `/* unravis:server */ SELECT (SELECT sqlserver_start_time FROM sys.dm_os_sys_info) AS started_local, ` +
 		`(SELECT ISNULL(SUM(waiting_tasks_count), 0) FROM sys.dm_os_wait_stats WHERE wait_type = 'THREADPOOL') AS threadpool_tasks`
-	qLaneLogFlush   = `/* unravis:errorlog:flush */ EXEC sp_readerrorlog 0, 1, N'cachestore flush'`
-	qLaneLogStart   = `/* unravis:errorlog:start */ EXEC sp_readerrorlog 0, 1, N'SQL Server is starting'`
+	qLaneLogFlush = `/* unravis:errorlog:flush */ EXEC sp_readerrorlog 0, 1, N'cachestore flush'`
+	qLaneLogStart = `/* unravis:errorlog:start */ EXEC sp_readerrorlog 0, 1, N'SQL Server is starting'`
 	// The list of error log files. Archive 1 was last written when the current log was started, so its date is when the current log begins.
 	qLaneLogEnum    = `/* unravis:errorlog:enum */ EXEC sp_enumerrorlogs 1`
 	qLaneQSOptions  = `/* unravis:qs_options */ SELECT TOP 1 actual_state_desc, desired_state_desc, readonly_reason, interval_length_minutes FROM sys.database_query_store_options`

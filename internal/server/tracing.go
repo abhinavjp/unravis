@@ -408,13 +408,13 @@ type tracingBucket struct {
 	TimedCount int64 `json:"timedCount,omitempty"`
 	// AvgMs is the average duration of the bucket's statements in milliseconds
 	// (the sql lane drawn from saved Query Store figures; p50 and p95 are then absent).
-	AvgMs    *float64 `json:"avgMs,omitempty"`
-	P50Ms    *float64 `json:"p50Ms,omitempty"`
-	P95Ms    *float64 `json:"p95Ms,omitempty"`
-	MaxMs    *float64 `json:"maxMs,omitempty"`
+	AvgMs *float64 `json:"avgMs,omitempty"`
+	P50Ms *float64 `json:"p50Ms,omitempty"`
+	P95Ms *float64 `json:"p95Ms,omitempty"`
+	MaxMs *float64 `json:"maxMs,omitempty"`
 	// BusyMs is the summed duration, in milliseconds, of the calls that started in this bucket.
 	// Nil means it was not recorded; it is never a stand-in zero.
-	BusyMs *float64 `json:"busyMs,omitempty"`
+	BusyMs   *float64 `json:"busyMs,omitempty"`
 	Clipped  bool     `json:"clipped"`
 	Complete bool     `json:"complete"`
 }
@@ -462,8 +462,8 @@ type tracingLane struct {
 	// open connection carries, by saved name (the audit lane only).
 	SourcesRead       []tracingRef `json:"sourcesRead,omitempty"`
 	SavedNotConnected []string     `json:"savedNotConnected,omitempty"`
-	ImportedFrom      *time.Time   `json:"importedFrom,omitempty"` // earliest time in the lane's imported files
-	ImportedTo        *time.Time   `json:"importedTo,omitempty"`   // latest time in the lane's imported files
+	ImportedFrom      *time.Time   `json:"importedFrom,omitempty"`    // earliest time in the lane's imported files
+	ImportedTo        *time.Time   `json:"importedTo,omitempty"`      // latest time in the lane's imported files
 	ImportedPartial   bool         `json:"importedPartial,omitempty"` // some imported file has no recorded time range
 	// BlockSeconds is the length of the blocks this lane's source saved its numbers in, when it is
 	// longer than the bucket (Query Store). Zero means not known or same as the bucket.

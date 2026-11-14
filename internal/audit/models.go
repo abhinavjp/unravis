@@ -27,7 +27,7 @@ const (
 )
 
 var (
-	ErrInvalidInput       = errors.New("invalid input")
+	ErrInvalidInput = errors.New("invalid input")
 	// ErrDuplicate is a source that is already open (same deployment, database and collection). It always travels with ErrInvalidInput.
 	ErrDuplicate          = errors.New("source already exists")
 	ErrNotFound           = errors.New("not found")
@@ -424,10 +424,10 @@ type RecordInput struct {
 // the summaries use.
 type RecordDetail struct {
 	RequestRecord
-	State        string  `json:"state"`
-	PendingAsync bool    `json:"pendingAsync,omitempty"`
-	Payload      Payload `json:"payload"`
-	Perf *RecordPerf `json:"perf"`
+	State        string      `json:"state"`
+	PendingAsync bool        `json:"pendingAsync,omitempty"`
+	Payload      Payload     `json:"payload"`
+	Perf         *RecordPerf `json:"perf"`
 }
 
 type PageInput struct {

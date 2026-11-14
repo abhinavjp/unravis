@@ -23,11 +23,11 @@ const (
 	tracingAuditListWarn = "The audit sources could not be listed, so the audit lane was not read."
 
 	tracingAuditSavedOnlyMsg = "This case saved audit databases that are not connected on this computer, so no API requests were read. Unravis reconnects a saved database by itself only when its password is saved. Otherwise press Connect next to it in the Sources row, enter the password, then press Start tracing again."
-	tracingAuditNoReaderMsg = "The audit source cannot be read here."
-	tracingAuditBroadMsg    = "The audit source reads at most 24 hours unless broad scans are allowed, so this window was not read."
-	tracingAuditTimeoutMsg  = "The audit read ran out of time; nothing was shortened."
-	tracingAuditRowCapMsg   = "The audit read reached its row limit; nothing was shortened."
-	tracingAuditErrorMsg    = "The audit read failed; nothing was shortened."
+	tracingAuditNoReaderMsg  = "The audit source cannot be read here."
+	tracingAuditBroadMsg     = "The audit source reads at most 24 hours unless broad scans are allowed, so this window was not read."
+	tracingAuditTimeoutMsg   = "The audit read ran out of time; nothing was shortened."
+	tracingAuditRowCapMsg    = "The audit read reached its row limit; nothing was shortened."
+	tracingAuditErrorMsg     = "The audit read failed; nothing was shortened."
 	// A window over 24 hours is read one chunk at a time; these say a read stopped
 	// after some chunks. The chunks read are shown and the rest were not read.
 	tracingAuditPartialTimeoutMsg = "The audit read ran out of time; the days read are shown and the rest were not read."
@@ -50,10 +50,10 @@ var errUnknownAuditSource = errors.New("unknown audit source")
 // the Count requests had a timing, and P50Ms, P95Ms and MaxMs their response
 // times (nil when none did).
 type auditBucket struct {
-	Start, End    time.Time
-	Clipped       bool
-	Count, Errors int64
-	Timed         int64
+	Start, End          time.Time
+	Clipped             bool
+	Count, Errors       int64
+	Timed               int64
 	P50Ms, P95Ms, MaxMs *float64
 	// BusyMs is the summed duration in ms of the timed calls (nil when none).
 	BusyMs *float64

@@ -73,7 +73,7 @@ const statusIs4xxExpr = `json_extract(attrs_json,'$.status') GLOB '4[0-9][0-9]'`
 var timingBinExpr = fmt.Sprintf(`CASE WHEN duration_ms < 1 THEN 0 WHEN duration_ms >= %v THEN 193 `+
 	`ELSE CAST(ln(duration_ms) / %v AS INTEGER) + 1 END`, math.Pow(1.1, 192), math.Log(1.1))
 
-const statusIs5xxExpr =`json_extract(attrs_json,'$.status') GLOB '5[0-9][0-9]'`
+const statusIs5xxExpr = `json_extract(attrs_json,'$.status') GLOB '5[0-9][0-9]'`
 
 // timelineIndexSQL are the two indexes the investigation timeline reads. They
 // carry no schema-version bump: a case without them is correct, only slow, and
