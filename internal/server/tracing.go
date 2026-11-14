@@ -1120,6 +1120,14 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 	// asserted once, like the audit lane's RollupReader below; a repository that
 	// does not implement it leaves the lane untouched.
 	sqlBusy, _ := h.repo.(audit.SQLBusyReader)
+	// The selected AUDIT source ids: the same ids the audit (Rollup) lane reads
+	// below. The api-seen fallback must read only these, so with two audit sources
+	// connected it does not sum the busy time of both (DATA-02). Empty — no audit
+	// source selected or listed — leaves SQLBusy reading every connected source.
+	auditIDs := make([]string, len(auditRefs))
+	for i, ref := range auditRefs {
+		auditIDs[i] = ref.SourceID
+	}
 	for _, lane := range lanes {
 		if lane.Key == calltrace.LaneSQL && lane.Disabled == "" && (lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange || lane.State == calltrace.StateEvents) {
 			if held, ok := tracingHeldSQLLane(ctx, unwrapCase(c), axis, now); ok {
@@ -1146,7 +1154,7 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 			writeStoreError(w, err)
 			return
 		}
-		lane, err = tracingAPISseenLane(ctx, sqlBusy, axis, lane, time.Now)
+		lane, err = tracingAPISseenLane(ctx, sqlBusy, auditIDs, axis, lane, time.Now)
 		if err != nil {
 			if r.Context().Err() != nil {
 				return // the client went away; nothing to write
@@ -1178,10 +1186,6 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 	case len(auditRefs) > 0:
 		if auditWarn != "" {
 			resp.Warnings = append(resp.Warnings, auditWarn)
-		}
-		auditIDs := make([]string, len(auditRefs))
-		for i, ref := range auditRefs {
-			auditIDs[i] = ref.SourceID
 		}
 		reader, _ := h.repo.(audit.RollupReader)
 		// The live lane stamps its own read time (time.Now, not now): it is read

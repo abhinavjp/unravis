@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"math"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -320,5 +321,95 @@ func TestSQLBusyNoSourcesAnswersRecordedWithoutQuery(t *testing.T) {
 	}
 	if !res.Recorded || len(res.Bins) != 0 {
 		t.Fatalf("no sources: %+v, want recorded with no bins", res)
+	}
+}
+
+// TestSQLBusyFiltersBySelectedSourceIDs is the DATA-02 proof. Two synthetic audit
+// sources hold records that OVERLAP in time (both have a step at t0), so an
+// unfiltered read sums them. Selecting one source must return only that source's
+// busy time and must not even read the other; selecting both sums them; an empty
+// selection keeps the historical read-every-connected-source behaviour.
+func TestSQLBusyFiltersBySelectedSourceIDs(t *testing.T) {
+	base := sqlBusyTestInput()
+	t0 := base.Start
+	s, _, calls, mu := sqlBusyStore(t, func(collection string) ([]any, error) {
+		switch collection {
+		case "src-a":
+			return []any{sqlBusyDoc(t, t0, 100.0, 2)}, nil
+		case "src-b":
+			return []any{sqlBusyDoc(t, t0, 50.0, 3)}, nil
+		}
+		return nil, nil
+	}, "src-a", "src-b")
+
+	srcs, err := s.Sources(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	idOf := make(map[string]string, len(srcs))
+	for _, src := range srcs {
+		idOf[src.Label] = src.ID
+	}
+	idA, idB := idOf["src-a"], idOf["src-b"]
+	if idA == "" || idB == "" || idA == idB {
+		t.Fatalf("two distinct synthetic sources required: %+v", srcs)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		ids       []string
+		wantBusy  float64
+		wantCalls int64
+		wantRead  map[string]int
+	}{
+		{"one selected counts only that source", []string{idA}, 100, 2, map[string]int{"src-a": 1}},
+		{"the other selected counts only it", []string{idB}, 50, 3, map[string]int{"src-b": 1}},
+		{"both selected sum", []string{idA, idB}, 150, 5, map[string]int{"src-a": 1, "src-b": 1}},
+		{"empty selection reads every connected source", nil, 150, 5, map[string]int{"src-a": 1, "src-b": 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
+			for k := range calls {
+				delete(calls, k)
+			}
+			mu.Unlock()
+			in := base
+			in.SourceIDs = tc.ids
+			res, err := s.SQLBusy(context.Background(), in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !res.Recorded || len(res.Bins) != 1 {
+				t.Fatalf("recorded %v bins %+v, want one overlapping step", res.Recorded, res.Bins)
+			}
+			b := res.Bins[0]
+			if !b.Start.Equal(t0) || b.BusyMs != tc.wantBusy || b.Calls != tc.wantCalls {
+				t.Fatalf("step = %+v, want busy %v calls %v (not the sum of both sources)", b, tc.wantBusy, tc.wantCalls)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if !reflect.DeepEqual(calls, tc.wantRead) {
+				t.Fatalf("aggregations run = %v, want %v (an unselected source must not be read)", calls, tc.wantRead)
+			}
+		})
+	}
+}
+
+// TestSQLBusyUnknownSelectedSourceFailsClosed: a selected id that is not connected
+// fails the whole call (as Rollup does), rather than silently dropping it and
+// presenting an undercounted sum as complete.
+func TestSQLBusyUnknownSelectedSourceFailsClosed(t *testing.T) {
+	s, _, calls, mu := sqlBusyStore(t, func(string) ([]any, error) {
+		return []any{sqlBusyDoc(t, sqlBusyTestInput().Start, 10.0, 1)}, nil
+	})
+	in := sqlBusyTestInput()
+	in.SourceIDs = []string{"src-missing"}
+	if _, err := s.SQLBusy(context.Background(), in); !errors.Is(err, errSourceNotFound) {
+		t.Fatalf("an unknown selected source must fail closed, err = %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) != 0 {
+		t.Fatalf("an unknown selected source must run no query, got %v", calls)
 	}
 }

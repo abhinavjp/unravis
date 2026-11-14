@@ -10,6 +10,13 @@ type SQLBusyInput struct {
 	Start         time.Time
 	End           time.Time
 	BucketSeconds int // one of 60, 300, 600, 900
+	// SourceIDs selects which connected audit sources contribute. A source is a
+	// connected database/collection (audit.Source.ID), not a field on a stored
+	// record: the repository reads each selected source and sums its steps. Empty
+	// reads every connected source (the historical behaviour); non-empty reads
+	// only these ids, so the busy time is not summed across sources the caller did
+	// not select. An id that is not connected fails the call closed, as Rollup does.
+	SourceIDs []string
 }
 
 // SQLBusyBin is one step. BusyMs is the summed database time, in milliseconds,
