@@ -13,6 +13,7 @@
   import { mapRow } from '../lib/drill/callMap';
   import { centreOn, clampWindow, coversOverview, overviewBounds, windowBounds } from '../lib/drill/callWindow';
   import { filterRows, type CallRef, type NearbyRow } from '../lib/drill/nearbyCalls';
+  import type { RequestRecord } from '../lib/types';
   import { formatTime, timeParts } from '../lib/time';
   import DrillOverview from './DrillOverview.svelte';
   import CallWindowBar from './CallWindowBar.svelte';
@@ -43,7 +44,9 @@
 
   type Tab = 'calls' | 'all';
 
-  let callState = $state<CallState | null>(null);
+  // Raw, not deep: the controller hands over a fresh snapshot per change, and the answers inside it (overview, nearby rows) stay the same objects
+  // until they really change, so the deriveds below can tell "same answer" from "new answer" and skip their work.
+  let callState = $state.raw<CallState | null>(null);
   let controller = $state.raw<ReturnType<typeof createCallController> | null>(null);
   let titleEl = $state<HTMLElement>();
   let shown = $state({ api: true, iis: true, db: true });
@@ -138,12 +141,42 @@
     time: (iso: string) => formatTime(iso, { zone, date: false, precision: 'minute' })
   };
 
+  // Shown while the slowest calls of a new window are being read (the old rows are already cleared, so none show under the new axis).
+  const SLOW_ROWS_LOADING = 'Loading the new window...';
+
+  // The window-independent parts, each derived from its own input so a drag preview (which only moves the window) does not redo them.
+  const overviewResp = $derived(callState?.overview ?? null);
+  const callStartMs = $derived(callState?.callStartMs ?? Number.NaN);
+  const over = $derived(overviewBounds(callStartMs));
+  const NO_ROWS: RequestRecord[] = [];
+  const nearbyRaw = $derived(callState?.nearby.rows ?? NO_ROWS);
+
+  // The overview strip rows: they depend on the two-hour overview answer only.
+  const mapRows = $derived.by(() => {
+    const resp = overviewResp;
+    return (['audit', 'iis', 'sql'] as const).map((key) =>
+      mapRow(key, resp ? buildLane(toLaneIn(resp.lanes.find((l) => l.key === key)), key, resp.window, over.start, over.end).cells : [])
+    );
+  });
+  const nearbyAll = $derived.by((): NearbyRow[] =>
+    nearbyRaw.map((r) => ({
+      id: r.id,
+      sourceId: r.sourceId,
+      controller: r.controller,
+      action: r.action,
+      initiatedAt: r.initiatedAt ?? '',
+      durationMs: r.durationMs,
+      status: r.status !== '' && Number.isFinite(Number(r.status)) ? Number(r.status) : undefined,
+      userId: r.userId ?? null,
+      light: r.light ?? null
+    }))
+  );
+
   // Everything the workbench draws, worked out once per change. Null until the call record is there.
   const bench = $derived.by(() => {
     const s = callState;
     if (!s || !s.record) return null;
     const bounds = windowBounds(s.callStartMs, s.window);
-    const over = overviewBounds(s.callStartMs);
     const resp = s.visible ?? s.overview;
     const win = resp?.window ?? { axisStart: new Date(bounds.start).toISOString(), bucketSeconds: 60 };
     const step = win.bucketSeconds;
@@ -220,21 +253,6 @@
       startMs: s.callStartMs,
       endMs: s.callEndMs
     };
-    const overviewLane = (key: LaneKey) => toLaneIn(s.overview?.lanes.find((l) => l.key === key));
-    const mapRows = (['audit', 'iis', 'sql'] as const).map((key) =>
-      mapRow(key, s.overview ? buildLane(overviewLane(key), key, s.overview.window, over.start, over.end).cells : [])
-    );
-    const nearbyAll: NearbyRow[] = s.nearby.rows.map((r) => ({
-      id: r.id,
-      sourceId: r.sourceId,
-      controller: r.controller,
-      action: r.action,
-      initiatedAt: r.initiatedAt ?? '',
-      durationMs: r.durationMs,
-      status: r.status !== '' && Number.isFinite(Number(r.status)) ? Number(r.status) : undefined,
-      userId: r.userId ?? null,
-      light: r.light ?? null
-    }));
     const nearbyRows = filterRows(nearbyAll, s.chip, callRef, bounds.start, bounds.end);
     const whileRan = readoutAt(s.callStartMs, { audit: lanes.audit.cells, iis: lanes.iis.cells, sql: drawnSql.cells }, call);
     const sources = [
@@ -377,6 +395,9 @@
             />
             {#if bench.s.visibleFailed}
               <p class="note" role="status" data-testid="scall-lanes-failed">{DRILL_TEXT.lanesFailed}</p>
+            {/if}
+            {#if bench.s.slowRowsLoading}
+              <p class="note" role="status" data-testid="scall-slowrows-loading">{SLOW_ROWS_LOADING}</p>
             {/if}
             {#if bench.s.slowRowsFailed}
               <p class="note" role="status" data-testid="scall-slowrows-failed">{DRILL_TEXT.slowRowsFailed}</p>

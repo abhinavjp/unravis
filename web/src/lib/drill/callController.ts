@@ -37,6 +37,8 @@ export interface CallState {
   overviewFailed: boolean;
   /** True when the slowest-calls read of the window failed; the rows are then empty because they are not known. */
   slowRowsFailed: boolean;
+  /** True from the start of a slowest-calls read until it answers. The old rows are cleared at the start, so they never show under a new axis. */
+  slowRowsLoading: boolean;
   visible: TracingResponse | null;
   visibleLoading: boolean;
   visibleFailed: boolean;
@@ -70,6 +72,7 @@ function initialState(): CallState {
     overview: null,
     overviewFailed: false,
     slowRowsFailed: false,
+    slowRowsLoading: false,
     visible: null,
     visibleLoading: false,
     visibleFailed: false,
@@ -157,17 +160,22 @@ export function createCallController(
 
   function readSlowRows(mySeq: number, ctl: AbortController, startIso: string, endIso: string): void {
     s.slowRowsFailed = false;
+    // The rows of the old window sit on the old time axis: drop them now instead of drawing them under the new one.
+    s.slowRows = [];
+    s.slowRowsLoading = true;
     deps.slowest(drillQuery({ start: startIso, end: endIso }, target.sourceIds), ctl.signal).then(
       (page) => {
         if (disposed || ctl.signal.aborted || mySeq !== readSeq) return;
         s.slowRows = page.rows.slice(0, SLOW_ROWS_MAX);
         s.slowRowsFailed = false;
+        s.slowRowsLoading = false;
         emit();
       },
       () => {
         if (disposed || ctl.signal.aborted || mySeq !== readSeq) return;
         s.slowRows = [];
         s.slowRowsFailed = true;
+        s.slowRowsLoading = false;
         emit();
       }
     );
