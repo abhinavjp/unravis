@@ -133,7 +133,14 @@ func DeriveState(in StateInput) StateInfo {
 			fmt.Sprintf("%s could not be read to the end. What was read is used; the rest counts as a gap, never as zero.", recordingFileCount(n)))
 	}
 
-	interval := m.IntervalSeconds
+	// Lateness is judged against the interval the recorder actually ticks at.
+	// The light budget can widen it above the configured base, so prefer the
+	// manifest's effective interval when present (>0) and fall back to the base
+	// otherwise; an on-time widened sample must not look running-late.
+	interval := m.EffectiveIntervalSeconds
+	if interval <= 0 {
+		interval = m.IntervalSeconds
+	}
 	if interval <= 0 {
 		interval = DefaultIntervalSecond
 	}

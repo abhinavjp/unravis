@@ -83,11 +83,32 @@ func RunHost(ctx context.Context, o HostOptions) error {
 		}
 		col = hc
 	}
+	// Below-normal priority, once, best-effort: a failure is not logged and
+	// never stops recording.
+	_ = SetBelowNormalPriority()
+	budget := NewBudget(cfg.IntervalSeconds)
+	// Resolver wiring (BBX-1-11): owner-selected names resolve to live
+	// processes per call, and the wildcard groups get one process-set change
+	// verdict per collection cycle. With no selected targets, Targets stays
+	// nil and machine-wide groups work exactly as before.
+	resolver := NewResolver()
+	gate := &processChangeGate{resolver: resolver, changed: resolver.ProcessSetChanged()}
+	deps := GroupDeps{Config: cfg, Cores: CoreCount(), ProcessSetChanged: func() bool { return gate.changed }}
+	if len(cfg.Targets) > 0 {
+		deps.Targets = func() []ResolvedTarget {
+			rt, _ := resolver.ResolveTargets(cfg.Targets)
+			return rt
+		}
+	}
+	groups := BuildGroups(deps)
+	gate.inner = NewGroupCollector(col, groups, budget)
+	col = gate
 	disk := o.Disk
 	if disk == nil {
 		disk = OSDisk{}
 	}
-	rec := NewRecorder(RecorderOptions{Config: cfg, Store: store, Collector: col, Disk: disk, RunID: runID, Now: o.Now, Ticks: o.Ticks})
+	rec := NewRecorder(RecorderOptions{Config: cfg, Store: store, Collector: col, Disk: disk, RunID: runID,
+		Now: o.Now, Ticks: o.Ticks, Budget: budget, SelfUsage: SelfUsage})
 	srv := NewServer(ServerOptions{Store: store, Recorder: rec, Config: cfg, Keys: keys, Now: o.Now})
 
 	srvDone := make(chan struct{})
@@ -105,6 +126,23 @@ func RunHost(ctx context.Context, o HostOptions) error {
 	<-srvDone
 	return runErr
 }
+
+// processChangeGate asks the resolver once per collection cycle whether the
+// process set changed and shares that one verdict with every group: all
+// groups in a cycle re-expand together, and the snapshot cost is paid once
+// per tick, not once per group.
+type processChangeGate struct {
+	inner    Collector
+	resolver *Resolver
+	changed  bool
+}
+
+func (g *processChangeGate) Collect(now time.Time) (Sample, error) {
+	g.changed = g.resolver.ProcessSetChanged()
+	return g.inner.Collect(now)
+}
+
+func (g *processChangeGate) Close() error { return g.inner.Close() }
 
 func serveWithRetry(ctx context.Context, srv *Server, cfg Config, o HostOptions, logf func(string, ...any)) {
 	retry := o.ListenRetry

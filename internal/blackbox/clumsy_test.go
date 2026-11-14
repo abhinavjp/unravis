@@ -55,8 +55,8 @@ func (g *hostRig) startAndWait(t *testing.T, o HostOptions) {
 func TestClumsyWrongReadKeyIsRefusedEveryWay(t *testing.T) {
 	g := newHostRig(t)
 	g.startAndWait(t, g.opts())
-	g.ticks <- time.Now()
-	g.ticks <- time.Now()
+	g.tick(t, time.Now())
+	g.tick(t, time.Now())
 
 	// The right key works first, so the later refusals are about the key.
 	if code, _, body := g.do(t, "GET", "/status", map[string]string{KeyHeader: g.key}); code != 200 {
@@ -88,8 +88,8 @@ func TestClumsyWrongReadKeyIsRefusedEveryWay(t *testing.T) {
 func TestClumsyEveryRouteIsGuardedAndRepeatedWrongKeysAreTurnedAway(t *testing.T) {
 	g := newHostRig(t)
 	g.startAndWait(t, g.opts())
-	g.ticks <- time.Now()
-	g.ticks <- time.Now()
+	g.tick(t, time.Now())
+	g.tick(t, time.Now())
 	// Every route is guarded, not only /status.
 	for _, p := range []string{"/manifest", "/files", "/files/bb-20260101-00.ndjson"} {
 		if code, _, _ := g.do(t, "GET", p, nil); code != http.StatusUnauthorized {
@@ -116,8 +116,9 @@ func TestClumsyEveryRouteIsGuardedAndRepeatedWrongKeysAreTurnedAway(t *testing.T
 func TestClumsyReadersCannotChangeOrEscapeTheFolder(t *testing.T) {
 	g := newHostRig(t)
 	g.startAndWait(t, g.opts())
-	g.ticks <- time.Now()
-	g.ticks <- time.Now()
+	g.tick(t, time.Now())
+	g.tick(t, time.Now())
+	g.waitProcessed(t)
 	h := map[string]string{KeyHeader: g.key}
 	for _, m := range []string{"POST", "PUT", "DELETE", "PATCH"} {
 		if code, _, _ := g.do(t, m, "/files/bb-20260101-00.ndjson", h); code != http.StatusMethodNotAllowed {
@@ -158,12 +159,13 @@ func TestClumsyClockMovedFiveSecondsIsInTheManifestAndOnTheStatusClock(t *testin
 	o := g.opts()
 	o.Now = func() time.Time { return time.Now().Add(time.Duration(offset.Load())) }
 	g.startAndWait(t, o)
-	g.ticks <- o.Now()
-	g.ticks <- o.Now()
+	g.tick(t, o.Now())
+	g.tick(t, o.Now())
 
 	offset.Store(int64(5 * time.Second)) // someone sets the server clock 5 s ahead
-	g.ticks <- o.Now()
-	g.ticks <- o.Now()
+	g.tick(t, o.Now())
+	g.tick(t, o.Now())
+	g.waitProcessed(t)
 
 	code, hdr, body := g.do(t, "GET", "/manifest", map[string]string{KeyHeader: g.key})
 	if code != 200 {
@@ -217,8 +219,8 @@ func TestClumsyFullDrivePausesThenResumesAndSaysSoOnTheStatusPage(t *testing.T) 
 	h := map[string]string{KeyHeader: g.key}
 	step := func() {
 		clock.Add(int64(61 * time.Second)) // past the housekeeping interval
-		g.ticks <- o.Now()
-		g.ticks <- o.Now()
+		g.tick(t, o.Now())
+		g.tick(t, o.Now())
 	}
 	state := func() (string, int) {
 		_, _, body := g.do(t, "GET", "/status", h)
@@ -228,8 +230,11 @@ func TestClumsyFullDrivePausesThenResumesAndSaysSoOnTheStatusPage(t *testing.T) 
 		}
 		return st.State, st.Samples
 	}
-	g.ticks <- o.Now()
-	g.ticks <- o.Now()
+	g.tick(t, o.Now())
+	g.tick(t, o.Now())
+	// Settle both ticks before capturing n0: a tick still in flight would append
+	// one more sample after the pause and break the n == n0 check below.
+	g.waitProcessed(t)
 	s0, n0 := state()
 	if s0 != "running" || n0 < 1 {
 		t.Fatalf("%s %d", s0, n0)
@@ -313,8 +318,8 @@ func TestClumsyStopInTheMiddleOfWritingLeavesWholeLinesAndACleanManifest(t *test
 	g2 := newHostRig(t)
 	g2.cfg.Folder = g.cfg.Folder
 	g2.startAndWait(t, g2.opts())
-	g2.ticks <- time.Now()
-	g2.ticks <- time.Now()
+	g2.tick(t, time.Now())
+	g2.tick(t, time.Now())
 	_ = g2.stop(t)
 	m2, err := ReadManifest(g.cfg.Folder)
 	if err != nil || m2.SampleCount() <= m.SampleCount() {

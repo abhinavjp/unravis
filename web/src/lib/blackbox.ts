@@ -93,6 +93,16 @@ export interface ThisPc {
 
 export interface BlackboxList { items: BlackboxItem[]; thisPc: ThisPc; canPack: boolean }
 
+/** The kind of an owner-selected target: an IIS app pool or a Windows service (BBX-1-12). */
+export type TargetKind = 'appPool' | 'service';
+
+/** One owner-selected target. Only kind and name are kept: never a path, command line or key. */
+export interface TargetRef { kind: TargetKind; name: string }
+
+/** One detected app pool or service, as GET /api/blackbox/this-pc/targets lists it. Names only. */
+export interface TargetInfo { name: string; running: boolean }
+export interface TargetsAnswer { appPools: TargetInfo[]; services: TargetInfo[]; detected: boolean }
+
 export interface Settings {
   name: string;
   folder: string;
@@ -105,6 +115,8 @@ export interface Settings {
   record: { processes: boolean; logsCatalogue: boolean; copyLogsOnSnapshot: boolean };
   logPaths: string[];
   probe: { enabled: boolean };
+  /** The app pools and services the owner picked for per-process detail. Empty means machine-wide only. */
+  targets: TargetRef[];
 }
 
 export interface Refusal {
@@ -210,6 +222,8 @@ async function call<T>(method: string, path: string, body?: unknown, signal?: Ab
 export const blackboxApi = {
   list: (signal?: AbortSignal) => call<BlackboxList>('GET', '', undefined, signal),
   thisPc: (signal?: AbortSignal) => call<ThisPc>('GET', '/this-pc', undefined, signal),
+  /** The app pools and services detected on this PC, for the wizard's target picker. Names only; read once on mount. */
+  targets: (signal?: AbortSignal) => call<TargetsAnswer>('GET', '/this-pc/targets', undefined, signal),
   test: (body: AddBody) => call<TestAnswer>('POST', '/test', body),
   add: (body: AddBody) => call<BlackboxItem>('POST', '', body),
   check: (id: string) => call<BlackboxItem>('POST', '/' + encodeURIComponent(id) + '/check', {}),
@@ -265,12 +279,24 @@ export function nameProblem(name: string): 'empty' | 'long' | 'chars' | null {
 
 export const INTERVALS = [5, 15, 30, 60] as const;
 
+/**
+ * Add or remove one owner-selected target, matched by kind and name together (BBX-1-12). Pure: a new list
+ * comes back and the one given is never changed. A target holds only kind and name: never a path, command
+ * line or key. Checking a name in the wizard calls this; unchecking calls it again.
+ */
+export function toggleTarget(targets: TargetRef[], kind: TargetKind, name: string): TargetRef[] {
+  const at = targets.findIndex((t) => t.kind === kind && t.name === name);
+  if (at >= 0) return targets.filter((_, i) => i !== at);
+  return [...targets, { kind, name }];
+}
+
 /** The defaults the recorder ships with (internal/blackbox/config.go). `folder` is the D: drive default. */
 export function defaultSettings(name = ''): Settings {
   return {
     name, folder: 'D:\\UnravisBlackbox', intervalSeconds: 15, keepDays: 7, maxGB: 2, minFreePercent: 10, port: 7788, bind: '127.0.0.1',
     record: { processes: true, logsCatalogue: true, copyLogsOnSnapshot: false },
-    logPaths: ['C:\\inetpub\\logs\\LogFiles'], probe: { enabled: false }
+    logPaths: ['C:\\inetpub\\logs\\LogFiles'], probe: { enabled: false },
+    targets: []
   };
 }
 
