@@ -1159,8 +1159,13 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 			if r.Context().Err() != nil {
 				return // the client went away; nothing to write
 			}
-			writeRepoError(w, err)
-			return
+			// A failed api-seen read degrades like the audit-list failure below: the
+			// API and IIS lanes already built stay in the answer and the SQL lane keeps
+			// its unchanged fallback state (tracingAPISseenLane returns it untouched on
+			// error). The warning goes on warns, which caseTracing copies into
+			// resp.Warnings after the lane loop, so it survives. No error text, host or
+			// value reaches the answer.
+			warns = append(warns, "The database time the API saw could not be read for this window, so the database lane may be empty.")
 		}
 		appendLane(&resp, lane)
 	}
