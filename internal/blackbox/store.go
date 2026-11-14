@@ -419,7 +419,9 @@ func (s *Store) rollbackLocked(before int64) {
 	_ = s.cur.Close()
 	s.cur, s.curN = nil, ""
 	if err := os.Truncate(filepath.Join(s.dir, name), before); err != nil {
-		s.event(s.now(), EventWriteFailed, "could not cut a half-written line out of "+name+": "+err.Error())
+		// Fixed code only (C10): the file name, the folder path and the OS
+		// error text must never reach the manifest, which ships in snapshots.
+		s.event(s.now(), EventWriteFailed, codeWriteFailed)
 	}
 }
 

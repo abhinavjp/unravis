@@ -448,6 +448,95 @@ type noTruncate struct{ halfWriter }
 
 func (noTruncate) Truncate(int64) error { return errors.New("Access is denied.") }
 
+// cutFailWriter stands for a volume where the half line cannot be cut at all:
+// Write and Truncate fail with injected text, and Close drops the file so the
+// fallback os.Truncate by name in rollbackLocked fails too. codeFailWriter
+// (recorder_test.go) cannot reach that branch: its embedded *os.File always
+// truncates fine, and so does the by-name cut on the real file.
+type cutFailWriter struct {
+	*os.File
+	fail *bool
+	err  error
+	path string
+}
+
+func (w cutFailWriter) Write(b []byte) (int, error) {
+	if *w.fail {
+		return 0, w.err
+	}
+	return w.File.Write(b)
+}
+
+func (w cutFailWriter) Truncate(n int64) error {
+	if *w.fail {
+		return w.err
+	}
+	return w.File.Truncate(n)
+}
+
+func (w cutFailWriter) Close() error {
+	err := w.File.Close()
+	if *w.fail {
+		_ = os.Remove(w.path)
+	}
+	return err
+}
+
+// C10: when even the by-name cut fails, the write-failed event must carry the
+// fixed code only — no file name, no folder path, no OS error text. The
+// manifest is copied into snapshots, so nothing free-form may reach it.
+func TestStoreRollbackCutFailureEventIsFixedCode(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	s := openT(t, dir, "r1", c)
+	fail := false
+	s.wrapFile = func(f *os.File) recFile {
+		return cutFailWriter{File: f, fail: &fail, err: errors.New(secretEventText), path: filepath.Join(dir, FileNameFor(t0))}
+	}
+	if err := s.Append(smp("r1", 1, t0), ""); err != nil {
+		t.Fatal(err)
+	}
+	fail = true
+	if err := s.Append(smp("r1", 2, t0.Add(15*time.Second)), ""); err == nil {
+		t.Fatal("the failing write was reported as fine")
+	}
+	// The fallback branch ran: the handle truncate failed and the by-name
+	// truncate failed, so exactly one write-failed event with the fixed code.
+	m := s.Manifest()
+	if n := fixedEvents(t, m, EventWriteFailed, codeWriteFailed); n != 1 {
+		t.Fatalf("write-failed events = %d, want 1", n)
+	}
+	for _, e := range m.Events {
+		if e.Kind != EventWriteFailed {
+			continue
+		}
+		for _, frag := range []string{dir, secretEventText, "secret driver text", `C:\instances`, "MSSQL$PROD1", FileNameFor(t0)} {
+			if strings.Contains(e.Detail, frag) {
+				t.Fatalf("event detail leaks %q: %q", frag, e.Detail)
+			}
+		}
+	}
+	// The store keeps going after the failed cut.
+	fail = false
+	if err := s.Append(smp("r1", 3, t0.Add(30*time.Second)), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close("stopped"); err != nil {
+		t.Fatal(err)
+	}
+	// The serialized manifest is what ships in snapshots: no folder path (raw
+	// or JSON-escaped) and no fragment of the injected error text in it.
+	data, err := os.ReadFile(filepath.Join(dir, ManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, frag := range []string{dir, strings.ReplaceAll(dir, `\`, `\\`), secretEventText, "secret driver text", "MSSQL$PROD1"} {
+		if strings.Contains(string(data), frag) {
+			t.Fatalf("manifest leaks %q:\n%s", frag, data)
+		}
+	}
+}
+
 // The hour file's handle itself must be able to cut the file back. On Windows a
 // handle opened with O_APPEND has no right to do that ("Access is denied").
 func TestStoreHourFileHandleCanTruncate(t *testing.T) {
