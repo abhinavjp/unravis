@@ -17,7 +17,9 @@ func (s *Store) Activity(ctx context.Context, input audit.ActivityInput) (audit.
 	// ActivityQuery leaves the user and API filters off the Query. They ride on it
 	// from here, so a cursor is tied to them (the fingerprint covers the Query) and
 	// the legacy reader rechecks them in Go. activityPipeline applies them on the
-	// server in a stage of their own, never inside the overlap $or.
+	// server in a stage of their own, never inside the overlap $or. The MongoDB 3.4
+	// adapter sends only the first $match, so it merges that stage into it
+	// (legacyFirstMatch): the filter then runs before the legacy scan cap.
 	if input.UserID != nil {
 		q.UserIDs = []int{*input.UserID}
 	}
@@ -68,7 +70,9 @@ func activityPipeline(q audit.Query, source string, after *pageCursor, limit int
 }
 
 // activityFilterMatch is the user and API conditions of q as equality tests on
-// the raw fields, in a $match that runs on every row after the overlap $or. The
+// the raw fields, in a $match that runs on every row after the overlap $or. It
+// must stay a $match of plain 3.4 operators placed directly after the first one:
+// legacyFirstMatch merges it into the first $match for MongoDB 3.4. The
 // user uses recordMatch, so an older row that stores the id as text still
 // matches. Values are BSON values, never spliced into text. An Operation that
 // does not split matches nothing instead of dropping the condition.

@@ -71,8 +71,8 @@ func rewriteLegacyPipeline(pipeline mongo.Pipeline) (mongo.Pipeline, error) {
 	if len(pipeline) == 0 || len(pipeline[0]) == 0 {
 		return nil, errors.New("empty legacy aggregation")
 	}
-	first, ok := pipeline[0][0].Value.(bson.D)
-	if !ok || pipeline[0][0].Key != "$match" {
+	first, ok := legacyFirstMatch(pipeline)
+	if !ok {
 		return nil, errors.New("unsupported legacy aggregation shape")
 	}
 	encoded, _ := bson.MarshalExtJSON(bson.D{{Key: "pipeline", Value: pipeline}}, false, false)
@@ -124,14 +124,81 @@ func legacyMetadataPipelineFor(pipeline mongo.Pipeline, fields []string) mongo.P
 	if isLegacyMetadataPipeline(pipeline) {
 		return pipeline
 	}
-	if len(pipeline) == 0 || len(pipeline[0]) == 0 || pipeline[0][0].Key != "$match" {
-		return nil
-	}
-	match, ok := pipeline[0][0].Value.(bson.D)
+	match, ok := legacyFirstMatch(pipeline)
 	if !ok {
 		return nil
 	}
 	return rawLegacyMetadataPipelineFor(match, fields)
+}
+
+// legacyFirstMatch is the one condition the MongoDB 3.4 adapter sends to the
+// server: it keeps pipeline[0] and drops every later stage, because the derived
+// fields those stages build need operators 3.4 lacks. Everything the server does
+// not test here is tested in Go, after the scan cap, and a scan over the cap fails
+// with legacyScanLimit instead of returning a cut list.
+//
+// So a filter that can be written as a plain 3.4 condition must reach this match,
+// or it runs after the cap and a rare value is lost among many rows. The activity
+// pipeline keeps its user and API filter in a $match of its own right after the
+// overlap match (never inside the overlap $or, where it would let rows through),
+// and that stage is merged here, in an $and with the first one. A later $match is
+// never merged: it follows a $set and reads derived fields. A stage that holds an
+// operator outside legacySafeOperators is left out and stays a Go filter.
+func legacyFirstMatch(pipeline mongo.Pipeline) (bson.D, bool) {
+	if len(pipeline) == 0 || len(pipeline[0]) == 0 || pipeline[0][0].Key != "$match" {
+		return nil, false
+	}
+	first, ok := pipeline[0][0].Value.(bson.D)
+	if !ok {
+		return nil, false
+	}
+	if len(pipeline) > 1 && len(pipeline[1]) == 1 && pipeline[1][0].Key == "$match" {
+		if next, ok := pipeline[1][0].Value.(bson.D); ok && len(next) > 0 && legacySafeCondition(next) {
+			return bson.D{{Key: "$and", Value: bson.A{first, next}}}, true
+		}
+	}
+	return first, true
+}
+
+// legacySafeOperators are the query operators a filter may use to be sent to
+// MongoDB 3.4 as it is: boolean joins, comparison, $in, $exists and the plain
+// regex pair. $expr, $convert, $toLong, $trim, $toDate, $where and every
+// aggregation expression are absent on purpose.
+var legacySafeOperators = map[string]bool{
+	"$and": true, "$or": true, "$in": true, "$eq": true, "$gt": true, "$gte": true,
+	"$lt": true, "$lte": true, "$exists": true, "$regex": true, "$options": true,
+}
+
+// legacySafeCondition reports whether every $-key in a match condition is one of
+// legacySafeOperators. Field names, plain values and BSON scalars pass.
+func legacySafeCondition(v any) bool {
+	switch c := v.(type) {
+	case bson.D:
+		for _, e := range c {
+			if strings.HasPrefix(e.Key, "$") && !legacySafeOperators[e.Key] {
+				return false
+			}
+			if !legacySafeCondition(e.Value) {
+				return false
+			}
+		}
+	case bson.M:
+		for k, e := range c {
+			if strings.HasPrefix(k, "$") && !legacySafeOperators[k] {
+				return false
+			}
+			if !legacySafeCondition(e) {
+				return false
+			}
+		}
+	case bson.A:
+		for _, e := range c {
+			if !legacySafeCondition(e) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func rawLegacyMetadataPipeline(match bson.D) mongo.Pipeline {
@@ -602,10 +669,19 @@ func readLegacyRequestRowsOrdered(ctx context.Context, p *profile, q audit.Query
 // legacyRecordFilterMatches applies q's record filters to one projected legacy
 // record: the raw-field filters through audit.RecordFilterMatches and the derived
 // completion through audit.StateMatches, the same rules recordMatch and
-// recordPostMatch give a modern server. The first $match already made the raw
-// filters on the full documents, so a value cut at its projection cap cannot
-// disprove a match (the Truncated flags). stateRecord is the record normalized
-// with the query's metric.
+// recordPostMatch give a modern server.
+//
+// Which filter runs where on MongoDB 3.4 (see legacyFirstMatch): the raw-field
+// filters (user, UI version, client IP, user agent, URL, audit id, status) and the
+// controller and action are plain conditions in the first $match, made on the full
+// documents before the scan cap, so a value cut at its projection cap cannot
+// disprove a match (the Truncated flags). The checks below repeat them in Go as a
+// second look. The derived ones cannot be written for 3.4 and run only here,
+// after the cap: the completion state, the numeric ranges (they compare values
+// that may be stored as text, or two fields) and the kind and outcome. A scan that
+// reaches the cap because of them fails with legacyScanLimit, which tells the
+// reader to narrow the window; it never returns a cut list. stateRecord is the
+// record normalized with the query's metric.
 func legacyRecordFilterMatches(q audit.Query, record, stateRecord legacyRecord) bool {
 	q = q.Normalized()
 	if q.Controller != "" && record.Controller != q.Controller {
