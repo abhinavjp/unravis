@@ -31,13 +31,15 @@ test('closing steps back to the timeline entry', () => {
   assert.ok(close.includes('marker.stepBack(CASE_TRACING_MARK)'), 'stepBack to the timeline mark missing in closeSlowCall');
 });
 
-test('Esc closes the call screen after the drill guard and before stepUpOnce', () => {
+test('Esc closes the call screen before stepUpOnce, and the retired drill pop-up leaves no trace', () => {
   const keys = body('export function onWindowKey(');
-  const guard = keys.indexOf('if (drillOpen) return;');
   const call = keys.indexOf('if (slowCall) { closeSlowCall(); return; }');
   const step = keys.indexOf('stepUpOnce();');
-  assert.ok(guard >= 0 && call >= 0 && step >= 0, 'a key line is missing');
-  assert.ok(guard < call && call < step, 'order must be drill guard, then call close, then stepUpOnce');
+  assert.ok(call >= 0 && step >= 0, 'a key line is missing');
+  assert.ok(call < step, 'order must be call close, then stepUpOnce');
+  assert.ok(!/drillOpen|setDrillOpen/.test(src), 'the drill pop-up flag must be gone from appState');
+  const popup = path.join(__dirname, '..', 'src', 'components', 'DrillPopup.svelte');
+  assert.ok(!fs.existsSync(popup), 'DrillPopup.svelte must be deleted');
 });
 
 test('the remembered call target reads and writes inside try and catch', () => {
