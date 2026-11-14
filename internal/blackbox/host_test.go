@@ -9,9 +9,25 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// countingCollector wraps the rig's collector and counts every Collect call that
+// returns. The recorder loop is sequential, so this is a processed-tick signal
+// the rig can wait on: once a tick's Collect has returned, its append is next.
+type countingCollector struct {
+	inner Collector
+	done  atomic.Int64 // Collect calls returned
+}
+
+func (c *countingCollector) Collect(now time.Time) (Sample, error) {
+	s, err := c.inner.Collect(now)
+	c.done.Add(1)
+	return s, err
+}
+func (c *countingCollector) Close() error { return c.inner.Close() }
 
 type hostRig struct {
 	cfg    Config
@@ -20,10 +36,16 @@ type hostRig struct {
 	ln     net.Listener
 	ticks  chan time.Time
 	col    *fakeCollector
+	ccount *countingCollector
 	ready  chan string
 	cancel context.CancelFunc
 	done   chan error
 	logs   chan string
+
+	// sent counts the ticks the test has pushed through tick. The recorder also
+	// takes one sample at once when Run starts, so a running rig holds 1+sent
+	// samples once every sent tick has been processed.
+	sent atomic.Int64
 
 	stopped bool
 	stopErr error
@@ -32,6 +54,7 @@ type hostRig struct {
 func newHostRig(t *testing.T) *hostRig {
 	t.Helper()
 	g := &hostRig{ticks: make(chan time.Time), col: &fakeCollector{}, ready: make(chan string, 1), done: make(chan error, 1), logs: make(chan string, 64)}
+	g.ccount = &countingCollector{inner: g.col}
 	g.cfg = Default()
 	g.cfg.Name = "box"
 	g.cfg.Folder = filepath.Join(t.TempDir(), "rec")
@@ -51,7 +74,7 @@ func newHostRig(t *testing.T) *hostRig {
 }
 
 func (g *hostRig) opts() HostOptions {
-	return HostOptions{Config: g.cfg, KeyPath: g.keyP, Version: "test", Collector: g.col, Disk: &pctDisk{pct: 80},
+	return HostOptions{Config: g.cfg, KeyPath: g.keyP, Version: "test", Collector: g.ccount, Disk: &pctDisk{pct: 80},
 		Listener: g.ln, Ticks: g.ticks, Ready: func(a string) { g.ready <- a },
 		Log: func(f string, a ...any) {
 			select {
@@ -59,6 +82,65 @@ func (g *hostRig) opts() HostOptions {
 			default:
 			}
 		}}
+}
+
+// tick sends one tick and remembers it, so waitProcessed knows how many ticks
+// the recorder still owes. Sending on the unbuffered channel only proves the
+// loop RECEIVED the tick; processing (collect + append) finishes later, which is
+// why a test must waitProcessed before reading state it depends on.
+func (g *hostRig) tick(t *testing.T, now time.Time) {
+	t.Helper()
+	g.sent.Add(1)
+	g.ticks <- now
+}
+
+// waitProcessed blocks until every tick sent so far has been fully processed and
+// its sample appended, so a test can read state without racing an in-flight tick.
+//
+// Sending on the unbuffered ticks channel only proves the loop RECEIVED a tick;
+// processing (collect, then append) finishes later. The processed-tick counter
+// first confirms every sent tick has been collected; the status page then
+// confirms the samples landed. The status page reads the store's IN-MEMORY
+// manifest, which Append updates synchronously, so this never races the store's
+// atomic manifest rename on Windows (reading the manifest file while the
+// recorder writes it would). Call it only while the rig is running and its
+// status server is listening.
+func (g *hostRig) waitProcessed(t *testing.T) {
+	t.Helper()
+	want := 1 + g.sent.Load() // the first sample Run takes at once, plus sent ticks
+	g.waitDone(t, want)       // every sent tick collected; appends follow at once
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var st StatusDoc
+		if _, body := g.get(t, "/status", g.key); json.Unmarshal(body, &st) == nil && int64(st.Samples) >= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("samples never reached %d", want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// waitCollected blocks until every tick sent so far has been collected. It is the
+// barrier for rigs whose status server is not listening (a busy port): the
+// caller reads the manifest file itself, once, after the ticks are done.
+func (g *hostRig) waitCollected(t *testing.T) {
+	t.Helper()
+	g.waitDone(t, 1+g.sent.Load())
+}
+
+// waitDone waits until at least n Collect calls have returned. The recorder loop
+// is sequential, so a returned Collect means that tick's append is next.
+func (g *hostRig) waitDone(t *testing.T, n int64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for g.ccount.done.Load() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d ticks finished collecting, want %d", g.ccount.done.Load(), n)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func (g *hostRig) start(t *testing.T, o HostOptions) {
@@ -116,8 +198,9 @@ func TestRunHostRecordsServesAndStopsCleanly(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("server never listened")
 	}
-	g.ticks <- time.Now()
-	g.ticks <- time.Now() // a second send proves the first tick was taken
+	g.tick(t, time.Now())
+	g.tick(t, time.Now()) // a second send proves the first tick was taken
+	g.waitProcessed(t)
 	code, body := g.get(t, "/status", g.key)
 	if code != 200 {
 		t.Fatalf("%d %s", code, body)
@@ -177,14 +260,15 @@ func TestRunHostKeepsRecordingWhenThePortIsBusyAndTakesItLater(t *testing.T) {
 	o.Config.Port = port
 	o.ListenRetry = 50 * time.Millisecond
 	g.start(t, o)
-	g.ticks <- time.Now()
-	g.ticks <- time.Now()
+	g.tick(t, time.Now())
+	g.tick(t, time.Now())
 	select {
 	case <-g.logs:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the busy port was not reported")
 	}
 	// Recording went on although the status page could not open.
+	g.waitCollected(t)
 	if m, err := ReadManifest(g.cfg.Folder); err != nil || m.SampleCount() < 1 {
 		t.Fatalf("%v %+v", err, m)
 	}
@@ -211,7 +295,7 @@ func TestRunHostStopWhileWaitingForAPortReturns(t *testing.T) {
 	o.Config.Bind = "127.0.0.1"
 	o.Config.Port = busy.Addr().(*net.TCPAddr).Port
 	g.start(t, o)
-	g.ticks <- time.Now()
+	g.tick(t, time.Now())
 	if err := g.stop(t); err != nil {
 		t.Fatal(err)
 	}
