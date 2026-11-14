@@ -176,6 +176,8 @@ func tracingHeldSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis,
 	label := sqlRuns[0].Report.Label
 	var allT []int64
 	intervalMin := 0
+	// maxPointBlock is the longest span one saved point covers: lane downsampling merges points (DATA-04).
+	var maxPointBlock int64
 	for _, lr := range sqlRuns {
 		if lr.source() != source {
 			continue
@@ -204,6 +206,7 @@ func tracingHeldSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis,
 			a.maxMs = max(a.maxMs, p.MaxMs)
 			a.filled = true
 			total += p.Execs
+			maxPointBlock = max(maxPointBlock, p.BlockSeconds)
 		}
 	}
 	if total == 0 {
@@ -226,7 +229,11 @@ func tracingHeldSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis,
 			byStart[from] = k
 		}
 	}
-	lane.BlockSeconds = heldSQLBlockSeconds(intervalMin, allT)
+	if maxPointBlock > 0 {
+		lane.BlockSeconds = int(maxPointBlock)
+	} else {
+		lane.BlockSeconds = heldSQLBlockSeconds(intervalMin, allT)
+	}
 	for i := range lane.Buckets {
 		a := cells[byStart[lane.Buckets[i].Start]]
 		if a == nil {

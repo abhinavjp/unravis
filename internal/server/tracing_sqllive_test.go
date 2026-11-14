@@ -331,3 +331,17 @@ func TestHeldSQLLaneDifferentTSameBucketStillAdds(t *testing.T) {
 		t.Fatalf("bucket busyMs %v, want 2500 (100*20 + 50*10)", b.BusyMs)
 	}
 }
+
+// A saved day whose points were merged (DATA-04) carries the span each point covers; the lane block length follows it,
+// so the web model spreads the busy time over the true span, not over the base block.
+func TestHeldSQLLaneBlockLengthFollowsMergedPointSpan(t *testing.T) {
+	t0 := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC).Unix()
+	series := []dbhealth.LaneSeriesPoint{
+		{T: t0, Execs: 100, AvgMs: 20, MaxMs: 90, BlockSeconds: 1800},
+		{T: t0 + 1800, Execs: 100, AvgMs: 20, MaxMs: 90, BlockSeconds: 1800},
+	}
+	lane := heldSQLTestLane(t, series, 15)
+	if lane.BlockSeconds != 1800 {
+		t.Fatalf("blockSeconds %d, want 1800 (the merged span, not the 15-minute base)", lane.BlockSeconds)
+	}
+}
