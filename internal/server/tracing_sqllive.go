@@ -2,8 +2,12 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"api-audit-explorer/internal/calltrace"
@@ -134,6 +138,71 @@ func heldSQLQueryStoreLane(held []laneRun, axis tracingAxis) (tracingLane, bool)
 	}, true
 }
 
+// heldReportDecodes counts the saved reports decoded from JSON for the held SQL lane. Tests read it to prove a repeated
+// Timeline request does not decode an unchanged saved day again (DATA-15).
+var heldReportDecodes atomic.Int64
+
+// heldReportKey names one saved report. The run id and save time say which day it is; the length and a hash of the
+// stored bytes keep two cases that both have, say, run 3 saved at the same second from being mixed up, and make a
+// day saved again always miss.
+type heldReportKey struct {
+	id  int64
+	at  int64
+	n   int
+	sum [sha256.Size]byte
+}
+
+// heldReportCache keeps the decoded saved reports, so a Timeline request decodes a saved day only the first time it
+// is seen (DATA-15). A nil value records a report that could not be decoded. The decoded reports are shared and only
+// read. Past heldReportCacheMax entries the cache is emptied, which bounds it to a few hundred kilobytes per day.
+var heldReportCache = struct {
+	sync.Mutex
+	m map[heldReportKey]*dbhealth.Report
+}{m: map[heldReportKey]*dbhealth.Report{}}
+
+const heldReportCacheMax = 128
+
+func heldReportOf(r casestore.HealthRun) *dbhealth.Report {
+	key := heldReportKey{id: r.ID, at: r.At.UnixNano(), n: len(r.Report), sum: sha256.Sum256(r.Report)}
+	heldReportCache.Lock()
+	rep, hit := heldReportCache.m[key]
+	heldReportCache.Unlock()
+	if hit {
+		return rep
+	}
+	heldReportDecodes.Add(1)
+	rep = new(dbhealth.Report)
+	if json.Unmarshal(r.Report, rep) != nil || rep.Lane == nil {
+		rep = nil
+	}
+	heldReportCache.Lock()
+	if len(heldReportCache.m) >= heldReportCacheMax {
+		heldReportCache.m = map[heldReportKey]*dbhealth.Report{}
+	}
+	heldReportCache.m[key] = rep
+	heldReportCache.Unlock()
+	return rep
+}
+
+// heldSQLLaneRuns lists the saved SQL lane days, newest first, like laneHeld but only the SQL ones, and without
+// decoding a day that was decoded before.
+func heldSQLLaneRuns(ctx context.Context, hs casestore.HealthStore) ([]laneRun, error) {
+	runs, err := hs.HealthRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []laneRun
+	for _, r := range runs {
+		if r.Kind != "sql" {
+			continue
+		}
+		if rep := heldReportOf(r); rep != nil {
+			out = append(out, laneRun{Run: r, Report: *rep})
+		}
+	}
+	return out, nil
+}
+
 // tracingHeldSQLLane builds the SQL lane from the saved lane days of the case
 // that cover the window, or reports false when the case holds none. Only the
 // newest saved source is used: two servers' counts must not be added together.
@@ -142,7 +211,7 @@ func tracingHeldSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis,
 	if !ok {
 		return tracingLane{}, false
 	}
-	held, err := laneHeld(ctx, hs)
+	held, err := heldSQLLaneRuns(ctx, hs)
 	if err != nil {
 		return tracingLane{}, false
 	}
