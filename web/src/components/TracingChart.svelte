@@ -1,3 +1,37 @@
+<script module lang="ts">
+  import type { TracingLaneKey as HintLaneKey } from '../lib/tracing/model';
+
+  // The key that opens the slowest call of a bucket, said in plain words wherever the chart tells the keys.
+  export const SHIFT_ENTER_HINT = 'Shift+Enter opens the slowest call.';
+  /** The bucket selector's name: every key it answers to, in plain words. */
+  export const BUCKET_SELECTOR_LABEL = 'Time buckets. Left and right arrow keys move, Home and End jump to the first and last bucket. Enter opens Run analysis for the selected bucket. Shift+Enter opens the slowest call when the bucket has a red diamond.';
+  /** What a screen reader hears for the selector before any bucket is chosen. */
+  export const NO_BUCKET_TEXT = 'No bucket chosen yet. Press an arrow key to choose one.';
+
+  /** The tooltip line that names Shift+Enter: only for keyboard users, only when the bucket has a red diamond the screen can open. */
+  export function diamondKeyHint(input: { flagged: boolean; hasHandler: boolean; fromKeyboard: boolean }): string {
+    return input.flagged && input.hasHandler && input.fromKeyboard ? SHIFT_ENTER_HINT : '';
+  }
+
+  /** Which lane heads are under the pointer or hold the focus, and which of them the user already closed with Esc. */
+  export interface HintState { hover: HintLaneKey | null; focus: HintLaneKey | null; closed: HintLaneKey[] }
+  /** The lane hints on screen now: shown by hover or focus and not yet closed. */
+  export function openHints(state: HintState): HintLaneKey[] {
+    const shown: HintLaneKey[] = [];
+    for (const key of [state.hover, state.focus]) if (key && !state.closed.includes(key) && !shown.includes(key)) shown.push(key);
+    return shown;
+  }
+  /** Esc closes the open hints and is used up only when there was one; otherwise it belongs to whatever is behind. */
+  export function escapeHints(state: HintState): { handled: boolean; closed: HintLaneKey[] } {
+    const shown = openHints(state);
+    return shown.length === 0 ? { handled: false, closed: state.closed } : { handled: true, closed: [...state.closed, ...shown] };
+  }
+  /** Once the pointer and the focus have both left a lane head, its hint may show again next time. */
+  export function forgetHint(state: HintState, key: HintLaneKey): HintLaneKey[] {
+    return state.hover === key || state.focus === key ? state.closed : state.closed.filter((other) => other !== key);
+  }
+</script>
+
 <script lang="ts">
   // The Investigation Timeline chart (WP-17b): one stacked row per lane (API audit, SQL, IIS) on one shared,
   // server-floored UTC axis. Bars are exactly the buckets the server returned; nothing here sums, estimates
@@ -294,7 +328,44 @@
     tipFromTouch && tipSlot != null && orderedLanes.some((lane) => drawsBars(lane) && (laneBars.get(lane.key)?.byIndex.get(tipSlot as number)?.count ?? 0) > 0)
   );
   // Screen readers do not re-read a changed tooltip description, so keyboard moves are also spoken through one polite live region.
-  const liveText = $derived(tipFromKeyboard ? tipGroups.map((group) => group.name + '. ' + group.lines.join('. ')).join(' ') : '');
+  // The Shift+Enter line shows with the keyboard tooltip of a bucket that has a red diamond, and is spoken with it.
+  const tipKeyHint = $derived(diamondKeyHint({ flagged: tipSlot != null && auditMarkFlagged(tipSlot), hasHandler: !!onDiamond, fromKeyboard: tipFromKeyboard }));
+  const liveText = $derived(tipFromKeyboard ? tipGroups.map((group) => group.name + '. ' + group.lines.join('. ')).join(' ') + (tipKeyHint ? ' ' + tipKeyHint : '') : '');
+  // The slider's value in words: which bucket is chosen, its place among the shown ones, and the key for a red diamond.
+  const sliderText = $derived.by(() => {
+    if (!grid || current == null) return NO_BUCKET_TEXT;
+    const start = slotStartMs(grid, current);
+    const place = `bucket ${current - range.from + 1} of ${shown}`;
+    const key = diamondKeyHint({ flagged: auditMarkFlagged(current), hasHandler: !!onDiamond, fromKeyboard: true });
+    return `${at(start)} to ${at(start + grid.widthMs)}, ${place}.${key ? ' ' + key : ''}`;
+  });
+
+  // Lane hint buttons (WCAG 1.4.13): the hint shows on hover and on focus, stays while the pointer is over it, and Esc closes it.
+  let hintHover = $state<HintLaneKey | null>(null);
+  let hintFocus = $state<HintLaneKey | null>(null);
+  let hintClosed = $state<HintLaneKey[]>([]);
+  const hintState = (): HintState => ({ hover: hintHover, focus: hintFocus, closed: hintClosed });
+  function hintEnter(key: HintLaneKey) { hintHover = key; }
+  function hintLeave(key: HintLaneKey) {
+    if (hintHover === key) hintHover = null;
+    hintClosed = forgetHint(hintState(), key);
+  }
+  function hintFocusIn(key: HintLaneKey) { hintFocus = key; }
+  function hintFocusOut(key: HintLaneKey, event: FocusEvent) {
+    // Focus moving between the parts of one lane head is not leaving it.
+    if ((event.currentTarget as HTMLElement | null)?.contains(event.relatedTarget as Node | null)) return;
+    if (hintFocus === key) hintFocus = null;
+    hintClosed = forgetHint(hintState(), key);
+  }
+  // Runs before every other Esc handler on the page (capture), and only takes the key when a hint is open, so nothing else closes with it.
+  function onWindowKeyCapture(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || dragFrom != null) return;
+    const result = escapeHints(hintState());
+    if (!result.handled) return;
+    hintClosed = result.closed;
+    event.preventDefault();
+    event.stopPropagation();
+  }
 
   function showKeyboardTip() {
     if (!grid || current == null) return;
@@ -459,7 +530,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onWindowKey} />
+<svelte:window onkeydown={onWindowKey} onkeydowncapture={onWindowKeyCapture} />
 
 {#snippet legendFor(key: TracingLaneKey)}
   <!-- One small key per lane, in the lane's own header: what its bars, line and red diamonds mean, and nothing else. -->
@@ -543,9 +614,10 @@
       {@const unreadRunList = unreadRuns(unreadByLane.get(lane.key) ?? new Set<number>(), range.from, range.to)}
       {@const chunkLine = laneChunkLine(lane, at)}
       {@const noFile = lane.key !== 'audit' && lane.state === 'no-data' && !lane.disabled && !unselected.includes(lane.key)}
-      <!-- Not a tab stop: it has no action. The name and the hint stay available to screen readers, and the hint shows on hover. -->
-      <div class="lane-label" role="group" aria-label={LANE_NAME[lane.key]} aria-describedby="tc-hint-{lane.key}" data-truncated={lane.truncated ? 'true' : undefined} style="--row:{laneIndex + 1}">
-        <span class="lane-title"><span class="swatch" style={SWATCH_STYLE[lane.key]} aria-hidden="true"></span><strong>{LANE_NAME[lane.key]}</strong></span>
+      <!-- The head itself is not a tab stop (it has no action). Its "?" button is: it describes itself by the hint, which shows on hover or focus and closes with Esc. -->
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div class="lane-label" role="group" aria-label={LANE_NAME[lane.key]} data-hint-closed={hintClosed.includes(lane.key) ? "true" : undefined} onpointerenter={() => hintEnter(lane.key)} onpointerleave={() => hintLeave(lane.key)} onfocusin={() => hintFocusIn(lane.key)} onfocusout={(event) => hintFocusOut(lane.key, event)} data-truncated={lane.truncated ? 'true' : undefined} style="--row:{laneIndex + 1}">
+        <span class="lane-title"><span class="swatch" style={SWATCH_STYLE[lane.key]} aria-hidden="true"></span><strong>{LANE_NAME[lane.key]}</strong><button type="button" class="hint-btn" aria-label="{LANE_NAME[lane.key]}: what this row shows" aria-describedby="tc-hint-{lane.key}">?</button></span>
         <small class="ask">{LANE_ASK[lane.key]}</small>
         {#if showsProvenance(lane)}
           <small class="origin">{lane.origin === 'live' ? TOOLTIP_TEXT.readJustNow : TOOLTIP_TEXT.fromSavedLogs} · {at(lane.asOf)}</small>
@@ -676,12 +748,15 @@
       </div>
     {/if}
 
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
-      role="group"
+      role="slider"
       aria-roledescription="bucket selector"
-      aria-label="Time buckets. Left and right arrow keys move, Home and End jump to the first and last bucket, Enter opens Run analysis for the selected bucket."
+      aria-label={BUCKET_SELECTOR_LABEL}
+      aria-orientation="horizontal"
+      aria-valuemin={range.from}
+      aria-valuemax={Math.max(range.from, range.to - 1)}
+      aria-valuenow={current ?? range.from}
+      aria-valuetext={sliderText}
       aria-describedby="tc-tip"
       tabindex="0"
       class="overlay"
@@ -705,6 +780,7 @@
           </div>
         {/each}
         {#if tipOpenable}<span class="tip-action">{TOOLTIP_TEXT.tapAgain}</span>{/if}
+        {#if tipKeyHint}<span class="tip-action">{tipKeyHint}</span>{/if}
       </div>
       {#if grid}
         {#each slotIndexes as i (i)}
@@ -767,6 +843,11 @@
   .lane-label { position: relative; }
   .hint { display: none; position: absolute; left: 0; top: 100%; z-index: 3; width: max-content; max-width: 22rem; padding: var(--space-2); color: var(--text); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); }
   .lane-label:hover .hint, .lane-label:focus-within .hint { display: block; }
+  .lane-label[data-hint-closed] .hint { display: none; }
+  /* The "?" button that carries the hint: a real tab stop, at least 24 px square. */
+  .hint-btn { flex: none; width: 1.5rem; height: 1.5rem; padding: 0; color: var(--text-2); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: 50%; font: inherit; font-size: var(--fs-2); line-height: 1; cursor: help; }
+  .hint-btn:hover { color: var(--text); }
+  .hint-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .lane-label .origin { color: var(--text-2); }
   /* The one-line question stays for screen readers; the lane name and its panel title already say it on screen. */
   .lane-label .ask { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
