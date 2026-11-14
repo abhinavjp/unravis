@@ -157,7 +157,7 @@ func TestOutputNoNames(t *testing.T) {
 		Requests{WaitType: "RUNNING", Tasks: 1, MaxWaitMs: 1, Blocked: 1, HeadBlockers: 1, MaxBlockMs: 1},
 		Waits{WaitType: "WRITELOG", DeltaMs: 1, DeltaTasks: 1},
 		Schedulers{CurrentTasks: 1, RunnableTasks: 1},
-		Semaphores{ResourceSemaphoreID: 1, Grantees: 1, Waiters: 1, Forced: i32p(1), Timeouts: i32p(1)},
+		Semaphores{PoolID: i32p(2), ResourceSemaphoreID: 1, Grantees: 1, Waiters: 1, Forced: i32p(1), Timeouts: i32p(1)},
 		Tempdb{InternalPages: 1, UserPages: 1},
 		FileStats{DatabaseID: 1, FileID: 1, ReadStallMs: 1, WriteStallMs: 1, Reads: 1, Writes: 1, SizeOnDiskBytes: 1},
 		AG{DatabaseID: 1, SyncState: 1},

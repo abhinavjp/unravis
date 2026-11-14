@@ -223,6 +223,15 @@ func applyPool(db *sql.DB, p poolSettings) {
 // openDB is the constructor seam tests use to observe Open's *sql.DB.
 var openDB = sql.OpenDB
 
+// connectInner is the driver-connector factory seam OpenContext admits through
+// (W8-01/W8-02/W8-06). nil means the real go-mssqldb connector built from the
+// parsed config and the per-connect clamped loopback dialer; production never
+// sets it. A test sets it to a fake database/sql/driver connector so the WHOLE
+// OpenContext path — no-Ping acquisition, per-physical-connection ceiling
+// admission and the cancellable connect watchdog — can be proven without a
+// live server. It receives the same clamped dialer production builds.
+var connectInner func(d mssql.Dialer) driver.Connector
+
 // lookupIP is the resolver seam for the loopback dial assert (hosts-file
 // aware, like the driver's own pre-dial resolution).
 var lookupIP = func(ctx context.Context, host string) ([]net.IPAddr, error) {
@@ -603,7 +612,7 @@ func OpenContext(ctx context.Context, cfg ConnConfig) (*sql.DB, error) {
 	case <-cctx.Done():
 		return nil, classified(CodeConnectTimeout)
 	}
-	db := openDB(ceilingConnector{cfg: mcfg})
+	db := openDB(ceilingConnector{cfg: mcfg, inner: connectInner})
 	applyPool(db, pool)
 	// Acquire the physical connection WITHOUT a Ping: Connect runs the ceiling
 	// admission on it, and closing the handle returns it to the idle pool for

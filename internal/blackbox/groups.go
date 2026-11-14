@@ -13,11 +13,19 @@ import (
 // ResolvedTarget is one resolved collection target. This packet owns the
 // shape; the resolver (BBX-1-08) fills it.
 type ResolvedTarget struct {
-	Key     string // "pool:<name>" or "svc:<name>"
-	PID     uint32
-	Start   int64  // unix creation time, part of the identity
-	Runtime uint8  // 0 unknown, 1 .NET Framework (clr.dll), 2 .NET 10 (coreclr/hostfxr)
-	Pool    string // app pool name when Key is "pool:<name>"
+	Key   string // "pool:<name>" or "svc:<name>"
+	PID   uint32
+	Start int64 // unix creation SECONDS (display/wire shape), part of the identity
+	// StartTicks is the LOSSLESS creation identity (raw FILETIME, 100-ns ticks
+	// since 1601), mirroring ProcInfo.StartTicks. When non-zero it is THE join
+	// identity for the per-process groups: two same-PID lifetimes created within
+	// one unix second stay distinct, which the second-granularity Start window
+	// cannot do. 0 means the view carries no lossless identity and the join
+	// falls back to the Start second window. Additive: existing consumers that
+	// only read Start keep working unchanged.
+	StartTicks int64
+	Runtime    uint8  // 0 unknown, 1 .NET Framework (clr.dll), 2 .NET 10 (coreclr/hostfxr)
+	Pool       string // app pool name when Key is "pool:<name>"
 }
 
 // GroupDeps carries what a group factory needs. RunHost wires Targets (nil

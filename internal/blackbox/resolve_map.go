@@ -432,7 +432,7 @@ func matchPool(procs []ProcInfo, byPID map[uint32]ProcInfo, instances []string, 
 		}
 		if len(children) == 1 {
 			c := children[0]
-			return ResolvedTarget{Key: "pool:" + name, PID: c.PID, Start: c.Start, Runtime: c.Runtime, Pool: name}, targetOK
+			return ResolvedTarget{Key: "pool:" + name, PID: c.PID, Start: c.Start, StartTicks: identityTicks(c), Runtime: c.Runtime, Pool: name}, targetOK
 		}
 		if len(children) > 1 {
 			return ResolvedTarget{}, targetAmbiguous // never silently pick a child
@@ -440,7 +440,7 @@ func matchPool(procs []ProcInfo, byPID map[uint32]ProcInfo, instances []string, 
 		// No legitimate child: the worker itself is the target (runtime may
 		// still be pending; the bounded runtime retry reclassifies it).
 	}
-	return ResolvedTarget{Key: "pool:" + name, PID: w.PID, Start: w.Start, Runtime: w.Runtime, Pool: name}, targetOK
+	return ResolvedTarget{Key: "pool:" + name, PID: w.PID, Start: w.Start, StartTicks: identityTicks(w), Runtime: w.Runtime, Pool: name}, targetOK
 }
 
 // matchService finds the selected running service by name (case-insensitive)
@@ -458,7 +458,7 @@ func matchService(byPID map[uint32]ProcInfo, services []svcProc, name string) (R
 		if s.start == 0 || s.start != identityTicks(p) {
 			continue // unverified binding or reused PID: fail closed
 		}
-		return ResolvedTarget{Key: "svc:" + name, PID: p.PID, Start: p.Start, Runtime: p.Runtime}, targetOK
+		return ResolvedTarget{Key: "svc:" + name, PID: p.PID, Start: p.Start, StartTicks: identityTicks(p), Runtime: p.Runtime}, targetOK
 	}
 	return ResolvedTarget{}, targetNotFound
 }

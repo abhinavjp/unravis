@@ -197,9 +197,13 @@ func TestBlackboxSQLLaneNoText(t *testing.T) {
 		t.Fatalf("reason %s, want blackbox", lane.ReasonCode)
 	}
 	// Numeric activity and the fixed label only: no events, no query text, no
-	// instance names, no error text, no copy beyond the label.
-	if len(lane.Events) != 0 || lane.Hidden != 0 || lane.Reason != "" {
+	// instance names, no error text. The reason is the fixed estimate note
+	// (W12-02): the bars are integrated throughput, not durations/concurrency.
+	if len(lane.Events) != 0 || lane.Hidden != 0 || lane.Reason != bbLaneEstimateNote {
 		t.Fatalf("events %d hidden %d reason %q", len(lane.Events), lane.Hidden, lane.Reason)
+	}
+	if !lane.Estimates {
+		t.Fatal("integrated batch counts are not labelled estimates")
 	}
 	for _, s := range lane.Sources {
 		if s.Label != "Blackbox sampling every 15 s since 20 Oct 2026" {
@@ -285,7 +289,7 @@ func TestBlackboxSQLLaneIncompleteReport(t *testing.T) {
 	if lane.ReasonCode != tracingReasonBlackbox || lane.Complete {
 		t.Fatalf("dropped lane %s complete %v, want blackbox incomplete", lane.ReasonCode, lane.Complete)
 	}
-	if lane.Reason != bbLaneGapWarning {
+	if !strings.Contains(lane.Reason, bbLaneGapWarning) {
 		t.Fatalf("reason %q, want the gap warning %q", lane.Reason, bbLaneGapWarning)
 	}
 	if lane.Scanned <= 0 || tracingBucketSum(lane) != lane.Scanned {
@@ -316,11 +320,14 @@ func TestBlackboxSQLLaneIncompleteReport(t *testing.T) {
 	if lane2.ReasonCode != tracingReasonBlackbox || lane2.Complete {
 		t.Fatalf("missing lane %s complete %v, want blackbox incomplete", lane2.ReasonCode, lane2.Complete)
 	}
-	if lane2.Reason != bbLaneGapWarning {
+	if !strings.Contains(lane2.Reason, bbLaneGapWarning) {
 		t.Fatalf("reason %q, want the gap warning", lane2.Reason)
 	}
-	if lane2.Scanned != 360000 {
-		t.Fatalf("scanned %d, want 360000 from the hour that was read", lane2.Scanned)
+	// The read hour contributes 100 req/s over the 3585 s it actually observed:
+	// the span ending at 11:00:00 belongs to the missing file's observation, and
+	// the span ending at 10:00:00 lies before the window (W12-02 apportioning).
+	if lane2.Scanned != 358500 {
+		t.Fatalf("scanned %d, want 358500 from the hour that was read", lane2.Scanned)
 	}
 	missingHour := invT0.Add(2 * time.Hour)
 	for _, bk := range lane2.Buckets {
@@ -399,19 +406,25 @@ func TestBlackboxSQLRateAbsurdSkipped(t *testing.T) {
 
 // BBX-5-16 fix (finding 3): an untrusted rate times interval can never overflow
 // int64 into a negative count. A 1e300 reading is skipped, a huge manifest
-// interval is clamped, and a count beyond the sane cap is skipped — all zero-safe.
+// interval is clamped, and a count beyond the sane cap is skipped — all
+// zero-safe. W12-01: a rejected number is never an observed zero, so the
+// affected coverage is downgraded, never called complete.
 func TestBlackboxSQLLaneOverflowSafe(t *testing.T) {
-	// A 1e300 instance beside a real one: only the real one draws (100 req/s).
+	// A 1e300 instance beside a real one: only the real one draws (100 req/s),
+	// and the rejected reading leaves the lane partial, not complete.
 	rec := bbLaneRec("web-b", bbLaneSamples(invT0.Add(-30*time.Minute), invT0.Add(3*time.Hour),
 		func(time.Time) *blackbox.SQLHostGroup { return bbSQLGroup(1e300, 100) }))
 	b, id := bbLaneEnv(t, rec)
 	out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
 	lane := tracingLaneOf(t, out, calltrace.LaneSQL)
-	if lane.ReasonCode != tracingReasonBlackbox || !lane.Complete {
-		t.Fatalf("lane %s complete %v, want blackbox complete", lane.ReasonCode, lane.Complete)
+	if lane.ReasonCode != tracingReasonBlackbox || lane.Complete {
+		t.Fatalf("lane %s complete %v, want blackbox partial (a reading was rejected)", lane.ReasonCode, lane.Complete)
+	}
+	if !strings.Contains(lane.Reason, bbLaneCoverageWarning) {
+		t.Fatalf("reason %q lacks the coverage warning", lane.Reason)
 	}
 	if lane.Scanned != 360000 || tracingBucketSum(lane) != 360000 {
-		t.Fatalf("scanned %d sum %d, want 360000", lane.Scanned, tracingBucketSum(lane))
+		t.Fatalf("scanned %d sum %d, want 360000 from the valid instance", lane.Scanned, tracingBucketSum(lane))
 	}
 	for _, bk := range lane.Buckets {
 		if bk.Count < 0 {
@@ -435,10 +448,16 @@ func TestBlackboxSQLLaneOverflowSafe(t *testing.T) {
 		}
 	}
 
-	// A reading at the per-instance cap with the longest interval still makes a
-	// count beyond the sane cap: it is skipped, never a negative int64.
-	capped := bbLaneRec("web-b", bbLaneSamples(invT0.Add(-30*time.Minute), invT0.Add(3*time.Hour),
-		func(time.Time) *blackbox.SQLHostGroup { return bbSQLGroup(bbSQLMaxRate) }))
+	// A reading at the per-instance cap over an OBSERVED hour-long span makes a
+	// count beyond the sane cap: it is skipped, never a negative int64, and the
+	// coverage it stood for is downgraded (W12-01), never called complete zero.
+	var hourly []blackbox.Sample
+	seq := uint64(0)
+	for t := invT0.Add(-time.Hour); !t.After(invT0.Add(3 * time.Hour)); t = t.Add(time.Hour) {
+		seq++
+		hourly = append(hourly, blackbox.Sample{V: 1, Run: "run-1", Seq: seq, T: t.UTC(), CPU: f64(25), SQLHost: bbSQLGroup(bbSQLMaxRate)})
+	}
+	capped := bbLaneRec("web-b", hourly)
 	capped.man.IntervalSeconds = bbSQLMaxInterval
 	b3, id3 := bbLaneEnv(t, capped)
 	out3, _ := tracingPost(t, b3.e, id3, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
@@ -446,12 +465,18 @@ func TestBlackboxSQLLaneOverflowSafe(t *testing.T) {
 	if lane3.ReasonCode != tracingReasonBlackbox {
 		t.Fatalf("capped lane %s, want blackbox", lane3.ReasonCode)
 	}
+	if lane3.Complete {
+		t.Fatal("capped lane complete: a rejected number was equated with observed zero")
+	}
 	if lane3.Scanned != 0 || tracingBucketSum(lane3) != 0 {
 		t.Fatalf("capped scanned %d sum %d, want 0 (skipped, zero-safe)", lane3.Scanned, tracingBucketSum(lane3))
 	}
 	for _, bk := range lane3.Buckets {
 		if bk.Count < 0 {
 			t.Fatalf("negative count %d from an out-of-range float", bk.Count)
+		}
+		if bk.Complete {
+			t.Fatalf("bucket %+v complete after every reading was rejected", bk)
 		}
 	}
 }

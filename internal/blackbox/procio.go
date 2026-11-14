@@ -9,9 +9,10 @@ import (
 // BBX-3-03 per-process I/O, pagefile, virtual bytes and elapsed time for the
 // owner-selected targets (any runtime). One reused PDH query over the Process
 // wildcards; #N instances map to PIDs via ID Process and to a creation time via
-// Creation Time, confirmed against the shared per-tick view's (PID, Start).
-// English paths only; names UNVERIFIED pending live check. No text, no
-// attach/dump, no goroutine/ticker.
+// Creation Time, confirmed against the shared per-tick view's (PID, creation)
+// identity — the lossless StartTicks when the view carries it, else the Start
+// second window. English paths only; names UNVERIFIED pending live check. No
+// text, no attach/dump, no goroutine/ticker.
 
 func init() { RegisterGroup("procIO", true, newProcIOGroup) }
 
@@ -58,13 +59,41 @@ func creationWindow(startUnix int64) (lo, hi int64) {
 // as float64) confirms the target's unix-second Start. Identity is the creation
 // time itself, never an age: the check is independent of the collection clock,
 // so a delayed read of the same generation still confirms (W5-04). A Start of 0
-// (unreadable creation) never confirms.
+// (unreadable creation) never confirms. This is the SECONDS-ONLY fallback join;
+// targetCreationConfirmed is the lossless join used when the view carries
+// StartTicks.
 func creationConfirmed(creationTicks float64, startUnix int64) bool {
 	if startUnix <= 0 {
 		return false
 	}
 	lo, hi := creationWindow(startUnix)
 	return creationTicks >= float64(lo-pdhCreationSlack) && creationTicks < float64(hi+pdhCreationSlack)
+}
+
+// targetHasCreation reports whether the captured target carries any creation
+// identity at all: the lossless ticks when present, otherwise unix seconds.
+// A target with neither is unreadable and never joins (missing, never 0).
+func targetHasCreation(t ResolvedTarget) bool {
+	return t.StartTicks != 0 || t.Start > 0
+}
+
+// targetCreationConfirmed reports whether a PDH Creation Time reading (FILETIME
+// ticks as float64) confirms the captured target's creation identity.
+//
+// When the view carries the lossless StartTicks, the reading must match those
+// ticks within pdhCreationSlack (the float64 formatting bound) — there is NO
+// second window: two same-PID lifetimes created within one unix second are
+// distinct identities, and only the matching lifetime confirms. When
+// StartTicks is absent (a seconds-only view), it falls back to the unix-second
+// window (creationConfirmed), which cannot disambiguate same-second reuse.
+// Like creationConfirmed it is independent of the collection clock, so a
+// delayed read of the same generation still confirms (W5-04).
+func targetCreationConfirmed(creationTicks float64, t ResolvedTarget) bool {
+	if t.StartTicks != 0 {
+		d := creationTicks - float64(t.StartTicks)
+		return d >= -pdhCreationSlack && d <= pdhCreationSlack
+	}
+	return creationConfirmed(creationTicks, t.Start)
 }
 
 // procIOCounter binds one expanded detail path to its instance and counter name;
@@ -219,11 +248,13 @@ func (g *procIOGroup) Collect(now time.Time, _ float64) (any, error) {
 	}
 	// Bind each captured target to the one instance whose (PID, creation)
 	// confirms it. Creation is read from the process itself, so a delayed read
-	// of the same generation still confirms (W5-04).
+	// of the same generation still confirms (W5-04). The join uses the lossless
+	// StartTicks identity when the view carries it, so two same-PID lifetimes
+	// within one second are never conflated.
 	instOfTarget := make(map[string]string, len(targets))
 	selected := make(map[string]bool)
 	for _, t := range targets {
-		if t.Start == 0 {
+		if !targetHasCreation(t) {
 			continue // creation unreadable: identity unconfirmed
 		}
 		for inst, pid := range instPID {
@@ -231,7 +262,7 @@ func (g *procIOGroup) Collect(now time.Time, _ float64) (any, error) {
 				continue // no mapped PID, a different process, or an ambiguous PID
 			}
 			cr, ok := instCreation[inst]
-			if !ok || !creationConfirmed(cr, t.Start) {
+			if !ok || !targetCreationConfirmed(cr, t) {
 				continue // creation unreadable or a different generation
 			}
 			instOfTarget[t.Key] = inst

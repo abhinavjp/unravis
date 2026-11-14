@@ -38,6 +38,11 @@ type semFixture struct {
 // fields (a measured delta is present; an unreadable one is nil/omitted).
 func i32p(v int32) *int32 { return &v }
 
+// semKey is the baseline key of a fixture row that carried no pool id: the
+// noPoolID sentinel beside the semaphore id (W11-02). The legacy fixtures below
+// project no pool_id, so they exercise the unreadable-identity fallback path.
+func semKey(id int32) semaphoreKey { return semaphoreKey{poolID: noPoolID, semID: id} }
+
 // semDelta reads an emitted nullable delta, failing the test if it is missing
 // when a value was expected.
 func semDelta(t *testing.T, p *int32) int32 {
@@ -247,7 +252,7 @@ func TestSemaphoresFirstCycleIsBaselineOnly(t *testing.T) {
 	if len(s.prev) != 1 {
 		t.Fatalf("baseline not recorded: len(prev) = %d, want 1", len(s.prev))
 	}
-	if got := s.prev[0]; got.forced != 40 || got.timeouts != 7 || got.grantees != 2 || got.waiters != 1 {
+	if got := s.prev[semKey(0)]; got.forced != 40 || got.timeouts != 7 || got.grantees != 2 || got.waiters != 1 {
 		t.Errorf("baseline = %+v, want the full sighting {2 1 40 7}", got)
 	}
 }
@@ -351,7 +356,7 @@ func TestSemaphoresCounterReset(t *testing.T) {
 	if err != nil || payload != nil {
 		t.Fatalf("reset cycle: payload=%v err=%v, want nil,nil (never a negative delta)", payload, err)
 	}
-	if got := s.prev[0]; got.forced != 3 || got.timeouts != 0 {
+	if got := s.prev[semKey(0)]; got.forced != 3 || got.timeouts != 0 {
 		t.Fatalf("baseline after reset = %+v, want the new reading {forced:3 timeouts:0}", got)
 	}
 
@@ -431,7 +436,7 @@ func TestSemaphoresStaleIDDropped(t *testing.T) {
 	if len(s.prev) != 1 {
 		t.Fatalf("len(prev) = %d after ids 0 and 2 vanished, want 1", len(s.prev))
 	}
-	if _, ok := s.prev[0]; ok {
+	if _, ok := s.prev[semKey(0)]; ok {
 		t.Error("stale id 0 kept a baseline: prev must be rebuilt from this cycle's rows")
 	}
 }
@@ -473,10 +478,10 @@ func TestSemaphoresNULLCounterKeepsGauges(t *testing.T) {
 	if len(s.prev) != 2 {
 		t.Fatalf("len(prev) = %d, want 2: the gauges of the NULL-counter row are still baselined", len(s.prev))
 	}
-	if s.prev[1].forcedOK {
+	if s.prev[semKey(1)].forcedOK {
 		t.Error("the NULL forced counter was baselined as a readable zero")
 	}
-	if !s.prev[1].timeoutsOK {
+	if !s.prev[semKey(1)].timeoutsOK {
 		t.Error("the readable timeouts counter beside the NULL forced counter was dropped")
 	}
 
@@ -533,7 +538,7 @@ func TestSemaphoresNoWrappedDelta(t *testing.T) {
 	if _, _, err := neg.Decode([]Row{semaphoreRow(int64(0), int64(0), int64(0), int64(-1), int64(0))}); err != nil {
 		t.Fatalf("negative baseline: %v", err)
 	}
-	if neg.prev[0].forcedOK {
+	if neg.prev[semKey(0)].forcedOK {
 		t.Error("a negative cumulative counter was accepted as a readable baseline")
 	}
 }
@@ -554,7 +559,7 @@ func TestSemaphoresWideCumulativeDelta(t *testing.T) {
 	if err != nil || payload != nil {
 		t.Fatalf("wide baseline: payload=%v err=%v, want nil,nil (no narrow-decode failure)", payload, err)
 	}
-	if len(s.prev) != 1 || !s.prev[0].forcedOK {
+	if len(s.prev) != 1 || !s.prev[semKey(0)].forcedOK {
 		t.Fatalf("wide baseline not recorded: prev=%+v", s.prev)
 	}
 	// 2147483648 -> 2147483649: a delta of 1 fits int32 and is emitted.
@@ -595,6 +600,114 @@ func TestSemaphoresWideCumulativeDelta(t *testing.T) {
 	got = semPayload(t, payload)
 	if len(got) != 1 || semDelta(t, got[0].Forced) != 0 || semDelta(t, got[0].Timeouts) != 0 {
 		t.Fatalf("max bigint steady = %+v, want present zero deltas", got)
+	}
+}
+
+// semPoolRow is one semaphore sighting carrying the numeric pool_id (W11-02).
+func semPoolRow(pool, id, grantees, waiters, forced, timeouts any) Row {
+	return Row{
+		"pool_id": pool, "resource_semaphore_id": id, "grantee_count": grantees,
+		"waiter_count": waiters, "forced_grant_count": forced, "timeout_count": timeouts,
+	}
+}
+
+// TestSemaphoresCompositePoolIdentity is the W11-02 fix: resource_semaphore_id
+// is NONUNIQUE and repeats in every resource pool, so two pools both expose
+// semaphore id 0. A single-id baseline key let one pool's row overwrite the
+// other's, producing a wrong delta. The composite (pool_id, resource_semaphore_id)
+// key keeps them independent, and the numeric pool id is emitted (it is an id,
+// not a pool name — C9).
+func TestSemaphoresCompositePoolIdentity(t *testing.T) {
+	s := &semaphoresSampler{}
+	base := []Row{
+		semPoolRow(int64(2), int64(0), int64(1), int64(0), int64(100), int64(10)),
+		semPoolRow(int64(3), int64(0), int64(2), int64(1), int64(500), int64(50)),
+	}
+	if p, _, err := s.Decode(base); err != nil || p != nil {
+		t.Fatalf("baseline: p=%v err=%v, want nil,nil", p, err)
+	}
+	if len(s.prev) != 2 {
+		t.Fatalf("len(prev)=%d, want 2 distinct composite baselines (same sem id, different pools)", len(s.prev))
+	}
+	// Each pool's counters advance by a DIFFERENT amount; neither baseline may
+	// overwrite the other.
+	cur := []Row{
+		semPoolRow(int64(2), int64(0), int64(1), int64(0), int64(105), int64(12)),
+		semPoolRow(int64(3), int64(0), int64(2), int64(1), int64(530), int64(57)),
+	}
+	p, _, err := s.Decode(cur)
+	if err != nil {
+		t.Fatalf("delta cycle: %v", err)
+	}
+	got := semPayload(t, p)
+	if len(got) != 2 {
+		t.Fatalf("payload=%+v, want both pools emitted", got)
+	}
+	byPool := map[int32]Semaphores{}
+	for _, r := range got {
+		if r.PoolID == nil {
+			t.Fatalf("row %+v: poolId missing, want the numeric pool id", r)
+		}
+		byPool[*r.PoolID] = r
+	}
+	if d := semDelta(t, byPool[2].Forced); d != 5 {
+		t.Errorf("pool 2 forced delta=%d, want 5", d)
+	}
+	if d := semDelta(t, byPool[2].Timeouts); d != 2 {
+		t.Errorf("pool 2 timeouts delta=%d, want 2", d)
+	}
+	if d := semDelta(t, byPool[3].Forced); d != 30 {
+		t.Errorf("pool 3 forced delta=%d, want 30 (not overwritten by pool 2)", d)
+	}
+	if d := semDelta(t, byPool[3].Timeouts); d != 7 {
+		t.Errorf("pool 3 timeouts delta=%d, want 7", d)
+	}
+}
+
+// TestSemaphoresPoolIDMissingNeverZero: a reply with no pool_id (a shape the
+// fixed statement never produces) still decodes and deltas under the internal
+// sentinel key, and poolId is OMITTED — never a fabricated 0.
+func TestSemaphoresPoolIDMissingNeverZero(t *testing.T) {
+	s := &semaphoresSampler{}
+	if p, _, err := s.Decode(semRows(semFixture{id: 0, grantees: 1, forced: 10, timeouts: 2})); err != nil || p != nil {
+		t.Fatalf("baseline: p=%v err=%v", p, err)
+	}
+	p, _, err := s.Decode(semRows(semFixture{id: 0, grantees: 1, forced: 13, timeouts: 3}))
+	if err != nil {
+		t.Fatalf("delta: %v", err)
+	}
+	got := semPayload(t, p)
+	if len(got) != 1 || got[0].PoolID != nil {
+		t.Fatalf("payload=%+v, want one row with poolId omitted (missing, never 0)", got)
+	}
+	if semDelta(t, got[0].Forced) != 3 || semDelta(t, got[0].Timeouts) != 1 {
+		t.Fatalf("deltas=%+v, want {3 1}", got[0])
+	}
+	if _, ok := s.prev[semKey(0)]; !ok {
+		t.Fatal("missing-pool row was not baselined under the sentinel key")
+	}
+}
+
+// TestSemaphoresPoolIDUnreadableIsMissing: a NULL, negative or out-of-int32
+// pool id is an unreadable identity. The gauges and deltas are still emitted
+// (keyed by the sentinel), but poolId is omitted — never 0, never a wrapped id.
+func TestSemaphoresPoolIDUnreadableIsMissing(t *testing.T) {
+	for _, pool := range []any{nil, int64(-1), int64(2147483648)} {
+		s := &semaphoresSampler{}
+		if p, _, err := s.Decode([]Row{semPoolRow(pool, int64(0), int64(1), int64(0), int64(10), int64(2))}); err != nil || p != nil {
+			t.Fatalf("pool=%v baseline: p=%v err=%v", pool, p, err)
+		}
+		p, _, err := s.Decode([]Row{semPoolRow(pool, int64(0), int64(1), int64(0), int64(12), int64(3))})
+		if err != nil {
+			t.Fatalf("pool=%v delta: %v", pool, err)
+		}
+		got := semPayload(t, p)
+		if len(got) != 1 || got[0].PoolID != nil {
+			t.Errorf("pool=%v: payload=%+v, want poolId omitted (unreadable identity is missing, never 0)", pool, got)
+		}
+		if semDelta(t, got[0].Forced) != 2 {
+			t.Errorf("pool=%v: forced delta=%v, want 2 beside the missing identity", pool, got[0].Forced)
+		}
 	}
 }
 
@@ -690,13 +803,34 @@ func TestSchedulersSemaphoresTempdbPayloadJSONKeys(t *testing.T) {
 		t.Fatalf("semaphores: %v", err)
 	}
 
+	// A composite-identity payload (W11-02): the numeric poolId is an allowed
+	// output key because it is an id, NOT a pool name. Build it from rows that
+	// carry pool_id so the key is actually emitted and checked.
+	semPool := &semaphoresSampler{}
+	poolRows := func(forced, timeouts int64) []Row {
+		return []Row{{"pool_id": int64(2), "resource_semaphore_id": int64(0),
+			"grantee_count": int64(1), "waiter_count": int64(0),
+			"forced_grant_count": forced, "timeout_count": timeouts}}
+	}
+	if _, _, err := semPool.Decode(poolRows(1, 1)); err != nil {
+		t.Fatalf("semaphores pool baseline: %v", err)
+	}
+	semsPoolPayload, _, err := semPool.Decode(poolRows(3, 4))
+	if err != nil {
+		t.Fatalf("semaphores pool: %v", err)
+	}
+
 	allowed := map[string]bool{
 		"currentTasks": true, "runnableTasks": true,
 		"internalPages": true, "userPages": true,
-		"resourceSemaphoreId": true, "grantees": true, "waiters": true,
+		"poolId": true, "resourceSemaphoreId": true, "grantees": true, "waiters": true,
 		"forced": true, "timeouts": true,
 	}
-	banned := []string{"name", "login", "host", "program", "path", "text", "pool",
+	// "pool" is deliberately NOT banned: the numeric poolId is a resource-pool
+	// ID (C9 allows ids), not a pool name. A pool NAME would be an unknown key
+	// and is rejected by the allowed gate above; every value must still be a
+	// number, so no name/text can ride along under any key.
+	banned := []string{"name", "login", "host", "program", "path", "text",
 		"instance", "session", "description", "parent"}
 
 	for _, tc := range []struct {
@@ -706,6 +840,7 @@ func TestSchedulersSemaphoresTempdbPayloadJSONKeys(t *testing.T) {
 		{"schedulers", schedPayload},
 		{"tempdb", tempdbPayload},
 		{"semaphores", semsPayload},
+		{"semaphores-pool", semsPoolPayload},
 	} {
 		data, err := json.Marshal(tc.payload)
 		if err != nil {

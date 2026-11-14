@@ -133,11 +133,11 @@ var rowSpecs = map[reflect.Type]rowSpec{
 		"internalPages": reqNull(), "userPages": reqNull(),
 	}},
 	reflect.TypeOf(Semaphores{}): {cols: map[string]colRule{
-		"resourceSemaphoreId": req(), "grantees": req(), "waiters": req(),
+		"poolId": {nullable: true}, "resourceSemaphoreId": req(), "grantees": req(), "waiters": req(),
 		"forced": reqNull(), "timeouts": reqNull(),
 	}},
 	reflect.TypeOf(semaphoresRaw{}): {cols: map[string]colRule{
-		"resourceSemaphoreId": req(), "grantees": req(), "waiters": req(),
+		"poolId": {nullable: true}, "resourceSemaphoreId": req(), "grantees": req(), "waiters": req(),
 		"forced": reqNull(), "timeouts": reqNull(),
 	}},
 	reflect.TypeOf(FileStats{}): {cols: map[string]colRule{
@@ -199,7 +199,15 @@ type Schedulers struct {
 }
 
 // Semaphores (bb:semaphores, BL-118): counts per resource semaphore; the
-// sampler (BBX-5-13) computes deltas in Go keyed by ResourceSemaphoreID.
+// sampler (BBX-5-13) computes deltas in Go keyed by the composite
+// (PoolID, ResourceSemaphoreID) identity (W11-02).
+//
+// PoolID is the numeric resource-pool id (the DMV's int NOT NULL pool_id). It is
+// part of the identity because resource_semaphore_id repeats in every pool, so
+// it is emitted beside the semaphore id. A numeric pool id is NOT a pool name:
+// no pool name/text is ever read or stored (C9). It is nullable/omitted only
+// when a reply carried no readable pool id (the fixed statement always projects
+// it); an unreadable identity is missing, never a fabricated 0.
 //
 // Grantees/Waiters are instantaneous gauges and are always present. Forced and
 // Timeouts are DELTAS of the cumulative DMV counters and are nullable: a nil
@@ -211,6 +219,7 @@ type Schedulers struct {
 // missingness was added, because "unreadable means missing, never 0". A measured
 // zero delta is a non-nil pointer to 0 and stays present.
 type Semaphores struct {
+	PoolID              *int32 `json:"poolId,omitempty"`
 	ResourceSemaphoreID int32  `json:"resourceSemaphoreId"`
 	Grantees            int32  `json:"grantees"`
 	Waiters             int32  `json:"waiters"`
@@ -250,6 +259,7 @@ var columnKeys = map[string]string{
 	"blocked": "blocked", "head_blockers": "headBlockers", "max_block_ms": "maxBlockMs",
 	"wait_time_ms": "deltaMs", "waiting_tasks_count": "deltaTasks",
 	"current_tasks": "currentTasks", "runnable_tasks": "runnableTasks",
+	"pool_id":               "poolId",
 	"resource_semaphore_id": "resourceSemaphoreId", "grantee_count": "grantees",
 	"waiter_count": "waiters", "forced_grant_count": "forced", "timeout_count": "timeouts",
 	"internal_pages": "internalPages", "user_pages": "userPages",

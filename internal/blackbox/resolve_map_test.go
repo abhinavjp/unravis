@@ -72,7 +72,7 @@ func TestResolveTargetsPoolMatch(t *testing.T) {
 	r.servicesFn = func() ([]svcProc, error) { return nil, nil }
 
 	got, missing := r.ResolveTargets([]Target{{Kind: "appPool", Name: "payroll api"}})
-	want := []ResolvedTarget{{Key: "pool:payroll api", PID: 4321, Start: 1000, Runtime: 1, Pool: "payroll api"}}
+	want := []ResolvedTarget{{Key: "pool:payroll api", PID: 4321, Start: 1000, StartTicks: 1000 * filetimeTicksPerSecond, Runtime: 1, Pool: "payroll api"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ResolveTargets = %+v, want %+v (owner-selected only)", got, want)
 	}
@@ -196,6 +196,8 @@ func TestResolveTargetsOutOfProcess(t *testing.T) {
 			if c.wantPID == 200 {
 				want[0].Start = 1100
 			}
+			// The view carries the lossless identity, not just unix seconds.
+			want[0].StartTicks = want[0].Start * filetimeTicksPerSecond
 			if !reflect.DeepEqual(got, want) || len(missing) != 0 {
 				t.Fatalf("got %+v / %v, want %+v", got, missing, want)
 			}
@@ -213,7 +215,7 @@ func TestResolveTargetsServiceMatch(t *testing.T) {
 	r.servicesFn = func() ([]svcProc, error) { return []svcProc{{name: "MSSQLSERVER", pid: 900}}, nil }
 
 	got, missing := r.ResolveTargets([]Target{{Kind: "service", Name: "mssqlserver"}})
-	want := []ResolvedTarget{{Key: "svc:mssqlserver", PID: 900, Start: 9000, Runtime: 1}}
+	want := []ResolvedTarget{{Key: "svc:mssqlserver", PID: 900, Start: 9000, StartTicks: 9000 * filetimeTicksPerSecond, Runtime: 1}}
 	if !reflect.DeepEqual(got, want) || len(missing) != 0 {
 		t.Fatalf("got %+v / %v, want %+v", got, missing, want)
 	}
@@ -304,8 +306,8 @@ func TestResolveTargetsIndependentEnumCaches(t *testing.T) {
 				return []svcProc{{name: "MSSQLSERVER", pid: 900}}, nil
 			}
 			targets := []Target{{Kind: "appPool", Name: "Pool"}, {Kind: "service", Name: "mssqlserver"}}
-			poolRT := ResolvedTarget{Key: "pool:Pool", PID: 4321, Start: 1000, Runtime: 1, Pool: "Pool"}
-			svcRT := ResolvedTarget{Key: "svc:mssqlserver", PID: 900, Start: 9000, Runtime: 1}
+			poolRT := ResolvedTarget{Key: "pool:Pool", PID: 4321, Start: 1000, StartTicks: 1000 * filetimeTicksPerSecond, Runtime: 1, Pool: "Pool"}
+			svcRT := ResolvedTarget{Key: "svc:mssqlserver", PID: 900, Start: 9000, StartTicks: 9000 * filetimeTicksPerSecond, Runtime: 1}
 			wantOK, wantMissing := []ResolvedTarget{svcRT}, []string{"Pool"}
 			if !c.failInst {
 				wantOK, wantMissing = []ResolvedTarget{poolRT}, []string{"mssqlserver"}

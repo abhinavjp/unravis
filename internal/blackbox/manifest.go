@@ -134,6 +134,23 @@ func (m Manifest) Coverage() (first, last time.Time, ok bool) {
 	return *m.FirstSample, *m.LastSample, true
 }
 
+// CadenceSeconds is the interval the recorder actually ticks at: the effective
+// interval when the manifest carries one (>0), else the configured base, else
+// the fixed default. Readers that integrate a per-second rate over time must
+// use this rather than IntervalSeconds alone: the light budget widens and
+// narrows the cadence while the configured base stays put (W12-02). It is a
+// single latest value, so a reader reconstructing historical cadence changes
+// still needs the observed sample times, not this field alone.
+func (m Manifest) CadenceSeconds() int {
+	if m.EffectiveIntervalSeconds > 0 {
+		return m.EffectiveIntervalSeconds
+	}
+	if m.IntervalSeconds > 0 {
+		return m.IntervalSeconds
+	}
+	return DefaultIntervalSecond
+}
+
 // TotalBytes is the size of the recording files.
 func (m Manifest) TotalBytes() int64 {
 	var n int64

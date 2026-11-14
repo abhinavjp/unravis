@@ -15,9 +15,11 @@ import (
 // screen never starts a database read. The screen's sentence comes from dbState
 // (P-07 maps api-seen to state "api"), so no new copy is written here.
 //
-// Precedence: Blackbox sampling (blackbox) > saved live day (held-sql /
-// layered-sql) > Query Store file (qs-file) > api-seen > nothing. This file only
-// fills the last case and never displaces a better source.
+// Precedence (W12-03): saved live day (held-sql / layered-sql) > Query Store
+// file (qs-file) > Blackbox sampling (blackbox) > api-seen > nothing. Query
+// Store duration evidence for the selected database outranks machine-wide
+// batch throughput; this file only fills the last case and never displaces a
+// better source.
 
 const tracingReasonAPISseen = "api-seen"
 

@@ -209,18 +209,20 @@ func (g *clrGroup) Collect(now time.Time, _ float64) (any, error) {
 		clrPIDCount[pid]++
 	}
 	// Bind each captured Framework target to the one CLR instance whose PID and
-	// creation confirm it.
+	// creation confirm it. The join uses the lossless StartTicks identity when
+	// the view carries it, so two same-PID lifetimes within one second are never
+	// conflated.
 	instOfTarget := make(map[string]string)
 	selected := make(map[string]bool)
 	for _, t := range targets {
-		if t.Runtime != 1 || t.Start == 0 {
+		if t.Runtime != 1 || !targetHasCreation(t) {
 			continue // Framework only; creation must be confirmed
 		}
 		if pidCount[t.PID] != 1 {
 			continue // PID absent from the inventory or ambiguous
 		}
 		cr, ok := pidCreation[t.PID]
-		if !ok || !creationConfirmed(cr, t.Start) {
+		if !ok || !targetCreationConfirmed(cr, t) {
 			continue // creation unreadable or a different generation
 		}
 		for inst, pid := range clrInstPID {

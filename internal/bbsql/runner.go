@@ -227,6 +227,11 @@ type Runner struct {
 	Dir     string
 	Conn    ConnConfig
 	Connect ConnectFunc
+	// ConnectContext is the context-aware connect seam (W8-01). When set it
+	// wins over Connect, so a stop during connect cancels the connect itself
+	// rather than being noticed only after it returns. Additive: existing
+	// callers and tests that assign Connect keep working.
+	ConnectContext ConnectFuncContext
 	Now     func() time.Time
 	Log     func(format string, args ...any)
 
@@ -535,14 +540,26 @@ func (r *Runner) reconnect(ctx context.Context) error {
 	// it must not be subtracted from counters read after it (W11-05). The
 	// ceiling is re-proven below before any sample is taken.
 	r.breakContinuity()
-	q, closeFn, err := r.connectFn()(r.Conn)
+	var q Queryer
+	var closeFn func() error
+	var err error
+	switch {
+	case r.ConnectContext != nil:
+		q, closeFn, err = r.ConnectContext(ctx, r.Conn)
+	case r.Connect != nil:
+		q, closeFn, err = r.Connect(r.Conn)
+	default:
+		// Production gets the cancellable connect by default: the whole
+		// connect lifecycle is bounded by ctx, not just the dial.
+		q, closeFn, err = DefaultConnectContext(ctx, r.Conn)
+	}
 	if err != nil {
 		return r.fail(err)
 	}
-	// ConnectFunc has no context parameter (the connection seam is owned
-	// elsewhere); honour cancellation here so a stop during connect does not
-	// proceed to sample on a connection the caller already abandoned. This is
-	// not an instance failure: State is untouched.
+	// A legacy ConnectFunc has no context parameter; honour cancellation here
+	// so a stop during connect does not proceed to sample on a connection the
+	// caller already abandoned. This is not an instance failure: State is
+	// untouched.
 	if ctx.Err() != nil {
 		_ = closeFn()
 		return Classify(ctx.Err())

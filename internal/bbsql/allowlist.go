@@ -62,9 +62,17 @@ WHERE status = N'VISIBLE ONLINE' /* unravis:bb:schedulers */`
 // The DMV column is timeout_error_count; it is aliased to timeout_count so the
 // fixed output mapping is unchanged. sys.dm_exec_requests likewise exposes
 // wait_time (ms), not wait_time_ms - that name belongs to dm_os_wait_stats.
-const stmtSemaphores = setPrefix + `SELECT TOP 17 resource_semaphore_id, grantee_count, waiter_count, forced_grant_count, timeout_error_count AS timeout_count
+//
+// W11-02: resource_semaphore_id is documented as NONUNIQUE (0 = regular,
+// 1 = small-query) and repeats in EVERY resource pool, so it cannot identify a
+// semaphore on its own - same-id rows from different pools would overwrite each
+// other's baselines. The numeric pool_id is projected and the rows are ordered
+// by the composite (pool_id, resource_semaphore_id) so the TOP cap is
+// deterministic and the Go baseline key is the same composite. pool_id is a
+// numeric id, never a pool name (C9); the DMV declares it int NOT NULL.
+const stmtSemaphores = setPrefix + `SELECT TOP 17 pool_id, resource_semaphore_id, grantee_count, waiter_count, forced_grant_count, timeout_error_count AS timeout_count
 FROM sys.dm_exec_query_resource_semaphores
-ORDER BY resource_semaphore_id /* unravis:bb:semaphores */`
+ORDER BY pool_id, resource_semaphore_id /* unravis:bb:semaphores */`
 
 // bb:tempdb (BL-118): tempdb page totals summed in SQL, no per-session ids.
 const stmtTempdb = setPrefix + `SELECT SUM(internal_objects_alloc_page_count) AS internal_pages,
@@ -80,8 +88,17 @@ ORDER BY database_id, file_id /* unravis:bb:filestats */`
 // bb:ag (BL-119): AG database replica state, gated by IsHadrEnabled in Go. No
 // sys.availability_replicas and no replica server names; ids/enum only.
 // TOP 64 is the C6 cap in SQL (defense in depth; the reader stops at 65).
+//
+// W11-03: sys.dm_hadr_database_replica_states returns a row for the LOCAL
+// database AND extra rows for its remote secondary copies, and database_id +
+// synchronization_state alone cannot tell them apart - a remote replica's state
+// could be persisted as if it were local. The fixed predicate is_local = 1 keeps
+// only the local replica's own database rows. is_local is a nullable bit, so a
+// NULL (unreadable locality) is excluded, never sampled. The predicate is
+// numeric and carries no replica server name; lintStatement enforces it.
 const stmtAG = setPrefix + `SELECT TOP 65 database_id, synchronization_state
 FROM sys.dm_hadr_database_replica_states
+WHERE is_local = 1
 ORDER BY database_id /* unravis:bb:ag */`
 
 // bb:hadr is the guard for bb:ag. SERVERPROPERTY answers on every 2012+
@@ -292,13 +309,13 @@ var lintBannedColumns = []string{
 // never a runtime string.
 var lintApprovedFrom = map[string]bool{
 	"sys.dm_exec_requests AS r LEFT JOIN sys.dm_exec_requests AS b ON b.session_id = r.blocking_session_id": true,
-	"sys.dm_os_wait_stats": true,
-	"sys.dm_os_schedulers": true,
-	"sys.dm_exec_query_resource_semaphores": true,
-	"sys.dm_db_session_space_usage": true,
+	"sys.dm_os_wait_stats":                     true,
+	"sys.dm_os_schedulers":                     true,
+	"sys.dm_exec_query_resource_semaphores":    true,
+	"sys.dm_db_session_space_usage":            true,
 	"sys.dm_io_virtual_file_stats(NULL, NULL)": true,
-	"sys.dm_hadr_database_replica_states": true,
-	"sys.fn_my_permissions(NULL, N'SERVER')": true,
+	"sys.dm_hadr_database_replica_states":      true,
+	"sys.fn_my_permissions(NULL, N'SERVER')":   true,
 }
 
 // renderTokens joins tokens with single spaces, tightening around punctuation
@@ -410,5 +427,28 @@ func lintStatement(id, text string) error {
 			return fmt.Errorf("unapproved source %q", src)
 		}
 	}
+	// W11-03: bb:ag must carry the fixed local-row predicate. The DMV returns
+	// the local database row AND its remote secondary copies, so without
+	// is_local = 1 a remote replica's state is indistinguishable from the local
+	// one. Matched as tokens (not a substring) so a comment or a renamed column
+	// cannot satisfy it; a NULL is_local is excluded by the predicate, never
+	// sampled. This is enforced at init like the rest of the grammar.
+	if id == "bb:ag" && !hasLocalRowPredicate(toks) {
+		return fmt.Errorf("bb:ag must filter to the local replica row (WHERE is_local = 1)")
+	}
 	return nil
+}
+
+// hasLocalRowPredicate reports whether the token stream carries the fixed
+// is_local = 1 predicate (W11-03): the word is_local, then '=', then the number
+// 1, in sequence.
+func hasLocalRowPredicate(toks []sqlToken) bool {
+	for i := 0; i+2 < len(toks); i++ {
+		if toks[i].kind == "word" && strings.EqualFold(toks[i].text, "is_local") &&
+			toks[i+1].kind == "punct" && toks[i+1].text == "=" &&
+			toks[i+2].kind == "num" && toks[i+2].text == "1" {
+			return true
+		}
+	}
+	return false
 }

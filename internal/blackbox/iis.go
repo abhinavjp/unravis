@@ -142,12 +142,12 @@ func (g *iisGroup) refresh() error {
 }
 
 // selectedPoolsFrom keeps only resolved appPool targets with a confirmed
-// creation time from the captured view — owner-selected pools only, never PID
-// alone.
+// creation identity from the captured view — owner-selected pools only, never
+// PID alone. The lossless StartTicks counts as a confirmed creation too.
 func selectedPoolsFrom(targets []ResolvedTarget) []ResolvedTarget {
 	var out []ResolvedTarget
 	for _, t := range targets {
-		if strings.HasPrefix(t.Key, "pool:") && t.Pool != "" && t.Start != 0 {
+		if strings.HasPrefix(t.Key, "pool:") && t.Pool != "" && targetHasCreation(t) {
 			out = append(out, t)
 		}
 	}
@@ -190,10 +190,12 @@ func (g *iisGroup) Collect(now time.Time, _ float64) (any, error) {
 	// acceptWorker verifies one "<PID>_<pool>" instance: the worker PID must be a
 	// live, unambiguous process with a confirmed creation, the pool must be
 	// selected, and when the selected target IS this worker (in-process) its
-	// creation must confirm the target's Start. An out-of-process parent or an
-	// overlapping worker (target PID differs) is accepted on verified-alive +
-	// selected-pool; the view carries the child/other-worker identity, not this
-	// worker's, so its own creation cannot be cross-checked here (see report).
+	// creation must confirm the target's identity — losslessly on StartTicks
+	// when the view carries it, so a same-second recycled worker PID is never
+	// bound to the wrong lifetime. An out-of-process parent or an overlapping
+	// worker (target PID differs) is accepted on verified-alive + selected-pool;
+	// the view carries the child/other-worker identity, not this worker's, so
+	// its own creation cannot be cross-checked here (see report).
 	acceptWorker := func(pid uint32, pool string) bool {
 		if pidCount[pid] != 1 {
 			return false // worker PID absent from the inventory or ambiguous
@@ -216,7 +218,7 @@ func (g *iisGroup) Collect(now time.Time, _ float64) (any, error) {
 			return false // unselected pool: omit, never a zero row
 		}
 		if self != nil {
-			return creationConfirmed(cr, self.Start) // in-process: bind the generation
+			return targetCreationConfirmed(cr, *self) // in-process: bind the generation
 		}
 		return true // out-of-process parent / overlapping worker: verified alive
 	}
@@ -244,6 +246,14 @@ func (g *iisGroup) Collect(now time.Time, _ float64) (any, error) {
 		w := byWorker[key]
 		if w == nil {
 			w = &IISWorker{Pool: c.pool, PID: c.pid}
+			// Carry the verified worker generation on the wire (additive): the
+			// creation FILETIME from the same atomic query that accepted this
+			// worker. A recycled worker PID is then distinguishable downstream
+			// even when two lifetimes share a unix second. Unreadable creation
+			// stays omitted (0), never a guessed stamp.
+			if cr := pidCreation[c.pid]; cr > 0 {
+				w.StartTicks = int64(cr)
+			}
 			byWorker[key] = w
 		}
 		switch c.field {

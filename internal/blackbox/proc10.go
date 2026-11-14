@@ -157,7 +157,7 @@ func (g *proc10Group) Collect(now time.Time, _ float64) (any, error) {
 	instOfTarget := make(map[string]string)
 	selected := make(map[string]bool)
 	for _, t := range targets {
-		if t.Runtime != 2 || t.Start == 0 {
+		if t.Runtime != 2 || !targetHasCreation(t) {
 			continue // .NET 10 only; creation must be confirmed
 		}
 		for inst, pid := range instPID {
@@ -165,7 +165,7 @@ func (g *proc10Group) Collect(now time.Time, _ float64) (any, error) {
 				continue
 			}
 			cr, ok := instCreation[inst]
-			if !ok || !creationConfirmed(cr, t.Start) {
+			if !ok || !targetCreationConfirmed(cr, t) {
 				continue // creation unreadable or a different generation
 			}
 			instOfTarget[t.Key] = inst

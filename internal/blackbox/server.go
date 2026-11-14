@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -266,13 +267,16 @@ const sqlStatusMaxAge = 20 * time.Minute
 const sqlStatusMaxBytes = 4096
 
 // readSQLStatus reads the SQL runner's status file best-effort: one small file
-// read per /status, on demand, no goroutine. Missing, unreadable, oversized,
-// stale, malformed or inconsistent means the WHOLE off object, never an error
-// answer and never a partial record (W8-04). The document is validated in
-// full: required fields present, no unknown fields, exactly one JSON value
-// (trailing data or delimiters refused), nonnegative failures, a whitelisted
-// state, enabled agreeing with state, and a non-zero lastOK when present. No
-// instance name, version or error text can leak through the file.
+// read per /status, on demand, no goroutine. Missing, unreadable, non-regular,
+// oversized, stale, malformed or inconsistent means the WHOLE off object, never
+// an error answer and never a partial record (W8-04). The size is bounded
+// BEFORE any allocation: Stat refuses an oversized file up front and the read
+// itself is capped at sqlStatusMaxBytes+1, so a corrupt/oversized status file
+// can never make /status allocate the whole file (W12-04). The document is
+// validated in full: required fields present, no unknown fields, exactly one
+// JSON value (trailing data or delimiters refused), nonnegative failures, a
+// whitelisted state, enabled agreeing with state, and a non-zero lastOK when
+// present. No instance name, version or error text can leak through the file.
 func readSQLStatus(folder string, now time.Time) SQLStatus {
 	off := SQLStatus{State: "off"}
 	path := filepath.Join(SQLDataDir(folder), "status.json")
@@ -282,7 +286,7 @@ func readSQLStatus(folder string, now time.Time) SQLStatus {
 	}
 	defer f.Close()
 	fi, err := f.Stat()
-	if err != nil || fi.Size() > sqlStatusMaxBytes {
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > sqlStatusMaxBytes {
 		return off
 	}
 	if age := now.Sub(fi.ModTime()); age > sqlStatusMaxAge || age < -sqlStatusMaxAge {
@@ -362,15 +366,71 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{"format": FormatVersion, "time": s.now().UTC(), "files": m.Files, "current": s.o.Store.CurrentFile()})
 }
 
+// errRecordingRefused is the fixed refusal for a recording entry that fails
+// containment: a link/junction/reparse alias, a non-regular object, or a root
+// that is itself a link. It never carries a path or provider text (handoff §3).
+var errRecordingRefused = errors.New("recording entry refused")
+
+// openRecordingFile opens one recording entry inside dir under a handle-based,
+// race-resistant containment/no-follow policy (W12-05):
+//
+//   - The root must be a real directory, never a symlink/junction: os.OpenRoot
+//     follows links in the root name, so a reparse root is refused before it is
+//     pinned (Lstat, not Stat — no following).
+//   - The root is then pinned as a directory HANDLE (os.OpenRoot). Substituting
+//     an ancestor of dir after this point cannot redirect the open: the handle
+//     keeps referencing the original directory.
+//   - The entry is opened RELATIVE to that handle (Root.Open). Every path
+//     component is validated against the root: on Windows the open uses
+//     OBJ_DONT_REPARSE (with a handle-inspecting fallback on older builds), so
+//     any symlink/junction/mount-point alias — final object or ancestor — is
+//     refused outright; on Unix no component may escape the root. A link
+//     substituted for the entry between validation and open cannot win: the
+//     no-follow check happens inside the same handle-relative open.
+//   - The FINAL object is checked on the opened handle (never the path): it
+//     must be a regular file, so directories, devices and pipes are refused
+//     even when they carry a valid recording basename.
+//
+// The caller still owns basename/shape validation and the read-key guard; this
+// only adds filesystem containment underneath them.
+func openRecordingFile(dir, name string) (*os.File, error) {
+	fi, err := os.Lstat(dir)
+	if err != nil || !fi.IsDir() || fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+		return nil, errRecordingRefused
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		f.Close()
+		return nil, errRecordingRefused
+	}
+	return f, nil
+}
+
 // handleFile serves one recording file. Only names that are recording files are
-// served; a path, a snapshot or the manifest is never reachable this way.
+// served; a path, a snapshot or the manifest is never reachable this way. The
+// open is handle-based and no-follow (W12-05): a valid basename that is a
+// filesystem link, or sits under a substituted ancestor, is refused instead of
+// being followed out of the recordings folder.
 func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/files/")
 	if !ValidFileName(name) || name != filepath.Base(name) {
 		s.errorJSON(w, http.StatusNotFound, "no such recording file")
 		return
 	}
-	f, err := os.Open(filepath.Join(s.o.Store.Dir(), name))
+	f, err := openRecordingFile(s.o.Store.Dir(), name)
 	if err != nil {
 		s.errorJSON(w, http.StatusNotFound, "no such recording file")
 		return

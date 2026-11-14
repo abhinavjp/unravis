@@ -102,6 +102,67 @@ func TestLintTOPCaps(t *testing.T) {
 	}
 }
 
+// TestSemaphoresCompositeIdentity pins W11-02: bb:semaphores must project the
+// numeric pool_id and order by the composite (pool_id, resource_semaphore_id),
+// because resource_semaphore_id is NONUNIQUE across resource pools. The pool id
+// is numeric (an id, not a pool name — C9); no pool name column may appear.
+func TestSemaphoresCompositeIdentity(t *testing.T) {
+	text := Statements["bb:semaphores"]
+	cols := outputColumns(t, text)
+	hasPool := false
+	for _, c := range cols {
+		if strings.EqualFold(c, "pool_id") {
+			hasPool = true
+		}
+		if strings.Contains(strings.ToLower(c), "name") {
+			t.Errorf("bb:semaphores projects a name column %q (C9: ids only)", c)
+		}
+	}
+	if !hasPool {
+		t.Errorf("bb:semaphores must project pool_id for the composite identity; cols=%v", cols)
+	}
+	if !strings.Contains(text, "ORDER BY pool_id, resource_semaphore_id") {
+		t.Errorf("bb:semaphores must order by the composite key so the TOP cap is deterministic: %q", text)
+	}
+	if err := lintStatement("bb:semaphores", text); err != nil {
+		t.Errorf("bb:semaphores fails the C2 grammar: %v", err)
+	}
+}
+
+// TestAGLocalRowPredicate pins W11-03: bb:ag must filter to the LOCAL replica
+// row (is_local = 1). The DMV returns the local database row AND its remote
+// secondary copies, so without the predicate a remote replica's state is
+// indistinguishable from the local one. The predicate is numeric and carries no
+// replica server name; the lint enforces it mechanically.
+func TestAGLocalRowPredicate(t *testing.T) {
+	text := Statements["bb:ag"]
+	if !strings.Contains(text, "WHERE is_local = 1") {
+		t.Errorf("bb:ag must carry the fixed local-row predicate: %q", text)
+	}
+	for _, banned := range []string{"availability_replicas", "replica_server_name", "server_name", "is_primary_replica"} {
+		if strings.Contains(strings.ToLower(text), banned) {
+			t.Errorf("bb:ag carries forbidden replica-identity token %q", banned)
+		}
+	}
+	if err := lintStatement("bb:ag", text); err != nil {
+		t.Errorf("bb:ag fails the C2 grammar: %v", err)
+	}
+	// The lint has teeth: dropping the local predicate is refused at init.
+	noLocal := strings.Replace(text, "WHERE is_local = 1\n", "", 1)
+	if err := lintStatement("bb:ag", noLocal); err == nil {
+		t.Error("lint accepted bb:ag without the local-row predicate (remote rows would be sampled)")
+	}
+	// A renamed/NULL-tolerant predicate is not the fixed local filter.
+	for _, mut := range []string{
+		strings.Replace(text, "is_local = 1", "is_local = 0", 1),
+		strings.Replace(text, "is_local = 1", "is_local IS NOT NULL", 1),
+	} {
+		if err := lintStatement("bb:ag", mut); err == nil {
+			t.Errorf("lint accepted a non-local predicate mutant: %q", mut)
+		}
+	}
+}
+
 // TestAllowlistExact proves IsAllowed accepts each constant and refuses any
 // mutation (added space, token, newline, case change, or a second SELECT).
 func TestAllowlistExact(t *testing.T) {

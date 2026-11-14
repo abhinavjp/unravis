@@ -19,8 +19,16 @@ type IISGroup struct {
 }
 
 type IISWorker struct {
-	Pool           string   `json:"pool"`
-	PID            uint32   `json:"pid"`
+	Pool string `json:"pool"`
+	PID  uint32 `json:"pid"`
+	// StartTicks is the worker's verified creation identity: the raw FILETIME
+	// creation ticks (100-ns since 1601) read from the Process object's Creation
+	// Time in the same atomic query that verified the worker. Additive and
+	// optional (omitted when 0/unreadable, never renamed): a recycled worker PID
+	// stays distinguishable downstream even when two lifetimes share a unix
+	// second. Old recordings without the field decode to 0; old consumers that
+	// ignore it keep working.
+	StartTicks     int64    `json:"startTicks,omitempty"`
 	ActiveRequests *float64 `json:"activeRequests,omitempty"`
 	ActiveThreads  *float64 `json:"activeThreads,omitempty"`
 	PingLatencyMs  *float64 `json:"pingLatencyMs,omitempty"`

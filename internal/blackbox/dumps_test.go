@@ -3,9 +3,12 @@ package blackbox
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +41,7 @@ func TestDumpsCatalogue(t *testing.T) {
 	writeDump(t, filepath.Join(root, "notes.txt"), []byte("x"), t0)                  // not a dump
 	writeDump(t, filepath.Join(root, "sub", "deeper", "hidden.dmp"), []byte("x"), t0) // depth 3: skipped
 
-	got := catalogueDumps([]string{root})
+	got, _ := catalogueDumps([]string{root})
 	want := []DumpEntry{
 		{Name: "CASE.DMP", Size: 4, MTime: t0.Add(3 * time.Second)},
 		{Name: "w3wp.exe.1234.dmp", Size: 3, MTime: t0.Add(2 * time.Second), Target: "w3wp"},
@@ -55,7 +58,7 @@ func TestDumpsNoContent(t *testing.T) {
 	secret := "TOP-SECRET-DUMP-CONTENT-0123456789"
 	writeDump(t, filepath.Join(root, "w3wp.exe.1.dmp"), []byte(secret), time.Unix(1000, 0))
 
-	entries := catalogueDumps([]string{root})
+	entries, _ := catalogueDumps([]string{root})
 	if len(entries) != 1 {
 		t.Fatalf("len = %d, want 1", len(entries))
 	}
@@ -83,12 +86,15 @@ func TestDumpsCaps(t *testing.T) {
 		for i := 0; i < 250; i++ {
 			writeDump(t, filepath.Join(root, fmt.Sprintf("d%03d.dmp", i)), []byte("x"), t0.Add(time.Duration(i)*time.Second))
 		}
-		got := catalogueDumps([]string{root})
+		got, st := catalogueDumps([]string{root})
 		if len(got) != dumpMaxListed {
 			t.Fatalf("len = %d, want capped at %d", len(got), dumpMaxListed)
 		}
 		if got[0].Name != "d249.dmp" {
 			t.Fatalf("newest dump dropped: first = %s, want d249.dmp", got[0].Name)
+		}
+		if st.Truncated {
+			t.Fatalf("250 entries are under the visit budget: %+v", st)
 		}
 	})
 	t.Run("visited capped at 500", func(t *testing.T) {
@@ -98,9 +104,12 @@ func TestDumpsCaps(t *testing.T) {
 			writeDump(t, filepath.Join(root, fmt.Sprintf("a%03d.txt", i)), []byte("x"), t0)
 		}
 		writeDump(t, filepath.Join(root, "zzz.dmp"), []byte("x"), t0)
-		got := catalogueDumps([]string{root})
+		got, st := catalogueDumps([]string{root})
 		if len(got) != 0 {
 			t.Fatalf("walk must stop after %d visited entries; zzz.dmp was reached: %d dumps", dumpMaxVisited, len(got))
+		}
+		if !st.Truncated || st.Visited > dumpMaxVisited+dumpReadBatch {
+			t.Fatalf("scan status not honest about the cap: %+v", st)
 		}
 	})
 }
@@ -111,7 +120,8 @@ func TestDumpsCadence(t *testing.T) {
 	calls := 0
 	g := &dumpsGroup{roots: []string{root}, scan: func(roots []string) []DumpEntry {
 		calls++
-		return catalogueDumps(roots)
+		entries, _ := catalogueDumps(roots)
+		return entries
 	}}
 	now := time.Unix(2000, 0)
 	v1, err := g.Collect(now, 0)
@@ -151,7 +161,7 @@ func TestDumpsCadence(t *testing.T) {
 
 func TestDumpsEmptyNil(t *testing.T) {
 	for _, roots := range [][]string{{t.TempDir()}, {filepath.Join(t.TempDir(), "absent")}} {
-		g := &dumpsGroup{roots: roots, scan: catalogueDumps}
+		g := &dumpsGroup{roots: roots, scanStatus: catalogueDumps}
 		v, err := g.Collect(time.Unix(1000, 0), 0)
 		if err != nil {
 			t.Fatal(err)
@@ -177,5 +187,132 @@ func TestDumpsTargetParse(t *testing.T) {
 		if got := dumpTarget(c.name); got != c.want {
 			t.Errorf("dumpTarget(%q) = %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+// W12-06: a huge directory is enumerated in bounded batches, not read whole
+// before the cap can stop it. The seam counts every entry the scan fetched.
+func TestDumpsScanBoundsEnumeration(t *testing.T) {
+	root := t.TempDir()
+	t0 := time.Unix(1000, 0)
+	for i := 0; i < 5000; i++ {
+		writeDump(t, filepath.Join(root, fmt.Sprintf("e%04d.dmp", i)), []byte("x"), t0.Add(time.Duration(i)*time.Second))
+	}
+	fetched := 0
+	batches := 0
+	old := dumpReadDir
+	dumpReadDir = func(f *os.File, n int) ([]fs.DirEntry, error) {
+		if n > dumpReadBatch {
+			t.Errorf("directory read asked for %d entries, want batches of at most %d", n, dumpReadBatch)
+		}
+		ents, err := old(f, n)
+		fetched += len(ents)
+		batches++
+		return ents, err
+	}
+	t.Cleanup(func() { dumpReadDir = old })
+	got, st := catalogueDumps([]string{root})
+	if !st.Truncated {
+		t.Fatalf("5000 entries must truncate the scan: %+v", st)
+	}
+	// The visit budget stops between batches: at most one batch past the cap.
+	if fetched > dumpMaxVisited+dumpReadBatch {
+		t.Fatalf("scan fetched %d entries, want at most %d (budget + one batch)", fetched, dumpMaxVisited+dumpReadBatch)
+	}
+	if batches > (dumpMaxVisited+dumpReadBatch)/dumpReadBatch+1 {
+		t.Fatalf("scan made %d directory reads, want bounded batches", batches)
+	}
+	if len(got) == 0 || len(got) > dumpMaxListed {
+		t.Fatalf("listed %d dumps, want 1..%d of the visited newest", len(got), dumpMaxListed)
+	}
+}
+
+// W12-06: once the shared visit budget is exhausted, no further root is opened.
+// The second root is a FILE: opening it as a directory would fail and count as
+// unreadable, so Unreadable == 0 proves it was never attempted.
+func TestDumpsStopsBeforeFurtherRoots(t *testing.T) {
+	root := t.TempDir()
+	t0 := time.Unix(1000, 0)
+	for i := 0; i < 600; i++ {
+		writeDump(t, filepath.Join(root, fmt.Sprintf("a%03d.txt", i)), []byte("x"), t0)
+	}
+	notADir := filepath.Join(t.TempDir(), "file-root")
+	writeDump(t, notADir, []byte("x"), t0)
+	got, st := catalogueDumps([]string{root, notADir})
+	if !st.Truncated || st.Unreadable != 0 {
+		t.Fatalf("exhausted scan touched a later root: %+v", st)
+	}
+	if len(got) != 0 {
+		t.Fatalf("dumps from a truncated visit: %d", len(got))
+	}
+}
+
+// W12-06: the kept set is the newest 200 OVER ALL visited roots, not the newest
+// of each root separately: a late root's newer dumps displace the first root's
+// older ones.
+func TestDumpsNewestHeapAcrossRoots(t *testing.T) {
+	root1, root2 := t.TempDir(), t.TempDir()
+	t0 := time.Unix(1000, 0)
+	for i := 0; i < 250; i++ {
+		writeDump(t, filepath.Join(root1, fmt.Sprintf("old%03d.dmp", i)), []byte("x"), t0.Add(time.Duration(i)*time.Second))
+	}
+	for i := 0; i < 10; i++ {
+		writeDump(t, filepath.Join(root2, fmt.Sprintf("new%02d.dmp", i)), []byte("x"), t0.Add(time.Duration(1000+i)*time.Second))
+	}
+	got, st := catalogueDumps([]string{root1, root2})
+	if st.Truncated || len(got) != dumpMaxListed {
+		t.Fatalf("status %+v, listed %d, want 200 untruncated", st, len(got))
+	}
+	for i := 0; i < 10; i++ {
+		if got[i].Name != fmt.Sprintf("new%02d.dmp", 9-i) {
+			t.Fatalf("newest heap lost a late root's dump at %d: %s", i, got[i].Name)
+		}
+	}
+}
+
+// W12-06: an unreadable root is reported, a missing root is normal.
+func TestDumpsUnreadableStatus(t *testing.T) {
+	notADir := filepath.Join(t.TempDir(), "file-root")
+	writeDump(t, notADir, []byte("x"), time.Unix(1000, 0))
+	_, st := catalogueDumps([]string{notADir, filepath.Join(t.TempDir(), "absent")})
+	if st.Unreadable != 1 || st.Truncated {
+		t.Fatalf("status %+v, want one unreadable root and no truncation", st)
+	}
+	g := &dumpsGroup{roots: []string{notADir}, scanStatus: catalogueDumps}
+	if _, err := g.Collect(time.Unix(2000, 0), 0); err != nil {
+		t.Fatal(err)
+	}
+	if g.ScanStatus().Unreadable != 1 {
+		t.Fatalf("group did not keep the scan status: %+v", g.ScanStatus())
+	}
+}
+
+// W12-06: a junction (Windows) or symlink directory under a root is not
+// followed, so a dump behind the alias never enters the catalogue. Only fake
+// temp-dir data is used; no real private target is read.
+func TestDumpsSkipsLinkDirectories(t *testing.T) {
+	root := t.TempDir()
+	real := t.TempDir()
+	writeDump(t, filepath.Join(real, "behind.dmp"), []byte("x"), time.Unix(2000, 0))
+	alias := filepath.Join(root, "alias")
+	if runtime.GOOS == "windows" {
+		out, err := exec.Command("cmd", "/c", "mklink", "/J", alias, real).CombinedOutput()
+		if err != nil {
+			t.Skipf("junction not creatable here: %v %s", err, out)
+		}
+	} else {
+		if err := os.Symlink(real, alias); err != nil {
+			t.Skipf("symlink not creatable here: %v", err)
+		}
+	}
+	writeDump(t, filepath.Join(root, "plain.dmp"), []byte("x"), time.Unix(1000, 0))
+	got, _ := catalogueDumps([]string{root})
+	if len(got) != 1 || got[0].Name != "plain.dmp" {
+		t.Fatalf("link directory was followed: %+v", got)
+	}
+	// The alias root itself is refused too.
+	got2, st2 := catalogueDumps([]string{alias})
+	if len(got2) != 0 || st2.Unreadable != 1 {
+		t.Fatalf("alias root followed or not reported: %+v %+v", got2, st2)
 	}
 }
