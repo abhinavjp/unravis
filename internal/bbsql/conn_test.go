@@ -52,13 +52,17 @@ func TestCheckLocalTarget(t *testing.T) {
 // --- stub driver: counts real connection attempts, never touches a network ---
 
 type stubConnector struct {
-	connects *int32
-	pingErr  error
+	connects   *int32
+	connectErr error
+	prepared   *[]string
 }
 
 func (c stubConnector) Connect(context.Context) (driver.Conn, error) {
 	atomic.AddInt32(c.connects, 1)
-	return stubConn{pingErr: c.pingErr}, nil
+	if c.connectErr != nil {
+		return nil, c.connectErr
+	}
+	return stubConn{prepared: c.prepared}, nil
 }
 func (c stubConnector) Driver() driver.Driver { return stubDriver{} }
 
@@ -66,26 +70,33 @@ type stubDriver struct{}
 
 func (stubDriver) Open(string) (driver.Conn, error) { return nil, errors.New("stub") }
 
-type stubConn struct{ pingErr error }
+type stubConn struct{ prepared *[]string }
 
-func (stubConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("stub") }
-func (stubConn) Close() error                        { return nil }
-func (stubConn) Begin() (driver.Tx, error)           { return nil, errors.New("stub") }
-func (c stubConn) Ping(context.Context) error        { return c.pingErr }
+func (c stubConn) Prepare(q string) (driver.Stmt, error) {
+	if c.prepared != nil {
+		*c.prepared = append(*c.prepared, q)
+	}
+	return nil, errors.New("stub")
+}
+func (stubConn) Close() error              { return nil }
+func (stubConn) Begin() (driver.Tx, error) { return nil, errors.New("stub") }
 
 // TestOpenOneConnection proves C5 (max open 1, max idle 1, lifetime 1 h) via
-// the constructor seam, that Open pings exactly one connection, that a remote
-// target is rejected BEFORE any connect, and that ping failures stay fixed-code.
+// the constructor seam, that Open acquires exactly one connection WITHOUT a
+// driver Ping or any other SQL (W8-06: the startup transcript is empty until
+// the ceiling controls run), that a remote target is rejected BEFORE any
+// connect, and that connect failures stay fixed-code.
 func TestOpenOneConnection(t *testing.T) {
 	if pool != (poolSettings{maxOpen: 1, maxIdle: 1, maxLifetime: time.Hour}) {
 		t.Fatalf("C5 pool settings = %+v; want {1 1 1h}", pool)
 	}
 	var connects int32
 	var opened bool
+	var prepared []string
 	old := openDB
 	openDB = func(driver.Connector) *sql.DB {
 		opened = true
-		return sql.OpenDB(stubConnector{connects: &connects})
+		return sql.OpenDB(stubConnector{connects: &connects, prepared: &prepared})
 	}
 	defer func() { openDB = old }()
 
@@ -101,7 +112,10 @@ func TestOpenOneConnection(t *testing.T) {
 		t.Errorf("MaxOpenConns = %d; want 1", n)
 	}
 	if n := atomic.LoadInt32(&connects); n != 1 {
-		t.Errorf("connections opened = %d; want exactly 1 (the ping)", n)
+		t.Errorf("connections opened = %d; want exactly 1 (the acquisition)", n)
+	}
+	if len(prepared) != 0 {
+		t.Fatalf("Open sent SQL of its own (driver Ping?): %v", prepared)
 	}
 
 	// applyPool really applies the limit to a *sql.DB.
@@ -123,13 +137,13 @@ func TestOpenOneConnection(t *testing.T) {
 		t.Fatal("a remote target reached the connector")
 	}
 
-	// Ping failure: fixed code, never the driver's text.
+	// Connect failure: fixed code, never the driver's text.
 	openDB = func(driver.Connector) *sql.DB {
-		return sql.OpenDB(stubConnector{connects: new(int32), pingErr: errors.New("driver-secret-text")})
+		return sql.OpenDB(stubConnector{connects: new(int32), connectErr: errors.New("driver-secret-text")})
 	}
 	_, err = Open(ConnConfig{Server: "localhost"})
 	if !errors.As(err, &e) || e.Code != "connect-failed" {
-		t.Fatalf("Open ping failure = %v; want connect-failed", err)
+		t.Fatalf("Open connect failure = %v; want connect-failed", err)
 	}
 	if strings.Contains(err.Error(), "driver-secret-text") {
 		t.Fatal("driver error text leaked")

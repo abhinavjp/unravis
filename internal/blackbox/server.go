@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -251,27 +252,83 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"Read the status with the read key in the " + KeyHeader + " header: /status, /manifest, /files, /files/<name>.\n"))
 }
 
+// sqlStatusMaxAge is the documented freshness rule (W8-04): the SQL runner
+// rewrites status.json on EVERY tick, and the longest tick interval is the C7
+// back-off cap of 15 minutes. 20 minutes = that cap plus a 5-minute margin, so
+// a file older than this (or implausibly far in the future) means the SQL
+// service is no longer updating it — stopped, removed or crashed — and /status
+// reports off instead of trusting an old enabled:true record forever. The
+// file's modification time is the heartbeat; it is private metadata, and the
+// public field set stays exactly the four C11 fields.
+const sqlStatusMaxAge = 20 * time.Minute
+
+// sqlStatusMaxBytes bounds the status file BEFORE any allocation (W8-04).
+const sqlStatusMaxBytes = 4096
+
 // readSQLStatus reads the SQL runner's status file best-effort: one small file
-// read per /status, on demand, no goroutine. Missing, unreadable or malformed
-// means off, never an error answer. Extra fields are refused
-// (DisallowUnknownFields) and the state is whitelisted, so no instance name,
-// version or error text can leak through the file.
-func readSQLStatus(folder string) SQLStatus {
+// read per /status, on demand, no goroutine. Missing, unreadable, oversized,
+// stale, malformed or inconsistent means the WHOLE off object, never an error
+// answer and never a partial record (W8-04). The document is validated in
+// full: required fields present, no unknown fields, exactly one JSON value
+// (trailing data or delimiters refused), nonnegative failures, a whitelisted
+// state, enabled agreeing with state, and a non-zero lastOK when present. No
+// instance name, version or error text can leak through the file.
+func readSQLStatus(folder string, now time.Time) SQLStatus {
 	off := SQLStatus{State: "off"}
-	data, err := os.ReadFile(filepath.Join(SQLDataDir(folder), "status.json"))
+	path := filepath.Join(SQLDataDir(folder), "status.json")
+	f, err := os.Open(path)
 	if err != nil {
 		return off
 	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || fi.Size() > sqlStatusMaxBytes {
+		return off
+	}
+	if age := now.Sub(fi.ModTime()); age > sqlStatusMaxAge || age < -sqlStatusMaxAge {
+		return off
+	}
+	data, err := io.ReadAll(io.LimitReader(f, sqlStatusMaxBytes+1))
+	if err != nil || len(data) > sqlStatusMaxBytes {
+		return off
+	}
+	// Pointer fields make a MISSING required field detectable; json.Unmarshal
+	// into the value struct would silently default it.
+	var p struct {
+		Enabled  *bool      `json:"enabled"`
+		State    *string    `json:"state"`
+		LastOK   *time.Time `json:"lastOK"`
+		Failures *int       `json:"failures"`
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	var st SQLStatus
-	if err := dec.Decode(&st); err != nil || dec.More() {
+	if err := dec.Decode(&p); err != nil {
+		return off
+	}
+	// A second decode must hit EOF: dec.More() alone accepts a trailing
+	// delimiter after a complete object.
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+		return off
+	}
+	if p.Enabled == nil || p.State == nil || p.Failures == nil {
+		return off
+	}
+	st := SQLStatus{Enabled: *p.Enabled, State: *p.State, LastOK: p.LastOK, Failures: *p.Failures}
+	if st.Failures < 0 {
 		return off
 	}
 	switch st.State {
 	case "on", "backing-off", "auto-off", "denied", "off":
 	default:
-		st.State = "off"
+		return off
+	}
+	// enabled must agree with state: only on/backing-off are enabled; a
+	// latched or off record can never advertise enabled:true.
+	if st.Enabled != (st.State == "on" || st.State == "backing-off") {
+		return off
+	}
+	if st.LastOK != nil && st.LastOK.IsZero() {
+		return off
 	}
 	return st
 }
@@ -287,7 +344,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Samples: m.SampleCount(), Files: len(m.Files), Bytes: m.TotalBytes(), Gaps: len(m.Gaps),
 		MinFreePercent: s.o.Config.MinFreePercent, KeepDays: s.o.Config.KeepDays, MaxGB: s.o.Config.MaxGB,
 		ManifestOK: s.o.Store.ManifestWritable(), WriteOK: st.WriteOK, Probe: Probe{Enabled: false},
-		SQL: readSQLStatus(s.o.Config.Folder),
+		SQL: readSQLStatus(s.o.Config.Folder, now),
 	}
 	if st.FreeKnown {
 		p := st.FreePercent

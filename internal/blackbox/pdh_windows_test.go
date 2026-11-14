@@ -43,6 +43,19 @@ func TestReadingFromFailedCounterNotOK(t *testing.T) {
 	}
 }
 
+// W1-01: NEW_DATA is a success status at the native boundary too. The engine and
+// the source must agree, or a valid reading is dropped before it can be used.
+func TestReadingFromNewDataIsOK(t *testing.T) {
+	r := readingFrom(`\X\Y`, pdhFmtCounterValue{CStatus: 1, Double: 3.5}, 0)
+	if !r.OK || r.Value != 3.5 || r.Status != 1 {
+		t.Errorf("NEW_DATA reading: got %+v, want OK=true Value=3.5 Status=1", r)
+	}
+	// An API failure still wins over a success-looking CStatus.
+	if r := readingFrom(`\X\Y`, pdhFmtCounterValue{CStatus: 1, Double: 3.5}, 0xC0000BB9); r.OK {
+		t.Errorf("API failure with NEW_DATA CStatus: got %+v, want OK=false", r)
+	}
+}
+
 func TestNewPDHSourceBadPathReturnsError(t *testing.T) {
 	src, err := NewPDHSource([]string{`\NoSuchObject(_Total)\NoSuchCounter`})
 	if err == nil {

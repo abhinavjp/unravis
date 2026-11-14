@@ -26,14 +26,17 @@ func proc10Reading(inst, counter string, v float64) CounterReading {
 	return CounterReading{Path: proc10Path(inst, counter), Value: v, OK: true}
 }
 
-// proc10Instance adds the four expanded paths and one valid reading per counter
+// proc10Instance adds the five expanded paths and one valid reading per counter
 // for a single Process instance (the #N suffix is part of the instance name).
-func proc10Instance(src *proc10FakeSource, inst string, pid, cpu, ws, pb float64) {
-	for _, c := range []string{"ID Process", "% Processor Time", "Working Set", "Private Bytes"} {
+// ID Process + Creation Time carry the (PID, creation) identity confirming start
+// (W5-01); the other three are the per-process metrics.
+func proc10Instance(src *proc10FakeSource, inst string, pid float64, start int64, cpu, ws, pb float64) {
+	for _, c := range []string{"ID Process", "Creation Time", "% Processor Time", "Working Set", "Private Bytes"} {
 		src.paths = append(src.paths, proc10Path(inst, c))
 	}
 	src.readings = append(src.readings,
 		proc10Reading(inst, "ID Process", pid),
+		proc10Reading(inst, "Creation Time", creationTicksFor(start)),
 		proc10Reading(inst, "% Processor Time", cpu),
 		proc10Reading(inst, "Working Set", ws),
 		proc10Reading(inst, "Private Bytes", pb),
@@ -42,10 +45,17 @@ func proc10Instance(src *proc10FakeSource, inst string, pid, cpu, ws, pb float64
 
 func newProc10TestGroup(t *testing.T, src *proc10FakeSource, targets []ResolvedTarget, changed func() bool) *proc10Group {
 	t.Helper()
+	return newProc10TestGroupFn(t, src, func() []ResolvedTarget { return targets }, changed)
+}
+
+// newProc10TestGroupFn builds a group from a targets func so a test can vary the
+// returned view between calls (mid-collect replacement, W5-01).
+func newProc10TestGroupFn(t *testing.T, src *proc10FakeSource, targets func() []ResolvedTarget, changed func() bool) *proc10Group {
+	t.Helper()
 	g, err := newProc10Group(GroupDeps{
 		Source:            src,
 		Cores:             4,
-		Targets:           func() []ResolvedTarget { return targets },
+		Targets:           targets,
 		ProcessSetChanged: changed,
 	})
 	if err != nil {
@@ -71,9 +81,9 @@ func proc10Collect(t *testing.T, g *proc10Group, n int) *Proc10Group {
 
 func TestProc10PIDMap(t *testing.T) {
 	src := &proc10FakeSource{}
-	proc10Instance(src, "w3wp", 4321, 10, 1000, 2000)
-	proc10Instance(src, "w3wp#1", 7777, 20, 3000, 4000)
-	proc10Instance(src, "dotnet", 900, 30, 5000, 6000) // unselected: must not appear
+	proc10Instance(src, "w3wp", 4321, 1000, 10, 1000, 2000)
+	proc10Instance(src, "w3wp#1", 7777, 1000, 20, 3000, 4000)
+	proc10Instance(src, "dotnet", 900, 1000, 30, 5000, 6000) // unselected: must not appear
 	targets := []ResolvedTarget{
 		{Key: "pool:a", PID: 7777, Start: 1000, Runtime: 2},
 		{Key: "pool:b", PID: 4321, Start: 1000, Runtime: 2},
@@ -86,7 +96,7 @@ func TestProc10PIDMap(t *testing.T) {
 	}
 	a, b := grp.Targets[0], grp.Targets[1] // sorted by key
 	if a.Target != "pool:a" || b.Target != "pool:b" {
-		t.Fatalf("keys = %q,%q; want pool:a,pool:b (instance→PID matched the right target)", a.Target, b.Target)
+		t.Fatalf("keys = %q,%q; want pool:a,pool:b (instance->PID matched the right target)", a.Target, b.Target)
 	}
 	check := func(name string, got *float64, want float64) {
 		t.Helper()
@@ -100,19 +110,19 @@ func TestProc10PIDMap(t *testing.T) {
 			t.Errorf("%s = %v, want %v", name, got, want)
 		}
 	}
-	check("a.CPUPct", a.CPUPct, 20) // w3wp#1 → PID 7777 → pool:a
+	check("a.CPUPct", a.CPUPct, 20) // w3wp#1 -> PID 7777 -> pool:a
 	checkU("a.WorkingSet", a.WorkingSet, 3000)
 	checkU("a.PrivateBytes", a.PrivateBytes, 4000)
-	check("b.CPUPct", b.CPUPct, 10) // w3wp → PID 4321 → pool:b
+	check("b.CPUPct", b.CPUPct, 10) // w3wp -> PID 4321 -> pool:b
 	checkU("b.WorkingSet", b.WorkingSet, 1000)
 	checkU("b.PrivateBytes", b.PrivateBytes, 2000)
 }
 
 func TestProc10Net10Only(t *testing.T) {
 	src := &proc10FakeSource{}
-	proc10Instance(src, "w3wp", 4321, 10, 1000, 2000)   // runtime 1: skip
-	proc10Instance(src, "dotnet", 7777, 20, 3000, 4000) // runtime 2: keep
-	proc10Instance(src, "svc", 900, 30, 5000, 6000)     // runtime 0: skip
+	proc10Instance(src, "w3wp", 4321, 1000, 10, 1000, 2000)   // runtime 1: skip
+	proc10Instance(src, "dotnet", 7777, 1000, 20, 3000, 4000) // runtime 2: keep
+	proc10Instance(src, "svc", 900, 1000, 30, 5000, 6000)     // runtime 0: skip
 	targets := []ResolvedTarget{
 		{Key: "pool:fw", PID: 4321, Start: 1000, Runtime: 1},
 		{Key: "pool:net10", PID: 7777, Start: 1000, Runtime: 2},
@@ -130,7 +140,7 @@ func TestProc10Net10Only(t *testing.T) {
 
 func TestProc10MultiCoreNotCapped(t *testing.T) {
 	src := &proc10FakeSource{}
-	proc10Instance(src, "dotnet", 7777, 250, 1000, 2000)
+	proc10Instance(src, "dotnet", 7777, 1000, 250, 1000, 2000)
 	targets := []ResolvedTarget{{Key: "pool:a", PID: 7777, Start: 1000, Runtime: 2}}
 	g := newProc10TestGroup(t, src, targets, nil)
 	grp := proc10Collect(t, g, 3)
@@ -145,21 +155,23 @@ func TestProc10MultiCoreNotCapped(t *testing.T) {
 func TestProc10MissingOmitted(t *testing.T) {
 	src := &proc10FakeSource{}
 	// w3wp: Working Set invalid, the rest valid.
-	for _, c := range []string{"ID Process", "% Processor Time", "Working Set", "Private Bytes"} {
+	for _, c := range []string{"ID Process", "Creation Time", "% Processor Time", "Working Set", "Private Bytes"} {
 		src.paths = append(src.paths, proc10Path("w3wp", c))
 	}
 	src.readings = append(src.readings,
 		proc10Reading("w3wp", "ID Process", 4321),
+		proc10Reading("w3wp", "Creation Time", creationTicksFor(1000)),
 		proc10Reading("w3wp", "% Processor Time", 10),
 		CounterReading{Path: proc10Path("w3wp", "Working Set"), Value: 99, Status: 1, OK: false},
 		proc10Reading("w3wp", "Private Bytes", 2000),
 	)
-	// dotnet: instance present (valid ID Process) but every metric invalid.
-	for _, c := range []string{"ID Process", "% Processor Time", "Working Set", "Private Bytes"} {
+	// dotnet: instance present (valid identity) but every metric invalid.
+	for _, c := range []string{"ID Process", "Creation Time", "% Processor Time", "Working Set", "Private Bytes"} {
 		src.paths = append(src.paths, proc10Path("dotnet", c))
 	}
 	src.readings = append(src.readings,
 		proc10Reading("dotnet", "ID Process", 7777),
+		proc10Reading("dotnet", "Creation Time", creationTicksFor(1000)),
 		CounterReading{Path: proc10Path("dotnet", "% Processor Time"), Value: 1, Status: 1, OK: false},
 		CounterReading{Path: proc10Path("dotnet", "Working Set"), Value: 2, Status: 1, OK: false},
 		CounterReading{Path: proc10Path("dotnet", "Private Bytes"), Value: 3, Status: 1, OK: false},
@@ -190,7 +202,7 @@ func TestProc10MissingOmitted(t *testing.T) {
 
 	// Nothing valid anywhere: the group is nil, never zero-filled.
 	src2 := &proc10FakeSource{}
-	proc10Instance(src2, "dotnet", 7777, 1, 2, 3)
+	proc10Instance(src2, "dotnet", 7777, 1, 1, 2, 3)
 	for i := range src2.readings {
 		src2.readings[i].OK = false
 		src2.readings[i].Status = 1
@@ -203,7 +215,7 @@ func TestProc10MissingOmitted(t *testing.T) {
 
 func TestProc10RateGated(t *testing.T) {
 	src := &proc10FakeSource{}
-	proc10Instance(src, "dotnet", 7777, 50, 1000, 2000)
+	proc10Instance(src, "dotnet", 7777, 1000, 50, 1000, 2000)
 	targets := []ResolvedTarget{{Key: "pool:a", PID: 7777, Start: 1000, Runtime: 2}}
 	g := newProc10TestGroup(t, src, targets, nil)
 	now := time.Unix(1000, 0)
@@ -232,7 +244,7 @@ func TestProc10RateGated(t *testing.T) {
 
 func TestProc10RefreshOnChange(t *testing.T) {
 	src := &proc10FakeSource{}
-	proc10Instance(src, "w3wp", 4321, 10, 1000, 2000)
+	proc10Instance(src, "w3wp", 4321, 1000, 10, 1000, 2000)
 	targets := []ResolvedTarget{
 		{Key: "pool:a", PID: 4321, Start: 1000, Runtime: 2},
 		{Key: "pool:b", PID: 7777, Start: 1000, Runtime: 2},
@@ -248,7 +260,7 @@ func TestProc10RefreshOnChange(t *testing.T) {
 	}
 	// The process set changes: a new instance appears; re-expand once, pick it up.
 	changed = true
-	proc10Instance(src, "dotnet", 7777, 20, 3000, 4000)
+	proc10Instance(src, "dotnet", 7777, 1000, 20, 3000, 4000)
 	v, err := g.Collect(now.Add(15*time.Second), 15)
 	if err != nil {
 		t.Fatal(err)
@@ -277,7 +289,7 @@ func TestProc10ParenInstance(t *testing.T) {
 		t.Fatalf("parse = (%q, %q, %v, %v), want (Svc (x86), Working Set, gauge, true)", inst, counter, kind, ok)
 	}
 	src := &proc10FakeSource{}
-	proc10Instance(src, "Svc (x86)", 7777, 20, 3000, 4000)
+	proc10Instance(src, "Svc (x86)", 7777, 1000, 20, 3000, 4000)
 	targets := []ResolvedTarget{{Key: "svc:x86", PID: 7777, Start: 1000, Runtime: 2}}
 	g := newProc10TestGroup(t, src, targets, nil)
 	grp := proc10Collect(t, g, 3)
@@ -303,7 +315,7 @@ func TestProc10ParenInstance(t *testing.T) {
 // machine-wide PDH query is never collected and no engine work runs (BL-122).
 func TestProc10NoTargetsNoSample(t *testing.T) {
 	src := &proc10FakeSource{}
-	proc10Instance(src, "dotnet", 7777, 50, 1000, 2000)
+	proc10Instance(src, "dotnet", 7777, 1000, 50, 1000, 2000)
 	// nil Targets func, nil slice, empty slice: all short-circuit before sampling.
 	gNil, err := newProc10Group(GroupDeps{Source: src, Cores: 4})
 	if err != nil {

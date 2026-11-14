@@ -34,6 +34,20 @@ type semFixture struct {
 	id, grantees, waiters, forced, timeouts int32
 }
 
+// i32p is a pointer to an int32 delta, for the nullable emitted Forced/Timeouts
+// fields (a measured delta is present; an unreadable one is nil/omitted).
+func i32p(v int32) *int32 { return &v }
+
+// semDelta reads an emitted nullable delta, failing the test if it is missing
+// when a value was expected.
+func semDelta(t *testing.T, p *int32) int32 {
+	t.Helper()
+	if p == nil {
+		t.Fatalf("delta is missing (nil), want a value")
+	}
+	return *p
+}
+
 func semRows(rows ...semFixture) []Row {
 	out := make([]Row, 0, len(rows))
 	for _, r := range rows {
@@ -267,22 +281,22 @@ func TestSemaphoresDelta(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("payload = %+v, want exactly 1 row", got)
 	}
-	want := Semaphores{ResourceSemaphoreID: 0, Grantees: 2, Waiters: 4, Forced: 5, Timeouts: 2}
-	if got[0] != want {
-		t.Fatalf("delta row = %+v, want %+v (gauges as read, counters differenced)", got[0], want)
+	if got[0].ResourceSemaphoreID != 0 || got[0].Grantees != 2 || got[0].Waiters != 4 ||
+		semDelta(t, got[0].Forced) != 5 || semDelta(t, got[0].Timeouts) != 2 {
+		t.Fatalf("delta row = %+v, want gauges {2 4} and deltas {forced:5 timeouts:2}", got[0])
 	}
 
 	// An unchanged sighting still emits one row: the gauges describe the
-	// grants in flight right now, and a zero forced delta is a measured zero,
-	// not a missing value.
+	// grants in flight right now, and a zero forced delta is a measured zero
+	// (a present pointer to 0), not a missing value.
 	payload, _, err = s.Decode(semRows(cur))
 	if err != nil {
 		t.Fatalf("steady cycle: %v", err)
 	}
 	got = semPayload(t, payload)
-	want = Semaphores{ResourceSemaphoreID: 0, Grantees: 2, Waiters: 4, Forced: 0, Timeouts: 0}
-	if len(got) != 1 || got[0] != want {
-		t.Fatalf("steady cycle = %+v, want %+v", got, want)
+	if len(got) != 1 || got[0].Grantees != 2 || got[0].Waiters != 4 ||
+		semDelta(t, got[0].Forced) != 0 || semDelta(t, got[0].Timeouts) != 0 {
+		t.Fatalf("steady cycle = %+v, want gauges {2 4} and present zero deltas", got)
 	}
 }
 
@@ -303,7 +317,7 @@ func TestSemaphoresUnseenIDSkipped(t *testing.T) {
 		t.Fatalf("cycle 2: %v", err)
 	}
 	got := semPayload(t, payload)
-	if len(got) != 1 || got[0].ResourceSemaphoreID != 0 || got[0].Forced != 2 {
+	if len(got) != 1 || got[0].ResourceSemaphoreID != 0 || semDelta(t, got[0].Forced) != 2 {
 		t.Fatalf("cycle 2 = %+v, want only id 0 with forced delta 2", got)
 	}
 	if len(s.prev) != 2 {
@@ -347,9 +361,9 @@ func TestSemaphoresCounterReset(t *testing.T) {
 		t.Fatalf("after reset: %v", err)
 	}
 	got := semPayload(t, payload)
-	want := Semaphores{ResourceSemaphoreID: 0, Grantees: 2, Waiters: 0, Forced: 5, Timeouts: 1}
-	if len(got) != 1 || got[0] != want {
-		t.Fatalf("after reset = %+v, want %+v measured from the new baseline", got, want)
+	if len(got) != 1 || got[0].ResourceSemaphoreID != 0 || got[0].Grantees != 2 || got[0].Waiters != 0 ||
+		semDelta(t, got[0].Forced) != 5 || semDelta(t, got[0].Timeouts) != 1 {
+		t.Fatalf("after reset = %+v, want gauges {2 0} and deltas {forced:5 timeouts:1} from the new baseline", got)
 	}
 
 	// Either counter rolling back alone is enough: a fall in timeout_count by
@@ -442,74 +456,145 @@ func TestSemaphoresEmptyReply(t *testing.T) {
 	}
 }
 
-// TestSemaphoresNULLRowSkipped is the NULL decision for the non-summed
-// statement: a row carrying NULL cannot be differenced, so it is skipped and
-// its baseline is dropped instead of being read as a zero counter.
-func TestSemaphoresNULLRowSkipped(t *testing.T) {
+// TestSemaphoresNULLCounterKeepsGauges is the schema-specific NULL decision
+// (W11-04): a NULL cumulative counter is unreadable for THAT counter only. The
+// readable gauges beside it are still baselined and emitted, and the missing
+// counter is a nil (omitted) delta — never a faked zero and never a blanked row.
+func TestSemaphoresNULLCounterKeepsGauges(t *testing.T) {
 	s := &semaphoresSampler{}
 	rows := []Row{
 		semaphoreRow(int64(0), int64(1), int64(0), int64(10), int64(2)),
-		semaphoreRow(int64(1), int64(0), int64(0), nil, int64(0)),
+		semaphoreRow(int64(1), int64(0), int64(0), nil, int64(0)), // forced NULL
 	}
 	payload, truncated, err := s.Decode(rows)
 	if err != nil || truncated || payload != nil {
 		t.Fatalf("first cycle: payload=%v truncated=%v err=%v, want nil,false,nil", payload, truncated, err)
 	}
-	if len(s.prev) != 1 {
-		t.Fatalf("len(prev) = %d, want 1: the NULL row must not be baselined", len(s.prev))
+	if len(s.prev) != 2 {
+		t.Fatalf("len(prev) = %d, want 2: the gauges of the NULL-counter row are still baselined", len(s.prev))
 	}
-	if _, ok := s.prev[1]; ok {
-		t.Error("the NULL row was baselined as a zero counter")
+	if s.prev[1].forcedOK {
+		t.Error("the NULL forced counter was baselined as a readable zero")
+	}
+	if !s.prev[1].timeoutsOK {
+		t.Error("the readable timeouts counter beside the NULL forced counter was dropped")
 	}
 
-	// The same id, now readable, is still only a baseline for that cycle.
+	// Next cycle: id0 deltas normally; id1's forced counter is now readable but
+	// has no prior baseline (it was NULL), so forced is baseline-only (nil) while
+	// its gauges and timeouts delta are emitted.
 	payload, _, err = s.Decode([]Row{
 		semaphoreRow(int64(0), int64(1), int64(0), int64(11), int64(2)),
-		semaphoreRow(int64(1), int64(0), int64(0), int64(3), int64(0)),
+		semaphoreRow(int64(1), int64(2), int64(1), int64(3), int64(0)),
 	})
 	if err != nil {
 		t.Fatalf("recovered cycle: %v", err)
 	}
 	got := semPayload(t, payload)
-	if len(got) != 1 || got[0].ResourceSemaphoreID != 0 || got[0].Forced != 1 {
-		t.Fatalf("recovered payload = %+v, want only id 0 with forced delta 1", got)
+	if len(got) != 2 {
+		t.Fatalf("recovered payload = %+v, want both ids (gauges beside a missing delta)", got)
+	}
+	byID := map[int32]Semaphores{}
+	for _, r := range got {
+		byID[r.ResourceSemaphoreID] = r
+	}
+	if semDelta(t, byID[0].Forced) != 1 {
+		t.Errorf("id0 forced delta = %v, want 1", byID[0].Forced)
+	}
+	if byID[1].Forced != nil {
+		t.Errorf("id1 forced delta = %v, want nil (counter was NULL last cycle, baseline-only now)", *byID[1].Forced)
+	}
+	if byID[1].Grantees != 2 || byID[1].Waiters != 1 {
+		t.Errorf("id1 gauges = {%d %d}, want {2 1} emitted beside the missing delta", byID[1].Grantees, byID[1].Waiters)
+	}
+	if semDelta(t, byID[1].Timeouts) != 0 {
+		t.Errorf("id1 timeouts delta = %v, want a present measured 0", byID[1].Timeouts)
 	}
 }
 
-// TestSemaphoresNoWrappedDelta proves the fixed int32 fields can never be
-// written with a difference that wraps into a negative number.
+// TestSemaphoresNoWrappedDelta proves a difference that cannot fit the fixed
+// int32 field skips the row, never wrapped into a negative number. A negative
+// cumulative counter is unreadable (missing), never a baseline.
 func TestSemaphoresNoWrappedDelta(t *testing.T) {
 	s := &semaphoresSampler{}
-	huge := semaphoreRow(int64(0), int64(0), int64(0), int64(-2147483648), int64(0))
-	if payload, _, err := s.Decode([]Row{huge}); err != nil || payload != nil {
+	// Baseline at 0; a jump to 2147483648 is a delta of 2147483648 (> MaxInt32).
+	if payload, _, err := s.Decode(semRows(semFixture{id: 0, grantees: 1, waiters: 0, forced: 0, timeouts: 0})); err != nil || payload != nil {
 		t.Fatalf("baseline: payload=%v err=%v, want nil,nil", payload, err)
 	}
-	if _, _, err := s.Decode([]Row{huge}); err != nil {
-		t.Fatalf("steady repeat: %v", err)
-	}
-	payload, _, err := s.Decode([]Row{semaphoreRow(int64(0), int64(0), int64(0), int64(2147483647), int64(0))})
+	payload, _, err := s.Decode([]Row{semaphoreRow(int64(0), int64(1), int64(0), int64(2147483648), int64(0))})
 	if err != nil {
 		t.Fatalf("jump cycle: %v", err)
 	}
 	if payload != nil {
 		t.Fatalf("payload = %#v, want nil instead of a delta that cannot fit int32", payload)
 	}
+	// A negative cumulative counter is unreadable: no baseline, no delta.
+	neg := &semaphoresSampler{}
+	if _, _, err := neg.Decode([]Row{semaphoreRow(int64(0), int64(0), int64(0), int64(-1), int64(0))}); err != nil {
+		t.Fatalf("negative baseline: %v", err)
+	}
+	if neg.prev[0].forcedOK {
+		t.Error("a negative cumulative counter was accepted as a readable baseline")
+	}
 }
 
-// TestSemaphoresCounterBeyondInt32 pins what happens on a long-lived instance
-// whose cumulative counter no longer fits the fixed int32 field: decodeRows
-// fails closed with the fixed errDecode and no baseline is recorded, instead of
-// sampling a wrapped number. See the report: this is the one behaviour the
-// existing Semaphores struct forces, and the smallest shared-file fix for it.
-func TestSemaphoresCounterBeyondInt32(t *testing.T) {
+// TestSemaphoresWideCumulativeDelta replaces the old narrow-decode failure test
+// (W11-01): a long-lived instance whose cumulative counter exceeds MaxInt32 must
+// still be sampled. The wide nullable int64 raw type reads the lifetime value,
+// the difference is computed in the wide domain, and a small delta is emitted
+// with the fixed int32 field — no decode error, no wrapped number, no fabricated
+// zero. Covers the MaxInt32 crossing, a true reset, NULL and the maximum
+// supported bigint value.
+func TestSemaphoresWideCumulativeDelta(t *testing.T) {
 	s := &semaphoresSampler{}
-	rows := []Row{semaphoreRow(int64(0), int64(1), int64(0), int64(2147483648), int64(0))}
+	// First sighting above MaxInt32: baseline only, NO error (the old code
+	// returned errDecode here and could auto-off the whole stream).
+	rows := []Row{semaphoreRow(int64(0), int64(1), int64(0), int64(2147483648), int64(2147483648))}
 	payload, _, err := s.Decode(rows)
-	if err != errDecode || payload != nil {
-		t.Fatalf("payload=%#v err=%v, want nil,%v", payload, err, errDecode)
+	if err != nil || payload != nil {
+		t.Fatalf("wide baseline: payload=%v err=%v, want nil,nil (no narrow-decode failure)", payload, err)
 	}
-	if len(s.prev) != 0 {
-		t.Fatalf("len(prev) = %d, want 0 after a rejected row", len(s.prev))
+	if len(s.prev) != 1 || !s.prev[0].forcedOK {
+		t.Fatalf("wide baseline not recorded: prev=%+v", s.prev)
+	}
+	// 2147483648 -> 2147483649: a delta of 1 fits int32 and is emitted.
+	payload, _, err = s.Decode([]Row{semaphoreRow(int64(0), int64(1), int64(0), int64(2147483649), int64(2147483649))})
+	if err != nil {
+		t.Fatalf("wide delta cycle: %v", err)
+	}
+	got := semPayload(t, payload)
+	if len(got) != 1 || semDelta(t, got[0].Forced) != 1 || semDelta(t, got[0].Timeouts) != 1 {
+		t.Fatalf("wide delta = %+v, want forced/timeouts deltas of 1 above the old int32 ceiling", got)
+	}
+
+	// A true reset (counter goes backwards) rebaselines and emits no delta.
+	payload, _, err = s.Decode([]Row{semaphoreRow(int64(0), int64(1), int64(0), int64(5), int64(5))})
+	if err != nil || payload != nil {
+		t.Fatalf("reset cycle: payload=%v err=%v, want nil,nil", payload, err)
+	}
+	payload, _, err = s.Decode([]Row{semaphoreRow(int64(0), int64(1), int64(0), int64(9), int64(7))})
+	if err != nil {
+		t.Fatalf("after reset: %v", err)
+	}
+	got = semPayload(t, payload)
+	if len(got) != 1 || semDelta(t, got[0].Forced) != 4 || semDelta(t, got[0].Timeouts) != 2 {
+		t.Fatalf("after reset = %+v, want deltas measured from the reset baseline {4 2}", got)
+	}
+
+	// Maximum supported bigint value, then a small increase: still a small delta.
+	maxS := &semaphoresSampler{}
+	const maxI64 = int64(9223372036854775807)
+	if _, _, err := maxS.Decode([]Row{semaphoreRow(int64(0), int64(0), int64(0), maxI64, maxI64)}); err != nil {
+		t.Fatalf("max bigint baseline: %v", err)
+	}
+	// Same max value: a measured zero delta, present (not missing).
+	payload, _, err = maxS.Decode([]Row{semaphoreRow(int64(0), int64(0), int64(0), maxI64, maxI64)})
+	if err != nil {
+		t.Fatalf("max bigint steady: %v", err)
+	}
+	got = semPayload(t, payload)
+	if len(got) != 1 || semDelta(t, got[0].Forced) != 0 || semDelta(t, got[0].Timeouts) != 0 {
+		t.Fatalf("max bigint steady = %+v, want present zero deltas", got)
 	}
 }
 

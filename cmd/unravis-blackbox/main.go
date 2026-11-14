@@ -42,12 +42,17 @@ Commands that change the service (run as administrator):
               Prints the read key once. Options: --name --folder --port --bind
   start       Start the service.
   stop        Stop the service. The current run is closed cleanly.
-  apply       Read blackbox.json again and restart the service.
+  apply       Save the settings to the installed blackbox.json and restart
+              the service. A stopped service keeps them for its next start.
   remove      Stop and remove the service. The recordings stay.
               --delete-recordings --confirm-name <name>  also deletes them.
-  install-sql Install and start the SQL service (UnravisBlackboxSql) under its
-              own virtual account, then print the grant to run in SSMS.
-              The Blackbox never runs the grant for you.
+  install-sql Install the SQL service (UnravisBlackboxSql) under its own
+              virtual account, STOPPED, then print the grant to run in SSMS.
+              The Blackbox never runs the grant for you. After the grant,
+              activate the service with enable-sql.
+  enable-sql  Activate the installed SQL service after the owner grant:
+              confirms the installed settings and folder, clears the
+              persisted off latch (owner-only) and starts the service.
   remove-sql  Stop and remove the SQL service, then print the revoke script.
               --confirm-name <name>  the Blackbox name, required.
 
@@ -141,30 +146,69 @@ func (a answer) ok(text string, fields map[string]any) int {
 	return exitOK
 }
 
-func (a answer) fail(err error) int {
-	reason := "other"
+// reasonOf maps an error to its fixed reason code (decision A39). It never
+// reads error text into the reason.
+func reasonOf(err error) string {
 	var ie *blackbox.InstallError
+	var ae *blackbox.ApplyError
 	var se *blackbox.SnapshotError
 	switch {
 	case errors.As(err, &ie):
-		reason = string(ie.Reason)
+		return string(ie.Reason)
+	case errors.As(err, &ae):
+		return string(ae.Reason)
 	case errors.As(err, &se):
-		reason = string(se.Reason)
+		return string(se.Reason)
 	case errors.Is(err, blackbox.ErrNotAdmin):
-		reason = string(blackbox.ReasonNoAdmin)
+		return string(blackbox.ReasonNoAdmin)
 	case errors.Is(err, blackbox.ErrNotInstalled):
-		reason = "not-installed"
+		return "not-installed"
 	case errors.Is(err, blackbox.ErrNotSQLInstalled):
-		reason = "not-installed"
+		return "not-installed"
 	case errors.Is(err, blackbox.ErrConfirmName):
-		reason = "confirm-name"
+		return "confirm-name"
 	case errors.Is(err, blackbox.ErrInvalidConfig):
-		reason = "invalid-config"
+		return "invalid-config"
 	}
+	return "other"
+}
+
+func (a answer) fail(err error) int {
+	reason := reasonOf(err)
 	if a.asJSON {
 		_ = json.NewEncoder(a.out).Encode(map[string]any{"ok": false, "reason": reason, "message": err.Error()})
 	} else {
 		fmt.Fprintln(a.err, err.Error())
+	}
+	return exitFail
+}
+
+// sqlReasonSentences are the ONLY messages a SQL command answer may carry
+// (W8-07): one fixed sentence per reason, never err.Error(), so no path,
+// configuration text or OS/driver prose reaches --json or the terminal log.
+var sqlReasonSentences = map[string]string{
+	string(blackbox.ReasonNoAdmin): "This account cannot approve administrator changes. Sign in as an administrator and try again.",
+	"not-installed":                "The service is not installed here. Install the Blackbox first.",
+	"confirm-name":                 "Type the Blackbox name exactly to confirm (--confirm-name).",
+	"invalid-config":               "The settings file is not valid. Fix it and try again.",
+	string(blackbox.ReasonExists):  "The SQL service is already installed. Remove it first (remove-sql).",
+	string(blackbox.ReasonFolder):  "The SQL data folder could not be made and locked for the SQL service only.",
+	"other":                        "The SQL command could not be completed.",
+}
+
+// failSQL answers a SQL command failure with a fixed reason and a fixed
+// sentence. The underlying error (which may name paths or carry OS text) is
+// deliberately dropped at this boundary (W8-07, C10).
+func (a answer) failSQL(err error) int {
+	reason := reasonOf(err)
+	msg, ok := sqlReasonSentences[reason]
+	if !ok {
+		msg = sqlReasonSentences["other"]
+	}
+	if a.asJSON {
+		_ = json.NewEncoder(a.out).Encode(map[string]any{"ok": false, "reason": reason, "message": msg})
+	} else {
+		fmt.Fprintln(a.err, msg)
 	}
 	return exitFail
 }
@@ -225,6 +269,17 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	}
 	paths.ConfigPath = pick(paths.ConfigPath, defaultConfigName)
 	paths.KeyPath = pick(paths.KeyPath, defaultKeyName)
+	// W8-09: the SQL commands bind the config path into the service registry,
+	// so it must be resolved to an absolute canonical path HERE — under the
+	// installer's working directory — before both loading and registration. A
+	// relative path would resolve against the SCM's different working
+	// directory at service startup and read a different (or no) file.
+	switch cmd {
+	case "install-sql", "remove-sql", "enable-sql":
+		if abs, err := filepath.Abs(paths.ConfigPath); err == nil {
+			paths.ConfigPath = abs
+		}
+	}
 
 	switch cmd {
 	case "install":
@@ -290,26 +345,41 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	case "run":
 		return runForeground(paths, d, ans, stderr)
 	case "install-sql":
-		// Creates the service and PRINTS the grant; it never runs SQL, never
-		// grants and never calls the elevate helper (C14). The service is bound
-		// to the exact config validated here, so it locks and uses the same
-		// folder (BBX-5-02 fix: no hardcoded program-folder config divergence).
+		// Creates the service STOPPED and PRINTS the grant; it never runs SQL,
+		// never grants and never calls the elevate helper (C14). The owner runs
+		// the grant in SSMS and then activates with enable-sql (W8-03): starting
+		// before the grant would latch a denial that survives restarts. The
+		// service is bound to the exact absolute config validated here, so it
+		// locks and uses the same folder (BBX-5-02, W8-09).
 		cfg, err := loadInstalledConfig(paths.ConfigPath)
 		if err != nil {
-			return ans.fail(err)
+			return ans.failSQL(err)
 		}
 		if err := d.sqlMgr.InstallSQL(cfg, paths.ConfigPath); err != nil {
-			return ans.fail(err)
+			return ans.failSQL(err)
 		}
-		return ans.ok("The "+blackbox.SQLServiceName+" service is installed and running.\n\nRun this grant in SSMS as an admin (the Blackbox never runs it for you):\n"+grantScript,
-			map[string]any{"service": blackbox.SQLServiceName, "account": blackbox.SQLServiceAccount, "grantScript": grantScript})
+		return ans.ok("The "+blackbox.SQLServiceName+" service is installed and stopped.\n\n1. Run this grant in SSMS as an admin (the Blackbox never runs it for you):\n"+grantScript+"\n\n2. Then activate the service:\n  unravis-blackbox enable-sql",
+			map[string]any{"service": blackbox.SQLServiceName, "account": blackbox.SQLServiceAccount, "grantScript": grantScript, "started": false})
+	case "enable-sql":
+		// Administrator-only owner activation (W8-03): confirms the installed
+		// settings/folder, durably clears only the persisted off latch, and
+		// starts/checks the service. Never runs SQL or the grant itself.
+		cfg, err := loadInstalledConfig(paths.ConfigPath)
+		if err != nil {
+			return ans.failSQL(err)
+		}
+		if err := d.sqlMgr.EnableSQL(cfg, paths.ConfigPath); err != nil {
+			return ans.failSQL(err)
+		}
+		return ans.ok("The "+blackbox.SQLServiceName+" service is enabled and running. It samples only while the rights ceiling passes.",
+			map[string]any{"service": blackbox.SQLServiceName, "started": true})
 	case "remove-sql":
 		cfg, err := loadInstalledConfig(paths.ConfigPath)
 		if err != nil {
-			return ans.fail(err)
+			return ans.failSQL(err)
 		}
 		if err := d.sqlMgr.RemoveSQL(cfg, *confirm); err != nil {
-			return ans.fail(err)
+			return ans.failSQL(err)
 		}
 		return ans.ok("The "+blackbox.SQLServiceName+" service is removed. The SQL data is kept.\n\nRun this revoke in SSMS (the Blackbox never runs it for you):\n"+revokeScript,
 			map[string]any{"serviceRemoved": true, "revokeScript": revokeScript})
@@ -425,22 +495,35 @@ type sqlRunOptions struct {
 
 // runSQLService loads the settings and runs the SQL runner until ctx is done.
 // It never starts the host recorder or its status page: no HTTP in this mode.
+// A clean stop publishes the off status (W8-04) so the host never keeps
+// advertising an old enabled:true record after the service ends.
 func runSQLService(ctx context.Context, p blackbox.Paths, d deps, logf func(string, ...any)) error {
 	cfg, err := blackbox.LoadConfig(p.ConfigPath)
 	if err != nil {
 		return err
 	}
-	return d.sqlRun(ctx, sqlRunOptions{Config: cfg, Dir: blackbox.SQLDataDir(cfg.Folder), Log: logf})
+	err = d.sqlRun(ctx, sqlRunOptions{Config: cfg, Dir: blackbox.SQLDataDir(cfg.Folder), Log: logf})
+	if err == nil {
+		if perr := blackbox.PublishSQLStopped(cfg.Folder); perr != nil && logf != nil {
+			logf("sql: status-off")
+		}
+	}
+	return err
 }
 
-// runSQLForeground is the console form of the hidden sql-service command, the
-// same code the SQL service runs (Ctrl+C to stop).
+// runSQLForeground is the console form of the hidden sql-service command. It is
+// DIAGNOSTIC wiring only (W10-11): production sampling runs exclusively inside
+// the UnravisBlackboxSql service under its own virtual account, and the real
+// runner refuses any other identity through the same folder/identity controls
+// (bbsql.CheckFolderAccess). It serves no HTTP and uses the same fixed-sentence
+// answer boundary as the other SQL commands.
 func runSQLForeground(p blackbox.Paths, d deps, ans answer, stderr io.Writer) int {
+	fmt.Fprintln(stderr, "sql-service console mode is diagnostic only; production runs as the UnravisBlackboxSql service.")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err := runSQLService(ctx, p, d, func(f string, a ...any) { fmt.Fprintf(stderr, f+"\n", a...) })
 	if err != nil {
-		return ans.fail(err)
+		return ans.failSQL(err)
 	}
 	return exitOK
 }

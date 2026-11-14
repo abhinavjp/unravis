@@ -31,17 +31,23 @@ import (
 // config.go deliberately still refuses (owner decision, live check).
 const sqlLocalServer = "(local)"
 
-// sqlBudgetShare is the part of the owner's maxGB budget the SQL sample folder
-// may use. The folder lives under the recorder's folder, but host housekeeping
-// never looks inside it, so the service must bound it itself - and the owner's
-// single number still has to cover both writers. A quarter of maxGB is the
-// split: the measured worst case, every sampler at its row cap on its own
-// cadence, is ~200 MB a day (internal/bbsql/budget_test.go prints the figure),
-// so the default 2 GB budget gives the SQL folder ~537 MB - a little over two
-// days - and a full 168-hour window at that rate would need ~1.4 GB. The byte
-// cap therefore bites before the age limit on a busy instance, oldest whole
-// hours going first, while the recorder keeps the rest.
-const sqlBudgetShare = 4
+// sqlBudgetShare is the SQL folder's part of the owner's single maxGB budget.
+// It is deliberately the SAME constant the host recorder uses to reserve the
+// remaining share (blackbox.SQLBudgetShare), so the two writers cannot drift
+// apart: host keeps max - max/share, SQL keeps max/share, and together they stay
+// within one ceiling (W10-02). The folder lives under the recorder's folder but
+// host housekeeping never looks inside it, so the service must bound it itself.
+//
+// Measured worst case with every sampler at its row cap AND maximum numeric
+// width is ~319 MB a day (internal/bbsql/budget_test.go prints the figure), so
+// the default 2 GB budget gives the SQL folder ~537 MB - under two days - and a
+// full 168-hour window at that rate would need ~2.2 GB. The byte cap therefore
+// bites before the age limit on a busy instance, oldest whole hours going first.
+//
+// OWNER DECISION OPEN: C13's "<2 KB per sample" is NOT met at the C6 row caps
+// (a realistic filestats line is ~4.4 KB, an at-cap max-width line ~53 KB). The
+// bound was not relaxed to make a test pass; it needs an explicit owner ruling.
+const sqlBudgetShare = blackbox.SQLBudgetShare
 
 // runSQLServiceLoop is the real deps.sqlRun: it runs the bbsql runner in this
 // process until ctx is done. The budgets (C4), the back-off and auto-off (C7)
@@ -62,8 +68,10 @@ func runSQLServiceLoop(ctx context.Context, o sqlRunOptions) error {
 		// The samples are wait types, counts and database ids, but ids of real
 		// databases in a real shop are business data: a folder the operator
 		// repointed without re-running install-sql can inherit rights that let
-		// ordinary users read it. Refusing to start is the only honest answer,
-		// and the fixed code is what reaches the event log - never a path.
+		// ordinary users read it. The check also proves this process IS the
+		// UnravisBlackboxSql service identity (W10-11): a console or helper
+		// process is refused. Refusing to start is the only honest answer, and
+		// the fixed code is what reaches the event log - never a path.
 		log("sql: " + bbsql.CodeFolder)
 		return err
 	}

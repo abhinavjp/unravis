@@ -20,7 +20,9 @@ type waitsCumulative struct {
 // bounded by CapWaits: it is rebuilt from the (cap-limited) rows of this cycle
 // every time, so keys that left the top 20 cannot accumulate.
 type waitsSampler struct {
-	prev map[string]waitsCumulative
+	prev          map[string]waitsCumulative
+	obs           Observation // last observation time + source epoch (W11-05)
+	baselineEpoch uint64      // epoch the current baselines were taken under
 }
 
 func (waitsSampler) ID() string   { return "bb:waits" }
@@ -31,12 +33,20 @@ func (waitsSampler) Kind() string { return "waits" }
 // four times the lines for the same information.
 func (waitsSampler) Interval() time.Duration { return DemotedInterval }
 
+// Observe records the runner's observation time and source generation. A change
+// of epoch (reconnect, failure, pause, partial tick, clock jump) invalidates the
+// baselines: the next Decode rebaselines and emits no delta over the unobserved
+// interval (W11-05). Deltas are raw counter differences, never divided by the
+// nominal cadence.
+func (s *waitsSampler) Observe(o Observation) { s.obs = o }
+
 // Decode emits, per wait type, the increase since the previous sighting of that
 // same type. The rules that keep the series honest:
 //
-//   - The first cycle after startup only records the baseline and emits
-//     nothing: a delta with nothing to subtract would be a lie, and "unreadable
-//     means missing, never 0".
+//   - The first cycle after startup (or after a source-epoch change: reconnect,
+//     failure, pause, partial tick, clock jump) only records the baseline and
+//     emits nothing: a delta with nothing to subtract would be a lie, and
+//     "unreadable means missing, never 0".
 //   - bb:waits is TOP 20 ORDER BY wait_time_ms DESC, so the row SET changes
 //     between ticks. A wait type with no baseline — new, or one that fell out of
 //     the top 20 and has come back — is recorded as a baseline and emits
@@ -62,11 +72,12 @@ func (s *waitsSampler) Decode(rows []Row) (any, bool, error) {
 		// Nothing seen: every baseline is stale, and an empty reply is not a
 		// sample.
 		s.prev = map[string]waitsCumulative{}
+		s.baselineEpoch = s.obs.Epoch
 		return nil, false, nil
 	}
 
 	nextPrev := make(map[string]waitsCumulative, len(cur))
-	firstCycle := s.prev == nil
+	firstCycle := s.prev == nil || s.baselineEpoch != s.obs.Epoch
 	out := make([]Waits, 0, len(cur))
 	for _, r := range cur {
 		cum := waitsCumulative{ms: r.DeltaMs, tasks: r.DeltaTasks}
@@ -92,6 +103,7 @@ func (s *waitsSampler) Decode(rows []Row) (any, bool, error) {
 	}
 
 	s.prev = nextPrev
+	s.baselineEpoch = s.obs.Epoch
 	if len(out) == 0 {
 		return nil, truncated, nil
 	}
@@ -99,5 +111,5 @@ func (s *waitsSampler) Decode(rows []Row) (any, bool, error) {
 }
 
 func init() {
-	RegisterSampler(&waitsSampler{})
+	RegisterSamplerFactory(func() Sampler { return &waitsSampler{} })
 }

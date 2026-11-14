@@ -75,11 +75,17 @@ func TestRegistryBuildsAndNames(t *testing.T) {
 	})
 
 	groups := BuildGroups(GroupDeps{Cores: 4})
-	if len(groups) != 2 {
-		t.Fatalf("BuildGroups returned %d groups, want 2 (broken factory skipped)", len(groups))
+	// A failed factory is no longer dropped for the life of the recorder: it keeps
+	// a bounded retry slot so a provider that appears later is picked up (W2-05).
+	if len(groups) != 3 {
+		t.Fatalf("BuildGroups returned %d groups, want 3 (failed factory keeps a retry slot)", len(groups))
 	}
-	if groups[0].Name() != "alpha" || groups[1].Name() != "zeta" {
-		t.Fatalf("BuildGroups order = %s,%s; want sorted alpha,zeta", groups[0].Name(), groups[1].Name())
+	if groups[0].Name() != "alpha" || groups[1].Name() != "broken" || groups[2].Name() != "zeta" {
+		t.Fatalf("BuildGroups order = %s,%s,%s; want sorted alpha,broken,zeta",
+			groups[0].Name(), groups[1].Name(), groups[2].Name())
+	}
+	if _, err := groups[1].Collect(time.Unix(1000, 0), 15); !errors.Is(err, errGroupUnavailable) {
+		t.Fatalf("unbuilt group err = %v, want errGroupUnavailable", err)
 	}
 	if got := registeredNames(); !reflect.DeepEqual(got, []string{"alpha", "broken", "zeta"}) {
 		t.Fatalf("registeredNames = %v, want sorted [alpha broken zeta]", got)
@@ -158,8 +164,8 @@ func TestGroupCollectorSlowGroupMarked(t *testing.T) {
 	if s.TCP != nil {
 		t.Fatal("slow-skipped group was zero-filled")
 	}
-	if !missingHas(s, "skipped: slow") {
-		t.Fatalf("Missing = %v, want skipped: slow", s.Missing)
+	if !missingHas(s, "tcp: slow") {
+		t.Fatalf("Missing = %v, want tcp: slow (the group keeps its identity)", s.Missing)
 	}
 	if g.calls != 0 {
 		t.Fatal("slow group ran despite the skip")
@@ -175,7 +181,7 @@ func TestGroupCollectorSlowGroupMarked(t *testing.T) {
 	if s2.TCP == nil || g.calls != 1 {
 		t.Fatal("slow group not re-probed next cycle")
 	}
-	if missingHas(s2, "skipped: slow") {
+	if missingHas(s2, "tcp: slow") {
 		t.Fatalf("second Missing = %v, want no slow mark", s2.Missing)
 	}
 }
@@ -229,7 +235,7 @@ func TestGroupCollectorMissingDeduped(t *testing.T) {
 		t.Fatalf("Missing = %v, want a single tcp", s.Missing)
 	}
 
-	// Two slow groups produce one "skipped: slow" entry.
+	// Two slow groups are named separately: a shared token hid which group was slow.
 	b := NewBudget(15)
 	b.GroupTiming("tcp", 2*time.Second, false)
 	b.GroupTiming("http", 2*time.Second, true)
@@ -241,8 +247,8 @@ func TestGroupCollectorMissingDeduped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
-	if !reflect.DeepEqual(s2.Missing, []string{"skipped: slow"}) {
-		t.Fatalf("Missing = %v, want a single skipped: slow", s2.Missing)
+	if !reflect.DeepEqual(s2.Missing, []string{"tcp: slow", "http: slow"}) {
+		t.Fatalf("Missing = %v, want both slow groups named", s2.Missing)
 	}
 }
 

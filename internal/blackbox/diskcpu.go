@@ -97,12 +97,14 @@ func diskInstanceCounter(path string) (inst, counter string, ok bool) {
 
 func (g *diskCPUGroup) Collect(now time.Time, _ float64) (any, error) {
 	// Disks rarely change: re-expand wildcards only when the process set
-	// changed, never per tick; rebuild specs/engine for the new instances.
+	// changed, never per tick. Reconcile keeps the baselines of the disks and
+	// processors that did not change, so unrelated process churn cannot starve
+	// these rates (W1-02).
 	if g.changed != nil && g.changed() {
 		if err := g.src.RefreshInstances(); err != nil {
 			return nil, err
 		}
-		g.eng = NewEngine(diskCPUSpecs(g.src.Paths()), g.cores)
+		g.eng.Reconcile(diskCPUSpecs(g.src.Paths()))
 	}
 	readings, err := g.src.Collect()
 	if err != nil {

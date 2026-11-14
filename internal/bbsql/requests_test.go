@@ -438,8 +438,10 @@ func TestRequestsRegistered(t *testing.T) {
 	if !ok {
 		t.Fatal("bb:requests is missing from the allowlist")
 	}
-	if !strings.Contains(text, "SELECT TOP 256 ") || !strings.Contains(text, "/* unravis:bb:requests */") {
-		t.Error("bb:requests is no longer the fixed TOP 256 statement with its tag")
+	// TOP 257 fetches one row more than the 256 kept, so an over-cap result is
+	// observable as truncated instead of looking complete (W8-05).
+	if !strings.Contains(text, "SELECT TOP 257 ") || !strings.Contains(text, "/* unravis:bb:requests */") {
+		t.Error("bb:requests is no longer the fixed TOP 257 statement with its tag")
 	}
 	row := Row{}
 	for _, col := range outputColumns(t, text) {

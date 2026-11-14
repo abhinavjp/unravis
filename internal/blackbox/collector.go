@@ -39,8 +39,14 @@ type HostCollector struct {
 	prevHost sampler.HostTimes
 	havePrev bool
 	prevAt   time.Time
-	prevProc map[procID]float64
-	procs    []sampler.ProcSample
+	// prevProcAt is the time of the last SUCCESSFUL process snapshot. It is
+	// tracked separately from prevAt (the host read) so a failed process
+	// enumeration never advances the process-rate denominator: the CPU
+	// numerator and its wall-time baseline always span the same interval
+	// (W6-05). It is zero until the first successful process read.
+	prevProcAt time.Time
+	prevProc   map[procID]float64
+	procs      []sampler.ProcSample
 }
 
 type procID struct {
@@ -79,6 +85,7 @@ func (h *HostCollector) Prime(now time.Time) error {
 			return err
 		}
 		h.remember()
+		h.prevProcAt = now
 	}
 	return nil
 }
@@ -143,10 +150,18 @@ func (h *HostCollector) Collect(now time.Time) (Sample, error) {
 		h.procs, perr = h.src.Processes(h.procs[:0])
 		if perr != nil {
 			s.Missing = append(s.Missing, "processes")
+			// Leave prevProc and prevProcAt untouched: the CPU baselines keep
+			// their own snapshot time, so the next successful read divides a
+			// numerator and denominator that span the same interval (W6-05).
+			// Host success below must not advance the process-rate clock.
 		} else {
-			wall := now.Sub(h.prevAt).Seconds()
+			var wall float64
+			if !h.prevProcAt.IsZero() {
+				wall = now.Sub(h.prevProcAt).Seconds()
+			}
 			s.Procs = h.topProcesses(wall)
 			h.remember()
+			h.prevProcAt = now
 		}
 	}
 	h.prevHost, h.havePrev, h.prevAt = hs.Times, true, now

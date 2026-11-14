@@ -19,6 +19,29 @@ type CounterSpec struct {
 	Path  string // English PDH path (fixed identifier, never captured text)
 	Field string // output key
 	Kind  CounterKind
+	// Volatile marks a path whose instance name can be rebound to a different
+	// entity: PDH names Process instances "w3wp", "w3wp#1" by enumeration order,
+	// so the same string can mean another process after a refresh. Such a path
+	// must never carry a rate baseline across Reconcile. Machine-wide paths
+	// (a disk, a processor, an app pool's queue, a SQL instance, an interface)
+	// are their own identity and leave this false.
+	Volatile bool
+}
+
+// PDH per-counter data statuses that mean "this reading is usable". They are
+// separate from the API return code: PdhGetFormattedCounterValue can succeed
+// while CStatus reports NEW_DATA, which is a normal success for a counter whose
+// value changed since the previous collect.
+const (
+	pdhStatusValidData uint32 = 0x00000000 // PDH_CSTATUS_VALID_DATA
+	pdhStatusNewData   uint32 = 0x00000001 // PDH_CSTATUS_NEW_DATA
+)
+
+// CounterStatusOK reports whether a PDH CStatus is usable data. Both source and
+// engine use this one predicate so a valid reading cannot be dropped at one
+// boundary and accepted at the other.
+func CounterStatusOK(status uint32) bool {
+	return status == pdhStatusValidData || status == pdhStatusNewData
 }
 
 // CounterReading is one raw counter sample. It is named CounterReading because
@@ -26,8 +49,8 @@ type CounterSpec struct {
 type CounterReading struct {
 	Path   string
 	Value  float64
-	Status uint32 // PDH status; valid only when 0 (ERROR_SUCCESS)
-	OK     bool   // source sets false for any non-zero status; engine double-checks
+	Status uint32 // PDH CStatus; usable when CounterStatusOK(Status)
+	OK     bool   // false when the API call failed or the status is not usable
 }
 
 // CounterSource produces readings; implemented by PDH (later) and by fakes.
@@ -66,6 +89,42 @@ func NewEngine(specs []CounterSpec, cores int) *Engine {
 	}
 }
 
+// Reconcile adopts a new spec set after a wildcard refresh WITHOUT throwing away
+// the baselines of counters that did not change. Rebuilding the engine instead
+// would re-prime every rate on each unrelated process arrival, so a busy host
+// could go indefinitely without a single rate while its gauges still looked
+// healthy.
+//
+// History is kept only for a path that is still present, still has the same
+// kind, and is not Volatile: a changed kind changes the meaning of the stored
+// value, and a volatile instance name may now belong to another process. Removed
+// paths lose their history so a departed instance cannot leak state.
+func (e *Engine) Reconcile(specs []CounterSpec) {
+	next := make(map[string]CounterSpec, len(specs))
+	for _, s := range specs {
+		next[s.Path] = s
+	}
+	for path := range e.history {
+		s, still := next[path]
+		old, had := e.byPath[path]
+		if !still || s.Volatile || (had && s.Kind != old.Kind) {
+			delete(e.history, path)
+		}
+	}
+	e.byPath = next
+}
+
+// reconcileEngine adopts specs into an existing engine, or builds the first one.
+// Group rebuild functions run both at construction (no engine yet) and on a
+// refresh, so they share this instead of choosing between NewEngine/Reconcile.
+func reconcileEngine(e *Engine, specs []CounterSpec, cores int) *Engine {
+	if e == nil {
+		return NewEngine(specs, cores)
+	}
+	e.Reconcile(specs)
+	return e
+}
+
 // Process emits only the fields that are valid this cycle. Absent fields mean
 // "missing", never 0. One output map per call; history maps are reused.
 func (e *Engine) Process(now time.Time, readings []CounterReading) map[string]float64 {
@@ -76,7 +135,9 @@ func (e *Engine) Process(now time.Time, readings []CounterReading) map[string]fl
 			continue // no spec for this path
 		}
 		// Valid-status check on every reading; invalid never advances baselines.
-		if !r.OK || r.Status != 0 {
+		// NEW_DATA is a success status, not an error: rejecting it would drop
+		// exactly the samples where a counter changed.
+		if !r.OK || !CounterStatusOK(r.Status) {
 			continue
 		}
 		if spec.Kind == KindGauge {

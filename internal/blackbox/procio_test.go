@@ -29,11 +29,22 @@ func procIOReading(inst, counter string, v float64) CounterReading {
 	return CounterReading{Path: procIOPath(inst, counter), Value: v, OK: true}
 }
 
-// procIOInstance adds all six counter paths for one Process instance.
+// procIOInstance adds all seven counter paths for one Process instance: the two
+// identity-mapping counters (ID Process, Creation Time) plus the five detail
+// counters. Readings are supplied separately (see procIOIdent for identity).
 func procIOInstance(src *procIOFakeSource, inst string) {
-	for _, c := range []string{"ID Process", "IO Read Bytes/sec", "IO Write Bytes/sec", "Page File Bytes", "Virtual Bytes", "Elapsed Time"} {
+	for _, c := range []string{"ID Process", "Creation Time", "IO Read Bytes/sec", "IO Write Bytes/sec", "Page File Bytes", "Virtual Bytes", "Elapsed Time"} {
 		src.paths = append(src.paths, procIOPath(inst, c))
 	}
+}
+
+// procIOIdent appends the identity readings for one instance: ID Process = pid
+// and Creation Time = the FILETIME confirming the unix-second start (W5-04).
+func procIOIdent(src *procIOFakeSource, inst string, pid float64, start int64) {
+	src.readings = append(src.readings,
+		procIOReading(inst, "ID Process", pid),
+		procIOReading(inst, "Creation Time", creationTicksFor(start)),
+	)
 }
 
 func newProcIOTestGroup(t *testing.T, src *procIOFakeSource, targets func() []ResolvedTarget, changed func() bool) *procIOGroup {
@@ -45,8 +56,9 @@ func newProcIOTestGroup(t *testing.T, src *procIOFakeSource, targets func() []Re
 	return g.(*procIOGroup)
 }
 
-// procIOAging advances every Elapsed Time reading: real elapsed grows with
-// the wall clock, so creation time stays confirmed as the tick clock moves.
+// procIOAging advances every Elapsed Time reading: Elapsed Time is a metric that
+// grows with the wall clock. Creation Time (the identity) is fixed and does not
+// age, so identity stays confirmed as the tick clock moves (W5-04).
 func procIOAging(src *procIOFakeSource, secs float64) {
 	for i := range src.readings {
 		if strings.HasSuffix(src.readings[i].Path, `\Elapsed Time`) {
@@ -82,19 +94,18 @@ func collectProcIO(t *testing.T, g *procIOGroup, src *procIOFakeSource, n int) *
 }
 
 // TestProcIOPIDMap guards the instance->PID mapping: #N instance names never
-// resemble the PIDs, so the right target row must come from ID Process.
+// resemble the PIDs, so the right target row must come from ID Process, and the
+// creation time must confirm the target's Start.
 func TestProcIOPIDMap(t *testing.T) {
 	src := &procIOFakeSource{}
 	procIOInstance(src, "w3wp#1") // PID 100 -> pool:a
 	procIOInstance(src, "w3wp")   // PID 200 -> svc:b
-	src.readings = []CounterReading{
-		procIOReading("w3wp#1", "ID Process", 100),
-		procIOReading("w3wp", "ID Process", 200),
-		procIOReading("w3wp#1", "Elapsed Time", 100),
-		procIOReading("w3wp", "Elapsed Time", 100),
+	procIOIdent(src, "w3wp#1", 100, 900)
+	procIOIdent(src, "w3wp", 200, 900)
+	src.readings = append(src.readings,
 		procIOReading("w3wp#1", "Page File Bytes", 1000),
 		procIOReading("w3wp", "Page File Bytes", 2000),
-	}
+	)
 	g := newProcIOTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{
 			{Key: "pool:a", PID: 100, Start: 900, Runtime: 1},
@@ -123,14 +134,12 @@ func TestProcIOSelectedOnly(t *testing.T) {
 	src := &procIOFakeSource{}
 	procIOInstance(src, "w3wp")  // selected
 	procIOInstance(src, "other") // unselected: must never be emitted
-	src.readings = []CounterReading{
-		procIOReading("w3wp", "ID Process", 100),
-		procIOReading("other", "ID Process", 300),
-		procIOReading("w3wp", "Elapsed Time", 100),
-		procIOReading("other", "Elapsed Time", 100),
+	procIOIdent(src, "w3wp", 100, 900)
+	procIOIdent(src, "other", 300, 900)
+	src.readings = append(src.readings,
 		procIOReading("w3wp", "Page File Bytes", 1000),
 		procIOReading("other", "Page File Bytes", 3000),
-	}
+	)
 	g := newProcIOTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{{Key: "pool:a", PID: 100, Start: 900}}
 	}, nil)
@@ -150,12 +159,11 @@ func TestProcIOSelectedOnly(t *testing.T) {
 func TestProcIOMissingOmitted(t *testing.T) {
 	src := &procIOFakeSource{}
 	procIOInstance(src, "w3wp")
-	src.readings = []CounterReading{
-		procIOReading("w3wp", "ID Process", 100),
-		procIOReading("w3wp", "Elapsed Time", 100),
-		{Path: procIOPath("w3wp", "Page File Bytes"), Value: 99, Status: 1, OK: false},
+	procIOIdent(src, "w3wp", 100, 900)
+	src.readings = append(src.readings,
+		CounterReading{Path: procIOPath("w3wp", "Page File Bytes"), Value: 99, Status: 1, OK: false},
 		procIOReading("w3wp", "Virtual Bytes", 55),
-	}
+	)
 	g := newProcIOTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{
 			{Key: "pool:a", PID: 100, Start: 900},
@@ -190,13 +198,12 @@ func TestProcIOMissingOmitted(t *testing.T) {
 func TestProcIORateGated(t *testing.T) {
 	src := &procIOFakeSource{}
 	procIOInstance(src, "w3wp")
-	src.readings = []CounterReading{
-		procIOReading("w3wp", "ID Process", 100),
-		procIOReading("w3wp", "Elapsed Time", 100),
+	procIOIdent(src, "w3wp", 100, 900)
+	src.readings = append(src.readings,
 		procIOReading("w3wp", "IO Read Bytes/sec", 10),
 		procIOReading("w3wp", "IO Write Bytes/sec", 20),
 		procIOReading("w3wp", "Page File Bytes", 1000),
-	}
+	)
 	g := newProcIOTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{{Key: "pool:a", PID: 100, Start: 900}}
 	}, nil)
@@ -232,18 +239,19 @@ func TestProcIORateGated(t *testing.T) {
 }
 
 // TestProcIOFields guards the field mapping: pagefile/virtual bytes are uint64
-// gauges, elapsed is seconds, IO rates land in their own fields.
+// gauges, elapsed is seconds (a metric, not identity), IO rates land in their
+// own fields.
 func TestProcIOFields(t *testing.T) {
 	src := &procIOFakeSource{}
 	procIOInstance(src, "w3wp")
-	src.readings = []CounterReading{
-		procIOReading("w3wp", "ID Process", 100),
+	procIOIdent(src, "w3wp", 100, 900)
+	src.readings = append(src.readings,
 		procIOReading("w3wp", "Elapsed Time", 100),
 		procIOReading("w3wp", "IO Read Bytes/sec", 10.5),
 		procIOReading("w3wp", "IO Write Bytes/sec", 20.25),
 		procIOReading("w3wp", "Page File Bytes", 4096),
 		procIOReading("w3wp", "Virtual Bytes", 8192),
-	}
+	)
 	g := newProcIOTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{{Key: "pool:a", PID: 100, Start: 900}}
 	}, nil)
@@ -269,16 +277,14 @@ func TestProcIOFields(t *testing.T) {
 	}
 }
 
-// TestProcIOStartMismatch guards the (PID, creation) identity: a PID match
-// whose Elapsed Time implies a different creation time is omitted.
+// TestProcIOStartMismatch guards the (PID, creation) identity: a PID match whose
+// Creation Time implies a different creation time is omitted (W5-04). Updated
+// from the old Elapsed-Time estimate to the precise Creation Time counter.
 func TestProcIOStartMismatch(t *testing.T) {
 	src := &procIOFakeSource{}
 	procIOInstance(src, "w3wp")
-	src.readings = []CounterReading{
-		procIOReading("w3wp", "ID Process", 100),
-		procIOReading("w3wp", "Elapsed Time", 500), // created at 500, not 900
-		procIOReading("w3wp", "Page File Bytes", 1000),
-	}
+	procIOIdent(src, "w3wp", 100, 500) // created at 500, not 900
+	src.readings = append(src.readings, procIOReading("w3wp", "Page File Bytes", 1000))
 	g := newProcIOTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{{Key: "pool:a", PID: 100, Start: 900}}
 	}, nil)
@@ -292,11 +298,8 @@ func TestProcIOStartMismatch(t *testing.T) {
 func TestProcIORefreshOnChange(t *testing.T) {
 	src := &procIOFakeSource{}
 	procIOInstance(src, "w3wp")
-	src.readings = []CounterReading{
-		procIOReading("w3wp", "ID Process", 100),
-		procIOReading("w3wp", "Elapsed Time", 100),
-		procIOReading("w3wp", "Page File Bytes", 1000),
-	}
+	procIOIdent(src, "w3wp", 100, 900)
+	src.readings = append(src.readings, procIOReading("w3wp", "Page File Bytes", 1000))
 	targets := []ResolvedTarget{{Key: "pool:a", PID: 100, Start: 900}}
 	changed := false
 	g := newProcIOTestGroup(t, src, func() []ResolvedTarget { return targets }, func() bool { return changed })
@@ -311,11 +314,8 @@ func TestProcIORefreshOnChange(t *testing.T) {
 	changed = true
 	targets = append(targets, ResolvedTarget{Key: "svc:b", PID: 200, Start: 900})
 	procIOInstance(src, "w3wp#1")
-	src.readings = append(src.readings,
-		procIOReading("w3wp#1", "ID Process", 200),
-		procIOReading("w3wp#1", "Elapsed Time", 100),
-		procIOReading("w3wp#1", "Page File Bytes", 2000),
-	)
+	procIOIdent(src, "w3wp#1", 200, 900)
+	src.readings = append(src.readings, procIOReading("w3wp#1", "Page File Bytes", 2000))
 	procIOAging(src, 15)
 	v, err := g.Collect(now.Add(15*time.Second), 15)
 	if err != nil {
@@ -347,11 +347,8 @@ func TestProcIOParenInstance(t *testing.T) {
 	}
 	src := &procIOFakeSource{}
 	procIOInstance(src, "Svc (x86)")
-	src.readings = []CounterReading{
-		procIOReading("Svc (x86)", "ID Process", 100),
-		procIOReading("Svc (x86)", "Elapsed Time", 100),
-		procIOReading("Svc (x86)", "Page File Bytes", 1000),
-	}
+	procIOIdent(src, "Svc (x86)", 100, 900)
+	src.readings = append(src.readings, procIOReading("Svc (x86)", "Page File Bytes", 1000))
 	g := newProcIOTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{{Key: "svc:x86", PID: 100, Start: 900}}
 	}, nil)
@@ -369,11 +366,8 @@ func TestProcIOParenInstance(t *testing.T) {
 func TestProcIONoTargetsNoSample(t *testing.T) {
 	src := &procIOFakeSource{}
 	procIOInstance(src, "w3wp")
-	src.readings = []CounterReading{
-		procIOReading("w3wp", "ID Process", 100),
-		procIOReading("w3wp", "Elapsed Time", 100),
-		procIOReading("w3wp", "Page File Bytes", 1000),
-	}
+	procIOIdent(src, "w3wp", 100, 900)
+	src.readings = append(src.readings, procIOReading("w3wp", "Page File Bytes", 1000))
 	for _, targets := range []func() []ResolvedTarget{
 		nil,
 		func() []ResolvedTarget { return nil },

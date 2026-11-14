@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { INTERVALS, blackboxApi, listensOnAll, toggleTarget, type Settings, type SettingsProblem, type TargetInfo, type TargetKind, type TargetRef } from '../lib/blackbox';
+  import { INTERVALS, blackboxApi, listensOnAll, pickedTargetState, toggleTarget, type Settings, type SettingsProblem, type TargetInfo, type TargetKind, type TargetRef, targetRunState } from '../lib/blackbox';
   import { BB_TEXT as T } from '../lib/copy/blackboxCopy';
 
   // The settings fields of a Blackbox, shared by the Place wizard (part 3) and Apply settings on this PC.
@@ -12,10 +12,15 @@
   const invalid = (key: SettingsProblem) => (problem === key ? 'true' : undefined);
   const described = (key: SettingsProblem, help: string) => idPrefix + '-' + help + (problem === key ? ' ' + idPrefix + '-' + key + '-error' : '');
 
-  // Targets (BBX-1-12): only kind+name is ever stored. A target that is not running says "not running", never 0.
+  // Targets (BBX-1-12): only kind+name is ever stored. A stopped target says "not running";
+  // one whose state could not be read says so, and is never labelled stopped (W2-07). A name
+  // absent from a capped or unreadable list is unknown, never guessed stopped (W3-06).
   let appPools = $state<TargetInfo[]>([]);
   let services = $state<TargetInfo[]>([]);
   let detected = $state(false);
+  let appPoolsState = $state<string | undefined>(undefined);
+  let servicesState = $state<string | undefined>(undefined);
+  let targetsRead = $state(false);
   let manualKind = $state<TargetKind>('appPool');
   let manualName = $state('');
 
@@ -27,16 +32,31 @@
       appPools = answer.appPools;
       services = answer.services;
       detected = answer.detected;
-    }).catch(() => { /* nothing could be read: the manual row below is used instead */ });
+      appPoolsState = answer.appPoolsState;
+      servicesState = answer.servicesState;
+      targetsRead = true;
+    }).catch(() => { targetsRead = true; /* nothing could be read: names are typed below and chips say so */ });
     return () => { alive = false; };
   });
 
   const picked = $derived(settings.targets ?? []);
-  // Detected names are offered as checkboxes; with nothing detected (or pack/remote) names are typed instead.
+  // Detected names are offered as checkboxes; the manual add row is always available alongside them,
+  // so a known valid name can be added even when detection succeeded but did not list it (W3-06).
   const showLists = $derived(targetMode === 'pc' && detected && (appPools.length > 0 || services.length > 0));
   const extraPicked = $derived(picked.filter((t) => !(t.kind === 'appPool' ? appPools : services).some((d) => d.name === t.name)));
+  // Chips carry an honest state note only on this PC once the single read has settled; pack/remote never fetches.
+  const chipsLabelled = $derived(targetMode === 'pc' && targetsRead);
   const isSelected = (kind: TargetKind, name: string) => picked.some((t) => t.kind === kind && t.name === name);
   function pick(kind: TargetKind, name: string) { settings.targets = toggleTarget(picked, kind, name); }
+  function chipNote(t: TargetRef): string {
+    const s = pickedTargetState(t.kind, t.name, { appPools, services, detected, appPoolsState, servicesState });
+    if (s === 'stopped') return T.targetsNotRunning;
+    if (s === 'unknown') return T.targetsStateUnknown;
+    if (s === 'not-in-list') return T.targetsNotInList;
+    if (s === 'source-not-found') return T.targetsSourceNotFound;
+    if (s === 'list-unreadable') return T.targetsListUnreadable;
+    return '';
+  }
   function addTarget() {
     const name = manualName.trim();
     if (!name) return;
@@ -54,7 +74,7 @@
   {#if list.length > 0}
     <ul class="bb-chips">
       {#each list as t (t.kind + ':' + t.name)}
-        <li class="bb-chip"><span>{t.kind === 'appPool' ? T.targetsKindAppPool : T.targetsKindService}: {t.name}</span>
+        <li class="bb-chip"><span>{t.kind === 'appPool' ? T.targetsKindAppPool : T.targetsKindService}: {t.name}{#if chipsLabelled && chipNote(t)} <span class="bb-note">{chipNote(t)}</span>{/if}</span>
           <button type="button" class="bb-chip-x" aria-label="{T.targetsRemove}: {t.name}" onclick={() => removeTarget(t.kind, t.name)}>×</button>
         </li>
       {/each}
@@ -83,30 +103,33 @@
     <fieldset class="bb-checks">
       <legend>{T.targetsAppPools}</legend>
       {#each appPools as t (t.name)}
-        <label class="bb-check"><input type="checkbox" checked={isSelected('appPool', t.name)} onchange={() => pick('appPool', t.name)} /><span>{t.name}{#if !t.running} <span class="bb-note">{T.targetsNotRunning}</span>{/if}</span></label>
+        <label class="bb-check"><input type="checkbox" checked={isSelected('appPool', t.name)} onchange={() => pick('appPool', t.name)} /><span>{t.name}{#if targetRunState(t) === 'stopped'} <span class="bb-note">{T.targetsNotRunning}</span>{:else if targetRunState(t) === 'unknown'} <span class="bb-note">{T.targetsStateUnknown}</span>{/if}</span></label>
       {/each}
     </fieldset>
     <fieldset class="bb-checks">
       <legend>{T.targetsServices}</legend>
       {#each services as t (t.name)}
-        <label class="bb-check"><input type="checkbox" checked={isSelected('service', t.name)} onchange={() => pick('service', t.name)} /><span>{t.name}{#if !t.running} <span class="bb-note">{T.targetsNotRunning}</span>{/if}</span></label>
+        <label class="bb-check"><input type="checkbox" checked={isSelected('service', t.name)} onchange={() => pick('service', t.name)} /><span>{t.name}{#if targetRunState(t) === 'stopped'} <span class="bb-note">{T.targetsNotRunning}</span>{:else if targetRunState(t) === 'unknown'} <span class="bb-note">{T.targetsStateUnknown}</span>{/if}</span></label>
       {/each}
     </fieldset>
     {@render targetChips(extraPicked)}
+    <p class="bb-note">{T.targetsListNote}</p>
   {:else}
     <p class="bb-note">{T.targetsManualNote}</p>
-    <div class="bb-target-add">
-      <label class="bb-field"><span>{T.targetsKindLabel}</span>
-        <select bind:value={manualKind}>
-          <option value="appPool">{T.targetsKindAppPool}</option>
-          <option value="service">{T.targetsKindService}</option>
-        </select>
-      </label>
-      <label class="bb-field"><span>{T.targetsNameLabel}</span>
-        <input type="text" bind:value={manualName} autocomplete="off" spellcheck="false" onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTarget(); } }} />
-      </label>
-      <button type="button" class="secondary-button" disabled={!manualName.trim()} onclick={addTarget}>{T.targetsAdd}</button>
-    </div>
+  {/if}
+  <div class="bb-target-add">
+    <label class="bb-field"><span>{T.targetsKindLabel}</span>
+      <select bind:value={manualKind}>
+        <option value="appPool">{T.targetsKindAppPool}</option>
+        <option value="service">{T.targetsKindService}</option>
+      </select>
+    </label>
+    <label class="bb-field"><span>{T.targetsNameLabel}</span>
+      <input type="text" bind:value={manualName} autocomplete="off" spellcheck="false" onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTarget(); } }} />
+    </label>
+    <button type="button" class="secondary-button" disabled={!manualName.trim()} onclick={addTarget}>{T.targetsAdd}</button>
+  </div>
+  {#if !showLists}
     {@render targetChips(picked)}
   {/if}
   <h4>{T.keepHeading}</h4>

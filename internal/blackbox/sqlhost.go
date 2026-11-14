@@ -2,6 +2,7 @@ package blackbox
 
 import (
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -91,6 +92,7 @@ type sqlHostGroup struct {
 	src      CounterSource
 	engine   *Engine
 	targets  map[string]sqlHostTarget
+	prefixes []string // last built instance set, so an unchanged set is not rebuilt
 	discover func() ([]string, error)
 	changed  func() bool
 	cores    int
@@ -130,8 +132,11 @@ func (g *sqlHostGroup) rebuild(prefixes []string) error {
 		_ = g.src.Close()
 	}
 	g.src = src
+	// A new query handle means new PDH baselines, so the engine starts fresh too.
+	// Collect only calls this when the instance set actually changed.
 	g.engine = NewEngine(specs, g.cores)
 	g.targets = targets
+	g.prefixes = slices.Clone(prefixes)
 	return nil
 }
 
@@ -144,8 +149,13 @@ func (g *sqlHostGroup) Collect(now time.Time, dt float64) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := g.rebuild(prefixes); err != nil {
-			return nil, err
+		// An unrelated process arrival must not rebuild the query: that would
+		// re-prime every SQL rate on a busy host (W1-02 / W4-04). Only a changed
+		// instance set is worth new handles.
+		if !slices.Equal(prefixes, g.prefixes) {
+			if err := g.rebuild(prefixes); err != nil {
+				return nil, err
+			}
 		}
 	}
 	readings, err := g.src.Collect()

@@ -472,6 +472,91 @@ func TestProcessesOffAndProcessFailure(t *testing.T) {
 	}
 }
 
+// recoverySource fails process enumeration on demand so a test can drive a
+// failure followed by a recovery (W6-05). Host reads always succeed.
+type recoverySource struct {
+	cores  int
+	host   sampler.HostSample
+	procs  [][]sampler.ProcSample
+	failAt map[int]bool
+	pi     int
+}
+
+func (s *recoverySource) Cores() int                        { return s.cores }
+func (s *recoverySource) Host() (sampler.HostSample, error) { return s.host, nil }
+func (s *recoverySource) Processes(dst []sampler.ProcSample) ([]sampler.ProcSample, error) {
+	i := s.pi
+	s.pi++
+	if s.failAt[i] {
+		return dst, errors.New("enumeration failed")
+	}
+	if i >= len(s.procs) {
+		i = len(s.procs) - 1
+	}
+	return append(dst, s.procs[i]...), nil
+}
+func (s *recoverySource) Close() error { return nil }
+
+// W6-05: a failed process enumeration must not advance the process-rate clock.
+// On recovery the CPU numerator and denominator span the SAME interval, so the
+// percentage is the true average (not doubled) and the ranking is honest.
+func TestProcessFailureRecoveryCPUAligned(t *testing.T) {
+	// 2 cores. PID 1 burns 3 CPU-s every 15 s (10% of the machine). PID 2 is
+	// idle in the first interval and burns 9 CPU-s in the second (15% average
+	// over the two-interval gap). The middle read fails.
+	mk := func(cpu1, cpu2 float64) []sampler.ProcSample {
+		return []sampler.ProcSample{proc(1, "steady", cpu1), proc(2, "burst", cpu2)}
+	}
+	src := &recoverySource{
+		cores:  2,
+		procs:  [][]sampler.ProcSample{mk(100, 100), mk(103, 100), mk(106, 109)},
+		failAt: map[int]bool{1: true},
+	}
+	c := NewHostCollector(src, nil, true)
+	t0 := time.Unix(10000, 0)
+	if err := c.Prime(t0); err != nil {
+		t.Fatal(err)
+	}
+	// t1: process enumeration fails; host succeeds. prevProcAt must stay at t0.
+	s1, err := c.Collect(t0.Add(15 * time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !missingHas(s1, "processes") {
+		t.Fatalf("missing = %v, want processes", s1.Missing)
+	}
+	if !c.prevProcAt.Equal(t0) {
+		t.Fatalf("prevProcAt advanced on a failed read: %v, want %v", c.prevProcAt, t0)
+	}
+	// t2: recovery. The gap since the last successful snapshot is 30 s, so the
+	// CPU delta (6 s for PID 1) divides by 30 s, not 15 s: 10%, not 20%.
+	s2, err := c.Collect(t0.Add(30 * time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPID := map[uint32]ProcRow{}
+	for _, r := range s2.Procs {
+		byPID[r.PID] = r
+	}
+	r1, r2 := byPID[1], byPID[2]
+	if r1.CPUPct == nil || r2.CPUPct == nil {
+		t.Fatalf("recovered rows missing CPU%%: %+v", s2.Procs)
+	}
+	if *r1.CPUPct < 9.99 || *r1.CPUPct > 10.01 {
+		t.Fatalf("steady CPU%% = %v, want 10 (6 s over 30 s on 2 cores), not the doubled 20", *r1.CPUPct)
+	}
+	if *r2.CPUPct < 14.99 || *r2.CPUPct > 15.01 {
+		t.Fatalf("burst CPU%% = %v, want 15 (9 s over 30 s on 2 cores)", *r2.CPUPct)
+	}
+	// Ranking: the burst process did more total work over the gap, so it leads.
+	if s2.Procs[0].PID != 2 {
+		t.Fatalf("busiest = PID %d, want 2 (honest total-work ranking)", s2.Procs[0].PID)
+	}
+	if !c.prevProcAt.Equal(t0.Add(30 * time.Second)) {
+		t.Fatalf("prevProcAt = %v, want the recovery time", c.prevProcAt)
+	}
+}
+
 func TestCollectorCloseClosesBoth(t *testing.T) {
 	src, ex := &fakeSource{cores: 1}, &fakeExtras{}
 	if err := NewHostCollector(src, ex, false).Close(); err != nil {

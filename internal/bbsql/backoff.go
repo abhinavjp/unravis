@@ -3,8 +3,10 @@
 package bbsql
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -43,17 +45,21 @@ func NewState() State { return State{Interval: BaseInterval, State: StateOn} }
 
 // OnSuccess recovers back-off one step toward the base interval and clears the
 // failure count. It never clears AutoOff: auto-off is owner-only. It also never
-// steps below the slow floor: three slow samples demoted the 15 s items, and one
-// lucky success must not undo that demotion on its own. SlowStrikes is not
-// reset here either - only a genuinely fast sample (OnSlow) calms the instance,
-// and once it does, recovery proceeds back down to BaseInterval.
+// steps below the slow floor ONCE the three-strike threshold has demoted the
+// 15 s items: a single lucky success must not undo that demotion on its own.
+// The floor applies only at SlowStrikeLimit, not for any nonzero strike (W7-06):
+// one or two slow samples below the threshold must not impose the 60 s floor.
+// SlowStrikes is not reset here either - only a genuinely fast sample (OnSlow)
+// calms the instance, and once it does, recovery proceeds back down to
+// BaseInterval. Instance failure back-off (Failures/Interval doubling) is kept
+// separate from this slow-demotion floor.
 func (s *State) OnSuccess() {
 	if s.AutoOff {
 		return
 	}
 	s.Failures = 0
 	floor := BaseInterval
-	if s.SlowStrikes > 0 {
+	if s.SlowStrikes >= SlowStrikeLimit {
 		floor = DemotedInterval
 	}
 	s.Interval /= 2
@@ -106,14 +112,94 @@ func StatePath(folder string) string { return filepath.Join(folder, "sql", "stat
 
 // Persistence seam: injectable so tests need no real disk.
 var (
-	readFile  = os.ReadFile
+	readFile = os.ReadFile
+	// writeFile replaces the state atomically: a temp file in the same folder,
+	// flushed, then renamed. An in-place overwrite could leave a torn state file
+	// after a power loss, which Load would then refuse - turning a healthy
+	// service permanently auto-off (W10-04).
 	writeFile = func(path string, data []byte) error {
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
-		return os.WriteFile(path, data, 0o600)
+		tmp, err := os.CreateTemp(dir, ".state-*.tmp")
+		if err != nil {
+			return err
+		}
+		name := tmp.Name()
+		defer os.Remove(name)
+		if _, err := tmp.Write(data); err != nil {
+			tmp.Close()
+			return err
+		}
+		if err := tmp.Sync(); err != nil {
+			tmp.Close()
+			return err
+		}
+		if err := tmp.Close(); err != nil {
+			return err
+		}
+		return os.Rename(name, path)
 	}
 )
+
+// errStateCorrupt is the fixed reason for a state file that cannot be trusted.
+// It carries no path and no parser text (C10).
+var errStateCorrupt = errors.New("sql state is not a complete, consistent record")
+
+// persistedState mirrors State with pointers so a MISSING field is detectable:
+// json.Unmarshal into State would silently default it, and a missing autoOff
+// would re-enable a service that had latched itself off (W7-04).
+type persistedState struct {
+	Interval    *int64  `json:"interval"`
+	Failures    *int    `json:"failures"`
+	AutoOff     *bool   `json:"autoOff"`
+	SlowStrikes *int    `json:"slowStrikes"`
+	State       *string `json:"state"`
+}
+
+// parseState accepts only a complete, consistent, single JSON record. null, {},
+// an unknown key, trailing data, a missing field, a negative count, an unknown
+// state label, or a latch that disagrees with its label are all refused.
+func parseState(data []byte) (State, error) {
+	var p persistedState
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&p); err != nil {
+		return State{}, errStateCorrupt
+	}
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+		return State{}, errStateCorrupt
+	}
+	if p.Interval == nil || p.Failures == nil || p.AutoOff == nil || p.SlowStrikes == nil || p.State == nil {
+		return State{}, errStateCorrupt
+	}
+	s := State{
+		Interval:    time.Duration(*p.Interval),
+		Failures:    *p.Failures,
+		AutoOff:     *p.AutoOff,
+		SlowStrikes: *p.SlowStrikes,
+		State:       *p.State,
+	}
+	if s.Interval <= 0 || s.Failures < 0 || s.SlowStrikes < 0 {
+		return State{}, errStateCorrupt
+	}
+	switch s.State {
+	case StateOn, StateBackingOff, StateAutoOff, StateDenied:
+	default:
+		return State{}, errStateCorrupt
+	}
+	// The latch and its label must agree, and a reached failure threshold must
+	// already be latched: neither may be relabelled into an enabled state.
+	if s.AutoOff != (s.State == StateAutoOff || s.State == StateDenied) {
+		return State{}, errStateCorrupt
+	}
+	if !s.AutoOff && s.Failures >= AutoOffFailures {
+		return State{}, errStateCorrupt
+	}
+	s.normalize()
+	return s, nil
+}
 
 // Save persists s as JSON (fixed fields only; no error text).
 func Save(path string, s State) error {
@@ -125,8 +211,8 @@ func Save(path string, s State) error {
 }
 
 // Load reads the persisted state. A persisted AutoOff STAYS auto-off across
-// restarts. Unreadable or corrupt state fails closed (auto-off) rather than
-// silently re-enabling. A missing file means first start: on at base.
+// restarts. Unreadable, incomplete or inconsistent state fails closed (auto-off)
+// rather than silently re-enabling. A missing file means first start: on at base.
 func Load(path string) (State, error) {
 	closed := State{Interval: BaseInterval, AutoOff: true, State: StateAutoOff}
 	data, err := readFile(path)
@@ -136,11 +222,10 @@ func Load(path string) (State, error) {
 	if err != nil {
 		return closed, err
 	}
-	var s State
-	if err := json.Unmarshal(data, &s); err != nil {
+	s, err := parseState(data)
+	if err != nil {
 		return closed, err
 	}
-	s.normalize()
 	return s, nil
 }
 

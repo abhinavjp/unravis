@@ -142,41 +142,71 @@ func (p *PDHSource) Collect() ([]CounterReading, error) {
 }
 
 // readingFrom maps one formatted result; OK only when both the API call and
-// the per-counter CStatus report success.
+// the per-counter CStatus report success. NEW_DATA (1) is a success status, so
+// it is accepted here exactly as the engine accepts it.
 func readingFrom(path string, v pdhFmtCounterValue, apiStatus uintptr) CounterReading {
 	if apiStatus != 0 {
 		return CounterReading{Path: path, Status: uint32(apiStatus)}
 	}
-	return CounterReading{Path: path, Value: v.Double, Status: v.CStatus, OK: v.CStatus == 0}
+	return CounterReading{Path: path, Value: v.Double, Status: v.CStatus, OK: CounterStatusOK(v.CStatus)}
 }
 
-// RefreshInstances re-expands ONLY wildcard counters on the same query handle.
-// The resolver calls it when the process set changes, never every tick.
+// RefreshInstances reconciles ONLY wildcard counters on the same query handle:
+// an instance that is still present keeps its handle (and therefore its PDH
+// baseline), a departed instance is removed, a new one is added. The resolver
+// calls it when the process set changes, never every tick.
+//
+// Every pattern is expanded before the query is touched, so a failed expansion
+// leaves the working counters intact instead of stripping the source down to
+// its direct counters and returning an error.
 func (p *PDHSource) RefreshInstances() error {
 	if p.closed {
 		return errors.New("PDH query closed")
 	}
-	kept := make([]pdhCounter, 0, len(p.counters))
-	for _, c := range p.counters {
-		if c.wildcard {
-			procPdhRemoveCounter.Call(c.handle)
-			continue
-		}
-		kept = append(kept, c) // direct counters keep their handles
-	}
-	p.counters = kept
+	desired := make(map[string]bool)
+	var order []string
 	for _, pattern := range p.wildcards {
 		expanded, err := expandWildCard(pattern)
 		if err != nil {
 			return err
 		}
 		for _, ep := range expanded {
-			if err := p.addCounter(ep, true); err != nil {
-				return err
+			if !desired[ep] {
+				desired[ep] = true
+				order = append(order, ep)
 			}
 		}
 	}
-	procPdhCollectQueryData.Call(p.query) // prime the re-added counters once
+
+	kept := make([]pdhCounter, 0, len(p.counters))
+	present := make(map[string]bool, len(p.counters))
+	changed := false
+	for _, c := range p.counters {
+		if !c.wildcard {
+			kept = append(kept, c) // direct counters keep their handles
+			continue
+		}
+		if desired[c.path] {
+			kept = append(kept, c)
+			present[c.path] = true
+			continue
+		}
+		procPdhRemoveCounter.Call(c.handle)
+		changed = true
+	}
+	p.counters = kept
+	for _, ep := range order {
+		if present[ep] {
+			continue
+		}
+		if err := p.addCounter(ep, true); err != nil {
+			return err
+		}
+		changed = true
+	}
+	if changed {
+		procPdhCollectQueryData.Call(p.query) // prime only the newly added counters
+	}
 	return nil
 }
 

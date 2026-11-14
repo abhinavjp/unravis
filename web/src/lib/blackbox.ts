@@ -100,8 +100,51 @@ export type TargetKind = 'appPool' | 'service';
 export interface TargetRef { kind: TargetKind; name: string }
 
 /** One detected app pool or service, as GET /api/blackbox/this-pc/targets lists it. Names only. */
-export interface TargetInfo { name: string; running: boolean }
-export interface TargetsAnswer { appPools: TargetInfo[]; services: TargetInfo[]; detected: boolean }
+export interface TargetInfo {
+  name: string;
+  /** Present only when the running state was actually read; absent means unknown. */
+  running?: boolean;
+  /** Fixed operational code from the server: running, stopped or unknown. */
+  state?: 'running' | 'stopped' | 'unknown';
+}
+export interface TargetsAnswer {
+  appPools: TargetInfo[]; services: TargetInfo[]; detected: boolean;
+  /** Per-source detection: detected, unavailable or not-found. Optional for older servers. */
+  appPoolsState?: string; servicesState?: string;
+}
+
+/** What is actually known about a detected target (W2-07). Configuration presence is
+ *  never a running claim, and an unreadable state is unknown, not stopped. An older
+ *  server that always sends a boolean still reads correctly. */
+export type TargetRunState = 'running' | 'stopped' | 'unknown';
+export function targetRunState(t: TargetInfo): TargetRunState {
+  if (t.state === 'running' || t.state === 'stopped' || t.state === 'unknown') return t.state;
+  if (t.running === true) return 'running';
+  if (t.running === false) return 'stopped';
+  return 'unknown';
+}
+
+/**
+ * What the picker can honestly say about one selected target (W3-06). A name that is in the
+ * detected list reads its state through targetRunState. A name that is absent is never guessed
+ * to mean stopped: the endpoint offers running services only and caps each list at 256, so an
+ * absent name may be stopped, may be beyond the cap, or may sit in a list that could not be read.
+ * The per-source state tells those apart. `answer` is null when nothing could be read at all.
+ */
+export type PickedTargetState = 'running' | 'stopped' | 'unknown' | 'not-in-list' | 'list-unreadable' | 'source-not-found';
+export function pickedTargetState(kind: TargetKind, name: string, answer: TargetsAnswer | null): PickedTargetState {
+  if (!answer) return 'list-unreadable';
+  const list = kind === 'appPool' ? answer.appPools : answer.services;
+  const found = (list ?? []).find((t) => t.name === name);
+  if (found) return targetRunState(found);
+  const source = kind === 'appPool' ? answer.appPoolsState : answer.servicesState;
+  if (source === 'unavailable') return 'list-unreadable';
+  if (source === 'not-found') return 'source-not-found';
+  // 'detected', or an older server that sends no per-source state but did detect something:
+  // the list was read and this name is simply not in it. Absence is unknown, never stopped.
+  if (source === 'detected' || answer.detected) return 'not-in-list';
+  return 'list-unreadable';
+}
 
 export interface Settings {
   name: string;

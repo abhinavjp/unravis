@@ -81,8 +81,8 @@ func TestUnreadableFreeSpaceStopsTheTick(t *testing.T) {
 
 	err := r.Tick(now)
 	var e *Error
-	if !errors.As(err, &e) || e.Code != CodeDiskLow {
-		t.Fatalf("tick error = %v, want code %q", err, CodeDiskLow)
+	if !errors.As(err, &e) || e.Code != CodeDiskUnreadable {
+		t.Fatalf("tick error = %v, want code %q (an unreadable volume is distinct from a known-low one)", err, CodeDiskUnreadable)
 	}
 	if strings.Contains(err.Error(), "GetVolumePathName") {
 		t.Errorf("the raw volume error survived: %v", err)

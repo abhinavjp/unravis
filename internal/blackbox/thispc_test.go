@@ -140,6 +140,192 @@ func TestStartStopApplyUseTheRightCommands(t *testing.T) {
 	}
 }
 
+// ---- apply through the helper, with real temporary files (W3-01) ----
+
+// helperElev stands in for the elevated helper program: it runs the real
+// Manager with the args ThisPC builds, against the fake service manager and
+// environment of service_test.go, and answers in the helper's JSON protocol.
+type helperElev struct {
+	m     *Manager
+	calls []fakeCall
+}
+
+func (h *helperElev) Run(_ context.Context, exe string, args []string, elevated bool) ([]byte, error) {
+	h.calls = append(h.calls, fakeCall{exe, args, elevated})
+	cfgPath := ""
+	for i, a := range args {
+		if a == "--config" && i+1 < len(args) {
+			cfgPath = args[i+1]
+		}
+	}
+	line := func(v map[string]any) []byte {
+		b, _ := json.Marshal(v)
+		return append(b, '\n')
+	}
+	fail := func(err error) []byte {
+		reason := string(ReasonOther)
+		var ie *InstallError
+		var ae *ApplyError
+		switch {
+		case errors.As(err, &ie):
+			reason = string(ie.Reason)
+		case errors.As(err, &ae):
+			reason = string(ae.Reason)
+		case errors.Is(err, ErrNotInstalled):
+			reason = ReasonNotInstall
+		case errors.Is(err, ErrInvalidConfig):
+			reason = ReasonInvalid
+		}
+		return line(map[string]any{"ok": false, "reason": reason, "message": err.Error()})
+	}
+	switch Op(args[0]) {
+	case OpInstall:
+		cfg, err := LoadConfig(cfgPath)
+		if err != nil {
+			return fail(err), nil
+		}
+		res, err := h.m.Install(cfg)
+		if err != nil {
+			return fail(err), nil
+		}
+		return line(map[string]any{"ok": true, "readKey": res.ReadKey, "name": cfg.Name, "folder": res.Folder,
+			"port": res.Port, "exePath": res.ExePath, "configPath": res.ConfigPath}), nil
+	case OpApply:
+		res, err := h.m.Apply(cfgPath)
+		if err != nil {
+			return fail(err), nil
+		}
+		return line(map[string]any{"ok": true, "restarted": res.Restarted}), nil
+	case OpStart:
+		if err := h.m.Start(); err != nil {
+			return fail(err), nil
+		}
+		return line(map[string]any{"ok": true}), nil
+	case OpStop:
+		if err := h.m.Stop(); err != nil {
+			return fail(err), nil
+		}
+		return line(map[string]any{"ok": true}), nil
+	}
+	return fail(errors.New("unsupported operation")), nil
+}
+
+// W3-01 end to end: install target A through ThisPC, apply target B through
+// ThisPC's short-lived settings file, and the INSTALLED config the service
+// command line names must hold B and not A — for a running and a stopped
+// recorder. The temporary file is gone afterwards and is never what the
+// service reads.
+func TestApplyThroughTheHelperSavesTheInstalledConfigNotTheTemporaryFile(t *testing.T) {
+	for _, stopped := range []bool{false, true} {
+		name := "running"
+		if stopped {
+			name = "stopped"
+		}
+		t.Run(name, func(t *testing.T) {
+			g := newSvcRig(t)
+			h := &helperElev{m: g.m}
+			tp := &ThisPC{Elev: h, Program: g.env.exe, TempRoot: t.TempDir()}
+			cfgA := g.cfg
+			cfgA.Targets = []Target{{Kind: "appPool", Name: "PoolA"}}
+			out, err := tp.Install(t.Context(), cfgA)
+			if err != nil || out.ConfigPath != g.p.ConfigPath {
+				t.Fatalf("%+v %v", out, err)
+			}
+			if stopped {
+				if err := tp.Stop(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfgB := cfgA
+			cfgB.Targets = []Target{{Kind: "service", Name: "SvcB"}}
+			restarted, err := tp.Apply(t.Context(), cfgB)
+			if err != nil || restarted != !stopped {
+				t.Fatalf("restarted=%v %v", restarted, err)
+			}
+			// The installed config selects B, not A.
+			svcPath := serviceConfigPath(g.svc.spec)
+			if svcPath != g.p.ConfigPath {
+				t.Fatalf("service reads %q, want the installed %q", svcPath, g.p.ConfigPath)
+			}
+			got, err := LoadConfig(svcPath)
+			if err != nil || strings.Join(targetNames(got), ",") != "service:SvcB" {
+				t.Fatalf("installed config: %+v %v", got.Targets, err)
+			}
+			raw, _ := os.ReadFile(svcPath)
+			if !strings.Contains(string(raw), "SvcB") || strings.Contains(string(raw), "PoolA") {
+				t.Fatalf("installed config text: %s", raw)
+			}
+			// The temporary settings file is gone and was never the service's.
+			applyCall := h.calls[len(h.calls)-1]
+			tmp := ""
+			for i, a := range applyCall.args {
+				if a == "--config" && i+1 < len(applyCall.args) {
+					tmp = applyCall.args[i+1]
+				}
+			}
+			if tmp == "" || samePath(tmp, svcPath) {
+				t.Fatalf("apply used %q", tmp)
+			}
+			if _, err := os.Stat(tmp); err == nil {
+				t.Fatal("the temporary settings file was left behind")
+			}
+			if strings.Contains(strings.Join(g.svc.spec.Args, " "), tmp) {
+				t.Fatal("the service reads the temporary file")
+			}
+			if stopped && g.svc.state != SvcStopped {
+				t.Fatalf("a stopped recorder was started: %s", g.svc.state)
+			}
+		})
+	}
+}
+
+// W3-01: a save failure travels back as the fixed save-failed reason, the
+// recorder keeps running and the old settings stay.
+func TestApplySaveFailureThroughTheHelperKeepsTheRecorderRunning(t *testing.T) {
+	g := newSvcRig(t)
+	h := &helperElev{m: g.m}
+	tp := &ThisPC{Elev: h, Program: g.env.exe, TempRoot: t.TempDir()}
+	cfgA := g.cfg
+	cfgA.Targets = []Target{{Kind: "appPool", Name: "PoolA"}}
+	if _, err := tp.Install(t.Context(), cfgA); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(g.p.ConfigPath+".bak", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgB := cfgA
+	cfgB.Targets = []Target{{Kind: "service", Name: "SvcB"}}
+	_, err := tp.Apply(t.Context(), cfgB)
+	var te *ThisPCError
+	if !errors.As(err, &te) || te.Reason != string(ReasonSaveFailed) {
+		t.Fatalf("%v", err)
+	}
+	if g.svc.state != SvcRunning {
+		t.Fatalf("the recorder was stopped although the save failed: %s", g.svc.state)
+	}
+	got, err := LoadConfig(g.p.ConfigPath)
+	if err != nil || strings.Join(targetNames(got), ",") != "appPool:PoolA" {
+		t.Fatalf("old settings not kept: %+v %v", got.Targets, err)
+	}
+	if what, next := FailureWords(te.Reason); what == "" || next == "" {
+		t.Fatalf("%s has no words", te.Reason)
+	}
+}
+
+func TestApplyFailureReasonsComeThroughInPlainWords(t *testing.T) {
+	for _, reason := range []string{"save-failed", "restart-failed"} {
+		f := &fakeElev{answer: `{"ok":false,"reason":"` + reason + `","message":"plain words here"}`}
+		_, err := newThisPC(f, t).Apply(t.Context(), packCfg())
+		var te *ThisPCError
+		if !errors.As(err, &te) || te.Reason != reason || te.Message == "" {
+			t.Errorf("%s: %v", reason, err)
+		}
+		if what, next := FailureWords(reason); what == "" || next == "" {
+			t.Errorf("%s has no words", reason)
+		}
+	}
+}
+
 func TestRemoveKeepsTheRecordingsUnlessTheNameIsTyped(t *testing.T) {
 	f := &fakeElev{answer: `{"ok":true,"serviceRemoved":true,"recordingsDeleted":false}`}
 	tp := newThisPC(f, t)

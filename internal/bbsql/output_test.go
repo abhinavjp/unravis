@@ -64,8 +64,8 @@ func TestDecodeWaitTypeRegex(t *testing.T) {
 }
 
 // TestDecodeEmptyWaitTypeRunning pins the review requirement: bb:requests
-// emits '' for running requests (ISNULL(wait_type,'')); the requests decode
-// path maps '' to the fixed sentinel RUNNING before validation, without
+// emits ” for running requests (ISNULL(wait_type,”)); the requests decode
+// path maps ” to the fixed sentinel RUNNING before validation, without
 // loosening the general regex.
 func TestDecodeEmptyWaitTypeRunning(t *testing.T) {
 	var out []Requests
@@ -137,6 +137,12 @@ func TestOutputNoNames(t *testing.T) {
 			}
 			switch f.Type.Kind() {
 			case reflect.Uint8, reflect.Uint32, reflect.Uint64, reflect.Int32:
+			case reflect.Ptr:
+				// Nullable int32 deltas (Semaphores.Forced/Timeouts): missingness
+				// added, width unchanged (W11-01/W11-04).
+				if f.Type.Elem().Kind() != reflect.Int32 {
+					t.Errorf("%s.%s is %s; want a nullable int32 delta", typ.Name(), f.Name, f.Type)
+				}
 			default:
 				t.Errorf("%s.%s is %s; want numeric only", typ.Name(), f.Name, f.Type.Kind())
 			}
@@ -151,7 +157,7 @@ func TestOutputNoNames(t *testing.T) {
 		Requests{WaitType: "RUNNING", Tasks: 1, MaxWaitMs: 1, Blocked: 1, HeadBlockers: 1, MaxBlockMs: 1},
 		Waits{WaitType: "WRITELOG", DeltaMs: 1, DeltaTasks: 1},
 		Schedulers{CurrentTasks: 1, RunnableTasks: 1},
-		Semaphores{ResourceSemaphoreID: 1, Grantees: 1, Waiters: 1, Forced: 1, Timeouts: 1},
+		Semaphores{ResourceSemaphoreID: 1, Grantees: 1, Waiters: 1, Forced: i32p(1), Timeouts: i32p(1)},
 		Tempdb{InternalPages: 1, UserPages: 1},
 		FileStats{DatabaseID: 1, FileID: 1, ReadStallMs: 1, WriteStallMs: 1, Reads: 1, Writes: 1, SizeOnDiskBytes: 1},
 		AG{DatabaseID: 1, SyncState: 1},

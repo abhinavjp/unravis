@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
@@ -87,18 +88,19 @@ func RunHost(ctx context.Context, o HostOptions) error {
 	// never stops recording.
 	_ = SetBelowNormalPriority()
 	budget := NewBudget(cfg.IntervalSeconds)
-	// Resolver wiring (BBX-1-11): owner-selected names resolve to live
-	// processes per call, and the wildcard groups get one process-set change
-	// verdict per collection cycle. With no selected targets, Targets stays
-	// nil and machine-wide groups work exactly as before.
+	// Resolver wiring (BBX-1-11): the gate resolves ONE immutable inventory and
+	// target result per collection cycle and shares it — with its monotonic
+	// generation — among the host collector and every group, so a tick takes one
+	// process snapshot, not one per consumer (W3-05), and a skipped group never
+	// loses a change (W3-03). With no selected targets, Targets stays nil and
+	// machine-wide groups work exactly as before.
 	resolver := NewResolver()
-	gate := &processChangeGate{resolver: resolver, changed: resolver.ProcessSetChanged()}
-	deps := GroupDeps{Config: cfg, Cores: CoreCount(), ProcessSetChanged: func() bool { return gate.changed }}
+	gate := &processChangeGate{resolver: resolver, targets: cfg.Targets}
+	gate.view.Store(resolver.resolveTick(cfg.Targets, time.Now()))
+	deps := GroupDeps{Config: cfg, Cores: CoreCount(),
+		Generation: func() uint64 { return gate.currentView().gen }}
 	if len(cfg.Targets) > 0 {
-		deps.Targets = func() []ResolvedTarget {
-			rt, _ := resolver.ResolveTargets(cfg.Targets)
-			return rt
-		}
+		deps.Targets = func() []ResolvedTarget { return gate.currentView().targets }
 	}
 	// The busiest-process list always includes the selected targets (BBX-4-05).
 	if hc, ok := col.(*HostCollector); ok {
@@ -131,18 +133,29 @@ func RunHost(ctx context.Context, o HostOptions) error {
 	return runErr
 }
 
-// processChangeGate asks the resolver once per collection cycle whether the
-// process set changed and shares that one verdict with every group: all
-// groups in a cycle re-expand together, and the snapshot cost is paid once
-// per tick, not once per group.
+// processChangeGate resolves ONE immutable inventory/target view per collection
+// cycle and shares it with every group and the host collector: all consumers in
+// a cycle read the same generation and the same targets, and the process
+// snapshot cost is paid once per tick, not once per consumer (W3-05). The view
+// is published with an atomic pointer because a group worker from an earlier
+// tick may still read it while the tick goroutine stores the next one.
 type processChangeGate struct {
 	inner    Collector
 	resolver *Resolver
-	changed  bool
+	targets  []Target
+	view     atomic.Pointer[tickView]
+}
+
+// currentView is the shared per-tick result, never nil once RunHost seeds it.
+func (g *processChangeGate) currentView() *tickView {
+	if v := g.view.Load(); v != nil {
+		return v
+	}
+	return &tickView{}
 }
 
 func (g *processChangeGate) Collect(now time.Time) (Sample, error) {
-	g.changed = g.resolver.ProcessSetChanged()
+	g.view.Store(g.resolver.resolveTick(g.targets, now))
 	return g.inner.Collect(now)
 }
 

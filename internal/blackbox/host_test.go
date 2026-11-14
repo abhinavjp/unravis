@@ -301,25 +301,25 @@ func TestRunHostStopWhileWaitingForAPortReturns(t *testing.T) {
 	}
 }
 
-// gateCollector reads the shared change verdict three times in one cycle,
-// like three wildcard groups sharing GroupDeps.ProcessSetChanged.
+// gateCollector reads the shared per-tick generation three times in one cycle,
+// like three wildcard groups sharing the gate's immutable view.
 type gateCollector struct {
-	verdicts *[]bool
-	read     func() bool
+	gens *[]uint64
+	read func() uint64
 }
 
 func (c *gateCollector) Collect(time.Time) (Sample, error) {
 	for i := 0; i < 3; i++ {
-		*c.verdicts = append(*c.verdicts, c.read())
+		*c.gens = append(*c.gens, c.read())
 	}
 	return Sample{}, nil
 }
 func (c *gateCollector) Close() error { return nil }
 
 // TestProcessChangeGateOneVerdictPerCycle guards the wiring: the resolver is
-// snapshotted ONCE per collection cycle and every group in the cycle sees the
-// same verdict; a set change reaches all groups on the next cycle, and a
-// stable set never re-expands.
+// snapshotted ONCE per collection cycle and every group in the cycle reads the
+// SAME immutable generation; a set change advances the generation for all
+// groups on the next cycle, and a stable set never re-expands (W3-05/W3-03).
 func TestProcessChangeGateOneVerdictPerCycle(t *testing.T) {
 	procs := []ProcInfo{{PID: 1, Start: 10}}
 	var snaps int
@@ -331,31 +331,32 @@ func TestProcessChangeGateOneVerdictPerCycle(t *testing.T) {
 		return out, nil
 	}
 	gate := &processChangeGate{resolver: r}
-	var verdicts []bool
-	gate.inner = &gateCollector{verdicts: &verdicts, read: func() bool { return gate.changed }}
+	gate.view.Store(r.resolveTick(nil, time.Now()))
+	var gens []uint64
+	gate.inner = &gateCollector{gens: &gens, read: func() uint64 { return gate.currentView().gen }}
 
-	cycle := func(want bool) {
+	cycle := func(want uint64) {
 		t.Helper()
-		verdicts = nil
+		gens = nil
 		if _, err := gate.Collect(time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		if len(verdicts) != 3 {
-			t.Fatalf("verdicts read = %d, want 3", len(verdicts))
+		if len(gens) != 3 {
+			t.Fatalf("generations read = %d, want 3", len(gens))
 		}
-		for _, v := range verdicts {
-			if v != want {
-				t.Fatalf("mixed verdicts in one cycle: %v, want all %v", verdicts, want)
+		for _, g := range gens {
+			if g != want {
+				t.Fatalf("mixed generations in one cycle: %v, want all %d", gens, want)
 			}
 		}
 	}
-	cycle(true)  // first cycle: no baseline yet
-	cycle(false) // stable set
+	cycle(1) // first cycle: baseline established, generation 1
+	cycle(1) // stable set: same generation
 	procs = append(procs, ProcInfo{PID: 2, Start: 20})
-	cycle(true)  // the change reaches every group
-	cycle(false) // stable again
-	if snaps != 4 {
-		t.Fatalf("snapshots = %d, want 4 (one per cycle, not one per group)", snaps)
+	cycle(2) // the change advances the generation for every group
+	cycle(2) // stable again
+	if snaps != 5 {
+		t.Fatalf("snapshots = %d, want 5 (one seed + one per cycle, not one per group)", snaps)
 	}
 }
 

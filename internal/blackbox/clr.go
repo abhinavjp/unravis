@@ -7,12 +7,16 @@ import (
 )
 
 // BBX-3-01 CLR counters for owner-selected Framework (runtime 1) targets.
-// Instances are process names (#N), not PIDs: Process ID maps instance -> PID;
-// targets match by PID, identity (PID, creation) is the resolver's. No text.
+// Instances are process names (#N), not PIDs: the CLR Process ID counter maps
+// instance -> PID, and the Process object's ID Process + Creation Time map that
+// PID to its creation FILETIME. Readings join to the shared per-tick view on the
+// full (PID, creation) identity, never PID alone (W5-01). No text.
 
 func init() { RegisterGroup("clr", true, newCLRGroup) }
 
-// clrPaths are the wildcard PDH paths; Process ID is the instance->PID map.
+// clrPaths are the wildcard PDH paths. The CLR Process ID counter is the
+// instance->PID map; the two Process-object counters supply the PID->creation
+// identity the CLR objects do not expose themselves.
 var clrPaths = []string{
 	`\.NET CLR Memory(*)\Process ID`,
 	`\.NET CLR Memory(*)\Gen 0 heap size`,
@@ -24,6 +28,8 @@ var clrPaths = []string{
 	`\.NET CLR LocksAndThreads(*)\Contention Rate/sec`,
 	`\.NET CLR LocksAndThreads(*)\# of current physical threads`,
 	`\.NET CLR Exceptions(*)\# of Exceps Thrown/sec`,
+	`\Process(*)\ID Process`,
+	`\Process(*)\Creation Time`,
 }
 
 // clrCounters binds counter names to kinds: rates are KindPDHRate (two
@@ -46,8 +52,8 @@ var clrCounters = []struct {
 
 var clrPrefixes = []string{`\.NET CLR Memory(`, `\.NET CLR LocksAndThreads(`, `\.NET CLR Exceptions(`}
 
-// clrCounter binds one expanded path to its instance and counter; key is the
-// engine output key (NUL cannot occur in a PDH instance name).
+// clrCounter binds one expanded detail path to its instance and counter; key is
+// the engine output key (NUL cannot occur in a PDH instance name).
 type clrCounter struct {
 	key   string
 	inst  string
@@ -67,6 +73,12 @@ type clrGroup struct {
 func newCLRGroup(d GroupDeps) (Group, error) {
 	src, owned := d.Source, false
 	if src == nil {
+		if d.Targets == nil {
+			// Nothing selected: do not create a machine-wide detail query at all
+			// (W2-04). The per-tick short-circuit alone still expanded, added and
+			// primed every Process instance before filtering the output.
+			return nil, errNoTargets
+		}
 		p, err := NewPDHSource(clrPaths)
 		if err != nil {
 			return nil, err // no PDH (non-Windows) or no CLR objects: skipped
@@ -89,22 +101,29 @@ func clrPathsOf(src CounterSource) []string {
 	return nil
 }
 
-// rebuild derives specs from expanded paths plus a fresh engine: new
-// instances start their two-baseline gate again.
+// rebuild derives DETAIL specs from the expanded CLR paths plus a fresh engine:
+// new instances start their two-baseline gate again. The CLR Process ID mapping
+// counter and the Process-object identity counters are read from the raw sample,
+// not the engine, so unselected instances never enter engine history (W5-03).
 func (g *clrGroup) rebuild(paths []string) {
 	counters := make([]clrCounter, 0, len(paths))
 	specs := make([]CounterSpec, 0, len(paths))
 	for _, path := range paths {
 		inst, counter, kind, ok := parseCLRPath(path)
 		if !ok {
-			continue
+			continue // Process-object identity paths are not CLR detail
+		}
+		if counter == "Process ID" {
+			continue // CLR instance->PID mapping is consumed from the raw sample
 		}
 		key := inst + "\x00" + counter
-		specs = append(specs, CounterSpec{Path: path, Field: key, Kind: kind})
+		// Volatile: a CLR instance name is a process label PDH can rebind to
+		// another process, so it must not carry a baseline across a refresh.
+		specs = append(specs, CounterSpec{Path: path, Field: key, Kind: kind, Volatile: true})
 		counters = append(counters, clrCounter{key: key, inst: inst, field: counter})
 	}
 	g.counters = counters
-	g.engine = NewEngine(specs, g.cores)
+	g.engine = reconcileEngine(g.engine, specs, g.cores)
 }
 
 // parseCLRPath extracts the instance and matches the counter suffix.
@@ -142,7 +161,14 @@ func (g *clrGroup) refresh() error {
 }
 
 func (g *clrGroup) Collect(now time.Time, _ float64) (any, error) {
-	if g.targets == nil || len(g.targets()) == 0 {
+	// Capture the ONE shared per-tick view before collecting and never re-resolve
+	// afterwards (W5-01): a mid-collect PID replacement must not be emitted under
+	// a new identity.
+	var targets []ResolvedTarget
+	if g.targets != nil {
+		targets = g.targets()
+	}
+	if len(targets) == 0 {
 		return nil, nil // nothing selected: nothing sampled, never machine-wide (BL-122)
 	}
 	if g.changed != nil && g.changed() {
@@ -154,21 +180,78 @@ func (g *clrGroup) Collect(now time.Time, _ float64) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := g.engine.Process(now, readings)
+	// PID -> creation FILETIME from the Process object (same atomic query). A PID
+	// reported by more than one Process instance is ambiguous and fails closed.
+	procInstPID, procInstCreation := procIOIdentity(readings)
+	pidCount := make(map[uint32]int, len(procInstPID))
+	pidCreation := make(map[uint32]float64, len(procInstPID))
+	for inst, pid := range procInstPID {
+		pidCount[pid]++
+		if cr, ok := procInstCreation[inst]; ok {
+			pidCreation[pid] = cr
+		}
+	}
+	// CLR instance -> PID from the CLR Process ID counter. A PID claimed by more
+	// than one CLR instance is likewise ambiguous and fails closed (W5-01).
+	clrInstPID := make(map[string]uint32)
+	clrPIDCount := make(map[uint32]int)
+	for _, r := range readings {
+		if !r.OK || !CounterStatusOK(r.Status) {
+			continue
+		}
+		inst, counter, _, ok := parseCLRPath(r.Path)
+		if !ok || counter != "Process ID" || r.Value <= 0 {
+			continue
+		}
+		clrInstPID[inst] = uint32(r.Value)
+	}
+	for _, pid := range clrInstPID {
+		clrPIDCount[pid]++
+	}
+	// Bind each captured Framework target to the one CLR instance whose PID and
+	// creation confirm it.
+	instOfTarget := make(map[string]string)
+	selected := make(map[string]bool)
+	for _, t := range targets {
+		if t.Runtime != 1 || t.Start == 0 {
+			continue // Framework only; creation must be confirmed
+		}
+		if pidCount[t.PID] != 1 {
+			continue // PID absent from the inventory or ambiguous
+		}
+		cr, ok := pidCreation[t.PID]
+		if !ok || !creationConfirmed(cr, t.Start) {
+			continue // creation unreadable or a different generation
+		}
+		for inst, pid := range clrInstPID {
+			if pid != t.PID || clrPIDCount[pid] != 1 {
+				continue
+			}
+			instOfTarget[t.Key] = inst
+			selected[inst] = true
+			break
+		}
+	}
+	if len(selected) == 0 {
+		return nil, nil
+	}
+	// Only selected instances' CLR detail reaches the engine (W5-03). PDH cannot
+	// narrow a wildcard query, so this is the earliest possible filter.
+	filtered := make([]CounterReading, 0, len(readings))
+	for _, r := range readings {
+		inst, counter, _, ok := parseCLRPath(r.Path)
+		if !ok || counter == "Process ID" || !selected[inst] {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+	out := g.engine.Process(now, filtered)
 
-	// Fold values per instance; Process ID maps instance -> PID (path order:
-	// first instance wins a duplicate PID).
+	// Fold values per instance; missing stays absent, never 0.
 	vals := make(map[string]map[string]float64)
-	instOf := make(map[uint32]string)
 	for _, c := range g.counters {
 		v, ok := out[c.key]
 		if !ok {
-			continue // missing stays absent, never 0
-		}
-		if c.field == "Process ID" {
-			if _, dup := instOf[uint32(v)]; !dup {
-				instOf[uint32(v)] = c.inst
-			}
 			continue
 		}
 		if vals[c.inst] == nil {
@@ -176,19 +259,13 @@ func (g *clrGroup) Collect(now time.Time, _ float64) (any, error) {
 		}
 		vals[c.inst][c.field] = v
 	}
-
 	var rows []CLRTarget
-	if g.targets != nil {
-		for _, t := range g.targets() {
-			if t.Runtime != 1 {
-				continue // Framework only; runtime 2 is BBX-3-02/3-04
-			}
-			inst, ok := instOf[t.PID]
-			if !ok {
-				continue // no CLR instance for this target: omit
-			}
-			rows = append(rows, clrTargetRow(t.Key, vals[inst]))
+	for _, t := range targets {
+		inst, ok := instOfTarget[t.Key]
+		if !ok {
+			continue // no confirmed CLR instance for this target: omit
 		}
+		rows = append(rows, clrTargetRow(t.Key, vals[inst]))
 	}
 	if len(rows) == 0 {
 		return nil, nil // nothing selected/matched: group omitted

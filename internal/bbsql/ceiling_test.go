@@ -28,10 +28,21 @@ func (f *ceilingFake) Query(_ context.Context, text string) ([]Row, error) {
 	return nil, errors.New("ceilingFake: unexpected query text")
 }
 
-// ceilingRoleNames pins the fixed server roles the C8 ceiling must refuse. It
-// is written out here (not derived from ceilingRoles) so dropping a role from
+// ceilingRoleNames pins EVERY column of bb:ceiling_role: the eight privileged
+// fixed-role membership flags plus the four C8 positive-proof failure flags
+// (W9-01). All are 0-on-good, so the shared fakes (runner_test ceilingOK,
+// budget_test budgetReplies) build a compliant row by zeroing this list. It is
+// written out here (not derived from ceilingRoles) so dropping a column from
 // the Go check or from bb:ceiling_role fails a test.
 var ceilingRoleNames = []string{
+	"sysadmin", "securityadmin", "serveradmin", "setupadmin",
+	"processadmin", "dbcreator", "bulkadmin", "diskadmin",
+	"principal_missing", "perm_empty", "perm_outside", "connect_missing",
+}
+
+// privilegedRoleNames are the eight fixed server roles whose membership alone
+// refuses the login (the role-flag half of bb:ceiling_role).
+var privilegedRoleNames = []string{
 	"sysadmin", "securityadmin", "serveradmin", "setupadmin",
 	"processadmin", "dbcreator", "bulkadmin", "diskadmin",
 }
@@ -116,7 +127,7 @@ func TestCeilingRefusesSecurityadmin(t *testing.T) {
 // come from role membership, not a direct grant), so the role flags are the
 // only gate for them.
 func TestCeilingRefusesEveryPrivilegedRole(t *testing.T) {
-	for _, role := range ceilingRoleNames {
+	for _, role := range privilegedRoleNames {
 		t.Run(role, func(t *testing.T) {
 			f := minimalCeiling()
 			f.perms = nil // nothing outside the ceiling was granted directly
@@ -155,22 +166,28 @@ func TestCeilingAllowsOnlyAllowedPerms(t *testing.T) {
 	}
 }
 
-// TestCeilingPermsUsesServerPrincipal pins the C8 bypass fix: sys.server_permissions.
-// grantee_principal_id is a SERVER principal id (sys.server_principals), so the
-// predicate must resolve the current login with SUSER_ID(). DATABASE_PRINCIPAL_ID()
-// returns a DATABASE principal id: with the C14 grant (login only, no user in the
-// database, so the session runs as guest = database principal 2) it matched the
-// public server role (server principal 2) instead of the login, hiding a
-// GRANT CONTROL SERVER to that login and letting an over-privileged login pass.
-func TestCeilingPermsUsesServerPrincipal(t *testing.T) {
-	perms := Statements["bb:ceiling_perms"]
-	if !strings.Contains(perms, "WHERE grantee_principal_id = SUSER_ID()") {
-		t.Errorf("bb:ceiling_perms must filter on the login's SERVER principal id via SUSER_ID(): %q", perms)
+// TestCeilingPermsUsesEffectiveRights pins the W9-01 fix: the permission proof
+// reads sys.fn_my_permissions(NULL, N'SERVER') — the EFFECTIVE server rights of
+// the current security context — not the direct-grant catalog. A right granted
+// to a custom/nested server role, a Windows group, public or a SQL2022
+// ##MS_*## role belongs to another principal id and was invisible to the old
+// grantee_principal_id = SUSER_ID() predicate on sys.server_permissions. The
+// function also subtracts DENYs, so a protective DENY is never reported as an
+// excess right (no owner is told to remove a DENY to pass).
+func TestCeilingPermsUsesEffectiveRights(t *testing.T) {
+	for _, id := range []string{"bb:ceiling_perms", "bb:ceiling_role"} {
+		text := Statements[id]
+		if !strings.Contains(text, "sys.fn_my_permissions(NULL, N'SERVER')") {
+			t.Errorf("%s must read the effective-permission function: %q", id, text)
+		}
+		if strings.Contains(text, "sys.server_permissions") {
+			t.Errorf("%s must not read the direct-grant catalog (inherited rights are invisible there)", id)
+		}
+		if strings.Contains(strings.ToUpper(text), "DATABASE_PRINCIPAL_ID") {
+			t.Errorf("%s must not use a database principal id", id)
+		}
 	}
-	if strings.Contains(strings.ToUpper(perms), "DATABASE_PRINCIPAL_ID") {
-		t.Error("bb:ceiling_perms must not use DATABASE_PRINCIPAL_ID(): a database principal id is not a server principal id (C8 bypass)")
-	}
-	// The role query is server-scoped too, and stays one FROM-less SELECT.
+	// The role query keeps the server-scoped membership flags.
 	role := Statements["bb:ceiling_role"]
 	if !strings.Contains(role, "IS_SRVROLEMEMBER(") {
 		t.Error("bb:ceiling_role must use server-scoped IS_SRVROLEMEMBER")
@@ -178,11 +195,24 @@ func TestCeilingPermsUsesServerPrincipal(t *testing.T) {
 	if strings.Contains(strings.ToUpper(role), "IS_MEMBER(") {
 		t.Error("bb:ceiling_role must not use database-scoped IS_MEMBER")
 	}
+	// The positive proof: an empty or unresolved result must never mean clean.
+	for _, flag := range []string{"principal_missing", "perm_empty", "perm_outside", "connect_missing"} {
+		if !strings.Contains(role, "AS "+flag) {
+			t.Errorf("bb:ceiling_role missing the positive-proof flag %q", flag)
+		}
+	}
+	if !strings.Contains(role, "SUSER_ID() IS NULL") {
+		t.Error("bb:ceiling_role must prove the principal resolved (SUSER_ID)")
+	}
+	if !strings.Contains(role, "COUNT(*) = 0") {
+		t.Error("bb:ceiling_role must flag an empty effective-permission list")
+	}
 }
 
 // TestCeilingRoleColumnsMatchGo proves the SQL and the Go check cover the same
-// eight roles: every selected column is asserted, and every asserted role is
-// selected. A role added to one side only is a silent ceiling gap.
+// columns: every selected column is asserted, and every asserted column is
+// selected. A column added to one side only is a silent ceiling gap. The eight
+// role flags and the four proof flags are checked separately.
 func TestCeilingRoleColumnsMatchGo(t *testing.T) {
 	cols := outputColumns(t, Statements["bb:ceiling_role"])
 	if len(cols) != len(ceilingRoleNames) {
@@ -192,7 +222,7 @@ func TestCeilingRoleColumnsMatchGo(t *testing.T) {
 	for _, c := range cols {
 		selected[strings.ToLower(c)] = true
 	}
-	for _, role := range ceilingRoleNames {
+	for _, role := range privilegedRoleNames {
 		if !selected[role] {
 			t.Errorf("bb:ceiling_role does not select role %q", role)
 		}
@@ -200,13 +230,21 @@ func TestCeilingRoleColumnsMatchGo(t *testing.T) {
 			t.Errorf("bb:ceiling_role missing IS_SRVROLEMEMBER flag for %q", role)
 		}
 	}
-	if len(ceilingRoles) != len(ceilingRoleNames) {
-		t.Fatalf("CheckCeiling asserts %d roles, want %d", len(ceilingRoles), len(ceilingRoleNames))
+	for _, flag := range ceilingProofFlags {
+		if !selected[flag] {
+			t.Errorf("bb:ceiling_role does not select proof flag %q", flag)
+		}
 	}
-	for i, role := range ceilingRoleNames {
+	if len(ceilingRoles) != len(privilegedRoleNames) {
+		t.Fatalf("CheckCeiling asserts %d roles, want %d", len(ceilingRoles), len(privilegedRoleNames))
+	}
+	for i, role := range privilegedRoleNames {
 		if ceilingRoles[i] != role {
 			t.Errorf("ceilingRoles[%d] = %q, want %q", i, ceilingRoles[i], role)
 		}
+	}
+	if len(ceilingProofFlags) != 4 {
+		t.Fatalf("CheckCeiling asserts %d proof flags, want 4", len(ceilingProofFlags))
 	}
 }
 
@@ -283,24 +321,17 @@ func TestCeilingFailsClosed(t *testing.T) {
 }
 
 // TestCeilingQueriesLintClean: both control statements are allowlisted and
-// pass the C2 lint; the perms query filters to rights OUTSIDE the ceiling so
-// the C6 row cap can never hide an extra right, and resolves the grantee with
-// the SERVER principal id (SUSER_ID) so the C14 guest session cannot hide a
-// grant made to the login.
+// pass the restricted C2 grammar; the perms query filters to effective rights
+// OUTSIDE the ceiling so the C6 row cap can never hide an extra right, and the
+// role query carries the positive readable-proof aggregates (W9-01).
 func TestCeilingQueriesLintClean(t *testing.T) {
 	for _, id := range []string{"bb:ceiling_role", "bb:ceiling_perms"} {
 		text, ok := Statement(id)
 		if !ok || !IsAllowed(text) {
 			t.Fatalf("%s missing from the allowlist", id)
 		}
-		if !strings.HasPrefix(text, setPrefix) {
-			t.Errorf("%s: missing the C3 SET prefix", id)
-		}
-		if n := strings.Count(strings.ToUpper(text), "SELECT"); n != 1 {
-			t.Errorf("%s: want exactly 1 SELECT, got %d", id, n)
-		}
-		if tag := "/* unravis:" + id + " */"; !strings.Contains(text, tag) {
-			t.Errorf("%s: missing tag %q", id, tag)
+		if err := lintStatement(id, text); err != nil {
+			t.Errorf("%s fails the C2 grammar: %v", id, err)
 		}
 		if tok := bannedToken(text); tok != "" {
 			t.Errorf("%s: banned token %q", id, tok)
@@ -310,14 +341,8 @@ func TestCeilingQueriesLintClean(t *testing.T) {
 	if !strings.Contains(perms, "SELECT TOP 2 permission_name") {
 		t.Error("bb:ceiling_perms must keep the TOP 2 reader-cap shape")
 	}
-	if !strings.Contains(perms, "FROM sys.server_permissions") {
-		t.Error("bb:ceiling_perms must read sys.server_permissions")
-	}
-	if !strings.Contains(perms, "WHERE grantee_principal_id = SUSER_ID()") {
-		t.Error("bb:ceiling_perms must match the grantee on SUSER_ID() (server principal id)")
-	}
-	if strings.Contains(strings.ToUpper(perms), "DATABASE_PRINCIPAL_ID") {
-		t.Error("bb:ceiling_perms must not match the grantee on a database principal id")
+	if !strings.Contains(perms, "FROM sys.fn_my_permissions(NULL, N'SERVER')") {
+		t.Error("bb:ceiling_perms must read the effective-permission function")
 	}
 	if !strings.Contains(perms, "NOT IN") {
 		t.Error("bb:ceiling_perms must filter to permissions outside the ceiling")
@@ -328,12 +353,89 @@ func TestCeilingQueriesLintClean(t *testing.T) {
 		}
 	}
 	role := Statements["bb:ceiling_role"]
-	if strings.Contains(strings.ToUpper(role), "FROM") {
-		t.Error("bb:ceiling_role must stay one FROM-less flag SELECT")
-	}
-	for _, name := range ceilingRoleNames {
+	for _, name := range privilegedRoleNames {
 		if !strings.Contains(role, "IS_SRVROLEMEMBER(N'"+name+"') AS "+name) {
 			t.Errorf("bb:ceiling_role missing membership flag for %s", name)
 		}
+	}
+}
+
+// TestCeilingProofFailsClosed (W9-01): a non-zero or unreadable positive-proof
+// flag never passes. An empty effective list, an unresolved principal or a
+// missing CONNECT SQL is NOT a clean login.
+func TestCeilingProofFailsClosed(t *testing.T) {
+	for _, flag := range ceilingProofFlags {
+		for _, val := range []any{int64(1), int64(2), nil} {
+			f := minimalCeiling()
+			r := noRoles()
+			if val == nil {
+				delete(r, flag)
+			} else {
+				r[flag] = val
+			}
+			f.role = []Row{r}
+			err := CheckCeiling(context.Background(), f)
+			if err == nil {
+				t.Fatalf("proof flag %s=%v passed", flag, val)
+			}
+			if !IsCeilingFailure(err) {
+				t.Fatalf("proof flag %s=%v: error lost its C8 origin: %v", flag, val, err)
+			}
+			if flag == "perm_outside" && val != nil {
+				assertTooManyRights(t, err)
+			}
+		}
+	}
+	// No role row at all is unreadable, never clean.
+	f := minimalCeiling()
+	f.role = nil
+	if err := CheckCeiling(context.Background(), f); err == nil || !IsCeilingFailure(err) {
+		t.Fatalf("missing role row: %v", err)
+	}
+}
+
+// TestCeilingFailureKeepsOrigin (W9-03): EVERY failed proof keeps its C8 origin
+// independently of the public code, so the runner can latch immediately. The
+// unreadable case keeps the generic public code (no new public surface) while
+// IsCeilingFailure still reports true; Classify still sees the fixed inner
+// error and no driver text escapes.
+func TestCeilingFailureKeepsOrigin(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(*ceilingFake)
+		code string
+	}{
+		{"unreadable", func(f *ceilingFake) { f.role = nil }, CodeFailed},
+		{"role-query-error", func(f *ceilingFake) { f.roleErr = errors.New("driver: SECRET reset") }, CodeQuery},
+		{"perms-query-error", func(f *ceilingFake) { f.permsErr = errors.New("driver: SECRET reset") }, CodeQuery},
+		{"too-many-rights", func(f *ceilingFake) { f.role = []Row{roleWith("sysadmin", 1)} }, CodeTooManyRights},
+		{"outside-right", func(f *ceilingFake) { f.perms = []Row{{"permission_name": "CONTROL SERVER"}} }, CodeTooManyRights},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := minimalCeiling()
+			tc.mut(f)
+			err := CheckCeiling(context.Background(), f)
+			if err == nil {
+				t.Fatal("failed proof passed")
+			}
+			if !IsCeilingFailure(err) {
+				t.Fatalf("C8 origin lost: %v", err)
+			}
+			e := Classify(err)
+			if e.Code != tc.code {
+				t.Fatalf("public code = %q, want %q", e.Code, tc.code)
+			}
+			if strings.Contains(err.Error(), "SECRET") || strings.Contains(e.Message, "SECRET") {
+				t.Fatalf("driver text surfaced: %q", err.Error())
+			}
+		})
+	}
+	// A non-ceiling error is not mislabelled as a ceiling failure.
+	if IsCeilingFailure(errors.New("plain")) || IsCeilingFailure(nil) {
+		t.Fatal("IsCeilingFailure matched a non-ceiling error")
+	}
+	if IsCeilingFailure(&Error{CodeFailed, "x"}) {
+		t.Fatal("a bare fixed error without the ceiling wrapper matched")
 	}
 }

@@ -131,8 +131,30 @@ func NewRecorder(o RecorderOptions) *Recorder {
 	return &Recorder{o: o, now: o.Now, started: o.Now().UTC(), writeOK: true, collectOK: true}
 }
 
+// SQLBudgetShare is the divisor of the owner's single maxGB budget reserved for
+// the SQL sample folder. The SQL service bounds its own folder to
+// Config.MaxBytes()/SQLBudgetShare (cmd/unravis-blackbox/sqlrunner.go's
+// sqlBudgetShare MUST equal this constant — see the seam note in the wave-10-11
+// data-fix report). The host recorder retains the REMAINING share, so the two
+// writers' ADMITTED (housekeeping-enforced) bytes satisfy one documented ceiling:
+//
+//	host MaxBytes + SQL MaxBytes <= Config.MaxBytes()
+//
+// Active-hour overshoot allowance: each writer protects its current hour file
+// from removal, so between housekeeping passes the retained total can exceed the
+// admitted ceiling by up to one active hour of writes per writer (host: one hour
+// of samples at the configured interval; SQL: one hour at its sampler cadences).
+// That overshoot is bounded by the per-hour write volume, is reclaimed at the
+// next pass once the hour rolls, and is the explicit allowance behind the
+// "combined cap" claim — not an unbounded 1.25x allocation (W10-02).
+const SQLBudgetShare = 4
+
 func (r *Recorder) limits() Limits {
-	return Limits{KeepDays: r.o.Config.KeepDays, MaxBytes: r.o.Config.MaxBytes(), MinFreePercent: float64(r.o.Config.MinFreePercent)}
+	max := r.o.Config.MaxBytes()
+	// Reserve SQL's share; the host keeps the rest so the combined admitted
+	// bytes stay within the owner's single ceiling (W10-02).
+	host := max - max/SQLBudgetShare
+	return Limits{KeepDays: r.o.Config.KeepDays, MaxBytes: host, MinFreePercent: float64(r.o.Config.MinFreePercent)}
 }
 
 // effectiveInterval is the tick interval in seconds: the budget's effective
@@ -246,6 +268,9 @@ func (r *Recorder) Tick(now time.Time) {
 		}
 		return
 	}
+	// The sample is durably accepted: only now may the event read cursor
+	// advance. A failure anywhere above leaves the batch pending (W6-06).
+	s.Events.Ack()
 	r.mu.Lock()
 	r.writeOK = true
 	r.resumedFlag = false

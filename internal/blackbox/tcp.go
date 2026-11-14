@@ -2,6 +2,7 @@ package blackbox
 
 import (
 	"encoding/binary"
+	"errors"
 	"strings"
 	"time"
 )
@@ -34,7 +35,29 @@ const (
 	tcpRowStride = 28
 	// maxTCPStateRows caps the table scan for footprint (BL-122).
 	maxTCPStateRows = 65536
+	// maxTCPTableBytes is the checked byte ceiling for the native table. It is
+	// enforced BEFORE any allocation (W6-03): a table larger than the rows we
+	// would ever scan is refused, so the sampler never allocates the whole
+	// native buffer (addresses/ports/PIDs included) just to count a prefix.
+	maxTCPTableBytes = 4 + maxTCPStateRows*tcpRowStride
+	// tcpTableMaxAttempts bounds the retry loop when the table grows between
+	// the size query and the read (W6-03).
+	tcpTableMaxAttempts = 3
 )
+
+// Fixed TCP-table failure codes (C10): never raw provider text.
+var (
+	errTCPTableUnreadable = errors.New("tcp table unreadable")
+	errTCPTableGrew       = errors.New("tcp table grew during read")
+)
+
+// tcpStates is one TCP-table read outcome. It distinguishes the three cases the
+// review asked for (W6-03): empty (counts nil, truncated false, no error),
+// unreadable (error), and incomplete (truncated true, counts partial or nil).
+type tcpStates struct {
+	counts    []TCPStateCount
+	truncated bool
+}
 
 type tcpGroup struct {
 	src       CounterSource
@@ -43,8 +66,8 @@ type tcpGroup struct {
 	changed   func() bool
 	owned     bool // factory created the source: Close owns it
 	queueKeys []string
-	counts    func() ([]TCPStateCount, error) // injected in tests
-	upgraded  bool // one-time lazy wildcard expansion attempted
+	counts    func() (tcpStates, error) // injected in tests
+	upgraded  bool                      // one-time lazy wildcard expansion attempted
 }
 
 func newTCPGroup(d GroupDeps) (Group, error) {
@@ -97,7 +120,9 @@ func (g *tcpGroup) rebuild(paths []string) {
 			}
 		}
 	}
-	g.eng = NewEngine(specs, g.cores)
+	// Interface names and the TCPv4/v6 objects are stable identities: keep their
+	// baselines when an unrelated process changes.
+	g.eng = reconcileEngine(g.eng, specs, g.cores)
 }
 
 // upgrade swaps in a source that also expands the Network Interface wildcard.
@@ -123,13 +148,17 @@ func (g *tcpGroup) upgrade() {
 func (g *tcpGroup) Collect(now time.Time, _ float64) (any, error) {
 	g.upgrade()
 	// Re-expand wildcards only when the process set changed, never per tick.
+	// A refresh failure keeps the previous expansion and must NOT suppress the
+	// independent rate and state reads below (W6-04): the PDH wildcard side and
+	// the GetTcpTable2 side fail on their own.
 	if g.changed != nil && g.changed() {
 		if r, ok := g.src.(interface{ RefreshInstances() error }); ok {
-			if err := r.RefreshInstances(); err != nil {
-				return nil, err
+			if err := r.RefreshInstances(); err == nil {
+				g.rebuild(tcpPathsOf(g.src))
 			}
+		} else {
+			g.rebuild(tcpPathsOf(g.src))
 		}
-		g.rebuild(tcpPathsOf(g.src))
 	}
 	var grp TCPGroup
 	have := false
@@ -158,11 +187,24 @@ func (g *tcpGroup) Collect(now time.Time, _ float64) (any, error) {
 		}
 		if n > 0 {
 			grp.OutboundQueue, have = &sum, true
+			grp.OutboundQueueInterfaces = n
+			// A total over only some interfaces is partial, never a complete
+			// machine-wide reading: one valid zero plus one unreadable
+			// interface must not publish a false complete 0 (W6-04).
+			if n < len(g.queueKeys) {
+				grp.OutboundQueuePartial = true
+			}
 		}
 	}
-	// A failed state query leaves States nil; the rates above are kept.
-	if states, err := g.counts(); err == nil && len(states) > 0 {
-		grp.States, have = states, true
+	// A failed state query leaves States nil; the rates above are kept. An
+	// incomplete table is labeled truncated, never an unlabeled complete count.
+	if res, err := g.counts(); err == nil {
+		if len(res.counts) > 0 {
+			grp.States, have = res.counts, true
+		}
+		if res.truncated {
+			grp.StatesTruncated, have = true, true
+		}
 	}
 	if !have {
 		return nil, nil // both sides failed: group omitted, Missing via collector
@@ -178,19 +220,60 @@ func (g *tcpGroup) Close() error {
 	return nil
 }
 
+// tcpTableSnapshot reads the table through injected seams, enforcing the byte
+// ceiling BEFORE any allocation and bounding the retries when the table grows
+// (W6-03). It is shared so the allocation bound is testable off Windows. sizeOf
+// returns the native byte size; readInto fills buf and returns the bytes written
+// (errTCPTableGrew when the buffer was too small).
+func tcpTableSnapshot(sizeOf func() (uint32, error), readInto func([]byte) (uint32, error)) (tcpStates, error) {
+	for attempt := 0; attempt < tcpTableMaxAttempts; attempt++ {
+		size, err := sizeOf()
+		if err != nil {
+			return tcpStates{}, err
+		}
+		if size < 4 {
+			return tcpStates{}, nil // empty table
+		}
+		if size > maxTCPTableBytes {
+			// Refuse before allocating: a complete table cannot be read within
+			// the ceiling, so report incomplete rather than unlabeled counts.
+			return tcpStates{truncated: true}, nil
+		}
+		buf := make([]byte, size)
+		n, err := readInto(buf)
+		if err != nil {
+			if errors.Is(err, errTCPTableGrew) {
+				continue // table outgrew the size query: bounded retry
+			}
+			return tcpStates{}, err
+		}
+		if int(n) > len(buf) {
+			n = uint32(len(buf))
+		}
+		counts, truncated := tcpStateCountsFromTable(buf[:n])
+		return tcpStates{counts: counts, truncated: truncated}, nil
+	}
+	return tcpStates{truncated: true}, nil // kept growing past the retry bound
+}
+
 // tcpStateCountsFromTable counts MIB_TCPTABLE2 rows by dwState only. The
 // address/port/PID bytes are never read; the scan is capped at maxTCPStateRows
 // and a truncated buffer counts complete rows only. States come out sorted.
-func tcpStateCountsFromTable(buf []byte) []TCPStateCount {
+// The second return reports truncation: the claimed row count exceeded the scan
+// cap or the complete rows that fit the buffer (W6-03).
+func tcpStateCountsFromTable(buf []byte) ([]TCPStateCount, bool) {
 	if len(buf) < 4 {
-		return nil
+		return nil, false
 	}
 	n := int(binary.LittleEndian.Uint32(buf))
+	truncated := false
 	if n > maxTCPStateRows {
 		n = maxTCPStateRows
+		truncated = true
 	}
 	if fit := (len(buf) - 4) / tcpRowStride; n > fit {
 		n = fit
+		truncated = true
 	}
 	var counts [13]uint32 // MIB_TCP_STATE 1..12
 	for i := 0; i < n; i++ {
@@ -204,5 +287,5 @@ func tcpStateCountsFromTable(buf []byte) []TCPStateCount {
 			out = append(out, TCPStateCount{State: uint8(s), Count: counts[s]})
 		}
 	}
-	return out
+	return out, truncated
 }

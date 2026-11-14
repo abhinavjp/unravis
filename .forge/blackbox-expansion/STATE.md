@@ -61,19 +61,21 @@ Reviewer: U = Ultimate, P = Performance. Tier: E = Efficient, P = Performance.
 | BBX-6-02 dump catalogue | committed | P | 9 | U: clean (stat-only, caps, never content) | (wave 9) |
 | BBX-5-16 lane server | committed | P | 9 | U: MED false-Complete/zero-fill + overflow fixed | (wave 9 + fix) |
 
-RESUME next: collect wave 11 (5-11/12/13 in `.bbx-wt/*`) -> Ultimate GATE verdict on BL-123+BL-124 -> fix round -> group-7 PR (waves 10+11). Blocked packets still: 3-04, 6-01, 6-03. Known ceiling limitation (PR note): rights inherited via custom server roles / Windows groups not yet checked (needs recursive sys.server_role_members - owner decision).
+RESUME next: adversarial-fix program, one wave at a time (see "Adversarial fix program" below). All 41 dispatchable packets are committed and delivered as PRs #3-#9; none merged. Blocked packets still: 3-04, 6-01, 6-03. Known ceiling limitation: rights inherited via custom server roles / Windows groups are not checked (W9-01).
 
 ## Wave 10 - committed 285b7ad (branch bbx-5-10, fast-forwarded into feat/blackbox-expansion)
-| BBX-5-10 runner+C13 | committed | P | 10 | Ultimate gate RUNNING (whole SQL subsystem, BL-123+BL-124) | report BBX-5-10.md; C13 measured, not asserted |
+| BBX-5-10 runner+C13 | committed | P | 10 | gate fix round committed 5b69353; corrective adversarial review open (wave-10 report) | reports BBX-5-10.md + BBX-5-10-fix.md; C13 measured on substitute decoders, not the shipped samplers (W10-05) |
 
 ## Wave 11 (samplers)
 | BBX-5-14 filestats+AG | committed | P | 11 | covered by the wave-10 gate run | ea2284d; 8 tests, 6/6 mutants killed |
-| BBX-5-11 requests | in flight | P | 11 | after integration | `.bbx-wt/5-11` (branch bbx-5-11) |
-| BBX-5-12 waits | in flight | P | 11 | after integration | `.bbx-wt/5-12` (branch bbx-5-12) |
-| BBX-5-13 schedulers | in flight | P | 11 | after integration | `.bbx-wt/5-13` (branch bbx-5-13) |
+| BBX-5-11 requests | committed | P | 11 | integrated be0d1d7; adversarial review open (wave-11 report) | 8 tests; source column invalid (W7-02) |
+| BBX-5-12 waits | committed | P | 11 | integrated be0d1d7 at the documented 60 s; adversarial review open | 13 tests |
+| BBX-5-13 schedulers | committed | P | 11 | integrated be0d1d7; adversarial review open (W11-01/02) | 19 tests |
 
-## Wave 12/13 (remaining)
-| BBX-5-17 lane web | pending | P | 13 | - | last dispatchable packet (5-16 + 6-02 were pulled forward and committed in wave 9) |
+## Wave 12/13
+| BBX-5-16 lane server | committed | P | 12 | executed early in wave 9; adversarial review open (wave-12 report) | canonical wave 12 |
+| BBX-6-02 dump catalogue | committed | P | 12 | executed early in wave 9; adversarial review open | canonical wave 12 |
+| BBX-5-17 lane web | committed | P | 13 | integrated be0d1d7; adversarial review open (W13-01/02) | canonical wave 13, executed in wave 11 |
 
 ## Blocked (written, not dispatched)
 | BBX-3-04 EventPipe | blocked | P | — | live pipe proof + cost | — |
@@ -99,3 +101,42 @@ RESUME next: collect wave 11 (5-11/12/13 in `.bbx-wt/*`) -> Ultimate GATE verdic
 - 2026-11-14: Ultimate gate on BL-123+BL-124 dispatched (read-only, whole SQL subsystem: allowlist/lint/conn/ceiling/backoff/output/runner/cmd wiring + DACL + recorder error paths) before the remaining samplers ship. Wave 11 samplers 5-11/5-12/5-13 dispatched in parallel in .bbx-wt/{5-11,5-12,5-13} on branches bbx-5-11/12/13 (new files only, no shared edits, mutation evidence required). NOTE: the Agent tool's worktree isolation cannot be used from this session - it resolves HEAD in the session root (not the repo) and fails; manual `git worktree add` + absolute paths is the working pattern.
 - 2026-11-14: Ultimate gate FIX ROUND done and committed. All HIGHs fixed: H1 query seam keeps the driver codes so permission/login failures reach C7 auto-off (fixedQueryError, conn.go:361); H2 owner config now reaches the runner (MinFreePercent / KeepDays*24 / MaxBytes/4) and the reconnect clock is nil-safe; H3 the sql folder DACL is verified fail-closed before the first connect (internal/bbsql/folder*.go, new code folder-lock) - BEHAVIOUR CHANGE: an unlocked folder now refuses to start, so dev/CI must use install-sql or a locked folder. M4a byte cap (whole hours oldest-first, newest never dropped), M5 slow-demotion survives a success, M6 sweep marked only after success (fixed disk-low sentence), M7 unreadable free space stops the tick, L8 dead import/stub cleanup, L9 per-statement row caps pinned (found bb:ceiling_perms TOP 2 vs Go cap 1 and bb:ceiling_role passing only by fallthrough), L10 hourly reconnect re-proves the C8 ceiling, L12 C13 measured on real RSS via psapi (60 ticks, +684 KB, cap 10 MB) with maxLine pinned in both tiers, L13 VIEW ANY DATABASE grant+revoke with the lint extended. L11 (rows:null reader) and M4b (group-inherited rights) deliberately NOT touched - real-server/next-round items. Mutation harness: 8/8 killed, byte-exact restores; M4 first SURVIVED, so TestByteCapDropsOldestHours now calls rotate directly with room for nothing. Green: go vet windows+linux, GOOS=windows GOARCH=386 build, go test ./internal/bbsql/ ./cmd/unravis-blackbox/ (30.6s / 3.2s ok). Report .forge/blackbox-expansion/reports/BBX-5-10-fix.md (measured numbers, live-server-only checks, owner decisions incl. hub-token rotation).
 - 2026-11-14: Wave 11 INTEGRATED (BBX-5-11 requests, 5-12 waits, 5-13 schedulers/semaphores/tempdb, 5-17 lane label) - 39 new Go tests + 14 new web tests, all green. Gate changes: (a) bb:waits moved from 15 s to the documented 60 s (security review line 10 + BACKLOG BL-102 beat my order; C4 now gives it the 5 s item limit), bb:tempdb kept at 60 s because 5-13 correctly refused my order and flagged the conflict; (b) budget_test.go was scheduling 3 of 7 kinds on the wrong cadence, so the footprint figures were wrong - re-measured: realistic ~19 MB/day (mean tick 3 269 B, worst 7 826 B), at-cap worst tick 59 421 B with the DAILY PROJECTION now computed per kind at its own cadence = 199 877 760 B/day (~200 MB/day, 168 h ~1.4 GB, not the 2.4 GB previously quoted); sqlrunner.go/runner.go/fix-report comments corrected (default 2 GB gives the SQL folder ~537 MB ~2 days saturated); (c) new sampler_registry_test.go = anti-drift gate over the live registry (cadence per kind, allowlisted ids, caps, only ag gated, and budget fixture cadence+cap must equal the registry in both directions); (d) Semaphores Forced/Timeouts KEPT int32 with the MaxInt32 guard (widening rejected: payload shape + missing beats wrong); (e) the web lane label was false after the cadence fix, so it now reads 'every 15 to 60 s' with its 4 assertions. Carried forward as real-server-only: wait/semaphore/filestats delta parity, bb:tempdb semantics (session_space_usage is accumulated allocation by current sessions, NOT tempdb pages in use - a statement change if the owner wants the other), TOP 16 semaphores reality, loaded-box CPU/RSS, benign-wait filter parity, L11 rows:null. Evidence: go test ./... exit 0, vet windows+linux clean, web 3021/3021, svelte-check 0 errors. Report .forge/blackbox-expansion/reports/BBX-5-11-12-13-17-integration.md.
+- 2026-11-14: GROUP 7 DELIVERED - PR #9 into feat/investigation-timeline (branch bbx-group-7 on the fork, tree identical to c08006c, parent bbx-group-6 so the branch diff is exactly this group: 85 files). OPEN, auto-merge NOT enabled, nothing merged. Covers the SQL runner (BBX-5-10 + fix round), BBX-5-14 filestats/AG, wave 11 samplers 5-11/12/13, the lane label 5-17 and the corrected C13 numbers. The PR body states the behaviour change (the service now refuses to start on an unlocked \sql folder), the nine things only a real SQL Server can prove (install-sql end to end, delta parity vs PerfMon/DMV, revoke-mid-run auto-off, tempdb semantics, TOP 16 reality, loaded-box CPU/RSS, named instances unreachable via TCP/1433, rows:null, group-inherited rights), and that BACKLOG is NOT ticked. PLAN STATUS: all 41 dispatchable packets of 44 now have reports; only the 3 blocked ones remain (BBX-3-04 EventPipe, BBX-6-01 VM steal, BBX-6-03 alloc sampling) - each needs live evidence and an owner go, so they stay unwritten. NOTE for the next session: .bbx-wt/{5-11,5-12,5-13,5-17} and branches bbx-5-11..13/17 are scratch (contents integrated and committed); left in place deliberately, remove with git worktree remove when the owner has finished testing. Owner action also outstanding: rotate the Runner Hub operator token that was pasted into chat.
+
+## Review provenance (W1-04) — read before trusting any "U: clean" above
+
+The `U` column records the tier the plan REQUIRED, not a verified execution record.
+What is actually known:
+
+- Required: Ultimate for anything touching SQL, credentials, service accounts, ACLs,
+  the HTTP endpoint, process access or the footprint budget (orchestration brief §1/§5).
+- Requested: the agent definitions were set to `Qwen4-max-preview` at the owner's request
+  (log 2026-11-14). `.qoder/agents/reviewer-ultimate.md` still labels itself "Ultimate".
+- Observed: **unverified**. This session's Agent tool exposed only
+  general-purpose/Explore/Plan and no per-dispatch model parameter, so the model that
+  actually ran each review was not recorded (log entries for waves 1 and 6).
+- Therefore: no row above is evidence that an Ultimate-tier review ran. Unknown
+  provenance is NOT proof that a lower tier ran either. Treat every historical
+  "clean"/"fixed" verdict as a claim to be re-checked against the code.
+
+Closure evidence to attach going forward, per review: required tier, requested model,
+observed model/tier when the host exposes it, dispatch id, reviewed commit, report path,
+verdict, and the high-severity findings closed with their re-review. Where the host
+cannot expose the observed model, record "unverified" and get an explicit owner
+acceptance of an alternative review instead of relabelling the prompt.
+
+## Adversarial fix program (started 2026-11-14)
+
+13 read-only wave reviews were produced at HEAD 33c219b
+(`reports/wave-1..13-adversarial-review.md`): 84 finding entries, every wave High / NO-GO.
+The owner then asked for all findings to be fixed, one wave at a time. Rules for this
+program: fix -> verify -> commit per wave; never merge or auto-merge a PR; never tick
+BACKLOG; state plainly what only a real server can prove.
+
+| Wave | Scope | Status |
+|---|---|---|
+| 1 | W1-01 NEW_DATA, W1-02 baseline lifetime, W1-03 target aliases, W1-04 provenance | fixed, verified, committed |
+| 2..13 | remaining findings | pending, in wave order |
+
+Findings that cannot be closed locally are recorded as live-server-only in each wave's
+fix report rather than silently marked done.

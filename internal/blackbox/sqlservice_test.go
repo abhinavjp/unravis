@@ -8,17 +8,25 @@ import (
 	"testing"
 )
 
-// fakeSQLEnv is fakeEnv plus the locked SQL data folder. Embedding keeps every
-// other answer the same, so the host install path is not changed by these tests.
+// fakeSQLEnv is fakeEnv plus the locked SQL data folder and the launch-access
+// grant. Embedding keeps every other answer the same, so the host install path
+// is not changed by these tests.
 type fakeSQLEnv struct {
 	*fakeEnv
-	sqlLocked []string // "dir sid" of every SecureSQLDir call, in order
-	sqlErr    error
+	sqlLocked  []string // "dir sid" of every SecureSQLDir call, in order
+	sqlErr     error
+	sqlGranted []string // "exe config sid" of every GrantSQLLaunchAccess call
+	grantErr   error
 }
 
 func (e *fakeSQLEnv) SecureSQLDir(dir, sid string) error {
 	e.sqlLocked = append(e.sqlLocked, dir+" "+sid)
 	return e.sqlErr
+}
+
+func (e *fakeSQLEnv) GrantSQLLaunchAccess(exe, config, sid string) error {
+	e.sqlGranted = append(e.sqlGranted, exe+" "+config+" "+sid)
+	return e.grantErr
 }
 
 // createFailSvc is fakeSvc with a Create that fails, so the undo can be watched.
@@ -42,6 +50,14 @@ type sqlRig struct {
 func newSQLRig(t *testing.T) *sqlRig {
 	t.Helper()
 	g := newSvcRig(t)
+	// W7-01: install-sql now requires a real host installation — the installed
+	// program and the settings file it binds must exist.
+	if err := os.WriteFile(filepath.Join(g.prog, InstalledExeName), []byte("MZ program"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveConfig(filepath.Join(g.prog, ConfigFileName), g.cfg, false); err != nil {
+		t.Fatal(err)
+	}
 	env := &fakeSQLEnv{fakeEnv: g.env}
 	return &sqlRig{m: &SQLManager{Svc: g.svc, Env: env}, svc: g.svc, env: env, cfg: g.cfg}
 }
@@ -104,15 +120,21 @@ func TestSQLServiceSID(t *testing.T) {
 }
 
 // The SQL service runs under its own virtual account, never LocalSystem, and
-// carries no secret on its command line.
+// carries no secret on its command line. W8-03: install creates it STOPPED —
+// the owner runs the grant and then enable-sql; a first connection before the
+// grant must not latch a denial. W7-01: the service SID gets least-privilege
+// launch access to the installed program and settings.
 func TestInstallSQLUsesAccount(t *testing.T) {
 	g := newSQLRig(t)
 	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
 		t.Fatal(err)
 	}
 	spec := g.svc.spec
-	if spec.Name != SQLServiceName || g.svc.state != SvcRunning {
-		t.Fatalf("%+v %s", spec, g.svc.state)
+	if spec.Name != SQLServiceName || g.svc.state != SvcStopped {
+		t.Fatalf("%+v %s (install must leave the service stopped)", spec, g.svc.state)
+	}
+	if g.svc.did("start") != 0 {
+		t.Fatalf("install started the service before the owner grant: %v", g.svc.calls)
 	}
 	if spec.Account != SQLServiceAccount {
 		t.Fatalf("the service runs as %q, want %q", spec.Account, SQLServiceAccount)
@@ -139,6 +161,16 @@ func TestInstallSQLUsesAccount(t *testing.T) {
 			}
 		}
 	}
+	// W7-01: launch access was granted for the installed exe and the bound
+	// config, to the service SID — and nothing else.
+	sid, err := sqlServiceSID(SQLServiceName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantGrant := filepath.Join(g.env.prog, InstalledExeName) + " " + g.configPath() + " " + sid
+	if len(g.env.sqlGranted) != 1 || g.env.sqlGranted[0] != wantGrant {
+		t.Fatalf("launch access grant = %v, want [%s]", g.env.sqlGranted, wantGrant)
+	}
 }
 
 // The service is registered with the EXACT config path it was given — never a
@@ -146,8 +178,12 @@ func TestInstallSQLUsesAccount(t *testing.T) {
 // that same config (BBX-5-02 fix: the service must not read an unlocked folder).
 func TestInstallSQLBindsGivenConfigPath(t *testing.T) {
 	g := newSQLRig(t)
-	// A non-default config path, different from progDir/blackbox.json.
+	// A non-default config path, different from progDir/blackbox.json. It must
+	// be a real file: install-sql verifies the settings it binds (W7-01).
 	other := filepath.Join(t.TempDir(), "other-blackbox.json")
+	if err := SaveConfig(other, g.cfg, false); err != nil {
+		t.Fatal(err)
+	}
 	if err := g.m.InstallSQL(g.cfg, other); err != nil {
 		t.Fatal(err)
 	}
@@ -230,14 +266,14 @@ func TestInstallSQLUndoOnFailure(t *testing.T) {
 		}
 		gone(t, g)
 	})
-	t.Run("start fails", func(t *testing.T) {
+	t.Run("the launch grant fails", func(t *testing.T) {
 		g := newSQLRig(t)
-		g.svc.startErr = errors.New("boom")
+		g.env.grantErr = errors.New("access denied")
 		if err := g.m.InstallSQL(g.cfg, g.configPath()); err == nil {
 			t.Fatal("install should fail")
 		}
-		if g.svc.did("delete") != 1 {
-			t.Fatalf("the service was not deleted: %v", g.svc.calls)
+		if g.svc.did("create") != 0 {
+			t.Fatal("a service was registered although launch access could not be granted")
 		}
 		gone(t, g)
 	})
@@ -286,7 +322,7 @@ func TestRemoveSQLConfirm(t *testing.T) {
 	if err := g.m.RemoveSQL(g.cfg, "web-c"); !errors.Is(err, ErrConfirmName) {
 		t.Fatalf("%v", err)
 	}
-	if len(g.svc.calls) != calls || g.svc.state != SvcRunning {
+	if len(g.svc.calls) != calls || g.svc.state != SvcStopped {
 		t.Fatalf("the service was touched before the name was confirmed: %v", g.svc.calls)
 	}
 	if _, err := os.Stat(data); err != nil {
@@ -296,11 +332,19 @@ func TestRemoveSQLConfirm(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := len(g.svc.calls)
-	if g.svc.calls[n-2] != "stop" || g.svc.calls[n-1] != "delete" || g.svc.state != SvcNotInstalled {
+	if g.svc.calls[n-1] != "delete" || g.svc.state != SvcNotInstalled {
 		t.Fatalf("%v %s", g.svc.calls, g.svc.state)
 	}
 	if _, err := os.Stat(data); err != nil {
 		t.Fatal("the sql data was deleted without being asked")
+	}
+	// W8-04: a clean remove publishes the off status, never an old enabled:true.
+	statusRaw, err := os.ReadFile(filepath.Join(g.sqlDir(), "status.json"))
+	if err != nil {
+		t.Fatalf("remove did not publish a status: %v", err)
+	}
+	if !strings.Contains(string(statusRaw), `"enabled":false`) || !strings.Contains(string(statusRaw), `"state":"off"`) {
+		t.Fatalf("remove published a non-off status: %s", statusRaw)
 	}
 
 	// Asked for: only <folder>\sql goes, never the recordings folder itself.
@@ -349,7 +393,7 @@ func TestSQLInstallRefusesNoAdminAndASecondService(t *testing.T) {
 	if installReason(t, err) != ReasonExists {
 		t.Fatalf("%v", err)
 	}
-	if g.svc.did("create") != 1 || g.svc.did("delete") != 0 || g.svc.state != SvcRunning {
+	if g.svc.did("create") != 1 || g.svc.did("delete") != 0 || g.svc.state != SvcStopped {
 		t.Fatalf("the first install was disturbed: %v", g.svc.calls)
 	}
 	if err := g.m.RemoveSQL(g.cfg, g.cfg.Name); err != nil {
@@ -376,4 +420,138 @@ func TestHostServiceAndFolderUnchangedByTheSQLWork(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(g.cfg.Folder, SQLDataSubdir)); err == nil {
 		t.Fatal("the host install made a sql folder")
 	}
+}
+
+// W8-09: a relative config path is refused before anything changes — the
+// service must be bound to an absolute path that resolves the same way under
+// the SCM's working directory as under the installer's.
+func TestInstallSQLRefusesRelativeConfigPath(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.InstallSQL(g.cfg, "relative-blackbox.json"); installReason(t, err) != ReasonOther {
+		t.Fatalf("%v", err)
+	}
+	if len(g.svc.calls) != 0 || len(g.env.sqlLocked) != 0 || len(g.env.sqlGranted) != 0 {
+		t.Fatalf("something was changed on a relative config path: %v %v", g.svc.calls, g.env.sqlLocked)
+	}
+}
+
+// W7-01: a supplied config alone does not prove a host installation — the
+// installed program and the bound settings file must both exist.
+func TestInstallSQLRequiresInstalledProgramAndConfig(t *testing.T) {
+	t.Run("no installed program", func(t *testing.T) {
+		g := newSQLRig(t)
+		if err := os.Remove(filepath.Join(g.env.prog, InstalledExeName)); err != nil {
+			t.Fatal(err)
+		}
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); installReason(t, err) != ReasonOther {
+			t.Fatalf("%v", err)
+		}
+		if len(g.svc.calls) != 0 {
+			t.Fatalf("a service was created without an installed program: %v", g.svc.calls)
+		}
+	})
+	t.Run("no settings file", func(t *testing.T) {
+		g := newSQLRig(t)
+		missing := filepath.Join(t.TempDir(), "missing.json")
+		if err := g.m.InstallSQL(g.cfg, missing); installReason(t, err) != ReasonOther {
+			t.Fatalf("%v", err)
+		}
+		if len(g.svc.calls) != 0 {
+			t.Fatalf("a service was created without a settings file: %v", g.svc.calls)
+		}
+	})
+}
+
+// W8-03: enable-sql is the explicit owner activation. It confirms the installed
+// program/config/folder, durably clears ONLY the persisted latch, and starts
+// the service. A healthy state is left untouched; a routine restart never
+// clears a genuine denial (only this owner action does).
+func TestEnableSQLActivatesAfterTheOwnerGrant(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	if g.svc.state != SvcStopped {
+		t.Fatalf("install left the service %s", g.svc.state)
+	}
+	// Simulate the first-connection denial the owner is re-arming after: a
+	// persisted denied latch in the SQL data folder.
+	if err := os.MkdirAll(g.sqlDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(g.sqlDir(), "state.json")
+	denied := `{"interval":30000000000,"failures":1,"autoOff":true,"slowStrikes":0,"state":"denied"}`
+	if err := os.WriteFile(statePath, []byte(denied), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.m.EnableSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatalf("enable-sql: %v", err)
+	}
+	if g.svc.state != SvcRunning || g.svc.did("start") != 1 {
+		t.Fatalf("enable-sql did not start the service: %v %s", g.svc.calls, g.svc.state)
+	}
+	// The latch is durably cleared: a fresh on state, no auto-off.
+	cleared, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(cleared), `"autoOff":true`) || !strings.Contains(string(cleared), `"state":"on"`) {
+		t.Fatalf("the latch was not cleared: %s", cleared)
+	}
+	// The folder lock was re-confirmed at activation.
+	if len(g.env.sqlLocked) != 2 {
+		t.Fatalf("enable-sql did not re-confirm the folder lock: %v", g.env.sqlLocked)
+	}
+	// A second enable with a healthy state starts nothing new and touches no
+	// state: the service already runs.
+	calls := len(g.svc.calls)
+	if err := g.m.EnableSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.svc.calls) != calls {
+		t.Fatalf("enable-sql disturbed a running service: %v", g.svc.calls)
+	}
+}
+
+// enable-sql refuses without admin, without an installed service, and when the
+// settings no longer match the installed folder — and it never starts the
+// service when the latch cannot be cleared durably.
+func TestEnableSQLRefusals(t *testing.T) {
+	t.Run("no admin", func(t *testing.T) {
+		g := newSQLRig(t)
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+			t.Fatal(err)
+		}
+		g.env.admin = false
+		if err := g.m.EnableSQL(g.cfg, g.configPath()); installReason(t, err) != ReasonNoAdmin {
+			t.Fatalf("%v", err)
+		}
+		if g.svc.did("start") != 0 {
+			t.Fatal("enable-sql started without admin rights")
+		}
+	})
+	t.Run("not installed", func(t *testing.T) {
+		g := newSQLRig(t)
+		if err := g.m.EnableSQL(g.cfg, g.configPath()); !errors.Is(err, ErrNotSQLInstalled) {
+			t.Fatalf("%v", err)
+		}
+	})
+	t.Run("config folder mismatch", func(t *testing.T) {
+		g := newSQLRig(t)
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+			t.Fatal(err)
+		}
+		other := g.cfg
+		other.Folder = filepath.Join(t.TempDir(), "elsewhere")
+		otherPath := filepath.Join(t.TempDir(), "other.json")
+		if err := SaveConfig(otherPath, other, false); err != nil {
+			t.Fatal(err)
+		}
+		if err := g.m.EnableSQL(g.cfg, otherPath); installReason(t, err) != ReasonOther {
+			t.Fatalf("%v", err)
+		}
+		if g.svc.did("start") != 0 {
+			t.Fatal("enable-sql started with a mismatched config")
+		}
+	})
 }

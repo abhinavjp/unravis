@@ -89,11 +89,11 @@ func TestLintC2(t *testing.T) {
 // statements; the reader also stops at cap+1, so the cap holds at both ends.
 func TestLintTOPCaps(t *testing.T) {
 	for id, want := range map[string]string{
-		"bb:requests":      "SELECT TOP 256 ",
-		"bb:waits":         "SELECT TOP 20 ",
-		"bb:semaphores":    "SELECT TOP 16 ",
-		"bb:filestats":     "SELECT TOP 256 ",
-		"bb:ag":            "SELECT TOP 64 ",
+		"bb:requests":      "SELECT TOP 257 ",
+		"bb:waits":         "SELECT TOP 21 ",
+		"bb:semaphores":    "SELECT TOP 17 ",
+		"bb:filestats":     "SELECT TOP 257 ",
+		"bb:ag":            "SELECT TOP 65 ",
 		"bb:ceiling_perms": "SELECT TOP 2 ",
 	} {
 		if !strings.Contains(Statements[id], want) {
@@ -254,6 +254,13 @@ func TestNoBannedTokenInOutput(t *testing.T) {
 	}
 }
 
+// sentinelRow lists the sample statements that must fetch cap+1 rows so an
+// over-cap result is observable as truncated.
+var sentinelRow = map[string]bool{
+	"bb:requests": true, "bb:waits": true, "bb:semaphores": true,
+	"bb:filestats": true, "bb:ag": true,
+}
+
 // topRe finds the C6 row cap written into the SQL text itself.
 var topRe = regexp.MustCompile(`(?i)\bTOP ([0-9]+)\b`)
 
@@ -287,12 +294,20 @@ func TestEveryStatementHasItsOwnRowCap(t *testing.T) {
 			}
 			continue
 		}
-		want, err := strconv.Atoi(m[1])
+		top, err := strconv.Atoi(m[1])
 		if err != nil {
 			t.Fatalf("%q: unreadable TOP %q", id, m[1])
 		}
-		if rowCap != want {
-			t.Errorf("%q: TOP %d in SQL but statementCap is %d - the reader and the query disagree", id, want, rowCap)
+		// A sample statement must fetch one row MORE than it keeps, or the
+		// n+1 witness can never arrive and an over-cap result looks complete
+		// (W8-05/W11-06). Control statements are refusal checks, not samples,
+		// and keep TOP == cap.
+		want := rowCap
+		if sentinelRow[id] {
+			want = rowCap + 1
+		}
+		if top != want {
+			t.Errorf("%q: TOP %d in SQL but the reader keeps %d (want TOP %d) - the query and the reader disagree", id, top, rowCap, want)
 		}
 		if strings.Count(text, "TOP ") != 1 {
 			t.Errorf("%q: more than one TOP n, so the reader cap cannot be proven", id)

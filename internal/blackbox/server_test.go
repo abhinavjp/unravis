@@ -2,6 +2,7 @@ package blackbox
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -408,14 +409,21 @@ func TestThrottleTableEvictsOneOffAddressesNotLockedOutOnes(t *testing.T) {
 // BBX-5-04 (C11): /status carries only the four-field SQL status object; no SQL
 // sample data ever crosses the plain-HTTP endpoint.
 
-// writeSQLStatusFile puts text into <folder>\sql\status.json, as the SQL runner does.
-func writeSQLStatusFile(t *testing.T, folder, text string) {
+// writeSQLStatusFile puts text into <folder>\sql\status.json, as the SQL runner
+// does, and stamps it with the rig's clock so the freshness rule sees a live
+// heartbeat (W8-04).
+func writeSQLStatusFile(t *testing.T, g *srvRig, text string) {
 	t.Helper()
-	dir := SQLDataDir(folder)
+	dir := SQLDataDir(g.s.Dir())
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "status.json"), []byte(text), 0o644); err != nil {
+	path := filepath.Join(dir, "status.json")
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := g.clk.now()
+	if err := os.Chtimes(path, now, now); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -438,7 +446,7 @@ func sqlObject(t *testing.T, g *srvRig) (map[string]json.RawMessage, string) {
 
 func TestStatusSQLShape(t *testing.T) {
 	g := newSrvRig(t)
-	writeSQLStatusFile(t, g.s.Dir(), `{"enabled":true,"state":"backing-off","lastOK":"2026-10-27T09:59:00Z","failures":3}`)
+	writeSQLStatusFile(t, g, `{"enabled":true,"state":"backing-off","lastOK":"2026-10-27T09:59:00Z","failures":3}`)
 	sql, body := sqlObject(t, g)
 	if len(sql) != 4 {
 		t.Fatalf("sql must hold exactly four fields: %v", sql)
@@ -457,7 +465,7 @@ func TestStatusSQLShape(t *testing.T) {
 		t.Fatalf("%+v", d.SQL)
 	}
 	// A missing lastOK is omitted, never a zero time.
-	writeSQLStatusFile(t, g.s.Dir(), `{"enabled":false,"state":"off","failures":0}`)
+	writeSQLStatusFile(t, g, `{"enabled":false,"state":"off","failures":0}`)
 	sql, body = sqlObject(t, g)
 	if _, ok := sql["lastOK"]; ok {
 		t.Fatalf("lastOK must be omitted when missing: %v", sql)
@@ -469,7 +477,7 @@ func TestStatusSQLShape(t *testing.T) {
 
 func TestStatusSQLNoInstanceOrError(t *testing.T) {
 	g := newSrvRig(t)
-	writeSQLStatusFile(t, g.s.Dir(), `{"enabled":true,"state":"on","failures":0,"instance":"MSSQL$SECRET","version":"16.0.1000","error":"Login failed for user sa on SECRET"}`)
+	writeSQLStatusFile(t, g, `{"enabled":true,"state":"on","failures":0,"instance":"MSSQL$SECRET","version":"16.0.1000","error":"Login failed for user sa on SECRET"}`)
 	sql, body := sqlObject(t, g)
 	for k := range sql {
 		switch k {
@@ -506,7 +514,7 @@ func TestStatusSQLMissingOff(t *testing.T) {
 		t.Fatalf("%+v", d.SQL)
 	}
 	// Unreadable content is off too, never a 500.
-	writeSQLStatusFile(t, g.s.Dir(), `{"enabled":true,"state":`)
+	writeSQLStatusFile(t, g, `{"enabled":true,"state":`)
 	if _, body := sqlObject(t, g); strings.Contains(body, `"enabled":true`) {
 		t.Fatalf("broken status.json must read as off: %s", body)
 	}
@@ -515,32 +523,170 @@ func TestStatusSQLMissingOff(t *testing.T) {
 func TestStatusSQLBadState(t *testing.T) {
 	g := newSrvRig(t)
 	for _, state := range []string{"ON", "running", "on;drop", "", "unknown"} {
-		writeSQLStatusFile(t, g.s.Dir(), `{"enabled":true,"state":"`+state+`","failures":1}`)
+		writeSQLStatusFile(t, g, `{"enabled":true,"state":"`+state+`","failures":1}`)
 		_, body := sqlObject(t, g)
 		var d StatusDoc
 		if err := json.Unmarshal([]byte(body), &d); err != nil {
 			t.Fatal(err)
 		}
-		if d.SQL.State != "off" {
-			t.Fatalf("state %q must normalize to off: %+v", state, d.SQL)
+		if d.SQL.State != "off" || d.SQL.Enabled {
+			t.Fatalf("state %q must normalize to the whole off object: %+v", state, d.SQL)
 		}
 	}
-	for _, state := range []string{"on", "backing-off", "auto-off", "denied", "off"} {
-		writeSQLStatusFile(t, g.s.Dir(), `{"enabled":true,"state":"`+state+`","failures":0}`)
+	// W8-04: enabled must agree with state. on/backing-off are enabled;
+	// auto-off/denied/off are not. A contradictory record is wholly off.
+	for _, tc := range []struct {
+		state   string
+		enabled bool
+	}{
+		{"on", true}, {"backing-off", true},
+		{"auto-off", false}, {"denied", false}, {"off", false},
+	} {
+		writeSQLStatusFile(t, g, fmt.Sprintf(`{"enabled":%v,"state":%q,"failures":0}`, tc.enabled, tc.state))
 		_, body := sqlObject(t, g)
 		var d StatusDoc
 		if err := json.Unmarshal([]byte(body), &d); err != nil {
 			t.Fatal(err)
 		}
-		if d.SQL.State != state {
-			t.Fatalf("whitelisted state %q lost: %+v", state, d.SQL)
+		if d.SQL.State != tc.state || d.SQL.Enabled != tc.enabled {
+			t.Fatalf("consistent state %q lost: %+v", tc.state, d.SQL)
 		}
+		// The contradictory pairing is refused entirely.
+		writeSQLStatusFile(t, g, fmt.Sprintf(`{"enabled":%v,"state":%q,"failures":0}`, !tc.enabled, tc.state))
+		_, body = sqlObject(t, g)
+		if err := json.Unmarshal([]byte(body), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.SQL.State != "off" || d.SQL.Enabled || d.SQL.Failures != 0 {
+			t.Fatalf("contradictory enabled/state for %q must be wholly off: %+v", tc.state, d.SQL)
+		}
+	}
+}
+
+// TestStatusSQLStrictDocument (W8-04): the whole document is validated —
+// required fields, trailing data/delimiters, negative failures, zero lastOK —
+// and any failure returns the entire off object, never a partial record.
+func TestStatusSQLStrictDocument(t *testing.T) {
+	g := newSrvRig(t)
+	bad := []string{
+		`null`,
+		`{}`,
+		`{"enabled":true,"state":"on"}`,                       // missing failures
+		`{"state":"on","failures":0}`,                         // missing enabled
+		`{"enabled":true,"failures":0}`,                       // missing state
+		`{"enabled":true,"state":"on","failures":-1}`,         // negative failures
+		`{"enabled":true,"state":"on","failures":0}}`,         // trailing delimiter
+		`{"enabled":true,"state":"on","failures":0} {"x":1}`,  // trailing value
+		`{"enabled":true,"state":"on","failures":0,"lastOK":"0001-01-01T00:00:00Z"}`, // zero time
+		`{"enabled":true,"state":"on","failures":0,"lastOK":"not-a-time"}`,
+		`[]`,
+	}
+	for _, text := range bad {
+		writeSQLStatusFile(t, g, text)
+		_, body := sqlObject(t, g)
+		var d StatusDoc
+		if err := json.Unmarshal([]byte(body), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.SQL.Enabled || d.SQL.State != "off" || d.SQL.Failures != 0 || d.SQL.LastOK != nil {
+			t.Fatalf("document %q must read as the whole off object: %+v", text, d.SQL)
+		}
+	}
+}
+
+// TestStatusSQLStaleAndOversized (W8-04): an old enabled:true record does not
+// survive stop/remove/crash, and the file is bounded before allocation. The
+// freshness window accounts for the 15-minute back-off cap.
+func TestStatusSQLStaleAndOversized(t *testing.T) {
+	g := newSrvRig(t)
+	dir := SQLDataDir(g.s.Dir())
+	path := filepath.Join(dir, "status.json")
+	writeSQLStatusFile(t, g, `{"enabled":true,"state":"on","failures":0}`)
+
+	// Just inside the window: still trusted (15-min backoff + margin).
+	age := sqlStatusMaxAge - time.Minute
+	old := g.clk.now().Add(-age)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if d := statusSQL(t, g); !d.Enabled || d.State != "on" {
+		t.Fatalf("a fresh-enough record was refused: %+v", d)
+	}
+	// Beyond the window: off, even though the record says enabled:true.
+	old = g.clk.now().Add(-sqlStatusMaxAge - time.Minute)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if d := statusSQL(t, g); d.Enabled || d.State != "off" {
+		t.Fatalf("a stale enabled:true record survived: %+v", d)
+	}
+	// Implausibly far in the future is not a live heartbeat either.
+	future := g.clk.now().Add(sqlStatusMaxAge + time.Hour)
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatal(err)
+	}
+	if d := statusSQL(t, g); d.Enabled || d.State != "off" {
+		t.Fatalf("a future-dated record survived: %+v", d)
+	}
+	// Oversized: refused before allocation, whatever it claims.
+	writeSQLStatusFile(t, g, `{"enabled":true,"state":"on","failures":0}`)
+	big := bytes.Repeat([]byte("x"), sqlStatusMaxBytes+1)
+	if err := os.WriteFile(path, big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := g.clk.now()
+	if err := os.Chtimes(path, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if d := statusSQL(t, g); d.Enabled || d.State != "off" {
+		t.Fatalf("an oversized status file was trusted: %+v", d)
+	}
+}
+
+// statusSQL answers /status and decodes just the SQL object.
+func statusSQL(t *testing.T, g *srvRig) SQLStatus {
+	t.Helper()
+	_, body := sqlObject(t, g)
+	var d StatusDoc
+	if err := json.Unmarshal([]byte(body), &d); err != nil {
+		t.Fatal(err)
+	}
+	return d.SQL
+}
+
+// TestPublishSQLStopped (W8-04): a clean stop/remove publishes the off record
+// with exactly the C11 field set, so the host never keeps advertising on.
+func TestPublishSQLStopped(t *testing.T) {
+	g := newSrvRig(t)
+	writeSQLStatusFile(t, g, `{"enabled":true,"state":"on","failures":0,"lastOK":"2026-10-27T09:59:00Z"}`)
+	if d := statusSQL(t, g); !d.Enabled {
+		t.Fatalf("precondition: %+v", d)
+	}
+	if err := PublishSQLStopped(g.s.Dir()); err != nil {
+		t.Fatal(err)
+	}
+	// The published file's heartbeat is real time; align it with the rig clock.
+	path := filepath.Join(SQLDataDir(g.s.Dir()), "status.json")
+	now := g.clk.now()
+	if err := os.Chtimes(path, now, now); err != nil {
+		t.Fatal(err)
+	}
+	sql, body := sqlObject(t, g)
+	if len(sql) != 3 { // enabled, state, failures — lastOK omitted
+		t.Fatalf("off record fields: %v", sql)
+	}
+	if strings.Contains(body, "0001-01-01") {
+		t.Fatal("a zero time leaked into /status")
+	}
+	d := statusSQL(t, g)
+	if d.Enabled || d.State != "off" || d.Failures != 0 || d.LastOK != nil {
+		t.Fatalf("stop did not publish off: %+v", d)
 	}
 }
 
 func TestFilesDoesNotServeSQL(t *testing.T) {
 	g := newSrvRig(t)
-	writeSQLStatusFile(t, g.s.Dir(), `{"enabled":true,"state":"on","failures":0}`)
+	writeSQLStatusFile(t, g, `{"enabled":true,"state":"on","failures":0}`)
 	sample := `{"secret":"sql sample data"}`
 	if err := os.WriteFile(filepath.Join(SQLDataDir(g.s.Dir()), "bb-20261027-09.ndjson"), []byte(sample), 0o644); err != nil {
 		t.Fatal(err)

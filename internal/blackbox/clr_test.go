@@ -26,7 +26,8 @@ func clrReading(obj, inst, counter string, v float64) CounterReading {
 	return CounterReading{Path: clrPath(obj, inst, counter), Value: v, OK: true}
 }
 
-// clrInstancePaths expands every CLR counter path for one instance.
+// clrInstancePaths expands every CLR counter path for one instance (including
+// the CLR Process ID mapping counter).
 func clrInstancePaths(inst string) []string {
 	ps := []string{
 		clrPath(".NET CLR Memory", inst, "Process ID"),
@@ -41,6 +42,19 @@ func clrInstancePaths(inst string) []string {
 		clrPath(".NET CLR Exceptions", inst, "# of Exceps Thrown/sec"),
 	}
 	return ps
+}
+
+// clrProcessIdent adds the Process-object identity mapping for one PID: ID
+// Process + Creation Time confirming the unix-second start. The CLR objects do
+// not expose creation time, so this is how a CLR reading binds to (PID,
+// creation) (W5-01). The Process instance name is independent of the CLR
+// instance name; the join is by PID.
+func clrProcessIdent(src *clrFakeSource, procInst string, pid float64, start int64) {
+	src.paths = append(src.paths, procIOPath(procInst, "ID Process"), procIOPath(procInst, "Creation Time"))
+	src.readings = append(src.readings,
+		procIOReading(procInst, "ID Process", pid),
+		procIOReading(procInst, "Creation Time", creationTicksFor(start)),
+	)
 }
 
 func newCLRTestGroup(t *testing.T, src *clrFakeSource, targets func() []ResolvedTarget, changed func() bool) *clrGroup {
@@ -69,7 +83,7 @@ func clrCollect(t *testing.T, g *clrGroup, now time.Time) *CLRGroup {
 }
 
 // Two instances named w3wp / w3wp#1 report PIDs 100 / 200 via the Process ID
-// counter; targets must match by PID, never by instance name.
+// counter; targets must match by (PID, creation), never by instance name.
 func TestCLRInstancePIDMap(t *testing.T) {
 	src := &clrFakeSource{}
 	src.paths = append(src.paths, clrInstancePaths("w3wp")...)
@@ -80,6 +94,8 @@ func TestCLRInstancePIDMap(t *testing.T) {
 		clrReading(".NET CLR Memory", "w3wp", "Gen 0 heap size", 111),
 		clrReading(".NET CLR Memory", "w3wp#1", "Gen 0 heap size", 222),
 	}
+	clrProcessIdent(src, "w3wp", 100, 20)
+	clrProcessIdent(src, "w3wp#1", 200, 10)
 	g := newCLRTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{
 			{Key: "pool:a", PID: 200, Start: 10, Runtime: 1},
@@ -113,6 +129,8 @@ func TestCLRFrameworkOnly(t *testing.T) {
 		clrReading(".NET CLR Memory", "w3wp", "Gen 0 heap size", 1),
 		clrReading(".NET CLR Memory", "dotnet", "Gen 0 heap size", 2),
 	}
+	clrProcessIdent(src, "w3wp", 100, 1)
+	clrProcessIdent(src, "dotnet", 200, 2)
 	g := newCLRTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{
 			{Key: "pool:fw", PID: 100, Start: 1, Runtime: 1},
@@ -140,6 +158,8 @@ func TestCLRSelectedOnly(t *testing.T) {
 		clrReading(".NET CLR Memory", "w3wp", "Gen 0 heap size", 1),
 		clrReading(".NET CLR Memory", "other", "Gen 0 heap size", 2),
 	}
+	clrProcessIdent(src, "w3wp", 100, 1)
+	clrProcessIdent(src, "other", 200, 1)
 	g := newCLRTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{{Key: "pool:sel", PID: 100, Start: 1, Runtime: 1}}
 	}, nil)
@@ -164,6 +184,7 @@ func TestCLRMissingOmitted(t *testing.T) {
 		clrReading(".NET CLR Memory", "w3wp", "Gen 0 heap size", 5),
 		{Path: clrPath(".NET CLR Memory", "w3wp", "Gen 1 heap size"), Value: 9, Status: 1, OK: false},
 	}
+	clrProcessIdent(src, "w3wp", 100, 1)
 	g := newCLRTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{
 			{Key: "pool:a", PID: 100, Start: 1, Runtime: 1},
@@ -205,6 +226,7 @@ func TestCLRRateGated(t *testing.T) {
 		clrReading(".NET CLR LocksAndThreads", "w3wp", "Contention Rate/sec", 7),
 		clrReading(".NET CLR Exceptions", "w3wp", "# of Exceps Thrown/sec", 3),
 	}
+	clrProcessIdent(src, "w3wp", 100, 1)
 	g := newCLRTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{{Key: "pool:a", PID: 100, Start: 1, Runtime: 1}}
 	}, nil)
@@ -249,6 +271,7 @@ func TestCLRHeapSizes(t *testing.T) {
 		clrReading(".NET CLR Memory", "w3wp", "% Time in GC", 350),
 		clrReading(".NET CLR LocksAndThreads", "w3wp", "# of current physical threads", 12),
 	}
+	clrProcessIdent(src, "w3wp", 100, 1)
 	g := newCLRTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{{Key: "pool:a", PID: 100, Start: 1, Runtime: 1}}
 	}, nil)
@@ -282,6 +305,7 @@ func TestCLRRefreshOnChange(t *testing.T) {
 		clrReading(".NET CLR Memory", "w3wp", "Process ID", 100),
 		clrReading(".NET CLR Memory", "w3wp", "Gen 0 heap size", 1),
 	}
+	clrProcessIdent(src, "w3wp", 100, 1)
 	targets := []ResolvedTarget{{Key: "pool:a", PID: 100, Start: 1, Runtime: 1}}
 	changed := false
 	g := newCLRTestGroup(t, src, func() []ResolvedTarget { return targets }, func() bool { return changed })
@@ -299,6 +323,7 @@ func TestCLRRefreshOnChange(t *testing.T) {
 		clrReading(".NET CLR Memory", "w3wp#1", "Process ID", 200),
 		clrReading(".NET CLR Memory", "w3wp#1", "Gen 0 heap size", 2),
 	)
+	clrProcessIdent(src, "w3wp#1", 200, 2)
 	targets = append(targets, ResolvedTarget{Key: "pool:b", PID: 200, Start: 2, Runtime: 1})
 	grp := clrCollect(t, g, now.Add(15*time.Second))
 	if src.refreshes != 1 {
@@ -324,6 +349,7 @@ func TestCLRNoTargetsNoSample(t *testing.T) {
 		clrReading(".NET CLR Memory", "w3wp", "Process ID", 100),
 		clrReading(".NET CLR Memory", "w3wp", "Gen 0 heap size", 1),
 	}
+	clrProcessIdent(src, "w3wp", 100, 1)
 	for _, targets := range []func() []ResolvedTarget{
 		nil,
 		func() []ResolvedTarget { return nil },

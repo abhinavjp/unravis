@@ -128,10 +128,13 @@ func TestAutoOffSurvivesReload(t *testing.T) {
 	if err != nil || !got.AutoOff || got.State != StateAutoOff {
 		t.Fatalf("ten-failure reload: %+v err = %v", got, err)
 	}
+	// W7-04: an incomplete record whose latch disagrees with its label is REFUSED
+	// outright, not silently relabelled. The outcome is still fail-closed auto-off,
+	// but now with an explicit fixed reason instead of a guessed enabled state.
 	files[path] = []byte(`{"autoOff":true,"state":"on","interval":15000000000}`)
 	got, err = Load(path)
-	if err != nil || !got.AutoOff || got.State != StateAutoOff {
-		t.Fatalf("tampered reload: %+v err = %v", got, err)
+	if err == nil || !got.AutoOff || got.State != StateAutoOff {
+		t.Fatalf("tampered reload: %+v err = %v, want a refusal and auto-off", got, err)
 	}
 }
 

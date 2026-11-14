@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	mssql "github.com/microsoft/go-mssqldb"
 	"github.com/microsoft/go-mssqldb/msdsn"
 )
 
@@ -257,7 +256,8 @@ func TestLoopbackDialer(t *testing.T) {
 		t.Error("::1 must pass the loopback assert")
 	}
 
-	// Open installs the loopback dialer on the real connector.
+	// Open installs the ceiling-admission connector (W8-02); the per-connect
+	// clamped loopback dialer it builds is proven in sqlcontrol_conn_test.go.
 	oldOpen := openDB
 	var captured driver.Connector
 	openDB = func(c driver.Connector) *sql.DB {
@@ -270,12 +270,8 @@ func TestLoopbackDialer(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	db.Close()
-	mc, ok := captured.(*mssql.Connector)
-	if !ok {
-		t.Fatalf("Open connector = %T; want *mssql.Connector", captured)
-	}
-	if _, ok := mc.Dialer.(loopbackDialer); !ok {
-		t.Fatalf("Open dialer = %T; want loopbackDialer", mc.Dialer)
+	if _, ok := captured.(ceilingConnector); !ok {
+		t.Fatalf("Open connector = %T; want ceilingConnector (per-physical-connection C8 admission)", captured)
 	}
 }
 

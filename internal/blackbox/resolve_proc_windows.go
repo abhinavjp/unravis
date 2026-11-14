@@ -17,7 +17,8 @@ const processQueryLimitedInformation = 0x1000
 
 // snapshotProcesses enumerates processes with Toolhelp and reads each creation
 // time with a query-only open. A process that cannot be opened keeps Start 0
-// (unknown); it is still listed with PID and Name. No modules are read here.
+// and StartTicks 0 (unknown); it is still listed with PID and Name. No modules
+// are read here.
 func snapshotProcesses() ([]ProcInfo, error) {
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
@@ -33,11 +34,13 @@ func snapshotProcesses() ([]ProcInfo, error) {
 	var procs []ProcInfo
 	for {
 		if e.ProcessID != 0 { // skip the idle pseudo-process
+			start, ticks := processStart(e.ProcessID)
 			procs = append(procs, ProcInfo{
-				PID:       e.ProcessID,
-				ParentPID: e.ParentProcessID,
-				Start:     processStart(e.ProcessID),
-				Name:      windows.UTF16ToString(e.ExeFile[:]),
+				PID:        e.ProcessID,
+				ParentPID:  e.ParentProcessID,
+				Start:      start,
+				StartTicks: ticks,
+				Name:       windows.UTF16ToString(e.ExeFile[:]),
 			})
 		}
 		if err := windows.Process32Next(snap, &e); err != nil {
@@ -49,19 +52,23 @@ func snapshotProcesses() ([]ProcInfo, error) {
 	}
 }
 
-// processStart reads the creation time as unix seconds. Query-only open; every
-// handle is closed. A process that cannot be opened or queried returns 0.
-func processStart(pid uint32) int64 {
+// processStart reads the creation time once, returning BOTH the unix seconds
+// (Start, for display/consumers) and the raw FILETIME ticks (StartTicks, the
+// lossless identity). Whole seconds alone would alias two same-PID lifetimes
+// created within one second (W3-04). Query-only open; every handle is closed. A
+// process that cannot be opened or queried returns (0, 0).
+func processStart(pid uint32) (int64, int64) {
 	h, err := windows.OpenProcess(processQueryLimitedInformation, false, pid)
 	if err != nil {
-		return 0
+		return 0, 0
 	}
 	defer windows.CloseHandle(h)
 	var creation, exit, kernel, user windows.Filetime
 	if err := windows.GetProcessTimes(h, &creation, &exit, &kernel, &user); err != nil {
-		return 0
+		return 0, 0
 	}
-	return creation.Nanoseconds() / 1_000_000_000
+	ticks := int64(creation.HighDateTime)<<32 | int64(creation.LowDateTime)
+	return creation.Nanoseconds() / 1_000_000_000, ticks
 }
 
 // loadModules returns the loaded module base names via a read-only toolhelp

@@ -7,10 +7,13 @@ import (
 )
 
 // proc10Paths are the English PDH wildcards this group samples. ID Process maps
-// each #N instance to its PID; the three metrics are per-process. UNVERIFIED
-// against a live .NET 10 pool (see packet live-check).
+// each #N instance to its PID and Creation Time to its creation FILETIME; the
+// three metrics are per-process. Identity is (PID, creation) confirmed against
+// the shared per-tick view, never PID alone (W5-01). UNVERIFIED against a live
+// .NET 10 pool (see packet live-check).
 var proc10Paths = []string{
 	`\Process(*)\ID Process`,
+	`\Process(*)\Creation Time`,
 	`\Process(*)\% Processor Time`,
 	`\Process(*)\Working Set`,
 	`\Process(*)\Private Bytes`,
@@ -32,6 +35,12 @@ type proc10Group struct {
 func newProc10Group(d GroupDeps) (Group, error) {
 	src, owned := d.Source, false
 	if src == nil {
+		if d.Targets == nil {
+			// Nothing selected: do not create a machine-wide detail query at all
+			// (W2-04). The per-tick short-circuit alone still expanded, added and
+			// primed every Process instance before filtering the output.
+			return nil, errNoTargets
+		}
 		p, err := NewPDHSource(proc10Paths)
 		if err != nil {
 			return nil, err // no PDH (non-Windows): BuildGroups skips the group
@@ -70,7 +79,7 @@ func parseProc10Path(path string) (inst, counter string, kind CounterKind, ok bo
 	switch counter {
 	case "% Processor Time":
 		kind = KindPDHRate
-	case "ID Process", "Working Set", "Private Bytes":
+	case "ID Process", "Creation Time", "Working Set", "Private Bytes":
 		kind = KindGauge
 	default:
 		return "", "", 0, false
@@ -78,18 +87,32 @@ func parseProc10Path(path string) (inst, counter string, kind CounterKind, ok bo
 	return inst, counter, kind, true
 }
 
-// rebuild derives per-(instance,counter) specs and a fresh engine: new instances
-// start their two-baseline gate again. NUL cannot occur in a PDH instance name.
+// proc10Mapping reports whether a counter is an identity-mapping counter read
+// straight from the raw sample (never engine detail).
+func proc10Mapping(counter string) bool {
+	return counter == "ID Process" || counter == "Creation Time"
+}
+
+// rebuild derives per-(instance,counter) DETAIL specs and a fresh engine. The
+// identity-mapping counters (ID Process, Creation Time) are read from the raw
+// sample, not the engine, so unselected instances never enter engine history
+// (W5-03). New instances start their two-baseline gate again. NUL cannot occur
+// in a PDH instance name.
 func (g *proc10Group) rebuild(paths []string) {
 	specs := make([]CounterSpec, 0, len(paths))
 	for _, p := range paths {
 		inst, counter, kind, ok := parseProc10Path(p)
-		if !ok {
+		if !ok || inst == "_Total" || inst == "Idle" {
 			continue
 		}
-		specs = append(specs, CounterSpec{Path: p, Field: inst + "\x00" + counter, Kind: kind})
+		if proc10Mapping(counter) {
+			continue // mapping is consumed from the raw sample, not engine detail
+		}
+		// Volatile: PDH names Process instances by enumeration order, so the same
+		// name can mean another process after a refresh.
+		specs = append(specs, CounterSpec{Path: p, Field: inst + "\x00" + counter, Kind: kind, Volatile: true})
 	}
-	g.engine = NewEngine(specs, g.cores)
+	g.engine = reconcileEngine(g.engine, specs, g.cores)
 }
 
 // refresh re-expands the wildcards on the same query handle — only when the
@@ -105,7 +128,14 @@ func (g *proc10Group) refresh() error {
 }
 
 func (g *proc10Group) Collect(now time.Time, _ float64) (any, error) {
-	if g.targets == nil || len(g.targets()) == 0 {
+	// Capture the ONE shared per-tick view before collecting and never re-resolve
+	// afterwards (W5-01): a mid-collect PID replacement must not be emitted under
+	// a new identity.
+	var targets []ResolvedTarget
+	if g.targets != nil {
+		targets = g.targets()
+	}
+	if len(targets) == 0 {
 		return nil, nil // nothing selected: nothing sampled, never machine-wide (BL-122)
 	}
 	if g.changed != nil && g.changed() {
@@ -117,38 +147,54 @@ func (g *proc10Group) Collect(now time.Time, _ float64) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := g.engine.Process(now, readings)
-	if len(out) == 0 || g.targets == nil {
-		return nil, nil // nothing valid / no selection: group omitted
+	// Identity mapping from the raw sample (shared Process-object reader). A PID
+	// reported by more than one instance is ambiguous and fails closed (W5-01).
+	instPID, instCreation := procIOIdentity(readings)
+	pidCount := make(map[uint32]int, len(instPID))
+	for _, pid := range instPID {
+		pidCount[pid]++
 	}
-	// instance → PID from the ID Process gauge; _Total/Idle and PID 0 never match.
-	pidOf := make(map[string]uint32)
-	for field, v := range out {
-		inst, counter, ok := splitProc10Key(field)
-		if !ok || counter != "ID Process" || inst == "_Total" || inst == "Idle" || v <= 0 {
+	instOfTarget := make(map[string]string)
+	selected := make(map[string]bool)
+	for _, t := range targets {
+		if t.Runtime != 2 || t.Start == 0 {
+			continue // .NET 10 only; creation must be confirmed
+		}
+		for inst, pid := range instPID {
+			if pid != t.PID || pidCount[pid] != 1 {
+				continue
+			}
+			cr, ok := instCreation[inst]
+			if !ok || !creationConfirmed(cr, t.Start) {
+				continue // creation unreadable or a different generation
+			}
+			instOfTarget[t.Key] = inst
+			selected[inst] = true
+			break
+		}
+	}
+	if len(selected) == 0 {
+		return nil, nil
+	}
+	// Only selected instances' detail reaches the engine (W5-03). PDH cannot
+	// narrow a wildcard query, so this is the earliest possible filter.
+	filtered := make([]CounterReading, 0, len(readings))
+	for _, r := range readings {
+		inst, counter, _, ok := parseProc10Path(r.Path)
+		if !ok || !selected[inst] || proc10Mapping(counter) {
 			continue
 		}
-		pidOf[inst] = uint32(v)
+		filtered = append(filtered, r)
 	}
-	insts := make([]string, 0, len(pidOf))
-	for inst := range pidOf {
-		insts = append(insts, inst)
-	}
-	sort.Strings(insts) // deterministic when two instances report one PID
-	instOf := make(map[uint32]string, len(pidOf))
-	for _, inst := range insts {
-		if _, dup := instOf[pidOf[inst]]; !dup {
-			instOf[pidOf[inst]] = inst
-		}
+	out := g.engine.Process(now, filtered)
+	if len(out) == 0 {
+		return nil, nil // nothing valid: group omitted
 	}
 	var grp Proc10Group
-	for _, t := range g.targets() {
-		if t.Runtime != 2 || t.Start == 0 {
-			continue // .NET 10 only; identity (PID, creation time) must be confirmed
-		}
-		inst, ok := instOf[t.PID]
+	for _, t := range targets {
+		inst, ok := instOfTarget[t.Key]
 		if !ok {
-			continue // no instance for this PID: omit, never zero-fill
+			continue // no confirmed instance for this target: omit, never zero-fill
 		}
 		row := Proc10Target{Target: t.Key}
 		have := false
@@ -175,14 +221,6 @@ func (g *proc10Group) Collect(now time.Time, _ float64) (any, error) {
 	}
 	sort.Slice(grp.Targets, func(i, j int) bool { return grp.Targets[i].Target < grp.Targets[j].Target })
 	return &grp, nil
-}
-
-func splitProc10Key(field string) (inst, counter string, ok bool) {
-	i := strings.IndexByte(field, 0)
-	if i < 0 {
-		return "", "", false
-	}
-	return field[:i], field[i+1:], true
 }
 
 // Close releases the query handle only when the factory created the source.

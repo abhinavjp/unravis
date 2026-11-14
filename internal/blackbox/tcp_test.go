@@ -13,12 +13,13 @@ import (
 // resetStep, when non-zero, advances the cumulative Connections Reset
 // counters on every Collect (KindRate semantics: totals climb over time).
 type tcpFakeSource struct {
-	paths     []string
-	readings  []CounterReading
-	resetStep float64
-	refreshes int
-	closed    bool
-	err       error
+	paths      []string
+	readings   []CounterReading
+	resetStep  float64
+	refreshes  int
+	closed     bool
+	err        error
+	refreshErr error
 }
 
 func (f *tcpFakeSource) Collect() ([]CounterReading, error) {
@@ -32,9 +33,9 @@ func (f *tcpFakeSource) Collect() ([]CounterReading, error) {
 	}
 	return f.readings, f.err
 }
-func (f *tcpFakeSource) Close() error                       { f.closed = true; return nil }
-func (f *tcpFakeSource) Paths() []string                    { return f.paths }
-func (f *tcpFakeSource) RefreshInstances() error            { f.refreshes++; return nil }
+func (f *tcpFakeSource) Close() error            { f.closed = true; return nil }
+func (f *tcpFakeSource) Paths() []string         { return f.paths }
+func (f *tcpFakeSource) RefreshInstances() error { f.refreshes++; return f.refreshErr }
 
 func tcpReading(path string, v float64) CounterReading {
 	return CounterReading{Path: path, Value: v, OK: true}
@@ -63,11 +64,11 @@ func tcpTestReadings() []CounterReading {
 	}
 }
 
-func tcpOKCounts() ([]TCPStateCount, error) {
-	return []TCPStateCount{{State: 5, Count: 7}, {State: 2, Count: 3}}, nil
+func tcpOKCounts() (tcpStates, error) {
+	return tcpStates{counts: []TCPStateCount{{State: 5, Count: 7}, {State: 2, Count: 3}}}, nil
 }
 
-func newTCPTestGroup(t *testing.T, src *tcpFakeSource, counts func() ([]TCPStateCount, error)) *tcpGroup {
+func newTCPTestGroup(t *testing.T, src *tcpFakeSource, counts func() (tcpStates, error)) *tcpGroup {
 	t.Helper()
 	gi, err := newTCPGroup(GroupDeps{Source: src, Cores: 4})
 	if err != nil {
@@ -114,30 +115,36 @@ func TestTCPStateCountsNoAddresses(t *testing.T) {
 	binary.LittleEndian.PutUint32(buf, rows)
 	for i, s := range []uint32{5, 5, 2, 11} {
 		off := 4 + i*tcpRowStride
-		binary.LittleEndian.PutUint32(buf[off:], s)          // dwState
-		binary.LittleEndian.PutUint32(buf[off+4:], 0x0100007F) // local addr
-		binary.LittleEndian.PutUint32(buf[off+8:], 0x5000)     // local port
+		binary.LittleEndian.PutUint32(buf[off:], s)             // dwState
+		binary.LittleEndian.PutUint32(buf[off+4:], 0x0100007F)  // local addr
+		binary.LittleEndian.PutUint32(buf[off+8:], 0x5000)      // local port
 		binary.LittleEndian.PutUint32(buf[off+12:], 0x08080808) // remote addr
-		binary.LittleEndian.PutUint32(buf[off+16:], 0x1BB)     // remote port
-		binary.LittleEndian.PutUint32(buf[off+20:], 4242)      // owning PID
+		binary.LittleEndian.PutUint32(buf[off+16:], 0x1BB)      // remote port
+		binary.LittleEndian.PutUint32(buf[off+20:], 4242)       // owning PID
 	}
 	want := []TCPStateCount{{State: 2, Count: 1}, {State: 5, Count: 2}, {State: 11, Count: 1}}
-	if got := tcpStateCountsFromTable(buf); !reflect.DeepEqual(got, want) {
-		t.Fatalf("counts = %+v, want %+v (state counts only)", got, want)
+	if got, trunc := tcpStateCountsFromTable(buf); !reflect.DeepEqual(got, want) || trunc {
+		t.Fatalf("counts = %+v trunc=%v, want %+v complete (state counts only)", got, trunc, want)
 	}
-	// The scan is capped: rows beyond maxTCPStateRows are never counted.
+	// The scan is capped: rows beyond maxTCPStateRows are never counted, and
+	// the result is labeled truncated, never an unlabeled complete count.
 	big := make([]byte, 4+(maxTCPStateRows+4)*tcpRowStride)
 	binary.LittleEndian.PutUint32(big, maxTCPStateRows+4)
 	for i := 0; i < maxTCPStateRows+4; i++ {
 		binary.LittleEndian.PutUint32(big[4+i*tcpRowStride:], 5)
 	}
-	got := tcpStateCountsFromTable(big)
-	if len(got) != 1 || got[0].State != 5 || got[0].Count != maxTCPStateRows {
-		t.Fatalf("capped scan = %+v, want one state 5 count %d", got, maxTCPStateRows)
+	got, trunc := tcpStateCountsFromTable(big)
+	if len(got) != 1 || got[0].State != 5 || got[0].Count != maxTCPStateRows || !trunc {
+		t.Fatalf("capped scan = %+v trunc=%v, want one state 5 count %d truncated", got, trunc, maxTCPStateRows)
 	}
-	// A truncated buffer counts complete rows only, never panics.
-	if got := tcpStateCountsFromTable(buf[:4+tcpRowStride+10]); len(got) != 1 || got[0].State != 5 || got[0].Count != 1 {
-		t.Fatalf("truncated table = %+v, want only the first complete row", got)
+	// A truncated buffer counts complete rows only, never panics, and is labeled.
+	if got, trunc := tcpStateCountsFromTable(buf[:4+tcpRowStride+10]); len(got) != 1 || got[0].State != 5 || got[0].Count != 1 || !trunc {
+		t.Fatalf("truncated table = %+v trunc=%v, want only the first complete row, truncated", got, trunc)
+	}
+	// An empty table (zero rows) is complete, not truncated.
+	empty := make([]byte, 4)
+	if got, trunc := tcpStateCountsFromTable(empty); len(got) != 0 || trunc {
+		t.Fatalf("empty table = %+v trunc=%v, want no counts and not truncated", got, trunc)
 	}
 }
 
@@ -253,7 +260,7 @@ func TestTCPMissingOmitted(t *testing.T) {
 		t.Fatalf("partial v4+v6 sum emitted %v; want nil", *grp.RetransmitsPerSec)
 	}
 	// A failed state query leaves States nil but keeps the rates.
-	failCounts := func() ([]TCPStateCount, error) { return nil, errors.New("GetTcpTable2 failed") }
+	failCounts := func() (tcpStates, error) { return tcpStates{}, errors.New("GetTcpTable2 failed") }
 	src3 := &tcpFakeSource{paths: tcpTestPaths(), readings: tcpTestReadings()}
 	grp = tcpCollectTicks(t, newTCPTestGroup(t, src3, failCounts), 3)
 	if grp.States != nil {

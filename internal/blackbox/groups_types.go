@@ -111,6 +111,26 @@ type ProcIOTarget struct {
 
 type EventsGroup struct {
 	Events []EventEntry `json:"events,omitempty"`
+	// Truncated says the per-channel read budget was exhausted with backlog
+	// still unread: the cursor continues forward next tick, so this is a
+	// partial read, never a silent gap (W6-01/W6-02).
+	Truncated bool `json:"truncated,omitempty"`
+	// Unreadable counts records that were fetched but could not be rendered
+	// (bad variant, unreadable Level/ID/time). They are missing, never 0, and
+	// they still charged the read budget (W6-02).
+	Unreadable uint32 `json:"unreadable,omitempty"`
+	// Lost counts records intentionally dropped from a channel generation
+	// (log clear/reset). An explicit numeric loss marker, never a silent gap
+	// (W6-01).
+	Lost uint64 `json:"lost,omitempty"`
+
+	// commit/pending carry the W6-06 acknowledgement: the read cursor is
+	// published only by Ack(), which the recorder calls after Store.Append has
+	// durably accepted the sample - never inside Collect and never as a side
+	// effect of serialization. Unexported so they are never serialized; nil on
+	// a batch read back from disk.
+	commit  *eventCommittedStore
+	pending eventCursors
 }
 
 type EventEntry struct {
@@ -122,10 +142,21 @@ type EventEntry struct {
 }
 
 type TCPGroup struct {
-	RetransmitsPerSec *float64        `json:"retransmitsPerSec,omitempty"`
-	ResetsPerSec      *float64        `json:"resetsPerSec,omitempty"`
-	OutboundQueue     *float64        `json:"outboundQueue,omitempty"`
-	States            []TCPStateCount `json:"states,omitempty"`
+	RetransmitsPerSec *float64 `json:"retransmitsPerSec,omitempty"`
+	ResetsPerSec      *float64 `json:"resetsPerSec,omitempty"`
+	OutboundQueue     *float64 `json:"outboundQueue,omitempty"`
+	// OutboundQueuePartial marks the outbound-queue sum as covering only some
+	// interfaces: at least one expected interface was unreadable, so the total
+	// is not a complete machine-wide reading (W6-04).
+	OutboundQueuePartial bool `json:"outboundQueuePartial,omitempty"`
+	// OutboundQueueInterfaces is the number of interfaces that contributed to
+	// OutboundQueue (the covered-interface count, W6-04).
+	OutboundQueueInterfaces int             `json:"outboundQueueInterfaces,omitempty"`
+	States                  []TCPStateCount `json:"states,omitempty"`
+	// StatesTruncated says the TCP table exceeded the checked byte/row ceiling
+	// and could not be read completely: States is partial or absent, never an
+	// unlabeled complete count (W6-03).
+	StatesTruncated bool `json:"statesTruncated,omitempty"`
 }
 
 type TCPStateCount struct {

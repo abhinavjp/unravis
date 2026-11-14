@@ -92,6 +92,14 @@ type Paths struct {
 	KeyPath    string
 }
 
+// installedPaths are the settings files in the program folder. Install writes
+// them and registers ConfigPath with the service; Apply saves new settings to
+// the same place, so there is one source of truth for the file the service
+// reads (W3-01).
+func installedPaths(progDir string) Paths {
+	return Paths{ConfigPath: filepath.Join(progDir, ConfigFileName), KeyPath: filepath.Join(progDir, KeyFileName)}
+}
+
 // Reason names why an install could not finish (decision A39).
 type Reason string
 
@@ -103,6 +111,17 @@ const (
 	ReasonFolder    Reason = "folder"
 	ReasonAntivirus Reason = "antivirus"
 	ReasonOther     Reason = "other"
+)
+
+// Apply failure reasons (W3-01). The machine answer carries the fixed reason
+// and a plain sentence, never a path or OS error text.
+const (
+	// ReasonSaveFailed: the new settings could not be saved to the installed
+	// config file. Nothing was stopped; the previous settings are untouched.
+	ReasonSaveFailed Reason = "save-failed"
+	// ReasonRestartFailed: the settings were saved but the recorder did not
+	// restart. The previous settings were put back, so nothing was changed.
+	ReasonRestartFailed Reason = "restart-failed"
 )
 
 // MinInstallFree is the free space install needs on the recordings drive.
@@ -118,6 +137,17 @@ type InstallError struct {
 
 func (e *InstallError) Error() string { return e.Message }
 func (e *InstallError) Unwrap() error { return e.Cause }
+
+// ApplyError is an apply that did not happen. Message is the plain sentence
+// shown to the person; Reason is ReasonSaveFailed or ReasonRestartFailed.
+type ApplyError struct {
+	Reason  Reason
+	Message string
+	Cause   error
+}
+
+func (e *ApplyError) Error() string { return e.Message }
+func (e *ApplyError) Unwrap() error { return e.Cause }
 
 // Errors of the other commands.
 var (
@@ -304,7 +334,7 @@ func (m *Manager) Install(cfg Config) (res InstallResult, err error) {
 	if serr := m.Env.SecureDir(progDir, false); serr != nil {
 		return res, lockErr(serr)
 	}
-	p := Paths{ConfigPath: filepath.Join(progDir, ConfigFileName), KeyPath: filepath.Join(progDir, KeyFileName)}
+	p := installedPaths(progDir)
 	exe := filepath.Join(progDir, InstalledExeName)
 	if !samePath(src, exe) {
 		undo.add(fileMemory(exe))
@@ -466,11 +496,20 @@ type ApplyResult struct {
 	Restarted bool // false when the service was stopped: new settings apply at its next start
 }
 
-// Apply reads the config file again and restarts the service so the settings
-// take effect. A config that does not validate is refused before anything is
-// stopped, so a typo cannot take the recorder down.
-func (m *Manager) Apply(configPath string) (ApplyResult, error) {
-	var res ApplyResult
+// Apply saves the validated settings to the installed config file — the same
+// path Install registers with the service — and only then restarts the service
+// so they take effect. The file the settings come from may be a temporary one
+// that is gone right after this call, so it is never what the service reads
+// (W3-01). A config that does not validate is refused before anything is saved
+// or stopped, so a typo cannot take the recorder down. A stopped recorder keeps
+// the new settings for its next start and Restarted is false.
+//
+// When the save fails, nothing is stopped and the reason is save-failed. When
+// the restart fails after the save, the previous settings (and their backup)
+// are put back the way a failed Install undoes itself, and the reason is
+// restart-failed. Both answer with a fixed reason and a plain sentence, never
+// a path or OS error text.
+func (m *Manager) Apply(configPath string) (res ApplyResult, err error) {
 	if !m.Env.IsAdmin() {
 		return res, ErrNotAdmin
 	}
@@ -483,28 +522,58 @@ func (m *Manager) Apply(configPath string) (ApplyResult, error) {
 	if err != nil {
 		return res, err
 	}
-	switch st {
-	case SvcNotInstalled:
+	if st == SvcNotInstalled {
 		return res, ErrNotInstalled
-	case SvcStopped:
+	}
+	progDir, err := m.Env.ProgramDir()
+	if err != nil {
+		return res, applySaveError(err)
+	}
+	installed := installedPaths(progDir).ConfigPath
+
+	var undo undoList
+	defer func() {
+		if err != nil {
+			undo.run()
+		}
+	}()
+	undo.add(fileMemory(installed))
+	undo.add(fileMemory(installed + ".bak"))
+	if err = SaveConfig(installed, cfg, true); err != nil {
+		return res, applySaveError(err)
+	}
+	if st == SvcStopped {
+		// Nothing is running: the saved settings apply at the next start.
 		return res, nil
 	}
 	if st == SvcRunning || st == SvcStartPending {
-		if err := m.Svc.Stop(ServiceName); err != nil {
-			return res, err
+		if err = m.Svc.Stop(ServiceName); err != nil {
+			return res, applyRestartError(err)
 		}
 	}
-	if err := m.waitFor(SvcStopped, 30*time.Second); err != nil {
-		return res, err
+	if err = m.waitFor(SvcStopped, 30*time.Second); err != nil {
+		return res, applyRestartError(err)
 	}
-	if err := m.Svc.Start(ServiceName); err != nil {
-		return res, err
+	if err = m.Svc.Start(ServiceName); err != nil {
+		return res, applyRestartError(err)
 	}
-	if err := m.waitFor(SvcRunning, 15*time.Second); err != nil {
-		return res, err
+	if err = m.waitFor(SvcRunning, 15*time.Second); err != nil {
+		return res, applyRestartError(err)
 	}
 	res.Restarted = true
 	return res, nil
+}
+
+// applySaveError is the fixed answer when the new settings could not be saved.
+// The cause stays in Cause for the log; the message never names a path.
+func applySaveError(cause error) *ApplyError {
+	return &ApplyError{Reason: ReasonSaveFailed, Message: "The new settings could not be saved, so nothing was changed. The recorder keeps its previous settings. Try again.", Cause: cause}
+}
+
+// applyRestartError is the fixed answer when the recorder did not restart after
+// the save. The undo put the previous settings back.
+func applyRestartError(cause error) *ApplyError {
+	return &ApplyError{Reason: ReasonRestartFailed, Message: "The recorder did not restart with the new settings. The previous settings were put back, so nothing was changed. Try again.", Cause: cause}
 }
 
 // RemoveResult says what Remove did.

@@ -52,5 +52,5 @@ func (s *requestsSampler) Decode(rows []Row) (any, bool, error) {
 }
 
 func init() {
-	RegisterSampler(&requestsSampler{})
+	RegisterSamplerFactory(func() Sampler { return &requestsSampler{} })
 }

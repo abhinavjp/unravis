@@ -14,17 +14,18 @@ import (
 	"regexp"
 )
 
-// C6 per-kind row caps. Every row-returning statement carries TOP n in SQL
-// (defense in depth); the reader stops at n+1 and decodeRows keeps n and
-// marks truncated. Never dbhealth's 5000 cap.
+// C6 per-kind row caps: the number of rows KEPT. Each sample statement fetches
+// TOP n+1 in SQL so the extra row is a real truncation witness; the reader stops
+// at n+1 and decodeRows keeps n and marks truncated. With TOP n the witness could
+// never arrive and an over-cap result looked complete. Never dbhealth's 5000 cap.
 const (
-	CapRequests   = 256 // TOP 256 in bb:requests
-	CapWaits      = 20  // TOP 20 in bb:waits
+	CapRequests   = 256 // bb:requests fetches TOP 257, keeps 256
+	CapWaits      = 20  // bb:waits fetches TOP 21, keeps 20
 	CapSchedulers = 1   // summed in SQL
-	CapSemaphores = 16  // TOP 16 in bb:semaphores
+	CapSemaphores = 16  // bb:semaphores fetches TOP 17, keeps 16
 	CapTempdb     = 1   // summed in SQL
-	CapFileStats  = 256 // TOP 256 in bb:filestats
-	CapAG         = 64  // TOP 64 in bb:ag
+	CapFileStats  = 256 // bb:filestats fetches TOP 257, keeps 256
+	CapAG         = 64  // bb:ag fetches TOP 65, keeps 64
 	// CapCeilingPerms mirrors the TOP 2 in bb:ceiling_perms: two permissions
 	// outside the ceiling are already a refusal, so the query never needs to
 	// report more, and the reader must not silently stop below what is sent.
@@ -39,8 +40,8 @@ const (
 
 // statementCap maps an allowlisted statement to its C6 row cap. Unknown text
 // gets the smallest cap (fail closed); the send gates only pass known text.
-// TestEveryStatementHasItsOwnRowCap proves this table agrees with the TOP n
-// written into each statement.
+// TestEveryStatementHasItsOwnRowCap proves this table agrees with the TOP n+1
+// written into each sample statement (TOP n for the control statements).
 func statementCap(text string) int {
 	switch text {
 	case stmtRequests:
@@ -67,8 +68,8 @@ func statementCap(text string) int {
 }
 
 // WaitTypeRunning is the fixed sentinel for running (non-waiting) requests:
-// bb:requests emits '' (ISNULL(wait_type,'')), which the strict C9 regex
-// rejects. Only the requests decode path maps '' to it before validation;
+// bb:requests emits ” (ISNULL(wait_type,”)), which the strict C9 regex
+// rejects. Only the requests decode path maps ” to it before validation;
 // the regex itself is never loosened.
 const WaitTypeRunning = "RUNNING"
 
@@ -81,7 +82,97 @@ var (
 	errUnknownColumn = errors.New("bbsql: unknown column")
 	errWaitType      = errors.New("bbsql: invalid wait type")
 	errDecode        = errors.New("bbsql: row decode failed")
+	// errMissingColumn: a required column is absent from the row. DisallowUnknownFields
+	// rejects extras but not absences, so a missing reading would otherwise decode
+	// to a factual zero (W11-04).
+	errMissingColumn = errors.New("bbsql: required column missing")
+	// errNullColumn: a non-nullable required column carried SQL NULL.
+	errNullColumn = errors.New("bbsql: required column is null")
+	// errEnumDomain: a value is outside its confirmed enum domain (AG sync state).
+	errEnumDomain = errors.New("bbsql: value outside enum domain")
 )
+
+// agSyncStateMax is the highest confirmed sys.dm_hadr_database_replica_states
+// synchronization_state: 0 NOT_SYNCHRONIZING, 1 SYNCHRONIZING, 2 SYNCHRONIZED,
+// 3 REVERTING, 4 INITIALIZING. A future/unsupported state is refused with a
+// fixed code rather than persisted as an arbitrary number (W11-04).
+const agSyncStateMax = 4
+
+// colRule is the per-column contract of one output type: required columns must
+// be present, and a non-nullable column must not carry SQL NULL. Validation runs
+// BEFORE conversion so an absent/null reading can never become a struct zero.
+type colRule struct{ required, nullable bool }
+
+// rowSpec is the exact column contract of one output type. summed marks the
+// statements that SUM in SQL (schedulers, tempdb): an empty set returns ONE row
+// of NULLs, which is a legitimate "nothing to add up" (missing), not an error —
+// but a PARTIAL row (some required columns absent) is still a schema defect.
+type rowSpec struct {
+	cols   map[string]colRule
+	summed bool
+}
+
+func req() colRule     { return colRule{required: true} }
+func reqNull() colRule { return colRule{required: true, nullable: true} }
+
+// rowSpecs pins the required columns and per-column nullability of every output
+// type, keyed by the struct the row decodes into. semaphoresRaw is the wide
+// cumulative input type (W11-01); its counters are nullable int64.
+var rowSpecs = map[reflect.Type]rowSpec{
+	reflect.TypeOf(Requests{}): {cols: map[string]colRule{
+		"waitType": req(), "tasks": req(), "maxWaitMs": req(),
+		"blocked": req(), "headBlockers": req(), "maxBlockMs": req(),
+	}},
+	reflect.TypeOf(Waits{}): {cols: map[string]colRule{
+		"waitType": req(), "deltaMs": req(), "deltaTasks": req(),
+	}},
+	reflect.TypeOf(Schedulers{}): {summed: true, cols: map[string]colRule{
+		"currentTasks": reqNull(), "runnableTasks": reqNull(),
+	}},
+	reflect.TypeOf(Tempdb{}): {summed: true, cols: map[string]colRule{
+		"internalPages": reqNull(), "userPages": reqNull(),
+	}},
+	reflect.TypeOf(Semaphores{}): {cols: map[string]colRule{
+		"resourceSemaphoreId": req(), "grantees": req(), "waiters": req(),
+		"forced": reqNull(), "timeouts": reqNull(),
+	}},
+	reflect.TypeOf(semaphoresRaw{}): {cols: map[string]colRule{
+		"resourceSemaphoreId": req(), "grantees": req(), "waiters": req(),
+		"forced": reqNull(), "timeouts": reqNull(),
+	}},
+	reflect.TypeOf(FileStats{}): {cols: map[string]colRule{
+		"databaseId": req(), "fileId": req(), "readStallMs": req(),
+		"writeStallMs": req(), "reads": req(), "writes": req(), "sizeOnDiskBytes": req(),
+	}},
+	reflect.TypeOf(AG{}): {cols: map[string]colRule{
+		"databaseId": req(), "syncState": req(),
+	}},
+	reflect.TypeOf(hadrFlag{}): {cols: map[string]colRule{
+		"hadr": req(),
+	}},
+}
+
+// validateRowSpec enforces presence and nullability on the JSON-keyed row before
+// it is converted. Unknown columns are rejected separately (columnKeys +
+// DisallowUnknownFields); this gate is about ABSENT and NULL required data.
+func validateRowSpec(keyed map[string]any, spec rowSpec) error {
+	if spec.summed && len(keyed) == 0 {
+		return nil // empty-SUM row: the sampler reports it missing, never zero
+	}
+	for key, rule := range spec.cols {
+		v, present := keyed[key]
+		if !present {
+			if rule.required {
+				return errMissingColumn
+			}
+			continue
+		}
+		if v == nil && !rule.nullable {
+			return errNullColumn
+		}
+	}
+	return nil
+}
 
 // Requests (bb:requests, BL-101): running-at-once grouped by wait type.
 type Requests struct {
@@ -109,12 +200,22 @@ type Schedulers struct {
 
 // Semaphores (bb:semaphores, BL-118): counts per resource semaphore; the
 // sampler (BBX-5-13) computes deltas in Go keyed by ResourceSemaphoreID.
+//
+// Grantees/Waiters are instantaneous gauges and are always present. Forced and
+// Timeouts are DELTAS of the cumulative DMV counters and are nullable: a nil
+// pointer (omitted from the JSON) means the delta is unreadable this cycle —
+// the cumulative counter was SQL NULL, went backwards, or its difference does
+// not fit the fixed int32 field. The gauge beside an unreadable counter is still
+// emitted (W11-04): a nonapplicable nullable counter must not blank out a
+// readable grantee/waiter count. The emitted WIDTH is unchanged (int32); only
+// missingness was added, because "unreadable means missing, never 0". A measured
+// zero delta is a non-nil pointer to 0 and stays present.
 type Semaphores struct {
-	ResourceSemaphoreID int32 `json:"resourceSemaphoreId"`
-	Grantees            int32 `json:"grantees"`
-	Waiters             int32 `json:"waiters"`
-	Forced              int32 `json:"forced"`
-	Timeouts            int32 `json:"timeouts"`
+	ResourceSemaphoreID int32  `json:"resourceSemaphoreId"`
+	Grantees            int32  `json:"grantees"`
+	Waiters             int32  `json:"waiters"`
+	Forced              *int32 `json:"forced,omitempty"`
+	Timeouts            *int32 `json:"timeouts,omitempty"`
 }
 
 // Tempdb (bb:tempdb, BL-118): page totals summed in SQL.
@@ -160,9 +261,11 @@ var columnKeys = map[string]string{
 }
 
 // decodeRows decodes rows into the fixed struct slice pointed to by dst,
-// rejecting any unknown column (C9). It stops at cap+1 rows, keeps cap and
-// reports truncated (C6). WaitType fields are validated against waitTypeRe;
-// only Requests maps the empty wait type to WaitTypeRunning first. dst is
+// rejecting any unknown column (C9) and any absent/null required column or
+// out-of-domain enum (W11-04). It stops at cap+1 rows, keeps cap and reports
+// truncated (C6). WaitType fields are validated against waitTypeRe; only
+// Requests maps a PRESENT empty wait type to WaitTypeRunning (a missing/null
+// wait_type is refused before conversion, never turned into RUNNING). dst is
 // untouched on error. Bounded decode: no goroutines, no unbounded state.
 func decodeRows(rows []Row, dst interface{}, cap int) (truncated bool, err error) {
 	rv := reflect.ValueOf(dst)
@@ -191,6 +294,13 @@ func decodeRows(rows []Row, dst interface{}, cap int) (truncated bool, err error
 			if !waitTypeRe.MatchString(v.WaitType) {
 				return false, errWaitType
 			}
+		case *AG:
+			// Enforce the confirmed synchronization-state enum domain; an
+			// out-of-domain value is a fixed-code refusal, never an arbitrary
+			// persisted state (W11-04).
+			if v.SyncState > agSyncStateMax {
+				return false, errEnumDomain
+			}
 		}
 		out = reflect.Append(out, elem.Elem())
 	}
@@ -198,7 +308,8 @@ func decodeRows(rows []Row, dst interface{}, cap int) (truncated bool, err error
 	return truncated, nil
 }
 
-// decodeRow maps one row's columns through columnKeys and decodes it into a
+// decodeRow maps one row's columns through columnKeys, validates the type's
+// required-column/nullability contract BEFORE conversion, and decodes it into a
 // fixed struct with DisallowUnknownFields. Errors are fixed codes only.
 func decodeRow(row Row, dst interface{}) error {
 	keyed := make(map[string]any, len(row))
@@ -211,6 +322,11 @@ func decodeRow(row Row, dst interface{}) error {
 			v = string(b)
 		}
 		keyed[key] = v
+	}
+	if spec, ok := rowSpecs[reflect.TypeOf(dst).Elem()]; ok {
+		if err := validateRowSpec(keyed, spec); err != nil {
+			return err
+		}
 	}
 	data, err := json.Marshal(keyed)
 	if err != nil {

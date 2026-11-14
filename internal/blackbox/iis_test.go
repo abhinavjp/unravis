@@ -43,6 +43,18 @@ func iisPoolReadings(inst string, requests, threads, ping float64) []CounterRead
 	}
 }
 
+// iisWorkerIdent adds the Process-object identity for one live worker PID: ID
+// Process + Creation Time confirming the unix-second start. This is the
+// collection-time inventory the counter-path worker PID is verified against
+// (W5-02). The Process instance name is independent of the W3WP instance name.
+func iisWorkerIdent(src *iisFakeSource, procInst string, pid float64, start int64) {
+	src.paths = append(src.paths, procIOPath(procInst, "ID Process"), procIOPath(procInst, "Creation Time"))
+	src.readings = append(src.readings,
+		procIOReading(procInst, "ID Process", pid),
+		procIOReading(procInst, "Creation Time", creationTicksFor(start)),
+	)
+}
+
 func newIISTestGroup(t *testing.T, src *iisFakeSource, targets []ResolvedTarget, changed func() bool) *iisGroup {
 	t.Helper()
 	g, err := newIISGroup(GroupDeps{
@@ -74,7 +86,8 @@ func collectIIS(t *testing.T, g *iisGroup, now time.Time) *IISGroup {
 }
 
 // Three pools have live instances, but only pool-b is selected: exactly one
-// worker, and never a row for an unselected pool.
+// worker, and never a row for an unselected pool. The worker PID is verified
+// against the inventory and its creation confirms the target's Start.
 func TestIISGroupSelectedOnly(t *testing.T) {
 	src := &iisFakeSource{}
 	for _, inst := range []string{"100_pool-a", "200_pool-b", "300_pool-c"} {
@@ -83,6 +96,9 @@ func TestIISGroupSelectedOnly(t *testing.T) {
 	src.readings = append(src.readings, iisPoolReadings("100_pool-a", 1, 10, 5)...)
 	src.readings = append(src.readings, iisPoolReadings("200_pool-b", 2, 20, 6)...)
 	src.readings = append(src.readings, iisPoolReadings("300_pool-c", 3, 30, 7)...)
+	iisWorkerIdent(src, "w3wp", 100, 10)
+	iisWorkerIdent(src, "w3wp#1", 200, 10)
+	iisWorkerIdent(src, "w3wp#2", 300, 10)
 	targets := []ResolvedTarget{{Key: "pool:pool-b", PID: 200, Start: 10, Pool: "pool-b"}}
 	g := newIISTestGroup(t, src, targets, nil)
 	grp := collectIIS(t, g, time.Unix(1000, 0))
@@ -105,23 +121,25 @@ func TestIISGroupSelectedOnly(t *testing.T) {
 	}
 }
 
-// Instances are matched by POOL NAME, not by the target PID: the resolver
-// may retarget the app PID to a child (out-of-process .NET 10), and the
-// instance PID is the w3wp worker PID. Every live instance of a selected
-// pool is emitted with its own worker PID; Start confirms selection.
+// Instances are matched by POOL NAME plus a verified live worker, not by the
+// target PID: the resolver may retarget the app PID to a child (out-of-process
+// .NET 10). Every live, verified worker of a selected pool is emitted with its
+// own worker PID. Updated (W5-02): workers must now exist in the inventory.
 func TestIISGroupPoolMatch(t *testing.T) {
 	src := &iisFakeSource{}
 	src.paths = append(src.paths, iisPoolPaths("100_pool-a")...)
 	src.paths = append(src.paths, iisPoolPaths("200_pool-a")...)
 	src.readings = append(src.readings, iisPoolReadings("100_pool-a", 1, 2, 3)...)
 	src.readings = append(src.readings, iisPoolReadings("200_pool-a", 7, 8, 9)...)
+	iisWorkerIdent(src, "w3wp", 100, 5)
+	iisWorkerIdent(src, "w3wp#1", 200, 5)
 	// Target PID 999 is a retargeted child: neither instance PID equals it,
-	// yet both instances of the selected pool must be emitted.
+	// yet both verified workers of the selected pool must be emitted.
 	targets := []ResolvedTarget{{Key: "pool:pool-a", PID: 999, Start: 10, Pool: "pool-a"}}
 	g := newIISTestGroup(t, src, targets, nil)
 	grp := collectIIS(t, g, time.Unix(1000, 0))
 	if grp == nil || len(grp.Workers) != 2 {
-		t.Fatalf("group = %+v, want 2 workers (pool-name match, not PID)", grp)
+		t.Fatalf("group = %+v, want 2 workers (pool-name match + verified workers)", grp)
 	}
 	if grp.Workers[0].PID != 100 || grp.Workers[1].PID != 200 {
 		t.Fatalf("worker PIDs = %d/%d, want 100/200 (the instance w3wp PIDs)", grp.Workers[0].PID, grp.Workers[1].PID)
@@ -143,12 +161,14 @@ func TestIISGroupPoolMatch(t *testing.T) {
 
 // Out-of-process .NET 10: the resolver retargets the runtime-0 w3wp to its
 // runtime-2 child, so ResolvedTarget.PID is the CHILD PID while the
-// W3SVC_W3WP instance stays "<w3wpPID>_<pool>". Matching is by pool name;
-// the worker carries the instance's w3wp PID, never the child PID.
+// W3SVC_W3WP instance stays "<w3wpPID>_<pool>". The parent worker is verified
+// alive in the inventory and carries its own w3wp PID, never the child PID.
 func TestIISGroupOutOfProcess(t *testing.T) {
 	src := &iisFakeSource{paths: iisPoolPaths("1000_api")}
 	src.readings = iisPoolReadings("1000_api", 3, 4, 5)
-	// Child PID 2000 != instance PID 1000: must still match by pool name.
+	iisWorkerIdent(src, "w3wp", 1000, 5)    // parent worker alive
+	iisWorkerIdent(src, "dotnet", 2000, 10) // child alive
+	// Child PID 2000 != instance PID 1000: must still match by pool + verified parent.
 	targets := []ResolvedTarget{{Key: "pool:api", PID: 2000, Start: 10, Runtime: 2, Pool: "api"}}
 	g := newIISTestGroup(t, src, targets, nil)
 	grp := collectIIS(t, g, time.Unix(1000, 0))
@@ -175,6 +195,7 @@ func TestIISGroupPoolNameWithParen(t *testing.T) {
 	}
 	src := &iisFakeSource{paths: iisPoolPaths("1234_MyApp (Staging)")}
 	src.readings = iisPoolReadings("1234_MyApp (Staging)", 6, 7, 8)
+	iisWorkerIdent(src, "w3wp", 1234, 10)
 	targets := []ResolvedTarget{{Key: "pool:MyApp (Staging)", PID: 1234, Start: 10, Pool: "MyApp (Staging)"}}
 	g := newIISTestGroup(t, src, targets, nil)
 	grp := collectIIS(t, g, time.Unix(1000, 0))
@@ -201,6 +222,7 @@ func TestIISGroupMissingOmitted(t *testing.T) {
 		{Path: iisW3WPPath(inst, "Active Threads"), Value: 99, Status: 1, OK: false},
 		iisReading(iisWASPath(inst, "Ping Response Latency"), 2),
 	}
+	iisWorkerIdent(src, "w3wp", 100, 10)
 	targets := []ResolvedTarget{{Key: "pool:pool-a", PID: 100, Start: 10, Pool: "pool-a"}}
 	g := newIISTestGroup(t, src, targets, nil)
 	grp := collectIIS(t, g, time.Unix(1000, 0))
@@ -232,6 +254,7 @@ func TestIISGroupMissingOmitted(t *testing.T) {
 func TestIISGroupStoppedPool(t *testing.T) {
 	src := &iisFakeSource{paths: iisPoolPaths("100_pool-a")}
 	src.readings = iisPoolReadings("100_pool-a", 4, 5, 6)
+	iisWorkerIdent(src, "w3wp", 100, 10)
 	targets := []ResolvedTarget{
 		{Key: "pool:pool-a", PID: 100, Start: 10, Pool: "pool-a"},
 		{Key: "pool:pool-b", PID: 200, Start: 20, Pool: "pool-b"}, // stopped: no instance
@@ -255,6 +278,7 @@ func TestIISGroupStoppedPool(t *testing.T) {
 func TestIISGroupRefreshOnChange(t *testing.T) {
 	src := &iisFakeSource{paths: iisPoolPaths("100_pool-a")}
 	src.readings = iisPoolReadings("100_pool-a", 1, 2, 3)
+	iisWorkerIdent(src, "w3wp", 100, 10)
 	targets := []ResolvedTarget{
 		{Key: "pool:pool-a", PID: 100, Start: 10, Pool: "pool-a"},
 		{Key: "pool:pool-b", PID: 200, Start: 20, Pool: "pool-b"},
@@ -272,6 +296,7 @@ func TestIISGroupRefreshOnChange(t *testing.T) {
 	changed = true
 	src.paths = append(src.paths, iisPoolPaths("200_pool-b")...)
 	src.readings = append(src.readings, iisPoolReadings("200_pool-b", 4, 5, 6)...)
+	iisWorkerIdent(src, "w3wp#1", 200, 20)
 	grp := collectIIS(t, g, now.Add(15*time.Second))
 	if src.refreshes != 1 {
 		t.Fatalf("refreshes = %d, want 1 on change", src.refreshes)

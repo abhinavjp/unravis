@@ -268,7 +268,10 @@ func (c Config) Validate() error {
 	if len(c.Targets) > maxTargets {
 		return invalidf("too many targets (max %d)", maxTargets)
 	}
-	seen := make(map[Target]bool, len(c.Targets))
+	// Duplicates are judged the way the Windows resolver judges them: pool and
+	// service names are matched case-insensitively, so "EmailSvc" and "emailsvc"
+	// are one target, not two. At most 32 entries, so a pairwise scan is cheap.
+	var seen []Target
 	for _, target := range c.Targets {
 		if target.Kind != "appPool" && target.Kind != "service" {
 			return invalidf("target kind must be appPool or service")
@@ -281,10 +284,12 @@ func (c Config) Validate() error {
 				return invalidf("target name has invalid characters")
 			}
 		}
-		if seen[target] {
-			return invalidf("duplicate target")
+		for _, prev := range seen {
+			if prev.Kind == target.Kind && strings.EqualFold(prev.Name, target.Name) {
+				return invalidf("duplicate target")
+			}
 		}
-		seen[target] = true
+		seen = append(seen, target)
 	}
 	if c.Probe.Enabled {
 		return invalidf(`"probe.enabled" must be false: the SQL probe is not part of this release`)

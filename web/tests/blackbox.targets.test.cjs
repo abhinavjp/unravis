@@ -131,10 +131,26 @@ test('the Settings step reads targets once on mount, for this PC only, and never
   assert.match(wizard, /targetMode=\{where === 'pc' \? 'pc' : 'manual'\}/, 'the wizard passes the mode it is in');
 });
 
-test('a not-running target shows the words "not running", never 0', () => {
+test('a stopped target says "not running"; an unreadable state says unknown, never stopped', () => {
   const comp = read('src/components/BlackboxSettings.svelte');
-  assert.match(comp, /\{#if !t\.running\} <span class="bb-note">\{T\.targetsNotRunning\}<\/span>\{\/if\}/);
+  // W2-07: configuration presence is not a running claim, and unknown is not stopped.
+  assert.match(comp, /\{#if targetRunState\(t\) === 'stopped'\} <span class="bb-note">\{T\.targetsNotRunning\}<\/span>\{:else if targetRunState\(t\) === 'unknown'\} <span class="bb-note">\{T\.targetsStateUnknown\}<\/span>\{\/if\}/);
   assert.equal(BB_TEXT.targetsNotRunning, 'not running');
+  assert.equal(BB_TEXT.targetsStateUnknown, 'running state unknown');
+});
+
+test('targetRunState reads the server state, an older boolean, or unknown', () => {
+  const { targetRunState } = loadTypeScript('src/lib/blackbox.ts');
+  assert.equal(targetRunState({ name: 'a', state: 'running' }), 'running');
+  assert.equal(targetRunState({ name: 'a', state: 'stopped' }), 'stopped');
+  assert.equal(targetRunState({ name: 'a', state: 'unknown' }), 'unknown');
+  // An older server that always sends a boolean still reads correctly.
+  assert.equal(targetRunState({ name: 'a', running: true }), 'running');
+  assert.equal(targetRunState({ name: 'a', running: false }), 'stopped');
+  // Nothing known: unknown, never a guessed stopped or running.
+  assert.equal(targetRunState({ name: 'a' }), 'unknown');
+  // An explicit state wins over a stale boolean.
+  assert.equal(targetRunState({ name: 'a', state: 'unknown', running: true }), 'unknown');
 });
 
 test('the picker stores only kind+name, and the record.processes checkbox and note are unchanged', () => {

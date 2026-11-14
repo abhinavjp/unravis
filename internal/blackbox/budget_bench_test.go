@@ -9,11 +9,22 @@ import (
 	"api-audit-explorer/internal/sampler"
 )
 
-// BL-122 footprint gate: a full budgeted tick with fake counter readers must
-// stay under 0.5% of one core on average (75 ms of CPU per tick at a 15 s
-// interval), under 50 MB working set, and each group under 1 s. Everything
-// here is fake and deterministic: no PDH, no process reads, no network, no
-// real sleeps, no goroutine and no ticker.
+// BL-122 footprint MICRO-benchmark — narrow scope, NOT production proof (W3-07).
+// This rig builds six SUBSTITUTE groups over a fixed ~200-reading fixture with
+// the host process list disabled. It never builds the production registry, never
+// uses the resolver, never creates native queries, and never runs Recorder.Tick,
+// store writes, housekeeping or the log catalogue. rig.tick collects THEN cycles,
+// whereas the real recorder feeds/cycles BEFORE collect, and SelfUsage is
+// hardwired to 0.1%/30 MiB. checkGate constrains wall time and allocation COUNT
+// only — not retained memory or process working set — so a regression in
+// production wildcard cardinality, resolver scans or native-query memory need not
+// change this result at all. Treat it as a fast deterministic regression guard
+// for the engine/budget arithmetic, NOT as evidence for the live budget (under
+// 0.5% of one core on average, under 50 MB working set, each group under 1 s).
+// The real production composition is measured by TestCompositionFootprintGate in
+// budget_composition_test.go; live CPU/working-set/handles on a real server still
+// require owner-authorized evidence. Everything here is fake and deterministic:
+// no PDH, no process reads, no network, no real sleeps, no goroutine, no ticker.
 
 const (
 	// benchValidReadings is the fake counter load: ~200 valid readings spread
@@ -383,8 +394,8 @@ func TestBudgetSlowGroupSkipped(t *testing.T) {
 	if s1.VM != nil {
 		t.Fatal("slow group was not skipped")
 	}
-	if !missingHas(s1, "skipped: slow") {
-		t.Fatalf("Missing = %v, want skipped: slow", s1.Missing)
+	if !missingHas(s1, "vm: slow") {
+		t.Fatalf("Missing = %v, want vm: slow", s1.Missing)
 	}
 	if slow.calls != 0 {
 		t.Fatalf("slow group ran %d times, want 0 while marked", slow.calls)
@@ -421,8 +432,8 @@ func TestBudgetSlowGroupSkipped(t *testing.T) {
 		if s.VM != nil {
 			t.Fatalf("gate tick %d: slow group ran while marked", i)
 		}
-		if !missingHas(s, "skipped: slow") {
-			t.Fatalf("gate tick %d: Missing = %v, want skipped: slow", i, s.Missing)
+		if !missingHas(s, "vm: slow") {
+			t.Fatalf("gate tick %d: Missing = %v, want vm: slow", i, s.Missing)
 		}
 	}
 	elapsed := time.Since(start)

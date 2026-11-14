@@ -107,9 +107,36 @@ func (s *tempdbSampler) Decode(rows []Row) (any, bool, error) {
 // semaphoreCumulative is the last full sighting of one resource semaphore. The
 // two cumulative counters are what gets subtracted; grantees and waiters are
 // recorded so a baseline is a complete, replaceable picture of the row it came
-// from, and are never differenced.
+// from, and are never differenced. forcedOK/timeoutsOK record whether the
+// counter was readable: a SQL NULL (or negative) cumulative counter leaves no
+// valid baseline for that counter, so no delta is fabricated against it.
 type semaphoreCumulative struct {
-	grantees, waiters, forced, timeouts int64
+	grantees, waiters    int64
+	forced, timeouts     int64
+	forcedOK, timeoutsOK bool
+}
+
+// semaphoresRaw is the WIDE cumulative input type (W11-01). The DMV's
+// forced_grant_count / timeout_error_count are bigint and nullable, so they are
+// decoded into nullable int64 here, never into the emitted int32 field. The
+// difference is computed in the int64 domain and only then range-checked into
+// the fixed int32 output. Widening the INPUT does not widen the emitted contract.
+type semaphoresRaw struct {
+	ResourceSemaphoreID int32  `json:"resourceSemaphoreId"`
+	Grantees            int32  `json:"grantees"`
+	Waiters             int32  `json:"waiters"`
+	Forced              *int64 `json:"forced"`
+	Timeouts            *int64 `json:"timeouts"`
+}
+
+// readSemaphoreCounter reads one nullable cumulative counter. ok is false when
+// the counter is SQL NULL or negative (an unreadable counter is missing, never
+// 0); the value is only meaningful when ok is true.
+func readSemaphoreCounter(p *int64) (v int64, ok bool) {
+	if p == nil || *p < 0 {
+		return 0, false
+	}
+	return *p, true
 }
 
 // semaphoresSampler samples sys.dm_exec_query_resource_semaphores every
@@ -117,12 +144,19 @@ type semaphoreCumulative struct {
 // (numeric id only: a resource pool name is text and must never reach the
 // sample, C9).
 type semaphoresSampler struct {
-	prev map[int32]semaphoreCumulative
+	prev          map[int32]semaphoreCumulative
+	obs           Observation // last observation time + source epoch (W11-05)
+	baselineEpoch uint64      // epoch the current baselines were taken under
 }
 
 func (semaphoresSampler) ID() string              { return "bb:semaphores" }
 func (semaphoresSampler) Kind() string            { return "semaphores" }
 func (semaphoresSampler) Interval() time.Duration { return BaseInterval }
+
+// Observe records the runner's observation time and source generation. A change
+// of epoch (reconnect, failure, pause, partial tick, clock jump) invalidates the
+// baselines: the next Decode rebaselines and emits no delta (W11-05).
+func (s *semaphoresSampler) Observe(o Observation) { s.obs = o }
 
 // Decode turns one DMV reply, which mixes gauge and cumulative columns, into
 // one payload row per semaphore. The rule per column is the point of this
@@ -138,38 +172,41 @@ func (semaphoresSampler) Interval() time.Duration { return BaseInterval }
 // happened. Counters are always differenced because they only ever grow, and
 // the raw value since instance start says nothing about this interval.
 //
-// Guards, in order: a row carrying NULL is not a sample, so it is skipped and
-// its baseline is dropped (it re-baselines next cycle). The first cycle only
-// records baselines and emits nothing (missing is never 0). An id with no
-// baseline is skipped for the cycle it first appears in. A counter going
-// backwards (instance restart, resource governor reconfigure) replaces that
-// id's baseline and emits nothing for it. prev is rebuilt from this cycle's
-// kept rows only, so it can never hold more than CapSemaphores entries and an
-// id that disappeared stops costing memory; an empty reply clears the map.
+// Guards, in order: the cumulative counters are decoded into the wide nullable
+// int64 raw type, so a lifetime value above MaxInt32 is read, not rejected
+// (W11-01). A NULL/negative counter is unreadable: it leaves no baseline and no
+// delta for THAT counter, but the readable gauges beside it are still emitted
+// (W11-04, schema-specific null handling, not a blanket row skip). The first
+// cycle (or a new source epoch) only records baselines and emits nothing. An id
+// with no baseline is skipped for the cycle it first appears in. A counter going
+// backwards replaces that id's baseline and skips the row. A delta that does not
+// fit int32 skips the row, never wrapped. A NULL counter emits the readable
+// gauges with a nil (omitted) delta. prev is rebuilt from this cycle's kept rows
+// only, so it can never hold more than CapSemaphores entries and an id that
+// disappeared stops costing memory; an empty reply clears the map.
 func (s *semaphoresSampler) Decode(rows []Row) (any, bool, error) {
-	var cur []Semaphores
+	var cur []semaphoresRaw
 	truncated, err := decodeRows(rows, &cur, CapSemaphores)
 	if err != nil {
 		return nil, false, err
 	}
 	if len(cur) == 0 {
 		s.prev = map[int32]semaphoreCumulative{}
+		s.baselineEpoch = s.obs.Epoch
 		return nil, false, nil
 	}
 
 	nextPrev := make(map[int32]semaphoreCumulative, len(cur))
-	firstCycle := s.prev == nil
+	firstCycle := s.prev == nil || s.baselineEpoch != s.obs.Epoch
 	out := make([]Semaphores, 0, len(cur))
-	for i, r := range cur {
-		if schedRowHasNull(rows[i]) {
-			continue // a NULL counter cannot be read and must not become a zero
-		}
+	for _, r := range cur {
 		k := r.ResourceSemaphoreID
+		forced, forcedOK := readSemaphoreCounter(r.Forced)
+		timeouts, timeoutsOK := readSemaphoreCounter(r.Timeouts)
 		cum := semaphoreCumulative{
-			grantees: int64(r.Grantees),
-			waiters:  int64(r.Waiters),
-			forced:   int64(r.Forced),
-			timeouts: int64(r.Timeouts),
+			grantees: int64(r.Grantees), waiters: int64(r.Waiters),
+			forced: forced, timeouts: timeouts,
+			forcedOK: forcedOK, timeoutsOK: timeoutsOK,
 		}
 		nextPrev[k] = cum // the new baseline stands even when nothing is emitted
 		if firstCycle {
@@ -179,27 +216,47 @@ func (s *semaphoresSampler) Decode(rows []Row) (any, bool, error) {
 		if !ok {
 			continue // unseen id: this sighting is only its baseline
 		}
-		if cum.forced < prev.forced || cum.timeouts < prev.timeouts {
-			continue // counters rolled back: baseline replaced, nothing emitted
+		// A readable counter that went backwards is a reset (instance restart,
+		// resource governor reconfigure): the baseline is replaced and nothing is
+		// emitted for this id, never a negative delta.
+		if (forcedOK && prev.forcedOK && forced < prev.forced) ||
+			(timeoutsOK && prev.timeoutsOK && timeouts < prev.timeouts) {
+			continue
 		}
-		dForced := cum.forced - prev.forced
-		dTimeouts := cum.timeouts - prev.timeouts
-		if dForced > math.MaxInt32 || dTimeouts > math.MaxInt32 {
-			continue // cannot fit the fixed field: never wrap into a negative delta
+		// Difference in the wide domain, then range-check the emitted int32. A
+		// delta that cannot fit the fixed field skips the row, never wraps.
+		var dForced, dTimeouts *int32
+		if forcedOK && prev.forcedOK {
+			d := forced - prev.forced
+			if d > math.MaxInt32 {
+				continue
+			}
+			v := int32(d)
+			dForced = &v
 		}
-		// Unlike the stall and wait deltas, an all-zero pair here is still
-		// evidence: the gauges beside it describe the grants in flight right
-		// now, so an id with a baseline is always emitted.
+		if timeoutsOK && prev.timeoutsOK {
+			d := timeouts - prev.timeouts
+			if d > math.MaxInt32 {
+				continue
+			}
+			v := int32(d)
+			dTimeouts = &v
+		}
+		// The gauges describe the grants in flight right now, so an id with a
+		// baseline is emitted even when a nullable counter was SQL NULL: that
+		// counter is a missing (nil) delta beside the readable gauges, never a
+		// faked zero and never a blanked row (W11-04).
 		out = append(out, Semaphores{
 			ResourceSemaphoreID: k,
 			Grantees:            r.Grantees,
 			Waiters:             r.Waiters,
-			Forced:              int32(dForced),
-			Timeouts:            int32(dTimeouts),
+			Forced:              dForced,
+			Timeouts:            dTimeouts,
 		})
 	}
 
 	s.prev = nextPrev
+	s.baselineEpoch = s.obs.Epoch
 	if len(out) == 0 {
 		return nil, truncated, nil
 	}
@@ -207,7 +264,7 @@ func (s *semaphoresSampler) Decode(rows []Row) (any, bool, error) {
 }
 
 func init() {
-	RegisterSampler(&schedulersSampler{})
-	RegisterSampler(&semaphoresSampler{})
-	RegisterSampler(&tempdbSampler{})
+	RegisterSamplerFactory(func() Sampler { return &schedulersSampler{} })
+	RegisterSamplerFactory(func() Sampler { return &semaphoresSampler{} })
+	RegisterSamplerFactory(func() Sampler { return &tempdbSampler{} })
 }

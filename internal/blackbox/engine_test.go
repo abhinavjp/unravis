@@ -94,8 +94,9 @@ func TestEngineInvalidStatusOmitted(t *testing.T) {
 	}, 1)
 	t0 := time.Unix(1000, 0)
 
-	// Non-zero status: omitted, never 0.
-	out := e.Process(t0, []CounterReading{{Path: gaugePath, Value: 5, Status: 1, OK: true}})
+	// A real failure status (PDH_CSTATUS_INVALID_DATA): omitted, never 0.
+	// Status 1 is NEW_DATA, a success status, and is covered by its own test.
+	out := e.Process(t0, []CounterReading{{Path: gaugePath, Value: 5, Status: 0x800007D4, OK: true}})
 	if _, ok := out["mem"]; ok {
 		t.Fatalf("invalid-status gauge emitted, want absent")
 	}

@@ -22,17 +22,27 @@ type filestatsCumulative struct {
 }
 
 type filestatsSampler struct {
-	prev map[fileKey]filestatsCumulative
+	prev          map[fileKey]filestatsCumulative
+	obs           Observation // last observation time + source epoch (W11-05)
+	baselineEpoch uint64      // epoch the current baselines were taken under
 }
 
 func (filestatsSampler) ID() string              { return "bb:filestats" }
 func (filestatsSampler) Kind() string            { return "filestats" }
 func (filestatsSampler) Interval() time.Duration { return DemotedInterval }
 
+// Observe records the runner's observation time and source generation. A change
+// of epoch (reconnect, failure, pause, partial tick, clock jump) invalidates the
+// baselines, so a delta never spans an unobserved interval or a reset that
+// overtook the old value during a gap (W11-05). Deltas are raw counter
+// differences, never divided by the nominal cadence.
+func (s *filestatsSampler) Observe(o Observation) { s.obs = o }
+
 // Decode emits the delta since the previous sighting of the same file. The
-// first cycle only records the baseline: a delta with nothing to subtract from
-// would be a lie. A counter that went backwards is a restart or a role change,
-// so that file's baseline is replaced and the file is skipped for this cycle.
+// first cycle (or a new source epoch) only records the baseline: a delta with
+// nothing to subtract from would be a lie. A counter that went backwards is a
+// restart or a role change, so that file's baseline is replaced and the file is
+// skipped for this cycle.
 func (s *filestatsSampler) Decode(rows []Row) (any, bool, error) {
 	var cur []FileStats
 	truncated, err := decodeRows(rows, &cur, CapFileStats)
@@ -43,11 +53,12 @@ func (s *filestatsSampler) Decode(rows []Row) (any, bool, error) {
 		// Nothing seen: every baseline is stale, and an empty reply is not a
 		// sample.
 		s.prev = map[fileKey]filestatsCumulative{}
+		s.baselineEpoch = s.obs.Epoch
 		return nil, false, nil
 	}
 
 	nextPrev := make(map[fileKey]filestatsCumulative, len(cur))
-	firstCycle := s.prev == nil
+	firstCycle := s.prev == nil || s.baselineEpoch != s.obs.Epoch
 	out := make([]FileStats, 0, len(cur))
 	for _, r := range cur {
 		k := fileKey{databaseID: r.DatabaseID, fileID: r.FileID}
@@ -93,6 +104,7 @@ func (s *filestatsSampler) Decode(rows []Row) (any, bool, error) {
 	}
 
 	s.prev = nextPrev
+	s.baselineEpoch = s.obs.Epoch
 	if len(out) == 0 {
 		return nil, truncated, nil
 	}
@@ -137,6 +149,6 @@ func (agSampler) Decode(rows []Row) (any, bool, error) {
 }
 
 func init() {
-	RegisterSampler(&filestatsSampler{})
-	RegisterSampler(&agSampler{})
+	RegisterSamplerFactory(func() Sampler { return &filestatsSampler{} })
+	RegisterSamplerFactory(func() Sampler { return &agSampler{} })
 }

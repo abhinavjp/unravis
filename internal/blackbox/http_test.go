@@ -239,3 +239,31 @@ func TestHTTPGroupRegistered(t *testing.T) {
 		t.Fatal("http group must be optional (ships off when it breaks budget)")
 	}
 }
+
+// W4-05: a pool name containing parentheses must still parse. The instance ends
+// at ")\", not at the first ')'.
+func TestHTTPPathPoolWithParentheses(t *testing.T) {
+	for _, tc := range []struct {
+		pool string
+		want bool
+	}{
+		{"MyApp (Staging)", true},
+		{"Payroll (EU) (Prod)", true},
+		{"PlainPool", true},
+		{"Pool_1", true},
+	} {
+		path := httpQueuePrefix + tc.pool + `)\CurrentQueueSize`
+		pool, field, _, ok := parseHTTPPath(path)
+		if ok != tc.want {
+			t.Errorf("parseHTTPPath(%q) ok = %v, want %v", path, ok, tc.want)
+			continue
+		}
+		if ok && (pool != tc.pool || field == "") {
+			t.Errorf("parseHTTPPath(%q) = (%q, %q), want pool %q and a field", path, pool, field, tc.pool)
+		}
+	}
+	// A path with no instance terminator is still rejected, never guessed.
+	if _, _, _, ok := parseHTTPPath(httpQueuePrefix + "NoTerminator"); ok {
+		t.Error("a path without the instance terminator was accepted")
+	}
+}

@@ -25,14 +25,24 @@ func (f *fakeSQLSvc) Create(spec blackbox.ServiceSpec) error {
 	return f.memSvc.Create(spec)
 }
 
-// fakeSQLDirEnv records the SQL data folder lock instead of applying an ACL.
+// fakeSQLDirEnv records the SQL data folder lock and the launch-access grant
+// instead of applying real ACLs.
 type fakeSQLDirEnv struct {
 	*memEnv
-	locked []string // "dir sid" of every SecureSQLDir call
+	locked  []string // "dir sid" of every SecureSQLDir call
+	granted []string // "exe config sid" of every GrantSQLLaunchAccess call
 }
 
 func (e *fakeSQLDirEnv) SecureSQLDir(dir, sid string) error {
 	e.locked = append(e.locked, dir+" "+sid)
+	return nil
+}
+
+// GrantSQLLaunchAccess records the least-privilege launch grant (W7-01). The
+// real implementation gives the service SID read/execute on the program and read
+// on the settings; the fake only records it, so tests can assert it happened.
+func (e *fakeSQLDirEnv) GrantSQLLaunchAccess(exe, config, sid string) error {
+	e.granted = append(e.granted, exe+" "+config+" "+sid)
 	return nil
 }
 
@@ -361,7 +371,9 @@ func TestInstallSQLConfigPathBoundToService(t *testing.T) {
 	}
 }
 
-// Every SQL command failure answers with a fixed reason code, never driver text.
+// Every SQL command failure answers with a fixed reason code AND a fixed
+// sentence — never the underlying error text, which can carry paths and
+// configuration/parser prose (W8-07).
 func TestSQLCommandsFixedReasons(t *testing.T) {
 	// No installed Blackbox: install-sql says not-installed.
 	r := newRig(t)
@@ -392,5 +404,113 @@ func TestSQLCommandsFixedReasons(t *testing.T) {
 	}
 	if len(g.svc.calls) != 0 {
 		t.Fatalf("install-sql changed the machine without admin rights: %v", g.svc.calls)
+	}
+}
+
+// TestSQLAnswersNeverLeakErrorText (W8-07): a failure whose underlying error
+// names a path and carries parser text still answers with the fixed sentence
+// only, in both --json and terminal form.
+func TestSQLAnswersNeverLeakErrorText(t *testing.T) {
+	g := newSQLRig(t)
+	broken := filepath.Join(g.dir, "broken-config.json")
+	if err := os.WriteFile(broken, []byte(`{"keepDays": `), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"remove-sql", "--json", "--config", broken, "--confirm-name", "box-1"},
+		{"enable-sql", "--json", "--config", broken},
+		{"install-sql", "--json", "--config", broken},
+	} {
+		c, out, _ := g.do(args...)
+		got := jsonAnswer(t, out)
+		if c != exitFail {
+			t.Fatalf("%v: %d %v", args, c, got)
+		}
+		msg, _ := got["message"].(string)
+		if strings.Contains(msg, g.dir) || strings.Contains(msg, "broken-config") ||
+			strings.Contains(msg, "keepDays") || strings.Contains(msg, "unexpected end") {
+			t.Fatalf("%v: the answer leaked error text: %q", args, msg)
+		}
+	}
+	// Terminal form is redacted too.
+	c, _, errs := g.do("enable-sql", "--config", broken)
+	if c != exitFail || strings.Contains(errs, g.dir) || strings.Contains(errs, "keepDays") {
+		t.Fatalf("terminal answer leaked: %d %q", c, errs)
+	}
+}
+
+// TestInstallSQLStoppedThenEnable (W8-03): install-sql creates the service
+// STOPPED and prints the grant plus the activation step; enable-sql is the
+// administrator-only owner activation that starts it. Nothing runs SQL.
+func TestInstallSQLStoppedThenEnable(t *testing.T) {
+	g := newSQLRig(t)
+	c, out, errs := g.do("install-sql")
+	if c != 0 {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	if g.svc.state != blackbox.SvcStopped {
+		t.Fatalf("install-sql left the service %s, want stopped", g.svc.state)
+	}
+	if !strings.Contains(out, "enable-sql") || !strings.Contains(out, "stopped") {
+		t.Fatalf("install-sql does not explain the activation step:\n%s", out)
+	}
+	if g.runner.calls != 0 || len(g.elev.calls) != 0 {
+		t.Fatal("install-sql executed something")
+	}
+	// enable-sql activates: the service runs, still no SQL executed by the app.
+	c, out, errs = g.do("enable-sql")
+	if c != 0 {
+		t.Fatalf("enable-sql: %d %s %s", c, out, errs)
+	}
+	if g.svc.state != blackbox.SvcRunning {
+		t.Fatalf("enable-sql left the service %s", g.svc.state)
+	}
+	if g.runner.calls != 0 || len(g.elev.calls) != 0 || g.hostRuns != 0 {
+		t.Fatal("enable-sql executed SQL or started the host")
+	}
+	// enable-sql without admin rights changes nothing.
+	g2 := newSQLRig(t)
+	if c, out, errs := g2.do("install-sql"); c != 0 {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	g2.env.admin = false
+	c, out, _ = g2.do("enable-sql", "--json")
+	if got := jsonAnswer(t, out); c != exitFail || got["reason"] != "no-admin" {
+		t.Fatalf("%d %v", c, got)
+	}
+	if g2.svc.state != blackbox.SvcStopped {
+		t.Fatalf("enable-sql started without admin: %s", g2.svc.state)
+	}
+}
+
+// TestInstallSQLRelativeConfigBecomesAbsolute (W8-09): a relative --config is
+// resolved against the installer's working directory and registered as an
+// absolute path, so the SCM startup (a different working directory) opens the
+// SAME file.
+func TestInstallSQLRelativeConfigBecomesAbsolute(t *testing.T) {
+	g := newSQLRig(t)
+	otherFolder := filepath.Join(g.dir, "other-rec")
+	other := blackbox.Default()
+	other.Name = "box-1"
+	other.Folder = otherFolder
+	if err := blackbox.SaveConfig(filepath.Join(g.dir, "rel-blackbox.json"), other, false); err != nil {
+		t.Fatal(err)
+	}
+	// Install from a staging directory with a RELATIVE config path.
+	t.Chdir(g.dir)
+	c, out, errs := g.do("install-sql", "--config", "rel-blackbox.json")
+	if c != 0 {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	want := filepath.Join(g.dir, "rel-blackbox.json")
+	if len(g.svc.spec.Args) != 3 || g.svc.spec.Args[2] != want || !filepath.IsAbs(g.svc.spec.Args[2]) {
+		t.Fatalf("service args %v, want the absolute config %q", g.svc.spec.Args, want)
+	}
+	// From a DIFFERENT working directory, the registered path still opens the
+	// same validated file.
+	t.Chdir(t.TempDir())
+	cfg, err := blackbox.LoadConfig(g.svc.spec.Args[2])
+	if err != nil || cfg.Folder != otherFolder {
+		t.Fatalf("the registered config resolves differently: %+v %v", cfg, err)
 	}
 }

@@ -4,12 +4,18 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'appState.svelte.ts'), 'utf8');
+// W13-05: normalize line endings before parsing. The repo checks out CRLF on
+// Windows while CI may see LF; an LF-only delimiter matched nothing on CRLF, so
+// slice(start, -1) returned the rest of the file and unrelated code satisfied the
+// assertion. Fail explicitly when the closing delimiter is absent.
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'appState.svelte.ts'), 'utf8').replace(/\r\n/g, '\n');
 
 function body(startText) {
   const start = src.indexOf(startText);
   assert.ok(start >= 0, `${startText} missing`);
-  return src.slice(start, src.indexOf('\n}\n', start));
+  const end = src.indexOf('\n}\n', start);
+  assert.ok(end > start, `${startText}: closing delimiter not found`);
+  return src.slice(start, end);
 }
 
 test('the call target key and the three functions exist', () => {
