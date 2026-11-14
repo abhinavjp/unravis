@@ -119,3 +119,10 @@ test('failure and gap lines exist and use no banned wording', () => {
 test('drill copy passes the copy lint', () => {
   assert.deepEqual(lintScreenStrings(drillCopyEntries(), deck.terms), []);
 });
+
+test('UI-13: Query Store is explained in plain words where a first-time reader meets it', () => {
+  assert.match(DRILL_HELP.laneDb, /Query Store is the database's own record of slow queries/);
+  assert.match(DRILL_TEXT.dbMsgLive(15), /Query Store, the database's own record of slow queries\. The database owner must switch it on\./);
+  assert.match(DRILL_TEXT.dbMsgOff, /needs the database owner/);
+  assert.ok(DRILL_HELP.laneDb.length < 160);
+});

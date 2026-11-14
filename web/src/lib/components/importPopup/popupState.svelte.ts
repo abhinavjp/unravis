@@ -1,5 +1,6 @@
 import { CaseApiError, cancelImportJob, importRunner, runImportQueue, startCheckJob, waitForCheckJob } from '../../cases';
 import type { BatchItem, BatchOutcome, BatchRun, CheckFileVerdict, CheckReport } from '../../cases';
+import { POPUP_TEXT } from '../../copy/importPopupCopy';
 import { ackTextFor, batchReasonText, errorText, importerLabel, reasonText } from '../../copy/importCopy';
 import { filesFromDrop } from '../../dropEntries';
 import { stageFiles } from '../../fileKinds';
@@ -81,6 +82,10 @@ export interface PopupState {
   rechecking: boolean;
   /** Why the check could not finish, or ''. */
   checkError: string;
+  /** Why the popup did not close when asked to (an import is running), or ''. */
+  closeNote: string;
+  /** Plain-words lines for computers "Add all" could not add. Replaced on each run. */
+  addNotes: string[];
   importing: boolean;
   /** Cancel was pressed: the file being sent finishes, the rest are not started. Import waits for it. */
   stopping: boolean;
@@ -192,6 +197,8 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
   let importRun = 0;
   let stopAfter: AbortController | null = null;
   let addingAll = false;
+  // Bumped when the popup goes away or its session is cleared, so an "Add all" still waiting on the server stops adding.
+  let addRun = 0;
   let nextId = 1;
   const leave = new AbortController();
   // What earlier runs of this popup already did, so the Result step tells the whole story even after a refused file sent the person back.
@@ -209,12 +216,13 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
   // Everything the person built up, back to a fresh popup. Used when files are discarded and when the person imports more.
   const clearSession = () => {
     abortChecks();
+    addRun += 1; addingAll = false;
     importRun += 1;
     stopAfter?.abort();
     stopAfter = null;
     carryImported = new Map();
     carryNotImported = [];
-    s.step = 1; s.checking = false; s.checkError = ''; s.importing = false; s.stopping = false; s.importDone = false;
+    s.step = 1; s.checking = false; s.checkError = ''; s.closeNote = ''; s.addNotes = []; s.importing = false; s.stopping = false; s.importDone = false;
     s.importProgress = 0; s.importTotal = 0; s.importGroups = []; s.result = null;
     s.expanded = initialExpanded(); s.selected = {}; s.cards = {}; s.labels = {}; s.kinds = {};
     s.ack = false; s.discard = false; s.retryServerName = null; s.focus = null;
@@ -328,7 +336,7 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
       notImported: [...carryNotImported, ...unsupported],
       computers: [...new Set(Object.values(s.labels))]
     };
-    s.step = 3; s.importing = false; s.importDone = true; s.focus = 'open-tl';
+    s.step = 3; s.importing = false; s.importDone = true; s.closeNote = ''; s.focus = 'open-tl';
   }
 
   async function finishImport(done: Array<{ key: string; outcome: BatchOutcome }>, cancelled: boolean, groupNames: ReadonlyMap<string, string>, mine: number) {
@@ -336,7 +344,7 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
     const refused = done.filter((entry) => entry.outcome.verdict === 'rejected' && entry.outcome.reason === 'unknown-host');
     const refusedKeys = new Set(refused.map((entry) => entry.key));
     settle(done.filter((entry) => !refusedKeys.has(entry.key)), groupNames);
-    s.importing = false;
+    s.importing = false; s.closeNote = '';
     if (cancelled) {
       s.stopping = false;
       s.step = s.files.length === 0 ? 1 : 2;
@@ -399,7 +407,7 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
   }
 
   const s: PopupState = $state<PopupState>({
-    caseId: '', step: 1, checking: false, rechecking: false, checkError: '', importing: false, stopping: false, importDone: false,
+    caseId: '', step: 1, checking: false, rechecking: false, checkError: '', closeNote: '', addNotes: [], importing: false, stopping: false, importDone: false,
     importProgress: 0, importTotal: 0, importGroups: [], result: null,
     expanded: initialExpanded(), selected: {}, cards: {}, labels: {}, kinds: {},
     ack: false, discard: false, closed: false, timeline: false,
@@ -469,21 +477,31 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
     addAllServers() {
       if (addingAll) return;
       const open = cardIds().filter((id) => cardOf(id) === 'open' && filesOfServer(id).length > 0);
+      const mine = ++addRun;
+      // The popup was closed or its session cleared while a save was in flight: add nothing more and touch nothing.
+      const stale = () => mine !== addRun || leave.signal.aborted;
       addingAll = true;
+      s.addNotes = [];
       void (async () => {
         const keys: string[] = [];
         try {
           for (const id of open) {
-            const result = await api.addComputer(id);
-            // A name already in the list is the goal reached.
-            if (!result.ok && result.reason !== 'taken') continue;
+            let result: SaveHostResult;
+            try {
+              result = await api.addComputer(id);
+            } catch {
+              result = { ok: false, reason: 'failed' };
+            }
+            if (stale()) return;
+            // A name already in the list is the goal reached. Any other failure is told to the person, and the card stays open.
+            if (!result.ok && result.reason !== 'taken') { s.addNotes.push(POPUP_TEXT.addFailed(id, result.reason)); continue; }
             s.cards[id] = 'resolved'; s.labels[id] = id;
             keys.push(...filesOfServer(id));
           }
         } finally {
-          addingAll = false;
+          if (mine === addRun) addingAll = false;
         }
-        s.focus = 'ack';
+        if (keys.length > 0) s.focus = 'ack';
         await recheck(keys, true);
       })();
     },
@@ -520,6 +538,7 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
     },
     cancelImport() {
       s.stopping = stopAfter !== null;
+      s.closeNote = '';
       stopAfter?.abort();
       s.importing = false; s.importDone = false; s.step = 2; s.checking = false;
     },
@@ -528,7 +547,7 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
     // The import is not left by accident: while a file is still importing or stopping (Cancel pressed, the file being sent still
     // finishing), the close button, Esc and a click outside wait, so the popup stays open and that file's outcome is not lost.
     requestClose() {
-      if (s.importing || s.stopping) return;
+      if (s.importing || s.stopping) { s.closeNote = s.stopping ? POPUP_TEXT.closeWhileStopping : POPUP_TEXT.closeWhileImporting; return; }
       if (s.listedFiles() > 0 && s.step !== 3) { s.discard = true; s.focus = 'keep'; }
       else s.closed = true;
     },
@@ -536,6 +555,7 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
     discardNow() { clearSession(); s.closed = true; },
     dispose() {
       leave.abort();
+      addRun += 1; addingAll = false;
       abortChecks();
     }
   });
