@@ -64,17 +64,33 @@ FROM sys.dm_io_virtual_file_stats(NULL, NULL) /* unravis:bb:filestats */`
 const stmtAG = setPrefix + `SELECT TOP 64 database_id, synchronization_state
 FROM sys.dm_hadr_database_replica_states /* unravis:bb:ag */`
 
+// bb:ceiling_role (BL-124): C8 control query — sysadmin/securityadmin
+// membership flags only (0/1); no login, host or session data.
+const stmtCeilingRole = setPrefix + `SELECT IS_SRVROLEMEMBER(N'sysadmin') AS sysadmin, IS_SRVROLEMEMBER(N'securityadmin') AS securityadmin /* unravis:bb:ceiling_role */`
+
+// bb:ceiling_perms (BL-124): C8 control query — returns ONLY permissions
+// outside the Blackbox ceiling, so any returned row is a refusal. The NOT IN
+// filter keeps the check fail-closed under the C6 row cap: a full permission
+// list could be truncated before an extra right is seen. TOP 2 mirrors the
+// reader cap; the Go subset assert in CheckCeiling is the second gate.
+const stmtCeilingPerms = setPrefix + `SELECT TOP 2 permission_name
+FROM sys.server_permissions
+WHERE grantee_principal_id = DATABASE_PRINCIPAL_ID()
+  AND permission_name NOT IN (N'CONNECT SQL', N'VIEW ANY DATABASE', N'VIEW SERVER STATE', N'VIEW SERVER PERFORMANCE STATE') /* unravis:bb:ceiling_perms */`
+
 // Statements is the complete allowlist and the single source of truth for what
 // may be sent. Values are fixed constants; a later packet may add more fixed
 // entries (e.g. the bb:hadr guard) but must never build text at runtime.
 var Statements = map[string]string{
-	"bb:requests":   stmtRequests,
-	"bb:waits":      stmtWaits,
-	"bb:schedulers": stmtSchedulers,
-	"bb:semaphores": stmtSemaphores,
-	"bb:tempdb":     stmtTempdb,
-	"bb:filestats":  stmtFilestats,
-	"bb:ag":         stmtAG,
+	"bb:requests":      stmtRequests,
+	"bb:waits":         stmtWaits,
+	"bb:schedulers":    stmtSchedulers,
+	"bb:semaphores":    stmtSemaphores,
+	"bb:tempdb":        stmtTempdb,
+	"bb:filestats":     stmtFilestats,
+	"bb:ag":            stmtAG,
+	"bb:ceiling_role":  stmtCeilingRole,
+	"bb:ceiling_perms": stmtCeilingPerms,
 }
 
 // Statement returns the fixed allowlisted text for id. ok is false for any

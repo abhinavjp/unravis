@@ -7,10 +7,11 @@ import (
 	"testing"
 )
 
-// requiredIDs are the seven statements this packet must define. The lint below
-// runs over every entry in Statements (so a later fixed addition, e.g. the
-// bb:hadr guard from BBX-5-14, is linted too) while this list pins the seven.
-var requiredIDs = []string{"bb:requests", "bb:waits", "bb:schedulers", "bb:semaphores", "bb:tempdb", "bb:filestats", "bb:ag"}
+// requiredIDs are the seven sampler statements plus the two C8 ceiling
+// control queries (BBX-5-07). The lint below runs over every entry in
+// Statements (so a later fixed addition, e.g. the bb:hadr guard from
+// BBX-5-14, is linted too) while this list pins the nine.
+var requiredIDs = []string{"bb:requests", "bb:waits", "bb:schedulers", "bb:semaphores", "bb:tempdb", "bb:filestats", "bb:ag", "bb:ceiling_role", "bb:ceiling_perms"}
 
 // bannedColumns are exfiltration tokens: a case-insensitive substring match
 // anywhere in the text (literals included) is forbidden.
@@ -87,11 +88,12 @@ func TestLintC2(t *testing.T) {
 // statements; the reader also stops at cap+1, so the cap holds at both ends.
 func TestLintTOPCaps(t *testing.T) {
 	for id, want := range map[string]string{
-		"bb:requests":   "SELECT TOP 256 ",
-		"bb:waits":      "SELECT TOP 20 ",
-		"bb:semaphores": "SELECT TOP 16 ",
-		"bb:filestats":  "SELECT TOP 256 ",
-		"bb:ag":         "SELECT TOP 64 ",
+		"bb:requests":      "SELECT TOP 256 ",
+		"bb:waits":         "SELECT TOP 20 ",
+		"bb:semaphores":    "SELECT TOP 16 ",
+		"bb:filestats":     "SELECT TOP 256 ",
+		"bb:ag":            "SELECT TOP 64 ",
+		"bb:ceiling_perms": "SELECT TOP 2 ",
 	} {
 		if !strings.Contains(Statements[id], want) {
 			t.Errorf("%s: missing %q", id, want)
@@ -187,7 +189,12 @@ func outputColumns(t *testing.T, text string) []string {
 	rest := up[si+len("SELECT"):]
 	fi := strings.Index(rest, "FROM")
 	if fi < 0 {
-		t.Fatal("no FROM after SELECT")
+		// FROM-less control SELECT (bb:ceiling_role): the column list runs
+		// to the tag comment instead of a FROM clause.
+		fi = strings.Index(rest, "/*")
+		if fi < 0 {
+			fi = len(rest)
+		}
 	}
 	list := text[si+len("SELECT") : si+len("SELECT")+fi]
 	var cols []string
