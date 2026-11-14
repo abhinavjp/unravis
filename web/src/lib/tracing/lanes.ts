@@ -316,7 +316,7 @@ export const NO_EVENTS_PERIOD = 'No events in this period';
 
 /** The one sentence a lane that draws no bars shows in its panel and in its hover text ('' when it draws bars). */
 export function laneStatusLine(lane: TracingLane): string {
-  if (lane.state === 'none-seen' && !lane.disabled && !laneCutShort(lane)) return NO_EVENTS_PERIOD;
+  if (lane.state === 'none-seen' && !lane.disabled && !laneCutShort(lane)) return lane.reason || NO_EVENTS_PERIOD;
   return laneNote(lane);
 }
 

@@ -244,6 +244,13 @@ test('lane rules shared by chart and tooltip', () => {
   assert.equal(laneStatusLine(laneOf()), '');
 });
 
+test('a none-seen lane shows its reason when it has one, else "No events in this period" (DATA-09)', () => {
+  const why = 'Query Store is switched off on this database, so it saved no history.';
+  assert.equal(laneStatusLine(laneOf({ key: 'sql', state: 'none-seen', reasonCode: 'qs-off', reason: why })), why);
+  assert.equal(laneStatusLine(laneOf({ key: 'sql', state: 'none-seen', reasonCode: '', reason: '' })), NO_EVENTS_PERIOD);
+  assert.equal(laneStatusLine(laneOf({ key: 'sql', state: 'none-seen' })), NO_EVENTS_PERIOD);
+});
+
 test('no provenance line for a lane with no file (UI-R1-08)', () => {
   assert.equal(showsProvenance(laneOf({ state: 'no-data' })), false);
   for (const state of ['events', 'none-seen', 'incomplete', 'out-of-range', 'clock-unchecked']) assert.equal(showsProvenance(laneOf({ state })), true);
