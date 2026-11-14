@@ -41,6 +41,12 @@ type RecorderOptions struct {
 	Mono func() time.Duration
 	// Ticks drives the loop. Default: a ticker at the configured interval.
 	Ticks <-chan time.Time
+	// Budget throttles the loop when the Blackbox itself costs too much.
+	// Optional: nil keeps the configured interval.
+	Budget *Budget
+	// SelfUsage reads the Blackbox's own CPU percent of one core and working
+	// set. Optional: nil skips the measurement. ok=false is a missing reading.
+	SelfUsage func() (float64, uint64, bool)
 }
 
 // RecorderStatus is a snapshot of the recorder for the status page.
@@ -99,12 +105,22 @@ func (r *Recorder) limits() Limits {
 	return Limits{KeepDays: r.o.Config.KeepDays, MaxBytes: r.o.Config.MaxBytes(), MinFreePercent: float64(r.o.Config.MinFreePercent)}
 }
 
+// effectiveInterval is the tick interval in seconds: the budget's effective
+// interval when there is a budget, else the configured base.
+func effectiveInterval(b *Budget, base int) int {
+	if b != nil {
+		return b.EffectiveInterval()
+	}
+	return base
+}
+
 // Run samples until ctx is done, then closes the run cleanly. The first sample
 // is taken at once.
 func (r *Recorder) Run(ctx context.Context) error {
 	ticks := r.o.Ticks
+	var t *time.Ticker
 	if ticks == nil {
-		t := time.NewTicker(time.Duration(r.o.Config.IntervalSeconds) * time.Second)
+		t = time.NewTicker(time.Duration(r.o.Config.IntervalSeconds) * time.Second)
 		defer t.Stop()
 		ticks = t.C
 	}
@@ -115,6 +131,11 @@ func (r *Recorder) Run(ctx context.Context) error {
 			return r.stop("stopped")
 		case <-ticks:
 			r.Tick(r.now())
+			// Own ticker only: follow the budget by resetting the one ticker,
+			// never a new one. The o.Ticks test path is unchanged.
+			if t != nil && r.o.Budget != nil {
+				t.Reset(time.Duration(effectiveInterval(r.o.Budget, r.o.Config.IntervalSeconds)) * time.Second)
+			}
 		}
 	}
 }
@@ -144,6 +165,13 @@ func (r *Recorder) Tick(now time.Time) {
 	r.mu.Unlock()
 	if paused {
 		return
+	}
+
+	r.feedBudget()
+	if r.o.Budget != nil {
+		// Gaps are judged against the interval this run actually ticks at, so
+		// a widened budget does not fabricate a gap between on-time samples.
+		r.o.Store.SetInterval(effectiveInterval(r.o.Budget, r.o.Config.IntervalSeconds))
 	}
 
 	s, err := r.o.Collector.Collect(now)
@@ -189,6 +217,22 @@ func (r *Recorder) Tick(now time.Time) {
 	r.resumedFlag = false
 	r.lastSample = now
 	r.mu.Unlock()
+}
+
+// feedBudget measures the Blackbox's own cost and advances the budget one
+// cycle, before the collector runs. A missing reading (ok=false) skips the
+// update — never 0-as-fact — and never blocks the tick.
+func (r *Recorder) feedBudget() {
+	b := r.o.Budget
+	if b == nil {
+		return
+	}
+	if r.o.SelfUsage != nil {
+		if cpu, ws, ok := r.o.SelfUsage(); ok {
+			b.SelfUsage(cpu, ws)
+		}
+	}
+	b.Cycle()
 }
 
 // checkClock compares how far the wall clock moved with how far the steady
@@ -276,7 +320,7 @@ func (r *Recorder) Status(now time.Time) RecorderStatus {
 		st.State = StateStopped
 	case r.paused:
 		st.State = StateDiskLow
-	case IsLate(ref, now.UTC(), r.o.Config.IntervalSeconds):
+	case IsLate(ref, now.UTC(), effectiveInterval(r.o.Budget, r.o.Config.IntervalSeconds)):
 		st.State = StateRunningLate
 	default:
 		st.State = StateRunning
