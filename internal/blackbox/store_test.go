@@ -94,6 +94,31 @@ func TestStoreGapInsideARunIsLate(t *testing.T) {
 	}
 }
 
+// TestStoreSetIntervalPersistsEffectiveInterval: SetInterval records the
+// effective interval in the manifest (for offline readers) while leaving the
+// configured base IntervalSeconds unchanged, and it survives a read back.
+func TestStoreSetIntervalPersistsEffectiveInterval(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	s := openT(t, dir, "r1", c) // base 15
+	s.SetInterval(60)
+	m, err := ReadManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.EffectiveIntervalSeconds != 60 {
+		t.Fatalf("effective interval = %d, want 60 persisted", m.EffectiveIntervalSeconds)
+	}
+	if m.IntervalSeconds != 15 {
+		t.Fatalf("base interval = %d, want 15 unchanged", m.IntervalSeconds)
+	}
+	// A non-positive value is ignored and leaves the effective interval as it was.
+	s.SetInterval(0)
+	if got := s.Manifest().EffectiveIntervalSeconds; got != 60 {
+		t.Fatalf("SetInterval(0) changed effective to %d, want 60", got)
+	}
+}
+
 func TestStoreCleanRestartGapAndCrashGap(t *testing.T) {
 	dir := t.TempDir()
 	c := &clock{t: t0}

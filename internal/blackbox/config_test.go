@@ -2,6 +2,7 @@ package blackbox
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -237,5 +238,149 @@ func TestPlainReasonHasNoFileOrFieldNames(t *testing.T) {
 	}
 	if PlainReason(errors.New("other")) != "" || PlainReason(nil) != "" {
 		t.Fatal("PlainReason invents a sentence for other errors")
+	}
+}
+
+// BBX-1-03: owner-selected targets are pool/service names only.
+
+func TestTargetsValid(t *testing.T) {
+	cases := []Target{
+		{Kind: "appPool", Name: "Payroll API"},
+		{Kind: "service", Name: "EmailSvc"},
+	}
+	for _, target := range cases {
+		c := Default()
+		c.Name = "web-01"
+		c.Targets = []Target{target}
+		if err := c.Validate(); err != nil {
+			t.Errorf("target %+v refused: %v", target, err)
+		}
+	}
+}
+
+func TestTargetsBadKind(t *testing.T) {
+	for _, kind := range []string{"process", "AppPool", "Service", ""} {
+		c := Default()
+		c.Name = "web-01"
+		c.Targets = []Target{{Kind: kind, Name: "EmailSvc"}}
+		if err := c.Validate(); !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("kind %q: want ErrInvalidConfig, got %v", kind, err)
+		}
+	}
+}
+
+func TestTargetsBadName(t *testing.T) {
+	bad := []string{
+		``,
+		`back\slash`,
+		`C:pool`,
+		`a/b`, `a*b`, `a?b`, `a"b`, `a<b`, `a>b`, `a|b`,
+		"a\tb", "a\nb", "a\x01b",
+		strings.Repeat("x", 129),
+	}
+	for _, name := range bad {
+		c := Default()
+		c.Name = "web-01"
+		c.Targets = []Target{{Kind: "appPool", Name: name}}
+		if err := c.Validate(); !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("name %q: want ErrInvalidConfig, got %v", name, err)
+		}
+	}
+	good := []string{"Payroll API", "My.App-Pool (v2)", strings.Repeat("x", 128)}
+	for _, name := range good {
+		c := Default()
+		c.Name = "web-01"
+		c.Targets = []Target{{Kind: "appPool", Name: name}}
+		if err := c.Validate(); err != nil {
+			t.Errorf("name %q refused: %v", name, err)
+		}
+	}
+}
+
+func TestTargetsTooMany(t *testing.T) {
+	c := Default()
+	c.Name = "web-01"
+	c.Targets = make([]Target, 33)
+	for i := range c.Targets {
+		c.Targets[i] = Target{Kind: "service", Name: fmt.Sprintf("svc-%d", i)}
+	}
+	if err := c.Validate(); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("33 targets: want ErrInvalidConfig, got %v", err)
+	}
+	c.Targets = c.Targets[:32]
+	if err := c.Validate(); err != nil {
+		t.Fatalf("32 targets refused: %v", err)
+	}
+}
+
+func TestTargetsDuplicate(t *testing.T) {
+	c := Default()
+	c.Name = "web-01"
+	c.Targets = []Target{
+		{Kind: "service", Name: "EmailSvc"},
+		{Kind: "service", Name: "EmailSvc"},
+	}
+	if err := c.Validate(); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("duplicate (kind,name): want ErrInvalidConfig, got %v", err)
+	}
+	// The same name under a different kind is a different pair, not a duplicate.
+	c.Targets = []Target{
+		{Kind: "appPool", Name: "EmailSvc"},
+		{Kind: "service", Name: "EmailSvc"},
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("same name, different kind refused: %v", err)
+	}
+}
+
+func TestTargetsEmptyOK(t *testing.T) {
+	c := Default()
+	c.Name = "web-01"
+	if len(c.Targets) != 0 {
+		t.Fatalf("default targets must be empty: %+v", c.Targets)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseConfig([]byte(`{"name":"a"}`))
+	if err != nil || len(got.Targets) != 0 {
+		t.Fatalf("a file with no targets must stay machine-wide: %+v %v", got, err)
+	}
+}
+
+func TestTargetsRoundTrip(t *testing.T) {
+	c := Default()
+	c.Name = "web-01"
+	c.Targets = []Target{
+		{Kind: "appPool", Name: "Payroll API"},
+		{Kind: "service", Name: "EmailSvc"},
+	}
+	b, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"targets"`) || !strings.Contains(string(b), `"kind": "appPool"`) || !strings.Contains(string(b), `"name": "Payroll API"`) {
+		t.Fatalf("targets missing from marshalled config:\n%s", b)
+	}
+	got, err := ParseConfig(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Targets) != len(c.Targets) {
+		t.Fatalf("round trip lost targets: %+v", got.Targets)
+	}
+	for i := range c.Targets {
+		if got.Targets[i] != c.Targets[i] {
+			t.Fatalf("round trip changed target %d: %+v != %+v", i, got.Targets[i], c.Targets[i])
+		}
+	}
+	// omitempty: a machine-wide config writes no targets key.
+	c.Targets = nil
+	b, err = c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"targets"`) {
+		t.Fatalf("empty targets must be omitted:\n%s", b)
 	}
 }
