@@ -1,9 +1,12 @@
 // ceiling.go is the C8 rights ceiling: the runner calls CheckCeiling at EVERY
 // (re)connect before any sampler runs. Two fixed, allowlisted control queries
-// prove the login is not sysadmin/securityadmin and holds no server permission
-// outside {CONNECT SQL, VIEW ANY DATABASE, VIEW SERVER STATE, VIEW SERVER
-// PERFORMANCE STATE}. Read-only: the app never grants or alters rights.
-// Refusal is the fixed ErrTooManyRights. No goroutines, no tickers.
+// prove the login is in no privileged fixed server role and holds no server
+// permission outside {CONNECT SQL, VIEW ANY DATABASE, VIEW SERVER STATE, VIEW
+// SERVER PERFORMANCE STATE}. Both queries are SERVER-scoped: role membership
+// via IS_SRVROLEMEMBER and permissions via SUSER_ID() (the login's server
+// principal id), never a database principal id. Read-only: the app never grants
+// or alters rights. Refusal is the fixed ErrTooManyRights. No goroutines, no
+// tickers.
 package bbsql
 
 import (
@@ -30,9 +33,25 @@ var ceilingAllowed = map[string]bool{
 	"VIEW SERVER PERFORMANCE STATE": true,
 }
 
-// CheckCeiling refuses any login with more rights than the Blackbox needs.
-// Only the two fixed control statements are sent, through the allowlisted
-// Query path; any failure or unreadable result fails closed.
+// ceilingRoles are the fixed server roles whose membership alone is more than
+// the Blackbox needs, so ANY flag of 1 refuses the login. The names are exactly
+// the output columns of bb:ceiling_role (pinned by TestCeilingRoleColumnsMatchGo);
+// a missing or unreadable flag fails closed, never counted as 0.
+var ceilingRoles = []string{
+	"sysadmin",
+	"securityadmin",
+	"serveradmin",
+	"setupadmin",
+	"processadmin",
+	"dbcreator",
+	"bulkadmin",
+	"diskadmin",
+}
+
+// CheckCeiling refuses any login with more rights than the Blackbox needs:
+// membership in ANY of ceilingRoles, or any server permission outside
+// ceilingAllowed. Only the two fixed control statements are sent, through the
+// allowlisted Query path; any failure or unreadable result fails closed.
 func CheckCeiling(q Queryer) error {
 	ctx := context.Background()
 	roleText, ok := Statement("bb:ceiling_role")
@@ -46,7 +65,9 @@ func CheckCeiling(q Queryer) error {
 	if len(rows) != 1 {
 		return errCeilingUnreadable
 	}
-	for _, role := range []string{"sysadmin", "securityadmin"} {
+	// Every role flag must be present and readable: a missing column (nil) is
+	// unreadable, so dropping a role from the query can never widen the ceiling.
+	for _, role := range ceilingRoles {
 		n, ok := ceilingFlag(rows[0][role])
 		if !ok {
 			return errCeilingUnreadable

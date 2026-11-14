@@ -64,18 +64,38 @@ FROM sys.dm_io_virtual_file_stats(NULL, NULL) /* unravis:bb:filestats */`
 const stmtAG = setPrefix + `SELECT TOP 64 database_id, synchronization_state
 FROM sys.dm_hadr_database_replica_states /* unravis:bb:ag */`
 
-// bb:ceiling_role (BL-124): C8 control query — sysadmin/securityadmin
-// membership flags only (0/1); no login, host or session data.
-const stmtCeilingRole = setPrefix + `SELECT IS_SRVROLEMEMBER(N'sysadmin') AS sysadmin, IS_SRVROLEMEMBER(N'securityadmin') AS securityadmin /* unravis:bb:ceiling_role */`
+// bb:ceiling_role (BL-124): C8 control query — fixed server-role membership
+// flags only (0/1); no login, host or session data. Every role listed here
+// carries more rights than the Blackbox needs, so ANY flag of 1 is a refusal:
+// sysadmin/securityadmin (full control / grant rights) plus serveradmin,
+// setupadmin, processadmin, dbcreator, bulkadmin and diskadmin (server-wide
+// configuration, process, database-creation, bulk-insert and file rights).
+// IS_SRVROLEMEMBER is server-scoped, matching the server-level ceiling.
+const stmtCeilingRole = setPrefix + `SELECT IS_SRVROLEMEMBER(N'sysadmin') AS sysadmin,
+  IS_SRVROLEMEMBER(N'securityadmin') AS securityadmin,
+  IS_SRVROLEMEMBER(N'serveradmin') AS serveradmin,
+  IS_SRVROLEMEMBER(N'setupadmin') AS setupadmin,
+  IS_SRVROLEMEMBER(N'processadmin') AS processadmin,
+  IS_SRVROLEMEMBER(N'dbcreator') AS dbcreator,
+  IS_SRVROLEMEMBER(N'bulkadmin') AS bulkadmin,
+  IS_SRVROLEMEMBER(N'diskadmin') AS diskadmin /* unravis:bb:ceiling_role */`
 
 // bb:ceiling_perms (BL-124): C8 control query — returns ONLY permissions
 // outside the Blackbox ceiling, so any returned row is a refusal. The NOT IN
 // filter keeps the check fail-closed under the C6 row cap: a full permission
 // list could be truncated before an extra right is seen. TOP 2 mirrors the
 // reader cap; the Go subset assert in CheckCeiling is the second gate.
+//
+// The grantee MUST be resolved with SUSER_ID(), the current session's SERVER
+// principal id (sys.server_principals), because sys.server_permissions.
+// grantee_principal_id is a server principal id. DATABASE_PRINCIPAL_ID()
+// returns a DATABASE principal id instead: with a login-only grant (no user in
+// the database, so the session runs as guest = database principal 2) it would
+// read the public server role's row (server principal 2) and a GRANT CONTROL
+// SERVER to the actual login would be invisible — a C8 bypass.
 const stmtCeilingPerms = setPrefix + `SELECT TOP 2 permission_name
 FROM sys.server_permissions
-WHERE grantee_principal_id = DATABASE_PRINCIPAL_ID()
+WHERE grantee_principal_id = SUSER_ID()
   AND permission_name NOT IN (N'CONNECT SQL', N'VIEW ANY DATABASE', N'VIEW SERVER STATE', N'VIEW SERVER PERFORMANCE STATE') /* unravis:bb:ceiling_perms */`
 
 // Statements is the complete allowlist and the single source of truth for what

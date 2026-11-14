@@ -28,11 +28,28 @@ func (f *ceilingFake) Query(_ context.Context, text string) ([]Row, error) {
 	return nil, errors.New("ceilingFake: unexpected query text")
 }
 
+// ceilingRoleNames pins the fixed server roles the C8 ceiling must refuse. It
+// is written out here (not derived from ceilingRoles) so dropping a role from
+// the Go check or from bb:ceiling_role fails a test.
+var ceilingRoleNames = []string{
+	"sysadmin", "securityadmin", "serveradmin", "setupadmin",
+	"processadmin", "dbcreator", "bulkadmin", "diskadmin",
+}
+
+// noRoles is the role row of a login in no privileged fixed server role.
+func noRoles() Row {
+	r := Row{}
+	for _, name := range ceilingRoleNames {
+		r[name] = int64(0)
+	}
+	return r
+}
+
 // minimalCeiling models the granted virtual account: no privileged role, only
 // CONNECT SQL and VIEW SERVER PERFORMANCE STATE.
 func minimalCeiling() *ceilingFake {
 	return &ceilingFake{
-		role:  []Row{{"sysadmin": int64(0), "securityadmin": int64(0)}},
+		role:  []Row{noRoles()},
 		perms: []Row{{"permission_name": "CONNECT SQL"}, {"permission_name": "VIEW SERVER PERFORMANCE STATE"}},
 	}
 }
@@ -52,7 +69,7 @@ func assertTooManyRights(t *testing.T, err error) {
 }
 
 // TestCeilingAllowsMinimal: exactly {CONNECT SQL, VIEW SERVER PERFORMANCE
-// STATE}, not sysadmin -> ok, with only the two allowlisted control queries.
+// STATE}, no privileged role -> ok, with only the two allowlisted control queries.
 func TestCeilingAllowsMinimal(t *testing.T) {
 	f := minimalCeiling()
 	if err := CheckCeiling(f); err != nil {
@@ -73,16 +90,124 @@ func TestCeilingAllowsMinimal(t *testing.T) {
 	}
 }
 
+// roleWith is noRoles with one membership flag set.
+func roleWith(name string, flag int64) Row {
+	r := noRoles()
+	r[name] = flag
+	return r
+}
+
 func TestCeilingRefusesSysadmin(t *testing.T) {
 	f := minimalCeiling()
-	f.role = []Row{{"sysadmin": int64(1), "securityadmin": int64(0)}}
+	f.role = []Row{roleWith("sysadmin", 1)}
 	assertTooManyRights(t, CheckCeiling(f))
 }
 
 func TestCeilingRefusesSecurityadmin(t *testing.T) {
 	f := minimalCeiling()
-	f.role = []Row{{"sysadmin": int64(0), "securityadmin": int64(1)}}
+	f.role = []Row{roleWith("securityadmin", 1)}
 	assertTooManyRights(t, CheckCeiling(f))
+}
+
+// TestCeilingRefusesEveryPrivilegedRole: each fixed server role that carries
+// more rights than the Blackbox needs refuses the login on its own, even with
+// an in-ceiling permission set. serveradmin/setupadmin/processadmin/dbcreator/
+// bulkadmin/diskadmin are not covered by the permission query (their rights
+// come from role membership, not a direct grant), so the role flags are the
+// only gate for them.
+func TestCeilingRefusesEveryPrivilegedRole(t *testing.T) {
+	for _, role := range ceilingRoleNames {
+		t.Run(role, func(t *testing.T) {
+			f := minimalCeiling()
+			f.perms = nil // nothing outside the ceiling was granted directly
+			f.role = []Row{roleWith(role, 1)}
+			assertTooManyRights(t, CheckCeiling(f))
+			// The refusal must come from the role flag alone: no permission row
+			// was returned, so only the membership check can have refused.
+			if len(f.sent) != 1 {
+				t.Fatalf("want the role query only, got %d sends", len(f.sent))
+			}
+			// A non-zero flag other than 1 is still a refusal (never "0 means ok"
+			// by equality on a specific value).
+			other := minimalCeiling()
+			other.perms = nil
+			other.role = []Row{roleWith(role, 2)}
+			assertTooManyRights(t, CheckCeiling(other))
+		})
+	}
+}
+
+// TestCeilingAllowsOnlyAllowedPerms: exactly the four allowed permissions and
+// no privileged role membership is the widest login the Blackbox accepts.
+func TestCeilingAllowsOnlyAllowedPerms(t *testing.T) {
+	f := minimalCeiling()
+	f.perms = []Row{
+		{"permission_name": "CONNECT SQL"},
+		{"permission_name": "VIEW ANY DATABASE"},
+		{"permission_name": "VIEW SERVER STATE"},
+		{"permission_name": "VIEW SERVER PERFORMANCE STATE"},
+	}
+	if err := CheckCeiling(f); err != nil {
+		t.Fatalf("the four allowed permissions with no roles were refused: %v", err)
+	}
+	if len(f.sent) != 2 {
+		t.Fatalf("want 2 control queries per connect, got %d", len(f.sent))
+	}
+}
+
+// TestCeilingPermsUsesServerPrincipal pins the C8 bypass fix: sys.server_permissions.
+// grantee_principal_id is a SERVER principal id (sys.server_principals), so the
+// predicate must resolve the current login with SUSER_ID(). DATABASE_PRINCIPAL_ID()
+// returns a DATABASE principal id: with the C14 grant (login only, no user in the
+// database, so the session runs as guest = database principal 2) it matched the
+// public server role (server principal 2) instead of the login, hiding a
+// GRANT CONTROL SERVER to that login and letting an over-privileged login pass.
+func TestCeilingPermsUsesServerPrincipal(t *testing.T) {
+	perms := Statements["bb:ceiling_perms"]
+	if !strings.Contains(perms, "WHERE grantee_principal_id = SUSER_ID()") {
+		t.Errorf("bb:ceiling_perms must filter on the login's SERVER principal id via SUSER_ID(): %q", perms)
+	}
+	if strings.Contains(strings.ToUpper(perms), "DATABASE_PRINCIPAL_ID") {
+		t.Error("bb:ceiling_perms must not use DATABASE_PRINCIPAL_ID(): a database principal id is not a server principal id (C8 bypass)")
+	}
+	// The role query is server-scoped too, and stays one FROM-less SELECT.
+	role := Statements["bb:ceiling_role"]
+	if !strings.Contains(role, "IS_SRVROLEMEMBER(") {
+		t.Error("bb:ceiling_role must use server-scoped IS_SRVROLEMEMBER")
+	}
+	if strings.Contains(strings.ToUpper(role), "IS_MEMBER(") {
+		t.Error("bb:ceiling_role must not use database-scoped IS_MEMBER")
+	}
+}
+
+// TestCeilingRoleColumnsMatchGo proves the SQL and the Go check cover the same
+// eight roles: every selected column is asserted, and every asserted role is
+// selected. A role added to one side only is a silent ceiling gap.
+func TestCeilingRoleColumnsMatchGo(t *testing.T) {
+	cols := outputColumns(t, Statements["bb:ceiling_role"])
+	if len(cols) != len(ceilingRoleNames) {
+		t.Fatalf("bb:ceiling_role selects %d columns, want %d", len(cols), len(ceilingRoleNames))
+	}
+	selected := map[string]bool{}
+	for _, c := range cols {
+		selected[strings.ToLower(c)] = true
+	}
+	for _, role := range ceilingRoleNames {
+		if !selected[role] {
+			t.Errorf("bb:ceiling_role does not select role %q", role)
+		}
+		if !strings.Contains(Statements["bb:ceiling_role"], "IS_SRVROLEMEMBER(N'"+role+"') AS "+role) {
+			t.Errorf("bb:ceiling_role missing IS_SRVROLEMEMBER flag for %q", role)
+		}
+	}
+	if len(ceilingRoles) != len(ceilingRoleNames) {
+		t.Fatalf("CheckCeiling asserts %d roles, want %d", len(ceilingRoles), len(ceilingRoleNames))
+	}
+	for i, role := range ceilingRoleNames {
+		if ceilingRoles[i] != role {
+			t.Errorf("ceilingRoles[%d] = %q, want %q", i, ceilingRoles[i], role)
+		}
+	}
 }
 
 func TestCeilingRefusesControlServer(t *testing.T) {
@@ -102,18 +227,41 @@ func TestCeilingRefusesExtraPermission(t *testing.T) {
 	assertTooManyRights(t, CheckCeiling(mixed))
 }
 
+// ceilingFailCase is one unreadable-result mutation for TestCeilingFailsClosed.
+type ceilingFailCase struct {
+	name string
+	mut  func(*ceilingFake)
+}
+
 // TestCeilingFailsClosed: unreadable or failed control results never pass and
 // never surface driver text.
 func TestCeilingFailsClosed(t *testing.T) {
-	cases := []struct {
-		name string
-		mut  func(*ceilingFake)
-	}{
+	cases := []ceilingFailCase{
 		{"role-query-error", func(f *ceilingFake) { f.roleErr = errors.New("driver: reset by peer SECRET") }},
 		{"perms-query-error", func(f *ceilingFake) { f.permsErr = errors.New("driver: reset by peer SECRET") }},
 		{"no-role-row", func(f *ceilingFake) { f.role = nil }},
-		{"null-role-flag", func(f *ceilingFake) { f.role = []Row{{"sysadmin": nil, "securityadmin": int64(0)}} }},
+		{"null-role-flag", func(f *ceilingFake) {
+			r := noRoles()
+			r["sysadmin"] = nil
+			f.role = []Row{r}
+		}},
 		{"bad-permission-value", func(f *ceilingFake) { f.perms = []Row{{"permission_name": nil}} }},
+	}
+	// A NULL or absent flag for ANY of the eight roles is unreadable, never 0:
+	// a role dropped from the result cannot widen the ceiling.
+	for _, role := range ceilingRoleNames {
+		cases = append(cases,
+			ceilingFailCase{"null-flag-" + role, func(f *ceilingFake) {
+				r := noRoles()
+				r[role] = nil
+				f.role = []Row{r}
+			}},
+			ceilingFailCase{"missing-column-" + role, func(f *ceilingFake) {
+				r := noRoles()
+				delete(r, role)
+				f.role = []Row{r}
+			}},
+		)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -136,7 +284,9 @@ func TestCeilingFailsClosed(t *testing.T) {
 
 // TestCeilingQueriesLintClean: both control statements are allowlisted and
 // pass the C2 lint; the perms query filters to rights OUTSIDE the ceiling so
-// the C6 row cap can never hide an extra right.
+// the C6 row cap can never hide an extra right, and resolves the grantee with
+// the SERVER principal id (SUSER_ID) so the C14 guest session cannot hide a
+// grant made to the login.
 func TestCeilingQueriesLintClean(t *testing.T) {
 	for _, id := range []string{"bb:ceiling_role", "bb:ceiling_perms"} {
 		text, ok := Statement(id)
@@ -157,12 +307,33 @@ func TestCeilingQueriesLintClean(t *testing.T) {
 		}
 	}
 	perms := Statements["bb:ceiling_perms"]
+	if !strings.Contains(perms, "SELECT TOP 2 permission_name") {
+		t.Error("bb:ceiling_perms must keep the TOP 2 reader-cap shape")
+	}
+	if !strings.Contains(perms, "FROM sys.server_permissions") {
+		t.Error("bb:ceiling_perms must read sys.server_permissions")
+	}
+	if !strings.Contains(perms, "WHERE grantee_principal_id = SUSER_ID()") {
+		t.Error("bb:ceiling_perms must match the grantee on SUSER_ID() (server principal id)")
+	}
+	if strings.Contains(strings.ToUpper(perms), "DATABASE_PRINCIPAL_ID") {
+		t.Error("bb:ceiling_perms must not match the grantee on a database principal id")
+	}
 	if !strings.Contains(perms, "NOT IN") {
 		t.Error("bb:ceiling_perms must filter to permissions outside the ceiling")
 	}
 	for _, lit := range []string{"N'CONNECT SQL'", "N'VIEW ANY DATABASE'", "N'VIEW SERVER STATE'", "N'VIEW SERVER PERFORMANCE STATE'"} {
 		if !strings.Contains(perms, lit) {
 			t.Errorf("bb:ceiling_perms missing ceiling literal %s", lit)
+		}
+	}
+	role := Statements["bb:ceiling_role"]
+	if strings.Contains(strings.ToUpper(role), "FROM") {
+		t.Error("bb:ceiling_role must stay one FROM-less flag SELECT")
+	}
+	for _, name := range ceilingRoleNames {
+		if !strings.Contains(role, "IS_SRVROLEMEMBER(N'"+name+"') AS "+name) {
+			t.Errorf("bb:ceiling_role missing membership flag for %s", name)
 		}
 	}
 }
