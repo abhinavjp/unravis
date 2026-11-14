@@ -472,25 +472,30 @@ func TestApiSeenExistingBucketsReaderNotCalled(t *testing.T) {
 
 // ---- handler: a read error is fail-closed and mapped ----
 
-func TestApiSeenReaderErrorMapsToHTTPStatus(t *testing.T) {
+// DATA-05: a failing api-seen read degrades to a warning instead of aborting the
+// request. The SQL lane keeps its unchanged fallback state and the other lanes
+// survive; the multi-lane survival proof is in tracing_apiseen_degrade_test.go.
+func TestApiSeenReaderErrorDegradesToWarning(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		err  error
-		code int
 	}{
-		{"busy", audit.ErrBusy, http.StatusTooManyRequests},
-		{"limit", audit.ErrLimit, http.StatusRequestEntityTooLarge},
-		{"deadline", context.DeadlineExceeded, http.StatusGatewayTimeout},
+		{"busy", audit.ErrBusy},
+		{"limit", audit.ErrLimit},
+		{"deadline", context.DeadlineExceeded},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &apiSeenFakeRepo{err: tc.err}
 			e, id := apiSeenEnv(t, f)
 			res := e.json(http.MethodPost, tracingPath(id), tracingWindowBodyFor("2026-03-10T10:00:00Z", "2026-03-10T11:00:00Z"))
-			if res.Code != tc.code {
-				t.Fatalf("%s = %d %s, want %d", tc.name, res.Code, res.Body, tc.code)
+			if res.Code != http.StatusOK {
+				t.Fatalf("%s = %d %s, want 200 (degrade, not abort)", tc.name, res.Code, res.Body)
 			}
 			if f.calls != 1 {
 				t.Fatalf("calls %d, want 1", f.calls)
+			}
+			if !strings.Contains(res.Body.String(), "could not be read for this window") {
+				t.Fatalf("%s: missing degrade warning: %s", tc.name, res.Body)
 			}
 		})
 	}
