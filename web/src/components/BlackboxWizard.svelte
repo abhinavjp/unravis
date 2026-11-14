@@ -189,7 +189,7 @@
       <button type="button" class="secondary-button" onclick={() => go(1)}>{T.backStep}</button>
     </div>
   {:else if part === 3}
-    <SettingsFields bind:settings bind:logPathsText problem={shownField} />
+    <SettingsFields bind:settings bind:logPathsText problem={shownField} targetMode={where === 'pc' ? 'pc' : 'manual'} />
     {#if problem}<div class="inline-error" role="alert">{problem}</div>{/if}
     <div class="bb-actions">
       <button type="button" class="primary-button" onclick={toReview}>{T.nextReview}</button>

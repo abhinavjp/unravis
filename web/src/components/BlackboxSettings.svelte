@@ -1,17 +1,65 @@
 <script lang="ts">
-  import { INTERVALS, listensOnAll, type Settings, type SettingsProblem } from '../lib/blackbox';
+  import { onMount } from 'svelte';
+  import { INTERVALS, blackboxApi, listensOnAll, toggleTarget, type Settings, type SettingsProblem, type TargetInfo, type TargetKind, type TargetRef } from '../lib/blackbox';
   import { BB_TEXT as T } from '../lib/copy/blackboxCopy';
 
   // The settings fields of a Blackbox, shared by the Place wizard (part 3) and Apply settings on this PC.
   // `problem` is the field that is wrong, if any: its message shows under it and the field points at the message (D-B-50).
-  let { settings = $bindable(), logPathsText = $bindable(), idPrefix = 'bb', problem = null }: { settings: Settings; logPathsText: string; idPrefix?: string; problem?: SettingsProblem | null } = $props();
+  // `targetMode` is 'pc' when the Blackbox runs on this PC (the wizard's this-PC choice and Apply settings):
+  // the detected app pools and services are read once on mount. 'manual' (pack/remote) never fetches: names are typed.
+  let { settings = $bindable(), logPathsText = $bindable(), idPrefix = 'bb', problem = null, targetMode = 'pc' }: { settings: Settings; logPathsText: string; idPrefix?: string; problem?: SettingsProblem | null; targetMode?: 'pc' | 'manual' } = $props();
   const warnAll = $derived(listensOnAll(settings.bind));
   const invalid = (key: SettingsProblem) => (problem === key ? 'true' : undefined);
   const described = (key: SettingsProblem, help: string) => idPrefix + '-' + help + (problem === key ? ' ' + idPrefix + '-' + key + '-error' : '');
+
+  // Targets (BBX-1-12): only kind+name is ever stored. A target that is not running says "not running", never 0.
+  let appPools = $state<TargetInfo[]>([]);
+  let services = $state<TargetInfo[]>([]);
+  let detected = $state(false);
+  let manualKind = $state<TargetKind>('appPool');
+  let manualName = $state('');
+
+  onMount(() => {
+    if (targetMode !== 'pc') return;
+    let alive = true;
+    blackboxApi.targets().then((answer) => {
+      if (!alive) return;
+      appPools = answer.appPools;
+      services = answer.services;
+      detected = answer.detected;
+    }).catch(() => { /* nothing could be read: the manual row below is used instead */ });
+    return () => { alive = false; };
+  });
+
+  const picked = $derived(settings.targets ?? []);
+  // Detected names are offered as checkboxes; with nothing detected (or pack/remote) names are typed instead.
+  const showLists = $derived(targetMode === 'pc' && detected && (appPools.length > 0 || services.length > 0));
+  const extraPicked = $derived(picked.filter((t) => !(t.kind === 'appPool' ? appPools : services).some((d) => d.name === t.name)));
+  const isSelected = (kind: TargetKind, name: string) => picked.some((t) => t.kind === kind && t.name === name);
+  function pick(kind: TargetKind, name: string) { settings.targets = toggleTarget(picked, kind, name); }
+  function addTarget() {
+    const name = manualName.trim();
+    if (!name) return;
+    if (!isSelected(manualKind, name)) settings.targets = toggleTarget(picked, manualKind, name);
+    manualName = '';
+  }
+  function removeTarget(kind: TargetKind, name: string) { settings.targets = toggleTarget(picked, kind, name); }
 </script>
 
 {#snippet fieldError(key: SettingsProblem)}
   {#if problem === key}<p class="inline-error" id="{idPrefix}-{key}-error" role="alert">{T.settingProblems[key]}</p>{/if}
+{/snippet}
+
+{#snippet targetChips(list: TargetRef[])}
+  {#if list.length > 0}
+    <ul class="bb-chips">
+      {#each list as t (t.kind + ':' + t.name)}
+        <li class="bb-chip"><span>{t.kind === 'appPool' ? T.targetsKindAppPool : T.targetsKindService}: {t.name}</span>
+          <button type="button" class="bb-chip-x" aria-label="{T.targetsRemove}: {t.name}" onclick={() => removeTarget(t.kind, t.name)}>×</button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
 {/snippet}
 
 <section class="bb-block" aria-label={T.settingsHeading}>
@@ -29,6 +77,38 @@
     <label class="bb-check"><input type="checkbox" bind:checked={settings.record.copyLogsOnSnapshot} /><span>{T.recordCopyLogs}</span></label>
     <p class="bb-note">{T.probeNote}</p>
   </fieldset>
+  <h4>{T.targetsHeading}</h4>
+  <p class="bb-note">{T.targetsHelp}</p>
+  {#if showLists}
+    <fieldset class="bb-checks">
+      <legend>{T.targetsAppPools}</legend>
+      {#each appPools as t (t.name)}
+        <label class="bb-check"><input type="checkbox" checked={isSelected('appPool', t.name)} onchange={() => pick('appPool', t.name)} /><span>{t.name}{#if !t.running} <span class="bb-note">{T.targetsNotRunning}</span>{/if}</span></label>
+      {/each}
+    </fieldset>
+    <fieldset class="bb-checks">
+      <legend>{T.targetsServices}</legend>
+      {#each services as t (t.name)}
+        <label class="bb-check"><input type="checkbox" checked={isSelected('service', t.name)} onchange={() => pick('service', t.name)} /><span>{t.name}{#if !t.running} <span class="bb-note">{T.targetsNotRunning}</span>{/if}</span></label>
+      {/each}
+    </fieldset>
+    {@render targetChips(extraPicked)}
+  {:else}
+    <p class="bb-note">{T.targetsManualNote}</p>
+    <div class="bb-target-add">
+      <label class="bb-field"><span>{T.targetsKindLabel}</span>
+        <select bind:value={manualKind}>
+          <option value="appPool">{T.targetsKindAppPool}</option>
+          <option value="service">{T.targetsKindService}</option>
+        </select>
+      </label>
+      <label class="bb-field"><span>{T.targetsNameLabel}</span>
+        <input type="text" bind:value={manualName} autocomplete="off" spellcheck="false" onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTarget(); } }} />
+      </label>
+      <button type="button" class="secondary-button" disabled={!manualName.trim()} onclick={addTarget}>{T.targetsAdd}</button>
+    </div>
+    {@render targetChips(picked)}
+  {/if}
   <h4>{T.keepHeading}</h4>
   <label class="bb-field"><span>{T.keepDays}</span><input id="{idPrefix}-f-keep" type="number" min="1" max="365" step="1" bind:value={settings.keepDays} aria-invalid={invalid('keep')} aria-describedby={described('keep', 'keep-help')} /></label>
   <p class="bb-note" id="{idPrefix}-keep-help">{T.keepDaysHelp}</p>
@@ -67,4 +147,10 @@
   .bb-checks legend { padding: 0; font-size: 13px; font-weight: 500; }
   .bb-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }
   .bb-check input { flex: 0 0 auto; margin: 3px 0 0; }
+  .bb-target-add { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-2); }
+  .bb-target-add .bb-field { flex: 1 1 160px; max-width: 240px; }
+  .bb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+  .bb-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; font-size: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); overflow-wrap: anywhere; }
+  .bb-chip-x { border: 0; padding: 0 2px; background: none; color: var(--text-2); font-size: 14px; line-height: 1; cursor: pointer; }
+  .bb-chip-x:hover { color: var(--text); }
 </style>

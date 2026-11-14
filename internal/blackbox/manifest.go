@@ -79,16 +79,22 @@ type Manifest struct {
 	Version         string      `json:"version"`
 	Host            string      `json:"host"`
 	IntervalSeconds int         `json:"intervalSeconds"`
-	Created         time.Time   `json:"created"`
-	Updated         time.Time   `json:"updated"`
-	State           string      `json:"state"`
-	FirstSample     *time.Time  `json:"firstSample,omitempty"`
-	LastSample      *time.Time  `json:"lastSample,omitempty"`
-	Runs            []RunEntry  `json:"runs"`
-	Files           []FileEntry `json:"files"`
-	Gaps            []Gap       `json:"gaps"`
-	Events          []Event     `json:"events"`
-	Probe           Probe       `json:"probe"`
+	// EffectiveIntervalSeconds is the interval the recorder is actually ticking
+	// at after the light budget widens or steps back (0 when never set, e.g. an
+	// older manifest or a run without a budget). IntervalSeconds stays the
+	// configured base; readers judge lateness against the effective interval
+	// when it is present so a widened cadence is not mistaken for running late.
+	EffectiveIntervalSeconds int        `json:"effectiveIntervalSeconds,omitempty"`
+	Created                  time.Time  `json:"created"`
+	Updated                  time.Time  `json:"updated"`
+	State                    string     `json:"state"`
+	FirstSample              *time.Time `json:"firstSample,omitempty"`
+	LastSample               *time.Time `json:"lastSample,omitempty"`
+	Runs                     []RunEntry `json:"runs"`
+	Files                    []FileEntry `json:"files"`
+	Gaps                     []Gap      `json:"gaps"`
+	Events                   []Event    `json:"events"`
+	Probe                    Probe      `json:"probe"`
 }
 
 // ErrNewerFormat is returned when the manifest was written by a newer recorder.

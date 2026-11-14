@@ -99,7 +99,7 @@ func qsFileBuckets(events []evidence.Event, axis tracingAxis) (buckets map[int]*
 // used for these totals. Like readLaneEvents, it filters by importer name, not
 // import id: the store's event type cannot distinguish files with that name.
 func tracingQSFileLane(ctx context.Context, c casestore.Case, axis tracingAxis, sel tracingSelection, lane tracingLane) (tracingLane, error) {
-	if lane.Key != calltrace.LaneSQL || lane.Disabled != "" || lane.State == calltrace.StateClockUnchecked || lane.ReasonCode == tracingReasonHeldSQL || lane.ReasonCode == tracingReasonLayeredSQL {
+	if lane.Key != calltrace.LaneSQL || lane.Disabled != "" || lane.State == calltrace.StateClockUnchecked || lane.ReasonCode == tracingReasonHeldSQL || lane.ReasonCode == tracingReasonLayeredSQL || lane.ReasonCode == tracingReasonBlackbox {
 		return lane, nil
 	}
 	picked := map[int64]bool{}

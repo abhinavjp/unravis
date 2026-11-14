@@ -13,8 +13,13 @@ const (
 	// LateIntervals: more than this many intervals without a sample is Running
 	// late (decision A36). The same count makes a gap in the recording.
 	LateIntervals = 3
-	// TopProcesses is how many processes each sample lists.
-	TopProcesses = 20
+	// TopCPU and TopMem are how many processes each sample lists: the busiest
+	// by CPU change and the largest by working set, merged without duplicates.
+	// Selected targets are listed on top of that, even when idle.
+	TopCPU = 10
+	TopMem = 5
+	// maxProcRows bounds the merged top lists (selected targets may add rows).
+	maxProcRows = TopCPU + TopMem
 	// MaxLogEntries bounds the logs catalogue in one sample.
 	MaxLogEntries = 200
 )
@@ -37,9 +42,24 @@ type Sample struct {
 	NetOut      *uint64  `json:"netOut,omitempty"`      // cumulative bytes sent
 	DiskFreePct *float64 `json:"diskFreePct,omitempty"` // free space of the recordings volume
 
-	Procs   []ProcRow  `json:"procs,omitempty"`
-	Logs    []LogEntry `json:"logs,omitempty"` // names, sizes and times only
-	Missing []string   `json:"missing,omitempty"`
+	Procs []ProcRow  `json:"procs,omitempty"`
+	Logs  []LogEntry `json:"logs,omitempty"` // names, sizes and times only
+
+	HTTP        *HTTPGroup        `json:"http,omitempty"`
+	IIS         *IISGroup         `json:"iis,omitempty"`
+	DiskCPU     *DiskCPUGroup     `json:"diskCpu,omitempty"`
+	SQLHost     *SQLHostGroup     `json:"sqlHost,omitempty"`
+	CLR         *CLRGroup         `json:"clr,omitempty"`
+	Proc10      *Proc10Group      `json:"proc10,omitempty"`
+	ProcIO      *ProcIOGroup      `json:"procIO,omitempty"`
+	Events      *EventsGroup      `json:"events,omitempty"`
+	TCP         *TCPGroup         `json:"tcp,omitempty"`
+	ASPNET      *ASPNETGroup      `json:"aspnet,omitempty"`
+	MemPressure *MemPressureGroup `json:"memPressure,omitempty"`
+	VM          *VMGroup          `json:"vm,omitempty"`
+	Dumps       *DumpsGroup       `json:"dumps,omitempty"`
+
+	Missing []string `json:"missing,omitempty"`
 }
 
 // ProcRow is one process in a sample. CPUSec is cumulative so a reader can

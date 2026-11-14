@@ -1,0 +1,208 @@
+package blackbox
+
+import "strings"
+
+// ProcInfo is one process in the inventory. Identity is (PID, Start): a PID
+// alone is not identity because Windows reuses PIDs after a recycle.
+type ProcInfo struct {
+	PID       uint32
+	ParentPID uint32
+	Start     int64    // unix creation time; 0 when it could not be read
+	Name      string   // image base name only; no command line, no environment
+	Modules   []string // module base names, filled only on a fresh module read
+	Runtime   uint8    // 0 unknown, 1 .NET Framework (clr.dll), 2 .NET 10 (coreclr/hostfxr)
+}
+
+// procKey is process identity: PID plus creation time, never PID alone.
+type procKey struct {
+	pid   uint32
+	start int64
+}
+
+// classifyRuntime detects the runtime from loaded module base names only —
+// never from the process name or config. clr.dll => 1 (.NET Framework);
+// coreclr.dll or hostfxr.dll => 2 (.NET 10); both => 2; neither => 0.
+func classifyRuntime(modules []string) uint8 {
+	var framework, core bool
+	for _, m := range modules {
+		switch strings.ToLower(moduleBase(m)) {
+		case "clr.dll":
+			framework = true
+		case "coreclr.dll", "hostfxr.dll":
+			core = true
+		}
+	}
+	switch {
+	case core:
+		return 2
+	case framework:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// moduleBase reduces a module path to its base name, handling both Windows
+// back-slashes and forward slashes so it is correct on every platform.
+func moduleBase(p string) string {
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}
+
+// processSetChanged reports whether the set of (PID, start) keys differs.
+// Order-independent; a recycled PID (same PID, new start) is a change.
+func processSetChanged(prev, cur []procKey) bool {
+	if len(prev) != len(cur) {
+		return true
+	}
+	counts := make(map[procKey]int, len(prev))
+	for _, k := range prev {
+		counts[k]++
+	}
+	for _, k := range cur {
+		counts[k]--
+		if counts[k] < 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// dotnetChildren returns the out-of-process .NET 10 children (runtime 2) of
+// parentPID — e.g. a .NET 10 app hosted out-of-process under a w3wp parent.
+func dotnetChildren(procs []ProcInfo, parentPID uint32) []ProcInfo {
+	var out []ProcInfo
+	for _, p := range procs {
+		if p.ParentPID == parentPID && p.Runtime == 2 {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// Resolver builds the process inventory and detects runtimes. Modules are read
+// only when the process set changes, and only for keys not already cached —
+// except keys with Start==0 (creation time unreadable), which are never cached
+// and re-read on every Inventory. The snapshot and module loader are injected
+// so tests need no Windows.
+type Resolver struct {
+	snapshotFn    func() ([]ProcInfo, error)
+	loadModulesFn func(pid uint32) ([]string, error)
+	instancesFn   func() ([]string, error)  // W3SVC_W3WP counter instances (BBX-1-11)
+	servicesFn    func() ([]svcProc, error) // running services with PIDs (BBX-1-11)
+
+	last   []procKey
+	cached map[procKey]uint8
+
+	mapLastInst []procKey // process set at the last W3SVC_W3WP enumeration attempt
+	mapLastSvc  []procKey // process set at the last service enumeration attempt
+	mapInst     []string  // cached W3SVC_W3WP instances (last good list)
+	mapSvc      []svcProc // cached running services (last good list)
+
+	changedLast []procKey // process set at the last ProcessSetChanged call
+}
+
+// NewResolver wires the platform process snapshot and module loader.
+func NewResolver() *Resolver {
+	return &Resolver{
+		snapshotFn:    snapshotProcesses,
+		loadModulesFn: loadModules,
+		instancesFn:   enumW3WPInstances,
+		servicesFn:    enumServiceProcs,
+		cached:        make(map[procKey]uint8),
+	}
+}
+
+// Inventory snapshots the processes and fills Runtime. When the process set is
+// unchanged it reuses cached runtimes and reads no modules for keys with a real
+// Start. Keys with Start==0 (creation time unreadable) are never cached — their
+// identity would degenerate to PID alone, so modules are re-read on every
+// Inventory and a recycled, still-unopenable PID cannot inherit a stale
+// runtime. When the set changes it loads modules only for real-Start keys not
+// cached (a recycled PID has a new start, so a new key). An access-denied
+// module read leaves Runtime 0 (unknown), never a guess, and is not cached so
+// a later set change retries it.
+func (r *Resolver) Inventory() ([]ProcInfo, error) {
+	procs, err := r.snapshotFn()
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]procKey, len(procs))
+	for i, p := range procs {
+		keys[i] = procKey{pid: p.PID, start: p.Start}
+	}
+
+	if !processSetChanged(r.last, keys) {
+		for i := range procs {
+			if keys[i].start == 0 {
+				// Never cached: re-read modules on every Inventory.
+				r.detectRuntime(&procs[i])
+				continue
+			}
+			procs[i].Runtime = r.cached[keys[i]]
+		}
+		return procs, nil
+	}
+
+	next := make(map[procKey]uint8, len(keys))
+	for i := range procs {
+		k := keys[i]
+		if k.start == 0 {
+			// Creation time unreadable: (pid, 0) would make identity PID
+			// alone. Treat as always changed — re-read modules and never
+			// store this key in the cache.
+			r.detectRuntime(&procs[i])
+			continue
+		}
+		rt, ok := r.cached[k]
+		if !ok {
+			mods, err := r.loadModulesFn(procs[i].PID)
+			if err != nil {
+				procs[i].Runtime = 0 // unknown, never guess; uncached -> retry on next change
+				continue
+			}
+			procs[i].Modules = mods
+			rt = classifyRuntime(mods)
+		}
+		next[k] = rt
+		procs[i].Runtime = rt
+	}
+	r.last = keys
+	r.cached = next
+	return procs, nil
+}
+
+// ProcessSetChanged reports whether the process set changed since the last
+// call: one snapshot, compared as (PID, Start) keys against the previous
+// call's keys (the first call reports true). No modules are read — change
+// detection needs identity only. A snapshot error reports false (no evidence
+// of change, never a guess) and keeps the baseline so the next call retries.
+// RunHost asks once per collection cycle and shares the verdict with every
+// group, so all wildcard groups re-expand together, never per tick.
+func (r *Resolver) ProcessSetChanged() bool {
+	procs, err := r.snapshotFn()
+	if err != nil {
+		return false
+	}
+	keys := make([]procKey, len(procs))
+	for i, p := range procs {
+		keys[i] = procKey{pid: p.PID, start: p.Start}
+	}
+	changed := processSetChanged(r.changedLast, keys)
+	r.changedLast = keys
+	return changed
+}
+
+// detectRuntime reads one process's modules and fills Modules/Runtime. A failed
+// read leaves Runtime 0 (unknown, never a guess). Used for Start==0 keys, which
+// are never cached.
+func (r *Resolver) detectRuntime(p *ProcInfo) {
+	mods, err := r.loadModulesFn(p.PID)
+	if err != nil {
+		return
+	}
+	p.Modules = mods
+	p.Runtime = classifyRuntime(mods)
+}

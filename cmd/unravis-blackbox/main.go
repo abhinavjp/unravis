@@ -45,6 +45,11 @@ Commands that change the service (run as administrator):
   apply       Read blackbox.json again and restart the service.
   remove      Stop and remove the service. The recordings stay.
               --delete-recordings --confirm-name <name>  also deletes them.
+  install-sql Install and start the SQL service (UnravisBlackboxSql) under its
+              own virtual account, then print the grant to run in SSMS.
+              The Blackbox never runs the grant for you.
+  remove-sql  Stop and remove the SQL service, then print the revoke script.
+              --confirm-name <name>  the Blackbox name, required.
 
 Other commands:
   snapshot    Copy the recordings into <folder>\snapshots\<name>-<date>-<time>.
@@ -67,13 +72,27 @@ type deps struct {
 	hostRun  func(ctx context.Context, o blackbox.HostOptions) error
 	snapOpt  blackbox.SnapshotOptions
 	driveOK  func(root string) bool
+	sqlMgr   *blackbox.SQLManager
+	// sqlRun is the SQL runner of the sql-service mode. Until BBX-5-10 lands it
+	// is runSQLStub; the runner packet replaces the stub, not the mode.
+	sqlRun func(ctx context.Context, o sqlRunOptions) error
+	// elev is the Windows elevate helper. No command here may use it (C14):
+	// this program IS the helper, and the SQL grant is run by the owner in
+	// SSMS. It stays nil; tests inject a fake to record that it is never called.
+	elev blackbox.Elevator
 }
 
 func realDeps() deps {
 	disk := blackbox.OSDisk{}
 	return deps{
-		mgr:  &blackbox.Manager{Svc: blackbox.WinService{}, Env: blackbox.OSEnv{}, Disk: disk},
-		disk: disk,
+		mgr: &blackbox.Manager{Svc: blackbox.WinService{}, Env: blackbox.OSEnv{}, Disk: disk},
+		// Pinned (wave 7): the SQLManager talks to blackbox.WinService DIRECTLY.
+		// internal/setup's bbSvc adapter drops Account/SIDUnrestricted and would
+		// create the SQL service as LocalSystem. RevokeScript stays empty: the
+		// remove-sql command prints the script through the answer writer.
+		sqlMgr: &blackbox.SQLManager{Svc: blackbox.WinService{}, Env: blackbox.OSEnv{}},
+		sqlRun: runSQLStub,
+		disk:   disk,
 		exeDir: func() string {
 			p, err := blackbox.OSEnv{}.ExePath()
 			if err != nil {
@@ -93,6 +112,9 @@ func realDeps() deps {
 }
 
 func main() {
+	if handled, code := sqlServiceEntry(os.Args[1:], realDeps()); handled {
+		os.Exit(code)
+	}
 	if handled, code := serviceEntry(os.Args[1:], realDeps()); handled {
 		os.Exit(code)
 	}
@@ -131,6 +153,8 @@ func (a answer) fail(err error) int {
 	case errors.Is(err, blackbox.ErrNotAdmin):
 		reason = string(blackbox.ReasonNoAdmin)
 	case errors.Is(err, blackbox.ErrNotInstalled):
+		reason = "not-installed"
+	case errors.Is(err, blackbox.ErrNotSQLInstalled):
 		reason = "not-installed"
 	case errors.Is(err, blackbox.ErrConfirmName):
 		reason = "confirm-name"
@@ -265,6 +289,32 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 			map[string]any{"dir": res.Dir, "bytes": res.Bytes, "recordings": res.Recordings, "logs": res.Logs})
 	case "run":
 		return runForeground(paths, d, ans, stderr)
+	case "install-sql":
+		// Creates the service and PRINTS the grant; it never runs SQL, never
+		// grants and never calls the elevate helper (C14). The service is bound
+		// to the exact config validated here, so it locks and uses the same
+		// folder (BBX-5-02 fix: no hardcoded program-folder config divergence).
+		cfg, err := loadInstalledConfig(paths.ConfigPath)
+		if err != nil {
+			return ans.fail(err)
+		}
+		if err := d.sqlMgr.InstallSQL(cfg, paths.ConfigPath); err != nil {
+			return ans.fail(err)
+		}
+		return ans.ok("The "+blackbox.SQLServiceName+" service is installed and running.\n\nRun this grant in SSMS as an admin (the Blackbox never runs it for you):\n"+grantScript,
+			map[string]any{"service": blackbox.SQLServiceName, "account": blackbox.SQLServiceAccount, "grantScript": grantScript})
+	case "remove-sql":
+		cfg, err := loadInstalledConfig(paths.ConfigPath)
+		if err != nil {
+			return ans.fail(err)
+		}
+		if err := d.sqlMgr.RemoveSQL(cfg, *confirm); err != nil {
+			return ans.fail(err)
+		}
+		return ans.ok("The "+blackbox.SQLServiceName+" service is removed. The SQL data is kept.\n\nRun this revoke in SSMS (the Blackbox never runs it for you):\n"+revokeScript,
+			map[string]any{"serviceRemoved": true, "revokeScript": revokeScript})
+	case "sql-service":
+		return runSQLForeground(paths, d, ans, stderr)
 	}
 	fmt.Fprintf(stderr, "unknown command %q\n\n", cmd)
 	fmt.Fprintf(stderr, usageText, version)
@@ -348,6 +398,58 @@ func runForeground(p blackbox.Paths, d deps, ans answer, stderr io.Writer) int {
 		Log:   func(f string, a ...any) { fmt.Fprintf(stderr, f+"\n", a...) },
 		Ready: func(addr string) { fmt.Fprintf(stderr, "status page on %s\n", addr) },
 	})
+	if err != nil {
+		return ans.fail(err)
+	}
+	return exitOK
+}
+
+// loadInstalledConfig reads the installed settings the SQL commands work on.
+// Without an installed Blackbox there is no folder to lock: say so plainly.
+func loadInstalledConfig(path string) (blackbox.Config, error) {
+	cfg, err := blackbox.LoadConfig(path)
+	if err != nil && errors.Is(err, os.ErrNotExist) {
+		err = blackbox.ErrNotInstalled
+	}
+	return cfg, err
+}
+
+// sqlRunOptions wires one run of the SQL service. Dir is the locked SQL data
+// folder (<folder>\sql). There is no listener and no port: the SQL service
+// never serves HTTP (C14).
+type sqlRunOptions struct {
+	Config blackbox.Config
+	Dir    string
+	Log    func(string, ...any)
+}
+
+// runSQLStub stands in for the SQL runner (BBX-5-10, internal/bbsql) until it
+// lands: it opens no connection, runs no SQL, starts no server, and waits for
+// the stop signal. The runner packet replaces this stub.
+func runSQLStub(ctx context.Context, o sqlRunOptions) error {
+	if o.Log != nil {
+		o.Log("the SQL runner is not part of this build yet; waiting for stop")
+	}
+	<-ctx.Done()
+	return nil
+}
+
+// runSQLService loads the settings and runs the SQL runner until ctx is done.
+// It never starts the host recorder or its status page: no HTTP in this mode.
+func runSQLService(ctx context.Context, p blackbox.Paths, d deps, logf func(string, ...any)) error {
+	cfg, err := blackbox.LoadConfig(p.ConfigPath)
+	if err != nil {
+		return err
+	}
+	return d.sqlRun(ctx, sqlRunOptions{Config: cfg, Dir: blackbox.SQLDataDir(cfg.Folder), Log: logf})
+}
+
+// runSQLForeground is the console form of the hidden sql-service command, the
+// same code the SQL service runs (Ctrl+C to stop).
+func runSQLForeground(p blackbox.Paths, d deps, ans answer, stderr io.Writer) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	err := runSQLService(ctx, p, d, func(f string, a ...any) { fmt.Fprintf(stderr, f+"\n", a...) })
 	if err != nil {
 		return ans.fail(err)
 	}
