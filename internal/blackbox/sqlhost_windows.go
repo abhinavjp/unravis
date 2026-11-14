@@ -9,10 +9,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Reuses the lazy pdh.dll declared in extras_windows.go (same package); only
-// the object-enumeration proc is new (same pattern as pdh_windows.go).
-var procPdhEnumObjects = pdh.NewProc("PdhEnumObjectsW")
-
 // pdhDetailWizard is PERF_DETAIL_WIZARD: enumerate every object, including
 // expert-level ones, so no SQL instance object is filtered out.
 const pdhDetailWizard = 400
