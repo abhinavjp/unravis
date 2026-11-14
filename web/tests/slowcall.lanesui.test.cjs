@@ -104,3 +104,29 @@ test('the component holds no sentence of its own', () => {
   const text = flat.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   assert.equal(text.replace(/[·]/g, '').trim(), '', `leftover text: ${text}`);
 });
+
+// ---- the throughput measure is labelled everywhere it is drawn (W13-01, W13-03) ----
+
+test('the database lane draws and reads its own measure, not a renamed concurrency', () => {
+  assert.match(source, /import \{[^}]*cellValue[^}]*\} from '\.\.\/lib\/drill\/callLanes'/);
+  assert.match(source, /lanes\.sql\.measure === 'batch-rate'/);
+  // shape, gaps and readout all go through the measure-aware value
+  assert.match(source, /const valueOf = \(name: LaneName, cell: LaneCell\)/);
+  assert.match(source, /if \(valueOf\(name, cell\) === null\)/);
+  // unit-labelled header, readout and legend
+  assert.match(source, /DRILL_TEXT\.laneRateShape\(/);
+  assert.match(source, /DRILL_TEXT\.readDbRate\(/);
+  assert.match(source, /DRILL_TEXT\.readDbRateNone/);
+  assert.match(source, /DRILL_TEXT\.readDbNoAtOnce/);
+  assert.match(source, /DRILL_TEXT\.legendRate/);
+  assert.match(source, /DRILL_TEXT\.unitBatches/);
+});
+
+test('a throughput lane never claims "nothing slow here": call times are marked unavailable', () => {
+  assert.match(source, /name === 'sql' && sqlRate \? DRILL_TEXT\.laneNoCallTimes/);
+  assert.match(source, /DRILL_TEXT\.laneNoCallTimes : slowCount\(name\) > 0/);
+});
+
+test('no raw HTML is ever interpolated', () => {
+  assert.doesNotMatch(source, /\{@html/);
+});

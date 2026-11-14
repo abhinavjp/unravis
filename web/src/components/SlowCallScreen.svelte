@@ -109,19 +109,25 @@
     return () => ask.abort();
   });
 
-  // The database lane draws one block per Query Store interval when the server sent no block length of its own.
-  function qsBlockSeconds(key: LaneKey): number | undefined {
-    const minutes = savedDay?.lane?.queryStore?.intervalMinutes;
-    return key === 'sql' && typeof minutes === 'number' && Number.isFinite(minutes) && minutes > 0 ? minutes * 60 : undefined;
-  }
-
-  // The tracing parser keeps the raw reason code, the lane events, the block seconds and the bucket busy time; all four pass through here.
+  // The tracing parser keeps the raw reason code, the lane events, the block seconds and the bucket busy time; all pass through here.
   function toLaneIn(lane: TracingLane | undefined): LaneIn | undefined {
     if (!lane) return undefined;
+    const reasonCode = lane.reasonCode ?? lane.incompleteReason;
+    // Query Store block semantics belong to Query Store provenance only (W13-02). A saved day's interval is
+    // never borrowed for a Blackbox or API-seen lane: those sources keep their own steps, and unknown cells
+    // stay unknown instead of being averaged into a block that does not describe them.
+    const qsBlockSeconds = (key: LaneKey): number | undefined => {
+      if (key !== 'sql') return undefined;
+      if (reasonCode !== 'held-sql' && reasonCode !== 'layered-sql' && reasonCode !== 'qs-file') return undefined;
+      const minutes = savedDay?.lane?.queryStore?.intervalMinutes;
+      return typeof minutes === 'number' && Number.isFinite(minutes) && minutes > 0 ? minutes * 60 : undefined;
+    };
     return {
       key: lane.key,
       state: lane.state,
-      reasonCode: lane.reasonCode ?? lane.incompleteReason,
+      reasonCode,
+      // The 'blackbox' reason code is the host PDH batch-count contract: throughput, never concurrency.
+      measure: reasonCode === 'blackbox' ? 'batch-rate' : undefined,
       blockSeconds: lane.blockSeconds ?? qsBlockSeconds(lane.key),
       buckets: lane.buckets,
       events: lane.events ?? [],
@@ -194,8 +200,11 @@
       {
         laneReasonCode: toLaneIn(sqlLane)?.reasonCode ?? '',
         laneHasShape: lanes.sql.hasShape,
+        // Source availability rests on recorded observations in the lane's own measure (batch counts for Blackbox).
+        laneHasObservations: lanes.sql.hasShape,
         laneAsOf: sqlLane?.asOf || null,
         laneSince: sqlLane?.since || null,
+        laneCadenceSeconds: sqlLane?.cadenceSeconds ?? null,
         blockSeconds: lanes.sql.blockSeconds,
         queryStore: savedDay?.lane?.queryStore ?? null,
         hasEvents: s.events.some((e) => SQL_EVENT_SOURCES.includes(e.source) && Date.parse(e.start) >= bounds.start && Date.parse(e.start) <= bounds.end),

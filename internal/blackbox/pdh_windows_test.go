@@ -3,6 +3,7 @@
 package blackbox
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -90,6 +91,113 @@ func TestPDHSourcePaths(t *testing.T) {
 	got := p.Paths()
 	if len(got) != 2 || got[0] != `\A\B` || got[1] != `\C\D` {
 		t.Fatalf("Paths() = %v, want the expanded paths in order", got)
+	}
+}
+
+// W2-02: the exact format flags must reach PdhGetFormattedCounterValue.
+// PDH_FMT_NOCAP100 is 0x8000 per pdh.h (0x1000 would be PDH_FMT_NOSCALE);
+// without it PDH caps percentages at 100 before the engine sees them.
+func TestCollectFormatsWithNoCap100(t *testing.T) {
+	if pdhFmtNoCap100 != 0x00008000 {
+		t.Fatalf("pdhFmtNoCap100 = 0x%x, want 0x8000 (PDH_FMT_NOCAP100 per pdh.h)", pdhFmtNoCap100)
+	}
+	var gotFormat, gotHandle uintptr
+	sFormat, sCollect := pdhFormatCall, pdhCollectCall
+	t.Cleanup(func() { pdhFormatCall, pdhCollectCall = sFormat, sCollect })
+	pdhFormatCall = func(handle, format uintptr, out *pdhFmtCounterValue) uintptr {
+		gotHandle, gotFormat = handle, format
+		*out = pdhFmtCounterValue{Double: 350}
+		return 0
+	}
+	pdhCollectCall = func(query uintptr) uintptr { return 0 }
+
+	p := &PDHSource{counters: []pdhCounter{{path: `\Process(app)\% Processor Time`, handle: 7}}}
+	rs, err := p.Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotFormat != 0x8200 { // PDH_FMT_DOUBLE (0x200) | PDH_FMT_NOCAP100 (0x8000)
+		t.Fatalf("native format flags = 0x%x, want 0x8200 (DOUBLE|NOCAP100)", gotFormat)
+	}
+	if gotHandle != 7 {
+		t.Fatalf("formatted handle = %d, want 7", gotHandle)
+	}
+	if len(rs) != 1 || !rs[0].OK || rs[0].Value != 350 {
+		t.Fatalf("readings = %+v, want the uncapped 350 passed through", rs)
+	}
+}
+
+// W2-03: the documented localization sequence must run in order — add the
+// English wildcard, read back the localized full path (two-call size
+// pattern), expand THAT localized pattern (two-call again), then add the
+// localized paths — while Paths() and Collect() keep returning ENGLISH
+// identities for the group parsers and engine specs.
+func TestWildcardLocalizationCallOrder(t *testing.T) {
+	const english = `\Process(*)\% Processor Time`
+	const localizedPattern = `\Prozess(*)\% Prozessorzeit`
+	expanded := []string{`\Prozess(app#1)\% Prozessorzeit`, `\Prozess(app#2)\% Prozessorzeit`}
+	rig := installFakePDH(t, func(pattern string, buf *uint16, size *uint32) uintptr {
+		return fillExpandBuf(expanded, buf, size)
+	})
+	rig.localizedOverride = localizedPattern
+
+	p := &PDHSource{query: 42, wildcards: []string{english}}
+	if err := p.RefreshInstances(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"addEnglish:" + english,
+		"getInfo", "getInfo",
+		"removeTemp:101",
+		"expand:" + localizedPattern, "expand:" + localizedPattern,
+		"addLocalized:" + expanded[0],
+		"addLocalized:" + expanded[1],
+		"collect",
+	}
+	if !reflect.DeepEqual(rig.events, want) {
+		t.Fatalf("call order:\n got %v\nwant %v", rig.events, want)
+	}
+	wantPaths := []string{`\Process(app#1)\% Processor Time`, `\Process(app#2)\% Processor Time`}
+	if !reflect.DeepEqual(p.Paths(), wantPaths) {
+		t.Fatalf("Paths() = %v, want English identities %v", p.Paths(), wantPaths)
+	}
+	// Collect reports the same English identities from the localized handles.
+	sFormat, sCollect := pdhFormatCall, pdhCollectCall
+	t.Cleanup(func() { pdhFormatCall, pdhCollectCall = sFormat, sCollect })
+	pdhFormatCall = func(handle, format uintptr, out *pdhFmtCounterValue) uintptr {
+		*out = pdhFmtCounterValue{Double: 1}
+		return 0
+	}
+	pdhCollectCall = func(query uintptr) uintptr { return 0 }
+	rs, err := p.Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs) != 2 || rs[0].Path != wantPaths[0] || rs[1].Path != wantPaths[1] {
+		t.Fatalf("Collect paths = %+v, want %v", rs, wantPaths)
+	}
+}
+
+// W2-03: English identity reconstruction takes object/counter from the
+// English pattern and the instance from the localized expansion (instance
+// names are data, not translated text). Partial wildcards and parentheses
+// inside instance names must survive.
+func TestEnglishPathFor(t *testing.T) {
+	cases := []struct {
+		pattern, localized, want string
+		ok                       bool
+	}{
+		{`\Process(*)\% Processor Time`, `\Prozess(app#1)\% Prozessorzeit`, `\Process(app#1)\% Processor Time`, true},
+		{`\Process(chrome*)\ID Process`, `\Prozess(chrome#3)\ID-Prozess`, `\Process(chrome#3)\ID Process`, true},
+		{`\PhysicalDisk(*)\Disk Reads/sec`, `\Physikalischer Datenträger(0 C:)\Lesevorgänge/s`, `\PhysicalDisk(0 C:)\Disk Reads/sec`, true},
+		{`\W3SVC_W3WP(*)\Active Requests`, `\W3SVC_W3WP(pool (x86))\Aktive Anforderungen`, `\W3SVC_W3WP(pool (x86))\Active Requests`, true},
+		{`\Process(*)\X`, `\Prozess\X`, "", false},
+	}
+	for _, c := range cases {
+		got, ok := englishPathFor(c.pattern, c.localized)
+		if ok != c.ok || got != c.want {
+			t.Errorf("englishPathFor(%q, %q) = %q,%v want %q,%v", c.pattern, c.localized, got, ok, c.want, c.ok)
+		}
 	}
 }
 

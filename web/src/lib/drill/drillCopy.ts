@@ -92,15 +92,20 @@ export const DRILL_TEXT = {
   laneSource: (label: string): string => `Source: ${label}`,
   unitAtOnce: 'running at once',
   unitAtOnceAvg: 'running at once (average)',
+  unitBatches: 'batches per second',
   laneSlow: (n: number): string => (n === 1 ? '1 slow in this window' : `${n} slow in this window`),
   laneNothingSlow: 'nothing slow here',
+  // A throughput lane records no call times, so it never claims "nothing slow here" (W13-01).
+  laneNoCallTimes: 'call times not recorded here',
   laneShape: (n: string): string => `Shape: 0 to ${n} at once`,
+  laneRateShape: (n: string): string => `Shape: 0 to ${n} batches/s`,
   laneBlocks: (m: number): string => `saved in ${m}-minute blocks`,
   laneApiOnly: 'API calls only',
   laneEventsOnly: 'events only, no volumes',
   laneMoreBars: (n: number): string => `and ${n} more, see the list below`,
   legendWidth: 'Bar width = how long it took',
   legendShape: 'Faint shape = how many were running at once',
+  legendRate: 'Database faint shape = batches per second the server handled, not how many ran at once',
   legendHatched: 'Hatched = not recorded, which is unknown, not zero',
   legendCall: 'Red column = while this call was running',
   legendOutside: 'This call is outside the window you are looking at',
@@ -129,6 +134,9 @@ export const DRILL_TEXT = {
   readRefused: (n: number): string => `refused or failed (4xx/5xx) ${n}`,
   readDb: (n: string): string => `Database running at once (average) ${n}`,
   readDbNone: 'Database not recorded',
+  readDbRate: (n: string): string => `Database batches per second ${n}`,
+  readDbRateNone: 'Database batches per second not recorded',
+  readDbNoAtOnce: 'running at once not recorded',
   readEmpty: 'Nothing slow was recorded in this time step. The numbers above still count every call.',
   // inspector
   secThisCall: 'This call',
@@ -157,15 +165,25 @@ export const DRILL_TEXT = {
   pretendNotRead: 'Not read',
   // database source labels and state sentences
   dbSrcLive: 'Query Store (live)',
-  dbSrcFile: (date: string): string => `Query Store file imported ${date}`,
+  dbSrcFile: (date: string | null): string => (date ? `Query Store file imported ${date}` : 'Query Store file, import date not recorded'),
   dbSrcApi: 'Seen by the API (time inside the database)',
   dbSrcNone: 'Not recorded',
   dbSrcLate: (time: string): string => `Query Store (live), nothing before ${time}`,
   dbSrcReadOnly: 'Query Store (live), read-only',
   dbSrcEvents: 'SQL Server event files, markers only',
-  dbSrcBlackbox: (date: string): string => `Blackbox sampling every 15 to 60 s since ${date}`,
+  // The Blackbox SQL lane reads HOST PDH batch counters (throughput), not the SQL-service DMV stream.
+  // The cadence is the recorder's own (5, 15, 30 or 60 s) and is only stated when the source sent it;
+  // the start date is only stated when the server sent a readable one (W13-03, W13-04).
+  dbSrcBlackbox: (date: string | null, cadenceSeconds?: number | null): string => {
+    const read = cadenceSeconds != null && cadenceSeconds > 0 ? `, read every ${cadenceSeconds} s` : '';
+    const start = date ? ` since ${date}` : ', recording start unknown';
+    return `Blackbox host batches per second${read}${start}`;
+  },
   dbMsgLive: (m: number): string => `Read from Query Store. It saves one summary per ${m}-minute block, so the database shape moves in steps and has no exact second.`,
-  dbMsgFile: (date: string): string => `Read from a Query Store export file that was imported on ${date}. It ends where the export ended.`,
+  dbMsgFile: (date: string | null): string =>
+    date
+      ? `Read from a Query Store export file that was imported on ${date}. It ends where the export ended.`
+      : 'Read from a Query Store export file. The import date was not recorded. It ends where the export ended.',
   dbMsgApi: "Query Store has no data for this period, so this lane shows the time this API's own calls spent inside the database. It leaves out other apps, so it can read lower than the real database load.",
   dbMsgOff: 'Query Store is switched off on this database, so it saved no history. Switching it on needs the database owner (the script is in Setup). Unravis never switches it on itself.',
   dbMsgReadOnly: 'Query Store is read-only, so it has stopped saving new history. This often happens when its storage is full. Older history is still shown.',
@@ -173,12 +191,16 @@ export const DRILL_TEXT = {
   dbMsgDenied: 'The saved database login is not allowed to read Query Store. It needs the VIEW DATABASE STATE permission. Ask the database owner, or add a login that has it.',
   dbMsgEvents: "Only SQL Server's own event files are available. They show moments such as deadlocks and long blocking, but not how busy the database was. A marker shows when something happened, not why.",
   dbMsgNotRead: 'The database was not read for this time. Go back to the timeline and read it for a window that covers this call.',
-  dbMsgBlackbox: 'Blackbox is a recorder you place on a server. It saves a measure every 15 seconds, and some measures only every 60, so this lane moves in steps and has no exact second. It counts every app on the database server, not only this API.',
+  dbMsgBlackbox: (cadenceSeconds?: number | null): string =>
+    'Blackbox is a recorder you place on a server.' +
+    (cadenceSeconds != null && cadenceSeconds > 0 ? ` It reads every ${cadenceSeconds} s.` : ' The read interval is not recorded.') +
+    ' This lane reads its host counter for SQL batches per second, added up over the instances there, so it counts every app, not only this API. It shows work arriving, not how many ran at once or how long it took. Gaps stay unknown, not zero.',
   dbShortOff: 'Not recorded: Query Store is off',
   dbShortDenied: 'Not recorded: no permission',
   dbShortEvents: 'Not recorded: only events, no volumes',
   dbShortLate: 'Not recorded: Query Store has no history here',
-  dbShortBlackbox: 'sampled every 15 to 60 seconds',
+  dbShortBlackbox: (cadenceSeconds?: number | null): string =>
+    cadenceSeconds != null && cadenceSeconds > 0 ? `batches/s every ${cadenceSeconds} s` : 'batches/s, read interval unknown',
   // lists
   tabNearbyCalls: (n: number): string => `Nearby calls (exact, API only · ${n})`,
   tabAllSources: (n: number): string => `All sources in time order (${n})`,
@@ -257,6 +279,7 @@ const SAMPLE = {
   laneSource: 'Query Store (live)',
   laneSlow: 3,
   laneShape: '4.2',
+  laneRateShape: '100',
   laneBlocks: 15,
   laneMoreBars: 4,
   mapCaption: 5,
@@ -269,9 +292,12 @@ const SAMPLE = {
   readP95: '1.2 s',
   readRefused: 3,
   readDb: '4.2',
+  readDbRate: '100',
   dbSrcFile: '11 Nov 2026',
   dbSrcLate: '10:30',
-  dbSrcBlackbox: '20 Oct 2026',
+  dbSrcBlackbox: ['20 Oct 2026', 15] as const,
+  dbMsgBlackbox: 15,
+  dbShortBlackbox: 15,
   dbMsgLive: 15,
   dbMsgFile: '11 Nov 2026',
   dbMsgLate: '10:30',
@@ -306,6 +332,7 @@ export const drillCopyEntries = (): LintEntry[] => {
     ['laneSource', DRILL_TEXT.laneSource(SAMPLE.laneSource)],
     ['laneSlow', DRILL_TEXT.laneSlow(SAMPLE.laneSlow)],
     ['laneShape', DRILL_TEXT.laneShape(SAMPLE.laneShape)],
+    ['laneRateShape', DRILL_TEXT.laneRateShape(SAMPLE.laneRateShape)],
     ['laneBlocks', DRILL_TEXT.laneBlocks(SAMPLE.laneBlocks)],
     ['laneMoreBars', DRILL_TEXT.laneMoreBars(SAMPLE.laneMoreBars)],
     ['mapCaption', DRILL_TEXT.mapCaption(SAMPLE.mapCaption)],
@@ -318,9 +345,12 @@ export const drillCopyEntries = (): LintEntry[] => {
     ['readP95', DRILL_TEXT.readP95(SAMPLE.readP95)],
     ['readRefused', DRILL_TEXT.readRefused(SAMPLE.readRefused)],
     ['readDb', DRILL_TEXT.readDb(SAMPLE.readDb)],
+    ['readDbRate', DRILL_TEXT.readDbRate(SAMPLE.readDbRate)],
     ['dbSrcFile', DRILL_TEXT.dbSrcFile(SAMPLE.dbSrcFile)],
     ['dbSrcLate', DRILL_TEXT.dbSrcLate(SAMPLE.dbSrcLate)],
-    ['dbSrcBlackbox', DRILL_TEXT.dbSrcBlackbox(SAMPLE.dbSrcBlackbox)],
+    ['dbSrcBlackbox', DRILL_TEXT.dbSrcBlackbox(...SAMPLE.dbSrcBlackbox)],
+    ['dbMsgBlackbox', DRILL_TEXT.dbMsgBlackbox(SAMPLE.dbMsgBlackbox)],
+    ['dbShortBlackbox', DRILL_TEXT.dbShortBlackbox(SAMPLE.dbShortBlackbox)],
     ['dbMsgLive', DRILL_TEXT.dbMsgLive(SAMPLE.dbMsgLive)],
     ['dbMsgFile', DRILL_TEXT.dbMsgFile(SAMPLE.dbMsgFile)],
     ['dbMsgLate', DRILL_TEXT.dbMsgLate(SAMPLE.dbMsgLate)],

@@ -5,10 +5,13 @@ const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
 
-// BBX-5-17 / BL-103: the Blackbox SQL lane source in the slow-call database lane.
-// The server (BBX-5-16) names the lane source "blackbox" and sends the moment its recording began (`since`);
-// the web says, to someone who has never seen this screen: "Blackbox sampling every 15 to 60 s since <date>".
-// The range is the truth: BL-101/118 sample every 15 s, BL-102/118/119 every 60 s.
+// BBX-5-17 / BL-103, after the wave-13 review (W13-01..W13-04): the Blackbox SQL lane source.
+// The lane reads HOST PDH batch counters (blackbox.Sample.SQLHost...BatchRequestsPerSec), NOT the
+// SQL-service DMV stream. The server sends estimated batch COUNTS with no busyMs, names the source
+// "blackbox" and sends the moment its recording began (`since`). The web says, to someone who has
+// never seen this screen: "Blackbox host batches per second[, read every N s] since <date>".
+// The cadence is the recorder's own (config permits 5/15/30/60 s) and is only stated when the source
+// sent it; otherwise the caption says the read interval is unknown. No date is ever invented.
 
 const root = path.resolve(__dirname, '..');
 function loadTypeScript(relativePath) {
@@ -49,31 +52,73 @@ test('blackbox: the server source key picks its own state', () => {
   const v = blackbox();
   assert.equal(v.key, 'blackbox');
   assert.equal(v.source, T.dbSrcBlackbox('D(2026-10-20)'));
+  assert.equal(v.measure, 'batch-rate', 'the blackbox reason code is the host batch-throughput contract');
 });
 
-test('blackbox: the label a first-time investigator reads, with the date', () => {
+test('blackbox: the label names the host batch measure and the date, with no invented cadence', () => {
   const v = blackbox();
-  assert.match(v.source, /^Blackbox sampling every 15 to 60 s since /);
-  assert.ok(v.source.includes('Blackbox sampling every 15 to 60 s since'), v.source);
-  assert.ok(v.source.includes('D(2026-10-20)'), 'the label carries the date the sampling began: ' + v.source);
-  assert.equal(T.dbSrcBlackbox('20 Oct 2026'), 'Blackbox sampling every 15 to 60 s since 20 Oct 2026');
+  assert.match(v.source, /^Blackbox host batches per second since /);
+  assert.ok(v.source.includes('D(2026-10-20)'), 'the label carries the date the recording began: ' + v.source);
+  assert.doesNotMatch(v.source, /15 to 60|every 15 s/, 'no cadence is claimed when the source sent none: ' + v.source);
+  assert.equal(T.dbSrcBlackbox('20 Oct 2026'), 'Blackbox host batches per second since 20 Oct 2026');
 });
 
 test('blackbox: it says what the source is and stays calm, with the usual short label and shape', () => {
   const v = blackbox();
-  assert.equal(v.message, T.dbMsgBlackbox);
+  assert.equal(v.message, T.dbMsgBlackbox(null));
   assert.equal(typeof v.message, 'string');
   assert.ok(v.message.length > 0 && v.message.length < 320, 'message length ' + v.message.length);
-  assert.equal(v.short, T.dbShortBlackbox);
+  assert.equal(v.short, T.dbShortBlackbox(null));
   assert.ok(v.short.length > 0 && v.short.length < 60, 'short length ' + v.short.length);
   assert.equal(v.shape, 'blocks');
   assert.equal(DB_STATE_KEYS.includes('blackbox'), false, 'blackbox is a real server state, not a demo pretend switch');
 });
 
-test('blackbox: no since from the server still names the source, on the sample date', () => {
+test('blackbox: the message separates throughput from concurrency and keeps gaps unknown', () => {
+  const msg = T.dbMsgBlackbox(null);
+  assert.ok(msg.includes('batches per second'), msg);
+  assert.ok(msg.includes('not how many ran at once or how long it took'), msg);
+  assert.ok(msg.includes('unknown, not zero'), msg);
+  assert.ok(msg.includes('The read interval is not recorded.'), 'an absent cadence is stated as unknown: ' + msg);
+  assert.doesNotMatch(msg, /15 to 60|every 15 seconds|every 60/, 'no unconsumed DMV cadence: ' + msg);
+});
+
+test('blackbox: a sent cadence of 5, 15, 30 or 60 s is the one stated, in label, message and short', () => {
+  for (const cadence of [5, 15, 30, 60]) {
+    const v = blackbox({ laneCadenceSeconds: cadence });
+    assert.ok(v.source.includes(`read every ${cadence} s`), v.source);
+    assert.ok(v.message.includes(`It reads every ${cadence} s.`), v.message);
+    assert.equal(v.short, `batches/s every ${cadence} s`);
+    assert.ok(v.message.length < 320, 'message length ' + v.message.length);
+    assert.ok(v.short.length < 60, 'short length ' + v.short.length);
+  }
+});
+
+test('blackbox: a missing or unusable cadence reads as unknown, never as a guess', () => {
+  for (const cadence of [null, undefined, 0, -5, NaN, '15']) {
+    const v = blackbox({ laneCadenceSeconds: cadence });
+    assert.doesNotMatch(v.source, /every \d/, v.source);
+    assert.ok(v.message.includes('The read interval is not recorded.'), v.message);
+    assert.equal(v.short, 'batches/s, read interval unknown');
+  }
+});
+
+test('blackbox: no since from the server says the recording start is unknown, never a sample date', () => {
   const v = run({ laneReasonCode: 'blackbox', laneHasShape: true });
   assert.equal(v.key, 'blackbox');
-  assert.equal(v.source, T.dbSrcBlackbox('11 Nov 2026'));
+  assert.equal(v.source, T.dbSrcBlackbox(null));
+  assert.ok(v.source.includes('recording start unknown'), v.source);
+  assert.doesNotMatch(v.source, /11 Nov 2026|since D\(/, 'no fabricated production date: ' + v.source);
+});
+
+test('blackbox: source availability rests on recorded observations, not on drawable concurrency', () => {
+  // Positive batch counts with no busyMs: concurrency cannot be drawn, yet the source is real.
+  const observed = run({ laneReasonCode: 'blackbox', laneHasShape: false, laneHasObservations: true, laneSince: SINCE });
+  assert.equal(observed.key, 'blackbox');
+  assert.equal(observed.shape, 'blocks');
+  // No valid observation at all: still never a claim, and never a zero lane.
+  const empty = run({ laneReasonCode: 'blackbox', laneHasShape: true, laneHasObservations: false, laneSince: SINCE });
+  assert.equal(empty.key, 'notread');
 });
 
 test('blackbox: the lane source wins over a Query Store state that says otherwise', () => {
@@ -119,6 +164,16 @@ test('the other database source labels are untouched', () => {
   assert.equal(run({ laneReasonCode: 'api-seen', laneHasShape: true }).source, T.dbSrcApi);
 });
 
+test('a Query Store file with no readable import date says so, outside the demo path', () => {
+  const v = run({ laneReasonCode: 'qs-file', laneHasShape: true });
+  assert.equal(v.key, 'qsfile');
+  assert.equal(v.source, 'Query Store file, import date not recorded');
+  assert.doesNotMatch(v.source, /11 Nov 2026/);
+  assert.doesNotMatch(v.message, /11 Nov 2026/);
+  // the demonstration date stays behind the explicit demo switch
+  assert.equal(run({ pretend: 'qsfile' }).source, T.dbSrcFile('11 Nov 2026'));
+});
+
 // ---- copy registration: a function key is not auto-counted, so the SAMPLE entry and the fns row must exist ----
 
 test('dbSrcBlackbox is registered in the lint entries, and the count guard holds', () => {
@@ -131,7 +186,7 @@ test('dbSrcBlackbox is registered in the lint entries, and the count guard holds
   assert.equal(new Set(ids).size, ids.length, 'entry ids are unique');
   assert.equal(entries.length, Object.keys(T).length + Object.keys(DRILL_HELP).length);
   const hit = entries.find((e) => e.id === 'drill.dbSrcBlackbox');
-  assert.match(hit.text, /^Blackbox sampling every 15 to 60 s since \S+ \S+ \d{4}$/);
+  assert.match(hit.text, /^Blackbox host batches per second, read every 15 s since \S+ \S+ \d{4}$/);
 });
 
 test('no help key was added: the help deck keeps its fixed 26 keys', () => {
@@ -145,7 +200,7 @@ test('the new copy passes the copy lint with the rest of the drill deck', () => 
 
 test('the new copy uses no banned wording and names no cause', () => {
   const banned = /because|due to|caus|waiting on|blocked by|led to|results? in|responsible for|leak|starv|saturat|proven/i;
-  const texts = [T.dbSrcBlackbox('20 Oct 2026'), T.dbMsgBlackbox, T.dbShortBlackbox];
+  const texts = [T.dbSrcBlackbox('20 Oct 2026', 15), T.dbSrcBlackbox(null), T.dbMsgBlackbox(15), T.dbMsgBlackbox(null), T.dbShortBlackbox(15), T.dbShortBlackbox(null)];
   for (const text of texts) {
     assert.equal(typeof text, 'string');
     assert.doesNotMatch(text, banned, text);
@@ -173,10 +228,12 @@ test('parseTracing keeps the server since on the lane, and drops one it cannot r
   assert.equal('since' in badSince.lanes[0], false);
 });
 
-test('the screen hands the server since to the database state, and adds no new polling', () => {
+test('the screen hands the server since and cadence to the database state, and adds no new polling', () => {
   const source = fs.readFileSync(path.join(root, 'src', 'components', 'SlowCallScreen.svelte'), 'utf8');
   assert.match(source, /laneSince:/);
   assert.match(source, /sqlLane\?\.since/);
+  assert.match(source, /laneCadenceSeconds: sqlLane\?\.cadenceSeconds \?\? null/);
+  assert.match(source, /laneHasObservations:/);
   assert.doesNotMatch(source, /setInterval|EventSource|new WebSocket/);
   assert.equal((source.match(/dbState\(/g) ?? []).length, 1, 'one database state call');
 });

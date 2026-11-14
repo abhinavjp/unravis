@@ -38,7 +38,8 @@ export interface TracingSourceRef { sourceId: string; label: string; noFile?: tr
  * The server bucket is `{start,count,errors?}`; SQL and IIS have no 5xx, so `errors` is absent there and
  * `parseTracing` fills it with 0. The server also sends `end` and `clipped`; this client ignores them. `complete`
  * is kept: a cell the server did not read to the end (a chunked audit read that stopped early) is `complete: false`
- * and its count of 0 means "not read", never "no traffic".
+ * and its count of 0 means "not read", never "no traffic". On a Blackbox SQL lane (`reasonCode: 'blackbox'`) the
+ * count is the estimated host batch requests in the step — throughput, with no `busyMs` — never a duration.
  */
 export interface TracingBucket {
   start: string;
@@ -96,6 +97,11 @@ export interface TracingLane {
   importedPartial?: true;
   /** Length in seconds of the blocks this lane was saved in (Query Store). Missing = same as the step. */
   blockSeconds?: number;
+  /**
+   * Optional: seconds between the source's own observations (the Blackbox host counter's sampling interval,
+   * which its config may set to 5, 15, 30 or 60). Absent = the cadence is unknown; the client never guesses one.
+   */
+  cadenceSeconds?: number;
   /** The server's raw `reasonCode` text when it sent a non-empty one (`incompleteReason` and `emptyBecause` are its narrowed forms). */
   reasonCode?: string;
   /** RFC3339: when this lane's own source began recording — the Blackbox's first sample. Absent when the server sent none. */
@@ -283,6 +289,8 @@ function parseLane(value: unknown): TracingLane | null {
     if (value.importedPartial === true) lane.importedPartial = true;
   }
   if (isNumber(value.blockSeconds) && value.blockSeconds > 0) lane.blockSeconds = value.blockSeconds;
+  // Optional source metadata: a positive observation cadence is kept; anything else leaves the cadence unknown.
+  if (isNumber(value.cadenceSeconds) && value.cadenceSeconds > 0) lane.cadenceSeconds = value.cadenceSeconds;
   if (isText(value.reasonCode) && value.reasonCode !== '') lane.reasonCode = value.reasonCode;
   // When the lane comes from the Blackbox recorder the server also says when its recording began; a date it cannot be read as a date is dropped.
   if (isText(value.since) && isParseableDate(value.since)) lane.since = value.since;
