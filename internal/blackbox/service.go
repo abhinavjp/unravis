@@ -46,6 +46,13 @@ type ServiceSpec struct {
 	Description string
 	ExePath     string
 	Args        []string
+	// Account is the account the service runs under (ServiceStartName). Empty
+	// means LocalSystem, which is what the host recorder uses. A virtual account
+	// such as NT SERVICE\UnravisBlackboxSql needs no password.
+	Account string
+	// SIDUnrestricted puts the service's own SID in its token, so a folder that
+	// grants that SID (the SQL data folder) is usable. Off for the host service.
+	SIDUnrestricted bool
 }
 
 // ServiceControl is the Windows service manager. The real one is in
