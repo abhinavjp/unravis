@@ -194,6 +194,11 @@ type VMGroup struct {
 
 type DumpsGroup struct {
 	Dumps []DumpEntry `json:"dumps,omitempty"`
+	// Truncated/Unreadable carry the scan's own coverage (W12-06): a capped or
+	// partly unreadable scan is not a complete newest-first catalogue. Additive
+	// and omitted when the scan was complete, so old rows decode unchanged.
+	Truncated  bool `json:"truncated,omitempty"`
+	Unreadable int  `json:"unreadable,omitempty"`
 }
 
 type DumpEntry struct {

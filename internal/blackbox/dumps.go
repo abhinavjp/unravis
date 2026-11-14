@@ -265,8 +265,10 @@ func (g *dumpsGroup) Collect(now time.Time, dt float64) (any, error) {
 		}
 		g.lastScan = now
 	}
-	if len(g.cached) == 0 {
-		return nil, nil // no dumps: group omitted, never 0
+	if len(g.cached) == 0 && !g.status.Truncated && g.status.Unreadable == 0 {
+		return nil, nil // a complete scan found no dumps: group omitted, never 0
 	}
-	return &DumpsGroup{Dumps: g.cached}, nil
+	// An incomplete scan with nothing found must not read as "no dumps": the
+	// coverage flags travel with the result so the consumer knows it is partial.
+	return &DumpsGroup{Dumps: g.cached, Truncated: g.status.Truncated, Unreadable: g.status.Unreadable}, nil
 }

@@ -1325,6 +1325,12 @@ func (b *blackboxHub) readHost(ctx context.Context, e bbsaved.Entry, windows ...
 		rep.Dropped = addNames(rep.Dropped, r.Dropped)
 		rep.Missing = addNames(rep.Missing, r.Missing)
 		rep.Newer = rep.Newer || r.Newer
+		// Carry the coverage reasons the reader now reports, so a merged read
+		// cannot look complete when a part was corrupt, capped or budget-limited.
+		rep.Corrupt = addNames(rep.Corrupt, r.Corrupt)
+		rep.Capped = rep.Capped || r.Capped
+		rep.OmittedFiles += r.OmittedFiles
+		rep.Limited = rep.Limited || r.Limited
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].T.Before(all[j].T) })
 	kept := all[:0]

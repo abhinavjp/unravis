@@ -172,6 +172,38 @@ func TestDumpsEmptyNil(t *testing.T) {
 	}
 }
 
+// An incomplete scan that found nothing must not read as "no dumps": the
+// coverage flags travel with the result (W12-06).
+func TestDumpsIncompleteScanIsNotNoDumps(t *testing.T) {
+	for _, st := range []DumpScanStatus{
+		{Truncated: true},
+		{Unreadable: 2},
+		{Truncated: true, Unreadable: 1},
+	} {
+		g := &dumpsGroup{roots: []string{t.TempDir()}, scanStatus: func([]string) ([]DumpEntry, DumpScanStatus) {
+			return nil, st
+		}}
+		v, err := g.Collect(time.Unix(1000, 0), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v == nil {
+			t.Fatalf("status %+v: an incomplete scan was reported as no dumps", st)
+		}
+		dg := v.(*DumpsGroup)
+		if dg.Truncated != st.Truncated || dg.Unreadable != st.Unreadable {
+			t.Fatalf("status %+v: wire flags = truncated %v unreadable %d", st, dg.Truncated, dg.Unreadable)
+		}
+	}
+	// A complete scan with nothing found is still a nil group, never a zero row.
+	g := &dumpsGroup{roots: []string{t.TempDir()}, scanStatus: func([]string) ([]DumpEntry, DumpScanStatus) {
+		return nil, DumpScanStatus{Visited: 3}
+	}}
+	if v, err := g.Collect(time.Unix(1000, 0), 0); err != nil || v != nil {
+		t.Fatalf("complete empty scan = (%v, %v), want (nil, nil)", v, err)
+	}
+}
+
 func TestDumpsTargetParse(t *testing.T) {
 	cases := []struct{ name, want string }{
 		{"w3wp.exe.1234.dmp", "w3wp"},
