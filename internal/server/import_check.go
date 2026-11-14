@@ -65,9 +65,12 @@ type checkFileVerdict struct {
 	ServerName string   `json:"serverName"`
 	NeedsZone  bool     `json:"needsZone"`
 	Reason     string   `json:"reason"`
-	Rows       int      `json:"rows"`
-	Emitted    int      `json:"emitted"`
-	Rejected   int      `json:"rejected"`
+	// Rows, Emitted and Rejected are set only when the file was read and counted
+	// (ready, or needs-zone). Every other verdict leaves them out, so a missing count
+	// is never read as zero.
+	Rows     *int `json:"rows,omitempty"`
+	Emitted  *int `json:"emitted,omitempty"`
+	Rejected *int `json:"rejected,omitempty"`
 }
 
 // checkReportDTO is the result of a finished check job.
@@ -325,7 +328,8 @@ func (h *handler) checkOne(ctx context.Context, c casestore.Case, id casestore.C
 			return notSupported(string(importer.ReasonUnsupportedFormat))
 		}
 		v.Importer = ans.Importer
-		v.Rows, v.Emitted, v.Rejected = int(ans.Report.Rows), int(ans.Report.Emitted), int(ans.Report.Rejected)
+		rows, emitted, rejected := int(ans.Report.Rows), int(ans.Report.Emitted), int(ans.Report.Rejected)
+		v.Rows, v.Emitted, v.Rejected = &rows, &emitted, &rejected
 		v.Verdict = verdictReady
 		if h.needsZone(ans.Report) {
 			v.Verdict, v.NeedsZone = verdictNeedsZone, true

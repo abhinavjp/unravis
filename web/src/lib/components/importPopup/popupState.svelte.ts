@@ -232,7 +232,7 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
   /** What the check would say about a file it was not asked about: one that is refused before sending, or one the server left out. */
   function localVerdict(item: StagedFile): CheckFileVerdict {
     const reason = item.refusal === 'compressed' ? 'archive-extract-first' : item.refusal === 'empty' ? 'no-rows' : '';
-    return { key: fileKeyOf(item), name: item.name, size: item.size, verdict: 'not-supported', importer: '', tied: [], serverName: '', needsZone: false, reason, rows: 0, emitted: 0, rejected: 0 };
+    return { key: fileKeyOf(item), name: item.name, size: item.size, verdict: 'not-supported', importer: '', tied: [], serverName: '', needsZone: false, reason };
   }
 
   /** The server's verdicts in the order the files are listed. */

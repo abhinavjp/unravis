@@ -76,7 +76,7 @@ func TestImportCheckReady(t *testing.T) {
 	id := e.newCase("Check, ready")
 	_, done := startedCheck(t, e, id, e.upload(checkPath(id), nil, &upload{"u_ex010203.log", unlistedW3C("web-a.example.test")}))
 	v := onlyVerdict(t, done)
-	if v.Verdict != verdictReady || v.Importer != "iis-w3c" || v.Rows != 5 || v.Rejected != 0 || v.ServerName != "" || len(v.Tied) != 0 {
+	if v.Verdict != verdictReady || v.Importer != "iis-w3c" || v.Rows == nil || *v.Rows != 5 || v.Rejected == nil || *v.Rejected != 0 || v.ServerName != "" || len(v.Tied) != 0 {
 		t.Fatalf("verdict = %+v", v)
 	}
 	if v.Name != "u_ex010203.log" || v.Size == 0 || v.Key == "" {
@@ -371,4 +371,58 @@ func TestImportCheckCanceled(t *testing.T) {
 		t.Fatalf("a cancelled check stored %d imports", n)
 	}
 	e.waitSlotsHeld(0)
+}
+
+// rawVerdicts decodes the finished job's report as plain JSON maps, so a test sees
+// exactly which keys the page receives.
+func rawVerdicts(t *testing.T, job importJobDTO) []map[string]any {
+	t.Helper()
+	var rep struct {
+		Files []map[string]any `json:"files"`
+	}
+	if err := json.Unmarshal(job.Result, &rep); err != nil {
+		t.Fatal(err)
+	}
+	return rep.Files
+}
+
+// Row counts exist only where rows were counted. A verdict that read nothing
+// leaves the three keys out, so the page cannot mistake "not counted" for zero.
+func TestImportCheckCountsOnlyWhenCounted(t *testing.T) {
+	e := newIntEnv(t, intRepo())
+	id := e.newCase("Check, counts")
+	counts := []string{"rows", "emitted", "rejected"}
+
+	_, done := startedCheck(t, e, id, e.upload(checkPath(id), nil, &upload{"u_ex010203.log", unlistedW3C("web-a.example.test")}))
+	v := onlyVerdict(t, done)
+	if v.Verdict != verdictReady || v.Rows == nil || v.Emitted == nil || v.Rejected == nil || *v.Rows != 5 || *v.Rejected != 0 {
+		t.Fatalf("ready verdict = %+v, want counted rows 5 and rejected 0", v)
+	}
+	raw := rawVerdicts(t, done)[0]
+	for _, k := range counts {
+		if _, ok := raw[k]; !ok {
+			t.Errorf("ready verdict lacks %q, a zero count must still be sent", k)
+		}
+	}
+
+	for _, c := range []struct {
+		name, body string
+	}{
+		{"u_ex010203.log", unlistedW3C("ISS-PROD-07")},
+		{intFileName, intHTTPERR},
+		{"notes.txt", "just some words\nnothing a log reader knows\n"},
+		{"access.log", checkCombined},
+	} {
+		_, done := startedCheck(t, e, id, e.upload(checkPath(id), nil, &upload{c.name, c.body}))
+		v := onlyVerdict(t, done)
+		if v.Verdict == verdictReady || v.Rows != nil || v.Emitted != nil || v.Rejected != nil {
+			t.Errorf("%s: verdict = %+v, want no counts", c.name, v)
+		}
+		raw := rawVerdicts(t, done)[0]
+		for _, k := range counts {
+			if _, ok := raw[k]; ok {
+				t.Errorf("%s: verdict %v sends %q though nothing was counted", c.name, raw["verdict"], k)
+			}
+		}
+	}
 }
