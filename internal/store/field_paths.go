@@ -52,7 +52,7 @@ func (s *Store) SampleFieldPaths(ctx context.Context, sourceID string) (audit.Fi
 			return audit.FieldPaths{}, errors.New("could not decode field path sample")
 		}
 		sampled++
-		walker.document("", raw, 1)
+		walker.document("", raw, 1, false)
 	}
 	if err := cur.Err(); err != nil {
 		return audit.FieldPaths{}, fieldPathsError(ctx, err)
@@ -117,23 +117,44 @@ func fieldPathSegment(name string) string {
 	return name
 }
 
+// payloadFieldPlaceholder replaces every key name below a payload field. A
+// payload is customer-shaped data: its keys can carry customer values (an id or
+// an email used as a key), so they are never returned.
+const payloadFieldPlaceholder = "*"
+
+// isPayloadField reports the two fields whose content is customer data. The
+// match is by name at any depth, so a payload copied under another parent is
+// treated the same way.
+func isPayloadField(name string) bool {
+	return name == "RequestPayload" || name == "ResponsePayload"
+}
+
 // document records every element of doc under prefix. depth is the depth of
-// the elements being listed (1 for the top level).
-func (w *fieldPathWalker) document(prefix string, doc bson.Raw, depth int) {
+// the elements being listed (1 for the top level). inPayload is true below a
+// payload field: every key there is replaced by the placeholder segment, and
+// repeated placeholders collapse into one path.
+func (w *fieldPathWalker) document(prefix string, doc bson.Raw, depth int, inPayload bool) {
 	elements, err := doc.Elements()
 	if err != nil {
 		return
 	}
 	for _, element := range elements {
-		path := fieldPathSegment(element.Key())
-		if prefix != "" {
-			path = prefix + "." + path
+		segment := fieldPathSegment(element.Key())
+		childInPayload := inPayload
+		if inPayload {
+			segment = payloadFieldPlaceholder
+		} else if isPayloadField(element.Key()) {
+			childInPayload = true
 		}
-		w.value(path, element.Value(), depth)
+		path := segment
+		if prefix != "" {
+			path = prefix + "." + segment
+		}
+		w.value(path, element.Value(), depth, childInPayload)
 	}
 }
 
-func (w *fieldPathWalker) value(path string, value bson.RawValue, depth int) {
+func (w *fieldPathWalker) value(path string, value bson.RawValue, depth int, inPayload bool) {
 	w.note(path, fieldTypeName(value.Type))
 	if depth >= audit.MaxFieldPathDepth {
 		return
@@ -141,7 +162,7 @@ func (w *fieldPathWalker) value(path string, value bson.RawValue, depth int) {
 	switch value.Type {
 	case bson.TypeEmbeddedDocument:
 		if doc, ok := value.DocumentOK(); ok {
-			w.document(path, doc, depth+1)
+			w.document(path, doc, depth+1, inPayload)
 		}
 	case bson.TypeArray:
 		array, ok := value.ArrayOK()
@@ -157,7 +178,7 @@ func (w *fieldPathWalker) value(path string, value bson.RawValue, depth int) {
 			if i >= maxFieldPathArrayItems {
 				break
 			}
-			w.value(elementPath, item, depth+1)
+			w.value(elementPath, item, depth+1, inPayload)
 		}
 	}
 }
