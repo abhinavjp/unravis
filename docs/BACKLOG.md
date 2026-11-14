@@ -44,11 +44,28 @@ Legend: `[ ]` open, `[x]` done, `[~]` dropped.
 - [ ] **BL-022** "Other work" semantics in the breakdown.
 - [ ] **BL-023** D3: Breakdown, Reveal, SEC-D3 security review on Opus, A8.
 - [ ] **BL-024** SQL packets S1 to S5.
-- [ ] **BL-025** e2e TSQL-03 (not run) and an add-computer e2e.
+- [ ] **BL-025** e2e TSQL-03 (not run) and an add-computer e2e. (Playwright e2e is manual-only, not part of CI: see BL-030.)
 - [ ] **BL-026** Owner action: connect the saved API audit database (enter its password) so the Slow call screen can be accepted on live data; until then the screen is demo-only. (source: P-46 acceptance 2026-11-13)
 - [ ] **BL-027** Slow call screen: "Back then reload" leaves a dead Forward step (a call history entry written before a reload reads as empty afterward); needs wayfinding.ts/screenFlow.ts, left out of the rc.36 history fix. (source: P-46 / R2-02 remainder 2026-11-13)
 - [ ] **BL-028** Slow call screen: restate a nearby row's per-call Database/Redis/Web figures in the Selected record detail so the row-to-detail number cross-check completes (deferred minor). (source: P-46 P46-02 2026-11-13)
 - [ ] **BL-029** api-seen SQL lane, residual DATA-02 edge: when an explicit source selection names only import sources (no audit source), the audit selection is empty, so the lane falls back to reading every connected audit source and sums their busy time. The DATA-02 fix filters by the selected audit ids when that selection is non-empty (the normal case); the empty-selection fallback keeps the historical read-all behaviour. Owner decision: should the api-seen lane be gated on a non-empty audit selection (mirroring the audit lane, which is hidden when no audit source is selected) so it never sums unselected sources? Needs a test for that edge. Pre-existing, not a regression introduced by the DATA-02 fix. (source: PR #2 review DATA-02 residual, 2026-11-14)
+
+### PR #2 review follow-ups (2026-11-15; none built, none ticked; the finding ids are from the PR #2 review)
+- [ ] **BL-030** CI-04: Playwright end-to-end runs are manual-only today (`run-e2e.ps1`); CI does not run them. Either add a windows job that runs them against the demo exe, or keep them manual and say so. (source: PR #2 review CI-04, 2026-11-15)
+- [ ] **BL-031** CI-03: `web/dist` is committed and embedded in the exe, but CI never checks it matches the source. Needs an owner decision first: is dist meant to be committed, and is the web build byte-for-byte repeatable on the CI runner? Only then add a `git diff --exit-code web/dist` step after "Web - build". (source: PR #2 review CI-03, 2026-11-15; needs owner)
+- [ ] **BL-032** Repo-wide gofmt pass: about 43 older Go files already on master are not gofmt-clean under the current Go version (doc-comment layout). The CI formatting step only checks Go files a pull request changes, so these are not flagged. Format them in one separate commit, then widen the CI step to the whole repo. (source: PR #2 review CI-02 follow-up, 2026-11-15; needs owner)
+- [ ] **BL-033** DATA-14: replace object payloads, and "*" keys of other maps with changing keys (for example headers), with constants on the server side, so no sample value or key name can leave the server. (source: PR #2 review DATA-14, 2026-11-15)
+- [ ] **BL-034** DATA-07: move the modern-server overlap filter into `activityPipeline`, and push the completion, range, kind and outcome filters into the database query on Mongo 3.4 (3.4-safe operators only). Needs a collector change, so deferred: do not build without the owner's go. (source: PR #2 review DATA-07, 2026-11-15)
+- [ ] **BL-035** SEC-09: add `RemoveScoped` to the `sourceLinkStore` interface and to the `reconnLinks` test fake, then retire the wide `Remove`. (source: PR #2 review SEC-09, 2026-11-15)
+- [ ] **BL-036** SEC-10: connection-text masking misses a digits-only password that contains one "/" and an unescaped "?" or "#" before the "@". Cover it with tests, then fix. (source: PR #2 review SEC-10, 2026-11-15)
+- [ ] **BL-037** DATA-10: a call that starts in one minute and ends in a later one is counted whole in the first minute; and the 24-hour look-back can be cut short by the 50,000-row cap. Spread the time across minutes and say when the cap is hit. (source: PR #2 review DATA-10, 2026-11-15)
+- [ ] **BL-038** DATA-04 and DATA-11: add `SumMs` to `LaneSeriesPoint` so the lane no longer depends on `round1` rounding of the average. (source: PR #2 review DATA-04/DATA-11, 2026-11-15)
+- [ ] **BL-039** DATA-09: tell a Query Store state lane apart from an imported-file lane in the reason text; check the fallbacks that run after a Query Store state lane; handle a stale state from the newest run. (source: PR #2 review DATA-09, 2026-11-15)
+- [ ] **BL-040** UI-02, UI-03 and UI-09: remove the unused reference period in `tracing()`; move the loading text into `DRILL_TEXT` (update `web/tests/drill.copy.test.cjs` counts). (source: PR #2 review UI-02/03/09, 2026-11-15)
+- [ ] **BL-041** The audit lane hint could also mention the red diamond (the slowest calls). Keep the copy in plain words for a first-time investigator. (source: PR #2 review, 2026-11-15)
+- [ ] **BL-042** `RunSQLLane` and `RunMongoLane` do not call `Validate` on their request, unlike the other lane runners. Add the call and a test. (source: PR #2 review, 2026-11-15)
+- [ ] **BL-043** UI warning when the chosen window is longer than 90 days (it may be slow or cut short). Plain-words copy; update the copy test counts. (source: PR #2 review, 2026-11-15)
+- [ ] **BL-044** BL-029 follow-on: filter the api-seen `SQLBusy` read by the leased source ids too, so it never sums a source that is not selected. (source: PR #2 review, 2026-11-15)
 
 ## Blackbox expansion (in the backlog; design and reviews done, nothing built)
 
