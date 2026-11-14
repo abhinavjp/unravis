@@ -2,6 +2,7 @@ package blackbox
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -237,5 +238,209 @@ func TestPlainReasonHasNoFileOrFieldNames(t *testing.T) {
 	}
 	if PlainReason(errors.New("other")) != "" || PlainReason(nil) != "" {
 		t.Fatal("PlainReason invents a sentence for other errors")
+	}
+}
+
+// BBX-1-03: owner-selected targets are pool/service names only.
+
+func TestTargetsValid(t *testing.T) {
+	cases := []Target{
+		{Kind: "appPool", Name: "Payroll API"},
+		{Kind: "service", Name: "EmailSvc"},
+	}
+	for _, target := range cases {
+		c := Default()
+		c.Name = "web-01"
+		c.Targets = []Target{target}
+		if err := c.Validate(); err != nil {
+			t.Errorf("target %+v refused: %v", target, err)
+		}
+	}
+}
+
+func TestTargetsBadKind(t *testing.T) {
+	for _, kind := range []string{"process", "AppPool", "Service", ""} {
+		c := Default()
+		c.Name = "web-01"
+		c.Targets = []Target{{Kind: kind, Name: "EmailSvc"}}
+		if err := c.Validate(); !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("kind %q: want ErrInvalidConfig, got %v", kind, err)
+		}
+	}
+}
+
+func TestTargetsBadName(t *testing.T) {
+	bad := []string{
+		``,
+		`back\slash`,
+		`C:pool`,
+		`a/b`, `a*b`, `a?b`, `a"b`, `a<b`, `a>b`, `a|b`,
+		"a\tb", "a\nb", "a\x01b",
+		strings.Repeat("x", 129),
+	}
+	for _, name := range bad {
+		c := Default()
+		c.Name = "web-01"
+		c.Targets = []Target{{Kind: "appPool", Name: name}}
+		if err := c.Validate(); !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("name %q: want ErrInvalidConfig, got %v", name, err)
+		}
+	}
+	good := []string{"Payroll API", "My.App-Pool (v2)", strings.Repeat("x", 128)}
+	for _, name := range good {
+		c := Default()
+		c.Name = "web-01"
+		c.Targets = []Target{{Kind: "appPool", Name: name}}
+		if err := c.Validate(); err != nil {
+			t.Errorf("name %q refused: %v", name, err)
+		}
+	}
+}
+
+func TestTargetsTooMany(t *testing.T) {
+	c := Default()
+	c.Name = "web-01"
+	c.Targets = make([]Target, 33)
+	for i := range c.Targets {
+		c.Targets[i] = Target{Kind: "service", Name: fmt.Sprintf("svc-%d", i)}
+	}
+	if err := c.Validate(); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("33 targets: want ErrInvalidConfig, got %v", err)
+	}
+	c.Targets = c.Targets[:32]
+	if err := c.Validate(); err != nil {
+		t.Fatalf("32 targets refused: %v", err)
+	}
+}
+
+func TestTargetsDuplicate(t *testing.T) {
+	c := Default()
+	c.Name = "web-01"
+	c.Targets = []Target{
+		{Kind: "service", Name: "EmailSvc"},
+		{Kind: "service", Name: "EmailSvc"},
+	}
+	if err := c.Validate(); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("duplicate (kind,name): want ErrInvalidConfig, got %v", err)
+	}
+	// The same name under a different kind is a different pair, not a duplicate.
+	c.Targets = []Target{
+		{Kind: "appPool", Name: "EmailSvc"},
+		{Kind: "service", Name: "EmailSvc"},
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("same name, different kind refused: %v", err)
+	}
+}
+
+func TestTargetsEmptyOK(t *testing.T) {
+	c := Default()
+	c.Name = "web-01"
+	if len(c.Targets) != 0 {
+		t.Fatalf("default targets must be empty: %+v", c.Targets)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseConfig([]byte(`{"name":"a"}`))
+	if err != nil || len(got.Targets) != 0 {
+		t.Fatalf("a file with no targets must stay machine-wide: %+v %v", got, err)
+	}
+}
+
+func TestTargetsRoundTrip(t *testing.T) {
+	c := Default()
+	c.Name = "web-01"
+	c.Targets = []Target{
+		{Kind: "appPool", Name: "Payroll API"},
+		{Kind: "service", Name: "EmailSvc"},
+	}
+	b, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"targets"`) || !strings.Contains(string(b), `"kind": "appPool"`) || !strings.Contains(string(b), `"name": "Payroll API"`) {
+		t.Fatalf("targets missing from marshalled config:\n%s", b)
+	}
+	got, err := ParseConfig(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Targets) != len(c.Targets) {
+		t.Fatalf("round trip lost targets: %+v", got.Targets)
+	}
+	for i := range c.Targets {
+		if got.Targets[i] != c.Targets[i] {
+			t.Fatalf("round trip changed target %d: %+v != %+v", i, got.Targets[i], c.Targets[i])
+		}
+	}
+	// omitempty: a machine-wide config writes no targets key.
+	c.Targets = nil
+	b, err = c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"targets"`) {
+		t.Fatalf("empty targets must be omitted:\n%s", b)
+	}
+}
+
+// TestProbeTrustAnchor proves the SQL trust-anchor config shape: absolute
+// credential-free PEM/DER paths, the CA pair set together, the two anchor
+// modes never mixed, and a plain host name. The probe stays off throughout.
+func TestProbeTrustAnchor(t *testing.T) {
+	certPath := filepath.Join(t.TempDir(), "sql.pem")
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	base := Default()
+	base.Name = "web-01"
+
+	ok := []Probe{
+		{}, // no anchor: default self-signed still fails closed at connect
+		{ServerCertificate: certPath},
+		{Certificate: caPath, HostNameInCertificate: "sql.local"},
+	}
+	for i, p := range ok {
+		c := base
+		c.Probe = p
+		if err := c.Validate(); err != nil {
+			t.Errorf("case %d: valid anchor refused: %v", i, err)
+		}
+	}
+
+	bad := []Probe{
+		{ServerCertificate: "sql.pem"},                              // relative
+		{ServerCertificate: filepath.Join(t.TempDir(), "sql.txt")},  // wrong ext
+		{ServerCertificate: certPath + ";password=x"},               // credentials
+		{ServerCertificate: certPath + "user id=sa"},                // credentials
+		{Certificate: "ca.pem", HostNameInCertificate: "sql.local"}, // relative CA
+		{Certificate: caPath},                                       // half pair
+		{HostNameInCertificate: "sql.local"},                        // half pair
+		{Certificate: caPath, HostNameInCertificate: "sa:pw@host"},  // credential host
+		{Certificate: caPath, HostNameInCertificate: "bad name"},    // not a host
+		{ServerCertificate: certPath, Certificate: caPath, HostNameInCertificate: "sql.local"}, // mixed
+	}
+	for i, p := range bad {
+		c := base
+		c.Probe = p
+		if err := c.Validate(); err == nil {
+			t.Errorf("case %d: bad anchor accepted: %+v", i, p)
+		} else if !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("case %d: err = %v; want ErrInvalidConfig", i, err)
+		}
+	}
+
+	// The anchors round-trip through blackbox.json and stay off-by-default.
+	c := base
+	c.Probe = Probe{Certificate: caPath, HostNameInCertificate: "sql.local"}
+	b, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseConfig(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Probe != c.Probe || got.Probe.Enabled {
+		t.Fatalf("probe round trip changed: %+v", got.Probe)
 	}
 }

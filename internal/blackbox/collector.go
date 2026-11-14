@@ -33,6 +33,7 @@ type HostCollector struct {
 	src       sampler.Source
 	extras    Extras
 	processes bool
+	selected  func() []ResolvedTarget
 
 	cores    int
 	prevHost sampler.HostTimes
@@ -59,6 +60,10 @@ func NewHostCollector(src sampler.Source, extras Extras, processes bool) *HostCo
 	}
 	return &HostCollector{src: src, extras: extras, processes: processes, cores: cores, prevProc: map[procID]float64{}}
 }
+
+// SetSelectedTargets wires the resolver's selected targets: each one is always
+// listed in the process rows, even when idle. A nil func lists no extra targets.
+func (h *HostCollector) SetSelectedTargets(f func() []ResolvedTarget) { h.selected = f }
 
 // Prime reads the host once so the first Collect has a baseline to take changes
 // from. It records nothing.
@@ -148,9 +153,12 @@ func (h *HostCollector) Collect(now time.Time) (Sample, error) {
 	return s, nil
 }
 
-// topProcesses lists the busiest TopProcesses processes by CPU change over the
-// last interval. On the first sample there is no change to take, so the
-// cumulative CPU time orders them and no percent is given.
+// topProcesses lists the busiest processes: the top TopCPU by CPU change over
+// the last interval plus the top TopMem by working set, merged without
+// duplicates, plus every selected target even when idle. Idle (PID 0) is never
+// listed. All processes are read and ranked; only the listing is smaller. On
+// the first sample there is no change to take, so the cumulative CPU time
+// orders them and no percent is given.
 func (h *HostCollector) topProcesses(wall float64) []ProcRow {
 	type scored struct {
 		i     int
@@ -179,11 +187,60 @@ func (h *HostCollector) topProcesses(wall float64) []ProcRow {
 		}
 		return h.procs[list[a].i].PID < h.procs[list[b].i].PID
 	})
-	if len(list) > TopProcesses {
-		list = list[:TopProcesses]
+	cpu := list
+	if len(cpu) > TopCPU {
+		cpu = cpu[:TopCPU]
 	}
-	rows := make([]ProcRow, 0, len(list))
-	for _, sc := range list {
+	// The memory top ranks the same read processes by working set; an
+	// unreadable working set ranks last (its row keeps nil fields, never 0).
+	mem := make([]scored, len(list))
+	copy(mem, list)
+	sort.SliceStable(mem, func(a, b int) bool {
+		wa, wb := h.workingSet(mem[a].i), h.workingSet(mem[b].i)
+		if wa != wb {
+			return wa > wb
+		}
+		return h.procs[mem[a].i].PID < h.procs[mem[b].i].PID
+	})
+	if len(mem) > TopMem {
+		mem = mem[:TopMem]
+	}
+	seen := make(map[procID]bool, maxProcRows)
+	picked := make([]scored, 0, maxProcRows)
+	add := func(sc scored) {
+		id := idOf(&h.procs[sc.i])
+		if !seen[id] {
+			seen[id] = true
+			picked = append(picked, sc)
+		}
+	}
+	for _, sc := range cpu {
+		add(sc)
+	}
+	for _, sc := range mem {
+		add(sc)
+	}
+	// Selected targets are always listed, even when idle: a measured zero is
+	// a real reading of a running process, not a missing one.
+	if h.selected != nil {
+		for _, t := range h.selected() {
+			if t.PID == 0 {
+				continue
+			}
+			want := procID{pid: t.PID, start: t.Start}
+			if seen[want] {
+				continue
+			}
+			for _, sc := range list {
+				if idOf(&h.procs[sc.i]) == want {
+					add(sc)
+					break
+				}
+			}
+		}
+	}
+	rows := make([]ProcRow, 0, len(picked))
+	for _, sc := range picked {
 		p := &h.procs[sc.i]
 		r := ProcRow{PID: p.PID, Name: p.Image, Threads: p.Threads}
 		if p.Have&sampler.HaveTimes != 0 {
@@ -208,6 +265,16 @@ func (h *HostCollector) topProcesses(wall float64) []ProcRow {
 		rows = append(rows, r)
 	}
 	return rows
+}
+
+// workingSet is the working set used to rank the memory top; an unreadable
+// working set ranks as 0 (ranking only, the row keeps nil).
+func (h *HostCollector) workingSet(i int) uint64 {
+	p := &h.procs[i]
+	if p.Have&sampler.HaveMemory != 0 {
+		return p.WorkingSet
+	}
+	return 0
 }
 
 // Close closes the Source and the extras.
