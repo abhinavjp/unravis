@@ -1,6 +1,7 @@
 package blackbox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
@@ -49,6 +50,18 @@ type StatusDoc struct {
 	ManifestOK      bool       `json:"manifestOK"`
 	WriteOK         bool       `json:"writeOK"`
 	Probe           Probe      `json:"probe"`
+	SQL             SQLStatus  `json:"sql"`
+}
+
+// SQLStatus is the only SQL information /status carries (review C11): the four
+// fields the SQL runner writes to <folder>\sql\status.json. No instance name,
+// server version or error text ever crosses the plain-HTTP endpoint, and no SQL
+// sample data is served at all (C12).
+type SQLStatus struct {
+	Enabled  bool       `json:"enabled"`
+	State    string     `json:"state"`
+	LastOK   *time.Time `json:"lastOK,omitempty"`
+	Failures int        `json:"failures"`
 }
 
 // ServerOptions wire the status server.
@@ -238,6 +251,31 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"Read the status with the read key in the " + KeyHeader + " header: /status, /manifest, /files, /files/<name>.\n"))
 }
 
+// readSQLStatus reads the SQL runner's status file best-effort: one small file
+// read per /status, on demand, no goroutine. Missing, unreadable or malformed
+// means off, never an error answer. Extra fields are refused
+// (DisallowUnknownFields) and the state is whitelisted, so no instance name,
+// version or error text can leak through the file.
+func readSQLStatus(folder string) SQLStatus {
+	off := SQLStatus{State: "off"}
+	data, err := os.ReadFile(filepath.Join(SQLDataDir(folder), "status.json"))
+	if err != nil {
+		return off
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var st SQLStatus
+	if err := dec.Decode(&st); err != nil || dec.More() {
+		return off
+	}
+	switch st.State {
+	case "on", "backing-off", "auto-off", "denied", "off":
+	default:
+		st.State = "off"
+	}
+	return st
+}
+
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	now := s.now().UTC()
 	m := s.o.Store.Manifest()
@@ -249,6 +287,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Samples: m.SampleCount(), Files: len(m.Files), Bytes: m.TotalBytes(), Gaps: len(m.Gaps),
 		MinFreePercent: s.o.Config.MinFreePercent, KeepDays: s.o.Config.KeepDays, MaxGB: s.o.Config.MaxGB,
 		ManifestOK: s.o.Store.ManifestWritable(), WriteOK: st.WriteOK, Probe: Probe{Enabled: false},
+		SQL: readSQLStatus(s.o.Config.Folder),
 	}
 	if st.FreeKnown {
 		p := st.FreePercent

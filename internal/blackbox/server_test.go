@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -401,5 +402,180 @@ func TestThrottleTableEvictsOneOffAddressesNotLockedOutOnes(t *testing.T) {
 	g.srv.mu.Unlock()
 	if n > maxTrackedIPs {
 		t.Fatalf("table grew to %d", n)
+	}
+}
+
+// BBX-5-04 (C11): /status carries only the four-field SQL status object; no SQL
+// sample data ever crosses the plain-HTTP endpoint.
+
+// writeSQLStatusFile puts text into <folder>\sql\status.json, as the SQL runner does.
+func writeSQLStatusFile(t *testing.T, folder, text string) {
+	t.Helper()
+	dir := SQLDataDir(folder)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "status.json"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// sqlObject answers /status and returns the raw sql object plus the whole body.
+func sqlObject(t *testing.T, g *srvRig) (map[string]json.RawMessage, string) {
+	t.Helper()
+	resp, body := g.get(t, "/status", g.key)
+	if resp.StatusCode != 200 {
+		t.Fatalf("/status: %d %s", resp.StatusCode, body)
+	}
+	var doc struct {
+		SQL map[string]json.RawMessage `json:"sql"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc.SQL, string(body)
+}
+
+func TestStatusSQLShape(t *testing.T) {
+	g := newSrvRig(t)
+	writeSQLStatusFile(t, g.s.Dir(), `{"enabled":true,"state":"backing-off","lastOK":"2026-10-27T09:59:00Z","failures":3}`)
+	sql, body := sqlObject(t, g)
+	if len(sql) != 4 {
+		t.Fatalf("sql must hold exactly four fields: %v", sql)
+	}
+	for _, k := range []string{"enabled", "state", "lastOK", "failures"} {
+		if _, ok := sql[k]; !ok {
+			t.Fatalf("sql is missing %q: %v", k, sql)
+		}
+	}
+	var d StatusDoc
+	if err := json.Unmarshal([]byte(body), &d); err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 10, 27, 9, 59, 0, 0, time.UTC)
+	if !d.SQL.Enabled || d.SQL.State != "backing-off" || d.SQL.Failures != 3 || d.SQL.LastOK == nil || !d.SQL.LastOK.Equal(want) {
+		t.Fatalf("%+v", d.SQL)
+	}
+	// A missing lastOK is omitted, never a zero time.
+	writeSQLStatusFile(t, g.s.Dir(), `{"enabled":false,"state":"off","failures":0}`)
+	sql, body = sqlObject(t, g)
+	if _, ok := sql["lastOK"]; ok {
+		t.Fatalf("lastOK must be omitted when missing: %v", sql)
+	}
+	if strings.Contains(body, "0001-01-01") {
+		t.Fatal("a zero time leaked into /status")
+	}
+}
+
+func TestStatusSQLNoInstanceOrError(t *testing.T) {
+	g := newSrvRig(t)
+	writeSQLStatusFile(t, g.s.Dir(), `{"enabled":true,"state":"on","failures":0,"instance":"MSSQL$SECRET","version":"16.0.1000","error":"Login failed for user sa on SECRET"}`)
+	sql, body := sqlObject(t, g)
+	for k := range sql {
+		switch k {
+		case "enabled", "state", "lastOK", "failures":
+		default:
+			t.Fatalf("extra field %q passed through: %v", k, sql)
+		}
+	}
+	for _, secret := range []string{"SECRET", "16.0.1000", "Login failed", `"instance"`, `"error"`} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("/status leaked %q: %s", secret, body)
+		}
+	}
+	var d StatusDoc
+	if err := json.Unmarshal([]byte(body), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.SQL.Enabled || d.SQL.State != "off" {
+		t.Fatalf("a file with extra fields must read as off: %+v", d.SQL)
+	}
+}
+
+func TestStatusSQLMissingOff(t *testing.T) {
+	g := newSrvRig(t)
+	resp, body := g.get(t, "/status", g.key)
+	if resp.StatusCode != 200 {
+		t.Fatalf("missing status.json must not fail /status: %d %s", resp.StatusCode, body)
+	}
+	var d StatusDoc
+	if err := json.Unmarshal(body, &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.SQL.Enabled || d.SQL.State != "off" || d.SQL.Failures != 0 || d.SQL.LastOK != nil {
+		t.Fatalf("%+v", d.SQL)
+	}
+	// Unreadable content is off too, never a 500.
+	writeSQLStatusFile(t, g.s.Dir(), `{"enabled":true,"state":`)
+	if _, body := sqlObject(t, g); strings.Contains(body, `"enabled":true`) {
+		t.Fatalf("broken status.json must read as off: %s", body)
+	}
+}
+
+func TestStatusSQLBadState(t *testing.T) {
+	g := newSrvRig(t)
+	for _, state := range []string{"ON", "running", "on;drop", "", "unknown"} {
+		writeSQLStatusFile(t, g.s.Dir(), `{"enabled":true,"state":"`+state+`","failures":1}`)
+		_, body := sqlObject(t, g)
+		var d StatusDoc
+		if err := json.Unmarshal([]byte(body), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.SQL.State != "off" {
+			t.Fatalf("state %q must normalize to off: %+v", state, d.SQL)
+		}
+	}
+	for _, state := range []string{"on", "backing-off", "auto-off", "denied", "off"} {
+		writeSQLStatusFile(t, g.s.Dir(), `{"enabled":true,"state":"`+state+`","failures":0}`)
+		_, body := sqlObject(t, g)
+		var d StatusDoc
+		if err := json.Unmarshal([]byte(body), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.SQL.State != state {
+			t.Fatalf("whitelisted state %q lost: %+v", state, d.SQL)
+		}
+	}
+}
+
+func TestFilesDoesNotServeSQL(t *testing.T) {
+	g := newSrvRig(t)
+	writeSQLStatusFile(t, g.s.Dir(), `{"enabled":true,"state":"on","failures":0}`)
+	sample := `{"secret":"sql sample data"}`
+	if err := os.WriteFile(filepath.Join(SQLDataDir(g.s.Dir()), "bb-20261027-09.ndjson"), []byte(sample), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		"/files/sql/status.json",
+		"/files/sql/bb-20261027-09.ndjson", // a valid recording name, but in the sql folder
+		"/files/sql%2fstatus.json",
+		"/files/sql%5cstatus.json",
+		"/files/status.json",
+	} {
+		resp, body := g.get(t, p, g.key)
+		if resp.StatusCode != 404 {
+			t.Fatalf("%s: %d %s", p, resp.StatusCode, body)
+		}
+		if strings.Contains(string(body), "sql sample data") {
+			t.Fatalf("%s served SQL sample data", p)
+		}
+	}
+}
+
+func TestProbeStillRefused(t *testing.T) {
+	cfg := Default()
+	cfg.Name = "box"
+	cfg.Probe.Enabled = true
+	if err := cfg.Validate(); err == nil || !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("probe.enabled true must stay refused: %v", err)
+	}
+	g := newSrvRig(t)
+	_, body := sqlObject(t, g)
+	var d StatusDoc
+	if err := json.Unmarshal([]byte(body), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Probe.Enabled || !strings.Contains(body, `"probe":{"enabled":false}`) {
+		t.Fatalf("the probe gate must stay hardcoded false: %s", body)
 	}
 }

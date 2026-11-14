@@ -59,6 +59,13 @@ type Store struct {
 	priorClean bool
 	lastMax    time.Time // newest sample time written (by time, not by order)
 	manifestOK bool      // false when the last manifest write failed
+
+	// gapInterval is the interval in seconds that gap detection judges samples
+	// against. It starts at the configured interval; the recorder sets it to
+	// the budget's effective interval so a widened tick cadence is not
+	// mistaken for a gap. The manifest keeps the configured base interval and,
+	// separately, the effective interval for offline readers.
+	gapInterval int
 }
 
 // OpenStore opens (and when needed creates) the recordings folder. It repairs
@@ -72,7 +79,7 @@ func OpenStore(dir string, opt StoreOptions) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{dir: dir, opt: opt, now: opt.Now, firstOfRun: true, manifestOK: true}
+	s := &Store{dir: dir, opt: opt, now: opt.Now, firstOfRun: true, manifestOK: true, gapInterval: opt.IntervalSeconds}
 	now := s.now().UTC()
 
 	m, err := readManifest(dir)
@@ -304,6 +311,27 @@ func (s *Store) Event(kind, detail string) {
 	_ = s.writeManifestLocked(false)
 }
 
+// SetInterval sets the interval in seconds that gap detection judges samples
+// against, and persists it as the manifest's effective interval so an offline
+// reader judges lateness against the same widened cadence. The recorder calls
+// it with the budget's effective interval, so a widened tick cadence neither
+// fabricates gaps nor looks running-late; without a budget the configured
+// interval from OpenStore stands. The base IntervalSeconds is left unchanged.
+// Values <= 0 are ignored. The manifest is rewritten only when the effective
+// interval actually changes, so a steady cadence adds no per-tick write.
+func (s *Store) SetInterval(seconds int) {
+	if seconds <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gapInterval = seconds
+	if s.m.EffectiveIntervalSeconds != seconds {
+		s.m.EffectiveIntervalSeconds = seconds
+		_ = s.writeManifestLocked(false)
+	}
+}
+
 // Append writes one sample as one line, flushes it to disk, and updates the
 // manifest. causeHint names why a gap before this sample happened when the
 // recorder knows (for example "disk-low"); otherwise a gap inside a run is
@@ -351,7 +379,7 @@ func (s *Store) Append(smp Sample, causeHint string) error {
 			} else if cause == "" {
 				cause = CauseLate
 			}
-			if g, ok := GapBetween(s.lastMax, smp.T, s.opt.IntervalSeconds, cause); ok {
+			if g, ok := GapBetween(s.lastMax, smp.T, s.gapInterval, cause); ok {
 				s.m.Gaps = append(s.m.Gaps, g)
 				if len(s.m.Gaps) > maxGaps {
 					s.m.Gaps = s.m.Gaps[len(s.m.Gaps)-maxGaps:]
@@ -391,7 +419,9 @@ func (s *Store) rollbackLocked(before int64) {
 	_ = s.cur.Close()
 	s.cur, s.curN = nil, ""
 	if err := os.Truncate(filepath.Join(s.dir, name), before); err != nil {
-		s.event(s.now(), EventWriteFailed, "could not cut a half-written line out of "+name+": "+err.Error())
+		// Fixed code only (C10): the file name, the folder path and the OS
+		// error text must never reach the manifest, which ships in snapshots.
+		s.event(s.now(), EventWriteFailed, codeWriteFailed)
 	}
 }
 
