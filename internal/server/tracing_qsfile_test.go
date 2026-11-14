@@ -75,7 +75,8 @@ func TestQSFileBucketsWeightAveragesAndUseHalfOpenStarts(t *testing.T) {
 	rows := []evidence.Event{
 		qsFileTestEvent(axis.Start, "100", 20, 90),
 		qsFileTestEvent(axis.Start.Add(time.Second), "50", 10, 120),
-		qsFileTestEvent(axis.Start.Add(-time.Millisecond), "999", 100, 1000),
+		// Ends before the window starts (DATA-10: one that still runs into it is kept).
+		qsFileTestEvent(axis.Start.Add(-15*time.Minute-time.Millisecond), "999", 100, 1000),
 		qsFileTestEvent(axis.End, "999", 100, 1000),
 	}
 	other := qsFileTestEvent(axis.Start, "999", 100, 1000)

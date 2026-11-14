@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -105,6 +106,7 @@ func qLaneQSIntervals(req LaneRequest, spans []Window) string {
 	incStart := sqlOffsetLit(req.Incident.Start)
 	return `/* unravis:qs_intervals */ SELECT i.start_time, SUM(rs.count_executions) AS execs, ` +
 		`SUM(rs.avg_duration * rs.count_executions) / NULLIF(SUM(rs.count_executions), 0) / 1000.0 AS avg_ms, ` +
+		`SUM(rs.avg_duration * rs.count_executions) / 1000.0 AS sum_ms, ` +
 		`MAX(rs.max_duration) / 1000.0 AS max_ms, ` +
 		`CASE WHEN i.start_time >= ` + incStart + ` THEN 'inc' ELSE 'ref' END AS win ` +
 		`FROM sys.query_store_runtime_stats rs JOIN sys.query_store_runtime_stats_interval i ON i.runtime_stats_interval_id = rs.runtime_stats_interval_id ` +
@@ -559,6 +561,14 @@ func reasonSuffix(reason string) string {
 
 // seriesOf turns the Query Store interval rows into the saved series, skipping
 // rows without a usable start time or any executions.
+//
+// A point holds an average, and the tracing lane gets a block's busy time back as
+// average x executions. So that product is the real summed duration (sum_ms, which
+// the server adds up before any rounding), the average is kept as the exact
+// quotient sum_ms / execs; rounding it to 0.1 ms first would shift the busy time by
+// up to 0.05 ms per execution. The page rounds the average when it shows it. A row
+// without a usable sum (an older read, or a value that is not a number) keeps the
+// average rounded to 0.1 ms.
 func seriesOf(intervals []Row) []LaneSeriesPoint {
 	out := make([]LaneSeriesPoint, 0, len(intervals))
 	for _, r := range intervals {
@@ -570,9 +580,38 @@ func seriesOf(intervals []Row) []LaneSeriesPoint {
 		if n <= 0 {
 			continue
 		}
-		out = append(out, LaneSeriesPoint{T: t.UTC().Unix(), Execs: int64(n), AvgMs: round1(num(r["avg_ms"])), MaxMs: round1(num(r["max_ms"]))})
+		avg := round1(num(r["avg_ms"]))
+		if sum, ok := sumMs(r["sum_ms"]); ok {
+			avg = sum / n
+		}
+		out = append(out, LaneSeriesPoint{T: t.UTC().Unix(), Execs: int64(n), AvgMs: avg, MaxMs: round1(num(r["max_ms"]))})
 	}
 	return out
+}
+
+// sumMs reads the summed-duration column: false when it is missing, not a
+// number, negative or infinite.
+func sumMs(v any) (float64, bool) {
+	var f float64
+	switch x := v.(type) {
+	case nil:
+		return 0, false
+	case string:
+		p, err := strconv.ParseFloat(strings.TrimSpace(x), 64)
+		if err != nil {
+			return 0, false
+		}
+		f = p
+	case []byte:
+		p, err := strconv.ParseFloat(strings.TrimSpace(string(x)), 64)
+		if err != nil {
+			return 0, false
+		}
+		f = p
+	default:
+		f = num(v)
+	}
+	return f, f >= 0 && !math.IsNaN(f) && !math.IsInf(f, 0)
 }
 
 func round1(v float64) float64 { return math.Round(v*10) / 10 }
