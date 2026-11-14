@@ -208,8 +208,14 @@ func (h *handler) postImportCheck(w http.ResponseWriter, r *http.Request, raw st
 		return
 	}
 	job.total.Store(sum)
+	if !h.jobs.beginRun() {
+		// Shutdown won the race: start no goroutine. handedOff stays false, so the
+		// defer above closes the spools, discards the job and gives back the slot
+		// and the gate.
+		writeCaseFailure(w, http.StatusServiceUnavailable, "cases-unavailable", "Unravis is shutting down. Try again in a moment.")
+		return
+	}
 	handedOff = true
-	h.jobs.wg.Add(1)
 	go h.runCheckJob(job, items, id, slot, release)
 	writeJSON(w, http.StatusAccepted, job.snapshot(), 4096)
 }
