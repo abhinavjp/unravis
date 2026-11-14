@@ -243,7 +243,7 @@
   .scall-map {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 8px;
     min-width: 0;
   }
   .scall-map-defs {
