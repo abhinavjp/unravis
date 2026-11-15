@@ -23,6 +23,15 @@ type fakeSQLEnv struct {
 	// unreadable or swapped config without Windows.
 	verifyCalls []string
 	verify      func(path string) error
+	// SEC-3: the install-record lock. markerLocks records every lock call;
+	// markerLockErr, when set, makes the lock fail so the undo can be watched.
+	markerLocks   []string
+	markerLockErr error
+}
+
+func (e *fakeSQLEnv) LockSQLInstallMarker(path string) error {
+	e.markerLocks = append(e.markerLocks, path)
+	return e.markerLockErr
 }
 
 func (e *fakeSQLEnv) VerifyAdminOnlyFile(path string) error {
@@ -626,7 +635,10 @@ func TestEnableSQLRefusesUserWritableConfig(t *testing.T) {
 	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
 		t.Fatal(err)
 	}
-	g.env.verify = func(string) error {
+	g.env.verify = func(path string) error {
+		if path != g.configPath() {
+			return nil // the install record stays locked
+		}
 		return errors.New("blackbox: the settings file allows a non-administrator to change it")
 	}
 	if err := g.m.EnableSQL(g.cfg, g.configPath()); installReason(t, err) != ReasonOther {
@@ -640,16 +652,20 @@ func TestEnableSQLRefusesUserWritableConfig(t *testing.T) {
 // SEC-1: the proof is repeated immediately before the service is started, so a
 // config swapped after the entry check still cannot ride into a running
 // service. A healthy config is proven at install, at enable entry and again at
-// the start itself.
+// the start itself; the SEC-3 install record is proven at install and at
+// enable entry, and its proofs never mask the config's.
 func TestEnableSQLRechecksConfigBeforeStart(t *testing.T) {
 	g := newSQLRig(t)
 	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
-	g.env.verify = func(string) error {
-		calls++
-		if calls == 1 {
+	configCalls := 0
+	g.env.verify = func(path string) error {
+		if path != g.configPath() {
+			return nil // the install record stays locked
+		}
+		configCalls++
+		if configCalls == 1 {
 			return nil // the entry check still sees the locked config
 		}
 		return errors.New("blackbox: the settings file allows a non-administrator to change it")
@@ -660,7 +676,8 @@ func TestEnableSQLRechecksConfigBeforeStart(t *testing.T) {
 	if g.svc.did("start") != 0 {
 		t.Fatalf("the service started although the start-time proof failed: %v", g.svc.calls)
 	}
-	// Healthy path: install proves once, enable proves at entry AND at start.
+	// Healthy path: install proves the config then the record; enable proves
+	// the record and the config at entry, and the config again at the start.
 	g2 := newSQLRig(t)
 	if err := g2.m.InstallSQL(g2.cfg, g2.configPath()); err != nil {
 		t.Fatal(err)
@@ -668,12 +685,14 @@ func TestEnableSQLRechecksConfigBeforeStart(t *testing.T) {
 	if err := g2.m.EnableSQL(g2.cfg, g2.configPath()); err != nil {
 		t.Fatal(err)
 	}
-	if len(g2.env.verifyCalls) != 3 {
-		t.Fatalf("want proofs at install, enable entry and start, got %v", g2.env.verifyCalls)
+	marker := sqlInstallMarkerPath(g2.env.prog)
+	want := []string{g2.configPath(), marker, marker, g2.configPath(), g2.configPath()}
+	if len(g2.env.verifyCalls) != len(want) {
+		t.Fatalf("want proofs %v, got %v", want, g2.env.verifyCalls)
 	}
-	for _, p := range g2.env.verifyCalls {
-		if p != g2.configPath() {
-			t.Fatalf("a proof was asked of the wrong path: %v", g2.env.verifyCalls)
+	for i, p := range want {
+		if g2.env.verifyCalls[i] != p {
+			t.Fatalf("proof %d was asked of %q, want %q (%v)", i, g2.env.verifyCalls[i], p, g2.env.verifyCalls)
 		}
 	}
 }
@@ -735,5 +754,206 @@ func TestAdminOnlyDACLRule(t *testing.T) {
 				t.Fatalf("an admin-locked settings file was refused: %v", err)
 			}
 		})
+	}
+}
+
+// SEC-3: the activation folder check must compare the loaded settings against
+// the folder persisted at INSTALL time — not against the same config file it
+// just loaded (a file compared with itself can never fail). Editing Folder in
+// the bound config and enabling with that same edited config must be REFUSED.
+func TestEnableSQLRefusesEditedConfigFolder(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	// Edit Folder in the bound settings file (a mistake, or tampering by
+	// whoever can write it) and enable with the SAME edited config: the old
+	// loaded.Folder != cfg.Folder check compares the file with itself.
+	edited := g.cfg
+	edited.Folder = filepath.Join(t.TempDir(), "elsewhere")
+	if err := SaveConfig(g.configPath(), edited, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.m.EnableSQL(edited, g.configPath()); installReason(t, err) != ReasonOther {
+		t.Fatalf("enable-sql accepted an edited folder: %v", err)
+	}
+	if g.svc.did("start") != 0 {
+		t.Fatalf("enable-sql started with an edited folder: %v", g.svc.calls)
+	}
+	// The honest positive case: an UNCHANGED folder still activates.
+	g2 := newSQLRig(t)
+	if err := g2.m.InstallSQL(g2.cfg, g2.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	if err := g2.m.EnableSQL(g2.cfg, g2.configPath()); err != nil {
+		t.Fatalf("enable-sql refused the unchanged install folder: %v", err)
+	}
+	if g2.svc.state != SvcRunning {
+		t.Fatalf("enable-sql did not start the honest case: %s", g2.svc.state)
+	}
+}
+
+// SEC-3: install persists the install-time folder in the install record beside
+// the program, locks it to administrators and proves the lock before the
+// service is registered.
+func TestInstallSQLPersistsInstallFolder(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	marker := sqlInstallMarkerPath(g.env.prog)
+	folder, err := readSQLInstallMarker(marker)
+	if err != nil || folder != g.cfg.Folder {
+		t.Fatalf("install record = %q, %v; want the install folder %q", folder, err, g.cfg.Folder)
+	}
+	if len(g.env.markerLocks) != 1 || g.env.markerLocks[0] != marker {
+		t.Fatalf("the install record was not locked: %v", g.env.markerLocks)
+	}
+	// The record's admin lock was proven at install, after the config's.
+	if len(g.env.verifyCalls) != 2 || g.env.verifyCalls[0] != g.configPath() || g.env.verifyCalls[1] != marker {
+		t.Fatalf("install proofs = %v, want [config, record]", g.env.verifyCalls)
+	}
+}
+
+// SEC-3: an install record that cannot be locked or proven refuses the whole
+// install and leaves no record, no folder and no service behind.
+func TestInstallSQLUndoUnprovenInstallRecord(t *testing.T) {
+	t.Run("the lock fails", func(t *testing.T) {
+		g := newSQLRig(t)
+		g.env.markerLockErr = errors.New("access denied")
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); installReason(t, err) != ReasonOther {
+			t.Fatalf("%v", err)
+		}
+		if g.svc.did("create") != 0 {
+			t.Fatalf("a service was registered although the record could not be locked: %v", g.svc.calls)
+		}
+		if _, err := os.Stat(sqlInstallMarkerPath(g.env.prog)); err == nil {
+			t.Fatal("the unlocked install record was left behind")
+		}
+		if _, err := os.Stat(g.sqlDir()); err == nil {
+			t.Fatal("the sql folder was left behind")
+		}
+	})
+	t.Run("the proof fails", func(t *testing.T) {
+		g := newSQLRig(t)
+		marker := sqlInstallMarkerPath(g.env.prog)
+		g.env.verify = func(path string) error {
+			if path == marker {
+				return errors.New("access denied") // unreadable ACL: fail closed
+			}
+			return nil
+		}
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); installReason(t, err) != ReasonOther {
+			t.Fatalf("%v", err)
+		}
+		if g.svc.did("create") != 0 {
+			t.Fatalf("a service was registered although the record was not proven: %v", g.svc.calls)
+		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatal("the unproven install record was left behind")
+		}
+	})
+}
+
+// SEC-3: enable-sql fails closed on the install record. Missing, malformed,
+// tampered or unverifiable means REFUSED — never a zero value that looks like
+// a matching folder. The tampered case also proves the record (not the config
+// itself) is the comparison source.
+func TestEnableSQLInstallRecordFailClosed(t *testing.T) {
+	t.Run("record missing", func(t *testing.T) {
+		g := newSQLRig(t)
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(sqlInstallMarkerPath(g.env.prog)); err != nil {
+			t.Fatal(err)
+		}
+		if err := g.m.EnableSQL(g.cfg, g.configPath()); installReason(t, err) != ReasonOther {
+			t.Fatalf("%v", err)
+		}
+		if g.svc.did("start") != 0 {
+			t.Fatalf("enable-sql started without an install record: %v", g.svc.calls)
+		}
+	})
+	t.Run("record malformed", func(t *testing.T) {
+		g := newSQLRig(t)
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(sqlInstallMarkerPath(g.env.prog), []byte("{not json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := g.m.EnableSQL(g.cfg, g.configPath()); installReason(t, err) != ReasonOther {
+			t.Fatalf("%v", err)
+		}
+		if g.svc.did("start") != 0 {
+			t.Fatalf("enable-sql started on a malformed record: %v", g.svc.calls)
+		}
+	})
+	t.Run("record names no folder", func(t *testing.T) {
+		g := newSQLRig(t)
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(sqlInstallMarkerPath(g.env.prog), []byte(`{"folder":""}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := g.m.EnableSQL(g.cfg, g.configPath()); installReason(t, err) != ReasonOther {
+			t.Fatalf("%v", err)
+		}
+		if g.svc.did("start") != 0 {
+			t.Fatalf("enable-sql started on an empty record folder: %v", g.svc.calls)
+		}
+	})
+	t.Run("record tampered to another folder", func(t *testing.T) {
+		g := newSQLRig(t)
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+			t.Fatal(err)
+		}
+		// The config is UNCHANGED; the record now names a different folder.
+		// The refusal proves the record is actually consulted.
+		if err := writeSQLInstallMarker(sqlInstallMarkerPath(g.env.prog), filepath.Join(t.TempDir(), "elsewhere")); err != nil {
+			t.Fatal(err)
+		}
+		if err := g.m.EnableSQL(g.cfg, g.configPath()); installReason(t, err) != ReasonOther {
+			t.Fatalf("%v", err)
+		}
+		if g.svc.did("start") != 0 {
+			t.Fatalf("enable-sql started on a tampered record: %v", g.svc.calls)
+		}
+	})
+	t.Run("record ACL unverifiable", func(t *testing.T) {
+		g := newSQLRig(t)
+		if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+			t.Fatal(err)
+		}
+		marker := sqlInstallMarkerPath(g.env.prog)
+		g.env.verify = func(path string) error {
+			if path == marker {
+				return errors.New("access denied") // unreadable ACL: fail closed
+			}
+			return nil
+		}
+		if err := g.m.EnableSQL(g.cfg, g.configPath()); installReason(t, err) != ReasonOther {
+			t.Fatalf("%v", err)
+		}
+		if g.svc.did("start") != 0 {
+			t.Fatalf("enable-sql started on an unverifiable record: %v", g.svc.calls)
+		}
+	})
+}
+
+// SEC-3: a clean remove takes the install record with the service; a re-install
+// writes a fresh one.
+func TestRemoveSQLClearsInstallRecord(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.m.RemoveSQL(g.cfg, g.cfg.Name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(sqlInstallMarkerPath(g.env.prog)); err == nil {
+		t.Fatal("the install record survived the removal")
 	}
 }

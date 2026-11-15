@@ -22,3 +22,11 @@ func (OSEnv) VerifyAdminOnlyFile(string) error { return errNoService }
 
 // verifyAdminOnlyFile is not available off Windows.
 func verifyAdminOnlyFile(string) error { return errNoService }
+
+// LockSQLInstallMarker is not available off Windows: there are no Windows ACLs
+// to apply, so the lock fails closed (SEC-3). The record write/read helpers
+// stay pure Go in sqlservice.go and are tested on every platform.
+func (OSEnv) LockSQLInstallMarker(string) error { return errNoService }
+
+// lockSQLInstallMarker is not available off Windows.
+func lockSQLInstallMarker(string) error { return errNoService }

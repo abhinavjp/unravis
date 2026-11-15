@@ -42,6 +42,28 @@ func (OSEnv) GrantSQLLaunchAccess(exePath, configPath, sid string) error {
 // that it is fine. The DACL rule itself is decided in pure Go (adminOnlyDACL).
 func (OSEnv) VerifyAdminOnlyFile(path string) error { return verifyAdminOnlyFile(path) }
 
+// LockSQLInstallMarker locks the SQL install record to SYSTEM and
+// Administrators only (SEC-3): a protected DACL with full control for SY/BA
+// and nothing for anyone else — not even the SQL service SID, which never
+// reads the record. The owner stays the installing administrator (trusted by
+// verifyAdminOnlyFile). No inheritance: the record's lock is its own.
+func (OSEnv) LockSQLInstallMarker(path string) error { return lockSQLInstallMarker(path) }
+
+// lockSQLInstallMarker applies the admin-only protected DACL to the record.
+func lockSQLInstallMarker(path string) error {
+	sd, err := windows.SecurityDescriptorFromString("D:PAI(A;;FA;;;SY)(A;;FA;;;BA)")
+	if err != nil {
+		return err
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil)
+}
+
 // verifyAdminOnlyFile is the real Windows proof behind OSEnv.VerifyAdminOnlyFile.
 func verifyAdminOnlyFile(path string) error {
 	path = filepath.Clean(path)

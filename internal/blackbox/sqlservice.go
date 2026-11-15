@@ -85,6 +85,91 @@ type sqlConfigVerifier interface {
 // The real Env must be able to prove the settings lock on every build.
 var _ sqlConfigVerifier = OSEnv{}
 
+// sqlInstallMarkerName is the install record inside the installed program
+// folder (SEC-3). It persists the folder the SQL service was INSTALLED with,
+// so enable-sql can compare the loaded settings against a value that does not
+// come from the settings file itself. The program folder is administrator-
+// locked by the host install, and the record itself is explicitly locked to
+// SYSTEM and Administrators at install and proven with VerifyAdminOnlyFile
+// before it is ever trusted.
+const sqlInstallMarkerName = "sql-install.json"
+
+// sqlInstallRecord is the persisted install-time fact. It carries no
+// credential and nothing the service process needs at run time.
+type sqlInstallRecord struct {
+	Folder string `json:"folder"`
+}
+
+// sqlInstallMarkerLocker locks the install record to SYSTEM and Administrators
+// only (SEC-3): a protected DACL, no inheritance, and no rights for ordinary
+// users — not even the SQL service SID, which never reads the record. OSEnv
+// implements it on Windows and refuses off Windows. Like sqlConfigVerifier,
+// the seam is optional only for test fakes predating it: production always
+// wires OSEnv (cmd/unravis-blackbox), so the real install path always locks.
+type sqlInstallMarkerLocker interface {
+	LockSQLInstallMarker(path string) error
+}
+
+// The real Env must be able to lock the install record on every build.
+var _ sqlInstallMarkerLocker = OSEnv{}
+
+// sqlInstallMarkerPath is the install record beside the installed program.
+func sqlInstallMarkerPath(progDir string) string {
+	return filepath.Join(progDir, sqlInstallMarkerName)
+}
+
+// writeSQLInstallMarker persists the install-time folder atomically (temp +
+// rename, the PublishSQLStopped pattern). The caller locks and proves the
+// record afterwards; a write failure is an install failure, never a silently
+// missing record.
+func writeSQLInstallMarker(path, folder string) error {
+	data, err := json.Marshal(sqlInstallRecord{Folder: folder})
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "sql-install-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	done := false
+	defer func() {
+		if !done {
+			_ = tmp.Close()
+			_ = os.Remove(name)
+		}
+	}()
+	if _, err := tmp.Write(append(data, '\n')); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		return err
+	}
+	done = true
+	return nil
+}
+
+// readSQLInstallMarker reads the persisted install-time folder. Any failure —
+// missing, unreadable, malformed, or naming no usable absolute folder — is an
+// error, never an empty string that could pass a comparison (fail closed).
+func readSQLInstallMarker(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var rec sqlInstallRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(rec.Folder) == "" || !filepath.IsAbs(rec.Folder) {
+		return "", errors.New("blackbox: the SQL install record names no usable folder")
+	}
+	return rec.Folder, nil
+}
+
 // verifySQLConfigFile asks the Env's ACL reader to prove configPath is
 // administrator-locked. Any error — a user-writable file, an unreadable or
 // malformed ACL, a reparse ancestor — is a refusal (fail closed). An Env that
@@ -214,6 +299,9 @@ func sqlSDDL(sid string) string {
 // SEC-1: the file must also be administrator-locked (trusted owner, change
 // rights only for SYSTEM/Administrators, no reparse ancestor); a user-writable
 // or unverifiable --config is refused before anything is registered.
+// SEC-3: the install-time folder is persisted in an administrator-locked
+// install record beside the program, so enable-sql can detect a later edit of
+// Folder in the settings file.
 //
 // Every answer message is a fixed sentence; causes stay in Cause for local
 // diagnostics and never carry paths into the public answer (W8-07).
@@ -296,6 +384,23 @@ func (m *SQLManager) InstallSQL(cfg Config, configPath string) (err error) {
 	if gerr := granter.GrantSQLLaunchAccess(exe, configPath, sid); gerr != nil {
 		return &InstallError{Reason: ReasonOther, Message: "The SQL service could not be given read access to its program and settings.", Cause: gerr}
 	}
+	// SEC-3: persist the INSTALL-TIME folder in an admin-locked install record
+	// beside the installed program, so enable-sql compares the loaded settings
+	// against a persisted fact instead of the settings file itself. Write,
+	// lock, then prove; any failure refuses the install and undoes the record.
+	markerPath := sqlInstallMarkerPath(progDir)
+	if werr := writeSQLInstallMarker(markerPath, cfg.Folder); werr != nil {
+		return &InstallError{Reason: ReasonOther, Message: "The SQL service install record could not be written.", Cause: werr}
+	}
+	undo.add(func() { _ = os.Remove(markerPath) })
+	if locker, ok := m.Env.(sqlInstallMarkerLocker); ok {
+		if lerr := locker.LockSQLInstallMarker(markerPath); lerr != nil {
+			return &InstallError{Reason: ReasonOther, Message: "The SQL service install record could not be locked to administrators.", Cause: lerr}
+		}
+	}
+	if verr := verifySQLConfigFile(m.Env, markerPath); verr != nil {
+		return &InstallError{Reason: ReasonOther, Message: "The SQL service install record is not locked to administrators, so the install was refused.", Cause: verr}
+	}
 	spec := ServiceSpec{Name: SQLServiceName, DisplayName: "Unravis Blackbox SQL",
 		Description: "Reads SQL Server performance counters for the Blackbox, in its own process and under its own virtual account. The owner grants its SQL rights.",
 		ExePath:     exe,
@@ -314,7 +419,9 @@ func (m *SQLManager) InstallSQL(cfg Config, configPath string) (err error) {
 }
 
 // EnableSQL is the administrator-only owner activation (W8-03): it confirms
-// the installed program and settings, re-confirms the data-folder lock, durably
+// the installed program and settings, checks the loaded folder against the
+// persisted INSTALL-TIME folder in the admin-locked install record (SEC-3),
+// re-confirms the data-folder lock, durably
 // clears ONLY the persisted auto-off/denied latch (the explicit owner re-enable
 // path — a routine restart never clears a genuine denial), and starts/checks
 // the service. Run it AFTER the owner has executed the printed grant in SSMS.
@@ -348,6 +455,23 @@ func (m *SQLManager) EnableSQL(cfg Config, configPath string) error {
 		return &InstallError{Reason: ReasonOther, Message: "The installed settings file could not be read. Re-run install-sql.", Cause: lerr}
 	}
 	if loaded.Folder != cfg.Folder {
+		return &InstallError{Reason: ReasonOther, Message: "The settings file does not match the folder given for the SQL service. Re-run install-sql."}
+	}
+	// SEC-3: the folder the service was INSTALLED with comes from the
+	// admin-locked install record written at install-sql — never from the
+	// settings file being checked, because a file compared with itself can
+	// never fail. Prove the record's lock first (unreadable or unverifiable
+	// means refused), then read it, then compare. A missing or malformed
+	// record is a refusal too: no record, no activation.
+	markerPath := sqlInstallMarkerPath(progDir)
+	if verr := verifySQLConfigFile(m.Env, markerPath); verr != nil {
+		return &InstallError{Reason: ReasonOther, Message: "The SQL service install record is not locked to administrators, so the service was not started. Re-run install-sql.", Cause: verr}
+	}
+	installedFolder, merr := readSQLInstallMarker(markerPath)
+	if merr != nil {
+		return &InstallError{Reason: ReasonOther, Message: "The SQL service install record could not be read, so the service was not started. Re-run install-sql.", Cause: merr}
+	}
+	if loaded.Folder != installedFolder {
 		return &InstallError{Reason: ReasonOther, Message: "The settings file does not match the folder the SQL service was installed with. Re-run install-sql."}
 	}
 	// SEC-1: re-prove the settings lock at activation — the file may have been
@@ -472,6 +596,11 @@ func (m *SQLManager) RemoveSQL(cfg Config, confirmName string) error {
 	// The service is gone: publish off so the host stops advertising it. A
 	// failed publish is covered by the status freshness rule, not fatal here.
 	_ = PublishSQLStopped(cfg.Folder)
+	// SEC-3: the install record belonged to the removed service; a re-install
+	// writes a fresh one. Best effort, like the status publish above.
+	if dir, derr := m.Env.ProgramDir(); derr == nil {
+		_ = os.Remove(sqlInstallMarkerPath(dir))
+	}
 	if m.RevokeScript != "" {
 		fmt.Fprintln(os.Stdout, m.RevokeScript)
 	}
