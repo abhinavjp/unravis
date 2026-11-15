@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { INTERVALS, blackboxApi, listensOnAll, pickedTargetState, toggleTarget, type Settings, type SettingsProblem, type TargetInfo, type TargetKind, type TargetRef, targetRunState } from '../lib/blackbox';
+  import { INTERVALS, blackboxApi, listensOnAll, pickedTargetState, targetsProblem, toggleTarget, type Settings, type SettingsProblem, type TargetInfo, type TargetKind, type TargetRef, targetRunState } from '../lib/blackbox';
   import { BB_TEXT as T } from '../lib/copy/blackboxCopy';
 
   // The settings fields of a Blackbox, shared by the Place wizard (part 3) and Apply settings on this PC.
@@ -23,6 +23,8 @@
   let targetsRead = $state(false);
   let manualKind = $state<TargetKind>('appPool');
   let manualName = $state('');
+  // Why the last Add was refused. The name stays in the box so it can be fixed (UX-4).
+  let targetRefusal = $state('');
 
   onMount(() => {
     if (targetMode !== 'pc') return;
@@ -47,7 +49,7 @@
   // Chips carry an honest state note only on this PC once the single read has settled; pack/remote never fetches.
   const chipsLabelled = $derived(targetMode === 'pc' && targetsRead);
   const isSelected = (kind: TargetKind, name: string) => picked.some((t) => t.kind === kind && t.name === name);
-  function pick(kind: TargetKind, name: string) { settings.targets = toggleTarget(picked, kind, name); }
+  function pick(kind: TargetKind, name: string) { targetRefusal = ''; settings.targets = toggleTarget(picked, kind, name); }
   function chipNote(t: TargetRef): string {
     const s = pickedTargetState(t.kind, t.name, { appPools, services, detected, appPoolsState, servicesState });
     if (s === 'stopped') return T.targetsNotRunning;
@@ -57,13 +59,21 @@
     if (s === 'list-unreadable') return T.targetsListUnreadable;
     return '';
   }
+  // The words beside the target row: why the last Add was refused, or the targets problem found at the
+  // last attempt. One alert, so the row never shows two messages at once.
+  function targetError(): string { return targetRefusal || (problem === 'targets' ? T.settingProblems.targets : ''); }
   function addTarget() {
     const name = manualName.trim();
     if (!name) return;
+    // The server's own rules, checked here so a wrong name is refused beside the box instead of
+    // coming back as a raw refusal. Nothing is added when the list would be wrong (UX-4).
+    const why = targetsProblem([...picked, { kind: manualKind, name }]);
+    if (why) { targetRefusal = T.targetProblems[why]; return; }
     if (!isSelected(manualKind, name)) settings.targets = toggleTarget(picked, manualKind, name);
+    targetRefusal = '';
     manualName = '';
   }
-  function removeTarget(kind: TargetKind, name: string) { settings.targets = toggleTarget(picked, kind, name); }
+  function removeTarget(kind: TargetKind, name: string) { targetRefusal = ''; settings.targets = toggleTarget(picked, kind, name); }
 </script>
 
 {#snippet fieldError(key: SettingsProblem)}
@@ -119,16 +129,17 @@
   {/if}
   <div class="bb-target-add">
     <label class="bb-field"><span>{T.targetsKindLabel}</span>
-      <select bind:value={manualKind}>
+      <select bind:value={manualKind} onchange={() => { targetRefusal = ''; }}>
         <option value="appPool">{T.targetsKindAppPool}</option>
         <option value="service">{T.targetsKindService}</option>
       </select>
     </label>
     <label class="bb-field"><span>{T.targetsNameLabel}</span>
-      <input type="text" bind:value={manualName} autocomplete="off" spellcheck="false" onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTarget(); } }} />
+      <input id="{idPrefix}-f-targets" type="text" bind:value={manualName} autocomplete="off" spellcheck="false" aria-invalid={targetError() ? 'true' : undefined} aria-describedby={targetError() ? idPrefix + '-targets-error' : undefined} oninput={() => { if (targetRefusal) targetRefusal = ''; }} onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTarget(); } }} />
     </label>
     <button type="button" class="secondary-button" disabled={!manualName.trim()} onclick={addTarget}>{T.targetsAdd}</button>
   </div>
+  {#if targetError()}<p class="inline-error" id="{idPrefix}-targets-error" role="alert">{targetError()}</p>{/if}
   {#if !showLists}
     {@render targetChips(picked)}
   {/if}

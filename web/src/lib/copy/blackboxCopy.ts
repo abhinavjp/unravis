@@ -1,4 +1,4 @@
-import type { PageState, SettingsProblem } from '../blackbox';
+import type { PageState, SettingsProblem, TargetsProblem } from '../blackbox';
 import type { LintEntry } from './copylint';
 
 /**
@@ -199,7 +199,8 @@ export const BB_TEXT = {
     free: 'Use 1 to 50 percent.',
     port: 'Use a port from 1 to 65535.',
     bind: 'Listens on needs an address such as 127.0.0.1, or a server name. Spaces and other symbols are not allowed.',
-    logs: 'Each log folder must be a full path.'
+    logs: 'Each log folder must be a full path.',
+    targets: 'Check the targets. Use up to 32 names, each 1 to 128 characters, with no \\ / : * ? " < > | and no name twice.'
   } as Record<SettingsProblem, string>,
 
   /* targets: the app pools and services picked in the Settings step (BBX-1-12) */
@@ -220,6 +221,15 @@ export const BB_TEXT = {
   targetsListNote: 'The list may be incomplete. Type a name below to add a target that is not listed.',
   targetsAdd: 'Add target',
   targetsRemove: 'Remove target',
+  // Why a typed target was not added. The name stays in the box so it can be fixed (UX-4).
+  targetProblems: {
+    empty: 'Type the name of the app pool or service.',
+    long: 'Use a name of 128 characters or fewer.',
+    chars: 'A name cannot contain \\ / : * ? " < > | or a line break.',
+    kind: 'Choose App pool or Service.',
+    duplicate: 'That target is already in the list. Capital and small letters count as the same name.',
+    many: 'The list holds up to 32 targets. Remove one before you add another.'
+  } as Record<TargetsProblem, string>,
 
   reviewHeading: 'Review',
   reviewName: 'Name',
@@ -386,7 +396,10 @@ export const BB_REFUSAL: Record<string, string> = {
   'busy-here': 'Another change to the Blackbox on this PC is still running. Try again when it has finished.',
   'list-damaged': 'The saved Blackbox list is damaged and was left as it is.',
   'list-unavailable': 'The saved Blackbox list could not be opened.',
-  'key-not-saved': 'The Blackbox was installed, but Unravis could not save its read key. Remove it from this PC and install it again.'
+  'key-not-saved': 'The Blackbox was installed, but Unravis could not save its read key. Remove it from this PC and install it again.',
+  // The server refused the settings and did not say which field. Every such refusal is checked before
+  // anything is written, so nothing was changed (UX-4).
+  'invalid-config': 'These settings are not allowed, so nothing was changed. Check the folder, the limits and the target names, then try again.'
 };
 
 const STATE_IDS = Object.keys(BB_TEXT.stateNext) as PageState[];
@@ -419,6 +432,7 @@ export function blackboxCopyEntries(): LintEntry[] {
   for (const id of STATE_IDS) add('stateNext.' + id, T.stateNext[id]);
   for (const [k, v] of Object.entries(T.nameProblems)) add('nameProblems.' + k, v);
   for (const [k, v] of Object.entries(T.settingProblems)) add('settingProblems.' + k, v);
+  for (const [k, v] of Object.entries(T.targetProblems)) add('targetProblems.' + k, v);
   for (const [k, v] of Object.entries(BB_REFUSAL)) add('refusal.' + k, v);
   return out;
 }

@@ -333,6 +333,49 @@ export function toggleTarget(targets: TargetRef[], kind: TargetKind, name: strin
   return [...targets, { kind, name }];
 }
 
+/** The target limits of internal/blackbox/config.go: at most 32 targets, a name of at most 128 bytes. */
+export const TARGETS_MAX = 32;
+export const TARGET_NAME_MAX = 128;
+
+/** What is wrong with a target list. Null when the list is fine. The panel turns the code into words. */
+export type TargetsProblem = 'many' | 'kind' | 'empty' | 'long' | 'chars' | 'duplicate';
+
+/** The characters a target name may not hold, as the server refuses them. */
+const TARGET_NAME_BAD = /[\\/:*?"<>|]/;
+
+/** Length in UTF-8 bytes, which is how the server counts a name: an accented letter counts as more than one. */
+function nameBytes(name: string): number {
+  let bytes = 0;
+  for (const ch of name) {
+    const c = ch.codePointAt(0) ?? 0;
+    bytes += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+  }
+  return bytes;
+}
+
+/**
+ * The first thing wrong with the targets, or null. Mirrors Validate in internal/blackbox/config.go, in the
+ * same order: the count, then each target's kind, name and duplicate check. Duplicates are judged the way
+ * Windows judges them: pool and service names match without regard to case, so EmailSvc and emailsvc are
+ * one target. A missing list means machine-wide only, which is fine. Pure: the list given is never changed.
+ */
+export function targetsProblem(targets: TargetRef[] | null | undefined): TargetsProblem | null {
+  const list = targets ?? [];
+  if (list.length > TARGETS_MAX) return 'many';
+  const seen: TargetRef[] = [];
+  for (const target of list) {
+    if (target.kind !== 'appPool' && target.kind !== 'service') return 'kind';
+    const name = target.name ?? '';
+    if (!name) return 'empty';
+    if (nameBytes(name) > TARGET_NAME_MAX) return 'long';
+    if (TARGET_NAME_BAD.test(name)) return 'chars';
+    for (const ch of name) if ((ch.codePointAt(0) ?? 0) < 0x20) return 'chars';
+    if (seen.some((prev) => prev.kind === target.kind && prev.name.toLowerCase() === name.toLowerCase())) return 'duplicate';
+    seen.push(target);
+  }
+  return null;
+}
+
 /** The defaults the recorder ships with (internal/blackbox/config.go). `folder` is the D: drive default. */
 export function defaultSettings(name = ''): Settings {
   return {
@@ -343,7 +386,7 @@ export function defaultSettings(name = ''): Settings {
   };
 }
 
-export type SettingsProblem = 'name' | 'folder' | 'interval' | 'keep' | 'size' | 'free' | 'port' | 'bind' | 'logs';
+export type SettingsProblem = 'name' | 'folder' | 'interval' | 'keep' | 'size' | 'free' | 'port' | 'bind' | 'logs' | 'targets';
 
 const HOST_NAME = /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 
@@ -380,6 +423,7 @@ export function settingsProblem(s: Settings): SettingsProblem | null {
   if (!Number.isInteger(s.port) || s.port < 1 || s.port > 65535) return 'port';
   if (!validBind(s.bind)) return 'bind';
   if (s.logPaths.some(p => !/^[A-Za-z]:[\\/]/.test(p.trim()))) return 'logs';
+  if (targetsProblem(s.targets)) return 'targets';
   return null;
 }
 
