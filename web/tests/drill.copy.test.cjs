@@ -126,3 +126,50 @@ test('UI-13: Query Store is explained in plain words where a first-time reader m
   assert.match(DRILL_TEXT.dbMsgOff, /needs the database owner/);
   assert.ok(DRILL_HELP.laneDb.length < 160);
 });
+
+// ---- the Blackbox measure/unit copy and the no-invented-date rule (W13-01, W13-03, W13-04) ----
+
+test('the blackbox source copy names host batch throughput, with a sent cadence or an unknown one', () => {
+  assert.equal(DRILL_TEXT.dbSrcBlackbox('20 Oct 2026', 15), 'Blackbox host batches per second, read every 15 s since 20 Oct 2026');
+  assert.equal(DRILL_TEXT.dbSrcBlackbox('20 Oct 2026'), 'Blackbox host batches per second since 20 Oct 2026');
+  assert.equal(DRILL_TEXT.dbSrcBlackbox(null, 5), 'Blackbox host batches per second, read every 5 s, recording start unknown');
+  assert.equal(DRILL_TEXT.dbSrcBlackbox(null), 'Blackbox host batches per second, recording start unknown');
+  assert.equal(DRILL_TEXT.dbShortBlackbox(30), 'batches/s every 30 s');
+  assert.equal(DRILL_TEXT.dbShortBlackbox(null), 'batches/s, read interval unknown');
+  for (const text of [DRILL_TEXT.dbSrcBlackbox('20 Oct 2026', 60), DRILL_TEXT.dbMsgBlackbox(60), DRILL_TEXT.dbShortBlackbox(60)]) {
+    assert.doesNotMatch(text, /15 to 60/, 'the old DMV cadence range is gone: ' + text);
+  }
+  assert.ok(DRILL_TEXT.dbMsgBlackbox(null).length < 320);
+  assert.ok(DRILL_TEXT.dbMsgBlackbox(60).length < 320);
+  assert.ok(DRILL_TEXT.dbShortBlackbox(null).length < 60);
+});
+
+test('the throughput unit has its own shape, readout and legend words', () => {
+  assert.equal(DRILL_TEXT.unitBatches, 'batches per second');
+  assert.equal(DRILL_TEXT.laneRateShape('100'), 'Height = batches per second, 0 to 100');
+  assert.equal(DRILL_TEXT.readDbRate('100'), 'Database batches per second 100');
+  assert.equal(DRILL_TEXT.readDbRateNone, 'Database batches per second not recorded');
+  assert.equal(DRILL_TEXT.readDbNoAtOnce, 'running at once not recorded');
+  assert.equal(DRILL_TEXT.laneNoCallTimes, 'call times not recorded here');
+  assert.match(DRILL_TEXT.legendRate, /batches per second/);
+  assert.match(DRILL_TEXT.legendRate, /not how many ran at once/);
+  // the concurrency words are unchanged for the lanes that measure concurrency
+  assert.equal(DRILL_TEXT.laneShape('4.2'), 'Height = running at once, 0 to 4.2');
+  assert.equal(DRILL_TEXT.readDb('4.2'), 'Database running at once (average) 4.2');
+});
+
+test('a missing import date is stated as unknown, never as a sample date', () => {
+  assert.equal(DRILL_TEXT.dbSrcFile(null), 'Query Store file, import date not recorded');
+  assert.doesNotMatch(DRILL_TEXT.dbMsgFile(null), /11 Nov 2026/);
+  assert.equal(DRILL_TEXT.dbSrcFile('11 Nov 2026'), 'Query Store file imported 11 Nov 2026');
+});
+
+test('the new unit copy uses no banned wording', () => {
+  const banned = /because|due to|caus|waiting on|blocked by|led to|results? in|responsible for|leak|starv|saturat|proven/i;
+  const strings = [
+    DRILL_TEXT.unitBatches, DRILL_TEXT.laneRateShape('100'), DRILL_TEXT.laneNoCallTimes,
+    DRILL_TEXT.readDbRate('100'), DRILL_TEXT.readDbRateNone, DRILL_TEXT.readDbNoAtOnce, DRILL_TEXT.legendRate,
+    DRILL_TEXT.dbSrcBlackbox(null), DRILL_TEXT.dbMsgBlackbox(null), DRILL_TEXT.dbShortBlackbox(null)
+  ];
+  for (const s of strings) assert.doesNotMatch(s, banned, s);
+});

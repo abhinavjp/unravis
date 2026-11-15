@@ -16,18 +16,24 @@ import (
 )
 
 type memSvc struct {
-	state blackbox.SvcState
-	calls []string
+	state    blackbox.SvcState
+	calls    []string
+	spec     blackbox.ServiceSpec
+	startErr error
 }
 
 func (s *memSvc) State(string) (blackbox.SvcState, error) { return s.state, nil }
-func (s *memSvc) Create(blackbox.ServiceSpec) error {
+func (s *memSvc) Create(spec blackbox.ServiceSpec) error {
 	s.calls = append(s.calls, "create")
+	s.spec = spec
 	s.state = blackbox.SvcStopped
 	return nil
 }
 func (s *memSvc) Start(string) error {
 	s.calls = append(s.calls, "start")
+	if s.startErr != nil {
+		return s.startErr
+	}
 	s.state = blackbox.SvcRunning
 	return nil
 }
@@ -225,6 +231,167 @@ func TestStartStopApplyRemoveThroughTheCommandLine(t *testing.T) {
 	}
 	if r.svc.state != blackbox.SvcNotInstalled {
 		t.Fatal("not removed")
+	}
+}
+
+// ---- apply persists the new settings (W3-01) ----
+
+// submitFile writes cfg to a file in its own folder, standing for the
+// short-lived settings file the Unravis helper passes to "apply --config".
+func submitFile(t *testing.T, cfg blackbox.Config) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "blackbox.json")
+	b, err := cfg.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// installWithTargets installs through the CLI with target A selected.
+func installWithTargets(t *testing.T, r *rig) (installed string, cfgA blackbox.Config) {
+	t.Helper()
+	cfgA = blackbox.Default()
+	cfgA.Name = "box-1"
+	cfgA.Folder = filepath.Join(r.dir, "rec")
+	cfgA.Targets = []blackbox.Target{{Kind: "appPool", Name: "PoolA"}}
+	if c, out, errs := r.do("install", "--json", "--config", submitFile(t, cfgA)); c != 0 {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	return filepath.Join(r.env.prog, defaultConfigName), cfgA
+}
+
+func installedTargets(t *testing.T, path string) []blackbox.Target {
+	t.Helper()
+	cfg, err := blackbox.LoadConfig(path)
+	if err != nil {
+		t.Fatalf("installed config %s: %v", path, err)
+	}
+	return cfg.Targets
+}
+
+// W3-01 through the CLI: install A, apply a DIFFERENT temp file selecting B.
+// The installed config must hold B and not A, the service command line must
+// still name the installed copy (never the temp file), and the next run must
+// load B.
+func TestApplyFromATemporaryFileSavesTheInstalledCopy(t *testing.T) {
+	r := newRig(t)
+	installed, cfgA := installWithTargets(t, r)
+	cfgB := cfgA
+	cfgB.Targets = []blackbox.Target{{Kind: "service", Name: "SvcB"}}
+	fileB := submitFile(t, cfgB) // a different folder than the install source
+	c, out, errs := r.do("apply", "--json", "--config", fileB)
+	if c != 0 || !strings.Contains(out, `"restarted":true`) {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	got := installedTargets(t, installed)
+	if len(got) != 1 || got[0].Kind != "service" || got[0].Name != "SvcB" {
+		t.Fatalf("installed targets: %+v", got)
+	}
+	raw, _ := os.ReadFile(installed)
+	if strings.Contains(string(raw), "PoolA") {
+		t.Fatalf("target A still in the installed config: %s", raw)
+	}
+	// The service reads the installed copy, not the temporary file.
+	args := strings.Join(r.svc.spec.Args, " ")
+	if !strings.Contains(args, installed) || strings.Contains(args, fileB) {
+		t.Fatalf("service args: %s", args)
+	}
+	// The next run (the same loader the service uses) sees B.
+	var seen blackbox.HostOptions
+	r.d.hostRun = func(_ context.Context, o blackbox.HostOptions) error { seen = o; return nil }
+	if c, _, _ := r.do("run"); c != 0 {
+		t.Fatal("run")
+	}
+	if len(seen.Config.Targets) != 1 || seen.Config.Targets[0].Name != "SvcB" {
+		t.Fatalf("next run targets: %+v", seen.Config.Targets)
+	}
+}
+
+// W3-01: a stopped recorder still gets the new settings saved; the answer says
+// restarted=false and the next start uses them.
+func TestApplyWhileStoppedSavesForTheNextStart(t *testing.T) {
+	r := newRig(t)
+	installed, cfgA := installWithTargets(t, r)
+	if c, _, _ := r.do("stop"); c != 0 {
+		t.Fatal("stop")
+	}
+	cfgB := cfgA
+	cfgB.Targets = []blackbox.Target{{Kind: "service", Name: "SvcB"}}
+	c, out, _ := r.do("apply", "--json", "--config", submitFile(t, cfgB))
+	if c != 0 || !strings.Contains(out, `"restarted":false`) {
+		t.Fatalf("%d %s", c, out)
+	}
+	if r.svc.state != blackbox.SvcStopped {
+		t.Fatalf("a stopped recorder was started: %s", r.svc.state)
+	}
+	got := installedTargets(t, installed)
+	if len(got) != 1 || got[0].Name != "SvcB" {
+		t.Fatalf("installed targets: %+v", got)
+	}
+	if c, _, _ := r.do("start"); c != 0 {
+		t.Fatal("start")
+	}
+	var seen blackbox.HostOptions
+	r.d.hostRun = func(_ context.Context, o blackbox.HostOptions) error { seen = o; return nil }
+	if c, _, _ := r.do("run"); c != 0 {
+		t.Fatal("run")
+	}
+	if len(seen.Config.Targets) != 1 || seen.Config.Targets[0].Name != "SvcB" {
+		t.Fatalf("next run targets: %+v", seen.Config.Targets)
+	}
+}
+
+// W3-01: a save failure is the fixed save-failed reason, nothing is stopped
+// and the old settings stay. The message carries no path.
+func TestApplySaveFailureIsAFixedReasonAndStopsNothing(t *testing.T) {
+	r := newRig(t)
+	installed, cfgA := installWithTargets(t, r)
+	// A folder sits where the backup file goes, so the save cannot finish.
+	if err := os.MkdirAll(installed+".bak", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgB := cfgA
+	cfgB.Targets = []blackbox.Target{{Kind: "service", Name: "SvcB"}}
+	c, out, _ := r.do("apply", "--json", "--config", submitFile(t, cfgB))
+	var got map[string]any
+	_ = json.Unmarshal([]byte(out), &got)
+	if c != exitFail || got["reason"] != "save-failed" {
+		t.Fatalf("%d %v", c, got)
+	}
+	if r.svc.state != blackbox.SvcRunning {
+		t.Fatalf("the recorder was stopped although the save failed: %s", r.svc.state)
+	}
+	if tg := installedTargets(t, installed); len(tg) != 1 || tg[0].Name != "PoolA" {
+		t.Fatalf("old settings not kept: %+v", tg)
+	}
+	if msg, _ := got["message"].(string); strings.Contains(msg, r.dir) {
+		t.Fatalf("the answer carries a path: %q", msg)
+	}
+}
+
+// W3-01: a restart failure after the save is the distinct restart-failed
+// reason and the previous settings are put back.
+func TestApplyRestartFailurePutsThePreviousSettingsBack(t *testing.T) {
+	r := newRig(t)
+	installed, cfgA := installWithTargets(t, r)
+	r.svc.startErr = errors.New("boom")
+	cfgB := cfgA
+	cfgB.Targets = []blackbox.Target{{Kind: "service", Name: "SvcB"}}
+	c, out, _ := r.do("apply", "--json", "--config", submitFile(t, cfgB))
+	var got map[string]any
+	_ = json.Unmarshal([]byte(out), &got)
+	if c != exitFail || got["reason"] != "restart-failed" {
+		t.Fatalf("%d %v", c, got)
+	}
+	if tg := installedTargets(t, installed); len(tg) != 1 || tg[0].Name != "PoolA" {
+		t.Fatalf("previous settings not restored: %+v", tg)
+	}
+	if msg, _ := got["message"].(string); strings.Contains(msg, r.dir) {
+		t.Fatalf("the answer carries a path: %q", msg)
 	}
 }
 

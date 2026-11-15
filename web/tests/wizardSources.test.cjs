@@ -590,9 +590,14 @@ test('a tested MongoDB connection holds its audit collection, and a blank one me
 });
 
 test('a case made by the create guide adopts its new sources and starts the analysis', () => {
+  // W13-05: normalize endings and require the delimiter (see slowcall.appstate).
   const state = fs.readFileSync(path.join(root, 'src/lib/appState.svelte.ts'), 'utf8').replace(/\r\n/g, '\n');
-  const body = state.slice(state.indexOf('export async function openCreatedCase'));
-  const fn = body.slice(0, body.indexOf('\n}\n'));
+  const at = state.indexOf('export async function openCreatedCase');
+  assert.ok(at >= 0, 'openCreatedCase missing');
+  const body = state.slice(at);
+  const end = body.indexOf('\n}\n');
+  assert.ok(end > 0, 'openCreatedCase: closing delimiter not found');
+  const fn = body.slice(0, end);
   assert.match(fn, /api\.sources\(\)/, 'reloads the source list the guide changed on the server');
   assert.match(fn, /query\.sourceIds = /, 'selects the new sources');
   assert.match(fn, /autoRan = false/, 'lets the landing run start by itself');

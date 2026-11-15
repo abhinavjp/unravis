@@ -5,16 +5,17 @@
 
 <script lang="ts">
   import { DRILL_TEXT } from '../lib/drill/drillCopy';
-  import { formatAtOnce, laneGapText, sameReadout, type CallLane, type LaneBar, type LaneCell } from '../lib/drill/callLanes';
+  import { cellValue, formatAtOnce, laneGapText, sameReadout, type CallLane, type LaneBar, type LaneCell } from '../lib/drill/callLanes';
   import { readoutAt, type Readout, type SourceItem } from '../lib/drill/callReadout';
   import { formatDuration } from '../lib/format';
   import { formatTime, zoneAbbreviation } from '../lib/time';
 
-  // The three lanes (API, web server, database) on one time axis: the faint "running at once" shape,
-  // hatched gaps, the red column for the call, slow items as bars, event markers, a hover line and its readout.
+  // The three lanes (API, web server, database) on one time axis: the faint shape in each lane's own measure
+  // ("running at once", or "batches per second" for a host-counter database lane), hatched gaps, the red column
+  // for the call, slow items as bars, event markers, a hover line and its readout.
   // Declared locally until dbState.ts is mounted by the screen; the shape is the same.
-  type DbStateKey = 'qs' | 'qsfile' | 'api' | 'off' | 'ro' | 'late' | 'denied' | 'events' | 'notread';
-  interface DbStateView { key: DbStateKey; source: string; message: string; short: string; shape: 'blocks' | 'apiseen' | 'markers' | 'none' }
+  type DbStateKey = 'qs' | 'qsfile' | 'api' | 'off' | 'ro' | 'late' | 'denied' | 'events' | 'notread' | 'blackbox';
+  interface DbStateView { key: DbStateKey; source: string; message: string; short: string; shape: 'blocks' | 'apiseen' | 'markers' | 'none'; measure: 'at-once' | 'batch-rate' }
   type LaneName = 'audit' | 'iis' | 'sql';
 
   let {
@@ -81,6 +82,12 @@
   const x = (t: number): number => Math.min(W, Math.max(0, ((t - start) / span) * W));
   const n2 = (v: number): string => String(Math.round(v * 100) / 100);
 
+  // The database lane's own measure: a Blackbox host-counter lane draws batches per second, never concurrency.
+  const sqlRate = $derived(lanes.sql.measure === 'batch-rate');
+  const valueOf = (name: LaneName, cell: LaneCell): number | null => cellValue(cell, name === 'sql' ? lanes.sql.measure : 'at-once');
+  const laneAria = (name: LaneName, title: string): string =>
+    name === 'sql' && sqlRate ? `${title}: ${DRILL_TEXT.unitBatches}` : title;
+
   // A database lane with no shape is all hatched; so is any lane with no cell that holds a number.
   const hatchAll = (name: LaneName): boolean =>
     name === 'sql' ? db.shape === 'none' || db.shape === 'markers' || !lanes.sql.hasShape : !lanes[name].hasShape;
@@ -91,7 +98,7 @@
     const runs: { x1: number; x2: number }[] = [];
     let open: { from: number; to: number } | null = null;
     for (const cell of cells) {
-      if (cell.atOnce === null) {
+      if (valueOf(name, cell) === null) {
         if (open) open.to = cell.end;
         else open = { from: cell.start, to: cell.end };
       } else if (open) {
@@ -116,12 +123,13 @@
       run = [];
     };
     for (const cell of lane.cells as LaneCell[]) {
-      if (cell.atOnce === null) {
+      const v = valueOf(name, cell);
+      if (v === null) {
         flush();
         continue;
       }
-      let h = (cell.atOnce / scale) * SHAPE_H;
-      if (cell.atOnce > 0 && h < 1.5) h = 1.5;
+      let h = (v / scale) * SHAPE_H;
+      if (v > 0 && h < 1.5) h = 1.5;
       run.push({ x: x((cell.start + cell.end) / 2), y: H - h, xs: x(cell.start), xe: x(cell.end) });
     }
     flush();
@@ -268,14 +276,25 @@
     cell && cell.refused !== null
       ? DRILL_TEXT.readRefused(cell.refused)
       : (DRILL_TEXT.readRefused as unknown as (v: string) => string)(DRILL_TEXT.notRecorded);
-  const dbLine = (cell: { atOnce: number | null } | null | undefined): string =>
-    cell && cell.atOnce !== null && db.shape !== 'none' ? DRILL_TEXT.readDb(formatAtOnce(cell.atOnce)) : DRILL_TEXT.readDbNone;
+  const dbLine = (cell: { atOnce: number | null; rate?: number | null } | null | undefined): string => {
+    if (sqlRate) {
+      // Throughput readout with its own unit; concurrency is stated as unavailable, never as zero.
+      const rate = cell?.rate ?? null;
+      const line = rate !== null && db.shape !== 'none' ? DRILL_TEXT.readDbRate(formatAtOnce(rate)) : DRILL_TEXT.readDbRateNone;
+      const atOnce = cell?.atOnce ?? null;
+      return atOnce !== null ? `${line} · ${DRILL_TEXT.readDb(formatAtOnce(atOnce))}` : `${line} · ${DRILL_TEXT.readDbNoAtOnce}`;
+    }
+    return cell && cell.atOnce !== null && db.shape !== 'none' ? DRILL_TEXT.readDb(formatAtOnce(cell.atOnce)) : DRILL_TEXT.readDbNone;
+  };
 
   const headShape = (name: LaneName): string => {
     const lane = lanes[name];
     if (name === 'sql') {
       if (db.shape === 'none' || db.shape === 'markers' || !lane.peak) return db.short;
-      return `${DRILL_TEXT.laneShape(formatAtOnce(lane.peak.atOnce))} · ${db.short}`;
+      const shape = sqlRate
+        ? DRILL_TEXT.laneRateShape(formatAtOnce(lane.peak.atOnce))
+        : DRILL_TEXT.laneShape(formatAtOnce(lane.peak.atOnce));
+      return `${shape} · ${db.short}`;
     }
     // No numbers: say why in plain words (not selected, could not be read, or not recorded). Never a 0.
     return lane.peak ? DRILL_TEXT.laneShape(formatAtOnce(lane.peak.atOnce)) : laneGapText(lane.gap);
@@ -328,6 +347,9 @@
         <li>{DRILL_TEXT.helpUp}</li>
         <li>{DRILL_TEXT.helpDots}</li>
         <li>{DRILL_TEXT.legendShape}</li>
+        {#if shown.db && sqlRate}
+          <li>{DRILL_TEXT.legendRate}</li>
+        {/if}
         <li>{DRILL_TEXT.legendWidth}</li>
         <li>{DRILL_TEXT.legendHatched}</li>
         <li>{DRILL_TEXT.legendCall}</li>
@@ -359,11 +381,11 @@
           {#if name === 'sql'}
             <span class="scall-source" data-testid="scall-db-source">{DRILL_TEXT.laneSource(db.source)}</span>
           {/if}
-          <span class="scall-slow">{slowCount(name) > 0 ? DRILL_TEXT.laneSlow(slowCount(name)) : DRILL_TEXT.laneNothingSlow}</span>
+          <span class="scall-slow">{name === 'sql' && sqlRate ? DRILL_TEXT.laneNoCallTimes : slowCount(name) > 0 ? DRILL_TEXT.laneSlow(slowCount(name)) : DRILL_TEXT.laneNothingSlow}</span>
           <span class="scall-shape">{headShape(name)}</span>
         </div>
         <div class="scall-plot" bind:clientWidth={plotW} bind:clientHeight={plotH}>
-          <svg viewBox="0 0 {W} {H}" preserveAspectRatio="none" aria-hidden="false" role="group" aria-label={lane.title}>
+          <svg viewBox="0 0 {W} {H}" preserveAspectRatio="none" aria-hidden="false" role="group" aria-label={laneAria(name, lane.title)}>
             {#each gapRuns(name) as run}
               <rect class="gap" x={run.x1} y="0" width={run.x2 - run.x1} height={H} fill="url(#{patternId})" />
             {/each}

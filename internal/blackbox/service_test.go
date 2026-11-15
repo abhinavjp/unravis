@@ -444,6 +444,244 @@ func TestApplyWithBrokenConfigStopsNothing(t *testing.T) {
 	}
 }
 
+// ---- apply persists the new settings (W3-01) ----
+
+// applySource writes cfg to a file in its own folder, standing for the
+// short-lived settings file the Unravis helper passes to "apply --config".
+func applySource(t *testing.T, cfg Config) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), ConfigFileName)
+	data, err := cfg.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// serviceConfigPath is the settings file the registered service command line
+// reads: the one the service loads at its next start.
+func serviceConfigPath(spec ServiceSpec) string {
+	for i, a := range spec.Args {
+		if a == "--config" && i+1 < len(spec.Args) {
+			return spec.Args[i+1]
+		}
+	}
+	return ""
+}
+
+func targetNames(cfg Config) []string {
+	var names []string
+	for _, tg := range cfg.Targets {
+		names = append(names, tg.Kind+":"+tg.Name)
+	}
+	return names
+}
+
+// W3-01: install with target A, apply a DIFFERENT temporary file selecting B.
+// The installed config — the file the service command line names — must hold B
+// and not A, so the next start records B. The temporary file is never what the
+// service reads.
+func TestApplySavesTheNewTargetsToTheInstalledConfig(t *testing.T) {
+	g := newSvcRig(t)
+	cfgA := g.cfg
+	cfgA.Targets = []Target{{Kind: "appPool", Name: "PoolA"}}
+	if _, err := g.m.Install(cfgA); err != nil {
+		t.Fatal(err)
+	}
+	cfgB := cfgA
+	cfgB.Targets = []Target{{Kind: "service", Name: "SvcB"}}
+	src := applySource(t, cfgB)
+
+	res, err := g.m.Apply(src)
+	if err != nil || !res.Restarted || g.svc.state != SvcRunning {
+		t.Fatalf("%+v %v %s", res, err, g.svc.state)
+	}
+	// The installed file now selects B, not A.
+	got, err := LoadConfig(g.p.ConfigPath)
+	if err != nil || strings.Join(targetNames(got), ",") != "service:SvcB" {
+		t.Fatalf("installed config: %+v %v", got.Targets, err)
+	}
+	raw, _ := os.ReadFile(g.p.ConfigPath)
+	if !strings.Contains(string(raw), "SvcB") || strings.Contains(string(raw), "PoolA") {
+		t.Fatalf("installed config text: %s", raw)
+	}
+	// The service still reads the installed file, never the temporary one, and
+	// apply did not re-register the service.
+	svcPath := serviceConfigPath(g.svc.spec)
+	if svcPath != g.p.ConfigPath || strings.Contains(strings.Join(g.svc.spec.Args, " "), src) {
+		t.Fatalf("service reads %q, temp source %q", svcPath, src)
+	}
+	if g.svc.did("create") != 1 {
+		t.Fatalf("apply re-registered the service: %v", g.svc.calls)
+	}
+	// The next start loads B: read the config the way the service will.
+	next, err := LoadConfig(svcPath)
+	if err != nil || strings.Join(targetNames(next), ",") != "service:SvcB" {
+		t.Fatalf("next start config: %+v %v", next.Targets, err)
+	}
+	// The previous settings are kept as a backup, the way Install keeps one.
+	bak, err := LoadConfig(g.p.ConfigPath + ".bak")
+	if err != nil || strings.Join(targetNames(bak), ",") != "appPool:PoolA" {
+		t.Fatalf("backup config: %+v %v", bak.Targets, err)
+	}
+	if g.svc.did("stop") != 1 || g.svc.did("start") != 2 {
+		t.Fatalf("restart calls: %v", g.svc.calls)
+	}
+}
+
+// W3-01: a stopped recorder must still persist the new settings (they apply at
+// its next start) and report Restarted=false honestly.
+func TestApplyOnAStoppedRecorderSavesForTheNextStart(t *testing.T) {
+	g := newSvcRig(t)
+	cfgA := g.cfg
+	cfgA.Targets = []Target{{Kind: "appPool", Name: "PoolA"}}
+	if _, err := g.m.Install(cfgA); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.m.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	starts, stops := g.svc.did("start"), g.svc.did("stop")
+	cfgB := cfgA
+	cfgB.Targets = []Target{{Kind: "service", Name: "SvcB"}}
+	res, err := g.m.Apply(applySource(t, cfgB))
+	if err != nil || res.Restarted {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if g.svc.did("start") != starts || g.svc.did("stop") != stops || g.svc.state != SvcStopped {
+		t.Fatalf("a stopped recorder was started or stopped: %v", g.svc.calls)
+	}
+	got, err := LoadConfig(g.p.ConfigPath)
+	if err != nil || strings.Join(targetNames(got), ",") != "service:SvcB" {
+		t.Fatalf("installed config: %+v %v", got.Targets, err)
+	}
+	// The next start uses the saved settings.
+	if err := g.m.Start(); err != nil {
+		t.Fatal(err)
+	}
+	next, err := LoadConfig(serviceConfigPath(g.svc.spec))
+	if err != nil || strings.Join(targetNames(next), ",") != "service:SvcB" {
+		t.Fatalf("next start config: %+v %v", next.Targets, err)
+	}
+}
+
+// W3-01: when the save fails, nothing is stopped, the old settings stay, and
+// the answer is the fixed save-failed reason with no path or OS error text.
+func TestApplySaveFailureStopsNothingAndKeepsTheOldSettings(t *testing.T) {
+	g := newSvcRig(t)
+	cfgA := g.cfg
+	cfgA.Targets = []Target{{Kind: "appPool", Name: "PoolA"}}
+	if _, err := g.m.Install(cfgA); err != nil {
+		t.Fatal(err)
+	}
+	// A folder sits where the backup file goes, so the save cannot finish.
+	if err := os.MkdirAll(g.p.ConfigPath+".bak", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgB := cfgA
+	cfgB.Targets = []Target{{Kind: "service", Name: "SvcB"}}
+	src := applySource(t, cfgB)
+	stops := g.svc.did("stop")
+	_, err := g.m.Apply(src)
+	var ae *ApplyError
+	if !errors.As(err, &ae) || ae.Reason != ReasonSaveFailed {
+		t.Fatalf("%v", err)
+	}
+	if g.svc.did("stop") != stops || g.svc.state != SvcRunning {
+		t.Fatalf("the recorder was stopped although the save failed: %v", g.svc.calls)
+	}
+	got, err := LoadConfig(g.p.ConfigPath)
+	if err != nil || strings.Join(targetNames(got), ",") != "appPool:PoolA" {
+		t.Fatalf("old settings not kept: %+v %v", got.Targets, err)
+	}
+	if strings.Contains(ae.Message, g.root) || strings.Contains(ae.Message, src) || !strings.Contains(ae.Message, "could not be saved") {
+		t.Fatalf("message carries a path or is not the fixed sentence: %q", ae.Message)
+	}
+}
+
+// W3-01: when the restart fails after a successful save, the previous settings
+// are put back (the Install undo pattern) and the answer is the distinct
+// restart-failed reason, never success.
+func TestApplyRestartFailurePutsThePreviousSettingsBack(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		setup func(g *svcRig)
+	}{
+		{"start refused", func(g *svcRig) { g.svc.startErr = errors.New("boom") }},
+		{"never runs", func(g *svcRig) { g.svc.stuck = true }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g := newSvcRig(t)
+			cfgA := g.cfg
+			cfgA.Targets = []Target{{Kind: "appPool", Name: "PoolA"}}
+			if _, err := g.m.Install(cfgA); err != nil {
+				t.Fatal(err)
+			}
+			// Watch what the service would load at the moment it is started:
+			// the new settings must be saved BEFORE the restart is attempted.
+			seenAtStart := ""
+			g.svc.onStart = func() {
+				b, _ := os.ReadFile(g.p.ConfigPath)
+				seenAtStart = string(b)
+			}
+			c.setup(g)
+			cfgB := cfgA
+			cfgB.Targets = []Target{{Kind: "service", Name: "SvcB"}}
+			res, err := g.m.Apply(applySource(t, cfgB))
+			var ae *ApplyError
+			if !errors.As(err, &ae) || ae.Reason != ReasonRestartFailed {
+				t.Fatalf("%v", err)
+			}
+			if res.Restarted {
+				t.Fatal("a failed restart was reported as success")
+			}
+			if !strings.Contains(seenAtStart, "SvcB") {
+				t.Fatalf("the restart was attempted before the save: %q", seenAtStart)
+			}
+			// The previous settings are back and the failed apply left no backup.
+			got, err := LoadConfig(g.p.ConfigPath)
+			if err != nil || strings.Join(targetNames(got), ",") != "appPool:PoolA" {
+				t.Fatalf("previous settings not restored: %+v %v", got.Targets, err)
+			}
+			if _, err := os.Stat(g.p.ConfigPath + ".bak"); err == nil {
+				t.Fatal("the failed apply left a backup behind")
+			}
+			if strings.Contains(ae.Message, g.root) || !strings.Contains(ae.Message, "did not restart") {
+				t.Fatalf("message carries a path or is not the fixed sentence: %q", ae.Message)
+			}
+		})
+	}
+}
+
+// W3-01: an invalid source file is refused before anything is saved or stopped.
+func TestApplyRefusesAnInvalidSourceBeforeSavingOrStopping(t *testing.T) {
+	g := newSvcRig(t)
+	cfgA := g.cfg
+	cfgA.Targets = []Target{{Kind: "appPool", Name: "PoolA"}}
+	if _, err := g.m.Install(cfgA); err != nil {
+		t.Fatal(err)
+	}
+	bad := cfgA
+	bad.Port = 0
+	stops := g.svc.did("stop")
+	if _, err := g.m.Apply(applySource(t, bad)); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("%v", err)
+	}
+	if g.svc.did("stop") != stops || g.svc.state != SvcRunning {
+		t.Fatalf("the recorder was stopped by an invalid file: %v", g.svc.calls)
+	}
+	got, err := LoadConfig(g.p.ConfigPath)
+	if err != nil || strings.Join(targetNames(got), ",") != "appPool:PoolA" {
+		t.Fatalf("installed config changed: %+v %v", got.Targets, err)
+	}
+	if _, err := os.Stat(g.p.ConfigPath + ".bak"); err == nil {
+		t.Fatal("a refused apply wrote a backup")
+	}
+}
+
 func TestServiceCommandsNeedAdmin(t *testing.T) {
 	g := newSvcRig(t)
 	g.env.admin = false

@@ -202,6 +202,25 @@ export const BB_TEXT = {
     logs: 'Each log folder must be a full path.'
   } as Record<SettingsProblem, string>,
 
+  /* targets: the app pools and services picked in the Settings step (BBX-1-12) */
+  targetsHeading: 'Targets (app pools and services)',
+  targetsHelp: 'Pick the app pools and services to watch in detail. Other counters stay machine-wide.',
+  targetsAppPools: 'App pools',
+  targetsServices: 'Services',
+  targetsNotRunning: 'not running',
+  targetsStateUnknown: 'running state unknown',
+  targetsNotInList: 'not in the detected list; running state unknown',
+  targetsListUnreadable: 'list could not be read; running state unknown',
+  targetsSourceNotFound: 'not detected on this PC; running state unknown',
+  targetsKindLabel: 'Kind',
+  targetsKindAppPool: 'App pool',
+  targetsKindService: 'Service',
+  targetsNameLabel: 'Target name',
+  targetsManualNote: 'Type the name of an app pool or service, then press Add target.',
+  targetsListNote: 'The list may be incomplete. Type a name below to add a target that is not listed.',
+  targetsAdd: 'Add target',
+  targetsRemove: 'Remove target',
+
   reviewHeading: 'Review',
   reviewName: 'Name',
   reviewRuns: 'Runs',

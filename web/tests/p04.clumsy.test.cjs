@@ -349,9 +349,13 @@ test('fixed: after a refused restore the cursor is not put back in the key or pa
 });
 
 test('fixed: a double-click on Lock sends two locks and the second one resets where unlocking returns to', () => {
-  const source = read('src/lib/appState.svelte.ts');
+  // W13-05: normalize endings and require the delimiter (see slowcall.appstate).
+  const source = read('src/lib/appState.svelte.ts').replace(/\r\n/g, '\n');
   const start = source.indexOf('export async function lockCases');
-  const body = source.slice(start, source.indexOf('\n}\n', start));
+  assert.ok(start >= 0, 'lockCases missing');
+  const end = source.indexOf('\n}\n', start);
+  assert.ok(end > start, 'lockCases: closing delimiter not found');
+  const body = source.slice(start, end);
   const awaitAt = body.indexOf('await lockMasterKey');
   const originAt = body.indexOf('unlockOrigin =');
   const guarded = /if \(\w*(busy|locking|inFlight)\w*\) return|screen === 'unlock'\) return|screen !== 'unlock'/.test(body);

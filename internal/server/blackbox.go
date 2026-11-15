@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +15,8 @@ import (
 	"api-audit-explorer/internal/bbsaved"
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/discover"
+	"api-audit-explorer/internal/discover/configparse"
 	"api-audit-explorer/internal/investigate"
 	"api-audit-explorer/internal/keeper"
 )
@@ -58,7 +61,11 @@ type BlackboxDeps struct {
 	Program blackbox.ProgramSource
 	// Open builds the reader of one place. nil uses the real folder and URL readers.
 	Open func(loc blackbox.Location, key string) blackbox.Source
-	Now  func() time.Time
+	// DetectTargets lists this PC's IIS app pools and running services for the
+	// install wizard, with each source's own detection state. nil uses the real
+	// detection (Windows only). Tests give a fake.
+	DetectTargets func() bbTargetsDetection
+	Now           func() time.Time
 }
 
 // WithBlackbox attaches the Blackbox pages.
@@ -147,6 +154,7 @@ func init() {
 		bbRoute("/api/blackbox/validate", bbExact("/api/blackbox/validate"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbValidate(w, r) })),
 		bbRoute("/api/blackbox/pack", bbExact("/api/blackbox/pack"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbPack(w, r) })),
 		bbRoute("/api/blackbox/this-pc", bbExact("/api/blackbox/this-pc"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbThisPCScan(w, r) })),
+		bbRoute("/api/blackbox/this-pc/targets", bbExact("/api/blackbox/this-pc/targets"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbTargets(w, r) })),
 		bbRoute("/api/blackbox/this-pc/install", bbExact("/api/blackbox/this-pc/install"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbInstall(w, r) })),
 		bbRoute("/api/blackbox/this-pc/start", bbExact("/api/blackbox/this-pc/start"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbStartStop(w, r, true) })),
 		bbRoute("/api/blackbox/this-pc/stop", bbExact("/api/blackbox/this-pc/stop"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbStartStop(w, r, false) })),
@@ -441,6 +449,206 @@ func (h *handler) bbThisPCScan(w http.ResponseWriter, _ *http.Request) {
 	}
 	found, scanErr := h.bb.scan()
 	writeJSON(w, http.StatusOK, h.bb.thisPCBlock(entries, found, scanErr), 16384)
+}
+
+/* ------------------------------------------------------- wizard targets */
+
+// TargetName is one detected install target: a name and what is known about its
+// running state, and nothing else. No command line, binary path, environment or
+// account ever goes into it (BBX-1-10).
+type TargetName struct {
+	Name string `json:"name"`
+	// Running is present only when the running state was actually read (W2-07).
+	// A target whose state could not be read carries no running claim at all;
+	// State says "unknown" instead. Configuration presence is never a running
+	// claim: a stopped pool must not be advertised as running.
+	Running *bool `json:"running,omitempty"`
+	// State is the fixed operational code: "running", "stopped" or "unknown".
+	// Optional, so an older client keeps reading name and running alone.
+	State string `json:"state,omitempty"`
+}
+
+// The fixed operational state codes of a detected target (W2-07). No other
+// value is ever sent, and never an error text.
+const (
+	bbTargetRunning = "running"
+	bbTargetStopped = "stopped"
+	bbTargetUnknown = "unknown"
+)
+
+// The fixed per-source detection codes (W2-06). They tell "no IIS on this box"
+// (not-found) from "could not read IIS" (unavailable). No other value is ever
+// sent, and never an error text, path or command line.
+const (
+	bbSourceDetected    = "detected"
+	bbSourceUnavailable = "unavailable"
+	bbSourceNotFound    = "not-found"
+)
+
+// bbTargetsDetection is one read of this PC's install targets. The two sources
+// are independent (W2-06): each is attempted whatever the other does, and what
+// one source read is kept when the other fails.
+type bbTargetsDetection struct {
+	AppPools      []TargetName
+	Services      []TargetName
+	AppPoolsState string // one of the bbSource codes
+	ServicesState string // one of the bbSource codes
+}
+
+// detected is true when at least one source was read, so the wizard is offered
+// whatever could be read. It is false only when neither source answered.
+func (d bbTargetsDetection) detected() bool {
+	return d.AppPoolsState == bbSourceDetected || d.ServicesState == bbSourceDetected
+}
+
+type bbTargetsAnswer struct {
+	AppPools []TargetName `json:"appPools"`
+	Services []TargetName `json:"services"`
+	Detected bool         `json:"detected"`
+	// Per-source detection state (W2-06), optional for older clients: one of
+	// the bbSource codes. Detected stays the combined claim it always was.
+	AppPoolsState string `json:"appPoolsState,omitempty"`
+	ServicesState string `json:"servicesState,omitempty"`
+}
+
+// bbMaxTargets caps each list the wizard is offered.
+const bbMaxTargets = 256
+
+// bbTargetList sorts by name, drops duplicates and empty names, and caps the
+// list. It always returns a non-nil slice so an empty list serializes as [].
+func bbTargetList(in []TargetName) []TargetName {
+	seen := make(map[string]bool, len(in))
+	out := make([]TargetName, 0, len(in))
+	for _, t := range in {
+		if t.Name == "" || seen[t.Name] {
+			continue
+		}
+		seen[t.Name] = true
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	if len(out) > bbMaxTargets {
+		out = out[:bbMaxTargets]
+	}
+	return out
+}
+
+func (b *blackboxHub) targets() bbTargetsDetection {
+	if b.deps.DetectTargets != nil {
+		return b.deps.DetectTargets()
+	}
+	return detectTargets()
+}
+
+// bbTargets offers the wizard the IIS app pools and running services detected on
+// this PC. It is a read-only GET: it runs the detection on demand, asks for no
+// elevation, and changes nothing. A PC where neither source could be read
+// answers 200 with empty lists and detected=false, never an error and never a
+// guess. What one source read is offered even when the other failed (W2-06),
+// and the per-source state says which failed and why, in fixed codes.
+func (h *handler) bbTargets(w http.ResponseWriter, _ *http.Request) {
+	if !h.bbReady(w) {
+		return
+	}
+	d := h.bb.targets()
+	pools, services := d.AppPools, d.Services
+	if !d.detected() {
+		pools, services = nil, nil
+	}
+	writeJSON(w, http.StatusOK, bbTargetsAnswer{
+		AppPools: bbTargetList(pools), Services: bbTargetList(services), Detected: d.detected(),
+		AppPoolsState: d.AppPoolsState, ServicesState: d.ServicesState,
+	}, 256<<10)
+}
+
+// detectTargets reads this PC through the existing discovery entry points: the
+// app pool names from applicationHost.config (configparse.ParseAppHost, the same
+// read IISSiteDirs does) and the running win32 services (Env.Services.List).
+// The sources are independent (W2-06): a failed config read never suppresses
+// service enumeration, and a failed service list never discards readable pools.
+// Off Windows nothing is claimed: both sources unavailable, detected=false.
+// Names only; the path and image fields the discovery structs carry are dropped
+// here and never serialized.
+func detectTargets() bbTargetsDetection {
+	env, err := discover.NewSystemEnv()
+	if err != nil {
+		return bbTargetsDetection{AppPoolsState: bbSourceUnavailable, ServicesState: bbSourceUnavailable}
+	}
+	return detectTargetsEnv(env)
+}
+
+// detectTargetsEnv is detectTargets over one Env, so tests drive the same
+// orchestration with a fake host and no real config or service is touched.
+func detectTargetsEnv(env discover.Env) bbTargetsDetection {
+	pools, poolsState := bbAppPools(env)
+	services, servicesState := bbRunningServices(env)
+	return bbTargetsDetection{AppPools: pools, Services: services, AppPoolsState: poolsState, ServicesState: servicesState}
+}
+
+// bbAppPools reads the pool names from applicationHost.config through env.FS,
+// the way discover.IISSiteDirs reads the same file. A missing config is
+// "not-found" (no IIS on this box); a refused, oversized or unparsable one is
+// "unavailable" (IIS may be here but could not be read). applicationHost.config
+// lists the configured pools only: configuration presence is not operational
+// state (W2-07), so every pool is offered with state "unknown" and no running
+// claim. internal/discover has no read-only pool-state source (Env.Procs carries
+// image names only, never the command line that names a pool), so the running
+// state is not guessed from configuration.
+func bbAppPools(env discover.Env) ([]TargetName, string) {
+	if env.FS == nil {
+		return nil, bbSourceUnavailable
+	}
+	roots := discover.DefaultIISRoots()
+	if w := os.Getenv("windir"); w != "" {
+		roots.WinDir = w
+	}
+	cfg := discover.WinJoin(roots.WinDir, `System32\inetsrv\config\applicationHost.config`)
+	fi, err := env.FS.Stat(cfg)
+	if err != nil {
+		if discover.IsNotFound(err) {
+			return nil, bbSourceNotFound
+		}
+		return nil, bbSourceUnavailable
+	}
+	if fi.IsDir || fi.Reparse || fi.Size > discover.MaxConfigBytes {
+		return nil, bbSourceUnavailable
+	}
+	b, err := env.FS.Head(cfg, discover.MaxConfigBytes)
+	if err != nil {
+		return nil, bbSourceUnavailable
+	}
+	ah, err := configparse.ParseAppHost(bytes.NewReader(b))
+	if err != nil || ah == nil {
+		return nil, bbSourceUnavailable
+	}
+	out := make([]TargetName, 0, len(ah.Pools))
+	for _, p := range ah.Pools {
+		out = append(out, TargetName{Name: p.Name, State: bbTargetUnknown})
+	}
+	return out, bbSourceDetected
+}
+
+// bbRunningServices lists the running win32 services through Env.Services.List
+// (EnumServicesStatusEx on Windows). Only names and the running state are kept;
+// BinaryDir and Image are dropped. The state comes from the service control
+// manager, so it is known: running=true with state "running". A list that cannot
+// be read is "unavailable" and never discards the pools the other source read.
+func bbRunningServices(env discover.Env) ([]TargetName, string) {
+	if env.Services == nil {
+		return nil, bbSourceUnavailable
+	}
+	list, err := env.Services.List()
+	if err != nil {
+		return nil, bbSourceUnavailable
+	}
+	out := make([]TargetName, 0, len(list))
+	for _, s := range list {
+		if s.State == "running" {
+			running := true
+			out = append(out, TargetName{Name: s.Name, Running: &running, State: bbTargetRunning})
+		}
+	}
+	return out, bbSourceDetected
 }
 
 /* ----------------------------------------------------------------- add */
@@ -1117,6 +1325,12 @@ func (b *blackboxHub) readHost(ctx context.Context, e bbsaved.Entry, windows ...
 		rep.Dropped = addNames(rep.Dropped, r.Dropped)
 		rep.Missing = addNames(rep.Missing, r.Missing)
 		rep.Newer = rep.Newer || r.Newer
+		// Carry the coverage reasons the reader now reports, so a merged read
+		// cannot look complete when a part was corrupt, capped or budget-limited.
+		rep.Corrupt = addNames(rep.Corrupt, r.Corrupt)
+		rep.Capped = rep.Capped || r.Capped
+		rep.OmittedFiles += r.OmittedFiles
+		rep.Limited = rep.Limited || r.Limited
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].T.Before(all[j].T) })
 	kept := all[:0]

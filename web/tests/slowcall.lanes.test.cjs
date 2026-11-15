@@ -23,7 +23,7 @@ function loadTypeScript(relativePath) {
   return module.exports;
 }
 
-const { MAX_BAR_ROWS, atOnce, laneCells, regroupBlocks, packBars, buildLane, formatAtOnce } = loadTypeScript('src/lib/drill/callLanes.ts');
+const { MAX_BAR_ROWS, atOnce, laneCells, regroupBlocks, packBars, buildLane, formatAtOnce, measureOf, cellValue } = loadTypeScript('src/lib/drill/callLanes.ts');
 
 const T0 = Date.parse('2026-03-01T10:00:00Z');
 const MIN = 60000;
@@ -175,4 +175,95 @@ test('a lane with no data has no shape and no peak', () => {
   assert.equal(missing.hasShape, false);
   assert.equal(missing.key, 'iis');
   assert.equal(missing.bars.length, 0);
+});
+
+// ---- the measure/unit contract (W13-01) and coverage-safe regrouping (W13-02) ----
+
+test('measureOf: the blackbox reason code is batch throughput; everything else is concurrency', () => {
+  assert.equal(measureOf({ reasonCode: 'blackbox' }), 'batch-rate');
+  assert.equal(measureOf({ measure: 'batch-rate' }), 'batch-rate');
+  assert.equal(measureOf({ reasonCode: 'held-sql' }), 'at-once');
+  assert.equal(measureOf({ reasonCode: 'api-seen' }), 'at-once');
+  assert.equal(measureOf(undefined), 'at-once');
+});
+
+test('a blackbox lane draws recorded counts as batches per second, never as busy time', () => {
+  const lane = eventsLane({
+    key: 'sql',
+    reasonCode: 'blackbox',
+    buckets: [
+      { start: iso(T0), count: 6000 },
+      { start: iso(T0 + MIN), count: 0 },
+      { start: iso(T0 + 2 * MIN), count: 3000, complete: false },
+      { start: iso(T0 + 4 * MIN), count: 120 }
+    ]
+  });
+  const cells = laneCells(lane, win, T0, T0 + 5 * MIN);
+  assert.deepEqual(cells.map((c) => c.rate), [100, 0, null, null, 2]);
+  // No busyMs was sent, so concurrency is unknown everywhere — a count is never a duration.
+  for (const cell of cells) assert.equal(cell.atOnce, null);
+  assert.equal(cellValue(cells[0], 'batch-rate'), 100);
+  assert.equal(cellValue(cells[0], 'at-once'), null);
+});
+
+test('buildLane on positive blackbox counts has a throughput shape and peak, with no concurrency', () => {
+  const buckets = [];
+  for (let i = 0; i < 15; i += 1) buckets.push({ start: iso(T0 + i * MIN), count: 6000 });
+  const lane = buildLane({ key: 'sql', state: 'events', reasonCode: 'blackbox', buckets, events: [] }, 'sql', win, T0, T0 + 15 * MIN);
+  assert.equal(lane.measure, 'batch-rate');
+  assert.equal(lane.hasShape, true, 'positive counts are a drawable source even without busyMs');
+  assert.deepEqual(lane.peak, { atOnce: 100, start: T0 });
+  assert.equal(lane.blockSeconds, null);
+  for (const cell of lane.cells) {
+    assert.equal(cell.rate, 100);
+    assert.equal(cell.atOnce, null);
+  }
+});
+
+test('a blackbox lane of genuine zeros is a real zero shape, not a gap', () => {
+  const buckets = [];
+  for (let i = 0; i < 5; i += 1) buckets.push({ start: iso(T0 + i * MIN), count: 0 });
+  const lane = buildLane({ key: 'sql', state: 'events', reasonCode: 'blackbox', buckets, events: [] }, 'sql', win, T0, T0 + 5 * MIN);
+  assert.equal(lane.hasShape, true);
+  assert.deepEqual(lane.peak, { atOnce: 0, start: T0 });
+  for (const cell of lane.cells) assert.equal(cell.rate, 0);
+});
+
+test('regroup never writes a group average into an unknown or incomplete cell (mixed block)', () => {
+  // One block: a known zero, a known positive, a missing minute and an explicitly incomplete minute.
+  const cells = [
+    { start: T0, end: T0 + MIN, atOnce: 0, rate: null, p95Ms: null, refused: null },
+    { start: T0 + MIN, end: T0 + 2 * MIN, atOnce: 3, rate: null, p95Ms: null, refused: null },
+    { start: T0 + 2 * MIN, end: T0 + 3 * MIN, atOnce: null, rate: null, p95Ms: null, refused: null },
+    { start: T0 + 3 * MIN, end: T0 + 4 * MIN, atOnce: null, rate: null, p95Ms: null, refused: null }
+  ];
+  const out = regroupBlocks(cells, 900);
+  // The average is spread only over the proven (known) interval: (0 + 3) / 2 = 1.5.
+  assert.equal(out[0].atOnce, 1.5);
+  assert.equal(out[1].atOnce, 1.5);
+  assert.equal(out[2].atOnce, null, 'a missing measurement stays unknown');
+  assert.equal(out[3].atOnce, null, 'an incomplete cell stays unknown');
+});
+
+test('regroup: one known zero plus unknown minutes never becomes all zeros', () => {
+  const cells = [];
+  for (let i = 0; i < 15; i += 1) {
+    cells.push({ start: T0 + i * MIN, end: T0 + (i + 1) * MIN, atOnce: i === 0 ? 0 : null, rate: null, p95Ms: null, refused: null });
+  }
+  const out = regroupBlocks(cells, 900);
+  assert.equal(out[0].atOnce, 0);
+  for (let i = 1; i < 15; i += 1) assert.equal(out[i].atOnce, null, 'cell ' + i + ' must stay unknown');
+});
+
+test('regroup keeps the rate series under the same coverage rule', () => {
+  const cells = [
+    { start: T0, end: T0 + MIN, atOnce: null, rate: 0, p95Ms: null, refused: null },
+    { start: T0 + MIN, end: T0 + 2 * MIN, atOnce: null, rate: 100, p95Ms: null, refused: null },
+    { start: T0 + 2 * MIN, end: T0 + 3 * MIN, atOnce: null, rate: null, p95Ms: null, refused: null }
+  ];
+  const out = regroupBlocks(cells, 900);
+  assert.equal(out[0].rate, 50);
+  assert.equal(out[1].rate, 50);
+  assert.equal(out[2].rate, null);
+  for (const cell of out) assert.equal(cell.atOnce, null);
 });

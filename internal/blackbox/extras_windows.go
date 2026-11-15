@@ -32,7 +32,12 @@ var (
 )
 
 const (
-	pdhFmtDouble      = 0x00000200
+	pdhFmtDouble = 0x00000200
+	// pdhFmtNoCap100 is PDH_FMT_NOCAP100: without it PDH caps percentage
+	// counters at 100 before the engine ever sees them (W2-02). Value verified
+	// against pdh.h (Windows SDK 10.0.22621): 0x8000. Note 0x1000 is
+	// PDH_FMT_NOSCALE, a different flag.
+	pdhFmtNoCap100    = 0x00008000
 	diskQueuePath     = `\PhysicalDisk(_Total)\Current Disk Queue Length`
 	diskLatencyPath   = `\PhysicalDisk(_Total)\Avg. Disk sec/Transfer`
 	ifTypeLoopback    = 24

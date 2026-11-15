@@ -15,8 +15,10 @@ import (
 // screen never starts a database read. The screen's sentence comes from dbState
 // (P-07 maps api-seen to state "api"), so no new copy is written here.
 //
-// Precedence: saved live day (held-sql / layered-sql) > Query Store file (qs-file)
-// > api-seen > nothing. This file only fills the last case and never displaces a
+// Precedence (W12-03): saved live day (held-sql / layered-sql) > Query Store
+// file (qs-file) > Blackbox sampling (blackbox) > api-seen > nothing. Query
+// Store duration evidence for the selected database outranks machine-wide
+// batch throughput; this file only fills the last case and never displaces a
 // better source.
 
 const tracingReasonAPISseen = "api-seen"
@@ -128,7 +130,7 @@ func apiSeenBuckets(ctx context.Context, reader audit.SQLBusyReader, sourceIDs [
 func tracingAPISseenLane(ctx context.Context, reader audit.SQLBusyReader, sourceIDs []string, axis tracingAxis, lane tracingLane, now func() time.Time) (tracingLane, error) {
 	if lane.Key != calltrace.LaneSQL || lane.Disabled != "" || lane.State == calltrace.StateClockUnchecked ||
 		lane.ReasonCode == tracingReasonHeldSQL || lane.ReasonCode == tracingReasonLayeredSQL || lane.ReasonCode == tracingReasonQSFile ||
-		lane.ReasonCode == tracingReasonNotImported || lane.ReasonCode == tracingReasonSkipped {
+		lane.ReasonCode == tracingReasonNotImported || lane.ReasonCode == tracingReasonSkipped || lane.ReasonCode == tracingReasonBlackbox {
 		return lane, nil
 	}
 	if reader == nil {

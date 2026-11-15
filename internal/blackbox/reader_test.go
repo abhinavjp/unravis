@@ -1,14 +1,19 @@
 package blackbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -572,5 +577,529 @@ func TestHTTPReadNeverUsesAProxy(t *testing.T) {
 	// The caller's own client is left as it was.
 	if withProxy.Transport.(*http.Transport).Proxy == nil {
 		t.Error("the given client was changed")
+	}
+}
+
+/* ------------------------------------------- W12-01: coverage honesty */
+
+// Incomplete stays the page-state predicate (a torn tail of a file being
+// written is normal); CoverageIncomplete is the lane predicate: every reason
+// that leaves time unobserved counts.
+func TestReadReportCoverageIncomplete(t *testing.T) {
+	clean := ReadReport{Files: 2, Samples: 10}
+	if clean.Incomplete() || clean.CoverageIncomplete() {
+		t.Fatalf("clean read flagged: %+v", clean)
+	}
+	for name, rep := range map[string]ReadReport{
+		"dropped": {Dropped: []string{"a"}},
+		"missing": {Missing: []string{"a"}},
+		"newer":   {Newer: true},
+		"torn":    {Torn: []string{"a"}},
+		"corrupt": {Corrupt: []string{"a"}},
+		"capped":  {Capped: true, OmittedFiles: 1},
+		"limited": {Limited: true},
+	} {
+		if !rep.CoverageIncomplete() {
+			t.Errorf("%s: CoverageIncomplete false", name)
+		}
+	}
+	// The state contract is unchanged: torn/newer alone are not Incomplete.
+	if (ReadReport{Torn: []string{"a"}}).Incomplete() || (ReadReport{Newer: true}).Incomplete() {
+		t.Fatal("torn/newer changed the page-state predicate")
+	}
+}
+
+// mapSource serves fixed files in memory and counts opens.
+type mapSource struct {
+	files map[string][]byte
+	opens *[]string
+}
+
+func (m mapSource) Manifest(context.Context) (ManifestRead, error) {
+	return ManifestRead{}, nil
+}
+func (m mapSource) Status(context.Context) (*StatusDoc, error) { return nil, nil }
+func (m mapSource) OpenFile(_ context.Context, name string) (io.ReadCloser, error) {
+	if m.opens != nil {
+		*m.opens = append(*m.opens, name)
+	}
+	b, ok := m.files[name]
+	if !ok {
+		return nil, readErr(ReadNotFound, "gone", nil)
+	}
+	return io.NopCloser(bytes.NewReader(b)), nil
+}
+
+func sampleLine(t time.Time, seq uint64) string {
+	return fmt.Sprintf(`{"v":1,"run":"r","seq":%d,"t":%q,"cpu":5}`, seq, t.UTC().Format(time.RFC3339Nano)) + "\n"
+}
+
+// W12-01: a malformed line in the MIDDLE of a file is corruption, not a clean
+// read: the samples around it are kept and the file is reported Corrupt.
+func TestReadSamplesCorruptInteriorLineIsReported(t *testing.T) {
+	dir := t.TempDir()
+	name := FileNameFor(t0)
+	var buf strings.Builder
+	buf.WriteString(sampleLine(t0, 1))
+	buf.WriteString(`{"v":1,"run":"r","seq":2,"t":"2026-10-27T10:`) // cut interior line
+	buf.WriteString("\n")
+	buf.WriteString(sampleLine(t0.Add(30*time.Second), 3))
+	os.WriteFile(filepath.Join(dir, name), []byte(buf.String()), 0o644)
+	src := folderSource(t, dir)
+	m := Manifest{Format: 1, Files: []FileEntry{{Name: name, Hour: t0}}}
+	got, rep, err := ReadSamples(context.Background(), src, m, t0, t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || len(rep.Corrupt) != 1 || rep.Corrupt[0] != name {
+		t.Fatalf("got %d report %+v, want the two good samples and one corrupt file", len(got), rep)
+	}
+	if rep.Incomplete() || !rep.CoverageIncomplete() {
+		t.Fatalf("corrupt interior line must be coverage-incomplete, not dropped: %+v", rep)
+	}
+	if len(rep.Torn) != 0 {
+		t.Fatalf("an interior bad line is not a torn tail: %+v", rep)
+	}
+}
+
+// W12-01: 193 overlapping hourly entries lose the oldest to MaxReadFiles, and
+// the read SAYS SO (Capped, OmittedFiles) instead of implying full coverage.
+func TestReadSamplesFileCapReportsOmittedCoverage(t *testing.T) {
+	files := map[string][]byte{}
+	var entries []FileEntry
+	var opens []string
+	for i := 0; i < MaxReadFiles+1; i++ {
+		h := t0.Add(time.Duration(i) * time.Hour)
+		name := FileNameFor(h)
+		files[name] = []byte(sampleLine(h, uint64(i+1)) + sampleLine(h.Add(30*time.Minute), uint64(i+1)))
+		entries = append(entries, FileEntry{Name: name, Hour: h})
+	}
+	src := mapSource{files: files, opens: &opens}
+	m := Manifest{Format: 1, Files: entries}
+	got, rep, err := ReadSamples(context.Background(), src, m, t0, t0.Add(time.Duration(MaxReadFiles+1)*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Capped || rep.OmittedFiles != 1 || rep.Files != MaxReadFiles || !rep.CoverageIncomplete() {
+		t.Fatalf("cap not reported: %+v", rep)
+	}
+	if len(opens) != MaxReadFiles {
+		t.Fatalf("opened %d files, want %d", len(opens), MaxReadFiles)
+	}
+	for _, name := range opens {
+		if name == FileNameFor(t0) {
+			t.Fatal("the oldest file was opened past the cap")
+		}
+	}
+	if len(got) == 0 || got[0].T.Before(t0.Add(time.Hour)) {
+		t.Fatalf("oldest hour present or nothing read: %d first %v", len(got), got[0].T)
+	}
+}
+
+// W12-04: the cumulative byte budget stops the read at limit+1 bytes and marks
+// it Limited (incomplete), never a clean EOF.
+func TestReadSamplesByteBudgetStopsAtLimitPlusOne(t *testing.T) {
+	old := maxReadTotalBytes
+	maxReadTotalBytes = 500
+	t.Cleanup(func() { maxReadTotalBytes = old })
+	name := FileNameFor(t0)
+	var buf strings.Builder
+	for i := 0; i < 200; i++ {
+		buf.WriteString(sampleLine(t0.Add(time.Duration(i)*15*time.Second), uint64(i+1)))
+	}
+	served := 0
+	src := countOpenSource{data: []byte(buf.String()), served: &served}
+	m := Manifest{Format: 1, Files: []FileEntry{{Name: name, Hour: t0}}}
+	got, rep, err := ReadSamples(context.Background(), src, m, t0, t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if served > 501 {
+		t.Fatalf("read served %d bytes, want at most limit+1 (501)", served)
+	}
+	if !rep.Limited || !rep.CoverageIncomplete() || rep.Incomplete() {
+		t.Fatalf("budget stop not reported as limited coverage: %+v", rep)
+	}
+	if len(got) == 0 || len(got) >= 200 {
+		t.Fatalf("got %d samples, want a bounded prefix", len(got))
+	}
+}
+
+// countOpenSource serves one file and counts the bytes actually read from it.
+type countOpenSource struct {
+	data   []byte
+	served *int
+}
+
+func (c countOpenSource) Manifest(context.Context) (ManifestRead, error) {
+	return ManifestRead{}, nil
+}
+func (c countOpenSource) Status(context.Context) (*StatusDoc, error) { return nil, nil }
+func (c countOpenSource) OpenFile(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(&countReader{r: bytes.NewReader(c.data), n: c.served}), nil
+}
+
+type countReader struct {
+	r *bytes.Reader
+	n *int
+}
+
+func (c *countReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	*c.n += n
+	return n, err
+}
+
+// W12-04: the decoded-sample budget stops at limit+1 objects and keeps at most
+// the limit, marked Limited.
+func TestReadSamplesSampleBudgetStopsAtLimitPlusOne(t *testing.T) {
+	old := maxReadTotalSamples
+	maxReadTotalSamples = 10
+	t.Cleanup(func() { maxReadTotalSamples = old })
+	name := FileNameFor(t0)
+	var buf strings.Builder
+	for i := 0; i < 100; i++ {
+		buf.WriteString(sampleLine(t0.Add(time.Duration(i)*15*time.Second), uint64(i+1)))
+	}
+	src := mapSource{files: map[string][]byte{name: []byte(buf.String())}}
+	m := Manifest{Format: 1, Files: []FileEntry{{Name: name, Hour: t0}}}
+	got, rep, err := ReadSamples(context.Background(), src, m, t0, t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) > 10 || !rep.Limited || !rep.CoverageIncomplete() {
+		t.Fatalf("got %d report %+v, want at most 10 kept and Limited", len(got), rep)
+	}
+}
+
+// W12-04: cancellation is checked in the decode loop: a large file whose source
+// keeps answering after the context ends does not hold the read.
+func TestReadSamplesChecksCancellationWhileDecoding(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	name := FileNameFor(t0)
+	var buf strings.Builder
+	for i := 0; i < 5000; i++ {
+		buf.WriteString(sampleLine(t0.Add(time.Duration(i)*time.Second), uint64(i+1)))
+	}
+	src := cancelAfterSource{data: []byte(buf.String()), cancel: cancel, after: 4000}
+	m := Manifest{Format: 1, Files: []FileEntry{{Name: name, Hour: t0}}}
+	done := make(chan struct{})
+	var got []Sample
+	var rep ReadReport
+	var err error
+	go func() {
+		got, rep, err = ReadSamples(ctx, src, m, t0, t0.Add(2*time.Hour))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("decode loop ignored the cancelled context")
+	}
+	if err == nil || KindOf(err) != ReadUnreachable {
+		t.Fatalf("err %v, want the cancelled read", err)
+	}
+	if len(got) >= 5000 {
+		t.Fatalf("kept %d samples, want the read to stop early", len(got))
+	}
+	_ = rep
+}
+
+type cancelAfterSource struct {
+	data   []byte
+	cancel context.CancelFunc
+	after  int
+}
+
+func (c cancelAfterSource) Manifest(context.Context) (ManifestRead, error) {
+	return ManifestRead{}, nil
+}
+func (c cancelAfterSource) Status(context.Context) (*StatusDoc, error) { return nil, nil }
+func (c cancelAfterSource) OpenFile(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(&cancelReader{r: bytes.NewReader(c.data), cancel: c.cancel, left: c.after}), nil
+}
+
+type cancelReader struct {
+	r      *bytes.Reader
+	cancel context.CancelFunc
+	left   int
+}
+
+func (c *cancelReader) Read(p []byte) (int, error) {
+	if c.left <= 0 {
+		c.cancel()
+	}
+	if len(p) > c.left && c.left > 0 {
+		p = p[:c.left]
+	}
+	n, err := c.r.Read(p)
+	c.left -= n
+	return n, err
+}
+
+/* ------------------------------------- W12-04: bounded read admission */
+
+// hangCountAccess blocks like a dead share and counts outstanding calls.
+type hangCountAccess struct {
+	mu      sync.Mutex
+	active  int
+	max     int
+	release chan struct{}
+}
+
+func (a *hangCountAccess) enter() {
+	a.mu.Lock()
+	a.active++
+	if a.active > a.max {
+		a.max = a.active
+	}
+	a.mu.Unlock()
+}
+func (a *hangCountAccess) leave() {
+	a.mu.Lock()
+	a.active--
+	a.mu.Unlock()
+}
+func (a *hangCountAccess) peak() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.max
+}
+func (a *hangCountAccess) ReadFile(string) ([]byte, error) {
+	a.enter()
+	defer a.leave()
+	<-a.release
+	return nil, errors.New("late")
+}
+func (a *hangCountAccess) Open(string) (io.ReadCloser, error) {
+	a.enter()
+	defer a.leave()
+	<-a.release
+	return nil, errors.New("late")
+}
+
+// Repeated permitted reads of a dead share return on their deadline and leave
+// at most the bounded number of outstanding OS helpers — per source and
+// globally — not one per read.
+func TestReadAdmissionBoundsOutstandingOSCalls(t *testing.T) {
+	loc, _ := ParseLocation(`\gone\share`)
+	acc := &hangCountAccess{release: make(chan struct{})}
+	src := &FolderSource{Loc: loc, Access: acc}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+			defer cancel()
+			if _, err := src.Manifest(ctx); err == nil {
+				t.Error("a dead share answered")
+			}
+		}()
+	}
+	wg.Wait()
+	if peak := acc.peak(); peak > maxSourceOutstanding {
+		t.Fatalf("one source left %d outstanding OS calls, want at most %d", peak, maxSourceOutstanding)
+	}
+	close(acc.release)
+	waitDrained(t, acc)
+
+	// Across sources the GLOBAL pool bounds the outstanding calls.
+	accs := make([]*hangCountAccess, 6)
+	var wg2 sync.WaitGroup
+	for i := range accs {
+		accs[i] = &hangCountAccess{release: make(chan struct{})}
+		s := &FolderSource{Loc: loc, Access: accs[i]}
+		for j := 0; j < 8; j++ {
+			wg2.Add(1)
+			go func() {
+				defer wg2.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+				defer cancel()
+				_, _ = s.Manifest(ctx)
+			}()
+		}
+	}
+	wg2.Wait()
+	total := 0
+	for _, a := range accs {
+		total += a.peak()
+	}
+	if total > maxOutstandingOS {
+		t.Fatalf("global outstanding OS calls peaked at %d, want at most %d", total, maxOutstandingOS)
+	}
+	for _, a := range accs {
+		close(a.release)
+	}
+	for _, a := range accs {
+		waitDrained(t, a)
+	}
+}
+
+func waitDrained(t *testing.T, a *hangCountAccess) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		a.mu.Lock()
+		n := a.active
+		a.mu.Unlock()
+		if n == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d OS helpers never finished", n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+/* ------------------------------------- W12-05: containment, no links */
+
+// A valid recording basename that is itself a symlink is refused; the plain
+// file beside it still opens. Only fake temp-dir data is used.
+func TestFolderOpenRefusesFileSymlink(t *testing.T) {
+	dir := t.TempDir()
+	name := FileNameFor(t0)
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(sampleLine(t0, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(t.TempDir(), "private.txt")
+	if err := os.WriteFile(private, []byte("PRIVATE-FAKE-DATA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkName := FileNameFor(t0.Add(time.Hour))
+	if err := os.Symlink(private, filepath.Join(dir, linkName)); err != nil {
+		t.Skipf("symlink not creatable here: %v", err)
+	}
+	src := folderSource(t, dir)
+	_, err := src.OpenFile(context.Background(), linkName)
+	if KindOf(err) != ReadBadData {
+		t.Fatalf("link entry: kind %v err %v, want bad-data", KindOf(err), err)
+	}
+	if strings.Contains(err.Error(), "PRIVATE") || strings.Contains(err.Error(), private) {
+		t.Fatalf("refusal leaks the target: %v", err)
+	}
+	rc, err := src.OpenFile(context.Background(), name)
+	if err != nil {
+		t.Fatalf("plain file refused: %v", err)
+	}
+	rc.Close()
+}
+
+// A junction (Windows) or symlink ancestor substitutes the whole folder: the
+// open is refused before any target byte is read.
+func TestFolderRefusesLinkAncestor(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := FileNameFor(t0)
+	if err := os.WriteFile(filepath.Join(real, name), []byte(sampleLine(t0, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, ManifestName), []byte(`{"format":1,"name":"x"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(base, "alias")
+	if runtime.GOOS == "windows" {
+		if out, err := exec.Command("cmd", "/c", "mklink", "/J", alias, real).CombinedOutput(); err != nil {
+			t.Skipf("junction not creatable here: %v %s", err, out)
+		}
+	} else {
+		if err := os.Symlink(real, alias); err != nil {
+			t.Skipf("symlink not creatable here: %v", err)
+		}
+	}
+	src := folderSource(t, alias)
+	if _, err := src.Manifest(context.Background()); KindOf(err) != ReadBadData {
+		t.Fatalf("junction ancestor manifest: kind %v err %v", KindOf(err), err)
+	}
+	if _, err := src.OpenFile(context.Background(), name); KindOf(err) != ReadBadData {
+		t.Fatalf("junction ancestor file: kind %v err %v", KindOf(err), err)
+	}
+	// The real folder still reads.
+	ok := folderSource(t, real)
+	if _, err := ok.Manifest(context.Background()); err != nil {
+		t.Fatalf("real folder refused: %v", err)
+	}
+}
+
+// A junction AS the recording entry (a directory alias with a valid basename)
+// is refused: it is not a regular file.
+func TestFolderRefusesJunctionEntry(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("junctions are Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := FileNameFor(t0)
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Join(dir, name), target).CombinedOutput(); err != nil {
+		t.Skipf("junction not creatable here: %v %s", err, out)
+	}
+	src := folderSource(t, dir)
+	if _, err := src.OpenFile(context.Background(), name); KindOf(err) != ReadBadData {
+		t.Fatalf("junction entry: kind %v err %v", KindOf(err), err)
+	}
+}
+
+// A non-regular object (a directory with a valid recording basename) is refused.
+func TestFolderRefusesNonRegularEntry(t *testing.T) {
+	dir := t.TempDir()
+	name := FileNameFor(t0)
+	if err := os.Mkdir(filepath.Join(dir, name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := folderSource(t, dir)
+	if _, err := src.OpenFile(context.Background(), name); KindOf(err) != ReadBadData {
+		t.Fatalf("directory entry: kind %v err %v", KindOf(err), err)
+	}
+}
+
+// The manifest open has the same policy: a manifest.json that is a link is
+// refused, not followed.
+func TestFolderManifestRefusesLink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(t.TempDir(), "manifest.json")
+	if err := os.WriteFile(real, []byte(`{"format":1,"name":"x"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(dir, ManifestName)); err != nil {
+		t.Skipf("symlink not creatable here: %v", err)
+	}
+	src := folderSource(t, dir)
+	if _, err := src.Manifest(context.Background()); KindOf(err) != ReadBadData {
+		t.Fatalf("manifest link: kind %v err %v", KindOf(err), err)
+	}
+}
+
+// The explicit trusted-root policy allows links; nothing sets it silently.
+func TestFolderTrustedRootAllowsLinks(t *testing.T) {
+	dir := t.TempDir()
+	private := filepath.Join(t.TempDir(), "target.ndjson")
+	if err := os.WriteFile(private, []byte(sampleLine(t0, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	name := FileNameFor(t0)
+	if err := os.Symlink(private, filepath.Join(dir, name)); err != nil {
+		t.Skipf("symlink not creatable here: %v", err)
+	}
+	loc, err := ParseLocation(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := &FolderSource{Loc: loc, Access: DirAccess{Dir: dir, Trusted: true}}
+	rc, err := src.OpenFile(context.Background(), name)
+	if err != nil {
+		t.Fatalf("trusted root refused a link: %v", err)
+	}
+	b, _ := io.ReadAll(rc)
+	rc.Close()
+	if !strings.Contains(string(b), `"cpu":5`) {
+		t.Fatalf("trusted root did not read the target: %q", b)
 	}
 }
