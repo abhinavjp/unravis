@@ -219,6 +219,14 @@ export const BB_TEXT = {
   targetsNameLabel: 'Target name',
   targetsManualNote: 'Type the name of an app pool or service, then press Add target.',
   targetsListNote: 'The list may be incomplete. Type a name below to add a target that is not listed.',
+  // What the detected lists say while the one read is in flight, or when it could not be read (UX-5).
+  // A failed read is never shown as an empty healthy list; each message says what to do instead.
+  targetsLoading: 'Looking for the app pools and services on this PC.',
+  targetsLoadFailed: 'The app pools and services on this PC could not be read. Type the names below to watch them anyway.',
+  targetsPoolsNotFound: 'No app pools were found on this PC. That is normal when IIS is not installed here.',
+  targetsPoolsUnreadable: 'The app pools on this PC could not be read. Type an app pool name below to watch it.',
+  targetsServicesNotFound: 'No services were found on this PC. Type a service name below to watch it.',
+  targetsServicesUnreadable: 'The services on this PC could not be read. Type a service name below to watch it.',
   targetsAdd: 'Add target',
   targetsRemove: 'Remove target',
   // Why a typed target was not added. The name stays in the box so it can be fixed (UX-4).

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { INTERVALS, blackboxApi, listensOnAll, pickedTargetState, targetsProblem, toggleTarget, type Settings, type SettingsProblem, type TargetInfo, type TargetKind, type TargetRef, targetRunState } from '../lib/blackbox';
+  import { INTERVALS, blackboxApi, listensOnAll, pickedTargetState, targetListState, targetsProblem, toggleTarget, type Settings, type SettingsProblem, type TargetInfo, type TargetKind, type TargetRef, targetRunState } from '../lib/blackbox';
   import { BB_TEXT as T } from '../lib/copy/blackboxCopy';
 
   // The settings fields of a Blackbox, shared by the Place wizard (part 3) and Apply settings on this PC.
@@ -21,6 +21,9 @@
   let appPoolsState = $state<string | undefined>(undefined);
   let servicesState = $state<string | undefined>(undefined);
   let targetsRead = $state(false);
+  // True when the one mount-time read was refused or never reached the server (UX-5). A failed
+  // read is never shown as an empty healthy list: both detected lists say it could not be read.
+  let targetsFailed = $state(false);
   let manualKind = $state<TargetKind>('appPool');
   let manualName = $state('');
   // Why the last Add was refused. The name stays in the box so it can be fixed (UX-4).
@@ -37,9 +40,17 @@
       appPoolsState = answer.appPoolsState;
       servicesState = answer.servicesState;
       targetsRead = true;
-    }).catch(() => { targetsRead = true; /* nothing could be read: names are typed below and chips say so */ });
+    }).catch(() => { targetsRead = true; targetsFailed = true; /* nothing could be read: the lists say so and names are typed below */ });
     return () => { alive = false; };
   });
+
+  // What one detected list can honestly show (UX-5): loading, failed, not-found, unavailable,
+  // empty or list. A function so it reads the live state on every render; the rule itself is pure.
+  function groupState(kind: TargetKind) {
+    return kind === 'appPool'
+      ? targetListState(appPools, appPoolsState, detected, targetsRead, targetsFailed)
+      : targetListState(services, servicesState, detected, targetsRead, targetsFailed);
+  }
 
   const picked = $derived(settings.targets ?? []);
   // Detected names are offered as checkboxes; the manual add row is always available alongside them,
@@ -109,19 +120,34 @@
   </fieldset>
   <h4>{T.targetsHeading}</h4>
   <p class="bb-note">{T.targetsHelp}</p>
+  {#if targetMode === 'pc' && groupState('appPool') === 'loading'}
+    <p class="bb-note" role="status">{T.targetsLoading}</p>
+  {:else if targetMode === 'pc' && groupState('appPool') === 'failed'}
+    <p class="bb-note bb-warn" role="status">{T.targetsLoadFailed}</p>
+  {/if}
+  {#if targetMode === 'pc' && targetsRead && !targetsFailed}
+    {#if groupState('appPool') === 'not-found'}<p class="bb-note">{T.targetsPoolsNotFound}</p>{/if}
+    {#if groupState('appPool') === 'unavailable'}<p class="bb-note bb-warn">{T.targetsPoolsUnreadable}</p>{/if}
+    {#if groupState('service') === 'not-found'}<p class="bb-note">{T.targetsServicesNotFound}</p>{/if}
+    {#if groupState('service') === 'unavailable'}<p class="bb-note bb-warn">{T.targetsServicesUnreadable}</p>{/if}
+  {/if}
   {#if showLists}
-    <fieldset class="bb-checks">
-      <legend>{T.targetsAppPools}</legend>
-      {#each appPools as t (t.name)}
-        <label class="bb-check"><input type="checkbox" checked={isSelected('appPool', t.name)} onchange={() => pick('appPool', t.name)} /><span>{t.name}{#if targetRunState(t) === 'stopped'} <span class="bb-note">{T.targetsNotRunning}</span>{:else if targetRunState(t) === 'unknown'} <span class="bb-note">{T.targetsStateUnknown}</span>{/if}</span></label>
-      {/each}
-    </fieldset>
-    <fieldset class="bb-checks">
-      <legend>{T.targetsServices}</legend>
-      {#each services as t (t.name)}
-        <label class="bb-check"><input type="checkbox" checked={isSelected('service', t.name)} onchange={() => pick('service', t.name)} /><span>{t.name}{#if targetRunState(t) === 'stopped'} <span class="bb-note">{T.targetsNotRunning}</span>{:else if targetRunState(t) === 'unknown'} <span class="bb-note">{T.targetsStateUnknown}</span>{/if}</span></label>
-      {/each}
-    </fieldset>
+    {#if groupState('appPool') === 'list'}
+      <fieldset class="bb-checks">
+        <legend>{T.targetsAppPools}</legend>
+        {#each appPools as t (t.name)}
+          <label class="bb-check"><input type="checkbox" checked={isSelected('appPool', t.name)} onchange={() => pick('appPool', t.name)} /><span>{t.name}{#if targetRunState(t) === 'stopped'} <span class="bb-note">{T.targetsNotRunning}</span>{:else if targetRunState(t) === 'unknown'} <span class="bb-note">{T.targetsStateUnknown}</span>{/if}</span></label>
+        {/each}
+      </fieldset>
+    {/if}
+    {#if groupState('service') === 'list'}
+      <fieldset class="bb-checks">
+        <legend>{T.targetsServices}</legend>
+        {#each services as t (t.name)}
+          <label class="bb-check"><input type="checkbox" checked={isSelected('service', t.name)} onchange={() => pick('service', t.name)} /><span>{t.name}{#if targetRunState(t) === 'stopped'} <span class="bb-note">{T.targetsNotRunning}</span>{:else if targetRunState(t) === 'unknown'} <span class="bb-note">{T.targetsStateUnknown}</span>{/if}</span></label>
+        {/each}
+      </fieldset>
+    {/if}
     {@render targetChips(extraPicked)}
     <p class="bb-note">{T.targetsListNote}</p>
   {:else}

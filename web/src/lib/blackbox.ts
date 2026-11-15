@@ -146,6 +146,25 @@ export function pickedTargetState(kind: TargetKind, name: string, answer: Target
   return 'list-unreadable';
 }
 
+/**
+ * What the Settings step can honestly show for one detected list (UX-5). Pure: no state, no DOM, no fetch.
+ * `read` is false while the single mount-time read is in flight; `failed` is true when that read was refused
+ * or never reached the server. A failed or unreadable list is never an empty healthy list: 'failed' and
+ * 'unavailable' say it could not be read, 'not-found' says the source is not on this PC, 'empty' means the
+ * list was read and holds no names (its fieldset is skipped), and 'list' means names were read. An older
+ * server sends no per-source state, so `detected` decides: nothing detected means nothing could be read.
+ */
+export type TargetListState = 'loading' | 'failed' | 'not-found' | 'unavailable' | 'empty' | 'list';
+export function targetListState(list: TargetInfo[] | null | undefined, source: string | undefined, detected: boolean, read: boolean, failed: boolean): TargetListState {
+  if (failed) return 'failed';
+  if (!read) return 'loading';
+  if ((list ?? []).length > 0) return 'list';
+  if (source === 'not-found') return 'not-found';
+  if (source === 'unavailable') return 'unavailable';
+  if (source === 'detected' || detected) return 'empty';
+  return 'unavailable';
+}
+
 export interface Settings {
   name: string;
   folder: string;

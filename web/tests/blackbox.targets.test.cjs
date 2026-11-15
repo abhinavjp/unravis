@@ -445,3 +445,295 @@ test('the rendered step shows no target alert when nothing is wrong', () => {
   assert.doesNotMatch(full.html, /bb-targets-error/);
   assert.equal((full.html.match(/class="bb-chip[ "]/g) ?? []).length, 32);
 });
+
+/* ------------------------------------------------------------------ UX-5: honest loading / failed / partial states */
+
+// The one mount-time read can be in flight, refused, or settled with only part of the answer.
+// Each detected list must say which it is; a failed or unreadable list is never shown as an
+// empty healthy list, and an empty detected list is skipped entirely (no fieldset).
+
+const poolsOk = [{ name: 'DefaultAppPool', state: 'unknown' }];
+const servicesOk = [{ name: 'W3SVC', running: true, state: 'running' }];
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+// Svelte scopes its styles with a class on the element, so a legend reads <legend class="svelte-...">.
+const legendOf = (label) => new RegExp('<legend[^>]*>' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '</legend>');
+
+test('targetListState says loading, failed, not-found, unavailable, empty or list, and is pure', () => {
+  const f = bb.targetListState;
+  assert.equal(typeof f, 'function', 'the pure helper exists');
+  // In flight: nothing read yet, nothing failed yet.
+  assert.equal(f([], undefined, false, false, false), 'loading');
+  // The read was refused or never reached the server: failed, whatever the lists hold.
+  assert.equal(f([], undefined, false, true, true), 'failed');
+  assert.equal(f([], 'detected', true, true, true), 'failed');
+  // The source is not on this PC (no IIS): not-found, even when the other source was read.
+  assert.equal(f([], 'not-found', false, true, false), 'not-found');
+  assert.equal(f([], 'not-found', true, true, false), 'not-found');
+  // The source may be here but could not be read: unavailable, never an empty healthy list.
+  assert.equal(f([], 'unavailable', true, true, false), 'unavailable');
+  assert.equal(f([], 'unavailable', false, true, false), 'unavailable');
+  // Read successfully and holds no names: empty (the fieldset is skipped).
+  assert.equal(f([], 'detected', true, true, false), 'empty');
+  // Names were read: list.
+  assert.equal(f(poolsOk, 'detected', true, true, false), 'list');
+  assert.equal(f(servicesOk, 'detected', true, true, false), 'list');
+  // An older server sends no per-source state: detected means the lists were read.
+  assert.equal(f([], undefined, true, true, false), 'empty');
+  assert.equal(f(servicesOk, undefined, true, true, false), 'list');
+  // Nothing detected and no per-source state: nothing could be read, never an empty healthy list.
+  assert.equal(f([], undefined, false, true, false), 'unavailable');
+  // A missing list is tolerated like an empty one; the list given is never changed.
+  const frozen = Object.freeze([...poolsOk]);
+  assert.equal(f(frozen, 'detected', true, true, false), 'list');
+  assert.equal(f(null, 'detected', true, true, false), 'empty');
+  assert.equal(f(undefined, undefined, false, false, false), 'loading');
+  assert.deepEqual(frozen, poolsOk);
+  // Pure: the same inputs give the same answer every time.
+  assert.equal(f([], 'unavailable', true, true, false), f([], 'unavailable', true, true, false));
+});
+
+test('targetListState tells a partial answer apart: what was read is a list, what failed is not', () => {
+  const f = bb.targetListState;
+  // Pools read, services refused: the pools are offered, the services say they could not be read.
+  assert.equal(f(poolsOk, 'detected', true, true, false), 'list');
+  assert.equal(f([], 'unavailable', true, true, false), 'unavailable');
+  // No IIS but services read: the pools say not-found, the services are offered.
+  assert.equal(f([], 'not-found', true, true, false), 'not-found');
+  assert.equal(f(servicesOk, 'detected', true, true, false), 'list');
+});
+
+// The step's own script with the mount callback captured, run against the REAL client: the only
+// stub is fetch itself. Proves the failure path is genuinely reachable, not a state set by hand.
+function mountStep(overrides = {}) {
+  const settings = overrides.settings ?? bb.defaultSettings('web-a');
+  const props = { settings, logPathsText: settings.logPaths.join('\n'), idPrefix: 'bb', problem: null, targetMode: 'pc', ...overrides };
+  const src = read('src/components/BlackboxSettings.svelte');
+  const script = src.match(/<script lang="ts">([\s\S]*?)<\/script>/)[1];
+  const js = ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+  const exposed = js + '\nmodule.exports.step = { groupState,'
+    + ' get targetsRead() { return targetsRead; }, get targetsFailed() { return targetsFailed; },'
+    + ' get detected() { return detected; }, get appPools() { return appPools; }, get services() { return services; } };';
+  let mounted = null;
+  const need = (request) => {
+    if (request === 'svelte') return { onMount: (fn) => { mounted = fn; } };
+    if (request === '../lib/blackbox') return bb;
+    if (request === '../lib/copy/blackboxCopy') return { BB_TEXT, BB_REFUSAL, blackboxCopyEntries };
+    throw new Error('unexpected import: ' + request);
+  };
+  const module = { exports: {} };
+  const identity = (value) => value;
+  new Function('require', 'module', 'exports', '$state', '$derived', '$props', '$bindable', exposed)(
+    need, module, module.exports, identity, identity, () => props, () => undefined);
+  return { step: module.exports.step, mount: () => mounted(), settings };
+}
+const tokenSession = () => { globalThis.sessionStorage = { getItem: () => TOKEN, setItem() {}, removeItem() {} }; };
+
+test('the mount read drives the states: loading in flight, failed after a rejected fetch', async () => {
+  tokenSession();
+  const calls = [];
+  let rejectFetch;
+  globalThis.fetch = (url) => { calls.push(String(url)); return new Promise((_, reject) => { rejectFetch = reject; }); };
+  const { step, mount } = mountStep();
+  assert.equal(step.groupState('appPool'), 'loading', 'before the read settles both lists are loading');
+  assert.equal(step.groupState('service'), 'loading');
+  mount();
+  assert.deepEqual(calls, ['/api/blackbox/this-pc/targets'], 'the real client made the one read');
+  assert.equal(step.targetsRead, false);
+  assert.equal(step.groupState('appPool'), 'loading', 'still loading while the fetch is in flight');
+  rejectFetch(new TypeError('network down'));
+  await flush();
+  assert.equal(step.targetsRead, true, 'the failed read still settles');
+  assert.equal(step.targetsFailed, true, 'the catch marks the read failed');
+  assert.equal(step.groupState('appPool'), 'failed');
+  assert.equal(step.groupState('service'), 'failed');
+  assert.deepEqual(step.appPools, [], 'nothing was read');
+});
+
+test('a refused read (503) also lands as failed, never an empty healthy list', async () => {
+  tokenSession();
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: 'Blackbox is not available in this build.', reason: 'unavailable' }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+  const { step, mount } = mountStep();
+  mount();
+  await flush();
+  assert.equal(step.targetsFailed, true);
+  assert.equal(step.groupState('appPool'), 'failed');
+  assert.equal(step.groupState('service'), 'failed');
+  assert.notEqual(step.groupState('service'), 'empty', 'a refusal is never an empty healthy list');
+});
+
+test('a partial answer keeps what was read and marks the other list unavailable', async () => {
+  tokenSession();
+  const body = { appPools: poolsOk, services: [], detected: true, appPoolsState: 'detected', servicesState: 'unavailable' };
+  globalThis.fetch = async () => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const { step, mount } = mountStep();
+  mount();
+  await flush();
+  assert.equal(step.targetsFailed, false);
+  assert.equal(step.detected, true);
+  assert.equal(step.groupState('appPool'), 'list');
+  assert.equal(step.groupState('service'), 'unavailable');
+});
+
+test('empty detected lists, a missing source and nothing detected each read honestly after the mount read', async () => {
+  tokenSession();
+  const cases = [
+    [{ appPools: [], services: [], detected: true, appPoolsState: 'detected', servicesState: 'detected' }, 'empty', 'empty'],
+    [{ appPools: [], services: servicesOk, detected: true, appPoolsState: 'not-found', servicesState: 'detected' }, 'not-found', 'list'],
+    [{ appPools: [], services: [], detected: false, appPoolsState: 'unavailable', servicesState: 'unavailable' }, 'unavailable', 'unavailable'],
+    // An older server: no per-source state, nothing detected. Nothing could be read.
+    [{ appPools: [], services: [], detected: false }, 'unavailable', 'unavailable']
+  ];
+  for (const [body, pools, services] of cases) {
+    globalThis.fetch = async () => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const { step, mount } = mountStep();
+    mount();
+    await flush();
+    assert.equal(step.targetsFailed, false, JSON.stringify(body));
+    assert.equal(step.groupState('appPool'), pools, JSON.stringify(body));
+    assert.equal(step.groupState('service'), services, JSON.stringify(body));
+  }
+});
+
+test('manual mode never fetches, and a read that settles after unmount changes nothing', async () => {
+  tokenSession();
+  const calls = [];
+  globalThis.fetch = async (url) => { calls.push(String(url)); return new Response('{}', { status: 200 }); };
+  const manual = mountStep({ targetMode: 'manual' });
+  manual.mount();
+  await flush();
+  assert.deepEqual(calls, [], 'pack/remote mode never asks the endpoint');
+  assert.equal(manual.step.targetsRead, false);
+  // Unmounted before the answer arrives: the late answer is dropped.
+  let resolveFetch;
+  globalThis.fetch = () => new Promise((resolve) => { resolveFetch = resolve; });
+  const { step, mount } = mountStep();
+  const cleanup = mount();
+  cleanup();
+  resolveFetch(new Response(JSON.stringify({ appPools: poolsOk, services: [], detected: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  await flush();
+  assert.equal(step.targetsRead, false, 'the late answer never lands');
+});
+
+/* ------------------------------------------------------------------ UX-5: the states, rendered for real */
+
+// Svelte's server render is synchronous, so the mount read is bridged to it: the answer (or the
+// refusal) is first produced by the REAL client with a stubbed fetch, then handed to the step's
+// own then/catch synchronously. The async tests above prove the unbridged path end to end.
+const pcBridge = { result: null, failed: false };
+const pcThenable = {
+  then(cb) { if (!pcBridge.failed && pcBridge.result) cb(pcBridge.result); return this; },
+  catch(cb) { if (pcBridge.failed) cb(pcBridge.result); return this; }
+};
+let pcComponent;
+function renderPcStep(overrides = {}) {
+  const settings = overrides.settings ?? bb.defaultSettings('web-a');
+  const props = { settings, logPathsText: settings.logPaths.join('\n'), idPrefix: 'bb', problem: null, targetMode: 'pc', ...overrides };
+  if (!pcComponent) {
+    const { compile } = require('svelte/compiler');
+    const compiled = compile(read('src/components/BlackboxSettings.svelte'), { filename: 'BlackboxSettings.svelte', generate: 'server' });
+    const js = ts.transpileModule(compiled.js.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+    const held = { exports: {} };
+    const load = (request) => {
+      if (request === 'svelte') return { onMount: (fn) => { fn(); } };
+      if (request === '../lib/blackbox') return { ...bb, blackboxApi: { ...bb.blackboxApi, targets: () => pcThenable } };
+      if (request === '../lib/copy/blackboxCopy') return { BB_TEXT, BB_REFUSAL, blackboxCopyEntries };
+      return require(request);
+    };
+    new Function('require', 'module', 'exports', js)(load, held, held.exports);
+    pcComponent = held.exports.default;
+  }
+  const html = require('svelte/server').render(pcComponent, { props }).html;
+  const plain = html.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  return { html, plain, fieldsets: (html.match(/<fieldset/g) ?? []).length };
+}
+async function realAnswer(body) {
+  tokenSession();
+  globalThis.fetch = async () => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  return bb.blackboxApi.targets();
+}
+async function realRefusal() {
+  tokenSession();
+  globalThis.fetch = async () => { throw new TypeError('network down'); };
+  try { await bb.blackboxApi.targets(); } catch (error) { return error; }
+  throw new Error('the read should have failed');
+}
+
+test('the rendered step says it is looking while the read is in flight, politely (role=status)', () => {
+  pcBridge.result = null; pcBridge.failed = false;
+  const { html, plain } = renderPcStep();
+  assert.match(html, /<p class="bb-note[^"]*" role="status">/);
+  assert.ok(plain.includes(BB_TEXT.targetsLoading), 'the loading words are shown');
+  assert.ok(!legendOf(BB_TEXT.targetsAppPools).test(html), 'no list is claimed yet');
+  assert.ok(!plain.includes(BB_TEXT.targetsLoadFailed), 'nothing has failed');
+});
+
+test('the rendered step says the read failed, and never shows it as an empty healthy list', async () => {
+  pcBridge.result = await realRefusal(); pcBridge.failed = true;
+  const { html, plain, fieldsets } = renderPcStep();
+  assert.ok(plain.includes(BB_TEXT.targetsLoadFailed), 'the failure words are shown');
+  assert.match(html, /role="status"/);
+  assert.equal(fieldsets, 1, 'only the What to record fieldset; no detected-list fieldsets');
+  assert.ok(!plain.includes(BB_TEXT.targetsLoading), 'it is no longer loading');
+  assert.match(html, /id="bb-f-targets"/, 'names can still be typed');
+  assert.match(BB_TEXT.targetsLoadFailed, /could not be read/, 'the copy says what happened');
+});
+
+test('the rendered step offers what was read and says which list could not be read (partial)', async () => {
+  pcBridge.result = await realAnswer({ appPools: poolsOk, services: [], detected: true, appPoolsState: 'detected', servicesState: 'unavailable' }); pcBridge.failed = false;
+  const { html, plain, fieldsets } = renderPcStep();
+  assert.ok(legendOf(BB_TEXT.targetsAppPools).test(html), 'the pools that were read are offered');
+  assert.ok(!legendOf(BB_TEXT.targetsServices).test(html), 'the unreadable services list is not an empty fieldset');
+  assert.ok(plain.includes(BB_TEXT.targetsServicesUnreadable), 'the services say they could not be read');
+  assert.ok(!plain.includes(BB_TEXT.targetsPoolsUnreadable), 'the pools were read');
+  assert.equal(fieldsets, 2);
+  assert.ok(plain.includes(BB_TEXT.targetsListNote), 'the list note stays');
+});
+
+test('the rendered step says when a source is not on this PC, apart from unreadable', async () => {
+  pcBridge.result = await realAnswer({ appPools: [], services: servicesOk, detected: true, appPoolsState: 'not-found', servicesState: 'detected' }); pcBridge.failed = false;
+  const { html, plain, fieldsets } = renderPcStep();
+  assert.ok(plain.includes(BB_TEXT.targetsPoolsNotFound), 'no IIS here is said plainly');
+  assert.ok(!plain.includes(BB_TEXT.targetsPoolsUnreadable), 'not-found is not unreadable');
+  assert.ok(legendOf(BB_TEXT.targetsServices).test(html));
+  assert.ok(!legendOf(BB_TEXT.targetsAppPools).test(html));
+  assert.equal(fieldsets, 2);
+});
+
+test('the rendered step skips an empty detected fieldset entirely, and says when both lists could not be read', async () => {
+  // Both sources read, both hold no names: no fieldsets, no failure claimed.
+  pcBridge.result = await realAnswer({ appPools: [], services: [], detected: true, appPoolsState: 'detected', servicesState: 'detected' }); pcBridge.failed = false;
+  const empty = renderPcStep();
+  assert.equal(empty.fieldsets, 1, 'an empty list is skipped, not shown as an empty fieldset');
+  assert.ok(!empty.plain.includes(BB_TEXT.targetsLoadFailed));
+  assert.ok(!empty.plain.includes(BB_TEXT.targetsPoolsUnreadable));
+  assert.ok(!empty.plain.includes(BB_TEXT.targetsServicesUnreadable));
+  // Neither source could be read: both say so. This was silent before UX-5.
+  pcBridge.result = await realAnswer({ appPools: [], services: [], detected: false, appPoolsState: 'unavailable', servicesState: 'unavailable' });
+  const unreadable = renderPcStep();
+  assert.ok(unreadable.plain.includes(BB_TEXT.targetsPoolsUnreadable), 'the pools say they could not be read');
+  assert.ok(unreadable.plain.includes(BB_TEXT.targetsServicesUnreadable), 'the services say they could not be read');
+  assert.equal(unreadable.fieldsets, 1);
+  // An older server that detected nothing: still never a silent empty healthy list.
+  pcBridge.result = await realAnswer({ appPools: [], services: [], detected: false });
+  const legacy = renderPcStep();
+  assert.ok(legacy.plain.includes(BB_TEXT.targetsPoolsUnreadable));
+  assert.ok(legacy.plain.includes(BB_TEXT.targetsServicesUnreadable));
+});
+
+test('manual mode renders none of the read states, and the new copy is linted and plain', () => {
+  const { html, plain } = renderStep();
+  assert.ok(!plain.includes(BB_TEXT.targetsLoading), 'pack/remote never loads');
+  assert.ok(!plain.includes(BB_TEXT.targetsLoadFailed));
+  assert.ok(!html.includes('role="status"'));
+  assert.ok(!plain.includes(BB_TEXT.targetsPoolsUnreadable));
+  const entries = blackboxCopyEntries();
+  assert.deepEqual(lintScreenStrings(entries, deck.terms), []);
+  for (const key of ['targetsLoading', 'targetsLoadFailed', 'targetsPoolsNotFound', 'targetsPoolsUnreadable', 'targetsServicesNotFound', 'targetsServicesUnreadable']) {
+    assert.equal(typeof BB_TEXT[key], 'string', key + ' is a plain string');
+    assert.ok(entries.some((e) => e.id === 'blackbox.' + key), key + ' is linted');
+  }
+  // A first-time investigator reads what happened and what to do; no jargon, no reason codes.
+  const words = [BB_TEXT.targetsLoadFailed, BB_TEXT.targetsPoolsUnreadable, BB_TEXT.targetsServicesUnreadable].join(' ');
+  assert.doesNotMatch(words, /unavailable|not-found|503|endpoint|fetch|detect/i, 'no operational codes leak into the words');
+  assert.match(BB_TEXT.targetsLoadFailed, /Type the names below/, 'the consequence and the way forward are said');
+});
