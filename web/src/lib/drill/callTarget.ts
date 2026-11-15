@@ -49,6 +49,15 @@ export function withCall(target: SlowCallTarget, call: { sourceId: string; id: s
   return { ...target, sourceIds: [...target.sourceIds], call: { sourceId: call.sourceId, id: call.id } };
 }
 
+/** The slot window (same width as the target's) that holds `initiatedAt`; the target's own window when the time is missing, unparsable or already inside it. */
+export function callSlotWindow(target: Pick<SlowCallTarget, 'start' | 'end'>, initiatedAt: string | null | undefined): { start: string; end: string } {
+  const start = Date.parse(target.start), end = Date.parse(target.end), at = Date.parse(initiatedAt ?? '');
+  const width = end - start;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || width <= 0 || !Number.isFinite(at) || (at >= start && at < end)) return { start: target.start, end: target.end };
+  const from = start + Math.floor((at - start) / width) * width;
+  return { start: new Date(from).toISOString(), end: new Date(from + width).toISOString() };
+}
+
 /** The target as JSON text for session storage. */
 export function encodeCallTarget(target: SlowCallTarget): string {
   return JSON.stringify(target);

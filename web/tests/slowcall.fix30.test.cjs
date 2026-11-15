@@ -119,8 +119,10 @@ test('UI-03: a failed read ends the loading with empty rows and the failed flag;
 const screen = fs.readFileSync(path.join(root, 'src/components/SlowCallScreen.svelte'), 'utf8').replace(/\r\n/g, '\n');
 
 test('UI-03: the screen shows a plain-words loading line in a status region while the rows load', () => {
-  assert.match(screen, /\{#if bench\.s\.slowRowsLoading\}\s*<p class="note" role="status" data-testid="scall-slowrows-loading">\{SLOW_ROWS_LOADING\}<\/p>/);
-  assert.match(screen, /const SLOW_ROWS_LOADING = 'Loading the new window\.\.\.';/);
+  assert.match(screen, /\{#if bench\.s\.slowRowsLoading\}\s*<p class="note" role="status" data-testid="scall-slowrows-loading">\{DRILL_TEXT\.slowRowsLoading\}<\/p>/);
+  assert.doesNotMatch(screen, /SLOW_ROWS_LOADING/);
+  const copy = fs.readFileSync(path.join(root, 'src/lib/drill/drillCopy.ts'), 'utf8');
+  assert.match(copy, /slowRowsLoading: 'Loading the new window\.\.\.'/);
 });
 
 test('UI-09: the window-independent parts are derived on their own, not rebuilt inside bench', () => {

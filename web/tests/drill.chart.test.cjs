@@ -19,9 +19,11 @@ test('the click hit-tests the diamonds and IIS dots before selecting', () => {
   assert.match(src, /\.panel\[data-lane="audit"\] \.mark, /);
   assert.match(src, /getBoundingClientRect\(\)/);
   assert.match(src, /hitFlagged\(rects, event\.clientX, event\.clientY, 6\)/);
-  const click = src.slice(src.indexOf('function onOverlayClick'));
-  assert.ok(click.indexOf('if (onDiamond)') < click.indexOf('selectAt(slot)'));
-  assert.ok(click.indexOf('if (onDiamond)') < click.indexOf('showTouchTip(slot, event)'));
+  const i = src.indexOf('function onOverlayClick');
+  assert.ok(i >= 0);
+  const click = src.slice(i);
+  assert.ok(click.indexOf('if (onDiamond') < click.indexOf('selectAt(slot)'));
+  assert.ok(click.indexOf('if (onDiamond') < click.indexOf('showTouchTip(slot, event)'));
 });
 
 test('diamonds in the IIS and SQL lanes and IIS dots also open the Slow call screen', () => {
@@ -29,12 +31,15 @@ test('diamonds in the IIS and SQL lanes and IIS dots also open the Slow call scr
   assert.ok(src.includes('.panel[data-lane="iis"] .dot'));
   assert.ok(src.includes('.panel[data-lane="sql"] .mark.flagged'));
   assert.ok(src.includes('<span class="dot" data-slot={dot.index}'));
-  const fn = src.slice(src.indexOf('function slotOpensCall'), src.indexOf('function diamondAt'));
-  assert.ok(fn.includes('flagged(sqlHero)'), 'sqlHero');
+  const i = src.indexOf('function slotOpensCall');
+  assert.ok(i >= 0);
+  const j = src.indexOf('function diamondAt');
+  assert.ok(j >= 0);
+  const fn = src.slice(i, j);
   assert.ok(fn.includes('anyMark(hero)'), 'every API-lane mark opens Call detail');
-  assert.ok(fn.includes('anyMark(webHero)'), 'every IIS-lane mark opens Call detail');
+  assert.ok(!fn.includes('anyMark(webHero)'), 'IIS-lane mark does not open Call detail independently');
+  assert.ok(!fn.includes('webHero?.dots.some'), 'IIS dots do not open Call detail independently');
   assert.ok(src.includes('.panel[data-lane="audit"] .mark,'), 'API marks, flagged or not, are click targets');
-  assert.ok(fn.includes('webHero?.dots.some'));
   assert.doesNotMatch(src, /auditMarkFlagged/);
 });
 

@@ -209,7 +209,7 @@ func downsampleSeries(pts []LaneSeriesPoint, limit int) []LaneSeriesPoint {
 }
 
 // downsampleWindows thins a series that is sorted by time to at most limit points. Each window is thinned on its own, so a merged point never spans
-// the gap between the reference and the incident (DATA-04), and each window keeps a share of the limit in proportion to its points. Inside a window
+// the gap between the reference and the incident (DATA-04), and every run uses one group size, raised until at most limit points remain. Inside a window
 // neighbouring points are merged in equal groups: executions add up, the average is weighted by executions, the slowest stays the slowest, the group
 // starts where its first point did, and BlockSeconds is the sum of the blocks it covers, so busy time over BlockSeconds stays the true busy per
 // second. unit is the length of one block in seconds (0 means work it out from the smallest gap between points).
@@ -232,24 +232,25 @@ func downsampleWindows(pts []LaneSeriesPoint, limit int, unit int64, wins []Wind
 		}
 		runs[k] = append(runs[k], p)
 	}
-	out := make([]LaneSeriesPoint, 0, limit)
-	for _, run := range runs {
-		if len(run) == 0 {
-			continue
+	group := (len(pts) + limit - 1) / limit
+	for {
+		out := make([]LaneSeriesPoint, 0, limit)
+		for _, run := range runs {
+			if len(run) == 0 {
+				continue
+			}
+			out = append(out, mergeGroups(run, group, unit)...)
 		}
-		share := max(1, int(int64(limit)*int64(len(run))/int64(len(pts))))
-		out = append(out, mergeRun(run, share, unit)...)
+		if len(out) <= limit {
+			sort.SliceStable(out, func(i, j int) bool { return out[i].T < out[j].T })
+			return out
+		}
+		group++
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].T < out[j].T })
-	return out
 }
 
-// mergeRun merges one run in equal groups so that at most limit points remain.
-func mergeRun(run []LaneSeriesPoint, limit int, unit int64) []LaneSeriesPoint {
-	if len(run) <= limit {
-		return run
-	}
-	group := (len(run) + limit - 1) / limit
+// mergeGroups merges one run in equal groups of group points (a group of 1 or less leaves the run as it is).
+func mergeGroups(run []LaneSeriesPoint, group int, unit int64) []LaneSeriesPoint {
 	out := make([]LaneSeriesPoint, 0, (len(run)+group-1)/group)
 	for i := 0; i < len(run); i += group {
 		part := run[i:min(i+group, len(run))]
@@ -270,7 +271,7 @@ func mergeRun(run []LaneSeriesPoint, limit int, unit int64) []LaneSeriesPoint {
 			}
 		}
 		if p.Execs > 0 {
-			p.AvgMs = round1(sumMs / float64(p.Execs))
+			p.AvgMs = sumMs / float64(p.Execs)
 		}
 		out = append(out, p)
 	}

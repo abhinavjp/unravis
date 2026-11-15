@@ -2,15 +2,15 @@
   import type { TracingLaneKey as HintLaneKey } from '../lib/tracing/model';
 
   // The key that opens the slowest call of a bucket, said in plain words wherever the chart tells the keys.
-  export const SHIFT_ENTER_HINT = 'Shift+Enter opens the slowest call.';
+  export const SHIFT_ENTER_HINT = 'Shift+Enter opens the slowest call in this bucket.';
   /** The bucket selector's name: every key it answers to, in plain words. */
-  export const BUCKET_SELECTOR_LABEL = 'Time buckets. Left and right arrow keys move, Home and End jump to the first and last bucket. Enter opens Run analysis for the selected bucket. Shift+Enter opens the slowest call when the bucket has a red diamond.';
+  export const BUCKET_SELECTOR_LABEL = 'Time buckets. Left and right arrow keys move, Home and End jump to the first and last bucket. Enter opens Run analysis for the selected bucket. Shift+Enter opens the slowest call in the bucket when it has an API call.';
   /** What a screen reader hears for the selector before any bucket is chosen. */
   export const NO_BUCKET_TEXT = 'No bucket chosen yet. Press an arrow key to choose one.';
 
-  /** The tooltip line that names Shift+Enter: only for keyboard users, only when the bucket has a red diamond the screen can open. */
-  export function diamondKeyHint(input: { flagged: boolean; hasHandler: boolean; fromKeyboard: boolean }): string {
-    return input.flagged && input.hasHandler && input.fromKeyboard ? SHIFT_ENTER_HINT : '';
+  /** The tooltip line that names Shift+Enter: only for keyboard users, only when the bucket has a call the screen can open. */
+  export function diamondKeyHint(input: { opensCall: boolean; hasHandler: boolean; fromKeyboard: boolean }): string {
+    return input.opensCall && input.hasHandler && input.fromKeyboard ? SHIFT_ENTER_HINT : '';
   }
 
   /** Which lane heads are under the pointer or hold the focus, and which of them the user already closed with Esc. */
@@ -233,13 +233,12 @@
     untrack(() => revealSlot(target.slot));
   });
 
-  // Whether this slot has something to open Call detail on: any API-lane or IIS-lane mark (flagged or not), a red diamond in the SQL lane, or a dot in the IIS lane.
+  // Whether this slot has an API call Call detail can open: an API-lane mark (flagged or not). IIS and SQL marks only open it through the API call in the same slot.
   function slotOpensCall(slot: number): boolean {
-    const flagged = (layout: HeroLayout | null) => !!layout?.marks.some((mark) => mark.index === slot && mark.flagged);
     const anyMark = (layout: HeroLayout | null) => !!layout?.marks.some((mark) => mark.index === slot);
-    return anyMark(hero) || anyMark(webHero) || flagged(sqlHero) || !!webHero?.dots.some((dot) => dot.index === slot);
+    return anyMark(hero);
   }
-  // The slot of the red diamond (API, IIS or SQL lane) or IIS dot under the pointer (6 px of slack), or null.
+  // The slot of the diamond or IIS dot under the pointer (6 px of slack), only when that slot has an API call to open; otherwise null.
   function diamondAt(event: MouseEvent): number | null {
     const nodes = overlayEl?.parentElement?.querySelectorAll<HTMLElement>('.panel[data-lane="audit"] .mark, .panel[data-lane="iis"] .mark, .panel[data-lane="iis"] .dot, .panel[data-lane="sql"] .mark.flagged');
     if (!nodes) return null;
@@ -250,7 +249,8 @@
       const box = node.getBoundingClientRect();
       rects.push({ slot, left: box.left, top: box.top, right: box.right, bottom: box.bottom });
     });
-    return hitFlagged(rects, event.clientX, event.clientY, 6);
+    const hit = hitFlagged(rects, event.clientX, event.clientY, 6);
+    return hit != null && slotOpensCall(hit) ? hit : null;
   }
 
   function onOverlayKey(event: KeyboardEvent) {
@@ -333,14 +333,14 @@
   );
   // Screen readers do not re-read a changed tooltip description, so keyboard moves are also spoken through one polite live region.
   // The Shift+Enter line shows with the keyboard tooltip of a bucket that has a red diamond, and is spoken with it.
-  const tipKeyHint = $derived(diamondKeyHint({ flagged: tipSlot != null && slotOpensCall(tipSlot), hasHandler: !!onDiamond, fromKeyboard: tipFromKeyboard }));
+  const tipKeyHint = $derived(diamondKeyHint({ opensCall: tipSlot != null && slotOpensCall(tipSlot), hasHandler: !!onDiamond, fromKeyboard: tipFromKeyboard }));
   const liveText = $derived(tipFromKeyboard ? tipGroups.map((group) => group.name + '. ' + group.lines.join('. ')).join(' ') + (tipKeyHint ? ' ' + tipKeyHint : '') : '');
   // The slider's value in words: which bucket is chosen, its place among the shown ones, and the key for a red diamond.
   const sliderText = $derived.by(() => {
     if (!grid || current == null) return NO_BUCKET_TEXT;
     const start = slotStartMs(grid, current);
     const place = `bucket ${current - range.from + 1} of ${shown}`;
-    const key = diamondKeyHint({ flagged: slotOpensCall(current), hasHandler: !!onDiamond, fromKeyboard: true });
+    const key = diamondKeyHint({ opensCall: slotOpensCall(current), hasHandler: !!onDiamond, fromKeyboard: true });
     return `${at(start)} to ${at(start + grid.widthMs)}, ${place}.${key ? ' ' + key : ''}`;
   });
 
@@ -451,7 +451,7 @@
     const fromColumn = column ? Number(column.dataset.slot) : Number.NaN;
     const slot = Number.isInteger(fromColumn) ? fromColumn : slotAt(event);
     if (slot < 0) return;
-    if (onDiamond) {
+    if (onDiamond && !(touch && !(tipFromTouch && tipSlot === slot))) {
       const diamond = diamondAt(event);
       if (diamond != null) { onDiamond(diamond); return; }
     }

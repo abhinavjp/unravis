@@ -68,16 +68,16 @@ test('UI-05: the bucket selector names Shift+Enter in plain words', () => {
   assert.ok(label, 'the bucket selector keeps its Time buckets label');
   assert.match(label[1], /Enter opens Run analysis for the selected bucket\./);
   assert.match(label[1], /Shift\+Enter opens the slowest call/);
-  assert.match(label[1], /red diamond/);
+  assert.doesNotMatch(label[1], /red diamond/);
 });
 
 test('UI-05: the keyboard tooltip names the key only on a bucket with a red diamond', () => {
   assert.equal(typeof chartModule.diamondKeyHint, 'function', 'the hint rule is exported for tests');
   const hint = chartModule.diamondKeyHint;
-  assert.match(hint({ flagged: true, hasHandler: true, fromKeyboard: true }), /Shift\+Enter opens the slowest call/);
-  assert.equal(hint({ flagged: false, hasHandler: true, fromKeyboard: true }), '');
-  assert.equal(hint({ flagged: true, hasHandler: false, fromKeyboard: true }), '');
-  assert.equal(hint({ flagged: true, hasHandler: true, fromKeyboard: false }), '', 'a pointer user clicks the diamond, so the key is not mentioned');
+  assert.match(hint({ opensCall: true, hasHandler: true, fromKeyboard: true }), /Shift\+Enter opens the slowest call/);
+  assert.equal(hint({ opensCall: false, hasHandler: true, fromKeyboard: true }), '');
+  assert.equal(hint({ opensCall: true, hasHandler: false, fromKeyboard: true }), '');
+  assert.equal(hint({ opensCall: true, hasHandler: true, fromKeyboard: false }), '', 'a pointer user clicks the diamond, so the key is not mentioned');
 });
 
 test('UI-05: the diamonds themselves stay hidden from the tab order', () => {

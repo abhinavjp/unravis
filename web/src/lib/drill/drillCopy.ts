@@ -53,6 +53,7 @@ export const DRILL_TEXT = {
   merged: (total: number, more: number): string => `${total} calls, ${more} more than loaded`,
   mergedNone: (total: number): string => `${total} calls, none more than loaded`,
   truncated: (shown: number): string => `Showing ${shown} of more`,
+  slowRowsLoading: 'Loading the new window...',
   askFailed: 'The server could not be asked. The list shows only the calls already loaded.',
   noNearby: 'No other calls in this window.',
 

@@ -1136,21 +1136,29 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 	for _, lane := range lanes {
 		if lane.Key == calltrace.LaneSQL && lane.Disabled == "" && (lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange || lane.State == calltrace.StateEvents) {
 			if held, ok := tracingHeldSQLLane(ctx, unwrapCase(c), axis, now); ok {
-				if lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange {
-					imported := lane
-					lane = held
-					// The imported files' time range stays on the lane the owner sees.
-					if lane.ImportedFrom == nil {
-						lane.ImportedFrom = imported.ImportedFrom
+				switch {
+				case lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange:
+					// A lane whose SQL file was listed but never imported (or whose
+					// import was set aside) keeps that reason: the investigator must
+					// be told to import the file, not that Query Store was off.
+					if lane.ReasonCode != tracingReasonNotImported && lane.ReasonCode != tracingReasonSkipped {
+						imported := lane
+						lane = held
+						// The imported files' time range stays on the lane the owner sees.
+						if lane.ImportedFrom == nil {
+							lane.ImportedFrom = imported.ImportedFrom
+						}
+						if lane.ImportedTo == nil {
+							lane.ImportedTo = imported.ImportedTo
+						}
+						if !lane.ImportedPartial {
+							lane.ImportedPartial = imported.ImportedPartial
+						}
 					}
-					if lane.ImportedTo == nil {
-						lane.ImportedTo = imported.ImportedTo
+				default:
+					if layered, did := layerSQLLane(lane, held); did {
+						lane = layered
 					}
-					if !lane.ImportedPartial {
-						lane.ImportedPartial = imported.ImportedPartial
-					}
-				} else if layered, did := layerSQLLane(lane, held); did {
-					lane = layered
 				}
 			}
 		}

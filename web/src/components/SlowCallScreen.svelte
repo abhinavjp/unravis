@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, untrack, tick } from 'svelte';
   import { api } from '../lib/api';
   import { DRILL_TEXT } from '../lib/drill/drillCopy';
   import { createCallController, type CallDeps, type CallState } from '../lib/drill/callController';
   import { fetchCallEvents } from '../lib/drill/callData';
-  import { withCall, type SlowCallTarget } from '../lib/drill/callTarget';
+  import { withCall, callSlotWindow, type SlowCallTarget } from '../lib/drill/callTarget';
   import { fetchTracing, nextRequestSeq, type TracingLane } from '../lib/tracing/model';
   import { fetchLaneDays, newestDay, type LaneDay } from '../lib/lanes';
   import { buildLane, packBars, type CallLane, type LaneBar, type LaneIn, type LaneKey } from '../lib/drill/callLanes';
@@ -38,7 +38,7 @@
     zone: string;
     demo: boolean;
     onBack: () => void;
-    onOpenAnalysis: (slot: number) => void;
+    onOpenAnalysis: (window: { start: string; end: string }) => void;
     onFound: (call: { sourceId: string; id: string }) => void;
   } = $props();
 
@@ -142,9 +142,6 @@
     },
     time: (iso: string) => formatTime(iso, { zone, date: false, precision: 'minute' })
   };
-
-  // Shown while the slowest calls of a new window are being read (the old rows are already cleared, so none show under the new axis).
-  const SLOW_ROWS_LOADING = 'Loading the new window...';
 
   // The window-independent parts, each derived from its own input so a drag preview (which only moves the window) does not redo them.
   const overviewResp = $derived(callState?.overview ?? null);
@@ -344,6 +341,7 @@
     opened = { sourceId: call.sourceId, id: call.id };
     tab = 'calls';
     titleEl?.scrollIntoView?.({ block: 'start' });
+    void tick().then(() => titleEl?.focus({ preventScroll: true }));
   }
 
   function pickNearby(row: NearbyRow) {
@@ -368,7 +366,7 @@
     <nav class="scall-crumb" aria-label="Breadcrumb"><button type="button" class="link" data-testid="scall-back" onclick={onBack}>{DRILL_TEXT.crumbTimeline}</button> <span aria-hidden="true">›</span> <span>{DRILL_TEXT.crumbCall(time)}</span></nav>
     <h2 id="scall-title" tabindex="-1" bind:this={titleEl}>{DRILL_TEXT.title}</h2>
     <div class="scall-actions">
-      <button type="button" class="btn outlined" data-testid="scall-analysis" onclick={() => onOpenAnalysis(target.slot)}>{DRILL_TEXT.openAnalysis}</button>
+      <button type="button" class="btn outlined" data-testid="scall-analysis" onclick={() => onOpenAnalysis(callSlotWindow(target, callState?.record?.initiatedAt))}>{DRILL_TEXT.openAnalysis}</button>
       <button type="button" class="btn outlined" data-testid="scall-back-btn" onclick={onBack}>{DRILL_TEXT.backToTimeline} <kbd>{DRILL_TEXT.escHint}</kbd></button>
     </div>
   </header>
@@ -418,7 +416,7 @@
               <p class="note" role="status" data-testid="scall-lanes-failed">{DRILL_TEXT.lanesFailed}</p>
             {/if}
             {#if bench.s.slowRowsLoading}
-              <p class="note" role="status" data-testid="scall-slowrows-loading">{SLOW_ROWS_LOADING}</p>
+              <p class="note" role="status" data-testid="scall-slowrows-loading">{DRILL_TEXT.slowRowsLoading}</p>
             {/if}
             {#if bench.s.slowRowsFailed}
               <p class="note" role="status" data-testid="scall-slowrows-failed">{DRILL_TEXT.slowRowsFailed}</p>

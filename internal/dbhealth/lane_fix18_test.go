@@ -33,6 +33,81 @@ func fix18Request(refN, incN int) LaneRequest {
 	}
 }
 
+func TestFix18MergingKeepsAveragesBelowTheRoundingStep(t *testing.T) {
+	const n = 1000
+	unit := int64(60)
+	start := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	pts := make([]LaneSeriesPoint, 0, n)
+	var want float64
+	for i := 0; i < n; i++ {
+		avg := 0.34
+		if i&1 != 0 {
+			avg = 0.04
+		}
+		pts = append(pts, LaneSeriesPoint{T: start.Unix() + int64(i)*unit, Execs: 500, AvgMs: avg, MaxMs: avg})
+		want += avg * 500
+	}
+	out := downsampleWindows(pts, 100, unit, nil)
+	var got float64
+	for _, p := range out {
+		got += p.AvgMs * float64(p.Execs)
+	}
+	if rel := (got - want) / want; rel > 1e-9 || rel < -1e-9 {
+		t.Errorf("busy time %v, want %v (rel %v)", got, want, rel)
+	}
+}
+
+func TestFix18SmallIncidentWindowKeepsItsPoints(t *testing.T) {
+	const unit = int64(60)
+	const cap = 3000
+	t0 := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	refEnd := t0.Add(8640 * time.Minute)
+	incStart := refEnd.Add(7 * 24 * time.Hour)
+	incEnd := incStart.Add(16 * time.Minute)
+	ref := Window{Start: t0, End: refEnd}
+	inc := Window{Start: incStart, End: incEnd}
+	pts := make([]LaneSeriesPoint, 0, 8640+16)
+	for i := 0; i < 8640; i++ {
+		pts = append(pts, LaneSeriesPoint{T: t0.Unix() + int64(i)*unit, Execs: 1, AvgMs: 1, MaxMs: 1})
+	}
+	for i := 0; i < 16; i++ {
+		pts = append(pts, LaneSeriesPoint{T: incStart.Unix() + int64(i)*unit, Execs: 100, AvgMs: 1, MaxMs: 1})
+	}
+	out := downsampleWindows(pts, cap, unit, []Window{ref, inc})
+	if len(out) > cap {
+		t.Fatalf("%d points, cap %d", len(out), cap)
+	}
+	incPoints := 0
+	for _, p := range out {
+		pt := time.Unix(p.T, 0)
+		inRef := ref.Contains(pt)
+		inInc := inc.Contains(pt)
+		if !inRef && !inInc {
+			t.Fatalf("point at %d lies outside both windows", p.T)
+		}
+		if inRef && inInc {
+			t.Fatalf("point at %d spans the window gap", p.T)
+		}
+		blk := p.BlockSeconds
+		if blk == 0 {
+			blk = unit
+		}
+		end := p.T + blk
+		if inRef && end > refEnd.Unix() {
+			t.Fatalf("reference point at %d spans past window end", p.T)
+		}
+		if inInc && end > incEnd.Unix() {
+			t.Fatalf("incident point at %d spans past window end", p.T)
+		}
+		if inInc {
+			incPoints++
+		}
+	}
+	if incPoints < 6 {
+		t.Errorf("incident kept %d points, want at least 6", incPoints)
+	}
+}
+
 func TestFix18SeriesIsNotMergedAcrossTheWindowGap(t *testing.T) {
 	// 2001 reference blocks: a plain grouping by 2 would pair the last reference block with the first incident block.
 	req := fix18Request(2001, 1500)
