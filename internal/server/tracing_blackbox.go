@@ -71,6 +71,12 @@ const (
 	// bbSQLMaxInterval bounds the manifest's sampling interval in seconds; an
 	// interval outside 1..3600 falls back to the fixed 15 s cadence.
 	bbSQLMaxInterval = 3600
+	// bbSQLMaxCadenceSeconds is the widest interval the recorder can actually
+	// tick at: the light budget's ladder caps at 60 s (budgetLadder in
+	// internal/blackbox/budget.go) and Config.Validate accepts a base of only
+	// 5, 15, 30 or 60. It is NOT bbSQLMaxInterval, which is merely the sanity
+	// bound on what a manifest may claim.
+	bbSQLMaxCadenceSeconds = 60
 	// bbSQLMaxCount bounds a sample's request count and the lane's running sums,
 	// so rate x interval can never overflow int64 (a float beyond it is skipped,
 	// never converted).
@@ -196,13 +202,25 @@ func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis traci
 		return nil, 0, time.Time{}, time.Time{}, time.Time{}, rep, false
 	}
 	// The effective cadence, not the configured base: the light budget widens
-	// and narrows the tick (W12-02). It bounds the lookback and the plausible
-	// span; the spans themselves come from the observed sample times.
+	// and narrows the tick (W12-02). It names the lane; the spans themselves
+	// come from the observed sample times.
 	cadence = rd.Manifest.CadenceSeconds()
 	if cadence < 1 || cadence > bbSQLMaxInterval {
 		cadence = blackbox.DefaultIntervalSecond
 	}
-	lookback := time.Duration(2*cadence) * time.Second
+	// CORR-1: the span tolerance is floored at the widest cadence the recorder
+	// can reach, never taken from the manifest's LATEST value alone. The budget
+	// steps back as well as widens, so a window sampled every 60 s can be read
+	// against a manifest that has since stepped back to 15 s; judging those
+	// spans by 3x15 s would call every one of them a gap and drop a fully
+	// observed lane to unknown. A manifest may only WIDEN the tolerance (still
+	// bounded by bbSQLMaxInterval above), never narrow it: narrowing it is the
+	// same defect in the other direction. For every real recording - base 5,
+	// 15, 30 or 60, ladder cap 60 - the tolerance is exactly 60 s. The lookback
+	// reaches the first prior sample within two of those ticks, so the window's
+	// first measured span has a start.
+	tolerance := max(cadence, bbSQLMaxCadenceSeconds)
+	lookback := time.Duration(2*tolerance) * time.Second
 	if lookback > time.Duration(bbSQLMaxInterval)*time.Second {
 		lookback = time.Duration(bbSQLMaxInterval) * time.Second
 	}
@@ -215,7 +233,7 @@ func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis traci
 	if rd.Manifest.FirstSample != nil && !rd.Manifest.FirstSample.IsZero() {
 		since = rd.Manifest.FirstSample.UTC()
 	}
-	gapLimit := time.Duration(blackbox.LateIntervals*cadence) * time.Second
+	gapLimit := time.Duration(blackbox.LateIntervals*tolerance) * time.Second
 	var prevT time.Time
 	var prevRun string
 	havePrev := false

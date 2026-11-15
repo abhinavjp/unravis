@@ -379,6 +379,95 @@ func TestBlackboxSQLLanePartialCoverage(t *testing.T) {
 	}
 }
 
+// bbLaneSpacedSamples makes one sample every step from 09:30 to 12:00 with 100
+// batch requests/s, all in one recorder run, skipping the samples strictly
+// inside hole (a stretch the recorder did not sample at all). It is the shape a
+// cadence change leaves behind: the times, not the manifest, say how wide the
+// measured spans are.
+func bbLaneSpacedSamples(step time.Duration, holeStart, holeEnd time.Time) []blackbox.Sample {
+	var out []blackbox.Sample
+	seq := uint64(0)
+	for t := invT0.Add(-30 * time.Minute); !t.After(invT0.Add(3 * time.Hour)); t = t.Add(step) {
+		if t.After(holeStart) && t.Before(holeEnd) {
+			continue
+		}
+		seq++
+		out = append(out, blackbox.Sample{V: 1, Run: "run-1", Seq: seq, T: t.UTC(), CPU: f64(25), SQLHost: bbSQLGroup(100)})
+	}
+	return out
+}
+
+// CORR-1: the manifest's LATEST cadence must not judge spans that were measured
+// at a wider one. The light budget steps back to 15 s after a widened stretch,
+// so a window recorded every 60 s is read against EffectiveIntervalSeconds=15.
+// Judging those 60 s spans by 3x15 s calls every one of them a gap and drops the
+// whole lane to unknown, although the recorder never missed a tick. The
+// tolerance is the widest cadence the budget can reach (60 s), so the observed
+// spans stay known and the hour still totals 100 req/s x 3600 s.
+func TestBlackboxSQLLaneCadenceChanged(t *testing.T) {
+	t.Run("stepped-back cadence keeps observed spans known", func(t *testing.T) {
+		rec := bbLaneRec("web-b", bbLaneSpacedSamples(time.Minute, time.Time{}, time.Time{}))
+		rec.man.IntervalSeconds = 15
+		rec.man.EffectiveIntervalSeconds = 15 // the budget stepped back after the window
+		b, id := bbLaneEnv(t, rec)
+		out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+		lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+		if lane.ReasonCode != tracingReasonBlackbox {
+			t.Fatalf("lane %s, want blackbox", lane.ReasonCode)
+		}
+		if lane.Scanned != 360000 || tracingBucketSum(lane) != 360000 {
+			t.Fatalf("scanned %d sum %d, want 360000: the 60 s spans were dropped as gaps", lane.Scanned, tracingBucketSum(lane))
+		}
+		if !lane.Complete || lane.Truncated {
+			t.Fatalf("complete %v truncated %v, want a complete untruncated lane", lane.Complete, lane.Truncated)
+		}
+		if strings.Contains(lane.Reason, bbLaneCoverageWarning) {
+			t.Fatalf("reason %q claims unobserved time although every tick was read", lane.Reason)
+		}
+		for _, bk := range lane.Buckets {
+			if !bk.Complete || bk.Count != 6000 {
+				t.Fatalf("bucket %+v, want 6000 complete (100 req/s over the observed 60 s)", bk)
+			}
+		}
+	})
+
+	// The widened tolerance is not a licence to invent activity: a stretch the
+	// recorder really did not sample stays unknown, never a complete zero and
+	// never counted at the neighbouring rate.
+	t.Run("real hole stays unknown", func(t *testing.T) {
+		holeStart, holeEnd := invT0.Add(70*time.Minute), invT0.Add(80*time.Minute) // 10:10-10:20
+		rec := bbLaneRec("web-b", bbLaneSpacedSamples(time.Minute, holeStart, holeEnd))
+		rec.man.IntervalSeconds = 15
+		rec.man.EffectiveIntervalSeconds = 15
+		b, id := bbLaneEnv(t, rec)
+		out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+		lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+		if lane.ReasonCode != tracingReasonBlackbox || lane.Complete {
+			t.Fatalf("lane %s complete %v, want blackbox incomplete across the hole", lane.ReasonCode, lane.Complete)
+		}
+		if !strings.Contains(lane.Reason, bbLaneCoverageWarning) {
+			t.Fatalf("reason %q lacks the coverage warning", lane.Reason)
+		}
+		// 100 req/s over the 3000 observed seconds; the 600 unobserved seconds
+		// are a gap, never zero activity and never counted.
+		if lane.Scanned != 300000 || tracingBucketSum(lane) != 300000 {
+			t.Fatalf("scanned %d sum %d, want 300000", lane.Scanned, tracingBucketSum(lane))
+		}
+		for _, bk := range lane.Buckets {
+			inHole := !bk.Start.Before(holeStart) && bk.Start.Before(holeEnd)
+			if inHole {
+				if bk.Complete || bk.Count != 0 {
+					t.Fatalf("hole bucket %+v, want an incomplete gap with no count", bk)
+				}
+				continue
+			}
+			if !bk.Complete || bk.Count != 6000 {
+				t.Fatalf("observed bucket %+v, want 6000 complete", bk)
+			}
+		}
+	})
+}
+
 // BBX-5-16 fix (finding 3): an absurd per-instance reading is skipped, never
 // summed; the cap itself is still a valid reading.
 func TestBlackboxSQLRateAbsurdSkipped(t *testing.T) {
