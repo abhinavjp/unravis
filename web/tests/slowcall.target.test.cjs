@@ -24,6 +24,7 @@ function loadTypeScript(relativePath) {
 }
 
 const { makeCallTarget, withCall, encodeCallTarget, parseCallTarget } = loadTypeScript('src/lib/drill/callTarget.ts');
+const { WINDOW_SOURCE_IDS } = loadTypeScript('src/lib/drill/target.ts');
 
 const window = {
   start: '2026-01-01T10:00:00.000Z',
@@ -129,4 +130,17 @@ test('parseCallTarget drops unknown keys, also inside call', () => {
   const plain = parseOf({ ...good(), x: 'extra' });
   assert.equal('x' in plain, false);
   assert.deepEqual(plain, good());
+});
+
+// The audit ids drive the slow-call search; the nearby-activity (IIS / SQL) and overview reads send no ids, which means every source of the case.
+test('the nearby and overview reads send no source ids, so IIS and SQL are read too', () => {
+  assert.deepEqual(WINDOW_SOURCE_IDS, []);
+  const src = fs.readFileSync(path.join(root, 'src/lib/drill/callController.ts'), 'utf8');
+  assert.equal((src.match(/WINDOW_SOURCE_IDS/g) || []).length >= 3, true);
+  assert.doesNotMatch(src, /windowIds/);
+});
+
+test('a stored target from before (with windowIds) still parses and the extra key is dropped', () => {
+  const parsed = parseOf({ ...good(), windowIds: ['a', 'q'] });
+  assert.equal('windowIds' in parsed, false);
 });

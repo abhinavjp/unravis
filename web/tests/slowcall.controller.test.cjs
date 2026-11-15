@@ -151,7 +151,7 @@ test('once the call is known the overview, window, slow rows, nearby and events 
   assert.equal(ov[2], new Date(CALL_START + 60 * MIN).toISOString());
   assert.equal(win[1], new Date(CALL_START - 15 * MIN).toISOString());
   assert.equal(win[2], new Date(CALL_START + 15 * MIN).toISOString());
-  assert.deepEqual(win[3], ['s1']);
+  assert.deepEqual(win[3], []); // no ids = every source of the case, so IIS and SQL are read too
 });
 
 test('preview makes zero dependency calls but moves the window and tells the screen', async () => {

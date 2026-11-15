@@ -30,6 +30,13 @@ export function drillSourceIds(lane: TracingLane, sources: readonly TracingSourc
   return ids;
 }
 
+/**
+ * The source ids the nearby-activity and overview tracing reads send: none. An empty list means every source of the case (the tracing
+ * contract), which is the only way the IIS and SQL lanes are read: only the audit lane reports the files it read, so a list built from
+ * the lanes holds audit files alone and leaves IIS empty.
+ */
+export const WINDOW_SOURCE_IDS: string[] = [];
+
 /** The slowest-calls query for one window: every kind of call, every outcome, no record filters. */
 export function drillQuery(win: { start: string; end: string }, sourceIds: string[]): Query {
   const startMs = Date.parse(win.start);

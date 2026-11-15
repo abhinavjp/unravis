@@ -233,11 +233,15 @@
     untrack(() => revealSlot(target.slot));
   });
 
-  // Whether the API lane's slowest request in this slot is a flagged one (a red diamond).
-  function auditMarkFlagged(slot: number): boolean { return !!hero?.marks.some((mark) => mark.index === slot && mark.flagged); }
-  // The slot of the red diamond under the pointer in the API lane (6 px of slack), or null.
+  // Whether this slot has something to open Call detail on: any API-lane or IIS-lane mark (flagged or not), a red diamond in the SQL lane, or a dot in the IIS lane.
+  function slotOpensCall(slot: number): boolean {
+    const flagged = (layout: HeroLayout | null) => !!layout?.marks.some((mark) => mark.index === slot && mark.flagged);
+    const anyMark = (layout: HeroLayout | null) => !!layout?.marks.some((mark) => mark.index === slot);
+    return anyMark(hero) || anyMark(webHero) || flagged(sqlHero) || !!webHero?.dots.some((dot) => dot.index === slot);
+  }
+  // The slot of the red diamond (API, IIS or SQL lane) or IIS dot under the pointer (6 px of slack), or null.
   function diamondAt(event: MouseEvent): number | null {
-    const nodes = overlayEl?.parentElement?.querySelectorAll<HTMLElement>('.panel[data-lane="audit"] .mark.flagged');
+    const nodes = overlayEl?.parentElement?.querySelectorAll<HTMLElement>('.panel[data-lane="audit"] .mark, .panel[data-lane="iis"] .mark, .panel[data-lane="iis"] .dot, .panel[data-lane="sql"] .mark.flagged');
     if (!nodes) return null;
     const rects: FlagMark[] = [];
     nodes.forEach((node) => {
@@ -258,7 +262,7 @@
     else if (event.key === 'ArrowRight') { event.preventDefault(); selectedSlot = stepSlot(range, current ?? range.from, 1, isOutside); }
     else if (event.key === 'Home') { event.preventDefault(); selectedSlot = edgeSlot(range, 'first', isOutside); }
     else if (event.key === 'End') { event.preventDefault(); selectedSlot = edgeSlot(range, 'last', isOutside); }
-    else if (event.key === 'Enter') { event.preventDefault(); if (current != null) { if (event.shiftKey && onDiamond && auditMarkFlagged(current)) onDiamond(current); else onSelect?.(current); } }
+    else if (event.key === 'Enter') { event.preventDefault(); if (current != null) { if (event.shiftKey && onDiamond && slotOpensCall(current)) onDiamond(current); else onSelect?.(current); } }
     else if (event.key === 'Escape' && tipSlot != null) { event.preventDefault(); event.stopPropagation(); hideTip(); return; }
     else if (event.key === '+' || event.key === '=') { event.preventDefault(); doZoomIn(); return; }
     else if (event.key === '-' || event.key === '_') { event.preventDefault(); doZoomOut(); return; }
@@ -329,14 +333,14 @@
   );
   // Screen readers do not re-read a changed tooltip description, so keyboard moves are also spoken through one polite live region.
   // The Shift+Enter line shows with the keyboard tooltip of a bucket that has a red diamond, and is spoken with it.
-  const tipKeyHint = $derived(diamondKeyHint({ flagged: tipSlot != null && auditMarkFlagged(tipSlot), hasHandler: !!onDiamond, fromKeyboard: tipFromKeyboard }));
+  const tipKeyHint = $derived(diamondKeyHint({ flagged: tipSlot != null && slotOpensCall(tipSlot), hasHandler: !!onDiamond, fromKeyboard: tipFromKeyboard }));
   const liveText = $derived(tipFromKeyboard ? tipGroups.map((group) => group.name + '. ' + group.lines.join('. ')).join(' ') + (tipKeyHint ? ' ' + tipKeyHint : '') : '');
   // The slider's value in words: which bucket is chosen, its place among the shown ones, and the key for a red diamond.
   const sliderText = $derived.by(() => {
     if (!grid || current == null) return NO_BUCKET_TEXT;
     const start = slotStartMs(grid, current);
     const place = `bucket ${current - range.from + 1} of ${shown}`;
-    const key = diamondKeyHint({ flagged: auditMarkFlagged(current), hasHandler: !!onDiamond, fromKeyboard: true });
+    const key = diamondKeyHint({ flagged: slotOpensCall(current), hasHandler: !!onDiamond, fromKeyboard: true });
     return `${at(start)} to ${at(start + grid.widthMs)}, ${place}.${key ? ' ' + key : ''}`;
   });
 
@@ -698,7 +702,7 @@
               </svg>
               {#if lane.key !== 'sql'}
                 {#each h.dots as dot (dot.index)}
-                  <span class="dot" aria-hidden="true" style="left:{dot.leftPct}%;bottom:{dot.bottomPct}%"></span>
+                  <span class="dot" data-slot={dot.index} aria-hidden="true" style="left:{dot.leftPct}%;bottom:{dot.bottomPct}%"></span>
                 {/each}
               {/if}
               {#each h.marks as mark (mark.index)}

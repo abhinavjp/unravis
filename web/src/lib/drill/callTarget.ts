@@ -40,7 +40,8 @@ export function makeCallTarget(
   if (!lane || !CASE_ID_PATTERN.test(caseId)) return null;
   const bounds = slotWindow(window, slot);
   if (!bounds) return null;
-  return { caseId, slot, start: bounds.start, end: bounds.end, sourceIds: drillSourceIds(lane, sources) };
+  const sourceIds = drillSourceIds(lane, sources);
+  return { caseId, slot, start: bounds.start, end: bounds.end, sourceIds };
 }
 
 /** A copy of the target that also names the call found. The input is left as it was. */

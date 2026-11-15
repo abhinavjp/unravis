@@ -42,7 +42,7 @@ test('the five sections each have an h3 from their copy key', () => {
 });
 
 test('the sections use their copy keys', () => {
-  for (const key of ['selectedNone', 'readApi', 'readIis', 'readDb', 'readDbNone', 'coverageNote', 'notShownTime', 'notShownStart', 'notShownWholeDb', 'notShownIis', 'legendWidth', 'legendShape', 'legendHatched', 'legendCall']) {
+  for (const key of ['selectedNone', 'readApiPeak', 'readIisPeak', 'readDbPeak', 'readDbNone', 'whileNote', 'openThisCall', 'vsNormalTitle', 'vsNormalAbove', 'vsNormalNear', 'vsNormalBelow', 'vsNormalNone', 'coverageNote', 'notShownTime', 'notShownStart', 'notShownWholeDb', 'notShownIis', 'legendWidth', 'legendShape', 'legendHatched', 'legendCall']) {
     assert.ok(DRILL_TEXT[key] !== undefined, key + ' exists in the copy');
     assert.match(src, new RegExp('DRILL_TEXT\\.' + key + '\\b'), key);
   }

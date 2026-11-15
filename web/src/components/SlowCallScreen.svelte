@@ -4,11 +4,11 @@
   import { DRILL_TEXT } from '../lib/drill/drillCopy';
   import { createCallController, type CallDeps, type CallState } from '../lib/drill/callController';
   import { fetchCallEvents } from '../lib/drill/callData';
-  import type { SlowCallTarget } from '../lib/drill/callTarget';
+  import { withCall, type SlowCallTarget } from '../lib/drill/callTarget';
   import { fetchTracing, nextRequestSeq, type TracingLane } from '../lib/tracing/model';
   import { fetchLaneDays, newestDay, type LaneDay } from '../lib/lanes';
   import { buildLane, packBars, type CallLane, type LaneBar, type LaneIn, type LaneKey } from '../lib/drill/callLanes';
-  import { allSources, readoutAt, type Readout, type SourceItem } from '../lib/drill/callReadout';
+  import { allSources, readoutSpan, type Readout, type SourceItem } from '../lib/drill/callReadout';
   import { dbState, type DbStateKey } from '../lib/drill/dbState';
   import { mapRow } from '../lib/drill/callMap';
   import { centreOn, clampWindow, coversOverview, overviewBounds, windowBounds } from '../lib/drill/callWindow';
@@ -54,6 +54,7 @@
   let selectedKey = $state<string | null>(null);
   let readout = $state<{ value: Readout | null; pinned: boolean }>({ value: null, pinned: false });
   let pretend = $state<DbStateKey | null>(null);
+  let opened = $state<{ sourceId: string; id: string } | null>(null);
   let savedDay = $state<LaneDay | null>(null);
   let callsTab = $state<HTMLElement>();
   let allTab = $state<HTMLElement>();
@@ -83,15 +84,16 @@
   // Keyed on the case and slot VALUES, not on the target object. Reading `target.caseId` inside the effect would track the whole
   // `target` prop, and the parent replaces `target` once the call is found (same case and slot) — that must not start the search over.
   // A derived primitive string only changes when the values do, so a same-value replacement leaves the effect (and the controller) alone.
-  const restartKey = $derived(`${target.caseId}:${target.slot}`);
+  // `opened` is a call the investigator picked on this screen (a row, a bar): it replaces the auto-found call and restarts the read.
+  const restartKey = $derived(`${target.caseId}:${target.slot}:${opened ? `${opened.sourceId}/${opened.id}` : ''}`);
 
   $effect(() => {
     void restartKey;
-    // Only a different case or slot restarts it: a new controller is made and the old one dropped.
+    // Only a different case, slot or picked call restarts it: a new controller is made and the old one dropped.
     const ctl = untrack(() => {
       callState = null;
       selectedKey = null;
-      const made = createCallController(target, deps, (next) => { callState = next; }, (call) => onFound(call));
+      const made = createCallController(opened ? withCall(target, opened) : target, deps, (next) => { callState = next; }, (call) => onFound(call));
       controller = made;
       made.start();
       return made;
@@ -254,7 +256,7 @@
       endMs: s.callEndMs
     };
     const nearbyRows = filterRows(nearbyAll, s.chip, callRef, bounds.start, bounds.end);
-    const whileRan = readoutAt(s.callStartMs, { audit: lanes.audit.cells, iis: lanes.iis.cells, sql: drawnSql.cells }, call);
+    const whileRan = readoutSpan({ audit: lanes.audit.cells, iis: lanes.iis.cells, sql: drawnSql.cells }, call);
     const sources = [
       { key: 'api' as const, label: DRILL_TEXT.laneApi, recorded: lanes.audit.hasShape || s.slowRows.length > 0 },
       { key: 'iis' as const, label: DRILL_TEXT.laneIis, recorded: lanes.iis.hasShape || lanes.iis.bars.length > 0 },
@@ -335,9 +337,28 @@
     (tab === 'calls' ? callsTab : allTab)?.focus();
   }
 
+  // Any API call can be opened here: the screen reads that call and recentres on it. The call already shown just gets selected.
+  function openCall(call: { sourceId: string; id: string }) {
+    const here = bench?.record;
+    if (here && here.id === call.id && here.sourceId === call.sourceId) return;
+    opened = { sourceId: call.sourceId, id: call.id };
+    tab = 'calls';
+    titleEl?.scrollIntoView?.({ block: 'start' });
+  }
+
   function pickNearby(row: NearbyRow) {
     selectedKey = bench ? bench.apiKeyOf(row.sourceId, row.id) : null;
+    openCall(row);
   }
+
+  // The call behind the selected API item, so the side panel can offer "Open this call". Not offered for the call already open.
+  const selectedCall = $derived.by((): { sourceId: string; id: string } | null => {
+    const b = bench;
+    const item = selected;
+    if (!b || !item || item.source !== 'api' || item.thisCall) return null;
+    const row = [...b.s.slowRows, ...b.s.nearby.rows].find((r) => b.apiKeyOf(r.sourceId, r.id) === item.key);
+    return row ? { sourceId: row.sourceId, id: row.id } : null;
+  });
 
   const time = $derived(formatTime(callState?.record?.initiatedAt ?? target.start, { zone, precision: 'second' }));
 </script>
@@ -480,6 +501,9 @@
         <CallInspector
           {selected}
           whileRan={bench.whileRan}
+          steps={bench.lanes.audit.cells}
+          {selectedCall}
+          onOpenCall={openCall}
           db={bench.db}
           sources={bench.sources}
           {zone}
@@ -509,10 +533,10 @@
 
   /* Layout W1: the main column (window bar, pinned timeline, facts, lists) and the inspector on the right. Nothing here scrolls on its own. */
   [data-layout='w1'].scall-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
-  [data-layout='w1'] .scall-main { --scall-lane-h: clamp(72px, calc((100vh - 540px) / 3), 132px); display: grid; gap: 16px; min-width: 0; }
+  [data-layout='w1'] .scall-main { --scall-lane-h: clamp(72px, calc((100vh - 540px) / 3), 132px); display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
   /* The timeline scrolls with the page (no sticky overlay), so facts and lists never slide behind the charts and get clipped. */
-  [data-layout='w1'] .scall-pin { display: grid; gap: 10px; }
-  [data-layout='w1'] .scall-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+  [data-layout='w1'] .scall-pin { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  [data-layout='w1'] .scall-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); }
   [data-layout='w1'] .tab { padding: 10px 12px; color: var(--text-2); background: none; border: 0; border-bottom: 2px solid transparent; font-size: 13px; font-weight: 600; cursor: pointer; }
   [data-layout='w1'] .tab[aria-selected='true'] { color: var(--text); border-bottom-color: var(--accent); }
   [data-layout='w1'] .tab:hover { color: var(--text); }

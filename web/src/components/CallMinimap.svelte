@@ -236,6 +236,7 @@
         </div>
       </div>
     </div>
+    <p class="scall-map-axis">{DRILL_TEXT.mapAxisLine}</p>
     <p class="scall-map-caption" data-testid="scall-map-caption">{DRILL_TEXT.mapCaption(columnMinutes(bucketSeconds))}</p>
     <details class="scall-map-more">
       <summary>{DRILL_TEXT.mapHow}</summary>
@@ -364,6 +365,11 @@
     background: var(--surface);
     pointer-events: none;
     user-select: none;
+  }
+  .scall-map-axis {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text);
   }
   .scall-map-caption {
     margin: 0;

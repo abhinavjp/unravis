@@ -103,34 +103,63 @@
     return runs.filter((r) => r.x2 > r.x1);
   }
 
-  // A step path through the cells that hold a number. Cells with no number leave a break (the hatch shows there).
-  function shapePath(name: LaneName): string {
+  // One point per time slot, at the middle of the slot, grouped in runs. A slot with no number ends a run (the hatch shows there).
+  interface ShapePoint { x: number; y: number; xs: number; xe: number }
+  function shapePoints(name: LaneName): ShapePoint[][] {
     const lane = lanes[name];
-    if (hatchAll(name) || !lane.peak) return '';
+    if (hatchAll(name) || !lane.peak) return [];
     const scale = lane.peak.atOnce > 0 ? lane.peak.atOnce : 1;
-    const parts: string[] = [];
-    let run: LaneCell[] = [];
+    const runs: ShapePoint[][] = [];
+    let run: ShapePoint[] = [];
     const flush = () => {
-      if (run.length === 0) return;
-      const x0 = x(run[0].start);
-      let d = `M${n2(x0)} ${H}`;
-      for (const cell of run) {
-        const v = cell.atOnce ?? 0;
-        let h = (v / scale) * SHAPE_H;
-        if (v > 0 && h < 1.5) h = 1.5;
-        const y = n2(H - h);
-        d += ` L${n2(x(cell.start))} ${y} L${n2(x(cell.end))} ${y}`;
-      }
-      d += ` L${n2(x(run[run.length - 1].end))} ${H} Z`;
-      parts.push(d);
+      if (run.length > 0) runs.push(run);
       run = [];
     };
-    for (const cell of lane.cells) {
-      if (cell.atOnce === null) flush();
-      else run.push(cell);
+    for (const cell of lane.cells as LaneCell[]) {
+      if (cell.atOnce === null) {
+        flush();
+        continue;
+      }
+      let h = (cell.atOnce / scale) * SHAPE_H;
+      if (cell.atOnce > 0 && h < 1.5) h = 1.5;
+      run.push({ x: x((cell.start + cell.end) / 2), y: H - h, xs: x(cell.start), xe: x(cell.end) });
     }
     flush();
-    return parts.join(' ');
+    return runs;
+  }
+
+  // The line joins the points with straight segments; the faint area under it goes down to zero. A run of one slot is a short flat stroke.
+  function shapePath(name: LaneName): string {
+    return shapePoints(name)
+      .map((run) => {
+        const pts = run.length === 1 ? [{ x: run[0].xs, y: run[0].y }, { x: run[0].xe, y: run[0].y }] : run;
+        const first = pts[0];
+        const last = pts[pts.length - 1];
+        return `M${n2(first.x)} ${H} ${pts.map((p) => `L${n2(p.x)} ${n2(p.y)}`).join(' ')} L${n2(last.x)} ${H} Z`;
+      })
+      .join(' ');
+  }
+
+  // A dot on every point, unless there are so many slots that dots would only form a smear.
+  const MAX_DOTS = 120;
+  function shapeDots(name: LaneName): ShapePoint[] {
+    const all = shapePoints(name).flat();
+    return all.length <= MAX_DOTS ? all : [];
+  }
+  function peakNumber(name: LaneName): string {
+    const peak = lanes[name].peak;
+    return peak ? formatAtOnce(peak.atOnce) : '';
+  }
+  const peakTop =((H - SHAPE_H) / H) * 100;
+
+  let helpOpen = $state(false);
+  let helpBtn = $state<HTMLButtonElement | null>(null);
+  function onHelpKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && helpOpen) {
+      e.preventDefault();
+      helpOpen = false;
+      helpBtn?.focus();
+    }
   }
 
   const drawnBars = (name: LaneName): LaneBar[] =>
@@ -281,6 +310,31 @@
     <p class="scall-loading" role="status">{DRILL_TEXT.loadingLanes}</p>
   {/if}
 
+  <div class="scall-readbar" role="presentation" onkeydown={onHelpKey}>
+    <p class="scall-readline">{DRILL_TEXT.chartReadLine}</p>
+    <button
+      type="button"
+      class="scall-help"
+      bind:this={helpBtn}
+      aria-expanded={helpOpen}
+      aria-controls="scall-help-{patternId}"
+      onclick={() => (helpOpen = !helpOpen)}
+    >
+      {DRILL_TEXT.helpButton}
+    </button>
+    <div class="scall-helppanel" id="scall-help-{patternId}" hidden={!helpOpen}>
+      <ul class="scall-legend" data-testid="scall-legend">
+        <li>{DRILL_TEXT.helpAcross}</li>
+        <li>{DRILL_TEXT.helpUp}</li>
+        <li>{DRILL_TEXT.helpDots}</li>
+        <li>{DRILL_TEXT.legendShape}</li>
+        <li>{DRILL_TEXT.legendWidth}</li>
+        <li>{DRILL_TEXT.legendHatched}</li>
+        <li>{DRILL_TEXT.legendCall}</li>
+      </ul>
+    </div>
+  </div>
+
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_no_noninteractive_tabindex -->
   <div
     class="scall-lanes"
@@ -314,7 +368,11 @@
               <rect class="gap" x={run.x1} y="0" width={run.x2 - run.x1} height={H} fill="url(#{patternId})" />
             {/each}
             {#if path}
-              <path class="shape" d={path} fill={color} fill-opacity="0.22" stroke={color} stroke-opacity="0.6" stroke-width="1" vector-effect="non-scaling-stroke" />
+              <line class="peakline" x1="0" x2={W} y1={H - SHAPE_H} y2={H - SHAPE_H} stroke={color} stroke-opacity="0.45" stroke-width="1" stroke-dasharray="4 4" vector-effect="non-scaling-stroke" />
+              <path class="shape" d={path} fill={color} fill-opacity="0.14" stroke={color} stroke-opacity="0.9" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+              {#each shapeDots(name) as dot}
+                <ellipse class="dot" cx={dot.x} cy={Math.min(dot.y, H - 3 * pxY)} rx={3 * pxX} ry={3 * pxY} fill={color} />
+              {/each}
             {/if}
             {#if callVisible}
               <rect class="thiscall" x={callX1} y="0" width={callW} height={H} />
@@ -349,6 +407,10 @@
               </g>
             {/each}
           </svg>
+          {#if path && lanes[name].peak}
+            <span class="y-peak" style="top: {peakTop}%" style:color={color} aria-hidden="true">{DRILL_TEXT.yPeak(peakNumber(name))}</span>
+            <span class="y-zero" aria-hidden="true">{DRILL_TEXT.yZero}</span>
+          {/if}
           {#if name === 'sql' && db.shape === 'none'}
             <p class="scall-note">{db.short}</p>
           {/if}
@@ -371,6 +433,7 @@
     {#each ticks as tick}
       <span class="tick {tick.edge}" style="left: {tick.pct}%">{tick.label}</span>
     {/each}
+    <span class="scall-xtitle">{DRILL_TEXT.xTitle(zoneName)}</span>
     <span class="scall-zone">{zoneName}</span>
   </div>
 
@@ -392,15 +455,6 @@
   </div>
   <p class="visually-hidden" role="status" aria-live="polite" data-testid="scall-pinned-live">{pinnedAnnouncement}</p>
 
-  <details class="scall-legend-more">
-    <summary>{DRILL_TEXT.legendHow}</summary>
-    <ul class="scall-legend" data-testid="scall-legend">
-      <li>{DRILL_TEXT.legendWidth}</li>
-      <li>{DRILL_TEXT.legendShape}</li>
-      <li>{DRILL_TEXT.legendHatched}</li>
-      <li>{DRILL_TEXT.legendCall}</li>
-    </ul>
-  </details>
 </div>
 
 <style>
@@ -457,9 +511,8 @@
     padding: 6px 10px 0;
     font-size: 12px;
     line-height: 16px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    flex-wrap: wrap;
+    min-width: 0;
     color: var(--text-2);
   }
   .scall-name {
@@ -559,6 +612,101 @@
     top: 16px;
     font-size: 10px;
   }
+  .scall-xtitle {
+    position: absolute;
+    left: 50%;
+    top: 15px;
+    max-width: calc(100% - 120px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transform: translateX(-50%);
+    font-size: 11px;
+  }
+  .peakline {
+    pointer-events: none;
+  }
+  .dot {
+    pointer-events: none;
+    stroke: var(--surface);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+  .y-peak,
+  .y-zero {
+    position: absolute;
+    left: 4px;
+    padding: 0 3px;
+    font-size: 10px;
+    line-height: 12px;
+    background: var(--surface);
+    pointer-events: none;
+    user-select: none;
+  }
+  .y-peak {
+    transform: translateY(-100%);
+  }
+  .y-zero {
+    bottom: 2px;
+    color: var(--text-2);
+  }
+  .scall-readbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+  }
+  .scall-readline {
+    flex: 1 1 260px;
+    margin: 0;
+    font-size: 12px;
+    line-height: 17px;
+    color: var(--text);
+  }
+  .scall-help {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px 2px 4px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .scall-help::before {
+    content: '?';
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .scall-help[aria-expanded='true'] {
+    background: var(--surface-2);
+  }
+  .scall-help:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  .scall-helppanel {
+    flex: 1 1 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--line-soft);
+    background: var(--surface-2);
+  }
+  .scall-helppanel .scall-legend {
+    flex-direction: column;
+    margin: 0;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text);
+  }
   .scall-readout {
     padding: 8px 10px;
     border: 1px solid var(--line-soft);
@@ -588,13 +736,6 @@
   }
   .read-hint {
     color: var(--text-2);
-  }
-  .scall-legend-more {
-    font-size: 11px;
-    color: var(--text-2);
-  }
-  .scall-legend-more summary {
-    cursor: pointer;
   }
   .scall-legend {
     display: flex;

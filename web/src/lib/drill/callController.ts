@@ -9,7 +9,7 @@ import type { CallEvent, CallEvents } from './callData';
 import { coversOverview, DEFAULT_WINDOW, overviewBounds, windowBounds, type CallWindow } from './callWindow';
 import { activityInput, needsServer, type CallRef, type Loaded, type NearbyChip } from './nearbyCalls';
 import { parsePerf, type DrillRecord } from './perf';
-import { drillQuery, pickCall } from './target';
+import { drillQuery, pickCall, WINDOW_SOURCE_IDS } from './target';
 import type { SlowCallTarget } from './callTarget';
 
 /** The most slow-call rows the screen keeps for one window. */
@@ -141,7 +141,7 @@ export function createCallController(
   function readVisible(mySeq: number, ctl: AbortController, startIso: string, endIso: string): void {
     s.visibleLoading = true;
     s.visibleFailed = false;
-    deps.tracing(target.caseId, startIso, endIso, target.sourceIds, ctl.signal).then(
+    deps.tracing(target.caseId, startIso, endIso, WINDOW_SOURCE_IDS, ctl.signal).then(
       (answer) => {
         if (disposed || ctl.signal.aborted || mySeq !== readSeq) return;
         if (answer === null) return;
@@ -278,7 +278,7 @@ export function createCallController(
     overviewCtl = ctl;
     s.overviewFailed = false;
     const ob = overviewBounds(s.callStartMs);
-    deps.tracing(target.caseId, iso(ob.start), iso(ob.end), target.sourceIds, ctl.signal).then(
+    deps.tracing(target.caseId, iso(ob.start), iso(ob.end), WINDOW_SOURCE_IDS, ctl.signal).then(
       (answer) => {
         if (disposed || ctl.signal.aborted) return;
         if (answer === null) return;
