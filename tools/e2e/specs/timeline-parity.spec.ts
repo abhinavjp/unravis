@@ -1,14 +1,14 @@
 // The page-level parts of the Investigation Timeline (the tracing-paper wireframe): the "Quick range" chip row above the two windows,
-// the plain headings and help lines ("Investigation window", "Compare it with (comparison period)"), Add evidence and Refresh timeline in
+// the plain headings and help lines ("Investigation window", "Compare it with (comparison period)"), Add evidence and Start tracing in
 // the "Sources traced" row, and the "windows changed" line. The demo clock is 2026-10-20T09:00Z, so the default incident window is
 // 08:00-09:00 UTC and the default comparison period 07:00-08:00. A chip sets the windows but never reads by itself; only Start tracing
-// or Refresh timeline sends a request.
+// (or a source newly connected) sends a request.
 //   TLPAR-01  The Quick range row sits above the windows, the six chips are in order, "Last hour" is pressed on a fresh screen, and
 //             "Last 4 hours" sets 05:00-09:00 / 01:00-05:00, flips the pressed state and sends no trace; the popover keeps its own ranges.
 //   TLPAR-02  The two h3 headings and their help lines; the fieldset legends still name the groups "Incident window (UTC)" and
 //             "Comparison period (UTC)", and "UTC" is still on the page.
 //   TLPAR-03  Add evidence sits in the "Sources traced" row and opens the Import files popup.
-//   TLPAR-04  Refresh timeline is disabled during the first read, repeats the previous request, and after a chip click it reads the
+//   TLPAR-04  Start tracing is disabled during the first read, repeats the previous request, and after a chip click it reads the
 //             new window and the "windows changed" line goes away.
 //   TLPAR-05  Closing the Add evidence popup reads the timeline again.
 //   TLPAR-06  Screenshots for the review: light and dark at 1280 and 375 px wide, written to .dev/tlpar-shots.
@@ -126,13 +126,13 @@ test('TLPAR-03: Add evidence sits in the "Sources traced" row and opens the Impo
   await expect(page.getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
 });
 
-test('TLPAR-04: Refresh timeline is disabled during the first read, repeats the request, and reads the chip\'s new window', async ({ page }) => {
+test('TLPAR-04: Start tracing is disabled during the first read, repeats the request, and reads the chip\'s new window', async ({ page }) => {
   await delayFirstTrace(page, 1500);
   const traces = countTraces(page);
   await openTimeline(page);
 
   // While the first read is in flight the button cannot be pressed; once the chart is back it can.
-  const refresh = sourcesRow(page).getByRole('button', { name: 'Refresh timeline' });
+  const refresh = sourcesRow(page).getByRole('button', { name: 'Start tracing' });
   await expect(refresh).toBeVisible();
   await expect(refresh).toBeDisabled();
   await expect(page.locator('.tracing-chart')).toBeVisible();
@@ -151,7 +151,7 @@ test('TLPAR-04: Refresh timeline is disabled during the first read, repeats the 
   expect(again.sourceIds ?? []).toEqual(firstBody.sourceIds ?? []);
   await answered;
 
-  // A chip changes the windows: the page says the timeline is stale until Refresh timeline reads the new window.
+  // A chip changes the windows: the page says the timeline is stale until Start tracing reads the new window.
   const stale = page.locator('[data-testid=tp-stale]');
   await expect(stale).toHaveCount(0);
   await quickChip(page, '4h').click();
@@ -195,7 +195,7 @@ test('TLPAR-06: screenshots of the timeline page, light and dark, 1280 and 375 p
     for (const width of [1280, 375]) {
       await page.setViewportSize({ width, height: 900 });
       await expect(quickRow(page)).toBeVisible();
-      await expect(sourcesRow(page).getByRole('button', { name: 'Refresh timeline' })).toBeVisible();
+      await expect(sourcesRow(page).getByRole('button', { name: 'Start tracing' })).toBeVisible();
       // A resize reflows over a frame or two: wait for the layout to settle (two animation frames, then the check) instead of reading it the instant the viewport changes.
       await expect.poll(() => page.evaluate(() => new Promise<boolean>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(document.documentElement.scrollWidth <= window.innerWidth + 1))))), { message: `no sideways scroll at ${width} px, ${scheme}`, timeout: 5000 }).toBe(true);
       await page.screenshot({ path: join(SHOTS, `app-${scheme}-${width}.png`) });

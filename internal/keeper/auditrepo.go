@@ -444,6 +444,19 @@ func (r *AuditRouter) SampleSchema(ctx context.Context, sourceID string, n int) 
 	return out, r.read(ctx, OpAuditSchema, AuditSchemaInput{SourceID: sourceID, N: n}, &out)
 }
 
+// SampleFieldPaths lists the field paths of a source's newest documents (names and types only).
+func (r *AuditRouter) SampleFieldPaths(ctx context.Context, sourceID string) (audit.FieldPaths, error) {
+	if !r.isHeld(sourceID) {
+		sampler, ok := r.local.(audit.FieldPathSampler)
+		if !ok {
+			return audit.FieldPaths{}, errLocalCannot
+		}
+		return sampler.SampleFieldPaths(ctx, sourceID)
+	}
+	var out audit.FieldPaths
+	return out, r.read(ctx, OpAuditFields, AuditSchemaInput{SourceID: sourceID}, &out)
+}
+
 // Rollup is the one read that merges both sides: the timeline of every open source. A keeper that cannot be reached leaves its
 // sources out, each marked with why, and the local part is still answered.
 func (r *AuditRouter) Rollup(ctx context.Context, plan audit.RollupPlan) (audit.RollupSlots, error) {

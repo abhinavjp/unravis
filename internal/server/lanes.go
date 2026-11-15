@@ -244,7 +244,7 @@ func (h *handler) caseLaneSQL(w http.ResponseWriter, r *http.Request, raw string
 		label = laneSQLLabel
 	}
 	req.Database, req.Login = target.Database, target.Username
-	ctx, cancel := context.WithTimeout(r.Context(), healthRunTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), dbhealth.LaneRunTimeout)
 	defer cancel()
 	held, err := laneHeld(ctx, hs)
 	if err != nil {

@@ -8,6 +8,14 @@ import type { LintEntry } from './copylint';
 
 export const filesWord = (n: number): string => (n === 1 ? ' file' : ' files');
 
+/** Why one computer could not be added, in plain words. The codes are the ones `saveHost` answers with. */
+function addFailReason(reason: string): string {
+  if (reason === 'label') return 'its name is not allowed as a computer name.';
+  if (reason === 'zone') return 'it needs a time zone.';
+  if (reason === 'locked') return 'the computer list is locked right now. Try again in a moment.';
+  return 'it could not be saved. Try again.';
+}
+
 export const POPUP_TEXT = {
   title: 'Import files',
   stepNames: ['Choose', 'Check', 'Result'],
@@ -61,6 +69,13 @@ export const POPUP_TEXT = {
   discardKeep: 'Keep them',
   discardNow: 'Discard',
 
+  checkFailed: 'The server could not check these files.',
+  checkAgain: 'Check again',
+
+  closeWhileImporting: 'An import is running. Press Cancel first.',
+  closeWhileStopping: 'Cancel was pressed. Close this once the file being sent has finished.',
+  addFailed: (name: string, reason: string): string => name + ' could not be added: ' + addFailReason(reason),
+
   impLine: (p: number, total: number): string => 'Importing ' + p + ' of ' + total + filesWord(total),
   cancel: 'Cancel',
 
@@ -104,6 +119,10 @@ export function popupCopyEntries(): LintEntry[] {
     discardTitle: T.discardTitle(13),
     discardTitle1: T.discardTitle(1),
     impLine: T.impLine(4, 13),
+    addFailedLabel: T.addFailed('iis_sandboxapi', 'label'),
+    addFailedZone: T.addFailed('iis_sandboxapi', 'zone'),
+    addFailedLocked: T.addFailed('iis_sandboxapi', 'locked'),
+    addFailedOther: T.addFailed('iis_sandboxapi', 'failed'),
     resultHero: T.resultHero(13),
     computersLine: T.computersLine(2, 'iis_sandboxapi, sql-prod-2')
   };

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/store"
 )
@@ -69,6 +70,12 @@ func TestSessionTokenGeneratesUnloggedRandomValue(t *testing.T) {
 func TestHTTPEnvelopeIncludesReadAndFiveMinuteOperation(t *testing.T) {
 	if httpWriteTimeout < httpReadTimeout+5*time.Minute+10*time.Second {
 		t.Fatal("HTTP response deadline clips the operation after a slow request body")
+	}
+}
+
+func TestHTTPEnvelopeIncludesALongDatabaseRead(t *testing.T) {
+	if httpWriteTimeout < httpReadTimeout+dbhealth.LaneRunTimeout+10*time.Second {
+		t.Fatal("HTTP response deadline clips a month-long database read")
 	}
 }
 

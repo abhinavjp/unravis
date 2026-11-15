@@ -36,7 +36,20 @@ export const ZONE_CHOICE_TEXT = {
   gone: 'This computer is no longer in the list. Pick another.'
 } as const;
 
-export type NeedKind = 'host' | 'host-tz' | 'optional' | 'none';
+/** The one-click "add the computer the file names" fix (create screen and import drawer). The server name comes from the file. */
+export const COMPUTER_FIX_TEXT = {
+  title: (name: string): string => name + ' is not on your computer list.',
+  help: 'Add it, and this file is read again straight away. Nothing else changes.',
+  helpZone: 'Add it with its time zone, and this file is read again straight away. This type writes the computer’s own clock, so the zone is needed.',
+  zoneLabel: 'Time zone of its clock',
+  zonePlaceholder: 'For example Asia/Dubai or UTC',
+  add: (name: string): string => 'Add ' + name + ' and try again',
+  addLabel: (name: string, file: string): string => 'Add ' + name + ' as a computer, then read ' + file + ' again',
+  saving: 'Adding…',
+  addAll: (count: number): string => 'Add all ' + count + ' computers and try again'
+} as const;
+
+export type NeedKind ='host' | 'host-tz' | 'optional' | 'none';
 
 export const hostProblemText = (problem: HostProblem, need: NeedKind): string => {
   switch (problem) {
@@ -88,7 +101,16 @@ export const optionalHelpText = (kind: string): string => (kind === 'sql-xe' ? Z
 
 export const zoneChoiceCopyEntries = (): LintEntry[] => [
   ...Object.entries(ZONE_CHOICE_TEXT).map(([id, text]) => ({ id: 'zone.' + id, text })),
-  { id: 'zone.sample.problem.host', text: hostProblemText('pick', 'host') },
+  { id: 'zone.fix.title', text: COMPUTER_FIX_TEXT.title('WEB01') },
+  { id: 'zone.fix.help', text: COMPUTER_FIX_TEXT.help },
+  { id: 'zone.fix.helpZone', text: COMPUTER_FIX_TEXT.helpZone },
+  { id: 'zone.fix.zoneLabel', text: COMPUTER_FIX_TEXT.zoneLabel },
+  { id: 'zone.fix.zonePlaceholder', text: COMPUTER_FIX_TEXT.zonePlaceholder },
+  { id: 'zone.fix.add', text: COMPUTER_FIX_TEXT.add('WEB01') },
+  { id: 'zone.fix.addLabel', text: COMPUTER_FIX_TEXT.addLabel('WEB01', 'u_ex240101.log') },
+  { id: 'zone.fix.saving', text: COMPUTER_FIX_TEXT.saving },
+  { id: 'zone.fix.addAll', text: COMPUTER_FIX_TEXT.addAll(2) },
+  { id: 'zone.sample.problem.host',text: hostProblemText('pick', 'host') },
   { id: 'zone.sample.problem.zone', text: hostProblemText('pick', 'host-tz') },
   ...(['empty', 'long', 'chars', 'taken'] as const).map((id) => ({ id: 'zone.label.' + id, text: labelProblemText(id) })),
   ...(['empty', 'unknown'] as const).map((id) => ({ id: 'zone.zonename.' + id, text: zoneProblemText(id) })),

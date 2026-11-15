@@ -1,0 +1,1 @@
+function e(){let e=null,t=new Set,n=n=>{if(n!==e){e=n;for(let n of[...t])n(e)}};return{current:()=>e,open:e=>n(e),close:t=>{e===t&&n(null)},subscribe(e){return t.add(e),()=>{t.delete(e)}}}}var t=e(),n=`unravis:open-glossary`;function r(e){let t=e?.termId;return typeof t==`string`&&t?t:null}export{r as n,t as r,n as t};

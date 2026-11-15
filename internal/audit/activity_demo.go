@@ -44,7 +44,13 @@ func (d *demoRepository) Activity(ctx context.Context, input ActivityInput) (Pag
 	rows := []RequestRecord{}
 	for _, r := range d.records {
 		if selected[r.SourceID] && ActivityOverlaps(r.InitiatedAt, r.CompletedAt, input.Start, input.End) {
-			rows = append(rows, r)
+			if input.UserID != nil && (r.UserID == nil || *r.UserID != *input.UserID) {
+				continue
+			}
+			if input.Operation != "" && r.Controller+"."+r.Action != input.Operation {
+				continue
+			}
+			rows = append(rows, d.withLight(r))
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {

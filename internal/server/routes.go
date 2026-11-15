@@ -185,6 +185,9 @@ var routes = []route{
 	{pattern: "/api/sources/{id}/schema", match: sourceSubpath("/schema"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.schema(w, r, id) },
 	}},
+	{pattern: "/api/sources/{id}/fields", match: sourceSubpath("/fields"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.sourceFields(w, r, id) },
+	}},
 	{pattern: "/api/sources/{id}/coverage", match: sourceSubpath("/coverage"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.coverage(w, r, id) },
 	}},

@@ -1339,21 +1339,40 @@ func (c *Case) BucketCounts(ctx context.Context, q casestore.BucketQuery) (cases
 	// with no error keep Errors 0.
 	query := "SELECT (ts_ms - ?) / ? AS b, source, import_id, COUNT(*), 0 FROM events WHERE " +
 		strings.Join(where, " AND ") + " GROUP BY b, source, import_id ORDER BY b, source, import_id"
-	var errQuery string
+	var errQuery, clientQuery, timingQuery string
 	var errTail []any // the ErrorExcludeSources arguments, after the where arguments
-	if q.CountErrors {
-		errWhere := append(append([]string(nil), where...), statusIs5xxExpr)
+	if q.CountErrors || q.CountClientErrors {
+		excl := ""
 		if len(q.ErrorExcludeSources) > 0 {
 			if len(q.ErrorExcludeSources) > maxFilter {
 				return casestore.BucketResult{}, fmt.Errorf("%w: too many error-exclude filters", ErrInvalid)
 			}
-			errWhere = append(errWhere, "source NOT IN ("+strings.TrimSuffix(strings.Repeat("?,", len(q.ErrorExcludeSources)), ",")+")")
+			excl = "source NOT IN (" + strings.TrimSuffix(strings.Repeat("?,", len(q.ErrorExcludeSources)), ",") + ")"
 			for _, v := range q.ErrorExcludeSources {
 				errTail = append(errTail, v)
 			}
 		}
-		errQuery = "SELECT (ts_ms - ?) / ? AS b, source, import_id, COUNT(*), COUNT(*) FROM events WHERE " +
-			strings.Join(errWhere, " AND ") + " GROUP BY b, source, import_id ORDER BY b, source, import_id"
+		statusQuery := func(expr string) string {
+			w := append(append([]string(nil), where...), expr)
+			if excl != "" {
+				w = append(w, excl)
+			}
+			return "SELECT (ts_ms - ?) / ? AS b, source, import_id, COUNT(*), COUNT(*) FROM events WHERE " +
+				strings.Join(w, " AND ") + " GROUP BY b, source, import_id ORDER BY b, source, import_id"
+		}
+		if q.CountErrors {
+			errQuery = statusQuery(statusIs5xxExpr)
+		}
+		if q.CountClientErrors {
+			clientQuery = statusQuery(statusIs4xxExpr)
+		}
+	}
+	if q.CountTimings {
+		// The response times: counts per log bin with the fastest and slowest of
+		// each, over the rows that have a duration.
+		timingQuery = "SELECT (ts_ms - ?) / ? AS b, source, import_id, " + timingBinExpr + " AS bin, COUNT(*), MIN(duration_ms), MAX(duration_ms), SUM(duration_ms) FROM events WHERE " +
+			strings.Join(append(append([]string(nil), where...), "duration_ms IS NOT NULL"), " AND ") +
+			" GROUP BY b, source, import_id, bin ORDER BY b, source, import_id, bin"
 	}
 
 	// Time budget. A GROUP BY hands out no row before it has read its whole
@@ -1438,6 +1457,17 @@ func (c *Case) BucketCounts(ctx context.Context, q casestore.BucketQuery) (cases
 				mergeBucketErrors(counts, errs)
 			}
 		}
+		if err == nil && clientQuery != "" {
+			errArgs[fromIdx], errArgs[fromIdx+1] = cFrom, cTo
+			var cl []casestore.BucketCount
+			if cl, err = c.bucketChunk(qctx, tx, clientQuery, errArgs); err == nil {
+				mergeBucketClientErrors(counts, cl)
+			}
+		}
+		var timings []casestore.BucketTiming
+		if err == nil && timingQuery != "" {
+			timings, err = c.timingChunk(qctx, tx, timingQuery, all)
+		}
 		if err != nil {
 			switch {
 			case ctx.Err() != nil:
@@ -1457,9 +1487,34 @@ func (c *Case) BucketCounts(ctx context.Context, q casestore.BucketQuery) (cases
 			res.Counts = append(res.Counts, bc)
 			res.Total += bc.Count
 		}
+		res.Timings = append(res.Timings, timings...)
 	}
 	res.Scanned = res.Total
 	return res, nil
+}
+
+// timingChunk runs the response-time query for one chunk and reads all its rows.
+func (c *Case) timingChunk(ctx context.Context, db queryer, query string, args []any) ([]casestore.BucketTiming, error) {
+	if queryHook != nil {
+		queryHook(query, args)
+	}
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, c.noteDamage(err)
+	}
+	defer rows.Close()
+	var out []casestore.BucketTiming
+	for rows.Next() {
+		var bt casestore.BucketTiming
+		if err := rows.Scan(&bt.Index, &bt.Source, &bt.ImportID, &bt.Bin, &bt.Count, &bt.Min, &bt.Max, &bt.Sum); err != nil {
+			return nil, c.noteDamage(err)
+		}
+		out = append(out, bt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, c.noteDamage(err)
+	}
+	return out, nil
 }
 
 // bucketChunks is the most chunks one BucketCounts call splits its window into.

@@ -476,7 +476,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       },
       {
         "key": "iis",
@@ -506,6 +508,7 @@
             "end": "2026-03-10T10:01:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -514,6 +517,7 @@
             "end": "2026-03-10T10:02:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -522,6 +526,7 @@
             "end": "2026-03-10T10:03:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -530,6 +535,7 @@
             "end": "2026-03-10T10:04:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -538,6 +544,7 @@
             "end": "2026-03-10T10:05:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -546,6 +553,7 @@
             "end": "2026-03-10T10:06:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -554,6 +562,7 @@
             "end": "2026-03-10T10:07:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -562,6 +571,7 @@
             "end": "2026-03-10T10:08:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -570,6 +580,7 @@
             "end": "2026-03-10T10:09:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -578,6 +589,7 @@
             "end": "2026-03-10T10:10:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -586,6 +598,12 @@
             "end": "2026-03-10T10:11:00Z",
             "count": 2,
             "errors": 1,
+            "clientErrors": 0,
+            "timedCount": 2,
+            "p50Ms": 80.09,
+            "p95Ms": 4915.01,
+            "maxMs": 5000,
+            "busyMs": 5080,
             "clipped": false,
             "complete": true
           },
@@ -594,6 +612,7 @@
             "end": "2026-03-10T10:12:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -602,6 +621,7 @@
             "end": "2026-03-10T10:13:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -610,6 +630,7 @@
             "end": "2026-03-10T10:14:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -618,6 +639,7 @@
             "end": "2026-03-10T10:15:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -626,6 +648,7 @@
             "end": "2026-03-10T10:16:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -634,6 +657,7 @@
             "end": "2026-03-10T10:17:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -642,6 +666,7 @@
             "end": "2026-03-10T10:18:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -650,6 +675,7 @@
             "end": "2026-03-10T10:19:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -658,6 +684,7 @@
             "end": "2026-03-10T10:20:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -666,6 +693,7 @@
             "end": "2026-03-10T10:21:00Z",
             "count": 2,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -674,6 +702,7 @@
             "end": "2026-03-10T10:22:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -682,6 +711,7 @@
             "end": "2026-03-10T10:23:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -690,6 +720,7 @@
             "end": "2026-03-10T10:24:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -698,6 +729,7 @@
             "end": "2026-03-10T10:25:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -706,6 +738,7 @@
             "end": "2026-03-10T10:26:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -714,6 +747,7 @@
             "end": "2026-03-10T10:27:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -722,6 +756,7 @@
             "end": "2026-03-10T10:28:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -730,6 +765,7 @@
             "end": "2026-03-10T10:29:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -738,6 +774,7 @@
             "end": "2026-03-10T10:30:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -746,6 +783,12 @@
             "end": "2026-03-10T10:31:00Z",
             "count": 1,
             "errors": 0,
+            "clientErrors": 1,
+            "timedCount": 1,
+            "p50Ms": 12,
+            "p95Ms": 12,
+            "maxMs": 12,
+            "busyMs": 12,
             "clipped": false,
             "complete": true
           },
@@ -754,6 +797,7 @@
             "end": "2026-03-10T10:32:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -762,6 +806,7 @@
             "end": "2026-03-10T10:33:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -770,6 +815,7 @@
             "end": "2026-03-10T10:34:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -778,6 +824,7 @@
             "end": "2026-03-10T10:35:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -786,6 +833,7 @@
             "end": "2026-03-10T10:36:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -794,6 +842,7 @@
             "end": "2026-03-10T10:37:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -802,6 +851,7 @@
             "end": "2026-03-10T10:38:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -810,6 +860,7 @@
             "end": "2026-03-10T10:39:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -818,6 +869,7 @@
             "end": "2026-03-10T10:40:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -826,6 +878,7 @@
             "end": "2026-03-10T10:41:00Z",
             "count": 1,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -834,6 +887,7 @@
             "end": "2026-03-10T10:42:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -842,6 +896,7 @@
             "end": "2026-03-10T10:43:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -850,6 +905,7 @@
             "end": "2026-03-10T10:44:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -858,6 +914,7 @@
             "end": "2026-03-10T10:45:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -866,6 +923,7 @@
             "end": "2026-03-10T10:46:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -874,6 +932,7 @@
             "end": "2026-03-10T10:47:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -882,6 +941,7 @@
             "end": "2026-03-10T10:48:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -890,6 +950,7 @@
             "end": "2026-03-10T10:49:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -898,6 +959,7 @@
             "end": "2026-03-10T10:50:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -906,6 +968,7 @@
             "end": "2026-03-10T10:51:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -914,6 +977,7 @@
             "end": "2026-03-10T10:52:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -922,6 +986,7 @@
             "end": "2026-03-10T10:53:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -930,6 +995,7 @@
             "end": "2026-03-10T10:54:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -938,6 +1004,7 @@
             "end": "2026-03-10T10:55:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -946,6 +1013,7 @@
             "end": "2026-03-10T10:56:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -954,6 +1022,7 @@
             "end": "2026-03-10T10:57:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -962,6 +1031,7 @@
             "end": "2026-03-10T10:58:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -970,6 +1040,7 @@
             "end": "2026-03-10T10:59:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -978,6 +1049,7 @@
             "end": "2026-03-10T11:00:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           }
@@ -1053,7 +1125,9 @@
             "kind": "iis-httperr"
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [
@@ -1542,7 +1616,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       },
       {
         "key": "iis",
@@ -1690,6 +1766,7 @@
             "end": "2026-03-10T10:01:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1698,6 +1775,7 @@
             "end": "2026-03-10T10:02:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1706,6 +1784,7 @@
             "end": "2026-03-10T10:03:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1714,6 +1793,7 @@
             "end": "2026-03-10T10:04:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1722,6 +1802,7 @@
             "end": "2026-03-10T10:05:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1730,6 +1811,7 @@
             "end": "2026-03-10T10:06:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1738,6 +1820,7 @@
             "end": "2026-03-10T10:07:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1746,6 +1829,7 @@
             "end": "2026-03-10T10:08:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1754,6 +1838,7 @@
             "end": "2026-03-10T10:09:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1762,6 +1847,7 @@
             "end": "2026-03-10T10:10:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1770,6 +1856,12 @@
             "end": "2026-03-10T10:11:00Z",
             "count": 2,
             "errors": 1,
+            "clientErrors": 0,
+            "timedCount": 2,
+            "p50Ms": 80.09,
+            "p95Ms": 4915.01,
+            "maxMs": 5000,
+            "busyMs": 5080,
             "clipped": false,
             "complete": true
           },
@@ -1778,6 +1870,7 @@
             "end": "2026-03-10T10:12:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1786,6 +1879,7 @@
             "end": "2026-03-10T10:13:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1794,6 +1888,7 @@
             "end": "2026-03-10T10:14:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1802,6 +1897,7 @@
             "end": "2026-03-10T10:15:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1810,6 +1906,7 @@
             "end": "2026-03-10T10:16:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1818,6 +1915,7 @@
             "end": "2026-03-10T10:17:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1826,6 +1924,7 @@
             "end": "2026-03-10T10:18:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1834,6 +1933,7 @@
             "end": "2026-03-10T10:19:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1842,6 +1942,7 @@
             "end": "2026-03-10T10:20:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1850,6 +1951,7 @@
             "end": "2026-03-10T10:21:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1858,6 +1960,7 @@
             "end": "2026-03-10T10:22:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1866,6 +1969,7 @@
             "end": "2026-03-10T10:23:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1874,6 +1978,7 @@
             "end": "2026-03-10T10:24:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1882,6 +1987,7 @@
             "end": "2026-03-10T10:25:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1890,6 +1996,7 @@
             "end": "2026-03-10T10:26:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1898,6 +2005,7 @@
             "end": "2026-03-10T10:27:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1906,6 +2014,7 @@
             "end": "2026-03-10T10:28:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1914,6 +2023,7 @@
             "end": "2026-03-10T10:29:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1922,6 +2032,7 @@
             "end": "2026-03-10T10:30:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1930,6 +2041,12 @@
             "end": "2026-03-10T10:31:00Z",
             "count": 1,
             "errors": 0,
+            "clientErrors": 1,
+            "timedCount": 1,
+            "p50Ms": 12,
+            "p95Ms": 12,
+            "maxMs": 12,
+            "busyMs": 12,
             "clipped": false,
             "complete": true
           },
@@ -1938,6 +2055,7 @@
             "end": "2026-03-10T10:32:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1946,6 +2064,7 @@
             "end": "2026-03-10T10:33:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1954,6 +2073,7 @@
             "end": "2026-03-10T10:34:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1962,6 +2082,7 @@
             "end": "2026-03-10T10:35:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1970,6 +2091,7 @@
             "end": "2026-03-10T10:36:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1978,6 +2100,7 @@
             "end": "2026-03-10T10:37:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1986,6 +2109,7 @@
             "end": "2026-03-10T10:38:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -1994,6 +2118,7 @@
             "end": "2026-03-10T10:39:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2002,6 +2127,7 @@
             "end": "2026-03-10T10:40:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2010,6 +2136,7 @@
             "end": "2026-03-10T10:41:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2018,6 +2145,7 @@
             "end": "2026-03-10T10:42:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2026,6 +2154,7 @@
             "end": "2026-03-10T10:43:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2034,6 +2163,7 @@
             "end": "2026-03-10T10:44:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2042,6 +2172,7 @@
             "end": "2026-03-10T10:45:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2050,6 +2181,7 @@
             "end": "2026-03-10T10:46:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2058,6 +2190,7 @@
             "end": "2026-03-10T10:47:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2066,6 +2199,7 @@
             "end": "2026-03-10T10:48:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2074,6 +2208,7 @@
             "end": "2026-03-10T10:49:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2082,6 +2217,7 @@
             "end": "2026-03-10T10:50:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2090,6 +2226,7 @@
             "end": "2026-03-10T10:51:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2098,6 +2235,7 @@
             "end": "2026-03-10T10:52:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2106,6 +2244,7 @@
             "end": "2026-03-10T10:53:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2114,6 +2253,7 @@
             "end": "2026-03-10T10:54:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2122,6 +2262,7 @@
             "end": "2026-03-10T10:55:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2130,6 +2271,7 @@
             "end": "2026-03-10T10:56:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2138,6 +2280,7 @@
             "end": "2026-03-10T10:57:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2146,6 +2289,7 @@
             "end": "2026-03-10T10:58:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2154,6 +2298,7 @@
             "end": "2026-03-10T10:59:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2162,6 +2307,7 @@
             "end": "2026-03-10T11:00:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           }
@@ -2201,7 +2347,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [],
@@ -2256,6 +2404,7 @@
             "end": "2026-03-10T10:01:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2264,6 +2413,7 @@
             "end": "2026-03-10T10:02:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2272,6 +2422,7 @@
             "end": "2026-03-10T10:03:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2280,6 +2431,7 @@
             "end": "2026-03-10T10:04:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2288,6 +2440,7 @@
             "end": "2026-03-10T10:05:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2296,6 +2449,7 @@
             "end": "2026-03-10T10:06:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2304,6 +2458,7 @@
             "end": "2026-03-10T10:07:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2312,6 +2467,7 @@
             "end": "2026-03-10T10:08:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2320,6 +2476,7 @@
             "end": "2026-03-10T10:09:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2328,6 +2485,7 @@
             "end": "2026-03-10T10:10:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2336,6 +2494,12 @@
             "end": "2026-03-10T10:11:00Z",
             "count": 2,
             "errors": 1,
+            "clientErrors": 0,
+            "timedCount": 2,
+            "p50Ms": 80.09,
+            "p95Ms": 4915.01,
+            "maxMs": 5000,
+            "busyMs": 5080,
             "clipped": false,
             "complete": true
           },
@@ -2344,6 +2508,7 @@
             "end": "2026-03-10T10:12:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2352,6 +2517,7 @@
             "end": "2026-03-10T10:13:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2360,6 +2526,7 @@
             "end": "2026-03-10T10:14:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2368,6 +2535,7 @@
             "end": "2026-03-10T10:15:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2376,6 +2544,7 @@
             "end": "2026-03-10T10:16:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2384,6 +2553,7 @@
             "end": "2026-03-10T10:17:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2392,6 +2562,7 @@
             "end": "2026-03-10T10:18:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2400,6 +2571,7 @@
             "end": "2026-03-10T10:19:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2408,6 +2580,7 @@
             "end": "2026-03-10T10:20:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2416,6 +2589,7 @@
             "end": "2026-03-10T10:21:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2424,6 +2598,7 @@
             "end": "2026-03-10T10:22:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2432,6 +2607,7 @@
             "end": "2026-03-10T10:23:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2440,6 +2616,7 @@
             "end": "2026-03-10T10:24:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2448,6 +2625,7 @@
             "end": "2026-03-10T10:25:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2456,6 +2634,7 @@
             "end": "2026-03-10T10:26:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2464,6 +2643,7 @@
             "end": "2026-03-10T10:27:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2472,6 +2652,7 @@
             "end": "2026-03-10T10:28:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2480,6 +2661,7 @@
             "end": "2026-03-10T10:29:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2488,6 +2670,7 @@
             "end": "2026-03-10T10:30:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2496,6 +2679,12 @@
             "end": "2026-03-10T10:31:00Z",
             "count": 1,
             "errors": 0,
+            "clientErrors": 1,
+            "timedCount": 1,
+            "p50Ms": 12,
+            "p95Ms": 12,
+            "maxMs": 12,
+            "busyMs": 12,
             "clipped": false,
             "complete": true
           },
@@ -2504,6 +2693,7 @@
             "end": "2026-03-10T10:32:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2512,6 +2702,7 @@
             "end": "2026-03-10T10:33:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2520,6 +2711,7 @@
             "end": "2026-03-10T10:34:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2528,6 +2720,7 @@
             "end": "2026-03-10T10:35:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2536,6 +2729,7 @@
             "end": "2026-03-10T10:36:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2544,6 +2738,7 @@
             "end": "2026-03-10T10:37:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2552,6 +2747,7 @@
             "end": "2026-03-10T10:38:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2560,6 +2756,7 @@
             "end": "2026-03-10T10:39:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2568,6 +2765,7 @@
             "end": "2026-03-10T10:40:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2576,6 +2774,7 @@
             "end": "2026-03-10T10:41:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2584,6 +2783,7 @@
             "end": "2026-03-10T10:42:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2592,6 +2792,7 @@
             "end": "2026-03-10T10:43:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2600,6 +2801,7 @@
             "end": "2026-03-10T10:44:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2608,6 +2810,7 @@
             "end": "2026-03-10T10:45:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2616,6 +2819,7 @@
             "end": "2026-03-10T10:46:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2624,6 +2828,7 @@
             "end": "2026-03-10T10:47:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2632,6 +2837,7 @@
             "end": "2026-03-10T10:48:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2640,6 +2846,7 @@
             "end": "2026-03-10T10:49:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2648,6 +2855,7 @@
             "end": "2026-03-10T10:50:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2656,6 +2864,7 @@
             "end": "2026-03-10T10:51:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2664,6 +2873,7 @@
             "end": "2026-03-10T10:52:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2672,6 +2882,7 @@
             "end": "2026-03-10T10:53:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2680,6 +2891,7 @@
             "end": "2026-03-10T10:54:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2688,6 +2900,7 @@
             "end": "2026-03-10T10:55:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2696,6 +2909,7 @@
             "end": "2026-03-10T10:56:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2704,6 +2918,7 @@
             "end": "2026-03-10T10:57:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2712,6 +2927,7 @@
             "end": "2026-03-10T10:58:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2720,6 +2936,7 @@
             "end": "2026-03-10T10:59:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -2728,6 +2945,7 @@
             "end": "2026-03-10T11:00:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           }
@@ -2767,7 +2985,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [
@@ -3254,7 +3474,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       },
       {
         "key": "iis",
@@ -3380,6 +3602,12 @@
             "end": "2026-03-10T10:01:00Z",
             "count": 50010,
             "errors": 0,
+            "clientErrors": 0,
+            "timedCount": 50010,
+            "p50Ms": 1,
+            "p95Ms": 1,
+            "maxMs": 1,
+            "busyMs": 50010,
             "clipped": false,
             "complete": true
           },
@@ -3388,6 +3616,7 @@
             "end": "2026-03-10T10:02:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3396,6 +3625,7 @@
             "end": "2026-03-10T10:03:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3404,6 +3634,7 @@
             "end": "2026-03-10T10:04:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3412,6 +3643,7 @@
             "end": "2026-03-10T10:05:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3420,6 +3652,7 @@
             "end": "2026-03-10T10:06:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3428,6 +3661,7 @@
             "end": "2026-03-10T10:07:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3436,6 +3670,7 @@
             "end": "2026-03-10T10:08:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3444,6 +3679,7 @@
             "end": "2026-03-10T10:09:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3452,6 +3688,7 @@
             "end": "2026-03-10T10:10:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3460,6 +3697,7 @@
             "end": "2026-03-10T10:11:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3468,6 +3706,7 @@
             "end": "2026-03-10T10:12:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3476,6 +3715,7 @@
             "end": "2026-03-10T10:13:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3484,6 +3724,7 @@
             "end": "2026-03-10T10:14:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3492,6 +3733,7 @@
             "end": "2026-03-10T10:15:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3500,6 +3742,7 @@
             "end": "2026-03-10T10:16:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3508,6 +3751,7 @@
             "end": "2026-03-10T10:17:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3516,6 +3760,7 @@
             "end": "2026-03-10T10:18:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3524,6 +3769,7 @@
             "end": "2026-03-10T10:19:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3532,6 +3778,7 @@
             "end": "2026-03-10T10:20:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3540,6 +3787,7 @@
             "end": "2026-03-10T10:21:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3548,6 +3796,7 @@
             "end": "2026-03-10T10:22:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3556,6 +3805,7 @@
             "end": "2026-03-10T10:23:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3564,6 +3814,7 @@
             "end": "2026-03-10T10:24:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3572,6 +3823,7 @@
             "end": "2026-03-10T10:25:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3580,6 +3832,7 @@
             "end": "2026-03-10T10:26:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3588,6 +3841,7 @@
             "end": "2026-03-10T10:27:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3596,6 +3850,7 @@
             "end": "2026-03-10T10:28:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3604,6 +3859,7 @@
             "end": "2026-03-10T10:29:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3612,6 +3868,7 @@
             "end": "2026-03-10T10:30:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3620,6 +3877,7 @@
             "end": "2026-03-10T10:31:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3628,6 +3886,7 @@
             "end": "2026-03-10T10:32:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3636,6 +3895,7 @@
             "end": "2026-03-10T10:33:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3644,6 +3904,7 @@
             "end": "2026-03-10T10:34:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3652,6 +3913,7 @@
             "end": "2026-03-10T10:35:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3660,6 +3922,7 @@
             "end": "2026-03-10T10:36:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3668,6 +3931,7 @@
             "end": "2026-03-10T10:37:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3676,6 +3940,7 @@
             "end": "2026-03-10T10:38:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3684,6 +3949,7 @@
             "end": "2026-03-10T10:39:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3692,6 +3958,7 @@
             "end": "2026-03-10T10:40:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3700,6 +3967,7 @@
             "end": "2026-03-10T10:41:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3708,6 +3976,7 @@
             "end": "2026-03-10T10:42:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3716,6 +3985,7 @@
             "end": "2026-03-10T10:43:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3724,6 +3994,7 @@
             "end": "2026-03-10T10:44:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3732,6 +4003,7 @@
             "end": "2026-03-10T10:45:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3740,6 +4012,7 @@
             "end": "2026-03-10T10:46:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3748,6 +4021,7 @@
             "end": "2026-03-10T10:47:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3756,6 +4030,7 @@
             "end": "2026-03-10T10:48:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3764,6 +4039,7 @@
             "end": "2026-03-10T10:49:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3772,6 +4048,7 @@
             "end": "2026-03-10T10:50:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3780,6 +4057,7 @@
             "end": "2026-03-10T10:51:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3788,6 +4066,7 @@
             "end": "2026-03-10T10:52:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3796,6 +4075,7 @@
             "end": "2026-03-10T10:53:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3804,6 +4084,7 @@
             "end": "2026-03-10T10:54:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3812,6 +4093,7 @@
             "end": "2026-03-10T10:55:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3820,6 +4102,7 @@
             "end": "2026-03-10T10:56:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3828,6 +4111,7 @@
             "end": "2026-03-10T10:57:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3836,6 +4120,7 @@
             "end": "2026-03-10T10:58:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3844,6 +4129,7 @@
             "end": "2026-03-10T10:59:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -3852,6 +4138,7 @@
             "end": "2026-03-10T11:00:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           }
@@ -4518,7 +4805,9 @@
             "win32": null
           }
         ],
-        "hidden": 49940
+        "hidden": 49940,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [],
@@ -5003,7 +5292,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       },
       {
         "key": "iis",
@@ -5029,6 +5320,7 @@
             "end": "2026-03-10T10:01:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5037,6 +5329,7 @@
             "end": "2026-03-10T10:02:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5045,6 +5338,7 @@
             "end": "2026-03-10T10:03:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5053,6 +5347,7 @@
             "end": "2026-03-10T10:04:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5061,6 +5356,7 @@
             "end": "2026-03-10T10:05:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5069,6 +5365,7 @@
             "end": "2026-03-10T10:06:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5077,6 +5374,7 @@
             "end": "2026-03-10T10:07:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5085,6 +5383,7 @@
             "end": "2026-03-10T10:08:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5093,6 +5392,7 @@
             "end": "2026-03-10T10:09:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5101,6 +5401,7 @@
             "end": "2026-03-10T10:10:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5109,6 +5410,12 @@
             "end": "2026-03-10T10:11:00Z",
             "count": 2,
             "errors": 1,
+            "clientErrors": 0,
+            "timedCount": 2,
+            "p50Ms": 80.09,
+            "p95Ms": 4915.01,
+            "maxMs": 5000,
+            "busyMs": 5080,
             "clipped": false,
             "complete": true
           },
@@ -5117,6 +5424,7 @@
             "end": "2026-03-10T10:12:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5125,6 +5433,7 @@
             "end": "2026-03-10T10:13:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5133,6 +5442,7 @@
             "end": "2026-03-10T10:14:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5141,6 +5451,7 @@
             "end": "2026-03-10T10:15:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5149,6 +5460,7 @@
             "end": "2026-03-10T10:16:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5157,6 +5469,7 @@
             "end": "2026-03-10T10:17:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5165,6 +5478,7 @@
             "end": "2026-03-10T10:18:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5173,6 +5487,7 @@
             "end": "2026-03-10T10:19:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5181,6 +5496,7 @@
             "end": "2026-03-10T10:20:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5189,6 +5505,7 @@
             "end": "2026-03-10T10:21:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5197,6 +5514,7 @@
             "end": "2026-03-10T10:22:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5205,6 +5523,7 @@
             "end": "2026-03-10T10:23:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5213,6 +5532,7 @@
             "end": "2026-03-10T10:24:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5221,6 +5541,7 @@
             "end": "2026-03-10T10:25:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5229,6 +5550,7 @@
             "end": "2026-03-10T10:26:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5237,6 +5559,7 @@
             "end": "2026-03-10T10:27:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5245,6 +5568,7 @@
             "end": "2026-03-10T10:28:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5253,6 +5577,7 @@
             "end": "2026-03-10T10:29:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5261,6 +5586,7 @@
             "end": "2026-03-10T10:30:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5269,6 +5595,12 @@
             "end": "2026-03-10T10:31:00Z",
             "count": 1,
             "errors": 0,
+            "clientErrors": 1,
+            "timedCount": 1,
+            "p50Ms": 12,
+            "p95Ms": 12,
+            "maxMs": 12,
+            "busyMs": 12,
             "clipped": false,
             "complete": true
           },
@@ -5277,6 +5609,7 @@
             "end": "2026-03-10T10:32:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5285,6 +5618,7 @@
             "end": "2026-03-10T10:33:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5293,6 +5627,7 @@
             "end": "2026-03-10T10:34:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5301,6 +5636,7 @@
             "end": "2026-03-10T10:35:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5309,6 +5645,7 @@
             "end": "2026-03-10T10:36:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5317,6 +5654,7 @@
             "end": "2026-03-10T10:37:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5325,6 +5663,7 @@
             "end": "2026-03-10T10:38:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5333,6 +5672,7 @@
             "end": "2026-03-10T10:39:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5341,6 +5681,7 @@
             "end": "2026-03-10T10:40:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5349,6 +5690,7 @@
             "end": "2026-03-10T10:41:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5357,6 +5699,7 @@
             "end": "2026-03-10T10:42:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5365,6 +5708,7 @@
             "end": "2026-03-10T10:43:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5373,6 +5717,7 @@
             "end": "2026-03-10T10:44:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5381,6 +5726,7 @@
             "end": "2026-03-10T10:45:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5389,6 +5735,7 @@
             "end": "2026-03-10T10:46:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5397,6 +5744,7 @@
             "end": "2026-03-10T10:47:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5405,6 +5753,7 @@
             "end": "2026-03-10T10:48:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5413,6 +5762,7 @@
             "end": "2026-03-10T10:49:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5421,6 +5771,7 @@
             "end": "2026-03-10T10:50:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5429,6 +5780,7 @@
             "end": "2026-03-10T10:51:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5437,6 +5789,7 @@
             "end": "2026-03-10T10:52:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5445,6 +5798,7 @@
             "end": "2026-03-10T10:53:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5453,6 +5807,7 @@
             "end": "2026-03-10T10:54:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5461,6 +5816,7 @@
             "end": "2026-03-10T10:55:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5469,6 +5825,7 @@
             "end": "2026-03-10T10:56:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5477,6 +5834,7 @@
             "end": "2026-03-10T10:57:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5485,6 +5843,7 @@
             "end": "2026-03-10T10:58:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5493,6 +5852,7 @@
             "end": "2026-03-10T10:59:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           },
@@ -5501,6 +5861,7 @@
             "end": "2026-03-10T11:00:00Z",
             "count": 0,
             "errors": 0,
+            "clientErrors": 0,
             "clipped": false,
             "complete": true
           }
@@ -5540,7 +5901,9 @@
             "win32": null
           }
         ],
-        "hidden": 0
+        "hidden": 0,
+        "importedFrom": "2026-03-10T09:00:00Z",
+        "importedTo": "2026-03-10T12:00:00Z"
       }
     ],
     "warnings": [],

@@ -48,19 +48,31 @@ type LaneRequest struct {
 	Login      string
 }
 
-// Validate refuses a request the checks cannot compare: both windows must be real and the reference must end before the incident starts.
+// MaxLaneWindow is the longest one window (incident or reference) may be. A longer window is refused before any query is built, so a mistyped date
+// cannot make a run cut thousands of slices (DATA-08).
+const MaxLaneWindow = 90 * 24 * time.Hour
+
+// Validate refuses a request the checks cannot compare: both windows must be real, neither may be longer than MaxLaneWindow, and the reference must
+// end before the incident starts.
 func (r LaneRequest) Validate() error {
 	if !r.Incident.Valid() || !r.Reference.Valid() {
 		return errors.New("both the incident window and the reference window need a start and an end")
 	}
+	if r.Incident.End.Sub(r.Incident.Start) > MaxLaneWindow {
+		return errors.New("the incident window can be at most 90 days long; pick a shorter span")
+	}
+	if r.Reference.End.Sub(r.Reference.Start) > MaxLaneWindow {
+		return errors.New("the reference window can be at most 90 days long; pick a shorter span")
+	}
 	if r.Reference.End.After(r.Incident.Start) {
 		return errors.New("the reference window must end before the incident window starts")
 	}
-	if r.Incident.End.Sub(r.Incident.Start) > 14*24*time.Hour || r.Reference.End.Sub(r.Reference.Start) > 14*24*time.Hour {
-		return errors.New("a window can be at most 14 days long")
-	}
 	return nil
 }
+
+// LaneRunTimeout bounds one whole lane run. A long window (a month or more) is read in slices, each with its own time limit, so the run as a
+// whole is allowed to take much longer than one query.
+const LaneRunTimeout = 20 * time.Minute
 
 // LaneCheck is one check's outcome. Fix is set when the state is "Cannot test yet" because of a missing grant or a switched-off feature.
 type LaneCheck struct {
@@ -82,7 +94,49 @@ type LaneResult struct {
 	Onset     *time.Time        `json:"onset,omitempty"`
 	Sources   []string          `json:"sources,omitempty"`
 	Guide     *ProfilerGuide    `json:"guide,omitempty"` // Mongo only: set when the profiler is off
+	// Series is the Query Store interval series of both windows (SQL only): the
+	// Timeline draws the SQL lane from it when no SQL file was imported.
+	Series []LaneSeriesPoint `json:"series,omitempty"`
+	// QueryStore says what state Query Store was in when the lane read it (SQL only).
+	QueryStore *LaneQueryStore `json:"queryStore,omitempty"`
 }
+
+// Query Store states a lane day can carry.
+const (
+	QSStateOn       = "on"
+	QSStateOff      = "off"
+	QSStateReadOnly = "read-only"
+	QSStateDenied   = "denied"
+	QSStateUnknown  = "unknown"
+)
+
+// LaneQueryStore is what the lane read learned about Query Store on the database.
+type LaneQueryStore struct {
+	// State is one of "on", "off", "read-only", "denied", "unknown".
+	State string `json:"state"`
+	// FirstData is the start of the oldest saved block, when one was found.
+	FirstData *time.Time `json:"firstData,omitempty"`
+	// IntervalMinutes is the block length Query Store is set to, when known.
+	IntervalMinutes int `json:"intervalMinutes,omitempty"`
+}
+
+// LaneSeriesPoint is one Query Store interval: when it started, how many
+// statements ran in it, and their average and slowest duration in milliseconds.
+// The field names are short because a month-long window holds thousands of them.
+type LaneSeriesPoint struct {
+	T     int64   `json:"t"`           // interval start, Unix seconds
+	Execs int64   `json:"n"`           // executions
+	AvgMs float64 `json:"a"`           // average duration (ms), weighted by executions
+	MaxMs float64 `json:"m,omitempty"` // slowest single execution (ms)
+	// BlockSeconds is how much Query Store time this point covers: the sum of the blocks that were merged
+	// into it. Zero means one block (the block length the run recorded), so a point that was never merged
+	// carries nothing and older saved runs read as before. Busy time (average x executions) spread over
+	// BlockSeconds gives the true busy per second of a merged point.
+	BlockSeconds int64 `json:"b,omitempty"`
+}
+
+// laneSeriesCap bounds the saved series so a report stays far under MaxHealthReport.
+const laneSeriesCap = 3000
 
 // State is the lane's readiness: Ready when every check ran, Partly ready when some did, otherwise Cannot test yet (or Failed when every check failed).
 func (l LaneResult) State() string {
@@ -133,6 +187,113 @@ func (b *laneBuilder) setOnset(t time.Time) {
 	if b.onset == nil || t.Before(*b.onset) {
 		b.onset = &t
 	}
+}
+
+// setSeries keeps the interval series for the saved report, oldest first and at
+// most laneSeriesCap points. A longer series is thinned evenly over each window
+// (neighbouring points are merged, never across the gap between the windows),
+// never cut at one end.
+func (b *laneBuilder) setSeries(pts []LaneSeriesPoint) {
+	sort.Slice(pts, func(i, j int) bool { return pts[i].T < pts[j].T })
+	var unit int64
+	if qs := b.res.QueryStore; qs != nil && qs.IntervalMinutes > 0 {
+		unit = int64(qs.IntervalMinutes) * 60
+	}
+	b.res.Series = downsampleWindows(pts, laneSeriesCap, unit, []Window{b.res.Reference, b.res.Incident})
+}
+
+// downsampleSeries merges neighbouring points in equal groups until at most limit remain. It knows no windows, so it treats the series as one run
+// and takes the block length from the smallest gap between points; the saved series goes through downsampleWindows instead.
+func downsampleSeries(pts []LaneSeriesPoint, limit int) []LaneSeriesPoint {
+	return downsampleWindows(pts, limit, 0, nil)
+}
+
+// downsampleWindows thins a series that is sorted by time to at most limit points. Each window is thinned on its own, so a merged point never spans
+// the gap between the reference and the incident (DATA-04), and every run uses one group size, raised until at most limit points remain. Inside a window
+// neighbouring points are merged in equal groups: executions add up, the average is weighted by executions, the slowest stays the slowest, the group
+// starts where its first point did, and BlockSeconds is the sum of the blocks it covers, so busy time over BlockSeconds stays the true busy per
+// second. unit is the length of one block in seconds (0 means work it out from the smallest gap between points). When limit is smaller than the number
+// of runs, one point per run is kept (the result may exceed limit by at most the run count).
+func downsampleWindows(pts []LaneSeriesPoint, limit int, unit int64, wins []Window) []LaneSeriesPoint {
+	if limit <= 0 || len(pts) <= limit {
+		return pts
+	}
+	if unit <= 0 {
+		unit = smallestGap(pts)
+	}
+	// One run per window, plus a last run for points outside every window. The input is sorted, so each run is a stretch of it.
+	runs := make([][]LaneSeriesPoint, len(wins)+1)
+	for _, p := range pts {
+		k := len(wins)
+		for i, w := range wins {
+			if w.Contains(time.Unix(p.T, 0)) {
+				k = i
+				break
+			}
+		}
+		runs[k] = append(runs[k], p)
+	}
+	group := (len(pts) + limit - 1) / limit
+	for {
+		out := make([]LaneSeriesPoint, 0, limit)
+		for _, run := range runs {
+			if len(run) == 0 {
+				continue
+			}
+			out = append(out, mergeGroups(run, group, unit)...)
+		}
+		if len(out) <= limit {
+			sort.SliceStable(out, func(i, j int) bool { return out[i].T < out[j].T })
+			return out
+		}
+		// A group as long as the longest run already makes one point per run; a bigger group cannot thin it further.
+		if group >= len(pts) {
+			sort.SliceStable(out, func(i, j int) bool { return out[i].T < out[j].T })
+			return out
+		}
+		group++
+	}
+}
+
+// mergeGroups merges one run in equal groups of group points (a group of 1 or less leaves the run as it is).
+func mergeGroups(run []LaneSeriesPoint, group int, unit int64) []LaneSeriesPoint {
+	out := make([]LaneSeriesPoint, 0, (len(run)+group-1)/group)
+	for i := 0; i < len(run); i += group {
+		part := run[i:min(i+group, len(run))]
+		if len(part) == 1 {
+			out = append(out, part[0])
+			continue
+		}
+		p := LaneSeriesPoint{T: part[0].T}
+		var sumMs float64
+		for _, q := range part {
+			p.Execs += q.Execs
+			sumMs += q.AvgMs * float64(q.Execs)
+			p.MaxMs = max(p.MaxMs, q.MaxMs)
+			if q.BlockSeconds > 0 {
+				p.BlockSeconds += q.BlockSeconds
+			} else {
+				p.BlockSeconds += unit
+			}
+		}
+		if p.Execs > 0 {
+			p.AvgMs = sumMs / float64(p.Execs)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// smallestGap is the smallest positive distance in seconds between neighbouring points of a series sorted by time: the block length when blocks
+// are saved back to back. Zero when there is none.
+func smallestGap(pts []LaneSeriesPoint) int64 {
+	var gap int64
+	for i := 1; i < len(pts); i++ {
+		if d := pts[i].T - pts[i-1].T; d > 0 && (gap == 0 || d < gap) {
+			gap = d
+		}
+	}
+	return gap
 }
 
 func (b *laneBuilder) source(name string) { b.sources[name] = true }

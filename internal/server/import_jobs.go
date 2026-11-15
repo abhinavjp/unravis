@@ -264,6 +264,19 @@ func (j *importJobs) cancelCaseUntilStopped(caseID casestore.CaseID) func() {
 	}
 }
 
+// beginRun counts a background job in the wait group only while the dispatcher is
+// still open. It holds j.mu across the closed check and the Add so shutdown (which
+// sets closed under j.mu before wg.Wait) cannot slip a Wait between them.
+func (j *importJobs) beginRun() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.closed {
+		return false
+	}
+	j.wg.Add(1)
+	return true
+}
+
 // shutdown cancels every job, refuses new ones, and waits up to wait for the
 // running ones to stop (they roll their imports back).
 func (j *importJobs) shutdown(wait time.Duration) {
@@ -383,8 +396,15 @@ func (h *handler) importAsync(w http.ResponseWriter, id casestore.CaseID, job *i
 		return
 	}
 	job.total.Store(size)
+	if !h.jobs.beginRun() {
+		// Shutdown won the race: start no goroutine. The spool is local to this
+		// call (postImport's defer gives back the job, slot and gate but not the
+		// spool), so drop it here as the fill-error path does.
+		spool.close()
+		writeCaseFailure(w, http.StatusServiceUnavailable, "cases-unavailable", "Unravis is shutting down. Try again in a moment.")
+		return
+	}
 	handOff()
-	h.jobs.wg.Add(1)
 	go h.runImportJob(job, spool, id, imp, hint, supplied, preview, ackGating, ackText, fileName, slot, release)
 	writeJSON(w, http.StatusAccepted, job.snapshot(), 4096)
 }

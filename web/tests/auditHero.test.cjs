@@ -80,7 +80,7 @@ test('a slowest request far above the usual P95 is a flagged, labelled diamond w
   const sentence = heroSentence(layout);
   assert.match(sentence, /red diamond/);
   assert.match(sentence, /60 s/);
-  assert.match(sentence, /^One interval holds a request far slower than usual, up to 60 s\./);
+  assert.match(sentence, /^One red diamond: a request far slower than usual, up to 60 s./);
   // Every other slot keeps an unflagged, unlabelled mark.
   assert.equal(layout.marks.length, 5);
   assert.equal(layout.marks.filter((m) => !m.flagged).length, 4);
@@ -95,7 +95,7 @@ test('several flagged intervals use the plural sentence and name the slowest of 
   const buckets = [0, 1, 3, 4, 5].map((i) => bucketAt(i, { p95Ms: 300, timedCount: 4, maxMs: i === 1 || i === 4 ? 60000 : 400 }));
   const layout = heroLayout(buckets, grid, { from: 0, to: 6 }, 'p95');
   assert.equal(layout.flaggedCount, 2);
-  assert.match(heroSentence(layout), /^2 intervals hold a request far slower than usual/);
+  assert.match(heroSentence(layout), /^2 red diamonds: requests far slower than usual/);
 });
 
 test('a view with no timings draws nothing', () => {
@@ -137,6 +137,10 @@ test('every fixed string the hero layer can print passes the copy lint', () => {
     { id: 'hero.tipSlowest', text: HERO_TEXT.tipSlowest },
     { id: 'hero.tipOutlier', text: HERO_TEXT.tipOutlier },
     { id: 'hero.empty', text: HERO_TEXT.empty },
+    { id: 'hero.legendWebRequests', text: HERO_TEXT.legendWebRequests },
+    { id: 'hero.legendRefused', text: HERO_TEXT.legendRefused },
+    { id: 'hero.legendFailed', text: HERO_TEXT.legendFailed },
+    { id: 'hero.webRefused', text: HERO_TEXT.webRefused(12, 340) },
     { id: 'hero.outlierOne', text: HERO_TEXT.outlierOne('60 s') },
     { id: 'hero.outlierMany', text: HERO_TEXT.outlierMany(3, '60 s') }
   ];

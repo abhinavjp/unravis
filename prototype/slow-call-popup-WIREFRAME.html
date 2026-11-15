@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slow call popup wireframe — Unravis</title>
+<style>
+/* PROTOTYPE, throwaway, not shipped. Question: what should the "Nearby activity" tab of the Slow call pop-up look like?
+   Three structurally different variants on the same tab, switch with ?variant=A|B|C, the bar at the bottom, or the left/right arrow keys.
+   Tokens copied from web/src/brand/tokens.css. All numbers are invented. */
+:root{
+  color-scheme:dark;
+  --lane-audit:#3fd6b0; --lane-sql:#c58bd6; --lane-iis:#e3a23c;
+  --bg:#050807; --surface:#0a0f0d; --surface-2:#101714;
+  --line:#1a2621; --line-soft:#131c18; --control-line:#6b8478;
+  --text:#eef3f1; --text-2:#93a39b;
+  --accent:#3fd6b0; --accent-ink:#03130e;
+  --warn:#e3b341; --bad:#ff7b72; --tone-ok:#3fb27f; --pending:#8fa39a;
+  --focus:#7ff0d0; --scrim:rgb(2 5 9 / 62%);
+  --font:"IBM Plex Sans","Segoe UI Variable Text",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"Cascadia Code",Consolas,monospace;
+  --radius:2px;
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    color-scheme:light;
+    --lane-audit:#0b6b57; --lane-sql:#9956a1; --lane-iis:#ad6511;
+    --bg:#f5f5f3; --surface:#ffffff; --surface-2:#eeeeeb;
+    --line:#d9d9d4; --line-soft:#e8e8e4; --control-line:#74808f;
+    --text:#16191d; --text-2:#4a525c;
+    --accent:#0b6b57; --accent-ink:#ffffff;
+    --warn:#96600a; --bad:#b02a3d; --tone-ok:#176b43; --pending:#5b6878;
+    --focus:#0b6b57; --scrim:rgb(20 28 40 / 38%);
+  }
+}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --lane-audit:#0b6b57; --lane-sql:#9956a1; --lane-iis:#ad6511;
+  --bg:#f5f5f3; --surface:#ffffff; --surface-2:#eeeeeb;
+  --line:#d9d9d4; --line-soft:#e8e8e4; --control-line:#74808f;
+  --text:#16191d; --text-2:#4a525c;
+  --accent:#0b6b57; --accent-ink:#ffffff;
+  --warn:#96600a; --bad:#b02a3d; --tone-ok:#176b43; --pending:#5b6878;
+  --focus:#0b6b57; --scrim:rgb(20 28 40 / 38%);
+}
+*{box-sizing:border-box}
+html{overflow-x:hidden}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 var(--font);min-height:100vh;overflow-x:hidden;
+  padding-top:24px;padding-bottom:96px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.page-note{max-width:860px;margin:0 auto 14px;color:var(--text-2);font-size:13px}
+.page-note b{color:var(--text)}
+.page-note .tag{display:inline-block;margin-right:6px;padding:1px 6px;border:1px solid var(--warn);color:var(--warn);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.popup{width:min(860px,100%);margin:0 auto;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 24px 64px color-mix(in srgb,var(--bg) 70%,transparent)}
+.popup-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:16px 20px 12px;border-bottom:1px solid var(--line)}
+.popup-head h2{margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em}
+.head-actions{display:flex;gap:8px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:8px 14px;border-radius:var(--radius);font:600 13px var(--font);cursor:pointer;color:var(--text);background:transparent;border:1px solid var(--line)}
+.btn:hover{border-color:var(--text-2);background:var(--surface-2)}
+button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.tabbar{display:flex;gap:4px;padding:0 20px;border-bottom:1px solid var(--line-soft);overflow-x:auto}
+.tab{padding:10px 12px;color:var(--text-2);background:none;border:0;border-bottom:2px solid transparent;font:600 13px var(--font);cursor:pointer;white-space:nowrap}
+.tab[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
+.tab .new{margin-left:6px;padding:0 5px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent-ink);background:var(--accent)}
+.body{padding:18px 20px;display:grid;gap:18px;min-width:0}
+.body > *{min-width:0}
+section h3{margin:0 0 4px;font-size:13px;font-weight:600;letter-spacing:.02em}
+.hint{margin:0 0 10px;color:var(--text-2);font-size:12.5px}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:0}
+.facts div{padding:8px 10px;background:var(--surface-2);border:1px solid var(--line-soft)}
+.facts dt{font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:.06em}
+.facts dd{margin:2px 0 0;font:500 14px var(--mono)}
+
+/* breakdown bar (Overview) */
+.bar{display:flex;height:14px;width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.seg{display:block;height:100%;min-width:2px}
+.seg.f,.sw.f{background:var(--accent)} .seg.o,.sw.o{background:var(--text-2)}
+.rows{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:6px}
+.rows li{display:flex;align-items:center;gap:8px;font-size:13px}
+.sw{flex:0 0 auto;width:10px;height:10px;border-radius:2px}
+.rows .v{margin-left:auto;font:500 13px var(--mono)}
+.rows .pct{width:44px;text-align:right;color:var(--text-2);font:12px var(--mono)}
+.callout{margin:0;padding:10px 12px;background:var(--surface-2);border:1px solid var(--line);border-left:3px solid var(--warn);font-size:12.5px;color:var(--text-2)}
+.callout b{color:var(--text)}
+
+/* shared nearby toolbar */
+.toolbar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:4px 10px;background:transparent;color:var(--text);border:1px solid var(--line);border-radius:var(--radius);font:600 12.5px var(--font);cursor:pointer}
+.chip[aria-pressed="true"]{border-color:var(--text-2);background:var(--surface-2)}
+.chip[aria-pressed="false"]{color:var(--text-2);text-decoration:line-through}
+.chip .dot{width:9px;height:9px;border-radius:50%}
+.seg-ctl{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.seg-ctl button{min-height:30px;padding:4px 12px;background:transparent;color:var(--text-2);border:0;border-right:1px solid var(--line);font:600 12.5px var(--font);cursor:pointer}
+.seg-ctl button:last-child{border-right:0}
+.seg-ctl button[aria-pressed="true"]{background:var(--surface-2);color:var(--text)}
+.vname{margin:8px 0 0;color:var(--text-2);font-size:12px}
+.vname b{color:var(--text)}
+
+.lane-tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}
+.lane-tag i{width:8px;height:8px;border-radius:50%}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;color:var(--text-2);font-size:12px;margin:6px 0 0}
+.legend .dia{display:inline-block;width:9px;height:9px;transform:rotate(45deg);background:var(--bad);margin-right:6px;vertical-align:-1px}
+.empty{padding:14px;color:var(--text-2);font-size:12.5px;border:1px dashed var(--line);text-align:center}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--text-2);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:7px 8px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+td.t{font-family:var(--mono);white-space:nowrap;color:var(--text-2)}
+td.d{font-family:var(--mono);white-space:nowrap;text-align:right}
+tr.this td{background:color-mix(in srgb,var(--bad) 12%,transparent)}
+tr.this td:first-child{box-shadow:inset 2px 0 var(--bad)}
+.scroll{overflow-x:auto;border:1px solid var(--line)}
+
+/* ---- Variant A: stacked lanes ---- */
+.lanes{border:1px solid var(--line);background:var(--surface-2)}
+.lane{display:grid;grid-template-columns:128px minmax(0,1fr);border-bottom:1px solid var(--line)}
+.lane:last-child{border-bottom:0}
+.lane-label{padding:10px 12px;border-right:1px solid var(--line);font-size:12.5px;font-weight:600;display:flex;flex-direction:column;gap:2px}
+.lane-label small{font-weight:400;color:var(--text-2);font-size:11.5px}
+.lane-label .k{display:inline-block;width:9px;height:9px;margin-right:6px;border-radius:50%}
+.plot{position:relative;height:84px;background:repeating-linear-gradient(90deg,transparent 0 calc(10% - 1px),var(--line-soft) calc(10% - 1px) 10%)}
+.plot .centre{position:absolute;top:0;bottom:0;width:0;border-left:1px dashed var(--bad)}
+.plot svg{position:absolute;inset:0;width:100%;height:100%}
+.axis{display:grid;grid-template-columns:128px minmax(0,1fr)}
+.axis .ticks{display:flex;justify-content:space-between;padding:4px 0 0;color:var(--text-2);font:11px var(--mono)}
+
+/* ---- Variant B: one feed ---- */
+.strip{display:flex;align-items:flex-end;gap:2px;height:56px;padding:6px;background:var(--surface-2);border:1px solid var(--line)}
+.strip .cell{flex:1;min-width:2px;background:var(--text-2);opacity:.5}
+.strip .cell.call{background:var(--bad);opacity:1}
+.strip-axis{display:flex;justify-content:space-between;padding:4px 6px 0;color:var(--text-2);font:11px var(--mono)}
+.feed{border:1px solid var(--line)}
+.mh{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding:7px 10px;background:var(--surface-2);border-bottom:1px solid var(--line);font:600 12.5px var(--mono)}
+.mh span{font:400 12px var(--font);color:var(--text-2)}
+.mh.call{box-shadow:inset 2px 0 var(--bad)}
+.fr{display:grid;grid-template-columns:76px 112px minmax(0,1fr) auto;gap:10px;padding:7px 10px;border-bottom:1px solid var(--line-soft);font-size:13px;align-items:baseline}
+.fr .t{font-family:var(--mono);color:var(--text-2)}
+.fr .d{font-family:var(--mono)}
+.fr.this{background:color-mix(in srgb,var(--bad) 12%,transparent);box-shadow:inset 2px 0 var(--bad)}
+
+/* ---- Variant C: minute grid ---- */
+.grid-wrap{border:1px solid var(--line);background:var(--surface-2);padding:10px}
+.grow{display:grid;grid-template-columns:128px minmax(0,1fr);gap:10px;align-items:center;margin-bottom:6px}
+.grow .nm{font-size:12.5px;font-weight:600}
+.grow .nm small{display:block;font-weight:400;color:var(--text-2);font-size:11.5px}
+.cells{display:grid;gap:2px}
+.hm{height:34px;min-width:0;border:0;border-radius:2px;cursor:pointer;padding:0;position:relative}
+.hm.call::after{content:"";position:absolute;left:50%;bottom:-5px;width:0;height:0;margin-left:-4px;border:4px solid transparent;border-bottom-color:var(--bad);border-top:0}
+.hm[aria-pressed="true"]{outline:2px solid var(--focus);outline-offset:1px}
+.grid-axis{display:grid;grid-template-columns:128px minmax(0,1fr);gap:10px}
+.grid-axis .ticks{display:flex;justify-content:space-between;color:var(--text-2);font:11px var(--mono);padding-top:6px}
+.detail{border:1px solid var(--line);padding:12px;display:grid;gap:10px}
+.detail h4{margin:0;font-size:14px}
+.sumline{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px}
+.sumline b{font-family:var(--mono);font-weight:500}
+.ramp{display:flex;align-items:center;gap:8px;color:var(--text-2);font-size:12px;margin-top:6px;flex-wrap:wrap}
+.ramp i{display:inline-block;width:70px;height:8px;background:linear-gradient(90deg,var(--surface),var(--text-2))}
+
+/* ---- Variant D: trace timeline ---- */
+.gantt{border:1px solid var(--line);background:var(--surface-2)}
+.g-lane{display:grid;grid-template-columns:128px minmax(0,1fr);border-bottom:1px solid var(--line)}
+.g-lane:last-child{border-bottom:0}
+.g-track{position:relative;background:repeating-linear-gradient(90deg,transparent 0 calc(10% - 1px),var(--line-soft) calc(10% - 1px) 10%)}
+.g-band{position:absolute;top:0;bottom:0;background:color-mix(in srgb,var(--bad) 14%,transparent);border-left:1px solid var(--bad);border-right:1px solid var(--bad);pointer-events:none}
+.g-bar{position:absolute;height:18px;min-width:4px;border:0;border-radius:2px;padding:0;cursor:pointer;opacity:.85}
+.g-bar:hover{opacity:1}
+.g-bar.this{outline:2px solid var(--bad);outline-offset:1px;opacity:1}
+.g-bar[aria-pressed="true"]{outline:2px solid var(--focus);outline-offset:1px;opacity:1}
+.dticks{position:relative;height:20px}
+.dticks span{position:absolute;top:4px;transform:translateX(-50%);font:11px var(--mono);color:var(--text-2);white-space:nowrap}
+.dbox{border:1px solid var(--line);padding:12px;display:grid;gap:8px;margin-top:12px}
+.dbox h4{margin:0;font-size:14px}
+
+/* ---- Variant E: scrubber timeline ---- */
+.ov{position:relative;display:flex;align-items:flex-end;gap:1px;height:44px;background:var(--surface-2);border:1px solid var(--line)}
+.ov button{flex:1;min-width:0;border:0;background:var(--text-2);opacity:.45;padding:0;cursor:pointer}
+.ov button.call{background:var(--bad);opacity:1}
+.ov-win{position:absolute;top:0;bottom:0;border:2px solid var(--focus);background:color-mix(in srgb,var(--focus) 10%,transparent);pointer-events:none}
+.e-wrap{display:grid;grid-template-columns:128px minmax(0,1fr);border:1px solid var(--line);background:var(--surface-2);margin-top:10px}
+.e-labels>div{height:84px;border-bottom:1px solid var(--line);padding:10px 12px;border-right:1px solid var(--line);font-size:12.5px;font-weight:600;display:flex;flex-direction:column;gap:2px}
+.e-labels small{font-weight:400;color:var(--text-2);font-size:11.5px}
+.e-labels>div:last-child,.e-plots .p:last-of-type{border-bottom:0}
+.e-plots{position:relative;cursor:crosshair}
+.e-plots .p{height:84px;border-bottom:1px solid var(--line);position:relative;background:repeating-linear-gradient(90deg,transparent 0 calc(10% - 1px),var(--line-soft) calc(10% - 1px) 10%)}
+.e-plots .p svg{position:absolute;inset:0;width:100%;height:100%}
+.xh{position:absolute;top:0;bottom:0;width:0;border-left:1px solid var(--text);pointer-events:none;display:none}
+.xh.pin{border-left-color:var(--focus);border-left-width:2px}
+.readout{min-height:58px;border:1px solid var(--line);padding:10px 12px;font-size:13px;margin-top:10px;display:grid;gap:6px}
+.readout b{font-family:var(--mono);font-weight:500}
+.readout .ev{display:flex;gap:10px;font-size:12.5px;flex-wrap:wrap}
+
+/* ---- floating prototype switcher ---- */
+.switcher{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:50;display:flex;align-items:center;gap:6px;padding:6px 8px;background:#f4f4f2;color:#111;border-radius:999px;box-shadow:0 6px 24px rgb(0 0 0 / 45%);font:600 13px var(--font)}
+.switcher button{width:32px;height:32px;border:0;border-radius:50%;background:#111;color:#fff;font-size:16px;cursor:pointer}
+.switcher span{min-width:170px;text-align:center;padding:0 6px}
+.switcher button:focus-visible{outline:2px solid #0b6b57;outline-offset:2px}
+[hidden]{display:none!important}
+@media (max-width:640px){
+  .lane,.axis,.grow,.grid-axis{grid-template-columns:84px minmax(0,1fr)}
+  .popup-head,.body,.tabbar{padding-left:14px;padding-right:14px}
+  .switcher span{min-width:120px}
+  .fr{grid-template-columns:64px minmax(0,1fr) auto}.fr .lane-tag{display:none}
+}
+</style>
+</head>
+<body>
+
+<p class="page-note"><span class="tag">Prototype</span><b>Slow call pop-up: Overview bar plus the new "Nearby activity" tab, in five layouts.</b> D and E are the timeline-chart ones; A, B, C are the earlier chart-lite, feed and grid versions. Use the pill at the bottom (or ← → keys) to flip between variants, and tell me which parts you want, for example "the bars from D with the overview strip from E". Numbers are invented; nothing is wired to the app.</p>
+
+<div class="popup" role="dialog" aria-label="Slow call">
+  <div class="popup-head">
+    <h2>Slow call</h2>
+    <div class="head-actions"><button class="btn" type="button">Open in Analysis</button><button class="btn" type="button">Close</button></div>
+  </div>
+  <div class="tabbar" role="tablist" aria-label="Call details">
+    <button class="tab" role="tab" id="t-overview" aria-selected="false" aria-controls="p-overview" type="button">Overview</button>
+    <button class="tab" role="tab" id="t-calls" aria-selected="false" aria-controls="p-calls" type="button">Nearby calls</button>
+    <button class="tab" role="tab" id="t-activity" aria-selected="true" aria-controls="p-activity" type="button">Nearby activity<span class="new">new</span></button>
+  </div>
+
+  <div class="body" role="tabpanel" id="p-overview" aria-labelledby="t-overview" hidden>
+    <section>
+      <h3>About this call</h3>
+      <dl class="facts">
+        <div><dt>Endpoint</dt><dd>Payroll / RunMonthly</dd></div>
+        <div><dt>Status code</dt><dd>200</dd></div>
+        <div><dt>Started</dt><dd>12 Nov 2026, 10:14:07</dd></div>
+        <div><dt>Total time</dt><dd>8.4 s</dd></div>
+      </dl>
+    </section>
+    <section>
+      <h3>Where the time went</h3>
+      <p class="hint">One bar is the whole call. Database, cache and outside web calls are not recorded per call yet, so they sit inside "Everything else".</p>
+      <div class="bar" role="img" aria-label="One bar showing the share of the call spent in filters and in everything else">
+        <span class="seg f" style="width:6%"></span><span class="seg o" style="width:94%"></span>
+      </div>
+      <ul class="rows">
+        <li><span class="sw f"></span>Filters<span class="v">520 ms</span><span class="pct">6%</span></li>
+        <li><span class="sw o"></span>Everything else<span class="v">7.9 s</span><span class="pct">94%</span></li>
+      </ul>
+    </section>
+    <p class="callout"><b>Tip:</b> to see what the database and the web server were doing around this call, open the <b>Nearby activity</b> tab.</p>
+  </div>
+
+  <div class="body" role="tabpanel" id="p-calls" aria-labelledby="t-calls" hidden>
+    <p class="hint">Unchanged from today: the other API calls from 10:00 to 10:30.</p>
+  </div>
+
+  <div class="body" role="tabpanel" id="p-activity" aria-labelledby="t-activity">
+    <section>
+      <h3>Nearby activity</h3>
+      <p class="hint">Everything recorded around this call: other API calls, the web server (IIS) and the database. Use it to spot a busy database, a burst of other calls, or web server errors at the same time.</p>
+      <div class="toolbar">
+        <div class="chips" role="group" aria-label="Show these sources">
+          <button class="chip" type="button" data-lane="api" aria-pressed="true"><span class="dot" style="background:var(--lane-audit)"></span>API calls</button>
+          <button class="chip" type="button" data-lane="iis" aria-pressed="true"><span class="dot" style="background:var(--lane-iis)"></span>Web server (IIS)</button>
+          <button class="chip" type="button" data-lane="sql" aria-pressed="true"><span class="dot" style="background:var(--lane-sql)"></span>Database</button>
+        </div>
+        <div class="seg-ctl" role="group" aria-label="Time around the call">
+          <button type="button" data-win="1" aria-pressed="false">±1 min</button>
+          <button type="button" data-win="5" aria-pressed="false">±5 min</button>
+          <button type="button" data-win="15" aria-pressed="true">±15 min</button>
+        </div>
+      </div>
+      <p class="vname" id="vname"></p>
+    </section>
+    <div id="viz"></div>
+    <p class="callout"><b>What this does not show:</b> which database statement belonged to this exact call. The database is read as a separate source, so these views show what was happening at the same time, not a proven cause.</p>
+  </div>
+</div>
+
+<div class="switcher" role="group" aria-label="Prototype variant (not part of the design)">
+  <button type="button" id="prev" aria-label="Previous variant">←</button>
+  <span id="vlabel"></span>
+  <button type="button" id="next" aria-label="Next variant">→</button>
+</div>
+
+<script>
+const BASE = 9*3600 + 59*60, CALL = 15, MIN = 31;
+const LANES = {
+  api: {name:'API calls', color:'var(--lane-audit)', tag:'API call', unit:'calls per minute'},
+  iis: {name:'Web server (IIS)', color:'var(--lane-iis)', tag:'Web server', unit:'response time'},
+  sql: {name:'Database', color:'var(--lane-sql)', tag:'Database', unit:'average statement time'}
+};
+const VARIANTS = [
+  {key:'A', win:15, name:'Stacked lanes', blurb:'Same time axis for every source, charts you can read at a glance, the events listed underneath.'},
+  {key:'B', win:15, name:'One feed', blurb:'No charts to decode: a thin activity strip, then everything that happened, grouped by minute, in time order.'},
+  {key:'C', win:15, name:'Minute grid', blurb:'A heat grid, one cell per minute per source. Click a minute to see exactly what happened in it.'},
+  {key:'D', win:1, name:'Trace timeline', blurb:'Every call, request and statement is a bar as long as it took, on one time axis. The shaded column is how long this call ran, so you see what overlapped it. Click any bar.'},
+  {key:'E', win:5, name:'Scrubber timeline', blurb:'The same lane charts as the main Timeline, with a small overview to move the window and a crosshair: hover to read any minute, click to pin it.'}
+];
+// invented data
+const series = {api:[], iis:[], sql:[], err:[]};
+for (let i = 0; i < MIN; i++) {
+  const d = i - CALL, n = (i*37) % 5;
+  series.api.push(Math.round(3 + n*0.6 + 9*Math.exp(-Math.pow(d/4, 2))));
+  series.iis.push(Math.round(600 + n*40 + 9000*Math.exp(-Math.pow(d/2.5, 2))));
+  series.sql.push(Math.round(300 + n*30 + 3000*Math.exp(-Math.pow(d/3, 2))));
+  series.err.push({14:2, 15:3, 16:1}[i] || 0);
+}
+const events = [
+  {t:260,  lane:'sql', text:'UPDATE Payroll.Run SET … (2 runs)', ms:900},
+  {t:402,  lane:'api', text:'Payroll / LoadEmployees · user 3', ms:1200},
+  {t:550,  lane:'iis', text:'GET /api/payroll/status · 200', ms:800},
+  {t:821,  lane:'sql', text:'UPDATE Payroll.Run SET … (3 runs)', ms:2100},
+  {t:892,  lane:'api', text:'Payroll / LoadEmployees · user 7', ms:1900},
+  {t:903,  lane:'iis', text:'POST /api/payroll/run · 502', ms:30000},
+  {t:907,  lane:'api', text:'This call · Payroll / RunMonthly', ms:8400, call:true},
+  {t:909,  lane:'sql', text:'SELECT … FROM Payroll.Slip JOIN … (41 runs)', ms:3600},
+  {t:912,  lane:'iis', text:'GET /api/payroll/status · 503', ms:12200},
+  {t:940,  lane:'api', text:'Payroll / RunMonthly · user 9', ms:5100},
+  {t:990,  lane:'api', text:'Payroll / RunMonthly · user 12', ms:7700},
+  {t:1022, lane:'sql', text:'EXEC Payroll.Recalc … (2 runs)', ms:1400},
+  {t:1040, lane:'iis', text:'POST /api/payroll/run · 504', ms:30000},
+  {t:1335, lane:'api', text:'Payroll / LoadEmployees · user 4', ms:1100},
+  {t:1550, lane:'sql', text:'SELECT … FROM Payroll.Slip (6 runs)', ms:700},
+  {t:884,  lane:'api', text:'Payroll / LoadEmployees · user 5', ms:2600},
+  {t:896,  lane:'sql', text:'SELECT … FROM Payroll.Emp (12 runs)', ms:1400},
+  {t:899,  lane:'api', text:'Payroll / RunMonthly · user 2', ms:3200},
+  {t:905,  lane:'sql', text:'UPDATE Payroll.Lock SET … (1 run)', ms:600},
+  {t:914,  lane:'sql', text:'EXEC Payroll.Recalc … (4 runs)', ms:2400},
+  {t:915,  lane:'api', text:'Payroll / LoadEmployees · user 8', ms:2100},
+  {t:921,  lane:'iis', text:'GET /api/payroll/status · 503', ms:9000},
+  {t:925,  lane:'api', text:'Payroll / RunMonthly · user 11', ms:4500}
+];
+events.sort((a, b) => a.t - b.t);
+events.forEach((e, i) => { e.id = i; });
+const st = {variant:'D', win:1, lanes:{api:true, iis:true, sql:true}, sel:CALL, center:CALL, selEv:null, pin:null, e:null};
+
+const pad = n => String(n).padStart(2, '0');
+const fmtT = t => { const s = BASE + t; return Math.floor(s/3600) + ':' + pad(Math.floor(s%3600/60)) + ':' + pad(s%60); };
+const fmtMin = i => fmtT(i*60).slice(0, -3);
+const fmtMs = ms => ms >= 1000 ? (ms/1000).toFixed(1) + ' s' : ms + ' ms';
+const minOf = e => Math.floor(e.t/60);
+const active = () => Object.keys(LANES).filter(k => st.lanes[k]);
+const rng = () => ({lo: CALL - st.win, hi: CALL + st.win, n: 2*st.win + 1});
+const inRange = e => { const {lo, hi} = rng(), m = minOf(e); return m >= lo && m <= hi && st.lanes[e.lane]; };
+const laneTag = k => `<span class="lane-tag"><i style="background:${LANES[k].color}"></i>${LANES[k].tag}</span>`;
+const legend = '<p class="legend"><span><i class="dia"></i>slowest call or statement</span><span>Red dashed line: this call</span></p>';
+
+function evTable(list) {
+  if (!list.length) return '<div class="empty">Nothing slow was recorded for these sources in this window.</div>';
+  return '<div class="scroll"><table><thead><tr><th>Time</th><th>Source</th><th>What</th><th style="text-align:right">Took</th></tr></thead><tbody>' +
+    list.map(e => `<tr class="${e.call ? 'this' : ''}"><td class="t">${fmtT(e.t)}</td><td>${laneTag(e.lane)}</td><td>${e.call ? '<b>' + e.text + '</b>' : e.text}</td><td class="d">${fmtMs(e.ms)}</td></tr>`).join('') +
+    '</tbody></table></div>';
+}
+
+/* ---------- Variant A: stacked lanes ---------- */
+function plot(k, lo, hi, n) {
+  const W = 600, H = 84, xs = i => (i - lo + 0.5)/n*W, s = series[k].slice(lo, hi + 1), mx = Math.max(...s);
+  let g = '';
+  if (k === 'api') {
+    const bw = W/n*0.7;
+    s.forEach((v, j) => { const h = v/mx*64; g += `<rect x="${xs(lo + j) - bw/2}" y="${H - h}" width="${bw}" height="${h}" fill="var(--lane-audit)" opacity=".55"/>`; });
+  } else {
+    g += `<polyline fill="none" stroke="${LANES[k].color}" stroke-width="1.6" vector-effect="non-scaling-stroke" points="${s.map((v, j) => xs(lo + j) + ',' + (H - 8 - v/mx*60)).join(' ')}"/>`;
+  }
+  if (k === 'iis') s.forEach((_, j) => { const e = series.err[lo + j]; if (e) g += `<rect x="${xs(lo + j) - 3}" y="${H - 3 - e*2}" width="6" height="${3 + e*2}" fill="var(--bad)"/>`; });
+  const top = s.indexOf(mx), cx = xs(lo + top);
+  g += `<path d="M${cx} 4 l6 6 -6 6 -6 -6z" fill="var(--bad)"/>`;
+  const inWin = CALL >= lo && CALL <= hi;
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${g}</svg>${inWin ? `<span class="centre" style="left:${(CALL - lo + 0.5)/n*100}%"></span>` : ''}`;
+}
+function ticks(lo, n) { let h = ''; for (let t = 0; t < 7; t++) h += `<span>${fmtMin(lo + Math.round(t*(n - 1)/6))}</span>`; return h; }
+function vA() {
+  const {lo, hi, n} = rng(), ks = active();
+  if (!ks.length) return '<div class="empty">Pick at least one source above.</div>';
+  return '<div class="lanes">' + ks.map(k => `<div class="lane"><div class="lane-label"><span><i class="k" style="background:${LANES[k].color}"></i>${LANES[k].name}</span><small>${LANES[k].unit}</small></div><div class="plot">${plot(k, lo, hi, n)}</div></div>`).join('') +
+    '</div><div class="axis"><span></span><div class="ticks">' + ticks(lo, n) + '</div></div>' + legend +
+    '<h3 style="margin:14px 0 6px">What happened, in time order</h3>' + evTable(events.filter(inRange));
+}
+
+/* ---------- Variant B: one feed ---------- */
+function vB() {
+  const {lo, hi, n} = rng(), ks = active();
+  if (!ks.length) return '<div class="empty">Pick at least one source above.</div>';
+  const mx = {}; ks.forEach(k => mx[k] = Math.max(...series[k]));
+  let cells = '';
+  for (let i = lo; i <= hi; i++) {
+    const v = ks.reduce((a, k) => a + series[k][i]/mx[k], 0)/ks.length;
+    cells += `<span class="cell ${i === CALL ? 'call' : ''}" style="height:${Math.round(8 + v*40)}px" title="${fmtMin(i)}"></span>`;
+  }
+  const groups = {};
+  events.filter(inRange).forEach(e => (groups[minOf(e)] = groups[minOf(e)] || []).push(e));
+  const mins = Object.keys(groups).map(Number).sort((a, b) => a - b);
+  const quiet = n - mins.length;
+  let feed = '';
+  mins.forEach(m => {
+    const sum = [];
+    if (st.lanes.api) sum.push(series.api[m] + ' API calls');
+    if (st.lanes.iis) sum.push('web server avg ' + fmtMs(series.iis[m]) + (series.err[m] ? ', ' + series.err[m] + ' errors' : ''));
+    if (st.lanes.sql) sum.push('database avg ' + fmtMs(series.sql[m]));
+    feed += `<div class="mh ${m === CALL ? 'call' : ''}">${fmtMin(m)}<span>${sum.join(' · ')}</span></div>` +
+      groups[m].map(e => `<div class="fr ${e.call ? 'this' : ''}"><span class="t">${fmtT(e.t)}</span>${laneTag(e.lane)}<span>${e.call ? '<b>' + e.text + '</b>' : e.text}</span><span class="d">${fmtMs(e.ms)}</span></div>`).join('');
+  });
+  return '<div class="strip" aria-label="Activity per minute, this call in red">' + cells + '</div><div class="strip-axis">' +
+    ticks(lo, n) + '</div>' +
+    '<p class="hint" style="margin:10px 0 6px">Taller bar = busier minute across the sources you picked. ' + quiet + ' quiet minute' + (quiet === 1 ? '' : 's') + ' with nothing slow are hidden below.</p>' +
+    (mins.length ? '<div class="feed">' + feed + '</div>' : '<div class="empty">Nothing slow was recorded for these sources in this window.</div>');
+}
+
+/* ---------- Variant C: minute grid ---------- */
+function vC() {
+  const {lo, hi, n} = rng(), ks = active();
+  if (!ks.length) return '<div class="empty">Pick at least one source above.</div>';
+  if (st.sel < lo || st.sel > hi) st.sel = CALL;
+  let h = '<div class="grid-wrap">';
+  ks.forEach(k => {
+    const mx = Math.max(...series[k]);
+    let cells = '';
+    for (let i = lo; i <= hi; i++) {
+      const pct = Math.round(10 + series[k][i]/mx*80);
+      cells += `<button type="button" class="hm ${i === CALL ? 'call' : ''}" data-min="${i}" aria-pressed="${i === st.sel}" aria-label="${LANES[k].name} at ${fmtMin(i)}" title="${fmtMin(i)}" style="background:color-mix(in srgb,${LANES[k].color} ${pct}%,var(--surface))"></button>`;
+    }
+    h += `<div class="grow"><div class="nm">${LANES[k].name}<small>${LANES[k].unit}</small></div><div class="cells" style="grid-template-columns:repeat(${n},1fr)">${cells}</div></div>`;
+  });
+  h += '<div class="grid-axis"><span></span><div class="ticks">' + ticks(lo, n) + '</div></div>' +
+    '<div class="ramp"><span>quiet</span><i></i><span>busy</span><span style="margin-left:12px">Red triangle: this call</span></div></div>';
+  const m = st.sel, sum = [];
+  if (st.lanes.api) sum.push(`<span>API calls <b>${series.api[m]}</b></span>`);
+  if (st.lanes.iis) sum.push(`<span>Web server avg <b>${fmtMs(series.iis[m])}</b></span><span>errors <b>${series.err[m]}</b></span>`);
+  if (st.lanes.sql) sum.push(`<span>Database avg <b>${fmtMs(series.sql[m])}</b></span>`);
+  const list = events.filter(e => minOf(e) === m && st.lanes[e.lane]);
+  h += `<div class="detail" style="margin-top:12px"><h4>Minute ${fmtMin(m)} to ${fmtMin(m + 1)}${m === CALL ? ' (this call)' : ''}</h4><div class="sumline">${sum.join('')}</div>` +
+    (list.length ? evTable(list) : '<div class="empty">Nothing slow was recorded in this minute. The numbers above still count every call.</div>') + '</div>';
+  return h;
+}
+
+/* ---------- Variant D: trace timeline ---------- */
+function vD() {
+  const {lo, hi} = rng(), ks = active();
+  if (!ks.length) return '<div class="empty">Pick at least one source above.</div>';
+  const T0 = lo*60, T1 = (hi + 1)*60, span = T1 - T0, minW = span*0.007;
+  const call = events.find(e => e.call), cs = call.t, ce = call.t + call.ms/1000;
+  const end = e => e.t + e.ms/1000;
+  const vis = e => end(e) >= T0 && e.t <= T1;
+  const pct = t => (Math.max(T0, Math.min(T1, t)) - T0)/span*100;
+  if (st.selEv === null || !events[st.selEv]) st.selEv = call.id;
+  let h = '<div class="gantt">';
+  ks.forEach(k => {
+    const list = events.filter(e => e.lane === k && vis(e)), rowEnd = [];
+    const placed = list.map(e => {
+      let r = rowEnd.findIndex(x => x <= e.t); if (r < 0) { r = rowEnd.length; rowEnd.push(0); }
+      rowEnd[r] = Math.max(end(e), e.t + minW) + span*0.004; return {e, r};
+    });
+    const rows = Math.max(1, rowEnd.length);
+    const bars = placed.map(({e, r}) => {
+      const l = pct(e.t), w = Math.max(pct(end(e)) - l, 0.5);
+      return `<button type="button" class="g-bar ${e.call ? 'this' : ''}" data-ev="${e.id}" aria-pressed="${e.id === st.selEv}" aria-label="${LANES[k].tag}: ${e.text}, ${fmtMs(e.ms)}" title="${fmtT(e.t)} · ${e.text} · ${fmtMs(e.ms)}" style="left:${l}%;width:${w}%;top:${8 + r*26}px;background:${LANES[k].color}"></button>`;
+    }).join('');
+    h += `<div class="g-lane"><div class="lane-label"><span><i class="k" style="background:${LANES[k].color}"></i>${LANES[k].name}</span><small>${list.length ? list.length + ' in this window' : 'nothing slow here'}</small></div>` +
+      `<div class="g-track" style="height:${rows*26 + 14}px"><span class="g-band" style="left:${pct(cs)}%;width:${Math.max(pct(ce) - pct(cs), 0.4)}%"></span>${bars}</div></div>`;
+  });
+  h += '</div><div class="axis"><span></span><div class="dticks">';
+  for (let i = 0; i <= 6; i++) { const t = Math.round(T0 + span*i/6); h += `<span style="left:${i/6*100}%">${span >= 600 ? fmtT(t).slice(0, -3) : fmtT(t)}</span>`; }
+  h += '</div></div><p class="legend"><span>Bar length = how long it took</span><span>Shaded column = while this call was running</span><span>Red outline = this call</span></p>';
+  const s = events[st.selEv], over = events.filter(e => !e.call && st.lanes[e.lane] && e.t < ce && end(e) > cs);
+  let rel;
+  if (s.call) rel = over.length ? `While it ran (${fmtT(cs)} to ${fmtT(Math.round(ce))}), ${over.length} other thing${over.length === 1 ? ' was' : 's were'} also running:` : 'Nothing else slow was running while this call ran.';
+  else if (s.t < ce && end(s) > cs) rel = 'This overlapped this call.';
+  else rel = s.t >= ce ? `Started ${Math.round(s.t - ce)} s after this call finished.` : `Finished ${Math.round(cs - end(s))} s before this call started.`;
+  h += `<div class="dbox"><h4>${s.call ? '<b>' + s.text + '</b>' : s.text}</h4><div class="sumline"><span>${laneTag(s.lane)}</span><span>Started <b>${fmtT(s.t)}</b></span><span>Took <b>${fmtMs(s.ms)}</b></span><span>Ended <b>${fmtT(Math.round(end(s)))}</b></span></div><p class="hint" style="margin:0">${rel}</p>` +
+    (s.call && over.length ? evTable(over) : '') + '</div>';
+  return h;
+}
+
+/* ---------- Variant E: scrubber timeline ---------- */
+function eRange() { const w = st.win, c = Math.max(w, Math.min(MIN - 1 - w, st.center)); return {c, lo: c - w, hi: c + w, n: 2*w + 1}; }
+function readoutHtml(m, note) {
+  const sum = [];
+  if (st.lanes.api) sum.push(`<span>API calls <b>${series.api[m]}</b></span>`);
+  if (st.lanes.iis) sum.push(`<span>Web server avg <b>${fmtMs(series.iis[m])}</b></span><span>errors <b>${series.err[m]}</b></span>`);
+  if (st.lanes.sql) sum.push(`<span>Database avg <b>${fmtMs(series.sql[m])}</b></span>`);
+  const list = events.filter(e => minOf(e) === m && st.lanes[e.lane]);
+  return `<b>${fmtMin(m)} to ${fmtMin(m + 1)}${m === CALL ? ' (this call)' : ''}</b> <span class="hint">${note}</span><div class="sumline">${sum.join('')}</div>` +
+    (list.length ? list.map(e => `<div class="ev"><span class="t">${fmtT(e.t)}</span>${laneTag(e.lane)}<span>${e.call ? '<b>' + e.text + '</b>' : e.text}</span><span class="d">${fmtMs(e.ms)}</span></div>`).join('') : '<span class="hint">Nothing slow was recorded in this minute.</span>');
+}
+function vE() {
+  const ks = active();
+  if (!ks.length) return '<div class="empty">Pick at least one source above.</div>';
+  const {lo, hi, n} = eRange();
+  const tot = i => ks.reduce((a, k) => a + series[k][i]/Math.max(...series[k]), 0)/ks.length;
+  let ov = '';
+  for (let i = 0; i < MIN; i++) ov += `<button type="button" data-c="${i}" class="${i === CALL ? 'call' : ''}" style="height:${Math.round(6 + tot(i)*34)}px" aria-label="Move the window to ${fmtMin(i)}" title="${fmtMin(i)}"></button>`;
+  let h = `<p class="hint" style="margin:0 0 6px">Whole half hour. Click anywhere to move the window below.</p><div class="ov">${ov}<span class="ov-win" style="left:${lo/MIN*100}%;width:${n/MIN*100}%"></span></div><div class="strip-axis">${ticks(0, MIN)}</div>`;
+  h += '<div class="lanes" id="elanes" style="margin-top:12px">' + ks.map(k => `<div class="lane"><div class="lane-label"><span><i class="k" style="background:${LANES[k].color}"></i>${LANES[k].name}</span><small>${LANES[k].unit}</small></div><div class="plot">${plot(k, lo, hi, n)}<span class="xh"></span></div></div>`).join('') + '</div>';
+  h += '<div class="axis"><span></span><div class="ticks">' + ticks(lo, n) + '</div></div>' + legend;
+  const m = st.pin !== null && st.pin >= lo && st.pin <= hi ? st.pin : (CALL >= lo && CALL <= hi ? CALL : eRange().c);
+  h += `<div class="readout" id="readout" aria-live="polite">${readoutHtml(m, st.pin !== null ? 'pinned, click the chart again to unpin' : 'hover a minute to read it, click to pin')}</div>`;
+  return h;
+}
+function ePos(ev) {
+  const p = document.querySelector('#elanes .plot'); if (!p) return null;
+  const r = p.getBoundingClientRect(), f = (ev.clientX - r.left)/r.width; if (f < 0 || f > 1) return null;
+  const {lo, n} = eRange(); return lo + Math.min(n - 1, Math.floor(f*n));
+}
+function eShowX(m, pin) {
+  const {lo, n} = eRange();
+  document.querySelectorAll('#elanes .xh').forEach(x => { x.style.display = m === null ? 'none' : 'block'; x.classList.toggle('pin', !!pin); if (m !== null) x.style.left = (m - lo + 0.5)/n*100 + '%'; });
+}
+
+/* ---------- wiring ---------- */
+function render() {
+  const v = VARIANTS.find(x => x.key === st.variant);
+  document.getElementById('vlabel').textContent = v.key + ' (' + v.name + ')';
+  document.getElementById('vname').innerHTML = '<b>Variant ' + v.key + ', ' + v.name + ':</b> ' + v.blurb;
+  document.getElementById('viz').innerHTML = {A:vA, B:vB, C:vC, D:vD, E:vE}[v.key]();
+  if (v.key === 'E' && st.pin !== null) { const {lo, hi} = eRange(); if (st.pin >= lo && st.pin <= hi) eShowX(st.pin, true); }
+}
+function syncWin() { document.querySelectorAll('.seg-ctl button').forEach(x => x.setAttribute('aria-pressed', String(Number(x.dataset.win) === st.win))); }
+const tabs = [...document.querySelectorAll('.tab')];
+function showTab(id) { tabs.forEach(t => { const on = t.id === id; t.setAttribute('aria-selected', String(on)); document.getElementById(t.getAttribute('aria-controls')).hidden = !on; }); }
+function setVariant(k, fromUser) {
+  st.variant = k; st.win = VARIANTS.find(x => x.key === k).win; st.center = CALL; st.pin = null; st.selEv = null; syncWin();
+  if (fromUser) showTab('t-activity');
+  try { const u = new URL(location.href); u.searchParams.set('variant', k); history.replaceState(null, '', u); } catch (e) {}
+  render();
+}
+function cycle(d) { const i = VARIANTS.findIndex(x => x.key === st.variant); setVariant(VARIANTS[(i + d + VARIANTS.length) % VARIANTS.length].key, true); }
+tabs.forEach(t => t.addEventListener('click', () => showTab(t.id)));
+document.getElementById('prev').addEventListener('click', () => cycle(-1));
+document.getElementById('next').addEventListener('click', () => cycle(1));
+document.addEventListener('keydown', e => {
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) return;
+  if (e.key === 'ArrowLeft') cycle(-1); else if (e.key === 'ArrowRight') cycle(1);
+});
+document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
+  st.lanes[c.dataset.lane] = c.getAttribute('aria-pressed') !== 'true';
+  c.setAttribute('aria-pressed', String(st.lanes[c.dataset.lane])); render();
+}));
+document.querySelectorAll('.seg-ctl button').forEach(b => b.addEventListener('click', () => {
+  st.win = Number(b.dataset.win); syncWin(); render();
+}));
+const viz = document.getElementById('viz');
+viz.addEventListener('click', e => {
+  const hm = e.target.closest('.hm'); if (hm) { st.sel = Number(hm.dataset.min); render(); return; }
+  const gb = e.target.closest('.g-bar'); if (gb) { st.selEv = Number(gb.dataset.ev); render(); return; }
+  const ob = e.target.closest('.ov button'); if (ob) { st.center = Number(ob.dataset.c); st.pin = null; render(); return; }
+  if (e.target.closest('#elanes')) { const m = ePos(e); if (m === null) return; st.pin = st.pin === m ? null : m; render(); }
+});
+viz.addEventListener('mousemove', e => {
+  if (st.variant !== 'E' || !e.target.closest('#elanes')) return;
+  const m = ePos(e), ro = document.getElementById('readout'); if (m === null || !ro) return;
+  eShowX(m, false); ro.innerHTML = readoutHtml(m, st.pin !== null && st.pin === m ? 'pinned, click the chart again to unpin' : 'hover a minute to read it, click to pin');
+});
+viz.addEventListener('mouseleave', () => { if (st.variant === 'E') render(); });
+let q = null; try { q = new URLSearchParams(location.search).get('variant'); } catch (e) {}
+setVariant(VARIANTS.some(v => v.key === q) ? q : 'D', false);
+</script>
+</body>
+</html>

@@ -90,8 +90,8 @@ test('bars are exactly the returned buckets', () => {
   ];
   const bars = barsFor(g, buckets);
   assert.deepEqual(bars.map((b) => b.index), [7, 8]);
-  assert.deepEqual(bars[0], { index: 7, count: 4, errors: 1 });
-  assert.deepEqual(bars[1], { index: 8, count: 2, errors: 0 });
+  assert.deepEqual(bars[0], { index: 7, count: 4, errors: 1, clientErrors: 0 });
+  assert.deepEqual(bars[1], { index: 8, count: 2, errors: 0, clientErrors: 0 });
 
   // An empty slot (index 9, say) gets no bar.
   assert.equal(bars.some((b) => b.index === 9), false);
@@ -101,7 +101,7 @@ test('bars are exactly the returned buckets', () => {
     { start: '2026-10-01T10:07:00Z', count: 3, errors: 1 },
     { start: '2026-10-01T10:07:40Z', count: 2, errors: 1 }
   ]);
-  assert.deepEqual(combined, [{ index: 7, count: 5, errors: 2 }]);
+  assert.deepEqual(combined, [{ index: 7, count: 5, errors: 2, clientErrors: 0 }]);
 
   assert.equal(barMax([]), 0);
   assert.equal(barMax(bars), 4);
@@ -244,6 +244,13 @@ test('lane rules shared by chart and tooltip', () => {
   assert.equal(laneStatusLine(laneOf()), '');
 });
 
+test('a none-seen lane shows its reason when it has one, else "No events in this period" (DATA-09)', () => {
+  const why = 'Query Store is switched off on this database, so it saved no history.';
+  assert.equal(laneStatusLine(laneOf({ key: 'sql', state: 'none-seen', reasonCode: 'qs-off', reason: why })), why);
+  assert.equal(laneStatusLine(laneOf({ key: 'sql', state: 'none-seen', reasonCode: '', reason: '' })), NO_EVENTS_PERIOD);
+  assert.equal(laneStatusLine(laneOf({ key: 'sql', state: 'none-seen' })), NO_EVENTS_PERIOD);
+});
+
 test('no provenance line for a lane with no file (UI-R1-08)', () => {
   assert.equal(showsProvenance(laneOf({ state: 'no-data' })), false);
   for (const state of ['events', 'none-seen', 'incomplete', 'out-of-range', 'clock-unchecked']) assert.equal(showsProvenance(laneOf({ state })), true);
@@ -290,7 +297,7 @@ test('Escape during a brush drag drops the selection and swallows the click that
   const body = src.slice(start, src.indexOf('function onOverlayClick'));
   assert.match(body, /dragFrom = null;\s*dragTo = null;\s*suppressClick = true;/);
   assert.match(src, /event\.key === 'Escape' && dragFrom != null\) \{ event\.preventDefault\(\); event\.stopPropagation\(\); cancelDrag\(\)/);
-  assert.match(src, /<svelte:window onkeydown=\{onWindowKey\} \/>/);
+  assert.match(src, /<svelte:window onkeydown=\{onWindowKey\} onkeydowncapture=\{onWindowKeyCapture\} \/>/);
   // The drag branch comes before the tooltip branch, so one Escape does one thing.
   assert.ok(src.indexOf("event.key === 'Escape' && dragFrom != null") < src.indexOf("event.key === 'Escape' && tipSlot != null"));
 });
@@ -317,12 +324,14 @@ test('the error overlay differs from the bar by pattern and by at least 3:1 ligh
   const src = read('src/components/TracingChart.svelte');
   const rule = src.slice(src.indexOf('.bar-err {'), src.indexOf('}', src.indexOf('.bar-err {')));
   assert.match(rule, /repeating-linear-gradient\([^)]*var\(--bad\)[^)]*var\(--bg\)/);
-  assert.equal(PANEL_TITLE.iis, 'Web-server requests (errors shown striped)');
+  assert.equal(PANEL_TITLE.iis, 'Web-server requests and how slow they were');
 });
 
 test('the lane heads are not tab stops and keep a name (UI-R2-07)', () => {
   const src = read('src/components/TracingChart.svelte');
-  assert.match(src, /<div class="lane-label" role="group" aria-label=\{LANE_NAME\[lane\.key\]\} aria-describedby="tc-hint-\{lane\.key\}"/);
+  assert.match(src, /<div class="lane-label" role="group" aria-label=\{LANE_NAME\[lane\.key\]\} data-hint-closed=/);
+  // The "?" button inside the head is the one tab stop; it carries the description.
+  assert.match(src, /<button type="button" class="hint-btn" aria-label="\{LANE_NAME\[lane\.key\]\}: what this row shows" aria-describedby="tc-hint-\{lane\.key\}">\?<\/button>/);
   assert.doesNotMatch(src, /lane-label[^\n]*tabindex/);
 });
 
@@ -368,4 +377,55 @@ test('the chart toolbar and hint are hidden while there is nothing to show (UI-R
 test('the SQL panel title claims only slow calls, because SQL data carries no errors (UI-R3-01)', () => {
   assert.equal(PANEL_TITLE.sql, 'Slow database calls (over 1 s)');
   assert.doesNotMatch(PANEL_TITLE.sql, /failed/i);
+});
+
+// ---- IIS lane: refused (4xx) counts and response times
+
+test('the wire keeps a positive clientErrors on a bucket and drops zero or junk', () => {
+  const { parseTracing } = loadTypeScript('src/lib/tracing/model.ts');
+  const b = (extra) => ({ start: '2026-10-01T10:00:00Z', end: '2026-10-01T10:01:00Z', count: 5, complete: true, ...extra });
+  const raw = {
+    window: { start: '2026-10-01T10:00:00Z', end: '2026-10-01T11:00:00Z', axisStart: '2026-10-01T10:00:00Z', axisEnd: '2026-10-01T11:00:00Z', bucketSeconds: 60 },
+    lanes: [{ key: 'iis', label: 'IIS', state: 'events', reason: '', origin: 'stored', asOf: '', consistency: 'stored', complete: true, truncated: false, scanned: 1, hidden: 0, sources: [],
+      buckets: [b({ clientErrors: 3 }), b({ clientErrors: 0 }), b({ clientErrors: 'x' })] }],
+    sources: []
+  };
+  const [x, y, z] = parseTracing(raw).lanes[0].buckets;
+  assert.equal(x.clientErrors, 3);
+  assert.equal('clientErrors' in y, false);
+  assert.equal('clientErrors' in z, false);
+});
+
+test('barsFor adds up clientErrors of buckets that share a cell', () => {
+  const g = slotGrid(window({ axisStart: '2026-10-01T10:00:00Z', axisEnd: '2026-10-01T12:00:00Z', bucketSeconds: 60 }));
+  const bars = barsFor(g, [
+    { start: '2026-10-01T10:07:00Z', count: 3, errors: 0, clientErrors: 2 },
+    { start: '2026-10-01T10:07:40Z', count: 2, errors: 0, clientErrors: 1 }
+  ]);
+  assert.equal(bars.length, 1);
+  assert.equal(bars[0].clientErrors, 3);
+});
+
+test('the IIS tooltip names the refused requests, and says nothing when there are none', () => {
+  const { barTipLines } = loadTypeScript('src/lib/tracing/tooltip.ts');
+  const input = { key: 'iis', startText: '21 Oct 10:00', endText: '21 Oct 10:05 UTC', zoneName: 'UTC', count: 40, errors: 0, origin: 'case', asOfText: '', note: '' };
+  const withRefused = barTipLines({ ...input, clientErrors: 7 });
+  assert.ok(withRefused.includes('7 refused or not found (4xx)'));
+  assert.ok(!barTipLines({ ...input, clientErrors: 0 }).some((l) => l.includes('4xx')));
+  assert.ok(!barTipLines({ ...input, key: 'audit', clientErrors: 7 }).some((l) => l.includes('refused or not found')));
+});
+
+test('an IIS lane with response times gets a hero layer, and one without gets none', () => {
+  const { heroLayout } = loadTypeScript('src/lib/tracing/auditHero.ts');
+  const g = slotGrid(window({ axisStart: '2026-10-01T10:00:00Z', axisEnd: '2026-10-01T10:10:00Z', bucketSeconds: 60 }));
+  const timed = [{ start: '2026-10-01T10:02:00Z', count: 9, errors: 0, timedCount: 9, p50Ms: 80, p95Ms: 4000, maxMs: 9000 }];
+  const layout = heroLayout(timed, g, { from: 0, to: 10 }, 'p95');
+  assert.ok(layout.maxMs > 0);
+  assert.equal(layout.dots.length, 1);
+  const plain = heroLayout([{ start: '2026-10-01T10:02:00Z', count: 9, errors: 0 }], g, { from: 0, to: 10 }, 'p95');
+  assert.equal(plain.maxMs, 0);
+});
+
+test('the web-server panel title says requests and how slow they were', () => {
+  assert.equal(PANEL_TITLE.iis, 'Web-server requests and how slow they were');
 });

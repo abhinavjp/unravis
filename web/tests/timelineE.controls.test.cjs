@@ -80,7 +80,7 @@ test('one controls card holds the quick range, both windows, the UTC readout, th
   const close = paper.indexOf('</section>', open);
   assert.ok(open > 0 && close > open);
   const card = paper.slice(open, close);
-  for (const needle of ['data-region="windows"', 'tp-quick-row', 'data-testid="tp-metaline"', 'utc-echo-incident', 'utc-echo-reference', 'data-region="sources"', '<TraceSources', 'WINDOW_TEXT.addEvidence', 'WINDOW_TEXT.refresh', 'trctl-notices', 'tp-problems']) {
+  for (const needle of ['data-region="windows"', 'tp-quick-row', 'data-testid="tp-metaline"', 'utc-echo-incident', 'utc-echo-reference', 'data-region="sources"', '<TraceSources', 'WINDOW_TEXT.addEvidence', 'WINDOW_TEXT.startTracing', 'trctl-notices', 'tp-problems']) {
     assert.ok(card.includes(needle), 'the card must hold ' + needle);
   }
   assert.ok(card.indexOf('tp-metaline') < card.indexOf('data-region="sources"'), 'the readout sits under the windows, above the sources row');

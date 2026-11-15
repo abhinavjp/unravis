@@ -522,3 +522,103 @@ func TestDemoWithStaleWorkReportsCompletionTalliesAndKeepsTheBaseDemoClean(t *te
 		t.Fatalf("List completion share = %v, want 1 (invalid excluded)", list.CompletionShare)
 	}
 }
+
+func TestDemoListRowsCarryLightTotalsOrNone(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	d := NewDemo(now).(*demoRepository)
+	rows := pageAllDemoRequests(t, d, demoQuery(now))
+	var withBlock, without *RequestRecord
+	for i := range rows {
+		if rows[i].Light != nil && withBlock == nil {
+			withBlock = &rows[i]
+		}
+		if rows[i].Light == nil && without == nil {
+			without = &rows[i]
+		}
+	}
+	if withBlock == nil || without == nil {
+		t.Fatalf("want rows with and without a light block, got with=%v without=%v", withBlock != nil, without != nil)
+	}
+	detail, err := d.Record(context.Background(), RecordInput{ID: withBlock.ID, SourceID: withBlock.SourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Perf == nil || detail.Perf.SQLMs == nil || withBlock.Light.SQLMs == nil || *withBlock.Light.SQLMs != *detail.Perf.SQLMs {
+		t.Fatalf("light.sqlMs of %s does not match the detail perf block", withBlock.ID)
+	}
+	if *withBlock.Light.RedisMs != *detail.Perf.RedisMs || *withBlock.Light.HTTPMs != *detail.Perf.HTTPMs {
+		t.Fatalf("light redis or http of %s does not match the detail perf block", withBlock.ID)
+	}
+	raw, err := json.Marshal(without)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"light"`) {
+		t.Fatalf("a row without the block must not carry a light key: %s", raw)
+	}
+	raw, err = json.Marshal(withBlock)
+	if err != nil || !strings.Contains(string(raw), `"light":{"sqlMs":`) {
+		t.Fatalf("a row with the block must carry it: %v %s", err, raw)
+	}
+}
+
+func TestDemoLightIsNilForEverySeventhRowAndWhenPerfIsNil(t *testing.T) {
+	d := NewDemo(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)).(*demoRepository)
+	sawSeventh := false
+	for i, r := range d.records {
+		light := demoLight(r, i)
+		if i%7 == 6 {
+			sawSeventh = true
+			if light != nil {
+				t.Fatalf("row %d is every seventh and must have no light block", i)
+			}
+			continue
+		}
+		if (demoPerf(r, i) == nil) != (light == nil) {
+			t.Fatalf("row %d: light block must be absent exactly when perf is absent", i)
+		}
+	}
+	if !sawSeventh {
+		t.Fatal("demo has fewer than seven records")
+	}
+}
+
+func checkLightRows(t *testing.T, name string, rows []RequestRecord) {
+	t.Helper()
+	var with, without *RequestRecord
+	for i := range rows {
+		if rows[i].Light != nil && with == nil {
+			with = &rows[i]
+		}
+		if rows[i].Light == nil && without == nil {
+			without = &rows[i]
+		}
+	}
+	if with == nil || without == nil {
+		t.Fatalf("%s: want rows with and without a light block, got with=%v without=%v", name, with != nil, without != nil)
+	}
+	raw, err := json.Marshal(without)
+	if err != nil || strings.Contains(string(raw), `"light"`) {
+		t.Fatalf("%s: a row without the block must not carry a light key: %v %s", name, err, raw)
+	}
+	raw, err = json.Marshal(with)
+	if err != nil || !strings.Contains(string(raw), `"light":{"sqlMs":`) {
+		t.Fatalf("%s: a row with the block must carry it: %v %s", name, err, raw)
+	}
+}
+
+func TestDemoActivityAndSlowestRowsCarryLightTotalsOrNone(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	d := NewDemo(now).(*demoRepository)
+	q := demoQuery(now)
+	activity, err := d.Activity(context.Background(), ActivityInput{SourceIDs: q.SourceIDs, Start: q.Start, End: q.End, Limit: MaxPageSize})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkLightRows(t, "activity", activity.Rows)
+	slowest, err := d.Slowest(context.Background(), PageInput{Query: demoSlowQuery(), Limit: MaxSlowestPageSize})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkLightRows(t, "slowest", slowest.Rows)
+}

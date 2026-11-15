@@ -160,7 +160,7 @@ test('only the timeline gets the wide column and the note banner has the amber e
   const home = read('src/lib/components/CaseHome.svelte');
   assert.match(home, /<div class="case-home" class:wide=\{timelineShown\}>/);
   assert.match(home, /\.case-home \{[^}]*max-width: 880px/);
-  assert.match(home, /\.case-home\.wide \{ max-width: 1232px; \}/);
+  assert.match(home, /\.case-home\.wide \{ max-width: 1480px; \}/);
   const chart = read('src/components/TracingChart.svelte');
   const notice = chart.split('\n').find((row) => row.trim().startsWith('.notice {'));
   assert.ok(notice);

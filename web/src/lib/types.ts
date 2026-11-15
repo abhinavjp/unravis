@@ -173,12 +173,14 @@ export interface RequestRecord {
   /** Additive audit-evidence columns: absent from older servers and when the stored field is empty. */
   userId?: number; userIp?: string; userAgent?: string; uiVersion?: string;
   createdOn?: string; updatedOn?: string; pollingTypeRaw?: string;
+  /** Per-call time totals, when the audit record stores them. null or missing = not recorded. */
+  light?: { sqlMs: number | null; redisMs: number | null; httpMs: number | null } | null;
 }
 export interface Page { rows: RequestRecord[]; nextCursor: string; sources: SourceResult[]; truncated: boolean; /** Additive: absent from older servers. */ provenance?: Provenance[] }
 export interface Payload { request: string; response: string; truncated: boolean }
 /** One record with every schema field, its derived kind/state/outcome, and capped payloads. */
 export interface RecordDetail extends RequestRecord { state: string; pendingAsync?: boolean; payload: Payload }
-export interface ActivityInput { sourceIds: string[]; start: string; end: string; cursor: string; limit: number }
+export interface ActivityInput { sourceIds: string[]; start: string; end: string; cursor: string; limit: number; userId?: number; operation?: string }
 export interface VolumeBucket { controller: string; action: string; at: string; count: number }
 export interface LoadWindow { at:string; count:number; timing:Stats }
 export type BreakdownDim = 'statusCode' | 'userId' | 'uiVersion' | 'userAgent' | 'userIp' | 'pollingType' | 'hourOfDay' | 'requestSizeBucket';

@@ -1,0 +1,23 @@
+# Binary assets — never normalise line endings or diff.
+# Text files keep the repository's existing checkout behaviour (core.autocrlf);
+# the web test helpers normalise CRLF->LF at their read point, so they pass on
+# both a CRLF (windows CI) and an LF checkout. Do not add a global text/eol rule:
+# the help/guide content is deliberately CRLF and its tests assert that.
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.otf binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.wasm binary
+*.pdf binary
+*.bin binary
+*.dat binary

@@ -14,6 +14,10 @@ type latencyAcc struct {
 	bins     map[int]int64
 	min, max float64
 	n        int64
+	// sum is the summed duration in milliseconds of the timed calls added so
+	// far; hasSum says at least one timed bin was added.
+	sum    float64
+	hasSum bool
 }
 
 // add merges one slot's bins. A bin with no count or a negative index adds
@@ -34,7 +38,20 @@ func (a *latencyAcc) add(bins []audit.RollupWireBin) {
 			a.max = b.Max
 		}
 		a.n += b.Count
+		a.sum += b.Sum
+		a.hasSum = true
 	}
+}
+
+// busy is the summed duration in milliseconds of the timed calls, rounded to 3
+// decimals like the other figures. It is nil when no timed call was added: a
+// missing number is never a stand-in zero.
+func (a *latencyAcc) busy() *float64 {
+	if !a.hasSum {
+		return nil
+	}
+	r := math.Round(a.sum*1000) / 1000
+	return &r
 }
 
 // quantile is the nearest-rank quantile by bin, the rule dayHist.quantile

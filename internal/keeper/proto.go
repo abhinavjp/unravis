@@ -134,6 +134,7 @@ const (
 	OpAuditSlowest   = "audit.slowest"
 	OpAuditRollup    = "audit.rollup"
 	OpAuditSchema    = "audit.schema"
+	OpAuditFields    = "audit.fields"
 )
 
 // ReservedPrefixP14b is the namespace of the MongoDB audit data plane (P14b).

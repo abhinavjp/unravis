@@ -1,0 +1,21 @@
+# RB-1 round 1: Models and copy
+Reviewed: P-02 P-03 P-04 P-05 P-06 P-07 P-08 P-09 P-10 P-11 P-12   Diff: git diff -- web/src/lib/screenFlow.ts web/src/lib/tracing/model.ts web/src/lib/types.ts web/src/lib/lanes.ts + untracked web/src/lib/drill/*, web/tests/slowcall.*, drill.copy (11 test files run: 118 pass, 0 fail)
+
+F-01 | P-05 | minor | confidence medium | web/src/lib/drill/callWindow.ts:58 | clampShift only runs on a step; after a preset change a shift of +50 min with a new +-30 window is out of range, and canStep(+1) is true because stepWindow(+1) clamps the shift DOWN to +30 (Later moves the window earlier) | in stepWindow/canStep return the unchanged window when the clamped shift moves against dir; export a clampWindow(w) for the controller to call when before/after change
+F-02 | P-10 | minor | confidence medium | web/src/lib/drill/callReadout.ts:88,95 | key `api:${row.id}` and `thisCall: row.id === input.callId` ignore sourceId; two sources with the same record id collapse into one row or both get "(this call)" | add sourceId to apiRows and callId match (as isThisCall in nearbyCalls does) and to the key
+F-03 | P-10 | minor | confidence medium | web/src/lib/drill/callReadout.ts:129 | an event with an empty evidenceId (callData.ts text() gives '') gets key `db:sql-xe:` so all such events collapse to one | fall back to source+kind+startMs in the key when evidenceId is empty
+F-04 | P-08 | nit | confidence high | web/src/lib/drill/nearbyCalls.ts:112 | a row 1 to 499 ms outside the call rounds to "+0 s" or "−0 s" | show "+<1 s" / "−<1 s" (or treat under 1 s as "during"/"this call")
+F-05 | P-08 | nit | confidence medium | web/src/lib/drill/nearbyCalls.ts:108 | gapLabel finds the call's own row by equal start ms, so another call that started in the same millisecond is also labelled "this call" | have the caller use isThisCall first and pass a flag (keep the ms test only as a fallback)
+F-06 | P-06 | minor | confidence low | web/src/lib/drill/callLanes.ts:86 | a Query Store block bucket that starts before fromMs is put in a cell outside the range, so the first partial block of the window is drawn as "not recorded" even though data exists | when blockSeconds is set, map each cell to the bucket that contains it, not only the one starting in it (needs the server to send block-wide buckets; check P-14/P-16 output)
+F-07 | P-04 | nit | confidence low | web/src/lib/drill/callTarget.ts:41 | makeCallTarget does not apply the 200-char id limit that parseCallTarget enforces, so a long source id is stored but the reload parse returns null | filter or refuse ids longer than 200 chars in makeCallTarget
+
+Rulings on implementer choices:
+(1) gapLabel own-row by start ms, gap from nearest edge: OK for the edge measure (matches the wireframe wording); the ms test alone is weak, see F-05 (nit).
+(2) callInside any overlap: OK. Matches the legend "This call is outside the window" and the test (false after two steps of +-5).
+(3) dbState `unknown` follows the data: OK. Never invents a state; ends at "the database was not read"; test at slowcall.dbstate.test.cjs:155 pins it.
+(4) point event whose end <= start has no end: OK. callReadout.ts keeps the event as a marker unless durationMs > 0.
+
+Checked, no finding: null stays null in atOnce, laneCells, mapRow, readoutAt, lightCells, toQueryStore; "not recorded is never zero" test exists; running at once = busyMs / (bucketSeconds x 1000); all P-02 keys present word for word, DRILL_HELP has the 8 keys, used keys (notRecorded, laneBlocks, dbShort*, dbMsg*) exist; no banned word in drillCopy.ts (the grep hit "scaled to" at line 112 is not "led to"); P-03/P-09/P-12 meet Outcome; callData drops line/attrs and never sends includeSensitive. Out of scope: other changes in model.ts (importedFrom, reconnectFailed, noFile) and the tracing/lanes.ts diff.
+
+UNCLEAR: needsServer (nearbyCalls.ts) keeps the browser filter for chip `everyone` even when the last read was truncated at 100 rows; narrowing the window then shows a list that may miss calls with no notice. Question for planner: is the truncated notice shown by the controller (RB-2) for this case, or should needsServer ask the server for a narrower window?
+VERDICT: SHIP

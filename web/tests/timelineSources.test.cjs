@@ -345,7 +345,7 @@ test('the lane shows which audit sources it read and which saved databases it co
 test('a changed choice is sent as sourceIds, kept, and read again; a stale one falls back to all once', () => {
   const paper = read('src/components/TracingPaper.svelte');
   assert.match(paper, /sourceIds: wanted\.ids/);
-  assert.match(paper, /function changeSelection\(next: SourceSelection\) \{\s*selection = next;\s*saveSources\(caseId, next, universe\);\s*void run\(lastBody \?\? undefined\);/);
+  assert.match(paper, /function changeSelection\(next: SourceSelection\) \{\s*selection = next;\s*saveSources\(caseId, next, universe\);\s*app\.rememberTraceSources\(next\);\s*void run\(lastBody \?\? undefined\);/);
   assert.match(paper, /mergeUniverse\(universe, res, wanted\.ids\.length === 0\)/);
   assert.match(paper, /error\.status === 404/);
   assert.match(paper, /await run\(body, false\)/, 'one retry only');
@@ -371,4 +371,37 @@ test('a lane that finished every day but is still marked incomplete is not descr
 test('the Add files button sits above the bucket-selector overlay so a person can click it', () => {
   const chart = read('src/components/TracingChart.svelte');
   assert.match(chart, /\.add-files \{ position: relative; z-index: 2;/);
+});
+
+// ---- the per-case kept source choice (parseStoredSourceChoice / sourceChoiceOf) ----
+
+test('parseStoredSourceChoice accepts none and some, and refuses junk', () => {
+  assert.deepEqual(sources.parseStoredSourceChoice({ mode: 'none' }), { mode: 'none' });
+  assert.deepEqual(sources.parseStoredSourceChoice({ mode: 'some', ids: ['a', 'b'] }), { mode: 'some', ids: ['a', 'b'] });
+  for (const junk of [null, undefined, 'x', 3, [], { mode: 'all' }, { mode: 'some' }, { mode: 'some', ids: [] }, { mode: 'some', ids: [1, null, ''] }, { mode: 'other' }]) {
+    assert.equal(sources.parseStoredSourceChoice(junk), null, JSON.stringify(junk));
+  }
+});
+
+test('parseStoredSourceChoice drops address-like and over-long ids, and caps the list at 50', () => {
+  assert.deepEqual(sources.parseStoredSourceChoice({ mode: 'some', ids: ['ok', 'mongodb://h/x', 'y'.repeat(201)] }), { mode: 'some', ids: ['ok'] });
+  const many = Array.from({ length: 80 }, (_, i) => 'id' + i);
+  assert.equal(sources.parseStoredSourceChoice({ mode: 'some', ids: many }).ids.length, 50);
+});
+
+test('sourceChoiceOf keeps none and some, and keeps nothing for all', () => {
+  assert.equal(sources.sourceChoiceOf({ mode: 'all' }), null);
+  assert.deepEqual(sources.sourceChoiceOf({ mode: 'none' }), { mode: 'none' });
+  assert.deepEqual(sources.sourceChoiceOf({ mode: 'some', ids: ['a'] }), { mode: 'some', ids: ['a'] });
+  assert.equal(sources.sourceChoiceOf({ mode: 'some', ids: [] }), null);
+});
+
+test('the Timeline saves the source choice on the case and takes it back on a fresh open', () => {
+  const paper = read('src/components/TracingPaper.svelte');
+  assert.match(paper, /startingSources\(\)\?\.selection \?\? app\.savedTraceSources \?\? ALL_SOURCES/);
+  assert.match(paper, /function changeSelection\(next: SourceSelection\) \{[\s\S]{0,400}app\.rememberTraceSources\(next\)/);
+  assert.match(paper, /const saved = app\.savedTraceSources;/);
+  const state = read('src/lib/appState.svelte.ts');
+  assert.match(state, /traceSources: savedTraceSources/);
+  assert.match(state, /function rememberTraceSources\(selection: SourceSelection\)/);
 });

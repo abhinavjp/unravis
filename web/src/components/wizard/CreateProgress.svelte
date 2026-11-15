@@ -10,6 +10,9 @@
   import { kindLabel } from '../../lib/copy/wizardSourcesCopy';
   import { rowOutcomeText } from '../../lib/copy/discoverCopy';
   import { CREATE_TEXT, failureText, fileStatusText, isHostReason, leaveOutLabel, resultText, rowText, stateText, suggestionLine, tryAgainLabel } from '../../lib/copy/wizardCreateCopy';
+  import { COMPUTER_FIX_TEXT } from '../../lib/copy/zoneChoiceCopy';
+  import { saveHost } from '../../lib/wizardHosts.svelte';
+  import ComputerFix from './ComputerFix.svelte';
   import ZoneChoice from './ZoneChoice.svelte';
 
   // The last screen of the create guide: what the run is doing, source by source, and what to do about anything that did not go through.
@@ -89,6 +92,30 @@
     await createNow(undefined, []);
   }
 
+  // The server a refused file names when it is not on the computer list ('' when the file was refused for another reason).
+  const serverNameOf = (row: { outcome: { kind: string; serverName?: string } | null } | undefined): string =>
+    row?.outcome?.kind === 'refused' ? (row.outcome.serverName ?? '').trim() : '';
+
+  // The computer is now in the list: a kind that needs a pick gets it, then the file is read again. A kind that names its own computer
+  // finds the new entry by itself.
+  async function fixedOne(key: string, kind: string, label: string) {
+    if (hostNeed(kind) !== 'optional') pickHost(key, label);
+    await retryOne(key);
+  }
+
+  // Two or more files refused for different servers: one button adds them all (only for kinds that need no time zone) and reads them again.
+  const addable = $derived(fileRows.filter((item) => {
+    const row = item.row;
+    return !!row && (row.status === 'failed' || row.status === 'skipped') && serverNameOf(row) !== '' && hostNeed(item.kind) !== 'host-tz';
+  }));
+  const addableNames = $derived([...new Set(addable.map((item) => serverNameOf(item.row)))]);
+  async function addAll() {
+    note = '';
+    for (const name of addableNames) await saveHost(name, '', true);
+    for (const item of addable) if (hostNeed(item.kind) !== 'optional') pickHost(item.key, serverNameOf(item.row));
+    await createNow(undefined, addable.map((item) => item.key));
+  }
+
   // Wireframe w38: one button takes every rejected file off the list. The case keeps what it already has.
   async function removeRejected() {
     for (const key of failedKeys) leaveOutFile(key);
@@ -160,7 +187,9 @@
                   <span class="reason">{row ? rowText(row) : CREATE_TEXT.waiting}</span>
                   {#if row?.status === 'running' && row.percent !== null}<progress max="100" value={row.percent} aria-label={item.name}></progress>{/if}
                   {#if failed && !busy}
-                    {#if canFixHost(item.kind, row)}
+                    {#if serverNameOf(row) !== ''}
+                      <ComputerFix kind={item.kind} serverName={serverNameOf(row)} fileName={item.name} onFixed={(label) => void fixedOne(item.key, item.kind, label)} />
+                    {:else if canFixHost(item.kind, row)}
                       <p class="fix">{CREATE_TEXT.hostFix}</p>
                       <ZoneChoice kind={item.kind} host={pickedHost(item.key)} name={item.name} onChange={(label) => pickHost(item.key, label)} />
                     {/if}
@@ -195,6 +224,9 @@
         <button type="button" class="primary-button" onclick={() => { opened = true; onTimeline(submit.caseId); }}>{CREATE_TEXT.openTimeline}</button>
       {/if}
       <button type="button" class={summary.imported > 0 && onTimeline ? 'secondary-button' : 'primary-button'} onclick={() => { opened = true; onOpen(submit.caseId); }}>{openLabel}</button>
+      {#if addableNames.length > 1}
+        <button type="button" class="secondary-button" disabled={busy} onclick={() => void addAll()}>{COMPUTER_FIX_TEXT.addAll(addableNames.length)}</button>
+      {/if}
       {#if failedKeys.length > 0}
         <button type="button" class="secondary-button" disabled={busy} onclick={() => void retryAll()}>{CREATE_TEXT.retryFailed}</button>
         <button type="button" class="quiet-button" disabled={busy} onclick={() => void removeRejected()}>{CREATE_TEXT.removeRejected}</button>

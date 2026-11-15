@@ -67,7 +67,7 @@ func (b *Backend) Register(s *Server) {
 	s.Handle(OpSQLImport, classWrite, storeTimeout, b.sqlImport)
 	s.Handle(OpSQLTest, classReach, reachTimeout, b.sqlTest)
 	s.Handle(OpSQLHealth, classReach, runTimeout, b.sqlHealth)
-	s.Handle(OpSQLLane, classReach, runTimeout, b.sqlLane)
+	s.Handle(OpSQLLane, classReach, dbhealth.LaneRunTimeout, b.sqlLane)
 
 	s.Handle(OpMongoList, classRead, storeTimeout, b.mongoList)
 	s.Handle(OpMongoDescribe, classRead, storeTimeout, b.mongoDescribe)

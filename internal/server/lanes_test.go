@@ -227,7 +227,6 @@ func TestLaneRefusals(t *testing.T) {
 			"no windows":        `{"savedId":"saved1"}`,
 			"reference after":   `{"savedId":"saved1","incident":{"start":"2026-10-20T10:00:00Z","end":"2026-10-20T11:00:00Z"},"reference":{"start":"2026-10-20T10:30:00Z","end":"2026-10-20T12:00:00Z"}}`,
 			"end before start":  `{"savedId":"saved1","incident":{"start":"2026-10-20T11:00:00Z","end":"2026-10-20T10:00:00Z"},"reference":{"start":"2026-10-19T10:00:00Z","end":"2026-10-19T11:00:00Z"}}`,
-			"too long":          `{"savedId":"saved1","incident":{"start":"2026-10-01T10:00:00Z","end":"2026-10-20T11:00:00Z"},"reference":{"start":"2026-09-19T10:00:00Z","end":"2026-09-19T11:00:00Z"}}`,
 			"no database":       `{"server":"db01","auth":"windows",` + laneWindowsJSON + `}`,
 			"injected database": `{"savedId":"saved1","database":"a;b",` + laneWindowsJSON + `}`,
 		} {

@@ -130,9 +130,8 @@ export const WINDOW_TEXT = {
   referenceHeading: 'Compare it with',
   referenceHeadingNote: '(comparison period)',
   referenceHelp: 'This earlier period is only used for comparison. It may not have been healthy.',
-  refresh: 'Refresh timeline',
-  refreshTitle: 'Read the timeline again for the windows and sources shown now.',
-  stale: 'The windows changed since this timeline was drawn. Press Refresh timeline to update it.',
+  startTitle: 'Read the timeline for the windows and sources shown now. Press it again after any change, or to read again.',
+  stale: 'The windows changed since this timeline was drawn. Press Start tracing to update it.',
   addEvidence: 'Add evidence',
   addEvidenceTitle: 'Add files to this case, then read the timeline again.',
   overlap: 'The two windows overlap. Pick a normal period that does not share any time with the incident.',
@@ -172,6 +171,26 @@ export function windowHasNoData(lanes: (Pick<TracingLane, 'buckets'> & Partial<L
   if (lanes.some((lane) => lane.state !== undefined && laneNotFullyRead({ state: lane.state, buckets: lane.buckets, disabled: lane.disabled, incompleteReason: lane.incompleteReason, chunksTotal: lane.chunksTotal, chunksRead: lane.chunksRead }))) return false;
   return lanes.length > 0 && lanes.every((lane) => lane.buckets.every((bucket) => !(bucket.count > 0)));
 }
+
+/**
+ * Reads four window fields from a value kept with the case (the case workspace). Strict: every field must be a real `YYYY-MM-DDTHH:mm` UTC
+ * time, the end after the start, each window within the cap; anything else is null so a damaged note never reaches the picker.
+ */
+export function parseStoredWindows(value: unknown): WindowFields | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const read = (name: keyof WindowFields): string | null => {
+    const field = record[name];
+    return typeof field === 'string' && Number.isFinite(parseFieldUtc(field)) ? field : null;
+  };
+  const fields = { incidentStart: read('incidentStart'), incidentEnd: read('incidentEnd'), referenceStart: read('referenceStart'), referenceEnd: read('referenceEnd') };
+  if (Object.values(fields).some((field) => field === null)) return null;
+  const checked = fields as WindowFields;
+  return checkWindows(checked).body ? checked : null;
+}
+
+/** The four fields and nothing else, so a saved note never carries more than the windows. */
+export const pickWindowFields = (f: WindowFields): WindowFields => ({ incidentStart: f.incidentStart, incidentEnd: f.incidentEnd, referenceStart: f.referenceStart, referenceEnd: f.referenceEnd });
 
 const STORAGE_KEY = 'unravis.tracing.windows.';
 const STORED_VALUE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})?$/;

@@ -14,7 +14,7 @@
     onAll: () => void;
     onNone: () => void;
     onConnect: () => void;
-    /** Buttons for the right end of the row (Add evidence, Refresh timeline), drawn by the screen. */
+    /** Buttons for the right end of the row (Start tracing, Add evidence), drawn by the screen. */
     actions?: Snippet;
   } = $props();
 
@@ -23,7 +23,7 @@
   const noneOn = $derived(chips.every((chip) => !isChipOn(selection, chip.id)));
 </script>
 
-<!-- The sources row of the one controls card (the wireframe's `Sources` row): the label, the chips, then Add evidence and Refresh timeline at the right end.
+<!-- The sources row of the one controls card (the wireframe's `Sources` row): the label, the chips, then Start tracing and Add evidence at the right end.
      It has no card of its own; the screen draws the card around it. -->
 <section class="trace-sources" aria-label={SOURCES_TEXT.label} data-testid="trace-sources">
   <div class="ts-row">
@@ -33,7 +33,7 @@
     {:else}
       <div class="ts-chips" role="group" aria-label={SOURCES_TEXT.label}>
         {#each chips as chip (chip.id)}
-          <button type="button" class="chip" data-source-id={chip.id} aria-pressed={isChipOn(selection, chip.id)} {disabled} onclick={() => onToggle(chip.id)}>{chipText(chip)}</button>
+          <button type="button" class="chip" data-source-id={chip.id} aria-pressed={isChipOn(selection, chip.id)} aria-describedby={chip.noFile ? 'ts-not-imported-reason' : undefined} title={chip.noFile ? SOURCES_TEXT.notImportedTitle : undefined} disabled={disabled || chip.noFile === true} onclick={() => onToggle(chip.id)}>{chipText(chip)}{#if chip.noFile}<span class="ts-chip-flag" data-testid="chip-not-imported"><span aria-hidden="true"> · </span>{SOURCES_TEXT.notImported}</span>{/if}</button>
         {/each}
         {#each saved as name (name)}
           <span class="ts-saved" data-testid="source-saved">
@@ -43,6 +43,7 @@
           </span>
         {/each}
       </div>
+      {#if chips.some((c) => c.noFile)}<p class="ts-note" id="ts-not-imported-reason" data-testid="chip-not-imported-reason">{SOURCES_TEXT.notImportedTitle}</p>{/if}
     {/if}
     {#if actions}<span class="ts-actions">{@render actions()}</span>{/if}
   </div>
@@ -75,6 +76,7 @@
   .ts-saved { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: 2px var(--space-2); border: var(--hairline-width) dashed var(--line); border-radius: var(--radius-sm); color: var(--text-2); font-size: var(--fs-2); }
   .ts-saved-name { color: var(--text); overflow-wrap: anywhere; }
   .ts-saved-state { font-style: italic; }
+  .ts-chip-flag { font-style: italic; }
   .ts-connect { min-height: 26px; padding: 2px var(--space-3); font-size: var(--fs-2); }
   .ts-note { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
   .ts-more { color: var(--text-2); font-size: var(--fs-2); }

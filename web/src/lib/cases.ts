@@ -159,6 +159,8 @@ export class CaseApiError extends Error {
   readonly reason: string;
   readonly column?: string;
   readonly importId?: number;
+  /** For an unknown-host refusal: the server name the file itself names (read through the check route), so the screen can offer to add it. */
+  serverName?: string;
   constructor(message: string, status: number, reason = '', column?: string, importId?: number) {
     super(message);
     this.name = 'CaseApiError';
@@ -562,9 +564,10 @@ export interface CheckFileVerdict {
   needsZone: boolean;
   /** The not-supported reason code, or ''. */
   reason: string;
-  rows: number;
-  emitted: number;
-  rejected: number;
+  /** Row counts exist only when the file was read and counted (ready, needs-zone). Absent means not counted, never zero. */
+  rows?: number;
+  emitted?: number;
+  rejected?: number;
 }
 
 export interface CheckReport {
@@ -575,12 +578,16 @@ export interface CheckReport {
 const CHECK_VERDICTS: readonly string[] = ['ready', 'needs-computer', 'needs-zone', 'not-supported', 'no-computer'];
 const isCheckVerdict = (value: unknown): value is CheckVerdict => typeof value === 'string' && CHECK_VERDICTS.includes(value);
 
+/** A count that the server sent as a number; nothing at all when it was left out, so "not counted" never reads as zero. */
+const optionalCount = <K extends 'rows' | 'emitted' | 'rejected'>(key: K, value: unknown): { [P in K]?: number } =>
+  typeof value === 'number' && Number.isFinite(value) ? ({ [key]: value } as { [P in K]?: number }) : {};
+
 function toCheckFile(raw: Record<string, unknown> | null): CheckFileVerdict | null {
   if (!raw || typeof raw.key !== 'string' || typeof raw.name !== 'string' || !isCheckVerdict(raw.verdict)) return null;
   return {
     key: raw.key, name: raw.name, size: asNumber(raw.size), verdict: raw.verdict, importer: asString(raw.importer), tied: asStrings(raw.tied),
     serverName: asString(raw.serverName), needsZone: raw.needsZone === true, reason: asString(raw.reason),
-    rows: asNumber(raw.rows), emitted: asNumber(raw.emitted), rejected: asNumber(raw.rejected)
+    ...optionalCount('rows', raw.rows), ...optionalCount('emitted', raw.emitted), ...optionalCount('rejected', raw.rejected)
   };
 }
 
@@ -785,6 +792,8 @@ export interface BatchOutcome {
   importer: string;
   importId?: number;
   column?: string;
+  /** Set with the reason 'unknown-host' when the file names a computer that is not on the computer list: the name to add. */
+  serverName?: string;
   /** The same file may pass on another try: the server was busy, did not answer, or was out of time. */
   transient: boolean;
 }
@@ -813,7 +822,7 @@ export function classifyFailure(error: unknown): BatchOutcome {
   if (error instanceof CaseApiError) {
     const reason = error.reason || 'import-failed';
     return {
-      verdict: 'rejected', reason, rowReason: '', rows: 0, rejected: 0, importer: '', importId: error.importId, column: error.column,
+      verdict: 'rejected', reason, rowReason: '', rows: 0, rejected: 0, importer: '', importId: error.importId, column: error.column, ...(error.serverName ? { serverName: error.serverName } : {}),
       transient: TRANSIENT_REASONS.has(reason) || error.status >= 500
     };
   }
@@ -897,6 +906,28 @@ export function tallyBatch(outcomes: readonly Pick<BatchOutcome, 'verdict'>[]): 
  * with the notice acknowledged. The same two steps as the single file flow, so a file is never kept as a type the server did not accept.
  */
 export function importRunner(caseId: string, ackText: string, onJob?: (key: string, job: ImportJob) => void): BatchRun {
+  const run = plainImportRunner(caseId, ackText, onJob);
+  return async (item, signal) => {
+    try {
+      return await run(item, signal);
+    } catch (error) {
+      // The refusal carries no name. The check route reads it from the file without keeping anything, so the screen can offer to add that computer.
+      if (error instanceof CaseApiError && error.reason === 'unknown-host' && !error.serverName) {
+        try {
+          const report = await waitForCheckJob(caseId, await startCheckJob({ caseId, files: [{ key: 'retry', file: item.file }] }, signal), { signal });
+          const verdict = report.files[0];
+          if (verdict?.verdict === 'needs-computer' && verdict.serverName) error.serverName = verdict.serverName;
+        } catch (inner) {
+          if (isAbortError(inner)) throw inner;
+          /* Keep the original refusal when the name cannot be read. */
+        }
+      }
+      throw error;
+    }
+  };
+}
+
+function plainImportRunner(caseId: string, ackText: string, onJob?: (key: string, job: ImportJob) => void): BatchRun {
   return async (item, signal) => {
     const base = { caseId, file: item.file, host: item.host, supplied: item.supplied };
     const tooBig = fileSizeProblem(item.file.size, item.importer);

@@ -602,9 +602,11 @@
 <ArchiveDrawers drawer={archiveDrawer} {info} onClose={closeArchiveDrawer} onChanged={archiveChanged} onGone={() => { archiveDrawer = null; gone(); }} onOpenNew={(id) => { archiveDrawer = null; openCase(id); }} onDone={archiveMoved} />
 
 <style>
-  .case-home { display: grid; gap: 20px; max-width: 880px; margin: 0 auto; padding: 8px 0 48px; }
+  /* width: 100% matters: a grid item with margin auto shrinks to its content, so its width (and everything inside) moved sideways
+     whenever hover text or table rows changed. With a fixed width the column only ever stops at its max-width. */
+  .case-home { display: grid; gap: 20px; width: 100%; max-width: 880px; margin: 0 auto; padding: 8px 0 48px; }
   /* The Investigation Timeline needs room for its plot; the other pages of the case keep the narrow column. */
-  .case-home.wide { max-width: 1232px; }
+  .case-home.wide { max-width: 1480px; }
   .top { display: flex; }
   .head h2 { margin: 2px 0 6px; font-size: 24px; overflow-wrap: anywhere; }
   .eyebrow { margin: 0; color: var(--text-2); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }

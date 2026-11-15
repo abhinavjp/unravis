@@ -26,7 +26,7 @@ function makeLoader() {
   }
   return load;
 }
-const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
+const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
 
 const pure = makeLoader();
 const { normaliseCode, resolveCode, CODE_NOT_FOUND } = pure('src/lib/caseCode.ts');

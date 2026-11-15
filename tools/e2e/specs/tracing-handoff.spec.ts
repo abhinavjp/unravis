@@ -267,7 +267,15 @@ for (const [id, scheme] of [['HAND-10', 'dark'], ['HAND-11', 'light']] as const)
     // The outline colour eases in, so read it until it settles.
     await expect.poll(() => page.locator('.column.selected').evaluate((el) => getComputedStyle(el).outlineColor)).toBe(accent);
     expect(await page.locator('.column.selected').evaluate((el) => getComputedStyle(el).outlineStyle)).not.toBe('none');
-    expect(await page.locator('.panel[data-lane=audit] .bar').first().evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(await token(page, '--lane-audit'));
+    expect(await page.locator('.panel[data-lane=audit] .bar').first().evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(await page.evaluate(() => {
+      // The hero lane draws its bars as a 30% wash of the lane colour so the line stays the loudest mark.
+      const probe = document.createElement('div');
+      probe.style.backgroundColor = 'color-mix(in srgb, var(--lane-audit) 30%, transparent)';
+      document.body.appendChild(probe);
+      const colour = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return colour;
+    }));
     await pickBar(page, 12);
     await expectAnalysisOpen(page);
     await noHorizontalScroll(page, 'analysis');
@@ -407,7 +415,9 @@ test('HAND-17: the timeline screen matches the wireframe: region order, lane ord
   });
   expect(style.panelBg).toBe(surface);
   expect(style.panelBorder).toBe(line);
-  expect(style.bar).toBe(laneAudit);
+  // A lane drawn as a hero (bars behind a percentile line) fades its bars to 30% of the lane colour.
+  if (await page.locator('.panel[data-lane=audit]').getAttribute('data-hero') === 'true') expect(style.bar).toMatch(/0\.3\)$/);
+  else expect(style.bar).toBe(laneAudit);
   expect(style.small).toBe(text2);
   expect(style.labelSwatch).toEqual(style.toolbarSwatch);
   expect(new Set(style.labelSwatch).size, 'three different lane colours').toBe(3);

@@ -178,7 +178,7 @@ test('Cancelled is said in the notes region below the chart, so the chart never 
 
 test('typed windows are restored on open and kept after the first edit only (UI-R2-11)', () => {
   const src = paper();
-  assert.match(src, /loadWindows\(caseId\) \?\? defaultWindows\(windowNow\(app\.info, Date\.now\(\)\)\)/);
+  assert.match(src, /loadWindows\(caseId\) \?\? \(app\.savedWindows \? \{ \.\.\.app\.savedWindows \} : null\) \?\? defaultWindows\(windowNow\(app\.info, Date\.now\(\)\)\)/);
   assert.match(src, /if \(edited\) saveWindows\(caseId,/);
   assert.match(src, /edited = true;\s*clearProblems\(\);\s*\}\s*\n\s*\n/);
 });
@@ -199,8 +199,8 @@ test('the chart region has a role and a name, and a case with no events says how
 
 test('erasing a case drops its kept tracing choice and windows before the active-case guard (P5)', () => {
   const src = read('src/lib/appState.svelte.ts');
-  assert.match(src, /import \{ forgetSources \} from '\.\/tracing\/sources';/);
-  assert.match(src, /import \{ forgetWindows \} from '\.\/tracing\/windows';/);
+  assert.match(src, /import \{ forgetSources, parseStoredSourceChoice, type SourceSelection \} from '\.\/tracing\/sources';/);
+  assert.match(src, /import \{ forgetWindows, parseStoredWindows, pickWindowFields, type WindowFields \} from '\.\/tracing\/windows';/);
   const body = src.slice(src.indexOf('export function caseErased'), src.indexOf('export function openCase('));
   assert.match(body, /forgetSources\(id\); forgetWindows\(id\);/);
   assert.ok(body.indexOf('forgetSources(id)') < body.indexOf('activeCaseId !== id'), 'the stored keys go before the active-case guard');

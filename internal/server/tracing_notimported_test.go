@@ -25,7 +25,11 @@ func TestTracingLaneSaysFilesWereNotImported(t *testing.T) {
 		decodeBody(t, res, &out)
 		for _, key := range []string{"sql", "iis"} {
 			l := tracingLaneOf(t, out, key)
-			if l.State != "no-data" || l.ReasonCode != tracingReasonNotImported || l.Reason != tracingNotImportedMsg {
+			want := tracingNotImportedMsg
+			if key == "sql" {
+				want = tracingSQLNotImportedMsg
+			}
+			if l.State != "no-data" || l.ReasonCode != tracingReasonNotImported || l.Reason != want {
 				t.Errorf("%s lane = %q %q %q, want no-data %q", key, l.State, l.ReasonCode, l.Reason, tracingReasonNotImported)
 			}
 		}

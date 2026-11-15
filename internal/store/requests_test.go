@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"reflect"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -17,6 +19,243 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
+
+type requestBSONCursor struct{ *fakeCursor }
+
+func (c *requestBSONCursor) Decode(dst any) error {
+	if target, ok := dst.(*requestDocument); ok {
+		if raw, ok := c.current.(bson.Raw); ok {
+			return bson.Unmarshal(raw, target)
+		}
+	}
+	return c.fakeCursor.Decode(dst)
+}
+
+func requestLightCases(t *testing.T) []struct {
+	name   string
+	fields bson.D
+	want   *audit.RecordLight
+} {
+	t.Helper()
+	decimal := func(text string) bson.Decimal128 {
+		value, err := bson.ParseDecimal128(text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	number := func(value float64) *float64 { return &value }
+	return []struct {
+		name   string
+		fields bson.D
+		want   *audit.RecordLight
+	}{
+		{"numbers", bson.D{{Key: "_perfSqlMs", Value: 12.25}, {Key: "_perfRedisMs", Value: int32(2)}, {Key: "_perfHttpMs", Value: int64(33)}}, &audit.RecordLight{SQLMs: number(12.25), RedisMs: number(2), HTTPMs: number(33)}},
+		{"decimal", bson.D{{Key: "_perfSqlMs", Value: decimal("12.75")}}, &audit.RecordLight{SQLMs: number(12.75)}},
+		{"zero", bson.D{{Key: "_perfRedisMs", Value: 0.0}}, &audit.RecordLight{RedisMs: number(0)}},
+		{"strings", bson.D{{Key: "_perfSqlMs", Value: "12.25"}, {Key: "_perfRedisMs", Value: "2"}, {Key: "_perfHttpMs", Value: "33"}}, nil},
+		{"missing", nil, nil},
+		{"nulls", bson.D{{Key: "_perfSqlMs", Value: nil}, {Key: "_perfRedisMs", Value: nil}, {Key: "_perfHttpMs", Value: nil}}, nil},
+		{"invalid numbers", bson.D{{Key: "_perfSqlMs", Value: math.NaN()}, {Key: "_perfRedisMs", Value: -1.0}, {Key: "_perfHttpMs", Value: math.Inf(1)}}, nil},
+		{"invalid decimals", bson.D{{Key: "_perfSqlMs", Value: decimal("NaN")}, {Key: "_perfRedisMs", Value: decimal("-1")}, {Key: "_perfHttpMs", Value: decimal("1E+6144")}}, nil},
+		{"other types", bson.D{{Key: "_perfSqlMs", Value: true}, {Key: "_perfRedisMs", Value: bson.D{{Key: "ms", Value: 2}}}, {Key: "_perfHttpMs", Value: bson.A{3}}}, nil},
+		{"mixed", bson.D{{Key: "_perfSqlMs", Value: "12"}, {Key: "_perfRedisMs", Value: math.NaN()}, {Key: "_perfHttpMs", Value: int64(0)}}, &audit.RecordLight{HTTPMs: number(0)}},
+	}
+}
+
+func assertRequestLight(t *testing.T, row audit.RequestRecord, want *audit.RecordLight) {
+	t.Helper()
+	if !reflect.DeepEqual(row.Light, want) {
+		t.Fatalf("light = %#v, want %#v", row.Light, want)
+	}
+	encoded, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"light":`) != (want != nil) {
+		t.Fatal("JSON light presence does not match recorded totals")
+	}
+}
+
+func assertLightProjection(t *testing.T, projection bson.D) {
+	t.Helper()
+	want := lightProjection()
+	if len(want) != 3 {
+		t.Fatalf("light projection has %d keys, want 3", len(want))
+	}
+	var got bson.D
+	for _, entry := range projection {
+		if strings.HasPrefix(entry.Key, "_perf") {
+			got = append(got, entry)
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatal("row projection must contain exactly the three shared light entries")
+	}
+	detail := recordPerfProjection()
+	for _, entry := range got {
+		found := false
+		for _, full := range detail {
+			if full.Key == entry.Key {
+				found = reflect.DeepEqual(full.Value, entry.Value)
+			}
+		}
+		if !found {
+			t.Fatalf("%s does not share its detail guard", entry.Key)
+		}
+	}
+	for _, doc := range []map[string]any{
+		{"SqlMilliseconds": 12.25, "RedisMilliseconds": int32(0), "HttpMilliseconds": int64(33)},
+		{"SqlMilliseconds": "12.25", "RedisMilliseconds": "0", "HttpMilliseconds": "33"},
+		{},
+	} {
+		for i, path := range []string{"SqlMilliseconds", "RedisMilliseconds", "HttpMilliseconds"} {
+			value := doc[path]
+			if _, text := value.(string); text {
+				value = nil
+			}
+			if !reflect.DeepEqual(evalExpr(t, got[i].Value, doc), value) {
+				t.Fatalf("%s did not preserve numbers and reject strings/missing values", got[i].Key)
+			}
+		}
+	}
+}
+
+func TestRequestLightPipelineStagesAndSharedProjection(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	q := queryForTest(now)
+	q.Kind, q.Outcome = "all", "all"
+	base := []string{"$match", "$set", "$set", "$set", "$set", "$match"}
+	for name, pipeline := range map[string]mongo.Pipeline{
+		"requests": requestPipelineOrdered(q, [5]string{"", "", "", "all", "all"}, "", true, false, "src", nil, 11),
+		"nearby":   activityPipeline(q, "src", nil, 11),
+		"slowest":  slowestPipeline(q, "src", nil, nil, 11),
+	} {
+		t.Run(name, func(t *testing.T) {
+			want := append(append([]string(nil), base...), "$sort", "$limit", "$project")
+			if name == "nearby" {
+				want = []string{"$match", "$set", "$match", "$set", "$set", "$set", "$match", "$sort", "$limit", "$project"}
+			} else if name == "slowest" {
+				want = append(append([]string(nil), base...), "$project", "$match", "$sort", "$limit")
+			}
+			var stages []string
+			for _, stage := range pipeline {
+				stages = append(stages, stage[0].Key)
+				if stage[0].Key == "$project" {
+					assertLightProjection(t, stage[0].Value.(bson.D))
+				}
+			}
+			if !reflect.DeepEqual(stages, want) {
+				t.Fatalf("stages = %v, want %v", stages, want)
+			}
+			t.Logf("stages: %v", stages)
+		})
+	}
+}
+
+func testRequestsLightReader(t *testing.T, legacy bool) {
+	t.Helper()
+	for _, mode := range []string{"requests", "nearby", "slowest"} {
+		for _, tc := range requestLightCases(t) {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				s, source, handle := recordStore(t, legacy)
+				now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+				q := queryForTest(now)
+				q.SourceIDs, q.Kind, q.Outcome = []string{source.ID}, "all", "all"
+				at := q.Start.Add(time.Second)
+				fields := bson.D{{Key: "_id", Value: mustObjectID("000000000000000000000001")}}
+				if legacy {
+					fields = append(fields, bson.E{Key: "_auditMetadataOversized", Value: false}, bson.E{Key: "RequestInitiatedAt", Value: at}, bson.E{Key: "RequestCompletedAt", Value: at.Add(time.Second)}, bson.E{Key: "RequestPollingType", Value: "synchronous"}, bson.E{Key: "StatusCode", Value: "OK"})
+				} else {
+					fields = append(fields, bson.E{Key: "initiatedAt", Value: at}, bson.E{Key: "durationMs", Value: 1000.0})
+				}
+				raw := perfRaw(t, append(fields, tc.fields...))
+				handle.aggregateFn = func(_ context.Context, _, _ string, pipeline mongo.Pipeline) (mongoCursor, error) {
+					for _, stage := range pipeline {
+						if stage[0].Key == "$project" {
+							assertLightProjection(t, stage[0].Value.(bson.D))
+						}
+					}
+					return &requestBSONCursor{&fakeCursor{docs: []any{raw}}}, nil
+				}
+				var page audit.Page
+				var err error
+				switch mode {
+				case "nearby":
+					page, err = s.Activity(context.Background(), audit.ActivityInput{SourceIDs: q.SourceIDs, Start: q.Start, End: q.End, Limit: 10})
+				case "slowest":
+					page, err = s.Slowest(context.Background(), audit.PageInput{Query: q, Limit: 10})
+				default:
+					page, err = s.Requests(context.Background(), audit.PageInput{Query: q, Limit: 10})
+				}
+				if err != nil || len(page.Rows) != 1 || len(page.Sources) != 1 || !page.Sources[0].OK {
+					t.Fatal("reader did not return the complete row successfully")
+				}
+				assertRequestLight(t, page.Rows[0], tc.want)
+			})
+		}
+	}
+}
+
+func TestRequestsModernLightReader(t *testing.T) {
+	testRequestsLightReader(t, false)
+}
+
+func TestRequestsLightDoesNotChangeCursor(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		for _, mode := range []string{"requests", "nearby", "slowest"} {
+			t.Run(fmt.Sprintf("legacy=%v/%s", legacy, mode), func(t *testing.T) {
+				s, source, handle := recordStore(t, legacy)
+				now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+				q := queryForTest(now)
+				q.SourceIDs, q.Kind, q.Outcome = []string{source.ID}, "all", "all"
+				at := q.Start.Add(time.Second)
+				withLight := false
+				handle.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
+					var docs []any
+					for _, id := range []string{"000000000000000000000002", "000000000000000000000001"} {
+						fields := bson.D{{Key: "_id", Value: mustObjectID(id)}}
+						if legacy {
+							fields = append(fields, bson.E{Key: "_auditMetadataOversized", Value: false}, bson.E{Key: "RequestInitiatedAt", Value: at}, bson.E{Key: "RequestCompletedAt", Value: at.Add(time.Second)}, bson.E{Key: "RequestPollingType", Value: "synchronous"}, bson.E{Key: "StatusCode", Value: "OK"})
+						} else {
+							fields = append(fields, bson.E{Key: "initiatedAt", Value: at}, bson.E{Key: "durationMs", Value: 1000.0})
+						}
+						if withLight {
+							fields = append(fields, bson.E{Key: "_perfSqlMs", Value: 0.0})
+						}
+						docs = append(docs, perfRaw(t, fields))
+					}
+					return &requestBSONCursor{&fakeCursor{docs: docs}}, nil
+				}
+				read := func() audit.Page {
+					var page audit.Page
+					var err error
+					switch mode {
+					case "nearby":
+						page, err = s.Activity(context.Background(), audit.ActivityInput{SourceIDs: q.SourceIDs, Start: q.Start, End: q.End, Limit: 1})
+					case "slowest":
+						page, err = s.Slowest(context.Background(), audit.PageInput{Query: q, Limit: 1})
+					default:
+						page, err = s.Requests(context.Background(), audit.PageInput{Query: q, Limit: 1})
+					}
+					if err != nil || len(page.Rows) != 1 || page.NextCursor == "" {
+						t.Fatal("expected one row and a continuation cursor")
+					}
+					return page
+				}
+				before := read()
+				withLight = true
+				after := read()
+				if before.NextCursor != after.NextCursor || before.Rows[0].ID != after.Rows[0].ID || before.Truncated != after.Truncated {
+					t.Fatal("light totals changed paging or cursor bytes")
+				}
+				assertRequestLight(t, before.Rows[0], nil)
+				zero := 0.0
+				assertRequestLight(t, after.Rows[0], &audit.RecordLight{SQLMs: &zero})
+			})
+		}
+	}
+}
 
 func TestRequestsRejectsBadPageAndFingerprintMismatch(t *testing.T) {
 	var handle *fakeClient

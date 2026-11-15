@@ -1,0 +1,329 @@
+package server
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"api-audit-explorer/internal/calltrace"
+	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/dbhealth"
+)
+
+// The SQL lane of the Timeline is drawn from imported SQL files when there are
+// any. When none were imported, it is drawn from the Query Store series saved
+// with the case's lane days (a live SQL read, kept as a stored copy), so the
+// Timeline itself never opens a connection.
+
+const (
+	tracingReasonHeldSQL = "held-sql"
+	tracingHeldSQLMsg    = "Drawn from the Query Store figures saved with this case on the date shown. Each bar is the statements run in that interval; the line is their average time."
+)
+
+// The saved Query Store state, when it explains why the held SQL lane has no database time in the window
+// (DATA-09). The wording mirrors the Query Store notes on the web side, written here for the Timeline's SQL lane.
+const (
+	tracingReasonQSOff      = "qs-off"
+	tracingReasonQSReadOnly = "qs-ro"
+	tracingReasonQSDenied   = "qs-denied"
+	tracingReasonQSLate     = "qs-late"
+
+	tracingQSOffMsg      = "Query Store is switched off on this database, so it saved no history. Switching it on needs the database owner (the script is in Setup). Unravis never switches it on itself."
+	tracingQSReadOnlyMsg = "Query Store is read-only, so it has stopped saving new history. This often happens when its storage is full. Older history is still shown."
+	tracingQSDeniedMsg   = "The saved database login is not allowed to read Query Store. It needs the VIEW DATABASE STATE permission. Ask the database owner, or add a login that has it."
+	// tracingQSLateMsg is a format: its one verb is the UTC time Query Store's history starts.
+	tracingQSLateMsg = "Query Store has nothing before %s. It was switched on later, or the older history was cleaned up. The time before that is unknown, not zero."
+)
+
+const (
+	tracingReasonLayeredSQL = "layered-sql"
+	tracingLayeredSQLMsg    = "Bars, the line and the diamonds are the Query Store figures saved with this case. The slow statements from the imported SQL files are kept as the lane's events. The two are never added together."
+)
+
+// layerSQLLane puts the imported SQL files' slow-statement events on top of the
+// saved Query Store day: the Query Store figures stay the bars and the line, the
+// imported events stay the markers, and the sources of both are named. Counts of
+// the two are never added together. It applies only to an imported lane that has
+// events; any other state keeps the imported lane as it is.
+func layerSQLLane(imported, held tracingLane) (tracingLane, bool) {
+	// A held lane that only carries a Query Store state (none-seen) has no bars to layer onto.
+	if imported.State != calltrace.StateEvents || len(imported.Events) == 0 || imported.Disabled != "" || held.State != calltrace.StateEvents {
+		return imported, false
+	}
+	out := held
+	out.Events = imported.Events
+	out.Hidden = imported.Hidden
+	out.Truncated = imported.Truncated
+	out.Complete = held.Complete && imported.Complete
+	out.ReasonCode, out.Reason = tracingReasonLayeredSQL, tracingLayeredSQLMsg
+	out.Sources = append(append(make([]tracingRef, 0, len(held.Sources)+len(imported.Sources)), imported.Sources...), held.Sources...)
+	// The imported files' time range stays on the lane the owner sees.
+	if out.ImportedFrom == nil {
+		out.ImportedFrom = imported.ImportedFrom
+	}
+	if out.ImportedTo == nil {
+		out.ImportedTo = imported.ImportedTo
+	}
+	if !out.ImportedPartial {
+		out.ImportedPartial = imported.ImportedPartial
+	}
+	return out, true
+}
+
+// heldSQLBlockSeconds is the length, in seconds, of the blocks a saved Query Store day was kept in: the
+// interval the day recorded when it has one, else the smallest gap between saved blocks when that is a
+// whole Query Store length. Zero means not known (a single block with no recorded interval).
+func heldSQLBlockSeconds(intervalMin int, ts []int64) int {
+	if intervalMin > 0 {
+		return intervalMin * 60
+	}
+	sorted := append([]int64(nil), ts...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	gap := int64(0)
+	for i := 1; i < len(sorted); i++ {
+		if d := sorted[i] - sorted[i-1]; d > 0 && (gap == 0 || d < gap) {
+			gap = d
+		}
+	}
+	switch gap {
+	case 60, 300, 600, 900, 1800, 3600, 86400:
+		return int(gap)
+	}
+	return 0
+}
+
+// heldSQLQueryStoreLane is the fallback when the saved days hold no database time in the window. When the
+// newest saved SQL day recorded a Query Store state that explains that (off, read-only, denied, or history that
+// starts after the window begins), it returns a lane that says so instead of leaving the Timeline to show "no
+// activity". With Query Store on or unknown, or no state recorded, it returns false: no activity stays honest.
+func heldSQLQueryStoreLane(held []laneRun, axis tracingAxis) (tracingLane, bool) {
+	var newest *laneRun
+	for i := range held {
+		if held[i].Run.Kind == "sql" && held[i].Report.Lane != nil {
+			newest = &held[i] // laneHeld is newest first
+			break
+		}
+	}
+	if newest == nil {
+		return tracingLane{}, false
+	}
+	qs := newest.Report.Lane.QueryStore
+	if qs == nil {
+		return tracingLane{}, false
+	}
+	var code, msg string
+	switch {
+	case qs.State == dbhealth.QSStateDenied:
+		code, msg = tracingReasonQSDenied, tracingQSDeniedMsg
+	case qs.State == dbhealth.QSStateOff:
+		code, msg = tracingReasonQSOff, tracingQSOffMsg
+	case qs.State == dbhealth.QSStateReadOnly:
+		code, msg = tracingReasonQSReadOnly, tracingQSReadOnlyMsg
+	case qs.FirstData != nil && qs.FirstData.After(axis.Start):
+		code, msg = tracingReasonQSLate, fmt.Sprintf(tracingQSLateMsg, qs.FirstData.UTC().Format(time.RFC3339))
+	default:
+		return tracingLane{}, false
+	}
+	return tracingLane{
+		Key: calltrace.LaneSQL, Label: "SQL Server", State: calltrace.StateNoneSeen,
+		Origin: tracingOriginCase, AsOf: newest.Run.At.UTC(), Complete: true, Consistency: tracingConsStored,
+		ReasonCode: code, Reason: msg, Scanned: 0,
+		Sources: []tracingRef{{SourceID: "sql-held", Label: newest.Report.Label + " · Query Store"}},
+		Buckets: tracingBuckets(axis, nil, nil), Events: []tracingEvent{},
+	}, true
+}
+
+// heldReportDecodes counts the saved reports decoded from JSON for the held SQL lane. Tests read it to prove a repeated
+// Timeline request does not decode an unchanged saved day again (DATA-15).
+var heldReportDecodes atomic.Int64
+
+// heldReportKey names one saved report. The run id and save time say which day it is; the length and a hash of the
+// stored bytes keep two cases that both have, say, run 3 saved at the same second from being mixed up, and make a
+// day saved again always miss.
+type heldReportKey struct {
+	id  int64
+	at  int64
+	n   int
+	sum [sha256.Size]byte
+}
+
+// heldReportCache keeps the decoded saved reports, so a Timeline request decodes a saved day only the first time it
+// is seen (DATA-15). A nil value records a report that could not be decoded. The decoded reports are shared and only
+// read. Past heldReportCacheMax entries the cache is emptied, which bounds it to a few hundred kilobytes per day.
+var heldReportCache = struct {
+	sync.Mutex
+	m map[heldReportKey]*dbhealth.Report
+}{m: map[heldReportKey]*dbhealth.Report{}}
+
+const heldReportCacheMax = 128
+
+func heldReportOf(r casestore.HealthRun) *dbhealth.Report {
+	key := heldReportKey{id: r.ID, at: r.At.UnixNano(), n: len(r.Report), sum: sha256.Sum256(r.Report)}
+	heldReportCache.Lock()
+	rep, hit := heldReportCache.m[key]
+	heldReportCache.Unlock()
+	if hit {
+		return rep
+	}
+	heldReportDecodes.Add(1)
+	rep = new(dbhealth.Report)
+	if json.Unmarshal(r.Report, rep) != nil || rep.Lane == nil {
+		rep = nil
+	}
+	heldReportCache.Lock()
+	if len(heldReportCache.m) >= heldReportCacheMax {
+		heldReportCache.m = map[heldReportKey]*dbhealth.Report{}
+	}
+	heldReportCache.m[key] = rep
+	heldReportCache.Unlock()
+	return rep
+}
+
+// heldSQLLaneRuns lists the saved SQL lane days, newest first, like laneHeld but only the SQL ones, and without
+// decoding a day that was decoded before.
+func heldSQLLaneRuns(ctx context.Context, hs casestore.HealthStore) ([]laneRun, error) {
+	runs, err := hs.HealthRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []laneRun
+	for _, r := range runs {
+		if r.Kind != "sql" {
+			continue
+		}
+		if rep := heldReportOf(r); rep != nil {
+			out = append(out, laneRun{Run: r, Report: *rep})
+		}
+	}
+	return out, nil
+}
+
+// tracingHeldSQLLane builds the SQL lane from the saved lane days of the case
+// that cover the window, or reports false when the case holds none. Only the
+// newest saved source is used: two servers' counts must not be added together.
+func tracingHeldSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis, now time.Time) (tracingLane, bool) {
+	hs, ok := healthStoreOf(c)
+	if !ok {
+		return tracingLane{}, false
+	}
+	held, err := heldSQLLaneRuns(ctx, hs)
+	if err != nil {
+		return tracingLane{}, false
+	}
+	var sqlRuns []laneRun
+	for _, lr := range held {
+		if lr.Run.Kind == "sql" && lr.Report.Lane != nil && len(lr.Report.Lane.Series) > 0 {
+			sqlRuns = append(sqlRuns, lr)
+		}
+	}
+	if len(sqlRuns) == 0 {
+		// A day that recorded no series (Query Store off or denied) is not in sqlRuns; its state may still say why.
+		return heldSQLQueryStoreLane(held, axis)
+	}
+	// laneHeld is newest first: keep the runs of the newest run's source.
+	source := sqlRuns[0].source()
+	type acc struct {
+		execs  int64
+		sumMs  float64 // average x executions (the busy time, in ms)
+		maxMs  float64
+		filled bool
+	}
+	cells := map[int]*acc{}
+	// seen holds each T already counted. The runs are newest first, so the newest run's value wins for a
+	// shared T (including 0, with no fall back to the older); a duplicate T is skipped before it touches
+	// cells, total or allT. Two saved days of one source can share a T because their incident windows differ
+	// while their reference times overlap (DATA-03). Keyed by exact T, never by bucket: different T in one
+	// bucket are legitimate and still add.
+	seen := map[int64]struct{}{}
+	var total int64
+	asOf := sqlRuns[0].Run.At
+	label := sqlRuns[0].Report.Label
+	var allT []int64
+	intervalMin := 0
+	// maxPointBlock is the longest span one saved point covers: lane downsampling merges points (DATA-04).
+	var maxPointBlock int64
+	for _, lr := range sqlRuns {
+		if lr.source() != source {
+			continue
+		}
+		if qs := lr.Report.Lane.QueryStore; intervalMin == 0 && qs != nil && qs.IntervalMinutes > 0 {
+			intervalMin = qs.IntervalMinutes
+		}
+		for _, p := range lr.Report.Lane.Series {
+			if _, dup := seen[p.T]; dup {
+				continue
+			}
+			seen[p.T] = struct{}{}
+			allT = append(allT, p.T)
+			ms := p.T * 1000
+			if ms < axis.Start.UnixMilli() || ms >= axis.End.UnixMilli() {
+				continue
+			}
+			k := int((ms - axis.AxisStart.UnixMilli()) / axis.WidthMs)
+			a := cells[k]
+			if a == nil {
+				a = &acc{}
+				cells[k] = a
+			}
+			a.execs += p.Execs
+			a.sumMs += p.AvgMs * float64(p.Execs)
+			a.maxMs = max(a.maxMs, p.MaxMs)
+			a.filled = true
+			total += p.Execs
+			maxPointBlock = max(maxPointBlock, p.BlockSeconds)
+		}
+	}
+	if total == 0 {
+		return heldSQLQueryStoreLane(held, axis)
+	}
+	perCell := make(map[int]int64, len(cells))
+	for k, a := range cells {
+		perCell[k] = a.execs
+	}
+	lane := tracingLane{
+		Key: calltrace.LaneSQL, Label: "SQL Server", State: calltrace.StateEvents,
+		Origin: tracingOriginCase, AsOf: asOf.UTC(), Complete: true, Consistency: tracingConsStored,
+		ReasonCode: tracingReasonHeldSQL, Reason: tracingHeldSQLMsg, Scanned: total,
+		Sources: []tracingRef{{SourceID: "sql-held", Label: label + " · Query Store"}},
+		Buckets: tracingBuckets(axis, perCell, nil), Events: []tracingEvent{},
+	}
+	byStart := map[time.Time]int{}
+	for k := 0; k < axis.Buckets; k++ {
+		if from, _, _, ok := axis.Bucket(k); ok {
+			byStart[from] = k
+		}
+	}
+	if maxPointBlock > 0 {
+		lane.BlockSeconds = int(maxPointBlock)
+	} else {
+		lane.BlockSeconds = heldSQLBlockSeconds(intervalMin, allT)
+	}
+	for i := range lane.Buckets {
+		a := cells[byStart[lane.Buckets[i].Start]]
+		if a == nil {
+			continue
+		}
+		// A saved point was read here: busyMs is 0 when nothing ran, never nil. It is the busy time of the
+		// whole saved block, not spread here; the web model spreads it over the block using blockSeconds.
+		busy := a.sumMs
+		lane.Buckets[i].BusyMs = &busy
+		if a.execs == 0 {
+			continue
+		}
+		avg := a.sumMs / float64(a.execs)
+		lane.Buckets[i].TimedCount = a.execs
+		lane.Buckets[i].AvgMs = &avg
+		if a.maxMs > 0 {
+			mx := a.maxMs
+			lane.Buckets[i].MaxMs = &mx
+		}
+	}
+	sort.Slice(lane.Buckets, func(i, j int) bool { return lane.Buckets[i].Start.Before(lane.Buckets[j].Start) })
+	_ = now
+	return lane, true
+}

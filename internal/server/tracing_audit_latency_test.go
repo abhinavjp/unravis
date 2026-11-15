@@ -162,3 +162,89 @@ func TestAuditLaneToWireLatencyJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestLatencyAccBusy(t *testing.T) {
+	// One bin of two calls summing 3000 ms.
+	var a latencyAcc
+	a.add([]audit.RollupWireBin{{Bin: latencyBinOf(1500), Count: 2, Sum: 3000, Min: 1400, Max: 1600}})
+	if busy := a.busy(); busy == nil || *busy != 3000 {
+		t.Errorf("busy %v, want 3000", busy)
+	}
+
+	// Two sources land in the same bucket: their sums are added.
+	a.add([]audit.RollupWireBin{{Bin: latencyBinOf(100), Count: 3, Sum: 450, Min: 100, Max: 200}})
+	if busy := a.busy(); busy == nil || *busy != 3450 {
+		t.Errorf("merged busy %v, want 3450", busy)
+	}
+
+	// A bin with no count adds nothing: no timed call, no busy time.
+	var empty latencyAcc
+	empty.add([]audit.RollupWireBin{{Bin: latencyBinOf(100), Count: 0, Sum: 99}})
+	if busy := empty.busy(); busy != nil {
+		t.Errorf("empty busy %v, want nil", *busy)
+	}
+}
+
+func TestAuditBucketsCarryBusy(t *testing.T) {
+	axis := newTracingAxis(auditT0, auditT0.Add(time.Hour))
+	ms1000, ms2000 := 1000.0, 2000.0
+	f := &latencyFake{rows: []latencyRow{
+		{auditT0.Add(10 * time.Second), &ms1000},
+		{auditT0.Add(20 * time.Second), &ms2000},
+		{auditT0.Add(30 * time.Second), nil}, // no timing: not part of the sum
+	}}
+	got := readAuditLane(context.Background(), f, []string{"a1"}, axis, auditClock(auditT0))
+	if !got.Complete || len(got.Buckets) != 1 {
+		t.Fatalf("read complete %v buckets %+v", got.Complete, got.Buckets)
+	}
+	if b := got.Buckets[0]; b.BusyMs == nil || *b.BusyMs != 3000 {
+		t.Errorf("busyMs %v, want 3000", b.BusyMs)
+	}
+	lane := auditLaneToWire(got, nil)
+	raw, err := json.Marshal(lane.Buckets[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"busyMs":3000`) {
+		t.Errorf("bucket lacks busyMs 3000: %s", raw)
+	}
+
+	// A bucket whose calls have no timing has no busyMs at all.
+	untimed := &latencyFake{rows: []latencyRow{{auditT0.Add(10 * time.Second), nil}}}
+	got = readAuditLane(context.Background(), untimed, []string{"a1"}, axis, auditClock(auditT0))
+	if len(got.Buckets) != 1 || got.Buckets[0].Count != 1 || got.Buckets[0].BusyMs != nil {
+		t.Fatalf("untimed bucket %+v, want count 1 and nil BusyMs", got.Buckets)
+	}
+	lane = auditLaneToWire(got, nil)
+	raw, err = json.Marshal(lane.Buckets[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "busyMs") {
+		t.Errorf("untimed bucket holds busyMs: %s", raw)
+	}
+}
+
+func TestAuditClippedBucketKeepsBusy(t *testing.T) {
+	// The window starts 30 seconds into its first cell, so that cell is clipped.
+	axis := newTracingAxis(auditT0.Add(30*time.Second), auditT0.Add(30*time.Minute))
+	ms500 := 500.0
+	f := &latencyFake{rows: []latencyRow{
+		{auditT0.Add(40 * time.Second), &ms500},
+		{auditT0.Add(45 * time.Second), &ms500},
+	}}
+	got := readAuditLane(context.Background(), f, []string{"a1"}, axis, auditClock(auditT0))
+	var clipped *auditBucket
+	for i := range got.Buckets {
+		if got.Buckets[i].Clipped {
+			clipped = &got.Buckets[i]
+			break
+		}
+	}
+	if clipped == nil {
+		t.Fatalf("no clipped bucket in %+v", got.Buckets)
+	}
+	if clipped.BusyMs == nil || *clipped.BusyMs != 1000 {
+		t.Errorf("clipped busyMs %v, want 1000", clipped.BusyMs)
+	}
+}

@@ -65,9 +65,12 @@ type checkFileVerdict struct {
 	ServerName string   `json:"serverName"`
 	NeedsZone  bool     `json:"needsZone"`
 	Reason     string   `json:"reason"`
-	Rows       int      `json:"rows"`
-	Emitted    int      `json:"emitted"`
-	Rejected   int      `json:"rejected"`
+	// Rows, Emitted and Rejected are set only when the file was read and counted
+	// (ready, or needs-zone). Every other verdict leaves them out, so a missing count
+	// is never read as zero.
+	Rows     *int `json:"rows,omitempty"`
+	Emitted  *int `json:"emitted,omitempty"`
+	Rejected *int `json:"rejected,omitempty"`
 }
 
 // checkReportDTO is the result of a finished check job.
@@ -106,7 +109,9 @@ func (h *handler) postImportCheck(w http.ResponseWriter, r *http.Request, raw st
 	}
 	h.event(r, "import_check_started")
 	limit := h.uploadCap(nil)
-	total := limit * checkBodyFactor
+	// The spool must not exceed what one case can hold: limit*checkBodyFactor
+	// alone allows up to 16 GiB, but a case holds at most MaxCaseBytes (4 GiB).
+	total := min(limit*checkBodyFactor, casestore.DefaultCaps.MaxCaseBytes)
 	if r.ContentLength > total {
 		writeCaseFailure(w, http.StatusRequestEntityTooLarge, "request-too-large", "The upload is larger than the cap.")
 		return
@@ -206,8 +211,14 @@ func (h *handler) postImportCheck(w http.ResponseWriter, r *http.Request, raw st
 		return
 	}
 	job.total.Store(sum)
+	if !h.jobs.beginRun() {
+		// Shutdown won the race: start no goroutine. handedOff stays false, so the
+		// defer above closes the spools, discards the job and gives back the slot
+		// and the gate.
+		writeCaseFailure(w, http.StatusServiceUnavailable, "cases-unavailable", "Unravis is shutting down. Try again in a moment.")
+		return
+	}
 	handedOff = true
-	h.jobs.wg.Add(1)
 	go h.runCheckJob(job, items, id, slot, release)
 	writeJSON(w, http.StatusAccepted, job.snapshot(), 4096)
 }
@@ -317,7 +328,8 @@ func (h *handler) checkOne(ctx context.Context, c casestore.Case, id casestore.C
 			return notSupported(string(importer.ReasonUnsupportedFormat))
 		}
 		v.Importer = ans.Importer
-		v.Rows, v.Emitted, v.Rejected = int(ans.Report.Rows), int(ans.Report.Emitted), int(ans.Report.Rejected)
+		rows, emitted, rejected := int(ans.Report.Rows), int(ans.Report.Emitted), int(ans.Report.Rejected)
+		v.Rows, v.Emitted, v.Rejected = &rows, &emitted, &rejected
 		v.Verdict = verdictReady
 		if h.needsZone(ans.Report) {
 			v.Verdict, v.NeedsZone = verdictNeedsZone, true
