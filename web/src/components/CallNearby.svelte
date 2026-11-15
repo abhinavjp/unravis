@@ -143,10 +143,11 @@
     </table>
   {/if}
 
-  {#if capped.capped}
+  {#if capped.capped && truncated}
+    <p class="status" data-testid="scall-nearby-capped">{DRILL_TEXT.nearbyCappedAndTruncated(capped.rows.length)}</p>
+  {:else if capped.capped}
     <p class="status" data-testid="scall-nearby-capped">{DRILL_TEXT.rowsCapped(capped.rows.length, capped.total)}</p>
-  {/if}
-  {#if truncated}
+  {:else if truncated}
     <p class="status" data-testid="scall-nearby-truncated">{DRILL_TEXT.truncated(capped.rows.length)}</p>
   {/if}
 </section>

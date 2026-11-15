@@ -31,7 +31,7 @@ const T0 = Date.parse('2026-03-01T10:00:00Z');
 const win = { axisStart: '2026-03-01T10:00:00Z', bucketSeconds: 60 };
 
 test('UI-04: a lane with no numbers says why, from its own state', () => {
-  assert.equal(laneGap({ state: 'no-data' }), 'not-selected');
+  assert.equal(laneGap({ state: 'no-data' }), 'no-file');
   assert.equal(laneGap({ state: 'incomplete' }), 'read-failed');
   for (const state of ['events', 'none-seen', 'clock-unchecked', 'out-of-range']) assert.equal(laneGap({ state }), 'not-recorded', state);
   assert.equal(laneGap(undefined), 'not-recorded');
@@ -39,8 +39,8 @@ test('UI-04: a lane with no numbers says why, from its own state', () => {
 
 test('UI-04: buildLane carries the gap for the API and web-server lanes too', () => {
   const lane = (key, state) => buildLane({ key, state, buckets: [], events: [] }, key, win, T0, T0 + 120000);
-  assert.equal(lane('audit', 'no-data').gap, 'not-selected');
-  assert.equal(lane('iis', 'no-data').gap, 'not-selected');
+  assert.equal(lane('audit', 'no-data').gap, 'no-file');
+  assert.equal(lane('iis', 'no-data').gap, 'no-file');
   assert.equal(lane('audit', 'incomplete').gap, 'read-failed');
   assert.equal(lane('iis', 'incomplete').gap, 'read-failed');
   assert.equal(lane('iis', 'events').gap, 'not-recorded');
@@ -50,10 +50,10 @@ test('UI-04: buildLane carries the gap for the API and web-server lanes too', ()
 
 test('UI-04: the words are plain and never a number', () => {
   assert.equal(laneGapText('not-recorded'), DRILL_TEXT.notRecorded);
-  assert.equal(laneGapText('not-selected'), DRILL_TEXT.laneNotSelected);
+  assert.equal(laneGapText('no-file'), DRILL_TEXT.laneNoFile);
   assert.equal(laneGapText('read-failed'), DRILL_TEXT.laneReadFailed);
   assert.equal(laneGapText(undefined), DRILL_TEXT.notRecorded);
-  const all = ['not-recorded', 'not-selected', 'read-failed'].map(laneGapText);
+  const all = ['not-recorded', 'no-file', 'read-failed'].map(laneGapText);
   assert.equal(new Set(all).size, 3);
   for (const t of all) assert.doesNotMatch(t, /\d/);
   assert.ok(drillCopyEntries().some((e) => e.id === 'drill.rowsCapped'));

@@ -102,7 +102,7 @@ export const DRILL_TEXT = {
   unitAtOnceAvg: 'running at once (average)',
   laneSlow: (n: number): string => (n === 1 ? '1 slow in this window' : `${n} slow in this window`),
   laneNothingSlow: 'nothing slow here',
-  laneNotSelected: 'not selected for this case',
+  laneNoFile: 'This case has no file for this lane. Import one to see it here.',
   laneReadFailed: 'could not be read',
   laneShape: (n: string): string => `Height = running at once, 0 to ${n}`,
   chartReadLine: 'Left to right is time. Up is how many were running at once, so a higher line is a busier moment. Each lane has its own scale.',
@@ -222,6 +222,7 @@ export const DRILL_TEXT = {
   allHeading: (n: number): string => `What happened, in time order (${n})`,
   allEmpty: 'Nothing slow was recorded for these sources in this window.',
   rowsCapped: (shown: number, total: number): string => `Showing the first ${shown} of ${total}`,
+  nearbyCappedAndTruncated: (shown: number): string => `Showing the first ${shown}; more calls exist in this window than can be listed`,
   // failure and gap lines
   chipUserNone: 'Same user: not recorded',
   chipApiNone: 'Same endpoint: not recorded',
@@ -307,6 +308,7 @@ const SAMPLE = {
   windowCalls: [12, '10:00', '10:30'] as const,
   allHeading: 12,
   rowsCapped: [200, 450] as const,
+  nearbyCappedAndTruncated: 200,
   rangeTo: ['10:00', '10:30'] as const
 } as const;
 
@@ -364,6 +366,7 @@ export const drillCopyEntries = (): LintEntry[] => {
     ['windowCalls', DRILL_TEXT.windowCalls(...SAMPLE.windowCalls)],
     ['allHeading', DRILL_TEXT.allHeading(SAMPLE.allHeading)],
     ['rowsCapped', DRILL_TEXT.rowsCapped(...SAMPLE.rowsCapped)],
+    ['nearbyCappedAndTruncated', DRILL_TEXT.nearbyCappedAndTruncated(SAMPLE.nearbyCappedAndTruncated)],
     ['rangeTo', DRILL_TEXT.rangeTo(...SAMPLE.rangeTo)]
   ];
   for (const [key, text] of fns) entries.push({ id: 'drill.' + key, text });
