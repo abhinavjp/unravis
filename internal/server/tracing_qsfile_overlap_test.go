@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"api-audit-explorer/internal/calltrace"
+	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/importer/sqlserver"
 )
@@ -113,8 +115,14 @@ func TestQSFileLaneReadsBackFarEnoughToFindAStraddlingInterval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.queries) != 1 || c.queries[0].Window.From.After(axis.Start.Add(-qsFileLookback)) {
-		t.Fatalf("read window %+v does not reach back %v", c.queries, qsFileLookback)
+	if len(c.queries) != 2 {
+		t.Fatalf("expected a window read and an early read, got %+v", c.queries)
+	}
+	if !c.queries[0].Window.From.Equal(axis.Start) || !c.queries[0].Window.To.Equal(axis.End) {
+		t.Fatalf("window read %+v is not the window %v..%v", c.queries[0].Window, axis.Start, axis.End)
+	}
+	if !c.queries[1].Window.From.Equal(axis.Start.Add(-qsFileLookback)) || !c.queries[1].Window.To.Equal(axis.Start) {
+		t.Fatalf("early read %+v does not cover %v..%v", c.queries[1].Window, axis.Start.Add(-qsFileLookback), axis.Start)
 	}
 	if got.ReasonCode != tracingReasonQSFile || got.Scanned != 40 {
 		t.Fatalf("reason %s, scanned %d; want qs-file and 40", got.ReasonCode, got.Scanned)
@@ -139,4 +147,35 @@ func TestQSFileStraddlingIntervalThroughTheHandler(t *testing.T) {
 			t.Fatalf("executions %d, scanned %d; want 200 (the 10:00 interval kept, the 09:45 one dropped)", tracingBucketSum(lane), lane.Scanned)
 		}
 	})
+}
+
+// A-1: rows that began before the window are read separately, so they cannot
+// fill the window read's cap. The 50,000 early rows end before the window
+// starts, so the End.After(axis.Start) check drops them; the ten in-window
+// intervals are all drawn and the lane is not truncated.
+func TestQSFilePreWindowRowsCannotFillTheWindowCap(t *testing.T) {
+	axis := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(3*time.Hour))
+	rows := make([]evidence.Event, 0, casestore.MaxEventQuery+10)
+	for i := 0; i < casestore.MaxEventQuery; i++ {
+		rows = append(rows, qsFileTestEvent(axis.Start.Add(-6*time.Hour), "1", 20, 90))
+	}
+	for i := 0; i < 10; i++ {
+		rows = append(rows, qsFileTestEvent(axis.Start.Add(time.Duration(i)*15*time.Minute), "1", 20, 90))
+	}
+	c := qsFileTestCase(rows)
+	got, err := tracingQSFileLane(context.Background(), c, axis, qsFileTestSelection(), tracingLane{Key: calltrace.LaneSQL, Complete: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Truncated {
+		t.Fatalf("pre-window rows filled the window cap: %q", got.Reason)
+	}
+	// The early read hit the row cap, so an interval that began before the
+	// window may be missing: the lane says so without claiming truncation.
+	if got.Complete || !strings.Contains(got.Reason, "An interval that began before this window may be missing.") {
+		t.Fatalf("early-read cap was not reported: complete=%v reason=%q", got.Complete, got.Reason)
+	}
+	if tracingBucketSum(got) != 10 || got.Scanned != 10 {
+		t.Fatalf("bucket sum %d, scanned %d; want 10", tracingBucketSum(got), got.Scanned)
+	}
 }

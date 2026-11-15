@@ -159,13 +159,23 @@ func tracingQSFileLane(ctx context.Context, c casestore.Case, axis tracingAxis, 
 	if !found {
 		return lane, nil
 	}
-	// The store lists events by start time, so the read begins a day early to
-	// find intervals that began before the window and still run into it.
-	readAxis := axis
-	readAxis.Start = axis.Start.Add(-qsFileLookback)
-	events, capped, timedOut, err := readLaneEvents(ctx, c, readAxis, []string{sqlserver.QSName})
+	// Window read: only this one sets the cap/timeout flags the lane reports.
+	events, capped, timedOut, err := readLaneEvents(ctx, c, axis, []string{sqlserver.QSName})
 	if err != nil {
 		return lane, err
+	}
+	// Early read: intervals that began before the window (up to qsFileLookback) and may run into it.
+	earlyAxis := axis
+	earlyAxis.Start = axis.Start.Add(-qsFileLookback)
+	earlyAxis.End = axis.Start
+	early, earlyCapped, earlyTimedOut, err := readLaneEvents(ctx, c, earlyAxis, []string{sqlserver.QSName})
+	if err != nil {
+		return lane, err
+	}
+	for _, e := range early {
+		if e.End.After(axis.Start) {
+			events = append(events, e)
+		}
 	}
 	intervals, skipped := 0, 0
 	for _, e := range events {
@@ -186,6 +196,10 @@ func tracingQSFileLane(ctx context.Context, c casestore.Case, axis tracingAxis, 
 		if timedOut {
 			lane.Complete, lane.Truncated = false, true
 			lane.Reason = strings.TrimSpace(lane.Reason + " " + tracingTimeoutMsg)
+		}
+		if earlyCapped || earlyTimedOut {
+			lane.Complete = false
+			lane.Reason = strings.TrimSpace(lane.Reason + " An interval that began before this window may be missing.")
 		}
 		return lane, nil
 	}
@@ -218,6 +232,10 @@ func tracingQSFileLane(ctx context.Context, c casestore.Case, axis tracingAxis, 
 	if timedOut {
 		lane.Complete, lane.Truncated = false, true
 		lane.Reason += " " + tracingTimeoutMsg
+	}
+	if earlyCapped || earlyTimedOut {
+		lane.Complete = false
+		lane.Reason += " An interval that began before this window may be missing."
 	}
 	if !lane.Complete {
 		for i := range lane.Buckets {
