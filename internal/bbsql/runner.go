@@ -514,9 +514,22 @@ func (r *Runner) tick(parent context.Context, now time.Time) error {
 // backwards must not suppress sampling until the stored timestamp catches up:
 // a backward jump makes the sampler due at once (the clock-jump guard separately
 // rebaselines deltas), so evidence is not silently stalled (W10-09).
+//
+// CORR-2: the comparison carries a bounded slack. Run schedules on the steady
+// clock but the tick stamps the wall clock, so a slot can be read a few tens of
+// milliseconds before the whole interval has elapsed (timer granularity, a
+// clock correction). Against the bare interval that slot is skipped outright
+// and the sampler silently halves its cadence, so the elapsed time is allowed
+// to fall short by a tenth of the interval, capped at one second. The cap keeps
+// the slack far below every cadence in use (15 s, 60 s, and the back-off steps),
+// so a 60 s item can never be pulled forward onto a 45 s slot.
 func (r *Runner) due(s Sampler, now time.Time) bool {
 	lr, ok := r.lastRun[s.Kind()]
-	return !ok || now.Before(lr) || now.Sub(lr) >= max(r.state.Interval, s.Interval())
+	if !ok || now.Before(lr) {
+		return true
+	}
+	iv := max(r.state.Interval, s.Interval())
+	return now.Sub(lr) >= iv-min(iv/10, time.Second)
 }
 
 // connExpired reports whether the live connection has outlived C5's lifetime.

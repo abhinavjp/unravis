@@ -656,6 +656,73 @@ func TestDueSchedulingKeepsCadences(t *testing.T) {
 	}
 }
 
+// TestDueJitter pins CORR-2: a slot read a hair early must still run. Run keeps
+// fixed-rate monotonic deadlines, but the tick stamps the WALL clock, so a slot
+// can be read a few tens of milliseconds before the exact interval has elapsed
+// (timer granularity, a clock correction). Comparing with the bare interval
+// then drops that whole slot and the 15 s items silently halve their cadence.
+// due() allows a bounded slack instead - a tenth of the interval, at most one
+// second - while the 60 s items must still not be pulled forward.
+func TestDueJitter(t *testing.T) {
+	base := time.Date(2026, 3, 4, 13, 0, 0, 0, time.UTC)
+	q := &recQuery{replies: map[string][]Row{
+		Statements["bb:waits"]:     fakeWaitRows(1),
+		Statements["bb:filestats"]: {{}},
+	}}
+	clock := base
+	r := newFakeRunner(t, q, runnerOpts{
+		now: base,
+		samplers: []Sampler{
+			baseSampler("bb:waits", "waits"),
+			&fakeSampler{id: "bb:filestats", kind: "filestats", interval: DemotedInterval},
+		},
+	})
+	r.Now = func() time.Time { return clock }
+
+	// Deterministic jitter in [0,50ms] - no clock, locale, home folder or network
+	// input - so the run is identical every time and under load.
+	const slots = 200
+	early, prev := 0, time.Duration(0)
+	for i := 0; i < slots; i++ {
+		jitter := time.Duration(i*37%51) * time.Millisecond
+		if i > 0 && jitter < prev {
+			early++
+		}
+		prev = jitter
+		clock = base.Add(time.Duration(i)*BaseInterval + jitter)
+		if err := r.Tick(clock); err != nil {
+			t.Fatalf("slot %d: %v", i, err)
+		}
+	}
+	if early == 0 {
+		t.Fatal("the jitter never went backwards, so an early slot was never exercised")
+	}
+	if got := q.countID("bb:waits"); got != slots {
+		t.Errorf("bb:waits ran %d times over %d slots, want every slot (%d slots read early)", got, slots, early)
+	}
+	if got := sampleCount(t, r.Dir, "waits"); got != slots {
+		t.Errorf("waits samples = %d, want %d (one per slot)", got, slots)
+	}
+	// The slack is bounded: the 60 s items still run every fourth slot, never on
+	// the third, so jitter cannot turn them into 45 s items.
+	if got := q.countID("bb:filestats"); got != slots/4 {
+		t.Errorf("bb:filestats ran %d times over %d slots, want %d", got, slots, slots/4)
+	}
+	if r.Skipped() != 0 {
+		t.Errorf("skipped = %d, want 0 (no tick overlapped)", r.Skipped())
+	}
+
+	// The backward-clock guard is kept: a wall clock that moved behind the last
+	// run makes the sampler due at once, never stalled until it catches up.
+	clock = clock.Add(-time.Hour)
+	if err := r.Tick(clock); err != nil {
+		t.Fatalf("tick after the clock moved back: %v", err)
+	}
+	if got := q.countID("bb:waits"); got != slots+1 {
+		t.Errorf("bb:waits ran %d times after the clock moved back, want %d", got, slots+1)
+	}
+}
+
 // TestOneSuccessPerTick: OnSuccess halves the interval, so calling it once per
 // tick (not once per sampler) is what keeps a back-off step per tick.
 func TestOneSuccessPerTick(t *testing.T) {
