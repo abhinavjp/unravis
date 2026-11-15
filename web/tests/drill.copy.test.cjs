@@ -164,6 +164,36 @@ test('a missing import date is stated as unknown, never as a sample date', () =>
   assert.equal(DRILL_TEXT.dbSrcFile('11 Nov 2026'), 'Query Store file imported 11 Nov 2026');
 });
 
+// ---- UX-2: the chart help describes the batch-rate database lane, not a count ----
+
+test('UX-2: the rate read line and the up-help addition say what the axis measures', () => {
+  assert.equal(typeof DRILL_TEXT.chartReadLineRate, 'string');
+  assert.match(DRILL_TEXT.chartReadLineRate, /batches per second/);
+  assert.doesNotMatch(DRILL_TEXT.chartReadLineRate, /Up is how many were running at once/);
+  assert.equal(typeof DRILL_TEXT.helpUpDbRate, 'string');
+  assert.match(DRILL_TEXT.helpUpDbRate, /batches per second/);
+  assert.match(DRILL_TEXT.helpUpDbRate, /not how many ran at once/);
+});
+
+test('UX-2: the at-once read line and up help are unchanged', () => {
+  assert.equal(
+    DRILL_TEXT.chartReadLine,
+    'Left to right is time. Up is how many were running at once, so a higher line is a busier moment. Each lane has its own scale.'
+  );
+  assert.equal(
+    DRILL_TEXT.helpUp,
+    'Up = how many were running at the same moment. The bottom is 0 and the dashed line marks the busiest moment in that lane. Each lane has its own scale, so compare a lane with itself.'
+  );
+});
+
+test('UX-2: the new keys are linted and use no banned wording', () => {
+  const ids = drillCopyEntries().map((e) => e.id);
+  assert.ok(ids.includes('drill.chartReadLineRate'), 'chartReadLineRate is linted');
+  assert.ok(ids.includes('drill.helpUpDbRate'), 'helpUpDbRate is linted');
+  const banned = /because|due to|caus|waiting on|blocked by|led to|results? in|responsible for|leak|starv|saturat|proven/i;
+  for (const s of [DRILL_TEXT.chartReadLineRate, DRILL_TEXT.helpUpDbRate]) assert.doesNotMatch(s, banned, s);
+});
+
 test('the new unit copy uses no banned wording', () => {
   const banned = /because|due to|caus|waiting on|blocked by|led to|results? in|responsible for|leak|starv|saturat|proven/i;
   const strings = [

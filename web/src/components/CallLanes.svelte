@@ -328,7 +328,7 @@
   {/if}
 
   <div class="scall-readbar" role="presentation" onkeydown={onHelpKey}>
-    <p class="scall-readline">{DRILL_TEXT.chartReadLine}</p>
+    <p class="scall-readline">{shown.db && sqlRate ? DRILL_TEXT.chartReadLineRate : DRILL_TEXT.chartReadLine}</p>
     <button
       type="button"
       class="scall-help"
@@ -342,7 +342,7 @@
     <div class="scall-helppanel" id="scall-help-{patternId}" hidden={!helpOpen}>
       <ul class="scall-legend" data-testid="scall-legend">
         <li>{DRILL_TEXT.helpAcross}</li>
-        <li>{DRILL_TEXT.helpUp}</li>
+        <li>{DRILL_TEXT.helpUp}{#if shown.db && sqlRate}{' '}{DRILL_TEXT.helpUpDbRate}{/if}</li>
         <li>{DRILL_TEXT.helpDots}</li>
         <li>{DRILL_TEXT.legendShape}</li>
         {#if shown.db && sqlRate}

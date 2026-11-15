@@ -112,12 +112,18 @@ export const DRILL_TEXT = {
   laneShape: (n: string): string => `Height = running at once, 0 to ${n}`,
   laneRateShape: (n: string): string => `Height = batches per second, 0 to ${n}`,
   chartReadLine: 'Left to right is time. Up is how many were running at once, so a higher line is a busier moment. Each lane has its own scale.',
+  // Shown instead of chartReadLine when the Database lane measures batches per second (Blackbox host counter):
+  // "up" is then a rate for that lane, never a count of running work (UX-2).
+  chartReadLineRate: 'Left to right is time. Up is how busy each lane was. The Database lane counts batches per second; the other lanes count how many ran at once. A higher line is a busier moment. Each lane has its own scale.',
   yPeak: (n: string): string => `busiest ${n}`,
   yZero: '0',
   xTitle: (zone: string): string => `Time (${zone}), earlier on the left, later on the right`,
   helpButton: 'How to read this chart',
   helpAcross: 'Across = time. Earlier is on the left, later on the right; the times are under the chart.',
   helpUp: 'Up = how many were running at the same moment. The bottom is 0 and the dashed line marks the busiest moment in that lane. Each lane has its own scale, so compare a lane with itself.',
+  // Appended to helpUp only when the Database lane measures batches per second, so the help never
+  // claims a count for a rate lane (UX-2). helpUp itself stays exact for the at-once lanes.
+  helpUpDbRate: 'The Database lane is different. Up there is batches per second, the work the server took on each second, not how many ran at once.',
   helpDots: 'Line and dots = one dot per time slot, joined so you can see busy moments rise and fall. A hatched stretch means nothing was recorded there.',
   mapAxisLine: 'Across is time. A taller column means more running at once, and each row has its own scale.',
   // The Database row can measure throughput instead (Blackbox host batch counts): then a taller column is more
