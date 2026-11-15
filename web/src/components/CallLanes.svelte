@@ -7,15 +7,13 @@
   import { DRILL_TEXT } from '../lib/drill/drillCopy';
   import { cellValue, formatAtOnce, laneGapText, sameReadout, type CallLane, type LaneBar, type LaneCell } from '../lib/drill/callLanes';
   import { readoutAt, type Readout, type SourceItem } from '../lib/drill/callReadout';
+  import type { DbStateView } from '../lib/drill/dbState';
   import { formatDuration } from '../lib/format';
   import { formatTime, zoneAbbreviation } from '../lib/time';
 
   // The three lanes (API, web server, database) on one time axis: the faint shape in each lane's own measure
   // ("running at once", or "batches per second" for a host-counter database lane), hatched gaps, the red column
   // for the call, slow items as bars, event markers, a hover line and its readout.
-  // Declared locally until dbState.ts is mounted by the screen; the shape is the same.
-  type DbStateKey = 'qs' | 'qsfile' | 'api' | 'off' | 'ro' | 'late' | 'denied' | 'events' | 'notread' | 'blackbox';
-  interface DbStateView { key: DbStateKey; source: string; message: string; short: string; shape: 'blocks' | 'apiseen' | 'markers' | 'none'; measure: 'at-once' | 'batch-rate' }
   type LaneName = 'audit' | 'iis' | 'sql';
 
   let {
