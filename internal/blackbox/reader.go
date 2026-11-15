@@ -929,6 +929,23 @@ func mergeSamples(out, file []Sample) []Sample {
 		return out
 	}
 	sort.SliceStable(file, func(i, j int) bool { return file[i].T.Before(file[j].T) })
+	// Fast path (PERF-1): when the file starts strictly AFTER everything read
+	// so far (or nothing was read yet), no interleaving is possible, so append
+	// instead of copying the whole accumulated slice into a new merge buffer.
+	// Duplicates are still dropped exactly as the merge below drops them:
+	// same T AND same Run against the last kept sample, which covers both
+	// within-file duplicates and (for an empty out) nothing else. A file whose
+	// first T EQUALS out's last T does NOT take this path — the merge below
+	// keeps out's payload first and drops the file's duplicate.
+	if len(out) == 0 || out[len(out)-1].T.Before(file[0].T) {
+		for _, s := range file {
+			if n := len(out); n > 0 && s.T.Equal(out[n-1].T) && s.Run == out[n-1].Run {
+				continue
+			}
+			out = append(out, s)
+		}
+		return out
+	}
 	merged := make([]Sample, 0, len(out)+len(file))
 	i, j := 0, 0
 	emit := func(s Sample) {
