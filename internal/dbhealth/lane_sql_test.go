@@ -662,6 +662,46 @@ func TestDownsampleSeriesKeepsTheWholeSpan(t *testing.T) {
 	}
 }
 
+func TestDownsampleWindowsTerminatesWhenLimitIsBelowTheRunCount(t *testing.T) {
+	const unit = int64(60)
+	ref := laneRef
+	inc := laneInc
+	wins := []Window{ref, inc}
+	var pts []LaneSeriesPoint
+	var wantExecs int64
+	for i := 0; i < 4; i++ {
+		pts = append(pts, LaneSeriesPoint{T: ref.Start.Unix() + int64(i)*unit, Execs: 10, AvgMs: 1, MaxMs: 1})
+		wantExecs += 10
+	}
+	for i := 0; i < 4; i++ {
+		pts = append(pts, LaneSeriesPoint{T: inc.Start.Unix() + int64(i)*unit, Execs: 10, AvgMs: 1, MaxMs: 1})
+		wantExecs += 10
+	}
+	done := make(chan []LaneSeriesPoint, 1)
+	go func() {
+		done <- downsampleWindows(pts, 1, unit, wins)
+	}()
+	var out []LaneSeriesPoint
+	select {
+	case out = <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("downsampleWindows did not return within 3 seconds")
+	}
+	if len(out) != 2 {
+		t.Fatalf("got %d points, want 2 (one per window)", len(out))
+	}
+	if out[0].T > out[1].T {
+		t.Fatalf("not sorted by T: %d then %d", out[0].T, out[1].T)
+	}
+	var gotExecs int64
+	for _, p := range out {
+		gotExecs += p.Execs
+	}
+	if gotExecs != wantExecs {
+		t.Fatalf("execs %d, want %d", gotExecs, wantExecs)
+	}
+}
+
 func TestWindowRelations(t *testing.T) {
 	a := Window{at(1, 0, 0), at(1, 12, 0)}
 	if !a.Overlaps(Window{at(1, 11, 0), at(1, 13, 0)}) || a.Overlaps(Window{at(1, 12, 0), at(1, 13, 0)}) {

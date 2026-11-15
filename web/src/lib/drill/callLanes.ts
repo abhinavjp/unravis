@@ -55,7 +55,7 @@ export interface LaneBar {
   kind: 'bar' | 'marker';
 }
 /** Why a lane has no numbers: the source was not selected, its read failed, or it simply did not record them. */
-export type LaneGap = 'not-recorded' | 'no-file' | 'read-failed';
+export type LaneGap = 'not-recorded' | 'no-file' | 'read-failed' | 'not-imported';
 
 export interface CallLane {
   key: LaneKey;
@@ -188,8 +188,11 @@ function emptyLane(key: LaneKey): LaneIn {
 }
 
 /** Why a lane without numbers is empty, from the lane's own state. A lane the answer does not hold is simply not recorded. */
-export function laneGap(lane: Pick<LaneIn, 'state'> | undefined): LaneGap {
+export function laneGap(lane: Pick<LaneIn, 'state' | 'reasonCode'> | undefined): LaneGap {
   if (!lane) return 'not-recorded';
+  if (lane.state === 'no-data' || lane.state === 'out-of-range') {
+    if (lane.reasonCode === 'not-imported' || lane.reasonCode === 'import-skipped') return 'not-imported';
+  }
   if (lane.state === 'no-data') return 'no-file';
   if (lane.state === 'incomplete') return 'read-failed';
   return 'not-recorded';
@@ -197,6 +200,7 @@ export function laneGap(lane: Pick<LaneIn, 'state'> | undefined): LaneGap {
 
 /** The short words for a lane gap (copy lives in drillCopy). */
 export function laneGapText(gap: LaneGap | undefined): string {
+  if (gap === 'not-imported') return DRILL_TEXT.laneNotImported;
   if (gap === 'no-file') return DRILL_TEXT.laneNoFile;
   if (gap === 'read-failed') return DRILL_TEXT.laneReadFailed;
   return DRILL_TEXT.notRecorded;

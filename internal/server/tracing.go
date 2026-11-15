@@ -1138,10 +1138,10 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 			if held, ok := tracingHeldSQLLane(ctx, unwrapCase(c), axis, now); ok {
 				switch {
 				case lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange:
-					// A lane whose SQL file was listed but never imported (or whose
-					// import was set aside) keeps that reason: the investigator must
-					// be told to import the file, not that Query Store was off.
-					if lane.ReasonCode != tracingReasonNotImported && lane.ReasonCode != tracingReasonSkipped {
+					// A lane whose SQL file was listed but never imported (or whose import was set aside) keeps that
+					// reason, so the investigator is told to import the file rather than that Query Store was off.
+					// The exception is a saved day that has real numbers in this window: those are shown.
+					if (lane.ReasonCode != tracingReasonNotImported && lane.ReasonCode != tracingReasonSkipped) || held.State == calltrace.StateEvents {
 						imported := lane
 						lane = held
 						// The imported files' time range stays on the lane the owner sees.

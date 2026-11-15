@@ -43,6 +43,9 @@ test('UI-04: a lane with no numbers says why, from its own state', () => {
   assert.equal(laneGap({ state: 'incomplete' }), 'read-failed');
   for (const state of ['events', 'none-seen', 'clock-unchecked', 'out-of-range']) assert.equal(laneGap({ state }), 'not-recorded', state);
   assert.equal(laneGap(undefined), 'not-recorded');
+  assert.equal(laneGap({ state: 'no-data', reasonCode: 'not-imported' }), 'not-imported');
+  assert.equal(laneGap({ state: 'no-data', reasonCode: 'import-skipped' }), 'not-imported');
+  assert.equal(laneGap({ state: 'no-data', reasonCode: 'other' }), 'no-file');
 });
 
 test('UI-04: buildLane carries the gap for the API and web-server lanes too', () => {
@@ -61,8 +64,9 @@ test('UI-04: the words are plain and never a number', () => {
   assert.equal(laneGapText('no-file'), DRILL_TEXT.laneNoFile);
   assert.equal(laneGapText('read-failed'), DRILL_TEXT.laneReadFailed);
   assert.equal(laneGapText(undefined), DRILL_TEXT.notRecorded);
-  const all = ['not-recorded', 'no-file', 'read-failed'].map(laneGapText);
-  assert.equal(new Set(all).size, 3);
+  assert.equal(laneGapText('not-imported'), DRILL_TEXT.laneNotImported);
+  const all = ['not-recorded', 'no-file', 'read-failed', 'not-imported'].map(laneGapText);
+  assert.equal(new Set(all).size, 4);
   for (const t of all) assert.doesNotMatch(t, /\d/);
   assert.ok(drillCopyEntries().some((e) => e.id === 'drill.rowsCapped'));
 });

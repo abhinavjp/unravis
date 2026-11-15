@@ -212,7 +212,8 @@ func downsampleSeries(pts []LaneSeriesPoint, limit int) []LaneSeriesPoint {
 // the gap between the reference and the incident (DATA-04), and every run uses one group size, raised until at most limit points remain. Inside a window
 // neighbouring points are merged in equal groups: executions add up, the average is weighted by executions, the slowest stays the slowest, the group
 // starts where its first point did, and BlockSeconds is the sum of the blocks it covers, so busy time over BlockSeconds stays the true busy per
-// second. unit is the length of one block in seconds (0 means work it out from the smallest gap between points).
+// second. unit is the length of one block in seconds (0 means work it out from the smallest gap between points). When limit is smaller than the number
+// of runs, one point per run is kept (the result may exceed limit by at most the run count).
 func downsampleWindows(pts []LaneSeriesPoint, limit int, unit int64, wins []Window) []LaneSeriesPoint {
 	if limit <= 0 || len(pts) <= limit {
 		return pts
@@ -242,6 +243,11 @@ func downsampleWindows(pts []LaneSeriesPoint, limit int, unit int64, wins []Wind
 			out = append(out, mergeGroups(run, group, unit)...)
 		}
 		if len(out) <= limit {
+			sort.SliceStable(out, func(i, j int) bool { return out[i].T < out[j].T })
+			return out
+		}
+		// A group as long as the longest run already makes one point per run; a bigger group cannot thin it further.
+		if group >= len(pts) {
 			sort.SliceStable(out, func(i, j int) bool { return out[i].T < out[j].T })
 			return out
 		}
