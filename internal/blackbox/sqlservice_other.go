@@ -14,3 +14,11 @@ func (OSEnv) GrantSQLLaunchAccess(string, string, string) error { return errNoSe
 
 // grantSQLLaunchAccess is not available off Windows.
 func grantSQLLaunchAccess(string, string, string) error { return errNoService }
+
+// VerifyAdminOnlyFile is not available off Windows: there are no Windows ACLs
+// to prove, so the proof fails closed (SEC-1). The pure rule (adminOnlyDACL)
+// still lives in sqlservice.go and is tested on every platform.
+func (OSEnv) VerifyAdminOnlyFile(string) error { return errNoService }
+
+// verifyAdminOnlyFile is not available off Windows.
+func verifyAdminOnlyFile(string) error { return errNoService }

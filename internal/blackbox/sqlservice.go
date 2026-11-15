@@ -70,6 +70,97 @@ type sqlLaunchGranter interface {
 // The real Env must be able to grant launch access on every build.
 var _ sqlLaunchGranter = OSEnv{}
 
+// sqlConfigVerifier proves a settings file is administrator-locked (SEC-1):
+// trusted owner, a DACL that grants change rights only to SYSTEM and
+// Administrators, and no reparse point anywhere in its ancestor chain. The SQL
+// service reads this file at every start, so a user-writable --config would let
+// an ordinary user aim a privileged service at their own folder. OSEnv
+// implements it on Windows with the real owner/DACL/reparse reads and refuses
+// off Windows. The rule itself is decided in pure Go (adminOnlyDACL) so a fake
+// ACL reader can drive it on any platform.
+type sqlConfigVerifier interface {
+	VerifyAdminOnlyFile(path string) error
+}
+
+// The real Env must be able to prove the settings lock on every build.
+var _ sqlConfigVerifier = OSEnv{}
+
+// verifySQLConfigFile asks the Env's ACL reader to prove configPath is
+// administrator-locked. Any error — a user-writable file, an unreadable or
+// malformed ACL, a reparse ancestor — is a refusal (fail closed). An Env that
+// carries no ACL reader at all is a test fake predating the seam: production
+// always wires OSEnv (cmd/unravis-blackbox), which implements the proof on
+// every platform, and the real Windows launch grant re-verifies the config
+// itself before it touches any ACL, so the real install path stays closed.
+func verifySQLConfigFile(env Env, configPath string) error {
+	v, ok := env.(sqlConfigVerifier)
+	if !ok {
+		return nil
+	}
+	return v.VerifyAdminOnlyFile(configPath)
+}
+
+// adminOnlyWriteMask is every right that lets a trustee CHANGE a settings
+// file: write/append data, extended attributes, attributes, delete (replace),
+// delete-child, DACL-change, owner-change, and the generic/maximum grants that
+// map onto them. The values are the Windows file-access constants; they are
+// literals here so the rule is pure and testable off Windows.
+const adminOnlyWriteMask uint32 = 0x00000002 | // FILE_WRITE_DATA
+	0x00000004 | // FILE_APPEND_DATA
+	0x00000010 | // FILE_WRITE_EA
+	0x00000100 | // FILE_WRITE_ATTRIBUTES
+	0x00000040 | // FILE_DELETE_CHILD
+	0x00010000 | // DELETE
+	0x00040000 | // WRITE_DAC
+	0x00080000 | // WRITE_OWNER
+	0x02000000 | // MAXIMUM_ALLOWED
+	0x10000000 | // GENERIC_ALL
+	0x40000000 // GENERIC_WRITE
+
+// fileACE is one access-control entry described in the only terms the rule
+// needs: the raw Windows ACE type, its access mask and its trustee SID string.
+// The platform reader produces these; the rule below never touches an ACL.
+type fileACE struct {
+	Type    byte
+	Mask    uint32
+	Trustee string
+}
+
+// adminOnlyDACL decides whether a described DACL leaves a settings file
+// changeable only by SYSTEM and Administrators (SEC-1). Fail closed: a missing
+// (NULL) DACL means everyone may change the file, an unrecognized ACE type is
+// refused, and any allow-family entry (including conditional/callback and
+// object ACEs, whose conditions cannot be evaluated here) that carries a
+// change right for anyone else refuses the file. Deny, audit, alarm and label
+// entries grant nothing and are skipped; a deny is never trusted to cancel a
+// later allow, because that depends on ACE order. Read-only entries for
+// ordinary users or the service SID are fine.
+func adminOnlyDACL(present bool, aces []fileACE) error {
+	if !present {
+		return errors.New("blackbox: the settings file has no access list, so anyone may change it")
+	}
+	for _, a := range aces {
+		switch a.Type {
+		case 0x1, 0x6, 0xA, 0xC: // access-denied (plain, object, callback): grants nothing
+			continue
+		case 0x2, 0x3, 0x7, 0x8, 0xD, 0xE, 0xF, 0x10, // audit/alarm families
+			0x11, 0x12, 0x13: // mandatory label, resource attribute, scoped policy: grant nothing
+			continue
+		case 0x0, 0x5, 0x9, 0xB: // access-allowed (plain, object, callback): may grant
+			if a.Mask&adminOnlyWriteMask == 0 {
+				continue
+			}
+			if strings.EqualFold(a.Trustee, "S-1-5-18") || strings.EqualFold(a.Trustee, "S-1-5-32-544") {
+				continue // SYSTEM or Administrators
+			}
+			return errors.New("blackbox: the settings file allows a non-administrator to change it")
+		default:
+			return fmt.Errorf("blackbox: an unrecognized access entry (type %d) on the settings file", a.Type)
+		}
+	}
+	return nil
+}
+
 // sqlServiceSID is the per-service SID Windows gives NT SERVICE\<name>: S-1-5-80
 // followed by the SHA-1 of the upper-case service name in UTF-16LE, read as five
 // little-endian 32-bit numbers (the algorithm of internal/keeper/owner.go). Pure:
@@ -120,6 +211,9 @@ func sqlSDDL(sid string) string {
 // be ABSOLUTE (W8-09): the service is registered with exactly that path, and a
 // relative path would resolve against the SCM's working directory, not the
 // installer's. The locked folder is always the folder that path's cfg names.
+// SEC-1: the file must also be administrator-locked (trusted owner, change
+// rights only for SYSTEM/Administrators, no reparse ancestor); a user-writable
+// or unverifiable --config is refused before anything is registered.
 //
 // Every answer message is a fixed sentence; causes stay in Cause for local
 // diagnostics and never carry paths into the public answer (W8-07).
@@ -168,6 +262,13 @@ func (m *SQLManager) InstallSQL(cfg Config, configPath string) (err error) {
 	}
 	if _, serr := os.Stat(configPath); serr != nil {
 		return &InstallError{Reason: ReasonOther, Message: "The settings file for the SQL service could not be found.", Cause: serr}
+	}
+	// SEC-1: the settings file the service will be bound to must be
+	// administrator-locked BEFORE anything is registered or mutated. A
+	// user-writable --config would let an ordinary user aim the service at
+	// their own folder on its next start. Unverifiable means refused.
+	if verr := verifySQLConfigFile(m.Env, configPath); verr != nil {
+		return &InstallError{Reason: ReasonOther, Message: "The settings file for the SQL service is not locked to administrators, so it was refused. Use the installed settings file (re-run install if needed).", Cause: verr}
 	}
 
 	var undo undoList
@@ -249,6 +350,11 @@ func (m *SQLManager) EnableSQL(cfg Config, configPath string) error {
 	if loaded.Folder != cfg.Folder {
 		return &InstallError{Reason: ReasonOther, Message: "The settings file does not match the folder the SQL service was installed with. Re-run install-sql."}
 	}
+	// SEC-1: re-prove the settings lock at activation — the file may have been
+	// replaced or its ACL widened since install-sql. Unverifiable means refused.
+	if verr := verifySQLConfigFile(m.Env, configPath); verr != nil {
+		return &InstallError{Reason: ReasonOther, Message: "The settings file for the SQL service is no longer locked to administrators, so it was not started. Re-run install-sql with the installed settings file.", Cause: verr}
+	}
 	sec, ok := m.Env.(sqlDirSecurer)
 	if !ok {
 		return &InstallError{Reason: ReasonOther, Message: "This program cannot lock the SQL data folder on this system."}
@@ -273,6 +379,13 @@ func (m *SQLManager) EnableSQL(cfg Config, configPath string) error {
 		}
 	}
 	if st != SvcRunning {
+		// SEC-1: prove the settings lock again immediately before the start, so
+		// a config swapped after the entry check cannot ride into a running
+		// service. This is the last moment the installer controls the file the
+		// SCM will hand to the service process.
+		if verr := verifySQLConfigFile(m.Env, configPath); verr != nil {
+			return &InstallError{Reason: ReasonOther, Message: "The settings file for the SQL service is no longer locked to administrators, so it was not started. Re-run install-sql with the installed settings file.", Cause: verr}
+		}
 		if serr := m.Svc.Start(SQLServiceName); serr != nil {
 			return &InstallError{Reason: ReasonOther, Message: "The SQL service did not start.", Cause: serr}
 		}

@@ -17,6 +17,20 @@ type fakeSQLEnv struct {
 	sqlErr     error
 	sqlGranted []string // "exe config sid" of every GrantSQLLaunchAccess call
 	grantErr   error
+	// SEC-1: the fake ACL reader. verifyCalls records every admin-lock proof
+	// asked of a settings file; verify, when set, answers instead of the
+	// default "admin-locked" answer, so a test can drive a user-writable,
+	// unreadable or swapped config without Windows.
+	verifyCalls []string
+	verify      func(path string) error
+}
+
+func (e *fakeSQLEnv) VerifyAdminOnlyFile(path string) error {
+	e.verifyCalls = append(e.verifyCalls, path)
+	if e.verify != nil {
+		return e.verify(path)
+	}
+	return nil
 }
 
 func (e *fakeSQLEnv) SecureSQLDir(dir, sid string) error {
@@ -554,4 +568,172 @@ func TestEnableSQLRefusals(t *testing.T) {
 			t.Fatal("enable-sql started with a mismatched config")
 		}
 	})
+}
+
+// SEC-1: a --config an ordinary user can change must never be bound to the SQL
+// service. The admin-lock proof is asked BEFORE anything is mutated, and an
+// unreadable or unverifiable ACL is a refusal, never a pass (fail closed).
+func TestInstallSQLRefusesUserWritableConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"user-writable DACL", errors.New("blackbox: the settings file allows a non-administrator to change it")},
+		{"untrusted owner", errors.New("blackbox: the settings file has an untrusted owner")},
+		{"unreadable ACL", errors.New("access denied")},
+		{"reparse ancestor", errors.New("blackbox: refusing a reparse point in the settings file chain")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newSQLRig(t)
+			g.env.verify = func(string) error { return tc.err }
+			err := g.m.InstallSQL(g.cfg, g.configPath())
+			if installReason(t, err) != ReasonOther {
+				t.Fatalf("%v", err)
+			}
+			if len(g.svc.calls) != 0 || len(g.env.sqlLocked) != 0 || len(g.env.sqlGranted) != 0 {
+				t.Fatalf("something was changed on a refused config: %v %v %v", g.svc.calls, g.env.sqlLocked, g.env.sqlGranted)
+			}
+			if len(g.env.verifyCalls) != 1 || g.env.verifyCalls[0] != g.configPath() {
+				t.Fatalf("the bound config was not proven admin-locked: %v", g.env.verifyCalls)
+			}
+			// W8-07: the public sentence never names the path.
+			if strings.Contains(err.Error(), g.configPath()) {
+				t.Fatalf("the refusal names the path: %v", err)
+			}
+		})
+	}
+}
+
+// SEC-1: an admin-locked config (the installed Program Files copy) installs,
+// and the proof was actually asked of the bound path.
+func TestInstallSQLAdminLockedConfigInstalls(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.env.verifyCalls) == 0 || g.env.verifyCalls[0] != g.configPath() {
+		t.Fatalf("install did not prove the config admin-locked: %v", g.env.verifyCalls)
+	}
+	if g.svc.state != SvcStopped || g.svc.did("create") != 1 {
+		t.Fatalf("the admin-locked install did not register the stopped service: %v %s", g.svc.calls, g.svc.state)
+	}
+}
+
+// SEC-1: enable-sql repeats the proof. A config that became user-writable since
+// install is refused and the service is NOT started.
+func TestEnableSQLRefusesUserWritableConfig(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	g.env.verify = func(string) error {
+		return errors.New("blackbox: the settings file allows a non-administrator to change it")
+	}
+	if err := g.m.EnableSQL(g.cfg, g.configPath()); installReason(t, err) != ReasonOther {
+		t.Fatalf("%v", err)
+	}
+	if g.svc.did("start") != 0 {
+		t.Fatalf("enable-sql started with a user-writable config: %v", g.svc.calls)
+	}
+}
+
+// SEC-1: the proof is repeated immediately before the service is started, so a
+// config swapped after the entry check still cannot ride into a running
+// service. A healthy config is proven at install, at enable entry and again at
+// the start itself.
+func TestEnableSQLRechecksConfigBeforeStart(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	g.env.verify = func(string) error {
+		calls++
+		if calls == 1 {
+			return nil // the entry check still sees the locked config
+		}
+		return errors.New("blackbox: the settings file allows a non-administrator to change it")
+	}
+	if err := g.m.EnableSQL(g.cfg, g.configPath()); installReason(t, err) != ReasonOther {
+		t.Fatalf("%v", err)
+	}
+	if g.svc.did("start") != 0 {
+		t.Fatalf("the service started although the start-time proof failed: %v", g.svc.calls)
+	}
+	// Healthy path: install proves once, enable proves at entry AND at start.
+	g2 := newSQLRig(t)
+	if err := g2.m.InstallSQL(g2.cfg, g2.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	if err := g2.m.EnableSQL(g2.cfg, g2.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	if len(g2.env.verifyCalls) != 3 {
+		t.Fatalf("want proofs at install, enable entry and start, got %v", g2.env.verifyCalls)
+	}
+	for _, p := range g2.env.verifyCalls {
+		if p != g2.configPath() {
+			t.Fatalf("a proof was asked of the wrong path: %v", g2.env.verifyCalls)
+		}
+	}
+}
+
+// SEC-1: the DACL rule in pure Go, driven by described ACEs so every adversarial
+// case runs on any platform. Fail closed: a NULL DACL, an unknown entry type or
+// any change right for a non-administrator refuses; denies never cancel allows.
+func TestAdminOnlyDACLRule(t *testing.T) {
+	const (
+		sy       = "S-1-5-18"
+		ba       = "S-1-5-32-544"
+		bu       = "S-1-5-32-545" // BUILTIN\Users
+		everyone = "S-1-1-0"
+		user     = "S-1-5-21-111-222-333-1001"
+		full     = uint32(0x1F01FF) // FILE_ALL_ACCESS
+		read     = uint32(0x120089) // FILE_GENERIC_READ
+	)
+	allow := func(mask uint32, trustee string) fileACE {
+		return fileACE{Type: 0x0, Mask: mask, Trustee: trustee}
+	}
+	for _, tc := range []struct {
+		name    string
+		present bool
+		aces    []fileACE
+		wantErr bool
+	}{
+		{"NULL DACL is everyone-writable", false, nil, true},
+		{"empty DACL grants nobody anything", true, nil, false},
+		{"admin-locked Program Files copy", true, []fileACE{allow(full, sy), allow(full, ba)}, false},
+		{"admin-locked with users read", true, []fileACE{allow(full, sy), allow(full, ba), allow(read, bu)}, false},
+		{"service SID read grant (W7-01)", true, []fileACE{allow(full, sy), allow(full, ba), allow(read, "S-1-5-80-1")}, false},
+		{"users write data", true, []fileACE{allow(full, sy), allow(0x2, bu)}, true},
+		{"users append data", true, []fileACE{allow(0x4, bu)}, true},
+		{"users write attributes", true, []fileACE{allow(0x100, bu)}, true},
+		{"everyone WRITE_DAC", true, []fileACE{allow(0x40000, everyone)}, true},
+		{"a user WRITE_OWNER", true, []fileACE{allow(0x80000, user)}, true},
+		{"a user DELETE (replace the file)", true, []fileACE{allow(0x10000, user)}, true},
+		{"a user GENERIC_ALL", true, []fileACE{allow(0x10000000, user)}, true},
+		{"a user GENERIC_WRITE", true, []fileACE{allow(0x40000000, user)}, true},
+		{"a user MAXIMUM_ALLOWED", true, []fileACE{allow(0x02000000, user)}, true},
+		{"a user full control", true, []fileACE{allow(full, user)}, true},
+		{"deny before allow does not cancel the allow", true, []fileACE{
+			{Type: 0x1, Mask: 0x2, Trustee: bu}, allow(0x2, bu)}, true},
+		{"object allow ACE with users write", true, []fileACE{{Type: 0x5, Mask: 0x2, Trustee: bu}}, true},
+		{"callback allow ACE with users write", true, []fileACE{{Type: 0x9, Mask: 0x2, Trustee: bu}}, true},
+		{"callback object allow ACE with users write", true, []fileACE{{Type: 0xB, Mask: 0x2, Trustee: bu}}, true},
+		{"unknown ACE type fails closed", true, []fileACE{{Type: 0x4, Mask: 0, Trustee: sy}}, true},
+		{"malformed trustee (empty SID string) with write", true, []fileACE{allow(0x2, "")}, true},
+		{"audit entries grant nothing", true, []fileACE{allow(full, sy), {Type: 0x2, Mask: full, Trustee: bu}}, false},
+		{"mandatory label grants nothing", true, []fileACE{allow(full, sy), {Type: 0x11, Mask: 0x3, Trustee: "S-1-16-12288"}}, false},
+		{"object deny grants nothing", true, []fileACE{allow(full, sy), {Type: 0x6, Mask: full, Trustee: bu}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := adminOnlyDACL(tc.present, tc.aces)
+			if tc.wantErr && err == nil {
+				t.Fatal("a changeable settings file was accepted")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("an admin-locked settings file was refused: %v", err)
+			}
+		})
+	}
 }

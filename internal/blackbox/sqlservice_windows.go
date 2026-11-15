@@ -34,6 +34,126 @@ func (OSEnv) GrantSQLLaunchAccess(exePath, configPath, sid string) error {
 	return grantSQLLaunchAccess(exePath, configPath, sid)
 }
 
+// VerifyAdminOnlyFile proves a settings file is administrator-locked (SEC-1):
+// a trusted owner (SYSTEM, Administrators or the installing administrator), a
+// DACL that grants change rights only to SYSTEM and Administrators, and no
+// reparse point in the file or any ancestor. Every read failure is a refusal:
+// an unreadable or malformed ACL means the file is NOT proven locked, never
+// that it is fine. The DACL rule itself is decided in pure Go (adminOnlyDACL).
+func (OSEnv) VerifyAdminOnlyFile(path string) error { return verifyAdminOnlyFile(path) }
+
+// verifyAdminOnlyFile is the real Windows proof behind OSEnv.VerifyAdminOnlyFile.
+func verifyAdminOnlyFile(path string) error {
+	path = filepath.Clean(path)
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("blackbox: the settings file path must be absolute")
+	}
+	// The whole ancestor chain must be free of reparse points (a junction could
+	// redirect the privileged service at another file) and be real directories.
+	for p := filepath.Dir(path); ; p = filepath.Dir(p) {
+		attrs, err := fileAttributes(p)
+		if err != nil {
+			return err
+		}
+		if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+			return fmt.Errorf("blackbox: refusing a reparse point in the settings file chain")
+		}
+		if attrs&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
+			return fmt.Errorf("blackbox: the settings file chain contains a non-directory")
+		}
+		if filepath.Dir(p) == p {
+			break
+		}
+	}
+	attrs, err := fileAttributes(path)
+	if err != nil {
+		return err
+	}
+	if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return fmt.Errorf("blackbox: refusing a reparse point as the settings file")
+	}
+	if attrs&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		return fmt.Errorf("blackbox: the settings file is a directory")
+	}
+	// The owner holds implicit WRITE_DAC no matter what the DACL says, so an
+	// ordinary owner could re-grant themselves write at any time: refuse.
+	owner, err := ownerSID(path)
+	if err != nil {
+		return err
+	}
+	if !trustedOwner(owner, currentTokenSID()) {
+		return fmt.Errorf("blackbox: the settings file has an untrusted owner")
+	}
+	present, aces, err := describeAdminDACL(path)
+	if err != nil {
+		return err
+	}
+	return adminOnlyDACL(present, aces)
+}
+
+// describeAdminDACL reads the file's DACL and describes every ACE for the pure
+// rule. A missing (NULL) DACL is reported as not present (the rule refuses it).
+// A malformed or truncated entry is an error, never a skipped entry.
+func describeAdminDACL(path string) (bool, []fileACE, error) {
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return false, nil, err
+	}
+	defer runtime.KeepAlive(sd)
+	dacl, present, err := sd.DACL()
+	if err != nil {
+		return false, nil, err
+	}
+	if !present || dacl == nil {
+		return false, nil, nil
+	}
+	aces := make([]fileACE, 0, int(dacl.AceCount))
+	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, i, &ace); err != nil {
+			return false, nil, err
+		}
+		size := int(ace.Header.AceSize)
+		if size < 8 {
+			return false, nil, fmt.Errorf("blackbox: a truncated access entry on the settings file")
+		}
+		raw := unsafe.Slice((*byte)(unsafe.Pointer(ace)), size)
+		a := fileACE{Type: ace.Header.AceType, Mask: uint32(ace.Mask)}
+		// The trustee SID starts at offset 8 for plain and callback ACEs; an
+		// object ACE carries a flags word and up to two GUIDs before the SID.
+		sidOff := 8
+		switch a.Type {
+		case 0x5, 0x6, 0x7, 0x8, 0xB, 0xC, 0xF, 0x10:
+			if size < 12 {
+				return false, nil, fmt.Errorf("blackbox: a truncated object access entry on the settings file")
+			}
+			objFlags := binary.LittleEndian.Uint32(raw[8:12])
+			sidOff = 12
+			if objFlags&0x1 != 0 { // ACE_OBJECT_TYPE_PRESENT
+				sidOff += 16
+			}
+			if objFlags&0x2 != 0 { // ACE_INHERITED_OBJECT_TYPE_PRESENT
+				sidOff += 16
+			}
+		}
+		if sidOff+8 > size {
+			return false, nil, fmt.Errorf("blackbox: a truncated access entry on the settings file")
+		}
+		sidLen := 8 + 4*int(raw[sidOff+1]) // revision + count + authority + sub-authorities
+		if sidOff+sidLen > size {
+			return false, nil, fmt.Errorf("blackbox: a malformed trustee on the settings file")
+		}
+		// Copy so the SID is aligned and owned; String() returns "" for an
+		// invalid SID, which the rule treats as an untrusted trustee.
+		sidBuf := make([]byte, sidLen)
+		copy(sidBuf, raw[sidOff:sidOff+sidLen])
+		a.Trustee = (*windows.SID)(unsafe.Pointer(&sidBuf[0])).String()
+		aces = append(aces, a)
+		runtime.KeepAlive(ace)
+	}
+	return true, aces, nil
+}
+
 // secureSQLDir applies sqlSDDL(sid) to dir as a protected DACL after the
 // adoption checks, and re-secures every existing child file the same way.
 func secureSQLDir(dir, sid string) error {
@@ -126,6 +246,12 @@ func setProtectedDACL(path, sid string) error {
 
 // grantSQLLaunchAccess appends the least-privilege launch ACEs (W7-01).
 func grantSQLLaunchAccess(exePath, configPath, sid string) error {
+	// SEC-1: re-prove the settings lock here, at the real ACL boundary, so the
+	// grant can never widen access on a user-writable config even if a caller
+	// skipped the entry proof. Unverifiable means refused.
+	if err := verifyAdminOnlyFile(configPath); err != nil {
+		return err
+	}
 	sidObj, err := windows.StringToSid(sid)
 	if err != nil {
 		return err
