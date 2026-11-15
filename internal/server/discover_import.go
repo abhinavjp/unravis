@@ -230,7 +230,17 @@ func (h *handler) postDiscoverImports(w http.ResponseWriter, r *http.Request, ra
 		refs = append(refs, discoverJobRef{FindingID: items[i].f.ID, JobID: job.id})
 	}
 	hint := host.hint
-	h.jobs.wg.Add(1)
+	if !h.jobs.beginRun() {
+		// Shutdown won the race: start no goroutine. Give back every job, the limiter
+		// slot and the case gate, exactly as the job==nil refusal path above does.
+		for j := range items {
+			h.jobs.discard(items[j].job)
+		}
+		slot()
+		release()
+		writeCaseFailure(w, http.StatusServiceUnavailable, "cases-unavailable", "Unravis is shutting down. Try again in a moment.")
+		return
+	}
 	go h.runDiscoverBatch(cfg, id, items, &hint, ackText, win, slot, release)
 	writeJSON(w, http.StatusAccepted, discoverImportAnswer{Jobs: refs}, 1<<16)
 }

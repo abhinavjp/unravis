@@ -25,15 +25,19 @@ import (
 // Repository panics on any method the tracing route does not use.
 type apiSeenFakeRepo struct {
 	audit.Repository
-	result audit.SQLBusyResult
-	err    error
-	calls  int
-	lastIn audit.SQLBusyInput
-	onCall func()
+	result  audit.SQLBusyResult
+	err     error
+	calls   int
+	lastIn  audit.SQLBusyInput
+	onCall  func()
+	sources []audit.Source // listed audit sources; nil keeps the empty listing
 }
 
 func (f *apiSeenFakeRepo) Sources(context.Context) ([]audit.Source, error) {
-	return []audit.Source{}, nil
+	if f.sources == nil {
+		return []audit.Source{}, nil
+	}
+	return f.sources, nil
 }
 
 func (f *apiSeenFakeRepo) SQLBusy(_ context.Context, in audit.SQLBusyInput) (audit.SQLBusyResult, error) {
@@ -93,11 +97,11 @@ func TestApiSeenBucketsMapsRecordedBins(t *testing.T) {
 		apiSeenBin(tracingLaneT0, 1200, 3),
 		apiSeenBin(tracingLaneT0.Add(5*time.Minute), 800, 2),
 	}}}
-	cells, recorded, err := apiSeenBuckets(context.Background(), f, axis)
-	if err != nil || !recorded {
-		t.Fatalf("recorded %v err %v", recorded, err)
+	cells, status, err := apiSeenBuckets(context.Background(), f, nil, axis)
+	if err != nil || status != apiSeenRecorded {
+		t.Fatalf("status %v err %v", status, err)
 	}
-	if f.calls != 1 || f.lastIn != apiSeenSQLBusyInput(axis) {
+	if f.calls != 1 || !reflect.DeepEqual(f.lastIn, apiSeenSQLBusyInput(axis)) {
 		t.Fatalf("calls %d input %+v, want one call with the axis window", f.calls, f.lastIn)
 	}
 	if len(cells) != 2 {
@@ -131,9 +135,9 @@ func TestApiSeenBucketsSumsBinsInOneCell(t *testing.T) {
 		apiSeenBin(tracingLaneT0.Add(time.Minute), 500, 1),
 		apiSeenBin(tracingLaneT0.Add(5*time.Minute), 700, 3),
 	}}}
-	cells, recorded, err := apiSeenBuckets(context.Background(), f, axis)
-	if err != nil || !recorded {
-		t.Fatalf("recorded %v err %v", recorded, err)
+	cells, status, err := apiSeenBuckets(context.Background(), f, nil, axis)
+	if err != nil || status != apiSeenRecorded {
+		t.Fatalf("status %v err %v", status, err)
 	}
 	b0 := cells[0]
 	if b0 == nil || b0.BusyMs == nil || *b0.BusyMs != 1500 || b0.Count != 3 || b0.TimedCount != 3 {
@@ -148,23 +152,70 @@ func TestApiSeenBucketsSumsBinsInOneCell(t *testing.T) {
 func TestApiSeenBucketsNotRecordedAndNilReader(t *testing.T) {
 	axis := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(time.Hour))
 	f := &apiSeenFakeRepo{result: audit.SQLBusyResult{Recorded: false}}
-	if cells, recorded, err := apiSeenBuckets(context.Background(), f, axis); err != nil || recorded || len(cells) != 0 {
-		t.Fatalf("not recorded: cells %d recorded %v err %v", len(cells), recorded, err)
+	if cells, status, err := apiSeenBuckets(context.Background(), f, nil, axis); err != nil || status != apiSeenNotRecorded || len(cells) != 0 {
+		t.Fatalf("not recorded: cells %d status %v err %v", len(cells), status, err)
 	}
 	// A nil reader is not-recorded, never a panic or an error.
-	if cells, recorded, err := apiSeenBuckets(context.Background(), nil, axis); err != nil || recorded || cells != nil {
-		t.Fatalf("nil reader: cells %v recorded %v err %v", cells, recorded, err)
+	if cells, status, err := apiSeenBuckets(context.Background(), nil, nil, axis); err != nil || status != apiSeenNotRecorded || cells != nil {
+		t.Fatalf("nil reader: cells %v status %v err %v", cells, status, err)
 	}
 }
 
 func TestApiSeenBucketsSkipsWindowOneCallCannotRead(t *testing.T) {
 	// A window over 24 h uses a coarser axis step outside the allowed set, so the
-	// fallback leaves the lane unread rather than failing the request.
+	// fallback reports an unsupported window (not "not recorded") and leaves the
+	// lane unread rather than failing the request: no SQLBusy call, no error.
 	long := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(48*time.Hour))
 	f := &apiSeenFakeRepo{result: audit.SQLBusyResult{Recorded: true, Bins: []audit.SQLBusyBin{apiSeenBin(tracingLaneT0, 1, 1)}}}
-	cells, recorded, err := apiSeenBuckets(context.Background(), f, long)
-	if err != nil || recorded || len(cells) != 0 || f.calls != 0 {
-		t.Fatalf("long window: cells %d recorded %v err %v calls %d", len(cells), recorded, err, f.calls)
+	cells, status, err := apiSeenBuckets(context.Background(), f, nil, long)
+	if err != nil || status != apiSeenUnsupported || len(cells) != 0 || f.calls != 0 {
+		t.Fatalf("long window: cells %d status %v err %v calls %d", len(cells), status, err, f.calls)
+	}
+}
+
+// TestApiSeenUnsupportedWindowStampsBroadScan proves an unsupported window is no
+// longer a silent empty lane: apiSeenBuckets reports the unsupported status with
+// no SQLBusy call and no error, and the lane stamps the EXISTING actionable
+// broad-scan reason, incomplete — mirroring the audit lane — without claiming a
+// live read or filling any busy data.
+func TestApiSeenUnsupportedWindowStampsBroadScan(t *testing.T) {
+	// A 48 h window uses an hourly axis step outside the frozen SQLBusy contract
+	// (60/300/600/900 s), so it cannot be read in one bounded call.
+	long := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(48*time.Hour))
+	f := &apiSeenFakeRepo{result: audit.SQLBusyResult{Recorded: true, Bins: []audit.SQLBusyBin{apiSeenBin(tracingLaneT0, 1200, 3)}}}
+	cells, status, err := apiSeenBuckets(context.Background(), f, nil, long)
+	if err != nil || status != apiSeenUnsupported || len(cells) != 0 || f.calls != 0 {
+		t.Fatalf("unsupported window: cells %d status %v err %v calls %d", len(cells), status, err, f.calls)
+	}
+	empty := tracingLane{Key: calltrace.LaneSQL, State: calltrace.StateNoData, Complete: true, Buckets: []tracingBucket{}, Events: []tracingEvent{}}
+	got, err := tracingAPISseenLane(context.Background(), f, nil, long, empty, auditClock(tracingLaneT0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReasonCode != auditCodeBroadScan || got.Complete || got.State != calltrace.StateIncomplete {
+		t.Fatalf("lane %s complete %v state %s, want broad-scan incomplete", got.ReasonCode, got.Complete, got.State)
+	}
+	if got.ReasonCode == tracingReasonAPISseen {
+		t.Fatal("unsupported window claimed an api-seen read")
+	}
+	if got.Reason != tracingAuditBroadMsg {
+		t.Fatalf("reason %q, want the broad-scan message", got.Reason)
+	}
+	// No live read is claimed: origin/consistency/asOf stay as the empty lane had.
+	if got.Origin != empty.Origin || got.Consistency != empty.Consistency || !got.AsOf.Equal(empty.AsOf) {
+		t.Fatalf("unsupported window stamped a live read: origin %q consistency %q asOf %v", got.Origin, got.Consistency, got.AsOf)
+	}
+	// The empty axis grid stays; no busy data is invented.
+	if tracingBucketSum(got) != 0 {
+		t.Fatalf("unsupported window filled counts: %d", tracingBucketSum(got))
+	}
+	for _, b := range got.Buckets {
+		if b.BusyMs != nil {
+			t.Fatalf("unsupported window invented busyMs %v", *b.BusyMs)
+		}
+	}
+	if f.calls != 0 {
+		t.Fatalf("SQLBusy called %d times for an unsupported window, want 0", f.calls)
 	}
 }
 
@@ -175,7 +226,7 @@ func TestApiSeenLaneGuardsAndStampsLiveRead(t *testing.T) {
 	clk := tracingLaneT0.Add(2 * time.Hour)
 	f := &apiSeenFakeRepo{result: audit.SQLBusyResult{Recorded: true, Bins: []audit.SQLBusyBin{apiSeenBin(tracingLaneT0, 1200, 3)}}}
 	empty := tracingLane{Key: calltrace.LaneSQL, State: calltrace.StateNoData, Complete: true, Buckets: []tracingBucket{}, Events: []tracingEvent{}}
-	got, err := tracingAPISseenLane(context.Background(), f, axis, empty, auditClock(clk))
+	got, err := tracingAPISseenLane(context.Background(), f, nil, axis, empty, auditClock(clk))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +253,7 @@ func TestApiSeenLaneRecordedNoCallsLeavesLaneEmpty(t *testing.T) {
 	axis := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(time.Hour))
 	f := &apiSeenFakeRepo{result: audit.SQLBusyResult{Recorded: true, Bins: []audit.SQLBusyBin{}}}
 	empty := tracingLane{Key: calltrace.LaneSQL, State: calltrace.StateNoData, Complete: true}
-	got, err := tracingAPISseenLane(context.Background(), f, axis, empty, auditClock(tracingLaneT0))
+	got, err := tracingAPISseenLane(context.Background(), f, nil, axis, empty, auditClock(tracingLaneT0))
 	if err != nil || !reflect.DeepEqual(got, empty) {
 		t.Fatalf("recorded with no calls changed the lane: %+v err %v", got, err)
 	}
@@ -214,7 +265,7 @@ func TestApiSeenLaneRecordedNoCallsLeavesLaneEmpty(t *testing.T) {
 func TestApiSeenLaneNilReaderLeavesLaneUntouched(t *testing.T) {
 	axis := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(time.Hour))
 	empty := tracingLane{Key: calltrace.LaneSQL, State: calltrace.StateNoData, Complete: true}
-	got, err := tracingAPISseenLane(context.Background(), nil, axis, empty, auditClock(tracingLaneT0))
+	got, err := tracingAPISseenLane(context.Background(), nil, nil, axis, empty, auditClock(tracingLaneT0))
 	if err != nil || !reflect.DeepEqual(got, empty) {
 		t.Fatalf("nil reader changed the lane: %+v err %v", got, err)
 	}
@@ -224,12 +275,45 @@ func TestApiSeenReaderErrorLeavesLaneUnchanged(t *testing.T) {
 	axis := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(time.Hour))
 	orig := tracingLane{Key: calltrace.LaneSQL, State: calltrace.StateNoData, Complete: true}
 	f := &apiSeenFakeRepo{err: audit.ErrBusy}
-	got, err := tracingAPISseenLane(context.Background(), f, axis, orig, auditClock(tracingLaneT0))
+	got, err := tracingAPISseenLane(context.Background(), f, nil, axis, orig, auditClock(tracingLaneT0))
 	if !errors.Is(err, audit.ErrBusy) {
 		t.Fatalf("err %v, want ErrBusy", err)
 	}
 	if !reflect.DeepEqual(got, orig) {
 		t.Fatalf("lane changed on error: %+v", got)
+	}
+}
+
+// TestApiSeenNotImportedReasonPreserved proves a lane whose files were listed but
+// never imported keeps its not-imported reason: api-seen does not run on it, so
+// the reader is not called even with a recorded result ready.
+func TestApiSeenNotImportedReasonPreserved(t *testing.T) {
+	axis := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(time.Hour))
+	f := &apiSeenFakeRepo{result: audit.SQLBusyResult{Recorded: true, Bins: []audit.SQLBusyBin{apiSeenBin(tracingLaneT0, 1200, 3)}}}
+	orig := tracingLane{Key: calltrace.LaneSQL, State: calltrace.StateNoData, Complete: true,
+		ReasonCode: tracingReasonNotImported, Reason: tracingSQLNotImportedMsg, Buckets: []tracingBucket{}, Events: []tracingEvent{}}
+	got, err := tracingAPISseenLane(context.Background(), f, nil, axis, orig, auditClock(tracingLaneT0))
+	if err != nil || !reflect.DeepEqual(got, orig) {
+		t.Fatalf("not-imported lane changed: %+v err %v", got, err)
+	}
+	if f.calls != 0 {
+		t.Fatalf("SQLBusy called %d times on a not-imported lane, want 0", f.calls)
+	}
+}
+
+// TestApiSeenSkippedReasonPreserved proves a lane whose imports were set aside
+// keeps its import-skipped reason: api-seen does not run on it either.
+func TestApiSeenSkippedReasonPreserved(t *testing.T) {
+	axis := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(time.Hour))
+	f := &apiSeenFakeRepo{result: audit.SQLBusyResult{Recorded: true, Bins: []audit.SQLBusyBin{apiSeenBin(tracingLaneT0, 1200, 3)}}}
+	orig := tracingLane{Key: calltrace.LaneSQL, State: calltrace.StateNoData, Complete: true,
+		ReasonCode: tracingReasonSkipped, Reason: tracingSkippedMsg, Buckets: []tracingBucket{}, Events: []tracingEvent{}}
+	got, err := tracingAPISseenLane(context.Background(), f, nil, axis, orig, auditClock(tracingLaneT0))
+	if err != nil || !reflect.DeepEqual(got, orig) {
+		t.Fatalf("import-skipped lane changed: %+v err %v", got, err)
+	}
+	if f.calls != 0 {
+		t.Fatalf("SQLBusy called %d times on an import-skipped lane, want 0", f.calls)
 	}
 }
 
@@ -290,6 +374,37 @@ func TestApiSeenRecordedFalseLeavesLaneUnchanged(t *testing.T) {
 	}
 	if f.calls != 1 {
 		t.Fatalf("calls %d, want 1", f.calls)
+	}
+}
+
+// TestApiSeenUnsupportedWindowHandlerStampsBroadScan proves a >24 h window through
+// the route answers 200 with a SQL lane carrying the actionable broad-scan reason
+// (not a request error, not a silent empty lane), no SQLBusy call, and the other
+// saved lane unaffected. The empty-listing harness has no audit lane, so the iis
+// lane proves the stamp is SQL-only.
+func TestApiSeenUnsupportedWindowHandlerStampsBroadScan(t *testing.T) {
+	f := &apiSeenFakeRepo{result: audit.SQLBusyResult{Recorded: true, Bins: []audit.SQLBusyBin{apiSeenBin(tracingLaneT0, 1200, 3)}}}
+	e, id := apiSeenEnv(t, f)
+	// 48 h is within the route's 186-day cap but uses an hourly axis step the
+	// SQLBusy contract cannot answer in one bounded call.
+	out, raw := tracingPost(t, e, id, tracingWindowBodyFor("2026-03-10T10:00:00Z", "2026-03-12T10:00:00Z"))
+	lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+	if lane.ReasonCode != auditCodeBroadScan || lane.Complete || lane.State != calltrace.StateIncomplete {
+		t.Fatalf("sql lane %s complete %v state %s, want broad-scan incomplete", lane.ReasonCode, lane.Complete, lane.State)
+	}
+	if lane.ReasonCode == tracingReasonAPISseen || tracingBucketSum(lane) != 0 {
+		t.Fatalf("unsupported window filled the sql lane: %s sum %d", lane.ReasonCode, tracingBucketSum(lane))
+	}
+	if f.calls != 0 {
+		t.Fatalf("SQLBusy called %d times for an unsupported window, want 0", f.calls)
+	}
+	if !strings.Contains(raw, `"reasonCode":"broad-scan"`) {
+		t.Fatal("wire output lacks the broad-scan reason")
+	}
+	// The stamp is SQL-only: the other saved lane is untouched.
+	iis := tracingLaneOf(t, out, calltrace.LaneIIS)
+	if iis.ReasonCode == auditCodeBroadScan || iis.ReasonCode == tracingReasonAPISseen {
+		t.Fatalf("iis lane affected by the sql stamp: %s", iis.ReasonCode)
 	}
 }
 
@@ -357,25 +472,30 @@ func TestApiSeenExistingBucketsReaderNotCalled(t *testing.T) {
 
 // ---- handler: a read error is fail-closed and mapped ----
 
-func TestApiSeenReaderErrorMapsToHTTPStatus(t *testing.T) {
+// DATA-05: a failing api-seen read degrades to a warning instead of aborting the
+// request. The SQL lane keeps its unchanged fallback state and the other lanes
+// survive; the multi-lane survival proof is in tracing_apiseen_degrade_test.go.
+func TestApiSeenReaderErrorDegradesToWarning(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		err  error
-		code int
 	}{
-		{"busy", audit.ErrBusy, http.StatusTooManyRequests},
-		{"limit", audit.ErrLimit, http.StatusRequestEntityTooLarge},
-		{"deadline", context.DeadlineExceeded, http.StatusGatewayTimeout},
+		{"busy", audit.ErrBusy},
+		{"limit", audit.ErrLimit},
+		{"deadline", context.DeadlineExceeded},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &apiSeenFakeRepo{err: tc.err}
 			e, id := apiSeenEnv(t, f)
 			res := e.json(http.MethodPost, tracingPath(id), tracingWindowBodyFor("2026-03-10T10:00:00Z", "2026-03-10T11:00:00Z"))
-			if res.Code != tc.code {
-				t.Fatalf("%s = %d %s, want %d", tc.name, res.Code, res.Body, tc.code)
+			if res.Code != http.StatusOK {
+				t.Fatalf("%s = %d %s, want 200 (degrade, not abort)", tc.name, res.Code, res.Body)
 			}
 			if f.calls != 1 {
 				t.Fatalf("calls %d, want 1", f.calls)
+			}
+			if !strings.Contains(res.Body.String(), "could not be read for this window") {
+				t.Fatalf("%s: missing degrade warning: %s", tc.name, res.Body)
 			}
 		})
 	}
@@ -433,5 +553,77 @@ func TestApiSeenDemoOnlyWhenSQLDayDoesNotCoverWindow(t *testing.T) {
 	}
 	if !busy || !strings.Contains(raw, `"reasonCode":"api-seen"`) || !strings.Contains(raw, `"busyMs"`) {
 		t.Fatal("demo api-seen lane carries no busy time")
+	}
+}
+
+// ---- DATA-02: the selected audit source ids reach SQLBusy ----
+
+func TestApiSeenBucketsForwardsSourceIDs(t *testing.T) {
+	axis := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(time.Hour))
+	f := &apiSeenFakeRepo{result: audit.SQLBusyResult{Recorded: true, Bins: []audit.SQLBusyBin{apiSeenBin(tracingLaneT0, 1200, 3)}}}
+	ids := []string{"src-a"}
+	if _, _, err := apiSeenBuckets(context.Background(), f, ids, axis); err != nil {
+		t.Fatal(err)
+	}
+	want := apiSeenSQLBusyInput(axis)
+	want.SourceIDs = ids
+	if f.calls != 1 || !reflect.DeepEqual(f.lastIn, want) {
+		t.Fatalf("calls %d input %+v, want the axis window with SourceIDs %v", f.calls, f.lastIn, ids)
+	}
+}
+
+func TestApiSeenLaneForwardsSourceIDs(t *testing.T) {
+	axis := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(time.Hour))
+	f := &apiSeenFakeRepo{result: audit.SQLBusyResult{Recorded: true, Bins: []audit.SQLBusyBin{apiSeenBin(tracingLaneT0, 1200, 3)}}}
+	empty := tracingLane{Key: calltrace.LaneSQL, State: calltrace.StateNoData, Complete: true}
+	ids := []string{"src-a", "src-b"}
+	got, err := tracingAPISseenLane(context.Background(), f, ids, axis, empty, auditClock(tracingLaneT0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReasonCode != tracingReasonAPISseen {
+		t.Fatalf("lane not filled: %s", got.ReasonCode)
+	}
+	if !reflect.DeepEqual(f.lastIn.SourceIDs, ids) {
+		t.Fatalf("SourceIDs = %v, want %v", f.lastIn.SourceIDs, ids)
+	}
+}
+
+// TestApiSeenPassesSelectedAuditSourceIDs proves caseTracing threads the selected
+// AUDIT source ids into the api-seen lane: with two synthetic audit sources
+// connected, selecting one forwards only that id (so SQLBusy cannot sum both),
+// selecting both forwards both, and no explicit selection forwards the whole
+// listing. The ids are audit ids, never SQL/IIS import ids.
+func TestApiSeenPassesSelectedAuditSourceIDs(t *testing.T) {
+	srcA := audit.Source{ID: "src-a", Label: "src-a", Database: "db", Collection: "src-a"}
+	srcB := audit.Source{ID: "src-b", Label: "src-b", Database: "db", Collection: "src-b"}
+	f := &apiSeenFakeRepo{
+		sources: []audit.Source{srcA, srcB},
+		result:  audit.SQLBusyResult{Recorded: true, Bins: []audit.SQLBusyBin{apiSeenBin(tracingLaneT0, 1200, 3)}},
+	}
+	e, id := apiSeenEnv(t, f)
+	for _, tc := range []struct {
+		name string
+		body string
+		want []string
+	}{
+		{"one selected", tracingLaneBody("src-a"), []string{"src-a"}},
+		{"both selected", tracingLaneBody("src-a", "src-b"), []string{"src-a", "src-b"}},
+		{"none selected lists all", tracingWindowBodyFor("2026-03-10T10:00:00Z", "2026-03-10T11:00:00Z"), []string{"src-a", "src-b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f.calls, f.lastIn = 0, audit.SQLBusyInput{}
+			out, _ := tracingPost(t, e, id, tc.body)
+			lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+			if lane.ReasonCode != tracingReasonAPISseen {
+				t.Fatalf("api-seen did not fill the SQL lane: %s", lane.ReasonCode)
+			}
+			if f.calls != 1 {
+				t.Fatalf("SQLBusy called %d times, want 1", f.calls)
+			}
+			if !reflect.DeepEqual(f.lastIn.SourceIDs, tc.want) {
+				t.Fatalf("SourceIDs = %v, want %v", f.lastIn.SourceIDs, tc.want)
+			}
+		})
 	}
 }

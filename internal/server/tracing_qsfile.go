@@ -19,16 +19,43 @@ const (
 	tracingQSFileMsg    = "Drawn from the Query Store export imported into this case on the date shown. Each bar is the statements run in that interval; the line is their average time."
 )
 
+// qsFileLookback is how far before the window the file read starts. The store
+// lists events by their start time, and Query Store blocks are at most one day
+// long (1440 minutes), so a block that began earlier than this cannot reach the
+// window.
+const qsFileLookback = 24 * time.Hour
+
 func qsFileExecutions(e evidence.Event) (int64, bool) {
 	n, err := strconv.ParseInt(strings.TrimSpace(e.Attrs["executions"]), 10, 64)
 	return n, err == nil && n >= 0
 }
 
+// qsFileInterval reports whether a Query Store interval overlaps the window:
+// it starts before the window ends and either starts inside the window or is
+// still running at the window start. An interval that began earlier and ended at
+// or before the window start is outside.
 func qsFileInterval(e evidence.Event, axis tracingAxis) bool {
-	return e.Kind == sqlserver.KindQueryInterval && !e.Start.Before(axis.Start) && e.Start.Before(axis.End)
+	if e.Kind != sqlserver.KindQueryInterval || !e.Start.Before(axis.End) {
+		return false
+	}
+	return !e.Start.Before(axis.Start) || e.End.After(axis.Start)
 }
 
-// qsFileBuckets keeps each interval's whole busy time at its start. The web
+// qsFileBucketIndex is the bucket an interval is drawn in: the one holding its
+// start, or the first bucket when it began before the window. Each interval is
+// drawn once, in one bucket, so nothing is counted twice; its whole totals stay
+// there (they include time before the window, which the bucket's Clipped flag
+// reports).
+func qsFileBucketIndex(e evidence.Event, axis tracingAxis) int {
+	start := e.Start
+	if start.Before(axis.Start) {
+		start = axis.Start
+	}
+	return int((start.UnixMilli() - axis.AxisStart.UnixMilli()) / axis.WidthMs)
+}
+
+// qsFileBuckets keeps each interval's whole busy time at its start (at the
+// window start for an interval that began before it). The web
 // model uses BlockSeconds to spread that total; it is not spread here.
 // A skipped row leaves its cell incomplete, even when that cell has no totals.
 func qsFileBuckets(events []evidence.Event, axis tracingAxis) (buckets map[int]*tracingBucket, blockSeconds int) {
@@ -39,10 +66,13 @@ func qsFileBuckets(events []evidence.Event, axis tracingAxis) (buckets map[int]*
 		if !qsFileInterval(e, axis) || axis.WidthMs <= 0 {
 			continue
 		}
-		k := int((e.Start.UnixMilli() - axis.AxisStart.UnixMilli()) / axis.WidthMs)
+		k := qsFileBucketIndex(e, axis)
 		from, to, clipped, ok := axis.Bucket(k)
 		if !ok {
 			continue
+		}
+		if e.Start.Before(axis.Start) {
+			clipped = true
 		}
 		if seconds := int(e.End.Sub(e.Start) / time.Second); seconds > 0 {
 			lengths[seconds]++
@@ -129,9 +159,23 @@ func tracingQSFileLane(ctx context.Context, c casestore.Case, axis tracingAxis, 
 	if !found {
 		return lane, nil
 	}
+	// Window read: only this one sets the cap/timeout flags the lane reports.
 	events, capped, timedOut, err := readLaneEvents(ctx, c, axis, []string{sqlserver.QSName})
 	if err != nil {
 		return lane, err
+	}
+	// Early read: intervals that began before the window (up to qsFileLookback) and may run into it.
+	earlyAxis := axis
+	earlyAxis.Start = axis.Start.Add(-qsFileLookback)
+	earlyAxis.End = axis.Start
+	early, earlyCapped, earlyTimedOut, err := readLaneEvents(ctx, c, earlyAxis, []string{sqlserver.QSName})
+	if err != nil {
+		return lane, err
+	}
+	for _, e := range early {
+		if e.End.After(axis.Start) {
+			events = append(events, e)
+		}
 	}
 	intervals, skipped := 0, 0
 	for _, e := range events {
@@ -144,6 +188,19 @@ func tracingQSFileLane(ctx context.Context, c casestore.Case, axis tracingAxis, 
 		}
 	}
 	if intervals == 0 {
+		// A capped or timed-out read may have run out before reaching the window: say so, not "no data".
+		if capped {
+			lane.Complete, lane.Truncated = false, true
+			lane.Reason = strings.SplitN(tracingRowCapMsg, ";", 2)[0] + "; Query Store figures from the imported file may be missing."
+		}
+		if timedOut {
+			lane.Complete, lane.Truncated = false, true
+			lane.Reason = strings.TrimSpace(lane.Reason + " " + tracingTimeoutMsg)
+		}
+		if earlyCapped || earlyTimedOut {
+			lane.Complete = false
+			lane.Reason = strings.TrimSpace(lane.Reason + " An interval that began before this window may be missing.")
+		}
 		return lane, nil
 	}
 	cells, blockSeconds := qsFileBuckets(events, axis)
@@ -175,6 +232,10 @@ func tracingQSFileLane(ctx context.Context, c casestore.Case, axis tracingAxis, 
 	if timedOut {
 		lane.Complete, lane.Truncated = false, true
 		lane.Reason += " " + tracingTimeoutMsg
+	}
+	if earlyCapped || earlyTimedOut {
+		lane.Complete = false
+		lane.Reason += " An interval that began before this window may be missing."
 	}
 	if !lane.Complete {
 		for i := range lane.Buckets {

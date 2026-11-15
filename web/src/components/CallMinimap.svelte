@@ -4,21 +4,23 @@
 </script>
 
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { DRILL_TEXT } from '../lib/drill/drillCopy';
   import { formatAtOnce } from '../lib/drill/callLanes';
   import {
-    KEY_STEP_FRACTION,
     boxOf,
     centreFromFraction,
     columnMinutes,
     fractionOf,
     type MapRow
   } from '../lib/drill/callMap';
+  import { createKeyCommit, stripKeyTarget } from '../lib/drill/keyCommit';
   import { formatTime } from '../lib/time';
 
   // The overview strip: the two hours around the call as three small rows, an outlined box for the part the big chart shows
   // (drag it or use the arrow keys), a red line for the call, the busiest moment of each row, and a caption in plain words.
   // The box only reports where it is: onPreview while dragging (no read happens), onCommit when the move is done.
+  // Keys preview at once too, but commit only after the keys stop (a quarter of a second), so a run of key presses starts one read, not one per key.
 
   let {
     rows,
@@ -59,6 +61,8 @@
   let dragGrab = 0;
   let dragFraction = $state<number | null>(null);
   let dragCentreMs = 0;
+  const keyCommit = createKeyCommit<number>((centreMs) => onCommit(centreMs));
+  onDestroy(() => keyCommit.cancel());
 
   const span = $derived(overview.end - overview.start);
   const box = $derived.by(() => {
@@ -87,6 +91,7 @@
 
   function onBoxDown(e: PointerEvent): void {
     if (e.button !== undefined && e.button !== 0) return;
+    keyCommit.cancel();
     const target = e.currentTarget as HTMLElement;
     target.setPointerCapture(e.pointerId);
     dragPointer = e.pointerId;
@@ -114,18 +119,17 @@
   }
 
   function onBoxKey(e: KeyboardEvent): void {
-    let next: number | null = null;
-    if (e.key === 'ArrowLeft') next = centreFromFraction(overview, centre - KEY_STEP_FRACTION);
-    else if (e.key === 'ArrowRight') next = centreFromFraction(overview, centre + KEY_STEP_FRACTION);
-    else if (e.key === 'Home') next = (call.startMs + call.endMs) / 2;
+    const next = stripKeyTarget(e.key, centreFromFraction(overview, centre), overview, (call.startMs + call.endMs) / 2);
     if (next === null) return;
     e.preventDefault();
-    onCommit(next);
+    onPreview(next);
+    keyCommit.push(next);
   }
 
   // A click on the strip outside the box moves the window there.
   function onStripClick(e: MouseEvent): void {
     if (boxEl && e.target instanceof Node && boxEl.contains(e.target)) return;
+    keyCommit.cancel();
     onCommit(centreFromFraction(overview, fractionAt(e.clientX)));
   }
 
@@ -220,6 +224,7 @@
             onpointerup={onBoxUp}
             onpointercancel={onBoxUp}
             onkeydown={onBoxKey}
+            onblur={() => keyCommit.flush()}
           >
             <span class="scall-map-drag">{DRILL_TEXT.mapDrag}</span>
           </div>
@@ -231,6 +236,7 @@
         </div>
       </div>
     </div>
+    <p class="scall-map-axis">{DRILL_TEXT.mapAxisLine}</p>
     <p class="scall-map-caption" data-testid="scall-map-caption">{DRILL_TEXT.mapCaption(columnMinutes(bucketSeconds))}</p>
     <details class="scall-map-more">
       <summary>{DRILL_TEXT.mapHow}</summary>
@@ -359,6 +365,11 @@
     background: var(--surface);
     pointer-events: none;
     user-select: none;
+  }
+  .scall-map-axis {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text);
   }
   .scall-map-caption {
     margin: 0;

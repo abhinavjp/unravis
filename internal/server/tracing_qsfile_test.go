@@ -75,7 +75,8 @@ func TestQSFileBucketsWeightAveragesAndUseHalfOpenStarts(t *testing.T) {
 	rows := []evidence.Event{
 		qsFileTestEvent(axis.Start, "100", 20, 90),
 		qsFileTestEvent(axis.Start.Add(time.Second), "50", 10, 120),
-		qsFileTestEvent(axis.Start.Add(-time.Millisecond), "999", 100, 1000),
+		// Ends before the window starts (DATA-10: one that still runs into it is kept).
+		qsFileTestEvent(axis.Start.Add(-15*time.Minute-time.Millisecond), "999", 100, 1000),
 		qsFileTestEvent(axis.End, "999", 100, 1000),
 	}
 	other := qsFileTestEvent(axis.Start, "999", 100, 1000)
@@ -284,5 +285,24 @@ func TestQSFileAsOfUsesExportImportNotOtherSQL(t *testing.T) {
 	got, err := tracingQSFileLane(context.Background(), c, axis, sel, tracingLane{Key: "sql", Complete: true})
 	if err != nil || !got.AsOf.Equal(c.imports[0].Imported) {
 		t.Fatal("asOf used another SQL file's import time")
+	}
+}
+
+// A capped read whose rows all begin before the window (the lookback day filled the cap) found nothing in the
+// window, but that is not "no Query Store data": the lane must say the list was cut short.
+func TestQSFileCapFilledBeforeWindowIsFlaggedNotSilent(t *testing.T) {
+	axis := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(time.Hour))
+	rows := make([]evidence.Event, casestore.MaxEventQuery)
+	for i := range rows {
+		rows[i] = qsFileTestEvent(axis.Start.Add(-6*time.Hour), "2", 20, 90)
+	}
+	c := &qsFileBudgetCase{stubTraceCase: &qsFileTestCase(nil).stubTraceCase, rows: rows}
+	lane := tracingLane{Key: "sql", Complete: true}
+	got, err := tracingQSFileLane(context.Background(), c, axis, qsFileTestSelection(), lane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Complete || !got.Truncated || !strings.Contains(got.Reason, "Only the first 50,000 saved events were listed") {
+		t.Fatalf("a cap filled before the window was silent: complete=%v truncated=%v reason=%q", got.Complete, got.Truncated, got.Reason)
 	}
 }

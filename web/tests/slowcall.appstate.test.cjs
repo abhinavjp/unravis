@@ -4,12 +4,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'appState.svelte.ts'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'appState.svelte.ts'), 'utf8').replace(/\r\n/g, '\n');
 
-function body(startText) {
-  const start = src.indexOf(startText);
+function body(startText, text = src) {
+  const norm = text.replace(/\r\n/g, '\n');
+  const start = norm.indexOf(startText);
   assert.ok(start >= 0, `${startText} missing`);
-  return src.slice(start, src.indexOf('\n}\n', start));
+  return norm.slice(start, norm.indexOf('\n}\n', start));
 }
 
 test('the call target key and the three functions exist', () => {
@@ -30,13 +31,15 @@ test('closing steps back to the timeline entry', () => {
   assert.ok(close.includes('marker.stepBack(CASE_TRACING_MARK)'), 'stepBack to the timeline mark missing in closeSlowCall');
 });
 
-test('Esc closes the call screen after the drill guard and before stepUpOnce', () => {
+test('Esc closes the call screen before stepUpOnce, and the retired drill pop-up leaves no trace', () => {
   const keys = body('export function onWindowKey(');
-  const guard = keys.indexOf('if (drillOpen) return;');
   const call = keys.indexOf('if (slowCall) { closeSlowCall(); return; }');
   const step = keys.indexOf('stepUpOnce();');
-  assert.ok(guard >= 0 && call >= 0 && step >= 0, 'a key line is missing');
-  assert.ok(guard < call && call < step, 'order must be drill guard, then call close, then stepUpOnce');
+  assert.ok(call >= 0 && step >= 0, 'a key line is missing');
+  assert.ok(call < step, 'order must be call close, then stepUpOnce');
+  assert.ok(!/drillOpen|setDrillOpen/.test(src), 'the drill pop-up flag must be gone from appState');
+  const popup = path.join(__dirname, '..', 'src', 'components', 'DrillPopup.svelte');
+  assert.ok(!fs.existsSync(popup), 'DrillPopup.svelte must be deleted');
 });
 
 test('the remembered call target reads and writes inside try and catch', () => {
@@ -121,4 +124,14 @@ test('the timeline hand-off runs the window it set when the analysis opens (P46-
 test('Esc skips an open menu inside a hidden part of the page', () => {
   const keys = body('export function onWindowKey(');
   assert.ok(keys.includes(".find((d) => !d.closest('[hidden]'))"), 'hidden menus must be skipped');
+});
+
+test('CI-01: body() isolates the closing branch on a CRLF checkout', () => {
+  const raw = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'appState.svelte.ts'), 'utf8');
+  const crlf = raw.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n');
+  assert.equal(crlf.indexOf('\n}\n'), -1, 'sanity: raw CRLF has no LF-only close marker (the original CI bug)');
+  const tracing = body('function setTracing', crlf);
+  const closed = tracing.slice(tracing.indexOf('if (!id)'));
+  assert.ok(closed.includes('slowCall = null; lastSlowCall = null;'), 'the closing branch is isolated on CRLF');
+  assert.ok(!closed.includes('storedCallTarget'), 'CRLF must not let the closing branch swallow later storedCallTarget text');
 });

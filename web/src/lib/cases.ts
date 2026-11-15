@@ -564,9 +564,10 @@ export interface CheckFileVerdict {
   needsZone: boolean;
   /** The not-supported reason code, or ''. */
   reason: string;
-  rows: number;
-  emitted: number;
-  rejected: number;
+  /** Row counts exist only when the file was read and counted (ready, needs-zone). Absent means not counted, never zero. */
+  rows?: number;
+  emitted?: number;
+  rejected?: number;
 }
 
 export interface CheckReport {
@@ -577,12 +578,16 @@ export interface CheckReport {
 const CHECK_VERDICTS: readonly string[] = ['ready', 'needs-computer', 'needs-zone', 'not-supported', 'no-computer'];
 const isCheckVerdict = (value: unknown): value is CheckVerdict => typeof value === 'string' && CHECK_VERDICTS.includes(value);
 
+/** A count that the server sent as a number; nothing at all when it was left out, so "not counted" never reads as zero. */
+const optionalCount = <K extends 'rows' | 'emitted' | 'rejected'>(key: K, value: unknown): { [P in K]?: number } =>
+  typeof value === 'number' && Number.isFinite(value) ? ({ [key]: value } as { [P in K]?: number }) : {};
+
 function toCheckFile(raw: Record<string, unknown> | null): CheckFileVerdict | null {
   if (!raw || typeof raw.key !== 'string' || typeof raw.name !== 'string' || !isCheckVerdict(raw.verdict)) return null;
   return {
     key: raw.key, name: raw.name, size: asNumber(raw.size), verdict: raw.verdict, importer: asString(raw.importer), tied: asStrings(raw.tied),
     serverName: asString(raw.serverName), needsZone: raw.needsZone === true, reason: asString(raw.reason),
-    rows: asNumber(raw.rows), emitted: asNumber(raw.emitted), rejected: asNumber(raw.rejected)
+    ...optionalCount('rows', raw.rows), ...optionalCount('emitted', raw.emitted), ...optionalCount('rejected', raw.rejected)
   };
 }
 

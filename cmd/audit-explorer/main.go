@@ -240,7 +240,7 @@ func run(args []string, getenv func(string) string) error {
 	}
 	served := server.New(wired.repo, explorer.Assets(), token, f.demo, serverOptions...)
 	if !f.demo {
-		// Open the saved databases whose password is saved, a few at a time and with a time limit, so a slow one never holds the app back.
+		// Open the saved databases whose password is saved, one at a time and with a time limit, so a slow one never holds the app back.
 		// It stops on Ctrl+C or a quit signal, and the deferred wait below ends it before the repository closes.
 		reconnected := make(chan struct{})
 		go func() {

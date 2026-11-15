@@ -59,7 +59,7 @@ test('props match the packet', () => {
 
 test('the geometry comes from callMap, not from the component', () => {
   assert.match(source, /from '\.\.\/lib\/drill\/callMap'/);
-  for (const name of ['boxOf', 'fractionOf', 'centreFromFraction', 'columnMinutes', 'KEY_STEP_FRACTION']) {
+  for (const name of ['boxOf', 'fractionOf', 'centreFromFraction', 'columnMinutes']) {
     assert.ok(source.includes(name), `uses ${name}`);
   }
 });
@@ -79,13 +79,14 @@ test('dragging previews while moving and commits when let go', () => {
 });
 
 test('keys move the box and a click outside it moves the window there', () => {
+  // The key names and steps live in the pure keyCommit module (checked in slowcall.fix29.test.cjs); the commit is debounced (UI-02).
   const keys = functionBody('onBoxKey');
-  assert.match(keys, /'ArrowLeft'/);
-  assert.match(keys, /'ArrowRight'/);
-  assert.match(keys, /'Home'/);
-  assert.match(keys, /KEY_STEP_FRACTION/);
-  assert.match(keys, /onCommit\(/);
+  assert.match(keys, /stripKeyTarget\(e\.key/);
+  assert.match(keys, /keyCommit\.push\(/);
   assert.match(keys, /call\.startMs \+ call\.endMs/);
+  const keyModule = fs.readFileSync(path.join(root, 'src/lib/drill/keyCommit.ts'), 'utf8');
+  for (const key of ['ArrowLeft', 'ArrowRight', 'Home', 'PageUp', 'PageDown', 'End']) assert.match(keyModule, new RegExp(`'${key}'`));
+  assert.match(keyModule, /KEY_STEP_FRACTION/);
   assert.match(source, /onclick=\{onStripClick\}/);
   assert.match(functionBody('onStripClick'), /onCommit\(/);
   assert.match(functionBody('onStripClick'), /boxEl\.contains/);

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { DRILL_TEXT } from '../lib/drill/drillCopy';
   import { chipAvailable, gapLabel, isThisCall, lightCells, type CallRef, type NearbyChip, type NearbyRow } from '../lib/drill/nearbyCalls';
+  import { capRows } from '../lib/drill/callLanes';
   import { formatMs } from '../lib/drill/overview';
   import { formatTime } from '../lib/time';
 
@@ -37,6 +38,8 @@
 
   const hintFrom = $derived(formatTime(start, { zone, date: false, precision: 'minute', suffix: false }));
   const hintTo = $derived(formatTime(end, { zone, date: false, precision: 'minute', suffix: false }));
+  // Only the first rows are drawn, so a very long window stays quick; the rest are counted in a note.
+  const capped = $derived(capRows(rows));
   const apiName = $derived(`${call.controller}.${call.action}`);
 
   function chipLabel(c: NearbyChip): string {
@@ -108,7 +111,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each rows as row (row.sourceId + '|' + row.id)}
+        {#each capped.rows as row (row.sourceId + '|' + row.id)}
           {@const light = lightCells(row)}
           {@const own = isThisCall(row, call)}
           <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -119,20 +122,20 @@
             onclick={() => onSelect(row)}
             onkeydown={(event) => rowKey(event, row)}
           >
-            <td class="time">{formatTime(row.initiatedAt, { zone, precision: 'second', date: false, suffix: false })}</td>
-            <td>
+            <td class="time" data-label={DRILL_TEXT.colTime}>{formatTime(row.initiatedAt, { zone, precision: 'second', date: false, suffix: false })}</td>
+            <td data-label={DRILL_TEXT.colFromCall}>
               {gapLabel(startMs(row), call, { thisCall: DRILL_TEXT.gapThis, during: DRILL_TEXT.gapDuring })}
               {#if own}<strong class="mark">{DRILL_TEXT.thisCallMark}</strong>{/if}
             </td>
-            <td>{userText(row)}</td>
-            <td>{row.controller}.{row.action}</td>
-            <td class="num">{ms(row.durationMs)}</td>
+            <td data-label={DRILL_TEXT.colUser}>{userText(row)}</td>
+            <td data-label={DRILL_TEXT.colApi}>{row.controller}.{row.action}</td>
+            <td class="num" data-label={DRILL_TEXT.colTook}>{ms(row.durationMs)}</td>
             {#if light === null}
               <td colspan="3" class="muted" data-testid="scall-light-none">{DRILL_TEXT.notRecorded}</td>
             {:else}
-              <td class="num">{ms(light.sqlMs)}</td>
-              <td class="num">{ms(light.redisMs)}</td>
-              <td class="num">{ms(light.httpMs)}</td>
+              <td class="num" data-label={DRILL_TEXT.colDatabase}>{ms(light.sqlMs)}</td>
+              <td class="num" data-label={DRILL_TEXT.colRedis}>{ms(light.redisMs)}</td>
+              <td class="num" data-label={DRILL_TEXT.colWebCalls}>{ms(light.httpMs)}</td>
             {/if}
           </tr>
         {/each}
@@ -140,8 +143,12 @@
     </table>
   {/if}
 
-  {#if truncated}
-    <p class="status" data-testid="scall-nearby-truncated">{DRILL_TEXT.truncated(rows.length)}</p>
+  {#if capped.capped && truncated}
+    <p class="status" data-testid="scall-nearby-capped">{DRILL_TEXT.nearbyCappedAndTruncated(capped.rows.length)}</p>
+  {:else if capped.capped}
+    <p class="status" data-testid="scall-nearby-capped">{DRILL_TEXT.rowsCapped(capped.rows.length, capped.total)}</p>
+  {:else if truncated}
+    <p class="status" data-testid="scall-nearby-truncated">{DRILL_TEXT.truncated(capped.rows.length)}</p>
   {/if}
 </section>
 
@@ -197,6 +204,7 @@
   }
   .nearby th,
   .nearby td {
+    overflow-wrap: anywhere;
     padding: 5px 8px;
     text-align: left;
     border-bottom: 1px solid var(--line-soft);
@@ -230,5 +238,48 @@
   .mark {
     margin-left: 4px;
     font-weight: 600;
+  }
+  /* Phone width: each call becomes a small card with labelled lines, so the page never scrolls sideways. */
+  @media (max-width: 760px) {
+    .nearby,
+    .nearby tbody,
+    .nearby tr,
+    .nearby td {
+      display: block;
+      width: 100%;
+    }
+    .nearby thead {
+      position: absolute;
+      width: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .nearby tr {
+      padding: 6px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .nearby td {
+      display: grid;
+      grid-template-columns: minmax(0, 6.5rem) minmax(0, 1fr);
+      gap: 12px;
+      border-bottom: 0;
+      padding: 2px 8px;
+      text-align: right;
+      white-space: normal;
+      word-break: break-all;
+    }
+    .nearby td::before {
+      content: attr(data-label);
+      color: var(--text-2);
+      text-align: left;
+    }
+    .nearby td[colspan] {
+      grid-template-columns: minmax(0, 1fr);
+      text-align: left;
+    }
+    .nearby td[colspan]::before {
+      content: none;
+    }
   }
 </style>

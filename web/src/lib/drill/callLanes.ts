@@ -3,6 +3,9 @@
 // the peak, and slow items packed into at most three bar rows. Pure functions only.
 // The input interfaces are structural: a tracing response satisfies them.
 
+import { DRILL_TEXT } from './drillCopy';
+import type { Readout } from './callReadout';
+
 export type LaneKey = 'audit' | 'sql' | 'iis';
 
 export interface LaneBucketIn {
@@ -51,8 +54,13 @@ export interface LaneBar {
   row: number;
   kind: 'bar' | 'marker';
 }
+/** Why a lane has no numbers: the source was not selected, its read failed, or it simply did not record them. */
+export type LaneGap = 'not-recorded' | 'no-file' | 'read-failed' | 'not-imported' | 'import-skipped';
+
 export interface CallLane {
   key: LaneKey;
+  /** Only used when the lane has no peak. Never a number: a gap is unknown, not zero. */
+  gap: LaneGap;
   cells: LaneCell[];
   peak: { atOnce: number; start: number } | null;
   bars: LaneBar[];
@@ -62,6 +70,9 @@ export interface CallLane {
 }
 
 export const MAX_BAR_ROWS = 3;
+
+/** Most rows a list on the Slow call screen draws at once; the rest are counted in a plain note. */
+export const LIST_ROW_CAP = 200;
 
 function finite(n: number | null | undefined): n is number {
   return typeof n === 'number' && Number.isFinite(n);
@@ -176,6 +187,40 @@ function emptyLane(key: LaneKey): LaneIn {
   return { key, state: 'no-data', buckets: [], events: [] };
 }
 
+/** Why a lane without numbers is empty, from the lane's own state. A lane the answer does not hold is simply not recorded. */
+export function laneGap(lane: Pick<LaneIn, 'state' | 'reasonCode'> | undefined): LaneGap {
+  if (!lane) return 'not-recorded';
+  if (lane.state === 'no-data' || lane.state === 'out-of-range') {
+    if (lane.reasonCode === 'not-imported') return 'not-imported';
+    if (lane.reasonCode === 'import-skipped') return 'import-skipped';
+  }
+  if (lane.state === 'no-data') return 'no-file';
+  if (lane.state === 'incomplete') return 'read-failed';
+  return 'not-recorded';
+}
+
+/** The short words for a lane gap (copy lives in drillCopy). */
+export function laneGapText(gap: LaneGap | undefined): string {
+  if (gap === 'not-imported') return DRILL_TEXT.laneNotImported;
+  if (gap === 'import-skipped') return DRILL_TEXT.laneImportSkipped;
+  if (gap === 'no-file') return DRILL_TEXT.laneNoFile;
+  if (gap === 'read-failed') return DRILL_TEXT.laneReadFailed;
+  return DRILL_TEXT.notRecorded;
+}
+
+/** Keeps the first `cap` rows of a list. `total` is always the full count, so a note can say how many are left out. */
+export function capRows<T>(rows: readonly T[], cap: number = LIST_ROW_CAP): { rows: T[]; total: number; capped: boolean } {
+  const limit = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : LIST_ROW_CAP;
+  return { rows: rows.length > limit ? rows.slice(0, limit) : rows.slice(), total: rows.length, capped: rows.length > limit };
+}
+
+/** True when two readouts would draw the same text, so the parent need not be told again. */
+export function sameReadout(a: Readout | null, b: Readout | null): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 /** Builds the drawable lane for one source. A missing lane is drawn as not recorded. */
 export function buildLane(lane: LaneIn | undefined, key: LaneKey, win: WindowIn, fromMs: number, toMs: number): CallLane {
   const source = lane ?? emptyLane(key);
@@ -210,6 +255,7 @@ export function buildLane(lane: LaneIn | undefined, key: LaneKey, win: WindowIn,
 
   return {
     key,
+    gap: lane ? laneGap(lane) : 'not-recorded', // a lane missing from the answer (still loading) is not yet known
     cells,
     peak,
     bars,

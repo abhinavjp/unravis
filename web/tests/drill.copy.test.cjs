@@ -35,7 +35,7 @@ const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
 
 test('plain strings match the brief exactly', () => {
-  assert.equal(DRILL_TEXT.title, 'Slow call');
+  assert.equal(DRILL_TEXT.title, 'Call detail');
   assert.equal(DRILL_TEXT.openAnalysis, 'Open in Analysis');
   assert.equal(DRILL_TEXT.finding, 'Finding the slowest call in this slot...');
   assert.equal(DRILL_TEXT.notRecorded, 'not recorded');
@@ -87,13 +87,13 @@ test('DRILL_HELP has exactly the brief keys with short non-empty values', () => 
 });
 
 test('slow call screen copy', () => {
-  assert.equal(DRILL_TEXT.crumbCall('10:14:07'), 'Slow call 10:14:07');
+  assert.equal(DRILL_TEXT.crumbCall('10:14:07'), 'Call detail 10:14:07');
   assert.equal(DRILL_TEXT.windowLine('09:59', '10:29', 15, 15), 'Showing 09:59 to 10:29 (15 min before, 15 min after this call)');
   assert.equal(DRILL_TEXT.laneSlow(1), '1 slow in this window');
   assert.equal(DRILL_TEXT.laneSlow(3), '3 slow in this window');
   assert.equal(
     DRILL_TEXT.mapCaption(5),
-    'The two hours around this call, one column per 5 minutes. The outlined box is what the big chart shows. The red line is the slow call.'
+    'The two hours around this call, one column per 5 minutes. The outlined box is what the big chart shows. The red line is this call.'
   );
   assert.equal(DRILL_TEXT.dbSrcFile('11 Nov 2026'), 'Query Store file imported 11 Nov 2026');
   assert.equal(DRILL_TEXT.tabNearbyCalls(12), 'Nearby calls (exact, API only · 12)');
@@ -118,4 +118,11 @@ test('failure and gap lines exist and use no banned wording', () => {
 
 test('drill copy passes the copy lint', () => {
   assert.deepEqual(lintScreenStrings(drillCopyEntries(), deck.terms), []);
+});
+
+test('UI-13: Query Store is explained in plain words where a first-time reader meets it', () => {
+  assert.match(DRILL_HELP.laneDb, /Query Store is the database's own record of slow queries/);
+  assert.match(DRILL_TEXT.dbMsgLive(15), /Query Store, the database's own record of slow queries\. The database owner must switch it on\./);
+  assert.match(DRILL_TEXT.dbMsgOff, /needs the database owner/);
+  assert.ok(DRILL_HELP.laneDb.length < 160);
 });

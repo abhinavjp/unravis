@@ -23,7 +23,8 @@ function loadTypeScript(relativePath) {
   return module.exports;
 }
 
-const { makeCallTarget, withCall, encodeCallTarget, parseCallTarget } = loadTypeScript('src/lib/drill/callTarget.ts');
+const { makeCallTarget, withCall, callSlotWindow, encodeCallTarget, parseCallTarget } = loadTypeScript('src/lib/drill/callTarget.ts');
+const { WINDOW_SOURCE_IDS } = loadTypeScript('src/lib/drill/target.ts');
 
 const window = {
   start: '2026-01-01T10:00:00.000Z',
@@ -70,6 +71,58 @@ test('withCall adds the call and does not change its input', () => {
   assert.equal('call' in t, false);
   assert.notEqual(next, t);
   assert.notEqual(next.sourceIds, t.sourceIds);
+});
+
+test('callSlotWindow keeps the original bounds when the call is inside', () => {
+  const target = { start: '2026-01-01T10:00:00Z', end: '2026-01-01T10:15:00Z' };
+  for (const at of ['2026-01-01T10:00:00Z', '2026-01-01T10:07:00Z', '2026-01-01T10:14:59.999Z']) {
+    assert.deepEqual(callSlotWindow(target, at), target);
+  }
+});
+
+test('callSlotWindow moves six widths for a call 90 minutes later in a 15-minute window', () => {
+  const target = Object.freeze({ start: '2026-01-01T10:00:00.000Z', end: '2026-01-01T10:15:00.000Z' });
+  assert.deepEqual(callSlotWindow(target, '2026-01-01T11:30:00.000Z'), {
+    start: '2026-01-01T11:30:00.000Z', end: '2026-01-01T11:45:00.000Z'
+  });
+});
+
+test('callSlotWindow moves back by whole widths for calls before the window', () => {
+  const target = { start: '2026-01-01T10:00:00.000Z', end: '2026-01-01T10:15:00.000Z' };
+  assert.deepEqual(callSlotWindow(target, '2026-01-01T09:59:00.000Z'), {
+    start: '2026-01-01T09:45:00.000Z', end: '2026-01-01T10:00:00.000Z'
+  });
+  assert.deepEqual(callSlotWindow(target, '2026-01-01T09:30:00.000Z'), {
+    start: '2026-01-01T09:30:00.000Z', end: '2026-01-01T09:45:00.000Z'
+  });
+});
+
+test('callSlotWindow keeps the original bounds for missing or unparsable call times', () => {
+  const target = { start: '2026-01-01T10:00:00.000Z', end: '2026-01-01T10:15:00.000Z' };
+  assert.deepEqual(callSlotWindow(target, undefined), target);
+  assert.deepEqual(callSlotWindow(target, 'garbage'), target);
+});
+
+test('callSlotWindow keeps the original bounds when the width is zero', () => {
+  const target = { start: '2026-01-01T10:00:00.000Z', end: '2026-01-01T10:00:00.000Z' };
+  assert.deepEqual(callSlotWindow(target, '2026-01-01T11:30:00.000Z'), target);
+});
+
+test('callSlotWindow puts a call at the exclusive end in the next window', () => {
+  const target = { start: '2026-01-01T10:00:00.000Z', end: '2026-01-01T10:15:00.000Z' };
+  assert.deepEqual(callSlotWindow(target, target.end), {
+    start: '2026-01-01T10:15:00.000Z', end: '2026-01-01T10:30:00.000Z'
+  });
+});
+
+test('callSlotWindow keeps malformed or reversed target bounds unchanged', () => {
+  for (const target of [
+    { start: 'garbage', end: '2026-01-01T10:15:00.000Z' },
+    { start: '2026-01-01T10:00:00.000Z', end: 'garbage' },
+    { start: '2026-01-01T10:15:00.000Z', end: '2026-01-01T10:00:00.000Z' }
+  ]) {
+    assert.deepEqual(callSlotWindow(target, '2026-01-01T11:30:00.000Z'), target);
+  }
 });
 
 test('parseCallTarget rejects null, long text, bad JSON and non-objects', () => {
@@ -129,4 +182,17 @@ test('parseCallTarget drops unknown keys, also inside call', () => {
   const plain = parseOf({ ...good(), x: 'extra' });
   assert.equal('x' in plain, false);
   assert.deepEqual(plain, good());
+});
+
+// The audit ids drive the slow-call search; the nearby-activity (IIS / SQL) and overview reads send no ids, which means every source of the case.
+test('the nearby and overview reads send no source ids, so IIS and SQL are read too', () => {
+  assert.deepEqual(WINDOW_SOURCE_IDS, []);
+  const src = fs.readFileSync(path.join(root, 'src/lib/drill/callController.ts'), 'utf8');
+  assert.equal((src.match(/WINDOW_SOURCE_IDS/g) || []).length >= 3, true);
+  assert.doesNotMatch(src, /windowIds/);
+});
+
+test('a stored target from before (with windowIds) still parses and the extra key is dropped', () => {
+  const parsed = parseOf({ ...good(), windowIds: ['a', 'q'] });
+  assert.equal('windowIds' in parsed, false);
 });

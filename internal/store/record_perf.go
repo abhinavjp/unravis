@@ -37,8 +37,9 @@ type perfField struct {
 }
 
 // recordPerfFields is the one table behind the projection and the decoder.
-// Only the two roles verified in the sandbox are wired; every other role is
-// listed as absent until its stored name is confirmed.
+// The numeric per-call totals and the named filter timings are wired to confirmed
+// stored names; the slow-list, step, pressure and flag roles project a literal null
+// until their stored names are confirmed.
 var recordPerfFields = []perfField{
 	{key: "_perfHitCount", mongoPath: "RequestHitCount", kind: perfNumber},
 	{key: "_perfFilterTotalMs", mongoPath: "PreActionFilterTotalMilliseconds", kind: perfNumber},

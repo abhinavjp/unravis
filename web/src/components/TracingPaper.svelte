@@ -402,14 +402,14 @@
 
   // Open in Analysis: the analysis window is the call's own slot (start and end kept in the target), never the slot number read on the current result,
   // because after a reload the grid can be a different one. The call is cleared in place (no history step back) before the analysis opens.
-  function openAnalysisFromCall() {
+  function openAnalysisFromCall(win: { start: string; end: string }) {
     const target = app.slowCall;
     if (!target) return;
     handoffNote = '';
     cancelled = false;
-    const bucket = { start: target.start, end: target.end };
+    const bucket = { start: win.start, end: win.end };
     const shown = result;
-    const sameGrid = !!shown && slotToBucket(shown, visible, target.slot)?.start === target.start;
+    const sameGrid = win.start === target.start && !!shown && slotToBucket(shown, visible, target.slot)?.start === target.start;
     closeSlowCall({ handoff: true });
     const ok = handOffBucket(bucket, {
       setWindow: (window) => { setWindowFromHour(window); setTracingHandoff(window, shown && sameGrid ? otherLanesNote(shown, visible, target.slot) : ''); },
@@ -597,7 +597,7 @@
     <SlowCallScreen target={app.slowCall} zone={timeZone.zone} demo={!!app.info?.demo}
       onBack={() => closeSlowCall()}
       onFound={(call) => noteSlowCall(call)}
-      onOpenAnalysis={() => openAnalysisFromCall()} />
+      onOpenAnalysis={(win) => openAnalysisFromCall(win)} />
   {/key}
 {/if}
 

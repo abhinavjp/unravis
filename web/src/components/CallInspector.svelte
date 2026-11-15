@@ -2,6 +2,7 @@
   import { DRILL_TEXT, DRILL_HELP } from '../lib/drill/drillCopy';
   import { formatMs } from '../lib/drill/overview';
   import { formatAtOnce } from '../lib/drill/callLanes';
+  import { compareToNormal } from '../lib/drill/callCompare';
   import type { Readout, SourceItem } from '../lib/drill/callReadout';
   import type { DbStateKey, DbStateView } from '../lib/drill/dbState';
   import { formatTime } from '../lib/time';
@@ -12,6 +13,9 @@
   let {
     selected,
     whileRan,
+    steps,
+    selectedCall,
+    onOpenCall,
     db,
     sources,
     zone,
@@ -21,6 +25,9 @@
   }: {
     selected: SourceItem | null;
     whileRan: Readout | null;
+    steps: readonly { p95Ms: number | null }[];
+    selectedCall: { sourceId: string; id: string } | null;
+    onOpenCall: (call: { sourceId: string; id: string }) => void;
     db: DbStateView;
     sources: { key: 'api' | 'iis' | 'db'; label: string; recorded: boolean }[];
     zone: string;
@@ -60,9 +67,19 @@
   );
   const dbLine = $derived(
     whileRan?.db && whileRan.db.atOnce !== null && Number.isFinite(whileRan.db.atOnce) && db.shape !== 'none'
-      ? DRILL_TEXT.readDb(formatAtOnce(whileRan.db.atOnce))
+      ? DRILL_TEXT.readDbPeak(formatAtOnce(whileRan.db.atOnce))
       : DRILL_TEXT.readDbNone
   );
+  // Where the selected API call sits against the slowest-5% marks of the steps on the chart. Only API calls have a duration to compare.
+  const normalLine = $derived.by((): string | null => {
+    if (!selected || selected.source !== 'api' || selected.marker || selected.tookMs === null) return null;
+    const range = compareToNormal(selected.tookMs, steps);
+    if (!range) return DRILL_TEXT.vsNormalNone;
+    const took = formatMs(selected.tookMs);
+    if (range.verdict === 'above') return DRILL_TEXT.vsNormalAbove(took, formatMs(range.highestMs));
+    if (range.verdict === 'near') return DRILL_TEXT.vsNormalNear(took, formatMs(range.typicalMs), formatMs(range.highestMs));
+    return DRILL_TEXT.vsNormalBelow(took, formatMs(range.typicalMs));
+  });
 </script>
 
 <aside class="scall-inspector" data-testid="scall-inspector" aria-label={DRILL_TEXT.secSelected}>
@@ -73,6 +90,12 @@
       <p>{SOURCE_NAME[selected.source]}</p>
       <p>{formatTime(selected.startMs, { zone })}</p>
       <p>{tookText}</p>
+      {#if normalLine}
+        <p class="insp-note" data-testid="scall-vsnormal" title={DRILL_TEXT.vsNormalHow}><strong>{DRILL_TEXT.vsNormalTitle}:</strong> {normalLine}</p>
+      {/if}
+      {#if selectedCall}
+        <button type="button" class="secondary-button insp-open" data-testid="scall-open-call" onclick={() => onOpenCall(selectedCall)}>{DRILL_TEXT.openThisCall}</button>
+      {/if}
     {:else}
       <p>{DRILL_TEXT.selectedNone}</p>
     {/if}
@@ -82,10 +105,11 @@
     <h3>{DRILL_TEXT.secWhile}</h3>
     {#if whileRan}
       <ul>
-        <li>{DRILL_TEXT.readApi(fmtAt(whileRan.api))}</li>
-        <li>{DRILL_TEXT.readIis(fmtAt(whileRan.iis))}</li>
+        <li>{DRILL_TEXT.readApiPeak(fmtAt(whileRan.api))}</li>
+        <li>{DRILL_TEXT.readIisPeak(fmtAt(whileRan.iis))}</li>
         <li>{dbLine}</li>
       </ul>
+      <p class="insp-note">{DRILL_TEXT.whileNote}</p>
     {:else}
       <p>{DRILL_TEXT.notRecorded}</p>
     {/if}
@@ -103,22 +127,26 @@
   </section>
 
   <section class="insp-section">
-    <h3>{DRILL_TEXT.secNotShown}</h3>
-    <ul>
-      {#each NOT_SHOWN as line (line)}
-        <li>{line}</li>
-      {/each}
-    </ul>
+    <details>
+      <summary><h3>{DRILL_TEXT.secNotShown}</h3></summary>
+      <ul>
+        {#each NOT_SHOWN as line (line)}
+          <li>{line}</li>
+        {/each}
+      </ul>
+    </details>
   </section>
 
   <section class="insp-section">
-    <h3>{DRILL_TEXT.secHow}</h3>
-    <ul>
-      {#each HOW as line (line)}
-        <li>{line}</li>
-      {/each}
-    </ul>
-    <p class="insp-note">{DRILL_HELP.atOnce}</p>
+    <details>
+      <summary><h3>{DRILL_TEXT.secHow}</h3></summary>
+      <ul>
+        {#each HOW as line (line)}
+          <li>{line}</li>
+        {/each}
+      </ul>
+      <p class="insp-note">{DRILL_HELP.atOnce}</p>
+    </details>
   </section>
 
   {#if demo}
@@ -161,6 +189,20 @@
   .insp-section ul {
     margin: 0 0 6px;
     padding-left: 18px;
+  }
+  .insp-section summary {
+    cursor: pointer;
+  }
+  .insp-section summary h3 {
+    display: inline;
+    margin: 0;
+  }
+  .insp-open {
+    margin-top: 6px;
+    min-height: 28px;
+    padding: 3px 10px;
+    font-size: 13px;
+    border-radius: var(--radius-sm);
   }
   .insp-what {
     font-weight: 600;

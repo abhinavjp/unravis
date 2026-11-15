@@ -9,7 +9,7 @@ import type { CallEvent, CallEvents } from './callData';
 import { coversOverview, DEFAULT_WINDOW, overviewBounds, windowBounds, type CallWindow } from './callWindow';
 import { activityInput, needsServer, type CallRef, type Loaded, type NearbyChip } from './nearbyCalls';
 import { parsePerf, type DrillRecord } from './perf';
-import { drillQuery, pickCall } from './target';
+import { drillQuery, pickCall, WINDOW_SOURCE_IDS } from './target';
 import type { SlowCallTarget } from './callTarget';
 
 /** The most slow-call rows the screen keeps for one window. */
@@ -37,6 +37,8 @@ export interface CallState {
   overviewFailed: boolean;
   /** True when the slowest-calls read of the window failed; the rows are then empty because they are not known. */
   slowRowsFailed: boolean;
+  /** True from the start of a slowest-calls read until it answers. The old rows are cleared at the start, so they never show under a new axis. */
+  slowRowsLoading: boolean;
   visible: TracingResponse | null;
   visibleLoading: boolean;
   visibleFailed: boolean;
@@ -70,6 +72,7 @@ function initialState(): CallState {
     overview: null,
     overviewFailed: false,
     slowRowsFailed: false,
+    slowRowsLoading: false,
     visible: null,
     visibleLoading: false,
     visibleFailed: false,
@@ -138,7 +141,7 @@ export function createCallController(
   function readVisible(mySeq: number, ctl: AbortController, startIso: string, endIso: string): void {
     s.visibleLoading = true;
     s.visibleFailed = false;
-    deps.tracing(target.caseId, startIso, endIso, target.sourceIds, ctl.signal).then(
+    deps.tracing(target.caseId, startIso, endIso, WINDOW_SOURCE_IDS, ctl.signal).then(
       (answer) => {
         if (disposed || ctl.signal.aborted || mySeq !== readSeq) return;
         if (answer === null) return;
@@ -157,17 +160,22 @@ export function createCallController(
 
   function readSlowRows(mySeq: number, ctl: AbortController, startIso: string, endIso: string): void {
     s.slowRowsFailed = false;
+    // The rows of the old window sit on the old time axis: drop them now instead of drawing them under the new one.
+    s.slowRows = [];
+    s.slowRowsLoading = true;
     deps.slowest(drillQuery({ start: startIso, end: endIso }, target.sourceIds), ctl.signal).then(
       (page) => {
         if (disposed || ctl.signal.aborted || mySeq !== readSeq) return;
         s.slowRows = page.rows.slice(0, SLOW_ROWS_MAX);
         s.slowRowsFailed = false;
+        s.slowRowsLoading = false;
         emit();
       },
       () => {
         if (disposed || ctl.signal.aborted || mySeq !== readSeq) return;
         s.slowRows = [];
         s.slowRowsFailed = true;
+        s.slowRowsLoading = false;
         emit();
       }
     );
@@ -270,7 +278,7 @@ export function createCallController(
     overviewCtl = ctl;
     s.overviewFailed = false;
     const ob = overviewBounds(s.callStartMs);
-    deps.tracing(target.caseId, iso(ob.start), iso(ob.end), target.sourceIds, ctl.signal).then(
+    deps.tracing(target.caseId, iso(ob.start), iso(ob.end), WINDOW_SOURCE_IDS, ctl.signal).then(
       (answer) => {
         if (disposed || ctl.signal.aborted) return;
         if (answer === null) return;

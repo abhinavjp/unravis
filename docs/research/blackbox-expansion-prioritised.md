@@ -1,6 +1,6 @@
 # Blackbox expansion: prioritised and conditions, 2026-11-13
 
-Sources: Google "Argon" research (raw: `C:\Users\Abhinav\Downloads\unravis-blackbox-google-argon-research.txt`), an Opus security review (`blackbox-sql-security-review.md`) and a Sonnet research pass on memory visibility and overhead. Backlog items: BL-104 to BL-126 in `docs/BACKLOG.md`. Owner ruling 2026-11-13: no "deferred"; design and conditions first, nothing implemented yet.
+Sources: Google "Argon" research (raw: `<local-downloads-folder>\unravis-blackbox-google-argon-research.txt`), an Opus security review (`blackbox-sql-security-review.md`) and a Sonnet research pass on memory visibility and overhead. Backlog items: BL-104 to BL-126 in `docs/BACKLOG.md`. Owner ruling 2026-11-13: no "deferred"; design and conditions first, nothing implemented yet.
 
 Counter paths are from Google and not yet verified. Run `typeperf -q` on a real server before building any counter group.
 

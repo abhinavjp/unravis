@@ -62,7 +62,7 @@ test('this call and selected rows are marked; click and Enter select', () => {
   assert.match(markup, /DRILL_TEXT\.thisCallMark/);
   assert.match(markup, /class:selected=\{selectedKey === item\.key\}/);
   assert.match(markup, /onclick=\{\(\) => onSelect\(item\.key\)\}/);
-  assert.match(src, /event\.key === 'Enter'/);
+  assert.match(src, /event\.key !== 'Enter' && event\.key !== ' '/);
 });
 
 test('the list has no inner scroll box', () => {

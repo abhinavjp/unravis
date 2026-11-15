@@ -1,18 +1,19 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, untrack, tick } from 'svelte';
   import { api } from '../lib/api';
   import { DRILL_TEXT } from '../lib/drill/drillCopy';
   import { createCallController, type CallDeps, type CallState } from '../lib/drill/callController';
   import { fetchCallEvents } from '../lib/drill/callData';
-  import type { SlowCallTarget } from '../lib/drill/callTarget';
+  import { withCall, callSlotWindow, type SlowCallTarget } from '../lib/drill/callTarget';
   import { fetchTracing, nextRequestSeq, type TracingLane } from '../lib/tracing/model';
   import { fetchLaneDays, newestDay, type LaneDay } from '../lib/lanes';
   import { buildLane, packBars, type CallLane, type LaneBar, type LaneIn, type LaneKey } from '../lib/drill/callLanes';
-  import { allSources, readoutAt, type Readout, type SourceItem } from '../lib/drill/callReadout';
+  import { allSources, readoutSpan, type Readout, type SourceItem } from '../lib/drill/callReadout';
   import { dbState, type DbStateKey } from '../lib/drill/dbState';
   import { mapRow } from '../lib/drill/callMap';
   import { centreOn, clampWindow, coversOverview, overviewBounds, windowBounds } from '../lib/drill/callWindow';
   import { filterRows, type CallRef, type NearbyRow } from '../lib/drill/nearbyCalls';
+  import type { RequestRecord } from '../lib/types';
   import { formatTime, timeParts } from '../lib/time';
   import DrillOverview from './DrillOverview.svelte';
   import CallWindowBar from './CallWindowBar.svelte';
@@ -37,13 +38,15 @@
     zone: string;
     demo: boolean;
     onBack: () => void;
-    onOpenAnalysis: (slot: number) => void;
+    onOpenAnalysis: (window: { start: string; end: string }) => void;
     onFound: (call: { sourceId: string; id: string }) => void;
   } = $props();
 
   type Tab = 'calls' | 'all';
 
-  let callState = $state<CallState | null>(null);
+  // Raw, not deep: the controller hands over a fresh snapshot per change, and the answers inside it (overview, nearby rows) stay the same objects
+  // until they really change, so the deriveds below can tell "same answer" from "new answer" and skip their work.
+  let callState = $state.raw<CallState | null>(null);
   let controller = $state.raw<ReturnType<typeof createCallController> | null>(null);
   let titleEl = $state<HTMLElement>();
   let shown = $state({ api: true, iis: true, db: true });
@@ -51,6 +54,7 @@
   let selectedKey = $state<string | null>(null);
   let readout = $state<{ value: Readout | null; pinned: boolean }>({ value: null, pinned: false });
   let pretend = $state<DbStateKey | null>(null);
+  let opened = $state<{ sourceId: string; id: string } | null>(null);
   let savedDay = $state<LaneDay | null>(null);
   let callsTab = $state<HTMLElement>();
   let allTab = $state<HTMLElement>();
@@ -80,15 +84,16 @@
   // Keyed on the case and slot VALUES, not on the target object. Reading `target.caseId` inside the effect would track the whole
   // `target` prop, and the parent replaces `target` once the call is found (same case and slot) — that must not start the search over.
   // A derived primitive string only changes when the values do, so a same-value replacement leaves the effect (and the controller) alone.
-  const restartKey = $derived(`${target.caseId}:${target.slot}`);
+  // `opened` is a call the investigator picked on this screen (a row, a bar): it replaces the auto-found call and restarts the read.
+  const restartKey = $derived(`${target.caseId}:${target.slot}:${opened ? `${opened.sourceId}/${opened.id}` : ''}`);
 
   $effect(() => {
     void restartKey;
-    // Only a different case or slot restarts it: a new controller is made and the old one dropped.
+    // Only a different case, slot or picked call restarts it: a new controller is made and the old one dropped.
     const ctl = untrack(() => {
       callState = null;
       selectedKey = null;
-      const made = createCallController(target, deps, (next) => { callState = next; }, (call) => onFound(call));
+      const made = createCallController(opened ? withCall(target, opened) : target, deps, (next) => { callState = next; }, (call) => onFound(call));
       controller = made;
       made.start();
       return made;
@@ -138,12 +143,39 @@
     time: (iso: string) => formatTime(iso, { zone, date: false, precision: 'minute' })
   };
 
+  // The window-independent parts, each derived from its own input so a drag preview (which only moves the window) does not redo them.
+  const overviewResp = $derived(callState?.overview ?? null);
+  const callStartMs = $derived(callState?.callStartMs ?? Number.NaN);
+  const over = $derived(overviewBounds(callStartMs));
+  const NO_ROWS: RequestRecord[] = [];
+  const nearbyRaw = $derived(callState?.nearby.rows ?? NO_ROWS);
+
+  // The overview strip rows: they depend on the two-hour overview answer only.
+  const mapRows = $derived.by(() => {
+    const resp = overviewResp;
+    return (['audit', 'iis', 'sql'] as const).map((key) =>
+      mapRow(key, resp ? buildLane(toLaneIn(resp.lanes.find((l) => l.key === key)), key, resp.window, over.start, over.end).cells : [])
+    );
+  });
+  const nearbyAll = $derived.by((): NearbyRow[] =>
+    nearbyRaw.map((r) => ({
+      id: r.id,
+      sourceId: r.sourceId,
+      controller: r.controller,
+      action: r.action,
+      initiatedAt: r.initiatedAt ?? '',
+      durationMs: r.durationMs,
+      status: r.status !== '' && Number.isFinite(Number(r.status)) ? Number(r.status) : undefined,
+      userId: r.userId ?? null,
+      light: r.light ?? null
+    }))
+  );
+
   // Everything the workbench draws, worked out once per change. Null until the call record is there.
   const bench = $derived.by(() => {
     const s = callState;
     if (!s || !s.record) return null;
     const bounds = windowBounds(s.callStartMs, s.window);
-    const over = overviewBounds(s.callStartMs);
     const resp = s.visible ?? s.overview;
     const win = resp?.window ?? { axisStart: new Date(bounds.start).toISOString(), bucketSeconds: 60 };
     const step = win.bucketSeconds;
@@ -220,23 +252,8 @@
       startMs: s.callStartMs,
       endMs: s.callEndMs
     };
-    const overviewLane = (key: LaneKey) => toLaneIn(s.overview?.lanes.find((l) => l.key === key));
-    const mapRows = (['audit', 'iis', 'sql'] as const).map((key) =>
-      mapRow(key, s.overview ? buildLane(overviewLane(key), key, s.overview.window, over.start, over.end).cells : [])
-    );
-    const nearbyAll: NearbyRow[] = s.nearby.rows.map((r) => ({
-      id: r.id,
-      sourceId: r.sourceId,
-      controller: r.controller,
-      action: r.action,
-      initiatedAt: r.initiatedAt ?? '',
-      durationMs: r.durationMs,
-      status: r.status !== '' && Number.isFinite(Number(r.status)) ? Number(r.status) : undefined,
-      userId: r.userId ?? null,
-      light: r.light ?? null
-    }));
     const nearbyRows = filterRows(nearbyAll, s.chip, callRef, bounds.start, bounds.end);
-    const whileRan = readoutAt(s.callStartMs, { audit: lanes.audit.cells, iis: lanes.iis.cells, sql: drawnSql.cells }, call);
+    const whileRan = readoutSpan({ audit: lanes.audit.cells, iis: lanes.iis.cells, sql: drawnSql.cells }, call);
     const sources = [
       { key: 'api' as const, label: DRILL_TEXT.laneApi, recorded: lanes.audit.hasShape || s.slowRows.length > 0 },
       { key: 'iis' as const, label: DRILL_TEXT.laneIis, recorded: lanes.iis.hasShape || lanes.iis.bars.length > 0 },
@@ -317,9 +334,29 @@
     (tab === 'calls' ? callsTab : allTab)?.focus();
   }
 
+  // Any API call can be opened here: the screen reads that call and recentres on it. The call already shown just gets selected.
+  function openCall(call: { sourceId: string; id: string }) {
+    const here = bench?.record;
+    if (here && here.id === call.id && here.sourceId === call.sourceId) return;
+    opened = { sourceId: call.sourceId, id: call.id };
+    tab = 'calls';
+    titleEl?.scrollIntoView?.({ block: 'start' });
+    void tick().then(() => titleEl?.focus({ preventScroll: true }));
+  }
+
   function pickNearby(row: NearbyRow) {
     selectedKey = bench ? bench.apiKeyOf(row.sourceId, row.id) : null;
+    openCall(row);
   }
+
+  // The call behind the selected API item, so the side panel can offer "Open this call". Not offered for the call already open.
+  const selectedCall = $derived.by((): { sourceId: string; id: string } | null => {
+    const b = bench;
+    const item = selected;
+    if (!b || !item || item.source !== 'api' || item.thisCall) return null;
+    const row = [...b.s.slowRows, ...b.s.nearby.rows].find((r) => b.apiKeyOf(r.sourceId, r.id) === item.key);
+    return row ? { sourceId: row.sourceId, id: row.id } : null;
+  });
 
   const time = $derived(formatTime(callState?.record?.initiatedAt ?? target.start, { zone, precision: 'second' }));
 </script>
@@ -329,7 +366,7 @@
     <nav class="scall-crumb" aria-label="Breadcrumb"><button type="button" class="link" data-testid="scall-back" onclick={onBack}>{DRILL_TEXT.crumbTimeline}</button> <span aria-hidden="true">›</span> <span>{DRILL_TEXT.crumbCall(time)}</span></nav>
     <h2 id="scall-title" tabindex="-1" bind:this={titleEl}>{DRILL_TEXT.title}</h2>
     <div class="scall-actions">
-      <button type="button" class="btn outlined" data-testid="scall-analysis" onclick={() => onOpenAnalysis(target.slot)}>{DRILL_TEXT.openAnalysis}</button>
+      <button type="button" class="btn outlined" data-testid="scall-analysis" onclick={() => onOpenAnalysis(callSlotWindow(target, callState?.record?.initiatedAt))}>{DRILL_TEXT.openAnalysis}</button>
       <button type="button" class="btn outlined" data-testid="scall-back-btn" onclick={onBack}>{DRILL_TEXT.backToTimeline} <kbd>{DRILL_TEXT.escHint}</kbd></button>
     </div>
   </header>
@@ -377,6 +414,9 @@
             />
             {#if bench.s.visibleFailed}
               <p class="note" role="status" data-testid="scall-lanes-failed">{DRILL_TEXT.lanesFailed}</p>
+            {/if}
+            {#if bench.s.slowRowsLoading}
+              <p class="note" role="status" data-testid="scall-slowrows-loading">{DRILL_TEXT.slowRowsLoading}</p>
             {/if}
             {#if bench.s.slowRowsFailed}
               <p class="note" role="status" data-testid="scall-slowrows-failed">{DRILL_TEXT.slowRowsFailed}</p>
@@ -459,6 +499,9 @@
         <CallInspector
           {selected}
           whileRan={bench.whileRan}
+          steps={bench.lanes.audit.cells}
+          {selectedCall}
+          onOpenCall={openCall}
           db={bench.db}
           sources={bench.sources}
           {zone}
@@ -488,10 +531,10 @@
 
   /* Layout W1: the main column (window bar, pinned timeline, facts, lists) and the inspector on the right. Nothing here scrolls on its own. */
   [data-layout='w1'].scall-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
-  [data-layout='w1'] .scall-main { --scall-lane-h: clamp(72px, calc((100vh - 540px) / 3), 132px); display: grid; gap: 16px; min-width: 0; }
+  [data-layout='w1'] .scall-main { --scall-lane-h: clamp(72px, calc((100vh - 540px) / 3), 132px); display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
   /* The timeline scrolls with the page (no sticky overlay), so facts and lists never slide behind the charts and get clipped. */
-  [data-layout='w1'] .scall-pin { display: grid; gap: 10px; }
-  [data-layout='w1'] .scall-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+  [data-layout='w1'] .scall-pin { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  [data-layout='w1'] .scall-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); }
   [data-layout='w1'] .tab { padding: 10px 12px; color: var(--text-2); background: none; border: 0; border-bottom: 2px solid transparent; font-size: 13px; font-weight: 600; cursor: pointer; }
   [data-layout='w1'] .tab[aria-selected='true'] { color: var(--text); border-bottom-color: var(--accent); }
   [data-layout='w1'] .tab:hover { color: var(--text); }

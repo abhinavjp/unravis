@@ -48,10 +48,21 @@ type LaneRequest struct {
 	Login      string
 }
 
-// Validate refuses a request the checks cannot compare: both windows must be real and the reference must end before the incident starts.
+// MaxLaneWindow is the longest one window (incident or reference) may be. A longer window is refused before any query is built, so a mistyped date
+// cannot make a run cut thousands of slices (DATA-08).
+const MaxLaneWindow = 90 * 24 * time.Hour
+
+// Validate refuses a request the checks cannot compare: both windows must be real, neither may be longer than MaxLaneWindow, and the reference must
+// end before the incident starts.
 func (r LaneRequest) Validate() error {
 	if !r.Incident.Valid() || !r.Reference.Valid() {
 		return errors.New("both the incident window and the reference window need a start and an end")
+	}
+	if r.Incident.End.Sub(r.Incident.Start) > MaxLaneWindow {
+		return errors.New("the incident window can be at most 90 days long; pick a shorter span")
+	}
+	if r.Reference.End.Sub(r.Reference.Start) > MaxLaneWindow {
+		return errors.New("the reference window can be at most 90 days long; pick a shorter span")
 	}
 	if r.Reference.End.After(r.Incident.Start) {
 		return errors.New("the reference window must end before the incident window starts")
@@ -117,6 +128,11 @@ type LaneSeriesPoint struct {
 	Execs int64   `json:"n"`           // executions
 	AvgMs float64 `json:"a"`           // average duration (ms), weighted by executions
 	MaxMs float64 `json:"m,omitempty"` // slowest single execution (ms)
+	// BlockSeconds is how much Query Store time this point covers: the sum of the blocks that were merged
+	// into it. Zero means one block (the block length the run recorded), so a point that was never merged
+	// carries nothing and older saved runs read as before. Busy time (average x executions) spread over
+	// BlockSeconds gives the true busy per second of a merged point.
+	BlockSeconds int64 `json:"b,omitempty"`
 }
 
 // laneSeriesCap bounds the saved series so a report stays far under MaxHealthReport.
@@ -174,36 +190,110 @@ func (b *laneBuilder) setOnset(t time.Time) {
 }
 
 // setSeries keeps the interval series for the saved report, oldest first and at
-// most laneSeriesCap points. A longer series is thinned evenly over the whole
-// span (neighbouring points are merged), never cut at one end.
+// most laneSeriesCap points. A longer series is thinned evenly over each window
+// (neighbouring points are merged, never across the gap between the windows),
+// never cut at one end.
 func (b *laneBuilder) setSeries(pts []LaneSeriesPoint) {
 	sort.Slice(pts, func(i, j int) bool { return pts[i].T < pts[j].T })
-	b.res.Series = downsampleSeries(pts, laneSeriesCap)
+	var unit int64
+	if qs := b.res.QueryStore; qs != nil && qs.IntervalMinutes > 0 {
+		unit = int64(qs.IntervalMinutes) * 60
+	}
+	b.res.Series = downsampleWindows(pts, laneSeriesCap, unit, []Window{b.res.Reference, b.res.Incident})
 }
 
-// downsampleSeries merges neighbouring points in equal groups until at most limit remain: executions add up, the average is weighted by executions,
-// the slowest stays the slowest and the group starts where its first point did.
+// downsampleSeries merges neighbouring points in equal groups until at most limit remain. It knows no windows, so it treats the series as one run
+// and takes the block length from the smallest gap between points; the saved series goes through downsampleWindows instead.
 func downsampleSeries(pts []LaneSeriesPoint, limit int) []LaneSeriesPoint {
+	return downsampleWindows(pts, limit, 0, nil)
+}
+
+// downsampleWindows thins a series that is sorted by time to at most limit points. Each window is thinned on its own, so a merged point never spans
+// the gap between the reference and the incident (DATA-04), and every run uses one group size, raised until at most limit points remain. Inside a window
+// neighbouring points are merged in equal groups: executions add up, the average is weighted by executions, the slowest stays the slowest, the group
+// starts where its first point did, and BlockSeconds is the sum of the blocks it covers, so busy time over BlockSeconds stays the true busy per
+// second. unit is the length of one block in seconds (0 means work it out from the smallest gap between points). When limit is smaller than the number
+// of runs, one point per run is kept (the result may exceed limit by at most the run count).
+func downsampleWindows(pts []LaneSeriesPoint, limit int, unit int64, wins []Window) []LaneSeriesPoint {
 	if limit <= 0 || len(pts) <= limit {
 		return pts
 	}
+	if unit <= 0 {
+		unit = smallestGap(pts)
+	}
+	// One run per window, plus a last run for points outside every window. The input is sorted, so each run is a stretch of it.
+	runs := make([][]LaneSeriesPoint, len(wins)+1)
+	for _, p := range pts {
+		k := len(wins)
+		for i, w := range wins {
+			if w.Contains(time.Unix(p.T, 0)) {
+				k = i
+				break
+			}
+		}
+		runs[k] = append(runs[k], p)
+	}
 	group := (len(pts) + limit - 1) / limit
-	out := make([]LaneSeriesPoint, 0, (len(pts)+group-1)/group)
-	for i := 0; i < len(pts); i += group {
-		end := min(i+group, len(pts))
-		p := LaneSeriesPoint{T: pts[i].T}
+	for {
+		out := make([]LaneSeriesPoint, 0, limit)
+		for _, run := range runs {
+			if len(run) == 0 {
+				continue
+			}
+			out = append(out, mergeGroups(run, group, unit)...)
+		}
+		if len(out) <= limit {
+			sort.SliceStable(out, func(i, j int) bool { return out[i].T < out[j].T })
+			return out
+		}
+		// A group as long as the longest run already makes one point per run; a bigger group cannot thin it further.
+		if group >= len(pts) {
+			sort.SliceStable(out, func(i, j int) bool { return out[i].T < out[j].T })
+			return out
+		}
+		group++
+	}
+}
+
+// mergeGroups merges one run in equal groups of group points (a group of 1 or less leaves the run as it is).
+func mergeGroups(run []LaneSeriesPoint, group int, unit int64) []LaneSeriesPoint {
+	out := make([]LaneSeriesPoint, 0, (len(run)+group-1)/group)
+	for i := 0; i < len(run); i += group {
+		part := run[i:min(i+group, len(run))]
+		if len(part) == 1 {
+			out = append(out, part[0])
+			continue
+		}
+		p := LaneSeriesPoint{T: part[0].T}
 		var sumMs float64
-		for _, q := range pts[i:end] {
+		for _, q := range part {
 			p.Execs += q.Execs
 			sumMs += q.AvgMs * float64(q.Execs)
 			p.MaxMs = max(p.MaxMs, q.MaxMs)
+			if q.BlockSeconds > 0 {
+				p.BlockSeconds += q.BlockSeconds
+			} else {
+				p.BlockSeconds += unit
+			}
 		}
 		if p.Execs > 0 {
-			p.AvgMs = round1(sumMs / float64(p.Execs))
+			p.AvgMs = sumMs / float64(p.Execs)
 		}
 		out = append(out, p)
 	}
 	return out
+}
+
+// smallestGap is the smallest positive distance in seconds between neighbouring points of a series sorted by time: the block length when blocks
+// are saved back to back. Zero when there is none.
+func smallestGap(pts []LaneSeriesPoint) int64 {
+	var gap int64
+	for i := 1; i < len(pts); i++ {
+		if d := pts[i].T - pts[i-1].T; d > 0 && (gap == 0 || d < gap) {
+			gap = d
+		}
+	}
+	return gap
 }
 
 func (b *laneBuilder) source(name string) { b.sources[name] = true }

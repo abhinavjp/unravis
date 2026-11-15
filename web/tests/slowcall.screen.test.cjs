@@ -126,14 +126,14 @@ test('RB-5: the database block length falls back to the Query Store interval', (
 // changed case or slot VALUE restarts the controller.
 
 test('the restart effect reads a derived case:slot key, never the target prop itself', () => {
-  assert.ok(/const restartKey = \$derived\(`\$\{target\.caseId\}:\$\{target\.slot\}`\);/.test(source), 'a primitive key derived from the case and slot values');
+  assert.ok(/const restartKey = \$derived\(`\$\{target\.caseId\}:\$\{target\.slot\}:\$\{opened \? `\$\{opened\.sourceId\}\/\$\{opened\.id\}` : ''\}`\);/.test(source), 'a primitive key derived from the case, slot and any picked call');
   const effect = /\$effect\(\(\) => \{[\s\S]*?\n  \}\);/.exec(source);
   assert.ok(effect, 'the restart effect is there');
   const body = effect[0];
   assert.ok(body.includes('void restartKey;'), 'the effect reads the primitive key');
   assert.ok(!/void target\.(caseId|slot)/.test(body), 'the effect must not track the target prop reference');
   // Creation and the state reset stay untracked, and the cleanup still disposes on a real restart.
-  assert.ok(/untrack\(\(\) => \{[\s\S]*?callState = null;[\s\S]*?selectedKey = null;[\s\S]*?createCallController\(target, deps,/.test(body), 'creation and reset inside untrack');
+  assert.ok(/untrack\(\(\) => \{[\s\S]*?callState = null;[\s\S]*?selectedKey = null;[\s\S]*?createCallController\(opened \? withCall\(target, opened\) : target, deps,/.test(body), 'creation and reset inside untrack');
   assert.ok(/return \(\) => \{\s*ctl\.dispose\(\);\s*if \(controller === ctl\) controller = null;\s*\};/.test(body), 'the cleanup disposes and clears');
 });
 
@@ -158,6 +158,8 @@ import { untrack } from 'svelte';
 let callState = $state(null);
 let controller = $state.raw(null);
 let selectedKey = $state(null);
+let opened = $state(null);
+function withCall(t, c) { return { ...t, call: c }; }
 const deps = {};
 let targetSource = $state(null);
 const target = $derived(targetSource);
@@ -173,6 +175,7 @@ function createCallController(t, d, onState, onFound) {
 }
 function onFound(call) { log.push('found'); }
 export function setTarget(t) { targetSource = t; }
+export function setOpened(c) { opened = c; }
 export function peek() { return { callState, selectedKey, controller }; }
 export function init() {
 ${keyCode}

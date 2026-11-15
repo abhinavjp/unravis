@@ -221,7 +221,6 @@ let sidePanelReturnFocus: HTMLElement | null = null;
 // The "Import files" popup, centred over the page. It is not a side panel, but `panels.sidePanel` still reads 'import' while it is open
 // (see `panels`), so the pages that re-read their files when the import closes keep working.
 let importPopup = $state<{ caseId: string; caseTitle: string; retryServerName: string | null } | null>(null);
-let drillOpen = $state(false);
 let importPopupReturnFocus: HTMLElement | null = null;
 // The one line the start screen shows after Import was asked for with no case open (see showImportPopup).
 // On until a case is opened (setActiveCase) or the line is dismissed on the start screen.
@@ -1691,15 +1690,14 @@ export function onWindowKey(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.defaultPrevented) return;
   // The import popup handles its own Esc (it asks before it closes), so the page behind it must not step up.
   if (importPopup) return;
-  // The drill pop-up handles its own Esc, so the page behind it must not step up either.
-  if (drillOpen) return;
   // A drawer closes on Esc even when focus is on the page itself (after a click on the page behind it); one with focus inside handles its own Esc.
   if (glossaryOpen) { void closeGlossary(); return; }
   if (coverageSource) { void closeCoverage(); return; }
   if (sidePanel) { void closeSidePanel(); return; }
   if (connectionsOpen) { void closeConnections(); return; }
   const target = event.target;
-  if (target instanceof HTMLElement && (target.tagName === 'SELECT' || target.closest('.popover'))) return;
+  // Esc inside a text field belongs to the field (the Custom window boxes, any INPUT/TEXTAREA/contenteditable): it stays with the field and never closes the screen. SELECT and .popover keep their own exemption.
+  if (target instanceof HTMLElement && (target.tagName === 'SELECT' || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || target.closest('.popover'))) return;
   // An open menu or the filters panel closes first; only then does Esc step one level up.
   const open = Array.from(document.querySelectorAll<HTMLDetailsElement>('details.menu[open], details.more-filters[open]')).find((d) => !d.closest('[hidden]')) ?? null;
   const inside = open != null && target instanceof HTMLElement && open.contains(target);
@@ -1711,7 +1709,6 @@ export function onWindowKey(event: KeyboardEvent) {
 // A scope change (range chip, request type, source, filter) only marks the analysis on screen as out of date (runHint); the Run analysis button starts the run.
 export function onScopeChange() { error = ''; }
 /** A chosen hour of the hour grid becomes the primary window, with the hour before it as the reference. */
-export function setDrillOpen(v: boolean) { drillOpen = v; }
 export function setWindowFromHour(window: RollupWindow) { tracingHandoff = null; Object.assign(query, hourWindowQuery(window)); controlsResetKey++; onScopeChange(); }
 /**
  * Remember what to say if the analysis on this just-set bar window is empty, and that the analysis must run on that window when it

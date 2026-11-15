@@ -33,6 +33,39 @@ export function readoutAt(
   };
 }
 
+// The whole time a call ran, not just the instant it started: the highest value in any step the call touched, per lane.
+// A lane with no recorded step inside the span gives null (printed as "not recorded", never 0). A call with no end is read at its start.
+function peakOver(cells: readonly ReadCell[], startMs: number, endMs: number): ReadCell | null {
+  const end = endMs > startMs ? endMs : startMs;
+  let best: ReadCell | null = null;
+  let first: ReadCell | null = null;
+  for (const cell of cells) {
+    const touches = end === startMs ? startMs >= cell.start && startMs < cell.end : cell.start < end && cell.end > startMs;
+    if (!touches) continue;
+    if (!first) first = cell;
+    if (cell.atOnce === null || !Number.isFinite(cell.atOnce)) continue;
+    if (!best || (best.atOnce ?? -1) < cell.atOnce) best = cell;
+  }
+  if (!best) return first && { ...first, atOnce: null };
+  const p95s = cells
+    .filter((c) => c.start < Math.max(end, startMs + 1) && c.end > startMs && c.p95Ms !== null && Number.isFinite(c.p95Ms))
+    .map((c) => c.p95Ms as number);
+  return { ...best, p95Ms: p95s.length ? Math.max(...p95s) : null };
+}
+
+export function readoutSpan(
+  lanes: { audit: readonly ReadCell[]; iis: readonly ReadCell[]; sql: readonly ReadCell[] },
+  call: { startMs: number; endMs: number }
+): Readout | null {
+  if (!Number.isFinite(call.startMs)) return null;
+  const api = peakOver(lanes.audit, call.startMs, call.endMs);
+  const iis = peakOver(lanes.iis, call.startMs, call.endMs);
+  const db = peakOver(lanes.sql, call.startMs, call.endMs);
+  const first = api ?? iis ?? db;
+  if (!first) return null;
+  return { stepStart: first.start, api, iis, db, isThisCall: true };
+}
+
 export type SourceKey = 'api' | 'iis' | 'db';
 export interface SourceItem { key: string; source: SourceKey; startMs: number; endMs: number | null; what: string; tookMs: number | null; marker: boolean; thisCall: boolean }
 export interface EventIn { evidenceId: string; source: string; kind: string; start: string; end?: string | null; durationMs?: number | null; severity?: string }

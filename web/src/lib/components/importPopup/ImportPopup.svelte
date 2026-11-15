@@ -15,10 +15,6 @@
   // ask to close, and answer "Keep them" when the confirmation is already open. `state.focus` moves focus to a `data-focus` element.
   const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), select:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
 
-  // Not in POPUP_TEXT yet: shown only when the check itself could not finish.
-  const CHECK_FAILED = 'The server could not check these files.';
-  const CHECK_AGAIN = 'Check again';
-
   // `query` is part of the popup's contract with the page but nothing here draws it.
   let {
     caseId,
@@ -137,6 +133,14 @@
   </div>
   <div class="prog-line" aria-live="polite"><b>{progText.slice(0, progCut)}</b>{progText.slice(progCut)}</div>
 
+  <!-- Esc, the x and a click outside do nothing while an import runs; this says why instead of leaving them silently dead. -->
+  {#if popup.closeNote !== ''}<p class="note close-note" role="status">{popup.closeNote}</p>{/if}
+  {#if popup.step === 2 && popup.addNotes.length > 0}
+    <div class="note add-notes" role="alert">
+      {#each popup.addNotes as note}<p>{note}</p>{/each}
+    </div>
+  {/if}
+
   <div class="popup-body">
     {#if popup.step === 1}
       <ChooseStep
@@ -151,8 +155,8 @@
     {:else if popup.step === 2}
       {#if popup.checkError !== ''}
         <div class="problem" role="alert">
-          <p>{CHECK_FAILED} {popup.checkError}</p>
-          <button type="button" class="btn btn-secondary" onclick={() => popup.continueToCheck()}>{CHECK_AGAIN}</button>
+          <p>{POPUP_TEXT.checkFailed} {popup.checkError}</p>
+          <button type="button" class="btn btn-secondary" onclick={() => popup.continueToCheck()}>{POPUP_TEXT.checkAgain}</button>
         </div>
       {:else}
         <CheckStep
@@ -263,6 +267,8 @@
   .prog-line { padding: 6px 20px 8px; color: var(--text-2); font-size: 12px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
   .prog-line b { color: var(--text); }
 
+  .note { margin: 0; padding: 8px 20px; color: var(--text); background: var(--surface-2); border-bottom: 1px solid var(--warn); font-size: 13px; }
+  .note p { margin: 0; }
   .popup-body { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; padding: 18px 20px; scrollbar-width: thin; }
   .popup-foot { flex: 0 0 auto; display: flex; flex-direction: column; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--line); background: var(--surface); }
 

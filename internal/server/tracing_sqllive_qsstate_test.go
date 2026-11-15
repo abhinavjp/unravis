@@ -1,0 +1,179 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	"api-audit-explorer/internal/calltrace"
+	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/dbhealth"
+)
+
+// DATA-09: the Query Store state saved with a SQL day reaches the held SQL lane's reason, so "switched off",
+// "read-only", "denied" and "data starts later" are not all shown as "no activity". All inputs are synthetic.
+
+var qsStateWindowStart = time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+
+// heldSQLQSCase is a case holding one saved SQL day with the given points and Query Store block (nil = none recorded).
+func heldSQLQSCase(t *testing.T, series []dbhealth.LaneSeriesPoint, qs *dbhealth.LaneQueryStore) *healthyCase {
+	t.Helper()
+	inc := dbhealth.Window{Start: qsStateWindowStart, End: qsStateWindowStart.Add(time.Hour)}
+	run := laneReportJSON(t, "sql", "AuditDb", inc, nil, nil)
+	var rep dbhealth.Report
+	if err := json.Unmarshal(run.Report, &rep); err != nil {
+		t.Fatal(err)
+	}
+	rep.Lane.Series = series
+	rep.Lane.QueryStore = qs
+	enc, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Report = enc
+	run.At = qsStateWindowStart.Add(2 * time.Hour)
+	return &healthyCase{stubTraceCase: &stubTraceCase{}, runs: []casestore.HealthRun{run}}
+}
+
+func heldSQLQSLane(t *testing.T, series []dbhealth.LaneSeriesPoint, qs *dbhealth.LaneQueryStore) (tracingLane, bool) {
+	t.Helper()
+	axis := newTracingAxis(qsStateWindowStart, qsStateWindowStart.Add(time.Hour))
+	return tracingHeldSQLLane(context.Background(), heldSQLQSCase(t, series, qs), axis, time.Now())
+}
+
+func requireQSLane(t *testing.T, qs *dbhealth.LaneQueryStore, code, msgPart string) tracingLane {
+	t.Helper()
+	lane, ok := heldSQLQSLane(t, nil, qs)
+	if !ok {
+		t.Fatalf("state %q drew no lane; the reason was lost", qs.State)
+	}
+	if lane.Key != calltrace.LaneSQL || lane.State != calltrace.StateNoneSeen {
+		t.Fatalf("lane %s %s, want sql none-seen", lane.Key, lane.State)
+	}
+	if lane.ReasonCode != code {
+		t.Fatalf("reason code %q, want %q", lane.ReasonCode, code)
+	}
+	if !strings.Contains(lane.Reason, msgPart) {
+		t.Fatalf("reason %q does not mention %q", lane.Reason, msgPart)
+	}
+	if lane.Scanned != 0 || len(lane.Events) != 0 {
+		t.Fatalf("scanned %d events %d, want none", lane.Scanned, len(lane.Events))
+	}
+	if !lane.Complete || lane.Origin != tracingOriginCase || lane.Consistency != tracingConsStored {
+		t.Fatalf("lane provenance %+v", lane)
+	}
+	if len(lane.Sources) != 1 || lane.Sources[0].SourceID != "sql-held" || !strings.HasSuffix(lane.Sources[0].Label, " · Query Store") {
+		t.Fatalf("sources %+v", lane.Sources)
+	}
+	if !lane.AsOf.Equal(qsStateWindowStart.Add(2 * time.Hour)) {
+		t.Fatalf("asOf %v", lane.AsOf)
+	}
+	if len(lane.Buckets) == 0 {
+		t.Fatal("no buckets on the axis")
+	}
+	for _, b := range lane.Buckets {
+		if b.Count != 0 || b.BusyMs != nil || b.AvgMs != nil {
+			t.Fatalf("bucket carries figures: %+v", b)
+		}
+	}
+	return lane
+}
+
+func TestHeldSQLLaneQSOffSaysOff(t *testing.T) {
+	requireQSLane(t, &dbhealth.LaneQueryStore{State: dbhealth.QSStateOff}, tracingReasonQSOff, "switched off")
+}
+
+func TestHeldSQLLaneQSReadOnlySaysReadOnly(t *testing.T) {
+	requireQSLane(t, &dbhealth.LaneQueryStore{State: dbhealth.QSStateReadOnly}, tracingReasonQSReadOnly, "read-only")
+}
+
+func TestHeldSQLLaneQSDeniedSaysDenied(t *testing.T) {
+	requireQSLane(t, &dbhealth.LaneQueryStore{State: dbhealth.QSStateDenied}, tracingReasonQSDenied, "VIEW DATABASE STATE")
+}
+
+func TestHeldSQLLaneQSLateSaysLate(t *testing.T) {
+	first := qsStateWindowStart.Add(30 * time.Minute)
+	lane := requireQSLane(t, &dbhealth.LaneQueryStore{State: dbhealth.QSStateOn, FirstData: &first}, tracingReasonQSLate, first.UTC().Format(time.RFC3339))
+	if !strings.Contains(lane.Reason, "unknown, not zero") {
+		t.Fatalf("late reason must say the earlier time is unknown: %q", lane.Reason)
+	}
+}
+
+// A first-data time at or before the window start explains nothing: the honest answer stays "no activity" (false).
+func TestHeldSQLLaneQSFirstDataNotAfterWindowStartStillReturnsFalse(t *testing.T) {
+	for _, first := range []time.Time{qsStateWindowStart, qsStateWindowStart.Add(-time.Hour)} {
+		f := first
+		if lane, ok := heldSQLQSLane(t, nil, &dbhealth.LaneQueryStore{State: dbhealth.QSStateOn, FirstData: &f}); ok {
+			t.Fatalf("first data %v drew a lane: %+v", first, lane)
+		}
+	}
+}
+
+// Query Store on (or unknown, or not recorded) with no activity keeps the old contract: no lane is drawn.
+func TestHeldSQLLaneQSOnEmptyStillReturnsFalse(t *testing.T) {
+	for name, qs := range map[string]*dbhealth.LaneQueryStore{
+		"on":      {State: dbhealth.QSStateOn},
+		"unknown": {State: dbhealth.QSStateUnknown},
+		"empty":   {},
+		"nil":     nil,
+	} {
+		if lane, ok := heldSQLQSLane(t, nil, qs); ok {
+			t.Fatalf("%s: drew a lane with no activity: %+v", name, lane)
+		}
+	}
+}
+
+// Activity in the window wins: the saved state is not stamped over real figures.
+func TestHeldSQLLaneQSStateIgnoredWhenActivityExists(t *testing.T) {
+	t0 := qsStateWindowStart.Unix()
+	series := []dbhealth.LaneSeriesPoint{{T: t0, Execs: 40, AvgMs: 10, MaxMs: 30}}
+	first := qsStateWindowStart.Add(30 * time.Minute)
+	for _, st := range []string{dbhealth.QSStateOff, dbhealth.QSStateReadOnly, dbhealth.QSStateDenied, dbhealth.QSStateOn} {
+		lane, ok := heldSQLQSLane(t, series, &dbhealth.LaneQueryStore{State: st, FirstData: &first})
+		if !ok {
+			t.Fatalf("state %s: no lane drawn from real activity", st)
+		}
+		if lane.State != calltrace.StateEvents || lane.ReasonCode != tracingReasonHeldSQL || lane.Reason != tracingHeldSQLMsg || lane.Scanned != 40 {
+			t.Fatalf("state %s: lane %s %s scanned %d, want events held-sql 40", st, lane.State, lane.ReasonCode, lane.Scanned)
+		}
+	}
+}
+
+// A saved day whose figures all fall outside the window carries its state too: nothing in the window, and the state says why.
+func TestHeldSQLLaneQSStateWithSeriesOutsideWindow(t *testing.T) {
+	out := []dbhealth.LaneSeriesPoint{{T: qsStateWindowStart.Add(-48 * time.Hour).Unix(), Execs: 9, AvgMs: 1}}
+	lane, ok := heldSQLQSLane(t, out, &dbhealth.LaneQueryStore{State: dbhealth.QSStateReadOnly})
+	if !ok || lane.ReasonCode != tracingReasonQSReadOnly || lane.State != calltrace.StateNoneSeen {
+		t.Fatalf("ok %v lane %s %s", ok, lane.State, lane.ReasonCode)
+	}
+}
+
+// The reasons are plain words for a first-time reader and the lane keeps working through JSON.
+func TestHeldSQLLaneQSLaneEncodesReason(t *testing.T) {
+	lane := requireQSLane(t, &dbhealth.LaneQueryStore{State: dbhealth.QSStateOff}, tracingReasonQSOff, "switched off")
+	raw, err := json.Marshal(lane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"reasonCode":"qs-off"`) || !strings.Contains(string(raw), `"state":"none-seen"`) {
+		t.Fatalf("lane JSON: %.300s", raw)
+	}
+}
+
+// A held lane that only carries a Query Store state has no bars: imported slow-statement events are never layered
+// onto it (the lane would turn none-seen and hide the imported events). The imported lane is kept as it is.
+func TestLayerSQLLaneIgnoresQueryStoreStateLane(t *testing.T) {
+	held, ok := heldSQLQSLane(t, nil, &dbhealth.LaneQueryStore{State: dbhealth.QSStateOff})
+	if !ok {
+		t.Fatal("no state lane")
+	}
+	imported := tracingLane{Key: calltrace.LaneSQL, State: calltrace.StateEvents, Complete: true,
+		Sources: []tracingRef{{SourceID: "f1", Label: "slow.xel"}},
+		Buckets: []tracingBucket{{Count: 7}}, Events: []tracingEvent{{ID: "e1"}}}
+	got, did := layerSQLLane(imported, held)
+	if did || got.State != calltrace.StateEvents || len(got.Events) != 1 {
+		t.Fatalf("layered onto a state lane: did %v state %s events %d", did, got.State, len(got.Events))
+	}
+}

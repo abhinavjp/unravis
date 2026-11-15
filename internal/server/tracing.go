@@ -408,13 +408,13 @@ type tracingBucket struct {
 	TimedCount int64 `json:"timedCount,omitempty"`
 	// AvgMs is the average duration of the bucket's statements in milliseconds
 	// (the sql lane drawn from saved Query Store figures; p50 and p95 are then absent).
-	AvgMs    *float64 `json:"avgMs,omitempty"`
-	P50Ms    *float64 `json:"p50Ms,omitempty"`
-	P95Ms    *float64 `json:"p95Ms,omitempty"`
-	MaxMs    *float64 `json:"maxMs,omitempty"`
+	AvgMs *float64 `json:"avgMs,omitempty"`
+	P50Ms *float64 `json:"p50Ms,omitempty"`
+	P95Ms *float64 `json:"p95Ms,omitempty"`
+	MaxMs *float64 `json:"maxMs,omitempty"`
 	// BusyMs is the summed duration, in milliseconds, of the calls that started in this bucket.
 	// Nil means it was not recorded; it is never a stand-in zero.
-	BusyMs *float64 `json:"busyMs,omitempty"`
+	BusyMs   *float64 `json:"busyMs,omitempty"`
 	Clipped  bool     `json:"clipped"`
 	Complete bool     `json:"complete"`
 }
@@ -462,8 +462,8 @@ type tracingLane struct {
 	// open connection carries, by saved name (the audit lane only).
 	SourcesRead       []tracingRef `json:"sourcesRead,omitempty"`
 	SavedNotConnected []string     `json:"savedNotConnected,omitempty"`
-	ImportedFrom      *time.Time   `json:"importedFrom,omitempty"` // earliest time in the lane's imported files
-	ImportedTo        *time.Time   `json:"importedTo,omitempty"`   // latest time in the lane's imported files
+	ImportedFrom      *time.Time   `json:"importedFrom,omitempty"`    // earliest time in the lane's imported files
+	ImportedTo        *time.Time   `json:"importedTo,omitempty"`      // latest time in the lane's imported files
 	ImportedPartial   bool         `json:"importedPartial,omitempty"` // some imported file has no recorded time range
 	// BlockSeconds is the length of the blocks this lane's source saved its numbers in, when it is
 	// longer than the bucket (Query Store). Zero means not known or same as the bucket.
@@ -625,11 +625,15 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 			lanes = append(lanes, lane)
 			continue
 		}
-		if sp := src.span[key]; sp != nil && sp.known {
+		sp := src.span[key]
+		if sp != nil && sp.known {
 			from, to := sp.from, sp.to
 			lane.ImportedFrom, lane.ImportedTo = &from, &to
-			lane.ImportedPartial = sp.partial
 		}
+		// Partial also when no file has a recorded range (nothing to show, yet the
+		// files are not described), and when a listed file was never imported (the
+		// range shown is then not the whole of what the owner listed).
+		lane.ImportedPartial = (sp != nil && sp.partial) || src.notImported[key] > 0
 		if lane.State == calltrace.StateNoData {
 			lane.ReasonCode, lane.Reason = emptyLaneReason(key, src)
 		}
@@ -973,9 +977,9 @@ func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *t
 		}
 		for i := range lane.Buckets {
 			k := idx[lane.Buckets[i].Start]
-			if n := clientCell[k]; n > 0 {
-				lane.Buckets[i].ClientErrors = &n
-			}
+			// Always sent, 0 where no 4xx was found: 0 means counted and none, a missing key means not counted.
+			n := clientCell[k]
+			lane.Buckets[i].ClientErrors = &n
 			if acc := timing[k]; acc != nil {
 				lane.Buckets[i].TimedCount, lane.Buckets[i].P50Ms, lane.Buckets[i].P95Ms, lane.Buckets[i].MaxMs = acc.figures()
 				// The IIS log writes the time a request ENDED, so this busy time sits in the step the request ended in (the API lane counts the step it started in).
@@ -1006,6 +1010,7 @@ func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *t
 			for i := range lane.Buckets {
 				if !lane.Buckets[i].Start.Before(res.DoneTo) {
 					lane.Buckets[i].Complete = false
+					lane.Buckets[i].ClientErrors = nil // not counted, so not shown as 0
 				}
 			}
 		}
@@ -1120,24 +1125,40 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 	// asserted once, like the audit lane's RollupReader below; a repository that
 	// does not implement it leaves the lane untouched.
 	sqlBusy, _ := h.repo.(audit.SQLBusyReader)
+	// The selected AUDIT source ids: the same ids the audit (Rollup) lane reads
+	// below. The api-seen fallback must read only these, so with two audit sources
+	// connected it does not sum the busy time of both (DATA-02). Empty — no audit
+	// source selected or listed — leaves SQLBusy reading every connected source.
+	auditIDs := make([]string, len(auditRefs))
+	for i, ref := range auditRefs {
+		auditIDs[i] = ref.SourceID
+	}
 	for _, lane := range lanes {
 		if lane.Key == calltrace.LaneSQL && lane.Disabled == "" && (lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange || lane.State == calltrace.StateEvents) {
 			if held, ok := tracingHeldSQLLane(ctx, unwrapCase(c), axis, now); ok {
-				if lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange {
-					imported := lane
-					lane = held
-					// The imported files' time range stays on the lane the owner sees.
-					if lane.ImportedFrom == nil {
-						lane.ImportedFrom = imported.ImportedFrom
+				switch {
+				case lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange:
+					// A lane whose SQL file was listed but never imported (or whose import was set aside) keeps that
+					// reason, so the investigator is told to import the file rather than that Query Store was off.
+					// The exception is a saved day that has real numbers in this window: those are shown.
+					if (lane.ReasonCode != tracingReasonNotImported && lane.ReasonCode != tracingReasonSkipped) || held.State == calltrace.StateEvents {
+						imported := lane
+						lane = held
+						// The imported files' time range stays on the lane the owner sees.
+						if lane.ImportedFrom == nil {
+							lane.ImportedFrom = imported.ImportedFrom
+						}
+						if lane.ImportedTo == nil {
+							lane.ImportedTo = imported.ImportedTo
+						}
+						if !lane.ImportedPartial {
+							lane.ImportedPartial = imported.ImportedPartial
+						}
 					}
-					if lane.ImportedTo == nil {
-						lane.ImportedTo = imported.ImportedTo
+				default:
+					if layered, did := layerSQLLane(lane, held); did {
+						lane = layered
 					}
-					if !lane.ImportedPartial {
-						lane.ImportedPartial = imported.ImportedPartial
-					}
-				} else if layered, did := layerSQLLane(lane, held); did {
-					lane = layered
 				}
 			}
 		}
@@ -1146,13 +1167,18 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 			writeStoreError(w, err)
 			return
 		}
-		lane, err = tracingAPISseenLane(ctx, sqlBusy, axis, lane, time.Now)
+		lane, err = tracingAPISseenLane(ctx, sqlBusy, auditIDs, axis, lane, time.Now)
 		if err != nil {
 			if r.Context().Err() != nil {
 				return // the client went away; nothing to write
 			}
-			writeRepoError(w, err)
-			return
+			// A failed api-seen read degrades like the audit-list failure below: the
+			// API and IIS lanes already built stay in the answer and the SQL lane keeps
+			// its unchanged fallback state (tracingAPISseenLane returns it untouched on
+			// error). The warning goes on warns, which caseTracing copies into
+			// resp.Warnings after the lane loop, so it survives. No error text, host or
+			// value reaches the answer.
+			warns = append(warns, "The database time the API saw could not be read for this window, so the database lane may be empty.")
 		}
 		appendLane(&resp, lane)
 	}
@@ -1178,10 +1204,6 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 	case len(auditRefs) > 0:
 		if auditWarn != "" {
 			resp.Warnings = append(resp.Warnings, auditWarn)
-		}
-		auditIDs := make([]string, len(auditRefs))
-		for i, ref := range auditRefs {
-			auditIDs[i] = ref.SourceID
 		}
 		reader, _ := h.repo.(audit.RollupReader)
 		// The live lane stamps its own read time (time.Now, not now): it is read

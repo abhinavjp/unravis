@@ -135,6 +135,30 @@ func (s *Store) Remove(selectionKey, database, collection string) error {
 	})
 }
 
+// RemoveScoped drops the link of a source the person removed, but only the link that belongs to savedConnectionID. Two saved connections
+// can name the same database and collection, so a source with no selection key must not take the other connection's link with it.
+// Remove is the older, wider form: with an empty selection key it drops every saved connection's link for that database and collection.
+// An empty savedConnectionID removes nothing.
+func (s *Store) RemoveScoped(savedConnectionID, selectionKey, database, collection string) error {
+	if savedConnectionID == "" {
+		return nil
+	}
+	return s.mutate(func(d *document) bool {
+		kept := d.Links[:0:0]
+		for _, l := range d.Links {
+			hit := l.SavedConnectionID == savedConnectionID &&
+				((selectionKey != "" && l.SelectionKey == selectionKey) ||
+					(selectionKey == "" && l.Database == database && l.Collection == collection))
+			if !hit {
+				kept = append(kept, l)
+			}
+		}
+		changed := len(kept) != len(d.Links)
+		d.Links = kept
+		return changed
+	})
+}
+
 // Forget drops every link of a saved connection the person deleted.
 func (s *Store) Forget(savedConnectionID string) error {
 	return s.mutate(func(d *document) bool {

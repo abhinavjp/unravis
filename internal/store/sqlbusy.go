@@ -145,12 +145,18 @@ func readSQLBusy(ctx context.Context, p *profile, pipeline mongo.Pipeline) ([]au
 }
 
 // SQLBusy sums the stored database time of the calls that started in each step,
-// across every connected source. It implements audit.SQLBusyReader.
+// across the selected connected sources. It implements audit.SQLBusyReader.
 //
-// Source selection: the input carries no source ids, so this reads all connected
-// sources in s.sources (the repository merges its sources internally, like
-// Rollup). Each source is leased and admitted, runs the one bounded aggregation,
-// and its steps are summed by step start across sources.
+// Source selection: a source is a connected database/collection (audit.Source.ID),
+// not a field on a stored record, so selection chooses WHICH sources the one
+// bounded aggregation runs against — the same selection Rollup, Breakdown and
+// Analyze make. A non-empty in.SourceIDs reads only those ids, so the busy time is
+// not summed across sources the caller did not select (DATA-02); an empty one reads
+// every connected source in s.sources, the historical behaviour kept for a caller
+// that names no source. Each selected source is leased and admitted, runs the
+// aggregation, and its steps are summed by step start across sources. The pipeline
+// is unchanged and carries no source field: filtering happens by reading only the
+// selected sources, so no operator newer than MongoDB 3.4 is introduced.
 //
 // Error handling: a source that fails, or is refused admission, fails the whole
 // call and its error is returned (a timeout unchanged). SQLBusyResult has no
@@ -174,6 +180,13 @@ func (s *Store) SQLBusy(ctx context.Context, in audit.SQLBusyInput) (audit.SQLBu
 	}
 	s.mu.RUnlock()
 	sort.Strings(ids)
+	// DATA-02: a non-empty selection reads only those sources, so the api-seen lane
+	// does not sum the busy time of audit sources the caller did not select. Empty
+	// keeps the historical read-every-connected-source behaviour. An unknown id
+	// fails closed in leaseSource below, exactly as Rollup does.
+	if len(in.SourceIDs) > 0 {
+		ids = in.SourceIDs
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()

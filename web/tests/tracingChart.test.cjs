@@ -244,6 +244,13 @@ test('lane rules shared by chart and tooltip', () => {
   assert.equal(laneStatusLine(laneOf()), '');
 });
 
+test('a none-seen lane shows its reason when it has one, else "No events in this period" (DATA-09)', () => {
+  const why = 'Query Store is switched off on this database, so it saved no history.';
+  assert.equal(laneStatusLine(laneOf({ key: 'sql', state: 'none-seen', reasonCode: 'qs-off', reason: why })), why);
+  assert.equal(laneStatusLine(laneOf({ key: 'sql', state: 'none-seen', reasonCode: '', reason: '' })), NO_EVENTS_PERIOD);
+  assert.equal(laneStatusLine(laneOf({ key: 'sql', state: 'none-seen' })), NO_EVENTS_PERIOD);
+});
+
 test('no provenance line for a lane with no file (UI-R1-08)', () => {
   assert.equal(showsProvenance(laneOf({ state: 'no-data' })), false);
   for (const state of ['events', 'none-seen', 'incomplete', 'out-of-range', 'clock-unchecked']) assert.equal(showsProvenance(laneOf({ state })), true);
@@ -290,7 +297,7 @@ test('Escape during a brush drag drops the selection and swallows the click that
   const body = src.slice(start, src.indexOf('function onOverlayClick'));
   assert.match(body, /dragFrom = null;\s*dragTo = null;\s*suppressClick = true;/);
   assert.match(src, /event\.key === 'Escape' && dragFrom != null\) \{ event\.preventDefault\(\); event\.stopPropagation\(\); cancelDrag\(\)/);
-  assert.match(src, /<svelte:window onkeydown=\{onWindowKey\} \/>/);
+  assert.match(src, /<svelte:window onkeydown=\{onWindowKey\} onkeydowncapture=\{onWindowKeyCapture\} \/>/);
   // The drag branch comes before the tooltip branch, so one Escape does one thing.
   assert.ok(src.indexOf("event.key === 'Escape' && dragFrom != null") < src.indexOf("event.key === 'Escape' && tipSlot != null"));
 });
@@ -322,7 +329,9 @@ test('the error overlay differs from the bar by pattern and by at least 3:1 ligh
 
 test('the lane heads are not tab stops and keep a name (UI-R2-07)', () => {
   const src = read('src/components/TracingChart.svelte');
-  assert.match(src, /<div class="lane-label" role="group" aria-label=\{LANE_NAME\[lane\.key\]\} aria-describedby="tc-hint-\{lane\.key\}"/);
+  assert.match(src, /<div class="lane-label" role="group" aria-label=\{LANE_NAME\[lane\.key\]\} data-hint-closed=/);
+  // The "?" button inside the head is the one tab stop; it carries the description.
+  assert.match(src, /<button type="button" class="hint-btn" aria-label="\{LANE_NAME\[lane\.key\]\}: what this row shows" aria-describedby="tc-hint-\{lane\.key\}">\?<\/button>/);
   assert.doesNotMatch(src, /lane-label[^\n]*tabindex/);
 });
 

@@ -2,6 +2,7 @@
   import { DRILL_TEXT } from '../lib/drill/drillCopy';
   import { formatMs } from '../lib/drill/overview';
   import type { SourceItem } from '../lib/drill/callReadout';
+  import { capRows } from '../lib/drill/callLanes';
   import { formatTime } from '../lib/time';
 
   // Every slow item and event marker of the shown sources in one time-ordered table.
@@ -37,11 +38,13 @@
     return formatMs(item.tookMs);
   }
 
+  // Only the first rows are drawn (the heading still counts them all), so a very long window stays quick.
+  const capped = $derived(capRows(items));
+
   function onKey(event: KeyboardEvent, key: string): void {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      onSelect(key);
-    }
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    onSelect(key);
   }
 </script>
 
@@ -60,11 +63,12 @@
         </tr>
       </thead>
       <tbody>
-        {#each items as item (item.key)}
+        {#each capped.rows as item (item.key)}
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
           <tr
             class:selected={selectedKey === item.key}
+            aria-selected={selectedKey === item.key}
             aria-current={item.thisCall ? 'true' : undefined}
             tabindex="0"
             onclick={() => onSelect(item.key)}
@@ -78,6 +82,9 @@
         {/each}
       </tbody>
     </table>
+    {#if capped.capped}
+      <p class="muted" data-testid="scall-all-capped">{DRILL_TEXT.rowsCapped(capped.rows.length, capped.total)}</p>
+    {/if}
   {/if}
   <p class="muted">{DRILL_TEXT.notShownTime}</p>
 </section>

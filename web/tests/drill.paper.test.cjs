@@ -40,9 +40,9 @@ test('the screen is a second root node after the section, keyed by slot', () => 
 });
 
 test('Open in Analysis hands off the own window of the call, clearing the call in place first', () => {
-  assert.ok(src.includes('onOpenAnalysis={() => openAnalysisFromCall()}'));
+  assert.ok(src.includes('onOpenAnalysis={(win) => openAnalysisFromCall(win)}'));
   const fn = src.slice(src.indexOf('function openAnalysisFromCall'), src.indexOf('let returnSlot'));
-  assert.ok(fn.includes('const bucket = { start: target.start, end: target.end };'));
+  assert.ok(fn.includes('const bucket = { start: win.start, end: win.end };'));
   assert.ok(fn.indexOf('closeSlowCall({ handoff: true })') > 0);
   assert.ok(fn.indexOf('closeSlowCall({ handoff: true })') < fn.indexOf('handOffBucket(bucket'));
   assert.ok(fn.includes('open: openAnalysis'));
