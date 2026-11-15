@@ -44,7 +44,7 @@ test('UI-04: a lane with no numbers says why, from its own state', () => {
   for (const state of ['events', 'none-seen', 'clock-unchecked', 'out-of-range']) assert.equal(laneGap({ state }), 'not-recorded', state);
   assert.equal(laneGap(undefined), 'not-recorded');
   assert.equal(laneGap({ state: 'no-data', reasonCode: 'not-imported' }), 'not-imported');
-  assert.equal(laneGap({ state: 'no-data', reasonCode: 'import-skipped' }), 'not-imported');
+  assert.equal(laneGap({ state: 'no-data', reasonCode: 'import-skipped' }), 'import-skipped');
   assert.equal(laneGap({ state: 'no-data', reasonCode: 'other' }), 'no-file');
 });
 

@@ -104,6 +104,7 @@ export const DRILL_TEXT = {
   laneNothingSlow: 'nothing slow here',
   laneNoFile: 'This case has no file for this lane. Import one to see it here.',
   laneNotImported: 'The file for this lane has not been imported. Import it to see it here.',
+  laneImportSkipped: 'The imported file for this lane was set aside, so it holds no events here.',
   laneReadFailed: 'could not be read',
   laneShape: (n: string): string => `Height = running at once, 0 to ${n}`,
   chartReadLine: 'Left to right is time. Up is how many were running at once, so a higher line is a busier moment. Each lane has its own scale.',
