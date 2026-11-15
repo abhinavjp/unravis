@@ -115,6 +115,7 @@
   });
 
   // The tracing parser keeps the raw reason code, the lane events, the block seconds and the bucket busy time; all pass through here.
+  // Buckets pass through whole (never re-mapped field by field), so a bucket's own end/clipped edges reach the clipped-rate math untouched.
   function toLaneIn(lane: TracingLane | undefined): LaneIn | undefined {
     if (!lane) return undefined;
     const reasonCode = lane.reasonCode ?? lane.incompleteReason;

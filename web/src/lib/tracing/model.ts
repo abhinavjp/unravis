@@ -36,13 +36,19 @@ export interface TracingSourceRef { sourceId: string; label: string; noFile?: tr
 
 /**
  * The server bucket is `{start,count,errors?}`; SQL and IIS have no 5xx, so `errors` is absent there and
- * `parseTracing` fills it with 0. The server also sends `end` and `clipped`; this client ignores them. `complete`
+ * `parseTracing` fills it with 0. The server also sends `end` and `clipped`; both are kept when readable,
+ * because a clipped edge bucket covers only start..end and its count must be divided by those covered
+ * seconds, not the whole step. `complete`
  * is kept: a cell the server did not read to the end (a chunked audit read that stopped early) is `complete: false`
  * and its count of 0 means "not read", never "no traffic". On a Blackbox SQL lane (`reasonCode: 'blackbox'`) the
  * count is the estimated host batch requests in the step — throughput, with no `busyMs` — never a duration.
  */
 export interface TracingBucket {
   start: string;
+  /** The bucket's own end as the server sent it (RFC3339). Kept only when readable; absent otherwise. */
+  end?: string;
+  /** True only when the server said so: the bucket was cut to the asked window and covers less than the step. */
+  clipped?: boolean;
   count: number;
   errors: number;
   /** The IIS lane only: how many answers were 4xx (refused or not found); absent when none were. */
@@ -225,6 +231,11 @@ function parseBucket(value: unknown): TracingBucket | null {
   if (isNumber(value.maxMs)) bucket.maxMs = value.maxMs;
   if (value.complete === false) bucket.complete = false;
   if (isNumber(value.busyMs) && value.busyMs >= 0) bucket.busyMs = value.busyMs;
+  // The bucket's own edges, kept only when readable: a clipped bucket covers start..end, not the whole
+  // step, and the rate math divides its count by those covered seconds. An unreadable end stays off, so
+  // the full step remains the divisor — never NaN or Infinity.
+  if (isText(value.end) && isParseableDate(value.end)) bucket.end = value.end;
+  if (value.clipped === true) bucket.clipped = true;
   return bucket;
 }
 

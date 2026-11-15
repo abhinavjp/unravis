@@ -499,6 +499,109 @@ test('UX-1: the screen and the panels are wired to the measure, with no new read
   assert.doesNotMatch(screenSrc, /setInterval|EventSource|new WebSocket/);
 });
 
+// ---- PERF-3: a clipped edge bucket divides its count by the seconds it covers ----
+// The server cuts the first and last bucket to the asked window (tracingAxis.Bucket) and sends
+// `end` + `clipped` on every bucket. 3,000 batches over the 30 s a clipped 60 s bucket covers is
+// 100 batches/s, not 50. A missing or unreadable end keeps the full step as the divisor, so old
+// fixtures (no end, no clipped) read exactly as before — never NaN or Infinity.
+
+test('PERF-3: a clipped 60 s bucket covering 30 s reads 100 batches/s, not 50', () => {
+  const buckets = [
+    { start: iso(T0), end: iso(T0 + 30000), clipped: true, count: 3000 },
+    { start: iso(T0 + MIN), end: iso(T0 + 2 * MIN), clipped: false, count: 3000 },
+    { start: iso(T0 + 2 * MIN), count: 3000 } // no end, no clipped: the old fixture shape
+  ];
+  const lane = buildLane({ key: 'sql', state: 'events', reasonCode: 'blackbox', buckets, events: [] }, 'sql', WINDOW, T0, T0 + SPAN);
+  assert.equal(lane.cells[0].rate, 100, '3000 batches over the covered 30 s is 100/s');
+  assert.equal(lane.cells[1].rate, 50, 'an unclipped full bucket keeps the step divisor');
+  assert.equal(lane.cells[2].rate, 50, 'a bucket with no clipped flag is unchanged');
+  assert.deepEqual(lane.peak, { atOnce: 100, start: T0 }, 'the peak reads the corrected rate');
+});
+
+test('PERF-3: a clipped trailing edge and a clipped full-width bucket both read their true rate', () => {
+  const buckets = [
+    { start: iso(T0), end: iso(T0 + MIN), clipped: true, count: 6000 }, // flagged clipped but covers the whole step
+    { start: iso(T0 + 14 * MIN), end: iso(T0 + 14 * MIN + 15000), clipped: true, count: 300 } // only the last 15 s
+  ];
+  const lane = buildLane({ key: 'sql', state: 'events', reasonCode: 'blackbox', buckets, events: [] }, 'sql', WINDOW, T0, T0 + SPAN);
+  assert.equal(lane.cells[0].rate, 100);
+  assert.equal(lane.cells[14].rate, 20, '300 batches over the covered 15 s is 20/s');
+});
+
+test('PERF-3: a missing, unreadable or empty covered span falls back to the step, never NaN or Infinity', () => {
+  const buckets = [
+    { start: iso(T0), clipped: true, count: 3000 }, // clipped but no end sent
+    { start: iso(T0 + MIN), end: 'not a date', clipped: true, count: 3000 },
+    { start: iso(T0 + 2 * MIN), end: iso(T0 + 2 * MIN), clipped: true, count: 3000 }, // zero coverage
+    { start: iso(T0 + 3 * MIN), end: iso(T0 + 3 * MIN - 1000), clipped: true, count: 3000 } // end before start
+  ];
+  const lane = buildLane({ key: 'sql', state: 'events', reasonCode: 'blackbox', buckets, events: [] }, 'sql', WINDOW, T0, T0 + SPAN);
+  for (let i = 0; i < 4; i += 1) {
+    assert.equal(lane.cells[i].rate, 50, 'bucket ' + i + ' keeps the full-step divisor');
+    assert.ok(Number.isFinite(lane.cells[i].rate), 'bucket ' + i + ' is a finite number');
+  }
+});
+
+test('PERF-3: the at-once busy-time path keeps the full step divisor (deliberate scope limit)', () => {
+  // PERF-3 corrects COUNT rates only. The busyMs concurrency path has the same clipped-edge
+  // pattern but is deliberately left as it was; this pins that limit so the change is visible.
+  const buckets = [{ start: iso(T0), end: iso(T0 + 30000), clipped: true, count: 3000, busyMs: 30000 }];
+  const lane = buildLane({ key: 'sql', state: 'events', reasonCode: 'blackbox', buckets, events: [] }, 'sql', WINDOW, T0, T0 + SPAN);
+  assert.equal(lane.cells[0].rate, 100, 'the count rate uses the covered seconds');
+  assert.equal(lane.cells[0].atOnce, 0.5, 'busyMs still divides by the full step — unchanged in PERF-3');
+});
+
+// The screen's real toLaneIn, cut out and run against a parsed lane (same extraction as screenMapRows).
+function screenToLaneIn(lane, savedDay = null) {
+  const from = screenSrc.indexOf('function toLaneIn(');
+  const to = screenSrc.indexOf('const SQL_EVENT_SOURCES');
+  assert.ok(from >= 0 && to > from, 'toLaneIn is in the screen');
+  const js = toJs(`function make(savedDay, lane) {
+${screenSrc.slice(from, to)}
+  return toLaneIn(lane);
+}`);
+  return new Function(`${js}\nreturn make;`)()(savedDay, lane);
+}
+
+test('PERF-3 end to end: a server-shaped clipped edge bucket reads 100 batches/s through parseTracing, toLaneIn and laneCells', () => {
+  // The real chain the app runs: server payload -> parseTracing (parseBucket) -> the screen's own
+  // toLaneIn -> buildLane/laneCells. The first bucket is cut to the asked window: 30 s of a 60 s step.
+  const buckets = [
+    { start: iso(T0), end: iso(T0 + 30000), clipped: true, count: 3000 },
+    { start: iso(T0 + MIN), end: iso(T0 + 2 * MIN), clipped: false, count: 3000 },
+    { start: iso(T0 + 2 * MIN), end: iso(T0 + 3 * MIN), clipped: false, count: 0 }
+  ];
+  const parsed = model.parseTracing(bbWire(buckets)).lanes[0];
+  assert.equal(parsed.buckets[0].end, iso(T0 + 30000), 'the parser keeps the bucket end the server sent');
+  assert.equal(parsed.buckets[0].clipped, true, 'the parser keeps the clipped flag the server sent');
+  const lane = buildLane(screenToLaneIn(parsed), 'sql', WINDOW, T0, T0 + SPAN);
+  assert.equal(lane.cells[0].rate, 100, '3000 batches over the covered 30 s is 100/s, end to end');
+  assert.equal(lane.cells[1].rate, 50, 'an unclipped bucket is unchanged');
+  assert.equal(lane.cells[2].rate, 0, 'a genuine zero stays zero');
+  assert.deepEqual(lane.peak, { atOnce: 100, start: T0 });
+});
+
+test('PERF-3 end to end: an unreadable end or clipped flag is dropped by the parser and the rate falls back to the step', () => {
+  const buckets = [
+    { start: iso(T0), end: 'not a date', clipped: true, count: 3000 },
+    { start: iso(T0 + MIN), clipped: true, count: 3000 }, // no end sent
+    { start: iso(T0 + 2 * MIN), end: iso(T0 + 3 * MIN), count: 3000 }, // no clipped flag: old shape
+    { start: iso(T0 + 3 * MIN), end: 123, clipped: 'yes', count: 3000 } // wrong types
+  ];
+  const parsed = model.parseTracing(bbWire(buckets)).lanes[0];
+  assert.equal('end' in parsed.buckets[0], false, 'an unparseable end is dropped');
+  assert.equal(parsed.buckets[0].clipped, true);
+  assert.equal('end' in parsed.buckets[1], false);
+  assert.equal('clipped' in parsed.buckets[2], false, 'a missing clipped flag stays off');
+  assert.equal('end' in parsed.buckets[3], false, 'a non-string end is dropped');
+  assert.equal('clipped' in parsed.buckets[3], false, 'a non-boolean clipped is dropped');
+  const lane = buildLane(screenToLaneIn(parsed), 'sql', WINDOW, T0, T0 + SPAN);
+  for (let i = 0; i < 4; i += 1) {
+    assert.equal(lane.cells[i].rate, 50, 'bucket ' + i + ' keeps the full-step divisor');
+    assert.ok(Number.isFinite(lane.cells[i].rate), 'bucket ' + i + ' is finite, never NaN or Infinity');
+  }
+});
+
 test('UX-1: end to end — counts on the wire become batches/s in the strip, the readout and the inspector', () => {
   const buckets = counts([6000, 0, 3000, 0, 120]);
   const lane = bbLane(buckets);
