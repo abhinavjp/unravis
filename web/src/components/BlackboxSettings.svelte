@@ -28,6 +28,9 @@
   let manualName = $state('');
   // Why the last Add was refused. The name stays in the box so it can be fixed (UX-4).
   let targetRefusal = $state('');
+  // Per-group filter text (UX-6). Functions below read it live on every render, as groupState does.
+  let poolFilter = $state('');
+  let serviceFilter = $state('');
 
   onMount(() => {
     if (targetMode !== 'pc') return;
@@ -50,6 +53,27 @@
     return kind === 'appPool'
       ? targetListState(appPools, appPoolsState, detected, targetsRead, targetsFailed)
       : targetListState(services, servicesState, detected, targetsRead, targetsFailed);
+  }
+
+  // UX-6: a long list stays usable. The filter narrows what is shown, never the read list itself;
+  // names match without regard to case, as Windows matches them. A blank filter shows everything.
+  function shownTargets(kind: TargetKind): TargetInfo[] {
+    const text = (kind === 'appPool' ? poolFilter : serviceFilter).trim().toLowerCase();
+    const list = kind === 'appPool' ? appPools : services;
+    return text ? list.filter((t) => t.name.toLowerCase().includes(text)) : list;
+  }
+  // What the count line under a filter box says: how many of the names are shown, or how to see
+  // them all again when none match. The filter never silently hides that names exist.
+  function filterNote(kind: TargetKind): string {
+    const total = (kind === 'appPool' ? appPools : services).length;
+    const shown = shownTargets(kind).length;
+    return shown > 0 ? T.targetsFilterCount(shown, total) : T.targetsFilterNone(total);
+  }
+  // True when no row's running state could be read: one note under the legend says it, with the
+  // consequence, instead of the same note on every row. A mixed list keeps its per-row notes.
+  function allUnknown(kind: TargetKind): boolean {
+    const list = kind === 'appPool' ? appPools : services;
+    return list.length > 0 && list.every((t) => targetRunState(t) === 'unknown');
   }
 
   const picked = $derived(settings.targets ?? []);
@@ -89,6 +113,10 @@
 
 {#snippet fieldError(key: SettingsProblem)}
   {#if problem === key}<p class="inline-error" id="{idPrefix}-{key}-error" role="alert">{T.settingProblems[key]}</p>{/if}
+{/snippet}
+
+{#snippet rowNote(t: TargetInfo)}
+  {#if targetRunState(t) === 'stopped'}{' '}<span class="bb-note">{T.targetsNotRunning}</span>{:else if targetRunState(t) === 'unknown'}{' '}<span class="bb-note">{T.targetsStateUnknown}</span>{/if}
 {/snippet}
 
 {#snippet targetChips(list: TargetRef[])}
@@ -135,17 +163,35 @@
     {#if groupState('appPool') === 'list'}
       <fieldset class="bb-checks">
         <legend>{T.targetsAppPools}</legend>
-        {#each appPools as t (t.name)}
-          <label class="bb-check"><input type="checkbox" checked={isSelected('appPool', t.name)} onchange={() => pick('appPool', t.name)} /><span>{t.name}{#if targetRunState(t) === 'stopped'} <span class="bb-note">{T.targetsNotRunning}</span>{:else if targetRunState(t) === 'unknown'} <span class="bb-note">{T.targetsStateUnknown}</span>{/if}</span></label>
-        {/each}
+        {#if allUnknown('appPool')}<p class="bb-note">{T.targetsAllUnknown}</p>{/if}
+        <label class="bb-field bb-filter"><span>{T.targetsFilterLabel}</span>
+          <input id="{idPrefix}-pools-filter" type="text" bind:value={poolFilter} autocomplete="off" spellcheck="false" aria-describedby={poolFilter.trim() ? idPrefix + '-pools-count' : undefined} />
+        </label>
+        {#if poolFilter.trim()}<p class="bb-note" id="{idPrefix}-pools-count" role="status">{filterNote('appPool')}</p>{/if}
+        <!-- A scroll region must be reachable by keyboard, so it takes tabindex despite being a div. -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div class="bb-scroll" tabindex="0" role="group" aria-label={T.targetsAppPools}>
+          {#each shownTargets('appPool') as t (t.name)}
+            <label class="bb-check"><input type="checkbox" checked={isSelected('appPool', t.name)} onchange={() => pick('appPool', t.name)} /><span>{t.name}{#if !allUnknown('appPool')}{@render rowNote(t)}{/if}</span></label>
+          {/each}
+        </div>
       </fieldset>
     {/if}
     {#if groupState('service') === 'list'}
       <fieldset class="bb-checks">
         <legend>{T.targetsServices}</legend>
-        {#each services as t (t.name)}
-          <label class="bb-check"><input type="checkbox" checked={isSelected('service', t.name)} onchange={() => pick('service', t.name)} /><span>{t.name}{#if targetRunState(t) === 'stopped'} <span class="bb-note">{T.targetsNotRunning}</span>{:else if targetRunState(t) === 'unknown'} <span class="bb-note">{T.targetsStateUnknown}</span>{/if}</span></label>
-        {/each}
+        {#if allUnknown('service')}<p class="bb-note">{T.targetsAllUnknown}</p>{/if}
+        <label class="bb-field bb-filter"><span>{T.targetsFilterLabel}</span>
+          <input id="{idPrefix}-services-filter" type="text" bind:value={serviceFilter} autocomplete="off" spellcheck="false" aria-describedby={serviceFilter.trim() ? idPrefix + '-services-count' : undefined} />
+        </label>
+        {#if serviceFilter.trim()}<p class="bb-note" id="{idPrefix}-services-count" role="status">{filterNote('service')}</p>{/if}
+        <!-- A scroll region must be reachable by keyboard, so it takes tabindex despite being a div. -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div class="bb-scroll" tabindex="0" role="group" aria-label={T.targetsServices}>
+          {#each shownTargets('service') as t (t.name)}
+            <label class="bb-check"><input type="checkbox" checked={isSelected('service', t.name)} onchange={() => pick('service', t.name)} /><span>{t.name}{#if !allUnknown('service')}{@render rowNote(t)}{/if}</span></label>
+          {/each}
+        </div>
       </fieldset>
     {/if}
     {@render targetChips(extraPicked)}
@@ -207,6 +253,10 @@
   .bb-checks legend { padding: 0; font-size: 13px; font-weight: 500; }
   .bb-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }
   .bb-check input { flex: 0 0 auto; margin: 3px 0 0; }
+  .bb-check span { min-width: 0; overflow-wrap: anywhere; }
+  /* UX-6: a long detected list scrolls inside a bounded region instead of stretching the page. */
+  .bb-scroll { display: grid; gap: 6px; max-height: 240px; overflow: auto; min-width: 0; }
+  .bb-filter { max-width: 240px; }
   .bb-target-add { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-2); }
   .bb-target-add .bb-field { flex: 1 1 160px; max-width: 240px; }
   .bb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }

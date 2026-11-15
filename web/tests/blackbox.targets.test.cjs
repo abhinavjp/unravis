@@ -131,12 +131,14 @@ test('the Settings step reads targets once on mount, for this PC only, and never
   assert.match(wizard, /targetMode=\{where === 'pc' \? 'pc' : 'manual'\}/, 'the wizard passes the mode it is in');
 });
 
-test('a stopped target says "not running"; an unreadable state says unknown, never stopped', () => {
+test('a stopped target says "not running"; an unreadable state is never labelled stopped', () => {
   const comp = read('src/components/BlackboxSettings.svelte');
   // W2-07: configuration presence is not a running claim, and unknown is not stopped.
-  assert.match(comp, /\{#if targetRunState\(t\) === 'stopped'\} <span class="bb-note">\{T\.targetsNotRunning\}<\/span>\{:else if targetRunState\(t\) === 'unknown'\} <span class="bb-note">\{T\.targetsStateUnknown\}<\/span>\{\/if\}/);
+  // UX-6: when every row of a group is unknown, one group note under the legend stands in for
+  // the per-row notes (rendered tests below). No per-row targetsStateUnknown assertion may live
+  // in this file: UX-8 deletes that copy key, and a leftover assertion here would break it.
+  assert.match(comp, /\{#if targetRunState\(t\) === 'stopped'\}\{' '\}<span class="bb-note">\{T\.targetsNotRunning\}<\/span>/);
   assert.equal(BB_TEXT.targetsNotRunning, 'not running');
-  assert.equal(BB_TEXT.targetsStateUnknown, 'running state unknown');
 });
 
 test('targetRunState reads the server state, an older boolean, or unknown', () => {
@@ -512,7 +514,14 @@ function mountStep(overrides = {}) {
   const js = ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
   const exposed = js + '\nmodule.exports.step = { groupState,'
     + ' get targetsRead() { return targetsRead; }, get targetsFailed() { return targetsFailed; },'
-    + ' get detected() { return detected; }, get appPools() { return appPools; }, get services() { return services; } };';
+    + ' get detected() { return detected; }, get appPools() { return appPools; }, get services() { return services; },'
+    // UX-6: the filter and the group note, read live. Typeof-guarded so this harness also runs
+    // against a step script that predates them.
+    + ' shownTargets: typeof shownTargets === \'undefined\' ? null : shownTargets,'
+    + ' allUnknown: typeof allUnknown === \'undefined\' ? null : allUnknown,'
+    + ' filterNote: typeof filterNote === \'undefined\' ? null : filterNote,'
+    + ' get poolFilter() { return typeof poolFilter === \'undefined\' ? \'\' : poolFilter; }, set poolFilter(v) { poolFilter = v; },'
+    + ' get serviceFilter() { return typeof serviceFilter === \'undefined\' ? \'\' : serviceFilter; }, set serviceFilter(v) { serviceFilter = v; } };';
   let mounted = null;
   const need = (request) => {
     if (request === 'svelte') return { onMount: (fn) => { mounted = fn; } };
@@ -736,4 +745,102 @@ test('manual mode renders none of the read states, and the new copy is linted an
   const words = [BB_TEXT.targetsLoadFailed, BB_TEXT.targetsPoolsUnreadable, BB_TEXT.targetsServicesUnreadable].join(' ');
   assert.doesNotMatch(words, /unavailable|not-found|503|endpoint|fetch|detect/i, 'no operational codes leak into the words');
   assert.match(BB_TEXT.targetsLoadFailed, /Type the names below/, 'the consequence and the way forward are said');
+});
+
+/* ------------------------------------------------------------------ UX-6: bounded lists, one group note, a filter */
+
+// A long detected list must stay usable: a bounded scroll region a keyboard can reach, a filter
+// that narrows it without hiding that names exist, and ONE note under the legend when no row's
+// running state could be read — not the same note on every row. No per-row targetsStateUnknown
+// assertion lives in this file (UX-8 deletes that key).
+const svc200 = Array.from({ length: 200 }, (_, i) => ({ name: 'Svc' + String(i).padStart(3, '0'), state: 'unknown' }));
+const countOf = (text, needle) => text.split(needle).length - 1;
+
+test('a 200-service list is bounded and scrollable, and says unknown once under the legend, not 200 times', async () => {
+  pcBridge.result = await realAnswer({ appPools: [], services: svc200, detected: true, appPoolsState: 'not-found', servicesState: 'detected' }); pcBridge.failed = false;
+  const { html, plain } = renderPcStep();
+  assert.equal(countOf(plain, BB_TEXT.targetsAllUnknown), 1, 'exactly one group note');
+  // The note sits under the Services legend (Svelte adds a scoping class to it), before the list.
+  const legendAt = html.search(legendOf(BB_TEXT.targetsServices));
+  assert.ok(legendAt >= 0, 'the services legend renders');
+  const noteAt = plain.indexOf(BB_TEXT.targetsAllUnknown);
+  assert.ok(html.indexOf(BB_TEXT.targetsAllUnknown) > legendAt, 'the note is under the legend');
+  assert.ok(noteAt < plain.indexOf('Svc000'), 'the note comes before the first row');
+  // Every name sits in one scroll region a keyboard can reach, with a meaningful label.
+  const scroll = html.match(/<div class="bb-scroll[^"]*" tabindex="0" role="group" aria-label="Services">([\s\S]*?)<\/div>/);
+  assert.ok(scroll, 'the list is wrapped in a labelled, focusable scroll region');
+  assert.equal((scroll[1].match(/type="checkbox"/g) ?? []).length, 200, 'all 200 names are inside it');
+  assert.ok(!scroll[1].includes('bb-note'), 'no per-row note on any of the 200 rows');
+  // Bounded height: the style block caps the region and lets it scroll.
+  const comp = read('src/components/BlackboxSettings.svelte');
+  assert.match(comp, /\.bb-scroll \{[^}]*max-height: 240px;[^}]*overflow: auto;/);
+  // A filter box is offered, with a visible label, and the list iterates the filtered names.
+  assert.match(html, /id="bb-services-filter"/);
+  assert.ok(plain.includes(BB_TEXT.targetsFilterLabel), 'the filter box is labelled');
+  assert.match(comp, /\{#each shownTargets\('service'\) as t \(t\.name\)\}/);
+  assert.match(comp, /\{#each shownTargets\('appPool'\) as t \(t\.name\)\}/);
+});
+
+test('the filter narrows a 200-name list, case-insensitively, and says how many are hidden', async () => {
+  tokenSession();
+  const body = { appPools: [], services: svc200, detected: true, appPoolsState: 'not-found', servicesState: 'detected' };
+  globalThis.fetch = async () => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const { step, mount } = mountStep();
+  mount();
+  await flush();
+  assert.equal(step.shownTargets('service').length, 200, 'an empty filter shows everything');
+  assert.equal(step.allUnknown('service'), true, 'every row is unknown');
+  step.serviceFilter = 'svc19';
+  const narrowed = step.shownTargets('service');
+  assert.equal(narrowed.length, 10, 'Svc190 to Svc199 match');
+  assert.ok(narrowed.every((t) => t.name.toLowerCase().includes('svc19')));
+  assert.equal(step.filterNote('service'), BB_TEXT.targetsFilterCount(10, 200), 'the count says what is hidden');
+  step.serviceFilter = 'SVC007';
+  assert.deepEqual(step.shownTargets('service').map((t) => t.name), ['Svc007'], 'case does not matter');
+  step.serviceFilter = 'zzz';
+  assert.deepEqual(step.shownTargets('service'), []);
+  assert.equal(step.filterNote('service'), BB_TEXT.targetsFilterNone(200), 'no match says how to see the names again');
+  step.serviceFilter = '   ';
+  assert.equal(step.shownTargets('service').length, 200, 'a blank filter shows everything');
+  // Filtering never changes the read list itself.
+  assert.equal(step.services.length, 200);
+});
+
+test('a mixed list keeps the honest per-row labels and shows no group note', async () => {
+  pcBridge.result = await realAnswer({
+    appPools: [{ name: 'Payroll', state: 'running' }, { name: 'DefaultAppPool', state: 'unknown' }],
+    services: [{ name: 'W3SVC', state: 'running' }, { name: 'Spooler', state: 'stopped' }],
+    detected: true, appPoolsState: 'detected', servicesState: 'detected'
+  }); pcBridge.failed = false;
+  const { html, plain } = renderPcStep();
+  assert.ok(!plain.includes(BB_TEXT.targetsAllUnknown), 'no group note when some states are known');
+  // SSR anchor comments may sit between the name and its note; the person reads "Spooler not running".
+  assert.match(html, /Spooler(?:<!--[^>]*-->)* <span class="bb-note[^"]*">not running<\/span>/);
+  // W2-07: the unknown row is never labelled stopped. Its own words are not asserted here:
+  // UX-8 deletes the per-row unknown copy key, and a leftover assertion would break it.
+  assert.doesNotMatch(html, /DefaultAppPool(?:<!--[^>]*-->)* <span class="bb-note[^"]*">not running<\/span>/);
+});
+
+test('an all-unknown pools list gets its own single note, and the new copy is linted and plain', async () => {
+  // 'B' carries no state at all (an older server): that is unknown too, never stopped.
+  pcBridge.result = await realAnswer({ appPools: [{ name: 'A', state: 'unknown' }, { name: 'B' }], services: [], detected: true, appPoolsState: 'detected', servicesState: 'detected' }); pcBridge.failed = false;
+  const { html, plain } = renderPcStep();
+  assert.equal(countOf(plain, BB_TEXT.targetsAllUnknown), 1, 'one note for the pools group');
+  const scroll = html.match(/<div class="bb-scroll[^"]*" tabindex="0" role="group" aria-label="App pools">([\s\S]*?)<\/div>/);
+  assert.ok(scroll, 'the pools scroll region is labelled too');
+  assert.ok(!scroll[1].includes('bb-note'), 'no per-row note on either pool row');
+  assert.match(html, /id="bb-pools-filter"/);
+  // The new copy is plain, linted, and states the consequence and the way back.
+  const entries = blackboxCopyEntries();
+  assert.deepEqual(lintScreenStrings(entries, deck.terms), []);
+  for (const key of ['targetsAllUnknown', 'targetsFilterLabel']) {
+    assert.equal(typeof BB_TEXT[key], 'string', key + ' is a plain string');
+    assert.ok(entries.some((e) => e.id === 'blackbox.' + key), key + ' is linted');
+  }
+  for (const id of ['blackbox.targetsFilterCount.1', 'blackbox.targetsFilterCount.2', 'blackbox.targetsFilterNone']) {
+    assert.ok(entries.some((e) => e.id === id), id + ' is linted');
+  }
+  assert.equal(BB_TEXT.targetsFilterCount(10, 200), 'Showing 10 of 200 names.');
+  assert.match(BB_TEXT.targetsFilterNone(200), /all 200 names/, 'the no-match note says how many exist');
+  assert.match(BB_TEXT.targetsAllUnknown, /records nothing/, 'the group note states the consequence');
 });

@@ -219,6 +219,13 @@ export const BB_TEXT = {
   targetsNameLabel: 'Target name',
   targetsManualNote: 'Type the name of an app pool or service, then press Add target.',
   targetsListNote: 'The list may be incomplete. Type a name below to add a target that is not listed.',
+  // UX-6: one note under a group's legend when no row's running state could be read. It states the
+  // consequence and stands in for the same note on every row. The filter never hides silently that
+  // names exist: the count line says how many are shown, and the no-match line says how to see them all.
+  targetsAllUnknown: 'Unravis could not read whether these are running. A target that is not running records nothing.',
+  targetsFilterLabel: 'Find a name',
+  targetsFilterCount: (shown: number, total: number) => 'Showing ' + shown + ' of ' + total + ' names.',
+  targetsFilterNone: (total: number) => 'No name matches. Clear the box to see all ' + total + ' names.',
   // What the detected lists say while the one read is in flight, or when it could not be read (UX-5).
   // A failed read is never shown as an empty healthy list; each message says what to do instead.
   targetsLoading: 'Looking for the app pools and services on this PC.',
@@ -429,6 +436,8 @@ export function blackboxCopyEntries(): LintEntry[] {
       else if (key === 'snapshotSaved') add(key, fn('D:\\UnravisBlackbox\\snapshots\\web-a-2026-10-20-0905', '46 MB'));
       else if (key === 'removedDeleted' || key === 'snapshotRecordings' || key === 'snapshotLogs' || key === 'hostTorn' || key === 'hostGapShort' || key === 'hostGapLong' || key === 'hostGapMinutes' || key === 'hostMinutes') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }
       else if (key === 'hostReadNote') add(key, fn(2, 240));
+      else if (key === 'targetsFilterCount') { add(key + '.1', fn(1, 200)); add(key + '.2', fn(10, 200)); }
+      else if (key === 'targetsFilterNone') add(key, fn(200));
       else if (key === 'reviewKeepsText') add(key, fn(7, 2, 10));
       else if (key === 'filesAndSamples') { add(key + '.1', fn(1, 1)); add(key + '.2', fn(4, 960)); }
       else if (key === 'gapsText') {

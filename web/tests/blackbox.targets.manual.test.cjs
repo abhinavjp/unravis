@@ -147,8 +147,10 @@ test('a selected stopped service is labelled stopped; an absent name is labelled
   assert.match(comp, /if \(s === 'source-not-found'\) return T\.targetsSourceNotFound;/);
   assert.match(comp, /if \(s === 'list-unreadable'\) return T\.targetsListUnreadable;/);
   assert.match(comp, /pickedTargetState\(t\.kind, t\.name, \{ appPools, services, detected, appPoolsState, servicesState \}\)/);
-  // The listed checkbox keeps its existing stopped/unknown labels (W2-07).
-  assert.match(comp, /\{#if targetRunState\(t\) === 'stopped'\} <span class="bb-note">\{T\.targetsNotRunning\}<\/span>\{:else if targetRunState\(t\) === 'unknown'\} <span class="bb-note">\{T\.targetsStateUnknown\}<\/span>\{\/if\}/);
+  // The listed checkbox keeps its stopped label (W2-07). UX-6: no per-row targetsStateUnknown
+  // assertion may live here — when every row is unknown, one group note under the legend says it,
+  // and UX-8 deletes that copy key; a leftover assertion would break it.
+  assert.match(comp, /\{#if targetRunState\(t\) === 'stopped'\}\{' '\}<span class="bb-note">\{T\.targetsNotRunning\}<\/span>/);
   // The absent-name copy says unknown, and never claims the target is stopped or not running.
   for (const key of ['targetsNotInList', 'targetsListUnreadable', 'targetsSourceNotFound']) {
     assert.match(BB_TEXT[key], /unknown/, key + ' says the running state is unknown');
