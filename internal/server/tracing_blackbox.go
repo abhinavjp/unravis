@@ -169,11 +169,29 @@ func (h *handler) bbLaneEntry(ctx context.Context, c casestore.Case, sel tracing
 	return bbsaved.Entry{}, false
 }
 
+// bbSQLGroupSkipped reports whether a sample's Missing names a tick where the
+// sqlHost group did not collect. The entries matched are the exact strings the
+// group collector writes (internal/blackbox/groups.go): "sqlHost" (budget
+// skip or failed collect), "sqlHost: slow" (slow-group skip or timeout) and
+// "sqlHost: busy" (the previous worker is still inside the provider). No other
+// variant exists; they are matched verbatim, in one place.
+func bbSQLGroupSkipped(missing []string) bool {
+	for _, m := range missing {
+		switch m {
+		case "sqlHost", "sqlHost: slow", "sqlHost: busy":
+			return true
+		}
+	}
+	return false
+}
+
 // bbSQLObs is one accepted SQL observation. The rate was measured over the span
-// (start, t] — the previous tick of the SAME recorder run to this sample — and
-// known says that span is proven (a plausible measured interval, not a restart
-// or a gap). whole says every instance seen so far reported a valid reading
-// here, so the sum is the machine total and not a lower bound.
+// (start, t] — the last PDH collect of the SAME recorder run to this sample,
+// which is NOT the previous tick when the sqlHost group was skipped there —
+// and known says that span is proven (a plausible measured interval, not a
+// restart, a gap or a skipped collect). whole says every instance seen so far
+// reported a valid reading here, so the sum is the machine total and not a
+// lower bound.
 type bbSQLObs struct {
 	t     time.Time
 	start time.Time
@@ -237,6 +255,7 @@ func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis traci
 	var prevT time.Time
 	var prevRun string
 	havePrev := false
+	prevSkipped := false      // the previous tick did not collect the sqlHost group
 	seen := map[string]bool{} // instances that ever contributed a valid reading
 	for _, s := range samples {
 		rate, has, whole := bbSQLReading(s)
@@ -257,7 +276,12 @@ func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis traci
 					covers = false
 				}
 			}
-			known := havePrev && s.Run == prevRun && s.T.After(prevT) && s.T.Sub(prevT) <= gapLimit
+			// CORR-3: a previous tick that skipped the sqlHost group did not
+			// collect the PDH counter, so this rate was measured from an earlier
+			// collect than prevT: the span (prevT, t] is not what was measured
+			// and stays unknown, however short it is (CORR-1's widened gapLimit
+			// must not wave it through).
+			known := havePrev && !prevSkipped && s.Run == prevRun && s.T.After(prevT) && s.T.Sub(prevT) <= gapLimit
 			o := bbSQLObs{t: s.T.UTC(), rate: rate, whole: whole && covers, known: known}
 			if known {
 				o.start = prevT.UTC()
@@ -265,9 +289,12 @@ func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis traci
 			obs = append(obs, o)
 		}
 		// EVERY sample advances the tick clock, even one without SQL: the rate
-		// at the next SQL sample was measured from the previous tick, not from
-		// the previous SQL sample.
+		// at the next SQL sample was measured from the last PDH collect, not
+		// from the previous SQL sample. When THIS tick skipped the sqlHost
+		// group there was no collect, so the next SQL span cannot be proven
+		// from prevT (CORR-3).
 		prevT, prevRun, havePrev = s.T, s.Run, true
+		prevSkipped = bbSQLGroupSkipped(s.Missing)
 	}
 	if len(obs) == 0 {
 		return nil, 0, time.Time{}, time.Time{}, time.Time{}, rep, false

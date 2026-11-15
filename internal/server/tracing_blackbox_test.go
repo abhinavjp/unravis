@@ -468,6 +468,83 @@ func TestBlackboxSQLLaneCadenceChanged(t *testing.T) {
 	})
 }
 
+// CORR-3: a tick that skipped the sqlHost group did not collect the PDH batch
+// counter, so the NEXT SQL sample's rate was measured from the last PDH collect
+// (an earlier tick), not from the previous tick. That first span after a skip
+// is unproven and must stay unknown even though CORR-1's widened gapLimit
+// accepts its length. The reasons matched are the exact Missing entries the
+// group collector writes (internal/blackbox/groups.go): "sqlHost" (budget
+// skip), "sqlHost: slow" (slow-group skip or timeout) and "sqlHost: busy"
+// (worker still inside the provider).
+func TestBlackboxSQLLaneGroupSkip(t *testing.T) {
+	skipAt := invT0.Add(90 * time.Minute) // 10:30:00, inside the window
+	recWithSkip := func(reason string, keepSQL bool) *simBB {
+		samples := bbLaneSamples(invT0.Add(-30*time.Minute), invT0.Add(3*time.Hour),
+			func(time.Time) *blackbox.SQLHostGroup { return bbSQLGroup(100) })
+		for i := range samples {
+			if samples[i].T.Equal(skipAt) {
+				if !keepSQL {
+					samples[i].SQLHost = nil
+				}
+				samples[i].Missing = []string{reason}
+			}
+		}
+		return bbLaneRec("web-b", samples)
+	}
+	for _, reason := range []string{"sqlHost", "sqlHost: slow", "sqlHost: busy"} {
+		t.Run("first span after "+reason+" is unknown", func(t *testing.T) {
+			b, id := bbLaneEnv(t, recWithSkip(reason, false))
+			out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+			lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+			if lane.ReasonCode != tracingReasonBlackbox || lane.Complete {
+				t.Fatalf("lane %s complete %v, want blackbox incomplete across the skip", lane.ReasonCode, lane.Complete)
+			}
+			if !strings.Contains(lane.Reason, bbLaneCoverageWarning) {
+				t.Fatalf("reason %q lacks the coverage warning", lane.Reason)
+			}
+			// The unproven stretch is (10:29:45, 10:30:15]: 30 s at 100 req/s are
+			// not counted. 358500 would pretend the post-skip span was measured
+			// from the skipped tick; 357000 is the honest observed total.
+			if lane.Scanned != 357000 || tracingBucketSum(lane) != 357000 {
+				t.Fatalf("scanned %d sum %d, want 357000: the post-skip span was counted as known", lane.Scanned, tracingBucketSum(lane))
+			}
+			for _, bk := range lane.Buckets {
+				touchesSkip := bk.Start.Equal(invT0.Add(89*time.Minute)) || bk.Start.Equal(skipAt)
+				if touchesSkip {
+					if bk.Complete || bk.Count != 4500 {
+						t.Fatalf("bucket %+v, want 4500 incomplete (the unproven 30 s stretch)", bk)
+					}
+				} else if !bk.Complete || bk.Count != 6000 {
+					t.Fatalf("bucket %+v, want 6000 complete away from the skip", bk)
+				}
+			}
+		})
+	}
+	// No skip: every span is measured from the previous tick's collect and stays
+	// known — the fix must not over-mark the normal lane.
+	t.Run("no skip keeps every span known", func(t *testing.T) {
+		b, id := bbLaneEnv(t, bbLaneSQLRec())
+		out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+		lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+		if lane.ReasonCode != tracingReasonBlackbox || !lane.Complete || lane.Scanned != 360000 {
+			t.Fatalf("lane %s complete %v scanned %d, want blackbox complete 360000", lane.ReasonCode, lane.Complete, lane.Scanned)
+		}
+		if strings.Contains(lane.Reason, bbLaneCoverageWarning) {
+			t.Fatalf("reason %q claims unobserved time although nothing was skipped", lane.Reason)
+		}
+	})
+	// Another group's Missing entry is not a sqlHost skip: the SQL counter was
+	// collected at that tick, so the next span stays known.
+	t.Run("another group's Missing does not mark the SQL span", func(t *testing.T) {
+		b, id := bbLaneEnv(t, recWithSkip("network", true))
+		out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+		lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+		if lane.ReasonCode != tracingReasonBlackbox || !lane.Complete || lane.Scanned != 360000 {
+			t.Fatalf("lane %s complete %v scanned %d, want blackbox complete 360000", lane.ReasonCode, lane.Complete, lane.Scanned)
+		}
+	})
+}
+
 // BBX-5-16 fix (finding 3): an absurd per-instance reading is skipped, never
 // summed; the cap itself is still a valid reading.
 func TestBlackboxSQLRateAbsurdSkipped(t *testing.T) {
