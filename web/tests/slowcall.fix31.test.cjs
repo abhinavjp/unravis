@@ -65,8 +65,10 @@ test('UI-04: the words are plain and never a number', () => {
   assert.equal(laneGapText('read-failed'), DRILL_TEXT.laneReadFailed);
   assert.equal(laneGapText(undefined), DRILL_TEXT.notRecorded);
   assert.equal(laneGapText('not-imported'), DRILL_TEXT.laneNotImported);
-  const all = ['not-recorded', 'no-file', 'read-failed', 'not-imported'].map(laneGapText);
-  assert.equal(new Set(all).size, 4);
+  assert.equal(laneGapText('import-skipped'), DRILL_TEXT.laneImportSkipped);
+  assert.doesNotMatch(laneGapText('import-skipped'), /not been imported/);
+  const all = ['not-recorded', 'no-file', 'read-failed', 'not-imported', 'import-skipped'].map(laneGapText);
+  assert.equal(new Set(all).size, 5);
   for (const t of all) assert.doesNotMatch(t, /\d/);
   assert.ok(drillCopyEntries().some((e) => e.id === 'drill.rowsCapped'));
 });
