@@ -27,3 +27,12 @@
 
 # PR #10 review scratch (plan packets, findings, hub prompts) - local only.
 /.forge/pr10-review/
+
+# Prototypes and throwaway wireframes live on the owner's machine, not in the remote.
+/prototype/
+
+# Stray root-level logs (test fixtures under testdata/ are tracked), temp files and OS junk.
+/*.log
+*.tmp
+Thumbs.db
+.DS_Store
