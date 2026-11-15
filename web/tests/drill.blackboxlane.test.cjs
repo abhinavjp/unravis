@@ -5,11 +5,11 @@ const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
 
-// BBX-5-17 / BL-103, after the wave-13 review (W13-01..W13-04): the Blackbox SQL lane source.
+// BBX-5-17 / BL-103, after the wave-13 review (W13-01..W13-04) and UX-9: the Blackbox SQL lane source.
 // The lane reads HOST PDH batch counters (blackbox.Sample.SQLHost...BatchRequestsPerSec), NOT the
 // SQL-service DMV stream. The server sends estimated batch COUNTS with no busyMs, names the source
 // "blackbox" and sends the moment its recording began (`since`). The web says, to someone who has
-// never seen this screen: "Blackbox host batches per second[, read every N s] since <date>".
+// never seen this screen: "Blackbox machine-wide batches per second[, read every N s] since <date>".
 // The cadence is the recorder's own (config permits 5/15/30/60 s) and is only stated when the source
 // sent it; otherwise the caption says the read interval is unknown. No date is ever invented.
 
@@ -58,19 +58,20 @@ test('blackbox: the server source key picks its own state', () => {
   assert.equal(v.measure, 'batch-rate', 'the blackbox reason code is the host batch-throughput contract');
 });
 
-test('blackbox: the label names the host batch measure and the date, with no invented cadence', () => {
+test('blackbox: the label names the machine-wide batch measure and the date, with no invented cadence', () => {
   const v = blackbox();
-  assert.match(v.source, /^Blackbox host batches per second since /);
+  assert.match(v.source, /^Blackbox machine-wide batches per second since /);
   assert.ok(v.source.includes('D(2026-10-20)'), 'the label carries the date the recording began: ' + v.source);
   assert.doesNotMatch(v.source, /15 to 60|every 15 s/, 'no cadence is claimed when the source sent none: ' + v.source);
-  assert.equal(T.dbSrcBlackbox('20 Oct 2026'), 'Blackbox host batches per second since 20 Oct 2026');
+  assert.equal(T.dbSrcBlackbox('20 Oct 2026'), 'Blackbox machine-wide batches per second since 20 Oct 2026');
 });
 
 test('blackbox: it says what the source is and stays calm, with the usual short label and shape', () => {
   const v = blackbox();
   assert.equal(v.message, T.dbMsgBlackbox(null));
   assert.equal(typeof v.message, 'string');
-  assert.ok(v.message.length > 0 && v.message.length < 320, 'message length ' + v.message.length);
+  // UX-9 raised the cap: the message defines batch, host counter and instance; it renders as a wrapping <p>.
+  assert.ok(v.message.length > 0 && v.message.length < 520, 'message length ' + v.message.length);
   assert.equal(v.short, T.dbShortBlackbox(null));
   assert.ok(v.short.length > 0 && v.short.length < 60, 'short length ' + v.short.length);
   assert.equal(v.shape, 'blocks');
@@ -86,13 +87,41 @@ test('blackbox: the message separates throughput from concurrency and keeps gaps
   assert.doesNotMatch(msg, /15 to 60|every 15 seconds|every 60/, 'no unconsumed DMV cadence: ' + msg);
 });
 
+// ---- UX-9: the message a first-time investigator reads defines every term it uses ----
+
+test('UX-9: the state message defines batch, host counter and instance, and says the count covers every app', () => {
+  for (const cadence of [15, null]) {
+    const msg = blackbox({ laneCadenceSeconds: cadence }).message;
+    assert.match(msg, /A batch is one request; it may hold several queries\./, msg);
+    assert.match(msg, /host counter: SQL Server's own count of batches per second/, msg);
+    assert.match(msg, /added up across every SQL Server instance on the machine/, msg);
+    assert.match(msg, /an instance is one running copy of SQL Server/, msg);
+    assert.match(msg, /every app, not only this one/, msg);
+    assert.match(msg, /work that arrived, not how many ran at once or how long it took/, msg);
+    assert.match(msg, /Gaps stay unknown, not zero\./, msg);
+    assert.doesNotMatch(msg, /added up over the instances there/, 'the old undefined phrasing is gone: ' + msg);
+  }
+});
+
+test('UX-9: the at-once lane copy is unchanged beside the reworded rate copy', () => {
+  assert.equal(T.unitAtOnce, 'running at once');
+  assert.equal(T.laneShape('4.2'), 'Height = running at once, 0 to 4.2');
+  assert.equal(T.readDb('4.2'), 'Database running at once (average) 4.2');
+  assert.equal(T.readDbPeak('4.2'), 'Database running at once (average), highest while it ran 4.2');
+  assert.equal(T.mapAxisLine, 'Across is time. A taller column means more running at once, and each row has its own scale.');
+  assert.equal(
+    T.mapCaptionMore,
+    'Drag the box or use Earlier and Later to look at another time. Taller means more running at once. Each row is scaled to its own busiest column, so compare a row with itself, not with other rows. Hatched means no data was recorded, not zero.'
+  );
+});
+
 test('blackbox: a sent cadence of 5, 15, 30 or 60 s is the one stated, in label, message and short', () => {
   for (const cadence of [5, 15, 30, 60]) {
     const v = blackbox({ laneCadenceSeconds: cadence });
     assert.ok(v.source.includes(`read every ${cadence} s`), v.source);
     assert.ok(v.message.includes(`It reads every ${cadence} s.`), v.message);
     assert.equal(v.short, `batches/s every ${cadence} s`);
-    assert.ok(v.message.length < 320, 'message length ' + v.message.length);
+    assert.ok(v.message.length < 520, 'message length ' + v.message.length);
     assert.ok(v.short.length < 60, 'short length ' + v.short.length);
   }
 });
@@ -189,7 +218,7 @@ test('dbSrcBlackbox is registered in the lint entries, and the count guard holds
   assert.equal(new Set(ids).size, ids.length, 'entry ids are unique');
   assert.equal(entries.length, Object.keys(T).length + Object.keys(DRILL_HELP).length);
   const hit = entries.find((e) => e.id === 'drill.dbSrcBlackbox');
-  assert.match(hit.text, /^Blackbox host batches per second, read every 15 s since \S+ \S+ \d{4}$/);
+  assert.match(hit.text, /^Blackbox machine-wide batches per second, read every 15 s since \S+ \S+ \d{4}$/);
 });
 
 test('no help key was added: the help deck keeps its fixed 26 keys', () => {

@@ -129,18 +129,20 @@ test('UI-13: Query Store is explained in plain words where a first-time reader m
 
 // ---- the Blackbox measure/unit copy and the no-invented-date rule (W13-01, W13-03, W13-04) ----
 
-test('the blackbox source copy names host batch throughput, with a sent cadence or an unknown one', () => {
-  assert.equal(DRILL_TEXT.dbSrcBlackbox('20 Oct 2026', 15), 'Blackbox host batches per second, read every 15 s since 20 Oct 2026');
-  assert.equal(DRILL_TEXT.dbSrcBlackbox('20 Oct 2026'), 'Blackbox host batches per second since 20 Oct 2026');
-  assert.equal(DRILL_TEXT.dbSrcBlackbox(null, 5), 'Blackbox host batches per second, read every 5 s, recording start unknown');
-  assert.equal(DRILL_TEXT.dbSrcBlackbox(null), 'Blackbox host batches per second, recording start unknown');
+test('the blackbox source copy names machine-wide batch throughput, with a sent cadence or an unknown one', () => {
+  assert.equal(DRILL_TEXT.dbSrcBlackbox('20 Oct 2026', 15), 'Blackbox machine-wide batches per second, read every 15 s since 20 Oct 2026');
+  assert.equal(DRILL_TEXT.dbSrcBlackbox('20 Oct 2026'), 'Blackbox machine-wide batches per second since 20 Oct 2026');
+  assert.equal(DRILL_TEXT.dbSrcBlackbox(null, 5), 'Blackbox machine-wide batches per second, read every 5 s, recording start unknown');
+  assert.equal(DRILL_TEXT.dbSrcBlackbox(null), 'Blackbox machine-wide batches per second, recording start unknown');
   assert.equal(DRILL_TEXT.dbShortBlackbox(30), 'batches/s every 30 s');
   assert.equal(DRILL_TEXT.dbShortBlackbox(null), 'batches/s, read interval unknown');
   for (const text of [DRILL_TEXT.dbSrcBlackbox('20 Oct 2026', 60), DRILL_TEXT.dbMsgBlackbox(60), DRILL_TEXT.dbShortBlackbox(60)]) {
     assert.doesNotMatch(text, /15 to 60/, 'the old DMV cadence range is gone: ' + text);
   }
-  assert.ok(DRILL_TEXT.dbMsgBlackbox(null).length < 320);
-  assert.ok(DRILL_TEXT.dbMsgBlackbox(60).length < 320);
+  // UX-9 raised the cap: the message now defines batch, host counter and instance in plain words.
+  // It renders as a wrapping paragraph (CallInspector's scall-db-state <p>), never a fixed-width cell.
+  assert.ok(DRILL_TEXT.dbMsgBlackbox(null).length < 520);
+  assert.ok(DRILL_TEXT.dbMsgBlackbox(60).length < 520);
   assert.ok(DRILL_TEXT.dbShortBlackbox(null).length < 60);
 });
 
@@ -202,4 +204,54 @@ test('the new unit copy uses no banned wording', () => {
     DRILL_TEXT.dbSrcBlackbox(null), DRILL_TEXT.dbMsgBlackbox(null), DRILL_TEXT.dbShortBlackbox(null)
   ];
   for (const s of strings) assert.doesNotMatch(s, banned, s);
+});
+
+// ---- UX-9: a first-time investigator can say what the DB lane number means and what it does not ----
+
+test('UX-9: the blackbox message defines a batch, the host counter and an instance in plain words', () => {
+  for (const msg of [DRILL_TEXT.dbMsgBlackbox(15), DRILL_TEXT.dbMsgBlackbox(null)]) {
+    assert.match(msg, /A batch is one request; it may hold several queries\./, msg);
+    assert.match(msg, /host counter: SQL Server's own count of batches per second/, msg);
+    assert.match(msg, /added up across every SQL Server instance on the machine/, msg);
+    assert.match(msg, /an instance is one running copy of SQL Server/, msg);
+    assert.match(msg, /every app, not only this one/, msg);
+  }
+});
+
+test('UX-9: the message says work arrived, not work running at once, and gaps stay unknown', () => {
+  for (const msg of [DRILL_TEXT.dbMsgBlackbox(5), DRILL_TEXT.dbMsgBlackbox(60), DRILL_TEXT.dbMsgBlackbox(null)]) {
+    assert.match(msg, /work that arrived, not how many ran at once or how long it took/, msg);
+    assert.match(msg, /Gaps stay unknown, not zero\./, msg);
+  }
+});
+
+test('UX-9: the old undefined jargon is gone from the DB lane copy, or defined where it stays', () => {
+  for (const msg of [DRILL_TEXT.dbMsgBlackbox(15), DRILL_TEXT.dbMsgBlackbox(null)]) {
+    assert.doesNotMatch(msg, /added up over the instances there/, 'bare "instances" is gone: ' + msg);
+    assert.doesNotMatch(msg, /its host counter for SQL batches/, 'the undefined "host counter" phrasing is gone: ' + msg);
+    // "host counter" may stay only because the same sentence defines it as SQL Server's own machine-wide count.
+    if (msg.includes('host counter')) assert.match(msg, /host counter: SQL Server's own count/, msg);
+  }
+  assert.doesNotMatch(DRILL_TEXT.dbSrcBlackbox('20 Oct 2026', 15), /host/, 'the source label needs no undefined "host"');
+  assert.doesNotMatch(DRILL_TEXT.dbSrcBlackbox(null), /host/);
+  assert.doesNotMatch(DRILL_TEXT.legendRate, /host/);
+});
+
+test('UX-9: the rate legend says the area is work that arrived and defines a batch', () => {
+  assert.match(DRILL_TEXT.legendRate, /batches per second that arrived/);
+  assert.match(DRILL_TEXT.legendRate, /a batch is one request/);
+  assert.match(DRILL_TEXT.legendRate, /not how many ran at once/);
+});
+
+test('UX-9: the at-once lane text is unchanged', () => {
+  assert.equal(DRILL_TEXT.unitAtOnce, 'running at once');
+  assert.equal(DRILL_TEXT.unitAtOnceAvg, 'running at once (average)');
+  assert.equal(DRILL_TEXT.laneShape('4.2'), 'Height = running at once, 0 to 4.2');
+  assert.equal(DRILL_TEXT.mapAxisLine, 'Across is time. A taller column means more running at once, and each row has its own scale.');
+  assert.equal(DRILL_TEXT.readDb('4.2'), 'Database running at once (average) 4.2');
+  assert.equal(DRILL_TEXT.readDbPeak('4.2'), 'Database running at once (average), highest while it ran 4.2');
+});
+
+test('UX-9: the reworded DB lane copy still passes the copy lint', () => {
+  assert.deepEqual(lintScreenStrings(drillCopyEntries(), deck.terms), []);
 });

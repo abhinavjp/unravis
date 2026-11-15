@@ -135,7 +135,7 @@ export const DRILL_TEXT = {
   laneMoreBars: (n: number): string => `and ${n} more, see the list below`,
   legendWidth: 'Bar width = how long it took',
   legendShape: 'Faint area under the line = the same count, filled in to make it easier to see',
-  legendRate: 'Database faint area = batches per second the server handled, not how many ran at once',
+  legendRate: 'Database faint area = batches per second that arrived (a batch is one request), not how many ran at once',
   legendHatched: 'Hatched = not recorded, which is unknown, not zero',
   legendCall: 'Red column = while this call was running',
   legendHow: 'What the shapes mean',
@@ -211,12 +211,13 @@ export const DRILL_TEXT = {
   dbSrcReadOnly: 'Query Store (live), read-only',
   dbSrcEvents: 'SQL Server event files, markers only',
   // The Blackbox SQL lane reads HOST PDH batch counters (throughput), not the SQL-service DMV stream.
+  // The label says "machine-wide", not "host": a first-time reader knows the machine, not the jargon (UX-9).
   // The cadence is the recorder's own (5, 15, 30 or 60 s) and is only stated when the source sent it;
   // the start date is only stated when the server sent a readable one (W13-03, W13-04).
   dbSrcBlackbox: (date: string | null, cadenceSeconds?: number | null): string => {
     const read = cadenceSeconds != null && cadenceSeconds > 0 ? `, read every ${cadenceSeconds} s` : '';
     const start = date ? ` since ${date}` : ', recording start unknown';
-    return `Blackbox host batches per second${read}${start}`;
+    return `Blackbox machine-wide batches per second${read}${start}`;
   },
   dbMsgLive: (m: number): string => `Read from Query Store, the database's own record of slow queries. The database owner must switch it on. It saves one summary per ${m}-minute block, so the database shape moves in steps and has no exact second.`,
   dbMsgFile: (date: string | null): string =>
@@ -233,7 +234,11 @@ export const DRILL_TEXT = {
   dbMsgBlackbox: (cadenceSeconds?: number | null): string =>
     'Blackbox is a recorder you place on a server.' +
     (cadenceSeconds != null && cadenceSeconds > 0 ? ` It reads every ${cadenceSeconds} s.` : ' The read interval is not recorded.') +
-    ' This lane reads its host counter for SQL batches per second, added up over the instances there, so it counts every app, not only this API. It shows work arriving, not how many ran at once or how long it took. Gaps stay unknown, not zero.',
+    ' A batch is one request; it may hold several queries.' +
+    " This lane reads the host counter: SQL Server's own count of batches per second, added up across every SQL Server instance on the machine (an instance is one running copy of SQL Server)." +
+    ' So it counts every app, not only this one.' +
+    ' It counts work that arrived, not how many ran at once or how long it took.' +
+    ' Gaps stay unknown, not zero.',
   dbShortOff: 'Not recorded: Query Store is off',
   dbShortDenied: 'Not recorded: no permission',
   dbShortEvents: 'Not recorded: only events, no volumes',
