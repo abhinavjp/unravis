@@ -13,9 +13,9 @@
 // is diagnostic wiring only, and production sampling runs exclusively inside
 // the virtual-account service under the same controls.
 //
-// The rule is decided here, in pure Go over a described DACL, so it is testable
-// on any platform; reading a real DACL is the platform job in
-// folder_windows.go / folder_other.go.
+// The rule is decided here, in pure Go over a described DACL and owner, so it
+// is testable on any platform; reading a real DACL and owner is the platform
+// job in folder_windows.go / folder_other.go.
 package bbsql
 
 import (
@@ -51,8 +51,13 @@ const (
 // (W10-11).
 const sqlServiceSID = "S-1-5-80-690519117-884339739-239568777-2365834119-2194647489"
 
-// folderACL is a DACL described in the only terms the rule needs.
+// folderACL is a DACL and owner described in the only terms the rule needs.
 type folderACL struct {
+	// Owner is the folder's owner SID as a string. The owner always holds
+	// implicit WRITE_DAC and READ_CONTROL even when the DACL names nobody it
+	// recognises, so an owner outside the trustee set can rewrite the DACL and
+	// grant itself access. Empty means the owner could not be read: refuse.
+	Owner string
 	// Present is false when the object reports no DACL at all.
 	Present bool
 	// Protected is the SE_DACL_PROTECTED flag: the DACL holds only what was
@@ -69,11 +74,26 @@ type folderACL struct {
 	Unknown bool
 }
 
+// allowedTrustee reports whether sid is one of the three pinned principals:
+// SYSTEM, Administrators or the SQL service SID (W10-11). It gates BOTH the
+// DACL grantees and the owner, so the two halves can never drift apart.
+func allowedTrustee(sid string) bool {
+	return strings.EqualFold(sid, sidSystem) ||
+		strings.EqualFold(sid, sidAdministrators) ||
+		strings.EqualFold(sid, sqlServiceSID)
+}
+
 // check applies the rule: a readable-by-strangers folder is refused, and so is
 // anything the check cannot prove. An empty DACL (nobody has access) is refused
 // too - the service could not write into it, and a folder that strange is not
 // one to start recording into. The only trustees are SYSTEM, Administrators
 // and the pinned SQL service SID (W10-11).
+//
+// The owner must be one of those three as well: Windows gives the owner
+// implicit WRITE_DAC and READ_CONTROL even when the DACL names none of its
+// rights, so a folder OWNED by an ordinary user can have its DACL rewritten by
+// that user no matter how locked the DACL looks today. An owner that is empty
+// or unrecognised is refused, never treated as safe.
 func (a folderACL) check() error {
 	switch {
 	case !a.Present:
@@ -86,11 +106,11 @@ func (a folderACL) check() error {
 		return errFolderLock
 	case len(a.Grantees) == 0:
 		return errFolderLock
+	case !allowedTrustee(a.Owner):
+		return errFolderLock
 	}
 	for _, g := range a.Grantees {
-		if !strings.EqualFold(g, sidSystem) &&
-			!strings.EqualFold(g, sidAdministrators) &&
-			!strings.EqualFold(g, sqlServiceSID) {
+		if !allowedTrustee(g) {
 			return errFolderLock
 		}
 	}
@@ -100,7 +120,8 @@ func (a folderACL) check() error {
 // CheckFolderAccess reports whether dir may hold SQL samples. It fails closed:
 // a folder it cannot read, a DACL it cannot classify, a DACL that grants
 // access to anyone outside SYSTEM, Administrators and the pinned SQL service
-// SID, and a process that is not that service identity all refuse (W10-11).
+// SID, an owner outside that same set (implicit WRITE_DAC), and a process that
+// is not that service identity all refuse (W10-11).
 func CheckFolderAccess(dir string) error {
 	if strings.TrimSpace(dir) == "" {
 		return errFolderLock

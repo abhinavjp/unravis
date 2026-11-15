@@ -12,6 +12,7 @@ const testSelf = sqlServiceSID
 
 func lockedACL() folderACL {
 	return folderACL{
+		Owner:     sidSystem,
 		Present:   true,
 		Protected: true,
 		Grantees:  []string{sidSystem, sidAdministrators, testSelf},
@@ -24,13 +25,13 @@ func TestFolderCheckAcceptsLockedFolder(t *testing.T) {
 	}
 	// Order and case are not the point: the same three trustees written by a
 	// different tool must still pass.
-	acl := folderACL{Present: true, Protected: true, Grantees: []string{
+	acl := folderACL{Owner: sidAdministrators, Present: true, Protected: true, Grantees: []string{
 		strings.ToLower(testSelf), sidAdministrators, sidSystem}}
 	if err := acl.check(); err != nil {
 		t.Fatalf("reordered lowercase DACL refused: %v", err)
 	}
 	// A folder locked to only the service account is not readable by strangers.
-	only := folderACL{Present: true, Protected: true, Grantees: []string{testSelf}}
+	only := folderACL{Owner: testSelf, Present: true, Protected: true, Grantees: []string{testSelf}}
 	if err := only.check(); err != nil {
 		t.Fatalf("service-only DACL refused: %v", err)
 	}
@@ -69,6 +70,36 @@ func TestFolderCheckRefuses(t *testing.T) {
 	} {
 		if err := tc.acl.check(); !errors.Is(err, errFolderLock) {
 			t.Errorf("%s: check = %v, want the folder-lock refusal", name, err)
+		}
+	}
+}
+
+// TestFolderCheckOwnerRule: the owner holds implicit WRITE_DAC no matter what
+// the DACL says, so a folder OWNED by anyone outside SYSTEM, Administrators
+// and the pinned SQL service SID is refused even when the DACL itself is the
+// exact install-sql lock. An unreadable (empty) or garbage owner is refused
+// too: missing evidence is never a pass.
+func TestFolderCheckOwnerRule(t *testing.T) {
+	for _, owner := range []string{sidSystem, sidAdministrators, sqlServiceSID} {
+		acl := lockedACL()
+		acl.Owner = owner
+		if err := acl.check(); err != nil {
+			t.Errorf("owner %s with the install-sql DACL refused: %v", owner, err)
+		}
+	}
+	for name, owner := range map[string]string{
+		"ordinary user owner":      "S-1-5-21-1-1-1-1001",
+		"builtin users owner":      "S-1-5-32-545",
+		"everyone owner":           "S-1-1-0",
+		"another service owner":    "S-1-5-80-3-142520817-3865290043-129737760-3809223833",
+		"empty owner":              "",
+		"garbage owner":            "not-a-sid",
+		"truncated service prefix": "S-1-5-80",
+	} {
+		acl := lockedACL() // the DACL is exactly right; only the owner differs
+		acl.Owner = owner
+		if err := acl.check(); !errors.Is(err, errFolderLock) {
+			t.Errorf("%s: check = %v, want the folder-lock refusal (implicit WRITE_DAC)", name, err)
 		}
 	}
 }
