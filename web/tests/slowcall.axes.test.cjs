@@ -5,6 +5,14 @@ const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
 
+function between(text, from, to) {
+  const a = text.indexOf(from);
+  assert.ok(a >= 0, `missing: ${from}`);
+  const b = to == null ? text.length : text.indexOf(to, a + from.length);
+  assert.ok(b >= 0, `missing: ${to}`);
+  return text.slice(a, b);
+}
+
 // Slow call screen: the chart axes are labelled, a "?" explains how to read them, and the points are joined.
 
 const root = path.resolve(__dirname, '..');
@@ -87,7 +95,7 @@ test('the points are joined: a line through each time slot, with a dot on every 
   assert.match(lanes, /<ellipse/);
   assert.match(lanes, /function shapePoints\(/);
   // joined by straight segments (L), no step segments that go flat then straight up
-  const fn = lanes.slice(lanes.indexOf('function shapePath('), lanes.indexOf('const drawnBars'));
+  const fn = between(lanes, 'function shapePath(', 'const drawnBars');
   assert.doesNotMatch(fn, /L\$\{n2\(x\(cell\.end\)\)\} \$\{y\}/);
 });
 
@@ -110,5 +118,8 @@ test('the new copy stays short and plain', () => {
 // Layout stability: the case column must not shrink-wrap to its content, or hovering the lanes moves the whole page sideways.
 test('the case column has a fixed width, so hover text cannot change its width', () => {
   const home = fs.readFileSync(path.resolve(__dirname, '..', 'src/lib/components/CaseHome.svelte'), 'utf8');
-  assert.match(home, /\.case-home \{[^}]*width: 100%;[^}]*max-width: 880px/);
+  const css = between(home, '<style>', '</style>');
+  const block = between(css, '.case-home {', '}');
+  assert.match(block, /width:\s*100%/);
+  assert.match(block, /max-width:\s*880px/);
 });

@@ -5,6 +5,14 @@ const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
 
+function between(text, from, to) {
+  const a = text.indexOf(from);
+  assert.ok(a >= 0, `missing: ${from}`);
+  const b = to == null ? text.length : text.indexOf(to, a + from.length);
+  assert.ok(b >= 0, `missing: ${to}`);
+  return text.slice(a, b);
+}
+
 // FIX-31 / FIX-33 (UI-04, UI-08, UI-10): lane gap reasons, quiet readout, keyboard and row-cap behaviour.
 
 const root = path.resolve(__dirname, '..');
@@ -61,8 +69,13 @@ test('UI-04: the words are plain and never a number', () => {
 
 test('UI-04: the lane head uses the reason when there is no peak', () => {
   const src = read('src/components/CallLanes.svelte');
+  const branch = 'lane.peak ? DRILL_TEXT.laneShape(formatAtOnce(lane.peak.atOnce)) : laneGapText(lane.gap)';
+  assert.ok(src.indexOf(branch) >= 0, branch);
   assert.match(src, /lane\.peak \? DRILL_TEXT\.laneShape\(formatAtOnce\(lane\.peak\.atOnce\)\) : laneGapText\(lane\.gap\)/);
   assert.doesNotMatch(src, /: DRILL_TEXT\.notRecorded;\s*\n\s*\};/);
+  const copy = read('src/lib/drill/drillCopy.ts');
+  assert.ok(copy.indexOf('laneNoFile') >= 0);
+  assert.ok(copy.indexOf('laneReadFailed') >= 0);
 });
 
 test('UI-10: capRows keeps the first rows and the full count', () => {
@@ -88,6 +101,8 @@ test('UI-10: capRows keeps the first rows and the full count', () => {
 
 test('UI-10: the cap note is plain words', () => {
   assert.equal(DRILL_TEXT.rowsCapped(200, 450), 'Showing the first 200 of 450');
+  const copy = read('src/lib/drill/drillCopy.ts');
+  assert.ok(copy.indexOf('Showing the first') >= 0);
 });
 
 test('UI-10: both tables cap their rows and say so', () => {
@@ -113,6 +128,7 @@ test('UI-08: the lanes area is a labelled group, not an application', () => {
   const src = read('src/components/CallLanes.svelte');
   assert.doesNotMatch(src, /role="application"/);
   assert.match(src, /role="group"\s+aria-label=\{DRILL_TEXT\.timelineTitle\}/);
+  assert.ok(read('src/lib/drill/drillCopy.ts').indexOf('timelineTitle') >= 0);
 });
 
 test('UI-08: the hover readout is not live; only a pinned point is announced', () => {

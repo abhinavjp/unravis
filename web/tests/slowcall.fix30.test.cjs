@@ -5,6 +5,14 @@ const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
 
+function between(text, from, to) {
+  const a = text.indexOf(from);
+  assert.ok(a >= 0, `missing: ${from}`);
+  const b = to == null ? text.length : text.indexOf(to, a + from.length);
+  assert.ok(b >= 0, `missing: ${to}`);
+  return text.slice(a, b);
+}
+
 // FIX-30 / UI-03 and UI-09: old slow rows are not shown under a new axis; the screen memoises the window-independent parts.
 
 const root = path.resolve(__dirname, '..');
@@ -122,7 +130,11 @@ test('UI-03: the screen shows a plain-words loading line in a status region whil
   assert.match(screen, /\{#if bench\.s\.slowRowsLoading\}\s*<p class="note" role="status" data-testid="scall-slowrows-loading">\{DRILL_TEXT\.slowRowsLoading\}<\/p>/);
   assert.doesNotMatch(screen, /SLOW_ROWS_LOADING/);
   const copy = fs.readFileSync(path.join(root, 'src/lib/drill/drillCopy.ts'), 'utf8');
+  const loadingLine = 'Loading the new window...';
+  assert.ok(copy.indexOf(loadingLine) >= 0, 'slowRowsLoading copy');
   assert.match(copy, /slowRowsLoading: 'Loading the new window\.\.\.'/);
+  assert.ok(screen.indexOf('data-testid="scall-slowrows-loading"') >= 0);
+  assert.ok(screen.indexOf('DRILL_TEXT.slowRowsLoading') >= 0);
 });
 
 test('UI-09: the window-independent parts are derived on their own, not rebuilt inside bench', () => {
@@ -130,13 +142,10 @@ test('UI-09: the window-independent parts are derived on their own, not rebuilt 
   assert.match(screen, /const overviewResp = \$derived\(callState\?\.overview \?\? null\);/);
   assert.match(screen, /const mapRows = \$derived\.by\(/);
   assert.match(screen, /const nearbyAll = \$derived\.by\(/);
-  const benchStart = screen.indexOf('const bench = $derived.by(');
-  const benchEnd = screen.indexOf('\n  });', benchStart);
-  assert.ok(benchStart > 0 && benchEnd > benchStart);
-  const bench = screen.slice(benchStart, benchEnd);
+  const bench = between(screen, 'const bench = $derived.by(', '\n  });');
   assert.doesNotMatch(bench, /mapRow\(/, 'mapRow is not called per drag preview');
   assert.doesNotMatch(bench, /s\.nearby\.rows\.map\(/, 'the nearby mapping is not redone per drag preview');
-  const mapDerived = screen.slice(screen.indexOf('const mapRows = $derived.by('), benchStart);
+  const mapDerived = between(screen, 'const mapRows = $derived.by(', 'const bench = $derived.by(');
   assert.doesNotMatch(mapDerived, /callState/, 'mapRows reads only the overview answer, the call start and the saved day');
   assert.match(screen, /mapRows,/, 'bench still returns mapRows');
 });
