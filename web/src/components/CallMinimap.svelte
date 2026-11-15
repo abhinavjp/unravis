@@ -6,7 +6,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { DRILL_TEXT } from '../lib/drill/drillCopy';
-  import { formatAtOnce } from '../lib/drill/callLanes';
+  import { formatAtOnce, type LaneMeasure } from '../lib/drill/callLanes';
   import {
     boxOf,
     centreFromFraction,
@@ -28,6 +28,7 @@
     win,
     call,
     bucketSeconds,
+    sqlMeasure,
     zone,
     hidden,
     onPreview,
@@ -38,6 +39,8 @@
     win: { start: number; end: number };
     call: { startMs: number; endMs: number };
     bucketSeconds: number;
+    /** What the Database row measures. Its columns are already drawn in this measure, so its words must match. */
+    sqlMeasure: LaneMeasure;
     zone: string;
     hidden: boolean;
     onPreview: (centreMs: number) => void;
@@ -133,14 +136,24 @@
     onCommit(centreFromFraction(overview, fractionAt(e.clientX)));
   }
 
-  const peakText = (row: MapRow): string =>
-    row.peak ? DRILL_TEXT.mapPeak(formatAtOnce(row.peak.atOnce), clock(row.peak.start)) : DRILL_TEXT.mapNoData;
-  const cellTitle = (row: MapRow, start: number, height: number | null, atOnce: number | null): string =>
-    height === null || atOnce === null
-      ? DRILL_TEXT.mapCellNone(LANE_NAME[row.key], clock(start))
-      : DRILL_TEXT.mapCell(LANE_NAME[row.key], formatAtOnce(atOnce), clock(start));
-  // A column only keeps its height as a share of the row's own busiest column; turn it back into a count for the hover text.
-  const atOnceOf = (row: MapRow, height: number | null): number | null =>
+  // The Database row keeps the measure of the lane it was drawn from: batches per second for a lane that
+  // recorded batch counts, running at once for the others. The API and web server rows always measure running at once.
+  const rateRow = (row: MapRow): boolean => row.key === 'sql' && sqlMeasure === 'batch-rate';
+  const peakText = (row: MapRow): string => {
+    if (!row.peak) return DRILL_TEXT.mapNoData;
+    const n = formatAtOnce(row.peak.atOnce);
+    const time = clock(row.peak.start);
+    return rateRow(row) ? DRILL_TEXT.mapPeakRate(n, time) : DRILL_TEXT.mapPeak(n, time);
+  };
+  const cellTitle = (row: MapRow, start: number, height: number | null, value: number | null): string => {
+    if (height === null || value === null) return DRILL_TEXT.mapCellNone(LANE_NAME[row.key], clock(start));
+    const n = formatAtOnce(value);
+    const time = clock(start);
+    return rateRow(row) ? DRILL_TEXT.mapCellRate(LANE_NAME[row.key], n, time) : DRILL_TEXT.mapCell(LANE_NAME[row.key], n, time);
+  };
+  // A column only keeps its height as a share of the row's own busiest column; turn it back into the number
+  // that lane measures for the hover text.
+  const valueAt = (row: MapRow, height: number | null): number | null =>
     height === null || !row.peak ? null : height * row.peak.atOnce;
 </script>
 
@@ -196,7 +209,7 @@
                     height={col.height * ROW_H}
                     fill={COLOR[row.key]}
                   >
-                    <title>{cellTitle(row, col.start, col.height, atOnceOf(row, col.height))}</title>
+                    <title>{cellTitle(row, col.start, col.height, valueAt(row, col.height))}</title>
                   </rect>
                 {/if}
               {/each}
@@ -236,11 +249,11 @@
         </div>
       </div>
     </div>
-    <p class="scall-map-axis">{DRILL_TEXT.mapAxisLine}</p>
+    <p class="scall-map-axis">{sqlMeasure === 'batch-rate' ? DRILL_TEXT.mapAxisLineRate : DRILL_TEXT.mapAxisLine}</p>
     <p class="scall-map-caption" data-testid="scall-map-caption">{DRILL_TEXT.mapCaption(columnMinutes(bucketSeconds))}</p>
     <details class="scall-map-more">
       <summary>{DRILL_TEXT.mapHow}</summary>
-      <p>{DRILL_TEXT.mapCaptionMore}</p>
+      <p>{sqlMeasure === 'batch-rate' ? DRILL_TEXT.mapCaptionMoreRate : DRILL_TEXT.mapCaptionMore}</p>
     </details>
   </div>
 {/if}

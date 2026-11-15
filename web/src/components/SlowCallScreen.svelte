@@ -7,7 +7,7 @@
   import { withCall, callSlotWindow, type SlowCallTarget } from '../lib/drill/callTarget';
   import { fetchTracing, nextRequestSeq, type TracingLane } from '../lib/tracing/model';
   import { fetchLaneDays, newestDay, type LaneDay } from '../lib/lanes';
-  import { buildLane, packBars, type CallLane, type LaneBar, type LaneIn, type LaneKey } from '../lib/drill/callLanes';
+  import { buildLane, cellValue, measureOf, packBars, type CallLane, type LaneBar, type LaneIn, type LaneKey } from '../lib/drill/callLanes';
   import { allSources, readoutSpan, type Readout, type SourceItem } from '../lib/drill/callReadout';
   import { dbState, type DbStateKey } from '../lib/drill/dbState';
   import { mapRow } from '../lib/drill/callMap';
@@ -157,12 +157,19 @@
   const nearbyRaw = $derived(callState?.nearby.rows ?? NO_ROWS);
 
   // The overview strip rows: they depend on the two-hour overview answer only.
+  // Each row is drawn in the measure of its own lane: a lane that recorded batch counts (Blackbox) draws batches
+  // per second, the others draw how many ran at once. mapRow stays measure-agnostic and is handed the one number
+  // each cell draws, so a lane with counts is never read as "no data" just because it recorded no busy time.
   const mapRows = $derived.by(() => {
     const resp = overviewResp;
-    return (['audit', 'iis', 'sql'] as const).map((key) =>
-      mapRow(key, resp ? buildLane(toLaneIn(resp.lanes.find((l) => l.key === key)), key, resp.window, over.start, over.end).cells : [])
-    );
+    return (['audit', 'iis', 'sql'] as const).map((key) => {
+      if (!resp) return mapRow(key, []);
+      const lane = buildLane(toLaneIn(resp.lanes.find((l) => l.key === key)), key, resp.window, over.start, over.end);
+      return mapRow(key, lane.cells.map((c) => ({ start: c.start, end: c.end, atOnce: cellValue(c, lane.measure) })));
+    });
   });
+  // The Database row of the strip keeps the measure of the lane it was drawn from, so its words match its columns.
+  const mapSqlMeasure = $derived(measureOf(toLaneIn(overviewResp?.lanes.find((l) => l.key === 'sql'))));
   const nearbyAll = $derived.by((): NearbyRow[] =>
     nearbyRaw.map((r) => ({
       id: r.id,
@@ -263,6 +270,8 @@
       endMs: s.callEndMs
     };
     const nearbyRows = filterRows(nearbyAll, s.chip, callRef, bounds.start, bounds.end);
+    // The drawn cells go in as they are: each carries its lane's own number, including the batch rate of a
+    // throughput lane, so the inspector reads the same measure the chart draws.
     const whileRan = readoutSpan({ audit: lanes.audit.cells, iis: lanes.iis.cells, sql: drawnSql.cells }, call);
     const sources = [
       { key: 'api' as const, label: DRILL_TEXT.laneApi, recorded: lanes.audit.hasShape || s.slowRows.length > 0 },
@@ -439,6 +448,7 @@
               win={bench.bounds}
               call={bench.call}
               bucketSeconds={bench.s.overview?.window.bucketSeconds ?? bench.step}
+              sqlMeasure={mapSqlMeasure}
               {zone}
               hidden={bench.covers}
               onPreview={(c) => controller?.preview(centreOn(bench.s.callStartMs, bench.s.window, c))}

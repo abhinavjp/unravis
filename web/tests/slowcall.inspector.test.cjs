@@ -42,7 +42,7 @@ test('the five sections each have an h3 from their copy key', () => {
 });
 
 test('the sections use their copy keys', () => {
-  for (const key of ['selectedNone', 'readApiPeak', 'readIisPeak', 'readDbPeak', 'readDbNone', 'whileNote', 'openThisCall', 'vsNormalTitle', 'vsNormalAbove', 'vsNormalNear', 'vsNormalBelow', 'vsNormalNone', 'coverageNote', 'notShownTime', 'notShownStart', 'notShownWholeDb', 'notShownIis', 'legendWidth', 'legendShape', 'legendHatched', 'legendCall']) {
+  for (const key of ['selectedNone', 'readApiPeak', 'readIisPeak', 'readDbPeak', 'readDbRatePeak', 'readDbNone', 'whileNote', 'openThisCall', 'vsNormalTitle', 'vsNormalAbove', 'vsNormalNear', 'vsNormalBelow', 'vsNormalNone', 'coverageNote', 'notShownTime', 'notShownStart', 'notShownWholeDb', 'notShownIis', 'legendWidth', 'legendShape', 'legendHatched', 'legendCall']) {
     assert.ok(DRILL_TEXT[key] !== undefined, key + ' exists in the copy');
     assert.match(src, new RegExp('DRILL_TEXT\\.' + key + '\\b'), key);
   }
@@ -50,6 +50,32 @@ test('the sections use their copy keys', () => {
   assert.match(markup, /data-testid="scall-sources"/);
   assert.match(src, /formatMs\(/);
   assert.match(src, /formatTime\(selected\.startMs, \{ zone \}\)/);
+});
+
+// UX-1: the database sentence keeps the measure of the lane it describes. A Blackbox lane records host batch
+// counts, so the highest number while the call ran is batches per second: never "running at once", and never
+// "not recorded" when counts exist. The words for a concurrency lane are unchanged.
+test('the database sentence reads batches per second for a throughput lane', () => {
+  assert.equal(typeof DRILL_TEXT.readDbRatePeak, 'function');
+  assert.equal(DRILL_TEXT.readDbRatePeak('100'), 'Database batches per second, highest while it ran 100');
+  assert.match(script, /db\.measure === 'batch-rate'/);
+  assert.match(script, /DRILL_TEXT\.readDbRatePeak\(formatAtOnce\(/);
+  assert.match(script, /whileRan\?\.db/);
+  // the concurrency sentence and the gap sentence are both kept
+  assert.match(script, /DRILL_TEXT\.readDbPeak\(/);
+  assert.match(script, /DRILL_TEXT\.readDbNone/);
+  // a missing rate is never turned into a zero
+  assert.doesNotMatch(script, /rate \?\? 0/);
+  assert.doesNotMatch(script, /atOnce \?\? 0/);
+});
+
+test('the chart help names the database area as batches per second on a throughput lane', () => {
+  assert.match(script, /db\.measure === 'batch-rate'/);
+  assert.match(script, /DRILL_TEXT\.legendRate/);
+  // the concurrency help is unchanged for the lanes that measure concurrency
+  assert.match(script, /DRILL_TEXT\.legendWidth, DRILL_TEXT\.legendShape, DRILL_TEXT\.legendHatched, DRILL_TEXT\.legendCall/);
+  assert.match(markup, /\{#each HOW as line \(line\)\}/);
+  assert.equal((markup.match(/<section/g) || []).length, 5, 'no new section was added');
 });
 
 test('the database sentence comes from dbState and carries its key', () => {

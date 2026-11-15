@@ -49,12 +49,13 @@ test('the strip, the box, the caption and the hidden note are all present', () =
 });
 
 test('props match the packet', () => {
-  for (const prop of ['rows', 'overview', 'win', 'call', 'bucketSeconds', 'zone', 'hidden', 'onPreview', 'onCommit']) {
+  for (const prop of ['rows', 'overview', 'win', 'call', 'bucketSeconds', 'zone', 'hidden', 'onPreview', 'onCommit', 'sqlMeasure']) {
     assert.match(source, new RegExp(`\\b${prop}\\b`), `prop ${prop}`);
   }
   assert.match(source, /onPreview: \(centreMs: number\) => void/);
   assert.match(source, /onCommit: \(centreMs: number\) => void/);
   assert.match(source, /rows: MapRow\[\]/);
+  assert.match(source, /sqlMeasure: LaneMeasure/);
 });
 
 test('the geometry comes from callMap, not from the component', () => {
@@ -114,7 +115,26 @@ test('rows: label, columns, hatched gaps, titles, peak and the red line', () => 
 
 test('the caption says how many minutes a column is, and the longer help sits in a details block', () => {
   assert.match(source, /mapCaption\(columnMinutes\(/);
-  assert.match(source, /<details[^>]*>\s*<summary>\{DRILL_TEXT\.mapHow\}<\/summary>\s*<p>\{DRILL_TEXT\.mapCaptionMore\}<\/p>\s*<\/details>/);
+  assert.match(source, /<details[^>]*>\s*<summary>\{DRILL_TEXT\.mapHow\}<\/summary>\s*<p>\{[^}]*DRILL_TEXT\.mapCaptionMore[^}]*\}<\/p>\s*<\/details>/);
+});
+
+// UX-1: the strip's Database row is drawn in the lane's own measure, so its words must name that measure.
+// A throughput lane (Blackbox host batch counts) is batches per second; the other rows stay running at once.
+test('the Database row names batches per second when its lane measures throughput', () => {
+  for (const key of ['mapCellRate', 'mapPeakRate', 'mapAxisLineRate', 'mapCaptionMoreRate']) {
+    assert.ok(DRILL_TEXT[key] !== undefined, key + ' exists in the copy');
+    assert.match(source, new RegExp('DRILL_TEXT\\.' + key + '\\b'), 'the component uses ' + key);
+  }
+  assert.match(source, /row\.key === 'sql' && sqlMeasure === 'batch-rate'/, 'only the SQL row of a throughput lane takes the rate words');
+  assert.match(source, /DRILL_TEXT\.mapAxisLineRate : DRILL_TEXT\.mapAxisLine/);
+  assert.match(source, /DRILL_TEXT\.mapCaptionMoreRate : DRILL_TEXT\.mapCaptionMore/);
+  // the concurrency words are still there for every other row
+  assert.match(source, /DRILL_TEXT\.mapCell\(/);
+  assert.match(source, /DRILL_TEXT\.mapPeak\(/);
+  assert.match(DRILL_TEXT.mapCellRate('Database', '100', '10:14'), /batches per second around 10:14/);
+  assert.match(DRILL_TEXT.mapPeakRate('100', '10:14'), /batches/);
+  assert.match(DRILL_TEXT.mapAxisLineRate, /batches per second/);
+  assert.match(DRILL_TEXT.mapCaptionMoreRate, /batches per second/);
 });
 
 test('the strip is at most 84 px tall, never scrolls, and only the box turns off touch scrolling', () => {
