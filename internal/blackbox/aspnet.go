@@ -23,7 +23,7 @@ var aspnetPaths = []string{
 // rest are gauges. Field names are the ASPNETGroup json fields.
 var aspnetSpecs = []CounterSpec{
 	{Path: aspnetPaths[0], Field: "requestsQueued", Kind: KindGauge},
-	{Path: aspnetPaths[1], Field: "requestsRejected", Kind: KindPDHRate},
+	{Path: aspnetPaths[1], Field: "requestsRejected", Kind: KindRate},
 	{Path: aspnetPaths[2], Field: "requestWaitTimeMs", Kind: KindGauge},
 	{Path: aspnetPaths[3], Field: "applicationRestarts", Kind: KindGauge},
 	{Path: aspnetPaths[4], Field: "requestsCurrent", Kind: KindGauge},

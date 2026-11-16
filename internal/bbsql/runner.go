@@ -599,8 +599,11 @@ func (r *Runner) gateIsOpen(ctx context.Context, g Gate, timeout time.Duration) 
 // raw error is classified and then forgotten: it never reaches disk or logs.
 func (r *Runner) fail(err error) error {
 	e := Classify(err)
-	perm := e.Code == CodePermission || e.Code == CodeLoginFailed || e.Code == CodeTooManyRights
-	r.state.OnFailure(perm, e.Code == CodeTooManyRights)
+	// A failed C8 proof latches at once whatever its public code (W9-03): an
+	// unreadable proof carries the generic failed code but keeps its origin.
+	ceiling := e.Code == CodeTooManyRights || IsCeilingFailure(err)
+	perm := e.Code == CodePermission || e.Code == CodeLoginFailed || ceiling
+	r.state.OnFailure(perm, ceiling)
 	// A failed tick breaks continuity: the next successful observation must
 	// rebaseline, never delta across the failure gap (W11-05).
 	r.breakContinuity()

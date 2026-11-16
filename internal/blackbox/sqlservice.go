@@ -209,6 +209,15 @@ func (m *SQLManager) InstallSQL(cfg Config, configPath string) (err error) {
 		_ = m.Svc.Delete(SQLServiceName)
 	})
 	// W8-03: deliberately NOT started. The owner runs the grant, then enable-sql.
+	// The service is Automatic, so a reboot or an SCM start before enable-sql would
+	// otherwise find no state file (= on at base) and reach SQL without owner
+	// activation. Persist an unarmed (auto-off) state now; EnableSQL clears it.
+	unarmed := bbsql.NewState()
+	unarmed.AutoOff = true
+	unarmed.State = bbsql.StateAutoOff
+	if serr := bbsql.Save(bbsql.StatePath(cfg.Folder), unarmed); serr != nil {
+		return &InstallError{Reason: ReasonOther, Message: "The SQL service could not be left switched off on disk, so it was not installed.", Cause: serr}
+	}
 	return nil
 }
 

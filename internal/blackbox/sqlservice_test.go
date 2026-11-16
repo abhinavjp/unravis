@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"api-audit-explorer/internal/bbsql"
 )
 
 // fakeSQLEnv is fakeEnv plus the locked SQL data folder and the launch-access
@@ -554,4 +556,28 @@ func TestEnableSQLRefusals(t *testing.T) {
 			t.Fatal("enable-sql started with a mismatched config")
 		}
 	})
+}
+
+// The service is Automatic, so install must leave an UNARMED state on disk: a
+// reboot between install-sql and enable-sql must not find a missing state file
+// (which loads as "on") and reach SQL without the owner's activation.
+func TestInstallSQLLeavesAnUnarmedState(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	st, err := bbsql.Load(bbsql.StatePath(g.cfg.Folder))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.AutoOff {
+		t.Fatalf("install left the SQL state armed: %+v", st)
+	}
+	if err := g.m.EnableSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatalf("enable-sql: %v", err)
+	}
+	st, err = bbsql.Load(bbsql.StatePath(g.cfg.Folder))
+	if err != nil || st.AutoOff || st.State != bbsql.StateOn {
+		t.Fatalf("enable-sql did not arm the state: %+v %v", st, err)
+	}
 }

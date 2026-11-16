@@ -42,6 +42,8 @@ func TestASPNETMapsFields(t *testing.T) {
 	now := time.Unix(1000, 0)
 	var grp *ASPNETGroup
 	for i := 0; i < 3; i++ { // two baselines, then the rate emits
+		// Requests Rejected is cumulative: +30 per 15 s tick is 2 per second.
+		src.readings[1] = aspnetReading(`\ASP.NET\Requests Rejected`, float64(30*i))
 		v, err := g.Collect(now.Add(time.Duration(i)*15*time.Second), 15)
 		if err != nil {
 			t.Fatalf("tick %d: %v", i+1, err)
@@ -124,6 +126,7 @@ func TestASPNETRateGated(t *testing.T) {
 	g := newASPNETTestGroup(t, src)
 	now := time.Unix(1000, 0)
 	for i := 0; i < 2; i++ {
+		src.readings[1] = aspnetReading(`\ASP.NET\Requests Rejected`, float64(30*i))
 		v, err := g.Collect(now.Add(time.Duration(i)*15*time.Second), 15)
 		if err != nil {
 			t.Fatalf("tick %d: %v", i+1, err)
@@ -136,6 +139,7 @@ func TestASPNETRateGated(t *testing.T) {
 			t.Fatalf("tick %d: gauge absent", i+1)
 		}
 	}
+	src.readings[1] = aspnetReading(`\ASP.NET\Requests Rejected`, 60)
 	v, err := g.Collect(now.Add(30*time.Second), 15)
 	if err != nil {
 		t.Fatalf("tick 3: %v", err)
