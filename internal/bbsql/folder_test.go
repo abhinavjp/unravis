@@ -104,6 +104,46 @@ func TestFolderCheckOwnerRule(t *testing.T) {
 	}
 }
 
+// R1-s1: the owner the elevated install assigns the sample folder must be an
+// owner this rule ACCEPTS, and it must come from the one constant the installer
+// writes with, so the rule and the installer cannot drift apart. Pure: it needs
+// no privilege, cannot skip and so still pins the shape on a non-Windows run.
+func TestFolderCheckAcceptsTheInstallerOwner(t *testing.T) {
+	if got := FolderOwnerSID(); got != "S-1-5-32-544" {
+		t.Fatalf("FolderOwnerSID() = %q, want BUILTIN\\Administrators (S-1-5-32-544): the install DACL names BA with the SDDL abbreviation, so any other owner would be an account the lock does not name", got)
+	}
+	acl := folderACL{
+		Owner:     FolderOwnerSID(),
+		Present:   true,
+		Protected: true,
+		Grantees:  []string{sidSystem, sidAdministrators, sqlServiceSID},
+	}
+	if err := acl.check(); err != nil {
+		t.Fatalf("check() refused the folder the installer creates (owner %s): %v", FolderOwnerSID(), err)
+	}
+	// One predicate still gates the owner and the grantees (SEC-2), so the owner
+	// the installer assigns cannot stop being a trustee without this refusing.
+	if !allowedTrustee(FolderOwnerSID()) {
+		t.Fatalf("FolderOwnerSID() = %q is not an allowed trustee", FolderOwnerSID())
+	}
+	// The other half of the same pure pair, in one test: the bare group SID
+	// S-1-5-32-544 is what passes, and an account's own SID is NOT what passes -
+	// not even an interactive administrator's logon account, because that owner
+	// holds implicit WRITE_DAC over the folder whatever the DACL says (SEC-2).
+	if !allowedTrustee(sidAdministrators) {
+		t.Errorf("the bare group SID %s is not an accepted owner: the folder the installer owns as Administrators would refuse itself", sidAdministrators)
+	}
+	userOwned := folderACL{
+		Owner:     "S-1-5-21-1-1-1-1001",
+		Present:   true,
+		Protected: true,
+		Grantees:  []string{sidSystem, sidAdministrators, sqlServiceSID},
+	}
+	if err := userOwned.check(); !errors.Is(err, errFolderLock) {
+		t.Errorf("a non-admin account as owner: check = %v, want the folder-lock refusal", err)
+	}
+}
+
 func TestFolderLockErrorIsFixedAndNamesNothing(t *testing.T) {
 	// C10: one fixed sentence, and it must not name the folder, the account or
 	// the SID that broke the rule.

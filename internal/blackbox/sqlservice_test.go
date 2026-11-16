@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"api-audit-explorer/internal/bbsql"
 )
 
 // fakeSQLEnv is fakeEnv plus the locked SQL data folder and the launch-access
@@ -420,6 +422,85 @@ func TestInstallSQLUndoOnFailure(t *testing.T) {
 			t.Fatal("earlier SQL data was removed by the undo")
 		}
 	})
+}
+
+// R1-s1: the folder the install hands the SQL service must carry the owner the
+// service's own sample-folder rule demands. When that owner cannot be assigned,
+// install-sql must refuse with its own sentence and roll back: a service
+// registered over an un-owned folder reads nothing at any later start, and the
+// operator has no way to fix it but a re-install. The Windows half (the write and
+// the read-back) is in sqlservice_windows_test.go; this is the fail-closed order,
+// which is pure and so runs on every build.
+func TestInstallSQLRollsBackWhenTheFolderOwnerIsNotSet(t *testing.T) {
+	g := newSQLRig(t)
+	g.env.sqlErr = errSQLFolderOwner
+	err := g.m.InstallSQL(g.cfg, g.configPath())
+	if err == nil {
+		t.Fatal("install-sql reported success on a folder nobody had owned")
+	}
+	if !errors.Is(err, errSQLFolderOwner) {
+		t.Fatalf("install error = %v, want the owner sentence so the operator is told to run elevated", err)
+	}
+	var ie *InstallError
+	if !errors.As(err, &ie) || ie.Reason != ReasonFolder {
+		t.Fatalf("reason = %#v, want %q: the wizard's folder words name the remedy that works", err, ReasonFolder)
+	}
+	if g.svc.did("create") != 0 {
+		t.Fatal("a service was registered over a folder the service cannot read")
+	}
+	if len(g.env.markerLocks) != 0 {
+		t.Fatalf("an install record was written although the folder was refused: %v", g.env.markerLocks)
+	}
+	for _, p := range []string{g.sqlDir(), g.cfg.Folder, sqlInstallMarkerPath(g.env.prog)} {
+		if _, serr := os.Stat(p); serr == nil {
+			t.Errorf("the undo left %s behind", p)
+		}
+	}
+}
+
+// R1-s1/R1-s2: the owner rules on both sides of the install are the same set, and
+// the one constant is the shared one. The folder rule in internal/bbsql refuses a
+// folder whose owner is outside its trustees (an owner holds implicit WRITE_DAC),
+// so the installer must write an owner that rule accepts - and the file rule must
+// not accept the account that merely happened to run the install.
+func TestOwnerTrustRulesMatchTheFolderRule(t *testing.T) {
+	sid, err := sqlServiceSID(SQLServiceName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer := bbsql.FolderOwnerSID()
+	if installer != "S-1-5-32-544" {
+		t.Fatalf("the install writes owner %q, want BUILTIN\\Administrators: internal/bbsql names that trustee in its own install DACL", installer)
+	}
+	for _, owner := range []string{installer, sidSystemSID, sid} {
+		if !trustedSQLFolderOwner(owner, sid) {
+			t.Errorf("the install refused its own folder owner %q after writing it", owner)
+		}
+	}
+	for _, owner := range []string{"S-1-5-32-545", "S-1-1-0", "S-1-5-21-1-1-1-1001", "", "S-1-5-80-3-142520817-3865290043-129737760-3809223833", strings.ToLower(installer) + "-"} {
+		if trustedSQLFolderOwner(owner, sid) {
+			t.Errorf("the install accepted folder owner %q, which internal/bbsql refuses", owner)
+		}
+	}
+	if !trustedSQLFolderOwner(strings.ToLower(installer), sid) {
+		t.Error("the folder owner test is case-sensitive: a SID read back in the other case is the same account")
+	}
+	// R1-s2: the file rule is the folder rule minus the installing token, because
+	// the installer assigns a file's owner itself and must not leave it to chance.
+	if trustedFileOwner("S-1-5-21-1-1-1-1001") {
+		t.Error("an install record owned by the account that ran the install was accepted: that owner keeps implicit WRITE_DAC and can re-open the record")
+	}
+	if !trustedFileOwner(installer) || !trustedFileOwner(sidSystemSID) || trustedFileOwner(strings.ToLower(installer)+"x") {
+		t.Error("trustedFileOwner no longer accepts exactly SYSTEM and Administrators")
+	}
+	// R1-s2, the half that keeps the folder rule and the file rule apart: a
+	// Windows owner test cannot see this split drift without it, and the
+	// installing token still counts for the objects the installer only ADOPTS
+	// (trustedOwner, in sqlservice_windows.go, asserted there).
+	self := "S-1-5-21-1-1-1-1001"
+	if trustedFileOwner(self) {
+		t.Error("the file rule accepted the installing token: the split from the folder rule is what an ordinary owner with implicit WRITE_DAC must not be able to cross")
+	}
 }
 
 // The name must be confirmed before anything at all is changed, and the data

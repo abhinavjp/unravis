@@ -475,10 +475,59 @@ func sqlSDDL(sid string) string {
 	return "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;" + sid + ")"
 }
 
+// errSQLFolderOwner is the one sentence the install ever produces when the SQL
+// data folder could not be given the owner the sample-folder rule demands
+// (R1-s1). The folder rule (internal/bbsql.CheckFolderAccess) refuses a folder
+// whose owner is not one of its trustees, because an owner outside the DACL holds
+// implicit WRITE_DAC — so a folder this install leaves owned by whoever created it
+// would be refused at every service start, with no way for the operator to fix it
+// except a re-install. The write needs a privilege only an elevated token holds,
+// so the sentence names the remedy that works. Declared here, off the platform
+// files, so the fail-closed order is testable on every build; the Windows installer
+// produces it from both the failed write and a failed owner read-back.
+var errSQLFolderOwner = errors.New("blackbox: the SQL data folder owner could not be set to Administrators; run this from an elevated command prompt")
+
+// sidSystemSID is NT AUTHORITY\SYSTEM, the owner a LocalSystem service gives
+// everything it creates, including a SQL data folder it recreates after a
+// delete/repoint.
+const sidSystemSID = "S-1-5-18"
+
+// trustedSQLFolderOwner is the read-back test for the SQL data folder's owner
+// after the install locked it (R1-s1): the BUILTIN\Administrators owner
+// install-sql writes, SYSTEM, or the SQL service SID itself — exactly the three
+// owners internal/bbsql's sample-folder rule trusts, named through its one
+// constant so the installer and the rule cannot drift apart. The SQL service SID
+// stays accepted because the service runs as that account and is the only one who
+// can re-create the folder once it is gone; it already holds full control in the
+// DACL install-sql writes.
+func trustedSQLFolderOwner(owner, sid string) bool {
+	return strings.EqualFold(owner, bbsql.FolderOwnerSID()) ||
+		strings.EqualFold(owner, sidSystemSID) ||
+		(sid != "" && strings.EqualFold(owner, sid))
+}
+
+// trustedFileOwner is the owner rule for a file the installer writes and then
+// trusts with its own rights: SYSTEM or BUILTIN\Administrators, nothing else
+// (R1-s2). The account that ran the install is deliberately NOT accepted here,
+// which is the difference from trustedOwner: the owner keeps implicit WRITE_DAC
+// whatever the DACL says — measured, a DACL write still succeeds after every entry
+// naming the account was removed — so a settings file or install record owned by
+// it could re-open itself at any later moment, and the install record is exactly
+// what SEC-3's folder comparison is anchored to. The installer assigns this owner
+// itself (lockSQLInstallMarker), so accepting only these two asks nothing of the
+// operator.
+func trustedFileOwner(owner string) bool {
+	return strings.EqualFold(owner, sidSystemSID) || strings.EqualFold(owner, bbsql.FolderOwnerSID())
+}
+
 // InstallSQL registers the SQL service under its own virtual account and locks
-// its data folder to SYSTEM, Administrators and that service SID. The host
-// service, its account and the recordings folder ACL are left as they are.
-// Whatever it did is undone when a step fails.
+// its data folder to SYSTEM, Administrators and that service SID. It also gives
+// the folder the BUILTIN\Administrators OWNER the sampler's own folder rule
+// demands (R1-s1): that rule refuses a folder whose owner is not one of its
+// trustees, so a folder left owned by whoever ran the install would brick the DB
+// lane at every service start. The host service, its account and the recordings
+// folder ACL are left as they are. Whatever it did is undone when a step fails,
+// including a folder whose owner could not be assigned.
 //
 // W8-03: the service is created STOPPED and unarmed. install-sql no longer
 // starts it, because a first connection before the owner runs the printed
@@ -571,9 +620,14 @@ func (m *SQLManager) InstallSQL(cfg Config, configPath string) (err error) {
 	if derr := ensureDir(dir, &undo); derr != nil {
 		return folderErr(derr)
 	}
-	// Lock the folder before the service exists, so no SQL data is ever written
-	// somewhere ordinary users can read. SecureSQLDir verifies owner, ancestors
-	// and existing children before it mutates anything (W7-03).
+	// Lock AND own the folder before the service exists, so no SQL data is ever
+	// written somewhere ordinary users can read. SecureSQLDir verifies the ancestors
+	// and the existing children before it mutates anything (W7-03), then writes the
+	// owner and the protected DACL in one descriptor and reads the owner back: this
+	// is the only code path that sets an owner, and it stops here, before the
+	// service, the grant and the install record exist, so an install that cannot
+	// assign the owner never leaves a folder the service would refuse forever
+	// (R1-s1). Any failure below runs the undo list above.
 	if serr := sec.SecureSQLDir(dir, sid); serr != nil {
 		return folderErr(serr)
 	}
@@ -590,6 +644,10 @@ func (m *SQLManager) InstallSQL(cfg Config, configPath string) (err error) {
 	// beside the installed program, so enable-sql compares the loaded settings
 	// against a persisted fact instead of the settings file itself. Write,
 	// lock, then prove; any failure refuses the install and undoes the record.
+	// The lock is what assigns the record's owner (R1-s2), so the three steps
+	// here must stay in this order: prove-after-write proves an owner the install
+	// has already set, and the folder re-own above has already happened before
+	// any of it.
 	// SEC-6: the record also names the settings file the grant was applied to,
 	// so remove-sql knows exactly which file's entries to take back.
 	markerPath := sqlInstallMarkerPath(progDir)
@@ -691,7 +749,11 @@ func (m *SQLManager) EnableSQL(cfg Config, configPath string) error {
 	if serr != nil {
 		return &InstallError{Reason: ReasonOther, Message: "Could not work out the SQL service account.", Cause: serr}
 	}
-	// Re-confirm the lock (owner/ancestors/children) before activation.
+	// Re-confirm the lock before activation: SecureSQLDir re-checks the owner it
+	// assigned, the ancestors and the children, and re-writes the folder's owner
+	// and DACL together (R1-s1). This runs after the install record is written and
+	// proved, so the folder is never reported as usable on an owner the sampler's
+	// own rule refuses.
 	if serr := sec.SecureSQLDir(SQLDataDir(cfg.Folder), sid); serr != nil {
 		return &InstallError{Reason: ReasonFolder, Message: "The SQL data folder could not be confirmed as locked for the SQL service only.", Cause: serr}
 	}

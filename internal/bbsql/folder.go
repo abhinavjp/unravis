@@ -1,6 +1,7 @@
 // folder.go is the H3 control of the wave-10 review: the SQL service proves its
 // own data folder is locked before it writes a sample into it. install-sql is
-// what writes the DACL, but the folder comes from config, and "folder" +
+// what writes the folder's DACL AND, since R1-s1, its owner (folderOwnerSID),
+// but the folder comes from config, and "folder" +
 // "apply" can point the service at a path whose permissions were inherited from
 // the parent - which on a normal server means BUILTIN\Users can read every
 // sample. A sample folder anyone can read is a privacy failure, so the service
@@ -42,6 +43,21 @@ const (
 	sidAdministrators = "S-1-5-32-544"
 )
 
+// folderOwnerSID is the owner a SQL sample folder must have, and the one the
+// elevated install assigns it (R1-s1). It is BUILTIN\Administrators, which is
+// already a trustee of the DACL install-sql writes, so the owner needs no grant
+// of its own. The write is not this package's job (bbsql reads descriptors and
+// never writes one): internal/blackbox/sqlservice_windows.go names this exact SID
+// through FolderOwnerSID in the same SetNamedSecurityInfo call that writes the
+// DACL, so the installer can never produce a folder this rule refuses.
+const folderOwnerSID = sidAdministrators
+
+// FolderOwnerSID is the SID the install must make the SQL sample folder's owner.
+// Exported so the folder rule and the installer agree by construction instead of
+// by two copies of the same literal (R1-s1): a folder owned by whoever ran the
+// install is refused here, and that refusal bricks the DB lane at every start.
+func FolderOwnerSID() string { return folderOwnerSID }
+
 // sqlServiceSID is the PINNED per-service SID of NT SERVICE\UnravisBlackboxSql
 // (S-1-5-80 + SHA-1 of the upper-case service name in UTF-16LE, five
 // little-endian uint32s — the same algorithm blackbox.sqlServiceSID uses,
@@ -76,10 +92,21 @@ type folderACL struct {
 
 // allowedTrustee reports whether sid is one of the three pinned principals:
 // SYSTEM, Administrators or the SQL service SID (W10-11). It gates BOTH the
-// DACL grantees and the owner, so the two halves can never drift apart.
+// DACL grantees and the owner, so the two halves can never drift apart. The owner
+// is named through folderOwnerSID, the constant the installer writes with.
+//
+// The owner rule exists for the case the grantee rule cannot see: an owner
+// outside the DACL holds implicit WRITE_DAC whatever is written down, so a folder
+// owned by an ordinary account can always be re-opened by that account. Both
+// owners this accepts are also granted full control by install-sql's DACL, so
+// their implicit WRITE_DAC adds no right the folder did not already give them.
+// The SQL service SID stays an accepted owner on purpose (R1-s1): when the service
+// creates <folder>\sql itself, after an operator deletes it or repoints Folder,
+// its owner is its own service SID, and refusing that would demand a second
+// install-sql for an ordinary restart.
 func allowedTrustee(sid string) bool {
 	return strings.EqualFold(sid, sidSystem) ||
-		strings.EqualFold(sid, sidAdministrators) ||
+		strings.EqualFold(sid, folderOwnerSID) ||
 		strings.EqualFold(sid, sqlServiceSID)
 }
 
@@ -93,7 +120,12 @@ func allowedTrustee(sid string) bool {
 // implicit WRITE_DAC and READ_CONTROL even when the DACL names none of its
 // rights, so a folder OWNED by an ordinary user can have its DACL rewritten by
 // that user no matter how locked the DACL looks today. An owner that is empty
-// or unrecognised is refused, never treated as safe.
+// or unrecognised is refused, never treated as safe. Nothing inherits or guesses
+// an owner here: the contract is that internal/blackbox/sqlservice_windows.go
+// assigns folderOwnerSID itself (OWNER|DACL|PROTECTED in one
+// SetNamedSecurityInfo) and reads the owner back before the service exists,
+// which is the only way a folder this rule accepts can come into existence
+// without an operator editing security (R1-s1).
 func (a folderACL) check() error {
 	switch {
 	case !a.Present:

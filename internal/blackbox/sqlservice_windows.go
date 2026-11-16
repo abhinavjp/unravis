@@ -12,6 +12,8 @@ import (
 	"strings"
 	"unsafe"
 
+	"api-audit-explorer/internal/bbsql"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -35,10 +37,15 @@ var (
 // of dir and removes every inherited permission: no ordinary user can read the
 // SQL data. W7-03: it first PROVES the folder is safe to adopt — trusted owner,
 // trusted ancestors, no reparse points anywhere in the chain, and every
-// existing child a regular file with a trusted owner — and only then applies
-// the protected DACL to the folder AND each existing child (replacing explicit
-// child ACEs, which inheritance alone would never remove). If any check fails
-// nothing is mutated, so pre-existing data keeps exactly what it had.
+// existing child a regular file with a trusted owner — and only then assigns
+// the folder its OWNER and its protected DACL in one write (R1-s1: the sampler's
+// own folder rule refuses a folder nobody pinned, so an install that left the
+// creator's owner in place would brick the DB lane at the first reading) and
+// applies the protected DACL to each existing child (replacing explicit child
+// ACEs, which inheritance alone would never remove). If any check fails
+// nothing is mutated, so pre-existing data keeps exactly what it had, and a
+// folder whose owner could not be assigned is refused (undoing the install)
+// rather than reported as locked.
 func (OSEnv) SecureSQLDir(dir, sid string) error { return secureSQLDir(dir, sid) }
 
 // GrantSQLLaunchAccess gives the SQL service SID the least-privilege rights it
@@ -57,10 +64,12 @@ func (OSEnv) GrantSQLLaunchAccess(exePath, configPath, sid string) error {
 	return grantSQLLaunchAccess(exePath, configPath, sid)
 }
 
-// VerifyAdminOnlyFile proves a settings file is administrator-locked (SEC-1):
-// a trusted owner (SYSTEM, Administrators or the installing administrator), a
-// DACL that grants change rights only to SYSTEM and Administrators, and no
-// reparse point in the file or any ancestor. Every read failure is a refusal:
+// VerifyAdminOnlyFile proves a settings file is administrator-locked (SEC-1): an
+// owner of SYSTEM or BUILTIN\Administrators — the two trustedFileOwner accepts,
+// which the installer ASSIGNS (R1-s2) rather than waits to inherit, so the
+// account that ran the install is no longer trusted here — a DACL that grants
+// change rights only to SYSTEM and Administrators, and no reparse point in the
+// file or any ancestor. Every read failure is a refusal:
 // an unreadable or malformed ACL means the file is NOT proven locked, never
 // that it is fine. The DACL rule itself is decided in pure Go (adminOnlyDACL).
 func (OSEnv) VerifyAdminOnlyFile(path string) error { return verifyAdminOnlyFile(path) }
@@ -68,11 +77,16 @@ func (OSEnv) VerifyAdminOnlyFile(path string) error { return verifyAdminOnlyFile
 // LockSQLInstallMarker locks the SQL install record to SYSTEM and
 // Administrators only (SEC-3): a protected DACL with full control for SY/BA
 // and nothing for anyone else — not even the SQL service SID, which never
-// reads the record. The owner stays the installing administrator (trusted by
-// verifyAdminOnlyFile). No inheritance: the record's lock is its own.
+// reads the record. The record is OWNED by BUILTIN\Administrators because the
+// installer says so in the same single descriptor write as the DACL (R1-s2),
+// never because the account that created it happens to be an administrator:
+// the owner holds implicit WRITE_DAC, so an owner of the installer's choosing
+// could re-open the record this proof is anchored to. verifyAdminOnlyFile
+// proves both halves. No inheritance: the record's lock is its own.
 func (OSEnv) LockSQLInstallMarker(path string) error { return lockSQLInstallMarker(path) }
 
-// lockSQLInstallMarker applies the admin-only protected DACL to the record.
+// lockSQLInstallMarker applies the admin-only owner and protected DACL to the
+// record in one write.
 func lockSQLInstallMarker(path string) error {
 	sd, err := windows.SecurityDescriptorFromString("D:PAI(A;;FA;;;SY)(A;;FA;;;BA)")
 	if err != nil {
@@ -82,9 +96,11 @@ func lockSQLInstallMarker(path string) error {
 	if err != nil {
 		return err
 	}
-	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil)
+	owner, err := windows.StringToSid(bbsql.FolderOwnerSID())
+	if err != nil {
+		return err
+	}
+	return writeOwnerAndProtectedDACL(path, owner, dacl)
 }
 
 // verifyAdminOnlyFile is the real Windows proof behind OSEnv.VerifyAdminOnlyFile.
@@ -121,12 +137,17 @@ func verifyAdminOnlyFile(path string) error {
 		return fmt.Errorf("blackbox: the settings file is a directory")
 	}
 	// The owner holds implicit WRITE_DAC no matter what the DACL says, so an
-	// ordinary owner could re-grant themselves write at any time: refuse.
+	// ordinary owner could re-grant themselves write at any time: refuse. Since
+	// R1-s2 the installer OWNS this file as Administrators in the same write that
+	// locked it (lockSQLInstallMarker), so the account that happened to create it
+	// is no longer accepted here; the folder chain in secureSQLDir still uses
+	// trustedOwner, which does, because the installer cannot re-own folders that
+	// belong to the operator. The split is written down on trustedFileOwner.
 	owner, err := ownerSID(path)
 	if err != nil {
 		return err
 	}
-	if !trustedOwner(owner, currentTokenSID()) {
+	if !trustedFileOwner(owner) {
 		return fmt.Errorf("blackbox: the settings file has an untrusted owner")
 	}
 	present, aces, err := describeAdminDACL(path)
@@ -313,10 +334,19 @@ func secureSQLDir(dir, sid string) error {
 		}
 		children = append(children, child)
 	}
-	// 3. Apply the protected DACL: the folder first, then each verified child,
-	// so explicit/protected child ACEs are replaced, not merely supplemented.
-	if err := setProtectedDACL(dir, sid); err != nil {
+	// 3. Lock the folder and give it its owner in ONE write (R1-s1), then prove
+	// the owner landed, then re-lock each verified child, so explicit/protected
+	// child ACEs are replaced, not merely supplemented. A child keeps its own
+	// owner: the sampler's rule is about the folder it is handed.
+	if err := lockAndOwnSQLDir(dir, sid); err != nil {
 		return err
+	}
+	folderOwner, err := ownerSID(dir)
+	if err != nil {
+		return err
+	}
+	if !trustedSQLFolderOwner(folderOwner, sid) {
+		return fmt.Errorf("%w (the folder kept a different owner)", errSQLFolderOwner)
 	}
 	for _, child := range children {
 		if err := setProtectedDACL(child, sid); err != nil {
@@ -336,9 +366,194 @@ func setProtectedDACL(path, sid string) error {
 	if err != nil {
 		return err
 	}
-	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+	return setNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 		nil, nil, dacl, nil)
+}
+
+// Privilege names, as Windows spells them (x/sys has no constant for either).
+const (
+	seRestorePrivilege       = "SeRestorePrivilege"
+	seTakeOwnershipPrivilege = "SeTakeOwnershipPrivilege"
+)
+
+// errPrivilegeNotHeld is the one answer this package gives for a token that was
+// asked to hold a privilege it cannot. A bare windows.Errno carries no context
+// once it reaches the sentence the person reads, and the identity of the code is
+// what a test checks the refusal for, so the read-back reports through this
+// variable.
+var errPrivilegeNotHeld = windows.ERROR_NOT_ALL_ASSIGNED
+
+// enablePrivilege turns one named privilege on for this process and returns the
+// function that puts the token back the way it was.
+//
+// Naming an owner that is not the caller is what SeRestorePrivilege (or
+// SeTakeOwnershipPrivilege) lets a process do, and an elevated install token
+// carries both present-but-disabled, so they are enabled for the length of one
+// descriptor write and taken back straight after it instead of being left on for
+// the rest of the install.
+//
+// A privilege the token does not hold is a failure, never a success. Windows
+// answers that case with ERROR_NOT_ALL_ASSIGNED and returns TRUE, which x/sys
+// reports as no error at all - measured on this host's filtered token, where the
+// call "succeeded" and the owner write afterwards failed with WIN32 1307. So the
+// token is read back and the assignment is proved, not trusted: an install that
+// cannot hold the privilege refuses, instead of attempting a write it has no
+// right to make.
+var enablePrivilege = enablePrivilegeOnToken
+
+func enablePrivilegeOnToken(name string) (func(), error) {
+	sysName, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return nil, err
+	}
+	var luid windows.LUID
+	if err := windows.LookupPrivilegeValue(nil, sysName, &luid); err != nil {
+		return nil, err
+	}
+	h, err := windows.GetCurrentProcess()
+	if err != nil {
+		return nil, err
+	}
+	var tok windows.Token
+	if err := windows.OpenProcessToken(h, windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &tok); err != nil {
+		return nil, err
+	}
+	// What the token says about itself before anything changes is what it has to
+	// say afterwards. PrevState cannot carry that: measured on this host, enabling
+	// SeChangeNotifyPrivilege - held and switched on by default - came back with
+	// PrivilegeCount 0, no entry for the privilege at all, and a restore computed
+	// from that turns off a privilege the process was already using.
+	wasOn, err := tokenPrivilegeEnabled(tok, luid)
+	if err != nil {
+		_ = tok.Close()
+		return nil, err
+	}
+	on := windows.Tokenprivileges{PrivilegeCount: 1, Privileges: [1]windows.LUIDAndAttributes{{Luid: luid, Attributes: windows.SE_PRIVILEGE_ENABLED}}}
+	if err := windows.AdjustTokenPrivileges(tok, false, &on, 0, nil, nil); err != nil {
+		_ = tok.Close()
+		return nil, err
+	}
+	if err := holdsPrivilege(tok, luid); err != nil {
+		_ = tok.Close()
+		return nil, err
+	}
+	back := attributesToRestore(wasOn)
+	restore := func() {
+		state := windows.Tokenprivileges{PrivilegeCount: 1, Privileges: [1]windows.LUIDAndAttributes{{Luid: luid, Attributes: back}}}
+		_ = windows.AdjustTokenPrivileges(tok, false, &state, 0, nil, nil)
+		_ = tok.Close()
+	}
+	return restore, nil
+}
+
+// attributesToRestore is the state enablePrivilege puts the token back into: the
+// enabled bit the privilege had before the write, and nothing else. One that was
+// already enabled stays enabled (switching it off would take a right the process
+// was using before the install), and one that was off goes off again, so the
+// privilege lives only for the single write that needed it.
+func attributesToRestore(wasEnabled bool) uint32 {
+	if wasEnabled {
+		return windows.SE_PRIVILEGE_ENABLED
+	}
+	return 0
+}
+
+// tokenPrivilegeEnabled reports whether this token's own privilege list has the
+// named privilege switched on right now.
+func tokenPrivilegeEnabled(tok windows.Token, luid windows.LUID) (bool, error) {
+	var n uint32
+	// Ask for the size first: the call fails with ERROR_INSUFFICIENT_BUFFER and
+	// reports how large the privilege list is.
+	if err := windows.GetTokenInformation(tok, windows.TokenPrivileges, nil, 0, &n); err != nil && err != windows.ERROR_INSUFFICIENT_BUFFER {
+		return false, err
+	}
+	if n < uint32(unsafe.Sizeof(windows.Tokenprivileges{})) {
+		return false, nil
+	}
+	buf := make([]byte, n)
+	if err := windows.GetTokenInformation(tok, windows.TokenPrivileges, &buf[0], n, &n); err != nil {
+		return false, err
+	}
+	ps := (*windows.Tokenprivileges)(unsafe.Pointer(&buf[0]))
+	for _, p := range ps.AllPrivileges() {
+		if p.Luid == luid {
+			runtime.KeepAlive(buf)
+			return p.Attributes&windows.SE_PRIVILEGE_ENABLED != 0, nil
+		}
+	}
+	runtime.KeepAlive(buf)
+	return false, nil
+}
+
+// holdsPrivilege refuses unless the token's own privilege list has the named
+// privilege switched on right now.
+//
+// Nothing here trusts a successful call: Windows answers AdjustTokenPrivileges
+// with TRUE and ERROR_NOT_ALL_ASSIGNED when the token does not hold the
+// privilege, and x/sys reports an error only when the call returns FALSE
+// (measured on this host's token, where enabling "succeeded" and the owner write
+// afterwards failed with WIN32 1307). So the assignment is proved against the
+// token itself, and an install that cannot hold the privilege refuses instead of
+// attempting a write it has no right to make.
+func holdsPrivilege(tok windows.Token, luid windows.LUID) error {
+	on, err := tokenPrivilegeEnabled(tok, luid)
+	if err != nil {
+		return err
+	}
+	if !on {
+		return errPrivilegeNotHeld
+	}
+	return nil
+}
+
+// writeOwnerAndProtectedDACL is the one Windows call that assigns an owner and a
+// protected DACL together, holding the privilege that makes naming another owner
+// possible for the length of that single write and no longer. Windows refusing
+// the owner (the measured WIN32 1307 of a token that cannot hold it) is the
+// install's own sentence, because a folder that kept its creator as owner is the
+// defect R1-s1 reported.
+func writeOwnerAndProtectedDACL(path string, owner *windows.SID, dacl *windows.ACL) error {
+	restore, err := enablePrivilege(seRestorePrivilege)
+	if err != nil {
+		restore, err = enablePrivilege(seTakeOwnershipPrivilege)
+		if err != nil {
+			return fmt.Errorf("%w: this process cannot enable either %s or %s (%w)", errSQLFolderOwner, seRestorePrivilege, seTakeOwnershipPrivilege, err)
+		}
+	}
+	defer restore()
+	if err := setNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		owner, nil, dacl, nil); err != nil {
+		return fmt.Errorf("%w: Windows refused the owner write (%w)", errSQLFolderOwner, err)
+	}
+	return nil
+}
+
+// setNamedSecurityInfo is the Win32 write behind every descriptor the installer
+// makes, again a variable only so a test can read the exact request.
+var setNamedSecurityInfo = windows.SetNamedSecurityInfo
+
+// lockAndOwnSQLDir writes the install DACL AND the folder's owner in a single
+// descriptor write (A1, R1-s1). The owner is the one SID bbsql's sample-folder
+// rule accepts and the installer must produce, named through bbsql.FolderOwnerSID
+// so the rule and the install cannot drift apart. Writing the two together leaves
+// no moment where the folder is locked but still owned by whoever created it, and
+// no half state to undo if the second write failed.
+func lockAndOwnSQLDir(path, sid string) error {
+	sd, err := windows.SecurityDescriptorFromString(sqlSDDL(sid))
+	if err != nil {
+		return err
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	owner, err := windows.StringToSid(bbsql.FolderOwnerSID())
+	if err != nil {
+		return err
+	}
+	return writeOwnerAndProtectedDACL(path, owner, dacl)
 }
 
 // grantSQLLaunchAccess applies the least-privilege launch plan (W7-01), which
@@ -422,6 +637,10 @@ func describeGrantDACL(path string) ([]fileACE, error) {
 // entry, the owner and the protection state untouched. The caller decides first
 // whether it is needed at all (aceGrantNeeded): an object that already holds
 // exactly this entry is never handed a second copy (SEC-6).
+// The owner this write leaves alone is NOT left to chance anywhere: it was
+// assigned by lockAndOwnSQLDir for the SQL data folder and by
+// lockSQLInstallMarker for the install record (R1-s1, R1-s2), and a DACL-only
+// write is exactly the shape that used to let an owner drift unnoticed.
 func appendAllowACE(path string, sid *windows.SID, want fileACE) error {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
@@ -595,14 +814,30 @@ func writeDACL(path string, header []byte, entries [][]byte) error {
 // installing administrator's own token user (a folder this admin created is
 // theirs to lock). Any other owner — an ordinary user who pre-created the
 // folder — is untrusted and refuses adoption (W7-03).
+//
+// This is the rule for objects the installer ADOPTS: the folder chain above the
+// SQL data folder and the files already inside it. They belong to whoever made
+// them, and an install must not re-own an operator's folders to satisfy a proof,
+// so the installing token counts here. The objects the installer CREATES are held
+// to the stricter trustedFileOwner (in sqlservice.go), because there the install
+// chooses the owner itself and must not leave it to chance.
 func trustedOwner(owner, self string) bool {
-	return strings.EqualFold(owner, "S-1-5-18") ||
+	return strings.EqualFold(owner, sidSystemSID) ||
 		strings.EqualFold(owner, "S-1-5-32-544") ||
 		(self != "" && strings.EqualFold(owner, self))
 }
 
 // ownerSID reads the owner SID of a file or folder.
-func ownerSID(path string) (string, error) {
+//
+// It is a variable for the same reason the two writes above are: the install's
+// owner read-back can only be watched end to end, with an operator-owned chain,
+// by a test that answers the read instead of the machine — this host has one
+// drive, its root is owned by NT SERVICE\TrustedInstaller, and W7-03 then refuses
+// every absolute path before the folder step is reached. The production value is
+// the Win32 read itself.
+var ownerSID = ownerSIDFromWindows
+
+func ownerSIDFromWindows(path string) (string, error) {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
 		return "", err
