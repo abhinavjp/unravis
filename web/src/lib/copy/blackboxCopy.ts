@@ -203,8 +203,8 @@ export const BB_TEXT = {
   } as Record<SettingsProblem, string>,
 
   /* targets: the app pools and services picked in the Settings step (BBX-1-12) */
-  targetsHeading: 'Targets (app pools and services)',
-  targetsHelp: 'Pick the app pools and services to watch in detail. Other counters stay machine-wide.',
+  targetsHeading: 'Targets: app pools and services (optional)',
+  targetsHelp: 'An app pool is the group of processes that runs one IIS website. A service is a Windows background program. The Blackbox also records extra counters for each one you pick. Pick none and it still records the machine-wide counters for the whole server. You only lose the per-app detail.',
   targetsAppPools: 'App pools',
   targetsServices: 'Services',
   targetsNotRunning: 'not running',
@@ -233,6 +233,15 @@ export const BB_TEXT = {
   reviewFolder: 'Folder',
   reviewPort: 'Port',
   reviewBind: 'Listens on',
+  reviewTargets: 'Watched closely',
+  reviewTargetsNone: 'No app pool or service was picked. The Blackbox records the machine-wide counters for the whole server only.',
+  // The Review row for the picked targets, for example "App pools: A, B. Services: C." An empty group is left out.
+  reviewTargetsText: (appPools: string[], services: string[]) => {
+    const parts: string[] = [];
+    if (appPools.length) parts.push('App pools: ' + appPools.join(', '));
+    if (services.length) parts.push('Services: ' + services.join(', '));
+    return parts.length ? parts.join('. ') + '.' : 'none';
+  },
   reviewProbe: 'Database probe',
   reviewProbeOff: 'Off (not in this release)',
   installButton: 'Install and start here',
@@ -409,6 +418,7 @@ export function blackboxCopyEntries(): LintEntry[] {
       else if (key === 'removedDeleted' || key === 'snapshotRecordings' || key === 'snapshotLogs' || key === 'hostTorn' || key === 'hostGapShort' || key === 'hostGapLong' || key === 'hostGapMinutes' || key === 'hostMinutes') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }
       else if (key === 'hostReadNote') add(key, fn(2, 240));
       else if (key === 'reviewKeepsText') add(key, fn(7, 2, 10));
+      else if (key === 'reviewTargetsText') { add(key + '.both', fn(['PoolA', 'PoolB'], ['SvcOne'])); add(key + '.pools', fn(['PoolA'], [])); add(key + '.services', fn([], ['SvcOne'])); }
       else if (key === 'filesAndSamples') { add(key + '.1', fn(1, 1)); add(key + '.2', fn(4, 960)); }
       else if (key === 'gapsText') {
         add(key + '.none', fn(0, 0)); add(key + '.gaps', fn(2, 0)); add(key + '.unread', fn(0, 1)); add(key + '.both', fn(1, 3));

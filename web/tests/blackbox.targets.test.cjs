@@ -114,8 +114,10 @@ test('the target picker copy passes the screen-string lint and the count guard h
   for (const key of ['targetsHeading', 'targetsHelp', 'targetsNotRunning', 'targetsAdd', 'targetsKindAppPool', 'targetsKindService']) {
     assert.equal(typeof BB_TEXT[key], 'string', key + ' is a plain string');
   }
-  assert.equal(BB_TEXT.targetsHeading, 'Targets (app pools and services)');
-  assert.equal(BB_TEXT.targetsHelp, 'Pick the app pools and services to watch in detail. Other counters stay machine-wide.');
+  assert.match(BB_TEXT.targetsHeading, /optional/i, 'the heading marks the section optional');
+  assert.match(BB_TEXT.targetsHelp, /app pool/i, 'the help says what an app pool is');
+  assert.match(BB_TEXT.targetsHelp, /service/i, 'the help says what a service is');
+  assert.match(BB_TEXT.targetsHelp, /pick none/i, 'the help says what picking none costs');
   assert.equal(BB_TEXT.targetsNotRunning, 'not running');
   assert.equal(BB_TEXT.targetsAdd, 'Add target');
 });

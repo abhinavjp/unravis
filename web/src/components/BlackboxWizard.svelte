@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import {
-    NAME_MAX, blackboxApi, defaultSettings, fieldProblemNow, listensOnAll, nameProblem, packFileName, refusalText, saveBlob, settingsProblem, wizardEscape,
+    NAME_MAX, blackboxApi, defaultSettings, fieldProblemNow, listensOnAll, nameProblem, packFileName, refusalText, saveBlob, settingsProblem, targetNamesByKind, wizardEscape,
     type BlackboxItem, type InstallAnswer, type Settings, type SettingsProblem, type ThisPc
   } from '../lib/blackbox';
   import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
@@ -43,6 +43,10 @@
   });
   const busy = $derived(phase.kind === 'working');
   const file = $derived(packFileName(name || 'name'));
+  const targetsReview = $derived.by(() => {
+    const groups = targetNamesByKind(settings.targets);
+    return T.reviewTargetsText(groups.appPools, groups.services);
+  });
 
   async function go(to: number) {
     problem = '';
@@ -202,6 +206,7 @@
         <div><dt>{T.reviewName}</dt><dd>{name}</dd></div>
         <div><dt>{T.reviewRuns}</dt><dd>{where === 'pc' ? T.reviewRunsPc : T.reviewRunsPack}</dd></div>
         <div><dt>{T.reviewSamples}</dt><dd>{settings.intervalSeconds} {T.seconds}</dd></div>
+        <div><dt>{T.reviewTargets}</dt><dd>{settings.targets.length === 0 ? T.reviewTargetsNone : targetsReview}</dd></div>
         <div><dt>{T.reviewKeeps}</dt><dd>{T.reviewKeepsText(settings.keepDays, settings.maxGB, settings.minFreePercent)}</dd></div>
         <div><dt>{T.reviewFolder}</dt><dd>{settings.folder}</dd></div>
         <div><dt>{T.reviewPort}</dt><dd>{settings.port}</dd></div>

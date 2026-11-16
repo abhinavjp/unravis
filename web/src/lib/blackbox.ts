@@ -146,6 +146,14 @@ export function pickedTargetState(kind: TargetKind, name: string, answer: Target
   return 'list-unreadable';
 }
 
+/** The picked target names split by kind, each group in the order picked. Nothing is dropped. */
+export function targetNamesByKind(targets: TargetRef[]): { appPools: string[]; services: string[] } {
+  const appPools: string[] = [];
+  const services: string[] = [];
+  for (const t of targets) (t.kind === 'appPool' ? appPools : services).push(t.name);
+  return { appPools, services };
+}
+
 export interface Settings {
   name: string;
   folder: string;
