@@ -135,7 +135,7 @@ export const DRILL_TEXT = {
   laneMoreBars: (n: number): string => `and ${n} more, see the list below`,
   legendWidth: 'Bar width = how long it took',
   legendShape: 'Faint area under the line = the same count, filled in to make it easier to see',
-  legendRate: 'Database faint area = batches per second that arrived (a batch is one request), not how many ran at once',
+  legendRate: 'Database faint area = batches per second counted by SQL Server (a batch is one request), not how many ran at once',
   legendHatched: 'Hatched = not recorded, which is unknown, not zero',
   legendCall: 'Red column = while this call was running',
   legendHow: 'What the shapes mean',
@@ -231,13 +231,23 @@ export const DRILL_TEXT = {
   dbMsgDenied: 'The saved database login is not allowed to read Query Store. It needs the VIEW DATABASE STATE permission. Ask the database owner, or add a login that has it.',
   dbMsgEvents: "Only SQL Server's own event files are available. They show moments such as deadlocks and long blocking, but not how busy the database was. A marker shows when something happened, not why.",
   dbMsgNotRead: 'The database was not read for this time. Go back to the timeline and read it for a window that covers this call.',
+  // What the batch number does and does not cover, kept inside what the recorder is verified to do (UX-9b):
+  // unreadable SQL Server instances are skipped, never counted as zero, so the sum is only over the instances
+  // Unravis could read (internal/blackbox/sqlhost.go: a failed source is skipped in sqlHostMultiSource.Collect,
+  // and build() creates an instance only from paths the engine emitted). The counter names and the time they
+  // cover are marked UNVERIFIED pending live check at internal/blackbox/sqlhost.go:31, so the message states
+  // what the counter measures and hands the window back to SQL Server instead of claiming it counts work that
+  // arrived. Cadence is only stated when the source sent it (W13-03, W13-04).
+  // The all-apps scope lives in the source label above this message ("machine-wide"), not in the message: the
+  // 520-character cap fix(UX-9) left cannot hold the scope, both glosses and the two new honest sentences (UX-9b).
   dbMsgBlackbox: (cadenceSeconds?: number | null): string =>
     'Blackbox is a recorder you place on a server.' +
     (cadenceSeconds != null && cadenceSeconds > 0 ? ` It reads every ${cadenceSeconds} s.` : ' The read interval is not recorded.') +
-    ' A batch is one request; it may hold several queries.' +
-    " This lane reads the host counter: SQL Server's own count of batches per second, added up across every SQL Server instance on the machine (an instance is one running copy of SQL Server)." +
-    ' So it counts every app, not only this one.' +
-    ' It counts work that arrived, not how many ran at once or how long it took.' +
+    " The number is the host counter: SQL Server's own count of batches per second, only over the SQL Server" +
+    ' instances Unravis could read (an instance is one running copy).' +
+    " An instance it could not read is left out, so the total can be lower than the machine's real work." +
+    ' It counts work, not how many ran at once or how long it took.' +
+    ' The window is what SQL Server reports; we have not checked it live.' +
     ' Gaps stay unknown, not zero.',
   dbShortOff: 'Not recorded: Query Store is off',
   dbShortDenied: 'Not recorded: no permission',

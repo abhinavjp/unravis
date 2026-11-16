@@ -139,7 +139,7 @@ test('the blackbox source copy names machine-wide batch throughput, with a sent 
   for (const text of [DRILL_TEXT.dbSrcBlackbox('20 Oct 2026', 60), DRILL_TEXT.dbMsgBlackbox(60), DRILL_TEXT.dbShortBlackbox(60)]) {
     assert.doesNotMatch(text, /15 to 60/, 'the old DMV cadence range is gone: ' + text);
   }
-  // UX-9 raised the cap: the message now defines batch, host counter and instance in plain words.
+  // UX-9 raised the cap once; UX-9b rewrote the sentences to fit under it unchanged (nothing raised here).
   // It renders as a wrapping paragraph (CallInspector's scall-db-state <p>), never a fixed-width cell.
   assert.ok(DRILL_TEXT.dbMsgBlackbox(null).length < 520);
   assert.ok(DRILL_TEXT.dbMsgBlackbox(60).length < 520);
@@ -208,19 +208,25 @@ test('the new unit copy uses no banned wording', () => {
 
 // ---- UX-9: a first-time investigator can say what the DB lane number means and what it does not ----
 
-test('UX-9: the blackbox message defines a batch, the host counter and an instance in plain words', () => {
+// UX-9b (R1-u2) replaced the "added up across every SQL Server instance" sentence: the recorder skips
+// unreadable instances, so the copy now says the sum is only over the instances it could read. The batch
+// gloss moved to the legend line that sits under the same chart; the instance gloss stayed in the message.
+test('UX-9: the blackbox message defines the host counter and an instance in plain words', () => {
   for (const msg of [DRILL_TEXT.dbMsgBlackbox(15), DRILL_TEXT.dbMsgBlackbox(null)]) {
-    assert.match(msg, /A batch is one request; it may hold several queries\./, msg);
     assert.match(msg, /host counter: SQL Server's own count of batches per second/, msg);
-    assert.match(msg, /added up across every SQL Server instance on the machine/, msg);
-    assert.match(msg, /an instance is one running copy of SQL Server/, msg);
-    assert.match(msg, /every app, not only this one/, msg);
+    assert.match(msg, /an instance is one running copy/, msg);
+    assert.match(msg, /It counts work, not how many ran at once or how long it took/, msg);
   }
+  // the all-apps scope stays visible for this state, in the source label the screen shows above the message
+  assert.match(DRILL_TEXT.dbSrcBlackbox('20 Oct 2026', 15), /machine-wide batches per second/);
+  assert.match(DRILL_TEXT.legendRate, /a batch is one request/, DRILL_TEXT.legendRate);
 });
 
-test('UX-9: the message says work arrived, not work running at once, and gaps stay unknown', () => {
+// UX-9b (R1-u1): the throughput-vs-concurrency split and the unknown gaps stay; the "work that arrived"
+// sentence went because the producer marks the counter names and their window UNVERIFIED (sqlhost.go:31).
+test('UX-9: the message separates throughput from concurrency and keeps gaps unknown', () => {
   for (const msg of [DRILL_TEXT.dbMsgBlackbox(5), DRILL_TEXT.dbMsgBlackbox(60), DRILL_TEXT.dbMsgBlackbox(null)]) {
-    assert.match(msg, /work that arrived, not how many ran at once or how long it took/, msg);
+    assert.match(msg, /not how many ran at once or how long it took/, msg);
     assert.match(msg, /Gaps stay unknown, not zero\./, msg);
   }
 });
@@ -237,8 +243,8 @@ test('UX-9: the old undefined jargon is gone from the DB lane copy, or defined w
   assert.doesNotMatch(DRILL_TEXT.legendRate, /host/);
 });
 
-test('UX-9: the rate legend says the area is work that arrived and defines a batch', () => {
-  assert.match(DRILL_TEXT.legendRate, /batches per second that arrived/);
+test('UX-9: the rate legend names the count SQL Server gives and defines a batch', () => {
+  assert.match(DRILL_TEXT.legendRate, /batches per second counted by SQL Server/);
   assert.match(DRILL_TEXT.legendRate, /a batch is one request/);
   assert.match(DRILL_TEXT.legendRate, /not how many ran at once/);
 });
@@ -253,5 +259,57 @@ test('UX-9: the at-once lane text is unchanged', () => {
 });
 
 test('UX-9: the reworded DB lane copy still passes the copy lint', () => {
+  assert.deepEqual(lintScreenStrings(drillCopyEntries(), deck.terms), []);
+});
+
+// ---- UX-9b (R1-u1, R1-u2): the counter copy may not claim more than the recorder is verified to do ----
+// Producer evidence, read in this repo at HEAD d0ec0832:
+//   internal/blackbox/sqlhost.go:31  "Names are UNVERIFIED pending live check."
+//   internal/blackbox/sqlhost.go:97-114  a source that fails to collect is skipped (line 105).
+//   internal/blackbox/sqlhost.go:308-325  only emitted paths make an instance; none at all omits the group.
+// So the number covers only the instances that could be read, and the arrived-vs-completed window is not verified.
+
+test('UX-9b R1-u2: the counter number covers only the instances Unravis could read and says the total can be lower', () => {
+  for (const msg of [DRILL_TEXT.dbMsgBlackbox(15), DRILL_TEXT.dbMsgBlackbox(60), DRILL_TEXT.dbMsgBlackbox(null)]) {
+    assert.match(msg, /only over the SQL Server instances Unravis could read/, msg);
+    assert.match(msg, /An instance it could not read is left out/, msg);
+    assert.match(msg, /can be lower than the machine's real work/, msg);
+    // the caps are exactly where fix(UX-9) left them; nothing was raised for this packet
+    assert.ok(msg.length < 520, 'message length ' + msg.length);
+  }
+});
+
+test('UX-9b R1-u2: no DB-lane counter copy claims every, all, each or any instance', () => {
+  const allInstances = /\b(every|all|each|any)\s+(SQL Server\s+)?(running\s+)?instances?\b/i;
+  const claimedAcross = /\bacross\b[^.]*\binstances?\b/i;
+  for (const text of [
+    DRILL_TEXT.dbMsgBlackbox(15), DRILL_TEXT.dbMsgBlackbox(60), DRILL_TEXT.dbMsgBlackbox(null),
+    DRILL_TEXT.dbSrcBlackbox('20 Oct 2026', 15), DRILL_TEXT.dbShortBlackbox(15), DRILL_TEXT.legendRate
+  ]) {
+    assert.doesNotMatch(text, allInstances, text);
+    assert.doesNotMatch(text, claimedAcross, text);
+  }
+});
+
+test('UX-9b R1-u1: the arrived-behaviour is not stated as verified; the window is what the server reports', () => {
+  for (const msg of [DRILL_TEXT.dbMsgBlackbox(15), DRILL_TEXT.dbMsgBlackbox(60), DRILL_TEXT.dbMsgBlackbox(null)]) {
+    assert.doesNotMatch(msg, /work that arrived|batches per second that arrived/i, msg);
+    assert.match(msg, /It counts work, not how many ran at once or how long it took\./, msg);
+    assert.match(msg, /The window is what SQL Server reports; we have not checked it live\./, msg);
+  }
+  // the chart legend carries the same claim and must not assert it either
+  assert.doesNotMatch(DRILL_TEXT.legendRate, /arrived/i, DRILL_TEXT.legendRate);
+  assert.match(DRILL_TEXT.legendRate, /batches per second/, DRILL_TEXT.legendRate);
+  assert.match(DRILL_TEXT.legendRate, /not how many ran at once/, DRILL_TEXT.legendRate);
+});
+
+test('UX-9b: the reworded copy still defines its terms in plain words and passes the copy lint', () => {
+  for (const msg of [DRILL_TEXT.dbMsgBlackbox(15), DRILL_TEXT.dbMsgBlackbox(null)]) {
+    assert.match(msg, /an instance is one running copy/, msg);
+    assert.match(msg, /host counter: SQL Server's own count of batches per second/, msg);
+    assert.doesNotMatch(msg, /\blane\b/i, 'no jargon "lane" in first-time copy: ' + msg);
+    assert.doesNotMatch(msg, /added up across every SQL Server instance/, msg);
+    assert.match(msg, /Gaps stay unknown, not zero\./, msg);
+  }
   assert.deepEqual(lintScreenStrings(drillCopyEntries(), deck.terms), []);
 });

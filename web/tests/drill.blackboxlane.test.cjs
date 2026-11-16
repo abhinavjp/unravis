@@ -70,7 +70,8 @@ test('blackbox: it says what the source is and stays calm, with the usual short 
   const v = blackbox();
   assert.equal(v.message, T.dbMsgBlackbox(null));
   assert.equal(typeof v.message, 'string');
-  // UX-9 raised the cap: the message defines batch, host counter and instance; it renders as a wrapping <p>.
+  // UX-9 raised the cap once; UX-9b rewritten the sentences to fit under it unchanged. It renders as a
+  // wrapping <p>, never a fixed-width cell.
   assert.ok(v.message.length > 0 && v.message.length < 520, 'message length ' + v.message.length);
   assert.equal(v.short, T.dbShortBlackbox(null));
   assert.ok(v.short.length > 0 && v.short.length < 60, 'short length ' + v.short.length);
@@ -89,17 +90,28 @@ test('blackbox: the message separates throughput from concurrency and keeps gaps
 
 // ---- UX-9: the message a first-time investigator reads defines every term it uses ----
 
-test('UX-9: the state message defines batch, host counter and instance, and says the count covers every app', () => {
+test('UX-9: the state message defines the host counter and an instance, and says what the number leaves out', () => {
   for (const cadence of [15, null]) {
-    const msg = blackbox({ laneCadenceSeconds: cadence }).message;
-    assert.match(msg, /A batch is one request; it may hold several queries\./, msg);
+    const state = blackbox({ laneCadenceSeconds: cadence });
+    const msg = state.message;
     assert.match(msg, /host counter: SQL Server's own count of batches per second/, msg);
-    assert.match(msg, /added up across every SQL Server instance on the machine/, msg);
-    assert.match(msg, /an instance is one running copy of SQL Server/, msg);
-    assert.match(msg, /every app, not only this one/, msg);
-    assert.match(msg, /work that arrived, not how many ran at once or how long it took/, msg);
+    assert.match(msg, /an instance is one running copy/, msg);
+    // the all-apps scope is stated where the screen shows it: the source label above this message
+    assert.match(state.source, /machine-wide batches per second/, state.source);
+    // UX-9b (R1-u2): unreadable instances are skipped by the recorder, so no all-instances claim is allowed
+    assert.match(msg, /only over the SQL Server instances Unravis could read/, msg);
+    assert.match(msg, /An instance it could not read is left out/, msg);
+    assert.match(msg, /can be lower than the machine's real work/, msg);
+    assert.doesNotMatch(msg, /\b(every|all|each|any)\s+(SQL Server\s+)?(running\s+)?instances?\b/i, msg);
+    // UX-9b (R1-u1): sqlhost.go:31 marks the counter names UNVERIFIED pending live check, so the window is
+    // handed back to SQL Server rather than stated as work that arrived.
+    assert.doesNotMatch(msg, /work that arrived/i, msg);
+    assert.match(msg, /The window is what SQL Server reports; we have not checked it live\./, msg);
+    assert.match(msg, /not how many ran at once or how long it took/, msg);
     assert.match(msg, /Gaps stay unknown, not zero\./, msg);
     assert.doesNotMatch(msg, /added up over the instances there/, 'the old undefined phrasing is gone: ' + msg);
+    assert.doesNotMatch(msg, /\blane\b/i, 'first-time copy names no lane: ' + msg);
+    assert.ok(msg.length < 520, 'message length ' + msg.length + ' fits the cap fix(UX-9) left');
   }
 });
 
