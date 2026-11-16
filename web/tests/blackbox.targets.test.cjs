@@ -114,8 +114,11 @@ test('the target picker copy passes the screen-string lint and the count guard h
   for (const key of ['targetsHeading', 'targetsHelp', 'targetsNotRunning', 'targetsAdd', 'targetsKindAppPool', 'targetsKindService']) {
     assert.equal(typeof BB_TEXT[key], 'string', key + ' is a plain string');
   }
-  assert.equal(BB_TEXT.targetsHeading, 'Targets (app pools and services)');
-  assert.equal(BB_TEXT.targetsHelp, 'Pick the app pools and services to watch in detail. Other counters stay machine-wide.');
+  // UX-8: the heading says what the list is in the words the person brings, and the help says what
+  // the choice does to the recording, in one plain sentence with no acronym in it.
+  assert.equal(BB_TEXT.targetsHeading, 'Websites and services to watch closely (optional)');
+  assert.equal(BB_TEXT.targetsHelp, 'Each watched name gets its own processor and memory record too, and none means the whole machine only.');
+  assert.doesNotMatch(BB_TEXT.targetsHelp, /CPU|IIS|app pool|counter|machine-wide/i, 'the sentence is plain words, not the field names');
   assert.equal(BB_TEXT.targetsNotRunning, 'not running');
   assert.equal(BB_TEXT.targetsAdd, 'Add target');
 });
@@ -765,9 +768,9 @@ test('manual mode renders none of the read states, and the new copy is linted an
 /* ------------------------------------------------------------------ UX-6: bounded lists, one group note, a filter */
 
 // A long detected list must stay usable: a bounded scroll region a keyboard can reach, a filter
-// that narrows it without hiding that names exist, and ONE note under the legend when no row's
-// running state could be read — not the same note on every row. No per-row targetsStateUnknown
-// assertion lives in this file (UX-8 deletes that key).
+// that narrows it without hiding that names exist, and ONE note under the legend of a group that
+// holds an unknown running state (UX-8b: any row, not only a whole list of them) — never the same
+// note on every row. No per-row targetsStateUnknown assertion lives in this file (UX-8 deletes that key).
 const svc200 = Array.from({ length: 200 }, (_, i) => ({ name: 'Svc' + String(i).padStart(3, '0'), state: 'unknown' }));
 const countOf = (text, needle) => text.split(needle).length - 1;
 
@@ -821,19 +824,77 @@ test('the filter narrows a 200-name list, case-insensitively, and says how many 
   assert.equal(step.services.length, 200);
 });
 
-test('a mixed list keeps the honest per-row labels and shows no group note', async () => {
+test('a mixed list keeps its honest per-row labels and says the unread states once, as the overall note', async () => {
   pcBridge.result = await realAnswer({
     appPools: [{ name: 'Payroll', state: 'running' }, { name: 'DefaultAppPool', state: 'unknown' }],
     services: [{ name: 'W3SVC', state: 'running' }, { name: 'Spooler', state: 'stopped' }],
     detected: true, appPoolsState: 'detected', servicesState: 'detected'
   }); pcBridge.failed = false;
   const { html, plain } = renderPcStep();
-  assert.ok(!plain.includes(BB_TEXT.targetsAllUnknown), 'no group note when some states are known');
+  // UX-8b (decision A): the old rule here was "no group note when some states are known", which left
+  // an unknown row with no words at all once UX-8 took its label away. The note now fires on ANY
+  // unknown row, so the pools group says it once. The services group holds no unknown row, so it
+  // stays quiet: one note per group that needs one, never a note per group that does not.
+  assert.equal(countOf(plain, BB_TEXT.targetsAllUnknown), 1, 'the group with an unknown row gets the overall note');
+  const poolsLegend = html.search(legendOf(BB_TEXT.targetsAppPools));
+  const servicesLegend = html.search(legendOf(BB_TEXT.targetsServices));
+  assert.ok(poolsLegend >= 0 && servicesLegend > poolsLegend, 'both legends render, pools first');
+  assert.ok(html.indexOf(BB_TEXT.targetsAllUnknown) > poolsLegend && html.indexOf(BB_TEXT.targetsAllUnknown) < servicesLegend, 'the note belongs to the pools group only');
   // SSR anchor comments may sit between the name and its note; the person reads "Spooler not running".
   assert.match(html, /Spooler(?:<!--[^>]*-->)* <span class="bb-note[^"]*">not running<\/span>/);
-  // W2-07: the unknown row is never labelled stopped. Its own words are not asserted here:
-  // UX-8 deletes the per-row unknown copy key, and a leftover assertion would break it.
+  // W2-07: the unknown row is never labelled stopped, and UX-8 keeps it free of any label of its own.
   assert.doesNotMatch(html, /DefaultAppPool(?:<!--[^>]*-->)* <span class="bb-note[^"]*">not running<\/span>/);
+  assert.doesNotMatch(html, /DefaultAppPool(?:<!--[^>]*-->)* <span class="bb-note/, 'no per-row label on the unknown row');
+});
+
+test('UX-8: a mixed list renders one honest overall note and no per-row unknown label', async () => {
+  // The pools group is mixed: one name known running, one whose state could not be read, one known
+  // stopped. The services group holds nothing but unknown names. Since UX-8b each of these groups
+  // owns one honest overall note (UX-6), because each holds at least one unread state — the count is
+  // per group, never per row. Everything below is read off the rendered text, never off the source.
+  pcBridge.result = await realAnswer({
+    appPools: [{ name: 'Payroll', state: 'running' }, { name: 'Nightly', state: 'unknown' }, { name: 'Legacy', state: 'stopped' }],
+    services: [{ name: 'BatchSvc', state: 'unknown' }, { name: 'QueueSvc', state: 'unknown' }],
+    detected: true, appPoolsState: 'detected', servicesState: 'detected'
+  }); pcBridge.failed = false;
+  const { html, plain } = renderPcStep();
+  // One note per group that holds an unknown row (UX-8b), and never one per row: three unknown names
+  // across the two groups here, so the count is 2 - one per group - not 3.
+  assert.equal(countOf(plain, BB_TEXT.targetsAllUnknown), 2, 'one honest overall note per group');
+  // UX-8: no per-row unknown label anywhere. The words are pinned here as the person reads them,
+  // so the assertion still says something once the per-row copy key is gone.
+  assert.equal(countOf(plain, 'running state unknown'), 0, 'no per-row unknown label renders');
+  // What is known is still said per row: a stopped row keeps its label, a running row claims nothing.
+  assert.match(html, /Legacy(?:<!--[^>]*-->)* <span class="bb-note[^"]*">not running<\/span>/, 'the stopped row keeps its honest label');
+  assert.doesNotMatch(html, /Payroll(?:<!--[^>]*-->)* <span class="bb-note/, 'a known running row says nothing');
+  // The unknown row says nothing of its own either: silence is not a claim that it is running.
+  assert.doesNotMatch(html, /Nightly(?:<!--[^>]*-->)* <span class="bb-note/, 'the unknown row carries no label of its own');
+  // No name was dropped on the way: every one is still offered, with the same states as before.
+  for (const name of ['Payroll', 'Nightly', 'Legacy', 'BatchSvc', 'QueueSvc']) {
+    assert.ok(plain.includes(name), name + ' is still listed');
+  }
+});
+
+test('UX-8b: a group with one unknown row gets the one overall note, and still no per-row label', async () => {
+  // The pools group is mixed on purpose: one name known running, one whose state could not be read.
+  // The services group holds only known states, so any overall note on the page must come from the
+  // pools group. Read off the rendered text, never off the component source.
+  pcBridge.result = await realAnswer({
+    appPools: [{ name: 'Payroll', state: 'running' }, { name: 'Nightly', state: 'unknown' }],
+    services: [{ name: 'W3SVC', state: 'running' }, { name: 'Spooler', state: 'stopped' }],
+    detected: true, appPoolsState: 'detected', servicesState: 'detected'
+  }); pcBridge.failed = false;
+  const { html, plain } = renderPcStep();
+  assert.equal(countOf(plain, BB_TEXT.targetsAllUnknown), 1, 'exactly one overall note for a group with one unknown row');
+  assert.equal(countOf(plain, 'running state unknown'), 0, 'and still no per-row unknown label');
+  // The note stands where the all-unknown note stands: under the App pools legend, before the rows.
+  const legendAt = html.search(legendOf(BB_TEXT.targetsAppPools));
+  assert.ok(legendAt >= 0, 'the pools legend renders');
+  assert.ok(html.indexOf(BB_TEXT.targetsAllUnknown) > legendAt, 'the note is under the pools legend');
+  assert.ok(plain.indexOf(BB_TEXT.targetsAllUnknown) < plain.indexOf('Payroll'), 'the note comes before the first row');
+  // Known states are still said per row; the unknown row itself still says nothing of its own.
+  assert.match(html, /Spooler(?:<!--[^>]*-->)* <span class="bb-note[^"]*">not running<\/span>/, 'a known stopped row keeps its label');
+  assert.doesNotMatch(html, /Nightly(?:<!--[^>]*-->)* <span class="bb-note/, 'the unknown row carries no label of its own');
 });
 
 test('an all-unknown pools list gets its own single note, and the new copy is linted and plain', async () => {

@@ -12,9 +12,10 @@
   const invalid = (key: SettingsProblem) => (problem === key ? 'true' : undefined);
   const described = (key: SettingsProblem, help: string) => idPrefix + '-' + help + (problem === key ? ' ' + idPrefix + '-' + key + '-error' : '');
 
-  // Targets (BBX-1-12): only kind+name is ever stored. A stopped target says "not running";
-  // one whose state could not be read says so, and is never labelled stopped (W2-07). A name
-  // absent from a capped or unreadable list is unknown, never guessed stopped (W3-06).
+  // Targets (BBX-1-12): only kind+name is ever stored. A stopped target says "not running" (W2-07);
+  // one whose state could not be read says nothing of its own, and is never labelled stopped. UX-8:
+  // the per-row unknown label is gone - the one overall note (targetsAllUnknown) carries that, and a
+  // name absent from a capped or unreadable list stays unknown, never guessed stopped (W3-06).
   let appPools = $state<TargetInfo[]>([]);
   let services = $state<TargetInfo[]>([]);
   let detected = $state(false);
@@ -69,8 +70,15 @@
     const shown = shownTargets(kind).length;
     return shown > 0 ? T.targetsFilterCount(shown, total) : T.targetsFilterNone(total);
   }
-  // True when no row's running state could be read: one note under the legend says it, with the
-  // consequence, instead of the same note on every row. A mixed list keeps its per-row notes.
+  // UX-8b: one note under the legend when ANY row's running state could not be read, so a mixed group
+  // is never left without words. Still one note per group, never one per row.
+  function anyUnknown(kind: TargetKind): boolean {
+    const list = kind === 'appPool' ? appPools : services;
+    return list.some((t) => targetRunState(t) === 'unknown');
+  }
+  // True when no row's running state could be read: then the rows carry no note of their own at all,
+  // because the one note above them has already said it. A mixed list keeps only its per-row "not
+  // running" notes (UX-8); a row whose state was not read says nothing of its own.
   function allUnknown(kind: TargetKind): boolean {
     const list = kind === 'appPool' ? appPools : services;
     return list.length > 0 && list.every((t) => targetRunState(t) === 'unknown');
@@ -113,7 +121,6 @@
   function chipNote(t: TargetRef): string {
     const s = pickedTargetState(t.kind, t.name, { appPools, services, detected, appPoolsState, servicesState });
     if (s === 'stopped') return T.targetsNotRunning;
-    if (s === 'unknown') return T.targetsStateUnknown;
     if (s === 'not-in-list') return T.targetsNotInList;
     if (s === 'source-not-found') return T.targetsSourceNotFound;
     if (s === 'list-unreadable') return T.targetsListUnreadable;
@@ -171,7 +178,7 @@
 {/snippet}
 
 {#snippet rowNote(t: TargetInfo)}
-  {#if targetRunState(t) === 'stopped'}{' '}<span class="bb-note">{T.targetsNotRunning}</span>{:else if targetRunState(t) === 'unknown'}{' '}<span class="bb-note">{T.targetsStateUnknown}</span>{/if}
+  {#if targetRunState(t) === 'stopped'}{' '}<span class="bb-note">{T.targetsNotRunning}</span>{/if}
 {/snippet}
 
 {#snippet targetChips(list: TargetRef[])}
@@ -218,7 +225,7 @@
     {#if groupState('appPool') === 'list'}
       <fieldset class="bb-checks">
         <legend>{T.targetsAppPools}</legend>
-        {#if allUnknown('appPool')}<p class="bb-note">{T.targetsAllUnknown}</p>{/if}
+        {#if anyUnknown('appPool')}<p class="bb-note">{T.targetsAllUnknown}</p>{/if}
         <label class="bb-field bb-filter"><span>{T.targetsFilterLabel}</span>
           <input id="{idPrefix}-pools-filter" type="text" bind:value={poolFilter} autocomplete="off" spellcheck="false" aria-describedby={poolFilter.trim() ? idPrefix + '-pools-count' : undefined} />
         </label>
@@ -235,7 +242,7 @@
     {#if groupState('service') === 'list'}
       <fieldset class="bb-checks">
         <legend>{T.targetsServices}</legend>
-        {#if allUnknown('service')}<p class="bb-note">{T.targetsAllUnknown}</p>{/if}
+        {#if anyUnknown('service')}<p class="bb-note">{T.targetsAllUnknown}</p>{/if}
         <label class="bb-field bb-filter"><span>{T.targetsFilterLabel}</span>
           <input id="{idPrefix}-services-filter" type="text" bind:value={serviceFilter} autocomplete="off" spellcheck="false" aria-describedby={serviceFilter.trim() ? idPrefix + '-services-count' : undefined} />
         </label>

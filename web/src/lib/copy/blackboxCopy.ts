@@ -204,12 +204,14 @@ export const BB_TEXT = {
   } as Record<SettingsProblem, string>,
 
   /* targets: the app pools and services picked in the Settings step (BBX-1-12) */
-  targetsHeading: 'Targets (app pools and services)',
-  targetsHelp: 'Pick the app pools and services to watch in detail. Other counters stay machine-wide.',
+  targetsHeading: 'Websites and services to watch closely (optional)',
+  // UX-8: the help says what the choice does, in the first words a first-time investigator reads:
+  // a picked name is measured on its own as well as on the machine, and an empty list is the
+  // machine alone. No jargon, no acronym.
+  targetsHelp: 'Each watched name gets its own processor and memory record too, and none means the whole machine only.',
   targetsAppPools: 'App pools',
   targetsServices: 'Services',
   targetsNotRunning: 'not running',
-  targetsStateUnknown: 'running state unknown',
   targetsNotInList: 'not in the detected list; running state unknown',
   targetsListUnreadable: 'list could not be read; running state unknown',
   targetsSourceNotFound: 'not detected on this PC; running state unknown',
@@ -219,10 +221,12 @@ export const BB_TEXT = {
   targetsNameLabel: 'Target name',
   targetsManualNote: 'Type the name of an app pool or service, then press Add target.',
   targetsListNote: 'The list may be incomplete. Type a name below to add a target that is not listed.',
-  // UX-6: one note under a group's legend when no row's running state could be read. It states the
-  // consequence and stands in for the same note on every row. The filter never hides silently that
-  // names exist: the count line says how many are shown, and the no-match line says how to see them all.
-  targetsAllUnknown: 'Unravis could not read whether these are running. A target that is not running records nothing.',
+  // UX-6: one note under a group's legend, never the same note on every row. UX-8b: it fires when ANY
+  // row's running state could not be read, so the sentence says "some of these" and not "these": it is
+  // shown for a mixed group too, where some states were read. It states what the missed states mean for
+  // the numbers. The filter never hides silently that names exist: the count line says how many are
+  // shown, and the no-match line says how to see them all.
+  targetsAllUnknown: 'Unravis could not read whether some of these are running. A target that is not running records nothing, so a missing figure may mean nothing was recorded.',
   targetsFilterLabel: 'Find a name',
   targetsFilterCount: (shown: number, total: number) => 'Showing ' + shown + ' of ' + total + ' names.',
   targetsFilterNone: (total: number) => 'No name matches. Clear the box to see all ' + total + ' names.',
