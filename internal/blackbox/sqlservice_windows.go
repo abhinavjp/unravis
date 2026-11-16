@@ -4,6 +4,7 @@ package blackbox
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,22 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+)
+
+// The pure launch plan (sqlLaunchGrants) names the rights as literals so it can
+// be decided and tested off Windows. These compile-time checks refuse the build
+// the moment a literal stops matching the Windows constant it stands for, in
+// either direction: a silent drift would hand the service rights nobody decided,
+// or take away ones it needs.
+var (
+	_ [int(windows.FILE_GENERIC_READ|windows.FILE_GENERIC_EXECUTE) - int(maskSQLProgram)]struct{}
+	_ [int(maskSQLProgram) - int(windows.FILE_GENERIC_READ|windows.FILE_GENERIC_EXECUTE)]struct{}
+	_ [int(windows.FILE_GENERIC_READ) - int(maskSQLSettings)]struct{}
+	_ [int(maskSQLSettings) - int(windows.FILE_GENERIC_READ)]struct{}
+	_ [int(windows.FILE_TRAVERSE|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE) - int(maskSQLTraverse)]struct{}
+	_ [int(maskSQLTraverse) - int(windows.FILE_TRAVERSE|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE)]struct{}
+	_ [int(windows.ACCESS_ALLOWED_ACE_TYPE) - int(aceTypeAllow)]struct{}
+	_ [int(aceTypeAllow) - int(windows.ACCESS_ALLOWED_ACE_TYPE)]struct{}
 )
 
 // SecureSQLDir gives SYSTEM, Administrators and the SQL service SID full control
@@ -30,6 +47,12 @@ func (OSEnv) SecureSQLDir(dir, sid string) error { return secureSQLDir(dir, sid)
 // allow ACEs to the existing DACLs: write, owner and DACL-change rights stay
 // with SYSTEM and Administrators, the ACEs are not inheritable, and nothing is
 // granted to ordinary users. The service never runs as SYSTEM.
+//
+// SEC-6: an entry an object already holds exactly is not added again, so a
+// re-install leaves one entry per object instead of another copy, and the grant
+// stops at the two folders that hold the files — a service account holds bypass
+// traverse checking, so the folders it only passes through need nothing.
+// RevokeSQLLaunchGrants takes the same entries back on remove-sql.
 func (OSEnv) GrantSQLLaunchAccess(exePath, configPath, sid string) error {
 	return grantSQLLaunchAccess(exePath, configPath, sid)
 }
@@ -117,63 +140,115 @@ func verifyAdminOnlyFile(path string) error {
 // rule. A missing (NULL) DACL is reported as not present (the rule refuses it).
 // A malformed or truncated entry is an error, never a skipped entry.
 func describeAdminDACL(path string) (bool, []fileACE, error) {
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	return describeFileDACL(path, "the settings file")
+}
+
+// describeFileDACL describes an object's access list for a pure rule, with the
+// same fail-closed reads as the settings-file proof: an unreadable, absent or
+// malformed ACL is an error, never a shorter list.
+func describeFileDACL(path, what string) (bool, []fileACE, error) {
+	list, err := describeACEs(path, what)
 	if err != nil {
 		return false, nil, err
+	}
+	aces := make([]fileACE, 0, len(list.entries))
+	for _, e := range list.entries {
+		aces = append(aces, e.ace)
+	}
+	return list.present, aces, nil
+}
+
+// describedDACL is one object's access list in every form the ACL writers need:
+// the entries as the pure rules judge them, their raw bytes (so a rebuilt list
+// carries the entries this code was never asked to touch, unchanged) and the
+// header bytes (so a rebuilt list keeps the revision the original declared).
+type describedDACL struct {
+	present bool
+	header  []byte
+	entries []describedACE
+}
+
+// describedACE is one access entry: its description and its exact bytes.
+type describedACE struct {
+	ace fileACE
+	raw []byte
+}
+
+// describeACEs reads path's DACL and describes every entry. Every read failure
+// is returned: an entry that cannot be parsed is never dropped, and a list that
+// cannot be read is never treated as an empty one (SEC-1, SEC-6). what names the
+// object in an error message.
+func describeACEs(path, what string) (describedDACL, error) {
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return describedDACL{}, err
 	}
 	defer runtime.KeepAlive(sd)
 	dacl, present, err := sd.DACL()
 	if err != nil {
-		return false, nil, err
+		return describedDACL{}, err
 	}
 	if !present || dacl == nil {
-		return false, nil, nil
+		return describedDACL{}, nil
 	}
-	aces := make([]fileACE, 0, int(dacl.AceCount))
+	// The ACL header is 8 bytes: revision, a spare byte, the total size, the
+	// entry count and a final spare word. x/sys keeps all but the count
+	// unexported, so the header is taken straight from the bytes.
+	hdr := make([]byte, 8)
+	copy(hdr, unsafe.Slice((*byte)(unsafe.Pointer(dacl)), 8))
+	list := describedDACL{present: true, header: hdr, entries: make([]describedACE, 0, int(dacl.AceCount))}
 	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, i, &ace); err != nil {
-			return false, nil, err
+			return describedDACL{}, err
 		}
 		size := int(ace.Header.AceSize)
 		if size < 8 {
-			return false, nil, fmt.Errorf("blackbox: a truncated access entry on the settings file")
-		}
-		raw := unsafe.Slice((*byte)(unsafe.Pointer(ace)), size)
-		a := fileACE{Type: ace.Header.AceType, Mask: uint32(ace.Mask)}
-		// The trustee SID starts at offset 8 for plain and callback ACEs; an
-		// object ACE carries a flags word and up to two GUIDs before the SID.
-		sidOff := 8
-		switch a.Type {
-		case 0x5, 0x6, 0x7, 0x8, 0xB, 0xC, 0xF, 0x10:
-			if size < 12 {
-				return false, nil, fmt.Errorf("blackbox: a truncated object access entry on the settings file")
-			}
-			objFlags := binary.LittleEndian.Uint32(raw[8:12])
-			sidOff = 12
-			if objFlags&0x1 != 0 { // ACE_OBJECT_TYPE_PRESENT
-				sidOff += 16
-			}
-			if objFlags&0x2 != 0 { // ACE_INHERITED_OBJECT_TYPE_PRESENT
-				sidOff += 16
-			}
-		}
-		if sidOff+8 > size {
-			return false, nil, fmt.Errorf("blackbox: a truncated access entry on the settings file")
-		}
-		sidLen := 8 + 4*int(raw[sidOff+1]) // revision + count + authority + sub-authorities
-		if sidOff+sidLen > size {
-			return false, nil, fmt.Errorf("blackbox: a malformed trustee on the settings file")
+			return describedDACL{}, fmt.Errorf("blackbox: a truncated access entry on %s", what)
 		}
 		// Copy so the SID is aligned and owned; String() returns "" for an
-		// invalid SID, which the rule treats as an untrusted trustee.
-		sidBuf := make([]byte, sidLen)
-		copy(sidBuf, raw[sidOff:sidOff+sidLen])
-		a.Trustee = (*windows.SID)(unsafe.Pointer(&sidBuf[0])).String()
-		aces = append(aces, a)
+		// invalid SID, which the rules treat as an untrusted trustee.
+		raw := make([]byte, size)
+		copy(raw, unsafe.Slice((*byte)(unsafe.Pointer(ace)), size))
+		a, err := describeACEBytes(raw, what)
+		if err != nil {
+			return describedDACL{}, err
+		}
+		list.entries = append(list.entries, describedACE{ace: a, raw: raw})
 		runtime.KeepAlive(ace)
 	}
-	return true, aces, nil
+	return list, nil
+}
+
+// describeACEBytes describes one access entry from its bytes. The trustee SID
+// starts at offset 8 for plain and callback ACEs; an object ACE carries a flags
+// word and up to two GUIDs before the SID.
+func describeACEBytes(raw []byte, what string) (fileACE, error) {
+	a := fileACE{Type: raw[0], Flags: raw[1], Mask: binary.LittleEndian.Uint32(raw[4:8])}
+	sidOff := 8
+	switch a.Type {
+	case 0x5, 0x6, 0x7, 0x8, 0xB, 0xC, 0xF, 0x10:
+		if len(raw) < 12 {
+			return a, fmt.Errorf("blackbox: a truncated object access entry on %s", what)
+		}
+		objFlags := binary.LittleEndian.Uint32(raw[8:12])
+		sidOff = 12
+		if objFlags&0x1 != 0 { // ACE_OBJECT_TYPE_PRESENT
+			sidOff += 16
+		}
+		if objFlags&0x2 != 0 { // ACE_INHERITED_OBJECT_TYPE_PRESENT
+			sidOff += 16
+		}
+	}
+	if sidOff+8 > len(raw) {
+		return a, fmt.Errorf("blackbox: a truncated access entry on %s", what)
+	}
+	sidLen := 8 + 4*int(raw[sidOff+1]) // revision + count + authority + sub-authorities
+	if sidOff+sidLen > len(raw) {
+		return a, fmt.Errorf("blackbox: a malformed trustee on %s", what)
+	}
+	a.Trustee = (*windows.SID)(unsafe.Pointer(&raw[sidOff])).String()
+	return a, nil
 }
 
 // secureSQLDir applies sqlSDDL(sid) to dir as a protected DACL after the
@@ -266,51 +341,88 @@ func setProtectedDACL(path, sid string) error {
 		nil, nil, dacl, nil)
 }
 
-// grantSQLLaunchAccess appends the least-privilege launch ACEs (W7-01).
-func grantSQLLaunchAccess(exePath, configPath, sid string) error {
+// grantSQLLaunchAccess applies the least-privilege launch plan (W7-01), which
+// sqlLaunchGrants decides in pure Go: the installed program, the bound settings
+// file and the two folders that hold them — nothing above them, and never the
+// same entry twice (SEC-6).
+func grantSQLLaunchAccess(exePath, configPath, sid string) (err error) {
 	// SEC-1: re-prove the settings lock here, at the real ACL boundary, so the
 	// grant can never widen access on a user-writable config even if a caller
 	// skipped the entry proof. Unverifiable means refused.
-	if err := verifyAdminOnlyFile(configPath); err != nil {
+	if verr := verifyAdminOnlyFile(configPath); verr != nil {
+		return verr
+	}
+	grants, err := sqlLaunchGrants(exePath, configPath, sid)
+	if err != nil {
 		return err
+	}
+	// PROVE FIRST, in the W7-03 order: every target's access list is read and the
+	// entries that are genuinely missing are worked out BEFORE a single write. A
+	// target whose list cannot be read therefore refuses the whole grant with
+	// nothing written, and a re-install whose entries are all already present
+	// writes nothing at all instead of another copy of each (SEC-6).
+	var todo []sqlLaunchGrant
+	for _, gr := range grants {
+		aces, derr := describeGrantDACL(gr.Path)
+		if derr != nil {
+			return derr
+		}
+		if aceGrantNeeded(aces, gr.ACE) {
+			todo = append(todo, gr)
+		}
+	}
+	if len(todo) == 0 {
+		return nil
 	}
 	sidObj, err := windows.StringToSid(sid)
 	if err != nil {
 		return err
 	}
-	if err := appendAllowACE(exePath, sidObj, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_EXECUTE); err != nil {
-		return err
-	}
-	if err := appendAllowACE(configPath, sidObj, windows.FILE_GENERIC_READ); err != nil {
-		return err
-	}
-	// Traversal on the program folder and on every folder leading to the
-	// settings file (the service must reach both). Traverse-only, no listing,
-	// no inheritance, no write.
-	traverse := windows.ACCESS_MASK(windows.FILE_TRAVERSE | windows.FILE_READ_ATTRIBUTES | windows.SYNCHRONIZE)
-	seen := map[string]bool{}
-	for _, d := range []string{filepath.Dir(exePath), filepath.Dir(configPath)} {
-		for p := filepath.Clean(d); ; p = filepath.Dir(p) {
-			if !seen[p] {
-				seen[p] = true
-				if err := appendAllowACE(p, sidObj, traverse); err != nil {
-					return err
-				}
-			}
-			if filepath.Dir(p) == p {
-				break
-			}
+	// A write that fails half way is taken back, so an install that did not
+	// finish never leaves its rights on some of its objects and not on others.
+	// The failure itself is still what the caller sees.
+	var done []sqlLaunchGrant
+	defer func() {
+		if err != nil && len(done) > 0 {
+			_ = revokeSQLLaunchGrants(done)
 		}
+	}()
+	for _, gr := range todo {
+		if aerr := appendAllowACE(gr.Path, sidObj, gr.ACE); aerr != nil {
+			err = aerr
+			return err
+		}
+		done = append(done, gr)
 	}
 	return nil
 }
 
-// appendAllowACE adds one non-inheritable access-allowed ACE for sid to path's
-// existing DACL, leaving every other ACE, the owner and the protection state
-// untouched. A missing (NULL) DACL is refused rather than silently replaced:
-// the host install always writes an explicit one, and a NULL DACL means the
-// program/settings are world-writable — a broken install, not a grant target.
-func appendAllowACE(path string, sid *windows.SID, mask windows.ACCESS_MASK) error {
+// describeGrantDACL reads the access list an object must already hold before the
+// grant rule may touch it. Everything is fail-closed: an unreadable or malformed
+// list is an error, and so is a missing (NULL) one — the host install always
+// writes an explicit list, and a NULL list means the program or settings are
+// world-writable, which is a broken install rather than a grant target. Unknown
+// never becomes "empty", because an empty list would make every grant look missing.
+func describeGrantDACL(path string) ([]fileACE, error) {
+	list, err := describeACEs(path, "the SQL launch grant target")
+	if err != nil {
+		return nil, err
+	}
+	if !list.present {
+		return nil, fmt.Errorf("blackbox: refusing to grant on an object with no access list")
+	}
+	aces := make([]fileACE, 0, len(list.entries))
+	for _, e := range list.entries {
+		aces = append(aces, e.ace)
+	}
+	return aces, nil
+}
+
+// appendAllowACE adds one entry to path's existing DACL, leaving every other
+// entry, the owner and the protection state untouched. The caller decides first
+// whether it is needed at all (aceGrantNeeded): an object that already holds
+// exactly this entry is never handed a second copy (SEC-6).
+func appendAllowACE(path string, sid *windows.SID, want fileACE) error {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return err
@@ -334,16 +446,146 @@ func appendAllowACE(path string, sid *windows.SID, mask windows.ACCESS_MASK) err
 	buf := make([]byte, newSize)
 	copy(buf, unsafe.Slice((*byte)(unsafe.Pointer(old)), oldSize))
 	off := oldSize
-	buf[off] = windows.ACCESS_ALLOWED_ACE_TYPE
-	buf[off+1] = 0 // no inheritance: the grant stays on this object only
+	buf[off] = want.Type
+	buf[off+1] = want.Flags // no inheritance: the grant stays on this object only
 	binary.LittleEndian.PutUint16(buf[off+2:], uint16(aceSize))
-	binary.LittleEndian.PutUint32(buf[off+4:], uint32(mask))
+	binary.LittleEndian.PutUint32(buf[off+4:], uint32(want.Mask))
 	copy(buf[off+8:], unsafe.Slice((*byte)(unsafe.Pointer(sid)), sidLen))
 	acl := (*windows.ACL)(unsafe.Pointer(&buf[0]))
 	// Rewrite the header size in the bytes (the struct field is unexported).
 	binary.LittleEndian.PutUint16(buf[2:4], uint16(newSize))
 	acl.AceCount = old.AceCount + 1
 	err = windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
+	runtime.KeepAlive(buf)
+	return err
+}
+
+// RevokeSQLLaunchGrants takes back the launch entries install-sql added (SEC-6).
+// It is handed the very entries of the install plan, so an entry this code did
+// not add — an operator's grant, an inherited one, a deny, SYSTEM's or
+// Administrators' full control — is never removed, and the folder's protection
+// state and owner are left exactly as they are.
+func (OSEnv) RevokeSQLLaunchGrants(grants []sqlLaunchGrant) error {
+	return revokeSQLLaunchGrants(grants)
+}
+
+// revokeSQLLaunchGrants takes the planned entries back. Every target is read and
+// its replacement list built BEFORE anything is written (the W7-03 prove-first
+// order), so an object whose list cannot be read stops the whole revoke and no
+// folder is stripped while another keeps its entry. What survives is written back
+// byte for byte, in order, under the header the object itself declared, and only
+// DACL_SECURITY_INFORMATION is ever set: the protection flag, the owner and the
+// group stay exactly as they were. A write that fails is returned: what did go was
+// one of this install's own read entries, so a part-finished revoke only ever
+// narrows access — it never widens it and never rewrites an entry that is not
+// ours — and the caller is told instead of being shown a clean removal.
+func revokeSQLLaunchGrants(grants []sqlLaunchGrant) error {
+	// One rewrite per object, even when two planned entries sit on the same
+	// folder: the second removal is applied to the list the first one produced,
+	// never to a stale copy that would write the entry back.
+	type target struct {
+		header  []byte
+		entries []describedACE
+		dirty   bool
+	}
+	byPath := make(map[string]*target, len(grants))
+	var order []string
+	for _, gr := range grants {
+		t := byPath[gr.Path]
+		if t == nil {
+			list, err := describeACEs(gr.Path, "the SQL launch grant target")
+			if err != nil {
+				// The object is gone (a replaced program folder, an already
+				// deleted settings file): its entries went with it, so there is
+				// nothing left to revoke. Any other read failure is returned:
+				// unknown is never treated as an empty access list.
+				if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
+					continue
+				}
+				return err
+			}
+			if !list.present {
+				return fmt.Errorf("blackbox: refusing to revoke on an object with no access list")
+			}
+			t = &target{header: list.header, entries: list.entries}
+			byPath[gr.Path] = t
+			order = append(order, gr.Path)
+		}
+		kept, removed, err := dropGrantACEs(t.entries, gr.ACE)
+		if err != nil {
+			return err
+		}
+		if removed > 0 {
+			t.entries, t.dirty = kept, true
+		}
+	}
+	for _, path := range order {
+		t := byPath[path]
+		if !t.dirty {
+			continue
+		}
+		raws := make([][]byte, len(t.entries))
+		for i, e := range t.entries {
+			raws[i] = e.raw
+		}
+		if err := writeDACL(path, t.header, raws); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dropGrantACEs returns the entries of a read list that survive revoking want and
+// how many went. The entries dropped here and the ones the pure rule counted must
+// agree; if they ever do not, the list is refused rather than rewritten from a
+// count this code cannot account for.
+func dropGrantACEs(list []describedACE, want fileACE) ([]describedACE, int, error) {
+	described := make([]fileACE, len(list))
+	for i, e := range list {
+		described[i] = e.ace
+	}
+	keptAces, removed := aceGrantKept(described, want)
+	if removed == 0 {
+		return list, 0, nil
+	}
+	kept := make([]describedACE, 0, len(list))
+	dropped := 0
+	for _, e := range list {
+		if dropped < removed && aceEqual(e.ace, want) {
+			dropped++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if len(kept) != len(keptAces) {
+		return nil, 0, fmt.Errorf("blackbox: the access list of the SQL launch grant target could not be rebuilt safely")
+	}
+	return kept, removed, nil
+}
+
+// writeDACL replaces path's access list with exactly these entries, keeping the
+// header the original list declared. Only DACL_SECURITY_INFORMATION is set, so
+// the protection flag, the owner and the group stay as they were.
+func writeDACL(path string, header []byte, entries [][]byte) error {
+	size := 8
+	for _, e := range entries {
+		size += len(e)
+	}
+	if size > 0xFFFF {
+		return fmt.Errorf("blackbox: the access list is too large to rewrite")
+	}
+	buf := make([]byte, size)
+	copy(buf, header[:8])
+	binary.LittleEndian.PutUint16(buf[2:4], uint16(size))
+	binary.LittleEndian.PutUint16(buf[4:6], uint16(len(entries)))
+	off := 8
+	for _, e := range entries {
+		copy(buf[off:], e)
+		off += len(e)
+	}
+	acl := (*windows.ACL)(unsafe.Pointer(&buf[0]))
+	err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
 	runtime.KeepAlive(buf)
 	return err
