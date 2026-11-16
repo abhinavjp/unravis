@@ -2,11 +2,31 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createRequire } = require('node:module');
+const { execFileSync } = require('node:child_process');
 const test = require('node:test');
 const ts = require('typescript');
 
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
+// The EOL assertions used to require a CRLF *checkout*, which only holds where
+// core.autocrlf materialises one; a fresh LF worktree failed them and CI could not tell
+// the difference. They now read the committed blob through git, which is the same bytes
+// on every checkout, plus the ending shape the file itself holds, which is the part a
+// mixed-ending edit can actually break.
+const committedText = (relative) => execFileSync('git', ['show', 'HEAD:web/' + relative], { cwd: root, maxBuffer: 32 * 1024 * 1024 }).toString('utf8');
+const rawRead = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
+const assertCommittedAsLf = (relative) => {
+  const text = committedText(relative);
+  assert.ok(text.includes('\n'), relative + ' has no line ending in its committed blob');
+  const cr = (text.match(/\r/g) ?? []).length;
+  assert.equal(cr, 0, relative + ' has ' + cr + ' CR bytes in its committed blob; the help and guide files are committed as LF');
+};
+const assertOneEndingOnDisk = (relative) => {
+  const text = rawRead(relative);
+  const crlf = (text.match(/\r\n/g) ?? []).length;
+  const bareLf = (text.match(/(?<!\r)\n/g) ?? []).length;
+  assert.ok(crlf === 0 || bareLf === 0, relative + ' mixes line endings on disk: ' + crlf + ' CRLF and ' + bareLf + ' bare LF');
+};
 function loadTypeScript(relativePath) {
   const filename = path.join(root, relativePath);
   const source = fs.readFileSync(filename, 'utf8');
@@ -109,9 +129,9 @@ test('the guide copy has its five keys and passes the copy lint', () => {
   assert.deepEqual(lintCopy(entries, deck.terms), []);
 });
 
-test('the new and changed files keep CRLF line endings', () => {
+test('the new and changed files are committed as LF and hold one ending on disk', () => {
   for (const file of ['src/components/HelpGuide.svelte', 'src/components/Glossary.svelte', 'src/lib/copy/helpCopy.ts']) {
-    const text = fs.readFileSync(path.join(root, file), 'utf8');
-    assert.ok(!/(?<!\r)\n/.test(text), file + ' has a bare LF');
+    assertCommittedAsLf(file);
+    assertOneEndingOnDisk(file);
   }
 });

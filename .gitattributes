@@ -2,7 +2,8 @@
 # Text files keep the repository's existing checkout behaviour (core.autocrlf);
 # the web test helpers normalise CRLF->LF at their read point, so they pass on
 # both a CRLF (windows CI) and an LF checkout. Do not add a global text/eol rule:
-# the help/guide content is deliberately CRLF and its tests assert that.
+# these help and guide files are committed as LF (core.eol=lf), and their tests assert
+# that against the git object plus one ending per file on whatever the checkout wrote.
 *.png binary
 *.ico binary
 *.jpg binary
