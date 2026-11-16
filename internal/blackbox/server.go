@@ -381,17 +381,17 @@ var errRecordingRefused = errors.New("recording entry refused")
 //     an ancestor of dir after this point cannot redirect the open: the handle
 //     keeps referencing the original directory.
 //   - The entry is opened RELATIVE to that handle (Root.Open), which enforces
-//     containment: no component may escape the root, and absolute link targets
-//     are refused. On Windows the open itself also refuses every reparse point
-//     (O_NOFOLLOW_ANY, with a handle-inspecting fallback on older builds). On
-//     Unix, however, Root.Open FOLLOWS relative symlinks that stay inside the
-//     root — containment alone is NOT no-follow there.
-//   - The entry name is therefore ALSO checked with root.Lstat on the same
-//     pinned root (no-follow on the final component): a symlink or irregular
-//     entry is refused even when its target is a regular file inside the
-//     folder. os.SameFile ties that Lstat to the opened handle's Stat, so an
-//     entry substituted between open and stat is refused, never served under
-//     an alias. Any Lstat/Stat error fails closed.
+//     containment of the path on BOTH platforms: no component may escape the
+//     root and absolute link targets are refused. Containment is not no-follow:
+//     a relative link to another file in the same folder was measured on this
+//     Windows host being followed to that file's bytes, so neither the Windows
+//     open nor the Unix one is relied on to refuse a reparse point.
+//   - No-follow on the FINAL component is this function's own guard, on every
+//     platform: root.Lstat on the same pinned root refuses a symlink or
+//     irregular entry even when its target is a regular file inside the folder,
+//     and os.SameFile ties that Lstat to the opened handle's Stat, so an entry
+//     substituted between open and stat is refused, never served under an
+//     alias. Any Lstat/Stat error fails closed.
 //   - The FINAL object is checked on the opened handle (never the path): it
 //     must be a regular file, so directories, devices and pipes are refused
 //     even when they carry a valid recording basename.
