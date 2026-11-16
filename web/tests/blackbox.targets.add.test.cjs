@@ -1,38 +1,18 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createRequire } = require('node:module');
 const test = require('node:test');
-const ts = require('typescript');
+const { loadTypeScript, CHIP_NOTE_RE } = require('./helpers/loadTs.cjs');
 
-// W3-06: successful-but-incomplete discovery must still let the owner add a known valid name,
-// and a selected target's state must be honest. The endpoint offers running services only and
-// caps each list at 256, so a name absent from a list is unknown, never guessed stopped. The
-// manual add row sits alongside the detected lists, not only in their else branch. Pack/remote
-// ('manual') mode is unchanged: it never fetches and its chips carry no state note.
+// W3-06 (add-by-name): successful-but-incomplete discovery must still let the owner add a known
+// valid name by typing it, and a selected target's state must be honest. The endpoint offers
+// running services only and caps each list at 256, so a name absent from a list is unknown,
+// never guessed stopped. The add-by-name row sits alongside the detected lists, not only in
+// their else branch. Pack/remote ('manual') mode is unchanged: it never fetches and its chips
+// carry no state note.
 
 const root = path.resolve(__dirname, '..');
-const cache = new Map();
-function loadTypeScript(relativePath) {
-  const filename = path.join(root, relativePath);
-  if (cache.has(filename)) return cache.get(filename).exports;
-  const source = fs.readFileSync(filename, 'utf8');
-  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
-  const module = { exports: {} };
-  cache.set(filename, module);
-  const nodeRequire = createRequire(filename);
-  const load = (request) => {
-    if (/^\.\.?\//.test(request)) {
-      const plain = path.join(path.dirname(filename), request + '.ts');
-      const store = path.join(path.dirname(filename), request + '.svelte.ts');
-      if (fs.existsSync(plain)) return loadTypeScript(path.relative(root, plain));
-      if (fs.existsSync(store)) return loadTypeScript(path.relative(root, store));
-    }
-    return nodeRequire(request);
-  };
-  new Function('require', 'module', 'exports', '$state', output)(load, module, module.exports, (value) => value);
-  return module.exports;
-}
+
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
 
 const bb = loadTypeScript('src/lib/blackbox.ts');
@@ -105,20 +85,20 @@ test('an older server with no per-source state still labels an absent name unkno
   assert.equal(pickedTargetState('service', 'MyStoppedSvc', legacyNone), 'list-unreadable');
 });
 
-/* ------------------------------------------------------------------ manual add alongside the lists */
+/* ---------------------------------------------------------- add-by-name alongside the lists */
 
-test('the manual add row renders alongside the detected lists, not only in their else branch', () => {
+test('the add-by-name row renders alongside the detected lists, not only in their else branch', () => {
   const comp = read('src/components/BlackboxSettings.svelte');
   // The else branch now holds only the manual note; the add row follows the closing {/if}, so it
   // renders whether or not detection succeeded. This is the W3-06 fix: the old else-only row is gone.
-  assert.match(comp, /\{:else\}\s*<p class="bb-note">\{T\.targetsManualNote\}<\/p>\s*\{\/if\}\s*<div class="bb-target-add">/, 'the add row is outside the showLists conditional');
+  assert.match(comp, /\{:else\}\s*<p\s+class="bb-note">\{T\.targetsManualNote\}<\/p>\s*\{\/if\}\s*<div\s+class="bb-target-add">/, 'the add row is outside the showLists conditional');
   assert.match(comp, /\{#if showLists\}/, 'the detected lists are still offered when detection succeeded');
   assert.match(comp, /\{@render targetChips\(extraPicked\)\}/, 'selected names absent from the lists render as chips');
-  assert.match(comp, /\{#if !showLists\}\s*\{@render targetChips\(picked\)\}/, 'with no lists, every picked name renders as a chip');
+  assert.match(comp, /\{#if\s+!showLists\}\s*\{@render\s+targetChips\(picked\)\}/, 'with no lists, every picked name renders as a chip');
   // The add row keeps the same kind+name helper and the same server-side validation/cap (nothing weakened here).
   assert.match(comp, /function addTarget\(\)/);
-  assert.match(comp, /settings\.targets = toggleTarget\(picked, manualKind, name\)/);
-  assert.match(comp, /disabled=\{!manualName\.trim\(\)\} onclick=\{addTarget\}/);
+  assert.match(comp, /settings\.targets\s*=\s*toggleTarget\(picked,\s*manualKind,\s*name\)/);
+  assert.match(comp, /disabled=\{!manualName\.trim\(\)\}\s*onclick=\{addTarget\}/);
 });
 
 test('successful-but-incomplete discovery still allows adding the wanted stopped service, stored as kind+name', () => {
@@ -141,14 +121,14 @@ test('successful-but-incomplete discovery still allows adding the wanted stopped
 test('a selected stopped service is labelled stopped; an absent name is labelled unknown, never stopped', () => {
   const comp = read('src/components/BlackboxSettings.svelte');
   // The chip note maps each honest state to its copy; absent-name states never map to "not running".
-  assert.match(comp, /if \(s === 'stopped'\) return T\.targetsNotRunning;/);
-  assert.match(comp, /if \(s === 'unknown'\) return T\.targetsStateUnknown;/);
-  assert.match(comp, /if \(s === 'not-in-list'\) return T\.targetsNotInList;/);
-  assert.match(comp, /if \(s === 'source-not-found'\) return T\.targetsSourceNotFound;/);
-  assert.match(comp, /if \(s === 'list-unreadable'\) return T\.targetsListUnreadable;/);
-  assert.match(comp, /pickedTargetState\(t\.kind, t\.name, \{ appPools, services, detected, appPoolsState, servicesState \}\)/);
+  assert.match(comp, /if\s*\(s\s*===\s*'stopped'\)\s*return\s*T\.targetsNotRunning;/);
+  assert.match(comp, /if\s*\(s\s*===\s*'unknown'\)\s*return\s*T\.targetsStateUnknown;/);
+  assert.match(comp, /if\s*\(s\s*===\s*'not-in-list'\)\s*return\s*T\.targetsNotInList;/);
+  assert.match(comp, /if\s*\(s\s*===\s*'source-not-found'\)\s*return\s*T\.targetsSourceNotFound;/);
+  assert.match(comp, /if\s*\(s\s*===\s*'list-unreadable'\)\s*return\s*T\.targetsListUnreadable;/);
+  assert.match(comp, /pickedTargetState\(t\.kind,\s*t\.name,\s*\{\s*appPools,\s*services,\s*detected,\s*appPoolsState,\s*servicesState\s*\}\)/);
   // The listed checkbox keeps its existing stopped/unknown labels (W2-07).
-  assert.match(comp, /\{#if targetRunState\(t\) === 'stopped'\} <span class="bb-note">\{T\.targetsNotRunning\}<\/span>\{:else if targetRunState\(t\) === 'unknown'\} <span class="bb-note">\{T\.targetsStateUnknown\}<\/span>\{\/if\}/);
+  assert.match(comp, CHIP_NOTE_RE, 'the listed checkbox keeps its stopped/unknown labels (W2-07)');
   // The absent-name copy says unknown, and never claims the target is stopped or not running.
   for (const key of ['targetsNotInList', 'targetsListUnreadable', 'targetsSourceNotFound']) {
     assert.match(BB_TEXT[key], /unknown/, key + ' says the running state is unknown');
@@ -160,42 +140,42 @@ test('a selected stopped service is labelled stopped; an absent name is labelled
 
 test('chips carry a state note only on this PC after the single read settles; the note is rendered', () => {
   const comp = read('src/components/BlackboxSettings.svelte');
-  assert.match(comp, /const chipsLabelled = \$derived\(targetMode === 'pc' && targetsRead\)/, 'pack/remote chips stay unlabelled');
-  assert.match(comp, /\{#if chipsLabelled && chipNote\(t\)\} <span class="bb-note">\{chipNote\(t\)\}<\/span>\{\/if\}/, 'the chip renders its honest note');
+  assert.match(comp, /const chipsLabelled\s*=\s*\$derived\(targetMode\s*===\s*'pc'\s*&&\s*targetsRead\)/, 'pack/remote chips stay unlabelled');
+  assert.match(comp, /\{#if\s+chipsLabelled\s*&&\s*chipNote\(t\)\}\s*<span\s+class="bb-note">\{chipNote\(t\)\}<\/span>\s*\{\/if\}/, 'the chip renders its honest note');
 });
 
 /* ------------------------------------------------------------------ read once, per-source state kept */
 
 test('the picker keeps the per-source states from the one read and never polls', () => {
   const comp = read('src/components/BlackboxSettings.svelte');
-  assert.match(comp, /onMount\(\(\) => \{\s*if \(targetMode !== 'pc'\) return;/, 'pack/remote mode never fetches');
+  assert.match(comp, /onMount\(\(\)\s*=>\s*\{\s*if\s*\(targetMode\s*!==\s*'pc'\)\s*return;/, 'pack/remote mode never fetches');
   assert.match(comp, /blackboxApi\.targets\(\)/);
-  assert.match(comp, /appPoolsState = answer\.appPoolsState;/);
-  assert.match(comp, /servicesState = answer\.servicesState;/);
-  assert.match(comp, /\.catch\(\(\) => \{ targetsRead = true;/, 'a failed read still settles so chips can say the list could not be read');
+  assert.match(comp, /appPoolsState\s*=\s*answer\.appPoolsState;/);
+  assert.match(comp, /servicesState\s*=\s*answer\.servicesState;/);
+  assert.match(comp, /\.catch\(\(\)\s*=>\s*\{\s*targetsRead\s*=\s*true;/, 'a failed read still settles so chips can say the list could not be read');
   assert.doesNotMatch(comp, /setInterval|setTimeout/, 'no polling');
-  assert.equal((comp.match(/targetsRead = true;/g) ?? []).length, 2, 'read settles on success and on failure');
+  assert.equal((comp.match(/targetsRead\s*=\s*true;/g) ?? []).length, 2, 'read settles on success and on failure');
 });
 
 /* ------------------------------------------------------------------ pack/remote mode unchanged */
 
 test('pack/remote (manual) mode is unchanged: no fetch, typed names, unlabelled chips', () => {
   const comp = read('src/components/BlackboxSettings.svelte');
-  assert.match(comp, /targetMode\?: 'pc' \| 'manual'/);
+  assert.match(comp, /targetMode\?:\s*'pc'\s*\|\s*'manual'/);
   assert.match(comp, /\{T\.targetsManualNote\}/, 'the manual note is still shown when there are no lists');
-  assert.match(comp, /const chipsLabelled = \$derived\(targetMode === 'pc' && targetsRead\)/, 'manual mode never labels chips');
+  assert.match(comp, /const chipsLabelled\s*=\s*\$derived\(targetMode\s*===\s*'pc'\s*&&\s*targetsRead\)/, 'manual mode never labels chips');
   const wizard = read('src/components/BlackboxWizard.svelte');
-  assert.match(wizard, /targetMode=\{where === 'pc' \? 'pc' : 'manual'\}/, 'the wizard passes the mode it is in');
+  assert.match(wizard, /targetMode=\{where\s*===\s*'pc'\s*\?\s*'pc'\s*:\s*'manual'\}/, 'the wizard passes the mode it is in');
   // In manual mode nothing is detected, so every picked name is a chip and the add row is the only way in.
-  assert.match(comp, /\{#if !showLists\}\s*\{@render targetChips\(picked\)\}/);
+  assert.match(comp, /\{#if\s+!showLists\}\s*\{@render\s+targetChips\(picked\)\}/);
 });
 
 /* ------------------------------------------------------------------ only kind+name is stored */
 
 test('the picker stores only kind+name and never a path, command line or key', () => {
   const comp = read('src/components/BlackboxSettings.svelte');
-  assert.match(comp, /toggleTarget\(picked, kind, name\)/, 'checking a name uses the pure helper');
-  assert.match(comp, /function removeTarget\(kind: TargetKind, name: string\)/);
+  assert.match(comp, /toggleTarget\(picked,\s*kind,\s*name\)/, 'checking a name uses the pure helper');
+  assert.match(comp, /function removeTarget\(kind:\s*TargetKind,\s*name:\s*string\)/);
   assert.doesNotMatch(comp, /commandLine|imagePath|\.path\b|readKey|password|secret/, 'no path, command line or key is stored');
   const both = toggleTarget(toggleTarget([], 'appPool', 'DefaultAppPool'), 'service', 'W3SVC');
   for (const t of both) assert.deepEqual(Object.keys(t).sort(), ['kind', 'name']);

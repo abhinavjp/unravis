@@ -1,9 +1,8 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createRequire } = require('node:module');
 const test = require('node:test');
-const ts = require('typescript');
+const { loadTypeScript } = require('./helpers/loadTs.cjs');
 
 // BBX-5-17 / BL-103, after the wave-13 review (W13-01..W13-04): the Blackbox SQL lane source.
 // The lane reads HOST PDH batch counters (blackbox.Sample.SQLHost...BatchRequestsPerSec), NOT the
@@ -14,20 +13,7 @@ const ts = require('typescript');
 // sent it; otherwise the caption says the read interval is unknown. No date is ever invented.
 
 const root = path.resolve(__dirname, '..');
-function loadTypeScript(relativePath) {
-  const filename = path.join(root, relativePath);
-  const source = fs.readFileSync(filename, 'utf8');
-  const output = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
-  }).outputText;
-  const module = { exports: {} };
-  const nodeRequire = createRequire(filename);
-  const load = (request) => /^\.\.?\//.test(request) && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
-    ? loadTypeScript(path.relative(root, path.join(path.dirname(filename), request + '.ts')))
-    : nodeRequire(request);
-  new Function('require', 'module', 'exports', output)(load, module, module.exports);
-  return module.exports;
-}
+
 
 const { dbState, DB_STATE_KEYS } = loadTypeScript('src/lib/drill/dbState.ts');
 const { DRILL_TEXT: T, DRILL_HELP, drillCopyEntries } = loadTypeScript('src/lib/drill/drillCopy.ts');

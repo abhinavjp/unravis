@@ -1,34 +1,10 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const { createRequire } = require('node:module');
 const test = require('node:test');
-const ts = require('typescript');
+const { loadTypeScript } = require('./helpers/loadTs.cjs');
 
 // UX-3: the Review step of the install wizard shows the app pools and services the owner picked.
 
-const root = path.resolve(__dirname, '..');
-const cache = new Map();
-function loadTypeScript(relativePath) {
-  const filename = path.join(root, relativePath);
-  if (cache.has(filename)) return cache.get(filename).exports;
-  const source = fs.readFileSync(filename, 'utf8');
-  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
-  const module = { exports: {} };
-  cache.set(filename, module);
-  const nodeRequire = createRequire(filename);
-  const load = (request) => {
-    if (/^\.\.?\//.test(request)) {
-      const plain = path.join(path.dirname(filename), request + '.ts');
-      const store = path.join(path.dirname(filename), request + '.svelte.ts');
-      if (fs.existsSync(plain)) return loadTypeScript(path.relative(root, plain));
-      if (fs.existsSync(store)) return loadTypeScript(path.relative(root, store));
-    }
-    return nodeRequire(request);
-  };
-  new Function('require', 'module', 'exports', '$state', output)(load, module, module.exports, (value) => value);
-  return module.exports;
-}
+
 
 const bb = loadTypeScript('src/lib/blackbox.ts');
 const { BB_TEXT, blackboxCopyEntries } = loadTypeScript('src/lib/copy/blackboxCopy.ts');

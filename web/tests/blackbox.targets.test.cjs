@@ -1,36 +1,15 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createRequire } = require('node:module');
 const test = require('node:test');
-const ts = require('typescript');
+const { loadTypeScript, CHIP_NOTE_RE } = require('./helpers/loadTs.cjs');
 
 // BBX-1-12: the install-wizard target picker. Targets are owner-selected app pools and services,
 // stored as kind+name only. This-PC mode reads the detected names once on mount; pack/remote mode
 // is manual entry. A not-running target says "not running", never 0.
 
 const root = path.resolve(__dirname, '..');
-const cache = new Map();
-function loadTypeScript(relativePath) {
-  const filename = path.join(root, relativePath);
-  if (cache.has(filename)) return cache.get(filename).exports;
-  const source = fs.readFileSync(filename, 'utf8');
-  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
-  const module = { exports: {} };
-  cache.set(filename, module);
-  const nodeRequire = createRequire(filename);
-  const load = (request) => {
-    if (/^\.\.?\//.test(request)) {
-      const plain = path.join(path.dirname(filename), request + '.ts');
-      const store = path.join(path.dirname(filename), request + '.svelte.ts');
-      if (fs.existsSync(plain)) return loadTypeScript(path.relative(root, plain));
-      if (fs.existsSync(store)) return loadTypeScript(path.relative(root, store));
-    }
-    return nodeRequire(request);
-  };
-  new Function('require', 'module', 'exports', '$state', output)(load, module, module.exports, (value) => value);
-  return module.exports;
-}
+
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
 
 const bb = loadTypeScript('src/lib/blackbox.ts');
@@ -126,17 +105,17 @@ test('the target picker copy passes the screen-string lint and the count guard h
 
 test('the Settings step reads targets once on mount, for this PC only, and never polls', () => {
   const comp = read('src/components/BlackboxSettings.svelte');
-  assert.match(comp, /onMount\(\(\) => \{\s*if \(targetMode !== 'pc'\) return;/, 'pack/remote mode never fetches');
+  assert.match(comp, /onMount\(\(\)\s*=>\s*\{\s*if\s*\(targetMode\s*!==\s*'pc'\)\s*return;/, 'pack/remote mode never fetches');
   assert.match(comp, /blackboxApi\.targets\(\)/, 'the detected names come from the endpoint');
   assert.doesNotMatch(comp, /setInterval|setTimeout/, 'no polling');
   const wizard = read('src/components/BlackboxWizard.svelte');
-  assert.match(wizard, /targetMode=\{where === 'pc' \? 'pc' : 'manual'\}/, 'the wizard passes the mode it is in');
+  assert.match(wizard, /targetMode=\{where\s*===\s*'pc'\s*\?\s*'pc'\s*:\s*'manual'\}/, 'the wizard passes the mode it is in');
 });
 
 test('a stopped target says "not running"; an unreadable state says unknown, never stopped', () => {
   const comp = read('src/components/BlackboxSettings.svelte');
   // W2-07: configuration presence is not a running claim, and unknown is not stopped.
-  assert.match(comp, /\{#if targetRunState\(t\) === 'stopped'\} <span class="bb-note">\{T\.targetsNotRunning\}<\/span>\{:else if targetRunState\(t\) === 'unknown'\} <span class="bb-note">\{T\.targetsStateUnknown\}<\/span>\{\/if\}/);
+  assert.match(comp, CHIP_NOTE_RE, 'a stopped target is labelled, an unreadable state says unknown');
   assert.equal(BB_TEXT.targetsNotRunning, 'not running');
   assert.equal(BB_TEXT.targetsStateUnknown, 'running state unknown');
 });
@@ -157,11 +136,11 @@ test('targetRunState reads the server state, an older boolean, or unknown', () =
 
 test('the picker stores only kind+name, and the record.processes checkbox and note are unchanged', () => {
   const comp = read('src/components/BlackboxSettings.svelte');
-  assert.match(comp, /toggleTarget\(picked, kind, name\)/, 'checking a name uses the pure helper');
+  assert.match(comp, /toggleTarget\(picked,\s*kind,\s*name\)/, 'checking a name uses the pure helper');
   assert.match(comp, /bind:checked=\{settings\.record\.processes\}/);
-  assert.match(comp, /\{#if !settings\.record\.processes\}<p class="bb-note">\{T\.processesNote\}<\/p>\{\/if\}/);
+  assert.match(comp, /\{#if\s+!settings\.record\.processes\}\s*<p\s+class="bb-note">\{T\.processesNote\}<\/p>\s*\{\/if\}/);
   assert.doesNotMatch(comp, /commandLine|imagePath|\.path\b|readKey|password|secret/, 'no path, command line or key is stored');
   // The manual row adds a name; the chips remove one. Both go through the same kind+name helper.
   assert.match(comp, /function addTarget\(\)/);
-  assert.match(comp, /function removeTarget\(kind: TargetKind, name: string\)/);
+  assert.match(comp, /function removeTarget\(kind:\s*TargetKind,\s*name:\s*string\)/);
 });
