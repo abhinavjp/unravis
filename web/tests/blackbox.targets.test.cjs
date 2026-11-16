@@ -272,7 +272,17 @@ function freshStep(overrides = {}) {
     const src = read('src/components/BlackboxSettings.svelte');
     const script = src.match(/<script lang="ts">([\s\S]*?)<\/script>/)[1];
     const js = ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+    // UX-7: the announcement, the focus slots and the two element refs, read and written live.
+    // Typeof-guarded so this harness also runs against a step script that predates them.
     stepScript = js + '\nmodule.exports.step = { addTarget, pick, removeTarget,'
+      + ' focusSlot: typeof focusSlot === \'undefined\' ? null : focusSlot,'
+      + ' chipsShown: typeof chipsShown === \'undefined\' ? null : chipsShown,'
+      + ' get announcement() { return typeof announcement === \'undefined\' ? null : announcement; },'
+      + ' set announcement(v) { if (typeof announcement !== \'undefined\') { announcement = v; } },'
+      + ' get chipsBox() { return typeof chipsBox === \'undefined\' ? null : chipsBox; },'
+      + ' set chipsBox(v) { try { chipsBox = v; } catch { /* a step script with no such ref: nothing to focus */ } },'
+      + ' get nameField() { return typeof nameField === \'undefined\' ? null : nameField; },'
+      + ' set nameField(v) { try { nameField = v; } catch { /* a step script with no such ref: nothing to focus */ } },'
       + ' get manualName() { return manualName; }, set manualName(v) { manualName = v; },'
       + ' get manualKind() { return manualKind; }, set manualKind(v) { manualKind = v; },'
       + ' get targetRefusal() { return typeof targetRefusal === \'undefined\' ? null : targetRefusal; },'
@@ -280,7 +290,8 @@ function freshStep(overrides = {}) {
   }
   const module = { exports: {} };
   const need = (request) => {
-    if (request === 'svelte') return { onMount: () => {} };
+    // UX-7: removeTarget waits for the list to render before it moves focus, so the step needs a real tick.
+    if (request === 'svelte') return { onMount: () => {}, tick: () => Promise.resolve() };
     if (request === '../lib/blackbox') return bb;
     if (request === '../lib/copy/blackboxCopy') return { BB_TEXT, BB_REFUSAL, blackboxCopyEntries };
     throw new Error('unexpected import: ' + request);
@@ -733,7 +744,11 @@ test('manual mode renders none of the read states, and the new copy is linted an
   const { html, plain } = renderStep();
   assert.ok(!plain.includes(BB_TEXT.targetsLoading), 'pack/remote never loads');
   assert.ok(!plain.includes(BB_TEXT.targetsLoadFailed));
-  assert.ok(!html.includes('role="status"'));
+  // UX-7: the panel now always carries one status region (a live region has to be in the page before
+  // the words change). In manual mode it is the only one, and it says nothing yet: the read-state
+  // status lines are the ones that must not render here, proven by the copy assertions around this.
+  assert.equal(countOf(html, 'role="status"'), 1, 'only the empty announcement region');
+  assert.match(html, /<p class="bb-sr[^"]*" role="status"[^>]*><\/p>/, 'it is empty until a target is added or removed');
   assert.ok(!plain.includes(BB_TEXT.targetsPoolsUnreadable));
   const entries = blackboxCopyEntries();
   assert.deepEqual(lintScreenStrings(entries, deck.terms), []);
@@ -843,4 +858,121 @@ test('an all-unknown pools list gets its own single note, and the new copy is li
   assert.equal(BB_TEXT.targetsFilterCount(10, 200), 'Showing 10 of 200 names.');
   assert.match(BB_TEXT.targetsFilterNone(200), /all 200 names/, 'the no-match note says how many exist');
   assert.match(BB_TEXT.targetsAllUnknown, /records nothing/, 'the group note states the consequence');
+});
+
+/* ------------------------------------------------------------------ UX-7: the chip remove button: size, focus, an announcement */
+
+// The × on a chip is the only way to take a name off the list once the detected lists are shown.
+// Before UX-7 it was a 14px glyph, so a tap missed and the focus ring vanished with the node it was
+// on, and the name left the page without a word. This suite has no DOM (no jsdom is installed), so
+// it follows the style of the file: the region, its emptiness and the 24px box are read off the real
+// rendered output and the shipped style block, and the focus move is proven by running the
+// component's own removeTarget against stub elements that record which one was focused.
+
+test('a removed or an added target is announced in the panel own plain words, and the copy is linted', () => {
+  assert.equal(typeof BB_TEXT.targetsRemoved, 'function', 'the removed words exist');
+  assert.equal(typeof BB_TEXT.targetsAdded, 'function', 'the added words exist');
+  // The name first, then what happened to the list - and nothing the code does not do.
+  assert.equal(BB_TEXT.targetsRemoved('W3SVC'), 'W3SVC removed from the targets.');
+  assert.equal(BB_TEXT.targetsAdded('W3SVC'), 'W3SVC added to the targets.');
+  const entries = blackboxCopyEntries();
+  for (const key of ['targetsRemoved', 'targetsAdded']) {
+    assert.ok(entries.some((e) => e.id === 'blackbox.' + key), key + ' is linted');
+  }
+  for (const text of [BB_TEXT.targetsRemoved('W3SVC'), BB_TEXT.targetsAdded('W3SVC')]) {
+    assert.ok(text.startsWith('W3SVC'), 'the name that changed is said');
+    assert.doesNotMatch(text, /stopped|running|recording|saved|written|applied|installed/i, 'it claims only that the list changed, never that anything was saved or is being recorded');
+  }
+  assert.deepEqual(lintScreenStrings(entries, deck.terms), [], 'the whole copy still lints clean');
+});
+
+test('the panel carries one visually-hidden status region that renders the announcement, and it is there before anything changes', () => {
+  const comp = read('src/components/BlackboxSettings.svelte');
+  // A live region inserted together with its text is missed by most screen readers, so the element
+  // stands on its own: no {#if} around it, and the words are its only content.
+  assert.match(comp, /<p class="bb-sr" role="status" aria-live="polite">\{announcement\}<\/p>/);
+  assert.doesNotMatch(comp, /\{#if announcement\}/, 'the region is never conditional');
+  assert.doesNotMatch(comp, /aria-hidden=\{?announcement|hidden=\{?announcement/, 'it is hidden by CSS only, never from assistive tech');
+  // Visually hidden the usual way, so it takes no room but is still read.
+  assert.match(comp, /\.bb-sr \{[^}]*position: absolute;[^}]*width: 1px;[^}]*height: 1px;[^}]*clip-path: inset\(50%\);/);
+  // It renders in the page itself, empty, in both modes.
+  pcBridge.result = null; pcBridge.failed = false;
+  for (const { html } of [renderStep(), renderPcStep()]) {
+    assert.match(html, /<p class="bb-sr[^"]*" role="status" aria-live="polite"><\/p>/);
+  }
+});
+
+test('the chip remove control is a real touch and keyboard target', () => {
+  const comp = read('src/components/BlackboxSettings.svelte');
+  // 24px is the smallest size a thumb or a keyboard user can be trusted to hit (WCAG 2.5.8).
+  assert.match(comp, /\.bb-chip-x \{[^}]*min-width: 24px;[^}]*min-height: 24px;/, 'the × has a 24px square');
+  // It stays a real button whose name says which target it removes, so the focus ring reads properly.
+  assert.match(comp, /<button type="button" class="bb-chip-x" aria-label="\{T\.targetsRemove\}: \{t\.name\}"/);
+  assert.match(comp, /\.bb-chip-x:focus-visible/, 'and it shows a focus ring');
+});
+
+test('focusSlot names the chip that takes the removed one place, and says when no chip is left', () => {
+  const { step } = freshStep();
+  const f = step.focusSlot;
+  assert.equal(typeof f, 'function', 'the helper exists');
+  // A chip in the middle or at the start: the one that shifts into its place, at the same index.
+  assert.equal(f(3, 0), 0);
+  assert.equal(f(3, 1), 1);
+  // The last chip went: the new last one takes focus, so focus never runs off the end.
+  assert.equal(f(3, 2), 1);
+  assert.equal(f(2, 1), 0);
+  // Nothing left, or nothing found: no chip to focus, so the name box does.
+  assert.equal(f(1, 0), null);
+  assert.equal(f(0, 0), null);
+  assert.equal(f(3, -1), null);
+});
+
+test('removing a chip moves focus to the next chip, the new last chip or the name box - never to the removed node', async () => {
+  const cases = [
+    [['Alpha', 'Bravo', 'Carol'], 'Bravo', 'chip:Carol'],
+    [['Alpha', 'Bravo', 'Carol'], 'Alpha', 'chip:Bravo'],
+    [['Alpha', 'Bravo', 'Carol'], 'Carol', 'chip:Bravo'],
+    [['Alpha'], 'Alpha', 'name-box']
+  ];
+  for (const [names, gone, want] of cases) {
+    const settings = { ...bb.defaultSettings('web-a'), targets: names.map((n) => t('service', n)) };
+    const { step } = freshStep({ settings });
+    const landed = [];
+    // What the page holds once the removal has rendered: one × per remaining chip, and the name box.
+    step.chipsBox = { querySelectorAll: () => (settings.targets ?? []).map((x) => ({ focus: () => landed.push('chip:' + x.name) })) };
+    step.nameField = { focus: () => landed.push('name-box') };
+    await step.removeTarget('service', gone);
+    assert.deepEqual(landed, [want], names.join('/') + ' minus ' + gone);
+    assert.deepEqual(settings.targets.map((x) => x.name), names.filter((n) => n !== gone), 'the name came off the list');
+    assert.ok(!landed[0].includes(gone), 'focus never lands on the chip that was removed');
+  }
+  // Focus moves only once the list has rendered, and never by scrolling the page or grabbing the body.
+  const comp = read('src/components/BlackboxSettings.svelte');
+  assert.match(comp, /async function removeTarget\(kind: TargetKind, name: string\) \{[\s\S]*?await tick\(\);[\s\S]*?focus\(\);/, 'the update is awaited before focus moves');
+  assert.doesNotMatch(comp, /document\.body\.focus|scrollIntoView|window\.focus/, 'nothing jumps to the top of the page');
+});
+
+test('the announcement follows what actually happened: an add, a refusal, a tick, an untick and a chip removal', async () => {
+  // A typed name that is accepted.
+  const add = freshStep();
+  add.step.manualName = 'Payroll API';
+  add.step.addTarget();
+  assert.equal(add.step.announcement, BB_TEXT.targetsAdded('Payroll API'));
+  // A name refused for its characters: nothing was added, so nothing may be announced.
+  const refused = freshStep();
+  refused.step.manualName = 'a|b';
+  refused.step.addTarget();
+  assert.equal(refused.step.announcement, '', 'a refusal announces nothing');
+  // Ticking a detected name adds it; ticking a name that is on the list takes it off.
+  const held = { ...bb.defaultSettings('web-a'), targets: [t('service', 'W3SVC')] };
+  const pickedUp = freshStep({ settings: { ...bb.defaultSettings('web-a'), targets: [] } });
+  pickedUp.step.pick('service', 'W3SVC');
+  assert.equal(pickedUp.step.announcement, BB_TEXT.targetsAdded('W3SVC'), 'a picked name is announced');
+  const putDown = freshStep({ settings: { ...bb.defaultSettings('web-a'), targets: [t('service', 'W3SVC')] } });
+  putDown.step.pick('service', 'W3SVC');
+  assert.equal(putDown.step.announcement, BB_TEXT.targetsRemoved('W3SVC'), 'an unticked name is announced too');
+  // A chip removal announces the name it took off the list.
+  const removed = freshStep({ settings: { ...bb.defaultSettings('web-a'), targets: [t('service', 'W3SVC')] } });
+  await removed.step.removeTarget('service', 'W3SVC');
+  assert.equal(removed.step.announcement, BB_TEXT.targetsRemoved('W3SVC'));
 });

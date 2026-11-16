@@ -236,6 +236,11 @@ export const BB_TEXT = {
   targetsServicesUnreadable: 'The services on this PC could not be read. Type a service name below to watch it.',
   targetsAdd: 'Add target',
   targetsRemove: 'Remove target',
+  // UX-7: the words the panel says out loud when a name goes on or off the list. They claim only what
+  // the control actually did - these settings are not saved and nothing starts recording until the
+  // Apply or Install step runs, so no running, recording or saving word belongs here.
+  targetsAdded: (name: string) => name + ' added to the targets.',
+  targetsRemoved: (name: string) => name + ' removed from the targets.',
   // Why a typed target was not added. The name stays in the box so it can be fixed (UX-4).
   targetProblems: {
     empty: 'Type the name of the app pool or service.',
@@ -438,6 +443,8 @@ export function blackboxCopyEntries(): LintEntry[] {
       else if (key === 'hostReadNote') add(key, fn(2, 240));
       else if (key === 'targetsFilterCount') { add(key + '.1', fn(1, 200)); add(key + '.2', fn(10, 200)); }
       else if (key === 'targetsFilterNone') add(key, fn(200));
+      // A real service name, so the linted sample reads as the page does (UX-7).
+      else if (key === 'targetsAdded' || key === 'targetsRemoved') add(key, fn('W3SVC'));
       else if (key === 'reviewKeepsText') add(key, fn(7, 2, 10));
       else if (key === 'filesAndSamples') { add(key + '.1', fn(1, 1)); add(key + '.2', fn(4, 960)); }
       else if (key === 'gapsText') {
