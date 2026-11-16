@@ -93,6 +93,17 @@ export function readoutSpan(
   return { stepStart: first.start, api, iis, db, isThisCall: true };
 }
 
+// The words one row of the overview strip gets, decided from the row and the measure the strip is told.
+// A row that counts batches says batches per second; every other row says how many ran at once. A lane that
+// measures concurrency keeps the concurrency words even on the Database row. The types match the map row keys and
+// the lane measures of the chart, so a new row or a new measure does not compile until this decision is updated.
+export type StripRowKey = 'audit' | 'iis' | 'sql';
+export type StripMeasure = 'at-once' | 'batch-rate';
+
+export function rowMeasuresBatches(rowKey: StripRowKey, measure: StripMeasure): boolean {
+  return rowKey === 'sql' && measure === 'batch-rate';
+}
+
 export type SourceKey = 'api' | 'iis' | 'db';
 export interface SourceItem { key: string; source: SourceKey; startMs: number; endMs: number | null; what: string; tookMs: number | null; marker: boolean; thisCall: boolean }
 export interface EventIn { evidenceId: string; source: string; kind: string; start: string; end?: string | null; durationMs?: number | null; severity?: string }
