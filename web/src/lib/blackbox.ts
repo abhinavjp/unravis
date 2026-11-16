@@ -93,6 +93,86 @@ export interface ThisPc {
 
 export interface BlackboxList { items: BlackboxItem[]; thisPc: ThisPc; canPack: boolean }
 
+/** The kind of an owner-selected target: an IIS app pool or a Windows service (BBX-1-12). */
+export type TargetKind = 'appPool' | 'service';
+
+/** One owner-selected target. Only kind and name are kept: never a path, command line or key. */
+export interface TargetRef { kind: TargetKind; name: string }
+
+/** One detected app pool or service, as GET /api/blackbox/this-pc/targets lists it. Names only. */
+export interface TargetInfo {
+  name: string;
+  /** Present only when the running state was actually read; absent means unknown. */
+  running?: boolean;
+  /** Fixed operational code from the server: running, stopped or unknown. */
+  state?: 'running' | 'stopped' | 'unknown';
+}
+export interface TargetsAnswer {
+  appPools: TargetInfo[]; services: TargetInfo[]; detected: boolean;
+  /** Per-source detection: detected, unavailable or not-found. Optional for older servers. */
+  appPoolsState?: string; servicesState?: string;
+}
+
+/** What is actually known about a detected target (W2-07). Configuration presence is
+ *  never a running claim, and an unreadable state is unknown, not stopped. An older
+ *  server that always sends a boolean still reads correctly. */
+export type TargetRunState = 'running' | 'stopped' | 'unknown';
+export function targetRunState(t: TargetInfo): TargetRunState {
+  if (t.state === 'running' || t.state === 'stopped' || t.state === 'unknown') return t.state;
+  if (t.running === true) return 'running';
+  if (t.running === false) return 'stopped';
+  return 'unknown';
+}
+
+/**
+ * What the picker can honestly say about one selected target (W3-06). A name that is in the
+ * detected list reads its state through targetRunState. A name that is absent is never guessed
+ * to mean stopped: the endpoint offers running services only and caps each list at 256, so an
+ * absent name may be stopped, may be beyond the cap, or may sit in a list that could not be read.
+ * The per-source state tells those apart. `answer` is null when nothing could be read at all.
+ */
+export type PickedTargetState = 'running' | 'stopped' | 'unknown' | 'not-in-list' | 'list-unreadable' | 'source-not-found';
+export function pickedTargetState(kind: TargetKind, name: string, answer: TargetsAnswer | null): PickedTargetState {
+  if (!answer) return 'list-unreadable';
+  const list = kind === 'appPool' ? answer.appPools : answer.services;
+  const found = (list ?? []).find((t) => t.name === name);
+  if (found) return targetRunState(found);
+  const source = kind === 'appPool' ? answer.appPoolsState : answer.servicesState;
+  if (source === 'unavailable') return 'list-unreadable';
+  if (source === 'not-found') return 'source-not-found';
+  // 'detected', or an older server that sends no per-source state but did detect something:
+  // the list was read and this name is simply not in it. Absence is unknown, never stopped.
+  if (source === 'detected' || answer.detected) return 'not-in-list';
+  return 'list-unreadable';
+}
+
+/**
+ * What the Settings step can honestly show for one detected list (UX-5). Pure: no state, no DOM, no fetch.
+ * `read` is false while the single mount-time read is in flight; `failed` is true when that read was refused
+ * or never reached the server. A failed or unreadable list is never an empty healthy list: 'failed' and
+ * 'unavailable' say it could not be read, 'not-found' says the source is not on this PC, 'empty' means the
+ * list was read and holds no names (its fieldset is skipped), and 'list' means names were read. An older
+ * server sends no per-source state, so `detected` decides: nothing detected means nothing could be read.
+ */
+export type TargetListState = 'loading' | 'failed' | 'not-found' | 'unavailable' | 'empty' | 'list';
+export function targetListState(list: TargetInfo[] | null | undefined, source: string | undefined, detected: boolean, read: boolean, failed: boolean): TargetListState {
+  if (failed) return 'failed';
+  if (!read) return 'loading';
+  if ((list ?? []).length > 0) return 'list';
+  if (source === 'not-found') return 'not-found';
+  if (source === 'unavailable') return 'unavailable';
+  if (source === 'detected' || detected) return 'empty';
+  return 'unavailable';
+}
+
+/** The picked target names split by kind, each group in the order picked. Nothing is dropped. */
+export function targetNamesByKind(targets: TargetRef[]): { appPools: string[]; services: string[] } {
+  const appPools: string[] = [];
+  const services: string[] = [];
+  for (const t of targets) (t.kind === 'appPool' ? appPools : services).push(t.name);
+  return { appPools, services };
+}
+
 export interface Settings {
   name: string;
   folder: string;
@@ -105,6 +185,8 @@ export interface Settings {
   record: { processes: boolean; logsCatalogue: boolean; copyLogsOnSnapshot: boolean };
   logPaths: string[];
   probe: { enabled: boolean };
+  /** The app pools and services the owner picked for per-process detail. Empty means machine-wide only. */
+  targets: TargetRef[];
 }
 
 export interface Refusal {
@@ -210,6 +292,8 @@ async function call<T>(method: string, path: string, body?: unknown, signal?: Ab
 export const blackboxApi = {
   list: (signal?: AbortSignal) => call<BlackboxList>('GET', '', undefined, signal),
   thisPc: (signal?: AbortSignal) => call<ThisPc>('GET', '/this-pc', undefined, signal),
+  /** The app pools and services detected on this PC, for the wizard's target picker. Names only; read once on mount. */
+  targets: (signal?: AbortSignal) => call<TargetsAnswer>('GET', '/this-pc/targets', undefined, signal),
   test: (body: AddBody) => call<TestAnswer>('POST', '/test', body),
   add: (body: AddBody) => call<BlackboxItem>('POST', '', body),
   check: (id: string) => call<BlackboxItem>('POST', '/' + encodeURIComponent(id) + '/check', {}),
@@ -265,16 +349,71 @@ export function nameProblem(name: string): 'empty' | 'long' | 'chars' | null {
 
 export const INTERVALS = [5, 15, 30, 60] as const;
 
+/**
+ * Add or remove one owner-selected target, matched by kind and name together (BBX-1-12). Pure: a new list
+ * comes back and the one given is never changed. A target holds only kind and name: never a path, command
+ * line or key. Checking a name in the wizard calls this; unchecking calls it again.
+ */
+export function toggleTarget(targets: TargetRef[], kind: TargetKind, name: string): TargetRef[] {
+  const at = targets.findIndex((t) => t.kind === kind && t.name === name);
+  if (at >= 0) return targets.filter((_, i) => i !== at);
+  return [...targets, { kind, name }];
+}
+
+/** The target limits of internal/blackbox/config.go: at most 32 targets, a name of at most 128 bytes. */
+export const TARGETS_MAX = 32;
+export const TARGET_NAME_MAX = 128;
+
+/** What is wrong with a target list. Null when the list is fine. The panel turns the code into words. */
+export type TargetsProblem = 'many' | 'kind' | 'empty' | 'long' | 'chars' | 'duplicate';
+
+/** The characters a target name may not hold, as the server refuses them. */
+const TARGET_NAME_BAD = /[\\/:*?"<>|]/;
+
+/** Length in UTF-8 bytes, which is how the server counts a name: an accented letter counts as more than one. */
+function nameBytes(name: string): number {
+  let bytes = 0;
+  for (const ch of name) {
+    const c = ch.codePointAt(0) ?? 0;
+    bytes += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+  }
+  return bytes;
+}
+
+/**
+ * The first thing wrong with the targets, or null. Mirrors Validate in internal/blackbox/config.go, in the
+ * same order: the count, then each target's kind, name and duplicate check. Duplicates are judged the way
+ * Windows judges them: pool and service names match without regard to case, so EmailSvc and emailsvc are
+ * one target. A missing list means machine-wide only, which is fine. Pure: the list given is never changed.
+ */
+export function targetsProblem(targets: TargetRef[] | null | undefined): TargetsProblem | null {
+  const list = targets ?? [];
+  if (list.length > TARGETS_MAX) return 'many';
+  const seen: TargetRef[] = [];
+  for (const target of list) {
+    if (target.kind !== 'appPool' && target.kind !== 'service') return 'kind';
+    const name = target.name ?? '';
+    if (!name) return 'empty';
+    if (nameBytes(name) > TARGET_NAME_MAX) return 'long';
+    if (TARGET_NAME_BAD.test(name)) return 'chars';
+    for (const ch of name) if ((ch.codePointAt(0) ?? 0) < 0x20) return 'chars';
+    if (seen.some((prev) => prev.kind === target.kind && prev.name.toLowerCase() === name.toLowerCase())) return 'duplicate';
+    seen.push(target);
+  }
+  return null;
+}
+
 /** The defaults the recorder ships with (internal/blackbox/config.go). `folder` is the D: drive default. */
 export function defaultSettings(name = ''): Settings {
   return {
     name, folder: 'D:\\UnravisBlackbox', intervalSeconds: 15, keepDays: 7, maxGB: 2, minFreePercent: 10, port: 7788, bind: '127.0.0.1',
     record: { processes: true, logsCatalogue: true, copyLogsOnSnapshot: false },
-    logPaths: ['C:\\inetpub\\logs\\LogFiles'], probe: { enabled: false }
+    logPaths: ['C:\\inetpub\\logs\\LogFiles'], probe: { enabled: false },
+    targets: []
   };
 }
 
-export type SettingsProblem = 'name' | 'folder' | 'interval' | 'keep' | 'size' | 'free' | 'port' | 'bind' | 'logs';
+export type SettingsProblem = 'name' | 'folder' | 'interval' | 'keep' | 'size' | 'free' | 'port' | 'bind' | 'logs' | 'targets';
 
 const HOST_NAME = /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 
@@ -311,6 +450,7 @@ export function settingsProblem(s: Settings): SettingsProblem | null {
   if (!Number.isInteger(s.port) || s.port < 1 || s.port > 65535) return 'port';
   if (!validBind(s.bind)) return 'bind';
   if (s.logPaths.some(p => !/^[A-Za-z]:[\\/]/.test(p.trim()))) return 'logs';
+  if (targetsProblem(s.targets)) return 'targets';
   return null;
 }
 

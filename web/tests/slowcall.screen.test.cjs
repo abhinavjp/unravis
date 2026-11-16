@@ -110,6 +110,10 @@ test('RB-5 F-08: pretend only counts in demo mode', () => {
 test('RB-5: the lane fields the parser keeps pass straight through toLaneIn', () => {
   const fn = source.slice(source.indexOf('function toLaneIn'), source.indexOf('const SQL_EVENT_SOURCES'));
   for (const needle of ['lane.reasonCode', 'lane.blockSeconds', 'lane.buckets', 'lane.events']) assert.ok(fn.includes(needle), needle);
+  // PERF-3: buckets pass through WHOLE, so a bucket's end/clipped edges reach the clipped-rate
+  // math. A field-by-field re-map here would silently strip them again.
+  assert.ok(fn.includes('buckets: lane.buckets'), 'whole buckets pass through, keeping end/clipped');
+  assert.ok(!/buckets:\s*lane\.buckets\.map/.test(fn), 'buckets are never re-mapped field by field');
 });
 
 test('RB-5: the database block length falls back to the Query Store interval', () => {

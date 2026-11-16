@@ -18,6 +18,7 @@
 /sql/
 /.mcp.json
 /.claude/
+/.qoder/
 /unravis-review-pack.zip
 # e2e scratch logs/results (direct children only; fixtures/files/*.txt stay tracked)
 /tools/e2e/*.txt
@@ -27,6 +28,9 @@
 
 # PR #10 review scratch (plan packets, findings, hub prompts) - local only.
 /.forge/pr10-review/
+
+# Blackbox-expansion agent working files (plans, packets, findings, logs) - local only.
+/.forge/blackbox-expansion/
 
 # Prototypes and throwaway wireframes live on the owner's machine, not in the remote.
 /prototype/

@@ -108,19 +108,25 @@ func setRecovery(s recoverySetter) error {
 	return s.SetRecoveryActionsOnNonCrashFailures(true)
 }
 
-// Create registers the service to start automatically as LocalSystem and to
-// restart itself after a crash (the recorder must keep recording).
+// Create registers the service to start automatically and to restart itself
+// after a crash (the recorder must keep recording). It runs as LocalSystem
+// unless spec.Account names another account; no password is ever set.
 func (WinService) Create(spec ServiceSpec) error {
 	m, err := connect()
 	if err != nil {
 		return err
 	}
 	defer m.Disconnect()
-	s, err := m.CreateService(spec.Name, spec.ExePath, mgr.Config{
-		DisplayName: spec.DisplayName,
-		Description: spec.Description,
-		StartType:   mgr.StartAutomatic,
-	}, spec.Args...)
+	c := mgr.Config{
+		DisplayName:      spec.DisplayName,
+		Description:      spec.Description,
+		StartType:        mgr.StartAutomatic,
+		ServiceStartName: spec.Account, // empty: LocalSystem, as before
+	}
+	if spec.SIDUnrestricted {
+		c.SidType = windows.SERVICE_SID_TYPE_UNRESTRICTED
+	}
+	s, err := m.CreateService(spec.Name, spec.ExePath, c, spec.Args...)
 	if err != nil {
 		return err
 	}

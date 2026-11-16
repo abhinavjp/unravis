@@ -468,6 +468,13 @@ type tracingLane struct {
 	// BlockSeconds is the length of the blocks this lane's source saved its numbers in, when it is
 	// longer than the bucket (Query Store). Zero means not known or same as the bucket.
 	BlockSeconds int `json:"blockSeconds,omitempty"`
+	// Since is when the lane's source began recording: the first sample of the
+	// Blackbox sampling (the blackbox SQL lane only). Omitted when unknown.
+	Since *time.Time `json:"since,omitempty"`
+	// Estimates marks a lane whose bucket counts are integrated throughput
+	// estimates (the blackbox SQL lane: rate x observed interval), not recorded
+	// statement counts, durations or concurrency. Omitted when false.
+	Estimates bool `json:"estimates,omitempty"`
 }
 
 type tracingResponse struct {
@@ -1134,7 +1141,13 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 		auditIDs[i] = ref.SourceID
 	}
 	for _, lane := range lanes {
-		if lane.Key == calltrace.LaneSQL && lane.Disabled == "" && (lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange || lane.State == calltrace.StateEvents) {
+		// The SQL lane's source chain (W12-03, documented in tracing_blackbox.go):
+		// held Query Store day > Query Store file > Blackbox batch throughput >
+		// api-seen. Query Store duration evidence for the selected database is
+		// decided FIRST, so a machine-wide recorder can never displace it; the
+		// Blackbox is read only when the selection allows it and no Query Store
+		// evidence answered, and it keeps imported markers as separate measures.
+		if lane.Key == calltrace.LaneSQL && lane.Disabled == "" && lane.ReasonCode != tracingReasonBlackbox && (lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange || lane.State == calltrace.StateEvents) {
 			if held, ok := tracingHeldSQLLane(ctx, unwrapCase(c), axis, now); ok {
 				switch {
 				case lane.State == calltrace.StateNoData || lane.State == calltrace.StateOutOfRange:
@@ -1166,6 +1179,16 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 		if err != nil {
 			writeStoreError(w, err)
 			return
+		}
+		// BBX-5-16: the case's Blackbox sampling fills the database lane only
+		// when no Query Store evidence answered and the selection allows it.
+		// Without SQL host counters the api-seen / not-recorded chain below runs
+		// unchanged.
+		if lane.Key == calltrace.LaneSQL && lane.Disabled == "" && lane.State != calltrace.StateClockUnchecked &&
+			lane.ReasonCode != tracingReasonHeldSQL && lane.ReasonCode != tracingReasonLayeredSQL && lane.ReasonCode != tracingReasonQSFile {
+			if bb, ok := h.blackboxSQLLane(ctx, unwrapCase(c), axis, sel, lane); ok {
+				lane = bb
+			}
 		}
 		lane, err = tracingAPISseenLane(ctx, sqlBusy, auditIDs, axis, lane, time.Now)
 		if err != nil {

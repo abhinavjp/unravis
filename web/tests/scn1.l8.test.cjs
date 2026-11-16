@@ -213,7 +213,7 @@ test('D-B-50: fieldProblemNow keeps a message only while that field is still wro
 
 test('D-B-50: each settings field has an id, an error line and aria-describedby that names it', () => {
   const fields = read('src/components/BlackboxSettings.svelte');
-  assert.match(fields, /problem = null \}: \{ settings: Settings; logPathsText: string; idPrefix\?: string; problem\?: SettingsProblem \| null \}/);
+  assert.match(fields, /problem = null, targetMode = 'pc' \}: \{ settings: Settings; logPathsText: string; idPrefix\?: string; problem\?: SettingsProblem \| null; targetMode\?: 'pc' \| 'manual' \}/);
   assert.match(fields, /\{#snippet fieldError\(key: SettingsProblem\)\}/);
   assert.match(fields, /<p class="inline-error" id="\{idPrefix\}-\{key\}-error" role="alert">\{T\.settingProblems\[key\]\}<\/p>/);
   for (const key of ['interval', 'keep', 'size', 'free', 'folder', 'port', 'bind', 'logs']) {
@@ -232,7 +232,7 @@ test('D-B-50: the wizard and Apply put a field problem beside the field and focu
   assert.match(wizard, /const shownField = \$derived\(fieldProblemNow\(fieldProblem, settings, logPathsText\)\);/);
   assert.match(wizard, /if \(first === 'name'\) \{ problem = T\.settingProblems\.name; return; \}/);
   assert.match(wizard, /fieldProblem = first;\s*await tick\(\);\s*rootEl\?\.querySelector<HTMLElement>\('#bb-f-' \+ first\)\?\.focus\(\);/);
-  assert.match(wizard, /<SettingsFields bind:settings bind:logPathsText problem=\{shownField\} \/>/);
+  assert.match(wizard, /<SettingsFields bind:settings bind:logPathsText problem=\{shownField\} targetMode=\{where === 'pc' \? 'pc' : 'manual'\} \/>/);
   assert.match(wizard, /problem = refusalText\(error, BB_REFUSAL\);/);
   const panel = read('src/components/BlackboxPanel.svelte');
   assert.match(panel, /const applyFieldShown = \$derived\(fieldProblemNow\(applyField, applySettings, applyLogs\)\);/);

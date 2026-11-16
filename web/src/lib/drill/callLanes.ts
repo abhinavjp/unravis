@@ -1,5 +1,6 @@
 // Slow call screen: turns a tracing response into three drawable lanes.
-// Each lane has one value per time step ("running at once", or null for "not recorded"),
+// Each lane has one value per time step in its own measure — "running at once" from measured busy time,
+// or "batches per second" from recorded host batch counts — and null for "not recorded",
 // the peak, and slow items packed into at most three bar rows. Pure functions only.
 // The input interfaces are structural: a tracing response satisfies them.
 
@@ -8,8 +9,21 @@ import type { Readout } from './callReadout';
 
 export type LaneKey = 'audit' | 'sql' | 'iis';
 
+/**
+ * What a lane's numbers measure. The two are never mixed:
+ *  - 'at-once': average concurrency, worked out from measured busy time (busyMs) only.
+ *  - 'batch-rate': host batch throughput in batches per second, worked out from recorded batch COUNTS.
+ * A count is never busy time, and a rate never implies a duration. The 'blackbox' reason code is the
+ * host PDH batch-count contract, so it always measures 'batch-rate' (W13-01).
+ */
+export type LaneMeasure = 'at-once' | 'batch-rate';
+
 export interface LaneBucketIn {
   start: string;
+  /** The bucket's own end as the server sent it. A clipped edge bucket ends before the step does. */
+  end?: string;
+  /** True when the server cut this bucket to the asked window: its count covers only start..end, not the whole step. */
+  clipped?: boolean;
   count: number;
   complete?: boolean;
   busyMs?: number | null;
@@ -29,6 +43,8 @@ export interface LaneIn {
   key: LaneKey;
   state: string;
   reasonCode?: string;
+  /** What this lane's buckets measure. Absent = derived from the reason code ('blackbox' -> batch throughput). */
+  measure?: LaneMeasure;
   blockSeconds?: number;
   buckets: LaneBucketIn[];
   events: LaneEventIn[];
@@ -42,7 +58,10 @@ export interface WindowIn {
 export interface LaneCell {
   start: number;
   end: number;
+  /** Average concurrency from measured busy time. Null = unknown, never 0. Never derived from a batch rate. */
   atOnce: number | null;
+  /** Host batch throughput in batches per second from recorded counts. Null = unknown. Only a 'batch-rate' lane fills it. */
+  rate: number | null;
   p95Ms: number | null;
   refused: number | null;
 }
@@ -61,7 +80,10 @@ export interface CallLane {
   key: LaneKey;
   /** Only used when the lane has no peak. Never a number: a gap is unknown, not zero. */
   gap: LaneGap;
+  /** What the cells measure; every label, legend and readout must use this unit. */
+  measure: LaneMeasure;
   cells: LaneCell[];
+  /** The peak of the lane's own measure: concurrency, or batches/s when measure is 'batch-rate'. */
   peak: { atOnce: number; start: number } | null;
   bars: LaneBar[];
   moreBars: number;
@@ -76,6 +98,17 @@ export const LIST_ROW_CAP = 200;
 
 function finite(n: number | null | undefined): n is number {
   return typeof n === 'number' && Number.isFinite(n);
+}
+
+/** The measure of a lane: an explicit measure wins, else the 'blackbox' reason code means host batch throughput. */
+export function measureOf(lane: { measure?: LaneMeasure; reasonCode?: string } | null | undefined): LaneMeasure {
+  if (lane?.measure === 'batch-rate' || lane?.reasonCode === 'blackbox') return 'batch-rate';
+  return 'at-once';
+}
+
+/** The one number a cell draws for its lane's measure. Unknown stays null, never 0. */
+export function cellValue(cell: LaneCell, measure: LaneMeasure): number | null {
+  return measure === 'batch-rate' ? cell.rate : cell.atOnce;
 }
 
 /** Average number of calls running at once: busy time divided by step length. Unknown stays null, never 0. */
@@ -98,26 +131,52 @@ export function laneCells(lane: LaneIn, win: WindowIn, fromMs: number, toMs: num
   }
 
   const read = lane.state === 'events';
+  const measure = measureOf(lane);
   const cells: LaneCell[] = [];
   for (let start = alignedStart(fromMs); start < toMs; start += stepMs) {
     const bucket = byStart.get(start);
     let value: number | null = null;
+    let rate: number | null = null;
     let p95: number | null = null;
     let refused: number | null = null;
     if (bucket && read && bucket.complete !== false) {
-      if (finite(bucket.busyMs)) value = atOnce(bucket.busyMs, win.bucketSeconds);
-      else if (bucket.count === 0) value = 0; // the source was read and saw nothing
+      if (measure === 'batch-rate') {
+        // Recorded batch counts are throughput: batches per second. A count is never busy time,
+        // so concurrency stays unknown unless the source measured busy time of its own.
+        // A clipped edge bucket was cut to the asked window, so its count covers only start..end:
+        // divide by those covered seconds, not the full step (3,000 batches over 30 s of a 60 s
+        // bucket is 100/s, not 50/s). A missing or unreadable end keeps the full step as the
+        // divisor, so a bucket without edges reads exactly as before — never NaN or Infinity.
+        if (finite(bucket.count) && bucket.count >= 0) {
+          let seconds = win.bucketSeconds;
+          if (bucket.clipped === true && typeof bucket.end === 'string') {
+            const covered = (Date.parse(bucket.end) - Date.parse(bucket.start)) / 1000;
+            if (finite(covered) && covered > 0) seconds = covered;
+          }
+          rate = bucket.count / seconds;
+        }
+        // Deliberate PERF-3 scope limit: the busy-time (at-once) path keeps the full step divisor.
+        if (finite(bucket.busyMs)) value = atOnce(bucket.busyMs, win.bucketSeconds);
+      } else {
+        if (finite(bucket.busyMs)) value = atOnce(bucket.busyMs, win.bucketSeconds);
+        else if (bucket.count === 0) value = 0; // the source was read and saw nothing
+      }
       p95 = finite(bucket.p95Ms) ? bucket.p95Ms : null;
       if (finite(bucket.clientErrors) || finite(bucket.errors)) {
         refused = (finite(bucket.clientErrors) ? bucket.clientErrors : 0) + (finite(bucket.errors) ? bucket.errors : 0);
       }
     }
-    cells.push({ start, end: start + stepMs, atOnce: value, p95Ms: p95, refused });
+    cells.push({ start, end: start + stepMs, atOnce: value, rate, p95Ms: p95, refused });
   }
   return cells;
 }
 
-/** Re-averages the cells inside each block (blocks start on whole multiples of the block length). */
+/**
+ * Re-averages the cells inside each block (blocks start on whole multiples of the block length).
+ * Coverage is independent of display averaging: a block's average is spread only over the cells that
+ * hold a number, and only those cells receive it. A null (unknown or incomplete) cell stays null —
+ * one known cell never turns its unknown neighbours into zeros (W13-02).
+ */
 export function regroupBlocks(cells: LaneCell[], blockSeconds: number): LaneCell[] {
   const blockMs = blockSeconds * 1000;
   if (!finite(blockMs) || blockMs <= 0 || cells.length === 0) return cells.map((c) => ({ ...c }));
@@ -128,21 +187,36 @@ export function regroupBlocks(cells: LaneCell[], blockSeconds: number): LaneCell
     if (group) group.push(cell);
     else groups.set(key, [cell]);
   }
-  const values = new Map<number, number | null>();
+  const values = new Map<number, { atOnce: number | null; rate: number | null }>();
   for (const [key, group] of groups) {
     let busy = 0;
     let covered = 0;
-    let any = false;
+    let batches = 0;
+    let rateCovered = 0;
     for (const cell of group) {
-      covered += cell.end - cell.start;
+      const span = cell.end - cell.start;
       if (cell.atOnce !== null) {
-        busy += cell.atOnce * (cell.end - cell.start);
-        any = true;
+        busy += cell.atOnce * span;
+        covered += span;
+      }
+      if (cell.rate !== null && cell.rate !== undefined) {
+        batches += cell.rate * span;
+        rateCovered += span;
       }
     }
-    values.set(key, any && covered > 0 ? busy / covered : null);
+    values.set(key, {
+      atOnce: covered > 0 ? busy / covered : null,
+      rate: rateCovered > 0 ? batches / rateCovered : null
+    });
   }
-  return cells.map((cell) => ({ ...cell, atOnce: values.get(Math.floor(cell.start / blockMs)) ?? null }));
+  return cells.map((cell) => {
+    const value = values.get(Math.floor(cell.start / blockMs)) ?? { atOnce: null, rate: null };
+    return {
+      ...cell,
+      atOnce: cell.atOnce === null ? null : value.atOnce,
+      rate: cell.rate === null || cell.rate === undefined ? null : value.rate
+    };
+  });
 }
 
 type PackItem = { id: string; label: string; start: number; end: number; kind?: 'bar' | 'marker' };
@@ -224,13 +298,15 @@ export function sameReadout(a: Readout | null, b: Readout | null): boolean {
 /** Builds the drawable lane for one source. A missing lane is drawn as not recorded. */
 export function buildLane(lane: LaneIn | undefined, key: LaneKey, win: WindowIn, fromMs: number, toMs: number): CallLane {
   const source = lane ?? emptyLane(key);
+  const measure = measureOf(source);
   let cells = laneCells(source, win, fromMs, toMs);
   const blockSeconds = finite(source.blockSeconds) && source.blockSeconds > 0 ? source.blockSeconds : null;
   if (key === 'sql' && blockSeconds !== null && blockSeconds > win.bucketSeconds) cells = regroupBlocks(cells, blockSeconds);
 
   let peak: CallLane['peak'] = null;
   for (const cell of cells) {
-    if (cell.atOnce !== null && (peak === null || cell.atOnce > peak.atOnce)) peak = { atOnce: cell.atOnce, start: cell.start };
+    const value = cellValue(cell, measure);
+    if (value !== null && (peak === null || value > peak.atOnce)) peak = { atOnce: value, start: cell.start };
   }
 
   const items: PackItem[] = [];
@@ -256,12 +332,13 @@ export function buildLane(lane: LaneIn | undefined, key: LaneKey, win: WindowIn,
   return {
     key,
     gap: lane ? laneGap(lane) : 'not-recorded', // a lane missing from the answer (still loading) is not yet known
+    measure,
     cells,
     peak,
     bars,
     moreBars: more,
     blockSeconds,
-    hasShape: cells.some((c) => c.atOnce !== null)
+    hasShape: cells.some((c) => cellValue(c, measure) !== null)
   };
 }
 

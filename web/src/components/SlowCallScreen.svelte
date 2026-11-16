@@ -7,7 +7,7 @@
   import { withCall, callSlotWindow, type SlowCallTarget } from '../lib/drill/callTarget';
   import { fetchTracing, nextRequestSeq, type TracingLane } from '../lib/tracing/model';
   import { fetchLaneDays, newestDay, type LaneDay } from '../lib/lanes';
-  import { buildLane, packBars, type CallLane, type LaneBar, type LaneIn, type LaneKey } from '../lib/drill/callLanes';
+  import { buildLane, cellValue, measureOf, packBars, type CallLane, type LaneBar, type LaneIn, type LaneKey } from '../lib/drill/callLanes';
   import { allSources, readoutSpan, type Readout, type SourceItem } from '../lib/drill/callReadout';
   import { dbState, type DbStateKey } from '../lib/drill/dbState';
   import { mapRow } from '../lib/drill/callMap';
@@ -114,19 +114,26 @@
     return () => ask.abort();
   });
 
-  // The database lane draws one block per Query Store interval when the server sent no block length of its own.
-  function qsBlockSeconds(key: LaneKey): number | undefined {
-    const minutes = savedDay?.lane?.queryStore?.intervalMinutes;
-    return key === 'sql' && typeof minutes === 'number' && Number.isFinite(minutes) && minutes > 0 ? minutes * 60 : undefined;
-  }
-
-  // The tracing parser keeps the raw reason code, the lane events, the block seconds and the bucket busy time; all four pass through here.
+  // The tracing parser keeps the raw reason code, the lane events, the block seconds and the bucket busy time; all pass through here.
+  // Buckets pass through whole (never re-mapped field by field), so a bucket's own end/clipped edges reach the clipped-rate math untouched.
   function toLaneIn(lane: TracingLane | undefined): LaneIn | undefined {
     if (!lane) return undefined;
+    const reasonCode = lane.reasonCode ?? lane.incompleteReason;
+    // Query Store block semantics belong to Query Store provenance only (W13-02). A saved day's interval is
+    // never borrowed for a Blackbox or API-seen lane: those sources keep their own steps, and unknown cells
+    // stay unknown instead of being averaged into a block that does not describe them.
+    const qsBlockSeconds = (key: LaneKey): number | undefined => {
+      if (key !== 'sql') return undefined;
+      if (reasonCode !== 'held-sql' && reasonCode !== 'layered-sql' && reasonCode !== 'qs-file') return undefined;
+      const minutes = savedDay?.lane?.queryStore?.intervalMinutes;
+      return typeof minutes === 'number' && Number.isFinite(minutes) && minutes > 0 ? minutes * 60 : undefined;
+    };
     return {
       key: lane.key,
       state: lane.state,
-      reasonCode: lane.reasonCode ?? lane.incompleteReason,
+      reasonCode,
+      // The 'blackbox' reason code is the host PDH batch-count contract: throughput, never concurrency.
+      measure: reasonCode === 'blackbox' ? 'batch-rate' : undefined,
       blockSeconds: lane.blockSeconds ?? qsBlockSeconds(lane.key),
       buckets: lane.buckets,
       events: lane.events ?? [],
@@ -151,12 +158,19 @@
   const nearbyRaw = $derived(callState?.nearby.rows ?? NO_ROWS);
 
   // The overview strip rows: they depend on the two-hour overview answer only.
+  // Each row is drawn in the measure of its own lane: a lane that recorded batch counts (Blackbox) draws batches
+  // per second, the others draw how many ran at once. mapRow stays measure-agnostic and is handed the one number
+  // each cell draws, so a lane with counts is never read as "no data" just because it recorded no busy time.
   const mapRows = $derived.by(() => {
     const resp = overviewResp;
-    return (['audit', 'iis', 'sql'] as const).map((key) =>
-      mapRow(key, resp ? buildLane(toLaneIn(resp.lanes.find((l) => l.key === key)), key, resp.window, over.start, over.end).cells : [])
-    );
+    return (['audit', 'iis', 'sql'] as const).map((key) => {
+      if (!resp) return mapRow(key, []);
+      const lane = buildLane(toLaneIn(resp.lanes.find((l) => l.key === key)), key, resp.window, over.start, over.end);
+      return mapRow(key, lane.cells.map((c) => ({ start: c.start, end: c.end, atOnce: cellValue(c, lane.measure) })));
+    });
   });
+  // The Database row of the strip keeps the measure of the lane it was drawn from, so its words match its columns.
+  const mapSqlMeasure = $derived(measureOf(toLaneIn(overviewResp?.lanes.find((l) => l.key === 'sql'))));
   const nearbyAll = $derived.by((): NearbyRow[] =>
     nearbyRaw.map((r) => ({
       id: r.id,
@@ -226,7 +240,11 @@
       {
         laneReasonCode: toLaneIn(sqlLane)?.reasonCode ?? '',
         laneHasShape: lanes.sql.hasShape,
+        // Source availability rests on recorded observations in the lane's own measure (batch counts for Blackbox).
+        laneHasObservations: lanes.sql.hasShape,
         laneAsOf: sqlLane?.asOf || null,
+        laneSince: sqlLane?.since || null,
+        laneCadenceSeconds: sqlLane?.cadenceSeconds ?? null,
         blockSeconds: lanes.sql.blockSeconds,
         queryStore: savedDay?.lane?.queryStore ?? null,
         hasEvents: s.events.some((e) => SQL_EVENT_SOURCES.includes(e.source) && Date.parse(e.start) >= bounds.start && Date.parse(e.start) <= bounds.end),
@@ -253,6 +271,8 @@
       endMs: s.callEndMs
     };
     const nearbyRows = filterRows(nearbyAll, s.chip, callRef, bounds.start, bounds.end);
+    // The drawn cells go in as they are: each carries its lane's own number, including the batch rate of a
+    // throughput lane, so the inspector reads the same measure the chart draws.
     const whileRan = readoutSpan({ audit: lanes.audit.cells, iis: lanes.iis.cells, sql: drawnSql.cells }, call);
     const sources = [
       { key: 'api' as const, label: DRILL_TEXT.laneApi, recorded: lanes.audit.hasShape || s.slowRows.length > 0 },
@@ -429,6 +449,7 @@
               win={bench.bounds}
               call={bench.call}
               bucketSeconds={bench.s.overview?.window.bucketSeconds ?? bench.step}
+              sqlMeasure={mapSqlMeasure}
               {zone}
               hidden={bench.covers}
               onPreview={(c) => controller?.preview(centreOn(bench.s.callStartMs, bench.s.window, c))}

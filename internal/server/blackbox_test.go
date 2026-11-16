@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,8 @@ import (
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/casestore/storetest"
+	"api-audit-explorer/internal/discover"
+	"api-audit-explorer/internal/discover/fake"
 	"api-audit-explorer/internal/importer"
 	"api-audit-explorer/internal/investigate"
 )
@@ -1147,5 +1150,555 @@ func TestHostSamplesDisk(t *testing.T) {
 	}
 	if got[1].DiskMs != nil {
 		t.Fatal("second DiskMs must be nil")
+	}
+}
+
+/* ---------------------------------------- wizard targets (BBX-1-10) */
+
+// The route table guard (TestRouteTableCoversEveryRoute) wants a row for every
+// route. The targets route belongs to the Blackbox pages, so its row is kept
+// here with them.
+func init() {
+	routeCases = append(routeCases, routeCase{"/api/blackbox/this-pc/targets", "/api/blackbox/this-pc/targets", "GET"})
+}
+
+// bbTargetsFake wires a fake detection into the deps, so no real IIS config or
+// service list is touched. detected=true claims both sources were read;
+// detected=false claims neither was (the per-source codes the real detection
+// distinguishes are exercised in TestDetectTargetsIndependentSources).
+func bbTargetsFake(pools, services []TargetName, detected bool) func(*BlackboxDeps) {
+	return func(d *BlackboxDeps) {
+		d.DetectTargets = func() bbTargetsDetection {
+			det := bbTargetsDetection{AppPools: pools, Services: services}
+			if detected {
+				det.AppPoolsState, det.ServicesState = bbSourceDetected, bbSourceDetected
+			} else {
+				det.AppPoolsState, det.ServicesState = bbSourceUnavailable, bbSourceUnavailable
+			}
+			return det
+		}
+	}
+}
+
+// bbKnown is a running state that was actually read, for fake targets.
+func bbKnown(v bool) *bool { return &v }
+
+func TestBBTargetsShape(t *testing.T) {
+	b := newBBEnv(t, bbTargetsFake(
+		[]TargetName{{Name: "zeta-pool", State: bbTargetUnknown}, {Name: "alpha-pool", Running: bbKnown(true), State: bbTargetRunning}},
+		[]TargetName{{Name: "svc-z", Running: bbKnown(true), State: bbTargetRunning}, {Name: "svc-a", Running: bbKnown(true), State: bbTargetRunning}}, true))
+	res := b.e.get("/api/blackbox/this-pc/targets")
+	if res.Code != http.StatusOK {
+		t.Fatalf("targets = %d %s", res.Code, res.Body)
+	}
+	var out bbTargetsAnswer
+	decodeBody(t, res, &out)
+	if !out.Detected || len(out.AppPools) != 2 || len(out.Services) != 2 {
+		t.Fatalf("targets = %+v", out)
+	}
+	if out.AppPools[0].Name != "alpha-pool" || out.AppPools[1].Name != "zeta-pool" ||
+		out.Services[0].Name != "svc-a" || out.Services[1].Name != "svc-z" {
+		t.Fatalf("names are not sorted: %+v", out)
+	}
+	// A known running state survives; an unknown one carries no running claim.
+	if out.AppPools[1].Running != nil || out.AppPools[1].State != bbTargetUnknown {
+		t.Fatalf("unknown pool = %+v", out.AppPools[1])
+	}
+	if out.AppPools[0].Running == nil || !*out.AppPools[0].Running ||
+		out.Services[0].Running == nil || !*out.Services[0].Running {
+		t.Fatalf("running state lost: %+v", out)
+	}
+	// Every entry carries name, the optional running bool and the optional
+	// fixed state code, and nothing else.
+	var raw struct {
+		AppPools []map[string]any `json:"appPools"`
+		Services []map[string]any `json:"services"`
+	}
+	decodeBody(t, res, &raw)
+	for _, list := range [][]map[string]any{raw.AppPools, raw.Services} {
+		for _, entry := range list {
+			if entry["name"] == nil {
+				t.Fatalf("entry without a name: %v", entry)
+			}
+			for k, v := range entry {
+				switch k {
+				case "name":
+				case "running":
+					if _, ok := v.(bool); !ok {
+						t.Fatalf("running is not a bool: %v", entry)
+					}
+				case "state":
+					if v != bbTargetRunning && v != bbTargetStopped && v != bbTargetUnknown {
+						t.Fatalf("state is not a fixed code: %v", entry)
+					}
+				default:
+					t.Fatalf("unexpected entry key %q: %v", k, entry)
+				}
+			}
+		}
+	}
+}
+
+func TestBBTargetsNotDetected(t *testing.T) {
+	// Even names handed back with detected=false answer as empty lists: an
+	// undetected PC claims nothing.
+	b := newBBEnv(t, bbTargetsFake([]TargetName{{Name: "pool"}}, []TargetName{{Name: "svc"}}, false))
+	res := b.e.get("/api/blackbox/this-pc/targets")
+	if res.Code != http.StatusOK {
+		t.Fatalf("undetected targets = %d %s", res.Code, res.Body)
+	}
+	var out bbTargetsAnswer
+	decodeBody(t, res, &out)
+	if out.Detected || len(out.AppPools) != 0 || len(out.Services) != 0 {
+		t.Fatalf("undetected = %+v", out)
+	}
+	if out.AppPoolsState != bbSourceUnavailable || out.ServicesState != bbSourceUnavailable {
+		t.Fatalf("undetected per-source state = %+v", out)
+	}
+	if !strings.Contains(res.Body.String(), `"appPools":[]`) || !strings.Contains(res.Body.String(), `"services":[]`) {
+		t.Fatalf("empty lists are not []: %s", res.Body)
+	}
+	// The plain undetected answer (non-Windows, nothing readable) is the same shape.
+	b2 := newBBEnv(t, bbTargetsFake(nil, nil, false))
+	res2 := b2.e.get("/api/blackbox/this-pc/targets")
+	if res2.Code != http.StatusOK || !strings.Contains(res2.Body.String(), `"detected":false`) {
+		t.Fatalf("undetected = %d %s", res2.Code, res2.Body)
+	}
+}
+
+func TestBBTargetsCapsAndDedup(t *testing.T) {
+	var pools, services []TargetName
+	for i := 0; i < 300; i++ {
+		pools = append(pools, TargetName{Name: fmt.Sprintf("pool-%03d", i%260), State: bbTargetUnknown})
+		services = append(services, TargetName{Name: fmt.Sprintf("svc-%03d", i%270), Running: bbKnown(true), State: bbTargetRunning})
+	}
+	b := newBBEnv(t, bbTargetsFake(pools, services, true))
+	res := b.e.get("/api/blackbox/this-pc/targets")
+	if res.Code != http.StatusOK {
+		t.Fatalf("targets = %d %s", res.Code, res.Body)
+	}
+	var out bbTargetsAnswer
+	decodeBody(t, res, &out)
+	if len(out.AppPools) != 256 || len(out.Services) != 256 {
+		t.Fatalf("caps: pools %d services %d, want 256 each", len(out.AppPools), len(out.Services))
+	}
+	for _, list := range [][]TargetName{out.AppPools, out.Services} {
+		seen := map[string]bool{}
+		for i, tn := range list {
+			if seen[tn.Name] {
+				t.Fatalf("duplicate name %q", tn.Name)
+			}
+			seen[tn.Name] = true
+			if i > 0 && list[i-1].Name >= tn.Name {
+				t.Fatalf("not sorted at %d: %q then %q", i, list[i-1].Name, tn.Name)
+			}
+		}
+	}
+	if out.AppPools[0].Name != "pool-000" || out.AppPools[255].Name != "pool-255" {
+		t.Fatalf("cap kept the wrong end: %s .. %s", out.AppPools[0].Name, out.AppPools[255].Name)
+	}
+}
+
+func TestBBTargetsAuth(t *testing.T) {
+	b := newBBEnv(t, func(d *BlackboxDeps) {
+		d.DetectTargets = func() bbTargetsDetection {
+			t.Error("detection ran for an unauthenticated request")
+			return bbTargetsDetection{AppPoolsState: bbSourceUnavailable, ServicesState: bbSourceUnavailable}
+		}
+	})
+	for _, token := range []string{"", "wrong-token"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/blackbox/this-pc/targets", nil)
+		req.Host = "127.0.0.1:8765"
+		if token != "" {
+			req.Header.Set("X-Audit-Token", token)
+		}
+		res := httptest.NewRecorder()
+		b.e.h.ServeHTTP(res, req)
+		if res.Code != http.StatusUnauthorized {
+			t.Fatalf("token %q = %d, want 401", token, res.Code)
+		}
+	}
+	// GET only: a POST is refused even with the token.
+	if res := b.e.json(http.MethodPost, "/api/blackbox/this-pc/targets", ""); res.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST targets = %d, want 405", res.Code)
+	}
+}
+
+func TestBBTargetsNoText(t *testing.T) {
+	b := newBBEnv(t, bbTargetsFake(
+		[]TargetName{{Name: "PayrollAPI", State: bbTargetUnknown}},
+		[]TargetName{{Name: "W3SVC", Running: bbKnown(true), State: bbTargetRunning}}, true))
+	res := b.e.get("/api/blackbox/this-pc/targets")
+	if res.Code != http.StatusOK {
+		t.Fatalf("targets = %d %s", res.Code, res.Body)
+	}
+	var doc map[string]any
+	decodeBody(t, res, &doc)
+	for k, v := range doc {
+		switch k {
+		case "appPools", "services", "detected":
+		case "appPoolsState", "servicesState":
+			// The per-source state is a fixed code, never an error text or path.
+			if v != bbSourceDetected && v != bbSourceUnavailable && v != bbSourceNotFound {
+				t.Fatalf("per-source state %q is not a fixed code: %v", k, v)
+			}
+		default:
+			t.Fatalf("unexpected top-level key %q", k)
+		}
+	}
+	// No key anywhere in the answer may be a path, command line or account field.
+	var walk func(v any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, val := range x {
+				lk := strings.ToLower(k)
+				for _, banned := range []string{"path", "command", "account"} {
+					if strings.Contains(lk, banned) {
+						t.Fatalf("forbidden key %q in %s", k, res.Body)
+					}
+				}
+				walk(val)
+			}
+		case []any:
+			for _, item := range x {
+				walk(item)
+			}
+		}
+	}
+	walk(doc)
+}
+
+// TestBBTargetsDetectionReusesEntryPoints drives the real detection helpers with
+// a fake discover.Env: pools come from applicationHost.config through
+// configparse.ParseAppHost, services from Services.List, running only.
+func TestBBTargetsDetectionReusesEntryPoints(t *testing.T) {
+	t.Setenv("windir", `C:\TestWindows`)
+	f := fake.New()
+	cfg := `C:\TestWindows\System32\inetsrv\config\applicationHost.config`
+	xml := `<configuration><system.applicationHost><applicationPools>` +
+		`<add name="PayrollAPI" managedRuntimeVersion="v4.0"><processModel identityType="SpecificUser" userName="SECRET-user" password="SECRET-pw" /></add>` +
+		`<add name="DefaultAppPool" />` +
+		`</applicationPools></system.applicationHost></configuration>`
+	f.FS.AddFile(cfg, int64(len(xml)), time.Now(), []byte(xml))
+	f.Services.Items = []discover.Service{
+		{Name: "W3SVC", State: "running", BinaryDir: `C:\secret`, Image: "svchost.exe"},
+		{Name: "StoppedSvc", State: "stopped"},
+		{Name: "OtherSvc", State: "other"},
+	}
+	env := f.Env(nil)
+	pools, state := bbAppPools(env)
+	if state != bbSourceDetected || len(pools) != 2 || pools[0].Name != "PayrollAPI" || pools[1].Name != "DefaultAppPool" {
+		t.Fatalf("pools = %+v state=%q", pools, state)
+	}
+	services, state := bbRunningServices(env)
+	if state != bbSourceDetected || len(services) != 1 || services[0].Name != "W3SVC" ||
+		services[0].Running == nil || !*services[0].Running || services[0].State != bbTargetRunning {
+		t.Fatalf("services = %+v state=%q", services, state)
+	}
+	// A missing config is "no IIS here"; a denied one is "could not read IIS";
+	// a denied service list is "unavailable". None is ever a 500 or a guess.
+	f2 := fake.New()
+	if _, state := bbAppPools(f2.Env(nil)); state != bbSourceNotFound {
+		t.Fatalf("missing applicationHost.config state = %q, want %q", state, bbSourceNotFound)
+	}
+	f2.FS.AddFile(cfg, int64(len(xml)), time.Now(), []byte(xml))
+	f2.FS.Deny(cfg)
+	if _, state := bbAppPools(f2.Env(nil)); state != bbSourceUnavailable {
+		t.Fatalf("denied applicationHost.config state = %q, want %q", state, bbSourceUnavailable)
+	}
+	f2.Services.Err = discover.ErrAccessDenied
+	if _, state := bbRunningServices(f2.Env(nil)); state != bbSourceUnavailable {
+		t.Fatalf("denied service list state = %q, want %q", state, bbSourceUnavailable)
+	}
+	// Off Windows the whole detection says not detected with empty lists.
+	if runtime.GOOS != "windows" {
+		d := detectTargets()
+		if d.detected() || len(d.AppPools) != 0 || len(d.Services) != 0 {
+			t.Fatalf("non-Windows detectTargets = %+v", d)
+		}
+	}
+}
+
+// bbTestPoolXML is a config with two pools. Whether their workers run is not in
+// the file: configuration presence is not operational state (W2-07).
+const bbTestPoolXML = `<configuration><system.applicationHost><applicationPools>` +
+	`<add name="PayrollAPI" managedRuntimeVersion="v4.0" />` +
+	`<add name="StoppedPool" managedRuntimeVersion="v4.0" />` +
+	`</applicationPools></system.applicationHost></configuration>`
+
+const bbTestCfgPath = `C:\TestWindows\System32\inetsrv\config\applicationHost.config`
+
+// bbAddTestConfig puts the two-pool config on the fake host.
+func bbAddTestConfig(f *fake.Env) {
+	f.FS.AddFile(bbTestCfgPath, int64(len(bbTestPoolXML)), time.Now(), []byte(bbTestPoolXML))
+}
+
+// bbAddTestServices gives the fake host one running and one stopped service.
+func bbAddTestServices(f *fake.Env) {
+	f.Services.Items = []discover.Service{
+		{Name: "W3SVC", State: "running"},
+		{Name: "StoppedSvc", State: "stopped"},
+	}
+}
+
+// TestDetectTargetsIndependentSources (W2-06) drives the orchestrating function
+// with a fake host: each source is attempted whatever the other does, what one
+// read is kept when the other fails, and the per-source state tells "no IIS on
+// this box" from "could not read IIS". No pool is ever claimed running (W2-07).
+func TestDetectTargetsIndependentSources(t *testing.T) {
+	t.Setenv("windir", `C:\TestWindows`)
+	cases := []struct {
+		name          string
+		setup         func(*fake.Env)
+		poolsState    string
+		servicesState string
+		poolNames     []string
+		serviceNames  []string
+		detected      bool
+	}{
+		{
+			name: "services readable, IIS config denied",
+			setup: func(f *fake.Env) {
+				bbAddTestServices(f)
+				bbAddTestConfig(f)
+				f.FS.Deny(bbTestCfgPath)
+			},
+			poolsState: bbSourceUnavailable, servicesState: bbSourceDetected,
+			serviceNames: []string{"W3SVC"}, detected: true,
+		},
+		{
+			name:       "services readable, no IIS on this box",
+			setup:      func(f *fake.Env) { bbAddTestServices(f) },
+			poolsState: bbSourceNotFound, servicesState: bbSourceDetected,
+			serviceNames: []string{"W3SVC"}, detected: true,
+		},
+		{
+			name: "IIS readable, services denied",
+			setup: func(f *fake.Env) {
+				bbAddTestConfig(f)
+				f.Services.Err = discover.ErrAccessDenied
+			},
+			poolsState: bbSourceDetected, servicesState: bbSourceUnavailable,
+			poolNames: []string{"PayrollAPI", "StoppedPool"}, detected: true,
+		},
+		{
+			name: "both unreadable",
+			setup: func(f *fake.Env) {
+				bbAddTestConfig(f)
+				bbAddTestServices(f)
+				f.DenyAll()
+			},
+			poolsState: bbSourceUnavailable, servicesState: bbSourceUnavailable, detected: false,
+		},
+		{
+			name: "both readable",
+			setup: func(f *fake.Env) {
+				bbAddTestConfig(f)
+				bbAddTestServices(f)
+			},
+			poolsState: bbSourceDetected, servicesState: bbSourceDetected,
+			poolNames: []string{"PayrollAPI", "StoppedPool"}, serviceNames: []string{"W3SVC"}, detected: true,
+		},
+		{
+			name: "IIS config unparsable, services readable",
+			setup: func(f *fake.Env) {
+				bbAddTestServices(f)
+				f.FS.AddFile(bbTestCfgPath, 9, time.Now(), []byte(`<not-xml`))
+			},
+			poolsState: bbSourceUnavailable, servicesState: bbSourceDetected,
+			serviceNames: []string{"W3SVC"}, detected: true,
+		},
+		{
+			name: "IIS config oversized, services readable",
+			setup: func(f *fake.Env) {
+				bbAddTestServices(f)
+				f.FS.AddFile(bbTestCfgPath, discover.MaxConfigBytes+1, time.Now(), []byte(bbTestPoolXML))
+			},
+			poolsState: bbSourceUnavailable, servicesState: bbSourceDetected,
+			serviceNames: []string{"W3SVC"}, detected: true,
+		},
+		{
+			name: "IIS config is a reparse point, services readable",
+			setup: func(f *fake.Env) {
+				bbAddTestServices(f)
+				f.FS.AddReparse(bbTestCfgPath)
+			},
+			poolsState: bbSourceUnavailable, servicesState: bbSourceDetected,
+			serviceNames: []string{"W3SVC"}, detected: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := fake.New()
+			tc.setup(f)
+			d := detectTargetsEnv(f.Env(nil))
+			if d.AppPoolsState != tc.poolsState || d.ServicesState != tc.servicesState || d.detected() != tc.detected {
+				t.Fatalf("states = %q/%q detected=%v, want %q/%q %v", d.AppPoolsState, d.ServicesState, d.detected(), tc.poolsState, tc.servicesState, tc.detected)
+			}
+			if got := bbNames(d.AppPools); !bbSameNames(got, tc.poolNames) {
+				t.Fatalf("pools = %v, want %v", got, tc.poolNames)
+			}
+			if got := bbNames(d.Services); !bbSameNames(got, tc.serviceNames) {
+				t.Fatalf("services = %v, want %v", got, tc.serviceNames)
+			}
+			// W2-07: a configured pool never carries a running claim; a listed
+			// service carries the state the service control manager gave.
+			for _, p := range d.AppPools {
+				if p.Running != nil || p.State != bbTargetUnknown {
+					t.Fatalf("configured pool claimed a state: %+v", p)
+				}
+			}
+			for _, s := range d.Services {
+				if s.Running == nil || !*s.Running || s.State != bbTargetRunning {
+					t.Fatalf("running service lost its state: %+v", s)
+				}
+			}
+		})
+	}
+}
+
+// bbNames lists the names of a target list, for comparisons.
+func bbNames(list []TargetName) []string {
+	out := make([]string, 0, len(list))
+	for _, t := range list {
+		out = append(out, t.Name)
+	}
+	return out
+}
+
+// bbSameNames compares two name lists (nil and empty are the same).
+func bbSameNames(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestBBTargetsPartialSourcesReachThePicker (W2-06) is the endpoint half of the
+// independence rule: the readable list reaches the wizard with detected=true,
+// the failed source is named by its fixed code, and only when both fail does
+// the answer claim nothing.
+func TestBBTargetsPartialSourcesReachThePicker(t *testing.T) {
+	t.Setenv("windir", `C:\TestWindows`)
+	cases := []struct {
+		name          string
+		setup         func(*fake.Env)
+		detected      bool
+		pools         int
+		services      int
+		poolsState    string
+		servicesState string
+	}{
+		{
+			name: "services readable, IIS denied",
+			setup: func(f *fake.Env) {
+				bbAddTestServices(f)
+				bbAddTestConfig(f)
+				f.FS.Deny(bbTestCfgPath)
+			},
+			detected: true, pools: 0, services: 1,
+			poolsState: bbSourceUnavailable, servicesState: bbSourceDetected,
+		},
+		{
+			name: "IIS readable, services denied",
+			setup: func(f *fake.Env) {
+				bbAddTestConfig(f)
+				f.Services.Err = discover.ErrAccessDenied
+			},
+			detected: true, pools: 2, services: 0,
+			poolsState: bbSourceDetected, servicesState: bbSourceUnavailable,
+		},
+		{
+			name: "both unreadable",
+			setup: func(f *fake.Env) {
+				bbAddTestConfig(f)
+				f.DenyAll()
+			},
+			detected: false, pools: 0, services: 0,
+			poolsState: bbSourceUnavailable, servicesState: bbSourceUnavailable,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := fake.New()
+			tc.setup(f)
+			d := detectTargetsEnv(f.Env(nil))
+			b := newBBEnv(t, func(deps *BlackboxDeps) {
+				deps.DetectTargets = func() bbTargetsDetection { return d }
+			})
+			res := b.e.get("/api/blackbox/this-pc/targets")
+			if res.Code != http.StatusOK {
+				t.Fatalf("targets = %d %s", res.Code, res.Body)
+			}
+			var out bbTargetsAnswer
+			decodeBody(t, res, &out)
+			if out.Detected != tc.detected || len(out.AppPools) != tc.pools || len(out.Services) != tc.services ||
+				out.AppPoolsState != tc.poolsState || out.ServicesState != tc.servicesState {
+				t.Fatalf("answer = %+v, want detected=%v pools=%d services=%d states %q/%q",
+					out, tc.detected, tc.pools, tc.services, tc.poolsState, tc.servicesState)
+			}
+		})
+	}
+}
+
+// TestBBTargetsConfiguredPoolIsNotClaimedRunning (W2-07) is the endpoint-to-picker
+// contract: a pool that is only configured (its worker may be stopped) arrives
+// with state "unknown" and no running claim, so the picker can never read it as
+// running=true. A running service keeps its known running=true.
+func TestBBTargetsConfiguredPoolIsNotClaimedRunning(t *testing.T) {
+	t.Setenv("windir", `C:\TestWindows`)
+	f := fake.New()
+	bbAddTestConfig(f)
+	bbAddTestServices(f)
+	d := detectTargetsEnv(f.Env(nil))
+	b := newBBEnv(t, func(deps *BlackboxDeps) {
+		deps.DetectTargets = func() bbTargetsDetection { return d }
+	})
+	res := b.e.get("/api/blackbox/this-pc/targets")
+	if res.Code != http.StatusOK {
+		t.Fatalf("targets = %d %s", res.Code, res.Body)
+	}
+	var raw struct {
+		AppPools []map[string]any `json:"appPools"`
+		Services []map[string]any `json:"services"`
+		Detected bool             `json:"detected"`
+	}
+	decodeBody(t, res, &raw)
+	if !raw.Detected || len(raw.AppPools) != 2 || len(raw.Services) != 1 {
+		t.Fatalf("answer = %s", res.Body)
+	}
+	for _, p := range raw.AppPools {
+		if v, held := p["running"]; held {
+			t.Fatalf("configured pool %v carries a running claim %v; a stopped pool must not read as running", p["name"], v)
+		}
+		if p["state"] != bbTargetUnknown {
+			t.Fatalf("configured pool %v state = %v, want unknown", p["name"], p["state"])
+		}
+	}
+	for _, s := range raw.Services {
+		if s["running"] != true || s["state"] != bbTargetRunning {
+			t.Fatalf("running service = %v, want running=true state=running", s)
+		}
+	}
+}
+
+// TestBBTargetsByteCap keeps the 256 KiB output cap: a list whose names alone
+// overflow it is refused, never streamed past the limit.
+func TestBBTargetsByteCap(t *testing.T) {
+	long := strings.Repeat("n", 2000)
+	var pools []TargetName
+	for i := 0; i < 256; i++ {
+		pools = append(pools, TargetName{Name: fmt.Sprintf("%s-%03d", long, i), State: bbTargetUnknown})
+	}
+	b := newBBEnv(t, bbTargetsFake(pools, nil, true))
+	res := b.e.get("/api/blackbox/this-pc/targets")
+	if res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized targets = %d, want 413 (body %d bytes)", res.Code, res.Body.Len())
 	}
 }

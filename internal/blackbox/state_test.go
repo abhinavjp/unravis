@@ -97,6 +97,28 @@ func TestRunningLateIsMoreThanThreeIntervals(t *testing.T) {
 	}
 }
 
+// TestLatenessUsesEffectiveIntervalWhenWidened: with the budget widened to 60 s
+// (base 15), an on-time 60 s sample is running, not running-late. Without the
+// effective field the base interval still governs, so the same 60 s sample is
+// late. A genuinely stale sample is still late even at the widened interval.
+func TestLatenessUsesEffectiveIntervalWhenWidened(t *testing.T) {
+	now := t0.Add(2 * time.Hour)
+	widened := func(m *Manifest) { m.IntervalSeconds = 15; m.EffectiveIntervalSeconds = 60 }
+
+	// Effective 60, base 15: a 60 s-old sample is on time (limit 3*60 = 180 s).
+	if si := derive(stReading(stManifest(now.Add(-60*time.Second), widened), now, nil), nil); si.State != SRunning {
+		t.Fatalf("effective 60/base 15, 60 s sample: state %s, want running", si.State)
+	}
+	// No effective field: base 15 governs, so 60 s (> 3*15 = 45 s) is late.
+	if si := derive(stReading(stManifest(now.Add(-60*time.Second), nil), now, nil), nil); si.State != SRunningLate {
+		t.Fatalf("base 15, no effective, 60 s sample: state %s, want running-late", si.State)
+	}
+	// Effective 60 still detects a genuinely stale sample (> 180 s).
+	if si := derive(stReading(stManifest(now.Add(-181*time.Second), widened), now, nil), nil); si.State != SRunningLate {
+		t.Fatalf("effective 60, 181 s sample: state %s, want running-late", si.State)
+	}
+}
+
 // Lateness is judged on the recorder's clock when it is known, so a PC whose own
 // clock is wrong does not make a healthy recorder look late.
 func TestLatenessUsesTheRecordersClockWhenKnown(t *testing.T) {

@@ -107,6 +107,9 @@ type ThisPC struct {
 
 // HelperArgs are the command line of one call. The settings travel in a file
 // (cfgPath), never in the arguments, so nothing but plain flags is on the line.
+// For apply the file is only the carrier of the new settings: the helper saves
+// them to the installed config path it works out itself, exactly as install
+// does, so the protocol needs no extra flag and stays backward compatible.
 func HelperArgs(req HelperRequest, cfgPath string) []string {
 	args := []string{string(req.Op), "--json"}
 	switch req.Op {
@@ -183,6 +186,10 @@ func FailureWords(reason string) (what, next string) {
 		return "The name typed does not match.", "Type the Blackbox name exactly to delete its recordings."
 	case ReasonInvalid:
 		return "The settings are not valid.", "Check the settings and try again."
+	case string(ReasonSaveFailed):
+		return "The new settings could not be saved.", "Nothing was changed. Try again. If it keeps happening, check that the Blackbox program folder is not locked by another program."
+	case string(ReasonRestartFailed):
+		return "The recorder did not restart with the new settings.", "The previous settings were put back. Try again, and check the Blackbox status if it keeps happening."
 	case string(SnapDriveFull):
 		return "The drive is full, so the snapshot was not written.", "Free some space or pick another folder. The recordings are untouched."
 	case string(SnapFileOpen):
@@ -281,8 +288,11 @@ func (t *ThisPC) Stop(ctx context.Context) error {
 	return err
 }
 
-// Apply saves new settings and restarts the service. It reports whether it
-// restarted (a stopped Blackbox applies them at its next start).
+// Apply saves new settings to the installed blackbox.json and restarts the
+// service. The settings travel in a short-lived file, but the helper saves them
+// to the installed copy the service reads, so the selection outlives the
+// temporary file. It reports whether it restarted (a stopped Blackbox applies
+// them at its next start).
 func (t *ThisPC) Apply(ctx context.Context, cfg Config) (restarted bool, err error) {
 	a, err := t.do(ctx, HelperRequest{Op: OpApply, Config: cfg})
 	return a.Restarted, err

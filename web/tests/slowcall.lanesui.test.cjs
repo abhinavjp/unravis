@@ -105,3 +105,131 @@ test('the component holds no sentence of its own', () => {
   const text = flat.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   assert.equal(text.replace(/[·]/g, '').trim(), '', `leftover text: ${text}`);
 });
+
+// ---- the throughput measure is labelled everywhere it is drawn (W13-01, W13-03) ----
+
+test('the database lane draws and reads its own measure, not a renamed concurrency', () => {
+  assert.match(source, /import \{[^}]*cellValue[^}]*\} from '\.\.\/lib\/drill\/callLanes'/);
+  assert.match(source, /lanes\.sql\.measure === 'batch-rate'/);
+  // shape, gaps and readout all go through the measure-aware value
+  assert.match(source, /const valueOf = \(name: LaneName, cell: LaneCell\)/);
+  assert.match(source, /if \(valueOf\(name, cell\) === null\)/);
+  // unit-labelled header, readout and legend
+  assert.match(source, /DRILL_TEXT\.laneRateShape\(/);
+  assert.match(source, /DRILL_TEXT\.readDbRate\(/);
+  assert.match(source, /DRILL_TEXT\.readDbRateNone/);
+  assert.match(source, /DRILL_TEXT\.readDbNoAtOnce/);
+  assert.match(source, /DRILL_TEXT\.legendRate/);
+  assert.match(source, /DRILL_TEXT\.unitBatches/);
+});
+
+test('a throughput lane never claims "nothing slow here": call times are marked unavailable', () => {
+  assert.match(source, /name === 'sql' && sqlRate \? DRILL_TEXT\.laneNoCallTimes/);
+  assert.match(source, /DRILL_TEXT\.laneNoCallTimes : slowCount\(name\) > 0/);
+});
+
+test('no raw HTML is ever interpolated', () => {
+  assert.doesNotMatch(source, /\{@html/);
+});
+
+// ---- UX-2: the chart help follows the lane's real measure (server-rendered, real data path) ----
+// The lanes are built by buildLane from a shaped tracing answer and the db view by dbState,
+// exactly as the screen builds them; the component's own sqlRate derivation drives the help.
+
+const { compile } = require('svelte/compiler');
+const { render } = require('svelte/server');
+
+const ssrCache = new Map();
+function loadModule(relativePath) {
+  const filename = path.join(root, relativePath);
+  if (ssrCache.has(filename)) return ssrCache.get(filename).exports;
+  let src = fs.readFileSync(filename, 'utf8');
+  if (filename.endsWith('.svelte')) {
+    src = compile(src, { filename: path.basename(filename), generate: 'server' }).js.code;
+  }
+  const output = ts.transpileModule(src, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+  const module = { exports: {} };
+  ssrCache.set(filename, module);
+  const nodeRequire = createRequire(filename);
+  const load = (request) => {
+    if (/^\.\.?\//.test(request)) {
+      for (const candidate of [request, request + '.ts', request + '.svelte.ts']) {
+        const full = path.join(path.dirname(filename), candidate);
+        if (fs.existsSync(full) && fs.statSync(full).isFile()) return loadModule(path.relative(root, full));
+      }
+    }
+    return nodeRequire(request);
+  };
+  new Function('require', 'module', 'exports', '$state', output)(load, module, module.exports, (v) => v);
+  return module.exports;
+}
+
+const { buildLane } = loadModule('src/lib/drill/callLanes.ts');
+const { dbState } = loadModule('src/lib/drill/dbState.ts');
+const fmt = { date: (iso) => iso.slice(0, 10), time: (iso) => iso.slice(11, 16) };
+const WS = Date.parse('2026-11-11T10:00:00Z');
+const WE = Date.parse('2026-11-11T11:00:00Z');
+const win = { axisStart: '2026-11-11T10:00:00Z', bucketSeconds: 60 };
+const bucketAt = (i, extra) => ({ start: new Date(WS + i * 60000).toISOString(), count: 4, ...extra });
+// A Blackbox host-counter SQL lane: recorded batch COUNTS, no busy time (the real server shape).
+const blackboxSqlIn = { key: 'sql', state: 'events', reasonCode: 'blackbox', buckets: [bucketAt(0, { count: 6000 }), bucketAt(1, { count: 3000 })], events: [] };
+// A Query Store SQL lane: measured busy time, the concurrency measure.
+const qsSqlIn = { key: 'sql', state: 'events', reasonCode: 'held-sql', buckets: [bucketAt(0, { busyMs: 12000 }), bucketAt(1, { busyMs: 6000 })], events: [] };
+const auditIn = { key: 'audit', state: 'events', buckets: [bucketAt(0, { busyMs: 24000, p95Ms: 900 })], events: [] };
+const iisIn = { key: 'iis', state: 'events', buckets: [bucketAt(0, { busyMs: 18000 })], events: [] };
+
+function renderLanes(sqlIn, dbOver, shownOver) {
+  const lanes = {
+    audit: buildLane(auditIn, 'audit', win, WS, WE),
+    iis: buildLane(iisIn, 'iis', win, WS, WE),
+    sql: buildLane(sqlIn, 'sql', win, WS, WE)
+  };
+  const db = dbState({
+    laneReasonCode: sqlIn.reasonCode ?? '', laneHasShape: lanes.sql.hasShape, laneAsOf: null,
+    laneSince: '2026-10-20T08:30:00Z', laneCadenceSeconds: 15, blockSeconds: null,
+    queryStore: { state: 'on' }, hasEvents: false, windowStart: WS, windowEnd: WE, ...dbOver
+  }, fmt);
+  const Lanes = loadModule('src/components/CallLanes.svelte').default;
+  const { body } = render(Lanes, {
+    props: {
+      lanes, start: WS, end: WE, stepSeconds: 60,
+      call: { startMs: WS + 600000, endMs: WS + 602400 },
+      db, markers: [], shown: { api: true, iis: true, db: true, ...shownOver },
+      zone: 'UTC', loading: false, selectedKey: null, onSelect() {}, onReadout() {}
+    }
+  });
+  return body;
+}
+
+// Svelte's SSR adds comment markers and scoping classes; read the text, not the markup.
+const plain = (html) => html.replace(/<!--[\s\S]*?-->/g, '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+const readLine = (html) => plain(/<p class="scall-readline[^"]*"[^>]*>([\s\S]*?)<\/p>/.exec(html)?.[1] ?? '');
+const legendItems = (html) => {
+  const ul = /<ul class="scall-legend[^"]*"[^>]*>([\s\S]*?)<\/ul>/.exec(html)?.[1] ?? '';
+  return [...ul.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)].map((m) => plain(m[1]));
+};
+
+test('UX-2: a shown batch-rate database lane gets rate-aware chart help (real render)', () => {
+  const html = renderLanes(blackboxSqlIn);
+  assert.equal(readLine(html), DRILL_TEXT.chartReadLineRate, 'the read line names the rate measure');
+  const items = legendItems(html);
+  assert.ok(items.includes(`${DRILL_TEXT.helpUp} ${DRILL_TEXT.helpUpDbRate}`), 'the up help carries the database-lane sentence: ' + JSON.stringify(items));
+  assert.ok(items.includes(DRILL_TEXT.legendRate), 'the rate legend line stays');
+});
+
+test('UX-2: an at-once database lane keeps the exact old chart help (real render)', () => {
+  const html = renderLanes(qsSqlIn);
+  assert.equal(readLine(html), DRILL_TEXT.chartReadLine);
+  const items = legendItems(html);
+  assert.ok(items.includes(DRILL_TEXT.helpUp), 'the up help is unchanged');
+  assert.equal(items.some((t) => t.includes(DRILL_TEXT.helpUpDbRate ?? '§none§')), false, 'no rate sentence');
+  assert.equal(items.includes(DRILL_TEXT.legendRate), false, 'no rate legend line');
+});
+
+test('UX-2: a rate lane hidden by the source switches keeps the at-once help (real render)', () => {
+  const html = renderLanes(blackboxSqlIn, {}, { db: false });
+  assert.equal(readLine(html), DRILL_TEXT.chartReadLine);
+  const items = legendItems(html);
+  assert.ok(items.includes(DRILL_TEXT.helpUp));
+  assert.equal(items.some((t) => t.includes(DRILL_TEXT.helpUpDbRate ?? '§none§')), false);
+});

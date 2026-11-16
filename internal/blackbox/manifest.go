@@ -74,21 +74,27 @@ const (
 // file is rewritten whole through a temporary file and a rename, so a reader
 // sees either the old or the new one.
 type Manifest struct {
-	Format          int         `json:"format"`
-	Name            string      `json:"name"`
-	Version         string      `json:"version"`
-	Host            string      `json:"host"`
-	IntervalSeconds int         `json:"intervalSeconds"`
-	Created         time.Time   `json:"created"`
-	Updated         time.Time   `json:"updated"`
-	State           string      `json:"state"`
-	FirstSample     *time.Time  `json:"firstSample,omitempty"`
-	LastSample      *time.Time  `json:"lastSample,omitempty"`
-	Runs            []RunEntry  `json:"runs"`
-	Files           []FileEntry `json:"files"`
-	Gaps            []Gap       `json:"gaps"`
-	Events          []Event     `json:"events"`
-	Probe           Probe       `json:"probe"`
+	Format          int    `json:"format"`
+	Name            string `json:"name"`
+	Version         string `json:"version"`
+	Host            string `json:"host"`
+	IntervalSeconds int    `json:"intervalSeconds"`
+	// EffectiveIntervalSeconds is the interval the recorder is actually ticking
+	// at after the light budget widens or steps back (0 when never set, e.g. an
+	// older manifest or a run without a budget). IntervalSeconds stays the
+	// configured base; readers judge lateness against the effective interval
+	// when it is present so a widened cadence is not mistaken for running late.
+	EffectiveIntervalSeconds int         `json:"effectiveIntervalSeconds,omitempty"`
+	Created                  time.Time   `json:"created"`
+	Updated                  time.Time   `json:"updated"`
+	State                    string      `json:"state"`
+	FirstSample              *time.Time  `json:"firstSample,omitempty"`
+	LastSample               *time.Time  `json:"lastSample,omitempty"`
+	Runs                     []RunEntry  `json:"runs"`
+	Files                    []FileEntry `json:"files"`
+	Gaps                     []Gap       `json:"gaps"`
+	Events                   []Event     `json:"events"`
+	Probe                    Probe       `json:"probe"`
 }
 
 // ErrNewerFormat is returned when the manifest was written by a newer recorder.
@@ -126,6 +132,23 @@ func (m Manifest) Coverage() (first, last time.Time, ok bool) {
 		return time.Time{}, time.Time{}, false
 	}
 	return *m.FirstSample, *m.LastSample, true
+}
+
+// CadenceSeconds is the interval the recorder actually ticks at: the effective
+// interval when the manifest carries one (>0), else the configured base, else
+// the fixed default. Readers that integrate a per-second rate over time must
+// use this rather than IntervalSeconds alone: the light budget widens and
+// narrows the cadence while the configured base stays put (W12-02). It is a
+// single latest value, so a reader reconstructing historical cadence changes
+// still needs the observed sample times, not this field alone.
+func (m Manifest) CadenceSeconds() int {
+	if m.EffectiveIntervalSeconds > 0 {
+		return m.EffectiveIntervalSeconds
+	}
+	if m.IntervalSeconds > 0 {
+		return m.IntervalSeconds
+	}
+	return DefaultIntervalSecond
 }
 
 // TotalBytes is the size of the recording files.

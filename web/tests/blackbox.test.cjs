@@ -1,34 +1,13 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createRequire } = require('node:module');
 const test = require('node:test');
-const ts = require('typescript');
+const { loadTypeScript } = require('./helpers/loadTs.cjs');
 
 // Blackbox in Unravis: the page's rules, its words, the A35 gap summary, and how the panel is wired in.
 
 const root = path.resolve(__dirname, '..');
-const cache = new Map();
-function loadTypeScript(relativePath) {
-  const filename = path.join(root, relativePath);
-  if (cache.has(filename)) return cache.get(filename).exports;
-  const source = fs.readFileSync(filename, 'utf8');
-  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
-  const module = { exports: {} };
-  cache.set(filename, module);
-  const nodeRequire = createRequire(filename);
-  const load = (request) => {
-    if (/^\.\.?\//.test(request)) {
-      const plain = path.join(path.dirname(filename), request + '.ts');
-      const store = path.join(path.dirname(filename), request + '.svelte.ts');
-      if (fs.existsSync(plain)) return loadTypeScript(path.relative(root, plain));
-      if (fs.existsSync(store)) return loadTypeScript(path.relative(root, store));
-    }
-    return nodeRequire(request);
-  };
-  new Function('require', 'module', 'exports', '$state', output)(load, module, module.exports, (value) => value);
-  return module.exports;
-}
+
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 const bb = loadTypeScript('src/lib/blackbox.ts');
@@ -147,9 +126,9 @@ test('the read key goes up in the add and key calls only, and is never kept or s
     assert.doesNotMatch(text, /localStorage|sessionStorage|indexedDB|console\.(log|info|debug)/, file + ' keeps nothing in the browser');
   }
   assert.doesNotMatch(read('src/components/BlackboxAdd.svelte'), />\s*\{key\}\s*</, 'the typed key is never printed');
-  assert.match(read('src/components/BlackboxAdd.svelte'), /type=\{showKey \? 'text' : 'password'\}/, 'the key field hides the key unless asked');
-  assert.match(read('src/components/BlackboxAdd.svelte'), /key = '';\s*onAdded/, 'the key is cleared once the add worked');
-  assert.match(read('src/components/BlackboxPanel.svelte'), /newKey = '';/, 'a replaced key is cleared once sent');
+  assert.match(read('src/components/BlackboxAdd.svelte'), /type=\{showKey\s*\?\s*'text'\s*:\s*'password'\}/, 'the key field hides the key unless asked');
+  assert.match(read('src/components/BlackboxAdd.svelte'), /key\s*=\s*'';\s*onAdded/, 'the key is cleared once the add worked');
+  assert.match(read('src/components/BlackboxPanel.svelte'), /newKey\s*=\s*'';/, 'a replaced key is cleared once sent');
   // No answer type in the page carries a key field.
   const types = lib.slice(0, lib.indexOf('/* ---------------------------------------------------------------- calls */'));
   const answers = types.split('\n').filter((line) => /\bkey\??\s*:/.test(line));
@@ -160,9 +139,9 @@ test('the panel is a header utility on every screen and is opened as a side pane
   assert.match(read('src/lib/appState.svelte.ts'), /'export' \| 'blackbox' \| null/);
   assert.match(read('src/lib/appState.svelte.ts'), /openSidePanel\(which: [^)]*'blackbox'\)/);
   const header = read('src/components/AppHeader.svelte');
-  assert.match(header, /id: 'blackbox', label: 'Blackbox', open: \(\) => openSidePanel\('blackbox'\)/);
-  assert.match(header, /\.\.\.\(working \? navDrawers : \[\]\), blackbox, glossary/, 'the menu reaches it before a case is open');
-  assert.match(read('src/App.svelte'), /panels\.sidePanel === 'blackbox'\}<BlackboxPanel onClose=\{closeSidePanel\}/);
+  assert.match(header, /id:\s*'blackbox',\s*label:\s*'Blackbox',\s*open:\s*\(\)\s*=>\s*openSidePanel\('blackbox'\)/);
+  assert.match(header, /\.\.\.\(working\s*\?\s*navDrawers\s*:\s*\[\]\),\s*blackbox,\s*glossary/, 'the menu reaches it before a case is open');
+  assert.match(read('src/App.svelte'), /panels\.sidePanel\s*===\s*'blackbox'\}\s*<BlackboxPanel\s+onClose=\{closeSidePanel\}/);
 });
 
 test('the panel shows no network scan and says the Blackbox only reads', () => {
@@ -228,7 +207,7 @@ test('the status screen offers use in this case and the control posts a name tag
   assert.match(panel, /BlackboxCaseUse\.svelte/);
   assert.match(panel, /<CaseUse \{item\} \/>/);
   const control = read('src/components/BlackboxCaseUse.svelte');
-  assert.match(control, /useInCase\(caseUseApi, caseId, item\.name\)/);
+  assert.match(control, /useInCase\(caseUseApi,\s*caseId,\s*item\.name\)/);
   assert.doesNotMatch(control, /item\.location|\.key\b|hasKey/);
   const api = read('src/lib/blackboxCaseApi.ts');
   assert.match(api, /postSourceTag/);
@@ -255,7 +234,7 @@ test('copy says so when the key is not given or the clipboard refuses, and never
 
 test('the read key row is on this PC only, masked, and the key stays in the component and goes nowhere else', () => {
   const panel = read('src/components/BlackboxPanel.svelte');
-  assert.match(panel, /item\.thisPc && item\.kind === 'url' && item\.hasKey\}\{#key item\.id\}<ReadKey \{item\} \/>/);
+  assert.match(panel, /item\.thisPc\s*&&\s*item\.kind\s*===\s*'url'\s*&&\s*item\.hasKey\}\s*\{#key\s+item\.id\}\s*<ReadKey\s+\{item\}\s*\/>/);
   const row = read('src/components/BlackboxReadKey.svelte');
   assert.match(row, /blackboxApi\.revealKey\(item\.id\)/);
   assert.match(row, /onDestroy\(letGo\)/);
@@ -276,16 +255,16 @@ test('no other screen or case file holds a key field', () => {
 
 test('D-C-23: the Add form marks a wrong field aria-invalid and links the error line', () => {
   const add = read('src/components/BlackboxAdd.svelte');
-  assert.match(add, /const locationBad = \$derived\(problem === T\.locationEmpty\);/);
-  assert.match(add, /const keyBad = \$derived\(problem === T\.keyNeeded\);/);
-  assert.match(add, /<div class="inline-error" id="bb-add-error" role="alert">\{problem\}<\/div>/);
-  assert.match(add, /aria-invalid=\{locationBad \? 'true' : undefined\} aria-describedby=\{locationBad \? 'bb-add-help bb-add-error' : 'bb-add-help'\}/);
-  assert.match(add, /aria-invalid=\{keyBad \? 'true' : undefined\} aria-describedby=\{keyBad \? 'bb-add-key-help bb-add-error' : 'bb-add-key-help'\}/);
+  assert.match(add, /const locationBad\s*=\s*\$derived\(problem\s*===\s*T\.locationEmpty\);/);
+  assert.match(add, /const keyBad\s*=\s*\$derived\(problem\s*===\s*T\.keyNeeded\);/);
+  assert.match(add, /<div\s+class="inline-error"\s+id="bb-add-error"\s+role="alert">\{problem\}<\/div>/);
+  assert.match(add, /aria-invalid=\{locationBad\s*\?\s*'true'\s*:\s*undefined\}\s*aria-describedby=\{locationBad\s*\?\s*'bb-add-help\s+bb-add-error'\s*:\s*'bb-add-help'\}/);
+  assert.match(add, /aria-invalid=\{keyBad\s*\?\s*'true'\s*:\s*undefined\}\s*aria-describedby=\{keyBad\s*\?\s*'bb-add-key-help\s+bb-add-error'\s*:\s*'bb-add-key-help'\}/);
   // The marks clear when the person types again.
-  assert.match(add, /oninput=\{\(\) => \{ if \(locationBad\) problem = ''; \}\}/);
-  assert.match(add, /oninput=\{\(\) => \{ if \(keyBad\) problem = ''; \}\}/);
+  assert.match(add, /oninput=\{\(\)\s*=>\s*\{\s*if\s*\(locationBad\)\s*problem\s*=\s*'';\s*\}\}/);
+  assert.match(add, /oninput=\{\(\)\s*=>\s*\{\s*if\s*\(keyBad\)\s*problem\s*=\s*'';\s*\}\}/);
   // The read key rules still hold: hidden by default, never printed, cleared after the add.
-  assert.match(add, /type=\{showKey \? 'text' : 'password'\}/);
+  assert.match(add, /type=\{showKey\s*\?\s*'text'\s*:\s*'password'\}/);
   assert.doesNotMatch(add, />\s*\{key\}\s*</);
-  assert.match(add, /key = '';\s*onAdded/);
+  assert.match(add, /key\s*=\s*'';\s*onAdded/);
 });

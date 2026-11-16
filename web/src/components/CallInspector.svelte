@@ -43,7 +43,13 @@
   };
 
   const NOT_SHOWN = [DRILL_TEXT.notShownTime, DRILL_TEXT.notShownStart, DRILL_TEXT.notShownWholeDb, DRILL_TEXT.notShownIis];
-  const HOW = [DRILL_TEXT.legendWidth, DRILL_TEXT.legendShape, DRILL_TEXT.legendHatched, DRILL_TEXT.legendCall];
+  // When the database lane measures throughput, its faint area is batches per second, not a number running at
+  // once: the chart help says so, using the same words the chart itself uses.
+  const HOW = $derived(
+    db.measure === 'batch-rate'
+      ? [DRILL_TEXT.legendWidth, DRILL_TEXT.legendShape, DRILL_TEXT.legendRate, DRILL_TEXT.legendHatched, DRILL_TEXT.legendCall]
+      : [DRILL_TEXT.legendWidth, DRILL_TEXT.legendShape, DRILL_TEXT.legendHatched, DRILL_TEXT.legendCall]
+  );
 
   const PRETEND: { id: string; state: DbStateKey | null; label: string }[] = [
     { id: 'real', state: null, label: DRILL_TEXT.pretendReal },
@@ -65,11 +71,18 @@
   const tookText = $derived(
     selected && selected.tookMs !== null && Number.isFinite(selected.tookMs) ? formatMs(selected.tookMs) : DRILL_TEXT.notRecorded
   );
-  const dbLine = $derived(
-    whileRan?.db && whileRan.db.atOnce !== null && Number.isFinite(whileRan.db.atOnce) && db.shape !== 'none'
-      ? DRILL_TEXT.readDbPeak(formatAtOnce(whileRan.db.atOnce))
-      : DRILL_TEXT.readDbNone
-  );
+  // The database line keeps the measure of the lane it describes: a lane that recorded batch counts reports
+  // batches per second, a lane that measured busy time reports how many ran at once. A missing number is
+  // "not recorded", never 0, and a rate is never printed as a number running at once.
+  const dbLine = $derived.by(() => {
+    const cell = whileRan?.db;
+    if (!cell || db.shape === 'none') return DRILL_TEXT.readDbNone;
+    const rate = cell.rate;
+    if (db.measure === 'batch-rate' && typeof rate === 'number' && Number.isFinite(rate)) {
+      return DRILL_TEXT.readDbRatePeak(formatAtOnce(rate));
+    }
+    return cell.atOnce !== null && Number.isFinite(cell.atOnce) ? DRILL_TEXT.readDbPeak(formatAtOnce(cell.atOnce)) : DRILL_TEXT.readDbNone;
+  });
   // Where the selected API call sits against the slowest-5% marks of the steps on the chart. Only API calls have a duration to compare.
   const normalLine = $derived.by((): string | null => {
     if (!selected || selected.source !== 'api' || selected.marker || selected.tookMs === null) return null;

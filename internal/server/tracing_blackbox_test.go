@@ -1,0 +1,1113 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"math"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"api-audit-explorer/internal/blackbox"
+	"api-audit-explorer/internal/calltrace"
+	"api-audit-explorer/internal/evidence"
+	"api-audit-explorer/internal/importer/sqlserver"
+)
+
+// BBX-5-16: the database lane drawn from the case's Blackbox sampling. The fake
+// world of blackbox_demo.go serves the recordings, so no share, service or port
+// is touched. The window is 2026-10-20 10:00-11:00; the recording starts 08:30.
+
+const bbLaneWindowStart = "2026-10-20T10:00:00Z"
+const bbLaneWindowEnd = "2026-10-20T11:00:00Z"
+
+// bbLaneSamples makes one sample every 15 s from start to end (inclusive). sql
+// gives the SQLHost group of a sample; nil leaves the group out entirely.
+func bbLaneSamples(start, end time.Time, sql func(time.Time) *blackbox.SQLHostGroup) []blackbox.Sample {
+	var out []blackbox.Sample
+	seq := uint64(0)
+	for t := start; !t.After(end); t = t.Add(15 * time.Second) {
+		seq++
+		out = append(out, blackbox.Sample{V: 1, Run: "run-1", Seq: seq, T: t.UTC(), CPU: f64(25), SQLHost: sql(t)})
+	}
+	return out
+}
+
+// bbSQLGroup is a SQLHost group of one instance per rate (MSSQLSERVER, NAMED, ...).
+func bbSQLGroup(rates ...float64) *blackbox.SQLHostGroup {
+	g := &blackbox.SQLHostGroup{}
+	for i, r := range rates {
+		v := r
+		name := "MSSQLSERVER"
+		if i > 0 {
+			name = "NAMED"
+		}
+		g.Instances = append(g.Instances, blackbox.SQLHostInstance{Instance: name, BatchRequestsPerSec: &v})
+	}
+	return g
+}
+
+// bbLaneRec builds a recording of the given samples as a simBB the fake world
+// serves: the manifest lists the hourly files and the first and last sample.
+func bbLaneRec(name string, samples []blackbox.Sample) *simBB {
+	bb := &simBB{files: map[string][]byte{}, dropAt: map[string]int{}}
+	byHour := map[time.Time]*bytes.Buffer{}
+	counts := map[time.Time]int{}
+	firstOf, lastOf := map[time.Time]time.Time{}, map[time.Time]time.Time{}
+	var hours []time.Time
+	for _, s := range samples {
+		line, _ := json.Marshal(s)
+		h := s.T.UTC().Truncate(time.Hour)
+		buf := byHour[h]
+		if buf == nil {
+			buf = &bytes.Buffer{}
+			byHour[h] = buf
+			hours = append(hours, h)
+		}
+		buf.Write(line)
+		buf.WriteByte('\n')
+		counts[h]++
+		if firstOf[h].IsZero() {
+			firstOf[h] = s.T
+		}
+		lastOf[h] = s.T
+	}
+	first, last := samples[0].T, samples[len(samples)-1].T
+	m := blackbox.Manifest{
+		Format: blackbox.FormatVersion, Name: name, Version: "0.9.0", Host: strings.ToUpper(name),
+		IntervalSeconds: 15, Created: first, Updated: last, State: "running",
+		Runs:        []blackbox.RunEntry{{ID: "run-1", Start: first, Version: "0.9.0"}},
+		FirstSample: &first, LastSample: &last,
+	}
+	for _, h := range hours {
+		fn := blackbox.FileNameFor(h)
+		data := byHour[h].Bytes()
+		bb.files[fn] = data
+		m.Files = append(m.Files, blackbox.FileEntry{Name: fn, Hour: h, Bytes: int64(len(data)), Samples: counts[h], First: firstOf[h], Last: lastOf[h]})
+	}
+	bb.man = m
+	return bb
+}
+
+// bbLaneEnv saves one Blackbox "web-b" serving rec and opens a case that uses it.
+func bbLaneEnv(t *testing.T, rec *simBB) (*bbEnv, string) {
+	t.Helper()
+	b := newBBEnv(t, nil)
+	b.world.put(share, rec)
+	b.mustAdd(share, "")
+	return b, b.caseWith("web-b")
+}
+
+// bbLaneSQLRec is a recording whose every sample carries 100 batch requests/s.
+func bbLaneSQLRec() *simBB {
+	return bbLaneRec("web-b", bbLaneSamples(invT0.Add(-30*time.Minute), invT0.Add(3*time.Hour),
+		func(time.Time) *blackbox.SQLHostGroup { return bbSQLGroup(100) }))
+}
+
+func TestBlackboxSQLLanePresent(t *testing.T) {
+	// Two instances: 100 + 50 batch requests/s together. Four 15 s samples a
+	// minute give (100+50) x 15 x 4 = 9000 a minute, 540000 over the hour.
+	rec := bbLaneRec("web-b", bbLaneSamples(invT0.Add(-30*time.Minute), invT0.Add(3*time.Hour),
+		func(time.Time) *blackbox.SQLHostGroup { return bbSQLGroup(100, 50) }))
+	b, id := bbLaneEnv(t, rec)
+	before := tracingFingerprint(t, b.e.store, id)
+	out, raw := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+	lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+	if lane.ReasonCode != tracingReasonBlackbox || lane.State != calltrace.StateEvents || !lane.Complete || lane.Truncated {
+		t.Fatalf("lane %s %s complete %v truncated %v", lane.ReasonCode, lane.State, lane.Complete, lane.Truncated)
+	}
+	if lane.Origin != tracingOriginCase || lane.Consistency != tracingConsStored || lane.Disabled != "" {
+		t.Fatalf("origin %s consistency %s disabled %q", lane.Origin, lane.Consistency, lane.Disabled)
+	}
+	if len(lane.Sources) != 1 || lane.Sources[0].SourceID != "blackbox" {
+		t.Fatalf("sources %+v, want one source keyed blackbox", lane.Sources)
+	}
+	if want := "Blackbox sampling every 15 s since 20 Oct 2026"; lane.Sources[0].Label != want {
+		t.Fatalf("label %q, want %q", lane.Sources[0].Label, want)
+	}
+	if lane.Scanned != 540000 || tracingBucketSum(lane) != 540000 {
+		t.Fatalf("scanned %d sum %d, want 540000", lane.Scanned, tracingBucketSum(lane))
+	}
+	if b0 := heldBucketAt(t, lane, invT0.Add(time.Hour).Unix()); b0.Count != 9000 {
+		t.Fatalf("first bucket count %d, want 9000", b0.Count)
+	}
+	if !strings.Contains(raw, `"reasonCode":"blackbox"`) || !strings.Contains(raw, `"sourceId":"blackbox"`) {
+		t.Fatal("wire output lacks the blackbox source key")
+	}
+	if tracingFingerprint(t, b.e.store, id) != before {
+		t.Fatal("tracing changed the case")
+	}
+	// The lane stays behind the app auth: no token, no answer.
+	req := httptest.NewRequest(http.MethodPost, tracingPath(id), strings.NewReader(tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd)))
+	req.Host = "127.0.0.1:8765"
+	req.Header.Set("Content-Type", "application/json")
+	if res := b.e.serve(req); res.Code != http.StatusUnauthorized {
+		t.Fatalf("no token = %d, want 401", res.Code)
+	}
+}
+
+func TestBlackboxSQLLaneAbsentFallsThrough(t *testing.T) {
+	// No SQLHost group at all: the lane stays not-recorded, never a zero lane.
+	plain := bbLaneRec("web-b", bbLaneSamples(invT0.Add(-30*time.Minute), invT0.Add(3*time.Hour),
+		func(time.Time) *blackbox.SQLHostGroup { return nil }))
+	b, id := bbLaneEnv(t, plain)
+	out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+	lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+	if lane.ReasonCode == tracingReasonBlackbox || lane.State != calltrace.StateNoData || lane.Since != nil || tracingBucketSum(lane) != 0 {
+		t.Fatalf("absent lane %s %s since %v sum %d, want unchanged no-data", lane.ReasonCode, lane.State, lane.Since, tracingBucketSum(lane))
+	}
+	// A case that names no Blackbox is unchanged too.
+	plainCase := b.e.newCase("no blackbox")
+	out, _ = tracingPost(t, b.e, plainCase, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+	if lane = tracingLaneOf(t, out, calltrace.LaneSQL); lane.ReasonCode != "" || lane.State != calltrace.StateNoData {
+		t.Fatalf("no-tag lane %s %s", lane.ReasonCode, lane.State)
+	}
+
+	// SQLHost present but the batch-request reading missing (another counter is
+	// recorded): still a fall-through, the missing reading is never a 0.
+	v := 5.0
+	other := bbLaneRec("web-b", bbLaneSamples(invT0.Add(-30*time.Minute), invT0.Add(3*time.Hour),
+		func(time.Time) *blackbox.SQLHostGroup {
+			return &blackbox.SQLHostGroup{Instances: []blackbox.SQLHostInstance{{Instance: "MSSQLSERVER", UserConnections: &v}}}
+		}))
+	b2, id2 := bbLaneEnv(t, other)
+	out, _ = tracingPost(t, b2.e, id2, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+	if lane = tracingLaneOf(t, out, calltrace.LaneSQL); lane.ReasonCode == tracingReasonBlackbox || lane.State != calltrace.StateNoData || lane.Since != nil {
+		t.Fatalf("missing-reading lane %s %s since %v", lane.ReasonCode, lane.State, lane.Since)
+	}
+
+	// The existing chain still runs: a Query Store file fills the lane even
+	// though the case names a Blackbox without SQL counters.
+	imp := seedTracingImport(t, b.e.store, id, sqlserver.QSName, "export.csv",
+		[]evidence.Event{qsFileTestEvent(invT0.Add(time.Hour), "100", 20, 90)})
+	body := `{"sourceIds":["` + tracingImportID(imp.ID) + `"],"incident":{"start":"` + bbLaneWindowStart + `","end":"` + bbLaneWindowEnd + `"}}`
+	out, _ = tracingPost(t, b.e, id, body)
+	if lane = tracingLaneOf(t, out, calltrace.LaneSQL); lane.ReasonCode != tracingReasonQSFile || tracingBucketSum(lane) != 100 {
+		t.Fatalf("qs-file fall-through %s sum %d", lane.ReasonCode, tracingBucketSum(lane))
+	}
+}
+
+func TestBlackboxSQLLaneNoText(t *testing.T) {
+	b, id := bbLaneEnv(t, bbLaneSQLRec())
+	out, raw := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+	lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+	if lane.ReasonCode != tracingReasonBlackbox {
+		t.Fatalf("reason %s, want blackbox", lane.ReasonCode)
+	}
+	// Numeric activity and the fixed label only: no events, no query text, no
+	// instance names, no error text. The reason is the fixed estimate note
+	// (W12-02): the bars are integrated throughput, not durations/concurrency.
+	if len(lane.Events) != 0 || lane.Hidden != 0 || lane.Reason != bbLaneEstimateNote {
+		t.Fatalf("events %d hidden %d reason %q", len(lane.Events), lane.Hidden, lane.Reason)
+	}
+	if !lane.Estimates {
+		t.Fatal("integrated batch counts are not labelled estimates")
+	}
+	for _, s := range lane.Sources {
+		if s.Label != "Blackbox sampling every 15 s since 20 Oct 2026" {
+			t.Fatalf("source label %q is not the fixed sentence", s.Label)
+		}
+	}
+	for _, banned := range []string{"MSSQLSERVER", "NAMED", "SELECT", "batchRequestsPerSec", "could not be read"} {
+		if strings.Contains(raw, banned) {
+			t.Fatalf("answer carries text %q", banned)
+		}
+	}
+	for _, bk := range lane.Buckets {
+		if bk.AvgMs != nil || bk.P50Ms != nil || bk.P95Ms != nil || bk.MaxMs != nil || bk.BusyMs != nil {
+			t.Fatalf("bucket invents figures the sampling never recorded: %+v", bk)
+		}
+	}
+	// A Blackbox that cannot be read adds no error text: the lane falls through.
+	b.world.drop(share)
+	out, raw = tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+	if lane = tracingLaneOf(t, out, calltrace.LaneSQL); lane.ReasonCode == tracingReasonBlackbox || lane.Reason != "" {
+		t.Fatalf("unreadable lane %s reason %q", lane.ReasonCode, lane.Reason)
+	}
+	if strings.Contains(raw, "could not be read") || strings.Contains(raw, "Blackbox web-b") {
+		t.Fatal("unreadable Blackbox leaked error text into the tracing answer")
+	}
+}
+
+func TestBlackboxSQLLaneSince(t *testing.T) {
+	first := invT0.Add(-30 * time.Minute) // 08:30, before the window
+	b, id := bbLaneEnv(t, bbLaneSQLRec())
+	out, raw := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+	lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+	if lane.Since == nil || !lane.Since.Equal(first) {
+		t.Fatalf("since %v, want the first sample %v", lane.Since, first)
+	}
+	if !strings.Contains(raw, `"since":"2026-10-20T08:30:00Z"`) {
+		t.Fatal("wire output lacks the since timestamp")
+	}
+	if !strings.Contains(lane.Sources[0].Label, "since 20 Oct 2026") {
+		t.Fatalf("label %q lacks the first sample date", lane.Sources[0].Label)
+	}
+	// A later window keeps the same since: it is the recording's first sample.
+	out, _ = tracingPost(t, b.e, id, tracingWindowBodyFor("2026-10-20T11:00:00Z", "2026-10-20T11:30:00Z"))
+	if lane = tracingLaneOf(t, out, calltrace.LaneSQL); lane.Since == nil || !lane.Since.Equal(first) {
+		t.Fatalf("later window since %v, want %v", lane.Since, first)
+	}
+}
+
+// The per-sample rate sums only the instances that recorded the reading; a
+// missing or invalid reading is never a stand-in zero.
+func TestBlackboxSQLRateMissingNeverZero(t *testing.T) {
+	if _, ok := bbSQLRate(blackbox.Sample{}); ok {
+		t.Fatal("a sample without SQLHost has a rate")
+	}
+	nilRate := &blackbox.SQLHostGroup{Instances: []blackbox.SQLHostInstance{{Instance: "MSSQLSERVER"}}}
+	if _, ok := bbSQLRate(blackbox.Sample{SQLHost: nilRate}); ok {
+		t.Fatal("a missing reading has a rate")
+	}
+	v, bad, nan := 100.0, -1.0, math.NaN()
+	mixed := &blackbox.SQLHostGroup{Instances: []blackbox.SQLHostInstance{
+		{Instance: "MSSQLSERVER", BatchRequestsPerSec: &v},
+		{Instance: "NAMED"},
+		{Instance: "NEG", BatchRequestsPerSec: &bad},
+		{Instance: "NAN", BatchRequestsPerSec: &nan},
+	}}
+	rate, ok := bbSQLRate(blackbox.Sample{SQLHost: mixed})
+	if !ok || rate != 100 {
+		t.Fatalf("rate %v ok %v, want 100 true", rate, ok)
+	}
+}
+
+// BBX-5-16 fix (finding 2): a read that lost files is incomplete, never a zero
+// lane. The samples read before the drop are kept; the lane carries the host
+// lane's gap warning and no instance or error text.
+func TestBlackboxSQLLaneIncompleteReport(t *testing.T) {
+	// A file that drops part way through (a share that went away).
+	rec := bbLaneSQLRec()
+	fn := blackbox.FileNameFor(invT0.Add(time.Hour).Truncate(time.Hour)) // the 10:00 hour
+	rec.dropAt[fn] = len(rec.files[fn]) / 2
+	b, id := bbLaneEnv(t, rec)
+	out, raw := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+	lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+	if lane.ReasonCode != tracingReasonBlackbox || lane.Complete {
+		t.Fatalf("dropped lane %s complete %v, want blackbox incomplete", lane.ReasonCode, lane.Complete)
+	}
+	if !strings.Contains(lane.Reason, bbLaneGapWarning) {
+		t.Fatalf("reason %q, want the gap warning %q", lane.Reason, bbLaneGapWarning)
+	}
+	if lane.Scanned <= 0 || tracingBucketSum(lane) != lane.Scanned {
+		t.Fatalf("scanned %d sum %d, want the samples read before the drop", lane.Scanned, tracingBucketSum(lane))
+	}
+	for _, bk := range lane.Buckets {
+		if bk.Complete {
+			t.Fatalf("bucket %+v complete after a dropped file", bk)
+		}
+		if bk.Count < 0 {
+			t.Fatalf("negative count %d", bk.Count)
+		}
+	}
+	for _, banned := range []string{"MSSQLSERVER", "NAMED", "network name", "connection dropped"} {
+		if strings.Contains(raw, banned) {
+			t.Fatalf("answer carries instance/error text %q", banned)
+		}
+	}
+
+	// A file the manifest lists but that is gone any more: the hour it held is a
+	// gap, never a zero. The window spans two hours so the read hour still draws.
+	rec2 := bbLaneSQLRec()
+	fn2 := blackbox.FileNameFor(invT0.Add(2 * time.Hour).Truncate(time.Hour)) // the 11:00 hour
+	delete(rec2.files, fn2)
+	b2, id2 := bbLaneEnv(t, rec2)
+	out2, _ := tracingPost(t, b2.e, id2, tracingWindowBodyFor(bbLaneWindowStart, "2026-10-20T12:00:00Z"))
+	lane2 := tracingLaneOf(t, out2, calltrace.LaneSQL)
+	if lane2.ReasonCode != tracingReasonBlackbox || lane2.Complete {
+		t.Fatalf("missing lane %s complete %v, want blackbox incomplete", lane2.ReasonCode, lane2.Complete)
+	}
+	if !strings.Contains(lane2.Reason, bbLaneGapWarning) {
+		t.Fatalf("reason %q, want the gap warning", lane2.Reason)
+	}
+	// The read hour contributes 100 req/s over the 3585 s it actually observed:
+	// the span ending at 11:00:00 belongs to the missing file's observation, and
+	// the span ending at 10:00:00 lies before the window (W12-02 apportioning).
+	if lane2.Scanned != 358500 {
+		t.Fatalf("scanned %d, want 358500 from the hour that was read", lane2.Scanned)
+	}
+	missingHour := invT0.Add(2 * time.Hour)
+	for _, bk := range lane2.Buckets {
+		if bk.Complete {
+			t.Fatalf("bucket %+v complete after a missing file", bk)
+		}
+		if !bk.Start.Before(missingHour) && bk.Count != 0 {
+			t.Fatalf("missing-hour bucket %+v invents activity", bk)
+		}
+		if bk.Count < 0 {
+			t.Fatalf("negative count %d", bk.Count)
+		}
+	}
+}
+
+// BBX-5-16 fix (finding 2): time the recording does not cover is a gap, never
+// zero activity. The recording stops at 10:30 but the window runs to 11:00.
+func TestBlackboxSQLLanePartialCoverage(t *testing.T) {
+	covEnd := invT0.Add(90 * time.Minute) // 10:30, the recording's last sample
+	rec := bbLaneRec("web-b", bbLaneSamples(invT0.Add(-30*time.Minute), covEnd,
+		func(time.Time) *blackbox.SQLHostGroup { return bbSQLGroup(100) }))
+	b, id := bbLaneEnv(t, rec)
+	out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+	lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+	if lane.ReasonCode != tracingReasonBlackbox || lane.Complete {
+		t.Fatalf("partial lane %s complete %v, want blackbox incomplete", lane.ReasonCode, lane.Complete)
+	}
+	covered, gaps := 0, 0
+	for _, bk := range lane.Buckets {
+		if !bk.End.After(covEnd) {
+			// Fully inside the recording: real activity, called complete.
+			if !bk.Complete || bk.Count <= 0 {
+				t.Fatalf("covered bucket %+v, want complete with activity", bk)
+			}
+			covered++
+		} else {
+			// Beyond the recording: a gap, never a claimed zero.
+			if bk.Complete {
+				t.Fatalf("uncovered bucket %+v called complete (drawn as zero)", bk)
+			}
+			gaps++
+		}
+		if bk.Count < 0 {
+			t.Fatalf("negative count %d", bk.Count)
+		}
+	}
+	if covered == 0 || gaps == 0 {
+		t.Fatalf("covered %d gaps %d, want both a covered and an uncovered stretch", covered, gaps)
+	}
+}
+
+// bbLaneSpacedSamples makes one sample every step from 09:30 to 12:00 with 100
+// batch requests/s, all in one recorder run, skipping the samples strictly
+// inside hole (a stretch the recorder did not sample at all). It is the shape a
+// cadence change leaves behind: the times, not the manifest, say how wide the
+// measured spans are.
+func bbLaneSpacedSamples(step time.Duration, holeStart, holeEnd time.Time) []blackbox.Sample {
+	var out []blackbox.Sample
+	seq := uint64(0)
+	for t := invT0.Add(-30 * time.Minute); !t.After(invT0.Add(3 * time.Hour)); t = t.Add(step) {
+		if t.After(holeStart) && t.Before(holeEnd) {
+			continue
+		}
+		seq++
+		out = append(out, blackbox.Sample{V: 1, Run: "run-1", Seq: seq, T: t.UTC(), CPU: f64(25), SQLHost: bbSQLGroup(100)})
+	}
+	return out
+}
+
+// CORR-1: the manifest's LATEST cadence must not judge spans that were measured
+// at a wider one. The light budget steps back to 15 s after a widened stretch,
+// so a window recorded every 60 s is read against EffectiveIntervalSeconds=15.
+// Judging those 60 s spans by 3x15 s calls every one of them a gap and drops the
+// whole lane to unknown, although the recorder never missed a tick. The
+// tolerance is the widest cadence the budget can reach (60 s), so the observed
+// spans stay known and the hour still totals 100 req/s x 3600 s.
+func TestBlackboxSQLLaneCadenceChanged(t *testing.T) {
+	t.Run("stepped-back cadence keeps observed spans known", func(t *testing.T) {
+		rec := bbLaneRec("web-b", bbLaneSpacedSamples(time.Minute, time.Time{}, time.Time{}))
+		rec.man.IntervalSeconds = 15
+		rec.man.EffectiveIntervalSeconds = 15 // the budget stepped back after the window
+		b, id := bbLaneEnv(t, rec)
+		out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+		lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+		if lane.ReasonCode != tracingReasonBlackbox {
+			t.Fatalf("lane %s, want blackbox", lane.ReasonCode)
+		}
+		if lane.Scanned != 360000 || tracingBucketSum(lane) != 360000 {
+			t.Fatalf("scanned %d sum %d, want 360000: the 60 s spans were dropped as gaps", lane.Scanned, tracingBucketSum(lane))
+		}
+		if !lane.Complete || lane.Truncated {
+			t.Fatalf("complete %v truncated %v, want a complete untruncated lane", lane.Complete, lane.Truncated)
+		}
+		if strings.Contains(lane.Reason, bbLaneCoverageWarning) {
+			t.Fatalf("reason %q claims unobserved time although every tick was read", lane.Reason)
+		}
+		for _, bk := range lane.Buckets {
+			if !bk.Complete || bk.Count != 6000 {
+				t.Fatalf("bucket %+v, want 6000 complete (100 req/s over the observed 60 s)", bk)
+			}
+		}
+	})
+
+	// The widened tolerance is not a licence to invent activity: a stretch the
+	// recorder really did not sample stays unknown, never a complete zero and
+	// never counted at the neighbouring rate.
+	t.Run("real hole stays unknown", func(t *testing.T) {
+		holeStart, holeEnd := invT0.Add(70*time.Minute), invT0.Add(80*time.Minute) // 10:10-10:20
+		rec := bbLaneRec("web-b", bbLaneSpacedSamples(time.Minute, holeStart, holeEnd))
+		rec.man.IntervalSeconds = 15
+		rec.man.EffectiveIntervalSeconds = 15
+		b, id := bbLaneEnv(t, rec)
+		out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+		lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+		if lane.ReasonCode != tracingReasonBlackbox || lane.Complete {
+			t.Fatalf("lane %s complete %v, want blackbox incomplete across the hole", lane.ReasonCode, lane.Complete)
+		}
+		if !strings.Contains(lane.Reason, bbLaneCoverageWarning) {
+			t.Fatalf("reason %q lacks the coverage warning", lane.Reason)
+		}
+		// 100 req/s over the 3000 observed seconds; the 600 unobserved seconds
+		// are a gap, never zero activity and never counted.
+		if lane.Scanned != 300000 || tracingBucketSum(lane) != 300000 {
+			t.Fatalf("scanned %d sum %d, want 300000", lane.Scanned, tracingBucketSum(lane))
+		}
+		for _, bk := range lane.Buckets {
+			inHole := !bk.Start.Before(holeStart) && bk.Start.Before(holeEnd)
+			if inHole {
+				if bk.Complete || bk.Count != 0 {
+					t.Fatalf("hole bucket %+v, want an incomplete gap with no count", bk)
+				}
+				continue
+			}
+			if !bk.Complete || bk.Count != 6000 {
+				t.Fatalf("observed bucket %+v, want 6000 complete", bk)
+			}
+		}
+	})
+}
+
+// CORR-3: a tick that skipped the sqlHost group did not collect the PDH batch
+// counter, so the NEXT SQL sample's rate was measured from the last PDH collect
+// (an earlier tick), not from the previous tick. That first span after a skip
+// is unproven and must stay unknown even though CORR-1's widened gapLimit
+// accepts its length. The reasons matched are the exact Missing entries the
+// group collector writes (internal/blackbox/groups.go): "sqlHost" (budget
+// skip), "sqlHost: slow" (slow-group skip or timeout) and "sqlHost: busy"
+// (worker still inside the provider).
+func TestBlackboxSQLLaneGroupSkip(t *testing.T) {
+	skipAt := invT0.Add(90 * time.Minute) // 10:30:00, inside the window
+	recWithSkip := func(reason string, keepSQL bool) *simBB {
+		samples := bbLaneSamples(invT0.Add(-30*time.Minute), invT0.Add(3*time.Hour),
+			func(time.Time) *blackbox.SQLHostGroup { return bbSQLGroup(100) })
+		for i := range samples {
+			if samples[i].T.Equal(skipAt) {
+				if !keepSQL {
+					samples[i].SQLHost = nil
+				}
+				samples[i].Missing = []string{reason}
+			}
+		}
+		return bbLaneRec("web-b", samples)
+	}
+	for _, reason := range []string{"sqlHost", "sqlHost: slow", "sqlHost: busy"} {
+		t.Run("first span after "+reason+" is unknown", func(t *testing.T) {
+			b, id := bbLaneEnv(t, recWithSkip(reason, false))
+			out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+			lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+			if lane.ReasonCode != tracingReasonBlackbox || lane.Complete {
+				t.Fatalf("lane %s complete %v, want blackbox incomplete across the skip", lane.ReasonCode, lane.Complete)
+			}
+			if !strings.Contains(lane.Reason, bbLaneCoverageWarning) {
+				t.Fatalf("reason %q lacks the coverage warning", lane.Reason)
+			}
+			// The unproven stretch is (10:29:45, 10:30:15]: 30 s at 100 req/s are
+			// not counted. 358500 would pretend the post-skip span was measured
+			// from the skipped tick; 357000 is the honest observed total.
+			if lane.Scanned != 357000 || tracingBucketSum(lane) != 357000 {
+				t.Fatalf("scanned %d sum %d, want 357000: the post-skip span was counted as known", lane.Scanned, tracingBucketSum(lane))
+			}
+			for _, bk := range lane.Buckets {
+				touchesSkip := bk.Start.Equal(invT0.Add(89*time.Minute)) || bk.Start.Equal(skipAt)
+				if touchesSkip {
+					if bk.Complete || bk.Count != 4500 {
+						t.Fatalf("bucket %+v, want 4500 incomplete (the unproven 30 s stretch)", bk)
+					}
+				} else if !bk.Complete || bk.Count != 6000 {
+					t.Fatalf("bucket %+v, want 6000 complete away from the skip", bk)
+				}
+			}
+		})
+	}
+	// No skip: every span is measured from the previous tick's collect and stays
+	// known — the fix must not over-mark the normal lane.
+	t.Run("no skip keeps every span known", func(t *testing.T) {
+		b, id := bbLaneEnv(t, bbLaneSQLRec())
+		out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+		lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+		if lane.ReasonCode != tracingReasonBlackbox || !lane.Complete || lane.Scanned != 360000 {
+			t.Fatalf("lane %s complete %v scanned %d, want blackbox complete 360000", lane.ReasonCode, lane.Complete, lane.Scanned)
+		}
+		if strings.Contains(lane.Reason, bbLaneCoverageWarning) {
+			t.Fatalf("reason %q claims unobserved time although nothing was skipped", lane.Reason)
+		}
+	})
+	// Another group's Missing entry is not a sqlHost skip: the SQL counter was
+	// collected at that tick, so the next span stays known.
+	t.Run("another group's Missing does not mark the SQL span", func(t *testing.T) {
+		b, id := bbLaneEnv(t, recWithSkip("network", true))
+		out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+		lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+		if lane.ReasonCode != tracingReasonBlackbox || !lane.Complete || lane.Scanned != 360000 {
+			t.Fatalf("lane %s complete %v scanned %d, want blackbox complete 360000", lane.ReasonCode, lane.Complete, lane.Scanned)
+		}
+	})
+}
+
+// BBX-5-16 fix (finding 3): an absurd per-instance reading is skipped, never
+// summed; the cap itself is still a valid reading.
+func TestBlackboxSQLRateAbsurdSkipped(t *testing.T) {
+	huge, over, edge, good := 1e300, bbSQLMaxRate+1, bbSQLMaxRate, 100.0
+	inf := math.Inf(1)
+	only := &blackbox.SQLHostGroup{Instances: []blackbox.SQLHostInstance{{Instance: "MSSQLSERVER", BatchRequestsPerSec: &huge}}}
+	if _, has := bbSQLRate(blackbox.Sample{SQLHost: only}); has {
+		t.Fatal("a 1e300 reading has a rate")
+	}
+	mixed := &blackbox.SQLHostGroup{Instances: []blackbox.SQLHostInstance{
+		{Instance: "MSSQLSERVER", BatchRequestsPerSec: &huge},
+		{Instance: "NAMED", BatchRequestsPerSec: &over},
+		{Instance: "INF", BatchRequestsPerSec: &inf},
+		{Instance: "OK", BatchRequestsPerSec: &good},
+	}}
+	rate, has := bbSQLRate(blackbox.Sample{SQLHost: mixed})
+	if !has || rate != 100 {
+		t.Fatalf("rate %v has %v, want 100 true (absurd readings skipped)", rate, has)
+	}
+	atCap := &blackbox.SQLHostGroup{Instances: []blackbox.SQLHostInstance{{Instance: "MSSQLSERVER", BatchRequestsPerSec: &edge}}}
+	if r, has := bbSQLRate(blackbox.Sample{SQLHost: atCap}); !has || r != bbSQLMaxRate {
+		t.Fatalf("rate %v has %v, want the cap %v true", r, has, bbSQLMaxRate)
+	}
+}
+
+// BBX-5-16 fix (finding 3): an untrusted rate times interval can never overflow
+// int64 into a negative count. A 1e300 reading is skipped, a huge manifest
+// interval is clamped, and a count beyond the sane cap is skipped — all
+// zero-safe. W12-01: a rejected number is never an observed zero, so the
+// affected coverage is downgraded, never called complete.
+func TestBlackboxSQLLaneOverflowSafe(t *testing.T) {
+	// A 1e300 instance beside a real one: only the real one draws (100 req/s),
+	// and the rejected reading leaves the lane partial, not complete.
+	rec := bbLaneRec("web-b", bbLaneSamples(invT0.Add(-30*time.Minute), invT0.Add(3*time.Hour),
+		func(time.Time) *blackbox.SQLHostGroup { return bbSQLGroup(1e300, 100) }))
+	b, id := bbLaneEnv(t, rec)
+	out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+	lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+	if lane.ReasonCode != tracingReasonBlackbox || lane.Complete {
+		t.Fatalf("lane %s complete %v, want blackbox partial (a reading was rejected)", lane.ReasonCode, lane.Complete)
+	}
+	if !strings.Contains(lane.Reason, bbLaneCoverageWarning) {
+		t.Fatalf("reason %q lacks the coverage warning", lane.Reason)
+	}
+	if lane.Scanned != 360000 || tracingBucketSum(lane) != 360000 {
+		t.Fatalf("scanned %d sum %d, want 360000 from the valid instance", lane.Scanned, tracingBucketSum(lane))
+	}
+	for _, bk := range lane.Buckets {
+		if bk.Count < 0 {
+			t.Fatalf("negative count %d from a 1e300 reading", bk.Count)
+		}
+	}
+
+	// A huge manifest interval is clamped to the fixed 15 s cadence, never
+	// amplified into an overflow.
+	huge := bbLaneSQLRec()
+	huge.man.IntervalSeconds = 1 << 62
+	b2, id2 := bbLaneEnv(t, huge)
+	out2, _ := tracingPost(t, b2.e, id2, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+	lane2 := tracingLaneOf(t, out2, calltrace.LaneSQL)
+	if lane2.ReasonCode != tracingReasonBlackbox || lane2.Scanned != 360000 {
+		t.Fatalf("huge-interval lane %s scanned %d, want blackbox 360000", lane2.ReasonCode, lane2.Scanned)
+	}
+	for _, bk := range lane2.Buckets {
+		if bk.Count < 0 {
+			t.Fatalf("negative count %d from a huge interval", bk.Count)
+		}
+	}
+
+	// A reading at the per-instance cap over an OBSERVED hour-long span makes a
+	// count beyond the sane cap: it is skipped, never a negative int64, and the
+	// coverage it stood for is downgraded (W12-01), never called complete zero.
+	var hourly []blackbox.Sample
+	seq := uint64(0)
+	for t := invT0.Add(-time.Hour); !t.After(invT0.Add(3 * time.Hour)); t = t.Add(time.Hour) {
+		seq++
+		hourly = append(hourly, blackbox.Sample{V: 1, Run: "run-1", Seq: seq, T: t.UTC(), CPU: f64(25), SQLHost: bbSQLGroup(bbSQLMaxRate)})
+	}
+	capped := bbLaneRec("web-b", hourly)
+	capped.man.IntervalSeconds = bbSQLMaxInterval
+	b3, id3 := bbLaneEnv(t, capped)
+	out3, _ := tracingPost(t, b3.e, id3, tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd))
+	lane3 := tracingLaneOf(t, out3, calltrace.LaneSQL)
+	if lane3.ReasonCode != tracingReasonBlackbox {
+		t.Fatalf("capped lane %s, want blackbox", lane3.ReasonCode)
+	}
+	if lane3.Complete {
+		t.Fatal("capped lane complete: a rejected number was equated with observed zero")
+	}
+	if lane3.Scanned != 0 || tracingBucketSum(lane3) != 0 {
+		t.Fatalf("capped scanned %d sum %d, want 0 (skipped, zero-safe)", lane3.Scanned, tracingBucketSum(lane3))
+	}
+	for _, bk := range lane3.Buckets {
+		if bk.Count < 0 {
+			t.Fatalf("negative count %d from an out-of-range float", bk.Count)
+		}
+		if bk.Complete {
+			t.Fatalf("bucket %+v complete after every reading was rejected", bk)
+		}
+	}
+}
+
+/* ------------------------------------- PERF-2: one window is read once */
+
+// bbReadCounter counts the sample files the Blackbox reads of one test open, by
+// name. The manifest is not a sample file, so the count is the window's decode
+// work alone: a second read of one window opens every name twice.
+type bbReadCounter struct {
+	mu      sync.Mutex
+	names   map[string]int
+	started chan struct{} // signals the first open, buffered
+	every   time.Duration // holds each open so a concurrent request must queue
+}
+
+// bbCountedSource is one Blackbox source with its opens counted.
+type bbCountedSource struct {
+	blackbox.Source
+	c *bbReadCounter
+}
+
+func (s bbCountedSource) OpenFile(ctx context.Context, name string) (io.ReadCloser, error) {
+	s.c.mu.Lock()
+	if s.c.names == nil {
+		s.c.names = map[string]int{}
+	}
+	s.c.names[name]++
+	s.c.mu.Unlock()
+	select {
+	case s.c.started <- struct{}{}:
+	default:
+	}
+	if s.c.every > 0 {
+		time.Sleep(s.c.every)
+	}
+	return s.Source.OpenFile(ctx, name)
+}
+
+// bbLaneCountedEnv is bbLaneEnv with every sample-file open counted, so a test
+// can tell one read of the window from two. every holds each open for a while so
+// a concurrent request has to queue behind the read in flight.
+func bbLaneCountedEnv(t *testing.T, rec *simBB, every time.Duration) (*bbEnv, string, *bbReadCounter) {
+	t.Helper()
+	c := &bbReadCounter{names: map[string]int{}, started: make(chan struct{}, 1), every: every}
+	b := newBBEnv(t, func(d *BlackboxDeps) {
+		inner := d.Open
+		d.Open = func(loc blackbox.Location, key string) blackbox.Source {
+			return bbCountedSource{Source: inner(loc, key), c: c}
+		}
+	})
+	b.world.put(share, rec)
+	b.mustAdd(share, "")
+	return b, b.caseWith("web-b"), c
+}
+
+// opens is how many sample files were opened in all.
+func (c *bbReadCounter) opens() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, k := range c.names {
+		n += k
+	}
+	return n
+}
+
+// reopens is the worst number of times any single sample file was opened: 1
+// means every file of the window was read once, whatever the request count.
+func (c *bbReadCounter) reopens() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	worst := 0
+	for _, k := range c.names {
+		if k > worst {
+			worst = k
+		}
+	}
+	return worst
+}
+
+// reset forgets every open counted so far, including the newest minutes the add
+// flow reads before any timeline request runs, and the first-open signal.
+func (c *bbReadCounter) reset() {
+	c.mu.Lock()
+	c.names = map[string]int{}
+	c.mu.Unlock()
+	select {
+	case <-c.started:
+	default:
+	}
+}
+
+// bbLaneAppendSample writes one more sample into the recording a test is
+// serving: the hour file grows and the manifest entry, the last sample and the
+// update time follow, the way an append-only recording changes between reads.
+func bbLaneAppendSample(rec *simBB, s blackbox.Sample) {
+	line, _ := json.Marshal(s)
+	fn := blackbox.FileNameFor(s.T)
+	h := s.T.UTC().Truncate(time.Hour)
+	grew := false
+	for i := range rec.man.Files {
+		if rec.man.Files[i].Name == fn {
+			rec.man.Files[i].Bytes += int64(len(line) + 1)
+			rec.man.Files[i].Samples++
+			rec.man.Files[i].Last = s.T
+			grew = true
+			break
+		}
+	}
+	rec.files[fn] = append(append(rec.files[fn], line...), '\n')
+	if !grew {
+		rec.man.Files = append(rec.man.Files, blackbox.FileEntry{
+			Name: fn, Hour: h, Bytes: int64(len(line) + 1), Samples: 1, First: s.T, Last: s.T,
+		})
+	}
+	last := s.T
+	rec.man.LastSample = &last
+	rec.man.Updated = s.T
+}
+
+// PERF-2: a timeline request re-reads the window only once. The repeat request
+// for one window and one Blackbox must answer from the extracted observations
+// instead of opening and decoding every in-window sample file again.
+func TestBlackboxSQLLaneCacheRepeatDoesNotReRead(t *testing.T) {
+	b, id, opens := bbLaneCountedEnv(t, bbLaneSQLRec(), 0)
+	body := tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd)
+	out, _ := tracingPost(t, b.e, id, body)
+	first := tracingLaneOf(t, out, calltrace.LaneSQL)
+	if first.ReasonCode != tracingReasonBlackbox || !first.Complete || first.Scanned != 360000 {
+		t.Fatalf("first lane %s complete %v scanned %d, want blackbox complete 360000",
+			first.ReasonCode, first.Complete, first.Scanned)
+	}
+	read := opens.opens()
+	if read == 0 {
+		t.Fatal("the first request opened no sample file: the counter proves nothing")
+	}
+	out, _ = tracingPost(t, b.e, id, body)
+	second := tracingLaneOf(t, out, calltrace.LaneSQL)
+	if second.ReasonCode != first.ReasonCode || second.Complete != first.Complete ||
+		second.Truncated != first.Truncated || second.Scanned != first.Scanned ||
+		tracingBucketSum(second) != tracingBucketSum(first) || second.Reason != first.Reason ||
+		len(second.Sources) != len(first.Sources) || second.Sources[0].Label != first.Sources[0].Label {
+		t.Fatalf("the repeat lane %+v differs from the read lane %+v", second, first)
+	}
+	if n := opens.opens(); n != read {
+		t.Fatalf("the repeat request opened %d more sample files, want 0: the window was decoded twice", n-read)
+	}
+}
+
+// PERF-2: the cache must not serve a stale signature. A new file in the
+// manifest and a later last sample both say the recording moved on, so the next
+// request must read the window again.
+func TestBlackboxSQLLaneCacheSignature(t *testing.T) {
+	body := tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd)
+	t.Run("a new hourly file re-reads", func(t *testing.T) {
+		rec := bbLaneSQLRec()
+		b, id, opens := bbLaneCountedEnv(t, rec, 0)
+		tracingPost(t, b.e, id, body)
+		read := opens.opens()
+		if read == 0 {
+			t.Fatal("the first request opened no sample file")
+		}
+		bbLaneAppendSample(rec, blackbox.Sample{V: 1, Run: "run-1", Seq: 1000,
+			T: invT0.Add(4 * time.Hour).UTC(), CPU: f64(25), SQLHost: bbSQLGroup(100)})
+		out, _ := tracingPost(t, b.e, id, body)
+		lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+		if lane.ReasonCode != tracingReasonBlackbox || !lane.Complete || lane.Scanned != 360000 {
+			t.Fatalf("lane after the new file %s complete %v scanned %d, want blackbox complete 360000",
+				lane.ReasonCode, lane.Complete, lane.Scanned)
+		}
+		if n := opens.opens(); n == read {
+			t.Fatal("the window was served from the cache although the manifest lists a new file")
+		}
+	})
+	t.Run("a later last sample re-reads", func(t *testing.T) {
+		rec := bbLaneSQLRec()
+		b, id, opens := bbLaneCountedEnv(t, rec, 0)
+		tracingPost(t, b.e, id, body)
+		read := opens.opens()
+		if read == 0 {
+			t.Fatal("the first request opened no sample file")
+		}
+		// Only the last sample moves: the file list is untouched, so a cache that
+		// keys on the file list alone would keep answering from the old read.
+		last := rec.man.LastSample.Add(15 * time.Second)
+		rec.man.LastSample = &last
+		if n := opens.opens(); n != read {
+			t.Fatalf("nothing was requested yet, but the opens went %d -> %d", read, n)
+		}
+		out, _ := tracingPost(t, b.e, id, body)
+		if lane := tracingLaneOf(t, out, calltrace.LaneSQL); lane.ReasonCode != tracingReasonBlackbox {
+			t.Fatalf("lane %s, want blackbox", lane.ReasonCode)
+		}
+		if n := opens.opens(); n == read {
+			t.Fatal("the window was served from the cache although its last sample moved on")
+		}
+	})
+	// A different window of one recording is a different read: the cached
+	// triples of the first window must not answer for the second.
+	t.Run("a different window re-reads", func(t *testing.T) {
+		b, id, opens := bbLaneCountedEnv(t, bbLaneSQLRec(), 0)
+		tracingPost(t, b.e, id, body)
+		read := opens.opens()
+		if read == 0 {
+			t.Fatal("the first request opened no sample file")
+		}
+		out, _ := tracingPost(t, b.e, id, tracingWindowBodyFor("2026-10-20T11:00:00Z", "2026-10-20T11:30:00Z"))
+		lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+		if lane.ReasonCode != tracingReasonBlackbox || !lane.Complete || lane.Scanned != 180000 {
+			t.Fatalf("second window lane %s complete %v scanned %d, want blackbox complete 180000",
+				lane.ReasonCode, lane.Complete, lane.Scanned)
+		}
+		if n := opens.opens(); n == read {
+			t.Fatal("the second window was answered from the first window's read")
+		}
+	})
+}
+
+// PERF-2: concurrent requests for one window do the read once. The others wait
+// for the read in flight instead of opening the same files again, so no file of
+// the window is decoded twice.
+func TestBlackboxSQLLaneCacheConcurrentReadsOnce(t *testing.T) {
+	b, id, opens := bbLaneCountedEnv(t, bbLaneSQLRec(), 40*time.Millisecond)
+	body := tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd)
+	opens.reset() // the add flow's own read is not this window's
+	leader := make(chan *httptest.ResponseRecorder, 1)
+	go func() { leader <- b.e.json(http.MethodPost, tracingPath(id), body) }()
+	<-opens.started // the leader is inside the window's read
+	const joiners = 3
+	recs := make([]*httptest.ResponseRecorder, joiners)
+	var wg sync.WaitGroup
+	for i := 0; i < joiners; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			recs[i] = b.e.json(http.MethodPost, tracingPath(id), body)
+		}(i)
+	}
+	wg.Wait()
+	lr := <-leader
+	if lr.Code != http.StatusOK {
+		t.Fatalf("leader = %d %s", lr.Code, lr.Body)
+	}
+	if n := opens.reopens(); n != 1 {
+		t.Fatalf("a sample file of the window was opened %d times, want 1: the concurrent requests read it themselves", n)
+	}
+	if opens.opens() == 0 {
+		t.Fatal("no sample file was opened at all")
+	}
+	// Every request still gets the whole lane, cached or not.
+	for _, res := range append([]*httptest.ResponseRecorder{lr}, recs...) {
+		var out tracingResponse
+		decodeBody(t, res, &out)
+		lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+		if lane.ReasonCode != tracingReasonBlackbox || !lane.Complete || lane.Scanned != 360000 {
+			t.Fatalf("lane %s complete %v scanned %d, want blackbox complete 360000",
+				lane.ReasonCode, lane.Complete, lane.Scanned)
+		}
+	}
+}
+
+// PERF-2 with CORR-3: a cached read must not make the first span after a skipped
+// sqlHost tick known again. The repeat request answers from the cache and still
+// leaves the unproven stretch uncounted and the lane incomplete.
+func TestBlackboxSQLLaneCacheKeepsGroupSkipUnknown(t *testing.T) {
+	skipAt := invT0.Add(90 * time.Minute) // 10:30:00, inside the window
+	samples := bbLaneSamples(invT0.Add(-30*time.Minute), invT0.Add(3*time.Hour),
+		func(time.Time) *blackbox.SQLHostGroup { return bbSQLGroup(100) })
+	for i := range samples {
+		if samples[i].T.Equal(skipAt) {
+			samples[i].SQLHost = nil
+			samples[i].Missing = []string{"sqlHost"}
+		}
+	}
+	b, id, opens := bbLaneCountedEnv(t, bbLaneRec("web-b", samples), 0)
+	body := tracingWindowBodyFor(bbLaneWindowStart, bbLaneWindowEnd)
+	out, _ := tracingPost(t, b.e, id, body)
+	first := tracingLaneOf(t, out, calltrace.LaneSQL)
+	if first.ReasonCode != tracingReasonBlackbox || first.Complete || first.Scanned != 357000 {
+		t.Fatalf("first lane %s complete %v scanned %d, want blackbox incomplete 357000",
+			first.ReasonCode, first.Complete, first.Scanned)
+	}
+	read := opens.opens()
+	out, _ = tracingPost(t, b.e, id, body)
+	second := tracingLaneOf(t, out, calltrace.LaneSQL)
+	if second.ReasonCode != tracingReasonBlackbox || second.Complete || second.Scanned != 357000 {
+		t.Fatalf("repeat lane %s complete %v scanned %d, want the post-skip span still unknown (357000)",
+			second.ReasonCode, second.Complete, second.Scanned)
+	}
+	if second.Reason != first.Reason {
+		t.Fatalf("repeat reason %q, want the first read's %q", second.Reason, first.Reason)
+	}
+	if n := opens.opens(); n != read {
+		t.Fatalf("the repeat request opened %d more sample files, want 0", n-read)
+	}
+}
+
+// The window cache on its own: one read per key while requests overlap, no
+// keeping of a read that could not speak for its window, a fresh read once an
+// entry ages out and once the recording's signature moves, and the oldest
+// windows dropped past the bound.
+func TestBlackboxSQLLaneCacheBounds(t *testing.T) {
+	ctx := context.Background()
+	key := bbLaneKey{entry: "bb-1", start: 1, end: 2}
+	now := time.Unix(1700000000, 0)
+	c := &bbLaneCache{now: func() time.Time { return now }}
+	reads := 0
+	good := func() (bbLaneRead, bool) { reads++; return bbLaneRead{cadence: 15}, true }
+	if _, ok := c.run(ctx, key, good); !ok {
+		t.Fatal("the first read failed")
+	}
+	if _, ok := c.run(ctx, key, good); !ok || reads != 1 {
+		t.Fatalf("reads %d ok %v, want the repeat served from the cache", reads, ok)
+	}
+	// A different window of the same recording is a different read.
+	if _, ok := c.run(ctx, bbLaneKey{entry: "bb-1", start: 2, end: 3}, good); !ok || reads != 2 {
+		t.Fatalf("reads %d, want the second window read", reads)
+	}
+	// A read that dropped a file is not kept: the next request may find the share
+	// back, and a remembered gap would hold the lane partial for nothing.
+	dropped := func() (bbLaneRead, bool) {
+		reads++
+		return bbLaneRead{rep: blackbox.ReadReport{Dropped: []string{"bb-20261020-10.ndjson"}}}, true
+	}
+	k3 := bbLaneKey{entry: "bb-1", start: 3, end: 4}
+	if _, ok := c.run(ctx, k3, dropped); !ok {
+		t.Fatal("the caller must still get the partial read")
+	}
+	before := reads
+	if _, ok := c.run(ctx, k3, dropped); !ok || reads != before+1 {
+		t.Fatalf("reads %d after %d, want the incomplete read done again (it was cached)", reads, before)
+	}
+	// The TTL bounds a signature that stopped changing.
+	now = now.Add(bbLaneCacheTTL)
+	before = reads
+	if _, ok := c.run(ctx, key, good); !ok || reads != before+1 {
+		t.Fatalf("reads %d after %d, want the aged entry read again", reads, before)
+	}
+	// The bound: past bbLaneCacheEntries windows the oldest is gone.
+	c2 := &bbLaneCache{now: c.now}
+	n := 0
+	mk := func() func() (bbLaneRead, bool) { return func() (bbLaneRead, bool) { n++; return bbLaneRead{}, true } }
+	for i := 0; i <= bbLaneCacheEntries; i++ {
+		if _, ok := c2.run(ctx, bbLaneKey{entry: "bb-1", start: int64(i), end: int64(i) + 1}, mk()); !ok {
+			t.Fatalf("window %d failed", i)
+		}
+	}
+	if n != bbLaneCacheEntries+1 {
+		t.Fatalf("reads %d, want one per window", n)
+	}
+	if _, ok := c2.run(ctx, bbLaneKey{entry: "bb-1", start: 0, end: 1}, mk()); !ok || n != bbLaneCacheEntries+2 {
+		t.Fatalf("reads %d ok %v, want the evicted oldest window read again", n, ok)
+	}
+	if _, ok := c2.run(ctx, bbLaneKey{entry: "bb-1", start: int64(bbLaneCacheEntries), end: int64(bbLaneCacheEntries) + 1}, mk()); !ok || n != bbLaneCacheEntries+2 {
+		t.Fatalf("reads %d ok %v, want the newest window still cached", n, ok)
+	}
+	// A read too large for the whole budget is not kept, and the fresh reads
+	// around it survive it.
+	c4 := &bbLaneCache{now: c.now, entries: []bbLaneEntry{{key: key, at: c.clock(), read: &bbLaneRead{}}}}
+	bigReads, kept := 0, 0
+	bigKey := bbLaneKey{entry: "bb-1", start: 50, end: 51}
+	big := func() (bbLaneRead, bool) {
+		bigReads++
+		return bbLaneRead{obs: make([]bbSQLObs, bbLaneCacheObs+1)}, true
+	}
+	if _, ok := c4.run(ctx, bigKey, big); !ok {
+		t.Fatal("the caller must still get an over-budget read")
+	}
+	if _, ok := c4.run(ctx, bigKey, big); !ok || bigReads != 2 {
+		t.Fatalf("bigReads %d ok %v, want an over-budget read never kept", bigReads, ok)
+	}
+	if _, ok := c4.run(ctx, key, func() (bbLaneRead, bool) { kept++; return bbLaneRead{}, true }); !ok || kept != 0 {
+		t.Fatalf("kept %d ok %v, want the older fresh read still cached after an over-budget read", kept, ok)
+	}
+	// One read for a burst on one window: the others wait for the flight.
+	c3 := &bbLaneCache{now: c.now}
+	calls := 0
+	var mu sync.Mutex
+	inRead := make(chan struct{})
+	release := make(chan struct{})
+	burst := func() (bbLaneRead, bool) {
+		mu.Lock()
+		calls++
+		first := calls == 1
+		mu.Unlock()
+		if first {
+			close(inRead)
+			<-release
+		}
+		return bbLaneRead{}, true
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); c3.run(ctx, key, burst) }()
+	<-inRead
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); c3.run(ctx, key, burst) }()
+	}
+	time.Sleep(100 * time.Millisecond) // let the joiners reach the wait
+	close(release)
+	wg.Wait()
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("the burst did %d reads of one window, want 1", got)
+	}
+}
+
+// PERF-2: the key must move whenever anything the read depends on moves. A
+// signature that missed it would keep answering from the old read.
+func TestBlackboxSQLLaneCacheKeySignature(t *testing.T) {
+	man := bbLaneSQLRec().man
+	base := bbLaneSignature(man)
+	equal := func(m blackbox.Manifest) bool { return bbLaneSignature(m) == base }
+	if !equal(man) {
+		t.Fatal("the signature is not stable for one manifest")
+	}
+	// A new hourly file (the file list).
+	m := man
+	m.Files = append(append([]blackbox.FileEntry{}, man.Files...), blackbox.FileEntry{
+		Name: "bb-20261020-13.ndjson", Hour: invT0.Add(4 * time.Hour), Bytes: 100, Samples: 1,
+	})
+	if equal(m) {
+		t.Fatal("a new recording file did not change the signature")
+	}
+	// A file that grew (the recorder appended to it).
+	m = man
+	m.Files = append([]blackbox.FileEntry{}, man.Files...)
+	m.Files[len(m.Files)-1].Bytes++
+	if equal(m) {
+		t.Fatal("a grown recording file did not change the signature")
+	}
+	// A later last sample (the coverage envelope).
+	m = man
+	last := man.LastSample.Add(time.Second)
+	m.LastSample = &last
+	if equal(m) {
+		t.Fatal("a later last sample did not change the signature")
+	}
+	// The cadence the tolerance, the lookback and the label come from.
+	for _, mod := range []func(*blackbox.Manifest){
+		func(x *blackbox.Manifest) { x.IntervalSeconds = 30 },
+		func(x *blackbox.Manifest) { x.EffectiveIntervalSeconds = 60 },
+		func(x *blackbox.Manifest) {
+			x.Runs = append([]blackbox.RunEntry{}, x.Runs...)
+			x.Runs = append(x.Runs, blackbox.RunEntry{ID: "run-2", Start: invT0.Add(time.Hour)})
+		},
+	} {
+		m = man
+		mod(&m)
+		if equal(m) {
+			t.Fatal("a manifest the read depends on did not change the signature")
+		}
+	}
+	// What the read does not use must not force a re-read on every tick.
+	m = man
+	m.Updated = man.Updated.Add(time.Minute)
+	m.State = "stopped"
+	if !equal(m) {
+		t.Fatal("the signature moved on a field the window read does not use")
+	}
+}

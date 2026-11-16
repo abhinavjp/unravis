@@ -3,10 +3,12 @@ package blackbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -343,6 +345,175 @@ func TestRecorderIncompletePassWithoutDiskReadingKeepsPauseState(t *testing.T) {
 	}
 }
 
+// --- BBX-1-07: the budgeted tick loop ---
+
+// TestTickFeedsBudget: a fake self-reading over budget must widen a real
+// Budget's effective interval, and the tick must keep sampling.
+func TestTickFeedsBudget(t *testing.T) {
+	g := newRig(t, nil)
+	b := NewBudget(15)
+	g.r.o.Budget = b
+	g.r.o.SelfUsage = func() (float64, uint64, bool) { return 5, 100 << 20, true }
+	g.r.Tick(g.clk.t)
+	g.tick(15 * time.Second)
+	if got := b.EffectiveInterval(); got != 30 {
+		t.Fatalf("effective interval = %d, want widened to 30", got)
+	}
+	if n := g.s.Manifest().SampleCount(); n != 2 {
+		t.Fatalf("samples %d, want 2: the budget must not block the tick", n)
+	}
+}
+
+// TestTickBudgetNilSafe: nil Budget and nil SelfUsage leave the tick unchanged;
+// a Budget with nil SelfUsage still cycles without a measurement.
+func TestTickBudgetNilSafe(t *testing.T) {
+	g := newRig(t, nil)
+	g.r.Tick(g.clk.t)
+	g.tick(15 * time.Second)
+	if n := g.s.Manifest().SampleCount(); n != 2 {
+		t.Fatalf("samples %d, want 2", n)
+	}
+	b := NewBudget(15)
+	g.r.o.Budget = b // SelfUsage stays nil
+	g.tick(15 * time.Second)
+	if got := b.EffectiveInterval(); got != 15 {
+		t.Fatalf("effective interval = %d, want base 15", got)
+	}
+	if n := g.s.Manifest().SampleCount(); n != 3 {
+		t.Fatalf("samples %d, want 3", n)
+	}
+}
+
+// TestTickSelfUsageNotOKSkipsUpdate: a missing reading (ok=false) skips the
+// budget update, never 0-as-fact: the over-budget flag from the previous
+// reading survives and the interval still widens.
+func TestTickSelfUsageNotOKSkipsUpdate(t *testing.T) {
+	g := newRig(t, nil)
+	b := NewBudget(15)
+	g.r.o.Budget = b
+	calls := 0
+	g.r.o.SelfUsage = func() (float64, uint64, bool) {
+		calls++
+		if calls == 1 {
+			return 5, 100 << 20, true
+		}
+		return 0, 0, false
+	}
+	g.r.Tick(g.clk.t)
+	g.tick(15 * time.Second)
+	if got := b.EffectiveInterval(); got != 30 {
+		t.Fatalf("effective interval = %d, want 30: a missing reading cleared the budget (0-as-fact)", got)
+	}
+}
+
+// TestEffectiveInterval table-tests the helper Run uses for the ticker reset.
+func TestEffectiveInterval(t *testing.T) {
+	widened := NewBudget(5)
+	widened.SelfUsage(5, 100<<20)
+	widened.Cycle()
+	widened.Cycle() // 5 -> 15
+	cases := []struct {
+		name string
+		b    *Budget
+		base int
+		want int
+	}{
+		{"nil budget falls back to base", nil, 15, 15},
+		{"fresh budget is at base", NewBudget(30), 30, 30},
+		{"widened budget wins over base", widened, 5, 15},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := effectiveInterval(tc.b, tc.base); got != tc.want {
+				t.Fatalf("effectiveInterval = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunResetsInterval: with the own ticker (not o.Ticks), the first tick
+// comes at the base interval and the ticker is then reset to the budget's
+// widened effective interval, so no second tick arrives at the old cadence.
+// The o.Ticks injection path is untouched (TestRecorderRunStopsCleanly).
+func TestRunResetsInterval(t *testing.T) {
+	g := newRig(t, func(c *Config) { c.IntervalSeconds = 1 })
+	b := NewBudget(1)
+	b.SelfUsage(5, 100<<20)
+	b.Cycle()
+	b.Cycle() // 1 -> 15
+	if b.EffectiveInterval() != 15 {
+		t.Fatalf("precondition: effective = %d, want 15", b.EffectiveInterval())
+	}
+	g.r = NewRecorder(RecorderOptions{Config: g.r.o.Config, Store: g.s, Collector: g.col, Disk: g.disk,
+		RunID: "run1", Now: time.Now, Budget: b})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- g.r.Run(ctx) }()
+	// First tick at the base 1 s, not the widened 15 s.
+	deadline := time.Now().Add(5 * time.Second)
+	for g.s.Manifest().SampleCount() < 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n := g.s.Manifest().SampleCount(); n < 2 {
+		t.Fatalf("first tick never came: %d samples", n)
+	}
+	// Reset to 15 s: the old 1 s cadence must not fire again.
+	time.Sleep(2500 * time.Millisecond)
+	if n := g.s.Manifest().SampleCount(); n != 2 {
+		t.Fatalf("samples %d, want 2: ticker not reset to the effective interval", n)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestWidenedBudgetNoFalseGapOrLate: with the budget widened to 60 s (base
+// 15), samples 60 s apart are on time — no fabricated gap and no running-late.
+// Lateness and gaps are judged against the effective interval, not the base.
+func TestWidenedBudgetNoFalseGapOrLate(t *testing.T) {
+	g := newRig(t, nil) // base 15
+	b := NewBudget(15)
+	b.SelfUsage(5, 100<<20)
+	b.Cycle()
+	b.Cycle()
+	b.Cycle() // 15 -> 30 -> 60
+	if b.EffectiveInterval() != 60 {
+		t.Fatalf("precondition: effective = %d, want 60", b.EffectiveInterval())
+	}
+	g.r.o.Budget = b // SelfUsage stays nil: the widened interval holds
+	g.r.Tick(g.clk.t)
+	g.tick(60 * time.Second)
+	g.tick(60 * time.Second)
+	m := g.s.Manifest()
+	if m.SampleCount() != 3 || len(m.Gaps) != 0 {
+		t.Fatalf("samples %d gaps %+v, want 3 samples and no gap at the widened interval", m.SampleCount(), m.Gaps)
+	}
+	if st := g.r.Status(g.clk.t); st.State != StateRunning {
+		t.Fatalf("state %s, want running", st.State)
+	}
+	// A full widened interval past the newest sample is still on time.
+	if st := g.r.Status(g.clk.t.Add(60 * time.Second)); st.State != StateRunning {
+		t.Fatalf("state %s at +60 s, want running", st.State)
+	}
+}
+
+// TestBaseIntervalStillDetectsRealGap: without a budget (base 15), a real 60 s
+// hole still reads running-late and is recorded as a gap.
+func TestBaseIntervalStillDetectsRealGap(t *testing.T) {
+	g := newRig(t, nil) // base 15, no budget
+	g.r.Tick(g.clk.t)
+	if st := g.r.Status(g.clk.t.Add(60 * time.Second)); st.State != StateRunningLate {
+		t.Fatalf("state %s, want running-late at base 15 after 60 s", st.State)
+	}
+	g.tick(60 * time.Second)
+	m := g.s.Manifest()
+	if len(m.Gaps) != 1 || m.Gaps[0].Seconds != 60 || m.Gaps[0].Cause != CauseLate {
+		t.Fatalf("gaps %+v, want one 60 s late gap", m.Gaps)
+	}
+}
+
 // Review F6.5: the pass right after a forward clock jump keeps the history.
 func TestRecorderForwardClockJumpDoesNotAgeOutHistoryInThatPass(t *testing.T) {
 	old := t0.Add(-3 * 24 * time.Hour) // inside keepDays until the clock jumps
@@ -363,4 +534,177 @@ func TestRecorderForwardClockJumpDoesNotAgeOutHistoryInThatPass(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(g.s.Dir(), FileNameFor(old))); err == nil {
 		t.Fatal("age rule never came back")
 	}
+}
+
+// --- BBX-5-03: events carry fixed codes, never error text ---
+
+// secretEventText stands for driver text with a path and an instance name. No
+// part of it may reach the manifest: the manifest ships in snapshots.
+const secretEventText = `secret driver text C:\instances\MSSQL$PROD1`
+
+// codeFailWriter fails writes with the injected error while fail is set. The
+// embedded file keeps Seek/Truncate/Sync/Close working, so rollback stays clean.
+type codeFailWriter struct {
+	*os.File
+	fail *bool
+	err  error
+}
+
+func (w codeFailWriter) Write(b []byte) (int, error) {
+	if *w.fail {
+		return 0, w.err
+	}
+	return w.File.Write(b)
+}
+
+// fixedEvents counts the events of one kind and fails unless every detail is
+// exactly the fixed code want.
+func fixedEvents(t *testing.T, m Manifest, kind, want string) int {
+	t.Helper()
+	n := 0
+	for _, e := range m.Events {
+		if e.Kind != kind {
+			continue
+		}
+		n++
+		if e.Detail != want {
+			t.Fatalf("%s event detail = %q, want fixed code %q", kind, e.Detail, want)
+		}
+	}
+	return n
+}
+
+func TestCollectFailureFixedCode(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"generic", errors.New(secretEventText), "collect-failed"},
+		{"permission", &os.PathError{Op: "read", Path: "secret", Err: os.ErrPermission}, "permission-denied"},
+		{"disk full", errors.New("There is not enough space on the disk."), "disk-full"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newRig(t, nil)
+			g.col.err = tc.err
+			g.r.Tick(g.clk.t)
+			g.tick(15 * time.Second)
+			g.tick(15 * time.Second)
+			// First failure only: one event, a fixed code, never the error text.
+			if n := fixedEvents(t, g.s.Manifest(), EventCollectFailed, tc.want); n != 1 {
+				t.Fatalf("collect-failed events = %d, want 1 (first-failure dedup)", n)
+			}
+			g.col.err = nil
+			g.tick(15 * time.Second)
+			if g.s.Manifest().SampleCount() != 1 {
+				t.Fatal("did not recover")
+			}
+		})
+	}
+}
+
+func TestWriteFailureFixedCode(t *testing.T) {
+	g := newRig(t, nil)
+	fail := true
+	g.s.wrapFile = func(f *os.File) recFile {
+		return codeFailWriter{File: f, fail: &fail, err: errors.New(secretEventText)}
+	}
+	g.r.Tick(g.clk.t)        // first write fails
+	g.tick(15 * time.Second) // still failing: no second event
+	if n := fixedEvents(t, g.s.Manifest(), EventWriteFailed, "write-failed"); n != 1 {
+		t.Fatalf("write-failed events = %d, want 1 (first-failure dedup)", n)
+	}
+	if g.r.Status(g.clk.t).WriteOK {
+		t.Fatal("write failure not reported")
+	}
+	fail = false // space comes back
+	g.tick(15 * time.Second)
+	if !g.r.Status(g.clk.t).WriteOK || g.s.Manifest().SampleCount() != 1 {
+		t.Fatalf("no recovery: %d samples", g.s.Manifest().SampleCount())
+	}
+}
+
+func TestHousekeepingFailureFixedCode(t *testing.T) {
+	g := newRig(t, nil)
+	orig := housekeepFn
+	housekeepFn = func(s *Store, l Limits, d DiskSpace, now time.Time) (Housekeeping, error) {
+		return Housekeeping{}, errors.New(secretEventText)
+	}
+	t.Cleanup(func() { housekeepFn = orig })
+	g.r.Tick(g.clk.t)
+	if n := fixedEvents(t, g.s.Manifest(), EventHousekeeping, "housekeeping-failed"); n != 1 {
+		t.Fatalf("housekeeping events = %d, want 1", n)
+	}
+	// A failed pass must not stop the sampling.
+	if g.s.Manifest().SampleCount() != 1 {
+		t.Fatal("no sample after a failed housekeeping pass")
+	}
+}
+
+func TestEventCodeNeverRaw(t *testing.T) {
+	fixed := map[string]bool{
+		"collect-failed": true, "write-failed": true, "housekeeping-failed": true,
+		"disk-full": true, "permission-denied": true,
+	}
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{errors.New("secret path X"), "collect-failed"},
+		{fmt.Errorf("wrapped: %w", errors.New(secretEventText)), "collect-failed"},
+		{os.ErrPermission, "permission-denied"},
+		{syscall.ENOSPC, "disk-full"},
+		{errors.New("There is not enough space on the disk."), "disk-full"},
+	}
+	for _, tc := range cases {
+		got := eventCode(tc.err)
+		if !fixed[got] {
+			t.Fatalf("eventCode(%v) = %q, not a fixed code", tc.err, got)
+		}
+		if got != tc.want {
+			t.Fatalf("eventCode(%v) = %q, want %q", tc.err, got, tc.want)
+		}
+		if got == tc.err.Error() {
+			t.Fatalf("eventCode returned the raw error text %q", got)
+		}
+	}
+}
+
+func TestNoErrorTextInManifest(t *testing.T) {
+	g := newRig(t, nil)
+	// A collect failure.
+	g.col.err = errors.New(secretEventText)
+	g.r.Tick(g.clk.t)
+	g.col.err = nil
+	// A write failure through the wrapFile seam.
+	fail := true
+	g.s.wrapFile = func(f *os.File) recFile {
+		return codeFailWriter{File: f, fail: &fail, err: errors.New(secretEventText)}
+	}
+	g.tick(15 * time.Second)
+	fail = false
+	// A housekeeping failure.
+	orig := housekeepFn
+	housekeepFn = func(s *Store, l Limits, d DiskSpace, now time.Time) (Housekeeping, error) {
+		return Housekeeping{}, errors.New(secretEventText)
+	}
+	t.Cleanup(func() { housekeepFn = orig })
+	g.tick(60 * time.Second)
+
+	// The serialized manifest is what ships in snapshots: no substring of the
+	// injected driver text, path or instance name may be in it.
+	data, err := os.ReadFile(filepath.Join(g.s.Dir(), ManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, frag := range []string{secretEventText, "secret driver text", `C:\instances`, "MSSQL$PROD1"} {
+		if strings.Contains(string(data), frag) {
+			t.Fatalf("manifest leaks error text %q:\n%s", frag, data)
+		}
+	}
+	m := g.s.Manifest()
+	fixedEvents(t, m, EventCollectFailed, "collect-failed")
+	fixedEvents(t, m, EventWriteFailed, "write-failed")
+	fixedEvents(t, m, EventHousekeeping, "housekeeping-failed")
 }

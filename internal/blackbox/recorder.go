@@ -2,8 +2,10 @@ package blackbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +30,34 @@ const (
 	clockJumpSeconds = 2.0
 )
 
+// Fixed event codes (C10): events never carry err.Error(), driver text, file
+// paths or instance names — the manifest is persisted and ships in snapshots.
+const (
+	codeCollectFailed      = "collect-failed"
+	codeWriteFailed        = "write-failed"
+	codeHousekeepingFailed = "housekeeping-failed"
+)
+
+// eventCode maps a failure to a fixed event code: a known cause gets a
+// specific code, anything else the generic collect code (the write and
+// housekeeping paths substitute their own generic code). It never returns
+// err.Error().
+func eventCode(err error) string {
+	switch {
+	case errors.Is(err, os.ErrPermission):
+		return "permission-denied"
+	case isDiskFull(err):
+		return "disk-full"
+	default:
+		return codeCollectFailed
+	}
+}
+
+// housekeepFn is the housekeeping pass, unchanged. Tests replace it to stand
+// for a pass that fails outright (Store.Housekeep reports blocked removals via
+// Skipped and does not itself return errors).
+var housekeepFn = (*Store).Housekeep
+
 // RecorderOptions wire the recorder to its parts. Tests replace Now, Mono and
 // Ticks; the service uses the defaults.
 type RecorderOptions struct {
@@ -41,6 +71,12 @@ type RecorderOptions struct {
 	Mono func() time.Duration
 	// Ticks drives the loop. Default: a ticker at the configured interval.
 	Ticks <-chan time.Time
+	// Budget throttles the loop when the Blackbox itself costs too much.
+	// Optional: nil keeps the configured interval.
+	Budget *Budget
+	// SelfUsage reads the Blackbox's own CPU percent of one core and working
+	// set. Optional: nil skips the measurement. ok=false is a missing reading.
+	SelfUsage func() (float64, uint64, bool)
 }
 
 // RecorderStatus is a snapshot of the recorder for the status page.
@@ -95,16 +131,48 @@ func NewRecorder(o RecorderOptions) *Recorder {
 	return &Recorder{o: o, now: o.Now, started: o.Now().UTC(), writeOK: true, collectOK: true}
 }
 
+// SQLBudgetShare is the divisor of the owner's single maxGB budget reserved for
+// the SQL sample folder. The SQL service bounds its own folder to
+// Config.MaxBytes()/SQLBudgetShare (cmd/unravis-blackbox/sqlrunner.go's
+// sqlBudgetShare MUST equal this constant — see the seam note in the wave-10-11
+// data-fix report). The host recorder retains the REMAINING share, so the two
+// writers' ADMITTED (housekeeping-enforced) bytes satisfy one documented ceiling:
+//
+//	host MaxBytes + SQL MaxBytes <= Config.MaxBytes()
+//
+// Active-hour overshoot allowance: each writer protects its current hour file
+// from removal, so between housekeeping passes the retained total can exceed the
+// admitted ceiling by up to one active hour of writes per writer (host: one hour
+// of samples at the configured interval; SQL: one hour at its sampler cadences).
+// That overshoot is bounded by the per-hour write volume, is reclaimed at the
+// next pass once the hour rolls, and is the explicit allowance behind the
+// "combined cap" claim — not an unbounded 1.25x allocation (W10-02).
+const SQLBudgetShare = 4
+
 func (r *Recorder) limits() Limits {
-	return Limits{KeepDays: r.o.Config.KeepDays, MaxBytes: r.o.Config.MaxBytes(), MinFreePercent: float64(r.o.Config.MinFreePercent)}
+	max := r.o.Config.MaxBytes()
+	// Reserve SQL's share; the host keeps the rest so the combined admitted
+	// bytes stay within the owner's single ceiling (W10-02).
+	host := max - max/SQLBudgetShare
+	return Limits{KeepDays: r.o.Config.KeepDays, MaxBytes: host, MinFreePercent: float64(r.o.Config.MinFreePercent)}
+}
+
+// effectiveInterval is the tick interval in seconds: the budget's effective
+// interval when there is a budget, else the configured base.
+func effectiveInterval(b *Budget, base int) int {
+	if b != nil {
+		return b.EffectiveInterval()
+	}
+	return base
 }
 
 // Run samples until ctx is done, then closes the run cleanly. The first sample
 // is taken at once.
 func (r *Recorder) Run(ctx context.Context) error {
 	ticks := r.o.Ticks
+	var t *time.Ticker
 	if ticks == nil {
-		t := time.NewTicker(time.Duration(r.o.Config.IntervalSeconds) * time.Second)
+		t = time.NewTicker(time.Duration(r.o.Config.IntervalSeconds) * time.Second)
 		defer t.Stop()
 		ticks = t.C
 	}
@@ -115,6 +183,11 @@ func (r *Recorder) Run(ctx context.Context) error {
 			return r.stop("stopped")
 		case <-ticks:
 			r.Tick(r.now())
+			// Own ticker only: follow the budget by resetting the one ticker,
+			// never a new one. The o.Ticks test path is unchanged.
+			if t != nil && r.o.Budget != nil {
+				t.Reset(time.Duration(effectiveInterval(r.o.Budget, r.o.Config.IntervalSeconds)) * time.Second)
+			}
 		}
 	}
 }
@@ -146,10 +219,17 @@ func (r *Recorder) Tick(now time.Time) {
 		return
 	}
 
+	r.feedBudget()
+	if r.o.Budget != nil {
+		// Gaps are judged against the interval this run actually ticks at, so
+		// a widened budget does not fabricate a gap between on-time samples.
+		r.o.Store.SetInterval(effectiveInterval(r.o.Budget, r.o.Config.IntervalSeconds))
+	}
+
 	s, err := r.o.Collector.Collect(now)
 	if err != nil {
 		if r.collectOK {
-			r.o.Store.Event(EventCollectFailed, err.Error())
+			r.o.Store.Event(EventCollectFailed, eventCode(err))
 		}
 		r.collectOK = false
 		return
@@ -180,15 +260,38 @@ func (r *Recorder) Tick(now time.Time) {
 		r.forceHK = true // a full disk is the usual reason: free some space now
 		r.mu.Unlock()
 		if first {
-			r.o.Store.Event(EventWriteFailed, err.Error())
+			code := eventCode(err)
+			if code == codeCollectFailed {
+				code = codeWriteFailed
+			}
+			r.o.Store.Event(EventWriteFailed, code)
 		}
 		return
 	}
+	// The sample is durably accepted: only now may the event read cursor
+	// advance. A failure anywhere above leaves the batch pending (W6-06).
+	s.Events.Ack()
 	r.mu.Lock()
 	r.writeOK = true
 	r.resumedFlag = false
 	r.lastSample = now
 	r.mu.Unlock()
+}
+
+// feedBudget measures the Blackbox's own cost and advances the budget one
+// cycle, before the collector runs. A missing reading (ok=false) skips the
+// update — never 0-as-fact — and never blocks the tick.
+func (r *Recorder) feedBudget() {
+	b := r.o.Budget
+	if b == nil {
+		return
+	}
+	if r.o.SelfUsage != nil {
+		if cpu, ws, ok := r.o.SelfUsage(); ok {
+			b.SelfUsage(cpu, ws)
+		}
+	}
+	b.Cycle()
 }
 
 // checkClock compares how far the wall clock moved with how far the steady
@@ -220,9 +323,13 @@ func (r *Recorder) housekeep(now time.Time) {
 		// the age rule out for this pass; size and free space still apply.
 		lim.SkipAge, r.clockFwd = true, false
 	}
-	res, err := r.o.Store.Housekeep(lim, r.o.Disk, now)
+	res, err := housekeepFn(r.o.Store, lim, r.o.Disk, now)
 	if err != nil {
-		r.o.Store.Event(EventHousekeeping, "housekeeping failed: "+err.Error())
+		code := eventCode(err)
+		if code == codeCollectFailed {
+			code = codeHousekeepingFailed
+		}
+		r.o.Store.Event(EventHousekeeping, code)
 	}
 	if res.Incomplete() {
 		// A file held open by a reader cannot be removed; it is tried again
@@ -276,7 +383,7 @@ func (r *Recorder) Status(now time.Time) RecorderStatus {
 		st.State = StateStopped
 	case r.paused:
 		st.State = StateDiskLow
-	case IsLate(ref, now.UTC(), r.o.Config.IntervalSeconds):
+	case IsLate(ref, now.UTC(), effectiveInterval(r.o.Budget, r.o.Config.IntervalSeconds)):
 		st.State = StateRunningLate
 	default:
 		st.State = StateRunning
