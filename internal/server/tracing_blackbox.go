@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"api-audit-explorer/internal/bbsaved"
@@ -200,6 +202,188 @@ type bbSQLObs struct {
 	rate  float64
 }
 
+// bbLaneRead is one window of one Blackbox read whole: the extracted SQL
+// observations with their spans and known/whole marks, plus everything else
+// bbLaneSamples answers with. The extraction below is what fills it, unchanged,
+// so a replayed read answers exactly like the read it came from: a span the read
+// could not prove (CORR-1's gap limit, CORR-3's tick that skipped the sqlHost
+// group) stays unknown in the cache too, and cannot become known by being
+// served again. The read report travels with it for the same reason: a read that
+// could not get to the end must not come back looking whole.
+type bbLaneRead struct {
+	obs                []bbSQLObs
+	rep                blackbox.ReadReport
+	cadence            int
+	first, last, since time.Time
+}
+
+// bbLaneKey names one read: the saved Blackbox, the manifest the read was made
+// against and the window it was asked for.
+type bbLaneKey struct {
+	entry      string
+	sig        [sha256.Size]byte
+	start, end int64
+}
+
+const (
+	// bbLaneCacheTTL bounds how long a read stays reusable after its signature
+	// stopped changing. A recording that moved on moves the file list or the last
+	// sample, and the key catches that at once; what the key cannot see is a file
+	// that went away while the manifest still listed it, and only time forgets it.
+	bbLaneCacheTTL = time.Minute
+	// bbLaneCacheEntries and bbLaneCacheObs bound what the kept reads hold
+	// together, the way the rollup cache does (PF-B-03): eight windows, and at
+	// most two reads of the reader's own sample ceiling of observations, oldest
+	// window out first. One read can never be wider than that ceiling, so the
+	// memory is fixed whatever window the timeline is shown over.
+	bbLaneCacheEntries = 8
+	bbLaneCacheObs     = 200000
+)
+
+type bbLaneEntry struct {
+	key  bbLaneKey
+	at   time.Time
+	nobs int
+	read *bbLaneRead
+}
+
+// bbLaneFlight is the read one caller is doing while the rest wait on done for
+// its answer, so a burst on one window opens the files once. The stdlib has no
+// singleflight and go.mod is not ours for this.
+type bbLaneFlight struct {
+	done chan struct{}
+	read bbLaneRead
+	ok   bool
+}
+
+type bbLaneCache struct {
+	mu      sync.Mutex
+	now     func() time.Time // for tests
+	entries []bbLaneEntry    // newest first
+	flights map[bbLaneKey]*bbLaneFlight
+}
+
+// bbLaneReads holds the window reads of the process. One server runs one
+// handler, and a key names its saved Blackbox, so two recordings or two saved
+// lists cannot answer for each other.
+var bbLaneReads bbLaneCache
+
+func (c *bbLaneCache) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+// run answers key from the cached read, or does it once when several requests
+// ask for the same window at the same time. A read that failed or could not
+// speak for its whole window is never kept: the next request may find the share
+// back, and a remembered gap would hold the lane partial for nothing.
+func (c *bbLaneCache) run(ctx context.Context, key bbLaneKey, do func() (bbLaneRead, bool)) (bbLaneRead, bool) {
+	c.mu.Lock()
+	if read, ok := c.getLocked(key); ok {
+		c.mu.Unlock()
+		return read, true
+	}
+	if f := c.flights[key]; f != nil {
+		c.mu.Unlock()
+		select {
+		case <-f.done:
+			return f.read, f.ok
+		case <-ctx.Done():
+			return bbLaneRead{}, false
+		}
+	}
+	f := &bbLaneFlight{done: make(chan struct{})}
+	if c.flights == nil {
+		c.flights = map[bbLaneKey]*bbLaneFlight{}
+	}
+	c.flights[key] = f
+	c.mu.Unlock()
+
+	read, ok := do()
+
+	c.mu.Lock()
+	delete(c.flights, key)
+	if ok && !read.rep.CoverageIncomplete() {
+		kept := read
+		c.pushLocked(key, &kept)
+	}
+	c.mu.Unlock()
+	// Written before done closes: every waiter happens-after the close.
+	f.read, f.ok = read, ok
+	close(f.done)
+	return read, ok
+}
+
+// getLocked returns the read of key, ignoring the entries past their TTL
+// (pushLocked is what drops them). The caller must hold the mutex.
+func (c *bbLaneCache) getLocked(key bbLaneKey) (bbLaneRead, bool) {
+	now := c.clock()
+	for _, e := range c.entries {
+		if now.Sub(e.at) >= bbLaneCacheTTL {
+			continue
+		}
+		if e.key == key {
+			return *e.read, true
+		}
+	}
+	return bbLaneRead{}, false
+}
+
+// pushLocked keeps read as the newest entry, dropping the aged ones, any older
+// copy of the same key and, past bbLaneCacheEntries windows or bbLaneCacheObs
+// observations together, the oldest. A read too large for the whole budget is
+// not kept, but the fresh ones around it are. The caller must hold the mutex.
+func (c *bbLaneCache) pushLocked(key bbLaneKey, read *bbLaneRead) {
+	now := c.clock()
+	n := len(read.obs)
+	fresh := make([]bbLaneEntry, 0, bbLaneCacheEntries)
+	if n > bbLaneCacheObs {
+		for _, e := range c.entries {
+			if e.key != key && now.Sub(e.at) < bbLaneCacheTTL {
+				fresh = append(fresh, e)
+			}
+		}
+		c.entries = fresh
+		return
+	}
+	fresh = append(fresh, bbLaneEntry{key: key, at: now, nobs: n, read: read})
+	total := n
+	for _, e := range c.entries { // newest first
+		if len(fresh) >= bbLaneCacheEntries || total+e.nobs > bbLaneCacheObs {
+			break // this one and every older one go: oldest out first
+		}
+		if e.key != key && now.Sub(e.at) < bbLaneCacheTTL {
+			fresh = append(fresh, e)
+			total += e.nobs
+		}
+	}
+	c.entries = fresh
+}
+
+// bbLaneSignature fingerprints the manifest a read is made against: the file
+// list with the size, sample count and span of every file, the first and last
+// sample, the runs and the cadence the tolerance, the lookback and the lane label
+// come from. Any of those moving means the window has to be read again.
+func bbLaneSignature(m blackbox.Manifest) [sha256.Size]byte {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d|%s|%s|%d|%d|", m.Format, m.Name, m.Host, m.IntervalSeconds, m.EffectiveIntervalSeconds)
+	if m.FirstSample != nil {
+		fmt.Fprintf(&b, "first=%d;", m.FirstSample.UnixNano())
+	}
+	if m.LastSample != nil {
+		fmt.Fprintf(&b, "last=%d;", m.LastSample.UnixNano())
+	}
+	for _, f := range m.Files {
+		fmt.Fprintf(&b, "f=%s,%d,%d,%d,%d;", f.Name, f.Bytes, f.Samples, f.First.UnixNano(), f.Last.UnixNano())
+	}
+	for _, r := range m.Runs {
+		fmt.Fprintf(&b, "r=%s,%d;", r.ID, r.Start.UnixNano())
+	}
+	return sha256.Sum256([]byte(b.String()))
+}
+
 // bbLaneSamples reads the window's samples of one saved Blackbox (plus the
 // boundary observations before the window start and at the window end, so the
 // first and last measured spans are known) and turns them into SQL
@@ -208,6 +392,10 @@ type bbSQLObs struct {
 // sampling while SQL went silent does not cover the silence (W12-01). rep says
 // what the read could not get. ok is false when nothing could be read or no
 // sample carries the reading: the lane then falls through, quietly.
+//
+// PERF-2: the manifest is read on every request (it is what the key is made
+// from), but the window's files are opened and decoded once per signature: the
+// repeat of a window is answered from the extracted observations.
 func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis tracingAxis) (obs []bbSQLObs, cadence int, first, last, since time.Time, rep blackbox.ReadReport, ok bool) {
 	ctx, cancel := context.WithTimeout(ctx, bbReadTimeout)
 	defer cancel()
@@ -219,13 +407,32 @@ func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis traci
 	if err != nil {
 		return nil, 0, time.Time{}, time.Time{}, time.Time{}, rep, false
 	}
+	key := bbLaneKey{
+		entry: e.ID,
+		sig:   bbLaneSignature(rd.Manifest),
+		start: axis.Start.UnixNano(),
+		end:   axis.End.UnixNano(),
+	}
+	read, ok := bbLaneReads.run(ctx, key, func() (bbLaneRead, bool) { return bbLaneExtract(ctx, src, rd.Manifest, axis) })
+	if !ok {
+		return nil, 0, time.Time{}, time.Time{}, time.Time{}, read.rep, false
+	}
+	return read.obs, read.cadence, read.first, read.last, read.since, read.rep, true
+}
+
+// bbLaneExtract does the read bbLaneSamples caches: the window's samples, the
+// span rules and the observations. It is the only place the sample files of a
+// timeline request are opened.
+func bbLaneExtract(ctx context.Context, src blackbox.Source, man blackbox.Manifest, axis tracingAxis) (bbLaneRead, bool) {
+	var out bbLaneRead
 	// The effective cadence, not the configured base: the light budget widens
 	// and narrows the tick (W12-02). It names the lane; the spans themselves
 	// come from the observed sample times.
-	cadence = rd.Manifest.CadenceSeconds()
+	cadence := man.CadenceSeconds()
 	if cadence < 1 || cadence > bbSQLMaxInterval {
 		cadence = blackbox.DefaultIntervalSecond
 	}
+	out.cadence = cadence
 	// CORR-1: the span tolerance is floored at the widest cadence the recorder
 	// can reach, never taken from the manifest's LATEST value alone. The budget
 	// steps back as well as widens, so a window sampled every 60 s can be read
@@ -244,12 +451,13 @@ func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis traci
 	}
 	// The observation AT the window end measures the last span of the window,
 	// so the read includes it (the window itself stays half open).
-	samples, rep, err := blackbox.ReadSamples(ctx, src, rd.Manifest, axis.Start.Add(-lookback), axis.End.Add(time.Nanosecond))
+	samples, rep, err := blackbox.ReadSamples(ctx, src, man, axis.Start.Add(-lookback), axis.End.Add(time.Nanosecond))
+	out.rep = rep
 	if err != nil {
-		return nil, 0, time.Time{}, time.Time{}, time.Time{}, rep, false
+		return out, false
 	}
-	if rd.Manifest.FirstSample != nil && !rd.Manifest.FirstSample.IsZero() {
-		since = rd.Manifest.FirstSample.UTC()
+	if man.FirstSample != nil && !man.FirstSample.IsZero() {
+		out.since = man.FirstSample.UTC()
 	}
 	gapLimit := time.Duration(blackbox.LateIntervals*tolerance) * time.Second
 	var prevT time.Time
@@ -257,6 +465,7 @@ func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis traci
 	havePrev := false
 	prevSkipped := false      // the previous tick did not collect the sqlHost group
 	seen := map[string]bool{} // instances that ever contributed a valid reading
+	var obs []bbSQLObs
 	for _, s := range samples {
 		rate, has, whole := bbSQLReading(s)
 		if has {
@@ -297,12 +506,14 @@ func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis traci
 		prevSkipped = bbSQLGroupSkipped(s.Missing)
 	}
 	if len(obs) == 0 {
-		return nil, 0, time.Time{}, time.Time{}, time.Time{}, rep, false
+		return bbLaneRead{rep: rep}, false
 	}
-	if since.IsZero() {
-		since = obs[0].t
+	out.obs = obs
+	out.first, out.last = obs[0].t, obs[len(obs)-1].t
+	if out.since.IsZero() {
+		out.since = obs[0].t
 	}
-	return obs, cadence, obs[0].t, obs[len(obs)-1].t, since, rep, true
+	return out, true
 }
 
 // blackboxSQLLane fills the SQL lane from the case's Blackbox sampling and
@@ -311,8 +522,9 @@ func (h *handler) bbLaneSamples(ctx context.Context, e bbsaved.Entry, axis traci
 // OBSERVED span and apportioned by overlap into the clipped buckets it touches
 // (W12-02); a span the read cannot prove contributes no count and leaves its
 // buckets incomplete. A read is bounded by bbReadTimeout and the reader's own
-// file/byte/sample caps; nothing is kept between requests. Time the recording
-// does not cover is a gap, never a zero.
+// file/byte/sample caps; the window that was read is kept and answered again for
+// the same window of the same recording (bbLaneSamples, PERF-2). Time the
+// recording does not cover is a gap, never a zero.
 func (h *handler) blackboxSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis, sel tracingSelection, lane tracingLane) (tracingLane, bool) {
 	if axis.WidthMs <= 0 {
 		return lane, false
