@@ -14,7 +14,15 @@ GRANT VIEW ANY DATABASE TO [NT SERVICE\UnravisBlackboxSql];
 -- answer for every database instead of only the ones this login can already
 -- see. It is a visibility right, not a data right: it names no database to
 -- anyone and the Blackbox reads counts and ids only. It is inside the C8
--- ceiling, so the service still refuses to start on a login with more.`
+-- ceiling, which proves only that the login holds no more SERVER-LEVEL
+-- rights: the ceiling queries read the effective server rights from
+-- sys.fn_my_permissions(NULL, N'SERVER') and the fixed server-role flags,
+-- so a login with more server rights is refused at every connect and no
+-- sample runs on an unproven connection. DATABASE-LEVEL rights are OUTSIDE
+-- that server-scope proof: db_owner of one database, for example, passes it
+-- unchanged. The per-database ceiling check is DEFERRED TO THE OWNER - it
+-- needs a new allowlisted statement and a live SQL Server. Nothing here
+-- checks it.`
 
 const revokeScript = `-- Stop the service first, then run in SSMS:
 REVOKE VIEW ANY DATABASE FROM [NT SERVICE\UnravisBlackboxSql];
