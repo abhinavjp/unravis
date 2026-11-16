@@ -1,6 +1,6 @@
 # Blackbox expansion: how to start development and review (handoff for another harness)
 
-Written 2026-11-13. Status: design and reviews done, **nothing built**. The owner has given the go (2026-11-13) to plan, split into packets and build through an orchestrated agent run, delivered as pull requests only. How to orchestrate: `docs/research/blackbox-qoder-orchestration.md` (works for any harness; model tiers are mapped there).
+Written 2026-11-13. Status: design and reviews done; groups 1-8 are built on `bbx/all-groups` (PR #12) and await live checks. The owner has given the go (2026-11-13) to plan, split into packets and build through an orchestrated agent run, delivered as pull requests only. How to orchestrate: `docs/research/blackbox-qoder-orchestration.md` (works for any harness; model tiers are mapped there).
 
 ## 1. Read first, in this order
 
@@ -65,7 +65,7 @@ Done means live-verified: a real server, a real reading, the number matches `per
 
 ## 8. Code that must change before SQL work (BL-123)
 
-`service.go:274` and `service_windows.go:25-27` (recordings folder readable by BUILTIN\Users), `recorder.go:149-156` (Collect runs inline in the tick loop and writes `err.Error()`), `server.go:90-101` (plain HTTP), `service_windows.go:119-123` (no service account), `config.go:206-208` and `server.go:251` (`probe.enabled` refused: keep it that way until C1-C14 pass), `config.go:317` and `pack.go:122` (`blackbox.json` is world-readable and shipped in the pack: never put credentials in it). Do not copy `internal/dbhealth` as a SQL template (it reads query text and program names).
+`service.go:274` and `service_windows.go:25-27` (recordings folder readable by BUILTIN\Users), `recorder.go` (Collect runs inline in the tick loop; errors are stored as fixed `eventCode` values, not `err.Error()`, `recorder.go:33-45,232`), `server.go:90-101` (plain HTTP), `service_windows.go:119-123` (no service account), `config.go:294-295` and `server.go:350` (`probe.enabled` refused: keep it that way until C1-C14 pass), `config.go:317` and `pack.go:122` (`blackbox.json` is world-readable and shipped in the pack: never put credentials in it). Do not copy `internal/dbhealth` as a SQL template (it reads query text and program names).
 
 ## 9. Prompt for the agent
 
