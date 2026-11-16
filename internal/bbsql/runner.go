@@ -97,8 +97,13 @@ type Gate interface {
 }
 
 // Observation is the continuity metadata the runner hands a stateful sampler
-// before each Decode (W11-05). Time is the observation wall time (UTC); Epoch is
-// the runner's source generation, which advances on every continuity break
+// before each Decode (W11-05). Time is when the sample was actually read - the
+// runner clock taken right after the query returned (UTC), NOT the tick start
+// (CORR-4): a delta covers the span between two reads, so a tick-start stamp
+// would overstate every span by the query's own duration and hide a read that
+// landed late in its slot. SampleDoc.T is a different clock and stays the tick
+// start, because it buckets the line into its hourly file. Epoch is the
+// runner's source generation, which advances on every continuity break
 // (reconnect, query/decode failure, disk pause, auto-off, partial tick, clock
 // jump). A sampler whose baseline was taken under a different Epoch must
 // rebaseline and emit no delta: a delta may never span an unobserved interval or
@@ -463,15 +468,20 @@ func (r *Runner) tick(parent context.Context, now time.Time) error {
 		if !ok {
 			return r.fail(errNotAllowed)
 		}
-		if obs, ok := s.(ObservingSampler); ok {
-			obs.Observe(Observation{Time: now.UTC(), Epoch: r.gen})
-		}
 		start := time.Now()
 		rows, err := Query(ctx, r.q, text, timeout)
 		if err != nil {
 			return r.fail(err)
 		}
 		used := time.Since(start)
+		// CORR-4: the observation is stamped from the runner clock the moment the
+		// query returns, because that is when the counters were read. A failed
+		// read observes nothing: the sampler must not hold a stamp for counters
+		// it never got, and fail() breaks continuity for the next one anyway.
+		// SampleDoc.T below stays the tick start - it picks the hourly file.
+		if obs, ok := s.(ObservingSampler); ok {
+			obs.Observe(Observation{Time: r.now(), Epoch: r.gen})
+		}
 		payload, truncated, err := s.Decode(rows)
 		if err != nil {
 			return r.fail(err)
