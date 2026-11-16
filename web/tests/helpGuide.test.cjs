@@ -1,31 +1,31 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createRequire } = require('node:module');
 const { execFileSync } = require('node:child_process');
+const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
 
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
-// The EOL assertions used to require a CRLF *checkout*, which only holds where
-// core.autocrlf materialises one; a fresh LF worktree failed them and CI could not tell
-// the difference. They now read the committed blob through git, which is the same bytes
-// on every checkout, plus the ending shape the file itself holds, which is the part a
-// mixed-ending edit can actually break.
-const committedText = (relative) => execFileSync('git', ['show', 'HEAD:web/' + relative], { cwd: root, maxBuffer: 32 * 1024 * 1024 }).toString('utf8');
-const rawRead = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
-const assertCommittedAsLf = (relative) => {
-  const text = committedText(relative);
-  assert.ok(text.includes('\n'), relative + ' has no line ending in its committed blob');
-  const cr = (text.match(/\r/g) ?? []).length;
-  assert.equal(cr, 0, relative + ' has ' + cr + ' CR bytes in its committed blob; the help and guide files are committed as LF');
+const readRaw = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
+// The committed bytes are read from the git object, not from disk, so no checkout
+// shape (windows-2022 with core.autocrlf=true, or a clean LF clone) can change the
+// answer: the repository commits LF for every path here. What disk is held to is
+// only that a file carries ONE line ending, which is the disk defect that is real
+// in every shape. Same contract as web/tests/help.test.cjs; cwd never enters it,
+// because both helpers resolve from __dirname.
+const blobText = (relative) => execFileSync('git', ['show', 'HEAD:web/' + relative], { cwd: root, maxBuffer: 32 * 1024 * 1024 }).toString('utf8');
+const assertBlobIsLF = (relative) => {
+  const text = blobText(relative);
+  assert.ok(text.includes('\n'), relative + ' has no line ending in its blob');
+  assert.equal((text.match(/\r/g) ?? []).length, 0, relative + ' has CR bytes in its blob; the repository commits LF');
 };
 const assertOneEndingOnDisk = (relative) => {
-  const text = rawRead(relative);
+  const text = readRaw(relative);
   const crlf = (text.match(/\r\n/g) ?? []).length;
-  const bareLf = (text.match(/(?<!\r)\n/g) ?? []).length;
-  assert.ok(crlf === 0 || bareLf === 0, relative + ' mixes line endings on disk: ' + crlf + ' CRLF and ' + bareLf + ' bare LF');
+  const bareLF = (text.match(/(?<!\r)\n/g) ?? []).length;
+  assert.ok(crlf === 0 || bareLF === 0, relative + ' mixes line endings on disk: ' + crlf + ' CRLF and ' + bareLF + ' bare LF');
 };
 function loadTypeScript(relativePath) {
   const filename = path.join(root, relativePath);
@@ -131,7 +131,7 @@ test('the guide copy has its five keys and passes the copy lint', () => {
 
 test('the new and changed files are committed as LF and hold one ending on disk', () => {
   for (const file of ['src/components/HelpGuide.svelte', 'src/components/Glossary.svelte', 'src/lib/copy/helpCopy.ts']) {
-    assertCommittedAsLf(file);
+    assertBlobIsLF(file);
     assertOneEndingOnDisk(file);
   }
 });

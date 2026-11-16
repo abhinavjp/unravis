@@ -1,8 +1,8 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createRequire } = require('node:module');
 const { execFileSync } = require('node:child_process');
+const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
 
@@ -21,23 +21,30 @@ function loadTypeScript(relativePath, runes = false) {
   return module.exports;
 }
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
-// Line endings are asserted against the committed bytes plus the shape the file holds on
-// disk, never against one particular checkout. A windows CI runner materialises CRLF and an
-// LF checkout materialises LF, so the old `must be CRLF on disk` assertion was only green
-// where core.autocrlf happened to say so. What the repository really guarantees is that the
-// blob is LF and that a file carries one ending, and both hold on any checkout.
-const committedText = (relativePath) => execFileSync('git', ['show', 'HEAD:web/' + relativePath], { cwd: root, maxBuffer: 32 * 1024 * 1024 }).toString('utf8');
-const assertCommittedAsLf = (relativePath) => {
-  const text = committedText(relativePath);
-  assert.ok(text.includes('\n'), relativePath + ' has no line ending in its committed blob');
-  const cr = (text.match(/\r/g) ?? []).length;
-  assert.equal(cr, 0, relativePath + ' has ' + cr + ' CR bytes in its committed blob; the copy and component files this suite covers are committed as LF');
+
+// Line endings have two homes and only one of them is stable per file.
+//
+// The committed blob is read from the git object (HEAD:web/<path>, cwd rooted at
+// __dirname so the answer never depends on where npm or node was started from),
+// because the repository commits LF (core.eol=lf, and .gitattributes sets no
+// text/eol rule on any of these paths). Asserting CRLF about that content was
+// only ever true of a checkout that converted it, so CI on windows-2022 with
+// core.autocrlf=true was green while a clean or Linux clone was red.
+//
+// The working-tree bytes keep a line-ending check, but the honest one: a file may
+// be all-CRLF or all-LF, never both. That is the disk property that is a defect in
+// every checkout shape.
+const blobText = (relativePath) => execFileSync('git', ['show', 'HEAD:web/' + relativePath], { cwd: root, maxBuffer: 32 * 1024 * 1024 }).toString('utf8');
+const assertBlobIsLF = (relativePath) => {
+  const text = blobText(relativePath);
+  assert.ok(text.includes('\n'), relativePath + ' has no line ending in its blob');
+  assert.equal((text.match(/\r/g) ?? []).length, 0, relativePath + ' has CR bytes in its blob; the repository commits LF');
 };
 const assertOneEndingOnDisk = (relativePath) => {
   const text = read(relativePath);
   const crlf = (text.match(/\r\n/g) ?? []).length;
-  const bareLf = (text.match(/(?<!\r)\n/g) ?? []).length;
-  assert.ok(crlf === 0 || bareLf === 0, relativePath + ' mixes line endings on disk: ' + crlf + ' CRLF and ' + bareLf + ' bare LF');
+  const bareLF = (text.match(/(?<!\r)\n/g) ?? []).length;
+  assert.ok(crlf === 0 || bareLF === 0, relativePath + ' mixes line endings on disk: ' + crlf + ' CRLF and ' + bareLF + ' bare LF');
 };
 
 const { help } = loadTypeScript('src/lib/copy/helpCopy.ts');
@@ -240,7 +247,7 @@ test('the eli10 store reads storage only in try/catch and is a rune store', () =
 
 test('the new files are committed as LF and hold one ending on disk', () => {
   for (const file of ['src/lib/copy/helpCopy.ts', 'src/lib/eli10.svelte.ts', 'src/components/HelpNote.svelte', 'src/components/Eli10Toggle.svelte', 'tests/help.test.cjs']) {
-    assertCommittedAsLf(file);
+    assertBlobIsLF(file);
     assertOneEndingOnDisk(file);
   }
 });
@@ -383,7 +390,7 @@ test('the group rail keeps one roving tab stop: help sits inside the panes, neve
 });
 
 test('FieldHelp is committed as LF and holds one ending on disk', () => {
-  assertCommittedAsLf('src/components/FieldHelp.svelte');
+  assertBlobIsLF('src/components/FieldHelp.svelte');
   assertOneEndingOnDisk('src/components/FieldHelp.svelte');
 });
 
