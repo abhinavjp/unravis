@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
@@ -20,6 +21,31 @@ function loadTypeScript(relativePath, runes = false) {
   return module.exports;
 }
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
+
+// Line endings have two homes and only one of them is stable per file.
+//
+// The committed blob is read from the git object (HEAD:web/<path>, cwd rooted at
+// __dirname so the answer never depends on where npm or node was started from),
+// because the repository commits LF (core.eol=lf, and .gitattributes sets no
+// text/eol rule on any of these paths). Asserting CRLF about that content was
+// only ever true of a checkout that converted it, so CI on windows-2022 with
+// core.autocrlf=true was green while a clean or Linux clone was red.
+//
+// The working-tree bytes keep a line-ending check, but the honest one: a file may
+// be all-CRLF or all-LF, never both. That is the disk property that is a defect in
+// every checkout shape.
+const blobText = (relativePath) => execFileSync('git', ['show', 'HEAD:web/' + relativePath], { cwd: root, maxBuffer: 32 * 1024 * 1024 }).toString('utf8');
+const assertBlobIsLF = (relativePath) => {
+  const text = blobText(relativePath);
+  assert.ok(text.includes('\n'), relativePath + ' has no line ending in its blob');
+  assert.equal((text.match(/\r/g) ?? []).length, 0, relativePath + ' has CR bytes in its blob; the repository commits LF');
+};
+const assertOneEndingOnDisk = (relativePath) => {
+  const text = read(relativePath);
+  const crlf = (text.match(/\r\n/g) ?? []).length;
+  const bareLF = (text.match(/(?<!\r)\n/g) ?? []).length;
+  assert.ok(crlf === 0 || bareLF === 0, relativePath + ' mixes line endings on disk: ' + crlf + ' CRLF and ' + bareLF + ' bare LF');
+};
 
 const { help } = loadTypeScript('src/lib/copy/helpCopy.ts');
 const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
@@ -219,10 +245,10 @@ test('the eli10 store reads storage only in try/catch and is a rune store', () =
   assert.doesNotMatch(src, /fetch\(|document\.cookie|sessionStorage/);
 });
 
-test('new files keep CRLF line endings', () => {
+test('the new files are committed as LF and hold one ending on disk', () => {
   for (const file of ['src/lib/copy/helpCopy.ts', 'src/lib/eli10.svelte.ts', 'src/components/HelpNote.svelte', 'src/components/Eli10Toggle.svelte', 'tests/help.test.cjs']) {
-    const text = read(file);
-    assert.ok(!/(?<!\r)\n/.test(text), file + ' has a bare LF');
+    assertBlobIsLF(file);
+    assertOneEndingOnDisk(file);
   }
 });
 
@@ -363,8 +389,9 @@ test('the group rail keeps one roving tab stop: help sits inside the panes, neve
   assert.match(src, /role="tabpanel" id="rail-pane-when"[^>]*hidden=\{current !== 'when'\}/, 'a hidden pane is hidden, so its notes take no focus');
 });
 
-test('FieldHelp keeps CRLF line endings', () => {
-  assert.ok(!/(?<!\r)\n/.test(read('src/components/FieldHelp.svelte')));
+test('FieldHelp is committed as LF and holds one ending on disk', () => {
+  assertBlobIsLF('src/components/FieldHelp.svelte');
+  assertOneEndingOnDisk('src/components/FieldHelp.svelte');
 });
 
 test('a bind: into an indexed record is never backed by an empty {} state (a $bindable fallback may not be bound to undefined)', () => {

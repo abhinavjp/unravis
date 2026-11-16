@@ -147,6 +147,26 @@ test('unavailable: no buckets, or only incomplete ones, is not a source and neve
   }
 });
 
+// ---- PERF-3: clipped edge buckets divide by the seconds they cover ----
+
+test('PERF-3: the mirrored toLaneIn keeps bucket end/clipped, so a clipped edge reads its covered rate', () => {
+  // The chain the app runs: server payload -> parseTracing -> toLaneIn -> laneCells. The first bucket
+  // is cut to the asked window (30 s of a 60 s step); the parser and whole-bucket pass-through must keep
+  // end/clipped so laneCells divides 3000 by 30 s = 100/s.
+  const parsed = parsedSql([
+    { start: iso(T0), end: iso(T0 + 30000), clipped: true, count: 3000 },
+    { start: iso(T0 + MIN), end: iso(T0 + 2 * MIN), clipped: false, count: 3000 }
+  ]);
+  const mapped = toLaneIn(parsed, null);
+  assert.equal(mapped.buckets[0].end, iso(T0 + 30000), 'the bucket end survives the parser and toLaneIn');
+  assert.equal(mapped.buckets[0].clipped, true, 'the clipped flag survives the parser and toLaneIn');
+  const built = buildLane(mapped, 'sql', WINDOW, T0, T0 + SPAN);
+  assert.equal(built.cells[0].rate, 100, 'the covered 30 s is the divisor, not the full 60 s step');
+  assert.equal(built.cells[1].rate, 50, 'an unclipped bucket is unchanged');
+  assert.equal(built.cells[2].rate, null, 'a minute with no bucket stays unknown');
+  assert.deepEqual(built.peak, { atOnce: 100, start: T0 });
+});
+
 // ---- W13-02: an unrelated saved Query Store day never touches Blackbox cells ----
 
 test('a saved Query Store day does not change Blackbox cells or borrow its block length', () => {
@@ -256,6 +276,9 @@ test('the screen gates the Query Store fallback by provenance and passes the mea
   assert.ok(fn.includes("reasonCode !== 'held-sql' && reasonCode !== 'layered-sql' && reasonCode !== 'qs-file'"), 'only Query Store provenance borrows the saved interval');
   assert.ok(fn.includes('lane.blockSeconds ?? qsBlockSeconds(lane.key)'), 'the lane keeps its own block length first');
   assert.ok(fn.includes("measure: reasonCode === 'blackbox' ? 'batch-rate' : undefined"), 'the measure passes through');
+  // PERF-3: whole buckets pass through, so a bucket's end/clipped edges reach the clipped-rate math.
+  assert.ok(fn.includes('buckets: lane.buckets'), 'whole buckets pass through, keeping end/clipped');
+  assert.ok(!/buckets:\s*lane\.buckets\.map/.test(fn), 'buckets are never re-mapped field by field');
   assert.ok(source.includes('laneCadenceSeconds: sqlLane?.cadenceSeconds ?? null'));
   assert.ok(source.includes('laneHasObservations: lanes.sql.hasShape'));
   assert.doesNotMatch(source, /\{@html/);

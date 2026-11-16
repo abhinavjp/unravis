@@ -20,6 +20,10 @@ export type LaneMeasure = 'at-once' | 'batch-rate';
 
 export interface LaneBucketIn {
   start: string;
+  /** The bucket's own end as the server sent it. A clipped edge bucket ends before the step does. */
+  end?: string;
+  /** True when the server cut this bucket to the asked window: its count covers only start..end, not the whole step. */
+  clipped?: boolean;
   count: number;
   complete?: boolean;
   busyMs?: number | null;
@@ -139,7 +143,19 @@ export function laneCells(lane: LaneIn, win: WindowIn, fromMs: number, toMs: num
       if (measure === 'batch-rate') {
         // Recorded batch counts are throughput: batches per second. A count is never busy time,
         // so concurrency stays unknown unless the source measured busy time of its own.
-        if (finite(bucket.count) && bucket.count >= 0) rate = bucket.count / win.bucketSeconds;
+        // A clipped edge bucket was cut to the asked window, so its count covers only start..end:
+        // divide by those covered seconds, not the full step (3,000 batches over 30 s of a 60 s
+        // bucket is 100/s, not 50/s). A missing or unreadable end keeps the full step as the
+        // divisor, so a bucket without edges reads exactly as before — never NaN or Infinity.
+        if (finite(bucket.count) && bucket.count >= 0) {
+          let seconds = win.bucketSeconds;
+          if (bucket.clipped === true && typeof bucket.end === 'string') {
+            const covered = (Date.parse(bucket.end) - Date.parse(bucket.start)) / 1000;
+            if (finite(covered) && covered > 0) seconds = covered;
+          }
+          rate = bucket.count / seconds;
+        }
+        // Deliberate PERF-3 scope limit: the busy-time (at-once) path keeps the full step divisor.
         if (finite(bucket.busyMs)) value = atOnce(bucket.busyMs, win.bucketSeconds);
       } else {
         if (finite(bucket.busyMs)) value = atOnce(bucket.busyMs, win.bucketSeconds);

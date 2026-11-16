@@ -23,7 +23,7 @@ function loadTypeScript(relativePath) {
   return module.exports;
 }
 
-const { readoutAt, allSources, sourceOfEvent, eventLabel } = loadTypeScript('src/lib/drill/callReadout.ts');
+const { readoutAt, readoutSpan, allSources, sourceOfEvent, eventLabel } = loadTypeScript('src/lib/drill/callReadout.ts');
 
 const cell = (start, end, atOnce, p95Ms, refused) => ({ start, end, atOnce, p95Ms, refused });
 const call = { startMs: 1000, endMs: 3000 };
@@ -181,4 +181,76 @@ test('events with an empty evidence id do not collapse into one', () => {
   ] }));
   assert.equal(out.length, 3);
   assert.equal(new Set(out.map((i) => i.key)).size, 3);
+});
+
+// ---- UX-1: a lane that recorded batch counts is read in its own unit over the whole call ----
+// A throughput cell carries `rate` (batches per second) and no `atOnce`. The span readout must report the
+// highest rate in any step the call touched, and must never turn a rate into a number running at once.
+
+const rateCell = (start, end, rate, atOnce = null, p95Ms = null) => ({ start, end, atOnce, rate, p95Ms, refused: null });
+
+test('readoutSpan reports the highest batches per second over the steps the call touched', () => {
+  const lanes = { audit: [], iis: [], sql: [rateCell(0, 100, 10), rateCell(100, 200, 200), rateCell(200, 300, 50)] };
+  const r = readoutSpan(lanes, { startMs: 50, endMs: 250 });
+  assert.notEqual(r.db.rate, null);
+  assert.equal(r.db.rate, 200);
+  assert.equal(r.db.start, 100);
+  assert.equal(r.db.atOnce, null, 'a rate is not a concurrency number');
+  assert.equal(r.isThisCall, true);
+  // a step outside the call is left out
+  assert.equal(readoutSpan(lanes, { startMs: 0, endMs: 90 }).db.rate, 10);
+  assert.equal(readoutSpan(lanes, { startMs: 210, endMs: 260 }).db.rate, 50);
+});
+
+test('an unknown first step does not hide the counts recorded later in the call', () => {
+  const lanes = { audit: [], iis: [], sql: [rateCell(0, 100, null), rateCell(100, 200, null), rateCell(200, 300, 120)] };
+  const r = readoutSpan(lanes, { startMs: 50, endMs: 250 });
+  assert.notEqual(r.db, null);
+  assert.equal(r.db.rate, 120, 'the lane recorded counts while the call ran, so it is not "not recorded"');
+  assert.equal(r.db.atOnce, null);
+});
+
+test('a genuine zero rate is a number, and an all-unknown span stays unknown', () => {
+  const zero = readoutSpan({ audit: [], iis: [], sql: [rateCell(0, 100, 0), rateCell(100, 200, 0)] }, { startMs: 0, endMs: 200 });
+  assert.equal(zero.db.rate, 0);
+  const unknown = readoutSpan({ audit: [], iis: [], sql: [rateCell(0, 100, null), rateCell(100, 200, null)] }, { startMs: 0, endMs: 200 });
+  assert.notEqual(unknown.db, null, 'the steps exist, they simply hold no number');
+  assert.equal(unknown.db.rate, null);
+  assert.equal(unknown.db.atOnce, null);
+  // a non-finite rate is unknown, never a peak
+  const bad = readoutSpan({ audit: [], iis: [], sql: [rateCell(0, 100, NaN), rateCell(100, 200, 7)] }, { startMs: 0, endMs: 200 });
+  assert.equal(bad.db.rate, 7);
+  assert.equal(readoutSpan({ audit: [], iis: [], sql: [rateCell(0, 100, 5)] }, { startMs: 500, endMs: 600 }), null);
+});
+
+test('a rate is never compared with a number running at once, and the slowest 5% still spans the call', () => {
+  const lanes = { audit: [], iis: [], sql: [rateCell(0, 100, 10, 1000, 900), rateCell(100, 200, 200, null, 300)] };
+  const r = readoutSpan(lanes, { startMs: 0, endMs: 200 });
+  assert.equal(r.db.rate, 200, 'the peak is the highest rate, not the biggest concurrency number');
+  assert.equal(r.db.start, 100);
+  assert.equal(r.db.p95Ms, 900);
+  // a step that measured both keeps both of its own numbers
+  const one = readoutSpan(lanes, { startMs: 0, endMs: 90 });
+  assert.equal(one.db.rate, 10);
+  assert.equal(one.db.atOnce, 1000);
+});
+
+test('a concurrency lane reads exactly as before, and a cell with no rate field still works', () => {
+  const lanes = { audit: [cell(0, 100, 2, 300, 0), cell(100, 200, 7, 900, 1)], iis: [], sql: [cell(0, 100, 1), cell(100, 200, 4)] };
+  const r = readoutSpan(lanes, { startMs: 50, endMs: 150 });
+  assert.equal(r.api.atOnce, 7);
+  assert.equal(r.api.p95Ms, 900);
+  assert.equal(r.db.atOnce, 4);
+  assert.equal(r.db.rate, null, 'no rate was recorded, so none is claimed');
+  const empty = readoutSpan({ audit: [cell(0, 100, null)], iis: [], sql: [] }, { startMs: 0, endMs: 100 });
+  assert.equal(empty.api.atOnce, null);
+  assert.equal(empty.api.rate, null);
+});
+
+test('readoutAt keeps the rate of the hovered step, unknown or zero', () => {
+  const lanes = { audit: [], iis: [], sql: [rateCell(0, 100, null), rateCell(100, 200, 0), rateCell(200, 300, 120)] };
+  assert.equal(readoutAt(50, lanes, call).db.rate, null);
+  assert.equal(readoutAt(150, lanes, call).db.rate, 0);
+  assert.equal(readoutAt(250, lanes, call).db.rate, 120);
+  assert.equal(readoutAt(250, lanes, call).db.atOnce, null);
 });

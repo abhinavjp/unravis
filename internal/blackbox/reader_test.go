@@ -1077,6 +1077,164 @@ func TestFolderManifestRefusesLink(t *testing.T) {
 	}
 }
 
+/* ------------------------------------- PERF-1: merge dedup and ordering */
+
+// ms builds one sample for the merge tests; seq identifies which payload
+// survived a dedup.
+func ms(at time.Time, run string, seq uint64) Sample {
+	return Sample{V: 1, Run: run, Seq: seq, T: at}
+}
+
+// mergeSamples must keep time order and drop duplicates (same T AND same Run)
+// both WITHIN one file and ACROSS the boundary between the accumulated result
+// and the next file — including when the next file starts strictly after the
+// accumulated result (the append fast path) and when its first T EQUALS the
+// accumulated last T (which must not skip the boundary dedup). A naive
+// append(out, file...) fails the dedup and ordering cases below.
+func TestMergeSamplesDedupAndOrdering(t *testing.T) {
+	t1 := t0
+	t2 := t0.Add(15 * time.Second)
+	t3 := t0.Add(30 * time.Second)
+	t4 := t0.Add(45 * time.Second)
+	cases := []struct {
+		name string
+		out  []Sample
+		file []Sample
+		want []Sample
+	}{
+		{
+			name: "fast path keeps within-file dedup",
+			out:  []Sample{ms(t1, "r", 1)},
+			file: []Sample{ms(t2, "r", 2), ms(t2, "r", 3), ms(t3, "r", 4)},
+			want: []Sample{ms(t1, "r", 1), ms(t2, "r", 2), ms(t3, "r", 4)},
+		},
+		{
+			name: "boundary equal T same Run dedups and keeps the accumulated payload",
+			out:  []Sample{ms(t1, "r", 1), ms(t2, "r", 2)},
+			file: []Sample{ms(t2, "r", 9), ms(t3, "r", 3)},
+			want: []Sample{ms(t1, "r", 1), ms(t2, "r", 2), ms(t3, "r", 3)},
+		},
+		{
+			name: "boundary equal T different Run keeps both, accumulated first",
+			out:  []Sample{ms(t1, "a", 1), ms(t2, "a", 2)},
+			file: []Sample{ms(t2, "b", 1), ms(t3, "b", 2)},
+			want: []Sample{ms(t1, "a", 1), ms(t2, "a", 2), ms(t2, "b", 1), ms(t3, "b", 2)},
+		},
+		{
+			name: "within-file equal T different Run keeps both in file order",
+			out:  []Sample{ms(t1, "a", 1)},
+			file: []Sample{ms(t2, "b", 1), ms(t2, "a", 2), ms(t2, "b", 3)},
+			want: []Sample{ms(t1, "a", 1), ms(t2, "b", 1), ms(t2, "a", 2), ms(t2, "b", 3)},
+		},
+		{
+			name: "overlapping file still merges in time order",
+			out:  []Sample{ms(t1, "r", 1), ms(t3, "r", 3)},
+			file: []Sample{ms(t2, "r", 2), ms(t4, "r", 4)},
+			want: []Sample{ms(t1, "r", 1), ms(t2, "r", 2), ms(t3, "r", 3), ms(t4, "r", 4)},
+		},
+		{
+			name: "overlapping file dedups against the accumulated result",
+			out:  []Sample{ms(t1, "r", 1), ms(t3, "r", 3)},
+			file: []Sample{ms(t1, "r", 8), ms(t2, "r", 2), ms(t3, "r", 9)},
+			want: []Sample{ms(t1, "r", 1), ms(t2, "r", 2), ms(t3, "r", 3)},
+		},
+		{
+			name: "unsorted file is sorted before merging",
+			out:  []Sample{ms(t1, "r", 1)},
+			file: []Sample{ms(t3, "r", 3), ms(t2, "r", 2), ms(t2, "r", 8)},
+			want: []Sample{ms(t1, "r", 1), ms(t2, "r", 2), ms(t3, "r", 3)},
+		},
+		{
+			name: "empty out takes the file with within-file dedup",
+			out:  nil,
+			file: []Sample{ms(t1, "r", 1), ms(t1, "r", 2), ms(t2, "r", 3)},
+			want: []Sample{ms(t1, "r", 1), ms(t2, "r", 3)},
+		},
+		{
+			name: "empty file leaves the accumulated result alone",
+			out:  []Sample{ms(t1, "r", 1), ms(t2, "r", 2)},
+			file: nil,
+			want: []Sample{ms(t1, "r", 1), ms(t2, "r", 2)},
+		},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			got := mergeSamples(append([]Sample(nil), c.out...), append([]Sample(nil), c.file...))
+			if len(got) != len(c.want) {
+				t.Fatalf("got %d samples %v, want %d %v", len(got), got, len(c.want), c.want)
+			}
+			for i := range got {
+				if !got[i].T.Equal(c.want[i].T) || got[i].Run != c.want[i].Run || got[i].Seq != c.want[i].Seq {
+					t.Fatalf("sample %d = %+v, want %+v (full got %v)", i, got[i], c.want[i], got)
+				}
+			}
+		})
+	}
+}
+
+// The same boundary through the REAL read path: the second hourly file repeats
+// the first file's last sample (same T and Run) and holds a within-file
+// duplicate; the read must keep time order and drop both duplicates.
+func TestReadSamplesDedupsAcrossFileBoundaryAndWithinFile(t *testing.T) {
+	last := t0.Add(59*time.Minute + 45*time.Second)
+	next := t0.Add(time.Hour)
+	name1 := FileNameFor(t0)
+	name2 := FileNameFor(next)
+	files := map[string][]byte{
+		name1: []byte(sampleLine(t0, 1) + sampleLine(last, 2)),
+		name2: []byte(sampleLine(last, 2) + sampleLine(next, 3) + sampleLine(next, 3) + sampleLine(next.Add(15*time.Second), 4)),
+	}
+	src := mapSource{files: files}
+	m := Manifest{Format: 1, Files: []FileEntry{{Name: name1, Hour: t0}, {Name: name2, Hour: next}}}
+	got, rep, err := ReadSamples(context.Background(), src, m, t0, t0.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Samples != len(got) || len(got) != 4 {
+		t.Fatalf("got %d samples (report %d), want 4: boundary and within-file duplicates dropped", len(got), rep.Samples)
+	}
+	want := []time.Time{t0, last, next, next.Add(15 * time.Second)}
+	for i, w := range want {
+		if !got[i].T.Equal(w) {
+			t.Fatalf("sample %d T = %v, want %v (order broken)", i, got[i].T, w)
+		}
+	}
+	if got[1].Seq != 2 || got[2].Seq != 3 {
+		t.Fatalf("boundary dedup kept the wrong payloads: %v", got)
+	}
+}
+
+// BenchmarkReadSamples192Files measures a full read of 192 hourly files of 240
+// samples each (8 days at 15 s): the common non-overlapping case where each
+// file's samples come strictly after everything read so far.
+func BenchmarkReadSamples192Files(b *testing.B) {
+	files := map[string][]byte{}
+	var entries []FileEntry
+	for i := 0; i < 192; i++ {
+		h := t0.Add(time.Duration(i) * time.Hour)
+		name := FileNameFor(h)
+		var buf strings.Builder
+		for j := 0; j < 240; j++ {
+			buf.WriteString(sampleLine(h.Add(time.Duration(j)*15*time.Second), uint64(j+1)))
+		}
+		files[name] = []byte(buf.String())
+		entries = append(entries, FileEntry{Name: name, Hour: h})
+	}
+	src := mapSource{files: files}
+	m := Manifest{Format: 1, Files: entries}
+	ctx := context.Background()
+	to := t0.Add(192 * time.Hour)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		got, rep, err := ReadSamples(ctx, src, m, t0, to)
+		if err != nil || rep.Samples != 192*240 || len(got) != 192*240 {
+			b.Fatalf("read got %d samples, report %+v, err %v", len(got), rep, err)
+		}
+	}
+}
+
 // The explicit trusted-root policy allows links; nothing sets it silently.
 func TestFolderTrustedRootAllowsLinks(t *testing.T) {
 	dir := t.TempDir()

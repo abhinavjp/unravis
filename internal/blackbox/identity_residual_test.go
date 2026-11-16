@@ -630,3 +630,62 @@ func TestHandleFileStillServesRegularRecording(t *testing.T) {
 		t.Fatalf("regular recording: %d (want 200, %d bytes)", resp.StatusCode, len(want))
 	}
 }
+
+// --- SEC-4 residual: an in-root link entry must not be followed ---
+
+// os.Root.Open keeps the open inside the root, but on Unix it FOLLOWS a
+// symlink whose target is inside the root (containment is not no-follow).
+// A link carrying a valid recording basename and pointing at another regular
+// file in the SAME folder must still be refused: the bytes served under a
+// recording name must come from that directory entry, never from an alias.
+// The genuine target under its own name must keep being served (no
+// over-refusal). On Windows Root.Open already refuses reparse points, so this
+// test exercises the Unix follow behaviour; makeFileLink skips with a stated
+// reason when the host grants no symlink-creation privilege.
+func TestHandleFileRefusesInFolderRecordingLink(t *testing.T) {
+	g := newSrvRig(t)
+	target := "bb-20261027-12.ndjson"
+	body := `{"v":1,"entry":"link-target"}` + "\n"
+	if err := os.WriteFile(filepath.Join(g.s.Dir(), target), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	name := "bb-20261027-11.ndjson" // valid shape, not the rig's current file
+	// The link target is RELATIVE and inside the root: os.Root refuses
+	// absolute and escaping links by itself, so only a relative in-root
+	// target exercises the follow-vs-refuse behaviour under test.
+	makeFileLink(t, filepath.Join(g.s.Dir(), name), target)
+
+	resp, b := g.get(t, "/files/"+name, g.key)
+	if resp.StatusCode != 404 {
+		t.Fatalf("in-folder link entry: %d, want 404 (body %q)", resp.StatusCode, b)
+	}
+	if strings.Contains(string(b), "link-target") {
+		t.Fatal("the link target's data was served under the link's name")
+	}
+	if !strings.Contains(string(b), "no such recording file") {
+		t.Fatalf("refusal must carry the fixed message: %s", b)
+	}
+	// No over-refusal: the genuine file under its own name is still served.
+	resp, b = g.get(t, "/files/"+target, g.key)
+	if resp.StatusCode != http.StatusOK || string(b) != body {
+		t.Fatalf("genuine target: %d (want 200 with its own bytes), body %q", resp.StatusCode, b)
+	}
+}
+
+// The containment seam itself must refuse an in-root link leaf, not only
+// links that escape the root (which Root.Open already refuses on every
+// platform). The refusal error is not asserted to be errRecordingRefused:
+// on Windows the no-follow open refuses first with its own error.
+func TestOpenRecordingFileRefusesInFolderLink(t *testing.T) {
+	root := t.TempDir()
+	target := "bb-20261027-12.ndjson"
+	if err := os.WriteFile(filepath.Join(root, target), []byte(`{"v":1}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	name := "bb-20261027-11.ndjson"
+	makeFileLink(t, filepath.Join(root, name), target) // relative, in-root
+	if f, err := openRecordingFile(root, name); err == nil {
+		f.Close()
+		t.Fatal("an in-folder link was followed instead of refused")
+	}
+}

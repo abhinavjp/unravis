@@ -3,6 +3,7 @@
 package bbsql
 
 import (
+	"errors"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -35,12 +36,24 @@ const (
 	aceDeniedCBObject  uint8 = 12
 )
 
-// readFolderACL describes the DACL of dir in the terms folderACL.check needs.
-// Anything it cannot read comes back as an error, which the caller refuses.
+// readFolderACL describes the DACL and owner of dir in the terms
+// folderACL.check needs. Anything it cannot read comes back as an error, which
+// the caller refuses. The owner is read in the SAME descriptor as the DACL so
+// the two halves describe one moment, and an unreadable or missing owner is an
+// error, never an empty string that a later rule might mistake for healthy.
 func readFolderACL(dir string) (folderACL, error) {
-	sd, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	sd, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return folderACL{}, err
+	}
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return folderACL{}, err
+	}
+	if owner == nil {
+		// No owner recorded: the implicit WRITE_DAC holder cannot be proven.
+		return folderACL{}, errors.New("bbsql: the folder reports no owner")
 	}
 	ctrl, _, err := sd.Control()
 	if err != nil {
@@ -55,6 +68,7 @@ func readFolderACL(dir string) (folderACL, error) {
 		return folderACL{}, err
 	}
 	out := folderACL{
+		Owner:     owner.String(),
 		Present:   true,
 		Protected: ctrl&windows.SE_DACL_PROTECTED != 0,
 	}

@@ -1,8 +1,20 @@
 // Slow call screen: the numbers under the hover line, and one time-ordered list of
 // slow items and event markers from every source. Pure functions, no imports.
 
-export interface ReadCell { start: number; end: number; atOnce: number | null; p95Ms: number | null; refused: number | null }
+export interface ReadCell {
+  start: number;
+  end: number;
+  atOnce: number | null;
+  /** Batches per second from recorded counts, on a lane that measures throughput. Absent or null = not recorded. */
+  rate?: number | null;
+  p95Ms: number | null;
+  refused: number | null;
+}
 export interface Readout { stepStart: number; api: ReadCell | null; iis: ReadCell | null; db: ReadCell | null; isThisCall: boolean }
+
+function isNumber(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
 
 function cellAt(cells: readonly ReadCell[], tMs: number): ReadCell | null {
   for (const cell of cells) {
@@ -35,22 +47,37 @@ export function readoutAt(
 
 // The whole time a call ran, not just the instant it started: the highest value in any step the call touched, per lane.
 // A lane with no recorded step inside the span gives null (printed as "not recorded", never 0). A call with no end is read at its start.
+// Each lane is read in its own measure: when any step the call touched recorded a batch rate, the peak is the highest
+// rate and the step carrying it is returned. A rate is never compared with a number running at once, and a step with
+// no number of its own never hides the numbers recorded in the other steps the call touched.
 function peakOver(cells: readonly ReadCell[], startMs: number, endMs: number): ReadCell | null {
   const end = endMs > startMs ? endMs : startMs;
+  const touching = cells.filter((cell) =>
+    end === startMs ? startMs >= cell.start && startMs < cell.end : cell.start < end && cell.end > startMs
+  );
+  if (touching.length === 0) return null;
+  const byRate = touching.some((cell) => isNumber(cell.rate));
+  const valueOf = (cell: ReadCell): number | null => {
+    if (byRate) return isNumber(cell.rate) ? cell.rate : null;
+    return isNumber(cell.atOnce) ? cell.atOnce : null;
+  };
   let best: ReadCell | null = null;
-  let first: ReadCell | null = null;
-  for (const cell of cells) {
-    const touches = end === startMs ? startMs >= cell.start && startMs < cell.end : cell.start < end && cell.end > startMs;
-    if (!touches) continue;
-    if (!first) first = cell;
-    if (cell.atOnce === null || !Number.isFinite(cell.atOnce)) continue;
-    if (!best || (best.atOnce ?? -1) < cell.atOnce) best = cell;
+  let bestValue = 0;
+  for (const cell of touching) {
+    const value = valueOf(cell);
+    if (value === null) continue;
+    if (best === null || value > bestValue) {
+      best = cell;
+      bestValue = value;
+    }
   }
-  if (!best) return first && { ...first, atOnce: null };
+  if (!best) return { ...touching[0], atOnce: null, rate: null };
   const p95s = cells
     .filter((c) => c.start < Math.max(end, startMs + 1) && c.end > startMs && c.p95Ms !== null && Number.isFinite(c.p95Ms))
     .map((c) => c.p95Ms as number);
-  return { ...best, p95Ms: p95s.length ? Math.max(...p95s) : null };
+  // The answer always states the rate as a number or as null, so a reader never has to guess whether an
+  // absent field means "not recorded" or "zero".
+  return { ...best, rate: isNumber(best.rate) ? best.rate : null, p95Ms: p95s.length ? Math.max(...p95s) : null };
 }
 
 export function readoutSpan(
@@ -64,6 +91,17 @@ export function readoutSpan(
   const first = api ?? iis ?? db;
   if (!first) return null;
   return { stepStart: first.start, api, iis, db, isThisCall: true };
+}
+
+// The words one row of the overview strip gets, decided from the row and the measure the strip is told.
+// A row that counts batches says batches per second; every other row says how many ran at once. A lane that
+// measures concurrency keeps the concurrency words even on the Database row. The types match the map row keys and
+// the lane measures of the chart, so a new row or a new measure does not compile until this decision is updated.
+export type StripRowKey = 'audit' | 'iis' | 'sql';
+export type StripMeasure = 'at-once' | 'batch-rate';
+
+export function rowMeasuresBatches(rowKey: StripRowKey, measure: StripMeasure): boolean {
+  return rowKey === 'sql' && measure === 'batch-rate';
 }
 
 export type SourceKey = 'api' | 'iis' | 'db';

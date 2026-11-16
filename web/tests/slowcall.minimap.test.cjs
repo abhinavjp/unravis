@@ -33,6 +33,77 @@ const functionBody = (name) => {
   return source.slice(start, end);
 };
 
+// ---- R2-F: draw the strip for real, so the measure decision is checked by what a reader sees, not by source text ----
+const { compile } = require('svelte/compiler');
+const { render } = require('svelte/server');
+
+const copyModule = loadTypeScript('src/lib/drill/drillCopy.ts');
+const laneModule = loadTypeScript('src/lib/drill/callLanes.ts');
+const mapModule = loadTypeScript('src/lib/drill/callMap.ts');
+const keyCommitModule = loadTypeScript('src/lib/drill/keyCommit.ts');
+const timeModule = loadTypeScript('src/lib/time.ts');
+const readoutModule = loadTypeScript('src/lib/drill/callReadout.ts');
+const { rowMeasuresBatches } = readoutModule;
+
+// Compile a strip source (the committed one, or a mutant held in memory only) into a server-renderable component.
+function loadMinimap(markup) {
+  const full = path.join(root, 'src/components/CallMinimap.svelte');
+  const compiled = compile(markup, { filename: 'CallMinimap.svelte', generate: 'server' });
+  assert.deepEqual(compiled.warnings.map((w) => w.code), [], 'the strip compiles without warnings');
+  const js = ts.transpileModule(compiled.js.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const module = { exports: {} };
+  const nodeRequire = createRequire(full);
+  const stubs = {
+    '../lib/drill/drillCopy': copyModule,
+    '../lib/drill/callLanes': laneModule,
+    '../lib/drill/callMap': mapModule,
+    '../lib/drill/keyCommit': keyCommitModule,
+    '../lib/time': timeModule
+  };
+  new Function('require', 'module', 'exports', js)((request) => stubs[request] ?? nodeRequire(request), module, module.exports);
+  return module.exports.default;
+}
+
+// Three rows over the same two buckets: one drawn column (height 0.5 of a peak of 4) and one hatched gap.
+const T0 = Date.parse('2026-11-05T10:00:00Z');
+const stripRows = () => ['audit', 'iis', 'sql'].map((key) => ({
+  key,
+  columns: [
+    { start: T0, end: T0 + 60_000, height: 0.5 },
+    { start: T0 + 60_000, end: T0 + 120_000, height: null }
+  ],
+  peak: { atOnce: 4, start: T0 }
+}));
+
+// Render the strip the way the screen does: rows drawn in their measure, plus the measure the strip is told.
+function renderStrip(sqlMeasure, markup = source) {
+  return render(loadMinimap(markup), {
+    props: {
+      rows: stripRows(),
+      overview: { start: T0 - 600_000, end: T0 + 600_000 },
+      win: { start: T0 - 30_000, end: T0 + 30_000 },
+      call: { startMs: T0, endMs: T0 + 5_000 },
+      bucketSeconds: 60,
+      sqlMeasure,
+      zone: 'UTC',
+      hidden: false,
+      onPreview: () => {},
+      onCommit: () => {}
+    }
+  }).body.replace(/<!--\[.*?-->/g, '');
+}
+
+// The hover text of every column of one row, keyed by the row it sits in.
+const titlesOfRow = (markup, key) => {
+  const row = markup.match(new RegExp(`data-row="${key}"[\\s\\S]*?<\\/svg>`));
+  assert.ok(row, `row ${key} drew`);
+  return [...row[0].matchAll(/<title>([^<]*)<\/title>/g)].map((m) => m[1]);
+};
+const peakTexts = (markup) => [...markup.matchAll(/class="scall-map-peak[^"]*"[^>]*title="([^"]*)"/g)].map((m) => m[1]);
+const RATE_WORDS = 'batches per second';
+const ONCE_WORDS = 'running at once';
+const NO_DATA = 'no data recorded';
+
 test('the strip, the box, the caption and the hidden note are all present', () => {
   for (const id of ['scall-map', 'scall-map-box', 'scall-map-caption', 'scall-map-hidden']) {
     assert.ok(source.includes(`data-testid="${id}"`), `has data-testid ${id}`);
@@ -49,12 +120,13 @@ test('the strip, the box, the caption and the hidden note are all present', () =
 });
 
 test('props match the packet', () => {
-  for (const prop of ['rows', 'overview', 'win', 'call', 'bucketSeconds', 'zone', 'hidden', 'onPreview', 'onCommit']) {
+  for (const prop of ['rows', 'overview', 'win', 'call', 'bucketSeconds', 'zone', 'hidden', 'onPreview', 'onCommit', 'sqlMeasure']) {
     assert.match(source, new RegExp(`\\b${prop}\\b`), `prop ${prop}`);
   }
   assert.match(source, /onPreview: \(centreMs: number\) => void/);
   assert.match(source, /onCommit: \(centreMs: number\) => void/);
   assert.match(source, /rows: MapRow\[\]/);
+  assert.match(source, /sqlMeasure: LaneMeasure/);
 });
 
 test('the geometry comes from callMap, not from the component', () => {
@@ -114,7 +186,102 @@ test('rows: label, columns, hatched gaps, titles, peak and the red line', () => 
 
 test('the caption says how many minutes a column is, and the longer help sits in a details block', () => {
   assert.match(source, /mapCaption\(columnMinutes\(/);
-  assert.match(source, /<details[^>]*>\s*<summary>\{DRILL_TEXT\.mapHow\}<\/summary>\s*<p>\{DRILL_TEXT\.mapCaptionMore\}<\/p>\s*<\/details>/);
+  assert.match(source, /<details[^>]*>\s*<summary>\{DRILL_TEXT\.mapHow\}<\/summary>\s*<p>\{[^}]*DRILL_TEXT\.mapCaptionMore[^}]*\}<\/p>\s*<\/details>/);
+});
+
+// UX-1: the strip's Database row is drawn in the lane's own measure, so its words must name that measure.
+// A throughput lane (Blackbox host batch counts) is batches per second; the other rows stay running at once.
+test('the Database row names batches per second when its lane measures throughput', () => {
+  for (const key of ['mapCellRate', 'mapPeakRate', 'mapAxisLineRate', 'mapCaptionMoreRate']) {
+    assert.ok(DRILL_TEXT[key] !== undefined, key + ' exists in the copy');
+    assert.match(source, new RegExp('DRILL_TEXT\\.' + key + '\\b'), 'the component uses ' + key);
+  }
+  assert.match(source, /row\.key === 'sql' && sqlMeasure === 'batch-rate'/, 'only the SQL row of a throughput lane takes the rate words');
+  assert.match(source, /DRILL_TEXT\.mapAxisLineRate : DRILL_TEXT\.mapAxisLine/);
+  assert.match(source, /DRILL_TEXT\.mapCaptionMoreRate : DRILL_TEXT\.mapCaptionMore/);
+  // the concurrency words are still there for every other row
+  assert.match(source, /DRILL_TEXT\.mapCell\(/);
+  assert.match(source, /DRILL_TEXT\.mapPeak\(/);
+  assert.match(DRILL_TEXT.mapCellRate('Database', '100', '10:14'), /batches per second around 10:14/);
+  assert.match(DRILL_TEXT.mapPeakRate('100', '10:14'), /batches/);
+  assert.match(DRILL_TEXT.mapAxisLineRate, /batches per second/);
+  assert.match(DRILL_TEXT.mapCaptionMoreRate, /batches per second/);
+});
+
+// R2-F: the sentence above only proves the component SOURCE still contains the decision as text. A wiring that hands the
+// rate words to the wrong row, or takes the measure from the wrong response, keeps that regex green. These cases call the
+// decision itself and then check what the drawn strip actually says.
+test('the decision is callable with (row key, measure) and only says batches for the Database row of a throughput lane', () => {
+  assert.equal(rowMeasuresBatches('sql', 'batch-rate'), true, "the Database row of a lane recording batch counts says batches per second");
+  assert.equal(rowMeasuresBatches('audit', 'batch-rate'), false, "an API row never says batches per second, even in a throughput lane");
+  assert.equal(rowMeasuresBatches('iis', 'batch-rate'), false, "an IIS row never says batches per second, even in a throughput lane");
+  assert.equal(rowMeasuresBatches('sql', 'at-once'), false, 'a Database row measured as concurrency keeps the concurrency words');
+  // what the decision picks is the hover sentence a reader sees
+  const hover = (key, measure) => {
+    const lane = { audit: DRILL_TEXT.laneApi, iis: DRILL_TEXT.laneIis, sql: DRILL_TEXT.laneDb }[key];
+    return rowMeasuresBatches(key, measure)
+      ? DRILL_TEXT.mapCellRate(lane, '2.0', '10:00')
+      : DRILL_TEXT.mapCell(lane, '2.0', '10:00');
+  };
+  assert.match(hover('sql', 'batch-rate'), new RegExp(`^${DRILL_TEXT.laneDb}: 2\\.0 ${RATE_WORDS} around 10:00$`));
+  assert.match(hover('audit', 'batch-rate'), new RegExp(`^${DRILL_TEXT.laneApi}: 2\\.0 ${ONCE_WORDS} around 10:00$`));
+  assert.match(hover('sql', 'at-once'), new RegExp(`^${DRILL_TEXT.laneDb}: 2\\.0 ${ONCE_WORDS} around 10:00$`));
+});
+
+test('the drawn strip says batches per second only where the decision says so', () => {
+  for (const measure of ['batch-rate', 'at-once']) {
+    const markup = renderStrip(measure);
+    for (const key of ['audit', 'iis', 'sql']) {
+      const titles = titlesOfRow(markup, key);
+      const measured = titles.filter((t) => !t.includes(NO_DATA));
+      assert.ok(measured.length > 0, `row ${key} drew a measured column`);
+      const wantsRate = rowMeasuresBatches(key, measure);
+      for (const title of measured) {
+        if (wantsRate) {
+          assert.match(title, new RegExp(RATE_WORDS), `${key} in ${measure}: hover says ${title}`);
+          assert.doesNotMatch(title, new RegExp(ONCE_WORDS), `${key} in ${measure}: hover says ${title}`);
+        } else {
+          assert.match(title, new RegExp(ONCE_WORDS), `${key} in ${measure}: hover says ${title}`);
+          assert.doesNotMatch(title, new RegExp(RATE_WORDS), `${key} in ${measure}: hover says ${title}`);
+        }
+      }
+      // a hatched gap never claims either measure, whatever the lane measures
+      for (const title of titles.filter((t) => t.includes(NO_DATA))) {
+        assert.doesNotMatch(title, new RegExp(`${RATE_WORDS}|${ONCE_WORDS}`), `a gap says no measure: ${title}`);
+      }
+    }
+    // one peak per row, in the row's own measure: only the Database row of a throughput lane counts batches
+    const peaks = peakTexts(markup);
+    assert.equal(peaks.length, 3, 'three peak readouts, one per row');
+    assert.equal(peaks.filter((t) => t.includes('batches/s')).length, measure === 'batch-rate' ? 1 : 0, `peaks in ${measure}: ${peaks}`);
+    // the whole-strip lines take the same measure as the strip
+    const axis = (markup.match(/class="scall-map-axis[^"]*">([^<]*)<\/p>/) ?? [])[1] ?? '';
+    const more = (markup.match(/<details[\s\S]*?<\/summary>\s*<p[^>]*>([^<]*)<\/p>/) ?? [])[1] ?? '';
+    for (const [which, text] of [['axis line', axis], ['longer help', more]]) {
+      assert.ok(text.length > 0, `${which} drew text`);
+      if (measure === 'batch-rate') {
+        assert.match(text, new RegExp(RATE_WORDS), `${which} in ${measure}: ${text}`);
+        assert.doesNotMatch(text, new RegExp(ONCE_WORDS), `${which} in ${measure}: ${text}`);
+      } else {
+        assert.match(text, new RegExp(ONCE_WORDS), `${which} in ${measure}: ${text}`);
+        assert.doesNotMatch(text, new RegExp(RATE_WORDS), `${which} in ${measure}: ${text}`);
+      }
+    }
+  }
+});
+
+test('the drawn check kills a wrong row wiring that the source-text assertions accept', () => {
+  // In-memory mutant: the rate words go to the API row instead of the Database row. Nothing is written to disk.
+  const mutant = source.replace("row.key === 'sql' && sqlMeasure === 'batch-rate'", "row.key === 'audit' && sqlMeasure === 'batch-rate'");
+  assert.notEqual(mutant, source, 'the mutant was built');
+  // the source-text assertions above still pass on it, which is exactly why the drawn case exists:
+  assert.match(mutant, /DRILL_TEXT\.mapCellRate\b/, 'the mutant still uses the rate copy');
+  assert.match(mutant, /row\.key === '[\w']+' && sqlMeasure === 'batch-rate'/, 'the mutant still reads as a sql/audit gating');
+  // the drawn strip does not: its Database row lies about its own measure, so the drawn check is red on the mutant
+  const sqlTitles = titlesOfRow(renderStrip('batch-rate', mutant), 'sql').filter((t) => !t.includes(NO_DATA));
+  assert.equal(sqlTitles.length, 1, 'the Database row drew one measured column');
+  assert.doesNotMatch(sqlTitles[0], new RegExp(RATE_WORDS), `the mutant's Database row says: ${sqlTitles[0]}`);
+  assert.equal(rowMeasuresBatches('sql', 'batch-rate'), true, 'the decision still says the Database row counts batches');
 });
 
 test('the strip is at most 84 px tall, never scrolls, and only the box turns off touch scrolling', () => {

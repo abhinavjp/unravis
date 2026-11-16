@@ -146,6 +146,25 @@ export function pickedTargetState(kind: TargetKind, name: string, answer: Target
   return 'list-unreadable';
 }
 
+/**
+ * What the Settings step can honestly show for one detected list (UX-5). Pure: no state, no DOM, no fetch.
+ * `read` is false while the single mount-time read is in flight; `failed` is true when that read was refused
+ * or never reached the server. A failed or unreadable list is never an empty healthy list: 'failed' and
+ * 'unavailable' say it could not be read, 'not-found' says the source is not on this PC, 'empty' means the
+ * list was read and holds no names (its fieldset is skipped), and 'list' means names were read. An older
+ * server sends no per-source state, so `detected` decides: nothing detected means nothing could be read.
+ */
+export type TargetListState = 'loading' | 'failed' | 'not-found' | 'unavailable' | 'empty' | 'list';
+export function targetListState(list: TargetInfo[] | null | undefined, source: string | undefined, detected: boolean, read: boolean, failed: boolean): TargetListState {
+  if (failed) return 'failed';
+  if (!read) return 'loading';
+  if ((list ?? []).length > 0) return 'list';
+  if (source === 'not-found') return 'not-found';
+  if (source === 'unavailable') return 'unavailable';
+  if (source === 'detected' || detected) return 'empty';
+  return 'unavailable';
+}
+
 /** The picked target names split by kind, each group in the order picked. Nothing is dropped. */
 export function targetNamesByKind(targets: TargetRef[]): { appPools: string[]; services: string[] } {
   const appPools: string[] = [];
@@ -341,6 +360,49 @@ export function toggleTarget(targets: TargetRef[], kind: TargetKind, name: strin
   return [...targets, { kind, name }];
 }
 
+/** The target limits of internal/blackbox/config.go: at most 32 targets, a name of at most 128 bytes. */
+export const TARGETS_MAX = 32;
+export const TARGET_NAME_MAX = 128;
+
+/** What is wrong with a target list. Null when the list is fine. The panel turns the code into words. */
+export type TargetsProblem = 'many' | 'kind' | 'empty' | 'long' | 'chars' | 'duplicate';
+
+/** The characters a target name may not hold, as the server refuses them. */
+const TARGET_NAME_BAD = /[\\/:*?"<>|]/;
+
+/** Length in UTF-8 bytes, which is how the server counts a name: an accented letter counts as more than one. */
+function nameBytes(name: string): number {
+  let bytes = 0;
+  for (const ch of name) {
+    const c = ch.codePointAt(0) ?? 0;
+    bytes += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+  }
+  return bytes;
+}
+
+/**
+ * The first thing wrong with the targets, or null. Mirrors Validate in internal/blackbox/config.go, in the
+ * same order: the count, then each target's kind, name and duplicate check. Duplicates are judged the way
+ * Windows judges them: pool and service names match without regard to case, so EmailSvc and emailsvc are
+ * one target. A missing list means machine-wide only, which is fine. Pure: the list given is never changed.
+ */
+export function targetsProblem(targets: TargetRef[] | null | undefined): TargetsProblem | null {
+  const list = targets ?? [];
+  if (list.length > TARGETS_MAX) return 'many';
+  const seen: TargetRef[] = [];
+  for (const target of list) {
+    if (target.kind !== 'appPool' && target.kind !== 'service') return 'kind';
+    const name = target.name ?? '';
+    if (!name) return 'empty';
+    if (nameBytes(name) > TARGET_NAME_MAX) return 'long';
+    if (TARGET_NAME_BAD.test(name)) return 'chars';
+    for (const ch of name) if ((ch.codePointAt(0) ?? 0) < 0x20) return 'chars';
+    if (seen.some((prev) => prev.kind === target.kind && prev.name.toLowerCase() === name.toLowerCase())) return 'duplicate';
+    seen.push(target);
+  }
+  return null;
+}
+
 /** The defaults the recorder ships with (internal/blackbox/config.go). `folder` is the D: drive default. */
 export function defaultSettings(name = ''): Settings {
   return {
@@ -351,7 +413,7 @@ export function defaultSettings(name = ''): Settings {
   };
 }
 
-export type SettingsProblem = 'name' | 'folder' | 'interval' | 'keep' | 'size' | 'free' | 'port' | 'bind' | 'logs';
+export type SettingsProblem = 'name' | 'folder' | 'interval' | 'keep' | 'size' | 'free' | 'port' | 'bind' | 'logs' | 'targets';
 
 const HOST_NAME = /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 
@@ -388,6 +450,7 @@ export function settingsProblem(s: Settings): SettingsProblem | null {
   if (!Number.isInteger(s.port) || s.port < 1 || s.port > 65535) return 'port';
   if (!validBind(s.bind)) return 'bind';
   if (s.logPaths.some(p => !/^[A-Za-z]:[\\/]/.test(p.trim()))) return 'logs';
+  if (targetsProblem(s.targets)) return 'targets';
   return null;
 }
 

@@ -103,9 +103,11 @@ func TestLaneGapInternalSQLSkipIsNeverCompleteZero(t *testing.T) {
 	if b := heldBucketAt(t, lane, invT0.Add(time.Hour).Unix()); b.Count != 6000 || !b.Complete {
 		t.Fatalf("observed bucket %+v, want 6000 complete", b)
 	}
-	// 100 req/s over the 3000 observed seconds of the hour.
-	if lane.Scanned != 300000 || tracingBucketSum(lane) != 300000 {
-		t.Fatalf("scanned %d sum %d, want 300000", lane.Scanned, tracingBucketSum(lane))
+	// 100 req/s over the 2985 observed seconds of the hour: the span ending at
+	// 10:20:00 was measured from the 10:09:45 collect (615 s), not from the
+	// skipped 10:19:45 tick, so it is unknown, never a counted 15 s (CORR-3).
+	if lane.Scanned != 298500 || tracingBucketSum(lane) != 298500 {
+		t.Fatalf("scanned %d sum %d, want 298500", lane.Scanned, tracingBucketSum(lane))
 	}
 }
 

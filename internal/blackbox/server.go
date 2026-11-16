@@ -372,7 +372,7 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 var errRecordingRefused = errors.New("recording entry refused")
 
 // openRecordingFile opens one recording entry inside dir under a handle-based,
-// race-resistant containment/no-follow policy (W12-05):
+// race-resistant containment/no-follow policy (W12-05, SEC-4):
 //
 //   - The root must be a real directory, never a symlink/junction: os.OpenRoot
 //     follows links in the root name, so a reparse root is refused before it is
@@ -380,13 +380,18 @@ var errRecordingRefused = errors.New("recording entry refused")
 //   - The root is then pinned as a directory HANDLE (os.OpenRoot). Substituting
 //     an ancestor of dir after this point cannot redirect the open: the handle
 //     keeps referencing the original directory.
-//   - The entry is opened RELATIVE to that handle (Root.Open). Every path
-//     component is validated against the root: on Windows the open uses
-//     OBJ_DONT_REPARSE (with a handle-inspecting fallback on older builds), so
-//     any symlink/junction/mount-point alias — final object or ancestor — is
-//     refused outright; on Unix no component may escape the root. A link
-//     substituted for the entry between validation and open cannot win: the
-//     no-follow check happens inside the same handle-relative open.
+//   - The entry is opened RELATIVE to that handle (Root.Open), which enforces
+//     containment of the path on BOTH platforms: no component may escape the
+//     root and absolute link targets are refused. Containment is not no-follow:
+//     a relative link to another file in the same folder was measured on this
+//     Windows host being followed to that file's bytes, so neither the Windows
+//     open nor the Unix one is relied on to refuse a reparse point.
+//   - No-follow on the FINAL component is this function's own guard, on every
+//     platform: root.Lstat on the same pinned root refuses a symlink or
+//     irregular entry even when its target is a regular file inside the folder,
+//     and os.SameFile ties that Lstat to the opened handle's Stat, so an entry
+//     substituted between open and stat is refused, never served under an
+//     alias. Any Lstat/Stat error fails closed.
 //   - The FINAL object is checked on the opened handle (never the path): it
 //     must be a regular file, so directories, devices and pipes are refused
 //     even when they carry a valid recording basename.
@@ -407,12 +412,21 @@ func openRecordingFile(dir, name string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	li, err := root.Lstat(name)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if li.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+		f.Close()
+		return nil, errRecordingRefused
+	}
 	st, err := f.Stat()
 	if err != nil {
 		f.Close()
 		return nil, err
 	}
-	if !st.Mode().IsRegular() {
+	if !st.Mode().IsRegular() || !os.SameFile(li, st) {
 		f.Close()
 		return nil, errRecordingRefused
 	}

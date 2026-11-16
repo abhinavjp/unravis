@@ -656,6 +656,73 @@ func TestDueSchedulingKeepsCadences(t *testing.T) {
 	}
 }
 
+// TestDueJitter pins CORR-2: a slot read a hair early must still run. Run keeps
+// fixed-rate monotonic deadlines, but the tick stamps the WALL clock, so a slot
+// can be read a few tens of milliseconds before the exact interval has elapsed
+// (timer granularity, a clock correction). Comparing with the bare interval
+// then drops that whole slot and the 15 s items silently halve their cadence.
+// due() allows a bounded slack instead - a tenth of the interval, at most one
+// second - while the 60 s items must still not be pulled forward.
+func TestDueJitter(t *testing.T) {
+	base := time.Date(2026, 3, 4, 13, 0, 0, 0, time.UTC)
+	q := &recQuery{replies: map[string][]Row{
+		Statements["bb:waits"]:     fakeWaitRows(1),
+		Statements["bb:filestats"]: {{}},
+	}}
+	clock := base
+	r := newFakeRunner(t, q, runnerOpts{
+		now: base,
+		samplers: []Sampler{
+			baseSampler("bb:waits", "waits"),
+			&fakeSampler{id: "bb:filestats", kind: "filestats", interval: DemotedInterval},
+		},
+	})
+	r.Now = func() time.Time { return clock }
+
+	// Deterministic jitter in [0,50ms] - no clock, locale, home folder or network
+	// input - so the run is identical every time and under load.
+	const slots = 200
+	early, prev := 0, time.Duration(0)
+	for i := 0; i < slots; i++ {
+		jitter := time.Duration(i*37%51) * time.Millisecond
+		if i > 0 && jitter < prev {
+			early++
+		}
+		prev = jitter
+		clock = base.Add(time.Duration(i)*BaseInterval + jitter)
+		if err := r.Tick(clock); err != nil {
+			t.Fatalf("slot %d: %v", i, err)
+		}
+	}
+	if early == 0 {
+		t.Fatal("the jitter never went backwards, so an early slot was never exercised")
+	}
+	if got := q.countID("bb:waits"); got != slots {
+		t.Errorf("bb:waits ran %d times over %d slots, want every slot (%d slots read early)", got, slots, early)
+	}
+	if got := sampleCount(t, r.Dir, "waits"); got != slots {
+		t.Errorf("waits samples = %d, want %d (one per slot)", got, slots)
+	}
+	// The slack is bounded: the 60 s items still run every fourth slot, never on
+	// the third, so jitter cannot turn them into 45 s items.
+	if got := q.countID("bb:filestats"); got != slots/4 {
+		t.Errorf("bb:filestats ran %d times over %d slots, want %d", got, slots, slots/4)
+	}
+	if r.Skipped() != 0 {
+		t.Errorf("skipped = %d, want 0 (no tick overlapped)", r.Skipped())
+	}
+
+	// The backward-clock guard is kept: a wall clock that moved behind the last
+	// run makes the sampler due at once, never stalled until it catches up.
+	clock = clock.Add(-time.Hour)
+	if err := r.Tick(clock); err != nil {
+		t.Fatalf("tick after the clock moved back: %v", err)
+	}
+	if got := q.countID("bb:waits"); got != slots+1 {
+		t.Errorf("bb:waits ran %d times after the clock moved back, want %d", got, slots+1)
+	}
+}
+
 // TestOneSuccessPerTick: OnSuccess halves the interval, so calling it once per
 // tick (not once per sampler) is what keeps a back-off step per tick.
 func TestOneSuccessPerTick(t *testing.T) {
@@ -1003,6 +1070,237 @@ func TestDecodeFailureIsAFixedError(t *testing.T) {
 	}
 	if r.CurrentState().Failures != 1 {
 		t.Errorf("failures = %d, want 1", r.CurrentState().Failures)
+	}
+}
+
+// obsSampler is a fakeSampler that keeps every Observation the runner hands it
+// and records how many were already in hand when each Decode started, so a test
+// can see both the stamp the runner chose and the Observe-before-Decode order.
+// The runner is single-goroutine (Tick is non-re-entrant), so no locking.
+type obsSampler struct {
+	fakeSampler
+	obs         []Observation
+	obsAtDecode []int
+}
+
+func (s *obsSampler) Observe(o Observation) { s.obs = append(s.obs, o) }
+
+func (s *obsSampler) Decode(rows []Row) (any, bool, error) {
+	s.obsAtDecode = append(s.obsAtDecode, len(s.obs))
+	return s.fakeSampler.Decode(rows)
+}
+
+// TestTickObservationTimeIsPostQuery pins CORR-4: Observation.Time is when the
+// counters were actually read - the runner clock stamped right AFTER the query
+// returns - not the tick start. A delta is a difference of two sightings, so a
+// tick-start stamp overstates every span by the query's own duration and hides
+// that the read happened late. SampleDoc.T and the hourly file name are the
+// OTHER clock and must not move: they are the tick slot the sample belongs to.
+func TestTickObservationTimeIsPostQuery(t *testing.T) {
+	base := time.Date(2026, 3, 4, 5, 0, 0, 0, time.UTC)
+	// Every query burns 3 s of the runner clock. The last tick starts at
+	// 05:59:59, so its post-query stamp falls in the NEXT hour: exactly the
+	// case that would move the sample between hourly files if the stamp leaked
+	// into the bucketing.
+	const queryCost = 3 * time.Second
+	starts := []time.Time{base, base.Add(BaseInterval), base.Add(time.Hour - time.Second)}
+	clock := base
+	s := &obsSampler{fakeSampler: *baseSampler("bb:waits", "waits")}
+	q := &recQuery{replies: map[string][]Row{Statements["bb:waits"]: fakeWaitRows(1)}}
+	q.onQuery = func(text string) {
+		if text == Statements["bb:waits"] {
+			clock = clock.Add(queryCost)
+		}
+	}
+	r := newFakeRunner(t, q, runnerOpts{now: base, samplers: []Sampler{s}})
+	r.Now = func() time.Time { return clock }
+
+	for i, start := range starts {
+		clock = start
+		if err := r.Tick(start); err != nil {
+			t.Fatalf("tick %d: %v", i, err)
+		}
+	}
+	if len(s.obs) != len(starts) {
+		t.Fatalf("observations = %d, want %d", len(s.obs), len(starts))
+	}
+	for i, o := range s.obs {
+		want := starts[i].Add(queryCost)
+		if !o.Time.Equal(want) {
+			t.Errorf("observation %d Time = %v, want the post-query stamp %v (tick start was %v)",
+				i, o.Time, want, starts[i])
+		}
+		if o.Time.Location() != time.UTC {
+			t.Errorf("observation %d Time = %v, want UTC", i, o.Time)
+		}
+	}
+	// Delta spacing: two ticks 15 s apart with the same query cost are 15 s
+	// apart in observation time, and every stamp stays inside its own slot.
+	if got := s.obs[1].Time.Sub(s.obs[0].Time); got != BaseInterval {
+		t.Errorf("observation spacing = %v, want the %v cadence", got, BaseInterval)
+	}
+	for i := range s.obs {
+		if s.obs[i].Time.Before(starts[i]) {
+			t.Errorf("observation %d Time = %v, before its own tick start %v", i, s.obs[i].Time, starts[i])
+		}
+		if i+1 < len(s.obs) && s.obs[i].Time.After(starts[i+1]) {
+			t.Errorf("observation %d Time = %v overran the next tick start %v", i, s.obs[i].Time, starts[i+1])
+		}
+	}
+	for i, n := range s.obsAtDecode {
+		if n != i+1 {
+			t.Errorf("decode %d saw %d observations, want %d (Observe still runs before Decode)", i, n, i+1)
+		}
+	}
+	lines := readSampleLines(t, r.Dir)
+	if len(lines) != len(starts) {
+		t.Fatalf("sample lines = %d, want %d", len(lines), len(starts))
+	}
+	for i, doc := range lines {
+		if !doc.T.Equal(starts[i]) {
+			t.Errorf("sample %d t = %v, want the tick start %v (hourly bucketing clock)", i, doc.T, starts[i])
+		}
+	}
+	if _, err := os.Stat(SamplePath(r.Dir, starts[len(starts)-1])); err != nil {
+		t.Errorf("the straddling tick did not land in its own hour file: %v", err)
+	}
+	if _, err := os.Stat(SamplePath(r.Dir, starts[len(starts)-1].Add(queryCost))); !os.IsNotExist(err) {
+		t.Error("a next-hour file exists: the post-query stamp leaked into the hourly bucketing")
+	}
+}
+
+// waitsRowsFor is one top-20 reply with a given cumulative wait_time_ms, so a
+// stateful sampler has a real counter series to subtract.
+func waitsRowsFor(cum int64) []Row {
+	return []Row{{"wait_type": "XET_LRU_BATCH_PAGE", "wait_time_ms": cum, "waiting_tasks_count": cum / 100}}
+}
+
+// waitsDeltaAt reads one sample line's waits payload (nil when the cycle only
+// recorded a baseline).
+func waitsDeltaAt(t *testing.T, dir string, idx int) []Waits {
+	t.Helper()
+	lines := readSampleLines(t, dir)
+	if idx >= len(lines) {
+		t.Fatalf("sample lines = %d, want more than %d", len(lines), idx)
+	}
+	if lines[idx].Rows == nil {
+		return nil
+	}
+	data, err := json.Marshal(lines[idx].Rows)
+	if err != nil {
+		t.Fatalf("re-encode rows: %v", err)
+	}
+	var out []Waits
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("decode rows: %v", err)
+	}
+	return out
+}
+
+// TestTickObservationSpacingKeepsDeltaContinuity guards the risk of CORR-4 on
+// the real delta sampler: the post-query stamp must not make the runner break a
+// sampler's continuity. The observation span has to stay the real gap between
+// two counter reads, no delta may span the failure gap, and one read yields
+// exactly one line - nothing dropped, nothing counted twice.
+func TestTickObservationSpacingKeepsDeltaContinuity(t *testing.T) {
+	base := time.Date(2026, 3, 4, 6, 0, 0, 0, time.UTC)
+	const queryCost = 3 * time.Second
+	clock := base
+	s := &waitsSampler{}
+	q := &recQuery{replies: map[string][]Row{Statements["bb:waits"]: waitsRowsFor(100)}}
+	q.onQuery = func(text string) {
+		if text == Statements["bb:waits"] {
+			clock = clock.Add(queryCost)
+		}
+	}
+	r := newFakeRunner(t, q, runnerOpts{now: base, samplers: []Sampler{s}})
+	r.Now = func() time.Time { return clock }
+
+	tick := func(i int, start time.Time) {
+		t.Helper()
+		clock = start
+		if err := r.Tick(start); err != nil {
+			t.Fatalf("tick %d: %v", i, err)
+		}
+	}
+	// waitsSampler keeps only its latest Observation, so snapshot it after every
+	// read that got one.
+	var seen []Observation
+	tickObs := func(i int, start time.Time) {
+		t.Helper()
+		tick(i, start)
+		seen = append(seen, s.obs)
+	}
+
+	tickObs(1, base)
+	if waitsDeltaAt(t, r.Dir, 0) != nil {
+		t.Error("the first cycle emitted a delta with nothing to subtract")
+	}
+	q.replies[Statements["bb:waits"]] = waitsRowsFor(200)
+	tickObs(2, base.Add(DemotedInterval))
+	delta := waitsDeltaAt(t, r.Dir, 1)
+	if len(delta) != 1 || delta[0].DeltaMs != 100 {
+		t.Errorf("second cycle delta = %+v, want one row of 100 ms", delta)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("observations = %d, want 2", len(seen))
+	}
+	if seen[0].Epoch != seen[1].Epoch {
+		t.Errorf("epochs differ across two clean ticks: %d vs %d", seen[0].Epoch, seen[1].Epoch)
+	}
+	if got := seen[1].Time.Sub(seen[0].Time); got != DemotedInterval {
+		t.Errorf("observation span = %v, want the %v cadence the delta covers", got, DemotedInterval)
+	}
+
+	// One read fails: no line for it, and the gap it leaves must stay unobserved.
+	q.errFor = func(text string) error {
+		if text == Statements["bb:waits"] {
+			return &Error{CodeNetwork, "unreachable"}
+		}
+		return nil
+	}
+	failedAt := base.Add(2 * DemotedInterval)
+	clock = failedAt
+	if err := r.Tick(failedAt); err == nil {
+		t.Fatal("the injected query failure did not reach the tick")
+	}
+	if got := sampleCount(t, r.Dir, "waits"); got != 2 {
+		t.Errorf("waits lines = %d after a failed tick, want 2 (a failed read writes nothing)", got)
+	}
+	if !seen[1].Time.Equal(s.obs.Time) {
+		t.Errorf("the failed read stamped %v, want the last real read %v: an Observation means the counters were read",
+			s.obs.Time, seen[1].Time)
+	}
+
+	// The first read after the failure rebaselines: the counters it skipped are
+	// missing, never attributed to this interval.
+	q.errFor = nil
+	q.replies[Statements["bb:waits"]] = waitsRowsFor(400)
+	tickObs(4, base.Add(3*DemotedInterval))
+	if waitsDeltaAt(t, r.Dir, 2) != nil {
+		t.Error("the cycle after the failure emitted a delta spanning the gap")
+	}
+	if len(seen) != 3 {
+		t.Fatalf("observations = %d, want 3 (the failed tick observes nothing)", len(seen))
+	}
+	if seen[2].Epoch == seen[1].Epoch {
+		t.Error("the epoch survived a failed read and a reconnect, so the next delta would span the gap")
+	}
+
+	q.replies[Statements["bb:waits"]] = waitsRowsFor(500)
+	tickObs(5, base.Add(4*DemotedInterval))
+	after := waitsDeltaAt(t, r.Dir, 3)
+	if len(after) != 1 || after[0].DeltaMs != 100 {
+		t.Errorf("post-rebaseline delta = %+v, want one row of 100 ms (not the 400 ms the gap hides)", after)
+	}
+	if got := sampleCount(t, r.Dir, "waits"); got != 4 {
+		t.Errorf("waits lines = %d, want 4 (one per successful read)", got)
+	}
+	if got := seen[3].Time.Sub(seen[2].Time); got != DemotedInterval {
+		t.Errorf("observation span after the failure = %v, want %v", got, DemotedInterval)
+	}
+	if r.Skipped() != 0 {
+		t.Errorf("skipped = %d, want 0", r.Skipped())
 	}
 }
 

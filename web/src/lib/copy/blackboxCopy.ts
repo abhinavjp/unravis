@@ -1,4 +1,4 @@
-import type { PageState, SettingsProblem } from '../blackbox';
+import type { PageState, SettingsProblem, TargetsProblem } from '../blackbox';
 import type { LintEntry } from './copylint';
 
 /**
@@ -199,16 +199,19 @@ export const BB_TEXT = {
     free: 'Use 1 to 50 percent.',
     port: 'Use a port from 1 to 65535.',
     bind: 'Listens on needs an address such as 127.0.0.1, or a server name. Spaces and other symbols are not allowed.',
-    logs: 'Each log folder must be a full path.'
+    logs: 'Each log folder must be a full path.',
+    targets: 'Check the targets. Use up to 32 names, each 1 to 128 characters, with no \\ / : * ? " < > | and no name twice.'
   } as Record<SettingsProblem, string>,
 
   /* targets: the app pools and services picked in the Settings step (BBX-1-12) */
-  targetsHeading: 'Targets: app pools and services (optional)',
-  targetsHelp: 'An app pool is the group of processes that runs one IIS website. A service is a Windows background program. The Blackbox also records extra counters for each one you pick. Pick none and it still records the machine-wide counters for the whole server. You only lose the per-app detail.',
+  targetsHeading: 'Websites and services to watch closely (optional)',
+  // UX-8: the help says what the choice does, in the first words a first-time investigator reads:
+  // a picked name is measured on its own as well as on the machine, and an empty list is the
+  // machine alone. No jargon, no acronym.
+  targetsHelp: 'Each watched name gets its own processor and memory record too, and none means the whole machine only.',
   targetsAppPools: 'App pools',
   targetsServices: 'Services',
   targetsNotRunning: 'not running',
-  targetsStateUnknown: 'running state unknown',
   targetsNotInList: 'not in the detected list; running state unknown',
   targetsListUnreadable: 'list could not be read; running state unknown',
   targetsSourceNotFound: 'not detected on this PC; running state unknown',
@@ -218,8 +221,39 @@ export const BB_TEXT = {
   targetsNameLabel: 'Target name',
   targetsManualNote: 'Type the name of an app pool or service, then press Add target.',
   targetsListNote: 'The list may be incomplete. Type a name below to add a target that is not listed.',
+  // UX-6: one note under a group's legend, never the same note on every row. UX-8b: it fires when ANY
+  // row's running state could not be read, so the sentence says "some of these" and not "these": it is
+  // shown for a mixed group too, where some states were read. It states what the missed states mean for
+  // the numbers. The filter never hides silently that names exist: the count line says how many are
+  // shown, and the no-match line says how to see them all.
+  targetsAllUnknown: 'Unravis could not read whether some of these are running. A target that is not running records nothing, so a missing figure may mean nothing was recorded.',
+  targetsFilterLabel: 'Find a name',
+  targetsFilterCount: (shown: number, total: number) => 'Showing ' + shown + ' of ' + total + ' names.',
+  targetsFilterNone: (total: number) => 'No name matches. Clear the box to see all ' + total + ' names.',
+  // What the detected lists say while the one read is in flight, or when it could not be read (UX-5).
+  // A failed read is never shown as an empty healthy list; each message says what to do instead.
+  targetsLoading: 'Looking for the app pools and services on this PC.',
+  targetsLoadFailed: 'The app pools and services on this PC could not be read. Type the names below to watch them anyway.',
+  targetsPoolsNotFound: 'No app pools were found on this PC. That is normal when IIS is not installed here.',
+  targetsPoolsUnreadable: 'The app pools on this PC could not be read. Type an app pool name below to watch it.',
+  targetsServicesNotFound: 'No services were found on this PC. Type a service name below to watch it.',
+  targetsServicesUnreadable: 'The services on this PC could not be read. Type a service name below to watch it.',
   targetsAdd: 'Add target',
   targetsRemove: 'Remove target',
+  // UX-7: the words the panel says out loud when a name goes on or off the list. They claim only what
+  // the control actually did - these settings are not saved and nothing starts recording until the
+  // Apply or Install step runs, so no running, recording or saving word belongs here.
+  targetsAdded: (name: string) => name + ' added to the targets.',
+  targetsRemoved: (name: string) => name + ' removed from the targets.',
+  // Why a typed target was not added. The name stays in the box so it can be fixed (UX-4).
+  targetProblems: {
+    empty: 'Type the name of the app pool or service.',
+    long: 'Use a name of 128 characters or fewer.',
+    chars: 'A name cannot contain \\ / : * ? " < > | or a line break.',
+    kind: 'Choose App pool or Service.',
+    duplicate: 'That target is already in the list. Capital and small letters count as the same name.',
+    many: 'The list holds up to 32 targets. Remove one before you add another.'
+  } as Record<TargetsProblem, string>,
 
   reviewHeading: 'Review',
   reviewName: 'Name',
@@ -395,7 +429,10 @@ export const BB_REFUSAL: Record<string, string> = {
   'busy-here': 'Another change to the Blackbox on this PC is still running. Try again when it has finished.',
   'list-damaged': 'The saved Blackbox list is damaged and was left as it is.',
   'list-unavailable': 'The saved Blackbox list could not be opened.',
-  'key-not-saved': 'The Blackbox was installed, but Unravis could not save its read key. Remove it from this PC and install it again.'
+  'key-not-saved': 'The Blackbox was installed, but Unravis could not save its read key. Remove it from this PC and install it again.',
+  // The server refused the settings and did not say which field. Every such refusal is checked before
+  // anything is written, so nothing was changed (UX-4).
+  'invalid-config': 'These settings are not allowed, so nothing was changed. Check the folder, the limits and the target names, then try again.'
 };
 
 const STATE_IDS = Object.keys(BB_TEXT.stateNext) as PageState[];
@@ -417,6 +454,10 @@ export function blackboxCopyEntries(): LintEntry[] {
       else if (key === 'snapshotSaved') add(key, fn('D:\\UnravisBlackbox\\snapshots\\web-a-2026-10-20-0905', '46 MB'));
       else if (key === 'removedDeleted' || key === 'snapshotRecordings' || key === 'snapshotLogs' || key === 'hostTorn' || key === 'hostGapShort' || key === 'hostGapLong' || key === 'hostGapMinutes' || key === 'hostMinutes') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }
       else if (key === 'hostReadNote') add(key, fn(2, 240));
+      else if (key === 'targetsFilterCount') { add(key + '.1', fn(1, 200)); add(key + '.2', fn(10, 200)); }
+      else if (key === 'targetsFilterNone') add(key, fn(200));
+      // A real service name, so the linted sample reads as the page does (UX-7).
+      else if (key === 'targetsAdded' || key === 'targetsRemoved') add(key, fn('W3SVC'));
       else if (key === 'reviewKeepsText') add(key, fn(7, 2, 10));
       else if (key === 'reviewTargetsText') { add(key + '.both', fn(['PoolA', 'PoolB'], ['SvcOne'])); add(key + '.pools', fn(['PoolA'], [])); add(key + '.services', fn([], ['SvcOne'])); }
       else if (key === 'filesAndSamples') { add(key + '.1', fn(1, 1)); add(key + '.2', fn(4, 960)); }
@@ -429,6 +470,7 @@ export function blackboxCopyEntries(): LintEntry[] {
   for (const id of STATE_IDS) add('stateNext.' + id, T.stateNext[id]);
   for (const [k, v] of Object.entries(T.nameProblems)) add('nameProblems.' + k, v);
   for (const [k, v] of Object.entries(T.settingProblems)) add('settingProblems.' + k, v);
+  for (const [k, v] of Object.entries(T.targetProblems)) add('targetProblems.' + k, v);
   for (const [k, v] of Object.entries(BB_REFUSAL)) add('refusal.' + k, v);
   return out;
 }

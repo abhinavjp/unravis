@@ -112,21 +112,30 @@ export const DRILL_TEXT = {
   laneShape: (n: string): string => `Height = running at once, 0 to ${n}`,
   laneRateShape: (n: string): string => `Height = batches per second, 0 to ${n}`,
   chartReadLine: 'Left to right is time. Up is how many were running at once, so a higher line is a busier moment. Each lane has its own scale.',
+  // Shown instead of chartReadLine when the Database lane measures batches per second (Blackbox host counter):
+  // "up" is then a rate for that lane, never a count of running work (UX-2).
+  chartReadLineRate: 'Left to right is time. Up is how busy each lane was. The Database lane counts batches per second; the other lanes count how many ran at once. A higher line is a busier moment. Each lane has its own scale.',
   yPeak: (n: string): string => `busiest ${n}`,
   yZero: '0',
   xTitle: (zone: string): string => `Time (${zone}), earlier on the left, later on the right`,
   helpButton: 'How to read this chart',
   helpAcross: 'Across = time. Earlier is on the left, later on the right; the times are under the chart.',
   helpUp: 'Up = how many were running at the same moment. The bottom is 0 and the dashed line marks the busiest moment in that lane. Each lane has its own scale, so compare a lane with itself.',
+  // Appended to helpUp only when the Database lane measures batches per second, so the help never
+  // claims a count for a rate lane (UX-2). helpUp itself stays exact for the at-once lanes.
+  helpUpDbRate: 'The Database lane is different. Up there is batches per second, the work the server took on each second, not how many ran at once.',
   helpDots: 'Line and dots = one dot per time slot, joined so you can see busy moments rise and fall. A hatched stretch means nothing was recorded there.',
   mapAxisLine: 'Across is time. A taller column means more running at once, and each row has its own scale.',
+  // The Database row can measure throughput instead (Blackbox host batch counts): then a taller column is more
+  // work arriving, not more running at once, and the line says so for every row on the strip.
+  mapAxisLineRate: 'Across is time. A taller column means more work in that row. The Database row counts batches per second; the other rows count how many ran at once. Each row has its own scale.',
   laneBlocks: (m: number): string => `saved in ${m}-minute blocks`,
   laneApiOnly: 'API calls only',
   laneEventsOnly: 'events only, no volumes',
   laneMoreBars: (n: number): string => `and ${n} more, see the list below`,
   legendWidth: 'Bar width = how long it took',
   legendShape: 'Faint area under the line = the same count, filled in to make it easier to see',
-  legendRate: 'Database faint area = batches per second the server handled, not how many ran at once',
+  legendRate: 'Database faint area = batches per second counted by SQL Server (a batch is one request), not how many ran at once',
   legendHatched: 'Hatched = not recorded, which is unknown, not zero',
   legendCall: 'Red column = while this call was running',
   legendHow: 'What the shapes mean',
@@ -137,9 +146,12 @@ export const DRILL_TEXT = {
   mapCaption: (minutes: number): string =>
     `The two hours around this call, one column per ${minutes === 1 ? 'minute' : minutes + ' minutes'}. The outlined box is what the big chart shows. The red line is this call.`,
   mapCaptionMore: 'Drag the box or use Earlier and Later to look at another time. Taller means more running at once. Each row is scaled to its own busiest column, so compare a row with itself, not with other rows. Hatched means no data was recorded, not zero.',
+  mapCaptionMoreRate: 'Drag the box or use Earlier and Later to look at another time. Taller means more work in that row. The Database row counts batches per second, not how many ran at once. Each row is scaled to its own busiest column, so compare a row with itself, not with other rows. Hatched means no data was recorded, not zero.',
   mapPeak: (n: string, time: string): string => `peak ${n} · ${time}`,
+  mapPeakRate: (n: string, time: string): string => `peak ${n} batches/s · ${time}`,
   mapNoData: 'no data',
   mapCell: (lane: string, n: string, time: string): string => `${lane}: ${n} running at once around ${time}`,
+  mapCellRate: (lane: string, n: string, time: string): string => `${lane}: ${n} batches per second around ${time}`,
   mapCellNone: (lane: string, time: string): string => `${lane}: no data recorded for ${time}`,
   mapThisCall: (time: string): string => `this call ${time}`,
   mapDrag: 'drag',
@@ -158,6 +170,7 @@ export const DRILL_TEXT = {
   readApiPeak: (n: string): string => `API calls running at once, highest while it ran ${n}`,
   readIisPeak: (n: string): string => `Web requests running at once, highest while it ran ${n}`,
   readDbPeak: (n: string): string => `Database running at once (average), highest while it ran ${n}`,
+  readDbRatePeak: (n: string): string => `Database batches per second, highest while it ran ${n}`,
   whileNote: 'From the moment this call started to the moment it ended. Each number is the highest in any time step it touched.',
   readDbNone: 'Database not recorded',
   readDbRate: (n: string): string => `Database batches per second ${n}`,
@@ -198,12 +211,13 @@ export const DRILL_TEXT = {
   dbSrcReadOnly: 'Query Store (live), read-only',
   dbSrcEvents: 'SQL Server event files, markers only',
   // The Blackbox SQL lane reads HOST PDH batch counters (throughput), not the SQL-service DMV stream.
+  // The label says "machine-wide", not "host": a first-time reader knows the machine, not the jargon (UX-9).
   // The cadence is the recorder's own (5, 15, 30 or 60 s) and is only stated when the source sent it;
   // the start date is only stated when the server sent a readable one (W13-03, W13-04).
   dbSrcBlackbox: (date: string | null, cadenceSeconds?: number | null): string => {
     const read = cadenceSeconds != null && cadenceSeconds > 0 ? `, read every ${cadenceSeconds} s` : '';
     const start = date ? ` since ${date}` : ', recording start unknown';
-    return `Blackbox host batches per second${read}${start}`;
+    return `Blackbox machine-wide batches per second${read}${start}`;
   },
   dbMsgLive: (m: number): string => `Read from Query Store, the database's own record of slow queries. The database owner must switch it on. It saves one summary per ${m}-minute block, so the database shape moves in steps and has no exact second.`,
   dbMsgFile: (date: string | null): string =>
@@ -217,10 +231,24 @@ export const DRILL_TEXT = {
   dbMsgDenied: 'The saved database login is not allowed to read Query Store. It needs the VIEW DATABASE STATE permission. Ask the database owner, or add a login that has it.',
   dbMsgEvents: "Only SQL Server's own event files are available. They show moments such as deadlocks and long blocking, but not how busy the database was. A marker shows when something happened, not why.",
   dbMsgNotRead: 'The database was not read for this time. Go back to the timeline and read it for a window that covers this call.',
+  // What the batch number does and does not cover, kept inside what the recorder is verified to do (UX-9b):
+  // unreadable SQL Server instances are skipped, never counted as zero, so the sum is only over the instances
+  // Unravis could read (internal/blackbox/sqlhost.go: a failed source is skipped in sqlHostMultiSource.Collect,
+  // and build() creates an instance only from paths the engine emitted). The counter names and the time they
+  // cover are marked UNVERIFIED pending live check at internal/blackbox/sqlhost.go:31, so the message states
+  // what the counter measures and hands the window back to SQL Server instead of claiming it counts work that
+  // arrived. Cadence is only stated when the source sent it (W13-03, W13-04).
+  // The all-apps scope lives in the source label above this message ("machine-wide"), not in the message: the
+  // 520-character cap fix(UX-9) left cannot hold the scope, both glosses and the two new honest sentences (UX-9b).
   dbMsgBlackbox: (cadenceSeconds?: number | null): string =>
     'Blackbox is a recorder you place on a server.' +
     (cadenceSeconds != null && cadenceSeconds > 0 ? ` It reads every ${cadenceSeconds} s.` : ' The read interval is not recorded.') +
-    ' This lane reads its host counter for SQL batches per second, added up over the instances there, so it counts every app, not only this API. It shows work arriving, not how many ran at once or how long it took. Gaps stay unknown, not zero.',
+    " The number is the host counter: SQL Server's own count of batches per second, only over the SQL Server" +
+    ' instances Unravis could read (an instance is one running copy).' +
+    " An instance it could not read is left out, so the total can be lower than the machine's real work." +
+    ' It counts work, not how many ran at once or how long it took.' +
+    ' The window is what SQL Server reports; we have not checked it live.' +
+    ' Gaps stay unknown, not zero.',
   dbShortOff: 'Not recorded: Query Store is off',
   dbShortDenied: 'Not recorded: no permission',
   dbShortEvents: 'Not recorded: only events, no volumes',
@@ -314,7 +342,9 @@ const SAMPLE = {
   laneMoreBars: 4,
   mapCaption: 5,
   mapPeak: ['4.2', '10:14'] as const,
+  mapPeakRate: ['100', '10:14'] as const,
   mapCell: ['API calls', '4.2', '10:14'] as const,
+  mapCellRate: ['Database', '100', '10:14'] as const,
   mapCellNone: ['API calls', '10:14'] as const,
   mapThisCall: '10:14',
   readApi: '4.2',
@@ -325,6 +355,7 @@ const SAMPLE = {
   readApiPeak: '4.2',
   readIisPeak: '4.2',
   readDbPeak: '4.2',
+  readDbRatePeak: '100',
   readDbRate: '100',
   dbSrcFile: '11 Nov 2026',
   dbSrcLate: '10:30',
@@ -374,7 +405,9 @@ export const drillCopyEntries = (): LintEntry[] => {
     ['laneMoreBars', DRILL_TEXT.laneMoreBars(SAMPLE.laneMoreBars)],
     ['mapCaption', DRILL_TEXT.mapCaption(SAMPLE.mapCaption)],
     ['mapPeak', DRILL_TEXT.mapPeak(...SAMPLE.mapPeak)],
+    ['mapPeakRate', DRILL_TEXT.mapPeakRate(...SAMPLE.mapPeakRate)],
     ['mapCell', DRILL_TEXT.mapCell(...SAMPLE.mapCell)],
+    ['mapCellRate', DRILL_TEXT.mapCellRate(...SAMPLE.mapCellRate)],
     ['mapCellNone', DRILL_TEXT.mapCellNone(...SAMPLE.mapCellNone)],
     ['mapThisCall', DRILL_TEXT.mapThisCall(SAMPLE.mapThisCall)],
     ['readApi', DRILL_TEXT.readApi(SAMPLE.readApi)],
@@ -385,6 +418,7 @@ export const drillCopyEntries = (): LintEntry[] => {
     ['readApiPeak', DRILL_TEXT.readApiPeak(SAMPLE.readApiPeak)],
     ['readIisPeak', DRILL_TEXT.readIisPeak(SAMPLE.readIisPeak)],
     ['readDbPeak', DRILL_TEXT.readDbPeak(SAMPLE.readDbPeak)],
+    ['readDbRatePeak', DRILL_TEXT.readDbRatePeak(SAMPLE.readDbRatePeak)],
     ['vsNormalAbove', DRILL_TEXT.vsNormalAbove('2.4 s', '1.1 s')],
     ['vsNormalNear', DRILL_TEXT.vsNormalNear('900 ms', '600 ms', '1.1 s')],
     ['vsNormalBelow', DRILL_TEXT.vsNormalBelow('300 ms', '600 ms')],
