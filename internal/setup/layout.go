@@ -117,7 +117,10 @@ type Layout struct {
 	InstallDir string
 	AppExe     string
 	KeeperExe  string
-	SetupExe   string
+	// BlackboxExe is the Blackbox program kept beside the app, which is where the app looks for it when it
+	// installs a Blackbox on this PC or builds a pack. It is always placed, whatever the Blackbox options are.
+	BlackboxExe string
+	SetupExe    string
 	StateFile  string
 	// The shared data folder, its cases and keeper folders (machine scope only).
 	SharedRoot  string
@@ -139,6 +142,7 @@ type Layout struct {
 func NewLayout(o Options, d Dirs) Layout {
 	l := Layout{Scope: o.Scope, InstallDir: filepath.Clean(o.Location)}
 	l.AppExe = filepath.Join(l.InstallDir, AppExeName)
+	l.BlackboxExe = filepath.Join(l.InstallDir, BlackboxExeName)
 	l.SetupExe = filepath.Join(l.InstallDir, SetupExeName)
 	l.StateFile = filepath.Join(l.InstallDir, StateFileName)
 	l.BlackboxDir = filepath.Join(d.ProgramFiles, BlackboxProgramFolder)

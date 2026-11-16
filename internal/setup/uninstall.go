@@ -180,7 +180,7 @@ func (p *Plan) removeARP(ctx context.Context, t *Txn) error {
 
 func (p *Plan) removeProgramFiles(ctx context.Context, t *Txn) error {
 	dir := p.Layout.InstallDir
-	for _, f := range []string{p.Layout.AppExe, p.Layout.KeeperExe, p.Layout.StateFile} {
+	for _, f := range []string{p.Layout.AppExe, p.Layout.KeeperExe, p.Layout.BlackboxExe, p.Layout.StateFile} {
 		if f == "" {
 			continue
 		}
