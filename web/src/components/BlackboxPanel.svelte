@@ -7,7 +7,7 @@
   import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
   import Drawer from './Drawer.svelte';
   import Sticker from './BlackboxSticker.svelte';
-  import Wizard from './BlackboxWizard.svelte';
+  import PlaceWizard from './BlackboxPlaceWizard.svelte';
   import AddBlackbox from './BlackboxAdd.svelte';
   import RemoveBlackbox from './BlackboxRemove.svelte';
   import SettingsFields from './BlackboxSettings.svelte';
@@ -15,14 +15,13 @@
   import CaseUse from './BlackboxCaseUse.svelte';
   import ReadKey from './BlackboxReadKey.svelte';
 
-  // The Blackbox page: the list with a sticker per state, the Place wizard, Add by folder, share or address, a status
+  // The Blackbox page: the list with a sticker per state, the Place pop-up, Add by folder, share or address, a status
   // screen per Blackbox with the actions that exist for it, Remove and Snapshot. It is not part of a case.
   // On this PC the actions go through the elevated helper; for another server Unravis shows steps and does nothing there.
   let { onClose }: { onClose: () => void } = $props();
 
   type View =
     | { kind: 'list' }
-    | { kind: 'wizard' }
     | { kind: 'add'; location: string; name: string }
     | { kind: 'status'; id: string }
     | { kind: 'remove'; id: string }
@@ -33,6 +32,8 @@
   let loading = $state(true);
   let loadError = $state('');
   let view = $state<View>({ kind: 'list' });
+  // The Place pop-up opens over whatever the drawer shows, so closing it leaves the drawer where it was (OD-9: the drawer wizard is gone).
+  let placeOpen = $state(false);
   let scanning = $state(false);
   let scanNote = $state('');
   let working = $state('');
@@ -51,7 +52,7 @@
   const items = $derived(list?.items ?? []);
   const thisPc = $derived<ThisPc>(list?.thisPc ?? { available: false, scanned: false, installed: false, running: false, listed: false });
   const current = $derived.by(() => {
-    if (view.kind === 'list' || view.kind === 'wizard' || view.kind === 'add') return null;
+    if (view.kind === 'list' || view.kind === 'add') return null;
     const id = view.id;
     return items.find((i) => i.id === id) ?? null;
   });
@@ -212,10 +213,7 @@
 
 <Drawer class="glossary-drawer blackbox-drawer" focusOnOpen bind:element={drawerEl} title={T.title} titleId="blackbox-title" intro={T.intro} closeLabel={T.close} {onClose}>
   <div class="bb-body" bind:this={body}>
-    {#if view.kind === 'wizard'}
-      <Wizard {thisPc} canPack={list?.canPack ?? false} onLeave={() => show({ kind: 'list' })} onPlaced={async () => { await load(); show({ kind: 'list' }); }} />
-
-    {:else if view.kind === 'add'}
+    {#if view.kind === 'add'}
       {#key view.location + view.name}
         <AddBlackbox initialLocation={view.kind === 'add' ? view.location : ''} initialName={view.kind === 'add' ? view.name : ''}
           onAdded={async (item) => { await load(); show({ kind: 'status', id: item.id }); actionNote = T.addFound(item.name); }}
@@ -284,7 +282,7 @@
 
         {#if item.thisPc && item.state.state === 'not-placed'}
           <div class="bb-actions">
-            <button type="button" class="primary-button" disabled={!!working} onclick={() => show({ kind: 'wizard' })}>{T.place}</button>
+            <button type="button" class="primary-button" disabled={!!working} onclick={() => { placeOpen = true; }}>{T.place}</button>
             <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'remove', id: item.id })}>{T.removeForget}</button>
           </div>
         {:else if item.thisPc}
@@ -328,7 +326,7 @@
     {:else}
       <div class="bb-nutshell"><span class="bb-label">{T.nutshellLabel}</span> {T.nutshell}</div>
       <div class="bb-actions bb-top">
-        <button type="button" class="primary-button" onclick={() => show({ kind: 'wizard' })}>{T.place}</button>
+        <button type="button" class="primary-button" onclick={() => { placeOpen = true; }}>{T.place}</button>
         <button type="button" class="secondary-button" disabled={scanning} onclick={scan}>{T.scanPc}</button>
         <button type="button" class="quiet-button" onclick={() => show({ kind: 'add', location: '', name: '' })}>{T.addExisting}</button>
       </div>
@@ -370,6 +368,13 @@
           {/each}
         </ul>
       {/if}
+    {/if}
+
+    <!-- The pop-up closes itself back to the button that opened it. After a real place the list reloads and shows. -->
+    {#if placeOpen}
+      <PlaceWizard {thisPc} canPack={list?.canPack ?? false} open={placeOpen}
+        onLeave={() => { placeOpen = false; }}
+        onPlaced={async () => { await load(); placeOpen = false; await show({ kind: 'list' }); }} />
     {/if}
   </div>
 </Drawer>

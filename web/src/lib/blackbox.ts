@@ -429,9 +429,38 @@ export function validBind(text: string): boolean {
   return HOST_NAME.test(s);
 }
 
-/** Whether a folder is a drive or share root or a Windows system folder. Mirrors unsafeFolder in internal/blackbox/config.go. */
+/** A folder on a drive the person can see, such as D:\UnravisBlackbox. */
+const DRIVE_FOLDER = /^[A-Za-z]:[\\/]/;
+/** The network volume of a full path: the leading \\server\share (or //server/share), cut the way filepath.VolumeName cuts it. */
+const UNC_VOLUME = /^[\\/]{2}[^\\/]+[\\/][^\\/]+/;
+
+/**
+ * The shape of a typed folder path (B-04): a drive folder such as D:\UnravisBlackbox, a network folder such as
+ * \\files01\share\UnravisBlackbox, or anything else, which is not a full Windows folder path. The Folder step uses this
+ * to pick the right notice: the drive cards and the C: note for a drive, the network notice for a share.
+ */
+export type FolderKind = 'drive' | 'unc' | 'invalid';
+export function folderKind(path: string): FolderKind {
+  const s = path.trim();
+  if (DRIVE_FOLDER.test(s)) return 'drive';
+  if (UNC_VOLUME.test(s)) return 'unc';
+  return 'invalid';
+}
+
+/**
+ * Whether a folder is a drive or share root or a Windows system folder. Mirrors unsafeFolder in internal/blackbox/config.go:
+ * a network path is cut at its share the way filepath.VolumeName cuts it, so \\files01\share is a share root and
+ * \\files01\share\bb is a folder of its own.
+ */
 export function unsafeFolder(folder: string): boolean {
-  const rest = folder.trim().replace(/^[A-Za-z]:/, '').replace(/^[\\/]+|[\\/]+$/g, '');
+  let rest = folder.trim();
+  if (/^[A-Za-z]:/.test(rest)) rest = rest.slice(2); // the X: volume
+  else if (/^[\\/]{2}/.test(rest)) {
+    const volume = UNC_VOLUME.exec(rest);
+    if (!volume) return true; // \\server or bare \\: there is no share, so this is a share root
+    rest = rest.slice(volume[0].length);
+  }
+  rest = rest.replace(/^[\\/]+|[\\/]+$/g, '');
   if (!rest || rest === '.') return true;
   const parts = rest.split(/[\\/]+/).filter(Boolean);
   const first = parts[0].toLowerCase();
@@ -439,10 +468,34 @@ export function unsafeFolder(folder: string): boolean {
   return ['users', 'programdata', 'documents and settings'].includes(first) && parts.length === 1;
 }
 
-/** The first thing wrong with the settings, or null. The server checks again; this only saves a round trip. */
+/**
+ * Why a typed folder is refused, as a short code the Folder step turns into words, or null when it is fine.
+ *   full   not a full path: it has no drive letter and is not a network path (\\server\share\folder)
+ *   slash  it uses forward slashes; Windows folders are written with backslashes
+ *   chars  a name holds a character Windows does not allow in a folder name: < > " | ? * (a colon only follows the drive letter)
+ *   system a drive root, a share root or a Windows system folder
+ * The checks run in that order, so the first thing to fix is the one said.
+ */
+export type FolderFault = 'full' | 'slash' | 'chars' | 'system';
+export function folderFault(folder: string): FolderFault | null {
+  const s = folder.trim();
+  if (folderKind(s) === 'invalid') return 'full';
+  if (s.includes('/')) return 'slash';
+  // After the drive letter and its colon (for a network path, anywhere) a colon is not allowed either.
+  const rest = /^[A-Za-z]:/.test(s) ? s.slice(2) : s;
+  if (/[<>:"|?*\u0000-\u001f]/.test(rest)) return 'chars';
+  if (unsafeFolder(s)) return 'system';
+  return null;
+}
+
+/**
+ * The first thing wrong with the settings, or null. The server checks again; this only saves a round trip.
+ * A folder is a full path on a drive (D:\UnravisBlackbox) or on a network share (\\files01\share\UnravisBlackbox),
+ * written with backslashes and with no character Windows refuses in a folder name.
+ */
 export function settingsProblem(s: Settings): SettingsProblem | null {
   if (nameProblem(s.name)) return 'name';
-  if (!/^[A-Za-z]:[\\/]/.test(s.folder.trim()) || unsafeFolder(s.folder)) return 'folder';
+  if (folderFault(s.folder) !== null) return 'folder';
   if (!INTERVALS.includes(s.intervalSeconds as 5 | 15 | 30 | 60)) return 'interval';
   if (!Number.isInteger(s.keepDays) || s.keepDays < 1 || s.keepDays > 365) return 'keep';
   if (!(s.maxGB >= 0.1 && s.maxGB <= 10000)) return 'size';

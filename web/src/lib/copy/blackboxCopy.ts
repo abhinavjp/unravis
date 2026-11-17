@@ -172,7 +172,7 @@ export const BB_TEXT = {
   recordLogs: 'Logs list: names, sizes and times of IIS and application logs, never their content',
   recordCopyLogs: 'Copy log files of the incident hour when a snapshot is taken',
   probeNote: 'The SQL Server probe is not part of this release.',
-  processesNote: 'Switched off, the web server process row in Step 5 says Cannot test yet. Everything else works.',
+  processesNote: 'With the process list unticked, the web server process row in Step 5 says Cannot test yet. Everything else works.',
   keepHeading: 'Keep',
   keepDays: 'Keep for (days)',
   keepDaysHelp: 'Older files are deleted automatically.',
@@ -189,7 +189,7 @@ export const BB_TEXT = {
   // Shown when the listen address is every address (D-B-50, D-C-20). Warn only; never refuse.
   bindWarn: 'This lets other computers on the network reach the status port. The read key is the only protection.',
   reviewBindWarn: 'This Blackbox listens on every address, so other computers can reach it. The read key is the only protection.',
-  housekeepingNote: 'Housekeeping always runs. You can lower the limits but not turn them off.',
+  housekeepingNote: 'Old recordings are always removed at these limits. You can lower the limits but not turn them off.',
   settingProblems: {
     name: 'Go back and fix the name.',
     folder: 'Type a full folder path such as D:\\UnravisBlackbox. A drive root or a Windows system folder is not allowed.',
@@ -240,6 +240,9 @@ export const BB_TEXT = {
   targetsServicesUnreadable: 'The services on this PC could not be read. Type a service name below to watch it.',
   targetsAdd: 'Add target',
   targetsRemove: 'Remove target',
+  // Why the Add target button is off: nothing is typed yet, or that name is already on the list.
+  targetsAddNeedsName: 'Type a name first. Then Add target works.',
+  targetsAddAlready: 'That name is already on the list.',
   // UX-7: the words the panel says out loud when a name goes on or off the list. They claim only what
   // the control actually did - these settings are not saved and nothing starts recording until the
   // Apply or Install step runs, so no running, recording or saving word belongs here.

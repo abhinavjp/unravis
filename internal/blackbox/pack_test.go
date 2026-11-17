@@ -125,8 +125,17 @@ func TestPackWithoutTheProgramSaysWhy(t *testing.T) {
 
 func TestPackTooBigIsRefused(t *testing.T) {
 	var buf bytes.Buffer
-	if _, err := BuildPack(&buf, packCfg(), memProgram{make([]byte, MaxPackBytes+10)}); err == nil || buf.Len() != 0 {
+	if _, err := BuildPack(&buf, packCfg(), memProgram{make([]byte, MaxProgramBytes+10)}); err == nil || buf.Len() != 0 {
 		t.Fatalf("an over-size pack was built: %v", err)
+	}
+}
+
+// The shipped recorder program is about 15 MB (it zips to about 8 MB). A program that
+// size must still build; the old 8 MB limit on the raw file refused the real one.
+func TestPackOfShippedSizeProgramBuilds(t *testing.T) {
+	var buf bytes.Buffer
+	if _, err := BuildPack(&buf, packCfg(), memProgram{make([]byte, 15<<20)}); err != nil {
+		t.Fatalf("a 15 MB program was refused: %v", err)
 	}
 }
 

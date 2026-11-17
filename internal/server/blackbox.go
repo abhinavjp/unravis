@@ -155,6 +155,7 @@ func init() {
 		bbRoute("/api/blackbox/pack", bbExact("/api/blackbox/pack"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbPack(w, r) })),
 		bbRoute("/api/blackbox/this-pc", bbExact("/api/blackbox/this-pc"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbThisPCScan(w, r) })),
 		bbRoute("/api/blackbox/this-pc/targets", bbExact("/api/blackbox/this-pc/targets"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbTargets(w, r) })),
+		bbRoute("/api/blackbox/this-pc/drives", bbExact("/api/blackbox/this-pc/drives"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbDrives(w, r) })),
 		bbRoute("/api/blackbox/this-pc/install", bbExact("/api/blackbox/this-pc/install"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbInstall(w, r) })),
 		bbRoute("/api/blackbox/this-pc/start", bbExact("/api/blackbox/this-pc/start"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbStartStop(w, r, true) })),
 		bbRoute("/api/blackbox/this-pc/stop", bbExact("/api/blackbox/this-pc/stop"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbStartStop(w, r, false) })),
@@ -940,11 +941,14 @@ func (h *handler) bbPack(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	info, err := blackbox.BuildPack(&buf, cfg, h.bb.deps.Program)
 	if err != nil {
-		reason := blackbox.ReasonInvalid
+		// The settings were already checked above, so what is left is a problem with
+		// the program or the pack itself. Say that in the words it already has, not
+		// the generic "settings are not allowed".
 		if errors.Is(err, blackbox.ErrNoProgram) {
-			reason = blackbox.ReasonNoProgram
+			writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: err.Error(), Reason: blackbox.ReasonNoProgram}, 4096)
+			return
 		}
-		writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: err.Error(), Reason: reason}, 4096)
+		writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: err.Error(), Reason: blackbox.ReasonInvalid, What: err.Error()}, 4096)
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")

@@ -1,0 +1,575 @@
+const assert = require('node:assert/strict');
+const test = require('node:test');
+const { loadTypeScript } = require('./helpers/loadTs.cjs');
+
+// TSK-01 (contracts C-1 and C-5): the wizard state module. Every rule of the Place a Blackbox pop-up that is not
+// a pixel lives in blackboxWizard.ts, so these tests drive it the way the components will: one state in, one out.
+
+const w = loadTypeScript('src/lib/blackboxWizard.ts');
+const bb = loadTypeScript('src/lib/blackbox.ts');
+
+const drive = (letter, type, system, extra = {}) =>
+  ({ letter, label: 'Drive ' + letter, type, system, freeBytes: 100, totalBytes: 200, ...extra });
+const FALLBACK = 'D:\\UnravisBlackbox';
+
+/** A wizard with a good name, the place chosen, and the folder already placed on a plain drive. */
+function ready(where = 'pc', extra = {}) {
+  let s = w.initialState();
+  s = { ...s, settings: { ...s.settings, name: 'web-a' } };
+  s = w.setWhere(s, where);
+  return { ...s, ...extra };
+}
+
+/** Walks Next from the first step to the step asked for, failing the test when Next refuses on the way. */
+function walkTo(s, id) {
+  let cur = s;
+  for (let i = 0; i < 10 && cur.step !== id; i++) {
+    const moved = w.next(cur);
+    assert.notEqual(moved, cur, 'next refused at ' + cur.step + ' (' + w.stepProblem(cur, cur.step) + ')');
+    cur = moved;
+  }
+  assert.equal(cur.step, id);
+  return cur;
+}
+
+/* ------------------------------------------------------------------ the step list */
+
+test('the step list is 7 steps, or 8 when the SQL step applies (S-02, B-01)', () => {
+  assert.deepEqual(w.steps({ where: null, sqlSeen: false }), ['name', 'where', 'record', 'watch', 'keep', 'folder', 'review']);
+  assert.deepEqual(w.steps({ where: 'pc', sqlSeen: false }), ['name', 'where', 'record', 'watch', 'keep', 'folder', 'review']);
+  assert.deepEqual(w.steps({ where: 'pc', sqlSeen: true }), ['name', 'where', 'record', 'sql', 'watch', 'keep', 'folder', 'review']);
+  assert.deepEqual(w.steps({ where: 'pack', sqlSeen: false }), ['name', 'where', 'record', 'sql', 'watch', 'keep', 'folder', 'review']);
+  assert.equal(w.steps({ where: 'pack', sqlSeen: true }).length, 8);
+});
+
+test('stepIndex counts from 1 in the current list, so the "Step X of N" line is honest', () => {
+  const s7 = ready('pc');
+  assert.equal(w.stepIndex({ ...s7, step: 'name' }), 1);
+  assert.equal(w.stepIndex({ ...s7, step: 'watch' }), 4);
+  assert.equal(w.stepIndex({ ...s7, step: 'review' }), 7);
+  const s8 = ready('pack');
+  assert.equal(w.stepIndex({ ...s8, step: 'watch' }), 5);
+  assert.equal(w.stepIndex({ ...s8, step: 'review' }), 8);
+});
+
+test('the SQL step appears and goes away with the choices, and the rail position follows the step, not the number', () => {
+  let s = ready('pc');
+  s = walkTo(s, 'keep');
+  assert.equal(s.maxSeen, 4); // name, where, record, watch, keep
+  const withSql = w.setSqlSeen(s, true);
+  assert.equal(withSql.step, 'keep');
+  assert.equal(withSql.maxSeen, 5, 'keep is now one place further along');
+  assert.equal(w.canVisit(withSql, 'sql'), true);
+  const gone = w.setSqlSeen(withSql, false);
+  assert.equal(gone.maxSeen, 4);
+  assert.equal(gone.step, 'keep');
+  // the current step itself disappearing lands on a neighbour
+  const onSql = { ...withSql, step: 'sql' };
+  assert.equal(w.setSqlSeen(onSql, false).step, 'watch');
+});
+
+/* ------------------------------------------------------------------ the rail */
+
+test('the rail is locked beyond maxSeen and open up to it (S-04)', () => {
+  let s = ready('pc');
+  assert.equal(w.canVisit(s, 'name'), true);
+  assert.equal(w.canVisit(s, 'where'), false);
+  s = walkTo(s, 'record');
+  assert.equal(s.maxSeen, 2);
+  assert.equal(w.canVisit(s, 'name'), true);
+  assert.equal(w.canVisit(s, 'record'), true);
+  assert.equal(w.canVisit(s, 'watch'), false);
+  assert.equal(w.canVisit(s, 'sql'), false, 'a step that is not in the list cannot be visited');
+  assert.equal(w.goTo(s, 'review'), s, 'a locked step is refused with the same state');
+  const back2 = w.goTo(s, 'name');
+  assert.equal(back2.step, 'name');
+  assert.equal(back2.maxSeen, 2, 'going back does not lock what was reached');
+  assert.equal(w.canVisit(back2, 'record'), true);
+});
+
+test('goTo forward is refused while the step being left has a problem, and back is always free', () => {
+  let s = walkTo(ready('pc'), 'record');
+  s = w.goTo(s, 'name');
+  s = { ...s, settings: { ...s.settings, name: 'bad name' } };
+  assert.equal(w.goTo(s, 'record'), s, 'the name is wrong, so the rail does not carry the owner forward');
+  const onRecord = { ...s, step: 'record', settings: { ...s.settings, intervalSeconds: 7 } };
+  assert.equal(w.goTo(onRecord, 'name').step, 'name');
+});
+
+test('back moves one step and stops at the first', () => {
+  const s = walkTo(ready('pc'), 'watch');
+  const b = w.back(s);
+  assert.equal(b.step, 'record');
+  assert.equal(b.maxSeen, s.maxSeen);
+  const first = w.back(w.back(w.back(b)));
+  assert.equal(first.step, 'name');
+  assert.equal(w.back(first), first);
+});
+
+/* ------------------------------------------------------------------ next and the step rules */
+
+test('next refuses while the step has a problem and moves on once it is fixed', () => {
+  const s0 = w.initialState();
+  assert.equal(w.stepProblem(s0, 'name'), 'name-empty');
+  assert.equal(w.next(s0), s0);
+  const bad = { ...s0, settings: { ...s0.settings, name: 'has space' } };
+  assert.equal(w.stepProblem(bad, 'name'), 'name-chars');
+  const long = { ...s0, settings: { ...s0.settings, name: 'a'.repeat(64) } };
+  assert.equal(w.stepProblem(long, 'name'), 'name-long');
+  const good = { ...s0, settings: { ...s0.settings, name: 'web-a' } };
+  assert.equal(w.stepProblem(good, 'name'), null);
+  const moved = w.next(good);
+  assert.equal(moved.step, 'where');
+  assert.equal(moved.maxSeen, 1);
+  // where must be answered
+  assert.equal(w.stepProblem(moved, 'where'), 'where-missing');
+  assert.equal(w.next(moved), moved);
+  assert.equal(w.next(w.setWhere(moved, 'pc')).step, 'record');
+});
+
+test('record, keep and watch problems come from the same rules the server repeats', () => {
+  const s = ready('pc');
+  const set = (patch) => ({ ...s, settings: { ...s.settings, ...patch } });
+  assert.equal(w.stepProblem(set({ intervalSeconds: 10 }), 'record'), 'interval');
+  assert.equal(w.stepProblem(set({}), 'record'), null);
+  assert.equal(w.stepProblem({ ...s, logPathsText: 'relative\\x' }, 'record'), 'logs');
+  assert.equal(w.stepProblem({ ...s, logPathsText: 'C:\\logs\nD:\\more\n\n' }, 'record'), null, 'blank lines are dropped');
+  const twentyOne = Array.from({ length: 21 }, (_, i) => 'C:\\l' + i).join('\n');
+  assert.equal(w.stepProblem({ ...s, logPathsText: twentyOne }, 'record'), 'logs', 'more than 20 log folders');
+  // the log box is hidden when the catalogue is off, so it cannot block
+  const off = { ...s, logPathsText: 'relative\\x', settings: { ...s.settings, record: { ...s.settings.record, logsCatalogue: false } } };
+  assert.equal(w.stepProblem(off, 'record'), null);
+
+  assert.equal(w.stepProblem(set({ keepDays: 0 }), 'keep'), 'keep');
+  assert.equal(w.stepProblem(set({ keepDays: 366 }), 'keep'), 'keep');
+  assert.equal(w.stepProblem(set({ keepDays: 365 }), 'keep'), null);
+  assert.equal(w.stepProblem(set({ maxGB: 0.05 }), 'keep'), 'size');
+  assert.equal(w.stepProblem(set({ maxGB: 0.1 }), 'keep'), null);
+  assert.equal(w.stepProblem(set({ minFreePercent: 51 }), 'keep'), 'free');
+
+  const dup = { kind: 'service', name: 'EmailSvc' };
+  const watch = (targets, watchMode = 'some') => ({ ...s, watchMode, settings: { ...s.settings, targets } });
+  assert.equal(w.stepProblem(watch([dup, { kind: 'service', name: 'emailsvc' }]), 'watch'), 'targets-duplicate');
+  assert.equal(w.stepProblem(watch([{ kind: 'service', name: 'a/b' }]), 'watch'), 'targets-chars');
+  assert.equal(w.stepProblem(watch([{ kind: 'service', name: '' }]), 'watch'), 'targets-empty');
+  assert.equal(w.stepProblem(watch([{ kind: 'queue', name: 'x' }]), 'watch'), 'targets-kind');
+  assert.equal(w.stepProblem(watch(Array.from({ length: 33 }, (_, i) => ({ kind: 'service', name: 's' + i }))), 'watch'), 'targets-many');
+  assert.equal(w.stepProblem(watch([dup]), 'watch'), null);
+  assert.equal(w.stepProblem(watch([dup, dup], 'none'), 'watch'), null, 'watch nothing: the list is not used');
+});
+
+test('the folder step: unsafe and not-full paths, the C: tick, port and bind', () => {
+  const s = ready('pc');
+  const at = (folder, extra = {}) => ({ ...s, ...extra, settings: { ...s.settings, folder, ...(extra.settings ?? {}) } });
+  assert.equal(w.stepProblem(at('D:\\UnravisBlackbox'), 'folder'), null);
+  assert.equal(w.stepProblem(at('relative\\x'), 'folder'), 'folder-invalid');
+  assert.equal(w.stepProblem(at(''), 'folder'), 'folder-invalid');
+  assert.equal(w.stepProblem(at('D:\\'), 'folder'), 'folder-unsafe');
+  assert.equal(w.stepProblem(at('D:\\Windows\\x'), 'folder'), 'folder-unsafe');
+  assert.equal(w.stepProblem(at('\\\\srv\\share'), 'folder'), 'folder-unsafe', 'a share root');
+  assert.equal(w.stepProblem(at('\\\\srv\\share\\bb'), 'folder'), null, 'a folder on a share (B-04)');
+  // the system drive needs the tick
+  assert.equal(w.stepProblem(at('C:\\UnravisBlackbox'), 'folder'), 'folder-system-drive');
+  // Changed on purpose (browser pass, defect E): forward slashes are refused now, with their own code, instead of being
+  // accepted as a Windows drive path. The tick question therefore only comes up for a backslash path.
+  assert.equal(w.stepProblem(at('c:/UnravisBlackbox'), 'folder'), 'folder-slash');
+  assert.equal(w.stepProblem(at('c:\\UnravisBlackbox'), 'folder'), 'folder-system-drive');
+  assert.equal(w.stepProblem(at('//srv/share/bb'), 'folder'), 'folder-slash');
+  for (const ch of ['<', '>', '"', '|', '?', '*', ':']) {
+    assert.equal(w.stepProblem(at('D:\\a' + ch + 'b'), 'folder'), 'folder-chars', ch);
+  }
+  assert.equal(w.stepProblem(at('C:\\UnravisBlackbox', { confirmSystemDrive: true }), 'folder'), null);
+  // Windows on another drive: that one needs the tick, and C: does not
+  assert.equal(w.stepProblem(at('E:\\UnravisBlackbox', { systemDrive: 'E' }), 'folder'), 'folder-system-drive');
+  assert.equal(w.stepProblem(at('C:\\UnravisBlackbox', { systemDrive: 'E' }), 'folder'), null);
+  assert.equal(w.stepProblem(at('D:\\bb', { settings: { port: 0 } }), 'folder'), 'port');
+  assert.equal(w.stepProblem(at('D:\\bb', { settings: { bind: 'not an address!' } }), 'folder'), 'bind');
+});
+
+test('next on a step with no choice (SQL) always moves on, and Review is the last step', () => {
+  const s = { ...walkTo(ready('pack'), 'sql') };
+  assert.equal(w.stepProblem(s, 'sql'), null);
+  assert.equal(w.next(s).step, 'watch');
+  const last = { ...s, step: 'review' };
+  assert.equal(w.next(last), last);
+});
+
+/* ------------------------------------------------------------------ returnTo */
+
+test('a Review "Change" link comes straight back to Review after Next (S-05)', () => {
+  let s = ready('pc');
+  s = w.useDefaultsToReview(s);
+  assert.equal(s.step, 'review');
+  const changing = w.changeStep(s, 'keep');
+  assert.equal(changing.step, 'keep');
+  assert.equal(changing.returnTo, 'review');
+  const done = w.next(changing);
+  assert.equal(done.step, 'review');
+  assert.equal(done.returnTo, null, 'the detour is over');
+  // a problem still stops the detour
+  const broken = { ...changing, settings: { ...changing.settings, keepDays: 0 } };
+  assert.equal(w.next(broken), broken);
+  // Review itself cannot be "changed" and locked steps cannot be reached
+  assert.equal(w.changeStep(s, 'review'), s);
+  assert.equal(w.changeStep(ready('pc'), 'folder').step, 'name');
+  // going back or using the rail ends the detour
+  assert.equal(w.back(changing).returnTo, null);
+  assert.equal(w.goTo(changing, 'name').returnTo, null);
+});
+
+/* ------------------------------------------------------------------ presets */
+
+test('presets are worked out from the three record switches (B-03)', () => {
+  assert.equal(w.presetOf({ processes: true, logsCatalogue: true, copyLogsOnSnapshot: false }), 'recommended');
+  assert.equal(w.presetOf({ processes: false, logsCatalogue: false, copyLogsOnSnapshot: false }), 'light');
+  assert.equal(w.presetOf({ processes: true, logsCatalogue: false, copyLogsOnSnapshot: false }), 'custom');
+  assert.equal(w.presetOf({ processes: false, logsCatalogue: true, copyLogsOnSnapshot: false }), 'custom');
+  assert.equal(w.presetOf({ processes: true, logsCatalogue: true, copyLogsOnSnapshot: true }), 'custom');
+  assert.equal(w.presetOf({ processes: false, logsCatalogue: false, copyLogsOnSnapshot: true }), 'custom');
+  // the recommended preset is what the recorder ships with
+  assert.equal(w.presetOf(bb.defaultSettings().record), 'recommended');
+});
+
+test('applyPreset sets the switches, and changing any one switch afterwards reads as Custom (S-07)', () => {
+  const s = ready('pc');
+  const light = w.applyPreset(s, 'light');
+  assert.deepEqual(light.settings.record, { processes: false, logsCatalogue: false, copyLogsOnSnapshot: false });
+  assert.equal(w.presetOf(light.settings.record), 'light');
+  const rec = w.applyPreset(light, 'recommended');
+  assert.deepEqual(rec.settings.record, { processes: true, logsCatalogue: true, copyLogsOnSnapshot: false });
+  assert.equal(w.presetOf(rec.settings.record), 'recommended');
+  for (const key of ['processes', 'logsCatalogue', 'copyLogsOnSnapshot']) {
+    for (const base of [rec, light]) {
+      const changed = { ...base.settings.record, [key]: !base.settings.record[key] };
+      assert.equal(w.presetOf(changed), 'custom', key + ' flipped from ' + w.presetOf(base.settings.record));
+    }
+  }
+  // the original state is untouched
+  assert.equal(w.presetOf(s.settings.record), 'recommended');
+  assert.equal(w.applyPreset(s, 'light') !== s, true);
+});
+
+/* ------------------------------------------------------------------ use defaults */
+
+test('"Use defaults, go to review" fills the record, SQL and watch answers and lands on Review with every step reached', () => {
+  let s = ready('pack');
+  s = {
+    ...s,
+    watchMode: 'some',
+    logPathsText: 'E:\\other',
+    settings: { ...s.settings, intervalSeconds: 60, record: { processes: false, logsCatalogue: false, copyLogsOnSnapshot: true }, targets: [{ kind: 'service', name: 'x' }], keepDays: 30 }
+  };
+  const r = w.useDefaultsToReview(s);
+  assert.equal(r.step, 'review');
+  assert.equal(r.returnTo, null);
+  assert.equal(r.maxSeen, 7, 'eight steps on the pack path: all reached');
+  assert.equal(w.presetOf(r.settings.record), 'recommended');
+  assert.equal(r.settings.intervalSeconds, 15);
+  assert.deepEqual(r.settings.logPaths, ['C:\\inetpub\\logs\\LogFiles']);
+  assert.equal(r.logPathsText, 'C:\\inetpub\\logs\\LogFiles');
+  assert.equal(r.watchMode, 'none');
+  assert.deepEqual(r.settings.targets, []);
+  assert.equal(r.settings.keepDays, 30, 'the keep answers are not part of the shortcut');
+  assert.equal(r.settings.name, 'web-a');
+  for (const id of w.steps(r)) assert.equal(w.canVisit(r, id), true, id);
+  assert.equal(s.step, 'name', 'the state given is not changed');
+});
+
+test('"Use defaults" from the Keep step (resetKeep) also puts back the days, size and free space (defect I)', () => {
+  const s = ready('pc');
+  const changed = { ...s, step: 'keep', settings: { ...s.settings, keepDays: 30, maxGB: 5, minFreePercent: 20 } };
+  const d = bb.defaultSettings('web-a');
+  const r = w.useDefaultsToReview(changed, true);
+  assert.equal(r.step, 'review');
+  assert.equal(r.settings.keepDays, d.keepDays);
+  assert.equal(r.settings.maxGB, d.maxGB);
+  assert.equal(r.settings.minFreePercent, d.minFreePercent);
+  assert.equal(w.useDefaultsToReview(changed).settings.keepDays, 30, 'without the flag the keep answers stay');
+});
+
+test('whereChoices says which cards work, why none does, and when the scan failed (defect F)', () => {
+  const pc = { available: true, scanned: true, installed: false };
+  assert.deepEqual(w.whereChoices(pc, true), { pc: true, pack: true, none: null, scanFailed: false });
+  assert.equal(w.whereChoices({ ...pc, scanned: false }, true).scanFailed, true, 'asked but no answer: say so');
+  assert.equal(w.whereChoices({ ...pc, scanned: false }, true).pc, true, 'and the owner can still choose');
+  assert.equal(w.whereChoices({ available: false, scanned: false, installed: false }, false).none, 'helper');
+  assert.equal(w.whereChoices({ available: false, scanned: false, installed: false }, false).scanFailed, false, 'no helper: the helper line says it');
+  assert.equal(w.whereChoices({ ...pc, installed: true }, false).none, 'other');
+  assert.equal(w.whereChoices({ ...pc, installed: true }, true).none, null, 'a pack can still be built');
+});
+
+test('"Use defaults" is refused until the name and the place are answered', () => {
+  const s0 = w.initialState();
+  assert.equal(w.useDefaultsToReview(s0), s0);
+  const named = { ...s0, settings: { ...s0.settings, name: 'web-a' } };
+  assert.equal(w.useDefaultsToReview(named), named, 'no place yet');
+  assert.equal(w.useDefaultsToReview(w.setWhere(named, 'pc')).step, 'review');
+});
+
+test('Review reports the first problem left in the shortcut, such as the C: tick', () => {
+  let s = ready('pc');
+  s = { ...s, settings: { ...s.settings, folder: 'C:\\UnravisBlackbox' } };
+  const r = w.useDefaultsToReview(s);
+  assert.equal(r.step, 'review');
+  assert.equal(w.stepProblem(r, 'review'), 'folder-system-drive');
+  assert.equal(w.stepProblem({ ...r, confirmSystemDrive: true }, 'review'), null);
+});
+
+/* ------------------------------------------------------------------ default folder */
+
+test('default folder with a D: drive is D:\\UnravisBlackbox with no tick (S-11)', () => {
+  const got = w.defaultFolder([drive('C', 'fixed', true), drive('D', 'fixed', false)], FALLBACK);
+  assert.deepEqual(got, { folder: 'D:\\UnravisBlackbox', needsSystemTick: false });
+});
+
+test('default folder takes the first plain fixed drive in letter order, ignoring USB and network drives', () => {
+  const got = w.defaultFolder([drive('Z', 'network', false), drive('F', 'removable', false), drive('E', 'fixed', false), drive('C', 'fixed', true), drive('D', 'fixed', false)], FALLBACK);
+  assert.deepEqual(got, { folder: 'D:\\UnravisBlackbox', needsSystemTick: false });
+  const lower = w.defaultFolder([drive('d', 'fixed', false)], FALLBACK);
+  assert.equal(lower.folder, 'D:\\UnravisBlackbox', 'the letter is upper case');
+});
+
+test('default folder without a D: drive uses the next plain fixed drive', () => {
+  const got = w.defaultFolder([drive('C', 'fixed', true), drive('E', 'fixed', false)], FALLBACK);
+  assert.deepEqual(got, { folder: 'E:\\UnravisBlackbox', needsSystemTick: false });
+});
+
+test('default folder with only C: is on the system drive and needs the tick', () => {
+  const got = w.defaultFolder([drive('C', 'fixed', true)], FALLBACK);
+  assert.deepEqual(got, { folder: 'C:\\UnravisBlackbox', needsSystemTick: true });
+  // USB and network drives are never the default, even when they are all there is beside C:
+  const withUsb = w.defaultFolder([drive('C', 'fixed', true), drive('F', 'removable', false), drive('Z', 'network', false)], FALLBACK);
+  assert.deepEqual(withUsb, { folder: 'C:\\UnravisBlackbox', needsSystemTick: true });
+  // Windows on another letter
+  const onE = w.defaultFolder([drive('E', 'fixed', true)], FALLBACK);
+  assert.deepEqual(onE, { folder: 'E:\\UnravisBlackbox', needsSystemTick: true });
+});
+
+test('default folder with no drives list (pack path, or the route failed) is the fallback, ticked only when it is on C:', () => {
+  assert.deepEqual(w.defaultFolder(null, FALLBACK), { folder: 'D:\\UnravisBlackbox', needsSystemTick: false });
+  assert.deepEqual(w.defaultFolder(null, 'C:\\UnravisBlackbox'), { folder: 'C:\\UnravisBlackbox', needsSystemTick: true });
+  assert.deepEqual(w.defaultFolder([], FALLBACK), { folder: 'D:\\UnravisBlackbox', needsSystemTick: false });
+  // a network fallback has no drive letter and never needs the tick
+  assert.deepEqual(w.defaultFolder(null, '\\\\srv\\share\\bb'), { folder: '\\\\srv\\share\\bb', needsSystemTick: false });
+  // only USB listed: nothing safe to pick, the fallback stands
+  assert.deepEqual(w.defaultFolder([drive('F', 'removable', false)], FALLBACK), { folder: 'D:\\UnravisBlackbox', needsSystemTick: false });
+});
+
+test('driveOfPath gives the drive letter, upper case, and null for a network path or text that is not a path', () => {
+  assert.equal(w.driveOfPath('D:\\x'), 'D');
+  assert.equal(w.driveOfPath('e:/data'), 'E');
+  assert.equal(w.driveOfPath(' c:\\x'), 'C');
+  assert.equal(w.driveOfPath('D:'), 'D');
+  assert.equal(w.driveOfPath('\\\\srv\\share\\x'), null);
+  assert.equal(w.driveOfPath('//srv/share/x'), null);
+  assert.equal(w.driveOfPath('relative\\x'), null);
+  assert.equal(w.driveOfPath(''), null);
+});
+
+test('applyDefaultFolder places the default until the owner types, then leaves the folder alone', () => {
+  const drives = [drive('C', 'fixed', true), drive('E', 'fixed', false)];
+  let s = ready('pc');
+  s = w.applyDefaultFolder(s, drives, FALLBACK);
+  assert.equal(s.settings.folder, 'E:\\UnravisBlackbox');
+  assert.equal(s.systemDrive, 'C');
+  assert.equal(s.folderTouched, false);
+  const typed = w.setFolder(s, 'F:\\mine');
+  assert.equal(typed.folderTouched, true);
+  const again = w.applyDefaultFolder(typed, [drive('C', 'fixed', true), drive('D', 'fixed', false)], FALLBACK);
+  assert.equal(again.settings.folder, 'F:\\mine', 'what the owner typed is never replaced');
+  const reset = w.resetFolder(again, [drive('C', 'fixed', true), drive('D', 'fixed', false)], FALLBACK);
+  assert.equal(reset.settings.folder, 'D:\\UnravisBlackbox');
+  assert.equal(reset.folderTouched, false);
+  // only C: listed: the tick is asked for
+  const onlyC = w.applyDefaultFolder(ready('pc'), [drive('C', 'fixed', true)], FALLBACK);
+  assert.equal(onlyC.settings.folder, 'C:\\UnravisBlackbox');
+  assert.equal(onlyC.confirmSystemDrive, false);
+  assert.equal(w.stepProblem(onlyC, 'folder'), 'folder-system-drive');
+});
+
+test('setFolder clears the C: tick when the path moves to another drive, and keeps it on the same drive', () => {
+  let s = { ...ready('pc'), settings: { ...ready('pc').settings, folder: 'C:\\a' }, confirmSystemDrive: true };
+  assert.equal(w.setFolder(s, 'C:\\b').confirmSystemDrive, true);
+  assert.equal(w.setFolder(s, 'D:\\b').confirmSystemDrive, false);
+  assert.equal(w.setFolder(s, '\\\\srv\\share\\b').confirmSystemDrive, false);
+});
+
+/* ------------------------------------------------------------------ the payload */
+
+test('buildSettings has exactly the keys of defaultSettings(), probe is { enabled: false } and nothing else slips in (C-5)', () => {
+  const keysOf = (o) => Object.keys(o).sort();
+  const base = bb.defaultSettings('web-a');
+  const s = ready('pc');
+  const out = w.buildSettings(s);
+  assert.deepEqual(keysOf(out), keysOf(base));
+  assert.deepEqual(keysOf(out.record), keysOf(base.record));
+  assert.deepEqual(out.probe, { enabled: false });
+  assert.deepEqual(keysOf(out.probe), ['enabled']);
+  assert.deepEqual(out, base, 'untouched answers give the recorder defaults');
+
+  // junk smuggled into the state is not copied out
+  const dirty = {
+    ...s,
+    settings: { ...s.settings, extra: 1, probe: { enabled: true, serverCertificate: 'x' }, record: { ...s.settings.record, junk: true }, targets: [{ kind: 'service', name: 'EmailSvc', path: 'C:\\x', pid: 4 }] },
+    watchMode: 'some'
+  };
+  const dirtyOut = w.buildSettings(dirty);
+  assert.deepEqual(keysOf(dirtyOut), keysOf(base));
+  assert.deepEqual(keysOf(dirtyOut.record), keysOf(base.record));
+  assert.deepEqual(dirtyOut.probe, { enabled: false });
+  assert.deepEqual(dirtyOut.targets, [{ kind: 'service', name: 'EmailSvc' }]);
+  assert.deepEqual(keysOf(dirtyOut.targets[0]), ['kind', 'name']);
+});
+
+test('buildSettings carries each step\'s answers into the right field', () => {
+  let s = ready('pc');
+  s = {
+    ...s,
+    watchMode: 'some',
+    logPathsText: ' C:\\logs\\a \r\n\nD:\\logs\\b\n',
+    settings: {
+      ...s.settings, name: 'iis-prod', intervalSeconds: 30, keepDays: 30, maxGB: 0.5, minFreePercent: 15,
+      folder: ' E:\\UnravisBlackbox ', port: 7799, bind: ' 0.0.0.0 ',
+      record: { processes: false, logsCatalogue: true, copyLogsOnSnapshot: true },
+      targets: [{ kind: 'appPool', name: 'DefaultAppPool' }, { kind: 'service', name: 'W3SVC' }]
+    }
+  };
+  const out = w.buildSettings(s);
+  assert.equal(out.name, 'iis-prod');
+  assert.equal(out.intervalSeconds, 30);
+  assert.deepEqual(out.record, { processes: false, logsCatalogue: true, copyLogsOnSnapshot: true });
+  assert.deepEqual(out.logPaths, ['C:\\logs\\a', 'D:\\logs\\b']);
+  assert.deepEqual(out.targets, [{ kind: 'appPool', name: 'DefaultAppPool' }, { kind: 'service', name: 'W3SVC' }]);
+  assert.equal(out.keepDays, 30);
+  assert.equal(out.maxGB, 0.5);
+  assert.equal(out.minFreePercent, 15);
+  assert.equal(out.folder, 'E:\\UnravisBlackbox', 'surrounding spaces are cut');
+  assert.equal(out.port, 7799);
+  assert.equal(out.bind, '0.0.0.0');
+  assert.equal(bb.settingsProblem(out), null);
+});
+
+test('buildSettings sends no targets when the owner chose to watch nothing, even if some were ticked earlier', () => {
+  const s = ready('pc');
+  const ticked = { ...s, watchMode: 'none', settings: { ...s.settings, targets: [{ kind: 'service', name: 'x' }] } };
+  assert.deepEqual(w.buildSettings(ticked).targets, []);
+  assert.deepEqual(w.buildSettings({ ...ticked, watchMode: 'some' }).targets, [{ kind: 'service', name: 'x' }]);
+});
+
+test('buildSettings with the logs catalogue off keeps the default log folder when the hidden box holds rubbish', () => {
+  const s = ready('pc');
+  const off = { ...s, logPathsText: 'not a path', settings: { ...s.settings, record: { processes: true, logsCatalogue: false, copyLogsOnSnapshot: false } } };
+  assert.deepEqual(w.buildSettings(off).logPaths, ['C:\\inetpub\\logs\\LogFiles']);
+  assert.equal(bb.settingsProblem(w.buildSettings(off)), null);
+});
+
+test('buildSettings does not change the state and shares no object with it', () => {
+  const s = { ...ready('pc'), watchMode: 'some' };
+  s.settings.targets = [{ kind: 'service', name: 'x' }];
+  const before = JSON.stringify(s);
+  const out = w.buildSettings(s);
+  assert.equal(JSON.stringify(s), before);
+  out.record.processes = false;
+  out.targets[0].name = 'changed';
+  out.targets.push({ kind: 'service', name: 'y' });
+  assert.equal(JSON.stringify(s), before);
+});
+
+test('every payload the wizard can reach by walking Next passes settingsProblem (the server check) on both paths', () => {
+  for (const where of ['pc', 'pack']) {
+    let s = w.applyDefaultFolder(ready(where), where === 'pc' ? [drive('C', 'fixed', true), drive('D', 'fixed', false)] : null, FALLBACK);
+    s = walkTo(s, 'review');
+    assert.equal(w.stepProblem(s, 'review'), null, where);
+    const out = w.buildSettings(s);
+    assert.equal(bb.settingsProblem(out), null, where);
+    assert.deepEqual(out.probe, { enabled: false });
+    assert.equal(out.folder, 'D:\\UnravisBlackbox');
+  }
+  // a busy path: Light preset, some targets, a network folder, other keep numbers
+  let s = ready('pc');
+  s = w.applyPreset(s, 'light');
+  s = { ...s, watchMode: 'some', folderTouched: true, settings: { ...s.settings, targets: [{ kind: 'appPool', name: 'Pool1' }], folder: '\\\\files01\\share\\bb', keepDays: 90, maxGB: 12.5, minFreePercent: 20 } };
+  s = walkTo(s, 'review');
+  const out = w.buildSettings(s);
+  assert.equal(bb.settingsProblem(out), null);
+  assert.deepEqual(out.probe, { enabled: false });
+});
+
+test('the review step reports a problem when the payload would not pass, so Place stays off', () => {
+  const s = walkTo(ready('pc'), 'review');
+  assert.equal(w.stepProblem(s, 'review'), null);
+  assert.equal(w.stepProblem({ ...s, settings: { ...s.settings, name: '' } }, 'review'), 'name-empty');
+  assert.equal(w.stepProblem({ ...s, where: null }, 'review'), 'where-missing');
+  assert.equal(w.stepProblem({ ...s, settings: { ...s.settings, port: 70000 } }, 'review'), 'port');
+});
+
+test('initialState starts from the recorder defaults on the first step', () => {
+  const s = w.initialState();
+  assert.equal(s.step, 'name');
+  assert.equal(s.maxSeen, 0);
+  assert.equal(s.returnTo, null);
+  assert.equal(s.where, null);
+  assert.equal(s.watchMode, 'none');
+  assert.equal(s.folderTouched, false);
+  assert.equal(s.confirmSystemDrive, false);
+  assert.equal(s.sqlSeen, false);
+  assert.equal(s.logPathsText, 'C:\\inetpub\\logs\\LogFiles');
+  assert.deepEqual(s.settings, bb.defaultSettings());
+  // two fresh states share nothing
+  s.settings.record.processes = false;
+  assert.equal(w.initialState().settings.record.processes, true);
+});
+
+/* ------------------------------------------------------------------ review fixes: duplicates, Where change, rail */
+
+test('a log folder typed twice is kept once, case-insensitively, with the first spelling and order', () => {
+  const s = { ...ready('pc'), logPathsText: 'C:\\a\nC:\\A\nC:\\b\n  c:\\B  \n\n' };
+  assert.deepEqual(w.buildSettings(s).logPaths, ['C:\\a', 'C:\\b']);
+  assert.equal(w.stepProblem(s, 'record'), null);
+  assert.equal(w.buildSettings({ ...s, logPathsText: 'C:\\a\nC:\\A\nC:\\b' }).logPaths.length, 2);
+});
+
+test('changing Where from Review ends the detour, so Next walks through Folder again and the C: tick is cleared', () => {
+  let s = walkTo(ready('pc'), 'review');
+  s = { ...s, confirmSystemDrive: true };
+  s = w.changeStep(s, 'where');
+  assert.equal(s.returnTo, 'review');
+  s = w.setWhere(s, 'pack');
+  assert.equal(s.returnTo, null);
+  assert.equal(s.confirmSystemDrive, false);
+  const moved = w.next(s);
+  assert.notEqual(moved.step, 'review');
+  // the untouched folder is still the automatic default, so Review stays locked until Folder was visited again
+  assert.equal(w.canVisit(s, 'review'), false);
+  assert.equal(w.canVisit(s, 'folder'), true);
+  assert.equal(w.goTo(s, 'review').step, 'where');
+  assert.equal(walkTo(s, 'review').step, 'review', 'walking Next reaches Review through Folder');
+});
+
+test('choosing the same Where again changes nothing; a touched folder keeps Review reachable', () => {
+  const base = walkTo(ready('pc'), 'review');
+  const detour = w.changeStep(base, 'where');
+  const same = w.setWhere(detour, 'pc');
+  assert.equal(same.returnTo, 'review');
+  assert.equal(same.maxSeen, detour.maxSeen);
+  const touched = w.setWhere({ ...detour, folderTouched: true, confirmSystemDrive: true }, 'pack');
+  assert.equal(touched.returnTo, null);
+  assert.equal(touched.confirmSystemDrive, false);
+  assert.equal(w.canVisit(touched, 'review'), true);
+});
+
+test('when the step list shrinks, a step the owner never visited does not unlock', () => {
+  let s = walkTo(ready('pack'), 'sql');
+  assert.equal(s.maxSeen, 3);
+  s = w.goTo(s, 'where');
+  s = w.setWhere(s, 'pc');
+  assert.deepEqual(w.steps(s), ['name', 'where', 'record', 'watch', 'keep', 'folder', 'review']);
+  assert.equal(w.canVisit(s, 'record'), true);
+  assert.equal(w.canVisit(s, 'watch'), false, 'watch was never visited');
+  assert.equal(s.maxSeen, 2);
+  // a step further on that was visited keeps its place
+  let t = walkTo(ready('pack'), 'keep');
+  t = w.goTo(t, 'where');
+  t = w.setWhere(t, 'pc');
+  assert.equal(t.maxSeen, w.steps(t).indexOf('keep'));
+});

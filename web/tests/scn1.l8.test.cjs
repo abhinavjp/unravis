@@ -154,15 +154,27 @@ test('D-B-49: wizardEscape says what Esc does on each part', () => {
   assert.equal(bb.wizardEscape(4, true, true), 'none');
 });
 
-test('D-B-49: the wizard takes Esc in the capture phase, only while focus is inside it, and the drawer is untouched', () => {
-  const wizard = read('src/components/BlackboxWizard.svelte');
-  assert.match(wizard, /<svelte:window onkeydowncapture=\{escape\} \/>/);
-  assert.match(wizard, /<div class="bb-wizard" bind:this=\{rootEl\}>/);
-  assert.match(wizard, /!rootEl\?\.contains\(document\.activeElement\)/);
-  assert.match(wizard, /event\.preventDefault\(\);\s*event\.stopPropagation\(\);/);
-  assert.match(wizard, /if \(part === 4\) backToSettings\(\); else void go\(part - 1\);/);
-  assert.match(wizard, /wizardEscape\(part, busy, phase\.kind === 'installed' \|\| phase\.kind === 'pack'\)/);
-  assert.doesNotMatch(wizard, /localStorage|sessionStorage|indexedDB|console\.(log|info|debug)/);
+test('D-B-49: the pop-up takes Esc on its own dialog, so the drawer behind it never sees the key, and Esc never discards without asking', () => {
+  // The drawer wizard listened for Esc on the window in the capture phase and stepped back. The pop-up is a native modal
+  // dialog: its keys reach only its own handler, which stops them there (this replaces the capture-phase assertions).
+  const dialog = read('src/components/blackboxWizard/WizardDialog.svelte');
+  assert.match(dialog, /<dialog class="pop" bind:this=\{dialog\} aria-labelledby=\{titleId\} oncancel=\{onCancel\} onclose=\{onClose\} onkeydown=\{onKey\}>/);
+  assert.match(dialog, /dialog\.showModal\(\)/);
+  assert.match(dialog, /if \(event\.key === 'Escape'\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);/);
+  assert.match(dialog, /function onCancel\(event: Event\): void \{\s*event\.preventDefault\(\);/);
+  assert.match(dialog, /const action = escapeAction\(busy, finished, leaving\);/);
+  const wizard = read('src/components/BlackboxPlaceWizard.svelte');
+  assert.doesNotMatch(wizard, /onkeydowncapture|svelte:window/, 'the pop-up adds no window key handler');
+  for (const file of ['src/components/blackboxWizard/WizardDialog.svelte', 'src/components/BlackboxPlaceWizard.svelte']) {
+    assert.doesNotMatch(read(file), /localStorage|sessionStorage|indexedDB|console\.(log|info|debug)/, file);
+  }
+  // What Esc does: while work runs it only says why, on a step it asks first, once placed it just leaves.
+  const keys = loadTypeScript('src/lib/wizardKeys.ts');
+  assert.equal(keys.escapeAction(true, false), 'note');
+  assert.equal(keys.escapeAction(false, false), 'ask');
+  assert.equal(keys.escapeAction(false, false, true), 'keep');
+  assert.equal(keys.escapeAction(false, true), 'leave');
+  assert.equal(keys.escapeAction(true, true), 'note');
   // The drawer keeps its own handler; nothing in this lane edits it.
   assert.match(read('src/components/Drawer.svelte'), /stopEscape/);
 });
@@ -170,9 +182,15 @@ test('D-B-49: the wizard takes Esc in the capture phase, only while focus is ins
 test('D-B-49: the heading shows the real part, for example "Part 2 of 4: Where"', () => {
   assert.equal(T.partHeading(2, T.partNames[1]), 'Part 2 of 4: Where');
   assert.equal(T.partHeading(4, T.partNames[3]), 'Part 4 of 4: Review');
-  const wizard = read('src/components/BlackboxWizard.svelte');
-  assert.match(wizard, /<span class="bb-part-now">\{T\.partHeading\(part, T\.partNames\[part - 1\]\)\}<\/span>/);
-  assert.match(wizard, /aria-label=\{T\.partOf\(part\)\}/);
+  // The pop-up shows the real step in its progress rail instead of a "Part n of 4" line: the list carries its own
+  // "Progress, step n of m" name, marks the current step, and names every button with its step number.
+  const rail = read('src/components/blackboxWizard/ProgressRail.svelte');
+  assert.match(rail, /aria-label=\{`Progress, step \$\{current \+ 1\} of \$\{steps\.length\}`\}/);
+  assert.match(rail, /aria-current=\{index === current \? 'step' : undefined\}/);
+  assert.match(rail, /aria-label=\{`\$\{step\.label\}, step \$\{index \+ 1\}`\}/);
+  const wizard = read('src/components/BlackboxPlaceWizard.svelte');
+  assert.match(wizard, /<ProgressRail steps=\{railSteps\} current=\{index\} maxSeen=\{wizard\.maxSeen\}/);
+  assert.match(wizard, /const index = \$derived\(list\.indexOf\(wizard\.step\)\);/);
   assert.ok(blackboxCopyEntries().some((entry) => entry.id === 'blackbox.partHeading'), 'the lint reads partHeading');
 });
 
@@ -194,10 +212,16 @@ test('D-B-50 and D-C-20: the warning, the Review sentence and the opt-in firewal
   const fields = read('src/components/BlackboxSettings.svelte');
   assert.match(fields, /\{#if warnAll\}<p class="bb-note bb-warn" id="\{idPrefix\}-bind-warn">\{T\.bindWarn\}<\/p>\{\/if\}/);
   assert.match(fields, /aria-describedby="\{idPrefix\}-bind-help\{warnAll \? ' ' \+ idPrefix \+ '-bind-warn' : ''\}\{problem === 'bind' \? ' ' \+ idPrefix \+ '-bind-error' : ''\}"/);
-  const wizard = read('src/components/BlackboxWizard.svelte');
-  assert.match(wizard, /\{#if listensOnAll\(settings\.bind\)\}<p class="bb-note bb-warn">\{T\.reviewBindWarn\}<\/p>\{\/if\}/);
-  // The Review sentence sits after the facts list and before the read-only note.
-  assert.ok(wizard.indexOf('T.reviewBindWarn') > wizard.indexOf('T.reviewBind}') && wizard.indexOf('T.reviewBindWarn') < wizard.indexOf('{T.readOnly}', wizard.indexOf('T.reviewBindWarn')));
+  // The pop-up shows the same two sentences: the bind warning beside the field on the Folder step, and the Review sentence.
+  const review = read('src/components/blackboxWizard/StepReview.svelte');
+  assert.match(review, /\{#if listensOnAll\(payload\.bind\)\}<p class="note warn">\{W\['review\.bindWarning'\]\}<\/p>\{\/if\}/);
+  // The Review sentence sits after the facts cards and before the read-only note.
+  assert.ok(review.indexOf("W['review.bindWarning']") > review.indexOf("W['review.bind']") && review.indexOf("W['review.bindWarning']") < review.indexOf("W['review.readOnly']"));
+  const folder = read('src/components/blackboxWizard/StepFolder.svelte');
+  assert.match(folder, /\{#if listensOnAll\(wizard\.settings\.bind\)\}\s*<p class="notice" role="note">\{W\['folder\.bindWarning'\]\}<\/p>\s*\{\/if\}/);
+  const W = loadTypeScript('src/lib/copy/blackboxWizardCopy.ts').BBW_TEXT;
+  assert.equal(W['review.bindWarning'], T.reviewBindWarn);
+  assert.equal(W['folder.bindWarning'], T.bindWarn);
 });
 
 test('D-B-50: fieldProblemNow keeps a message only while that field is still wrong', () => {
@@ -227,13 +251,19 @@ test('D-B-50: each settings field has an id, an error line and aria-describedby 
   for (const help of ['keep', 'size', 'free', 'folder', 'port', 'bind']) assert.ok(fields.includes('id="{idPrefix}-' + help + '-help"'), 'help id ' + help);
 });
 
-test('D-B-50: the wizard and Apply put a field problem beside the field and focus it; name and refusals stay at the bottom', () => {
-  const wizard = read('src/components/BlackboxWizard.svelte');
-  assert.match(wizard, /const shownField = \$derived\(fieldProblemNow\(fieldProblem, settings, logPathsText\)\);/);
-  assert.match(wizard, /if \(first === 'name'\) \{ problem = T\.settingProblems\.name; return; \}/);
-  assert.match(wizard, /fieldProblem = first;\s*await tick\(\);\s*rootEl\?\.querySelector<HTMLElement>\('#bb-f-' \+ first\)\?\.focus\(\);/);
-  assert.match(wizard, /<SettingsFields bind:settings bind:logPathsText problem=\{shownField\} targetMode=\{where === 'pc' \? 'pc' : 'manual'\} \/>/);
-  assert.match(wizard, /problem = refusalText\(error, BB_REFUSAL\);/);
+test('D-B-50: the pop-up and Apply put a field problem beside the field and focus it; the server refusal stays on Review', () => {
+  // Pop-up: a refused Next marks the step (attempted), each step shows its problem beside its own field, and focus goes to
+  // the first field marked wrong. A refusal from the server's own check shows on Review (this replaces the drawer wizard's
+  // fieldProblem, #bb-f- id lookup and bottom problem line).
+  const wizard = read('src/components/BlackboxPlaceWizard.svelte');
+  assert.match(wizard, /if \(moved === wizard\) \{\s*if \(problem\) \{ attempted = true; void focusProblem\(\); \}\s*return;\s*\}/);
+  assert.match(wizard, /bodyEl\?\.querySelector<HTMLElement>\('\[aria-invalid="true"\]'\)/);
+  assert.match(wizard, /<StepName \{wizard\} showProblem=\{attempted\} /);
+  assert.match(wizard, /<StepFolder bind:wizard \{attempted\} \/>/);
+  assert.match(wizard, /<StepWatch bind:wizard problem=\{watchProblem\} \/>/);
+  assert.match(wizard, /reviewProblem = refusalText\(error, BB_REFUSAL\);/);
+  assert.match(wizard, /\{#if reviewProblem\}<p class="problem" role="alert">\{reviewProblem\}<\/p>\{\/if\}/);
+  assert.match(read('src/components/blackboxWizard/StepName.svelte'), /<p class="inline-error" id=\{`\$\{uid\}-problem`\} role="alert">\{words\}<\/p>/);
   const panel = read('src/components/BlackboxPanel.svelte');
   assert.match(panel, /const applyFieldShown = \$derived\(fieldProblemNow\(applyField, applySettings, applyLogs\)\);/);
   assert.match(panel, /applyField = first;\s*await tick\(\);\s*body\?\.querySelector<HTMLElement>\('#bb-apply-f-' \+ first\)\?\.focus\(\);/);

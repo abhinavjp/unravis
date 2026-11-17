@@ -1,0 +1,417 @@
+import {
+  INTERVALS,
+  defaultSettings,
+  folderFault,
+  nameProblem,
+  settingsProblem,
+  targetsProblem
+} from './blackbox';
+import type { Settings, TargetRef, ThisPc } from './blackbox';
+import type { DriveInfo } from './blackboxDrives';
+
+/**
+ * The state machine of the Place a Blackbox pop-up (contract C-1, payload contract C-5). Pure TypeScript: no Svelte,
+ * no fetch, no DOM, so node can test every rule. The components hold one WizardState and call these functions;
+ * they never decide a rule themselves. Words live in copy/blackboxWizardCopy.ts, so a problem here is a short code.
+ *
+ * Every function returns a new state and never changes the one given.
+ */
+
+export type StepId = 'name' | 'where' | 'record' | 'sql' | 'watch' | 'keep' | 'folder' | 'review';
+export type Where = 'pc' | 'pack';
+export type PresetId = 'recommended' | 'light' | 'custom';
+export type WatchMode = 'none' | 'some';
+
+export interface WizardState {
+  step: StepId;
+  /** Index of the furthest step reached; the rail unlocks 0..maxSeen. */
+  maxSeen: number;
+  /** Set by a Review "Change" link: the next Next goes straight back to Review. */
+  returnTo: 'review' | null;
+  where: Where | null;
+  /** The one payload; starts from defaultSettings(). */
+  settings: Settings;
+  /** Textarea mirror of settings.logPaths: one folder per line. */
+  logPathsText: string;
+  watchMode: WatchMode;
+  /** The owner typed or picked a folder; stop the automatic default. */
+  folderTouched: boolean;
+  /** The C: tick. */
+  confirmSystemDrive: boolean;
+  /** SQL Server seen in the this-pc services list (B-01). */
+  sqlSeen: boolean;
+  /**
+   * Letter of the drive Windows runs from, as the drives route reported it. Optional: when it is absent the
+   * system drive is C. Added to C-1 so the C: tick guards the right drive on a machine where Windows is not on C:.
+   */
+  systemDrive?: string;
+}
+
+/**
+ * Why a step cannot be left. A short code, never prose: the pop-up turns it into words. Null means the step is fine.
+ *   name:    name-empty | name-long | name-chars
+ *   where:   where-missing
+ *   record:  interval | logs
+ *   watch:   targets-many | targets-kind | targets-empty | targets-long | targets-chars | targets-duplicate
+ *   keep:    keep | size | free
+ *   folder:  folder-invalid (not a full path) | folder-slash (forward slashes) | folder-chars (a character Windows refuses)
+ *            | folder-unsafe (a drive root or system folder) | folder-system-drive | port | bind
+ *   review:  the first problem of any step before it
+ */
+export type StepProblem = string;
+
+/** The folder the recorder is placed in when the owner changes nothing, on the chosen drive. */
+const FOLDER_NAME = 'UnravisBlackbox';
+/** The system drive when the drives route has not said otherwise. */
+const DEFAULT_SYSTEM_DRIVE = 'C';
+/** The server accepts at most this many log folders (maxLogPaths in config.go). */
+const LOG_PATHS_MAX = 20;
+
+/* ---------------------------------------------------------------- the steps */
+
+/** The steps in order: 8 when the SQL step applies (pack path, or SQL Server seen on this PC), else 7. */
+export function steps(s: Pick<WizardState, 'where' | 'sqlSeen'>): StepId[] {
+  const list: StepId[] = ['name', 'where', 'record'];
+  if (s.where === 'pack' || s.sqlSeen) list.push('sql');
+  list.push('watch', 'keep', 'folder', 'review');
+  return list;
+}
+
+/** The position shown as "Step X of N": 1-based. */
+export function stepIndex(s: WizardState): number {
+  return steps(s).indexOf(s.step) + 1;
+}
+
+/** Whether the rail lets the owner go to a step: it is in the list and not past the furthest step reached. */
+export function canVisit(s: WizardState, id: StepId): boolean {
+  const at = steps(s).indexOf(id);
+  return at >= 0 && at <= s.maxSeen;
+}
+
+/* ---------------------------------------------------------------- folder helpers */
+
+/** The drive letter of a typed path ('D' for D:\x, upper case), or null for a network path or anything else. */
+export function driveOfPath(path: string): string | null {
+  const m = /^([A-Za-z]):/.exec(path.trim());
+  return m ? m[1].toUpperCase() : null;
+}
+
+/**
+ * The folder the Folder step starts with (S-11, B-05). The first plain fixed drive, in letter order, that is not the
+ * Windows drive: X:\UnravisBlackbox. With no such drive the Windows drive is used and the C: tick is needed. With no
+ * drives list at all (the pack path, or the route failed) it is the fallback, which is D:\UnravisBlackbox in the wizard.
+ */
+export function defaultFolder(drives: DriveInfo[] | null, fallback: string): { folder: string; needsSystemTick: boolean } {
+  if (drives) {
+    const plain = drives
+      .filter((d) => d.type === 'fixed' && !d.system)
+      .map((d) => d.letter.toUpperCase())
+      .sort();
+    if (plain.length > 0) return { folder: plain[0] + ':\\' + FOLDER_NAME, needsSystemTick: false };
+    const windows = drives.find((d) => d.system);
+    if (windows) return { folder: windows.letter.toUpperCase() + ':\\' + FOLDER_NAME, needsSystemTick: true };
+  }
+  const letter = driveOfPath(fallback);
+  const system = (drives?.find((d) => d.system)?.letter ?? DEFAULT_SYSTEM_DRIVE).toUpperCase();
+  return { folder: fallback, needsSystemTick: letter !== null && letter === system };
+}
+
+function systemDriveOf(s: WizardState): string {
+  return (s.systemDrive ?? DEFAULT_SYSTEM_DRIVE).toUpperCase();
+}
+
+/** Whether the typed folder is on the drive Windows runs from. */
+function onSystemDrive(s: WizardState): boolean {
+  return driveOfPath(s.settings.folder) === systemDriveOf(s);
+}
+
+/**
+ * Puts the default folder in, unless the owner has already typed or picked one. Called when the drives list arrives
+ * (or fails: pass null) and when the pack path is chosen. The system-drive tick starts off.
+ */
+export function applyDefaultFolder(s: WizardState, drives: DriveInfo[] | null, fallback: string): WizardState {
+  const windows = drives?.find((d) => d.system);
+  const systemDrive = windows ? windows.letter.toUpperCase() : s.systemDrive;
+  if (s.folderTouched) return systemDrive === s.systemDrive ? s : { ...s, systemDrive };
+  const { folder } = defaultFolder(drives, fallback);
+  return { ...s, systemDrive, settings: { ...s.settings, folder }, confirmSystemDrive: false };
+}
+
+/** The "Reset to default" link: forget what the owner typed and take the default again. */
+export function resetFolder(s: WizardState, drives: DriveInfo[] | null, fallback: string): WizardState {
+  return applyDefaultFolder({ ...s, folderTouched: false }, drives, fallback);
+}
+
+/**
+ * The owner typed or picked a folder. The automatic default stops. The C: tick only means something for the
+ * drive it was given for, so it is cleared when the path moves to another drive.
+ */
+export function setFolder(s: WizardState, folder: string): WizardState {
+  const moved = driveOfPath(folder) !== driveOfPath(s.settings.folder);
+  return { ...s, folderTouched: true, confirmSystemDrive: moved ? false : s.confirmSystemDrive, settings: { ...s.settings, folder } };
+}
+
+/* ---------------------------------------------------------------- the rules per step */
+
+/**
+ * The folders typed in the log box, one per line, blanks dropped. A folder typed twice is kept once (Windows paths
+ * ignore case), with the first spelling and the first position, so Review can list each folder as its own row.
+ */
+function parseLogPaths(text: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const path = line.trim();
+    if (!path) continue;
+    const key = path.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(path);
+  }
+  return out;
+}
+
+function logPathsOk(paths: string[]): boolean {
+  return paths.length <= LOG_PATHS_MAX && paths.every((p) => /^[A-Za-z]:[\\/]/.test(p));
+}
+
+/**
+ * What stops a step from being left, or null. The rules are blackbox.ts's own (nameProblem, targetsProblem, the
+ * settingsProblem ranges); this only decides which step each one belongs to.
+ */
+export function stepProblem(s: WizardState, id: StepId): StepProblem | null {
+  const st = s.settings;
+  switch (id) {
+    case 'name': {
+      const p = nameProblem(st.name);
+      return p ? 'name-' + p : null;
+    }
+    case 'where':
+      return s.where === null ? 'where-missing' : null;
+    case 'record': {
+      if (!INTERVALS.includes(st.intervalSeconds as 5 | 15 | 30 | 60)) return 'interval';
+      // The log folders only matter while the logs catalogue is on; the box is hidden otherwise (B-07).
+      if (st.record.logsCatalogue && !logPathsOk(parseLogPaths(s.logPathsText))) return 'logs';
+      return null;
+    }
+    case 'sql':
+      return null;
+    case 'watch': {
+      if (s.watchMode === 'none') return null;
+      const p = targetsProblem(st.targets);
+      return p ? 'targets-' + p : null;
+    }
+    case 'keep': {
+      const p = settingsProblem({ ...defaultSettings(st.name), keepDays: st.keepDays, maxGB: st.maxGB, minFreePercent: st.minFreePercent });
+      return p === 'keep' || p === 'size' || p === 'free' ? p : null;
+    }
+    case 'folder': {
+      const fault = folderFault(st.folder);
+      if (fault === 'full') return 'folder-invalid';
+      if (fault === 'slash') return 'folder-slash';
+      if (fault === 'chars') return 'folder-chars';
+      if (fault === 'system') return 'folder-unsafe';
+      if (onSystemDrive(s) && !s.confirmSystemDrive) return 'folder-system-drive';
+      const p = settingsProblem({ ...defaultSettings(st.name), port: st.port, bind: st.bind });
+      return p === 'port' || p === 'bind' ? p : null;
+    }
+    case 'review': {
+      for (const earlier of steps(s)) {
+        if (earlier === 'review') break;
+        const found = stepProblem(s, earlier);
+        if (found) return found;
+      }
+      // Belt and braces: the whole payload must pass the one check the server repeats.
+      return settingsProblem(buildSettings(s));
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- moving */
+
+/** Remaps the current step and the furthest step reached onto a new step list, by step, not by position. */
+function withList(s: WizardState, next: WizardState): WizardState {
+  const before = steps(s);
+  const after = steps(next);
+  // The furthest step the owner reached that still exists. A step that went away (SQL) unlocks nothing after it.
+  let maxSeen = 0;
+  for (let i = Math.min(s.maxSeen, before.length - 1); i >= 0; i--) {
+    const found = after.indexOf(before[i]);
+    if (found >= 0) {
+      maxSeen = found;
+      break;
+    }
+  }
+  let step = s.step;
+  if (!after.includes(step)) step = after[Math.min(before.indexOf(step), after.length - 1)];
+  // The step being shown is always unlocked, even when its own step went away and the next one took its place.
+  return { ...next, step, maxSeen: Math.max(maxSeen, after.indexOf(step)) };
+}
+
+/** Moves one step on. Refused (the same state comes back) while the step has a problem. Honours returnTo. */
+export function next(s: WizardState): WizardState {
+  if (stepProblem(s, s.step)) return s;
+  const list = steps(s);
+  const at = list.indexOf(s.step);
+  if (at < 0 || at >= list.length - 1) return s;
+  if (s.returnTo === 'review') {
+    const review = list.length - 1;
+    return { ...s, step: 'review', returnTo: null, maxSeen: Math.max(s.maxSeen, review) };
+  }
+  return { ...s, step: list[at + 1], maxSeen: Math.max(s.maxSeen, at + 1) };
+}
+
+/** Moves one step back. Going back always works, and it ends a Change detour from Review. */
+export function back(s: WizardState): WizardState {
+  const list = steps(s);
+  const at = list.indexOf(s.step);
+  if (at <= 0) return s;
+  return { ...s, step: list[at - 1], returnTo: null };
+}
+
+/**
+ * Jumps to a step the rail has unlocked. Going backwards is always allowed; going forwards is refused while the step
+ * being left has a problem. A jump from the rail ends a Change detour.
+ */
+export function goTo(s: WizardState, id: StepId): WizardState {
+  if (!canVisit(s, id)) return s;
+  const list = steps(s);
+  if (list.indexOf(id) > list.indexOf(s.step) && stepProblem(s, s.step)) return s;
+  return { ...s, step: id, returnTo: null };
+}
+
+/** A Review "Change" link: go to that step, and come straight back to Review after it. */
+export function changeStep(s: WizardState, id: StepId): WizardState {
+  if (!canVisit(s, id) || id === 'review') return s;
+  return { ...s, step: id, returnTo: 'review' };
+}
+
+/* ---------------------------------------------------------------- choices that change the step list */
+
+/**
+ * Which Where cards can be chosen (B-11), and why none can. `pc` is true only while this PC can take a Blackbox and has
+ * none yet. `none` is 'helper' when this build has no helper program beside the app (nothing can be placed or built),
+ * 'other' when both are off for another reason (a Blackbox is already here and no pack can be built), else null.
+ * `scanFailed` is true when this PC could be asked but the answer did not come, so "already installed" is not known.
+ */
+export function whereChoices(
+  thisPc: Pick<ThisPc, 'available' | 'scanned' | 'installed'>,
+  canPack: boolean
+): { pc: boolean; pack: boolean; none: 'helper' | 'other' | null; scanFailed: boolean } {
+  const pc = thisPc.available && !thisPc.installed;
+  const none = pc || canPack ? null : !thisPc.available ? 'helper' : 'other';
+  return { pc, pack: canPack, none, scanFailed: thisPc.available && !thisPc.scanned };
+}
+
+/** The owner chose where the recorder goes. The pack path always shows the SQL step, so the list can change. */
+export function setWhere(s: WizardState, where: Where): WizardState {
+  if (s.where === where) return withList(s, { ...s, where });
+  // A real change (this PC <-> pack): the folder default and the C: tick belonged to the old answer. A Change detour
+  // from Review ends, so Next walks on through Folder (which puts the new default in) before Review. While the folder
+  // is still the automatic default, Review stays locked until Folder has been visited again.
+  const moved = withList(s, { ...s, where, returnTo: null, confirmSystemDrive: false });
+  if (s.folderTouched) return moved;
+  const folderAt = steps(moved).indexOf('folder');
+  return { ...moved, maxSeen: Math.min(moved.maxSeen, folderAt) };
+}
+
+/** SQL Server was seen (or not) in the this-pc services list. The SQL step appears or goes away. */
+export function setSqlSeen(s: WizardState, sqlSeen: boolean): WizardState {
+  return withList(s, { ...s, sqlSeen });
+}
+
+/* ---------------------------------------------------------------- presets and defaults */
+
+/** The preset the three record switches add up to (B-03). Anything else is Custom. */
+export function presetOf(record: Settings['record']): PresetId {
+  if (record.processes && record.logsCatalogue && !record.copyLogsOnSnapshot) return 'recommended';
+  if (!record.processes && !record.logsCatalogue && !record.copyLogsOnSnapshot) return 'light';
+  return 'custom';
+}
+
+/** Sets the three record switches to a preset. Any single change afterwards moves presetOf to custom by itself. */
+export function applyPreset(s: WizardState, p: Exclude<PresetId, 'custom'>): WizardState {
+  const on = p === 'recommended';
+  return { ...s, settings: { ...s.settings, record: { processes: on, logsCatalogue: on, copyLogsOnSnapshot: false } } };
+}
+
+/**
+ * "Use defaults, go to review": the Record, SQL and Watch answers go back to the defaults (the SQL step holds no
+ * choice), then Review. Refused until the name and the place are answered. Every step is then reached.
+ * The Keep answers (days, size, free space) are not part of the shortcut unless the shortcut is taken from the Keep
+ * step itself (resetKeep): there the owner asks for the defaults of that very step.
+ */
+export function useDefaultsToReview(s: WizardState, resetKeep = false): WizardState {
+  if (stepProblem(s, 'name') || stepProblem(s, 'where')) return s;
+  const d = defaultSettings(s.settings.name);
+  const settings: Settings = {
+    ...s.settings,
+    record: { ...d.record },
+    intervalSeconds: d.intervalSeconds,
+    logPaths: [...d.logPaths],
+    targets: []
+  };
+  if (resetKeep) {
+    settings.keepDays = d.keepDays;
+    settings.maxGB = d.maxGB;
+    settings.minFreePercent = d.minFreePercent;
+  }
+  const review = steps(s).length - 1;
+  return {
+    ...s,
+    settings,
+    logPathsText: d.logPaths.join('\n'),
+    watchMode: 'none',
+    step: 'review',
+    returnTo: null,
+    maxSeen: Math.max(s.maxSeen, review)
+  };
+}
+
+/* ---------------------------------------------------------------- start and payload */
+
+/** A fresh wizard: the first step, the recommended answers, the default folder (the drives list improves it later). */
+export function initialState(): WizardState {
+  const d = defaultSettings();
+  return {
+    step: 'name',
+    maxSeen: 0,
+    returnTo: null,
+    where: null,
+    settings: d,
+    logPathsText: d.logPaths.join('\n'),
+    watchMode: 'none',
+    folderTouched: false,
+    confirmSystemDrive: false,
+    sqlSeen: false
+  };
+}
+
+/**
+ * The payload for validate, install and pack (C-5). It starts from defaultSettings() and writes only what the steps
+ * own, key by key: nothing the server does not know can slip in (it refuses unknown keys). probe is always
+ * { enabled: false } because the SQL probe is not part of this release. Targets are sent only when the owner chose
+ * to watch some, and only as kind and name. The state is never changed and the result shares nothing with it.
+ */
+export function buildSettings(s: WizardState): Settings {
+  const out = defaultSettings(s.settings.name);
+  const st = s.settings;
+  out.record = {
+    processes: st.record.processes,
+    logsCatalogue: st.record.logsCatalogue,
+    copyLogsOnSnapshot: st.record.copyLogsOnSnapshot
+  };
+  out.intervalSeconds = st.intervalSeconds;
+  // With the logs catalogue off the box is hidden, so a bad leftover must not block the install: the default stays.
+  const typed = parseLogPaths(s.logPathsText);
+  if (st.record.logsCatalogue || logPathsOk(typed)) out.logPaths = typed;
+  out.targets = s.watchMode === 'some' ? st.targets.map((t): TargetRef => ({ kind: t.kind, name: t.name })) : [];
+  out.keepDays = st.keepDays;
+  out.maxGB = st.maxGB;
+  out.minFreePercent = st.minFreePercent;
+  out.folder = st.folder.trim();
+  out.port = st.port;
+  out.bind = st.bind.trim();
+  out.probe = { enabled: false };
+  return out;
+}
