@@ -10,7 +10,7 @@ import (
 // BBX-2-02 IIS worker counters for SELECTED app pools only: W3SVC_W3WP
 // active requests/threads and WAS_W3WP ping latency. Instances are
 // "<PID>_<AppPoolName>"; the instance IS the pool's w3wp worker. Each worker
-// PID is verified against the Process object's ID Process + Creation Time (the
+// PID is verified against the Process object's ID Process + Elapsed Time (the
 // collection-time inventory) and the selected pool before any reading is kept
 // (W5-02). The resolver may retarget the app PID to an out-of-process child, so
 // worker identities are kept separate from the application-child target. English
@@ -20,7 +20,7 @@ var iisPaths = []string{
 	`\W3SVC_W3WP(*)\Active Threads`,
 	`\WAS_W3WP(*)\Ping Response Latency`,
 	`\Process(*)\ID Process`,
-	`\Process(*)\Creation Time`,
+	`\Process(*)\Elapsed Time`,
 }
 
 // iisCounters binds each object prefix + counter to its json field. All
@@ -178,7 +178,7 @@ func (g *iisGroup) Collect(now time.Time, _ float64) (any, error) {
 	// creation FILETIME. A PID reported by more than one Process instance is
 	// ambiguous and fails closed. This is the collection-time inventory the
 	// counter-path PID is checked against (W5-02).
-	procInstPID, procInstCreation := procIOIdentity(readings)
+	procInstPID, procInstCreation := procIOIdentity(readings, now)
 	pidCount := make(map[uint32]int, len(procInstPID))
 	pidCreation := make(map[uint32]float64, len(procInstPID))
 	for inst, pid := range procInstPID {

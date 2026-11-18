@@ -33,7 +33,7 @@ const (
 )
 
 // ErrNoProgram is returned when the recorder program cannot be found.
-var ErrNoProgram = errors.New("The Blackbox program (unravis-blackbox.exe) is not next to Unravis, so a pack cannot be built. Reinstall Unravis or copy unravis-blackbox.exe into its folder.")
+var ErrNoProgram = errors.New("unravis-blackbox.exe is not next to Unravis, so no pack can be built. Reinstall Unravis to restore it.")
 
 // ProgramSource gives the recorder program the pack carries.
 type ProgramSource interface {

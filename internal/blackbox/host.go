@@ -8,8 +8,16 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime/debug"
 	"sync/atomic"
 	"time"
+)
+
+// Go runtime settings of the service (performance review PERF-05): a soft limit
+// on the Go heap and a GC that runs at 40 percent growth instead of 100.
+const (
+	hostMemoryLimit = 64 << 20
+	hostGCPercent   = 40
 )
 
 // HostOptions wire one run of the recorder: store, sampler loop and status
@@ -87,7 +95,27 @@ func RunHost(ctx context.Context, o HostOptions) error {
 	// Below-normal priority, once, best-effort: a failure is not logged and
 	// never stops recording.
 	_ = SetBelowNormalPriority()
+	// Keep the Go heap small: a soft memory limit and an earlier GC, so the
+	// per-tick garbage does not grow the heap goal. Process-wide, set once; the
+	// previous values are put back when the run ends (tests share the process).
+	prevLimit := debug.SetMemoryLimit(hostMemoryLimit)
+	prevGC := debug.SetGCPercent(hostGCPercent)
+	defer func() {
+		debug.SetMemoryLimit(prevLimit)
+		debug.SetGCPercent(prevGC)
+	}()
 	budget := NewBudget(cfg.IntervalSeconds)
+	// A restart does not start over: the interval and the groups on probation
+	// that the last run settled on come back, unless the configured interval
+	// changed (the owner's new interval is honoured).
+	if mb := store.Manifest().Budget; mb != nil {
+		restoreAt := time.Now()
+		if o.Now != nil {
+			restoreAt = o.Now()
+		}
+		budget.Restore(restoreAt, *mb)
+		store.SetInterval(budget.EffectiveInterval())
+	}
 	// Resolver wiring (BBX-1-11): the gate resolves ONE immutable inventory and
 	// target result per collection cycle and shares it — with its monotonic
 	// generation — among the host collector and every group, so a tick takes one
@@ -95,10 +123,12 @@ func RunHost(ctx context.Context, o HostOptions) error {
 	// loses a change (W3-03). With no selected targets, Targets stays nil and
 	// machine-wide groups work exactly as before.
 	resolver := NewResolver()
+	wireResolverSnapshot(resolver, col)
 	gate := &processChangeGate{resolver: resolver, targets: cfg.Targets}
 	gate.view.Store(resolver.resolveTick(cfg.Targets, time.Now()))
 	deps := GroupDeps{Config: cfg, Cores: CoreCount(),
-		Generation: func() uint64 { return gate.currentView().gen }}
+		Generation:    func() uint64 { return gate.currentView().gen },
+		SQLProcessSig: func() uint64 { return gate.currentView().sqlSig }}
 	if len(cfg.Targets) > 0 {
 		deps.Targets = func() []ResolvedTarget { return gate.currentView().targets }
 	}
@@ -131,6 +161,22 @@ func RunHost(ctx context.Context, o HostOptions) error {
 	_ = srv.Shutdown(sctx)
 	<-srvDone
 	return runErr
+}
+
+// wireResolverSnapshot gives the resolver the host collector's process list, so
+// the resolver and the collector share one machine-wide read per tick (the
+// Source serves the second caller from the first read). The list carries the
+// creation identity of every process at no extra cost, so the resolver needs no
+// separate "lite" enumeration. A collector that is not the host collector (a test
+// fake) keeps the Toolhelp enumeration, without creation times when nothing is
+// selected (PERF-04).
+func wireResolverSnapshot(r *Resolver, col Collector) {
+	if hc, ok := col.(*HostCollector); ok {
+		r.snapshotFn = hc.SnapshotProcesses
+		r.liteFn = hc.SnapshotProcesses
+		return
+	}
+	r.liteFn = snapshotProcessesLite
 }
 
 // processChangeGate resolves ONE immutable inventory/target view per collection

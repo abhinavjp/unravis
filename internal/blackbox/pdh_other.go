@@ -14,6 +14,8 @@ var _ CounterSource = (*PDHSource)(nil)
 
 func NewPDHSource(paths []string) (*PDHSource, error) { return nil, errPDHWindowsOnly }
 
+func NewPDHSourceTolerant(paths []string) (*PDHSource, error) { return nil, errPDHWindowsOnly }
+
 func (p *PDHSource) Collect() ([]CounterReading, error) { return nil, errPDHWindowsOnly }
 func (p *PDHSource) RefreshInstances() error            { return errPDHWindowsOnly }
 func (p *PDHSource) Close() error                       { return errPDHWindowsOnly }

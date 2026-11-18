@@ -21,6 +21,7 @@ type fakeSvc struct {
 	startErr error
 	stuck    bool // Start leaves the service pending
 	onStart  func()
+	failStarts int // the next this many Start calls fail
 }
 
 func (f *fakeSvc) State(string) (SvcState, error) { return f.state, nil }
@@ -33,6 +34,10 @@ func (f *fakeSvc) Start(string) error {
 	f.calls = append(f.calls, "start")
 	if f.onStart != nil {
 		f.onStart()
+	}
+	if f.failStarts > 0 {
+		f.failStarts--
+		return errors.New("the service could not start")
 	}
 	if f.startErr != nil {
 		return f.startErr
@@ -80,6 +85,11 @@ type fakeEnv struct {
 	secureErr error
 	secured   []string // folders SecureDir was asked about, in order, with the state of the program folder at the time
 	log       []string
+	// hashFor, when set, answers FileSHA256 for the paths it knows (ok true).
+	hashFor func(path string) (string, bool)
+	// aliveFails is how many ProbeAlive calls fail first; alive counts the calls.
+	aliveFails int
+	alive      int
 }
 
 func (e *fakeEnv) IsAdmin() bool               { return e.admin }
@@ -93,7 +103,22 @@ func (e *fakeEnv) SecureDir(dir string, usersRead bool) error {
 }
 func (e *fakeEnv) PortFree(string, int) error          { return e.portErr }
 func (e *fakeEnv) FolderWritable(string) error         { return e.folder }
-func (e *fakeEnv) FileSHA256(p string) (string, error) { return e.real.FileSHA256(p) }
+func (e *fakeEnv) FileSHA256(p string) (string, error) {
+	if e.hashFor != nil {
+		if h, ok := e.hashFor(p); ok {
+			return h, nil
+		}
+	}
+	return e.real.FileSHA256(p)
+}
+func (e *fakeEnv) ProbeAlive(string, int) error {
+	e.alive++
+	if e.aliveFails > 0 {
+		e.aliveFails--
+		return errors.New("the status page did not answer")
+	}
+	return nil
+}
 func (e *fakeEnv) ProbeStatus(host string, port int, _ string) error {
 	e.probed = append(e.probed, net.JoinHostPort(host, strconv.Itoa(port)))
 	if e.listensOn != "" && host != e.listensOn {
@@ -625,7 +650,9 @@ func TestApplyRestartFailurePutsThePreviousSettingsBack(t *testing.T) {
 			seenAtStart := ""
 			g.svc.onStart = func() {
 				b, _ := os.ReadFile(g.p.ConfigPath)
-				seenAtStart = string(b)
+				if seenAtStart == "" { // the first start only; recovery starts again
+					seenAtStart = string(b)
+				}
 			}
 			c.setup(g)
 			cfgB := cfgA

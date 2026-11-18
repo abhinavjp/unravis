@@ -53,6 +53,11 @@ type CPUSplit struct {
 	PrivilegedPct *float64 `json:"privilegedPct,omitempty"`
 	DPCPct        *float64 `json:"dpcPct,omitempty"`
 	InterruptPct  *float64 `json:"interruptPct,omitempty"`
+	// UtilityPct is the modern CPU load (Windows Task Manager's number, frequency
+	// aware, can pass 100 on boost). ContextSwitchesPerSec is the machine-wide
+	// switch rate: a jump with flat CPU points at thread thrash.
+	UtilityPct            *float64 `json:"utilityPct,omitempty"`
+	ContextSwitchesPerSec *float64 `json:"contextSwitchesPerSec,omitempty"`
 }
 
 type SQLHostGroup struct {
@@ -159,7 +164,13 @@ type TCPGroup struct {
 	OutboundQueuePartial bool `json:"outboundQueuePartial,omitempty"`
 	// OutboundQueueInterfaces is the number of interfaces that contributed to
 	// OutboundQueue (the covered-interface count, W6-04).
-	OutboundQueueInterfaces int             `json:"outboundQueueInterfaces,omitempty"`
+	OutboundQueueInterfaces int `json:"outboundQueueInterfaces,omitempty"`
+	// ConnFailuresPerSec: connection attempts that failed (TCPv4 plus TCPv6).
+	// DiscardedPerSec: inbound packets dropped with no error, all adapters
+	// summed. OutErrorsPerSec: outbound packets that failed, all adapters summed.
+	ConnFailuresPerSec *float64 `json:"connFailuresPerSec,omitempty"`
+	DiscardedPerSec    *float64 `json:"discardedPerSec,omitempty"`
+	OutErrorsPerSec    *float64 `json:"outErrorsPerSec,omitempty"`
 	States                  []TCPStateCount `json:"states,omitempty"`
 	// StatesTruncated says the TCP table exceeded the checked byte/row ceiling
 	// and could not be read completely: States is partial or absent, never an
@@ -185,6 +196,16 @@ type MemPressureGroup struct {
 	PoolPagedBytes    *uint64  `json:"poolPagedBytes,omitempty"`
 	PoolNonPagedBytes *uint64  `json:"poolNonPagedBytes,omitempty"`
 	PageFileUsagePct  *float64 `json:"pageFileUsagePct,omitempty"`
+	// PagesPerSec is all paging traffic (in plus out); PageFaultsPerSec counts
+	// every fault, hard or soft. Standby, Modified and Free are the memory
+	// lists: standby is the file cache Windows can hand back, modified waits to
+	// be written, free is truly empty. Together they say whether low "available"
+	// memory is harmless cache or real pressure.
+	PagesPerSec      *float64 `json:"pagesPerSec,omitempty"`
+	PageFaultsPerSec *float64 `json:"pageFaultsPerSec,omitempty"`
+	StandbyBytes     *uint64  `json:"standbyBytes,omitempty"`
+	ModifiedBytes    *uint64  `json:"modifiedBytes,omitempty"`
+	FreeBytes        *uint64  `json:"freeBytes,omitempty"`
 }
 
 type VMGroup struct {

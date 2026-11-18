@@ -29,21 +29,15 @@ func secureSDDL(usersRead bool) string {
 	return sddl
 }
 
-// SecureDir gives SYSTEM and Administrators full control of dir, removes every
+// SecureDir makes Administrators the owner of dir (SEC-03: an owner can always
+// change the permissions back, so a folder another account made would stay that
+// account's), gives SYSTEM and Administrators full control, removes every
 // inherited permission, and, with usersRead, lets ordinary users read and list
-// it. What is already inside gets the same rights.
+// it. What is already inside gets the same rights. The folder is opened once
+// without following a link and everything is applied through that handle
+// (SEC-FIX-06); a folder owned by another account is refused (SEC-FIX-05).
 func (OSEnv) SecureDir(dir string, usersRead bool) error {
-	sd, err := windows.SecurityDescriptorFromString(secureSDDL(usersRead))
-	if err != nil {
-		return err
-	}
-	dacl, _, err := sd.DACL()
-	if err != nil {
-		return err
-	}
-	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil)
+	return secureDirHandle(dir, usersRead, true)
 }
 
 func connect() (*mgr.Mgr, error) { return mgr.Connect() }

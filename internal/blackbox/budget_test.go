@@ -1,23 +1,77 @@
 package blackbox
 
 import (
-	"reflect"
 	"sync"
 	"testing"
 	"time"
 )
 
-// wsBytes is a working-set size in bytes, for fake SelfUsage inputs.
-func wsBytes(n uint64) uint64 { return n << 20 }
+// Readings used by the budget tests. Each is one tick at a 15 s cadence.
+var (
+	rdCalm = SelfReading{CPUPct: 0.1, WallSeconds: 15, HeapInUse: 10 << 20, Private: 50 << 20}
+	rdBand = SelfReading{CPUPct: 0.8, WallSeconds: 15, HeapInUse: 28 << 20, Private: 100 << 20}
+	rdOver = SelfReading{CPUPct: 2.0, WallSeconds: 15, HeapInUse: 10 << 20, Private: 50 << 20}
+)
+
+// budgetRig drives a Budget with a fake clock. A window at a 15 s step is exactly
+// four ticks (4 ticks and 60 s).
+type budgetRig struct {
+	t   *testing.T
+	b   *Budget
+	now time.Time
+}
+
+func newBudgetRig(t *testing.T, base int) *budgetRig {
+	t.Helper()
+	r := &budgetRig{t: t, b: NewBudget(base), now: time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)}
+	// The warm-up cycles take no part in a window.
+	for i := 0; i < budgetWarmupCycles; i++ {
+		r.tick(rdOver)
+	}
+	return r
+}
+
+func (r *budgetRig) tick(rd SelfReading) {
+	r.now = r.now.Add(15 * time.Second)
+	r.b.Cycle(r.now, rd, true)
+}
+
+// window runs one full window (four ticks) of the reading.
+func (r *budgetRig) window(rd SelfReading) {
+	for i := 0; i < budgetWindowTicks; i++ {
+		r.tick(rd)
+	}
+}
+
+func (r *budgetRig) windows(n int, rd SelfReading) {
+	for i := 0; i < n; i++ {
+		r.window(rd)
+	}
+}
+
+func (r *budgetRig) want(interval int, why string) {
+	r.t.Helper()
+	if got := r.b.EffectiveInterval(); got != interval {
+		r.t.Fatalf("%s: effective = %d, want %d", why, got, interval)
+	}
+}
+
+// widenBudget feeds b over-budget readings from start until it has widened by
+// the given number of rungs, and returns the time of the last cycle.
+func widenBudget(b *Budget, start time.Time, rungs int) time.Time {
+	now := start
+	for i := 0; i < budgetWarmupCycles+budgetWindowTicks*budgetOverWindows*rungs; i++ {
+		now = now.Add(15 * time.Second)
+		b.Cycle(now, rdOver, true)
+	}
+	return now
+}
 
 func TestBudgetStartsAtBase(t *testing.T) {
 	for _, base := range []int{5, 15, 30, 60} {
 		b := NewBudget(base)
 		if got := b.EffectiveInterval(); got != base {
 			t.Fatalf("base %d: effective = %d, want %d", base, got, base)
-		}
-		if b.SkipOptional() {
-			t.Fatalf("base %d: optional groups skipped at start", base)
 		}
 		if len(b.SlowGroups()) != 0 {
 			t.Fatalf("base %d: slow groups at start: %v", base, b.SlowGroups())
@@ -28,283 +82,268 @@ func TestBudgetStartsAtBase(t *testing.T) {
 	}
 }
 
-func TestBudgetSlowGroupSkipsAndMarks(t *testing.T) {
-	b := NewBudget(15)
-	b.GroupTiming("http", 1500*time.Millisecond, false)
-	if got := b.SlowGroups(); !reflect.DeepEqual(got, []string{"http"}) {
-		t.Fatalf("SlowGroups = %v, want [http]", got)
+// The first readings carry the cost of the first tick (opening every counter);
+// they must not count against the budget.
+func TestBudgetWarmupCyclesAreIgnored(t *testing.T) {
+	r := newBudgetRig(t, 15) // two over-budget warm-up ticks inside
+	r.windows(1, rdCalm)
+	if k := r.b.LastWindow().Kind; k != WindowCalm {
+		t.Fatalf("first window after warm-up = %v, want calm", k)
 	}
-	if !b.GroupSkipped("http", false) {
-		t.Fatal("slow mandatory group http not skipped")
+	r.want(15, "warm-up ignored")
+}
+
+// One over window is not enough: it takes two in a row.
+func TestBudgetWidensAfterTwoOverWindows(t *testing.T) {
+	r := newBudgetRig(t, 15)
+	r.window(rdOver)
+	r.want(15, "after one over window")
+	r.window(rdOver)
+	r.want(30, "after two over windows")
+	r.windows(2, rdOver)
+	r.want(60, "after four over windows")
+	r.windows(6, rdOver)
+	r.want(60, "capped at 60")
+}
+
+// With a base of 5 the ladder is still 15/30/60.
+func TestBudgetLadderStartsAt15FromSmallBase(t *testing.T) {
+	r := newBudgetRig(t, 5)
+	r.windows(2, rdOver)
+	r.want(15, "5 widens to the first rung")
+	r.windows(2, rdOver)
+	r.want(30, "then 30")
+}
+
+func TestBudgetStepsBackAfterFiveCalmWindows(t *testing.T) {
+	r := newBudgetRig(t, 15)
+	r.windows(4, rdOver)
+	r.want(60, "widened")
+	r.windows(4, rdCalm)
+	r.want(60, "four calm windows are not enough")
+	r.windows(1, rdCalm)
+	r.want(30, "five calm windows step back one rung")
+	r.windows(5, rdCalm)
+	r.want(15, "five more step back to the base")
+	r.windows(10, rdCalm)
+	r.want(15, "never below base")
+}
+
+func TestBudgetStepBackNeverBelowBase(t *testing.T) {
+	r := newBudgetRig(t, 30)
+	r.windows(2, rdOver)
+	r.want(60, "30 widens to 60")
+	r.windows(5, rdCalm)
+	r.want(30, "back to base")
+	r.windows(10, rdCalm)
+	r.want(30, "stays at base 30, not 15")
+}
+
+// A window between the calm and over limits is the hysteresis band: it resets
+// both counts and changes nothing.
+func TestBudgetHysteresisBand(t *testing.T) {
+	r := newBudgetRig(t, 15)
+	r.window(rdOver)
+	r.window(rdBand)
+	r.window(rdOver)
+	r.want(15, "over, band, over is not two in a row")
+	if k := r.b.LastWindow().Kind; k != WindowOver {
+		t.Fatalf("last window kind = %v", k)
 	}
-	if !b.GroupSkipped("http", true) {
-		t.Fatal("slow optional group http not skipped")
+
+	r = newBudgetRig(t, 15)
+	r.windows(4, rdOver)
+	r.want(60, "widened")
+	r.windows(4, rdCalm)
+	r.window(rdBand)
+	r.windows(1, rdCalm)
+	r.want(60, "a band window resets the calm count")
+	r.windows(4, rdCalm)
+	r.want(30, "five calm windows after the band window step back")
+}
+
+// A spike on one tick does not widen: the window mean is judged.
+func TestBudgetCPUIsAWindowMean(t *testing.T) {
+	r := newBudgetRig(t, 15)
+	spike := rdCalm
+	spike.CPUPct = 3.0 // one tick at 3 percent, three at 0.1: mean 0.8
+	for w := 0; w < 4; w++ {
+		r.tick(spike)
+		r.tick(rdCalm)
+		r.tick(rdCalm)
+		r.tick(rdCalm)
 	}
-	if b.GroupSkipped("db", false) {
-		t.Fatal("fast group db reported skipped")
-	}
-	// Names come back sorted, not in insertion order; both optional and
-	// mandatory groups are marked.
-	b.GroupTiming("zeta", 2*time.Second, true)
-	b.GroupTiming("alpha", 2*time.Second, true)
-	if got := b.SlowGroups(); !reflect.DeepEqual(got, []string{"alpha", "http", "zeta"}) {
-		t.Fatalf("SlowGroups = %v, want sorted [alpha http zeta]", got)
+	r.want(15, "a spike averaged over the window stays in the band")
+	if k := r.b.LastWindow().Kind; k != WindowBand {
+		t.Fatalf("kind = %v, want band", k)
 	}
 }
 
-func TestBudgetOverCPUSkipsOptionalFirst(t *testing.T) {
-	b := NewBudget(15)
-	b.SelfUsage(0.9, wsBytes(10))
-	b.Cycle()
-	if !b.SkipOptional() {
-		t.Fatal("over CPU did not skip optional groups")
+func TestBudgetHeapAndPrivateLimits(t *testing.T) {
+	heap := rdCalm
+	heap.HeapInUse = 40 << 20 // over 32 MiB
+	r := newBudgetRig(t, 15)
+	r.windows(2, heap)
+	r.want(30, "heap over 32 MiB widens")
+
+	priv := rdCalm
+	priv.Private = 140 << 20 // over 128 MiB
+	r = newBudgetRig(t, 15)
+	r.windows(2, priv)
+	r.want(30, "private bytes over 128 MiB widen")
+
+	// 28 MiB heap is under the limit and over the calm value: band, not over.
+	r = newBudgetRig(t, 15)
+	r.windows(4, rdBand)
+	r.want(15, "heap in the band does not widen")
+}
+
+// A missing reading counts as calm: it never widens and it helps step back.
+func TestBudgetMissingReadingCountsAsCalm(t *testing.T) {
+	r := newBudgetRig(t, 15)
+	for i := 0; i < budgetWindowTicks*4; i++ {
+		r.now = r.now.Add(15 * time.Second)
+		r.b.Cycle(r.now, SelfReading{}, false)
 	}
-	if got := b.EffectiveInterval(); got != 15 {
-		t.Fatalf("first over cycle widened to %d, want base 15", got)
+	r.want(15, "missing readings never widen")
+
+	r = newBudgetRig(t, 15)
+	r.windows(4, rdOver)
+	r.want(60, "widened")
+	for i := 0; i < budgetWindowTicks*budgetCalmWindows; i++ {
+		r.now = r.now.Add(15 * time.Second)
+		r.b.Cycle(r.now, SelfReading{}, false)
 	}
-	if !b.GroupSkipped("opt", true) {
-		t.Fatal("optional group not skipped while over budget")
+	r.want(30, "five windows of missing readings step back")
+}
+
+// An optional group over 1 s twice in a row sits out 10 minutes, alone; then it
+// is tried once more.
+func TestBudgetOptionalGroupProbation(t *testing.T) {
+	r := newBudgetRig(t, 15)
+	b := r.b
+	b.GroupTiming("tcp", 2*time.Second, true)
+	if b.GroupSkipped("tcp", true) {
+		t.Fatal("one slow run must not skip the group")
 	}
-	if b.GroupSkipped("mand", false) {
-		t.Fatal("mandatory group skipped on CPU over alone")
+	b.GroupTiming("tcp", 2*time.Second, true)
+	if !b.GroupSkipped("tcp", true) {
+		t.Fatal("two slow runs in a row must put the group on probation")
 	}
-	// Only the next over cycle widens.
-	b.Cycle()
-	if got := b.EffectiveInterval(); got != 30 {
-		t.Fatalf("second over cycle effective = %d, want 30", got)
+	if got := b.SlowGroups(); len(got) != 1 || got[0] != "tcp" {
+		t.Fatalf("SlowGroups = %v, want [tcp]", got)
+	}
+	if b.GroupSkipped("http", true) {
+		t.Fatal("one slow group must not switch other groups off")
+	}
+	if b.GroupSkipped("tcp", false) {
+		t.Fatal("a mandatory group is never skipped")
+	}
+
+	// Still on probation just before the time box ends...
+	r.now = r.now.Add(budgetProbation - time.Second)
+	b.Cycle(r.now, rdCalm, true)
+	if !b.GroupSkipped("tcp", true) {
+		t.Fatal("probation ended early")
+	}
+	// ...and over once it has passed.
+	r.now = r.now.Add(2 * time.Second)
+	b.Cycle(r.now, rdCalm, true)
+	if b.GroupSkipped("tcp", true) {
+		t.Fatal("the group must be tried again after the probation")
+	}
+	// Slow again on that one try: a new probation starts at once.
+	b.GroupTiming("tcp", 2*time.Second, true)
+	if !b.GroupSkipped("tcp", true) {
+		t.Fatal("a slow retry must start a new probation")
+	}
+	// A fast run clears everything.
+	r.now = r.now.Add(budgetProbation + time.Second)
+	b.Cycle(r.now, rdCalm, true)
+	b.GroupTiming("tcp", 50*time.Millisecond, true)
+	b.GroupTiming("tcp", 2*time.Second, true)
+	if b.GroupSkipped("tcp", true) {
+		t.Fatal("a fast run must clear the strikes: one slow run after it is not two in a row")
 	}
 }
 
-func TestBudgetWidensThenCaps(t *testing.T) {
-	cases := []struct {
-		base int
-		want []int // effective interval after each over cycle
-	}{
-		{15, []int{15, 30, 60, 60, 60}},
-		{5, []int{5, 15, 30, 60, 60}},
-		{30, []int{30, 60, 60, 60}},
-		{60, []int{60, 60, 60}},
-	}
-	for _, c := range cases {
-		b := NewBudget(c.base)
-		b.SelfUsage(0.9, wsBytes(10))
-		for i, want := range c.want {
-			b.Cycle()
-			if got := b.EffectiveInterval(); got != want {
-				t.Fatalf("base %d cycle %d: effective = %d, want %d", c.base, i+1, got, want)
-			}
-			if !b.SkipOptional() {
-				t.Fatalf("base %d cycle %d: optional not skipped", c.base, i+1)
-			}
+// A slow mandatory group is never skipped; it makes the window over budget, so
+// the interval widens (after two such windows).
+func TestBudgetMandatorySlowCountsAsOverWindow(t *testing.T) {
+	r := newBudgetRig(t, 15)
+	for w := 0; w < 2; w++ {
+		r.tick(rdCalm)
+		r.b.GroupTiming("diskCpu", 2*time.Second, false)
+		r.b.GroupTiming("diskCpu", 2*time.Second, false)
+		r.tick(rdCalm)
+		r.tick(rdCalm)
+		r.tick(rdCalm)
+		if r.b.GroupSkipped("diskCpu", false) {
+			t.Fatal("a mandatory group must never be skipped")
 		}
 	}
-}
-
-func TestBudgetStepsBackAfterTenCalm(t *testing.T) {
-	b := NewBudget(15)
-	b.SelfUsage(0.9, wsBytes(10))
-	b.Cycle() // skip optional
-	b.Cycle() // 15 -> 30
-	b.Cycle() // 30 -> 60
-	if got := b.EffectiveInterval(); got != 60 {
-		t.Fatalf("effective = %d, want 60 before calm", got)
-	}
-	b.SelfUsage(0.1, wsBytes(1)) // back under budget
-	for i := 0; i < budgetCalmCycles-1; i++ {
-		b.Cycle()
-		if got := b.EffectiveInterval(); got != 60 {
-			t.Fatalf("calm cycle %d stepped back early to %d", i+1, got)
-		}
-		if !b.SkipOptional() {
-			t.Fatalf("calm cycle %d re-enabled optional early", i+1)
-		}
-	}
-	b.Cycle() // the 10th calm cycle steps back
-	if got := b.EffectiveInterval(); got != 30 {
-		t.Fatalf("after 10 calm effective = %d, want 30", got)
-	}
-	if b.SkipOptional() {
-		t.Fatal("optional groups not re-enabled after step-back")
-	}
-	// Calm reset: a further 9 calm cycles must not step back again.
-	for i := 0; i < budgetCalmCycles-1; i++ {
-		b.Cycle()
-		if got := b.EffectiveInterval(); got != 30 {
-			t.Fatalf("calm-reset cycle %d effective = %d, want 30", i+1, got)
-		}
-	}
-	b.Cycle()
-	if got := b.EffectiveInterval(); got != 15 {
-		t.Fatalf("after second 10 calm effective = %d, want 15", got)
+	r.want(30, "two windows with a slow mandatory group widen")
+	if len(r.b.SlowGroups()) != 0 {
+		t.Fatalf("a mandatory group is not on probation: %v", r.b.SlowGroups())
 	}
 }
 
-func TestBudgetNeverBelowBase(t *testing.T) {
-	for _, base := range []int{30, 60} {
-		b := NewBudget(base)
-		b.SelfUsage(0.9, wsBytes(10))
-		b.Cycle()
-		b.Cycle() // widen to 60 (or stay at 60 for base 60)
-		b.SelfUsage(0.1, wsBytes(1))
-		for i := 0; i < 2*budgetCalmCycles; i++ {
-			b.Cycle()
-			if got := b.EffectiveInterval(); got < base {
-				t.Fatalf("base %d: effective %d dropped below base", base, got)
-			}
-		}
-		if got := b.EffectiveInterval(); got != base {
-			t.Fatalf("base %d: effective = %d, want %d", base, got, base)
-		}
+func TestBudgetPersistedStateRestores(t *testing.T) {
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	r := newBudgetRig(t, 15)
+	r.windows(4, rdOver)
+	r.want(60, "widened")
+	r.b.GroupTiming("tcp", 2*time.Second, true)
+	r.b.GroupTiming("tcp", 2*time.Second, true)
+	st := r.b.Persisted()
+	if st.Base != 15 || st.Effective != 60 || len(st.Probation) != 1 || st.Probation[0].Group != "tcp" {
+		t.Fatalf("persisted = %+v", st)
+	}
+
+	// Same base: effective and probation come back.
+	nb := NewBudget(15)
+	nb.Restore(r.now, st)
+	if nb.EffectiveInterval() != 60 {
+		t.Fatalf("restored effective = %d, want 60", nb.EffectiveInterval())
+	}
+	if !nb.GroupSkipped("tcp", true) {
+		t.Fatal("restored probation must still skip the group")
+	}
+
+	// A different base (the owner changed the interval): ignored.
+	nb = NewBudget(30)
+	nb.Restore(r.now, st)
+	if nb.EffectiveInterval() != 30 {
+		t.Fatalf("a state learned at another base must be ignored, got %d", nb.EffectiveInterval())
+	}
+
+	// Probation that already ended is dropped; an effective outside the ladder is ignored.
+	nb = NewBudget(15)
+	nb.Restore(r.now.Add(budgetProbation+time.Minute), st)
+	if nb.GroupSkipped("tcp", true) {
+		t.Fatal("expired probation must not come back")
+	}
+	nb = NewBudget(15)
+	nb.Restore(now, BudgetState{Base: 15, Effective: 600})
+	if nb.EffectiveInterval() != 15 {
+		t.Fatalf("an out-of-range interval must be ignored, got %d", nb.EffectiveInterval())
+	}
+	nb.Restore(now, BudgetState{Base: 15, Effective: 3})
+	if nb.EffectiveInterval() != 15 {
+		t.Fatalf("an interval below base must be ignored, got %d", nb.EffectiveInterval())
 	}
 }
 
-func TestBudgetWSOver(t *testing.T) {
-	cases := []struct {
-		cpu      float64
-		ws       uint64
-		wantSkip bool
-	}{
-		{0.9, wsBytes(10), true},
-		{0.1, wsBytes(60), true},
-		{0.5, wsBytes(50), false}, // exactly at the limits is not over
-		{0.1, wsBytes(10), false},
-		{0.6, 0, true},
-	}
-	for _, c := range cases {
-		b := NewBudget(15)
-		b.SelfUsage(c.cpu, c.ws)
-		b.Cycle()
-		if got := b.SkipOptional(); got != c.wantSkip {
-			t.Fatalf("cpu %v ws %d: SkipOptional = %v, want %v", c.cpu, c.ws, got, c.wantSkip)
-		}
-	}
-}
-
-func TestBudgetFastGroupClearsSlow(t *testing.T) {
-	b := NewBudget(15)
-	b.GroupTiming("http", 1500*time.Millisecond, false)
-	b.GroupTiming("http", 500*time.Millisecond, false)
-	if got := b.SlowGroups(); len(got) != 0 {
-		t.Fatalf("fast timing left slow groups %v", got)
-	}
-	if b.GroupSkipped("http", false) {
-		t.Fatal("cleared group still skipped")
-	}
-	// Exactly at the limit is not slow; just over is.
-	b.GroupTiming("db", budgetMaxGroup, true)
-	if len(b.SlowGroups()) != 0 {
-		t.Fatal("timing exactly at budgetMaxGroup marked slow")
-	}
-	b.GroupTiming("db", budgetMaxGroup+1, true)
-	if got := b.SlowGroups(); !reflect.DeepEqual(got, []string{"db"}) {
-		t.Fatalf("SlowGroups = %v, want [db]", got)
-	}
-}
-
-// TestSlowGroupReprobesAfterSkip checks the livelock fix: a slow mark is a
-// one-cycle skip consumed by NoteSkipped, so a skipped group is re-probed and
-// can never permanently pin the interval.
-func TestSlowGroupReprobesAfterSkip(t *testing.T) {
-	b := NewBudget(15)
-	b.GroupTiming("http", 1500*time.Millisecond, false) // mandatory slow
-	b.Cycle()                                           // widens immediately to 30
-	if got := b.EffectiveInterval(); got != 30 {
-		t.Fatalf("effective = %d, want 30 after mandatory slow cycle", got)
-	}
-	if !b.GroupSkipped("http", false) {
-		t.Fatal("slow group not marked for skip")
-	}
-	// The collector skips the group this cycle and consumes the mark.
-	b.NoteSkipped("http")
-	if got := b.SlowGroups(); len(got) != 0 {
-		t.Fatalf("NoteSkipped left slow groups %v, want empty", got)
-	}
-	if b.GroupSkipped("http", false) {
-		t.Fatal("consumed group still skipped; it would never be re-probed")
-	}
-	// Under budget with no slow marks: 10 calm cycles step back to base.
-	b.SelfUsage(0.1, wsBytes(1))
-	for i := 0; i < budgetCalmCycles; i++ {
-		b.Cycle()
-	}
-	if got := b.EffectiveInterval(); got != 15 {
-		t.Fatalf("after 10 calm effective = %d, want base 15", got)
-	}
-	if got := b.SlowGroups(); len(got) != 0 {
-		t.Fatalf("SlowGroups = %v, want empty", got)
-	}
-	if b.SkipOptional() {
-		t.Fatal("optional groups not re-enabled after step-back")
-	}
-	// A genuinely slow group is re-marked when it runs slow again.
-	b.GroupTiming("http", 2*time.Second, false)
-	if got := b.SlowGroups(); !reflect.DeepEqual(got, []string{"http"}) {
-		t.Fatalf("re-probed slow group not re-marked: %v", got)
-	}
-}
-
-// TestMandatorySlowWidensImmediately checks that a slow MANDATORY group
-// widens on the first over cycle, while an optional-only slow group skips
-// optional first and widens on the next over cycle.
-func TestMandatorySlowWidensImmediately(t *testing.T) {
-	b := NewBudget(15)
-	b.GroupTiming("core", 1500*time.Millisecond, false) // mandatory
-	b.Cycle()
-	if got := b.EffectiveInterval(); got != 30 {
-		t.Fatalf("mandatory slow: first cycle effective = %d, want 30", got)
-	}
-	if !b.SkipOptional() {
-		t.Fatal("mandatory slow: optional groups not skipped")
-	}
-	b.Cycle()
-	if got := b.EffectiveInterval(); got != 60 {
-		t.Fatalf("mandatory slow: second cycle effective = %d, want 60", got)
-	}
-	b.Cycle()
-	if got := b.EffectiveInterval(); got != 60 {
-		t.Fatalf("mandatory slow: effective = %d, want cap 60", got)
-	}
-
-	// Optional-only slow: skip optional first, widen on the next over cycle.
-	o := NewBudget(15)
-	o.GroupTiming("opt", 1500*time.Millisecond, true)
-	o.Cycle()
-	if !o.SkipOptional() {
-		t.Fatal("optional slow: optional groups not skipped")
-	}
-	if got := o.EffectiveInterval(); got != 15 {
-		t.Fatalf("optional slow: first cycle widened to %d, want base 15", got)
-	}
-	o.Cycle()
-	if got := o.EffectiveInterval(); got != 30 {
-		t.Fatalf("optional slow: second cycle effective = %d, want 30", got)
-	}
-
-	// A mandatory slow group widens immediately from a non-15 base too.
-	m := NewBudget(30)
-	m.GroupTiming("core", 2*time.Second, false)
-	m.Cycle()
-	if got := m.EffectiveInterval(); got != 60 {
-		t.Fatalf("base 30 mandatory slow: effective = %d, want 60", got)
-	}
-}
-
-// TestBudgetCycleAllocatesNothing checks the footprint rule: Cycle does only
-// slow-set bookkeeping and integer math, no per-cycle slices.
+// Cycle is on the tick path: it must not allocate.
 func TestBudgetCycleAllocatesNothing(t *testing.T) {
-	over := NewBudget(15)
-	over.SelfUsage(0.9, wsBytes(10))
-	if n := testing.AllocsPerRun(200, func() { over.Cycle() }); n != 0 {
-		t.Fatalf("over-budget Cycle allocated %v per call, want 0", n)
-	}
-	calm := NewBudget(15)
-	if n := testing.AllocsPerRun(200, func() { calm.Cycle() }); n != 0 {
-		t.Fatalf("calm Cycle allocated %v per call, want 0", n)
-	}
-	slow := NewBudget(15)
-	slow.GroupTiming("core", 2*time.Second, false) // exercises mandatorySlow + widen
-	if n := testing.AllocsPerRun(200, func() { slow.Cycle() }); n != 0 {
-		t.Fatalf("mandatory-slow Cycle allocated %v per call, want 0", n)
+	r := newBudgetRig(t, 15)
+	now := r.now
+	n := testing.AllocsPerRun(200, func() {
+		now = now.Add(15 * time.Second)
+		r.b.Cycle(now, rdOver, true)
+	})
+	if n != 0 {
+		t.Fatalf("Cycle allocated %v per call, want 0", n)
 	}
 }
 
@@ -319,7 +358,6 @@ func TestBudgetEffectiveIntervalConcurrentReads(t *testing.T) {
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
 
-	// Readers: hammer EffectiveInterval like the HTTP status handlers.
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
@@ -338,19 +376,18 @@ func TestBudgetEffectiveIntervalConcurrentReads(t *testing.T) {
 		}()
 	}
 
-	// The single tick goroutine: widen toward 60, then step back, repeatedly.
-	// All non-atomic Budget fields are touched only here, as in the real loop.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for round := 0; round < 400; round++ {
-			b.SelfUsage(0.9, wsBytes(10)) // over budget
-			for i := 0; i < 4; i++ {
-				b.Cycle() // widen 15 -> 30 -> 60
+		now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+		for round := 0; round < 200; round++ {
+			for i := 0; i < budgetWindowTicks*budgetOverWindows+budgetWarmupCycles; i++ {
+				now = now.Add(15 * time.Second)
+				b.Cycle(now, rdOver, true)
 			}
-			b.SelfUsage(0.1, wsBytes(1)) // back under budget
-			for i := 0; i < budgetCalmCycles; i++ {
-				b.Cycle() // step back down
+			for i := 0; i < budgetWindowTicks*budgetCalmWindows; i++ {
+				now = now.Add(15 * time.Second)
+				b.Cycle(now, rdCalm, true)
 			}
 		}
 	}()

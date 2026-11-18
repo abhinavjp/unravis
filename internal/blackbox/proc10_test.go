@@ -28,15 +28,15 @@ func proc10Reading(inst, counter string, v float64) CounterReading {
 
 // proc10Instance adds the five expanded paths and one valid reading per counter
 // for a single Process instance (the #N suffix is part of the instance name).
-// ID Process + Creation Time carry the (PID, creation) identity confirming start
+// ID Process + Elapsed Time carry the (PID, creation) identity confirming start
 // (W5-01); the other three are the per-process metrics.
 func proc10Instance(src *proc10FakeSource, inst string, pid float64, start int64, cpu, ws, pb float64) {
-	for _, c := range []string{"ID Process", "Creation Time", "% Processor Time", "Working Set", "Private Bytes"} {
+	for _, c := range []string{"ID Process", "Elapsed Time", "% Processor Time", "Working Set", "Private Bytes"} {
 		src.paths = append(src.paths, proc10Path(inst, c))
 	}
 	src.readings = append(src.readings,
 		proc10Reading(inst, "ID Process", pid),
-		proc10Reading(inst, "Creation Time", creationTicksFor(start)),
+		proc10Reading(inst, "Elapsed Time", elapsedFor(start)),
 		proc10Reading(inst, "% Processor Time", cpu),
 		proc10Reading(inst, "Working Set", ws),
 		proc10Reading(inst, "Private Bytes", pb),
@@ -65,11 +65,14 @@ func newProc10TestGroupFn(t *testing.T, src *proc10FakeSource, targets func() []
 }
 
 // proc10Collect runs n ticks 15 s apart and returns the last group.
-func proc10Collect(t *testing.T, g *proc10Group, n int) *Proc10Group {
+func proc10Collect(t *testing.T, g *proc10Group, src *proc10FakeSource, n int) *Proc10Group {
 	t.Helper()
 	now := time.Unix(1000, 0)
 	var grp *Proc10Group
 	for i := 0; i < n; i++ {
+		if i > 0 {
+			ageElapsed(src.readings, 15)
+		}
 		v, err := g.Collect(now.Add(time.Duration(i)*15*time.Second), 15)
 		if err != nil {
 			t.Fatalf("tick %d: %v", i+1, err)
@@ -90,7 +93,7 @@ func TestProc10PIDMap(t *testing.T) {
 		{Key: "pool:stale", PID: 4321, Start: 0, Runtime: 2}, // Start unconfirmed: omit
 	}
 	g := newProc10TestGroup(t, src, targets, nil)
-	grp := proc10Collect(t, g, 3) // two baselines, then the CPU rate emits
+	grp := proc10Collect(t, g, src, 3) // two baselines, then the CPU rate emits
 	if grp == nil || len(grp.Targets) != 2 {
 		t.Fatalf("targets = %+v, want 2 (selected, Start confirmed)", grp)
 	}
@@ -129,7 +132,7 @@ func TestProc10Net10Only(t *testing.T) {
 		{Key: "svc:unk", PID: 900, Start: 1000, Runtime: 0},
 	}
 	g := newProc10TestGroup(t, src, targets, nil)
-	grp := proc10Collect(t, g, 3)
+	grp := proc10Collect(t, g, src, 3)
 	if grp == nil || len(grp.Targets) != 1 {
 		t.Fatalf("targets = %+v, want only the runtime-2 target", grp)
 	}
@@ -143,7 +146,7 @@ func TestProc10MultiCoreNotCapped(t *testing.T) {
 	proc10Instance(src, "dotnet", 7777, 1000, 250, 1000, 2000)
 	targets := []ResolvedTarget{{Key: "pool:a", PID: 7777, Start: 1000, Runtime: 2}}
 	g := newProc10TestGroup(t, src, targets, nil)
-	grp := proc10Collect(t, g, 3)
+	grp := proc10Collect(t, g, src, 3)
 	if grp == nil || len(grp.Targets) != 1 {
 		t.Fatalf("targets = %+v, want 1", grp)
 	}
@@ -155,23 +158,23 @@ func TestProc10MultiCoreNotCapped(t *testing.T) {
 func TestProc10MissingOmitted(t *testing.T) {
 	src := &proc10FakeSource{}
 	// w3wp: Working Set invalid, the rest valid.
-	for _, c := range []string{"ID Process", "Creation Time", "% Processor Time", "Working Set", "Private Bytes"} {
+	for _, c := range []string{"ID Process", "Elapsed Time", "% Processor Time", "Working Set", "Private Bytes"} {
 		src.paths = append(src.paths, proc10Path("w3wp", c))
 	}
 	src.readings = append(src.readings,
 		proc10Reading("w3wp", "ID Process", 4321),
-		proc10Reading("w3wp", "Creation Time", creationTicksFor(1000)),
+		proc10Reading("w3wp", "Elapsed Time", elapsedFor(1000)),
 		proc10Reading("w3wp", "% Processor Time", 10),
 		CounterReading{Path: proc10Path("w3wp", "Working Set"), Value: 99, Status: 1, OK: false},
 		proc10Reading("w3wp", "Private Bytes", 2000),
 	)
 	// dotnet: instance present (valid identity) but every metric invalid.
-	for _, c := range []string{"ID Process", "Creation Time", "% Processor Time", "Working Set", "Private Bytes"} {
+	for _, c := range []string{"ID Process", "Elapsed Time", "% Processor Time", "Working Set", "Private Bytes"} {
 		src.paths = append(src.paths, proc10Path("dotnet", c))
 	}
 	src.readings = append(src.readings,
 		proc10Reading("dotnet", "ID Process", 7777),
-		proc10Reading("dotnet", "Creation Time", creationTicksFor(1000)),
+		proc10Reading("dotnet", "Elapsed Time", elapsedFor(1000)),
 		CounterReading{Path: proc10Path("dotnet", "% Processor Time"), Value: 1, Status: 1, OK: false},
 		CounterReading{Path: proc10Path("dotnet", "Working Set"), Value: 2, Status: 1, OK: false},
 		CounterReading{Path: proc10Path("dotnet", "Private Bytes"), Value: 3, Status: 1, OK: false},
@@ -182,7 +185,7 @@ func TestProc10MissingOmitted(t *testing.T) {
 		{Key: "pool:noinst", PID: 5555, Start: 1000, Runtime: 2}, // no instance: omit
 	}
 	g := newProc10TestGroup(t, src, targets, nil)
-	grp := proc10Collect(t, g, 3)
+	grp := proc10Collect(t, g, src, 3)
 	if grp == nil || len(grp.Targets) != 1 {
 		t.Fatalf("targets = %+v, want only pool:a", grp)
 	}
@@ -220,6 +223,9 @@ func TestProc10RateGated(t *testing.T) {
 	g := newProc10TestGroup(t, src, targets, nil)
 	now := time.Unix(1000, 0)
 	for i := 0; i < 2; i++ { // two baselines: CPU rate absent, gauges present
+		if i > 0 {
+			ageElapsed(src.readings, 15)
+		}
 		v, err := g.Collect(now.Add(time.Duration(i)*15*time.Second), 15)
 		if err != nil {
 			t.Fatalf("tick %d: %v", i+1, err)
@@ -232,6 +238,7 @@ func TestProc10RateGated(t *testing.T) {
 			t.Fatalf("tick %d: gauges absent", i+1)
 		}
 	}
+	ageElapsed(src.readings, 15)
 	v, err := g.Collect(now.Add(30*time.Second), 15)
 	if err != nil {
 		t.Fatalf("tick 3: %v", err)
@@ -261,6 +268,7 @@ func TestProc10RefreshOnChange(t *testing.T) {
 	// The process set changes: a new instance appears; re-expand once, pick it up.
 	changed = true
 	proc10Instance(src, "dotnet", 7777, 1000, 20, 3000, 4000)
+	ageElapsed(src.readings, 15)
 	v, err := g.Collect(now.Add(15*time.Second), 15)
 	if err != nil {
 		t.Fatal(err)
@@ -272,6 +280,7 @@ func TestProc10RefreshOnChange(t *testing.T) {
 		t.Fatalf("targets = %d, want 2 after re-expansion", len(grp.Targets))
 	}
 	changed = false
+	ageElapsed(src.readings, 15)
 	if _, err := g.Collect(now.Add(30*time.Second), 15); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +301,7 @@ func TestProc10ParenInstance(t *testing.T) {
 	proc10Instance(src, "Svc (x86)", 7777, 1000, 20, 3000, 4000)
 	targets := []ResolvedTarget{{Key: "svc:x86", PID: 7777, Start: 1000, Runtime: 2}}
 	g := newProc10TestGroup(t, src, targets, nil)
-	grp := proc10Collect(t, g, 3)
+	grp := proc10Collect(t, g, src, 3)
 	if grp == nil || len(grp.Targets) != 1 {
 		t.Fatalf("targets = %+v, want the Svc (x86) instance matched", grp)
 	}

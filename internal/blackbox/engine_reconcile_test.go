@@ -122,26 +122,27 @@ func TestEngineReconcileDropsUnsafeHistory(t *testing.T) {
 }
 
 // The same guarantee through the real group: disk/CPU rates keep flowing while
-// the process set changes on every tick.
-func TestDiskCPURatesSurviveProcessChurn(t *testing.T) {
+// the wildcards are re-expanded on every collect (here the ticks are one refresh
+// period apart, so every collect after the first refreshes).
+func TestDiskCPURatesSurviveRefresh(t *testing.T) {
 	p := `\Processor(_Total)\% DPC Time`
 	src := &fakeDiskSource{paths: []string{p}, readings: []CounterReading{okReading(p, 7)}}
 	g := newTestDiskCPU(src)
-	g.changed = func() bool { return true } // churn on every single tick
 	t0 := time.Unix(1000, 0)
+	step := wildcardRefreshEvery
 
 	collectDiskCPU(t, g, t0)
-	collectDiskCPU(t, g, t0.Add(15*time.Second))
+	collectDiskCPU(t, g, t0.Add(step))
 	for i := 2; i <= 21; i++ {
-		grp := collectDiskCPU(t, g, t0.Add(time.Duration(i*15)*time.Second))
+		grp := collectDiskCPU(t, g, t0.Add(time.Duration(i)*step))
 		if grp == nil || grp.CPU == nil || grp.CPU.DPCPct == nil {
-			t.Fatalf("tick %d: DPCPct absent under continuous churn, want a rate after warm-up", i)
+			t.Fatalf("tick %d: DPCPct absent under continuous refresh, want a rate after warm-up", i)
 		}
 		if *grp.CPU.DPCPct != 7 {
 			t.Fatalf("tick %d: DPCPct = %v, want 7", i, *grp.CPU.DPCPct)
 		}
 	}
-	if src.refreshes != 22 {
-		t.Errorf("refreshes = %d, want 22 (the refresh still runs; it just no longer resets rates)", src.refreshes)
+	if src.refreshes != 21 {
+		t.Errorf("refreshes = %d, want 21 (the refresh still runs; it just no longer resets rates)", src.refreshes)
 	}
 }

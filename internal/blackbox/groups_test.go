@@ -126,8 +126,9 @@ func TestGroupCollectorAppliesResult(t *testing.T) {
 
 func TestGroupCollectorSkippedOptional(t *testing.T) {
 	b := NewBudget(15)
-	b.SelfUsage(0.9, wsBytes(10))
-	b.Cycle() // over budget: optional groups skipped
+	// The optional group was slow twice in a row: it is on probation.
+	b.GroupTiming("tcp", 2*time.Second, true)
+	b.GroupTiming("tcp", 2*time.Second, true)
 	opt := &fakeGroup{name: "tcp", optional: true, result: &TCPGroup{}}
 	mand := &fakeGroup{name: "http", result: &HTTPGroup{}}
 	c := NewGroupCollector(&stubCollector{}, []Group{opt, mand}, b)
@@ -139,8 +140,8 @@ func TestGroupCollectorSkippedOptional(t *testing.T) {
 	if s.TCP != nil {
 		t.Fatal("skipped optional group was zero-filled")
 	}
-	if !missingHas(s, "tcp") {
-		t.Fatalf("Missing = %v, want tcp", s.Missing)
+	if !missingHas(s, "tcp: slow") {
+		t.Fatalf("Missing = %v, want tcp: slow", s.Missing)
 	}
 	if s.HTTP == nil {
 		t.Fatal("mandatory group did not run while optional skipped")
@@ -150,14 +151,35 @@ func TestGroupCollectorSkippedOptional(t *testing.T) {
 	}
 }
 
-func TestGroupCollectorSlowGroupMarked(t *testing.T) {
+// A mandatory group is never skipped, however slow it was.
+func TestGroupCollectorMandatorySlowStillRuns(t *testing.T) {
 	b := NewBudget(15)
-	b.GroupTiming("tcp", 2*time.Second, false) // marked slow last cycle
-	g := &fakeGroup{name: "tcp", result: &TCPGroup{}}
+	b.GroupTiming("http", 2*time.Second, false)
+	b.GroupTiming("http", 2*time.Second, false)
+	g := &fakeGroup{name: "http", result: &HTTPGroup{}}
+	c := NewGroupCollector(&stubCollector{}, []Group{g}, b)
+	s, err := c.Collect(time.Now())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if s.HTTP == nil || g.calls != 1 {
+		t.Fatal("a mandatory group must run even when it was slow")
+	}
+	if missingHas(s, "http: slow") {
+		t.Fatalf("Missing = %v, a mandatory group is never marked slow", s.Missing)
+	}
+}
+
+func TestGroupCollectorSlowGroupProbation(t *testing.T) {
+	b := NewBudget(15)
+	start := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	b.Cycle(start, SelfReading{}, false)
+	b.GroupTiming("tcp", 2*time.Second, true)
+	b.GroupTiming("tcp", 2*time.Second, true) // slow twice in a row
+	g := &fakeGroup{name: "tcp", optional: true, result: &TCPGroup{}}
 	c := NewGroupCollector(&stubCollector{}, []Group{g}, b)
 
-	now := time.Now()
-	s, err := c.Collect(now)
+	s, err := c.Collect(start)
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
@@ -170,19 +192,26 @@ func TestGroupCollectorSlowGroupMarked(t *testing.T) {
 	if g.calls != 0 {
 		t.Fatal("slow group ran despite the skip")
 	}
-	if len(b.SlowGroups()) != 0 {
-		t.Fatal("slow mark not consumed by NoteSkipped")
+	// Still skipped on the next tick: the probation is time-boxed, not one cycle.
+	b.Cycle(start.Add(15*time.Second), SelfReading{}, false)
+	if _, err := c.Collect(start.Add(15 * time.Second)); err != nil || g.calls != 0 {
+		t.Fatalf("group ran during the probation (calls %d, err %v)", g.calls, err)
 	}
-	// The mark is one-cycle: the group is re-probed next tick.
-	s2, err := c.Collect(now.Add(15 * time.Second))
+	// After the probation it is tried again, and a fast run clears it.
+	later := start.Add(budgetProbation + time.Minute)
+	b.Cycle(later, SelfReading{}, false)
+	s2, err := c.Collect(later)
 	if err != nil {
 		t.Fatalf("second Collect: %v", err)
 	}
 	if s2.TCP == nil || g.calls != 1 {
-		t.Fatal("slow group not re-probed next cycle")
+		t.Fatal("slow group not re-probed after the probation")
 	}
 	if missingHas(s2, "tcp: slow") {
 		t.Fatalf("second Missing = %v, want no slow mark", s2.Missing)
+	}
+	if len(b.SlowGroups()) != 0 {
+		t.Fatalf("a fast run must clear the probation: %v", b.SlowGroups())
 	}
 }
 
@@ -237,10 +266,12 @@ func TestGroupCollectorMissingDeduped(t *testing.T) {
 
 	// Two slow groups are named separately: a shared token hid which group was slow.
 	b := NewBudget(15)
-	b.GroupTiming("tcp", 2*time.Second, false)
-	b.GroupTiming("http", 2*time.Second, true)
+	for i := 0; i < 2; i++ {
+		b.GroupTiming("tcp", 2*time.Second, true)
+		b.GroupTiming("http", 2*time.Second, true)
+	}
 	c2 := NewGroupCollector(&stubCollector{}, []Group{
-		&fakeGroup{name: "tcp"},
+		&fakeGroup{name: "tcp", optional: true},
 		&fakeGroup{name: "http", optional: true},
 	}, b)
 	s2, err := c2.Collect(time.Now())

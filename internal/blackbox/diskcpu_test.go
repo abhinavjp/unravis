@@ -156,27 +156,29 @@ func TestDiskCPUMissingOmitted(t *testing.T) {
 	}
 }
 
-// Wildcards re-expand only when ProcessSetChanged() reports a change.
-func TestDiskCPURefreshOnChange(t *testing.T) {
+// Wildcards re-expand on a five-minute timer, not when a process comes or goes.
+func TestDiskCPURefreshOnTimer(t *testing.T) {
 	src := &fakeDiskSource{paths: []string{`\System\Processor Queue Length`}}
 	g := newTestDiskCPU(src)
-	changed := false
-	g.changed = func() bool { return changed }
 	t0 := time.Unix(1000, 0)
 
-	collectDiskCPU(t, g, t0)
-	if src.refreshes != 0 {
-		t.Fatalf("refreshes = %d, want 0 without a change", src.refreshes)
-	}
-	changed = true
+	collectDiskCPU(t, g, t0) // arms the timer, no refresh
 	collectDiskCPU(t, g, t0.Add(15*time.Second))
-	if src.refreshes != 1 {
-		t.Fatalf("refreshes = %d, want 1 after ProcessSetChanged", src.refreshes)
+	collectDiskCPU(t, g, t0.Add(wildcardRefreshEvery-time.Second))
+	if src.refreshes != 0 {
+		t.Fatalf("refreshes = %d, want 0 before the timer is due", src.refreshes)
 	}
-	changed = false
-	collectDiskCPU(t, g, t0.Add(30*time.Second))
+	collectDiskCPU(t, g, t0.Add(wildcardRefreshEvery))
 	if src.refreshes != 1 {
-		t.Fatalf("refreshes = %d, want no re-expand without a change", src.refreshes)
+		t.Fatalf("refreshes = %d, want 1 when due", src.refreshes)
+	}
+	collectDiskCPU(t, g, t0.Add(wildcardRefreshEvery+15*time.Second))
+	if src.refreshes != 1 {
+		t.Fatalf("refreshes = %d, want no second expansion inside the period", src.refreshes)
+	}
+	collectDiskCPU(t, g, t0.Add(2*wildcardRefreshEvery))
+	if src.refreshes != 2 {
+		t.Fatalf("refreshes = %d, want 2 after two periods", src.refreshes)
 	}
 }
 

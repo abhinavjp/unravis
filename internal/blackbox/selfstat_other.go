@@ -4,9 +4,12 @@ package blackbox
 
 import "runtime"
 
-// SelfUsage has no self-measurement off Windows: a missing reading, never
-// 0-as-fact.
-func SelfUsage() (cpuPctOfOneCore float64, wsBytes uint64, ok bool) { return 0, 0, false }
+// selfHeap reads the Go heap in use; tick-loop only.
+var selfHeap = newHeapReader()
+
+// SelfUsage off Windows reads only the Go heap: there is no CPU or private-byte
+// reading, so those stay absent (zero), never 0-as-fact.
+func SelfUsage() (SelfReading, bool) { return SelfReading{HeapInUse: selfHeap.read()}, true }
 
 // SetBelowNormalPriority is a no-op off Windows.
 func SetBelowNormalPriority() error { return nil }

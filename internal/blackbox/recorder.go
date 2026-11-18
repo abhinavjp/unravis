@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,9 @@ const (
 const (
 	housekeepEvery = 60 * time.Second
 	logsEvery      = 5 * time.Minute
+	// freeMemEvery is how often the heap is handed back to the OS, right after a
+	// housekeeping pass (the Go scavenger alone returns it late).
+	freeMemEvery = 10 * time.Minute
 	// clockJumpSeconds: when the wall clock moves this much more (or less) than
 	// the steady clock between two ticks, it is recorded as an event.
 	clockJumpSeconds = 2.0
@@ -74,9 +78,10 @@ type RecorderOptions struct {
 	// Budget throttles the loop when the Blackbox itself costs too much.
 	// Optional: nil keeps the configured interval.
 	Budget *Budget
-	// SelfUsage reads the Blackbox's own CPU percent of one core and working
-	// set. Optional: nil skips the measurement. ok=false is a missing reading.
-	SelfUsage func() (float64, uint64, bool)
+	// SelfUsage reads the Blackbox's own cost: CPU percent of one core since the
+	// last reading, Go heap in use, private bytes and handles. Optional: nil
+	// skips the measurement. ok=false is a missing reading (counted as calm).
+	SelfUsage func() (SelfReading, bool)
 }
 
 // RecorderStatus is a snapshot of the recorder for the status page.
@@ -117,6 +122,8 @@ type Recorder struct {
 	forceHK      bool
 	lastSkipMsg  string
 	clockFwd     bool // the wall clock jumped forward since the last housekeeping pass
+	lastFreeMem  time.Time
+	self         selfTracker // this run's own cost; tick goroutine only
 }
 
 // NewRecorder makes a recorder. The caller opened the store and the collector.
@@ -169,27 +176,59 @@ func effectiveInterval(b *Budget, base int) int {
 // Run samples until ctx is done, then closes the run cleanly. The first sample
 // is taken at once.
 func (r *Recorder) Run(ctx context.Context) error {
-	ticks := r.o.Ticks
-	var t *time.Ticker
-	if ticks == nil {
-		t = time.NewTicker(time.Duration(r.o.Config.IntervalSeconds) * time.Second)
-		defer t.Stop()
-		ticks = t.C
-	}
-	r.Tick(r.now())
-	for {
-		select {
-		case <-ctx.Done():
-			return r.stop("stopped")
-		case <-ticks:
-			r.Tick(r.now())
-			// Own ticker only: follow the budget by resetting the one ticker,
-			// never a new one. The o.Ticks test path is unchanged.
-			if t != nil && r.o.Budget != nil {
-				t.Reset(time.Duration(effectiveInterval(r.o.Budget, r.o.Config.IntervalSeconds)) * time.Second)
+	if ticks := r.o.Ticks; ticks != nil {
+		// Test path: the caller drives the ticks.
+		r.Tick(r.now())
+		for {
+			select {
+			case <-ctx.Done():
+				return r.stop("stopped")
+			case <-ticks:
+				r.Tick(r.now())
 			}
 		}
 	}
+	// Deadline scheduling: the next tick is the previous DEADLINE plus the
+	// interval, not the end of the last tick plus the interval, so the cadence
+	// does not drift by the tick duration and follows the budget at once. A
+	// deadline that already passed (a slow tick, a sleeping machine) is skipped,
+	// never run back to back.
+	next := time.Now()
+	r.Tick(r.now())
+	timer := time.NewTimer(time.Hour)
+	defer timer.Stop()
+	for {
+		interval := time.Duration(effectiveInterval(r.o.Budget, r.o.Config.IntervalSeconds)) * time.Second
+		next = nextDeadline(next, time.Now(), interval)
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(time.Until(next))
+		select {
+		case <-ctx.Done():
+			return r.stop("stopped")
+		case <-timer.C:
+			r.Tick(r.now())
+		}
+	}
+}
+
+// nextDeadline is the first deadline after now on the grid prev + k x interval.
+// A prev that is already behind now moves forward by whole intervals, so missed
+// deadlines are skipped. A non-positive interval is treated as one second.
+func nextDeadline(prev, now time.Time, interval time.Duration) time.Time {
+	if interval <= 0 {
+		interval = time.Second
+	}
+	next := prev.Add(interval)
+	if !next.After(now) {
+		missed := now.Sub(next)/interval + 1
+		next = next.Add(missed * interval)
+	}
+	return next
 }
 
 func (r *Recorder) stop(reason string) error {
@@ -219,10 +258,35 @@ func (r *Recorder) Tick(now time.Time) {
 		return
 	}
 
-	r.feedBudget()
+	tickStart := time.Now()
+	reading, haveReading := r.feedBudget(now)
+	feedDur := time.Since(tickStart)
+	var appendDur time.Duration
+	// The self block of this run's record: the reading taken at the top of the
+	// tick plus how long the tick took and where it went. In memory; the
+	// manifest file picks it up at its next write.
+	defer func() {
+		st := r.self.note(now, reading, haveReading, time.Since(tickStart))
+		c := &r.self.cur
+		c.FeedMs = round1(float64(feedDur) / float64(time.Millisecond))
+		c.AppendMs = round1(float64(appendDur) / float64(time.Millisecond))
+		c.HostMs, c.SlowGroup, c.SlowGroupMs = 0, "", 0
+		if t, ok := r.o.Collector.(interface {
+			Timings() (time.Duration, string, time.Duration)
+		}); ok {
+			h, n, d := t.Timings()
+			c.HostMs, c.SlowGroup = round1(float64(h)/float64(time.Millisecond)), n
+			c.SlowGroupMs = round1(float64(d) / float64(time.Millisecond))
+		}
+		st = *c
+		r.o.Store.SetSelf(st)
+	}()
 	if r.o.Budget != nil {
-		// Gaps are judged against the interval this run actually ticks at, so
-		// a widened budget does not fabricate a gap between on-time samples.
+		// What the budget settled on survives a restart; SetInterval is written
+		// only when the interval changes. Gaps are judged against the interval
+		// this run actually ticks at, so a widened budget does not fabricate a
+		// gap between on-time samples.
+		r.o.Store.SetBudget(r.o.Budget.Persisted())
 		r.o.Store.SetInterval(effectiveInterval(r.o.Budget, r.o.Config.IntervalSeconds))
 	}
 
@@ -253,7 +317,10 @@ func (r *Recorder) Tick(now time.Time) {
 	if r.resumedFlag {
 		hint = CauseDiskLow
 	}
-	if err := r.o.Store.Append(s, hint); err != nil {
+	appendStart := time.Now()
+	err = r.o.Store.Append(s, hint)
+	appendDur = time.Since(appendStart)
+	if err != nil {
 		r.mu.Lock()
 		first := r.writeOK
 		r.writeOK = false
@@ -279,19 +346,19 @@ func (r *Recorder) Tick(now time.Time) {
 }
 
 // feedBudget measures the Blackbox's own cost and advances the budget one
-// cycle, before the collector runs. A missing reading (ok=false) skips the
-// update — never 0-as-fact — and never blocks the tick.
-func (r *Recorder) feedBudget() {
-	b := r.o.Budget
-	if b == nil {
-		return
-	}
+// cycle, before the collector runs. A missing reading (ok=false) is never
+// 0-as-fact: it counts as calm and never blocks the tick. The reading is
+// returned for the self block.
+func (r *Recorder) feedBudget(now time.Time) (SelfReading, bool) {
+	var rd SelfReading
+	ok := false
 	if r.o.SelfUsage != nil {
-		if cpu, ws, ok := r.o.SelfUsage(); ok {
-			b.SelfUsage(cpu, ws)
-		}
+		rd, ok = r.o.SelfUsage()
 	}
-	b.Cycle()
+	if b := r.o.Budget; b != nil {
+		b.Cycle(now, rd, ok)
+	}
+	return rd, ok
 }
 
 // checkClock compares how far the wall clock moved with how far the steady
@@ -323,6 +390,15 @@ func (r *Recorder) housekeep(now time.Time) {
 		// the age rule out for this pass; size and free space still apply.
 		lim.SkipAge, r.clockFwd = true, false
 	}
+	// Hand the heap back to the OS every freeMemEvery, right after the pass.
+	defer func() {
+		if r.lastFreeMem.IsZero() || now.Before(r.lastFreeMem) {
+			r.lastFreeMem = now
+		} else if now.Sub(r.lastFreeMem) >= freeMemEvery {
+			r.lastFreeMem = now
+			debug.FreeOSMemory()
+		}
+	}()
 	res, err := housekeepFn(r.o.Store, lim, r.o.Disk, now)
 	if err != nil {
 		code := eventCode(err)

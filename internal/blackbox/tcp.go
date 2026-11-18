@@ -17,6 +17,8 @@ func tcpRatePaths() []string {
 		`\TCPv6\Segments Retransmitted/sec`,
 		`\TCPv4\Connections Reset`,
 		`\TCPv6\Connections Reset`,
+		`\TCPv4\Connection Failures`,
+		`\TCPv6\Connection Failures`,
 	}
 }
 
@@ -24,12 +26,23 @@ func tcpRatePaths() []string {
 // the interfaces PDH enumerates). First expansion of this object is slow
 // (~1.5 s), so it is only used after the host is already listening.
 func tcpPaths() []string {
-	return append(tcpRatePaths(), `\Network Interface(*)\Output Queue Length`)
+	return append(tcpRatePaths(),
+		`\Network Interface(*)\Output Queue Length`,
+		`\Network Interface(*)\Packets Received Discarded`,
+		`\Network Interface(*)\Packets Outbound Errors`)
 }
+
+// tcpMaxInterfaces caps how many adapters each per-adapter counter follows. A
+// host with hundreds of virtual adapters (containers, VPNs) must not make the
+// sampler track hundreds of series; the cap keeps the cost flat and the sum is
+// still labeled by how many adapters it covers.
+const tcpMaxInterfaces = 64
 
 const (
 	tcpQueuePrefix = `\Network Interface(`
 	tcpQueueSuffix = `\Output Queue Length`
+	tcpDiscSuffix  = `\Packets Received Discarded`
+	tcpOutErrSuffix = `\Packets Outbound Errors`
 	// tcpRowStride is the MIB_TCPROW2 size (7 DWORDs). Only dwState at
 	// offset 0 is ever read; addresses, ports and PIDs are never copied.
 	tcpRowStride = 28
@@ -63,25 +76,38 @@ type tcpGroup struct {
 	src       CounterSource
 	eng       *Engine
 	cores     int
-	changed   func() bool
+	refresh   refreshTimer
 	owned     bool // factory created the source: Close owns it
-	queueKeys []string
-	counts    func() (tcpStates, error) // injected in tests
-	upgraded  bool                      // one-time lazy wildcard expansion attempted
+ queueKeys []string
+	discKeys  []string
+	outErrKeys []string
+	counts    func() (tcpStates, error)             // injected in tests
+	openWild  func([]string) (CounterSource, error) // the slow expansion; a seam for tests
+	upgraded  bool                                  // one-time lazy wildcard expansion started
+	warm      chan CounterSource                    // the background expansion; nil once taken
 }
 
 func newTCPGroup(d GroupDeps) (Group, error) {
 	src, owned := d.Source, false
 	if src == nil {
-		p, err := NewPDHSource(tcpRatePaths())
+		p, err := NewPDHSourceTolerant(tcpRatePaths())
 		if err != nil {
 			return nil, err // no PDH (non-Windows): group skipped
 		}
 		src, owned = p, true
 	}
-	g := &tcpGroup{src: src, cores: d.Cores, changed: d.ProcessSetChanged, owned: owned, counts: tcpTableCounts}
+	g := &tcpGroup{src: src, cores: d.Cores, owned: owned, counts: tcpTableCounts, openWild: openPDH}
 	g.rebuild(tcpPathsOf(src))
 	return g, nil
+}
+
+// openPDH opens the real PDH source; the nil interface is returned on failure.
+func openPDH(paths []string) (CounterSource, error) {
+	p, err := NewPDHSource(paths)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 func (g *tcpGroup) Name() string   { return "tcp" }
@@ -99,7 +125,7 @@ func tcpPathsOf(src CounterSource) []string {
 // instances start their two-baseline gate again.
 func (g *tcpGroup) rebuild(paths []string) {
 	specs := make([]CounterSpec, 0, len(paths))
-	g.queueKeys = nil
+	g.queueKeys, g.discKeys, g.outErrKeys = nil, nil, nil
 	for _, p := range paths {
 		switch p {
 		case `\TCPv4\Segments Retransmitted/sec`:
@@ -113,10 +139,26 @@ func (g *tcpGroup) rebuild(paths []string) {
 			specs = append(specs, CounterSpec{Path: p, Field: "reset4", Kind: KindRate})
 		case `\TCPv6\Connections Reset`:
 			specs = append(specs, CounterSpec{Path: p, Field: "reset6", Kind: KindRate})
+		case `\TCPv4\Connection Failures`:
+			specs = append(specs, CounterSpec{Path: p, Field: "fail4", Kind: KindRate})
+		case `\TCPv6\Connection Failures`:
+			specs = append(specs, CounterSpec{Path: p, Field: "fail6", Kind: KindRate})
 		default:
-			if strings.HasPrefix(p, tcpQueuePrefix) && strings.HasSuffix(p, tcpQueueSuffix) {
+			if !strings.HasPrefix(p, tcpQueuePrefix) {
+				continue
+			}
+			switch {
+			case strings.HasSuffix(p, tcpQueueSuffix) && len(g.queueKeys) < tcpMaxInterfaces:
 				specs = append(specs, CounterSpec{Path: p, Field: p, Kind: KindGauge})
 				g.queueKeys = append(g.queueKeys, p)
+			// Discarded and outbound-error packets are cumulative counts: the
+			// engine turns them into a per-second delta with a reset guard.
+			case strings.HasSuffix(p, tcpDiscSuffix) && len(g.discKeys) < tcpMaxInterfaces:
+				specs = append(specs, CounterSpec{Path: p, Field: p, Kind: KindRate})
+				g.discKeys = append(g.discKeys, p)
+			case strings.HasSuffix(p, tcpOutErrSuffix) && len(g.outErrKeys) < tcpMaxInterfaces:
+				specs = append(specs, CounterSpec{Path: p, Field: p, Kind: KindRate})
+				g.outErrKeys = append(g.outErrKeys, p)
 			}
 		}
 	}
@@ -126,32 +168,54 @@ func (g *tcpGroup) rebuild(paths []string) {
 }
 
 // upgrade swaps in a source that also expands the Network Interface wildcard.
-// That first expansion is slow, so it is deferred past host startup to the
-// first Collect (the status server is already listening by then). One attempt
-// only: on failure the rate-only source is kept and OutboundQueue stays nil.
-// Injected sources are never swapped. The fresh engine re-gates the rates.
+// That first expansion is slow (about 1.5 s), so it runs in the background and
+// never on the tick path: the first Collect starts it, and a later Collect swaps
+// the new source in once it is ready. Until then the rate-only source answers, so
+// the group is never slow because of the expansion (PERF-16). One attempt only:
+// on failure the rate-only source is kept and OutboundQueue stays nil. Injected
+// sources are never swapped. The fresh engine re-gates the rates.
 func (g *tcpGroup) upgrade() {
-	if g.upgraded || !g.owned {
+	if !g.owned {
 		return
 	}
-	g.upgraded = true
-	p, err := NewPDHSource(tcpPaths())
-	if err != nil {
+	if g.warm == nil {
+		if g.upgraded {
+			return
+		}
+		g.upgraded = true
+		ch := make(chan CounterSource, 1)
+		g.warm = ch
+		open := g.openWild
+		go func() {
+			p, err := open(tcpPaths())
+			if err != nil {
+				p = nil
+			}
+			ch <- p
+		}()
 		return
 	}
-	old := g.src
-	g.src = p
-	g.rebuild(tcpPathsOf(p))
-	_ = old.Close()
+	select {
+	case p := <-g.warm:
+		g.warm = nil
+		if p == nil {
+			return
+		}
+		old := g.src
+		g.src = p
+		g.rebuild(tcpPathsOf(p))
+		_ = old.Close()
+	default:
+	}
 }
 
 func (g *tcpGroup) Collect(now time.Time, _ float64) (any, error) {
 	g.upgrade()
-	// Re-expand wildcards only when the process set changed, never per tick.
-	// A refresh failure keeps the previous expansion and must NOT suppress the
+	// Re-expand wildcards on a slow timer (they follow network adapters, not
+	// processes), never per tick (PERF-06). A refresh failure keeps the previous expansion and must NOT suppress the
 	// independent rate and state reads below (W6-04): the PDH wildcard side and
 	// the GetTcpTable2 side fail on their own.
-	if g.changed != nil && g.changed() {
+	if g.refresh.due(now) {
 		if r, ok := g.src.(interface{ RefreshInstances() error }); ok {
 			if err := r.RefreshInstances(); err == nil {
 				g.rebuild(tcpPathsOf(g.src))
@@ -176,6 +240,23 @@ func (g *tcpGroup) Collect(now time.Time, _ float64) (any, error) {
 				v := a + b
 				grp.ResetsPerSec, have = &v, true
 			}
+		}
+		// Connection failures: sum whichever families are present.
+		fail, nf := 0.0, 0
+		for _, k := range [...]string{"fail4", "fail6"} {
+			if v, ok := out[k]; ok {
+				fail += v
+				nf++
+			}
+		}
+		if nf > 0 {
+			grp.ConnFailuresPerSec, have = &fail, true
+		}
+		if v, ok := sumKeys(out, g.discKeys); ok {
+			grp.DiscardedPerSec, have = &v, true
+		}
+		if v, ok := sumKeys(out, g.outErrKeys); ok {
+			grp.OutErrorsPerSec, have = &v, true
 		}
 		var sum float64
 		n := 0
@@ -212,9 +293,33 @@ func (g *tcpGroup) Collect(now time.Time, _ float64) (any, error) {
 	return &grp, nil
 }
 
+// sumKeys adds the readings of the given fields; ok is false when none was read.
+func sumKeys(out map[string]float64, keys []string) (float64, bool) {
+	var sum float64
+	n := 0
+	for _, k := range keys {
+		if v, ok := out[k]; ok {
+			sum += v
+			n++
+		}
+	}
+	return sum, n > 0
+}
+
 // Close releases the query handle only when the factory created the source.
 func (g *tcpGroup) Close() error {
 	if g.owned {
+		if g.warm != nil {
+			// The background expansion is still running: whoever finishes it
+			// closes the source it built.
+			ch := g.warm
+			g.warm = nil
+			go func() {
+				if p := <-ch; p != nil {
+					_ = p.Close()
+				}
+			}()
+		}
 		return g.src.Close()
 	}
 	return nil

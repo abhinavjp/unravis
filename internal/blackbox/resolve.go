@@ -110,11 +110,43 @@ func moduleBase(p string) string {
 	return p
 }
 
+// sqlServerImage is the SQL Server engine's process image name.
+const sqlServerImage = "sqlservr.exe"
+
+// sqlProcessSig is an order-independent signature of the SQL Server engine
+// processes in procs: it changes when one starts, stops or restarts, and not for
+// any other process. 0 means none. A hash collision could only delay a
+// re-discovery until the slow safety net in the sqlHost group.
+func sqlProcessSig(procs []ProcInfo) uint64 {
+	var sig uint64
+	for i := range procs {
+		p := &procs[i]
+		if len(p.Name) != len(sqlServerImage) || !strings.EqualFold(p.Name, sqlServerImage) {
+			continue
+		}
+		x := (uint64(p.PID)+1)*0x9E3779B97F4A7C15 ^ uint64(identityTicks(*p))*0xC2B2AE3D27D4EB4F
+		x ^= x >> 29
+		sig += x | 1
+	}
+	return sig
+}
+
 // processSetChanged reports whether the set of (PID, start) keys differs.
 // Order-independent; a recycled PID (same PID, new start) is a change.
 func processSetChanged(prev, cur []procKey) bool {
 	if len(prev) != len(cur) {
 		return true
+	}
+	// The common case: the same processes in the same order. No map needed.
+	same := true
+	for i := range prev {
+		if prev[i] != cur[i] {
+			same = false
+			break
+		}
+	}
+	if same {
+		return false
 	}
 	counts := make(map[procKey]int, len(prev))
 	for _, k := range prev {
@@ -155,6 +187,7 @@ type Resolver struct {
 	mu sync.Mutex
 
 	snapshotFn    func() ([]ProcInfo, error)
+	liteFn        func() ([]ProcInfo, error) // PID/parent/name only; nil means use snapshotFn
 	loadModulesFn func(pid uint32) ([]string, error)
 	instancesFn   func() ([]string, error)  // W3SVC_W3WP counter instances (BBX-1-11)
 	servicesFn    func() ([]svcProc, error) // running services with PIDs (BBX-1-11)
@@ -171,6 +204,7 @@ type Resolver struct {
 
 	changedLast []procKey // process set at the last ProcessSetChanged call
 
+	sqlSig      uint64           // signature of the sqlservr.exe processes at the last snapshot
 	gen         uint64           // monotonic inventory generation (W3-03)
 	lastTargets []ResolvedTarget // resolved targets at the last target comparison
 }
@@ -207,7 +241,7 @@ func (r *Resolver) Generation() uint64 {
 func (r *Resolver) Inventory() ([]ProcInfo, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	procs, keys, setChanged, err := r.snapshotLocked()
+	procs, keys, setChanged, err := r.snapshotLocked(false)
 	if err != nil {
 		return nil, err
 	}
@@ -222,14 +256,23 @@ func (r *Resolver) Inventory() ([]ProcInfo, error) {
 // whether the set changed since the last inventory, advances the baseline and
 // prunes retired identities from the cache. Callers must hold mu. On a snapshot
 // error the baseline is kept so the next good snapshot still detects the change.
-func (r *Resolver) snapshotLocked() ([]ProcInfo, []procKey, bool, error) {
-	procs, err := r.snapshotFn()
+//
+// lite takes the cheap enumeration (no creation times) when one is wired. It is
+// only for a tick with no selected targets, where no identity is needed and the
+// only question is whether the set of PIDs changed (PERF-04).
+func (r *Resolver) snapshotLocked(lite bool) ([]ProcInfo, []procKey, bool, error) {
+	fn := r.snapshotFn
+	if lite && r.liteFn != nil {
+		fn = r.liteFn
+	}
+	procs, err := fn()
 	if err != nil {
 		return nil, nil, false, err
 	}
 	keys := keysOf(procs)
 	setChanged := !r.haveLast || processSetChanged(r.last, keys)
 	r.last, r.haveLast = keys, true
+	r.sqlSig = sqlProcessSig(procs)
 	r.pruneCache(keys)
 	return procs, keys, setChanged, nil
 }
