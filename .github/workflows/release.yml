@@ -125,6 +125,9 @@ jobs:
         # (SEC-FIX-01). A rebuild here would give a different file and break the pin.
         run: ./build-blackbox.ps1 -Reuse -Version "${{ steps.tag.outputs.version }}"
 
+      # When SignPath signing is wired up, sign unravis-blackbox.exe BEFORE the pin is computed and
+      # unravis.exe is built. Signing it afterwards changes its bytes and the app's pin (the helper
+      # hash check) would then refuse it on every elevation.
       - name: Check the app is pinned to the packed Blackbox
         shell: pwsh
         run: |

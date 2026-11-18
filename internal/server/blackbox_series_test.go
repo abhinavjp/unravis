@@ -118,3 +118,11 @@ func keysOf(ls []bbSeriesLine) []string {
 	}
 	return out
 }
+
+func TestBBSeriesUnitMsNeedsCapitalMs(t *testing.T) {
+	for key, want := range map[string]string{"host.diskMs": "ms", "sqlHost.lockWaitTimeMs": "ms", "iis.items": "count", "x.queueItems": "count"} {
+		if got := bbSeriesUnit(key); got != want {
+			t.Errorf("bbSeriesUnit(%q) = %q, want %q", key, got, want)
+		}
+	}
+}

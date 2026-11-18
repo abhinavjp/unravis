@@ -431,7 +431,11 @@ func (c *groupCollector) Collect(now time.Time) (Sample, error) {
 			s.Missing = append(s.Missing, name+": slow")
 			continue
 		}
-		c.runGroup(i, g, now, dt, &s)
+		// Groups read their counters after the host read and after earlier groups,
+		// so the tick's start is already behind the real counter sample. Hand each
+		// group the tick time moved on by the real time spent, so the process start
+		// derived from Elapsed Time stays inside pdhCreationSlack on a busy server.
+		c.runGroup(i, g, now.Add(time.Since(hostStart)), dt, &s)
 	}
 	s.Missing = dedupMissing(s.Missing)
 	return s, nil

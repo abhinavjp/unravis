@@ -249,7 +249,7 @@ func bbSeriesUnit(key string) string {
 		return "pct"
 	case strings.HasSuffix(l, "bytes") || l == "memavail" || l == "memcommit" || l == "workingset":
 		return "bytes"
-	case strings.HasSuffix(l, "ms") || strings.HasSuffix(l, "timems"):
+	case strings.HasSuffix(last, "Ms"): // case-sensitive: "items" is a count, "diskMs" is time
 		return "ms"
 	case l == "netinbps" || l == "netoutbps":
 		return "bytesPerSec"

@@ -13,6 +13,8 @@ func TestMemPressureExtraCounters(t *testing.T) {
 		memReading(`\Memory\Pages/sec`, 40),
 		memReading(`\Memory\Page Faults/sec`, 900),
 		memReading(`\Memory\Standby Cache Normal Priority Bytes`, 2<<30),
+		memReading(`\Memory\Standby Cache Reserve Bytes`, 1<<30),
+		memReading(`\Memory\Standby Cache Core Bytes`, 256<<20),
 		memReading(`\Memory\Modified Page List Bytes`, 64<<20),
 		memReading(`\Memory\Free & Zero Page List Bytes`, 512<<20),
 	}}
@@ -30,7 +32,7 @@ func TestMemPressureExtraCounters(t *testing.T) {
 	if grp.PageFaultsPerSec == nil || *grp.PageFaultsPerSec != 900 {
 		t.Fatalf("PageFaultsPerSec = %v, want 900", grp.PageFaultsPerSec)
 	}
-	if grp.StandbyBytes == nil || *grp.StandbyBytes != 2<<30 {
+	if grp.StandbyBytes == nil || *grp.StandbyBytes != 2<<30+1<<30+256<<20 {
 		t.Fatalf("StandbyBytes = %v", grp.StandbyBytes)
 	}
 	if grp.ModifiedBytes == nil || *grp.ModifiedBytes != 64<<20 {

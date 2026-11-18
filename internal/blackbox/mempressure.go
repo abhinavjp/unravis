@@ -19,6 +19,8 @@ var memPressurePaths = []string{
 	`\Memory\Pages/sec`,
 	`\Memory\Page Faults/sec`,
 	`\Memory\Standby Cache Normal Priority Bytes`,
+	`\Memory\Standby Cache Reserve Bytes`,
+	`\Memory\Standby Cache Core Bytes`,
 	`\Memory\Modified Page List Bytes`,
 	`\Memory\Free & Zero Page List Bytes`,
 }
@@ -34,7 +36,10 @@ func memPressureSpecs() []CounterSpec {
 		{Path: `\Paging File(_Total)\% Usage`, Field: "pageFileUsagePct", Kind: KindGauge},
 		{Path: `\Memory\Pages/sec`, Field: "pagesPerSec", Kind: KindPDHRate},
 		{Path: `\Memory\Page Faults/sec`, Field: "pageFaultsPerSec", Kind: KindPDHRate},
+		// Windows splits the standby list in three priority bands; the field is their sum.
 		{Path: `\Memory\Standby Cache Normal Priority Bytes`, Field: "standbyBytes", Kind: KindGauge},
+		{Path: `\Memory\Standby Cache Reserve Bytes`, Field: "standbyReserveBytes", Kind: KindGauge},
+		{Path: `\Memory\Standby Cache Core Bytes`, Field: "standbyCoreBytes", Kind: KindGauge},
 		{Path: `\Memory\Modified Page List Bytes`, Field: "modifiedBytes", Kind: KindGauge},
 		{Path: `\Memory\Free & Zero Page List Bytes`, Field: "freeBytes", Kind: KindGauge},
 	}
@@ -98,7 +103,7 @@ func (g *memPressureGroup) Collect(now time.Time, _ float64) (any, error) {
 	if v, ok := out["pageFaultsPerSec"]; ok {
 		grp.PageFaultsPerSec = &v
 	}
-	grp.StandbyBytes = memBytes(out, "standbyBytes")
+	grp.StandbyBytes = memBytesSum(out, "standbyBytes", "standbyReserveBytes", "standbyCoreBytes")
 	grp.ModifiedBytes = memBytes(out, "modifiedBytes")
 	grp.FreeBytes = memBytes(out, "freeBytes")
 	return &grp, nil
@@ -111,6 +116,22 @@ func memBytes(out map[string]float64, field string) *uint64 {
 		return &u
 	}
 	return nil
+}
+
+// memBytesSum adds the byte gauges that were read; nil only when none was.
+func memBytesSum(out map[string]float64, fields ...string) *uint64 {
+	var total uint64
+	var any bool
+	for _, f := range fields {
+		if v, ok := out[f]; ok && v >= 0 {
+			total += uint64(v)
+			any = true
+		}
+	}
+	if !any {
+		return nil
+	}
+	return &total
 }
 
 // Close releases the query handle only when the factory created the source.
