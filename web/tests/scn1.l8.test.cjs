@@ -187,9 +187,10 @@ test('D-B-49: the heading shows the real part, for example "Part 2 of 4: Where"'
   const rail = read('src/components/blackboxWizard/ProgressRail.svelte');
   assert.match(rail, /aria-label=\{`Progress, step \$\{current \+ 1\} of \$\{steps\.length\}`\}/);
   assert.match(rail, /aria-current=\{index === current \? 'step' : undefined\}/);
-  assert.match(rail, /aria-label=\{`\$\{step\.label\}, step \$\{index \+ 1\}`\}/);
+  assert.match(rail, /aria-label=\{`\$\{step\.label\}, step \$\{index \+ 1\}\$\{step\.skipped \? ', skipped' : ''\}`\}/);
   const wizard = read('src/components/BlackboxPlaceWizard.svelte');
-  assert.match(wizard, /<ProgressRail steps=\{railSteps\} current=\{index\} maxSeen=\{wizard\.maxSeen\}/);
+  assert.match(wizard, /<ProgressRail steps=\{railSteps\} current=\{railCurrent\} maxSeen=\{railMax\}/);
+  assert.match(wizard, /const railCurrent = \$derived\(ALL\.indexOf\(wizard\.step\)\);/);
   assert.match(wizard, /const index = \$derived\(list\.indexOf\(wizard\.step\)\);/);
   assert.ok(blackboxCopyEntries().some((entry) => entry.id === 'blackbox.partHeading'), 'the lint reads partHeading');
 });
@@ -237,7 +238,7 @@ test('D-B-50: fieldProblemNow keeps a message only while that field is still wro
 
 test('D-B-50: each settings field has an id, an error line and aria-describedby that names it', () => {
   const fields = read('src/components/BlackboxSettings.svelte');
-  assert.match(fields, /problem = null, targetMode = 'pc' \}: \{ settings: Settings; logPathsText: string; idPrefix\?: string; problem\?: SettingsProblem \| null; targetMode\?: 'pc' \| 'manual' \}/);
+  assert.match(fields, /problem = null, targetMode = 'pc', lockReached = false \}: \{ settings: Settings; logPathsText: string; idPrefix\?: string; problem\?: SettingsProblem \| null; targetMode\?: 'pc' \| 'manual'; lockReached\?: boolean \}/);
   assert.match(fields, /\{#snippet fieldError\(key: SettingsProblem\)\}/);
   assert.match(fields, /<p class="inline-error" id="\{idPrefix\}-\{key\}-error" role="alert">\{T\.settingProblems\[key\]\}<\/p>/);
   for (const key of ['interval', 'keep', 'size', 'free', 'folder', 'port', 'bind', 'logs']) {
@@ -267,8 +268,8 @@ test('D-B-50: the pop-up and Apply put a field problem beside the field and focu
   const panel = read('src/components/BlackboxPanel.svelte');
   assert.match(panel, /const applyFieldShown = \$derived\(fieldProblemNow\(applyField, applySettings, applyLogs\)\);/);
   assert.match(panel, /applyField = first;\s*await tick\(\);\s*body\?\.querySelector<HTMLElement>\('#bb-apply-f-' \+ first\)\?\.focus\(\);/);
-  assert.match(panel, /idPrefix="bb-apply" problem=\{applyFieldShown\} \/>/);
-  assert.match(panel, /applyProblem = refusalText\(error, BB_REFUSAL\);/);
+  assert.match(panel, /idPrefix="bb-apply" problem=\{applyFieldShown\} lockReached \/>/);
+  assert.match(panel, /applyProblem = failed\(error\);/);
 });
 
 test('D-C-24: in the light theme the OK tone and the three sticker fills pass 4.5:1, and both light blocks agree', () => {

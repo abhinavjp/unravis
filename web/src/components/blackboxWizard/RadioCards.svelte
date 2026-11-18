@@ -3,10 +3,14 @@
     legend,
     options,
     value = $bindable(),
-    disabled = false
+    disabled = false,
+    hideLegend = false
   }: {
+    /** Hidden from the eye (still read out) when the step title already says it, as the wireframe does for Where and Watch. */
+    hideLegend?: boolean;
     legend: string;
-    options: { value: T; title: string; description: string; disabled?: boolean; disabledReason?: string }[];
+    /** `tags` are the small outlined chips after the title ("simplest", "Windows drive"); `warn` tints one amber. */
+    options: { value: T; title: string; description: string; tags?: { text: string; warn?: boolean }[]; disabled?: boolean; disabledReason?: string }[];
     value: T | null;
     disabled?: boolean;
   } = $props();
@@ -15,7 +19,7 @@
 </script>
 
 <fieldset {disabled}>
-  <legend>{legend}</legend>
+  <legend class:sr={hideLegend}>{legend}</legend>
   <div class="cards">
     {#each options as option, index (option.value)}
       <label class:chosen={value === option.value} class:unavailable={option.disabled || disabled}>
@@ -29,7 +33,7 @@
           aria-describedby={`${name}-description-${index}${option.disabledReason ? ` ${name}-reason-${index}` : ''}`}
         />
         <span class="copy">
-          <strong>{option.title}</strong>
+          <strong>{option.title}{#each option.tags ?? [] as tag (tag.text)} <span class="tag" class:warn={tag.warn}>{tag.text}</span>{/each}</strong>
           <span id={`${name}-description-${index}`}>{option.description}</span>
           {#if option.disabledReason}
             <span class="reason" id={`${name}-reason-${index}`}>{option.disabledReason}</span>
@@ -42,16 +46,22 @@
 
 <style>
   fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
-  legend { margin-bottom: var(--space-2); padding: 0; color: var(--text); font-weight: 600; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: var(--space-2); }
-  label { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 40px; min-height: 44px; padding: var(--space-2) var(--space-3); border: 1px solid var(--control-line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); cursor: pointer; }
-  label:hover:not(.unavailable) { background: var(--surface-2); }
-  label.chosen { border-color: var(--accent); background: var(--surface-2); }
+  legend { margin-bottom: var(--space-2); padding: 0; color: var(--text); font-weight: 500; }
+  legend.sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  /* The wireframe's radio card: one card per row, a whole-row target, the chosen one tinted. */
+  .cards { display: grid; gap: var(--space-3); }
+  label { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--space-3); min-width: 40px; min-height: 44px; padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); cursor: pointer; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
+  label:hover:not(.unavailable) { border-color: var(--control-line); }
+  label.chosen { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
   label:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
   label.unavailable { cursor: not-allowed; }
   label.unavailable input { opacity: .6; }
-  input { flex: 0 0 auto; margin: 3px 0 0; accent-color: var(--accent); }
+  input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); }
   .copy { display: grid; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
-  .copy > span { color: var(--text-2); }
+  .copy strong { font-weight: 600; }
+  .copy > span { color: var(--text-2); font-size: var(--fs-3); line-height: 1.3; }
   .reason { font-weight: 500; }
+  /* Inline, like the wireframe's .tag: an inline chip's vertical padding and border never lift the 20px title line. */
+  .tag { padding: 1px var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--text-2); font-size: var(--fs-2); white-space: nowrap; }
+  .tag.warn { color: var(--warn); border-color: var(--warn); }
 </style>

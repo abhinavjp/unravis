@@ -240,7 +240,7 @@
 </dialog>
 
 <style>
-  dialog.pop { width: min(680px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100vh - 48px); max-height: calc(100dvh - 48px); margin: auto; padding: 0; overflow: hidden; color: var(--text); background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-md); box-shadow: 0 24px 64px var(--scrim); }
+  dialog.pop { font-size: 14px; width: min(680px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100vh - 48px); max-height: calc(100dvh - 48px); margin: auto; padding: 0; overflow: hidden; color: var(--text); background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-md); box-shadow: 0 24px 64px var(--scrim); }
   dialog.pop::backdrop { background: var(--scrim); }
   /* The drawer styles every details/summary inside it with a chevron and a gap. This dialog sits inside the drawer, so undo that here. */
   :global(dialog.pop.pop details > summary) { gap: 0; }
@@ -253,17 +253,17 @@
   dialog.pop[open] { animation: pop-in var(--dur) var(--ease); }
   @keyframes pop-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
-  .frame { position: relative; display: grid; max-height: inherit; min-height: min(640px, calc(100dvh - 48px)); }
+  .frame { position: relative; display: grid; max-height: inherit; }
   .shell { position: relative; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; max-height: calc(100vh - 50px); max-height: calc(100dvh - 50px); min-height: 0; }
   /* The right side is kept clear for the close button (12px in, 40px wide, 8px gap), so the last dot never sits under it. A rail
      that is wider than what is left scrolls sideways. */
-  .shell-rail { min-width: 0; padding: var(--space-5) calc(var(--space-3) + 40px + var(--space-2)) 0 var(--space-6); }
-  .shell-head { display: grid; gap: var(--space-1); padding: var(--space-4) calc(var(--space-6) + 32px) var(--space-4) var(--space-6); border-bottom: 1px solid var(--hairline); }
+  .shell-rail { min-width: 0; padding: var(--space-5) var(--space-6) 0 var(--space-6); }
+  .shell-head { display: grid; gap: var(--space-1); padding: var(--space-5) var(--space-6) var(--space-4); border-bottom: 1px solid var(--hairline); }
   .shell-body { display: grid; align-content: start; gap: var(--space-5); min-height: 0; padding: var(--space-6); overflow: auto; }
   .shell-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-4) var(--space-6); border-top: 1px solid var(--hairline); background: var(--surface); }
 
   /* The close button sits in the top corner, 40px square. */
-  .x { position: absolute; top: var(--space-3); right: var(--space-3); z-index: 2; display: grid; place-items: center; width: 40px; height: 40px; padding: 0; color: var(--text-2); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); font-size: 22px; line-height: 1; }
+  .x { position: absolute; top: var(--space-3); right: var(--space-3); z-index: 2; display: grid; place-items: center; width: 40px; height: 40px; padding: 0; color: var(--text-2); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); font-size: var(--fs-6); line-height: 1; }
   .x:hover { color: var(--text); background: var(--surface-2); }
 
   /* The leave question covers the pop-up. The rest of the pop-up is inert while it shows. */

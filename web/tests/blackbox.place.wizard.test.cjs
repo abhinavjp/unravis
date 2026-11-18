@@ -91,9 +91,10 @@ test('A: on Review Enter acts only through the button, and a held-down Enter is 
 
 test('B: the rail leaves room for the close button so the x never covers the last dot (defect B)', () => {
   // Not visually verified (no build allowed in this pass): the rule is that the rail's right padding clears the 40px close button, also at phone width.
+  // Desktop follows the wireframe (24px each side; the last label ends before the 40px x). Phone width hides the other labels, so only it keeps the extra room.
   const rails = dialogSource.match(/\.shell-rail \{[^}]*\}/g) || [];
   assert.ok(rails.length >= 2, 'a desktop and a phone-width rule');
-  for (const rule of rails) assert.match(rule, /padding:[^;]*calc\(var\(--space-\d\) \+ 40px \+ var\(--space-\d\)\)/, rule);
+  assert.match(rails[rails.length - 1], /padding:[^;]*calc\(var\(--space-\d\) \+ 40px \+ var\(--space-\d\)\)/, rails[rails.length - 1]);
 });
 
 test('D: a refused Next opens a closed Advanced section before it focuses the field (defect D)', () => {
@@ -136,8 +137,8 @@ test('H: every step that starts with a text field marks it, and a step change fo
   assert.match(dialogSource, /aria-live/, 'the step is still announced to a screen reader');
 });
 
-test('I: the Keep step has the "use defaults, go to review" shortcut, and it resets the keep numbers (defect I)', () => {
-  assert.match(wrapper, /wizard\.step === 'keep'\)\s*\)/);
+test('I: the "use defaults, go to review" link shows on Record, SQL and Watch only, as in the wireframe, and still resets the keep numbers when asked on Keep (defect I)', () => {
+  assert.match(wrapper, /wizard\.step === 'record' \|\| wizard\.step === 'sql' \|\| wizard\.step === 'watch'\)/);
   assert.match(wrapper, /useDefaultsToReview\(wizard, wizard\.step === 'keep'\)/);
 });
 

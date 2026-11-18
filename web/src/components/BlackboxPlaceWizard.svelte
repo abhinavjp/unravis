@@ -80,7 +80,11 @@
   const finished = $derived(phase.kind === 'installed' || phase.kind === 'pack' || partial);
   const showingResult = $derived(phase.kind === 'installed' || phase.kind === 'pack' || phase.kind === 'failed');
   const problem = $derived(stepProblem(wizard, wizard.step));
-  const railSteps = $derived(list.map((id) => ({ id, label: W[('rail.' + id) as `rail.${StepId}`] })));
+  // The rail always shows all eight steps (the wireframe): a step this path does not need, such as SQL, stays in place, greyed.
+  const ALL: StepId[] = ['name', 'where', 'record', 'sql', 'watch', 'keep', 'folder', 'review'];
+  const railSteps = $derived(ALL.map((id) => ({ id, label: W[('rail.' + id) as `rail.${StepId}`], skipped: !list.includes(id) })));
+  const railCurrent = $derived(ALL.indexOf(wizard.step));
+  const railMax = $derived(ALL.indexOf(list[Math.min(wizard.maxSeen, list.length - 1)] ?? 'name'));
 
   const TITLE: Record<StepId, string> = {
     name: W['step.name.title'], where: W['step.where.title'], record: W['step.record.title'], sql: W['step.sql.title'],
@@ -94,16 +98,10 @@
     folder: wizard.where === 'pack' ? W['step.folder.leadPack'] : W['step.folder.lead'],
     review: W['step.review.lead']
   });
-  // Name, Where and Watch print their own help inside the step, so the header does not repeat it.
-  const HELP: Partial<Record<StepId, string>> = {
-    record: W['step.record.help'], sql: W['step.sql.help'], keep: W['step.keep.help'], folder: W['step.folder.help'], review: W['step.review.help']
-  };
-
   const headTitle = $derived(
     phase.kind === 'installed' ? W['result.placedTitle'] : phase.kind === 'pack' ? W['result.packTitle'] : TITLE[wizard.step]
   );
   const headLead = $derived(showingResult ? '' : LEAD[wizard.step]);
-  const headHelp = $derived(showingResult ? '' : (HELP[wizard.step] ?? ''));
 
   const outcome = $derived.by((): ResultOutcome | null => {
     if (phase.kind === 'installed') return { kind: 'installed', answer: phase.answer };
@@ -304,7 +302,8 @@
   );
   const canBack = $derived(!showingResult && index > 0);
   const canDefaults = $derived(
-    !showingResult && (wizard.step === 'record' || wizard.step === 'sql' || wizard.step === 'watch' || wizard.step === 'keep')
+    !showingResult && wizard.returnTo === null &&
+    (wizard.step === 'record' || wizard.step === 'sql' || wizard.step === 'watch')
   );
   // Enter must never place or build from the page: on Review only the Place or Build button itself acts (its own click).
   const enterNeedsButton = $derived(wizard.step === 'review' && phase.kind === 'idle');
@@ -350,14 +349,14 @@
 >
   {#snippet rail()}
     {#if !showingResult}
-      <ProgressRail steps={railSteps} current={index} maxSeen={wizard.maxSeen} disabled={busy || checking} onGo={railGo} />
+      <ProgressRail steps={railSteps} current={railCurrent} maxSeen={railMax} disabled={busy || checking} onGo={(i) => railGo(list.indexOf(ALL[i]))} />
     {/if}
   {/snippet}
 
   {#snippet header()}
+    {#if !showingResult}<p class="eyebrow">{W['head.eyebrow']} · {W['head.step']} {railCurrent + 1} of {ALL.length}</p>{/if}
     <h2 id={titleId} class="head-title">{headTitle}</h2>
     {#if headLead}<p class="head-lead">{headLead}</p>{/if}
-    {#if headHelp}<p class="head-help">{headHelp}</p>{/if}
   {/snippet}
 
   {#snippet body()}
@@ -388,8 +387,8 @@
         <StepFolder bind:wizard {attempted} />
       {:else}
         <StepReview bind:wizard disabled={busy || checking} onChange={reviewChanged} />
-        <div class="review-status" aria-live="polite">
-          {#if checking}<p class="status">{W['review.checking']}</p>{/if}
+        <div class="review-status">
+          {#if checking}<p class="status" role="status">{W['review.checking']}</p>{/if}
           {#if busy}<p class="status" role="status">{wizard.where === 'pc' ? BB_TEXT.installing : BB_TEXT.building}</p>{/if}
           {#if reviewProblem}<p class="problem" role="alert">{reviewProblem}</p>{/if}
         </div>
@@ -401,14 +400,14 @@
     {#if canBack}
       <button type="button" class="secondary-button" disabled={busy || checking} onclick={goBack}>{W['footer.back']}</button>
     {/if}
+    <span class="spacer"></span>
+    {#if canDefaults}
+      <button type="button" class="quiet-button" disabled={busy || checking} onclick={useDefaults}>{W['footer.useDefaults']}</button>
+    {/if}
     {#if whereBlocked}
       <p class="saved-note" id={nextReasonId}>{W['where.nextOff']}</p>
     {:else if !showingResult}
       <p class="saved-note calm">{W['footer.nothingSaved']}</p>
-    {/if}
-    <span class="spacer"></span>
-    {#if canDefaults}
-      <button type="button" class="quiet-button" disabled={busy || checking} onclick={useDefaults}>{W['footer.useDefaults']}</button>
     {/if}
     <button
       type="button"
@@ -422,22 +421,29 @@
 </WizardDialog>
 
 <style>
-  .head-title { margin: 0; font-size: var(--fs-6); line-height: 1.25; }
+  .eyebrow { margin: 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 500; letter-spacing: .4px; }
+  .head-title { margin: 0; font-size: var(--fs-6); font-weight: 600; line-height: 1.25; }
   .head-title:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
-  .head-lead { margin: 0; color: var(--text); font-size: var(--fs-4); }
-  .head-help { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
+  .head-lead { margin: 0; color: var(--text-2); font-size: var(--fs-4); }
   .step-body { display: grid; gap: var(--space-4); min-width: 0; }
   .review-status { display: grid; gap: var(--space-2); }
   .status { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .problem { margin: 0; color: var(--bad); font-size: var(--fs-3); overflow-wrap: anywhere; }
-  .saved-note { flex: 1 1 12rem; margin: 0; color: var(--text-2); font-size: var(--fs-3); }
+  .saved-note { flex: 0 1 auto; margin: 0; color: var(--text-2); font-size: var(--fs-2); }
   .spacer { flex: 1 1 0; }
-  .primary-button, .secondary-button, .quiet-button { min-height: 44px; padding: 0 var(--space-5); }
+  .primary-button, .secondary-button { min-height: 40px; padding: 0 var(--space-5); font-size: var(--fs-4); font-weight: 500; }
+  .primary-button { min-width: 112px; }
+  .secondary-button { border: 1px solid transparent; background: transparent; color: var(--text-2); }
+  .secondary-button:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+  .quiet-button { min-height: 32px; padding: var(--space-2) var(--space-1); border: 0; background: transparent; color: var(--text-2); font: inherit; text-decoration: underline; text-underline-offset: 3px; }
+  .quiet-button:hover:not(:disabled) { color: var(--text); }
   /* On a phone the footer has two rows: "Use defaults", then Back and the main button side by side. The reassurance line
-     "Nothing is saved until the last step" is left out there to give the step more room; the Review step says it too. The
+     "Nothing saved until the last step" is left out there to give the step more room; the Review step says it too. The
      line that says why Next is off stays. */
   @media (max-width: 640px) {
     .saved-note { order: 0; flex: 0 0 100%; }
+    .spacer { display: none; }
+    .primary-button { margin-left: auto; }
     .saved-note.calm { display: none; }
     .quiet-button { order: 1; flex: 0 0 100%; }
     .secondary-button { order: 2; }

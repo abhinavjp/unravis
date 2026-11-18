@@ -125,26 +125,31 @@
     return bytes >= TB ? (bytes / TB).toFixed(1) + ' TB' : Math.round(bytes / GB) + ' GB';
   }
 
+  // The wireframe puts the labels ("picked for you", "Windows drive") as small chips after the drive name and keeps
+  // the space line plain under it.
+  function tagsOf(drive: DriveInfo): { text: string; warn?: boolean }[] {
+    const tags: { text: string; warn?: boolean }[] = [];
+    if (drive.letter.toUpperCase() === defaultLetter && !defaultPath.needsSystemTick) tags.push({ text: W['folder.pickedForYou'] });
+    if (drive.system) tags.push({ text: W['folder.windowsDrive'], warn: true });
+    else if (drive.type === 'removable') tags.push({ text: W['folder.driveUsb'] });
+    else if (drive.type === 'network') tags.push({ text: W['folder.driveNetwork'] });
+    return tags;
+  }
+
   function describe(drive: DriveInfo): string {
-    const parts: string[] = [];
-    const l = drive.letter.toUpperCase();
-    if (l === defaultLetter && !defaultPath.needsSystemTick) parts.push(W['folder.pickedForYou']);
-    if (drive.system) parts.push(W['folder.windowsDrive']);
-    else if (drive.type === 'removable') parts.push(W['folder.driveUsb']);
-    else if (drive.type === 'network') parts.push(W['folder.driveNetwork']);
-    parts.push(
+    const space =
       drive.freeBytes !== null && drive.totalBytes !== null
         ? W['folder.space'](formatBytes(drive.freeBytes), formatBytes(drive.totalBytes))
-        : W['folder.spaceUnknown']
-    );
-    return parts.join(' · ');
+        : W['folder.spaceUnknown'];
+    return drive.system ? space + ' · ' + W['folder.notAdvised'] : space;
   }
 
   const options = $derived(
     cards.map((d) => ({
       value: d.letter.toUpperCase(),
       title: d.letter.toUpperCase() + ': ' + d.label,
-      description: describe(d)
+      description: describe(d),
+      tags: tagsOf(d)
     }))
   );
 
@@ -192,9 +197,9 @@
       {#if options.length > 0}
         <div class="cards">
           <RadioCards legend={W['folder.drive']} {options} bind:value={() => selectedLetter, pickDrive} />
-          {#if defaultPath.needsSystemTick}
-            <p class="note">{W['folder.noOtherDrive'](systemLetter)}</p>
-          {/if}
+          <p class="note">
+            {#if defaultPath.needsSystemTick}{W['folder.noOtherDrive'](systemLetter)} {/if}{W['folder.hideNote']}
+          </p>
         </div>
       {:else}
         <p class="note" role="status">{W['folder.noDrives']}</p>
@@ -248,60 +253,63 @@
   <details class="advanced" bind:open={advancedOpen}>
     <summary>{W['folder.advanced']}</summary>
     <div class="advanced-body">
-      <div class="field">
-        <label for={portId}>{W['folder.port']}</label>
-        <input
-          id={portId}
-          class="short"
-          type="text"
-          inputmode="numeric"
-          value={portText}
-          autocomplete="off"
-          aria-invalid={portProblem ? 'true' : undefined}
-          aria-describedby={portHelpId + (portProblem ? ' ' + portErrorId : '')}
-          oninput={(e) => typePort(e.currentTarget.value)}
-        />
-        <p class="hint" id={portHelpId}>{W['folder.portHelp']}</p>
-        {#if portProblem}<p class="error" role="alert" id={portErrorId}>{portProblem}</p>{/if}
+      <div class="row">
+        <div class="field port-field">
+          <label for={portId}>{W['folder.port']}</label>
+          <input
+            id={portId}
+            class="short"
+            type="text"
+            inputmode="numeric"
+            value={portText}
+            autocomplete="off"
+            aria-invalid={portProblem ? 'true' : undefined}
+            aria-describedby={portHelpId + (portProblem ? ' ' + portErrorId : '')}
+            oninput={(e) => typePort(e.currentTarget.value)}
+          />
+        </div>
+        <div class="field bind-field">
+          <label for={bindId}>{W['folder.bind']}</label>
+          <input
+            id={bindId}
+            type="text"
+            value={wizard.settings.bind}
+            spellcheck="false"
+            autocomplete="off"
+            aria-invalid={bindProblem ? 'true' : undefined}
+            aria-describedby={bindHelpId + (bindProblem ? ' ' + bindErrorId : '')}
+            oninput={(e) => typeBind(e.currentTarget.value)}
+          />
+        </div>
       </div>
-
-      <div class="field">
-        <label for={bindId}>{W['folder.bind']}</label>
-        <input
-          id={bindId}
-          class="medium"
-          type="text"
-          value={wizard.settings.bind}
-          spellcheck="false"
-          autocomplete="off"
-          aria-invalid={bindProblem ? 'true' : undefined}
-          aria-describedby={bindHelpId + (bindProblem ? ' ' + bindErrorId : '')}
-          oninput={(e) => typeBind(e.currentTarget.value)}
-        />
-        <p class="hint" id={bindHelpId}>
-          {wizard.settings.bind.trim() === '127.0.0.1' ? W['folder.bindSafe'] : W['folder.bindOther']}
-        </p>
-        {#if bindProblem}<p class="error" role="alert" id={bindErrorId}>{bindProblem}</p>{/if}
-        {#if listensOnAll(wizard.settings.bind)}
-          <p class="notice" role="note">{W['folder.bindWarning']}</p>
-        {/if}
-      </div>
+      {#if portProblem}<p class="error" role="alert" id={portErrorId}>{portProblem}</p>{/if}
+      {#if bindProblem}<p class="error" role="alert" id={bindErrorId}>{bindProblem}</p>{/if}
+      <p class="hint" id={bindHelpId}>
+        <span class="port-help" id={portHelpId}>{W['folder.portHelp']}</span>
+        {wizard.settings.bind.trim() === '127.0.0.1' ? W['folder.bindSafe'] : W['folder.bindOther']}
+      </p>
+      {#if listensOnAll(wizard.settings.bind)}
+        <p class="notice" role="note">{W['folder.bindWarning']}</p>
+      {/if}
     </div>
   </details>
 </div>
 
 <style>
-  .step { display: grid; gap: var(--space-4); min-width: 0; }
+  .step { display: grid; gap: var(--space-5); min-width: 0; }
   .cards { display: grid; gap: var(--space-2); }
-  .field { display: grid; gap: var(--space-1); min-width: 0; }
-  label { color: var(--text); font-weight: 600; }
-  input[type='text'] { box-sizing: border-box; width: 100%; min-height: 44px; padding: var(--space-2) var(--space-3); border: 1px solid var(--control-line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; }
-  input[type='text'].path { font-family: var(--mono); }
-  input[type='text'].short { max-width: 140px; }
-  input[type='text'].medium { max-width: 320px; }
-  input[type='text']:focus-visible, input[type='checkbox']:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .field { display: grid; gap: var(--space-2); min-width: 0; }
+  label { color: var(--text); font-weight: 500; }
+  input[type='text'] { box-sizing: border-box; width: 100%; min-height: 44px; padding: 0 var(--space-3); border: 1px solid var(--control-line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; }
+  input[type='text'].path { font-family: var(--mono); font-size: 13px; }
+  input[type='text'].short { width: 120px; }
+  input[type='text']:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
+  input[type='checkbox']:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   input[aria-invalid='true'] { border-color: var(--bad); }
-  .hint, .note { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+  .row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3); }
+  .port-field { flex: 0 0 auto; }
+  .bind-field { flex: 1 1 180px; }
+  .hint, .note { margin: 0; color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; }
   .error { margin: 0; color: var(--bad); font-weight: 600; overflow-wrap: anywhere; }
   .notice { margin: 0; padding-left: var(--space-3); border-left: 3px solid var(--warn); color: var(--text); overflow-wrap: anywhere; }
   .link { display: inline-flex; align-items: center; min-width: 40px; min-height: 44px; padding: 0 var(--space-1); border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
@@ -309,7 +317,10 @@
   .confirm { display: grid; gap: var(--space-1); padding: var(--space-3); border: 1px solid var(--warn); border-radius: var(--radius-sm); }
   .tick { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; font-weight: 600; cursor: pointer; }
   .tick input { flex: 0 0 auto; width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
-  .advanced summary { display: flex; align-items: center; width: fit-content; min-height: 44px; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  .advanced { padding-top: var(--space-3); border-top: 1px solid var(--line); }
+  .advanced summary { display: flex; align-items: center; min-height: 40px; color: var(--text-2); font-weight: 500; cursor: pointer; }
   .advanced summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-sm); }
-  .advanced-body { display: grid; gap: var(--space-4); padding-top: var(--space-2); }
+  .advanced-body { display: grid; gap: var(--space-4); padding: var(--space-2) 0; }
+  /* The port help takes its own row inside the Advanced hint, so the bind text under it never runs into it. */
+  .port-help { display: block; }
 </style>

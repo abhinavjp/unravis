@@ -73,10 +73,10 @@
 </div>
 
 <style>
-  .name-step { display: grid; gap: var(--space-2); max-width: 420px; min-width: 0; }
-  .name-label { color: var(--text); font-size: var(--fs-3); font-weight: 600; }
-  .name-input { box-sizing: border-box; width: 100%; min-height: 44px; padding: var(--space-1) var(--space-2); color: var(--text); font: inherit; background: var(--surface); border: 1px solid var(--control-line); border-radius: var(--radius-sm); }
-  .name-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .name-step { display: grid; gap: var(--space-2); min-width: 0; }
+  .name-label { color: var(--text); font-size: var(--fs-4); font-weight: 500; }
+  .name-input { box-sizing: border-box; width: 100%; min-height: 44px; padding: 0 var(--space-3); color: var(--text); font: inherit; background: var(--surface); border: 1px solid var(--control-line); border-radius: var(--radius-sm); }
+  .name-input:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
   .name-input[aria-invalid='true'] { border-color: var(--bad); }
-  .name-hint { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
+  .name-hint { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
 </style>

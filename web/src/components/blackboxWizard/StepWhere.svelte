@@ -53,7 +53,7 @@
 </script>
 
 <div class="where-step">
-  <RadioCards legend={BBW_TEXT['rail.where']} {options} bind:value={choice} />
+  <RadioCards legend={BBW_TEXT['rail.where']} hideLegend {options} bind:value={choice} />
   {#if choices.scanFailed}
     <p class="where-notice" role="status">{BBW_TEXT['where.scanFailed']}</p>
   {/if}
@@ -64,7 +64,7 @@
 </div>
 
 <style>
-  .where-step { display: grid; gap: var(--space-3); min-width: 0; }
+  .where-step { display: grid; gap: var(--space-5); min-width: 0; }
   .where-notice { margin: 0; padding-left: var(--space-3); border-left: 3px solid var(--warn); color: var(--text); overflow-wrap: anywhere; }
-  .where-help { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
+  .where-help { margin: 0; color: var(--text-2); font-size: 13px; }
 </style>

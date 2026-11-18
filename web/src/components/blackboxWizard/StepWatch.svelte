@@ -20,16 +20,14 @@
   let pickerOpened = $state(wizard.watchMode === 'some');
   $effect(() => { if (wizard.watchMode === 'some') pickerOpened = true; });
 
-  const options: { value: WatchMode; title: string; description: string }[] = [
-    { value: 'none', title: W['watch.noneTitle'], description: W['watch.noneText'] },
+  const options: { value: WatchMode; title: string; description: string; tags?: { text: string }[] }[] = [
+    { value: 'none', title: W['watch.noneTitle'], description: W['watch.noneText'], tags: [{ text: W['watch.simplest'] }] },
     { value: 'some', title: W['watch.someTitle'], description: W['watch.someText'] }
   ];
 </script>
 
 <div class="step">
-  <p class="note">{W['step.watch.help']}</p>
-
-  <RadioCards legend={W['watch.legend']} {options} bind:value={wizard.watchMode} />
+  <RadioCards legend={W['watch.legend']} hideLegend {options} bind:value={wizard.watchMode} />
 
   {#if wizard.watchMode === 'none' && count > 0}
     <!-- Picked names are hidden, not lost; buildSettings sends [] while this choice stays. -->
@@ -59,10 +57,10 @@
 </div>
 
 <style>
-  .step { display: grid; gap: var(--space-3); min-width: 0; }
+  .step { display: grid; gap: var(--space-5); min-width: 0; }
   .note { margin: 0; color: var(--text-2); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
-  .picker { display: grid; gap: var(--space-3); min-width: 0; padding-top: var(--space-3); border-top: 1px solid var(--line); }
+  .picker { display: grid; gap: var(--space-3); min-width: 0; }
   .picker[hidden] { display: none; }
-  .count { margin: 0; font-weight: 600; color: var(--text); }
-  .honest { margin: 0; padding-left: var(--space-4); display: grid; gap: var(--space-1); color: var(--text-2); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+  .count { margin: 0; color: var(--text-2); font-size: 13px; }
+  .honest { margin: 0; padding-left: var(--space-4); display: grid; gap: var(--space-1); color: var(--text-2); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 </style>

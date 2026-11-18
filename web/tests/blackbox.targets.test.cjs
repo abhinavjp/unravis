@@ -958,7 +958,7 @@ test('the panel carries one visually-hidden status region that renders the annou
   assert.doesNotMatch(comp, /\{#if announcement\}/, 'the region is never conditional');
   assert.doesNotMatch(comp, /aria-hidden=\{?announcement|hidden=\{?announcement/, 'it is hidden by CSS only, never from assistive tech');
   // Visually hidden the usual way, so it takes no room but is still read.
-  assert.match(comp, /\.bb-sr \{[^}]*position: absolute;[^}]*width: 1px;[^}]*height: 1px;[^}]*clip-path: inset\(50%\);/);
+  assert.match(read('src/app.css'), /\.bb-sr \{[^}]*position: absolute;[^}]*width: 1px;[^}]*height: 1px;[^}]*clip-path: inset\(50%\);/);
   // It renders in the page itself, empty, in both modes.
   pcBridge.result = null; pcBridge.failed = false;
   for (const { html } of [renderStep(), renderPcStep()]) {

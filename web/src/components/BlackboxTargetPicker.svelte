@@ -278,7 +278,6 @@
 
 <style>
   .bb-picker { display: grid; gap: var(--space-2); min-width: 0; margin: 0; padding: 0; border: 0; }
-  .bb-note { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
   .bb-warn { color: var(--text); border-left: 3px solid var(--warn); padding-left: var(--space-2); }
   .bb-picker .inline-error { margin: 0; max-width: 420px; }
   .bb-field { display: grid; gap: 4px; font-size: 13px; font-weight: 500; }
@@ -301,5 +300,4 @@
   /* The ring is drawn inside the chip, so it stays whole next to the chip's own border. */
   .bb-chip-x:focus-visible { outline-offset: -2px; }
   /* UX-7: the announcement is read but never seen: no room on the page, nothing hidden from assistive tech. */
-  .bb-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 </style>

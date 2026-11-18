@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { BlackboxError, blackboxApi, needsKey, refusalText, shownTime, type BlackboxItem, type StateInfo, type TestAnswer } from '../lib/blackbox';
-  import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
+  import { BlackboxError, blackboxApi, guessKind, needsKey, refusalText, shownTime, type BlackboxItem, type StateInfo, type TestAnswer } from '../lib/blackbox';
+  import { BB_REFUSAL, BB_TEXT as T, addFailReasonsFor, ageWords, intervalWords } from '../lib/copy/blackboxCopy';
   import Sticker from './BlackboxSticker.svelte';
 
   // Add a Blackbox that already runs: by folder, network share, or address and port. No network scan.
@@ -85,7 +85,7 @@
     <p class="bb-note" id="bb-add-name-help">{T.addNameHelp}</p>
     {#if wantsKey}
       <label class="bb-field"><span>{T.addKey}</span>
-        <input type={showKey ? 'text' : 'password'} bind:value={key} autocomplete="off" spellcheck="false" aria-invalid={keyBad ? 'true' : undefined} aria-describedby={keyBad ? 'bb-add-key-help bb-add-error' : 'bb-add-key-help'} oninput={() => { if (keyBad) problem = ''; }} />
+        <input type={showKey ? 'text' : 'password'} bind:value={key} autocomplete="off" spellcheck="false" aria-invalid={keyBad ? 'true' : undefined} aria-describedby={keyBad ? 'bb-add-key-help bb-add-error' : 'bb-add-key-help'} oninput={() => { if (keyBad) problem = ''; }} onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} />
       </label>
       <label class="bb-check"><input type="checkbox" bind:checked={showKey} /><span>{T.addKeyShow}</span></label>
       <p class="bb-note" id="bb-add-key-help">{T.addKeyHelp}</p>
@@ -93,29 +93,31 @@
     {/if}
   </section>
 
-  <div aria-live="polite">
+  <div>
     {#if problem}<div class="inline-error" id="bb-add-error" role="alert">{problem}</div>{/if}
     {#if outcome.kind === 'working'}<p class="bb-note" role="status">{outcome.what === 'add' ? T.adding : T.checking}</p>{/if}
     {#if outcome.kind === 'checked'}
       <div class="bb-result" role="status">
         <p><Sticker info={outcome.answer.state} /> <strong>{outcome.answer.name}</strong></p>
         <p class="bb-note">{outcome.answer.state.detail}</p>
-        {#if outcome.answer.facts}<p class="bb-note">{T.lastSample}: {shownTime(outcome.answer.facts.lastSample)}. {T.samplesEvery} {outcome.answer.facts.intervalSeconds} {T.seconds}.</p>{/if}
+        {#if outcome.answer.facts}<p class="bb-note">{T.lastSample}: {ageWords(outcome.answer.facts.lastSample) || shownTime(outcome.answer.facts.lastSample)}. {intervalWords(outcome.answer.facts.intervalSeconds, outcome.answer.facts.effectiveIntervalSeconds)}.</p>{/if}
+        <p class="bb-note">{T.addLooksGood}</p>
       </div>
     {/if}
     {#if outcome.kind === 'failed'}
       <div class="inline-error" role="alert">
         <strong>{T.addFailTitle}</strong>
         <p>{outcome.text}</p>
+        {#if outcome.state?.detail}<p>{outcome.state.detail}</p>{/if}
         <p>{T.addNothingChanged}</p>
       </div>
       <details class="bb-reasons">
         <summary>{T.addFailLikely}</summary>
-        <ul>{#each T.addFailReasons as reason, i (i)}<li>{reason}</li>{/each}</ul>
+        <ul>{#each addFailReasonsFor(guessKind(location)) as reason, i (i)}<li>{reason}</li>{/each}</ul>
       </details>
     {/if}
     {#if outcome.kind === 'duplicate'}
-      <div class="notice" role="alert">
+      <div class="notice" role="status">
         <strong>{T.duplicateTitle}</strong>
         <p>{T.duplicateText(outcome.existing.name)}</p>
         <button type="button" class="secondary-button" onclick={() => { if (outcome.kind === 'duplicate') onOpen(outcome.existing); }}>{T.duplicateOpen}</button>
@@ -135,13 +137,11 @@
   .bb-add h3 { margin: 0; font-size: var(--fs-5); font-weight: 600; }
   .bb-block { display: grid; gap: var(--space-2); margin: 0; padding: 0; border: 0; min-width: 0; }
   .bb-block h4 { margin: 0; font-size: 14px; font-weight: 600; }
-  .bb-note { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
   .bb-field { display: grid; gap: 4px; font-size: 13px; font-weight: 500; }
   .bb-field input { width: 100%; max-width: 460px; padding: 6px 8px; font: inherit; font-weight: 400; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-sizing: border-box; }
   .bb-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
   .bb-result p { margin: 0 0 4px; font-size: 13px; }
   .bb-reasons { margin-top: var(--space-2); font-size: 13px; }
   .bb-reasons ul { margin: var(--space-2) 0 0; padding-left: 18px; display: grid; gap: 4px; color: var(--text-2); }
-  .bb-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .inline-error p, .notice p { margin: 4px 0 0; }
 </style>

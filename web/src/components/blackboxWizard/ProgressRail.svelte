@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
 
   let { steps, current, maxSeen, disabled, onGo }: {
-    steps: { id: string; label: string }[];
+    steps: { id: string; label: string; skipped?: boolean }[];
     current: number;
     maxSeen: number;
     disabled: boolean;
@@ -34,15 +34,16 @@
 <div class="progress">
   <ol class="rail" role="list" aria-label={`Progress, step ${current + 1} of ${steps.length}`} bind:this={rail}>
     {#each steps as step, index (step.id)}
-      <li class:past={index < current} class:current={index === current}>
+      <li class:past={index < current && !step.skipped} class:skipped={step.skipped} class:current={index === current}>
         <button
           type="button"
-          disabled={disabled || index > maxSeen}
+          disabled={disabled || step.skipped || index > maxSeen}
           aria-current={index === current ? 'step' : undefined}
-          aria-label={`${step.label}, step ${index + 1}`}
+          aria-label={`${step.label}, step ${index + 1}${step.skipped ? ', skipped' : ''}`}
+          title={step.skipped ? 'Not needed for this choice' : undefined}
           onclick={() => onGo(index)}
         >
-          <span class="dot" aria-hidden="true">{index + 1}</span>
+          <span class="dot" aria-hidden="true">{#if index < current && !step.skipped}✓{:else}{index + 1}{/if}</span>
           <span class="label">{step.label}</span>
         </button>
       </li>
@@ -54,77 +55,84 @@
 <style>
   .rail {
     display: flex;
-    margin: 0;
+    margin: var(--space-4) 0 0;
     padding: 0;
     list-style: none;
     overflow-x: auto;
   }
   .rail li {
+    flex: 1;
     position: relative;
-    flex: 1 0 40px;
     min-width: 0;
     text-align: center;
+    font-size: var(--fs-2);
+    color: var(--text-2);
   }
-  .rail li:not(:first-child)::before {
+  .rail li::before {
     content: '';
     position: absolute;
-    top: 19px;
+    top: 11px;
     left: -50%;
     width: 100%;
     height: 2px;
-    background: var(--control-line);
+    background: var(--line);
+    z-index: 0;
   }
-  .rail li.past::before, .rail li.current::before { background: var(--accent); }
+  .rail li:first-child::before { display: none; }
+  .rail li::after {
+    content: '';
+    position: absolute;
+    top: 11px;
+    left: -50%;
+    width: 0;
+    height: 2px;
+    background: var(--accent);
+    transition: width 360ms var(--ease);
+    z-index: 0;
+  }
+  .rail li.past::after, .rail li.current::after { width: 100%; }
+  .rail li:first-child::after { display: none; }
   .rail button {
     position: relative;
     z-index: 1; /* above the next step's connector line, which reaches back to this circle */
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
+    display: grid;
+    justify-items: center;
+    gap: var(--space-1);
     box-sizing: border-box;
     width: 100%;
-    min-width: 40px;
-    min-height: 40px;
-    padding: 8px 2px;
+    padding: 0 var(--space-1);
     border: 0;
     background: transparent;
-    color: var(--text-2);
+    color: inherit;
     font: inherit;
-    font-size: 12px;
     cursor: pointer;
   }
   .rail button:disabled { cursor: default; opacity: 1; }
-  .rail button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .rail button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
   .dot {
     display: grid;
     place-items: center;
     box-sizing: border-box;
     width: 24px;
     height: 24px;
-    border: 2px solid var(--control-line);
+    border: 2px solid var(--line);
     border-radius: 50%;
     background: var(--surface);
+    font-size: var(--fs-2);
     font-weight: 600;
+    transition: all var(--dur) var(--ease);
   }
   .past .dot { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
-  .current .dot { border-color: var(--accent); color: var(--accent); }
+  .current .dot { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent); }
+  .skipped .dot { border-style: dashed; color: var(--text-2); }
+  .skipped button { color: var(--text-2); }
   .current button { color: var(--text); font-weight: 600; }
   .label { overflow-wrap: anywhere; }
   .mobile-label { display: none; }
 
   @media (max-width: 640px) {
     .rail .label { display: none; }
-    /* Eight steps (the SQL step adds one) must fit a phone without a sideways scroll. */
-    .rail li { flex: 1 0 34px; }
-    .rail button { min-width: 34px; }
-    .mobile-label {
-      display: block;
-      margin-top: 4px;
-      color: var(--text);
-      font-size: 12px;
-      font-weight: 600;
-      text-align: center;
-    }
+    .rail .current .label { display: block; }
+    .rail button { min-height: 40px; }
   }
 </style>

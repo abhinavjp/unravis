@@ -8,6 +8,7 @@ export interface FigureDetails {
 export interface Figure {
   id: string;
   label: string;
+  hint: string;
   details: FigureDetails;
 }
 
@@ -35,6 +36,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'machine.base',
         label: 'Core figures',
+        hint: 'Processor use, free memory, disk activity, network bytes and free space on the save drive.',
         details: {
           what: 'The main processor, memory, disk and network figures. It also includes free space on the save drive.',
           why: 'These figures show whether the whole server was busy or short of resources.',
@@ -46,6 +48,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'machine.cpu',
         label: 'Processor detail',
+        hint: 'Jobs lined up for the processor, and time spent on Windows and system work.',
         details: {
           what: 'How busy the processor is. It counts jobs waiting in line and time spent on system work.',
           why: 'A long queue means programs are ready but cannot run yet. The other figures show where processor time went.',
@@ -57,6 +60,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'machine.memory',
         label: 'Memory detail',
+        hint: 'Hard page faults, Windows memory pools and page file use.',
         details: {
           what: 'Hard page faults, the two Windows memory pools, and page file use.',
           why: 'Hard faults and a busy page file can appear when Windows has little memory left.',
@@ -68,6 +72,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'machine.disk',
         label: 'Disk detail',
+        hint: 'Read and write times, disk activity and split operations for each disk.',
         details: {
           what: 'Read and write times, reads and writes per second, and split disk operations for each disk.',
           why: 'Slow disk reads and writes can add delay to work across the server.',
@@ -79,6 +84,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'machine.network',
         label: 'Network detail',
+        hint: 'Data sent again, resets, queued data and connection counts. Never addresses.',
         details: {
           what: 'How healthy the network is. It counts data sent again, dropped connections and data waiting to go out.',
           why: 'Resends and resets can show trouble on the network path. Queued data can show a slow path.',
@@ -98,6 +104,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'http.queues',
         label: 'Requests waiting to reach a website',
+        hint: 'Queue size, oldest waiting request, rejected requests and new request rate.',
         details: {
           what: 'The queue size, oldest queue item age, rejected requests and new request rate for each web app pool.',
           why: 'Requests gather here before website code runs. Rejected requests did not get through.',
@@ -117,6 +124,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'iis.workers',
         label: 'Activity in watched web app pools',
+        hint: 'Active requests, active threads and ping time for watched web app pools.',
         details: {
           what: 'Active requests, active threads and ping time for workers of the web app pools you watch.',
           why: 'These figures show whether a watched website was busy and whether its worker answered a ping.',
@@ -136,6 +144,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'aspnet.activity',
         label: 'ASP.NET requests and restarts',
+        hint: 'Waiting, current and rejected requests, wait time and app restarts.',
         details: {
           what: 'How many ASP.NET requests are waiting, running or turned away. Also how long they wait and how often the app restarts.',
           why: 'Queues and restarts can help explain pauses that people using a website noticed.',
@@ -155,6 +164,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'clr.memory',
         label: '.NET Framework memory and threads',
+        hint: 'Memory use, cleanup time, locks, threads and errors for watched .NET Framework programs.',
         details: {
           what: 'How the .NET runtime uses memory. It counts memory size, cleanup time, locks, threads and errors.',
           why: 'These figures show how a watched .NET Framework program used memory and processor time.',
@@ -175,6 +185,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'processes.list',
         label: 'Busiest programs and programs you watch',
+        hint: 'Program names, processor use, memory, handles and threads.',
         details: {
           what: 'The top 10 programs by processor use and top 5 by memory, plus every program you watch.',
           why: 'This shows which programs used the machine, not just that the machine was busy.',
@@ -194,6 +205,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'proc10.detail',
         label: '.NET 10 processor and memory',
+        hint: 'Processor and memory use for each watched .NET 10 program.',
         details: {
           what: 'How much processor and memory each watched .NET 10 program uses.',
           why: 'These figures separate one watched program from the load on the whole machine.',
@@ -213,6 +225,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'procIO.detail',
         label: 'Disk and memory activity for watched programs',
+        hint: 'Disk activity, memory use and running time for each watched program.',
         details: {
           what: 'Bytes read and written per second, page file and virtual memory use, and running time.',
           why: 'This shows disk and memory use for one watched program. A reset running time can mark a restart.',
@@ -232,6 +245,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'events.system',
         label: 'System log',
+        hint: 'Disk errors, low resources, and web app pool failures and restarts.',
         details: {
           what: 'Chosen System events. They cover disk problems, low resources, and web app pools that fail or restart.',
           why: 'These events can add a precise time to a disk, resource or website problem.',
@@ -243,6 +257,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'events.application',
         label: 'Application log',
+        hint: 'Program crashes and .NET runtime errors.',
         details: {
           what: 'Chosen Application events. They cover programs that crash and .NET errors.',
           why: 'A crash or runtime failure can help explain a sudden stop or restart.',
@@ -263,6 +278,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'logs.catalogue',
         label: 'Log file names, sizes and times',
+        hint: 'Paths, sizes and times for the newest 200 log files in your chosen folders.',
         details: {
           what: 'The newest 200 .log files in the log folders you choose. The default folder holds IIS logs.',
           why: 'This helps you find the right log for the hour of an incident without reading its content.',
@@ -283,6 +299,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'logs.snapshot',
         label: 'Log files from the snapshot window',
+        hint: 'Copies log files from the snapshot window only when you take a snapshot.',
         details: {
           what: 'Copies log files from the snapshot window, only when you take a snapshot.',
           why: 'The copies keep the log evidence with that snapshot before old logs are removed.',
@@ -302,6 +319,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'dumps.list',
         label: 'Crash dump files found',
+        hint: 'Names, sizes and times for the newest 200 crash dump files. Never their content.',
         details: {
           what: 'The newest 200 crash dump files in the standard Windows crash folders.',
           why: 'A new dump can show that Windows or a program crashed.',
@@ -322,6 +340,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'sqlHost.batchRequestsPerSec',
         label: 'Batch requests per second',
+        hint: 'How many batches of work SQL Server gets each second.',
         details: {
           what: 'How many batches of work SQL Server receives each second.',
           why: 'This is a simple measure of how busy SQL Server is.',
@@ -333,6 +352,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'sqlHost.userConnections',
         label: 'User connections',
+        hint: 'How many apps and people are connected right now.',
         details: {
           what: 'How many apps and people have a SQL Server connection right now.',
           why: 'A count that only climbs can show that apps are not closing connections.',
@@ -344,6 +364,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'sqlHost.lockWaitsPerSec',
         label: 'Lock waits per second',
+        hint: 'How often requests pause while another request holds a lock.',
         details: {
           what: 'How often a request pauses each second while another request holds a lock on data.',
           why: 'Locks protect data, but lock waits can slow requests down.',
@@ -355,6 +376,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'sqlHost.processesBlocked',
         label: 'Processes blocked',
+        hint: 'Requests held while another request uses the data they need.',
         details: {
           what: 'Requests held up right now while another request holds the data they need.',
           why: 'A blocked process cannot finish its current request yet.',
@@ -366,6 +388,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'sqlHost.memoryGrantsPending',
         label: 'Memory grants pending',
+        hint: 'Queries that need memory before they can start.',
         details: {
           what: 'Queries that are ready to run but still need SQL Server to give them memory.',
           why: 'These queries cannot start until SQL Server gives them memory.',
@@ -377,6 +400,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'sqlHost.pageLifeExpectancy',
         label: 'Page life expectancy',
+        hint: 'How long data stays in memory. A fast fall can be a warning.',
         details: {
           what: 'How many seconds a page of data stays in SQL Server memory.',
           why: 'A short stay can mean SQL Server reads the same data from disk more often.',
@@ -388,6 +412,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'sqlHost.freeListStallsPerSec',
         label: 'Free list stalls per second',
+        hint: 'How often work pauses while no memory page is free.',
         details: {
           what: 'How often a request pauses each second while no free memory page is ready.',
           why: 'This can appear when SQL Server has little free memory for new work.',
@@ -399,6 +424,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'sqlHost.compilationsPerSec',
         label: 'Compilations per second',
+        hint: 'How often SQL Server builds query plans each second.',
         details: {
           what: 'How often SQL Server builds a new plan for running a query each second.',
           why: 'Building query plans uses processor time.',
@@ -410,6 +436,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'sqlHost.reCompilationsPerSec',
         label: 'Re-compilations per second',
+        hint: 'How often SQL Server builds saved query plans again each second.',
         details: {
           what: 'How often SQL Server replaces a saved query plan with a new one each second.',
           why: 'Rebuilding plans uses processor time and can change how long a query takes.',
@@ -421,6 +448,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'sqlHost.deadlocksPerSec',
         label: 'Deadlocks per second',
+        hint: 'How often requests block each other and one is cancelled.',
         details: {
           what: 'How often requests lock each other and SQL Server cancels one of them.',
           why: 'A cancelled request can fail for the person or app that sent it.',
@@ -432,6 +460,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'sqlHost.lockWaitTimeMs',
         label: 'Lock wait time in milliseconds',
+        hint: 'Time requests spent on lock waits in the last second.',
         details: {
           what: 'The time spent on lock waits in the last second, in milliseconds.',
           why: 'This adds how long requests waited to the count of lock waits.',
@@ -443,6 +472,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'sqlHost.logFlushWaitTimeMs',
         label: 'Log flush wait time in milliseconds',
+        hint: 'How long SQL Server waited to write its log in the last second.',
         details: {
           what: 'Time in the last second spent on writes to the SQL Server transaction log.',
           why: 'Slow log writes can add delay to database changes.',
@@ -454,6 +484,7 @@ export const RECORD_GROUPS: RecordGroup[] = [
       {
         id: 'sqlHost.forwardedRecordsPerSec',
         label: 'Forwarded records per second',
+        hint: 'Extra row moves that can slow down table reads.',
         details: {
           what: 'Rows that moved and left a pointer behind, which adds a step when SQL Server reads them.',
           why: 'Many forwarded records can add work to table reads.',

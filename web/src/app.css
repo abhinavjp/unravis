@@ -749,6 +749,12 @@ th.numeric { text-align: right; }
   .theme-toggle { min-width: 40px; }
 }
 
+/* Blackbox screens: the small rules every Blackbox component shares (UX-27). Component styles add only what is theirs. */
+.bb-note { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.bb-ok { color: var(--tone-ok); }
+.bb-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.bb-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+
 /* Tap targets: 44px tall on touch screens and narrow windows. The desktop sizes above are unchanged. */
 @media (pointer: coarse), (max-width: 720px) {
   .header-button, .chip, .segmented button, .more-filters > summary, .filter-chip, .menu > summary, .primary-button, .secondary-button, .quiet-button { min-height: 44px; }

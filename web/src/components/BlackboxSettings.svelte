@@ -8,7 +8,8 @@
   // `targetMode` is 'pc' when the Blackbox runs on this PC (the wizard's this-PC choice and Apply settings):
   // the detected app pools and services are read once on mount. 'manual' (pack/remote) never fetches: names are typed.
   // The target picker itself lives in BlackboxTargetPicker.svelte; this form hands it the list and the mode.
-  let { settings = $bindable(), logPathsText = $bindable(), idPrefix = 'bb', problem = null, targetMode = 'pc' }: { settings: Settings; logPathsText: string; idPrefix?: string; problem?: SettingsProblem | null; targetMode?: 'pc' | 'manual' } = $props();
+  let { settings = $bindable(), logPathsText = $bindable(), idPrefix = 'bb', problem = null, targetMode = 'pc', lockReached = false }: { settings: Settings; logPathsText: string; idPrefix?: string; problem?: SettingsProblem | null; targetMode?: 'pc' | 'manual'; lockReached?: boolean } = $props();
+  // `lockReached` is Apply on this PC: the server refuses a new port or address, because Unravis finds the Blackbox by them.
   const warnAll = $derived(listensOnAll(settings.bind));
   const invalid = (key: SettingsProblem) => (problem === key ? 'true' : undefined);
   const described = (key: SettingsProblem, help: string) => idPrefix + '-' + help + (problem === key ? ' ' + idPrefix + '-' + key + '-error' : '');
@@ -50,13 +51,14 @@
   <label class="bb-field"><span>{T.folder}</span><input id="{idPrefix}-f-folder" type="text" bind:value={settings.folder} autocomplete="off" spellcheck="false" aria-invalid={invalid('folder')} aria-describedby={described('folder', 'folder-help')} /></label>
   <p class="bb-note" id="{idPrefix}-folder-help">{T.folderHelp}</p>
   {@render fieldError('folder')}
-  <label class="bb-field"><span>{T.port}</span><input id="{idPrefix}-f-port" type="number" min="1" max="65535" step="1" bind:value={settings.port} aria-invalid={invalid('port')} aria-describedby={described('port', 'port-help')} /></label>
+  <label class="bb-field"><span>{T.port}</span><input id="{idPrefix}-f-port" type="number" min="1" max="65535" step="1" bind:value={settings.port} disabled={lockReached} aria-invalid={invalid('port')} aria-describedby={described('port', 'port-help')} /></label>
   <p class="bb-note" id="{idPrefix}-port-help">{T.portHelp}</p>
   {@render fieldError('port')}
-  <label class="bb-field"><span>{T.bind}</span><input id="{idPrefix}-f-bind" type="text" bind:value={settings.bind} autocomplete="off" spellcheck="false" aria-invalid={invalid('bind')} aria-describedby="{idPrefix}-bind-help{warnAll ? ' ' + idPrefix + '-bind-warn' : ''}{problem === 'bind' ? ' ' + idPrefix + '-bind-error' : ''}" /></label>
+  <label class="bb-field"><span>{T.bind}</span><input id="{idPrefix}-f-bind" type="text" bind:value={settings.bind} disabled={lockReached} autocomplete="off" spellcheck="false" aria-invalid={invalid('bind')} aria-describedby="{idPrefix}-bind-help{warnAll ? ' ' + idPrefix + '-bind-warn' : ''}{problem === 'bind' ? ' ' + idPrefix + '-bind-error' : ''}" /></label>
   <p class="bb-note" id="{idPrefix}-bind-help">{T.bindHelp}</p>
   {#if warnAll}<p class="bb-note bb-warn" id="{idPrefix}-bind-warn">{T.bindWarn}</p>{/if}
   {@render fieldError('bind')}
+  {#if lockReached}<p class="bb-note">{T.applyLocked}</p>{/if}
   <label class="bb-field"><span>{T.logPaths}</span><textarea id="{idPrefix}-f-logs" rows="2" bind:value={logPathsText} spellcheck="false" aria-invalid={invalid('logs')} aria-describedby={problem === 'logs' ? idPrefix + '-logs-error' : undefined}></textarea></label>
   {@render fieldError('logs')}
 </section>
@@ -64,7 +66,6 @@
 <style>
   .bb-block { display: grid; gap: var(--space-2); min-width: 0; margin: 0; padding: 0; border: 0; }
   .bb-block h4 { margin: 0; font-size: 14px; font-weight: 600; }
-  .bb-note { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
   .bb-warn { color: var(--text); border-left: 3px solid var(--warn); padding-left: var(--space-2); }
   .bb-block .inline-error { margin: 0; max-width: 420px; }
   .bb-field { display: grid; gap: 4px; font-size: 13px; font-weight: 500; }

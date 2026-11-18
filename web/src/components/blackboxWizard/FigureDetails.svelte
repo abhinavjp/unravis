@@ -23,12 +23,15 @@
 </details>
 
 <style>
-  summary { display: flex; align-items: center; width: fit-content; min-width: 40px; min-height: 44px; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
-  summary::before { content: '▸'; margin-right: var(--space-2); text-decoration: none; }
-  details[open] > summary::before { content: '▾'; }
+  details { margin: 0 0 0 32px; }
+  summary { display: flex; align-items: center; width: fit-content; min-height: 28px; color: var(--text-2); font-size: 12.5px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
   summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-sm); }
-  dl { display: grid; gap: var(--space-1); margin: 0 0 var(--space-2); }
-  dt { color: var(--text); font-weight: 600; }
-  dd { margin: 0 0 var(--space-2); color: var(--text-2); overflow-wrap: anywhere; }
+  dl { display: grid; grid-template-columns: 110px 1fr; gap: var(--space-2) var(--space-3); margin: var(--space-1) 0 var(--space-2); padding: var(--space-3); border-left: 3px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); font-size: var(--fs-3); }
+  dt { color: var(--text-2); }
+  dd { margin: 0; overflow-wrap: anywhere; }
   .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+  @media (max-width: 640px) {
+    dl { grid-template-columns: 1fr; }
+    dd { margin-bottom: var(--space-2); }
+  }
 </style>
