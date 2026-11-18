@@ -288,3 +288,49 @@ func TestIsSQLProc(t *testing.T) {
 		}
 	}
 }
+
+func TestHostLaneCoverageNoteNamesTheMinutes(t *testing.T) {
+	in := hostInput()
+	// Only the first 10 minutes of the incident window are recorded.
+	res := HostLane(in, hostH(hostSamples(hostT0.Add(30*time.Minute), hostT0.Add(40*time.Minute), calm, nil)))
+	if res.Lanes["H1"] != Unknown {
+		t.Fatalf("H1 = %v, want unknown", res.Lanes["H1"])
+	}
+	if !strings.Contains(res.Note, "covers") || !strings.Contains(res.Note, "of 30 minutes") {
+		t.Fatalf("note does not name the coverage: %q", res.Note)
+	}
+}
+
+func TestHostLaneReferenceInTheFutureIsNamed(t *testing.T) {
+	in := hostInput()
+	// The recording holds the incident window only; the reference is before it.
+	res := HostLane(in, hostH(hostSamples(hostT0.Add(30*time.Minute), hostT0.Add(60*time.Minute), calm, nil)))
+	if res.Lanes["H1"] != No {
+		t.Fatalf("H1 = %v, want no (%s)", res.Lanes["H1"], res.Note)
+	}
+	if !strings.Contains(res.Note, "before the recording began") || !strings.Contains(res.Note, "fixed busy mark") {
+		t.Fatalf("note does not name the missing baseline: %q", res.Note)
+	}
+	// A reference window that has not happened yet (after the last sample).
+	in2 := Input{
+		Incident:  Window{Start: hostT0, End: hostT0.Add(30 * time.Minute)},
+		Reference: Window{Start: hostT0.Add(60 * time.Minute), End: hostT0.Add(90 * time.Minute)},
+	}
+	res = HostLane(in2, hostH(hostSamples(hostT0, hostT0.Add(30*time.Minute), calm, nil)))
+	if !strings.Contains(res.Note, "has not happened yet") {
+		t.Fatalf("future reference not named: %q", res.Note)
+	}
+}
+
+func TestApplyHostCarriesTheReasonToStep9(t *testing.T) {
+	in := hostInput()
+	in.ApplyHost(hostH(hostSamples(hostT0.Add(30*time.Minute), hostT0.Add(40*time.Minute), calm, nil)))
+	if in.LaneNotes["host"] == "" {
+		t.Fatal("ApplyHost did not keep the reason")
+	}
+	st := stepsOf(in)[9]
+	joined := strings.Join(st.Reasons, " ")
+	if st.Readiness != CannotTestYet || strings.Contains(joined, "No host data is imported") || !strings.Contains(joined, "covers") {
+		t.Fatalf("step 9 = %v %q", st.Readiness, joined)
+	}
+}

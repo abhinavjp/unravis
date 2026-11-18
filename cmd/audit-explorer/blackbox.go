@@ -45,7 +45,11 @@ func wireBlackbox(demo bool, cfg demoSettings, getenv func(string) string, kept 
 	}
 	if program, ok := blackbox.FindProgram(dirs...); ok {
 		deps.Program = program
-		deps.ThisPC = &blackbox.ThisPC{Elev: blackbox.OSElevator{}, Program: program.Path}
+		deps.ThisPC = &blackbox.ThisPC{Elev: blackbox.OSElevator{}, Program: program.Path, Guard: blackbox.GuardHelper}
+		// The version of the shipped program, asked once per file, so the status
+		// can offer "Update the recorder" when the installed one is older.
+		pv := &blackbox.ProgramVersioner{Elev: blackbox.OSElevator{}, Program: program.Path, Guard: blackbox.GuardHelper}
+		deps.ProgramVersion = pv.Version
 	}
 	return []server.Option{server.WithBlackbox(deps)}
 }

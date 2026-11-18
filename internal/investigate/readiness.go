@@ -388,7 +388,11 @@ func Steps(in Input, f Facts, s Signals, th Thresholds) []Step {
 		known, total, grey := laneCount(in, entries)
 		switch {
 		case known == 0:
-			st.set(CannotTestYet, "No "+l.src+" data is imported for this case.")
+			if n := in.LaneNotes[l.src]; n != "" {
+				st.set(CannotTestYet, "The "+l.src+" recording was read but could not answer. "+n)
+			} else {
+				st.set(CannotTestYet, "No "+l.src+" data is imported for this case.")
+			}
 		case known < total-grey:
 			st.set(PartlyReady, fmt.Sprintf("%d of %d suspects have a reading from the %s data.", known, total, l.src))
 		default:

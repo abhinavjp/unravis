@@ -84,6 +84,7 @@ type performanceInformation struct {
 
 type winSource struct {
 	cores int
+	table procTable
 }
 
 // OSSource is the Windows Source.
@@ -130,11 +131,22 @@ func (w *winSource) Host() (HostSample, error) {
 	return h, nil
 }
 
-// Processes lists the processes with Toolhelp (name and thread count for every
-// process) and reads the rest from each process that can be opened with
+// Processes appends every process to dst. It uses one system-wide read
+// (proctable_windows.go); if that read is refused it falls back to a Toolhelp
+// listing plus a query-only open of each process. Two calls within
+// processReadReuse share one read.
+func (w *winSource) Processes(dst []ProcSample) ([]ProcSample, error) {
+	if out, err := w.table.appendTo(dst, time.Now()); err == nil {
+		return out, nil
+	}
+	return w.processesToolhelp(dst)
+}
+
+// processesToolhelp lists the processes with Toolhelp (name and thread count for
+// every process) and reads the rest from each process that can be opened with
 // PROCESS_QUERY_LIMITED_INFORMATION. Every handle is closed before the call
 // returns.
-func (w *winSource) Processes(dst []ProcSample) ([]ProcSample, error) {
+func (w *winSource) processesToolhelp(dst []ProcSample) ([]ProcSample, error) {
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return dst, err
@@ -147,7 +159,7 @@ func (w *winSource) Processes(dst []ProcSample) ([]ProcSample, error) {
 	}
 	for {
 		if e.ProcessID != 0 { // the idle pseudo-process
-			p := ProcSample{PID: e.ProcessID, Image: windows.UTF16ToString(e.ExeFile[:]), Threads: e.Threads}
+			p := ProcSample{PID: e.ProcessID, Parent: e.ParentProcessID, Image: windows.UTF16ToString(e.ExeFile[:]), Threads: e.Threads}
 			readProcess(&p)
 			dst = append(dst, p)
 		}
