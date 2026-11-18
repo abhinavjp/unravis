@@ -14,6 +14,7 @@ import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
  *   POST   /api/blackbox/validate | /pack  settings -> { ok } | a zip
  *   GET    /api/blackbox/this-pc                   -> thisPc
  *   POST   /api/blackbox/this-pc/{install,start,stop,apply,remove,snapshot}
+ *   POST   /api/blackbox/this-pc/update            -> { ok, updated, wasRunning, restarted, oldHash?, newHash?, newVersion? }
  *   POST   /api/blackbox/{id}/host-reading {incident, reference} -> the Step 9 answer
  * A refusal is JSON { error, reason, what?, next?, state?, existing? }.
  * A read key goes up in one request and never comes back: no answer holds one.
@@ -43,6 +44,8 @@ export interface Facts {
   host: string;
   version?: string;
   intervalSeconds: number;
+  /** The interval the recorder really runs at now. It is slower than intervalSeconds when the PC is busy. Absent from an older server. */
+  effectiveIntervalSeconds?: number;
   state: string;
   firstSample?: string;
   lastSample?: string;
@@ -87,8 +90,24 @@ export interface ThisPc {
   listed: boolean;
   listId?: string;
   problem?: string;
+  /** The version the installed recorder reports and the one that ships with Unravis. Either can be missing when it is not known. */
+  recorderVersion?: string;
+  programVersion?: string;
+  /** True when the recorder installed on this PC is older than the one that ships with Unravis. Update replaces it. */
+  updateAvailable?: boolean;
   /** What the installed service runs with (blackbox.json holds no secret). Apply settings starts from it. */
   settings?: Settings;
+}
+
+/** The answer of Update the recorder. `updated` is false when the installed recorder already was the shipped one. */
+export interface UpdateAnswer {
+  ok: boolean;
+  updated: boolean;
+  wasRunning: boolean;
+  restarted: boolean;
+  oldHash?: string;
+  newHash?: string;
+  newVersion?: string;
 }
 
 export interface BlackboxList { items: BlackboxItem[]; thisPc: ThisPc; canPack: boolean }
@@ -223,6 +242,28 @@ export function refusalText(error: unknown, table: Record<string, string>): stri
   return table.offline ?? 'The request failed.';
 }
 
+/** The machine reason of a refused call ('offline', 'no_session', 'rate' ...), or '' for any other thrown value. */
+export function refusalReason(error: unknown): string {
+  return error instanceof BlackboxError ? error.refusal.reason : '';
+}
+
+/** True when the page itself lost Unravis (it restarted or this tab is stale), so a reload is the next step. */
+export function needsReload(error: unknown): boolean {
+  const reason = refusalReason(error);
+  return reason === 'offline' || reason === 'no_session';
+}
+
+/**
+ * Which service buttons a this-PC Blackbox gets. The state of a recorder that cannot be read says nothing about the
+ * service, so the scan's `running` counts too: a service that runs but cannot be read can be stopped, and one that
+ * is not running can be started. Never both.
+ */
+export function pcControls(state: PageState, thisPc: Pick<ThisPc, 'installed' | 'running'>): { start: boolean; stop: boolean } {
+  const readRunning = state === 'running' || state === 'running-late' || state === 'disk-low' || state === 'incomplete' || state === 'clock-differs';
+  const stop = readRunning || (thisPc.installed && thisPc.running);
+  return { stop, start: thisPc.installed && !stop };
+}
+
 export interface Span { window: string; start: string; end: string; minutes: number; kind: string }
 export interface HostStep {
   number: number;
@@ -306,6 +347,8 @@ export const blackboxApi = {
   apply: (settings: Settings) => call<{ ok: boolean; restarted: boolean }>('POST', '/this-pc/apply', settings),
   remove: (deleteRecordings: boolean, confirmName: string) => call<RemoveAnswer>('POST', '/this-pc/remove', { deleteRecordings, confirmName }),
   snapshot: () => call<SnapshotAnswer>('POST', '/this-pc/snapshot', {}),
+  /** Replaces the recorder program installed on this PC with the one that ships with Unravis. One administrator approval. */
+  updateThisPc: () => call<UpdateAnswer>('POST', '/this-pc/update', {}),
   hostReading: (id: string, body: { incident: { start: string; end: string }; reference: { start: string; end: string } }) =>
     call<HostAnswer>('POST', '/' + encodeURIComponent(id) + '/host-reading', body),
   /**
@@ -429,9 +472,38 @@ export function validBind(text: string): boolean {
   return HOST_NAME.test(s);
 }
 
-/** Whether a folder is a drive or share root or a Windows system folder. Mirrors unsafeFolder in internal/blackbox/config.go. */
+/** A folder on a drive the person can see, such as D:\UnravisBlackbox. */
+const DRIVE_FOLDER = /^[A-Za-z]:[\\/]/;
+/** The network volume of a full path: the leading \\server\share (or //server/share), cut the way filepath.VolumeName cuts it. */
+const UNC_VOLUME = /^[\\/]{2}[^\\/]+[\\/][^\\/]+/;
+
+/**
+ * The shape of a typed folder path (B-04): a drive folder such as D:\UnravisBlackbox, a network folder such as
+ * \\files01\share\UnravisBlackbox, or anything else, which is not a full Windows folder path. The Folder step uses this
+ * to pick the right notice: the drive cards and the C: note for a drive, the network notice for a share.
+ */
+export type FolderKind = 'drive' | 'unc' | 'invalid';
+export function folderKind(path: string): FolderKind {
+  const s = path.trim();
+  if (DRIVE_FOLDER.test(s)) return 'drive';
+  if (UNC_VOLUME.test(s)) return 'unc';
+  return 'invalid';
+}
+
+/**
+ * Whether a folder is a drive or share root or a Windows system folder. Mirrors unsafeFolder in internal/blackbox/config.go:
+ * a network path is cut at its share the way filepath.VolumeName cuts it, so \\files01\share is a share root and
+ * \\files01\share\bb is a folder of its own.
+ */
 export function unsafeFolder(folder: string): boolean {
-  const rest = folder.trim().replace(/^[A-Za-z]:/, '').replace(/^[\\/]+|[\\/]+$/g, '');
+  let rest = folder.trim();
+  if (/^[A-Za-z]:/.test(rest)) rest = rest.slice(2); // the X: volume
+  else if (/^[\\/]{2}/.test(rest)) {
+    const volume = UNC_VOLUME.exec(rest);
+    if (!volume) return true; // \\server or bare \\: there is no share, so this is a share root
+    rest = rest.slice(volume[0].length);
+  }
+  rest = rest.replace(/^[\\/]+|[\\/]+$/g, '');
   if (!rest || rest === '.') return true;
   const parts = rest.split(/[\\/]+/).filter(Boolean);
   const first = parts[0].toLowerCase();
@@ -439,10 +511,34 @@ export function unsafeFolder(folder: string): boolean {
   return ['users', 'programdata', 'documents and settings'].includes(first) && parts.length === 1;
 }
 
-/** The first thing wrong with the settings, or null. The server checks again; this only saves a round trip. */
+/**
+ * Why a typed folder is refused, as a short code the Folder step turns into words, or null when it is fine.
+ *   full   not a full path: it has no drive letter and is not a network path (\\server\share\folder)
+ *   slash  it uses forward slashes; Windows folders are written with backslashes
+ *   chars  a name holds a character Windows does not allow in a folder name: < > " | ? * (a colon only follows the drive letter)
+ *   system a drive root, a share root or a Windows system folder
+ * The checks run in that order, so the first thing to fix is the one said.
+ */
+export type FolderFault = 'full' | 'slash' | 'chars' | 'system';
+export function folderFault(folder: string): FolderFault | null {
+  const s = folder.trim();
+  if (folderKind(s) === 'invalid') return 'full';
+  if (s.includes('/')) return 'slash';
+  // After the drive letter and its colon (for a network path, anywhere) a colon is not allowed either.
+  const rest = /^[A-Za-z]:/.test(s) ? s.slice(2) : s;
+  if (/[<>:"|?*\u0000-\u001f]/.test(rest)) return 'chars';
+  if (unsafeFolder(s)) return 'system';
+  return null;
+}
+
+/**
+ * The first thing wrong with the settings, or null. The server checks again; this only saves a round trip.
+ * A folder is a full path on a drive (D:\UnravisBlackbox) or on a network share (\\files01\share\UnravisBlackbox),
+ * written with backslashes and with no character Windows refuses in a folder name.
+ */
 export function settingsProblem(s: Settings): SettingsProblem | null {
   if (nameProblem(s.name)) return 'name';
-  if (!/^[A-Za-z]:[\\/]/.test(s.folder.trim()) || unsafeFolder(s.folder)) return 'folder';
+  if (folderFault(s.folder) !== null) return 'folder';
   if (!INTERVALS.includes(s.intervalSeconds as 5 | 15 | 30 | 60)) return 'interval';
   if (!Number.isInteger(s.keepDays) || s.keepDays < 1 || s.keepDays > 365) return 'keep';
   if (!(s.maxGB >= 0.1 && s.maxGB <= 10000)) return 'size';
@@ -503,6 +599,43 @@ export function shownBytes(bytes: number): string {
 }
 
 /** The confirm button for "Delete the recordings too" turns on only when the typed name matches exactly. */
+/**
+ * The first windows Step 9 offers, in minutes since the epoch: the incident is the last 30 minutes and the reference the 30
+ * before that, both clamped to the recorded span (first..last sample). Start and end equal means the reference has no data.
+ */
+export function defaultHostWindows(firstSample: string | undefined, lastSample: string | undefined, minute = 60_000): { incStart: number; incEnd: number; refStart: number; refEnd: number } | null {
+  const last = Date.parse(lastSample ?? '');
+  if (!Number.isFinite(last)) return null;
+  const lastMin = Math.floor(last / minute) * minute;
+  const parsedFirst = Date.parse(firstSample ?? '');
+  const first = Number.isFinite(parsedFirst) ? Math.min(Math.floor(parsedFirst / minute) * minute, lastMin) : lastMin - 60 * minute;
+  const clamp = (t: number) => Math.min(Math.max(t, first), lastMin);
+  const incStart = clamp(lastMin - 30 * minute);
+  return { incStart, incEnd: lastMin, refStart: clamp(lastMin - 60 * minute), refEnd: incStart };
+}
+
+/** One setting that Apply would change: which field, and the old and new value as short text. */
+export interface SettingChange { field: 'interval' | 'keepDays' | 'maxGB' | 'minFreePercent' | 'folder' | 'processes' | 'logs' | 'copyLogs' | 'logPaths' | 'targets'; from: string; to: string }
+
+/** What an Apply would change, in the order of the form. Name, port and listening address are locked by the server, so they are not compared. */
+export function settingsChanges(before: Settings, after: Settings): SettingChange[] {
+  const out: SettingChange[] = [];
+  const yn = (v: boolean) => (v ? 'on' : 'off');
+  const add = (field: SettingChange['field'], from: string, to: string) => { if (from !== to) out.push({ field, from, to }); };
+  add('interval', String(before.intervalSeconds), String(after.intervalSeconds));
+  add('processes', yn(before.record.processes), yn(after.record.processes));
+  add('logs', yn(before.record.logsCatalogue), yn(after.record.logsCatalogue));
+  add('copyLogs', yn(before.record.copyLogsOnSnapshot), yn(after.record.copyLogsOnSnapshot));
+  const names = (t: TargetRef[]) => (t ?? []).map((x) => x.kind + ':' + x.name).sort().join(',');
+  add('targets', names(before.targets), names(after.targets));
+  add('keepDays', String(before.keepDays), String(after.keepDays));
+  add('maxGB', String(before.maxGB), String(after.maxGB));
+  add('minFreePercent', String(before.minFreePercent), String(after.minFreePercent));
+  add('folder', (before.folder ?? '').trim(), (after.folder ?? '').trim());
+  add('logPaths', (before.logPaths ?? []).join('|'), (after.logPaths ?? []).join('|'));
+  return out;
+}
+
 export const removeConfirmed = (deleteRecordings: boolean, typed: string, name: string): boolean => !deleteRecordings || (name !== '' && typed === name);
 
 /**

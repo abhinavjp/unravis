@@ -50,10 +50,10 @@ func clrInstancePaths(inst string) []string {
 // creation) (W5-01). The Process instance name is independent of the CLR
 // instance name; the join is by PID.
 func clrProcessIdent(src *clrFakeSource, procInst string, pid float64, start int64) {
-	src.paths = append(src.paths, procIOPath(procInst, "ID Process"), procIOPath(procInst, "Creation Time"))
+	src.paths = append(src.paths, procIOPath(procInst, "ID Process"), procIOPath(procInst, "Elapsed Time"))
 	src.readings = append(src.readings,
 		procIOReading(procInst, "ID Process", pid),
-		procIOReading(procInst, "Creation Time", creationTicksFor(start)),
+		procIOReading(procInst, "Elapsed Time", elapsedFor(start)),
 	)
 }
 
@@ -232,6 +232,9 @@ func TestCLRRateGated(t *testing.T) {
 	}, nil)
 	now := time.Unix(1000, 0)
 	for i := 0; i < 2; i++ {
+		if i > 0 {
+			ageElapsed(src.readings, 15)
+		}
 		grp := clrCollect(t, g, now.Add(time.Duration(i)*15*time.Second))
 		if grp == nil || len(grp.Targets) != 1 {
 			t.Fatalf("tick %d: group = %+v, want one target", i+1, grp)
@@ -244,6 +247,7 @@ func TestCLRRateGated(t *testing.T) {
 			t.Fatalf("tick %d: rate emitted before two baselines", i+1)
 		}
 	}
+	ageElapsed(src.readings, 15)
 	grp := clrCollect(t, g, now.Add(30*time.Second))
 	row := grp.Targets[0]
 	if row.AllocBytesPerSec == nil || *row.AllocBytesPerSec != 50 {
@@ -325,6 +329,7 @@ func TestCLRRefreshOnChange(t *testing.T) {
 	)
 	clrProcessIdent(src, "w3wp#1", 200, 2)
 	targets = append(targets, ResolvedTarget{Key: "pool:b", PID: 200, Start: 2, Runtime: 1})
+	ageElapsed(src.readings, 15)
 	grp := clrCollect(t, g, now.Add(15*time.Second))
 	if src.refreshes != 1 {
 		t.Fatalf("refreshes = %d, want 1 on change", src.refreshes)
@@ -333,6 +338,7 @@ func TestCLRRefreshOnChange(t *testing.T) {
 		t.Fatalf("group = %+v, want 2 targets after re-expansion", grp)
 	}
 	changed = false
+	ageElapsed(src.readings, 15)
 	if grp := clrCollect(t, g, now.Add(30*time.Second)); grp == nil {
 		t.Fatal("third collect: nil group")
 	}

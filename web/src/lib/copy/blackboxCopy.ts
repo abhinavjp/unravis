@@ -19,9 +19,10 @@ export const BB_TEXT = {
   addExisting: 'Add one by folder, share or address',
   scanPc: 'Scan this PC',
   scanning: 'Looking at this PC.',
-  scanFailed: 'This PC could not be asked whether a Blackbox is installed.',
+  scanFailed: 'This PC could not be asked whether a Blackbox is installed. Press Scan this PC again. If it fails again, restart Unravis.',
   loading: 'Loading the Blackbox list.',
   loadFailed: 'The Blackbox list could not be loaded.',
+  reload: 'Reload this page',
   retry: 'Try again',
 
   emptyTitle: 'No Blackbox yet',
@@ -41,10 +42,13 @@ export const BB_TEXT = {
   recorded: 'Recorded',
   gaps: 'Gaps',
   files: 'Files',
-  diskFree: 'Disk free',
+  diskFree: 'Recordings drive free',
+  intervalHelp: 'Unravis slows recording when the PC is busy, so the recorder stays light.',
+  checkedAt: 'Checked',
   host: 'Host',
   version: 'Version',
   noSample: 'none yet',
+  noRecordingYet: 'No recording yet.',
   noGaps: 'none',
   openStatus: 'Open status',
   check: 'Check again',
@@ -63,6 +67,7 @@ export const BB_TEXT = {
     incomplete: 'The recording has gaps. A gap of up to 2 minutes only warns. A longer gap makes the minutes inside it Cannot test yet.',
     'not-placed': 'Place a Blackbox before you need it. Until then host steps say Cannot test yet.'
   } as Record<PageState, string>,
+  servicesStepsLate: 'On the server, open Services (services.msc). Find UnravisBlackbox. Choose Restart. Wait one minute. The state here changes to Running.',
   servicesSteps: 'On the server, open Services (services.msc). Find UnravisBlackbox. Choose Start, or Restart if it is late. Wait one minute. The state here changes to Running.',
   servicesTitle: 'Steps for the server',
   anotherServer: 'This Blackbox is on another server, so Unravis does not offer Stop or Snapshot for it. Use the steps below.',
@@ -77,31 +82,57 @@ export const BB_TEXT = {
   keyCopied: 'Copied. Paste it where it is needed. Unravis does not keep a copy of it on this page.',
   keyShownAnnounce: 'Read key shown.',
   keyHiddenAgain: 'The key was hidden again after a short time.',
-  keyFailed: 'The read key could not be shown.',
+  keyFailed: 'The read key could not be shown. Press Show again. If it fails again, close and reopen this page.',
   keyCopyFailed: 'Copy did not work here. Press Show and copy it by hand.',
   keyHeld: 'The key keeper holds this read key and never shows it. Ask the person who looks after this PC.',
   readKeySaved: 'A read key is saved on this PC.',
   readKeyNone: 'This place needs no read key.',
+  readKeyMissing: 'No read key is saved for this address. Press Type a new read key.',
+  keyFieldHelp: 'Paste the current key. It is saved sealed on this PC and never shown again.',
   changeKey: 'Type a new read key',
   newKey: 'New read key',
   saveKey: 'Save the new key',
   keySaved: 'The new key was tried and saved.',
+  keyHiddenNow: 'Key is hidden.',
+  keyHidesIn: 'It hides again in 30 seconds.',
 
   /* this-PC actions */
   start: 'Start',
   stop: 'Stop',
   snapshot: 'Snapshot now',
+  updateTitle: 'A newer recorder is ready',
+  updateText: 'This PC runs an older recorder than the one that came with Unravis. Updating swaps in the new one and starts it again. Windows asks for one administrator approval. Your recordings and settings are kept.',
+  updateButton: 'Update the recorder',
   apply: 'Apply settings',
   remove: 'Remove',
   removeForget: 'Forget this place',
   working: 'Working. Windows may ask for administrator approval.',
+  workingStart: 'Starting. Windows may ask for approval. If you do not see it, check the taskbar.',
+  workingStop: 'Stopping. Windows may ask for approval. If you do not see it, check the taskbar.',
+  workingSnapshot: 'Copying the recordings.',
+  workingUpdate: 'Updating the recorder. Windows may ask for approval. If you do not see it, check the taskbar.',
+  updatedRestarted: 'Updated. The recorder started again with the new program. Your recordings and settings were kept.',
+  updatedStopped: 'Updated. The recorder was stopped, so it stays stopped until you press Start. Your recordings and settings were kept.',
+  updateCurrent: 'Already up to date. Nothing was changed and the recorder was not restarted.',
   started: 'Started. Check again in a few seconds.',
   stopped: 'Stopped. The recordings are kept.',
   confirmStop: 'While stopped, nothing is recorded. A case that reads this Blackbox sees a gap from then on.',
+  stopTitle: 'Stop recording?',
+  stopYes: 'Stop recording',
+  stopKeep: 'Keep recording',
   adminNote: 'Windows asks for administrator approval for service changes. Choosing No changes nothing.',
 
   applyTitle: 'Apply settings',
   applyIntro: 'These are the settings the service on this PC runs with now. Change what you need. Apply writes them and restarts the service. Recording pauses for a moment.',
+  applyLocked: 'Unravis finds the Blackbox by its port and address, so they cannot be changed here. To use others, remove it and place it again.',
+  applyChangedLabels: {
+    interval: 'Interval', processes: 'Process list', logs: 'Logs list', copyLogs: 'Copy logs on snapshot', targets: 'Watched sites and services',
+    keepDays: 'Keep days', maxGB: 'Size limit', minFreePercent: 'Free disk', folder: 'Folder', logPaths: 'Log folders'
+  } as Record<string, string>,
+  applyChangedLine: (parts: string[]) => 'You changed: ' + parts.join('. ') + '.',
+  applyFolderWarn: 'Old recordings stay in the old folder and are not moved. A case or reader must use the new folder.',
+  applyIntervalWarn: 'Unravis can still slow recording when the PC is busy.',
+  applyNoChange: 'Nothing is changed yet.',
   applyUnreadable: 'The settings of the service on this PC could not be read, so they cannot be changed here.',
   applied: 'Applied. The service restarted with the new settings.',
   appliedNoRestart: 'Applied. The service was stopped, so the new settings are used when it next starts.',
@@ -172,7 +203,7 @@ export const BB_TEXT = {
   recordLogs: 'Logs list: names, sizes and times of IIS and application logs, never their content',
   recordCopyLogs: 'Copy log files of the incident hour when a snapshot is taken',
   probeNote: 'The SQL Server probe is not part of this release.',
-  processesNote: 'Switched off, the web server process row in Step 5 says Cannot test yet. Everything else works.',
+  processesNote: 'With the process list unticked, the web server process row in Step 5 says Cannot test yet. Everything else works.',
   keepHeading: 'Keep',
   keepDays: 'Keep for (days)',
   keepDaysHelp: 'Older files are deleted automatically.',
@@ -189,7 +220,7 @@ export const BB_TEXT = {
   // Shown when the listen address is every address (D-B-50, D-C-20). Warn only; never refuse.
   bindWarn: 'This lets other computers on the network reach the status port. The read key is the only protection.',
   reviewBindWarn: 'This Blackbox listens on every address, so other computers can reach it. The read key is the only protection.',
-  housekeepingNote: 'Housekeeping always runs. You can lower the limits but not turn them off.',
+  housekeepingNote: 'Old recordings are always removed at these limits. You can lower the limits but not turn them off.',
   settingProblems: {
     name: 'Go back and fix the name.',
     folder: 'Type a full folder path such as D:\\UnravisBlackbox. A drive root or a Windows system folder is not allowed.',
@@ -240,6 +271,9 @@ export const BB_TEXT = {
   targetsServicesUnreadable: 'The services on this PC could not be read. Type a service name below to watch it.',
   targetsAdd: 'Add target',
   targetsRemove: 'Remove target',
+  // Why the Add target button is off: nothing is typed yet, or that name is already on the list.
+  targetsAddNeedsName: 'Type a name first. Then Add target works.',
+  targetsAddAlready: 'That name is already on the list.',
   // UX-7: the words the panel says out loud when a name goes on or off the list. They claim only what
   // the control actually did - these settings are not saved and nothing starts recording until the
   // Apply or Install step runs, so no running, recording or saving word belongs here.
@@ -337,6 +371,7 @@ export const BB_TEXT = {
     'Firewall. For an address, the port may be blocked.',
     'Key refused. The address answered but the read key was not accepted. Type the new key and look again.'
   ],
+  addLooksGood: 'Looks good. Press Add to the list to keep it.',
   addNothingChanged: 'Nothing was changed on that server.',
   statusReadOnly: 'Unravis only reads here. Nothing was changed on that server.',
   duplicateTitle: 'That Blackbox is already in the list',
@@ -347,7 +382,9 @@ export const BB_TEXT = {
 
   /* remove (wireframe 68) */
   removeTitle: (name: string) => 'Remove ' + name,
-  removeThisPc: 'Remove stops the UnravisBlackbox service on this PC and uninstalls it. Windows asks for administrator approval first. Cases that already read it keep what they imported.',
+  removeStops: 'Remove stops the Blackbox service on this PC. Then it removes the service. Windows asks you to approve first.',
+  removeStopsLive: 'Recording ends now. Remove stops the Blackbox service on this PC and then removes it. Windows asks you to approve first.',
+  removeChoiceLegend: 'What happens to the recordings',
   removeKeep: 'Keep the recordings',
   removeKeepText: 'The folder stays, so a later Blackbox can read it.',
   removeDelete: 'Delete the recordings too',
@@ -355,8 +392,11 @@ export const BB_TEXT = {
   removeTypeName: (name: string) => 'Type the name ' + name + ' to turn the button on',
   removeTypeLabel: 'Name',
   removeButton: 'Remove Blackbox',
+  removeButtonDelete: 'Remove and delete recordings',
+  removeNameMismatch: 'The name does not match yet.',
+  removeFailedHint: 'Check Scan this PC to see what is left.',
   removing: 'Removing. Approve the Windows prompt when it appears.',
-  removeCasesNote: 'A case that has not read this Blackbox yet loses the source. Its host steps say Cannot test yet.',
+  removeCases: 'Cases that already read it keep what they imported. A case that has not read it yet loses the source and says Cannot test yet.',
   removedTitle: 'Removed',
   removedKept: 'The service was removed. The recordings were kept.',
   removedDeleted: (n: number) => 'The service was removed and ' + n + (n === 1 ? ' file was' : ' files were') + ' deleted.',
@@ -389,7 +429,9 @@ export const BB_TEXT = {
   caseUseOther: (name: string) => 'This case already uses ' + name + '. A case reads one Blackbox. Stop using that one first.',
   caseUseAdded: 'Added. Step 9 reads this Blackbox the next time the case is investigated.',
   caseUseRemoved: 'Removed from this case. The Blackbox and its recordings are as they were.',
-  caseUseFailed: 'The case could not be changed.',
+  caseUseNext: 'Try again. If it fails again, close and reopen this page.',
+  caseUseFailed: 'The case could not be changed. Try again. If it fails again, close and reopen this page.',
+  caseUseRetry: 'Look again',
 
   /* host reading (Step 9) */
   hostTitle: 'Step 9: Host and network',
@@ -415,6 +457,7 @@ export const BB_TEXT = {
   hostReadNote: (files: number, samples: number) => files + (files === 1 ? ' file' : ' files') + ', ' + samples + ' samples read.',
   hostTorn: (n: number) => n + (n === 1 ? ' line was' : ' lines were') + ' cut off at the end of a file and skipped.',
   hostDropped: 'Some files could not be read to the end, so their minutes count as a gap.',
+  hostNoEarlier: (at: string) => 'Recording started at ' + at + ', so there is no earlier time to compare with. Choose the reference window yourself.',
   hostWindowProblem: 'Each window needs an end after its start, and no window may be longer than 7 days.',
   hostWords: { Ready: 'Ready', 'Partly ready': 'Partly ready', 'Cannot test yet': 'Cannot test yet', Failed: 'Failed' } as Record<string, string>
 };
@@ -422,8 +465,9 @@ export const BB_TEXT = {
 /** Words for a refused call that the server did not explain in full. */
 export const BB_REFUSAL: Record<string, string> = {
   rate: 'Too many tries in a minute. Wait a minute and try again.',
-  offline: 'Unravis could not be reached. Check that it is still running.',
-  no_session: 'Open Unravis from the link it printed when it started, or restart it.',
+  offline: 'Unravis did not answer. If you restarted it, reload this page. If it is still starting, wait a moment and try again.',
+  no_session: 'This page lost its link to Unravis, often after a restart. Reload this page. If that does not help, open Unravis from the link it printed.',
+  other: 'Something went wrong and the Blackbox was left as it was. Press the button again. If it fails again, press Check again to see its state.',
   unavailable: 'Blackbox is not available in this build.',
   'no-helper': 'This build cannot change the Blackbox on this PC. Use the pack and set it up on the server by hand.',
   'busy-here': 'Another change to the Blackbox on this PC is still running. Try again when it has finished.',
@@ -435,7 +479,75 @@ export const BB_REFUSAL: Record<string, string> = {
   'invalid-config': 'These settings are not allowed, so nothing was changed. Check the folder, the limits and the target names, then try again.'
 };
 
+/** "Recording every 60 seconds (set to 15; slowed to stay light)". One helper for every screen that shows the interval. */
+export function intervalWords(set: number, effective?: number | null): string {
+  const unit = (n: number) => n + (n === 1 ? ' second' : ' seconds');
+  if (!effective || effective <= 0 || effective === set) return 'Recording every ' + unit(set);
+  const word = effective > set ? 'slowed to stay light' : 'faster than set';
+  return 'Recording every ' + unit(effective) + ' (set to ' + set + '; ' + word + ')';
+}
+
+/** How long ago, in plain words. An unreadable or future time gives ''. */
+export function ageWords(value: string | undefined | null, now: number = Date.now()): string {
+  if (!value) return '';
+  const t = Date.parse(value);
+  if (!Number.isFinite(t) || t > now + 60_000) return '';
+  const s = Math.max(0, Math.round((now - t) / 1000));
+  if (s < 60) return 'less than a minute ago';
+  const m = Math.round(s / 60);
+  if (m < 60) return m + (m === 1 ? ' minute ago' : ' minutes ago');
+  const h = Math.round(m / 60);
+  if (h < 48) return h + (h === 1 ? ' hour ago' : ' hours ago');
+  const d = Math.round(h / 24);
+  return d + ' days ago';
+}
+
+const UNREACHABLE_NEXT: Record<string, string> = {
+  key: 'The read key was refused. Press Type a new read key and paste the current one.',
+  wait: 'Too many wrong keys were tried. Wait a few minutes, then press Check again.',
+  busy: 'The recorder was busy. Wait a minute, then press Check again.',
+  'newer-format': 'This Blackbox is newer than this Unravis. Update Unravis.'
+};
+
+/**
+ * The next step for one state. It follows the server's reason for Unreachable, tells a paused recorder from one that
+ * is only low on space, and gives this PC the buttons it really has.
+ */
+export function stateNextFor(info: { state: PageState; tone?: string; reason?: string }, thisPc: boolean): string {
+  const T = BB_TEXT;
+  switch (info.state) {
+    case 'unreachable':
+      return (info.reason && UNREACHABLE_NEXT[info.reason]) || T.stateNext.unreachable;
+    case 'running-late':
+      return thisPc ? 'No sample for more than three intervals. Press Stop, then Start.' : T.stateNext['running-late'];
+    case 'disk-low':
+      return info.tone === 'bad'
+        ? 'Recording is paused. Free space on that drive. It resumes by itself.'
+        : 'Space is low, but it is still recording. Free space on that drive or lower the size limit before it pauses.';
+    case 'incomplete':
+      return 'Some recording files could not be read to the end. Press Check again. If it stays, copy the files again.';
+    default:
+      return T.stateNext[info.state];
+  }
+}
+
+/** The reasons an add can fail that fit what was typed: a path for a folder or share, an address for a URL. */
+export function addFailReasonsFor(kind: 'folder' | 'share' | 'url' | null): string[] {
+  const r = BB_TEXT.addFailReasons;
+  if (!kind) return r;
+  return kind === 'url' ? [r[2], r[3], r[4]] : [r[0], r[1], r[2]];
+}
+
 const STATE_IDS = Object.keys(BB_TEXT.stateNext) as PageState[];
+
+/** One changed setting as a short phrase: "Interval 15 to 30 seconds", "Folder D:\a to E:\b". Lists are named, not dumped. */
+export function applyChangePart(c: { field: string; from: string; to: string }): string {
+  const label = BB_TEXT.applyChangedLabels[c.field] ?? c.field;
+  if (c.field === 'targets' || c.field === 'logPaths') return label + ' changed';
+  const unit = c.field === 'interval' ? ' seconds' : c.field === 'maxGB' ? ' GB' : c.field === 'minFreePercent' ? ' percent' : c.field === 'keepDays' ? ' days' : '';
+  const shown = (v: string) => (v === '' ? 'none' : v);
+  return label + ' ' + shown(c.from) + ' to ' + shown(c.to) + unit;
+}
 
 /** The texts the copy lint reads. Functions are called with sample values. */
 export function blackboxCopyEntries(): LintEntry[] {
@@ -453,6 +565,7 @@ export function blackboxCopyEntries(): LintEntry[] {
       else if (key === 'packReadyTitle' || key === 'removeTitle' || key === 'removeTypeName' || key === 'snapshotTitle' || key === 'duplicateText' || key === 'addFound' || key === 'installedText' || key === 'caseUseOther') add(key, fn('web-a'));
       else if (key === 'snapshotSaved') add(key, fn('D:\\UnravisBlackbox\\snapshots\\web-a-2026-10-20-0905', '46 MB'));
       else if (key === 'removedDeleted' || key === 'snapshotRecordings' || key === 'snapshotLogs' || key === 'hostTorn' || key === 'hostGapShort' || key === 'hostGapLong' || key === 'hostGapMinutes' || key === 'hostMinutes') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }
+      else if (key === 'hostNoEarlier') add(key, fn('2026-11-17 09:05 UTC'));
       else if (key === 'hostReadNote') add(key, fn(2, 240));
       else if (key === 'targetsFilterCount') { add(key + '.1', fn(1, 200)); add(key + '.2', fn(10, 200)); }
       else if (key === 'targetsFilterNone') add(key, fn(200));
@@ -467,7 +580,13 @@ export function blackboxCopyEntries(): LintEntry[] {
       }
     }
   }
+  add('applyChangedLine', T.applyChangedLine([applyChangePart({ field: 'interval', from: '15', to: '30' }), applyChangePart({ field: 'folder', from: 'D:\a', to: 'E:\b' }), applyChangePart({ field: 'targets', from: '', to: 'x' })]));
+  Object.entries(T.applyChangedLabels).forEach(([k, v]) => add('applyChangedLabels.' + k, v));
   for (const id of STATE_IDS) add('stateNext.' + id, T.stateNext[id]);
+  add('interval.same', intervalWords(15, 15)); add('interval.slow', intervalWords(15, 60)); add('interval.fast', intervalWords(30, 15)); add('interval.one', intervalWords(1));
+  for (const age of [0, 30, 120, 7200, 400000]) add('age.' + age, ageWords(new Date(Date.now() - age * 1000).toISOString()));
+  for (const reason of Object.keys(UNREACHABLE_NEXT)) add('unreachableNext.' + reason, stateNextFor({ state: 'unreachable', reason }, true));
+  for (const id of STATE_IDS) for (const pc of [true, false]) for (const tone of ['bad', 'warn']) add('next.' + id + '.' + pc + '.' + tone, stateNextFor({ state: id, tone }, pc));
   for (const [k, v] of Object.entries(T.nameProblems)) add('nameProblems.' + k, v);
   for (const [k, v] of Object.entries(T.settingProblems)) add('settingProblems.' + k, v);
   for (const [k, v] of Object.entries(T.targetProblems)) add('targetProblems.' + k, v);

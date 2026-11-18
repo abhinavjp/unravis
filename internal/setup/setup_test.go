@@ -400,6 +400,9 @@ func TestUserInstallNeedsNoApproval(t *testing.T) {
 	if exists(l.KeeperExe) || exists(filepath.Join(l.InstallDir, KeeperExeName)) {
 		t.Fatal("a just-for-me install placed the keeper")
 	}
+	if !exists(l.BlackboxExe) {
+		t.Fatal("the Blackbox program is not beside the app, so the app cannot install a Blackbox or build a pack")
+	}
 }
 
 func TestBlackboxInstallWithFirewallAndReadKeyFile(t *testing.T) {

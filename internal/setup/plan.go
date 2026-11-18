@@ -107,7 +107,7 @@ func (r *Runner) NewPlan(op Op, opts Options, un UninstallOptions, old *Installe
 			p.Opts.StartAtSignIn = ours
 		}
 	}
-	p.Elevated =NeedsAdminFor(r.Sys.Svc, p.Opts)
+	p.Elevated = NeedsAdminFor(r.Sys.Svc, p.Opts)
 	if op == OpUninstall {
 		p.Steps = uninstallSteps(p)
 	} else {
@@ -330,9 +330,9 @@ func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
 	if p.Opts.Scope == ScopeMachine {
 		names = append(names, KeeperExeName)
 	}
-	if p.Opts.Blackbox != nil {
-		names = append(names, BlackboxExeName)
-	}
+	// The Blackbox program is always staged: it is placed beside the app (the app looks for it there) and, when a
+	// Blackbox is being installed, the same staged copy goes to the Blackbox folder.
+	names = append(names, BlackboxExeName)
 	for _, n := range names {
 		dst, err := p.stageFile(ctx, staging, n)
 		if err != nil {
@@ -347,7 +347,18 @@ func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
 		}
 		p.staged[SetupExeName] = dst
 	}
-	place := []struct{ name, to string }{{AppExeName, p.Layout.AppExe}, {SetupExeName, p.Layout.SetupExe}}
+	// Placing moves the staged file. The Blackbox step still needs its own staged copy, so the copy that goes
+	// beside the app is a second file when a Blackbox is being installed.
+	companion := BlackboxExeName
+	if p.Opts.Blackbox != nil {
+		companion = "beside-app-" + BlackboxExeName
+		dst := filepath.Join(staging, companion)
+		if err := copyFile(ctx, p.staged[BlackboxExeName], dst); err != nil {
+			return err
+		}
+		p.staged[companion] = dst
+	}
+	place := []struct{ name, to string }{{AppExeName, p.Layout.AppExe}, {companion, p.Layout.BlackboxExe}, {SetupExeName, p.Layout.SetupExe}}
 	if p.Opts.Scope == ScopeMachine {
 		place = append(place, struct{ name, to string }{KeeperExeName, p.Layout.KeeperExe})
 	}

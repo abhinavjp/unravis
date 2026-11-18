@@ -95,14 +95,9 @@ func TestBusyGroupDoesNotAccumulateWorkers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("tick %d: %v", i, err)
 		}
-		// The first tick after a timeout consumes the one-cycle slow mark; from
-		// then on the still-outstanding worker is reported as busy.
-		want := "stalled: busy"
-		if i == 1 {
-			want = "stalled: slow"
-		}
-		if !missingHas(s, want) {
-			t.Fatalf("tick %d: Missing = %v, want %s", i, s.Missing, want)
+		// After the timeout the still-outstanding worker is reported as busy.
+		if !missingHas(s, "stalled: busy") {
+			t.Fatalf("tick %d: Missing = %v, want stalled: busy", i, s.Missing)
 		}
 		if s.TCP == nil {
 			t.Fatalf("tick %d: the healthy group stopped being collected", i)

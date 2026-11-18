@@ -29,21 +29,15 @@ func secureSDDL(usersRead bool) string {
 	return sddl
 }
 
-// SecureDir gives SYSTEM and Administrators full control of dir, removes every
+// SecureDir makes Administrators the owner of dir (SEC-03: an owner can always
+// change the permissions back, so a folder another account made would stay that
+// account's), gives SYSTEM and Administrators full control, removes every
 // inherited permission, and, with usersRead, lets ordinary users read and list
-// it. What is already inside gets the same rights.
+// it. What is already inside gets the same rights. The folder is opened once
+// without following a link and everything is applied through that handle
+// (SEC-FIX-06); a folder owned by another account is refused (SEC-FIX-05).
 func (OSEnv) SecureDir(dir string, usersRead bool) error {
-	sd, err := windows.SecurityDescriptorFromString(secureSDDL(usersRead))
-	if err != nil {
-		return err
-	}
-	dacl, _, err := sd.DACL()
-	if err != nil {
-		return err
-	}
-	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil)
+	return secureDirHandle(dir, usersRead, true)
 }
 
 func connect() (*mgr.Mgr, error) { return mgr.Connect() }
@@ -63,25 +57,31 @@ func mapState(s svc.State) SvcState {
 }
 
 // State reports the service state, or SvcNotInstalled when there is none.
+// State asks for the state with read-only handles, so it works without administrator rights. mgr.Connect and mgr.OpenService ask for full
+// access, which a normal user is refused, so the Where step could never tell whether a Blackbox is installed.
 func (WinService) State(name string) (SvcState, error) {
-	m, err := connect()
+	m, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
 	if err != nil {
 		return SvcNotInstalled, err
 	}
-	defer m.Disconnect()
-	s, err := m.OpenService(name)
+	defer windows.CloseServiceHandle(m)
+	n, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return SvcNotInstalled, err
+	}
+	s, err := windows.OpenService(m, n, windows.SERVICE_QUERY_STATUS)
 	if err != nil {
 		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 			return SvcNotInstalled, nil
 		}
 		return SvcNotInstalled, err
 	}
-	defer s.Close()
-	st, err := s.Query()
-	if err != nil {
+	defer windows.CloseServiceHandle(s)
+	var st windows.SERVICE_STATUS
+	if err := windows.QueryServiceStatus(s, &st); err != nil {
 		return SvcNotInstalled, err
 	}
-	return mapState(st.State), nil
+	return mapState(svc.State(st.CurrentState)), nil
 }
 
 // recoverySetter is the part of a Windows service handle setRecovery uses.

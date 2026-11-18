@@ -53,8 +53,18 @@ test('review 3 and 4: the drawer takes focus when it opens and every screen scro
 });
 
 test('review 5: the wizard name error clears as soon as the name is valid', () => {
-  const wizard = read('src/components/BlackboxWizard.svelte');
-  assert.match(wizard, /oninput=\{\(\)\s*=>\s*\{\s*if\s*\(problem\s*&&\s*!nameProblem\(name\)\)\s*problem\s*=\s*'';\s*\}\}/);
+  // The pop-up's name step keeps no problem string of its own: the line is derived from the one state on every keystroke,
+  // so it is gone the moment the typed name is valid (this replaces the drawer wizard's oninput that cleared its string).
+  const step = read('src/components/blackboxWizard/StepName.svelte');
+  assert.match(step, /const problem = \$derived\(stepProblem\(wizard, 'name'\)\);/);
+  assert.match(step, /const show = \$derived\(problem !== null && \(touched \|\| showProblem\)\);/);
+  assert.match(step, /oninput=\{type\}/);
+  assert.match(step, /onChange\(\{ \.\.\.wizard, settings: \{ \.\.\.wizard\.settings, name: event\.currentTarget\.value \} \}\)/);
+  assert.match(step, /\{#if show && words\}/);
+  const w = loadTypeScript('src/lib/blackboxWizard.ts');
+  const typed = (name) => ({ ...w.initialState(), settings: { ...w.initialState().settings, name } });
+  assert.equal(w.stepProblem(typed('web a'), 'name'), 'name-chars');
+  assert.equal(w.stepProblem(typed('web-a'), 'name'), null, 'a valid name leaves no problem to show');
 });
 
 test('review 6 and 7: the facts say files and samples in words, and unread files count as gaps', () => {

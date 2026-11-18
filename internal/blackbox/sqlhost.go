@@ -135,6 +135,13 @@ type sqlHostGroup struct {
 	discover func() ([]string, error)
 	changed  func() bool
 	cores    int
+	// sqlSig is the signature of the sqlservr.exe processes (nil: none wired). The
+	// instance list is re-read when it changes, not on every process change.
+	sqlSig       func() uint64
+	seenSig      uint64
+	haveSig      bool
+	recheck      int
+	lastDiscover time.Time
 	// W4-06 partial availability: paths that could not be added, the fixed
 	// per-instance diagnostics, and the bounded retry state for recovering them.
 	missing  []string
@@ -153,7 +160,11 @@ func (g *sqlHostGroup) Optional() bool { return true }
 // group can recover without a recorder restart. No SQL login is opened — host
 // counters only, and no raw provider text is returned.
 func newSQLHostGroup(d GroupDeps) (Group, error) {
-	g := &sqlHostGroup{discover: discoverSQLInstances, changed: d.ProcessSetChanged, cores: d.Cores}
+	g := &sqlHostGroup{discover: discoverSQLInstances, changed: d.ProcessSetChanged, cores: d.Cores,
+		sqlSig: d.SQLProcessSig}
+	if g.sqlSig != nil {
+		g.seenSig, g.haveSig = g.sqlSig(), true
+	}
 	prefixes, err := g.discover()
 	if err != nil {
 		return nil, errSQLHostUnavailable
@@ -257,7 +268,11 @@ func (g *sqlHostGroup) rebuild(prefixes []string) error {
 func (g *sqlHostGroup) Collect(now time.Time, dt float64) (any, error) {
 	changed := g.changed != nil && g.changed()
 	retryDue := len(g.missing) > 0 && !now.Before(g.next)
-	if changed || retryDue {
+	// PdhEnumObjects with a refresh costs ~10 ms of CPU. A busy machine changes
+	// its process set on nearly every tick, so asking "did a SQL Server engine
+	// start or stop" first keeps that off the hot path.
+	if g.discoveryWanted(now, changed, retryDue) {
+		g.lastDiscover = now
 		prefixes, derr := g.discover()
 		if derr == nil {
 			// Only a changed instance set or recovering missing counters is worth
@@ -290,6 +305,39 @@ func (g *sqlHostGroup) Collect(now time.Time, dt float64) (any, error) {
 		return nil, nil // untyped nil: no valid instance, group omitted
 	}
 	return grp, nil
+}
+
+// sqlRediscoverEvery is the slowest a SQL instance set is re-read when a process
+// changed but no SQL Server engine process did (a safety net for an engine whose
+// counter object registers late).
+const sqlRediscoverEvery = 5 * time.Minute
+
+// sqlRecheckTicks is how many further ticks re-discover after an engine process
+// appeared or went away: its PDH object registers a few seconds after the process.
+const sqlRecheckTicks = 3
+
+// discoveryWanted says whether this tick must re-read the PDH object list.
+// Without a SQL process signature (tests, older callers) every process-set
+// change re-discovers, as before. With one, only a change of the sqlservr.exe
+// set, the few ticks after it, a due retry of missing counters, or the slow
+// safety net does. Everything else keeps the instance set and its rate baselines.
+func (g *sqlHostGroup) discoveryWanted(now time.Time, changed, retryDue bool) bool {
+	if g.sqlSig == nil {
+		return changed || retryDue
+	}
+	sig := g.sqlSig()
+	if !g.haveSig || sig != g.seenSig {
+		g.seenSig, g.haveSig, g.recheck = sig, true, sqlRecheckTicks
+		return true
+	}
+	if g.recheck > 0 {
+		g.recheck--
+		return true
+	}
+	if retryDue {
+		return true
+	}
+	return changed && (g.lastDiscover.IsZero() || now.Sub(g.lastDiscover) >= sqlRediscoverEvery)
 }
 
 // availability returns the fixed availability diagnostics for instances that

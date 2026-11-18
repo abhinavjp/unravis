@@ -219,23 +219,22 @@ func (d compDisk) Free(string) (DiskInfo, error) {
 // compSelf is an injectable SelfUsage reading. ok=false models a missing reading.
 type compSelf struct {
 	mu    sync.Mutex
-	cpu   float64
-	ws    uint64
+	rd    SelfReading
 	ok    bool
 	calls int
 }
 
-func (s *compSelf) set(cpu float64, ws uint64, ok bool) {
+func (s *compSelf) set(rd SelfReading, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cpu, s.ws, s.ok = cpu, ws, ok
+	s.rd, s.ok = rd, ok
 }
 
-func (s *compSelf) read() (float64, uint64, bool) {
+func (s *compSelf) read() (SelfReading, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
-	return s.cpu, s.ws, s.ok
+	return s.rd, s.ok
 }
 
 // compClock is a fake wall+steady clock advanced explicitly by the test.
@@ -304,13 +303,6 @@ func (f *compProcFixture) setProcs(p []ProcInfo) {
 
 func compProcInfo(pid uint32, name string) ProcInfo {
 	return ProcInfo{PID: pid, ParentPID: 4, Start: 1000, StartTicks: 1000*filetimeTicksPerSecond + filetimeUnixEpochDiff, Name: name}
-}
-
-// compCreationTicks is the PDH Creation Time reading (FILETIME ticks as float64)
-// for a process created at startUnix. It sits inside creationWindow(startUnix),
-// so the per-process groups' creationConfirmed join accepts it.
-func compCreationTicks(startUnix int64) float64 {
-	return float64(startUnix*filetimeTicksPerSecond + filetimeUnixEpochDiff)
 }
 
 // compStallGroup blocks until released: a stalled provider for the adverse case.
@@ -387,7 +379,7 @@ func compInner(g Group) Group {
 func newCompRig(t *testing.T, opts compOpts) *compRig {
 	t.Helper()
 	clk := &compClock{t: time.Unix(100000, 0)}
-	r := &compRig{t: t, clk: clk, self: &compSelf{cpu: 0.1, ws: 30 << 20, ok: true}}
+	r := &compRig{t: t, clk: clk, self: &compSelf{rd: rdCalm, ok: true}}
 
 	storeDir := t.TempDir()
 	r.logDir = t.TempDir()
@@ -449,10 +441,9 @@ func newCompRig(t *testing.T, opts compOpts) *compRig {
 	})
 	RegisterGroup("diskCpu", false, func(d GroupDeps) (Group, error) {
 		return &diskCPUGroup{
-			src:     r.src,
-			eng:     NewEngine(diskCPUSpecs(r.src.Paths()), d.Cores),
-			cores:   d.Cores,
-			changed: d.ProcessSetChanged,
+			src:   r.src,
+			eng:   NewEngine(diskCPUSpecs(r.src.Paths()), d.Cores),
+			cores: d.Cores,
 		}, nil
 	})
 	evSrc := &compEventSource{}
@@ -609,14 +600,13 @@ func buildCompReadings(s *compCounterSource) {
 		ep := `\.NET CLR Exceptions(` + inst + `)\`
 		s.addRate(ep+"# of Exceps Thrown/sec", 2, 0)
 	}
-	// Process-object identity counters (ID Process + Creation Time) for BOTH
+	// Process-object identity counters (ID Process + Elapsed Time) for BOTH
 	// selected PIDs. The per-process groups (clr/iis/proc10/procIO) confirm
 	// (PID, creation FILETIME) against the shared view's unix-second Start
-	// (W5-01/W5-04); Creation Time is the identity, Elapsed Time is only a metric.
+	// (W5-01/W5-04); the start is derived from Elapsed Time (tick clock minus it).
 	s.add(`\Process(w3wp)\ID Process`, 100)
-	s.add(`\Process(w3wp)\Creation Time`, compCreationTicks(1000))
+	s.addElapsed(`\Process(w3wp)\Elapsed Time`, 1000)
 	s.add(`\Process(email)\ID Process`, 200)
-	s.add(`\Process(email)\Creation Time`, compCreationTicks(1000))
 	// proc10 + procIO detail for the selected .NET 10 instance "email" (PID 200).
 	s.addRate(`\Process(email)\% Processor Time`, 10, 0)
 	s.add(`\Process(email)\Working Set`, 50<<20)
@@ -700,7 +690,7 @@ func TestCompositionFootprintGate(t *testing.T) {
 	// production SelfUsage twin reads the current process; the first call primes
 	// its delta baseline.
 	wallStart := time.Now()
-	_, _, selfOK0 := SelfUsage()
+	_, selfOK0 := SelfUsage()
 
 	start := time.Now()
 	var maxTick time.Duration
@@ -712,7 +702,7 @@ func TestCompositionFootprintGate(t *testing.T) {
 		}
 	}
 	elapsed := time.Since(start)
-	cpuPct, wsBytes, selfOK1 := SelfUsage()
+	selfRd, selfOK1 := SelfUsage()
 	wallWindow := time.Since(wallStart)
 
 	runtime.GC()
@@ -810,16 +800,20 @@ func TestCompositionFootprintGate(t *testing.T) {
 	// second call is the measurement. Off Windows these are skipped honestly — no
 	// Go-heap substitute.
 	if runtime.GOOS == "windows" && selfOK1 {
-		if wsBytes > budgetMaxWS {
-			t.Errorf("process working set %d bytes exceeds the budget %d", wsBytes, budgetMaxWS)
+		if selfRd.HeapInUse > budgetMaxHeap {
+			t.Errorf("Go heap in use %d bytes exceeds the budget %d", selfRd.HeapInUse, uint64(budgetMaxHeap))
+		}
+		if selfRd.Private > budgetMaxPrivate {
+			t.Errorf("private bytes %d exceed the budget %d", selfRd.Private, uint64(budgetMaxPrivate))
 		}
 		// CPU per tick = average percent of one core over the window * window /
 		// ticks. The documented budget is 0.5% of one core averaged over 15 s,
 		// i.e. 75 ms of CPU per tick.
+		cpuPct := selfRd.CPUPct
 		cpuSeconds := cpuPct / 100 * wallWindow.Seconds()
 		cpuPerTick := time.Duration(cpuSeconds / float64(compMeasured) * float64(time.Second))
-		t.Logf("windows self-stat: working set %d bytes, cpu %.3f%% of one core over %v => %v CPU/tick",
-			wsBytes, cpuPct, wallWindow, cpuPerTick)
+		t.Logf("windows self-stat: heap %d bytes, private %d bytes, cpu %.3f%% of one core over %v => %v CPU/tick",
+			selfRd.HeapInUse, selfRd.Private, cpuPct, wallWindow, cpuPerTick)
 		if cpuPerTick > 75*time.Millisecond {
 			t.Errorf("CPU per tick %v exceeds the 75 ms budget (0.5%% of one core at 15 s)", cpuPerTick)
 		}
@@ -879,14 +873,10 @@ func TestCompositionStalledSourceBounded(t *testing.T) {
 			t.Fatalf("tick %d took %v; a busy slot must not re-block", i, d)
 		}
 		s := r.readLastSample()
-		// The tick after the timeout consumes the one-cycle slow mark; from then
-		// on the still-outstanding worker is reported as busy (never re-marked).
-		want := "compStall: busy"
-		if i == 0 {
-			want = "compStall: slow"
-		}
-		if !missingHas(s, want) {
-			t.Fatalf("tick %d Missing = %v, want %s", i, s.Missing, want)
+		// From the tick after the timeout the still-outstanding worker is reported
+		// as busy (it is not timed again, so it is never put on probation).
+		if !missingHas(s, "compStall: busy") {
+			t.Fatalf("tick %d Missing = %v, want compStall: busy", i, s.Missing)
 		}
 		// The mandatory siblings keep running while the stalled provider is busy.
 		// (Optional groups are correctly skipped by the budget after a slow group.)
@@ -1018,46 +1008,57 @@ func TestCompositionFailedFactoryRecovers(t *testing.T) {
 	}
 }
 
-// TestCompositionMissingSelfReadingNotSafety proves a failed self-stat reading is
-// not treated as fresh evidence of safety: after an over-limit reading widens the
-// budget and skips optional groups, a missing reading (ok=false) must leave the
-// budget over budget, and only fresh calm readings step it back.
-func TestCompositionMissingSelfReadingNotSafety(t *testing.T) {
+// TestCompositionProbationAndMissingReadings drives the real Recorder.Tick: an
+// optional group that was slow twice is named "tcp: slow" and sits out for the
+// time box; a missing self reading is calm (it never widens the interval); when
+// the probation has passed the group is tried again and a fast run clears it.
+func TestCompositionProbationAndMissingReadings(t *testing.T) {
 	r := newCompRig(t, compOpts{})
-
-	// Over-limit self reading: optional groups skipped.
-	r.self.set(0.9, 30<<20, true)
 	r.tick()
 	r.tick()
-	if !r.budget.SkipOptional() {
-		t.Fatal("over-limit reading did not skip optional groups")
-	}
-	if s := r.readLastSample(); !missingHas(s, "tcp") {
-		t.Fatalf("optional group not skipped over budget: missing=%v", s.Missing)
-	}
+	r.budget.GroupTiming("tcp", 2*time.Second, true)
+	r.budget.GroupTiming("tcp", 2*time.Second, true)
 
-	// Missing readings: feedBudget skips the update, so the budget must REMAIN
-	// over budget — a failed reading is not fresh calm evidence.
-	r.self.set(0, 0, false)
-	for i := 0; i < 5; i++ {
+	r.self.set(SelfReading{}, false)
+	for i := 0; i < 12; i++ {
 		r.tick()
-		if !r.budget.SkipOptional() {
-			t.Fatalf("missing reading %d re-enabled optional groups (treated as safety)", i)
-		}
-		if s := r.readLastSample(); !missingHas(s, "tcp") {
-			t.Fatalf("missing reading %d: optional group ran: missing=%v", i, s.Missing)
+		if s := r.readLastSample(); !missingHas(s, "tcp: slow") {
+			t.Fatalf("tick %d: optional group ran during its probation: missing=%v", i, s.Missing)
 		}
 	}
+	if got := r.budget.EffectiveInterval(); got != compInterval {
+		t.Fatalf("missing readings moved the interval to %d", got)
+	}
 
-	// Fresh calm readings for budgetCalmCycles cycles step back and re-enable.
-	r.self.set(0.1, 30<<20, true)
-	for i := 0; i < budgetCalmCycles+2; i++ {
+	// The probation is 10 minutes; run past it.
+	for i := 0; i < int(budgetProbation/(compInterval*time.Second))+2; i++ {
 		r.tick()
 	}
-	if r.budget.SkipOptional() {
-		t.Fatal("fresh calm readings did not re-enable optional groups")
+	if s := r.readLastSample(); missingHas(s, "tcp: slow") || missingHas(s, "tcp") {
+		t.Fatalf("group still skipped after the probation: missing=%v", s.Missing)
 	}
-	if s := r.readLastSample(); missingHas(s, "tcp") {
-		t.Fatalf("optional group still skipped after calm recovery: missing=%v", s.Missing)
+	if slow := r.budget.SlowGroups(); len(slow) != 0 {
+		t.Fatalf("a fast run must clear the probation: %v", slow)
+	}
+}
+
+// TestCompositionOverReadingWidensThenSteps: an over-budget self reading widens
+// the real recorder's interval after two windows; calm readings step it back
+// after five.
+func TestCompositionOverReadingWidensThenSteps(t *testing.T) {
+	r := newCompRig(t, compOpts{})
+	r.self.set(rdOver, true)
+	for i := 0; i < budgetWarmupCycles+budgetWindowTicks*budgetOverWindows; i++ {
+		r.tick()
+	}
+	if got := r.budget.EffectiveInterval(); got != 2*compInterval {
+		t.Fatalf("effective interval = %d, want %d after two over windows", got, 2*compInterval)
+	}
+	r.self.set(rdCalm, true)
+	for i := 0; i < budgetWindowTicks*budgetCalmWindows+1; i++ {
+		r.tickBy(30 * time.Second)
+	}
+	if got := r.budget.EffectiveInterval(); got != compInterval {
+		t.Fatalf("effective interval = %d, want back at %d after calm windows", got, compInterval)
 	}
 }

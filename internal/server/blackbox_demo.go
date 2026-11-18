@@ -605,6 +605,19 @@ func (p *simPC) Snapshot(ctx context.Context) (blackbox.SnapshotOutcome, error) 
 	}, nil
 }
 
+func (p *simPC) Update(ctx context.Context) (blackbox.UpdateOutcome, error) {
+	if err := p.enter(ctx, "update"); err != nil {
+		return blackbox.UpdateOutcome{}, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.installed {
+		return blackbox.UpdateOutcome{}, &blackbox.ThisPCError{Reason: blackbox.ReasonNotInstall, Message: "No Blackbox is installed on this PC."}
+	}
+	// The pretend recorder is always the shipped one.
+	return blackbox.UpdateOutcome{}, nil
+}
+
 // cloneCfg copies the settings the simulated service runs with. The caller holds p.mu.
 func (p *simPC) cloneCfg() *blackbox.Config {
 	c := p.cfg

@@ -121,7 +121,8 @@ test('the read key goes up in the add and key calls only, and is never kept or s
   const lib = read('src/lib/blackbox.ts');
   const calls = lib.split('\n').filter((line) => /\bkey\b/.test(line) && /call<|body|JSON/.test(line));
   assert.ok(calls.some((line) => line.includes('setKey')), 'a new key is sent by setKey');
-  for (const file of ['src/lib/blackbox.ts', 'src/components/BlackboxAdd.svelte', 'src/components/BlackboxPanel.svelte', 'src/components/BlackboxHostCard.svelte', 'src/components/BlackboxWizard.svelte', 'src/components/BlackboxRemove.svelte']) {
+  for (const file of ['src/lib/blackbox.ts', 'src/components/BlackboxAdd.svelte', 'src/components/BlackboxPanel.svelte', 'src/components/BlackboxHostCard.svelte', 'src/components/BlackboxPlaceWizard.svelte', 'src/components/BlackboxRemove.svelte',
+    ...fs.readdirSync(path.join(root, 'src/components/blackboxWizard')).filter((name) => name.endsWith('.svelte')).map((name) => 'src/components/blackboxWizard/' + name)]) {
     const text = read(file);
     assert.doesNotMatch(text, /localStorage|sessionStorage|indexedDB|console\.(log|info|debug)/, file + ' keeps nothing in the browser');
   }
@@ -267,4 +268,15 @@ test('D-C-23: the Add form marks a wrong field aria-invalid and links the error 
   assert.match(add, /type=\{showKey\s*\?\s*'text'\s*:\s*'password'\}/);
   assert.doesNotMatch(add, />\s*\{key\}\s*</);
   assert.match(add, /key\s*=\s*'';\s*onAdded/);
+});
+
+test('TSK-18: the panel opens the Place pop-up over the drawer from both Place buttons, and the drawer wizard is gone', () => {
+  const panel = read('src/components/BlackboxPanel.svelte');
+  assert.match(panel, /import PlaceWizard from '\.\/BlackboxPlaceWizard\.svelte';/);
+  assert.doesNotMatch(panel, /BlackboxWizard\.svelte|kind: 'wizard'/);
+  assert.equal((panel.match(/onclick=\{\(\) => \{ placeOpen = true; \}\}/g) ?? []).length, 2, 'the status and list Place buttons');
+  assert.match(panel, /\{#if placeOpen\}\s*<PlaceWizard \{thisPc\} canPack=\{list\?\.canPack \?\? false\} open=\{placeOpen\}/);
+  assert.match(panel, /onLeave=\{\(\) => \{ placeOpen = false; \}\}/);
+  assert.match(panel, /onPlaced=\{async \(\) => \{ await load\(\); placeOpen = false; await show\(\{ kind: 'list' \}\); \}\}/);
+  assert.equal(fs.existsSync(path.join(root, 'src/components/BlackboxWizard.svelte')), false, 'the drawer wizard file is deleted');
 });

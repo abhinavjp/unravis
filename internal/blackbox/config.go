@@ -225,6 +225,21 @@ func validBind(s string) bool {
 	return hostNameRe.MatchString(s)
 }
 
+// BindWarning is the plain sentence to show when the status port listens beyond
+// this PC (SEC-10): the read key and the recordings cross the network unencrypted,
+// because the status port has no TLS. Empty for a loopback address.
+func BindWarning(bind string) string {
+	b := strings.ToLower(strings.TrimSpace(bind))
+	if b == "" || b == "localhost" || b == "::1" || b == "[::1]" {
+		return ""
+	}
+	if ip := net.ParseIP(b); ip != nil && ip.IsLoopback() {
+		return ""
+	}
+	return "The Blackbox listens beyond this PC and its status port is not encrypted, so the read key and the readings can be seen on the network. " +
+		"In Windows Firewall, allow this port only from the Unravis PC, or change Listens on to 127.0.0.1 and read it through the same PC."
+}
+
 // Validate checks every field and says which one is wrong. Housekeeping limits
 // below their minimum are refused, not clamped: the limits cannot be turned off.
 func (c Config) Validate() error {
@@ -263,6 +278,11 @@ func (c Config) Validate() error {
 	for _, p := range c.LogPaths {
 		if !filepath.IsAbs(p) {
 			return invalidf(`"logPaths" entry %q must be a full path`, p)
+		}
+		// The recorder runs as SYSTEM: a network share would make this PC's account
+		// sign in to another machine on every scan (SEC-07).
+		if strings.HasPrefix(strings.ReplaceAll(p, "/", `\`), `\\`) {
+			return invalidf(`"logPaths" entry %q is a network share: list a folder on this PC instead`, p)
 		}
 	}
 	if len(c.Targets) > maxTargets {
@@ -347,6 +367,10 @@ func LoadConfigDraft(path string) (Config, error) {
 	}
 	return parseDraft(data)
 }
+
+// ParseConfigDraft is LoadConfigDraft for bytes that were already read, so a
+// caller that checked a hash of the bytes parses exactly those bytes.
+func ParseConfigDraft(data []byte) (Config, error) { return parseDraft(data) }
 
 func parseDraft(data []byte) (Config, error) {
 	if len(data) > maxConfigBytes {

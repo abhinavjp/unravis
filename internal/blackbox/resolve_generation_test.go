@@ -337,6 +337,19 @@ func newGenRig(t *testing.T, optionalNames []string, mandatory string) (*process
 	return gate, tracker, b, fakes, &procs
 }
 
+// setProbation puts the optional groups on probation (slow twice in a row) or
+// takes them off it (a fast run).
+func setProbation(b *Budget, groups []*genFakeGroup, on bool) {
+	for _, g := range groups {
+		if on {
+			b.GroupTiming(g.name, 2*time.Second, true)
+			b.GroupTiming(g.name, 2*time.Second, true)
+		} else {
+			b.GroupTiming(g.name, 10*time.Millisecond, true)
+		}
+	}
+}
+
 // TestGenerationDeliveredAcrossSkips guards W3-03: over 20 skip/change/stable/
 // resume cycles, a change that happens DURING a budget skip is delivered to every
 // optional group on resume — the newest generation, without a second change.
@@ -349,7 +362,7 @@ func TestGenerationDeliveredAcrossSkips(t *testing.T) {
 
 	for round := 0; round < 20; round++ {
 		// 1) Skip optional groups and change the process set during the skip.
-		b.skipOptional = true
+		setProbation(b, optional, true)
 		*procs = append(*procs, ProcInfo{PID: nextPID, Start: int64(nextPID), StartTicks: int64(nextPID) * 10_000_000, Name: "extra.exe"})
 		nextPID++
 		now = now.Add(15 * time.Second)
@@ -372,7 +385,7 @@ func TestGenerationDeliveredAcrossSkips(t *testing.T) {
 		}
 		// 3) Resume: optional groups run and must reconcile the newest generation
 		//    WITHOUT any second process change.
-		b.skipOptional = false
+		setProbation(b, optional, false)
 		now = now.Add(15 * time.Second)
 		if _, err := gate.Collect(now); err != nil {
 			t.Fatal(err)
@@ -403,14 +416,14 @@ func TestFailedRefreshRetainsGeneration(t *testing.T) {
 	now := time.Unix(1000, 0)
 
 	// Change during a skip.
-	b.skipOptional = true
+	setProbation(b, []*genFakeGroup{g}, true)
 	*procs = append(*procs, ProcInfo{PID: 1000, Start: 1000, StartTicks: 10_000_000_000, Name: "extra.exe"})
 	now = now.Add(15 * time.Second)
 	if _, err := gate.Collect(now); err != nil {
 		t.Fatal(err)
 	}
 	// Resume, but the refresh fails: no ack, still dirty.
-	b.skipOptional = false
+	setProbation(b, []*genFakeGroup{g}, false)
 	g.fail = true
 	now = now.Add(15 * time.Second)
 	if _, err := gate.Collect(now); err != nil {

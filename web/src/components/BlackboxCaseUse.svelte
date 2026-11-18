@@ -3,8 +3,8 @@
   import { caseUse, stopUsingInCase, useInCase, type CaseUse } from '../lib/blackboxCase';
   import { caseUseApi } from '../lib/blackboxCaseApi';
   import { believedState, getCaseView } from '../lib/cases';
-  import { type BlackboxItem } from '../lib/blackbox';
-  import { BB_TEXT as T } from '../lib/copy/blackboxCopy';
+  import { BlackboxError, refusalText, type BlackboxItem } from '../lib/blackbox';
+  import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
   import { onMount } from 'svelte';
 
   // Add this Blackbox to the case being worked in, so Step 9 reads it. The tag holds the Blackbox name and nothing else.
@@ -20,20 +20,30 @@
   let problem = $state('');
   // The case is closed: the server refuses any change to its tags, so the buttons are off up front (D-B-46).
   let caseClosed = $state(false);
+  let refreshFailed = $state(false);
   const closed = $derived(!!caseId && caseClosed);
 
   onMount(() => { void refresh(); });
 
+  // The case calls fail with their own words or with a plain Error. A Blackbox refusal gets its cause and next step;
+  // a plain Error keeps its cause and gets the next step added; with no cause the whole sentence is the fallback.
+  function caseProblem(error: unknown): string {
+    if (error instanceof BlackboxError) return refusalText(error, BB_REFUSAL);
+    return error instanceof Error && error.message ? error.message + ' ' + T.caseUseNext : T.caseUseFailed;
+  }
   async function refresh() {
     if (!caseId) { use = null; caseClosed = false; return; }
     busy = T.caseUseChecking;
+    refreshFailed = false;
+    problem = '';
     try {
       const [tags, view] = await Promise.all([caseUseApi.listTags(caseId), getCaseView(caseId).catch(() => null)]);
       use = caseUse(tags, item.name);
       caseClosed = view ? believedState(view) === 'closed' : false;
     } catch (error) {
       use = null;
-      problem = error instanceof Error && error.message ? error.message : T.caseUseFailed;
+      problem = caseProblem(error);
+      refreshFailed = true;
     } finally {
       busy = '';
     }
@@ -47,7 +57,7 @@
       use = await change();
       note = done;
     } catch (error) {
-      problem = error instanceof Error && error.message ? error.message : T.caseUseFailed;
+      problem = caseProblem(error);
     } finally {
       busy = '';
     }
@@ -71,12 +81,15 @@
     <p>{T.caseUseOther(use.name)}</p>
   {/if}
   {#if closed}<p class="bb-note">{T.caseUseClosed}</p>{/if}
-  <div aria-live="polite">
+  <div>
     {#if busy}<p class="bb-note" role="status">{busy}</p>{/if}
     {#if note}<p class="bb-ok" role="status">{note}</p>{/if}
     {#if problem}<div class="inline-error" role="alert">{problem}</div>{/if}
   </div>
   <div class="bb-actions">
+    {#if refreshFailed}
+      <button type="button" class="secondary-button" disabled={!!busy} onclick={refresh}>{T.caseUseRetry}</button>
+    {/if}
     {#if use?.state === 'this'}
       <button type="button" class="secondary-button" disabled={!!busy || closed} onclick={remove}>{T.caseUseStop}</button>
     {:else}
@@ -89,7 +102,5 @@
   .bb-case { display: grid; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--line); min-width: 0; }
   .bb-case h4 { margin: 0; font-size: 14px; font-weight: 600; }
   .bb-case p { margin: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
-  .bb-note { color: var(--text-2); font-size: 12px !important; }
-  .bb-ok { color: var(--tone-ok); }
-  .bb-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .bb-case p.bb-note { font-size: 12px; }
 </style>

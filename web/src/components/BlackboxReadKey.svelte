@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { blackboxApi, type BlackboxItem } from '../lib/blackbox';
+  import { blackboxApi, refusalText, type BlackboxItem } from '../lib/blackbox';
   import { copyKeyOnce, isKeeperHeldError, KEY_SHOW_MS, makeRevealGuard } from '../lib/blackboxKey';
-  import { BB_TEXT as T } from '../lib/copy/blackboxCopy';
+  import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
 
   // Screen 65: the read key, masked, with Show and Copy. It is only for the Blackbox installed on this PC. The key lives in
   // this component's own variable while it is on view. It is not written to storage, to the app state or to a case, and it
@@ -38,7 +38,7 @@
       if (!guard.valid(mine)) return;
       letGo();
       if (isKeeperHeldError(error)) held = true;
-      else problem = error instanceof Error && error.message ? error.message : T.keyFailed;
+      else problem = refusalText(error, { ...BB_REFUSAL, other: T.keyFailed });
     } finally {
       busy = '';
     }
@@ -57,7 +57,7 @@
 
 <section class="bb-key" aria-label={T.keyTitle}>
   <h4>{T.keyTitle}</h4>
-  <p class="bb-key-value">{#if key}<code>{key}</code>{:else}<span aria-hidden="true">••••••••••••••••</span>{/if}</p>
+  <p class="bb-key-value">{#if key}<code>{key}</code>{:else}<span aria-hidden="true">••••••••••••••••</span><span class="bb-sr">{T.keyHiddenNow}</span>{/if}</p>
   <p class="bb-note">{T.keyHereOnly}</p>
   <div class="bb-actions">
     {#if key}
@@ -67,7 +67,7 @@
     {/if}
     <button type="button" class="secondary-button" disabled={!!busy || held} onclick={copy}>{T.keyCopy}</button>
   </div>
-  <div aria-live="polite">
+  <div>
     {#if key}<p class="bb-sr" role="status">{T.keyShownAnnounce}</p>{/if}
     {#if busy}<p class="bb-note" role="status">{busy}</p>{/if}
     {#if note}<p class="bb-ok" role="status">{note}</p>{/if}
@@ -82,8 +82,5 @@
   .bb-key p { margin: 0; font-size: 13px; line-height: 1.5; }
   .bb-key-value { overflow-wrap: anywhere; word-break: break-all; }
   .bb-key-value code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
-  .bb-note { color: var(--text-2); font-size: 12px !important; }
-  .bb-ok { color: var(--tone-ok); }
-  .bb-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .bb-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .bb-key p.bb-note { font-size: 12px; }
 </style>

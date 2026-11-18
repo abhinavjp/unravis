@@ -353,14 +353,26 @@ func TestTickFeedsBudget(t *testing.T) {
 	g := newRig(t, nil)
 	b := NewBudget(15)
 	g.r.o.Budget = b
-	g.r.o.SelfUsage = func() (float64, uint64, bool) { return 5, 100 << 20, true }
+	g.r.o.SelfUsage = func() (SelfReading, bool) { return rdOver, true }
 	g.r.Tick(g.clk.t)
-	g.tick(15 * time.Second)
+	// Two warm-up cycles, then two over windows of four ticks each.
+	for i := 0; i < budgetWarmupCycles+budgetWindowTicks*budgetOverWindows-1; i++ {
+		g.tick(15 * time.Second)
+	}
 	if got := b.EffectiveInterval(); got != 30 {
 		t.Fatalf("effective interval = %d, want widened to 30", got)
 	}
-	if n := g.s.Manifest().SampleCount(); n != 2 {
-		t.Fatalf("samples %d, want 2: the budget must not block the tick", n)
+	if n := g.s.Manifest().SampleCount(); n != budgetWarmupCycles+budgetWindowTicks*budgetOverWindows {
+		t.Fatalf("samples %d: the budget must not block the tick", n)
+	}
+	// The block of the run record: the self reading and the tick cost, and the
+	// budget state that survives a restart.
+	m := g.s.Manifest()
+	if len(m.Runs) == 0 || m.Runs[len(m.Runs)-1].Self == nil {
+		t.Fatalf("no self block in the run record: %+v", m.Runs)
+	}
+	if m.Budget == nil || m.Budget.Effective != 30 || m.Budget.Base != 15 {
+		t.Fatalf("budget state not kept in the manifest: %+v", m.Budget)
 	}
 }
 
@@ -384,34 +396,29 @@ func TestTickBudgetNilSafe(t *testing.T) {
 	}
 }
 
-// TestTickSelfUsageNotOKSkipsUpdate: a missing reading (ok=false) skips the
-// budget update, never 0-as-fact: the over-budget flag from the previous
-// reading survives and the interval still widens.
-func TestTickSelfUsageNotOKSkipsUpdate(t *testing.T) {
+// TestTickMissingSelfReadingIsCalm: a missing reading (ok=false) is never
+// 0-as-fact and never widens the interval; the tick keeps sampling.
+func TestTickMissingSelfReadingIsCalm(t *testing.T) {
 	g := newRig(t, nil)
 	b := NewBudget(15)
 	g.r.o.Budget = b
-	calls := 0
-	g.r.o.SelfUsage = func() (float64, uint64, bool) {
-		calls++
-		if calls == 1 {
-			return 5, 100 << 20, true
-		}
-		return 0, 0, false
-	}
+	g.r.o.SelfUsage = func() (SelfReading, bool) { return SelfReading{}, false }
 	g.r.Tick(g.clk.t)
-	g.tick(15 * time.Second)
-	if got := b.EffectiveInterval(); got != 30 {
-		t.Fatalf("effective interval = %d, want 30: a missing reading cleared the budget (0-as-fact)", got)
+	for i := 0; i < 16; i++ {
+		g.tick(15 * time.Second)
+	}
+	if got := b.EffectiveInterval(); got != 15 {
+		t.Fatalf("effective interval = %d, want 15: a missing reading must count as calm", got)
+	}
+	if n := g.s.Manifest().SampleCount(); n != 17 {
+		t.Fatalf("samples %d, want 17", n)
 	}
 }
 
 // TestEffectiveInterval table-tests the helper Run uses for the ticker reset.
 func TestEffectiveInterval(t *testing.T) {
 	widened := NewBudget(5)
-	widened.SelfUsage(5, 100<<20)
-	widened.Cycle()
-	widened.Cycle() // 5 -> 15
+	widenBudget(widened, t0, 1) // 5 -> 15
 	cases := []struct {
 		name string
 		b    *Budget
@@ -431,16 +438,14 @@ func TestEffectiveInterval(t *testing.T) {
 	}
 }
 
-// TestRunResetsInterval: with the own ticker (not o.Ticks), the first tick
-// comes at the base interval and the ticker is then reset to the budget's
-// widened effective interval, so no second tick arrives at the old cadence.
+// TestRunFollowsEffectiveInterval: with the own timer (not o.Ticks), the first
+// tick is at once and the next one is a whole effective interval later, so a
+// widened budget is followed at the first tick and the old cadence never fires.
 // The o.Ticks injection path is untouched (TestRecorderRunStopsCleanly).
-func TestRunResetsInterval(t *testing.T) {
+func TestRunFollowsEffectiveInterval(t *testing.T) {
 	g := newRig(t, func(c *Config) { c.IntervalSeconds = 1 })
 	b := NewBudget(1)
-	b.SelfUsage(5, 100<<20)
-	b.Cycle()
-	b.Cycle() // 1 -> 15
+	widenBudget(b, t0, 1) // 1 -> 15
 	if b.EffectiveInterval() != 15 {
 		t.Fatalf("precondition: effective = %d, want 15", b.EffectiveInterval())
 	}
@@ -450,22 +455,79 @@ func TestRunResetsInterval(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- g.r.Run(ctx) }()
-	// First tick at the base 1 s, not the widened 15 s.
 	deadline := time.Now().Add(5 * time.Second)
-	for g.s.Manifest().SampleCount() < 2 && time.Now().Before(deadline) {
+	for g.s.Manifest().SampleCount() < 1 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if n := g.s.Manifest().SampleCount(); n < 2 {
+	if n := g.s.Manifest().SampleCount(); n < 1 {
 		t.Fatalf("first tick never came: %d samples", n)
 	}
-	// Reset to 15 s: the old 1 s cadence must not fire again.
+	// The 1 s base cadence must not fire again: the interval is 15 s.
 	time.Sleep(2500 * time.Millisecond)
-	if n := g.s.Manifest().SampleCount(); n != 2 {
-		t.Fatalf("samples %d, want 2: ticker not reset to the effective interval", n)
+	if n := g.s.Manifest().SampleCount(); n != 1 {
+		t.Fatalf("samples %d, want 1: the timer did not follow the effective interval", n)
 	}
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Without a budget the cadence is the configured interval.
+func TestRunTicksAtBaseInterval(t *testing.T) {
+	g := newRig(t, func(c *Config) { c.IntervalSeconds = 1 })
+	g.r = NewRecorder(RecorderOptions{Config: g.r.o.Config, Store: g.s, Collector: g.col, Disk: g.disk,
+		RunID: "run1", Now: time.Now})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- g.r.Run(ctx) }()
+	deadline := time.Now().Add(6 * time.Second)
+	for g.s.Manifest().SampleCount() < 3 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n := g.s.Manifest().SampleCount(); n < 3 {
+		t.Fatalf("samples %d, want at least 3 at a 1 s interval", n)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNextDeadline(t *testing.T) {
+	base := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	iv := 15 * time.Second
+	cases := []struct {
+		name string
+		prev time.Time
+		now  time.Time
+		want time.Time
+	}{
+		{"on time", base, base.Add(14 * time.Second), base.Add(15 * time.Second)},
+		{"tick finished late but before the deadline", base, base.Add(14900 * time.Millisecond), base.Add(15 * time.Second)},
+		{"at the deadline moves on", base, base.Add(15 * time.Second), base.Add(30 * time.Second)},
+		{"one missed deadline is skipped", base, base.Add(20 * time.Second), base.Add(30 * time.Second)},
+		{"a long sleep skips all missed deadlines", base, base.Add(10 * time.Minute), base.Add(10*time.Minute + 15*time.Second)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := nextDeadline(tc.prev, tc.now, iv); !got.Equal(tc.want) {
+				t.Fatalf("nextDeadline = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// The grid keeps its phase: no drift by the tick duration.
+	d := base
+	for i := 0; i < 100; i++ {
+		d = nextDeadline(d, d.Add(700*time.Millisecond), iv)
+	}
+	if want := base.Add(100 * iv); !d.Equal(want) {
+		t.Fatalf("deadline drifted: %v, want %v", d, want)
+	}
+	// A zero interval falls back to one second.
+	if got := nextDeadline(base, base, 0); !got.Equal(base.Add(time.Second)) {
+		t.Fatalf("zero interval: %v", got)
 	}
 }
 
@@ -475,10 +537,7 @@ func TestRunResetsInterval(t *testing.T) {
 func TestWidenedBudgetNoFalseGapOrLate(t *testing.T) {
 	g := newRig(t, nil) // base 15
 	b := NewBudget(15)
-	b.SelfUsage(5, 100<<20)
-	b.Cycle()
-	b.Cycle()
-	b.Cycle() // 15 -> 30 -> 60
+	widenBudget(b, t0, 2) // 15 -> 30 -> 60
 	if b.EffectiveInterval() != 60 {
 		t.Fatalf("precondition: effective = %d, want 60", b.EffectiveInterval())
 	}

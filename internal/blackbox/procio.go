@@ -8,22 +8,21 @@ import (
 
 // BBX-3-03 per-process I/O, pagefile, virtual bytes and elapsed time for the
 // owner-selected targets (any runtime). One reused PDH query over the Process
-// wildcards; #N instances map to PIDs via ID Process and to a creation time via
-// Creation Time, confirmed against the shared per-tick view's (PID, creation)
-// identity — the lossless StartTicks when the view carries it, else the Start
-// second window. English paths only; names UNVERIFIED pending live check. No
-// text, no attach/dump, no goroutine/ticker.
+// wildcards; #N instances map to PIDs via ID Process and to a start time derived
+// from Elapsed Time, confirmed against the shared per-tick view's (PID, start)
+// identity within pdhCreationSlack. English paths only. No text, no attach/dump,
+// no goroutine/ticker.
 
 func init() { RegisterGroup("procIO", true, newProcIOGroup) }
 
-// procIOPaths is the ID Process + Creation Time mapping plus the five
-// per-process detail counters. Creation Time is the process creation FILETIME
-// (100-ns ticks since 1601): it is the identity discriminator, replacing the old
-// now-minus-Elapsed-Time estimate (W5-04). Elapsed Time stays a metric only.
+// procIOPaths is the ID Process mapping plus the per-process detail counters.
+// Windows has NO "Creation Time" Process counter (checked with typeperf -qx), so
+// the process start is derived from Elapsed Time: start = tick time minus
+// Elapsed Time, compared with the resolver's start within pdhCreationSlack.
+// The (PID, start) pair is still the identity; Elapsed Time is also a metric.
 func procIOPaths() []string {
 	return []string{
 		`\Process(*)\ID Process`,
-		`\Process(*)\Creation Time`,
 		`\Process(*)\IO Read Bytes/sec`,
 		`\Process(*)\IO Write Bytes/sec`,
 		`\Process(*)\Page File Bytes`,
@@ -39,13 +38,18 @@ const procIOPrefix = `\Process(`
 // per-process group's creation-time join.
 const filetimeUnixEpochDiff int64 = 11644473600 * filetimeTicksPerSecond
 
-// pdhCreationSlack bounds the float64 rounding of a PDH Creation Time value.
-// PDH formats the FILETIME as a float64; near the current epoch one ulp is 16
-// ticks, so the formatted value can differ from the true ticks by up to half an
-// ulp. The slack keeps a valid creation sitting on a second boundary from being
-// dropped, and it can never bridge two whole seconds (the windows are 10^7 ticks
-// apart), so a different generation a second or more away is always rejected.
-const pdhCreationSlack = 16
+// pdhCreationSlack bounds the error of the start time derived from Elapsed Time:
+// PDH stamps the sample slightly before or after our own clock read, Elapsed Time
+// is whole seconds, and the resolver start is truncated to a second. A different
+// process that reused the PID started more than this long ago or later, so it is
+// rejected; a PID reused inside this window needs sub-3-second process churn on
+// the same PID, which Windows (4-byte, slowly recycled PIDs) does not do.
+const pdhCreationSlack = 3 * filetimeTicksPerSecond
+
+// unixToFiletime converts a time to FILETIME ticks (100 ns since 1601).
+func unixToFiletime(t time.Time) float64 {
+	return float64(t.UnixNano()/100 + filetimeUnixEpochDiff)
+}
 
 // creationWindow returns the [lo, hi) FILETIME tick range that the resolver's
 // unix-second Start represents. The resolver truncates StartTicks to Start, so
@@ -55,13 +59,10 @@ func creationWindow(startUnix int64) (lo, hi int64) {
 	return lo, lo + filetimeTicksPerSecond
 }
 
-// creationConfirmed reports whether a PDH Creation Time reading (FILETIME ticks
-// as float64) confirms the target's unix-second Start. Identity is the creation
-// time itself, never an age: the check is independent of the collection clock,
-// so a delayed read of the same generation still confirms (W5-04). A Start of 0
+// creationConfirmed reports whether a derived start (FILETIME ticks as float64)
+// confirms the target's unix-second Start within pdhCreationSlack. A Start of 0
 // (unreadable creation) never confirms. This is the SECONDS-ONLY fallback join;
-// targetCreationConfirmed is the lossless join used when the view carries
-// StartTicks.
+// targetCreationConfirmed is the join used when the view carries StartTicks.
 func creationConfirmed(creationTicks float64, startUnix int64) bool {
 	if startUnix <= 0 {
 		return false
@@ -77,21 +78,18 @@ func targetHasCreation(t ResolvedTarget) bool {
 	return t.StartTicks != 0 || t.Start > 0
 }
 
-// targetCreationConfirmed reports whether a PDH Creation Time reading (FILETIME
-// ticks as float64) confirms the captured target's creation identity.
+// targetCreationConfirmed reports whether a derived start (FILETIME ticks as
+// float64) confirms the captured target's creation identity.
 //
-// When the view carries the lossless StartTicks, the reading must match those
-// ticks within pdhCreationSlack (the float64 formatting bound) — there is NO
-// second window: two same-PID lifetimes created within one unix second are
-// distinct identities, and only the matching lifetime confirms. When
-// StartTicks is absent (a seconds-only view), it falls back to the unix-second
-// window (creationConfirmed), which cannot disambiguate same-second reuse.
-// Like creationConfirmed it is independent of the collection clock, so a
-// delayed read of the same generation still confirms (W5-04).
+// When the view carries the lossless StartTicks, the derived start must match
+// those ticks within pdhCreationSlack. When StartTicks is absent (a seconds-only
+// view), it falls back to the unix-second window (creationConfirmed). Two
+// same-PID lifetimes closer than the slack cannot be told apart; Windows does not
+// recycle a PID that fast.
 func targetCreationConfirmed(creationTicks float64, t ResolvedTarget) bool {
 	if t.StartTicks != 0 {
 		d := creationTicks - float64(t.StartTicks)
-		return d >= -pdhCreationSlack && d <= pdhCreationSlack
+		return d >= -float64(pdhCreationSlack) && d <= float64(pdhCreationSlack)
 	}
 	return creationConfirmed(creationTicks, t.Start)
 }
@@ -147,7 +145,7 @@ func procIOPathsOf(src CounterSource) []string {
 // procIOKind: IO bytes/sec are PDH rates (two-baseline gated); rest gauges.
 func procIOKind(counter string) (CounterKind, bool) {
 	switch counter {
-	case "ID Process", "Creation Time", "Page File Bytes", "Virtual Bytes", "Elapsed Time":
+	case "ID Process", "Page File Bytes", "Virtual Bytes", "Elapsed Time":
 		return KindGauge, true
 	case "IO Read Bytes/sec", "IO Write Bytes/sec":
 		return KindPDHRate, true
@@ -157,9 +155,10 @@ func procIOKind(counter string) (CounterKind, bool) {
 
 // procIOMapping reports whether a counter is an identity-mapping counter read
 // straight from the raw sample (never engine detail): ID Process maps the
-// instance to a PID, Creation Time to its creation FILETIME.
+// instance to a PID. (Elapsed Time also feeds the start derivation, but procIO
+// keeps it as a metric too.)
 func procIOMapping(counter string) bool {
-	return counter == "ID Process" || counter == "Creation Time"
+	return counter == "ID Process"
 }
 
 // parseProcIOPath splits an expanded Process path into instance and counter.
@@ -178,7 +177,7 @@ func parseProcIOPath(path string) (inst, counter string, ok bool) {
 }
 
 // rebuild derives per-(instance,counter) DETAIL specs and a fresh engine from
-// the expanded paths. The identity-mapping counters (ID Process, Creation Time)
+// the expanded paths. The identity-mapping counters (ID Process, Elapsed Time)
 // are read from the raw sample, not the engine, so unselected instances never
 // enter engine history (W5-03). New instances start their two-baseline gate
 // again.
@@ -239,9 +238,9 @@ func (g *procIOGroup) Collect(now time.Time, _ float64) (any, error) {
 		return nil, err
 	}
 	// Identity mapping from the raw sample: instance -> PID and instance ->
-	// creation FILETIME. A PID reported by more than one instance is ambiguous
-	// and fails closed (W5-01), never first-wins.
-	instPID, instCreation := procIOIdentity(readings)
+	// derived start FILETIME. A PID reported by more than one instance is
+	// ambiguous and fails closed (W5-01), never first-wins.
+	instPID, instCreation := procIOIdentity(readings, now)
 	pidCount := make(map[uint32]int, len(instPID))
 	for _, pid := range instPID {
 		pidCount[pid]++
@@ -317,8 +316,10 @@ func (g *procIOGroup) Collect(now time.Time, _ float64) (any, error) {
 }
 
 // procIOIdentity reads the instance -> PID and instance -> creation FILETIME
-// maps from the raw sample. _Total/Idle and non-positive PIDs never map.
-func procIOIdentity(readings []CounterReading) (instPID map[string]uint32, instCreation map[string]float64) {
+// maps from the raw sample; the start is at minus Elapsed Time. _Total/Idle and
+// non-positive PIDs never map.
+func procIOIdentity(readings []CounterReading, at time.Time) (instPID map[string]uint32, instCreation map[string]float64) {
+	nowTicks := unixToFiletime(at)
 	instPID = make(map[string]uint32)
 	instCreation = make(map[string]float64)
 	for _, r := range readings {
@@ -334,8 +335,10 @@ func procIOIdentity(readings []CounterReading) (instPID map[string]uint32, instC
 			if r.Value > 0 {
 				instPID[inst] = uint32(r.Value)
 			}
-		case "Creation Time":
-			instCreation[inst] = r.Value
+		case "Elapsed Time":
+			if r.Value >= 0 {
+				instCreation[inst] = nowTicks - r.Value*float64(filetimeTicksPerSecond)
+			}
 		}
 	}
 	return instPID, instCreation

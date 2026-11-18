@@ -86,7 +86,7 @@ test('an older server with no per-source state still labels an absent name unkno
 /* ------------------------------------------------------------------ manual add alongside the lists */
 
 test('the manual add row renders alongside the detected lists, not only in their else branch', () => {
-  const comp = read('src/components/BlackboxSettings.svelte');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
   // The else branch now holds only the manual note; the add row follows the closing {/if}, so it
   // renders whether or not detection succeeded. This is the W3-06 fix: the old else-only row is gone.
   assert.match(comp, /\{:else\}\s*<p class="bb-note">\{T\.targetsManualNote\}<\/p>\s*\{\/if\}\s*<div class="bb-target-add">/, 'the add row is outside the showLists conditional');
@@ -95,8 +95,12 @@ test('the manual add row renders alongside the detected lists, not only in their
   assert.match(comp, /\{#if !showLists\}\s*\{@render targetChips\(picked\)\}/, 'with no lists, every picked name renders as a chip');
   // The add row keeps the same kind+name helper and the same server-side validation/cap (nothing weakened here).
   assert.match(comp, /function addTarget\(\)/);
-  assert.match(comp, /settings\.targets = toggleTarget\(picked, manualKind, name\)/);
-  assert.match(comp, /disabled=\{!manualName\.trim\(\)\} onclick=\{addTarget\}/);
+  assert.match(comp, /targets = toggleTarget\(picked, manualKind, name\)/);
+  // Browser pass, item C: the button is off for an empty name (as before) and now also for a name already on the
+  // list, with a reason beside it. The old inline test of the empty name is now the addBlocked rule below.
+  assert.match(comp, /disabled=\{addBlocked\}[^>]*onclick=\{addTarget\}/);
+  assert.match(comp, /const addBlocked = \$derived\(typedName === '' \|\| alreadyPicked\);/);
+  assert.match(comp, /\{#if addReason && !targetError\(\)\}<p class="bb-note" id="\{idPrefix\}-add-reason">\{addReason\}<\/p>\{\/if\}/);
 });
 
 test('successful-but-incomplete discovery still allows adding the wanted stopped service, stored as kind+name', () => {
@@ -117,7 +121,7 @@ test('successful-but-incomplete discovery still allows adding the wanted stopped
 /* ------------------------------------------------------------------ honest chip labels */
 
 test('a selected stopped service is labelled stopped; an absent name is labelled unknown, never stopped', () => {
-  const comp = read('src/components/BlackboxSettings.svelte');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
   // The chip note maps each honest state to its copy; absent-name states never map to "not running".
   assert.match(comp, /if \(s === 'stopped'\) return T\.targetsNotRunning;/);
   // UX-8: an unreadable state carries no label of its own, on a chip or on a row. The one overall
@@ -162,16 +166,16 @@ test('a selected stopped service is labelled stopped; an absent name is labelled
 });
 
 test('chips carry a state note only on this PC after the single read settles; the note is rendered', () => {
-  const comp = read('src/components/BlackboxSettings.svelte');
-  assert.match(comp, /const chipsLabelled = \$derived\(targetMode === 'pc' && targetsRead\)/, 'pack/remote chips stay unlabelled');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
+  assert.match(comp, /const chipsLabelled = \$derived\(mode === 'pc' && targetsRead\)/, 'pack/remote chips stay unlabelled');
   assert.match(comp, /\{#if chipsLabelled && chipNote\(t\)\} <span class="bb-note">\{chipNote\(t\)\}<\/span>\{\/if\}/, 'the chip renders its honest note');
 });
 
 /* ------------------------------------------------------------------ read once, per-source state kept */
 
 test('the picker keeps the per-source states from the one read and never polls', () => {
-  const comp = read('src/components/BlackboxSettings.svelte');
-  assert.match(comp, /onMount\(\(\) => \{\s*if \(targetMode !== 'pc'\) return;/, 'pack/remote mode never fetches');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
+  assert.match(comp, /onMount\(\(\) => \{\s*if \(mode !== 'pc'\) return;/, 'pack mode never fetches');
   assert.match(comp, /blackboxApi\.targets\(\)/);
   assert.match(comp, /appPoolsState = answer\.appPoolsState;/);
   assert.match(comp, /servicesState = answer\.servicesState;/);
@@ -183,12 +187,16 @@ test('the picker keeps the per-source states from the one read and never polls',
 /* ------------------------------------------------------------------ pack/remote mode unchanged */
 
 test('pack/remote (manual) mode is unchanged: no fetch, typed names, unlabelled chips', () => {
-  const comp = read('src/components/BlackboxSettings.svelte');
-  assert.match(comp, /targetMode\?: 'pc' \| 'manual'/);
+  const form = read('src/components/BlackboxSettings.svelte');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
+  assert.match(form, /targetMode\?: 'pc' \| 'manual'/);
+  assert.match(form, /mode=\{targetMode === 'pc' \? 'pc' : 'pack'\}/, 'the form maps manual to the picker pack mode');
+  assert.match(comp, /mode\?: 'pc' \| 'pack'/);
   assert.match(comp, /\{T\.targetsManualNote\}/, 'the manual note is still shown when there are no lists');
-  assert.match(comp, /const chipsLabelled = \$derived\(targetMode === 'pc' && targetsRead\)/, 'manual mode never labels chips');
-  const wizard = read('src/components/BlackboxWizard.svelte');
-  assert.match(wizard, /targetMode=\{where === 'pc' \? 'pc' : 'manual'\}/, 'the wizard passes the mode it is in');
+  assert.match(comp, /const chipsLabelled = \$derived\(mode === 'pc' && targetsRead\)/, 'manual mode never labels chips');
+  const watch = read('src/components/blackboxWizard/StepWatch.svelte');
+  assert.match(watch, /const mode = \$derived\(wizard\.where === 'pack' \? 'pack' : 'pc'\);/, 'the pop-up Watch step passes the mode it is in (pack for another server)');
+  assert.match(watch, /<BlackboxTargetPicker bind:targets=\{wizard\.settings\.targets\} \{mode\} /, 'and hands it to the picker');
   // In manual mode nothing is detected, so every picked name is a chip and the add row is the only way in.
   assert.match(comp, /\{#if !showLists\}\s*\{@render targetChips\(picked\)\}/);
 });
@@ -196,7 +204,7 @@ test('pack/remote (manual) mode is unchanged: no fetch, typed names, unlabelled 
 /* ------------------------------------------------------------------ only kind+name is stored */
 
 test('the picker stores only kind+name and never a path, command line or key', () => {
-  const comp = read('src/components/BlackboxSettings.svelte');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
   assert.match(comp, /toggleTarget\(picked, kind, name\)/, 'checking a name uses the pure helper');
   assert.match(comp, /function removeTarget\(kind: TargetKind, name: string\)/);
   assert.doesNotMatch(comp, /commandLine|imagePath|\.path\b|readKey|password|secret/, 'no path, command line or key is stored');

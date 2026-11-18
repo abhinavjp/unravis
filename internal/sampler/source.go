@@ -34,6 +34,7 @@ const (
 // ("access denied": name and threads only).
 type ProcSample struct {
 	PID          uint32
+	Parent       uint32 // parent PID; 0 when the source does not know it
 	Image        string // image base name, never a path or a command line
 	Threads      uint32
 	Have         uint8

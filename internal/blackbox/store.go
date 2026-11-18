@@ -66,7 +66,27 @@ type Store struct {
 	// mistaken for a gap. The manifest keeps the configured base interval and,
 	// separately, the effective interval for offline readers.
 	gapInterval int
+
+	// priorInterval is the interval (seconds) the previous run was ticking at,
+	// read from the manifest before this run overwrites it. The first sample of
+	// this run judges the restart hole against 1.5 x this value.
+	priorInterval int
+
+	// Durability bookkeeping. The in-memory manifest is always current; the file
+	// is rewritten on events (gap, hour roll, interval change, stop) and every
+	// manifestWriteEvery. Sample lines are fsynced per sample only when the
+	// interval is 30 s or more, else every syncEveryN samples or syncEvery.
+	lastWrite time.Time
+	lastSync  time.Time
+	unsynced  int
 }
+
+// Sample fsync batching, used only at an interval under syncPerSampleFrom.
+const (
+	syncPerSampleFrom = 30 // seconds
+	syncEveryN        = 4
+	syncEvery         = 60 * time.Second
+)
 
 // OpenStore opens (and when needed creates) the recordings folder. It repairs
 // what an unclean stop can leave: a torn last line, a file missing from the
@@ -98,7 +118,17 @@ func OpenStore(dir string, opt StoreOptions) (*Store, error) {
 		m = Manifest{Format: FormatVersion, Created: now}
 		rebuilt = true
 	}
+	// The interval the previous run ticked at, before this run's settings go in.
+	prior := m.EffectiveIntervalSeconds
+	if prior <= 0 {
+		prior = m.IntervalSeconds
+	}
+	if prior <= 0 {
+		prior = opt.IntervalSeconds
+	}
+	s.priorInterval = prior
 	s.m = m
+	s.m.normalize()
 	s.m.Format = FormatVersion
 	s.m.Name, s.m.Version, s.m.Host, s.m.IntervalSeconds = opt.Name, opt.Version, opt.Host, opt.IntervalSeconds
 	if s.m.Created.IsZero() {
@@ -122,6 +152,15 @@ func OpenStore(dir string, opt StoreOptions) (*Store, error) {
 			}
 			last.Stop, last.Reason = &stop, "crash"
 		}
+	}
+	// Every start after an earlier run says so, whether or not the hole is long
+	// enough to be a gap (a short restart is otherwise invisible).
+	if len(s.m.Runs) > 0 {
+		detail := RestartAfterCrash
+		if s.priorClean {
+			detail = RestartAfterStop
+		}
+		s.event(now, EventRestart, detail)
 	}
 	if s.m.LastSample != nil {
 		s.lastMax = *s.m.LastSample
@@ -332,11 +371,65 @@ func (s *Store) SetInterval(seconds int) {
 	}
 }
 
-// Append writes one sample as one line, flushes it to disk, and updates the
-// manifest. causeHint names why a gap before this sample happened when the
-// recorder knows (for example "disk-low"); otherwise a gap inside a run is
-// "late". On a write error the file is cut back to its size before the write,
-// so a half line is never left behind.
+// SetBudget keeps the light budget's state (effective interval, groups on
+// probation) in the manifest so a restart does not start over. It is in memory
+// only, except when the set of groups on probation changes, which is written at
+// once; an interval change is written by SetInterval, called right after.
+func (s *Store) SetBudget(st BudgetState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := s.m.Budget == nil || !sameProbationNames(s.m.Budget.Probation, st.Probation)
+	cp := st
+	cp.Probation = append([]GroupProbation(nil), st.Probation...)
+	s.m.Budget = &cp
+	if changed {
+		_ = s.writeManifestLocked(false)
+	}
+}
+
+func sameProbationNames(a, b []GroupProbation) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Group != b[i].Group {
+			return false
+		}
+	}
+	return true
+}
+
+// SetSelf sets the self block of this run's record (heap, private bytes,
+// handles, tick time and their peaks). It is in memory only; the file picks it
+// up at the next manifest write (every five minutes, an event, or the stop).
+func (s *Store) SetSelf(st SelfStats) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n := len(s.m.Runs); n > 0 && s.m.Runs[n-1].ID == s.opt.RunID {
+		cp := st
+		s.m.Runs[n-1].Self = &cp
+	}
+}
+
+// syncDueLocked says whether the sample just written must be fsynced now. At an
+// interval of 30 s or more every sample is (a lost minute is a lost sample); at a
+// shorter interval an fsync every few seconds would cost more than the sample, so
+// it is every syncEveryN samples or syncEvery, and always on an hour roll and at
+// Close.
+func (s *Store) syncDueLocked(now time.Time) bool {
+	if s.gapInterval >= syncPerSampleFrom {
+		return true
+	}
+	return s.unsynced+1 >= syncEveryN || s.lastSync.IsZero() || now.Sub(s.lastSync) >= syncEvery || now.Before(s.lastSync)
+}
+
+// Append writes one sample as one line and updates the manifest in memory. The
+// line is fsynced per the policy in syncDueLocked; the manifest file is written
+// on an hour roll, a gap or an event, and every manifestWriteEvery otherwise.
+// causeHint names why a gap before this sample happened when the recorder knows
+// (for example "disk-low"); otherwise a gap inside a run is "late". On a write
+// error the file is cut back to its size before the write, so a half line is
+// never left behind.
 func (s *Store) Append(smp Sample, causeHint string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -349,8 +442,12 @@ func (s *Store) Append(smp Sample, causeHint string) error {
 	line = append(line, '\n')
 
 	name := FileNameFor(smp.T)
+	mustWrite := s.curN != name // an hour roll (or the first sample of a run)
 	if err := s.openFileLocked(name); err != nil {
 		return err
+	}
+	if mustWrite {
+		s.unsynced = 0 // the roll synced the file it left
 	}
 	before, err := s.cur.Seek(0, 2)
 	if err != nil {
@@ -360,15 +457,22 @@ func (s *Store) Append(smp Sample, causeHint string) error {
 		s.rollbackLocked(before)
 		return err
 	}
-	if err := s.cur.Sync(); err != nil {
-		s.rollbackLocked(before)
-		return err
+	clock := s.now()
+	if s.syncDueLocked(clock) {
+		if err := s.cur.Sync(); err != nil {
+			s.rollbackLocked(before)
+			return err
+		}
+		s.unsynced, s.lastSync = 0, clock
+	} else {
+		s.unsynced++
 	}
 
 	// The sample is on disk; now the bookkeeping.
 	if !s.lastMax.IsZero() {
 		if smp.T.Before(s.lastMax) {
 			s.event(smp.T, EventClockBack, fmt.Sprintf("sample is %.1f s before the newest one", s.lastMax.Sub(smp.T).Seconds()))
+			mustWrite = true
 		} else {
 			cause := causeHint
 			if s.firstOfRun {
@@ -379,11 +483,21 @@ func (s *Store) Append(smp Sample, causeHint string) error {
 			} else if cause == "" {
 				cause = CauseLate
 			}
-			if g, ok := GapBetween(s.lastMax, smp.T, s.gapInterval, cause); ok {
+			var g Gap
+			var ok bool
+			if s.firstOfRun {
+				// A restart is judged against 1.5 x the interval the earlier run
+				// was ticking at, not 3 x the new run's base.
+				g, ok = gapOver(s.lastMax, smp.T, RestartGapLimit(s.priorInterval), cause)
+			} else {
+				g, ok = GapBetween(s.lastMax, smp.T, s.gapInterval, cause)
+			}
+			if ok {
 				s.m.Gaps = append(s.m.Gaps, g)
 				if len(s.m.Gaps) > maxGaps {
 					s.m.Gaps = s.m.Gaps[len(s.m.Gaps)-maxGaps:]
 				}
+				mustWrite = true
 			}
 		}
 	}
@@ -400,8 +514,20 @@ func (s *Store) Append(smp Sample, causeHint string) error {
 	if e.Samples == 1 || smp.T.After(e.Last) {
 		e.Last = smp.T
 	}
-	s.recomputeCoverage()
-	_ = s.writeManifestLocked(false)
+	if e.Samples == 1 {
+		mustWrite = true
+	}
+	if s.m.FirstSample == nil || smp.T.Before(*s.m.FirstSample) {
+		t := smp.T
+		s.m.FirstSample = &t
+	}
+	if s.m.LastSample == nil || smp.T.After(*s.m.LastSample) {
+		t := smp.T
+		s.m.LastSample = &t
+	}
+	if mustWrite || s.lastWrite.IsZero() || clock.Sub(s.lastWrite) >= manifestWriteEvery || clock.Before(s.lastWrite) {
+		_ = s.writeManifestLocked(false)
+	}
 	return nil
 }
 
@@ -470,8 +596,11 @@ func (s *Store) openFileLocked(name string) error {
 // Windows; that is retried briefly and then left for the next write, so a reader
 // never stops the recording. sync forces the data to disk first.
 func (s *Store) writeManifestLocked(sync bool) error {
+	s.m.normalize()
 	s.m.Updated = s.now().UTC()
-	data, err := json.MarshalIndent(s.m, "", " ")
+	// Compact JSON: the file is read by programs, and the indent was most of its
+	// size at 30 days of hourly entries.
+	data, err := json.Marshal(s.m)
 	if err != nil {
 		return err
 	}
@@ -480,6 +609,7 @@ func (s *Store) writeManifestLocked(sync bool) error {
 	for i := 0; i < 3; i++ {
 		if werr = writeFileAtomicSync(path, data, 0o644, sync); werr == nil {
 			s.manifestOK = true
+			s.lastWrite = s.now()
 			return nil
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -525,7 +655,19 @@ func writeFileAtomicSync(path string, data []byte, perm os.FileMode, sync bool) 
 
 // Remove deletes one recording file and its manifest entry. The file being
 // written is never removed.
-func (s *Store) Remove(name string) error {
+func (s *Store) Remove(name string) error { return s.remove(name, true) }
+
+// fileEntries is a copy of the file entries only (housekeeping reads this once
+// per pass instead of copying the whole manifest for every decision).
+func (s *Store) fileEntries() []FileEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]FileEntry(nil), s.m.Files...)
+}
+
+// remove deletes one recording file and its entry; write says whether the
+// manifest file is rewritten at once.
+func (s *Store) remove(name string, write bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !ValidFileName(name) {
@@ -550,7 +692,9 @@ func (s *Store) Remove(name string) error {
 	s.m.Files = kept
 	s.pruneGapsLocked()
 	s.recomputeCoverage()
-	_ = s.writeManifestLocked(false)
+	if write {
+		_ = s.writeManifestLocked(false)
+	}
 	return nil
 }
 
@@ -592,10 +736,22 @@ func (s *Store) Manifest() Manifest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m := s.m
-	m.Files = append([]FileEntry(nil), s.m.Files...)
-	m.Gaps = append([]Gap(nil), s.m.Gaps...)
-	m.Events = append([]Event(nil), s.m.Events...)
-	m.Runs = append([]RunEntry(nil), s.m.Runs...)
+	// Empty, never nil, so a reader that marshals the copy still gets [].
+	m.Files = append([]FileEntry{}, s.m.Files...)
+	m.Gaps = append([]Gap{}, s.m.Gaps...)
+	m.Events = append([]Event{}, s.m.Events...)
+	m.Runs = append([]RunEntry{}, s.m.Runs...)
+	for i := range m.Runs {
+		if p := m.Runs[i].Self; p != nil {
+			cp := *p
+			m.Runs[i].Self = &cp
+		}
+	}
+	if b := s.m.Budget; b != nil {
+		cp := *b
+		cp.Probation = append([]GroupProbation(nil), b.Probation...)
+		m.Budget = &cp
+	}
 	return m
 }
 

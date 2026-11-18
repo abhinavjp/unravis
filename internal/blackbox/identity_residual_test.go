@@ -37,12 +37,24 @@ func ticksAt(startUnix, offsetTicks int64) int64 {
 	return lo + offsetTicks
 }
 
-// Two lifetimes 0.5 s apart inside the SAME unix second: the seconds window
-// cannot tell them apart, the lossless ticks can.
+// Two lifetimes of one PID, 6 s apart: farther than pdhCreationSlack, so the
+// derived-start join tells them apart (lifetimes closer than the slack cannot be
+// told apart, and Windows does not recycle a PID that fast).
 const (
-	sameSecondLifeA = 2_000_000 // 0.2 s into the second
-	sameSecondLifeB = 7_000_000 // 0.7 s into the second
+	sameSecondLifeA = 2_000_000  // 0.2 s into the start second
+	sameSecondLifeB = 62_000_000 // 6.2 s after the start second began
 )
+
+// elapsedForTicks is the Elapsed Time reading (seconds) that makes the group
+// derive exactly creationTicks as the start on the first tick (clock 1000 s).
+func elapsedForTicks(creationTicks int64) float64 {
+	return float64(creationWindowTicks(identityTestBase)-creationTicks) / float64(filetimeTicksPerSecond)
+}
+
+func creationWindowTicks(startUnix int64) int64 {
+	lo, _ := creationWindow(startUnix)
+	return lo
+}
 
 func TestTargetCreationConfirmedLossless(t *testing.T) {
 	start := int64(900)
@@ -51,13 +63,9 @@ func TestTargetCreationConfirmedLossless(t *testing.T) {
 	withTicks := ResolvedTarget{Key: "pool:a", PID: 100, Start: start, StartTicks: lifeA}
 	secondsOnly := ResolvedTarget{Key: "pool:a", PID: 100, Start: start}
 
-	// The wrong same-second lifetime IS inside the old seconds window (the
-	// residual was real) but must NOT confirm the lossless identity.
-	if !creationConfirmed(float64(lifeB), start) {
-		t.Fatal("fixture: lifeB must sit inside the Start second window")
-	}
+	// A later lifetime of the same PID (6 s apart) must NOT confirm.
 	if targetCreationConfirmed(float64(lifeB), withTicks) {
-		t.Fatal("a different same-second lifetime confirmed the lossless identity")
+		t.Fatal("a different lifetime confirmed the lossless identity")
 	}
 	if !targetCreationConfirmed(float64(lifeA), withTicks) {
 		t.Fatal("the exact lossless creation did not confirm")
@@ -75,11 +83,11 @@ func TestTargetCreationConfirmedLossless(t *testing.T) {
 	}
 	// Seconds-only view keeps the old window behaviour (no regression while
 	// the resolver view does not yet carry StartTicks).
-	if !targetCreationConfirmed(float64(lifeB), secondsOnly) {
+	if !targetCreationConfirmed(float64(lifeA), secondsOnly) {
 		t.Fatal("seconds-only fallback must keep confirming inside the window")
 	}
-	if targetCreationConfirmed(float64(ticksAt(start+1, filetimeTicksPerSecond/2)), secondsOnly) {
-		t.Fatal("a different second must not confirm the fallback")
+	if targetCreationConfirmed(float64(ticksAt(start+10, filetimeTicksPerSecond/2)), secondsOnly) {
+		t.Fatal("a start 10 s later must not confirm the fallback")
 	}
 	// No creation identity at all never confirms, and is reported as absent.
 	none := ResolvedTarget{Key: "pool:a", PID: 100}
@@ -103,7 +111,7 @@ func TestTargetCreationConfirmedLossless(t *testing.T) {
 func procIOIdentTicks(src *procIOFakeSource, inst string, pid float64, creationTicks int64) {
 	src.readings = append(src.readings,
 		procIOReading(inst, "ID Process", pid),
-		procIOReading(inst, "Creation Time", float64(creationTicks)),
+		procIOReading(inst, "Elapsed Time", elapsedForTicks(creationTicks)),
 	)
 }
 
@@ -143,12 +151,12 @@ func TestProcIOSameSecondPIDReuseNotConflated(t *testing.T) {
 
 // proc10InstanceTicks is proc10Instance with an explicit creation FILETIME.
 func proc10InstanceTicks(src *proc10FakeSource, inst string, pid float64, creationTicks int64, cpu, ws, pb float64) {
-	for _, c := range []string{"ID Process", "Creation Time", "% Processor Time", "Working Set", "Private Bytes"} {
+	for _, c := range []string{"ID Process", "Elapsed Time", "% Processor Time", "Working Set", "Private Bytes"} {
 		src.paths = append(src.paths, proc10Path(inst, c))
 	}
 	src.readings = append(src.readings,
 		proc10Reading(inst, "ID Process", pid),
-		proc10Reading(inst, "Creation Time", float64(creationTicks)),
+		proc10Reading(inst, "Elapsed Time", elapsedForTicks(creationTicks)),
 		proc10Reading(inst, "% Processor Time", cpu),
 		proc10Reading(inst, "Working Set", ws),
 		proc10Reading(inst, "Private Bytes", pb),
@@ -170,7 +178,7 @@ func TestProc10SameSecondPIDReuseNotConflated(t *testing.T) {
 			g := newProc10TestGroup(t, src, []ResolvedTarget{
 				{Key: "pool:a", PID: 7777, Start: 900, StartTicks: ticksAt(900, sameSecondLifeA), Runtime: 2},
 			}, nil)
-			grp := proc10Collect(t, g, 3)
+			grp := proc10Collect(t, g, src, 3)
 			if tc.wantRow {
 				if grp == nil || len(grp.Targets) != 1 || grp.Targets[0].WorkingSet == nil || *grp.Targets[0].WorkingSet != 3000 {
 					t.Fatalf("group = %+v, want the exact lifetime's row", grp)
@@ -188,10 +196,10 @@ func TestProc10SameSecondPIDReuseNotConflated(t *testing.T) {
 
 // clrProcessIdentTicks is clrProcessIdent with an explicit creation FILETIME.
 func clrProcessIdentTicks(src *clrFakeSource, procInst string, pid float64, creationTicks int64) {
-	src.paths = append(src.paths, procIOPath(procInst, "ID Process"), procIOPath(procInst, "Creation Time"))
+	src.paths = append(src.paths, procIOPath(procInst, "ID Process"), procIOPath(procInst, "Elapsed Time"))
 	src.readings = append(src.readings,
 		procIOReading(procInst, "ID Process", pid),
-		procIOReading(procInst, "Creation Time", float64(creationTicks)),
+		procIOReading(procInst, "Elapsed Time", elapsedForTicks(creationTicks)),
 	)
 }
 
@@ -233,10 +241,10 @@ func TestCLRSameSecondPIDReuseNotConflated(t *testing.T) {
 
 // iisWorkerIdentTicks is iisWorkerIdent with an explicit creation FILETIME.
 func iisWorkerIdentTicks(src *iisFakeSource, procInst string, pid float64, creationTicks int64) {
-	src.paths = append(src.paths, procIOPath(procInst, "ID Process"), procIOPath(procInst, "Creation Time"))
+	src.paths = append(src.paths, procIOPath(procInst, "ID Process"), procIOPath(procInst, "Elapsed Time"))
 	src.readings = append(src.readings,
 		procIOReading(procInst, "ID Process", pid),
-		procIOReading(procInst, "Creation Time", float64(creationTicks)),
+		procIOReading(procInst, "Elapsed Time", elapsedForTicks(creationTicks)),
 	)
 }
 
@@ -279,8 +287,8 @@ func TestIISWorkerCreationDistinguishesRecycledPID(t *testing.T) {
 	// The captured view now carries lifeB. The old seconds-only join could not
 	// tell the two apart; the wire rows must.
 	for i := range src.readings {
-		if strings.HasSuffix(src.readings[i].Path, `\Creation Time`) {
-			src.readings[i].Value = float64(lifeB)
+		if strings.HasSuffix(src.readings[i].Path, `\Elapsed Time`) {
+			src.readings[i].Value = elapsedForTicks(lifeB) + 15 // tick 2 is 15 s later
 		}
 	}
 	targets[0].StartTicks = lifeB

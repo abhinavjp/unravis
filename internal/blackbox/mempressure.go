@@ -16,6 +16,13 @@ var memPressurePaths = []string{
 	`\Memory\Pool Paged Bytes`,
 	`\Memory\Pool Nonpaged Bytes`,
 	`\Paging File(_Total)\% Usage`,
+	`\Memory\Pages/sec`,
+	`\Memory\Page Faults/sec`,
+	`\Memory\Standby Cache Normal Priority Bytes`,
+	`\Memory\Standby Cache Reserve Bytes`,
+	`\Memory\Standby Cache Core Bytes`,
+	`\Memory\Modified Page List Bytes`,
+	`\Memory\Free & Zero Page List Bytes`,
 }
 
 // memPressureSpecs binds each path to its output field and kind. Pages Input/sec
@@ -27,10 +34,18 @@ func memPressureSpecs() []CounterSpec {
 		{Path: `\Memory\Pool Paged Bytes`, Field: "poolPagedBytes", Kind: KindGauge},
 		{Path: `\Memory\Pool Nonpaged Bytes`, Field: "poolNonPagedBytes", Kind: KindGauge},
 		{Path: `\Paging File(_Total)\% Usage`, Field: "pageFileUsagePct", Kind: KindGauge},
+		{Path: `\Memory\Pages/sec`, Field: "pagesPerSec", Kind: KindPDHRate},
+		{Path: `\Memory\Page Faults/sec`, Field: "pageFaultsPerSec", Kind: KindPDHRate},
+		// Windows splits the standby list in three priority bands; the field is their sum.
+		{Path: `\Memory\Standby Cache Normal Priority Bytes`, Field: "standbyBytes", Kind: KindGauge},
+		{Path: `\Memory\Standby Cache Reserve Bytes`, Field: "standbyReserveBytes", Kind: KindGauge},
+		{Path: `\Memory\Standby Cache Core Bytes`, Field: "standbyCoreBytes", Kind: KindGauge},
+		{Path: `\Memory\Modified Page List Bytes`, Field: "modifiedBytes", Kind: KindGauge},
+		{Path: `\Memory\Free & Zero Page List Bytes`, Field: "freeBytes", Kind: KindGauge},
 	}
 }
 
-// memPressureGroup samples the four counters over one reused PDH query handle.
+// memPressureGroup samples the counters over one reused PDH query handle.
 type memPressureGroup struct {
 	src    CounterSource
 	engine *Engine
@@ -40,7 +55,9 @@ type memPressureGroup struct {
 func newMemPressureGroup(d GroupDeps) (Group, error) {
 	src, owned := d.Source, false
 	if src == nil {
-		p, err := NewPDHSource(memPressurePaths)
+		// Tolerant: each counter is independent, so one this Windows lacks is
+		// left out and the others still record.
+		p, err := NewPDHSourceTolerant(memPressurePaths)
 		if err != nil {
 			return nil, err // no PDH (non-Windows) or counters unavailable: skipped
 		}
@@ -80,7 +97,41 @@ func (g *memPressureGroup) Collect(now time.Time, _ float64) (any, error) {
 	if v, ok := out["pageFileUsagePct"]; ok {
 		grp.PageFileUsagePct = &v
 	}
+	if v, ok := out["pagesPerSec"]; ok {
+		grp.PagesPerSec = &v
+	}
+	if v, ok := out["pageFaultsPerSec"]; ok {
+		grp.PageFaultsPerSec = &v
+	}
+	grp.StandbyBytes = memBytesSum(out, "standbyBytes", "standbyReserveBytes", "standbyCoreBytes")
+	grp.ModifiedBytes = memBytes(out, "modifiedBytes")
+	grp.FreeBytes = memBytes(out, "freeBytes")
 	return &grp, nil
+}
+
+// memBytes reads a byte gauge; nil when it was not read or is negative.
+func memBytes(out map[string]float64, field string) *uint64 {
+	if v, ok := out[field]; ok && v >= 0 {
+		u := uint64(v)
+		return &u
+	}
+	return nil
+}
+
+// memBytesSum adds the byte gauges that were read; nil only when none was.
+func memBytesSum(out map[string]float64, fields ...string) *uint64 {
+	var total uint64
+	var any bool
+	for _, f := range fields {
+		if v, ok := out[f]; ok && v >= 0 {
+			total += uint64(v)
+			any = true
+		}
+	}
+	if !any {
+		return nil
+	}
+	return &total
 }
 
 // Close releases the query handle only when the factory created the source.

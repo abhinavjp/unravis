@@ -21,7 +21,31 @@ func diskCPUPaths() []string {
 		`\Processor(_Total)\% Privileged Time`,
 		`\Processor(_Total)\% DPC Time`,
 		`\Processor(_Total)\% Interrupt Time`,
+		`\Processor Information(_Total)\% Processor Utility`,
+		`\System\Context Switches/sec`,
 	}
+}
+
+// wildcardRefreshEvery is how often a machine-wide wildcard (disks, processors,
+// network interfaces) is expanded again. A new disk or adapter is picked up
+// within this time; a busy host no longer pays the expansion for every process
+// that starts or stops.
+const wildcardRefreshEvery = 5 * time.Minute
+
+// refreshTimer says when a machine-wide wildcard is due. The first call only
+// arms it: the source was expanded when it was built.
+type refreshTimer struct{ next time.Time }
+
+func (r *refreshTimer) due(now time.Time) bool {
+	if r.next.IsZero() {
+		r.next = now.Add(wildcardRefreshEvery)
+		return false
+	}
+	if now.Before(r.next) {
+		return false
+	}
+	r.next = now.Add(wildcardRefreshEvery)
+	return true
 }
 
 // diskCPUSource is the PDH surface this group needs (faked in tests).
@@ -35,19 +59,19 @@ type diskCPUGroup struct {
 	src     diskCPUSource
 	eng     *Engine
 	cores   int
-	changed func() bool
+	refresh refreshTimer
 }
 
 func newDiskCPUGroup(d GroupDeps) (Group, error) {
-	src, err := NewPDHSource(diskCPUPaths())
+	// Tolerant: the machine counters are independent; the disk wildcard is not.
+	src, err := NewPDHSourceTolerant(diskCPUPaths())
 	if err != nil {
 		return nil, err
 	}
 	return &diskCPUGroup{
-		src:     src,
-		eng:     NewEngine(diskCPUSpecs(src.Paths()), d.Cores),
-		cores:   d.Cores,
-		changed: d.ProcessSetChanged,
+		src:   src,
+		eng:   NewEngine(diskCPUSpecs(src.Paths()), d.Cores),
+		cores: d.Cores,
 	}, nil
 }
 
@@ -76,6 +100,10 @@ func diskCPUSpecs(paths []string) []CounterSpec {
 			specs = append(specs, CounterSpec{Path: p, Field: "dpcPct", Kind: KindPDHRate})
 		case p == `\Processor(_Total)\% Interrupt Time`:
 			specs = append(specs, CounterSpec{Path: p, Field: "interruptPct", Kind: KindPDHRate})
+		case p == `\Processor Information(_Total)\% Processor Utility`:
+			specs = append(specs, CounterSpec{Path: p, Field: "utilityPct", Kind: KindPDHRate})
+		case p == `\System\Context Switches/sec`:
+			specs = append(specs, CounterSpec{Path: p, Field: "ctxSwitches", Kind: KindPDHRate})
 		}
 	}
 	return specs
@@ -96,11 +124,11 @@ func diskInstanceCounter(path string) (inst, counter string, ok bool) {
 }
 
 func (g *diskCPUGroup) Collect(now time.Time, _ float64) (any, error) {
-	// Disks rarely change: re-expand wildcards only when the process set
-	// changed, never per tick. Reconcile keeps the baselines of the disks and
-	// processors that did not change, so unrelated process churn cannot starve
-	// these rates (W1-02).
-	if g.changed != nil && g.changed() {
+	// Disks and processors do not follow process starts and exits, so the
+	// wildcards are re-expanded on a slow timer, never per tick and never because
+	// some unrelated process came or went (PERF-06). Reconcile keeps the
+	// baselines of the disks and processors that did not change (W1-02).
+	if g.refresh.due(now) {
 		if err := g.src.RefreshInstances(); err != nil {
 			return nil, err
 		}
@@ -164,6 +192,14 @@ func (g *diskCPUGroup) Collect(now time.Time, _ float64) (any, error) {
 	}
 	if v, ok := out["interruptPct"]; ok {
 		cpu.InterruptPct = diskF64(v)
+		have = true
+	}
+	if v, ok := out["utilityPct"]; ok {
+		cpu.UtilityPct = diskF64(v) // can pass 100 on boost; never capped
+		have = true
+	}
+	if v, ok := out["ctxSwitches"]; ok {
+		cpu.ContextSwitchesPerSec = diskF64(v)
 		have = true
 	}
 	if have {

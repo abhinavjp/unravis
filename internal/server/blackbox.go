@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log"
+	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,6 +52,7 @@ type BlackboxPC interface {
 	Apply(ctx context.Context, cfg blackbox.Config) (bool, error)
 	Remove(ctx context.Context, name string, deleteRecordings bool, confirmName string) (blackbox.RemoveOutcome, error)
 	Snapshot(ctx context.Context) (blackbox.SnapshotOutcome, error)
+	Update(ctx context.Context) (blackbox.UpdateOutcome, error)
 }
 
 // BlackboxDeps wires the Blackbox pages. Only Store is required; a missing ThisPC
@@ -59,6 +63,10 @@ type BlackboxDeps struct {
 	ThisPC  BlackboxPC
 	Scan    func() (blackbox.LocalFound, error)
 	Program blackbox.ProgramSource
+	// ProgramVersion is the version of the unravis-blackbox.exe that ships with
+	// Unravis ("" when it cannot be told). With the version the installed recorder
+	// reports it decides whether an update is offered. nil makes no claim.
+	ProgramVersion func() string
 	// Open builds the reader of one place. nil uses the real folder and URL readers.
 	Open func(loc blackbox.Location, key string) blackbox.Source
 	// DetectTargets lists this PC's IIS app pools and running services for the
@@ -82,11 +90,16 @@ type blackboxHub struct {
 	deps   BlackboxDeps
 	pcMu   sync.Mutex // one change to this PC at a time
 	probes connectionTestLimiter
+	// reveals is the budget of "show the read key". It is separate from probes,
+	// so trying addresses cannot lock the owner out of the key, and it is tight:
+	// the key is a secret (SEC-FIX-13).
+	reveals connectionTestLimiter
 }
 
 func newBlackboxHub(d BlackboxDeps) *blackboxHub {
 	b := &blackboxHub{deps: d}
 	b.probes.limit = 30
+	b.reveals.limit = 5
 	return b
 }
 
@@ -155,16 +168,19 @@ func init() {
 		bbRoute("/api/blackbox/pack", bbExact("/api/blackbox/pack"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbPack(w, r) })),
 		bbRoute("/api/blackbox/this-pc", bbExact("/api/blackbox/this-pc"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbThisPCScan(w, r) })),
 		bbRoute("/api/blackbox/this-pc/targets", bbExact("/api/blackbox/this-pc/targets"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbTargets(w, r) })),
+		bbRoute("/api/blackbox/this-pc/drives", bbExact("/api/blackbox/this-pc/drives"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbDrives(w, r) })),
 		bbRoute("/api/blackbox/this-pc/install", bbExact("/api/blackbox/this-pc/install"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbInstall(w, r) })),
 		bbRoute("/api/blackbox/this-pc/start", bbExact("/api/blackbox/this-pc/start"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbStartStop(w, r, true) })),
 		bbRoute("/api/blackbox/this-pc/stop", bbExact("/api/blackbox/this-pc/stop"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbStartStop(w, r, false) })),
 		bbRoute("/api/blackbox/this-pc/apply", bbExact("/api/blackbox/this-pc/apply"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbApply(w, r) })),
 		bbRoute("/api/blackbox/this-pc/remove", bbExact("/api/blackbox/this-pc/remove"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbRemoveThisPC(w, r) })),
+		bbRoute("/api/blackbox/this-pc/update", bbExact("/api/blackbox/this-pc/update"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbUpdate(w, r) })),
 		bbRoute("/api/blackbox/this-pc/snapshot", bbExact("/api/blackbox/this-pc/snapshot"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbSnapshot(w, r) })),
 		bbRoute("/api/blackbox/{id}/check", bbEntryPath("/check"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbCheck(w, r, id) })),
 		bbRoute("/api/blackbox/{id}/key", bbEntryPath("/key"), bbM(http.MethodPut, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbSetKey(w, r, id) })),
 		bbRoute("/api/blackbox/{id}/reveal-key", bbEntryPath("/reveal-key"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbRevealKey(w, r, id) })),
 		bbRoute("/api/blackbox/{id}/host-reading", bbEntryPath("/host-reading"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbHostReading(w, r, id) })),
+		bbRoute("/api/blackbox/{id}/series", bbEntryPath("/series"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbSeries(w, r, id) })),
 		bbRoute("/api/blackbox/{id}", bbEntryPath(""), bbM(http.MethodDelete, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbRemoveEntry(w, r, id) })),
 	)
 }
@@ -173,16 +189,20 @@ func init() {
 
 // bbFacts is what the manifest says, for the list and the status screens.
 type bbFacts struct {
-	Name            string     `json:"name"`
-	Host            string     `json:"host"`
-	Version         string     `json:"version,omitempty"`
-	IntervalSeconds int        `json:"intervalSeconds"`
-	State           string     `json:"state"`
-	FirstSample     *time.Time `json:"firstSample,omitempty"`
-	LastSample      *time.Time `json:"lastSample,omitempty"`
-	Files           int        `json:"files"`
-	Samples         int        `json:"samples"`
-	Gaps            int        `json:"gaps"`
+	Name            string `json:"name"`
+	Host            string `json:"host"`
+	Version         string `json:"version,omitempty"`
+	IntervalSeconds int    `json:"intervalSeconds"`
+	// EffectiveIntervalSeconds is the interval the recorder really ticks at when
+	// the light budget widened it (E2E-16). Absent when it runs at the configured
+	// interval, so a reader that does not know the field loses nothing.
+	EffectiveIntervalSeconds int        `json:"effectiveIntervalSeconds,omitempty"`
+	State                    string     `json:"state"`
+	FirstSample              *time.Time `json:"firstSample,omitempty"`
+	LastSample               *time.Time `json:"lastSample,omitempty"`
+	Files                    int        `json:"files"`
+	Samples                  int        `json:"samples"`
+	Gaps                     int        `json:"gaps"`
 	// LongestGapSeconds is the length of the longest gap in the manifest, so the status can say how long it was (D-B-51).
 	LongestGapSeconds int `json:"longestGapSeconds,omitempty"`
 	// Unread is the number of recording files that could not be read to the end. It is what makes a Blackbox Incomplete.
@@ -193,7 +213,11 @@ type bbFacts struct {
 type bbItem struct {
 	bbsaved.Entry
 	State blackbox.StateInfo `json:"state"`
-	Facts *bbFacts           `json:"facts,omitempty"`
+	// StateReason repeats State.Reason at the top of the item so the screen can
+	// say why a Blackbox is unreachable even when there are no facts to show:
+	// "key", "wait", "busy", "newer-format", "share-dropped" or "timeout".
+	StateReason string   `json:"stateReason,omitempty"`
+	Facts       *bbFacts `json:"facts,omitempty"`
 }
 
 type bbThisPC struct {
@@ -214,6 +238,14 @@ type bbThisPC struct {
 	Problem string `json:"problem,omitempty"`
 	// Settings is what the installed service runs with, so Apply settings starts from it.
 	Settings *blackbox.Config `json:"settings,omitempty"`
+	// RecorderVersion is the version the installed recorder reports (only when
+	// its status could be read), ProgramVersion the one that ships with Unravis.
+	// UpdateAvailable says the installed recorder is older than the shipped one;
+	// the update itself compares the programs and may still answer "already
+	// current" (a local build reports "dev" and names no release).
+	RecorderVersion string `json:"recorderVersion,omitempty"`
+	ProgramVersion  string `json:"programVersion,omitempty"`
+	UpdateAvailable bool   `json:"updateAvailable"`
 }
 
 type bbListAnswer struct {
@@ -240,6 +272,9 @@ func (b *blackboxHub) facts(rd *blackbox.Reading, rep *blackbox.ReadReport) *bbF
 	f := &bbFacts{
 		Name: m.Name, Host: m.Host, Version: m.Version, IntervalSeconds: m.IntervalSeconds, State: m.State,
 		FirstSample: m.FirstSample, LastSample: m.LastSample, Files: len(m.Files), Gaps: len(m.Gaps),
+	}
+	if m.EffectiveIntervalSeconds > 0 && m.EffectiveIntervalSeconds != m.IntervalSeconds {
+		f.EffectiveIntervalSeconds = m.EffectiveIntervalSeconds
 	}
 	for _, fe := range m.Files {
 		f.Samples += fe.Samples
@@ -360,7 +395,7 @@ func (b *blackboxHub) lookEntry(ctx context.Context, e bbsaved.Entry, found *bla
 }
 
 func (b *blackboxHub) item(e bbsaved.Entry, l bbLook) bbItem {
-	return bbItem{Entry: e, State: l.State, Facts: b.facts(l.Reading, l.Report)}
+	return bbItem{Entry: e, State: l.State, StateReason: l.State.Reason, Facts: b.facts(l.Reading, l.Report)}
 }
 
 /* --------------------------------------------------------- unavailable */
@@ -415,7 +450,27 @@ func (h *handler) bbList(w http.ResponseWriter, r *http.Request) {
 		}(i)
 	}
 	wg.Wait()
-	writeJSON(w, http.StatusOK, bbListAnswer{Items: items, ThisPC: b.thisPCBlock(entries, found, scanErr), CanPack: b.deps.Program != nil}, maxResponseBytes)
+	pc := b.thisPCBlock(entries, found, scanErr)
+	b.markUpdate(&pc, items)
+	writeJSON(w, http.StatusOK, bbListAnswer{Items: items, ThisPC: pc, CanPack: b.deps.Program != nil}, maxResponseBytes)
+}
+
+// markUpdate fills the update fields of the this-PC block from the version the
+// installed recorder reported in the list (its entry's facts) and the version
+// that ships with Unravis. No claim is made without the shipped one; a recorder
+// that reports no version (older build, or stopped) is offered the update.
+func (b *blackboxHub) markUpdate(t *bbThisPC, items []bbItem) {
+	if !t.Installed || !t.Available || b.deps.ProgramVersion == nil {
+		return
+	}
+	for _, it := range items {
+		if it.ThisPC && it.Facts != nil {
+			t.RecorderVersion = it.Facts.Version
+			break
+		}
+	}
+	t.ProgramVersion = b.deps.ProgramVersion()
+	t.UpdateAvailable = blackbox.UpdateAvailable(t.RecorderVersion, t.ProgramVersion)
 }
 
 func (b *blackboxHub) thisPCBlock(entries []bbsaved.Entry, found *blackbox.LocalFound, scanErr error) bbThisPC {
@@ -862,6 +917,10 @@ func (h *handler) bbRevealKey(w http.ResponseWriter, _ *http.Request, id string)
 		writeJSON(w, http.StatusForbidden, bbFailure{Error: "A read key is shown only for the Blackbox installed on this PC.", Reason: "not-this-pc"}, 4096)
 		return
 	}
+	if !h.bb.reveals.allow() {
+		writeJSON(w, http.StatusTooManyRequests, bbFailure{Error: "The read key was asked for too often in a minute.", Reason: "rate", Next: "Wait a minute and try again."}, 4096)
+		return
+	}
 	key, err := h.bb.deps.Store.Key(id)
 	if err != nil {
 		bbStoreFailure(w, err)
@@ -871,6 +930,8 @@ func (h *handler) bbRevealKey(w http.ResponseWriter, _ *http.Request, id string)
 		writeJSON(w, http.StatusNotFound, bbFailure{Error: "This Blackbox has no read key saved.", Reason: "no-key", Next: "Remove it from this PC and install it again to make a new key."}, 4096)
 		return
 	}
+	// An audit line: which entry and that a key was shown, never the key (SEC-18).
+	log.Printf("Blackbox read key shown for saved entry %s", id)
 	writeJSON(w, http.StatusOK, bbRevealKeyAnswer{Key: key}, 1024)
 }
 
@@ -940,15 +1001,18 @@ func (h *handler) bbPack(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	info, err := blackbox.BuildPack(&buf, cfg, h.bb.deps.Program)
 	if err != nil {
-		reason := blackbox.ReasonInvalid
+		// The settings were already checked above, so what is left is a problem with
+		// the program or the pack itself. Say that in the words it already has, not
+		// the generic "settings are not allowed".
 		if errors.Is(err, blackbox.ErrNoProgram) {
-			reason = blackbox.ReasonNoProgram
+			writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: err.Error(), Reason: blackbox.ReasonNoProgram}, 4096)
+			return
 		}
-		writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: err.Error(), Reason: reason}, 4096)
+		writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: err.Error(), Reason: blackbox.ReasonInvalid, What: err.Error()}, 4096)
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+info.FileName+`"`)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": info.FileName}))
 	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
@@ -986,6 +1050,12 @@ func bbPCFailure(w http.ResponseWriter, err error) {
 	var te *blackbox.ThisPCError
 	if errors.As(err, &te) {
 		what, next := blackbox.FailureWords(te.Reason)
+		// A reason with no words of its own would hide the real cause behind the generic line, so say the cause.
+		// A failed update says in its own sentence whether the previous program was put back and whether the recorder runs.
+		own := te.Reason == string(blackbox.ReasonUpdateFailed) && te.Message != ""
+		if own || (what == blackbox.GenericFailure && te.Message != "" && te.Message != blackbox.GenericFailure) {
+			what = te.Message
+		}
 		writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: te.Message, Reason: te.Reason, What: what, Next: next}, 8192)
 		return
 	}
@@ -1035,7 +1105,7 @@ func (h *handler) bbInstall(w http.ResponseWriter, r *http.Request) {
 	// the loopback address and dropped; it is never in an answer.
 	key := out.ReadKey
 	out.ReadKey = ""
-	loc, perr := blackbox.ParseLocation("http://127.0.0.1:" + strconv.Itoa(out.Port))
+	loc, perr := blackbox.ParseLocation("http://" + hostPort(blackbox.ProbeHost(cfg.Bind), out.Port))
 	var e bbsaved.Entry
 	var serr error
 	if perr == nil {
@@ -1067,7 +1137,9 @@ func (h *handler) bbInstall(w http.ResponseWriter, r *http.Request) {
 		Folder    string `json:"folder"`
 		Port      int    `json:"port"`
 		Entry     bbItem `json:"entry"`
-	}{true, out.Name, out.Folder, out.Port, bbItem{Entry: g, State: blackbox.DeriveState(blackbox.StateInput{Placed: true, Err: readFail(blackbox.ReadUnreachable, "The Blackbox has just been installed and has not answered yet. Press Check in a few seconds.")})}}, 16384)
+		// BindWarning is set when the status port listens beyond this PC (SEC-10).
+		BindWarning string `json:"bindWarning,omitempty"`
+	}{true, out.Name, out.Folder, out.Port, bbItem{Entry: g, State: blackbox.DeriveState(blackbox.StateInput{Placed: true, Err: readFail(blackbox.ReadUnreachable, "The Blackbox has just been installed and has not answered yet. Press Check in a few seconds.")})}, blackbox.BindWarning(cfg.Bind)}, 16384)
 }
 
 func (h *handler) bbStartStop(w http.ResponseWriter, r *http.Request, start bool) {
@@ -1097,6 +1169,50 @@ func (h *handler) bbStartStop(w http.ResponseWriter, r *http.Request, start bool
 	}{true, start}, 1024)
 }
 
+// hostPort joins an address and a port, with brackets around an IPv6 address.
+func hostPort(host string, port int) string {
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		host = "[" + host + "]"
+	}
+	return host + ":" + strconv.Itoa(port)
+}
+
+// bbApplyLocked is the reason of an Apply that tried to change what Unravis
+// reaches the Blackbox by.
+const bbApplyLocked = "settings-locked"
+
+// bbApplyReaches checks, before any permission prompt, that an Apply keeps the
+// name, port and listening address the saved entry reaches the Blackbox by. The
+// entry stores them at Place time and nothing updates them, so a change would
+// leave the service installed while the list says Not placed or Unreachable
+// (E2E-04). The folder and what is recorded may change. found is what the
+// service runs with now; nil means it could not be read, and the helper decides.
+func bbApplyReaches(found *blackbox.LocalFound, cfg blackbox.Config) (bbFailure, bool) {
+	if found == nil || !found.Installed || found.ConfigUnreadable || found.Name == "" || found.Port == 0 {
+		return bbFailure{}, false
+	}
+	var changed []string
+	if cfg.Name != found.Name {
+		changed = append(changed, "name")
+	}
+	if cfg.Port != found.Port {
+		changed = append(changed, "port")
+	}
+	if blackbox.ProbeHost(cfg.Bind) != blackbox.ProbeHost(found.Bind) {
+		changed = append(changed, "listening address")
+	}
+	if len(changed) == 0 {
+		return bbFailure{}, false
+	}
+	what := "The " + strings.Join(changed, " and ") + " cannot be changed after the Blackbox is placed."
+	return bbFailure{
+		Error:  what + " Nothing was changed.",
+		Reason: bbApplyLocked,
+		What:   what,
+		Next:   "Unravis finds the Blackbox by them. Keep them as they are, or remove the Blackbox and place it again with the new ones.",
+	}, true
+}
+
 func (h *handler) bbApply(w http.ResponseWriter, r *http.Request) {
 	pc, ok := h.bbPC(w)
 	if !ok {
@@ -1110,6 +1226,11 @@ func (h *handler) bbApply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, bbInvalid(err), 4096)
 		return
 	}
+	found, _ := h.bb.scan()
+	if f, locked := bbApplyReaches(found, cfg); locked {
+		writeJSON(w, http.StatusUnprocessableEntity, f, 4096)
+		return
+	}
 	if !h.bbLockPC(w) {
 		return
 	}
@@ -1121,10 +1242,29 @@ func (h *handler) bbApply(w http.ResponseWriter, r *http.Request) {
 		bbPCFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, struct {
-		OK        bool `json:"ok"`
-		Restarted bool `json:"restarted"`
-	}{true, restarted}, 1024)
+	out := bbApplyAnswer{OK: true, Restarted: restarted, BindWarning: blackbox.BindWarning(cfg.Bind)}
+	if found != nil && found.Installed && found.Folder != "" && !sameFolder(found.Folder, cfg.Folder) {
+		out.OldFolder = found.Folder
+		out.Note = "The recorder now writes to " + cfg.Folder + ". The recordings already made stay in " + found.Folder + ": they are not moved, and removing the Blackbox with its recordings deletes only the new folder. Move or delete the old ones by hand."
+	}
+	writeJSON(w, http.StatusOK, out, 4096)
+}
+
+// bbApplyAnswer is what a finished Apply says. OldFolder and Note are set only
+// when the recordings folder changed: the earlier recordings stay where they were.
+type bbApplyAnswer struct {
+	OK        bool   `json:"ok"`
+	Restarted bool   `json:"restarted"`
+	OldFolder string `json:"oldFolder,omitempty"`
+	Note      string `json:"note,omitempty"`
+	// BindWarning is set when the status port listens beyond this PC (SEC-10).
+	BindWarning string `json:"bindWarning,omitempty"`
+}
+
+// sameFolder says two folder spellings name one folder (Windows is not case
+// sensitive and ignores a trailing separator).
+func sameFolder(a, b string) bool {
+	return strings.EqualFold(filepath.Clean(strings.TrimSpace(a)), filepath.Clean(strings.TrimSpace(b)))
 }
 
 type bbRemoveBody struct {
@@ -1169,18 +1309,69 @@ func (h *handler) bbRemoveThisPC(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), bbActionTimeout)
 	defer cancel()
 	out, err := pc.Remove(ctx, name, body.DeleteRecordings, body.ConfirmName)
+	// A stale entry whose service is already gone has nothing left to remove but
+	// the entry itself: that is what the person pressed Remove for.
+	var te *blackbox.ThisPCError
+	staleEntry := errors.As(err, &te) && te.Reason == blackbox.ReasonNotInstall && listed && !body.DeleteRecordings
+	if err != nil && !staleEntry {
+		// The remove stops with the service still installed, so the entry stays:
+		// it is the only way to reach the Blackbox again.
+		bbPCFailure(w, err)
+		return
+	}
+	ans := bbRemoveAnswer{ServiceRemoved: out.ServiceRemoved, RecordingsDeleted: out.RecordingsDeleted, FilesDeleted: out.FilesDeleted, SQLServiceRemoved: out.SQLServiceRemoved, Note: out.Note}
+	if listed {
+		if rerr := h.bb.deps.Store.Remove(entry.ID); rerr != nil {
+			if ans.Note != "" {
+				ans.Note += " "
+			}
+			ans.Note += "The Blackbox was removed from this PC, but its entry could not be taken off the list. Use Remove on the entry in the list."
+		} else {
+			ans.EntryRemoved = true
+		}
+	}
+	writeJSON(w, http.StatusOK, ans, 4096)
+}
+
+// bbRemoveAnswer is what a finished remove says. EntryRemoved is false when the
+// list entry stayed (it could not be removed, or there was none); Note carries a
+// warning that did not stop the remove.
+type bbRemoveAnswer struct {
+	ServiceRemoved    bool   `json:"serviceRemoved"`
+	RecordingsDeleted bool   `json:"recordingsDeleted"`
+	FilesDeleted      int    `json:"filesDeleted"`
+	SQLServiceRemoved bool   `json:"sqlServiceRemoved"`
+	EntryRemoved      bool   `json:"entryRemoved"`
+	Note              string `json:"note,omitempty"`
+}
+
+// bbUpdate replaces the installed recorder program with the one that ships with
+// Unravis. One administrator prompt; settings, key and recordings are kept.
+func (h *handler) bbUpdate(w http.ResponseWriter, r *http.Request) {
+	pc, ok := h.bbPC(w)
+	if !ok {
+		return
+	}
+	if !h.bbLockPC(w) {
+		return
+	}
+	defer h.bb.pcMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), bbActionTimeout)
+	defer cancel()
+	out, err := pc.Update(ctx)
 	if err != nil {
 		bbPCFailure(w, err)
 		return
 	}
-	if listed {
-		_ = h.bb.deps.Store.Remove(entry.ID)
-	}
 	writeJSON(w, http.StatusOK, struct {
-		ServiceRemoved    bool `json:"serviceRemoved"`
-		RecordingsDeleted bool `json:"recordingsDeleted"`
-		FilesDeleted      int  `json:"filesDeleted"`
-	}{out.ServiceRemoved, out.RecordingsDeleted, out.FilesDeleted}, 4096)
+		OK         bool   `json:"ok"`
+		Updated    bool   `json:"updated"`
+		WasRunning bool   `json:"wasRunning"`
+		Restarted  bool   `json:"restarted"`
+		OldHash    string `json:"oldHash,omitempty"`
+		NewHash    string `json:"newHash,omitempty"`
+		NewVersion string `json:"newVersion,omitempty"`
+	}{true, out.Updated, out.WasRunning, out.Restarted, out.OldHash, out.NewHash, out.NewVersion}, 4096)
 }
 
 func (h *handler) bbSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -1299,15 +1490,34 @@ func addNames(dst []string, src []string) []string {
 // cannot be read in full leaves a gap in the samples, and the gap rule (A35) in the
 // engine decides what that means; nothing is filled in.
 func (b *blackboxHub) readHost(ctx context.Context, e bbsaved.Entry, windows ...investigate.Window) (hostRead, error) {
+	rd, kept, rep, err := b.readSamples(ctx, e, windows...)
+	if err != nil {
+		return hostRead{}, err
+	}
+	hi := investigate.HostInput{Name: rd.Manifest.Name, IntervalSeconds: rd.Manifest.CadenceSeconds(), Samples: hostSamples(kept)}
+	if rd.Manifest.FirstSample != nil {
+		hi.First = rd.Manifest.FirstSample.UTC()
+	}
+	if rd.Manifest.LastSample != nil {
+		hi.Last = rd.Manifest.LastSample.UTC()
+	}
+	rp := rep
+	return hostRead{Input: hi, Report: rep, State: blackbox.DeriveState(blackbox.StateInput{Placed: true, Reading: &rd, Report: &rp})}, nil
+}
+
+// readSamples is the read under readHost: the samples of the windows, in time
+// order with repeats removed, with the manifest and the report of what could not
+// be read. The charts view uses it too, so both see the same recording.
+func (b *blackboxHub) readSamples(ctx context.Context, e bbsaved.Entry, windows ...investigate.Window) (blackbox.Reading, []blackbox.Sample, blackbox.ReadReport, error) {
 	ctx, cancel := context.WithTimeout(ctx, bbReadTimeout)
 	defer cancel()
 	src, err := b.source(e)
 	if err != nil {
-		return hostRead{}, err
+		return blackbox.Reading{}, nil, blackbox.ReadReport{}, err
 	}
 	rd, err := blackbox.ProbeSource(ctx, src, b.now)
 	if err != nil {
-		return hostRead{}, err
+		return blackbox.Reading{}, nil, blackbox.ReadReport{}, err
 	}
 	var all []blackbox.Sample
 	var rep blackbox.ReadReport
@@ -1317,7 +1527,7 @@ func (b *blackboxHub) readHost(ctx context.Context, e bbsaved.Entry, windows ...
 		}
 		part, r, rerr := blackbox.ReadSamples(ctx, src, rd.Manifest, w.Start, w.End)
 		if rerr != nil {
-			return hostRead{}, rerr
+			return blackbox.Reading{}, nil, blackbox.ReadReport{}, rerr
 		}
 		all = append(all, part...)
 		rep.Files += r.Files
@@ -1341,15 +1551,7 @@ func (b *blackboxHub) readHost(ctx context.Context, e bbsaved.Entry, windows ...
 		kept = append(kept, s)
 	}
 	rep.Samples = len(kept)
-	hi := investigate.HostInput{Name: rd.Manifest.Name, IntervalSeconds: rd.Manifest.IntervalSeconds, Samples: hostSamples(kept)}
-	if rd.Manifest.FirstSample != nil {
-		hi.First = rd.Manifest.FirstSample.UTC()
-	}
-	if rd.Manifest.LastSample != nil {
-		hi.Last = rd.Manifest.LastSample.UTC()
-	}
-	rp := rep
-	return hostRead{Input: hi, Report: rep, State: blackbox.DeriveState(blackbox.StateInput{Placed: true, Reading: &rd, Report: &rp})}, nil
+	return rd, kept, rep, nil
 }
 
 func summarize(r blackbox.ReadReport) bbReadSummary {

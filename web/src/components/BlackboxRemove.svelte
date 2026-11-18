@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { BlackboxError, blackboxApi, refusalText, removeConfirmed, type BlackboxItem, type RemoveAnswer, type ThisPc } from '../lib/blackbox';
   import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
 
@@ -20,6 +21,15 @@
   let phase = $state<Phase>({ kind: 'idle' });
   const busy = $derived(phase.kind === 'working');
   const ready = $derived(removeConfirmed(deleteRecordings, typed, typedName));
+  // A running Blackbox stops the moment Remove is approved, so the page says so (UX-18).
+  const recording = $derived(item.state.state === 'running' || item.state.state === 'running-late' || item.state.state === 'disk-low' || item.state.state === 'clock-differs');
+  const mismatch = $derived(deleteRecordings && typed.trim() !== '' && !ready);
+  let nameInput = $state<HTMLInputElement>();
+  async function chooseDelete() {
+    deleteRecordings = true;
+    await tick();
+    nameInput?.focus();
+  }
 
   async function removeHere() {
     if (busy || !ready) return;
@@ -54,32 +64,32 @@
     </section>
     <div class="bb-actions"><button type="button" class="primary-button" onclick={onChanged}>{T.back}</button></div>
   {:else if here}
-    <p class="bb-note">{T.removeThisPc}</p>
+    <p class="bb-note">{recording ? T.removeStopsLive : T.removeStops}</p>
     <fieldset class="bb-block bb-choice">
-      <legend class="bb-sr">{T.removeTitle(item.name)}</legend>
+      <legend class="bb-sr">{T.removeChoiceLegend}</legend>
       <label class="bb-radio"><input type="radio" name="bb-remove" checked={!deleteRecordings} onchange={() => { deleteRecordings = false; }} disabled={busy} />
         <span><strong>{T.removeKeep}</strong><span class="bb-note">{T.removeKeepText}</span></span></label>
-      <label class="bb-radio"><input type="radio" name="bb-remove" checked={deleteRecordings} onchange={() => { deleteRecordings = true; }} disabled={busy} />
+      <label class="bb-radio"><input type="radio" name="bb-remove" checked={deleteRecordings} onchange={chooseDelete} disabled={busy} />
         <span><strong>{T.removeDelete}</strong><span class="bb-note">{T.removeDeleteText}</span></span></label>
     </fieldset>
     {#if deleteRecordings}
       <label class="bb-field"><span>{T.removeTypeName(typedName)}</span>
-        <input type="text" bind:value={typed} autocomplete="off" spellcheck="false" aria-label={T.removeTypeLabel} />
+        <input type="text" bind:this={nameInput} bind:value={typed} autocomplete="off" spellcheck="false" aria-label={T.removeTypeLabel} aria-describedby={mismatch ? 'bb-remove-mismatch' : undefined} />
       </label>
+      {#if mismatch}<p class="bb-note" id="bb-remove-mismatch">{T.removeNameMismatch}</p>{/if}
     {/if}
-    <p class="bb-note">{T.removeCasesNote}</p>
-    <p class="bb-note">{T.adminNote}</p>
-    <div aria-live="polite">
+    <p class="bb-note">{T.removeCases}</p>
+    <div>
       {#if busy}<p class="bb-note" role="status">{T.removing}</p>{/if}
-      {#if phase.kind === 'failed'}<div class="inline-error" role="alert">{phase.text}</div>{/if}
+      {#if phase.kind === 'failed'}<div class="inline-error" role="alert">{phase.text} {T.removeFailedHint}</div>{/if}
     </div>
     <div class="bb-actions">
-      <button type="button" class="secondary-button" disabled={busy || !ready} onclick={removeHere}>{T.removeButton}</button>
+      <button type="button" class="secondary-button" disabled={busy || !ready} onclick={removeHere}>{deleteRecordings ? T.removeButtonDelete : T.removeButton}</button>
       <button type="button" class="primary-button" disabled={busy} onclick={onCancel}>{T.cancel}</button>
     </div>
   {:else if gone}
     <p class="bb-note">{T.removeNotPlaced}</p>
-    <div aria-live="polite">
+    <div>
       {#if phase.kind === 'failed'}<div class="inline-error" role="alert">{phase.text}</div>{/if}
     </div>
     <div class="bb-actions">
@@ -99,7 +109,7 @@
       <p class="bb-note">{T.removeOtherAfter}</p>
       <p class="bb-note">{T.forgetText}</p>
     </section>
-    <div aria-live="polite">
+    <div>
       {#if phase.kind === 'failed'}<div class="inline-error" role="alert">{phase.text}</div>{/if}
     </div>
     <div class="bb-actions">
@@ -118,13 +128,10 @@
   .bb-remove h3 { margin: 0; font-size: var(--fs-5); font-weight: 600; overflow-wrap: anywhere; }
   .bb-block { display: grid; gap: var(--space-2); margin: 0; padding: 0; border: 0; min-width: 0; }
   .bb-block h4 { margin: 0; font-size: 14px; font-weight: 600; }
-  .bb-note { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-  .bb-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .bb-radio { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 14px; }
   .bb-radio input { flex: 0 0 auto; margin: 3px 0 0; }
   .bb-radio > span { display: grid; gap: 2px; min-width: 0; }
   .bb-field { display: grid; gap: 4px; font-size: 13px; font-weight: 500; }
   .bb-field input { width: 100%; max-width: 320px; padding: 6px 8px; font: inherit; font-weight: 400; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-sizing: border-box; }
   .bb-code { margin: 0; padding: 8px 10px; font-family: var(--mono); font-size: 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm); overflow-x: auto; user-select: all; }
-  .bb-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 </style>

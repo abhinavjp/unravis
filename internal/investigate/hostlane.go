@@ -83,6 +83,9 @@ type HostResult struct {
 	// Covered is the number of incident minutes that hold a CPU reading.
 	Covered int
 	Note    string
+	// Unread is true when a recording was attached and read but gave no answer
+	// for the host (H1 unknown). Step 9 then carries Note as the reason.
+	Unread bool
 }
 
 // HostGaps finds the gaps of a recording inside one window. A gap is a stretch of
@@ -236,11 +239,12 @@ func HostLane(in Input, h HostInput) HostResult {
 	total := in.Incident.minutes()
 	if total == 0 || float64(len(inc))/float64(total) < hostMinCoverage {
 		res.Lanes["H1"] = Unknown
-		res.Note = "The Blackbox has CPU readings for too few minutes of the incident window to read the host."
+		res.Note = fmt.Sprintf("The recording covers %d of %d minutes of the incident window, which is too few to read the host. Pick an incident window the Blackbox was recording, or let it record longer.", len(inc), total)
 		return res
 	}
 
 	base, haveBase := 0.0, false
+	baseNote := ""
 	if in.Reference.Valid() {
 		ref := hostMinutes(h.Samples, in.Reference)
 		var means []float64
@@ -249,6 +253,8 @@ func HostLane(in Input, h HostInput) HostResult {
 		}
 		if len(means) >= hostOnsetRun {
 			base, haveBase = medianOf(means)
+		} else {
+			baseNote = referenceNote(h, in.Reference, len(means))
 		}
 	}
 	busy := func(v float64) bool { return v >= hostCPUHigh || (haveBase && v >= base+hostCPURise) }
@@ -307,10 +313,37 @@ func HostLane(in Input, h HostInput) HostResult {
 			res.Note = "Host CPU was neither clearly busy nor clearly flat."
 		}
 	}
+	if baseNote != "" {
+		res.Note += " " + baseNote
+	}
 	if onSQLHost(h.Samples, in.Incident) {
 		hostSQLLanes(&res, in, h, total)
 	}
 	return res
+}
+
+// referenceNote says why the reference window gave no baseline, so the reader
+// knows the host was judged against the fixed marks only (never a silent
+// fallback). It names the real cause: a window before the recording began, one
+// after it ended (a window in the future reads this way), or too few readings.
+func referenceNote(h HostInput, ref Window, minutes int) string {
+	first, last := h.First, h.Last
+	if ts := hostTimes(h.Samples); len(ts) > 0 {
+		if first.IsZero() || ts[0].Before(first) {
+			first = ts[0]
+		}
+		if last.IsZero() || ts[len(ts)-1].After(last) {
+			last = ts[len(ts)-1]
+		}
+	}
+	const tail = " The host is judged against the fixed busy mark only, not against a normal baseline."
+	switch {
+	case !last.IsZero() && !ref.Start.Before(last):
+		return "The reference window is after the end of the recording (or has not happened yet), so there is no baseline." + tail
+	case !first.IsZero() && !ref.End.After(first):
+		return "The reference window is before the recording began, so there is no baseline." + tail
+	}
+	return fmt.Sprintf("The reference window holds only %d minute(s) with a reading, which is too few for a baseline.", minutes) + tail
 }
 
 // hostSQLLanes answers D9 and D10 for a recording made on the SQL Server machine.
@@ -431,6 +464,13 @@ func (in *Input) ApplyHost(h HostInput) HostResult {
 		name = "Blackbox " + name
 	}
 	in.LaneSources = append(in.LaneSources, name)
+	if res.Lanes["H1"] == Unknown && res.Note != "" {
+		res.Unread = true
+		if in.LaneNotes == nil {
+			in.LaneNotes = map[string]string{}
+		}
+		in.LaneNotes["host"] = res.Note
+	}
 	if len(res.Gaps) > 0 {
 		if in.LaneGaps == nil {
 			in.LaneGaps = map[string][]Span{}

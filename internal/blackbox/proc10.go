@@ -7,13 +7,13 @@ import (
 )
 
 // proc10Paths are the English PDH wildcards this group samples. ID Process maps
-// each #N instance to its PID and Creation Time to its creation FILETIME; the
+// each #N instance to its PID and Elapsed Time to its start (read time minus age); the
 // three metrics are per-process. Identity is (PID, creation) confirmed against
 // the shared per-tick view, never PID alone (W5-01). UNVERIFIED against a live
 // .NET 10 pool (see packet live-check).
 var proc10Paths = []string{
 	`\Process(*)\ID Process`,
-	`\Process(*)\Creation Time`,
+	`\Process(*)\Elapsed Time`,
 	`\Process(*)\% Processor Time`,
 	`\Process(*)\Working Set`,
 	`\Process(*)\Private Bytes`,
@@ -79,7 +79,7 @@ func parseProc10Path(path string) (inst, counter string, kind CounterKind, ok bo
 	switch counter {
 	case "% Processor Time":
 		kind = KindPDHRate
-	case "ID Process", "Creation Time", "Working Set", "Private Bytes":
+	case "ID Process", "Elapsed Time", "Working Set", "Private Bytes":
 		kind = KindGauge
 	default:
 		return "", "", 0, false
@@ -90,11 +90,11 @@ func parseProc10Path(path string) (inst, counter string, kind CounterKind, ok bo
 // proc10Mapping reports whether a counter is an identity-mapping counter read
 // straight from the raw sample (never engine detail).
 func proc10Mapping(counter string) bool {
-	return counter == "ID Process" || counter == "Creation Time"
+	return counter == "ID Process" || counter == "Elapsed Time"
 }
 
 // rebuild derives per-(instance,counter) DETAIL specs and a fresh engine. The
-// identity-mapping counters (ID Process, Creation Time) are read from the raw
+// identity-mapping counters (ID Process, Elapsed Time) are read from the raw
 // sample, not the engine, so unselected instances never enter engine history
 // (W5-03). New instances start their two-baseline gate again. NUL cannot occur
 // in a PDH instance name.
@@ -149,7 +149,7 @@ func (g *proc10Group) Collect(now time.Time, _ float64) (any, error) {
 	}
 	// Identity mapping from the raw sample (shared Process-object reader). A PID
 	// reported by more than one instance is ambiguous and fails closed (W5-01).
-	instPID, instCreation := procIOIdentity(readings)
+	instPID, instCreation := procIOIdentity(readings, now)
 	pidCount := make(map[uint32]int, len(instPID))
 	for _, pid := range instPID {
 		pidCount[pid]++
