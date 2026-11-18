@@ -35,6 +35,18 @@ func giveBack(t *testing.T, dir string) {
 	})
 }
 
+// longTempDir is t.TempDir() spelled the way Windows reports it. A CI runner's
+// profile folder can come back as an 8.3 name (RUNNER~1), which secureDirHandle
+// rightly refuses as "not the place that was checked".
+func longTempDir(t *testing.T) string {
+	t.Helper()
+	d := t.TempDir()
+	if l, err := filepath.EvalSymlinks(d); err == nil {
+		return l
+	}
+	return d
+}
+
 func daclText(t *testing.T, path string) string {
 	t.Helper()
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
@@ -47,7 +59,7 @@ func daclText(t *testing.T, path string) string {
 // SEC-FIX-06: the permission list is applied through the folder's handle, is
 // protected, and reaches what is already inside.
 func TestSecureDirHandleAppliesThePermissionList(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "bb")
+	dir := filepath.Join(longTempDir(t), "bb")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
