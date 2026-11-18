@@ -107,7 +107,7 @@ func (r *Runner) NewPlan(op Op, opts Options, un UninstallOptions, old *Installe
 			p.Opts.StartAtSignIn = ours
 		}
 	}
-	p.Elevated =NeedsAdminFor(r.Sys.Svc, p.Opts)
+	p.Elevated = NeedsAdminFor(r.Sys.Svc, p.Opts)
 	if op == OpUninstall {
 		p.Steps = uninstallSteps(p)
 	} else {

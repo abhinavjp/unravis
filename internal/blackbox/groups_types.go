@@ -168,10 +168,10 @@ type TCPGroup struct {
 	// ConnFailuresPerSec: connection attempts that failed (TCPv4 plus TCPv6).
 	// DiscardedPerSec: inbound packets dropped with no error, all adapters
 	// summed. OutErrorsPerSec: outbound packets that failed, all adapters summed.
-	ConnFailuresPerSec *float64 `json:"connFailuresPerSec,omitempty"`
-	DiscardedPerSec    *float64 `json:"discardedPerSec,omitempty"`
-	OutErrorsPerSec    *float64 `json:"outErrorsPerSec,omitempty"`
-	States                  []TCPStateCount `json:"states,omitempty"`
+	ConnFailuresPerSec *float64        `json:"connFailuresPerSec,omitempty"`
+	DiscardedPerSec    *float64        `json:"discardedPerSec,omitempty"`
+	OutErrorsPerSec    *float64        `json:"outErrorsPerSec,omitempty"`
+	States             []TCPStateCount `json:"states,omitempty"`
 	// StatesTruncated says the TCP table exceeded the checked byte/row ceiling
 	// and could not be read completely: States is partial or absent, never an
 	// unlabeled complete count (W6-03).

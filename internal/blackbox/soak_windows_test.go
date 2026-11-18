@@ -41,10 +41,10 @@ func TestRealSoakNoGrowth(t *testing.T) {
 		}
 	}()
 	type snap struct {
-		tick                     int
-		gor                      int
-		heapKB, privKB           uint64
-		handles                  uint32
+		tick           int
+		gor            int
+		heapKB, privKB uint64
+		handles        uint32
 	}
 	take := func(i int) snap {
 		runtime.GC()

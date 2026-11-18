@@ -45,7 +45,9 @@ func (p *Plan) un() *uninstallState {
 	return p.unState
 }
 
-func (p *Plan) leftf(format string, a ...any) { p.un().left = append(p.un().left, fmt.Sprintf(format, a...)) }
+func (p *Plan) leftf(format string, a ...any) {
+	p.un().left = append(p.un().left, fmt.Sprintf(format, a...))
+}
 
 func (p *Plan) blackboxPresent() bool {
 	if st, err := p.r.Sys.Svc.State(blackbox.ServiceName); err == nil && st != blackbox.SvcNotInstalled {

@@ -39,9 +39,9 @@ func tcpPaths() []string {
 const tcpMaxInterfaces = 64
 
 const (
-	tcpQueuePrefix = `\Network Interface(`
-	tcpQueueSuffix = `\Output Queue Length`
-	tcpDiscSuffix  = `\Packets Received Discarded`
+	tcpQueuePrefix  = `\Network Interface(`
+	tcpQueueSuffix  = `\Output Queue Length`
+	tcpDiscSuffix   = `\Packets Received Discarded`
 	tcpOutErrSuffix = `\Packets Outbound Errors`
 	// tcpRowStride is the MIB_TCPROW2 size (7 DWORDs). Only dwState at
 	// offset 0 is ever read; addresses, ports and PIDs are never copied.
@@ -73,18 +73,18 @@ type tcpStates struct {
 }
 
 type tcpGroup struct {
-	src       CounterSource
-	eng       *Engine
-	cores     int
-	refresh   refreshTimer
-	owned     bool // factory created the source: Close owns it
- queueKeys []string
-	discKeys  []string
+	src        CounterSource
+	eng        *Engine
+	cores      int
+	refresh    refreshTimer
+	owned      bool // factory created the source: Close owns it
+	queueKeys  []string
+	discKeys   []string
 	outErrKeys []string
-	counts    func() (tcpStates, error)             // injected in tests
-	openWild  func([]string) (CounterSource, error) // the slow expansion; a seam for tests
-	upgraded  bool                                  // one-time lazy wildcard expansion started
-	warm      chan CounterSource                    // the background expansion; nil once taken
+	counts     func() (tcpStates, error)             // injected in tests
+	openWild   func([]string) (CounterSource, error) // the slow expansion; a seam for tests
+	upgraded   bool                                  // one-time lazy wildcard expansion started
+	warm       chan CounterSource                    // the background expansion; nil once taken
 }
 
 func newTCPGroup(d GroupDeps) (Group, error) {

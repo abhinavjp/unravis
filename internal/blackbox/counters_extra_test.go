@@ -112,8 +112,8 @@ func TestTCPPacketLossAndFailures(t *testing.T) {
 	add(`\TCPv6\Segments Retransmitted/sec`, 1, 0)
 	add(`\TCPv4\Connections Reset`, 10, 0)
 	add(`\TCPv6\Connections Reset`, 10, 0)
-	add(`\TCPv4\Connection Failures`, 5, 15)  // +1/s
-	add(`\TCPv6\Connection Failures`, 5, 30)  // +2/s
+	add(`\TCPv4\Connection Failures`, 5, 15)                           // +1/s
+	add(`\TCPv6\Connection Failures`, 5, 30)                           // +2/s
 	add(`\Network Interface(eth0)\Packets Received Discarded`, 0, 150) // +10/s
 	add(`\Network Interface(eth1)\Packets Received Discarded`, 0, 75)  // +5/s
 	add(`\Network Interface(eth0)\Packets Outbound Errors`, 0, 30)     // +2/s

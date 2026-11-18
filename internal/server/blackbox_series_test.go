@@ -8,7 +8,7 @@ import (
 	"api-audit-explorer/internal/blackbox"
 )
 
-func u64(v uint64) *uint64   { return &v }
+func u64(v uint64) *uint64 { return &v }
 
 // fullSample carries a reading in every group the recorder can write.
 func fullSample(t time.Time, i int) blackbox.Sample {

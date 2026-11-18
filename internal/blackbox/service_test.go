@@ -15,12 +15,12 @@ import (
 
 // fakeSvc is a service manager that lives in memory.
 type fakeSvc struct {
-	state    SvcState
-	spec     ServiceSpec
-	calls    []string
-	startErr error
-	stuck    bool // Start leaves the service pending
-	onStart  func()
+	state      SvcState
+	spec       ServiceSpec
+	calls      []string
+	startErr   error
+	stuck      bool // Start leaves the service pending
+	onStart    func()
 	failStarts int // the next this many Start calls fail
 }
 
@@ -101,8 +101,8 @@ func (e *fakeEnv) SecureDir(dir string, usersRead bool) error {
 	e.secured = append(e.secured, dir)
 	return e.secureErr
 }
-func (e *fakeEnv) PortFree(string, int) error          { return e.portErr }
-func (e *fakeEnv) FolderWritable(string) error         { return e.folder }
+func (e *fakeEnv) PortFree(string, int) error  { return e.portErr }
+func (e *fakeEnv) FolderWritable(string) error { return e.folder }
 func (e *fakeEnv) FileSHA256(p string) (string, error) {
 	if e.hashFor != nil {
 		if h, ok := e.hashFor(p); ok {

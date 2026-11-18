@@ -121,7 +121,7 @@ type Layout struct {
 	// installs a Blackbox on this PC or builds a pack. It is always placed, whatever the Blackbox options are.
 	BlackboxExe string
 	SetupExe    string
-	StateFile  string
+	StateFile   string
 	// The shared data folder, its cases and keeper folders (machine scope only).
 	SharedRoot  string
 	SharedCases string

@@ -26,14 +26,14 @@ type SelfReading struct {
 // additive, so a reader of an older manifest still works. Sizes are in MB and
 // tick time is in milliseconds, rounded to one decimal.
 type SelfStats struct {
-	HeapMB        float64   `json:"heapMB"`
-	PrivateMB     float64   `json:"privateMB,omitempty"`
-	Handles       uint32    `json:"handles,omitempty"`
-	TickMs        float64   `json:"tickMs"`
-	PeakHeapMB    float64   `json:"peakHeapMB,omitempty"`
-	PeakPrivateMB float64   `json:"peakPrivateMB,omitempty"`
-	PeakHandles   uint32    `json:"peakHandles,omitempty"`
-	PeakTickMs    float64   `json:"peakTickMs,omitempty"`
+	HeapMB        float64 `json:"heapMB"`
+	PrivateMB     float64 `json:"privateMB,omitempty"`
+	Handles       uint32  `json:"handles,omitempty"`
+	TickMs        float64 `json:"tickMs"`
+	PeakHeapMB    float64 `json:"peakHeapMB,omitempty"`
+	PeakPrivateMB float64 `json:"peakPrivateMB,omitempty"`
+	PeakHandles   uint32  `json:"peakHandles,omitempty"`
+	PeakTickMs    float64 `json:"peakTickMs,omitempty"`
 	// Where the last tick went, so a heavy tick can be traced without a debugger:
 	// the self reading, the host read, the slowest group (and its name), and the
 	// file write. All optional and additive.
