@@ -4,11 +4,17 @@ param(
     # Skip `go test ./...` for a caller that has already run it (CI does, in an earlier step). Default: tests run.
     [switch]$SkipTests,
     # Stamped into the program (shown by --version and /api/version). Default: git describe, else "dev".
-    [string]$Version
+    [string]$Version,
+    # A release build: the app must be pinned to the exact unravis-blackbox.exe built here (SEC-FIX-01). The build fails if the
+    # pin is empty or -Unpinned is also given. CI passes this.
+    [switch]$Release,
+    # Local development only: do not pin the app to the helper, so the helper can be rebuilt alone. The log says so loudly.
+    [switch]$Unpinned
 )
 
 $ErrorActionPreference = 'Stop'
 $UtilityRoot = $PSScriptRoot
+if ($Release -and $Unpinned) { throw 'A release build must be pinned: use -Release or -Unpinned, not both.' }
 
 # Walk up from the repo (including itself) to find a shared .dev\toolchains\go\bin\go.exe.
 $ToolchainRoot = $null
@@ -118,12 +124,35 @@ try {
     if (-not $SkipTests) { Invoke-Checked $GoExe @('test', './...') }
     Invoke-Checked $GoExe @('vet', './...')
     New-Item -ItemType Directory -Force -Path (Join-Path $UtilityRoot 'dist') | Out-Null
-    Invoke-Checked $GoExe @('build', '-ldflags', $GuiLdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis.exe'), './cmd/audit-explorer')
+
+    # SEC-FIX-01: the Blackbox helper is built FIRST and the app is pinned to its SHA-256, so the app only ever starts
+    # (elevated) the exact helper it was built with. The same bytes go into the installer payload and, in a release, into
+    # the standalone zip (build-blackbox.ps1 -Reuse). The helper itself is never pinned (it would depend on its own hash).
+    $HelperExe = Join-Path $UtilityRoot 'dist\unravis-blackbox.exe'
+    $HelperVersion = $Version.TrimStart('v')
+    $HelperLdFlags = "-s -w $LdFlags -X main.version=$HelperVersion"
+    Invoke-Checked $GoExe @('build', '-trimpath', '-ldflags', $HelperLdFlags, '-o', $HelperExe, './cmd/unravis-blackbox')
+    $HelperSha = (Get-FileHash -LiteralPath $HelperExe -Algorithm SHA256).Hash.ToLowerInvariant()
+    $AppLdFlags = $GuiLdFlags
+    if ($Unpinned) {
+        Write-Warning 'UNPINNED DEV BUILD: unravis.exe is NOT pinned to unravis-blackbox.exe, so it accepts any helper that is signed or unsigned-but-untampered. Never ship this build. Run without -Unpinned for a pinned build.'
+    } else {
+        if ($HelperSha -notmatch '^[0-9a-f]{64}$') { throw "The helper hash is not a SHA-256 (got '$HelperSha'); refusing to build the app without a pin." }
+        $AppLdFlags = "$GuiLdFlags -X api-audit-explorer/internal/blackbox.PinnedHelperSHA256=$HelperSha"
+        Write-Host "Pinning unravis.exe to unravis-blackbox.exe SHA-256 $HelperSha"
+    }
+    if ($Release -and -not $HelperSha) { throw 'Release build: the helper hash is empty, so the app cannot be pinned.' }
+    Invoke-Checked $GoExe @('build', '-ldflags', $AppLdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis.exe'), './cmd/audit-explorer')
+    if (-not $Unpinned) {
+        # The pin must really be inside the program: the hash text appears in its bytes.
+        $AppBytes = [System.IO.File]::ReadAllBytes((Join-Path $UtilityRoot 'dist\unravis.exe'))
+        $AppText = [System.Text.Encoding]::GetEncoding(28591).GetString($AppBytes)
+        if (-not $AppText.Contains($HelperSha)) { throw 'unravis.exe does not contain the helper pin. The -ldflags -X for PinnedHelperSHA256 did not take effect.' }
+    }
     # Compatibility copy for MCP client configs that still point at dist\api-audit-explorer.exe.
     # Remove this copy and the MCP.md note after 2026-12-31 (one release after the rename).
     Copy-Item -LiteralPath (Join-Path $UtilityRoot 'dist\unravis.exe') -Destination (Join-Path $UtilityRoot 'dist\api-audit-explorer.exe') -Force
     Invoke-Checked $GoExe @('build', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-keeper.exe'), './cmd/unravis-keeper')
-    Invoke-Checked $GoExe @('build', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-blackbox.exe'), './cmd/unravis-blackbox')
 
     # The one-file installer comes last: it embeds the programs above with a manifest of their SHA-256, so setup refuses a
     # payload that was changed after the build. The payload folder is cleared first and is not committed (see its README.txt).
@@ -134,9 +163,11 @@ try {
     foreach ($Name in @('unravis.exe', 'unravis-keeper.exe', 'unravis-blackbox.exe')) {
         $Source = Join-Path $UtilityRoot "dist\$Name"
         Copy-Item -LiteralPath $Source -Destination (Join-Path $PayloadDir $Name) -Force
+        $PayloadSha = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($Name -eq 'unravis-blackbox.exe' -and -not $Unpinned -and $PayloadSha -ne $HelperSha) { throw 'The helper in the payload is not the one the app is pinned to.' }
         $PayloadFiles += [ordered]@{
             name   = $Name
-            sha256 = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash.ToLowerInvariant()
+            sha256 = $PayloadSha
             size   = (Get-Item -LiteralPath $Source).Length
         }
     }

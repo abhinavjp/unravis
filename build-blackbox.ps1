@@ -1,13 +1,18 @@
 param(
     [string]$Version = 'dev',
     [string]$GoPath,
-    [string]$OutDir
+    [string]$OutDir,
+    # Pack the dist\unravis-blackbox.exe that build.ps1 already built, instead of building it again. A release uses this so the
+    # zip holds the same bytes the app is pinned to (SEC-FIX-01).
+    [switch]$Reuse
 )
 
 # Builds the Blackbox recorder and its pack:
 #   dist\unravis-blackbox.exe
 #   dist\unravis-blackbox-v<Version>-windows-x64.zip  (exe, blackbox.json, README.txt)
 # The pack must stay under 8 MB. Nothing is installed or run.
+# A standalone build here is NOT the helper that Unravis (unravis.exe) is pinned to: the app refuses to start it elevated
+# when the app was pinned by build.ps1. Use -Reuse after build.ps1 to pack the pinned one.
 
 $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
@@ -48,13 +53,21 @@ if ($Clean -notmatch '^[0-9A-Za-z][0-9A-Za-z.\-+]*$') { throw "Version has chara
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $Exe = Join-Path $OutDir 'unravis-blackbox.exe'
-Push-Location $Root
-try {
-    & $GoExe build -trimpath -ldflags "-s -w -X main.version=$Clean" -o $Exe ./cmd/unravis-blackbox
-    if ($LASTEXITCODE -ne 0) { throw "go build failed with exit code $LASTEXITCODE" }
-} finally {
-    Pop-Location
+if ($Reuse) {
+    if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { throw "-Reuse needs $Exe from build.ps1. Run build.ps1 first, or leave -Reuse out to build it here." }
+    Write-Host "Reusing $Exe (built and pinned by build.ps1)."
+} else {
+    Push-Location $Root
+    try {
+        & $GoExe build -trimpath -ldflags "-s -w -X main.version=$Clean" -o $Exe ./cmd/unravis-blackbox
+        if ($LASTEXITCODE -ne 0) { throw "go build failed with exit code $LASTEXITCODE" }
+    } finally {
+        Pop-Location
+    }
+    Write-Warning 'This unravis-blackbox.exe was built on its own, so a pinned unravis.exe will not accept it as its helper. Use build.ps1 (then -Reuse) for a pinned pair.'
 }
+$ExeSha = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
+Write-Host "unravis-blackbox.exe SHA-256 $ExeSha"
 
 $Stage = Join-Path $OutDir 'blackbox-pack'
 if (Test-Path -LiteralPath $Stage) { Remove-Item -LiteralPath $Stage -Recurse -Force }
