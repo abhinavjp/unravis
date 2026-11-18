@@ -66,7 +66,7 @@ func TestFixedQueryErrorUsesTheContextReason(t *testing.T) {
 	// An expired budget with no error at all is still the budget's fault.
 	deadline, dfail := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer dfail()
-	time.Sleep(2 * time.Millisecond)
+	<-deadline.Done() // a fixed sleep is not enough: Windows timers tick every ~15ms
 	if err := fixedQueryError(deadline, context.DeadlineExceeded); !errors.As(err, &e) || e.Code != CodeTimeout {
 		t.Fatalf("err = %#v, want %q", err, CodeTimeout)
 	}
