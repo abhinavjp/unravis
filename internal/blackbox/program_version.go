@@ -3,6 +3,7 @@ package blackbox
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -82,7 +83,9 @@ func ParseVersionLine(s string) string {
 // version is an older build or one that is stopped, so an update is offered. A
 // local build reports "dev", which names no release, so two versions cannot be
 // compared and an update is offered too: the helper compares the programs
-// themselves and answers "already current" when they are the same.
+// themselves and answers "already current" when they are the same. Two release
+// numbers are compared as numbers, so a recorder newer than the shipped program
+// (Unravis was rolled back) is never offered a downgrade.
 func UpdateAvailable(recorder, program string) bool {
 	if program == "" {
 		return false
@@ -90,5 +93,55 @@ func UpdateAvailable(recorder, program string) bool {
 	if recorder == "" || recorder == "dev" || program == "dev" {
 		return true
 	}
+	if c, ok := compareReleases(recorder, program); ok {
+		return c < 0 // only an older recorder is updated; a newer one is never downgraded
+	}
 	return recorder != program
+}
+
+// compareReleases compares two dotted release numbers such as "1.4.2" or "v1.4.2"
+// (a "-suffix" is ignored). It returns -1, 0 or 1, and false when either side is
+// not a plain dotted number, so the caller falls back to "different".
+func compareReleases(a, b string) (int, bool) {
+	pa, oka := releaseParts(a)
+	pb, okb := releaseParts(b)
+	if !oka || !okb {
+		return 0, false
+	}
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var x, y int
+		if i < len(pa) {
+			x = pa[i]
+		}
+		if i < len(pb) {
+			y = pb[i]
+		}
+		if x != y {
+			if x < y {
+				return -1, true
+			}
+			return 1, true
+		}
+	}
+	return 0, true
+}
+
+func releaseParts(v string) ([]int, bool) {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	if v == "" {
+		return nil, false
+	}
+	fields := strings.Split(v, ".")
+	out := make([]int, 0, len(fields))
+	for _, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil || n < 0 {
+			return nil, false
+		}
+		out = append(out, n)
+	}
+	return out, true
 }
