@@ -45,7 +45,9 @@ func (p *Plan) un() *uninstallState {
 	return p.unState
 }
 
-func (p *Plan) leftf(format string, a ...any) { p.un().left = append(p.un().left, fmt.Sprintf(format, a...)) }
+func (p *Plan) leftf(format string, a ...any) {
+	p.un().left = append(p.un().left, fmt.Sprintf(format, a...))
+}
 
 func (p *Plan) blackboxPresent() bool {
 	if st, err := p.r.Sys.Svc.State(blackbox.ServiceName); err == nil && st != blackbox.SvcNotInstalled {
@@ -180,7 +182,7 @@ func (p *Plan) removeARP(ctx context.Context, t *Txn) error {
 
 func (p *Plan) removeProgramFiles(ctx context.Context, t *Txn) error {
 	dir := p.Layout.InstallDir
-	for _, f := range []string{p.Layout.AppExe, p.Layout.KeeperExe, p.Layout.StateFile} {
+	for _, f := range []string{p.Layout.AppExe, p.Layout.KeeperExe, p.Layout.BlackboxExe, p.Layout.StateFile} {
 		if f == "" {
 			continue
 		}

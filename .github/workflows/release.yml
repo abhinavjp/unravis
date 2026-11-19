@@ -113,17 +113,30 @@ jobs:
       - name: Build the programs and the installer
         # The web step above already built web/dist, so it is skipped here (same as ci.yml); the Go tests step above already ran go test, so -SkipTests.
         # build.ps1 also builds the keeper, the Blackbox and the installer with its embedded payload.
+        # -Release makes build.ps1 build the Blackbox first and pin the app to its SHA-256 (SEC-FIX-01); it fails on an empty pin.
         shell: pwsh
         run: |
-          ./build.ps1 -SkipWeb -SkipTests -Version "${{ steps.tag.outputs.version }}"
+          ./build.ps1 -SkipWeb -SkipTests -Release -Version "${{ steps.tag.outputs.version }}"
           Copy-Item -LiteralPath 'dist/unravis-setup.exe' -Destination "dist/unravis-setup-v${{ steps.tag.outputs.version }}-windows-x64.exe" -Force
 
       - name: Build dist\unravis-blackbox.exe and its zip
-        # The Blackbox is built twice on purpose for now: build.ps1 builds it for the installer payload
-        # (stamped with internal/version only), and this script rebuilds it with -trimpath and
-        # -X main.version so the zip's exe reports the release version. Reusing the first build would
-        # make the zip's exe print "dev". See .dev/reports/release-hardening.md for the proper fix.
-        run: ./build-blackbox.ps1 -Version "${{ steps.tag.outputs.version }}"
+        # The Blackbox is built once, by build.ps1 (with -trimpath and -X main.version), and the app is pinned to
+        # its SHA-256. -Reuse packs those same bytes, so the zip's exe is the one the app accepts as its helper
+        # (SEC-FIX-01). A rebuild here would give a different file and break the pin.
+        run: ./build-blackbox.ps1 -Reuse -Version "${{ steps.tag.outputs.version }}"
+
+      # When SignPath signing is wired up, sign unravis-blackbox.exe BEFORE the pin is computed and
+      # unravis.exe is built. Signing it afterwards changes its bytes and the app's pin (the helper
+      # hash check) would then refuse it on every elevation.
+      - name: Check the app is pinned to the packed Blackbox
+        shell: pwsh
+        run: |
+          $sha = (Get-FileHash -LiteralPath 'dist/unravis-blackbox.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -notmatch '^[0-9a-f]{64}$') { throw 'The Blackbox hash is empty.' }
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path 'dist/unravis.exe').Path)
+          $text = [System.Text.Encoding]::GetEncoding(28591).GetString($bytes)
+          if (-not $text.Contains($sha)) { throw "dist/unravis.exe is not pinned to dist/unravis-blackbox.exe ($sha). A release must not ship an unpinned app." }
+          Write-Host "unravis.exe is pinned to unravis-blackbox.exe $sha"
 
       - name: Sign the binaries (SignPath)
         # Skipped entirely unless the SIGNPATH secret is set (see the signgate step). Until the

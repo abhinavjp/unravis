@@ -1,9 +1,8 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createRequire } = require('node:module');
 const test = require('node:test');
-const ts = require('typescript');
+const { loadTypeScript } = require('./helpers/loadTs.cjs');
 
 // Wave-13 lane fix (W13-01..W13-04): the Blackbox measure/unit contract, run end to end through the
 // real exported helpers against the CURRENT server shape (internal/server/tracing_blackbox.go):
@@ -13,20 +12,7 @@ const ts = require('typescript');
 // The toLaneIn mapping below mirrors SlowCallScreen.svelte and is kept honest by source-text assertions.
 
 const root = path.resolve(__dirname, '..');
-function loadTypeScript(relativePath) {
-  const filename = path.join(root, relativePath);
-  const source = fs.readFileSync(filename, 'utf8');
-  const output = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
-  }).outputText;
-  const module = { exports: {} };
-  const nodeRequire = createRequire(filename);
-  const load = (request) => /^\.\.?\//.test(request) && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
-    ? loadTypeScript(path.relative(root, path.join(path.dirname(filename), request + '.ts')))
-    : nodeRequire(request);
-  new Function('require', 'module', 'exports', output)(load, module, module.exports);
-  return module.exports;
-}
+
 
 const { parseTracing } = loadTypeScript('src/lib/tracing/model.ts');
 const { buildLane, laneCells, regroupBlocks, measureOf, cellValue, formatAtOnce } = loadTypeScript('src/lib/drill/callLanes.ts');

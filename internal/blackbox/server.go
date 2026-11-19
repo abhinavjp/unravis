@@ -26,6 +26,14 @@ const (
 	failWindow    = time.Minute
 	maxFailures   = 5
 	maxTrackedIPs = 1024 // addresses kept in the failure table
+	// maxHeaderBytes: a reader sends a path and one key header.
+	maxHeaderBytes = 8 << 10
+	// maxConnections: open connections at once, so idle ones cannot starve readers (SEC-12).
+	maxConnections = 32
+	// maxConnectionsPerAddr: open connections from one address, inside the total,
+	// so one host (or one local account) cannot fill every slot and shut out the
+	// real reader (SEC-FIX-12).
+	maxConnectionsPerAddr = 8
 )
 
 // StatusDoc is the answer of /status. Every answer carries Time.
@@ -102,7 +110,7 @@ func NewServer(o ServerOptions) *Server {
 	// WriteTimeout bounds how long a stalled client can hold a recording file
 	// open (an open file cannot be removed by housekeeping on Windows). Reads
 	// answer ranges, so a reader that is cut off resumes where it stopped.
-	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second}
+	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: maxHeaderBytes}
 	return s
 }
 
@@ -117,7 +125,7 @@ func Listen(bind string, port int) (net.Listener, error) {
 
 // Serve answers on ln until Shutdown.
 func (s *Server) Serve(ln net.Listener) error {
-	err := s.srv.Serve(ln)
+	err := s.srv.Serve(newLimitListener(ln, maxConnections, maxConnectionsPerAddr))
 	if err == http.ErrServerClosed {
 		return nil
 	}
@@ -126,6 +134,15 @@ func (s *Server) Serve(ln net.Listener) error {
 
 // Shutdown stops the server, waiting for open requests until ctx ends.
 func (s *Server) Shutdown(ctx context.Context) error { return s.srv.Shutdown(ctx) }
+
+// crossSite says whether a browser marked the request as coming from another site.
+func crossSite(secFetchSite string) bool {
+	switch strings.ToLower(strings.TrimSpace(secFetchSite)) {
+	case "cross-site", "same-site":
+		return true
+	}
+	return false
+}
 
 func clientIP(r *http.Request) string {
 	h, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -218,14 +235,29 @@ func (s *Server) guard(h http.HandlerFunc) http.HandlerFunc {
 			s.errorJSON(w, http.StatusMethodNotAllowed, "read only: GET and HEAD only")
 			return
 		}
-		ip := clientIP(r)
-		if s.throttled(ip, now) {
-			w.Header().Set("Retry-After", "60")
-			s.errorJSON(w, http.StatusTooManyRequests, "too many wrong keys from this address; wait a minute")
+		// A page in a browser must never be able to read this (SEC-09): readers are
+		// programs, which send neither header.
+		if r.Header.Get("Origin") != "" || crossSite(r.Header.Get("Sec-Fetch-Site")) {
+			s.errorJSON(w, http.StatusForbidden, "this endpoint is for the Unravis program, not for a web page")
 			return
 		}
-		if s.o.Keys == nil || !s.o.Keys.Check(r.Header.Get(KeyHeader)) {
-			s.fail(ip, now)
+		ip := clientIP(r)
+		given := r.Header.Get(KeyHeader)
+		keyOK := s.o.Keys != nil && s.o.Keys.Check(given)
+		// The key is checked first (SEC-09): somebody who sprays wrong keys from the
+		// reader's address locks out the wrong keys, never the right one. The
+		// throttle only changes the answer to 429; it does not slow guessing down,
+		// which the length of the key (160 bits) does (SEC-FIX-14). A request with
+		// no key at all is not a guess and is not counted.
+		if !keyOK {
+			if s.throttled(ip, now) {
+				w.Header().Set("Retry-After", "60")
+				s.errorJSON(w, http.StatusTooManyRequests, "too many wrong keys from this address; wait a minute")
+				return
+			}
+			if given != "" {
+				s.fail(ip, now)
+			}
 			s.errorJSON(w, http.StatusUnauthorized, "the read key is missing or wrong")
 			return
 		}
@@ -458,4 +490,81 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	// ServeContent answers ranges, so a reader can resume or tail the open file.
 	http.ServeContent(w, r, name, st.ModTime(), f)
+}
+
+// limitListener caps the connections open at once, and the ones open from one
+// address. A connection past either cap is closed straight away rather than
+// queued, so a flood of idle connections cannot keep the real reader waiting
+// (SEC-12, SEC-FIX-12).
+type limitListener struct {
+	net.Listener
+	slots   chan struct{}
+	perAddr int
+	mu      sync.Mutex
+	byAddr  map[string]int
+}
+
+// newLimitListener allows max open connections, at most perAddr of them from
+// one remote address (perAddr 0 or more than max means only the total applies).
+func newLimitListener(ln net.Listener, max, perAddr int) net.Listener {
+	if perAddr <= 0 || perAddr > max {
+		perAddr = max
+	}
+	return &limitListener{Listener: ln, slots: make(chan struct{}, max), perAddr: perAddr, byAddr: map[string]int{}}
+}
+
+// addrKey is the remote host without the port.
+func addrKey(a net.Addr) string {
+	if a == nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(a.String())
+	if err != nil {
+		return a.String()
+	}
+	return host
+}
+
+func (l *limitListener) Accept() (net.Conn, error) {
+	for {
+		c, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		key := addrKey(c.RemoteAddr())
+		l.mu.Lock()
+		if l.byAddr[key] >= l.perAddr {
+			l.mu.Unlock()
+			c.Close()
+			continue
+		}
+		select {
+		case l.slots <- struct{}{}:
+			l.byAddr[key]++
+			l.mu.Unlock()
+			return &limitConn{Conn: c, release: func() {
+				l.mu.Lock()
+				if l.byAddr[key]--; l.byAddr[key] <= 0 {
+					delete(l.byAddr, key)
+				}
+				l.mu.Unlock()
+				<-l.slots
+			}}, nil
+		default:
+			l.mu.Unlock()
+			c.Close()
+		}
+	}
+}
+
+type limitConn struct {
+	net.Conn
+	once    sync.Once
+	release func()
+}
+
+func (c *limitConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(c.release)
+	return err
 }

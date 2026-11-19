@@ -1,6 +1,7 @@
 package blackbox
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -9,21 +10,35 @@ import (
 // the existing fake-source seams (no Windows, no live process/service ops) and
 // assert on internal engine state / call counts, not only emitted rows.
 
-// creationTicksFor returns a PDH Creation Time value (FILETIME ticks as float64)
-// comfortably inside the unix-second start's window (mid-second). It is a
-// multiple of 16 ticks, so it is exactly representable as a float64 at the
-// current epoch — no rounding ambiguity in the fixtures.
-func creationTicksFor(startUnix int64) float64 {
-	lo, _ := creationWindow(startUnix)
-	return float64(lo + filetimeTicksPerSecond/2)
+// identityTestBase is the tick clock (unix seconds) the identity fixtures are
+// written against: the first tick of every test collects at time.Unix(1000, 0).
+const identityTestBase int64 = 1000
+
+// elapsedFor returns the Elapsed Time reading (seconds) of a process that started
+// at startUnix, as seen by the first tick. The group derives the start as tick
+// time minus Elapsed Time, so this yields exactly startUnix on that tick.
+func elapsedFor(startUnix int64) float64 {
+	return float64(identityTestBase - startUnix)
+}
+
+// ageElapsed advances every Elapsed Time reading by secs, as the wall clock
+// would between two ticks. Call it before each tick after the first so the
+// derived start stays put.
+func ageElapsed(rs []CounterReading, secs float64) {
+	for i := range rs {
+		if strings.HasSuffix(rs[i].Path, `\Elapsed Time`) {
+			rs[i].Value += secs
+		}
+	}
 }
 
 // --- procIO (W5-04): precise creation identity, no age tolerance ---
 
-// A different creation only two seconds away must be rejected (the old +/-3s
-// age tolerance accepted it). Identity is the creation time, not an age.
-func TestProcIORejectsCreationWithinThreeSeconds(t *testing.T) {
-	for _, delta := range []int64{-2, -1, 1, 2, 3} {
+// A different creation more than the 3 s slack away must be rejected. The start
+// is derived from Elapsed Time (Windows has no Creation Time counter), so the
+// slack only absorbs the rounding of that counter.
+func TestProcIORejectsCreationBeyondSlack(t *testing.T) {
+	for _, delta := range []int64{-60, -9, -4, 4, 9, 60} {
 		src := &procIOFakeSource{}
 		procIOInstance(src, "w3wp")
 		procIOIdent(src, "w3wp", 100, 900+delta) // creation differs from Start 900
@@ -32,7 +47,7 @@ func TestProcIORejectsCreationWithinThreeSeconds(t *testing.T) {
 			return []ResolvedTarget{{Key: "pool:a", PID: 100, Start: 900}}
 		}, nil)
 		if grp := collectProcIO(t, g, src, 1); grp != nil {
-			t.Fatalf("delta %d: group = %+v, want nil (a different creation within 3s must be rejected)", delta, grp)
+			t.Fatalf("delta %d: group = %+v, want nil (a different creation beyond the slack must be rejected)", delta, grp)
 		}
 	}
 }
@@ -44,11 +59,15 @@ func TestProcIORejectsCreationWithinThreeSeconds(t *testing.T) {
 func TestProcIOAcceptsDelayedRead(t *testing.T) {
 	src := &procIOFakeSource{}
 	procIOInstance(src, "w3wp")
-	procIOIdent(src, "w3wp", 100, 900) // created at 900
-	// Elapsed Time is huge because the read happened long after the tick; it is a
-	// metric only and must not influence identity.
+	// Created at 900; the tick clock is 6000, so Elapsed Time is 5100 s and the
+	// derived start is 900. A late tick clock does not break identity as long as
+	// Elapsed Time is read in the same tick.
+	src.paths = append(src.paths, procIOPath("w3wp", "ID Process"), procIOPath("w3wp", "Elapsed Time"))
 	src.readings = append(src.readings,
-		procIOReading("w3wp", "Elapsed Time", 5000),
+		procIOReading("w3wp", "ID Process", 100),
+		procIOReading("w3wp", "Elapsed Time", 5100),
+	)
+	src.readings = append(src.readings,
 		procIOReading("w3wp", "Page File Bytes", 1000),
 	)
 	g := newProcIOTestGroup(t, src, func() []ResolvedTarget {
@@ -204,18 +223,18 @@ func TestProc10DuplicatePIDFailsClosed(t *testing.T) {
 	g := newProc10TestGroupFn(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{{Key: "pool:a", PID: 7777, Start: 900, Runtime: 2}}
 	}, nil)
-	if grp := proc10Collect(t, g, 3); grp != nil {
+	if grp := proc10Collect(t, g, src, 3); grp != nil {
 		t.Fatalf("group = %+v, want nil (ambiguous duplicate PID)", grp)
 	}
 }
 
 func TestProc10CreationMismatch(t *testing.T) {
 	src := &proc10FakeSource{}
-	proc10Instance(src, "dotnet", 7777, 902, 20, 3000, 4000) // creation 902 != Start 900
+	proc10Instance(src, "dotnet", 7777, 906, 20, 3000, 4000) // creation 906 != Start 900
 	g := newProc10TestGroupFn(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{{Key: "pool:a", PID: 7777, Start: 900, Runtime: 2}}
 	}, nil)
-	if grp := proc10Collect(t, g, 3); grp != nil {
+	if grp := proc10Collect(t, g, src, 3); grp != nil {
 		t.Fatalf("group = %+v, want nil (creation does not confirm Start)", grp)
 	}
 }
@@ -227,7 +246,7 @@ func TestProc10UnselectedNotProcessed(t *testing.T) {
 	g := newProc10TestGroupFn(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{{Key: "pool:a", PID: 100, Start: 900, Runtime: 2}}
 	}, nil)
-	proc10Collect(t, g, 3)
+	proc10Collect(t, g, src, 3)
 	if _, ok := g.engine.history[proc10Path("unsel", "% Processor Time")]; ok {
 		t.Fatal("unselected instance CPU rate was processed/retained (W5-03)")
 	}
@@ -289,7 +308,7 @@ func TestCLRCreationMismatch(t *testing.T) {
 		clrReading(".NET CLR Memory", "w3wp", "Process ID", 100),
 		clrReading(".NET CLR Memory", "w3wp", "Gen 0 heap size", 111),
 	)
-	clrProcessIdent(src, "w3wp", 100, 902) // creation 902 != Start 900
+	clrProcessIdent(src, "w3wp", 100, 906) // creation 906 != Start 900
 	g := newCLRTestGroup(t, src, func() []ResolvedTarget {
 		return []ResolvedTarget{{Key: "pool:a", PID: 100, Start: 900, Runtime: 1}}
 	}, nil)

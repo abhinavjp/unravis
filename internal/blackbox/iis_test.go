@@ -48,10 +48,10 @@ func iisPoolReadings(inst string, requests, threads, ping float64) []CounterRead
 // collection-time inventory the counter-path worker PID is verified against
 // (W5-02). The Process instance name is independent of the W3WP instance name.
 func iisWorkerIdent(src *iisFakeSource, procInst string, pid float64, start int64) {
-	src.paths = append(src.paths, procIOPath(procInst, "ID Process"), procIOPath(procInst, "Creation Time"))
+	src.paths = append(src.paths, procIOPath(procInst, "ID Process"), procIOPath(procInst, "Elapsed Time"))
 	src.readings = append(src.readings,
 		procIOReading(procInst, "ID Process", pid),
-		procIOReading(procInst, "Creation Time", creationTicksFor(start)),
+		procIOReading(procInst, "Elapsed Time", elapsedFor(start)),
 	)
 }
 
@@ -297,6 +297,7 @@ func TestIISGroupRefreshOnChange(t *testing.T) {
 	src.paths = append(src.paths, iisPoolPaths("200_pool-b")...)
 	src.readings = append(src.readings, iisPoolReadings("200_pool-b", 4, 5, 6)...)
 	iisWorkerIdent(src, "w3wp#1", 200, 20)
+	ageElapsed(src.readings, 15) // one interval later: both workers keep their start
 	grp := collectIIS(t, g, now.Add(15*time.Second))
 	if src.refreshes != 1 {
 		t.Fatalf("refreshes = %d, want 1 on change", src.refreshes)
@@ -305,6 +306,7 @@ func TestIISGroupRefreshOnChange(t *testing.T) {
 		t.Fatalf("group = %+v, want 2 workers after re-expansion", grp)
 	}
 	changed = false
+	ageElapsed(src.readings, 15)
 	collectIIS(t, g, now.Add(30*time.Second))
 	if src.refreshes != 1 {
 		t.Fatalf("refreshes = %d, want no re-expand without a change", src.refreshes)

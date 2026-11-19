@@ -1,8 +1,8 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createRequire } = require('node:module');
 const test = require('node:test');
+const { loadTypeScript } = require('./helpers/loadTs.cjs');
 const ts = require('typescript');
 
 // BBX-1-12: the install-wizard target picker. Targets are owner-selected app pools and services,
@@ -10,27 +10,6 @@ const ts = require('typescript');
 // is manual entry. A not-running target says "not running", never 0.
 
 const root = path.resolve(__dirname, '..');
-const cache = new Map();
-function loadTypeScript(relativePath) {
-  const filename = path.join(root, relativePath);
-  if (cache.has(filename)) return cache.get(filename).exports;
-  const source = fs.readFileSync(filename, 'utf8');
-  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
-  const module = { exports: {} };
-  cache.set(filename, module);
-  const nodeRequire = createRequire(filename);
-  const load = (request) => {
-    if (/^\.\.?\//.test(request)) {
-      const plain = path.join(path.dirname(filename), request + '.ts');
-      const store = path.join(path.dirname(filename), request + '.svelte.ts');
-      if (fs.existsSync(plain)) return loadTypeScript(path.relative(root, plain));
-      if (fs.existsSync(store)) return loadTypeScript(path.relative(root, store));
-    }
-    return nodeRequire(request);
-  };
-  new Function('require', 'module', 'exports', '$state', output)(load, module, module.exports, (value) => value);
-  return module.exports;
-}
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
 
 const bb = loadTypeScript('src/lib/blackbox.ts');
@@ -126,16 +105,22 @@ test('the target picker copy passes the screen-string lint and the count guard h
 /* ------------------------------------------------------------------ the Settings step */
 
 test('the Settings step reads targets once on mount, for this PC only, and never polls', () => {
-  const comp = read('src/components/BlackboxSettings.svelte');
-  assert.match(comp, /onMount\(\(\) => \{\s*if \(targetMode !== 'pc'\) return;/, 'pack/remote mode never fetches');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
+  assert.match(comp, /onMount\(\(\) => \{\s*if \(mode !== 'pc'\) return;/, 'pack mode never fetches');
   assert.match(comp, /blackboxApi\.targets\(\)/, 'the detected names come from the endpoint');
+  // The form hands the picker the mode it is in and never reads the names itself.
+  const form = read('src/components/BlackboxSettings.svelte');
+  assert.match(form, /<TargetPicker bind:targets=\{settings\.targets\} mode=\{targetMode === 'pc' \? 'pc' : 'pack'\} \{idPrefix\} \{problem\} \/>/);
+  assert.doesNotMatch(form, /blackboxApi\.targets\(\)/, 'the form no longer reads the targets itself');
   assert.doesNotMatch(comp, /setInterval|setTimeout/, 'no polling');
-  const wizard = read('src/components/BlackboxWizard.svelte');
-  assert.match(wizard, /targetMode=\{where === 'pc' \? 'pc' : 'manual'\}/, 'the wizard passes the mode it is in');
+  // The pop-up's Watch step passes the mode it is in (this replaces the drawer wizard's targetMode on the settings form).
+  const watch = read('src/components/blackboxWizard/StepWatch.svelte');
+  assert.match(watch, /const mode = \$derived\(wizard\.where === 'pack' \? 'pack' : 'pc'\);/, 'the Watch step derives the mode from where the Blackbox goes');
+  assert.match(watch, /<BlackboxTargetPicker bind:targets=\{wizard\.settings\.targets\} \{mode\} idPrefix="bbw" \{problem\} \/>/, 'and hands it to the picker');
 });
 
 test('a stopped target says "not running"; an unreadable state is never labelled stopped', () => {
-  const comp = read('src/components/BlackboxSettings.svelte');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
   // W2-07: configuration presence is not a running claim, and unknown is not stopped.
   // UX-6: when every row of a group is unknown, one group note under the legend stands in for
   // the per-row notes (rendered tests below). No per-row targetsStateUnknown assertion may live
@@ -159,10 +144,11 @@ test('targetRunState reads the server state, an older boolean, or unknown', () =
 });
 
 test('the picker stores only kind+name, and the record.processes checkbox and note are unchanged', () => {
-  const comp = read('src/components/BlackboxSettings.svelte');
+  const settingsSrc = read('src/components/BlackboxSettings.svelte');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
   assert.match(comp, /toggleTarget\(picked, kind, name\)/, 'checking a name uses the pure helper');
-  assert.match(comp, /bind:checked=\{settings\.record\.processes\}/);
-  assert.match(comp, /\{#if !settings\.record\.processes\}<p class="bb-note">\{T\.processesNote\}<\/p>\{\/if\}/);
+  assert.match(settingsSrc, /bind:checked=\{settings\.record\.processes\}/);
+  assert.match(settingsSrc, /\{#if !settings\.record\.processes\}<p class="bb-note">\{T\.processesNote\}<\/p>\{\/if\}/);
   assert.doesNotMatch(comp, /commandLine|imagePath|\.path\b|readKey|password|secret/, 'no path, command line or key is stored');
   // The manual row adds a name; the chips remove one. Both go through the same kind+name helper.
   assert.match(comp, /function addTarget\(\)/);
@@ -264,20 +250,33 @@ test('a refused settings call reads the plain sentence, and the server own words
 
 /* ------------------------------------------------------------------ UX-4: the Settings step refuses a typed name inline */
 
+// TSK-12: the target picker (BlackboxTargetPicker.svelte) takes `targets` and `mode`; the form hands it
+// settings.targets and a mode of 'pc' or 'pack'. The harness builds the picker's props from the form-shaped
+// overrides the cases below pass, and `followPicker` makes settings.targets read the list the picker holds,
+// so a case can still say "settings.targets" for what the page would show.
+function pickerProps(settings, overrides) {
+  return { targets: settings.targets, mode: overrides.targetMode === 'pc' ? 'pc' : 'pack', idPrefix: overrides.idPrefix ?? 'bb', problem: overrides.problem ?? null };
+}
+function followPicker(settings, step) {
+  Object.defineProperty(settings, 'targets', { configurable: true, enumerable: true, get: () => step.targets, set: (v) => { step.targets = v; } });
+  return settings;
+}
+
 // The step's own script, run with plain values for the runes: no DOM, no network, no clock. The alert
 // markup below is the template that renders the words this returns. Transpiled once, run per case.
 // Each case is a fresh step: with plain values a derived list is read once, when the step is built.
 let stepScript;
 function freshStep(overrides = {}) {
   const settings = overrides.settings ?? bb.defaultSettings('web-a');
-  const props = { settings, logPathsText: settings.logPaths.join('\n'), idPrefix: 'bb', problem: null, targetMode: 'manual', ...overrides };
+  const props = pickerProps(settings, { targetMode: 'manual', ...overrides });
   if (!stepScript) {
-    const src = read('src/components/BlackboxSettings.svelte');
+    const src = read('src/components/BlackboxTargetPicker.svelte');
     const script = src.match(/<script lang="ts">([\s\S]*?)<\/script>/)[1];
     const js = ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
     // UX-7: the announcement, the focus slots and the two element refs, read and written live.
     // Typeof-guarded so this harness also runs against a step script that predates them.
     stepScript = js + '\nmodule.exports.step = { addTarget, pick, removeTarget,'
+      + ' get targets() { return targets; }, set targets(v) { targets = v; },'
       + ' focusSlot: typeof focusSlot === \'undefined\' ? null : focusSlot,'
       + ' chipsShown: typeof chipsShown === \'undefined\' ? null : chipsShown,'
       + ' get announcement() { return typeof announcement === \'undefined\' ? null : announcement; },'
@@ -302,7 +301,7 @@ function freshStep(overrides = {}) {
   const identity = (value) => value;
   new Function('require', 'module', 'exports', '$state', '$derived', '$props', '$bindable', stepScript)(
     need, module, module.exports, identity, identity, () => props, () => undefined);
-  return { step: module.exports.step, settings };
+  return { step: module.exports.step, settings: followPicker(settings, module.exports.step) };
 }
 
 test('addTarget refuses a name the server would refuse, says why, and does not add it', () => {
@@ -390,20 +389,23 @@ test('the refusal does not outlive what it describes: removing a chip, picking a
   dup.step.pick('service', 'EmailSvc');
   assert.equal(dup.step.targetError(), '');
   // The kind is part of the decision, so changing it clears the words too.
-  const comp = read('src/components/BlackboxSettings.svelte');
-  assert.match(comp, /<select bind:value=\{manualKind\} onchange=\{\(\) => \{ targetRefusal = ''; \}\}>/);
-  assert.match(comp, /oninput=\{\(\) => \{ if \(targetRefusal\) targetRefusal = ''; \}\}/);
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
+  // The same two handlers also clear the spoken "added" words, which are stale once the name or the kind changes
+  // (browser pass, item C), so the old assertions now allow that extra statement. The refusal still goes first.
+  assert.match(comp, /<select bind:value=\{manualKind\} onchange=\{\(\) => \{ targetRefusal = ''; announcement = ''; \}\}>/);
+  assert.match(comp, /oninput=\{\(\) => \{ announcement = ''; if \(targetRefusal\) targetRefusal = ''; \}\}/);
 });
 
 test('the refusal renders as an alert beside the target row, and the row is the field the wizard focuses', () => {
-  const comp = read('src/components/BlackboxSettings.svelte');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
   assert.match(comp, /\{#if targetError\(\)\}<p class="inline-error" id="\{idPrefix\}-targets-error" role="alert">\{targetError\(\)\}<\/p>\{\/if\}/);
   // The wizard and Apply focus '#bb-f-' + problem, so the target row carries that id.
   assert.match(comp, /id="\{idPrefix\}-f-targets"/);
   assert.match(comp, /aria-invalid=\{targetError\(\) \? 'true' : undefined\}/);
   assert.match(comp, /aria-describedby=\{targetError\(\) \? idPrefix \+ '-targets-error' : undefined\}/);
   // The words go once the person types again, and the targets problem found at the last attempt shows here too.
-  assert.match(comp, /oninput=\{\(\) => \{ if \(targetRefusal\) targetRefusal = ''; \}\}/);
+  // (Changed on purpose, defect C: the same typing also clears the stale "added" words.)
+  assert.match(comp, /oninput=\{\(\) => \{ announcement = ''; if \(targetRefusal\) targetRefusal = ''; \}\}/);
   assert.match(comp, /function targetError\(\): string \{ return targetRefusal \|\| \(problem === 'targets' \? T\.settingProblems\.targets : ''\); \}/);
   // A settings problem found at the last attempt reads the same alert.
   const { step } = freshStep({ problem: 'targets' });
@@ -411,6 +413,28 @@ test('the refusal renders as an alert beside the target row, and the row is the 
 });
 
 /* ------------------------------------------------------------------ UX-4: the alert, rendered for real */
+
+// The settings form compiled for the server, with the target picker it renders compiled the same way.
+// `svelteStub` replaces the 'svelte' import (onMount) and `blackbox` the client, in both components.
+function compileForm(svelteStub, blackbox) {
+  const { compile } = require('svelte/compiler');
+  const build = (file, name, picker) => {
+    const compiled = compile(read(file), { filename: name, generate: 'server' });
+    const js = ts.transpileModule(compiled.js.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+    const held = { exports: {} };
+    const load = (request) => {
+      if (request === 'svelte') return { tick: () => Promise.resolve(), ...svelteStub };
+      if (request === '../lib/blackbox') return blackbox;
+      if (request === '../lib/copy/blackboxCopy') return { BB_TEXT, BB_REFUSAL, blackboxCopyEntries };
+      if (picker && request === './BlackboxTargetPicker.svelte') return { __esModule: true, default: picker };
+      return require(request);
+    };
+    new Function('require', 'module', 'exports', js)(load, held, held.exports);
+    return held.exports.default;
+  };
+  const picker = build('src/components/BlackboxTargetPicker.svelte', 'BlackboxTargetPicker.svelte');
+  return build('src/components/BlackboxSettings.svelte', 'BlackboxSettings.svelte', picker);
+}
 
 // The step rendered by Svelte itself (server render, no DOM, no network): the words above are the words
 // the page shows. The inline Add refusal uses this same element, with targetError() proven above.
@@ -420,18 +444,7 @@ function renderStep(overrides = {}) {
   const settings = overrides.settings ?? bb.defaultSettings('web-a');
   const props = { settings, logPathsText: settings.logPaths.join('\n'), idPrefix: 'bb', problem: null, targetMode: 'manual', ...overrides };
   if (!stepComponent) {
-    const { compile } = require('svelte/compiler');
-    const compiled = compile(read('src/components/BlackboxSettings.svelte'), { filename: 'BlackboxSettings.svelte', generate: 'server' });
-    const js = ts.transpileModule(compiled.js.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
-    const held = { exports: {} };
-    const load = (request) => {
-      if (request === 'svelte') return { onMount: () => {} };
-      if (request === '../lib/blackbox') return bb;
-      if (request === '../lib/copy/blackboxCopy') return { BB_TEXT, BB_REFUSAL, blackboxCopyEntries };
-      return require(request);
-    };
-    new Function('require', 'module', 'exports', js)(load, held, held.exports);
-    stepComponent = held.exports.default;
+    stepComponent = compileForm({ onMount: () => {} }, bb);
   }
   const html = require('svelte/server').render(stepComponent, { props }).html;
   // Svelte escapes the symbols in the copy; read them back as the person sees them.
@@ -522,11 +535,12 @@ test('targetListState tells a partial answer apart: what was read is a list, wha
 // stub is fetch itself. Proves the failure path is genuinely reachable, not a state set by hand.
 function mountStep(overrides = {}) {
   const settings = overrides.settings ?? bb.defaultSettings('web-a');
-  const props = { settings, logPathsText: settings.logPaths.join('\n'), idPrefix: 'bb', problem: null, targetMode: 'pc', ...overrides };
-  const src = read('src/components/BlackboxSettings.svelte');
+  const props = pickerProps(settings, { targetMode: 'pc', ...overrides });
+  const src = read('src/components/BlackboxTargetPicker.svelte');
   const script = src.match(/<script lang="ts">([\s\S]*?)<\/script>/)[1];
   const js = ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
   const exposed = js + '\nmodule.exports.step = { groupState,'
+    + ' get targets() { return targets; }, set targets(v) { targets = v; },'
     + ' get targetsRead() { return targetsRead; }, get targetsFailed() { return targetsFailed; },'
     + ' get detected() { return detected; }, get appPools() { return appPools; }, get services() { return services; },'
     // UX-6: the filter and the group note, read live. Typeof-guarded so this harness also runs
@@ -538,7 +552,7 @@ function mountStep(overrides = {}) {
     + ' get serviceFilter() { return typeof serviceFilter === \'undefined\' ? \'\' : serviceFilter; }, set serviceFilter(v) { serviceFilter = v; } };';
   let mounted = null;
   const need = (request) => {
-    if (request === 'svelte') return { onMount: (fn) => { mounted = fn; } };
+    if (request === 'svelte') return { onMount: (fn) => { mounted = fn; }, tick: () => Promise.resolve() };
     if (request === '../lib/blackbox') return bb;
     if (request === '../lib/copy/blackboxCopy') return { BB_TEXT, BB_REFUSAL, blackboxCopyEntries };
     throw new Error('unexpected import: ' + request);
@@ -547,7 +561,7 @@ function mountStep(overrides = {}) {
   const identity = (value) => value;
   new Function('require', 'module', 'exports', '$state', '$derived', '$props', '$bindable', exposed)(
     need, module, module.exports, identity, identity, () => props, () => undefined);
-  return { step: module.exports.step, mount: () => mounted(), settings };
+  return { step: module.exports.step, mount: () => mounted(), settings: followPicker(settings, module.exports.step) };
 }
 const tokenSession = () => { globalThis.sessionStorage = { getItem: () => TOKEN, setItem() {}, removeItem() {} }; };
 
@@ -652,18 +666,7 @@ function renderPcStep(overrides = {}) {
   const settings = overrides.settings ?? bb.defaultSettings('web-a');
   const props = { settings, logPathsText: settings.logPaths.join('\n'), idPrefix: 'bb', problem: null, targetMode: 'pc', ...overrides };
   if (!pcComponent) {
-    const { compile } = require('svelte/compiler');
-    const compiled = compile(read('src/components/BlackboxSettings.svelte'), { filename: 'BlackboxSettings.svelte', generate: 'server' });
-    const js = ts.transpileModule(compiled.js.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
-    const held = { exports: {} };
-    const load = (request) => {
-      if (request === 'svelte') return { onMount: (fn) => { fn(); } };
-      if (request === '../lib/blackbox') return { ...bb, blackboxApi: { ...bb.blackboxApi, targets: () => pcThenable } };
-      if (request === '../lib/copy/blackboxCopy') return { BB_TEXT, BB_REFUSAL, blackboxCopyEntries };
-      return require(request);
-    };
-    new Function('require', 'module', 'exports', js)(load, held, held.exports);
-    pcComponent = held.exports.default;
+    pcComponent = compileForm({ onMount: (fn) => { fn(); } }, { ...bb, blackboxApi: { ...bb.blackboxApi, targets: () => pcThenable } });
   }
   const html = require('svelte/server').render(pcComponent, { props }).html;
   const plain = html.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -790,7 +793,7 @@ test('a 200-service list is bounded and scrollable, and says unknown once under 
   assert.equal((scroll[1].match(/type="checkbox"/g) ?? []).length, 200, 'all 200 names are inside it');
   assert.ok(!scroll[1].includes('bb-note'), 'no per-row note on any of the 200 rows');
   // Bounded height: the style block caps the region and lets it scroll.
-  const comp = read('src/components/BlackboxSettings.svelte');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
   assert.match(comp, /\.bb-scroll \{[^}]*max-height: 240px;[^}]*overflow: auto;/);
   // A filter box is offered, with a visible label, and the list iterates the filtered names.
   assert.match(html, /id="bb-services-filter"/);
@@ -948,14 +951,14 @@ test('a removed or an added target is announced in the panel own plain words, an
 });
 
 test('the panel carries one visually-hidden status region that renders the announcement, and it is there before anything changes', () => {
-  const comp = read('src/components/BlackboxSettings.svelte');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
   // A live region inserted together with its text is missed by most screen readers, so the element
   // stands on its own: no {#if} around it, and the words are its only content.
   assert.match(comp, /<p class="bb-sr" role="status" aria-live="polite">\{announcement\}<\/p>/);
   assert.doesNotMatch(comp, /\{#if announcement\}/, 'the region is never conditional');
   assert.doesNotMatch(comp, /aria-hidden=\{?announcement|hidden=\{?announcement/, 'it is hidden by CSS only, never from assistive tech');
   // Visually hidden the usual way, so it takes no room but is still read.
-  assert.match(comp, /\.bb-sr \{[^}]*position: absolute;[^}]*width: 1px;[^}]*height: 1px;[^}]*clip-path: inset\(50%\);/);
+  assert.match(read('src/app.css'), /\.bb-sr \{[^}]*position: absolute;[^}]*width: 1px;[^}]*height: 1px;[^}]*clip-path: inset\(50%\);/);
   // It renders in the page itself, empty, in both modes.
   pcBridge.result = null; pcBridge.failed = false;
   for (const { html } of [renderStep(), renderPcStep()]) {
@@ -964,7 +967,7 @@ test('the panel carries one visually-hidden status region that renders the annou
 });
 
 test('the chip remove control is a real touch and keyboard target', () => {
-  const comp = read('src/components/BlackboxSettings.svelte');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
   // 24px is the smallest size a thumb or a keyboard user can be trusted to hit (WCAG 2.5.8).
   assert.match(comp, /\.bb-chip-x \{[^}]*min-width: 24px;[^}]*min-height: 24px;/, 'the × has a 24px square');
   // It stays a real button whose name says which target it removes, so the focus ring reads properly.
@@ -1008,7 +1011,7 @@ test('removing a chip moves focus to the next chip, the new last chip or the nam
     assert.ok(!landed[0].includes(gone), 'focus never lands on the chip that was removed');
   }
   // Focus moves only once the list has rendered, and never by scrolling the page or grabbing the body.
-  const comp = read('src/components/BlackboxSettings.svelte');
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
   assert.match(comp, /async function removeTarget\(kind: TargetKind, name: string\) \{[\s\S]*?await tick\(\);[\s\S]*?focus\(\);/, 'the update is awaited before focus moves');
   assert.doesNotMatch(comp, /document\.body\.focus|scrollIntoView|window\.focus/, 'nothing jumps to the top of the page');
 });
@@ -1036,4 +1039,32 @@ test('the announcement follows what actually happened: an add, a refusal, a tick
   const removed = freshStep({ settings: { ...bb.defaultSettings('web-a'), targets: [t('service', 'W3SVC')] } });
   await removed.step.removeTarget('service', 'W3SVC');
   assert.equal(removed.step.announcement, BB_TEXT.targetsRemoved('W3SVC'));
+});
+// Browser pass, item C: the 33rd tick, the stale "added" words and the reason beside a disabled Add target.
+test('ticking a detected name at 32 targets is refused with the typed path words, and the box is put back', () => {
+  const full = freshStep({ settings: { ...bb.defaultSettings('web-a'), targets: many(32) } });
+  const box = { checked: true };
+  full.step.pick('service', 'extra-svc', box);
+  assert.equal(full.settings.targets.length, 32, 'nothing was added');
+  assert.equal(box.checked, false, 'the checkbox is put back');
+  assert.equal(full.step.targetRefusal, BB_TEXT.targetProblems.many, 'the same words as the typed Add');
+  assert.equal(full.step.targetError(), BB_TEXT.targetProblems.many);
+  assert.equal(full.step.announcement, '', 'a refusal announces nothing');
+  // Unticking a name that is on the full list still works: the limit only stops an add.
+  const off = full.step.pick('service', 'svc-3', { checked: false });
+  assert.equal(off, undefined);
+  assert.equal(full.settings.targets.length, 31);
+  assert.equal(full.step.targetError(), '');
+});
+
+test('the stale "added" words are cleared when the name or the kind changes, and Add target says why it is off', () => {
+  const comp = read('src/components/BlackboxTargetPicker.svelte');
+  assert.match(comp, /oninput=\{\(\) => \{ announcement = ''; /, 'typing clears the spoken words');
+  assert.match(comp, /onchange=\{\(\) => \{ targetRefusal = ''; announcement = ''; \}\}/, 'a kind change clears them too');
+  assert.match(comp, /const addReason = \$derived\(typedName === '' \? T\.targetsAddNeedsName : alreadyPicked \? T\.targetsAddAlready : ''\);/);
+  assert.match(comp, /aria-describedby=\{addReason \? idPrefix \+ '-add-reason' : undefined\}/, 'the reason is tied to the button');
+  const { step } = freshStep({ settings: { ...bb.defaultSettings('web-a'), targets: [t('service', 'EmailSvc')] } });
+  assert.equal(typeof step.pick, 'function');
+  assert.match(BB_TEXT.targetsAddNeedsName, /Type a name/);
+  assert.match(BB_TEXT.targetsAddAlready, /already on the list/);
 });

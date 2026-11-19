@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io"
 	"reflect"
-	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -47,6 +46,10 @@ type GroupDeps struct {
 	// set, BuildGroups tracks each group's last successfully reconciled
 	// generation and acknowledges only on a successful Collect.
 	Generation func() uint64
+	// SQLProcessSig is a signature of the running sqlservr.exe processes (their
+	// PIDs and creation times). Optional; the sqlHost group re-reads the PDH object
+	// list only when it changes, not on every process change.
+	SQLProcessSig func() uint64
 }
 
 // Group is one counter group, collected serially within the per-group budget.
@@ -380,6 +383,17 @@ type groupCollector struct {
 	slots  []workerSlot
 	budget *Budget
 	last   time.Time
+
+	// What the last pass cost, for the self block: the host read, and the one
+	// slowest group. Written by the tick loop only; read by it right after.
+	hostDur  time.Duration
+	slowName string
+	slowDur  time.Duration
+}
+
+// Timings reports the last pass: the host read time and the slowest group.
+func (c *groupCollector) Timings() (host time.Duration, slowGroup string, slow time.Duration) {
+	return c.hostDur, c.slowName, c.slowDur
 }
 
 // NewGroupCollector wraps inner so each group runs under the budget.
@@ -393,7 +407,9 @@ func (c *groupCollector) Collect(now time.Time) (Sample, error) {
 	if !c.innerW.idle() {
 		return Sample{}, errHostBusy
 	}
+	hostStart := time.Now()
 	hv, herr, timedOut := c.innerW.run(func() (any, error) { return c.inner.Collect(now) }, budgetMaxGroup)
+	c.hostDur, c.slowName, c.slowDur = time.Since(hostStart), "", 0
 	if timedOut {
 		return Sample{}, errHostSlow
 	}
@@ -407,20 +423,19 @@ func (c *groupCollector) Collect(now time.Time) (Sample, error) {
 		dt = now.Sub(c.last).Seconds()
 	}
 	c.last = now
-	slow := c.budget.SlowGroups()
 	for i, g := range c.groups {
 		name := g.Name()
 		if c.budget.GroupSkipped(name, g.Optional()) {
-			if slices.Contains(slow, name) {
-				// Consume the one-cycle slow mark so the group is re-probed.
-				c.budget.NoteSkipped(name)
-				s.Missing = append(s.Missing, name+": slow")
-			} else {
-				s.Missing = append(s.Missing, name)
-			}
+			// On probation: this optional group was over budget twice in a row and
+			// sits out its time box. Only this group; the others keep running.
+			s.Missing = append(s.Missing, name+": slow")
 			continue
 		}
-		c.runGroup(i, g, now, dt, &s)
+		// Groups read their counters after the host read and after earlier groups,
+		// so the tick's start is already behind the real counter sample. Hand each
+		// group the tick time moved on by the real time spent, so the process start
+		// derived from Elapsed Time stays inside pdhCreationSlack on a busy server.
+		c.runGroup(i, g, now.Add(time.Since(hostStart)), dt, &s)
 	}
 	s.Missing = dedupMissing(s.Missing)
 	return s, nil
@@ -446,7 +461,11 @@ func (c *groupCollector) runGroup(i int, g Group, now time.Time, dt float64, s *
 		s.Missing = append(s.Missing, name+": slow")
 		return
 	}
-	c.budget.GroupTiming(name, time.Since(start), g.Optional())
+	took := time.Since(start)
+	if took > c.slowDur {
+		c.slowName, c.slowDur = name, took
+	}
+	c.budget.GroupTiming(name, took, g.Optional())
 	if err != nil || isNilPayload(v) {
 		s.Missing = append(s.Missing, name)
 		return

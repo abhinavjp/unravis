@@ -115,8 +115,28 @@ const (
 // GapBetween says whether the time from prev to next is a gap: more than
 // LateIntervals intervals. The cause is passed through.
 func GapBetween(prev, next time.Time, intervalSeconds int, cause string) (Gap, bool) {
+	return gapOver(prev, next, time.Duration(LateIntervals*intervalSeconds)*time.Second, cause)
+}
+
+// RestartGapIntervals is the limit, in intervals, for the hole between the last
+// sample of one run and the first of the next. A restart is judged tighter than
+// a late tick: a recorder that is started again is expected to sample at once,
+// so more than 1.5 intervals of the interval the earlier run was ticking at is a
+// gap (a 36 s restart at a 15 s cadence is one).
+const RestartGapIntervals = 1.5
+
+// RestartGapLimit is the limit for the first sample of a run, from the interval
+// (seconds) the previous run was ticking at.
+func RestartGapLimit(priorIntervalSeconds int) time.Duration {
+	if priorIntervalSeconds <= 0 {
+		priorIntervalSeconds = DefaultIntervalSecond
+	}
+	return time.Duration(RestartGapIntervals * float64(priorIntervalSeconds) * float64(time.Second))
+}
+
+// gapOver says whether prev to next is longer than limit.
+func gapOver(prev, next time.Time, limit time.Duration, cause string) (Gap, bool) {
 	d := next.Sub(prev)
-	limit := time.Duration(LateIntervals*intervalSeconds) * time.Second
 	if d <= limit {
 		return Gap{}, false
 	}

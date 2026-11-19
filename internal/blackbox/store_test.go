@@ -379,6 +379,7 @@ func TestStoreFailedWriteLeavesNoHalfLineAndNextSampleIsClean(t *testing.T) {
 		dir := t.TempDir()
 		c := &clock{t: t0}
 		s := openT(t, dir, "r1", c)
+		s.SetInterval(30) // a sample is synced at once from 30 s up
 		fail := false
 		s.wrapFile = func(f *os.File) recFile { return halfWriter{File: f, fail: &fail, syncFails: syncFails} }
 		if err := s.Append(smp("r1", 1, t0), ""); err != nil {

@@ -54,33 +54,44 @@ func (s *Store) Housekeep(l Limits, disk DiskSpace, now time.Time) (Housekeeping
 	now = now.UTC()
 	protected := FileNameFor(now)
 
+	// The file list is copied once for the whole pass (oldest first) and the
+	// decisions are made on that copy; the manifest file is written once at the
+	// end, not after every removal.
+	files := s.fileEntries()
+	cur := s.CurrentFile()
+	var total int64
+	for _, f := range files {
+		total += f.Bytes
+	}
 	skipped := map[string]bool{}
+	gone := map[string]bool{}
 	// remove takes one file out; a failure parks the file for this pass.
-	remove := func(name string) {
-		if err := s.Remove(name); err != nil {
-			skipped[name] = true
-			res.Skipped = append(res.Skipped, name)
+	remove := func(f FileEntry) {
+		if err := s.remove(f.Name, false); err != nil {
+			skipped[f.Name] = true
+			res.Skipped = append(res.Skipped, f.Name)
 			return
 		}
-		res.Removed = append(res.Removed, name)
+		gone[f.Name] = true
+		total -= f.Bytes
+		res.Removed = append(res.Removed, f.Name)
 	}
-	// next is the oldest file that may go, or "".
-	next := func() string {
-		cur := s.CurrentFile()
-		for _, f := range s.Manifest().Files {
-			if f.Name != cur && f.Name != protected && !skipped[f.Name] {
-				return f.Name
+	// next is the oldest file that may go.
+	next := func() (FileEntry, bool) {
+		for _, f := range files {
+			if f.Name != cur && f.Name != protected && !skipped[f.Name] && !gone[f.Name] {
+				return f, true
 			}
 		}
-		return ""
+		return FileEntry{}, false
 	}
 
 	// Age: a file goes once the whole hour it covers is older than the keep time.
 	if l.KeepDays > 0 && !l.SkipAge {
 		cutoff := now.Add(-time.Duration(l.KeepDays) * 24 * time.Hour)
 		byAge := 0
-		for _, f := range s.Manifest().Files {
-			if f.Name == s.CurrentFile() || f.Name == protected {
+		for _, f := range files {
+			if f.Name == cur || f.Name == protected {
 				continue
 			}
 			if f.Hour.Add(time.Hour).Before(cutoff) {
@@ -88,18 +99,18 @@ func (s *Store) Housekeep(l Limits, disk DiskSpace, now time.Time) (Housekeeping
 					break
 				}
 				byAge++
-				remove(f.Name)
+				remove(f)
 			}
 		}
 	}
 	// Size.
 	if l.MaxBytes > 0 {
-		for s.Manifest().TotalBytes() > l.MaxBytes {
-			n := next()
-			if n == "" {
+		for total > l.MaxBytes {
+			f, ok := next()
+			if !ok {
 				break
 			}
-			remove(n)
+			remove(f)
 		}
 	}
 	// Free space.
@@ -113,16 +124,17 @@ func (s *Store) Housekeep(l Limits, disk DiskSpace, now time.Time) (Housekeeping
 			if res.FreePercent >= l.MinFreePercent {
 				break
 			}
-			n := next()
-			if n == "" {
+			f, ok := next()
+			if !ok {
 				res.DiskLow = true
 				break
 			}
-			remove(n)
+			remove(f)
 		}
 	}
-	res.Bytes = s.Manifest().TotalBytes()
+	res.Bytes = total
 	if len(res.Removed) > 0 {
+		// One manifest write for the whole pass: the event below writes it.
 		s.Event(EventHousekeeping, fmt.Sprintf("removed %d file(s), oldest first: %s to %s", len(res.Removed), res.Removed[0], res.Removed[len(res.Removed)-1]))
 	}
 	return res, nil

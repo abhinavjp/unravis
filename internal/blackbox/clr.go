@@ -8,7 +8,7 @@ import (
 
 // BBX-3-01 CLR counters for owner-selected Framework (runtime 1) targets.
 // Instances are process names (#N), not PIDs: the CLR Process ID counter maps
-// instance -> PID, and the Process object's ID Process + Creation Time map that
+// instance -> PID, and the Process object's ID Process + Elapsed Time map that
 // PID to its creation FILETIME. Readings join to the shared per-tick view on the
 // full (PID, creation) identity, never PID alone (W5-01). No text.
 
@@ -29,7 +29,7 @@ var clrPaths = []string{
 	`\.NET CLR LocksAndThreads(*)\# of current physical threads`,
 	`\.NET CLR Exceptions(*)\# of Exceps Thrown/sec`,
 	`\Process(*)\ID Process`,
-	`\Process(*)\Creation Time`,
+	`\Process(*)\Elapsed Time`,
 }
 
 // clrCounters binds counter names to kinds: rates are KindPDHRate (two
@@ -182,7 +182,7 @@ func (g *clrGroup) Collect(now time.Time, _ float64) (any, error) {
 	}
 	// PID -> creation FILETIME from the Process object (same atomic query). A PID
 	// reported by more than one Process instance is ambiguous and fails closed.
-	procInstPID, procInstCreation := procIOIdentity(readings)
+	procInstPID, procInstCreation := procIOIdentity(readings, now)
 	pidCount := make(map[uint32]int, len(procInstPID))
 	pidCreation := make(map[uint32]float64, len(procInstPID))
 	for inst, pid := range procInstPID {

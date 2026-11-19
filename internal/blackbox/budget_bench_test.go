@@ -245,7 +245,7 @@ func newBenchRig(t0 time.Time, extra ...Group) (*benchRig, error) {
 
 // tick runs one budgeted tick the way the recorder does: collect, charge the
 // self cost against the budget, then advance the cycle. The self-usage inputs
-// are fixed fakes under both limits (0.5% of one core, 50 MB): feeding the
+// are fixed fakes under both limits (0.1% of one core, 10 MiB heap): feeding the
 // measured wall time back would let one OS preemption flip the optional-skip
 // and make the gate flaky. The gate measures the real tick cost itself; the
 // over-limit budget paths are covered by budget_test.go and by the injected
@@ -255,8 +255,7 @@ func (r *benchRig) tick(now time.Time) (Sample, error) {
 	if err != nil {
 		return s, err
 	}
-	r.budget.SelfUsage(0.1, 30<<20)
-	r.budget.Cycle()
+	r.budget.Cycle(now, SelfReading{CPUPct: 0.1, WallSeconds: benchInterval, HeapInUse: 10 << 20, Private: 50 << 20}, true)
 	return s, nil
 }
 
@@ -360,14 +359,15 @@ func TestBudgetTickStaysInTheBudget(t *testing.T) {
 	}
 }
 
-// TestBudgetSlowGroupSkipped proves a group that takes over 1 s is marked slow
-// and skipped the next tick, and that the footprint gate still passes with it
+// TestBudgetSlowGroupSkipped proves an optional group that takes over 1 s twice
+// in a row is put on probation and skipped, that it is tried again once the
+// probation has passed, and that the footprint gate still passes with it
 // skipped. runGroup times groups with the real clock, so the slow duration is
 // INJECTED into the budget (GroupTiming is the only place a duration enters
 // it) instead of sleeping for real: the test stays instant and deterministic.
 func TestBudgetSlowGroupSkipped(t *testing.T) {
 	t0 := time.Unix(1000, 0)
-	slow := &fakeCounterGroup{name: "vm", build: func(out map[string]float64) any {
+	slow := &fakeCounterGroup{name: "vm", optional: true, build: func(out map[string]float64) any {
 		return &VMGroup{StealPct: benchF64(out, "vmSteal")}
 	}}
 	rig, err := newBenchRig(t0, slow)
@@ -378,15 +378,16 @@ func TestBudgetSlowGroupSkipped(t *testing.T) {
 	slow.src = rig.src
 	slow.engine = NewEngine([]CounterSpec{{Path: `\Hypervisor\Steal %`, Field: "vmSteal", Kind: KindGauge}}, 4)
 
-	// The previous tick's vm group took 1.5 s (> the 1 s per-group budget).
-	// Inject that duration exactly as runGroup's GroupTiming would record it.
-	rig.budget.GroupTiming("vm", 1500*time.Millisecond, false)
+	// The budget learns the time from its first cycle; the probation runs from it.
+	rig.budget.Cycle(t0, SelfReading{}, false)
+	// The vm group took 1.5 s on two ticks in a row (> the 1 s per-group budget).
+	rig.budget.GroupTiming("vm", 1500*time.Millisecond, true)
+	rig.budget.GroupTiming("vm", 1500*time.Millisecond, true)
 	if got := rig.budget.SlowGroups(); len(got) != 1 || got[0] != "vm" {
 		t.Fatalf("SlowGroups = %v, want [vm]", got)
 	}
 
-	// Next tick: vm is skipped, its field absent (never zero-filled), and the
-	// one-cycle mark is consumed.
+	// Next tick: vm is skipped, its field absent (never zero-filled).
 	s1, err := rig.tick(t0.Add(benchInterval * time.Second))
 	if err != nil {
 		t.Fatal(err)
@@ -398,52 +399,60 @@ func TestBudgetSlowGroupSkipped(t *testing.T) {
 		t.Fatalf("Missing = %v, want vm: slow", s1.Missing)
 	}
 	if slow.calls != 0 {
-		t.Fatalf("slow group ran %d times, want 0 while marked", slow.calls)
+		t.Fatalf("slow group ran %d times, want 0 while on probation", slow.calls)
 	}
-	if len(rig.budget.SlowGroups()) != 0 {
-		t.Fatal("slow mark not consumed by the skip")
+	// The probation is time-boxed, not one cycle: it is still there a minute on.
+	s1b, err := rig.tick(t0.Add(75 * time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s1b.VM != nil || slow.calls != 0 {
+		t.Fatal("the probation ended early")
 	}
 
-	// The mark is one-cycle: vm is re-probed next tick and (being a fake) runs
-	// fast, clearing the slow path.
-	s2, err := rig.tick(t0.Add(2 * benchInterval * time.Second))
+	// After the probation (10 min) vm is re-probed and, being a fake, runs fast,
+	// which clears it.
+	after := t0.Add(budgetProbation + 30*time.Second)
+	rig.budget.Cycle(after, SelfReading{}, false)
+	s2, err := rig.tick(after.Add(benchInterval * time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s2.VM == nil || slow.calls != 1 {
-		t.Fatal("slow group not re-probed the cycle after the skip")
+		t.Fatal("slow group not re-probed after the probation")
+	}
+	if len(rig.budget.SlowGroups()) != 0 {
+		t.Fatal("a fast run must clear the probation")
 	}
 
-	// The gate still passes with the slow group skipped: keep its slow mark
-	// live (re-injected each tick, as a persistently slow group would) so it
-	// is skipped for the whole gate run, and measure the full tick cost.
+	// The gate still passes with the slow group skipped: keep it on probation
+	// (re-injected each tick, as a persistently slow group would be) so it is
+	// skipped for the whole gate run, and measure the full tick cost.
 	const ticks = 200
-	var before, after runtime.MemStats
+	var before, afterMem runtime.MemStats
 	runtime.ReadMemStats(&before)
 	start := time.Now()
-	now := t0.Add(2 * benchInterval * time.Second)
+	now := after.Add(benchInterval * time.Second)
 	for i := 0; i < ticks; i++ {
-		rig.budget.GroupTiming("vm", 1500*time.Millisecond, false)
+		rig.budget.GroupTiming("vm", 1500*time.Millisecond, true)
+		rig.budget.GroupTiming("vm", 1500*time.Millisecond, true)
 		now = now.Add(benchInterval * time.Second)
 		s, err := rig.tick(now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if s.VM != nil {
-			t.Fatalf("gate tick %d: slow group ran while marked", i)
+			t.Fatalf("gate tick %d: slow group ran while on probation", i)
 		}
 		if !missingHas(s, "vm: slow") {
 			t.Fatalf("gate tick %d: Missing = %v, want vm: slow", i, s.Missing)
 		}
 	}
 	elapsed := time.Since(start)
-	runtime.ReadMemStats(&after)
+	runtime.ReadMemStats(&afterMem)
 
-	checkGate(t, elapsed/ticks, (after.Mallocs-before.Mallocs)/ticks, (after.TotalAlloc-before.TotalAlloc)/ticks)
+	checkGate(t, elapsed/ticks, (afterMem.Mallocs-before.Mallocs)/ticks, (afterMem.TotalAlloc-before.TotalAlloc)/ticks)
 	if slow.calls != 1 {
 		t.Fatalf("slow group ran %d times during the gate, want 0 (only the re-probe)", slow.calls-1)
-	}
-	if slow := rig.budget.SlowGroups(); len(slow) != 0 {
-		t.Errorf("unexpected slow marks after the gate: %v", slow)
 	}
 }

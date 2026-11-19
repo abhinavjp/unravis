@@ -120,7 +120,7 @@ func mapRetryDelay(failures int) time.Duration {
 func (r *Resolver) ResolveTargets(targets []Target) ([]ResolvedTarget, []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out, missing, _ := r.resolveLocked(targets, r.nowFn())
+	out, missing, _ := r.resolveLocked(targets, r.nowFn(), false)
 	return out, missing
 }
 
@@ -145,6 +145,7 @@ func (r *Resolver) TargetStatus() map[string]string {
 // status carries the fixed availability code for each unresolved name.
 type tickView struct {
 	gen     uint64
+	sqlSig  uint64 // signature of the sqlservr.exe processes (see sqlProcessSig)
 	targets []ResolvedTarget
 	missing []string
 	status  map[string]string
@@ -152,18 +153,20 @@ type tickView struct {
 
 // resolveTick resolves ONE immutable inventory/target result for a collection
 // cycle: one process snapshot, bounded module classification, the shared
-// generation. The host gate stores the returned view and every consumer reads
+// generation. With nothing selected the snapshot is the cheap one: no creation
+// time is read, because no target needs an identity and the groups only ask
+// whether the process set changed. The host gate stores the returned view and every consumer reads
 // it, so a tick never re-inventories the host per consumer (W3-05).
 func (r *Resolver) resolveTick(targets []Target, now time.Time) *tickView {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out, missing, _ := r.resolveLocked(targets, now)
+	out, missing, _ := r.resolveLocked(targets, now, len(targets) == 0)
 	bs := r.bindState()
 	status := make(map[string]string, len(bs.status))
 	for k, v := range bs.status {
 		status[k] = v
 	}
-	return &tickView{gen: r.gen, targets: out, missing: missing, status: status}
+	return &tickView{gen: r.gen, sqlSig: r.sqlSig, targets: out, missing: missing, status: status}
 }
 
 // resolveLocked is the unlocked resolution body; callers must hold mu. It takes
@@ -173,8 +176,8 @@ func (r *Resolver) resolveTick(targets []Target, now time.Time) *tickView {
 // matches the targets, and advances the monotonic generation when the process
 // set OR the resolved target set changed. On a snapshot error every selected
 // name is missing and the generation/baseline are left untouched.
-func (r *Resolver) resolveLocked(targets []Target, now time.Time) ([]ResolvedTarget, []string, error) {
-	procs, keys, setChanged, err := r.snapshotLocked()
+func (r *Resolver) resolveLocked(targets []Target, now time.Time, lite bool) ([]ResolvedTarget, []string, error) {
+	procs, keys, setChanged, err := r.snapshotLocked(lite)
 	if err != nil {
 		var missing []string
 		for _, t := range targets {

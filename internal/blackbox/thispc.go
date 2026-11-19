@@ -3,6 +3,8 @@ package blackbox
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,11 +30,23 @@ const (
 	OpApply    Op = "apply"
 	OpRemove   Op = "remove"
 	OpSnapshot Op = "snapshot"
+	// OpUpdate replaces the installed recorder program with the one Unravis ships.
+	OpUpdate Op = "update"
 )
 
 // NeedsAdmin says whether an operation changes the service (a snapshot only
 // copies files and runs as the person).
 func (o Op) NeedsAdmin() bool { return o != OpSnapshot }
+
+// NeedsGuard says whether the program is checked against the pinned build before
+// the permission prompt. Only install and apply fail closed: they put new
+// settings and a new service in place. Start, stop and remove never need the
+// check to pass, so a Blackbox that was installed by another version can always
+// be stopped and removed (SEC-FIX-15).
+//
+// Update fails closed as well: it copies the program that is about to run into
+// Program Files, so that program must be the pinned build.
+func (o Op) NeedsGuard() bool { return o == OpInstall || o == OpApply || o == OpUpdate }
 
 // Failure reasons beyond the install and snapshot ones.
 const (
@@ -41,7 +55,13 @@ const (
 	ReasonNotInstall = "not-installed"
 	ReasonConfirm    = "confirm-name"
 	ReasonInvalid    = "invalid-config"
+	// ReasonHelperChanged: the Blackbox program is not the one Unravis shipped,
+	// so no permission prompt was shown (SEC-01).
+	ReasonHelperChanged = "helper-changed"
 )
+
+// ErrNoAnswer is a helper that ended without writing its answer.
+var ErrNoAnswer = errors.New("the Blackbox program ended without an answer")
 
 // ErrDeclined is a Windows permission prompt that was cancelled.
 var ErrDeclined = errors.New("The Windows permission prompt was cancelled, so nothing was changed. Press the button again and choose Yes when Windows asks.")
@@ -76,9 +96,16 @@ type HelperAnswer struct {
 	ConfigPath string `json:"configPath"`
 
 	Restarted         bool   `json:"restarted"`
+	Updated           bool   `json:"updated"`
+	WasRunning        bool   `json:"wasRunning"`
+	OldHash           string `json:"oldHash"`
+	NewHash           string `json:"newHash"`
+	Version           string `json:"version"`
 	ServiceRemoved    bool   `json:"serviceRemoved"`
 	RecordingsDeleted bool   `json:"recordingsDeleted"`
 	FilesDeleted      int    `json:"filesDeleted"`
+	SQLServiceRemoved bool   `json:"sqlServiceRemoved"`
+	Note              string `json:"note"`
 	Dir               string `json:"dir"`
 	Bytes             int64  `json:"bytes"`
 	Recordings        int    `json:"recordings"`
@@ -103,6 +130,11 @@ type ThisPC struct {
 	Program string // path of unravis-blackbox.exe to run
 	// TempRoot is where the short-lived settings file goes ("" is the user temp).
 	TempRoot string
+	// Guard, when set, checks the program before an administrator prompt is shown
+	// (SEC-01: the prompt would otherwise run whatever sits in that file). It
+	// returns a release function that is called when the call ends: on Windows
+	// the file stays locked against changes until then. An error stops the call.
+	Guard func(program string) (release func(), err error)
 }
 
 // HelperArgs are the command line of one call. The settings travel in a file
@@ -152,12 +184,14 @@ func failure(a HelperAnswer) error {
 	case string(ReasonNoAdmin):
 		msg = ErrNotAdmin.Error()
 	case ReasonNotInstall:
-		msg = ErrNotInstalled.Error()
+		if msg == "" {
+			msg = ErrNotInstalled.Error()
+		}
 	case ReasonConfirm:
 		msg = ErrConfirmName.Error()
 	}
 	if msg == "" {
-		msg = "The change did not finish."
+		msg = GenericFailure
 	}
 	return &ThisPCError{Reason: reason, Message: msg}
 }
@@ -175,11 +209,11 @@ func FailureWords(reason string) (what, next string) {
 	case string(ReasonFolder):
 		return "The recordings folder cannot be written to, or the drive has too little free space.", "Pick another folder or free some space."
 	case string(ReasonAntivirus):
-		return "Antivirus stopped the Blackbox from starting.", "Allow unravis-blackbox.exe in the antivirus, then try again."
+		return "Antivirus stopped the Blackbox from starting.", "Allow the Blackbox in your antivirus, then try again."
 	case ReasonDeclined:
 		return "The Windows permission prompt was cancelled.", "Nothing was changed. Press the button again and choose Yes."
 	case ReasonNoProgram:
-		return "The Blackbox program is missing.", "Reinstall Unravis, or copy unravis-blackbox.exe next to it."
+		return "The Blackbox program is missing.", "Reinstall Unravis to restore the Blackbox program."
 	case ReasonNotInstall:
 		return "No Blackbox is installed on this PC.", "Install one first."
 	case ReasonConfirm:
@@ -190,13 +224,24 @@ func FailureWords(reason string) (what, next string) {
 		return "The new settings could not be saved.", "Nothing was changed. Try again. If it keeps happening, check that the Blackbox program folder is not locked by another program."
 	case string(ReasonRestartFailed):
 		return "The recorder did not restart with the new settings.", "The previous settings were put back. Try again, and check the Blackbox status if it keeps happening."
+	case string(ReasonUpdateFailed):
+		return "The recorder could not be updated.", "Your recordings and settings were not touched. Try again, and check the Blackbox status if it keeps happening."
+	case string(ReasonFolderUnsafe):
+		return "The recordings folder is not a safe place for the Blackbox.", "Choose a new, empty folder on a local drive, such as " + DefaultFolder + ", then try again."
+	case ReasonHelperChanged:
+		return "The Blackbox program is not the one that came with Unravis, so it was not started.", "Nothing was changed. Reinstall Unravis to restore the program, then try again."
+	case string(ReasonRemoveFailed):
+		return "The Blackbox could not be removed completely.", "Close any program that has the recordings open, then remove it again. The status shows what is still installed."
 	case string(SnapDriveFull):
 		return "The drive is full, so the snapshot was not written.", "Free some space or pick another folder. The recordings are untouched."
 	case string(SnapFileOpen):
 		return "A recording file was locked by another program.", "Try again in a minute. The recordings are untouched."
 	}
-	return "The change did not finish.", "Nothing was left half done. Try again."
+	return GenericFailure, "Check the Blackbox status to see what state it is in, then try again."
 }
+
+// GenericFailure is the words for a failure with no reason of its own.
+const GenericFailure = "The change did not finish."
 
 func (t *ThisPC) check() error {
 	if t == nil || t.Elev == nil {
@@ -218,6 +263,7 @@ func (t *ThisPC) do(ctx context.Context, req HelperRequest) (HelperAnswer, error
 		return HelperAnswer{}, &ThisPCError{Reason: ReasonConfirm, Message: ErrConfirmName.Error(), Cause: ErrConfirmName}
 	}
 	cfgPath := ""
+	cfgSum := ""
 	if req.Op == OpInstall || req.Op == OpApply {
 		if err := req.Config.Validate(); err != nil {
 			return HelperAnswer{}, &ThisPCError{Reason: ReasonInvalid, Message: err.Error(), Cause: err}
@@ -235,13 +281,31 @@ func (t *ThisPC) do(ctx context.Context, req HelperRequest) (HelperAnswer, error
 		if err := os.WriteFile(cfgPath, data, 0o600); err != nil {
 			return HelperAnswer{}, &ThisPCError{Reason: string(ReasonOther), Message: "Unravis could not write the settings for the helper.", Cause: err}
 		}
+		// SEC-05, SEC-FIX-07: the hash is of the bytes written above, held in
+		// memory, never of a second read of the file. The helper refuses a file
+		// that is not these bytes.
+		sum := sha256.Sum256(data)
+		cfgSum = hex.EncodeToString(sum[:])
 	}
-	out, err := t.Elev.Run(ctx, t.Program, HelperArgs(req, cfgPath), req.Op.NeedsAdmin())
+	args := HelperArgs(req, cfgPath)
+	if cfgPath != "" {
+		args = append(args, "--config-sha256", cfgSum)
+	}
+	if t.Guard != nil && req.Op.NeedsGuard() {
+		release, gerr := t.Guard(t.Program)
+		if gerr != nil {
+			return HelperAnswer{}, &ThisPCError{Reason: ReasonHelperChanged, Message: "The Blackbox program is not the one that came with Unravis, so no permission prompt was shown and nothing was changed. Reinstall Unravis to restore it, then try again.", Cause: gerr}
+		}
+		if release != nil {
+			defer release()
+		}
+	}
+	out, err := t.Elev.Run(ctx, t.Program, args, req.Op.NeedsAdmin())
 	if err != nil {
 		if errors.Is(err, ErrDeclined) {
 			return HelperAnswer{}, &ThisPCError{Reason: ReasonDeclined, Message: ErrDeclined.Error(), Cause: err}
 		}
-		return HelperAnswer{}, &ThisPCError{Reason: string(ReasonOther), Message: "Windows could not start the Blackbox program: " + err.Error(), Cause: err}
+		return HelperAnswer{}, &ThisPCError{Reason: string(ReasonOther), Message: startFailureWords(err), Cause: err}
 	}
 	a, err := ParseHelperAnswer(out)
 	if err != nil {
@@ -251,6 +315,23 @@ func (t *ThisPC) do(ctx context.Context, req HelperRequest) (HelperAnswer, error
 		return HelperAnswer{}, failure(a)
 	}
 	return a, nil
+}
+
+// startFailureWords is the plain sentence for a Blackbox program that Windows
+// could not start. The OS error text stays in Cause: it names paths and codes
+// that mean nothing to the person.
+func startFailureWords(err error) string {
+	switch {
+	case errors.Is(err, ErrNoAnswer):
+		return "The Blackbox program ended without an answer. The change may or may not have happened: check the Blackbox status before trying again."
+	case errors.Is(err, os.ErrNotExist):
+		return "Windows could not find the Blackbox program, so nothing was changed. Reinstall Unravis, or put unravis-blackbox.exe next to it."
+	case errors.Is(err, os.ErrPermission):
+		return "Windows would not let the Blackbox program start, so nothing was changed. Antivirus may be blocking unravis-blackbox.exe: allow it, then try again."
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return "The Blackbox program did not finish in time. The change may or may not have happened: check the Blackbox status before trying again."
+	}
+	return "Windows could not start the Blackbox program, so nothing was changed. Antivirus or a Windows policy may be blocking it. Allow unravis-blackbox.exe, then try again."
 }
 
 // InstallOutcome is a finished install. ReadKey is the one time the key is known:
@@ -298,11 +379,41 @@ func (t *ThisPC) Apply(ctx context.Context, cfg Config) (restarted bool, err err
 	return a.Restarted, err
 }
 
+// UpdateOutcome is a finished update. Updated is false when the installed
+// recorder already was the one Unravis ships (nothing was stopped or restarted).
+type UpdateOutcome struct {
+	Updated    bool
+	WasRunning bool
+	Restarted  bool
+	// OldHash and NewHash are the first 12 characters of the program hashes
+	// (OldHash is empty when the installed program was missing). NewVersion is the
+	// version the new program reports ("dev" for a local build).
+	OldHash    string
+	NewHash    string
+	NewVersion string
+}
+
+// Update replaces the installed recorder program with the one that came with
+// Unravis and restarts the recorder if it was running. Settings, key and
+// recordings are kept. One administrator prompt.
+func (t *ThisPC) Update(ctx context.Context) (UpdateOutcome, error) {
+	a, err := t.do(ctx, HelperRequest{Op: OpUpdate})
+	if err != nil {
+		return UpdateOutcome{}, err
+	}
+	return UpdateOutcome{Updated: a.Updated, WasRunning: a.WasRunning, Restarted: a.Restarted,
+		OldHash: ShortHash(a.OldHash), NewHash: ShortHash(a.NewHash), NewVersion: a.Version}, nil
+}
+
 // RemoveOutcome is a finished remove.
 type RemoveOutcome struct {
 	ServiceRemoved    bool
 	RecordingsDeleted bool
 	FilesDeleted      int
+	SQLServiceRemoved bool
+	// Note is a warning from the remove that did not stop it (for example SQL
+	// launch permissions to take back by hand).
+	Note string
 }
 
 // Remove removes the service. The recordings stay unless deleteRecordings is set
@@ -312,7 +423,7 @@ func (t *ThisPC) Remove(ctx context.Context, name string, deleteRecordings bool,
 	if err != nil {
 		return RemoveOutcome{}, err
 	}
-	return RemoveOutcome{ServiceRemoved: a.ServiceRemoved, RecordingsDeleted: a.RecordingsDeleted, FilesDeleted: a.FilesDeleted}, nil
+	return RemoveOutcome{ServiceRemoved: a.ServiceRemoved, RecordingsDeleted: a.RecordingsDeleted, FilesDeleted: a.FilesDeleted, SQLServiceRemoved: a.SQLServiceRemoved, Note: a.Note}, nil
 }
 
 // SnapshotOutcome is a finished snapshot.

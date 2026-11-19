@@ -184,13 +184,16 @@ func TestTCPCompleteInterfaceQueue(t *testing.T) {
 // query (or the rates). The previous expansion is kept.
 func TestTCPRefreshFailureKeepsStates(t *testing.T) {
 	src := &tcpFakeSource{paths: tcpTestPaths(), readings: tcpTestReadings(), refreshErr: errors.New("refresh failed")}
-	gi, err := newTCPGroup(GroupDeps{Source: src, Cores: 4, ProcessSetChanged: func() bool { return true }})
+	gi, err := newTCPGroup(GroupDeps{Source: src, Cores: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
 	g := gi.(*tcpGroup)
 	g.counts = tcpOKCounts
-	v, err := g.Collect(time.Unix(1000, 0), 0)
+	if _, err := g.Collect(time.Unix(1000, 0), 0); err != nil { // arms the refresh timer
+		t.Fatal(err)
+	}
+	v, err := g.Collect(time.Unix(1000, 0).Add(wildcardRefreshEvery), 0)
 	if err != nil {
 		t.Fatalf("refresh failure failed the whole tick: %v", err)
 	}

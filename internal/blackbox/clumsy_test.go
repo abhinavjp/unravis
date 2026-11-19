@@ -96,8 +96,8 @@ func TestClumsyEveryRouteIsGuardedAndRepeatedWrongKeysAreTurnedAway(t *testing.T
 			t.Fatalf("%s without a key: %d", p, code)
 		}
 	}
-	// Asking again and again with a wrong key gets this address turned away,
-	// right key or not, until the minute is over.
+	// Asking again and again with a wrong key gets wrong keys from this address
+	// turned away until the minute is over.
 	if code, _, _ := g.do(t, "GET", "/status", map[string]string{KeyHeader: g.key}); code == http.StatusTooManyRequests {
 		t.Fatal("three misses already blocked a reader who has the right key")
 	}
@@ -108,7 +108,12 @@ func TestClumsyEveryRouteIsGuardedAndRepeatedWrongKeysAreTurnedAway(t *testing.T
 	if last != http.StatusTooManyRequests {
 		t.Fatalf("never throttled, last %d", last)
 	}
-	if code, hdr, _ := g.do(t, "GET", "/status", map[string]string{KeyHeader: g.key}); code != http.StatusTooManyRequests || hdr.Get("Retry-After") == "" {
+	// Wrong keys stay turned away. The right key still gets through (SEC-09): a
+	// stranger spraying wrong keys from the reader's address cannot lock the reader out.
+	if code, hdr, _ := g.do(t, "GET", "/status", map[string]string{KeyHeader: "ubk-wrong"}); code != http.StatusTooManyRequests || hdr.Get("Retry-After") == "" {
+		t.Fatalf("throttled address with a wrong key: %d", code)
+	}
+	if code, _, _ := g.do(t, "GET", "/status", map[string]string{KeyHeader: g.key}); code != http.StatusOK {
 		t.Fatalf("throttled address with the right key: %d", code)
 	}
 }

@@ -115,5 +115,28 @@ func probeOnce(c *http.Client, url, key string) error {
 	return nil
 }
 
+// ProbeAlive asks the status page at host:port for /status WITHOUT a key and
+// expects 401: the recorder is up and refuses a caller with no key. It needs no
+// read key, so the elevated helper can use it after an update (see AliveProber).
+func (OSEnv) ProbeAlive(host string, port int) error {
+	url := fmt.Sprintf("http://%s/status", net.JoinHostPort(host, strconv.Itoa(port)))
+	c := &http.Client{Timeout: 3 * time.Second}
+	var last error
+	for i := 0; i < 8; i++ { // the service may need a moment to open the port
+		req, _ := http.NewRequest(http.MethodGet, url, nil)
+		resp, err := c.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusUnauthorized {
+				return nil
+			}
+			err = fmt.Errorf("answered %d without a key", resp.StatusCode)
+		}
+		last = err
+		time.Sleep(500 * time.Millisecond)
+	}
+	return last
+}
+
 // Sleep pauses.
 func (OSEnv) Sleep(d time.Duration) { time.Sleep(d) }

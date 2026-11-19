@@ -765,6 +765,15 @@ func TestBlackboxThisPCFailureWords(t *testing.T) {
 	}
 }
 
+func TestBlackboxThisPCUnmappedReasonSaysItsCause(t *testing.T) {
+	b := newBBEnv(t, nil)
+	b.pc.failNext = &blackbox.ThisPCError{Reason: "other", Message: "Windows could not start the Blackbox program: file not found."}
+	f := bbFail(t, b.post("/api/blackbox/this-pc/install", `{"name":"web-a"}`), http.StatusUnprocessableEntity, "other")
+	if f.What != "Windows could not start the Blackbox program: file not found." || f.Next == "" {
+		t.Fatalf("the real cause was hidden: %+v", f)
+	}
+}
+
 func TestBlackboxOnePCChangeAtATime(t *testing.T) {
 	b := newBBEnv(t, nil)
 	b.post("/api/blackbox/this-pc/install", `{"name":"web-a"}`)
@@ -799,7 +808,7 @@ func TestBlackboxOnePCChangeAtATime(t *testing.T) {
 
 func TestBlackboxWithoutAHelperOrWithoutTheHub(t *testing.T) {
 	b := newBBEnv(t, func(d *BlackboxDeps) { d.ThisPC = nil; d.Program = nil })
-	for _, p := range []string{"install", "start", "stop", "apply", "remove", "snapshot"} {
+	for _, p := range []string{"install", "start", "stop", "apply", "remove", "snapshot", "update"} {
 		bbFail(t, b.post("/api/blackbox/this-pc/"+p, `{"name":"web-a"}`), http.StatusServiceUnavailable, "no-helper")
 	}
 	if l := b.list(); l.ThisPC.Available || l.CanPack {

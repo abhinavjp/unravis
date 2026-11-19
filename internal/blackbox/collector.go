@@ -2,7 +2,6 @@ package blackbox
 
 import (
 	"errors"
-	"sort"
 	"time"
 
 	"api-audit-explorer/internal/sampler"
@@ -47,6 +46,10 @@ type HostCollector struct {
 	prevProcAt time.Time
 	prevProc   map[procID]float64
 	procs      []sampler.ProcSample
+	// infoScratch is the buffer SnapshotProcesses reads into.
+	infoScratch []sampler.ProcSample
+	// Reused every tick by topProcesses.
+	cpuTop, memTop, picked []scored
 }
 
 type procID struct {
@@ -65,6 +68,30 @@ func NewHostCollector(src sampler.Source, extras Extras, processes bool) *HostCo
 		cores = 1
 	}
 	return &HostCollector{src: src, extras: extras, processes: processes, cores: cores, prevProc: map[procID]float64{}}
+}
+
+// SnapshotProcesses lists the processes as the resolver wants them (PID, parent,
+// name, creation identity), read through the same Source the host collector uses.
+// On Windows the Source serves a read taken a few milliseconds earlier to this
+// second caller, so a tick lists the machine once, not twice (perf finding
+// 2026-11-18). It never touches h.procs: the collector's own list is separate.
+func (h *HostCollector) SnapshotProcesses() ([]ProcInfo, error) {
+	var err error
+	h.infoScratch, err = h.src.Processes(h.infoScratch[:0])
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ProcInfo, 0, len(h.infoScratch))
+	for i := range h.infoScratch {
+		p := &h.infoScratch[i]
+		pi := ProcInfo{PID: p.PID, ParentPID: p.Parent, Name: p.Image}
+		if p.Have&sampler.HaveTimes != 0 && !p.Start.IsZero() {
+			pi.Start = p.Start.Unix()
+			pi.StartTicks = p.Start.UnixNano()/100 + filetimeUnixEpochDiff
+		}
+		out = append(out, pi)
+	}
+	return out, nil
 }
 
 // SetSelectedTargets wires the resolver's selected targets: each one is always
@@ -168,6 +195,50 @@ func (h *HostCollector) Collect(now time.Time) (Sample, error) {
 	return s, nil
 }
 
+// scored is one process with the numbers it is ranked by.
+type scored struct {
+	i     int
+	delta float64
+	have  bool
+	ws    uint64
+}
+
+// cpuBefore ranks by CPU change, then the lower PID first.
+func (h *HostCollector) cpuBefore(a, b scored) bool {
+	if a.delta != b.delta {
+		return a.delta > b.delta
+	}
+	return h.procs[a.i].PID < h.procs[b.i].PID
+}
+
+// memBefore ranks by working set; an unreadable one ranks last.
+func (h *HostCollector) memBefore(a, b scored) bool {
+	if a.ws != b.ws {
+		return a.ws > b.ws
+	}
+	return h.procs[a.i].PID < h.procs[b.i].PID
+}
+
+// insertTop keeps the best k items of a stream in order. dst never grows past k.
+func insertTop(dst []scored, k int, x scored, before func(a, b scored) bool) []scored {
+	n := len(dst)
+	if n == k {
+		if !before(x, dst[n-1]) {
+			return dst
+		}
+		n--
+	} else {
+		dst = append(dst, x)
+	}
+	j := n
+	for j > 0 && before(x, dst[j-1]) {
+		dst[j] = dst[j-1]
+		j--
+	}
+	dst[j] = x
+	return dst
+}
+
 // topProcesses lists the busiest processes: the top TopCPU by CPU change over
 // the last interval plus the top TopMem by working set, merged without
 // duplicates, plus every selected target even when idle. Idle (PID 0) is never
@@ -175,12 +246,13 @@ func (h *HostCollector) Collect(now time.Time) (Sample, error) {
 // the first sample there is no change to take, so the cumulative CPU time
 // orders them and no percent is given.
 func (h *HostCollector) topProcesses(wall float64) []ProcRow {
-	type scored struct {
-		i     int
-		delta float64
-		have  bool
-	}
-	var list []scored
+	// Only TopCPU and TopMem rows are kept, so the whole list is never sorted: a
+	// bounded insertion keeps the best k seen so far. Both orders are total (the
+	// PID breaks every tie), so the result equals a full sort. The buffers live on
+	// the collector and are reused every tick.
+	cpu := h.cpuTop[:0]
+	mem := h.memTop[:0]
+	havePrevProc := h.havePrev && len(h.prevProc) > 0
 	for i := range h.procs {
 		p := &h.procs[i]
 		if p.PID == 0 {
@@ -190,44 +262,24 @@ func (h *HostCollector) topProcesses(wall float64) []ProcRow {
 		if p.Have&sampler.HaveTimes != 0 {
 			if prev, ok := h.prevProc[idOf(p)]; ok && p.CPUSeconds >= prev {
 				sc.delta, sc.have = p.CPUSeconds-prev, true
-			} else if !h.havePrev || len(h.prevProc) == 0 {
+			} else if !havePrevProc {
 				sc.delta = p.CPUSeconds
 			}
 		}
-		list = append(list, sc)
+		sc.ws = h.workingSet(i)
+		cpu = insertTop(cpu, TopCPU, sc, h.cpuBefore)
+		mem = insertTop(mem, TopMem, sc, h.memBefore)
 	}
-	sort.SliceStable(list, func(a, b int) bool {
-		if list[a].delta != list[b].delta {
-			return list[a].delta > list[b].delta
-		}
-		return h.procs[list[a].i].PID < h.procs[list[b].i].PID
-	})
-	cpu := list
-	if len(cpu) > TopCPU {
-		cpu = cpu[:TopCPU]
-	}
-	// The memory top ranks the same read processes by working set; an
-	// unreadable working set ranks last (its row keeps nil fields, never 0).
-	mem := make([]scored, len(list))
-	copy(mem, list)
-	sort.SliceStable(mem, func(a, b int) bool {
-		wa, wb := h.workingSet(mem[a].i), h.workingSet(mem[b].i)
-		if wa != wb {
-			return wa > wb
-		}
-		return h.procs[mem[a].i].PID < h.procs[mem[b].i].PID
-	})
-	if len(mem) > TopMem {
-		mem = mem[:TopMem]
-	}
-	seen := make(map[procID]bool, maxProcRows)
-	picked := make([]scored, 0, maxProcRows)
+	h.cpuTop, h.memTop = cpu, mem
+	picked := h.picked[:0]
 	add := func(sc scored) {
 		id := idOf(&h.procs[sc.i])
-		if !seen[id] {
-			seen[id] = true
-			picked = append(picked, sc)
+		for _, q := range picked {
+			if idOf(&h.procs[q.i]) == id {
+				return
+			}
 		}
+		picked = append(picked, sc)
 	}
 	for _, sc := range cpu {
 		add(sc)
@@ -243,17 +295,35 @@ func (h *HostCollector) topProcesses(wall float64) []ProcRow {
 				continue
 			}
 			want := procID{pid: t.PID, start: t.Start}
-			if seen[want] {
-				continue
-			}
-			for _, sc := range list {
-				if idOf(&h.procs[sc.i]) == want {
-					add(sc)
+			found := false
+			for _, q := range picked {
+				if idOf(&h.procs[q.i]) == want {
+					found = true
 					break
 				}
 			}
+			if found {
+				continue
+			}
+			for i := range h.procs {
+				p := &h.procs[i]
+				if p.PID == 0 || idOf(p) != want {
+					continue
+				}
+				sc := scored{i: i}
+				if p.Have&sampler.HaveTimes != 0 {
+					if prev, ok := h.prevProc[want]; ok && p.CPUSeconds >= prev {
+						sc.delta, sc.have = p.CPUSeconds-prev, true
+					} else if !havePrevProc {
+						sc.delta = p.CPUSeconds
+					}
+				}
+				add(sc)
+				break
+			}
 		}
 	}
+	h.picked = picked
 	rows := make([]ProcRow, 0, len(picked))
 	for _, sc := range picked {
 		p := &h.procs[sc.i]

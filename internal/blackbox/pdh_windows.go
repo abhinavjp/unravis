@@ -51,6 +51,7 @@ var (
 	errPDHExpandTooLarge      = errors.New("PDH wildcard expansion buffer exceeds the size limit")
 	errPDHTooManyInstances    = errors.New("PDH wildcard expansion exceeds the instance limit")
 	errPDHTooManyCounters     = errors.New("PDH source exceeds the counter limit")
+	errPDHNoCounters          = errors.New("PDH source has none of the requested counters")
 	errPDHCounterInfoTooLarge = errors.New("PDH counter info exceeds the size limit")
 )
 
@@ -177,6 +178,19 @@ func isWildcard(path string) bool { return strings.Contains(path, "*") }
 // the documented localization procedure) and primes with a single collect.
 // Any open/add failure closes the query.
 func NewPDHSource(paths []string) (*PDHSource, error) {
+	return newPDHSource(paths, false)
+}
+
+// NewPDHSourceTolerant is NewPDHSource for groups made of independent machine
+// counters: a plain (non-wildcard) path that this Windows does not have is left
+// out instead of failing the whole source, so one missing counter on an older
+// or trimmed system never removes the others. A wildcard that cannot expand
+// still fails, and so does a source with no counter at all.
+func NewPDHSourceTolerant(paths []string) (*PDHSource, error) {
+	return newPDHSource(paths, true)
+}
+
+func newPDHSource(paths []string, tolerant bool) (*PDHSource, error) {
 	p := &PDHSource{}
 	if err := pdh.Load(); err != nil {
 		return nil, err
@@ -191,6 +205,9 @@ func NewPDHSource(paths []string) (*PDHSource, error) {
 				return nil, err
 			}
 			if err := p.addCounter(path, false); err != nil {
+				if tolerant {
+					continue
+				}
 				p.Close()
 				return nil, err
 			}
@@ -212,6 +229,10 @@ func NewPDHSource(paths []string) (*PDHSource, error) {
 				return nil, err
 			}
 		}
+	}
+	if tolerant && len(p.counters) == 0 {
+		p.Close()
+		return nil, errPDHNoCounters
 	}
 	pdhCollectCall(p.query) // one priming collect
 	return p, nil

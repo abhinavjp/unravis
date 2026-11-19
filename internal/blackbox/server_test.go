@@ -170,9 +170,13 @@ func TestRepeatedWrongKeysAreThrottled(t *testing.T) {
 			t.Fatalf("attempt %d: %d", i, resp.StatusCode)
 		}
 	}
-	resp, _ := g.get(t, "/status", g.key)
+	resp, _ := g.get(t, "/status", "wrong")
 	if resp.StatusCode != 429 || resp.Header.Get("Retry-After") == "" {
 		t.Fatalf("%d", resp.StatusCode)
+	}
+	// SEC-09: the right key is not locked out by wrong guesses from the same address.
+	if resp, _ := g.get(t, "/status", g.key); resp.StatusCode != 200 {
+		t.Fatalf("right key while wrong keys are throttled: %d", resp.StatusCode)
 	}
 	// After the window the address may try again.
 	g.clk.t = g.clk.t.Add(failWindow + time.Second)

@@ -1337,3 +1337,28 @@ func TestTruncatedFlagReachesTheLine(t *testing.T) {
 		t.Error("a false truncated flag was persisted, want the field omitted")
 	}
 }
+
+// TestUnreadableCeilingProofLatchesImmediately: an unreadable C8 proof carries
+// the generic failed code but a C8 origin, so the runner latches denied on the
+// first tick instead of backing off for ten (W9-03).
+func TestUnreadableCeilingProofLatchesImmediately(t *testing.T) {
+	now := time.Date(2026, 3, 4, 9, 0, 0, 0, time.UTC)
+	q := &recQuery{replies: map[string][]Row{Statements["bb:waits"]: fakeWaitRows(1)}}
+	q.errFor = func(text string) error {
+		if text == Statements["bb:ceiling_role"] {
+			return &ceilingError{errCeilingUnreadable}
+		}
+		return nil
+	}
+	r := newFakeRunner(t, q, runnerOpts{
+		now:      now,
+		samplers: []Sampler{baseSampler("bb:waits", "waits")},
+	})
+	if err := r.Tick(now); err == nil {
+		t.Fatal("tick succeeded with an unreadable ceiling proof")
+	}
+	st := r.CurrentState()
+	if !st.AutoOff || st.State != StateDenied {
+		t.Fatalf("state = %+v, want auto-off/denied after one unreadable proof", st)
+	}
+}

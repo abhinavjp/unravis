@@ -178,6 +178,9 @@ type Input struct {
 	LaneGaps map[string][]Span `json:"laneGaps,omitempty"`
 	// LaneUnread names a configured lane (kind → reason) that gave no usable reading, so it must not be skipped over when naming an origin.
 	LaneUnread map[string]string `json:"laneUnread,omitempty"`
+	// LaneNotes maps a tier ("host") to why an attached source could not answer, so
+	// "Cannot test yet" names the real cause and not "nothing imported".
+	LaneNotes map[string]string `json:"laneNotes,omitempty"`
 }
 
 // NormalizePath lower-cases a request path, drops a query string and a trailing

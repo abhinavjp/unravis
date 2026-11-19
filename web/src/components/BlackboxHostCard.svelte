@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { blackboxApi, gapSummary, refusalText, shownTime, type BlackboxItem, type HostAnswer } from '../lib/blackbox';
+  import { blackboxApi, defaultHostWindows, gapSummary, refusalText, shownTime, type BlackboxItem, type HostAnswer } from '../lib/blackbox';
   import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
   import WindowPicker from '../lib/components/WindowPicker.svelte';
 
@@ -9,15 +9,17 @@
 
   const MINUTE = 60_000;
   const local = (t: number) => new Date(t).toISOString().slice(0, 16);
-  const anchor = (() => {
-    const t = Date.parse(item.facts?.lastSample ?? '');
-    return Number.isFinite(t) ? Math.floor(t / MINUTE) * MINUTE : 0;
-  })();
-
-  let incStart = $state(anchor ? local(anchor - 30 * MINUTE) : '');
-  let incEnd = $state(anchor ? local(anchor) : '');
-  let refStart = $state(anchor ? local(anchor - 60 * MINUTE) : '');
-  let refEnd = $state(anchor ? local(anchor - 30 * MINUTE) : '');
+  // The default windows stay inside what was recorded (first to last sample). A Blackbox that recorded 15 minutes has no
+  // earlier reference, so the reference starts empty-handed and the card says why (UX-23).
+  // The windows are offered once, from the facts this card opened with.
+  // svelte-ignore state_referenced_locally
+  const firstAt = Date.parse(item.facts?.firstSample ?? '');
+  // svelte-ignore state_referenced_locally
+  const defaults = defaultHostWindows(item.facts?.firstSample, item.facts?.lastSample, MINUTE);
+  let incStart = $state(defaults ? local(defaults.incStart) : '');
+  let incEnd = $state(defaults ? local(defaults.incEnd) : '');
+  let refStart = $state(defaults ? local(defaults.refStart) : '');
+  let refEnd = $state(defaults ? local(defaults.refEnd) : '');
   // svelte-ignore state_referenced_locally
   let answer = $state<HostAnswer | null>(initial);
   let busy = $state(false);
@@ -25,6 +27,8 @@
 
   const gaps = $derived(gapSummary(answer?.gaps));
   const toIso = (v: string) => v ? v + ':00Z' : '';
+  // True when the reference window ends before the first recorded sample, so it has nothing to compare with.
+  const noEarlier = $derived(Number.isFinite(firstAt) && (refEnd === '' || Date.parse(toIso(refEnd)) <= firstAt || refEnd <= refStart));
 
   function windowsOk(): boolean {
     const w = (s: string, e: string) => {
@@ -67,10 +71,11 @@
         <WindowPicker variant="inline" label={`${T.hostReference} (UTC)`} bind:start={refStart} bind:end={refEnd} />
       </fieldset>
     </div>
-    <button type="button" class="secondary-button" disabled={busy} onclick={read}>{busy ? T.hostRunning : T.hostRun}</button>
+    {#if noEarlier}<p class="bb-note" id="bb-host-no-earlier">{T.hostNoEarlier(shownTime(item.facts?.firstSample))}</p>{/if}
+    <button type="button" class="secondary-button" disabled={busy} onclick={read} aria-describedby={noEarlier ? 'bb-host-no-earlier' : undefined}>{busy ? T.hostRunning : T.hostRun}</button>
   </details>
 
-  <div aria-live="polite">
+  <div>
     {#if problem}<div class="inline-error" role="alert">{problem}</div>{/if}
     {#if answer}
       <div class="bb-step">
@@ -107,7 +112,6 @@
   .bb-host { display: grid; gap: var(--space-3); min-width: 0; }
   .bb-host h4 { margin: 0; font-size: 14px; font-weight: 600; }
   .bb-host h5 { margin: var(--space-2) 0 0; font-size: 13px; font-weight: 600; }
-  .bb-note { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
   .bb-windows summary { width: fit-content; color: var(--text-2); font-size: 13px; }
   .bb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--space-3); margin: var(--space-2) 0; }
   .bb-grid fieldset { display: grid; gap: var(--space-2); margin: 0; padding: 0; border: 0; min-width: 0; }

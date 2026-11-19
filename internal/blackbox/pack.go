@@ -17,8 +17,13 @@ import (
 // and a README. It never holds a read key (the key is made on the server at
 // install), a password or any recording.
 
-// MaxPackBytes is the size the pack must stay under.
-const MaxPackBytes = 8 << 20
+// MaxPackBytes is the size the pack (the zip) must stay under. The shipped
+// recorder program is about 15 MB and zips to about 8 MB, so the limit leaves room.
+const MaxPackBytes = 16 << 20
+
+// MaxProgramBytes is a sanity limit on the recorder program file itself. A file
+// larger than this is not the program Unravis ships.
+const MaxProgramBytes = 64 << 20
 
 // PackExeName, PackConfigName and PackReadmeName are the three files of the pack.
 const (
@@ -28,7 +33,7 @@ const (
 )
 
 // ErrNoProgram is returned when the recorder program cannot be found.
-var ErrNoProgram = errors.New("The Blackbox program (unravis-blackbox.exe) is not next to Unravis, so a pack cannot be built. Reinstall Unravis or copy unravis-blackbox.exe into its folder.")
+var ErrNoProgram = errors.New("unravis-blackbox.exe is not next to Unravis, so no pack can be built. Reinstall Unravis to restore it.")
 
 // ProgramSource gives the recorder program the pack carries.
 type ProgramSource interface {
@@ -93,15 +98,15 @@ func BuildPack(w io.Writer, cfg Config, prog ProgramSource) (PackInfo, error) {
 		return PackInfo{}, err
 	}
 	defer rc.Close()
-	exe, err := io.ReadAll(io.LimitReader(rc, MaxPackBytes+1))
+	exe, err := io.ReadAll(io.LimitReader(rc, MaxProgramBytes+1))
 	if err != nil {
 		return PackInfo{}, fmt.Errorf("The Blackbox program could not be read: %w", err)
 	}
 	if len(exe) == 0 {
 		return PackInfo{}, ErrNoProgram
 	}
-	if len(exe) > MaxPackBytes {
-		return PackInfo{}, fmt.Errorf("The Blackbox program is over %d MB, so it is not the program Unravis ships. Reinstall Unravis.", MaxPackBytes>>20)
+	if len(exe) > MaxProgramBytes {
+		return PackInfo{}, fmt.Errorf("The Blackbox program is over %d MB, so it is not the program Unravis ships. Reinstall Unravis.", MaxProgramBytes>>20)
 	}
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)

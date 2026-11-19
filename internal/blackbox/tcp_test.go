@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
@@ -33,7 +34,12 @@ func (f *tcpFakeSource) Collect() ([]CounterReading, error) {
 	}
 	return f.readings, f.err
 }
-func (f *tcpFakeSource) Close() error            { f.closed = true; return nil }
+func (f *tcpFakeSource) Close() error {
+	tcpFakeMu.Lock()
+	f.closed = true
+	tcpFakeMu.Unlock()
+	return nil
+}
 func (f *tcpFakeSource) Paths() []string         { return f.paths }
 func (f *tcpFakeSource) RefreshInstances() error { f.refreshes++; return f.refreshErr }
 
@@ -299,10 +305,10 @@ func TestTCPSumV4V6(t *testing.T) {
 	}
 }
 
-func TestTCPRefreshOnChange(t *testing.T) {
+func TestTCPRefreshOnTimer(t *testing.T) {
 	src := &tcpFakeSource{paths: tcpTestPaths(), readings: tcpTestReadings()}
-	changed := false
-	gi, err := newTCPGroup(GroupDeps{Source: src, Cores: 4, ProcessSetChanged: func() bool { return changed }})
+	// A process-set change must not trigger the expansion any more.
+	gi, err := newTCPGroup(GroupDeps{Source: src, Cores: 4, ProcessSetChanged: func() bool { return true }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,27 +319,31 @@ func TestTCPRefreshOnChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	if src.refreshes != 0 {
-		t.Fatalf("refreshes = %d, want 0 without a process-set change", src.refreshes)
+		t.Fatalf("refreshes = %d, want 0 on the first collect", src.refreshes)
 	}
-	changed = true
+	if _, err := g.Collect(now.Add(15*time.Second), 15); err != nil {
+		t.Fatal(err)
+	}
+	if src.refreshes != 0 {
+		t.Fatalf("refreshes = %d, want 0 before the timer is due", src.refreshes)
+	}
 	src.paths = append(src.paths, `\Network Interface(eth1)\Output Queue Length`)
 	src.readings = append(src.readings, tcpReading(`\Network Interface(eth1)\Output Queue Length`, 3))
-	v, err := g.Collect(now.Add(15*time.Second), 15)
+	v, err := g.Collect(now.Add(wildcardRefreshEvery), 15)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if src.refreshes != 1 {
-		t.Fatalf("refreshes = %d, want 1 on change", src.refreshes)
+		t.Fatalf("refreshes = %d, want 1 when due", src.refreshes)
 	}
 	if grp := v.(*TCPGroup); grp.OutboundQueue == nil || *grp.OutboundQueue != 5 {
 		t.Fatalf("OutboundQueue = %v, want 5 after re-expansion", grp.OutboundQueue)
 	}
-	changed = false
-	if _, err := g.Collect(now.Add(30*time.Second), 15); err != nil {
+	if _, err := g.Collect(now.Add(wildcardRefreshEvery+15*time.Second), 15); err != nil {
 		t.Fatal(err)
 	}
 	if src.refreshes != 1 {
-		t.Fatalf("refreshes = %d, want no re-expand without a change", src.refreshes)
+		t.Fatalf("refreshes = %d, want no re-expand inside the period", src.refreshes)
 	}
 	if err := g.Close(); err != nil {
 		t.Fatal(err)
@@ -353,4 +363,128 @@ func TestTCPGroupRegistered(t *testing.T) {
 	if !reg.optional {
 		t.Fatal("tcp group must be optional (ships off when it breaks budget)")
 	}
+}
+
+// The slow Network Interface expansion runs in the background: the first Collect
+// returns at once with the rate-only source, and the wildcard source is swapped
+// in by a later Collect once it is ready (PERF-16).
+func TestTCPWildcardWarmsInBackground(t *testing.T) {
+	rate := &tcpFakeSource{paths: tcpTestPaths()[:4], readings: tcpTestReadings()[:4]}
+	wild := &tcpFakeSource{paths: tcpTestPaths(), readings: tcpTestReadings()}
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	g := &tcpGroup{src: rate, cores: 4, owned: true, counts: tcpOKCounts,
+		openWild: func([]string) (CounterSource, error) {
+			started <- struct{}{}
+			<-release
+			return wild, nil
+		}}
+	g.rebuild(tcpPathsOf(rate))
+	now := time.Unix(1000, 0)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := g.Collect(now, 0); err != nil {
+			t.Error(err)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Collect waited for the slow wildcard expansion")
+	}
+	<-started
+	v, _ := g.Collect(now.Add(15*time.Second), 15)
+	if grp := v.(*TCPGroup); grp.OutboundQueue != nil {
+		t.Fatalf("OutboundQueue = %v before the expansion finished", *grp.OutboundQueue)
+	}
+	close(release)
+	deadline := time.Now().Add(2 * time.Second)
+	for g.src != CounterSource(wild) && time.Now().Before(deadline) {
+		_, _ = g.Collect(now.Add(30*time.Second), 15)
+		time.Sleep(5 * time.Millisecond)
+	}
+	if g.src != CounterSource(wild) {
+		t.Fatal("the wildcard source was never swapped in")
+	}
+	if !rate.closed {
+		t.Fatal("the rate-only source must be closed after the swap")
+	}
+	v, _ = g.Collect(now.Add(45*time.Second), 15)
+	if grp := v.(*TCPGroup); grp.OutboundQueue == nil {
+		t.Fatal("OutboundQueue missing after the swap")
+	}
+}
+
+func TestTCPWildcardWarmFailureKeepsRateSource(t *testing.T) {
+	rate := &tcpFakeSource{paths: tcpTestPaths()[:4], readings: tcpTestReadings()[:4]}
+	opened := make(chan struct{})
+	g := &tcpGroup{src: rate, cores: 4, owned: true, counts: tcpOKCounts,
+		openWild: func([]string) (CounterSource, error) {
+			defer close(opened)
+			return nil, errors.New("no wildcard")
+		}}
+	g.rebuild(tcpPathsOf(rate))
+	now := time.Unix(1000, 0)
+	_, _ = g.Collect(now, 0)
+	<-opened
+	deadline := time.Now().Add(2 * time.Second)
+	for g.warm != nil && time.Now().Before(deadline) {
+		_, _ = g.Collect(now.Add(15*time.Second), 15)
+		time.Sleep(5 * time.Millisecond)
+	}
+	if g.warm != nil {
+		t.Fatal("the failed expansion was never taken")
+	}
+	if g.src != CounterSource(rate) || rate.closed {
+		t.Fatal("a failed expansion must keep the rate-only source")
+	}
+	// One attempt only.
+	_, _ = g.Collect(now.Add(30*time.Second), 15)
+	if g.warm != nil {
+		t.Fatal("a second expansion was started")
+	}
+}
+
+// Closing while the expansion is still running does not leak the new source.
+func TestTCPCloseWhileWarmingClosesTheLateSource(t *testing.T) {
+	rate := &tcpFakeSource{paths: tcpTestPaths()[:4], readings: tcpTestReadings()[:4]}
+	wild := &tcpFakeSource{paths: tcpTestPaths(), readings: tcpTestReadings()}
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	g := &tcpGroup{src: rate, cores: 4, owned: true, counts: tcpOKCounts,
+		openWild: func([]string) (CounterSource, error) {
+			started <- struct{}{}
+			<-release
+			return wild, nil
+		}}
+	g.rebuild(tcpPathsOf(rate))
+	_, _ = g.Collect(time.Unix(1000, 0), 0)
+	<-started
+	if err := g.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !rate.closed {
+		t.Fatal("rate source not closed")
+	}
+	close(release)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if closedFlag(wild) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the late wildcard source was never closed")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+var tcpFakeMu sync.Mutex
+
+func closedFlag(f *tcpFakeSource) bool {
+	tcpFakeMu.Lock()
+	defer tcpFakeMu.Unlock()
+	return f.closed
 }

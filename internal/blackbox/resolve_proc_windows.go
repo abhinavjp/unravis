@@ -19,7 +19,15 @@ const processQueryLimitedInformation = 0x1000
 // time with a query-only open. A process that cannot be opened keeps Start 0
 // and StartTicks 0 (unknown); it is still listed with PID and Name. No modules
 // are read here.
-func snapshotProcesses() ([]ProcInfo, error) {
+func snapshotProcesses() ([]ProcInfo, error) { return snapshotProcessList(true) }
+
+// snapshotProcessesLite is the same enumeration without the per-process
+// OpenProcess and GetProcessTimes: PID, parent and name only, creation time 0.
+// It is for the ticks where nothing selected needs a process identity and only
+// "did the set change" matters (PERF-04).
+func snapshotProcessesLite() ([]ProcInfo, error) { return snapshotProcessList(false) }
+
+func snapshotProcessList(withStart bool) ([]ProcInfo, error) {
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return nil, err
@@ -31,10 +39,13 @@ func snapshotProcesses() ([]ProcInfo, error) {
 	if err := windows.Process32First(snap, &e); err != nil {
 		return nil, err
 	}
-	var procs []ProcInfo
+	procs := make([]ProcInfo, 0, 256)
 	for {
 		if e.ProcessID != 0 { // skip the idle pseudo-process
-			start, ticks := processStart(e.ProcessID)
+			var start, ticks int64
+			if withStart {
+				start, ticks = processStart(e.ProcessID)
+			}
 			procs = append(procs, ProcInfo{
 				PID:        e.ProcessID,
 				ParentPID:  e.ParentProcessID,

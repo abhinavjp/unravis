@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import {
-    blackboxApi, defaultSettings, fieldProblemNow, refusalText, settingsProblem, shownTime,
+    blackboxApi, defaultSettings, fieldProblemNow, needsReload, pcControls, refusalText, settingsChanges, settingsProblem, shownTime,
     type BlackboxItem, type BlackboxList, type Settings, type SettingsProblem, type SnapshotAnswer, type ThisPc, shownBytes
   } from '../lib/blackbox';
-  import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
+  import { BB_REFUSAL, BB_TEXT as T, ageWords, applyChangePart, intervalWords, stateNextFor } from '../lib/copy/blackboxCopy';
   import Drawer from './Drawer.svelte';
   import Sticker from './BlackboxSticker.svelte';
-  import Wizard from './BlackboxWizard.svelte';
+  import PlaceWizard from './BlackboxPlaceWizard.svelte';
   import AddBlackbox from './BlackboxAdd.svelte';
   import RemoveBlackbox from './BlackboxRemove.svelte';
   import SettingsFields from './BlackboxSettings.svelte';
@@ -15,14 +15,13 @@
   import CaseUse from './BlackboxCaseUse.svelte';
   import ReadKey from './BlackboxReadKey.svelte';
 
-  // The Blackbox page: the list with a sticker per state, the Place wizard, Add by folder, share or address, a status
+  // The Blackbox page: the list with a sticker per state, the Place pop-up, Add by folder, share or address, a status
   // screen per Blackbox with the actions that exist for it, Remove and Snapshot. It is not part of a case.
   // On this PC the actions go through the elevated helper; for another server Unravis shows steps and does nothing there.
   let { onClose }: { onClose: () => void } = $props();
 
   type View =
     | { kind: 'list' }
-    | { kind: 'wizard' }
     | { kind: 'add'; location: string; name: string }
     | { kind: 'status'; id: string }
     | { kind: 'remove'; id: string }
@@ -33,17 +32,32 @@
   let loading = $state(true);
   let loadError = $state('');
   let view = $state<View>({ kind: 'list' });
+  // The Place pop-up opens over whatever the drawer shows, so closing it leaves the drawer where it was (OD-9: the drawer wizard is gone).
+  let placeOpen = $state(false);
   let scanning = $state(false);
   let scanNote = $state('');
   let working = $state('');
   let actionNote = $state('');
   let actionError = $state('');
+  let stopAsk = $state(false);
+  // True when the last failure means this page lost Unravis (it restarted or the tab is stale): a reload is the next step.
+  let reloadHint = $state(false);
+  let checkedAt = $state('');
+  let keepBtn = $state<HTMLButtonElement>();
+  let keyInput = $state<HTMLInputElement>();
+  let showNewKey = $state(false);
   let newKey = $state('');
   let keyOpen = $state(false);
   let applySettings = $state<Settings>(defaultSettings());
   let applyLogs = $state('');
+  // The settings as the service runs them now, to show what Apply would change (UX-16).
+  let applyBefore = $state<Settings | null>(null);
   let applyProblem = $state('');
   let applyField = $state<SettingsProblem | null>(null);
+  const applyChanges = $derived.by(() => {
+    if (!applyBefore) return [];
+    return settingsChanges(applyBefore, { ...applySettings, logPaths: applyLogs.split('\n').map((s) => s.trim()).filter(Boolean) });
+  });
   const applyFieldShown = $derived(fieldProblemNow(applyField, applySettings, applyLogs));
   let body = $state<HTMLElement>();
   let drawerEl = $state<HTMLElement>();
@@ -51,20 +65,28 @@
   const items = $derived(list?.items ?? []);
   const thisPc = $derived<ThisPc>(list?.thisPc ?? { available: false, scanned: false, installed: false, running: false, listed: false });
   const current = $derived.by(() => {
-    if (view.kind === 'list' || view.kind === 'wizard' || view.kind === 'add') return null;
+    if (view.kind === 'list' || view.kind === 'add') return null;
     const id = view.id;
     return items.find((i) => i.id === id) ?? null;
   });
 
   onMount(() => { void load(); });
 
+  /** The words for a failure. It also notes whether the cure is to reload the page. */
+  function failed(error: unknown): string {
+    reloadHint = needsReload(error);
+    return refusalText(error, BB_REFUSAL);
+  }
+  const reload = () => { try { window.location.reload(); } catch { /* nothing more to do here */ } };
+
   async function load(keepView = true) {
     loading = true;
     loadError = '';
     try {
       list = await blackboxApi.list();
+      checkedAt = new Date().toISOString().slice(11, 16) + ' UTC';
     } catch (error) {
-      loadError = refusalText(error, BB_REFUSAL);
+      loadError = failed(error);
     } finally {
       loading = false;
     }
@@ -82,6 +104,9 @@
     actionNote = '';
     actionError = '';
     keyOpen = false;
+    stopAsk = false;
+    reloadHint = false;
+    showNewKey = false;
     newKey = '';
     await tick();
     drawerEl?.scrollTo?.({ top: 0 });
@@ -111,7 +136,7 @@
       scanNote = found.problem ? T.scanFailed : '';
       if (!found.problem && found.scanned && !found.installed) scanNote = T.thisPcNote;
     } catch (error) {
-      scanNote = refusalText(error, BB_REFUSAL);
+      scanNote = failed(error);
     } finally {
       scanning = false;
     }
@@ -130,25 +155,40 @@
     try {
       actionNote = await run();
     } catch (error) {
-      actionError = refusalText(error, BB_REFUSAL);
+      actionError = failed(error);
     } finally {
       working = '';
     }
     await load();
   }
   const check = (item: BlackboxItem) => act(T.checking, async () => { replaceItem(await blackboxApi.check(item.id)); return ''; });
-  const start = () => act(T.working, async () => { await blackboxApi.start(); return T.started; });
-  const stop = () => act(T.working, async () => { await blackboxApi.stop(); return T.stopped; });
+  const start = () => act(T.workingStart, async () => { await blackboxApi.start(); return T.started; });
+  const update = () => act(T.workingUpdate, async () => {
+    const done = await blackboxApi.updateThisPc();
+    return !done.updated ? T.updateCurrent : done.restarted ? T.updatedRestarted : T.updatedStopped;
+  });
+  const stop = () => { stopAsk = false; return act(T.workingStop, async () => { await blackboxApi.stop(); return T.stopped; }); };
+  async function openKey() {
+    keyOpen = !keyOpen;
+    if (!keyOpen) return;
+    await tick();
+    keyInput?.focus();
+  }
+  async function askStop() {
+    stopAsk = true;
+    await tick();
+    keepBtn?.focus();
+  }
   async function snapshot(item: BlackboxItem) {
     if (working) return;
-    working = T.working;
+    working = T.workingSnapshot;
     actionNote = '';
     actionError = '';
     try {
       const answer = await blackboxApi.snapshot();
       show({ kind: 'snapshot', id: item.id, answer });
     } catch (error) {
-      actionError = refusalText(error, BB_REFUSAL);
+      actionError = failed(error);
     } finally {
       working = '';
     }
@@ -164,7 +204,7 @@
       keyOpen = false;
       actionNote = T.keySaved;
     } catch (error) {
-      actionError = refusalText(error, BB_REFUSAL);
+      actionError = failed(error);
     } finally {
       working = '';
     }
@@ -175,6 +215,7 @@
     if (found) {
       applySettings = JSON.parse(JSON.stringify(found)) as Settings;
       applyLogs = (found.logPaths ?? []).join('\n');
+      applyBefore = JSON.parse(JSON.stringify(found)) as Settings;
     }
     applyField = null;
     applyProblem = found ? '' : T.applyUnreadable;
@@ -200,22 +241,31 @@
       show({ kind: 'status', id: item.id });
       actionNote = answer.restarted ? T.applied : T.appliedNoRestart;
     } catch (error) {
-      applyProblem = refusalText(error, BB_REFUSAL);
+      applyProblem = failed(error);
     } finally {
       working = '';
     }
   }
 
   const kindWord = (item: BlackboxItem) => (item.kind === 'url' ? T.kindUrl : item.kind === 'share' ? T.kindShare : T.kindFolder);
-  const running = (item: BlackboxItem) => item.state.state === 'running' || item.state.state === 'running-late' || item.state.state === 'disk-low' || item.state.state === 'incomplete' || item.state.state === 'clock-differs';
+  const intervalFor = (f: NonNullable<BlackboxItem['facts']>) => intervalWords(f.intervalSeconds, f.effectiveIntervalSeconds);
+  // How old the last sample is, then the exact time: "2 minutes ago (2026-11-17 09:05 UTC)".
+  const sampleLine = (item: BlackboxItem) => {
+    const at = item.facts?.lastSample;
+    const age = ageWords(at);
+    return age ? age + ' (' + shownTime(at) + ')' : shownTime(at);
+  };
+  // A this-PC address with a refused or missing key can be repaired here. Another server's can always be.
+  const canChangeKey = (item: BlackboxItem) => item.kind === 'url' && (!item.thisPc || !item.hasKey || item.state.reason === 'key');
+  const keyLine = (item: BlackboxItem) => {
+    if (item.kind !== 'url') return T.readKeyNone;
+    return (item.hasKey ? T.readKeySaved : T.readKeyMissing) + ' ' + (item.thisPc ? T.readKeyNoteThisPc : T.readKeyNote);
+  };
 </script>
 
 <Drawer class="glossary-drawer blackbox-drawer" focusOnOpen bind:element={drawerEl} title={T.title} titleId="blackbox-title" intro={T.intro} closeLabel={T.close} {onClose}>
   <div class="bb-body" bind:this={body}>
-    {#if view.kind === 'wizard'}
-      <Wizard {thisPc} canPack={list?.canPack ?? false} onLeave={() => show({ kind: 'list' })} onPlaced={async () => { await load(); show({ kind: 'list' }); }} />
-
-    {:else if view.kind === 'add'}
+    {#if view.kind === 'add'}
       {#key view.location + view.name}
         <AddBlackbox initialLocation={view.kind === 'add' ? view.location : ''} initialName={view.kind === 'add' ? view.name : ''}
           onAdded={async (item) => { await load(); show({ kind: 'status', id: item.id }); actionNote = T.addFound(item.name); }}
@@ -241,12 +291,17 @@
         <h3 tabindex="-1">{T.applyTitle}</h3>
         <p class="bb-note">{T.applyIntro}</p>
         {#if thisPc.settings}
-          <SettingsFields bind:settings={applySettings} bind:logPathsText={applyLogs} idPrefix="bb-apply" problem={applyFieldShown} />
+          <SettingsFields bind:settings={applySettings} bind:logPathsText={applyLogs} idPrefix="bb-apply" problem={applyFieldShown} lockReached />
         {/if}
-        <div aria-live="polite">
+        <div>
           {#if working}<p class="bb-note" role="status">{working}</p>{/if}
-          {#if applyProblem}<div class="inline-error" role="alert">{applyProblem}</div>{/if}
+          {#if applyProblem}<div class="inline-error" role="alert">{applyProblem}</div>{#if reloadHint}<button type="button" class="secondary-button" onclick={reload}>{T.reload}</button>{/if}{/if}
         </div>
+        {#if thisPc.settings}
+          <p class="bb-note" id="bb-apply-diff">{applyChanges.length ? T.applyChangedLine(applyChanges.map(applyChangePart)) : T.applyNoChange}</p>
+          {#if applyChanges.some((c) => c.field === 'folder')}<p class="bb-note bb-warn">{T.applyFolderWarn}</p>{/if}
+          {#if applyChanges.some((c) => c.field === 'interval')}<p class="bb-note">{T.applyIntervalWarn}</p>{/if}
+        {/if}
         <p class="bb-note">{T.adminNote}</p>
         <div class="bb-actions">
           <button type="button" class="primary-button" disabled={!!working || !thisPc.settings} onclick={() => apply(current)}>{T.apply}</button>
@@ -256,65 +311,94 @@
 
     {:else if view.kind === 'status' && current}
       {@const item = current}
-      <section class="bb-block" aria-label={item.name}>
+      <section class="bb-block" aria-labelledby="bb-status-title">
         <button type="button" class="quiet-button bb-back" onclick={() => show({ kind: 'list' })}>{T.back}</button>
-        <h3 tabindex="-1">{item.name} <Sticker info={item.state} />{#if item.thisPc}<span class="bb-chip">{T.rowThisPc}</span>{/if}</h3>
+        <h3 id="bb-status-title" tabindex="-1">{item.name} <Sticker info={item.state} />{#if item.thisPc}<span class="bb-chip">{T.rowThisPc}</span>{/if}</h3>
         <p class="bb-ready"><strong>{item.state.readiness}</strong></p>
         <p>{item.state.detail}</p>
-        <p class="bb-note">{T.stateNext[item.state.state]}</p>
+        <p class="bb-note">{stateNextFor(item.state, item.thisPc)}</p>
+        {#if checkedAt}<p class="bb-note">{T.checkedAt} {checkedAt}.</p>{/if}
         {#if !item.thisPc}<p class="bb-note">{T.statusReadOnly}</p>{/if}
         <dl class="bb-facts">
           <div><dt>{T.rowReachedBy}</dt><dd>{kindWord(item)}: {item.location}</dd></div>
-          <div><dt>{T.lastSample}</dt><dd>{shownTime(item.facts?.lastSample)}</dd></div>
           {#if item.facts}
-            <div><dt>{T.samplesEvery}</dt><dd>{item.facts.intervalSeconds} {T.seconds}</dd></div>
+            <div><dt>{T.lastSample}</dt><dd>{sampleLine(item)}</dd></div>
+            <div><dt>{T.samplesEvery}</dt><dd>{intervalFor(item.facts)}</dd></div>
             <div><dt>{T.recorded}</dt><dd>{T.filesAndSamples(item.facts.files, item.facts.samples)}</dd></div>
             <div><dt>{T.gaps}</dt><dd>{T.gapsText(item.facts.gaps, item.facts.unread ?? 0, item.facts.longestGapSeconds ?? 0)}</dd></div>
-            {#if item.facts.freePercent != null}<div><dt>{T.diskFree}</dt><dd>{item.facts.freePercent} %</dd></div>{/if}
+            {#if item.facts.freePercent != null}<div><dt>{T.diskFree}</dt><dd>{item.facts.freePercent}%</dd></div>{/if}
             <div><dt>{T.host}</dt><dd>{item.facts.host}{#if item.facts.version}, {T.version} {item.facts.version}{/if}</dd></div>
+          {:else}
+            <div><dt>{T.lastSample}</dt><dd>{T.noRecordingYet}</dd></div>
           {/if}
         </dl>
-        <p class="bb-note">{item.kind === 'url' ? (item.hasKey ? T.readKeySaved : T.readKeyNone) : T.readKeyNone} {item.kind === 'url' ? (item.thisPc ? T.readKeyNoteThisPc : T.readKeyNote) : ''}</p>
+        {#if item.facts && item.facts.effectiveIntervalSeconds && item.facts.effectiveIntervalSeconds !== item.facts.intervalSeconds}<p class="bb-note">{T.intervalHelp}</p>{/if}
+        <p class="bb-note">{keyLine(item)}</p>
 
-        <div aria-live="polite">
+        <div>
           {#if working}<p class="bb-note" role="status">{working}</p>{/if}
           {#if actionNote}<p class="bb-ok" role="status">{actionNote}</p>{/if}
           {#if actionError}<div class="inline-error" role="alert">{actionError}</div>{/if}
         </div>
+        {#if actionError && reloadHint}<div class="bb-actions"><button type="button" class="secondary-button" onclick={reload}>{T.reload}</button></div>{/if}
 
         {#if item.thisPc && item.state.state === 'not-placed'}
           <div class="bb-actions">
-            <button type="button" class="primary-button" disabled={!!working} onclick={() => show({ kind: 'wizard' })}>{T.place}</button>
+            <button type="button" class="primary-button" disabled={!!working} onclick={() => { placeOpen = true; }}>{T.place}</button>
             <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'remove', id: item.id })}>{T.removeForget}</button>
           </div>
         {:else if item.thisPc}
           <p class="bb-note">{T.adminNote}</p>
+          {#if thisPc.installed && thisPc.updateAvailable}
+            <div class="bb-confirm" role="group" aria-label={T.updateTitle}>
+              <strong>{T.updateTitle}</strong>
+              <p class="bb-note">{T.updateText}</p>
+              <div class="bb-actions"><button type="button" class="primary-button" disabled={!!working} onclick={update}>{T.updateButton}</button></div>
+            </div>
+          {/if}
+          {@const controls = pcControls(item.state.state, thisPc)}
           <div class="bb-actions">
-            {#if !running(item) && thisPc.installed}<button type="button" class="primary-button" disabled={!!working} onclick={start}>{T.start}</button>{/if}
-            {#if running(item)}<button type="button" class="secondary-button" disabled={!!working} onclick={stop}>{T.stop}</button>{/if}
+            {#if controls.start}<button type="button" class="primary-button" disabled={!!working} onclick={start}>{T.start}</button>{/if}
+            {#if controls.stop}<button type="button" class="secondary-button" disabled={!!working} onclick={askStop} aria-expanded={stopAsk}>{T.stop}</button>{/if}
+            {#if canChangeKey(item)}<button type="button" class="secondary-button" disabled={!!working} onclick={openKey} aria-expanded={keyOpen}>{T.changeKey}</button>{/if}
             <button type="button" class="secondary-button" disabled={!!working || !thisPc.settings} onclick={() => openApply(item)}>{T.apply}</button>
             <button type="button" class="secondary-button" disabled={!!working} onclick={() => snapshot(item)}>{T.snapshot}</button>
             <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'remove', id: item.id })}>{T.remove}</button>
             <button type="button" class="quiet-button" disabled={!!working} onclick={() => check(item)}>{T.check}</button>
           </div>
-          {#if running(item)}<p class="bb-note">{T.confirmStop}</p>{/if}
+          {#if stopAsk && controls.stop}
+            <div class="bb-confirm" role="group" aria-label={T.stopTitle}>
+              <strong>{T.stopTitle}</strong>
+              <p class="bb-note">{T.confirmStop}</p>
+              <div class="bb-actions">
+                <button type="button" class="secondary-button" disabled={!!working} onclick={stop}>{T.stopYes}</button>
+                <button type="button" class="primary-button" bind:this={keepBtn} onclick={() => { stopAsk = false; }}>{T.stopKeep}</button>
+              </div>
+            </div>
+          {/if}
         {:else}
           <p class="bb-note">{T.anotherServer}</p>
           <div class="bb-actions">
             <button type="button" class="primary-button" disabled={!!working} onclick={() => check(item)}>{T.check}</button>
-            {#if item.kind === 'url'}<button type="button" class="secondary-button" disabled={!!working} onclick={() => { keyOpen = !keyOpen; }} aria-expanded={keyOpen}>{T.changeKey}</button>{/if}
+            {#if canChangeKey(item)}<button type="button" class="secondary-button" disabled={!!working} onclick={openKey} aria-expanded={keyOpen}>{T.changeKey}</button>{/if}
             <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'remove', id: item.id })}>{T.removeForget}</button>
           </div>
-          {#if keyOpen}
-            <div class="bb-key">
-              <label class="bb-field"><span>{T.newKey}</span><input type="password" bind:value={newKey} autocomplete="off" spellcheck="false" /></label>
-              <button type="button" class="secondary-button" disabled={!!working || !newKey} onclick={() => saveKey(item)}>{T.saveKey}</button>
-            </div>
-          {/if}
           <details class="bb-services">
             <summary>{T.servicesTitle}</summary>
-            <p class="bb-note">{T.servicesSteps}</p>
+            <p class="bb-note">{item.state.state === 'running-late' ? T.servicesStepsLate : T.servicesSteps}</p>
           </details>
+        {/if}
+
+        {#if keyOpen && canChangeKey(item)}
+          <div class="bb-key">
+            <label class="bb-field"><span>{T.newKey}</span>
+              <input id="bb-new-key" bind:this={keyInput} type={showNewKey ? 'text' : 'password'} bind:value={newKey} autocomplete="off" spellcheck="false" aria-describedby="bb-new-key-help"
+                onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void saveKey(item); } }} />
+            </label>
+            <label class="bb-check"><input type="checkbox" bind:checked={showNewKey} /><span>{T.addKeyShow}</span></label>
+            <p class="bb-note" id="bb-new-key-help">{T.keyFieldHelp}</p>
+            <button type="button" class="secondary-button" disabled={!!working || !newKey} onclick={() => saveKey(item)}>{T.saveKey}</button>
+          </div>
         {/if}
 
         {#if item.thisPc && item.kind === 'url' && item.hasKey}{#key item.id}<ReadKey {item} />{/key}{/if}
@@ -322,20 +406,22 @@
 
         {#if item.facts}
           <HostCard {item} />
+          <!-- PROTOTYPE (throwaway, dev only): remove after the owner picks a layout -->
         {/if}
       </section>
 
     {:else}
       <div class="bb-nutshell"><span class="bb-label">{T.nutshellLabel}</span> {T.nutshell}</div>
       <div class="bb-actions bb-top">
-        <button type="button" class="primary-button" onclick={() => show({ kind: 'wizard' })}>{T.place}</button>
+        <button type="button" class="primary-button" onclick={() => { placeOpen = true; }}>{T.place}</button>
         <button type="button" class="secondary-button" disabled={scanning} onclick={scan}>{T.scanPc}</button>
         <button type="button" class="quiet-button" onclick={() => show({ kind: 'add', location: '', name: '' })}>{T.addExisting}</button>
       </div>
       <p class="bb-note">{T.readOnly}</p>
 
-      <div aria-live="polite">
+      <div>
         {#if scanNote}<p class="bb-note" role="status">{scanNote}</p>{/if}
+        {#if scanNote && reloadHint}<button type="button" class="secondary-button" onclick={reload}>{T.reload}</button>{/if}
         {#if thisPc.installed && !thisPc.listed}
           <div class="notice" role="status">
             <p>{thisPc.configUnreadable ? T.thisPcUnreadable : T.thisPcFound}</p>
@@ -348,7 +434,10 @@
         <p class="bb-note" role="status">{T.loading}</p>
       {:else if loadError}
         <div class="inline-error" role="alert">{T.loadFailed} {loadError}</div>
-        <div class="bb-actions"><button type="button" class="secondary-button" onclick={() => load()}>{T.retry}</button></div>
+        <div class="bb-actions">
+          {#if reloadHint}<button type="button" class="primary-button" onclick={reload}>{T.reload}</button>{/if}
+          <button type="button" class="secondary-button" onclick={() => load()}>{T.retry}</button>
+        </div>
       {:else if items.length === 0}
         <section class="bb-empty" aria-label={T.emptyTitle}>
           <h3 tabindex="-1">{T.emptyTitle}</h3>
@@ -364,28 +453,38 @@
                 {#if item.thisPc}<span class="bb-chip">{T.rowThisPc}</span>{/if}
               </div>
               <p class="bb-note">{kindWord(item)}: {item.location}</p>
-              <p class="bb-note">{T.lastSample}: {shownTime(item.facts?.lastSample)}{#if item.facts}. {T.samplesEvery} {item.facts.intervalSeconds} {T.seconds}{#if item.facts.freePercent != null}. {T.diskFree} {item.facts.freePercent} %{/if}{/if}</p>
+              {#if item.facts}
+                <p class="bb-note">{T.lastSample}: {sampleLine(item)}</p>
+                <p class="bb-note">{intervalFor(item.facts)}{#if item.facts.freePercent != null}. {T.diskFree}: {item.facts.freePercent}%{/if}</p>
+              {:else}
+                <p class="bb-note">{T.noRecordingYet}</p>
+              {/if}
               <div class="bb-actions"><button type="button" class="secondary-button" data-open-for={item.id} onclick={() => show({ kind: 'status', id: item.id })} aria-label={T.openStatus + ': ' + item.name}>{T.openStatus}</button></div>
             </li>
           {/each}
         </ul>
       {/if}
     {/if}
+
+    <!-- The pop-up closes itself back to the button that opened it. After a real place the list reloads and shows. -->
+    {#if placeOpen}
+      <PlaceWizard {thisPc} canPack={list?.canPack ?? false} open={placeOpen}
+        onLeave={() => { placeOpen = false; }}
+        onPlaced={async () => { await load(); placeOpen = false; await show({ kind: 'list' }); }} />
+    {/if}
   </div>
 </Drawer>
 
 <style>
-  :global(.connections-drawer.blackbox-drawer) { overflow-x: hidden; }
   .bb-body { display: grid; gap: var(--space-4); align-content: start; min-width: 0; margin-top: var(--space-3); }
   .bb-block { display: grid; gap: var(--space-3); margin: 0; padding: 0; border: 0; min-width: 0; }
   .bb-block h3, .bb-empty h3 { margin: 0; font-size: var(--fs-5); font-weight: 600; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .bb-block p, .bb-empty p { margin: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
-  .bb-note { color: var(--text-2); font-size: 12px !important; }
-  .bb-ready { font-size: 15px !important; }
-  .bb-ok { color: var(--tone-ok); }
+  .bb-block p.bb-note { font-size: 12px; }
+  .bb-block p.bb-ready { font-size: 15px; }
+  .bb-warn { color: var(--text); border-left: 3px solid var(--warn); padding-left: var(--space-2); }
   .bb-nutshell { padding: var(--space-3); font-size: 13px; line-height: 1.5; background: var(--surface-2); border-radius: var(--radius-sm); }
   .bb-label { font-weight: 600; margin-right: 4px; }
-  .bb-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .bb-back { width: fit-content; }
   .bb-empty { display: grid; gap: var(--space-2); padding: var(--space-4) 0; border-top: 1px solid var(--line); }
   .bb-list { display: grid; margin: 0; padding: 0; list-style: none; }
@@ -397,6 +496,8 @@
   .bb-facts div { display: flex; gap: 10px; min-width: 0; }
   .bb-facts dt { flex: 0 0 100px; color: var(--text-2); }
   .bb-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  .bb-confirm { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); }
+  .bb-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
   .bb-key { display: grid; gap: var(--space-2); justify-items: start; }
   .bb-field { display: grid; gap: 4px; font-size: 13px; font-weight: 500; }
   .bb-field input { width: 100%; max-width: 320px; padding: 6px 8px; font: inherit; font-weight: 400; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-sizing: border-box; }

@@ -831,6 +831,30 @@ func TestEnableSQLRefusals(t *testing.T) {
 	})
 }
 
+// The service is Automatic, so install must leave an UNARMED state on disk: a
+// reboot between install-sql and enable-sql must not find a missing state file
+// (which loads as "on") and reach SQL without the owner's activation.
+func TestInstallSQLLeavesAnUnarmedState(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	st, err := bbsql.Load(bbsql.StatePath(g.cfg.Folder))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.AutoOff {
+		t.Fatalf("install left the SQL state armed: %+v", st)
+	}
+	if err := g.m.EnableSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatalf("enable-sql: %v", err)
+	}
+	st, err = bbsql.Load(bbsql.StatePath(g.cfg.Folder))
+	if err != nil || st.AutoOff || st.State != bbsql.StateOn {
+		t.Fatalf("enable-sql did not arm the state: %+v %v", st, err)
+	}
+}
+
 // SEC-1: a --config an ordinary user can change must never be bound to the SQL
 // service. The admin-lock proof is asked BEFORE anything is mutated, and an
 // unreadable or unverifiable ACL is a refusal, never a pass (fail closed).

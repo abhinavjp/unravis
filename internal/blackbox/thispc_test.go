@@ -452,3 +452,34 @@ func TestScanThisPCNoneFoundAndUnreadable(t *testing.T) {
 		t.Fatal("a service manager error was hidden")
 	}
 }
+
+func TestUpdateRunsTheHelperElevatedAndReportsShortHashes(t *testing.T) {
+	old, nu := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	f := &fakeElev{answer: `{"ok":true,"updated":true,"wasRunning":true,"restarted":true,"oldHash":"` + old + `","newHash":"` + nu + `","version":"1.4.0"}`}
+	out, err := newThisPC(f, t).Update(t.Context())
+	if err != nil || !out.Updated || !out.WasRunning || !out.Restarted || out.NewVersion != "1.4.0" || out.OldHash != old[:12] || out.NewHash != nu[:12] {
+		t.Fatalf("%+v %v", out, err)
+	}
+	if len(f.calls) != 1 || !f.calls[0].elevated || f.calls[0].args[0] != "update" || strings.Contains(strings.Join(f.calls[0].args, " "), "--config") {
+		t.Fatalf("%+v", f.calls)
+	}
+}
+
+func TestUpdateFailureKeepsThePlainReason(t *testing.T) {
+	f := &fakeElev{answer: `{"ok":false,"reason":"update-failed","message":"The updated recorder did not start."}`}
+	_, err := newThisPC(f, t).Update(t.Context())
+	var te *ThisPCError
+	if !errors.As(err, &te) || te.Reason != string(ReasonUpdateFailed) || te.Message != "The updated recorder did not start." {
+		t.Fatalf("%v", err)
+	}
+	what, next := FailureWords(te.Reason)
+	if what == GenericFailure || next == "" {
+		t.Fatal("no plain words for update-failed")
+	}
+}
+
+func TestUpdateOpNeedsAdminAndTheGuard(t *testing.T) {
+	if !OpUpdate.NeedsAdmin() || !OpUpdate.NeedsGuard() {
+		t.Fatal("update must be elevated and guarded")
+	}
+}

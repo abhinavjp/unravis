@@ -30,10 +30,10 @@ func procIOReading(inst, counter string, v float64) CounterReading {
 }
 
 // procIOInstance adds all seven counter paths for one Process instance: the two
-// identity-mapping counters (ID Process, Creation Time) plus the five detail
+// identity-mapping counters (ID Process, Elapsed Time) plus the five detail
 // counters. Readings are supplied separately (see procIOIdent for identity).
 func procIOInstance(src *procIOFakeSource, inst string) {
-	for _, c := range []string{"ID Process", "Creation Time", "IO Read Bytes/sec", "IO Write Bytes/sec", "Page File Bytes", "Virtual Bytes", "Elapsed Time"} {
+	for _, c := range []string{"ID Process", "IO Read Bytes/sec", "IO Write Bytes/sec", "Page File Bytes", "Virtual Bytes", "Elapsed Time"} {
 		src.paths = append(src.paths, procIOPath(inst, c))
 	}
 }
@@ -43,7 +43,7 @@ func procIOInstance(src *procIOFakeSource, inst string) {
 func procIOIdent(src *procIOFakeSource, inst string, pid float64, start int64) {
 	src.readings = append(src.readings,
 		procIOReading(inst, "ID Process", pid),
-		procIOReading(inst, "Creation Time", creationTicksFor(start)),
+		procIOReading(inst, "Elapsed Time", elapsedFor(start)),
 	)
 }
 

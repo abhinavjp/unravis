@@ -6,6 +6,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -44,6 +46,9 @@ Commands that change the service (run as administrator):
   stop        Stop the service. The current run is closed cleanly.
   apply       Save the settings to the installed blackbox.json and restart
               the service. A stopped service keeps them for its next start.
+  update      Replace the installed recorder program with this one and
+              restart the service if it was running. Settings, key and
+              recordings are kept; the old program is kept as .old.
   remove      Stop and remove the service. The recordings stay.
               --delete-recordings --confirm-name <name>  also deletes them.
   install-sql Install the SQL service (UnravisBlackboxSql) under its own
@@ -89,13 +94,15 @@ type deps struct {
 
 func realDeps() deps {
 	disk := blackbox.OSDisk{}
+	sqlMgr := &blackbox.SQLManager{Svc: blackbox.WinService{}, Env: blackbox.OSEnv{}}
 	return deps{
-		mgr: &blackbox.Manager{Svc: blackbox.WinService{}, Env: blackbox.OSEnv{}, Disk: disk},
+		// remove also removes the SQL service (E2E-10), through the same SQLManager.
+		mgr: &blackbox.Manager{Svc: blackbox.WinService{}, Env: blackbox.OSEnv{}, Disk: disk, SQL: sqlMgr},
 		// Pinned (wave 7): the SQLManager talks to blackbox.WinService DIRECTLY.
 		// internal/setup's bbSvc adapter drops Account/SIDUnrestricted and would
 		// create the SQL service as LocalSystem. RevokeScript stays empty: the
 		// remove-sql command prints the script through the answer writer.
-		sqlMgr: &blackbox.SQLManager{Svc: blackbox.WinService{}, Env: blackbox.OSEnv{}},
+		sqlMgr: sqlMgr,
 		sqlRun: runSQLServiceLoop,
 		disk:   disk,
 		exeDir: func() string {
@@ -152,7 +159,13 @@ func reasonOf(err error) string {
 	var ie *blackbox.InstallError
 	var ae *blackbox.ApplyError
 	var se *blackbox.SnapshotError
+	var re *blackbox.RemoveError
+	var ue *blackbox.UpdateError
 	switch {
+	case errors.As(err, &ue):
+		return string(ue.Reason)
+	case errors.As(err, &re):
+		return re.Reason
 	case errors.As(err, &ie):
 		return string(ie.Reason)
 	case errors.As(err, &ae):
@@ -181,6 +194,42 @@ func (a answer) fail(err error) int {
 		fmt.Fprintln(a.err, err.Error())
 	}
 	return exitFail
+}
+
+// readCheckedConfig reads the settings file ONCE and refuses it unless its
+// SHA-256 is the one Unravis checked before it asked for administrator rights.
+// The caller parses the bytes returned here, never the file again (SEC-FIX-08).
+func readCheckedConfig(path, want string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("the settings file could not be read: %w", blackbox.ErrInvalidConfig)
+	}
+	sum := sha256.Sum256(data)
+	if !strings.EqualFold(hex.EncodeToString(sum[:]), strings.TrimSpace(want)) {
+		return nil, fmt.Errorf("the settings file changed after it was checked, so nothing was changed. Press the button again: %w", blackbox.ErrInvalidConfig)
+	}
+	return data, nil
+}
+
+// checkConfigHash is readCheckedConfig for a caller that only needs the verdict.
+func checkConfigHash(path, want string) error {
+	_, err := readCheckedConfig(path, want)
+	return err
+}
+
+// withBindWarning adds the unsafe-listen-address warning to an answer.
+func withBindWarning(bind string, fields map[string]any) map[string]any {
+	if w := blackbox.BindWarning(bind); w != "" {
+		fields["bindWarning"] = w
+	}
+	return fields
+}
+
+func bindWarningText(bind string) string {
+	if w := blackbox.BindWarning(bind); w != "" {
+		return " Warning: " + w
+	}
+	return ""
 }
 
 // sqlReasonSentences are the ONLY messages a SQL command answer may carry
@@ -237,12 +286,27 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	bind := fs.String("bind", "", "address the status page listens on (install)")
 	delRec := fs.Bool("delete-recordings", false, "also delete the recordings (remove)")
 	confirm := fs.String("confirm-name", "", "the Blackbox name, to confirm deleting the recordings (remove)")
+	answerFile := fs.String(strings.TrimPrefix(blackbox.AnswerFileFlag, "--"), "", "write the answer to this file instead of the console (set by Unravis)")
+	configSHA := fs.String("config-sha256", "", "SHA-256 of the settings file Unravis checked (install, apply)")
 	if err := fs.Parse(rest); err != nil {
 		return exitUsage
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "unexpected argument %q\n", fs.Arg(0))
 		return exitUsage
+	}
+	if *answerFile != "" {
+		// Unravis starts this program elevated and directly, so the answer cannot
+		// come back on the console. Only the owner and administrators can read it.
+		// SEC-FIX-04: Unravis made this file before the prompt, so it is opened
+		// as it is (never created) and a link is refused.
+		f, err := blackbox.OpenAnswerFile(*answerFile)
+		if err != nil {
+			fmt.Fprintln(stderr, "cannot write the answer file: Unravis makes it before this program starts. Press the button in Unravis again")
+			return exitFail
+		}
+		defer f.Close()
+		stdout = f
 	}
 	ans := answer{out: stdout, err: stderr, asJSON: *asJSON}
 	paths := blackbox.Paths{ConfigPath: *configPath, KeyPath: *keyPath}
@@ -265,6 +329,16 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 				return filepath.Join(progDir, name)
 			}
 		}
+		if cmd == "apply" || cmd == "remove" {
+			// SEC-15: these run elevated from the app, whose folder an ordinary
+			// user can write to on a per-user install. Never take settings or a
+			// key file from there: use the installed copy (which may be missing,
+			// and then the command says so) and nothing else.
+			if progDir != "" {
+				return filepath.Join(progDir, name)
+			}
+			return ""
+		}
 		return filepath.Join(d.exeDir(), name)
 	}
 	paths.ConfigPath = pick(paths.ConfigPath, defaultConfigName)
@@ -281,9 +355,29 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		}
 	}
 
+	// cfgData is the one read of the settings file for install and apply.
+	var cfgData []byte
+	if cmd == "install" || cmd == "apply" {
+		switch {
+		case *configSHA != "":
+			// SEC-05: the settings Unravis checked and showed are the ones used. A
+			// file rewritten while the permission prompt was open is refused, and
+			// the bytes hashed here are the bytes parsed below (SEC-FIX-08).
+			b, err := readCheckedConfig(paths.ConfigPath, *configSHA)
+			if err != nil {
+				return ans.fail(err)
+			}
+			cfgData = b
+		case *answerFile != "":
+			// Unravis always sends the hash; a call that runs elevated for it
+			// without one is not from Unravis, so it is not trusted to read a file.
+			return ans.fail(fmt.Errorf("the settings were not checked first, so nothing was changed. Press the button in Unravis again: %w", blackbox.ErrInvalidConfig))
+		}
+	}
+
 	switch cmd {
 	case "install":
-		cfg, err := installConfig(paths.ConfigPath, d, *name, *folder, *port, *bind)
+		cfg, err := installConfig(paths.ConfigPath, cfgData, d, *name, *folder, *port, *bind)
 		if err != nil {
 			return ans.fail(err)
 		}
@@ -292,9 +386,9 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 			return ans.fail(err)
 		}
 		return ans.ok(fmt.Sprintf("Installed. The %s service is running.\nFolder: %s\nProgram and settings: %s\nStatus port: %d\n\nRead key (shown once, copy it now):\n  %s\n\nOnly a fingerprint of the key is kept on this server.",
-			res.Service, res.Folder, filepath.Dir(res.ExePath), res.Port, res.ReadKey),
-			map[string]any{"readKey": res.ReadKey, "service": res.Service, "folder": res.Folder, "port": res.Port, "name": cfg.Name,
-				"exePath": res.ExePath, "configPath": res.ConfigPath})
+			res.Service, res.Folder, filepath.Dir(res.ExePath), res.Port, res.ReadKey)+bindWarningText(cfg.Bind),
+			withBindWarning(cfg.Bind, map[string]any{"readKey": res.ReadKey, "service": res.Service, "folder": res.Folder, "port": res.Port, "name": cfg.Name,
+				"exePath": res.ExePath, "configPath": res.ConfigPath}))
 	case "start":
 		if err := d.mgr.Start(); err != nil {
 			return ans.fail(err)
@@ -306,14 +400,43 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		}
 		return ans.ok("The Blackbox is stopped. Recordings are kept.", nil)
 	case "apply":
-		res, err := d.mgr.Apply(paths.ConfigPath)
+		var res blackbox.ApplyResult
+		var err error
+		bind := ""
+		if cfgData != nil {
+			cfg, perr := blackbox.ParseConfig(cfgData)
+			if perr != nil {
+				return ans.fail(perr)
+			}
+			bind = cfg.Bind
+			res, err = d.mgr.ApplyConfig(cfg)
+		} else {
+			res, err = d.mgr.Apply(paths.ConfigPath)
+			if c, lerr := blackbox.LoadConfig(paths.ConfigPath); lerr == nil {
+				bind = c.Bind
+			}
+		}
 		if err != nil {
 			return ans.fail(err)
 		}
 		if !res.Restarted {
-			return ans.ok("Settings saved. The Blackbox is stopped: they apply at its next start.", map[string]any{"restarted": false})
+			return ans.ok("Settings saved. The Blackbox is stopped: they apply at its next start."+bindWarningText(bind), withBindWarning(bind, map[string]any{"restarted": false}))
 		}
-		return ans.ok("Settings applied. The Blackbox restarted.", map[string]any{"restarted": true})
+		return ans.ok("Settings applied. The Blackbox restarted."+bindWarningText(bind), withBindWarning(bind, map[string]any{"restarted": true}))
+	case "update":
+		res, err := d.mgr.Update()
+		if err != nil {
+			return ans.fail(err)
+		}
+		text := "The recorder is already up to date. Nothing was stopped or restarted."
+		switch {
+		case res.Updated && res.Restarted:
+			text = "The recorder was updated and restarted. Settings, key and recordings were not touched."
+		case res.Updated:
+			text = "The recorder was updated. It was stopped, so it stays stopped until you start it."
+		}
+		return ans.ok(text, map[string]any{"updated": res.Updated, "wasRunning": res.WasRunning, "restarted": res.Restarted,
+			"oldHash": res.OldHash, "newHash": res.NewHash, "version": version})
 	case "remove":
 		cfg, err := blackbox.LoadConfig(paths.ConfigPath)
 		if err != nil {
@@ -330,7 +453,14 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		if res.RecordingsDeleted {
 			text = fmt.Sprintf("The service is removed and %d recording items were deleted.", res.FilesDeleted)
 		}
-		return ans.ok(text, map[string]any{"serviceRemoved": res.ServiceRemoved, "recordingsDeleted": res.RecordingsDeleted, "filesDeleted": res.FilesDeleted})
+		if res.SQLServiceRemoved {
+			text += " The SQL service was removed too."
+		}
+		extra := map[string]any{"serviceRemoved": res.ServiceRemoved, "recordingsDeleted": res.RecordingsDeleted, "filesDeleted": res.FilesDeleted, "sqlServiceRemoved": res.SQLServiceRemoved}
+		if res.SQLNote != "" {
+			extra["note"] = res.SQLNote
+		}
+		return ans.ok(text, extra)
 	case "snapshot":
 		cfg, err := blackbox.LoadConfig(paths.ConfigPath)
 		if err != nil {
@@ -393,8 +523,14 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 
 // installConfig is the settings of an install: the file if there is one, else
 // the defaults, then the options given on the command line.
-func installConfig(path string, d deps, name, folder string, port int, bind string) (blackbox.Config, error) {
-	cfg, err := blackbox.LoadConfigDraft(path)
+func installConfig(path string, data []byte, d deps, name, folder string, port int, bind string) (blackbox.Config, error) {
+	var cfg blackbox.Config
+	var err error
+	if data != nil {
+		cfg, err = blackbox.ParseConfigDraft(data)
+	} else {
+		cfg, err = blackbox.LoadConfigDraft(path)
+	}
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return cfg, err

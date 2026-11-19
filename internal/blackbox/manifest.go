@@ -46,6 +46,10 @@ type RunEntry struct {
 	Version string     `json:"version"`
 	Stop    *time.Time `json:"stop,omitempty"`
 	Reason  string     `json:"reason,omitempty"` // "stopped", "crash", ...
+	// Self is the Blackbox's own cost during this run (heap, private bytes,
+	// handles, tick time, with peaks). Optional: absent in older manifests and in
+	// a run that has not measured yet.
+	Self *SelfStats `json:"self,omitempty"`
 }
 
 // Event is something worth knowing about the recording that is not a sample.
@@ -68,7 +72,23 @@ const (
 	EventCollectFailed   = "collect-failed"
 	EventWriteFailed     = "write-failed"
 	EventSettingsRestart = "settings-applied"
+	// EventRestart is written at every start that follows an earlier run. The
+	// detail is a fixed code: "after-stop" (the earlier run stopped cleanly) or
+	// "after-crash" (it did not). It is recorded even when the hole is too short
+	// to be a gap, so a restart is always visible.
+	EventRestart = "restart"
 )
+
+// Restart event details.
+const (
+	RestartAfterStop  = "after-stop"
+	RestartAfterCrash = "after-crash"
+)
+
+// How often the manifest is written to disk when nothing else asks for it (an
+// event, a gap, an hour roll, an interval change, a stop). The in-memory
+// manifest is always current, and that is what the status server serves.
+const manifestWriteEvery = 5 * time.Minute
 
 // Manifest is manifest.json: what the folder holds and how complete it is. The
 // file is rewritten whole through a temporary file and a rename, so a reader
@@ -84,17 +104,20 @@ type Manifest struct {
 	// older manifest or a run without a budget). IntervalSeconds stays the
 	// configured base; readers judge lateness against the effective interval
 	// when it is present so a widened cadence is not mistaken for running late.
-	EffectiveIntervalSeconds int         `json:"effectiveIntervalSeconds,omitempty"`
-	Created                  time.Time   `json:"created"`
-	Updated                  time.Time   `json:"updated"`
-	State                    string      `json:"state"`
-	FirstSample              *time.Time  `json:"firstSample,omitempty"`
-	LastSample               *time.Time  `json:"lastSample,omitempty"`
-	Runs                     []RunEntry  `json:"runs"`
-	Files                    []FileEntry `json:"files"`
-	Gaps                     []Gap       `json:"gaps"`
-	Events                   []Event     `json:"events"`
-	Probe                    Probe       `json:"probe"`
+	EffectiveIntervalSeconds int `json:"effectiveIntervalSeconds,omitempty"`
+	// Budget is the state the light budget settled on (effective interval, groups
+	// on probation), kept so a restart does not start over. Optional.
+	Budget      *BudgetState `json:"budget,omitempty"`
+	Created     time.Time    `json:"created"`
+	Updated     time.Time    `json:"updated"`
+	State       string       `json:"state"`
+	FirstSample *time.Time   `json:"firstSample,omitempty"`
+	LastSample  *time.Time   `json:"lastSample,omitempty"`
+	Runs        []RunEntry   `json:"runs"`
+	Files       []FileEntry  `json:"files"`
+	Gaps        []Gap        `json:"gaps"`
+	Events      []Event      `json:"events"`
+	Probe       Probe        `json:"probe"`
 }
 
 // ErrNewerFormat is returned when the manifest was written by a newer recorder.
@@ -185,7 +208,26 @@ func readManifest(dir string) (Manifest, error) {
 	if m.Format < 1 {
 		return Manifest{}, errors.New("blackbox: manifest has no format version")
 	}
+	m.normalize()
 	return m, nil
+}
+
+// normalize turns nil lists into empty ones, so the manifest always marshals
+// them as [] and never as null (readers that expect an array must not break on
+// a manifest an older recorder wrote with null).
+func (m *Manifest) normalize() {
+	if m.Runs == nil {
+		m.Runs = []RunEntry{}
+	}
+	if m.Files == nil {
+		m.Files = []FileEntry{}
+	}
+	if m.Gaps == nil {
+		m.Gaps = []Gap{}
+	}
+	if m.Events == nil {
+		m.Events = []Event{}
+	}
 }
 
 // ReadManifest reads the manifest of a recordings folder, for readers.

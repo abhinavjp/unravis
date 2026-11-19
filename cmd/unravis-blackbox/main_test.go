@@ -475,18 +475,18 @@ func TestInstallFromThePackTemplateNamesAfterTheComputerAndUsesCWhenThereIsNoD(t
 	if err := os.WriteFile(filepath.Join(r.dir, defaultConfigName), tpl, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := installConfig(filepath.Join(r.dir, defaultConfigName), r.d, "", "", 0, "")
+	cfg, err := installConfig(filepath.Join(r.dir, defaultConfigName), nil, r.d, "", "", 0, "")
 	if err != nil || cfg.Name != "WEB-B-corp" || cfg.Folder != blackbox.FallbackFolder {
 		t.Fatalf("%+v %v", cfg, err)
 	}
 	r.d.driveOK = func(root string) bool { return root == `D:\` }
-	cfg, _ = installConfig(filepath.Join(r.dir, defaultConfigName), r.d, "", "", 0, "")
+	cfg, _ = installConfig(filepath.Join(r.dir, defaultConfigName), nil, r.d, "", "", 0, "")
 	if cfg.Folder != blackbox.DefaultFolder {
 		t.Fatalf("%s", cfg.Folder)
 	}
 	// A hand-edited file that is broken stops the install with a clear message.
 	_ = os.WriteFile(filepath.Join(r.dir, defaultConfigName), []byte(`{"keepDays": `), 0o644)
-	if _, err := installConfig(filepath.Join(r.dir, defaultConfigName), r.d, "", "", 0, ""); err == nil {
+	if _, err := installConfig(filepath.Join(r.dir, defaultConfigName), nil, r.d, "", "", 0, ""); err == nil {
 		t.Fatal("accepted a broken file")
 	}
 }
@@ -558,5 +558,37 @@ func TestInstallWithABindAddressProbesThatAddress(t *testing.T) {
 	}
 	if r.svc.state != blackbox.SvcRunning {
 		t.Fatal("service not left running")
+	}
+}
+
+func TestUpdateCommandReplacesTheProgramAndKeepsTheSettings(t *testing.T) {
+	r := newRig(t)
+	if c, _, errs := r.do("update", "--json"); c != exitFail {
+		t.Fatalf("%d %s", c, errs)
+	}
+	if c, _, _ := r.do(append([]string{"install"}, r.args...)...); c != 0 {
+		t.Fatal("install")
+	}
+	if c, out, _ := r.do("update", "--json"); c != 0 || !strings.Contains(out, `"updated":false`) {
+		t.Fatalf("already current: %d %s", c, out)
+	}
+	if err := os.WriteFile(r.env.exe, []byte("MZ newer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c, out, _ := r.do("update", "--json")
+	if c != 0 || !strings.Contains(out, `"updated":true`) || !strings.Contains(out, `"restarted":true`) || !strings.Contains(out, `"version"`) {
+		t.Fatalf("%d %s", c, out)
+	}
+	got, _ := os.ReadFile(filepath.Join(r.env.prog, blackbox.InstalledExeName))
+	if string(got) != "MZ newer" || r.svc.state != blackbox.SvcRunning {
+		t.Fatalf("%q %s", got, r.svc.state)
+	}
+}
+
+func TestUpdateWhenNotInstalledIsAFixedReason(t *testing.T) {
+	r := newRig(t)
+	c, out, _ := r.do("update", "--json")
+	if c != exitFail || !strings.Contains(out, `"reason":"not-installed"`) {
+		t.Fatalf("%d %s", c, out)
 	}
 }
