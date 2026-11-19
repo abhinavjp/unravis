@@ -49,6 +49,7 @@
       problem = e instanceof BlackboxError ? e.refusal.error : 'Unravis could not look for recorder folders.';
       choice = ANOTHER;
     }
+    if (name.trim() === '') name = 'This PC';
     loading = false;
   }
   onMount(() => { void load(); });
