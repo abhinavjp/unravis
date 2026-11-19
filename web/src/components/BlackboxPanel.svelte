@@ -124,7 +124,8 @@
     showNewKey = false;
     newKey = '';
     await tick();
-    drawerEl?.scrollTo?.({ top: 0 });
+    // The drawer behind the pop-up keeps its scroll, so closing the pop-up lands back on the row that opened it.
+    if (!popView && !wasPop) drawerEl?.scrollTo?.({ top: 0 });
     // A screen inside the pop-up: the pop-up puts focus on its own title (or first field) and scrolls itself to the top.
     // Opening it does that by itself; moving between its screens asks for it here.
     if (popView) {
@@ -511,7 +512,7 @@
             {/if}
       {/snippet}
       {#snippet footer()}
-        <button type="button" class="secondary-button" disabled={!!working || removeBusy} onclick={closePop}>{T.popClose}</button>
+        <button type="button" class="secondary-button" disabled={!!working || removeBusy} onclick={() => pop?.requestLeave()}>{T.popClose}</button>
       {/snippet}
     </WizardDialog>
 

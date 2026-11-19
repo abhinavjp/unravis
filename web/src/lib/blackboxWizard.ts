@@ -126,7 +126,7 @@ export function defaultFolder(drives: DriveInfo[] | null, fallback: string): { f
 
 /** The letters of the USB and network drives in a drives list, upper case. The Windows drive is never one of them. */
 export function nonLocalLetters(drives: DriveInfo[]): string[] {
-  return drives.filter((d) => !d.system && (d.type === 'removable' || d.type === 'network')).map((d) => d.letter.toUpperCase());
+  return drives.filter((d) => !d.system && d.type !== 'fixed').map((d) => d.letter.toUpperCase());
 }
 
 function sameLetters(a: string[] | undefined, b: string[] | undefined): boolean {

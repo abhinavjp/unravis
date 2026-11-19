@@ -608,3 +608,8 @@ test('when the step list shrinks, a step the owner never visited does not unlock
   t = w.setWhere(t, 'pc');
   assert.equal(t.maxSeen, w.steps(t).indexOf('keep'));
 });
+
+test('nonLocalLetters: every drive that is not a local hard drive is refused (USB, network, CD or RAM disk), the Windows drive is left to its own guard', () => {
+  const list = [drive('C', 'fixed', true), drive('D', 'fixed', false), drive('E', 'removable', false), drive('F', 'other', false), drive('Z', 'network', false)];
+  assert.deepEqual(w.nonLocalLetters(list), ['E', 'F', 'Z']);
+});

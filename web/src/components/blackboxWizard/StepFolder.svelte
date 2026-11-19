@@ -147,7 +147,8 @@
   // only records on a local hard drive and would refuse them at install.
   const options = $derived(
     cards.map((d) => {
-      const notLocal = !d.system && (d.type === 'removable' || d.type === 'network');
+      // Any drive that is not a local hard drive (USB, network, CD, RAM disk): the recorder refuses all of them.
+      const notLocal = !d.system && d.type !== 'fixed';
       return {
         value: d.letter.toUpperCase(),
         title: d.letter.toUpperCase() + ': ' + d.label,

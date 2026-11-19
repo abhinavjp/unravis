@@ -155,6 +155,9 @@
     onLeave();
   }
 
+  /** For a close button outside the shell (the pop-up footer): asks first, like Esc and the corner X. */
+  export function requestLeave(): void { handleLeaveRequest(); }
+
   // Esc, the browser's own "cancel" and the close button all land here.
   function handleLeaveRequest(): void {
     const action = escapeAction(busy, finished, leaving);
