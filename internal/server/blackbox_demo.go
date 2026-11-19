@@ -123,8 +123,8 @@ type simRec struct {
 	DropBefore time.Duration
 	Key        string
 	// Dumps, WinEvents and Markers make the recording carry crash dumps, Windows events and recorder notes, so the
-	// "What happened" view has something to show in the demo. Dumps and events ride on the sample whose tick holds
-	// their time. None of them is a real reading.
+	// "What happened" view has something to show in the demo. Events ride on the sample whose tick holds their time;
+	// dumps are listed on every sample from their time on, as the real folder scan does. None of them is a real reading.
 	Dumps     []blackbox.DumpEntry
 	WinEvents []blackbox.EventEntry
 	Markers   []blackbox.Event
@@ -183,7 +183,8 @@ func (r simRec) build() *simBB {
 			{PID: 4, Name: "System", CPUPct: f64(1), Threads: 180},
 		}
 		for _, d := range r.Dumps {
-			if !d.MTime.Before(t) && d.MTime.Before(t.Add(step)) {
+			// Like the real collector, every scan lists the folder's dumps so far (not only new ones), old ones included.
+			if !d.MTime.After(t) {
 				if s.Dumps == nil {
 					s.Dumps = &blackbox.DumpsGroup{}
 				}
@@ -722,6 +723,7 @@ func demoBlackboxes(now time.Time) (*memBBStore, *simWorld, *simPC) {
 			Skip: [][2]time.Time{{now.Add(-3 * time.Hour), now.Add(-3*time.Hour + 90*time.Second)}},
 			// Things that happened, for the "What happened" view: two crash dumps, a restart and some Windows events.
 			Dumps: []blackbox.DumpEntry{
+				{Name: "old-crash-from-last-month.dmp", Size: 77 << 20, MTime: now.Add(-30 * 24 * time.Hour).Truncate(time.Second), Target: "w3wp.exe"},
 				{Name: "w3wp.exe.4412.dmp", Size: 412 << 20, MTime: now.Add(-100 * time.Minute).Truncate(time.Second), Target: "w3wp.exe"},
 				{Name: "<img src=x onerror=alert(1)>.dmp", Size: 9 << 20, MTime: now.Add(-40 * time.Minute).Truncate(time.Second)},
 			},

@@ -4,7 +4,7 @@
  * and a tiny shape line for the "Everything" table. Only the answer's own numbers are used.
  */
 import type { SeriesLine, SeriesPoint, SeriesUnit } from './blackboxSeries';
-import { lineFigures, seriesUnit } from './blackboxSeries';
+import { lineFigures, own, seriesUnit } from './blackboxSeries';
 
 /** What a counter tells you, by the field name the recorder uses (the last part of its key). Plain words, no cause named. */
 const MEANING: Record<string, string> = {
@@ -105,8 +105,8 @@ export function meaningOf(key: string, serverUnit: string): string {
   const parts = key.split('.');
   const field = parts[parts.length - 1];
   if (parts[0] === 'tcp' && parts[1] === 'states') return 'How many network connections are in the "' + field + '" state.';
-  if (parts[0] === 'events' && LEVEL_MEANING[field]) return LEVEL_MEANING[field];
-  return MEANING[field] ?? UNIT_MEANING[seriesUnit(key, serverUnit)];
+  if (parts[0] === 'events' && own(LEVEL_MEANING, field)) return own(LEVEL_MEANING, field)!;
+  return own(MEANING, field) ?? UNIT_MEANING[seriesUnit(key, serverUnit)];
 }
 
 /* ------------------------------------------------------------ quick questions */
@@ -143,8 +143,8 @@ export interface Compared { last: number; avg: number; min: number; max: number;
  * Where the latest value sits between this counter's own lowest and highest in the range (0 = lowest, 1 = highest).
  * "Near its highest" is the top fifth, "near its lowest" the bottom fifth. A counter that never moved is "flat".
  */
-export function compareLatest(pts: SeriesPoint[]): Compared | null {
-  const f = lineFigures(pts);
+export function compareLatest(pts: SeriesPoint[], fromMs = -Infinity, toMs = Infinity): Compared | null {
+  const f = lineFigures(pts, fromMs, toMs);
   if (f.n === 0 || f.last == null || f.avg == null || f.min == null || f.max == null) return null;
   const range = f.max - f.min;
   const at = range > 0 ? Math.min(1, Math.max(0, (f.last - f.min) / range)) : 0.5;

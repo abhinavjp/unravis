@@ -425,6 +425,10 @@ func buildBBSeries(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.
 		}
 		if s.Dumps != nil {
 			for _, d := range s.Dumps.Dumps {
+				// The collector lists the folder's newest dumps on every scan; only those written inside the window belong here.
+				if d.MTime.Before(win.Start) || d.MTime.After(win.End) {
+					continue
+				}
 				dumps[d.Name] = bbSeriesDump{Name: d.Name, Size: d.Size, MTime: d.MTime.UTC(), Target: d.Target}
 			}
 		}

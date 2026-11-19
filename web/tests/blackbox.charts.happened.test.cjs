@@ -80,7 +80,7 @@ test('Windows events are listed by severity then count, with a meaning only for 
   assert.deepEqual(rows.map((r) => r.eventId), [41, 1000, 9999, 5]);
   assert.equal(rows[0].log, 'System');
   assert.equal(rows[0].level, 'Critical');
-  assert.match(rows[0].meaning, /without a clean shutdown/);
+  assert.match(rows[0].meaning, /^Usually means: .*without a clean shutdown/);
   assert.equal(rows[2].meaning, '');
   assert.equal(rows[3].log, 'Log 7');
   assert.equal(rows[3].level, 'Level 9');
@@ -115,25 +115,62 @@ test('recording health says samples, gaps, unread files and the Blackbox state i
   assert.equal(h.healthRows(base()).find((r) => r.label === 'Time with no recording').value, 'None');
 });
 
-test('status chips: Saved copy, Running late, Partly ready, each only when true', () => {
-  const now = Date.parse('2026-11-18T07:00:00Z');
-  const live = { state: 'running', intervalSeconds: 15, effectiveIntervalSeconds: 15, lastSample: '2026-11-18T06:59:50Z' };
-  assert.deepEqual(h.statusChips(base(), live, now), []);
-  assert.deepEqual(h.statusChips(base(), { ...live, state: 'stopped' }, now).map((x) => x.id), ['saved']);
-  assert.deepEqual(h.statusChips(base(), { ...live, lastSample: '2026-11-18T05:00:00Z' }, now).map((x) => x.id), ['saved']);
-  assert.deepEqual(h.statusChips(base(), { ...live, effectiveIntervalSeconds: 60 }, now).map((x) => x.id), ['late']);
-  assert.deepEqual(h.statusChips(base({ gaps: [{ from: 'x', to: 'y', seconds: 5, cause: 'late' }] }), live, now).map((x) => x.id), ['late']);
-  assert.deepEqual(h.statusChips(base({ read: { files: 2, samples: 1, torn: 0, dropped: ['f'], missing: null } }), live, now).map((x) => x.id), ['partly']);
-  assert.deepEqual(h.statusChips(base({ groups: [{ group: 'clr', read: 0, missing: 0, slow: 4, busy: 0 }] }), live, now).map((x) => x.id), ['partly']);
-  // a group nobody asked for (nothing missing, slow or busy) is not "partly"
-  assert.deepEqual(h.statusChips(base({ groups: [{ group: 'clr', read: 0, missing: 0, slow: 0, busy: 0 }] }), live, now), []);
-  assert.deepEqual(h.statusChips(null, undefined, now), []);
-  for (const chip of h.statusChips(base({ truncated: true }), { ...live, state: 'stopped', effectiveIntervalSeconds: 60 }, now)) assert.ok(chip.hint.length > 20 && chip.text.length < 20);
+test('status chips come from this answer\'s own state: Saved copy when stopped, Running late when late now, Partly ready when something was not read', () => {
+  const st = (state) => ({ state: { state, label: 'x', detail: '', tone: 'ok' } });
+  assert.deepEqual(h.statusChips(base(st('running'))), []);
+  assert.deepEqual(h.statusChips(base(st('stopped'))).map((x) => x.id), ['saved']);
+  assert.deepEqual(h.statusChips(base(st('running-late'))).map((x) => x.id), ['late']);
+  // an old late gap in the range does not make it "running late" now
+  assert.deepEqual(h.statusChips(base({ ...st('running'), gaps: [{ from: 'x', to: 'y', seconds: 5, cause: 'late' }] })), []);
+  assert.deepEqual(h.statusChips(base({ read: { files: 2, samples: 1, torn: 0, dropped: ['f'], missing: null } })).map((x) => x.id), ['partly']);
+  assert.deepEqual(h.statusChips(base({ groups: [{ group: 'clr', read: 0, missing: 0, slow: 4, busy: 0 }] })).map((x) => x.id), ['partly']);
+  assert.deepEqual(h.statusChips(base({ groups: [{ group: 'clr', read: 0, missing: 0, slow: 0, busy: 0 }] })), []);
+  assert.deepEqual(h.statusChips(null), []);
+  for (const chip of h.statusChips(base({ ...st('stopped'), truncated: true }))) assert.ok(chip.hint.length > 20 && chip.text.length < 20);
+});
+
+test('a dump older than the range (the recorder lists the whole folder each scan) is not shown, and each kind is capped on its own', () => {
+  const a = base({
+    dumps: [{ name: 'old.dmp', size: 1, mtime: '2026-10-01T00:00:00Z' }, { name: 'new.dmp', size: 1, mtime: '2026-11-18T06:30:00Z' }, { name: 'later.dmp', size: 1, mtime: '2026-11-19T06:30:00Z' }]
+  });
+  assert.deepEqual(h.happenedItems(a).items.map((i) => i.title), ['Crash dump: new.dmp']);
+  const gaps = Array.from({ length: 200 }, (_, i) => ({ from: new Date(T0 + i * 10000).toISOString(), to: new Date(T0 + i * 10000 + 5000).toISOString(), seconds: 5, cause: 'late' }));
+  const r = h.happenedItems(base({ gaps, dumps: [{ name: 'd.dmp', size: 1, mtime: '2026-11-18T06:59:00Z' }], markers: [{ t: '2026-11-18T06:58:00Z', kind: 'restart', detail: 'after-stop' }] }));
+  assert.equal(r.drawn.gaps.length, h.MAX_DRAWN);
+  assert.equal(r.drawn.dumps.length, 1);
+  assert.equal(r.drawn.restarts.length, 1);
+  // a gap that starts before the range but runs into it still counts
+  assert.equal(h.happenedItems(base({ gaps: [{ from: '2026-11-18T05:00:00Z', to: '2026-11-18T06:05:00Z', seconds: 3900, cause: 'crash' }] })).items.length, 1);
+});
+
+test('text from the recorder never reaches an inherited property ("constructor", "__proto__", "toString")', () => {
+  const a = base({
+    gaps: [{ from: '2026-11-18T06:10:00Z', to: '2026-11-18T06:12:00Z', seconds: 120, cause: 'constructor' }],
+    markers: [{ t: '2026-11-18T06:20:00Z', kind: 'toString' }, { t: '2026-11-18T06:21:00Z', kind: 'restart', detail: '__proto__' }]
+  });
+  for (const it of h.happenedItems(a).items) assert.ok(typeof it.title === 'string' && it.title.length > 5 && typeof it.detail === 'string', JSON.stringify(it));
+  assert.equal(h.happenedItems(a).items.find((i) => i.t === Date.parse('2026-11-18T06:20:00Z')).title, 'Recorder note: toString');
+  assert.equal(c.meaningOf('x.constructor', 'count'), 'A count.');
+  assert.equal(c.meaningOf('x.__proto__', 'ms'), 'A time in milliseconds.');
+  assert.equal(s.seriesTitle('x.hasOwnProperty'), 'hasOwnProperty');
+  assert.equal(s.pickerGroups([{ key: 'constructor.x.y', group: 'constructor', unit: 'count', points: [] }])[0].title, 'constructor');
+});
+
+test('a bad event, dump, gap or note in the answer is dropped, never shown as "Log NaN"', () => {
+  const a = s.readSeriesAnswer(base({
+    eventIds: [{ channel: 'x', eventId: 1, level: 2, count: 1 }, { channel: 1, eventId: 41, level: 1, count: 1 }, null],
+    dumps: [{ name: 5, size: 1, mtime: 'x' }, { name: 'ok.dmp', size: 1, mtime: '2026-11-18T06:30:00Z' }],
+    gaps: [{ from: 1, to: 2, seconds: 1, cause: 'x' }], markers: [{ t: 1, kind: 2 }, { t: '2026-11-18T06:30:00Z', kind: 'resumed' }]
+  }));
+  assert.equal(a.eventIds.length, 1);
+  assert.equal(a.dumps.length, 1);
+  assert.equal(a.gaps.length, 0);
+  assert.equal(a.markers.length, 1);
 });
 
 test('the series reader keeps the state sentence for the health rows', () => {
   const a = s.readSeriesAnswer({ ...base(), state: { label: 'Ready', detail: 'ok', tone: 'ok', extra: 1 } });
-  assert.deepEqual(a.state, { label: 'Ready', detail: 'ok', tone: 'ok' });
+  assert.deepEqual(a.state, { state: '', label: 'Ready', detail: 'ok', tone: 'ok' });
   assert.equal(s.readSeriesAnswer(base()).state, undefined);
 });
 
@@ -169,6 +206,11 @@ test('Latest compared puts the latest value between the counter\'s own lowest an
   assert.equal(c.compareLatest([p(10, 10, 10), [T0 + 1, 100, 100, 100], [T0 + 2, 55, 55, 55]]).position, 'usual');
   assert.equal(c.compareLatest([p(7, 7, 7), [T0 + 1, 7, 7, 7]]).position, 'flat');
   assert.equal(c.compareLatest([]), null);
+  // inside a zoom only the zoomed points count
+  const z = c.compareLatest([[T0, 10, 10, 10], [T0 + 1000, 100, 100, 100], [T0 + 2000, 20, 20, 20]], T0, T0 + 1000);
+  assert.equal(z.last, 100);
+  assert.equal(z.max, 100);
+  assert.match(read('src/components/BlackboxCharts.svelte'), /compareLatest\(d\.points, zoom\?\.startMs/);
   const r = c.compareLatest([p(0, 0, 0), [T0 + 1, 50, 50, 50]]);
   assert.equal(r.at, 1);
   assert.deepEqual(['high', 'usual', 'low', 'flat'].map((k) => c.POSITION_WORDS[k]), ['Near its highest', 'In its usual range', 'Near its lowest', 'Did not change']);

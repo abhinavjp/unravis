@@ -6,7 +6,7 @@ What was built, what was checked, what was not.
 
 1. **What happened** view: a timeline (no recording, crash dumps, restarts, Windows events), a list (dumps, restarts, gaps, recorder notes), Windows events by log, level, ID and count (with a plain meaning for nine well-known IDs), and recording health (state, samples, gaps, unread files, damaged lines). Dumps and restarts are also drawn as dotted lines on the charts.
 2. **First-time help**: a 3-step card (can be hidden, comes back with "Show help"), quick questions that pick counters, and "What does this mean?" under the table (click a row; the line is marked on the chart).
-3. **Status chips**: Saved copy, Running late, Partly ready. Each has a tooltip.
+3. **Status chips**: Saved copy (state stopped), Running late (state running-late now), Partly ready (something unread in this range). Taken from the series answer's own state; each has a tooltip.
 4. **Scale words**: "Even steps" and "Times-10 steps", each with a tooltip.
 5. **Latest compared** and **Everything** views.
 6. **Highest at** column in the table.

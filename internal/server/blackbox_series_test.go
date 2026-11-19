@@ -209,7 +209,7 @@ func TestDemoRecordingCarriesWhatHappened(t *testing.T) {
 	mt := start.Add(10 * time.Minute)
 	bb := simRec{
 		Name: "x", Start: start, End: end, Now: end,
-		Dumps:     []blackbox.DumpEntry{{Name: "w3wp.dmp", Size: 10, MTime: mt, Target: "w3wp.exe"}},
+		Dumps:     []blackbox.DumpEntry{{Name: "old.dmp", Size: 10, MTime: start.Add(-30 * 24 * time.Hour), Target: "w3wp.exe"}, {Name: "w3wp.dmp", Size: 10, MTime: mt, Target: "w3wp.exe"}},
 		WinEvents: []blackbox.EventEntry{{Channel: 1, EventID: 41, Level: 1, Count: 1, T: mt}, {Channel: 2, EventID: 1000, Level: 2, Count: 2, T: mt.Add(time.Minute)}},
 		Markers:   []blackbox.Event{{T: mt, Kind: blackbox.EventRestart, Detail: "after-crash"}},
 	}.build()
@@ -228,6 +228,7 @@ func TestDemoRecordingCarriesWhatHappened(t *testing.T) {
 	}
 	sort.Slice(samples, func(i, j int) bool { return samples[i].T.Before(samples[j].T) })
 	ans := buildBBSeries(bb.man, samples, blackbox.ReadReport{}, blackbox.StateInfo{}, bbWindow{Start: start, End: end}, 60)
+	// the folder list rides on every sample, the old dump too; only the one written inside the window is answered
 	if len(ans.Dumps) != 1 || ans.Dumps[0].Name != "w3wp.dmp" || ans.Dumps[0].Target != "w3wp.exe" {
 		t.Fatalf("dumps = %+v", ans.Dumps)
 	}

@@ -43,12 +43,14 @@ test('Blackbox charts: What happened lists dumps, restarts and Windows events, a
   await charts.getByRole('button', { name: 'What happened', exact: true }).click();
   await expect(charts.getByRole('heading', { name: 'Timeline of this time range' })).toBeVisible();
   await expect(charts.getByText('Crash dump: w3wp.exe.4412.dmp')).toBeVisible();
+  // the folder also holds a month-old dump; it is not part of this range
+  await expect(charts.getByText(/old-crash-from-last-month/)).toHaveCount(0);
   // a hostile file name is text, never an element
   await expect(charts.getByText('Crash dump: <img src=x onerror=alert(1)>.dmp')).toBeVisible();
   await expect(charts.locator('img')).toHaveCount(0);
   await expect(charts.getByText('The recorder started again')).toBeVisible();
   const events = charts.getByRole('table').nth(1);
-  await expect(events.getByRole('row', { name: /System Critical 41 1 Windows restarted without a clean shutdown/ })).toBeVisible();
+  await expect(events.getByRole('row', { name: /System Critical 41 1 Usually means: Windows restarted without a clean shutdown/ })).toBeVisible();
   await expect(charts.getByRole('row', { name: /Time with no recording/ })).toBeVisible();
   // no folder from the recorded PC reaches the page
   expect(await charts.innerText()).not.toMatch(/[A-Z]:\\|\/Users\//);

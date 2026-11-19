@@ -4,6 +4,7 @@
  * file name, a note's detail, an unknown note kind) is untrusted: it goes through safeText, which keeps a file name only (no
  * folders), drops control and direction-changing characters, and cuts it short. The view prints it as plain text, never as HTML.
  */
+import { own } from './blackboxSeries';
 import type { SeriesAnswer, SeriesDump, SeriesGap, SeriesMarker, SeriesEventId, SeriesLine } from './blackboxSeries';
 
 /** At most this many marks are drawn on one chart or timeline, and this many rows are listed, however much the answer carries. */
@@ -81,35 +82,44 @@ export function dumpItem(d: SeriesDump): HappenedItem | null {
 export function gapItem(g: SeriesGap, i: number): HappenedItem | null {
   const t = Date.parse(g.from), end = Date.parse(g.to);
   if (!Number.isFinite(t) || !Number.isFinite(end)) return null;
-  const c = CAUSE_TITLES[g.cause] ?? { title: 'No samples for a while', kind: 'late' as HappenedKind, tone: 'warn' as Tone };
+  const c = own(CAUSE_TITLES, g.cause) ?? { title: 'No samples for a while', kind: 'late' as HappenedKind, tone: 'warn' as Tone };
   return { id: 'gap:' + i + ':' + t, kind: c.kind, t, end, tone: c.tone, title: c.title, detail: 'No samples for ' + lengthWords(g.seconds) + '.' };
 }
 export function noteItem(m: SeriesMarker, i: number): HappenedItem | null {
   const t = Date.parse(m.t);
   if (!Number.isFinite(t)) return null;
-  const known = NOTE_TITLES[m.kind];
-  const detail = m.kind === 'restart' ? (RESTART_DETAIL[m.detail ?? ''] ?? '') : '';
+  const known = own(NOTE_TITLES, m.kind);
+  const detail = m.kind === 'restart' ? (own(RESTART_DETAIL, m.detail) ?? '') : '';
   return { id: 'note:' + i + ':' + t, kind: m.kind === 'restart' ? 'restart' : 'note', t, tone: known?.tone ?? 'info', title: known?.title ?? 'Recorder note: ' + (safeText(m.kind, 40) || 'unknown'), detail };
 }
 
 /**
- * Everything that happened in the answer's range, newest first. A restart that shows both as a note and as a gap is listed once
- * (the gap carries the length; a note within a minute of a restart or crash gap is dropped).
+ * Everything that happened inside the answer's range, newest first. The recorder lists the whole dump folder on every scan, so a
+ * dump (or note) older than the range is left out here. A restart that shows both as a note and as a gap is listed once (the gap
+ * carries the length). `drawn` holds each kind on its own, capped on its own, so many gaps never push dumps off the timeline.
  */
-export function happenedItems(a: SeriesAnswer): { items: HappenedItem[]; more: number } {
-  const gaps = a.gaps.map(gapItem).filter((x): x is HappenedItem => !!x);
+export interface Happened { items: HappenedItem[]; more: number; drawn: { gaps: HappenedItem[]; dumps: HappenedItem[]; restarts: HappenedItem[] } }
+export function happenedItems(a: SeriesAnswer): Happened {
+  const lo = Date.parse(a.start), hi = Date.parse(a.end);
+  const inRange = (x: HappenedItem) => !(Number.isFinite(lo) && (x.end ?? x.t) < lo) && !(Number.isFinite(hi) && x.t > hi);
+  const gaps = a.gaps.map(gapItem).filter((x): x is HappenedItem => !!x).filter(inRange);
   const gapSpans = gaps.filter((g) => g.kind === 'restart' || g.kind === 'crash' || g.kind === 'disk');
-  const notes = a.markers.map(noteItem).filter((x): x is HappenedItem => !!x)
+  const notes = a.markers.map(noteItem).filter((x): x is HappenedItem => !!x).filter(inRange)
     .filter((n) => !(n.kind === 'restart' && gapSpans.some((g) => n.t >= g.t - 60_000 && n.t <= (g.end ?? g.t) + 60_000)));
-  const dumps = a.dumps.map(dumpItem).filter((x): x is HappenedItem => !!x);
-  const all = [...dumps, ...gaps, ...notes].sort((x, y) => y.t - x.t);
-  return { items: all.slice(0, MAX_LISTED), more: Math.max(0, all.length - MAX_LISTED) };
+  const dumps = a.dumps.map(dumpItem).filter((x): x is HappenedItem => !!x).filter(inRange);
+  const newest = (xs: HappenedItem[]) => xs.slice().sort((x, y) => y.t - x.t);
+  const all = newest([...dumps, ...gaps, ...notes]);
+  const restarts = [...notes, ...gaps].filter((x) => x.kind === 'restart' || x.kind === 'crash');
+  return {
+    items: all.slice(0, MAX_LISTED), more: Math.max(0, all.length - MAX_LISTED),
+    drawn: { gaps: newest(gaps).slice(0, MAX_DRAWN), dumps: newest(dumps).slice(0, MAX_DRAWN), restarts: newest(restarts).slice(0, MAX_DRAWN) }
+  };
 }
 
 /* ------------------------------------------------------------ windows events */
 
-const LEVELS: Record<number, string> = { 1: 'Critical', 2: 'Error', 3: 'Warning', 4: 'Information' };
-const CHANNELS: Record<number, string> = { 1: 'System', 2: 'Application' };
+const LEVELS: Record<string, string> = { 1: 'Critical', 2: 'Error', 3: 'Warning', 4: 'Information' };
+const CHANNELS: Record<string, string> = { 1: 'System', 2: 'Application' };
 /** Well-known events, by log and ID. Anything else is shown by its number, to look up in Event Viewer. */
 const KNOWN_EVENTS: Record<string, string> = {
   '1:41': 'Windows restarted without a clean shutdown (Kernel-Power)',
@@ -127,10 +137,10 @@ export interface EventRow { id: string; log: string; level: string; levelNum: nu
 export function eventRows(ids: SeriesEventId[]): { rows: EventRow[]; more: number } {
   const rows = ids.filter((e) => Number.isFinite(e.eventId) && Number.isFinite(e.count)).map((e): EventRow => ({
     id: e.channel + ':' + e.eventId + ':' + e.level,
-    log: CHANNELS[e.channel] ?? 'Log ' + Math.trunc(e.channel),
-    level: LEVELS[e.level] ?? 'Level ' + Math.trunc(e.level), levelNum: e.level,
+    log: own(CHANNELS, String(e.channel)) ?? 'Log ' + Math.trunc(e.channel),
+    level: own(LEVELS, String(e.level)) ?? 'Level ' + Math.trunc(e.level), levelNum: e.level,
     eventId: Math.trunc(e.eventId), count: Math.trunc(e.count),
-    meaning: KNOWN_EVENTS[e.channel + ':' + e.eventId] ?? ''
+    meaning: own(KNOWN_EVENTS, e.channel + ':' + e.eventId) ? 'Usually means: ' + own(KNOWN_EVENTS, e.channel + ':' + e.eventId) : ''
   })).sort((x, y) => (x.levelNum - y.levelNum) || (y.count - x.count) || (x.eventId - y.eventId));
   return { rows: rows.slice(0, MAX_LISTED), more: Math.max(0, rows.length - MAX_LISTED) };
 }
@@ -173,26 +183,18 @@ export function healthRows(a: SeriesAnswer): HealthRow[] {
 /* ------------------------------------------------------------ status chips */
 
 export interface Chip { id: 'saved' | 'late' | 'partly'; text: string; hint: string }
-interface ChipFacts { state?: string; intervalSeconds?: number; effectiveIntervalSeconds?: number; lastSample?: string }
 
-/** A sample newer than this many recorder intervals (and at least this many minutes) still counts as live. */
-const LIVE_MIN_MS = 3 * 60_000;
-
-export function statusChips(a: SeriesAnswer | null, f: ChipFacts | undefined, nowMs: number): Chip[] {
+/**
+ * The chips come from this answer only: the recorder's own state (stopped, running late) read with the series, and what could not
+ * be read in this range. The drawer's older snapshot and this PC's clock are not used, so a chip never disagrees with the health list.
+ */
+export function statusChips(a: SeriesAnswer | null): Chip[] {
   const chips: Chip[] = [];
-  const iv = f?.effectiveIntervalSeconds || f?.intervalSeconds || a?.intervalSeconds || 15;
-  const last = Date.parse(f?.lastSample ?? a?.last ?? '');
-  if (f?.state === 'stopped' || (Number.isFinite(last) && nowMs - last > Math.max(LIVE_MIN_MS, iv * 4000))) {
-    chips.push({ id: 'saved', text: 'Saved copy', hint: 'This Blackbox is not recording right now. You are looking at what it saved earlier.' });
-  }
-  const slow = !!f?.intervalSeconds && !!f.effectiveIntervalSeconds && f.effectiveIntervalSeconds > f.intervalSeconds * 1.5;
-  if (slow || a?.gaps.some((g) => g.cause === 'late')) {
-    chips.push({ id: 'late', text: 'Running late', hint: 'The recorder took samples later than planned. A busy PC makes it slow down on purpose to stay light.' });
-  }
-  if (a) {
-    const unread = (a.read.dropped?.length ?? 0) + (a.read.missing?.length ?? 0) > 0;
-    const cut = a.groups.some((g) => a.samples > 0 && g.read === 0 && (g.slow > 0 || g.busy > 0 || g.missing > 0)) || !!a.truncated;
-    if (unread || cut) chips.push({ id: 'partly', text: 'Partly ready', hint: 'Some recording files or some counters could not be read in this range. Charts show what was read.' });
-  }
+  if (!a) return chips;
+  if (a.state?.state === 'stopped') chips.push({ id: 'saved', text: 'Saved copy', hint: 'This Blackbox is not recording right now. You are looking at what it saved earlier.' });
+  if (a.state?.state === 'running-late') chips.push({ id: 'late', text: 'Running late', hint: 'The recorder is taking samples later than planned right now. A busy PC makes it slow down on purpose to stay light.' });
+  const unread = (a.read.dropped?.length ?? 0) + (a.read.missing?.length ?? 0) > 0;
+  const cut = a.groups.some((g) => a.samples > 0 && g.read === 0 && (g.slow > 0 || g.busy > 0 || g.missing > 0)) || !!a.truncated;
+  if (unread || cut) chips.push({ id: 'partly', text: 'Partly ready', hint: 'Some recording files or some counters could not be read in this range. Charts show what was read.' });
   return chips;
 }

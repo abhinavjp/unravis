@@ -9,10 +9,10 @@
   import { BBC_TEXT as T } from '../lib/copy/blackboxChartsCopy';
   import {
     PRESET_LABELS, UNIT_TITLES, axisValue, chartData, gapRanges, coverNote, defaultSelection, firstPreset, formatValue, lineFigures, pickerGroups,
-    alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES,
+    alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES, own,
     type SeriesAnswer, type SeriesLine, type SeriesPoint, type SeriesUnit, type WindowPreset
   } from '../lib/blackboxSeries';
-  import { MAX_DRAWN, eventDots, eventRows, happenedItems, healthRows, statusChips, type HappenedItem } from '../lib/blackboxHappened';
+  import { MAX_DRAWN, eventDots, eventRows, happenedItems, healthRows, statusChips, type HappenedItem, type Happened } from '../lib/blackboxHappened';
   import { POSITION_WORDS, QUICK_QUESTIONS, compareLatest, meaningOf, quickKeys, shapePath, type QuickQuestion } from '../lib/blackboxCompare';
 
   // The Blackbox charts view: what one Blackbox recorded, drawn like Perfmon (pick counters, linear or log scale, a figures bar
@@ -52,7 +52,6 @@
   let showIntro = $state(!introWasHidden());
   const setIntro = (on: boolean) => { showIntro = on; try { if (on) localStorage.removeItem(INTRO); else localStorage.setItem(INTRO, 'hidden'); } catch { /* a convenience only */ } };
   let focusKey = $state('');
-  let loadedAt = $state(Date.now());
   let openGroups = $state<string[]>(['host']);
   let everySearch = $state('');
   let procMetric = $state<'cpu' | 'workingSet' | 'privateBytes'>('cpu');
@@ -103,7 +102,6 @@
         const a = readSeriesAnswer(raw);
         if (!a) { problem = T.badAnswer; answer = null; return; }
         answer = a;
-        loadedAt = Date.now();
         const have = new Set(a.lines.map((l) => l.key));
         const kept = untrack(() => keys).filter((k) => have.has(k));
         if (!kept.length) keys = defaultSelection(a.lines);
@@ -176,14 +174,14 @@
   });
   let hidden = $state(0);
   const MAX_LINES = 24;
-  const chips = $derived(statusChips(answer, facts, loadedAt));
-  const happened = $derived(answer && view !== 'latest' && view !== 'everything' ? happenedItems(answer) : { items: [] as HappenedItem[], more: 0 });
+  const chips = $derived(statusChips(answer));
+  const happened = $derived(answer && view !== 'latest' && view !== 'everything' ? happenedItems(answer) : ({ items: [] as HappenedItem[], more: 0, drawn: { gaps: [], dumps: [], restarts: [] } } as Happened));
   const evRows = $derived(answer && view === 'happened' ? eventRows(answer.eventIds) : { rows: [], more: 0 });
   const evDots = $derived(answer && view === 'happened' ? eventDots(answer.lines) : { dots: [], more: 0 });
   const health = $derived(answer && view === 'happened' ? healthRows(answer) : []);
   const quick = $derived(answer ? QUICK_QUESTIONS.map((q) => ({ q, keys: quickKeys(q, answer!.lines) })).filter((x) => x.keys.length) : []);
   const lineByKey = $derived(new Map((answer?.lines ?? []).map((l) => [l.key, l])));
-  const compared = $derived(view === 'latest' ? drawn.map((d) => ({ d, c: compareLatest(d.points) })) : []);
+  const compared = $derived(view === 'latest' ? drawn.map((d) => ({ d, c: compareLatest(d.points, zoom?.startMs ?? -Infinity, zoom?.endMs ?? Infinity) })) : []);
   const allGroups = $derived.by(() => {
     if (view !== 'everything' || !answer) return [];
     const q = everySearch.trim().toLowerCase();
@@ -218,11 +216,10 @@
     const axis = { axisLine: { lineStyle: { color: p.axisLine } }, axisLabel: { color: p.text2 }, nameTextStyle: { color: p.text2 }, splitLine: { lineStyle: { color: p.grid } } };
     const gapAreas = a.gaps.slice(0, MAX_DRAWN).map((g) => [{ xAxis: Date.parse(g.from), name: T.gapLabel }, { xAxis: Date.parse(g.to) }]);
     // Crash dumps and restarts are drawn as dotted lines (at most MAX_DRAWN, newest first). The label is plain text from safeText.
-    const markerLines = untrack(() => happened).items.filter((it) => it.kind === 'dump' || it.kind === 'restart' || it.kind === 'crash').slice(0, MAX_DRAWN)
-      .map((it) => ({ xAxis: it.t, name: it.kind === 'dump' ? T.markDump : T.markRestart }));
+    const drawnNow = untrack(() => happened).drawn;
+    const markerLines = [...drawnNow.dumps.map((it) => ({ xAxis: it.t, name: T.markDump })), ...drawnNow.restarts.map((it) => ({ xAxis: it.t, name: T.markRestart }))];
     const focus = untrack(() => focusKey);
     let hiddenNow = 0;
-    void focusKey;
     const grids = strips.map((_, i) => ({ left: 86, right: 24, top: TOP + i * (STRIP_H + GAP), height: STRIP_H }));
     const xAxes = strips.map((_, i) => ({
       type: 'time', gridIndex: i, min: Math.min(w.startMs, Date.parse(a.start) || w.startMs), max: Math.max(w.endMs, Date.parse(a.end) || w.endMs), ...axis, splitLine: { show: false },
@@ -243,7 +240,7 @@
         series.push({
           type: 'line', name: d.title, id: k, xAxisIndex: i, yAxisIndex: i, data: cd.data, connectNulls: false, showSymbol: cd.data.length < 40, symbolSize: 4,
           sampling: 'lttb', lineStyle: { width: focus === k ? 3 : 1.6, opacity: focus && focus !== k ? 0.35 : 1, color: c?.color, type: c?.dashed ? 'dashed' : 'solid' }, itemStyle: { color: c?.color },
-          markArea: j === 0 && gapAreas.length ? { silent: true, itemStyle: { color: p.empty, opacity: 0.5 }, label: { show: i === 0 && gapAreas.length <= 6, position: 'insideTop', color: p.text2, fontSize: 11 }, data: gapAreas } : undefined,
+          markArea: j === 0 && gapAreas.length ? { silent: true, itemStyle: { color: p.empty, opacity: 0.5 }, label: { show: i === 0 && gapAreas.length <= 6, position: 'insideBottom', color: p.text2, fontSize: 11 }, data: gapAreas } : undefined,
           markLine: j === 0 && markerLines.length ? { silent: true, symbol: 'none', lineStyle: { color: p.warn, type: 'dotted' }, label: { show: i === 0 && markerLines.length <= 6, formatter: '{b}', color: p.text2, fontSize: 11 }, data: markerLines } : undefined
         });
       });
@@ -277,6 +274,15 @@
         }
       }
     }, true);
+  });
+
+  // A click on a table row only restyles the lines (no rebuild of the chart).
+  $effect(() => {
+    const c = chart;
+    const f = focusKey;
+    if (!c || !untrack(() => answer) || !((c.getOption() as { series?: unknown[] }).series?.length)) return;
+    const ids = untrack(() => drawn).map((d) => d.key);
+    c.setOption({ series: ids.map((id) => ({ id, lineStyle: { width: f === id ? 3 : 1.6, opacity: f && f !== id ? 0.35 : 1 } })) });
   });
 
   const figures = $derived(drawn.map((d) => ({ d, f: lineFigures(d.points, zoom?.startMs ?? -Infinity, zoom?.endMs ?? Infinity) })));
@@ -331,7 +337,7 @@
         </div>
         {#if zoom}<button type="button" class="secondary-button" title={T.zoomReadHint} onclick={readZoom}>{T.zoomRead}</button>{/if}
       {/if}
-      {#if back.length}<button type="button" class="quiet-button" onclick={goBack}>{T.zoomBack}</button>{/if}
+      {#if back.length}<button type="button" class="quiet-button" title={T.zoomBackHint} onclick={goBack}>{T.zoomBack}</button>{/if}
     </div>
 
     <div class="bbc-main" class:wide={view !== 'charts'}>
@@ -375,7 +381,7 @@
           {#if notRead.length}
             <div class="bbc-notread">
               <strong>{T.notReadGroups}</strong>
-              <ul>{#each notRead as x (x.c.group)}<li>{GROUP_TITLES[x.c.group] ?? x.c.group}: {x.note}</li>{/each}</ul>
+              <ul>{#each notRead as x (x.c.group)}<li>{own(GROUP_TITLES, x.c.group) ?? x.c.group}: {x.note}</li>{/each}</ul>
             </div>
           {/if}
         {:else}
@@ -394,7 +400,7 @@
       <section class="bbc-chart-area" aria-label={T.title(item.name)}>
         <div aria-live="polite">
           {#if busy}<p class="bbc-note" role="status">{T.reading}</p>{/if}
-          {#if problem}<div class="inline-error" role="alert">{problem} <button type="button" class="secondary-button" onclick={() => { attempt++; }}>{T.retry}</button></div>{/if}
+          {#if problem}<div class="inline-error" role="alert">{problem} <button type="button" class="secondary-button" title={T.retryHint} onclick={() => { attempt++; }}>{T.retry}</button></div>{/if}
         </div>
 
         {#if view === 'charts'}
@@ -447,18 +453,19 @@
             {@const pos = (t: number) => Math.max(0, Math.min(100, ((t - w0) / (w1 - w0)) * 100))}
             <div class="bbc-tl" role="group" aria-label={T.happenedTimeline}>
               <div class="bbc-lane"><span class="bbc-lane-name">{T.laneGaps}</span><div class="bbc-lane-track">
-                {#each happened.items.filter((x) => x.end && x.end > x.t).slice(0, MAX_DRAWN) as it (it.id)}
-                  <span class="bbc-gapblock {it.tone}" style:left={pos(it.t) + '%'} style:width={Math.max(0.4, pos(it.end ?? it.t) - pos(it.t)) + '%'} title={whenText(it.t) + ': ' + it.title + '. ' + it.detail} role="img" aria-label={it.title}></span>
+                {#each happened.drawn.gaps.filter((x) => x.end && x.end > x.t) as it (it.id)}
+                  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                  <span tabindex="0" class="bbc-gapblock {it.tone}" style:left={pos(it.t) + '%'} style:width={Math.max(0.4, pos(it.end ?? it.t) - pos(it.t)) + '%'} title={whenText(it.t) + ': ' + it.title + '. ' + it.detail} role="img" aria-label={it.title}></span>
                 {/each}
               </div></div>
               <div class="bbc-lane"><span class="bbc-lane-name">{T.laneDumps}</span><div class="bbc-lane-track">
-                {#each happened.items.filter((x) => x.kind === 'dump').slice(0, MAX_DRAWN) as it (it.id)}
+                {#each happened.drawn.dumps as it (it.id)}
                   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
                   <span class="bbc-mark dump" style:left={pos(it.t) + '%'} title={whenText(it.t) + ': ' + it.title + ' ' + it.detail} tabindex="0" role="img" aria-label={whenText(it.t) + ': ' + it.title + ' ' + it.detail}></span>
                 {/each}
               </div></div>
               <div class="bbc-lane"><span class="bbc-lane-name">{T.laneRestarts}</span><div class="bbc-lane-track">
-                {#each happened.items.filter((x) => x.kind === 'restart' || x.kind === 'crash').slice(0, MAX_DRAWN) as it (it.id)}
+                {#each happened.drawn.restarts as it (it.id)}
                   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
                   <span class="bbc-mark restart" style:left={pos(it.t) + '%'} title={whenText(it.t) + ': ' + it.title + ' ' + it.detail} tabindex="0" role="img" aria-label={whenText(it.t) + ': ' + it.title + ' ' + it.detail}></span>
                 {/each}
@@ -511,7 +518,7 @@
 
         {:else if view === 'latest'}
           {#if answer && !problem}
-            <p class="bbc-note">{T.latestHelp}</p>
+            <p class="bbc-note">{T.latestHelp} {#if zoom}{T.latestZoomed}{/if}</p>
             {#if !compared.length}<p class="bbc-note">{T.latestEmpty}</p>
             {:else}
               <ul class="bbc-cmp">
