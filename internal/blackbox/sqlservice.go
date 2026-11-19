@@ -171,6 +171,13 @@ func lockSQLConfigFile(env Env, configPath string) error {
 	return l.LockSQLSettingsFile(configPath)
 }
 
+// isInstalledConfigPath reports whether configPath is the settings file the
+// host install wrote beside the installed program. Windows paths compare
+// without case.
+func isInstalledConfigPath(progDir, configPath string) bool {
+	return strings.EqualFold(filepath.Clean(configPath), filepath.Clean(filepath.Join(progDir, ConfigFileName)))
+}
+
 // sqlInstallMarkerPath is the install record beside the installed program.
 func sqlInstallMarkerPath(progDir string) string {
 	return filepath.Join(progDir, sqlInstallMarkerName)
@@ -639,8 +646,14 @@ func (m *SQLManager) InstallSQL(cfg Config, configPath string) (err error) {
 	// host, where the file is otherwise owned by the account that wrote it. The
 	// settings-file lock is the single thing mutated before this point; a failed
 	// lock or a failed proof still refuses with nothing registered.
-	if lerr := lockSQLConfigFile(m.Env, configPath); lerr != nil {
-		return &InstallError{Reason: ReasonOther, Message: "The settings file for the SQL service could not be locked to administrators. Run this from an elevated command prompt.", Cause: lerr}
+	// REG-1 follow-up: only the INSTALLED settings file is pinned. A --config
+	// anywhere else (BBX-5-02 allows one) is proven as it stands and must
+	// already be administrator-locked: pinning it here would take over a file an
+	// ordinary user wrote and make SEC-1's refusal pass for it.
+	if isInstalledConfigPath(progDir, configPath) {
+		if lerr := lockSQLConfigFile(m.Env, configPath); lerr != nil {
+			return &InstallError{Reason: ReasonOther, Message: "The settings file for the SQL service could not be locked to administrators. Run this from an elevated command prompt.", Cause: lerr}
+		}
 	}
 	if verr := verifySQLConfigFile(m.Env, configPath); verr != nil {
 		return &InstallError{Reason: ReasonOther, Message: "The settings file for the SQL service is not locked to administrators, so it was refused. Use the installed settings file (re-run install if needed).", Cause: verr}

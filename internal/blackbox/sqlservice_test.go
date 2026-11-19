@@ -102,6 +102,15 @@ func (e *fakeSQLEnv) LockSQLSettingsFile(path string) error {
 	return nil
 }
 
+// pinOwner gives path the administrator owner, as an operator who locked a
+// custom settings file by hand leaves it.
+func (e *fakeSQLEnv) pinOwner(path string) {
+	if e.owners == nil {
+		e.owners = map[string]string{}
+	}
+	e.owners[path] = bbsql.FolderOwnerSID()
+}
+
 // acl returns the fake access list of path, seeded the way the host install
 // leaves a Program Files object: explicit full control for SYSTEM and
 // Administrators and nothing for anybody else.
@@ -368,6 +377,9 @@ func TestInstallSQLBindsGivenConfigPath(t *testing.T) {
 	if err := SaveConfig(other, g.cfg, false); err != nil {
 		t.Fatal(err)
 	}
+	// install-sql pins only the installed settings file; a custom one must
+	// already be administrator-owned, as an operator who locked it leaves it.
+	g.env.pinOwner(other)
 	if err := g.m.InstallSQL(g.cfg, other); err != nil {
 		t.Fatal(err)
 	}
@@ -1681,6 +1693,9 @@ func TestRemoveSQLRevokesTheRecordedConfig(t *testing.T) {
 	if err := SaveConfig(other, g.cfg, false); err != nil {
 		t.Fatal(err)
 	}
+	// install-sql pins only the installed settings file; a custom one must
+	// already be administrator-owned, as an operator who locked it leaves it.
+	g.env.pinOwner(other)
 	if err := g.m.InstallSQL(g.cfg, other); err != nil {
 		t.Fatal(err)
 	}
@@ -1835,5 +1850,44 @@ func TestEnableSQLSucceedsOnAHealthyHost(t *testing.T) {
 		if g.env.verifyCalls[i] != p {
 			t.Fatalf("proof %d was asked of %q, want %q (%v)", i, g.env.verifyCalls[i], p, g.env.verifyCalls)
 		}
+	}
+}
+
+// REG-1 follow-up: install-sql pins ONLY the installed settings file. A custom
+// --config that an ordinary account still owns is refused as SEC-1 demands, and
+// the installer does not take it over by locking it first.
+func TestInstallSQLDoesNotLockACustomSettingsFile(t *testing.T) {
+	g := newSQLRig(t)
+	other := filepath.Join(t.TempDir(), "other-blackbox.json")
+	if err := SaveConfig(other, g.cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	err := g.m.InstallSQL(g.cfg, other)
+	if installReason(t, err) != ReasonOther {
+		t.Fatalf("a user-owned custom settings file was accepted: %v", err)
+	}
+	if len(g.env.settingsLocks) != 0 {
+		t.Fatalf("install-sql locked a custom settings file: %v", g.env.settingsLocks)
+	}
+	if owner := g.env.ownerOf(other); owner != sidInstallingUser {
+		t.Fatalf("the custom settings file changed owner to %q", owner)
+	}
+	if len(g.svc.calls) != 0 || len(g.env.sqlLocked) != 0 || len(g.env.sqlGranted) != 0 || len(g.env.markerLocks) != 0 {
+		t.Fatalf("something was changed on a refused custom config: %v %v %v %v",
+			g.svc.calls, g.env.sqlLocked, g.env.sqlGranted, g.env.markerLocks)
+	}
+}
+
+// The installed-path match ignores case and redundant separators, as Windows does.
+func TestIsInstalledConfigPath(t *testing.T) {
+	prog := filepath.Join(t.TempDir(), "Unravis Blackbox")
+	if !isInstalledConfigPath(prog, filepath.Join(prog, ConfigFileName)) {
+		t.Fatal("the installed settings file was not recognised")
+	}
+	if !isInstalledConfigPath(prog, strings.ToUpper(filepath.Join(prog, ".", ConfigFileName))) {
+		t.Fatal("case or a redundant segment changed the answer")
+	}
+	if isInstalledConfigPath(prog, filepath.Join(prog, "other.json")) {
+		t.Fatal("a different file was taken for the installed settings file")
 	}
 }
