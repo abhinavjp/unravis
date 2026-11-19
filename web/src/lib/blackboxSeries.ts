@@ -20,11 +20,13 @@ export interface SeriesDump { name: string; size: number; mtime: string; target?
 export interface SeriesAnswer {
   start: string; end: string; bucketSeconds: number; intervalSeconds: number; samples: number; first?: string; last?: string;
   lines: SeriesLine[]; groups: SeriesGroupCover[]; processes: SeriesProc[]; eventIds: SeriesEventId[]; dumps: SeriesDump[];
-  gaps: SeriesGap[]; markers: SeriesMarker[]; truncated?: boolean;
+  gaps: SeriesGap[]; markers: SeriesMarker[]; truncated?: boolean; state?: { state: string; label: string; detail: string; tone: string };
   read: { files: number; samples: number; torn: number; dropped: string[] | null; missing: string[] | null };
 }
 export interface SeriesRequest { start: string; end: string; points?: number }
 
+/** An own property of a plain lookup table, never one inherited from Object (recorded text can say "constructor"). */
+export const own = <T>(rec: Record<string, T>, key: unknown): T | undefined => (typeof key === 'string' && Object.prototype.hasOwnProperty.call(rec, key) ? rec[key] : undefined);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isArr = Array.isArray;
 const isPoint = (p: unknown): p is SeriesPoint => isArr(p) && p.length === 4 && p.every((x) => typeof x === 'number' && Number.isFinite(x));
@@ -46,8 +48,11 @@ export function readSeriesAnswer(v: unknown): SeriesAnswer | null {
     start: v.start, end: v.end, bucketSeconds: v.bucketSeconds, intervalSeconds: typeof v.intervalSeconds === 'number' ? v.intervalSeconds : 0,
     samples: v.samples, first: typeof v.first === 'string' ? v.first : undefined, last: typeof v.last === 'string' ? v.last : undefined,
     lines: v.lines as SeriesLine[], groups: v.groups as SeriesGroupCover[], processes: (isArr(v.processes) ? v.processes : []) as SeriesProc[],
-    eventIds: (isArr(v.eventIds) ? v.eventIds : []) as SeriesEventId[], dumps: (isArr(v.dumps) ? v.dumps : []) as SeriesDump[],
-    gaps: v.gaps as SeriesGap[], markers: (isArr(v.markers) ? v.markers : []) as SeriesMarker[], truncated: v.truncated === true,
+    eventIds: (isArr(v.eventIds) ? v.eventIds : []).filter((e): e is SeriesEventId => isObj(e) && [e.channel, e.eventId, e.level, e.count].every((n) => typeof n === 'number' && Number.isFinite(n))),
+    dumps: (isArr(v.dumps) ? v.dumps : []).filter((d): d is SeriesDump => isObj(d) && typeof d.name === 'string' && typeof d.mtime === 'string' && typeof d.size === 'number'),
+    state: isObj(v.state) && typeof v.state.label === 'string' ? { state: typeof v.state.state === 'string' ? v.state.state : '', label: v.state.label, detail: typeof v.state.detail === 'string' ? v.state.detail : '', tone: typeof v.state.tone === 'string' ? v.state.tone : '' } : undefined,
+    gaps: (v.gaps as unknown[]).filter((g): g is SeriesGap => isObj(g) && typeof g.from === 'string' && typeof g.to === 'string' && typeof g.seconds === 'number'),
+    markers: (isArr(v.markers) ? v.markers : []).filter((m): m is SeriesMarker => isObj(m) && typeof m.t === 'string' && typeof m.kind === 'string'), truncated: v.truncated === true,
     read: {
       files: typeof read.files === 'number' ? read.files : 0, samples: typeof read.samples === 'number' ? read.samples : 0,
       torn: typeof read.torn === 'number' ? read.torn : 0,
@@ -120,9 +125,9 @@ function split(key: string): { group: string; where: string; field: string } {
 export function seriesName(key: string): { name: string; where: string; group: string } {
   const { group, where, field } = split(key);
   if (group === 'tcp' && where === 'states') return { name: 'Connections in state ' + field, where: '', group };
-  if (group === 'events' && /^level\d$/.test(field)) return { name: (EVENT_LEVELS[field.slice(5)] ?? 'Level ' + field.slice(5)) + ' events', where: '', group };
-  if (group === 'diskCpu' && where === 'cpu') return { name: FIELD_NAMES[field] ?? field, where: '', group };
-  return { name: FIELD_NAMES[field] ?? field, where, group };
+  if (group === 'events' && /^level\d$/.test(field)) return { name: (own(EVENT_LEVELS, field.slice(5)) ?? 'Level ' + field.slice(5)) + ' events', where: '', group };
+  if (group === 'diskCpu' && where === 'cpu') return { name: own(FIELD_NAMES, field) ?? field, where: '', group };
+  return { name: own(FIELD_NAMES, field) ?? field, where, group };
 }
 export const seriesTitle = (key: string): string => {
   const n = seriesName(key);
@@ -204,15 +209,16 @@ export function gapRanges(gaps: SeriesGap[]): Array<{ fromMs: number; toMs: numb
 }
 
 /** Last, average, lowest and highest over the shown points (Perfmon's bar under the chart). The average weighs every bucket the same. */
-export function lineFigures(pts: SeriesPoint[], fromMs = -Infinity, toMs = Infinity): { last: number | null; avg: number | null; min: number | null; max: number | null; n: number } {
-  let sum = 0, n = 0, min = Infinity, max = -Infinity, last: number | null = null;
+export function lineFigures(pts: SeriesPoint[], fromMs = -Infinity, toMs = Infinity): { last: number | null; avg: number | null; min: number | null; max: number | null; maxAt: number | null; n: number } {
+  let sum = 0, n = 0, min = Infinity, max = -Infinity, last: number | null = null, maxAt: number | null = null;
   for (const p of pts) {
     if (p[0] < fromMs || p[0] > toMs) continue;
     sum += p[1]; n++;
-    min = Math.min(min, p[2]); max = Math.max(max, p[3]);
+    min = Math.min(min, p[2]);
+    if (p[3] > max) { max = p[3]; maxAt = p[0]; }
     last = p[1];
   }
-  return n ? { last, avg: sum / n, min, max, n } : { last: null, avg: null, min: null, max: null, n: 0 };
+  return n ? { last, avg: sum / n, min, max, maxAt, n } : { last: null, avg: null, min: null, max: null, maxAt: null, n: 0 };
 }
 
 /** The lines the view starts with: the four Perfmon starts with for a slow server, in this order, when they were recorded. */
@@ -233,7 +239,7 @@ export function pickerGroups(lines: SeriesLine[]): Array<{ group: string; title:
   }
   const order = [...GROUP_ORDER, ...[...by.keys()].filter((g) => !GROUP_ORDER.includes(g)).sort()];
   return order.filter((g) => by.has(g)).map((g) => ({
-    group: g, title: GROUP_TITLES[g] ?? g,
+    group: g, title: own(GROUP_TITLES, g) ?? g,
     lines: by.get(g)!.slice().sort((a, b) => seriesTitle(a.key).localeCompare(seriesTitle(b.key)))
   }));
 }

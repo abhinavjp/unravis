@@ -122,6 +122,12 @@ type simRec struct {
 	// the recording (a share that dropped).
 	DropBefore time.Duration
 	Key        string
+	// Dumps, WinEvents and Markers make the recording carry crash dumps, Windows events and recorder notes, so the
+	// "What happened" view has something to show in the demo. Events ride on the sample whose tick holds their time;
+	// dumps are listed on every sample from their time on, as the real folder scan does. None of them is a real reading.
+	Dumps     []blackbox.DumpEntry
+	WinEvents []blackbox.EventEntry
+	Markers   []blackbox.Event
 }
 
 func f64(v float64) *float64 { return &v }
@@ -176,6 +182,23 @@ func (r simRec) build() *simBB {
 			{PID: 1204, Name: top, CPUPct: f64(share), Threads: 24},
 			{PID: 4, Name: "System", CPUPct: f64(1), Threads: 180},
 		}
+		for _, d := range r.Dumps {
+			// Like the real collector, every scan lists the folder's dumps so far (not only new ones), old ones included.
+			if !d.MTime.After(t) {
+				if s.Dumps == nil {
+					s.Dumps = &blackbox.DumpsGroup{}
+				}
+				s.Dumps.Dumps = append(s.Dumps.Dumps, d)
+			}
+		}
+		for _, e := range r.WinEvents {
+			if !e.T.Before(t) && e.T.Before(t.Add(step)) {
+				if s.Events == nil {
+					s.Events = &blackbox.EventsGroup{}
+				}
+				s.Events.Events = append(s.Events.Events, e)
+			}
+		}
 		line, _ := json.Marshal(s)
 		h := t.Truncate(time.Hour)
 		buf := byHour[h]
@@ -204,7 +227,7 @@ func (r simRec) build() *simBB {
 		Created: r.Start.UTC(), Updated: r.End.UTC(), State: "running",
 		Runs:   []blackbox.RunEntry{{ID: "run-1", Start: r.Start.UTC(), Version: "0.9.0"}},
 		Gaps:   blackbox.DetectGaps(times, iv, blackbox.CauseLate),
-		Events: []blackbox.Event{},
+		Events: append([]blackbox.Event{}, r.Markers...),
 	}
 	if r.Stopped {
 		m.State = "stopped"
@@ -698,6 +721,21 @@ func demoBlackboxes(now time.Time) (*memBBStore, *simWorld, *simPC) {
 			Key: "ubk-demo-a-NOT-A-REAL-KEY",
 			// A short hiccup (90 seconds) well before the busy stretch.
 			Skip: [][2]time.Time{{now.Add(-3 * time.Hour), now.Add(-3*time.Hour + 90*time.Second)}},
+			// Things that happened, for the "What happened" view: two crash dumps, a restart and some Windows events.
+			Dumps: []blackbox.DumpEntry{
+				{Name: "old-crash-from-last-month.dmp", Size: 77 << 20, MTime: now.Add(-30 * 24 * time.Hour).Truncate(time.Second), Target: "w3wp.exe"},
+				{Name: "w3wp.exe.4412.dmp", Size: 412 << 20, MTime: now.Add(-100 * time.Minute).Truncate(time.Second), Target: "w3wp.exe"},
+				{Name: "<img src=x onerror=alert(1)>.dmp", Size: 9 << 20, MTime: now.Add(-40 * time.Minute).Truncate(time.Second)},
+			},
+			WinEvents: []blackbox.EventEntry{
+				{Channel: 1, EventID: 41, Level: 1, Count: 1, T: now.Add(-3*time.Hour + 2*time.Minute).Truncate(time.Second)},
+				{Channel: 1, EventID: 7034, Level: 2, Count: 3, T: now.Add(-100 * time.Minute).Truncate(time.Second)},
+				{Channel: 2, EventID: 1000, Level: 2, Count: 2, T: now.Add(-100 * time.Minute).Truncate(time.Second)},
+				{Channel: 2, EventID: 1002, Level: 3, Count: 1, T: now.Add(-70 * time.Minute).Truncate(time.Second)},
+			},
+			Markers: []blackbox.Event{
+				{T: now.Add(-3*time.Hour + 90*time.Second), Kind: blackbox.EventRestart, Detail: "after-crash"},
+			},
 		}},
 		{name: "web-b", loc: `\\web-b\UnravisBlackbox`, rec: simRec{
 			Name: "web-b", Start: four, End: now.Add(-2 * time.Minute), Now: now, CPU: spike, Busy: "w3wp",
