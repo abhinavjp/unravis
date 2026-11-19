@@ -14,6 +14,8 @@
   import HostCard from './BlackboxHostCard.svelte';
   import CaseUse from './BlackboxCaseUse.svelte';
   import ReadKey from './BlackboxReadKey.svelte';
+  import BlackboxCharts from './BlackboxCharts.svelte';
+  import { BBC_TEXT } from '../lib/copy/blackboxChartsCopy';
 
   // The Blackbox page: the list with a sticker per state, the Place pop-up, Add by folder, share or address, a status
   // screen per Blackbox with the actions that exist for it, Remove and Snapshot. It is not part of a case.
@@ -34,6 +36,8 @@
   let view = $state<View>({ kind: 'list' });
   // The Place pop-up opens over whatever the drawer shows, so closing it leaves the drawer where it was (OD-9: the drawer wizard is gone).
   let placeOpen = $state(false);
+  // The charts pop-up, for one Blackbox. It opens over the drawer and closing it leaves the drawer as it was.
+  let chartsFor = $state<BlackboxItem | null>(null);
   let scanning = $state(false);
   let scanNote = $state('');
   let working = $state('');
@@ -405,8 +409,11 @@
         {#key item.id}<CaseUse {item} />{/key}
 
         {#if item.facts}
+          {#if item.facts.lastSample}<div class="bb-confirm">
+            <p class="bb-note">{BBC_TEXT.openHint}</p>
+            <div class="bb-actions"><button type="button" class="secondary-button" onclick={() => { chartsFor = item; }}>{BBC_TEXT.open}</button></div>
+          </div>{/if}
           <HostCard {item} />
-          <!-- PROTOTYPE (throwaway, dev only): remove after the owner picks a layout -->
         {/if}
       </section>
 
@@ -474,6 +481,7 @@
     {/if}
   </div>
 </Drawer>
+{#if chartsFor}{#key chartsFor.id}<BlackboxCharts item={chartsFor} onClose={() => { chartsFor = null; }} />{/key}{/if}
 
 <style>
   .bb-body { display: grid; gap: var(--space-4); align-content: start; min-width: 0; margin-top: var(--space-3); }

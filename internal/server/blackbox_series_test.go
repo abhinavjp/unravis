@@ -126,3 +126,25 @@ func TestBBSeriesUnitMsNeedsCapitalMs(t *testing.T) {
 		}
 	}
 }
+
+// The charts view's log scale hides a 0 and says how many it hid, so the server must keep a real 0 as a point
+// (a 0 is a reading) and leave out only what was not read.
+func TestSeriesKeepsARealZeroAndLeavesOutWhatWasNotRead(t *testing.T) {
+	start := time.Date(2026, 11, 18, 6, 0, 0, 0, time.UTC)
+	samples := []blackbox.Sample{
+		{V: 1, Run: "r1", Seq: 1, T: start, CPU: f64(0), DiskQueue: f64(0)},
+		{V: 1, Run: "r1", Seq: 2, T: start.Add(30 * time.Second), CPU: f64(5)},
+	}
+	win := bbWindow{Start: start, End: start.Add(time.Minute)}
+	ans := buildBBSeries(blackbox.Manifest{IntervalSeconds: 30}, samples, blackbox.ReadReport{}, blackbox.StateInfo{}, win, 2)
+	byKey := map[string]bbSeriesLine{}
+	for _, l := range ans.Lines {
+		byKey[l.Key] = l
+	}
+	if cpu := byKey["cpu"]; len(cpu.Points) != 2 || cpu.Points[0][1] != 0 {
+		t.Fatalf("cpu points = %v, want a 0 then a 5", cpu.Points)
+	}
+	if dq := byKey["diskQueue"]; len(dq.Points) != 1 || dq.Points[0][1] != 0 {
+		t.Fatalf("diskQueue points = %v, want one 0 and no point where it was not read", dq.Points)
+	}
+}
