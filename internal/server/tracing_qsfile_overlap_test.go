@@ -217,3 +217,46 @@ func TestQSFileShortLookbackWithLongIntervalNamesTheCap(t *testing.T) {
 		t.Fatalf("complete=%v truncated=%v reason=%q; want the cap named", got.Complete, got.Truncated, got.Reason)
 	}
 }
+
+// BL-037: an interval exactly as long as the shortened look-back starts at the
+// read's first instant and cannot reach the window, so seeing one (15-minute
+// blocks with a 15-minute read) does not make the lane incomplete.
+func TestQSFileShortLookbackWithIntervalAsLongAsItIsComplete(t *testing.T) {
+	axis := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(3*time.Hour))
+	rows := make([]evidence.Event, 0, casestore.MaxEventQuery)
+	for i := 0; i < casestore.MaxEventQuery; i++ {
+		rows = append(rows, qsFileTestEvent(axis.Start.Add(-6*time.Hour), "1", 20, 90)) // 15-minute blocks
+	}
+	c := qsFileTestCase(rows)
+	got, err := tracingQSFileLane(context.Background(), c, axis, qsFileTestSelection(), tracingLane{Key: calltrace.LaneSQL, Complete: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got.Reason, "50,000-row") {
+		t.Fatalf("a false cap note: %q", got.Reason)
+	}
+}
+
+// BL-037: a long block seen only in the capped day read (not in the one-hour
+// read) still counts: it is kept when it reaches the window, and a block longer
+// than the shorter read makes the lane say an interval may be missing.
+func TestQSFileLongBlockOnlyInCappedDayReadIsKept(t *testing.T) {
+	axis := newTracingAxis(tracingLaneT0, tracingLaneT0.Add(3*time.Hour))
+	long := qsFileTestEvent(axis.Start.Add(-3*time.Hour), "30", 20, 90)
+	long.End = axis.Start.Add(30 * time.Minute) // a 3.5-hour block that began outside the 1-hour read
+	rows := []evidence.Event{long}
+	for i := 0; i < casestore.MaxEventQuery; i++ {
+		rows = append(rows, qsFileTestEvent(axis.Start.Add(-2*time.Hour), "1", 20, 90))
+	}
+	c := qsFileTestCase(rows)
+	got, err := tracingQSFileLane(context.Background(), c, axis, qsFileTestSelection(), tracingLane{Key: calltrace.LaneSQL, Complete: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tracingBucketSum(got) == 0 {
+		t.Fatal("the long block that reaches the window was dropped")
+	}
+	if got.Complete || !strings.Contains(got.Reason, "50,000-row") {
+		t.Fatalf("complete=%v reason=%q; want a missing-interval note naming the cap", got.Complete, got.Reason)
+	}
+}

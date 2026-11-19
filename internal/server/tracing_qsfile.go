@@ -35,12 +35,17 @@ var qsFileEarlySteps = []time.Duration{qsFileLookback, time.Hour, 15 * time.Minu
 
 // qsFileEarlyRead reads the intervals that began before the window and still run
 // into it (BL-037). It starts with the full day look-back and, while a read is
-// capped, retries with a shorter one (qsFileEarlySteps). The result is the
-// shortest read's rows that end after the window start. missed is true when an
-// interval may still be missing: the last read was capped or ran out of time, or
-// a shorter look-back was used and an interval at least that long was seen (so an
-// earlier one of the same length may reach the window). capped says the row cap
-// was the cause, so the lane can name it.
+// capped, retries with a shorter one (qsFileEarlySteps). A capped read still
+// counts: the rows it holds that began before the next, shorter read starts are
+// kept when they end after the window start, and every row it holds is measured,
+// so a long interval seen only there still counts toward missed. The shorter read
+// covers the rest, so no row is kept twice.
+//
+// missed is true when an interval may still be absent: the last read was capped or
+// ran out of time, or a shorter look-back was used and an interval LONGER than it
+// was seen (one exactly as long starts at the read's first instant and cannot
+// reach the window, so it is not counted). capped says the row cap was involved,
+// so the lane can name it.
 func qsFileEarlyRead(ctx context.Context, c casestore.Case, axis tracingAxis, inWindow []evidence.Event) (early []evidence.Event, capped, missed bool, err error) {
 	var longest time.Duration
 	note := func(evs []evidence.Event) {
@@ -59,12 +64,17 @@ func qsFileEarlyRead(ctx context.Context, c casestore.Case, axis tracingAxis, in
 		if rerr != nil {
 			return nil, false, false, rerr
 		}
+		note(rows)
 		if rowsCapped && i+1 < len(qsFileEarlySteps) {
 			capped = true
+			nextFrom := axis.Start.Add(-qsFileEarlySteps[i+1])
+			for _, e := range rows {
+				if e.Start.Before(nextFrom) && e.End.After(axis.Start) {
+					early = append(early, e)
+				}
+			}
 			continue
 		}
-		note(rows)
-		early = early[:0]
 		for _, e := range rows {
 			if e.End.After(axis.Start) {
 				early = append(early, e)
@@ -72,7 +82,7 @@ func qsFileEarlyRead(ctx context.Context, c casestore.Case, axis tracingAxis, in
 		}
 		capped = capped || rowsCapped
 		shortened := back < qsFileLookback
-		missed = rowsCapped || timedOut || shortened && longest >= back
+		missed = rowsCapped || timedOut || shortened && longest > back
 		if !missed {
 			capped = false
 		}

@@ -652,3 +652,12 @@ test('UX-1: end to end — counts on the wire become batches/s in the strip, the
   assert.equal(gap.height, null);
   assert.equal(mm.cellTitle(sql, gap.start, null, null), T.mapCellNone('Database', '10:05'));
 });
+
+test('BL-037: an imported Query Store file lane is not averaged back into blocks; a saved day still is', () => {
+  const busy = (list) => list.map((b, i) => ({ start: iso(T0 + i * MIN), count: 0, busyMs: b }));
+  const mk = (reasonCode) => buildLane({ key: 'sql', state: 'events', reasonCode, blockSeconds: 900, buckets: busy([60000, 300000, 120000]), events: [] }, 'sql', WINDOW, T0, T0 + SPAN);
+  const file = mk('qs-file').cells.slice(0, 3).map((c) => c.atOnce);
+  assert.deepEqual(file, [1, 5, 2], 'the server already spread the minutes; each keeps its own value');
+  const saved = mk('held-sql').cells.slice(0, 3).map((c) => c.atOnce);
+  assert.equal(new Set(saved).size, 1, 'a saved day is still averaged over its block');
+});
