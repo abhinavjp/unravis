@@ -173,9 +173,16 @@ func TestAddressOnlyDropsAPasswordWithSlashAndQueryMark(t *testing.T) {
 		{"mongodb://reader:ab/c?d@db.example/admin", "mongodb://db.example/admin", "ab/c"},
 		{"mongodb://reader:ab/c#d@db.example", "mongodb://db.example", "ab/c"},
 		{"mongodb://reader:ab/c?d@e@db.example:27017/admin?tls=true", "mongodb://db.example:27017/admin?tls=true", "ab/c"},
+		{"mongodb://user:pw?x@host/db", "mongodb://host/db", "pw"},
+		{"mongodb://user:pw#x@host/db", "mongodb://host/db", "pw"},
+		{"mongodb://user:pw?x@host:27017/db?tls=true", "mongodb://host:27017/db?tls=true", "pw"},
+		// The first "@" may sit inside the password: the real host is after the last "@" before the path.
+		{"mongodb://user:pw/x@y?z@host/db", "mongodb://host/db", "pw"},
 		// Still kept whole: no login at all.
 		{"mongodb://db.example:27017/app?x=a@b", "mongodb://db.example:27017/app?x=a@b", ""},
 		{"mongodb://db.example/admin#a@b", "mongodb://db.example/admin#a@b", ""},
+		{"mongodb://db.example?appName=a@b", "mongodb://db.example?appName=a@b", ""},
+		{"mongodb://db.example:27017?appName=a@b", "mongodb://db.example:27017?appName=a@b", ""},
 	} {
 		got := addressOnly(tc.in)
 		if got != tc.want {

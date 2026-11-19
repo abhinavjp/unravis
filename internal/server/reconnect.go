@@ -124,12 +124,16 @@ func addressOnly(uri string) string {
 	return uri[:scheme+3] + authority + rest[end:]
 }
 
-// slashPasswordEnd returns the index in rest of the "@" that ends a login whose password holds a "/", or -1. end is where the authority
-// would end by the plain URL rule. It says yes only when the text up to the first "/" has no "@" and reads as a login ("user:pw", not a
-// host list "host:27017"), or when a database name between that "/" and the "@" would hold a "/" (a database name never does).
+// slashPasswordEnd returns the index in rest of the "@" that ends a login whose password holds a "/", "?" or "#", or -1. end is where the
+// authority would end by the plain URL rule. It says yes only when the text before it has no "@" and reads as a login ("user:pw", not a host
+// list "host:27017"), or when a database name between a "/" and the "@" would hold a "/" (a database name never does).
 func slashPasswordEnd(rest string, end int) int {
-	if end >= len(rest) || rest[end] != '/' || strings.Contains(rest[:end], "@") {
+	if end >= len(rest) || strings.Contains(rest[:end], "@") {
 		return -1
+	}
+	if rest[end] != '/' {
+		// "user:pw?x@host/db" and "user:pw#x@host/db": the authority ends at the "?" or "#" inside the password (BL-036).
+		return loginEnd(rest, end)
 	}
 	stop := len(rest)
 	if i := strings.IndexAny(rest, "?#"); i >= 0 {
@@ -137,31 +141,33 @@ func slashPasswordEnd(rest string, end int) int {
 	}
 	at := strings.LastIndex(rest[:stop], "@")
 	if at <= end {
-		// The password may hold an unescaped "?" or "#" too ("user:pw/x?y@host"), so the "@" sits after it (BL-036). That only
-		// reads as a login when the text before the "/" cannot be a host and port; the login then ends at the first run of "@"s.
-		if !loginShape(rest[:end]) {
-			return -1
-		}
-		first := strings.Index(rest[end:], "@")
-		if first < 0 {
-			return -1
-		}
-		at = end + first
-		for {
-			next := strings.Index(rest[at+1:], "@")
-			if next < 0 || strings.ContainsAny(rest[at+1:at+1+next], "/?#") {
-				return at
-			}
-			at += 1 + next
-		}
+		// The password may hold an unescaped "?" or "#" too ("user:pw/x?y@host"), so the "@" sits after it (BL-036).
+		return loginEnd(rest, end)
 	}
 	if strings.Contains(rest[end+1:at], "/") {
 		return at
 	}
+	return loginEnd(rest, end)
+}
+
+// loginEnd finds where a login ends when its password broke the authority early. It only applies when the text before end reads as
+// "user:password". The login starts the real address at the last "@" before the first "/" that follows the first "@" (the path), so an "@"
+// inside the password, or in a "?" part before the path, is cut with it. An address with no "/" after the login ends at its last "@".
+// Limit: a query with an "@" and no path after a login is read as part of the password.
+func loginEnd(rest string, end int) int {
 	if !loginShape(rest[:end]) {
 		return -1
 	}
-	return at
+	first := strings.Index(rest[end:], "@")
+	if first < 0 {
+		return -1
+	}
+	first += end
+	limit := len(rest)
+	if slash := strings.Index(rest[first+1:], "/"); slash >= 0 {
+		limit = first + 1 + slash
+	}
+	return strings.LastIndex(rest[:limit], "@")
 }
 
 // loginShape says the text reads as "user:password", never as a host list "host:27017": it has a ":" whose tail is not a port.
