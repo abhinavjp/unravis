@@ -47,7 +47,7 @@ export const BBC_TEXT = {
   procPriv: 'Private memory (Private Bytes)',
   procNone: 'No program was recorded in this range.',
   procHelp: 'The eight programs with the highest processor use in this range. The recorder lists the busiest and largest programs at each sample, so a program shows only while it was near the top.',
-  notReadGroups: 'Not read in this range',
+  notReadGroups: 'Not fully read in this range',
   sameAsPerfmon: 'Same counters as Perfmon. Names in brackets are what Perfmon calls them.',
   timesUtc: 'Times are UTC.'
 } as const;

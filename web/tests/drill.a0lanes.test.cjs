@@ -66,3 +66,19 @@ test('copy lint accepts the new copy entries', () => {
   const problems = lintScreenStrings(lanes.laneCopyEntries(), deck.terms);
   assert.deepEqual(problems, []);
 });
+
+test('BL-048: importedPartial is kept without a range, and the lane says the files have no known range', () => {
+  const base = { key: 'iis', label: 'Web server', state: 'no-data', buckets: [] };
+  const response = (laneExtra) => ({
+    window: { start: win.start, end: win.end, axisStart: win.start, axisEnd: win.end, bucketSeconds: 60 },
+    lanes: [{ ...base, ...laneExtra }]
+  });
+  const parsed = model.parseTracing(response({ importedPartial: true })).lanes[0];
+  assert.equal(parsed.importedPartial, true);
+  assert.match(lanes.laneRangeUnknownLine(parsed), /no recorded time range/);
+  // with a known range the existing "some files" sentence covers it, so no second note
+  assert.equal(lanes.laneRangeUnknownLine({ importedPartial: true, ...span }), '');
+  assert.equal(lanes.laneRangeUnknownLine({ importedPartial: true, disabled: true }), '');
+  assert.equal(lanes.laneRangeUnknownLine({}), '');
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src/components/TracingChart.svelte'), 'utf8'), /data-testid="range-unknown"/);
+});

@@ -169,3 +169,9 @@ test('alignedRequest makes each point a whole number of recorder readings and ne
   const week = s.alignedRequest(end - 7 * 24 * 3600_000 + 60_000, end, 15);
   assert.ok(week.endMs - week.startMs <= 7 * 24 * 3600_000, 'stays inside 7 days');
 });
+
+test('a group read only in part says how many readings were partial, and an older server without the count says nothing', () => {
+  assert.match(s.coverNote({ group: 'tcp', read: 10, missing: 0, slow: 0, busy: 0, partial: 3 }), /^3 of 10 readings covered only part/);
+  assert.match(s.coverNote({ group: 'tcp', read: 4, missing: 0, slow: 0, busy: 0, partial: 4 }), /^every reading covered only part/);
+  assert.equal(s.coverNote({ group: 'tcp', read: 4, missing: 0, slow: 0, busy: 0 }), null);
+});

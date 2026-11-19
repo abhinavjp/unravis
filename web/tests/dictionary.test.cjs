@@ -37,7 +37,7 @@ const SEED = [
   { id: 'latency.p50', term: 'Typical time (P50)', plain: 'Half of the requests finished faster than this.' },
   { id: 'latency.p95', term: 'Slower-end time (P95)', plain: 'About 95 of every 100 requests finished within this time.' },
   { id: 'latency.p95Ratio', term: 'Slower-end spread', plain: 'How much longer the slower end took than the typical request.' },
-  { id: 'lane.api-audit', term: 'API audit', plain: 'Requests recorded in the API audit log.' },
+  { id: 'lane.api-audit', term: 'API audit', plain: 'Requests recorded in the API audit log. A red diamond marks a request far slower than usual in its slot.' },
   { id: 'lane.sql', term: 'SQL', plain: 'Queries recorded by the SQL source.' },
   { id: 'lane.iis', term: 'IIS', plain: 'Requests recorded in the web server log.' },
   { id: 'lane.mongo', term: 'Mongo', plain: 'Operations recorded by the Mongo source.' },

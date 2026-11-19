@@ -10,7 +10,8 @@ export type SeriesUnit = 'pct' | 'bytes' | 'bytesPerSec' | 'ms' | 'sec' | 'perSe
 export type SeriesPoint = [number, number, number, number];
 
 export interface SeriesLine { key: string; group: string; label: string; unit: string; points: SeriesPoint[] }
-export interface SeriesGroupCover { group: string; read: number; missing: number; slow: number; busy: number }
+/** partial: samples whose reading covered only part of what it sums (some network adapters, for example). Absent from an older server. */
+export interface SeriesGroupCover { group: string; read: number; missing: number; slow: number; busy: number; partial?: number }
 export interface SeriesProc { name: string; peakCpuPct: number; cpu: SeriesPoint[]; workingSet: SeriesPoint[]; privateBytes: SeriesPoint[] }
 export interface SeriesGap { from: string; to: string; seconds: number; cause: string }
 export interface SeriesMarker { t: string; kind: string; detail?: string }
@@ -259,7 +260,12 @@ export function unitStrips(keys: string[], lines: SeriesLine[]): Array<{ unit: S
 
 /** A group with samples but no readings in the window: why, in plain words. Null when it was read at least once or never asked for. */
 export function coverNote(c: SeriesGroupCover): string | null {
-  if (c.read > 0) return null;
+  if (c.read > 0) {
+    const p = c.partial ?? 0;
+    if (p <= 0) return null;
+    return p === c.read ? 'every reading covered only part of what it adds up (for example some network adapters), so totals are low'
+      : p + ' of ' + c.read + ' readings covered only part of what they add up (for example some network adapters), so those totals are low';
+  }
   if (c.slow > 0) return 'skipped: the reading took too long, so the recorder left it out to stay light';
   if (c.busy > 0) return 'skipped: the last reading was still running';
   if (c.missing > 0) return 'could not be read on this server';

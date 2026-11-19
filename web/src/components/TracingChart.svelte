@@ -40,7 +40,7 @@
   import type { TracingLane, TracingLaneKey, TracingResponse } from '../lib/tracing/model';
   import {
     LANE_ASK, LANE_NAME, LANE_ORDER, MIXED_NOTE, PANEL_TITLE, READ_TEXT,
-    anyLaneCutShort, axisCaption, barHeightPct, barMax, barSizeParts, barsFor, hasAnyData, isLaneVisible, laneChunkLine, laneCutShort, laneDrawsBars, laneNote, laneNoteTone, laneImportedLine, laneStatusLineFor,
+    anyLaneCutShort, axisCaption, barHeightPct, barMax, barSizeParts, barsFor, hasAnyData, isLaneVisible, laneChunkLine, laneCutShort, laneDrawsBars, laneNote, laneNoteTone, laneImportedLine, laneRangeUnknownLine, laneStatusLineFor,
     outsideSlots, readSummary, showsProvenance, slotGrid, slotOutside, slotStartMs, tickBottomPct, truncatedNote, unreadRuns, unreadSlots, widthLabel, yTicks, type Bar
   } from '../lib/tracing/lanes';
   import { formatTime } from '../lib/time';
@@ -627,6 +627,7 @@
           <small class="origin">{lane.origin === 'live' ? TOOLTIP_TEXT.readJustNow : TOOLTIP_TEXT.fromSavedLogs} · {at(lane.asOf)}</small>
         {/if}
         {#if chunkLine}<small class="chunk-line" data-testid="chunk-line" data-lane={lane.key}>{chunkLine}</small>{/if}
+        {#if laneRangeUnknownLine(lane)}<small class="chunk-line" data-testid="range-unknown" data-lane={lane.key}>{laneRangeUnknownLine(lane)}</small>{/if}
         {#if lane.sourcesRead && lane.sourcesRead.length > 0}
           <small class="read-from" data-testid="lane-sources-read" data-lane={lane.key}>{SOURCES_TEXT.readLabel}: {lane.sourcesRead.map((ref) => ref.label || ref.sourceId).join(', ')}</small>
         {/if}
