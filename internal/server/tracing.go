@@ -1134,11 +1134,18 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 	sqlBusy, _ := h.repo.(audit.SQLBusyReader)
 	// The selected AUDIT source ids: the same ids the audit (Rollup) lane reads
 	// below. The api-seen fallback must read only these, so with two audit sources
-	// connected it does not sum the busy time of both (DATA-02). Empty — no audit
-	// source selected or listed — leaves SQLBusy reading every connected source.
+	// connected it does not sum the busy time of both (DATA-02). With no explicit
+	// selection, empty leaves SQLBusy reading every connected source, which is what
+	// "no selection" means. An explicit selection that names no audit source (only
+	// case files) makes no api-seen read at all (BL-029/BL-044): an empty id list
+	// would make SQLBusy read every connected source, none of which was selected.
+	// This mirrors the audit lane, which is left out in that case.
 	auditIDs := make([]string, len(auditRefs))
 	for i, ref := range auditRefs {
 		auditIDs[i] = ref.SourceID
+	}
+	if sel.Explicit && len(auditIDs) == 0 {
+		sqlBusy = nil
 	}
 	for _, lane := range lanes {
 		// The SQL lane's source chain (W12-03, documented in tracing_blackbox.go):
