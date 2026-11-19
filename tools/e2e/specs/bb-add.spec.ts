@@ -121,7 +121,7 @@ test('BB-06: an address needs the read key, which is masked until Show, and the 
   // The wrong box's key is refused; the right one reaches the Blackbox.
   await key.fill('ubk-demo-a-NOT-A-REAL-KEY');
   await again(dialog).click();
-  await expect(dialog.getByText('did not accept the read key')).toBeVisible();
+  await expect(dialog.getByText('did not accept the read key').first()).toBeVisible();
   await key.fill('ubk-demo-c-NOT-A-REAL-KEY');
   await again(dialog).click();
   await expect(dialog.getByText('Disk low')).toBeVisible();
@@ -233,162 +233,171 @@ test('BB-09c: Esc with a half-typed key closes the status pop-up, a second Esc t
   await expect(again.getByRole('button', { name: /^Open status: / })).toHaveCount(9);
 });
 
-test('BB-14: the place wizard has four named parts, saves nothing, and Leave set-up adds no row', async ({ page }) => {
+/* The Place pop-up (PR #13, BL-130). Steps: Name, Where, Record, SQL, Watch, Keep, Folder, Review. */
+const pop = (page: Page) => page.locator('dialog.pop[open]');
+const stepTitle = (page: Page) => pop(page).locator('h2').first();
+
+/** Opens Place, types the name and goes on to Where. */
+async function placeTo(page: Page, name: string, where: 'pack' | 'pc' = 'pack') {
+  const dialog = await openDrawer(page);
+  await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
+  await expect(stepTitle(page)).toHaveText('What do you call this Blackbox?');
+  await pop(page).getByLabel('Name', { exact: true }).fill(name);
+  await pop(page).getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(stepTitle(page)).toHaveText('Where should it run?');
+  await page.getByText(where === 'pack' ? 'On another server' : 'On this PC', { exact: true }).click();
+  return dialog;
+}
+
+/** Presses Next until the step with this title shows. */
+async function nextUntil(page: Page, title: string) {
+  for (let i = 0; i < 8 && (await stepTitle(page).innerText()) !== title; i++) {
+    await pop(page).getByRole('button', { name: 'Next', exact: true }).click();
+  }
+  await expect(stepTitle(page)).toHaveText(title);
+}
+
+test('BB-14: the place pop-up has eight named steps, saves nothing, and Leave adds no row', async ({ page, allow }) => {
+  // Review asks the server to check the settings; a demo run off Windows cannot read a D:\ path, so that answer may be 422.
+  allow(/\/api\/blackbox\/validate/, 'Review check of a Windows path on a non-Windows demo');
   const posts: string[] = [];
   page.on('request', (r) => {
     if (r.method() !== 'GET' && r.url().includes('/api/blackbox')) posts.push(r.method() + ' ' + new URL(r.url()).pathname);
   });
-  const dialog = await openDrawer(page);
-  await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
-  await expect(dialog.getByText('Nothing is saved until the last step.')).toBeVisible();
-  await expect(dialog.getByRole('list', { name: 'Part 1 of 4' }).getByRole('listitem')).toHaveText([/Name/, /Where/, /Settings/, /Review/]);
-  await dialog.getByLabel('Name', { exact: true }).fill('bb-test-1');
-  await dialog.getByRole('button', { name: 'Next: Where' }).click();
-  await expect(dialog.getByRole('list', { name: 'Part 2 of 4' })).toBeVisible();
-  await expect(dialog.getByText('Nothing is saved until the last step.')).toBeVisible();
-  await dialog.getByRole('radio', { name: /On another server \(pack\)/ }).check();
-  await dialog.getByRole('button', { name: 'Next: Settings' }).click();
-  await expect(dialog.getByRole('list', { name: 'Part 3 of 4' })).toBeVisible();
-  await dialog.getByRole('button', { name: 'Next: Review' }).click();
-  await expect(dialog.getByRole('list', { name: 'Part 4 of 4' })).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Download the pack' })).toBeVisible();
-  await expect(dialog.getByText('Nothing is saved until the last step.')).toBeVisible();
-  await dialog.getByRole('button', { name: 'Back' }).click();
-  await dialog.getByRole('button', { name: 'Back' }).click();
-  await dialog.getByRole('button', { name: 'Leave set-up' }).click();
+  const dialog = await placeTo(page, 'bb-test-1');
+  const rail = await pop(page).getByRole('button', { name: /, step \d/ }).evaluateAll((els) => els.map((e) => (e.getAttribute('aria-label') ?? '').replace(/, skipped$/, '')));
+  expect(rail).toEqual(['Name, step 1', 'Where, step 2', 'Record, step 3', 'SQL, step 4', 'Watch, step 5', 'Keep, step 6', 'Folder, step 7', 'Review, step 8']);
+  await expect(pop(page).getByText('Nothing saved until the last step')).toBeVisible();
+  await nextUntil(page, 'Check it, then place it');
+  await expect(pop(page).getByRole('button', { name: 'Build the pack' })).toBeVisible();
+  await pop(page).getByRole('button', { name: 'Close set-up' }).click();
+  await expect(page.getByRole('alertdialog', { name: 'Leave without placing it?' })).toBeVisible();
+  await page.getByRole('button', { name: 'Leave', exact: true }).click();
+  await expect(pop(page)).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: /^Open status: / })).toHaveCount(9);
   await expect(dialog.getByRole('button', { name: 'Open status: bb-test-1' })).toHaveCount(0);
-  expect(posts.filter((p) => !/\/blackbox\/validate$/.test(p)), 'only the name check was sent').toEqual([]);
+  expect(posts.filter((p) => !/\/blackbox\/validate$/.test(p)), 'only the settings check was sent').toEqual([]);
 });
 
-test('BB-14a: part 1 has no Back button, a reload drops the wizard, and nothing was saved', async ({ page }) => {
+test('BB-14a: step 1 has no Back button, a reload drops the pop-up, and nothing was saved', async ({ page }) => {
   const dialog = await openDrawer(page);
   await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
-  await expect(dialog.getByRole('button', { name: 'Back', exact: true })).toHaveCount(0);
-  await dialog.getByLabel('Name', { exact: true }).fill('bb-reload');
+  await expect(pop(page).getByRole('button', { name: 'Back', exact: true })).toHaveCount(0);
+  await pop(page).getByLabel('Name', { exact: true }).fill('bb-reload');
   await page.reload();
   const again = await openDrawer(page);
+  await expect(pop(page)).toHaveCount(0);
   await expect(again.getByRole('button', { name: /^Open status: / })).toHaveCount(9);
   await expect(again.getByRole('button', { name: 'Open status: bb-reload' })).toHaveCount(0);
 });
 
-test('BB-14b: Esc inside the wizard steps back one part instead of closing the drawer', async ({ page }) => {
-  const dialog = await openDrawer(page);
-  await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
-  await dialog.getByLabel('Name', { exact: true }).fill('bb-esc');
-  await dialog.getByRole('button', { name: 'Next: Where' }).click();
-  await expect(dialog.getByRole('list', { name: 'Part 2 of 4' })).toBeVisible();
+test('BB-14b: Esc inside the pop-up asks before leaving, and Keep going keeps every answer', async ({ page }) => {
+  const dialog = await placeTo(page, 'bb-esc');
   await page.keyboard.press('Escape');
+  await expect(page.getByRole('alertdialog', { name: 'Leave without placing it?' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Keep going' })).toBeFocused();
+  await page.getByRole('button', { name: 'Keep going' }).click();
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('list', { name: 'Part 1 of 4' })).toBeVisible();
-  await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('bb-esc');
+  await expect(stepTitle(page)).toHaveText('Where should it run?');
+  await pop(page).getByRole('button', { name: 'Back', exact: true }).click();
+  await expect(pop(page).getByLabel('Name', { exact: true })).toHaveValue('bb-esc');
 });
 
-test('BB-14c: the part number is part of the visible heading', async ({ page }) => {
+test('BB-14c: the step number is said above the heading', async ({ page }) => {
   const dialog = await openDrawer(page);
   await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
-  await expect(dialog.getByRole('heading', { level: 3 })).toContainText('Part 1 of 4');
-  await dialog.getByLabel('Name', { exact: true }).fill('bb-heading');
-  await dialog.getByRole('button', { name: 'Next: Where' }).click();
-  await expect(dialog.getByRole('heading', { level: 3 })).toContainText('Part 2 of 4');
+  await expect(pop(page).locator('.shell-head')).toContainText('step 1 of 8');
+  await pop(page).getByLabel('Name', { exact: true }).fill('bb-heading');
+  await pop(page).getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(pop(page).locator('.shell-head')).toContainText('step 2 of 8');
 });
 
-test('BB-16: every out-of-range setting is refused in its own words and keeps the wizard on Settings', async ({ page }) => {
-  const dialog = await openDrawer(page);
-  await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
-  await dialog.getByLabel('Name', { exact: true }).fill('bb-test-2');
-  await dialog.getByRole('button', { name: 'Next: Where' }).click();
-  await dialog.getByRole('button', { name: 'Next: Settings' }).click();
-  await expect(dialog.getByRole('list', { name: 'Part 3 of 4' })).toBeVisible();
-
-  // The interval is a choice of four, so another value cannot be typed.
-  await expect(dialog.getByLabel('Sample every').locator('option')).toHaveText(['5 seconds', '15 seconds', '30 seconds', '60 seconds']);
-
-  const next = dialog.getByRole('button', { name: 'Next: Review' });
+test('BB-16: every out-of-range Keep setting is refused in its own words and keeps the pop-up on Keep', async ({ page }) => {
+  await placeTo(page, 'bb-test-2');
+  const keep = 'How long should it keep recordings?';
+  await nextUntil(page, keep);
+  await pop(page).getByRole('radio', { name: 'Other', exact: true }).check();
+  const next = pop(page).getByRole('button', { name: 'Next', exact: true });
   const cases: { label: string; bad: string[]; message: string; good: string }[] = [
-    { label: 'Keep for (days)', bad: ['0', '366', '-3', '1.5', ''], message: 'Keep for 1 to 365 days.', good: '7' },
-    { label: 'Size limit (GB)', bad: ['0', '0.05', '10001', '-1', ''], message: 'Use a size from 0.1 to 10000 GB.', good: '2' },
-    { label: 'Keep free disk (percent)', bad: ['0', '51', '2.5', '-4', ''], message: 'Use 1 to 50 percent.', good: '10' },
-    { label: 'Status port', bad: ['0', '65536', '7788.5', '-80', ''], message: 'Use a port from 1 to 65535.', good: '7788' }
+    { label: 'Other', bad: ['0', '366', '-3', '1.5', ''], message: 'Enter a whole number of days from 1 to 365.', good: '7' },
+    { label: 'Use at most', bad: ['0', '0.05', '10001', '-1', ''], message: 'Enter a size from 0.1 to 10000 GB.', good: '2' },
+    { label: 'Stop when the disk is', bad: ['0', '51', '2.5', '-4', ''], message: 'Enter a whole number from 1 to 50 percent.', good: '10' }
   ];
   for (const c of cases) {
-    const field = dialog.getByLabel(c.label);
+    const field = pop(page).getByRole('spinbutton', { name: c.label, exact: true });
     for (const bad of c.bad) {
       await field.fill(bad);
       await next.click();
-      await expect(dialog.getByText(c.message).first(), c.label + ' = "' + bad + '"').toBeVisible();
-      await expect(dialog.getByRole('list', { name: 'Part 3 of 4' }), 'still on Settings').toBeVisible();
+      await expect(pop(page).getByText(c.message).first(), c.label + ' = "' + bad + '"').toBeVisible();
+      await expect(stepTitle(page), 'still on Keep').toHaveText(keep);
     }
     await field.fill(c.good);
   }
   // The edges are allowed.
-  for (const [label, edge] of [['Keep for (days)', '1'], ['Keep for (days)', '365'], ['Size limit (GB)', '0.1'], ['Size limit (GB)', '10000'], ['Keep free disk (percent)', '1'], ['Keep free disk (percent)', '50'], ['Status port', '1'], ['Status port', '65535']]) {
-    await dialog.getByLabel(label).fill(edge);
+  for (const [label, edge, good] of [['Other', '1', '7'], ['Other', '365', '7'], ['Use at most', '0.1', '2'], ['Use at most', '10000', '2'], ['Stop when the disk is', '1', '10'], ['Stop when the disk is', '50', '10']]) {
+    await pop(page).getByRole('spinbutton', { name: label, exact: true }).fill(edge);
     await next.click();
-    await expect(dialog.getByRole('list', { name: 'Part 4 of 4' }), label + ' = ' + edge).toBeVisible();
-    await dialog.getByRole('button', { name: 'Back' }).click();
-    await expect(dialog.getByRole('list', { name: 'Part 3 of 4' })).toBeVisible();
-    await dialog.getByLabel(label).fill(label === 'Status port' ? '7788' : label === 'Keep for (days)' ? '7' : label === 'Size limit (GB)' ? '2' : '10');
+    await expect(stepTitle(page), label + ' = ' + edge).toHaveText('Where should recordings be saved?');
+    await pop(page).getByRole('button', { name: 'Back', exact: true }).click();
+    await expect(stepTitle(page)).toHaveText(keep);
+    await pop(page).getByRole('spinbutton', { name: label, exact: true }).fill(good);
   }
 });
 
-test('BB-16a: the settings notes say what the bind address, the probe and housekeeping mean', async ({ page }) => {
-  const dialog = await openDrawer(page);
-  await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
-  await dialog.getByLabel('Name', { exact: true }).fill('bb-notes');
-  await dialog.getByRole('button', { name: 'Next: Where' }).click();
-  await dialog.getByRole('button', { name: 'Next: Settings' }).click();
-  await expect(dialog.getByText('The SQL Server probe is not part of this release.')).toBeVisible();
-  await expect(dialog.getByText('Housekeeping always runs. You can lower the limits but not turn them off.')).toBeVisible();
-  await expect(dialog.getByText(/127\.0\.0\.1 means only this computer can ask it/)).toBeVisible();
-  await expect(dialog.getByText(/Unravis does not add a firewall rule. Adding one is your own choice./)).toBeVisible();
-});
-
-test('BB-16b: a bind address, a folder and a log folder that are wrong each get their own message', async ({ page }) => {
-  const dialog = await openDrawer(page);
-  await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
-  await dialog.getByLabel('Name', { exact: true }).fill('bb-bind');
-  await dialog.getByRole('button', { name: 'Next: Where' }).click();
-  await dialog.getByRole('button', { name: 'Next: Settings' }).click();
-  const next = dialog.getByRole('button', { name: 'Next: Review' });
-  const bind = dialog.getByLabel('Listens on');
+test('BB-16b: a wrong port, bind address or folder each get their own message and keep the pop-up on Folder', async ({ page }) => {
+  await placeTo(page, 'bb-bind');
+  const folderStep = 'Where should recordings be saved?';
+  await nextUntil(page, folderStep);
+  const next = pop(page).getByRole('button', { name: 'Next', exact: true });
+  const folder = pop(page).getByLabel('Folder on the other server', { exact: true });
+  for (const bad of ['', 'D:\\', 'C:\\Windows\\x', 'relative\\path', 'D:/bb', '\\\\srv\\share\\bb']) {
+    await folder.fill(bad);
+    await next.click();
+    await expect(stepTitle(page), 'folder = "' + bad + '"').toHaveText(folderStep);
+    await expect(pop(page).getByRole('alert').first(), 'folder = "' + bad + '"').toBeVisible();
+  }
+  await folder.fill('D:\\UnravisBlackbox');
+  await pop(page).getByText('Advanced · port and who can connect').click();
+  const port = pop(page).getByLabel('Status port');
+  for (const bad of ['0', '65536', '7788.5', '-80', '']) {
+    await port.fill(bad);
+    await next.click();
+    await expect(stepTitle(page), 'port = "' + bad + '"').toHaveText(folderStep);
+    await expect(pop(page).getByText('The status port must be a whole number from 1 to 65535.')).toBeVisible();
+  }
+  await port.fill('7788');
+  const bind = pop(page).getByLabel('Listens on');
   for (const bad of ['', 'bad address!', '999.1.1.1', '*', '0.0.0.0/0']) {
     await bind.fill(bad);
     await next.click();
-    await expect(dialog.getByRole('list', { name: 'Part 3 of 4' }), 'bind = "' + bad + '"').toBeVisible();
-    await expect(dialog.getByRole('alert').first(), 'bind = "' + bad + '"').toBeVisible();
-  }
-  await bind.fill('127.0.0.1');
-  const folder = dialog.getByLabel('Folder', { exact: true });
-  for (const bad of ['', 'D:\\', 'C:\\Windows\\x', 'relative\\path']) {
-    await folder.fill(bad);
-    await next.click();
-    await expect(dialog.getByRole('list', { name: 'Part 3 of 4' }), 'folder = "' + bad + '"').toBeVisible();
-    await expect(dialog.getByRole('alert').first(), 'folder = "' + bad + '"').toBeVisible();
+    await expect(stepTitle(page), 'bind = "' + bad + '"').toHaveText(folderStep);
+    await expect(pop(page).getByRole('alert').first(), 'bind = "' + bad + '"').toBeVisible();
   }
 });
 
-test('BB-16c: a bind address other than this computer is called out on the Settings part with the read key as the only protection', async ({ page }) => {
-  const dialog = await openDrawer(page);
-  await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
-  await dialog.getByLabel('Name', { exact: true }).fill('bb-bind-warn');
-  await dialog.getByRole('button', { name: 'Next: Where' }).click();
-  await dialog.getByRole('button', { name: 'Next: Settings' }).click();
-  await dialog.getByLabel('Listens on').fill('0.0.0.0');
-  await dialog.getByRole('button', { name: 'Next: Review' }).click();
-  await expect(dialog.getByRole('list', { name: 'Part 4 of 4' })).toBeVisible();
-  await expect(dialog.getByText('This Blackbox listens on every address, so other computers can reach it. The read key is the only protection.')).toBeVisible();
+test('BB-16c: a bind address other than this computer is called out with the read key as the only protection', async ({ page, allow }) => {
+  allow(/\/api\/blackbox\/validate/, 'Review check of a Windows path on a non-Windows demo');
+  await placeTo(page, 'bb-bind-warn');
+  await nextUntil(page, 'Where should recordings be saved?');
+  await pop(page).getByText('Advanced · port and who can connect').click();
+  await pop(page).getByLabel('Listens on').fill('0.0.0.0');
+  await expect(pop(page).getByText('This lets other computers on the network reach the status port. The read key is the only protection.')).toBeVisible();
+  await nextUntil(page, 'Check it, then place it');
+  await expect(pop(page).getByText('This Blackbox listens on every address, so other computers can reach it. The read key is the only protection.')).toBeVisible();
 });
 
-test('BB-17: Download the pack gives unravis-blackbox-<name>.zip with the recorder and its settings and no read key', async ({ page }, testInfo) => {
-  const dialog = await openDrawer(page);
-  await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
-  await dialog.getByLabel('Name', { exact: true }).fill('bb-test-3');
-  await dialog.getByRole('button', { name: 'Next: Where' }).click();
-  await dialog.getByRole('button', { name: 'Next: Settings' }).click();
-  await dialog.getByRole('button', { name: 'Next: Review' }).click();
-  await expect(dialog.getByRole('button', { name: 'Download the pack' })).toBeVisible();
-  const [download] = await Promise.all([page.waitForEvent('download'), dialog.getByRole('button', { name: 'Download the pack' }).click()]);
+/** Builds the pack on Review and returns the download. Windows only: off Windows the server refuses a D:\ folder. */
+async function buildPack(page: Page, name: string) {
+  await placeTo(page, name);
+  await nextUntil(page, 'Check it, then place it');
+  const build = pop(page).getByRole('button', { name: 'Build the pack' });
+  await expect(build).toBeEnabled();
+  const [download] = await Promise.all([page.waitForEvent('download'), build.click()]);
+  return download;
+}
+
+test('BB-17: Build the pack gives unravis-blackbox-<name>.zip with the recorder and its settings and no read key', async ({ page }, testInfo) => {
+  const download = await buildPack(page, 'bb-test-3');
   expect(download.suggestedFilename()).toBe('unravis-blackbox-bb-test-3.zip');
   const zip = testInfo.outputPath('pack.zip');
   await download.saveAs(zip);
@@ -403,25 +412,19 @@ test('BB-17: Download the pack gives unravis-blackbox-<name>.zip with the record
   expect(config.bind).toBe('127.0.0.1');
   for (const f of files) expect(readFileSync(join(out, f)).toString('latin1'), f + ' holds no read key').not.toContain('ubk-');
   expect(page.url()).not.toContain('ubk-');
-  await expect(dialog.getByRole('button', { name: 'Download again' })).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Back to the list' })).toBeVisible();
+  await expect(pop(page).getByText('Pack built')).toBeVisible();
 });
 
 test('BB-17a: the pack README and the on-screen steps give the same install command', async ({ page }, testInfo) => {
-  const dialog = await openDrawer(page);
-  await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
-  await dialog.getByLabel('Name', { exact: true }).fill('bb-test-4');
-  await dialog.getByRole('button', { name: 'Next: Where' }).click();
-  await dialog.getByRole('button', { name: 'Next: Settings' }).click();
-  await dialog.getByRole('button', { name: 'Next: Review' }).click();
-  const [download] = await Promise.all([page.waitForEvent('download'), dialog.getByRole('button', { name: 'Download the pack' }).click()]);
+  const download = await buildPack(page, 'bb-test-4');
   const zip = testInfo.outputPath('pack4.zip');
   await download.saveAs(zip);
   const out = testInfo.outputPath('pack4');
   mkdirSync(out, { recursive: true });
   execFileSync(TAR, ['-xf', zip, '-C', out], { windowsHide: true });
   const readme = readFileSync(join(out, 'README.txt'), 'utf8');
-  const screen = await dialog.innerText();
+  await expect(pop(page).getByText('Pack built')).toBeVisible();
+  const screen = await pop(page).innerText();
   expect(screen).toContain('unravis-blackbox.exe install');
   expect(readme).toContain('unravis-blackbox.exe install');
   expect(readme, 'the README does not add a flag the screen never mentions').not.toContain('install --name');
