@@ -351,6 +351,9 @@ export const blackboxApi = {
   updateThisPc: () => call<UpdateAnswer>('POST', '/this-pc/update', {}),
   hostReading: (id: string, body: { incident: { start: string; end: string }; reference: { start: string; end: string } }) =>
     call<HostAnswer>('POST', '/' + encodeURIComponent(id) + '/host-reading', body),
+  /** Every recorded measurement for one window, downsampled to at most `points` buckets (server cap 600). Check the shape with readSeriesAnswer. */
+  series: (id: string, body: { start: string; end: string; points?: number }, signal?: AbortSignal) =>
+    call<unknown>('POST', '/' + encodeURIComponent(id) + '/series', body, signal),
   /**
    * The sealed read key of the Blackbox installed on this PC, for Show and Copy (A33, wireframe 65). A POST that is never
    * cached. The caller holds the answer only while it is on view and never stores it.
