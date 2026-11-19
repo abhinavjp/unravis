@@ -179,21 +179,31 @@ export function axisValue(unit: SeriesUnit, v: number): string {
 /* ------------------------------------------------------------- lines */
 
 /**
- * The points as chart data: [t, value] with a null between two points further apart than one and a half buckets, so the line
- * breaks where the recorder had no reading. On a log scale a value at or below 0 cannot be drawn; it becomes a break too and is counted.
+ * The points as chart data: [t, value], with a null where a real gap (one the server reports: a recorder stop, or a hole the
+ * samples show at the recorder's own pace) falls between two points, so the line breaks only where the recorder had no reading.
+ * Spacing alone is not used: the recorder slows down when the PC is busy, and that busy hour must still draw as a line.
+ * On a log scale a value at or below 0 cannot be drawn; it becomes a break too and is counted.
  */
-export function chartData(pts: SeriesPoint[], bucketSeconds: number, log: boolean, pick: 1 | 2 | 3 = 1): { data: Array<[number, number | null]>; hidden: number } {
+export function chartData(pts: SeriesPoint[], gaps: Array<{ fromMs: number; toMs: number }>, log: boolean, pick: 1 | 2 | 3 = 1): { data: Array<[number, number | null]>; hidden: number } {
   const out: Array<[number, number | null]> = [];
-  const step = Math.max(1, bucketSeconds) * 1000;
   let hidden = 0;
   let prev: number | null = null;
   for (const p of pts) {
-    if (prev != null && p[0] - prev > step * 1.5) out.push([prev + step, null]);
+    if (prev != null) {
+      const a = prev;
+      const g = gaps.find((x) => x.toMs > a && x.fromMs < p[0]);
+      if (g) out.push([Math.max(a + 1, Math.min(p[0] - 1, Math.round((Math.max(a, g.fromMs) + Math.min(p[0], g.toMs)) / 2))), null]);
+    }
     const v = p[pick];
     if (log && !(v > 0)) { hidden++; out.push([p[0], null]); } else out.push([p[0], v]);
     prev = p[0];
   }
   return { data: out, hidden };
+}
+
+/** The server's gaps as millisecond ranges, for chartData. A gap with a time that does not parse is left out. */
+export function gapRanges(gaps: SeriesGap[]): Array<{ fromMs: number; toMs: number }> {
+  return gaps.map((g) => ({ fromMs: Date.parse(g.from), toMs: Date.parse(g.to) })).filter((g) => Number.isFinite(g.fromMs) && Number.isFinite(g.toMs) && g.toMs > g.fromMs);
 }
 
 /** Last, average, lowest and highest over the shown points (Perfmon's bar under the chart). The average weighs every bucket the same. */

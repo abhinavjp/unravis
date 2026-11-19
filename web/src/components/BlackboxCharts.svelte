@@ -8,7 +8,7 @@
   import { BB_REFUSAL } from '../lib/copy/blackboxCopy';
   import { BBC_TEXT as T } from '../lib/copy/blackboxChartsCopy';
   import {
-    PRESET_LABELS, UNIT_TITLES, axisValue, chartData, coverNote, defaultSelection, firstPreset, formatValue, lineFigures, pickerGroups,
+    PRESET_LABELS, UNIT_TITLES, axisValue, chartData, gapRanges, coverNote, defaultSelection, firstPreset, formatValue, lineFigures, pickerGroups,
     alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES,
     type SeriesAnswer, type SeriesLine, type SeriesPoint, type SeriesUnit, type WindowPreset
   } from '../lib/blackboxSeries';
@@ -181,7 +181,7 @@
     let hiddenNow = 0;
     const grids = strips.map((_, i) => ({ left: 86, right: 24, top: TOP + i * (STRIP_H + GAP), height: STRIP_H }));
     const xAxes = strips.map((_, i) => ({
-      type: 'time', gridIndex: i, min: w.startMs, max: w.endMs, ...axis, splitLine: { show: false },
+      type: 'time', gridIndex: i, min: Math.min(w.startMs, Date.parse(a.start) || w.startMs), max: Math.max(w.endMs, Date.parse(a.end) || w.endMs), ...axis, splitLine: { show: false },
       axisLabel: { color: p.text2, formatter: ticks(w), hideOverlap: true }
     }));
     const yAxes = strips.map((s, i) => ({
@@ -194,7 +194,7 @@
       s.keys.forEach((k, j) => {
         const d = byKey.get(k)!;
         const c = colourOf.get(k);
-        const cd = chartData(d.points, a.bucketSeconds, log);
+        const cd = chartData(d.points, gapRanges(a.gaps), log);
         hiddenNow += cd.hidden;
         series.push({
           type: 'line', name: d.title, id: k, xAxisIndex: i, yAxisIndex: i, data: cd.data, connectNulls: false, showSymbol: cd.data.length < 40, symbolSize: 4,
@@ -206,12 +206,14 @@
     });
     hidden = hiddenNow;
     const all = strips.map((_, i) => i);
+    const z = untrack(() => zoom);
+    const keep = z ? { startValue: z.startMs, endValue: z.endMs } : {};
     chart.setOption({
       animation: false, textStyle: { color: p.text2 }, grid: grids, xAxis: xAxes, yAxis: yAxes, series,
       axisPointer: { link: [{ xAxisIndex: 'all' }] },
       dataZoom: [
-        { type: 'inside', xAxisIndex: all, filterMode: 'none' },
-        { type: 'slider', xAxisIndex: all, filterMode: 'none', bottom: 8, height: 22, labelFormatter: ticks(w), textStyle: { color: p.text2 } }
+        { type: 'inside', xAxisIndex: all, filterMode: 'none', ...keep },
+        { type: 'slider', xAxisIndex: all, filterMode: 'none', ...keep, bottom: 8, height: 22, labelFormatter: ticks(w), textStyle: { color: p.text2 } }
       ],
       tooltip: {
         trigger: 'axis', confine: true, renderMode: 'richText', axisPointer: { type: 'line' },
@@ -238,7 +240,7 @@
 </script>
 
 <!-- Esc closes only this pop-up, wherever focus is: it is caught first here so the Blackbox drawer behind it and the app's own Esc stay put. -->
-<svelte:window onkeydowncapture={(e) => { if (e.key === 'Escape' && dialog?.open) { e.preventDefault(); e.stopPropagation(); dialog.close(); } }} />
+<svelte:window onkeydowncapture={(e) => { const f = e.target as HTMLElement | null; if (f instanceof HTMLSelectElement || (f instanceof HTMLInputElement && f.type === 'search' && f.value)) return; if (e.key === 'Escape' && dialog?.open) { e.preventDefault(); e.stopPropagation(); dialog.close(); } }} />
 <dialog bind:this={dialog} class="bbc" aria-labelledby="bbc-title" onclose={onClose}>
   <header class="bbc-head">
     <div>
@@ -322,7 +324,7 @@
           {:else if !drawn.length}<p class="bbc-note">{tab === 'processes' ? T.procNone : T.pickSome}</p>{/if}
         {/if}
         <div class="bbc-canvas" bind:this={node} style:height={height + 'px'} class:empty={!drawn.length || !!problem}></div>
-        {#if answer && drawn.length}
+        {#if answer && !problem && drawn.length}
           <p class="bbc-note">
             {T.bucket(bucketWords(answer.bucketSeconds), bucketWords(answer.intervalSeconds || answer.bucketSeconds))}
             {#if answer.gaps.length}{T.gaps(answer.gaps.length)} {/if}

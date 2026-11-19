@@ -71,14 +71,27 @@ test('formatValue gives each unit in words a person reads, and a missing value a
   assert.equal(s.formatValue('pct', NaN), 'not read');
 });
 
-test('chartData breaks the line at a hole longer than one and a half buckets, and the log scale hides 0 and counts it', () => {
+test('chartData breaks the line only at a gap the server reports, and the log scale hides 0 and counts it', () => {
   const pts = [[T0, 1, 1, 1], [T0 + 15000, 2, 2, 2], [T0 + 60000, 0, 0, 0], [T0 + 75000, 4, 4, 4]];
-  const lin = s.chartData(pts, 15, false);
-  assert.deepEqual(lin.data, [[T0, 1], [T0 + 15000, 2], [T0 + 30000, null], [T0 + 60000, 0], [T0 + 75000, 4]]);
+  const gaps = [{ fromMs: T0 + 20000, toMs: T0 + 55000 }];
+  const lin = s.chartData(pts, gaps, false);
+  assert.deepEqual(lin.data, [[T0, 1], [T0 + 15000, 2], [T0 + 37500, null], [T0 + 60000, 0], [T0 + 75000, 4]]);
   assert.equal(lin.hidden, 0);
-  const log = s.chartData(pts, 15, true);
+  const log = s.chartData(pts, gaps, true);
   assert.deepEqual(log.data[3], [T0 + 60000, null]);
   assert.equal(log.hidden, 1);
+});
+
+test('chartData keeps the line whole when the recorder slowed down (points spaced two buckets apart, no gap)', () => {
+  const pts = [0, 30000, 60000, 90000].map((d, i) => [T0 + d, i, i, i]);
+  const out = s.chartData(pts, [], false);
+  assert.equal(out.data.length, 4);
+  assert.ok(out.data.every((x) => x[1] !== null));
+});
+
+test('gapRanges turns the server gaps into ms ranges and drops bad ones', () => {
+  const g = s.gapRanges([{ from: '2026-01-01T00:00:00Z', to: '2026-01-01T00:01:00Z', seconds: 60, cause: 'late' }, { from: 'x', to: 'y', seconds: 0, cause: '' }]);
+  assert.deepEqual(g, [{ fromMs: Date.parse('2026-01-01T00:00:00Z'), toMs: Date.parse('2026-01-01T00:01:00Z') }]);
 });
 
 test('lineFigures: last, average, lowest of the lows, highest of the highs, inside the zoom only', () => {
