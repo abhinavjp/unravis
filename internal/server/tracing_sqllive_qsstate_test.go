@@ -177,3 +177,47 @@ func TestLayerSQLLaneIgnoresQueryStoreStateLane(t *testing.T) {
 		t.Fatalf("layered onto a state lane: did %v state %s events %d", did, got.State, len(got.Events))
 	}
 }
+
+// BL-039: a Query Store state reason says it comes from the saved database check, so it is not read as being about
+// an imported SQL file.
+func TestHeldSQLLaneQSReasonNamesTheSavedCheck(t *testing.T) {
+	lane := requireQSLane(t, &dbhealth.LaneQueryStore{State: dbhealth.QSStateOff}, tracingReasonQSOff, "switched off")
+	if !strings.HasPrefix(lane.Reason, tracingQSCheckLead) {
+		t.Fatalf("reason %q does not say it comes from the saved database check", lane.Reason)
+	}
+	if strings.Contains(lane.Reason, "before this window ended") {
+		t.Fatalf("a check saved after the window was called stale: %q", lane.Reason)
+	}
+}
+
+// BL-039: a state saved before the window ended is older than part of the window, so the lane says when it was saved
+// and that it may have changed.
+func TestHeldSQLLaneQSStaleStateSaysWhenItWasSaved(t *testing.T) {
+	c := heldSQLQSCase(t, nil, &dbhealth.LaneQueryStore{State: dbhealth.QSStateReadOnly})
+	saved := qsStateWindowStart.Add(30 * time.Minute)
+	c.runs[0].At = saved
+	axis := newTracingAxis(qsStateWindowStart, qsStateWindowStart.Add(time.Hour))
+	lane, ok := tracingHeldSQLLane(context.Background(), c, axis, time.Now())
+	if !ok || lane.ReasonCode != tracingReasonQSReadOnly {
+		t.Fatalf("ok %v code %q", ok, lane.ReasonCode)
+	}
+	if !strings.Contains(lane.Reason, saved.Format(time.RFC3339)) || !strings.Contains(lane.Reason, "may have changed") {
+		t.Fatalf("stale state not flagged: %q", lane.Reason)
+	}
+}
+
+// BL-039: when the newest source's saved days hold no figures in the window, only that source's state explains it;
+// a newer day of another server is not used.
+func TestHeldSQLLaneQSStateComesFromTheSeriesSource(t *testing.T) {
+	c := heldSQLQSCase(t, []dbhealth.LaneSeriesPoint{{T: qsStateWindowStart.Add(-48 * time.Hour).Unix(), Execs: 5, AvgMs: 2}}, &dbhealth.LaneQueryStore{State: dbhealth.QSStateOn})
+	other := heldSQLQSCase(t, nil, &dbhealth.LaneQueryStore{State: dbhealth.QSStateOff})
+	o := other.runs[0]
+	o.Key = "sql|Other|OtherDb|x|1|2"
+	o.ID = c.runs[0].ID + 1
+	o.At = c.runs[0].At.Add(time.Hour)
+	c.runs = append([]casestore.HealthRun{o}, c.runs...)
+	axis := newTracingAxis(qsStateWindowStart, qsStateWindowStart.Add(time.Hour))
+	if lane, ok := tracingHeldSQLLane(context.Background(), c, axis, time.Now()); ok {
+		t.Fatalf("another server's Query Store state explained this lane: %s %q", lane.ReasonCode, lane.Reason)
+	}
+}

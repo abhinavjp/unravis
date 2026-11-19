@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"math"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -428,8 +429,15 @@ func TestLaneGapFullQueryStoreSurvivesPartialBlackbox(t *testing.T) {
 	if lane.ReasonCode != tracingReasonQSFile || !lane.Complete || tracingBucketSum(lane) != 100 {
 		t.Fatalf("lane %s complete %v sum %d, want the complete qs-file lane", lane.ReasonCode, lane.Complete, tracingBucketSum(lane))
 	}
-	if lane.Buckets[0].BusyMs == nil || *lane.Buckets[0].BusyMs != 2000 {
-		t.Fatal("the Query Store durations were lost to the recorder")
+	// BL-037: the 15-minute interval is spread over its 15 one-minute buckets; the durations add back to 2000 ms.
+	var busy float64
+	for _, bk := range lane.Buckets {
+		if bk.BusyMs != nil {
+			busy += *bk.BusyMs
+		}
+	}
+	if lane.Buckets[0].BusyMs == nil || math.Abs(busy-2000) > 1e-6 {
+		t.Fatalf("the Query Store durations were lost to the recorder: %v ms", busy)
 	}
 }
 

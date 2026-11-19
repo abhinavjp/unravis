@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -49,19 +50,29 @@ func TestQSFileIntervalsDrawVolumesAndImportTime(t *testing.T) {
 		if tracingBucketSum(lane) != 200 || lane.Scanned != 200 || len(lane.Events) != 2 {
 			t.Fatalf("executions %d, scanned %d, events %d", tracingBucketSum(lane), lane.Scanned, len(lane.Events))
 		}
+		// BL-037: each 15-minute interval is spread over its 15 one-minute buckets.
 		for _, row := range rows {
-			b := heldBucketAt(t, lane, row.Start.Unix())
-			if b.Count != 100 || b.BusyMs == nil || *b.BusyMs != 2000 || b.AvgMs == nil || *b.AvgMs != 20 || b.MaxMs == nil || *b.MaxMs != 90 {
-				t.Fatal("interval bucket lacks its execution-weighted figures")
+			var n int64
+			var busy float64
+			for m := 0; m < 15; m++ {
+				b := heldBucketAt(t, lane, row.Start.Add(time.Duration(m)*time.Minute).Unix())
+				if b.BusyMs == nil || b.AvgMs == nil || math.Abs(*b.AvgMs-20) > 1e-9 || b.MaxMs == nil || *b.MaxMs != 90 {
+					t.Fatalf("minute %d of the interval lacks its execution-weighted figures: %+v", m, b)
+				}
+				if b.P50Ms != nil || b.P95Ms != nil {
+					t.Fatal("file averages invented percentiles")
+				}
+				n += b.Count
+				busy += *b.BusyMs
 			}
-			if b.P50Ms != nil || b.P95Ms != nil {
-				t.Fatal("file averages invented percentiles")
+			if n != 100 || math.Abs(busy-2000) > 1e-6 {
+				t.Fatalf("interval spread to %d executions and %v ms; want 100 and 2000", n, busy)
 			}
 		}
-		if b := heldBucketAt(t, lane, tracingLaneT0.Add(5*time.Minute).Unix()); b.BusyMs != nil {
+		if b := heldBucketAt(t, lane, tracingLaneT0.Add(35*time.Minute).Unix()); b.BusyMs != nil {
 			t.Fatal("busy time was spread into an unrecorded bucket")
 		}
-		if !strings.Contains(raw, `"busyMs":2000`) || !strings.Contains(raw, `"blockSeconds":900`) || !strings.Contains(raw, `"reasonCode":"qs-file"`) {
+		if !strings.Contains(raw, `"blockSeconds":900`) || !strings.Contains(raw, `"reasonCode":"qs-file"`) {
 			t.Fatal("wire output lacks file figures")
 		}
 		if tracingFingerprint(t, e.store, id) != before {
@@ -83,11 +94,22 @@ func TestQSFileBucketsWeightAveragesAndUseHalfOpenStarts(t *testing.T) {
 	other.Kind = "wait"
 	rows = append(rows, other)
 	buckets, block := qsFileBuckets(rows, axis)
-	b := buckets[0]
-	if len(buckets) != 1 || block != 900 || b == nil || b.Count != 150 || !b.Clipped || !b.Complete {
-		t.Fatal("start-based clipped bucket or interval length is wrong")
+	// BL-037: both intervals run from about 10:00:30 to 10:15:30, so they are spread over buckets 0 to 15.
+	var n int64
+	var busy float64
+	for _, b := range buckets {
+		n += b.Count
+		if b.BusyMs != nil {
+			busy += *b.BusyMs
+		}
 	}
-	if b.BusyMs == nil || *b.BusyMs != 2500 || b.AvgMs == nil || *b.AvgMs != 2500.0/150 || b.MaxMs == nil || *b.MaxMs != 120 {
+	b := buckets[0]
+	if len(buckets) != 16 || block != 900 || b == nil || !b.Clipped || !b.Complete || n != 150 || math.Abs(busy-2500) > 1e-6 {
+		t.Fatalf("buckets %d, block %d, first %+v, executions %d, busy %v", len(buckets), block, b, n, busy)
+	}
+	// The first bucket is 30 s: 30/900 of the first interval and 29/900 of the second (it starts 1 s later).
+	wantAvg := (2000*30.0/900 + 500*29.0/900) / (100*30.0/900 + 50*29.0/900)
+	if b.BusyMs == nil || b.AvgMs == nil || math.Abs(*b.AvgMs-wantAvg) > 1e-9 || b.MaxMs == nil || *b.MaxMs != 120 {
 		t.Fatal("same-bucket totals or weighted average is wrong")
 	}
 }
@@ -142,7 +164,7 @@ func TestQSFileMissingDurationIsNotZero(t *testing.T) {
 		t.Fatal("missing duration claimed complete totals")
 	}
 	b := heldBucketAt(t, got, axis.Start.Unix())
-	if b.Count != 100 || b.BusyMs != nil || b.AvgMs != nil || b.MaxMs == nil || *b.MaxMs != 0 {
+	if tracingBucketSum(got) != 100 || b.BusyMs != nil || b.AvgMs != nil || b.MaxMs == nil || *b.MaxMs != 0 {
 		t.Fatal("missing timing became zero, or a recorded zero maximum was lost")
 	}
 	row.DurationMs = new(float64)
