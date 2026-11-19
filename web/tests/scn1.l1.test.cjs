@@ -135,16 +135,19 @@ test('D-A-07: markScreen marks in place or adds an entry, and Back and Forward r
   assert.equal(b.entries.length, 3);
 });
 
-test('D-A-07: a reload ignores marks from the page before it', () => {
+test('D-A-07: a reload reads marks from the page before it as inherited, never as its own (BL-027)', () => {
   const { createViewHistory } = loadTypeScript('src/lib/wayfinding.ts');
   const b = fakeHistory();
   const first = createViewHistory(b.loc, b.hist);
   first.markScreen('case', true);
   assert.equal(first.screen, 'case');
+  assert.equal(first.inherited, false);
   const second = createViewHistory(b.loc, b.hist);
-  assert.equal(second.screen, '', 'the old mark belongs to the old page life');
+  assert.equal(second.screen, 'case', 'the old mark is still read');
+  assert.equal(second.inherited, true, 'but it belongs to the old page life');
   second.markScreen('start', true);
   assert.equal(second.screen, 'start');
+  assert.equal(second.inherited, false);
 });
 
 test('D-A-07: view changes keep the screen mark, and stepping up never goes Back across a screen', () => {
@@ -171,7 +174,7 @@ test('D-A-07: appState marks screens through the history, ignores key screens an
   const go = state.slice(state.indexOf('export function go(to: Screen)'), state.indexOf('// Reads the key state once the app info is in'));
   assert.match(go, /^export function go\(to: Screen\): boolean \{\s*const from = screen;/);
   assert.match(go, /if \(!poppingScreen\) noteScreenHistory\(from, move\.screen\);/);
-  assert.match(go, /function noteScreenHistory\(from: Screen, to: Screen\) \{[\s\S]*drawers\.whenClear\([\s\S]*historyStep\(from, to, marker\.screen\)[\s\S]*marker\.markScreen\(to, step === 'replace'\)/);
+  assert.match(go, /function noteScreenHistory\(from: Screen, to: Screen\) \{[\s\S]*drawers\.whenClear\([\s\S]*historyStep\(from, to, marker\.inherited \? '' : marker\.screen\)[\s\S]*marker\.markScreen\(to, step === 'replace'\)/);
   assert.match(go, /function stepScreenFromHistory\(wanted: string\) \{[\s\S]*wanted === 'case' && !activeCaseId[\s\S]*marker\.markScreen\(screen, true\)/);
   assert.match(go, /try \{ if \(!go\(wanted\)\) marker\.markScreen\(screen, true\); \} finally \{ poppingScreen = false; \}/);
   assert.match(state, /if \(drawerHistory\?\.pop\(\)\) return;\s*const target = viewHistory\?\.pop\(\);\s*if \(target === undefined\) return;/);

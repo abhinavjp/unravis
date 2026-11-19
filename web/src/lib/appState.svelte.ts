@@ -568,7 +568,12 @@ function noteScreenHistory(from: Screen, to: Screen) {
   if (!marker || !drawers || !isHistoryScreen(to)) return;
   drawers.whenClear(() => {
     if (screen !== to || viewHistory !== marker) return;
-    const step = historyStep(from, to, marker.screen);
+    // A reload lands on the entry it left. When an earlier load already marked that entry for the screen shown now (case page, timeline or
+    // Slow call), it is taken over in place, so the entries before and after it (Back, and Forward after "Back then reload") still work (BL-027).
+    const want = to === 'case' && tracingCase && tracingCase === activeCaseId ? (slowCall ? CASE_CALL_MARK : CASE_TRACING_MARK) : to;
+    if (marker.inherited && marker.screen === want) { marker.markScreen(want); return; }
+    // Any other inherited mark is treated as unmarked: the first move off the loading or key screens marks the entry in place, as before.
+    const step = historyStep(from, to, marker.inherited ? '' : marker.screen);
     // The Slow call hand-off replaces the call entry with this screen, so the timeline entry below it is not left as a duplicate dead step (R2-01).
     if (replaceCallEntry && marker.screen === CASE_CALL_MARK) marker.markScreen(to, true);
     else if (step !== 'none') marker.markScreen(to, step === 'replace');

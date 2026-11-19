@@ -266,3 +266,47 @@ test('stepBack closes the timeline with one Back when the entry before is the ca
   g.markScreen('case/tracing', true);
   assert.equal(g.stepBack('case'), false);
 });
+
+test('BL-027: Back then reload keeps the call entry, so Forward reopens it and Back still climbs', () => {
+  const b = fakeBrowser('#x');
+  const first = createViewHistory(b.loc, b.hist);
+  first.markScreen('case', true);
+  first.markScreen('case/tracing');
+  first.markScreen('case/tracing/call');
+  // Back to the timeline, then a reload: a new page load reads the same entry.
+  b.pop(1);
+  first.pop();
+  const again = createViewHistory(b.loc, b.hist);
+  assert.equal(again.screen, 'case/tracing', 'the mark from the earlier load is read');
+  assert.equal(again.inherited, true);
+  // The reload takes the entry over in place: no new entry, so the call entry after it is kept.
+  again.markScreen('case/tracing');
+  assert.equal(again.inherited, false);
+  assert.equal(b.entries.length, 3);
+  assert.deepEqual(b.calls.slice(-1), ['replace']);
+  // Forward: the call entry still says what it is.
+  b.pop(2);
+  assert.equal(again.pop(), null);
+  assert.equal(again.screen, 'case/tracing/call');
+  assert.equal(again.inherited, true);
+  // Back twice: the timeline, then the case page.
+  b.pop(1);
+  again.pop();
+  assert.equal(again.screen, 'case/tracing');
+  assert.equal(again.inherited, false);
+  b.pop(0);
+  again.pop();
+  assert.equal(again.screen, 'case');
+});
+
+test('BL-027: a mark written in this page load is not inherited', () => {
+  const b = fakeBrowser('#x');
+  const h = createViewHistory(b.loc, b.hist);
+  assert.equal(h.inherited, false);
+  h.markScreen('case', true);
+  h.markScreen('case/tracing');
+  b.pop(0);
+  h.pop();
+  assert.equal(h.screen, 'case');
+  assert.equal(h.inherited, false);
+});

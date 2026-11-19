@@ -172,7 +172,11 @@ const indexOf = (state: unknown): number => {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0;
 };
 
-/** history.state keys that name the screen an entry belongs to. The life key ties a mark to this page load, so a reload ignores old marks. */
+/**
+ * history.state keys that name the screen an entry belongs to. The life key says which page load wrote a mark. A mark from an earlier load of
+ * this tab is still read (so Back and Forward across a reload land where they were made), but it is "inherited": the page may not trust
+ * that the screen it names can be rebuilt, so the caller checks it before following it (BL-027).
+ */
 export const SCREEN_MARK = 'uvScreen';
 const LIFE_MARK = 'uvLife';
 
@@ -188,15 +192,18 @@ export function createViewHistory(loc: LocationLike, hist: HistoryLike) {
   let current = parseViewHash(loc.hash);
   let ownBacks = 0;
   const url = (hash: string) => loc.pathname + loc.search + hash;
-  // The screen the current entry was made on ('' when unknown), read only from marks written during this page load.
+  // The screen the current entry was made on ('' when unknown), and whether that mark was written by an earlier load of this tab.
   const life = Math.random().toString(36).slice(2);
   const screenOf = (state: unknown): string => {
     if (!state || typeof state !== 'object') return '';
-    const record = state as Record<string, unknown>;
-    return record[LIFE_MARK] === life && typeof record[SCREEN_MARK] === 'string' ? (record[SCREEN_MARK] as string) : '';
+    const value = (state as Record<string, unknown>)[SCREEN_MARK];
+    return typeof value === 'string' ? value : '';
   };
+  const olderOf = (state: unknown): boolean =>
+    screenOf(state) !== '' && (state as Record<string, unknown>)[LIFE_MARK] !== life;
   const stamp = (name: string): Record<string, unknown> => (name ? { uvIdx: index, [SCREEN_MARK]: name, [LIFE_MARK]: life } : { uvIdx: index });
   let shown = screenOf(hist.state);
+  let inherited = olderOf(hist.state);
   const marks: string[] = [];
   marks[index] = shown;
   return {
@@ -204,6 +211,8 @@ export function createViewHistory(loc: LocationLike, hist: HistoryLike) {
     get view() { return current; },
     /** The screen the current history entry stands for, or '' when it has no mark from this page load. */
     get screen() { return shown; },
+    /** True while the current entry's mark was written by an earlier load of this tab (a reload, or Back or Forward across one). */
+    get inherited() { return inherited; },
     /** Makes the address match a view. `replace` forces a replace (used after the screen was rebuilt from the address). */
     sync(view: View | null, replace = false): SyncResult {
       const target = formatViewHash(view, loc.hash);
@@ -222,8 +231,11 @@ export function createViewHistory(loc: LocationLike, hist: HistoryLike) {
     },
     /** Marks the current entry (`replace`) or adds an entry (default) for a screen, at the address shown now. Does nothing when the entry already says `name`. */
     markScreen(name: string, replace = false): void {
-      if (!name || name === shown) return;
-      shown = name;
+      if (!name) return;
+      // An entry an earlier load marked with this same screen is taken over in place, not repeated.
+      if (name === shown && inherited) { inherited = false; hist.replaceState(stamp(name), '', url(loc.hash)); marks[index] = name; return; }
+      if (name === shown) return;
+      shown = name; inherited = false;
       if (replace) { hist.replaceState(stamp(name), '', url(loc.hash)); marks[index] = name; return; }
       index++; stack.length = index; marks.length = index; stack[index] = loc.hash; marks[index] = name;
       hist.pushState(stamp(name), '', url(loc.hash));
@@ -231,7 +243,7 @@ export function createViewHistory(loc: LocationLike, hist: HistoryLike) {
     /** Leaves the current entry by going back one step when the entry before was made for screen `name` at the same address (the browser's Back, started by the page). Returns false and does nothing otherwise. */
     stepBack(name: string): boolean {
       if (!name || index <= 0 || marks[index - 1] !== name || stack[index - 1] !== loc.hash) return false;
-      ownBacks++; index--; shown = name; hist.back(); return true;
+      ownBacks++; index--; shown = name; inherited = false; hist.back(); return true;
     },
     /** Call on popstate. Returns the view to show, null for the first screen, or undefined when the event was this module's own Back. `screen` then names the entry's screen. */
     pop(): View | null | undefined {
@@ -239,6 +251,7 @@ export function createViewHistory(loc: LocationLike, hist: HistoryLike) {
       if (stack[index] === undefined) stack[index] = loc.hash;
       current = parseViewHash(loc.hash);
       shown = screenOf(hist.state);
+      inherited = olderOf(hist.state);
       marks[index] = shown;
       if (ownBacks > 0) { ownBacks--; return undefined; }
       return current;

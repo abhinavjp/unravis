@@ -141,3 +141,10 @@ test('CI-01: body() isolates the closing branch on a CRLF checkout', () => {
   assert.ok(closed.includes('slowCall = null; lastSlowCall = null;'), 'the closing branch is isolated on CRLF');
   assert.ok(!closed.includes('storedCallTarget'), 'CRLF must not let the closing branch swallow later storedCallTarget text');
 });
+
+test('BL-027: a reload takes over an entry an earlier load marked for the same screen', () => {
+  const note = body('function noteScreenHistory');
+  assert.ok(note.includes('if (marker.inherited && marker.screen === want) { marker.markScreen(want); return; }'), 'the inherited mark is taken over in place');
+  assert.ok(note.includes("historyStep(from, to, marker.inherited ? '' : marker.screen)"), 'any other inherited mark counts as unmarked');
+  assert.ok(note.includes('(slowCall ? CASE_CALL_MARK : CASE_TRACING_MARK)'), 'the wanted mark covers the timeline and the Slow call screen');
+});

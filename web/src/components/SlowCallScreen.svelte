@@ -341,6 +341,16 @@
     return null;
   });
 
+  // The per-call Database, Redis and Web call times of the selected API call, taken from the same row the nearby table draws, so the
+  // panel repeats the row's numbers (BL-028). undefined: no row for it (nothing is shown); null: the row has none ("not recorded").
+  const selectedLight = $derived.by((): NearbyRow['light'] | undefined => {
+    const b = bench;
+    const item = selected;
+    if (!b || !item || item.source !== 'api' || item.marker) return undefined;
+    const row = [...b.s.nearby.rows, ...b.s.slowRows].find((r) => b.apiKeyOf(r.sourceId, r.id) === item.key);
+    return row ? (row.light ?? null) : undefined;
+  });
+
   const TABS: Tab[] = ['calls', 'all'];
   function onTabKey(e: KeyboardEvent) {
     let next = TABS.indexOf(tab);
@@ -519,6 +529,7 @@
 
         <CallInspector
           {selected}
+          light={selectedLight}
           whileRan={bench.whileRan}
           steps={bench.lanes.audit.cells}
           {selectedCall}

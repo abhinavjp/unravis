@@ -12,6 +12,7 @@
   // and (demo only) the "Pretend the database is" switch. The database sentence comes from dbState.
   let {
     selected,
+    light,
     whileRan,
     steps,
     selectedCall,
@@ -24,6 +25,8 @@
     onPretend
   }: {
     selected: SourceItem | null;
+    /** The selected call's own Database, Redis and Web call times, as its nearby row shows them; null when the row has none, undefined when no row matches. */
+    light?: { sqlMs: number | null; redisMs: number | null; httpMs: number | null } | null;
     whileRan: Readout | null;
     steps: readonly { p95Ms: number | null }[];
     selectedCall: { sourceId: string; id: string } | null;
@@ -68,6 +71,10 @@
   const fmtAt = (cell: { atOnce: number | null } | null | undefined): string =>
     cell && cell.atOnce !== null && Number.isFinite(cell.atOnce) ? formatAtOnce(cell.atOnce) : DRILL_TEXT.notRecorded;
 
+  // A missing time is "not recorded", never 0, as in the nearby table.
+  const fmtMs = (value: number | null | undefined): string =>
+    value !== null && value !== undefined && Number.isFinite(value) ? formatMs(value) : DRILL_TEXT.notRecorded;
+
   const tookText = $derived(
     selected && selected.tookMs !== null && Number.isFinite(selected.tookMs) ? formatMs(selected.tookMs) : DRILL_TEXT.notRecorded
   );
@@ -103,6 +110,13 @@
       <p>{SOURCE_NAME[selected.source]}</p>
       <p>{formatTime(selected.startMs, { zone })}</p>
       <p>{tookText}</p>
+      {#if light !== undefined}
+        <ul class="insp-light" data-testid="scall-selected-light">
+          <li>{DRILL_TEXT.colDatabase}: {fmtMs(light?.sqlMs)}</li>
+          <li>{DRILL_TEXT.colRedis}: {fmtMs(light?.redisMs)}</li>
+          <li>{DRILL_TEXT.colWebCalls}: {fmtMs(light?.httpMs)}</li>
+        </ul>
+      {/if}
       {#if normalLine}
         <p class="insp-note" data-testid="scall-vsnormal" title={DRILL_TEXT.vsNormalHow}><strong>{DRILL_TEXT.vsNormalTitle}:</strong> {normalLine}</p>
       {/if}
