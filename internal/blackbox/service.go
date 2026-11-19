@@ -552,6 +552,11 @@ func (m *Manager) Stop() error {
 type ApplyResult struct {
 	Config    Config
 	Restarted bool // false when the service was stopped: new settings apply at its next start
+	// SQLSettingsUnlocked is set when the SQL service is installed on the
+	// installed settings file and the save could not give that file back its
+	// administrator lock and the SQL service's read entry (BL-139). The recorder
+	// is fine; the SQL service will refuse at enable-sql until install-sql runs.
+	SQLSettingsUnlocked bool
 }
 
 // Apply saves the validated settings to the installed config file (the same
@@ -668,6 +673,15 @@ func (m *Manager) ApplyConfig(cfg Config) (res ApplyResult, err error) {
 	undo.add(fileMemory(installed + ".bak"))
 	if err = SaveConfig(installed, cfg, true); err != nil {
 		return res, applySaveError(err)
+	}
+	// BL-139: the save replaced the file through a rename, so it lost the owner
+	// and DACL install-sql gave it, and with them the SQL service's read entry.
+	// Put them back. A failure does not undo the save: the recorder works on the
+	// new settings, and only the SQL service waits for install-sql.
+	if m.SQL != nil {
+		if rerr := m.SQL.ResecureSettings(installed); rerr != nil {
+			res.SQLSettingsUnlocked = true
+		}
 	}
 	if st == SvcStopped {
 		// Nothing is running: the saved settings apply at the next start.

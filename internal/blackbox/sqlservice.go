@@ -178,6 +178,55 @@ func isInstalledConfigPath(progDir, configPath string) bool {
 	return strings.EqualFold(filepath.Clean(configPath), filepath.Clean(filepath.Join(progDir, ConfigFileName)))
 }
 
+// ResecureSettings gives the installed settings file back what install-sql
+// gave it, after the host rewrote it (BL-139): the administrator owner and
+// protected DACL, proven, then the SQL service's read entry. SaveConfig writes
+// through a temp file and a rename, so every save drops both, and enable-sql
+// would refuse again (REG-1 coming back).
+//
+// It does nothing when the SQL service is not installed, or when its install
+// record binds another settings file (a custom --config is the operator's to
+// lock, never the installer's). A missing or unreadable record means install-sql
+// never finished, so there is nothing to restore either.
+func (m *SQLManager) ResecureSettings(configPath string) error {
+	st, err := m.Svc.State(SQLServiceName)
+	if err != nil {
+		return err
+	}
+	if st == SvcNotInstalled {
+		return nil
+	}
+	progDir, err := m.Env.ProgramDir()
+	if err != nil {
+		return err
+	}
+	if !isInstalledConfigPath(progDir, configPath) {
+		return nil
+	}
+	rec, err := readSQLInstallRecord(sqlInstallMarkerPath(progDir))
+	if err != nil {
+		return nil
+	}
+	if !isInstalledConfigPath(progDir, rec.Config) {
+		return nil
+	}
+	granter, ok := m.Env.(sqlLaunchGranter)
+	if !ok {
+		return fmt.Errorf("blackbox: cannot grant the SQL service read access on this system")
+	}
+	sid, err := sqlServiceSID(SQLServiceName)
+	if err != nil {
+		return err
+	}
+	if err := lockSQLConfigFile(m.Env, configPath); err != nil {
+		return err
+	}
+	if err := verifySQLConfigFile(m.Env, configPath); err != nil {
+		return err
+	}
+	return granter.GrantSQLLaunchAccess(filepath.Join(progDir, InstalledExeName), configPath, sid)
+}
+
 // sqlInstallMarkerPath is the install record beside the installed program.
 func sqlInstallMarkerPath(progDir string) string {
 	return filepath.Join(progDir, sqlInstallMarkerName)
