@@ -44,7 +44,7 @@ type bbSeriesLine struct {
 	Key    string          `json:"key"`   // for example "memCommit" or "sqlHost.SQLEXPRESS.batchRequestsPerSec"
 	Group  string          `json:"group"` // "host" for the core measurements, else the group name
 	Label  string          `json:"label"`
-	Unit   string          `json:"unit"` // "pct", "bytes", "bytesPerSec", "ms", "perSec", "count"
+	Unit   string          `json:"unit"` // "pct", "bytes", "bytesPerSec", "ms", "sec", "perSec", "count"
 	Points []bbSeriesPoint `json:"points"`
 }
 
@@ -54,6 +54,9 @@ type bbSeriesGroupCover struct {
 	Missing int    `json:"missing"` // samples that said it could not be read
 	Slow    int    `json:"slow"`    // skipped by the light budget
 	Busy    int    `json:"busy"`    // previous reading still running
+	// Partial counts samples whose reading covered only part of what it sums
+	// (a flag in bbPartialFlags was set: some network adapters unreadable or over the cap; BL-138).
+	Partial int `json:"partial"`
 }
 
 type bbSeriesProc struct {
@@ -174,7 +177,9 @@ var bbTCPStateNames = map[int]string{1: "closed", 2: "listen", 3: "syn-sent", 4:
 
 // bbSeriesSkip are fields that are not measurements: identities, flags and the
 // parts that have their own place in the answer.
-var bbSeriesSkip = map[string]bool{"v": true, "run": true, "seq": true, "t": true, "procs": true, "logs": true, "missing": true, "events": true, "dumps": true, "pid": true, "startTicks": true, "start": true, "channel": true, "eventId": true, "level": true}
+var bbSeriesSkip = map[string]bool{"v": true, "run": true, "seq": true, "t": true, "procs": true, "logs": true, "missing": true, "events": true, "dumps": true, "pid": true, "startTicks": true, "start": true, "channel": true, "eventId": true, "level": true,
+	// Counts of what a sum covered, not measurements (BL-146).
+	"outboundQueueInterfaces": true, "discardedInterfaces": true, "outErrorsInterfaces": true}
 
 // walk adds every numeric value under v to the buckets. Lists of named things
 // (pools, instances, targets, disks) are keyed by their name; TCP states by the
@@ -230,6 +235,32 @@ func (b *bbBuckets) walk(prefix string, t time.Time, v any) {
 	}
 }
 
+// bbPartialFlags are the flags that say a sum covered only some of what it adds up. Other "truncated" flags
+// (delayed events, a long dump list) do not make a total low, so they are not listed.
+var bbPartialFlags = map[string]bool{"outboundQueuePartial": true, "discardedPartial": true, "outErrorsPartial": true}
+
+// bbPartial is true when any of bbPartialFlags is set anywhere under v.
+func bbPartial(v any) bool {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, child := range x {
+			if b, ok := child.(bool); ok && b && bbPartialFlags[k] {
+				return true
+			}
+			if bbPartial(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range x {
+			if bbPartial(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func bbJoin(a, b string) string {
 	if a == "" {
 		return b
@@ -240,6 +271,15 @@ func bbJoin(a, b string) string {
 func bbSeriesUnit(key string) string {
 	last := key[strings.LastIndex(key, ".")+1:]
 	l := strings.ToLower(last)
+	// Fields whose name does not say their unit (BL-146).
+	switch last {
+	case "pctTimeInGC":
+		return "pct"
+	case "maxQueueItemAge":
+		return "ms"
+	case "pageLifeExpectancy", "elapsedSec":
+		return "sec"
+	}
 	switch {
 	case strings.HasSuffix(l, "bytespersec"):
 		return "bytesPerSec"
@@ -335,8 +375,11 @@ func buildBBSeries(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.
 			continue
 		}
 		for _, g := range bbSeriesGroups {
-			if _, ok := tree[g]; ok {
+			if sub, ok := tree[g]; ok {
 				cover[g].Read++
+				if bbPartial(sub) {
+					cover[g].Partial++
+				}
 			}
 		}
 		for _, miss := range s.Missing {

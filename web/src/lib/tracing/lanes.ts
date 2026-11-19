@@ -63,7 +63,8 @@ export const READ_TEXT = {
 
 export const COVER_TEXT = {
   outside: (from: string, to: string): string => `Imported files cover ${from} to ${to}; nothing falls inside this window.`,
-  some: (from: string, to: string): string => `Some imported files cover ${from} to ${to}; the other files have no recorded range.`
+  some: (from: string, to: string): string => `Some imported files cover ${from} to ${to}; the other files have no recorded range.`,
+  noRange: 'Some files for this row have no recorded time range, or were not imported, so the times they cover are not known.'
 } as const;
 
 /** The sentence for a lane whose imported files all sit outside the window, or '' when it does not apply. */
@@ -79,6 +80,16 @@ export function laneImportedLine(lane: TracingLane, window: TracingWindow, at: (
   if (!outside || (lane.state !== 'out-of-range' && !emptyEvents)) return '';
   const cover = lane.importedPartial ? COVER_TEXT.some : COVER_TEXT.outside;
   return cover(at(lane.importedFrom), at(lane.importedTo));
+}
+
+/**
+ * BL-048: the note for a lane the server marked importedPartial (some file has no recorded range, or was never imported) when
+ * laneImportedLine said nothing: with no range at all, or with a range that holds the window while another file is missing.
+ * '' when the lane is switched off, is not partial, or the lane line above already says it.
+ */
+export function laneRangeUnknownLine(lane: TracingLane, window: TracingWindow, at: (v: string) => string): string {
+  if (lane.disabled || !lane.importedPartial) return '';
+  return laneImportedLine(lane, window, at) ? '' : COVER_TEXT.noRange;
 }
 
 /**
@@ -168,6 +179,7 @@ export const laneCopyEntries = (): LintEntry[] => {
     ...Object.entries(READ_TEXT).map(([id, text]) => ({ id: 'tracingRead.' + id, text })),
     { id: 'tracingRead.coverOutside', text: COVER_TEXT.outside('1 Jan 00:00', '1 Jan 01:00') },
     { id: 'tracingRead.coverSome', text: COVER_TEXT.some('1 Jan 00:00', '1 Jan 01:00') },
+    { id: 'tracingRead.coverNoRange', text: COVER_TEXT.noRange },
     { id: 'tracingRead.chunkLine', text: laneChunkLine(lane, at) },
     { id: 'tracingRead.partial', text: laneReadLine(lane, at) },
     { id: 'tracingRead.none', text: laneReadLine({ ...lane, chunksRead: 0, readThrough: undefined }, at) },

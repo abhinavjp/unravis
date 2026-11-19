@@ -10,7 +10,8 @@ export type SeriesUnit = 'pct' | 'bytes' | 'bytesPerSec' | 'ms' | 'sec' | 'perSe
 export type SeriesPoint = [number, number, number, number];
 
 export interface SeriesLine { key: string; group: string; label: string; unit: string; points: SeriesPoint[] }
-export interface SeriesGroupCover { group: string; read: number; missing: number; slow: number; busy: number }
+/** partial: samples whose reading covered only part of what it sums (some network adapters, for example). Absent from an older server. */
+export interface SeriesGroupCover { group: string; read: number; missing: number; slow: number; busy: number; partial?: number }
 export interface SeriesProc { name: string; peakCpuPct: number; cpu: SeriesPoint[]; workingSet: SeriesPoint[]; privateBytes: SeriesPoint[] }
 export interface SeriesGap { from: string; to: string; seconds: number; cause: string }
 export interface SeriesMarker { t: string; kind: string; detail?: string }
@@ -93,8 +94,7 @@ const FIELD_NAMES: Record<string, string> = {
   ioReadBytesPerSec: 'Disk read (IO Read Bytes/sec)', ioWriteBytesPerSec: 'Disk write (IO Write Bytes/sec)', pageFileBytes: 'Page file use (Page File Bytes)',
   virtualBytes: 'Virtual memory (Virtual Bytes)', elapsedSec: 'Time since start',
   retransmitsPerSec: 'Retransmits (Segments Retransmitted/sec)', resetsPerSec: 'Resets (Connections Reset)', outboundQueue: 'Network send queue (Output Queue Length)',
-  outboundQueueInterfaces: 'Network adapters counted', discardedInterfaces: 'Network adapters counted (packets dropped)',
-  outErrorsInterfaces: 'Network adapters counted (send errors)', connFailuresPerSec: 'Failed connections (Connection Failures)',
+  connFailuresPerSec: 'Failed connections (Connection Failures)',
   discardedPerSec: 'Packets dropped (Packets Received Discarded)', outErrorsPerSec: 'Send errors (Packets Outbound Errors)',
   requestsQueued: 'Requests queued (Requests Queued)', requestsCurrent: 'Requests now (Requests Current)', requestsRejected: 'Requests rejected (Requests Rejected)',
   requestWaitTimeMs: 'Request wait time (Request Wait Time)', applicationRestarts: 'App restarts (Application Restarts)',
@@ -129,12 +129,8 @@ export const seriesTitle = (key: string): string => {
   return n.where ? n.name + ': ' + n.where : n.name;
 };
 
-/** The unit to draw. The server guesses from the field name; a few fields it cannot guess are fixed here. */
-export function seriesUnit(key: string, serverUnit: string): SeriesUnit {
-  const field = split(key).field;
-  if (field === 'pctTimeInGC') return 'pct';
-  if (field === 'maxQueueItemAge') return 'ms';
-  if (field === 'pageLifeExpectancy' || field === 'elapsedSec') return 'sec';
+/** The unit to draw: the server's (it sets the units of every field). An unknown one is a plain count. */
+export function seriesUnit(_key: string, serverUnit: string): SeriesUnit {
   return (['pct', 'bytes', 'bytesPerSec', 'ms', 'sec', 'perSec', 'count'] as const).find((u) => u === serverUnit) ?? 'count';
 }
 
@@ -259,7 +255,12 @@ export function unitStrips(keys: string[], lines: SeriesLine[]): Array<{ unit: S
 
 /** A group with samples but no readings in the window: why, in plain words. Null when it was read at least once or never asked for. */
 export function coverNote(c: SeriesGroupCover): string | null {
-  if (c.read > 0) return null;
+  if (c.read > 0) {
+    const p = c.partial ?? 0;
+    if (p <= 0) return null;
+    return p === c.read ? 'every reading covered only part of what it adds up (for example some network adapters), so totals are low'
+      : p + ' of ' + c.read + ' readings covered only part of what they add up (for example some network adapters), so those totals are low';
+  }
   if (c.slow > 0) return 'skipped: the reading took too long, so the recorder left it out to stay light';
   if (c.busy > 0) return 'skipped: the last reading was still running';
   if (c.missing > 0) return 'could not be read on this server';

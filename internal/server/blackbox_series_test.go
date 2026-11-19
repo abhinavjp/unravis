@@ -148,3 +148,52 @@ func TestSeriesKeepsARealZeroAndLeavesOutWhatWasNotRead(t *testing.T) {
 		t.Fatalf("diskQueue points = %v, want one 0 and no point where it was not read", dq.Points)
 	}
 }
+
+// BL-146: a count of what a sum covered is not drawn as a line, and the fields whose name hides their unit get the right one.
+// A sample whose group covered only part of what it sums is counted as partial for that group.
+func TestSeriesUnitsSkipsAndPartialCover(t *testing.T) {
+	start := time.Date(2026, 11, 18, 6, 0, 0, 0, time.UTC)
+	s := fullSample(start, 0)
+	s.TCP.OutboundQueue = f64(2)
+	s.TCP.OutboundQueueInterfaces = 3
+	s.TCP.DiscardedPerSec, s.TCP.DiscardedInterfaces = f64(1), 3
+	s.TCP.OutErrorsPerSec, s.TCP.OutErrorsInterfaces = f64(0), 3
+	s.TCP.OutboundQueuePartial = true
+	s.Events.Truncated = true
+	s.Dumps.Truncated = true
+	s.SQLHost.Instances[0].PageLifeExpectancy = f64(900)
+	s2 := fullSample(start.Add(30*time.Second), 1)
+	win := bbWindow{Start: start, End: start.Add(time.Minute)}
+	ans := buildBBSeries(blackbox.Manifest{IntervalSeconds: 30}, []blackbox.Sample{s, s2}, blackbox.ReadReport{}, blackbox.StateInfo{}, win, 2)
+	units := map[string]string{}
+	for _, l := range ans.Lines {
+		units[l.Key] = l.Unit
+	}
+	for _, k := range []string{"tcp.outboundQueueInterfaces", "tcp.discardedInterfaces", "tcp.outErrorsInterfaces"} {
+		if _, ok := units[k]; ok {
+			t.Fatalf("%s, an adapter count, is charted as a measurement", k)
+		}
+	}
+	for k, want := range map[string]string{
+		"clr.w3wp.pctTimeInGC": "pct", "sqlHost.SQLEXPRESS.pageLifeExpectancy": "sec", "tcp.outboundQueue": "count", "cpu": "pct",
+	} {
+		if units[k] != want {
+			t.Errorf("%s unit = %q, want %q", k, units[k], want)
+		}
+	}
+	for _, c := range ans.Groups {
+		// a truncated events list (delayed) and a truncated dump list are not partial totals
+		if (c.Group == "events" || c.Group == "dumps") && c.Partial != 0 {
+			t.Fatalf("%s cover = %+v, want none partial", c.Group, c)
+		}
+		if c.Group == "tcp" && (c.Read != 2 || c.Partial != 1) {
+			t.Fatalf("tcp cover = %+v, want 2 read and 1 partial", c)
+		}
+		if c.Group == "sqlHost" && c.Partial != 0 {
+			t.Fatalf("sqlHost cover = %+v, want none partial", c)
+		}
+	}
+	if bbSeriesUnit("http.api.maxQueueItemAge") != "ms" || bbSeriesUnit("proc10.w3wp.elapsedSec") != "sec" {
+		t.Fatal("maxQueueItemAge or elapsedSec unit is wrong")
+	}
+}

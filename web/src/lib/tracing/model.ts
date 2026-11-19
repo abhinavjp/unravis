@@ -100,7 +100,7 @@ export interface TracingLane {
   savedNotConnected?: string[];
   importedFrom?: string;
   importedTo?: string;
-  /** True when the server says some imported files have no recorded range (set only with an accepted importedFrom/importedTo). */
+  /** True when the server says some imported files have no recorded range or were never imported. Kept with or without importedFrom/importedTo (BL-048). */
   importedPartial?: true;
   /** Length in seconds of the blocks this lane was saved in (Query Store). Missing = same as the step. */
   blockSeconds?: number;
@@ -301,8 +301,8 @@ function parseLane(value: unknown): TracingLane | null {
     && isParseableDate(value.importedFrom) && isParseableDate(value.importedTo)) {
     lane.importedFrom = value.importedFrom;
     lane.importedTo = value.importedTo;
-    if (value.importedPartial === true) lane.importedPartial = true;
   }
+  if (value.importedPartial === true) lane.importedPartial = true;
   if (isNumber(value.blockSeconds) && value.blockSeconds > 0) lane.blockSeconds = value.blockSeconds;
   // Optional source metadata: a positive observation cadence is kept; anything else leaves the cadence unknown.
   if (isNumber(value.cadenceSeconds) && value.cadenceSeconds > 0) lane.cadenceSeconds = value.cadenceSeconds;
