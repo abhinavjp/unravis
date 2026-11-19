@@ -118,11 +118,11 @@ func laneRunsOf(runs []casestore.HealthRun) []laneRun {
 		if r.Kind != "sql" && r.Kind != "mongo" {
 			continue
 		}
-		var rep dbhealth.Report
-		if json.Unmarshal(r.Report, &rep) != nil || rep.Lane == nil {
-			continue
+		// The decoded report is shared through the cache, so a saved day is decoded once across the lane list, the
+		// overlap check, the investigation and the Timeline (DATA-15). Callers only read it.
+		if rep := heldReportOf(r); rep != nil {
+			out = append(out, laneRun{Run: r, Report: *rep})
 		}
-		out = append(out, laneRun{Run: r, Report: rep})
 	}
 	return out
 }
