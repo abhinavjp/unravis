@@ -1,4 +1,4 @@
-import{$ as e,A as t,B as n,E as r,F as i,G as a,H as o,I as s,J as c,L as l,M as u,P as d,S as f,V as p,W as m,Y as h,at as g,c as _,et as v,f as y,h as b,ht as x,it as S,j as C,k as w,lt as ee,m as T,mt as E,n as D,nt as O,p as k,pt as te,r as A,st as j,tt as M,ut as ne,w as N}from"./disclose-version-Cz0YKkiE.js";import{i as P}from"./api-CwDNliGr.js";import{n as re,t as F}from"./lookup-erXAX2sz.js";import{Bt as I,Lt as L,Rt as R,T as ie,gt as z,ht as ae,pt as B,yt as oe,zt as se}from"./index-CU66ShOn.js";function ce(e){let t=(e?.version??``).trim();if(!t)return``;let n=/^\d/.test(t)?`v`+t:t,r=[],i=(e?.commit??``).trim().slice(0,7);i&&r.push(`build `+i);let a=(e?.date??``).trim();return a&&r.push(a),`Unravis `+n+(r.length?` (`+r.join(`, `)+`)`:``)}var V=`# Unravis Blackbox
+import{$ as e,A as t,B as n,E as r,F as i,G as a,H as o,I as s,J as c,L as l,M as u,P as d,S as f,V as p,W as m,Y as h,at as g,c as _,et as v,f as y,h as b,ht as x,it as S,j as C,k as w,lt as ee,m as T,mt as E,n as D,nt as O,p as k,pt as te,r as A,st as j,tt as M,ut as ne,w as N}from"./disclose-version-Cz0YKkiE.js";import{i as P}from"./api-CwDNliGr.js";import{n as re,t as F}from"./lookup-erXAX2sz.js";import{Bt as I,Lt as L,Rt as R,T as ie,gt as z,ht as ae,pt as B,yt as oe,zt as se}from"./index-DoeZ8f9d.js";function ce(e){let t=(e?.version??``).trim();if(!t)return``;let n=/^\d/.test(t)?`v`+t:t,r=[],i=(e?.commit??``).trim().slice(0,7);i&&r.push(`build `+i);let a=(e?.date??``).trim();return a&&r.push(a),`Unravis `+n+(r.length?` (`+r.join(`, `)+`)`:``)}var V=`# Unravis Blackbox
 
 The Blackbox is a small program that sits on a server and keeps a flight recorder of it. When an incident happens, Unravis reads the recording and shows what the server was doing at that minute. It only reads the server. It never changes anything on it except its own recordings folder.
 
@@ -1383,7 +1383,7 @@ The same five cards open from the header's Import button, in the drawer. The Fil
 ![Add data in the Import drawer, dark](screenshots/P7/p7-import-drawer-dark.png)
 ![Add data in the Import drawer, light](screenshots/P7/p7-import-drawer-light.png)
 
-When the drawer closes on the Investigation Timeline and the sources there were picked by hand, a file that was just added is switched on too. A source you switched off stays off. At most 50 sources can be traced at once. If a switch would go past that, it is not made and a short note says to switch one off first.
+When the drawer closes on the Investigation Timeline and the sources there were picked by hand, a file that was just added is switched on too. A source you switched off stays off. At most 8 sources can be traced at once. If a switch would go past that, it is not made and a short note says to switch one off first.
 
 ### The Sources list
 
