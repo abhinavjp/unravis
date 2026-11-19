@@ -14,6 +14,9 @@
   import HostCard from './BlackboxHostCard.svelte';
   import CaseUse from './BlackboxCaseUse.svelte';
   import ReadKey from './BlackboxReadKey.svelte';
+  import BlackboxCharts from './BlackboxCharts.svelte';
+  import { BBC_TEXT } from '../lib/copy/blackboxChartsCopy';
+  import WizardDialog from './blackboxWizard/WizardDialog.svelte';
 
   // The Blackbox page: the list with a sticker per state, the Place pop-up, Add by folder, share or address, a status
   // screen per Blackbox with the actions that exist for it, Remove and Snapshot. It is not part of a case.
@@ -34,6 +37,8 @@
   let view = $state<View>({ kind: 'list' });
   // The Place pop-up opens over whatever the drawer shows, so closing it leaves the drawer where it was (OD-9: the drawer wizard is gone).
   let placeOpen = $state(false);
+  // The charts pop-up, for one Blackbox. It opens over the drawer and closing it leaves the drawer as it was.
+  let chartsFor = $state<BlackboxItem | null>(null);
   let scanning = $state(false);
   let scanNote = $state('');
   let working = $state('');
@@ -61,6 +66,18 @@
   const applyFieldShown = $derived(fieldProblemNow(applyField, applySettings, applyLogs));
   let body = $state<HTMLElement>();
   let drawerEl = $state<HTMLElement>();
+  // Status, Remove, Apply and Snapshot open in a pop-up over the list (BL-131), with the same shell as Place.
+  let pop = $state<WizardDialog>();
+  let removeBusy = $state(false);
+  const popView = $derived(view.kind === 'status' || view.kind === 'remove' || view.kind === 'apply' || view.kind === 'snapshot');
+  const popLabels = {
+    close: T.popCloseLabel,
+    leaveTitle: T.popLeaveTitle,
+    leaveBody: T.popLeaveBody,
+    keepGoing: T.popKeepEditing,
+    leave: T.popLeave,
+    busyNote: T.popBusy
+  };
 
   const items = $derived(list?.items ?? []);
   const thisPc = $derived<ThisPc>(list?.thisPc ?? { available: false, scanned: false, installed: false, running: false, listed: false });
@@ -98,8 +115,10 @@
    * from the list also looks at the list again, in case another tab changed it.
    */
   async function show(next: View) {
-    const fromList = view.kind === 'list';
-    const leavingStatus = view.kind === 'status' ? view.id : '';
+    const fromList = view.kind === 'list' || view.kind === 'add';
+    const wasPop = popView;
+    // Leaving the pop-up from any of its screens goes back to the row it was opened from (D-C-22).
+    const leavingStatus = view.kind !== 'list' && view.kind !== 'add' ? view.id : '';
     view = next;
     actionNote = '';
     actionError = '';
@@ -109,14 +128,26 @@
     showNewKey = false;
     newKey = '';
     await tick();
-    drawerEl?.scrollTo?.({ top: 0 });
+    // The drawer behind the pop-up keeps its scroll, so closing the pop-up lands back on the row that opened it.
+    if (!popView && !wasPop) drawerEl?.scrollTo?.({ top: 0 });
+    // A screen inside the pop-up: the pop-up puts focus on its own title (or first field) and scrolls itself to the top.
+    // Opening it does that by itself; moving between its screens asks for it here.
+    if (popView) {
+      if (wasPop) pop?.focusStep();
+      if (fromList && next.kind === 'status') void refreshOpened(next.id);
+      return;
+    }
     // Back from a status: return to the row that was opened (D-C-22). If it is gone, use the usual target.
     const row = next.kind === 'list' && leavingStatus
       ? Array.from(body?.querySelectorAll<HTMLElement>('[data-open-for]') ?? []).find((el) => el.dataset.openFor === leavingStatus)
       : undefined;
     const target = row ?? body?.querySelector<HTMLElement>('h3[tabindex="-1"]') ?? drawerEl?.querySelector<HTMLElement>('h2');
     target?.focus({ preventScroll: true });
-    if (fromList && next.kind === 'status') void refreshOpened(next.id);
+  }
+  /** Closing the pop-up goes back to the list, read again, since a remove or an apply may have changed it. */
+  async function closePop() {
+    await show({ kind: 'list' });
+    void load();
   }
   /** Reloads the list after a status opened. If that Blackbox was removed elsewhere, say so and show the list. */
   async function refreshOpened(id: string) {
@@ -273,143 +304,6 @@
           onCancel={() => show({ kind: 'list' })} />
       {/key}
 
-    {:else if view.kind === 'remove' && current}
-      <RemoveBlackbox item={current} {thisPc} onChanged={async () => { await load(); show({ kind: 'list' }); }} onCancel={() => show({ kind: 'status', id: current.id })} />
-
-    {:else if view.kind === 'snapshot'}
-      <section class="bb-block" aria-label={T.snapshotTitle(current?.name ?? '')}>
-        <h3 tabindex="-1">{T.snapshotTitle(current?.name ?? '')}</h3>
-        <p role="status">{T.snapshotSaved(view.answer.dir, shownBytes(view.answer.bytes))}</p>
-        <p class="bb-note">{T.snapshotRecordings(view.answer.recordings)}</p>
-        <p class="bb-note">{T.snapshotLogs(view.answer.logs)}</p>
-        <p class="bb-note">{T.snapshotNot}</p>
-        <div class="bb-actions"><button type="button" class="primary-button" onclick={() => show({ kind: 'status', id: view.kind === 'snapshot' ? view.id : '' })}>{T.done}</button></div>
-      </section>
-
-    {:else if view.kind === 'apply' && current}
-      <section class="bb-block" aria-label={T.applyTitle}>
-        <h3 tabindex="-1">{T.applyTitle}</h3>
-        <p class="bb-note">{T.applyIntro}</p>
-        {#if thisPc.settings}
-          <SettingsFields bind:settings={applySettings} bind:logPathsText={applyLogs} idPrefix="bb-apply" problem={applyFieldShown} lockReached />
-        {/if}
-        <div>
-          {#if working}<p class="bb-note" role="status">{working}</p>{/if}
-          {#if applyProblem}<div class="inline-error" role="alert">{applyProblem}</div>{#if reloadHint}<button type="button" class="secondary-button" onclick={reload}>{T.reload}</button>{/if}{/if}
-        </div>
-        {#if thisPc.settings}
-          <p class="bb-note" id="bb-apply-diff">{applyChanges.length ? T.applyChangedLine(applyChanges.map(applyChangePart)) : T.applyNoChange}</p>
-          {#if applyChanges.some((c) => c.field === 'folder')}<p class="bb-note bb-warn">{T.applyFolderWarn}</p>{/if}
-          {#if applyChanges.some((c) => c.field === 'interval')}<p class="bb-note">{T.applyIntervalWarn}</p>{/if}
-        {/if}
-        <p class="bb-note">{T.adminNote}</p>
-        <div class="bb-actions">
-          <button type="button" class="primary-button" disabled={!!working || !thisPc.settings} onclick={() => apply(current)}>{T.apply}</button>
-          <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'status', id: current.id })}>{T.cancel}</button>
-        </div>
-      </section>
-
-    {:else if view.kind === 'status' && current}
-      {@const item = current}
-      <section class="bb-block" aria-labelledby="bb-status-title">
-        <button type="button" class="quiet-button bb-back" onclick={() => show({ kind: 'list' })}>{T.back}</button>
-        <h3 id="bb-status-title" tabindex="-1">{item.name} <Sticker info={item.state} />{#if item.thisPc}<span class="bb-chip">{T.rowThisPc}</span>{/if}</h3>
-        <p class="bb-ready"><strong>{item.state.readiness}</strong></p>
-        <p>{item.state.detail}</p>
-        <p class="bb-note">{stateNextFor(item.state, item.thisPc)}</p>
-        {#if checkedAt}<p class="bb-note">{T.checkedAt} {checkedAt}.</p>{/if}
-        {#if !item.thisPc}<p class="bb-note">{T.statusReadOnly}</p>{/if}
-        <dl class="bb-facts">
-          <div><dt>{T.rowReachedBy}</dt><dd>{kindWord(item)}: {item.location}</dd></div>
-          {#if item.facts}
-            <div><dt>{T.lastSample}</dt><dd>{sampleLine(item)}</dd></div>
-            <div><dt>{T.samplesEvery}</dt><dd>{intervalFor(item.facts)}</dd></div>
-            <div><dt>{T.recorded}</dt><dd>{T.filesAndSamples(item.facts.files, item.facts.samples)}</dd></div>
-            <div><dt>{T.gaps}</dt><dd>{T.gapsText(item.facts.gaps, item.facts.unread ?? 0, item.facts.longestGapSeconds ?? 0)}</dd></div>
-            {#if item.facts.freePercent != null}<div><dt>{T.diskFree}</dt><dd>{item.facts.freePercent}%</dd></div>{/if}
-            <div><dt>{T.host}</dt><dd>{item.facts.host}{#if item.facts.version}, {T.version} {item.facts.version}{/if}</dd></div>
-          {:else}
-            <div><dt>{T.lastSample}</dt><dd>{T.noRecordingYet}</dd></div>
-          {/if}
-        </dl>
-        {#if item.facts && item.facts.effectiveIntervalSeconds && item.facts.effectiveIntervalSeconds !== item.facts.intervalSeconds}<p class="bb-note">{T.intervalHelp}</p>{/if}
-        <p class="bb-note">{keyLine(item)}</p>
-
-        <div>
-          {#if working}<p class="bb-note" role="status">{working}</p>{/if}
-          {#if actionNote}<p class="bb-ok" role="status">{actionNote}</p>{/if}
-          {#if actionError}<div class="inline-error" role="alert">{actionError}</div>{/if}
-        </div>
-        {#if actionError && reloadHint}<div class="bb-actions"><button type="button" class="secondary-button" onclick={reload}>{T.reload}</button></div>{/if}
-
-        {#if item.thisPc && item.state.state === 'not-placed'}
-          <div class="bb-actions">
-            <button type="button" class="primary-button" disabled={!!working} onclick={() => { placeOpen = true; }}>{T.place}</button>
-            <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'remove', id: item.id })}>{T.removeForget}</button>
-          </div>
-        {:else if item.thisPc}
-          <p class="bb-note">{T.adminNote}</p>
-          {#if thisPc.installed && thisPc.updateAvailable}
-            <div class="bb-confirm" role="group" aria-label={T.updateTitle}>
-              <strong>{T.updateTitle}</strong>
-              <p class="bb-note">{T.updateText}</p>
-              <div class="bb-actions"><button type="button" class="primary-button" disabled={!!working} onclick={update}>{T.updateButton}</button></div>
-            </div>
-          {/if}
-          {@const controls = pcControls(item.state.state, thisPc)}
-          <div class="bb-actions">
-            {#if controls.start}<button type="button" class="primary-button" disabled={!!working} onclick={start}>{T.start}</button>{/if}
-            {#if controls.stop}<button type="button" class="secondary-button" disabled={!!working} onclick={askStop} aria-expanded={stopAsk}>{T.stop}</button>{/if}
-            {#if canChangeKey(item)}<button type="button" class="secondary-button" disabled={!!working} onclick={openKey} aria-expanded={keyOpen}>{T.changeKey}</button>{/if}
-            <button type="button" class="secondary-button" disabled={!!working || !thisPc.settings} onclick={() => openApply(item)}>{T.apply}</button>
-            <button type="button" class="secondary-button" disabled={!!working} onclick={() => snapshot(item)}>{T.snapshot}</button>
-            <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'remove', id: item.id })}>{T.remove}</button>
-            <button type="button" class="quiet-button" disabled={!!working} onclick={() => check(item)}>{T.check}</button>
-          </div>
-          {#if stopAsk && controls.stop}
-            <div class="bb-confirm" role="group" aria-label={T.stopTitle}>
-              <strong>{T.stopTitle}</strong>
-              <p class="bb-note">{T.confirmStop}</p>
-              <div class="bb-actions">
-                <button type="button" class="secondary-button" disabled={!!working} onclick={stop}>{T.stopYes}</button>
-                <button type="button" class="primary-button" bind:this={keepBtn} onclick={() => { stopAsk = false; }}>{T.stopKeep}</button>
-              </div>
-            </div>
-          {/if}
-        {:else}
-          <p class="bb-note">{T.anotherServer}</p>
-          <div class="bb-actions">
-            <button type="button" class="primary-button" disabled={!!working} onclick={() => check(item)}>{T.check}</button>
-            {#if canChangeKey(item)}<button type="button" class="secondary-button" disabled={!!working} onclick={openKey} aria-expanded={keyOpen}>{T.changeKey}</button>{/if}
-            <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'remove', id: item.id })}>{T.removeForget}</button>
-          </div>
-          <details class="bb-services">
-            <summary>{T.servicesTitle}</summary>
-            <p class="bb-note">{item.state.state === 'running-late' ? T.servicesStepsLate : T.servicesSteps}</p>
-          </details>
-        {/if}
-
-        {#if keyOpen && canChangeKey(item)}
-          <div class="bb-key">
-            <label class="bb-field"><span>{T.newKey}</span>
-              <input id="bb-new-key" bind:this={keyInput} type={showNewKey ? 'text' : 'password'} bind:value={newKey} autocomplete="off" spellcheck="false" aria-describedby="bb-new-key-help"
-                onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void saveKey(item); } }} />
-            </label>
-            <label class="bb-check"><input type="checkbox" bind:checked={showNewKey} /><span>{T.addKeyShow}</span></label>
-            <p class="bb-note" id="bb-new-key-help">{T.keyFieldHelp}</p>
-            <button type="button" class="secondary-button" disabled={!!working || !newKey} onclick={() => saveKey(item)}>{T.saveKey}</button>
-          </div>
-        {/if}
-
-        {#if item.thisPc && item.kind === 'url' && item.hasKey}{#key item.id}<ReadKey {item} />{/key}{/if}
-        {#key item.id}<CaseUse {item} />{/key}
-
-        {#if item.facts}
-          <HostCard {item} />
-          <!-- PROTOTYPE (throwaway, dev only): remove after the owner picks a layout -->
-        {/if}
-      </section>
-
     {:else}
       <div class="bb-nutshell"><span class="bb-label">{T.nutshellLabel}</span> {T.nutshell}</div>
       <div class="bb-actions bb-top">
@@ -466,6 +360,169 @@
       {/if}
     {/if}
 
+    <!-- Status, Remove, Apply and Snapshot (BL-131): a pop-up over the list, in the Place pop-up's shell. Closing it goes back to the list. -->
+    <WizardDialog
+      bind:this={pop}
+      open={popView && current !== null}
+      titleId="bb-pop-title"
+      busy={!!working || removeBusy}
+      finished={!(view.kind === 'apply' && applyChanges.length > 0)}
+      enterNeedsButton
+      labels={popLabels}
+      onLeave={closePop}
+      onPrimary={() => {}}
+    >
+      {#snippet rail()}{/snippet}
+      {#snippet header()}
+        {#if current}
+          <h2 id="bb-pop-title" class="bb-pop-title" tabindex="-1">{current.name} <Sticker info={current.state} />{#if current.thisPc}<span class="bb-chip">{T.rowThisPc}</span>{/if}</h2>
+        {/if}
+      {/snippet}
+      {#snippet body()}
+            {#if view.kind === 'remove' && current}
+          <RemoveBlackbox item={current} {thisPc} onBusy={(b) => { removeBusy = b; }} onChanged={async () => { await load(); show({ kind: 'list' }); }} onCancel={() => show({ kind: 'status', id: current.id })} />
+
+        {:else if view.kind === 'snapshot'}
+          <section class="bb-block" aria-label={T.snapshotTitle(current?.name ?? '')}>
+            <h3 tabindex="-1">{T.snapshotTitle(current?.name ?? '')}</h3>
+            <p role="status">{T.snapshotSaved(view.answer.dir, shownBytes(view.answer.bytes))}</p>
+            <p class="bb-note">{T.snapshotRecordings(view.answer.recordings)}</p>
+            <p class="bb-note">{T.snapshotLogs(view.answer.logs)}</p>
+            <p class="bb-note">{T.snapshotNot}</p>
+            <div class="bb-actions"><button type="button" class="primary-button" onclick={() => show({ kind: 'status', id: view.kind === 'snapshot' ? view.id : '' })}>{T.done}</button></div>
+          </section>
+
+        {:else if view.kind === 'apply' && current}
+          <section class="bb-block" aria-label={T.applyTitle}>
+            <h3 tabindex="-1">{T.applyTitle}</h3>
+            <p class="bb-note">{T.applyIntro}</p>
+            {#if thisPc.settings}
+              <SettingsFields bind:settings={applySettings} bind:logPathsText={applyLogs} idPrefix="bb-apply" problem={applyFieldShown} lockReached />
+            {/if}
+            <div>
+              {#if working}<p class="bb-note" role="status">{working}</p>{/if}
+              {#if applyProblem}<div class="inline-error" role="alert">{applyProblem}</div>{#if reloadHint}<button type="button" class="secondary-button" onclick={reload}>{T.reload}</button>{/if}{/if}
+            </div>
+            {#if thisPc.settings}
+              <p class="bb-note" id="bb-apply-diff">{applyChanges.length ? T.applyChangedLine(applyChanges.map(applyChangePart)) : T.applyNoChange}</p>
+              {#if applyChanges.some((c) => c.field === 'folder')}<p class="bb-note bb-warn">{T.applyFolderWarn}</p>{/if}
+              {#if applyChanges.some((c) => c.field === 'interval')}<p class="bb-note">{T.applyIntervalWarn}</p>{/if}
+            {/if}
+            <p class="bb-note">{T.adminNote}</p>
+            <div class="bb-actions">
+              <button type="button" class="primary-button" disabled={!!working || !thisPc.settings} onclick={() => apply(current)}>{T.apply}</button>
+              <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'status', id: current.id })}>{T.cancel}</button>
+            </div>
+          </section>
+
+        {:else if view.kind === 'status' && current}
+          {@const item = current}
+          <section class="bb-block" aria-labelledby="bb-pop-title">
+            <p class="bb-ready"><strong>{item.state.readiness}</strong></p>
+            <p>{item.state.detail}</p>
+            <p class="bb-note">{stateNextFor(item.state, item.thisPc)}</p>
+            {#if checkedAt}<p class="bb-note">{T.checkedAt} {checkedAt}.</p>{/if}
+            {#if !item.thisPc}<p class="bb-note">{T.statusReadOnly}</p>{/if}
+            <dl class="bb-facts">
+              <div><dt>{T.rowReachedBy}</dt><dd>{kindWord(item)}: {item.location}</dd></div>
+              {#if item.facts}
+                <div><dt>{T.lastSample}</dt><dd>{sampleLine(item)}</dd></div>
+                <div><dt>{T.samplesEvery}</dt><dd>{intervalFor(item.facts)}</dd></div>
+                <div><dt>{T.recorded}</dt><dd>{T.filesAndSamples(item.facts.files, item.facts.samples)}</dd></div>
+                <div><dt>{T.gaps}</dt><dd>{T.gapsText(item.facts.gaps, item.facts.unread ?? 0, item.facts.longestGapSeconds ?? 0)}</dd></div>
+                {#if item.facts.freePercent != null}<div><dt>{T.diskFree}</dt><dd>{item.facts.freePercent}%</dd></div>{/if}
+                <div><dt>{T.host}</dt><dd>{item.facts.host}{#if item.facts.version}, {T.version} {item.facts.version}{/if}</dd></div>
+              {:else}
+                <div><dt>{T.lastSample}</dt><dd>{T.noRecordingYet}</dd></div>
+              {/if}
+            </dl>
+            {#if item.facts && item.facts.effectiveIntervalSeconds && item.facts.effectiveIntervalSeconds !== item.facts.intervalSeconds}<p class="bb-note">{T.intervalHelp}</p>{/if}
+            <p class="bb-note">{keyLine(item)}</p>
+
+            <div>
+              {#if working}<p class="bb-note" role="status">{working}</p>{/if}
+              {#if actionNote}<p class="bb-ok" role="status">{actionNote}</p>{/if}
+              {#if actionError}<div class="inline-error" role="alert">{actionError}</div>{/if}
+            </div>
+            {#if actionError && reloadHint}<div class="bb-actions"><button type="button" class="secondary-button" onclick={reload}>{T.reload}</button></div>{/if}
+
+            {#if item.thisPc && item.state.state === 'not-placed'}
+              <div class="bb-actions">
+                <button type="button" class="primary-button" disabled={!!working} onclick={() => { placeOpen = true; }}>{T.place}</button>
+                <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'remove', id: item.id })}>{T.removeForget}</button>
+              </div>
+            {:else if item.thisPc}
+              <p class="bb-note">{T.adminNote}</p>
+              {#if thisPc.installed && thisPc.updateAvailable}
+                <div class="bb-confirm" role="group" aria-label={T.updateTitle}>
+                  <strong>{T.updateTitle}</strong>
+                  <p class="bb-note">{T.updateText}</p>
+                  <div class="bb-actions"><button type="button" class="primary-button" disabled={!!working} onclick={update}>{T.updateButton}</button></div>
+                </div>
+              {/if}
+              {@const controls = pcControls(item.state.state, thisPc)}
+              <div class="bb-actions">
+                {#if controls.start}<button type="button" class="primary-button" disabled={!!working} onclick={start}>{T.start}</button>{/if}
+                {#if controls.stop}<button type="button" class="secondary-button" disabled={!!working} onclick={askStop} aria-expanded={stopAsk}>{T.stop}</button>{/if}
+                {#if canChangeKey(item)}<button type="button" class="secondary-button" disabled={!!working} onclick={openKey} aria-expanded={keyOpen}>{T.changeKey}</button>{/if}
+                <button type="button" class="secondary-button" disabled={!!working || !thisPc.settings} onclick={() => openApply(item)}>{T.apply}</button>
+                <button type="button" class="secondary-button" disabled={!!working} onclick={() => snapshot(item)}>{T.snapshot}</button>
+                <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'remove', id: item.id })}>{T.remove}</button>
+                <button type="button" class="quiet-button" disabled={!!working} onclick={() => check(item)}>{T.check}</button>
+              </div>
+              {#if stopAsk && controls.stop}
+                <div class="bb-confirm" role="group" aria-label={T.stopTitle}>
+                  <strong>{T.stopTitle}</strong>
+                  <p class="bb-note">{T.confirmStop}</p>
+                  <div class="bb-actions">
+                    <button type="button" class="secondary-button" disabled={!!working} onclick={stop}>{T.stopYes}</button>
+                    <button type="button" class="primary-button" bind:this={keepBtn} onclick={() => { stopAsk = false; }}>{T.stopKeep}</button>
+                  </div>
+                </div>
+              {/if}
+            {:else}
+              <p class="bb-note">{T.anotherServer}</p>
+              <div class="bb-actions">
+                <button type="button" class="primary-button" disabled={!!working} onclick={() => check(item)}>{T.check}</button>
+                {#if canChangeKey(item)}<button type="button" class="secondary-button" disabled={!!working} onclick={openKey} aria-expanded={keyOpen}>{T.changeKey}</button>{/if}
+                <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'remove', id: item.id })}>{T.removeForget}</button>
+              </div>
+              <details class="bb-services">
+                <summary>{T.servicesTitle}</summary>
+                <p class="bb-note">{item.state.state === 'running-late' ? T.servicesStepsLate : T.servicesSteps}</p>
+              </details>
+            {/if}
+
+            {#if keyOpen && canChangeKey(item)}
+              <div class="bb-key">
+                <label class="bb-field"><span>{T.newKey}</span>
+                  <input id="bb-new-key" bind:this={keyInput} type={showNewKey ? 'text' : 'password'} bind:value={newKey} autocomplete="off" spellcheck="false" aria-describedby="bb-new-key-help"
+                    onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void saveKey(item); } }} />
+                </label>
+                <label class="bb-check"><input type="checkbox" bind:checked={showNewKey} /><span>{T.addKeyShow}</span></label>
+                <p class="bb-note" id="bb-new-key-help">{T.keyFieldHelp}</p>
+                <button type="button" class="secondary-button" disabled={!!working || !newKey} onclick={() => saveKey(item)}>{T.saveKey}</button>
+              </div>
+            {/if}
+
+            {#if item.thisPc && item.kind === 'url' && item.hasKey}{#key item.id}<ReadKey {item} />{/key}{/if}
+            {#key item.id}<CaseUse {item} />{/key}
+
+            {#if item.facts}
+              {#if item.facts.lastSample}<div class="bb-confirm">
+                <p class="bb-note">{BBC_TEXT.openHint}</p>
+                <div class="bb-actions"><button type="button" class="secondary-button" onclick={() => { chartsFor = item; }}>{BBC_TEXT.open}</button></div>
+              </div>{/if}
+              <HostCard {item} />
+            {/if}
+          </section>
+            {/if}
+      {/snippet}
+      {#snippet footer()}
+        <button type="button" class="secondary-button" disabled={!!working || removeBusy} onclick={() => pop?.requestLeave()}>{T.popClose}</button>
+      {/snippet}
+    </WizardDialog>
+
     <!-- The pop-up closes itself back to the button that opened it. After a real place the list reloads and shows. -->
     {#if placeOpen}
       <PlaceWizard {thisPc} canPack={list?.canPack ?? false} open={placeOpen}
@@ -474,6 +531,7 @@
     {/if}
   </div>
 </Drawer>
+{#if chartsFor}{#key chartsFor.id}<BlackboxCharts item={chartsFor} onClose={() => { chartsFor = null; }} />{/key}{/if}
 
 <style>
   .bb-body { display: grid; gap: var(--space-4); align-content: start; min-width: 0; margin-top: var(--space-3); }
@@ -485,7 +543,7 @@
   .bb-warn { color: var(--text); border-left: 3px solid var(--warn); padding-left: var(--space-2); }
   .bb-nutshell { padding: var(--space-3); font-size: 13px; line-height: 1.5; background: var(--surface-2); border-radius: var(--radius-sm); }
   .bb-label { font-weight: 600; margin-right: 4px; }
-  .bb-back { width: fit-content; }
+  .bb-pop-title { margin: 0; padding-right: 40px; font-size: var(--fs-6); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .bb-empty { display: grid; gap: var(--space-2); padding: var(--space-4) 0; border-top: 1px solid var(--line); }
   .bb-list { display: grid; margin: 0; padding: 0; list-style: none; }
   .bb-row { display: grid; gap: var(--space-2); padding: var(--space-3) 0; border-top: 1px solid var(--line); min-width: 0; }

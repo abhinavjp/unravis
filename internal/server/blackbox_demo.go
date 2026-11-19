@@ -125,6 +125,7 @@ type simRec struct {
 }
 
 func f64(v float64) *float64 { return &v }
+func u64p(v uint64) *uint64  { return &v }
 
 func (r simRec) build() *simBB {
 	iv := r.Interval
@@ -142,6 +143,7 @@ func (r simRec) build() *simBB {
 	var hours []time.Time
 	var times []time.Time
 	seq := uint64(0)
+	netTotal := uint64(0)
 	for t := r.Start.UTC().Truncate(time.Second); !t.After(r.End); t = t.Add(step) {
 		skipped := false
 		for _, sk := range r.Skip {
@@ -155,6 +157,17 @@ func (r simRec) build() *simBB {
 		seq++
 		c := cpu(t)
 		s := blackbox.Sample{V: 1, Run: "run-1", Seq: seq, T: t, CPU: f64(c)}
+		// The demo also carries the base memory, disk and network figures and two detail groups, so the charts
+		// view has more than one line to draw. They follow the CPU curve; none of them is a real reading.
+		s.MemAvail = u64p(uint64((6.0 - c/40) * (1 << 30)))
+		s.MemCommit = u64p(uint64((4.0 + c/30) * (1 << 30)))
+		s.DiskQueue = f64(c / 40)
+		s.DiskMs = f64(2 + c*c/400)
+		s.DiskFreePct = f64(62)
+		netTotal += uint64(c * 40_000 * float64(iv))
+		s.NetIn, s.NetOut = u64p(netTotal), u64p(netTotal/3)
+		s.DiskCPU = &blackbox.DiskCPUGroup{CPU: &blackbox.CPUSplit{QueueLength: f64(c / 20), PrivilegedPct: f64(c / 6), DPCPct: f64(0)}}
+		s.TCP = &blackbox.TCPGroup{RetransmitsPerSec: f64(c / 50), States: []blackbox.TCPStateCount{{State: 5, Count: uint32(40 + c)}, {State: 11, Count: uint32(c / 4)}}}
 		top, share := "System", 1.0
 		if c > 80 && r.Busy != "" {
 			top, share = r.Busy, c-5
