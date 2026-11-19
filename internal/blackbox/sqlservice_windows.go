@@ -85,9 +85,36 @@ func (OSEnv) VerifyAdminOnlyFile(path string) error { return verifyAdminOnlyFile
 // proves both halves. No inheritance: the record's lock is its own.
 func (OSEnv) LockSQLInstallMarker(path string) error { return lockSQLInstallMarker(path) }
 
+// LockSQLSettingsFile assigns the settings file the owner verifyAdminOnlyFile
+// demands and the administrator-only protected DACL, in the same single
+// descriptor write the install record uses (R1-s2, REG-1). The settings file
+// needs this because nothing else in the install ever gives a file an owner:
+// SaveConfig writes through a temp file and os.Chmod, and a rename keeps the
+// descriptor of the temp file, so the file is owned by the account that ran the
+// install — the owner SEC-1's rule refuses on purpose. Windows does not fix
+// that by inheritance: an OICI ACE propagates access, never ownership.
+//
+// The DACL this writes does not carry the SQL service's own read entry, so it
+// must be applied BEFORE grantSQLLaunchAccess adds it; install-sql keeps that
+// order, and the grant is idempotent, so re-installing leaves one entry per
+// trustee.
+func (OSEnv) LockSQLSettingsFile(path string) error { return lockSQLSettingsFile(path) }
+
+// lockSQLSettingsFile is the real Windows settings-file lock: the same owner and
+// the same protected DACL as the install record, named once here so the two
+// halves of the rule cannot drift.
+func lockSQLSettingsFile(path string) error { return lockAdminOnlyFile(path) }
+
 // lockSQLInstallMarker applies the admin-only owner and protected DACL to the
 // record in one write.
-func lockSQLInstallMarker(path string) error {
+func lockSQLInstallMarker(path string) error { return lockAdminOnlyFile(path) }
+
+// lockAdminOnlyFile is the one descriptor every object the installer claims for
+// administrators gets: a protected DACL that leaves change rights with SYSTEM
+// and Administrators alone, and BUILTIN\Administrators as the owner, both in a
+// single write so there is no moment when the file is locked but still owned by
+// whoever created it.
+func lockAdminOnlyFile(path string) error {
 	sd, err := windows.SecurityDescriptorFromString("D:PAI(A;;FA;;;SY)(A;;FA;;;BA)")
 	if err != nil {
 		return err
