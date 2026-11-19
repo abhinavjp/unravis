@@ -9,10 +9,10 @@
 
   // Connect to MongoDB, list its databases, and say what each one is: API audit logs, other data, or not used. Only a database that was listed
   // by a successful test can be chosen. The password is kept in memory only (wizardConnections.ts) and the draft holds an id, never the password.
-  let { onDone }: { onDone?: () => void } = $props();
+  let { onDone, prefill = '' }: { onDone?: () => void; prefill?: string } = $props();
 
   const uid = $props.id();
-  let uri = $state('');
+  let uri = $state(prefill);
   let username = $state('');
   let password = $state('');
   let authSource = $state('');

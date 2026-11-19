@@ -17,3 +17,8 @@ export function railGroups<T extends RailSource>(sources: readonly T[], titleOf:
 
 /** Whether the last button may be pressed: something to add, and nothing already running. */
 export const canFinish = (adding: boolean, count: number, busy: boolean, closed: boolean): boolean => !busy && !closed && (adding ? count > 0 : true);
+
+/** The address a found Mongo/SQL row opens its form with. The scan finds the service and its logs, not its port, so this is the usual local address; the owner can edit it. */
+export function connectPrefill(kind: 'mongo' | 'sql'): string {
+  return kind === 'mongo' ? 'mongodb://localhost:27017' : 'localhost';
+}

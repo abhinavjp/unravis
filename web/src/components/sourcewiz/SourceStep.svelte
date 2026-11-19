@@ -5,7 +5,7 @@
   import { sourceKey } from '../../lib/wizardSources';
   import { groupOf } from '../../lib/discover';
   import { releaseOrphanFiles } from '../../lib/wizardFiles.svelte';
-  import { railGroups } from '../../lib/sourceWizard';
+  import { railGroups, connectPrefill } from '../../lib/sourceWizard';
   import { DISCOVER_TEXT } from '../../lib/copy/discoverCopy';
   import { kindLabel } from '../../lib/copy/wizardSourcesCopy';
   import { WIZ } from '../../lib/copy/sourceWizardCopy';
@@ -26,6 +26,8 @@
   let card = $state<Card>('');
   let heading = $state<HTMLHeadingElement>();
   let dropNote = $state('');
+  let from = $state('');
+  let connected = $state<string[]>([]);
 
   const tiles: Array<{ id: Exclude<Card, ''>; name: string; sub: string; badge?: string }> = $derived([
     { id: 'pc', ...WIZ.tiles.pc }, { id: 'mongo', ...WIZ.tiles.mongo }, { id: 'sql', ...WIZ.tiles.sql }, { id: 'redis', ...WIZ.tiles.redis },
@@ -42,7 +44,8 @@
   const existingGroups = $derived(railGroups(existing.map((e) => ({ ...e, ref: e.label })), (e) => kindLabel(e.kind)));
 
   async function back() { card = ''; dropNote = ''; await tick(); heading?.focus(); }
-  function open(c: Card) { card = c; dropNote = ''; }
+  function open(c: Card, finding = '') { card = c; dropNote = ''; from = finding; }
+  function connectedDone() { if (from !== '' && !connected.includes(from)) connected = [...connected, from]; from = ''; card = 'pc'; }
   async function drop(event: DragEvent) { event.preventDefault(); card = 'files'; dropNote = 'Drop them in the box below.'; }
   async function remove(key: string) { removeChosen(key); releaseOrphanFiles(); await tick(); heading?.focus(); }
 </script>
@@ -57,7 +60,7 @@
         <h4>{WIZ.alreadyHeading}</h4>
         {#each existingGroups as g (g.title)}
           <p class="gtitle">{g.title}</p>
-          <ul>{#each g.items as e (e.label)}<li class="ro">{e.label}</li>{/each}</ul>
+          <ul>{#each g.items as e, i (i)}<li class="ro">{e.label}</li>{/each}</ul>
         {/each}
       {/if}
       <h4 tabindex="-1" bind:this={heading}>{adding ? WIZ.toAddHeading : WIZ.railHeading}</h4>
@@ -93,9 +96,9 @@
       {:else}
         <button type="button" class="quiet-button" onclick={() => void back()}>← {WIZ.back}</button>
         {#if dropNote}<p class="hint">{dropNote}</p>{/if}
-        {#if card === 'pc'}<FindOnPc onCard={(c) => open(c)} onDone={() => void back()} />
-        {:else if card === 'mongo'}<MongoClassify onDone={() => void back()} />
-        {:else if card === 'sql'}<SqlServerForm onDone={() => void back()} />
+        {#if card === 'pc'}<FindOnPc {connected} onCard={(c, f) => open(c, f ?? '')} onDone={() => void back()} />
+        {:else if card === 'mongo'}{#if from !== ''}<p class="hint">{WIZ.find.mongoPrefill} <code>{connectPrefill('mongo')}</code></p>{/if}<MongoClassify prefill={from !== '' ? connectPrefill('mongo') : ''} onDone={() => (from !== '' ? connectedDone() : void back())} />
+        {:else if card === 'sql'}{#if from !== ''}<p class="hint">{WIZ.find.mongoPrefill} <code>{connectPrefill('sql')}</code></p>{/if}<SqlServerForm prefill={from !== '' ? connectPrefill('sql') : ''} onDone={() => (from !== '' ? connectedDone() : void back())} />
         {:else if card === 'redis'}<ReachableCheck kind="redis" onDone={() => void back()} />
         {:else if card === 'files'}<ImportFilesPanel onCancel={() => void back()} />
         {:else if card === 'blackbox'}<BlackboxCard onDone={() => void back()} />

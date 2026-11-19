@@ -11,10 +11,10 @@
   // SQL Server the way SQL Server Management Studio asks for it. "Test and list databases" connects (read only) and fills the Database list.
   // "Add and keep details" tests the connection too, adds the server to the case, and keeps the details on this computer. The form keeps its fields.
   // The password never enters the wizard draft: it goes straight to the kept file, and only when "Remember password" is ticked.
-  let { onDone }: { onDone?: () => void } = $props();
+  let { onDone, prefill = '' }: { onDone?: () => void; prefill?: string } = $props();
 
   const uid = $props.id();
-  let form = $state<SqlForm>(blankSqlForm());
+  let form = $state<SqlForm>({ ...blankSqlForm(), ...(prefill !== '' ? { server: prefill } : {}) });
   let saved = $state<SavedSqlConnection[]>([]);
   let busy = $state(false);
   let testing = $state(false);

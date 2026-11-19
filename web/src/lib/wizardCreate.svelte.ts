@@ -34,9 +34,11 @@ export interface CreateView {
   result: SubmitResult | null;
   /** The titles of the cases that exist, to warn about a repeat. Null until read. */
   titles: string[] | null;
+  /** The case already existed and this run only adds to it: the case's saved retry list is left as it is. */
+  appendOnly: boolean;
 }
 
-const blank = (): CreateView => ({ window: '24h', ack: false, submit: blankSubmitState(), running: false, result: null, titles: null });
+const blank = (): CreateView => ({ window: '24h', ack: false, submit: blankSubmitState(), running: false, result: null, titles: null, appendOnly: false });
 
 export const createView = $state<CreateView>(blank());
 
@@ -144,7 +146,7 @@ export function buildInput(now: number = Date.now(), only?: readonly string[]): 
   return {
     title: draft.title, envs: draft.envs, sources: draft.sources, importers, hosts,
     window: draft.sources.some(isScanSource) ? windowFor(createView.window, now, null, { from: '', to: '' }) : null,
-    scanId: sourcesView.scanId, host: sourcesView.host, files, ackText: ackTextFor(), caseKey: draftCaseKey(), ...(only ? { only } : {})
+    scanId: sourcesView.scanId, host: sourcesView.host, files, ackText: ackTextFor(), caseKey: draftCaseKey(), ...(createView.appendOnly ? { appendOnly: true } : {}), ...(only ? { only } : {})
   };
 }
 

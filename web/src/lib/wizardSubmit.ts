@@ -67,6 +67,8 @@ export const blankSubmitState = (): SubmitState => ({
 
 /** What the review step hands over. Titles, environments and tags are already cleaned by the draft. */
 export interface SubmitInput {
+  /** The case already existed: do not replace the retry list it keeps. */
+  appendOnly?: boolean;
   title: string;
   envs: readonly string[];
   sources: readonly DraftSource[];
@@ -372,7 +374,7 @@ async function execute(input: SubmitInput, api: SubmitApi, state: SubmitState): 
     if (!state.locked) {
       state.finished = true;
       // The list the case keeps for later. A failure to save it never changes the result the person sees on this screen.
-      if (api.saveRetries) {
+      if (api.saveRetries && !input.appendOnly) {
         try { await guarded(() => api.saveRetries!(caseId, retryItemsOf(state, input))); }
         catch (error) { if (error instanceof Locked) { state.finished = false; throw error; } }
       }

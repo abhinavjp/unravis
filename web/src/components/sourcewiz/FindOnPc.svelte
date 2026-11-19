@@ -14,7 +14,7 @@
   // "Find on this PC": the first tile. One scan of this computer; each row has a status word and (when Unravis can read it) a tick box.
   // Ticks are collected here and added together by "Add N ticked", so a row is linked to its source by the finding id and nothing is added by accident.
   // MongoDB and SQL Server open their short form (the card host does that); a Redis the scan did not find can be added by address.
-  let { onCard, onDone }: { onCard: (card: 'mongo' | 'sql' | 'redis') => void; onDone: () => void } = $props();
+  let { onCard, onDone, connected = [] }: { onCard: (card: 'mongo' | 'sql' | 'redis', finding?: string) => void; onDone: () => void; connected?: string[] } = $props();
 
   const uid = $props.id();
   let ticked = $state<Record<string, boolean>>({});
@@ -33,7 +33,7 @@
 
   const dbKind = (f: Finding): 'mongo' | 'sql' | 'redis' | '' => (f.detector === 'mongo' ? 'mongo' : f.detector === 'sql' ? 'sql' : f.detector === 'redis' ? 'redis' : '');
   const isFile = (e: GalleryEntry): boolean => e.state !== 'steps';
-  const statusOf = (e: GalleryEntry): string => (isChosen(sourceKey({ kind: 'discover', ref: e.finding.id })) ? WIZ.find.added : e.state === 'ready' ? WIZ.find.statusWorks : e.state === 'unverified' ? WIZ.find.statusNotReadable : dbKind(e.finding) ? WIZ.find.statusFound : WIZ.find.statusNeedsSteps);
+  const statusOf = (e: GalleryEntry): string => (isChosen(sourceKey({ kind: 'discover', ref: e.finding.id })) || connected.includes(e.finding.id) ? WIZ.find.added : e.state === 'ready' ? WIZ.find.statusWorks : e.state === 'unverified' ? WIZ.find.statusNotReadable : dbKind(e.finding) ? WIZ.find.statusFound : WIZ.find.statusNeedsSteps);
   const metaOf = (e: GalleryEntry): string => rowMetaText(e.finding, ageMinutes(e.finding.newest, Date.now()));
 
   async function onScan() { scanClickedAt = Date.now(); note = ''; ticked = {}; await startScan(); }
@@ -88,7 +88,7 @@
               {@const f = entry.finding}
               {@const rowId = uid + '-f-' + f.id}
               {@const db = dbKind(f)}
-              {@const added = isChosen(sourceKey({ kind: 'discover', ref: f.id }))}
+              {@const added = isChosen(sourceKey({ kind: 'discover', ref: f.id })) || connected.includes(f.id)}
               <li class="row" class:muted={entry.state !== 'ready'} data-finding={f.id}>
                 <div class="pick">
                   {#if entry.state === 'ready'}
@@ -104,7 +104,7 @@
                     </p>
                     <div class="actions">
                       {#if db === 'mongo' || db === 'sql'}
-                        <button type="button" class="secondary-button" onclick={() => onCard(db)}>{WIZ.find.connect}</button>
+                        <button type="button" class="secondary-button" onclick={() => onCard(db, f.id)}>{connected.includes(f.id) ? WIZ.find.added : WIZ.find.connect}</button>
                       {:else if db === 'redis'}
                         <button type="button" class="secondary-button" onclick={() => onCard('redis')}>{WIZ.find.addByAddress}</button>
                       {/if}

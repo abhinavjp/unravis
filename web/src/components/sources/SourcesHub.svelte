@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { createView } from '../../lib/wizardCreate.svelte';
   import AddAnotherDay from './AddAnotherDay.svelte';
   import AddAuditDatabase from './AddAuditDatabase.svelte';
   import AddSourcesFlow from '../sourcewiz/AddSourcesFlow.svelte';
@@ -53,7 +54,7 @@
 <div class="src" data-sources-hub>
   <div class="tabs" role="tablist" aria-label={HUB_TEXT.label}>
     {#each tabs as item (item.id)}
-      <button type="button" role="tab" class="btn" id="hub-tab-{item.id}" aria-selected={tab === item.id} tabindex={tab === item.id ? 0 : -1} aria-controls="hub-panel" onkeydown={roving} onclick={() => { tab = item.id; addingAudit = false; }}>{item.label}</button>
+      <button type="button" role="tab" class="btn" id="hub-tab-{item.id}" aria-selected={tab === item.id} disabled={createView.running} tabindex={tab === item.id ? 0 : -1} aria-controls="hub-panel" onkeydown={roving} onclick={() => { tab = item.id; addingAudit = false; }}>{item.label}</button>
     {/each}
   </div>
   <div id="hub-panel" role="tabpanel" aria-labelledby="hub-tab-{tab}">

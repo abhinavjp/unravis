@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { wizard, resetWizard } from '../../lib/wizard.svelte';
+  import { wizard, resetWizard, wizardIsDirty } from '../../lib/wizard.svelte';
   import { REVIEW_WINDOWS, blockers, chooseWindow, createNow, createView, setAck } from '../../lib/wizardCreate.svelte';
   import { importPlan } from '../../lib/wizardSubmit';
   import { listSourceTags } from '../../lib/caseTagsApi';
@@ -34,21 +34,25 @@
   };
   const groups = $derived(railGroups(wizard.sources, titleOf));
   const closed = $derived(readOnly);
+  // An unfinished new-case draft is not thrown away without a word: this screen asks first.
+  const resume = createView.appendOnly && createView.submit.caseId === caseId;
+  let askDiscard = $state(!resume && wizardIsDirty());
   const ready = $derived(canFinish(true, wizard.sources.length, createView.running, closed) && pending.length === 0);
 
   onMount(() => {
     // A draft from the create wizard is not carried into this case: start from an empty list.
-    resetWizard();
+    if (!resume && !askDiscard) resetWizard();
     const mine = new AbortController();
     void listSourceTags(caseId, mine.signal).then((tags) => { existing = tags.map((t) => ({ kind: t.kind, label: t.label })); }).catch(() => { /* the list above stays empty */ });
-    return () => { mine.abort(); if (!started) resetWizard(); };
+    return () => { mine.abort(); if (!createView.running && !askDiscard) resetWizard(); };
   });
 
   async function go(to: Screen) { screen = to; await tick(); head?.focus(); }
 
   async function run() {
-    if (!ready) return;
-    // Setting the id first makes the run skip case creation; the blockers were checked just above.
+    // The blockers are read fresh (a scan can expire while this screen is open); the run skips them once the id is set.
+    if (!ready || blockers().length > 0) return;
+    createView.appendOnly = true;
     createView.submit.caseId = caseId;
     createView.submit.caseTitle = '';
     await createNow();
@@ -56,7 +60,12 @@
 </script>
 
 <div class="flow">
-  {#if started}
+  {#if askDiscard}
+    <section role="alert">
+      <p>{WIZ.draftWarning}</p>
+      <button type="button" class="primary-button" onclick={() => { resetWizard(); askDiscard = false; }}>{WIZ.draftDiscard}</button>
+    </section>
+  {:else if started}
     <CreateProgress onOpen={() => { resetWizard(); onDone(); }} onAddMore={() => { resetWizard(); screen = 'add'; }} />
   {:else if screen === 'add'}
     <SourceStep adding {caseId} {closed} {existing} />

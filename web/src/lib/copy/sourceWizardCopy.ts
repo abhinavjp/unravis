@@ -17,6 +17,8 @@ export const WIZ = {
   openFolderLabel: (what: string) => 'Open folder for ' + what,
   alreadyHeading: 'Already in this case',
   toAddHeading: 'To add now',
+  draftWarning: 'You have a new case that is not finished. Adding sources here starts a clean list and throws that unfinished case away.',
+  draftDiscard: 'Throw it away and continue',
   closedCase: 'This case cannot take new data right now: it is closed, or it changed somewhere else.',
   namesHeading: 'Names (optional)',
   tiles: {
@@ -36,7 +38,7 @@ export const WIZ = {
     cancel: 'Stop looking',
     found: (n: number) => (n === 1 ? 'Found 1 thing. Tick what to add.' : 'Found ' + n + ' things. Tick what to add.'),
     nothing: 'Nothing was found on this PC. Pick a kind on the previous screen to add it by hand.',
-    mongoSqlNote: 'MongoDB and SQL Server open a short form with the address filled in, then bring you back here.',
+    mongoSqlNote: 'MongoDB and SQL Server open a short form with the usual local address filled in (change it if yours differs), then bring you back here.',
     connect: 'Connect…',
     addByAddress: 'Add by address',
     addTicked: (n: number) => (n === 0 ? 'Add ticked' : 'Add ' + n + ' ticked'),
