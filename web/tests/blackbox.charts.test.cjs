@@ -95,8 +95,8 @@ test('gapRanges turns the server gaps into ms ranges and drops bad ones', () => 
 
 test('lineFigures: last, average, lowest of the lows, highest of the highs, inside the zoom only', () => {
   const pts = [[T0, 10, 5, 20], [T0 + 15000, 30, 25, 40], [T0 + 30000, 50, 1, 90]];
-  assert.deepEqual(s.lineFigures(pts), { last: 50, avg: 30, min: 1, max: 90, n: 3 });
-  assert.deepEqual(s.lineFigures(pts, T0, T0 + 15000), { last: 30, avg: 20, min: 5, max: 40, n: 2 });
+  assert.deepEqual(s.lineFigures(pts), { last: 50, avg: 30, min: 1, max: 90, maxAt: T0 + 30000, n: 3 });
+  assert.deepEqual(s.lineFigures(pts, T0, T0 + 15000), { last: 30, avg: 20, min: 5, max: 40, maxAt: T0 + 15000, n: 2 });
   assert.equal(s.lineFigures([]).avg, null);
 });
 

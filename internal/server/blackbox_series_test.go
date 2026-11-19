@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -195,5 +197,57 @@ func TestSeriesUnitsSkipsAndPartialCover(t *testing.T) {
 	}
 	if bbSeriesUnit("http.api.maxQueueItemAge") != "ms" || bbSeriesUnit("proc10.w3wp.elapsedSec") != "sec" {
 		t.Fatal("maxQueueItemAge or elapsedSec unit is wrong")
+	}
+}
+
+// The demo recording can carry crash dumps, Windows events and recorder notes, so the "What happened" view has
+// something to show. The series answer must carry them as the view expects: dumps by file name only, events as
+// counts per ID, notes with their kind.
+func TestDemoRecordingCarriesWhatHappened(t *testing.T) {
+	start := time.Date(2026, 11, 18, 6, 0, 0, 0, time.UTC)
+	end := start.Add(30 * time.Minute)
+	mt := start.Add(10 * time.Minute)
+	bb := simRec{
+		Name: "x", Start: start, End: end, Now: end,
+		Dumps:     []blackbox.DumpEntry{{Name: "w3wp.dmp", Size: 10, MTime: mt, Target: "w3wp.exe"}},
+		WinEvents: []blackbox.EventEntry{{Channel: 1, EventID: 41, Level: 1, Count: 1, T: mt}, {Channel: 2, EventID: 1000, Level: 2, Count: 2, T: mt.Add(time.Minute)}},
+		Markers:   []blackbox.Event{{T: mt, Kind: blackbox.EventRestart, Detail: "after-crash"}},
+	}.build()
+	var samples []blackbox.Sample
+	for _, data := range bb.files {
+		for _, line := range strings.Split(string(data), "\n") {
+			if line == "" {
+				continue
+			}
+			var s blackbox.Sample
+			if err := json.Unmarshal([]byte(line), &s); err != nil {
+				t.Fatal(err)
+			}
+			samples = append(samples, s)
+		}
+	}
+	sort.Slice(samples, func(i, j int) bool { return samples[i].T.Before(samples[j].T) })
+	ans := buildBBSeries(bb.man, samples, blackbox.ReadReport{}, blackbox.StateInfo{}, bbWindow{Start: start, End: end}, 60)
+	if len(ans.Dumps) != 1 || ans.Dumps[0].Name != "w3wp.dmp" || ans.Dumps[0].Target != "w3wp.exe" {
+		t.Fatalf("dumps = %+v", ans.Dumps)
+	}
+	if len(ans.EventIDs) != 2 || ans.EventIDs[0].EventID+ans.EventIDs[1].EventID != 1041 {
+		t.Fatalf("eventIds = %+v", ans.EventIDs)
+	}
+	if len(ans.Markers) != 1 || ans.Markers[0].Kind != "restart" || ans.Markers[0].Detail != "after-crash" {
+		t.Fatalf("markers = %+v", ans.Markers)
+	}
+	// the per-level count lines the view draws as dots
+	have := map[string]bool{}
+	for _, l := range ans.Lines {
+		have[l.Key] = true
+	}
+	if !have["events.level1"] || !have["events.level2"] {
+		t.Fatalf("event level lines missing: %v", have)
+	}
+	// nothing a person's folder could leak: the dump list carries a file name and a program name, never a path
+	b, _ := json.Marshal(ans.Dumps)
+	if strings.ContainsAny(string(b), `\/`) {
+		t.Fatalf("a dump entry carries a path: %s", b)
 	}
 }

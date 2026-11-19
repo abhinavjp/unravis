@@ -20,7 +20,7 @@ export interface SeriesDump { name: string; size: number; mtime: string; target?
 export interface SeriesAnswer {
   start: string; end: string; bucketSeconds: number; intervalSeconds: number; samples: number; first?: string; last?: string;
   lines: SeriesLine[]; groups: SeriesGroupCover[]; processes: SeriesProc[]; eventIds: SeriesEventId[]; dumps: SeriesDump[];
-  gaps: SeriesGap[]; markers: SeriesMarker[]; truncated?: boolean;
+  gaps: SeriesGap[]; markers: SeriesMarker[]; truncated?: boolean; state?: { label: string; detail: string; tone: string };
   read: { files: number; samples: number; torn: number; dropped: string[] | null; missing: string[] | null };
 }
 export interface SeriesRequest { start: string; end: string; points?: number }
@@ -47,6 +47,7 @@ export function readSeriesAnswer(v: unknown): SeriesAnswer | null {
     samples: v.samples, first: typeof v.first === 'string' ? v.first : undefined, last: typeof v.last === 'string' ? v.last : undefined,
     lines: v.lines as SeriesLine[], groups: v.groups as SeriesGroupCover[], processes: (isArr(v.processes) ? v.processes : []) as SeriesProc[],
     eventIds: (isArr(v.eventIds) ? v.eventIds : []) as SeriesEventId[], dumps: (isArr(v.dumps) ? v.dumps : []) as SeriesDump[],
+    state: isObj(v.state) && typeof v.state.label === 'string' ? { label: v.state.label, detail: typeof v.state.detail === 'string' ? v.state.detail : '', tone: typeof v.state.tone === 'string' ? v.state.tone : '' } : undefined,
     gaps: v.gaps as SeriesGap[], markers: (isArr(v.markers) ? v.markers : []) as SeriesMarker[], truncated: v.truncated === true,
     read: {
       files: typeof read.files === 'number' ? read.files : 0, samples: typeof read.samples === 'number' ? read.samples : 0,
@@ -204,15 +205,16 @@ export function gapRanges(gaps: SeriesGap[]): Array<{ fromMs: number; toMs: numb
 }
 
 /** Last, average, lowest and highest over the shown points (Perfmon's bar under the chart). The average weighs every bucket the same. */
-export function lineFigures(pts: SeriesPoint[], fromMs = -Infinity, toMs = Infinity): { last: number | null; avg: number | null; min: number | null; max: number | null; n: number } {
-  let sum = 0, n = 0, min = Infinity, max = -Infinity, last: number | null = null;
+export function lineFigures(pts: SeriesPoint[], fromMs = -Infinity, toMs = Infinity): { last: number | null; avg: number | null; min: number | null; max: number | null; maxAt: number | null; n: number } {
+  let sum = 0, n = 0, min = Infinity, max = -Infinity, last: number | null = null, maxAt: number | null = null;
   for (const p of pts) {
     if (p[0] < fromMs || p[0] > toMs) continue;
     sum += p[1]; n++;
-    min = Math.min(min, p[2]); max = Math.max(max, p[3]);
+    min = Math.min(min, p[2]);
+    if (p[3] > max) { max = p[3]; maxAt = p[0]; }
     last = p[1];
   }
-  return n ? { last, avg: sum / n, min, max, n } : { last: null, avg: null, min: null, max: null, n: 0 };
+  return n ? { last, avg: sum / n, min, max, maxAt, n } : { last: null, avg: null, min: null, max: null, maxAt: null, n: 0 };
 }
 
 /** The lines the view starts with: the four Perfmon starts with for a slow server, in this order, when they were recorded. */

@@ -12,6 +12,8 @@
     alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES,
     type SeriesAnswer, type SeriesLine, type SeriesPoint, type SeriesUnit, type WindowPreset
   } from '../lib/blackboxSeries';
+  import { MAX_DRAWN, eventDots, eventRows, happenedItems, healthRows, statusChips, type HappenedItem } from '../lib/blackboxHappened';
+  import { POSITION_WORDS, QUICK_QUESTIONS, compareLatest, meaningOf, quickKeys, shapePath, type QuickQuestion } from '../lib/blackboxCompare';
 
   // The Blackbox charts view: what one Blackbox recorded, drawn like Perfmon (pick counters, linear or log scale, a figures bar
   // under the chart). The numbers come from POST /api/blackbox/{id}/series, which reads the recordings with the same reader as the
@@ -44,6 +46,15 @@
   let log = $state(saved.log === true);
   let keys = $state<string[]>(Array.isArray(saved.keys) ? saved.keys : []);
   let tab = $state<'counters' | 'processes'>('counters');
+  let view = $state<'charts' | 'happened' | 'latest' | 'everything'>('charts');
+  const INTRO = 'unravis.bbCharts.intro';
+  const introWasHidden = (): boolean => { try { return localStorage.getItem(INTRO) === 'hidden'; } catch { return false; } };
+  let showIntro = $state(!introWasHidden());
+  const setIntro = (on: boolean) => { showIntro = on; try { if (on) localStorage.removeItem(INTRO); else localStorage.setItem(INTRO, 'hidden'); } catch { /* a convenience only */ } };
+  let focusKey = $state('');
+  let loadedAt = $state(Date.now());
+  let openGroups = $state<string[]>(['host']);
+  let everySearch = $state('');
   let procMetric = $state<'cpu' | 'workingSet' | 'privateBytes'>('cpu');
   let search = $state('');
   let zoom = $state<Win | null>(null);
@@ -52,22 +63,31 @@
   let node = $state<HTMLDivElement>();
   let chart = $state<ReturnType<typeof echarts.init>>();
 
-  onMount(() => {
-    dialog?.showModal();
-    if (!node) return;
+  onMount(() => { dialog?.showModal(); });
+
+  // The chart exists only while the Charts view is on screen: leaving it (or closing the pop-up) removes the listener, stops the
+  // size watcher and frees the chart object, so nothing is held for a view nobody is looking at.
+  $effect(() => {
     const target = node;
+    if (!target) return;
+    let made: ReturnType<typeof echarts.init> | undefined;
     const observer = new ResizeObserver(() => {
-      if (!chart) {
+      if (!made) {
         if (target.clientWidth > 0 && target.clientHeight > 0) {
-          chart = echarts.init(target);
-          chart.on('datazoom', onZoom);
+          made = echarts.init(target);
+          made.on('datazoom', onZoom);
+          chart = made;
         }
         return;
       }
-      chart.resize();
+      made.resize();
     });
     observer.observe(target);
-    return () => { observer.disconnect(); chart?.dispose(); };
+    return () => {
+      observer.disconnect();
+      if (made) { made.off('datazoom', onZoom); made.dispose(); made = undefined; }
+      chart = undefined;
+    };
   });
 
   // One read per window. A newer window cancels the older read.
@@ -83,6 +103,7 @@
         const a = readSeriesAnswer(raw);
         if (!a) { problem = T.badAnswer; answer = null; return; }
         answer = a;
+        loadedAt = Date.now();
         const have = new Set(a.lines.map((l) => l.key));
         const kept = untrack(() => keys).filter((k) => have.has(k));
         if (!kept.length) keys = defaultSelection(a.lines);
@@ -139,7 +160,7 @@
       return answer.processes.map((p) => ({ key: 'proc:' + p.name, title: p.name, unit, points: p[procMetric] })).filter((d) => d.points.length);
     }
     const byKey = new Map(answer.lines.map((l) => [l.key, l]));
-    return keys.map((k) => byKey.get(k)).filter((l): l is SeriesLine => !!l).map((l) => ({ key: l.key, title: seriesTitle(l.key), unit: seriesUnit(l.key, l.unit), points: l.points }));
+    return keys.map((k) => byKey.get(k)).filter((l): l is SeriesLine => !!l).slice(0, MAX_LINES).map((l) => ({ key: l.key, title: seriesTitle(l.key), unit: seriesUnit(l.key, l.unit), points: l.points }));
   });
   const strips = $derived(unitStrips(drawn.map((d) => d.key), drawn.map((d) => ({ key: d.key, group: '', label: '', unit: d.unit, points: [] }))));
   const groups = $derived(answer ? pickerGroups(answer.lines) : []);
@@ -154,6 +175,25 @@
     return new Map(drawn.map((d, i) => [d.key, { color: p.series[i % p.series.length], dashed: i >= p.series.length }]));
   });
   let hidden = $state(0);
+  const MAX_LINES = 24;
+  const chips = $derived(statusChips(answer, facts, loadedAt));
+  const happened = $derived(answer && view !== 'latest' && view !== 'everything' ? happenedItems(answer) : { items: [] as HappenedItem[], more: 0 });
+  const evRows = $derived(answer && view === 'happened' ? eventRows(answer.eventIds) : { rows: [], more: 0 });
+  const evDots = $derived(answer && view === 'happened' ? eventDots(answer.lines) : { dots: [], more: 0 });
+  const health = $derived(answer && view === 'happened' ? healthRows(answer) : []);
+  const quick = $derived(answer ? QUICK_QUESTIONS.map((q) => ({ q, keys: quickKeys(q, answer!.lines) })).filter((x) => x.keys.length) : []);
+  const lineByKey = $derived(new Map((answer?.lines ?? []).map((l) => [l.key, l])));
+  const compared = $derived(view === 'latest' ? drawn.map((d) => ({ d, c: compareLatest(d.points) })) : []);
+  const allGroups = $derived.by(() => {
+    if (view !== 'everything' || !answer) return [];
+    const q = everySearch.trim().toLowerCase();
+    return pickerGroups(answer.lines).map((g) => ({ ...g, lines: q ? g.lines.filter((l) => (seriesTitle(l.key) + ' ' + l.key).toLowerCase().includes(q)) : g.lines })).filter((g) => g.lines.length);
+  });
+  const whenText = (ms: number | null | undefined) => ms == null ? '' : chartTime(ms, ZONE, { seconds: false });
+  const focusLine = $derived(drawn.find((d) => d.key === focusKey));
+  function ask(q: QuickQuestion, ks: string[]) { void q; tab = 'counters'; view = 'charts'; keys = ks; focusKey = ''; }
+  function toggleGroup(g: string) { openGroups = openGroups.includes(g) ? openGroups.filter((x) => x !== g) : [...openGroups, g]; }
+  function pickFocus(k: string) { focusKey = focusKey === k ? '' : k; }
 
   const STRIP_H = 150;
   const TOP = 22;
@@ -176,9 +216,13 @@
     const byKey = new Map(drawn.map((d) => [d.key, d]));
     const lookup = new Map(drawn.map((d) => [d.key, new Map(d.points.map((pt) => [pt[0], pt]))]));
     const axis = { axisLine: { lineStyle: { color: p.axisLine } }, axisLabel: { color: p.text2 }, nameTextStyle: { color: p.text2 }, splitLine: { lineStyle: { color: p.grid } } };
-    const gapAreas = a.gaps.map((g) => [{ xAxis: Date.parse(g.from), name: T.gapLabel }, { xAxis: Date.parse(g.to) }]);
-    const markerLines = a.markers.map((m) => ({ xAxis: Date.parse(m.t), name: m.kind }));
+    const gapAreas = a.gaps.slice(0, MAX_DRAWN).map((g) => [{ xAxis: Date.parse(g.from), name: T.gapLabel }, { xAxis: Date.parse(g.to) }]);
+    // Crash dumps and restarts are drawn as dotted lines (at most MAX_DRAWN, newest first). The label is plain text from safeText.
+    const markerLines = untrack(() => happened).items.filter((it) => it.kind === 'dump' || it.kind === 'restart' || it.kind === 'crash').slice(0, MAX_DRAWN)
+      .map((it) => ({ xAxis: it.t, name: it.kind === 'dump' ? T.markDump : T.markRestart }));
+    const focus = untrack(() => focusKey);
     let hiddenNow = 0;
+    void focusKey;
     const grids = strips.map((_, i) => ({ left: 86, right: 24, top: TOP + i * (STRIP_H + GAP), height: STRIP_H }));
     const xAxes = strips.map((_, i) => ({
       type: 'time', gridIndex: i, min: Math.min(w.startMs, Date.parse(a.start) || w.startMs), max: Math.max(w.endMs, Date.parse(a.end) || w.endMs), ...axis, splitLine: { show: false },
@@ -198,9 +242,9 @@
         hiddenNow += cd.hidden;
         series.push({
           type: 'line', name: d.title, id: k, xAxisIndex: i, yAxisIndex: i, data: cd.data, connectNulls: false, showSymbol: cd.data.length < 40, symbolSize: 4,
-          sampling: 'lttb', lineStyle: { width: 1.6, color: c?.color, type: c?.dashed ? 'dashed' : 'solid' }, itemStyle: { color: c?.color },
-          markArea: j === 0 && gapAreas.length ? { silent: true, itemStyle: { color: p.empty, opacity: 0.5 }, label: { show: i === 0, position: 'insideTop', color: p.text2, fontSize: 11 }, data: gapAreas } : undefined,
-          markLine: j === 0 && markerLines.length ? { silent: true, symbol: 'none', lineStyle: { color: p.warn, type: 'dotted' }, label: { show: i === 0, formatter: '{b}', color: p.text2, fontSize: 11 }, data: markerLines } : undefined
+          sampling: 'lttb', lineStyle: { width: focus === k ? 3 : 1.6, opacity: focus && focus !== k ? 0.35 : 1, color: c?.color, type: c?.dashed ? 'dashed' : 'solid' }, itemStyle: { color: c?.color },
+          markArea: j === 0 && gapAreas.length ? { silent: true, itemStyle: { color: p.empty, opacity: 0.5 }, label: { show: i === 0 && gapAreas.length <= 6, position: 'insideTop', color: p.text2, fontSize: 11 }, data: gapAreas } : undefined,
+          markLine: j === 0 && markerLines.length ? { silent: true, symbol: 'none', lineStyle: { color: p.warn, type: 'dotted' }, label: { show: i === 0 && markerLines.length <= 6, formatter: '{b}', color: p.text2, fontSize: 11 }, data: markerLines } : undefined
         });
       });
     });
@@ -246,46 +290,78 @@
     <div>
       <h2 id="bbc-title">{T.title(item.name)}</h2>
       <p class="bbc-note">{[facts?.firstSample && facts?.lastSample ? T.recordedSpan(shownTime(facts.firstSample), shownTime(facts.lastSample)) : '', T.timesUtc, T.sameAsPerfmon].filter(Boolean).join(' ')}</p>
+      {#if chips.length}
+        <ul class="bbc-chips" aria-label={T.chipsLabel}>
+          {#each chips as c (c.id)}<li><span class="bbc-chip {c.id}" title={c.hint}>{c.text}<span class="bbc-sr">. {c.hint}</span></span></li>{/each}
+        </ul>
+      {/if}
     </div>
-    <button type="button" class="bbc-close" aria-label={T.close} onclick={() => dialog?.close()}>×</button>
+    <div class="bbc-head-actions">
+      {#if !showIntro}<button type="button" class="quiet-button" title={T.helpShowHint} onclick={() => setIntro(true)}>{T.helpShow}</button>{/if}
+      <button type="button" class="bbc-close" aria-label={T.close} title={T.close} onclick={() => dialog?.close()}>×</button>
+    </div>
   </header>
 
   {#if !win}
     <p class="bbc-body">{T.nothingRecorded}</p>
   {:else}
+    {#if showIntro}
+      <section class="bbc-intro" aria-labelledby="bbc-intro-title">
+        <h3 id="bbc-intro-title">{T.introTitle}</h3>
+        <ol><li>{T.intro1}</li><li>{T.intro2}</li><li>{T.intro3}</li></ol>
+        <button type="button" class="secondary-button" title={T.introDismissHint} onclick={() => setIntro(false)}>{T.introDismiss}</button>
+      </section>
+    {/if}
     <div class="bbc-bar">
       <div class="bbc-seg" role="group" aria-label={T.window}>
         {#each Object.keys(PRESET_LABELS) as p (p)}
-          <button type="button" class:on={preset === p} aria-pressed={preset === p} onclick={() => pickPreset(p as WindowPreset)}>{PRESET_LABELS[p as WindowPreset]}</button>
+          <button type="button" class:on={preset === p} aria-pressed={preset === p} title={T.windowHint(PRESET_LABELS[p as WindowPreset])} onclick={() => pickPreset(p as WindowPreset)}>{PRESET_LABELS[p as WindowPreset]}</button>
         {/each}
       </div>
-      <div class="bbc-seg" role="group" aria-label={T.scale} title={T.logHelp}>
-        <button type="button" class:on={!log} aria-pressed={!log} onclick={() => { log = false; }}>{T.linear}</button>
-        <button type="button" class:on={log} aria-pressed={log} onclick={() => { log = true; }}>{T.log}</button>
+      <div class="bbc-seg" role="group" aria-label={T.viewLabel}>
+        <button type="button" class:on={view === 'charts'} aria-pressed={view === 'charts'} title={T.viewChartsHint} onclick={() => { view = 'charts'; }}>{T.viewCharts}</button>
+        <button type="button" class:on={view === 'happened'} aria-pressed={view === 'happened'} title={T.viewHappenedHint} onclick={() => { view = 'happened'; }}>{T.viewHappened}</button>
+        <button type="button" class:on={view === 'latest'} aria-pressed={view === 'latest'} title={T.viewLatestHint} onclick={() => { view = 'latest'; }}>{T.viewLatest}</button>
+        <button type="button" class:on={view === 'everything'} aria-pressed={view === 'everything'} title={T.viewEverythingHint} onclick={() => { view = 'everything'; }}>{T.viewEverything}</button>
       </div>
-      {#if zoom}<button type="button" class="secondary-button" onclick={readZoom}>{T.zoomRead}</button>{/if}
+      {#if view === 'charts'}
+        <div class="bbc-seg" role="group" aria-label={T.scale}>
+          <button type="button" class:on={!log} aria-pressed={!log} title={T.linearHelp} onclick={() => { log = false; }}>{T.linear}</button>
+          <button type="button" class:on={log} aria-pressed={log} title={T.logHelp} onclick={() => { log = true; }}>{T.log}</button>
+        </div>
+        {#if zoom}<button type="button" class="secondary-button" title={T.zoomReadHint} onclick={readZoom}>{T.zoomRead}</button>{/if}
+      {/if}
       {#if back.length}<button type="button" class="quiet-button" onclick={goBack}>{T.zoomBack}</button>{/if}
     </div>
 
-    <div class="bbc-main">
+    <div class="bbc-main" class:wide={view !== 'charts'}>
+      {#if view === 'charts'}
       <aside class="bbc-side">
-        <div class="bbc-tabs" role="tablist">
-          <button type="button" role="tab" aria-selected={tab === 'counters'} class:on={tab === 'counters'} onclick={() => { tab = 'counters'; }}>{T.tabCounters}</button>
-          <button type="button" role="tab" aria-selected={tab === 'processes'} class:on={tab === 'processes'} onclick={() => { tab = 'processes'; }}>{T.tabProcesses}</button>
+        <div class="bbc-tabs" role="group" aria-label={T.sideLabel}>
+          <button type="button" aria-pressed={tab === 'counters'} class:on={tab === 'counters'} title={T.tabCountersHint} onclick={() => { tab = 'counters'; }}>{T.tabCounters}</button>
+          <button type="button" aria-pressed={tab === 'processes'} class:on={tab === 'processes'} title={T.tabProcessesHint} onclick={() => { tab = 'processes'; }}>{T.tabProcesses}</button>
         </div>
         {#if tab === 'counters'}
-          <input class="bbc-search" type="search" placeholder={T.search} aria-label={T.search} bind:value={search} />
+          {#if quick.length}
+            <div class="bbc-quick">
+              <strong>{T.quickTitle}</strong>
+              {#each quick as x (x.q.id)}
+                <button type="button" class="bbc-q" title={x.q.hint} onclick={() => ask(x.q, x.keys)}>{x.q.label}</button>
+              {/each}
+            </div>
+          {/if}
+          <input class="bbc-search" type="search" placeholder={T.search} aria-label={T.search} title={T.searchHint} bind:value={search} />
           <div class="bbc-pick-actions">
-            <button type="button" class="quiet-button" onclick={() => { keys = answer ? defaultSelection(answer.lines) : []; }}>{T.reset}</button>
-            <button type="button" class="quiet-button" onclick={() => { keys = []; }}>{T.clear}</button>
+            <button type="button" class="quiet-button" title={T.resetHint} onclick={() => { keys = answer ? defaultSelection(answer.lines) : []; }}>{T.reset}</button>
+            <button type="button" class="quiet-button" title={T.clearHint} onclick={() => { keys = []; }}>{T.clear}</button>
           </div>
-          <div class="bbc-list" aria-label={T.pickerTitle}>
+          <div class="bbc-list" role="group" aria-label={T.pickerTitle}>
             {#each shownGroups as g (g.group)}
               <details open={g.group === 'host' || !!search || g.lines.some((l) => keys.includes(l.key))}>
                 <summary>{g.title} <span class="bbc-count">{g.lines.length}</span></summary>
                 {#each g.lines as l (l.key)}
                   {@const c = colourOf.get(l.key)}
-                  <label class="bbc-pick" title={l.key}>
+                  <label class="bbc-pick" title={meaningOf(l.key, l.unit)}>
                     <input type="checkbox" checked={keys.includes(l.key)} onchange={() => toggle(l.key)} />
                     <span class="bbc-swatch" style:background={c?.color ?? 'transparent'}></span>
                     <span>{seriesTitle(l.key)}</span>
@@ -304,7 +380,7 @@
           {/if}
         {:else}
           <label class="bbc-field">{T.procMetric}
-            <select bind:value={procMetric}>
+            <select bind:value={procMetric} title={T.procMetricHint}>
               <option value="cpu">{T.procCpu}</option>
               <option value="workingSet">{T.procWs}</option>
               <option value="privateBytes">{T.procPriv}</option>
@@ -313,40 +389,176 @@
           <p class="bbc-note">{T.procHelp}</p>
         {/if}
       </aside>
+      {/if}
 
       <section class="bbc-chart-area" aria-label={T.title(item.name)}>
         <div aria-live="polite">
           {#if busy}<p class="bbc-note" role="status">{T.reading}</p>{/if}
           {#if problem}<div class="inline-error" role="alert">{problem} <button type="button" class="secondary-button" onclick={() => { attempt++; }}>{T.retry}</button></div>{/if}
         </div>
-        {#if answer && !problem}
-          {#if answer.samples === 0}<p class="bbc-note">{T.noSamples}</p>
-          {:else if !drawn.length}<p class="bbc-note">{tab === 'processes' ? T.procNone : T.pickSome}</p>{/if}
-        {/if}
-        <div class="bbc-canvas" bind:this={node} style:height={height + 'px'} class:empty={!drawn.length || !!problem}></div>
-        {#if answer && !problem && drawn.length}
-          <p class="bbc-note">
-            {T.bucket(bucketWords(answer.bucketSeconds), bucketWords(answer.intervalSeconds || answer.bucketSeconds))}
-            {#if answer.gaps.length}{T.gaps(answer.gaps.length)} {/if}
-            {#if log && hidden}{T.logHidden(hidden)} {/if}
-            {#if answer.read.dropped?.length || answer.read.missing?.length}{T.incomplete} {/if}
-            {#if answer.truncated}{T.truncated} {/if}
-            {T.zoomHelp}
-          </p>
-          <table class="bbc-figs">
-            <thead><tr><th scope="col"></th><th scope="col">{tab === 'processes' ? T.colProgram : T.colCounter}</th><th scope="col">{T.last}</th><th scope="col">{T.average}</th><th scope="col">{T.lowest}</th><th scope="col">{T.highest}</th><th scope="col"></th></tr></thead>
-            <tbody>
-              {#each figures as { d, f } (d.key)}
-                {@const c = colourOf.get(d.key)}
-                <tr>
-                  <td><span class="bbc-swatch" class:dashed={c?.dashed} style:background={c?.color}></span></td>
-                  <th scope="row" title={d.key}>{d.title}</th>
-                  <td>{formatValue(d.unit, f.last)}</td><td>{formatValue(d.unit, f.avg)}</td><td>{formatValue(d.unit, f.min)}</td><td>{formatValue(d.unit, f.max)}</td>
-                  <td>{#if tab === 'counters'}<button type="button" class="bbc-x" aria-label={T.remove(d.title)} onclick={() => toggle(d.key)}>×</button>{/if}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+
+        {#if view === 'charts'}
+          {#if answer && !problem}
+            {#if answer.samples === 0}<p class="bbc-note">{T.noSamples}</p>
+            {:else if !drawn.length}<p class="bbc-note">{tab === 'processes' ? T.procNone : T.pickSome}</p>{/if}
+          {/if}
+          <div class="bbc-canvas" bind:this={node} style:height={height + 'px'} class:empty={!drawn.length || !!problem}></div>
+          {#if answer && !problem && drawn.length}
+            <p class="bbc-note">
+              {T.bucket(bucketWords(answer.bucketSeconds), bucketWords(answer.intervalSeconds || answer.bucketSeconds))}
+              {#if answer.gaps.length}{T.gaps(answer.gaps.length)} {/if}
+              {#if log && hidden}{T.logHidden(hidden)} {/if}
+              {#if answer.read.dropped?.length || answer.read.missing?.length}{T.incomplete} {/if}
+              {#if answer.truncated}{T.truncated} {/if}
+              {#if tab === 'counters' && keys.length > MAX_LINES}{T.tooMany(MAX_LINES)} {/if}
+              {T.zoomHelp}
+            </p>
+            <table class="bbc-figs">
+              <caption class="bbc-cap">{T.meaningFocus}</caption>
+              <thead><tr><th scope="col"></th><th scope="col">{tab === 'processes' ? T.colProgram : T.colCounter}</th><th scope="col">{T.last}</th><th scope="col">{T.average}</th><th scope="col">{T.lowest}</th><th scope="col">{T.highest}</th><th scope="col" title={T.highestAtHint}>{T.highestAt}</th><th scope="col"></th></tr></thead>
+              <tbody>
+                {#each figures as { d, f } (d.key)}
+                  {@const c = colourOf.get(d.key)}
+                  <tr class:focus={focusKey === d.key}>
+                    <td><span class="bbc-swatch" class:dashed={c?.dashed} style:background={c?.color}></span></td>
+                    <th scope="row"><button type="button" class="bbc-rowbtn" aria-pressed={focusKey === d.key} title={T.rowHint(d.title)} onclick={() => pickFocus(d.key)}>{d.title}</button></th>
+                    <td>{formatValue(d.unit, f.last)}</td><td>{formatValue(d.unit, f.avg)}</td><td>{formatValue(d.unit, f.min)}</td><td>{formatValue(d.unit, f.max)}</td>
+                    <td class="bbc-when">{whenText(f.maxAt)}</td>
+                    <td>{#if tab === 'counters'}<button type="button" class="bbc-x" aria-label={T.remove(d.title)} title={T.remove(d.title)} onclick={() => toggle(d.key)}>×</button>{/if}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+            <section class="bbc-meaning" aria-labelledby="bbc-mean-title">
+              <h3 id="bbc-mean-title">{T.meaningTitle}</h3>
+              {#if focusLine}
+                <p><strong>{focusLine.title}.</strong> {tab === 'processes' ? meaningOf(procMetric === 'cpu' ? 'cpuPct' : procMetric, '') : meaningOf(focusLine.key, lineByKey.get(focusLine.key)?.unit ?? '')}</p>
+              {:else}<p class="bbc-note">{T.meaningEmpty}</p>{/if}
+            </section>
+          {/if}
+
+        {:else if view === 'happened'}
+          {#if answer && !problem}
+            {#if answer.samples === 0}<p class="bbc-note">{T.noSamples}</p>{/if}
+            <h3 class="bbc-h">{T.happenedTimeline}</h3>
+            <p class="bbc-note">{T.happenedTimelineHint}</p>
+            {@const w0 = Math.min(win.startMs, Date.parse(answer.start) || win.startMs)}
+            {@const w1 = Math.max(win.endMs, Date.parse(answer.end) || win.endMs)}
+            {@const pos = (t: number) => Math.max(0, Math.min(100, ((t - w0) / (w1 - w0)) * 100))}
+            <div class="bbc-tl" role="group" aria-label={T.happenedTimeline}>
+              <div class="bbc-lane"><span class="bbc-lane-name">{T.laneGaps}</span><div class="bbc-lane-track">
+                {#each happened.items.filter((x) => x.end && x.end > x.t).slice(0, MAX_DRAWN) as it (it.id)}
+                  <span class="bbc-gapblock {it.tone}" style:left={pos(it.t) + '%'} style:width={Math.max(0.4, pos(it.end ?? it.t) - pos(it.t)) + '%'} title={whenText(it.t) + ': ' + it.title + '. ' + it.detail} role="img" aria-label={it.title}></span>
+                {/each}
+              </div></div>
+              <div class="bbc-lane"><span class="bbc-lane-name">{T.laneDumps}</span><div class="bbc-lane-track">
+                {#each happened.items.filter((x) => x.kind === 'dump').slice(0, MAX_DRAWN) as it (it.id)}
+                  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                  <span class="bbc-mark dump" style:left={pos(it.t) + '%'} title={whenText(it.t) + ': ' + it.title + ' ' + it.detail} tabindex="0" role="img" aria-label={whenText(it.t) + ': ' + it.title + ' ' + it.detail}></span>
+                {/each}
+              </div></div>
+              <div class="bbc-lane"><span class="bbc-lane-name">{T.laneRestarts}</span><div class="bbc-lane-track">
+                {#each happened.items.filter((x) => x.kind === 'restart' || x.kind === 'crash').slice(0, MAX_DRAWN) as it (it.id)}
+                  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                  <span class="bbc-mark restart" style:left={pos(it.t) + '%'} title={whenText(it.t) + ': ' + it.title + ' ' + it.detail} tabindex="0" role="img" aria-label={whenText(it.t) + ': ' + it.title + ' ' + it.detail}></span>
+                {/each}
+              </div></div>
+              <div class="bbc-lane"><span class="bbc-lane-name">{T.laneEvents}</span><div class="bbc-lane-track">
+                {#each evDots.dots as e (e.t + ':' + e.level)}
+                  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                  <span class="bbc-mark ev l{e.level}" style:left={pos(e.t) + '%'} title={whenText(e.t) + ': ' + (e.level === 1 ? 'Critical' : e.level === 2 ? 'Error' : e.level === 3 ? 'Warning' : 'Information') + ' events from Windows'} tabindex="0" role="img" aria-label={whenText(e.t) + ': Windows wrote events'}></span>
+                {/each}
+              </div></div>
+              <div class="bbc-axis"><span>{whenText(w0)}</span><span>{whenText(w1)}</span></div>
+            </div>
+            {#if evDots.more}<p class="bbc-note">{T.drawnMore(evDots.more)}</p>{/if}
+
+            <h3 class="bbc-h">{T.happenedList}</h3>
+            {#if !happened.items.length}<p class="bbc-note">{T.happenedEmpty}</p>
+            {:else}
+              <table class="bbc-list-table">
+                <thead><tr><th scope="col">{T.colWhen}</th><th scope="col">{T.colWhat}</th></tr></thead>
+                <tbody>
+                  {#each happened.items as it (it.id)}
+                    <tr><td class="bbc-when">{whenText(it.t)}</td><td><div class="bbc-what"><span class="bbc-dot {it.tone}" aria-hidden="true"></span><div><strong>{it.title}</strong>{#if it.detail}<div class="bbc-sub">{it.detail}</div>{/if}</div></div></td></tr>
+                  {/each}
+                </tbody>
+              </table>
+              {#if happened.more}<p class="bbc-note">{T.happenedMore(happened.more)}</p>{/if}
+              <p class="bbc-note">{T.untrustedHint}</p>
+            {/if}
+
+            <h3 class="bbc-h">{T.happenedEvents}</h3>
+            <p class="bbc-note">{T.happenedEventsHint}</p>
+            {#if !evRows.rows.length}<p class="bbc-note">{T.happenedEmpty}</p>
+            {:else}
+              <table class="bbc-list-table">
+                <thead><tr><th scope="col">{T.colLog}</th><th scope="col">{T.colLevel}</th><th scope="col">{T.colId}</th><th scope="col">{T.colCount}</th><th scope="col">{T.colMeaningShort}</th></tr></thead>
+                <tbody>
+                  {#each evRows.rows as r (r.id)}
+                    <tr><td>{r.log}</td><td>{r.level}</td><td>{r.eventId}</td><td>{r.count}</td><td>{r.meaning}</td></tr>
+                  {/each}
+                </tbody>
+              </table>
+              {#if evRows.more}<p class="bbc-note">{T.happenedMore(evRows.more)}</p>{/if}
+            {/if}
+
+            <h3 class="bbc-h">{T.happenedHealth}</h3>
+            <table class="bbc-list-table">
+              <tbody>{#each health as h (h.label)}<tr><th scope="row">{h.label}</th><td><span class="bbc-dot {h.tone}" aria-hidden="true"></span>{h.value}</td></tr>{/each}</tbody>
+            </table>
+          {/if}
+
+        {:else if view === 'latest'}
+          {#if answer && !problem}
+            <p class="bbc-note">{T.latestHelp}</p>
+            {#if !compared.length}<p class="bbc-note">{T.latestEmpty}</p>
+            {:else}
+              <ul class="bbc-cmp">
+                {#each compared as { d, c } (d.key)}
+                  <li>
+                    <div class="bbc-cmp-name">{d.title}</div>
+                    {#if c}
+                      <div class="bbc-bar-track" role="img" aria-label={d.title + ': ' + POSITION_WORDS[c.position] + '. ' + formatValue(d.unit, c.last) + ' now. Lowest ' + formatValue(d.unit, c.min) + ', highest ' + formatValue(d.unit, c.max) + '.'}>
+                        <span class="bbc-bar-mark" style:left={(c.at * 100) + '%'}></span>
+                      </div>
+                      <div class="bbc-cmp-nums"><span>{formatValue(d.unit, c.min)}</span><strong>{formatValue(d.unit, c.last)} · {POSITION_WORDS[c.position]}</strong><span>{formatValue(d.unit, c.max)}</span></div>
+                    {:else}<p class="bbc-note">{T.notRead}</p>{/if}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          {/if}
+
+        {:else}
+          {#if answer && !problem}
+            <p class="bbc-note">{T.everythingHelp}</p>
+            <input class="bbc-search" type="search" placeholder={T.search} aria-label={T.search} title={T.searchHint} bind:value={everySearch} />
+            {#each allGroups as g (g.group)}
+              <details class="bbc-eg" open={openGroups.includes(g.group) || !!everySearch} ontoggle={(e) => { const o = (e.currentTarget as HTMLDetailsElement).open; if (!everySearch && o !== openGroups.includes(g.group)) toggleGroup(g.group); }}>
+                <summary>{g.title} <span class="bbc-count">{g.lines.length}</span></summary>
+                {#if openGroups.includes(g.group) || everySearch}
+                  <table class="bbc-list-table bbc-every">
+                    <thead><tr><th scope="col">{T.colCounter}</th><th scope="col">{T.last}</th><th scope="col">{T.average}</th><th scope="col">{T.highest}</th><th scope="col">{T.colShape}</th><th scope="col">{T.colMeaning}</th></tr></thead>
+                    <tbody>
+                      {#each g.lines as l (l.key)}
+                        {@const u = seriesUnit(l.key, l.unit)}
+                        {@const f = lineFigures(l.points)}
+                        <tr>
+                          <th scope="row">{seriesTitle(l.key)}</th>
+                          <td>{formatValue(u, f.last)}</td><td>{formatValue(u, f.avg)}</td><td>{formatValue(u, f.max)}</td>
+                          <td><svg class="bbc-spark" viewBox="0 0 80 18" aria-hidden="true"><path d={shapePath(l.points)} /></svg></td>
+                          <td class="bbc-mean">{meaningOf(l.key, l.unit)}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                {/if}
+              </details>
+            {:else}
+              <p class="bbc-note">{answer.lines.length ? T.noMatch : T.everythingNone}</p>
+            {/each}
+          {/if}
         {/if}
       </section>
     </div>
@@ -392,8 +604,70 @@
   .bbc-figs th[scope="row"], .bbc-figs thead th:nth-child(2) { text-align: left; white-space: normal; font-weight: 500; }
   .bbc-figs thead th { color: var(--text-2); font-weight: 500; border-top: 0; }
   .bbc-x { padding: 0 6px; color: var(--text-2); background: transparent; border: 0; font-size: 16px; cursor: pointer; }
+  .bbc-head-actions { display: flex; align-items: flex-start; gap: var(--space-2); }
+  .bbc-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); list-style: none; margin: 6px 0 0; padding: 0; }
+  .bbc-chip { display: inline-block; padding: 2px 10px; font-size: 12px; font-weight: 600; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; cursor: help; }
+  .bbc-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .bbc-chip.saved { border-color: var(--control-line); }
+  .bbc-chip.late, .bbc-chip.partly { border-color: var(--warn); }
+  .bbc-chip:focus-visible, .bbc-mark:focus-visible, .bbc-rowbtn:focus-visible, .bbc-seg button:focus-visible, .bbc-tabs button:focus-visible, .bbc-q:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .bbc-intro { margin: 0; padding: var(--space-2) var(--space-4); background: var(--surface-2); border-bottom: 1px solid var(--line); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); }
+  .bbc-intro h3 { margin: 0; font-size: var(--fs-5, 15px); }
+  .bbc-intro ol { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.45; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
+  .bbc-quick { display: grid; gap: 4px; }
+  .bbc-quick strong { font-size: 12px; color: var(--text-2); font-weight: 600; }
+  .bbc-q { text-align: left; padding: 5px 8px; font: inherit; font-size: 12.5px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer; }
+  .bbc-q:hover { border-color: var(--control-line); }
+  .bbc-main.wide { grid-template-columns: minmax(0, 1fr); }
+  .bbc-h { margin: var(--space-4) 0 0; font-size: var(--fs-5, 15px); font-weight: 600; }
+  .bbc-cap { caption-side: top; text-align: left; padding: 0 8px 4px; color: var(--text-2); font-size: 12px; }
+  .bbc-rowbtn { padding: 0; font: inherit; color: inherit; text-align: left; background: transparent; border: 0; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+  .bbc-rowbtn[aria-pressed='true'] { font-weight: 700; text-decoration: underline; }
+  tr.focus { background: var(--surface-2); }
+  .bbc-when { color: var(--text-2); }
+  .bbc-meaning { margin-top: var(--space-3); padding: var(--space-3); background: var(--surface-2); border-radius: var(--radius-sm); }
+  .bbc-meaning h3 { margin: 0 0 4px; font-size: 13px; }
+  .bbc-meaning p { margin: 0; font-size: 13px; line-height: 1.5; }
+  .bbc-tl { display: grid; gap: 6px; margin-top: var(--space-2); }
+  .bbc-lane { display: grid; grid-template-columns: 120px minmax(0, 1fr); align-items: center; gap: var(--space-2); font-size: 12px; }
+  .bbc-lane-name { color: var(--text-2); }
+  .bbc-lane-track { position: relative; height: 22px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 3px; }
+  .bbc-gapblock { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(45deg, var(--pending) 0 3px, transparent 3px 6px); opacity: 0.8; }
+  .bbc-gapblock.bad { background: repeating-linear-gradient(45deg, var(--bad) 0 3px, transparent 3px 6px); }
+  .bbc-gapblock.warn { background: repeating-linear-gradient(45deg, var(--warn) 0 3px, transparent 3px 6px); }
+  .bbc-mark { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; }
+  .bbc-mark.dump { background: var(--bad); transform: rotate(45deg); }
+  .bbc-mark.restart { width: 4px; height: 16px; margin: -8px 0 0 -2px; background: var(--accent); border-radius: 1px; }
+  .bbc-mark.ev { border-radius: 50%; background: var(--warn); }
+  .bbc-mark.ev.l1, .bbc-mark.ev.l2 { background: var(--bad); }
+  .bbc-mark.ev.l4 { background: var(--pending); }
+  .bbc-axis { display: flex; justify-content: space-between; margin-left: 128px; font-size: 11px; color: var(--text-2); }
+  .bbc-list-table { width: 100%; margin-top: var(--space-2); border-collapse: collapse; font-size: 12.5px; background: transparent; font-family: inherit; }
+  .bbc-list-table th, .bbc-list-table td { padding: 4px 8px; text-align: left; vertical-align: top; border-top: 1px solid var(--line); background: transparent; font-family: inherit; letter-spacing: normal; text-transform: none; overflow-wrap: anywhere; }
+  .bbc-list-table thead th { color: var(--text-2); font-weight: 500; border-top: 0; }
+  .bbc-list-table th[scope='row'] { font-weight: 500; }
+  .bbc-what { display: flex; align-items: flex-start; gap: 6px; }
+  .bbc-what .bbc-dot { margin: 5px 0 0; flex: 0 0 auto; }
+  .bbc-sub { color: var(--text-2); }
+  .bbc-dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--pending); }
+  .bbc-dot.bad { background: var(--bad); }
+  .bbc-dot.warn { background: var(--warn); }
+  .bbc-cmp { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: grid; gap: var(--space-3); }
+  .bbc-cmp-name { font-size: 13px; font-weight: 600; }
+  .bbc-bar-track { position: relative; height: 10px; margin: 6px 0 2px; background: linear-gradient(90deg, var(--surface-2), var(--line)); border: 1px solid var(--line); border-radius: 5px; }
+  .bbc-bar-mark { position: absolute; top: -4px; width: 4px; height: 16px; margin-left: -2px; background: var(--accent); border-radius: 2px; }
+  .bbc-cmp-nums { display: flex; justify-content: space-between; gap: var(--space-2); font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .bbc-cmp-nums strong { color: var(--text); font-weight: 600; text-align: center; }
+  .bbc-eg { border-top: 1px solid var(--line-soft, var(--line)); padding: 4px 0; }
+  .bbc-eg summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
+  .bbc-every .bbc-mean { color: var(--text-2); min-width: 240px; }
+  .bbc-spark { width: 80px; height: 18px; fill: none; stroke: var(--series-1); stroke-width: 1.4; }
   @media (max-width: 899px) {
+    .bbc-intro { grid-template-columns: minmax(0, 1fr); }
+    .bbc-intro ol { grid-template-columns: minmax(0, 1fr); gap: 2px; }
     .bbc-main { grid-template-columns: 1fr; overflow: auto; }
     .bbc-side { border-right: 0; border-bottom: 1px solid var(--line); max-height: 40vh; }
+    .bbc-lane { grid-template-columns: 84px minmax(0, 1fr); }
+    .bbc-axis { margin-left: 92px; }
   }
 </style>
