@@ -115,7 +115,7 @@ func TestReconnectDoesNotReopenASourceRemovedWhileThePassRuns(t *testing.T) {
 	repo := &removingRepo{reconnRepo: base}
 	repo.afterSources = func() {
 		// The pass now holds a list that still says payroll and orders both need opening. The person removes payroll.
-		_ = links.Remove("key-payroll-audit", "payroll", "audit")
+		_ = links.RemoveScoped("saved-1", "key-payroll-audit", "payroll", "audit")
 	}
 	h := reconnectHandler(t, repo, saved, links)
 

@@ -42,14 +42,9 @@ const (
 type sourceLinkStore interface {
 	List() ([]sourcelinks.Link, error)
 	Add(sourcelinks.Link) error
-	Remove(selectionKey, database, collection string) error
-	Forget(savedConnectionID string) error
-}
-
-// scopedLinkRemover is a links store that can drop one saved connection's link without touching another's. The real store (sourcelinks.Store)
-// has it; Remove alone cannot tell two saved connections apart when a source has no selection key.
-type scopedLinkRemover interface {
+	// RemoveScoped drops one saved connection's link without touching another's that names the same database and collection (SEC-09).
 	RemoveScoped(savedConnectionID, selectionKey, database, collection string) error
+	Forget(savedConnectionID string) error
 }
 
 // WithSourceLinks turns on reopening saved audit sources. Without it nothing is remembered and nothing is reopened.
@@ -322,19 +317,15 @@ func (h *handler) dropLinkOfSource(ctx context.Context, id string) (restore func
 
 // forgetOpenedSource drops the links in held (and any waiting address) of a source the person removed. Each link is dropped for its own
 // saved connection, so another saved connection that shares the database and collection keeps its link. listed says held is the
-// complete answer; a store that cannot drop one connection's link at a time falls back to the older Remove.
+// complete answer; when it is not, no link is dropped, since the wrong saved connection's link could go with it.
 func (h *handler) forgetOpenedSource(src audit.Source, held []sourcelinks.Link, listed bool) {
 	if h.links == nil {
 		return
 	}
-	if scoped, ok := h.links.(scopedLinkRemover); ok {
-		if listed {
-			for _, l := range held {
-				_ = scoped.RemoveScoped(l.SavedConnectionID, l.SelectionKey, l.Database, l.Collection)
-			}
+	if listed {
+		for _, l := range held {
+			_ = h.links.RemoveScoped(l.SavedConnectionID, l.SelectionKey, l.Database, l.Collection)
 		}
-	} else {
-		_ = h.links.Remove(src.SelectionKey, src.Database, src.Collection)
 	}
 	h.reconn.mu.Lock()
 	kept := h.reconn.pending[:0]
