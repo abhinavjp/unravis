@@ -48,7 +48,7 @@
   const existingGroups = $derived(railGroups(existing.map((e) => ({ ...e, ref: e.label })), (e) => kindLabel(e.kind)));
 
   async function back() { card = ''; dropNote = ''; seed = undefined; await tick(); heading?.focus(); }
-  async function open(c: Card, finding = '') { card = c; dropNote = ''; from = finding; seed = undefined; await tick(); cardEl?.focus(); }
+  async function open(c: Card, finding = '', dropped?: { files: File[]; folder: boolean; says: string[] }) { seed = dropped; card = c; dropNote = ''; from = finding; await tick(); cardEl?.focus(); }
   function connectedDone() { if (from !== '' && !connected.includes(from)) connected = [...connected, from]; from = ''; card = 'pc'; }
   async function drop(event: DragEvent) {
     event.preventDefault();
@@ -64,8 +64,7 @@
     if (dropped.tooMany) says.push(FILES_TEXT.dropTruncated);
     if (dropped.tooDeep) says.push(FILES_TEXT.dropTooDeep);
     if (dropped.unreadable > 0) says.push(dropUnreadableText(dropped.unreadable));
-    await open('files');
-    seed = { files: dropped.files, folder: dropped.folder, says };
+    await open('files', '', { files: dropped.files, folder: dropped.folder, says });
   }
   async function remove(key: string) { removeChosen(key); releaseOrphanFiles(); await tick(); heading?.focus(); }
 </script>

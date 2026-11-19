@@ -9,6 +9,7 @@ test('a drop on the tile screen is read and staged, not discarded', () => {
   assert.match(step, /filesFromDrop\(items, plain\)/);
   assert.match(step, /if \(closed\) return;/);
   assert.match(step, /<ImportFilesPanel \{seed\}/);
+  assert.match(step, /await open\('files', '', \{ files: dropped\.files/, 'the seed is set before the panel mounts, or its mount-time staging sees nothing');
   assert.match(read('src/components/wizard/ImportFilesPanel.svelte'), /onMount\(\(\) => \{ if \(seed && seed\.files\.length > 0\) void take\(seed\.files, seed\.folder, seed\.says\)/);
 });
 
