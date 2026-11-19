@@ -27,3 +27,9 @@
 - Installed (silent upgrade, cases kept) and verified in the INSTALLED app: Name, Where (real drives C: and D:), Record, SQL (pack path), Watch, Keep, Folder, Review, Build the pack gives "Pack built" with correct steps.
 - Checks: svelte-check 0/0, npm test 3391/3391, go vet clean, go test ./internal/... ok.
 - Not verified: This PC install (needs UAC, owner side), failed-install result view, real SQL service. BL-130..135 not ticked.
+
+## 2026-11-19 BL-137 and BL-131
+- BL-137: USB and network drive cards greyed out with the reason; Next refused for a UNC path and for a USB or network letter of this PC (`folder-not-local`, `nonLocalDrives` on WizardState).
+- BL-131: Status, Remove, Apply and Snapshot moved from the drawer into WizardDialog over the list. Remove reports busy through `onBusy`.
+- e2e `tools/e2e/specs/blackbox.spec.ts` updated for the pop-up (it still targeted the old drawer wizard and two old copy strings) and BB-31, BB-31a, BB-32 added; 13/13 pass against a Linux demo build (cases off).
+- Not verified: real remove/apply with the service installed; a real USB stick or mapped drive on Windows.
