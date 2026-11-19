@@ -3,6 +3,7 @@
   import { formatMs } from '../lib/drill/overview';
   import { formatAtOnce } from '../lib/drill/callLanes';
   import { compareToNormal } from '../lib/drill/callCompare';
+  import { lightLines } from '../lib/drill/nearbyCalls';
   import type { Readout, SourceItem } from '../lib/drill/callReadout';
   import type { DbStateKey, DbStateView } from '../lib/drill/dbState';
   import { formatTime } from '../lib/time';
@@ -12,6 +13,7 @@
   // and (demo only) the "Pretend the database is" switch. The database sentence comes from dbState.
   let {
     selected,
+    light,
     whileRan,
     steps,
     selectedCall,
@@ -24,6 +26,8 @@
     onPretend
   }: {
     selected: SourceItem | null;
+    /** The selected call's own Database, Redis and Web call times, as its nearby row shows them; null when the row has none, undefined when no row matches. */
+    light?: { sqlMs: number | null; redisMs: number | null; httpMs: number | null } | null;
     whileRan: Readout | null;
     steps: readonly { p95Ms: number | null }[];
     selectedCall: { sourceId: string; id: string } | null;
@@ -68,6 +72,11 @@
   const fmtAt = (cell: { atOnce: number | null } | null | undefined): string =>
     cell && cell.atOnce !== null && Number.isFinite(cell.atOnce) ? formatAtOnce(cell.atOnce) : DRILL_TEXT.notRecorded;
 
+  // The selected call's Database, Redis and Web calls lines; a missing time is "not recorded", never 0, as in the nearby table.
+  const lightRows = $derived(
+    lightLines(light, { database: DRILL_TEXT.colDatabase, redis: DRILL_TEXT.colRedis, web: DRILL_TEXT.colWebCalls, notRecorded: DRILL_TEXT.notRecorded }, formatMs)
+  );
+
   const tookText = $derived(
     selected && selected.tookMs !== null && Number.isFinite(selected.tookMs) ? formatMs(selected.tookMs) : DRILL_TEXT.notRecorded
   );
@@ -103,6 +112,13 @@
       <p>{SOURCE_NAME[selected.source]}</p>
       <p>{formatTime(selected.startMs, { zone })}</p>
       <p>{tookText}</p>
+      {#if lightRows}
+        <ul class="insp-light" data-testid="scall-selected-light">
+          {#each lightRows as line (line.label)}
+            <li>{line.label}: {line.value}</li>
+          {/each}
+        </ul>
+      {/if}
       {#if normalLine}
         <p class="insp-note" data-testid="scall-vsnormal" title={DRILL_TEXT.vsNormalHow}><strong>{DRILL_TEXT.vsNormalTitle}:</strong> {normalLine}</p>
       {/if}

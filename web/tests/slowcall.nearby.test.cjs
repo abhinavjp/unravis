@@ -155,3 +155,16 @@ test('isThisCall matches id and source', () => {
   assert.equal(m.isThisCall(row('c2', 0), call), false);
   assert.equal(m.isThisCall(row('c1', 0, { sourceId: 's2' }), call), false);
 });
+
+test('BL-028: lightLines gives the Selected panel lines, with "not recorded" for a missing figure and none without a row', () => {
+  const text = { database: 'Database', redis: 'Redis', web: 'Web calls', notRecorded: 'not recorded' };
+  const fmt = (ms) => ms + ' ms';
+  assert.equal(m.lightLines(undefined, text, fmt), null, 'no row found: no lines');
+  assert.deepEqual(m.lightLines(null, text, fmt).map((l) => l.value), ['not recorded', 'not recorded', 'not recorded'], 'row without figures');
+  assert.deepEqual(m.lightLines({ sqlMs: 12, redisMs: null, httpMs: 0 }, text, fmt), [
+    { label: 'Database', value: '12 ms' },
+    { label: 'Redis', value: 'not recorded' },
+    { label: 'Web calls', value: '0 ms' }
+  ], 'a null stays "not recorded"; a real 0 stays 0');
+  assert.equal(m.lightLines({ sqlMs: NaN, redisMs: 1, httpMs: 2 }, text, fmt)[0].value, 'not recorded');
+});
