@@ -109,8 +109,8 @@
   const startingSources = () => loadSources(caseId);
   let selection = $state.raw<SourceSelection>(startingSources()?.selection ?? app.savedTraceSources ?? ALL_SOURCES);
   let universe = $state.raw<SourceUniverse>(startingSources()?.universe ?? { chips: [], saved: [] });
-  // Said when a source cannot be switched on because 50 are on already; cleared by the next change of the choice.
-  let capNote = $state('');
+  // Said when a source cannot be switched on because 8 are on already; cleared by the next change of the choice.
+  let capNote = $state(startingSources()?.trimmed ? SOURCES_TEXT.keptTrimmed : '');
   const nothingSelected = $derived(composeSourceIds(selection).nothing);
   const offLanes = $derived(unselectedLanes(selection, universe.chips));
   // Saved databases no open audit source answers to yet: only then does the page say it is reconnecting.

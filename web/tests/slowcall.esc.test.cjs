@@ -43,7 +43,6 @@ function compileHandler() {
     'env',
     `
     let importPopup = env.importPopup;
-    let drillOpen = env.drillOpen;
     let glossaryOpen = env.glossaryOpen;
     let coverageSource = env.coverageSource;
     let sidePanel = env.sidePanel;
@@ -100,7 +99,6 @@ function makeMenu() {
 function baseEnv(overrides = {}) {
   return {
     importPopup: false,
-    drillOpen: false,
     glossaryOpen: false,
     coverageSource: null,
     sidePanel: null,

@@ -36,8 +36,10 @@ type mongoLane struct {
 }
 
 // RunMongoLane runs the Mongo checks for one incident and returns them as a report whose Lane holds the answers.
+// A request Validate refuses runs no query at all: every check is "Failed" with the reason (BL-042).
 func RunMongoLane(ctx context.Context, m Mongo, label string, req LaneRequest, now clock) Report {
 	started := now()
+	invalid := req.Validate()
 	l := &mongoLane{m: guarded{inner: m}, req: req, b: newLaneBuilder(req)}
 	version := ""
 	steps := []struct {
@@ -54,7 +56,9 @@ func RunMongoLane(ctx context.Context, m Mongo, label string, req LaneRequest, n
 	}
 	for _, st := range steps {
 		var c LaneCheck
-		if ctx.Err() != nil {
+		if invalid != nil {
+			c = refusedCheck(invalid)
+		} else if ctx.Err() != nil {
 			c = LaneCheck{State: StateFailed, Summary: "The run stopped before this check ran."}
 		} else {
 			cctx, cancel := context.WithTimeout(ctx, checkTimeout)

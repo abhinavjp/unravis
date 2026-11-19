@@ -19,7 +19,7 @@ import (
 const (
 	tracingAuditLabel    = "API requests (audit log)"
 	tracingConsLive      = "live-non-snapshot"
-	tracingAuditCapWarn  = "Only the first 50 audit sources are shown."
+	tracingAuditCapWarn  = "Only the first 8 audit sources are shown."
 	tracingAuditListWarn = "The audit sources could not be listed, so the audit lane was not read."
 
 	tracingAuditSavedOnlyMsg = "This case saved audit databases that are not connected on this computer, so no API requests were read. Unravis reconnects a saved database by itself only when its password is saved. Otherwise press Connect next to it in the Sources row, enter the password, then press Start tracing again."
@@ -417,7 +417,7 @@ func auditSavedOnlyLane(now time.Time, saved []string) tracingLane {
 // selectAuditSources decides which audit sources one request reads.
 //
 // explicit false (the default call): every listed source in listed order, empty
-// ids dropped, de-duplicated, at most 50 (more than that adds the cap warning).
+// ids dropped, de-duplicated, at most 8 (more than that adds the cap warning).
 // explicit true: the ids as sent, each checked against the listing; an id that is
 // not listed returns errUnknownAuditSource, and with no ids nothing is listed.
 // A nil repo is an empty listing. An error from the listing is returned as is

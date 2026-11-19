@@ -19,8 +19,9 @@ const maxFieldPathArrayItems = 20
 // SampleFieldPaths reads the newest audit.FieldPathsSample documents of one
 // source and reports the union of their field paths with BSON type names. It is
 // read-only and shares the global and per-source query admission limits. No
-// field value is ever returned: the two payload fields are replaced by a
-// constant on the server, and the walker below keeps only names and types.
+// field value is ever returned: the opaque fields (payloads and header maps)
+// leave the database only as their type name, and the walker below keeps only
+// names and types.
 func (s *Store) SampleFieldPaths(ctx context.Context, sourceID string) (audit.FieldPaths, error) {
 	if sourceID == "" {
 		return audit.FieldPaths{}, fmt.Errorf("%w: sourceId is required", audit.ErrInvalidInput)
@@ -60,22 +61,63 @@ func (s *Store) SampleFieldPaths(ctx context.Context, sourceID string) (audit.Fi
 	return walker.result(sampled), nil
 }
 
+// opaqueFields are the top-level fields whose content is customer data or a
+// map whose keys change from call to call (payloads and headers). Their keys
+// and values never leave the database: see fieldPathsPipeline.
+var opaqueFields = []string{"RequestPayload", "ResponsePayload", "RequestHeaders", "ResponseHeaders"}
+
+// opaqueTypesField holds, per sampled document, the $type name of each opaque
+// field. It is added by fieldPathsPipeline and read by the walker; it is never
+// listed as a path itself.
+const opaqueTypesField = "_unravisOpaqueTypes"
+
 // fieldPathsPipeline selects the newest documents by _id (ObjectIDs are
 // time-ordered). The empty first $match is what the MongoDB 3.4 adapter
-// requires of every pipeline. A payload that is text is replaced by the
-// constant "x" before it leaves the database: its type stays, its content does
-// not travel.
+// requires of every pipeline. Each opaque field is replaced on the database
+// server by its type name (a constant such as "object" or "string") and the
+// field itself is dropped, so no key name or value of a payload or a header
+// map travels. $type and an exclusion $project are both MongoDB 3.4 operators.
 func fieldPathsPipeline() mongo.Pipeline {
-	redact := func(field string) bson.E {
-		return bson.E{Key: field, Value: bson.D{{Key: "$cond", Value: bson.A{
-			bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$" + field}}, "string"}}}, "x", "$" + field,
-		}}}}
+	types := make(bson.D, 0, len(opaqueFields))
+	drop := make(bson.D, 0, len(opaqueFields))
+	for _, field := range opaqueFields {
+		types = append(types, bson.E{Key: field, Value: bson.D{{Key: "$type", Value: "$" + field}}})
+		drop = append(drop, bson.E{Key: field, Value: 0})
 	}
 	return mongo.Pipeline{
 		bson.D{{Key: "$match", Value: bson.D{}}},
 		bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: -1}}}},
 		bson.D{{Key: "$limit", Value: audit.FieldPathsSample}},
-		bson.D{{Key: "$addFields", Value: bson.D{redact("RequestPayload"), redact("ResponsePayload")}}},
+		bson.D{{Key: "$addFields", Value: bson.D{{Key: opaqueTypesField, Value: types}}}},
+		bson.D{{Key: "$project", Value: drop}},
+	}
+}
+
+// mongoTypeNames is the set of $type aliases an opaque type name may take. A
+// name outside it is reported as "other", so only a fixed constant is returned.
+var mongoTypeNames = map[string]bool{
+	"double": true, "string": true, "object": true, "array": true, "binData": true, "undefined": true,
+	"objectId": true, "bool": true, "date": true, "null": true, "regex": true, "dbPointer": true,
+	"javascript": true, "symbol": true, "javascriptWithScope": true, "int": true, "timestamp": true,
+	"long": true, "decimal": true, "minKey": true, "maxKey": true,
+}
+
+// opaqueTypes records the type names fieldPathsPipeline put in place of the
+// opaque fields. A field the document lacks ($type "missing") is skipped.
+func (w *fieldPathWalker) opaqueTypes(doc bson.Raw) {
+	for _, field := range opaqueFields {
+		value, err := doc.LookupErr(field)
+		if err != nil {
+			continue
+		}
+		name, ok := value.StringValueOK()
+		if !ok || name == "missing" {
+			continue
+		}
+		if !mongoTypeNames[name] {
+			name = "other"
+		}
+		w.note(field, name)
 	}
 }
 
@@ -117,16 +159,22 @@ func fieldPathSegment(name string) string {
 	return name
 }
 
-// payloadFieldPlaceholder replaces every key name below a payload field. A
-// payload is customer-shaped data: its keys can carry customer values (an id or
+// payloadFieldPlaceholder replaces every key name below an opaque field that
+// still reaches the walker (one copied under another parent, or a database
+// that did not run the pipeline). Its keys can carry customer values (an id or
 // an email used as a key), so they are never returned.
 const payloadFieldPlaceholder = "*"
 
-// isPayloadField reports the two fields whose content is customer data. The
-// match is by name at any depth, so a payload copied under another parent is
-// treated the same way.
+// isPayloadField reports the opaque fields (payloads and header maps). The
+// match is by name at any depth, so one copied under another parent is treated
+// the same way.
 func isPayloadField(name string) bool {
-	return name == "RequestPayload" || name == "ResponsePayload"
+	for _, field := range opaqueFields {
+		if name == field {
+			return true
+		}
+	}
+	return false
 }
 
 // document records every element of doc under prefix. depth is the depth of
@@ -139,6 +187,12 @@ func (w *fieldPathWalker) document(prefix string, doc bson.Raw, depth int, inPay
 		return
 	}
 	for _, element := range elements {
+		if depth == 1 && element.Key() == opaqueTypesField {
+			if types, ok := element.Value().DocumentOK(); ok {
+				w.opaqueTypes(types)
+			}
+			continue
+		}
 		segment := fieldPathSegment(element.Key())
 		childInPayload := inPayload
 		if inPayload {

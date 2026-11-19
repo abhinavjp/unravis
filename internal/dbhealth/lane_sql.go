@@ -172,13 +172,17 @@ type sqlLane struct {
 
 // RunSQLLane runs the four SQL checks for one incident and returns them as a report whose Lane holds the answers. q must be scoped to req.Database
 // (it may be empty, which only the Query Store check minds). A cancelled context stops the run: the checks not yet run are "Failed".
+// A request Validate refuses runs no query at all: every check is "Failed" with the reason (BL-042).
 func RunSQLLane(ctx context.Context, q Queryer, label string, req LaneRequest, now clock) Report {
 	started := now()
 	s := &sqlLane{q: q, req: req, b: newLaneBuilder(req)}
-	bctx, cancel := context.WithTimeout(ctx, checkTimeout)
-	rows, err := q.Query(bctx, qLaneBase)
-	cancel()
-	s.base = evalBase(rows, err)
+	invalid := req.Validate()
+	if invalid == nil {
+		bctx, cancel := context.WithTimeout(ctx, checkTimeout)
+		rows, err := q.Query(bctx, qLaneBase)
+		cancel()
+		s.base = evalBase(rows, err)
+	}
 	s.era = EraOf(s.base.version)
 	s.b.res.Era = string(s.era)
 
@@ -195,7 +199,9 @@ func RunSQLLane(ctx context.Context, q Queryer, label string, req LaneRequest, n
 	}
 	for _, st := range steps {
 		var c LaneCheck
-		if ctx.Err() != nil {
+		if invalid != nil {
+			c = refusedCheck(invalid)
+		} else if ctx.Err() != nil {
 			c = LaneCheck{State: StateFailed, Summary: "The run stopped before this check ran."}
 		} else {
 			// Query Store reads a long window slice by slice and gives each query its own time limit.
@@ -212,7 +218,9 @@ func RunSQLLane(ctx context.Context, q Queryer, label string, req LaneRequest, n
 		}
 		s.b.add(c)
 	}
-	s.coldCache()
+	if invalid == nil {
+		s.coldCache()
+	}
 	return reportFromLane("sql", label, req, s.base.version, s.b.finish(), started, now)
 }
 

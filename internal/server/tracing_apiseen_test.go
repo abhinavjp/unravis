@@ -627,3 +627,26 @@ func TestApiSeenPassesSelectedAuditSourceIDs(t *testing.T) {
 		})
 	}
 }
+
+// BL-029/BL-044: an explicit selection that names only a case file (no audit
+// source) makes no api-seen read. An empty id list would make SQLBusy read every
+// connected audit source, none of which was selected.
+func TestApiSeenFileOnlySelectionDoesNotReadAuditSources(t *testing.T) {
+	srcA := audit.Source{ID: "src-a", Label: "src-a", Database: "db", Collection: "src-a"}
+	f := &apiSeenFakeRepo{
+		sources: []audit.Source{srcA},
+		result:  audit.SQLBusyResult{Recorded: true, Bins: []audit.SQLBusyBin{apiSeenBin(tracingLaneT0, 1200, 3)}},
+	}
+	e, id := apiSeenEnv(t, f)
+	imp := seedTracingImport(t, e.store, id, "iis-w3c", "web.log",
+		tracingKindEvents("request", tracingLaneT0.Add(20*time.Minute), 5, time.Minute, map[string]string{"status": "503"}))
+	out, _ := tracingPost(t, e, id, tracingLaneBody(tracingImportID(imp.ID)))
+	if f.calls != 0 {
+		t.Fatalf("SQLBusy called %d times for a selection with no audit source (ids %v)", f.calls, f.lastIn.SourceIDs)
+	}
+	for _, lane := range out.Lanes {
+		if lane.ReasonCode == tracingReasonAPISseen {
+			t.Fatal("api-seen filled the SQL lane from an audit source that was not selected")
+		}
+	}
+}

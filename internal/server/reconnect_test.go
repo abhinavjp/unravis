@@ -45,12 +45,15 @@ func (s *reconnLinks) Add(l sourcelinks.Link) error {
 	return nil
 }
 
-func (s *reconnLinks) Remove(key, database, collection string) error {
+func (s *reconnLinks) RemoveScoped(id, key, database, collection string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if id == "" {
+		return nil
+	}
 	kept := s.links[:0:0]
 	for _, l := range s.links {
-		if (key != "" && l.SelectionKey == key) || (key == "" && l.Database == database && l.Collection == collection) {
+		if l.SavedConnectionID == id && ((key != "" && l.SelectionKey == key) || (key == "" && l.Database == database && l.Collection == collection)) {
 			continue
 		}
 		kept = append(kept, l)

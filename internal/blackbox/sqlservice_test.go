@@ -1915,3 +1915,97 @@ func TestIsInstalledConfigPath(t *testing.T) {
 		t.Fatal("a different file was taken for the installed settings file")
 	}
 }
+
+// BL-139: a settings save replaces blackbox.json through a rename, which drops
+// the owner and DACL install-sql gave it. ResecureSettings puts the lock and the
+// SQL read entry back, so a later enable-sql proves the file instead of refusing.
+func TestResecureSettingsRestoresTheInstallSQLLock(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	// What a SaveConfig rename leaves: the file belongs to the account that saved it.
+	g.env.owners[g.configPath()] = sidInstallingUser
+	if err := g.m.ResecureSettings(g.configPath()); err != nil {
+		t.Fatalf("resecure: %v", err)
+	}
+	if len(g.env.settingsLocks) != 2 || g.env.settingsLocks[1] != g.configPath() {
+		t.Fatalf("settings-file locks = %v, want the install's lock and one more on %s", g.env.settingsLocks, g.configPath())
+	}
+	if len(g.env.sqlGranted) != 2 {
+		t.Fatalf("the SQL read grant was not applied again: %v", g.env.sqlGranted)
+	}
+	if owner := g.env.ownerOf(g.configPath()); !trustedFileOwner(owner) {
+		t.Fatalf("the settings file is still owned by %q", owner)
+	}
+	if err := g.m.EnableSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatalf("enable-sql refused after a resecured save: %v", err)
+	}
+}
+
+// BL-139: no SQL service, nothing to restore, and nothing is touched.
+func TestResecureSettingsLeavesAHostWithoutTheSQLServiceAlone(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.ResecureSettings(g.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.env.settingsLocks) != 0 || len(g.env.sqlGranted) != 0 {
+		t.Fatalf("changed a host with no SQL service: %v %v", g.env.settingsLocks, g.env.sqlGranted)
+	}
+}
+
+// BL-139: when install-sql bound a custom --config, a save of the installed file
+// is not the SQL service's settings, and the installer never locks a custom one.
+func TestResecureSettingsSkipsACustomBoundConfig(t *testing.T) {
+	g := newSQLRig(t)
+	other := filepath.Join(t.TempDir(), "other-blackbox.json")
+	if err := SaveConfig(other, g.cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	g.env.pinOwner(other)
+	if err := g.m.InstallSQL(g.cfg, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.m.ResecureSettings(g.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.m.ResecureSettings(other); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.env.settingsLocks) != 0 || len(g.env.sqlGranted) != 1 {
+		t.Fatalf("a custom-bound install was re-locked or re-granted: %v %v", g.env.settingsLocks, g.env.sqlGranted)
+	}
+}
+
+// BL-139 end to end: apply on a host with the SQL service puts the settings lock
+// back after its save, and a lock that will not land is reported, not fatal.
+func TestApplyResecuresTheSQLSettingsFile(t *testing.T) {
+	for _, failLock := range []bool{false, true} {
+		g := installedRig(t)
+		two := &twoSvc{host: g.svc, sql: &fakeSvc{}}
+		g.m.Svc = two
+		env := &fakeSQLEnv{fakeEnv: g.env}
+		g.m.SQL = &SQLManager{Svc: two, Env: env}
+		if err := g.m.SQL.InstallSQL(g.cfg, g.p.ConfigPath); err != nil {
+			t.Fatal(err)
+		}
+		if failLock {
+			env.settingsLockErr = errors.New("SetNamedSecurityInfo failed")
+		}
+		cfgB := g.cfg
+		cfgB.Targets = []Target{{Kind: "service", Name: "SvcB"}}
+		res, err := g.m.Apply(applySource(t, cfgB))
+		if err != nil {
+			t.Fatalf("failLock=%v: apply: %v", failLock, err)
+		}
+		if res.SQLSettingsUnlocked != failLock {
+			t.Fatalf("failLock=%v: SQLSettingsUnlocked=%v", failLock, res.SQLSettingsUnlocked)
+		}
+		if len(env.settingsLocks) != 2 {
+			t.Fatalf("failLock=%v: settings-file locks = %v, want install + apply", failLock, env.settingsLocks)
+		}
+		if got, lerr := LoadConfig(g.p.ConfigPath); lerr != nil || strings.Join(targetNames(got), ",") != "service:SvcB" {
+			t.Fatalf("failLock=%v: the new settings were not kept: %+v %v", failLock, got.Targets, lerr)
+		}
+	}
+}

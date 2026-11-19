@@ -344,7 +344,7 @@ export const blackboxApi = {
   install: (settings: Settings) => call<InstallAnswer>('POST', '/this-pc/install', settings),
   start: () => call<{ ok: boolean; started: boolean }>('POST', '/this-pc/start', {}),
   stop: () => call<{ ok: boolean; started: boolean }>('POST', '/this-pc/stop', {}),
-  apply: (settings: Settings) => call<{ ok: boolean; restarted: boolean }>('POST', '/this-pc/apply', settings),
+  apply: (settings: Settings) => call<{ ok: boolean; restarted: boolean; sqlWarning?: string }>('POST', '/this-pc/apply', settings),
   remove: (deleteRecordings: boolean, confirmName: string) => call<RemoveAnswer>('POST', '/this-pc/remove', { deleteRecordings, confirmName }),
   snapshot: () => call<SnapshotAnswer>('POST', '/this-pc/snapshot', {}),
   /** Replaces the recorder program installed on this PC with the one that ships with Unravis. One administrator approval. */

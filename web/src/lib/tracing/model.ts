@@ -32,7 +32,8 @@ export interface TracingWindow {
 }
 
 /** Sent per lane and at the top level, exactly as the server sends it. */
-export interface TracingSourceRef { sourceId: string; label: string; noFile?: true }
+/** `capped`: listed but not read, because the default call reads at most 8 sources in all. */
+export interface TracingSourceRef { sourceId: string; label: string; noFile?: true; capped?: true }
 
 /**
  * The server bucket is `{start,count,errors?}`; SQL and IIS have no 5xx, so `errors` is absent there and
@@ -147,7 +148,8 @@ export interface TracingResponse {
 export interface TracingRequest {
   sourceIds?: string[];
   incident: TracingRange;
-  reference: TracingRange;
+  /** Accepted and checked by the server but not used: the answer has one window. Leave it out when there is none (UI-02). */
+  reference?: TracingRange;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -169,7 +171,8 @@ export function isStale(responseSeq: number, latestSeq: number): boolean {
 // The request body. Only the fields the server's strict decoder accepts; an unknown field is a 400.
 
 export function buildTracingBody(req: TracingRequest, seq: number): string {
-  const body: Record<string, unknown> = { incident: req.incident, reference: req.reference, requestSeq: seq };
+  const body: Record<string, unknown> = { incident: req.incident, requestSeq: seq };
+  if (req.reference) body.reference = req.reference;
   if (req.sourceIds && req.sourceIds.length > 0) body.sourceIds = req.sourceIds;
   return JSON.stringify(body);
 }
@@ -201,6 +204,7 @@ function parseSourceRef(value: unknown): TracingSourceRef | null {
   if (!isObject(value) || !isText(value.sourceId) || !isText(value.label)) return null;
   const ref: TracingSourceRef = { sourceId: value.sourceId, label: value.label };
   if (value.noFile === true) ref.noFile = true;
+  if (value.capped === true) ref.capped = true;
   return ref;
 }
 
