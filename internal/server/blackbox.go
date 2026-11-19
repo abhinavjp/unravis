@@ -49,7 +49,7 @@ type BlackboxPC interface {
 	Install(ctx context.Context, cfg blackbox.Config) (blackbox.InstallOutcome, error)
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
-	Apply(ctx context.Context, cfg blackbox.Config) (bool, error)
+	Apply(ctx context.Context, cfg blackbox.Config) (blackbox.ApplyOutcome, error)
 	Remove(ctx context.Context, name string, deleteRecordings bool, confirmName string) (blackbox.RemoveOutcome, error)
 	Snapshot(ctx context.Context) (blackbox.SnapshotOutcome, error)
 	Update(ctx context.Context) (blackbox.UpdateOutcome, error)
@@ -1237,12 +1237,15 @@ func (h *handler) bbApply(w http.ResponseWriter, r *http.Request) {
 	defer h.bb.pcMu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), bbActionTimeout)
 	defer cancel()
-	restarted, err := pc.Apply(ctx, cfg)
+	applied, err := pc.Apply(ctx, cfg)
 	if err != nil {
 		bbPCFailure(w, err)
 		return
 	}
-	out := bbApplyAnswer{OK: true, Restarted: restarted, BindWarning: blackbox.BindWarning(cfg.Bind)}
+	out := bbApplyAnswer{OK: true, Restarted: applied.Restarted, BindWarning: blackbox.BindWarning(cfg.Bind)}
+	if applied.SQLSettingsUnlocked {
+		out.SQLWarning = blackbox.SQLSettingsUnlockedText
+	}
 	if found != nil && found.Installed && found.Folder != "" && !sameFolder(found.Folder, cfg.Folder) {
 		out.OldFolder = found.Folder
 		out.Note = "The recorder now writes to " + cfg.Folder + ". The recordings already made stay in " + found.Folder + ": they are not moved, and removing the Blackbox with its recordings deletes only the new folder. Move or delete the old ones by hand."
@@ -1259,6 +1262,9 @@ type bbApplyAnswer struct {
 	Note      string `json:"note,omitempty"`
 	// BindWarning is set when the status port listens beyond this PC (SEC-10).
 	BindWarning string `json:"bindWarning,omitempty"`
+	// SQLWarning is set when the SQL service's settings lock could not be put
+	// back after the save (BL-139): the recorder applied, the SQL service did not.
+	SQLWarning string `json:"sqlWarning,omitempty"`
 }
 
 // sameFolder says two folder spellings name one folder (Windows is not case
