@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -41,14 +42,9 @@ const (
 type sourceLinkStore interface {
 	List() ([]sourcelinks.Link, error)
 	Add(sourcelinks.Link) error
-	Remove(selectionKey, database, collection string) error
-	Forget(savedConnectionID string) error
-}
-
-// scopedLinkRemover is a links store that can drop one saved connection's link without touching another's. The real store (sourcelinks.Store)
-// has it; Remove alone cannot tell two saved connections apart when a source has no selection key.
-type scopedLinkRemover interface {
+	// RemoveScoped drops one saved connection's link without touching another's that names the same database and collection (SEC-09).
 	RemoveScoped(savedConnectionID, selectionKey, database, collection string) error
+	Forget(savedConnectionID string) error
 }
 
 // WithSourceLinks turns on reopening saved audit sources. Without it nothing is remembered and nothing is reopened.
@@ -128,12 +124,16 @@ func addressOnly(uri string) string {
 	return uri[:scheme+3] + authority + rest[end:]
 }
 
-// slashPasswordEnd returns the index in rest of the "@" that ends a login whose password holds a "/", or -1. end is where the authority
-// would end by the plain URL rule. It says yes only when the text up to the first "/" has no "@" and reads as a login ("user:pw", not a
-// host list "host:27017"), or when a database name between that "/" and the "@" would hold a "/" (a database name never does).
+// slashPasswordEnd returns the index in rest of the "@" that ends a login whose password holds a "/", "?" or "#", or -1. end is where the
+// authority would end by the plain URL rule. It says yes only when the text before it has no "@" and reads as a login ("user:pw", not a host
+// list "host:27017"), or when a database name between a "/" and the "@" would hold a "/" (a database name never does).
 func slashPasswordEnd(rest string, end int) int {
-	if end >= len(rest) || rest[end] != '/' || strings.Contains(rest[:end], "@") {
+	if end >= len(rest) || strings.Contains(rest[:end], "@") {
 		return -1
+	}
+	if rest[end] != '/' {
+		// "user:pw?x@host/db" and "user:pw#x@host/db": the authority ends at the "?" or "#" inside the password (BL-036).
+		return loginEnd(rest, end)
 	}
 	stop := len(rest)
 	if i := strings.IndexAny(rest, "?#"); i >= 0 {
@@ -141,21 +141,61 @@ func slashPasswordEnd(rest string, end int) int {
 	}
 	at := strings.LastIndex(rest[:stop], "@")
 	if at <= end {
-		return -1
+		// The password may hold an unescaped "?" or "#" too ("user:pw/x?y@host"), so the "@" sits after it (BL-036).
+		return loginEnd(rest, end)
 	}
 	if strings.Contains(rest[end+1:at], "/") {
 		return at
 	}
-	authority := rest[:end]
+	return loginEnd(rest, end)
+}
+
+// loginEnd finds where a login ends when its password broke the authority early. It only applies when the text before end reads as
+// "user:password". The login starts the real address at the last "@" before the first "/" that follows the first "@" (the path), so an "@"
+// inside the password, or in a "?" part before the path, is cut with it. An address with no "/" after the login ends at its last "@".
+// Limit: a query with an "@" and no path after a login is read as part of the password.
+func loginEnd(rest string, end int) int {
+	if !loginShape(rest[:end]) {
+		return -1
+	}
+	first := strings.Index(rest[end:], "@")
+	if first < 0 {
+		return -1
+	}
+	first += end
+	limit := len(rest)
+	if slash := strings.Index(rest[first+1:], "/"); slash >= 0 {
+		limit = first + 1 + slash
+	}
+	return strings.LastIndex(rest[:limit], "@")
+}
+
+// loginShape says the text reads as "user:password", never as a host list "host:27017": it has a ":" whose tail is not a port.
+func loginShape(authority string) bool {
 	colon := strings.LastIndex(authority, ":")
 	if colon < 0 {
-		return -1
+		return false
 	}
 	tail := authority[colon+1:]
-	if tail == "" || strings.Contains(tail, "]") || allDigits(tail) {
-		return -1
+	return tail != "" && !strings.Contains(tail, "]") && !allDigits(tail)
+}
+
+// addressWithout is addressOnly with the password the person typed as a hint. A password of digits with a "/" reads exactly like a port and
+// a path ("user:1234/5678@host" and "host:27017/app@x" have the same shape), so parsing alone cannot tell them apart. When the known password
+// sits in the text right after a ":" and before an "@", the login is cut through that "@" first (BL-036).
+func addressWithout(uri, password string) string {
+	uri = strings.TrimSpace(uri)
+	scheme := strings.Index(uri, "://")
+	if password != "" && scheme >= 0 {
+		rest := uri[scheme+3:]
+		for _, pw := range []string{password, url.QueryEscape(password), url.PathEscape(password)} {
+			if i := strings.Index(rest, ":"+pw+"@"); i >= 0 && !strings.ContainsAny(rest[:i], "/?#@") {
+				uri = uri[:scheme+3] + rest[i+len(pw)+2:]
+				break
+			}
+		}
 	}
-	return at
+	return addressOnly(uri)
 }
 
 func allDigits(s string) bool {
@@ -182,7 +222,7 @@ func (h *handler) noteOpenedSource(item audit.Source, savedID string, conn audit
 		_ = h.links.Add(link)
 		return
 	}
-	conn.Password, conn.SavedConnectionID, conn.URI = "", "", addressOnly(conn.URI)
+	conn.Password, conn.SavedConnectionID, conn.URI = "", "", addressWithout(conn.URI, conn.Password)
 	h.reconn.mu.Lock()
 	h.reconn.pending = append(h.reconn.pending, pendingLink{link: link, address: conn})
 	if len(h.reconn.pending) > maxPendingLinks {
@@ -283,19 +323,15 @@ func (h *handler) dropLinkOfSource(ctx context.Context, id string) (restore func
 
 // forgetOpenedSource drops the links in held (and any waiting address) of a source the person removed. Each link is dropped for its own
 // saved connection, so another saved connection that shares the database and collection keeps its link. listed says held is the
-// complete answer; a store that cannot drop one connection's link at a time falls back to the older Remove.
+// complete answer; when it is not, no link is dropped, since the wrong saved connection's link could go with it.
 func (h *handler) forgetOpenedSource(src audit.Source, held []sourcelinks.Link, listed bool) {
 	if h.links == nil {
 		return
 	}
-	if scoped, ok := h.links.(scopedLinkRemover); ok {
-		if listed {
-			for _, l := range held {
-				_ = scoped.RemoveScoped(l.SavedConnectionID, l.SelectionKey, l.Database, l.Collection)
-			}
+	if listed {
+		for _, l := range held {
+			_ = h.links.RemoveScoped(l.SavedConnectionID, l.SelectionKey, l.Database, l.Collection)
 		}
-	} else {
-		_ = h.links.Remove(src.SelectionKey, src.Database, src.Collection)
 	}
 	h.reconn.mu.Lock()
 	kept := h.reconn.pending[:0]

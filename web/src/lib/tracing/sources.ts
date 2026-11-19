@@ -17,6 +17,8 @@ export interface SourceChip {
   label: string;
   kind: SourceKind;
   noFile?: true;
+  /** Listed but not read by "all": the default call reads at most 8 sources in all. It can be switched on after another is off. */
+  capped?: true;
 }
 
 export type SourceSelection = { mode: 'all' } | { mode: 'none' } | { mode: 'some'; ids: string[] };
@@ -43,8 +45,11 @@ export const SOURCES_TEXT = {
   kindSql: 'SQL',
   kindIis: 'IIS',
   kindFile: 'File',
-  capNote: 'At most 50 sources can be traced at once. Switch one off first.',
-  newNotOn: 'The new file’s source was not switched on. 50 sources are already on.',
+  capNote: 'At most 8 sources can be traced at once. Switch one off first.',
+  keptTrimmed: 'The kept choice named more than 8 sources, so only the first 8 are used.',
+  cappedFlag: 'not read',
+  cappedTitle: 'Only 8 sources are traced at once, so this one is listed but not read. Switch another off, then switch this one on.',
+  newNotOn: 'The new file’s source was not switched on. 8 sources are already on.',
   notImported: 'not imported',
   notImportedTitle: 'This file is listed but was never imported, so the timeline holds nothing from it. Import it to see its events.'
 } as const;
@@ -89,13 +94,16 @@ export function sourcesSummary(selection: SourceSelection, chips: SourceChip[]):
   const total = chips.length;
   const word = (n: number) => (n === 1 ? 'source' : 'sources');
   if (selection.mode === 'none') return 'Tracing no sources.';
-  if (selection.mode === 'all') return `Tracing all ${total} ${word(total)}.`;
+  if (selection.mode === 'all') {
+    const capped = chips.filter((chip) => chip.capped).length;
+    return capped > 0 ? `Tracing the first ${total - capped} of ${total} sources.` : `Tracing all ${total} ${word(total)}.`;
+  }
   const on = chips.filter((chip) => selection.ids.includes(chip.id)).length;
   return `Tracing ${on} of ${total} ${word(total)}.`;
 }
 
-export function isChipOn(selection: SourceSelection, id: string): boolean {
-  if (selection.mode === 'all') return true;
+export function isChipOn(selection: SourceSelection, id: string, capped = false): boolean {
+  if (selection.mode === 'all') return !capped;
   if (selection.mode === 'none') return false;
   return selection.ids.includes(id);
 }
@@ -110,12 +118,12 @@ export function selectionOf(on: string[], chips: SourceChip[]): SourceSelection 
 }
 
 /** The longest explicit sourceIds list the server accepts; a longer one is refused with a 400. */
-export const MAX_EXPLICIT_SOURCES = 50;
+export const MAX_EXPLICIT_SOURCES = 8;
 
 /** The result of pressing a chip: the selection that follows, and whether the press was refused because the list would pass the cap. */
 export function toggleOutcome(selection: SourceSelection, chips: SourceChip[], id: string): { selection: SourceSelection; refused: boolean } {
   if (!chips.some((chip) => chip.id === id)) return { selection, refused: false };
-  const on = chips.filter((chip) => isChipOn(selection, chip.id)).map((chip) => chip.id);
+  const on = chips.filter((chip) => isChipOn(selection, chip.id, chip.capped === true)).map((chip) => chip.id);
   const next = selectionOf(on.includes(id) ? on.filter((item) => item !== id) : [...on, id], chips);
   if (next.mode === 'some' && next.ids.length > MAX_EXPLICIT_SOURCES) return { selection, refused: true };
   return { selection: next, refused: false };
@@ -188,7 +196,7 @@ export function chipsOf(res: TracingResponse): SourceChip[] {
   const add = (ref: TracingSourceRef, kind: SourceKind) => {
     if (seen.has(ref.sourceId)) return;
     seen.add(ref.sourceId);
-    out.push({ id: ref.sourceId, label: ref.label || ref.sourceId, kind, ...(ref.noFile ? { noFile: true as const } : {}) });
+    out.push({ id: ref.sourceId, label: ref.label || ref.sourceId, kind, ...(ref.noFile ? { noFile: true as const } : {}), ...(ref.capped ? { capped: true as const } : {}) });
   };
   for (const ref of res.auditSources) add(ref, 'audit');
   for (const ref of res.sources) add(ref, kindOfFile(res, ref));
@@ -224,6 +232,8 @@ export interface StoredSources {
   selection: SourceSelection;
   /** What was known when the choice was made, so a reload can draw the whole row before any answer comes back. */
   universe: SourceUniverse;
+  /** True when the kept list was longer than the cap and was cut. */
+  trimmed?: true;
 }
 
 const KINDS: SourceKind[] = ['audit', 'sql', 'iis', 'file'];
@@ -240,7 +250,7 @@ export function loadSources(caseId: string, storage?: Pick<Storage, 'getItem'>):
         if (typeof item !== 'object' || item === null) continue;
         const chip = item as Record<string, unknown>;
         if (typeof chip.id === 'string' && chip.id !== '' && typeof chip.label === 'string' && KINDS.includes(chip.kind as SourceKind)) {
-          chips.push({ id: chip.id, label: chip.label, kind: chip.kind as SourceKind, ...(chip.noFile === true ? { noFile: true as const } : {}) });
+          chips.push({ id: chip.id, label: chip.label, kind: chip.kind as SourceKind, ...(chip.noFile === true ? { noFile: true as const } : {}), ...(chip.capped === true ? { capped: true as const } : {}) });
         }
       }
     }
@@ -248,8 +258,10 @@ export function loadSources(caseId: string, storage?: Pick<Storage, 'getItem'>):
     const universe: SourceUniverse = { chips, saved };
     if (record.mode === 'none') return { selection: NO_SOURCES, universe };
     if (record.mode === 'some' && Array.isArray(record.ids)) {
-      const ids = record.ids.filter((id): id is string => typeof id === 'string' && id !== '');
-      return ids.length > 0 ? { selection: { mode: 'some', ids }, universe } : null;
+      const all = record.ids.filter((id): id is string => typeof id === 'string' && id !== '');
+      // A tab that kept a longer list under the old cap of 50 would send it and get a 400, so only the first 8 are used.
+      const ids = all.slice(0, MAX_EXPLICIT_SOURCES);
+      return ids.length > 0 ? { selection: { mode: 'some', ids }, universe, ...(all.length > ids.length ? { trimmed: true as const } : {}) } : null;
     }
     return null;
   } catch {
@@ -304,7 +316,8 @@ export const sourcesCopyEntries = (): LintEntry[] => [
 
 export interface StoredSourceChoice { mode: 'none' | 'some'; ids?: string[] }
 
-const MAX_KEPT_IDS = 50;
+const MAX_KEPT_IDS = MAX_EXPLICIT_SOURCES;
+
 
 /** The kept choice as a selection, or null when it is missing, is "all" or cannot be read. */
 export function parseStoredSourceChoice(value: unknown): SourceSelection | null {

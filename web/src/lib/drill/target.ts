@@ -21,7 +21,7 @@ export function slotWindow(window: TracingWindow, slot: number): { start: string
 
 /** The audit lane's sources read; when none were read, the listed sources that have a file. Deduplicated, at most 8. May be empty: the caller must not send an empty list. */
 export function drillSourceIds(lane: TracingLane, sources: readonly TracingSourceRef[]): string[] {
-  const read = lane.sourcesRead && lane.sourcesRead.length > 0 ? lane.sourcesRead : sources.filter((source) => !source.noFile);
+  const read = lane.sourcesRead && lane.sourcesRead.length > 0 ? lane.sourcesRead : sources.filter((source) => !source.noFile && !source.capped);
   const ids: string[] = [];
   for (const source of read) {
     if (!ids.includes(source.sourceId)) ids.push(source.sourceId);

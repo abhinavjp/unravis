@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"reflect"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -487,4 +488,55 @@ func closedFlag(f *tcpFakeSource) bool {
 	tcpFakeMu.Lock()
 	defer tcpFakeMu.Unlock()
 	return f.closed
+}
+
+// BL-138: a host with more adapters than the cap gets totals marked partial,
+// with the number of adapters each covers.
+func TestTCPAdapterCapMarksPartial(t *testing.T) {
+	src := &tcpFakeSource{paths: tcpTestPaths()[:4], readings: tcpTestReadings()[:4]}
+	for i := 0; i < tcpMaxInterfaces+3; i++ {
+		name := `\Network Interface(nic` + strconv.Itoa(i) + `)`
+		for _, suf := range []string{tcpQueueSuffix, tcpDiscSuffix, tcpOutErrSuffix} {
+			src.paths = append(src.paths, name+suf)
+			src.readings = append(src.readings, tcpReading(name+suf, 1))
+		}
+	}
+	grp := tcpCollectTicks(t, newTCPTestGroup(t, src, tcpOKCounts), 3)
+	if !grp.OutboundQueuePartial || grp.OutboundQueueInterfaces != tcpMaxInterfaces {
+		t.Fatalf("queue partial=%v interfaces=%d, want true and %d", grp.OutboundQueuePartial, grp.OutboundQueueInterfaces, tcpMaxInterfaces)
+	}
+	if grp.DiscardedPerSec == nil || !grp.DiscardedPartial || grp.DiscardedInterfaces != tcpMaxInterfaces {
+		t.Fatalf("discarded partial=%v interfaces=%d, want true and %d", grp.DiscardedPartial, grp.DiscardedInterfaces, tcpMaxInterfaces)
+	}
+	if grp.OutErrorsPerSec == nil || !grp.OutErrorsPartial || grp.OutErrorsInterfaces != tcpMaxInterfaces {
+		t.Fatalf("out-errors partial=%v interfaces=%d, want true and %d", grp.OutErrorsPartial, grp.OutErrorsInterfaces, tcpMaxInterfaces)
+	}
+}
+
+// BL-138: an adapter with no valid reading makes the discard and out-error
+// sums partial; with every adapter read they are complete.
+func TestTCPDiscardOutErrorPartialOnMissingAdapter(t *testing.T) {
+	build := func(bothOK bool) *TCPGroup {
+		src := &tcpFakeSource{paths: tcpTestPaths()[:4], readings: tcpTestReadings()[:4]}
+		for _, nic := range []string{"eth0", "eth1"} {
+			name := `\Network Interface(` + nic + `)`
+			for _, suf := range []string{tcpDiscSuffix, tcpOutErrSuffix} {
+				src.paths = append(src.paths, name+suf)
+				r := tcpReading(name+suf, 10)
+				if nic == "eth1" && !bothOK {
+					r.OK = false
+				}
+				src.readings = append(src.readings, r)
+			}
+		}
+		return tcpCollectTicks(t, newTCPTestGroup(t, src, tcpOKCounts), 3)
+	}
+	part := build(false)
+	if !part.DiscardedPartial || part.DiscardedInterfaces != 1 || !part.OutErrorsPartial || part.OutErrorsInterfaces != 1 {
+		t.Fatalf("missing adapter: discarded %v/%d, out-errors %v/%d; want partial over 1", part.DiscardedPartial, part.DiscardedInterfaces, part.OutErrorsPartial, part.OutErrorsInterfaces)
+	}
+	full := build(true)
+	if full.DiscardedPartial || full.DiscardedInterfaces != 2 || full.OutErrorsPartial || full.OutErrorsInterfaces != 2 {
+		t.Fatalf("all adapters read: discarded %v/%d, out-errors %v/%d; want complete over 2", full.DiscardedPartial, full.DiscardedInterfaces, full.OutErrorsPartial, full.OutErrorsInterfaces)
+	}
 }

@@ -226,6 +226,14 @@ export function shiftDays(w: LaneWindow, days: number): LaneWindow {
   return { start: move(w.start), end: move(w.end) };
 }
 
+/** The longest one lane window may be, as the server checks it (MaxLaneWindow in internal/dbhealth/lane.go). */
+export const MAX_LANE_WINDOW_MS = 90 * 24 * 3600 * 1000;
+
+/** True when either window is longer than the server allows (BL-043), so the run is refused here before anything is sent. */
+export function laneWindowTooLong(...windows: LaneWindow[]): boolean {
+  return windows.some((w) => Date.parse(w.end) - Date.parse(w.start) > MAX_LANE_WINDOW_MS);
+}
+
 /**
  * Whether a new window for a source clashes with a day the case already holds (same kind, label and database).
  * The same window is a check of that day again (allowed). A window that overlaps without being the same is refused, as the server does.

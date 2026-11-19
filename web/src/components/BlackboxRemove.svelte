@@ -5,11 +5,13 @@
 
   // Remove a Blackbox. On this PC: stop and uninstall the service, keep or delete the recordings (typing the name
   // turns that button on). On another server Unravis does nothing there: it shows the two commands and can forget the place.
-  let { item, thisPc, onChanged, onCancel }: {
+  let { item, thisPc, onChanged, onCancel, onBusy }: {
     item: BlackboxItem;
     thisPc: ThisPc;
     onChanged: () => void;
     onCancel: () => void;
+    /** Told when a remove or forget starts and ends, so the pop-up around it cannot be closed while it runs (BL-131). */
+    onBusy?: (busy: boolean) => void;
   } = $props();
 
   type Phase = { kind: 'idle' } | { kind: 'working' } | { kind: 'done'; text: string } | { kind: 'failed'; text: string; missing?: boolean };
@@ -20,6 +22,7 @@
   let typed = $state('');
   let phase = $state<Phase>({ kind: 'idle' });
   const busy = $derived(phase.kind === 'working');
+  $effect(() => { onBusy?.(busy); });
   const ready = $derived(removeConfirmed(deleteRecordings, typed, typedName));
   // A running Blackbox stops the moment Remove is approved, so the page says so (UX-18).
   const recording = $derived(item.state.state === 'running' || item.state.state === 'running-late' || item.state.state === 'disk-low' || item.state.state === 'clock-differs');

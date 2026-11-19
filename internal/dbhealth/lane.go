@@ -70,6 +70,11 @@ func (r LaneRequest) Validate() error {
 	return nil
 }
 
+// refusedCheck is the outcome of a check that was not run because Validate refused the request.
+func refusedCheck(err error) LaneCheck {
+	return LaneCheck{State: StateFailed, Summary: "Not run: " + err.Error() + "."}
+}
+
 // LaneRunTimeout bounds one whole lane run. A long window (a month or more) is read in slices, each with its own time limit, so the run as a
 // whole is allowed to take much longer than one query.
 const LaneRunTimeout = 20 * time.Minute

@@ -127,8 +127,8 @@ func TestStartStopApplyUseTheRightCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	re, err := tp.Apply(t.Context(), packCfg())
-	if err != nil || !re {
-		t.Fatalf("%v %v", re, err)
+	if err != nil || !re.Restarted || re.SQLSettingsUnlocked {
+		t.Fatalf("%+v %v", re, err)
 	}
 	if f.calls[0].args[0] != "start" || f.calls[1].args[0] != "stop" || f.calls[2].args[0] != "apply" {
 		t.Fatalf("%+v", f.calls)
@@ -195,7 +195,7 @@ func (h *helperElev) Run(_ context.Context, exe string, args []string, elevated 
 		if err != nil {
 			return fail(err), nil
 		}
-		return line(map[string]any{"ok": true, "restarted": res.Restarted}), nil
+		return line(map[string]any{"ok": true, "restarted": res.Restarted, "sqlSettingsUnlocked": res.SQLSettingsUnlocked}), nil
 	case OpStart:
 		if err := h.m.Start(); err != nil {
 			return fail(err), nil
@@ -239,7 +239,7 @@ func TestApplyThroughTheHelperSavesTheInstalledConfigNotTheTemporaryFile(t *test
 			cfgB := cfgA
 			cfgB.Targets = []Target{{Kind: "service", Name: "SvcB"}}
 			restarted, err := tp.Apply(t.Context(), cfgB)
-			if err != nil || restarted != !stopped {
+			if err != nil || restarted.Restarted != !stopped {
 				t.Fatalf("restarted=%v %v", restarted, err)
 			}
 			// The installed config selects B, not A.
@@ -481,5 +481,19 @@ func TestUpdateFailureKeepsThePlainReason(t *testing.T) {
 func TestUpdateOpNeedsAdminAndTheGuard(t *testing.T) {
 	if !OpUpdate.NeedsAdmin() || !OpUpdate.NeedsGuard() {
 		t.Fatal("update must be elevated and guarded")
+	}
+}
+
+// BL-139: the helper's apply answer carries the SQL settings-lock warning
+// through to the caller, so the app can say the SQL service did not apply.
+func TestApplyCarriesTheSQLSettingsWarning(t *testing.T) {
+	f := &fakeElev{answer: `{"ok":true,"restarted":false,"sqlSettingsUnlocked":true}`}
+	tp := newThisPC(f, t)
+	out, err := tp.Apply(t.Context(), packCfg())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Restarted || !out.SQLSettingsUnlocked {
+		t.Fatalf("%+v", out)
 	}
 }

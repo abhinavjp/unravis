@@ -95,21 +95,23 @@ type HelperAnswer struct {
 	ExePath    string `json:"exePath"`
 	ConfigPath string `json:"configPath"`
 
-	Restarted         bool   `json:"restarted"`
-	Updated           bool   `json:"updated"`
-	WasRunning        bool   `json:"wasRunning"`
-	OldHash           string `json:"oldHash"`
-	NewHash           string `json:"newHash"`
-	Version           string `json:"version"`
-	ServiceRemoved    bool   `json:"serviceRemoved"`
-	RecordingsDeleted bool   `json:"recordingsDeleted"`
-	FilesDeleted      int    `json:"filesDeleted"`
-	SQLServiceRemoved bool   `json:"sqlServiceRemoved"`
-	Note              string `json:"note"`
-	Dir               string `json:"dir"`
-	Bytes             int64  `json:"bytes"`
-	Recordings        int    `json:"recordings"`
-	Logs              int    `json:"logs"`
+	Restarted bool `json:"restarted"`
+	// SQLSettingsUnlocked is apply's BL-139 warning (ApplyResult).
+	SQLSettingsUnlocked bool   `json:"sqlSettingsUnlocked"`
+	Updated             bool   `json:"updated"`
+	WasRunning          bool   `json:"wasRunning"`
+	OldHash             string `json:"oldHash"`
+	NewHash             string `json:"newHash"`
+	Version             string `json:"version"`
+	ServiceRemoved      bool   `json:"serviceRemoved"`
+	RecordingsDeleted   bool   `json:"recordingsDeleted"`
+	FilesDeleted        int    `json:"filesDeleted"`
+	SQLServiceRemoved   bool   `json:"sqlServiceRemoved"`
+	Note                string `json:"note"`
+	Dir                 string `json:"dir"`
+	Bytes               int64  `json:"bytes"`
+	Recordings          int    `json:"recordings"`
+	Logs                int    `json:"logs"`
 }
 
 // ThisPCError is a change that did not happen. Message is the plain sentence
@@ -373,10 +375,17 @@ func (t *ThisPC) Stop(ctx context.Context) error {
 // service. The settings travel in a short-lived file, but the helper saves them
 // to the installed copy the service reads, so the selection outlives the
 // temporary file. It reports whether it restarted (a stopped Blackbox applies
-// them at its next start).
-func (t *ThisPC) Apply(ctx context.Context, cfg Config) (restarted bool, err error) {
+// them at its next start) and whether the SQL service's settings lock could not
+// be put back after the save (BL-139).
+func (t *ThisPC) Apply(ctx context.Context, cfg Config) (ApplyOutcome, error) {
 	a, err := t.do(ctx, HelperRequest{Op: OpApply, Config: cfg})
-	return a.Restarted, err
+	return ApplyOutcome{Restarted: a.Restarted, SQLSettingsUnlocked: a.SQLSettingsUnlocked}, err
+}
+
+// ApplyOutcome is a finished apply as the helper answered it.
+type ApplyOutcome struct {
+	Restarted           bool
+	SQLSettingsUnlocked bool
 }
 
 // UpdateOutcome is a finished update. Updated is false when the installed

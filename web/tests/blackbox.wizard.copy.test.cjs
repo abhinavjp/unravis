@@ -132,8 +132,8 @@ test('the required beginner hints and folder notices are present', () => {
   assert.match(BBW_TEXT['folder.confirmCError']('E'), /keep E:/);
   assert.match(BBW_TEXT['folder.noOtherDrive']('E'), /only E:/);
   assert.match(BBW_TEXT['notice.unlistedDrive']('E'), /E:/);
-  assert.match(BBW_TEXT['notice.usbDrive'], /USB/);
-  assert.equal(BBW_TEXT['notice.networkDrive'], 'The Blackbox service must be able to write here. A local drive is safer.');
+  assert.match(BBW_TEXT['folder.errNotLocal'], /local hard drive/);
+  assert.match(BBW_TEXT['folder.notLocalReason'], /local hard drive/);
 });
 
 test('copy entries cover the flat copy object, including every function sample', () => {

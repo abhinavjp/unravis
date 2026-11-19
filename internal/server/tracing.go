@@ -24,14 +24,14 @@ import (
 // lanes read only what the case already stores.
 
 const (
-	tracingMaxSources   = 50
+	tracingMaxSources   = 8
 	tracingMaxIDLen     = 128
 	tracingLabelRunes   = 64
 	tracingWindowText   = "The window needs a start and an end, and the end must be after the start."
 	tracingBadSourceMsg = "A source id is not valid."
-	tracingTooManyMsg   = "Pick at most 50 sources."
+	tracingTooManyMsg   = "Pick at most 8 sources."
 	tracingBadSeqMsg    = "The request number is not valid."
-	tracingCappedWarn   = "Only the first 50 sources are shown."
+	tracingCappedWarn   = "Only the first 8 sources are shown."
 	tracingTooLongMsg   = "The longest window is 186 days. Shorten the start or end."
 	tracingUnknownMsg   = "That source is not part of this case."
 
@@ -181,6 +181,10 @@ type tracingRef struct {
 	// NoFile is true for a listed source whose file was never imported into the
 	// case (a tag the wizard saved, or a file that was only previewed).
 	NoFile bool `json:"noFile,omitempty"`
+	// Capped is true for a listed file source the default call did not read,
+	// because the audit and file sources together would pass tracingMaxSources.
+	// It is listed so it can be switched on once another is switched off.
+	Capped bool `json:"capped,omitempty"`
 }
 
 // tracingSelection is the sources one request reads. Refs are the resolved
@@ -191,7 +195,10 @@ type tracingRef struct {
 // included by the audit lane (never infer "no audit lane" from AuditIDs being
 // empty).
 type tracingSelection struct {
-	Refs     []tracingRef
+	Refs []tracingRef
+	// Capped are the file sources the default call listed but did not read
+	// (see applyCombinedCap). They are not in Refs, so no lane reads them.
+	Capped   []tracingRef
 	ImportOf map[string]int64
 	AuditIDs []string
 	Explicit bool
@@ -332,7 +339,7 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 	}
 
 	// Default call: every tag (oldest first), then every usable import no tag
-	// references (in id order), cut to the first 50.
+	// references (in id order), cut to the first 8.
 	linked := map[int64]bool{}
 	refs := make([]tracingRef, 0, len(tags)+len(imports))
 	for _, t := range tags {
@@ -361,16 +368,34 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 		refs = append(refs, tracingRef{SourceID: sid, Label: tracingLabel(im.Importer)})
 		sel.ImportOf[sid] = im.ID
 	}
-	if len(refs) > tracingMaxSources {
-		for _, r := range refs[tracingMaxSources:] {
-			delete(sel.ImportOf, r.SourceID)
-		}
-		refs = refs[:tracingMaxSources]
-		sel.Warnings = append(sel.Warnings, tracingCappedWarn)
-	}
 	sel.Refs = refs
 	sel.markNoFile()
 	return sel, nil
+}
+
+// applyCombinedCap keeps the default call to tracingMaxSources sources in all:
+// the audit sources it reads (auditRead) come first, the file sources fill what
+// is left. A file source past that is moved to Capped (listed, not read) and
+// the cap warning is added once.
+func (s *tracingSelection) applyCombinedCap(auditRead int) {
+	if s.Explicit {
+		return
+	}
+	room := tracingMaxSources - auditRead
+	if room < 0 {
+		room = 0
+	}
+	if len(s.Refs) <= room {
+		return
+	}
+	for _, r := range s.Refs[room:] {
+		delete(s.ImportOf, r.SourceID)
+		delete(s.KindOf, r.SourceID)
+		r.Capped, r.NoFile = true, false
+		s.Capped = append(s.Capped, r)
+	}
+	s.Refs = s.Refs[:room]
+	s.Warnings = append(s.Warnings, tracingCappedWarn)
 }
 
 // markNoFile flags every listed source whose file was never imported, so the
@@ -1109,6 +1134,7 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 		writeCaseFailure(w, http.StatusNotFound, "unknown-source", tracingUnknownMsg)
 		return
 	}
+	sel.applyCombinedCap(len(auditRefs))
 	now := time.Now().UTC()
 	start, end := req.Incident.Start.UTC(), req.Incident.End.UTC()
 	axis := newTracingAxis(start, end)
@@ -1119,7 +1145,7 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 		RequestSeq: req.RequestSeq,
 		AsOf:       now,
 		Window:     win,
-		Sources:    sel.Refs,
+		Sources:    append(append([]tracingRef{}, sel.Refs...), sel.Capped...),
 		Lanes:      []tracingLane{},
 	}
 	lanes, warns, err := tracingSQLIISLanes(ctx, unwrapCase(c), axis, sel, now)

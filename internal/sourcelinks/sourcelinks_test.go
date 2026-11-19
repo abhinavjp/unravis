@@ -103,13 +103,13 @@ func TestRemoveByKeyThenByDatabaseAndForgetBySavedConnection(t *testing.T) {
 	noKey.SelectionKey = ""
 	_ = s.Add(noKey)
 
-	if err := s.Remove("key-a", "", ""); err != nil {
+	if err := s.RemoveScoped("saved-1", "key-a", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Remove("", "d", "audit"); err != nil {
+	if err := s.RemoveScoped("saved-2", "", "d", "audit"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Remove("never-added", "", ""); err != nil {
+	if err := s.RemoveScoped("saved-1", "never-added", "", ""); err != nil {
 		t.Fatalf("removing nothing is not an error: %v", err)
 	}
 	got, _ := s.List()

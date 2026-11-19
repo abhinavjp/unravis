@@ -103,7 +103,16 @@ func (OSEnv) LockSQLSettingsFile(path string) error { return lockSQLSettingsFile
 // lockSQLSettingsFile is the real Windows settings-file lock: the same owner and
 // the same protected DACL as the install record, named once here so the two
 // halves of the rule cannot drift.
-func lockSQLSettingsFile(path string) error { return lockAdminOnlyFile(path) }
+//
+// The reparse-point and absolute-path checks of the proof run FIRST: the
+// descriptor write follows a link at the final path, so a link must be refused
+// before anything is written through it, not only by the proof afterwards.
+func lockSQLSettingsFile(path string) error {
+	if err := refuseSettingsFileChain(path); err != nil {
+		return err
+	}
+	return lockAdminOnlyFile(path)
+}
 
 // lockSQLInstallMarker applies the admin-only owner and protected DACL to the
 // record in one write.
@@ -130,8 +139,12 @@ func lockAdminOnlyFile(path string) error {
 	return writeOwnerAndProtectedDACL(path, owner, dacl)
 }
 
-// verifyAdminOnlyFile is the real Windows proof behind OSEnv.VerifyAdminOnlyFile.
-func verifyAdminOnlyFile(path string) error {
+// refuseSettingsFileChain is the path half of the settings-file proof: the path
+// is absolute, the whole ancestor chain is real directories with no reparse
+// point (a junction could redirect the privileged service at another file), and
+// the file itself is a regular file, not a link or a directory. It writes
+// nothing, so the lock runs it before its descriptor write.
+func refuseSettingsFileChain(path string) error {
 	path = filepath.Clean(path)
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("blackbox: the settings file path must be absolute")
@@ -162,6 +175,15 @@ func verifyAdminOnlyFile(path string) error {
 	}
 	if attrs&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
 		return fmt.Errorf("blackbox: the settings file is a directory")
+	}
+	return nil
+}
+
+// verifyAdminOnlyFile is the real Windows proof behind OSEnv.VerifyAdminOnlyFile.
+func verifyAdminOnlyFile(path string) error {
+	path = filepath.Clean(path)
+	if err := refuseSettingsFileChain(path); err != nil {
+		return err
 	}
 	// The owner holds implicit WRITE_DAC no matter what the DACL says, so an
 	// ordinary owner could re-grant themselves write at any time: refuse. Since

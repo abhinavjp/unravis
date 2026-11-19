@@ -117,27 +117,8 @@ func (s *Store) Add(link Link) error {
 	})
 }
 
-// Remove drops the link of a source the person removed. The selection key names it when the repository gave one; otherwise the
-// database and collection do.
-func (s *Store) Remove(selectionKey, database, collection string) error {
-	return s.mutate(func(d *document) bool {
-		kept := d.Links[:0:0]
-		for _, l := range d.Links {
-			hit := (selectionKey != "" && l.SelectionKey == selectionKey) ||
-				(selectionKey == "" && l.Database == database && l.Collection == collection)
-			if !hit {
-				kept = append(kept, l)
-			}
-		}
-		changed := len(kept) != len(d.Links)
-		d.Links = kept
-		return changed
-	})
-}
-
 // RemoveScoped drops the link of a source the person removed, but only the link that belongs to savedConnectionID. Two saved connections
 // can name the same database and collection, so a source with no selection key must not take the other connection's link with it.
-// Remove is the older, wider form: with an empty selection key it drops every saved connection's link for that database and collection.
 // An empty savedConnectionID removes nothing.
 func (s *Store) RemoveScoped(savedConnectionID, selectionKey, database, collection string) error {
 	if savedConnectionID == "" {
