@@ -115,7 +115,7 @@ func TestReconnectDoesNotReopenASourceRemovedWhileThePassRuns(t *testing.T) {
 	repo := &removingRepo{reconnRepo: base}
 	repo.afterSources = func() {
 		// The pass now holds a list that still says payroll and orders both need opening. The person removes payroll.
-		_ = links.Remove("key-payroll-audit", "payroll", "audit")
+		_ = links.RemoveScoped("saved-1", "key-payroll-audit", "payroll", "audit")
 	}
 	h := reconnectHandler(t, repo, saved, links)
 
@@ -163,5 +163,49 @@ func TestAddressOnlyDropsAPasswordThatHoldsASlash(t *testing.T) {
 	h.noteOpenedSource(audit.Source{Database: "payroll", Collection: "audit"}, "", audit.ConnectionInput{URI: "mongodb://reader:" + pw + "@db.example", Password: pw})
 	if len(h.reconn.pending) != 1 || strings.Contains(fmt.Sprintf("%+v", h.reconn.pending), "pw/") || strings.Contains(fmt.Sprintf("%+v", h.reconn.pending), "slash") {
 		t.Errorf("pending = %+v", h.reconn.pending)
+	}
+}
+
+// BL-036 (SEC-10 remainder): a password that holds a "/" and also an unescaped "?" or "#" before the "@" is cut out too. A digits-only one
+// reads exactly like a port and a path, so it is cut with the typed password as the hint.
+func TestAddressOnlyDropsAPasswordWithSlashAndQueryMark(t *testing.T) {
+	for _, tc := range []struct{ in, want, secret string }{
+		{"mongodb://reader:ab/c?d@db.example/admin", "mongodb://db.example/admin", "ab/c"},
+		{"mongodb://reader:ab/c#d@db.example", "mongodb://db.example", "ab/c"},
+		{"mongodb://reader:ab/c?d@e@db.example:27017/admin?tls=true", "mongodb://db.example:27017/admin?tls=true", "ab/c"},
+		{"mongodb://user:pw?x@host/db", "mongodb://host/db", "pw"},
+		{"mongodb://user:pw#x@host/db", "mongodb://host/db", "pw"},
+		{"mongodb://user:pw?x@host:27017/db?tls=true", "mongodb://host:27017/db?tls=true", "pw"},
+		// The first "@" may sit inside the password: the real host is after the last "@" before the path.
+		{"mongodb://user:pw/x@y?z@host/db", "mongodb://host/db", "pw"},
+		// Still kept whole: no login at all.
+		{"mongodb://db.example:27017/app?x=a@b", "mongodb://db.example:27017/app?x=a@b", ""},
+		{"mongodb://db.example/admin#a@b", "mongodb://db.example/admin#a@b", ""},
+		{"mongodb://db.example?appName=a@b", "mongodb://db.example?appName=a@b", ""},
+		{"mongodb://db.example:27017?appName=a@b", "mongodb://db.example:27017?appName=a@b", ""},
+	} {
+		got := addressOnly(tc.in)
+		if got != tc.want {
+			t.Errorf("addressOnly(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+		if tc.secret != "" && strings.Contains(got, tc.secret) {
+			t.Errorf("addressOnly(%q) kept part of the password: %q", tc.in, got)
+		}
+	}
+	for _, tc := range []struct{ in, pw, want string }{
+		{"mongodb://reader:12/34?56@db.example/admin", "12/34?56", "mongodb://db.example/admin"},
+		{"mongodb://reader:1234/5678@db.example", "1234/5678", "mongodb://db.example"},
+		{"mongodb://reader:12%2F34%3F56@db.example/admin", "12/34?56", "mongodb://db.example/admin"},
+		// The hint never cuts an address the password is not part of.
+		{"mongodb://db.example:27017/app@x", "27017", "mongodb://db.example:27017/app@x"},
+	} {
+		if got := addressWithout(tc.in, tc.pw); got != tc.want {
+			t.Errorf("addressWithout(%q, %q) = %q, want %q", tc.in, tc.pw, got, tc.want)
+		}
+	}
+	h := reconnectHandler(t, newReconnRepo(), &reconnHistory{}, &reconnLinks{})
+	h.noteOpenedSource(audit.Source{Database: "payroll", Collection: "audit"}, "", audit.ConnectionInput{URI: "mongodb://reader:12/34?56@db.example", Password: "12/34?56"})
+	if got := fmt.Sprintf("%+v", h.reconn.pending); strings.Contains(got, "12/34") || strings.Contains(got, "?56") {
+		t.Errorf("pending kept the password: %s", got)
 	}
 }

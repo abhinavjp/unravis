@@ -587,7 +587,7 @@ func TestLaneRequestValidate(t *testing.T) {
 	}
 }
 
-// A window has no length limit: a month (or a 4-week pattern with a long reference) is accepted.
+// A long window up to MaxLaneWindow (90 days) is accepted: a month, or a 4-week pattern with a long reference.
 func TestLaneRequestValidateAcceptsLongWindows(t *testing.T) {
 	long := LaneRequest{
 		Incident:  Window{laneInc.Start, laneInc.Start.Add(30 * 24 * time.Hour)},

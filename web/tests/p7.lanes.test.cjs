@@ -151,3 +151,15 @@ test('days group by source, newest day first', () => {
   assert.equal(lanes.readableByDay('sql'), true);
   assert.equal(lanes.readableByDay('mongo'), false, 'the profiler keeps only the latest entries');
 });
+
+test('BL-043: a lane window longer than 90 days is refused before anything is sent, in plain words', () => {
+  const lanesTs = loadTypeScript('src/lib/lanes.ts');
+  const { RUN_TEXT } = loadTypeScript('src/lib/copy/sourcesCopy.ts');
+  const day = (s, e) => ({ start: s, end: e });
+  assert.equal(lanesTs.laneWindowTooLong(day('2026-01-01T00:00:00.000Z', '2026-04-01T00:00:00.000Z')), false, '90 days is allowed');
+  assert.equal(lanesTs.laneWindowTooLong(day('2026-01-01T00:00:00.000Z', '2026-04-01T00:01:00.000Z')), true, 'a minute past 90 days is not');
+  assert.equal(lanesTs.laneWindowTooLong(day('2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z'), day('2025-01-01T00:00:00.000Z', '2025-06-01T00:00:00.000Z')), true, 'a long reference too');
+  assert.match(RUN_TEXT.tooLong, /90 days/);
+  const runner = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/components/sources/LaneRunner.svelte'), 'utf8');
+  assert.ok(runner.indexOf('laneWindowTooLong(inc, ref)') > 0 && runner.indexOf('laneWindowTooLong(inc, ref)') < runner.indexOf('busy = true;'), 'checked before the run starts');
+});

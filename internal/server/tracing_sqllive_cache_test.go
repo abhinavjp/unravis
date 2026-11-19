@@ -86,3 +86,30 @@ func TestHeldSQLLaneSkipsAnUndecodableDay(t *testing.T) {
 		}
 	}
 }
+
+// BL-046 (DATA-15 follow-up): the lane list, the overlap check and the investigation read the saved days through
+// laneHeld. They share the Timeline's decode cache, so an unchanged day is decoded once across all of them.
+func TestLaneHeldSharesTheDecodeCacheWithTheTimeline(t *testing.T) {
+	c := heldSQLTwoRunCase(t, heldCachePoint(40), heldCachePoint(9))
+	inc := dbhealth.Window{Start: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC), End: time.Date(2026, 10, 20, 11, 0, 0, 0, time.UTC)}
+	c.runs = append(c.runs, laneReportJSON(t, "mongo", "orders", inc, nil, nil))
+	for i := range c.runs {
+		c.runs[i].ID, c.runs[i].At = int64(9300+i), time.Date(2026, 10, 21, 7, i, 0, 0, time.UTC)
+	}
+	before := heldReportDecodes.Load()
+	if _, ok := tracingHeldSQLLane(context.Background(), c, heldCacheAxis(), time.Now()); !ok {
+		t.Fatal("no lane drawn")
+	}
+	for i := 0; i < 4; i++ {
+		held, err := laneHeld(context.Background(), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(held) != 3 || held[2].Run.Kind != "mongo" {
+			t.Fatalf("laneHeld = %d runs, want the 2 SQL days and the Mongo day", len(held))
+		}
+	}
+	if got := heldReportDecodes.Load() - before; got != 3 {
+		t.Fatalf("decoded %d reports, want 3 (each saved day once)", got)
+	}
+}

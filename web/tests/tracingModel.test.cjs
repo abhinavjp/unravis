@@ -80,6 +80,13 @@ test('request body carries only the schema fields', () => {
   assert.deepEqual(withIds.sourceIds, ['cs_1', 'imp_2']);
 });
 
+test('request body leaves the reference out when there is none (UI-02: the Call screen sends one window)', () => {
+  const one = JSON.parse(buildTracingBody({ incident: INCIDENT, sourceIds: ['cs_1'] }, 9));
+  assert.deepEqual(Object.keys(one).sort(), ['incident', 'requestSeq', 'sourceIds']);
+  const screen = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/components/SlowCallScreen.svelte'), 'utf8');
+  assert.doesNotMatch(screen, /referenceStart|reference: \{/, 'the Call screen no longer builds a comparison period');
+});
+
 test('parseTracing rejects bad shapes and fills consistency defaults', () => {
   // A lane list that is not an array is unreadable.
   assert.throws(() => parseTracing({ window: WINDOW, lanes: {}, allLanesStored: true }), (e) => e instanceof CaseApiError && e.reason === 'unreadable');

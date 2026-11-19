@@ -201,6 +201,7 @@ export const RUN_TEXT = {
   signedOut: 'This page is no longer signed in to Unravis, so nothing was read. Reload the page, or open Unravis from the link it printed when it started, then try again.',
   needIncident: 'Give the incident a start and an end, with the end after the start.',
   needReference: 'Give the reference a start and an end, with the end after the start.',
+  tooLong: 'Each time span can be at most 90 days long. Pick a shorter span. Nothing was read.',
   busy: 'Another read is running. Try again when it has finished.',
   limited: 'Too many tries in a short time. Wait a minute, then try again.',
   locked: 'The case files are locked. Unlock them first.',

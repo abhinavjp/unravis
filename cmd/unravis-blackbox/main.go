@@ -419,10 +419,14 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		if err != nil {
 			return ans.fail(err)
 		}
-		if !res.Restarted {
-			return ans.ok("Settings saved. The Blackbox is stopped: they apply at its next start."+bindWarningText(bind), withBindWarning(bind, map[string]any{"restarted": false}))
+		sqlNote := ""
+		if res.SQLSettingsUnlocked {
+			sqlNote = " " + blackbox.SQLSettingsUnlockedText
 		}
-		return ans.ok("Settings applied. The Blackbox restarted."+bindWarningText(bind), withBindWarning(bind, map[string]any{"restarted": true}))
+		if !res.Restarted {
+			return ans.ok("Settings saved. The Blackbox is stopped: they apply at its next start."+sqlNote+bindWarningText(bind), withBindWarning(bind, map[string]any{"restarted": false, "sqlSettingsUnlocked": res.SQLSettingsUnlocked}))
+		}
+		return ans.ok("Settings applied. The Blackbox restarted."+sqlNote+bindWarningText(bind), withBindWarning(bind, map[string]any{"restarted": true, "sqlSettingsUnlocked": res.SQLSettingsUnlocked}))
 	case "update":
 		res, err := d.mgr.Update()
 		if err != nil {

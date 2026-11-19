@@ -270,7 +270,8 @@
       const answer = await blackboxApi.apply(JSON.parse(JSON.stringify(applySettings)) as Settings);
       await load();
       show({ kind: 'status', id: item.id });
-      actionNote = answer.restarted ? T.applied : T.appliedNoRestart;
+      // BL-139: the recorder applied, but the SQL service's settings lock did not land.
+      actionNote = (answer.restarted ? T.applied : T.appliedNoRestart) + (answer.sqlWarning ? ' ' + answer.sqlWarning : '');
     } catch (error) {
       applyProblem = failed(error);
     } finally {
