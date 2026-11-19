@@ -59,6 +59,8 @@
     const items = Array.from(transfer.items ?? []);
     const plain = Array.from(transfer.files ?? []);
     const dropped = await filesFromDrop(items, plain);
+    // A slow folder read must not override a card the person opened meanwhile, or a case that closed.
+    if (closed || card !== '') return;
     if (dropped.files.length === 0) { dropNote = dropped.unreadable > 0 ? dropUnreadableText(dropped.unreadable) : FILES_TEXT.dropNoFiles; return; }
     const says: string[] = [];
     if (dropped.tooMany) says.push(FILES_TEXT.dropTruncated);
@@ -119,7 +121,7 @@
         {#if dropNote}<p class="hint" role="status">{dropNote}</p>{/if}
         {#if card === 'pc'}<FindOnPc {connected} onCard={(c, f) => void open(c, f ?? '')} onDone={() => void back()} />
         {:else if card === 'mongo'}{#if from !== ''}<p class="hint">{WIZ.find.mongoPrefill} <code>{connectPrefill('mongo')}</code></p>{/if}<MongoClassify prefill={from !== '' ? connectPrefill('mongo') : ''} onDone={() => (from !== '' ? connectedDone() : void back())} />
-        {:else if card === 'sql'}{#if from !== ''}<p class="hint">{WIZ.find.mongoPrefill} <code>{connectPrefill('sql')}</code></p>{/if}<SqlServerForm prefill={from !== '' ? connectPrefill('sql') : ''} onDone={() => (from !== '' ? connectedDone() : void back())} />
+        {:else if card === 'sql'}{#if from !== ''}<p class="hint">{WIZ.find.sqlPrefill} <code>{connectPrefill('sql')}</code></p>{/if}<SqlServerForm prefill={from !== '' ? connectPrefill('sql') : ''} onDone={() => (from !== '' ? connectedDone() : void back())} />
         {:else if card === 'redis'}<ReachableCheck kind="redis" onDone={() => void back()} />
         {:else if card === 'files'}<ImportFilesPanel {seed} onCancel={() => void back()} />
         {:else if card === 'blackbox'}<BlackboxCard onDone={() => void back()} />

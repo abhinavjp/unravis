@@ -3,7 +3,7 @@
   import { wizard, resetWizard, wizardIsDirty } from '../../lib/wizard.svelte';
   import { REVIEW_WINDOWS, blockers, chooseWindow, createNow, createView, setAck } from '../../lib/wizardCreate.svelte';
   import { importPlan } from '../../lib/wizardSubmit';
-  import { listSourceTags } from '../../lib/caseTagsApi';
+  import { getEnvironments, listSourceTags } from '../../lib/caseTagsApi';
   import { sourcesView } from '../../lib/wizardSources.svelte';
   import { sourceKey } from '../../lib/wizardSources';
   import { groupOf } from '../../lib/discover';
@@ -46,14 +46,21 @@
     // A draft from the create wizard is not carried into this case: start from an empty list.
     if (!resume && !askDiscard) resetWizard();
     const mine = new AbortController();
-    void listSourceTags(caseId, mine.signal).then((tags) => {
-      existing = tags.map((t) => ({ kind: t.kind, label: t.label }));
-      // The environments the case already uses, so a new source is checked against them. They are never written back (the run skips that step).
-      caseEnvs = [...new Set(tags.map((t) => (t.env ?? '').trim()).filter((e) => e !== ''))];
-      if (!askDiscard) wizard.envText = caseEnvs.join(NL);
-    }).catch(() => { /* the list above stays empty */ });
+    void loadCase(mine.signal);
     return () => { mine.abort(); if (!createView.running && !askDiscard) resetWizard(); };
   });
+
+  // The case's own list and its declared environments, so a new source is checked against them. They are never written back (the run skips that step).
+  async function loadCase(signal?: AbortSignal) {
+    try {
+      const [tags, envs] = await Promise.all([listSourceTags(caseId, signal), getEnvironments(caseId, signal).catch(() => [] as string[])]);
+      existing = tags.map((t) => ({ kind: t.kind, label: t.label }));
+      caseEnvs = [...new Set([...envs, ...tags.map((t) => t.env ?? '')].map((e) => e.trim()).filter((e) => e !== ''))];
+      if (!askDiscard) wizard.envText = caseEnvs.join(NL);
+    } catch { /* the list stays as it was */ }
+  }
+
+  async function addMore() { resetWizard(); screen = 'add'; wizard.envText = caseEnvs.join(NL); await tick(); flowEl?.focus(); void loadCase(); }
 
   async function go(to: Screen) { screen = to; await tick(); (to === 'review' ? head : flowEl)?.focus(); }
 
@@ -71,10 +78,10 @@
   {#if askDiscard}
     <section role="alert">
       <p>{WIZ.draftWarning}</p>
-      <button type="button" class="primary-button" onclick={() => { resetWizard(); askDiscard = false; wizard.envText = caseEnvs.join(NL); }}>{WIZ.draftDiscard}</button>
+      <button type="button" class="primary-button" onclick={() => { resetWizard(); askDiscard = false; wizard.envText = caseEnvs.join(NL); void tick().then(() => flowEl?.focus()); }}>{WIZ.draftDiscard}</button>
     </section>
   {:else if started}
-    <CreateProgress adding onOpen={() => { resetWizard(); onDone(); }} onAddMore={() => { resetWizard(); screen = 'add'; }} />
+    <CreateProgress adding onOpen={() => { resetWizard(); onDone(); }} onAddMore={() => void addMore()} />
   {:else if screen === 'add'}
     <SourceStep adding {caseId} {closed} {existing} />
     <div class="actions">

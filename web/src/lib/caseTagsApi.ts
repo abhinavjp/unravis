@@ -29,6 +29,12 @@ export async function putEnvironments(caseId: string, environments: readonly str
   return Array.isArray(body.environments) ? body.environments.filter((name): name is string => typeof name === 'string') : [];
 }
 
+/** The case's declared environments: GET /api/cases/{id}/environments. Read only. */
+export async function getEnvironments(caseId: string, signal?: AbortSignal): Promise<string[]> {
+  const body = await json<{ environments?: unknown }>(await send(casePath(caseId, '/environments'), {}, signal));
+  return Array.isArray(body.environments) ? body.environments.filter((name): name is string => typeof name === 'string') : [];
+}
+
 /** Adds one source tag. A Mongo database needs a successful connection test in the last 30 minutes, or the server answers `database-not-tested`. */
 export async function postSourceTag(caseId: string, tag: SourceTagInput, signal?: AbortSignal): Promise<SourceTag> {
   const payload = { importId: tag.importId ?? 0, kind: tag.kind, label: tag.label, env: tag.env, portal: tag.portal, api: tag.api, classification: tag.classification };

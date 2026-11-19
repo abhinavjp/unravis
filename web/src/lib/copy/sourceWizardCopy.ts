@@ -51,7 +51,8 @@ export const WIZ = {
     statusNeedsSteps: 'Needs an export',
     statusNotFound: 'Not found',
     added: 'Added',
-    mongoPrefill: 'Address filled in for you:'
+    mongoPrefill: 'Address filled in for you:',
+    sqlPrefill: 'Server address filled in for you:'
   },
   blackbox: {
     heading: 'Blackbox recorder',
