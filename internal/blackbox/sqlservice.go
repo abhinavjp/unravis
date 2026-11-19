@@ -141,6 +141,43 @@ type sqlInstallMarkerLocker interface {
 // The real Env must be able to lock the install record on every build.
 var _ sqlInstallMarkerLocker = OSEnv{}
 
+// sqlSettingsFileLocker assigns a settings file the administrator-only owner and
+// DACL that VerifyAdminOnlyFile then proves (REG-1). OSEnv implements it on
+// Windows and refuses off Windows. Like sqlConfigVerifier and
+// sqlInstallMarkerLocker, the seam is optional only for test fakes predating it:
+// production always wires OSEnv (cmd/unravis-blackbox), so the real install path
+// always pins the owner before it proves it.
+type sqlSettingsFileLocker interface {
+	LockSQLSettingsFile(path string) error
+}
+
+// The real Env must be able to lock the settings file on every build.
+var _ sqlSettingsFileLocker = OSEnv{}
+
+// lockSQLConfigFile asks the Env to give configPath the owner and DACL the
+// settings proof demands, before that proof runs. It repairs rather than
+// merely detects because nothing else in the install ever assigns a file owner:
+// the settings file would otherwise stay owned by whoever created it, which the
+// owner rule refuses on purpose, so install-sql refused a healthy host (REG-1).
+// A lock that fails is returned untouched — the caller proves the file right
+// afterwards and still refuses, so nothing is ever bound on an unproven config.
+// An Env with no lock seam is a test fake predating it; production always wires
+// OSEnv, whose write and read-back are the same descriptor the record gets.
+func lockSQLConfigFile(env Env, configPath string) error {
+	l, ok := env.(sqlSettingsFileLocker)
+	if !ok {
+		return nil
+	}
+	return l.LockSQLSettingsFile(configPath)
+}
+
+// isInstalledConfigPath reports whether configPath is the settings file the
+// host install wrote beside the installed program. Windows paths compare
+// without case.
+func isInstalledConfigPath(progDir, configPath string) bool {
+	return strings.EqualFold(filepath.Clean(configPath), filepath.Clean(filepath.Join(progDir, ConfigFileName)))
+}
+
 // sqlInstallMarkerPath is the install record beside the installed program.
 func sqlInstallMarkerPath(progDir string) string {
 	return filepath.Join(progDir, sqlInstallMarkerName)
@@ -600,9 +637,24 @@ func (m *SQLManager) InstallSQL(cfg Config, configPath string) (err error) {
 		return &InstallError{Reason: ReasonOther, Message: "The settings file for the SQL service could not be found.", Cause: serr}
 	}
 	// SEC-1: the settings file the service will be bound to must be
-	// administrator-locked BEFORE anything is registered or mutated. A
-	// user-writable --config would let an ordinary user aim the service at
-	// their own folder on its next start. Unverifiable means refused.
+	// administrator-locked BEFORE anything is registered. A user-writable
+	// --config would let an ordinary user aim the service at their own folder on
+	// its next start. Unverifiable means refused.
+	// REG-1: the lock is what makes the file admin-locked, so it is applied here
+	// first and proven right after — the same write-then-prove order the install
+	// record below uses, and the only reason the proof can pass at all on a real
+	// host, where the file is otherwise owned by the account that wrote it. The
+	// settings-file lock is the single thing mutated before this point; a failed
+	// lock or a failed proof still refuses with nothing registered.
+	// REG-1 follow-up: only the INSTALLED settings file is pinned. A --config
+	// anywhere else (BBX-5-02 allows one) is proven as it stands and must
+	// already be administrator-locked: pinning it here would take over a file an
+	// ordinary user wrote and make SEC-1's refusal pass for it.
+	if isInstalledConfigPath(progDir, configPath) {
+		if lerr := lockSQLConfigFile(m.Env, configPath); lerr != nil {
+			return &InstallError{Reason: ReasonOther, Message: "The settings file for the SQL service could not be locked to administrators. Run this from an elevated command prompt.", Cause: lerr}
+		}
+	}
 	if verr := verifySQLConfigFile(m.Env, configPath); verr != nil {
 		return &InstallError{Reason: ReasonOther, Message: "The settings file for the SQL service is not locked to administrators, so it was refused. Use the installed settings file (re-run install if needed).", Cause: verr}
 	}

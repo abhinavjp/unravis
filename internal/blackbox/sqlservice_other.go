@@ -39,3 +39,12 @@ func (OSEnv) LockSQLInstallMarker(string) error { return errNoService }
 
 // lockSQLInstallMarker is not available off Windows.
 func lockSQLInstallMarker(string) error { return errNoService }
+
+// LockSQLSettingsFile is not available off Windows: there are no Windows ACLs
+// to apply, so the lock fails closed (REG-1) exactly as the proof does. The
+// install order that needs it stays pure Go in sqlservice.go and is tested on
+// every platform.
+func (OSEnv) LockSQLSettingsFile(string) error { return errNoService }
+
+// lockSQLSettingsFile is not available off Windows.
+func lockSQLSettingsFile(string) error { return errNoService }

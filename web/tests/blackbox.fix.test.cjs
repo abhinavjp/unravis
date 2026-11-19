@@ -45,7 +45,10 @@ test('review 3 and 4: the drawer takes focus when it opens and every screen scro
   assert.match(drawer, /tabindex=\{focusTitle\s*\|\|\s*focusOnOpen\s*\?\s*-1\s*:\s*undefined\}/);
   const panel = read('src/components/BlackboxPanel.svelte');
   assert.match(panel, /<Drawer[^>]* focusOnOpen /);
-  assert.match(panel, /async function show\(next:\s*View\)[\s\S]*await tick\(\);\s*drawerEl\?\.scrollTo\?\.\(\{\s*top:\s*0\s*\}\)/);
+  assert.match(panel, /async function show\(next:\s*View\)[\s\S]*await tick\(\);[\s\S]*if \(!popView && !wasPop\) drawerEl\?\.scrollTo\?\.\(\{\s*top:\s*0\s*\}\)/);
+  // Footer Close in the pop-up asks first, like Esc and the corner X (review of BL-131).
+  assert.match(panel, /onclick=\{\(\) => pop\?\.requestLeave\(\)\}>\{T\.popClose\}/);
+  assert.match(read('src/components/blackboxWizard/WizardDialog.svelte'), /export function requestLeave\(\): void \{ handleLeaveRequest\(\); \}/);
   assert.match(panel, /h3\[tabindex="-1"\][\s\S]*focus\(\{ preventScroll: true \}\)/);
   for (const file of ['BlackboxPanel', 'BlackboxAdd', 'BlackboxRemove']) {
     assert.match(read('src/components/' + file + '.svelte'), /<h3 tabindex="-1">/, file);

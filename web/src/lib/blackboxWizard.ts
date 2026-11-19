@@ -2,6 +2,7 @@ import {
   INTERVALS,
   defaultSettings,
   folderFault,
+  folderKind,
   nameProblem,
   settingsProblem,
   targetsProblem
@@ -45,6 +46,11 @@ export interface WizardState {
    * system drive is C. Added to C-1 so the C: tick guards the right drive on a machine where Windows is not on C:.
    */
   systemDrive?: string;
+  /**
+   * Letters of the USB and network drives of this PC, as the drives route reported them (BL-137). The recorder only
+   * records on a local hard drive, so on this PC a folder on one of these cannot be used. Optional: absent means none known.
+   */
+  nonLocalDrives?: string[];
 }
 
 /**
@@ -55,7 +61,9 @@ export interface WizardState {
  *   watch:   targets-many | targets-kind | targets-empty | targets-long | targets-chars | targets-duplicate
  *   keep:    keep | size | free
  *   folder:  folder-invalid (not a full path) | folder-slash (forward slashes) | folder-chars (a character Windows refuses)
- *            | folder-unsafe (a drive root or system folder) | folder-system-drive | port | bind
+ *            | folder-unsafe (a drive root or system folder) | folder-not-local (a network path, or a USB or network
+ *            drive of this PC: the recorder refuses any folder that is not on a local hard drive) | folder-system-drive
+ *            | port | bind
  *   review:  the first problem of any step before it
  */
 export type StepProblem = string;
@@ -116,6 +124,30 @@ export function defaultFolder(drives: DriveInfo[] | null, fallback: string): { f
   return { folder: fallback, needsSystemTick: letter !== null && letter === system };
 }
 
+/** The letters of the USB and network drives in a drives list, upper case. The Windows drive is never one of them. */
+export function nonLocalLetters(drives: DriveInfo[]): string[] {
+  return drives.filter((d) => !d.system && d.type !== 'fixed').map((d) => d.letter.toUpperCase());
+}
+
+function sameLetters(a: string[] | undefined, b: string[] | undefined): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  return x.length === y.length && x.every((l, i) => l === y[i]);
+}
+
+/**
+ * Whether the recorder would refuse the typed folder because it is not on a local hard drive (BL-137). A network path
+ * is refused on both paths: the recorder checks the drive type where it is installed. A drive letter is only judged on
+ * this PC, where the drives list is known.
+ */
+export function folderNotLocal(s: WizardState): boolean {
+  const folder = s.settings.folder;
+  if (folderKind(folder) === 'unc') return true;
+  if (s.where !== 'pc') return false;
+  const letter = driveOfPath(folder);
+  return letter !== null && (s.nonLocalDrives ?? []).includes(letter);
+}
+
 function systemDriveOf(s: WizardState): string {
   return (s.systemDrive ?? DEFAULT_SYSTEM_DRIVE).toUpperCase();
 }
@@ -132,9 +164,13 @@ function onSystemDrive(s: WizardState): boolean {
 export function applyDefaultFolder(s: WizardState, drives: DriveInfo[] | null, fallback: string): WizardState {
   const windows = drives?.find((d) => d.system);
   const systemDrive = windows ? windows.letter.toUpperCase() : s.systemDrive;
-  if (s.folderTouched) return systemDrive === s.systemDrive ? s : { ...s, systemDrive };
+  const nonLocalDrives = drives ? nonLocalLetters(drives) : s.nonLocalDrives;
+  if (s.folderTouched) {
+    const same = systemDrive === s.systemDrive && sameLetters(nonLocalDrives, s.nonLocalDrives);
+    return same ? s : { ...s, systemDrive, nonLocalDrives };
+  }
   const { folder } = defaultFolder(drives, fallback);
-  return { ...s, systemDrive, settings: { ...s.settings, folder }, confirmSystemDrive: false };
+  return { ...s, systemDrive, nonLocalDrives, settings: { ...s.settings, folder }, confirmSystemDrive: false };
 }
 
 /** The "Reset to default" link: forget what the owner typed and take the default again. */
@@ -211,6 +247,7 @@ export function stepProblem(s: WizardState, id: StepId): StepProblem | null {
       if (fault === 'slash') return 'folder-slash';
       if (fault === 'chars') return 'folder-chars';
       if (fault === 'system') return 'folder-unsafe';
+      if (folderNotLocal(s)) return 'folder-not-local';
       if (onSystemDrive(s) && !s.confirmSystemDrive) return 'folder-system-drive';
       const p = settingsProblem({ ...defaultSettings(st.name), port: st.port, bind: st.bind });
       return p === 'port' || p === 'bind' ? p : null;

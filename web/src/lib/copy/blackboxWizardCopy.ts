@@ -48,7 +48,7 @@ export const BBW_TEXT = {
   'step.folder.title': 'Where should recordings be saved?',
   'step.folder.lead': 'Pick a drive, then edit the folder if you want a different one.',
   'step.folder.leadPack': 'Type the full folder on the other server.',
-  'step.folder.help': 'Use a full path such as D:\\UnravisBlackbox, or a network folder path.',
+  'step.folder.help': 'Use a full path on a local hard drive, such as D:\\UnravisBlackbox.',
 
   'step.review.title': 'Check it, then place it',
   'step.review.lead': 'Nothing has been saved yet.',
@@ -179,7 +179,9 @@ export const BBW_TEXT = {
   'folder.reset': (path: string): string => 'Reset to ' + path,
   'folder.confirmC': (drive: string): string => 'Yes, keep the recordings on the Windows drive (' + drive + ':)',
   'folder.confirmCHelp': 'Recording pauses when free space falls to your limit. The oldest recordings are deleted when the size limit is reached.',
-  'folder.errFull': 'That is not a full folder path. Start with a drive letter, such as D:\\Blackbox, or a network path, such as \\\\server\\share\\Blackbox.',
+  'folder.errFull': 'That is not a full folder path. Start with a drive letter, such as D:\\Blackbox.',
+  'folder.errNotLocal': 'The Blackbox only records on a local hard drive. It cannot use a USB drive or a network folder. Pick a local drive.',
+  'folder.notLocalReason': 'Cannot be used. The Blackbox only records on a local hard drive.',
   'folder.errSlash': 'Use backslashes in the folder path, for example D:\\Blackbox.',
   'folder.errChars': 'The folder path has a character that Windows does not allow in folder names. Remove any of < > " | ? * and any colon after the drive letter.',
   'folder.errSystem': 'That is a drive root or a Windows system folder. Choose a folder of your own, such as D:\\Blackbox.',
@@ -188,7 +190,7 @@ export const BBW_TEXT = {
   'folder.drivesFailed': 'The drive list could not be read. Type the full folder path instead.',
   'folder.advanced': 'Advanced · port and who can connect',
   'folder.notAdvised': 'not advised. If it fills up, Windows slows down.',
-  'folder.hideNote': 'USB sticks, network drives and hidden drives are never offered.',
+  'folder.hideNote': 'USB and network drives are shown but cannot be used. Hidden drives are not shown.',
   'folder.port': BB_TEXT.port,
   'folder.portHelp': BB_TEXT.portHelp,
   'folder.bind': BB_TEXT.bind,
@@ -197,8 +199,6 @@ export const BBW_TEXT = {
 
   'notice.systemDrive': (drive: string): string => drive + ': is the Windows drive. A full ' + drive + ': can slow or stop Windows. Choose another drive if you can.',
   'notice.unlistedDrive': (letter: string): string => letter + ': is not in the drive list. Check that it is a fixed drive and that the Blackbox service can write there.',
-  'notice.usbDrive': 'A USB drive can be unplugged. Recording stops if the folder disappears.',
-  'notice.networkDrive': 'The Blackbox service must be able to write here. A local drive is safer.',
 
   'review.basics': 'Basics',
   'review.record': 'What it records',

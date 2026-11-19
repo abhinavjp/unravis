@@ -2,6 +2,7 @@ package blackbox
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,19 @@ type fakeSQLEnv struct {
 	dacls      map[string][]fileACE
 	unreadable map[string]bool
 	sqlRevoked [][]sqlLaunchGrant // what each remove-sql handed the revoke seam
+	// REG-1: the fake owner model. owners records who owns each object, and an
+	// object nobody pinned is owned by the account that ran the install — the
+	// shape a real settings file has, because SaveConfig's atomic write does
+	// os.Chmod only and a rename keeps the descriptor of the temp file.
+	// VerifyAdminOnlyFile below refuses a path whose recorded owner
+	// trustedFileOwner does not accept, so no test can pass by pretending the
+	// settings file is admin-locked when nothing in the run ever locked it.
+	owners map[string]string
+	// REG-1: the settings-file owner lock. settingsLocks records every
+	// LockSQLSettingsFile call; settingsLockErr makes the lock fail, so a write
+	// that will not land must still refuse the install, never re-allow the owner.
+	settingsLocks   []string
+	settingsLockErr error
 }
 
 // The rights of the least-privilege launch grant, named as the production plan
@@ -50,6 +64,52 @@ const (
 // fullControl is the Windows FILE_ALL_ACCESS value, as the fake writes it for the
 // entries a real Program Files object already carries.
 const fullControl = uint32(0x001F01FF)
+
+// sidInstallingUser stands for the account that ran the install: a machine
+// user SID, which is what Windows really leaves as the owner of a settings file
+// nobody pinned. It is deliberately not one of the two owners trustedFileOwner
+// accepts, and TestInstallSQLLocksTheSettingsFileItBinds fails the fixture if
+// that ever stops being true.
+const sidInstallingUser = "S-1-5-21-1004-1005-1006-1001"
+
+// ownerOf answers the fake's owner for path, seeding an unpinned object with the
+// installing account, as the real filesystem does.
+func (e *fakeSQLEnv) ownerOf(path string) string {
+	if o, ok := e.owners[path]; ok {
+		return o
+	}
+	if e.owners == nil {
+		e.owners = map[string]string{}
+	}
+	e.owners[path] = sidInstallingUser
+	return sidInstallingUser
+}
+
+// LockSQLSettingsFile is the fake's owner-and-DACL write for a settings file
+// (REG-1): like the Windows lock it assigns bbsql.FolderOwnerSID in the same
+// single write as the protected DACL, so the object it returns is exactly what
+// VerifyAdminOnlyFile below demands. A failure it reports leaves the owner
+// alone, as a refused SetNamedSecurityInfo does.
+func (e *fakeSQLEnv) LockSQLSettingsFile(path string) error {
+	e.settingsLocks = append(e.settingsLocks, path)
+	if e.settingsLockErr != nil {
+		return e.settingsLockErr
+	}
+	if e.owners == nil {
+		e.owners = map[string]string{}
+	}
+	e.owners[path] = bbsql.FolderOwnerSID()
+	return nil
+}
+
+// pinOwner gives path the administrator owner, as an operator who locked a
+// custom settings file by hand leaves it.
+func (e *fakeSQLEnv) pinOwner(path string) {
+	if e.owners == nil {
+		e.owners = map[string]string{}
+	}
+	e.owners[path] = bbsql.FolderOwnerSID()
+}
 
 // acl returns the fake access list of path, seeded the way the host install
 // leaves a Program Files object: explicit full control for SYSTEM and
@@ -78,13 +138,29 @@ func (e *fakeSQLEnv) setACL(path string, aces []fileACE) {
 
 func (e *fakeSQLEnv) LockSQLInstallMarker(path string) error {
 	e.markerLocks = append(e.markerLocks, path)
-	return e.markerLockErr
+	if e.markerLockErr != nil {
+		return e.markerLockErr
+	}
+	// The real marker lock assigns the owner in the same write (R1-s2), so the
+	// record is trusted after it, and only after it.
+	if e.owners == nil {
+		e.owners = map[string]string{}
+	}
+	e.owners[path] = bbsql.FolderOwnerSID()
+	return nil
 }
 
 func (e *fakeSQLEnv) VerifyAdminOnlyFile(path string) error {
 	e.verifyCalls = append(e.verifyCalls, path)
 	if e.verify != nil {
 		return e.verify(path)
+	}
+	// REG-1: the owner half of the proof is answered by the fake's own owner
+	// model, so an object nobody pinned is refused exactly as the real
+	// verifyAdminOnlyFile refuses it. A test that wants to drive some other
+	// answer sets verify above.
+	if owner := e.ownerOf(path); !trustedFileOwner(owner) {
+		return fmt.Errorf("blackbox: the settings file has an untrusted owner (%s)", owner)
 	}
 	return nil
 }
@@ -301,6 +377,9 @@ func TestInstallSQLBindsGivenConfigPath(t *testing.T) {
 	if err := SaveConfig(other, g.cfg, false); err != nil {
 		t.Fatal(err)
 	}
+	// install-sql pins only the installed settings file; a custom one must
+	// already be administrator-owned, as an operator who locked it leaves it.
+	g.env.pinOwner(other)
 	if err := g.m.InstallSQL(g.cfg, other); err != nil {
 		t.Fatal(err)
 	}
@@ -1638,6 +1717,9 @@ func TestRemoveSQLRevokesTheRecordedConfig(t *testing.T) {
 	if err := SaveConfig(other, g.cfg, false); err != nil {
 		t.Fatal(err)
 	}
+	// install-sql pins only the installed settings file; a custom one must
+	// already be administrator-owned, as an operator who locked it leaves it.
+	g.env.pinOwner(other)
 	if err := g.m.InstallSQL(g.cfg, other); err != nil {
 		t.Fatal(err)
 	}
@@ -1692,5 +1774,144 @@ func TestRemoveSQLRevokesTheRecordedConfig(t *testing.T) {
 	got, err := readSQLInstallRecord(rec2)
 	if err != nil || got.Config != "" || got.Folder != g2.cfg.Folder {
 		t.Fatalf("record = %+v, %v; want the folder and no usable settings path", got, err)
+	}
+}
+
+// REG-1: install-sql must bind a settings file it has ADMIN-LOCKED, and the
+// owner half of that lock is the installer's own job. Nothing in this tree ever
+// assigned an owner to blackbox.json — the only owner writer is the descriptor
+// write the install record and the SQL data folder use — so on a real host the
+// settings file is owned by the account that ran the install, exactly the owner
+// trustedFileOwner refuses on purpose. Proving that file before anything pins it
+// therefore refused a perfectly healthy host with advice the operator could not
+// act on. The fake now models the owner, so the code has to do the assigning.
+func TestInstallSQLLocksTheSettingsFileItBinds(t *testing.T) {
+	if trustedFileOwner(sidInstallingUser) {
+		t.Fatal("the fake's default owner is trusted: the owner half of the proof can no longer fail")
+	}
+	g := newSQLRig(t)
+	if got := g.env.ownerOf(g.configPath()); got != sidInstallingUser {
+		t.Fatalf("the settings file the installer wrote is owned by %q, want the installing account", got)
+	}
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatalf("install-sql refused a healthy host: %v", err)
+	}
+	// The lock step actually ran, on the settings file, exactly once.
+	if len(g.env.settingsLocks) != 1 || g.env.settingsLocks[0] != g.configPath() {
+		t.Fatalf("settings-file locks = %v, want exactly [%s]", g.env.settingsLocks, g.configPath())
+	}
+	// The prove step actually ran, after the lock: the bound settings file, then
+	// the install record. A no-op seam could not satisfy this.
+	marker := sqlInstallMarkerPath(g.env.prog)
+	want := []string{g.configPath(), marker}
+	if len(g.env.verifyCalls) != len(want) {
+		t.Fatalf("install proofs = %v, want %v", g.env.verifyCalls, want)
+	}
+	for i, p := range want {
+		if g.env.verifyCalls[i] != p {
+			t.Fatalf("proof %d was asked of %q, want %q (%v)", i, g.env.verifyCalls[i], p, g.env.verifyCalls)
+		}
+	}
+	// The file the service is bound to now carries the owner the rule demands,
+	// so a later enable-sql proves the same file the install locked.
+	if owner := g.env.ownerOf(g.configPath()); !trustedFileOwner(owner) {
+		t.Fatalf("the settings file is still owned by %q after install-sql", owner)
+	}
+}
+
+// REG-1 must repair, not re-allow: a settings file whose owner lock will not
+// land is still a refusal, and it still refuses before anything is registered.
+func TestInstallSQLRefusesWhenTheSettingsFileCannotBeLocked(t *testing.T) {
+	g := newSQLRig(t)
+	g.env.settingsLockErr = errors.New("SetNamedSecurityInfo failed")
+	err := g.m.InstallSQL(g.cfg, g.configPath())
+	if installReason(t, err) != ReasonOther {
+		t.Fatalf("%v", err)
+	}
+	// The repair was attempted on the settings file the service would bind — the
+	// refusal below is a failed lock, not a step that was never taken.
+	if len(g.env.settingsLocks) != 1 || g.env.settingsLocks[0] != g.configPath() {
+		t.Fatalf("settings-file locks = %v, want exactly [%s]", g.env.settingsLocks, g.configPath())
+	}
+	var ie *InstallError
+	if !errors.As(err, &ie) || ie.Cause == nil || !strings.Contains(ie.Cause.Error(), "SetNamedSecurityInfo") {
+		t.Fatalf("the refused install must name the lock that failed, not swallow it: %v", err)
+	}
+	// Nothing downstream was bound on a config that could not be locked, and the
+	// install never reaches the point where it trusts the settings file.
+	if len(g.svc.calls) != 0 || len(g.env.sqlLocked) != 0 || len(g.env.sqlGranted) != 0 || len(g.env.markerLocks) != 0 {
+		t.Fatalf("something was changed on a config that could not be locked: %v %v %v %v",
+			g.svc.calls, g.env.sqlLocked, g.env.sqlGranted, g.env.markerLocks)
+	}
+}
+
+// REG-1: enable-sql on a host install-sql completed must start the service. The
+// settings owner is pinned ONCE, at install: activation deliberately proves
+// without repairing, so a settings file swapped or widened after install-sql is
+// still refused instead of silently fixed.
+func TestEnableSQLSucceedsOnAHealthyHost(t *testing.T) {
+	g := newSQLRig(t)
+	if err := g.m.InstallSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatalf("install-sql refused a healthy host: %v", err)
+	}
+	if err := g.m.EnableSQL(g.cfg, g.configPath()); err != nil {
+		t.Fatalf("enable-sql refused a healthy host: %v", err)
+	}
+	if g.svc.state != SvcRunning || g.svc.did("start") != 1 {
+		t.Fatalf("enable-sql did not start the service: %v %s", g.svc.calls, g.svc.state)
+	}
+	marker := sqlInstallMarkerPath(g.env.prog)
+	if len(g.env.settingsLocks) != 1 || g.env.settingsLocks[0] != g.configPath() {
+		t.Fatalf("settings-file locks = %v, want the install's single lock on %s", g.env.settingsLocks, g.configPath())
+	}
+	// install proves the config then the record; enable proves the record, the
+	// config at entry and the config again immediately before the start.
+	want := []string{g.configPath(), marker, marker, g.configPath(), g.configPath()}
+	if len(g.env.verifyCalls) != len(want) {
+		t.Fatalf("proofs = %v, want %v", g.env.verifyCalls, want)
+	}
+	for i, p := range want {
+		if g.env.verifyCalls[i] != p {
+			t.Fatalf("proof %d was asked of %q, want %q (%v)", i, g.env.verifyCalls[i], p, g.env.verifyCalls)
+		}
+	}
+}
+
+// REG-1 follow-up: install-sql pins ONLY the installed settings file. A custom
+// --config that an ordinary account still owns is refused as SEC-1 demands, and
+// the installer does not take it over by locking it first.
+func TestInstallSQLDoesNotLockACustomSettingsFile(t *testing.T) {
+	g := newSQLRig(t)
+	other := filepath.Join(t.TempDir(), "other-blackbox.json")
+	if err := SaveConfig(other, g.cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	err := g.m.InstallSQL(g.cfg, other)
+	if installReason(t, err) != ReasonOther {
+		t.Fatalf("a user-owned custom settings file was accepted: %v", err)
+	}
+	if len(g.env.settingsLocks) != 0 {
+		t.Fatalf("install-sql locked a custom settings file: %v", g.env.settingsLocks)
+	}
+	if owner := g.env.ownerOf(other); owner != sidInstallingUser {
+		t.Fatalf("the custom settings file changed owner to %q", owner)
+	}
+	if len(g.svc.calls) != 0 || len(g.env.sqlLocked) != 0 || len(g.env.sqlGranted) != 0 || len(g.env.markerLocks) != 0 {
+		t.Fatalf("something was changed on a refused custom config: %v %v %v %v",
+			g.svc.calls, g.env.sqlLocked, g.env.sqlGranted, g.env.markerLocks)
+	}
+}
+
+// The installed-path match ignores case and redundant separators, as Windows does.
+func TestIsInstalledConfigPath(t *testing.T) {
+	prog := filepath.Join(t.TempDir(), "Unravis Blackbox")
+	if !isInstalledConfigPath(prog, filepath.Join(prog, ConfigFileName)) {
+		t.Fatal("the installed settings file was not recognised")
+	}
+	if !isInstalledConfigPath(prog, strings.ToUpper(filepath.Join(prog, ".", ConfigFileName))) {
+		t.Fatal("case or a redundant segment changed the answer")
+	}
+	if isInstalledConfigPath(prog, filepath.Join(prog, "other.json")) {
+		t.Fatal("a different file was taken for the installed settings file")
 	}
 }
