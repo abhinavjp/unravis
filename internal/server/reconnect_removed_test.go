@@ -165,3 +165,40 @@ func TestAddressOnlyDropsAPasswordThatHoldsASlash(t *testing.T) {
 		t.Errorf("pending = %+v", h.reconn.pending)
 	}
 }
+
+// BL-036 (SEC-10 remainder): a password that holds a "/" and also an unescaped "?" or "#" before the "@" is cut out too. A digits-only one
+// reads exactly like a port and a path, so it is cut with the typed password as the hint.
+func TestAddressOnlyDropsAPasswordWithSlashAndQueryMark(t *testing.T) {
+	for _, tc := range []struct{ in, want, secret string }{
+		{"mongodb://reader:ab/c?d@db.example/admin", "mongodb://db.example/admin", "ab/c"},
+		{"mongodb://reader:ab/c#d@db.example", "mongodb://db.example", "ab/c"},
+		{"mongodb://reader:ab/c?d@e@db.example:27017/admin?tls=true", "mongodb://db.example:27017/admin?tls=true", "ab/c"},
+		// Still kept whole: no login at all.
+		{"mongodb://db.example:27017/app?x=a@b", "mongodb://db.example:27017/app?x=a@b", ""},
+		{"mongodb://db.example/admin#a@b", "mongodb://db.example/admin#a@b", ""},
+	} {
+		got := addressOnly(tc.in)
+		if got != tc.want {
+			t.Errorf("addressOnly(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+		if tc.secret != "" && strings.Contains(got, tc.secret) {
+			t.Errorf("addressOnly(%q) kept part of the password: %q", tc.in, got)
+		}
+	}
+	for _, tc := range []struct{ in, pw, want string }{
+		{"mongodb://reader:12/34?56@db.example/admin", "12/34?56", "mongodb://db.example/admin"},
+		{"mongodb://reader:1234/5678@db.example", "1234/5678", "mongodb://db.example"},
+		{"mongodb://reader:12%2F34%3F56@db.example/admin", "12/34?56", "mongodb://db.example/admin"},
+		// The hint never cuts an address the password is not part of.
+		{"mongodb://db.example:27017/app@x", "27017", "mongodb://db.example:27017/app@x"},
+	} {
+		if got := addressWithout(tc.in, tc.pw); got != tc.want {
+			t.Errorf("addressWithout(%q, %q) = %q, want %q", tc.in, tc.pw, got, tc.want)
+		}
+	}
+	h := reconnectHandler(t, newReconnRepo(), &reconnHistory{}, &reconnLinks{})
+	h.noteOpenedSource(audit.Source{Database: "payroll", Collection: "audit"}, "", audit.ConnectionInput{URI: "mongodb://reader:12/34?56@db.example", Password: "12/34?56"})
+	if got := fmt.Sprintf("%+v", h.reconn.pending); strings.Contains(got, "12/34") || strings.Contains(got, "?56") {
+		t.Errorf("pending kept the password: %s", got)
+	}
+}

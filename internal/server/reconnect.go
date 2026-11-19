@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -141,21 +142,59 @@ func slashPasswordEnd(rest string, end int) int {
 	}
 	at := strings.LastIndex(rest[:stop], "@")
 	if at <= end {
-		return -1
+		// The password may hold an unescaped "?" or "#" too ("user:pw/x?y@host"), so the "@" sits after it (BL-036). That only
+		// reads as a login when the text before the "/" cannot be a host and port; the login then ends at the first run of "@"s.
+		if !loginShape(rest[:end]) {
+			return -1
+		}
+		first := strings.Index(rest[end:], "@")
+		if first < 0 {
+			return -1
+		}
+		at = end + first
+		for {
+			next := strings.Index(rest[at+1:], "@")
+			if next < 0 || strings.ContainsAny(rest[at+1:at+1+next], "/?#") {
+				return at
+			}
+			at += 1 + next
+		}
 	}
 	if strings.Contains(rest[end+1:at], "/") {
 		return at
 	}
-	authority := rest[:end]
-	colon := strings.LastIndex(authority, ":")
-	if colon < 0 {
-		return -1
-	}
-	tail := authority[colon+1:]
-	if tail == "" || strings.Contains(tail, "]") || allDigits(tail) {
+	if !loginShape(rest[:end]) {
 		return -1
 	}
 	return at
+}
+
+// loginShape says the text reads as "user:password", never as a host list "host:27017": it has a ":" whose tail is not a port.
+func loginShape(authority string) bool {
+	colon := strings.LastIndex(authority, ":")
+	if colon < 0 {
+		return false
+	}
+	tail := authority[colon+1:]
+	return tail != "" && !strings.Contains(tail, "]") && !allDigits(tail)
+}
+
+// addressWithout is addressOnly with the password the person typed as a hint. A password of digits with a "/" reads exactly like a port and
+// a path ("user:1234/5678@host" and "host:27017/app@x" have the same shape), so parsing alone cannot tell them apart. When the known password
+// sits in the text right after a ":" and before an "@", the login is cut through that "@" first (BL-036).
+func addressWithout(uri, password string) string {
+	uri = strings.TrimSpace(uri)
+	scheme := strings.Index(uri, "://")
+	if password != "" && scheme >= 0 {
+		rest := uri[scheme+3:]
+		for _, pw := range []string{password, url.QueryEscape(password), url.PathEscape(password)} {
+			if i := strings.Index(rest, ":"+pw+"@"); i >= 0 && !strings.ContainsAny(rest[:i], "/?#@") {
+				uri = uri[:scheme+3] + rest[i+len(pw)+2:]
+				break
+			}
+		}
+	}
+	return addressOnly(uri)
 }
 
 func allDigits(s string) bool {
@@ -182,7 +221,7 @@ func (h *handler) noteOpenedSource(item audit.Source, savedID string, conn audit
 		_ = h.links.Add(link)
 		return
 	}
-	conn.Password, conn.SavedConnectionID, conn.URI = "", "", addressOnly(conn.URI)
+	conn.Password, conn.SavedConnectionID, conn.URI = "", "", addressWithout(conn.URI, conn.Password)
 	h.reconn.mu.Lock()
 	h.reconn.pending = append(h.reconn.pending, pendingLink{link: link, address: conn})
 	if len(h.reconn.pending) > maxPendingLinks {
