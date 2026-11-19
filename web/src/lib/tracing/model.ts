@@ -32,7 +32,8 @@ export interface TracingWindow {
 }
 
 /** Sent per lane and at the top level, exactly as the server sends it. */
-export interface TracingSourceRef { sourceId: string; label: string; noFile?: true }
+/** `capped`: listed but not read, because the default call reads at most 8 sources in all. */
+export interface TracingSourceRef { sourceId: string; label: string; noFile?: true; capped?: true }
 
 /**
  * The server bucket is `{start,count,errors?}`; SQL and IIS have no 5xx, so `errors` is absent there and
@@ -201,6 +202,7 @@ function parseSourceRef(value: unknown): TracingSourceRef | null {
   if (!isObject(value) || !isText(value.sourceId) || !isText(value.label)) return null;
   const ref: TracingSourceRef = { sourceId: value.sourceId, label: value.label };
   if (value.noFile === true) ref.noFile = true;
+  if (value.capped === true) ref.capped = true;
   return ref;
 }
 

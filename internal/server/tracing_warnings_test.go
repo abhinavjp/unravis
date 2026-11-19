@@ -28,8 +28,8 @@ func TestTracingWarningsKeepEveryGroup(t *testing.T) {
 			if !reflect.DeepEqual(out.Warnings, want) {
 				t.Errorf("warnings %q, want %q", out.Warnings, want)
 			}
-			if len(out.Sources) != tracingMaxSources {
-				t.Errorf("sources %d, want %d", len(out.Sources), tracingMaxSources)
+			if len(out.Sources) != tracingMaxSources+1 || out.Sources[tracingMaxSources-1].Capped || !out.Sources[tracingMaxSources].Capped {
+				t.Errorf("sources %d, want %d with only the last one capped", len(out.Sources), tracingMaxSources+1)
 			}
 			for _, key := range []string{"sql", "iis"} {
 				if l := tracingLaneOf(t, out, key); !l.AsOf.Equal(out.AsOf) {

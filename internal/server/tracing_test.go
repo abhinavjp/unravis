@@ -279,11 +279,17 @@ func TestTracingOmittedSourceIdsMeansAll(t *testing.T) {
 		var out tracingResponse
 		decodeBody(t, res, &out)
 		// WP-18b adds the no-file warning (55 tags with no file yet), after the cap warning.
-		if len(out.Sources) != 8 || len(out.Warnings) != 2 || out.Warnings[0] != "Only the first 8 sources are shown." || out.Warnings[1] != tracingNoFileWarn {
+		// Every file source is listed; only the first 8 are read, the rest are flagged capped so they can be switched on.
+		if len(out.Sources) != 55 || len(out.Warnings) != 2 || out.Warnings[0] != "Only the first 8 sources are shown." || out.Warnings[1] != tracingNoFileWarn {
 			t.Fatalf("55 tags: %d sources, warnings %v", len(out.Sources), out.Warnings)
 		}
 		if out.Sources[0].Label != "t0" || out.Sources[7].Label != "t7" {
 			t.Errorf("not the oldest 8: first %q last %q", out.Sources[0].Label, out.Sources[7].Label)
+		}
+		for i, s := range out.Sources {
+			if s.Capped != (i >= 8) {
+				t.Errorf("source %d capped = %v", i, s.Capped)
+			}
 		}
 	})
 

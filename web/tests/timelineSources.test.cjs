@@ -315,7 +315,7 @@ test('a SQL or IIS lane whose files are all switched off says so; one with no fi
 
 test('the picker lists live sources and saved-not-connected databases, each with the wireframe words', () => {
   const picker = read('src/components/TraceSources.svelte');
-  assert.match(picker, /aria-pressed=\{isChipOn\(selection, chip\.id\)\}/);
+  assert.match(picker, /aria-pressed=\{isChipOn\(selection, chip\.id, chip\.capped === true\)\}/);
   assert.match(picker, /\{chipText\(chip\)\}/);
   assert.match(picker, /SOURCES_TEXT\.savedNotConnected/);
   assert.match(picker, /data-testid="source-saved"/);
@@ -404,4 +404,29 @@ test('the Timeline saves the source choice on the case and takes it back on a fr
   const state = read('src/lib/appState.svelte.ts');
   assert.match(state, /traceSources: savedTraceSources/);
   assert.match(state, /function rememberTraceSources\(selection: SourceSelection\)/);
+});
+
+test('"all" with more than 8 chips: the server lists the rest as capped, one can still be switched off, and a capped one cannot pass 8', () => {
+  const chips = Array.from({ length: 10 }, (_, i) => ({ id: 's' + (i + 1), label: 'S' + (i + 1), kind: 'file', ...(i >= 8 ? { capped: true } : {}) }));
+  assert.equal(sources.isChipOn(sources.ALL_SOURCES, 's1', false), true);
+  assert.equal(sources.isChipOn(sources.ALL_SOURCES, 's9', true), false, 'a capped chip is not on under "all"');
+  assert.equal(sources.sourcesSummary(sources.ALL_SOURCES, chips), 'Tracing the first 8 of 10 sources.');
+  const off = sources.toggleOutcome(sources.ALL_SOURCES, chips, 's1');
+  assert.equal(off.refused, false, 'switching one of the 8 read sources off from "all" works');
+  assert.equal(off.selection.ids.length, 7);
+  assert.ok(!off.selection.ids.includes('s9'));
+  const on = sources.toggleOutcome(sources.ALL_SOURCES, chips, 's9');
+  assert.equal(on.refused, true, 'a 9th source cannot be switched on while 8 are on');
+  const back = sources.toggleOutcome(off.selection, chips, 's9');
+  assert.deepEqual(back.selection.ids, ['s2', 's3', 's4', 's5', 's6', 's7', 's8', 's9'], 'after one is off, a capped one can be switched on');
+});
+
+test('a choice kept in this tab under the old cap of 50 is cut to 8 and says so', () => {
+  const ids = Array.from({ length: 20 }, (_, i) => 'cs_' + (i + 1));
+  const storage = { getItem: () => JSON.stringify({ mode: 'some', ids, chips: [], saved: [] }) };
+  const out = sources.loadSources('c1', storage);
+  assert.equal(out.selection.ids.length, 8);
+  assert.equal(out.trimmed, true);
+  const fine = sources.loadSources('c1', { getItem: () => JSON.stringify({ mode: 'some', ids: ids.slice(0, 3), chips: [], saved: [] }) });
+  assert.equal(fine.trimmed, undefined);
 });

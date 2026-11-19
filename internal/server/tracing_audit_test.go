@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -646,6 +647,35 @@ func TestAuditSourceIDsListingFailure(t *testing.T) {
 	out, _ = tracingPost(t, e, id, tracingBody(""))
 	if len(f.plans) != 1 || len(f.plans[0].SourceIDs) != 8 || len(out.Warnings) != 1 || out.Warnings[0] != "Only the first 8 audit sources are shown." {
 		t.Errorf("52 sources: plans %d warnings %v", len(f.plans), out.Warnings)
+	}
+}
+
+// The default call reads at most 8 sources in all: audit sources first, file sources fill what is left, and the rest
+// are listed as capped (not read).
+func TestTracingDefaultCapIsCombinedAcrossAuditAndFiles(t *testing.T) {
+	f := &auditFake{sources: auditSources("a1", "a2", "a3", "a4", "a5")}
+	e, id := auditHandlerEnv(t, f)
+	for i := 0; i < 5; i++ {
+		seedTracingTag(t, e.store, id, casestore.SourceTag{Kind: "iis", Label: "f" + strconv.Itoa(i)})
+	}
+	out, _ := tracingPost(t, e, id, tracingBody(""))
+	if len(f.plans) != 1 || len(f.plans[0].SourceIDs) != 5 {
+		t.Fatalf("audit plans %d, ids %v", len(f.plans), f.plans)
+	}
+	if len(out.Sources) != 5 {
+		t.Fatalf("file sources listed %d, want all 5", len(out.Sources))
+	}
+	read := 0
+	for _, s := range out.Sources {
+		if !s.Capped {
+			read++
+		}
+	}
+	if read != 3 || !out.Sources[3].Capped || !out.Sources[4].Capped {
+		t.Errorf("file sources read %d, want 3 (5 audit + 3 files = 8): %+v", read, out.Sources)
+	}
+	if !slices.Contains(out.Warnings, tracingCappedWarn) {
+		t.Errorf("warnings %v lack the cap warning", out.Warnings)
 	}
 }
 
