@@ -172,8 +172,8 @@ test('hubfixE picks: a hand-picked list switches on a new source; all and none s
   assert.deepEqual(picks.switchOnNew({ mode: 'none' }, ['imp_7']), { selection: { mode: 'none' }, refused: false });
 });
 
-test('hubfixE picks: past 50 nothing is added and the refusal is reported', () => {
-  const ids = Array.from({ length: 50 }, (_, i) => 'x' + i);
+test('hubfixE picks: past 8 nothing is added and the refusal is reported', () => {
+  const ids = Array.from({ length: 8 }, (_, i) => 'x' + i);
   const full = { mode: 'some', ids };
   assert.deepEqual(picks.switchOnNew(full, ['imp_7']), { selection: full, refused: true });
   const chips = [...ids.map((id) => chip(id)), chip('y'), chip('z')];
@@ -189,5 +189,5 @@ test('hubfixE picks: the timeline reads the case after the drawer closes and say
   assert.match(paper, /switchOnNew\(selection, fileSourceIds\(tags, imports\)\.filter\(\(id\) => !known\.has\(id\)\)\)/);
   assert.match(paper, /data-testid="tp-source-cap"/);
   assert.match(paper, /out\.refused\) capNote = SOURCES_TEXT\.capNote/);
-  assert.match(picks.SOURCES_TEXT.capNote, /50 sources/);
+  assert.match(picks.SOURCES_TEXT.capNote, /8 sources/);
 });

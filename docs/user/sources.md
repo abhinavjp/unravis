@@ -150,7 +150,7 @@ The same five cards open from the header's Import button, in the drawer. The Fil
 ![Add data in the Import drawer, dark](screenshots/P7/p7-import-drawer-dark.png)
 ![Add data in the Import drawer, light](screenshots/P7/p7-import-drawer-light.png)
 
-When the drawer closes on the Investigation Timeline and the sources there were picked by hand, a file that was just added is switched on too. A source you switched off stays off. At most 50 sources can be traced at once. If a switch would go past that, it is not made and a short note says to switch one off first.
+When the drawer closes on the Investigation Timeline and the sources there were picked by hand, a file that was just added is switched on too. A source you switched off stays off. At most 8 sources can be traced at once. If a switch would go past that, it is not made and a short note says to switch one off first.
 
 ### The Sources list
 

@@ -24,14 +24,14 @@ import (
 // lanes read only what the case already stores.
 
 const (
-	tracingMaxSources   = 50
+	tracingMaxSources   = 8
 	tracingMaxIDLen     = 128
 	tracingLabelRunes   = 64
 	tracingWindowText   = "The window needs a start and an end, and the end must be after the start."
 	tracingBadSourceMsg = "A source id is not valid."
-	tracingTooManyMsg   = "Pick at most 50 sources."
+	tracingTooManyMsg   = "Pick at most 8 sources."
 	tracingBadSeqMsg    = "The request number is not valid."
-	tracingCappedWarn   = "Only the first 50 sources are shown."
+	tracingCappedWarn   = "Only the first 8 sources are shown."
 	tracingTooLongMsg   = "The longest window is 186 days. Shorten the start or end."
 	tracingUnknownMsg   = "That source is not part of this case."
 
@@ -332,7 +332,7 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 	}
 
 	// Default call: every tag (oldest first), then every usable import no tag
-	// references (in id order), cut to the first 50.
+	// references (in id order), cut to the first 8.
 	linked := map[int64]bool{}
 	refs := make([]tracingRef, 0, len(tags)+len(imports))
 	for _, t := range tags {

@@ -90,7 +90,7 @@ func TestSampleFieldPathsPipelineIsNewestFirstAndRedactsPayloads(t *testing.T) {
 	_, sent := fieldPathsFor(t)
 	encoded, _ := bson.MarshalExtJSON(bson.D{{Key: "p", Value: sent}}, false, false)
 	text := string(encoded)
-	for _, want := range []string{`"$sort"`, `"_id":-1`, `"$limit":5`, `"$addFields"`, `"RequestPayload"`, `"ResponsePayload"`} {
+	for _, want := range []string{`"$sort"`, `"_id":-1`, `"$limit":5`, `"$addFields"`, `"$project"`, `"RequestPayload"`, `"ResponsePayload"`, `"RequestHeaders"`, `"ResponseHeaders"`} {
 		if !strings.Contains(strings.ReplaceAll(text, " ", ""), want) {
 			t.Errorf("pipeline lacks %s: %s", want, text)
 		}

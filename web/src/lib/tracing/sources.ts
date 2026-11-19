@@ -43,8 +43,8 @@ export const SOURCES_TEXT = {
   kindSql: 'SQL',
   kindIis: 'IIS',
   kindFile: 'File',
-  capNote: 'At most 50 sources can be traced at once. Switch one off first.',
-  newNotOn: 'The new file’s source was not switched on. 50 sources are already on.',
+  capNote: 'At most 8 sources can be traced at once. Switch one off first.',
+  newNotOn: 'The new file’s source was not switched on. 8 sources are already on.',
   notImported: 'not imported',
   notImportedTitle: 'This file is listed but was never imported, so the timeline holds nothing from it. Import it to see its events.'
 } as const;
@@ -110,7 +110,7 @@ export function selectionOf(on: string[], chips: SourceChip[]): SourceSelection 
 }
 
 /** The longest explicit sourceIds list the server accepts; a longer one is refused with a 400. */
-export const MAX_EXPLICIT_SOURCES = 50;
+export const MAX_EXPLICIT_SOURCES = 8;
 
 /** The result of pressing a chip: the selection that follows, and whether the press was refused because the list would pass the cap. */
 export function toggleOutcome(selection: SourceSelection, chips: SourceChip[], id: string): { selection: SourceSelection; refused: boolean } {
@@ -304,7 +304,7 @@ export const sourcesCopyEntries = (): LintEntry[] => [
 
 export interface StoredSourceChoice { mode: 'none' | 'some'; ids?: string[] }
 
-const MAX_KEPT_IDS = 50;
+const MAX_KEPT_IDS = MAX_EXPLICIT_SOURCES;
 
 /** The kept choice as a selection, or null when it is missing, is "all" or cannot be read. */
 export function parseStoredSourceChoice(value: unknown): SourceSelection | null {

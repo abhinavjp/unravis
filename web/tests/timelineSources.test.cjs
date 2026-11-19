@@ -193,16 +193,16 @@ test('a source can be switched off and on again; all off is its own state, never
 
 test('a flip whose explicit list reaches the cap the server refuses does not happen (P1)', () => {
   const chipsOfN = (n) => Array.from({ length: n }, (_, i) => ({ id: 's' + (i + 1), label: 'Source ' + (i + 1), kind: 'file' }));
-  const many = chipsOfN(52);
-  assert.equal(sources.MAX_EXPLICIT_SOURCES, 50);
-  assert.equal(sources.toggleSource(sources.ALL_SOURCES, many, 's1'), sources.ALL_SOURCES, '52 chips, one off would be 51 ids: the same selection comes back');
-  const fiftyOne = chipsOfN(51);
-  assert.deepEqual(sources.toggleSource(sources.ALL_SOURCES, fiftyOne, 's1'), { mode: 'some', ids: fiftyOne.slice(1).map((chip) => chip.id) }, '51 chips, one off: 50 ids is allowed');
-  const fifty = chipsOfN(50);
-  assert.equal(sources.toggleSource(sources.ALL_SOURCES, fifty, 's1').ids.length, 49, '50 chips, one off: 49 ids');
-  const someFifty = { mode: 'some', ids: many.slice(0, 50).map((chip) => chip.id) };
-  assert.equal(sources.toggleSource(someFifty, many, 's1').ids.length, 49, 'switching one of 50 off still works');
-  assert.equal(sources.toggleSource(someFifty, many, 's51'), someFifty, 'a 51st id is refused');
+  const many = chipsOfN(10);
+  assert.equal(sources.MAX_EXPLICIT_SOURCES, 8);
+  assert.equal(sources.toggleSource(sources.ALL_SOURCES, many, 's1'), sources.ALL_SOURCES, '10 chips, one off would be 9 ids: the same selection comes back');
+  const nine = chipsOfN(9);
+  assert.deepEqual(sources.toggleSource(sources.ALL_SOURCES, nine, 's1'), { mode: 'some', ids: nine.slice(1).map((chip) => chip.id) }, '9 chips, one off: 8 ids is allowed');
+  const eight = chipsOfN(8);
+  assert.equal(sources.toggleSource(sources.ALL_SOURCES, eight, 's1').ids.length, 7, '8 chips, one off: 7 ids');
+  const someEight = { mode: 'some', ids: many.slice(0, 8).map((chip) => chip.id) };
+  assert.equal(sources.toggleSource(someEight, many, 's1').ids.length, 7, 'switching one of 8 off still works');
+  assert.equal(sources.toggleSource(someEight, many, 's9'), someEight, 'a 9th id is refused');
 });
 
 test('the request: all sends no ids, some sends the ids, none sends nothing at all', () => {
@@ -383,10 +383,10 @@ test('parseStoredSourceChoice accepts none and some, and refuses junk', () => {
   }
 });
 
-test('parseStoredSourceChoice drops address-like and over-long ids, and caps the list at 50', () => {
+test('parseStoredSourceChoice drops address-like and over-long ids, and caps the list at 8', () => {
   assert.deepEqual(sources.parseStoredSourceChoice({ mode: 'some', ids: ['ok', 'mongodb://h/x', 'y'.repeat(201)] }), { mode: 'some', ids: ['ok'] });
   const many = Array.from({ length: 80 }, (_, i) => 'id' + i);
-  assert.equal(sources.parseStoredSourceChoice({ mode: 'some', ids: many }).ids.length, 50);
+  assert.equal(sources.parseStoredSourceChoice({ mode: 'some', ids: many }).ids.length, 8);
 });
 
 test('sourceChoiceOf keeps none and some, and keeps nothing for all', () => {
