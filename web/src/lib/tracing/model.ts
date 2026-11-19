@@ -147,7 +147,8 @@ export interface TracingResponse {
 export interface TracingRequest {
   sourceIds?: string[];
   incident: TracingRange;
-  reference: TracingRange;
+  /** Accepted and checked by the server but not used: the answer has one window. Leave it out when there is none (UI-02). */
+  reference?: TracingRange;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -169,7 +170,8 @@ export function isStale(responseSeq: number, latestSeq: number): boolean {
 // The request body. Only the fields the server's strict decoder accepts; an unknown field is a 400.
 
 export function buildTracingBody(req: TracingRequest, seq: number): string {
-  const body: Record<string, unknown> = { incident: req.incident, reference: req.reference, requestSeq: seq };
+  const body: Record<string, unknown> = { incident: req.incident, requestSeq: seq };
+  if (req.reference) body.reference = req.reference;
   if (req.sourceIds && req.sourceIds.length > 0) body.sourceIds = req.sourceIds;
   return JSON.stringify(body);
 }
