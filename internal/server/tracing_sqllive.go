@@ -25,6 +25,14 @@ const (
 	tracingHeldSQLMsg    = "Drawn from the Query Store figures saved with this case on the date shown. Each bar is the statements run in that interval; the line is their average time."
 )
 
+// tracingQSCheckLead opens every Query Store state reason, so it is never read as being about an imported SQL file
+// (BL-039, DATA-09): the state comes from the saved live database check.
+const tracingQSCheckLead = "From the saved database check (not an imported file): "
+
+// tracingQSStaleMsg is added when that check ran before the window ended (BL-039): the state it saw is older than part
+// of the window and may have changed. Its one verb is the UTC time the check was saved.
+const tracingQSStaleMsg = " This was saved at %s, before this window ended, so it may have changed since."
+
 // The saved Query Store state, when it explains why the held SQL lane has no database time in the window
 // (DATA-09). The wording mirrors the Query Store notes on the web side, written here for the Timeline's SQL lane.
 const (
@@ -33,11 +41,11 @@ const (
 	tracingReasonQSDenied   = "qs-denied"
 	tracingReasonQSLate     = "qs-late"
 
-	tracingQSOffMsg      = "Query Store is switched off on this database, so it saved no history. Switching it on needs the database owner (the script is in Setup). Unravis never switches it on itself."
-	tracingQSReadOnlyMsg = "Query Store is read-only, so it has stopped saving new history. This often happens when its storage is full. Older history is still shown."
-	tracingQSDeniedMsg   = "The saved database login is not allowed to read Query Store. It needs the VIEW DATABASE STATE permission. Ask the database owner, or add a login that has it."
+	tracingQSOffMsg      = tracingQSCheckLead + "Query Store is switched off on this database, so it saved no history. Switching it on needs the database owner (the script is in Setup). Unravis never switches it on itself."
+	tracingQSReadOnlyMsg = tracingQSCheckLead + "Query Store is read-only, so it has stopped saving new history. This often happens when its storage is full. Older history is still shown."
+	tracingQSDeniedMsg   = tracingQSCheckLead + "The saved database login is not allowed to read Query Store. It needs the VIEW DATABASE STATE permission. Ask the database owner, or add a login that has it."
 	// tracingQSLateMsg is a format: its one verb is the UTC time Query Store's history starts.
-	tracingQSLateMsg = "Query Store has nothing before %s. It was switched on later, or the older history was cleaned up. The time before that is unknown, not zero."
+	tracingQSLateMsg = tracingQSCheckLead + "Query Store has nothing before %s. It was switched on later, or the older history was cleaned up. The time before that is unknown, not zero."
 )
 
 const (
@@ -101,10 +109,13 @@ func heldSQLBlockSeconds(intervalMin int, ts []int64) int {
 // newest saved SQL day recorded a Query Store state that explains that (off, read-only, denied, or history that
 // starts after the window begins), it returns a lane that says so instead of leaving the Timeline to show "no
 // activity". With Query Store on or unknown, or no state recorded, it returns false: no activity stays honest.
-func heldSQLQueryStoreLane(held []laneRun, axis tracingAxis) (tracingLane, bool) {
+//
+// source, when not empty, limits the choice to that source's days (BL-039): the lane's series came from it, so a
+// newer day of another server must not explain it. A state saved before the window ended says so (tracingQSStaleMsg).
+func heldSQLQueryStoreLane(held []laneRun, axis tracingAxis, source string) (tracingLane, bool) {
 	var newest *laneRun
 	for i := range held {
-		if held[i].Run.Kind == "sql" && held[i].Report.Lane != nil {
+		if held[i].Run.Kind == "sql" && held[i].Report.Lane != nil && (source == "" || held[i].source() == source) {
 			newest = &held[i] // laneHeld is newest first
 			break
 		}
@@ -128,6 +139,9 @@ func heldSQLQueryStoreLane(held []laneRun, axis tracingAxis) (tracingLane, bool)
 		code, msg = tracingReasonQSLate, fmt.Sprintf(tracingQSLateMsg, qs.FirstData.UTC().Format(time.RFC3339))
 	default:
 		return tracingLane{}, false
+	}
+	if at := newest.Run.At.UTC(); at.Before(axis.End) {
+		msg += fmt.Sprintf(tracingQSStaleMsg, at.Format(time.RFC3339))
 	}
 	return tracingLane{
 		Key: calltrace.LaneSQL, Label: "SQL Server", State: calltrace.StateNoneSeen,
@@ -223,7 +237,7 @@ func tracingHeldSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis,
 	}
 	if len(sqlRuns) == 0 {
 		// A day that recorded no series (Query Store off or denied) is not in sqlRuns; its state may still say why.
-		return heldSQLQueryStoreLane(held, axis)
+		return heldSQLQueryStoreLane(held, axis, "")
 	}
 	// laneHeld is newest first: keep the runs of the newest run's source.
 	source := sqlRuns[0].source()
@@ -279,7 +293,7 @@ func tracingHeldSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis,
 		}
 	}
 	if total == 0 {
-		return heldSQLQueryStoreLane(held, axis)
+		return heldSQLQueryStoreLane(held, axis, source)
 	}
 	perCell := make(map[int]int64, len(cells))
 	for k, a := range cells {

@@ -301,7 +301,9 @@ export function buildLane(lane: LaneIn | undefined, key: LaneKey, win: WindowIn,
   const measure = measureOf(source);
   let cells = laneCells(source, win, fromMs, toMs);
   const blockSeconds = finite(source.blockSeconds) && source.blockSeconds > 0 ? source.blockSeconds : null;
-  if (key === 'sql' && blockSeconds !== null && blockSeconds > win.bucketSeconds) cells = regroupBlocks(cells, blockSeconds);
+  // An imported Query Store file lane arrives already spread over the minutes each interval ran (BL-037), so it is not
+  // averaged back into UTC-aligned blocks here; blockSeconds stays only for the block-length wording.
+  if (key === 'sql' && blockSeconds !== null && blockSeconds > win.bucketSeconds && source.reasonCode !== 'qs-file') cells = regroupBlocks(cells, blockSeconds);
 
   let peak: CallLane['peak'] = null;
   for (const cell of cells) {
