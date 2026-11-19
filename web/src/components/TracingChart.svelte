@@ -617,6 +617,7 @@
       {@const drawBars = drawsBars(lane)}
       {@const unreadRunList = unreadRuns(unreadByLane.get(lane.key) ?? new Set<number>(), range.from, range.to)}
       {@const chunkLine = laneChunkLine(lane, at)}
+      {@const rangeUnknown = laneRangeUnknownLine(lane, response.window, spanAt)}
       {@const noFile = lane.key !== 'audit' && lane.state === 'no-data' && !lane.disabled && !unselected.includes(lane.key)}
       <!-- The head itself is not a tab stop (it has no action). Its "?" button is: it describes itself by the hint, which shows on hover or focus and closes with Esc. -->
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -627,7 +628,7 @@
           <small class="origin">{lane.origin === 'live' ? TOOLTIP_TEXT.readJustNow : TOOLTIP_TEXT.fromSavedLogs} · {at(lane.asOf)}</small>
         {/if}
         {#if chunkLine}<small class="chunk-line" data-testid="chunk-line" data-lane={lane.key}>{chunkLine}</small>{/if}
-        {#if laneRangeUnknownLine(lane)}<small class="chunk-line" data-testid="range-unknown" data-lane={lane.key}>{laneRangeUnknownLine(lane)}</small>{/if}
+        {#if rangeUnknown}<small class="chunk-line" data-testid="range-unknown" data-lane={lane.key}>{rangeUnknown}</small>{/if}
         {#if lane.sourcesRead && lane.sourcesRead.length > 0}
           <small class="read-from" data-testid="lane-sources-read" data-lane={lane.key}>{SOURCES_TEXT.readLabel}: {lane.sourcesRead.map((ref) => ref.label || ref.sourceId).join(', ')}</small>
         {/if}

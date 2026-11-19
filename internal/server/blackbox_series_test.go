@@ -159,6 +159,8 @@ func TestSeriesUnitsSkipsAndPartialCover(t *testing.T) {
 	s.TCP.DiscardedPerSec, s.TCP.DiscardedInterfaces = f64(1), 3
 	s.TCP.OutErrorsPerSec, s.TCP.OutErrorsInterfaces = f64(0), 3
 	s.TCP.OutboundQueuePartial = true
+	s.Events.Truncated = true
+	s.Dumps.Truncated = true
 	s.SQLHost.Instances[0].PageLifeExpectancy = f64(900)
 	s2 := fullSample(start.Add(30*time.Second), 1)
 	win := bbWindow{Start: start, End: start.Add(time.Minute)}
@@ -180,6 +182,10 @@ func TestSeriesUnitsSkipsAndPartialCover(t *testing.T) {
 		}
 	}
 	for _, c := range ans.Groups {
+		// a truncated events list (delayed) and a truncated dump list are not partial totals
+		if (c.Group == "events" || c.Group == "dumps") && c.Partial != 0 {
+			t.Fatalf("%s cover = %+v, want none partial", c.Group, c)
+		}
 		if c.Group == "tcp" && (c.Read != 2 || c.Partial != 1) {
 			t.Fatalf("tcp cover = %+v, want 2 read and 1 partial", c)
 		}

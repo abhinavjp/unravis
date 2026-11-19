@@ -55,8 +55,7 @@ type bbSeriesGroupCover struct {
 	Slow    int    `json:"slow"`    // skipped by the light budget
 	Busy    int    `json:"busy"`    // previous reading still running
 	// Partial counts samples whose reading covered only part of what it sums
-	// (an "…Partial" or "…Truncated" flag was set, for example some network
-	// adapters unreadable or over the cap; BL-138).
+	// (a flag in bbPartialFlags was set: some network adapters unreadable or over the cap; BL-138).
 	Partial int `json:"partial"`
 }
 
@@ -236,12 +235,16 @@ func (b *bbBuckets) walk(prefix string, t time.Time, v any) {
 	}
 }
 
-// bbPartial is true when any flag under v named "…Partial" or "…Truncated" is set.
+// bbPartialFlags are the flags that say a sum covered only some of what it adds up. Other "truncated" flags
+// (delayed events, a long dump list) do not make a total low, so they are not listed.
+var bbPartialFlags = map[string]bool{"outboundQueuePartial": true, "discardedPartial": true, "outErrorsPartial": true}
+
+// bbPartial is true when any of bbPartialFlags is set anywhere under v.
 func bbPartial(v any) bool {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, child := range x {
-			if b, ok := child.(bool); ok && b && (strings.HasSuffix(k, "Partial") || strings.HasSuffix(k, "Truncated") || k == "truncated") {
+			if b, ok := child.(bool); ok && b && bbPartialFlags[k] {
 				return true
 			}
 			if bbPartial(child) {

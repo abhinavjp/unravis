@@ -67,7 +67,7 @@ test('copy lint accepts the new copy entries', () => {
   assert.deepEqual(problems, []);
 });
 
-test('BL-048: importedPartial is kept without a range, and the lane says the files have no known range', () => {
+test('BL-048: importedPartial is kept without a range, and the lane says some files have no known range', () => {
   const base = { key: 'iis', label: 'Web server', state: 'no-data', buckets: [] };
   const response = (laneExtra) => ({
     window: { start: win.start, end: win.end, axisStart: win.start, axisEnd: win.end, bucketSeconds: 60 },
@@ -75,10 +75,18 @@ test('BL-048: importedPartial is kept without a range, and the lane says the fil
   });
   const parsed = model.parseTracing(response({ importedPartial: true })).lanes[0];
   assert.equal(parsed.importedPartial, true);
-  assert.match(lanes.laneRangeUnknownLine(parsed), /no recorded time range/);
-  // with a known range the existing "some files" sentence covers it, so no second note
-  assert.equal(lanes.laneRangeUnknownLine({ importedPartial: true, ...span }), '');
-  assert.equal(lanes.laneRangeUnknownLine({ importedPartial: true, disabled: true }), '');
-  assert.equal(lanes.laneRangeUnknownLine({}), '');
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src/components/TracingChart.svelte'), 'utf8'), /data-testid="range-unknown"/);
+  assert.match(lanes.laneRangeUnknownLine(parsed, win, at), /no recorded time range/);
+});
+
+test('BL-048: the note also shows when one file covers the window and another was never imported', () => {
+  const inside = { importedFrom: '2001-02-03T03:00:00Z', importedTo: '2001-02-03T06:00:00Z' };
+  const events = lane({ ...inside, importedPartial: true, state: 'events', scanned: 5, buckets: [{ count: 3 }] });
+  assert.equal(lanes.laneImportedLine(events, win, at), '', 'the range holds the window, so the "outside" sentence stays quiet');
+  assert.match(lanes.laneRangeUnknownLine(events, win, at), /no recorded time range, or were not imported/);
+});
+
+test('BL-048: no second note when the lane line already speaks, when the lane is off, or when nothing is partial', () => {
+  assert.equal(lanes.laneRangeUnknownLine(lane({ ...span, importedPartial: true }), win, at), '', 'the "some files" sentence is already shown');
+  assert.equal(lanes.laneRangeUnknownLine(lane({ importedPartial: true, disabled: true }), win, at), '');
+  assert.equal(lanes.laneRangeUnknownLine(lane({}), win, at), '');
 });

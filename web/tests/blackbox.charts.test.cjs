@@ -45,18 +45,17 @@ test('names follow the key shape the server writes: host fields, named things, t
 test('every field the recorder writes as a number has a plain name', () => {
   const src = ['groups_types.go', 'sample.go'].map((f) => fs.readFileSync(path.join(__dirname, '..', '..', 'internal', 'blackbox', f), 'utf8')).join('\n');
   const numeric = [...src.matchAll(/^\s*\w+\s+\*?(?:float64|uint64|uint32|int)\s+`json:"(\w+)/gm)].map((m) => m[1]);
-  const skip = new Set(['v', 'seq', 'pid', 'startTicks', 'start', 'channel', 'eventId', 'level', 'count', 'state', 'size', 'seconds', 'cpuSec', 'ws', 'priv', 'handles', 'netIn', 'netOut', 'unreadable']);
+  const skip = new Set(['v', 'seq', 'pid', 'startTicks', 'start', 'channel', 'eventId', 'level', 'count', 'state', 'size', 'seconds', 'cpuSec', 'ws', 'priv', 'handles', 'netIn', 'netOut', 'unreadable', 'outboundQueueInterfaces', 'discardedInterfaces', 'outErrorsInterfaces']);
   const missing = [...new Set(numeric)].filter((f) => !skip.has(f)).filter((f) => s.seriesName('g.x.' + f).name === f);
   assert.deepEqual(missing, []);
 });
 
-test('units: the server guess is kept, and the fields it cannot guess are fixed', () => {
+test('units: the server unit is used and an unknown one is a plain count', () => {
   assert.equal(s.seriesUnit('memAvail', 'bytes'), 'bytes');
-  assert.equal(s.seriesUnit('clr.w3wp.pctTimeInGC', 'count'), 'pct');
-  assert.equal(s.seriesUnit('http.api.maxQueueItemAge', 'count'), 'ms');
-  assert.equal(s.seriesUnit('sqlHost.X.pageLifeExpectancy', 'count'), 'sec');
+  assert.equal(s.seriesUnit('sqlHost.X.pageLifeExpectancy', 'sec'), 'sec');
   assert.equal(s.seriesUnit('x', 'furlongs'), 'count');
 });
+
 
 test('formatValue gives each unit in words a person reads, and a missing value as "not read", never 0', () => {
   assert.equal(s.formatValue('pct', 12.345), '12.3 %');

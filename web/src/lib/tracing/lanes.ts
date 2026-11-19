@@ -67,12 +67,6 @@ export const COVER_TEXT = {
   noRange: 'Some files for this row have no recorded time range, or were not imported, so the times they cover are not known.'
 } as const;
 
-/** BL-048: the note for a lane whose imported files have no known range at all, or '' when it does not apply. */
-export function laneRangeUnknownLine(lane: Pick<TracingLane, 'disabled' | 'importedPartial' | 'importedFrom' | 'importedTo'>): string {
-  if (lane.disabled || !lane.importedPartial || (lane.importedFrom && lane.importedTo)) return '';
-  return COVER_TEXT.noRange;
-}
-
 /** The sentence for a lane whose imported files all sit outside the window, or '' when it does not apply. */
 export function laneImportedLine(lane: TracingLane, window: TracingWindow, at: (v: string) => string): string {
   if (lane.disabled || !lane.importedFrom || !lane.importedTo) return '';
@@ -86,6 +80,16 @@ export function laneImportedLine(lane: TracingLane, window: TracingWindow, at: (
   if (!outside || (lane.state !== 'out-of-range' && !emptyEvents)) return '';
   const cover = lane.importedPartial ? COVER_TEXT.some : COVER_TEXT.outside;
   return cover(at(lane.importedFrom), at(lane.importedTo));
+}
+
+/**
+ * BL-048: the note for a lane the server marked importedPartial (some file has no recorded range, or was never imported) when
+ * laneImportedLine said nothing: with no range at all, or with a range that holds the window while another file is missing.
+ * '' when the lane is switched off, is not partial, or the lane line above already says it.
+ */
+export function laneRangeUnknownLine(lane: TracingLane, window: TracingWindow, at: (v: string) => string): string {
+  if (lane.disabled || !lane.importedPartial) return '';
+  return laneImportedLine(lane, window, at) ? '' : COVER_TEXT.noRange;
 }
 
 /**
