@@ -17,6 +17,15 @@ async function openDrawer(page: Page) {
   return dialog;
 }
 
+/** The status pop-up of one Blackbox (BL-131): its body is one region named by the Blackbox. */
+const statusOf = (page: Page, name: string) => page.locator('dialog.pop[open]').getByRole('region', { name: new RegExp('^' + name + '\\b') });
+/** The state sticker, which sits in the pop-up's title. */
+const popSticker = (page: Page) => page.locator('dialog.pop[open] .bb-pop-title .bb-sticker');
+async function closePop(page: Page) {
+  await page.locator('dialog.pop[open]').getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.locator('dialog.pop[open]')).toHaveCount(0);
+}
+
 async function openAdd(page: Page) {
   const dialog = await openDrawer(page);
   await dialog.getByRole('button', { name: 'Add one by folder, share or address' }).click();
@@ -151,8 +160,8 @@ test('BB-07: a place that is already listed is refused on Add with the way to op
   await expect(dialog.getByText(DUP_TITLE)).toBeVisible();
   await expect(dialog.getByText('It is listed as web-b. It was not added a second time.')).toBeVisible();
   await dialog.getByRole('button', { name: 'Open the one in the list' }).click();
-  await expect(dialog.getByRole('region', { name: 'web-b' })).toBeVisible();
-  await dialog.getByRole('button', { name: 'Back to the list' }).click();
+  await expect(statusOf(page, 'web-b')).toBeVisible();
+  await closePop(page);
   await expect(dialog.getByRole('button', { name: 'Open status: web-b' })).toHaveCount(1);
   await expect(dialog.getByRole('button', { name: /^Open status: / })).toHaveCount(9);
 });
@@ -160,12 +169,12 @@ test('BB-07: a place that is already listed is refused on Add with the way to op
 test('BB-08: web-e is Unreachable, says why in plain words, offers the steps for the server, and changes nothing', async ({ page }) => {
   const dialog = await openDrawer(page);
   await dialog.getByRole('button', { name: 'Open status: web-e' }).click();
-  const region = dialog.getByRole('region', { name: 'web-e' });
-  await expect(region.locator('.bb-sticker')).toHaveText('Unreachable');
+  const region = statusOf(page, 'web-e');
+  await expect(popSticker(page)).toHaveText('Unreachable');
   await expect(region.getByText('Nothing answered at http://web-e:7788. The server may be off, or the port is blocked.')).toBeVisible();
   await expect(region.getByText('Unravis only reads here. Nothing was changed on that server.')).toBeVisible();
   await region.getByRole('button', { name: 'Check again' }).click();
-  await expect(region.locator('.bb-sticker')).toHaveText('Unreachable');
+  await expect(popSticker(page)).toHaveText('Unreachable');
   const steps = region.locator('details', { hasText: 'Steps for the server' });
   for (let i = 0; i < 5; i++) {
     await steps.locator('summary').click();
@@ -210,11 +219,13 @@ test('BB-09b: a refused new key is explained and is not shown back; the right ke
   expect(await page.content()).not.toContain('ubk-demo-c');
 });
 
-test('BB-09c: Esc with a half-typed key closes the drawer and the key is gone from the page', async ({ page }) => {
+test('BB-09c: Esc with a half-typed key closes the status pop-up, a second Esc the drawer, and the key is gone from the page', async ({ page }) => {
   const dialog = await openDrawer(page);
   await dialog.getByRole('button', { name: 'Open status: web-c' }).click();
   await dialog.getByRole('button', { name: 'Type a new read key' }).click();
   await dialog.getByLabel('New read key').fill('ubk-test-HALFTYPED-NOT-A-REAL-KEY');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog.pop[open]')).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   expect(await page.content()).not.toContain('HALFTYPED');
@@ -421,13 +432,13 @@ test('BB-20: the views of the other servers offer only reading, never a button t
   const forbidden = /^(Start|Stop|Apply settings|Snapshot now|Remove|Install.*)$/;
   for (const name of ['web-b', 'web-c', 'web-d', 'web-e', 'web-f']) {
     await dialog.getByRole('button', { name: 'Open status: ' + name }).click();
-    const region = dialog.getByRole('region', { name });
+    const region = statusOf(page, name);
     await expect(region).toBeVisible();
     const buttons = await region.getByRole('button').evaluateAll((els) => els.map((e) => (e.textContent ?? '').trim()));
     for (const b of buttons) expect(b, name + ' offers "' + b + '"').not.toMatch(forbidden);
     await expect(region, name).toContainText('Nothing was changed on that server.');
     await expect(region.locator('details', { hasText: 'Steps for the server' }).getByRole('button')).toHaveCount(0);
     await expect(region.getByText(/delete/i), name + ' has no delete wording').toHaveCount(0);
-    await region.getByRole('button', { name: 'Back to the list' }).click();
+    await closePop(page);
   }
 });
