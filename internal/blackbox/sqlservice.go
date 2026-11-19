@@ -699,6 +699,11 @@ func (m *SQLManager) InstallSQL(cfg Config, configPath string) (err error) {
 	// anywhere else (BBX-5-02 allows one) is proven as it stands and must
 	// already be administrator-locked: pinning it here would take over a file an
 	// ordinary user wrote and make SEC-1's refusal pass for it.
+	// The lock is deliberately not on the undo list: a refused install leaves the
+	// settings file stricter than it found it, which takes nothing from anyone
+	// (SYSTEM and Administrators keep full control) and is what a retry needs.
+	// The match is on the path text, so an 8.3 short name or a \\?\ prefix of
+	// the installed file is not pinned and is refused by the proof below.
 	if isInstalledConfigPath(progDir, configPath) {
 		if lerr := lockSQLConfigFile(m.Env, configPath); lerr != nil {
 			return &InstallError{Reason: ReasonOther, Message: "The settings file for the SQL service could not be locked to administrators. Run this from an elevated command prompt.", Cause: lerr}
