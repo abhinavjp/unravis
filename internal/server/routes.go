@@ -317,6 +317,7 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/report", match: caseSubpath("/report"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseReport(w, r, id) },
 	}},
+	{pattern: "/api/local/open-folder", match: exactPath("/api/local/open-folder"), methods: post((*handler).openFolder)},
 	{pattern: "/api/call-trace", match: exactPath("/api/call-trace"), methods: post((*handler).callTrace)},
 	{pattern: "/api/discover/capabilities", match: exactPath("/api/discover/capabilities"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.discoverCapabilities(w, r) },
