@@ -388,7 +388,10 @@ export function startApp() {
       if (drawerHistory?.pop()) return;
       const target = viewHistory?.pop();
       if (target === undefined) return;
-      followHistoryMark(viewHistory?.screen ?? '');
+      // A mark from before a reload is followed only when it names the case page, its timeline or the Slow call screen: those rebuild from
+      // the open case. An older start, create or analysis mark is ignored, as an unmarked entry was, so it cannot clear the open case's state.
+      const mark = viewHistory?.screen ?? '';
+      followHistoryMark(viewHistory?.inherited && parseScreenMark(mark).screen !== 'case' ? '' : mark);
       void applyView(target);
     };
     window.addEventListener('popstate', onPop);

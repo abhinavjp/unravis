@@ -121,6 +121,26 @@ export function lightCells(row: NearbyRow): { sqlMs: number | null; redisMs: num
   return { sqlMs: row.light.sqlMs, redisMs: row.light.redisMs, httpMs: row.light.httpMs };
 }
 
+export interface LightLine { label: string; value: string }
+
+/**
+ * The Selected panel's Database, Redis and Web calls lines for one call (BL-028). undefined = no row found for the call, so no lines;
+ * null or a null number = "not recorded", never 0. The numbers are those the nearby table shows for the same row.
+ */
+export function lightLines(
+  light: { sqlMs: number | null; redisMs: number | null; httpMs: number | null } | null | undefined,
+  text: { database: string; redis: string; web: string; notRecorded: string },
+  format: (ms: number) => string
+): LightLine[] | null {
+  if (light === undefined) return null;
+  const show = (value: number | null | undefined): string => (value !== null && value !== undefined && Number.isFinite(value) ? format(value) : text.notRecorded);
+  return [
+    { label: text.database, value: show(light?.sqlMs) },
+    { label: text.redis, value: show(light?.redisMs) },
+    { label: text.web, value: show(light?.httpMs) }
+  ];
+}
+
 export function isThisCall(row: NearbyRow, call: CallRef): boolean {
   return row.id === call.id && row.sourceId === call.sourceId;
 }

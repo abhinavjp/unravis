@@ -310,3 +310,62 @@ test('BL-027: a mark written in this page load is not inherited', () => {
   assert.equal(h.screen, 'case');
   assert.equal(h.inherited, false);
 });
+
+test('BL-027: after a reload on the call screen, in-app Back goes back one entry instead of adding one', () => {
+  const b = fakeBrowser('#x');
+  const first = createViewHistory(b.loc, b.hist);
+  first.markScreen('case', true);
+  first.markScreen('case/tracing');
+  first.markScreen('case/tracing/call');
+  // Reload on the call entry: a new page load reads the same entry.
+  const again = createViewHistory(b.loc, b.hist);
+  assert.equal(again.screen, 'case/tracing/call');
+  assert.equal(again.inherited, true);
+  again.markScreen('case/tracing/call');
+  assert.equal(b.entries.length, 3, 'taken over in place');
+  // Esc / breadcrumb: closeSlowCall asks stepBack for the timeline entry before it.
+  assert.equal(again.stepBack('case/tracing'), true);
+  assert.deepEqual(b.calls.slice(-1), ['back']);
+  b.pop(1);
+  assert.equal(again.pop(), undefined, 'the page started that Back');
+  assert.equal(again.screen, 'case/tracing');
+  assert.equal(b.entries.length, 3, 'no entry was added, so Forward still reaches the call');
+});
+
+test('BL-027: after a reload on the timeline, closing it goes back to the case page', () => {
+  const b = fakeBrowser('#x');
+  const first = createViewHistory(b.loc, b.hist);
+  first.markScreen('case', true);
+  first.markScreen('case/tracing');
+  const again = createViewHistory(b.loc, b.hist);
+  again.markScreen('case/tracing');
+  assert.equal(again.stepBack('case'), true);
+  // Not for a screen that was not the one before.
+  const c = fakeBrowser('#x');
+  const g1 = createViewHistory(c.loc, c.hist);
+  g1.markScreen('case', true);
+  g1.markScreen('case/tracing');
+  const g2 = createViewHistory(c.loc, c.hist);
+  assert.equal(g2.stepBack('start'), false);
+});
+
+test('BL-027: Back across a reload learns the entry before from the state, and sync replace takes the mark over', () => {
+  const b = fakeBrowser('#x');
+  const first = createViewHistory(b.loc, b.hist);
+  first.markScreen('case', true);
+  first.markScreen('case/tracing');
+  first.markScreen('case/tracing/call');
+  b.pop(2);
+  const again = createViewHistory(b.loc, b.hist);
+  b.pop(1);
+  again.pop();
+  assert.equal(again.inherited, true);
+  assert.equal(again.stepBack('case'), true, 'the entry before the timeline is known from its own state');
+  const c = fakeBrowser('#x');
+  const h = createViewHistory(c.loc, c.hist);
+  h.markScreen('case', true);
+  const h2 = createViewHistory(c.loc, c.hist);
+  assert.equal(h2.inherited, true);
+  h2.sync(where, true);
+  assert.equal(h2.inherited, false);
+});

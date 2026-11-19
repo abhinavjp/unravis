@@ -175,10 +175,13 @@ const indexOf = (state: unknown): number => {
 /**
  * history.state keys that name the screen an entry belongs to. The life key says which page load wrote a mark. A mark from an earlier load of
  * this tab is still read (so Back and Forward across a reload land where they were made), but it is "inherited": the page may not trust
- * that the screen it names can be rebuilt, so the caller checks it before following it (BL-027).
+ * that the screen it names can be rebuilt, so the caller checks `inherited` before following it (BL-027).
+ * Each entry also records the entry before it (screen and address) under the prev key, so after a reload the page still knows what
+ * stepping Back from this entry would reach, and the in-app Back (Esc, breadcrumb) can go back instead of adding an entry.
  */
 export const SCREEN_MARK = 'uvScreen';
 const LIFE_MARK = 'uvLife';
+const PREV_MARK = 'uvPrev';
 
 /**
  * Keeps the address in step with the screen. Going deeper adds a history step, so the browser Back button walks back up; stepping up with Esc
@@ -201,11 +204,22 @@ export function createViewHistory(loc: LocationLike, hist: HistoryLike) {
   };
   const olderOf = (state: unknown): boolean =>
     screenOf(state) !== '' && (state as Record<string, unknown>)[LIFE_MARK] !== life;
-  const stamp = (name: string): Record<string, unknown> => (name ? { uvIdx: index, [SCREEN_MARK]: name, [LIFE_MARK]: life } : { uvIdx: index });
+  const marks: string[] = [];
+  const stamp = (name: string): Record<string, unknown> => {
+    const out: Record<string, unknown> = name ? { uvIdx: index, [SCREEN_MARK]: name, [LIFE_MARK]: life } : { uvIdx: index };
+    if (index > 0 && marks[index - 1] && stack[index - 1] !== undefined) out[PREV_MARK] = { s: marks[index - 1], h: stack[index - 1] };
+    return out;
+  };
+  // The entry before the current one, as the current entry's state recorded it. Fills only what this page load has not seen itself.
+  const learnPrev = (state: unknown): void => {
+    if (index <= 0 || !state || typeof state !== 'object' || marks[index - 1] !== undefined) return;
+    const prev = (state as Record<string, unknown>)[PREV_MARK] as { s?: unknown; h?: unknown } | undefined;
+    if (prev && typeof prev.s === 'string' && typeof prev.h === 'string') { marks[index - 1] = prev.s; stack[index - 1] = prev.h; }
+  };
   let shown = screenOf(hist.state);
   let inherited = olderOf(hist.state);
-  const marks: string[] = [];
   marks[index] = shown;
+  learnPrev(hist.state);
   return {
     /** The view the address describes right now. */
     get view() { return current; },
@@ -219,7 +233,7 @@ export function createViewHistory(loc: LocationLike, hist: HistoryLike) {
       if (target === loc.hash) { current = view; stack[index] = target; return 'none'; }
       if (replace || sameLevel(current, view)) {
         hist.replaceState(stamp(shown), '', url(target));
-        stack[index] = target; current = view; return 'replace';
+        stack[index] = target; current = view; inherited = false; return 'replace';
       }
       // Stepping up goes back only when the entry before was made on the same screen.
       if (index > 0 && stack[index - 1] === target && marks[index - 1] === shown) {
@@ -253,6 +267,7 @@ export function createViewHistory(loc: LocationLike, hist: HistoryLike) {
       shown = screenOf(hist.state);
       inherited = olderOf(hist.state);
       marks[index] = shown;
+      learnPrev(hist.state);
       if (ownBacks > 0) { ownBacks--; return undefined; }
       return current;
     }

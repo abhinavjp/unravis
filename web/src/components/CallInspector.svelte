@@ -3,6 +3,7 @@
   import { formatMs } from '../lib/drill/overview';
   import { formatAtOnce } from '../lib/drill/callLanes';
   import { compareToNormal } from '../lib/drill/callCompare';
+  import { lightLines } from '../lib/drill/nearbyCalls';
   import type { Readout, SourceItem } from '../lib/drill/callReadout';
   import type { DbStateKey, DbStateView } from '../lib/drill/dbState';
   import { formatTime } from '../lib/time';
@@ -71,9 +72,10 @@
   const fmtAt = (cell: { atOnce: number | null } | null | undefined): string =>
     cell && cell.atOnce !== null && Number.isFinite(cell.atOnce) ? formatAtOnce(cell.atOnce) : DRILL_TEXT.notRecorded;
 
-  // A missing time is "not recorded", never 0, as in the nearby table.
-  const fmtMs = (value: number | null | undefined): string =>
-    value !== null && value !== undefined && Number.isFinite(value) ? formatMs(value) : DRILL_TEXT.notRecorded;
+  // The selected call's Database, Redis and Web calls lines; a missing time is "not recorded", never 0, as in the nearby table.
+  const lightRows = $derived(
+    lightLines(light, { database: DRILL_TEXT.colDatabase, redis: DRILL_TEXT.colRedis, web: DRILL_TEXT.colWebCalls, notRecorded: DRILL_TEXT.notRecorded }, formatMs)
+  );
 
   const tookText = $derived(
     selected && selected.tookMs !== null && Number.isFinite(selected.tookMs) ? formatMs(selected.tookMs) : DRILL_TEXT.notRecorded
@@ -110,11 +112,11 @@
       <p>{SOURCE_NAME[selected.source]}</p>
       <p>{formatTime(selected.startMs, { zone })}</p>
       <p>{tookText}</p>
-      {#if light !== undefined}
+      {#if lightRows}
         <ul class="insp-light" data-testid="scall-selected-light">
-          <li>{DRILL_TEXT.colDatabase}: {fmtMs(light?.sqlMs)}</li>
-          <li>{DRILL_TEXT.colRedis}: {fmtMs(light?.redisMs)}</li>
-          <li>{DRILL_TEXT.colWebCalls}: {fmtMs(light?.httpMs)}</li>
+          {#each lightRows as line (line.label)}
+            <li>{line.label}: {line.value}</li>
+          {/each}
         </ul>
       {/if}
       {#if normalLine}

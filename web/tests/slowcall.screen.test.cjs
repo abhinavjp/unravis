@@ -279,7 +279,7 @@ test('BL-028: the Selected panel repeats the row figures for Database, Redis and
   assert.ok(source.includes('light={selectedLight}'), 'the screen passes the row figures');
   assert.ok(source.includes('[...b.s.nearby.rows, ...b.s.slowRows].find((r) => b.apiKeyOf(r.sourceId, r.id) === item.key)'), 'the figures come from the same row as the table');
   const inspector = fs.readFileSync(path.join(root, 'src/components/CallInspector.svelte'), 'utf8');
-  for (const needle of ['data-testid="scall-selected-light"', '{DRILL_TEXT.colDatabase}: {fmtMs(light?.sqlMs)}', '{DRILL_TEXT.colRedis}: {fmtMs(light?.redisMs)}', '{DRILL_TEXT.colWebCalls}: {fmtMs(light?.httpMs)}']) {
+  for (const needle of ['data-testid="scall-selected-light"', 'lightLines(light,', 'DRILL_TEXT.colDatabase', 'DRILL_TEXT.colRedis', 'DRILL_TEXT.colWebCalls']) {
     assert.ok(inspector.includes(needle), needle);
   }
 });
