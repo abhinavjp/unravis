@@ -167,7 +167,9 @@ test('the folder step: unsafe and not-full paths, the C: tick, port and bind', (
   assert.equal(w.stepProblem(at('D:\\'), 'folder'), 'folder-unsafe');
   assert.equal(w.stepProblem(at('D:\\Windows\\x'), 'folder'), 'folder-unsafe');
   assert.equal(w.stepProblem(at('\\\\srv\\share'), 'folder'), 'folder-unsafe', 'a share root');
-  assert.equal(w.stepProblem(at('\\\\srv\\share\\bb'), 'folder'), null, 'a folder on a share (B-04)');
+  // Changed on purpose (BL-137): the recorder refuses a network share at install (newFolderProblem in
+  // internal/blackbox/service_folder.go), so the wizard refuses it too instead of letting the install fail.
+  assert.equal(w.stepProblem(at('\\\\srv\\share\\bb'), 'folder'), 'folder-not-local', 'a folder on a share');
   // the system drive needs the tick
   assert.equal(w.stepProblem(at('C:\\UnravisBlackbox'), 'folder'), 'folder-system-drive');
   // Changed on purpose (browser pass, defect E): forward slashes are refused now, with their own code, instead of being
@@ -184,6 +186,39 @@ test('the folder step: unsafe and not-full paths, the C: tick, port and bind', (
   assert.equal(w.stepProblem(at('C:\\UnravisBlackbox', { systemDrive: 'E' }), 'folder'), null);
   assert.equal(w.stepProblem(at('D:\\bb', { settings: { port: 0 } }), 'folder'), 'port');
   assert.equal(w.stepProblem(at('D:\\bb', { settings: { bind: 'not an address!' } }), 'folder'), 'bind');
+});
+
+test('the folder step refuses a USB or network drive of this PC (BL-137), and only on this PC', () => {
+  const s = ready('pc');
+  const at = (folder, extra = {}) => ({ ...s, ...extra, settings: { ...s.settings, folder } });
+  const known = { nonLocalDrives: ['E', 'Z'] };
+  assert.equal(w.stepProblem(at('E:\\UnravisBlackbox', known), 'folder'), 'folder-not-local');
+  assert.equal(w.stepProblem(at('z:\\bb', known), 'folder'), 'folder-not-local', 'case ignored');
+  assert.equal(w.stepProblem(at('D:\\UnravisBlackbox', known), 'folder'), null);
+  assert.equal(w.stepProblem(at('E:\\UnravisBlackbox'), 'folder'), null, 'no drives list: nothing known');
+  // the pack path is another server: this PC's drive letters say nothing about it
+  const pack = { ...ready('pack'), nonLocalDrives: ['E'], settings: { ...ready('pack').settings, folder: 'E:\\bb' } };
+  assert.equal(w.stepProblem(pack, 'folder'), null);
+  // but a network path is refused there too, the recorder checks it where it is installed
+  assert.equal(w.stepProblem({ ...pack, settings: { ...pack.settings, folder: '\\\\srv\\share\\bb' } }, 'folder'), 'folder-not-local');
+});
+
+test('applyDefaultFolder records the USB and network drives of the list, even after the owner typed a folder', () => {
+  const drives = [
+    { letter: 'C', label: 'OS', type: 'fixed', system: true, freeBytes: 1, totalBytes: 2 },
+    { letter: 'D', label: 'Data', type: 'fixed', system: false, freeBytes: 1, totalBytes: 2 },
+    { letter: 'e', label: 'Stick', type: 'removable', system: false, freeBytes: 1, totalBytes: 2 },
+    { letter: 'Z', label: 'Share', type: 'network', system: false, freeBytes: null, totalBytes: null }
+  ];
+  const s = ready('pc');
+  const fresh = w.applyDefaultFolder(s, drives, 'D:\\UnravisBlackbox');
+  assert.deepEqual(fresh.nonLocalDrives, ['E', 'Z']);
+  assert.equal(fresh.settings.folder, 'D:\\UnravisBlackbox', 'the default never lands on USB or network');
+  const typed = w.applyDefaultFolder(w.setFolder(s, 'E:\\bb'), drives, 'D:\\UnravisBlackbox');
+  assert.deepEqual(typed.nonLocalDrives, ['E', 'Z']);
+  assert.equal(typed.settings.folder, 'E:\\bb', 'a typed folder is kept');
+  assert.equal(w.stepProblem(typed, 'folder'), 'folder-not-local');
+  assert.deepEqual(w.applyDefaultFolder(s, null, 'D:\\UnravisBlackbox').nonLocalDrives, undefined, 'no list: nothing known');
 });
 
 test('next on a step with no choice (SQL) always moves on, and Review is the last step', () => {
@@ -488,7 +523,7 @@ test('every payload the wizard can reach by walking Next passes settingsProblem 
   // a busy path: Light preset, some targets, a network folder, other keep numbers
   let s = ready('pc');
   s = w.applyPreset(s, 'light');
-  s = { ...s, watchMode: 'some', folderTouched: true, settings: { ...s.settings, targets: [{ kind: 'appPool', name: 'Pool1' }], folder: '\\\\files01\\share\\bb', keepDays: 90, maxGB: 12.5, minFreePercent: 20 } };
+  s = { ...s, watchMode: 'some', folderTouched: true, settings: { ...s.settings, targets: [{ kind: 'appPool', name: 'Pool1' }], folder: 'E:\\Recordings\\bb', keepDays: 90, maxGB: 12.5, minFreePercent: 20 } };
   s = walkTo(s, 'review');
   const out = w.buildSettings(s);
   assert.equal(bb.settingsProblem(out), null);

@@ -69,7 +69,8 @@
     'folder-invalid': W['folder.errFull'],
     'folder-slash': W['folder.errSlash'],
     'folder-chars': W['folder.errChars'],
-    'folder-unsafe': W['folder.errSystem']
+    'folder-unsafe': W['folder.errSystem'],
+    'folder-not-local': W['folder.errNotLocal']
   };
   const folderProblem = $derived(
     problem !== null && problem in FOLDER_WORDS ? (attempted || folderLeft ? FOLDER_WORDS[problem] : null) : null
@@ -80,13 +81,11 @@
 
   // One notice at most, about the folder as it stands now.
   const notice = $derived.by((): string | null => {
+    // A network path, or a USB or network drive of this PC, is refused with its own error (BL-137), so no notice too.
+    if (problem === 'folder-not-local') return null;
     const kind = folderKind(folder);
-    if (kind === 'unc') return W['notice.networkDrive'];
     if (kind !== 'drive' || letter === null) return null;
     if (letter === systemLetter) return W['notice.systemDrive'](systemLetter);
-    const card = drives?.find((d) => d.letter.toUpperCase() === letter);
-    if (card?.type === 'network') return W['notice.networkDrive'];
-    if (card?.type === 'removable') return W['notice.usbDrive'];
     if (isPc && driveStatus === 'ready' && !cardLetters.includes(letter)) return W['notice.unlistedDrive'](letter);
     return null;
   });
@@ -144,13 +143,20 @@
     return drive.system ? space + ' · ' + W['folder.notAdvised'] : space;
   }
 
+  // USB and network drives stay listed so the owner sees them, but greyed out with the reason (BL-137): the recorder
+  // only records on a local hard drive and would refuse them at install.
   const options = $derived(
-    cards.map((d) => ({
-      value: d.letter.toUpperCase(),
-      title: d.letter.toUpperCase() + ': ' + d.label,
-      description: describe(d),
-      tags: tagsOf(d)
-    }))
+    cards.map((d) => {
+      const notLocal = !d.system && (d.type === 'removable' || d.type === 'network');
+      return {
+        value: d.letter.toUpperCase(),
+        title: d.letter.toUpperCase() + ': ' + d.label,
+        description: describe(d),
+        tags: tagsOf(d),
+        disabled: notLocal,
+        disabledReason: notLocal ? W['folder.notLocalReason'] : undefined
+      };
+    })
   );
 
   /** Picking a card changes the drive letter only; the rest of the typed path stays. */
