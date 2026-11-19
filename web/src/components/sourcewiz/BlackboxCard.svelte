@@ -56,9 +56,11 @@
 
   async function check() {
     if (location === '' || checking) return;
+    const asked = location;
     checking = true; verdict = ''; problem = '';
-    try { const r = await blackboxApi.test({ name: name.trim() || 'Recorder', location, key: '' }); verdict = r.ok ? 'works' : 'failed'; }
-    catch (e) { verdict = 'failed'; problem = e instanceof BlackboxError ? e.refusal.error : ''; }
+    // The folder can change while the check runs: an answer about an older folder is dropped.
+    try { const r = await blackboxApi.test({ name: name.trim() || 'Recorder', location: asked, key: '' }); if (location === asked) verdict = r.ok ? 'works' : 'failed'; }
+    catch (e) { if (location === asked) { verdict = 'failed'; problem = e instanceof BlackboxError ? e.refusal.error : ''; } }
     checking = false;
   }
 
@@ -71,7 +73,8 @@
       try { saved = (await blackboxApi.add({ name: label, location, key: '' })).name; }
       catch (e) { if (e instanceof BlackboxError && e.refusal.existing) saved = e.refusal.existing.name; else throw e; }
       const result = addSource(wizard.sources, makeSource('blackbox', saved, saved));
-      if (result.ok) setSources(result.list);
+      if (!result.ok) { problem = WIZ.blackbox.notListed; saving = false; return; }
+      setSources(result.list);
       line = WIZ.blackbox.added;
       onDone();
     } catch (e) {

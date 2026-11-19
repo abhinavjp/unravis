@@ -9,6 +9,8 @@
   import { DISCOVER_TEXT } from '../../lib/copy/discoverCopy';
   import { kindLabel } from '../../lib/copy/wizardSourcesCopy';
   import { WIZ } from '../../lib/copy/sourceWizardCopy';
+  import { FILES_TEXT, dropUnreadableText } from '../../lib/copy/fileKindsCopy';
+  import { filesFromDrop } from '../../lib/dropEntries';
   import MongoClassify from '../wizard/MongoClassify.svelte';
   import SqlServerForm from '../wizard/SqlServerForm.svelte';
   import ReachableCheck from '../wizard/ReachableCheck.svelte';
@@ -26,6 +28,8 @@
   let card = $state<Card>('');
   let heading = $state<HTMLHeadingElement>();
   let dropNote = $state('');
+  let cardEl = $state<HTMLDivElement>();
+  let seed = $state<{ files: File[]; folder: boolean; says: string[] } | undefined>();
   let from = $state('');
   let connected = $state<string[]>([]);
 
@@ -43,10 +47,26 @@
   const groups = $derived(railGroups(wizard.sources, titleOf));
   const existingGroups = $derived(railGroups(existing.map((e) => ({ ...e, ref: e.label })), (e) => kindLabel(e.kind)));
 
-  async function back() { card = ''; dropNote = ''; await tick(); heading?.focus(); }
-  function open(c: Card, finding = '') { card = c; dropNote = ''; from = finding; }
+  async function back() { card = ''; dropNote = ''; seed = undefined; await tick(); heading?.focus(); }
+  async function open(c: Card, finding = '') { card = c; dropNote = ''; from = finding; seed = undefined; await tick(); cardEl?.focus(); }
   function connectedDone() { if (from !== '' && !connected.includes(from)) connected = [...connected, from]; from = ''; card = 'pc'; }
-  async function drop(event: DragEvent) { event.preventDefault(); card = 'files'; dropNote = 'Drop them in the box below.'; }
+  async function drop(event: DragEvent) {
+    event.preventDefault();
+    if (closed) return;
+    const transfer = event.dataTransfer;
+    if (!transfer) return;
+    // Taken now: the browser clears the drop's items as soon as this handler yields.
+    const items = Array.from(transfer.items ?? []);
+    const plain = Array.from(transfer.files ?? []);
+    const dropped = await filesFromDrop(items, plain);
+    if (dropped.files.length === 0) { dropNote = dropped.unreadable > 0 ? dropUnreadableText(dropped.unreadable) : FILES_TEXT.dropNoFiles; return; }
+    const says: string[] = [];
+    if (dropped.tooMany) says.push(FILES_TEXT.dropTruncated);
+    if (dropped.tooDeep) says.push(FILES_TEXT.dropTooDeep);
+    if (dropped.unreadable > 0) says.push(dropUnreadableText(dropped.unreadable));
+    await open('files');
+    seed = { files: dropped.files, folder: dropped.folder, says };
+  }
   async function remove(key: string) { removeChosen(key); releaseOrphanFiles(); await tick(); heading?.focus(); }
 </script>
 
@@ -76,17 +96,18 @@
       <p class="tray" role="status">{WIZ.tray(wizard.sources.length)}</p>
     </aside>
 
-    <section class="main" aria-live="polite">
+    <section class="main">
       {#if card === ''}
         <h3>{adding ? WIZ.askAdd : WIZ.askNew}</h3>
         <ul class="tiles">
           {#each tiles as t (t.id)}
-            <li><button type="button" class="tile" class:start={t.id === 'pc'} disabled={closed} onclick={() => open(t.id)}>
+            <li><button type="button" class="tile" class:start={t.id === 'pc'} disabled={closed} onclick={() => void open(t.id)}>
               <span class="tname">{t.name}{#if t.badge}<span class="badge">{t.badge}</span>{/if}</span><span class="tsub">{t.sub}</span></button></li>
           {/each}
         </ul>
         <p class="hint">{WIZ.hint}</p>
-        <div class="dropzone" role="button" tabindex="0" ondragover={(e) => e.preventDefault()} ondrop={(e) => void drop(e)} onclick={() => open('files')} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open('files'); } }}>{WIZ.drop}</div>
+        {#if dropNote}<p class="hint" role="status">{dropNote}</p>{/if}
+        <div class="dropzone" class:off={closed} role="button" tabindex={closed ? -1 : 0} aria-disabled={closed} ondragover={(e) => e.preventDefault()} ondrop={(e) => void drop(e)} onclick={() => { if (!closed) void open('files'); }} onkeydown={(e) => { if (!closed && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); void open('files'); } }}>{WIZ.drop}</div>
         {#if wizard.sources.length > 0}
           <details class="names">
             <summary>{WIZ.namesHeading}</summary>
@@ -94,17 +115,19 @@
           </details>
         {/if}
       {:else}
+        <div class="cardwrap" tabindex="-1" bind:this={cardEl}>
         <button type="button" class="quiet-button" onclick={() => void back()}>← {WIZ.back}</button>
-        {#if dropNote}<p class="hint">{dropNote}</p>{/if}
-        {#if card === 'pc'}<FindOnPc {connected} onCard={(c, f) => open(c, f ?? '')} onDone={() => void back()} />
+        {#if dropNote}<p class="hint" role="status">{dropNote}</p>{/if}
+        {#if card === 'pc'}<FindOnPc {connected} onCard={(c, f) => void open(c, f ?? '')} onDone={() => void back()} />
         {:else if card === 'mongo'}{#if from !== ''}<p class="hint">{WIZ.find.mongoPrefill} <code>{connectPrefill('mongo')}</code></p>{/if}<MongoClassify prefill={from !== '' ? connectPrefill('mongo') : ''} onDone={() => (from !== '' ? connectedDone() : void back())} />
         {:else if card === 'sql'}{#if from !== ''}<p class="hint">{WIZ.find.mongoPrefill} <code>{connectPrefill('sql')}</code></p>{/if}<SqlServerForm prefill={from !== '' ? connectPrefill('sql') : ''} onDone={() => (from !== '' ? connectedDone() : void back())} />
         {:else if card === 'redis'}<ReachableCheck kind="redis" onDone={() => void back()} />
-        {:else if card === 'files'}<ImportFilesPanel onCancel={() => void back()} />
+        {:else if card === 'files'}<ImportFilesPanel {seed} onCancel={() => void back()} />
         {:else if card === 'blackbox'}<BlackboxCard onDone={() => void back()} />
         {:else if card === 'another' && caseId !== ''}<AddAnotherDay {caseId} readOnly={closed} onDone={() => void back()} onCancel={() => void back()} />{/if}
+        </div>
       {/if}
-      <p class="hint foot">{WIZ.footer}</p>
+      <p class="hint foot">{adding ? WIZ.footerAdd : WIZ.footer}</p>
     </section>
   </div>
 </div>
@@ -138,5 +161,7 @@
   .dropzone:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .names summary { cursor: pointer; font-weight: 600; padding: var(--space-2) 0; }
   .mine { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-3); }
+  .cardwrap { display: grid; gap: var(--space-3); min-width: 0; } .cardwrap:focus { outline: none; }
+  .dropzone.off { opacity: .55; cursor: not-allowed; }
   .foot { margin-top: var(--space-2); }
 </style>

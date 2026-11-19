@@ -7,7 +7,10 @@ export const WIZ = {
   askAdd: 'What do you want to add to this case?',
   hint: 'Something on another computer? Pick its type above and type the address.',
   drop: 'Or drop files or a folder here',
-  footer: 'Nothing is read until the last button.',
+  footer: 'Nothing is read until the last button. A Blackbox recorder is saved as soon as you add it.',
+  footerAdd: 'Nothing is read until the last button. A Blackbox recorder is saved as soon as you add it, and Another day imports as soon as you start it.',
+  reviewStays: 'Everything already in this case stays as it is.',
+  reviewStale: 'Adding data makes steps you already ran show Out of date, rerun.',
   railHeading: 'Your sources',
   railEmpty: 'Nothing added yet. Pick a kind above.',
   tray: (n: number) => (n === 1 ? '1 source ready to add' : n + ' sources ready to add'),
@@ -74,7 +77,8 @@ export const WIZ = {
     again: 'Look again',
     placeNew: 'Place a new recorder instead',
     placeNewNote: 'This opens the recorder page. Come back here afterwards.',
-    added: 'Recorder added.'
+    added: 'Recorder added.',
+    notListed: 'The recorder was saved, but it could not be put in your list (it is already there, or the list is full).'
   },
   openReasons: {
     'not-found': 'That folder was not found on this computer.',

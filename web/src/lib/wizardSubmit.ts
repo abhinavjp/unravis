@@ -210,8 +210,8 @@ async function guarded<T>(call: () => Promise<T>): Promise<T> {
 const step = (status: StepStatus = 'waiting', reason = '', extra: Partial<StepState> = {}): StepState => ({ status, reason, ...extra });
 
 /** Gives every importable source a row, so the progress list shows them all at once. A row that exists is kept. */
-export function prepareState(input: Pick<SubmitInput, 'sources' | 'envs'>, state: SubmitState): void {
-  if (input.envs.length === 0 && state.envs.status === 'waiting') state.envs = step('skipped');
+export function prepareState(input: Pick<SubmitInput, 'sources' | 'envs' | 'appendOnly'>, state: SubmitState): void {
+  if ((input.envs.length === 0 || input.appendOnly) && state.envs.status === 'waiting') state.envs = step('skipped');
   for (const source of input.sources) {
     const key = sourceKey(source);
     if (!state.tags[key]) state.tags[key] = step();
@@ -326,7 +326,8 @@ async function execute(input: SubmitInput, api: SubmitApi, state: SubmitState): 
     const caseId = state.caseId;
 
     // 2. The environments.
-    if (input.envs.length > 0 && state.envs.status !== 'done') {
+    // Adding to an open case never rewrites its environment list (the list sent would only be the ones seen on its sources).
+    if (input.envs.length > 0 && !input.appendOnly && state.envs.status !== 'done') {
       state.envs = step('running');
       try { await guarded(() => api.putEnvironments(caseId, input.envs)); state.envs = step('done'); }
       catch (error) { if (error instanceof Locked) { state.envs = step(); throw error; } state.envs = step('failed', reasonOf(error)); }

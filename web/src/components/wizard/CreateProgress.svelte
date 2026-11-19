@@ -19,7 +19,7 @@
   // The case is never deleted here. It opens by itself when every scan source was read and no file was picked; with files the screen stays,
   // because the table of what was read from each file is the answer the person came for (packet P5), with the actions of packet P10:
   // open the timeline, open the case, try the failed files again, add more files.
-  let { onOpen, onTimeline, onAddMore }: { onOpen: (caseId: string) => void; onTimeline?: (caseId: string) => void; onAddMore?: (caseId: string) => void } = $props();
+  let { onOpen, onTimeline, onAddMore, adding = false }: { onOpen: (caseId: string) => void; onTimeline?: (caseId: string) => void; onAddMore?: (caseId: string) => void; adding?: boolean } = $props();
 
   const uid = $props.id();
   let box = $state<HTMLElement>();
@@ -50,9 +50,12 @@
     return { status: 'waiting', reason: '' };
   }
 
+  // Adding to an open case: the case and its environments already exist, so those two steps are not listed.
   const steps = $derived<{ id: string; label: string; state: Pick<StepState, 'status'> }[]>([
-    { id: 'case', label: CREATE_TEXT.stepCase, state: { status: submit.caseId ? 'done' : createView.running ? 'running' : submit.createError ? 'failed' : 'waiting' } },
-    { id: 'envs', label: CREATE_TEXT.stepEnvs, state: submit.envs },
+    ...(adding ? [] : [
+      { id: 'case', label: CREATE_TEXT.stepCase, state: { status: (submit.caseId ? 'done' : createView.running ? 'running' : submit.createError ? 'failed' : 'waiting') as StepState['status'] } },
+      { id: 'envs', label: CREATE_TEXT.stepEnvs, state: submit.envs }
+    ]),
     { id: 'tags', label: CREATE_TEXT.stepTags, state: overall([...Object.values(submit.tags), ...Object.values(submit.audit)]) },
     { id: 'imports', label: CREATE_TEXT.stepImports, state: overall(Object.values(submit.imports)) }
   ]);

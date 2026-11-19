@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, tick, untrack, type Snippet } from 'svelte';
+  import { onDestroy, onMount, tick, untrack, type Snippet } from 'svelte';
   import { EXTRA_KIND_IDS, FILE_KIND_IDS, hostNeed, importerFor, isPanelKind, kindsInUse, needingHost, needingZone, needsHost, usableFiles } from '../../lib/fileKinds';
   import { filesFromDrop } from '../../lib/dropEntries';
   import type { PanelKind, StagedFile } from '../../lib/fileKinds';
@@ -23,8 +23,10 @@
   // The same panel serves the import drawer of an open case (packet P9) when `drawer` is set. There, a .zip is opened in the page, the button
   // hands the rows to `onImport` instead of adding sources, the list stays after the import, and a Result column shows how each file ended
   // (Used, Partly used or Rejected, with a plain reason and Try again). `results` is keyed by row id. A row being sent cannot be changed.
-  let { drawer = false, busy = false, canImport = true, results = {}, pending = $bindable(0), onImport, onRetry, onListChange, onCancel, footer }: {
+  let { drawer = false, busy = false, canImport = true, results = {}, pending = $bindable(0), seed, onImport, onRetry, onListChange, onCancel, footer }: {
     drawer?: boolean;
+    /** Wizard only: files dropped on the tile screen, staged once when the panel opens (zip opening and de-duplication included). */
+    seed?: { files: File[]; folder: boolean; says: string[] };
     /** Drawer only: how many listed files have no result yet (staged, not imported), for the Add data cards and the leave question. */
     pending?: number;
     /** The drawer is sending files: the list cannot be cleared and nothing is sent twice. */
@@ -208,6 +210,7 @@
   }
 
   const dropHere = (event: DragEvent) => { void onDrop(event); };
+  onMount(() => { if (seed && seed.files.length > 0) void take(seed.files, seed.folder, seed.says); });
 
   function setKind(id: number, value: string) {
     // The three extra choices are for the wizard; the drawer offers the importers only.
