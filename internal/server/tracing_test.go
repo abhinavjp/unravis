@@ -175,7 +175,7 @@ func tracingEnv(t *testing.T, store casestore.Store) *caseEnv {
 
 func TestTracingStrictRequest(t *testing.T) {
 	forEachTracingStore(t, func(t *testing.T, e *caseEnv, id string) {
-		many := make([]string, 51)
+		many := make([]string, 9)
 		for i := range many {
 			many[i] = `"imp_` + strconv.Itoa(i+1) + `"`
 		}
@@ -185,7 +185,7 @@ func TestTracingStrictRequest(t *testing.T) {
 			text       string
 		}{
 			{"unknown field route", `{"route":"/x",` + tracingWindowBody + `}`, 400, "Request body has a field this server does not know."},
-			{"too many ids", tracingBody(`"sourceIds":[` + strings.Join(many, ",") + `]`), 400, "Pick at most 50 sources."},
+			{"too many ids", tracingBody(`"sourceIds":[` + strings.Join(many, ",") + `]`), 400, "Pick at most 8 sources."},
 			{"empty id", tracingBody(`"sourceIds":["  "]`), 400, "A source id is not valid."},
 			{"long id", tracingBody(`"sourceIds":["` + strings.Repeat("a", 129) + `"]`), 400, "A source id is not valid."},
 			{"end before start", `{"incident":{"start":"2001-02-03T05:00:00Z","end":"2001-02-03T04:00:00Z"}}`, 400, tracingWindowText},
@@ -279,11 +279,17 @@ func TestTracingOmittedSourceIdsMeansAll(t *testing.T) {
 		var out tracingResponse
 		decodeBody(t, res, &out)
 		// WP-18b adds the no-file warning (55 tags with no file yet), after the cap warning.
-		if len(out.Sources) != 50 || len(out.Warnings) != 2 || out.Warnings[0] != "Only the first 50 sources are shown." || out.Warnings[1] != tracingNoFileWarn {
+		// Every file source is listed; only the first 8 are read, the rest are flagged capped so they can be switched on.
+		if len(out.Sources) != 55 || len(out.Warnings) != 2 || out.Warnings[0] != "Only the first 8 sources are shown." || out.Warnings[1] != tracingNoFileWarn {
 			t.Fatalf("55 tags: %d sources, warnings %v", len(out.Sources), out.Warnings)
 		}
-		if out.Sources[0].Label != "t0" || out.Sources[49].Label != "t49" {
-			t.Errorf("not the oldest 50: first %q last %q", out.Sources[0].Label, out.Sources[49].Label)
+		if out.Sources[0].Label != "t0" || out.Sources[7].Label != "t7" {
+			t.Errorf("not the oldest 8: first %q last %q", out.Sources[0].Label, out.Sources[7].Label)
+		}
+		for i, s := range out.Sources {
+			if s.Capped != (i >= 8) {
+				t.Errorf("source %d capped = %v", i, s.Capped)
+			}
 		}
 	})
 
