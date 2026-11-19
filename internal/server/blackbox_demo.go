@@ -560,19 +560,19 @@ func (p *simPC) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (p *simPC) Apply(ctx context.Context, cfg blackbox.Config) (bool, error) {
+func (p *simPC) Apply(ctx context.Context, cfg blackbox.Config) (blackbox.ApplyOutcome, error) {
 	if err := p.enter(ctx, "apply"); err != nil {
-		return false, err
+		return blackbox.ApplyOutcome{}, err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.installed {
-		return false, &blackbox.ThisPCError{Reason: blackbox.ReasonNotInstall, Message: "No Blackbox is installed on this PC."}
+		return blackbox.ApplyOutcome{}, &blackbox.ThisPCError{Reason: blackbox.ReasonNotInstall, Message: "No Blackbox is installed on this PC."}
 	}
 	restart := cfg.Port != p.cfg.Port || cfg.IntervalSeconds != p.cfg.IntervalSeconds || cfg.Bind != p.cfg.Bind
 	cfg.Name = p.cfg.Name
 	p.cfg = cfg
-	return restart, nil
+	return blackbox.ApplyOutcome{Restarted: restart}, nil
 }
 
 func (p *simPC) Remove(ctx context.Context, name string, deleteRecordings bool, confirmName string) (blackbox.RemoveOutcome, error) {

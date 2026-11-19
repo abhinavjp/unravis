@@ -421,7 +421,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		}
 		sqlNote := ""
 		if res.SQLSettingsUnlocked {
-			sqlNote = " The SQL service's settings lock could not be put back: run install-sql again before enable-sql."
+			sqlNote = " " + blackbox.SQLSettingsUnlockedText
 		}
 		if !res.Restarted {
 			return ans.ok("Settings saved. The Blackbox is stopped: they apply at its next start."+sqlNote+bindWarningText(bind), withBindWarning(bind, map[string]any{"restarted": false, "sqlSettingsUnlocked": res.SQLSettingsUnlocked}))

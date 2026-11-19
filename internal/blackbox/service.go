@@ -559,6 +559,11 @@ type ApplyResult struct {
 	SQLSettingsUnlocked bool
 }
 
+// SQLSettingsUnlockedText is the fixed sentence every surface shows when
+// SQLSettingsUnlocked is set. Applying again retries the lock; install-sql
+// cannot, because it refuses while the SQL service exists.
+const SQLSettingsUnlockedText = "The SQL service's settings file could not be locked again after the save, so the SQL service will refuse enable-sql and may fail at its next start. Apply the settings again from an elevated prompt to retry the lock."
+
 // Apply saves the validated settings to the installed config file (the same
 // path Install registers with the service) and only then restarts the service
 // so they take effect. The file the settings come from may be a temporary one
