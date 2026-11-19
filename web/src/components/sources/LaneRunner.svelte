@@ -3,7 +3,7 @@
   import { api } from '../../lib/api';
   import { DEFAULT_COLLECTION } from '../../lib/wizardConnections';
   import {
-    overlapProblem, runMongoLane, runNotice, runProblem, runSqlLane, unreadableTime, utcInput, utcWindow, type LaneDay, type LaneRunResult, type LaneWindow
+    laneWindowTooLong, overlapProblem, runMongoLane, runNotice, runProblem, runSqlLane, unreadableTime, utcInput, utcWindow, type LaneDay, type LaneRunResult, type LaneWindow
   } from '../../lib/lanes';
   import { RUN_TEXT, DAY_TEXT } from '../../lib/copy/sourcesCopy';
   import type { RecentConnection, SavedSqlConnection } from '../../lib/types';
@@ -75,6 +75,7 @@
     if (!inc) { problem = RUN_TEXT.needIncident; return; }
     const ref = utcWindow(refStart, refEnd);
     if (!ref) { problem = RUN_TEXT.needReference; return; }
+    if (laneWindowTooLong(inc, ref)) { problem = RUN_TEXT.tooLong; return; }
     if (overlapProblem(days, kind, heldLabel(), db.trim(), inc)) { problem = RUN_TEXT.overlap; return; }
     busy = true;
     const windows = { incident: inc, reference: ref };

@@ -60,16 +60,9 @@
   let allTab = $state<HTMLElement>();
 
   // Every read gets its own request number and its own answer: the tracing read is not "latest wins" here, so the overview strip and the
-  // visible window can run side by side and both fill. The comparison period is the equal period right before the asked range.
+  // visible window can run side by side and both fill. No comparison period is sent: the tracing answer has one window (UI-02).
   function tracing(caseId: string, startIso: string, endIso: string, sourceIds: string[], signal: AbortSignal) {
-    const startMs = Date.parse(startIso);
-    const endMs = Date.parse(endIso);
-    const referenceStart = new Date(startMs - (endMs - startMs)).toISOString();
-    const body = {
-      sourceIds,
-      incident: { start: startIso, end: endIso },
-      reference: { start: referenceStart, end: startIso }
-    };
+    const body = { sourceIds, incident: { start: startIso, end: endIso } };
     return fetchTracing(caseId, body, nextRequestSeq(), signal);
   }
 

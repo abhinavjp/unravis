@@ -173,6 +173,14 @@ export const BB_TEXT = {
   nextReview: 'Next: Review',
   backStep: 'Back',
   cancel: 'Cancel',
+  // The Status, Remove, Apply and Snapshot pop-up (BL-131).
+  popClose: 'Close',
+  popCloseLabel: 'Close this Blackbox',
+  popLeaveTitle: 'Leave without applying?',
+  popLeaveBody: 'Your changes to the settings are not saved.',
+  popKeepEditing: 'Keep editing',
+  popLeave: 'Leave',
+  popBusy: 'Please let the current action finish first.',
 
   nameHeading: 'Name it',
   nameLabel: 'Name',

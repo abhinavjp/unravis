@@ -19,8 +19,8 @@
   } = $props();
 
   const summary = $derived(sourcesSummary(selection, chips));
-  const allOn = $derived(chips.length > 0 && chips.every((chip) => isChipOn(selection, chip.id)));
-  const noneOn = $derived(chips.every((chip) => !isChipOn(selection, chip.id)));
+  const allOn = $derived(chips.length > 0 && chips.every((chip) => isChipOn(selection, chip.id, chip.capped === true) || chip.capped === true));
+  const noneOn = $derived(chips.every((chip) => !isChipOn(selection, chip.id, chip.capped === true)));
 </script>
 
 <!-- The sources row of the one controls card (the wireframe's `Sources` row): the label, the chips, then Start tracing and Add evidence at the right end.
@@ -33,7 +33,7 @@
     {:else}
       <div class="ts-chips" role="group" aria-label={SOURCES_TEXT.label}>
         {#each chips as chip (chip.id)}
-          <button type="button" class="chip" data-source-id={chip.id} aria-pressed={isChipOn(selection, chip.id)} aria-describedby={chip.noFile ? 'ts-not-imported-reason' : undefined} title={chip.noFile ? SOURCES_TEXT.notImportedTitle : undefined} disabled={disabled || chip.noFile === true} onclick={() => onToggle(chip.id)}>{chipText(chip)}{#if chip.noFile}<span class="ts-chip-flag" data-testid="chip-not-imported"><span aria-hidden="true"> · </span>{SOURCES_TEXT.notImported}</span>{/if}</button>
+          <button type="button" class="chip" data-source-id={chip.id} aria-pressed={isChipOn(selection, chip.id, chip.capped === true)} aria-describedby={chip.noFile ? 'ts-not-imported-reason' : undefined} title={chip.noFile ? SOURCES_TEXT.notImportedTitle : chip.capped ? SOURCES_TEXT.cappedTitle : undefined} disabled={disabled || chip.noFile === true} onclick={() => onToggle(chip.id)}>{chipText(chip)}{#if chip.noFile}<span class="ts-chip-flag" data-testid="chip-not-imported"><span aria-hidden="true"> · </span>{SOURCES_TEXT.notImported}</span>{/if}{#if chip.capped && !chip.noFile}<span class="ts-chip-flag" data-testid="chip-capped"><span aria-hidden="true"> · </span>{SOURCES_TEXT.cappedFlag}</span>{/if}</button>
         {/each}
         {#each saved as name (name)}
           <span class="ts-saved" data-testid="source-saved">

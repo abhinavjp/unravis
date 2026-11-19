@@ -26,6 +26,6 @@ test('reason paragraph is rendered with its testid and id', () => {
 });
 
 test('existing title and flag span are kept', () => {
-  assert.ok(src.includes('SOURCES_TEXT.notImportedTitle : undefined'));
+  assert.ok(src.includes('SOURCES_TEXT.notImportedTitle : chip.capped ? SOURCES_TEXT.cappedTitle : undefined'));
   assert.ok(src.includes('data-testid="chip-not-imported"'));
 });

@@ -11,8 +11,8 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 const src = read('src/components/TraceSources.svelte');
 
 test('chip keeps its toggle and text, and shows a text mark with a title', () => {
-  assert.match(src, /aria-pressed=\{isChipOn\(selection, chip\.id\)\}/);
+  assert.match(src, /aria-pressed=\{isChipOn\(selection, chip\.id, chip\.capped === true\)\}/);
   assert.match(src, /\{chipText\(chip\)\}/);
-  assert.match(src, /title=\{chip\.noFile \? SOURCES_TEXT\.notImportedTitle : undefined\}/);
+  assert.match(src, /title=\{chip\.noFile \? SOURCES_TEXT\.notImportedTitle : chip\.capped \? SOURCES_TEXT\.cappedTitle : undefined\}/);
   assert.match(src, /\{#if chip\.noFile\}<span class="ts-chip-flag" data-testid="chip-not-imported">/);
 });

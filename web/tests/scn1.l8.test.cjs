@@ -93,10 +93,25 @@ test('D-B-45: the other-server status view shows the short read-only line', () =
 test('D-C-22: Back in the status view returns focus to the opened row', () => {
   const panel = read('src/components/BlackboxPanel.svelte');
   assert.match(panel, /data-open-for=\{item\.id\}/);
-  assert.match(panel, /const leavingStatus = view\.kind === 'status' \? view\.id : '';/);
+  // Changed on purpose (BL-131): status, remove, apply and snapshot share one pop-up, so leaving it from any of them
+  // goes back to the row it was opened from.
+  assert.match(panel, /const leavingStatus = view\.kind !== 'list' && view\.kind !== 'add' \? view\.id : '';/);
   assert.match(panel, /el\.dataset\.openFor === leavingStatus/);
   assert.match(panel, /const target = row \?\? body\?\.querySelector<HTMLElement>\('h3\[tabindex="-1"\]'\)/);
   assert.match(panel, /if \(fromList && next\.kind === 'status'\) void refreshOpened\(next\.id\)/);
+});
+
+test('BL-131: status, remove, apply and snapshot open in the Place pop-up shell, and closing it reads the list again', () => {
+  const panel = read('src/components/BlackboxPanel.svelte');
+  assert.match(panel, /import WizardDialog from '\.\/blackboxWizard\/WizardDialog\.svelte'/);
+  assert.match(panel, /const popView = \$derived\(view\.kind === 'status' \|\| view\.kind === 'remove' \|\| view\.kind === 'apply' \|\| view\.kind === 'snapshot'\)/);
+  assert.match(panel, /open=\{popView && current !== null\}/);
+  // unsaved Apply changes ask before leaving; a running remove or action cannot be closed
+  assert.match(panel, /finished=\{!\(view\.kind === 'apply' && applyChanges\.length > 0\)\}/);
+  assert.match(panel, /busy=\{!!working \|\| removeBusy\}/);
+  assert.match(panel, /async function closePop\(\) \{\s*await show\(\{ kind: 'list' \}\);\s*void load\(\);/);
+  const remove = read('src/components/BlackboxRemove.svelte');
+  assert.match(remove, /\$effect\(\(\) => \{ onBusy\?\.\(busy\); \}\)/);
 });
 
 test('D-B-51: the gaps fact says how long the longest gap was and what the rule is', () => {

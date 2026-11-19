@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -418,7 +419,7 @@ func TestAuditLaneOrderViaAppendLane(t *testing.T) {
 	}
 }
 
-func TestAuditSourceIDsCapsAtFifty(t *testing.T) {
+func TestAuditSourceIDsCapsAtEight(t *testing.T) {
 	ctx := context.Background()
 	ids55 := make([]string, 55)
 	for i := range ids55 {
@@ -426,12 +427,12 @@ func TestAuditSourceIDsCapsAtFifty(t *testing.T) {
 	}
 	f := &auditFake{sources: auditSources(ids55...)}
 	got, warn, err := auditSourceIDs(ctx, f, false, nil)
-	if err != nil || len(got) != 50 || got[0] != "s0" || got[49] != "s49" || warn != "Only the first 50 audit sources are shown." {
+	if err != nil || len(got) != 8 || got[0] != "s0" || got[7] != "s7" || warn != "Only the first 8 audit sources are shown." {
 		t.Fatalf("55 sources: %d ids, warn %q, err %v", len(got), warn, err)
 	}
-	f = &auditFake{sources: auditSources(ids55[:50]...)}
-	if got, warn, err = auditSourceIDs(ctx, f, false, nil); err != nil || len(got) != 50 || warn != "" {
-		t.Errorf("50 sources: %d ids, warn %q, err %v", len(got), warn, err)
+	f = &auditFake{sources: auditSources(ids55[:8]...)}
+	if got, warn, err = auditSourceIDs(ctx, f, false, nil); err != nil || len(got) != 8 || warn != "" {
+		t.Errorf("8 sources: %d ids, warn %q, err %v", len(got), warn, err)
 	}
 	// Duplicates and empty ids are dropped; listed order is kept.
 	f = &auditFake{sources: auditSources("b", "", "a", "b", "c")}
@@ -636,7 +637,7 @@ func TestAuditSourceIDsListingFailure(t *testing.T) {
 	if laneKeys(out) != "sql,iis" || len(out.Warnings) != 0 {
 		t.Errorf("nil repo: lanes %s warnings %v", laneKeys(out), out.Warnings)
 	}
-	// More than 50 listed sources: the first 50 are read, one warning.
+	// More than 8 listed sources: the first 8 are read, one warning.
 	ids := make([]string, 52)
 	for i := range ids {
 		ids[i] = "s" + strconv.Itoa(i)
@@ -644,8 +645,37 @@ func TestAuditSourceIDsListingFailure(t *testing.T) {
 	f = &auditFake{sources: auditSources(ids...)}
 	e, id = auditHandlerEnv(t, f)
 	out, _ = tracingPost(t, e, id, tracingBody(""))
-	if len(f.plans) != 1 || len(f.plans[0].SourceIDs) != 50 || len(out.Warnings) != 1 || out.Warnings[0] != "Only the first 50 audit sources are shown." {
+	if len(f.plans) != 1 || len(f.plans[0].SourceIDs) != 8 || len(out.Warnings) != 1 || out.Warnings[0] != "Only the first 8 audit sources are shown." {
 		t.Errorf("52 sources: plans %d warnings %v", len(f.plans), out.Warnings)
+	}
+}
+
+// The default call reads at most 8 sources in all: audit sources first, file sources fill what is left, and the rest
+// are listed as capped (not read).
+func TestTracingDefaultCapIsCombinedAcrossAuditAndFiles(t *testing.T) {
+	f := &auditFake{sources: auditSources("a1", "a2", "a3", "a4", "a5")}
+	e, id := auditHandlerEnv(t, f)
+	for i := 0; i < 5; i++ {
+		seedTracingTag(t, e.store, id, casestore.SourceTag{Kind: "iis", Label: "f" + strconv.Itoa(i)})
+	}
+	out, _ := tracingPost(t, e, id, tracingBody(""))
+	if len(f.plans) != 1 || len(f.plans[0].SourceIDs) != 5 {
+		t.Fatalf("audit plans %d, ids %v", len(f.plans), f.plans)
+	}
+	if len(out.Sources) != 5 {
+		t.Fatalf("file sources listed %d, want all 5", len(out.Sources))
+	}
+	read := 0
+	for _, s := range out.Sources {
+		if !s.Capped {
+			read++
+		}
+	}
+	if read != 3 || !out.Sources[3].Capped || !out.Sources[4].Capped {
+		t.Errorf("file sources read %d, want 3 (5 audit + 3 files = 8): %+v", read, out.Sources)
+	}
+	if !slices.Contains(out.Warnings, tracingCappedWarn) {
+		t.Errorf("warnings %v lack the cap warning", out.Warnings)
 	}
 }
 
