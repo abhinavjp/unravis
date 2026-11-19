@@ -81,10 +81,13 @@ type tcpGroup struct {
 	queueKeys  []string
 	discKeys   []string
 	outErrKeys []string
-	counts     func() (tcpStates, error)             // injected in tests
-	openWild   func([]string) (CounterSource, error) // the slow expansion; a seam for tests
-	upgraded   bool                                  // one-time lazy wildcard expansion started
-	warm       chan CounterSource                    // the background expansion; nil once taken
+	// How many adapters PDH listed for each per-adapter counter, before the cap.
+	// A sum over fewer than this is partial (BL-138).
+	queueSeen, discSeen, outErrSeen int
+	counts                          func() (tcpStates, error)             // injected in tests
+	openWild                        func([]string) (CounterSource, error) // the slow expansion; a seam for tests
+	upgraded                        bool                                  // one-time lazy wildcard expansion started
+	warm                            chan CounterSource                    // the background expansion; nil once taken
 }
 
 func newTCPGroup(d GroupDeps) (Group, error) {
@@ -126,6 +129,7 @@ func tcpPathsOf(src CounterSource) []string {
 func (g *tcpGroup) rebuild(paths []string) {
 	specs := make([]CounterSpec, 0, len(paths))
 	g.queueKeys, g.discKeys, g.outErrKeys = nil, nil, nil
+	g.queueSeen, g.discSeen, g.outErrSeen = 0, 0, 0
 	for _, p := range paths {
 		switch p {
 		case `\TCPv4\Segments Retransmitted/sec`:
@@ -146,6 +150,14 @@ func (g *tcpGroup) rebuild(paths []string) {
 		default:
 			if !strings.HasPrefix(p, tcpQueuePrefix) {
 				continue
+			}
+			switch {
+			case strings.HasSuffix(p, tcpQueueSuffix):
+				g.queueSeen++
+			case strings.HasSuffix(p, tcpDiscSuffix):
+				g.discSeen++
+			case strings.HasSuffix(p, tcpOutErrSuffix):
+				g.outErrSeen++
 			}
 			switch {
 			case strings.HasSuffix(p, tcpQueueSuffix) && len(g.queueKeys) < tcpMaxInterfaces:
@@ -252,11 +264,15 @@ func (g *tcpGroup) Collect(now time.Time, _ float64) (any, error) {
 		if nf > 0 {
 			grp.ConnFailuresPerSec, have = &fail, true
 		}
-		if v, ok := sumKeys(out, g.discKeys); ok {
+		// Adapters past the cap, or with no valid reading, make the sum partial,
+		// never a complete machine-wide total (BL-138).
+		if v, n := sumKeys(out, g.discKeys); n > 0 {
 			grp.DiscardedPerSec, have = &v, true
+			grp.DiscardedInterfaces, grp.DiscardedPartial = n, n < g.discSeen
 		}
-		if v, ok := sumKeys(out, g.outErrKeys); ok {
+		if v, n := sumKeys(out, g.outErrKeys); n > 0 {
 			grp.OutErrorsPerSec, have = &v, true
+			grp.OutErrorsInterfaces, grp.OutErrorsPartial = n, n < g.outErrSeen
 		}
 		var sum float64
 		n := 0
@@ -271,8 +287,9 @@ func (g *tcpGroup) Collect(now time.Time, _ float64) (any, error) {
 			grp.OutboundQueueInterfaces = n
 			// A total over only some interfaces is partial, never a complete
 			// machine-wide reading: one valid zero plus one unreadable
-			// interface must not publish a false complete 0 (W6-04).
-			if n < len(g.queueKeys) {
+			// interface must not publish a false complete 0 (W6-04). Adapters past
+			// the cap count as not covered too (BL-138).
+			if n < g.queueSeen {
 				grp.OutboundQueuePartial = true
 			}
 		}
@@ -293,8 +310,8 @@ func (g *tcpGroup) Collect(now time.Time, _ float64) (any, error) {
 	return &grp, nil
 }
 
-// sumKeys adds the readings of the given fields; ok is false when none was read.
-func sumKeys(out map[string]float64, keys []string) (float64, bool) {
+// sumKeys adds the readings of the given fields and says how many were read.
+func sumKeys(out map[string]float64, keys []string) (float64, int) {
 	var sum float64
 	n := 0
 	for _, k := range keys {
@@ -303,7 +320,7 @@ func sumKeys(out map[string]float64, keys []string) (float64, bool) {
 			n++
 		}
 	}
-	return sum, n > 0
+	return sum, n
 }
 
 // Close releases the query handle only when the factory created the source.

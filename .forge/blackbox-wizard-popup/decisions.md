@@ -49,6 +49,7 @@
 - Settled S-11: accept UNC.
 - Client: `settingsProblem` refuses anything that is not `X:\`. Server: allows UNC except a share root (`unsafeFolder`).
 - Not verified: whether the recorder's service account can write to a network share.
+- **Superseded 2026-11-19 (BL-137):** the recorder refuses a network share at install (`newFolderProblem` in `internal/blackbox/service_folder.go`), so the wizard now refuses a UNC path with `folder-not-local` instead of showing a notice.
 - **Recommended default:** allow UNC on the client, matching the server (TSK-03), and show a network notice: "The Blackbox service must be able to write here. A local drive is safer."
 
 ### B-05: drive cards need a drives list
