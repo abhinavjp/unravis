@@ -108,6 +108,8 @@ var routeCases = []routeCase{
 	{"/api/cases/{id}/investigation", "/api/cases/c1/investigation", "POST"},
 	{"/api/cases/{id}/tracing", "/api/cases/c1/tracing", "POST"},
 	{"/api/call-trace", "/api/call-trace", "POST"},
+	{"/api/local/open-folder", "/api/local/open-folder", "POST"},
+	{"/api/blackbox/this-pc/folders", "/api/blackbox/this-pc/folders", "GET"},
 	{"/api/discover/capabilities", "/api/discover/capabilities", "GET"},
 	{"/api/discover/scans", "/api/discover/scans", "POST"},
 	{"/api/discover/scans/{scan}", "/api/discover/scans/s1", "DELETE, GET"},
