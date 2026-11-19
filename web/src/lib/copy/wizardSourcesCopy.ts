@@ -182,6 +182,7 @@ export const KIND_LABELS: Readonly<Record<string, string>> = {
   'mongo-database': 'MongoDB database',
   'sql-server': 'SQL Server',
   redis: 'Redis',
+  blackbox: 'Blackbox recorder',
   'iis-logs': 'IIS web server logs',
   'hangfire-csv': 'Hangfire jobs (CSV)',
   'redis-slowlog-csv': 'Redis slow log (CSV)',

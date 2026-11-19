@@ -1,0 +1,88 @@
+/** Every fixed sentence of the one source wizard (create a case, or add to an open case). Plain words, one idea per line. */
+
+export const WIZ = {
+  nutshell: 'In a nutshell',
+  nutshellText: 'Add as many sources as you like, even several of one kind. One at a time: connect, choose, done. Unravis only reads.',
+  askNew: 'What do you want to add?',
+  askAdd: 'What do you want to add to this case?',
+  hint: 'Something on another computer? Pick its type above and type the address.',
+  drop: 'Or drop files or a folder here',
+  footer: 'Nothing is read until the last button.',
+  railHeading: 'Your sources',
+  railEmpty: 'Nothing added yet. Pick a kind above.',
+  tray: (n: number) => (n === 1 ? '1 source ready to add' : n + ' sources ready to add'),
+  back: 'Back to the list',
+  remove: 'Remove',
+  openFolder: 'Open folder',
+  openFolderLabel: (what: string) => 'Open folder for ' + what,
+  alreadyHeading: 'Already in this case',
+  toAddHeading: 'To add now',
+  closedCase: 'This case cannot take new data right now: it is closed, or it changed somewhere else.',
+  namesHeading: 'Names (optional)',
+  tiles: {
+    pc: { name: 'Find on this PC', sub: 'Looks for what is here', badge: 'Start here' },
+    mongo: { name: 'MongoDB', sub: 'API audit logs and app data' },
+    sql: { name: 'SQL Server', sub: 'Slow calls, Query Store' },
+    redis: { name: 'Redis', sub: 'Cache health' },
+    files: { name: 'Files', sub: 'IIS, app logs, exports' },
+    blackbox: { name: 'Blackbox recorder', sub: 'Machine health over time' },
+    another: { name: 'Another day', sub: 'More data for a day already in the case' }
+  },
+  find: {
+    heading: 'Find on this PC',
+    intro: 'Unravis looks at this computer and shows what it found. It reads file names and sizes only.',
+    start: 'Look on this PC',
+    again: 'Look again',
+    cancel: 'Stop looking',
+    found: (n: number) => (n === 1 ? 'Found 1 thing. Tick what to add.' : 'Found ' + n + ' things. Tick what to add.'),
+    nothing: 'Nothing was found on this PC. Pick a kind on the previous screen to add it by hand.',
+    mongoSqlNote: 'MongoDB and SQL Server open a short form with the address filled in, then bring you back here.',
+    connect: 'Connect…',
+    addByAddress: 'Add by address',
+    addTicked: (n: number) => (n === 0 ? 'Add ticked' : 'Add ' + n + ' ticked'),
+    statusWorks: 'Works',
+    statusFound: 'Found',
+    statusNotReadable: 'Not readable yet',
+    statusNeedsSteps: 'Needs an export',
+    statusNotFound: 'Not found',
+    added: 'Added',
+    mongoPrefill: 'Address filled in for you:'
+  },
+  blackbox: {
+    heading: 'Blackbox recorder',
+    intro: 'The recorder writes machine health to a folder. Unravis reads that folder.',
+    searching: 'Looking for recorder folders on your drives…',
+    recorderOn: 'The recorder is running here. Its folder was read from the service.',
+    pickHeading: 'Which folder?',
+    recommended: 'Recommended',
+    newest: 'Newest recording',
+    recordings: (n: number) => (n === 1 ? '1 recording' : n + ' recordings'),
+    another: 'Another folder',
+    anotherLabel: 'Folder path',
+    anotherHint: 'A full path that starts with a drive letter, such as D:\\Blackbox.',
+    check: 'Check it works',
+    checking: 'Checking…',
+    works: 'Works',
+    failed: 'Failed',
+    add: 'Add this recorder',
+    nameLabel: 'Name it',
+    nameHint: 'A short name you will recognise, such as Server 1.',
+    none: 'No recorder folders were found on your drives.',
+    incomplete: 'The search stopped early. Use Look again, or type the folder.',
+    again: 'Look again',
+    placeNew: 'Place a new recorder instead',
+    placeNewNote: 'This opens the recorder page. Come back here afterwards.',
+    added: 'Recorder added.'
+  },
+  openReasons: {
+    'not-found': 'That folder was not found on this computer.',
+    'not-a-folder': 'That path is not a folder.',
+    'path-unsafe': 'That folder path cannot be opened. Use a full path that starts with a drive letter.',
+    'path-not-local': 'Only folders on this computer can be opened.',
+    'not-supported': 'Opening a folder is only available in the Windows app.',
+    'cannot-open': 'Windows could not open that folder.'
+  } as Readonly<Record<string, string>>
+};
+
+export const lastButton = (adding: boolean, n: number, busy: boolean): string =>
+  busy ? (adding ? 'Adding…' : 'Creating…') : adding ? (n === 1 ? 'Add 1 source to case' : 'Add ' + n + ' sources to case') : n === 0 ? 'Create case' : n === 1 ? 'Create case with 1 source' : 'Create case with ' + n + ' sources';

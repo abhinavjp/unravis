@@ -327,7 +327,7 @@ test('a draft source has no field for a password, key or connection string', () 
 });
 
 test('the create route reaches the shell through the Landing screen', () => {
-  assert.match(read('src/components/Landing.svelte'), /mode === 'create'\}\s*<CreateWizard onLeave=\{goHome\} busy=\{[^}]+\}>\s*\{#snippet sources\(\)\}<SourceGallery \/>\{\/snippet\}\s*\{#snippet review\(\)\}[\s\S]*?\{#snippet finish\(\)\}[\s\S]*?<\/CreateWizard>/);
+  assert.match(read('src/components/Landing.svelte'), /mode === 'create'\}\s*<CreateWizard onLeave=\{goHome\} busy=\{[^}]+\}>\s*\{#snippet sources\(\)\}<SourceStep \/>\{\/snippet\}\s*\{#snippet review\(\)\}[\s\S]*?\{#snippet finish\(\)\}[\s\S]*?<\/CreateWizard>/);
   assert.match(read('src/App.svelte'), /app\.screen === 'create'[\s\S]{0,300}<Landing mode="create" \/>/);
 });
 

@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unravis source wizard (PROTOTYPE)</title>
+<style>
+:root{--bg:#050807;--surface:#0a0f0d;--surface-2:#101714;--line:#1a2621;--line-soft:#131c18;--control:#6b8478;--text:#eef3f1;--text-2:#93a39b;--accent:#3fd6b0;--accent-ink:#03130e;--warn:#e3b341;--bad:#ff7b72;--focus:#7ff0d0;--hatch:repeating-linear-gradient(135deg,#8fa39a33 0 4px,transparent 4px 8px);--r:2px;--dur:180ms;--ease:cubic-bezier(.2,.7,.2,1)}
+:root[data-theme=light]{--bg:#f5f5f3;--surface:#fff;--surface-2:#eeeeeb;--line:#d9d9d4;--line-soft:#e6e6e2;--control:#74808f;--text:#16191d;--text-2:#4a525c;--accent:#0b6b57;--accent-ink:#fff;--warn:#96600a;--bad:#b02a3d;--focus:#0b6b57}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "IBM Plex Sans","Segoe UI Variable Text",system-ui,sans-serif;font-feature-settings:"tnum" 1}
+code,.mono{font-family:"IBM Plex Mono",ui-monospace,Consolas,monospace;font-size:12px}
+h1,h2,h3{font-weight:600;letter-spacing:-.01em;margin:0}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+header{height:56px;display:flex;align-items:center;gap:12px;padding:0 24px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:600}
+.mark{width:26px;height:26px;border:1px solid var(--line);background:var(--surface-2);padding:5px;display:flex;align-items:flex-end;gap:2px}
+.mark i{flex:1;background:var(--accent)}.mark i:nth-child(1){height:7px;opacity:.55}.mark i:nth-child(2){height:14px}.mark i:nth-child(3){height:10px;opacity:.8}
+.spacer{flex:1}
+.proto{background:var(--surface-2);color:var(--text-2);padding:2px 8px;font-size:12px}
+.seg{display:flex;border:1px solid var(--line)}
+.seg button{background:none;border:0;padding:6px 12px;color:var(--text-2)}
+.seg button[aria-pressed=true]{color:var(--text);box-shadow:inset 0 -2px var(--accent)}
+.btn{background:transparent;border:1px solid var(--line);border-radius:var(--r);padding:6px 12px;transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.btn:hover{border-color:var(--text-2);background:var(--surface-2)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.quiet{border-color:transparent;color:var(--text-2)}
+.btn:disabled{background:var(--surface-2);border-color:var(--control);color:var(--text-2);cursor:not-allowed;opacity:.7}
+main{max-width:1080px;margin:0 auto;padding:24px 24px 120px}
+.case{display:flex;align-items:center;gap:8px;color:var(--text-2);margin-bottom:16px}
+.sticker{background:var(--surface-2);padding:2px 8px;font-size:12px;border-radius:var(--r)}
+.sticker.good{color:var(--accent)}.sticker.warn{color:var(--warn)}.sticker.bad{color:var(--bad)}.sticker.pending{background:var(--hatch),var(--surface-2)}
+.steps{display:flex;gap:24px;border-bottom:1px solid var(--line);margin-bottom:24px}
+.steps div{padding:8px 0;color:var(--text-2)}
+.steps div.on{color:var(--text);box-shadow:inset 0 -2px var(--accent)}
+.steps div.done{color:var(--text)}.steps div.done::before{content:"\2713  ";color:var(--accent)}
+.lead{color:var(--text-2);max-width:62ch;margin:6px 0 20px}
+.nutshell{border:1px solid var(--line);background:var(--surface);padding:12px 16px;margin-bottom:20px;max-width:70ch}
+.nutshell b{display:block;margin-bottom:2px}
+.grid{display:grid;grid-template-columns:1.1fr 1fr;gap:24px}
+@media(max-width:820px){.grid{grid-template-columns:1fr}}
+.drop{border:1px dashed var(--control);padding:20px;text-align:center;color:var(--text-2);margin-bottom:16px;transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.drop.over{background:var(--surface-2);border-color:var(--accent);color:var(--text)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.tile{text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px;transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease)}
+.tile:hover{border-color:var(--text-2);background:var(--surface-2)}
+.tile[aria-pressed=true]{border-color:var(--accent)}
+.tile b{display:block;font-weight:600}.tile span{color:var(--text-2);font-size:12px}
+.panel{background:var(--surface);border:1px solid var(--line);padding:16px;min-height:240px}
+.panel h3{margin-bottom:4px}
+.beats{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:14px}
+.beat{display:grid;grid-template-columns:24px 1fr;gap:8px}
+.beat .n{width:20px;height:20px;border:1px solid var(--control);display:grid;place-items:center;font-size:12px;color:var(--text-2)}
+.beat.ok .n{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+label{display:block;font-size:12px;color:var(--text-2);margin-bottom:4px}
+input,select{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--control);border-radius:var(--r);padding:6px 8px;font:inherit}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.hint{color:var(--text-2);font-size:12px;margin:4px 0 0}
+.checks{display:grid;gap:4px;margin-top:6px}
+.checks label{display:flex;gap:8px;align-items:center;color:var(--text);font-size:13px;margin:0}
+.checks input{width:auto}
+.tray{margin-top:24px;border-top:1px solid var(--line);padding-top:16px}
+.tray h3{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.item{display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:center;border:1px solid var(--line-soft);background:var(--surface);padding:8px 12px;margin-bottom:8px}
+.item .meta{color:var(--text-2);font-size:12px}
+.labels{grid-column:1/-1;display:none;gap:8px;grid-template-columns:repeat(3,1fr)}
+.item.open .labels{display:grid}
+.empty{color:var(--text-2);border:1px dashed var(--line);padding:12px}
+footer{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:12px 24px;display:flex;gap:12px;align-items:center;justify-content:space-between}
+.note{color:var(--text-2);font-size:12px}
+.done-box{border:1px solid var(--accent);padding:24px;max-width:60ch}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="mark"><i></i><i></i><i></i></span>Unravis</div>
+  <span class="proto">Prototype. Sample data. Not connected to anything.</span>
+  <span class="spacer"></span>
+  <span class="note">Starting from:</span>
+  <div class="seg" role="group" aria-label="Which door">
+    <button id="m-new" aria-pressed="true">Create a case</button>
+    <button id="m-add" aria-pressed="false">Add to a case</button>
+  </div>
+  <button class="btn quiet" id="theme" aria-label="Switch light or dark">Theme</button>
+</header>
+<main id="app"></main>
+<footer>
+  <div class="note" id="foot-note"></div>
+  <div class="row" style="margin:0"><button class="btn" id="back">Back</button><button class="btn primary" id="next">Next</button></div>
+</footer>
+
+<script>
+// PROTOTYPE: one wizard, two doors. State lives in memory only. Sample data below is illustrative, not a live scan.
+const TYPES = {
+  mongo:{name:'MongoDB',sub:'Audit database',saved:['audit-prod (db01:27017)','audit-uat (db02:27017)'],dbs:['AuditDB','AuditArchive','ReportsDB'],where:'Address'},
+  sql:{name:'SQL Server',sub:'Query Store, slow calls',saved:['sql-prod (SQL01)'],dbs:['Payroll','Payroll_Reports'],where:'Server address'},
+  redis:{name:'Redis',sub:'Cache health',saved:[],dbs:[],where:'Address'},
+  files:{name:'Files',sub:'IIS, app logs, exports',saved:[],dbs:[],where:'Folder or files'},
+  blackbox:{name:'Blackbox recorder',sub:'Machine health over time',saved:['WEB01 (recording, 6 days)','DB01 (recording, 2 days)'],dbs:[],where:'Recorder'},
+  scan:{name:'Find on this PC',sub:'Looks at file names only',saved:[],dbs:[],where:''}
+};
+const SCAN=[['IIS logs','C:\\inetpub\\logs\\LogFiles','Ready'],['SQL Server','localhost\\SQLEXPRESS','Ready'],['App logs','D:\\Apps\\Payroll\\logs','Partly ready']];
+const S={where:{},mode:'new',step:0,name:'',pick:'mongo',tray:[],test:{},done:false,caseName:'Payroll slow-down, 12 Nov'};
+const $=s=>document.querySelector(s);
+const steps=()=>S.mode==='new'?['Name','Add sources','Review']:['Add sources','Review'];
+const kind=()=>steps()[S.step];
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function add(type,title,detail){S.tray.push({id:Math.random().toString(36).slice(2),type,title,detail,env:'',portal:'',api:'',open:false});S.test[type]=null;S.where[type]='';render();}
+function render(){
+  $('#m-new').setAttribute('aria-pressed',S.mode==='new');$('#m-add').setAttribute('aria-pressed',S.mode==='add');
+  const st=steps(),k=kind();
+  let h=`<div class="case"><h1 style="font-size:20px">${S.mode==='new'?'Create a case':'Add sources'}</h1>${S.mode==='add'?`<span class="sticker">to ${esc(S.caseName)}</span>`:''}</div>`;
+  if(!S.done) h+=`<div class="steps" role="list">${st.map((t,i)=>`<div role="listitem" class="${i===S.step?'on':i<S.step?'done':''}">${i+1}. ${t}</div>`).join('')}</div>`;
+  if(S.done){
+    h+=`<div class="done-box"><h2>${S.mode==='new'?'Case created':'Sources added'}</h2><p class="lead">${S.tray.length} source${S.tray.length===1?'':'s'} ${S.mode==='new'?'in':'added to'} <b>${esc(S.mode==='new'?(S.name||'Untitled case'):S.caseName)}</b>. Unravis only read them; nothing changed on those servers.</p><button class="btn primary" id="again">Start over</button></div>`;
+    $('#app').innerHTML=h;$('#again').onclick=()=>{Object.assign(S,{step:0,tray:[],done:false,name:''});render()};chrome();return;
+  }
+  if(k==='Name') h+=nameStep();
+  else if(k==='Add sources') h+=sourcesStep();
+  else h+=reviewStep();
+  $('#app').innerHTML=h;bind();chrome();
+}
+function chrome(){
+  const st=steps(),last=S.step===st.length-1;
+  $('#back').style.visibility=S.step===0||S.done?'hidden':'visible';
+  const n=S.tray.length;
+  $('#next').style.display=S.done?'none':'';
+  $('#next').textContent=last?(S.mode==='new'?'Create case':`Add ${n} source${n===1?'':'s'} to case`):'Next';
+  $('#next').disabled=last&&n===0&&S.mode==='add';
+  $('#foot-note').textContent=S.done?'':n?`${n} source${n===1?'':'s'} in the tray. Nothing is read until the last button.`:'Nothing is read until the last button.';
+}
+function nameStep(){return `<p class="lead">Give the case a name you will recognise. You can change it later.</p>
+<div class="panel" style="max-width:520px;min-height:0"><label for="nm">Case name</label><input id="nm" value="${esc(S.name)}" placeholder="For example: Payroll slow-down, 12 Nov">
+<p class="hint">Next you will choose what to look at. You can also skip that and add data after.</p></div>`;}
+function sourcesStep(){
+  const t=TYPES[S.pick];
+  return `<div class="nutshell"><b>In a nutshell</b>Pick a type, check it works, choose what to read. Everything you add waits in the tray. Nothing is read until the last button.</div>
+<div class="grid"><div>
+  <div class="drop" id="drop"><b>Drop files or a folder here</b><div class="hint">Unravis picks the type for you (IIS logs, app logs, Query Store export, audit export).</div><div class="row" style="justify-content:center"><button class="btn" id="fake-drop">Try with 2 sample files</button></div></div>
+  <div class="tiles">${Object.entries(TYPES).map(([k,v])=>`<button class="tile" data-pick="${k}" aria-pressed="${S.pick===k}"><b>${v.name}</b><span>${v.sub}</span></button>`).join('')}</div>
+</div><div class="panel">${panel(t)}</div></div>
+${tray()}`;
+}
+function panel(t){
+  const k=S.pick,res=S.test[k];
+  if(k==='scan') return `<h3>Find on this PC</h3><p class="hint">Looks at file names and sizes. Opens nothing.</p><ul class="beats">${SCAN.map((s,i)=>`<li class="beat"><span class="n"></span><div><b>${s[0]}</b> <span class="sticker ${s[2]==='Ready'?'good':'warn'}">${s[2]}</span><div class="hint mono">${esc(s[1])}</div><button class="btn" data-scan="${i}" style="margin-top:6px">Add to tray</button></div></li>`).join('')}</ul>`;
+  const saved=t.saved.length?`<label for="sv">Use a saved one</label><select id="sv"><option>Type a new one</option>${t.saved.map(s=>`<option>${esc(s)}</option>`).join('')}</select>`:'';
+  let b1=`<div>${saved}<label for="wh" style="margin-top:8px">${t.where}</label><input id="wh" value="${esc(S.where[k]||'')}" placeholder="${k==='files'?'D:\\logs\\2025-11-12':'e.g. server01:27017'}"></div>`;
+  let b2=`<div><div class="row" style="margin-top:0"><button class="btn" id="test">Check it works</button>${res==='ok'?'<span class="sticker good">Works</span>':res==='bad'?'<span class="sticker bad">Failed</span>':'<span class="sticker pending">Not tested</span>'}</div>
+  <p class="hint">${k==='files'?'Reads file names only. The files are not opened yet.':'Read-only. A password you type stays in memory and is not saved.'}</p>${res==='bad'?'<p class="hint" style="color:var(--bad)">Could not reach it. Check the address, then try again. Nothing was changed.</p>':''}</div>`;
+  let b3=`<div>${t.dbs.length?`<div class="checks">${t.dbs.map((d,i)=>`<label><input type="checkbox" class="db" ${i===0?'checked':''}> ${d}</label>`).join('')}</div>`:`<p class="hint">${k==='files'?'You will see the files Unravis found after the check.':k==='blackbox'?'One recorder, one machine.':'Nothing to choose for this type.'}</p>`}</div>`;
+  return `<h3>${t.name}</h3><p class="hint">${t.sub}. Unravis only reads.</p><ol class="beats" style="list-style:none">
+  <li class="beat ${S.pick&&''}"><span class="n">1</span><div><b>Where</b>${b1}</div></li>
+  <li class="beat ${res==='ok'?'ok':''}"><span class="n">${res==='ok'?'\u2713':'2'}</span><div><b>Check it</b>${b2}</div></li>
+  <li class="beat"><span class="n">3</span><div><b>Choose what to read</b>${b3}</div></li></ol>
+  <div class="row"><button class="btn primary" id="add" ${res==='ok'?'':'disabled'}>Add to tray</button>${res==='ok'?'':'<span class="hint">Check it works first.</span>'}</div>`;
+}
+function tray(){
+  return `<div class="tray"><h3>Tray <span class="sticker">${S.tray.length}</span></h3>${S.tray.length?S.tray.map(i=>`<div class="item ${i.open?'open':''}"><div><b>${esc(i.title)}</b> <span class="sticker">${esc(TYPES[i.type]?TYPES[i.type].name:i.type)}</span><div class="meta mono">${esc(i.detail)}</div></div>
+<div class="row" style="margin:0"><button class="btn quiet" data-lab="${i.id}">Labels (optional)</button><button class="btn quiet" data-rm="${i.id}" aria-label="Remove ${esc(i.title)}">Remove</button></div>
+<div class="labels"><div><label>Environment</label><input data-f="env" data-id="${i.id}" value="${esc(i.env)}" placeholder="Prod"></div><div><label>Portal</label><input data-f="portal" data-id="${i.id}" value="${esc(i.portal)}"></div><div><label>API</label><input data-f="api" data-id="${i.id}" value="${esc(i.api)}"></div></div></div>`).join(''):'<div class="empty">Nothing added yet. You can also skip this and add data after.</div>'}</div>`;
+}
+function reviewStep(){
+  const rows=S.tray.map(i=>`<div class="item"><div><b>${esc(i.title)}</b> <span class="sticker">${esc(TYPES[i.type]?TYPES[i.type].name:i.type)}</span><div class="meta mono">${esc(i.detail)}</div></div><div class="meta">${[i.env,i.portal,i.api].filter(Boolean).map(esc).join(' / ')||'No labels'}</div></div>`).join('')||'<div class="empty">No sources. The case will be made empty; you can add data after.</div>';
+  return `<div class="nutshell"><b>In a nutshell</b>${S.tray.length} source${S.tray.length===1?'':'s'}. Unravis only reads. Nothing changes on those servers.</div>
+<h3 style="margin-bottom:8px">${esc(S.mode==='new'?(S.name||'Untitled case'):S.caseName)}</h3>${rows}`;
+}
+function bind(){
+  document.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>{S.pick=b.dataset.pick;render()});
+  const nm=$('#nm');if(nm)nm.oninput=e=>S.name=e.target.value;
+  const t=$('#test');if(t)t.onclick=()=>{const v=$('#wh').value.trim();S.where[S.pick]=v;S.test[S.pick]=(v||S.pick==='blackbox')?'ok':'bad';render()};
+  const a=$('#add');if(a)a.onclick=()=>{const t=TYPES[S.pick],v=($('#wh')||{}).value||t.saved[0]||t.name;const dbs=[...document.querySelectorAll('.db:checked')].map(x=>x.parentNode.textContent.trim());add(S.pick,t.name,v+(dbs.length?'  ['+dbs.join(', ')+']':''))};
+  document.querySelectorAll('[data-scan]').forEach(b=>b.onclick=()=>{const s=SCAN[b.dataset.scan];add(s[0]==='SQL Server'?'sql':'files',s[0],s[1])});
+  const fd=$('#fake-drop');if(fd)fd.onclick=()=>{add('files','IIS logs','u_ex251112.log, u_ex251113.log  (detected: IIS)')};
+  const d=$('#drop');if(d){d.ondragover=e=>{e.preventDefault();d.classList.add('over')};d.ondragleave=()=>d.classList.remove('over');d.ondrop=e=>{e.preventDefault();d.classList.remove('over');const n=[...e.dataTransfer.files].map(f=>f.name);add('files','Files',n.length?n.join(', ')+'  (names only, not read)':'dropped files')}}
+  document.querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{S.tray=S.tray.filter(i=>i.id!==b.dataset.rm);render()});
+  document.querySelectorAll('[data-lab]').forEach(b=>b.onclick=()=>{const i=S.tray.find(x=>x.id===b.dataset.lab);i.open=!i.open;render()});
+  document.querySelectorAll('[data-f]').forEach(inp=>inp.oninput=e=>{S.tray.find(x=>x.id===inp.dataset.id)[inp.dataset.f]=e.target.value});
+}
+$('#m-new').onclick=()=>{S.mode='new';S.step=0;S.done=false;render()};
+$('#m-add').onclick=()=>{S.mode='add';S.step=0;S.done=false;render()};
+$('#back').onclick=()=>{if(S.step>0){S.step--;render()}};
+$('#next').onclick=()=>{if(S.step<steps().length-1){S.step++;render()}else{S.done=true;render()}};
+$('#theme').onclick=()=>{const r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark'};
+render();
+</script>
+</body>
+</html>

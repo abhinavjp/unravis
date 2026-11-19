@@ -570,7 +570,7 @@ test('Enter in a step field does not move the wizard on', () => {
 });
 
 test('the landing screen mounts the gallery in the create wizard', () => {
-  assert.match(read('src/components/Landing.svelte'), /<CreateWizard onLeave=\{goHome\} busy=\{[^}]+\}>\s*\{#snippet sources\(\)\}<SourceGallery \/>\{\/snippet\}/);
+  assert.match(read('src/components/Landing.svelte'), /<CreateWizard onLeave=\{goHome\} busy=\{[^}]+\}>\s*\{#snippet sources\(\)\}<SourceStep \/>\{\/snippet\}/);
 });
 
 test('the store keeps no password in the shared draft model', () => {

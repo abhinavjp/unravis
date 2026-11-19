@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unravis source wizard (PROTOTYPE v2)</title>
+<style>
+:root{--bg:#050807;--surface:#0a0f0d;--surface-2:#101714;--line:#1a2621;--line-soft:#131c18;--control:#6b8478;--text:#eef3f1;--text-2:#93a39b;--accent:#3fd6b0;--accent-ink:#03130e;--warn:#e3b341;--bad:#ff7b72;--focus:#7ff0d0;--hatch:repeating-linear-gradient(135deg,#8fa39a33 0 4px,transparent 4px 8px);--r:2px;--dur:180ms;--ease:cubic-bezier(.2,.7,.2,1)}
+:root[data-theme=light]{--bg:#f5f5f3;--surface:#fff;--surface-2:#eeeeeb;--line:#d9d9d4;--line-soft:#e6e6e2;--control:#74808f;--text:#16191d;--text-2:#4a525c;--accent:#0b6b57;--accent-ink:#fff;--warn:#96600a;--bad:#b02a3d;--focus:#0b6b57}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "IBM Plex Sans","Segoe UI Variable Text",system-ui,sans-serif;font-feature-settings:"tnum" 1}
+code,.mono{font-family:"IBM Plex Mono",ui-monospace,Consolas,monospace;font-size:12px}
+h1,h2,h3{font-weight:600;letter-spacing:-.01em;margin:0}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+body>header{height:56px;display:flex;align-items:center;gap:12px;padding:0 24px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:600}
+.mark{width:26px;height:26px;border:1px solid var(--line);background:var(--surface-2);padding:5px;display:flex;align-items:flex-end;gap:2px}
+.mark i{flex:1;background:var(--accent)}.mark i:nth-child(1){height:7px;opacity:.55}.mark i:nth-child(2){height:14px}.mark i:nth-child(3){height:10px;opacity:.8}
+.spacer{flex:1}
+.proto{background:var(--surface-2);color:var(--text-2);padding:2px 8px;font-size:12px}
+.seg{display:flex;border:1px solid var(--line)}
+.seg button{background:none;border:0;padding:6px 12px;color:var(--text-2)}
+.seg button[aria-pressed=true]{color:var(--text);box-shadow:inset 0 -2px var(--accent)}
+.btn{background:transparent;border:1px solid var(--control);border-radius:var(--r);padding:6px 12px;transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.btn:hover{border-color:var(--text-2);background:var(--surface-2)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.primary.off{background:transparent;color:var(--text);border-color:var(--control);font-weight:400}
+.btn.quiet{border-color:transparent;color:var(--text-2)}
+.btn:disabled{background:var(--surface-2);border-color:var(--control);color:var(--text-2);cursor:not-allowed;opacity:.7}
+main{max-width:1080px;margin:0 auto;padding:24px 24px 120px}
+.case{display:flex;align-items:center;gap:8px;color:var(--text-2);margin-bottom:16px}
+.sticker{background:var(--surface-2);padding:2px 8px;font-size:12px;border-radius:var(--r);white-space:nowrap}
+.sticker.good{color:var(--accent)}.sticker.warn{color:var(--warn)}.sticker.bad{color:var(--bad)}.sticker.pending{background:var(--hatch),var(--surface-2)}
+.steps{display:flex;gap:24px;border-bottom:1px solid var(--line);margin-bottom:24px}
+.steps div{padding:8px 0;color:var(--text-2)}
+.steps div.on{color:var(--text);box-shadow:inset 0 -2px var(--accent)}
+.steps div.done{color:var(--text)}.steps div.done::before{content:"\2713  ";color:var(--accent)}
+.lead{color:var(--text-2);max-width:62ch;margin:6px 0 20px}
+.nutshell{border:1px solid var(--line);background:var(--surface);padding:12px 16px;margin-bottom:20px;max-width:70ch}
+.nutshell b{display:block;margin-bottom:2px}
+.drop{border:1px dashed var(--control);padding:16px;text-align:center;color:var(--text-2);transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.drop.over{background:var(--surface-2);border-color:var(--accent);color:var(--text)}
+.tile{text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px;transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease)}
+.tile:hover{border-color:var(--text-2);background:var(--surface-2)}
+.tile b{display:flex;justify-content:space-between;gap:8px;font-weight:600}.tile span{color:var(--text-2);font-size:12px}
+.panel{background:var(--surface);border:1px solid var(--line);padding:16px}
+label{display:block;font-size:12px;color:var(--text-2);margin-bottom:4px}
+input,select{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--control);border-radius:var(--r);padding:6px 8px;font:inherit}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.hint{color:var(--text-2);font-size:12px;margin:4px 0 0}
+.item{display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:center;border:1px solid var(--line-soft);background:var(--surface);padding:8px 12px;margin-bottom:8px}
+.item .meta{color:var(--text-2);font-size:12px}
+.empty{color:var(--text-2);border:1px dashed var(--line);padding:12px}
+footer{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:12px 24px;display:flex;gap:12px;align-items:center;justify-content:space-between}
+.note{color:var(--text-2);font-size:12px}
+.done-box{border:1px solid var(--accent);padding:24px;max-width:60ch}
+/* step 2 v2 */
+.grid2{display:grid;grid-template-columns:268px 1fr;gap:24px;align-items:start}
+@media(max-width:860px){.grid2{grid-template-columns:1fr}}
+.rail{border:1px solid var(--line);background:var(--surface);padding:12px;position:sticky;top:12px}
+.rail h3{font-size:13px;color:var(--text-2);display:flex;justify-content:space-between;align-items:center}
+.grp{margin-top:12px}.grp>.gh{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text-2)}
+.src{display:grid;grid-template-columns:8px 1fr auto;gap:8px;align-items:center;width:100%;text-align:left;background:transparent;border:1px solid var(--line-soft);border-radius:var(--r);padding:7px 8px;margin-top:6px}
+.src:hover{border-color:var(--text-2);background:var(--surface-2)}.src[aria-current=true]{border-color:var(--accent)}
+.src .dot{width:8px;height:8px;background:var(--accent)}.src .dot.warn{background:var(--warn)}
+.src b{font-weight:600;display:block;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.src small{color:var(--text-2);font-size:11px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rail .empty{font-size:12px;margin-top:10px}
+.card{background:var(--surface);border:1px solid var(--line);padding:20px;max-width:720px}
+.card>.hd{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.card h2{font-size:18px}
+.stepper{display:flex;gap:6px;margin:0 0 18px;padding:0;list-style:none}
+.stepper li{flex:1;border-top:2px solid var(--line);padding-top:6px;font-size:12px;color:var(--text-2)}
+.stepper li.on{border-color:var(--accent);color:var(--text)}.stepper li.done{border-color:var(--accent)}
+.stepper li.done::before{content:"\2713  ";color:var(--accent)}
+.ask{font-size:16px;font-weight:600;margin:0 0 12px}
+.fld{margin-bottom:12px}.fld>label{color:var(--text);font-weight:600;font-size:13px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}.three{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:560px){.two,.three{grid-template-columns:1fr}}
+.chips{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:6px}
+.chip{text-align:left;background:var(--bg);border:1px solid var(--line);border-radius:var(--r);padding:8px 10px}
+.chip:hover{border-color:var(--text-2)}.chip[aria-pressed=true]{border-color:var(--accent);background:var(--surface-2)}
+.chip b{display:block;font-size:13px}.chip small{color:var(--text-2);font-size:11px}.chip.new{border-style:dashed;color:var(--text-2)}
+details.disc{border-top:1px solid var(--line-soft);padding:8px 0}
+details.disc>summary{cursor:pointer;list-style:none;display:flex;gap:8px;color:var(--text);font-size:13px}
+details.disc>summary::-webkit-details-marker{display:none}
+details.disc>summary::before{content:"+";width:14px;color:var(--text-2)}details.disc[open]>summary::before{content:"\2212"}
+details.disc>summary .sm{color:var(--text-2);margin-left:auto;font-size:12px}
+details.disc>div{padding:10px 0 2px 22px}
+.segc{display:inline-flex;border:1px solid var(--control);border-radius:var(--r);flex-wrap:wrap}
+.segc button{background:none;border:0;padding:5px 10px;font-size:12px;color:var(--text-2)}
+.segc button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink);font-weight:600}
+.dbrow{display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap;border:1px solid var(--line-soft);padding:8px 10px;margin-bottom:6px}
+.tick{display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--text);font-size:13px}.tick input{width:auto}
+.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:16px}
+.say{border-left:3px solid var(--line);padding:6px 10px;margin-top:10px;font-size:13px}.say.good{border-color:var(--accent)}.say.bad{border-color:var(--bad)}.say.warn{border-color:var(--warn)}
+.tiles2{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
+.frow{border:1px solid var(--line-soft);padding:8px 10px;margin-bottom:6px;display:grid;gap:6px}
+.frow .top{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="mark"><i></i><i></i><i></i></span>Unravis</div>
+  <span class="proto">Prototype v2. Sample data. Not connected to anything.</span>
+  <span class="spacer"></span>
+  <span class="note">Starting from:</span>
+  <div class="seg" role="group" aria-label="Which door">
+    <button id="m-new" aria-pressed="true">Create a case</button>
+    <button id="m-add" aria-pressed="false">Add to a case</button>
+  </div>
+  <button class="btn quiet" id="theme" aria-label="Switch light or dark">Theme</button>
+</header>
+<main id="app"></main>
+<footer>
+  <div class="note" id="foot-note"></div>
+  <div class="row" style="margin:0"><button class="btn" id="back">Back</button><button class="btn primary" id="next">Next</button></div>
+</footer>
+
+<script>
+// PROTOTYPE v2: only step 2 (Add sources) is redesigned. Many sources of one type, every field the current app has,
+// saved connections visible. State is in memory. Sample data only: nothing is connected, nothing is read.
+const TYPES={
+ mongo:{name:'MongoDB',sub:'API audit logs and app data'},
+ sql:{name:'SQL Server',sub:'Slow calls, Query Store'},
+ redis:{name:'Redis',sub:'Cache health'},
+ files:{name:'Files',sub:'IIS, app logs, exports'},
+ blackbox:{name:'Blackbox recorder',sub:'Machine health over time'}
+};
+const SAVED={
+ mongo:[{id:'m1',label:'audit-prod',addr:'mongodb://db01:27017',user:'auditreader',auth:'admin',tls:'system',coll:'ApiAuditLog',pw:true},
+        {id:'m2',label:'audit-uat',addr:'mongodb://db02:27017',user:'',auth:'',tls:'uri',coll:'ApiAuditLog',pw:false}],
+ sql:[{id:'s1',label:'sql-prod',server:'SQL01,1655',auth:'sql',user:'reader',db:'Payroll',pw:true},
+      {id:'s2',label:'sql-uat',server:'SQL02',auth:'windows',user:'',db:'',pw:false}]
+};
+const DBS={mongo:['AuditDB','AuditArchive','ReportsDB','admin'],sql:['Payroll','Payroll_Reports','master']};
+const TLS=[['system','On: verify the certificate'],['custom','On: use a certificate file'],['insecure','On: skip verification (advanced)'],['uri','As set in the address'],['off','Off']];
+const KINDS=['IIS web log (W3C)','HTTP.sys error log (HTTPERR)','IIS failed request trace','SQL Server extended events','SQL Server error log','SQL Server Query Store export','Windows event log','App log (log4net, NLog, Serilog or similar)','Hangfire jobs (CSV export)','Redis slow log (CSV export)','Another file or export'];
+const NEEDS_ZONE=[0,1,2,6,7];
+const ZONES=['Same computer as Unravis','WEB01','WEB02','DB01'];
+const SCAN=[['IIS logs','files','C:\\inetpub\\logs\\LogFiles','Ready'],['SQL Server','sql','localhost\\SQLEXPRESS','Ready'],['App logs','files','D:\\Apps\\Payroll\\logs','Partly ready']];
+const S={mode:'new',step:0,name:'',src:[],cur:null,D:null,scan:false,done:false,caseName:'Payroll slow-down, 12 Nov'};
+const $=s=>document.querySelector(s);
+const steps=()=>S.mode==='new'?['Name','Add sources','Review']:['Add sources','Review'];
+const kind=()=>steps()[S.step];
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const uid=()=>Math.random().toString(36).slice(2);
+const count=t=>S.src.filter(x=>x.type===t).length;
+const word=(n,w)=>n+' '+w+(n===1?'':'s');
+const labs=x=>[x.env,x.portal,x.api].filter(Boolean).join(' \u203a ');
+
+function draft(type,extra){
+ const base={env:'',portal:'',api:''};
+ const f={mongo:{saved:'',uri:'',user:'',pass:'',auth:'',tls:'system',coll:'ApiAuditLog'},
+  sql:{saved:'',server:'',auth:'sql',user:'',pass:'',remember:false,enc:'mandatory',trust:false,db:'',name:''},
+  redis:{addr:''},files:{},blackbox:{where:'',rec:''}}[type];
+ S.D=Object.assign({type,phase:0,f:Object.assign({},base,f),res:null,msg:'',dbs:[],cls:{},files:[],typing:false},extra||{});
+ S.cur=null;S.scan=false;
+}
+function render(){
+ $('#m-new').setAttribute('aria-pressed',S.mode==='new');$('#m-add').setAttribute('aria-pressed',S.mode==='add');
+ const st=steps(),k=kind();
+ let h=`<div class="case"><h1 style="font-size:20px">${S.mode==='new'?'Create a case':'Add sources'}</h1>${S.mode==='add'?`<span class="sticker">to ${esc(S.caseName)}</span>`:''}</div>`;
+ if(S.done){
+  h+=`<div class="done-box"><h2>${S.mode==='new'?'Case created':'Sources added'}</h2><p class="lead">${word(S.src.length,'source')} ${S.mode==='new'?'in':'added to'} <b>${esc(S.mode==='new'?(S.name||'Untitled case'):S.caseName)}</b>. Unravis only read them; nothing changed on those servers.</p><button class="btn primary" id="again">Start over</button></div>`;
+  $('#app').innerHTML=h;$('#again').onclick=()=>{Object.assign(S,{step:0,src:[],done:false,name:'',D:null,cur:null,scan:false});render()};chrome();return;
+ }
+ h+=`<div class="steps" role="list">${st.map((t,i)=>`<div role="listitem" class="${i===S.step?'on':i<S.step?'done':''}">${i+1}. ${t}</div>`).join('')}</div>`;
+ h+=k==='Name'?nameStep():k==='Add sources'?sourcesStep():reviewStep();
+ $('#app').innerHTML=h;chrome();
+}
+function chrome(){
+ const st=steps(),last=S.step===st.length-1,n=S.src.length;
+ $('#back').style.visibility=S.step===0||S.done?'hidden':'visible';
+ $('#next').style.display=S.done?'none':'';
+ $('#next').textContent=last?(S.mode==='new'?'Create case':`Add ${word(n,'source')} to case`):(kind()==='Add sources'?(n?'Review':'Skip, add later'):'Next');
+ $('#next').disabled=last&&n===0&&S.mode==='add';
+ $('#next').classList.toggle('off',kind()==='Add sources'&&(!!S.D||!n));
+ $('#foot-note').textContent=S.done?'':n?`${word(n,'source')} on your list. Nothing is read until the last button.`:'Nothing is read until the last button.';
+}
+function nameStep(){return `<p class="lead">Give the case a name you will recognise. You can change it later.</p>
+<div class="panel" style="max-width:520px"><label for="nm">Case name</label><input id="nm" value="${esc(S.name)}" placeholder="For example: Payroll slow-down, 12 Nov">
+<p class="hint">Next you will choose what to look at. You can also skip that and add data after.</p></div>`;}
+
+/* ---------- step 2 ---------- */
+function sourcesStep(){return `<div class="grid2">${rail()}<div>${S.D?card():S.cur?detail():S.scan?scanCard():pick()}</div></div>`;}
+function rail(){
+ const g=Object.keys(TYPES).filter(count).map(t=>`<div class="grp"><div class="gh"><span>${TYPES[t].name} \u00b7 ${count(t)}</span><button class="btn quiet" data-act="new" data-t="${t}" style="padding:0 6px" aria-label="Add another ${TYPES[t].name}">+ Add</button></div>
+ ${S.src.filter(x=>x.type===t).map(x=>`<button class="src" data-act="open" data-id="${x.id}" aria-current="${S.cur===x.id}"><i class="dot ${x.status||''}"></i><span style="min-width:0"><b>${esc(x.title)}</b><small>${esc(x.detail)}</small></span>${labs(x)?`<span class="sticker">${esc(labs(x))}</span>`:'<span></span>'}</button>`).join('')}</div>`).join('');
+ return `<aside class="rail" aria-label="Your sources"><h3><span>Your sources</span><span class="sticker">${S.src.length}</span></h3>${g||'<div class="empty">Nothing yet. That is fine: you can add data later.</div>'}</aside>`;
+}
+function pick(){
+ return `<div class="nutshell"><b>In a nutshell</b>Add as many sources as you like, even several of one kind. One at a time: connect, choose, done. Unravis only reads.</div>
+ <p class="ask">What do you want to add?</p>
+ <div class="tiles2">${Object.entries(TYPES).map(([k,v])=>`<button class="tile" data-act="new" data-t="${k}"><b>${v.name}${count(k)?`<span class="sticker good">${count(k)} added</span>`:''}</b><span>${v.sub}${count(k)?' \u00b7 add another':''}</span></button>`).join('')}
+ <button class="tile" data-act="scan"><b>Find on this PC</b><span>File names only. Opens nothing.</span></button></div>
+ <div class="drop" id="drop" style="margin-top:14px"><b>Or drop files or a folder here</b><div class="hint">Unravis picks the type for you. <button class="btn quiet" data-act="sample" style="padding:0 6px">Try 2 sample files</button></div></div>`;
+}
+function scanCard(){return `<section class="card"><div class="hd"><h2>Find on this PC</h2><span class="spacer"></span><button class="btn quiet" data-act="cancel">Cancel</button></div><p class="hint" style="margin:0 0 10px">Looks at file names and sizes. Opens nothing.</p>${SCAN.map((s,i)=>`<div class="dbrow"><span><b>${s[0]}</b> <span class="sticker ${s[3]==='Ready'?'good':'warn'}">${s[3]}</span><div class="hint mono">${esc(s[2])}</div></span><button class="btn" data-act="scanadd" data-i="${i}">Add</button></div>`).join('')}</section>`;}
+function stepper(l,ph){return `<ol class="stepper">${l.map((x,i)=>`<li class="${i===ph?'on':i<ph?'done':''}">${x}</li>`).join('')}</ol>`;}
+function fld(lbl,key,o={}){const f=S.D.f;return `<div class="fld"><label for="f-${key}">${lbl}</label><input id="f-${key}" data-k="${key}" type="${o.type||'text'}" value="${esc(f[key])}" placeholder="${esc(o.ph||'')}" autocomplete="off">${o.hint?`<p class="hint">${o.hint}</p>`:''}</div>`;}
+function sel(lbl,key,list){const f=S.D.f;return `<div class="fld"><label for="f-${key}">${lbl}</label><select id="f-${key}" data-k="${key}">${list.map(o=>{const v=Array.isArray(o)?o[0]:o,t=Array.isArray(o)?o[1]:o;return `<option value="${esc(v)}" ${f[key]===v?'selected':''}>${esc(t)}</option>`}).join('')}</select></div>`;}
+function disc(title,summary,body,open){return `<details class="disc" ${open?'open':''}><summary><span>${title}</span><span class="sm">${esc(summary)}</span></summary><div>${body}</div></details>`;}
+function savedChips(t){
+ const list=SAVED[t]||[],f=S.D.f;
+ if(!list.length)return '';
+ return `<div class="fld"><label>Saved connections</label><div class="chips">${list.map(s=>`<button class="chip" data-act="usesaved" data-id="${s.id}" aria-pressed="${f.saved===s.id}"><b>${esc(s.label)}</b><small>${esc(t==='mongo'?s.addr:s.server)} \u00b7 ${s.pw?'password kept':(s.auth==='windows'?'Windows login':'no password kept')}</small></button>`).join('')}<button class="chip new" data-act="clearsaved" aria-pressed="${f.saved===''}"><b>+ New connection</b><small>Type it below</small></button></div>${f.saved?`<p class="hint">Saved details are filled in. The password is used but never shown. Change the address or user and it becomes a new connection. <button class="btn quiet" data-act="forget" style="padding:0 4px">Remove this saved connection</button></p>`:''}</div>`;
+}
+function say(){const D=S.D;return D.msg?`<div class="say ${D.res==='ok'?'good':D.res==='bad'?'bad':D.res==='warn'?'warn':''}" role="status">${D.msg}</div>`:'';}
+function labelsBlock(){const f=S.D.f;return disc('Labels',[f.env,f.portal,f.api].filter(Boolean).join(' \u203a ')||'optional',`<div class="three"><div><label>Environment</label><input data-k="env" value="${esc(f.env)}" placeholder="Prod"></div><div><label>Portal</label><input data-k="portal" value="${esc(f.portal)}"></div><div><label>API</label><input data-k="api" value="${esc(f.api)}"></div></div><p class="hint">Helps you tell similar sources apart later. Skip if unsure.</p>`);}
+
+function card(){
+ const D=S.D,t=D.type,title=TYPES[t].name+(count(t)?` \u00b7 #${count(t)+1}`:'');
+ const L={mongo:['Connect','Choose databases'],sql:['Connect','Choose database'],redis:['Address'],files:['Pick files','Check types'],blackbox:['Find recorder','Choose machine']}[t];
+ const body={mongo:mongoBody,sql:sqlBody,redis:redisBody,files:filesBody,blackbox:bbBody}[t]();
+ return `<section class="card" aria-label="${title}"><div class="hd"><h2>${title}</h2><span class="sticker">Step ${D.phase+1} of ${L.length}</span><span class="spacer"></span><button class="btn quiet" data-act="cancel">Cancel</button></div>${stepper(L,D.phase)}${body}</section>`;
+}
+function savedPw(t){const f=S.D.f,s=f.saved&&(SAVED[t]||[]).find(x=>x.id===f.saved);return s&&s.pw;}
+function mongoBody(){
+ const D=S.D,f=D.f;
+ if(D.phase===0){
+  const tlsName=(TLS.find(x=>x[0]===f.tls)||[])[1];
+  return `<p class="ask">Where is this MongoDB?</p>${savedChips('mongo')}
+  ${fld('Connection address','uri',{ph:'mongodb://host:27017',hint:'Leave the user name and password out of the address; use Sign-in below.'})}
+  ${disc('Sign-in',f.user||'none (optional)',`<div class="two"><div class="fld"><label>User name</label><input data-k="user" value="${esc(f.user)}" autocomplete="off"></div><div class="fld"><label>Password</label><input data-k="pass" type="password" placeholder="${savedPw('mongo')?'Kept for this connection':''}" autocomplete="new-password"></div></div><div class="fld"><label>Login database (authSource)</label><input data-k="auth" value="${esc(f.auth)}" placeholder="optional"></div><p class="hint">Use a read-only user. A typed password stays in memory and is not saved.</p>`,!!f.user)}
+  ${disc('Encryption',tlsName,`${sel('Encryption and server trust','tls',TLS)}${f.tls==='custom'?`<div class="fld"><label>Certificate authority file (.pem or .crt)</label><input type="file" accept=".pem,.crt"><p class="hint">Certificates only. Private keys are not accepted. 256 KiB or smaller.</p></div>`:''}${f.tls==='insecure'?'<div class="say warn">Certificate checks are off. The server is not verified. Use only on a network you trust.</div>':''}${f.tls==='off'?'<div class="say warn">Traffic is not encrypted. Use only on a trusted local network.</div>':''}`,f.tls==='custom'||f.tls==='insecure'||f.tls==='off')}
+  ${disc('Audit log collection',f.coll,fld('Collection name','coll',{hint:'The collection that holds the API audit log. The usual name is ApiAuditLog.'}))}
+  ${say()}<div class="actions"><button class="btn primary" data-act="mtest">Test and list databases</button></div>`;
+ }
+ return `<p class="ask">What is in each database?</p><p class="hint" style="margin:-6px 0 10px">Connected to <b>${esc(f.uri||'(saved connection)')}</b>. A database set to Skip is not read.</p>
+ ${D.dbs.map(d=>{const c=D.cls[d]||'skip';return `<div class="dbrow"><span><b>${d}</b>${/audit/i.test(d)?' <span class="sticker">Looks like an audit log</span>':''}</span><span class="segc" role="group" aria-label="${d}">${[['audit','API audit logs'],['app','App data'],['both','Both'],['skip','Skip']].map(([v,l])=>`<button data-act="cls" data-db="${d}" data-v="${v}" aria-pressed="${c===v}">${l}</button>`).join('')}</span></div>`}).join('')}
+ <p class="hint">API audit logs go into the analysis. App data means slow operations and load. Both is saved as API audit logs.</p>
+ ${labelsBlock()}<div class="actions"><button class="btn primary" data-act="madd">Add to my list</button><button class="btn" data-act="back0">Change connection</button></div>`;
+}
+function sqlBody(){
+ const D=S.D,f=D.f;
+ if(D.phase===0){
+  return `<p class="ask">Which SQL Server?</p>${savedChips('sql')}
+  ${fld('Server name','server',{ph:'SQL01,1655',hint:'Add the port after a comma if it is not the usual one.'})}
+  <div class="fld"><label>Sign in with</label><span class="segc" role="group"><button data-act="auth" data-v="sql" aria-pressed="${f.auth==='sql'}">SQL Server login</button><button data-act="auth" data-v="windows" aria-pressed="${f.auth==='windows'}">Windows login</button></span></div>
+  ${f.auth==='sql'?`<div class="two"><div class="fld"><label>User name</label><input data-k="user" value="${esc(f.user)}" autocomplete="off"></div><div class="fld"><label>Password</label><input data-k="pass" type="password" placeholder="${savedPw('sql')?'Kept for this connection':''}" autocomplete="new-password"></div></div>
+  <label class="tick"><input type="checkbox" data-k="remember" ${f.remember?'checked':''}> Remember password on this computer</label><p class="hint" style="margin-top:-4px">Off: not kept. On: sealed to your Windows account and never shown again.</p>`:'<p class="hint">Unravis uses your Windows account. No user name or password.</p>'}
+  ${disc('Encryption',({mandatory:'Mandatory',optional:'Optional',strict:'Strict'})[f.enc]+(f.trust?' \u00b7 trust certificate':''),`${sel('Encrypt','enc',[['mandatory','Mandatory'],['optional','Optional'],['strict','Strict']])}<label class="tick"><input type="checkbox" data-k="trust" ${f.trust?'checked':''}> Trust server certificate</label><p class="hint">Only tick this for a server you know, such as one with a self-signed certificate.</p>`,f.trust)}
+  ${say()}<div class="actions"><button class="btn primary" data-act="stest">Test and list databases</button></div>`;
+ }
+ return `<p class="ask">Which database?</p><p class="hint" style="margin:-6px 0 10px">Connected to <b>${esc(f.server||'(saved connection)')}</b>. ${word(D.dbs.length,'database')} found.</p>
+ <div class="fld"><label for="f-db">Database</label>${D.typing?`<input id="f-db" data-k="db" value="${esc(f.db)}" placeholder="Database name">`:`<select id="f-db" data-k="db"><option value="">The login\u2019s default database</option>${D.dbs.map(d=>`<option ${f.db===d?'selected':''}>${d}</option>`).join('')}</select>`}<button class="btn quiet" data-act="typedb" style="padding:0 4px;margin-top:4px">${D.typing?'Pick from the list':'Type the name instead'}</button></div>
+ ${fld('Connection name (optional)','name',{ph:f.server,hint:'A short name to find it by. Without one, the server name is used.'})}
+ ${labelsBlock()}<div class="actions"><button class="btn primary" data-act="sadd">Add and keep details</button><button class="btn" data-act="back0">Change connection</button></div>
+ <p class="hint">Details are kept only on this computer${f.remember&&f.auth==='sql'?', with the password':''}.</p>`;
+}
+function redisBody(){
+ return `<p class="ask">Where is this Redis?</p>${fld('Address','addr',{ph:'cache01:6379',hint:'A host name or address, with a port if it is not the usual one.'})}
+ <p class="hint">Unravis checks for a reply on that port. No user name or password is asked for. If nothing answers, it stays on your list, marked, and you decide.</p>
+ ${labelsBlock()}${say()}<div class="actions"><button class="btn primary" data-act="radd">Check and add</button></div>`;
+}
+function kindOf(n){n=n.toLowerCase();return /^u_ex/.test(n)?0:/httperr/.test(n)?1:/\.xel$/.test(n)?3:/errorlog/.test(n)?4:/querystore/.test(n)?5:/\.evtx$/.test(n)?6:/hangfire/.test(n)?8:/slowlog/.test(n)?9:7;}
+function filesBody(){
+ const D=S.D;
+ if(D.phase===0)return `<p class="ask">Which files?</p><div class="drop" id="drop"><b>Drop files or a folder here</b><div class="hint">Names only. Nothing is opened yet.</div><div class="row" style="justify-content:center"><button class="btn" data-act="sample2">Choose files</button><button class="btn" data-act="sample2">Choose a folder</button></div></div>${D.files.length?`<p class="hint">${word(D.files.length,'file')} picked.</p><div class="actions"><button class="btn primary" data-act="fnext">Check types</button></div>`:''}`;
+ return `<p class="ask">Is each file the right type?</p><p class="hint" style="margin:-6px 0 10px">Unravis guessed from the name. Change one only if it is wrong. Files that are too big, unreadable or private keys are refused.</p>
+ ${D.files.map((x,i)=>`<div class="frow"><div class="top"><span><b class="mono">${esc(x.name)}</b> <span class="sticker good">${esc(KINDS[x.kind])}</span></span><button class="btn quiet" data-act="chg" data-i="${i}">${x.edit?'Done':'Change type'}</button></div>
+ ${x.edit?`<select data-act2="kind" data-i="${i}" aria-label="File type">${KINDS.map((k,j)=>`<option value="${j}" ${j===x.kind?'selected':''}>${k}</option>`).join('')}</select>`:''}
+ ${NEEDS_ZONE.includes(x.kind)?`<div><label>Which computer wrote it</label><select data-act2="zone" data-i="${i}">${ZONES.map(z=>`<option ${x.zone===z?'selected':''}>${z}</option>`).join('')}</select></div>`:''}</div>`).join('')}
+ ${labelsBlock()}<div class="actions"><button class="btn primary" data-act="fadd">Add ${word(D.files.length,'file')}</button><button class="btn" data-act="back0">Pick different files</button></div>`;
+}
+function bbBody(){
+ const D=S.D,f=D.f;
+ if(D.phase===0)return `<p class="ask">Where is the recorder\u2019s folder?</p>${fld('Folder, share or address','where',{ph:'\\\\WEB01\\blackbox  or  D:\\blackbox',hint:'Use a recorder that is already running. Placing a new one needs Windows admin approval and has its own guided flow.'})}${say()}<div class="actions"><button class="btn primary" data-act="btest">Check it works</button><button class="btn quiet" data-act="place">Place a new recorder instead</button></div>`;
+ return `<p class="ask">Which machine?</p><p class="hint" style="margin:-6px 0 10px"><span class="sticker good">Works</span> Found recorders at <b>${esc(f.where)}</b>.</p>${['WEB01 (recording, 6 days)','DB01 (recording, 2 days)'].map(r=>`<label class="dbrow" style="cursor:pointer;color:var(--text);font-size:13px;margin:0 0 6px"><span><input type="radio" name="rec" data-k="rec" value="${r}" ${f.rec===r?'checked':''} style="width:auto"> <b>${r}</b></span></label>`).join('')}${say()}${labelsBlock()}<div class="actions"><button class="btn primary" data-act="badd">Add to my list</button><button class="btn" data-act="back0">Change location</button></div>`;
+}
+function detail(){
+ const x=S.src.find(s=>s.id===S.cur);if(!x){S.cur=null;return pick();}
+ return `<section class="card"><div class="hd"><h2>${esc(x.title)}</h2><span class="sticker">${TYPES[x.type].name}</span><span class="spacer"></span><button class="btn quiet" data-act="cancel">Close</button></div>
+ <p class="mono hint" style="margin:0 0 12px">${esc(x.detail)}</p>
+ <div class="three"><div><label>Environment</label><input data-s="env" value="${esc(x.env)}"></div><div><label>Portal</label><input data-s="portal" value="${esc(x.portal)}"></div><div><label>API</label><input data-s="api" value="${esc(x.api)}"></div></div>
+ <div class="actions"><button class="btn" data-act="new" data-t="${x.type}">Add another ${TYPES[x.type].name}</button><button class="btn quiet" data-act="rm" data-id="${x.id}">Remove</button></div></section>`;
+}
+function reviewStep(){
+ const rows=S.src.map(i=>`<div class="item"><div><b>${esc(i.title)}</b> <span class="sticker">${TYPES[i.type].name}</span><div class="meta mono">${esc(i.detail)}</div></div><div class="meta">${esc(labs(i))||'No labels'}</div></div>`).join('')||'<div class="empty">No sources. The case will be made empty; you can add data after.</div>';
+ return `<div class="nutshell"><b>In a nutshell</b>${word(S.src.length,'source')}. Unravis only reads. Nothing changes on those servers.</div><h3 style="margin-bottom:8px">${esc(S.mode==='new'?(S.name||'Untitled case'):S.caseName)}</h3>${rows}`;
+}
+/* ---------- actions ---------- */
+function push(type,title,detail,f,status,key){S.src.push({id:uid(),type,title,detail,status:status||'',key,env:(f||{}).env||'',portal:(f||{}).portal||'',api:(f||{}).api||''});S.D=null;S.cur=null;S.scan=false;render();}
+const dup=(type,key)=>S.src.some(s=>s.type===type&&s.key===key);
+const A={
+ new(e){draft(e.t);render();},
+ cancel(){S.D=null;S.cur=null;S.scan=false;render();},
+ open(e){S.D=null;S.scan=false;S.cur=e.id;render();},
+ rm(e){S.src=S.src.filter(s=>s.id!==e.id);S.cur=null;render();},
+ scan(){S.D=null;S.cur=null;S.scan=true;render();},
+ scanadd(e){const s=SCAN[e.i];push(s[1],s[0],s[2],{},s[3]==='Ready'?'':'warn',s[2].toLowerCase());},
+ sample(){draft('files',{phase:1,files:[{name:'u_ex251112.log',kind:0,zone:ZONES[1]},{name:'u_ex251113.log',kind:0,zone:ZONES[1]}]});render();},
+ sample2(){S.D.files=[{name:'u_ex251112.log',kind:0,zone:ZONES[1]},{name:'ERRORLOG',kind:4,zone:ZONES[2]},{name:'Payroll.api.log',kind:7,zone:ZONES[0]}];render();},
+ fnext(){S.D.phase=1;render();},
+ chg(e){const x=S.D.files[e.i];x.edit=!x.edit;render();},
+ fadd(){const D=S.D;push('files',word(D.files.length,'file'),D.files.map(x=>x.name).join(', ')+' (names only, not read)',D.f);},
+ back0(){S.D.phase=0;S.D.msg='';S.D.res=null;render();},
+ usesaved(e){const D=S.D,s=SAVED[D.type].find(x=>x.id===e.id);D.f.saved=s.id;
+  if(D.type==='mongo')Object.assign(D.f,{uri:s.addr,user:s.user,auth:s.auth,tls:s.tls,coll:s.coll,pass:''});
+  else Object.assign(D.f,{server:s.server,auth:s.auth,user:s.user,db:s.db,remember:s.pw,pass:''});
+  D.msg='';D.res=null;render();},
+ clearsaved(){const f=S.D.f;f.saved='';f.uri=f.server=f.user=f.pass=f.auth='';S.D.msg='';render();},
+ forget(){const D=S.D;SAVED[D.type]=SAVED[D.type].filter(x=>x.id!==D.f.saved);A.clearsaved();},
+ auth(e){S.D.f.auth=e.v;render();},
+ typedb(){S.D.typing=!S.D.typing;render();},
+ cls(e){S.D.cls[e.db]=e.v;render();},
+ mtest(){const D=S.D,f=D.f;
+  if(!f.uri.trim()){D.res='bad';D.msg='Type the connection address first.';return render();}
+  if(/bad/i.test(f.uri)){D.res='bad';D.msg='Could not connect. Check the address, user name and password, then try again.';return render();}
+  D.dbs=DBS.mongo;D.cls={};D.dbs.forEach(d=>{D.cls[d]=d==='AuditDB'?'audit':'skip'});D.phase=1;D.res=null;D.msg='';render();},
+ madd(){const D=S.D,f=D.f,key=f.uri.trim().toLowerCase();
+  if(dup('mongo',key)){D.msg='This address is already on your list.';D.res='bad';D.phase=0;return render();}
+  const a=D.dbs.filter(d=>D.cls[d]==='audit'||D.cls[d]==='both'),o=D.dbs.filter(d=>D.cls[d]==='app');
+  const sv=f.saved&&SAVED.mongo.find(x=>x.id===f.saved);
+  push('mongo',sv?sv.label:f.uri.replace(/^mongodb:\/\//,''),`${f.uri}  [audit: ${a.join(', ')||'none'}${o.length?'; app: '+o.join(', '):''}]`,f,'',key);},
+ stest(){const D=S.D,f=D.f;
+  if(!f.server.trim()){D.res='bad';D.msg='Type the server name first.';return render();}
+  if(f.auth==='sql'&&!f.user.trim()){D.res='bad';D.msg='Type the user name, or choose Windows login.';return render();}
+  if(f.auth==='sql'&&!f.pass&&!savedPw('sql')){D.res='bad';D.msg='Not connected. Type the password, or choose Windows login.';return render();}
+  if(/bad/i.test(f.server)){D.res='bad';D.msg='Not connected. The server did not answer.';return render();}
+  D.dbs=DBS.sql;D.phase=1;D.res=null;D.msg='';render();},
+ sadd(){const D=S.D,f=D.f,key=(f.server.trim()+'|'+f.db).toLowerCase();
+  if(dup('sql',key)){D.msg='This server and database are already on your list.';D.res='bad';D.phase=0;return render();}
+  if(f.remember&&f.auth==='sql'&&!SAVED.sql.some(x=>x.server===f.server))SAVED.sql.push({id:uid(),label:f.name||f.server,server:f.server,auth:f.auth,user:f.user,db:f.db,pw:true});
+  push('sql',f.name||f.server,`${f.server}${f.db?' \u00b7 '+f.db:''} \u00b7 ${f.auth==='windows'?'Windows login':f.user}`,f,'',key);},
+ radd(){const D=S.D,f=D.f,key=f.addr.trim().toLowerCase();
+  if(!key){D.res='bad';D.msg='Type the address first.';return render();}
+  if(dup('redis',key)){D.res='bad';D.msg='This address is already on your list.';return render();}
+  const ok=!/bad/i.test(key);push('redis',f.addr,ok?'Reached the port':'No reply from that port. Kept on the list, marked.',f,ok?'':'warn',key);},
+ btest(){const D=S.D;if(!D.f.where.trim()){D.res='bad';D.msg='Type the folder, share or address first.';return render();}D.phase=1;D.res=null;D.msg='';render();},
+ badd(){const D=S.D;if(!D.f.rec){D.res='bad';D.msg='Choose a machine first.';return render();}push('blackbox',D.f.rec.split(' (')[0],D.f.where+' \u00b7 '+D.f.rec,D.f,'',(D.f.where+D.f.rec).toLowerCase());},
+ place(){alert('Prototype: this would open the existing Place a recorder flow (needs Windows admin approval) and come back here.');}
+};
+document.addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(!b)return;const fn=A[b.dataset.act];if(fn){e.preventDefault();fn(Object.assign({},b.dataset));}});
+document.addEventListener('input',e=>{const t=e.target;
+ if(t.id==='nm'){S.name=t.value;return;}
+ if(t.dataset.s){const x=S.src.find(s=>s.id===S.cur);if(x)x[t.dataset.s]=t.value;return;}
+ if(!t.dataset.k||!S.D||t.type==='radio')return;
+ S.D.f[t.dataset.k]=t.type==='checkbox'?t.checked:t.value;});
+document.addEventListener('change',e=>{const t=e.target;
+ if(t.dataset.k&&S.D){
+  if(t.type==='checkbox'){S.D.f[t.dataset.k]=t.checked;render();return;}
+  if(t.type==='radio'){S.D.f[t.dataset.k]=t.value;return;}
+  if(t.dataset.k==='tls'||t.dataset.k==='enc'||t.dataset.k==='db'){S.D.f[t.dataset.k]=t.value;render();return;}}
+ if(t.dataset.act2==='kind'){const x=S.D.files[t.dataset.i];x.kind=+t.value;x.edit=false;render();}
+ if(t.dataset.act2==='zone'){S.D.files[t.dataset.i].zone=t.value;}
+ if(t.dataset.s)render();});
+document.addEventListener('dragover',e=>{const d=e.target.closest('#drop');if(d){e.preventDefault();d.classList.add('over')}});
+document.addEventListener('dragleave',e=>{const d=e.target.closest('#drop');if(d)d.classList.remove('over')});
+document.addEventListener('drop',e=>{const d=e.target.closest('#drop');if(!d)return;e.preventDefault();
+ const names=[...e.dataTransfer.files].map(f=>f.name);if(!names.length)names.push('u_ex251112.log');
+ draft('files',{phase:1,files:names.map(n=>({name:n,kind:kindOf(n),zone:ZONES[0]}))});render();});
+function reset(m){S.mode=m;S.step=0;S.done=false;S.D=null;S.cur=null;S.scan=false;render();}
+$('#m-new').onclick=()=>reset('new');
+$('#m-add').onclick=()=>reset('add');
+$('#back').onclick=()=>{if(S.step>0){S.step--;S.D=null;S.cur=null;S.scan=false;render()}};
+$('#next').onclick=()=>{if(S.step<steps().length-1){S.step++;S.D=null;S.cur=null;S.scan=false;render()}else{S.done=true;render()}};
+$('#theme').onclick=()=>{const r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark'};
+render();
+</script>
+</body>
+</html>

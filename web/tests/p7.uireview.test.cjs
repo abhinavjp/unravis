@@ -75,7 +75,7 @@ test('M2: a closed case offers no read, add, test, edit or forget, and says why'
   const home = read('src/lib/components/CaseHome.svelte');
   assert.match(home, /<SourcesHub \{caseId\} \{readOnly\}/, 'the case page hands its read-only state to the hub');
   const hub = comp('SourcesHub');
-  for (const mount of ['ConnectionsPage', 'SqlStepPanel', 'MongoStepPanel', 'AddDataPanel', 'AddAnotherDay']) {
+  for (const mount of ['ConnectionsPage', 'SqlStepPanel', 'MongoStepPanel', 'AddSourcesFlow', 'AddAnotherDay']) {
     assert.match(hub, new RegExp('<' + mount + ' [^>]*\\{readOnly\\}'), mount + ' gets readOnly from the hub');
   }
   for (const name of ['SqlStepPanel', 'MongoStepPanel']) assert.match(comp(name), /readOnly = false/, name + ' stays usable in the guided shell, which never passes it');
@@ -106,10 +106,7 @@ test('M2: the case-closed refusal reads as a plain sentence, not as another read
 
 test('M3: Add data never clicks into nothing: Files opens the import page, Blackbox opens the Blackbox page and is off only in a closed case', () => {
   const hub = comp('SourcesHub');
-  assert.doesNotMatch(hub, /else tab = 'add';/, 'choosing files or blackbox no longer lands back on the same tab');
-  assert.match(hub, /what === 'files'\) onAddFiles\?\.\(\)/);
-  assert.match(hub, /what === 'blackbox'\) onAddBlackbox\?\.\(\)/);
-  assert.match(hub, /files=\{!!onAddFiles\} onChoose/, 'the Files card is on only when its page was handed in');
+  assert.match(hub, /<AddSourcesFlow \{caseId\} \{readOnly\} onDone=/, 'the Add data tab is the one source wizard; Files and Blackbox are cards inside it');
   const add = comp('AddDataPanel');
   assert.match(add, /disabled=\{off\} onclick=\{\(\) => choose\('blackbox'\)\}/, 'the Blackbox card is on unless the case is closed (or an import is sending)');
   assert.match(add, /disabled=\{off \|\| !files\} onclick=\{\(\) => choose\('files'\)\}/);
@@ -117,7 +114,6 @@ test('M3: Add data never clicks into nothing: Files opens the import page, Black
   assert.equal(copy.ADD_TEXT.blackboxLater, undefined);
   const home = read('src/lib/components/CaseHome.svelte');
   assert.match(home, /onAddFiles=\{openCaseImport\}/, 'Files opens the import drawer that exists on this branch');
-  assert.match(home, /onAddBlackbox=\{\(\) => openSidePanel\('blackbox'\)\}/, 'Blackbox opens the Blackbox side panel (App.svelte panels.sidePanel)');
   assert.match(read('src/App.svelte'), /panels\.sidePanel === 'blackbox'\}<BlackboxPanel/);
 });
 

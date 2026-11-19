@@ -1,7 +1,7 @@
 <script lang="ts">
   import AddAnotherDay from './AddAnotherDay.svelte';
   import AddAuditDatabase from './AddAuditDatabase.svelte';
-  import AddDataPanel, { type AddChoice } from './AddDataPanel.svelte';
+  import AddSourcesFlow from '../sourcewiz/AddSourcesFlow.svelte';
   import ConnectionsPage from './ConnectionsPage.svelte';
   import MongoStepPanel from './MongoStepPanel.svelte';
   import SourceCombinations from './SourceCombinations.svelte';
@@ -18,7 +18,7 @@
   // combinations table. The guided shell mounts SqlStepPanel and MongoStepPanel directly; this hub keeps the lanes reachable from the case page.
   // onAddFiles and onAddBlackbox open the pages that add those sources. Files is offered only when its page is handed in; the Blackbox card is always on.
   // onAddMongo opens the window where a MongoDB connection is saved; without it the + MongoDB button is off.
-  let { caseId, readOnly = false, onGone, onAddFiles, onAddBlackbox, onAddMongo }: { caseId: string; readOnly?: boolean; onGone?: () => void; onAddFiles?: () => void; onAddBlackbox?: () => void; onAddMongo?: () => void } = $props();
+  let { caseId, readOnly = false, onGone, onAddFiles, onAddMongo }: { caseId: string; readOnly?: boolean; onGone?: () => void; onAddFiles?: () => void; onAddMongo?: () => void } = $props();
   type Tab = 'list' | 'connections' | 'sql' | 'mongo' | 'add' | 'day' | 'combos';
   let tab = $state<Tab>('connections');
   // The Investigation Timeline asks for the Sources tab from its time-zone notice (packet P11).
@@ -48,13 +48,6 @@
     tab = tabs[to].id;
     document.getElementById('hub-tab-' + tab)?.focus();
   }
-  function choose(what: AddChoice) {
-    if (what === 'sql') tab = 'sql';
-    else if (what === 'mongo') addingAudit = true;
-    else if (what === 'day') tab = 'day';
-    else if (what === 'files') onAddFiles?.();
-    else if (what === 'blackbox') onAddBlackbox?.();
-  }
 </script>
 
 <div class="src" data-sources-hub>
@@ -76,7 +69,7 @@
       <div class="actions"><button type="button" class="link" onclick={() => { addingAudit = false; }}>{ADD_TEXT.back}</button></div>
       <AddAuditDatabase {caseId} {readOnly} onProfiler={() => { addingAudit = false; tab = 'mongo'; }} />
     {:else if tab === 'add'}
-      <AddDataPanel {caseId} {readOnly} files={!!onAddFiles} onChoose={choose} />
+      <AddSourcesFlow {caseId} {readOnly} onDone={() => { tab = 'list'; }} />
     {:else if tab === 'day'}
       <AddAnotherDay {caseId} {readOnly} {onGone} onCancel={() => { tab = 'add'; }} />
     {:else}

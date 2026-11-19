@@ -110,6 +110,10 @@ export interface UpdateAnswer {
   newVersion?: string;
 }
 
+/** One folder the search found. `fromService` is true when the running recorder says it writes there. */
+export interface FolderCandidate { path: string; drive: string; recordings: number; newest: string; fromService: boolean; recommended: boolean }
+export interface FoldersAnswer { folders: FolderCandidate[]; complete: boolean }
+
 export interface BlackboxList { items: BlackboxItem[]; thisPc: ThisPc; canPack: boolean }
 
 /** The kind of an owner-selected target: an IIS app pool or a Windows service (BBX-1-12). */
@@ -333,6 +337,8 @@ async function call<T>(method: string, path: string, body?: unknown, signal?: Ab
 export const blackboxApi = {
   list: (signal?: AbortSignal) => call<BlackboxList>('GET', '', undefined, signal),
   thisPc: (signal?: AbortSignal) => call<ThisPc>('GET', '/this-pc', undefined, signal),
+  /** Folders on this PC's fixed drives that hold recordings, newest first. Bounded on the server. */
+  folders: (signal?: AbortSignal) => call<FoldersAnswer>('GET', '/this-pc/folders', undefined, signal),
   /** The app pools and services detected on this PC, for the wizard's target picker. Names only; read once on mount. */
   targets: (signal?: AbortSignal) => call<TargetsAnswer>('GET', '/this-pc/targets', undefined, signal),
   test: (body: AddBody) => call<TestAnswer>('POST', '/test', body),

@@ -9,7 +9,7 @@
   import StartScreen from './StartScreen.svelte';
   import EnterCase from './EnterCase.svelte';
   import CreateWizard from './CreateWizard.svelte';
-  import SourceGallery from './wizard/SourceGallery.svelte';
+  import SourceStep from './sourcewiz/SourceStep.svelte';
   import ReviewStep from './wizard/ReviewStep.svelte';
   import CreateProgress from './wizard/CreateProgress.svelte';
   import MasterKeySetup from './MasterKeySetup.svelte';
@@ -44,7 +44,7 @@
   </StartScreen>
 {:else if mode === 'create'}
   <CreateWizard onLeave={goHome} busy={createView.running || caseMade()}>
-    {#snippet sources()}<SourceGallery />{/snippet}
+    {#snippet sources()}<SourceStep />{/snippet}
     {#snippet review()}{#if createView.running || caseMade()}<CreateProgress onOpen={openCreated} onTimeline={openTimeline} onAddMore={addMore} />{:else}<ReviewStep />{/if}{/snippet}
     {#snippet finish()}{#if !caseMade()}<button type="button" class="primary-button" disabled={createView.running || blockers().length > 0} onclick={() => void createNow()}>{createButtonText(wizard.sources.length, createView.running)}</button>{/if}{/snippet}
   </CreateWizard>

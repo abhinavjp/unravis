@@ -63,8 +63,7 @@ test('audit-add: the default tick follows the same name rule as the create wizar
 test('audit-add: the hub opens the new page from Add data > MongoDB and keeps Step 8 as its own tab', () => {
   const hub = read('src/components/sources/SourcesHub.svelte');
   assert.match(hub, /import AddAuditDatabase from '\.\/AddAuditDatabase\.svelte'/);
-  assert.match(hub, /what === 'mongo'\) addingAudit = true/);
-  assert.doesNotMatch(hub, /what === 'mongo'\) tab = 'mongo'/);
+  assert.match(hub, /want === 'mongo-add'\) void tick\(\)\.then\(\(\) => \{ addingAudit = true; \}\)/);
   assert.match(hub, /id: 'mongo', label: HUB_TEXT\.mongo/, 'the Step 8 tab is still listed');
   assert.match(hub, /<MongoStepPanel /);
   assert.match(hub, /onProfiler=\{\(\) => \{ addingAudit = false; tab = 'mongo'; \}\}/);
