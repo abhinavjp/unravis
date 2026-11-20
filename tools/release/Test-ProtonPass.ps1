@@ -26,7 +26,7 @@ $fake = Join-Path $work 'fake-pass-cli.ps1'
 param([string]$a, [string]$b, [string]$c)
 switch ($env:FAKE_MODE) {
     'ok'      { [Console]::Out.Write("correct horse battery`r`n"); exit 0 }
-    'utf8'    { $o = [Console]::OpenStandardOutput(); $b = [Text.Encoding]::UTF8.GetBytes('Gr' + [char]0xfc + 'n-' + [char]0xa3 + '-key' + "`n"); $o.Write($b, 0, $b.Length); $o.Flush(); exit 0 }
+    'utf8'    { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::Out.Write('Gr' + [char]0xfc + 'n-' + [char]0xa3 + '-key' + [char]10); [Console]::Out.Flush(); exit 0 }
     'noeol'   { [Console]::Out.Write("correct horse battery"); exit 0 }
     'empty'   { exit 0 }
     'blank'   { [Console]::Out.Write("`r`n"); exit 0 }
