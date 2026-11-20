@@ -14,6 +14,7 @@
   import HostCard from './BlackboxHostCard.svelte';
   import CaseUse from './BlackboxCaseUse.svelte';
   import ReadKey from './BlackboxReadKey.svelte';
+  import Diagnostics from './BlackboxDiagnostics.svelte';
   import BlackboxCharts from './BlackboxCharts.svelte';
   import { BBC_TEXT } from '../lib/copy/blackboxChartsCopy';
   import WizardDialog from './blackboxWizard/WizardDialog.svelte';
@@ -516,6 +517,7 @@
               </div>{/if}
               <HostCard {item} />
             {/if}
+            {#key item.id}<Diagnostics {item} />{/key}
           </section>
             {/if}
       {/snippet}

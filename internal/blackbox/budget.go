@@ -96,6 +96,7 @@ type Budget struct {
 	overWins   int
 	calmWins   int
 	lastWindow WindowResult
+	windowSeq  int // windows judged so far; the recorder logs each new one
 
 	groups map[string]*groupState
 }
@@ -117,6 +118,13 @@ type WindowResult struct {
 	CPUPct  float64
 	HeapMB  float64
 	Private float64
+	// Reason names what made an over window over: cpu, heap, private or
+	// slow-group (diagnostics only).
+	Reason string
+	// Action is what the window changed: "widen", "stepback" or "".
+	Action string
+	// From and To are the interval before and after Action.
+	From, To int
 }
 
 // NewBudget starts effective at base. The widen ladder stays 15/30/60; the
@@ -258,14 +266,27 @@ func (b *Budget) closeWindow() {
 	over := cpu > budgetMaxCPUPct || heap > budgetMaxHeap || priv > budgetMaxPrivate || b.wMandSlow
 	calm := !over && cpu < budgetCalmCPUPct && heap < budgetCalmHeap && priv < budgetCalmPrivate
 	kind := WindowBand
+	reason, action := "", ""
+	from := int(b.effective.Load())
 	switch {
 	case over:
 		kind = WindowOver
+		switch {
+		case cpu > budgetMaxCPUPct:
+			reason = "cpu"
+		case heap > budgetMaxHeap:
+			reason = "heap"
+		case priv > budgetMaxPrivate:
+			reason = "private"
+		default:
+			reason = "slow-group"
+		}
 		b.calmWins = 0
 		b.overWins++
 		if b.overWins >= budgetOverWindows {
 			b.widen()
 			b.overWins = 0
+			action = "widen"
 		}
 	case calm:
 		kind = WindowCalm
@@ -274,16 +295,26 @@ func (b *Budget) closeWindow() {
 		if b.calmWins >= budgetCalmWindows {
 			b.stepBack()
 			b.calmWins = 0
+			action = "stepback"
 		}
 	default:
 		b.overWins, b.calmWins = 0, 0
 	}
-	b.lastWindow = WindowResult{Kind: kind, CPUPct: cpu, HeapMB: heap / mib, Private: priv / mib}
+	to := int(b.effective.Load())
+	if to == from {
+		action = ""
+	}
+	b.windowSeq++
+	b.lastWindow = WindowResult{Kind: kind, CPUPct: cpu, HeapMB: heap / mib, Private: priv / mib,
+		Reason: reason, Action: action, From: from, To: to}
 	b.wTicks, b.wSecs = 0, 0
 	b.wCoreSecs, b.wCPUWall = 0, 0
 	b.wHeapSum, b.wHeapN, b.wPrivSum, b.wPrivN = 0, 0, 0, 0
 	b.wMandSlow = false
 }
+
+// WindowSeq counts the windows judged so far.
+func (b *Budget) WindowSeq() int { return b.windowSeq }
 
 // LastWindow is the verdict of the latest finished window.
 func (b *Budget) LastWindow() WindowResult { return b.lastWindow }

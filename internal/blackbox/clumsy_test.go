@@ -311,7 +311,7 @@ func TestClumsyStopInTheMiddleOfWritingLeavesWholeLinesAndACleanManifest(t *test
 				total++
 			}
 			f.Close()
-		case name == "manifest.json":
+		case name == "manifest.json", name == DiagFileName, name == diagOldName:
 		default:
 			t.Fatalf("a leftover file after stop: %s", name)
 		}

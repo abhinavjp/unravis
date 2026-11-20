@@ -145,9 +145,11 @@ func RunHost(ctx context.Context, o HostOptions) error {
 	if disk == nil {
 		disk = OSDisk{}
 	}
+	diag := OpenDiagLog(store.Dir(), o.Now)
+	defer diag.Close()
 	rec := NewRecorder(RecorderOptions{Config: cfg, Store: store, Collector: col, Disk: disk, RunID: runID,
-		Now: o.Now, Ticks: o.Ticks, Budget: budget, SelfUsage: SelfUsage})
-	srv := NewServer(ServerOptions{Store: store, Recorder: rec, Config: cfg, Keys: keys, Now: o.Now, Update: o.Update})
+		Now: o.Now, Ticks: o.Ticks, Budget: budget, SelfUsage: SelfUsage, Diag: diag})
+	srv := NewServer(ServerOptions{Store: store, Recorder: rec, Config: cfg, Keys: keys, Now: o.Now, Diag: diag, Update: o.Update})
 
 	srvDone := make(chan struct{})
 	go func() {
@@ -192,6 +194,9 @@ type processChangeGate struct {
 	resolver *Resolver
 	targets  []Target
 	view     atomic.Pointer[tickView]
+	// resolveNs is how long the last round spent resolving the targets, before
+	// the host read starts (diagnostics only).
+	resolveNs atomic.Int64
 }
 
 // currentView is the shared per-tick result, never nil once RunHost seeds it.
@@ -203,11 +208,50 @@ func (g *processChangeGate) currentView() *tickView {
 }
 
 func (g *processChangeGate) Collect(now time.Time) (Sample, error) {
+	t := time.Now()
 	g.view.Store(g.resolver.resolveTick(g.targets, now))
+	g.resolveNs.Store(int64(time.Since(t)))
 	return g.inner.Collect(now)
 }
 
 func (g *processChangeGate) Close() error { return g.inner.Close() }
+
+// Timings, GroupTimings and GroupCount pass the group collector's numbers
+// through. Without them the recorder, which only sees the gate, could never read
+// where a round went: the self block's host and slow-group fields stayed empty.
+func (g *processChangeGate) Timings() (time.Duration, string, time.Duration) {
+	if t, ok := g.inner.(interface {
+		Timings() (time.Duration, string, time.Duration)
+	}); ok {
+		return t.Timings()
+	}
+	return 0, "", 0
+}
+
+func (g *processChangeGate) GroupTimings() []groupTime {
+	if t, ok := g.inner.(interface{ GroupTimings() []groupTime }); ok {
+		return t.GroupTimings()
+	}
+	return nil
+}
+
+// ResolveTime is how long the last round spent resolving the targets.
+func (g *processChangeGate) ResolveTime() time.Duration { return time.Duration(g.resolveNs.Load()) }
+
+// GroupsTime is the total time the last round spent in all counter groups.
+func (g *processChangeGate) GroupsTime() time.Duration {
+	if t, ok := g.inner.(interface{ GroupsTime() time.Duration }); ok {
+		return t.GroupsTime()
+	}
+	return 0
+}
+
+func (g *processChangeGate) GroupCount() int {
+	if t, ok := g.inner.(interface{ GroupCount() int }); ok {
+		return t.GroupCount()
+	}
+	return 0
+}
 
 func serveWithRetry(ctx context.Context, srv *Server, cfg Config, o HostOptions, logf func(string, ...any)) {
 	retry := o.ListenRetry

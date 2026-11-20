@@ -424,3 +424,13 @@ func (k keyedSource) OpenFile(ctx context.Context, name string) (io.ReadCloser, 
 	rc, err := k.inner.OpenFile(ctx, name)
 	return rc, keeperReadErr(err)
 }
+
+// Diagnostics reads the recorder's diagnostics log through the keeper.
+func (k keyedSource) Diagnostics(ctx context.Context) ([]byte, error) {
+	d, ok := k.inner.(blackbox.DiagSource)
+	if !ok {
+		return nil, nil
+	}
+	b, err := d.Diagnostics(ctx)
+	return b, keeperReadErr(err)
+}

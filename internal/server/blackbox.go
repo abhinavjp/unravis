@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"mime"
 	"net/http"
@@ -169,7 +170,7 @@ func init() {
 		bbRoute("/api/blackbox/this-pc", bbExact("/api/blackbox/this-pc"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbThisPCScan(w, r) })),
 		bbRoute("/api/blackbox/this-pc/targets", bbExact("/api/blackbox/this-pc/targets"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbTargets(w, r) })),
 		bbRoute("/api/blackbox/this-pc/folders", bbExact("/api/blackbox/this-pc/folders"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbFolders(w, r) })),
-		bbRoute("/api/blackbox/this-pc/drives",bbExact("/api/blackbox/this-pc/drives"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbDrives(w, r) })),
+		bbRoute("/api/blackbox/this-pc/drives", bbExact("/api/blackbox/this-pc/drives"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbDrives(w, r) })),
 		bbRoute("/api/blackbox/this-pc/install", bbExact("/api/blackbox/this-pc/install"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbInstall(w, r) })),
 		bbRoute("/api/blackbox/this-pc/start", bbExact("/api/blackbox/this-pc/start"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbStartStop(w, r, true) })),
 		bbRoute("/api/blackbox/this-pc/stop", bbExact("/api/blackbox/this-pc/stop"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbStartStop(w, r, false) })),
@@ -178,6 +179,7 @@ func init() {
 		bbRoute("/api/blackbox/this-pc/update", bbExact("/api/blackbox/this-pc/update"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbUpdate(w, r) })),
 		bbRoute("/api/blackbox/this-pc/snapshot", bbExact("/api/blackbox/this-pc/snapshot"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbSnapshot(w, r) })),
 		bbRoute("/api/blackbox/{id}/check", bbEntryPath("/check"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbCheck(w, r, id) })),
+		bbRoute("/api/blackbox/{id}/diagnostics", bbEntryPath("/diagnostics"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbDiagnostics(w, r, id) })),
 		bbRoute("/api/blackbox/{id}/key", bbEntryPath("/key"), bbM(http.MethodPut, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbSetKey(w, r, id) })),
 		bbRoute("/api/blackbox/{id}/reveal-key", bbEntryPath("/reveal-key"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbRevealKey(w, r, id) })),
 		bbRoute("/api/blackbox/{id}/host-reading", bbEntryPath("/host-reading"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbHostReading(w, r, id) })),
@@ -845,6 +847,83 @@ func (h *handler) bbCheck(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	found, _ := h.bb.scan()
 	writeJSON(w, http.StatusOK, h.bb.item(e, h.bb.lookEntry(r.Context(), e, found)), 16384)
+}
+
+// bbDiagResponse is the Diagnostics view: the plain-words cause, the newest log
+// lines, and the text to copy.
+type bbDiagResponse struct {
+	State    string                 `json:"state"`
+	Label    string                 `json:"label"`
+	Detail   string                 `json:"detail"`
+	Headline string                 `json:"headline"`
+	Findings []blackbox.DiagFinding `json:"findings"`
+	Lines    int                    `json:"lines"`
+	Log      string                 `json:"log"`
+	Text     string                 `json:"text"`
+}
+
+const bbDiagShownLines = 200
+
+// bbDiagnostics answers GET /api/blackbox/{id}/diagnostics: it reads the
+// recorder's diagnostics log (from the folder or over the address), says in plain
+// words what slowed it, and gives a ready-to-copy text.
+func (h *handler) bbDiagnostics(w http.ResponseWriter, r *http.Request, id string) {
+	if !h.bbReady(w) {
+		return
+	}
+	b := h.bb
+	e, err := b.deps.Store.Get(id)
+	if err != nil {
+		bbStoreFailure(w, err)
+		return
+	}
+	if !b.probes.allow() {
+		writeJSON(w, http.StatusTooManyRequests, bbFailure{Error: "Too many tries in a minute.", Reason: "rate", Next: "Wait a minute and try again."}, 4096)
+		return
+	}
+	found, _ := b.scan()
+	look := b.lookEntry(r.Context(), e, found)
+	src, serr := b.source(e)
+	if serr != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: serr.Error(), Reason: "location"}, 4096)
+		return
+	}
+	var raw []byte
+	if ds, ok := src.(blackbox.DiagSource); ok {
+		ctx, cancel := context.WithTimeout(r.Context(), bbProbeTimeout)
+		defer cancel()
+		raw, err = ds.Diagnostics(ctx)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, bbFailure{Error: err.Error(), Reason: "unreachable", State: &look.State}, 4096)
+			return
+		}
+	}
+	base := blackbox.DefaultIntervalSecond
+	if look.Reading != nil && look.Reading.Manifest.IntervalSeconds > 0 {
+		base = look.Reading.Manifest.IntervalSeconds
+	}
+	// The recorder's clock dates the log lines; judge a stopped log on it.
+	now := b.now()
+	if look.Reading != nil && !look.Reading.ServerTime.IsZero() {
+		now = look.Reading.ServerTime
+	}
+	text := string(raw)
+	rep := blackbox.DiagnoseLate(text, now, base)
+	header := []string{"State: " + look.State.Label + ". " + look.State.Detail, "Checked: " + b.now().UTC().Format(time.RFC3339)}
+	if look.Reading != nil {
+		m := look.Reading.Manifest
+		header = append(header, fmt.Sprintf("Blackbox version %s, interval %d s (now %d s)", m.Version, m.IntervalSeconds, m.CadenceSeconds()))
+		if m.LastSample != nil {
+			header = append(header, "Last sample: "+m.LastSample.UTC().Format(time.RFC3339))
+		}
+	}
+	full := blackbox.FormatDiagText(header, rep, text, bbDiagShownLines)
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if len(lines) > bbDiagShownLines {
+		lines = lines[len(lines)-bbDiagShownLines:]
+	}
+	writeJSON(w, http.StatusOK, bbDiagResponse{State: string(look.State.State), Label: look.State.Label, Detail: look.State.Detail,
+		Headline: rep.Headline, Findings: rep.Findings, Lines: rep.Lines, Log: strings.Join(lines, "\n"), Text: full}, 1<<20)
 }
 
 type bbKeyBody struct {
