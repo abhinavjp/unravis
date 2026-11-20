@@ -21,6 +21,9 @@
     5. runs unravis-setup.exe --silent: --upgrade when an install exists, a fresh install otherwise.
        This is where Windows asks for administrator approval, once. Setup replaces Unravis AND the Blackbox recorder,
        keeps all settings and recordings, and puts everything back if a step fails.
+    5b. a recorder service that setup's record does not list (installed from the app's wizard) is found through Windows and updated
+       with its own `update` command from the new, hash-checked recorder program. This needs a SECOND Windows approval. A stopped
+       recorder stays stopped.
     6. checks the result: program version, Blackbox program version, Blackbox service state and status answer.
     7. prints a short result and writes a log (path printed). The Blackbox read key is never printed.
 
@@ -144,7 +147,7 @@ try {
     }
     $bbSvc = Get-Service -Name 'UnravisBlackbox' -ErrorAction SilentlyContinue
     if ($state) {
-        Say "    Installed: Unravis $($state.version) ($($state.scope)) in $stateDir; Blackbox: $(if ($state.blackbox) { 'yes' } else { 'no' })"
+        Say "    Installed: Unravis $($state.version) ($($state.scope)) in $stateDir; Blackbox in setup's record: $(if ($state.blackbox) { 'yes' } else { 'no' })"
         $op = 'upgrade'
         # Setup refuses a lower version. Say so now, before a long run, instead of after.
         function Get-VerKey([string]$v) { if ($v -match '^v?(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?') { return @([int]$Matches[1], [int]$Matches[2], [int]$Matches[3], $(if ($Matches[4]) { [int]$Matches[4] } else { 999999 })) } }
@@ -157,6 +160,17 @@ try {
         if ($bbSvc) { Fail 'A Blackbox service (UnravisBlackbox) exists but no Unravis install owns it. This script will not guess. Install via the setup window first (it explains what it will do), or remove that Blackbox. Nothing was changed.' }
         Say '    No install found: this will be a fresh install.'
         $op = 'install'
+    }
+
+    # A recorder installed from the app's wizard is a Windows service that setup's record does not list; setup's upgrade leaves it alone.
+    # Windows tells any user about the service itself, so ask Windows (the program folder is often not readable without admin).
+    $outsideBb = $null
+    if ($state -and -not $state.blackbox -and $bbSvc) {
+        $cim = Get-CimInstance Win32_Service -Filter "Name='UnravisBlackbox'" -ErrorAction SilentlyContinue
+        $bbPath = if ($cim) { $cim.PathName -replace '^"([^"]+)".*$', '$1' } else { $null }
+        $outsideBb = [pscustomobject]@{ State = $bbSvc.Status; Path = $bbPath }
+        Say "    Blackbox service found outside setup's record: $($outsideBb.State), $bbPath"
+        Say '    Setup will not touch it. This script updates it in a separate step with the recorder program from this build/release (a second Windows approval). A stopped recorder stays stopped.'
     }
 
     # 3. backup --------------------------------------------------------------------------------------------------------------
@@ -189,6 +203,26 @@ try {
             if ($skipped -gt 0) { Say '    Some files could not be copied (see above). Setup keeps all data and undoes itself on a failure; continue only if that is acceptable.' }
         }
     } else { Say '3/6 Backup skipped' }
+
+    $newBbExe = $null; $newBbSha = $null
+    if ($outsideBb) {
+        if ($FromRelease) {
+            $zip = Get-ChildItem -LiteralPath $work -Filter 'unravis-blackbox-*.zip' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $zip) { & gh release download $FromRelease --repo $Repo --dir $work --pattern 'unravis-blackbox-*.zip' | Out-Null; $zip = Get-ChildItem -LiteralPath $work -Filter 'unravis-blackbox-*.zip' | Select-Object -First 1 }
+            if (-not $zip) { Fail 'The release has no recorder zip.' }
+            $ex = Join-Path $work 'bb'; Expand-Archive -LiteralPath $zip.FullName -DestinationPath $ex -Force
+            $found = @(Get-ChildItem -LiteralPath $ex -Recurse -Filter 'unravis-blackbox.exe')
+            if ($found.Count -ne 1) { Fail 'The recorder zip must hold exactly one unravis-blackbox.exe.' }
+            $newBbExe = $found[0].FullName
+            $newBbSha = (Get-FileHash -LiteralPath $newBbExe -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($mf.blackboxExeSha256 -and $mf.blackboxExeSha256 -ne $newBbSha) { Fail 'The recorder program is not the one the signed manifest lists (SHA-256 differs).' }
+        } else {
+            $newBbExe = Join-Path $repoRoot 'dist\unravis-blackbox.exe'
+            if (-not (Test-Path -LiteralPath $newBbExe)) { Fail "The build did not make $newBbExe." }
+            $newBbSha = (Get-FileHash -LiteralPath $newBbExe -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        Say "    Recorder program: $newBbExe ($newBbSha)"
+    }
 
     if ($DryRun) {
         Say "DRY RUN: would now ask Unravis to quit and run: unravis-setup.exe --silent --$op ..."
@@ -241,6 +275,18 @@ try {
     Say "    Setup exit code $code : $meaning"
     if ($code -ne 0) { Fail "Setup did not finish. $meaning Setup log: $setupLog" }
 
+    # 5b. a recorder outside setup's record: run its own update command, elevated, from the verified new program
+    if ($outsideBb) {
+        Say '5b/6 Updating the recorder service (Windows will ask for approval again)'
+        $outFile = Join-Path $work 'recorder-update.txt'
+        $inner = "& '$newBbExe' update --expect-sha256 $newBbSha *> '$outFile'; exit `$LASTEXITCODE"
+        try {
+            $p = Start-Process -FilePath (Get-Process -Id $PID).Path -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList @('-NoProfile', '-Command', $inner)
+        } catch { Fail "The recorder update was not approved or could not start: $($_.Exception.Message). Unravis itself was already updated." }
+        if (Test-Path -LiteralPath $outFile) { Get-Content -LiteralPath $outFile | ForEach-Object { Say "    $_" } }
+        if ($p.ExitCode -ne 0) { Fail "The recorder update failed (exit $($p.ExitCode)); the recorder keeps or gets its previous program back. Unravis itself was already updated." }
+    }
+
     # 6. check the result ---------------------------------------------------------------------------------------------------
     Say '6/6 Checking the result'
     $st = $null
@@ -278,7 +324,8 @@ try {
         }
     }
     if ($problems.Count -gt 0) { $problems | ForEach-Object { Write-Host "    PROBLEM: $_" -ForegroundColor Yellow }; Fail 'Setup finished but the check found problems (above).' }
-    Write-Host 'OK: everything is installed and running.' -ForegroundColor Green
+    if ($outsideBb) { Say "    Recorder service is now: $((Get-Service UnravisBlackbox -ErrorAction SilentlyContinue).Status) (it was $($outsideBb.State); a stopped recorder stays stopped)." }
+    Write-Host 'OK: everything is installed.' -ForegroundColor Green
     if ($op -eq 'install' -and $WithBlackbox) { Say "The Blackbox read key was written to $ReadKeyFile (readable by you only). Keep it safe." }
     Say "Log: $log"
     Say "Setup log: $setupLog"
