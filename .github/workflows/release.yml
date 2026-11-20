@@ -34,6 +34,11 @@ jobs:
   build:
     runs-on: windows-2022
     timeout-minutes: 45
+    permissions:
+      contents: read
+      # Build attestation (docs/auto-updater/SPEC.md U1b): GitHub signs "this workflow, at this commit, built these files".
+      id-token: write
+      attestations: write
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       version: ${{ steps.tag.outputs.version }}
@@ -272,6 +277,17 @@ jobs:
             -TemplatePath '.github/release-notes-template.md' `
             -OutFile 'dist/RELEASE-NOTES.md' `
             -Signed:($env:SIGNED -eq 'true')
+
+      - name: Attest the release files (built by this workflow from this commit)
+        # Pinned to the commit of v2.4.0. Sign-Release.ps1 checks these attestations before the owner signs the manifest.
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            dist/unravis-v*-windows-x64.zip
+            dist/unravis-blackbox-v*-windows-x64.zip
+            dist/unravis-lite-v*-windows-x64.zip
+            dist/unravis-setup-v*-windows-x64.exe
+            dist/update-manifest.json
 
       - name: Upload the release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

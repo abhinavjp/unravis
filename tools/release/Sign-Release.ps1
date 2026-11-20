@@ -13,6 +13,8 @@
     - builds the signing tool from a clean copy of that commit (not your working folder);
     - shows what changed in the signing code and in the trusted key list since the last signed release, and makes you
       type "reviewed" / "keys ok" if anything did (a new key in that list would let its owner sign updates for everyone);
+    - checks that every downloaded file has a GitHub build attestation from this repository's release workflow at the
+      tag's commit (gh attestation verify); no attestation, no signing;
     - re-hashes every downloaded file against update-manifest.json, shows version, dates and names, asks you to type "yes";
     - asks the key passphrase (hidden), signs, then checks the signature against the keys built into the new tag AND the
       keys of the release now on the feed (so installed copies will accept it); uploads update-manifest.json.sig.
@@ -45,6 +47,24 @@ $src = Join-Path $work 'src'
 function Invoke-Checked([string]$what, [scriptblock]$cmd) {
     & $cmd
     if ($LASTEXITCODE -ne 0) { throw "$what failed (exit code $LASTEXITCODE)." }
+}
+# Build attestation: every downloaded file must carry a GitHub attestation made by this repository's release workflow, at the tag's
+# commit. A stolen token that swapped files in the draft cannot produce one. Fails closed: no attestation, no signing.
+function Assert-Attested([string]$dir, [string]$repo, [string]$tag, [string]$commit) {
+    $workflow = "$repo/.github/workflows/release.yml"
+    foreach ($f in Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Name -match '^(unravis-.*\.(zip|exe)|update-manifest\.json)$' }) {
+        $errFile = Join-Path $dir '.attest-err.txt'   # gh prints progress on stderr; keep it out of the JSON
+        $json = gh attestation verify $f.FullName --repo $repo --signer-workflow $workflow --format json 2>$errFile
+        if ($LASTEXITCODE -ne 0) { throw "No valid build attestation for $($f.Name) from $workflow : $(Get-Content -Raw -ErrorAction SilentlyContinue $errFile)" }
+        Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
+        $found = $false
+        foreach ($r in ($json | ConvertFrom-Json)) {
+            $c = $r.verificationResult.signature.certificate
+            if ($c.sourceRepositoryDigest -eq $commit -and $c.sourceRepositoryRef -eq "refs/tags/$tag") { $found = $true }
+        }
+        if (-not $found) { throw "The attestation for $($f.Name) is not for $tag at commit $commit. Do not sign." }
+        Write-Host "  attested: $($f.Name)"
+    }
 }
 function Confirm-Typed([string]$word, [string]$question) {
     if ((Read-Host "$question Type '$word' to go on") -ne $word) { throw 'Stopped. Nothing was signed or published.' }
@@ -114,6 +134,8 @@ try {
         Invoke-Checked 'downloading the draft' { gh release download $Tag --repo $Repo --dir $files }
         Invoke-Checked 'checking the files against the manifest' { & $tool check-assets -manifest $manifest -dir $files }
         Invoke-Checked 'checking the manifest against the tag and the feed' { & $tool preflight -manifest $manifest -tag $Tag -commit $sha @feedArgs }
+        Write-Host 'Checking that GitHub attests these files were built by the release workflow from the tag:'
+        Assert-Attested $files $Repo $Tag $sha
         Confirm-Typed 'yes' 'Sign this release?'
         $secure = Read-Host "Passphrase for $KeyFile" -AsSecureString
         $plain = [System.Net.NetworkCredential]::new('', $secure).Password
