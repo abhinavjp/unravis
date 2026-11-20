@@ -40,16 +40,38 @@ func Allowed(method, path string) bool {
 	return method == http.MethodGet || method == http.MethodHead
 }
 
-// Wrap answers only what Allowed lets through.
+// Wrap answers only what Allowed lets through. Lite's page files carry fixed
+// names (no hash), so they are marked no-cache: a new Lite on the same port
+// must never run an old page from the browser's cache.
 func Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !Allowed(r.Method, r.URL.Path) {
-			w.Header().Set("Cache-Control", "no-store")
+			h := w.Header()
+			h.Set("Cache-Control", "no-store")
+			h.Set("Content-Security-Policy", "default-src 'none'")
+			h.Set("X-Content-Type-Options", "nosniff")
 			http.NotFound(w, r)
 			return
 		}
+		if !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/launch" {
+			w = &noCache{ResponseWriter: w}
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+type noCache struct{ http.ResponseWriter }
+
+func (n *noCache) WriteHeader(code int) {
+	n.Header().Set("Cache-Control", "no-cache")
+	n.ResponseWriter.WriteHeader(code)
+}
+
+func (n *noCache) Write(b []byte) (int, error) {
+	if n.Header().Get("Cache-Control") != "no-cache" {
+		n.Header().Set("Cache-Control", "no-cache")
+	}
+	return n.ResponseWriter.Write(b)
 }
 
 // Store is a one-entry, in-memory Blackbox list. It never writes a file and holds no key.

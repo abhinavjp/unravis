@@ -26,7 +26,9 @@
       item = list.items[0] ?? null;
       if (!item) problem = 'No Blackbox is set for this copy. Start Unravis Lite with --folder <recordings folder>.';
     } catch (e) {
-      problem = e instanceof Error ? e.message : 'Could not read the Blackbox.';
+      const text = e instanceof Error ? e.message : 'Could not read the Blackbox.';
+      // The full app's wording points at screens Lite does not have.
+      problem = text.replace(/Open Unravis from the link it printed when it started, or restart it\./, 'Open Unravis Lite from the link it printed, or start it again.');
     }
     loading = false;
   }
@@ -44,7 +46,7 @@
   {:else if item}
     <section aria-labelledby="bb-name">
       <h1 id="bb-name">{item.name}</h1>
-      <p class="mono">{item.location}</p>
+      <p class="mono wrap">{item.location}</p>
       <p><span class="tone {item.state.tone}">{item.state.label}</span> {item.state.detail}</p>
       {#if item.facts}
         <dl>
@@ -70,6 +72,7 @@
   h1 { font-size: 20px; margin: 0; }
   p { margin: 0; }
   .mono { font-family: var(--mono); color: var(--text-muted, inherit); }
+  .wrap { overflow-wrap: anywhere; }
   .problem { color: var(--bad); }
   dl { display: grid; gap: 6px; margin: 4px 0; }
   dl div { display: flex; gap: 10px; }

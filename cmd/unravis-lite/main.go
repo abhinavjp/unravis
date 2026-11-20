@@ -42,15 +42,20 @@ const codeLife = 2 * time.Minute
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "Unravis Lite: "+err.Error())
+		if len(os.Args) == 1 && runtime.GOOS == "windows" {
+			// Started by a double-click: keep the window open so the message can be read.
+			fmt.Fprintln(os.Stderr, "Press Enter to close.")
+			_, _ = fmt.Fscanln(os.Stdin)
+		}
 		os.Exit(1)
 	}
 }
 
 type options struct {
-	folder    string
-	port      int
-	noBrowser bool
-	version   bool
+	folder  string
+	port    int
+	open    bool
+	version bool
 }
 
 func parse(args []string, stderr io.Writer) (options, error) {
@@ -59,7 +64,7 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	fl.SetOutput(stderr)
 	fl.StringVar(&o.folder, "folder", "", "the Blackbox recordings folder (default: the Blackbox on this PC)")
 	fl.IntVar(&o.port, "port", 0, "local port (0 picks a free one)")
-	fl.BoolVar(&o.noBrowser, "no-browser", false, "print the one-time link instead of opening the browser")
+	fl.BoolVar(&o.open, "open", false, "also open the link in the default browser (do not use it from an administrator window)")
 	fl.BoolVar(&o.version, "version", false, "print the version and exit")
 	if err := fl.Parse(args); err != nil {
 		return o, err
@@ -81,6 +86,8 @@ func find(folder string, scan func() (blackbox.LocalFound, error)) (loc blackbox
 		switch {
 		case serr != nil:
 			return loc, name, fmt.Errorf("could not ask this PC for its Blackbox (%v). Start with --folder <recordings folder>", serr)
+		case found.Installed && found.ConfigUnreadable:
+			return loc, name, errors.New("a Blackbox is installed on this PC but its settings could not be read. Run Unravis Lite as administrator, or start with --folder <recordings folder>")
 		case !found.Installed || found.Folder == "":
 			return loc, name, errors.New("no Blackbox was found on this PC. Start with --folder <recordings folder>")
 		}
@@ -160,14 +167,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 		MaxHeaderBytes:    16 << 10,
 	}
 	link := "http://" + listener.Addr().String() + "/launch?c=" + code
-	opened := false
-	if !o.noBrowser && runtime.GOOS == "windows" {
-		opened = openInBrowser(link) == nil
-	}
-	if opened {
-		fmt.Fprintf(stdout, "%s is open in your browser, showing %s. Close this window to stop it.\n", strings.Replace(version.Short(), "Unravis", "Unravis Lite", 1), loc.Display())
-	} else {
-		fmt.Fprintf(stdout, "Open Unravis Lite with this one-time link (works once, expires in %d minutes):\n%s\n", int(codeLife/time.Minute), link)
+	// The link is always printed: it works once, and a server may have no browser that opens. Lite is often run as
+	// administrator, and a browser started from it would run elevated too, so the browser is opened only with --open.
+	fmt.Fprintf(stdout, "%s is showing %s. Close this window to stop it.\nOpen it with this one-time link (works once, expires in %d minutes):\n%s\n",
+		strings.Replace(version.Short(), "Unravis", "Unravis Lite", 1), loc.Display(), int(codeLife/time.Minute), link)
+	if o.open && runtime.GOOS == "windows" {
+		_ = openInBrowser(link)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -194,5 +199,9 @@ func openInBrowser(url string) error {
 	if root == "" {
 		root = `C:\Windows`
 	}
-	return exec.Command(filepath.Join(root, "System32", "rundll32.exe"), "url.dll,FileProtocolHandler", url).Start()
+	cmd := exec.Command(filepath.Join(root, "System32", "rundll32.exe"), "url.dll,FileProtocolHandler", url)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
 }

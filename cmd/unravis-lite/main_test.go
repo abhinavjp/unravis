@@ -15,8 +15,8 @@ func TestParseRefusesBadInput(t *testing.T) {
 			t.Errorf("%v should be refused", args)
 		}
 	}
-	o, err := parse([]string{"--folder", `D:\x`, "--no-browser", "--port", "0"}, io.Discard)
-	if err != nil || o.folder != `D:\x` || !o.noBrowser {
+	o, err := parse([]string{"--folder", `D:\x`, "--open", "--port", "0"}, io.Discard)
+	if err != nil || o.folder != `D:\x` || !o.open {
 		t.Fatalf("%+v %v", o, err)
 	}
 }
@@ -58,5 +58,15 @@ func TestFindFromThisPC(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "--folder") {
 			t.Errorf("the message must name --folder: %v", err)
 		}
+	}
+}
+
+func TestFindSaysWhenSettingsCannotBeRead(t *testing.T) {
+	scan := func() (blackbox.LocalFound, error) {
+		return blackbox.LocalFound{Installed: true, ConfigUnreadable: true}, nil
+	}
+	_, _, err := find("", scan)
+	if err == nil || !strings.Contains(err.Error(), "could not be read") || strings.Contains(err.Error(), "no Blackbox was found") {
+		t.Fatalf("%v", err)
 	}
 }

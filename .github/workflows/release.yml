@@ -151,7 +151,7 @@ jobs:
             'Shipping now would mark the release as signed when it is not.',
             'The owner must do ONE of these, then re-run this workflow (Actions > Release > Run workflow, enter the same tag):',
             '1. Ship unsigned: delete the SIGNPATH secret (repository Settings > Secrets and variables > Actions > Repository secrets). The notes then carry the "not signed" notice.',
-            '2. Ship signed: add the SignPath signing step (buildout/plan/installer-and-releases.md section 8) so it signs dist/unravis-setup.exe, dist/unravis.exe and dist/unravis-blackbox.exe before packaging, and set SIGNED to true in the "Write the release notes" step.'
+            '2. Ship signed: add the SignPath signing step (buildout/plan/installer-and-releases.md section 8) so it signs dist/unravis-setup.exe, dist/unravis.exe, dist/unravis-blackbox.exe and dist/unravis-lite.exe before packaging, and set SIGNED to true in the "Write the release notes" step.'
           )
           Write-Host ('::error title=SignPath is set but signing is not wired up::' + ($lines -join '%0A'))
           $lines | ForEach-Object { Write-Host $_ }
@@ -216,10 +216,10 @@ jobs:
             'Run (as an administrator if the recordings folder is locked):',
             '    unravis-lite.exe',
             '',
-            'It finds the Blackbox on this PC and opens your browser to a local page',
-            '(loopback only). To read a copy of the recordings, or a share:',
+            'It finds the Blackbox on this PC and prints a one-time link to a local page',
+            '(loopback only); open the link in your browser. To read a copy of the recordings, or a share:',
             '    unravis-lite.exe --folder D:\copy-of-recordings',
-            'Use --no-browser to get a one-time link to open by hand.'
+            'Add --open to open the link in the default browser for you.'
           )
           $Readme | Set-Content -Encoding utf8 (Join-Path $Stage 'README.txt')
           $Zip = "dist/unravis-lite-v$Version-windows-x64.zip"

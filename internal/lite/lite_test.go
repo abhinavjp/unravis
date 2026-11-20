@@ -173,3 +173,21 @@ func TestStoreWritesNothing(t *testing.T) {
 		t.Fatal("unknown id must fail")
 	}
 }
+
+func TestPageFilesAreNotCachedAndRefusalsCarryHeaders(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+		_, _ = w.Write([]byte("x"))
+	})
+	h := Wrap(inner)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/assets/lite.js", nil))
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("page file cache header %q", got)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/sources", nil))
+	if rec.Code != 404 || rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Header().Get("Content-Security-Policy") == "" {
+		t.Fatalf("refusal: %d %v", rec.Code, rec.Header())
+	}
+}

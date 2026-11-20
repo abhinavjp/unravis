@@ -186,6 +186,8 @@ try {
         if ($Subsystem -ne 3) { throw "unravis-blackbox.exe: PE subsystem $Subsystem, expected 3" }
         $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis-setup.exe')
         if ($Subsystem -ne 3) { throw "unravis-setup.exe: PE subsystem $Subsystem, expected 3" }
+        $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis-lite.exe')
+        if ($Subsystem -ne 3) { throw "unravis-lite.exe: PE subsystem $Subsystem, expected 3" }
     } finally {
         # The programs stay in dist; the copies in the source tree go, so a later `go test` does not carry them.
         Get-ChildItem -LiteralPath $PayloadDir -Force | Where-Object { $_.Name -notin @('README.txt', '.gitignore') } | Remove-Item -Recurse -Force
