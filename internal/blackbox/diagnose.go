@@ -104,6 +104,7 @@ func DiagnoseLate(text string, now time.Time, base int) DiagReport {
 		to    int
 	}
 	groups := map[string]*gs{}
+	stalls, stallMax := 0, 0.0
 	overReason := map[string]int{}
 	widened := ""
 	suppressed := 0
@@ -145,6 +146,22 @@ func DiagnoseLate(text string, now time.Time, base int) DiagReport {
 				}
 			}
 		case "round":
+			lagMax = maxf(lagMax, l.num("lag"))
+			// A round whose collect took seconds while the host read and every
+			// named group were quick: the whole process was not running.
+			if c := l.num("collect"); c >= 3000 {
+				acc := l.num("host")
+				for _, part := range strings.Split(l.KV["groups"], ",") {
+					if p := strings.Split(part, ":"); len(p) == 3 {
+						v, _ := strconv.ParseFloat(p[1], 64)
+						acc += v
+					}
+				}
+				if acc < c/2 {
+					stalls++
+					stallMax = maxf(stallMax, c)
+				}
+			}
 			if e := l.KV["err"]; e != "" && e != "-" {
 				errs[e]++
 			}
@@ -193,6 +210,10 @@ func DiagnoseLate(text string, now time.Time, base int) DiagReport {
 			add("group-slow:"+n, true, fmt.Sprintf("Counter group \"%s\" is slow.", n),
 				fmt.Sprintf("Up to %.0f ms, slow %d time(s)%s. Groups run one after another, so a slow one delays the sample. After two slow rounds the Blackbox sets an optional group aside for 10 minutes.", g.max, maxi(g.count, g.to), timeoutText(g.to)))
 		}
+	}
+	if stalls > 0 {
+		add("stalled", true, "The whole Blackbox stopped for a while.",
+			fmt.Sprintf("%d round(s) took up to %.0f s while no counter and no read was slow. The process itself was not given CPU time: the PC was overloaded (the Blackbox runs at low priority on purpose), asleep, or paused by antivirus.", stalls, stallMax/1000))
 	}
 	if appendMax >= 1000 {
 		add("write-slow", true, "Writing to the recordings drive is slow.",

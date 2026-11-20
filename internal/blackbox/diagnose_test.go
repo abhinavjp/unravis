@@ -100,3 +100,11 @@ func TestFormatDiagTextCapsLines(t *testing.T) {
 		t.Fatal(txt)
 	}
 }
+
+func TestDiagnoseStallWithQuickGroups(t *testing.T) {
+	log := dline(2*time.Minute, "round seq=10 total=21384 lag=2585 missed=0 hk=0 feed=0 collect=21384 host=410 append=0 groups=events:227:empty,sqlHost:0:empty err=- paused=false")
+	rep := DiagnoseLate(log, dn, 5)
+	if !has(rep, "stalled") || !has(rep, "cpu-starved") {
+		t.Fatalf("%+v", rep)
+	}
+}

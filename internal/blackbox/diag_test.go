@@ -289,3 +289,24 @@ func TestFolderAndHTTPDiagnostics(t *testing.T) {
 		t.Fatal("no log must read as empty")
 	}
 }
+
+func TestAGroupThatAlwaysErrorsDoesNotMakeEveryRoundNotable(t *testing.T) {
+	g, _ := diagRig(t)
+	g.r.Tick(g.clk.t)
+	g.r.o.Collector = &groupsFake{inner: g.col, gt: []groupTime{{Name: "aspnet", Outcome: "error"}, {Name: "events", Dur: 150 * time.Millisecond, Outcome: "empty"}}}
+	for i := 0; i < 5; i++ {
+		g.tick(15 * time.Second)
+	}
+	if strings.Contains(readDiag(g), " round ") {
+		t.Fatalf("error/empty groups alone must not write round lines:\n%s", readDiag(g))
+	}
+}
+
+type groupsFake struct {
+	inner Collector
+	gt    []groupTime
+}
+
+func (f *groupsFake) Collect(n time.Time) (Sample, error) { return f.inner.Collect(n) }
+func (f *groupsFake) Close() error                        { return nil }
+func (f *groupsFake) GroupTimings() []groupTime           { return f.gt }

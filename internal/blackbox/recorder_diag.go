@@ -53,7 +53,9 @@ func (r *Recorder) diagRound(now time.Time, rd roundDiag, start time.Time, pause
 	notable := rd.Err != "" || rd.Missed > 0 || rd.Lag >= diagNotableMin || rd.HK >= diagNotableMin ||
 		rd.Total >= diagNotableMin && rd.Total >= interval/2
 	for _, g := range rd.Groups {
-		if g.Outcome != "ok" && g.Outcome != "skipped" {
+		// A group that ran out of time or was still busy is news. One that always
+		// answers "error" or "empty" (no IIS or SQL on this PC) is not.
+		if g.Outcome == "timeout" || g.Outcome == "busy" {
 			notable = true
 		}
 	}
