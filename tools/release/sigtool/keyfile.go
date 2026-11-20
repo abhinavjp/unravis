@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"unicode/utf8"
 )
 
 // The private key is stored encrypted with a passphrase: PBKDF2-SHA256 (600,000 rounds) then AES-256-GCM.
@@ -35,7 +36,7 @@ func deriveKey(pass string, salt []byte, rounds int) ([]byte, error) {
 }
 
 func sealKey(role string, priv ed25519.PrivateKey, pass string, rounds int) ([]byte, error) {
-	if len(pass) < minPassphrase {
+	if utf8.RuneCountInString(pass) < minPassphrase {
 		return nil, fmt.Errorf("passphrase must be at least %d characters", minPassphrase)
 	}
 	salt := make([]byte, 16)
@@ -69,6 +70,9 @@ func openKey(data []byte, pass string) (role string, priv ed25519.PrivateKey, er
 	var kf keyFile
 	if err := json.Unmarshal(data, &kf); err != nil || kf.Version != keyFileVersion {
 		return "", nil, errors.New("not an unravis key file")
+	}
+	if kf.Role != "stable" && kf.Role != "rc" {
+		return "", nil, errors.New("key file has no valid role")
 	}
 	if kf.Rounds < 100000 || kf.Rounds > 10000000 || len(kf.Salt) != 16 || len(kf.Pub) != ed25519.PublicKeySize {
 		return "", nil, errors.New("key file is damaged")

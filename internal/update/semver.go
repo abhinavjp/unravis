@@ -93,10 +93,15 @@ func Compare(a, b Version) int {
 		xn, yn := isNumeric(x), isNumeric(y)
 		switch {
 		case xn && yn:
-			xi, _ := strconv.ParseUint(x, 10, 64)
-			yi, _ := strconv.ParseUint(y, 10, 64)
-			if xi != yi {
-				if xi < yi {
+			// Numbers have no leading zeros (checked on parse), so a longer one is larger, and equal lengths compare as text.
+			if len(x) != len(y) {
+				if len(x) < len(y) {
+					return -1
+				}
+				return 1
+			}
+			if x != y {
+				if x < y {
 					return -1
 				}
 				return 1

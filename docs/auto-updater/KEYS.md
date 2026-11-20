@@ -2,33 +2,41 @@
 
 Free. Uses only the Go standard library. Do this once, on your own PC (not CI, not a cloud machine).
 
-## Make the keys (4 keys: rc current + next, stable current + next)
+## Make the keys
+
+Four keys: rc current (`rc-1`), rc backup (`rc-2`), stable current (`stable-1`), stable backup (`stable-2`).
+**Use a different passphrase for each of the two backup keys and for stable vs rc.** Ask twice so a typo cannot lock you out.
 
 ```powershell
-$env:UNRAVIS_KEY_PASSPHRASE = Read-Host "Passphrase (12+ characters)"   # type it; it is not saved
-go run ./tools/release/sigtool keygen -role rc     -out D:\secret\rc-1.key.json     -pub D:\secret\rc-1.pub
-go run ./tools/release/sigtool keygen -role rc     -out D:\secret\rc-2.key.json     -pub D:\secret\rc-2.pub
-go run ./tools/release/sigtool keygen -role stable -out D:\secret\stable-1.key.json -pub D:\secret\stable-1.pub
-go run ./tools/release/sigtool keygen -role stable -out D:\secret\stable-2.key.json -pub D:\secret\stable-2.pub
-Remove-Item Env:UNRAVIS_KEY_PASSPHRASE
+function New-UpdateKey($role, $name) {
+    $a = Read-Host "Passphrase for $name (12+ characters)" -AsSecureString
+    $b = Read-Host "Same passphrase again" -AsSecureString
+    $pa = [System.Net.NetworkCredential]::new('', $a).Password
+    if ($pa -ne [System.Net.NetworkCredential]::new('', $b).Password) { throw 'The two passphrases differ.' }
+    $pa | go run ./tools/release/sigtool keygen -role $role -out "D:\secret\$name.key.json" -pub "D:\secret\$name.pub"
+}
+New-UpdateKey rc rc-1
+New-UpdateKey rc rc-2
+New-UpdateKey stable stable-1
+New-UpdateKey stable stable-2
 ```
 
-- Use a different passphrase for stable than for rc.
+(The passphrase goes in on standard input, never on the command line.)
+
 - The `.key.json` files are the private keys, encrypted (PBKDF2-SHA256 600,000 rounds + AES-256-GCM). The tool refuses to overwrite a file.
-- Copy all `.key.json` files to two USB sticks and keep them apart. Do not keep the passphrase with them.
+- Keep the `-1` keys on two USB sticks. Keep the `-2` keys on a **different** stick kept somewhere else. Do not keep a passphrase with a stick.
 - Never commit a `.key.json`. Never put one in CI or a cloud drive.
 
 ## Tell the programs to trust the public keys
 
-Append the lines of every `.pub` file to `internal/update/trusted_keys.txt` (a line looks like `rc 3fa9...`). Commit that file. Public keys are safe to publish. Only the `-1` and `-2` public keys are listed; day to day you sign with `-1`. If `-1` is ever lost or leaked, ship a release signed with `-2` that carries a new `-3` public key.
-
-A build with no keys in that file accepts no update at all.
+Append the lines of every `.pub` file to `internal/update/trusted_keys.txt` (a line looks like `rc 3fa9...`) and commit it. Public keys are safe to publish. Day to day you sign with `-1`. A build with no keys in that file accepts no update at all.
 
 ## Sign a release
 
-See `tools/release/Sign-Release.ps1`: step 1 signs before Publish, step 2 updates the feed after Publish.
+`tools/release/Sign-Release.ps1`: step 1 signs before Publish, step 2 updates the feed after Publish. The script builds the signing tool from the tag in a clean copy, so other code in your folder never sees the passphrase.
 
 ## If a private key leaks
 
-1. Stop signing with it. Sign the next release with the `-2` key and list a new `-3` public key.
-2. A copy that never updated and trusts only the leaked key must be reinstalled by hand. This is the honest limit.
+1. Stop using it. Make a release signed with the backup key (`-2`) whose `trusted_keys.txt` **removes the leaked public key** and adds a new one. Copies that update to it no longer trust the leaked key.
+2. Until a copy has taken that update, it still trusts the leaked key. A copy that never updates must be reinstalled by hand. This is the honest limit.
+3. Rotate the other role's keys only if they were stored together with the leaked one.

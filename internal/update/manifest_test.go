@@ -3,6 +3,7 @@ package update
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -68,7 +69,7 @@ func TestVerifyRefusals(t *testing.T) {
 		trust Trust
 	}{
 		{"tampered manifest", []byte(strings.Replace(string(rcM), "rc.48", "rc.49", 1)), rcS, trust},
-		{"tampered signature", rcM, []byte(strings.Replace(string(rcS), "A", "B", 1)), trust},
+		{"tampered signature", rcM, flipSig(t, rcS), trust},
 		{"unknown key", func() []byte { b, _ := sign(t, goodManifest("1.0.0", ChannelStable), other, otherPriv); return b }(),
 			[]byte(FormatSignature(other.Pub, ed25519.Sign(otherPriv, []byte("x")))), trust},
 		{"empty signature", rcM, nil, trust},
@@ -198,4 +199,80 @@ func TestSemverOrder(t *testing.T) {
 			t.Errorf("%q accepted", bad)
 		}
 	}
+}
+
+func TestChannelFailsClosed(t *testing.T) {
+	k, priv := key(t, ChannelRC)
+	mb, sb := sign(t, goodManifest("0.1.0-rc.48", ChannelRC), k, priv)
+	for _, ch := range []string{"", "Stable", "STABLE", "beta"} {
+		if _, err := Verify(mb, sb, Trust{Keys: []Key{k}, Channel: ch}, now); err == nil {
+			t.Errorf("build channel %q accepted", ch)
+		}
+	}
+	if _, err := Verify(mb, sb, Trust{Keys: []Key{k}, Channel: ChannelRC, Want: ChannelStable}, now); err == nil {
+		t.Error("rc manifest accepted when stable was asked for")
+	}
+	if _, err := Verify(mb, sb, Trust{Keys: []Key{k}, Channel: ChannelRC, Want: ChannelRC}, now); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestStrictJSON(t *testing.T) {
+	k, priv := key(t, ChannelRC)
+	good, _ := json.Marshal(goodManifest("0.1.0-rc.48", ChannelRC))
+	g := string(good)
+	bodies := map[string]string{
+		"duplicate seq":      strings.Replace(g, `"seq":48`, `"seq":48,"seq":9`, 1),
+		"case duplicate":     strings.Replace(g, `"seq":48`, `"seq":48,"SEQ":99`, 1),
+		"upper-case key":     strings.Replace(g, `"seq"`, `"SEQ"`, 1),
+		"trailing brace":     g + "}",
+		"trailing bracket":   g + "]",
+		"duplicate in asset": strings.Replace(g, `"size":100`, `"size":100,"size":1`, 1),
+	}
+	for name, body := range bodies {
+		sb := []byte(FormatSignature(k.Pub, ed25519.Sign(priv, []byte(body))))
+		if _, err := Verify([]byte(body), sb, Trust{Keys: []Key{k}, Channel: ChannelRC}, now); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestSaferFileNamesAndLifetime(t *testing.T) {
+	for name, mut := range map[string]func(m *Manifest){
+		"reserved":     func(m *Manifest) { a := m.Assets["app"]; a.Name = "CON.zip"; m.Assets["app"] = a },
+		"trailing dot": func(m *Manifest) { a := m.Assets["app"]; a.Name = "x.exe."; m.Assets["app"] = a },
+		"case duplicate": func(m *Manifest) {
+			a := m.Assets["app"]
+			a.Name = strings.ToUpper(m.Assets["setup"].Name)
+			m.Assets["app"] = a
+		},
+		"long lifetime": func(m *Manifest) { m.Expires = m.Published.Add(500 * 24 * time.Hour) },
+		"floor above":   func(m *Manifest) { m.MinUpdateFrom = "9.0.0" },
+		"floor spelled": func(m *Manifest) { m.MinUpdateFrom = "v0.1.0-rc.1" },
+	} {
+		m := goodManifest("0.1.0-rc.48", ChannelRC)
+		mut(&m)
+		if err := m.Validate(now); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestHugePrereleaseNumbers(t *testing.T) {
+	a, _ := ParseVersion("1.0.0-rc.99999999999999999999")
+	b, _ := ParseVersion("1.0.0-rc.99999999999999999998")
+	if Compare(a, b) != 1 || Compare(b, a) != -1 {
+		t.Fatal("huge numbers compare wrongly")
+	}
+}
+
+// flipSig changes one bit of the decoded signature, so the test does not depend on which letters the base64 holds.
+func flipSig(t *testing.T, sigFile []byte) []byte {
+	t.Helper()
+	id, sig, err := parseSignature(sigFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig[10] ^= 1
+	return []byte(sigPrefix + " " + id + " " + base64.StdEncoding.EncodeToString(sig) + "\n")
 }

@@ -4,12 +4,14 @@
 //	sigtool manifest -dir dist -version V -seq N -out manifest.json  describe a release (CI runs this; it signs nothing)
 //	sigtool sign     -key key.json -in manifest.json -out manifest.json.sig
 //	sigtool check-assets -manifest manifest.json -dir downloaded   re-hash the real files against the manifest before signing
+//	sigtool preflight -manifest m.json -tag vX [-feed current.json]  sanity-check a manifest against its tag and the live feed
 //	sigtool verify   -in manifest.json -sig manifest.json.sig -pub a.pub[,b.pub] [-channel stable|rc]
 //
 // The passphrase comes from UNRAVIS_KEY_PASSPHRASE or the first line of standard input. It is never a command-line argument.
 package main
 
 import (
+	"archive/zip"
 	"bufio"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -131,9 +133,9 @@ func run(args []string, in io.Reader, out io.Writer) error {
 			return err
 		}
 		// Check the manifest before signing it: a key never signs a manifest of the wrong channel or one that does not validate.
-		var m update.Manifest
-		if err := json.Unmarshal(mb, &m); err != nil {
-			return fmt.Errorf("manifest: %w", err)
+		m, err := update.ParseManifest(mb) // the same strict reader the programs use: it will not sign what they would refuse
+		if err != nil {
+			return fmt.Errorf("refusing to sign: %w", err)
 		}
 		if err := m.Validate(time.Now()); err != nil {
 			return fmt.Errorf("refusing to sign: %w", err)
@@ -159,31 +161,52 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		var m update.Manifest
-		if err := json.Unmarshal(mb, &m); err != nil {
+		m, err := update.ParseManifest(mb)
+		if err != nil {
 			return err
 		}
-		if err := checkAssets(&m, *dir); err != nil {
+		if err := m.Validate(time.Now()); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "ok: %d file(s) match the manifest for %s\n", len(m.Assets)+1, m.Version)
+		if err := checkAssets(m, *dir); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "ok: %d release file(s) and the Blackbox exe inside its zip match the manifest for %s\n", len(m.Assets), m.Version)
 		return nil
+
+	case "preflight":
+		mf := fs.String("manifest", "", "manifest about to be signed or published")
+		tag := fs.String("tag", "", "release tag, e.g. v0.1.0-rc.48")
+		feed := fs.String("feed", "", "the manifest the feed holds now (optional)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		return preflight(*mf, *tag, *feed, out)
 
 	case "verify":
 		inFile := fs.String("in", "", "manifest")
 		sigFile := fs.String("sig", "", "signature file")
-		pubs := fs.String("pub", "", "comma-separated public key files")
-		channel := fs.String("channel", update.ChannelRC, "channel of the build checking (stable or rc)")
+		pubs := fs.String("pub", "", "comma-separated public key files (or use -trusted)")
+		trusted := fs.Bool("trusted", false, "use the keys built into this source tree (internal/update/trusted_keys.txt) instead of -pub")
+		channel := fs.String("channel", "", "channel of the build checking: stable or rc (required)")
+		want := fs.String("want", "", "channel the file must be for (optional)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
 		var keys []update.Key
-		for _, p := range strings.Split(*pubs, ",") {
-			k, err := readPub(strings.TrimSpace(p))
-			if err != nil {
+		if *trusted {
+			var err error
+			if keys, err = update.TrustedKeys(); err != nil {
 				return err
 			}
-			keys = append(keys, k)
+		} else {
+			for _, p := range strings.Split(*pubs, ",") {
+				k, err := readPub(strings.TrimSpace(p))
+				if err != nil {
+					return err
+				}
+				keys = append(keys, k)
+			}
 		}
 		mb, err := os.ReadFile(*inFile)
 		if err != nil {
@@ -193,7 +216,7 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		m, err := update.Verify(mb, sb, update.Trust{Keys: keys, Channel: *channel}, time.Now())
+		m, err := update.Verify(mb, sb, update.Trust{Keys: keys, Channel: *channel, Want: *want}, time.Now())
 		if err != nil {
 			return err
 		}
@@ -295,6 +318,85 @@ func checkAssets(m *update.Manifest, dir string) error {
 		if sum != a.SHA256 || size != a.Size {
 			return fmt.Errorf("%s (%s) does not match the manifest", key, a.Name)
 		}
+	}
+	// blackboxExeSha256 is what the app pins the helper to, so it is checked against the exe inside the Blackbox zip.
+	zr, err := zip.OpenReader(filepath.Join(dir, m.Assets[update.AssetBlackbox].Name))
+	if err != nil {
+		return fmt.Errorf("blackbox zip: %w", err)
+	}
+	defer zr.Close()
+	for _, f := range zr.File {
+		if f.Name != "unravis-blackbox.exe" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		defer rc.Close()
+		h := sha256.New()
+		if _, err := io.Copy(h, io.LimitReader(rc, update.MaxAssetSize+1)); err != nil {
+			return err
+		}
+		if hex.EncodeToString(h.Sum(nil)) != m.BlackboxExeSHA256 {
+			return errors.New("blackboxExeSha256 does not match the exe inside the Blackbox zip")
+		}
+		return nil
+	}
+	return errors.New("the Blackbox zip has no unravis-blackbox.exe")
+}
+
+// preflight stops the owner signing a manifest that is not what the tag says, or that would not move the feed forward.
+// It prints the facts a person should look at. The feed copy is only a guard here: it is unverified and a wrong one can
+// only make this check stricter or looser, never make a bad manifest installable (the programs verify the signature themselves).
+func preflight(manifestPath, tag, feedPath string, out io.Writer) error {
+	mb, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return err
+	}
+	m, err := update.ParseManifest(mb)
+	if err != nil {
+		return err
+	}
+	if err := m.Validate(time.Now()); err != nil {
+		return err
+	}
+	if "v"+m.Version != tag {
+		return fmt.Errorf("the manifest is for %s but the tag is %s", m.Version, tag)
+	}
+	want := map[string]string{
+		update.AssetSetup:    "unravis-setup-" + tag + "-windows-x64.exe",
+		update.AssetApp:      "unravis-" + tag + "-windows-x64.zip",
+		update.AssetBlackbox: "unravis-blackbox-" + tag + "-windows-x64.zip",
+		update.AssetLite:     "unravis-lite-" + tag + "-windows-x64.zip",
+	}
+	for k, a := range m.Assets {
+		if a.Name != want[k] {
+			return fmt.Errorf("asset %s is named %q, expected %q", k, a.Name, want[k])
+		}
+	}
+	fmt.Fprintf(out, "version %s, channel %s, seq %d\npublished %s, expires %s, minUpdateFrom %q\n",
+		m.Version, m.Channel, m.Seq, m.Published.Format(time.RFC3339), m.Expires.Format(time.RFC3339), m.MinUpdateFrom)
+	for _, k := range []string{update.AssetSetup, update.AssetApp, update.AssetBlackbox, update.AssetLite} {
+		if a, ok := m.Assets[k]; ok {
+			fmt.Fprintf(out, "  %-8s %s  %d bytes\n", k, a.Name, a.Size)
+		}
+	}
+	if feedPath != "" {
+		fb, err := os.ReadFile(feedPath)
+		if err != nil {
+			return err
+		}
+		cur, err := update.ParseManifest(fb)
+		if err != nil {
+			return fmt.Errorf("the feed's current manifest: %w", err)
+		}
+		cv, _ := update.ParseVersion(cur.Version)
+		nv, _ := update.ParseVersion(m.Version)
+		if m.Channel != cur.Channel || m.Seq <= cur.Seq || update.Compare(nv, cv) <= 0 {
+			return fmt.Errorf("this would not move the feed forward (feed has %s, seq %d)", cur.Version, cur.Seq)
+		}
+		fmt.Fprintf(out, "feed now has %s (seq %d): this moves it forward\n", cur.Version, cur.Seq)
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package update
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -8,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -25,6 +28,7 @@ const (
 	MaxManifestSize = 64 * 1024         // a manifest or signature file larger than this is refused unread
 	MaxAssetSize    = 500 * 1024 * 1024 // no single release file may claim to be larger
 	clockSkew       = 10 * time.Minute
+	maxLifetime     = 400 * 24 * time.Hour // a manifest may not claim to be valid longer than this
 )
 
 // Asset names the keys of Manifest.Assets.
@@ -101,12 +105,19 @@ func (m *Manifest) Validate(now time.Time) error {
 	if m.Published.After(now.Add(clockSkew)) {
 		return errors.New("manifest is dated in the future")
 	}
+	if m.Expires.Sub(m.Published) > maxLifetime {
+		return errors.New("manifest lifetime is too long")
+	}
 	if !now.Before(m.Expires) {
 		return errors.New("manifest has expired")
 	}
 	if m.MinUpdateFrom != "" {
-		if _, err := ParseVersion(m.MinUpdateFrom); err != nil {
+		floor, err := ParseVersion(m.MinUpdateFrom)
+		if err != nil {
 			return fmt.Errorf("minUpdateFrom: %w", err)
+		}
+		if m.MinUpdateFrom != floor.String() || Compare(floor, v) > 0 {
+			return errors.New("minUpdateFrom must be written plainly and not above the version")
 		}
 	}
 	if !sha256RE.MatchString(m.BlackboxExeSHA256) {
@@ -122,13 +133,13 @@ func (m *Manifest) Validate(now time.Time) error {
 		if !knownAssets[key] {
 			return fmt.Errorf("unknown asset %q", key)
 		}
-		if !assetNameRE.MatchString(a.Name) || strings.Contains(a.Name, "..") {
+		if !safeFileName(a.Name) {
 			return fmt.Errorf("asset %q has an unsafe file name", key)
 		}
-		if seen[a.Name] {
+		if seen[strings.ToLower(a.Name)] {
 			return fmt.Errorf("asset file name %q is used twice", a.Name)
 		}
-		seen[a.Name] = true
+		seen[strings.ToLower(a.Name)] = true
 		if !sha256RE.MatchString(a.SHA256) {
 			return fmt.Errorf("asset %q hash must be 64 lower-case hex digits", key)
 		}
@@ -137,6 +148,22 @@ func (m *Manifest) Validate(now time.Time) error {
 		}
 	}
 	return nil
+}
+
+var reservedNames = map[string]bool{"con": true, "prn": true, "aux": true, "nul": true, "com1": true, "com2": true, "com3": true, "com4": true,
+	"com5": true, "com6": true, "com7": true, "com8": true, "com9": true, "lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true,
+	"lpt5": true, "lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true}
+
+// safeFileName allows plain names that are also safe on Windows: no path parts, no trailing dot, no device names.
+func safeFileName(n string) bool {
+	if !assetNameRE.MatchString(n) || strings.Contains(n, "..") || strings.HasSuffix(n, ".") {
+		return false
+	}
+	base := strings.ToLower(n)
+	if i := strings.IndexByte(base, '.'); i >= 0 {
+		base = base[:i]
+	}
+	return !reservedNames[base]
 }
 
 // Key is one trusted public key. Role decides which channel it may sign.
@@ -155,8 +182,11 @@ func KeyID(pub ed25519.PublicKey) string {
 type Trust struct {
 	Keys []Key
 	// Channel is the running build's channel. A stable build accepts only stable manifests;
-	// an rc build accepts both (so it can move to a final release).
+	// an rc build accepts both (so it can move to a final release). It must be exactly "stable" or "rc"; anything else fails closed.
 	Channel string
+	// Want is the channel the caller asked for (the feed file it read). When set, a manifest of another channel is refused,
+	// so a swapped rc.json/stable.json cannot move a machine to a channel it did not choose.
+	Want string
 }
 
 const sigPrefix = "unravis-sig-v1"
@@ -184,6 +214,12 @@ func parseSignature(text []byte) (keyID string, sig []byte, err error) {
 // Verify checks the detached signature over the exact manifest bytes, then the manifest fields.
 // It returns the parsed manifest only when every check passes. Nothing is read from the manifest before the signature is good.
 func Verify(manifest, sigFile []byte, t Trust, now time.Time) (*Manifest, error) {
+	if t.Channel != ChannelStable && t.Channel != ChannelRC {
+		return nil, errors.New("the build's channel must be stable or rc")
+	}
+	if t.Want != "" && t.Want != ChannelStable && t.Want != ChannelRC {
+		return nil, errors.New("the wanted channel must be stable or rc")
+	}
 	if len(manifest) == 0 || len(manifest) > MaxManifestSize {
 		return nil, errors.New("manifest size is not allowed")
 	}
@@ -207,14 +243,9 @@ func Verify(manifest, sigFile []byte, t Trust, now time.Time) (*Manifest, error)
 	if !ed25519.Verify(key.Pub, manifest, sig) {
 		return nil, errors.New("manifest signature does not match")
 	}
-	dec := json.NewDecoder(strings.NewReader(string(manifest)))
-	dec.DisallowUnknownFields()
-	var m Manifest
-	if err := dec.Decode(&m); err != nil {
-		return nil, fmt.Errorf("manifest is not valid: %w", err)
-	}
-	if dec.More() {
-		return nil, errors.New("manifest has extra data after the object")
+	m, err := ParseManifest(manifest)
+	if err != nil {
+		return nil, err
 	}
 	if err := m.Validate(now); err != nil {
 		return nil, err
@@ -226,7 +257,10 @@ func Verify(manifest, sigFile []byte, t Trust, now time.Time) (*Manifest, error)
 	if t.Channel == ChannelStable && m.Channel != ChannelStable {
 		return nil, errors.New("a stable build accepts only stable manifests")
 	}
-	return &m, nil
+	if t.Want != "" && m.Channel != t.Want {
+		return nil, fmt.Errorf("this is the %s channel, but %s was asked for", m.Channel, t.Want)
+	}
+	return m, nil
 }
 
 // Decision is what a program does with a verified manifest.
@@ -262,4 +296,78 @@ func Judge(m *Manifest, current string, lastSeq uint64) (Decision, string, error
 		}
 	}
 	return DecisionInstall, "", nil
+}
+
+// ParseManifest decodes a manifest strictly: no duplicate keys (in any letter case), no unknown or differently spelled
+// keys, nothing after the object. What a person reads is then exactly what the program acts on.
+func ParseManifest(b []byte) (*Manifest, error) {
+	if err := rejectDuplicateKeys(b); err != nil {
+		return nil, fmt.Errorf("manifest is not valid: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	var m Manifest
+	if err := dec.Decode(&m); err != nil {
+		return nil, fmt.Errorf("manifest is not valid: %w", err)
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, errors.New("manifest has extra data after the object")
+	}
+	// Go matches key names without regard to letter case. Re-encoding and comparing catches "SEQ" for "seq".
+	canon, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	var a, c any
+	if err := json.Unmarshal(b, &a); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(canon, &c); err != nil {
+		return nil, err
+	}
+	if !reflect.DeepEqual(a, c) {
+		return nil, errors.New("manifest has keys that are misspelled or in the wrong letter case")
+	}
+	return &m, nil
+}
+
+func rejectDuplicateKeys(b []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	var walk func() error
+	walk = func() error {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		d, ok := tok.(json.Delim)
+		if !ok {
+			return nil
+		}
+		if d == '{' {
+			seen := map[string]bool{}
+			for dec.More() {
+				kt, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				k := strings.ToLower(kt.(string))
+				if seen[k] {
+					return fmt.Errorf("duplicate key %q", kt)
+				}
+				seen[k] = true
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+		} else {
+			for dec.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+		}
+		_, err = dec.Token()
+		return err
+	}
+	return walk()
 }
