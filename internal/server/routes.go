@@ -179,6 +179,8 @@ var routes = []route{
 	{pattern: "/api/version", match: exactPath("/api/version"), methods: get((*handler).version)},
 	{pattern: "/api/update-check", match: exactPath("/api/update-check"), methods: post((*handler).updateCheck)},
 	{pattern: "/api/update/status", match: exactPath("/api/update/status"), methods: get((*handler).updateStatus)},
+	{pattern: "/api/update/download", match: exactPath("/api/update/download"), methods: post((*handler).updateDownload)},
+	{pattern: "/api/update/install", match: exactPath("/api/update/install"), methods: post((*handler).updateInstall)},
 	{pattern: "/api/update/settings", match: exactPath("/api/update/settings"), methods: map[string]routeFunc{
 		http.MethodPut: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.updateSettingsPut(w, r) },
 	}},

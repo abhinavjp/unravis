@@ -1,0 +1,71 @@
+//go:build windows
+
+package update
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"syscall"
+
+	"golang.org/x/sys/windows"
+)
+
+// CanLaunch says whether this build can hand a downloaded setup to the installer.
+const CanLaunch = true
+
+const (
+	detachedProcess       = 0x00000008
+	createNewProcessGroup = 0x00000200
+)
+
+// openHeld opens path for reading with sharing that allows other readers only: nobody can write, rename or delete the file while
+// the handle is open. Hash from this handle and start the process before closing it, and what was hashed is what starts.
+func openHeld(path string) (*os.File, error) {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, err := windows.CreateFile(p, windows.GENERIC_READ, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(h), path), nil
+}
+
+// LaunchSetup starts the downloaded setup program as an upgrade, in its own window, apart from this program. It passes the
+// hash and version the signed manifest promised, and the setup refuses to run if its own file or contents differ.
+// path must be an absolute path to the file this program downloaded. The file is held open with no write, rename or delete sharing
+// from the moment it is hashed until the process has started, so nothing can swap it in between.
+func LaunchSetup(path, sha256hex, version string) error {
+	if !filepath.IsAbs(path) || !sha256RE.MatchString(sha256hex) {
+		return errors.New("the setup file or its hash is not valid")
+	}
+	if v, err := ParseVersion(version); err != nil || v.String() != version {
+		return errors.New("the version is not valid")
+	}
+	f, err := openHeld(path)
+	if err != nil {
+		return errors.New("could not open the setup file")
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return errors.New("could not read the setup file")
+	}
+	if hex.EncodeToString(h.Sum(nil)) != sha256hex {
+		return errors.New("the setup file changed after it was checked; it was not started")
+	}
+	cmd := exec.Command(path, "--upgrade", "--expect-sha256", sha256hex, "--expect-version", version)
+	cmd.Dir = filepath.Dir(path)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: detachedProcess | createNewProcessGroup}
+	if err := cmd.Start(); err != nil {
+		return errors.New("could not start the setup program")
+	}
+	_ = cmd.Process.Release()
+	return nil
+}

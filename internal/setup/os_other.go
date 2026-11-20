@@ -24,7 +24,9 @@ func DialWorkerPipe(string, uint32) (*WorkerPipe, error) { return nil, errWindow
 
 type OSElevator struct {
 	SetupExe string
-	Timeout  time.Duration
+	// ExtraArgs are added to the worker's command line (the --expect-* checks).
+	ExtraArgs []string
+	Timeout   time.Duration
 }
 
 func (OSElevator) Start(context.Context) (io.ReadWriteCloser, error) { return nil, errWindowsOnly }

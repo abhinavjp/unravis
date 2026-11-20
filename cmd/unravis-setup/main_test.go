@@ -44,6 +44,8 @@ type testRig struct {
 	env    env
 	// elevated counts the times the fake "run as administrator" was started.
 	elevated int
+	// lastExtra is what the last elevator was asked to start the worker with.
+	lastExtra []string
 	uacNo    bool
 }
 
@@ -79,7 +81,7 @@ func newRig(t *testing.T) *testRig {
 		dirs:     func() (setup.Dirs, error) { return d, nil },
 		userSID:  func() (string, error) { return "S-1-5-21-1000", nil },
 		setupExe: func() (string, error) { return exe, nil },
-		elevator: func(string) setup.Elevator { return rg },
+		elevator: func(_ string, extra []string) setup.Elevator { rg.lastExtra = extra; return rg },
 		payload:  func() (*setup.Payload, error) { return payload, nil },
 		static: func() (fs.FS, error) {
 			return fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html><title>Unravis Setup</title>")}}, nil

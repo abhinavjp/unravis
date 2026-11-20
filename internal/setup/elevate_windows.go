@@ -31,6 +31,8 @@ import (
 type OSElevator struct {
 	// SetupExe is the running setup program (os.Executable).
 	SetupExe string
+	// ExtraArgs are added to the worker's command line (the --expect-* checks). Each is escaped.
+	ExtraArgs []string
 	// Timeout is how long to wait for the worker to connect once the prompt is approved (0 is two minutes).
 	Timeout time.Duration
 }
@@ -91,6 +93,9 @@ func (e OSElevator) Start(ctx context.Context) (io.ReadWriteCloser, error) {
 	defer ln.Close() // one client only: the name goes away as soon as the worker is connected (or not)
 
 	params := "--worker --pipe " + windows.EscapeArg(name) + " --parent " + strconv.Itoa(os.Getpid())
+	for _, a := range e.ExtraArgs {
+		params += " " + windows.EscapeArg(a)
+	}
 	verb, _ := windows.UTF16PtrFromString("runas")
 	file, err := windows.UTF16PtrFromString(e.SetupExe)
 	if err != nil {

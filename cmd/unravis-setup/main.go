@@ -44,7 +44,7 @@ type env struct {
 	dirs           func() (setup.Dirs, error)
 	userSID        func() (string, error)
 	setupExe       func() (string, error)
-	elevator       func(exe string) setup.Elevator
+	elevator       func(exe string, extra []string) setup.Elevator
 	payload        func() (*setup.Payload, error)
 	static         func() (fs.FS, error)
 	// openWindow, openFolder and startApp are the window's doings (never the worker's).
@@ -67,7 +67,7 @@ func osEnv() env {
 	return env{
 		stdout: os.Stdout, stderr: os.Stderr, now: time.Now,
 		system: setup.NewOSSystem, dirs: setup.OSDirs, userSID: setup.CurrentUserSID, setupExe: os.Executable,
-		elevator: func(exe string) setup.Elevator { return setup.OSElevator{SetupExe: exe} },
+		elevator: func(exe string, extra []string) setup.Elevator { return setup.OSElevator{SetupExe: exe, ExtraArgs: extra} },
 		payload: func() (*setup.Payload, error) {
 			sub, err := fs.Sub(payloadFiles, "payload")
 			if err != nil {
@@ -88,6 +88,7 @@ func osEnv() env {
 type options struct {
 	silent, uninstall, repair, upgrade, allowDowngrade, worker, noBrowser, showVersion, capture bool
 	config, logPath, pipe                                                                      string
+	expectSHA, expectVersion                                                                   string // --expect-sha256 / --expect-version: what the updater verified
 	parent                                                                                     uint
 }
 
@@ -102,6 +103,8 @@ func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
 	fl.BoolVar(&o.repair, "repair", false, "put the program files, shortcuts and service back as installed")
 	fl.BoolVar(&o.upgrade, "upgrade", false, "replace the installed version with this one")
 	fl.BoolVar(&o.allowDowngrade, "allow-downgrade", false, "allow installing an older version over a newer one")
+	fl.StringVar(&o.expectSHA, "expect-sha256", "", "refuse to run unless this setup program's own file has this SHA-256 (the update check passes it)")
+	fl.StringVar(&o.expectVersion, "expect-version", "", "refuse to run unless this setup installs exactly this version (the update check passes it)")
 	fl.BoolVar(&o.noBrowser, "no-browser", false, "do not open the setup window; print its address instead")
 	fl.BoolVar(&o.showVersion, "version", false, "print the version and exit")
 	// The worker flags are for the copy the window starts with "run as administrator"; they are not shown in the help.
@@ -138,6 +141,9 @@ func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
 	}
 	if n > 1 {
 		return o, errors.New("choose only one of --uninstall, --repair and --upgrade")
+	}
+	if err := o.checkExpectFlags(); err != nil {
+		return o, err
 	}
 	if o.config != "" && !o.silent {
 		return o, errors.New("--config is for --silent; add --silent, or leave --config out to open the setup window")
@@ -266,6 +272,12 @@ func runSilent(o options, e env) int {
 		say("%s Nothing was changed.", err)
 		return setup.OutcomePreflightFailed.ExitCode()
 	}
+	release, err := verifyExpect(o, e, payloadVersionOf(r))
+	defer release()
+	if err != nil {
+		say("%s", err)
+		return setup.OutcomePreflightFailed.ExitCode()
+	}
 	old, _ := setup.Detect(r.Sys.Reg)
 	setup.FillRecordingsConfirmation(&req, old)
 	opts := req.Options
@@ -284,7 +296,7 @@ func runSilent(o options, e env) int {
 			payloadVersion = r.Payload.Manifest.Version
 		}
 		r.DeriveStartAtSignIn(setup.ResolveOp(req.Op, old, payloadVersion), opts, &req.Options)
-		res = setup.RunWorker(context.Background(), e.elevator(r.SetupExe), req, nil, func(s string) { l.Line("worker: " + s) })
+		res = setup.RunWorker(context.Background(), e.elevator(r.SetupExe, o.expectArgs()), req, nil, func(s string) { l.Line("worker: " + s) })
 		o2 := opts
 		o2.StartAtSignIn = req.Options.StartAtSignIn
 		r.ApplyProfileLinks(o2, &res, func(s string) { l.Line("links: " + s) })
@@ -344,6 +356,16 @@ func runWorker(o options, e env) int {
 		fmt.Fprintln(e.stderr, "unravis-setup worker: not running as administrator")
 		return setup.OutcomeInvalid.ExitCode()
 	}
+	// Check this file and payload against what the update check verified before anything else, and before the window is told anything.
+	if p, err := e.payload(); err == nil {
+		r.Payload = p
+	}
+	release, err := verifyExpect(o, e, payloadVersionOf(r))
+	defer release()
+	if err != nil {
+		fmt.Fprintln(e.stderr, "unravis-setup worker:", err)
+		return setup.OutcomePreflightFailed.ExitCode()
+	}
 	wp, err := e.dialWorker(o.pipe, uint32(o.parent))
 	if err != nil {
 		fmt.Fprintln(e.stderr, "unravis-setup worker:", err)
@@ -354,9 +376,6 @@ func runWorker(o options, e env) int {
 	// line to the window as MsgLog, and the window (or silent mode) writes the one log, as the user, as "worker: ...".
 	r.Log = nil
 	r.UserSID = ""
-	if p, err := e.payload(); err == nil {
-		r.Payload = p
-	}
 	res := setup.ServeWorker(context.Background(), wp.Conn, r, setup.WorkerPrepare(wp.SID, wp.Profile))
 	return res.Outcome.ExitCode()
 }
@@ -377,7 +396,14 @@ func runWindow(o options, e env) int {
 	} else {
 		l.Line("payload: " + err.Error())
 	}
-	be := &setup.LocalBackend{R: r, Elev: e.elevator(r.SetupExe), Mode: o.op(), IsAdmin: r.Sys.Mach.IsAdmin(), LogPath: logPath,
+	release, err := verifyExpect(o, e, payloadVersionOf(r))
+	defer release()
+	if err != nil {
+		l.Line("expect: " + err.Error())
+		fmt.Fprintln(e.stderr, "unravis-setup:", err)
+		return setup.OutcomePreflightFailed.ExitCode()
+	}
+	be := &setup.LocalBackend{R: r, Elev: e.elevator(r.SetupExe, o.expectArgs()), Mode: o.op(), IsAdmin: r.Sys.Mach.IsAdmin(), LogPath: logPath,
 		Log: l.Line, AllowDowngrade: o.allowDowngrade}
 	return serve(o, e, be, nil, r.Sys.Mach.Browser(), l.Line)
 }

@@ -177,6 +177,10 @@ export const api = {
   updateCheck: (preview = '') => request<UpdateCheckReply>('/update-check' + (preview ? '?preview=' + encodeURIComponent(preview) : ''), { method: 'POST' }),
   /** The last known update answer and the settings. Makes no network call. preview: demo only. */
   updateStatus: (preview = '') => request<UpdateCheckReply>('/update/status' + (preview ? '?preview=' + encodeURIComponent(preview) : '')),
+  /** Starts the download of the verified update. Returns at once; poll updateStatus for progress. preview: demo only. */
+  updateDownload: (preview = '') => request<UpdateCheckReply>('/update/download' + (preview ? '?preview=' + encodeURIComponent(preview) : ''), { method: 'POST' }),
+  /** Opens the installer for the downloaded, re-checked file. preview: demo only. */
+  updateInstall: (preview = '') => request<UpdateCheckReply>('/update/install' + (preview ? '?preview=' + encodeURIComponent(preview) : ''), { method: 'POST' }),
   updateSettings: (auto: boolean, intervalMinutes: number) => request<UpdateCheckReply>('/update/settings', { method: 'PUT', body: JSON.stringify({ auto, intervalMinutes }) }),
   /** preview: a keeper screenshot preview (saved or stopped), answered only in the demo. */
   sources: (preview = '') => request<Source[]>('/sources' + (preview ? '?preview=' + encodeURIComponent(preview) : '')),

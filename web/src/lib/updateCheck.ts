@@ -1,7 +1,8 @@
 import type { UpdateCheckReply } from './types';
 
+export type UpdatePreview = '' | (typeof PREVIEWS)[number];
 const UNREACHABLE_NOTE = 'Could not check for updates. Check your connection and try again later.';
-const PREVIEWS = ['latest', 'available', 'offline', 'unverified'] as const;
+const PREVIEWS = ['latest', 'available', 'offline', 'unverified', 'downloading', 'ready', 'failed', 'launched'] as const;
 const OWN_RELEASE_PREFIX = 'https://github.com/abhinavjp/unravis/';
 
 /** The one sentence the Help panel shows for a check result. */
@@ -23,11 +24,11 @@ export function updateCheckNote(reply: UpdateCheckReply): string {
 }
 
 /** The demo-only preview named in the URL hash, such as #update=available. Any other value gives ''. */
-export function updatePreviewFrom(hash: string): '' | 'latest' | 'available' | 'offline' | 'unverified' {
+export function updatePreviewFrom(hash: string): UpdatePreview {
   const match = /(?:^#|[#&])update=([a-z]+)/.exec(hash);
   if (!match) return '';
   const name = match[1];
-  return (PREVIEWS as readonly string[]).includes(name) ? (name as 'latest' | 'available' | 'offline' | 'unverified') : '';
+  return (PREVIEWS as readonly string[]).includes(name) ? (name as UpdatePreview) : '';
 }
 
 /** True only for a release page in this project's own GitHub repository. */
@@ -41,7 +42,6 @@ export function updateCheckState(reply: { status?: unknown } | null | undefined)
   return status === 'latest' || status === 'available' || status === 'dev' || status === 'unverified' || status === 'none' ? status : 'unreachable';
 }
 
-type UpdatePreview = '' | 'latest' | 'available' | 'offline' | 'unverified';
 const UPDATE_PREVIEW_KEY = 'unravis.updatePreview';
 let updatePreview: UpdatePreview = '';
 
@@ -111,4 +111,41 @@ export function checkedNote(checkedAt: string | undefined, now: Date = new Date(
   const hours = Math.round(minutes / 60);
   if (hours < 48) return `Last checked ${hours} ${hours === 1 ? 'hour' : 'hours'} ago.`;
   return `Last checked ${Math.round(hours / 24)} days ago.`;
+}
+
+/** Whole percent of a download, 0 to 100. An unknown total gives 0. */
+export function downloadPercent(done: number, total: number): number {
+  if (!(total > 0) || !(done > 0)) return 0;
+  return Math.min(100, Math.floor((done / total) * 100));
+}
+
+/** The sentence for the download and install step. '' when there is nothing to say. */
+export function installNote(reply: UpdateCheckReply): string {
+  const step = reply.install;
+  if (!step) return '';
+  switch (step.state) {
+    case 'downloading':
+      return `Downloading version ${step.version}... ${downloadPercent(step.done, step.total)}%`;
+    case 'ready':
+      return `Version ${step.version} is downloaded and checked. Install opens the updater; Unravis closes while it updates.`;
+    case 'launched':
+      return 'The updater is open. Finish the update there. If you closed it, open it again.';
+    case 'failed':
+      return `The update did not go through. ${step.error ?? ''}`.trim();
+    default:
+      return '';
+  }
+}
+
+/** The short line a screen reader hears when the state changes (no percentage, so it is not read out every second). */
+export function installAnnouncement(reply: UpdateCheckReply): string {
+  const step = reply.install;
+  if (!step) return '';
+  switch (step.state) {
+    case 'downloading': return `Downloading version ${step.version}.`;
+    case 'ready': return `Version ${step.version} is ready to install.`;
+    case 'launched': return 'The updater is open.';
+    case 'failed': return 'The update did not go through.';
+    default: return '';
+  }
 }

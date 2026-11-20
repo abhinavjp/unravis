@@ -64,9 +64,20 @@ func updateCheckDemoReply(preview string) (updateCheckReply, bool) {
 	case "latest":
 		base.Status = "latest"
 		return base, true
-	case "available":
+	case "available", "downloading", "ready", "failed", "launched":
 		base.Status, base.Latest = "available", "1.3.0"
 		base.URL = "https://github.com/abhinavjp/unravis/releases/tag/v1.3.0"
+		base.CanInstall = true
+		switch preview {
+		case "downloading":
+			base.Install = &InstallInfo{State: "downloading", Version: "1.3.0", Done: 42 << 20, Total: 100 << 20}
+		case "ready":
+			base.Install = &InstallInfo{State: "ready", Version: "1.3.0", Done: 100 << 20, Total: 100 << 20}
+		case "failed":
+			base.Install = &InstallInfo{State: "failed", Version: "1.3.0", Error: "The download does not match the signed release (hash differs); it was deleted."}
+		case "launched":
+			base.Install = &InstallInfo{State: "launched", Version: "1.3.0", Done: 100 << 20, Total: 100 << 20}
+		}
 		return base, true
 	case "offline":
 		base.Status = "unreachable"
@@ -157,5 +168,38 @@ func (h *handler) updateSettingsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.event(r, "update_settings", "auto", saved.Auto, "interval_minutes", saved.IntervalMinutes)
+	writeJSON(w, http.StatusOK, u.Status(), 4096)
+}
+
+// updateDownload answers POST /api/update/download: starts the download of the verified update. It returns at once; the status
+// endpoint shows the progress. A person pressed the button; no page load calls this.
+func (h *handler) updateDownload(w http.ResponseWriter, r *http.Request) {
+	h.updateStep(w, r, "update_download", "ready", (*Updater).StartDownload)
+}
+
+// updateInstall answers POST /api/update/install: opens the installer for the downloaded, re-checked file.
+func (h *handler) updateInstall(w http.ResponseWriter, r *http.Request) {
+	h.updateStep(w, r, "update_install", "launched", (*Updater).Install)
+}
+
+func (h *handler) updateStep(w http.ResponseWriter, r *http.Request, event, demoState string, step func(*Updater) error) {
+	u, demo := h.updaterAndDemo()
+	if demo {
+		if reply, ok := updateCheckDemoReply(r.URL.Query().Get("preview")); ok && reply.Status == "available" {
+			reply.Install = &InstallInfo{State: demoState, Version: reply.Latest, Done: 100 << 20, Total: 100 << 20}
+			writeJSON(w, http.StatusOK, reply, 4096)
+			return
+		}
+	}
+	if u == nil {
+		writeError(w, http.StatusConflict, "Update checks are not available in this build.")
+		return
+	}
+	if err := step(u); err != nil {
+		h.event(r, event, "ok", false)
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	h.event(r, event, "ok", true)
 	writeJSON(w, http.StatusOK, u.Status(), 4096)
 }
