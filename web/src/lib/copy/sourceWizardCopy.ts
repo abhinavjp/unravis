@@ -15,6 +15,7 @@ export const WIZ = {
   railEmpty: 'Nothing added yet. Pick a kind above.',
   tray: (n: number) => (n === 1 ? '1 source ready to add' : n + ' sources ready to add'),
   back: 'Back to the list',
+  addedBadge: (n: number) => n + ' added',
   remove: 'Remove',
   openFolder: 'Open folder',
   openFolderLabel: (what: string) => 'Open folder for ' + what,

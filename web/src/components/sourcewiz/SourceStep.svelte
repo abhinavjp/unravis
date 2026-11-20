@@ -39,6 +39,11 @@
     ...(adding ? [{ id: 'another' as const, ...WIZ.tiles.another }] : [])
   ]);
 
+  // "N added" on a tile: how many of the chosen sources came from that kind of card.
+  const addedOf = (id: Exclude<Card, ''>): number => {
+    const kinds: Record<string, string[]> = { mongo: ['mongo-database'], sql: ['sql-server'], redis: ['redis'], files: ['iis-logs', 'app-log', 'hangfire-csv', 'redis-slowlog-csv', 'file'], blackbox: ['blackbox'] };
+    return wizard.sources.filter((s) => (kinds[id] ?? []).includes(s.kind)).length;
+  };
   const titleOf = (s: { kind: string; ref: string }): string => {
     if (s.kind !== 'discover') return kindLabel(s.kind);
     const f = sourcesView.findings.find((x) => x.id === s.ref);
@@ -49,6 +54,7 @@
 
   async function back() { card = ''; dropNote = ''; seed = undefined; await tick(); heading?.focus(); }
   async function open(c: Card, finding = '', dropped?: { files: File[]; folder: boolean; says: string[] }) { seed = dropped; card = c; dropNote = ''; from = finding; await tick(); cardEl?.focus(); }
+  function markConnected() { if (from !== '' && !connected.includes(from)) connected = [...connected, from]; }
   function connectedDone() { if (from !== '' && !connected.includes(from)) connected = [...connected, from]; from = ''; card = 'pc'; }
   async function drop(event: DragEvent) {
     event.preventDefault();
@@ -68,7 +74,7 @@
     if (dropped.unreadable > 0) says.push(dropUnreadableText(dropped.unreadable));
     await open('files', '', { files: dropped.files, folder: dropped.folder, says });
   }
-  async function remove(key: string) { removeChosen(key); releaseOrphanFiles(); await tick(); heading?.focus(); }
+  async function remove(key: string) { removeChosen(key); releaseOrphanFiles(); await tick(); heading?.focus({ preventScroll: true }); }
 </script>
 
 <div class="step">
@@ -103,7 +109,7 @@
         <ul class="tiles">
           {#each tiles as t (t.id)}
             <li><button type="button" class="tile" class:start={t.id === 'pc'} disabled={closed} onclick={() => void open(t.id)}>
-              <span class="tname">{t.name}{#if t.badge}<span class="badge">{t.badge}</span>{/if}</span><span class="tsub">{t.sub}</span></button></li>
+              <span class="tname">{t.name}{#if t.badge}<span class="badge">{t.badge}</span>{/if}{#if addedOf(t.id) > 0}<span class="added">{WIZ.addedBadge(addedOf(t.id))}</span>{/if}</span><span class="tsub">{t.sub}</span></button></li>
           {/each}
         </ul>
         <p class="hint">{WIZ.hint}</p>
@@ -120,7 +126,7 @@
         <div class="cardbar"><button type="button" class="secondary-button" onclick={() => void back()}>{WIZ.back}</button></div>
         {#if dropNote}<p class="hint" role="status">{dropNote}</p>{/if}
         {#if card === 'pc'}<FindOnPc {connected} onCard={(c, f) => void open(c, f ?? '')} onDone={() => void back()} />
-        {:else if card === 'mongo'}{#if from !== ''}<p class="hint">{WIZ.find.mongoPrefill} <code>{connectPrefill('mongo')}</code></p>{/if}<MongoClassify prefill={from !== '' ? connectPrefill('mongo') : ''} onDone={() => (from !== '' ? connectedDone() : void back())} />
+        {:else if card === 'mongo'}{#if from !== ''}<p class="hint">{WIZ.find.mongoPrefill} <code>{connectPrefill('mongo')}</code></p>{/if}<MongoClassify prefill={from !== '' ? connectPrefill('mongo') : ''} onTested={markConnected} onDone={() => (from !== '' ? connectedDone() : void back())} />
         {:else if card === 'sql'}{#if from !== ''}<p class="hint">{WIZ.find.sqlPrefill} <code>{connectPrefill('sql')}</code></p>{/if}<SqlServerForm prefill={from !== '' ? connectPrefill('sql') : ''} onDone={() => (from !== '' ? connectedDone() : void back())} />
         {:else if card === 'redis'}<ReachableCheck kind="redis" onDone={() => void back()} />
         {:else if card === 'files'}<ImportFilesPanel {seed} onCancel={() => void back()} />
@@ -145,7 +151,7 @@
   .rail h4, h3 { margin: 0; font-size: var(--fs-5); font-weight: 600; }
   .rail h4:focus { outline: none; } .rail h4:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
   .gtitle { margin: var(--space-3) 0 0; color: var(--text-2); font-weight: 600; font-size: var(--fs-3); }
-  .rail ul { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-1); }
+  .rail ul { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-1); max-height: 28vh; overflow-y: auto; }
   .rail li { display: flex; gap: var(--space-2); align-items: center; justify-content: space-between; min-width: 0; }
   .item { padding: var(--space-2) var(--space-3); background: var(--bg); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .item .quiet-button { flex-shrink: 0; font-size: var(--fs-2); }
@@ -164,6 +170,7 @@
   .tile:disabled { opacity: .55; cursor: not-allowed; }
   .tname { font-weight: 600; font-size: var(--fs-4); display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: space-between; }
   .badge { padding: 0 var(--space-2); font-size: var(--fs-2); border: var(--hairline-width) solid var(--accent); border-radius: var(--radius-sm); }
+  .added { padding: 0 var(--space-2); font-size: var(--fs-2); color: var(--accent-ink); background: var(--accent); border-radius: var(--radius-sm); }
   .tsub { color: var(--text-2); font-size: var(--fs-3); }
   .hint { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .dropzone { padding: var(--space-4); text-align: center; color: var(--text-2); border: 2px dashed var(--control-line); border-radius: var(--radius-sm); cursor: pointer; }

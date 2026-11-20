@@ -787,7 +787,7 @@ test('audit-database: the components wire the ticks, the name default and the re
   const classify = read('src/components/wizard/MongoClassify.svelte');
   assert.match(classify, /type="checkbox"/);
   assert.match(classify, /tickAuditByName\(result\.id\)/);
-  assert.match(classify, /SOURCES_TEXT\.mongoNeitherTicked/);
+  assert.match(classify, /SOURCES_TEXT\.mongoBothTicked/);
   assert.match(read('src/components/wizard/ReviewStep.svelte'), /noAuditSourceChosen\(/);
   assert.match(read('src/components/wizard/ReviewStep.svelte'), /SOURCES_TEXT\.reviewNoAuditSource/);
 });

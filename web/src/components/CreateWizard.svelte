@@ -300,7 +300,7 @@
   .chip { max-width: 100%; padding: 2px var(--space-3); background: var(--surface-2); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font-size: var(--fs-3); overflow-wrap: anywhere; }
   .env-notes { display: grid; gap: var(--space-1); }
 
-  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding-top: var(--space-3); border-top: var(--hairline-width) solid var(--line); }
+  .bar { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) 0; background: var(--bg); border-top: var(--hairline-width) solid var(--line); }
   .bar .spacer { flex: 1 1 0; }
   .chosen { color: var(--text-2); font-size: var(--fs-3); }
   .blocked { color: var(--text-2); font-size: var(--fs-3); }

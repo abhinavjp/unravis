@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { wizard } from '../../lib/wizard.svelte';
   import { classifyMongo, removeConnection, sourcesView, testMongo } from '../../lib/wizardSources.svelte';
   import { DEFAULT_COLLECTION, heldCollection, heldConnection } from '../../lib/wizardConnections';
@@ -9,7 +10,7 @@
 
   // Connect to MongoDB, list its databases, and say what each one is: API audit logs, other data, or not used. Only a database that was listed
   // by a successful test can be chosen. The password is kept in memory only (wizardConnections.ts) and the draft holds an id, never the password.
-  let { onDone, prefill = '' }: { onDone?: () => void; prefill?: string } = $props();
+  let { onDone, onTested, prefill = '' }: { onDone?: () => void; onTested?: () => void; prefill?: string } = $props();
 
   const uid = $props.id();
   let uri = $state(prefill);
@@ -36,6 +37,14 @@
   let problems = $state<Record<string, string>>({});
   let retesting = $state<Record<string, boolean>>({});
   let retestLine = $state<Record<string, string>>({});
+  // Only a connection tested in this visit shows its full database list. One from an earlier visit shows a one-line summary, so opening the form again starts clean.
+  let opened = $state<Record<string, boolean>>({});
+  onMount(() => {
+    for (const c of [...sourcesView.connections]) {
+      const own = counts(c.id);
+      if (own.audit + own.other === 0) removeConnection(c.id);
+    }
+  });
 
   const counts = (id: string): { audit: number; other: number } => {
     const own = wizard.sources.filter((s) => s.kind === 'mongo-database' && s.ref.startsWith('mongo:' + id + '/'));
@@ -44,11 +53,11 @@
   const auditOn = (id: string, database: string): boolean => databaseClass(wizard.sources, id, database) === 'audit';
   const appOn = (id: string, database: string): boolean => databaseClass(wizard.sources, id, database) === 'other' || (auditOn(id, database) && !!sourcesView.alsoApp[id + '/' + database]);
 
-  // A database that looks like an audit log starts with the audit tick on, unless the person already decided about it.
+  // A database whose name looks like an audit log gets a hint. Nothing is ticked for the person: they choose.
   function tickAuditByName(id: string) {
     const databases = sourcesView.connections.find((c) => c.id === id)?.databases ?? [];
     for (const database of defaultAuditDatabases(databases, (d) => databaseClass(wizard.sources, id, d) !== '' || !!sourcesView.setAside[id + '/' + d])) {
-      if (classifyMongo(id, database, 'audit') === null) sourcesView.suggested[id + '/' + database] = true;
+      sourcesView.suggested[id + '/' + database] = true;
     }
   }
 
@@ -87,7 +96,8 @@
     connectedTo = uri.trim();
     line = testedText(result.databases);
     tickAuditByName(result.id);
-    onDone?.();
+    opened[result.id] = true;
+    onTested?.();
   }
 
   async function testAgain(id: string) {
@@ -97,7 +107,7 @@
     const result = await testMongo(input, id, undefined, heldCollection(id));
     retesting[id] = false;
     retestLine[id] = result.ok ? testedText(result.databases) : (result.text !== '' ? result.text : SOURCES_TEXT.mongoFailed);
-    if (result.ok) tickAuditByName(id);
+    if (result.ok) { tickAuditByName(id); opened[id] = true; }
   }
 
   // The two ticks of a database. API audit logs is a source of the analysis; Application data is named and kept; neither reads nothing.
@@ -191,7 +201,10 @@
       </div>
       <p class="line" role="status" hidden={!retestLine[connection.id]}>{retestLine[connection.id] ?? ''}</p>
       {#if connection.warning !== ''}<p class="hint">{connection.warning}</p>{/if}
-      {#if connection.databases.length === 0}
+      {#if !opened[connection.id] && done.audit + done.other > 0}
+        <p class="hint" role="status">{classSummaryText(done.audit, done.other)}</p>
+        <div class="actions"><button type="button" class="secondary-button" onclick={() => { opened[connection.id] = true; }}>{SOURCES_TEXT.mongoChange}</button></div>
+      {:else if connection.databases.length === 0}
         <p class="hint">{SOURCES_TEXT.mongoNoDatabases}</p>
       {:else}
         <p class="hint">{SOURCES_TEXT.mongoClassifyHelp} {SOURCES_TEXT.mongoAuditOptional}</p>
@@ -204,12 +217,12 @@
             <li class="db">
               <fieldset class="db-set" aria-describedby={problems[connection.id + '/' + database] ? rowId + '-problem' : undefined}>
                 <legend class="db-name">{database}</legend>
-                <span class="hint">{SOURCES_TEXT.mongoWhatIsIn}</span>
-                <label class="tick" for="{rowId}-audit"><input id="{rowId}-audit" type="checkbox" checked={audit} onchange={(event) => tick(event, connection.id, database, 'audit')} /> {SOURCES_TEXT.mongoTickAudit} <span class="hint">{SOURCES_TEXT.mongoTickAuditNote}</span></label>
-                <label class="tick" for="{rowId}-app"><input id="{rowId}-app" type="checkbox" checked={app} onchange={(event) => tick(event, connection.id, database, 'app')} /> {SOURCES_TEXT.mongoTickApp} <span class="hint">{SOURCES_TEXT.mongoTickAppNote}</span></label>
-                {#if audit && sourcesView.suggested[connection.id + '/' + database]}<p class="hint">{SOURCES_TEXT.mongoAuditSuggested}</p>{/if}
+                <div class="switches">
+                  <label class="tick" for="{rowId}-audit" title={SOURCES_TEXT.mongoTickAuditNote}><input id="{rowId}-audit" class="switch" type="checkbox" role="switch" checked={audit} onchange={(event) => tick(event, connection.id, database, 'audit')} /> {SOURCES_TEXT.mongoTickAudit}</label>
+                  <label class="tick" for="{rowId}-app" title={SOURCES_TEXT.mongoTickAppNote}><input id="{rowId}-app" class="switch" type="checkbox" role="switch" checked={app} onchange={(event) => tick(event, connection.id, database, 'app')} /> {SOURCES_TEXT.mongoTickApp}</label>
+                </div>
+                {#if !audit && !app && sourcesView.suggested[connection.id + '/' + database]}<p class="hint">{SOURCES_TEXT.mongoAuditSuggested}</p>{/if}
                 {#if audit && app}<p class="hint">{SOURCES_TEXT.mongoBothTicked}</p>{/if}
-                {#if !audit && !app}<p class="hint">{SOURCES_TEXT.mongoNeitherTicked}</p>{/if}
               </fieldset>
               <p class="inline-error" id="{rowId}-problem" role="alert" hidden={!problems[connection.id + '/' + database]}>{problems[connection.id + '/' + database] ?? ''}</p>
             </li>
@@ -239,11 +252,17 @@
   .conn { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .conn-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
   .conn-top h5 { margin: 0; font-size: var(--fs-4); font-weight: 600; overflow-wrap: anywhere; }
-  .dbs { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+  .dbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
   .db { display: grid; gap: var(--space-1); min-width: 0; }
   .db-set { display: grid; gap: var(--space-1); min-width: 0; margin: 0; padding: var(--space-2) var(--space-3); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .db-name { padding: 0 var(--space-1); font-size: var(--fs-4); font-weight: 600; overflow-wrap: anywhere; }
   .tick { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-height: 44px; font-size: var(--fs-3); }
-  .tick input { width: 20px; height: 20px; margin: 0; }
+  .switches { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); }
+  .tick { min-height: 36px; cursor: pointer; }
+  .switch { appearance: none; position: relative; flex: none; width: 38px; height: 22px; margin: 0; background: var(--control-line); border-radius: 11px; cursor: pointer; transition: background 0.15s; }
+  .switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; background: var(--bg); border-radius: 50%; transition: transform 0.15s; }
+  .switch:checked { background: var(--accent); }
+  .switch:checked::after { transform: translateX(16px); }
+  @media (prefers-reduced-motion: reduce) { .switch, .switch::after { transition: none; } }
   .db .inline-error { margin: 0; }
 </style>
