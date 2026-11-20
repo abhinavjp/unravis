@@ -1,7 +1,8 @@
 # Auto-updater for Unravis and Blackbox: spec
 
-Status: DRAFT for nachi's confirmation. No code written. 2026-11-20.
-Rule: nothing below is built until nachi confirms (see "Open decisions", section 12).
+Status: DRAFT v2 for nachi's confirmation. No code written. 2026-11-20.
+v2 adds nachi's answers (D1 30 min check, D2 zero cost, D4 ok, D6 Blackbox auto-update on other servers, D7 public repo) and a new section 12, Unravis Lite.
+Rule: nothing below is built until nachi confirms (see "Open decisions", section 13).
 
 ## 1. Goal
 
@@ -40,13 +41,12 @@ Key lesson: **a checksum next to the download proves nothing** if the attacker c
 
 ## 4. Recommended approach (one line)
 
-**Signed manifest + reuse `unravis-setup.exe`.** The app checks a small ed25519-signed manifest, downloads the installer, verifies it, and hands it to the existing upgrade flow. Blackbox updates ride along with Unravis (it is bundled). No new install engine.
+**Signed feed + signed manifest + reuse the installer.** A tiny signed file on GitHub says "latest version is X". Unravis (and the Blackbox service, on its own) check it every 30 min, download the matching package, verify it with a public key built into the program, and install it with the existing upgrade/rollback code. No new install engine. Zero cost.
 
 ## 5. Release side (CI + one manual step)
 
-Add one more release asset, `update-manifest.json`, plus `update-manifest.json.sig` (ed25519, detached).
-
-Manifest (signed):
+### Signed assets
+Each release gets `update-manifest.json` + `update-manifest.json.sig` (ed25519, detached).
 
 ```json
 {
@@ -61,28 +61,42 @@ Manifest (signed):
   "assets": {
     "setup":    { "name": "unravis-setup-v0.1.0-rc.48-windows-x64.exe", "sha256": "...", "size": 0 },
     "app":      { "name": "unravis-v...-windows-x64.zip", "sha256": "...", "size": 0 },
-    "blackbox": { "name": "unravis-blackbox-v...-windows-x64.zip", "sha256": "...", "size": 0 }
+    "blackbox": { "name": "unravis-blackbox-v...-windows-x64.zip", "sha256": "...", "size": 0 },
+    "lite":     { "name": "unravis-lite-v...-windows-x64.zip", "sha256": "...", "size": 0 }
   },
   "blackboxExeSha256": "..."
 }
 ```
 
-- `channel` is `stable` or `rc`. `seq` only goes up. `expires` stops "freeze" replays of an old manifest.
-- The manifest names assets by exact file name; the app builds the URL itself (`https://github.com/abhinavjp/unravis/releases/download/<tag>/<name>`). **No URL is ever taken from GitHub API JSON.**
-- Signing key: ed25519. **Private key stays off CI** (open decision D2). Flow: CI builds the draft and uploads the unsigned manifest; nachi runs `tools/release/Sign-Release.ps1` on a trusted PC, which signs and uploads the `.sig`; nachi presses Publish. This fits the existing "person presses Publish" rule.
-- Public keys (current + next) are compiled into `unravis.exe`, `unravis-setup.exe` and `unravis-blackbox.exe`. Two keys allow rotation without a stranded fleet.
-- Later, when SignPath is approved: Authenticode on top. The app also checks the signer. This is a second lock, not a replacement (the ed25519 check also works offline and on air-gapped PCs).
+- `seq` only goes up. `expires` stops replay of an old manifest.
+- Assets are named exactly; the program builds the URL itself (`https://github.com/abhinavjp/unravis/releases/download/<tag>/<name>`). **No URL is ever taken from unsigned data.**
 
-## 6. Client side: check
+### The feed (why 30-minute checks stay cheap)
+A permanent release tagged `update-feed` holds two small files, replaced on each release: `stable.json` and `rc.json`, each a signed copy of the newest manifest of that channel (+ `.sig`), about 1 KB.
 
-- **Where:** `internal/update` (new), used by the existing server. Only the Unravis app checks. **The Blackbox service never touches the network** (footprint + air-gap).
-- **Opt-in, default OFF** (open decision D1: A52 said manual only; this overturns it, so it needs nachi's yes). Three modes: Off (manual button only, as today), Notify (default when on), Notify + download.
-- **Cadence:** one check at app start (after 60 s delay) then every 24 h plus random jitter up to 2 h, only while the app runs. No service, no scheduled task, no timers when off. Idle cost = one sleeping timer.
-- **Request:** `GET /repos/abhinavjp/unravis/releases?per_page=5` with `If-None-Match` (ETag). A `304` costs almost nothing. Then fetch `update-manifest.json` and `.sig` only if a newer tag appears (~2 KB). Roughly 2 to 10 KB a day.
-- **Channels:** `stable` (ignores pre-releases) and `rc` (includes them). Default = the channel of the running build (an rc build stays on rc). Change in Settings. The channel in the signed manifest must equal the one asked for.
-- **Proxy:** use the Windows system proxy. Honour no-proxy. On any error: say "Could not check", retry next cycle, never loop. Back off x2 on repeated failure, cap 7 days.
-- **No telemetry.** Request carries no user data; User-Agent is `Unravis/<version>` only. Version-only, no machine id.
-- Dev builds (`version = dev`) never call out (as today).
+- A check is one `GET https://github.com/abhinavjp/unravis/releases/download/update-feed/<channel>.json` with `If-None-Match`. A `304` is a few hundred bytes.
+- This is **not the GitHub API**, so no 60 requests/hour API limit. 48 checks a day per machine is nothing even for many servers behind one IP.
+- The feed is only a pointer. A forged or stale feed fails the signature, `seq` or `expires` test.
+- Pre-releases are handled by the `rc.json` file, which fixes today's gap (the manual check ignores rc builds).
+
+### Signing key: zero cost (D2)
+- ed25519 key pair made once, **offline, on nachi's PC** with a free tool (a small Go program in `tools/release/`, no purchase).
+- Private key is stored encrypted with a strong passphrase (free: Go `x/crypto` / `age`-style file). Never in CI, never in the repo. Backups: two copies on USB sticks you already own, kept apart. Passphrase not stored with them.
+- Release flow: CI builds the DRAFT release and uploads the unsigned manifest. nachi runs `tools/release/Sign-Release.ps1` locally (asks the passphrase), which signs the manifest and updates the feed. nachi presses Publish. Matches today's "a person presses Publish".
+- Public keys (current + next) are compiled into `unravis.exe`, `unravis-setup.exe` and `unravis-blackbox.exe`. Two keys allow rotation.
+- **SignPath Foundation is free for public open-source repos** (repo is public, D7). Apply anyway: it adds Authenticode (SmartScreen, UAC publisher name) as a second lock. Not needed for the updater to be safe, and it is not a blocker. Review needed: its terms and approval time (not verified live).
+- Not recommended as the only trust: GitHub artifact attestations (free for public repos). Useful for people checking by hand, heavy to verify inside the program.
+
+## 6. Client side: check (Unravis app)
+
+- **Where:** `internal/update` (new), used by the existing server.
+- **Default: ON, every 30 minutes** (D1; overturns A52). The user can change the interval or turn it off in Settings. Minimum allowed 5 min. After the stable version is launched we raise the default (see D9). Mode: `Off`, `Notify`, `Notify + download` (default: Notify).
+- **Cadence:** first check 60 s after start, then every interval plus random jitter of up to 10%. Only while the app runs. No service, no scheduled task. Cost: one sleeping timer, one ~1 KB request per 30 min (about 50 KB/day worst case, less with `304`).
+- **Channels:** `stable` or `rc`. Default = channel of the running build (an rc build stays on rc). The channel inside the signed manifest must equal the one asked for.
+- **Proxy:** Windows system proxy. On error: "Could not check", retry next cycle, back off x2 up to 6 h, never loop.
+- **No telemetry:** no user data, User-Agent `Unravis/<version>` only, no machine id.
+- Dev builds (`version = dev`) never call out.
+- The existing "Check for updates" button stays; it calls the same code.
 
 ## 7. Client side: verify, download, install (Unravis)
 
@@ -99,31 +113,58 @@ Verify order. Any failure = stop, delete the file, show a plain message, log it.
 
 Release-notes text from GitHub is shown as plain text only (escaped). It is never a link target or HTML.
 
-## 8. Blackbox service
+## 8. Blackbox auto-update (D6: also on other servers)
 
-The Blackbox exe is inside the Unravis installer and pinned by hash. So it updates **with** Unravis. Two paths:
+Facts that drive the design:
+- Blackbox has **no network client today** and runs as a Windows service, often on a server with no Unravis and no keeper (the keeper belongs to the Unravis install, so it cannot be the updater there).
+- A headless server has nobody to click a UAC prompt. So the "one UAC prompt" answer (D4) fits only a Blackbox next to Unravis on a PC. For a server, auto-update must be done by the service itself.
 
-| Case | Path |
+### Three cases
+
+| Case | How it updates |
 |---|---|
-| Blackbox on this PC | Step 7's installer upgrades it. Or, if only the recorder is older than the bundled one, the app's BL-136 `update` op does it alone. One UAC prompt either way. |
-| Blackbox on another server | Unravis shows "Recorder on SERVER is older (x vs y)". No remote push (remote code install is too risky). It offers the Blackbox zip + an exact command for the admin on that server: `unravis-blackbox.exe update --from <zip>` (verify the same signed manifest, offline). |
+| A. Blackbox on the same PC as Unravis | With Unravis: the installer upgrades both (step 7). Or BL-136 `update` op alone. One UAC prompt (D4). |
+| B. Blackbox alone on a server, internet allowed | **The service updates itself.** Section 8.1. |
+| C. Blackbox alone on a server, no internet | Same code, but the update source is a folder or share (section 8.2). |
 
-**Admin prompt handling**
-- Windows needs a person for UAC. So: the app explains first ("Windows will ask for administrator approval to update the recorder service"), then shows one prompt. If declined or no admin rights: nothing changes, banner stays, message says what to do.
-- Service is stopped only after the new file is staged and its hash is checked. Restart only if it was running. Wait for "running" + a status answer; else roll back.
-- Never silent for the service in the first version. **Later option (D4):** the keeper service (already SYSTEM) verifies the signature itself and installs without UAC (the Chrome model). Faster, but a SYSTEM process that installs code is a bigger target. Not recommended for v1.
+### 8.1 Self-update by the service (recommended, minimal footprint)
+
+- No extra process, no scheduled task, no extra service. The Blackbox service gets one small goroutine: every 30 min (+ jitter) it fetches `<channel>.json` + `.sig` (~1 KB, `If-None-Match`). It sleeps otherwise. When nothing changed: no CPU worth measuring, no memory growth, ~1 KB/30 min.
+- Network code is the minimum: one HTTPS GET to the one allowed host, system proxy, 10 s timeout, body capped at 64 KB (manifest) / manifest size (package). No listener added; the status port stays as is.
+- On a newer signed version (same checks as section 7, steps 1 to 5): download the Blackbox zip into its own locked folder under the Blackbox data folder, hash while streaming, verify the signature and the `blackboxExeSha256`.
+- **Apply** (the service cannot overwrite its own running exe): it starts a short-lived copy of the NEW, verified exe as `unravis-blackbox.exe apply-update --stage <dir>`, running as the same account. That helper: waits for the service to stop (asks the service manager to stop it), renames old exe to `.old`, moves the new exe in, starts the service, waits for "running" + a status answer, and on any failure restores `.old` and restarts it. This is the same logic as BL-136, so the two share one code path and one live test.
+- Config, read key, recordings, the folder lock and the firewall rule are never touched. A gap of a few seconds in recording happens at restart (state this in the UI and docs; schedule option below).
+- **Controls** in `blackbox.json` (and the CLI `unravis-blackbox config`): `autoUpdate`: `install` (default per D1), `notify` or `off`; `channel`; `intervalMinutes`; `maintenanceWindow` (optional, e.g. only 02:00 to 04:00); `source` (internet, or folder/share, section 8.2).
+- Where Unravis sees the server, the Blackbox status screen shows "Recorder version, update state, last check, last result" (read from `/status`, new fields).
+
+### 8.2 No internet: folder or share source
+- `source` can be a UNC or local folder holding `<channel>.json`, `.sig` and the zip. The check is a file read every 30 min. Same signature checks.
+- Someone (or Unravis on a connected PC: "Copy update to share") drops the files there. A fleet of air-gapped servers updates from one share. Nothing unsigned is ever accepted.
+
+### 8.3 Security of a SYSTEM service that installs code (the honest risk)
+This is the Chrome-style model, and it is the highest-risk part of this spec. Mitigations, all required:
+1. Signature with an embedded key (not the download host) decides everything.
+2. Version and `seq` must go up; `expires`; `channel` match; `minUpdateFrom`.
+3. HTTPS only, one host allowlist (`github.com`, `*.githubusercontent.com`), max 3 redirects, size caps.
+4. Staging folder: ACL for SYSTEM/Administrators only, so a normal user cannot swap the file.
+5. Only the Blackbox exe is replaced, never anything else; the exe is the one hashed in the signed manifest.
+6. Rollback on any failure (section 9). Skip list for a version that failed.
+7. A `off` switch on the box, which a remote request cannot change.
+8. Every check and apply is written to the Blackbox log (no secrets).
+
+Residual risk: whoever holds the signing key can push code to every server. This is why the key is offline and passphrase-protected (D2) and why rotation exists.
 
 ## 9. Rollback
 
 - Before replacing: installer keeps the old program files in a backup folder (already in the plan) and writes a `pending` marker with old version, new version and time.
-- After install the new app must start and report "ready" within 60 s (service: "running" + status answer). The app then clears the marker and deletes the backup after a grace period (next successful start).
+- After install the new app (or the Blackbox service) must start and report "ready" within 60 s (service: "running" + status answer). The app then clears the marker and deletes the backup after a grace period (next successful start).
 - If the marker is still `pending` when the app starts next (crash loop, 2 failed starts) the installer's journal restores the backup, restarts the old version, and records "update X failed; staying on Y". That version is added to a local skip list so it is not offered again until a newer one appears.
 - Data is never touched by rollback. Data schema: an update must not migrate cases in a way the old version can't read, or must take a copy first. (Check against case store before build.)
 - Rollback is local only. A remote or manifest request can never lower the version.
 
 ## 10. Offline and air-gapped servers
 
-- Updates off by default; nothing calls out unless turned on.
+- With no internet the check fails quietly ("Could not check"); nothing else breaks. For servers, use the folder/share source (section 8.2).
 - **Import update** button (and `unravis-setup.exe --verify <folder>`): pick a folder with `unravis-setup-*.exe`, `update-manifest.json`, `.sig`. The same verify steps 2, 3, 4 run offline. Carry files on a USB stick after checking on a connected PC.
 - Docs page: where to download, how to check with `Get-FileHash` and the in-app verify.
 - Sealed corporate proxy that breaks TLS: check fails with "could not check". No option to skip verification. Ever.
@@ -144,38 +185,76 @@ The Blackbox exe is inside the Unravis installer and pinned by hash. So it updat
 | Signing key stolen | Offline key, optional passphrase/YubiKey. Revoke by shipping a build with a new key set (needs a manual install for PCs that never updated: state this honestly). |
 | Update server (GitHub) down or rate-limited | Skip, retry later. Unauthenticated API: 60 requests/hour per IP, we use ~1 a day. |
 | Update crashes the app/service | Section 9. |
+| Service updates itself: attacker gets SYSTEM code run | Section 8.3: only a signed, newer, hash-matched exe is installed; staging folder locked. |
+| Many servers hit GitHub at once | Jitter; feed is a static file, no API limit; `304`. |
 
 Honest limits: a local admin can already do anything on the PC. Unsigned binaries still trigger SmartScreen on a manual first install; the in-app path avoids that because the app is already trusted.
 
-## 12. Open decisions for nachi
+## 12. Unravis Lite (view what a Blackbox captured, on a server with no Unravis)
+
+### What it is
+A small program for a server that has a Blackbox but not Unravis. It opens a local page and shows what the Blackbox recorded: the Blackbox charts (Perfmon-style, log scale), the What happened view, the list of recordings, and status. Read only. No cases, no SQL/Mongo connections, no Drill/Slow call, no import, no MCP.
+
+### Options
+| Option | Pros | Cons |
+|---|---|---|
+| A. `unravis.exe --lite` (same file, features hidden) | One download, one updater | Whole big program and attack surface sits on the server |
+| **B. Separate `unravis-lite.exe`** (same Go packages, own small web build) | Smaller, fewer features means less to attack, own zip asset, simple to update | One more asset to build and test |
+| C. Page served by the Blackbox itself | No new exe | Puts a web UI inside a SYSTEM service. Bigger risk. Reject. |
+
+**Recommended: B.**
+
+### Design
+- Reads the recordings **directly from the local Blackbox folder** (same reader code as the app), so no read key and no network are needed on the same machine. Access is by Windows file permission: it runs as the signed-in user and shows only what that user may read. The Blackbox data folder is locked today, so Lite asks for a one-time admin approval to read it, or runs elevated when started from "Run as administrator" (decision D10). It never loosens the folder lock.
+- Local web page on `127.0.0.1` only, with a one-time token in the URL (same idea as Unravis' launch link). No outside port. Opens the browser; `--no-browser` prints the link.
+- Starts on demand (double click, or a Start menu / desktop link). Not a service. Nothing runs when closed: zero idle cost.
+- Reuses the existing Blackbox web screens. **To confirm in the build slice:** whether the Blackbox charts and What-happened screens can be built into a separate bundle. If they are tangled with the case screens, Lite needs a small route split first. I have not measured the size; target under 15 MB to be measured (the frontend bundle is the main cost).
+- Extras that cost little: choose a day, time range, group/search counters, export a chart as an image. Nothing that writes.
+- A remote view (Lite on laptop reading a server's Blackbox over port 7788 with a read key) is the main Unravis app's job, not Lite's.
+
+### Install and update
+- Shipped as a signed-manifest asset `unravis-lite-vX-windows-x64.zip` (see manifest `lite`). Unzip and run. No installer needed, no admin needed to run (only for the data folder, above).
+- Updates: Lite checks the same feed on start (once per run, not every 30 min, since it is not a service). If newer it shows a banner and offers to download, verify and replace itself in its own folder (no admin, as it lives in a user-writable folder; the verify steps are the same). If installed under Program Files, it says "ask an administrator" or uses the Blackbox update.
+- Option: the Blackbox self-update (section 8) can also refresh `unravis-lite.exe` if it sits next to the Blackbox exe, from the same signed manifest. Recommended as it keeps both in step (D11).
+
+### Security
+- Loopback only + one-time token + Host and Origin checks (same as the app).
+- Read only. No file upload, no write to the Blackbox folder, no secrets handled (no read key, no passwords).
+- Same signature rules for its own update.
+- A different user on the same server cannot use another's link (token is per run, process-owned).
+
+## 13. Open decisions for nachi
+
+Answered: D1 (30 min default, user can change, raise after stable), D2 (yes, zero cost, offline key), D4 (one UAC prompt next to Unravis), D7 (public).
 
 | # | Decision | Recommendation |
 |---|---|---|
-| D1 | Overturn A52 (manual check only): allow an opt-in background check? | Yes, opt-in, default OFF, 24 h. |
-| D2 | Where does the ed25519 private key live? (a) your PC / YubiKey, signed by hand before Publish; (b) CI secret (fully automatic, but a CI break = signing break) | (a). Matches "a person presses Publish". |
 | D3 | Install timing: only on click, or also "on next quit"? | Click only for v1. |
-| D4 | Silent Blackbox update via keeper service (no UAC)? | No for v1. One UAC prompt. Revisit later. |
-| D5 | Default channel for rc builds on production-bound boxes: stay on rc, or move to stable once stable exists? | Stay on channel until the user changes it. |
-| D6 | Remote Blackbox servers: manual zip + command (recommended), or Unravis pushes? | Manual. |
-| D7 | Is the repo public? SignPath needs it. Does the update host have to stay GitHub? | Need your answer; spec works either way. |
-| D8 | Ship before SignPath is approved? | Yes: ed25519 does the trust job; add Authenticode later. |
+| D5 | Default channel for rc builds on production-bound boxes | Stay on channel until the user changes it. |
+| D6 | Blackbox auto-update on other servers | Done in section 8: the service updates itself, default on. **Confirm**: is it OK for the Blackbox service itself to install a signed update with no human click on a server? (Default `install`, can be set to `notify`/`off`.) |
+| D8 | Ship before SignPath is approved? | Yes. Apply to SignPath Foundation (free) in parallel. |
+| D9 | Interval after stable launch | Suggest 6 h for stable, keep 30 min for rc. Change only the default. |
+| D10 | Lite reading the locked Blackbox folder: ask admin approval once per start, or run elevated by the admin who starts it? | Admin starts it ("Run as administrator"); no stored elevation. |
+| D11 | Blackbox self-update also refreshes `unravis-lite.exe` next to it | Yes. |
+| D12 | Maintenance window default for servers | None by default; available setting. |
 
-## 13. Build plan (after you confirm)
+## 14. Build plan (after you confirm)
 
 | Slice | Content | Live check on |
 |---|---|---|
-| U1 | `Sign-Release.ps1`, manifest generator in `release.yml`, public keys embedded, key-rotation doc | Real rc release signed + verified by a tiny CLI |
-| U2 | `internal/update`: verify manifest, semver/seq/expiry, host allowlist, unit tests incl. bad sig, downgrade, replay, expired, wrong host, truncated | Real GitHub release (rc) |
-| U3 | Check: ETag, cadence, jitter, channel, Settings toggle, proxy; extend the existing button to pre-releases | rc.N to rc.N+1 on your PC |
-| U4 | Download + hand-off to `unravis-setup --upgrade --expect-sha256`; worker re-hash | Same, with cases + saved connections kept |
-| U5 | Rollback marker + health check + skip list | Forced failure (bad build) on your PC |
-| U6 | Blackbox: finish BL-136 live run; remote-server banner + `update --from zip` | Elevated host |
-| U7 | Offline import + docs page | USB-stick run on a PC with no network |
+| U1 | Key tool + `Sign-Release.ps1`, manifest + feed generator in `release.yml`, public keys embedded, key-rotation doc | Real rc release signed and verified |
+| U2 | `internal/update`: verify manifest, semver/seq/expiry, host allowlist, unit tests incl. bad sig, downgrade, replay, expired, wrong host, truncated | Real GitHub feed |
+| U3 | Unravis check: ETag, 30 min cadence, jitter, channel, Settings (interval, off), proxy | rc.N to rc.N+1 on your PC |
+| U4 | Download + hand-off to `unravis-setup --upgrade --expect-sha256`; worker re-hash | Same, cases and saved connections kept |
+| U5 | Rollback marker + health check + skip list | Forced failure on your PC |
+| U6 | Blackbox self-update: check goroutine, `apply-update` helper (shares BL-136 code), config keys, status fields, folder/share source | Elevated host, real service, forced failure |
+| U7 | Unravis Lite: separate build, local reader, loopback page, own update | Server with Blackbox and no Unravis |
+| U8 | Offline import + docs page | USB-stick run, no network |
 
-Each slice follows the factory way: spec, build, review, verify, then reinstall on your PC. Verified-on-live vs tests-only is reported per slice (owner rule). Owed live items stay unticked in `BACKLOG.md`.
+Each slice follows the factory way: spec, build, review, verify, then reinstall on your PC. Verified-on-live vs tests-only is reported per slice. Owed live items stay unticked in `BACKLOG.md`.
 
-## 14. Footprint summary
+## 15. Footprint summary
 
-- Off: zero. No timer, no network.
-- On: one timer, ~2 to 10 KB a day, a few KB of memory for the verifier. Download only after a new release and only the one installer (size = manifest value).
-- Blackbox: zero network, zero added CPU.
+- Unravis: one timer, ~1 KB per 30 min, a few KB of memory for the verifier. Download only after a new release.
+- Blackbox service: one goroutine asleep between checks, ~1 KB per 30 min, no new listener, no new process unless applying an update. Recording is not slowed.
+- Lite: nothing runs when closed.
