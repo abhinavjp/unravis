@@ -1,3 +1,7 @@
 # Public keys the updater trusts. One per line: "stable <64 hex>" or "rc <64 hex>".
 # EMPTY ON PURPOSE until the owner runs `sigtool keygen` (docs/auto-updater/KEYS.md) and adds the public keys here.
 # With no keys, no update is ever accepted.
+rc d95eb088ac039e91f5a81871999d245c54594e60aa3d0f07cff3e2c2b116be17
+rc 4490fcf8d0f7b149ad4685b9c81694c01a7f1049926ed3678a273e3e5dc4920c
+stable 85f025739ef40bd97cb45e1d9454dd97eca7bc5301272ed80d5fc69308d2f7bc
+stable 371cc30201af0b23c440e8b56a7a92b2375d3e6795cbb57faa7aa3b215aa7d8c

@@ -102,7 +102,7 @@ func (p *Plan) removeBlackbox(ctx context.Context, t *Txn) error {
 	if _, err := m.Remove(cfg, keyPath, del, p.Uninst.ConfirmRecordings); err != nil && !errors.Is(err, blackbox.ErrNotInstalled) {
 		p.leftf("Blackbox service %s (%v)", blackbox.ServiceName, err)
 	}
-	for _, f := range []string{keyPath, cfgPath, cfgPath + ".bak", exe} {
+	for _, f := range []string{keyPath, cfgPath, cfgPath + ".bak", exe, filepath.Join(p.Layout.BlackboxDir, blackbox.ManagedMarkerName)} {
 		if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
 			p.leftf("File %s (%v)", f, err)
 		}
