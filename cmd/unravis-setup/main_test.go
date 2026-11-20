@@ -44,7 +44,9 @@ type testRig struct {
 	env    env
 	// elevated counts the times the fake "run as administrator" was started.
 	elevated int
-	uacNo    bool
+	// lastExtra is what the last elevator was asked to start the worker with.
+	lastExtra []string
+	uacNo     bool
 }
 
 func newRig(t *testing.T) *testRig {
@@ -79,7 +81,7 @@ func newRig(t *testing.T) *testRig {
 		dirs:     func() (setup.Dirs, error) { return d, nil },
 		userSID:  func() (string, error) { return "S-1-5-21-1000", nil },
 		setupExe: func() (string, error) { return exe, nil },
-		elevator: func(string) setup.Elevator { return rg },
+		elevator: func(_ string, extra []string) setup.Elevator { rg.lastExtra = extra; return rg },
 		payload:  func() (*setup.Payload, error) { return payload, nil },
 		static: func() (fs.FS, error) {
 			return fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html><title>Unravis Setup</title>")}}, nil
@@ -386,7 +388,9 @@ func TestSilentUninstallBadConfigExitsTwoAndChangesNothing(t *testing.T) {
 
 func TestSilentWithoutProgramFilesStops(t *testing.T) {
 	rg := newRig(t)
-	rg.env.payload = func() (*setup.Payload, error) { return nil, errors.New("this setup program has no program files inside.") }
+	rg.env.payload = func() (*setup.Payload, error) {
+		return nil, errors.New("this setup program has no program files inside.")
+	}
 	before := rg.f.Snapshot()
 	if got := run([]string{"--silent", "--config", rg.config(`{"scope":"user"}`)}, rg.env); got != setup.OutcomePreflightFailed.ExitCode() {
 		t.Fatalf("exit %d", got)
@@ -423,7 +427,9 @@ func TestWorkerServesOneRequestOverItsPipe(t *testing.T) {
 		return &setup.WorkerPipe{Conn: b, SID: "S-1-5-21-1000", Profile: rg.dirs.UserProfile}, nil
 	}
 	done := make(chan int, 1)
-	go func() { done <- run([]string{"--worker", "--pipe", `\\.\pipe\unravis-setup-x`, "--parent", "4242"}, rg.env) }()
+	go func() {
+		done <- run([]string{"--worker", "--pipe", `\\.\pipe\unravis-setup-x`, "--parent", "4242"}, rg.env)
+	}()
 	u := rg.dirs.User()
 	req := setup.WorkRequest{Op: setup.OpInstall, User: &u, Options: setup.Options{Scope: setup.ScopeMachine,
 		Location: setup.DefaultLocation(setup.ScopeMachine, rg.dirs), StartAtSignIn: true}}

@@ -2,7 +2,17 @@
 
 Free. Uses only the Go standard library. Do this once, on your own PC (not CI, not a cloud machine).
 
-## Make the keys
+## Make the keys (one command)
+
+From a clean checkout of a commit you reviewed, in PowerShell 7.2 or newer (`pwsh`), with go and git installed:
+
+```powershell
+pwsh ./tools/release/Make-Keys.ps1 -OutDir D:\secret -AddToTrusted
+```
+
+It asks for 8 passphrases (each key twice, hidden), makes the four keys, prints the public keys and adds them to `internal/update/trusted_keys.txt`. Then check `git diff`, commit and push that one file. The manual steps below do the same thing.
+
+## Make the keys by hand
 
 Four keys: rc current (`rc-1`), rc backup (`rc-2`), stable current (`stable-1`), stable backup (`stable-2`).
 **Use a different passphrase for each of the two backup keys and for stable vs rc.** Ask twice so a typo cannot lock you out.

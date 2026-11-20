@@ -108,7 +108,7 @@ Verify order. Any failure = stop, delete the file, show a plain message, log it.
 1. HTTPS only (TLS 1.2+, system trust). No HTTP, no redirect to another scheme. Redirects allowed only to `github.com` and `*.githubusercontent.com`, max 3.
 2. Verify `update-manifest.json.sig` against the embedded public keys (ed25519).
 3. Check manifest: `product`, `channel` matches, `expires` in the future, `seq` > last seen `seq` (stored), `version` > installed (semver; `rc.N` numeric) and the tag in the URL matches `version`. **No silent downgrade.** Equal or lower = ignored. `minUpdateFrom` honoured.
-4. Download the setup exe: size capped to the manifest `size` (+0), written to a per-user folder with a locked ACL (not Temp), hashed while streaming; SHA-256 must equal the manifest.
+4. Download the setup exe: size capped to the manifest `size` (+0), written to a per-user folder under the local cache (`%LOCALAPPDATA%\\Unravis\\updates`, default ACL: this user, SYSTEM and administrators; not Temp), hashed while streaming; SHA-256 must equal the manifest.
 5. Authenticode (once signing exists): signer must match the pinned publisher.
 6. Show "Update to X ready. Needs administrator approval if Blackbox is installed. Close Unravis and update?" The user clicks. **Never installs without a click** (open decision D3 for a "install on next quit" option).
 7. Launch `unravis-setup.exe --upgrade --expect-sha256 <hash> --expect-version <v>`. The installer's elevated worker **re-hashes its own image** before doing any admin step (closes the swap-after-verify gap). The installer re-verifies the embedded Blackbox pin as today.
@@ -257,7 +257,7 @@ A small program for a server that has a Blackbox but not Unravis. It opens a loc
 | U1 | Key tool + `Sign-Release.ps1`, manifest + feed generator in `release.yml`, public keys embedded, key-rotation doc | Real rc release signed and verified |
 | U2 | `internal/update`: verify manifest, semver/seq/expiry, host allowlist, unit tests incl. bad sig, downgrade, replay, expired, wrong host, truncated | Real GitHub feed |
 | U3 | Unravis check: ETag, 30 min cadence, jitter, channel, Settings (interval, off), proxy | rc.N to rc.N+1 on your PC |
-| U4 | Download + hand-off to `unravis-setup --upgrade --expect-sha256`; worker re-hash | Same, cases and saved connections kept |
+| U4 | Download + hand-off to `unravis-setup --upgrade --expect-sha256` (built 2026-11-20; file held open with no write/rename/delete share while hashed and started; the setup holds its own file the same way while it runs) | Same, cases and saved connections kept |
 | U5 | Rollback marker + health check + skip list | Forced failure on your PC |
 | U6 | Blackbox self-update: check goroutine, `apply-update` helper (shares BL-136 code), config keys, status fields, folder/share source | Elevated host, real service, forced failure |
 | U7 | Unravis Lite: separate build, local reader, loopback page, own update | Server with Blackbox and no Unravis |

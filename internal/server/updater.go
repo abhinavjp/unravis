@@ -46,7 +46,11 @@ type Updater struct {
 	haveLast bool
 	failures int
 	wake     chan struct{}
-	checkMu  sync.Mutex // one check at a time
+	checkMu  sync.Mutex       // one check at a time
+	avail    *update.Manifest // newest verified newer release; a later failed check does not erase it
+	dl       *update.Downloader
+	launch   Launcher
+	inst     installState
 	saveMu   sync.Mutex // one settings save at a time
 	rnd      *rand.Rand
 }
@@ -160,6 +164,9 @@ type UpdateStatus struct {
 	CheckedAt       string `json:"checkedAt"`
 	Auto            bool   `json:"auto"`
 	IntervalMinutes int    `json:"intervalMinutes"`
+	// CanInstall is true when this build can download and start the installer (Windows). Install is the state of that step.
+	CanInstall bool         `json:"canInstall"`
+	Install    *InstallInfo `json:"install,omitempty"`
 }
 
 // Status is the last known answer plus the settings. It makes no network call.
@@ -177,11 +184,10 @@ func (u *Updater) Status() UpdateStatus {
 	st.CheckedAt = u.checked.UTC().Format(time.RFC3339)
 	switch u.last.Status {
 	case update.StatusAvailable:
-		st.Status = "available"
-		if m := u.last.Manifest; m != nil {
-			st.Latest = m.Version
-			// Built here from the signed version, never taken from the feed.
-			st.URL = "https://github.com/abhinavjp/unravis/releases/tag/v" + m.Version
+		if m := u.validAvail(); m != nil {
+			u.fillAvailable(&st, m)
+		} else {
+			st.Status = "unreachable" // the signed answer has expired; the next check replaces it
 		}
 	case update.StatusLatest:
 		st.Status = "latest"
@@ -191,6 +197,12 @@ func (u *Updater) Status() UpdateStatus {
 		st.Status = "dev"
 	default:
 		st.Status = "unreachable"
+	}
+	// An update found earlier stays on offer while a later check fails: it was verified, and the file may already be downloaded.
+	if st.Status == "unreachable" || st.Status == "unverified" {
+		if m := u.validAvail(); m != nil {
+			u.fillAvailable(&st, m)
+		}
 	}
 	return st
 }
@@ -206,13 +218,33 @@ func (u *Updater) checkOnce(ctx context.Context) (res update.Result, ok bool) {
 	}
 	u.mu.Lock()
 	u.last, u.checked, u.haveLast = res, time.Now(), true
+	switch res.Status {
+	case update.StatusAvailable:
+		u.avail = res.Manifest
+	case update.StatusLatest, update.StatusDev:
+		u.avail = nil
+	}
 	if res.Backoff {
 		u.failures++
 	} else {
 		u.failures = 0
 	}
+	keep := u.validAvail()
 	u.mu.Unlock()
+	u.noteCheck(keep)
 	return res, true
+}
+
+// fillAvailable fills st for a verified newer release. Call with u.mu held.
+func (u *Updater) fillAvailable(st *UpdateStatus, m *update.Manifest) {
+	st.Status = "available"
+	st.CanInstall = u.channel != "" && u.dl != nil && u.launch != nil
+	if m != nil {
+		st.Latest = m.Version
+		st.Install = u.installInfo(m.Version)
+		// Built here from the signed version, never taken from the feed.
+		st.URL = "https://github.com/abhinavjp/unravis/releases/tag/v" + m.Version
+	}
 }
 
 // CheckNow runs one check at once (the "Check for updates" button) and returns the new status.

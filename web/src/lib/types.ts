@@ -45,7 +45,12 @@ export interface UpdateCheckReply {
   status: 'latest' | 'available' | 'dev' | 'unreachable' | 'unverified' | 'none';
   current: string; latest: string; url: string;
   channel?: string; checkedAt?: string; auto?: boolean; intervalMinutes?: number;
+  /** True when this build can download and start the installer (Windows). */
+  canInstall?: boolean;
+  install?: UpdateInstall;
 }
+/** The download and install step of an available update. */
+export interface UpdateInstall { state: 'idle' | 'downloading' | 'ready' | 'failed' | 'launched'; version: string; done: number; total: number; error?: string }
 /** Record-level completion: complete rows have a usable duration, pending rows are accepted asynchronous jobs. */
 export type Completion = 'all' | 'complete' | 'incomplete' | 'pending' | 'invalid';
 /** An inclusive numeric bound; either end may be absent, and a range with neither end is not in use. */

@@ -251,6 +251,12 @@ func run(args []string, getenv func(string) string) error {
 				log.Printf("Update checks are off: %v", kerr)
 			} else {
 				updater = server.NewUpdater(filepath.Join(dir, "update"), keys)
+				if update.CanLaunch {
+					// Downloads are big and need not follow the person to another PC, so they go to the local cache folder, not Roaming.
+					if cache, cerr := os.UserCacheDir(); cerr == nil {
+						updater.EnableInstall(filepath.Join(cache, "Unravis", "updates"), update.LaunchSetup)
+					}
+				}
 				serverOptions = append(serverOptions, server.WithUpdater(updater))
 			}
 		}
@@ -259,7 +265,7 @@ func run(args []string, getenv func(string) string) error {
 	if updater != nil {
 		updaterDone := make(chan struct{})
 		go func() { defer close(updaterDone); updater.Run(signalContext) }()
-		defer func() { cancel(); <-updaterDone }()
+		defer func() { cancel(); updater.Close(); <-updaterDone }()
 	}
 	if !f.demo {
 		// Open the saved databases whose password is saved, one at a time and with a time limit, so a slow one never holds the app back.
