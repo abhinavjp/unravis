@@ -115,11 +115,15 @@ func (u *Updater) installInfo(latest string) *InstallInfo {
 }
 
 // StartDownload starts downloading the setup program of the version the last check found. It returns at once.
+// It takes u.mu and then inst.mu (the order Status uses) and keeps both while it records the download, so a check that finds a
+// newer version meanwhile either runs before it (and is used) or after it (and noteCheck then sees this download and drops it).
 func (u *Updater) StartDownload() error {
 	if !u.CanInstall() {
 		return errNoInstall
 	}
-	m := u.availableManifest()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	m := u.validAvail()
 	if m == nil {
 		return errNoUpdate
 	}

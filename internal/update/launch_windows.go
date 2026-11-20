@@ -11,12 +11,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
 
 // CanLaunch says whether this build can hand a downloaded setup to the installer.
 const CanLaunch = true
+
+// launchGrace is how long a started setup must stay up to count as started.
+const launchGrace = 3 * time.Second
 
 const (
 	detachedProcess       = 0x00000008
@@ -66,6 +70,14 @@ func LaunchSetup(path, sha256hex, version string) error {
 	if err := cmd.Start(); err != nil {
 		return errors.New("could not start the setup program")
 	}
-	_ = cmd.Process.Release()
+	// The setup has no console, so if it refuses to run (its own file or version check) nobody would see why. A setup that is still
+	// running after a few seconds is up; one that stopped at once is reported.
+	exited := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(exited) }()
+	select {
+	case <-exited:
+		return errors.New("the setup program closed right away; its log is in the setup-logs folder under Unravis in your local app data")
+	case <-time.After(launchGrace):
+	}
 	return nil
 }

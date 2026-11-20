@@ -23,6 +23,7 @@ export async function refreshUpdateStatus(): Promise<void> {
     const reply = await api.updateStatus(updatePreviewNow());
     if (reply && typeof reply.status === 'string') {
       updates.reply = reply;
+      if (reply.install?.state === 'ready' || reply.install?.state === 'launched') installing.error = ''; // an old refusal is stale now
       if (reply.install?.state === 'downloading') pollWhileDownloading(); // also after a page reload mid-download
     }
   } catch { /* the bar just stays as it was */ }

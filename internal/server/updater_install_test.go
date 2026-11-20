@@ -390,3 +390,61 @@ func TestInstallIsRefusedInTheFailedState(t *testing.T) {
 		t.Fatalf("install after trying again = %d", code)
 	}
 }
+
+// A download of an old version that is still running when a newer version is found must not touch the new state.
+func TestStaleDownloadResultIsIgnored(t *testing.T) {
+	rg := newInstallRig(t)
+	gate := make(chan struct{})
+	inner := rg.feed.srv.Config.Handler
+	rg.feed.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "v0.1.0-rc.48/unravis-setup") {
+			<-gate // the old download hangs here (and finishes fine when released)
+		}
+		inner.ServeHTTP(w, r)
+	})
+	rg.u.CheckNow(t.Context())
+	rg.post("/api/update/download")
+	rg.publish("0.1.0-rc.49", 4901, bytes.Repeat([]byte("newer-setup"), 2000))
+	rg.u.CheckNow(t.Context()) // finds the newer version: the old download is thrown away
+	close(gate)
+	time.Sleep(300 * time.Millisecond) // the old goroutine finishes now
+	rg.u.inst.mu.Lock()
+	state, running := rg.u.inst.info.State, rg.u.inst.running
+	rg.u.inst.mu.Unlock()
+	if state != "" || running {
+		t.Fatalf("the old download changed the new state: %q running=%v", state, running)
+	}
+	// and the new version downloads normally
+	if code, _ := rg.post("/api/update/download"); code != http.StatusOK {
+		t.Fatalf("download of the new version = %d", code)
+	}
+	if s := rg.waitFor("ready"); s.Install.Version != "0.1.0-rc.49" {
+		t.Fatalf("%+v", s.Install)
+	}
+}
+
+// Pressing Install twice must start the installer once.
+func TestDoubleInstallStartsOnce(t *testing.T) {
+	rg := newInstallRig(t)
+	rg.readyDownload()
+	inLaunch, release := make(chan struct{}), make(chan struct{})
+	rg.u.launch = func(path, sha, ver string) error {
+		rg.launch.Add(1)
+		close(inLaunch)
+		<-release
+		return nil
+	}
+	done := make(chan error, 1)
+	go func() { done <- rg.u.Install() }()
+	<-inLaunch
+	if err := rg.u.Install(); err == nil {
+		t.Error("a second Install ran while the first was starting")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if rg.launch.Load() != 1 {
+		t.Errorf("launched %d times", rg.launch.Load())
+	}
+}

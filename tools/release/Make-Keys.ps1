@@ -22,10 +22,13 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 Remove-Item Env:UNRAVIS_KEY_PASSPHRASE -ErrorAction SilentlyContinue   # the tool would prefer it over the typed passphrase
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-if (git -C $repo status --porcelain) { throw 'This folder has uncommitted changes. Run this from a clean checkout of a commit you reviewed.' }
+$status = git -C $repo status --porcelain
+if ($LASTEXITCODE -ne 0) { throw 'git could not read this folder.' }
+if ($status) { throw 'This folder has uncommitted changes. Run this from a clean checkout of a commit you reviewed.' }
 $head = (git -C $repo rev-parse HEAD).Trim()
-$full = [System.IO.Path]::GetFullPath($OutDir)
-if ($full.StartsWith($repo, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Choose a folder outside the repository for the keys.' }
+$full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutDir)
+$repoSlash = $repo.TrimEnd('\') + '\'
+if (($full.TrimEnd('\') + '\').StartsWith($repoSlash, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Choose a folder outside the repository for the keys.' }
 New-Item -ItemType Directory -Force -Path $full | Out-Null
 $tool = Join-Path $full 'sigtool.exe'
 Write-Host "Building the key tool from commit $head"
@@ -41,8 +44,10 @@ function New-UpdateKey([string]$role, [string]$name) {
     $pa = [System.Net.NetworkCredential]::new('', $a).Password
     if ($pa.Length -lt 12) { throw 'The passphrase is shorter than 12 characters.' }
     if ($pa -ne [System.Net.NetworkCredential]::new('', $b).Password) { throw 'The two passphrases differ.' }
-    $pa | & $tool keygen -role $role -out $keyFile -pub $pubFile
-    if ($LASTEXITCODE -ne 0) { throw "keygen failed for $name." }
+    try {
+        $pa | & $tool keygen -role $role -out $keyFile -pub $pubFile
+        if ($LASTEXITCODE -ne 0) { throw "keygen failed for $name. Delete the partial files in $full and run it again." }
+    } finally { $pa = $null; $a.Dispose(); $b.Dispose() }
 }
 New-UpdateKey rc rc-1
 New-UpdateKey rc rc-2

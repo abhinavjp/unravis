@@ -41,6 +41,6 @@
 Thumbs.db
 .DS_Store
 /audit-explorer
-/audit-explorer
 /unravis-setup
 /unravis-blackbox
+*.key.json
