@@ -86,7 +86,7 @@ A permanent release tagged `update-feed` holds two small files, replaced on each
 - The signing script (`Sign-Release.ps1`) builds the tool from the tag in a clean copy, shows the version, dates and file names, re-hashes every file (including the Blackbox exe inside its zip), checks the new version/seq moves the feed forward, and asks for a typed "yes". The `-Feed` step refuses a draft release. It also compares the local tag with GitHub's, requires the manifest's `commit` to equal the tag's commit, shows changes to the signing code and the trusted key list since the last signed release (you must type to accept), and checks the signature against the keys installed copies already trust.
 - **Known gap (U1b):** nothing yet proves the draft's files were built by our workflow from that commit; a stolen token could swap files and a matching manifest and rely on you to sign. The fix is free build attestations (`actions/attest-build-provenance` + `gh attestation verify`), to be added and tested on a real rc run.
 - Public keys (current + next) are compiled into `unravis.exe`, `unravis-setup.exe` and `unravis-blackbox.exe`. Two keys allow rotation.
-- **SignPath Foundation** [F] gives free signing to open-source projects, but: needs an OSI-approved licence (this repo has **no LICENSE file today**, so nachi must pick one first), the certificate is issued to "SignPath Foundation", every release needs a manual approval, MFA for the team, a privacy/data-transfer note, and acceptance is at their discretion. It adds Authenticode as a second lock; the updater does not depend on it.
+- **SignPath Foundation** [F] gives free signing to open-source projects, but: needs an OSI-approved licence (Apache-2.0 added 2026-11-20, see D14), the certificate is issued to "SignPath Foundation", every release needs a manual approval, MFA for the team, a privacy/data-transfer note, and acceptance is at their discretion. It adds Authenticode as a second lock; the updater does not depend on it.
 - **Separate keys per channel** (from the Doyensec and TUF lessons [F]): an `rc` key and a `stable` key. A stable build trusts only the stable key. An rc build trusts both. A leaked rc key can never push to stable users.
 - Not recommended as the only trust: GitHub artifact attestations (free for public repos). Useful for people checking by hand, heavy to verify inside the program.
 
@@ -242,13 +242,13 @@ A small program for a server that has a Blackbox but not Unravis. It opens a loc
 | D5 | A build stays on its channel (rc stays rc) until the user changes it | Do not move people between test and real versions behind their back. |
 | D6 | Blackbox on a server updates itself, default `install` | It is a tape recorder, not the shop that serves customers. If an update fails, the worst case is a few seconds of missing tape, and it undoes itself. Safety: only a signed, newer, matching file is accepted. Setting `notify` or `off` is one line in the config. |
 | D7 | Public repo | Done. Allows free signing. |
-| D8 | Ship before SignPath is approved | Our own key does the safety job. SignPath is a bonus badge. SignPath needs a licence file first (open question for nachi). |
+| D8 | Ship before SignPath is approved | Our own key does the safety job. SignPath is a bonus badge. SignPath needs a licence file; now added (D14). |
 | D9 | 30 min for rc, 6 h for stable | Testing builds change often, real ones rarely. |
 | D10 | Lite is started "as administrator" by the person who wants to look | The recordings are in a locked room. The person with the key opens the door. Lite never makes the lock weaker and never keeps admin rights. |
 | D11 | Blackbox update also refreshes `unravis-lite.exe` beside it | One signed update keeps both in step. |
 | D12 | No maintenance window by default; setting available | Most boxes are fine; picky ones can set a quiet hour. |
 | D13 | Separate signing keys for rc and stable | A thief of the test key cannot touch real users. |
-| D14 | No LICENSE file exists. **Only nachi can choose a licence** | SignPath needs one. I will not pick for you. Until then, no SignPath. |
+| D14 | **Apache-2.0** (decided 2026-11-20, nachi delegated; `LICENSE` and `NOTICE` added) | SignPath needs an OSI-approved licence. Apache-2.0 is OSI-approved, lets anyone use the tool, and says nobody can sue you over a patent in it. All our Go libraries are BSD, MIT or Apache-2.0, so they fit. MIT is shorter but has no patent promise. GPL/AGPL would force others to open their changes and some firms refuse to touch them. Follow-up: ship a third-party notices file with the installer (BSD and MIT ask for it). |
 
 ## 14. Build plan (after you confirm)
 
