@@ -23,6 +23,7 @@ func (e *testEnv) upgradeTo(ver string) {
 func TestUpgradeKeepsTheOldSetupAndAMarker(t *testing.T) {
 	e := newEnv(t, "1.2.0")
 	o := e.userOpts()
+	writeFile(t, e.r.SetupExe, "setup program 1.2.0 "+rollbackFlags) // a setup that can be rolled back to
 	e.mustRun(OpInstall, o, UninstallOptions{})
 	prev := filepath.Join(NewLayout(o, e.dirs).InstallDir, update.PreviousDir)
 	if exists(prev) {
@@ -54,6 +55,7 @@ func TestUpgradeKeepsTheOldSetupAndAMarker(t *testing.T) {
 func TestGoingBackClearsTheKeptVersion(t *testing.T) {
 	e := newEnv(t, "1.2.0")
 	o := e.userOpts()
+	writeFile(t, e.r.SetupExe, "setup program 1.2.0 "+rollbackFlags) // a setup that can be rolled back to
 	e.mustRun(OpInstall, o, UninstallOptions{})
 	e.upgradeTo("1.3.0")
 	e.mustRun(OpUpgrade, Options{}, UninstallOptions{})
@@ -90,6 +92,7 @@ func TestAFailedUpgradeLeavesNoKeptVersion(t *testing.T) {
 func TestRepairOfTheSameVersionClearsTheKeptVersion(t *testing.T) {
 	e := newEnv(t, "1.2.0")
 	o := e.userOpts()
+	writeFile(t, e.r.SetupExe, "setup program 1.2.0 "+rollbackFlags) // a setup that can be rolled back to
 	e.mustRun(OpInstall, o, UninstallOptions{})
 	e.upgradeTo("1.3.0")
 	e.mustRun(OpUpgrade, Options{}, UninstallOptions{})
