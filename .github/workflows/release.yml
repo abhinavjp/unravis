@@ -151,7 +151,7 @@ jobs:
             'Shipping now would mark the release as signed when it is not.',
             'The owner must do ONE of these, then re-run this workflow (Actions > Release > Run workflow, enter the same tag):',
             '1. Ship unsigned: delete the SIGNPATH secret (repository Settings > Secrets and variables > Actions > Repository secrets). The notes then carry the "not signed" notice.',
-            '2. Ship signed: add the SignPath signing step (buildout/plan/installer-and-releases.md section 8) so it signs dist/unravis-setup.exe, dist/unravis.exe and dist/unravis-blackbox.exe before packaging, and set SIGNED to true in the "Write the release notes" step.'
+            '2. Ship signed: add the SignPath signing step (buildout/plan/installer-and-releases.md section 8) so it signs dist/unravis-setup.exe, dist/unravis.exe, dist/unravis-blackbox.exe and dist/unravis-lite.exe before packaging, and set SIGNED to true in the "Write the release notes" step.'
           )
           Write-Host ('::error title=SignPath is set but signing is not wired up::' + ($lines -join '%0A'))
           $lines | ForEach-Object { Write-Host $_ }
@@ -196,6 +196,37 @@ jobs:
           Compress-Archive -Path (Join-Path $Stage '*') -DestinationPath $Zip -CompressionLevel Optimal
           Remove-Item -LiteralPath $Stage -Recurse -Force
 
+      - name: Package Unravis Lite
+        shell: pwsh
+        run: |
+          $Version = '${{ steps.tag.outputs.version }}'
+          $Stage = 'dist/lite-pack'
+          if (Test-Path -LiteralPath $Stage) { Remove-Item -LiteralPath $Stage -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $Stage | Out-Null
+          Copy-Item -LiteralPath 'dist/unravis-lite.exe' -Destination $Stage
+          Get-ChildItem -LiteralPath '.' -Filter 'LICENSE*' -File -ErrorAction SilentlyContinue | Copy-Item -Destination $Stage
+          Get-ChildItem -LiteralPath '.' -Filter 'NOTICE*' -File -ErrorAction SilentlyContinue | Copy-Item -Destination $Stage
+          $Readme = @(
+            'Unravis Lite',
+            '============',
+            '',
+            'A small viewer for one Blackbox. It reads the recordings and shows the charts.',
+            'It changes nothing, saves nothing and sends nothing anywhere.',
+            '',
+            'Run (as an administrator if the recordings folder is locked):',
+            '    unravis-lite.exe',
+            '',
+            'It finds the Blackbox on this PC and prints a one-time link to a local page',
+            '(loopback only); open the link in your browser. To read a copy of the recordings, or a share:',
+            '    unravis-lite.exe --folder D:\copy-of-recordings',
+            'Add --open to open the link in the default browser for you.'
+          )
+          $Readme | Set-Content -Encoding utf8 (Join-Path $Stage 'README.txt')
+          $Zip = "dist/unravis-lite-v$Version-windows-x64.zip"
+          if (Test-Path -LiteralPath $Zip) { Remove-Item -LiteralPath $Zip -Force }
+          Compress-Archive -Path (Join-Path $Stage '*') -DestinationPath $Zip -CompressionLevel Optimal
+          Remove-Item -LiteralPath $Stage -Recurse -Force
+
       - name: Collect the release assets and write SHA256SUMS.txt
         id: assets
         shell: pwsh
@@ -206,6 +237,7 @@ jobs:
           $Assets = @(
             "unravis-v$Version-windows-x64.zip",
             "unravis-blackbox-v$Version-windows-x64.zip",
+            "unravis-lite-v$Version-windows-x64.zip",
             "unravis-setup-v$Version-windows-x64.exe"
           )
           foreach ($name in $Assets) {
@@ -249,6 +281,7 @@ jobs:
           path: |
             dist/unravis-v*-windows-x64.zip
             dist/unravis-blackbox-v*-windows-x64.zip
+            dist/unravis-lite-v*-windows-x64.zip
             dist/unravis-setup-v*-windows-x64.exe
             dist/update-manifest.json
             dist/SHA256SUMS.txt

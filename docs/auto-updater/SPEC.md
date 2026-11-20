@@ -214,7 +214,7 @@ A small program for a server that has a Blackbox but not Unravis. It opens a loc
 
 ### Design
 - Reads the recordings **directly from the local Blackbox folder** (same reader code as the app), so no read key and no network are needed on the same machine. Access is by Windows file permission: it runs as the signed-in user and shows only what that user may read. The Blackbox data folder is locked today, so Lite asks for a one-time admin approval to read it, or runs elevated when started from "Run as administrator" (decision D10). It never loosens the folder lock.
-- Local web page on `127.0.0.1` only, with a one-time token in the URL (same idea as Unravis' launch link). No outside port. Opens the browser; `--no-browser` prints the link.
+- Local web page on `127.0.0.1` only, with a one-time token in the URL (same idea as Unravis' launch link). No outside port. Always prints the link; `--open` also opens the browser (off by default because Lite is often run as administrator, and a browser started from it would be elevated too).
 - Starts on demand (double click, or a Start menu / desktop link). Not a service. Nothing runs when closed: zero idle cost.
 - Reuses the existing Blackbox web screens. **To confirm in the build slice:** whether the Blackbox charts and What-happened screens can be built into a separate bundle. If they are tangled with the case screens, Lite needs a small route split first. I have not measured the size; target under 15 MB to be measured (the frontend bundle is the main cost).
 - Extras that cost little: choose a day, time range, group/search counters, export a chart as an image. Nothing that writes.
