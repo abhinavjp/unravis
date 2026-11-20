@@ -15,6 +15,7 @@ import (
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/datadir"
 	"api-audit-explorer/internal/keeper"
+	"api-audit-explorer/internal/update"
 )
 
 // Plan is the list of steps one run takes, worked out before anything changes.
@@ -144,6 +145,9 @@ func installSteps(p *Plan) []Step {
 		Step{ID: "state", Title: "Save the setup choices", Do: p.saveState},
 		Step{ID: "verify", Title: "Check that Unravis starts", Do: p.verify},
 	)
+	if p.Op == OpUpgrade && p.Old != nil {
+		steps = append(steps, Step{ID: "keep-previous", Title: "Keep the old version in case it is needed", Do: p.keepPrevious})
+	}
 	return steps
 }
 
@@ -802,6 +806,64 @@ func (p *Plan) verify(ctx context.Context, t *Txn) error {
 		return &StepError{Msg: "The program in place reports “" + strings.TrimSpace(out) + "”, not version " + p.Version + ".",
 			Fix: "Run setup again; if it fails the same way, download the setup program again."}
 	}
+	return nil
+}
+
+// keepPrevious keeps the setup program the upgrade just replaced, with a marker, so a new version that cannot start can be taken
+// back (internal/update/health.go). The old setup carries the old program files, so going back is this same installer run with
+// --allow-downgrade. Nothing here is fatal to the install: a run that cannot keep the old setup still upgrades, and says so in its log.
+// Going back (a downgrade) or reinstalling the same version keeps nothing and clears an earlier copy.
+func (p *Plan) keepPrevious(ctx context.Context, t *Txn) error {
+	dir := filepath.Join(p.Layout.InstallDir, update.PreviousDir)
+	from, errFrom := update.ParseVersion(p.Old.Version)
+	to, errTo := update.ParseVersion(p.Version)
+	if errFrom != nil || errTo != nil || update.Compare(to, from) <= 0 {
+		if err := os.RemoveAll(dir); err != nil {
+			t.log("previous version: could not remove " + dir + ": " + err.Error())
+		}
+		return nil
+	}
+	var old string
+	for _, u := range t.j.Undos() {
+		if u.Kind == UndoRestoreFile && samePath(u.Path, p.Layout.SetupExe) {
+			old = u.Backup
+		}
+	}
+	if old == "" {
+		t.log("previous version: the old setup program was not in the folder, so nothing is kept to go back to")
+		return nil
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.log("previous version: could not clear the earlier copy: " + err.Error())
+		return nil
+	}
+	// A rollback removes the folder again if the run fails after this point. It is not in the list the commit removes.
+	if err := t.record(Undo{Kind: UndoRemoveTree, Path: dir, Note: "kept-version folder created: remove " + dir}); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.log("previous version: could not make " + dir + ": " + err.Error())
+		return nil
+	}
+	dst := filepath.Join(dir, update.PreviousSetupName)
+	if err := copyFile(ctx, old, dst); err != nil {
+		t.log("previous version: could not keep the old setup: " + err.Error())
+		_ = os.RemoveAll(dir)
+		return nil
+	}
+	sum, err := fileSHA256(dst)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		t.log("previous version: could not hash the old setup: " + err.Error())
+		return nil
+	}
+	m := update.Marker{From: from.String(), To: to.String(), SetupSHA256: sum, At: p.r.Sys.now().UTC()}
+	if err := update.WriteMarker(dir, m); err != nil {
+		_ = os.RemoveAll(dir)
+		t.log("previous version: could not write the marker: " + err.Error())
+		return nil
+	}
+	t.log("previous version " + m.From + " kept in " + dir)
 	return nil
 }
 

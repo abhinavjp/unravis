@@ -145,7 +145,7 @@ func storeOptions(f runFlags) []store.Option {
 
 // run is the whole program after the command line is parsed. Each step is a small named function below; run keeps their order and the
 // defers that undo them (they run last-in first-out, so the session file goes before the server, the server before the stores).
-func run(args []string, getenv func(string) string) error {
+func run(args []string, getenv func(string) string) (runErr error) {
 	f, err := parseFlags(args)
 	if err != nil {
 		return err
@@ -198,6 +198,12 @@ func run(args []string, getenv func(string) string) error {
 	if logFile != nil {
 		defer logFile.Close()
 	}
+	// A freshly installed version is watched for its first starts; one that keeps failing hands over to the old setup (health.go).
+	endHealth, handedOver := startHealth(f.demo, getenv)
+	if handedOver {
+		return nil
+	}
+	defer endHealth(&runErr)
 
 	wired, err := wireData(f, demoCfg, getenv)
 	if err != nil {

@@ -11,3 +11,8 @@ const CanLaunch = false
 func LaunchSetup(path, sha256hex, version string) error {
 	return errors.New("installing an update works on Windows only")
 }
+
+// LaunchRollback does not exist off Windows.
+func LaunchRollback(path, sha256hex, version string) error {
+	return errors.New("going back to the old version works on Windows only")
+}

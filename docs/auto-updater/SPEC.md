@@ -170,6 +170,8 @@ Residual risk: whoever holds the signing key can push code to every server. This
 - Data is never touched by rollback. Data schema: an update must not migrate cases in a way the old version can't read, or must take a copy first. (Check against case store before build.)
 - Rollback is local only. A remote or manifest request can never lower the version.
 
+**As built (U5):** the upgrade's last step (`keep-previous`) copies the setup program it just replaced into `<program folder>\.previous\unravis-setup.exe` with `pending.json` (from, to, SHA-256 of that setup, time). That old setup carries the old program files, so going back is the same installer run with `--allow-downgrade` (no second restore code). The new app counts starts in its per-user update folder (`health.json`): it is confirmed after 60 s up; closing it on purpose early is not a failure; an error exit or a crash is. After 3 unconfirmed starts, the 4th start puts the version on `skip.json` and opens the kept setup (hash and version from the marker go through the U4 `--expect-*` checks), then exits. The setup window still needs the person's Install click (and UAC for a machine install). A downgrade or a repair clears `.previous`; uninstall removes it. Not built: a message in the Help panel that says "update X failed; staying on Y".
+
 ## 10. Offline and air-gapped servers
 
 - With no internet the check fails quietly ("Could not check"); nothing else breaks. For servers, use the folder/share source (section 8.2).

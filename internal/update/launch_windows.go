@@ -46,6 +46,17 @@ func openHeld(path string) (*os.File, error) {
 // path must be an absolute path to the file this program downloaded. The file is held open with no write, rename or delete sharing
 // from the moment it is hashed until the process has started, so nothing can swap it in between.
 func LaunchSetup(path, sha256hex, version string) error {
+	return launchSetup(path, sha256hex, version, nil)
+}
+
+// LaunchRollback starts the old setup kept by the last upgrade, to go back to version. It is the same hand-off as LaunchSetup, with
+// the one flag that lets setup install an older version over a newer one. The caller passes the path, hash and version from the
+// marker the installer wrote; nothing from the network reaches this call.
+func LaunchRollback(path, sha256hex, version string) error {
+	return launchSetup(path, sha256hex, version, []string{"--allow-downgrade"})
+}
+
+func launchSetup(path, sha256hex, version string, extra []string) error {
 	if !filepath.IsAbs(path) || !sha256RE.MatchString(sha256hex) {
 		return errors.New("the setup file or its hash is not valid")
 	}
@@ -64,7 +75,7 @@ func LaunchSetup(path, sha256hex, version string) error {
 	if hex.EncodeToString(h.Sum(nil)) != sha256hex {
 		return errors.New("the setup file changed after it was checked; it was not started")
 	}
-	cmd := exec.Command(path, "--upgrade", "--expect-sha256", sha256hex, "--expect-version", version)
+	cmd := exec.Command(path, append([]string{"--upgrade", "--expect-sha256", sha256hex, "--expect-version", version}, extra...)...)
 	cmd.Dir = filepath.Dir(path)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: detachedProcess | createNewProcessGroup}
 	if err := cmd.Start(); err != nil {
