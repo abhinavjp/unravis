@@ -81,6 +81,8 @@ type ServerOptions struct {
 	Config   Config
 	Keys     *KeyCheck
 	Now      func() time.Time
+	// Diag is the diagnostics log served at /diag. Optional.
+	Diag *DiagLog
 }
 
 // Server is the status HTTP server. Reading is allowed only with the read key;
@@ -105,6 +107,7 @@ func NewServer(o ServerOptions) *Server {
 	mux.HandleFunc("/", s.handleRoot)
 	mux.HandleFunc("/status", s.guard(s.handleStatus))
 	mux.HandleFunc("/manifest", s.guard(s.handleManifest))
+	mux.HandleFunc("/diag", s.guard(s.handleDiag))
 	mux.HandleFunc("/files", s.guard(s.handleFiles))
 	mux.HandleFunc("/files/", s.guard(s.handleFile))
 	// WriteTimeout bounds how long a stalled client can hold a recording file
@@ -387,6 +390,17 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		doc.FreePercent = &p
 	}
 	s.writeJSON(w, http.StatusOK, doc)
+}
+
+// handleDiag serves the newest part of the diagnostics log as plain text.
+func (s *Server) handleDiag(w http.ResponseWriter, r *http.Request) {
+	b := s.o.Diag.Tail(DiagTailBytes)
+	if len(b) == 0 {
+		s.errorJSON(w, http.StatusNotFound, "no diagnostics log yet")
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write(b)
 }
 
 func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {

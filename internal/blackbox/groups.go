@@ -389,7 +389,23 @@ type groupCollector struct {
 	hostDur  time.Duration
 	slowName string
 	slowDur  time.Duration
+	// The groups of the last pass that were slow or did not give a reading, for
+	// the diagnostics log. Reused every pass; tick loop only.
+	gt []groupTime
 }
+
+// hostBudget is how long the host read (CPU, memory, disk, network and the
+// process list) may take before the round gives up. It used to be one group
+// budget; on a loaded or scanned PC a process list over a second threw away the
+// whole sample, round after round, with no visible reason.
+var hostBudget = 2 * time.Second
+
+// GroupTimings reports the slow or failed groups of the last pass. The slice is
+// reused: copy it to keep it.
+func (c *groupCollector) GroupTimings() []groupTime { return c.gt }
+
+// GroupCount is how many counter groups this collector runs.
+func (c *groupCollector) GroupCount() int { return len(c.groups) }
 
 // Timings reports the last pass: the host read time and the slowest group.
 func (c *groupCollector) Timings() (host time.Duration, slowGroup string, slow time.Duration) {
@@ -408,8 +424,9 @@ func (c *groupCollector) Collect(now time.Time) (Sample, error) {
 		return Sample{}, errHostBusy
 	}
 	hostStart := time.Now()
-	hv, herr, timedOut := c.innerW.run(func() (any, error) { return c.inner.Collect(now) }, budgetMaxGroup)
+	hv, herr, timedOut := c.innerW.run(func() (any, error) { return c.inner.Collect(now) }, hostBudget)
 	c.hostDur, c.slowName, c.slowDur = time.Since(hostStart), "", 0
+	c.gt = c.gt[:0]
 	if timedOut {
 		return Sample{}, errHostSlow
 	}
@@ -429,6 +446,7 @@ func (c *groupCollector) Collect(now time.Time) (Sample, error) {
 			// On probation: this optional group was over budget twice in a row and
 			// sits out its time box. Only this group; the others keep running.
 			s.Missing = append(s.Missing, name+": slow")
+			c.gt = append(c.gt, groupTime{Name: name, Outcome: "skipped"})
 			continue
 		}
 		// Groups read their counters after the host read and after earlier groups,
@@ -452,6 +470,7 @@ func (c *groupCollector) runGroup(i int, g Group, now time.Time, dt float64, s *
 		// worker and do not re-mark it slow: re-marking every cycle would pin the
 		// group forever (the livelock this budget already had once).
 		s.Missing = append(s.Missing, name+": busy")
+		c.gt = append(c.gt, groupTime{Name: name, Outcome: "busy"})
 		return
 	}
 	start := time.Now()
@@ -459,6 +478,9 @@ func (c *groupCollector) runGroup(i int, g Group, now time.Time, dt float64, s *
 	if timedOut {
 		c.budget.GroupTiming(name, budgetMaxGroup+time.Millisecond, g.Optional())
 		s.Missing = append(s.Missing, name+": slow")
+		// A group that ran out of time is the slowest one, whatever else ran.
+		c.slowName, c.slowDur = name, budgetMaxGroup
+		c.gt = append(c.gt, groupTime{Name: name, Dur: budgetMaxGroup, Outcome: "timeout"})
 		return
 	}
 	took := time.Since(start)
@@ -468,7 +490,15 @@ func (c *groupCollector) runGroup(i int, g Group, now time.Time, dt float64, s *
 	c.budget.GroupTiming(name, took, g.Optional())
 	if err != nil || isNilPayload(v) {
 		s.Missing = append(s.Missing, name)
+		out := "empty"
+		if err != nil {
+			out = "error"
+		}
+		c.gt = append(c.gt, groupTime{Name: name, Dur: took, Outcome: out})
 		return
+	}
+	if took >= diagGroupMin {
+		c.gt = append(c.gt, groupTime{Name: name, Dur: took, Outcome: "ok"})
 	}
 	applyGroup(s, name, v)
 }

@@ -419,6 +419,7 @@ func (s *FolderSource) Manifest(ctx context.Context) (ManifestRead, error) {
 	if rerr != nil {
 		return ManifestRead{}, rerr
 	}
+	s.freshLast(ctx, &m)
 	return ManifestRead{Manifest: m}, nil
 }
 

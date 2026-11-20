@@ -692,9 +692,9 @@ func (b *Backend) bbImport(_ context.Context, c *Call) (any, error) {
 	return ImportResult{Imported: n}, err
 }
 
-// bbPathAllowed is the whole list of what the keeper GETs from a Blackbox: the manifest, the status and one recording file.
+// bbPathAllowed is the whole list of what the keeper GETs from a Blackbox: the manifest, the status, the diagnostics log and one recording file.
 func bbPathAllowed(p string) bool {
-	if p == "/manifest" || p == "/status" {
+	if p == "/manifest" || p == "/status" || p == "/diag" {
 		return true
 	}
 	name, ok := strings.CutPrefix(p, "/files/")

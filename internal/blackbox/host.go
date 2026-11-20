@@ -143,9 +143,11 @@ func RunHost(ctx context.Context, o HostOptions) error {
 	if disk == nil {
 		disk = OSDisk{}
 	}
+	diag := OpenDiagLog(store.Dir(), o.Now)
+	defer diag.Close()
 	rec := NewRecorder(RecorderOptions{Config: cfg, Store: store, Collector: col, Disk: disk, RunID: runID,
-		Now: o.Now, Ticks: o.Ticks, Budget: budget, SelfUsage: SelfUsage})
-	srv := NewServer(ServerOptions{Store: store, Recorder: rec, Config: cfg, Keys: keys, Now: o.Now})
+		Now: o.Now, Ticks: o.Ticks, Budget: budget, SelfUsage: SelfUsage, Diag: diag})
+	srv := NewServer(ServerOptions{Store: store, Recorder: rec, Config: cfg, Keys: keys, Now: o.Now, Diag: diag})
 
 	srvDone := make(chan struct{})
 	go func() {
@@ -206,6 +208,32 @@ func (g *processChangeGate) Collect(now time.Time) (Sample, error) {
 }
 
 func (g *processChangeGate) Close() error { return g.inner.Close() }
+
+// Timings, GroupTimings and GroupCount pass the group collector's numbers
+// through. Without them the recorder, which only sees the gate, could never read
+// where a round went: the self block's host and slow-group fields stayed empty.
+func (g *processChangeGate) Timings() (time.Duration, string, time.Duration) {
+	if t, ok := g.inner.(interface {
+		Timings() (time.Duration, string, time.Duration)
+	}); ok {
+		return t.Timings()
+	}
+	return 0, "", 0
+}
+
+func (g *processChangeGate) GroupTimings() []groupTime {
+	if t, ok := g.inner.(interface{ GroupTimings() []groupTime }); ok {
+		return t.GroupTimings()
+	}
+	return nil
+}
+
+func (g *processChangeGate) GroupCount() int {
+	if t, ok := g.inner.(interface{ GroupCount() int }); ok {
+		return t.GroupCount()
+	}
+	return 0
+}
 
 func serveWithRetry(ctx context.Context, srv *Server, cfg Config, o HostOptions, logf func(string, ...any)) {
 	retry := o.ListenRetry
