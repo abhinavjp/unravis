@@ -60,3 +60,8 @@ test('addSource closes the connections drawer only when every database was added
   assert.ok(body.indexOf('allAdded = true;') > body.indexOf('if (failures.length)'), 'only the no-failure branch sets allAdded');
   assert.match(body, /sourceError = `Added \$\{addedCount\} of/);
 });
+
+// UX-1: the Blackbox drawer holds hidden controls (a closed status pop-up). They were counted as the last focusable item, so Tab left the dialog.
+test('the Tab trap skips controls that are not on screen', () => {
+  assert.match(drawer, /querySelectorAll<HTMLElement>\(focusable\)\]\.filter\(\(item\) => item\.getClientRects\(\)\.length > 0\)/);
+});
