@@ -61,6 +61,8 @@ type StatusDoc struct {
 	WriteOK         bool       `json:"writeOK"`
 	Probe           Probe      `json:"probe"`
 	SQL             SQLStatus  `json:"sql"`
+	// Update is the self-update state; absent from a Blackbox that does not report it.
+	Update *UpdateStatus `json:"update,omitempty"`
 }
 
 // SQLStatus is the only SQL information /status carries (review C11): the four
@@ -81,6 +83,8 @@ type ServerOptions struct {
 	Config   Config
 	Keys     *KeyCheck
 	Now      func() time.Time
+	// Update reports the self-update state in /status; nil leaves it out.
+	Update func() *UpdateStatus
 }
 
 // Server is the status HTTP server. Reading is allowed only with the read key;
@@ -381,6 +385,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		MinFreePercent: s.o.Config.MinFreePercent, KeepDays: s.o.Config.KeepDays, MaxGB: s.o.Config.MaxGB,
 		ManifestOK: s.o.Store.ManifestWritable(), WriteOK: st.WriteOK, Probe: Probe{Enabled: false},
 		SQL: readSQLStatus(s.o.Config.Folder, now),
+	}
+	if s.o.Update != nil {
+		doc.Update = s.o.Update()
 	}
 	if st.FreeKnown {
 		p := st.FreePercent

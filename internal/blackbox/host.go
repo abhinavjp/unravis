@@ -36,6 +36,8 @@ type HostOptions struct {
 
 	// Log receives one line per notable thing. Never a key, never a password.
 	Log func(format string, a ...any)
+	// Update reports the self-update state in /status (nil: not reported).
+	Update func() *UpdateStatus
 	// Ready is called once the status server listens, with its address.
 	Ready func(addr string)
 
@@ -145,7 +147,7 @@ func RunHost(ctx context.Context, o HostOptions) error {
 	}
 	rec := NewRecorder(RecorderOptions{Config: cfg, Store: store, Collector: col, Disk: disk, RunID: runID,
 		Now: o.Now, Ticks: o.Ticks, Budget: budget, SelfUsage: SelfUsage})
-	srv := NewServer(ServerOptions{Store: store, Recorder: rec, Config: cfg, Keys: keys, Now: o.Now})
+	srv := NewServer(ServerOptions{Store: store, Recorder: rec, Config: cfg, Keys: keys, Now: o.Now, Update: o.Update})
 
 	srvDone := make(chan struct{})
 	go func() {

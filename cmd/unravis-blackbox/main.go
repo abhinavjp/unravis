@@ -385,6 +385,10 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		if err != nil {
 			return ans.fail(err)
 		}
+		if *answerFile != "" {
+			// Installed from Unravis: it updates this recorder together with itself (blackbox.ManagedMarkerName).
+			_ = blackbox.MarkManaged(filepath.Dir(res.ExePath))
+		}
 		return ans.ok(fmt.Sprintf("Installed. The %s service is running.\nFolder: %s\nProgram and settings: %s\nStatus port: %d\n\nRead key (shown once, copy it now):\n  %s\n\nOnly a fingerprint of the key is kept on this server.",
 			res.Service, res.Folder, filepath.Dir(res.ExePath), res.Port, res.ReadKey)+bindWarningText(cfg.Bind),
 			withBindWarning(cfg.Bind, map[string]any{"readKey": res.ReadKey, "service": res.Service, "folder": res.Folder, "port": res.Port, "name": cfg.Name,

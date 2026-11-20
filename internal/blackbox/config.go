@@ -143,6 +143,8 @@ type Config struct {
 	LogPaths        []string `json:"logPaths"`
 	Probe           Probe    `json:"probe"`
 	Targets         []Target `json:"targets,omitempty"`
+	// AutoUpdate is left out of a new settings file: the defaults apply (install, every 30 minutes).
+	AutoUpdate *AutoUpdate `json:"autoUpdate,omitempty"`
 }
 
 // DefaultLogPaths are the folders the logs catalogue looks in when blackbox.json
@@ -268,6 +270,9 @@ func (c Config) Validate() error {
 	}
 	if c.Port < 1 || c.Port > 65535 {
 		return invalidf(`"port" must be 1 to 65535`)
+	}
+	if err := c.AutoUpdate.validate(); err != nil {
+		return err
 	}
 	if !validBind(c.Bind) {
 		return fmt.Errorf("%w: %w", invalidf(`"bind" must be an address such as 127.0.0.1 or 0.0.0.0`), ErrBadBind)
