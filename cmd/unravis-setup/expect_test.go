@@ -160,3 +160,13 @@ func TestExpectIsPassedToTheWorker(t *testing.T) {
 		t.Errorf("the worker was started with %v", rg.lastExtra)
 	}
 }
+
+func TestVerifyFolderRefusesWhenTheBuildCannotCheck(t *testing.T) {
+	rg := newRig(t)
+	if got := run([]string{"--verify", t.TempDir()}, rg.env); got != 1 {
+		t.Fatalf("exit %d, want 1 (a development build or one without keys trusts no release)", got)
+	}
+	if !strings.Contains(rg.errOut.String(), "unravis-setup:") {
+		t.Fatalf("no reason printed: %q", rg.errOut.String())
+	}
+}

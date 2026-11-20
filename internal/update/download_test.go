@@ -214,7 +214,10 @@ func TestEndlessBodyIsStoppedAtTheDeclaredSize(t *testing.T) {
 	if _, err := d.Download(context.Background(), m, AssetSetup, nil); err == nil {
 		t.Fatal("accepted an endless body")
 	}
-	if sent.Load() > a.Size+2<<20 {
+	// The server counts what it wrote into socket buffers, which the system may take in the many megabytes before it sees the client
+	// close (3 MB seen on a loaded Windows runner). The client stops at the declared size; a client that kept reading would run to
+	// the server's 64 MB cap.
+	if sent.Load() > a.Size+16<<20 {
 		t.Errorf("the client kept reading: %d bytes sent for a %d byte file", sent.Load(), a.Size)
 	}
 	if ents, _ := os.ReadDir(d.Dir); len(ents) != 0 {

@@ -89,7 +89,7 @@ func osEnv() env {
 
 type options struct {
 	silent, uninstall, repair, upgrade, allowDowngrade, worker, noBrowser, showVersion, capture bool
-	config, logPath, pipe                                                                       string
+	config, logPath, pipe, verify                                                               string
 	expectSHA, expectVersion                                                                    string // --expect-sha256 / --expect-version: what the updater verified
 	parent                                                                                      uint
 }
@@ -107,6 +107,7 @@ func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
 	fl.BoolVar(&o.allowDowngrade, "allow-downgrade", false, "allow installing an older version over a newer one")
 	fl.StringVar(&o.expectSHA, "expect-sha256", "", "refuse to run unless this setup program's own file has this SHA-256 (the update check passes it)")
 	fl.StringVar(&o.expectVersion, "expect-version", "", "refuse to run unless this setup installs exactly this version (the update check passes it)")
+	fl.StringVar(&o.verify, "verify", "", "check a release in this folder offline (update-manifest.json, its .sig and the files) and print the result; installs nothing")
 	fl.BoolVar(&o.noBrowser, "no-browser", false, "do not open the setup window; print its address instead")
 	fl.BoolVar(&o.showVersion, "version", false, "print the version and exit")
 	// The worker flags are for the copy the window starts with "run as administrator"; they are not shown in the help.
@@ -191,6 +192,8 @@ func run(args []string, e env) int {
 		return 0
 	}
 	switch {
+	case o.verify != "":
+		return runVerify(o, e)
 	case o.capture:
 		return runCapture(o, e)
 	case o.worker:
