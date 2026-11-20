@@ -883,6 +883,9 @@ func (m *Manager) Remove(cfg Config, keyPath string, deleteRecordings bool, conf
 		_ = os.Remove(filepath.Join(dir, InstalledExeName))
 		_ = os.Remove(p.ConfigPath)
 		_ = os.Remove(p.ConfigPath + ".bak")
+		// The "managed by Unravis" marker must not outlive the recorder it described: a standalone recorder installed here
+		// later would otherwise never update itself.
+		_ = os.Remove(filepath.Join(dir, ManagedMarkerName))
 	}
 	return res, nil
 }

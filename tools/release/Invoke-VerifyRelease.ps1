@@ -69,7 +69,10 @@ Step 'A2 release verifies offline (signature, expiry, hashes)' {
 Step 'A3a damaged signature is refused' {
     $d = Join-Path $work 'bad-sig'; Copy-Item $newDir $d -Recurse
     $sig = Join-Path $d 'update-manifest.json.sig'
-    $b = [IO.File]::ReadAllBytes($sig); $b[$b.Length - 2] = $b[$b.Length - 2] -bxor 0x01; [IO.File]::WriteAllBytes($sig, $b)
+    # The file is "unravis-sig-v1 <keyid> <base64>". Change one base64 letter in the middle so the text still decodes and the signature check itself fails.
+    $t = [IO.File]::ReadAllText($sig); $parts = $t.TrimEnd() -split ' '
+    $b64 = $parts[-1].ToCharArray(); $m = [int]($b64.Length / 2); $b64[$m] = if ($b64[$m] -eq 'A') { 'B' } else { 'A' }
+    $parts[-1] = -join $b64; [IO.File]::WriteAllText($sig, (($parts -join ' ') + "`n"))
     & $newSetup --verify $d *> $null
     Expect ($LASTEXITCODE -ne 0) 'a damaged signature was accepted'
 }
@@ -113,7 +116,7 @@ if ($Previous) {
         '{}' | Set-Content -Encoding utf8 -LiteralPath (Join-Path $work 'up.json')
         & $newSetup --silent --upgrade --config (Join-Path $work 'up.json') --expect-sha256 $sha --expect-version $ver --log (Join-Path $work 'upgrade.log') | Out-Host
         Expect ($LASTEXITCODE -eq 0) "upgrade exit $LASTEXITCODE"
-        Expect (((& $appExe --version | Out-String)) -match [regex]::Escape($ver)) 'app version is not the new one'
+        Expect (((& $appExe --version | Out-String)) -match ('v' + [regex]::Escape($ver) + '(\s|$)')) 'app version is not the new one'
         Expect ((Get-BbVersion) -eq $ver) "recorder reports '$(Get-BbVersion)'"
         Expect ((Get-Service UnravisBlackbox).Status -eq 'Running') 'service not running after upgrade'
         $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:7788/' -TimeoutSec 15
@@ -133,20 +136,22 @@ if ($Previous) {
         Expect ($LASTEXITCODE -eq 0) "uninstall exit $LASTEXITCODE"
         $zip = Get-ChildItem $oldDir -Filter 'unravis-blackbox-*.zip' | Select-Object -First 1
         Expect ([bool]$zip) 'previous release has no recorder zip'
+        # Setup's uninstall can leave this marker behind, and with it a recorder never updates itself (it is "managed by Unravis").
+        Remove-Item -LiteralPath (Join-Path $env:ProgramFiles 'Unravis Blackbox\managed-by-unravis') -Force -ErrorAction SilentlyContinue
         $bbDir = Join-Path $work 'bb-old'; Expand-Archive -LiteralPath $zip.FullName -DestinationPath $bbDir
         $bbExe = (Get-ChildItem $bbDir -Recurse -Filter 'unravis-blackbox.exe' | Select-Object -First 1).FullName
         & $bbExe install --name verify --folder 'C:\UnravisBlackbox' --port 7788 *> (Join-Path $work 'bb-install.txt')   # read key goes to this file; never printed
         Expect ($LASTEXITCODE -eq 0) "recorder install exit $LASTEXITCODE"
         Expect ((Get-BbVersion) -eq $pver) "installed recorder is '$(Get-BbVersion)', expected $pver"
         $deadline = (Get-Date).AddMinutes($WaitMinutes)
-        while ((Get-Date) -lt $deadline -and (Get-BbVersion) -ne $ver) { Start-Sleep -Seconds 20 }
+        while ((Get-Date) -lt $deadline) { $cur = try { Get-BbVersion } catch { '' }; if ($cur -eq $ver) { break }; Start-Sleep -Seconds 20 }
         Expect ((Get-BbVersion) -eq $ver) "after $WaitMinutes minutes the recorder is still '$(Get-BbVersion)'"
         Start-Sleep -Seconds 10
         Expect ((Get-Service UnravisBlackbox).Status -eq 'Running') 'service not running after its own update'
     }
 }
 
-Remove-Item -LiteralPath (Join-Path $work 'bb-install.txt') -Force -ErrorAction SilentlyContinue   # holds a read key
+Remove-Item -LiteralPath (Join-Path $work 'bb-install.txt'), (Join-Path $work 'readkey.txt') -Force -ErrorAction SilentlyContinue   # both hold a read key
 if ($failures.Count -gt 0) {
     Write-Host "`n$($failures.Count) step(s) FAILED:" -ForegroundColor Red
     $failures | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }

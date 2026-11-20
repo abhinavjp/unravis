@@ -13,8 +13,8 @@
     2 Tag        Tag        you type the tag again; it creates the tag and pushes it (this starts the CI build).
     3 Wait       Wait       waits for release.yml: build, build attestation, smoke test on two runners, then a DRAFT release.
     4 Sign       Sign       Sign-Release.ps1 step 1. YOU type the key passphrase and "yes". Nothing else can sign.
-    5 Publish    Publish    you type "publish"; the draft becomes a public release.
-    6 Feed       Feed       Sign-Release.ps1 -Feed: the signed pointer on the update-feed release moves to this version.
+    5 Publish    Publish    you type "publish"; the draft becomes a public release (refused if the signature is missing).
+    6 Feed       Feed       you type "feed"; Sign-Release.ps1 -Feed moves the signed pointer on the update-feed release to this version.
                             From here installed copies are offered the update.
     7 Verify     Verify     starts verify-release.yml on a clean runner and waits (public feed, tamper refusals, upgrade,
                             no downgrade, a standalone recorder updating itself). Needs a previous signed release.
@@ -28,6 +28,7 @@
 .PARAMETER FirstRelease  Only for the first release of a channel (nothing on the feed yet); passed to Sign-Release.ps1.
 .PARAMETER Previous    The published tag to upgrade from in the verify stage. Default: the newest earlier release that has a signed manifest.
 .PARAMETER SkipVerify  Stop after the feed update. Use it only when you will run verify-release.yml yourself.
+.PARAMETER RunId       Continue at Wait with this release.yml run (use it after re-running the build from the Actions tab).
 .PARAMETER Branch      The branch a release is made from (default master).
 #>
 param(
@@ -38,6 +39,7 @@ param(
     [string]$Previous,
     [switch]$SkipVerify,
     [switch]$DryRun,
+    [long]$RunId,
     [string]$Branch = 'master',
     [string]$Repo = 'abhinavjp/unravis'
 )
@@ -50,6 +52,7 @@ $tag = "v$Version"
 $channel = if ($Version.Contains('-')) { 'rc' } else { 'stable' }
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $order = 'Preflight', 'Tag', 'Wait', 'Sign', 'Publish', 'Feed', 'Verify'
+if ($DryRun -and $From -ne 'Preflight') { throw '-DryRun only works from Preflight.' }
 function Reach([string]$stage) { $order.IndexOf($stage) -ge $order.IndexOf($From) }
 function Fail([string]$stage, [string]$msg) { Write-Host "`nSTOPPED at $stage : $msg" -ForegroundColor Red; Write-Host "Fix it, then continue with: ./tools/release/Release.ps1 -Version $Version -KeyFile <key> -From $stage" -ForegroundColor Yellow; exit 1 }
 function Stage([string]$n, [string]$name) { Write-Host "`n[$n/7] $name" -ForegroundColor Cyan }
@@ -86,7 +89,7 @@ try {
         $keys = Get-Content -LiteralPath (Join-Path $repoRoot 'internal\update\trusted_keys.txt') | Where-Object { $_ -match "^$channel\s+[0-9a-f]{64}\s*$" }
         if (-not $keys) { Fail 'Preflight' "internal/update/trusted_keys.txt has no '$channel' key. Run Make-Keys.ps1 first (docs/auto-updater/KEYS.md); a build with no keys accepts no update." }
         if ((git tag -l $tag) -and $From -eq 'Preflight') { Fail 'Preflight' "Tag $tag already exists locally." }
-        if (gh api "repos/$Repo/git/ref/tags/$tag" 2>$null) { if ($From -in 'Preflight', 'Tag') { Fail 'Preflight' "Tag $tag already exists on GitHub." } }
+        if ((git ls-remote --tags origin "refs/tags/$tag") -and $From -eq 'Preflight') { Fail 'Preflight' "Tag $tag already exists on GitHub." }
         $existing = (gh release list --repo $Repo --limit 100 --json tagName | ConvertFrom-Json).tagName
         if ($From -eq 'Preflight' -and $existing -contains $tag) { Fail 'Preflight' "A release $tag already exists." }
         if (-not $KeyFile -and -not $DryRun) { Fail 'Preflight' 'Pass -KeyFile (the encrypted private key for this channel).' }
@@ -103,22 +106,26 @@ try {
     if (Reach 'Tag') {
         Stage 2 'Tag and push'
         $head = (git rev-parse HEAD).Trim()
-        if (-not (git tag -l $tag)) {
+        $remoteTag = (git ls-remote --tags origin "refs/tags/$tag")
+        $localTag = (git tag -l $tag)
+        if ($localTag -and (git rev-list -n 1 $tag).Trim() -ne $head) { Fail 'Tag' "Local tag $tag points at a different commit than HEAD ($($head.Substring(0,7)))." }
+        if (-not $remoteTag) {
             Confirm-Typed $tag "This creates tag $tag on $($head.Substring(0,7)) ($(git log -1 --format=%s)) and pushes it. CI then builds a DRAFT release."
-            Run 'git tag' { git tag $tag $head } | Out-Null
-            Run 'git push tag' { git push origin $tag } | Out-Null
+            try {
+                if (-not $localTag) { Run 'git tag' { git tag $tag $head } | Out-Null }
+                Run 'git push tag' { git push origin $tag } | Out-Null
+            } catch { Fail 'Tag' $_.Exception.Message }
             Write-Host "Pushed $tag."
-        } else { Write-Host "Tag $tag already exists locally; continuing." }
+        } else { Write-Host "Tag $tag is already on GitHub; continuing." }
     }
     # 3 Wait ------------------------------------------------------------------------------------------------------------------
     if (Reach 'Wait') {
         Stage 3 'Waiting for the CI build, attestation, smoke test and draft'
         $sha = (git rev-list -n 1 $tag).Trim()
-        $id = Find-Run 'release.yml' $tag $sha 180
+        $id = if ($RunId) { $RunId } else { Find-Run 'release.yml' $tag $sha 180 }
         if (-not $id) { Fail 'Wait' 'The release.yml run did not start within 3 minutes. Check the Actions tab.' }
         gh run watch $id --repo $Repo --exit-status --interval 20 | Out-Host
         if ($LASTEXITCODE -ne 0) { Fail 'Wait' "release.yml run $id failed: https://github.com/$Repo/actions/runs/$id" }
-        $rel = gh release view $tag --repo $Repo --json isDraft 2>$null | ConvertFrom-Json
         # a draft is not always found by "view"; list instead (same trick release.yml uses)
         $drafts = gh release list --repo $Repo --limit 30 --json tagName,isDraft | ConvertFrom-Json | Where-Object { $_.tagName -eq $tag }
         if (-not $drafts) { Fail 'Wait' "CI finished but no release $tag was found." }
@@ -130,25 +137,27 @@ try {
         if (-not $KeyFile) { Fail 'Sign' 'Pass -KeyFile.' }
         $a = @{ Tag = $tag; KeyFile = $KeyFile }
         if ($FirstRelease) { $a.FirstRelease = $true }
-        & (Join-Path $PSScriptRoot 'Sign-Release.ps1') @a
-        if ($LASTEXITCODE -ne 0) { Fail 'Sign' 'Sign-Release.ps1 did not finish.' }
+        $a.Repo = $Repo
+        try { & (Join-Path $PSScriptRoot 'Sign-Release.ps1') @a } catch { Fail 'Sign' $_.Exception.Message }
     }
     # 5 Publish ---------------------------------------------------------------------------------------------------------------
     if (Reach 'Publish') {
         Stage 5 'Publish the release'
-        $notes = gh release view $tag --repo $Repo --json body --jq .body 2>$null
+        $assetNames = (gh release list --repo $Repo --limit 1 --json tagName 2>$null | Out-Null; gh api "repos/$Repo/releases?per_page=30" --jq ".[] | select(.tag_name==`"$tag`") | .assets[].name" 2>$null)
+        if ($assetNames -notcontains 'update-manifest.json.sig') { Fail 'Publish' "The draft has no update-manifest.json.sig. Run the Sign stage first (-From Sign). Publishing without it would leave a public release nobody can be offered." }
+        $notes = gh api "repos/$Repo/releases?per_page=30" --jq ".[] | select(.tag_name==`"$tag`") | .body" 2>$null
         if ($notes) { Write-Host ($notes -split "`n" | Select-Object -First 15 | Out-String) }
         Confirm-Typed 'publish' "This makes $tag public ($channel channel). Nobody is offered it until the feed step."
-        Run 'publish' { gh release edit $tag --repo $Repo --draft=false } | Out-Null
+        try { Run 'publish' { gh release edit $tag --repo $Repo --draft=false } | Out-Null } catch { Fail 'Publish' $_.Exception.Message }
         Write-Host "$tag is published." -ForegroundColor Green
     }
     # 6 Feed ------------------------------------------------------------------------------------------------------------------
     if (Reach 'Feed') {
         Stage 6 'Update the signed feed'
-        $a = @{ Tag = $tag; Feed = $true }
+        Confirm-Typed 'feed' "This moves the $channel feed to $tag. From now on every installed copy on this channel is offered the update."
+        $a = @{ Tag = $tag; Feed = $true; Repo = $Repo }
         if ($FirstRelease) { $a.FirstRelease = $true }
-        & (Join-Path $PSScriptRoot 'Sign-Release.ps1') @a
-        if ($LASTEXITCODE -ne 0) { Fail 'Feed' 'Sign-Release.ps1 -Feed did not finish.' }
+        try { & (Join-Path $PSScriptRoot 'Sign-Release.ps1') @a } catch { Fail 'Feed' $_.Exception.Message }
         Write-Host "The $channel feed now points at $tag. Installed copies will be offered it at their next check." -ForegroundColor Green
     }
     # 7 Verify ----------------------------------------------------------------------------------------------------------------
@@ -157,15 +166,15 @@ try {
         Stage 7 'Verify on a clean machine (verify-release.yml)'
         if (-not $Previous -and -not $FirstRelease) {
             # newest earlier published release on the same kind of channel that carries a signed manifest
-            foreach ($r in (gh release list --repo $Repo --limit 50 --json tagName,isDraft,publishedAt | ConvertFrom-Json | Where-Object { -not $_.isDraft -and $_.tagName -match '^v[0-9]' -and $_.tagName -ne $tag } | Sort-Object publishedAt -Descending)) {
-                $assets = (gh release view $r.tagName --repo $Repo --json assets --jq '.assets[].name' 2>$null)
+            foreach ($r in (gh release list --repo $Repo --limit 50 --json tagName,isDraft,publishedAt | ConvertFrom-Json | Where-Object { -not $_.isDraft -and $_.tagName -match '^v[0-9]' -and $_.tagName -ne $tag -and ($_.tagName.Contains('-') -eq ($channel -eq 'rc')) } | Sort-Object publishedAt -Descending)) {
+                $assets = (gh api "repos/$Repo/releases/tags/$($r.tagName)" --jq '.assets[].name' 2>$null)
                 if ($assets -contains 'update-manifest.json.sig') { $Previous = $r.tagName; break }
             }
         }
         $wf = @('workflow', 'run', 'verify-release.yml', '--repo', $Repo, '--ref', $Branch, '-f', "tag=$tag")
         if ($Previous) { $wf += @('-f', "previous=$Previous"); Write-Host "Upgrading from $Previous." } else { Write-Host 'No earlier signed release: part A only (feed, offline verify, tamper refusals).' }
         $before = Get-Date
-        Run 'start verify' { gh @wf } | Out-Null
+        try { Run 'start verify' { gh @wf } | Out-Null } catch { Fail 'Verify' $_.Exception.Message }
         Start-Sleep -Seconds 10
         $id = $null
         $deadline = (Get-Date).AddMinutes(2)
