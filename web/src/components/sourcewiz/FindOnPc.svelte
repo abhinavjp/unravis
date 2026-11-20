@@ -8,6 +8,11 @@
   import { DISCOVER_TEXT, detectorLine, gapReasonText, howText, rowMetaText, showsText } from '../../lib/copy/discoverCopy';
   import { SOURCES_TEXT, notReadableText } from '../../lib/copy/wizardSourcesCopy';
   import { WIZ } from '../../lib/copy/sourceWizardCopy';
+  import { blackboxApi } from '../../lib/blackbox';
+  import type { ThisPc } from '../../lib/blackbox';
+  import { wizard, setSources } from '../../lib/wizard.svelte';
+  import { addSource, makeSource } from '../../lib/wizardSources';
+  import { recorderEntryName } from '../../lib/wizardBlackbox';
   import LocateFolder from '../wizard/LocateFolder.svelte';
   import OpenFolderButton from './OpenFolderButton.svelte';
 
@@ -20,6 +25,16 @@
   let ticked = $state<Record<string, boolean>>({});
   let note = $state('');
   let scanClickedAt = $state(0);
+  // The Blackbox recorder is not a file scan: the recorder service on this PC says where it writes. It is shown as one more row.
+  let pc = $state<ThisPc | undefined>();
+  let bbTick = $state(false);
+  // Recorder not running as a service: its folder is found by looking for recordings on the drives (the same way the Blackbox card does).
+  let bbFolder = $state('');
+  const bbReady = $derived(bbFolder !== '');
+  let bbDone = $state(false);
+  let bbBusy = $state(false);
+  // Only this PC's recorder counts here: a recorder on another machine that was added earlier must not hide it.
+  const bbAdded = $derived(bbDone || wizard.sources.some((s) => s.kind === 'blackbox' && s.ref === 'This PC'));
 
   const groups = $derived(galleryGroups(sourcesView.findings, GROUPS));
   const offered = $derived(groups.reduce((n, g) => n + g.entries.length, 0));
@@ -29,7 +44,18 @@
   const entryKind = $derived(sourcesView.entry.kind);
   const toAdd = $derived(Object.keys(ticked).filter((id) => ticked[id] && !isChosen(sourceKey({ kind: 'discover', ref: id }))));
 
-  onMount(() => { reconcileEnvironments(); void loadEntry(); });
+  onMount(() => { reconcileEnvironments(); void loadEntry(); void findRecorder(); });
+
+  async function findRecorder() {
+    try {
+      const p = await blackboxApi.thisPc();
+      pc = p;
+      if (p.installed && p.folder) { bbFolder = p.folder; return; }
+      const answer = await blackboxApi.folders();
+      const best = answer.folders.find((f) => f.recommended) ?? answer.folders[0];
+      bbFolder = best ? best.path : '';
+    } catch { pc = undefined; bbFolder = ''; }
+  }
 
   const dbKind = (f: Finding): 'mongo' | 'sql' | 'redis' | '' => (f.detector === 'mongo' ? 'mongo' : f.detector === 'sql' ? 'sql' : f.detector === 'redis' ? 'redis' : '');
   const isFile = (e: GalleryEntry): boolean => e.state !== 'steps';
@@ -39,8 +65,28 @@
   async function onScan() { scanClickedAt = Date.now(); note = ''; ticked = {}; await startScan(); }
   async function onStop() { if (cancelAllowed(scanClickedAt, Date.now())) await cancelScan(); }
 
-  function addTicked() {
+  async function addBlackbox(): Promise<boolean> {
+    if (bbFolder === '') return true;
+    try {
+      const saved = await recorderEntryName(pc && pc.folder === bbFolder ? pc : { listed: false }, bbFolder, 'This PC');
+      const result = addSource(wizard.sources, makeSource('blackbox', saved, saved));
+      if (!result.ok) { if (result.reason === 'duplicate') { bbDone = true; return true; } note = SOURCES_TEXT.limitFull; return false; }
+      setSources(result.list);
+      bbDone = true;
+      return true;
+    } catch { note = WIZ.find.blackboxFailed; return false; }
+  }
+
+  async function addTicked() {
+    if (bbBusy) return;
+    bbBusy = true;
+    try { await addTickedNow(); } finally { bbBusy = false; }
+  }
+
+  async function addTickedNow() {
     let refused = 0;
+    if (bbTick && bbReady && !bbAdded) { if (!(await addBlackbox())) return; }
+    bbTick = false;
     for (const id of toAdd) { tickFinding(id, true); if (!isChosen(sourceKey({ kind: 'discover', ref: id }))) refused++; }
     ticked = {};
     if (refused > 0) { note = SOURCES_TEXT.limitFull; return; }
@@ -76,9 +122,24 @@
       {/if}
     {:else if sourcesView.phase === 'done'}
       {#if stale}<p class="notice" role="status">{SOURCES_TEXT.locateExpired}</p>{/if}
-      <p class="found-line" role="status">{WIZ.find.found(offered + gapsRedis.length)}</p>
+      <p class="found-line" role="status">{WIZ.find.found(offered + gapsRedis.length + (bbReady ? 1 : 0))}</p>
       <p class="hint">{WIZ.find.mongoSqlNote}</p>
-      {#if offered + gapsRedis.length === 0}<p class="hint">{WIZ.find.nothing}</p>{/if}
+      {#if offered + gapsRedis.length === 0 && !bbReady}<p class="hint">{WIZ.find.nothing}</p>{/if}
+
+      {#if bbReady}
+        <section class="group" aria-labelledby="{uid}-bb">
+          <h4 id="{uid}-bb">{WIZ.find.blackboxGroup}</h4>
+          <ul class="rows">
+            <li class="row" data-finding="blackbox"><div class="pick">
+              <input id="{uid}-bbbox" type="checkbox" checked={bbAdded || bbTick} disabled={bbAdded} onchange={(e) => { bbTick = e.currentTarget.checked; }} />
+              <div class="body">
+                <label class="name" for="{uid}-bbbox">{WIZ.tiles.blackbox.name}</label>
+                <span class="status ok">{bbAdded ? WIZ.find.added : pc?.installed ? (pc.running ? WIZ.find.statusWorks : WIZ.find.blackboxStopped) : WIZ.find.blackboxFolder}</span>
+                <p class="hint">{bbFolder} {pc?.listed && pc.folder === bbFolder ? WIZ.find.blackboxListed : pc?.installed ? WIZ.find.blackboxNote : WIZ.find.blackboxFolderNote}</p>
+              </div></div></li>
+          </ul>
+        </section>
+      {/if}
 
       {#each groups as group (group.id)}
         <section class="group" aria-labelledby="{uid}-g-{group.id}">
@@ -135,7 +196,7 @@
       {/if}
 
       <div class="actions sticky">
-        <button type="button" class="primary-button" disabled={toAdd.length === 0} onclick={addTicked}>{WIZ.find.addTicked(toAdd.length)}</button>
+        <button type="button" class="primary-button" disabled={bbBusy || toAdd.length + (bbTick && bbReady && !bbAdded ? 1 : 0) === 0} onclick={() => void addTicked()}>{WIZ.find.addTicked(toAdd.length + (bbTick && bbReady && !bbAdded ? 1 : 0))}</button>
       </div>
     {/if}
   {/if}
