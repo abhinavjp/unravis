@@ -117,6 +117,12 @@ type SelfUpdater struct {
 	Log   func(format string, a ...any)
 	Now   func() time.Time
 	Rand  *rand.Rand
+	// Managed (optional) says Unravis updates this Blackbox. It is asked before every check, because the marker can appear after the
+	// service started (Unravis installs, then marks). A managed Blackbox checks nothing and installs nothing.
+	Managed func() bool
+	// Confirm is how long a freshly updated program must stay up before the update counts as good. The helper that installed it
+	// rolls back when the program does not answer, so success is not decided at the first moment.
+	Confirm time.Duration
 
 	mu     sync.Mutex
 	status UpdateStatus
@@ -168,7 +174,7 @@ func (u *SelfUpdater) Status() *UpdateStatus {
 // Reconcile is called once when the service starts. A pending marker means the last run asked for an update: if this program is
 // the version it asked for, the update worked; if not, it failed (and was rolled back), so that version is skipped and not tried
 // again until a newer one appears.
-func (u *SelfUpdater) Reconcile() {
+func (u *SelfUpdater) Reconcile(ctx context.Context) {
 	path := filepath.Join(u.Dir, pendingName)
 	var p pending
 	data, err := os.ReadFile(path)
@@ -180,6 +186,15 @@ func (u *SelfUpdater) Reconcile() {
 		return
 	}
 	if p.To == u.Version {
+		if u.Confirm > 0 {
+			t := time.NewTimer(u.Confirm)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return // stopped early: the marker stays and the next start decides
+			case <-t.C:
+			}
+		}
 		u.logf("update to %s finished", p.To)
 	} else {
 		u.logf("update to %s did not take; staying on %s and not trying %s again", p.To, u.Version, p.To)
@@ -209,6 +224,10 @@ func (u *SelfUpdater) cleanStage() {
 // CheckOnce makes one check and, in install mode, the whole update. It returns the result of the check so the loop can back off.
 func (u *SelfUpdater) CheckOnce(ctx context.Context) update.Result {
 	if u.Mode == UpdateOff {
+		return update.Result{Status: update.StatusLatest}
+	}
+	if u.Managed != nil && u.Managed() {
+		u.set("managed", "", "This Blackbox is updated together with Unravis.")
 		return update.Result{Status: update.StatusLatest}
 	}
 	res := u.Check(ctx)
@@ -267,7 +286,7 @@ func resultSentence(r update.Result) string {
 
 // Run checks until ctx ends. The first check waits a short random time, so a fleet restarted together does not call at once.
 func (u *SelfUpdater) Run(ctx context.Context) {
-	u.Reconcile()
+	u.Reconcile(ctx)
 	if u.Mode == UpdateOff {
 		u.set("off", "", "Automatic update is off.")
 		return
@@ -306,12 +325,6 @@ func NewServiceUpdater(cfg Config, version, exe string, logf func(string, ...any
 	if err != nil {
 		return nil, errors.New("a development build does not update itself")
 	}
-	// Managed by Unravis: updated with it, unless the settings ask for self-update by name.
-	if cfg.AutoUpdate == nil {
-		if _, serr := os.Stat(filepath.Join(filepath.Dir(exe), ManagedMarkerName)); serr == nil {
-			return nil, errors.New("this Blackbox is updated together with Unravis")
-		}
-	}
 	keys, err := update.TrustedKeys()
 	if err != nil {
 		return nil, fmt.Errorf("no trusted update keys: %w", err)
@@ -338,7 +351,13 @@ func NewServiceUpdater(cfg Config, version, exe string, logf func(string, ...any
 			}
 			return stageFromZip(got.Path, filepath.Join(dir, "stage-"+m.Version), m.BlackboxExeSHA256)
 		},
-		Apply: func(path, sha string) error { return update.StartVerified(path, sha, "update") },
+		Apply:   func(path, sha string) error { return update.StartVerified(path, sha, "update", "--expect-sha256", sha) },
+		Confirm: 2 * time.Minute,
+	}
+	// Managed by Unravis: updated with it, unless the settings ask for self-update by name.
+	if cfg.AutoUpdate == nil {
+		marker := filepath.Join(filepath.Dir(exe), ManagedMarkerName)
+		u.Managed = func() bool { _, serr := os.Stat(marker); return serr == nil }
 	}
 	return u, nil
 }
@@ -403,4 +422,10 @@ func fileSHA256Hex(path string) (string, error) {
 		return "", err
 	}
 	return sha256Hex(data), nil
+}
+
+// DropStalePending removes a pending update marker beside exe without judging it. The service calls it when self-update cannot run
+// (off, development build, no keys), so an old marker is not read later, after self-update is switched on, and wrongly skip a version.
+func DropStalePending(exe string) {
+	_ = os.Remove(filepath.Join(filepath.Dir(exe), "updates", pendingName))
 }

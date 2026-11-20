@@ -75,6 +75,7 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 	// runs exactly as before. The updater stops with the service.
 	if exe, xerr := os.Executable(); xerr == nil {
 		if upd, uerr := blackbox.NewServiceUpdater(cfg, version, exe, logf); uerr != nil {
+			blackbox.DropStalePending(exe)
 			if logf != nil {
 				logf("self-update is off: %v", uerr)
 			}

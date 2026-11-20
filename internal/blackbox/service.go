@@ -178,6 +178,9 @@ type Manager struct {
 	// stops and deletes the SQL service too, and its data folder when the
 	// recordings are deleted. Nil leaves the SQL service alone.
 	SQL *SQLManager
+	// ExpectSHA256, when set, is the hash the new recorder program must have for Update to go on (the self-update helper sets it
+	// to the hash it checked before starting the program). Empty skips the check.
+	ExpectSHA256 string
 }
 
 // InstallResult is a finished install. ReadKey is shown once; only its hash is

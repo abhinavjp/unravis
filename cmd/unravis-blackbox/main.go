@@ -287,6 +287,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	delRec := fs.Bool("delete-recordings", false, "also delete the recordings (remove)")
 	confirm := fs.String("confirm-name", "", "the Blackbox name, to confirm deleting the recordings (remove)")
 	answerFile := fs.String(strings.TrimPrefix(blackbox.AnswerFileFlag, "--"), "", "write the answer to this file instead of the console (set by Unravis)")
+	expectSHA := fs.String("expect-sha256", "", "SHA-256 the new program must have (update)")
 	configSHA := fs.String("config-sha256", "", "SHA-256 of the settings file Unravis checked (install, apply)")
 	if err := fs.Parse(rest); err != nil {
 		return exitUsage
@@ -432,9 +433,16 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		}
 		return ans.ok("Settings applied. The Blackbox restarted."+sqlNote+bindWarningText(bind), withBindWarning(bind, map[string]any{"restarted": true, "sqlSettingsUnlocked": res.SQLSettingsUnlocked}))
 	case "update":
+		d.mgr.ExpectSHA256 = *expectSHA
 		res, err := d.mgr.Update()
 		if err != nil {
 			return ans.fail(err)
+		}
+		if *answerFile != "" {
+			// Updated from Unravis: it updates this recorder together with itself (blackbox.ManagedMarkerName).
+			if progDir, perr := d.mgr.Env.ProgramDir(); perr == nil {
+				_ = blackbox.MarkManaged(progDir)
+			}
 		}
 		text := "The recorder is already up to date. Nothing was stopped or restarted."
 		switch {

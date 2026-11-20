@@ -125,14 +125,14 @@ func TestReconcileSuccessAndFailure(t *testing.T) {
 	r := newSURig(t, UpdateInstall)
 	r.u.CheckOnce(context.Background()) // marker 1.1.0 -> 1.2.0
 	r.u.Version = "1.2.0"               // the service restarted as the new version
-	r.u.Reconcile()
+	r.u.Reconcile(context.Background())
 	if _, ok := r.marker(t); ok || r.u.tracker().Skipped("1.2.0") {
 		t.Fatal("a finished update must clear the marker and not skip the version")
 	}
 
 	r2 := newSURig(t, UpdateInstall)
 	r2.u.CheckOnce(context.Background())
-	r2.u.Reconcile() // still 1.1.0: the update was rolled back
+	r2.u.Reconcile(context.Background()) // still 1.1.0: the update was rolled back
 	if _, ok := r2.marker(t); ok || !r2.u.tracker().Skipped("1.2.0") {
 		t.Fatal("a failed update must skip that version")
 	}
@@ -156,13 +156,13 @@ func TestReconcileDropsAGarbageMarkerAndCleansStaging(t *testing.T) {
 	os.MkdirAll(filepath.Join(r.u.Dir, "stage-1.2.0"), 0o700)
 	os.WriteFile(filepath.Join(r.u.Dir, "unravis-blackbox-v1.2.0-windows-x64.zip"), []byte("z"), 0o600)
 	os.WriteFile(filepath.Join(r.u.Dir, "keep.txt"), []byte("k"), 0o600)
-	r.u.Reconcile()
+	r.u.Reconcile(context.Background())
 	if _, ok := r.marker(t); ok {
 		t.Fatal("garbage marker kept")
 	}
 	// a valid marker run also cleans
 	r.u.CheckOnce(context.Background())
-	r.u.Reconcile()
+	r.u.Reconcile(context.Background())
 	if _, err := os.Stat(filepath.Join(r.u.Dir, "stage-1.2.0")); err == nil {
 		t.Fatal("staging folder left")
 	}
@@ -270,27 +270,63 @@ func TestStageFromZip(t *testing.T) {
 	}
 }
 
-func TestManagedMarkerStopsSelfUpdateUnlessSettingsAsk(t *testing.T) {
+func TestManagedMarkerStopsChecksEvenWhenItAppearsLater(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "unravis-blackbox.exe")
 	logf := func(string, ...any) {}
-	_, err := NewServiceUpdater(Config{}, "1.2.0", exe, logf)
-	if err != nil && strings.Contains(err.Error(), "together with Unravis") {
-		t.Fatalf("no marker, but treated as managed: %v", err)
+	u, err := NewServiceUpdater(Config{}, "1.2.0", exe, logf)
+	if err != nil && !strings.Contains(err.Error(), "trusted update keys") {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if err != nil {
+		t.Skip("no trusted keys in this build; the guard is tested below with a rig")
+	}
+	if u.Managed == nil || u.Managed() {
+		t.Fatal("no marker yet: must not be managed")
 	}
 	if err := MarkManaged(dir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewServiceUpdater(Config{}, "1.2.0", exe, logf); err == nil || !strings.Contains(err.Error(), "together with Unravis") {
-		t.Fatalf("marker present, want the managed refusal, got %v", err)
+	if !u.Managed() {
+		t.Fatal("marker written after start must count")
 	}
-	// Settings that name self-update win over the marker.
-	cfg := Config{AutoUpdate: &AutoUpdate{Mode: UpdateInstall}}
-	if _, err := NewServiceUpdater(cfg, "1.2.0", exe, logf); err != nil && strings.Contains(err.Error(), "together with Unravis") {
-		t.Fatalf("explicit autoUpdate ignored: %v", err)
+	// Explicit settings win over the marker.
+	u2, err := NewServiceUpdater(Config{AutoUpdate: &AutoUpdate{Mode: UpdateInstall}}, "1.2.0", exe, logf)
+	if err == nil && u2.Managed != nil {
+		t.Fatal("explicit autoUpdate must ignore the marker")
 	}
-	// Off stays off.
-	if _, err := NewServiceUpdater(Config{AutoUpdate: &AutoUpdate{Mode: UpdateOff}}, "1.2.0", exe, logf); err == nil {
-		t.Fatal("off must not build an updater")
+}
+
+func TestManagedUpdaterChecksAndInstallsNothing(t *testing.T) {
+	r := newSURig(t, UpdateInstall)
+	r.u.Managed = func() bool { return true }
+	r.u.CheckOnce(context.Background())
+	if r.checks != 0 || r.stages != 0 || r.applies != 0 {
+		t.Fatalf("managed: checks=%d stages=%d applies=%d", r.checks, r.stages, r.applies)
+	}
+	if st := r.u.Status(); st.State != "managed" {
+		t.Fatalf("state %q", st.State)
+	}
+}
+
+func TestSuccessIsDecidedOnlyAfterTheConfirmTime(t *testing.T) {
+	r := newSURig(t, UpdateInstall)
+	r.u.Confirm = time.Hour
+	b, _ := json.Marshal(pending{From: "1.0.0", To: "1.1.0"})
+	path := filepath.Join(r.u.Dir, pendingName)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { r.u.Reconcile(ctx); close(done) }()
+	time.Sleep(50 * time.Millisecond)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("marker removed before the confirm time")
+	}
+	cancel()
+	<-done
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("a stop before the confirm time must leave the marker for the next start")
 	}
 }
