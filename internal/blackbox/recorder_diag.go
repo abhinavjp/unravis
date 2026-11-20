@@ -67,7 +67,7 @@ func (r *Recorder) diagRound(now time.Time, rd roundDiag, start time.Time, pause
 		if r.noteCount < diagLinesPerMin {
 			r.noteCount++
 			d.Line("round", "seq", rd.Seq, "total", rd.Total, "lag", rd.Lag, "missed", rd.Missed,
-				"hk", rd.HK, "feed", rd.Feed, "collect", rd.Collect, "host", rd.Host, "append", rd.Append,
+				"hk", rd.HK, "feed", rd.Feed, "collect", rd.Collect, "host", rd.Host, "resolve", rd.Resolve, "groupsAll", rd.GroupsAll, "append", rd.Append,
 				"groups", rd.groupsText(), "err", rd.Err, "paused", paused)
 		} else {
 			r.agg.suppressed++

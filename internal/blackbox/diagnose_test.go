@@ -108,3 +108,27 @@ func TestDiagnoseStallWithQuickGroups(t *testing.T) {
 		t.Fatalf("%+v", rep)
 	}
 }
+
+func TestDiagnoseSlowResolveIsNotAStall(t *testing.T) {
+	log := dline(2*time.Minute, "round seq=10 total=21384 lag=0 missed=0 hk=0 feed=0 collect=21384 host=410 resolve=20000 groupsAll=300 append=0 groups=- err=- paused=false")
+	rep := DiagnoseLate(log, dn, 5)
+	if !has(rep, "resolve-slow") || has(rep, "stalled") {
+		t.Fatalf("%+v", rep)
+	}
+}
+
+func TestDiagnoseManySmallGroupsIsNotAStall(t *testing.T) {
+	log := dline(2*time.Minute, "round seq=10 total=3300 lag=0 missed=0 hk=0 feed=0 collect=3300 host=200 resolve=50 groupsAll=3000 append=0 groups=- err=- paused=false")
+	rep := DiagnoseLate(log, dn, 5)
+	if has(rep, "stalled") {
+		t.Fatalf("%+v", rep)
+	}
+}
+
+func TestDiagnoseStoppedOnPurpose(t *testing.T) {
+	log := dline(40*time.Minute, "stop reason=stopped")
+	rep := DiagnoseLate(log, dn, 5)
+	if !has(rep, "stopped") || has(rep, "log-stopped") {
+		t.Fatalf("%+v", rep)
+	}
+}

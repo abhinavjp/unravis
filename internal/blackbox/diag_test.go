@@ -310,3 +310,59 @@ type groupsFake struct {
 func (f *groupsFake) Collect(n time.Time) (Sample, error) { return f.inner.Collect(n) }
 func (f *groupsFake) Close() error                        { return nil }
 func (f *groupsFake) GroupTimings() []groupTime           { return f.gt }
+
+func TestAbsentGroupsAreNotCountedAsSlowInTheBeat(t *testing.T) {
+	var a diagAgg
+	for i := 0; i < 50; i++ {
+		a.add(roundDiag{Groups: []groupTime{{Name: "iis", Outcome: "empty"}, {Name: "sqlHost", Outcome: "error"}, {Name: "x", Outcome: "skipped"}}})
+	}
+	if a.slowText() != "-" {
+		t.Fatalf("absent groups are not slow: %s", a.slowText())
+	}
+	a.add(roundDiag{Groups: []groupTime{{Name: "tcp", Dur: 900 * time.Millisecond, Outcome: "ok"}}})
+	if !strings.HasPrefix(a.slowText(), "tcp:900ms:x1") {
+		t.Fatal(a.slowText())
+	}
+}
+
+func TestDiagLogComesBackAfterAFailedWrite(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	d := OpenDiagLog(dir, c.now)
+	d.Line("a")
+	d.mu.Lock()
+	d.f.Close() // the next write fails
+	d.mu.Unlock()
+	d.Line("lost")
+	c.t = c.t.Add(2 * time.Minute)
+	d.Line("back")
+	d.Close()
+	b, _ := os.ReadFile(filepath.Join(dir, DiagFileName))
+	if !strings.Contains(string(b), " back") {
+		t.Fatalf("log must retry after a failure:\n%s", b)
+	}
+}
+
+func TestHostBusyRoundCarriesNoStaleTimings(t *testing.T) {
+	stall := make(chan struct{})
+	defer close(stall)
+	c := NewGroupCollector(&diagStuckHost{stall: stall}, nil, NewBudget(15)).(*groupCollector)
+	c.gt = []groupTime{{Name: "old", Outcome: "timeout"}}
+	c.hostDur = time.Hour
+	if _, err := c.Collect(t0); !errors.Is(err, errHostSlow) {
+		t.Fatalf("err = %v", err)
+	}
+	c.gt = []groupTime{{Name: "old", Outcome: "timeout"}}
+	c.hostDur = time.Hour
+	if _, err := c.Collect(t0); !errors.Is(err, errHostBusy) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(c.GroupTimings()) != 0 || c.hostDur != 0 {
+		t.Fatalf("stale: %v %v", c.gt, c.hostDur)
+	}
+}
+
+type diagStuckHost struct{ stall chan struct{} }
+
+func (b *diagStuckHost) Collect(time.Time) (Sample, error) { <-b.stall; return Sample{}, nil }
+func (b *diagStuckHost) Close() error                      { return nil }

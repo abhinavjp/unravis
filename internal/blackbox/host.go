@@ -192,6 +192,9 @@ type processChangeGate struct {
 	resolver *Resolver
 	targets  []Target
 	view     atomic.Pointer[tickView]
+	// resolveNs is how long the last round spent resolving the targets, before
+	// the host read starts (diagnostics only).
+	resolveNs atomic.Int64
 }
 
 // currentView is the shared per-tick result, never nil once RunHost seeds it.
@@ -203,7 +206,9 @@ func (g *processChangeGate) currentView() *tickView {
 }
 
 func (g *processChangeGate) Collect(now time.Time) (Sample, error) {
+	t := time.Now()
 	g.view.Store(g.resolver.resolveTick(g.targets, now))
+	g.resolveNs.Store(int64(time.Since(t)))
 	return g.inner.Collect(now)
 }
 
@@ -226,6 +231,17 @@ func (g *processChangeGate) GroupTimings() []groupTime {
 		return t.GroupTimings()
 	}
 	return nil
+}
+
+// ResolveTime is how long the last round spent resolving the targets.
+func (g *processChangeGate) ResolveTime() time.Duration { return time.Duration(g.resolveNs.Load()) }
+
+// GroupsTime is the total time the last round spent in all counter groups.
+func (g *processChangeGate) GroupsTime() time.Duration {
+	if t, ok := g.inner.(interface{ GroupsTime() time.Duration }); ok {
+		return t.GroupsTime()
+	}
+	return 0
 }
 
 func (g *processChangeGate) GroupCount() int {

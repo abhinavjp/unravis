@@ -345,6 +345,12 @@ func (r *Recorder) Tick(now time.Time) {
 	}); ok {
 		rd.Host, _, _ = t.Timings()
 	}
+	if t, ok := r.o.Collector.(interface{ ResolveTime() time.Duration }); ok {
+		rd.Resolve = t.ResolveTime()
+	}
+	if t, ok := r.o.Collector.(interface{ GroupsTime() time.Duration }); ok {
+		rd.GroupsAll = t.GroupsTime()
+	}
 	if err != nil {
 		rd.Err = diagErrCode(err)
 		if r.collectOK {

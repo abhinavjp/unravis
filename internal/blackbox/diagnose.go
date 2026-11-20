@@ -79,7 +79,9 @@ func DiagnoseLate(text string, now time.Time, base int) DiagReport {
 		fs = append(fs, DiagFinding{Code: code, Cause: cause, Title: title, Detail: detail})
 	}
 
-	if !now.IsZero() && now.UTC().Sub(newest) > 12*time.Minute {
+	if last := lines[len(lines)-1]; last.Kind == "stop" && !now.IsZero() && now.UTC().Sub(newest) > 2*time.Minute {
+		add("stopped", false, "The Blackbox was stopped.", "The log ends with a normal stop. It was stopped on purpose, or the service was restarted. Start it again to keep recording.")
+	} else if !now.IsZero() && now.UTC().Sub(newest) > 12*time.Minute {
 		add("log-stopped", true, "The Blackbox stopped writing its log.",
 			fmt.Sprintf("The last line is %s old. It writes at least every 5 minutes. So the recorder is stopped or frozen: the service was stopped, the PC slept, or it hung. Restart the UnravisBlackbox service.", roundAge(now.UTC().Sub(newest))))
 	}
@@ -105,6 +107,7 @@ func DiagnoseLate(text string, now time.Time, base int) DiagReport {
 	}
 	groups := map[string]*gs{}
 	stalls, stallMax := 0, 0.0
+	resolveSlow, resolveMax := 0, 0.0
 	overReason := map[string]int{}
 	widened := ""
 	suppressed := 0
@@ -147,16 +150,15 @@ func DiagnoseLate(text string, now time.Time, base int) DiagReport {
 			}
 		case "round":
 			lagMax = maxf(lagMax, l.num("lag"))
-			// A round whose collect took seconds while the host read and every
-			// named group were quick: the whole process was not running.
+			// A round whose collect took seconds while everything it timed
+			// (target resolving, the host read, all groups) was quick: the
+			// whole process was not running.
+			if r := l.num("resolve"); r >= 2000 {
+				resolveSlow++
+				resolveMax = maxf(resolveMax, r)
+			}
 			if c := l.num("collect"); c >= 3000 {
-				acc := l.num("host")
-				for _, part := range strings.Split(l.KV["groups"], ",") {
-					if p := strings.Split(part, ":"); len(p) == 3 {
-						v, _ := strconv.ParseFloat(p[1], 64)
-						acc += v
-					}
-				}
+				acc := l.num("host") + l.num("resolve") + l.num("groupsAll")
 				if acc < c/2 {
 					stalls++
 					stallMax = maxf(stallMax, c)
@@ -210,6 +212,10 @@ func DiagnoseLate(text string, now time.Time, base int) DiagReport {
 			add("group-slow:"+n, true, fmt.Sprintf("Counter group \"%s\" is slow.", n),
 				fmt.Sprintf("Up to %.0f ms, slow %d time(s)%s. Groups run one after another, so a slow one delays the sample. After two slow rounds the Blackbox sets an optional group aside for 10 minutes.", g.max, maxi(g.count, g.to), timeoutText(g.to)))
 		}
+	}
+	if resolveSlow > 0 {
+		add("resolve-slow", true, "Finding the selected programs was too slow.",
+			fmt.Sprintf("%d round(s) spent up to %.0f s listing processes to find the selected targets. A PC with very many processes, or antivirus, does this. Select fewer targets or use a longer interval.", resolveSlow, resolveMax/1000))
 	}
 	if stalls > 0 {
 		add("stalled", true, "The whole Blackbox stopped for a while.",

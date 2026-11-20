@@ -391,8 +391,12 @@ type groupCollector struct {
 	slowDur  time.Duration
 	// The groups of the last pass that were slow or did not give a reading, for
 	// the diagnostics log. Reused every pass; tick loop only.
-	gt []groupTime
+	gt        []groupTime
+	groupsDur time.Duration // all groups together, this pass
 }
+
+// GroupsTime is the total time all counter groups took in the last pass.
+func (c *groupCollector) GroupsTime() time.Duration { return c.groupsDur }
 
 // hostBudget is how long the host read (CPU, memory, disk, network and the
 // process list) may take before the round gives up. It used to be one group
@@ -420,6 +424,7 @@ func NewGroupCollector(inner Collector, groups []Group, b *Budget) Collector {
 func (c *groupCollector) Collect(now time.Time) (Sample, error) {
 	// The host read used to sit outside every per-group timer. It is bounded now
 	// too; a stalled process enumeration is a missing sample, not a frozen service.
+	c.gt, c.groupsDur, c.hostDur, c.slowName, c.slowDur = c.gt[:0], 0, 0, "", 0
 	if !c.innerW.idle() {
 		return Sample{}, errHostBusy
 	}
@@ -440,6 +445,8 @@ func (c *groupCollector) Collect(now time.Time) (Sample, error) {
 		dt = now.Sub(c.last).Seconds()
 	}
 	c.last = now
+	groupsStart := time.Now()
+	defer func() { c.groupsDur = time.Since(groupsStart) }()
 	for i, g := range c.groups {
 		name := g.Name()
 		if c.budget.GroupSkipped(name, g.Optional()) {

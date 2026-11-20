@@ -42,6 +42,9 @@ type DiagLog struct {
 	size int64
 	now  func() time.Time
 	off  bool
+	// retryAt: after a failed write or reopen the log is tried again from this
+	// time, not given up for the rest of the run.
+	retryAt time.Time
 }
 
 // OpenDiagLog opens (or starts) the log in dir. It never fails: on an error the
@@ -120,31 +123,48 @@ func diagValue(v any) string {
 func (d *DiagLog) write(s string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.off || d.f == nil {
+	if d.off {
 		return
+	}
+	if d.f == nil {
+		// A failed write or reopen: try again once a minute.
+		if now := d.now(); now.Before(d.retryAt) {
+			return
+		}
+		if d.open() != nil {
+			d.retryAt = d.now().Add(time.Minute)
+			return
+		}
 	}
 	if d.size+int64(len(s)) > diagMaxBytes {
 		d.rotateLocked()
-		if d.off || d.f == nil {
+		if d.f == nil {
 			return
 		}
 	}
 	n, err := d.f.WriteString(s)
 	d.size += int64(n)
 	if err != nil {
-		d.off = true
+		d.f.Close()
+		d.f = nil
+		d.retryAt = d.now().Add(time.Minute)
 	}
 }
 
-// rotateLocked keeps the newest log as ".1" and starts a fresh file.
+// rotateLocked keeps the newest log as ".1" and starts a fresh file. A reader
+// holding a file open can make the rename fail on Windows; the cap still holds
+// then, because the current file is emptied instead.
 func (d *DiagLog) rotateLocked() {
 	d.f.Close()
 	d.f = nil
+	cur := filepath.Join(d.dir, DiagFileName)
 	old := filepath.Join(d.dir, diagOldName)
 	_ = os.Remove(old) // Windows will not rename over an existing file
-	_ = os.Rename(filepath.Join(d.dir, DiagFileName), old)
+	if err := os.Rename(cur, old); err != nil {
+		_ = os.Truncate(cur, 0)
+	}
 	if err := d.open(); err != nil {
-		d.off = true
+		d.retryAt = d.now().Add(time.Minute)
 	}
 }
 
@@ -237,17 +257,19 @@ type groupTime struct {
 
 // roundDiag is where one round went.
 type roundDiag struct {
-	Seq     uint64
-	Lag     time.Duration // how late the round started against its deadline
-	Missed  int           // deadlines skipped because the previous round ran over
-	HK      time.Duration
-	Feed    time.Duration
-	Collect time.Duration
-	Host    time.Duration
-	Append  time.Duration
-	Total   time.Duration
-	Groups  []groupTime // only the slow or failed ones
-	Err     string      // fixed code, empty when the round was fine
+	Seq       uint64
+	Lag       time.Duration // how late the round started against its deadline
+	Missed    int           // deadlines skipped because the previous round ran over
+	HK        time.Duration
+	Feed      time.Duration
+	Collect   time.Duration
+	Host      time.Duration
+	Resolve   time.Duration // resolving the selected targets, before the host read
+	GroupsAll time.Duration // all counter groups together
+	Append    time.Duration
+	Total     time.Duration
+	Groups    []groupTime // only the slow or failed ones
+	Err       string      // fixed code, empty when the round was fine
 }
 
 func (r roundDiag) groupsText() string {
@@ -301,6 +323,11 @@ func (a *diagAgg) add(r roundDiag) {
 		a.maxAppend = r.Append
 	}
 	for _, g := range r.Groups {
+		// Groups that are simply absent (no IIS, no SQL on this PC) answer
+		// empty/error/skipped every round: that is not slowness.
+		if g.Outcome != "ok" && g.Outcome != "timeout" && g.Outcome != "busy" {
+			continue
+		}
 		if a.slow == nil {
 			a.slow = map[string]*groupAgg{}
 		}
