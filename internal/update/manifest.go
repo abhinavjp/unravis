@@ -28,6 +28,7 @@ const (
 	MaxManifestSize = 64 * 1024         // a manifest or signature file larger than this is refused unread
 	MaxAssetSize    = 500 * 1024 * 1024 // no single release file may claim to be larger
 	clockSkew       = 10 * time.Minute
+	MaxSeq          = 10_000_000           // seq is CI run number x 100 + attempt; a bound stops one bad manifest from locking machines out
 	maxLifetime     = 400 * 24 * time.Hour // a manifest may not claim to be valid longer than this
 )
 
@@ -56,6 +57,7 @@ type Manifest struct {
 	Published         time.Time        `json:"published"`
 	Expires           time.Time        `json:"expires"`
 	Seq               uint64           `json:"seq"`
+	Commit            string           `json:"commit"` // the git commit the release was built from
 	MinUpdateFrom     string           `json:"minUpdateFrom,omitempty"`
 	Assets            map[string]Asset `json:"assets"`
 	BlackboxExeSHA256 string           `json:"blackboxExeSha256"`
@@ -64,6 +66,7 @@ type Manifest struct {
 var (
 	assetNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 	sha256RE    = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	commitRE    = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	knownAssets = map[string]bool{AssetSetup: true, AssetApp: true, AssetBlackbox: true, AssetLite: true}
 )
 
@@ -96,8 +99,11 @@ func (m *Manifest) Validate(now time.Time) error {
 	if m.Channel != ChannelOf(v) {
 		return fmt.Errorf("version %s does not belong to channel %s", m.Version, m.Channel)
 	}
-	if m.Seq == 0 {
-		return errors.New("manifest seq must be above zero")
+	if m.Seq == 0 || m.Seq > MaxSeq {
+		return errors.New("manifest seq is out of range")
+	}
+	if !commitRE.MatchString(m.Commit) {
+		return errors.New("manifest commit must be 40 lower-case hex digits")
 	}
 	if m.Published.IsZero() || m.Expires.IsZero() || !m.Expires.After(m.Published) {
 		return errors.New("manifest dates are missing or out of order")
@@ -184,7 +190,7 @@ type Trust struct {
 	// Channel is the running build's channel. A stable build accepts only stable manifests;
 	// an rc build accepts both (so it can move to a final release). It must be exactly "stable" or "rc"; anything else fails closed.
 	Channel string
-	// Want is the channel the caller asked for (the feed file it read). When set, a manifest of another channel is refused,
+	// Want is the channel the caller asked for (the feed file it read). It is required: a manifest of another channel is refused,
 	// so a swapped rc.json/stable.json cannot move a machine to a channel it did not choose.
 	Want string
 }
@@ -217,7 +223,7 @@ func Verify(manifest, sigFile []byte, t Trust, now time.Time) (*Manifest, error)
 	if t.Channel != ChannelStable && t.Channel != ChannelRC {
 		return nil, errors.New("the build's channel must be stable or rc")
 	}
-	if t.Want != "" && t.Want != ChannelStable && t.Want != ChannelRC {
+	if t.Want != ChannelStable && t.Want != ChannelRC {
 		return nil, errors.New("the wanted channel must be stable or rc")
 	}
 	if len(manifest) == 0 || len(manifest) > MaxManifestSize {
@@ -257,7 +263,7 @@ func Verify(manifest, sigFile []byte, t Trust, now time.Time) (*Manifest, error)
 	if t.Channel == ChannelStable && m.Channel != ChannelStable {
 		return nil, errors.New("a stable build accepts only stable manifests")
 	}
-	if t.Want != "" && m.Channel != t.Want {
+	if m.Channel != t.Want {
 		return nil, fmt.Errorf("this is the %s channel, but %s was asked for", m.Channel, t.Want)
 	}
 	return m, nil

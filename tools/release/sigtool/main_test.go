@@ -3,12 +3,16 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+const commitA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func writeAssets(t *testing.T, dir, ver string, withLite bool) {
 	t.Helper()
@@ -82,7 +86,7 @@ func TestManifestSignVerifyEndToEnd(t *testing.T) {
 	}
 	writeAssets(t, dir, "0.1.0-rc.48", false)
 	mf, sg := filepath.Join(dir, "update-manifest.json"), filepath.Join(dir, "update-manifest.json.sig")
-	if err := run([]string{"manifest", "-dir", dir, "-version", "0.1.0-rc.48", "-seq", "48", "-out", mf}, nil, &out); err != nil {
+	if err := run([]string{"manifest", "-dir", dir, "-version", "0.1.0-rc.48", "-seq", "48", "-commit", commitA, "-out", mf}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	// The stable key must refuse to sign an rc manifest.
@@ -92,11 +96,11 @@ func TestManifestSignVerifyEndToEnd(t *testing.T) {
 	if err := run([]string{"sign", "-key", kp, "-in", mf, "-out", sg}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"verify", "-in", mf, "-sig", sg, "-pub", pp + "," + pp2, "-channel", "rc"}, nil, &out); err != nil {
+	if err := run([]string{"verify", "-in", mf, "-sig", sg, "-pub", pp + "," + pp2, "-channel", "rc", "-want", "rc"}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	// A stable build must refuse it.
-	if err := run([]string{"verify", "-in", mf, "-sig", sg, "-pub", pp + "," + pp2, "-channel", "stable"}, nil, &out); err == nil {
+	if err := run([]string{"verify", "-in", mf, "-sig", sg, "-pub", pp + "," + pp2, "-channel", "stable", "-want", "rc"}, nil, &out); err == nil {
 		t.Fatal("stable build accepted an rc manifest")
 	}
 	// Changing one byte of an asset hash breaks the signature.
@@ -104,22 +108,22 @@ func TestManifestSignVerifyEndToEnd(t *testing.T) {
 	if err := os.WriteFile(mf, bytes.Replace(b, []byte(`"size": 1`), []byte(`"size": 2`), 1), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"verify", "-in", mf, "-sig", sg, "-pub", pp, "-channel", "rc"}, nil, &out); err == nil {
+	if err := run([]string{"verify", "-in", mf, "-sig", sg, "-pub", pp, "-channel", "rc", "-want", "rc"}, nil, &out); err == nil {
 		t.Fatal("tampered manifest verified")
 	}
 }
 
 func TestManifestNeedsRealAssets(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := buildManifest(dir, "0.1.0", 1, 30, "", time.Now()); err == nil {
+	if _, err := buildManifest(dir, "0.1.0", 1, 30, "", commitA, time.Now()); err == nil {
 		t.Fatal("manifest built from an empty folder")
 	}
 	writeAssets(t, dir, "0.1.0", true)
-	m, err := buildManifest(dir, "0.1.0", 1, 30, "", time.Now())
+	m, err := buildManifest(dir, "0.1.0", 1, 30, "", commitA, time.Now())
 	if err != nil || m.Channel != "stable" || len(m.Assets) != 4 {
 		t.Fatalf("%v %v", m, err)
 	}
-	if _, err := buildManifest(dir, "v0.1.0", 1, 30, "", time.Now()); err == nil {
+	if _, err := buildManifest(dir, "v0.1.0", 1, 30, "", commitA, time.Now()); err == nil {
 		t.Fatal("v prefix accepted")
 	}
 }
@@ -127,7 +131,7 @@ func TestManifestNeedsRealAssets(t *testing.T) {
 func TestCheckAssets(t *testing.T) {
 	dir := t.TempDir()
 	writeAssets(t, dir, "0.1.0", false)
-	m, err := buildManifest(dir, "0.1.0", 1, 30, "", time.Now())
+	m, err := buildManifest(dir, "0.1.0", 1, 30, "", commitA, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +149,7 @@ func TestCheckAssets(t *testing.T) {
 func TestCheckAssetsBlackboxExeHash(t *testing.T) {
 	dir := t.TempDir()
 	writeAssets(t, dir, "0.1.0", false) // dist exe is "xxxx" (4th file), the zip holds "xxxx"
-	m, err := buildManifest(dir, "0.1.0", 1, 30, "", time.Now())
+	m, err := buildManifest(dir, "0.1.0", 1, 30, "", commitA, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,14 +172,14 @@ func TestVerifyNeedsRealChannel(t *testing.T) {
 	}
 	writeAssets(t, dir, "0.1.0-rc.1", false)
 	mf, sg := filepath.Join(dir, "m.json"), filepath.Join(dir, "m.sig")
-	if err := run([]string{"manifest", "-dir", dir, "-version", "0.1.0-rc.1", "-seq", "1", "-out", mf}, nil, &out); err != nil {
+	if err := run([]string{"manifest", "-dir", dir, "-version", "0.1.0-rc.1", "-seq", "1", "-commit", commitA, "-out", mf}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	if err := run([]string{"sign", "-key", kp, "-in", mf, "-out", sg}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	for _, ch := range []string{"", "Stable", "beta"} {
-		if err := run([]string{"verify", "-in", mf, "-sig", sg, "-pub", pp, "-channel", ch}, nil, &out); err == nil {
+		if err := run([]string{"verify", "-in", mf, "-sig", sg, "-pub", pp, "-channel", ch, "-want", "rc"}, nil, &out); err == nil {
 			t.Errorf("channel %q accepted", ch)
 		}
 	}
@@ -189,25 +193,51 @@ func TestPreflight(t *testing.T) {
 	writeAssets(t, dir, "0.1.0-rc.48", false)
 	mf := filepath.Join(dir, "m.json")
 	var out bytes.Buffer
-	if err := run([]string{"manifest", "-dir", dir, "-version", "0.1.0-rc.48", "-seq", "48", "-out", mf}, nil, &out); err != nil {
+	if err := run([]string{"manifest", "-dir", dir, "-version", "0.1.0-rc.48", "-seq", "48", "-commit", commitA, "-out", mf}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
-	if err := preflight(mf, "v0.1.0-rc.48", "", &out); err != nil {
+	if err := preflight(mf, "v0.1.0-rc.48", commitA, "", &out); err != nil {
 		t.Fatal(err)
 	}
-	if err := preflight(mf, "v99.0.0-rc.1", "", &out); err == nil {
+	if err := preflight(mf, "v99.0.0-rc.1", commitA, "", &out); err == nil {
 		t.Fatal("wrong tag passed")
 	}
 	// the feed already holds a newer one
 	writeAssets(t, dir, "0.1.0-rc.60", false)
 	feed := filepath.Join(dir, "feed.json")
-	if err := run([]string{"manifest", "-dir", dir, "-version", "0.1.0-rc.60", "-seq", "60", "-out", feed}, nil, &out); err != nil {
+	if err := run([]string{"manifest", "-dir", dir, "-version", "0.1.0-rc.60", "-seq", "60", "-commit", commitA, "-out", feed}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
-	if err := preflight(mf, "v0.1.0-rc.48", feed, &out); err == nil {
+	if err := preflight(mf, "v0.1.0-rc.48", commitA, feed, &out); err == nil {
 		t.Fatal("older manifest allowed past a newer feed")
 	}
-	if err := preflight(feed, "v0.1.0-rc.60", mf, &out); err != nil {
+	if err := preflight(feed, "v0.1.0-rc.60", commitA, mf, &out); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPreflightCommitAndExpiry(t *testing.T) {
+	dir := t.TempDir()
+	writeAssets(t, dir, "0.1.0-rc.1", false)
+	mf := filepath.Join(dir, "m.json")
+	var out bytes.Buffer
+	if err := run([]string{"manifest", "-dir", dir, "-version", "0.1.0-rc.1", "-seq", "1", "-commit", commitA, "-out", mf}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := preflight(mf, "v0.1.0-rc.1", strings.Repeat("b", 40), "", &out); err == nil {
+		t.Fatal("manifest from another commit passed")
+	}
+	if err := run([]string{"manifest", "-dir", dir, "-version", "0.1.0-rc.1", "-seq", "1", "-commit", commitA, "-days", "20", "-out", mf}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := preflight(mf, "v0.1.0-rc.1", commitA, "", &out); err == nil {
+		t.Fatal("nearly expired manifest passed")
+	}
+}
+
+func TestPassphraseMustBePlainAscii(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	if _, err := sealKey("rc", priv, "pässword-with-accent", 1000); err == nil {
+		t.Fatal("non-ASCII passphrase accepted")
 	}
 }

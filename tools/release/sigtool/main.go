@@ -94,11 +94,12 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		seq := fs.Uint64("seq", 0, "ever-rising number (CI run number)")
 		days := fs.Int("days", 180, "days until the manifest expires")
 		minFrom := fs.String("min-update-from", "", "oldest version that may update straight to this one")
+		commit := fs.String("commit", "", "git commit the release was built from (40 hex)")
 		outFile := fs.String("out", "update-manifest.json", "file to write")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		m, err := buildManifest(*dir, *ver, *seq, *days, *minFrom, time.Now().UTC())
+		m, err := buildManifest(*dir, *ver, *seq, *days, *minFrom, *commit, time.Now().UTC())
 		if err != nil {
 			return err
 		}
@@ -178,18 +179,20 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		mf := fs.String("manifest", "", "manifest about to be signed or published")
 		tag := fs.String("tag", "", "release tag, e.g. v0.1.0-rc.48")
 		feed := fs.String("feed", "", "the manifest the feed holds now (optional)")
+		commit := fs.String("commit", "", "the commit the local tag points at (required)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		return preflight(*mf, *tag, *feed, out)
+		return preflight(*mf, *tag, *commit, *feed, out)
 
 	case "verify":
 		inFile := fs.String("in", "", "manifest")
 		sigFile := fs.String("sig", "", "signature file")
 		pubs := fs.String("pub", "", "comma-separated public key files (or use -trusted)")
 		trusted := fs.Bool("trusted", false, "use the keys built into this source tree (internal/update/trusted_keys.txt) instead of -pub")
+		keysFile := fs.String("keys", "", "a trusted_keys.txt file (for example from an older tag) instead of -pub")
 		channel := fs.String("channel", "", "channel of the build checking: stable or rc (required)")
-		want := fs.String("want", "", "channel the file must be for (optional)")
+		want := fs.String("want", "", "channel the file must be for: stable or rc (required)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -197,6 +200,14 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		if *trusted {
 			var err error
 			if keys, err = update.TrustedKeys(); err != nil {
+				return err
+			}
+		} else if *keysFile != "" {
+			kb, err := os.ReadFile(*keysFile)
+			if err != nil {
+				return err
+			}
+			if keys, err = update.ParseKeys(string(kb)); err != nil {
 				return err
 			}
 		} else {
@@ -268,7 +279,7 @@ func hashFile(path string) (string, int64, error) {
 	return hex.EncodeToString(h.Sum(nil)), n, nil
 }
 
-func buildManifest(dir, ver string, seq uint64, days int, minFrom string, now time.Time) (*update.Manifest, error) {
+func buildManifest(dir, ver string, seq uint64, days int, minFrom, commit string, now time.Time) (*update.Manifest, error) {
 	v, err := update.ParseVersion(ver)
 	if err != nil {
 		return nil, err
@@ -279,7 +290,7 @@ func buildManifest(dir, ver string, seq uint64, days int, minFrom string, now ti
 	m := &update.Manifest{
 		Schema: update.SchemaVersion, Product: update.Product, Version: v.String(), Channel: update.ChannelOf(v),
 		Published: now.Truncate(time.Second), Expires: now.Add(time.Duration(days) * 24 * time.Hour).Truncate(time.Second),
-		Seq: seq, MinUpdateFrom: minFrom, Assets: map[string]update.Asset{},
+		Seq: seq, Commit: commit, MinUpdateFrom: minFrom, Assets: map[string]update.Asset{},
 	}
 	files := map[string]string{
 		update.AssetSetup:    "unravis-setup-v" + ver + "-windows-x64.exe",
@@ -325,6 +336,15 @@ func checkAssets(m *update.Manifest, dir string) error {
 		return fmt.Errorf("blackbox zip: %w", err)
 	}
 	defer zr.Close()
+	found := 0
+	for _, f := range zr.File {
+		if strings.EqualFold(f.Name, "unravis-blackbox.exe") {
+			found++
+		}
+	}
+	if found > 1 {
+		return errors.New("the Blackbox zip has more than one unravis-blackbox.exe")
+	}
 	for _, f := range zr.File {
 		if f.Name != "unravis-blackbox.exe" {
 			continue
@@ -349,7 +369,7 @@ func checkAssets(m *update.Manifest, dir string) error {
 // preflight stops the owner signing a manifest that is not what the tag says, or that would not move the feed forward.
 // It prints the facts a person should look at. The feed copy is only a guard here: it is unverified and a wrong one can
 // only make this check stricter or looser, never make a bad manifest installable (the programs verify the signature themselves).
-func preflight(manifestPath, tag, feedPath string, out io.Writer) error {
+func preflight(manifestPath, tag, commit, feedPath string, out io.Writer) error {
 	mb, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return err
@@ -360,6 +380,12 @@ func preflight(manifestPath, tag, feedPath string, out io.Writer) error {
 	}
 	if err := m.Validate(time.Now()); err != nil {
 		return err
+	}
+	if m.Commit != commit {
+		return fmt.Errorf("the manifest was built from commit %s but the tag %s points at %s: the draft's files are not from the commit you trust", m.Commit, tag, commit)
+	}
+	if left := time.Until(m.Expires); left < 60*24*time.Hour {
+		return fmt.Errorf("the manifest expires in %d days: build the release again", int(left.Hours()/24))
 	}
 	if "v"+m.Version != tag {
 		return fmt.Errorf("the manifest is for %s but the tag is %s", m.Version, tag)
@@ -375,8 +401,8 @@ func preflight(manifestPath, tag, feedPath string, out io.Writer) error {
 			return fmt.Errorf("asset %s is named %q, expected %q", k, a.Name, want[k])
 		}
 	}
-	fmt.Fprintf(out, "version %s, channel %s, seq %d\npublished %s, expires %s, minUpdateFrom %q\n",
-		m.Version, m.Channel, m.Seq, m.Published.Format(time.RFC3339), m.Expires.Format(time.RFC3339), m.MinUpdateFrom)
+	fmt.Fprintf(out, "commit %s\nversion %s, channel %s, seq %d\npublished %s, expires %s, minUpdateFrom %q\n",
+		m.Commit, m.Version, m.Channel, m.Seq, m.Published.Format(time.RFC3339), m.Expires.Format(time.RFC3339), m.MinUpdateFrom)
 	for _, k := range []string{update.AssetSetup, update.AssetApp, update.AssetBlackbox, update.AssetLite} {
 		if a, ok := m.Assets[k]; ok {
 			fmt.Fprintf(out, "  %-8s %s  %d bytes\n", k, a.Name, a.Size)

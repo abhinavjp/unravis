@@ -7,13 +7,20 @@ Free. Uses only the Go standard library. Do this once, on your own PC (not CI, n
 Four keys: rc current (`rc-1`), rc backup (`rc-2`), stable current (`stable-1`), stable backup (`stable-2`).
 **Use a different passphrase for each of the two backup keys and for stable vs rc.** Ask twice so a typo cannot lock you out.
 
+Build the key tool first from a clean checkout of a commit you have reviewed (this is the one moment the raw private key exists, so do not run it from a folder with uncommitted code):
+
+```powershell
+git clone https://github.com/abhinavjp/unravis $env:TEMP\unravis-keys; cd $env:TEMP\unravis-keys; git checkout <reviewed-commit>
+go build -mod=readonly -o D:\secret\sigtool.exe ./tools/release/sigtool
+```
+
 ```powershell
 function New-UpdateKey($role, $name) {
-    $a = Read-Host "Passphrase for $name (12+ characters)" -AsSecureString
+    $a = Read-Host "Passphrase for $name (12+ characters, plain keyboard characters only: letters, digits, punctuation)" -AsSecureString
     $b = Read-Host "Same passphrase again" -AsSecureString
     $pa = [System.Net.NetworkCredential]::new('', $a).Password
     if ($pa -ne [System.Net.NetworkCredential]::new('', $b).Password) { throw 'The two passphrases differ.' }
-    $pa | go run ./tools/release/sigtool keygen -role $role -out "D:\secret\$name.key.json" -pub "D:\secret\$name.pub"
+    $pa | & D:\secret\sigtool.exe keygen -role $role -out "D:\secret\$name.key.json" -pub "D:\secret\$name.pub"
 }
 New-UpdateKey rc rc-1
 New-UpdateKey rc rc-2

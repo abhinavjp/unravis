@@ -37,6 +37,9 @@ func ParseVersion(s string) (Version, error) {
 		return Version{}, errors.New("patch version too large")
 	}
 	if m[4] != "" {
+		if m[4] != strings.ToLower(m[4]) {
+			return Version{}, errors.New("pre-release names must be lower case")
+		}
 		v.Pre = strings.Split(m[4], ".")
 		for _, id := range v.Pre {
 			if isNumeric(id) && len(id) > 1 && id[0] == '0' {

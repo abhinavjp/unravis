@@ -39,6 +39,13 @@ func sealKey(role string, priv ed25519.PrivateKey, pass string, rounds int) ([]b
 	if utf8.RuneCountInString(pass) < minPassphrase {
 		return nil, fmt.Errorf("passphrase must be at least %d characters", minPassphrase)
 	}
+	// Windows PowerShell 5.1 turns non-ASCII characters into "?" when piping, so a passphrase typed in one shell would not
+	// open in another. Plain ASCII works everywhere.
+	for _, r := range pass {
+		if r > 126 || r < 32 {
+			return nil, errors.New("use only plain keyboard characters (letters, digits, punctuation) in the passphrase")
+		}
+	}
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, err
@@ -92,6 +99,9 @@ func openKey(data []byte, pass string) (role string, priv ed25519.PrivateKey, er
 	seed, err := gcm.Open(nil, kf.Nonce, kf.Sealed, []byte(kf.Role+"|"+string(kf.Pub)))
 	if err != nil {
 		return "", nil, errors.New("wrong passphrase, or the key file was changed")
+	}
+	if len(seed) != ed25519.SeedSize {
+		return "", nil, errors.New("key file is damaged")
 	}
 	priv = ed25519.NewKeyFromSeed(seed)
 	if string(priv.Public().(ed25519.PublicKey)) != string(kf.Pub) {

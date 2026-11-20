@@ -24,6 +24,7 @@ func goodManifest(version, channel string) Manifest {
 			"blackbox": {Name: "unravis-blackbox-v" + version + "-windows-x64.zip", SHA256: h("c"), Size: 100},
 		},
 		BlackboxExeSHA256: h("d"),
+		Commit:            strings.Repeat("e", 40),
 	}
 }
 
@@ -48,7 +49,7 @@ func sign(t *testing.T, m Manifest, k Key, priv ed25519.PrivateKey) ([]byte, []b
 func TestVerifyGood(t *testing.T) {
 	k, priv := key(t, ChannelRC)
 	mb, sb := sign(t, goodManifest("0.1.0-rc.48", ChannelRC), k, priv)
-	m, err := Verify(mb, sb, Trust{Keys: []Key{k}, Channel: ChannelRC}, now)
+	m, err := Verify(mb, sb, Trust{Keys: []Key{k}, Channel: ChannelRC, Want: ChannelRC}, now)
 	if err != nil || m.Version != "0.1.0-rc.48" {
 		t.Fatalf("got %v %v", m, err)
 	}
@@ -58,7 +59,7 @@ func TestVerifyRefusals(t *testing.T) {
 	rc, rcPriv := key(t, ChannelRC)
 	st, stPriv := key(t, ChannelStable)
 	other, otherPriv := key(t, ChannelStable)
-	trust := Trust{Keys: []Key{rc, st}, Channel: ChannelRC}
+	trust := Trust{Keys: []Key{rc, st}, Channel: ChannelRC, Want: ChannelRC}
 
 	rcM, rcS := sign(t, goodManifest("0.1.0-rc.48", ChannelRC), rc, rcPriv)
 	stM, stS := sign(t, goodManifest("1.0.0", ChannelStable), st, stPriv)
@@ -74,7 +75,7 @@ func TestVerifyRefusals(t *testing.T) {
 			[]byte(FormatSignature(other.Pub, ed25519.Sign(otherPriv, []byte("x")))), trust},
 		{"empty signature", rcM, nil, trust},
 		{"garbage signature", rcM, []byte("hello"), trust},
-		{"stable build refuses rc key", rcM, rcS, Trust{Keys: []Key{rc, st}, Channel: ChannelStable}},
+		{"stable build refuses rc key", rcM, rcS, Trust{Keys: []Key{rc, st}, Channel: ChannelStable, Want: ChannelRC}},
 		{"oversize manifest", []byte(strings.Repeat("x", MaxManifestSize+1)), rcS, trust},
 	}
 	for _, c := range cases {
@@ -84,7 +85,7 @@ func TestVerifyRefusals(t *testing.T) {
 	}
 	// stable manifest signed by the stable key is fine for both builds
 	for _, ch := range []string{ChannelStable, ChannelRC} {
-		if _, err := Verify(stM, stS, Trust{Keys: []Key{rc, st}, Channel: ch}, now); err != nil {
+		if _, err := Verify(stM, stS, Trust{Keys: []Key{rc, st}, Channel: ch, Want: ChannelStable}, now); err != nil {
 			t.Errorf("stable manifest on %s build: %v", ch, err)
 		}
 	}
@@ -94,7 +95,7 @@ func TestRoleMustMatchChannel(t *testing.T) {
 	rc, rcPriv := key(t, ChannelRC)
 	// An rc key signing a stable manifest must be refused even though the signature is valid.
 	mb, sb := sign(t, goodManifest("1.0.0", ChannelStable), rc, rcPriv)
-	if _, err := Verify(mb, sb, Trust{Keys: []Key{rc}, Channel: ChannelRC}, now); err == nil {
+	if _, err := Verify(mb, sb, Trust{Keys: []Key{rc}, Channel: ChannelRC, Want: ChannelStable}, now); err == nil {
 		t.Fatal("rc key signed a stable manifest")
 	}
 }
@@ -109,6 +110,9 @@ func TestValidateRejects(t *testing.T) {
 		"expired":           mut(func(m *Manifest) { m.Expires = now.Add(-time.Second) }),
 		"future":            mut(func(m *Manifest) { m.Published = now.Add(time.Hour) }),
 		"seq zero":          mut(func(m *Manifest) { m.Seq = 0 }),
+		"seq huge":          mut(func(m *Manifest) { m.Seq = MaxSeq + 1 }),
+		"no commit":         mut(func(m *Manifest) { m.Commit = "" }),
+		"short commit":      mut(func(m *Manifest) { m.Commit = "abc" }),
 		"path in name":      mut(func(m *Manifest) { a := m.Assets["setup"]; a.Name = "../evil.exe"; m.Assets["setup"] = a }),
 		"slash in name":     mut(func(m *Manifest) { a := m.Assets["setup"]; a.Name = "a/b.exe"; m.Assets["setup"] = a }),
 		"short hash":        mut(func(m *Manifest) { a := m.Assets["app"]; a.SHA256 = "abc"; m.Assets["app"] = a }),
@@ -142,7 +146,7 @@ func TestVerifyRejectsUnknownFieldsAndTrailingData(t *testing.T) {
 		"trailing":      append(append([]byte{}, b...), []byte(`{}`)...),
 	} {
 		sb := []byte(FormatSignature(k.Pub, ed25519.Sign(priv, body)))
-		if _, err := Verify(body, sb, Trust{Keys: []Key{k}, Channel: ChannelRC}, now); err == nil {
+		if _, err := Verify(body, sb, Trust{Keys: []Key{k}, Channel: ChannelRC, Want: ChannelRC}, now); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
@@ -194,7 +198,7 @@ func TestSemverOrder(t *testing.T) {
 			}
 		}
 	}
-	for _, bad := range []string{"", "1", "1.2", "01.2.3", "1.2.3+build", "1.2.3-", "1.2.3-rc.01", "v", "1.2.3 4"} {
+	for _, bad := range []string{"", "1", "1.2", "1.2.3-RC.1", "01.2.3", "1.2.3+build", "1.2.3-", "1.2.3-rc.01", "v", "1.2.3 4"} {
 		if _, err := ParseVersion(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
@@ -205,12 +209,15 @@ func TestChannelFailsClosed(t *testing.T) {
 	k, priv := key(t, ChannelRC)
 	mb, sb := sign(t, goodManifest("0.1.0-rc.48", ChannelRC), k, priv)
 	for _, ch := range []string{"", "Stable", "STABLE", "beta"} {
-		if _, err := Verify(mb, sb, Trust{Keys: []Key{k}, Channel: ch}, now); err == nil {
+		if _, err := Verify(mb, sb, Trust{Keys: []Key{k}, Channel: ch, Want: ChannelRC}, now); err == nil {
 			t.Errorf("build channel %q accepted", ch)
 		}
 	}
 	if _, err := Verify(mb, sb, Trust{Keys: []Key{k}, Channel: ChannelRC, Want: ChannelStable}, now); err == nil {
 		t.Error("rc manifest accepted when stable was asked for")
+	}
+	if _, err := Verify(mb, sb, Trust{Keys: []Key{k}, Channel: ChannelRC}, now); err == nil {
+		t.Error("an empty Want was accepted")
 	}
 	if _, err := Verify(mb, sb, Trust{Keys: []Key{k}, Channel: ChannelRC, Want: ChannelRC}, now); err != nil {
 		t.Error(err)
@@ -231,7 +238,7 @@ func TestStrictJSON(t *testing.T) {
 	}
 	for name, body := range bodies {
 		sb := []byte(FormatSignature(k.Pub, ed25519.Sign(priv, []byte(body))))
-		if _, err := Verify([]byte(body), sb, Trust{Keys: []Key{k}, Channel: ChannelRC}, now); err == nil {
+		if _, err := Verify([]byte(body), sb, Trust{Keys: []Key{k}, Channel: ChannelRC, Want: ChannelRC}, now); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
