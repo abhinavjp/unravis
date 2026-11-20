@@ -55,6 +55,8 @@ Case 'a blank line is refused' 'blank' { param($r, $e) -not $r -and $e -match 'e
 Case 'two lines are refused' 'two' { param($r, $e) -not $r -and $e -match 'more than one line' -and $e -notmatch 'second line' }
 Case 'non-zero exit is refused and its text is not echoed' 'fail' { param($r, $e) -not $r -and $e -match 'exit code 1' -and $e -notmatch 'SECRET-LEAK-CHECK' }
 Case 'a hang is cut off' 'hang' { param($r, $e) -not $r -and $e -match 'did not answer' } $ref 3
+Case 'the real item and field names (dots, hyphens, spaces) are accepted' 'ok' { param($r, $e) $r -and (Plain $r) -eq 'correct horse battery' } 'pass://Work/Unravis Passphrases/rc.1 passphrase'
+Case 'stable-1 field name is accepted' 'ok' { param($r, $e) $r -and -not $e } 'pass://Work/Unravis Passphrases/stable-1 passphrase'
 Case 'a reference with an option in it is refused' 'ok' { param($r, $e) -not $r -and $e -match 'must look like' } '--help'
 Case 'a reference with a missing field is refused' 'ok' { param($r, $e) -not $r -and $e -match 'must look like' } 'pass://Vault/Item'
 Case 'a reference that is a shell trick is refused' 'ok' { param($r, $e) -not $r -and $e -match 'must look like' } 'pass://V/I/password; calc'
