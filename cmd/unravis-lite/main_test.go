@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -21,7 +22,27 @@ func TestParseRefusesBadInput(t *testing.T) {
 	}
 }
 
+func fakeStat(t *testing.T, err error) {
+	t.Helper()
+	old := statFolder
+	statFolder = func(string) (os.FileInfo, error) {
+		if err != nil {
+			return nil, err
+		}
+		return os.Stat(t.TempDir())
+	}
+	t.Cleanup(func() { statFolder = old })
+}
+
+func TestFindRefusesAFolderThatCannotBeOpened(t *testing.T) {
+	fakeStat(t, os.ErrNotExist)
+	if _, _, err := find(`D:\nope`, nil); err == nil || !strings.Contains(err.Error(), "cannot open") {
+		t.Fatalf("%v", err)
+	}
+}
+
 func TestFindUsesTheGivenFolderWithoutScanning(t *testing.T) {
+	fakeStat(t, nil)
 	scan := func() (blackbox.LocalFound, error) { t.Fatal("must not scan"); return blackbox.LocalFound{}, nil }
 	loc, _, err := find(`D:\Recordings`, scan)
 	if err != nil || loc.Kind != blackbox.LocFolder || loc.Path != `D:\Recordings` {
@@ -42,6 +63,7 @@ func TestFindRefusesAnAddress(t *testing.T) {
 }
 
 func TestFindFromThisPC(t *testing.T) {
+	fakeStat(t, nil)
 	ok := func() (blackbox.LocalFound, error) {
 		return blackbox.LocalFound{Installed: true, Folder: `E:\bb`, Name: "web-a"}, nil
 	}

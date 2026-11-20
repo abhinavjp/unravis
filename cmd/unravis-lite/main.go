@@ -42,7 +42,7 @@ const codeLife = 2 * time.Minute
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "Unravis Lite: "+err.Error())
-		if len(os.Args) == 1 && runtime.GOOS == "windows" {
+		if ownsConsole() {
 			// Started by a double-click: keep the window open so the message can be read.
 			fmt.Fprintln(os.Stderr, "Press Enter to close.")
 			_, _ = fmt.Fscanln(os.Stdin)
@@ -103,6 +103,11 @@ func find(folder string, scan func() (blackbox.LocalFound, error)) (loc blackbox
 	if loc.Kind == blackbox.LocURL {
 		return loc, name, errors.New("Unravis Lite reads a folder or a share, not an address")
 	}
+	if info, serr := statFolder(loc.Path); serr != nil {
+		return loc, name, fmt.Errorf("cannot open %s (%v). Check the path, and run as administrator if the folder is locked", loc.Path, serr)
+	} else if !info.IsDir() {
+		return loc, name, fmt.Errorf("%s is not a folder", loc.Path)
+	}
 	return loc, name, nil
 }
 
@@ -115,6 +120,9 @@ func handler(loc blackbox.Location, name, token string, code string, until time.
 	)
 	return lite.Wrap(inner)
 }
+
+// statFolder is a variable so tests can look at paths that do not exist on the test machine.
+var statFolder = os.Stat
 
 func random(n int) (string, error) {
 	raw := make([]byte, n)
