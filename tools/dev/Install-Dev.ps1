@@ -38,6 +38,8 @@ param(
     [string]$Repo = 'abhinavjp/unravis',
     [switch]$SkipTests,
     [switch]$SkipWeb,
+    # -FromBuild only: stamp this version into the build instead of git describe (for example 0.1.0-rc.52). Setup refuses to go to a lower version.
+    [string]$BuildVersion,
     [switch]$NoBackup,
     [switch]$DryRun,
     # First install only
@@ -114,6 +116,7 @@ try {
         $buildArgs = @{ Release = $true }
         if ($SkipTests) { $buildArgs.SkipTests = $true }
         if ($SkipWeb) { $buildArgs.SkipWeb = $true }
+        if ($BuildVersion) { $buildArgs.Version = $BuildVersion }
         $setupExe = Join-Path $repoRoot 'dist\unravis-setup.exe'
         Remove-Item -LiteralPath $setupExe -Force -ErrorAction SilentlyContinue   # never install a leftover from an earlier build
         Push-Location $repoRoot
@@ -143,6 +146,12 @@ try {
     if ($state) {
         Say "    Installed: Unravis $($state.version) ($($state.scope)) in $stateDir; Blackbox: $(if ($state.blackbox) { 'yes' } else { 'no' })"
         $op = 'upgrade'
+        # Setup refuses a lower version. Say so now, before a long run, instead of after.
+        function Get-VerKey([string]$v) { if ($v -match '^v?(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?') { return @([int]$Matches[1], [int]$Matches[2], [int]$Matches[3], $(if ($Matches[4]) { [int]$Matches[4] } else { 999999 })) } }
+        $ok = Get-VerKey ([string]$state.version); $nk = Get-VerKey ([string]$newVersion)
+        if ($ok -and $nk) {
+            for ($i = 0; $i -lt 4; $i++) { if ($nk[$i] -ne $ok[$i]) { if ($nk[$i] -lt $ok[$i]) { Say "    WARNING: this build ($newVersion) is OLDER than the installed $($state.version). Setup will refuse a downgrade. Use -BuildVersion with a higher version, or -FromRelease." } break } }
+        }
         if ($WithBlackbox -and -not $state.blackbox) { Fail 'Unravis is installed without a Blackbox. Adding one is done in the setup window (Repair), not here. Nothing was changed.' }
     } else {
         if ($bbSvc) { Fail 'A Blackbox service (UnravisBlackbox) exists but no Unravis install owns it. This script will not guess. Install via the setup window first (it explains what it will do), or remove that Blackbox. Nothing was changed.' }
@@ -158,7 +167,7 @@ try {
         # A user-scope install keeps its cases and settings under these two folders (internal/datadir).
         foreach ($f in @((Join-Path $env:APPDATA 'APIAuditExplorer'), (Join-Path $env:LOCALAPPDATA 'APIAuditExplorer'))) { if (Test-Path -LiteralPath $f) { $src += $f } }
         $skipped = 0; $copied = 0
-        Say "3/6 Backup of settings and cases to $bk"
+        Say "3/6 Backup of settings and cases to $bk$(if ($DryRun) { ' (dry run: not created)' })"
         if (-not $DryRun) {
             New-Item -ItemType Directory -Force -Path $bk | Out-Null
             Copy-Item -LiteralPath (Join-Path $stateDir 'setup-state.json') -Destination $bk -Force
