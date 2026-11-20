@@ -145,6 +145,9 @@ func (m *Manager) Update() (res UpdateResult, err error) {
 	}
 	newSum := sha256Hex(data)
 	res.NewHash = newSum
+	if m.ExpectSHA256 != "" && !strings.EqualFold(m.ExpectSHA256, newSum) {
+		return res, updateFailed("The new recorder program is not the one that was checked, so nothing was changed.", errors.New("hash differs from the expected one"), false, st == SvcRunning)
+	}
 	oldSum := ""
 	if _, statErr := os.Stat(exe); statErr == nil {
 		var herr error

@@ -600,6 +600,7 @@ func (p *Plan) blackbox(ctx context.Context, t *Txn) error {
 		}
 		return err
 	}
+	p.markManaged(t)
 	p.readKey = res.ReadKey
 	if p.Opts.ReadKeyFile != "" {
 		return p.writeReadKeyFile(t, res.ReadKey)
@@ -638,7 +639,17 @@ func (p *Plan) blackboxKeep(t *Txn, exe, cfgPath, keyPath string, st blackbox.Sv
 		}
 	}
 	_ = cfg
+	p.markManaged(t)
 	return t.StartService(blackbox.ServiceName)
+}
+
+// markManaged leaves the marker that tells the Blackbox service Unravis updates it together with itself, so it does not update itself
+// to a program the pinned Unravis would refuse. A failure is only logged: the install must not fail for it.
+func (p *Plan) markManaged(t *Txn) {
+	path := filepath.Join(p.Layout.BlackboxDir, blackbox.ManagedMarkerName)
+	if err := t.WriteFile(path, []byte("Unravis updates this Blackbox together with itself.\r\n"), "Blackbox marker"); err != nil {
+		t.log("Blackbox marker: " + err.Error())
+	}
 }
 
 // writeReadKeyFile writes the silent-mode read key to the file the config names, readable by the person and the system only. The key

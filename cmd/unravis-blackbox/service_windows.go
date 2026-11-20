@@ -70,8 +70,24 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
+	opts := blackbox.HostOptions{Config: cfg, KeyPath: h.keyPath, Version: version, Log: logf}
+	// The service updates itself (docs/auto-updater/SPEC.md 8.1). Without trusted keys in this build, or on a development build, it
+	// runs exactly as before. The updater stops with the service.
+	if exe, xerr := os.Executable(); xerr == nil {
+		if upd, uerr := blackbox.NewServiceUpdater(cfg, version, exe, logf); uerr != nil {
+			blackbox.DropStalePending(exe)
+			if logf != nil {
+				logf("self-update is off: %v", uerr)
+			}
+		} else {
+			opts.Update = upd.Status
+			updDone := make(chan struct{})
+			go func() { defer close(updDone); upd.Run(ctx) }()
+			defer func() { cancel(); <-updDone }()
+		}
+	}
 	go func() {
-		done <- h.d.hostRun(ctx, blackbox.HostOptions{Config: cfg, KeyPath: h.keyPath, Version: version, Log: logf})
+		done <- h.d.hostRun(ctx, opts)
 	}()
 	status <- svc.Status{State: svc.Running, Accepts: accepted}
 	for {

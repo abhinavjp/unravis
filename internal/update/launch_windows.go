@@ -92,3 +92,31 @@ func launchSetup(path, sha256hex, version string, extra []string) error {
 	}
 	return nil
 }
+
+// StartVerified starts the program at path with args, detached from this process, only if the file's SHA-256 is sha256hex. The file is
+// held open with no write, rename or delete sharing while it is hashed and started, so the bytes that were checked are the bytes that
+// run. It does not wait for the program: the Blackbox service starts its update helper this way, and the helper stops that service.
+func StartVerified(path, sha256hex string, args ...string) error {
+	if !filepath.IsAbs(path) || !sha256RE.MatchString(sha256hex) {
+		return errors.New("the program file or its hash is not valid")
+	}
+	f, err := openHeld(path)
+	if err != nil {
+		return errors.New("could not open the program file")
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return errors.New("could not read the program file")
+	}
+	if hex.EncodeToString(h.Sum(nil)) != sha256hex {
+		return errors.New("the program file changed after it was checked; it was not started")
+	}
+	cmd := exec.Command(path, args...)
+	cmd.Dir = filepath.Dir(path)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: detachedProcess | createNewProcessGroup}
+	if err := cmd.Start(); err != nil {
+		return errors.New("could not start the program")
+	}
+	return cmd.Process.Release()
+}
