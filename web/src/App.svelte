@@ -5,6 +5,8 @@
   import { WAIT_TEXT } from './lib/copy/waitCopy';
   import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeImportPopup, closeSidePanel, onWindowKey, openCaseHome, openCaseImport, openTracing, panels, resetInvestigation, restore, results, runAnalysis, scope, startApp } from './lib/appState.svelte';
   import AppHeader from './components/AppHeader.svelte';
+  import UpdateBanner from './components/UpdateBanner.svelte';
+  import { startUpdateWatch } from './lib/updateState.svelte';
   import SubBar from './components/SubBar.svelte';
   import Landing from './components/Landing.svelte';
   import { zoomView } from './lib/zoomView.svelte';
@@ -43,6 +45,8 @@
   const ProvenanceNote = lazyComponent(provenanceModule);
 
   const info = $derived(app.info);
+  // Read the update status once the app is up, then every ten minutes. It is a local call; the program's own timer does the checking.
+  $effect(() => { if (info) return startUpdateWatch(); });
   const analysis = $derived(results.analysis);
   const loading = $derived(results.loading);
   const depth = $derived(navigation.depth);
@@ -86,6 +90,7 @@
 
 <div class="app-shell">
   <AppHeader />
+  <UpdateBanner />
 
   {#if app.initError}<div class="banner error-banner" role="alert"><strong>{STARTUP_TITLE}</strong><span>{app.initError}</span>{#if app.initCanRetry}<button class="quiet-button" onclick={() => { app.initError = ''; void initialize(); }}>Retry</button>{/if}</div>{/if}
 

@@ -77,3 +77,43 @@ test('the result state is always one of the four known names', () => {
 test('without a window there is no remembered preview', () => {
   assert.equal(upd.updatePreviewNow(), '');
 });
+
+test('the unverified answer says it was ignored', () => {
+  assert.equal(upd.updateCheckNote({ status: 'unverified', current: '1.2.0', latest: '', url: '' }), 'An update answer came back, but it did not pass the safety check, so it was ignored.');
+  assert.equal(upd.updateCheckState({ status: 'unverified' }), 'unverified');
+  assert.equal(upd.updateCheckState({ status: 'none' }), 'none');
+  assert.equal(upd.updateCheckState({ status: 'surprise' }), 'unreachable');
+});
+
+test('the how-often labels', () => {
+  assert.equal(upd.intervalLabel(30), 'Every 30 minutes');
+  assert.equal(upd.intervalLabel(60), 'Every hour');
+  assert.equal(upd.intervalLabel(360), 'Every 6 hours');
+  assert.equal(upd.intervalLabel(1440), 'Every day');
+  assert.equal(upd.intervalLabel(45), 'Every 45 minutes');
+  assert.equal(upd.intervalLabel(120), 'Every 2 hours');
+  assert.equal(upd.intervalLabel(4320), 'Every 3 days');
+});
+
+test('the last-checked line', () => {
+  const now = new Date('2026-11-20T12:00:00Z');
+  assert.equal(upd.checkedNote('', now), '');
+  assert.equal(upd.checkedNote('nonsense', now), '');
+  assert.equal(upd.checkedNote('2026-11-20T11:59:50Z', now), 'Last checked just now.');
+  assert.equal(upd.checkedNote('2026-11-20T11:59:00Z', now), 'Last checked 1 minute ago.');
+  assert.equal(upd.checkedNote('2026-11-20T11:30:00Z', now), 'Last checked 30 minutes ago.');
+  assert.equal(upd.checkedNote('2026-11-20T10:00:00Z', now), 'Last checked 2 hours ago.');
+  assert.equal(upd.checkedNote('2026-11-15T12:00:00Z', now), 'Last checked 5 days ago.');
+});
+
+test('the bar shows only for a newer version that was not dismissed', () => {
+  const st = loadTypeScript('src/lib/updateState.svelte.ts');
+  const avail = { status: 'available', current: '1.2.0', latest: '1.3.0', url: '' };
+  assert.equal(st.updateBarVisible(avail, ''), true);
+  assert.equal(st.updateBarVisible(avail, '1.3.0'), false);
+  assert.equal(st.updateBarVisible({ ...avail, latest: '1.4.0' }, '1.3.0'), true, 'a newer version shows the bar again');
+  assert.equal(st.updateBarVisible({ ...avail, status: 'latest' }, ''), false);
+  assert.equal(st.updateBarVisible({ ...avail, status: 'unverified' }, ''), false);
+  assert.equal(st.updateBarVisible({ ...avail, latest: '' }, ''), false);
+  assert.equal(st.updateBarVisible(null, ''), false);
+});

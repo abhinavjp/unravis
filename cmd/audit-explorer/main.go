@@ -35,6 +35,7 @@ import (
 	"api-audit-explorer/internal/server"
 	"api-audit-explorer/internal/store"
 	"api-audit-explorer/internal/tray"
+	"api-audit-explorer/internal/update"
 	"api-audit-explorer/internal/version"
 )
 
@@ -238,7 +239,28 @@ func run(args []string, getenv func(string) string) error {
 	if logFile != nil {
 		serverOptions = append(serverOptions, server.WithLogger(logFile.Logger), server.WithLogDir(logFile.Dir))
 	}
+	// The update checker (docs/auto-updater/SPEC.md). A demo run has none. It checks every 30 minutes unless the person changed that,
+	// stops with the app, and only ever finds out whether a newer signed release exists.
+	var updater *server.Updater
+	if !f.demo {
+		if dir, err := mcp.SessionDir(getenv); err != nil {
+			log.Printf("Update checks are off: %v", err)
+		} else {
+			keys, kerr := update.TrustedKeys()
+			if kerr != nil {
+				log.Printf("Update checks are off: %v", kerr)
+			} else {
+				updater = server.NewUpdater(filepath.Join(dir, "update"), keys)
+				serverOptions = append(serverOptions, server.WithUpdater(updater))
+			}
+		}
+	}
 	served := server.New(wired.repo, explorer.Assets(), token, f.demo, serverOptions...)
+	if updater != nil {
+		updaterDone := make(chan struct{})
+		go func() { defer close(updaterDone); updater.Run(signalContext) }()
+		defer func() { cancel(); <-updaterDone }()
+	}
 	if !f.demo {
 		// Open the saved databases whose password is saved, one at a time and with a time limit, so a slow one never holds the app back.
 		// It stops on Ctrl+C or a quit signal, and the deferred wait below ends it before the repository closes.

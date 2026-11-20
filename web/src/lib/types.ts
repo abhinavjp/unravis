@@ -40,7 +40,12 @@ export interface Info {
 }
 /** What /api/version answers: the build's stamped version, commit and date. Empty strings mean not stamped. */
 export interface VersionInfo { version: string; commit: string; date: string }
-export interface UpdateCheckReply { status: 'latest' | 'available' | 'dev' | 'unreachable'; current: string; latest: string; url: string }
+export interface UpdateCheckReply {
+  /** none: no check has run yet. unverified: an answer came back that failed its safety check and was ignored. */
+  status: 'latest' | 'available' | 'dev' | 'unreachable' | 'unverified' | 'none';
+  current: string; latest: string; url: string;
+  channel?: string; checkedAt?: string; auto?: boolean; intervalMinutes?: number;
+}
 /** Record-level completion: complete rows have a usable duration, pending rows are accepted asynchronous jobs. */
 export type Completion = 'all' | 'complete' | 'incomplete' | 'pending' | 'invalid';
 /** An inclusive numeric bound; either end may be absent, and a range with neither end is not in use. */

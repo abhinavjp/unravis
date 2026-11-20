@@ -175,6 +175,9 @@ export const api = {
   logsInfo: () => request<LogsInfo>('/logs/info'),
   /** preview: a demo-only canned answer (latest, available, offline). Ignored by a real build. */
   updateCheck: (preview = '') => request<UpdateCheckReply>('/update-check' + (preview ? '?preview=' + encodeURIComponent(preview) : ''), { method: 'POST' }),
+  /** The last known update answer and the settings. Makes no network call. preview: demo only. */
+  updateStatus: (preview = '') => request<UpdateCheckReply>('/update/status' + (preview ? '?preview=' + encodeURIComponent(preview) : '')),
+  updateSettings: (auto: boolean, intervalMinutes: number) => request<UpdateCheckReply>('/update/settings', { method: 'PUT', body: JSON.stringify({ auto, intervalMinutes }) }),
   /** preview: a keeper screenshot preview (saved or stopped), answered only in the demo. */
   sources: (preview = '') => request<Source[]>('/sources' + (preview ? '?preview=' + encodeURIComponent(preview) : '')),
   recentConnections: () => request<RecentConnection[]>('/connections/recent'),
