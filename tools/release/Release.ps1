@@ -143,7 +143,7 @@ try {
     # 5 Publish ---------------------------------------------------------------------------------------------------------------
     if (Reach 'Publish') {
         Stage 5 'Publish the release'
-        $assetNames = (gh release list --repo $Repo --limit 1 --json tagName 2>$null | Out-Null; gh api "repos/$Repo/releases?per_page=30" --jq ".[] | select(.tag_name==`"$tag`") | .assets[].name" 2>$null)
+        $assetNames = @(gh api "repos/$Repo/releases?per_page=30" --jq ".[] | select(.tag_name==`"$tag`") | .assets[].name" 2>$null)
         if ($assetNames -notcontains 'update-manifest.json.sig') { Fail 'Publish' "The draft has no update-manifest.json.sig. Run the Sign stage first (-From Sign). Publishing without it would leave a public release nobody can be offered." }
         $notes = gh api "repos/$Repo/releases?per_page=30" --jq ".[] | select(.tag_name==`"$tag`") | .body" 2>$null
         if ($notes) { Write-Host ($notes -split "`n" | Select-Object -First 15 | Out-String) }
