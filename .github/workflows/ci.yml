@@ -209,6 +209,10 @@ jobs:
           }
           if ($bad) { throw "$bad script(s) do not parse." }
 
+      - name: Proton Pass reader self-test (fake pass-cli, failure paths)
+        shell: pwsh
+        run: ./tools/release/Test-ProtonPass.ps1
+
       - name: Parse tools/dev in Windows PowerShell 5.1
         shell: powershell
         run: |
