@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -78,12 +79,38 @@ type Fetcher struct {
 	// Zero uses three seconds.
 	RetryWait time.Duration
 
-	mu     sync.Mutex
-	cache  map[string]cached // channel -> last verified manifest, sig and ETag (memory only)
-	seen   map[string]uint64 // channel -> highest seq verified in this process
-	hashes map[string]string
-	once   sync.Once
-	cl     *http.Client
+	mu    sync.Mutex
+	cache map[string]cached // channel -> last verified manifest, sig and ETag (memory only)
+	local *seenMem          // used when StatePath is empty
+	once  sync.Once
+	cl    *http.Client
+}
+
+// seenMem is the in-process copy of what has been seen, so a lost or unreadable state file cannot reopen a rollback while the
+// program is running. With a StatePath it is shared by every Fetcher in the process that uses the same file.
+type seenMem struct {
+	seq  map[string]uint64
+	hash map[string]string
+}
+
+var (
+	memByPath   = map[string]*seenMem{} // guarded by stateMu
+	errReadMemo = errors.New("could not read the update memory")
+)
+
+func (f *Fetcher) memory() *seenMem { // call with stateMu held
+	if f.StatePath == "" {
+		if f.local == nil {
+			f.local = &seenMem{seq: map[string]uint64{}, hash: map[string]string{}}
+		}
+		return f.local
+	}
+	m := memByPath[f.StatePath]
+	if m == nil {
+		m = &seenMem{seq: map[string]uint64{}, hash: map[string]string{}}
+		memByPath[f.StatePath] = m
+	}
+	return m
 }
 
 type cached struct {
@@ -168,10 +195,12 @@ func (f *Fetcher) Check(ctx context.Context) Result {
 		if wait == 0 {
 			wait = 3 * time.Second
 		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return Result{Status: StatusUnreachable, Detail: "check stopped"}
-		case <-time.After(wait):
+		case <-timer.C:
 		}
 		res = f.once1(ctx, base, want, now, false)
 	}
@@ -215,14 +244,23 @@ func (f *Fetcher) once1(ctx context.Context, base, want string, now func() time.
 
 	stateMu.Lock()
 	defer stateMu.Unlock()
-	st, loadNote := f.loadState()
-	f.mu.Lock()
-	if f.seen != nil {
-		if f.seen[want] > st.SeenSeq[want] {
-			st.SeenSeq[want], st.SeenHash[want] = f.seen[want], f.hashes[want]
+	st, loadNote, lerr := f.loadState()
+	if lerr != nil { // a read problem is not "no memory": fail closed for this check
+		return attempt{Result: Result{Status: StatusUnreachable, Detail: lerr.Error(), Backoff: true}}
+	}
+	mem := f.memory()
+	dirty := loadNote != ""
+	if ms := mem.seq[want]; ms > st.SeenSeq[want] || (ms == st.SeenSeq[want] && ms > 0 && st.SeenHash[want] == "") {
+		st.SeenSeq[want], st.SeenHash[want] = ms, mem.hash[want]
+		dirty = true // the file is behind this process's memory: put it right now, before any refusal below
+	}
+	note := loadNote
+	if dirty {
+		if err := f.saveState(st); err != nil {
+			note += " (could not save the update memory: " + err.Error() + ")"
 		}
 	}
-	f.mu.Unlock()
+	loadNote = note
 	seen := st.SeenSeq[want]
 	if m.Seq < seen {
 		return attempt{Result: Result{Status: StatusRejected, Detail: "the feed offers an older release than one already seen (rollback refused)" + loadNote}}
@@ -232,21 +270,17 @@ func (f *Fetcher) once1(ctx context.Context, base, want string, now func() time.
 	}
 	d, why, err := Judge(m, f.Current, seen)
 	if err != nil {
-		return attempt{Result: Result{Status: StatusRejected, Detail: err.Error()}}
+		return attempt{Result: Result{Status: StatusRejected, Detail: err.Error() + loadNote}}
 	}
 	st.SeenSeq[want], st.SeenHash[want] = m.Seq, hash
+	mem.seq[want], mem.hash[want] = m.Seq, hash
 	f.mu.Lock()
-	if f.seen == nil {
-		f.seen, f.hashes = map[string]uint64{}, map[string]string{}
-	}
-	f.seen[want], f.hashes[want] = m.Seq, hash
 	if f.cache == nil {
 		f.cache = map[string]cached{}
 	}
 	f.cache[want] = cached{manifest, sig, newETag} // stored only now: the ETag is never trusted before the pair verified
 	f.mu.Unlock()
-	note := loadNote
-	if err := f.saveState(st); err != nil {
+	if err := f.saveState(st); err != nil && !strings.Contains(note, "could not save") {
 		note += " (could not save the update memory: " + err.Error() + ")"
 	}
 	if d == DecisionInstall {
@@ -316,6 +350,9 @@ func (f *Fetcher) get(ctx context.Context, rawURL, etag string) (body []byte, ne
 // retryAfter reads a Retry-After in seconds, capped at six hours. The date form is ignored (the normal back-off applies).
 func retryAfter(resp *http.Response) time.Duration {
 	secs, err := strconv.Atoi(resp.Header.Get("Retry-After"))
+	if ne, ok := err.(*strconv.NumError); ok && ne.Err == strconv.ErrRange && !strings.HasPrefix(resp.Header.Get("Retry-After"), "-") {
+		return maxBackoff
+	}
 	if err != nil || secs <= 0 {
 		return 0
 	}
@@ -325,27 +362,31 @@ func retryAfter(resp *http.Response) time.Duration {
 	return maxBackoff
 }
 
-// loadState reads the state file. A missing file is normal. An unreadable one is set aside as .corrupt and the note says so,
-// so the problem is visible instead of silently starting from zero; the in-process memory still protects this run.
-func (f *Fetcher) loadState() (State, string) {
+// loadState reads the state file. A missing file is normal. A file that cannot be parsed is set aside under a unique name and
+// the note says so, so the problem is visible. Any other read problem is an error: the check fails closed instead of
+// starting from zero. The in-process memory protects this run either way.
+func (f *Fetcher) loadState() (State, string, error) {
 	st := State{SeenSeq: map[string]uint64{}, SeenHash: map[string]string{}}
 	if f.StatePath == "" {
-		return st, ""
+		return st, "", nil
 	}
 	fi, err := os.Stat(f.StatePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return st, "", nil
+	}
+	if err != nil || !fi.Mode().IsRegular() {
+		return st, "", errReadMemo
+	}
+	if fi.Size() > maxStateSize {
+		return st, f.setAside(), nil
+	}
+	b, err := os.ReadFile(f.StatePath)
 	if err != nil {
-		return st, ""
+		return st, "", errReadMemo
 	}
 	var s State
-	b, rerr := []byte(nil), error(nil)
-	if fi.Size() <= maxStateSize {
-		b, rerr = os.ReadFile(f.StatePath)
-	} else {
-		rerr = errors.New("too large")
-	}
-	if rerr != nil || json.Unmarshal(b, &s) != nil {
-		_ = os.Rename(f.StatePath, f.StatePath+".corrupt")
-		return st, " (the saved update memory was unreadable and was set aside)"
+	if json.Unmarshal(b, &s) != nil {
+		return st, f.setAside(), nil
 	}
 	if s.SeenSeq != nil {
 		st.SeenSeq = s.SeenSeq
@@ -353,7 +394,14 @@ func (f *Fetcher) loadState() (State, string) {
 	if s.SeenHash != nil {
 		st.SeenHash = s.SeenHash
 	}
-	return st, ""
+	return st, "", nil
+}
+
+func (f *Fetcher) setAside() string {
+	if err := os.Rename(f.StatePath, f.StatePath+".corrupt-"+strconv.FormatInt(time.Now().UnixNano(), 10)); err != nil {
+		_ = os.Remove(f.StatePath)
+	}
+	return " (the saved update memory was unreadable and was set aside)"
 }
 
 // saveState writes the file to a unique temp file in the same folder, flushes it to disk, then renames it into place.
@@ -400,10 +448,7 @@ func NextDelay(interval time.Duration, failures int, retryIn time.Duration, rnd 
 		d *= 2
 	}
 	if d > maxBackoff && d > interval {
-		d = maxBackoff
-		if interval > maxBackoff {
-			d = interval
-		}
+		d = max(maxBackoff, interval)
 	}
 	if retryIn > maxBackoff {
 		retryIn = maxBackoff

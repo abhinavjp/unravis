@@ -278,8 +278,8 @@ const (
 )
 
 // Judge decides whether a verified manifest is an upgrade for the running build.
-// lastSeq is the highest seq this machine has already seen (stored by the caller); an older one is a rollback.
-// It never allows a downgrade, an equal version, or a replayed (lower or equal seq) manifest.
+// lastSeq is the highest seq this machine has already seen (stored by the caller); an older one is a rollback. An equal one is allowed (the same release keeps showing as available); the caller pins its hash.
+// It never allows a downgrade, an equal version, or a replayed manifest with a lower seq.
 func Judge(m *Manifest, current string, lastSeq uint64) (Decision, string, error) {
 	cur, err := ParseVersion(current)
 	if err != nil {

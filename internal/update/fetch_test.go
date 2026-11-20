@@ -94,6 +94,7 @@ func TestFetchAvailableLatestAndRollback(t *testing.T) {
 	if r := f.Check(t.Context()); r.Status != StatusRejected {
 		t.Fatalf("rollback accepted: %+v", r)
 	}
+	restart()
 	f2 := fs.fetcher(t, k, ChannelRC, "0.1.0-rc.30")
 	f2.StatePath = f.StatePath
 	if r := f2.Check(t.Context()); r.Status != StatusRejected {
@@ -192,14 +193,20 @@ func TestRedirectRules(t *testing.T) {
 	fs := newFeed(t)
 	fs.publish(t, "rc", goodManifest("0.1.0-rc.40", ChannelRC), k, priv)
 
-	// Redirect to http:// (the valid server's address with the scheme downgraded) must not be followed.
+	// Redirect to a plain http:// server that would serve a valid pair: it must not be followed.
+	var plainHits atomic.Int32
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		plainHits.Add(1)
+		w.Write(good.files[r.URL.Path])
+	}))
+	t.Cleanup(plain.Close)
 	fs.override = func(w http.ResponseWriter, r *http.Request) bool {
-		http.Redirect(w, r, strings.Replace(good.srv.URL, "https://", "http://", 1)+r.URL.Path, http.StatusFound)
+		http.Redirect(w, r, plain.URL+r.URL.Path, http.StatusFound)
 		return true
 	}
 	f := fs.fetcher(t, k, ChannelRC, "0.1.0-rc.47")
-	if r := f.Check(t.Context()); r.Status != StatusUnreachable || good.hits.Load() != 0 {
-		t.Errorf("http redirect: %+v, other server hit %d times", r, good.hits.Load())
+	if r := f.Check(t.Context()); r.Status != StatusUnreachable || plainHits.Load() != 0 {
+		t.Errorf("http redirect: %+v, plain server hit %d times", r, plainHits.Load())
 	}
 	// Redirect to a host the allowlist refuses (example.com, which the test transport maps to the valid server).
 	goodAddr := good.srv.Listener.Addr().String()
@@ -227,28 +234,29 @@ func TestRedirectRules(t *testing.T) {
 	if _ = fs2.Check(t.Context()); good.hits.Load() == 0 {
 		t.Errorf("control failed: the redirect target was never reached, so the test above proves nothing")
 	}
-	// Exactly 3 redirects are allowed, the 4th is refused.
+	// Exactly 3 redirects are allowed, the 4th is refused. One counter per file, so the manifest and its signature are separate.
 	for _, hops := range []int{3, 4} {
-		var n atomic.Int32
+		var n, m atomic.Int32
 		fs.override = func(w http.ResponseWriter, r *http.Request) bool {
-			if strings.HasPrefix(r.URL.Path, "/hop") {
-				n.Add(1)
-				if int(n.Load()) < hops {
-					http.Redirect(w, r, "/hop", http.StatusFound)
-					return true
-				}
-				r.URL.Path = "/rc.json"
+			if r.URL.Path == "/hop-rc.json" || r.URL.Path == "/hop-rc.json.sig" {
 				return false
 			}
-			http.Redirect(w, r, "/hop", http.StatusFound)
-			return true
+			c := &n
+			if strings.HasSuffix(r.URL.Path, ".sig") {
+				c = &m
+			}
+			if int(c.Add(1)) <= hops {
+				http.Redirect(w, r, r.URL.Path, http.StatusFound) // back to itself: counts hops
+				return true
+			}
+			return false
 		}
-		_ = fs.fetcher(t, k, ChannelRC, "0.1.0-rc.47").Check(t.Context())
-		if hops == 3 && n.Load() == 0 {
-			t.Errorf("3 redirects should be followed")
+		r := fs.fetcher(t, k, ChannelRC, "0.1.0-rc.47").Check(t.Context())
+		if hops == 3 && r.Status != StatusLatest { // this feed serves rc.40, so a followed fetch reads as up to date
+			t.Errorf("3 redirects should be followed: %+v", r)
 		}
-		if hops == 4 && n.Load() > 3 {
-			t.Errorf("a 4th redirect was followed (%d hops seen)", n.Load())
+		if hops == 4 && r.Status != StatusUnreachable {
+			t.Errorf("a 4th redirect was followed: %+v", r)
 		}
 	}
 }
@@ -283,12 +291,22 @@ func TestAntiRollbackWithoutStateFile(t *testing.T) {
 		if r.Status != StatusRejected {
 			t.Errorf("%s: rollback accepted: %+v", statePath, r)
 		}
+		// A new process after the refusal must still refuse it: the file was put right during the refused check.
+		restart()
+		f3 := fs.fetcher(t, k, ChannelRC, "0.1.0-rc.30")
+		f3.StatePath = f.StatePath
+		fs.etag = `"c` + statePath + `"`
+		if statePath != "" {
+			if r3 := f3.Check(t.Context()); r3.Status != StatusRejected {
+				t.Errorf("%s: rollback accepted after a restart: %+v", statePath, r3)
+			}
+		}
 		if statePath == "corrupt" {
 			if !strings.Contains(r.Detail, "unreadable") {
 				t.Errorf("a broken state file was not reported: %q", r.Detail)
 			}
-			if _, err := os.Stat(f.StatePath + ".corrupt"); err != nil {
-				t.Errorf("broken file not set aside: %v", err)
+			if m, _ := filepath.Glob(f.StatePath + ".corrupt-*"); len(m) != 1 {
+				t.Errorf("broken file not set aside: %v", m)
 			}
 		}
 	}
@@ -314,30 +332,39 @@ func TestTwoChannelsOneStateFile(t *testing.T) {
 	k, priv := key(t, ChannelRC)
 	sk, spriv := key(t, ChannelStable)
 	fs := newFeed(t)
-	rcM := goodManifest("0.1.0-rc.48", ChannelRC)
 	stM := goodManifest("1.0.0", ChannelStable)
 	stM.Seq = 50
-	fs.publish(t, "rc", rcM, k, priv)
+	fs.publish(t, "rc", goodManifest("0.1.0-rc.48", ChannelRC), k, priv)
 	fs.publish(t, "stable", stM, sk, spriv)
-	path := filepath.Join(t.TempDir(), "state.json")
-	mk := func(want string) *Fetcher {
-		f := fs.fetcher(t, k, ChannelRC, "0.1.0-rc.1")
-		f.Keys = []Key{k, sk}
-		f.Want, f.StatePath = want, path
-		return f
-	}
-	var wg sync.WaitGroup
-	for i := 0; i < 40; i++ {
+	for i := 0; i < 300; i++ { // many rounds, each from an empty file: without the lock one channel's update is lost
+		restart()
+		path := filepath.Join(t.TempDir(), "state.json")
+		var wg sync.WaitGroup
 		for _, w := range []string{ChannelRC, ChannelStable} {
+			f := fs.fetcher(t, k, ChannelRC, "0.1.0-rc.1")
+			f.Keys = []Key{k, sk}
+			f.Want, f.StatePath = w, path
 			wg.Add(1)
-			go func(w string) { defer wg.Done(); mk(w).Check(t.Context()) }(w)
+			go func() { defer wg.Done(); f.Check(t.Context()) }()
+		}
+		wg.Wait()
+		b, _ := os.ReadFile(path)
+		var st State
+		if err := json.Unmarshal(b, &st); err != nil || st.SeenSeq[ChannelRC] != 48 || st.SeenSeq[ChannelStable] != 50 {
+			t.Fatalf("round %d lost an update: %s %v", i, b, err)
 		}
 	}
-	wg.Wait()
-	b, _ := os.ReadFile(path)
-	var st State
-	if err := json.Unmarshal(b, &st); err != nil || st.SeenSeq[ChannelRC] != 48 || st.SeenSeq[ChannelStable] != 50 {
-		t.Fatalf("lost an update: %s %v", b, err)
+}
+
+func TestUnreadableStateFailsClosed(t *testing.T) {
+	k, priv := key(t, ChannelRC)
+	fs := newFeed(t)
+	fs.publish(t, "rc", goodManifest("0.1.0-rc.48", ChannelRC), k, priv)
+	f := fs.fetcher(t, k, ChannelRC, "0.1.0-rc.30")
+	f.StatePath = t.TempDir() // a directory where the file should be: reading it fails
+	r := f.Check(t.Context())
+	if r.Status != StatusUnreachable || !strings.Contains(r.Detail, "update memory") {
+		t.Fatalf("a read problem did not fail closed: %+v", r)
 	}
 }
 
@@ -430,4 +457,11 @@ func TestNextDelay(t *testing.T) {
 			t.Fatalf("jitter out of range: %v", d)
 		}
 	}
+}
+
+// restart forgets the in-process memory, as a new process would; only the state file remains.
+func restart() {
+	stateMu.Lock()
+	memByPath = map[string]*seenMem{}
+	stateMu.Unlock()
 }
