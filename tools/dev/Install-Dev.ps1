@@ -110,9 +110,10 @@ try {
         if ($LASTEXITCODE -ne 0) { Fail "The release folder did not verify (exit $LASTEXITCODE). Nothing was installed. There is no way to skip this check." }
     } else {
         Say '1/6 Building this checkout (pinned release build)'
-        $buildArgs = @('-Release')
-        if ($SkipTests) { $buildArgs += '-SkipTests' }
-        if ($SkipWeb) { $buildArgs += '-SkipWeb' }
+        # A hashtable, not an array: splatting an array passes "-Release" as a positional value (it became build.ps1's -GoPath).
+        $buildArgs = @{ Release = $true }
+        if ($SkipTests) { $buildArgs.SkipTests = $true }
+        if ($SkipWeb) { $buildArgs.SkipWeb = $true }
         $setupExe = Join-Path $repoRoot 'dist\unravis-setup.exe'
         Remove-Item -LiteralPath $setupExe -Force -ErrorAction SilentlyContinue   # never install a leftover from an earlier build
         Push-Location $repoRoot
