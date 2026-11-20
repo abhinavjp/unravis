@@ -259,11 +259,11 @@
   .tick { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-height: 44px; font-size: var(--fs-3); }
   .switches { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); }
   .tick { min-height: 36px; cursor: pointer; }
-  .switch { appearance: none; position: relative; flex: none; width: 38px; height: 22px; margin: 0; background: var(--control-line); border-radius: 11px; cursor: pointer; transition: background 0.15s; }
+  .tick input.switch { appearance: none; position: relative; flex: none; width: 38px; height: 22px; margin: 0; border: 0; background: var(--control-line); border-radius: 11px; cursor: pointer; transition: background 0.15s; }
   .switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; background: var(--bg); border-radius: 50%; transition: transform 0.15s; }
-  .switch:checked { background: var(--accent); }
-  .switch:checked::after { transform: translateX(16px); }
-  @media (forced-colors: active) { .switch { forced-color-adjust: none; background: Canvas; border: 2px solid ButtonText; } .switch::after { background: ButtonText; } .switch:checked { background: Highlight; } .switch:checked::after { background: HighlightText; } }
+  .tick input.switch:checked { background: var(--accent); }
+  .tick input.switch:checked::after { transform: translateX(16px); }
+  @media (forced-colors: active) { .tick input.switch { forced-color-adjust: none; background: Canvas; border: 2px solid ButtonText; } .switch::after { background: ButtonText; } .tick input.switch:checked { background: Highlight; } .tick input.switch:checked::after { background: HighlightText; } }
   @media (prefers-reduced-motion: reduce) { .switch, .switch::after { transition: none; } }
   .db .inline-error { margin: 0; }
 </style>
