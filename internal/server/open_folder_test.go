@@ -50,7 +50,7 @@ func TestOpenFolderOpensAnExistingFolderAndAFilesParent(t *testing.T) {
 	}
 	got := stubOpener(t)
 	f := newDiscFix(t, nil)
-	dir := t.TempDir()
+	dir := longTempDir(t)
 	file := filepath.Join(dir, "a.log")
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -76,7 +76,7 @@ func TestOpenFolderRateLimit(t *testing.T) {
 	}
 	stubOpener(t)
 	f := newDiscFix(t, nil)
-	dir := t.TempDir()
+	dir := longTempDir(t)
 	last := 0
 	for i := 0; i <= openFoldersPerWindow; i++ {
 		last = f.req(http.MethodPost, "/api/local/open-folder", openBody(map[string]string{"path": dir})).Code
@@ -97,4 +97,14 @@ func TestOpenFolderUnknownScanFinding(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("both given: %d", rr.Code)
 	}
+}
+
+// longTempDir is t.TempDir() with any 8.3 short name (RUNNER~1 on CI) expanded: the path check refuses short aliases on purpose.
+func longTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if long, err := filepath.EvalSymlinks(dir); err == nil {
+		return long
+	}
+	return dir
 }
