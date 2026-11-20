@@ -82,6 +82,8 @@ type RecorderOptions struct {
 	// last reading, Go heap in use, private bytes and handles. Optional: nil
 	// skips the measurement. ok=false is a missing reading (counted as calm).
 	SelfUsage func() (SelfReading, bool)
+	// Diag is the diagnostics log. Optional: nil writes nothing.
+	Diag *DiagLog
 }
 
 // RecorderStatus is a snapshot of the recorder for the status page.
@@ -124,6 +126,24 @@ type Recorder struct {
 	clockFwd     bool // the wall clock jumped forward since the last housekeeping pass
 	lastFreeMem  time.Time
 	self         selfTracker // this run's own cost; tick goroutine only
+
+	// Diagnostics (tick goroutine only): where the rounds went, kept cheap.
+	sched      schedInfo // set by Run just before each Tick
+	agg        diagAgg
+	lastBeat   time.Time
+	lastWinSeq int
+	lastProb   string
+	lastEff    int
+	noteMinute time.Time
+	noteCount  int
+	lastSelf   SelfReading
+}
+
+// schedInfo is how the round was scheduled: how late it started and how many
+// deadlines were skipped before it.
+type schedInfo struct {
+	lag    time.Duration
+	missed int
 }
 
 // NewRecorder makes a recorder. The caller opened the store and the collector.
@@ -176,6 +196,7 @@ func effectiveInterval(b *Budget, base int) int {
 // Run samples until ctx is done, then closes the run cleanly. The first sample
 // is taken at once.
 func (r *Recorder) Run(ctx context.Context) error {
+	r.diagStart()
 	if ticks := r.o.Ticks; ticks != nil {
 		// Test path: the caller drives the ticks.
 		r.Tick(r.now())
@@ -199,7 +220,12 @@ func (r *Recorder) Run(ctx context.Context) error {
 	defer timer.Stop()
 	for {
 		interval := time.Duration(effectiveInterval(r.o.Budget, r.o.Config.IntervalSeconds)) * time.Second
+		prev := next
 		next = nextDeadline(next, time.Now(), interval)
+		missed := 0
+		if interval > 0 {
+			missed = int(next.Sub(prev)/interval) - 1
+		}
 		if !timer.Stop() {
 			select {
 			case <-timer.C:
@@ -211,6 +237,7 @@ func (r *Recorder) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return r.stop("stopped")
 		case <-timer.C:
+			r.sched = schedInfo{lag: time.Since(next), missed: missed}
 			r.Tick(r.now())
 		}
 	}
@@ -232,6 +259,10 @@ func nextDeadline(prev, now time.Time, interval time.Duration) time.Time {
 }
 
 func (r *Recorder) stop(reason string) error {
+	if r.o.Diag != nil {
+		r.diagBeat(r.now().UTC())
+		r.o.Diag.Line("stop", "reason", reason)
+	}
 	r.mu.Lock()
 	r.stopped = true
 	r.mu.Unlock()
@@ -246,21 +277,32 @@ func (r *Recorder) stop(reason string) error {
 // unless the disk is low.
 func (r *Recorder) Tick(now time.Time) {
 	now = now.UTC()
+	roundStart := time.Now()
+	rd := roundDiag{Seq: r.seq + 1, Lag: r.sched.lag, Missed: r.sched.missed}
+	r.sched = schedInfo{}
+	if rd.Lag < 0 {
+		rd.Lag = 0
+	}
 	r.checkClock(now)
 
 	if r.forceHK || r.lastHK.IsZero() || now.Sub(r.lastHK) >= housekeepEvery || now.Before(r.lastHK) {
+		hkStart := time.Now()
 		r.housekeep(now)
+		rd.HK = time.Since(hkStart)
 	}
 	r.mu.Lock()
 	paused := r.paused
 	r.mu.Unlock()
 	if paused {
+		r.diagRound(now, rd, roundStart, true)
 		return
 	}
 
 	tickStart := time.Now()
 	reading, haveReading := r.feedBudget(now)
 	feedDur := time.Since(tickStart)
+	rd.Feed = feedDur
+	r.lastSelf = reading
 	var appendDur time.Duration
 	// The self block of this run's record: the reading taken at the top of the
 	// tick plus how long the tick took and where it went. In memory; the
@@ -280,6 +322,11 @@ func (r *Recorder) Tick(now time.Time) {
 		}
 		st = *c
 		r.o.Store.SetSelf(st)
+		rd.Append = appendDur
+		if gt, ok := r.o.Collector.(interface{ GroupTimings() []groupTime }); ok {
+			rd.Groups = append(rd.Groups[:0], gt.GroupTimings()...)
+		}
+		r.diagRound(now, rd, roundStart, false)
 	}()
 	if r.o.Budget != nil {
 		// What the budget settled on survives a restart; SetInterval is written
@@ -290,10 +337,24 @@ func (r *Recorder) Tick(now time.Time) {
 		r.o.Store.SetInterval(effectiveInterval(r.o.Budget, r.o.Config.IntervalSeconds))
 	}
 
+	collectStart := time.Now()
 	s, err := r.o.Collector.Collect(now)
+	rd.Collect = time.Since(collectStart)
+	if t, ok := r.o.Collector.(interface {
+		Timings() (time.Duration, string, time.Duration)
+	}); ok {
+		rd.Host, _, _ = t.Timings()
+	}
+	if t, ok := r.o.Collector.(interface{ ResolveTime() time.Duration }); ok {
+		rd.Resolve = t.ResolveTime()
+	}
+	if t, ok := r.o.Collector.(interface{ GroupsTime() time.Duration }); ok {
+		rd.GroupsAll = t.GroupsTime()
+	}
 	if err != nil {
+		rd.Err = diagErrCode(err)
 		if r.collectOK {
-			r.o.Store.Event(EventCollectFailed, eventCode(err))
+			r.event(EventCollectFailed, eventCode(err))
 		}
 		r.collectOK = false
 		return
@@ -326,12 +387,13 @@ func (r *Recorder) Tick(now time.Time) {
 		r.writeOK = false
 		r.forceHK = true // a full disk is the usual reason: free some space now
 		r.mu.Unlock()
+		rd.Err = "write-failed"
 		if first {
 			code := eventCode(err)
 			if code == codeCollectFailed {
 				code = codeWriteFailed
 			}
-			r.o.Store.Event(EventWriteFailed, code)
+			r.event(EventWriteFailed, code)
 		}
 		return
 	}
@@ -361,6 +423,12 @@ func (r *Recorder) feedBudget(now time.Time) (SelfReading, bool) {
 	return rd, ok
 }
 
+// event records an event in the manifest and in the diagnostics log.
+func (r *Recorder) event(kind, detail string) {
+	r.o.Store.Event(kind, detail)
+	r.diagEvent(kind, detail)
+}
+
 // checkClock compares how far the wall clock moved with how far the steady
 // clock moved, and records a clock-jump event when they differ.
 func (r *Recorder) checkClock(now time.Time) {
@@ -375,7 +443,7 @@ func (r *Recorder) checkClock(now time.Time) {
 			} else {
 				r.clockFwd = true // housekeeping leaves the age rule out once
 			}
-			r.o.Store.Event(EventClockJump, fmt.Sprintf("clock moved %s by %.1f s", dir, math.Abs(d)))
+			r.event(EventClockJump, fmt.Sprintf("clock moved %s by %.1f s", dir, math.Abs(d)))
 		}
 	}
 	r.lastTickWall, r.lastTickMono, r.haveTick = now, mono, true
@@ -400,19 +468,23 @@ func (r *Recorder) housekeep(now time.Time) {
 		}
 	}()
 	res, err := housekeepFn(r.o.Store, lim, r.o.Disk, now)
+	if len(res.Removed) > 0 || len(res.Skipped) > 0 || err != nil {
+		r.o.Diag.Line("housekeeping", "removed", len(res.Removed), "skipped", len(res.Skipped),
+			"free", round1(res.FreePercent), "diskKnown", res.DiskKnown, "low", res.DiskLow, "failed", err != nil)
+	}
 	if err != nil {
 		code := eventCode(err)
 		if code == codeCollectFailed {
 			code = codeHousekeepingFailed
 		}
-		r.o.Store.Event(EventHousekeeping, code)
+		r.event(EventHousekeeping, code)
 	}
 	if res.Incomplete() {
 		// A file held open by a reader cannot be removed; it is tried again
 		// next round. Say so once per set of files, not every minute.
 		if msg := "could not remove " + strings.Join(res.Skipped, ", ") + " (in use), will retry"; msg != r.lastSkipMsg {
 			r.lastSkipMsg = msg
-			r.o.Store.Event(EventHousekeeping, msg)
+			r.event(EventHousekeeping, msg)
 		}
 	} else {
 		r.lastSkipMsg = ""
@@ -435,11 +507,11 @@ func (r *Recorder) housekeep(now time.Time) {
 	switch {
 	case res.DiskLow && !r.paused:
 		r.paused = true
-		r.o.Store.Event(EventPausedDiskLow, fmt.Sprintf("free space %.1f%% is below %d%% and nothing older can be removed", res.FreePercent, r.o.Config.MinFreePercent))
+		r.event(EventPausedDiskLow, fmt.Sprintf("free space %.1f%% is below %d%% and nothing older can be removed", res.FreePercent, r.o.Config.MinFreePercent))
 	case !res.DiskLow && r.paused:
 		r.paused = false
 		r.resumedFlag = true
-		r.o.Store.Event(EventResumed, fmt.Sprintf("free space %.1f%%", res.FreePercent))
+		r.event(EventResumed, fmt.Sprintf("free space %.1f%%", res.FreePercent))
 	}
 }
 

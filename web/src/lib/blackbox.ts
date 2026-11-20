@@ -292,6 +292,12 @@ export interface HostAnswer {
 
 export interface AddBody { name: string; location: string; key: string }
 export interface InstallAnswer { installed: boolean; name: string; folder: string; port: number; entry: BlackboxItem }
+export interface DiagFinding { code: string; cause: boolean; title: string; detail: string }
+/** The Diagnostics view: the likely cause in plain words, the newest log lines, and the text to copy. */
+export interface DiagnosticsAnswer {
+  state: string; label: string; detail: string; headline: string;
+  findings: DiagFinding[]; lines: number; log: string; text: string;
+}
 export interface RemoveAnswer { serviceRemoved: boolean; recordingsDeleted: boolean; filesDeleted: number }
 export interface SnapshotAnswer { dir: string; bytes: number; recordings: number; logs: number }
 export interface TestAnswer { ok: boolean; name: string; state: StateInfo; facts: Facts | null }
@@ -343,6 +349,7 @@ export const blackboxApi = {
   targets: (signal?: AbortSignal) => call<TargetsAnswer>('GET', '/this-pc/targets', undefined, signal),
   test: (body: AddBody) => call<TestAnswer>('POST', '/test', body),
   add: (body: AddBody) => call<BlackboxItem>('POST', '', body),
+  diagnostics: (id: string, signal?: AbortSignal) => call<DiagnosticsAnswer>('GET', '/' + encodeURIComponent(id) + '/diagnostics', undefined, signal),
   check: (id: string) => call<BlackboxItem>('POST', '/' + encodeURIComponent(id) + '/check', {}),
   setKey: (id: string, key: string) => call<BlackboxItem>('PUT', '/' + encodeURIComponent(id) + '/key', { key }),
   forget: (id: string) => call<{ removed: boolean; note: string }>('DELETE', '/' + encodeURIComponent(id)),

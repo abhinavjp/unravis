@@ -798,8 +798,10 @@ func TestRemoveRecordingsRemovesFolderWhenEmpty(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(dir, SnapshotsDir, SnapshotName("web-b", t0)), 0o755)
 	_ = os.WriteFile(filepath.Join(dir, FileNameFor(t0)), []byte("a"), 0o644)
 	_ = os.WriteFile(filepath.Join(dir, ManifestName+".bad-20261027"), []byte("a"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, DiagFileName), []byte("a"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, diagOldName), []byte("a"), 0o644)
 	n, err := RemoveRecordings(dir)
-	if err != nil || n != 3 {
+	if err != nil || n != 5 {
 		t.Fatalf("%d %v", n, err)
 	}
 	if _, err := os.Stat(dir); err == nil {

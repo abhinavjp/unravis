@@ -893,7 +893,7 @@ var snapshotDirRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*-\d{4}-\d{2}-\d
 func isStoreTemp(name string) bool { return strings.HasPrefix(name, ManifestName+".tmp-") }
 
 // RemoveRecordings deletes what the recorder wrote in dir and nothing else: the
-// recording files, the manifest (and its .bad- copies and temp files), and the
+// recording files, the diagnostics log, the manifest (and its .bad- copies and temp files), and the
 // snapshot folders Snapshot made. The folder itself goes only when that leaves
 // it empty. A drive root or a system folder is refused outright.
 func RemoveRecordings(dir string) (int, error) {
@@ -936,7 +936,7 @@ func removeRecordings(dir string, keep map[string]bool, removeDir bool) (int, er
 				}
 			}
 			_ = os.Remove(path) // only succeeds when empty
-		case !e.IsDir() && (ValidFileName(name) || name == ManifestName || strings.HasPrefix(name, ManifestName+".bad-") || isStoreTemp(name)):
+		case !e.IsDir() && (ValidFileName(name) || name == ManifestName || name == DiagFileName || name == diagOldName || strings.HasPrefix(name, ManifestName+".bad-") || isStoreTemp(name)):
 			if err := os.Remove(path); err != nil {
 				return n, err
 			}
