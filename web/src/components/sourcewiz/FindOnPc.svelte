@@ -31,7 +31,10 @@
   // Recorder not running as a service: its folder is found by looking for recordings on the drives (the same way the Blackbox card does).
   let bbFolder = $state('');
   const bbReady = $derived(bbFolder !== '');
-  const bbAdded = $derived(wizard.sources.some((s) => s.kind === 'blackbox'));
+  let bbDone = $state(false);
+  let bbBusy = $state(false);
+  // Only this PC's recorder counts here: a recorder on another machine that was added earlier must not hide it.
+  const bbAdded = $derived(bbDone || wizard.sources.some((s) => s.kind === 'blackbox' && s.ref === 'This PC'));
 
   const groups = $derived(galleryGroups(sourcesView.findings, GROUPS));
   const offered = $derived(groups.reduce((n, g) => n + g.entries.length, 0));
@@ -67,13 +70,20 @@
     try {
       const saved = await recorderEntryName(pc && pc.folder === bbFolder ? pc : { listed: false }, bbFolder, 'This PC');
       const result = addSource(wizard.sources, makeSource('blackbox', saved, saved));
-      if (!result.ok) { note = SOURCES_TEXT.limitFull; return false; }
+      if (!result.ok) { if (result.reason === 'duplicate') { bbDone = true; return true; } note = SOURCES_TEXT.limitFull; return false; }
       setSources(result.list);
+      bbDone = true;
       return true;
     } catch { note = WIZ.find.blackboxFailed; return false; }
   }
 
   async function addTicked() {
+    if (bbBusy) return;
+    bbBusy = true;
+    try { await addTickedNow(); } finally { bbBusy = false; }
+  }
+
+  async function addTickedNow() {
     let refused = 0;
     if (bbTick && bbReady && !bbAdded) { if (!(await addBlackbox())) return; }
     bbTick = false;
@@ -125,7 +135,7 @@
               <div class="body">
                 <label class="name" for="{uid}-bbbox">{WIZ.tiles.blackbox.name}</label>
                 <span class="status ok">{bbAdded ? WIZ.find.added : pc?.installed ? (pc.running ? WIZ.find.statusWorks : WIZ.find.blackboxStopped) : WIZ.find.blackboxFolder}</span>
-                <p class="hint">{bbFolder} {pc?.listed && pc.folder === bbFolder ? WIZ.find.blackboxListed : WIZ.find.blackboxNote}</p>
+                <p class="hint">{bbFolder} {pc?.listed && pc.folder === bbFolder ? WIZ.find.blackboxListed : pc?.installed ? WIZ.find.blackboxNote : WIZ.find.blackboxFolderNote}</p>
               </div></div></li>
           </ul>
         </section>
@@ -186,7 +196,7 @@
       {/if}
 
       <div class="actions sticky">
-        <button type="button" class="primary-button" disabled={toAdd.length + (bbTick && bbReady && !bbAdded ? 1 : 0) === 0} onclick={() => void addTicked()}>{WIZ.find.addTicked(toAdd.length + (bbTick && bbReady && !bbAdded ? 1 : 0))}</button>
+        <button type="button" class="primary-button" disabled={bbBusy || toAdd.length + (bbTick && bbReady && !bbAdded ? 1 : 0) === 0} onclick={() => void addTicked()}>{WIZ.find.addTicked(toAdd.length + (bbTick && bbReady && !bbAdded ? 1 : 0))}</button>
       </div>
     {/if}
   {/if}

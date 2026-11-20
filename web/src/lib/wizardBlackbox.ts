@@ -7,9 +7,7 @@ import type { ThisPc } from './blackbox';
  */
 export async function recorderEntryName(pc: Pick<ThisPc, 'listed' | 'listId'>, folder: string, name: string): Promise<string> {
   if (pc.listed && pc.listId) {
-    const list = await blackboxApi.list();
-    const hit = list.items.find((i) => i.id === pc.listId);
-    if (hit) return hit.name;
+    try { const list = await blackboxApi.list(); const hit = list.items.find((i) => i.id === pc.listId); if (hit) return hit.name; } catch { /* fall through to a plain add */ }
   }
   try { return (await blackboxApi.add({ name, location: folder, key: '' })).name; }
   catch (e) { if (e instanceof BlackboxError && e.refusal.existing) return e.refusal.existing.name; throw e; }

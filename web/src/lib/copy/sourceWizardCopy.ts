@@ -56,6 +56,7 @@ export const WIZ = {
     blackboxFolder: 'Recordings found',
     blackboxListed: 'Already in your list of recorders, so it is added once, not twice.',
     blackboxNote: 'The recorder service on this PC writes here. Unravis reads that folder.',
+    blackboxFolderNote: 'Recordings were found in this folder. Unravis reads that folder.',
     blackboxFailed: 'The recorder could not be added. Open Blackbox recorder to see why.',
     mongoPrefill: 'Address filled in for you:',
     sqlPrefill: 'Server address filled in for you:'
