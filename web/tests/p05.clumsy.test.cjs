@@ -367,7 +367,7 @@ test('p05: while a case is being made the guide cannot be left: Back, Next, the 
   assert.match(wizard, /primary-button" disabled=\{busy \|\| nextBlocked\}/);
   assert.match(wizard, /disabled=\{busy \|\| !view\.enabled\}/);
   assert.match(wizard, /beforeunload/);
-  assert.match(wizard, /if \(event\.key === 'Escape'\) \{ event\.stopPropagation\(\); keepWorking\(\); \}/);
+  assert.match(wizard, /<dialog class="wiz-leave-ask"[^>]*oncancel=\{\(e\) => \{ e\.preventDefault\(\); keepWorking\(\); \}\}/);
   const landing = read('src/components/Landing.svelte');
   assert.match(landing, /busy=\{createView\.running \|\| caseMade\(\)\}/);
 });

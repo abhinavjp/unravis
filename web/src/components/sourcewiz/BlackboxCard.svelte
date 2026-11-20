@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { blackboxApi, BlackboxError } from '../../lib/blackbox';
-  import type { FolderCandidate } from '../../lib/blackbox';
+  import { recorderEntryName } from '../../lib/wizardBlackbox';
+  import type { FolderCandidate, ThisPc } from '../../lib/blackbox';
   import { wizard, setSources } from '../../lib/wizard.svelte';
   import { addSource, makeSource } from '../../lib/wizardSources';
   import { openSidePanel } from '../../lib/appState.svelte';
@@ -26,6 +27,7 @@
   let problem = $state('');
   let saving = $state(false);
   let line = $state('');
+  let pcInfo = $state<ThisPc | undefined>();
 
   const location = $derived((choice === ANOTHER ? typed : choice).trim());
 
@@ -33,6 +35,7 @@
     loading = true; problem = ''; verdict = '';
     try {
       const pc = await blackboxApi.thisPc();
+      pcInfo = pc;
       if (pc.installed && pc.running && pc.folder) {
         fromService = true;
         folders = [{ path: pc.folder, drive: '', recordings: 0, newest: '', fromService: true, recommended: true }];
@@ -69,9 +72,7 @@
     if (label === '' || location === '' || saving) { problem = label === '' ? WIZ.blackbox.nameHint : ''; return; }
     saving = true; problem = '';
     try {
-      let saved = label;
-      try { saved = (await blackboxApi.add({ name: label, location, key: '' })).name; }
-      catch (e) { if (e instanceof BlackboxError && e.refusal.existing) saved = e.refusal.existing.name; else throw e; }
+      const saved = await recorderEntryName(pcInfo && location === pcInfo.folder ? pcInfo : { listed: false }, location, label);
       const result = addSource(wizard.sources, makeSource('blackbox', saved, saved));
       if (!result.ok) { problem = WIZ.blackbox.notListed; saving = false; return; }
       setSources(result.list);

@@ -51,6 +51,12 @@ export const WIZ = {
     statusNeedsSteps: 'Needs an export',
     statusNotFound: 'Not found',
     added: 'Added',
+    blackboxGroup: 'Blackbox recorder',
+    blackboxStopped: 'Installed, not running',
+    blackboxFolder: 'Recordings found',
+    blackboxListed: 'Already in your list of recorders, so it is added once, not twice.',
+    blackboxNote: 'The recorder service on this PC writes here. Unravis reads that folder.',
+    blackboxFailed: 'The recorder could not be added. Open Blackbox recorder to see why.',
     mongoPrefill: 'Address filled in for you:',
     sqlPrefill: 'Server address filled in for you:'
   },

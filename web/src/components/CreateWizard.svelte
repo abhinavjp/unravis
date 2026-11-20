@@ -39,6 +39,7 @@
   let heading = $state<HTMLElement>();
   let titleField = $state<HTMLInputElement>();
   let keepButton = $state<HTMLButtonElement>();
+  let askDialog = $state<HTMLDialogElement>();
   let leaving = $state(false);
   let resumed = $state(false);
   // The name problem is shown once the person has left the field or tried to go on; a fresh empty field is not scolded.
@@ -110,10 +111,12 @@
     if (!dirty) { doLeave(); return; }
     leaving = true;
     await tick();
+    if (askDialog && !askDialog.open) askDialog.showModal();
     keepButton?.focus();
   }
 
   function doLeave() {
+    if (askDialog?.open) askDialog.close();
     resetWizard();
     leaving = false;
     onLeave();
@@ -121,10 +124,7 @@
 
   function keepWorking() {
     leaving = false;
-  }
-
-  function leaveKey(event: KeyboardEvent) {
-    if (event.key === 'Escape') { event.stopPropagation(); keepWorking(); }
+    if (askDialog?.open) askDialog.close();
   }
 
   function startOver() {
@@ -149,16 +149,15 @@
   </header>
 
   {#if leaving}
-    <!-- Escape works from either button inside; the group itself is not a control. -->
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="wiz-leave-ask" role="group" aria-labelledby="{uid}-ask" onkeydown={leaveKey}>
+    <!-- A real pop-up: the page behind it is inert, Escape and the dark backdrop both mean "keep working". -->
+    <dialog class="wiz-leave-ask" bind:this={askDialog} aria-labelledby="{uid}-ask" aria-describedby="{uid}-ask-text" oncancel={(e) => { e.preventDefault(); keepWorking(); }} onclick={(e) => { if (e.target === e.currentTarget) keepWorking(); }}>
       <strong id="{uid}-ask">{WIZARD_TEXT.leaveAskTitle}</strong>
-      <p>{WIZARD_TEXT.leaveAskText}</p>
+      <p id="{uid}-ask-text">{WIZARD_TEXT.leaveAskText}</p>
       <div class="wiz-leave-actions">
         <button type="button" class="primary-button" bind:this={keepButton} onclick={keepWorking}>{WIZARD_TEXT.leaveNo}</button>
         <button type="button" class="secondary-button" onclick={doLeave}>{WIZARD_TEXT.leaveYes}</button>
       </div>
-    </div>
+    </dialog>
   {/if}
 
   <nav class="steps" aria-label={WIZARD_TEXT.stepsLabel}>
@@ -256,9 +255,12 @@
   .wiz-name { margin: 0; font-size: var(--fs-6); font-weight: 600; }
   .wiz-note { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .wiz-resumed { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
-  .wiz-leave-ask { display: grid; gap: var(--space-2); max-width: 72ch; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--accent); border-radius: var(--radius-sm); }
+  .wiz-leave-ask { box-sizing: border-box; width: min(440px, calc(100vw - 32px)); padding: var(--space-5); color: var(--text); background: var(--surface); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; }
+  .wiz-leave-ask[open] { display: grid; gap: var(--space-3); }
+  .wiz-leave-ask::backdrop { background: var(--scrim); }
+  .wiz-leave-ask strong { font-size: var(--fs-5); }
   .wiz-leave-ask p { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
-  .wiz-leave-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .wiz-leave-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: flex-end; }
 
   .steps ol { display: flex; margin: 0; padding: 0; list-style: none; border-bottom: var(--hairline-width) solid var(--line); overflow-x: auto; }
   .step { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; padding: var(--space-3) var(--space-5); color: var(--text-2); background: transparent; border: 0; border-bottom: 2px solid transparent; font: inherit; font-size: var(--fs-4); white-space: nowrap; cursor: pointer; }

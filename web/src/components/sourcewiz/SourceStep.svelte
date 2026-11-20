@@ -84,13 +84,13 @@
           <ul>{#each g.items as e, i (i)}<li class="ro">{e.label}</li>{/each}</ul>
         {/each}
       {/if}
-      <h4 tabindex="-1" bind:this={heading}>{adding ? WIZ.toAddHeading : WIZ.railHeading}</h4>
-      {#if wizard.sources.length === 0}<p class="hint">{WIZ.railEmpty}</p>{/if}
+      <div class="railtop"><h4 tabindex="-1" bind:this={heading}>{adding ? WIZ.toAddHeading : WIZ.railHeading}</h4><span class="count" aria-hidden="true">{wizard.sources.length}</span></div>
+      {#if wizard.sources.length === 0}<p class="empty">{WIZ.railEmpty}</p>{/if}
       {#each groups as g (g.title)}
         <p class="gtitle">{g.title}</p>
         <ul>
           {#each g.items as s (sourceKey(s))}
-            <li><span class="lbl">{s.label || s.ref}</span> <button type="button" class="quiet-button" aria-label="{WIZ.remove} {s.label || s.ref}" onclick={() => void remove(sourceKey(s))}>{WIZ.remove}</button></li>
+            <li class="item"><span class="lbl">{s.label || s.ref}</span><button type="button" class="quiet-button" aria-label="{WIZ.remove} {s.label || s.ref}" onclick={() => void remove(sourceKey(s))}>{WIZ.remove}</button></li>
           {/each}
         </ul>
       {/each}
@@ -117,7 +117,7 @@
         {/if}
       {:else}
         <div class="cardwrap" tabindex="-1" bind:this={cardEl}>
-        <button type="button" class="quiet-button" onclick={() => void back()}>← {WIZ.back}</button>
+        <div class="cardbar"><button type="button" class="secondary-button" onclick={() => void back()}>{WIZ.back}</button></div>
         {#if dropNote}<p class="hint" role="status">{dropNote}</p>{/if}
         {#if card === 'pc'}<FindOnPc {connected} onCard={(c, f) => void open(c, f ?? '')} onDone={() => void back()} />
         {:else if card === 'mongo'}{#if from !== ''}<p class="hint">{WIZ.find.mongoPrefill} <code>{connectPrefill('mongo')}</code></p>{/if}<MongoClassify prefill={from !== '' ? connectPrefill('mongo') : ''} onDone={() => (from !== '' ? connectedDone() : void back())} />
@@ -138,23 +138,31 @@
   .nutshell { margin: 0; color: var(--text-2); font-size: var(--fs-4); max-width: 70ch; }
   .layout { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr); gap: var(--space-5); align-items: start; }
   @media (max-width: 720px) { .layout { grid-template-columns: minmax(0, 1fr); } }
-  .rail { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  .rail { display: grid; gap: var(--space-2); align-content: start; min-width: 0; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  .railtop { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+  .count { min-width: 22px; padding: 0 var(--space-2); text-align: center; color: var(--text-2); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); }
+  .empty { margin: 0; padding: var(--space-3); color: var(--text-2); font-size: var(--fs-3); border: var(--hairline-width) dashed var(--control-line); border-radius: var(--radius-sm); }
   .rail h4, h3 { margin: 0; font-size: var(--fs-5); font-weight: 600; }
   .rail h4:focus { outline: none; } .rail h4:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
-  .gtitle { margin: var(--space-2) 0 0; font-weight: 600; font-size: var(--fs-3); }
+  .gtitle { margin: var(--space-3) 0 0; color: var(--text-2); font-weight: 600; font-size: var(--fs-3); }
   .rail ul { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-1); }
-  .rail li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: space-between; min-width: 0; }
+  .rail li { display: flex; gap: var(--space-2); align-items: center; justify-content: space-between; min-width: 0; }
+  .item { padding: var(--space-2) var(--space-3); background: var(--bg); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  .item .quiet-button { flex-shrink: 0; font-size: var(--fs-2); }
   .lbl { overflow-wrap: anywhere; min-width: 0; }
   .ro { color: var(--text-2); }
   .tray { margin: var(--space-2) 0 0; font-weight: 600; }
   .main { display: grid; gap: var(--space-3); min-width: 0; align-content: start; }
-  .tiles { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: var(--space-3); }
-  .tile { width: 100%; display: grid; gap: var(--space-1); text-align: left; padding: var(--space-3); min-height: 64px; background: var(--surface); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); cursor: pointer; font: inherit; color: inherit; }
+  .tiles { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: var(--space-3); }
+  @media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 520px) { .tiles { grid-template-columns: minmax(0, 1fr); } }
+  .tiles li { display: grid; min-width: 0; }
+  .tile { box-sizing: border-box; width: 100%; height: 100%; display: grid; align-content: start; gap: var(--space-1); text-align: left; padding: var(--space-3) var(--space-4); min-height: 84px; background: var(--surface); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); cursor: pointer; font: inherit; color: inherit; }
   .tile:hover:not(:disabled) { background: var(--surface-2); }
   .tile:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-  .tile.start { border-color: var(--accent); border-width: 2px; }
+  .tile.start { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
   .tile:disabled { opacity: .55; cursor: not-allowed; }
-  .tname { font-weight: 600; font-size: var(--fs-4); display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+  .tname { font-weight: 600; font-size: var(--fs-4); display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: space-between; }
   .badge { padding: 0 var(--space-2); font-size: var(--fs-2); border: var(--hairline-width) solid var(--accent); border-radius: var(--radius-sm); }
   .tsub { color: var(--text-2); font-size: var(--fs-3); }
   .hint { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
@@ -162,7 +170,8 @@
   .dropzone:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .names summary { cursor: pointer; font-weight: 600; padding: var(--space-2) 0; }
   .mine { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-3); }
-  .cardwrap { display: grid; gap: var(--space-3); min-width: 0; } .cardwrap:focus { outline: none; }
+  .cardwrap { display: grid; gap: var(--space-3); min-width: 0; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  .cardbar { display: flex; justify-content: flex-end; } .cardwrap:focus { outline: none; }
   .dropzone.off { opacity: .55; cursor: not-allowed; }
   .foot { margin-top: var(--space-2); }
 </style>

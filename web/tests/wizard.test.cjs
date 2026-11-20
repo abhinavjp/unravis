@@ -309,7 +309,8 @@ test('leaving asks first when there is something to lose, moves focus to the saf
   const src = read('src/components/CreateWizard.svelte');
   assert.match(src, /if \(!dirty\) \{ doLeave\(\); return; \}/);
   assert.match(src, /keepButton\?\.focus\(\)/);
-  assert.match(src, /event\.key === 'Escape'/);
+  assert.match(src, /oncancel=\{\(e\) => \{ e\.preventDefault\(\); keepWorking\(\); \}\}/);
+  assert.match(src, /askDialog\.showModal\(\)/);
   assert.match(src, /beforeunload/);
 });
 
