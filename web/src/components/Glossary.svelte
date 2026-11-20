@@ -5,7 +5,8 @@
   import { searchTerms } from '../lib/copy/lookup';
   import { HELP_STEPS, HELP_TEXT, glossaryCount } from '../lib/copy/screenCopy';
   import { versionLine } from '../lib/versionLine';
-  import { updateCheckNote, updateCheckState, updatePreviewNow, isOwnReleaseUrl } from '../lib/updateCheck';
+  import { updateCheckNote, updateCheckState, updatePreviewNow, isOwnReleaseUrl, UPDATE_INTERVALS, intervalLabel, checkedNote } from '../lib/updateCheck';
+  import { refreshUpdateStatus, setUpdateReply, updates } from '../lib/updateState.svelte';
   import type { UpdateCheckReply } from '../lib/types';
   import Drawer from './Drawer.svelte';
   import HelpGuide from './HelpGuide.svelte';
@@ -48,6 +49,21 @@
   let update = $state<UpdateCheckReply | null>(null);
   let checkId = $state(0);
   const unreachableReply = (): UpdateCheckReply => ({ status: 'unreachable', current: '', latest: '', url: '' });
+  // The automatic check and its settings. The program checks on its own; these only change how often, or switch it off.
+  const settings = $derived(updates.reply);
+  const auto = $derived(settings?.auto ?? true);
+  const minutes = $derived(settings?.intervalMinutes ?? 30);
+  const intervalChoices = $derived(UPDATE_INTERVALS.some(item => item.minutes === minutes) ? UPDATE_INTERVALS : [...UPDATE_INTERVALS, { minutes, label: intervalLabel(minutes) }]);
+  const canChange = $derived(!!settings && settings.status !== 'dev');
+  let settingsNote = $state('');
+  async function saveSettings(nextAuto: boolean, nextMinutes: number, undo: () => void) {
+    settingsNote = '';
+    try {
+      const reply = await api.updateSettings(nextAuto, nextMinutes);
+      if (reply && typeof reply.status === 'string') setUpdateReply(reply);
+    } catch { settingsNote = 'Could not save this choice. It was not changed.'; undo(); await refreshUpdateStatus(); }
+  }
+  onMount(() => { void refreshUpdateStatus(); });
   async function checkForUpdates() {
     if (checking) return;
     checking = true;
@@ -55,6 +71,7 @@
     try {
       const reply = await api.updateCheck(updatePreviewNow());
       update = reply && typeof reply.status === 'string' ? reply : unreachableReply();
+      if (update.status !== 'unreachable' || update.current) setUpdateReply({ ...update, auto: update.auto ?? auto, intervalMinutes: update.intervalMinutes ?? minutes });
     } catch { update = unreachableReply(); }
     finally { checking = false; }
     checkId += 1;
@@ -113,8 +130,21 @@
       <button type="button" class="update-button" data-testid="copy-log-folder" onclick={copyLogFolderPath}>Copy folder path</button>{#if logPathCopied}<span class="log-copied" role="status">Copied</span>{/if}{/if}
       <p>Send the newest unravis.log to your contact; it contains no passwords or case data.</p>
     </section>
-    <div class="update-check"><button type="button" class="update-button" data-testid="update-check-button" aria-disabled={checking} onclick={checkForUpdates}>{checking ? 'Checking...' : 'Check for updates'}</button>
-      <div role="status" aria-live="polite" aria-busy={checking}>{#if update}{#key checkId}<p class="update-note" data-testid="update-check-result" data-state={updateCheckState(update)}>{updateCheckNote(update)}{#if update.status === 'available' && update.url && isOwnReleaseUrl(update.url)}{' '}<a data-testid="update-check-link" href={update.url} target="_blank" rel="noopener noreferrer">Open the release page</a>{/if}</p>{/key}{/if}</div></div>
+    <section class="updates" aria-labelledby="updates-title">
+      <h3 id="updates-title">Updates</h3>
+      <p>Unravis looks for a new version on its own and tells you here. It never installs one by itself.</p>
+      {#if canChange}
+        <label class="updates-auto"><input type="checkbox" data-testid="update-auto" checked={auto} onchange={(event) => { const box = event.currentTarget; void saveSettings(box.checked, minutes, () => { box.checked = auto; }); }} /> Check automatically</label>
+        <label class="updates-every" for="update-every">How often</label>
+        <select id="update-every" data-testid="update-every" value={minutes} disabled={!auto} onchange={(event) => { const pick = event.currentTarget; void saveSettings(auto, Number(pick.value), () => { pick.value = String(minutes); }); }}>
+          {#each intervalChoices as item (item.minutes)}<option value={item.minutes}>{item.label}</option>{/each}
+        </select>
+        {#if settingsNote}<p class="update-note" role="alert" data-testid="update-settings-note">{settingsNote}</p>{/if}
+        {#if settings && settings.checkedAt}<p class="updates-checked" data-testid="update-checked">{checkedNote(settings.checkedAt)}</p>{/if}
+      {/if}
+      <div class="update-check"><button type="button" class="update-button" data-testid="update-check-button" aria-disabled={checking} onclick={checkForUpdates}>{checking ? 'Checking...' : 'Check for updates'}</button>
+        <div role="status" aria-live="polite" aria-busy={checking}>{#if update}{#key checkId}<p class="update-note" data-testid="update-check-result" data-state={updateCheckState(update)}>{updateCheckNote(update)}{#if update.status === 'available' && update.url && isOwnReleaseUrl(update.url)}{' '}<a data-testid="update-check-link" href={update.url} target="_blank" rel="noopener noreferrer">Open the release page</a>{/if}</p>{/key}{/if}</div></div>
+    </section>
   {/if}
 </Drawer>
 
@@ -141,6 +171,16 @@
   .support-logs p { margin: 0 0 6px; color: var(--text-2); }
   .support-logs .log-path { color: var(--text); font: 12px var(--mono); overflow-wrap: anywhere; }
   .support-logs .log-copied { margin-left: 8px; color: var(--text-2); font-size: 12px; }
+  .updates { margin-top: 18px; display: grid; gap: 6px; }
+  .updates h3 { margin: 0 0 2px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+  .updates p { margin: 0; color: var(--text-2); }
+  .updates-auto { display: inline-flex; align-items: center; gap: 8px; margin-top: 4px; color: var(--text); font-size: 13px; cursor: pointer; }
+  .updates-auto input { margin: 0; accent-color: var(--accent); }
+  .updates-every { margin-top: 4px; color: var(--text-2); font-size: 12px; font-weight: 500; }
+  .updates select { width: 100%; max-width: 240px; min-height: 34px; padding: 6px 10px; color: var(--text); background: var(--bg); border: 1px solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: 13px; }
+  .updates select:disabled { opacity: .55; }
+  .updates select:focus-visible, .updates-auto:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .updates-checked { font-size: 12px; }
   .update-check { margin-top: 10px; display: grid; gap: 8px; justify-items: start; }
   .update-button { border: 1px solid var(--control-line); background: transparent; color: var(--text); padding: 6px 12px; border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
   .guide-open { margin-top: 10px; }

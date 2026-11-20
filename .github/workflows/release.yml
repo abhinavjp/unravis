@@ -212,6 +212,12 @@ jobs:
             $path = Join-Path 'dist' $name
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing release asset: $path" }
           }
+          # The unsigned update manifest (docs/auto-updater/SPEC.md section 5). CI signs nothing: the owner signs it on
+          # their own PC (tools/release/Sign-Release.ps1) before pressing Publish. -seq must only ever go up: run number x 100 + attempt.
+          $Commit = (git rev-parse HEAD).Trim()
+          go run ./tools/release/sigtool manifest -dir dist -version "$Version" -commit $Commit -seq ([int64]${{ github.run_number }} * 100 + [int64]${{ github.run_attempt }}) -out dist/update-manifest.json
+          if ($LASTEXITCODE -ne 0) { throw "sigtool manifest failed with exit code $LASTEXITCODE" }
+          $Assets += 'update-manifest.json'
           ./tools/release/New-Sha256Sums.ps1 -AssetDir 'dist' -Names $Assets -OutFile 'dist/SHA256SUMS.txt'
           $Assets += 'SHA256SUMS.txt'
           ($Assets -join "`n") | Set-Content -Encoding utf8 'dist/ASSET-LIST.txt'
@@ -244,6 +250,7 @@ jobs:
             dist/unravis-v*-windows-x64.zip
             dist/unravis-blackbox-v*-windows-x64.zip
             dist/unravis-setup-v*-windows-x64.exe
+            dist/update-manifest.json
             dist/SHA256SUMS.txt
             dist/ASSET-LIST.txt
             dist/RELEASE-NOTES.md
@@ -328,6 +335,10 @@ jobs:
             $isDraft = [bool]$found[0].isDraft
             if (-not $isDraft) { throw "Release $tag is already published. Refusing to change a published release; delete it by hand first if you really mean to rebuild it." }
             Write-Host "Draft $tag exists. Replacing its assets and keeping its notes."
+            # A re-run makes a new update-manifest.json. The owner's old signature no longer matches it, so drop it first
+            # (a missing one is fine); it must be signed again.
+            gh release delete-asset $tag update-manifest.json.sig --yes 2>$null
+            $global:LASTEXITCODE = 0
             gh release upload $tag @assetPaths --clobber
             if ($LASTEXITCODE -ne 0) { throw "gh release upload failed with exit code $LASTEXITCODE" }
           } else {

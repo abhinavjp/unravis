@@ -40,3 +40,4 @@
 *.tmp
 Thumbs.db
 .DS_Store
+/audit-explorer

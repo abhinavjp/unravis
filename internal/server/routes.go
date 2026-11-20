@@ -178,6 +178,10 @@ var routes = []route{
 	}},
 	{pattern: "/api/version", match: exactPath("/api/version"), methods: get((*handler).version)},
 	{pattern: "/api/update-check", match: exactPath("/api/update-check"), methods: post((*handler).updateCheck)},
+	{pattern: "/api/update/status", match: exactPath("/api/update/status"), methods: get((*handler).updateStatus)},
+	{pattern: "/api/update/settings", match: exactPath("/api/update/settings"), methods: map[string]routeFunc{
+		http.MethodPut: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.updateSettingsPut(w, r) },
+	}},
 	{pattern: "/api/sources", match: exactPath("/api/sources"), methods: map[string]routeFunc{
 		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.sources(w, r) },
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.addSource(w, r) },

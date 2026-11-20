@@ -1,7 +1,7 @@
 import type { UpdateCheckReply } from './types';
 
 const UNREACHABLE_NOTE = 'Could not check for updates. Check your connection and try again later.';
-const PREVIEWS = ['latest', 'available', 'offline'] as const;
+const PREVIEWS = ['latest', 'available', 'offline', 'unverified'] as const;
 const OWN_RELEASE_PREFIX = 'https://github.com/abhinavjp/unravis/';
 
 /** The one sentence the Help panel shows for a check result. */
@@ -13,17 +13,21 @@ export function updateCheckNote(reply: UpdateCheckReply): string {
       return `Version ${reply.latest} is available. You have v${reply.current}.`;
     case 'dev':
       return 'This is a development build, so there is nothing to compare.';
+    case 'unverified':
+      return 'An update answer came back, but it did not pass the safety check, so it was ignored.';
+    case 'none':
+      return 'No check has run yet.';
     default:
       return UNREACHABLE_NOTE;
   }
 }
 
 /** The demo-only preview named in the URL hash, such as #update=available. Any other value gives ''. */
-export function updatePreviewFrom(hash: string): '' | 'latest' | 'available' | 'offline' {
+export function updatePreviewFrom(hash: string): '' | 'latest' | 'available' | 'offline' | 'unverified' {
   const match = /(?:^#|[#&])update=([a-z]+)/.exec(hash);
   if (!match) return '';
   const name = match[1];
-  return (PREVIEWS as readonly string[]).includes(name) ? (name as 'latest' | 'available' | 'offline') : '';
+  return (PREVIEWS as readonly string[]).includes(name) ? (name as 'latest' | 'available' | 'offline' | 'unverified') : '';
 }
 
 /** True only for a release page in this project's own GitHub repository. */
@@ -32,12 +36,12 @@ export function isOwnReleaseUrl(url: string): boolean {
 }
 
 /** The data-state value for a reply: always one of latest, available, unreachable or dev. */
-export function updateCheckState(reply: { status?: unknown } | null | undefined): 'latest' | 'available' | 'unreachable' | 'dev' {
+export function updateCheckState(reply: { status?: unknown } | null | undefined): 'latest' | 'available' | 'unreachable' | 'dev' | 'unverified' | 'none' {
   const status = reply && typeof reply.status === 'string' ? reply.status : '';
-  return status === 'latest' || status === 'available' || status === 'dev' ? status : 'unreachable';
+  return status === 'latest' || status === 'available' || status === 'dev' || status === 'unverified' || status === 'none' ? status : 'unreachable';
 }
 
-type UpdatePreview = '' | 'latest' | 'available' | 'offline';
+type UpdatePreview = '' | 'latest' | 'available' | 'offline' | 'unverified';
 const UPDATE_PREVIEW_KEY = 'unravis.updatePreview';
 let updatePreview: UpdatePreview = '';
 
@@ -74,6 +78,37 @@ export function updateCheckSentences(): string[] {
     updateCheckNote({ status: 'latest', current: '1.2.0', latest: '1.2.0', url: '' }),
     updateCheckNote({ status: 'available', current: '1.2.0', latest: '1.3.0', url: 'https://github.com/abhinavjp/unravis/releases/tag/v1.3.0' }),
     updateCheckNote({ status: 'dev', current: 'dev', latest: '', url: '' }),
-    updateCheckNote({ status: 'unreachable', current: '1.2.0', latest: '', url: '' })
+    updateCheckNote({ status: 'unreachable', current: '1.2.0', latest: '', url: '' }),
+    updateCheckNote({ status: 'unverified', current: '1.2.0', latest: '', url: '' })
   ];
+}
+
+/** The "how often" choices. A saved value that is not here is shown as its own entry. */
+export const UPDATE_INTERVALS: { minutes: number; label: string }[] = [
+  { minutes: 30, label: 'Every 30 minutes' },
+  { minutes: 60, label: 'Every hour' },
+  { minutes: 360, label: 'Every 6 hours' },
+  { minutes: 1440, label: 'Every day' }
+];
+
+/** The label for any saved interval, such as "Every 45 minutes". */
+export function intervalLabel(minutes: number): string {
+  const known = UPDATE_INTERVALS.find(item => item.minutes === minutes);
+  if (known) return known.label;
+  if (minutes % 1440 === 0) return `Every ${minutes / 1440} days`;
+  if (minutes % 60 === 0) return `Every ${minutes / 60} hours`;
+  return `Every ${minutes} minutes`;
+}
+
+/** "Last checked 14:05" or '' when no check has run. The time is the person's own clock. */
+export function checkedNote(checkedAt: string | undefined, now: Date = new Date()): string {
+  if (!checkedAt) return '';
+  const when = new Date(checkedAt);
+  if (Number.isNaN(when.getTime())) return '';
+  const minutes = Math.max(0, Math.round((now.getTime() - when.getTime()) / 60000));
+  if (minutes < 1) return 'Last checked just now.';
+  if (minutes < 60) return `Last checked ${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago.`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `Last checked ${hours} ${hours === 1 ? 'hour' : 'hours'} ago.`;
+  return `Last checked ${Math.round(hours / 24)} days ago.`;
 }
