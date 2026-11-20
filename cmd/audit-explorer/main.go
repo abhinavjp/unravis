@@ -198,6 +198,11 @@ func run(args []string, getenv func(string) string) error {
 	if logFile != nil {
 		defer logFile.Close()
 	}
+	// A freshly installed version is watched for its first starts; one that keeps failing hands over to the old setup (health.go).
+	endHealth, handedOver := startHealth(f.demo, getenv)
+	if handedOver {
+		return nil
+	}
 
 	wired, err := wireData(f, demoCfg, getenv)
 	if err != nil {
@@ -306,7 +311,9 @@ func run(args []string, getenv func(string) string) error {
 	if logFile != nil {
 		logStart(logFile, getenv, listener, f.demo, launchOutcome(opened, printed))
 	}
-	return awaitShutdown(signalContext, serveDone, removeSession, httpServer)
+	err = awaitShutdown(signalContext, serveDone, removeSession, httpServer)
+	endHealth(err)
+	return err
 }
 
 // runMCP serves the read-only MCP bridge over stdio, against the dashboard another copy already runs.

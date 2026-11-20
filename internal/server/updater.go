@@ -216,6 +216,11 @@ func (u *Updater) checkOnce(ctx context.Context) (res update.Result, ok bool) {
 	if ctx.Err() != nil {
 		return res, false
 	}
+	// A version that failed to run on this PC and was rolled back is not offered again (docs/auto-updater/SPEC.md section 9).
+	// Only that exact version is skipped; the next one is offered as usual.
+	if res.Status == update.StatusAvailable && res.Manifest != nil && (&update.Tracker{StateDir: u.dir}).Skipped(res.Manifest.Version) {
+		res.Status, res.Manifest = update.StatusLatest, nil
+	}
 	u.mu.Lock()
 	u.last, u.checked, u.haveLast = res, time.Now(), true
 	switch res.Status {
