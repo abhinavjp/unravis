@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 )
@@ -132,6 +131,9 @@ type healthState struct {
 	At        time.Time `json:"at"`
 	Starts    int       `json:"starts"`
 	Confirmed bool      `json:"confirmed"`
+	// Recovered says the hand-over to the old setup was tried for this marker. It is tried once: a person who closes the setup window
+	// (or cannot pass its administrator prompt) must still get the app to start.
+	Recovered bool `json:"recovered,omitempty"`
 }
 
 func (t *Tracker) statePath() string { return filepath.Join(t.StateDir, "health.json") }
@@ -165,7 +167,7 @@ func (t *Tracker) Begin() (Action, Marker) {
 		return ActNone, Marker{}
 	}
 	s := t.load(m)
-	if s.Confirmed {
+	if s.Confirmed || s.Recovered {
 		return ActNone, m
 	}
 	s.Starts++
@@ -175,6 +177,20 @@ func (t *Tracker) Begin() (Action, Marker) {
 		return ActRecover, m
 	}
 	return ActWatch, m
+}
+
+// MarkRecovered records that the rollback is being handed over, so no later start tries it again.
+func (t *Tracker) MarkRecovered() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	m, ok := t.marker()
+	if !ok {
+		return
+	}
+	s := t.load(m)
+	s.Recovered = true
+	_ = os.MkdirAll(t.StateDir, 0o755)
+	_ = writeJSON(t.statePath(), s)
 }
 
 // Confirm says the new version stayed up long enough. The counter stops mattering.
@@ -223,8 +239,7 @@ func (t *Tracker) Skip(version string) {
 			return
 		}
 	}
-	f.Versions = append(f.Versions, version)
-	sort.Strings(f.Versions)
+	f.Versions = append(f.Versions, version) // oldest first; the oldest go when the list is full
 	if len(f.Versions) > maxSkips {
 		f.Versions = f.Versions[len(f.Versions)-maxSkips:]
 	}

@@ -136,3 +136,14 @@ func TestOversizedStateFileIsIgnored(t *testing.T) {
 		t.Fatal("huge file read")
 	}
 }
+
+func TestSkipListKeepsTheNewestByInsertionNotByText(t *testing.T) {
+	tr := &Tracker{StateDir: t.TempDir()}
+	for i := 0; i < maxSkips; i++ {
+		tr.Skip("1.0." + string(rune('a'+i)))
+	}
+	tr.Skip("0.9.0") // sorts before every entry as text, but is the newest added
+	if !tr.Skipped("0.9.0") || tr.Skipped("1.0.a") {
+		t.Fatal("the oldest entry should go, not the one that sorts first")
+	}
+}

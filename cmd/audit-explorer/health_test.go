@@ -43,26 +43,15 @@ func TestGoBackThatCannotStartLetsTheAppStart(t *testing.T) {
 	}
 }
 
-func TestACrashIsNotCountedAsAVisit(t *testing.T) {
-	for name, run := range map[string]func(end func(*error)) (err error){
-		"error": func(end func(*error)) (err error) { defer end(&err); return errors.New("port in use") },
-		"panic": func(end func(*error)) (err error) {
-			defer func() { _ = recover() }() // the test catches what end raises again
-			defer end(&err)
-			panic("boom")
-		},
-	} {
-		tr, _ := healthRig(t)
-		tr.Begin()
-		run(watchHealth(tr, time.Hour))
-		if a, _ := tr.Begin(); a != update.ActWatch {
-			t.Fatalf("%s: %v", name, a)
-		}
-		// two starts are on record, so the failure was counted: one more unconfirmed start per loop reaches recovery.
-		tr.Begin()
-		if a, _ := tr.Begin(); a != update.ActRecover {
-			t.Fatalf("%s: a failed run did not count: %v", name, a)
-		}
+func TestAFailedRunIsNotCountedAsAVisit(t *testing.T) {
+	tr, _ := healthRig(t)
+	tr.Begin()
+	// an early error return never calls end, and a returned error is not a clean end
+	watchHealth(tr, time.Hour)(errors.New("port in use"))
+	tr.Begin()
+	tr.Begin()
+	if a, _ := tr.Begin(); a != update.ActRecover {
+		t.Fatalf("a failed run did not count: %v", a)
 	}
 }
 
@@ -70,11 +59,21 @@ func TestACleanShortVisitDoesNotCount(t *testing.T) {
 	tr, _ := healthRig(t)
 	for i := 0; i < 10; i++ {
 		tr.Begin()
-		var err error
-		func() { defer watchHealth(tr, time.Hour)(&err) }()
+		watchHealth(tr, time.Hour)(nil)
 	}
 	if a, _ := tr.Begin(); a != update.ActWatch {
 		t.Fatalf("%v", a)
+	}
+}
+
+func TestARollbackIsHandedOverOnlyOnce(t *testing.T) {
+	tr, m := healthRig(t)
+	for i := 0; i <= update.MaxFailedStarts; i++ {
+		tr.Begin()
+	}
+	goBack(tr, m, func(string, string, string) error { return nil }, func(string, ...any) {})
+	if a, _ := tr.Begin(); a != update.ActNone {
+		t.Fatalf("the app must start once the rollback was tried: %v", a)
 	}
 }
 
@@ -83,8 +82,7 @@ func TestStayingUpConfirms(t *testing.T) {
 	tr.Begin()
 	end := watchHealth(tr, 10*time.Millisecond)
 	time.Sleep(80 * time.Millisecond)
-	var err error
-	end(&err)
+	end(nil)
 	for i := 0; i < 6; i++ {
 		if a, _ := tr.Begin(); a != update.ActNone {
 			t.Fatalf("not confirmed: %v", a)

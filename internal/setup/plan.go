@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -145,7 +146,7 @@ func installSteps(p *Plan) []Step {
 		Step{ID: "state", Title: "Save the setup choices", Do: p.saveState},
 		Step{ID: "verify", Title: "Check that Unravis starts", Do: p.verify},
 	)
-	if p.Op == OpUpgrade && p.Old != nil {
+	if (p.Op == OpUpgrade || p.Op == OpRepair) && p.Old != nil {
 		steps = append(steps, Step{ID: "keep-previous", Title: "Keep the old version in case it is needed", Do: p.keepPrevious})
 	}
 	return steps
@@ -833,6 +834,13 @@ func (p *Plan) keepPrevious(ctx context.Context, t *Txn) error {
 		t.log("previous version: the old setup program was not in the folder, so nothing is kept to go back to")
 		return nil
 	}
+	// A setup from before the hand-over checks cannot be started the way a rollback starts it (it would refuse the flags), so
+	// keeping it would only make a rollback that cannot work.
+	if !setupCanBeRolledBackTo(old) {
+		t.log("previous version: the old setup program is too old to be started for a rollback, so nothing is kept")
+		_ = os.RemoveAll(dir)
+		return nil
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		t.log("previous version: could not clear the earlier copy: " + err.Error())
 		return nil
@@ -865,6 +873,21 @@ func (p *Plan) keepPrevious(ctx context.Context, t *Txn) error {
 	}
 	t.log("previous version " + m.From + " kept in " + dir)
 	return nil
+}
+
+// setupCanBeRolledBackTo says the setup program at path knows the flags a rollback passes to it. The flag names are plain strings in the
+// program, so this reads them from the file; a setup that lacks one is from before the hand-over checks.
+func setupCanBeRolledBackTo(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, flagName := range []string{"expect-sha256", "expect-version", "allow-downgrade"} {
+		if !bytes.Contains(data, []byte(flagName)) {
+			return false
+		}
+	}
+	return true
 }
 
 // checkAdminOnly refuses a folder that someone other than administrators, the system or a service may change.

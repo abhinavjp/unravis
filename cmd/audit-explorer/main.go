@@ -145,7 +145,7 @@ func storeOptions(f runFlags) []store.Option {
 
 // run is the whole program after the command line is parsed. Each step is a small named function below; run keeps their order and the
 // defers that undo them (they run last-in first-out, so the session file goes before the server, the server before the stores).
-func run(args []string, getenv func(string) string) (runErr error) {
+func run(args []string, getenv func(string) string) error {
 	f, err := parseFlags(args)
 	if err != nil {
 		return err
@@ -203,7 +203,6 @@ func run(args []string, getenv func(string) string) (runErr error) {
 	if handedOver {
 		return nil
 	}
-	defer endHealth(&runErr)
 
 	wired, err := wireData(f, demoCfg, getenv)
 	if err != nil {
@@ -312,7 +311,9 @@ func run(args []string, getenv func(string) string) (runErr error) {
 	if logFile != nil {
 		logStart(logFile, getenv, listener, f.demo, launchOutcome(opened, printed))
 	}
-	return awaitShutdown(signalContext, serveDone, removeSession, httpServer)
+	err = awaitShutdown(signalContext, serveDone, removeSession, httpServer)
+	endHealth(err)
+	return err
 }
 
 // runMCP serves the read-only MCP bridge over stdio, against the dashboard another copy already runs.

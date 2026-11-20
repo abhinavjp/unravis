@@ -42,6 +42,7 @@ func healthTracker(demo bool, getenv func(string) string) *update.Tracker {
 func goBack(t *update.Tracker, m update.Marker, launch func(path, sha, version string) error, logf func(string, ...any)) bool {
 	logf("update %s failed to stay up %d times; going back to %s", m.To, update.MaxFailedStarts, m.From)
 	t.Skip(m.To)
+	t.MarkRecovered() // tried once: if the setup window is closed or refused, the next start runs the app as usual
 	if err := launch(t.SetupPath(), m.SetupSHA256, m.From); err != nil {
 		logf("could not start the old setup: %v", err)
 		return false
@@ -49,26 +50,21 @@ func goBack(t *update.Tracker, m update.Marker, launch func(path, sha, version s
 	return true
 }
 
-// watchHealth confirms the version after `after`. The returned func is deferred by run: a short visit that the person ended on
-// purpose (no error, no panic) is not counted as a failed start. It must be deferred directly, so recover sees a panic; a panic is
-// raised again, so the crash still shows.
-func watchHealth(t *update.Tracker, after time.Duration) func(runErr *error) {
+// watchHealth confirms the version after `after`. The returned func is called by run when the app ends on purpose: a short visit
+// is not a failed start. A panic or an early error return never reaches it, so those stay counted (and a panic keeps its own stack).
+func watchHealth(t *update.Tracker, after time.Duration) func(runErr error) {
 	timer := time.AfterFunc(after, t.Confirm)
-	return func(runErr *error) {
-		p := recover()
-		if timer.Stop() && p == nil && (runErr == nil || *runErr == nil) {
+	return func(runErr error) {
+		if timer.Stop() && runErr == nil {
 			t.CleanExit()
-		}
-		if p != nil {
-			panic(p)
 		}
 	}
 }
 
 // startHealth is called once, early in run. stopped is true when the app handed over to the old setup and must not start. end is
-// deferred with the address of run's result.
-func startHealth(demo bool, getenv func(string) string) (end func(runErr *error), stopped bool) {
-	end = func(*error) {}
+// called as soon as the app has stopped serving, before the slow clean-up, so a Windows end-session cannot cut it off.
+func startHealth(demo bool, getenv func(string) string) (end func(runErr error), stopped bool) {
+	end = func(error) {}
 	t := healthTracker(demo, getenv)
 	if t == nil {
 		return end, false
