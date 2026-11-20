@@ -62,6 +62,16 @@ $log = Join-Path $logDir "install-dev-$stamp.log"
 Start-Transcript -Path $log | Out-Null
 
 function Say([string]$m) { Write-Host $m }
+# Where an Unravis install may be: the folder Windows records for it (as setup itself looks), then the two default folders.
+function Get-InstallDirs {
+    $dirs = New-Object System.Collections.Generic.List[string]
+    foreach ($k in @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Unravis', 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Unravis')) {
+        $loc = (Get-ItemProperty -LiteralPath $k -ErrorAction SilentlyContinue).InstallLocation
+        if ($loc) { $dirs.Add($loc.TrimEnd('\')) }
+    }
+    $dirs.Add((Join-Path $env:ProgramW6432 'Unravis')); $dirs.Add((Join-Path $env:LOCALAPPDATA 'Programs\Unravis'))
+    $dirs | Select-Object -Unique
+}
 function Fail([string]$m) { Write-Host "FAILED: $m" -ForegroundColor Red; Say "Log: $log"; try { Stop-Transcript | Out-Null } catch {}; exit 1 }
 
 try {
@@ -82,18 +92,31 @@ try {
         if ($LASTEXITCODE -ne 0) { Fail "Could not download $FromRelease (is it published and are you signed in to gh?)." }
         $setupExe = (Get-ChildItem -LiteralPath $work -Filter 'unravis-setup-*.exe' | Select-Object -First 1).FullName
         if (-not $setupExe) { Fail 'The release has no unravis-setup-*.exe.' }
+        # The chosen file must be the one the manifest lists (an extra unlisted file is never run).
+        $mf = Get-Content -Raw -LiteralPath (Join-Path $work 'update-manifest.json') | ConvertFrom-Json
+        $listed = $mf.assets.setup
+        if (-not $listed -or $listed.name -ne (Split-Path -Leaf $setupExe) -or $listed.sha256 -ne (Get-FileHash -LiteralPath $setupExe -Algorithm SHA256).Hash.ToLowerInvariant()) {
+            Fail 'The downloaded setup program is not the file the manifest lists (name or SHA-256 differs).'
+        }
+        # Prefer an already installed setup (a program you trusted earlier) to check the folder; a fresh PC uses the downloaded one.
+        $checker = $setupExe
+        foreach ($d in @((Join-Path $env:ProgramW6432 'Unravis'), (Join-Path $env:LOCALAPPDATA 'Programs\Unravis'))) {
+            $c = Join-Path $d 'unravis-setup.exe'
+            if (Test-Path -LiteralPath $c) { $checker = $c; break }
+        }
+        if ($checker -eq $setupExe) { Say '    Note: no earlier install to check with, so the downloaded setup checks its own release (its built-in keys decide).' }
         Say '    Checking signature, expiry and hashes (unravis-setup --verify)'
-        & $setupExe --verify $work
+        & $checker --verify $work
         if ($LASTEXITCODE -ne 0) { Fail "The release folder did not verify (exit $LASTEXITCODE). Nothing was installed. There is no way to skip this check." }
     } else {
         Say '1/6 Building this checkout (pinned release build)'
         $buildArgs = @('-Release')
         if ($SkipTests) { $buildArgs += '-SkipTests' }
         if ($SkipWeb) { $buildArgs += '-SkipWeb' }
+        $setupExe = Join-Path $repoRoot 'dist\unravis-setup.exe'
+        Remove-Item -LiteralPath $setupExe -Force -ErrorAction SilentlyContinue   # never install a leftover from an earlier build
         Push-Location $repoRoot
         try { & (Join-Path $repoRoot 'build.ps1') @buildArgs } finally { Pop-Location }
-        if (-not $?) { Fail 'The build failed.' }
-        $setupExe = Join-Path $repoRoot 'dist\unravis-setup.exe'
         if (-not (Test-Path -LiteralPath $setupExe)) { Fail "The build did not make $setupExe." }
     }
     $sha = (Get-FileHash -LiteralPath $setupExe -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -108,7 +131,7 @@ try {
     # 2. what is installed ---------------------------------------------------------------------------------------------------
     Say '2/6 Looking for an existing install'
     $state = $null; $stateDir = $null
-    foreach ($d in @((Join-Path $env:ProgramFiles 'Unravis'), (Join-Path $env:LOCALAPPDATA 'Programs\Unravis'))) {
+    foreach ($d in (Get-InstallDirs)) {
         $f = Join-Path $d 'setup-state.json'
         if (Test-Path -LiteralPath $f) {
             try { $state = Get-Content -Raw -LiteralPath $f | ConvertFrom-Json; $stateDir = $d; break }
@@ -131,7 +154,9 @@ try {
         $bk = Join-Path $base "dev-backups\$stamp"
         $src = @()
         if ($state.sharedRoot) { $src += $state.sharedRoot }
-        $userData = Join-Path $env:LOCALAPPDATA 'Unravis'
+        # A user-scope install keeps its cases and settings under these two folders (internal/datadir).
+        foreach ($f in @((Join-Path $env:APPDATA 'APIAuditExplorer'), (Join-Path $env:LOCALAPPDATA 'APIAuditExplorer'))) { if (Test-Path -LiteralPath $f) { $src += $f } }
+        $skipped = 0; $copied = 0
         Say "3/6 Backup of settings and cases to $bk"
         if (-not $DryRun) {
             New-Item -ItemType Directory -Force -Path $bk | Out-Null
@@ -139,16 +164,19 @@ try {
             foreach ($s in $src) {
                 if (-not (Test-Path -LiteralPath $s)) { continue }
                 # Recordings can be huge: copy small files only (json, db, sealed), skip anything over 50 MB.
-                $dest = Join-Path $bk 'shared'
+                $dest = Join-Path $bk (($s -replace '[:\\/]+', '_').Trim('_'))
                 New-Item -ItemType Directory -Force -Path $dest | Out-Null
                 Get-ChildItem -LiteralPath $s -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Length -le 50MB } | ForEach-Object {
                     $rel = $_.FullName.Substring($s.Length).TrimStart('\')
                     $to = Join-Path $dest $rel
-                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
-                    try { Copy-Item -LiteralPath $_.FullName -Destination $to -Force } catch { Say "    skipped (in use or no access): $rel" }
+                    try {
+                        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+                        Copy-Item -LiteralPath $_.FullName -Destination $to -Force; $copied++
+                    } catch { $skipped++; Say "    skipped (in use, no access or path too long): $rel" }
                 }
             }
-            Say '    Done. Files over 50 MB (recordings) are not copied; setup never touches recordings.'
+            Say "    Copied $copied file(s); skipped $skipped. Files over 50 MB (recordings) are not copied; setup never touches recordings."
+            if ($skipped -gt 0) { Say '    Some files could not be copied (see above). Setup keeps all data and undoes itself on a failure; continue only if that is acceptable.' }
         }
     } else { Say '3/6 Backup skipped' }
 
@@ -161,7 +189,9 @@ try {
     Say '4/6 Asking a running Unravis to quit'
     $appExe = if ($stateDir) { Join-Path $stateDir 'unravis.exe' } else { $null }
     if ($appExe -and (Test-Path -LiteralPath $appExe)) {
-        & $appExe --quit 2>&1 | Out-Null
+        $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'   # Windows PowerShell 5.1 turns native stderr into errors under Stop
+        & $appExe --quit 2>$null | Out-Null   # 0 = quit sent, or it was not running
+        $ErrorActionPreference = $eap
         $deadline = (Get-Date).AddSeconds(20)
         while ((Get-Date) -lt $deadline -and (Get-Process -Name 'unravis' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $appExe })) { Start-Sleep -Milliseconds 500 }
         if (Get-Process -Name 'unravis' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $appExe }) { Fail 'Unravis is still running. Choose Quit Unravis from the tray icon and run this again. Nothing was changed.' }
@@ -204,7 +234,7 @@ try {
     # 6. check the result ---------------------------------------------------------------------------------------------------
     Say '6/6 Checking the result'
     $st = $null
-    foreach ($d in @((Join-Path $env:ProgramFiles 'Unravis'), (Join-Path $env:LOCALAPPDATA 'Programs\Unravis'))) {
+    foreach ($d in (Get-InstallDirs)) {
         $f = Join-Path $d 'setup-state.json'
         if (Test-Path -LiteralPath $f) { $st = Get-Content -Raw -LiteralPath $f | ConvertFrom-Json; $stateDir = $d; break }
     }
@@ -213,23 +243,27 @@ try {
     else {
         $installed = (& (Join-Path $stateDir 'unravis.exe') --version | Out-String).Trim()
         Say "    Unravis program: $installed"
-        if ($newVersion -and $st.version -ne $newVersion) { $problems += "Recorded version is $($st.version), expected $newVersion." }
+        if ($newVersion -and ([string]$st.version).TrimStart('v') -ne $newVersion) { $problems += "Recorded version is $($st.version), expected $newVersion." }
         if ($st.blackbox) {
-            $svc = Get-CimInstance Win32_Service -Filter "Name='UnravisBlackbox'" -ErrorAction SilentlyContinue
+            $svc = $null
+            $until = (Get-Date).AddSeconds(30)   # setup returns before the service has finished starting
+            do { $svc = Get-CimInstance Win32_Service -Filter "Name='UnravisBlackbox'" -ErrorAction SilentlyContinue; if ($svc -and $svc.State -eq 'Running') { break }; Start-Sleep -Seconds 2 } while ((Get-Date) -lt $until)
             if (-not $svc) { $problems += 'The Blackbox service is not installed.' }
             else {
                 $exe = ($svc.PathName -replace '^"([^"]+)".*$', '$1')
-                $bbVer = (& $exe version 2>&1 | Out-String).Trim()
+                $bbVer = (& $exe version | Out-String).Trim()
                 Say "    Blackbox program: $bbVer"
                 Say "    Blackbox service: $($svc.State)"
                 if ($svc.State -ne 'Running') { $problems += "Blackbox service is $($svc.State), expected Running." }
                 if ($newVersion -and $bbVer -notmatch [regex]::Escape($newVersion)) { $problems += "Blackbox program reports '$bbVer', expected $newVersion." }
                 $port = if ($st.blackbox.port) { $st.blackbox.port } else { 7788 }
-                try {
-                    # The root page answers on loopback without the read key (/status needs the key, which this script never touches).
-                    $r = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/" -TimeoutSec 10
-                    Say "    Blackbox answers: $(($r.Content -split "`n")[0].Trim())"
-                } catch { $problems += "The Blackbox did not answer on 127.0.0.1:$port ($($_.Exception.Message))." }
+                $r = $null; $err = $null
+                $until = (Get-Date).AddSeconds(30)
+                do {
+                    try { $r = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/" -TimeoutSec 5; $err = $null; break } catch { $err = $_.Exception.Message; Start-Sleep -Seconds 2 }
+                } while ((Get-Date) -lt $until)
+                if ($err) { $problems += "The Blackbox did not answer on 127.0.0.1:$port ($err)." }
+                else { Say "    Blackbox answers: $(($r.Content -split "`n")[0].Trim())" }
             }
         }
     }

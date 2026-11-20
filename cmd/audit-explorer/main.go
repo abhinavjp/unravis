@@ -77,6 +77,7 @@ type runFlags struct {
 	docsExaminedBudget  int64
 	version             bool
 	quit                bool
+	checkUpdate         bool
 	background          bool
 }
 
@@ -95,6 +96,7 @@ func parseFlags(args []string) (runFlags, error) {
 	flags.Int64Var(&f.docsExaminedBudget, "docs-examined-budget", 0, "dashboard only: cap on records examined per query; 0 leaves it unset")
 	flags.BoolVar(&f.version, "version", false, "print the version and exit")
 	flags.BoolVar(&f.quit, "quit", false, "ask the running Unravis to quit")
+	flags.BoolVar(&f.checkUpdate, "check-update", false, "check the signed update feed once, print the answer as one line of JSON and exit (0 = latest or newer available, 2 = could not check); keeps no state")
 	flags.BoolVar(&f.background, "background", false, "start in the tray without opening a browser; used by start at sign-in")
 	if err := flags.Parse(args); err != nil {
 		return runFlags{}, err
@@ -108,6 +110,9 @@ func parseFlags(args []string) (runFlags, error) {
 	}
 	if f.quit && flags.NFlag() > 1 {
 		return runFlags{}, fmt.Errorf("--quit cannot be combined with other options")
+	}
+	if f.checkUpdate && flags.NFlag() > 1 {
+		return runFlags{}, fmt.Errorf("--check-update cannot be combined with other options")
 	}
 	if f.background && hostOS != "windows" {
 		return runFlags{}, fmt.Errorf("--background is only available on Windows")
@@ -156,6 +161,12 @@ func run(args []string, getenv func(string) string) error {
 	}
 	if f.quit {
 		if code := runQuit(os.Stderr, quitSignal); code != 0 {
+			exitProcess(code)
+		}
+		return nil
+	}
+	if f.checkUpdate {
+		if code := runCheckUpdate(stdout, os.Stderr, checkUpdateTimeout); code != 0 {
 			exitProcess(code)
 		}
 		return nil
