@@ -1,7 +1,7 @@
 # Auto-updater for Unravis and Blackbox: spec
 
-Status: DRAFT v2 for nachi's confirmation. No code written. 2026-11-20.
-v2 adds nachi's answers (D1 30 min check, D2 zero cost, D4 ok, D6 Blackbox auto-update on other servers, D7 public repo) and a new section 12, Unravis Lite.
+Status: DRAFT v3 for nachi's confirmation. No code written. 2026-11-20.
+v3 adds the live research (section 16, fetched vs memory) and my own answers to every open decision (section 13). v2 added nachi's answers (D1 30 min check, D2 zero cost, D4 ok, D6 Blackbox auto-update on other servers, D7 public repo) and a new section 12, Unravis Lite.
 Rule: nothing below is built until nachi confirms (see "Open decisions", section 13).
 
 ## 1. Goal
@@ -24,18 +24,18 @@ Order of goals: **security first**, then footprint (CPU, memory, network ~ zero)
 
 So most of the install, upgrade and rollback engine exists. The gap is: **finding, downloading and trusting** a release.
 
-## 3. How others do it (from general knowledge; not live-fetched, re-check before build)
+## 3. How others do it (marks: [F] fetched 2026-11-20, [M] from memory, not re-checked; details in section 16)
 
 | Tool | Idea | Take |
 |---|---|---|
-| Squirrel.Windows | Per-user install, background check, swap folders, delta packages | Per-user swap is simple, but cannot touch services/admin. No built-in signature check beyond Authenticode. |
-| Velopack (Squirrel successor) | Same, plus delta updates, update.exe, channels, rollback to last version | Good model for channels and "keep last good". Deltas not worth it for us. |
-| WinSparkle / Sparkle | Feed (appcast) signed with **EdDSA (ed25519)**; public key inside the app | **Copy this.** Trust comes from a key in the app, not from the download host. |
-| Chrome / Edge / Dropbox | Separate SYSTEM "elevation/update service" installs updates without UAC | Powerful, bigger attack surface. Later option only (section 8). |
-| WinSW and service wrappers | Do **not** self-update. Update = stop service, replace exe, start | Service exe can't replace itself while running. Needs an outside actor. Our actor = installer / app op (BL-136). |
-| go-selfupdate / minio selfupdate | Download, verify checksum, rename over the running exe | Fine for plain apps. Not for a service under Program Files. |
-| TUF (The Update Framework) | Signed metadata with expiry, version, threshold keys, key rotation | Take the ideas: expiry, monotonic version, two keys. Skip the full framework. |
-| winget / Chocolatey | Hash in a manifest, optional publisher signature | Hash from same host as file is weak. |
+| Squirrel.Windows [M] | Per-user install, background check, swap folders, delta packages | Per-user swap is simple, but cannot touch services/admin. No built-in signature check beyond Authenticode. |
+| Velopack [F] | Per-channel index files, delta updates. Its signing path is Azure Artifact Signing at about USD 10/month (not free); docs state no downgrade rule | Channel idea is good. Cost rules it out. Deltas not worth it for us. |
+| WinSparkle / Sparkle [F] | Feed (appcast) signed with **EdDSA (ed25519)**; public key inside the app | **Copy this.** Trust comes from a key in the app, not from the download host. |
+| Chrome / Edge / Dropbox [M] | Separate SYSTEM "elevation/update service" installs updates without UAC | Powerful, bigger attack surface. Later option only (section 8). |
+| WinSW and service wrappers [M] | Do **not** self-update. Update = stop service, replace exe, start | Service exe can't replace itself while running. Needs an outside actor. Our actor = installer / app op (BL-136). |
+| go-selfupdate / minio selfupdate [M] | Download, verify checksum, rename over the running exe | Fine for plain apps. Not for a service under Program Files. |
+| TUF (The Update Framework) [F] | Signed metadata with expiry, version, threshold keys, key rotation | Take the ideas: expiry, monotonic version, two keys. Skip the full framework. |
+| winget / Chocolatey [M] | Hash in a manifest, optional publisher signature | Hash from same host as file is weak. |
 
 Key lesson: **a checksum next to the download proves nothing** if the attacker controls the release (stolen GitHub account, bad token). Trust must come from a key held outside GitHub.
 
@@ -75,7 +75,7 @@ Each release gets `update-manifest.json` + `update-manifest.json.sig` (ed25519, 
 A permanent release tagged `update-feed` holds two small files, replaced on each release: `stable.json` and `rc.json`, each a signed copy of the newest manifest of that channel (+ `.sig`), about 1 KB.
 
 - A check is one `GET https://github.com/abhinavjp/unravis/releases/download/update-feed/<channel>.json` with `If-None-Match`. A `304` is a few hundred bytes.
-- This is **not the GitHub API**, so no 60 requests/hour API limit. 48 checks a day per machine is nothing even for many servers behind one IP.
+- This is **not the GitHub API**. GitHub's API allows only 60 unauthenticated requests/hour per IP [F] and its page does not say a `304` is free, so I avoid the API. Whether the release-download host has a limit is **not verified**; the client backs off on any 403/429 (U2 live-checks this).
 - The feed is only a pointer. A forged or stale feed fails the signature, `seq` or `expires` test.
 - Pre-releases are handled by the `rc.json` file, which fixes today's gap (the manual check ignores rc builds).
 
@@ -84,7 +84,8 @@ A permanent release tagged `update-feed` holds two small files, replaced on each
 - Private key is stored encrypted with a strong passphrase (free: Go `x/crypto` / `age`-style file). Never in CI, never in the repo. Backups: two copies on USB sticks you already own, kept apart. Passphrase not stored with them.
 - Release flow: CI builds the DRAFT release and uploads the unsigned manifest. nachi runs `tools/release/Sign-Release.ps1` locally (asks the passphrase), which signs the manifest and updates the feed. nachi presses Publish. Matches today's "a person presses Publish".
 - Public keys (current + next) are compiled into `unravis.exe`, `unravis-setup.exe` and `unravis-blackbox.exe`. Two keys allow rotation.
-- **SignPath Foundation is free for public open-source repos** (repo is public, D7). Apply anyway: it adds Authenticode (SmartScreen, UAC publisher name) as a second lock. Not needed for the updater to be safe, and it is not a blocker. Review needed: its terms and approval time (not verified live).
+- **SignPath Foundation** [F] gives free signing to open-source projects, but: needs an OSI-approved licence (this repo has **no LICENSE file today**, so nachi must pick one first), the certificate is issued to "SignPath Foundation", every release needs a manual approval, MFA for the team, a privacy/data-transfer note, and acceptance is at their discretion. It adds Authenticode as a second lock; the updater does not depend on it.
+- **Separate keys per channel** (from the Doyensec and TUF lessons [F]): an `rc` key and a `stable` key. A stable build trusts only the stable key. An rc build trusts both. A leaked rc key can never push to stable users.
 - Not recommended as the only trust: GitHub artifact attestations (free for public repos). Useful for people checking by hand, heavy to verify inside the program.
 
 ## 6. Client side: check (Unravis app)
@@ -112,6 +113,11 @@ Verify order. Any failure = stop, delete the file, show a plain message, log it.
 8. The installer runs its normal upgrade: stop, replace program files, keep data, restart Unravis. A user-scope install without Blackbox needs no UAC.
 
 Release-notes text from GitHub is shown as plain text only (escaped). It is never a link target or HTML.
+
+Lessons added from research [F]:
+- Sparkle CVE-2025-0509: a valid signature could be reused to install a different payload. So the signature must bind **exact bytes + version + size + file name** in one signed manifest, and the installer is told `--expect-sha256` and `--expect-version` (already above). A signed file for version A can never be installed as version B.
+- TUF: never accept anything older than previously seen (`seq`, stored); declared size caps the download (endless data); all assets sit in one signed manifest (mix-and-match).
+- Doyensec: TOCTOU cannot be fully removed by path; so we also hold the file open without write sharing while it is hashed and started, and the worker re-hashes.
 
 ## 8. Blackbox auto-update (D6: also on other servers)
 
@@ -223,20 +229,24 @@ A small program for a server that has a Blackbox but not Unravis. It opens a loc
 - Same signature rules for its own update.
 - A different user on the same server cannot use another's link (token is per run, process-owned).
 
-## 13. Open decisions for nachi
+## 13. Decisions (nachi delegated them to me on 2026-11-20; ELI10 reasons)
 
-Answered: D1 (30 min default, user can change, raise after stable), D2 (yes, zero cost, offline key), D4 (one UAC prompt next to Unravis), D7 (public).
-
-| # | Decision | Recommendation |
+| # | Decision | Why, in simple words |
 |---|---|---|
-| D3 | Install timing: only on click, or also "on next quit"? | Click only for v1. |
-| D5 | Default channel for rc builds on production-bound boxes | Stay on channel until the user changes it. |
-| D6 | Blackbox auto-update on other servers | Done in section 8: the service updates itself, default on. **Confirm**: is it OK for the Blackbox service itself to install a signed update with no human click on a server? (Default `install`, can be set to `notify`/`off`.) |
-| D8 | Ship before SignPath is approved? | Yes. Apply to SignPath Foundation (free) in parallel. |
-| D9 | Interval after stable launch | Suggest 6 h for stable, keep 30 min for rc. Change only the default. |
-| D10 | Lite reading the locked Blackbox folder: ask admin approval once per start, or run elevated by the admin who starts it? | Admin starts it ("Run as administrator"); no stored elevation. |
-| D11 | Blackbox self-update also refreshes `unravis-lite.exe` next to it | Yes. |
-| D12 | Maintenance window default for servers | None by default; available setting. |
+| D1 | Check every 30 min, user can change, raise to 6 h after stable | nachi's call. A check is a 1 KB note, like glancing at a noticeboard. Cheap. |
+| D2 | Key made on nachi's PC, locked with a passphrase, 2 USB backups. Zero cost | A key in the cloud can be stolen with the cloud. A key in a drawer cannot. Free. |
+| D3 | Install only after the user clicks (Unravis app) | A program that changes itself while you work is rude and risky. You press the button. |
+| D4 | Next to Unravis, Blackbox updates with one Windows admin prompt | Windows asks "are you sure?" for big changes. That is good; a person is there to answer. |
+| D5 | A build stays on its channel (rc stays rc) until the user changes it | Do not move people between test and real versions behind their back. |
+| D6 | Blackbox on a server updates itself, default `install` | It is a tape recorder, not the shop that serves customers. If an update fails, the worst case is a few seconds of missing tape, and it undoes itself. Safety: only a signed, newer, matching file is accepted. Setting `notify` or `off` is one line in the config. |
+| D7 | Public repo | Done. Allows free signing. |
+| D8 | Ship before SignPath is approved | Our own key does the safety job. SignPath is a bonus badge. SignPath needs a licence file first (open question for nachi). |
+| D9 | 30 min for rc, 6 h for stable | Testing builds change often, real ones rarely. |
+| D10 | Lite is started "as administrator" by the person who wants to look | The recordings are in a locked room. The person with the key opens the door. Lite never makes the lock weaker and never keeps admin rights. |
+| D11 | Blackbox update also refreshes `unravis-lite.exe` beside it | One signed update keeps both in step. |
+| D12 | No maintenance window by default; setting available | Most boxes are fine; picky ones can set a quiet hour. |
+| D13 | Separate signing keys for rc and stable | A thief of the test key cannot touch real users. |
+| D14 | No LICENSE file exists. **Only nachi can choose a licence** | SignPath needs one. I will not pick for you. Until then, no SignPath. |
 
 ## 14. Build plan (after you confirm)
 
@@ -258,3 +268,17 @@ Each slice follows the factory way: spec, build, review, verify, then reinstall 
 - Unravis: one timer, ~1 KB per 30 min, a few KB of memory for the verifier. Download only after a new release.
 - Blackbox service: one goroutine asleep between checks, ~1 KB per 30 min, no new listener, no new process unless applying an update. Recording is not slowed.
 - Lite: nothing runs when closed.
+## 16. Research log (what was fetched and what is from memory)
+
+Fetched live 2026-11-20 (free pages, via web fetch):
+- GitHub REST rate limits: 60/hour unauthenticated per IP; a `304` is not stated as free. (docs.github.com, rate limits for the REST API)
+- Sparkle security page: use HTTPS feeds (an HTTP feed caused remote code execution), use EdDSA not DSA, verify before extracting, keep keys off the command line. (sparkle-project.github.io)
+- CVE-2025-0509 (Sparkle before 2.6.4): signature check bypassed by swapping the payload. (tenable.com)
+- TUF attack list: rollback, fast-forward, freeze, endless data, mix-and-match, malicious mirrors, key compromise; fixes: expiry, freshness, key rotation, size caps. (theupdateframework.io/security)
+- SignPath Foundation terms: OSI licence, manual approval per release, certificate issued to the Foundation, MFA, discretionary acceptance. (signpath.org/terms, signpath.io open-source page)
+- Velopack signing and channels: Azure Artifact Signing about USD 10/month; per-channel index files; no downgrade rule stated. (docs.velopack.io)
+- Doyensec safe updater: sign version + hash, owner-only temp folder, downgrades off, separate keys per channel, TOCTOU is not fully removable. (blog.doyensec.com, 2026-02-16; a reference design, not production)
+
+From memory, not re-checked: Squirrel.Windows, WinSW, go-selfupdate/minio, Chrome/Edge elevation service, winget/Chocolatey, Windows service behaviour (cannot overwrite its own running exe), Authenticode/SmartScreen effects. Re-check at the start of slice U1/U6.
+
+Not verified at all: whether `github.com/.../releases/download/...` has a request limit for many callers; the size of Unravis Lite; whether the Blackbox screens can be bundled alone.

@@ -104,7 +104,7 @@ Legend: `[ ]` open, `[x]` done, `[~]` dropped.
 
 ## Auto-updater (spec drafted 2026-11-20; build waits for the owner's go; see `docs/auto-updater/SPEC.md`)
 
-- [ ] **BL-149** Auto-updater for Unravis and the Blackbox: signed manifest (ed25519), opt-in background check, verified download, hand-off to `unravis-setup --upgrade`, rollback, offline import. Slices U1 to U7 in the spec. Not started: D1, D2, D4, D7 answered 2026-11-20; D3, D5, D6 confirm, D8 to D12 open. Includes Blackbox self-update (U6) and Unravis Lite (U7). (source: owner chat 2026-11-20)
+- [ ] **BL-149** Auto-updater for Unravis and the Blackbox: signed manifest (ed25519), opt-in background check, verified download, hand-off to `unravis-setup --upgrade`, rollback, offline import. Slices U1 to U7 in the spec. Not started: All decisions answered (D1 to D14) as of 2026-11-20; D14 (pick a licence) is nachi's. Includes Blackbox self-update (U6) and Unravis Lite (U7). (source: owner chat 2026-11-20)
 
 ## Blackbox expansion (design and reviews done; groups 1-8 built on branch `bbx/all-groups` (PR #12), awaiting live checks)
 
