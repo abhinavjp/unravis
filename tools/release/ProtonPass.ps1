@@ -39,13 +39,23 @@ function Get-ProtonPassSecret {
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
+    # pass-cli writes UTF-8; without this .NET would use the console code page and garble non-ASCII passphrases.
+    $psi.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    $psi.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
     $p = $null
     try {
         try { $p = [System.Diagnostics.Process]::Start($psi) } catch { throw 'pass-cli could not be started.' }
         $p.StandardInput.Close()
         $outTask = $p.StandardOutput.ReadToEndAsync()
         $errTask = $p.StandardError.ReadToEndAsync()
-        if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        $timedOut = -not $p.WaitForExit($TimeoutSec * 1000)
+        if (-not $timedOut) {
+            # The process ended; the pipes must close too (a helper that inherited them would otherwise hang us). Same overall limit.
+            $left = [Math]::Max(1, $TimeoutSec * 1000 - [int]$clock.ElapsedMilliseconds)
+            $timedOut = -not [System.Threading.Tasks.Task]::WaitAll(@($outTask, $errTask), $left)
+        }
+        if ($timedOut) {
             try { $p.Kill($true) } catch {}
             throw "pass-cli did not answer within $TimeoutSec seconds (a locked or logged-out session can wait for input). Run 'pass-cli login' or 'pass-cli session unlock' in a normal window."
         }

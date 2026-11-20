@@ -26,6 +26,7 @@ $fake = Join-Path $work 'fake-pass-cli.ps1'
 param([string]$a, [string]$b, [string]$c)
 switch ($env:FAKE_MODE) {
     'ok'      { [Console]::Out.Write("correct horse battery`r`n"); exit 0 }
+    'utf8'    { $o = [Console]::OpenStandardOutput(); $b = [Text.Encoding]::UTF8.GetBytes("Gr\u00fcn-\u00a3-key`n"); $o.Write($b, 0, $b.Length); $o.Flush(); exit 0 }
     'noeol'   { [Console]::Out.Write("correct horse battery"); exit 0 }
     'empty'   { exit 0 }
     'blank'   { [Console]::Out.Write("`r`n"); exit 0 }
@@ -47,6 +48,7 @@ function Case([string]$name, [string]$mode, [scriptblock]$check, [string]$r = $r
 }
 function Plain($s) { [System.Net.NetworkCredential]::new('', $s).Password }
 Case 'good answer becomes the passphrase, newline removed' 'ok' { param($r, $e) $r -and (Plain $r) -eq 'correct horse battery' -and -not $e }
+Case 'UTF-8 passphrase survives' 'utf8' { param($r, $e) $r -and (Plain $r) -eq ('Gr' + [char]0xfc + 'n-' + [char]0xa3 + '-key') }
 Case 'no trailing newline works' 'noeol' { param($r, $e) $r -and (Plain $r) -eq 'correct horse battery' }
 Case 'empty output is refused' 'empty' { param($r, $e) -not $r -and $e -match 'nothing' }
 Case 'a blank line is refused' 'blank' { param($r, $e) -not $r -and $e -match 'empty' }
