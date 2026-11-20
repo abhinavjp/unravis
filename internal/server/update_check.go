@@ -143,13 +143,17 @@ func (h *handler) updateSettingsPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "Update checks are not available in this build.")
 		return
 	}
-	var in UpdaterSettings
+	in := UpdaterSettings{Auto: true, IntervalMinutes: updateDefaultMinutes}
 	if !decodeJSON(w, r, &in) {
+		return
+	}
+	if _, err := cleanUpdaterSettings(in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	saved, err := u.SetSettings(in)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	h.event(r, "update_settings", "auto", saved.Auto, "interval_minutes", saved.IntervalMinutes)

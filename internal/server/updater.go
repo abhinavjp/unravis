@@ -47,6 +47,7 @@ type Updater struct {
 	failures int
 	wake     chan struct{}
 	checkMu  sync.Mutex // one check at a time
+	saveMu   sync.Mutex // one settings save at a time
 	rnd      *rand.Rand
 }
 
@@ -80,7 +81,7 @@ func (u *Updater) loadSettings() {
 	if err != nil {
 		return
 	}
-	var s UpdaterSettings
+	s := UpdaterSettings{Auto: true, IntervalMinutes: updateDefaultMinutes}
 	if json.Unmarshal(b, &s) != nil {
 		return
 	}
@@ -105,6 +106,8 @@ func (u *Updater) SetSettings(s UpdaterSettings) (UpdaterSettings, error) {
 	if err != nil {
 		return s, err
 	}
+	u.saveMu.Lock()
+	defer u.saveMu.Unlock()
 	b, _ := json.Marshal(s)
 	if err := os.MkdirAll(u.dir, 0o700); err != nil {
 		return s, errors.New("could not save the update settings")
@@ -115,6 +118,10 @@ func (u *Updater) SetSettings(s UpdaterSettings) (UpdaterSettings, error) {
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return s, errors.New("could not save the update settings")
+	}
+	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		return s, errors.New("could not save the update settings")
 	}
@@ -186,21 +193,29 @@ func (u *Updater) Status() UpdateStatus {
 	return st
 }
 
-// CheckNow runs one check at once (the "Check for updates" button) and returns the new status.
-func (u *Updater) CheckNow(ctx context.Context) UpdateStatus {
+// checkOnce runs one check and stores the answer. Only one runs at a time, so the timer and the button never overlap.
+// ok is false when ctx ended first (nothing is stored then).
+func (u *Updater) checkOnce(ctx context.Context) (res update.Result, ok bool) {
 	u.checkMu.Lock()
 	defer u.checkMu.Unlock()
-	res := u.fetcher.Check(ctx)
-	if ctx.Err() == nil {
-		u.mu.Lock()
-		u.last, u.checked, u.haveLast = res, time.Now(), true
-		if res.Backoff {
-			u.failures++
-		} else {
-			u.failures = 0
-		}
-		u.mu.Unlock()
+	res = u.fetcher.Check(ctx)
+	if ctx.Err() != nil {
+		return res, false
 	}
+	u.mu.Lock()
+	u.last, u.checked, u.haveLast = res, time.Now(), true
+	if res.Backoff {
+		u.failures++
+	} else {
+		u.failures = 0
+	}
+	u.mu.Unlock()
+	return res, true
+}
+
+// CheckNow runs one check at once (the "Check for updates" button) and returns the new status.
+func (u *Updater) CheckNow(ctx context.Context) UpdateStatus {
+	u.checkOnce(ctx)
 	return u.Status()
 }
 
@@ -210,6 +225,10 @@ func (u *Updater) Run(ctx context.Context) {
 		return
 	}
 	delay := updateFirstDelay
+	var nextAt time.Time // when the next check was planned; zero while off
+	if u.currentSettings().Auto {
+		nextAt = time.Now().Add(delay)
+	}
 	for {
 		timer := time.NewTimer(delay)
 		select {
@@ -218,43 +237,52 @@ func (u *Updater) Run(ctx context.Context) {
 			return
 		case <-u.wake:
 			timer.Stop()
-			// The settings changed: start the clock again from the new interval (and wait the first delay if just turned on).
+			// The settings changed. Keep a wait the server asked for; otherwise follow the new interval.
+			st := u.currentSettings()
 			u.mu.Lock()
-			auto, minutes := u.settings.Auto, u.settings.IntervalMinutes
+			failures := u.failures
 			u.mu.Unlock()
 			switch {
-			case !auto:
-				delay = 24 * time.Hour // off: sleep until something wakes us
-			case !u.hasChecked():
-				delay = updateFirstDelay
+			case !st.Auto:
+				delay, nextAt = 24*time.Hour, time.Time{}
+			case nextAt.IsZero():
+				delay = updateFirstDelay // just turned on
+				nextAt = time.Now().Add(delay)
 			default:
-				delay = update.NextDelay(time.Duration(minutes)*time.Minute, 0, 0, u.rnd)
+				remaining := time.Until(nextAt)
+				if remaining < time.Second {
+					remaining = time.Second
+				}
+				if iv := time.Duration(st.IntervalMinutes) * time.Minute; failures == 0 && iv < remaining {
+					remaining = iv
+				}
+				delay = remaining
+				nextAt = time.Now().Add(delay)
 			}
 			continue
 		case <-timer.C:
 		}
-		u.mu.Lock()
-		auto, minutes, failures := u.settings.Auto, u.settings.IntervalMinutes, u.failures
-		u.mu.Unlock()
-		if !auto {
-			delay = 24 * time.Hour
+		st := u.currentSettings()
+		if !st.Auto {
+			delay, nextAt = 24*time.Hour, time.Time{}
 			continue
 		}
-		res := u.fetcher.Check(ctx)
-		if ctx.Err() != nil {
+		res, ok := u.checkOnce(ctx)
+		if !ok {
 			return
 		}
 		u.mu.Lock()
-		u.last, u.checked, u.haveLast = res, time.Now(), true
-		if res.Backoff {
-			u.failures++
-		} else {
-			u.failures = 0
-		}
-		failures = u.failures
+		failures := u.failures
 		u.mu.Unlock()
-		delay = update.NextDelay(time.Duration(minutes)*time.Minute, failures, res.RetryIn, u.rnd)
+		delay = update.NextDelay(time.Duration(st.IntervalMinutes)*time.Minute, failures, res.RetryIn, u.rnd)
+		nextAt = time.Now().Add(delay)
 	}
+}
+
+func (u *Updater) currentSettings() UpdaterSettings {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.settings
 }
 
 func (u *Updater) hasChecked() bool {

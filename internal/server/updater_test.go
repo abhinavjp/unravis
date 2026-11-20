@@ -313,3 +313,87 @@ func TestUpdateDemoPreviewsAndNoUpdater(t *testing.T) {
 }
 
 func writeFileForTest(path, body string) error { return os.WriteFile(path, []byte(body), 0o600) }
+
+// "Off" must survive a restart: the saved file says off, nothing wakes the loop, and no check runs.
+func TestUpdaterOffStaysOffAfterRestart(t *testing.T) {
+	setVersion(t, "0.1.0-rc.47")
+	old := updateFirstDelay
+	updateFirstDelay = 20 * time.Millisecond
+	t.Cleanup(func() { updateFirstDelay = old })
+	k, priv := rcKey(t)
+	feed := newFakeFeed(t)
+	feed.publish(t, "rc", "0.1.0-rc.48", 4801, k, priv)
+	dir := t.TempDir()
+	if err := writeFileForTest(filepath.Join(dir, "settings.json"), `{"auto":false,"intervalMinutes":30}`); err != nil {
+		t.Fatal(err)
+	}
+	u := NewUpdater(dir, []update.Key{k})
+	u.fetcher.Base, u.fetcher.HTTP = feed.srv.URL, feed.srv.Client()
+	u.fetcher.AllowHost = func(string) bool { return true }
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { u.Run(ctx); close(done) }()
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+	<-done
+	if feed.hits.Load() != 0 {
+		t.Errorf("checked although the saved choice was off (%d calls)", feed.hits.Load())
+	}
+}
+
+// A body or file that leaves out a field keeps the default for it; it must not switch checking off.
+func TestUpdaterPartialSettingsKeepDefaults(t *testing.T) {
+	setVersion(t, "0.1.0-rc.47")
+	k, _ := rcKey(t)
+	dir := t.TempDir()
+	if err := writeFileForTest(filepath.Join(dir, "settings.json"), `{"intervalMinutes":60}`); err != nil {
+		t.Fatal(err)
+	}
+	if s := NewUpdater(dir, []update.Key{k}).Status(); !s.Auto || s.IntervalMinutes != 60 {
+		t.Errorf("file without auto: %+v", s)
+	}
+	// valid JSON, interval out of range: refused on load, defaults used
+	if err := writeFileForTest(filepath.Join(dir, "settings.json"), `{"auto":false,"intervalMinutes":1}`); err != nil {
+		t.Fatal(err)
+	}
+	if s := NewUpdater(dir, []update.Key{k}).Status(); !s.Auto || s.IntervalMinutes != 30 {
+		t.Errorf("out of range on load: %+v", s)
+	}
+	h := updHandler(NewUpdater(t.TempDir(), []update.Key{k}))
+	rec := request(h, http.MethodPut, "/api/update/settings", `{}`, true)
+	if s := decodeStatus(t, rec.Code, rec.Body.String()); !s.Auto || s.IntervalMinutes != 30 {
+		t.Errorf("empty PUT changed the settings: %+v", s)
+	}
+}
+
+// The timer and the button must never ask the feed at the same moment.
+func TestUpdaterChecksDoNotOverlap(t *testing.T) {
+	setVersion(t, "0.1.0-rc.47")
+	k, priv := rcKey(t)
+	var inflight, peak atomic.Int32
+	feed := newFakeFeed(t)
+	feed.publish(t, "rc", "0.1.0-rc.48", 4801, k, priv)
+	inner := feed.srv.Config.Handler
+	feed.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := inflight.Add(1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		time.Sleep(60 * time.Millisecond)
+		inner.ServeHTTP(w, r)
+		inflight.Add(-1)
+	})
+	u := testUpdater(t, feed, k)
+	done := make(chan struct{}, 2)
+	for i := 0; i < 2; i++ {
+		go func() { u.checkOnce(t.Context()); done <- struct{}{} }()
+	}
+	<-done
+	<-done
+	if peak.Load() > 1 {
+		t.Errorf("%d requests at once", peak.Load())
+	}
+}

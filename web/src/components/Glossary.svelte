@@ -56,12 +56,12 @@
   const intervalChoices = $derived(UPDATE_INTERVALS.some(item => item.minutes === minutes) ? UPDATE_INTERVALS : [...UPDATE_INTERVALS, { minutes, label: intervalLabel(minutes) }]);
   const canChange = $derived(!!settings && settings.status !== 'dev');
   let settingsNote = $state('');
-  async function saveSettings(nextAuto: boolean, nextMinutes: number) {
+  async function saveSettings(nextAuto: boolean, nextMinutes: number, undo: () => void) {
     settingsNote = '';
     try {
       const reply = await api.updateSettings(nextAuto, nextMinutes);
       if (reply && typeof reply.status === 'string') setUpdateReply(reply);
-    } catch { settingsNote = 'Could not save this choice. It was not changed.'; await refreshUpdateStatus(); }
+    } catch { settingsNote = 'Could not save this choice. It was not changed.'; undo(); await refreshUpdateStatus(); }
   }
   onMount(() => { void refreshUpdateStatus(); });
   async function checkForUpdates() {
@@ -134,9 +134,9 @@
       <h3 id="updates-title">Updates</h3>
       <p>Unravis looks for a new version on its own and tells you here. It never installs one by itself.</p>
       {#if canChange}
-        <label class="updates-auto"><input type="checkbox" data-testid="update-auto" checked={auto} onchange={(event) => saveSettings(event.currentTarget.checked, minutes)} /> Check automatically</label>
+        <label class="updates-auto"><input type="checkbox" data-testid="update-auto" checked={auto} onchange={(event) => { const box = event.currentTarget; void saveSettings(box.checked, minutes, () => { box.checked = auto; }); }} /> Check automatically</label>
         <label class="updates-every" for="update-every">How often</label>
-        <select id="update-every" data-testid="update-every" value={minutes} disabled={!auto} onchange={(event) => saveSettings(auto, Number(event.currentTarget.value))}>
+        <select id="update-every" data-testid="update-every" value={minutes} disabled={!auto} onchange={(event) => { const pick = event.currentTarget; void saveSettings(auto, Number(pick.value), () => { pick.value = String(minutes); }); }}>
           {#each intervalChoices as item (item.minutes)}<option value={item.minutes}>{item.label}</option>{/each}
         </select>
         {#if settingsNote}<p class="update-note" role="alert" data-testid="update-settings-note">{settingsNote}</p>{/if}

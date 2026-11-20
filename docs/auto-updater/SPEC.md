@@ -16,7 +16,7 @@ Order of goals: **security first**, then footprint (CPU, memory, network ~ zero)
 |---|---|
 | Release pipeline (`release.yml`) | Tag `vX.Y.Z[-rc.N]` builds a DRAFT release: setup exe, app zip, Blackbox zip, `SHA256SUMS.txt`. A person presses Publish. Never auto-publishes. |
 | Signing | None yet (SignPath planned, A48). Releases are unsigned. |
-| Update check | Manual button only (`internal/server/update_check.go`, decision A52: no background calls). Calls `releases/latest`. **Ignores pre-releases**, so an rc build is never offered a newer rc. Link only, no download. |
+| Update check | **Before U3:** manual button only, GitHub `releases/latest`, ignored pre-releases (decision A52, now replaced by D1). **Since U3:** background check (default 30 min) plus the button, both through the signed feed. Link only, no download until U4. |
 | Installer `unravis-setup.exe` | Already does upgrade in place: asks to close the app, stops services, replaces program files, keeps data and sealed secrets, refuses downgrade (`--allow-downgrade`), journal + rollback, keeps old files until the new version starts once. UI runs unelevated; a short-lived elevated worker does admin steps. |
 | Blackbox pin (SEC-FIX-01) | The app embeds the SHA-256 of the exact Blackbox exe it ships with, and refuses any other. |
 | BL-136 | Designed and built, **not run live**: app-driven Blackbox `update` op (one admin approval, hash check, `.old` rollback). |

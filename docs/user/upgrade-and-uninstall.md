@@ -6,7 +6,7 @@ The same `unravis-setup.exe` upgrades, repairs and removes Unravis. Run a newer 
 
 ## Checking for a newer version
 
-Unravis never checks for a new version by itself. You check when you want to: open **Glossary** in the header (the help panel) and press **Check for updates** at the foot. Unravis asks GitHub for the latest release of `abhinavjp/unravis`. The request goes to api.github.com. It sends nothing about you or your cases.
+Unravis checks for a new version by itself, every 30 minutes by default. You can change how often, or switch it off, in **Glossary** (the help panel), section **Updates**. You can also press **Check for updates** there at any time. The check reads a small signed file from github.com (`abhinavjp/unravis`, release `update-feed`). Unravis ignores the answer unless the signature is valid. The check sends nothing about you or your cases, and it never installs anything by itself. A development build never checks.
 
 There are four answers:
 
