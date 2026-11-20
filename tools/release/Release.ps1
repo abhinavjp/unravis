@@ -27,6 +27,7 @@
 .PARAMETER From        Continue an earlier run at this stage (Preflight, Tag, Wait, Sign, Publish, Feed, Verify).
 .PARAMETER FirstRelease  Only for the first release of a channel (nothing on the feed yet); passed to Sign-Release.ps1.
 .PARAMETER Previous    The published tag to upgrade from in the verify stage. Default: the newest earlier release that has a signed manifest.
+.PARAMETER PassphraseFromProtonPass  A Proton Pass reference, pass://Vault/Item/password, that holds the key passphrase. Read only at the signing step, held in memory, never written anywhere. If pass-cli is missing, logged out or locked you are asked to type it instead. The typed confirmations (tag, yes, publish, feed) stay.
 .PARAMETER SkipVerify  Stop after the feed update. Use it only when you will run verify-release.yml yourself.
 .PARAMETER RunId       Continue at Wait with this release.yml run (use it after re-running the build from the Actions tab).
 .PARAMETER Branch      The branch a release is made from (default master).
@@ -36,6 +37,7 @@ param(
     [string]$KeyFile,
     [ValidateSet('Preflight', 'Tag', 'Wait', 'Sign', 'Publish', 'Feed', 'Verify')] [string]$From = 'Preflight',
     [switch]$FirstRelease,
+    [string]$PassphraseFromProtonPass,
     [string]$Previous,
     [switch]$SkipVerify,
     [switch]$DryRun,
@@ -44,6 +46,7 @@ param(
     [string]$Repo = 'abhinavjp/unravis'
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ProtonPass.ps1')
 $PSNativeCommandUseErrorActionPreference = $false
 Remove-Item Env:UNRAVIS_KEY_PASSPHRASE -ErrorAction SilentlyContinue
 
@@ -94,6 +97,11 @@ try {
         if ($From -eq 'Preflight' -and $existing -contains $tag) { Fail 'Preflight' "A release $tag already exists." }
         if (-not $KeyFile -and -not $DryRun) { Fail 'Preflight' 'Pass -KeyFile (the encrypted private key for this channel).' }
         if ($KeyFile -and -not (Test-Path -LiteralPath $KeyFile)) { Fail 'Preflight' "Key file not found: $KeyFile" }
+        if ($PassphraseFromProtonPass) {
+            # Find out now, before anything is tagged, whether the passphrase can be read. Nothing is shown or kept.
+            try { (Get-ProtonPassSecret -Reference $PassphraseFromProtonPass).Dispose(); Write-Host 'Proton Pass: the passphrase can be read (one clean line).' -ForegroundColor Green }
+            catch { Write-Host "Proton Pass: $($_.Exception.Message)" -ForegroundColor Yellow; Write-Host 'The signing step will ask you to type the passphrase instead.' -ForegroundColor Yellow }
+        }
         & (Join-Path $PSScriptRoot 'Test-Release.ps1') | Out-Host
         if ($LASTEXITCODE -ne 0) { Fail 'Preflight' 'Test-Release.ps1 failed.' }
         Write-Host "Preflight OK: $Branch at $($head.Substring(0,7)), CI green, $channel key listed, $tag is free." -ForegroundColor Green
@@ -138,6 +146,7 @@ try {
         $a = @{ Tag = $tag; KeyFile = $KeyFile }
         if ($FirstRelease) { $a.FirstRelease = $true }
         $a.Repo = $Repo
+        if ($PassphraseFromProtonPass) { $a.ProtonPassRef = $PassphraseFromProtonPass }
         try { & (Join-Path $PSScriptRoot 'Sign-Release.ps1') @a } catch { Fail 'Sign' $_.Exception.Message }
     }
     # 5 Publish ---------------------------------------------------------------------------------------------------------------

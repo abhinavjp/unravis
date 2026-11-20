@@ -26,15 +26,20 @@
     Add -FirstRelease only for the very first release of a channel (nothing on the feed yet).
 
   The passphrase goes to the signing tool on its standard input; never an argument or an environment variable.
+  With -ProtonPassRef 'pass://Vault/Item/password' it is read from the Proton Pass CLI instead of typed (see tools/release/ProtonPass.ps1);
+  any problem with pass-cli falls back to typing it.
 #>
 param(
     [Parameter(Mandatory)] [string]$Tag,
     [string]$KeyFile,
     [switch]$Feed,
     [switch]$FirstRelease,
-    [string]$Repo = 'abhinavjp/unravis'
+    [string]$Repo = 'abhinavjp/unravis',
+    # A Proton Pass reference (pass://Vault/Item/password) the key passphrase is read from. Optional; if it cannot be read the script asks you to type it.
+    [string]$ProtonPassRef
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ProtonPass.ps1')
 $PSNativeCommandUseErrorActionPreference = $false
 Remove-Item Env:UNRAVIS_KEY_PASSPHRASE -ErrorAction SilentlyContinue   # the tool would prefer it over the typed passphrase
 if ($Tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9a-z.]+)?$') { throw "Tag '$Tag' is not vX.Y.Z or vX.Y.Z-pre.N (lower case)." }
@@ -137,9 +142,14 @@ try {
         Write-Host 'Checking that GitHub attests these files were built by the release workflow from the tag:'
         Assert-Attested $files $Repo $Tag $sha
         Confirm-Typed 'yes' 'Sign this release?'
-        $secure = Read-Host "Passphrase for $KeyFile" -AsSecureString
+        $secure = $null
+        if ($ProtonPassRef) {
+            try { $secure = Get-ProtonPassSecret -Reference $ProtonPassRef; Write-Host 'Passphrase read from Proton Pass (not shown).' }
+            catch { Write-Host "Proton Pass: $($_.Exception.Message)" -ForegroundColor Yellow; Write-Host 'Falling back to typing the passphrase.' -ForegroundColor Yellow }
+        }
+        if (-not $secure) { $secure = Read-Host "Passphrase for $KeyFile" -AsSecureString }
         $plain = [System.Net.NetworkCredential]::new('', $secure).Password
-        try { $plain | & $tool sign -key $KeyFile -in $manifest -out "$manifest.sig" } finally { $plain = $null }
+        try { $plain | & $tool sign -key $KeyFile -in $manifest -out "$manifest.sig" } finally { $plain = $null; $secure.Dispose() }
         if ($LASTEXITCODE -ne 0) { throw 'Signing failed. Nothing was uploaded.' }
         Invoke-Checked 'verifying with the keys of the new tag' { & $tool verify -in $manifest -sig "$manifest.sig" -trusted -channel $channel -want $channel }
         if ($prevKeys) { Invoke-Checked "verifying with the keys installed copies trust ($prevTag)" { & $tool verify -in $manifest -sig "$manifest.sig" -keys $prevKeys -channel $channel -want $channel } }

@@ -110,6 +110,7 @@ Legend: `[ ]` open, `[x]` done, `[~]` dropped.
 - [ ] **BL-152** OTA P2: `unravis.exe --check-update` built 2026-11-20 (one signed check against the real feed, one JSON line, throw-away state, exit 0/2; unit tests pass; NOT run against a real signed feed). The Blackbox needs no trigger: its first check is 1-5 minutes after the service starts.
 - [ ] **BL-153** OTA P3: `verify-release.yml` (GitHub Windows runner installs the previous release, starts Unravis and the Blackbox service, forces a check on the real public feed, asserts both reach the new version, refuses a bad signature and a downgrade).
 - [ ] **BL-154** OTA P4: `tools/release/Release.ps1` one-command release (preflight, tag, wait for CI draft, sign, publish, feed, verify). Key passphrase, typed yes, and the tag/publish confirms stay with the owner.
+- [ ] **BL-156** Release passphrase from Proton Pass CLI (`-PassphraseFromProtonPass`, `tools/release/ProtonPass.ps1`). Failure paths tested in CI with a fake pass-cli. Tick only after nachi runs one real release with it (real `pass-cli item view` output is not verified; pass-cli needs a paid Proton Pass plan).
 - [ ] **BL-155** OTA gaps before stable: pause/blocked list in the signed feed (G2), rollout percent (G3), manifest expiry refresh (G5), second free feed host (G4), Blackbox folder/share source and status display in Unravis (G7).
 
 ## Blackbox expansion (design and reviews done; groups 1-8 built on branch `bbx/all-groups` (PR #12), awaiting live checks)
