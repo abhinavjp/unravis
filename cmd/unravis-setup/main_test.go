@@ -46,7 +46,7 @@ type testRig struct {
 	elevated int
 	// lastExtra is what the last elevator was asked to start the worker with.
 	lastExtra []string
-	uacNo    bool
+	uacNo     bool
 }
 
 func newRig(t *testing.T) *testRig {
@@ -388,7 +388,9 @@ func TestSilentUninstallBadConfigExitsTwoAndChangesNothing(t *testing.T) {
 
 func TestSilentWithoutProgramFilesStops(t *testing.T) {
 	rg := newRig(t)
-	rg.env.payload = func() (*setup.Payload, error) { return nil, errors.New("this setup program has no program files inside.") }
+	rg.env.payload = func() (*setup.Payload, error) {
+		return nil, errors.New("this setup program has no program files inside.")
+	}
 	before := rg.f.Snapshot()
 	if got := run([]string{"--silent", "--config", rg.config(`{"scope":"user"}`)}, rg.env); got != setup.OutcomePreflightFailed.ExitCode() {
 		t.Fatalf("exit %d", got)
@@ -425,7 +427,9 @@ func TestWorkerServesOneRequestOverItsPipe(t *testing.T) {
 		return &setup.WorkerPipe{Conn: b, SID: "S-1-5-21-1000", Profile: rg.dirs.UserProfile}, nil
 	}
 	done := make(chan int, 1)
-	go func() { done <- run([]string{"--worker", "--pipe", `\\.\pipe\unravis-setup-x`, "--parent", "4242"}, rg.env) }()
+	go func() {
+		done <- run([]string{"--worker", "--pipe", `\\.\pipe\unravis-setup-x`, "--parent", "4242"}, rg.env)
+	}()
 	u := rg.dirs.User()
 	req := setup.WorkRequest{Op: setup.OpInstall, User: &u, Options: setup.Options{Scope: setup.ScopeMachine,
 		Location: setup.DefaultLocation(setup.ScopeMachine, rg.dirs), StartAtSignIn: true}}

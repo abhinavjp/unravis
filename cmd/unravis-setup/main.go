@@ -67,7 +67,9 @@ func osEnv() env {
 	return env{
 		stdout: os.Stdout, stderr: os.Stderr, now: time.Now,
 		system: setup.NewOSSystem, dirs: setup.OSDirs, userSID: setup.CurrentUserSID, setupExe: os.Executable,
-		elevator: func(exe string, extra []string) setup.Elevator { return setup.OSElevator{SetupExe: exe, ExtraArgs: extra} },
+		elevator: func(exe string, extra []string) setup.Elevator {
+			return setup.OSElevator{SetupExe: exe, ExtraArgs: extra}
+		},
 		payload: func() (*setup.Payload, error) {
 			sub, err := fs.Sub(payloadFiles, "payload")
 			if err != nil {
@@ -87,9 +89,9 @@ func osEnv() env {
 
 type options struct {
 	silent, uninstall, repair, upgrade, allowDowngrade, worker, noBrowser, showVersion, capture bool
-	config, logPath, pipe                                                                      string
-	expectSHA, expectVersion                                                                   string // --expect-sha256 / --expect-version: what the updater verified
-	parent                                                                                     uint
+	config, logPath, pipe                                                                       string
+	expectSHA, expectVersion                                                                    string // --expect-sha256 / --expect-version: what the updater verified
+	parent                                                                                      uint
 }
 
 func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
