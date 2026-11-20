@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick as tick0 } from 'svelte';
   import { wizard } from '../../lib/wizard.svelte';
   import { classifyMongo, removeConnection, sourcesView, testMongo } from '../../lib/wizardSources.svelte';
   import { DEFAULT_COLLECTION, heldCollection, heldConnection } from '../../lib/wizardConnections';
@@ -97,7 +97,6 @@
     line = testedText(result.databases);
     tickAuditByName(result.id);
     opened[result.id] = true;
-    onTested?.();
   }
 
   async function testAgain(id: string) {
@@ -122,6 +121,7 @@
     const value = classFromTicks(audit, app);
     sourcesView.setAside[key] = value === 'unused';
     const problem = classifyMongo(id, database, value);
+    if (!problem && value !== 'unused') onTested?.();
     if (problem) { problems[key] = databaseProblemText(problem); box.checked = which === 'audit' ? auditOn(id, database) : appOn(id, database); return; }
     sourcesView.alsoApp[key] = audit && app;
   }
@@ -193,7 +193,7 @@
     {@const done = counts(connection.id)}
     <section class="conn" aria-labelledby="{uid}-{connection.id}-h">
       <div class="conn-top">
-        <h5 id="{uid}-{connection.id}-h">{SOURCES_TEXT.mongoListHeading}: {connection.host}</h5>
+        <h5 id="{uid}-{connection.id}-h" tabindex="-1">{SOURCES_TEXT.mongoListHeading}: {connection.host}</h5>
         <div class="actions">
           <button type="button" class="secondary-button" disabled={retesting[connection.id]} aria-label="{SOURCES_TEXT.mongoTestAgain}: {connection.host}" onclick={() => void testAgain(connection.id)}>{SOURCES_TEXT.mongoTestAgain}</button>
           <button type="button" class="quiet-button" aria-label="{SOURCES_TEXT.mongoRemove}: {connection.host}" onclick={() => { removeConnection(connection.id); onDone?.(); }}>{SOURCES_TEXT.mongoRemove}</button>
@@ -203,7 +203,7 @@
       {#if connection.warning !== ''}<p class="hint">{connection.warning}</p>{/if}
       {#if !opened[connection.id] && done.audit + done.other > 0}
         <p class="hint" role="status">{classSummaryText(done.audit, done.other)}</p>
-        <div class="actions"><button type="button" class="secondary-button" onclick={() => { opened[connection.id] = true; }}>{SOURCES_TEXT.mongoChange}</button></div>
+        <div class="actions"><button type="button" class="secondary-button" onclick={async () => { opened[connection.id] = true; await tick0(); document.getElementById(uid + '-' + connection.id + '-h')?.focus(); }}>{SOURCES_TEXT.mongoChange}</button></div>
       {:else if connection.databases.length === 0}
         <p class="hint">{SOURCES_TEXT.mongoNoDatabases}</p>
       {:else}
@@ -263,6 +263,7 @@
   .switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; background: var(--bg); border-radius: 50%; transition: transform 0.15s; }
   .switch:checked { background: var(--accent); }
   .switch:checked::after { transform: translateX(16px); }
+  @media (forced-colors: active) { .switch { forced-color-adjust: none; background: Canvas; border: 2px solid ButtonText; } .switch::after { background: ButtonText; } .switch:checked { background: Highlight; } .switch:checked::after { background: HighlightText; } }
   @media (prefers-reduced-motion: reduce) { .switch, .switch::after { transition: none; } }
   .db .inline-error { margin: 0; }
 </style>

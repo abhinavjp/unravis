@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
   import { wizard } from '../../lib/wizard.svelte';
   import { sourcesView, removeChosen } from '../../lib/wizardSources.svelte';
-  import { sourceKey } from '../../lib/wizardSources';
+  import { sourceKey, FILE_KINDS } from '../../lib/wizardSources';
   import { groupOf } from '../../lib/discover';
   import { releaseOrphanFiles } from '../../lib/wizardFiles.svelte';
   import { railGroups, connectPrefill } from '../../lib/sourceWizard';
@@ -41,7 +41,7 @@
 
   // "N added" on a tile: how many of the chosen sources came from that kind of card.
   const addedOf = (id: Exclude<Card, ''>): number => {
-    const kinds: Record<string, string[]> = { mongo: ['mongo-database'], sql: ['sql-server'], redis: ['redis'], files: ['iis-logs', 'app-log', 'hangfire-csv', 'redis-slowlog-csv', 'file'], blackbox: ['blackbox'] };
+    const kinds: Record<string, string[]> = { mongo: ['mongo-database'], sql: ['sql-server'], redis: ['redis'], files: [...FILE_KINDS], blackbox: ['blackbox'] };
     return wizard.sources.filter((s) => (kinds[id] ?? []).includes(s.kind)).length;
   };
   const titleOf = (s: { kind: string; ref: string }): string => {
@@ -54,6 +54,7 @@
 
   async function back() { card = ''; dropNote = ''; seed = undefined; await tick(); heading?.focus(); }
   async function open(c: Card, finding = '', dropped?: { files: File[]; folder: boolean; says: string[] }) { seed = dropped; card = c; dropNote = ''; from = finding; await tick(); cardEl?.focus(); }
+  function leaveForm() { from = ''; card = 'pc'; }
   function markConnected() { if (from !== '' && !connected.includes(from)) connected = [...connected, from]; }
   function connectedDone() { if (from !== '' && !connected.includes(from)) connected = [...connected, from]; from = ''; card = 'pc'; }
   async function drop(event: DragEvent) {
@@ -126,7 +127,7 @@
         <div class="cardbar"><button type="button" class="secondary-button" onclick={() => void back()}>{WIZ.back}</button></div>
         {#if dropNote}<p class="hint" role="status">{dropNote}</p>{/if}
         {#if card === 'pc'}<FindOnPc {connected} onCard={(c, f) => void open(c, f ?? '')} onDone={() => void back()} />
-        {:else if card === 'mongo'}{#if from !== ''}<p class="hint">{WIZ.find.mongoPrefill} <code>{connectPrefill('mongo')}</code></p>{/if}<MongoClassify prefill={from !== '' ? connectPrefill('mongo') : ''} onTested={markConnected} onDone={() => (from !== '' ? connectedDone() : void back())} />
+        {:else if card === 'mongo'}{#if from !== ''}<p class="hint">{WIZ.find.mongoPrefill} <code>{connectPrefill('mongo')}</code></p>{/if}<MongoClassify prefill={from !== '' ? connectPrefill('mongo') : ''} onTested={markConnected} onDone={() => (from !== '' ? leaveForm() : void back())} />
         {:else if card === 'sql'}{#if from !== ''}<p class="hint">{WIZ.find.sqlPrefill} <code>{connectPrefill('sql')}</code></p>{/if}<SqlServerForm prefill={from !== '' ? connectPrefill('sql') : ''} onDone={() => (from !== '' ? connectedDone() : void back())} />
         {:else if card === 'redis'}<ReachableCheck kind="redis" onDone={() => void back()} />
         {:else if card === 'files'}<ImportFilesPanel {seed} onCancel={() => void back()} />
