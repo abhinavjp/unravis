@@ -102,6 +102,10 @@ Legend: `[ ]` open, `[x]` done, `[~]` dropped.
 - [x] **BL-055** Call detail "While this call ran" now reads the whole span of the call (highest API, IIS and database value while it ran), not one instant. Explainer panels (Not shown, How to read) collapse. (source: chat 2026-11-15) Unit-tested only; not yet checked live.
 - [ ] **BL-056** [Needs the audited app to write `_perfSqlMs`, `_perfRedisMs`, `_perfHttpMs`] Call detail breakdown bar and lead sentence. The live Brain Sandbox case has none of these fields, so the screen says "not recorded"; cannot be live-verified here. Latency-over-time switch and overlap highlight in Nearby calls stay deferred for the owner's go. (source: chat 2026-11-15)
 
+## Auto-updater (spec drafted 2026-11-20; build waits for the owner's go; see `docs/auto-updater/SPEC.md`)
+
+- [ ] **BL-149** Auto-updater for Unravis and the Blackbox: signed manifest (ed25519), opt-in background check, verified download, hand-off to `unravis-setup --upgrade`, rollback, offline import. Slices U1 to U7 in the spec. Not started: needs the owner's answers to D1 to D8. (source: owner chat 2026-11-20)
+
 ## Blackbox expansion (design and reviews done; groups 1-8 built on branch `bbx/all-groups` (PR #12), awaiting live checks)
 
 Owner ruling 2026-11-13: nothing here is "deferred": an item is either in the backlog or dropped. This replaces the 2026-11-12 "wait for the owner's go" ruling for the Blackbox. The owner said not to implement yet: first finalize the backlog and conditions. Conditions every item must meet, the order, and the SQL security review are in `docs/research/blackbox-expansion-prioritised.md` and `docs/research/blackbox-sql-security-review.md`. Items marked [Must] come first. Items marked "Built, awaiting live check" have code and tests on `bbx/all-groups` but are NOT verified on a real server, so they stay unticked until the owner's live checks pass.
