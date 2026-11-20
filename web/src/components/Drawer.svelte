@@ -56,7 +56,8 @@
   function onKey(event: KeyboardEvent) {
     if (event.key === 'Escape') { event.preventDefault(); if (stopEscape) event.stopPropagation(); onClose(); return; }
     if (event.key !== 'Tab' || !element) return;
-    const items = [...element.querySelectorAll<HTMLElement>(focusable)];
+    // Only controls that are on screen count: a hidden one (display:none) can never take focus, so as the "last" item it stopped the wrap and Tab left the dialog.
+    const items = [...element.querySelectorAll<HTMLElement>(focusable)].filter((item) => item.getClientRects().length > 0);
     if (!items.length) return;
     const first = items[0], last = items[items.length - 1];
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
