@@ -143,7 +143,7 @@ func (h *handler) updateSettingsPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "Update checks are not available in this build.")
 		return
 	}
-	in := UpdaterSettings{Auto: true, IntervalMinutes: updateDefaultMinutes}
+	in := u.currentSettings() // a body that leaves a field out keeps the current value
 	if !decodeJSON(w, r, &in) {
 		return
 	}

@@ -87,6 +87,8 @@ func (u *Updater) loadSettings() {
 	}
 	if cleaned, err := cleanUpdaterSettings(s); err == nil {
 		u.settings = cleaned
+	} else {
+		u.settings.Auto = s.Auto // keep the on/off choice; only the bad interval falls back to the default
 	}
 }
 
@@ -225,8 +227,9 @@ func (u *Updater) Run(ctx context.Context) {
 		return
 	}
 	delay := updateFirstDelay
-	var nextAt time.Time // when the next check was planned; zero while off
-	if u.currentSettings().Auto {
+	var nextAt time.Time // when the next check was planned (kept while off, so a server-requested wait survives off and on)
+	wasOff := !u.currentSettings().Auto
+	if !wasOff {
 		nextAt = time.Now().Add(delay)
 	}
 	for {
@@ -244,9 +247,13 @@ func (u *Updater) Run(ctx context.Context) {
 			u.mu.Unlock()
 			switch {
 			case !st.Auto:
-				delay, nextAt = 24*time.Hour, time.Time{}
-			case nextAt.IsZero():
+				delay, wasOff = 24*time.Hour, true
+			case wasOff:
+				wasOff = false
 				delay = updateFirstDelay // just turned on
+				if wait := time.Until(nextAt); failures > 0 && wait > delay {
+					delay = wait // the feed asked us to wait: off and on does not skip that
+				}
 				nextAt = time.Now().Add(delay)
 			default:
 				remaining := time.Until(nextAt)
@@ -264,7 +271,7 @@ func (u *Updater) Run(ctx context.Context) {
 		}
 		st := u.currentSettings()
 		if !st.Auto {
-			delay, nextAt = 24*time.Hour, time.Time{}
+			delay, wasOff = 24*time.Hour, true
 			continue
 		}
 		res, ok := u.checkOnce(ctx)
@@ -283,10 +290,4 @@ func (u *Updater) currentSettings() UpdaterSettings {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.settings
-}
-
-func (u *Updater) hasChecked() bool {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	return u.haveLast
 }

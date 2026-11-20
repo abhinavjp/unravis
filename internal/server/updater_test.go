@@ -356,13 +356,19 @@ func TestUpdaterPartialSettingsKeepDefaults(t *testing.T) {
 	if err := writeFileForTest(filepath.Join(dir, "settings.json"), `{"auto":false,"intervalMinutes":1}`); err != nil {
 		t.Fatal(err)
 	}
-	if s := NewUpdater(dir, []update.Key{k}).Status(); !s.Auto || s.IntervalMinutes != 30 {
+	if s := NewUpdater(dir, []update.Key{k}).Status(); s.Auto || s.IntervalMinutes != 30 {
 		t.Errorf("out of range on load: %+v", s)
 	}
 	h := updHandler(NewUpdater(t.TempDir(), []update.Key{k}))
 	rec := request(h, http.MethodPut, "/api/update/settings", `{}`, true)
 	if s := decodeStatus(t, rec.Code, rec.Body.String()); !s.Auto || s.IntervalMinutes != 30 {
 		t.Errorf("empty PUT changed the settings: %+v", s)
+	}
+	// off stays off when a later body names only the interval
+	request(h, http.MethodPut, "/api/update/settings", `{"auto":false,"intervalMinutes":30}`, true)
+	rec = request(h, http.MethodPut, "/api/update/settings", `{"intervalMinutes":60}`, true)
+	if s := decodeStatus(t, rec.Code, rec.Body.String()); s.Auto || s.IntervalMinutes != 60 {
+		t.Errorf("a partial PUT turned checks on: %+v", s)
 	}
 }
 
@@ -395,5 +401,79 @@ func TestUpdaterChecksDoNotOverlap(t *testing.T) {
 	<-done
 	if peak.Load() > 1 {
 		t.Errorf("%d requests at once", peak.Load())
+	}
+}
+
+// The feed asked us to wait (429 + Retry-After). Changing the interval, or off and on, must not skip that wait.
+func TestUpdaterKeepsServerWaitAcrossSettings(t *testing.T) {
+	setVersion(t, "0.1.0-rc.47")
+	old := updateFirstDelay
+	updateFirstDelay = 20 * time.Millisecond
+	t.Cleanup(func() { updateFirstDelay = old })
+	k, _ := rcKey(t)
+	feed := newFakeFeed(t)
+	feed.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		feed.hits.Add(1)
+		w.Header().Set("Retry-After", "21600")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	u := testUpdater(t, feed, k)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { u.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	deadline := time.Now().Add(3 * time.Second)
+	for feed.hits.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	before := feed.hits.Load()
+	if before == 0 {
+		t.Fatal("no first check")
+	}
+	u.SetSettings(UpdaterSettings{Auto: true, IntervalMinutes: 5})
+	u.SetSettings(UpdaterSettings{Auto: false, IntervalMinutes: 5})
+	time.Sleep(50 * time.Millisecond)
+	u.SetSettings(UpdaterSettings{Auto: true, IntervalMinutes: 5})
+	time.Sleep(400 * time.Millisecond)
+	if got := feed.hits.Load(); got != before {
+		t.Errorf("a settings change skipped the server's wait (%d -> %d calls)", before, got)
+	}
+}
+
+// Turning checks on waits the first delay; it does not check at once.
+func TestUpdaterTurnOnWaitsFirstDelay(t *testing.T) {
+	setVersion(t, "0.1.0-rc.47")
+	old := updateFirstDelay
+	updateFirstDelay = 2500 * time.Millisecond
+	t.Cleanup(func() { updateFirstDelay = old })
+	k, priv := rcKey(t)
+	feed := newFakeFeed(t)
+	feed.publish(t, "rc", "0.1.0-rc.48", 4801, k, priv)
+	u := testUpdater(t, feed, k)
+	u.SetSettings(UpdaterSettings{Auto: false, IntervalMinutes: 30})
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { u.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	time.Sleep(100 * time.Millisecond)
+	u.SetSettings(UpdaterSettings{Auto: true, IntervalMinutes: 30})
+	time.Sleep(1500 * time.Millisecond)
+	if feed.hits.Load() != 0 {
+		t.Error("checked before the first delay")
+	}
+}
+
+func TestUpdaterSaveFailureIs500(t *testing.T) {
+	setVersion(t, "0.1.0-rc.47")
+	k, _ := rcKey(t)
+	f := filepath.Join(t.TempDir(), "afile")
+	if err := writeFileForTest(f, "x"); err != nil {
+		t.Fatal(err)
+	}
+	u := NewUpdater(f, []update.Key{k}) // the "folder" is a file, so saving fails
+	rec := request(updHandler(u), http.MethodPut, "/api/update/settings", `{"auto":true,"intervalMinutes":60}`, true)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("code = %d, want 500", rec.Code)
 	}
 }
