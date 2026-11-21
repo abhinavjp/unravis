@@ -284,7 +284,7 @@ test('INV-12a: a window with no data shows dashes, not zeros', async ({ page }) 
   await expect(pulse.getByRole('button', { name: /^Observed P95 — / })).toBeVisible();
 });
 
-test('INV-15: the UTC / Local toggle changes labels only; no new analysis is requested', async ({ page }) => {
+test('INV-15: the time zone choice changes labels only; no new analysis is requested', async ({ page }) => {
   const pulse = page.getByRole('region', { name: 'Pulse' });
   await expect(pulse.getByRole('button', { name: /^Requests / })).toBeVisible();
   const before = await pulse.getByRole('button').allInnerTexts();
@@ -292,13 +292,13 @@ test('INV-15: the UTC / Local toggle changes labels only; no new analysis is req
   page.on('request', (r) => {
     if (r.url().includes('/api/analyze')) analyses++;
   });
-  const group = page.getByRole('group', { name: 'Show times in' });
-  await expect(group.getByRole('button', { name: 'UTC', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await group.getByRole('button', { name: /^Local/ }).click();
-  await expect(group.getByRole('button', { name: /^Local/ })).toHaveAttribute('aria-pressed', 'true');
+  const zone = page.getByRole('combobox', { name: 'Show and type times in' });
+  await expect(zone).toHaveValue('utc');
+  await zone.selectOption('local');
+  await expect(zone).toHaveValue('local');
   expect(await pulse.getByRole('button').allInnerTexts()).toEqual(before);
-  await group.getByRole('button', { name: 'UTC', exact: true }).click();
-  await expect(group.getByRole('button', { name: 'UTC', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await zone.selectOption('utc');
+  await expect(zone).toHaveValue('utc');
   expect(await pulse.getByRole('button').allInnerTexts()).toEqual(before);
   // Theme only recolours.
   const theme = page.getByRole('button', { name: /^Theme:/ });

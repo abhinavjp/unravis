@@ -80,18 +80,21 @@ test('DOC-01a: in a scratch copy a renamed picture, a dropped screen and a wrong
 
 test('DOC-04: the page list of the in-app guide and the files in docs/user agree', async () => {
   const order = pageOrder();
-  expect(order).toHaveLength(12);
+  expect(order).toHaveLength(10);
   const files = mdFiles();
   expect(files).toHaveLength(13);
   for (const slug of order) expect(files, `${slug}.md exists`).toContain(slug + '.md');
-  expect(files.filter((f) => !order.includes(f.replace(/\.md$/, ''))), 'only screenshots.md is outside the guide').toEqual(['screenshots.md']);
+  // Three files are not in the guide: the retired pages kept on disk (BL-180) and the screenshots list.
+  expect(files.filter((f) => !order.includes(f.replace(/\.md$/, ''))).sort(), 'only the unlisted pages are outside the guide').toEqual(['guided-analysis.md', 'manual-tools.md', 'screenshots.md']);
   // The guide reads the same folder, so a new page would join it by name.
   expect(read('web', 'src', 'lib', 'help', 'pages.ts')).toContain("import.meta.glob('../../../../docs/user/*.md'");
 });
 
 test('DOC-04a: the index links every page and every relative link between pages points at a page and a heading that exist', async () => {
   const index = doc('index');
-  for (const f of mdFiles()) if (f !== 'index.md') expect(index, `index.md links ${f}`).toContain(`(${f})`);
+  const unlisted = ['guided-analysis.md', 'manual-tools.md', 'screenshots.md'];
+  for (const f of mdFiles()) if (f !== 'index.md' && !unlisted.includes(f)) expect(index, `index.md links ${f}`).toContain(`(${f})`);
+  for (const f of ['guided-analysis.md', 'manual-tools.md']) expect(index, `index.md does not list ${f}`).not.toContain(`(${f})`);
   const slugify = (t: string) => t.trim().toLowerCase().replace(/[^\p{L}\p{N} -]/gu, '').replace(/ /g, '-');
   const headings = (slug: string) => [...doc(slug).matchAll(/^#{1,6}\s+(.*)$/gm)].map((m) => slugify(m[1].replace(/[*`]/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')));
   const problems: string[] = [];

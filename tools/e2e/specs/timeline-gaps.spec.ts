@@ -1,10 +1,10 @@
 // The Investigation Timeline against the tracing-paper wireframe, the last gaps: one controls card, the UTC readout under the pickers,
-// 12-hour time boxes, "Each bar = ..." under the chart, and the Suspects rail. The demo clock is 2026-10-20T09:00Z, so the default
+// 24-hour time boxes, "Each bar = ..." under the chart, and the Suspects rail. The demo clock is 2026-10-20T09:00Z, so the default
 // incident window is 08:00-09:00 UTC and the default comparison period 07:00-08:00; the demo audit lane (read live) rises at 08:30.
 //   TLGAP-01  The quick ranges, both windows, the UTC readout, the Sources traced row, Add evidence and Start tracing are in ONE card;
 //             the chart is outside it; the readout sits under the windows and above the sources row.
 //   TLGAP-02  The UTC readout names both periods in UTC, follows a quick range and a typed window, and sends no trace by itself.
-//   TLGAP-03  The time boxes are 12-hour (hour 1-12, minute, AM or PM): 22:30 is 10 : 30 PM, the readout and the button follow.
+//   TLGAP-03  The time boxes are 24-hour (hour 00-23, minute): 22:30 is 22 and 30, the readout and the button follow.
 //   TLGAP-04  The chart says what one bar covers ("Each bar = 1 minute") and the figure follows the window.
 //   TLGAP-05  The Suspects rail: beside the chart at 1600 (the breakpoint is 1480 so the plot keeps its width), below it at 1280 and 375; legend, summary, pinned card, orange L1, grey cards say what
 //             they need, evidence opens by keyboard, See all and Show fewer, ruled-out details.
@@ -111,23 +111,21 @@ test('TLGAP-02: the UTC readout names both periods, follows a quick range and a 
   expect(traces.count(), 'a quick range and a picker never read by themselves').toBe(0);
 });
 
-test('TLGAP-03: the time boxes are 12-hour (hour, minute, AM or PM) and the window, readout and button follow', async ({ page }) => {
+test('TLGAP-03: the time boxes are 24-hour (hour 00-23 and minute) and the window, readout and button follow', async ({ page }) => {
   await openTimeline(page);
   const dialog = await openPicker(page, 'incident');
   const startBox = pickerTime(page, 'incident', 'start time');
-  await expect(startBox.getByRole('combobox')).toHaveCount(3);
+  await expect(startBox.getByRole('combobox')).toHaveCount(2);
   const hour = startBox.getByRole('combobox', { name: 'Incident window start time hour', exact: true });
   const minute = startBox.getByRole('combobox', { name: 'Incident window start time minute', exact: true });
-  const period = startBox.getByRole('combobox', { name: 'Incident window start time AM or PM', exact: true });
   const hourOptions = await hour.locator('option').evaluateAll((els) => els.map((el) => (el as HTMLOptionElement).value).filter((v) => v !== ''));
-  expect(hourOptions).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12']);
+  expect(hourOptions).toEqual(Array.from({ length: 24 }, (_, i) => String(i)));
   expect((await minute.locator('option').evaluateAll((els) => els.map((el) => (el as HTMLOptionElement).value).filter((v) => v !== ''))).length).toBe(60);
-  expect(await period.locator('option').evaluateAll((els) => els.map((el) => (el as HTMLOptionElement).value).filter((v) => v !== ''))).toEqual(['AM', 'PM']);
-  // 08:00 is 8 : 00 AM; 22:30 is 10 : 30 PM; 00:15 is 12 : 15 AM; 12:00 is 12 : 00 PM.
-  expect([await hour.inputValue(), await minute.inputValue(), await period.inputValue()]).toEqual(['8', '0', 'AM']);
-  for (const [hhmm, shown] of [['22:30', ['10', '30', 'PM']], ['00:15', ['12', '15', 'AM']], ['12:00', ['12', '0', 'PM']]] as const) {
+  // 08:00 shows as 8 and 0; 22:30 as 22 and 30; 00:15 as 0 and 15.
+  expect([await hour.inputValue(), await minute.inputValue()]).toEqual(['8', '0']);
+  for (const [hhmm, shown] of [['22:30', ['22', '30']], ['00:15', ['0', '15']], ['12:00', ['12', '0']]] as const) {
     await fillTime(page, 'incident', 'start time', hhmm);
-    expect([await hour.inputValue(), await minute.inputValue(), await period.inputValue()]).toEqual(shown);
+    expect([await hour.inputValue(), await minute.inputValue()]).toEqual(shown);
     expect(await readTime(page, 'incident', 'start time')).toBe(hhmm);
   }
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -137,7 +135,7 @@ test('TLGAP-03: the time boxes are 12-hour (hour, minute, AM or PM) and the wind
   await expect(card(page).getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-19T22:30:00Z – 2026-10-20T01:30:00Z');
   // The box is a keyboard control: a drop-down takes the arrow keys and Escape still closes the picker.
   await openPicker(page, 'incident');
-  await pickerTime(page, 'incident', 'end time').getByRole('combobox', { name: 'Incident window end time AM or PM', exact: true }).focus();
+  await pickerTime(page, 'incident', 'end time').getByRole('combobox', { name: 'Incident window end time hour', exact: true }).focus();
   await page.keyboard.press('Escape');
   await expect(pickerDialog(page, 'incident')).toBeHidden();
 });
