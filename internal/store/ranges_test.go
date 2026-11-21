@@ -175,9 +175,12 @@ func rgExtJSON(t *testing.T, pipeline mongo.Pipeline) string {
 func TestLatencyRangeImpliesComplete(t *testing.T) {
 	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	for name, apply := range map[string]func(*audit.Query) string{
-		"observed":    func(q *audit.Query) string { q.ObservedMs = rgRange(rgF(10), rgF(900)); return "_auditRangeObserved" },
-		"api":         func(q *audit.Query) string { q.ApiTimeMs = rgRange(rgF(10), nil); return "_auditRangeApi" },
-		"audit create": func(q *audit.Query) string { q.AuditCreateTimeMs = rgRange(nil, rgF(900)); return "_auditRangeAuditCreate" },
+		"observed": func(q *audit.Query) string { q.ObservedMs = rgRange(rgF(10), rgF(900)); return "_auditRangeObserved" },
+		"api":      func(q *audit.Query) string { q.ApiTimeMs = rgRange(rgF(10), nil); return "_auditRangeApi" },
+		"audit create": func(q *audit.Query) string {
+			q.AuditCreateTimeMs = rgRange(nil, rgF(900))
+			return "_auditRangeAuditCreate"
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			q := queryForTest(now)
@@ -467,7 +470,7 @@ func rgCases() []rgCase {
 		{name: "observed with explicit complete", apply: func(q *audit.Query) { q.ObservedMs, q.Completion = rgRange(rgF(300), nil), "complete" }},
 		{name: "kb with invalid completion", apply: func(q *audit.Query) { q.RequestKB, q.Completion = rgRange(rgF(0), nil), "invalid" }},
 		{name: "age min", apply: func(q *audit.Query) { q.IncompleteAgeMs = rgRange(rgF(60_000), nil) }},
-		{name: "age band", apply: func(q *audit.Query) { q.IncompleteAgeMs = rgRange(rgF(5 * 60_000), rgF(10 * 60_000)) }},
+		{name: "age band", apply: func(q *audit.Query) { q.IncompleteAgeMs = rgRange(rgF(5*60_000), rgF(10*60_000)) }},
 		{name: "age max is inclusive", apply: func(q *audit.Query) { q.IncompleteAgeMs = rgRange(nil, rgF(5*60_000)) }},
 		{name: "age with pending", apply: func(q *audit.Query) { q.IncompleteAgeMs, q.Completion = rgRange(rgF(1), nil), "pending" }},
 		{name: "age with incomplete", apply: func(q *audit.Query) { q.IncompleteAgeMs, q.Completion = rgRange(rgF(1), nil), "incomplete" }},
@@ -625,7 +628,9 @@ func TestRangeFiltersAgreeOnModernLegacyAndDemo(t *testing.T) {
 		{"observed band", func(q *audit.Query) { q.ObservedMs = rgRange(rgF(30), rgF(400)) }},
 		{"request kb", func(q *audit.Query) { q.RequestKB = rgRange(rgF(2), rgF(4)) }},
 		{"response kb", func(q *audit.Query) { q.ResponseKB = rgRange(nil, rgF(5)) }},
-		{"combined", func(q *audit.Query) { q.ObservedMs, q.ResponseKB, q.UserIDs = rgRange(rgF(60), nil), rgRange(rgF(3), nil), []int{1001, 1002} }},
+		{"combined", func(q *audit.Query) {
+			q.ObservedMs, q.ResponseKB, q.UserIDs = rgRange(rgF(60), nil), rgRange(rgF(3), nil), []int{1001, 1002}
+		}},
 		{"age on complete rows", func(q *audit.Query) { q.IncompleteAgeMs = rgRange(rgF(1), nil) }},
 	}
 	for _, tc := range cases {
@@ -798,13 +803,13 @@ func TestRangeIsPartOfTheCursorFingerprint(t *testing.T) {
 	base := pageFingerprint(q, "")
 	seen := map[string]string{"none": base}
 	for name, apply := range map[string]func(*audit.Query){
-		"observed":    func(q *audit.Query) { q.ObservedMs = rgRange(rgF(1), nil) },
+		"observed":     func(q *audit.Query) { q.ObservedMs = rgRange(rgF(1), nil) },
 		"observed max": func(q *audit.Query) { q.ObservedMs = rgRange(nil, rgF(1)) },
-		"api":         func(q *audit.Query) { q.ApiTimeMs = rgRange(rgF(1), nil) },
-		"audit":       func(q *audit.Query) { q.AuditCreateTimeMs = rgRange(rgF(1), nil) },
-		"request kb":  func(q *audit.Query) { q.RequestKB = rgRange(rgF(1), nil) },
-		"response kb": func(q *audit.Query) { q.ResponseKB = rgRange(rgF(1), nil) },
-		"age":         func(q *audit.Query) { q.IncompleteAgeMs = rgRange(rgF(1), nil) },
+		"api":          func(q *audit.Query) { q.ApiTimeMs = rgRange(rgF(1), nil) },
+		"audit":        func(q *audit.Query) { q.AuditCreateTimeMs = rgRange(rgF(1), nil) },
+		"request kb":   func(q *audit.Query) { q.RequestKB = rgRange(rgF(1), nil) },
+		"response kb":  func(q *audit.Query) { q.ResponseKB = rgRange(rgF(1), nil) },
+		"age":          func(q *audit.Query) { q.IncompleteAgeMs = rgRange(rgF(1), nil) },
 	} {
 		other := q
 		apply(&other)

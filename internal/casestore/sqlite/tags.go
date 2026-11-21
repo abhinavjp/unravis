@@ -22,7 +22,6 @@ func (c *Case) loadTagCounts(ctx context.Context) error {
 	return c.countTags(ctx, c.db)
 }
 
-
 func (c *Case) countTags(ctx context.Context, q *sql.DB) error {
 	var envs, sources int64
 	if err := q.QueryRowContext(ctx, "SELECT (SELECT COUNT(*) FROM case_envs), (SELECT COUNT(*) FROM case_sources)").Scan(&envs, &sources); err != nil {

@@ -82,7 +82,7 @@ var w3cSpec = &spec{
 	zoneRule: clock.RuleUTCField,
 	keep: []string{"date", "time", "cs-method", "cs-uri-stem", "sc-status", "sc-substatus",
 		"sc-win32-status", "time-taken", "s-port", "s-sitename", "s-computername", "cs-username", "sc-bytes", "cs-bytes",
-			"c-ip", "cs(referer)", "cs(cookie)"},
+		"c-ip", "cs(referer)", "cs(cookie)"},
 	required: []string{"date", "time"},
 	row:      w3cRow,
 	gaps: func(st *runState, rep *importer.Report) []string {

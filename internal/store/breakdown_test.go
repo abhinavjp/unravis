@@ -872,7 +872,11 @@ func TestBreakdownValidatesInputAndKeepsLimits(t *testing.T) {
 		"top over 50":       {Query: q, Dim: audit.BreakdownUserAgent, Top: 51},
 		"negative top":      {Query: q, Dim: audit.BreakdownUserAgent, Top: -1},
 		"range over 7 days": {Query: func() audit.Query { w := q; w.Start = w.End.Add(-8 * 24 * time.Hour); return w }(), Dim: audit.BreakdownUserAgent},
-		"filter too long":   {Query: func() audit.Query { w := q; w.UserIPs = []string{strings.Repeat("x", audit.MaxFilterLength+1)}; return w }(), Dim: audit.BreakdownUserAgent},
+		"filter too long": {Query: func() audit.Query {
+			w := q
+			w.UserIPs = []string{strings.Repeat("x", audit.MaxFilterLength+1)}
+			return w
+		}(), Dim: audit.BreakdownUserAgent},
 	} {
 		if _, err := h.store.Breakdown(context.Background(), in); !errors.Is(err, audit.ErrInvalidInput) {
 			t.Errorf("%s: err = %v, want invalid input", name, err)

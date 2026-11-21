@@ -117,7 +117,7 @@ func TestBenchCounters(t *testing.T) {
 	}
 	short := envInt("UNRAVIS_BENCH_QUERIES_SHORT", 10)
 	epq := url.Values{"from": {from.Format(time.RFC3339)}, "to": {to.Format(time.RFC3339)},
-		"ep": {from.Add(10 * time.Hour).Format(time.RFC3339) + "/" + from.Add(10*time.Hour+10*time.Minute).Format(time.RFC3339)}}
+		"ep": {from.Add(10*time.Hour).Format(time.RFC3339) + "/" + from.Add(10*time.Hour+10*time.Minute).Format(time.RFC3339)}}
 	queries := []q{
 		{"series 1 selector, 5 min buckets (288)", seriesPath([]string{total}, 300_000), reqs},
 		{"series 10 selectors, 5 min buckets", seriesPath(ten, 300_000), short},
