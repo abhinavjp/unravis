@@ -213,6 +213,15 @@ jobs:
         shell: pwsh
         run: ./tools/release/Test-ProtonPass.ps1
 
+      - name: Set up Go (the self-test lists the signing tool's dependencies)
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Release manager self-test (keys, versions, audit chain, no-prompt rules)
+        shell: pwsh
+        run: ./tools/release/Test-ReleaseManager.ps1
+
       - name: Parse tools/dev in Windows PowerShell 5.1
         shell: powershell
         run: |

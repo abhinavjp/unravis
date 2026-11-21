@@ -3,6 +3,9 @@
 //	sigtool keygen   -role stable|rc -out key.json -pub key.pub     make an encrypted key pair (offline, on the owner's PC)
 //	sigtool manifest -dir dist -version V -seq N -out manifest.json  describe a release (CI runs this; it signs nothing)
 //	sigtool sign     -key key.json -in manifest.json -out manifest.json.sig
+//	sigtool feedsig  -in rc.json -sig rc.json.sig -trusted|-keys K -want C   signature only (ignores expiry): which version the feed really names
+//	sigtool controlsig -in c.json -sig c.json.sig -keys K[,K2] -want C   control file signature check that ignores expiry; prints its expiry and seq
+//	sigtool keycheck -key key.json [-role rc|stable]   check the passphrase opens the key (signs nothing, writes nothing)
 //	sigtool refresh  -in rc.json -sig rc.json.sig -trusted -want C -version V -commit SHA -days D -out new.json   same release, later expiry, seq + 1 (then sign it)
 //	sigtool control  -channel C [-pause] [-block V,..] [-rollout V -percent N] [-note T] [-days D] -out control.json
 //	sigtool sign     -control -key key.json -in control.json -out control.json.sig   (a control file: pause, withdraw, staged rollout)
@@ -205,6 +208,128 @@ func run(args []string, in io.Reader, out io.Writer) error {
 			return err
 		}
 		fmt.Fprintf(out, "wrote %s: %s again, seq %d -> %d, expires %s\n", *outFile, nw.Version, old.Seq, nw.Seq, nw.Expires.Format("2006-01-02"))
+		return nil
+
+	case "feedsig":
+		// The release scripts take the version on the feed as the baseline for their gates. A token holder could edit that JSON, so
+		// its signature is checked first. Expiry is ignored on purpose: an expired feed still names its release truly.
+		inFile := fs.String("in", "", "the manifest on the feed")
+		sigFile := fs.String("sig", "", "its signature file")
+		trusted := fs.Bool("trusted", false, "check against the keys built into this source tree")
+		keysFile := fs.String("keys", "", "or against a trusted_keys.txt file")
+		want := fs.String("want", "", "channel the file must be for: stable or rc (required)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *want != update.ChannelStable && *want != update.ChannelRC {
+			return errors.New("-want must be stable or rc")
+		}
+		var keys []update.Key
+		var err error
+		switch {
+		case *trusted:
+			keys, err = update.TrustedKeys()
+		case *keysFile != "":
+			var kb []byte
+			if kb, err = os.ReadFile(*keysFile); err == nil {
+				keys, err = update.ParseKeys(string(kb))
+			}
+		default:
+			err = errors.New("pass -trusted or -keys")
+		}
+		if err != nil {
+			return err
+		}
+		mb, err := os.ReadFile(*inFile)
+		if err != nil {
+			return err
+		}
+		sb, err := os.ReadFile(*sigFile)
+		if err != nil {
+			return err
+		}
+		m, err := update.VerifySignatureOnly(mb, sb, update.Trust{Keys: keys})
+		if err != nil {
+			return fmt.Errorf("the feed file does not verify: %w", err)
+		}
+		if m.Channel != *want {
+			return fmt.Errorf("the feed file is for %s, not %s", m.Channel, *want)
+		}
+		fmt.Fprintf(out, "%s\n", m.Version)
+		return nil
+
+	case "controlsig":
+		// Set-Control -KeepInForce must know whether the control file on the feed is genuine before it reads anything from it,
+		// expiry included (an edited date must not make real holds look expired). The signature is checked at the file's own
+		// publish time, so an expired but genuine file still verifies; its expiry is then read from the verified content.
+		inFile := fs.String("in", "", "control file")
+		sigFile := fs.String("sig", "", "its signature file")
+		keysFiles := fs.String("keys", "", "comma-separated trusted_keys.txt files; any of them may hold the signing key")
+		want := fs.String("want", "", "channel the file must be for: stable or rc (required)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		var keys []update.Key
+		for _, kf := range strings.Split(*keysFiles, ",") {
+			if kf = strings.TrimSpace(kf); kf == "" {
+				continue
+			}
+			kb, err := os.ReadFile(kf)
+			if err != nil {
+				return err
+			}
+			k, err := update.ParseKeys(string(kb))
+			if err != nil {
+				return err
+			}
+			keys = append(keys, k...)
+		}
+		if len(keys) == 0 {
+			return errors.New("pass -keys")
+		}
+		body, err := os.ReadFile(*inFile)
+		if err != nil {
+			return err
+		}
+		sb, err := os.ReadFile(*sigFile)
+		if err != nil {
+			return err
+		}
+		pre, err := update.ParseControl(body)
+		if err != nil {
+			return err
+		}
+		c, err := update.VerifyControl(body, sb, update.Trust{Keys: keys, Channel: *want, Want: *want}, pre.Published.Add(time.Second))
+		if err != nil {
+			return fmt.Errorf("the control file does not verify: %w", err)
+		}
+		fmt.Fprintf(out, "%s %d\n", c.Expires.UTC().Format(time.RFC3339), c.Seq)
+		return nil
+
+	case "keycheck":
+		// The release manager runs this before anything is tagged, so a wrong passphrase or key is found while nothing has changed.
+		keyPath := fs.String("key", "", "encrypted private key file")
+		wantRole := fs.String("role", "", "the channel the key must be for (optional)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		pass, err := passphrase(in)
+		if err != nil {
+			return err
+		}
+		kb, err := os.ReadFile(*keyPath)
+		if err != nil {
+			return err
+		}
+		role, priv, err := openKey(kb, pass)
+		if err != nil {
+			return err
+		}
+		if *wantRole != "" && role != *wantRole {
+			return fmt.Errorf("this is a %s key, not %s", role, *wantRole)
+		}
+		pub := priv.Public().(ed25519.PublicKey)
+		fmt.Fprintf(out, "ok: %s key %s %s\n", role, update.KeyID(pub), hex.EncodeToString(pub))
 		return nil
 
 	case "sign":
