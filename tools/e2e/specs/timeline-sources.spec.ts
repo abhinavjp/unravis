@@ -183,12 +183,12 @@ test('TSRC-04: a source can be switched off and on again; each click sends the m
   await openTimeline(page);
   await expect(page.locator('.tracing-chart')).toBeVisible();
 
-  // SQL off: the request leaves out the SQL file, the chip is off, and the SQL lane says no source is selected (not "no file").
+  // SQL off: the request leaves out the SQL file and the chip is off. The imported file is no longer read, so the SQL lane falls back
+  // to the SQL time the selected live audit sources carry (api-seen, read just now); it does not say "no file" and offers no Add files.
   const off = await clickAndRead(page, () => chip(page, 'imp_1').click());
   expect(idsOf(off)).toEqual(['demo-east', 'demo-west', 'imp_2', 'imp_3']);
   await expect(chip(page, 'imp_1')).toHaveAttribute('aria-pressed', 'false');
-  const sqlStatus = page.locator('.panel[data-lane=sql] [data-testid=lane-status]');
-  await expect(sqlStatus).toHaveText('No source for this lane is selected.');
+  await expect(page.locator('.panel[data-lane=sql]')).toHaveAttribute('data-state', 'events');
   await expect(page.locator('.panel[data-lane=sql] [data-testid=lane-add-files]')).toHaveCount(0);
   await expect(page.locator('.panel[data-lane=iis]')).not.toContainText('No source for this lane is selected.');
   const stored = await page.evaluate(() => Object.keys(sessionStorage).concat(Object.keys(localStorage)).filter((k) => k.startsWith('unravis.tracing.sources.')));
@@ -327,7 +327,7 @@ test('TSRC-11: a source that was never imported says so on its chip', async ({ p
 test('TSRC-12: a lane whose files sit outside the window says what they cover', async ({ page }) => {
   await answerWith(page, (body) => {
     const iis = body.lanes.find((lane: Body) => lane.key === 'iis');
-    Object.assign(iis, { state: 'out-of-range', scanned: 0, buckets: [], events: [], importedFrom: '2001-01-01T00:00:00Z', importedTo: '2001-01-01T01:00:00Z' });
+    Object.assign(iis, { state: 'out-of-range', scanned: 0, buckets: [], events: [], importedFrom: '2001-01-01T00:00:00Z', importedTo: '2001-01-01T01:00:00Z', importedPartial: false });
   });
   await openTimeline(page);
   const panel = page.locator('.panel[data-lane="iis"]');
