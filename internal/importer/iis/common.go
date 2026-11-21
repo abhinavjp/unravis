@@ -64,14 +64,14 @@ type spec struct {
 }
 
 type runState struct {
-	rep         *importer.Report
-	hostCache   map[string]string
-	machines    map[string]struct{} // unlisted names (importer.HostKey) filed under the picked host
+	rep       *importer.Report
+	hostCache map[string]string
+	machines  map[string]struct{} // unlisted names (importer.HostKey) filed under the picked host
 	// listedAsPicked: a name the host list knows resolved to the picked host's label.
 	listedAsPicked bool
-	software    string
-	first, last time.Time
-	declared    map[string]bool // kept columns seen in any #Fields
+	software       string
+	first, last    time.Time
+	declared       map[string]bool // kept columns seen in any #Fields
 }
 
 type rowCtx struct {

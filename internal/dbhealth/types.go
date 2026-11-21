@@ -99,8 +99,8 @@ type Env struct {
 	Database   string
 	Collection string // MongoDB only
 	Now        time.Time
-	Version   string  // filled by the server check
-	UptimeMin float64 // filled by the server check; later checks read it
+	Version    string  // filled by the server check
+	UptimeMin  float64 // filled by the server check; later checks read it
 }
 
 /* -------------------------------------------------------------- helpers */

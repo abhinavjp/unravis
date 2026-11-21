@@ -70,12 +70,12 @@ func TestConnectionURLRefusesBadInput(t *testing.T) {
 func TestClassifyConnectNeverEchoesDriverText(t *testing.T) {
 	secret := "PRODSQL01 user svc_audit"
 	for msg, code := range map[string]string{
-		"Login failed for user 'svc_audit'. " + secret:         "login_failed",
+		"Login failed for user 'svc_audit'. " + secret:          "login_failed",
 		"Cannot open database \"Audit\" requested by the login": "database",
 		"tls: failed to verify certificate: x509: " + secret:    "certificate",
 		"dial tcp: lookup PRODSQL01: no such host":              "network",
-		"i/o timeout":                                           "timeout",
-		"something odd " + secret:                               "failed",
+		"i/o timeout":             "timeout",
+		"something odd " + secret: "failed",
 	} {
 		e := ClassifyConnect(errors.New(msg))
 		if e.Code != code {

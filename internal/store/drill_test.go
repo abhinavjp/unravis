@@ -77,10 +77,10 @@ func drillRaw(t *testing.T, doc map[string]any) bson.Raw {
 // drillCounted is what the summary counted for one query: the rows that
 // survive its pipeline, each with the state, outcome and kind it derived.
 type drillCounted struct {
-	id                                  string
-	kind, state, outcome, class         string
-	pending                             bool
-	incomplete, invalid, unclassified   bool
+	id                                string
+	kind, state, outcome, class       string
+	pending                           bool
+	incomplete, invalid, unclassified bool
 }
 
 func countedByPipeline(t *testing.T, q audit.Query, fixtures []drillFixture) []drillCounted {

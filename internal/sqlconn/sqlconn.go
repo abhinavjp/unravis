@@ -139,7 +139,9 @@ func SplitServer(text string) (host string, port int, ok bool) {
 		}
 	}
 	hostPart = strings.Trim(hostPart, "[]")
-	if hostPart == "" || strings.ContainsFunc(hostPart, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) || strings.ContainsRune(`/;=@'"`, r) }) {
+	if hostPart == "" || strings.ContainsFunc(hostPart, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r) || strings.ContainsRune(`/;=@'"`, r)
+	}) {
 		return "", 0, false
 	}
 	if portPart != "" {

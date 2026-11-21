@@ -172,7 +172,7 @@ func vmstatFixtures(t testing.TB) importertest.Fixtures {
 	}
 }
 
-func TestConformanceSadf(t *testing.T)   { importertest.Run(t, NewSadf(), sadfFixtures(t)) }
+func TestConformanceSadf(t *testing.T)    { importertest.Run(t, NewSadf(), sadfFixtures(t)) }
 func TestConformancePidstat(t *testing.T) { importertest.Run(t, NewPidstat(), pidstatFixtures(t)) }
 func TestConformanceVmstat(t *testing.T)  { importertest.Run(t, NewVmstat(), vmstatFixtures(t)) }
 

@@ -69,12 +69,12 @@ type Options struct {
 	// then filed under the host the person picked (UnlistedFallback). Discovery
 	// leaves it false: an unlisted name there is refused with ErrUnknownHost. The
 	// old no-host-map path (Hosts == nil, importer unit tests) keeps the fallback.
-	AllowUnlistedHost            bool
-	Limits                       Limits
-	Window                       Window
-	Pseudonymize                 func(kind, value string) string // keyed per case; kind "user" | "client"
-	Supplied                     map[string]string               // owner-supplied quality, e.g. "slowms": "100"
-	CookiePolicy                 *CookiePolicy                   // nil: no cookie value is ever stored, even as a digest
+	AllowUnlistedHost bool
+	Limits            Limits
+	Window            Window
+	Pseudonymize      func(kind, value string) string // keyed per case; kind "user" | "client"
+	Supplied          map[string]string               // owner-supplied quality, e.g. "slowms": "100"
+	CookiePolicy      *CookiePolicy                   // nil: no cookie value is ever stored, even as a digest
 }
 
 // HostKey is the key a machine name is compared and counted under: lower-cased,
