@@ -394,10 +394,10 @@ func evalProfiler(docs []map[string]any) Finding {
 		return Finding{Status: OK, Summary: "The profiler is on and recorded no operation slower than 100 ms in the last 24 hours."}
 	}
 	type group struct {
-		op, ns       string
-		n            int
-		sum, max     float64
-		scan         bool
+		op, ns        string
+		n             int
+		sum, max      float64
+		scan          bool
 		examined, ret float64
 	}
 	by := map[string]*group{}

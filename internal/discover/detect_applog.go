@@ -933,4 +933,3 @@ func (r *appRun) emitPresence() {
 		r.findings = append(r.findings, f)
 	}
 }
-

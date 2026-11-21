@@ -101,8 +101,8 @@ func TestTracingSQLIILanesGolden(t *testing.T) {
 		goldenEvent("s1", "sql-xel", "slow-op", t0.Add(5*time.Minute), 1200, "warn", map[string]string{"wait_class": "lock"}),
 		goldenEvent("s2", "sql-xel", "deadlock", t0.Add(6*time.Minute), 0, "error", map[string]string{"win32": "1205"}),
 		goldenEvent("s3", "sql-xel", "slow-op", t0.Add(59*time.Minute+59*time.Second), 300, "", nil),
-		goldenEvent("s4", "sql-xel", "slow-op", t0.Add(time.Hour), 10, "", nil),           // at End: half open, left out
-		goldenEvent("s5", "sql-xel", "slow-op", t0.Add(-time.Minute), 10, "", nil),        // before the window
+		goldenEvent("s4", "sql-xel", "slow-op", t0.Add(time.Hour), 10, "", nil),    // at End: half open, left out
+		goldenEvent("s5", "sql-xel", "slow-op", t0.Add(-time.Minute), 10, "", nil), // before the window
 		goldenEvent("i1", "iis-w3c", "request", t0.Add(10*time.Minute), 80, "", map[string]string{"status": "200"}),
 		goldenEvent("i2", "iis-w3c", "request", t0.Add(10*time.Minute), 5000, "", map[string]string{"status": "503"}),
 		goldenEvent("i3", "iis-w3c", "request", t0.Add(30*time.Minute), 12, "", map[string]string{"status": "404"}),

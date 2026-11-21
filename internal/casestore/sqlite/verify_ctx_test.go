@@ -23,6 +23,7 @@ func TestVerifyCancelledContextIsNotDamaged(t *testing.T) {
 		t.Fatalf("verify with a cancelled context = %v, want context.Canceled", err)
 	}
 }
+
 // The helper verify uses when a metadata query fails: a live context means the
 // case is damaged, a done context means the caller gave up.
 func TestDamagedUnlessCancelled(t *testing.T) {

@@ -93,6 +93,7 @@ func auditBinExpr(durationField string) bson.D {
 	}
 	return bson.D{{Key: "$switch", Value: bson.D{{Key: "branches", Value: branches}, {Key: "default", Value: 193}}}}
 }
+
 // Reference statistics use the whole interval; only current results need time slots.
 func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mongo.Pipeline {
 	intervalMS := int64(q.BucketSeconds) * 1000

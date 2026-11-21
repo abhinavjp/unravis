@@ -244,7 +244,7 @@ func TestRangeJSONRoundTrip(t *testing.T) {
 // demoRangeCases pair a range with an independent predicate over the demo
 // records (Observed is completed minus initiated; the rest read stored fields).
 func demoRangeCases() []demoFilterCase {
-	observed := func(r RequestRecord) float64 { return float64(r.CompletedAt.UnixMilli()-r.InitiatedAt.UnixMilli()) }
+	observed := func(r RequestRecord) float64 { return float64(r.CompletedAt.UnixMilli() - r.InitiatedAt.UnixMilli()) }
 	return []demoFilterCase{
 		{"duration min", func(q *Query) { q.ApiTimeMs = rng(fp(45), nil) }, func(r RequestRecord) bool { return r.ApiTimeMs != nil && *r.ApiTimeMs >= 45 }},
 		{"duration max", func(q *Query) { q.AuditCreateTimeMs = rng(nil, fp(8)) }, func(r RequestRecord) bool { return r.AuditCreateTimeMs != nil && *r.AuditCreateTimeMs <= 8 }},

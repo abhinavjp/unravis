@@ -147,7 +147,7 @@ func TestBinarySniffHasNoFalsePositivesOnText(t *testing.T) {
 	// BSON look-alikes that are not documents.
 	for name, head := range map[string][]byte{
 		"length too small":    bsonHead(4, 0x07, "_id"),
-		"length over 16 MiB": {0x40, 0x00, 0x00, 0x01, 0x07, '_', 'i', 'd', 0, 0, 0, 0},
+		"length over 16 MiB":  {0x40, 0x00, 0x00, 0x01, 0x07, '_', 'i', 'd', 0, 0, 0, 0},
 		"bad element type":    bsonHead(0x40, 0x20, "_id"),
 		"empty field name":    bsonHead(0x40, 0x07, ""),
 		"unprintable name":    bsonHead(0x40, 0x07, "a\x01b"),

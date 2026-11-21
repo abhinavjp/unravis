@@ -26,8 +26,8 @@ type Facts struct {
 	Coverage Coverage     `json:"coverage"`
 	Gaps     []Span       `json:"gaps,omitempty"`
 	// Gate says whether the reference can be compared against. Computed in groups(); never serialized.
-	Gate Gate `json:"-"`
-	Tiers    []TierOnset  `json:"tiers"`
+	Gate  Gate        `json:"-"`
+	Tiers []TierOnset `json:"tiers"`
 	// Series is the per-minute data behind the charts. It is large, so a caller that
 	// only wants the verdict can drop it.
 	Series []Minute `json:"series,omitempty"`
