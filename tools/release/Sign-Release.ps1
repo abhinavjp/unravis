@@ -139,7 +139,7 @@ try {
         # shared gates (ReleaseLib.ps1). Without -Yes you type 'reviewed' / 'keys ok'; with -Yes fixed rules decide and nobody is asked.
         $keyDir = Split-Path -Parent (Resolve-Path -LiteralPath $KeyFile).Path
         $audit = Join-Path (Get-ReleaseDataDir) 'audit.jsonl'
-        $null = Invoke-SigningGates -RepoRoot $repoRoot -Repo $Repo -Baseline $prevTag -Commit $sha -KeyDir $keyDir -Yes:$Yes -Context $Tag -AuditPath $audit -SourceDir $src
+        $null = Invoke-SigningGates -RepoRoot $repoRoot -Repo $Repo -Baseline $prevTag -Commit $sha -KeyDir $keyDir -Yes:$Yes -Context $Tag -AuditPath $audit -SourceDir $src -Tool $tool
 
         Invoke-Checked 'downloading the draft' { gh release download $Tag --repo $Repo --dir $files }
         Invoke-Checked 'checking the files against the manifest' { & $tool check-assets -manifest $manifest -dir $files }

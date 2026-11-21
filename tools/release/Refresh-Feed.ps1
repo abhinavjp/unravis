@@ -29,6 +29,7 @@ $work = Join-Path ([System.IO.Path]::GetTempPath()) ("unravis-refresh-" + [guid]
 New-Item -ItemType Directory -Path $work | Out-Null
 function Invoke-Checked([string]$what, [scriptblock]$cmd) { & $cmd; if ($LASTEXITCODE -ne 0) { throw "$what failed (exit code $LASTEXITCODE)." } }
 $done = $false
+$wt = $null
 try {
     # The signing tool is built from a clean checkout that matches GitHub, never from a changed working folder.
     if (git -C $repoRoot status --porcelain) { throw 'The working folder has changes. Use a clean checkout of master.' }
@@ -45,10 +46,11 @@ try {
     # Same gates as Sign-Release.ps1 (ReleaseLib.ps1): typed words without -Yes, fixed rules with -Yes.
     $keyDir = Split-Path -Parent (Resolve-Path -LiteralPath $KeyFile).Path
     $audit = Join-Path (Get-ReleaseDataDir) 'audit.jsonl'
-    $null = Invoke-SigningGates -RepoRoot $repoRoot -Repo $Repo -Baseline $prevTag -Commit (git -C $repoRoot rev-parse HEAD).Trim() -KeyDir $keyDir -Yes:$Yes -Context "refresh $Channel" -AuditPath $audit -SourceDir $repoRoot
-    $tool = Join-Path $work 'sigtool.exe'
-    Push-Location $repoRoot
-    try { Invoke-Checked 'building the signing tool' { go build -mod=readonly -o $tool ./tools/release/sigtool } } finally { Pop-Location }
+    # The signing tool is built from a throw-away worktree of this commit, never from the working folder itself.
+    $head = (git -C $repoRoot rev-parse HEAD).Trim()
+    $wt = New-ToolWorktree $repoRoot $head $work
+    $tool = $wt.Tool
+    $null = Invoke-SigningGates -RepoRoot $repoRoot -Repo $Repo -Baseline $prevTag -Commit $head -KeyDir $keyDir -Yes:$Yes -Context "refresh $Channel" -AuditPath $audit -SourceDir $wt.Dir -Tool $tool
 
     $old = Join-Path $work "$Channel.json"
     $file = Join-Path $work "$Channel-new.json"
@@ -92,6 +94,7 @@ try {
     Write-Host "Refreshed. The feed is valid again until the new expiry." -ForegroundColor Green
     $done = $true
 } finally {
+    if ($wt) { Remove-ToolWorktree $repoRoot $wt.Dir }
     if ($done) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
     else { Write-Host "Stopped. The working folder is kept so nothing is lost: $work (it holds the signed file if the upload failed)." -ForegroundColor Yellow }
 }

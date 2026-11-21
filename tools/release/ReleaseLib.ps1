@@ -13,9 +13,10 @@ $script:ReleaseTrustedKeysPath = 'internal/update/trusted_keys.txt'
 $env:GOFLAGS = ''; $env:GOWORK = 'off'; $env:GOENV = 'off'; $env:GOTOOLCHAIN = 'local'
 # The code that sees the passphrase or decides what installed copies accept.
 # All of tools/release: the PowerShell scripts read and pipe the passphrase too.
-$script:ReleaseSigningPaths = @('tools/release', 'internal/update', ':!internal/update/trusted_keys.txt')
+# Case-insensitive: on Windows Internal/Update/x.go lands in the same folder and is compiled in.
+$script:ReleaseSigningPaths = @(':(icase)tools/release', ':(icase)internal/update', ':(icase,exclude)internal/update/trusted_keys.txt')
 # Paths whose PRs are named in the release report (they change what is built, signed or trusted).
-$script:ReleaseSensitivePaths = @('tools/release', 'internal/update', '.github/workflows', 'go.mod', 'go.sum', 'installer')
+$script:ReleaseSensitivePaths = @(':(icase)tools/release', ':(icase)internal/update', ':(icase).github/workflows', ':(icase)go.mod', ':(icase)go.sum', ':(icase)installer')
 # Proton Pass entries for each key (docs/auto-updater/RELEASING.md, vault "Work", item "Unravis Passphrases").
 $script:ReleasePassRefs = @{
     'rc-1'     = 'pass://Work/Unravis Passphrases/rc.1 passphrase'
@@ -232,19 +233,32 @@ function Get-SensitivePullRequests([string]$RepoRoot, [string]$Base, [string]$He
 #  key list changed     -> every ADDED key must have its private key file in KeyDir (made by Make-Keys). Removed keys are fine.
 #  first release        -> every listed key must have its key file in KeyDir.
 function Invoke-SigningGates {
-    param([string]$RepoRoot, [string]$Repo, [string]$Baseline, [string]$Commit, [string]$KeyDir, [switch]$Yes, [string]$Context, [string]$AuditPath, [string]$SourceDir)
+    param([string]$RepoRoot, [string]$Repo, [string]$Baseline, [string]$Commit, [string]$KeyDir, [switch]$Yes, [string]$Context, [string]$AuditPath, [string]$SourceDir, [string]$Tool)
     if (-not $SourceDir) { $SourceDir = $RepoRoot }
     $r = [ordered]@{ CodeChanged = $false; DiffSha256 = $null; KeysAdded = @(); KeysRemoved = @() }
     $owner = Get-OwnerKeys $KeyDir
     $ask = { param($word, $q) if ((Read-Host "$q Type '$word' to go on") -ne $word) { throw 'Stopped. Nothing was signed or published.' } }
     $newKeys = (git -C $RepoRoot show "${Commit}:$script:ReleaseTrustedKeysPath") -join "`n"
     if ($LASTEXITCODE -ne 0) { throw "Could not read $script:ReleaseTrustedKeysPath at $Commit." }
+    if ($Yes) {
+        # With nobody reading along, only code that is on GitHub's master through merged PRs is ever signed, whatever it changes.
+        $cmp = gh api "repos/$Repo/compare/master...$Commit" --jq .status 2>$null
+        if ($LASTEXITCODE -ne 0 -or ($cmp -ne 'behind' -and $cmp -ne 'identical')) { throw "$Context ($($Commit.Substring(0, 7))) is not part of GitHub's master (compare says '$cmp'). Not signing. Merge it through a pull request first." }
+        if ($Baseline) {
+            $pr = Get-CommitPullRequests $RepoRoot $Repo $Baseline $Commit
+            if ($pr.Missing.Count) { throw "These commits on master since $Baseline did not come through a merged pull request: $(($pr.Missing | ForEach-Object { $_.Substring(0, 7) }) -join ', '). Not signing." }
+        }
+        # SourceDir is a clean checkout of Commit (a throw-away worktree).
+        $bad = Get-ForbiddenSigtoolDeps (Get-SigtoolNonStdDeps $SourceDir)
+        if ($bad.Count) { throw "The signing tool depends on code outside the standard library and internal/update: $($bad -join ', '). Not signing." }
+    }
     if (-not $Baseline) {
         Write-Host 'Trusted public keys in this release:'; $newKeys | Write-Host
         if ($Yes) {
             $c = Compare-KeyLists '' $newKeys $owner
             if ($c.Foreign.Count) { throw "The trusted key list holds keys you have no key file for in ${KeyDir}: $(($c.Foreign | ForEach-Object { "$($_.Role) $($_.Pub)" }) -join '; '). Not signing." }
-            Write-Host "-Yes: every trusted key has its key file in $KeyDir." -ForegroundColor Yellow
+            Assert-KeysOpen $c.Added $owner $Tool
+            Write-Host "-Yes: every trusted key has its key file in $KeyDir and opens with its own passphrase." -ForegroundColor Yellow
             $r.KeysAdded = @($c.Added | ForEach-Object { "$($_.Role) $($_.Pub.Substring(0, 16))" })
         } else { & $ask 'keys ok' "These are your keys and nobody else's." }
         if ($AuditPath) { Write-AuditEntry $AuditPath @{ event = 'signing-gates'; context = $Context; baseline = 'first-release'; commit = $Commit; keys_added = $r.KeysAdded; mode = $(if ($Yes) { 'auto' } else { 'typed' }) } }
@@ -257,16 +271,8 @@ function Invoke-SigningGates {
         Write-Host "Signing and verifying code changed since ${Baseline}:"; $codeDiff | Write-Host
         $diffText = (git -C $RepoRoot diff $Baseline $Commit -- $script:ReleaseSigningPaths) -join "`n"
         $r.DiffSha256 = Get-TextSha256 $diffText
-        if ($Yes) {
-            $cmp = gh api "repos/$Repo/compare/master...$Commit" --jq .status 2>$null
-            if ($LASTEXITCODE -ne 0 -or ($cmp -ne 'behind' -and $cmp -ne 'identical')) { throw "The signing code at $Context is not part of GitHub's master (compare says '$cmp'). Not signing. Merge it through a pull request first." }
-            $pr = Get-CommitPullRequests $RepoRoot $Repo $Baseline $Commit
-            if ($pr.Missing.Count) { throw "These commits on master since $Baseline did not come through a merged pull request: $(($pr.Missing | ForEach-Object { $_.Substring(0, 7) }) -join ', '). Not signing." }
-            # SourceDir is a clean checkout of Commit (Sign-Release.ps1 passes its throw-away worktree).
-            $bad = Get-ForbiddenSigtoolDeps (Get-SigtoolNonStdDeps $SourceDir)
-            if ($bad.Count) { throw "The signing tool now depends on code outside the standard library and internal/update: $($bad -join ', '). Not signing." }
-            Write-Host "-Yes: the signing code is on master through merged PRs; diff sha256 $($r.DiffSha256)." -ForegroundColor Yellow
-        } else { & $ask 'reviewed' 'You have read that diff (git diff) and it is yours.' }
+        if ($Yes) { Write-Host "-Yes: the signing code is on master through merged PRs; diff sha256 $($r.DiffSha256)." -ForegroundColor Yellow }
+        else { & $ask 'reviewed' 'You have read that diff (git diff) and it is yours.' }
     }
     $oldKeys = (git -C $RepoRoot show "${Baseline}:$script:ReleaseTrustedKeysPath") -join "`n"
     if ($LASTEXITCODE -ne 0) { throw "Could not read $script:ReleaseTrustedKeysPath at $Baseline." }
@@ -277,11 +283,43 @@ function Invoke-SigningGates {
         Write-Host "The list of trusted public keys CHANGED since ${Baseline}: $($c.Added.Count) added, $($c.Removed.Count) removed."
         if ($Yes) {
             if ($c.Foreign.Count) { throw "A trusted key was added that is not one of yours (no key file for it in $KeyDir): $(($c.Foreign | ForEach-Object { "$($_.Role) $($_.Pub)" }) -join '; '). Not signing." }
-            Write-Host '-Yes: every added key has its key file in the key folder; removed keys only narrow trust.' -ForegroundColor Yellow
+            Assert-KeysOpen $c.Added $owner $Tool
+            Write-Host '-Yes: every added key has its key file and opens with its own passphrase; removed keys only narrow trust.' -ForegroundColor Yellow
         } else { & $ask 'keys ok' 'Every added or removed key is one you made or removed on purpose.' }
     }
     if ($AuditPath) { Write-AuditEntry $AuditPath @{ event = 'signing-gates'; context = $Context; baseline = $Baseline; commit = $Commit; code_changed = $r.CodeChanged; diff_sha256 = "$($r.DiffSha256)"; keys_added = $r.KeysAdded; keys_removed = $r.KeysRemoved; mode = $(if ($Yes) { 'auto' } else { 'typed' }) } }
     return [pscustomobject]$r
+}
+
+# A key file is proof of ownership only if it opens: its public key is in clear, so a look-alike JSON file would pass a file check.
+# Every key in Keys must have its file in the owner's folder and open with its own Proton Pass entry (sigtool keycheck via Tool).
+function Assert-KeysOpen($Keys, $OwnerKeys, [string]$Tool) {
+    foreach ($a in @($Keys)) {
+        if (-not $a) { continue }
+        if (-not $Tool) { throw 'Internal error: no signing tool to check added keys with. Not signing.' }
+        $f = $OwnerKeys | Where-Object { -not $_.Problem -and $_.Role -eq $a.Role -and $_.Pub -eq $a.Pub } | Select-Object -First 1
+        $ref = if ($f) { Get-ProtonPassRefForKey $f.Name } else { $null }
+        if (-not $f -or -not $ref) { throw "Trusted key $($a.Role) $($a.Pub.Substring(0, 16))... has no key file with a known Proton Pass entry. Not signing." }
+        $sec = Get-SigningPassphrase -ProtonPassRef $ref -KeyFile $f.Path -Yes
+        try { $null = Invoke-WithPassphrase $sec $Tool @('keycheck', '-key', $f.Path, '-role', $a.Role) 2>&1 } finally { $sec.Dispose() }
+        if ($LASTEXITCODE -ne 0) { throw "Trusted key $($f.Name) does not open with its Proton Pass entry: not proven to be yours. Not signing." }
+    }
+}
+
+# Builds sigtool from a throw-away worktree of Commit (never the working folder: ignored or hidden files there do not count).
+# Returns @{ Dir = worktree; Tool = exe }. The caller removes the worktree with Remove-ToolWorktree.
+function New-ToolWorktree([string]$RepoRoot, [string]$Commit, [string]$Work) {
+    $dir = Join-Path $Work 'src'
+    git -C $RepoRoot worktree add --detach $dir $Commit 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "git worktree add for $Commit failed." }
+    $tool = Join-Path $Work 'sigtool.exe'
+    Push-Location $dir
+    try { go build -mod=readonly -o $tool ./tools/release/sigtool; if ($LASTEXITCODE -ne 0) { throw 'building the signing tool failed.' } } finally { Pop-Location }
+    return [pscustomobject]@{ Dir = $dir; Tool = $tool }
+}
+function Remove-ToolWorktree([string]$RepoRoot, [string]$Dir) {
+    if ($Dir -and (Test-Path -LiteralPath $Dir)) { git -C $RepoRoot worktree remove --force $Dir 2>&1 | Out-Null }
+    git -C $RepoRoot worktree prune 2>&1 | Out-Null
 }
 
 # ---- passphrase -------------------------------------------------------------------------------------------------------------

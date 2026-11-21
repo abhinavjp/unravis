@@ -48,6 +48,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("unravis-control-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 function Invoke-Checked([string]$what, [scriptblock]$cmd) { & $cmd; if ($LASTEXITCODE -ne 0) { throw "$what failed (exit code $LASTEXITCODE)." } }
+$wt = $null
 try {
     # The signing tool is built from a clean checkout that matches GitHub, never from a changed working folder.
     if (git -C $repoRoot status --porcelain) { throw 'The working folder has changes. Use a clean checkout of master.' }
@@ -63,16 +64,22 @@ try {
     $prevTag = 'v' + (Get-Content -Raw (Join-Path $work "$Channel.json") | ConvertFrom-Json).version
     git -C $repoRoot rev-parse --verify --quiet "refs/tags/$prevTag^{commit}" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "The feed's current release $prevTag is not in this clone. Run: git fetch --tags" }
+    if ($AllowBehindMaster) {
+        # An older master commit is fine, but never one older than the release on the feed (the PR check would cover nothing).
+        git -C $repoRoot merge-base --is-ancestor $prevTag HEAD
+        if ($LASTEXITCODE -ne 0) { throw "This checkout is older than $prevTag, the release on the feed. Run git pull first." }
+    }
     $prevKeys = Join-Path $work 'prev_trusted_keys.txt'
     git -C $repoRoot show "${prevTag}:internal/update/trusted_keys.txt" > $prevKeys
     if ($LASTEXITCODE -ne 0) { throw "Could not read the trusted keys of $prevTag." }
     # Same gates as Sign-Release.ps1 (ReleaseLib.ps1): typed words without -Yes, fixed rules with -Yes.
     $keyDir = Split-Path -Parent (Resolve-Path -LiteralPath $KeyFile).Path
     $audit = Join-Path (Get-ReleaseDataDir) 'audit.jsonl'
-    $null = Invoke-SigningGates -RepoRoot $repoRoot -Repo $Repo -Baseline $prevTag -Commit (git -C $repoRoot rev-parse HEAD).Trim() -KeyDir $keyDir -Yes:$Yes -Context "control $Channel" -AuditPath $audit -SourceDir $repoRoot
-    $tool = Join-Path $work 'sigtool.exe'
-    Push-Location $repoRoot
-    try { Invoke-Checked 'building the signing tool' { go build -mod=readonly -o $tool ./tools/release/sigtool } } finally { Pop-Location }
+    # The signing tool is built from a throw-away worktree of this commit, never from the working folder itself.
+    $head = (git -C $repoRoot rev-parse HEAD).Trim()
+    $wt = New-ToolWorktree $repoRoot $head $work
+    $tool = $wt.Tool
+    $null = Invoke-SigningGates -RepoRoot $repoRoot -Repo $Repo -Baseline $prevTag -Commit $head -KeyDir $keyDir -Yes:$Yes -Context "control $Channel" -AuditPath $audit -SourceDir $wt.Dir -Tool $tool
 
     # The feed's JSON names the baseline for every gate; a token holder could edit it. Its signature must hold with the keys of the
     # release it names (an old genuine pair can be replayed, but it then names its own older release, which only widens the checks).
@@ -86,13 +93,16 @@ try {
         gh release download update-feed --repo $Repo --pattern "$Channel-control.json*" --dir $cur 2>&1 | Out-Null
         $cj = Join-Path $cur "$Channel-control.json"
         if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $cj) -and (Test-Path -LiteralPath "$cj.sig")) {
+            $exp = try { ([datetime](Get-Content -Raw -LiteralPath $cj | ConvertFrom-Json).expires).ToUniversalTime() } catch { [datetime]::MaxValue }
             & $tool verify -control -in $cj -sig "$cj.sig" -keys $prevKeys -channel $Channel -want $Channel 2>&1 | Out-Null
+            # Expired: nothing is in force. Not expired but not verifying: stop rather than drop holds that may be real.
+            if ($LASTEXITCODE -ne 0 -and $exp -gt (Get-Date).ToUniversalTime()) { throw "The $Channel control file on the feed does not verify with the keys of $prevTag, so its holds cannot be kept safely. Check it, then run without -KeepInForce naming every hold." }
             if ($LASTEXITCODE -eq 0) {
                 $old = Get-Content -Raw -LiteralPath $cj | ConvertFrom-Json
                 if ($old.pause) { $Pause = $true }
                 $Block = @(@($old.blocked) + $Block | Where-Object { $_ } | Select-Object -Unique)
                 Write-Host "Keeping the holds in force: pause=$([bool]$old.pause), withdrawn: $($Block -join ', ')."
-            } else { Write-Host 'The control file on the feed does not verify (or has expired); not keeping anything from it.' -ForegroundColor Yellow }
+            } else { Write-Host 'The control file on the feed has expired; nothing to keep from it.' -ForegroundColor Yellow }
         }
     }
     $file = Join-Path $work "$Channel-control.json"
@@ -124,5 +134,6 @@ try {
     Invoke-Checked 'verifying the published pair' { & $tool verify -control -in (Join-Path $back "$Channel-control.json") -sig (Join-Path $back "$Channel-control.json.sig") -keys $prevKeys -channel $Channel -want $Channel }
     Write-Host "Published. Machines pick it up at their next check (within about 30 minutes)." -ForegroundColor Green
 } finally {
+    if ($wt) { Remove-ToolWorktree $repoRoot $wt.Dir }
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }

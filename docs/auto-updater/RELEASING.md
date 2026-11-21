@@ -60,8 +60,9 @@ pwsh ./tools/release/Release.ps1 -Version 0.1.0-rc.52 -KeyFile D:\secret\rc-1.ke
 
 With `-Yes` no script in `tools/release` waits for typed input (owner's standing approval, 21 Nov 2026). Fixed rules replace the typed words (code in `tools/release/ReleaseLib.ps1`, `Invoke-SigningGates`; Sign-Release, Set-Control and Refresh-Feed all use it):
 
-- **Signing code** (`tools/release/sigtool`, `internal/update`) changed since the release on the feed: the commit must be on GitHub's `master`, every first-parent commit since that release must be a merged pull request, and `sigtool` may depend only on the Go standard library and `internal/update`. The diff SHA-256 goes to the audit log.
-- **Trusted keys** changed (or a channel's first release): every key ADDED must have its private key file (`*.key.json`, same role and public key) in the key folder. A key nobody here holds stops the run and is named. Removed keys only narrow trust and are logged.
+- **Always:** the commit being signed must be on GitHub's `master`, every first-parent commit since the release on the feed must be a merged pull request, and `sigtool` may depend only on the Go standard library and `internal/update`. The signing tool is built in a throw-away worktree.
+- **Signing code** (all of `tools/release`, `internal/update`) changed: its diff SHA-256 goes to the audit log.
+- **Trusted keys** changed (or a channel's first release): every key ADDED must have its private key file (`*.key.json`, same role and public key) in the key folder and open with its own Proton Pass entry. A key nobody here holds stops the run and is named. Removed keys only narrow trust and are logged.
 - **Passphrase**: only from Proton Pass. If pass-cli fails, the run stops with the reason; it never falls back to a hidden prompt.
 
 Without `-Yes` the old typed prompts (`reviewed`, `keys ok`, `yes`) still apply.
