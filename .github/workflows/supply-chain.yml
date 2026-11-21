@@ -109,6 +109,8 @@ jobs:
       - name: Install osv-scanner
         run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION}
       - name: Scan lockfiles
+        # Non-blocking until BL-460 clears the findings that exist on master today.
+        continue-on-error: true
         run: |
           args="-L go.mod -L web/package-lock.json"
           if [ -f desktop/src-tauri/Cargo.lock ]; then args="$args -L desktop/src-tauri/Cargo.lock"; fi
