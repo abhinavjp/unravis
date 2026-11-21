@@ -105,8 +105,9 @@ try {
     # ---- signing tool dependencies ------------------------------------------------------------------------------------------
     $deps = @('api-audit-explorer/internal/update', 'api-audit-explorer/tools/release/sigtool', '')
     Assert-That 'deps: today''s non-standard set is allowed' ((Get-ForbiddenSigtoolDeps $deps).Count -eq 0)
-    $f = Get-ForbiddenSigtoolDeps ($deps + 'github.com/evil/exfil' + 'api-audit-explorer/internal/server' + 'exfil')
-    Assert-That 'deps: a module, another internal package and a dot-less replaced module are refused' ($f.Count -eq 3)
+    Assert-That 'deps: golang.org/x/sys/windows (pinned, used by internal/update) is allowed' ((Get-ForbiddenSigtoolDeps ($deps + 'golang.org/x/sys/windows')).Count -eq 0)
+    $f = Get-ForbiddenSigtoolDeps ($deps + 'github.com/evil/exfil' + 'api-audit-explorer/internal/server' + 'exfil' + 'golang.org/x/sys/unix' + 'golang.org/x/net/http2')
+    Assert-That 'deps: a module, another internal package, a dot-less replaced module and other x/ packages are refused' ($f.Count -eq 5)
     $real = Get-SigtoolNonStdDeps (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
     Assert-That 'deps: the real signing tool passes the rule' ((Get-ForbiddenSigtoolDeps $real).Count -eq 0) ($real -join ', ')
 

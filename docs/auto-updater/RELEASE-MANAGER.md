@@ -30,7 +30,7 @@ Other switches: `-CheckOnly` (all checks, including the passphrase opening the k
    - feed: readable, its release tag is in this clone, it expires in more than 30 days (warns otherwise)
    - keys: key folder found; every key file readable and matching its `.pub`; the chosen key is for this channel and trusted by HEAD and by the feed's release; added keys in `trusted_keys.txt` since the feed's release all have a key file in the folder
    - passphrase: read from Proton Pass and **checked to open the chosen key** (`sigtool keycheck`), so a wrong entry is found before anything is tagged
-   - signing code: if `tools/release/sigtool` or `internal/update` changed since the feed's release, `sigtool` may depend only on the standard library and `internal/update`
+   - signing code: if `tools/release/sigtool` or `internal/update` changed since the feed's release, `sigtool` may depend only on the standard library, `internal/update` and `golang.org/x/sys/windows` (pinned in go.mod)
    - PowerShell transcription or module logging turned on by policy: stop (they could log the passphrase)
    - `Test-Release.ps1` passes
 2. **Tag**: creates and pushes `vX`.

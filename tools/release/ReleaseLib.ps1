@@ -183,7 +183,8 @@ function Assert-NextVersion([string]$Version, [string[]]$Tags) {
 # Input: the NON-standard packages, as printed by Get-SigtoolNonStdDeps (go itself decides what is standard, so a module named
 # without a dot cannot pass as standard). Output: the packages that are not allowed.
 function Get-ForbiddenSigtoolDeps([string[]]$Lines) {
-    $ok = @('api-audit-explorer/internal/update', 'api-audit-explorer/tools/release/sigtool')
+    # golang.org/x/sys/windows: internal/update uses it on Windows (version pinned in go.mod and go.sum, both sensitive paths).
+    $ok = @('api-audit-explorer/internal/update', 'api-audit-explorer/tools/release/sigtool', 'golang.org/x/sys/windows')
     return , @($Lines | Where-Object { $_ } | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not ($ok -contains $_) })
 }
 function Get-SigtoolNonStdDeps([string]$Dir) {
