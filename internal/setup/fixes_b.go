@@ -158,15 +158,14 @@ func (r *Runner) programFolderProblem(dir string, old *Installed) (string, error
 }
 
 // splitApps divides the running Unravis programs into the ones of the person who ran setup and the ones of anyone else. A program
-// whose owner the list did not report counts as the person's; one whose owner cannot be read counts as someone else's.
+// counts as the person's only when the run knows the person's SID, the program's SID is known and the two are equal (case does not
+// matter). A program with no SID, one whose owner cannot be read (UnknownOwner) and every program when the run's own SID is empty
+// count as someone else's, so setup refuses to close them: this is the safe direction.
 func (r *Runner) splitApps(running []Process) (mine, others []Process) {
 	for _, q := range running {
-		switch {
-		case q.SID == "":
+		if r.UserSID != "" && q.SID != "" && q.SID != UnknownOwner && strings.EqualFold(q.SID, r.UserSID) {
 			mine = append(mine, q)
-		case q.SID != UnknownOwner && r.UserSID != "" && strings.EqualFold(q.SID, r.UserSID):
-			mine = append(mine, q)
-		default:
+		} else {
 			others = append(others, q)
 		}
 	}

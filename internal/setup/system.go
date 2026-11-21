@@ -136,7 +136,8 @@ func (cleanPaths) Canonical(p string) (string, error) { return filepath.Clean(p)
 type Process struct {
 	PID uint32 `json:"pid"`
 	Exe string `json:"exe"`
-	// SID is the account the program runs as. "" means the list did not say; UnknownOwner means it could not be read.
+	// SID is the account the program runs as. "" means the list did not say, and UnknownOwner means it could not be read: neither
+	// counts as the person's, so setup never closes such a program.
 	SID string `json:"sid,omitempty"`
 }
 

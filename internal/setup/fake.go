@@ -581,6 +581,9 @@ type FakeProcesses struct {
 	List_  []Process
 	Faults *Faults
 	nextID uint32
+	// DefaultSID is the SID Run gives a new program. NewFakeSystem sets it to the fake person's, as production always reports the
+	// account of every unravis.exe it lists.
+	DefaultSID string
 }
 
 func (p *FakeProcesses) List() ([]Process, error) {
@@ -623,12 +626,12 @@ func (p *FakeProcesses) TerminateIf(pid uint32, exe string) error {
 	return ErrNotFound
 }
 
-// Run adds a running program.
+// Run adds a running program, owned by DefaultSID.
 func (p *FakeProcesses) Run(exe string) uint32 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.nextID += 100
-	p.List_ = append(p.List_, Process{PID: p.nextID, Exe: exe})
+	p.List_ = append(p.List_, Process{PID: p.nextID, Exe: exe, SID: p.DefaultSID})
 	return p.nextID
 }
 
@@ -700,7 +703,7 @@ type Fakes struct {
 	AskQuitErr   error
 	// QuitRemovesApps makes a successful AskQuit end every process of the current user, as a quitting app would.
 	QuitRemovesApps bool
-	// UserSID is the account of the fake person: processes with it (or with no SID) are "mine".
+	// UserSID is the account of the fake person: only processes with this SID are "mine"; one with no SID or an unknown one is not.
 	UserSID string
 	locked  bool
 	lockMu  sync.Mutex
@@ -718,6 +721,7 @@ func NewFakeSystem(version string) (*System, *Fakes) {
 			HasWebView2: true, Admin: true, Elevate: true},
 		Faults: faults, Versions: map[string]string{}, version: version, UserSID: "S-1-5-21-1000",
 	}
+	f.Proc.DefaultSID = f.UserSID
 	s := &System{Reg: f.Reg, Svc: f.Svc, FW: f.FW, Sec: f.Sec, Proc: f.Proc, Mach: f.Mach, Disk: fakeDisk{f.Mach},
 		Trust: TrustWith(f.Sec, f.Reg),
 		Probe: func(string, int, string) error { return f.ProbeErr },
@@ -762,7 +766,7 @@ func (f *Fakes) UseAskQuit(s *System) {
 		if f.QuitRemovesApps {
 			kept := f.Proc.List_[:0:0]
 			for _, q := range f.Proc.List_ {
-				if q.SID != "" && !strings.EqualFold(q.SID, f.UserSID) {
+				if !strings.EqualFold(q.SID, f.UserSID) {
 					kept = append(kept, q)
 				}
 			}
