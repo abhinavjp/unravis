@@ -78,12 +78,12 @@ func TestVersionFromBuildInfoWithStrip(t *testing.T) {
 		exe += ".exe"
 	}
 	ld := "-s -w -buildid= -X api-audit-explorer/internal/version.Version=9.8.7 -X api-audit-explorer/internal/version.Commit=0123456789abcdef -X api-audit-explorer/internal/version.Date=2026-11-21"
-	build := exec.Command("go", "build", "-trimpath", "-ldflags", ld, "-o", exe, ".")
+	build := exec.Command("go", "build", "-trimpath", "-ldflags", ld, "-o", exe, ".") //nolint:gosec // test builds and runs its own throw-away binary
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
-	out, err := exec.Command(exe, "--version").CombinedOutput()
+	out, err := exec.Command(exe, "--version").CombinedOutput() //nolint:gosec // runs the binary just built above
 	if err != nil {
 		t.Fatalf("--version: %v\n%s", err, out)
 	}
