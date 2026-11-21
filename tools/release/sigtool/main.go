@@ -3,6 +3,8 @@
 //	sigtool keygen   -role stable|rc -out key.json -pub key.pub     make an encrypted key pair (offline, on the owner's PC)
 //	sigtool manifest -dir dist -version V -seq N -out manifest.json  describe a release (CI runs this; it signs nothing)
 //	sigtool sign     -key key.json -in manifest.json -out manifest.json.sig
+//	sigtool control  -channel C [-pause] [-block V,..] [-rollout V -percent N] [-note T] [-days D] -out control.json
+//	sigtool sign     -control -key key.json -in control.json -out control.json.sig   (a control file: pause, withdraw, staged rollout)
 //	sigtool check-assets -manifest manifest.json -dir downloaded   re-hash the real files against the manifest before signing
 //	sigtool preflight -manifest m.json -tag vX [-feed current.json]  sanity-check a manifest against its tag and the live feed
 //	sigtool verify   -in manifest.json -sig manifest.json.sig -pub a.pub[,b.pub] [-channel stable|rc]
@@ -110,7 +112,39 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		fmt.Fprintf(out, "wrote %s for %s (%s channel)\n", *outFile, m.Version, m.Channel)
 		return nil
 
+	case "control":
+		channel := fs.String("channel", "", "channel the file is for: stable or rc")
+		pause := fs.Bool("pause", false, "offer nothing on this channel")
+		block := fs.String("block", "", "comma-separated versions to withdraw")
+		rollV := fs.String("rollout", "", "version to roll out in stages")
+		pct := fs.Int("percent", 0, "share of machines that may take -rollout (1 to 100)")
+		note := fs.String("note", "", "short plain words shown to the person")
+		days := fs.Int("days", 30, "days until the file expires (at most 90)")
+		outFile := fs.String("out", "control.json", "file to write")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		t := time.Now().UTC().Truncate(time.Second)
+		c := update.Control{Schema: update.ControlSchema, Product: update.Product, Channel: *channel, Seq: uint64(t.Unix()),
+			Published: t, Expires: t.Add(time.Duration(*days) * 24 * time.Hour), Pause: *pause, Blocked: []string{},
+			RolloutVersion: *rollV, RolloutPercent: *pct, Note: *note}
+		for _, v := range strings.Split(*block, ",") {
+			if v = strings.TrimSpace(v); v != "" {
+				c.Blocked = append(c.Blocked, v)
+			}
+		}
+		if err := c.Validate(t); err != nil {
+			return err
+		}
+		b, _ := json.MarshalIndent(c, "", "  ")
+		if err := os.WriteFile(*outFile, append(b, '\n'), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "wrote %s for the %s channel (pause=%v, blocked=%d, rollout=%q %d%%)\n", *outFile, c.Channel, c.Pause, len(c.Blocked), c.RolloutVersion, c.RolloutPercent)
+		return nil
+
 	case "sign":
+		isControl := fs.Bool("control", false, "the input is a control file, not a manifest")
 		keyPath := fs.String("key", "", "encrypted private key file")
 		inFile := fs.String("in", "", "manifest to sign")
 		outFile := fs.String("out", "", "signature file to write")
@@ -132,6 +166,24 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		mb, err := os.ReadFile(*inFile)
 		if err != nil {
 			return err
+		}
+		if *isControl {
+			c, err := update.ParseControl(mb)
+			if err != nil {
+				return fmt.Errorf("refusing to sign: %w", err)
+			}
+			if err := c.Validate(time.Now()); err != nil {
+				return fmt.Errorf("refusing to sign: %w", err)
+			}
+			if c.Channel != role {
+				return fmt.Errorf("refusing to sign: this is a %s key but the control file is for the %s channel", role, c.Channel)
+			}
+			pub := priv.Public().(ed25519.PublicKey)
+			if err := os.WriteFile(*outFile, []byte(update.FormatSignature(pub, ed25519.Sign(priv, mb))), 0o644); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "signed the %s control file (seq %d) with key %s\n", c.Channel, c.Seq, update.KeyID(pub))
+			return nil
 		}
 		// Check the manifest before signing it: a key never signs a manifest of the wrong channel or one that does not validate.
 		m, err := update.ParseManifest(mb) // the same strict reader the programs use: it will not sign what they would refuse
@@ -186,6 +238,7 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		return preflight(*mf, *tag, *commit, *feed, out)
 
 	case "verify":
+		isControl := fs.Bool("control", false, "the input is a control file")
 		inFile := fs.String("in", "", "manifest")
 		sigFile := fs.String("sig", "", "signature file")
 		pubs := fs.String("pub", "", "comma-separated public key files (or use -trusted)")
@@ -226,6 +279,14 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		sb, err := os.ReadFile(*sigFile)
 		if err != nil {
 			return err
+		}
+		if *isControl {
+			c, err := update.VerifyControl(mb, sb, update.Trust{Keys: keys, Channel: *channel, Want: *want}, time.Now())
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "ok: control file for %s, seq %d\n", c.Channel, c.Seq)
+			return nil
 		}
 		m, err := update.Verify(mb, sb, update.Trust{Keys: keys, Channel: *channel, Want: *want}, time.Now())
 		if err != nil {
