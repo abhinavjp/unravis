@@ -38,10 +38,18 @@ On a PC that does not make releases there is no release log. Steps then show "un
 
 ## Auto-update (BL-199)
 
-The releases app rides the Unravis OTA instead of being a second signed product. `build.ps1` builds `dist\unravis-releases.exe` and puts it in the setup payload (an optional companion, like the Blackbox helper): the same signed manifest, SHA-256 pin, key checks, silent-update rules and rollback cover it. Setup places it beside `unravis.exe` and adds a Start-menu entry "Unravis Releases" (with its own icon). Uninstall removes both. A setup program built without it installs exactly as before.
+The releases app rides the Unravis OTA instead of being a second signed product. `build.ps1` builds `dist\unravis-releases.exe` and puts it in the setup payload (an optional companion, like the Blackbox helper): the same signed manifest, SHA-256 pin, key checks, silent-update rules and rollback cover it.
 
-- It updates when Unravis updates, so the release manager needs no change and there is no second feed.
-- If the releases window is open during an update, the old file is moved aside and the new one placed; the open window keeps running the old version until it is closed and opened again.
-- Installed copies: setup writes the link in the profile through the same window-owned step as the Unravis link, and only when the file is really there.
+**It is opt-in. A normal install does not get it.** Setup installs it only when asked:
 
-Not verified: needs `go test ./internal/setup ./cmd/unravis-setup` on Windows (these tests are Windows-only; on Linux they fail the same way with or without this change), then one real rc release and an update on a PC that has the app installed.
+- `unravis-setup.exe --silent --with-releases` (works with an install, `--repair` and `--upgrade`), or `"releases": true` in `setup.json`.
+- Once installed it is kept and updated by every later update and repair, with no flag. Without the file nothing changes.
+- The setup window has no checkbox for it; use the flag, then the window and silent updates keep it.
+
+When installed, setup places it beside `unravis.exe`, adds the Start-menu entry "Unravis Releases" (own icon), and uninstall removes both. During an update or uninstall setup ends an open releases window first (it is a read-only viewer with nothing to save), so no old file or backup folder is left in use.
+
+Known limits:
+- Rolling back to a Unravis version older than this feature (the old setup does not know the file) leaves `unravis-releases.exe` and its Start-menu link in place. They are harmless and the next newer setup manages them again.
+- On a relocated install the Start-menu link follows the moved folder like the Unravis link.
+
+Not verified: `go test ./internal/setup ./cmd/unravis-setup` on Windows (these tests are Windows-only; on Linux they fail the same way with or without this change, and so do the new ones), then one real rc release and an update of an installed copy.

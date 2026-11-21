@@ -82,6 +82,7 @@ func (r *Runner) NewPlan(op Op, opts Options, un UninstallOptions, old *Installe
 		}
 		p.Opts = old.State.Options()
 		p.Opts.CloseRunningApp = opts.CloseRunningApp
+		p.Opts.Releases = opts.Releases
 		if op == OpUninstall {
 			p.Opts.CloseRunningApp = un.CloseRunningApp
 			p.Version = old.Version
@@ -177,7 +178,30 @@ func (p *Plan) runningApps() ([]Process, error) {
 // ErrAppRunning is Unravis open while setup needs to replace or remove it, without the person's yes to closing it.
 var ErrAppRunning = &StepError{Msg: "Unravis is open.", Fix: "Close Unravis (or tick “Close Unravis for me”), then try again."}
 
+// closeReleases ends this install's releases window (if it is open and the person's own). It is a read-only viewer with nothing to
+// save, so it needs no question; an open copy would otherwise keep its old file in a backup folder and block the folder's removal.
+func (p *Plan) closeReleases(t *Txn) {
+	list, err := p.r.Sys.Proc.List()
+	if err != nil {
+		return
+	}
+	var found []Process
+	for _, q := range list {
+		if strings.EqualFold(filepath.Base(q.Exe), ReleasesExeName) && (insideFolder(q.Exe, p.Layout.InstallDir) || samePath(q.Exe, p.Layout.ReleasesExe)) {
+			found = append(found, q)
+		}
+	}
+	mine, _ := p.r.splitApps(found)
+	for _, q := range mine {
+		t.Logf("close-app: closing Unravis Releases (process %d)", q.PID)
+		if err := p.r.Sys.Proc.TerminateIf(q.PID, q.Exe); err != nil && !errors.Is(err, ErrNotFound) {
+			t.Logf("close-app: could not close Unravis Releases (process %d): %v", q.PID, err)
+		}
+	}
+}
+
 func (p *Plan) closeApp(ctx context.Context, t *Txn) error {
+	p.closeReleases(t)
 	running, err := p.runningApps()
 	if err != nil {
 		return err
@@ -370,6 +394,15 @@ func (p *Plan) stageFile(ctx context.Context, staging, name string) (string, err
 	return dst, nil
 }
 
+// wantReleases: the releases window is installed on request (--with-releases or "releases": true), and kept updated once it is there.
+func (p *Plan) wantReleases() bool {
+	if p.Opts.Releases {
+		return true
+	}
+	fi, err := os.Lstat(p.Layout.ReleasesExe)
+	return err == nil && fi.Mode().IsRegular()
+}
+
 func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
 	staging := filepath.Join(p.Layout.InstallDir, ".setup-staging-"+p.stamp)
 	if err := t.WorkDir(staging); err != nil {
@@ -382,8 +415,9 @@ func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
 	// The Blackbox program is always staged: it is placed beside the app (the app looks for it there) and, when a
 	// Blackbox is being installed, the same staged copy goes to the Blackbox folder.
 	names = append(names, BlackboxExeName)
-	// The releases window is an optional companion: it is staged only when this setup program carries it.
-	if _, ok := p.r.Payload.file(ReleasesExeName); ok {
+	// The releases window is an optional companion: staged only when this setup program carries it and the person asked for it (or it
+	// is already installed, so an update keeps it current).
+	if _, ok := p.r.Payload.file(ReleasesExeName); ok && p.wantReleases() {
 		names = append(names, ReleasesExeName)
 	}
 	for _, n := range names {

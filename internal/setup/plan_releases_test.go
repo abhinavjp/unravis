@@ -63,6 +63,7 @@ func releasesRoundTrip(t *testing.T, scope string) {
 		if scope == "machine" {
 			o = e.machineOpts()
 		}
+		o.Releases = true
 		e.mustRun(OpInstall, o, UninstallOptions{})
 		l := NewLayout(o, e.dirs)
 		if !exists(l.ReleasesExe) {
@@ -86,5 +87,46 @@ func TestInstallWithoutTheReleasesFileWritesNoReleasesLink(t *testing.T) {
 	l := NewLayout(o, e.dirs)
 	if exists(l.ReleasesExe) || exists(l.ReleasesLink) {
 		t.Fatal("an older payload must install exactly as before")
+	}
+}
+
+func TestPayloadWithReleasesInstallsNothingExtraUnlessAsked(t *testing.T) {
+	e := newEnv(t, "1.2.0")
+	e.r.Payload = payloadWithReleases(t, "1.2.0")
+	o := e.userOpts() // Releases is off
+	e.mustRun(OpInstall, o, UninstallOptions{})
+	l := NewLayout(o, e.dirs)
+	if exists(l.ReleasesExe) || exists(l.ReleasesLink) {
+		t.Fatal("a normal install must not carry the releases window")
+	}
+}
+
+func TestAnInstalledReleasesWindowIsKeptOnRepairWithoutTheOption(t *testing.T) {
+	e := newEnv(t, "1.2.0")
+	e.r.Payload = payloadWithReleases(t, "1.2.0")
+	o := e.userOpts()
+	o.Releases = true
+	e.mustRun(OpInstall, o, UninstallOptions{})
+	l := NewLayout(o, e.dirs)
+	writeFile(t, l.ReleasesExe, "damaged")
+	o.Releases = false
+	e.mustRun(OpRepair, o, UninstallOptions{})
+	if !exists(l.ReleasesExe) || !exists(l.ReleasesLink) {
+		t.Fatal("repair must keep (and restore) an installed releases window")
+	}
+}
+
+func TestReleasesOptionComesFromTheSilentConfig(t *testing.T) {
+	c, err := ParseSilentConfig([]byte(`{"scope":"user","releases":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := c.Request(OpInstall)
+	if err != nil || !req.Options.Releases {
+		t.Fatalf("%v %+v", err, req.Options)
+	}
+	c, _ = ParseSilentConfig([]byte(`{"scope":"user"}`))
+	if req, _ = c.Request(OpInstall); req.Options.Releases {
+		t.Fatal("off unless asked for")
 	}
 }

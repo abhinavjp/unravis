@@ -179,7 +179,7 @@ try {
         Invoke-Checked $GoExe @('build', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-setup.exe'), './cmd/unravis-setup')
         # Unravis Lite: a small console viewer for one Blackbox (docs/auto-updater/SPEC.md). It stays a console program so it can print the one-time link.
         Invoke-Checked $GoExe @('build', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-lite.exe'), './cmd/unravis-lite')
-        # Subsystem check: the app must be GUI (2) so it opens no console; every other program built here stays console (3).
+        # Subsystem check: the app and the releases window must be GUI (2) so they open no console; every other program built here stays console (3).
         $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis.exe')
         if ($Subsystem -ne 2) { throw "unravis.exe: PE subsystem $Subsystem, expected 2" }
         $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis-releases.exe')
