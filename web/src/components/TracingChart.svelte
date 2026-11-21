@@ -851,7 +851,7 @@
   .lane-label:hover .hint, .lane-label:focus-within .hint { display: block; }
   .lane-label[data-hint-closed] .hint { display: none; }
   /* The "?" button that carries the hint: a real tab stop, at least 24 px square. */
-  .hint-btn { flex: none; width: 1.5rem; height: 1.5rem; padding: 0; color: var(--text-2); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: 50%; font: inherit; font-size: var(--fs-2); line-height: 1; cursor: help; }
+  .hint-btn { flex: none; width: max(1.5rem, 24px); height: max(1.5rem, 24px); padding: 0; color: var(--text-2); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: 50%; font: inherit; font-size: var(--fs-2); line-height: 1; cursor: help; }
   .hint-btn:hover { color: var(--text); }
   .hint-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .lane-label .origin { color: var(--text-2); }

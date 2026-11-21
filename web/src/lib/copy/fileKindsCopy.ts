@@ -121,7 +121,7 @@ export const zoneWarnText = (count: number): string =>
 export const hostWarnText = (count: number): string =>
   count + (count === 1 ? ' file needs' : ' files need') + ' a computer named. Pick one in the list, or add it on the last step. The case cannot be made until each has one.';
 export const dropUnreadableText = (count: number): string => (count === 1 ? '1 item could not be read and was left out.' : count + ' items could not be read and were left out.');
-export const addedText = (count: number): string => (count === 1 ? '1 file was added to your sources.' : count + ' files were added to your sources.');
+export const addedText = (count: number): string => (count === 1 ? '1 file is ready to add.' : count + ' files are ready to add.');
 export const skippedText = (count: number): string => (count === 1 ? '1 file was left out.' : count + ' files were left out.');
 export const alreadyListedText = (count: number): string => (count === 1 ? 'That file is already in the list, so it was not added again.' : count + ' of those files are already in the list, so they were not added again.');
 

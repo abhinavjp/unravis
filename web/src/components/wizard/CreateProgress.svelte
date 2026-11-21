@@ -270,7 +270,7 @@
   tbody th.file { min-width: 140px; font-weight: 400; }
   .file-name { font-family: var(--mono); font-size: var(--fs-2); overflow-wrap: anywhere; }
   .result { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); min-width: 180px; max-width: 44ch; }
-  .badge { justify-self: start; padding: 0 var(--space-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); font-weight: 600; }
+  .badge { justify-self: start; padding: 0 var(--space-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); font-weight: 600; white-space: nowrap; }
   .badge[data-tone='good'] { border-color: var(--ok, var(--accent)); background: color-mix(in srgb, var(--ok, var(--accent)) 14%, var(--surface)); }
   .badge[data-tone='warn'] { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, var(--surface)); }
   .badge[data-tone='bad'] { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--surface)); }
