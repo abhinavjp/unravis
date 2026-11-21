@@ -390,3 +390,14 @@ func TestRecheckOtherReleaseStartsNothing(t *testing.T) {
 		}
 	}
 }
+
+func TestBlackboxUpdateIntervalForChannel(t *testing.T) {
+	var c Config
+	if c.UpdateIntervalFor(update.ChannelStable) != 6*time.Hour || c.UpdateIntervalFor(update.ChannelRC) != 30*time.Minute {
+		t.Errorf("defaults %v %v", c.UpdateIntervalFor(update.ChannelStable), c.UpdateIntervalFor(update.ChannelRC))
+	}
+	c.AutoUpdate = &AutoUpdate{IntervalMinutes: 60}
+	if c.UpdateIntervalFor(update.ChannelStable) != time.Hour || c.UpdateIntervalFor(update.ChannelRC) != time.Hour {
+		t.Error("a configured interval must win")
+	}
+}

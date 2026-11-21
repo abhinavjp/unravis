@@ -4,7 +4,7 @@ Owner rule (2026-11-21): an update is just an update. No terminal, no setup wind
 
 ## How it works now
 
-1. **Check** (unchanged): every 30 minutes, signed feed, no telemetry.
+1. **Check** (unchanged): every 30 minutes (release candidate) or 6 hours (stable), signed feed, no telemetry.
 2. **Download** (new, automatic): when a verified newer version exists, it downloads in the background (size capped, SHA-256 checked, signature already checked). A failed download waits 5 min, 15 min, 1 h, then 6 h before the next try.
 3. **In use?** The page tells the program it is being used (every 45 s, only while the page is visible and was touched in the last 5 minutes). "In use" = a sign within the last 2 minutes. A program with no page open, or a page left alone, counts as not in use.
 4. **In use:** the bar says "Version X is ready. It installs by itself when you are not using Unravis, or press Apply now." Buttons: Apply now, Later. Nothing is interrupted.

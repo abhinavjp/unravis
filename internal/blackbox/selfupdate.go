@@ -38,6 +38,8 @@ const (
 	MinUpdateMinutes     = 30
 	MaxUpdateMinutes     = 24 * 60
 	DefaultUpdateMinutes = 30
+	// DefaultStableUpdateMinutes is the default for a stable build: every 6 hours.
+	DefaultStableUpdateMinutes = 360
 
 	maxProgramSize = 200 << 20
 	programName    = "unravis-blackbox.exe"
@@ -119,7 +121,7 @@ func MarkManaged(progDir string) error {
 	return os.WriteFile(filepath.Join(progDir, ManagedMarkerName), []byte("Unravis updates this Blackbox together with itself.\r\n"), 0o644)
 }
 
-// AutoUpdate is the "autoUpdate" block of blackbox.json. A missing block means the defaults: install, every 30 minutes.
+// AutoUpdate is the "autoUpdate" block of blackbox.json. A missing block means the defaults: install, every 30 minutes (stable builds: every 6 hours).
 type AutoUpdate struct {
 	Mode            string `json:"mode,omitempty"`
 	IntervalMinutes int    `json:"intervalMinutes,omitempty"`
@@ -133,9 +135,16 @@ func (c Config) UpdateMode() string {
 	return c.AutoUpdate.Mode
 }
 
-// UpdateInterval is the time between checks.
-func (c Config) UpdateInterval() time.Duration {
+// UpdateInterval is the time between checks for a release candidate build.
+func (c Config) UpdateInterval() time.Duration { return c.UpdateIntervalFor(update.ChannelRC) }
+
+// UpdateIntervalFor is the time between checks for a build of channel: what the file says, else 6 hours for stable and 30 minutes
+// for anything else.
+func (c Config) UpdateIntervalFor(channel string) time.Duration {
 	if c.AutoUpdate == nil || c.AutoUpdate.IntervalMinutes == 0 {
+		if channel == update.ChannelStable {
+			return DefaultStableUpdateMinutes * time.Minute
+		}
 		return DefaultUpdateMinutes * time.Minute
 	}
 	return time.Duration(c.AutoUpdate.IntervalMinutes) * time.Minute
@@ -434,7 +443,7 @@ func NewServiceUpdater(cfg Config, version, exe string, logf func(string, ...any
 	}
 	fetcher.Folder, dl.Folder = src, src
 	u := &SelfUpdater{
-		Mode: cfg.UpdateMode(), Interval: cfg.UpdateInterval(), Version: v.String(), Dir: dir, Log: logf,
+		Mode: cfg.UpdateMode(), Interval: cfg.UpdateIntervalFor(update.ChannelOf(v)), Version: v.String(), Dir: dir, Log: logf,
 		Check: func(ctx context.Context) update.Result {
 			if err := os.MkdirAll(dir, 0o700); err != nil {
 				return update.Result{Status: update.StatusUnreachable, Detail: "no update folder"}

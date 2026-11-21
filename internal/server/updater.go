@@ -19,16 +19,19 @@ import (
 // exists. It downloads nothing and installs nothing; those are later slices and always wait for a click.
 
 const (
-	updateDefaultMinutes = 30
-	updateMinMinutes     = 5
-	updateMaxMinutes     = 7 * 24 * 60
-	updateSettingsLimit  = 4 * 1024
+	// A release candidate looks every 30 minutes; a stable build every 6 hours (a stable fleet does not need to chase a day's work,
+	// and a pause still reaches it because the last look before a start is made fresh).
+	updateDefaultMinutesRC     = 30
+	updateDefaultMinutesStable = 360
+	updateMinMinutes           = 5
+	updateMaxMinutes           = 7 * 24 * 60
+	updateSettingsLimit        = 4 * 1024
 )
 
 // updateFirstDelay is the wait before the first check after start; a variable only so a test can shorten it.
 var updateFirstDelay = 60 * time.Second
 
-// UpdaterSettings is what the person can change. A new install checks automatically every 30 minutes.
+// UpdaterSettings is what the person can change. A new install checks automatically: every 30 minutes (release candidate) or every 6 hours (stable).
 type UpdaterSettings struct {
 	Auto            bool `json:"auto"`
 	IntervalMinutes int  `json:"intervalMinutes"`
@@ -71,14 +74,14 @@ type Updater struct {
 // NewUpdater reads the saved settings from dir (created on first save). keys are the public keys this program trusts.
 func NewUpdater(dir string, keys []update.Key) *Updater {
 	u := &Updater{
-		dir:      dir,
-		settings: UpdaterSettings{Auto: true, IntervalMinutes: updateDefaultMinutes, ApplyAuto: true},
-		wake:     make(chan struct{}, 1),
-		rnd:      rand.New(rand.NewSource(time.Now().UnixNano())),
+		dir:  dir,
+		wake: make(chan struct{}, 1),
+		rnd:  rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	if v, err := update.ParseVersion(version.Version); err == nil {
 		u.channel = update.ChannelOf(v)
 	}
+	u.settings = UpdaterSettings{Auto: true, IntervalMinutes: defaultUpdateMinutes(u.channel), ApplyAuto: true}
 	u.fetcher = &update.Fetcher{
 		Keys: keys, Build: u.channel, Current: version.Version,
 		StatePath: filepath.Join(dir, "state.json"),
@@ -98,20 +101,28 @@ func (u *Updater) loadSettings() {
 	if err != nil {
 		return
 	}
-	s := UpdaterSettings{Auto: true, IntervalMinutes: updateDefaultMinutes, ApplyAuto: true}
+	s := UpdaterSettings{Auto: true, IntervalMinutes: defaultUpdateMinutes(u.channel), ApplyAuto: true}
 	if json.Unmarshal(b, &s) != nil {
 		return
 	}
-	if cleaned, err := cleanUpdaterSettings(s); err == nil {
+	if cleaned, err := cleanUpdaterSettings(s, defaultUpdateMinutes(u.channel)); err == nil {
 		u.settings = cleaned
 	} else {
 		u.settings.Auto = s.Auto // keep the on/off choice; only the bad interval falls back to the default
 	}
 }
 
-func cleanUpdaterSettings(s UpdaterSettings) (UpdaterSettings, error) {
+// defaultUpdateMinutes is the check interval of a channel: stable 6 hours, anything else 30 minutes.
+func defaultUpdateMinutes(channel string) int {
+	if channel == update.ChannelStable {
+		return updateDefaultMinutesStable
+	}
+	return updateDefaultMinutesRC
+}
+
+func cleanUpdaterSettings(s UpdaterSettings, def int) (UpdaterSettings, error) {
 	if s.IntervalMinutes == 0 {
-		s.IntervalMinutes = updateDefaultMinutes
+		s.IntervalMinutes = def
 	}
 	if s.IntervalMinutes < updateMinMinutes || s.IntervalMinutes > updateMaxMinutes {
 		return s, errors.New("the check interval must be between 5 minutes and 7 days")
@@ -121,7 +132,7 @@ func cleanUpdaterSettings(s UpdaterSettings) (UpdaterSettings, error) {
 
 // SetSettings validates, saves and applies new settings. A failed save is an error: the person sees that the choice was not kept.
 func (u *Updater) SetSettings(s UpdaterSettings) (UpdaterSettings, error) {
-	s, err := cleanUpdaterSettings(s)
+	s, err := cleanUpdaterSettings(s, defaultUpdateMinutes(u.channel))
 	if err != nil {
 		return s, err
 	}
