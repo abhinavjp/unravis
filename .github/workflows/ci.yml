@@ -213,6 +213,10 @@ jobs:
         shell: pwsh
         run: ./tools/release/Test-ProtonPass.ps1
 
+      - name: Release manager self-test (keys, versions, audit chain, no-prompt rules)
+        shell: pwsh
+        run: ./tools/release/Test-ReleaseManager.ps1
+
       - name: Parse tools/dev in Windows PowerShell 5.1
         shell: powershell
         run: |

@@ -348,3 +348,29 @@ func TestRefreshKeepsTheReleaseAndMovesTheDates(t *testing.T) {
 }
 
 func hexOf(b []byte) string { return hex.EncodeToString(b) }
+
+func TestKeycheck(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	kp, pp := filepath.Join(dir, "k.json"), filepath.Join(dir, "k.pub")
+	if err := run([]string{"keygen", "-role", "rc", "-out", kp, "-pub", pp}, strings.NewReader("correct horse battery\n"), &out); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := run([]string{"keycheck", "-key", kp, "-role", "rc"}, strings.NewReader("correct horse battery\n"), &out); err != nil {
+		t.Fatal(err)
+	}
+	k, err := readPub(pp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), hexOf(k.Pub)) || strings.Contains(out.String(), "horse") {
+		t.Fatalf("keycheck output: %q", out.String())
+	}
+	if err := run([]string{"keycheck", "-key", kp}, strings.NewReader("wrong passphrase!!\n"), &out); err == nil {
+		t.Fatal("a wrong passphrase was accepted")
+	}
+	if err := run([]string{"keycheck", "-key", kp, "-role", "stable"}, strings.NewReader("correct horse battery\n"), &out); err == nil {
+		t.Fatal("an rc key passed as stable")
+	}
+}

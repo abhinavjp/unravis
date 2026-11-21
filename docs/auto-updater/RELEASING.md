@@ -2,20 +2,22 @@
 
 Needs PowerShell 7.2+, git, go, `gh` (logged in), and your signing key files (see [KEYS.md](KEYS.md)).
 
-## One command
+## One command (release manager)
 
 ```powershell
-pwsh ./tools/release/Release.ps1 -Version 0.1.0-rc.52 -KeyFile D:\secret\rc-1.key.json
+pwsh ./tools/release/Release.ps1 -Channel rc -Yes
 ```
 
-First release on a channel (nothing trusts the keys yet): add `-FirstRelease`.
-Dry run (checks only, changes nothing): add `-DryRun`.
+Nothing to type. It works out the next version, picks the key from `D:\secret`, takes that key's passphrase from Proton Pass (table below), checks that the passphrase opens the key before anything is tagged, waits for CI, signs, publishes, moves the feed, reads the feed back, verifies on a clean runner, and withdraws the version by itself if that verify fails. If it stops, it says exactly why; run the same command again and it continues where it stopped. Full spec: [RELEASE-MANAGER.md](RELEASE-MANAGER.md). Threats: [THREAT-MODEL.md](THREAT-MODEL.md).
 
-By default it stops to ask you to type: the tag, `yes` (sign), `publish`, `feed`.
+- Stable: `-Channel stable` (version = the X.Y.Z of the newest rc), or `-Version 0.1.0`.
+- Checks only, changes nothing: `-CheckOnly` (old name `-DryRun`).
+- Audit log check: `-CheckAudit` (log in `%LOCALAPPDATA%\Unravis\release\audit.jsonl`).
+- Keys elsewhere (USB stick): `-KeyDir E:\keys`. One key: `-KeyFile`. Other Proton Pass entry: `-PassphraseFromProtonPass`.
+- First release on a channel: add `-FirstRelease`.
+- Without `-Yes` it asks you to type: the tag, `yes` (sign), `publish`, `feed`, and `reviewed` / `keys ok` when those changed.
 
-**Hands-off:** add `-Yes` (rc or stable). It skips those four typed confirmations. All checks still run and any failure still stops it (CI green, build attestation, manifest and feed checks, signature, no downgrade, verify run). Two gates in Sign-Release.ps1 still ask, on purpose: signing code changed since the last release, and trusted keys changed.
-
-With `-Yes` and `-PassphraseFromProtonPass` there is nothing to type (if pass-cli is logged out it falls back to asking for the passphrase).
+The old form still works: `Release.ps1 -Version 0.1.0-rc.52 -KeyFile D:\secret\rc-1.key.json -PassphraseFromProtonPass '...' -Yes`.
 
 ## Read the passphrase from Proton Pass (optional)
 
@@ -56,9 +58,10 @@ pwsh ./tools/release/Release.ps1 -Version 0.1.0-rc.52 -KeyFile D:\secret\rc-1.ke
 
 ## Hands-off signing (-Yes) and what still protects the key
 
-With `-Yes` the script asks nobody anything (owner's standing approval, 21 Nov 2026). Two things replace the typed prompts, both automatic:
+With `-Yes` no script in `tools/release` waits for typed input (owner's standing approval, 21 Nov 2026). Fixed rules replace the typed words (code in `tools/release/ReleaseLib.ps1`, `Invoke-SigningGates`; Sign-Release, Set-Control and Refresh-Feed all use it):
 
-- **Signing code:** the diff of `tools/release/sigtool` and `internal/update` since the release now on the feed is no longer typed over. Instead the commit being signed must already be part of GitHub's `master` (`gh api compare` says behind or identical), which only takes changes through a pull request with the required CI check. A tampered signing tool that never went through master stops the run. The SHA-256 of that diff is appended to `%LOCALAPPDATA%\Unravis\release\signing-code-approvals.log` for later audit.
-- **Trusted keys:** if `trusted_keys.txt` changed since the last signed release, or this is the channel's first signed release, `-Yes` refuses and says to run `Sign-Release.ps1` by hand. It never prompts.
+- **Signing code** (`tools/release/sigtool`, `internal/update`) changed since the release on the feed: the commit must be on GitHub's `master`, every first-parent commit since that release must be a merged pull request, and `sigtool` may depend only on the Go standard library and `internal/update`. The diff SHA-256 goes to the audit log.
+- **Trusted keys** changed (or a channel's first release): every key ADDED must have its private key file (`*.key.json`, same role and public key) in the key folder. A key nobody here holds stops the run and is named. Removed keys only narrow trust and are logged.
+- **Passphrase**: only from Proton Pass. If pass-cli fails, the run stops with the reason; it never falls back to a hidden prompt.
 
-Without `-Yes` the old typed prompts (`reviewed`, `keys ok`) still apply.
+Without `-Yes` the old typed prompts (`reviewed`, `keys ok`, `yes`) still apply.

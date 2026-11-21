@@ -37,11 +37,13 @@ param(
     [string]$Repo = 'abhinavjp/unravis',
     # A Proton Pass reference (pass://Vault/Item/password) the key passphrase is read from. Optional; if it cannot be read the script asks you to type it.
     [string]$ProtonPassRef,
-    # Release.ps1 -Yes: skips the plain 'Sign this release?' confirmation. The signing-code prompt becomes an automatic on-master guard; a changed trusted-key list is refused (not prompted).
+    # Release.ps1 -Yes: nothing is typed. 'Sign this release?' is skipped; the signing-code and key gates decide by fixed rules
+    # (ReleaseLib.ps1 Invoke-SigningGates); the passphrase must come from Proton Pass (no hidden prompt).
     [switch]$Yes
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ProtonPass.ps1')
+. (Join-Path $PSScriptRoot 'ReleaseLib.ps1')
 $PSNativeCommandUseErrorActionPreference = $false
 Remove-Item Env:UNRAVIS_KEY_PASSPHRASE -ErrorAction SilentlyContinue   # the tool would prefer it over the typed passphrase
 if ($Tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9a-z.]+)?$') { throw "Tag '$Tag' is not vX.Y.Z or vX.Y.Z-pre.N (lower case)." }
@@ -126,38 +128,11 @@ try {
     if (-not $Feed) {
         if (-not $KeyFile -or -not (Test-Path -LiteralPath $KeyFile)) { throw 'Pass -KeyFile (the encrypted private key file).' }
 
-        # What can see the passphrase and what keys will be trusted: show every change since the last signed release.
-        $baseline = if ($prevTag) { $prevTag } else { $null }
-        if ($baseline) {
-            $codeDiff = git -C $repoRoot diff --stat $baseline $sha -- tools/release/sigtool internal/update ':!internal/update/trusted_keys.txt'
-            if ($codeDiff) {
-                Write-Host "Signing and verifying code changed since ${baseline}:"; $codeDiff | Write-Host
-                if ($Yes) {
-                    # Owner's standing approval (-Yes): no typed prompt. In its place an automatic guard: the signing code at the tag must
-                    # already be on GitHub's master, which only takes changes through a pull request with the required CI check. A tampered
-                    # signing tool that was never merged there stops the run. The hash of the diff is logged for later audit.
-                    $cmp = gh api "repos/$Repo/compare/master...$sha" --jq .status 2>$null
-                    if ($LASTEXITCODE -ne 0 -or ($cmp -ne 'behind' -and $cmp -ne 'identical')) { throw "The signing code at $Tag is not part of GitHub's master (compare says '$cmp'). Not signing. Merge it through a pull request first." }
-                    $diffText = (git -C $repoRoot diff $baseline $sha -- tools/release/sigtool internal/update ':!internal/update/trusted_keys.txt') -join "`n"
-                    $h = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($diffText))).Replace('-', '').ToLower()
-                    $logDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Unravis\release'
-                    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-                    Add-Content -Path (Join-Path $logDir 'signing-code-approvals.log') -Value "$([DateTime]::UtcNow.ToString('o')) $Tag since $baseline diff-sha256=$h on-master=$cmp mode=auto(-Yes)"
-                    Write-Host "-Yes: the signing code is on master; diff sha256 $h logged. Not asking for 'reviewed'." -ForegroundColor Yellow
-                } else { Confirm-Typed 'reviewed' 'You have read that diff (git diff) and it is yours.' }
-            }
-            $keyDiff = git -C $repoRoot diff $baseline $sha -- internal/update/trusted_keys.txt
-            if ($keyDiff) {
-                Write-Host 'The list of trusted public keys CHANGED:'; $keyDiff | Write-Host
-                # Under -Yes nobody is asked: a changed key list is refused outright (a new key would let its owner sign updates for everyone).
-                if ($Yes) { throw 'The list of trusted public keys changed since the last signed release. Refusing to sign under -Yes. Run Sign-Release.ps1 by hand (without -Yes) and confirm the keys.' }
-                Confirm-Typed 'keys ok' 'Every added or removed key is one you made or removed on purpose.'
-            }
-        } else {
-            Write-Host 'Trusted public keys in this release:'; Get-Content (Join-Path $src 'internal/update/trusted_keys.txt') | Write-Host
-            if ($Yes) { throw 'This is the first signed release of the channel; the key list must be confirmed by hand. Run Sign-Release.ps1 without -Yes.' }
-            Confirm-Typed 'keys ok' 'These are your keys and nobody else''s.'
-        }
+        # What can see the passphrase and what keys will be trusted: every change since the last signed release goes through the
+        # shared gates (ReleaseLib.ps1). Without -Yes you type 'reviewed' / 'keys ok'; with -Yes fixed rules decide and nobody is asked.
+        $keyDir = Split-Path -Parent (Resolve-Path -LiteralPath $KeyFile).Path
+        $audit = Join-Path (Get-ReleaseDataDir) 'audit.jsonl'
+        $null = Invoke-SigningGates -RepoRoot $repoRoot -Repo $Repo -Baseline $prevTag -Commit $sha -KeyDir $keyDir -Yes:$Yes -Context $Tag -AuditPath $audit -SourceDir $src
 
         Invoke-Checked 'downloading the draft' { gh release download $Tag --repo $Repo --dir $files }
         Invoke-Checked 'checking the files against the manifest' { & $tool check-assets -manifest $manifest -dir $files }
@@ -165,18 +140,13 @@ try {
         Write-Host 'Checking that GitHub attests these files were built by the release workflow from the tag:'
         Assert-Attested $files $Repo $Tag $sha
         if ($Yes) { Write-Host "-Yes: signing without typing 'yes'." -ForegroundColor Yellow } else { Confirm-Typed 'yes' 'Sign this release?' }
-        $secure = $null
-        if ($ProtonPassRef) {
-            try { $secure = Get-ProtonPassSecret -Reference $ProtonPassRef; Write-Host 'Passphrase read from Proton Pass (not shown).' }
-            catch { Write-Host "Proton Pass: $($_.Exception.Message)" -ForegroundColor Yellow; Write-Host 'Falling back to typing the passphrase.' -ForegroundColor Yellow }
-        }
-        if (-not $secure) { $secure = Read-Host "Passphrase for $KeyFile" -AsSecureString }
-        $plain = [System.Net.NetworkCredential]::new('', $secure).Password
-        try { $plain | & $tool sign -key $KeyFile -in $manifest -out "$manifest.sig" } finally { $plain = $null; $secure.Dispose() }
-        if ($LASTEXITCODE -ne 0) { throw 'Signing failed. Nothing was uploaded.' }
+        $secure = Get-SigningPassphrase -ProtonPassRef $ProtonPassRef -KeyFile $KeyFile -Yes:$Yes
+        try { Invoke-WithPassphrase $secure $tool @('sign', '-key', $KeyFile, '-in', $manifest, '-out', "$manifest.sig") } finally { $secure.Dispose() }
+        if ($LASTEXITCODE -ne 0) { throw 'Signing failed (wrong passphrase, wrong key for this channel, or a manifest the tool refuses). Nothing was uploaded.' }
         Invoke-Checked 'verifying with the keys of the new tag' { & $tool verify -in $manifest -sig "$manifest.sig" -trusted -channel $channel -want $channel }
         if ($prevKeys) { Invoke-Checked "verifying with the keys installed copies trust ($prevTag)" { & $tool verify -in $manifest -sig "$manifest.sig" -keys $prevKeys -channel $channel -want $channel } }
         Invoke-Checked 'uploading the signature' { gh release upload $Tag "$manifest.sig" --repo $Repo --clobber }
+        Write-AuditEntry $audit @{ event = 'signed'; tag = $Tag; commit = $sha; manifest_sha256 = (Get-FileSha256 $manifest); sig_sha256 = (Get-FileSha256 "$manifest.sig"); key_file = (Split-Path -Leaf $KeyFile); key_pub = (Get-KeyFileInfo $KeyFile).Pub }
         Write-Host 'Signed. Check the draft and press Publish, then run this script again with -Feed.'
     } else {
         $isDraft = gh release view $Tag --repo $Repo --json isDraft --jq '.isDraft'

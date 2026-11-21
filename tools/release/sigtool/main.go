@@ -3,6 +3,7 @@
 //	sigtool keygen   -role stable|rc -out key.json -pub key.pub     make an encrypted key pair (offline, on the owner's PC)
 //	sigtool manifest -dir dist -version V -seq N -out manifest.json  describe a release (CI runs this; it signs nothing)
 //	sigtool sign     -key key.json -in manifest.json -out manifest.json.sig
+//	sigtool keycheck -key key.json [-role rc|stable]   check the passphrase opens the key (signs nothing, writes nothing)
 //	sigtool refresh  -in rc.json -sig rc.json.sig -trusted -want C -version V -commit SHA -days D -out new.json   same release, later expiry, seq + 1 (then sign it)
 //	sigtool control  -channel C [-pause] [-block V,..] [-rollout V -percent N] [-note T] [-days D] -out control.json
 //	sigtool sign     -control -key key.json -in control.json -out control.json.sig   (a control file: pause, withdraw, staged rollout)
@@ -205,6 +206,32 @@ func run(args []string, in io.Reader, out io.Writer) error {
 			return err
 		}
 		fmt.Fprintf(out, "wrote %s: %s again, seq %d -> %d, expires %s\n", *outFile, nw.Version, old.Seq, nw.Seq, nw.Expires.Format("2006-01-02"))
+		return nil
+
+	case "keycheck":
+		// The release manager runs this before anything is tagged, so a wrong passphrase or key is found while nothing has changed.
+		keyPath := fs.String("key", "", "encrypted private key file")
+		wantRole := fs.String("role", "", "the channel the key must be for (optional)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		pass, err := passphrase(in)
+		if err != nil {
+			return err
+		}
+		kb, err := os.ReadFile(*keyPath)
+		if err != nil {
+			return err
+		}
+		role, priv, err := openKey(kb, pass)
+		if err != nil {
+			return err
+		}
+		if *wantRole != "" && role != *wantRole {
+			return fmt.Errorf("this is a %s key, not %s", role, *wantRole)
+		}
+		pub := priv.Public().(ed25519.PublicKey)
+		fmt.Fprintf(out, "ok: %s key %s %s\n", role, update.KeyID(pub), hex.EncodeToString(pub))
 		return nil
 
 	case "sign":
