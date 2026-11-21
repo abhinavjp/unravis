@@ -144,7 +144,6 @@
   <section class="start" aria-labelledby="start-title">
     <header class="start-head">
       <h2 id="start-title">{START_TEXT.title}</h2>
-      <p>{START_TEXT.intro}</p>
       <HelpNote id="start" />
     </header>
 
@@ -173,7 +172,7 @@
               <li class="case-row">
                 <div class="case-info">
                   <strong class="case-title" title={row.fullTitle}>{row.title}</strong>
-                  <span class="case-meta">{row.created}{row.created ? ' · ' : ''}{row.counts} · {row.codeText}</span>
+                  <span class="case-meta">{[row.created, row.counts, row.codeText].filter(Boolean).join(' · ')}</span>
                   {#if row.closed}<span class="case-closed">{row.closedLabel}</span>{/if}
                   {#if row.keyEnding}<span class="case-closed">{row.keyEnding}</span>{/if}
                   {#if row.untrusted}<span class="case-closed" role="note">{row.untrustedLabel}</span>{/if}
@@ -233,7 +232,6 @@
 
       <section class="card" aria-labelledby="card-enter">
         <h3 id="card-enter">{START_TEXT.enterTitle}</h3>
-        <p class="card-text">{START_TEXT.enterText}</p>
         {#if enter}{@render enter()}{:else}<p class="card-note">{START_TEXT.enterSoon}</p>{/if}
       </section>
 
@@ -255,7 +253,6 @@
   .start { display: grid; gap: var(--space-4); min-width: 0; }
   .start-head { display: grid; gap: var(--space-2); max-width: 64ch; }
   .start-head h2 { margin: 0; font-size: 20px; font-weight: 600; }
-  .start-head p { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .start-note { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
   .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); align-items: start; }
   .card { display: grid; gap: var(--space-2); align-content: start; min-width: 0; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
