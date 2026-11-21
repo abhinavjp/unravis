@@ -95,6 +95,10 @@ try {
         git -C $repoRoot show "${TrustBaseline}:internal/update/trusted_keys.txt" > $baseKeys
         if ($LASTEXITCODE -ne 0) { throw "Could not read the trusted keys of $TrustBaseline." }
     }
+    # The number of the next file is above every number this PC has published (and, below, above the one on the feed).
+    $afterSeq = [uint64]0
+    $prior = @(Get-Content -LiteralPath $audit -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} } | Where-Object { $_.event -eq 'control-published' -and $_.channel -eq $Channel }) | Select-Object -Last 1
+    if ($prior -and $null -ne $prior.seq) { $afterSeq = [uint64]$prior.seq }
     if ($KeepInForce) {
         $cur = Join-Path $work 'current-control'; New-Item -ItemType Directory -Path $cur | Out-Null
         $names = @(gh release view update-feed --repo $Repo --json assets --jq '.assets[].name' 2>$null)
@@ -117,6 +121,7 @@ try {
             $parts = $exp -split '\s+'
             $expAt = [datetime]::Parse($parts[0], [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal)
             $seq = [uint64]$parts[1]
+            if ($seq -gt $afterSeq) { $afterSeq = $seq }
             # A genuine but older file put back (a replay) has a lower seq than the one this PC last published: refuse it.
             if ($last -and $null -ne $last.seq -and $seq -lt [uint64]$last.seq) { throw "The $Channel control file on the feed (seq $seq) is older than the one published from this PC (seq $($last.seq)). Someone put an old one back; check before signing." }
             if (-not $last) { Write-Host "Note: this PC has no record of earlier $Channel control files, so an old genuine one put back would not be noticed here." -ForegroundColor Yellow }
@@ -142,6 +147,7 @@ try {
     $file = Join-Path $work "$Channel-control.json"
     if ($Percent -ne 0 -and -not $Rollout) { throw '-Percent needs -Rollout <version>.' }
     $a = @('control', '-channel', $Channel, '-days', $Days, '-out', $file)
+    if ($afterSeq) { $a += @('-after-seq', [string]$afterSeq) }
     if ($Pause) { $a += '-pause' }
     if ($Block.Count) { $a += @('-block', ($Block -join ',')) }
     if ($Rollout) { $a += @('-rollout', $Rollout, '-percent', $Percent) }

@@ -473,7 +473,9 @@ func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, freshHas
 	case cur != nil && cur.Seq == fresh.Seq: // a state written before hashes were kept: compare what the file says
 		accept = sameControl(cur, fresh)
 	default:
-		accept = true // first sight of this number
+		// First sight of this number: no hash was kept and no remembered file has it (a state from before hashes whose control has
+		// since expired is the one case where an equal-numbered file cannot be compared; the publisher's numbers rise, so it is rare).
+		accept = true
 	}
 	if accept {
 		cur, floor = fresh, fresh.Seq
@@ -482,7 +484,7 @@ func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, freshHas
 	}
 	st.ControlSeq[want], mem.ctlSeq[want] = floor, floor
 	// What the memory knows is never lost from the saved state: the hash, and (below) the withdrawn list.
-	if h := mem.ctlHash[want]; h != "" && (st.ControlHash[want] == "" || mem.ctlSeq[want] == floor && known == h) {
+	if h := mem.ctlHash[want]; h != "" && (st.ControlHash[want] == "" || known == h) {
 		st.ControlHash[want] = h
 	}
 	if ctlLive(cur, now) {
