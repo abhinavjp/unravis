@@ -337,15 +337,22 @@ func TestWindowsReadDeadline(t *testing.T) {
 			t.Fatalf("timeout took %v, want within %v", el, o.ReplyTimeout+500*time.Millisecond)
 		}
 	}
-	run() // warm-up: the Go runtime and the server make their own handles once
-	time.Sleep(100 * time.Millisecond)
-	before := handleCount(t)
-	for i := 0; i < 5; i++ {
+	// Warm-up: the Go runtime starts OS threads (each holds handles) for the
+	// server's blocking pipe calls, and the server keeps one pending instance.
+	// Those settle after a few rounds; a leak in the dialer does not.
+	for i := 0; i < 8; i++ {
 		run()
 	}
-	time.Sleep(200 * time.Millisecond)
-	if after := handleCount(t); after > before+3 || after < before-3 {
-		t.Fatalf("handle count went from %d to %d over 5 probes: a handle leaks", before, after)
+	time.Sleep(300 * time.Millisecond)
+	before := handleCount(t)
+	const rounds = 15
+	for i := 0; i < rounds; i++ {
+		run()
+	}
+	time.Sleep(300 * time.Millisecond)
+	// One leaked handle per probe would add `rounds`; the dialer holds 5 per connection.
+	if after := handleCount(t); after > before+4 || after < before-4 {
+		t.Fatalf("handle count went from %d to %d over %d probes: a handle leaks", before, after, rounds)
 	}
 }
 
