@@ -116,12 +116,15 @@ try {
         $verifyExit = $LASTEXITCODE
         $ErrorActionPreference = 'Stop'
         $verifyOut | ForEach-Object { Write-Host "    $_" }
-        if ($verifyExit -ne 0 -and $checker -ne $setupExe -and ($verifyOut -join ' ') -match 'no trusted update keys') {
-            # The installed program is an old build with no keys (the one-time hop onto the signed feed). Check with the downloaded
+        if ($verifyExit -ne 0 -and $checker -ne $setupExe -and ($verifyOut -join ' ') -match 'no trusted update keys|flag provided but not defined: -?-verify') {
+            # The installed program is an old build with no keys, or older than --verify (the one-time hop onto the signed feed). Check with the downloaded
             # setup's built-in keys instead, and also require GitHub's build attestation for that file (built by our workflow from the tag).
             Say '    The installed setup has no trusted keys (an old build). Checking with the downloaded setup instead, plus GitHub build attestation.'
-            & gh attestation verify $setupExe --repo $Repo
-            if ($LASTEXITCODE -ne 0) { Fail 'GitHub does not attest that the downloaded setup was built by this repository. Nothing was installed.' }
+            $ErrorActionPreference = 'Continue'
+            & gh attestation verify $setupExe --repo $Repo --signer-workflow "$Repo/.github/workflows/release.yml"
+            $attExit = $LASTEXITCODE
+            $ErrorActionPreference = 'Stop'
+            if ($attExit -ne 0) { Fail 'GitHub does not attest that the downloaded setup was built by this repository. Nothing was installed.' }
             $ErrorActionPreference = 'Continue'
             & $setupExe --verify $work
             $verifyExit = $LASTEXITCODE
