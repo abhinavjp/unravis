@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "state": "held",
+  "id": "719888ebbe8e4274a86780b73b58beca",
+  "host": "9f484c6ac779",
+  "pid": 74208,
+  "requester": "dryrun-coord-thread",
+  "started": "2026-11-21T23:07:43.2393344Z",
+  "heartbeat": "2026-11-21T23:07:43.2406254Z",
+  "channel": "rc",
+  "version": "",
+  "stage": "Starting",
+  "commit": "",
+  "holdMerges": false,
+  "lease_minutes": 180,
+  "reason": "",
+  "last": null
+}
