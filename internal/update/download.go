@@ -39,6 +39,9 @@ type Downloader struct {
 	HTTP      *http.Client // nil builds one with no overall timeout (the idle and total limits apply instead)
 	Current   string       // running version, sent as the User-Agent
 	AllowHost func(host string) bool
+	// Folder, when set, copies the file from this folder (a local path or a share) instead of downloading it. The copy is checked
+	// byte for byte against the signed manifest exactly like a download.
+	Folder string
 
 	once sync.Once
 	cl   *http.Client
@@ -105,9 +108,12 @@ func (d *Downloader) Download(ctx context.Context, m *Manifest, kind string, pro
 	if kind == AssetSetup && !setupNameOK(a.Name) {
 		return Downloaded{}, errors.New("the setup file name in the release is not the expected form")
 	}
-	rawURL, err := d.FileURL(m, a)
-	if err != nil {
-		return Downloaded{}, err
+	rawURL := ""
+	if d.Folder == "" {
+		var err error
+		if rawURL, err = d.FileURL(m, a); err != nil {
+			return Downloaded{}, err
+		}
 	}
 	if d.Dir == "" {
 		return Downloaded{}, errors.New("no download folder")
@@ -126,31 +132,62 @@ func (d *Downloader) Download(ctx context.Context, m *Manifest, kind string, pro
 	idle := time.AfterFunc(downloadIdle, cancel)
 	defer idle.Stop()
 
-	cl := *d.client()
-	cl.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) > maxRedirects {
-			return errors.New("too many redirects")
+	var body io.ReadCloser
+	if d.Folder != "" {
+		src := filepath.Join(d.Folder, a.Name) // the name is checked by Manifest.Validate: a plain file name, no folders
+		fi, err := os.Lstat(src)
+		if err != nil || !fi.Mode().IsRegular() {
+			return Downloaded{}, errors.New("the update folder does not have this release file")
 		}
-		if req.URL.Scheme != "https" || !d.allow(req.URL.Hostname()) {
-			return errors.New("redirect to a host that is not allowed")
+		if fi.Size() != a.Size {
+			return Downloaded{}, errors.New("the file in the update folder is not the size the release says")
 		}
-		return nil
+		if body, err = os.Open(src); err != nil {
+			return Downloaded{}, errors.New("the update folder file could not be read")
+		}
+	} else {
+		cl := *d.client()
+		cl.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			if len(via) > maxRedirects {
+				return errors.New("too many redirects")
+			}
+			if req.URL.Scheme != "https" || !d.allow(req.URL.Hostname()) {
+				return errors.New("redirect to a host that is not allowed")
+			}
+			return nil
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return Downloaded{}, errors.New("bad download request")
+		}
+		req.Header.Set("User-Agent", "Unravis/"+d.Current)
+		resp, err := cl.Do(req)
+		if err != nil {
+			return Downloaded{}, errors.New("could not reach the download")
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return Downloaded{}, fmt.Errorf("the download answered %d", resp.StatusCode)
+		}
+		if resp.ContentLength >= 0 && resp.ContentLength != a.Size {
+			resp.Body.Close()
+			return Downloaded{}, errors.New("the download is not the size the release says")
+		}
+		body = resp.Body
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return Downloaded{}, errors.New("bad download request")
-	}
-	req.Header.Set("User-Agent", "Unravis/"+d.Current)
-	resp, err := cl.Do(req)
-	if err != nil {
-		return Downloaded{}, errors.New("could not reach the download")
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return Downloaded{}, fmt.Errorf("the download answered %d", resp.StatusCode)
-	}
-	if resp.ContentLength >= 0 && resp.ContentLength != a.Size {
-		return Downloaded{}, errors.New("the download is not the size the release says")
+	defer body.Close()
+	if d.Folder != "" {
+		// A read from a share does not watch the context, so close the file when the context ends (a stop, the idle limit
+		// or the total limit); the blocked read then returns.
+		stop := make(chan struct{})
+		defer close(stop)
+		go func() {
+			select {
+			case <-ctx.Done():
+				body.Close()
+			case <-stop:
+			}
+		}()
 	}
 	tmp, err := os.CreateTemp(d.Dir, ".part-*")
 	if err != nil {
@@ -162,7 +199,10 @@ func (d *Downloader) Download(ctx context.Context, m *Manifest, kind string, pro
 	var done int64
 	buf := make([]byte, 64*1024)
 	for {
-		n, rerr := resp.Body.Read(buf)
+		if ctx.Err() != nil {
+			return Downloaded{}, errors.New("the download stopped")
+		}
+		n, rerr := body.Read(buf)
 		if n > 0 {
 			idle.Reset(downloadIdle)
 			done += int64(n)

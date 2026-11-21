@@ -45,3 +45,17 @@ The hash must equal the one `--verify` printed (and the one in `update-manifest.
 - `--verify` does not remember what it has seen, so it cannot catch an old but validly signed release shown to you again. It does say when the release is not newer than the setup you run it with.
 - A build with no trusted keys (a development build) refuses to verify anything.
 - A proxy that breaks TLS only affects the online check. Offline import has no network step.
+
+## 6. Automatic updates of a Blackbox from a folder or share (no internet)
+
+A recorder on a server that cannot reach GitHub can still update itself, from a folder you fill:
+
+1. On a PC with internet, download from the GitHub release page, into one folder: `rc.json` or `stable.json` and its `.sig` (from the `update-feed` release), and the `unravis-blackbox-vX.Y.Z-windows-x64.zip` of that release. The optional `rc-control.json` / `stable-control.json` and their `.sig` go in the same folder.
+2. Put the folder where the server can read it, for example `\\fileserver\unravis-feed`. The recorder runs as the computer account, so that account needs read access to the share.
+3. On the server, create `update-source.txt` in the recorder's program folder (administrators only can write there). Its first line is the folder, for example `\\fileserver\unravis-feed`.
+
+Restart the recorder service once (the file is read when it starts). From then on it checks that folder on its normal timer. It checks exactly what an online recorder checks: the signature on the feed file, the size and SHA-256 of the zip against the signed manifest, the program hash inside the zip, and the rule that it never goes back to an older release. A wrong or tampered file in the folder is refused; a missing file shows as "Could not read the update folder" on its status page. The folder is not trusted because of where it is.
+
+Updating the folder is all it takes to roll a new version out to every server that points at it. To stop, delete `update-source.txt` and restart the service: the recorder reads the internet again (or is updated by Unravis, if Unravis manages it).
+
+Not verified on a live server yet (needs a Windows server and a share); unit-tested with a local folder only.
