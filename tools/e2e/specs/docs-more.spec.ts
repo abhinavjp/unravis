@@ -212,7 +212,7 @@ test('DOC-07: the upgrade and uninstall page says what the update check, the ins
   for (const name of ["setup-state.json", ".setup-backup-", "blackbox.json.bak"]) expect(setupSource, name + " is a name the installer uses").toContain(name);
 });
 
-test('DOC-07a: the page says Unravis never checks by itself, and the app makes no update call and no outside call on its own', async ({ page }) => {
+test('DOC-07a: the page says how Unravis checks by itself, and a development build makes no update call and no outside call', async ({ page }) => {
   const outside: string[] = [];
   const update: string[] = [];
   page.on('request', (r) => {
@@ -220,7 +220,7 @@ test('DOC-07a: the page says Unravis never checks by itself, and the app makes n
     if (!['127.0.0.1', 'localhost'].includes(u.hostname) && u.protocol.startsWith('http')) outside.push(r.url());
     if (/update-check/.test(u.pathname)) update.push(r.method() + ' ' + u.pathname);
   });
-  expect(doc('upgrade-and-uninstall')).toContain('Unravis never checks for a new version by itself');
+  expect(doc('upgrade-and-uninstall')).toContain('Unravis checks for a new version by itself, every 30 minutes by default');
   await page.getByRole('button', { name: 'Glossary' }).click();
   const guide = page.getByRole('dialog');
   await expect(guide.getByRole('button', { name: 'Check for updates' })).toBeVisible();
@@ -302,19 +302,21 @@ test('DOC-09: the SQL probe is said to be outside release 1 wherever it is menti
   for (const f of ['helpCopy.ts', 'wordings.ts']) expect(read('web', 'src', 'lib', 'copy', f), `${f} has no probe`).not.toMatch(/probe/i);
 });
 
-test('DOC-09a: the wizard says the probe is not in this release on Settings and shows it Off on Review', async ({ page }) => {
+test('DOC-09a: the wizard never mentions a SQL Server probe; the SQL step is plain', async ({ page, allow }) => {
+  allow(/422/, 'the wizard checks the settings with the server and may be refused');
   await page.getByRole('button', { name: 'Blackbox', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Blackbox' });
   await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
   await dialog.getByLabel('Name', { exact: true }).fill('bb-doc-09');
-  await dialog.getByRole('button', { name: 'Next: Where' }).click();
-  await dialog.getByRole('button', { name: 'Next: Settings' }).click();
-  await expect(dialog.getByText('The SQL Server probe is not part of this release.')).toBeVisible();
-  await dialog.getByRole('button', { name: 'Next: Review' }).click();
-  await expect(dialog.getByRole('list', { name: 'Part 4 of 4' })).toBeVisible();
-  const row = dialog.getByText('Database probe', { exact: true });
-  await expect(row).toBeVisible();
-  await expect(dialog.getByText('Off (not in this release)')).toBeVisible();
+  const next = dialog.getByRole('button', { name: 'Next', exact: true });
+  await next.click();
+  await dialog.getByRole('radio', { name: /On another server/ }).check();
+  await next.click();
+  await next.click();
+  await expect(dialog.getByRole('heading', { name: 'SQL Server figures' })).toBeVisible();
+  await expect(dialog).not.toContainText(/probe/i);
+  for (let i = 0; i < 4; i++) await next.click();
+  await expect(dialog).not.toContainText(/probe/i);
 });
 
 test('DOC-11: the docs have no emoji, no dash used as a stop, and none of the cause or proof words in a sentence about a measurement', async () => {

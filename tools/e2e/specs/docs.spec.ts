@@ -95,7 +95,7 @@ test('DOC-05: the Blackbox states table says what the app says for all nine stat
     await dialog.getByRole('button', { name: label }).click();
     const region = dialog.getByRole('region', { name });
     await expect(region).toBeVisible();
-    const state = (await region.locator('.bb-sticker').first().innerText()).trim();
+    const state = (await page.locator('dialog.pop[open] .bb-sticker').first().innerText()).trim();
     const readiness = (await region.locator('.bb-ready strong').first().innerText()).trim();
     const next = (await region.locator('p.bb-note').first().innerText()).trim();
     seen.add(state);
@@ -105,7 +105,7 @@ test('DOC-05: the Blackbox states table says what the app says for all nine stat
       if (row.readiness !== readiness) problems.push(`${state}: table says "${row.readiness}", app says "${readiness}"`);
       if (!row.text.includes(next)) problems.push(`${state}: next step "${next}" is not in the table row`);
     }
-    await region.getByRole('button', { name: 'Back to the list' }).click();
+    await page.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   }
   for (const r of table) if (!seen.has(r.state)) problems.push(`${r.state}: no demo Blackbox shows this state`);
   expect(problems).toEqual([]);

@@ -14,7 +14,7 @@ export function utcToWall(stamp: string, zone: string): string {
   return z === 'UTC' ? stamp : formatStamp(ms + zoneOffsetMs(ms, z));
 }
 
-/** The UTC stamp for a wall clock in `zone`. A wall time read twice (clocks going back) takes the first; one the clocks skip lands just after the gap. */
+/** The UTC stamp for a wall clock in `zone`. A wall time read twice (clocks going back) takes the first; one the clocks skip moves forward by the length of the gap. */
 export function wallToUtc(stamp: string, zone: string): string {
   const ms = parseStamp(stamp);
   if (!Number.isFinite(ms)) return stamp;

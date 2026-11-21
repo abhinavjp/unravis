@@ -75,13 +75,13 @@ test('BB-11a: a case reads one Blackbox, so another one cannot be added until th
   const a = await openStatus(page, 'web-a');
   await a.region.getByRole('button', { name: 'Use in this case' }).click();
   await expect(a.region.getByRole('button', { name: 'Stop using it in this case' })).toBeVisible();
-  await a.region.getByRole('button', { name: 'Back to the list' }).click();
+  await page.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   await a.dialog.getByRole('button', { name: 'Open status: web-b' }).click();
   const b = a.dialog.getByRole('region', { name: 'web-b' });
   await expect(b.getByText('This case already uses web-a. A case reads one Blackbox. Stop using that one first.')).toBeVisible();
   await expect(b.getByRole('button', { name: 'Use in this case' })).toBeDisabled();
   // leave the demo as it was found
-  await b.getByRole('button', { name: 'Back to the list' }).click();
+  await page.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   await a.dialog.getByRole('button', { name: 'Open status: web-a' }).click();
   await a.dialog.getByRole('button', { name: 'Stop using it in this case' }).click();
   await expect(a.dialog.getByRole('button', { name: 'Use in this case' })).toBeEnabled();
@@ -177,7 +177,7 @@ test('BB-20a: no other server view has a write button, and the Blackbox list has
     await expect(region).toBeVisible();
     const buttons = await region.getByRole('button').evaluateAll((els) => els.map((e) => (e.textContent ?? '').trim()));
     for (const b of buttons) expect(b, name + ' offers "' + b + '"').not.toMatch(writes);
-    await region.getByRole('button', { name: 'Back to the list' }).click();
+    await page.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   }
 });
 
@@ -188,14 +188,14 @@ test('BB-10: Cancel keeps web-d; Forget this place removes only it, says nothing
   await expect(dialog.getByText('Forget removes the saved place and its sealed read key from this PC. The Blackbox and its recordings are not touched.')).toBeVisible();
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(dialog.getByRole('region', { name: 'web-d' })).toBeVisible();
-  await dialog.getByRole('button', { name: 'Back to the list' }).click();
+  await dialog.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   await expect(dialog.getByRole('button', { name: /^Open status: / })).toHaveCount(9);
 
   await dialog.getByRole('button', { name: 'Open status: web-d' }).click();
   await dialog.getByRole('button', { name: 'Forget this place' }).click();
   await dialog.getByRole('button', { name: 'Forget this place' }).click();
   await expect(dialog.getByText('Removed from the list. The Blackbox and its recordings were not touched.')).toBeVisible();
-  await dialog.getByRole('button', { name: 'Back to the list' }).click();
+  await dialog.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   await expect(dialog.getByRole('button', { name: /^Open status: / })).toHaveCount(8);
   await expect(dialog.getByRole('button', { name: 'Open status: web-d' })).toHaveCount(0);
 });
@@ -210,7 +210,7 @@ test('BB-10a: a double press on the second Forget removes the row once without a
   await dialog.getByRole('button', { name: 'Forget this place' }).dblclick();
   await expect(dialog.getByText('Removed from the list. The Blackbox and its recordings were not touched.')).toBeVisible();
   expect(deletes).toHaveLength(1);
-  await dialog.getByRole('button', { name: 'Back to the list' }).click();
+  await dialog.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   await expect(dialog.getByRole('button', { name: /^Open status: / })).toHaveCount(7);
 });
 
@@ -228,8 +228,7 @@ test('BB-18a: Remove on this PC defaults to keeping the recordings, and Esc or C
   await expect(dialog.getByRole('region', { name: 'web-a' })).toBeVisible();
   await dialog.getByRole('region', { name: 'web-a' }).getByRole('button', { name: 'Remove', exact: true }).click();
   await page.keyboard.press('Escape');
-  const again = await openDrawer(page);
-  await expect(again.getByRole('button', { name: 'Open status: web-a' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Open status: web-a' })).toBeVisible();
   expect(posts).toEqual([]);
 });
 
@@ -238,7 +237,7 @@ test('BB-18: deleting the recordings needs the exact name, case and all, and rem
   await region.getByRole('button', { name: 'Remove', exact: true }).click();
   await dialog.getByRole('radio', { name: /Delete the recordings too/ }).check();
   await expect(dialog.getByText('Type the name web-a to turn the button on')).toBeVisible();
-  const confirm = dialog.getByRole('button', { name: 'Remove Blackbox' });
+  const confirm = dialog.getByRole('button', { name: 'Remove and delete recordings' });
   const name = dialog.getByLabel('Name', { exact: true });
   await expect(confirm).toBeDisabled();
   for (const wrong of ['web-', 'WEB-A', 'web-A', 'web-aa', 'web-b', ' web-a']) {
@@ -252,6 +251,6 @@ test('BB-18: deleting the recordings needs the exact name, case and all, and rem
   await name.fill('web-a');
   await confirm.click();
   await expect(dialog.getByText(/The service was removed and \d+ files? (was|were) deleted\./)).toBeVisible();
-  await dialog.getByRole('button', { name: 'Back to the list' }).click();
+  await dialog.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   await expect(dialog.getByRole('button', { name: 'Open status: web-a' })).toHaveCount(0);
 });

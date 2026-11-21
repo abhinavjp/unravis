@@ -397,6 +397,7 @@ async function buildPack(page: Page, name: string) {
 }
 
 test('BB-17: Build the pack gives unravis-blackbox-<name>.zip with the recorder and its settings and no read key', async ({ page }, testInfo) => {
+  test.skip(process.platform !== 'win32', 'the pack folder is a D:\\ path, which the server refuses off Windows');
   const download = await buildPack(page, 'bb-test-3');
   expect(download.suggestedFilename()).toBe('unravis-blackbox-bb-test-3.zip');
   const zip = testInfo.outputPath('pack.zip');
@@ -416,6 +417,7 @@ test('BB-17: Build the pack gives unravis-blackbox-<name>.zip with the recorder 
 });
 
 test('BB-17a: the pack README and the on-screen steps give the same install command', async ({ page }, testInfo) => {
+  test.skip(process.platform !== 'win32', 'the pack folder is a D:\\ path, which the server refuses off Windows');
   const download = await buildPack(page, 'bb-test-4');
   const zip = testInfo.outputPath('pack4.zip');
   await download.saveAs(zip);

@@ -58,11 +58,11 @@ Every Blackbox is in one of nine states. The sticker carries the word, and the r
 | Running | Ready | Nothing to do. It is recording. |
 | Running late | Partly ready | No sample for more than three intervals. On the server, open Services, find UnravisBlackbox and restart it. |
 | Stopped | Partly ready | On this PC, press Start. On another server, start it from Services. |
-| Disk low | Partly ready | Free space on that drive, or lower the size limit. Recording resumes by itself. |
+| Disk low | Partly ready | Space is low, but it is still recording. Free space on that drive or lower the size limit before it pauses. Free space on that drive, or lower the size limit. Recording resumes by itself. |
 | Clock differs | Partly ready | Fix the clock on that server. Until then, events less than a second apart are not put in order. |
 | Not found | Cannot test yet | Check the folder, share or address, then check again. |
 | Unreachable | Cannot test yet | Check the share permissions or the firewall port, then check again. |
-| Incomplete | Partly ready | The recording has gaps. A gap of up to 2 minutes only warns. A longer gap makes the minutes inside it Cannot test yet. |
+| Incomplete | Partly ready | Some recording files could not be read to the end. Press Check again. If it stays, copy the files again. The recording has gaps. A gap of up to 2 minutes only warns. A longer gap makes the minutes inside it Cannot test yet. |
 | Not placed | Cannot test yet | Place a Blackbox before you need it. Until then host steps say Cannot test yet. |
 
 Stopped is Partly ready because the recordings are kept and can still be read. Clock differs means the server clock and this PC differ by more than a second. Not found means the folder, share or address does not exist. Unreachable means nothing answered, the key was refused, or the share dropped. Not placed is a this-PC entry whose service is gone; place a Blackbox again, or forget the place.
