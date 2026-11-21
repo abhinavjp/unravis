@@ -18,7 +18,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $UtilityRoot = $PSScriptRoot
-if ($SignScript -and -not (Test-Path -LiteralPath $SignScript -PathType Leaf)) { throw "-SignScript $SignScript does not exist." }
+if ($SignScript) {
+    if (-not (Test-Path -LiteralPath $SignScript -PathType Leaf)) { throw "-SignScript $SignScript does not exist." }
+    $SignScript = (Resolve-Path -LiteralPath $SignScript).Path   # build.ps1 changes folder later; use the full path
+}
 function Invoke-Sign([string[]]$Files) {
     if (-not $SignScript) { return }
     & $SignScript -Path $Files

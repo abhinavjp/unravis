@@ -9,7 +9,9 @@
 
   Needs: the SignPath PowerShell module (installed from the PowerShell Gallery if missing) and these settings, from the
   workflow: SIGNPATH_API_TOKEN (secret), SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG, SIGNPATH_POLICY_SLUG (repository
-  variables), and optionally SIGNPATH_ARTIFACT_CONFIG_SLUG.
+  variables, plus SIGNPATH_MODULE_VERSION, the exact SignPath module version to install), and optionally SIGNPATH_ARTIFACT_CONFIG_SLUG.
+
+  A stable build sends one request per program (five). Each may need a person's approval in SignPath, so keep an approver ready (the job limit is 45 minutes).
 
   A file is replaced only after Windows reports its signature as Valid. Any failure stops the build: a signed release must never
   carry an unsigned program under a "signed" notice.
@@ -22,20 +24,23 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-foreach ($name in 'SIGNPATH_API_TOKEN', 'SIGNPATH_ORGANIZATION_ID', 'SIGNPATH_PROJECT_SLUG', 'SIGNPATH_POLICY_SLUG') {
+foreach ($name in 'SIGNPATH_API_TOKEN', 'SIGNPATH_ORGANIZATION_ID', 'SIGNPATH_PROJECT_SLUG', 'SIGNPATH_POLICY_SLUG', 'SIGNPATH_MODULE_VERSION') {
     if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Sign-Binaries: $name is not set, so nothing can be signed." }
 }
-if (-not (Get-Module -ListAvailable -Name SignPath)) {
-    Install-Module -Name SignPath -Scope CurrentUser -Force -Repository PSGallery
+# An exact module version, set by the owner (SIGNPATH_MODULE_VERSION): this code runs with the API token in its environment, so
+# "whatever is newest" is not accepted.
+$moduleVersion = $env:SIGNPATH_MODULE_VERSION
+if (-not (Get-Module -ListAvailable -Name SignPath | Where-Object { $_.Version -eq [version]$moduleVersion })) {
+    Install-Module -Name SignPath -RequiredVersion $moduleVersion -Scope CurrentUser -Force -Repository PSGallery
 }
-Import-Module SignPath
+Import-Module SignPath -RequiredVersion $moduleVersion
 
 foreach ($file in $Path) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Sign-Binaries: $file does not exist." }
     $full = (Resolve-Path -LiteralPath $file).Path
     $out = "$full.signed"
     Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
-    $args = @{
+    $req = @{
         InputArtifactPath  = $full
         OutputArtifactPath = $out
         ApiToken           = $env:SIGNPATH_API_TOKEN
@@ -44,11 +49,11 @@ foreach ($file in $Path) {
         SigningPolicySlug  = $env:SIGNPATH_POLICY_SLUG
         WaitForCompletion  = $true
     }
-    if ($env:SIGNPATH_ARTIFACT_CONFIG_SLUG) { $args.ArtifactConfigurationSlug = $env:SIGNPATH_ARTIFACT_CONFIG_SLUG }
-    Submit-SigningRequest @args
+    if ($env:SIGNPATH_ARTIFACT_CONFIG_SLUG) { $req.ArtifactConfigurationSlug = $env:SIGNPATH_ARTIFACT_CONFIG_SLUG }
+    Submit-SigningRequest @req
     if (-not (Test-Path -LiteralPath $out -PathType Leaf)) { throw "Sign-Binaries: SignPath returned no file for $file." }
     $sig = Get-AuthenticodeSignature -LiteralPath $out
-    if ($sig.Status -ne 'Valid' -or -not $sig.SignerCertificate) { throw "Sign-Binaries: the signed $file does not have a valid signature (status $($sig.Status))." }
+    if ($sig.Status -ne 'Valid' -or -not $sig.SignerCertificate) { throw "Sign-Binaries: the signed $file does not have a valid signature (status $($sig.Status)). A SignPath test-signing policy gives UnknownError because its root is not trusted; use the release-signing policy." }
     Move-Item -LiteralPath $out -Destination $full -Force
     Write-Host "signed $file ($($sig.SignerCertificate.Subject))"
 }
