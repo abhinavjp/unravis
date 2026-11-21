@@ -264,3 +264,62 @@ func TestStateFileRc55LoadsAndTheNewOneReadsBackInRc55Shape(t *testing.T) {
 		}
 	}
 }
+
+// A saved state that is behind the memory (a failed save, or an old file put back) must not make the genuine newer control
+// file look like a different file at the same number.
+func TestControlStaleStateDoesNotRefuseTheNewerFile(t *testing.T) {
+	k, priv := key(t, ChannelRC)
+	fs := newFeed(t)
+	fs.publish(t, "rc", goodManifest("0.1.0-rc.48", ChannelRC), k, priv)
+	f := fs.fetcher(t, k, ChannelRC, "0.1.0-rc.47")
+	pause := goodControl(ChannelRC)
+	pause.Pause, pause.Blocked = true, []string{"0.1.0-rc.48"}
+	fs.publishControl(t, "rc", pause, k, priv)
+	if r := f.Check(t.Context()); !r.Held {
+		t.Fatalf("%+v", r)
+	}
+	old, err := os.ReadFile(f.StatePath) // the seq 100 state
+	if err != nil {
+		t.Fatal(err)
+	}
+	lift := goodControl(ChannelRC)
+	lift.Seq = 200
+	fs.publishControl(t, "rc", lift, k, priv)
+	if r := f.Check(t.Context()); r.Status != StatusAvailable {
+		t.Fatalf("%+v", r)
+	}
+	if err := os.WriteFile(f.StatePath, old, 0o600); err != nil { // the old file comes back
+		t.Fatal(err)
+	}
+	if r := f.Check(t.Context()); r.Status != StatusAvailable {
+		t.Fatalf("the genuine newer file was refused: %+v", r)
+	}
+	restart()
+	if r := f.Check(t.Context()); r.Status != StatusAvailable {
+		t.Fatalf("after a restart: %+v", r)
+	}
+	if kb := readStateFile(t, f).KeptBlocked[ChannelRC]; len(kb) != 0 {
+		t.Fatalf("the old withdrawn list is held again: %v", kb)
+	}
+}
+
+// After a lost state file the saved state is rebuilt from the memory: seq, hash and the withdrawn list.
+func TestControlLostStateIsRebuiltFromMemory(t *testing.T) {
+	fs, f, k, _ := expiringBlock(t)
+	if r := f.Check(t.Context()); !r.Held {
+		t.Fatalf("%+v", r)
+	}
+	if err := os.Remove(f.StatePath); err != nil {
+		t.Fatal(err)
+	}
+	delete(fs.files, "/rc-control.json")
+	delete(fs.files, "/rc-control.json.sig")
+	if r := f.Check(t.Context()); !r.Held {
+		t.Fatalf("%+v", r)
+	}
+	st := readStateFile(t, f)
+	if st.ControlSeq[ChannelRC] == 0 || st.ControlHash[ChannelRC] == "" || len(st.KeptBlocked[ChannelRC]) != 1 {
+		t.Fatalf("the saved state lost what the memory knew: %+v", st)
+	}
+	_ = k
+}

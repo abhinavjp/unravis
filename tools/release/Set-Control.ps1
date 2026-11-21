@@ -133,6 +133,10 @@ try {
             }
         } elseif ($lastLive) {
             throw "The $Channel control file is missing from the feed, but one published from this PC is still in force until $($last.expires). Someone removed it; check before signing a new one."
+        } elseif ($last -and @($last.blocked | Where-Object { $_ }).Count) {
+            # The file has expired and is gone from the feed, but machines keep its withdrawn list; carry it over from this PC's record.
+            $Block = @(@($last.blocked) + $Block | Where-Object { $_ } | Select-Object -Unique)
+            Write-Host "No $Channel control file is on the feed; keeping the withdrawn versions this PC last published: $($Block -join ', ')." -ForegroundColor Yellow
         }
     }
     $file = Join-Path $work "$Channel-control.json"

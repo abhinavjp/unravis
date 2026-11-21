@@ -450,9 +450,17 @@ func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, freshHas
 	if cur != nil {
 		floor = max(floor, cur.Seq)
 	}
+	// The hash of the file that set the floor: from the memory when it is ahead of the saved state (a failed save, or an old state
+	// file put back), else from the saved state, else from the memory.
+	stSeq := st.ControlSeq[want]
+	if cur != nil {
+		stSeq = max(stSeq, cur.Seq)
+	}
 	known := st.ControlHash[want]
-	if known == "" {
-		known = mem.ctlHash[want]
+	if mem.ctlSeq[want] > stSeq || known == "" {
+		if h := mem.ctlHash[want]; h != "" {
+			known = h
+		}
 	}
 	accept := false
 	switch {
@@ -473,6 +481,10 @@ func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, freshHas
 		st.ControlHash[want], mem.ctlHash[want] = freshHash, freshHash
 	}
 	st.ControlSeq[want], mem.ctlSeq[want] = floor, floor
+	// What the memory knows is never lost from the saved state: the hash, and (below) the withdrawn list.
+	if h := mem.ctlHash[want]; h != "" && (st.ControlHash[want] == "" || mem.ctlSeq[want] == floor && known == h) {
+		st.ControlHash[want] = h
+	}
 	if ctlLive(cur, now) {
 		// The withdrawn list of the newest live file is kept past its expiry; only a newer accepted file replaces it.
 		if len(cur.Blocked) > 0 {
@@ -490,7 +502,9 @@ func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, freshHas
 		}
 		kept := st.KeptBlocked[want]
 		if kept == nil {
-			kept = mem.kept[want]
+			if kept = mem.kept[want]; kept != nil {
+				st.KeptBlocked[want] = kept
+			}
 		} else {
 			mem.kept[want] = kept
 		}
