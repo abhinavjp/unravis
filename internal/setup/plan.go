@@ -684,6 +684,12 @@ func (p *Plan) blackboxKeep(t *Txn, exe, cfgPath, keyPath string, st blackbox.Sv
 	}
 	_ = cfg
 	p.markManaged(t)
+	// A person stopped it on purpose and it was not running when setup began: leave it off.
+	if !p.svcWasRunning[blackbox.ServiceName] {
+		if _, merr := os.Stat(filepath.Join(p.Layout.BlackboxDir, blackbox.StoppedByUserMarkerName)); merr == nil {
+			return nil
+		}
+	}
 	return t.StartService(blackbox.ServiceName)
 }
 

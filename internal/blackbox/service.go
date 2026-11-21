@@ -331,6 +331,7 @@ func (m *Manager) Install(cfg Config) (res InstallResult, err error) {
 	if st != SvcNotInstalled {
 		return res, &InstallError{Reason: ReasonExists, Message: fmt.Sprintf("A service named %s already exists. A Blackbox is already installed here. Open its status, or Remove it first.", ServiceName)}
 	}
+	m.markStoppedByUser(false) // a fresh install starts running; no old "keep it off" applies
 	if perr := m.Env.PortFree(cfg.Bind, cfg.Port); perr != nil {
 		return res, &InstallError{Reason: ReasonPortBusy, Message: fmt.Sprintf("Port %d is busy. Another program uses it. Change the port in Settings, or stop that program.", cfg.Port), Cause: perr}
 	}
@@ -521,6 +522,7 @@ func (m *Manager) Start() error {
 	case SvcNotInstalled:
 		return ErrNotInstalled
 	case SvcRunning:
+		m.markStoppedByUser(false)
 		return nil
 	}
 	if err := m.Svc.Start(ServiceName); err != nil {
@@ -562,16 +564,16 @@ func (m *Manager) Stop() error {
 	case SvcNotInstalled:
 		return ErrNotInstalled
 	case SvcStopped:
+		m.markStoppedByUser(true) // asked to keep it off, whatever stopped it before
 		return nil
 	}
-	if err := m.Svc.Stop(ServiceName); err != nil {
-		return err
-	}
-	if err := m.waitFor(SvcStopped, 30*time.Second); err != nil {
-		return err
-	}
+	// The marker goes first: a slow stop that ends after the wait gave up is still a stop on purpose.
 	m.markStoppedByUser(true)
-	return nil
+	if err := m.Svc.Stop(ServiceName); err != nil {
+		m.markStoppedByUser(false)
+		return err
+	}
+	return m.waitFor(SvcStopped, 30*time.Second)
 }
 
 // ApplyResult says what Apply did.
@@ -828,6 +830,7 @@ func (m *Manager) Remove(cfg Config, keyPath string, deleteRecordings bool, conf
 	}
 	installed := st != SvcNotInstalled
 	if !installed && !deleteRecordings {
+		m.markStoppedByUser(false)
 		return res, &RemoveError{Reason: "not-installed", Message: ErrNotInstalled.Error() + " There is nothing to remove. If it is still in the list, take it off the list instead.", Cause: ErrNotInstalled}
 	}
 	wasRunning := installed && st != SvcStopped
