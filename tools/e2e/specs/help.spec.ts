@@ -55,11 +55,11 @@ test('HELP-03: the build line holds a version and no folder, user name or secret
   expect(line).not.toMatch(/[A-Za-z]:\\|\/Users\/|token|password|key/i);
 });
 
-test('HELP-04: the guide has the 12 pages in order, the current one is marked, and no screenshots page', async ({ page }) => {
+test('HELP-04: the guide has the 10 pages in order, the current one is marked, and no screenshots page', async ({ page }) => {
   const dialog = await openHelp(page);
   await dialog.getByTestId('guide-open').click();
   const nav = dialog.locator('[data-testid^="guide-nav-"]');
-  await expect(nav).toHaveCount(12);
+  await expect(nav).toHaveCount(10);
   const ids = await nav.evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')));
   expect(ids).toEqual(SLUGS.map((s) => 'guide-nav-' + s));
   await expect(dialog.getByTestId('guide-nav-index')).toHaveAttribute('aria-current', 'page');
