@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -399,9 +400,15 @@ func isASCIILetter(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && 
 
 // localVolumeTarget reports whether a DOS-device target (QueryDosDevice of "C:") is a disk volume of this computer. A mapped network drive
 // resolves to a redirector (`\Device\LanmanRedirector\...`) and a subst alias to `\??\<path>`; neither is a disk the proof can stand for.
+//
+// The match is deliberately strict: the WHOLE target must be `\Device\HarddiskVolume<digits>`. A prefix test would also pass a raw-target subst
+// (`\Device\HarddiskVolume3\Users\bob`, DDD_RAW_TARGET_PATH) and a shadow copy (`\Device\HarddiskVolumeShadowCopy2`), whose root is an alias
+// the chain proof would stop at.
 func localVolumeTarget(target string) bool {
-	return strings.HasPrefix(strings.ToLower(target), `\device\harddiskvolume`)
+	return localVolumeRE.MatchString(target)
 }
+
+var localVolumeRE = regexp.MustCompile(`(?i)^\\Device\\HarddiskVolume[0-9]+$`)
 
 // BL-140: the folders above the settings file. The file's own access list proves
 // nobody else can edit it, but whoever may DELETE it, or delete or rename a folder

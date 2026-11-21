@@ -2098,6 +2098,9 @@ func TestLocalVolumeTarget(t *testing.T) {
 		`\device\harddiskvolume12`:              true,
 		`\Device\LanmanRedirector\;Z:000\srv\s`: false,
 		`\??\C:\Users\bob`:                      false,
+		`\Device\HarddiskVolume3\Users\bob`:     false, // raw-target subst
+		`\Device\HarddiskVolumeShadowCopy2`:     false,
+		`\Device\HarddiskVolume3\`:              false,
 		``:                                      false,
 	} {
 		if got := localVolumeTarget(target); got != want {
