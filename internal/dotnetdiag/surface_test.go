@@ -15,7 +15,7 @@ import (
 // message encoders are unexported. Adding a name here is a security decision.
 var fixedSurface = []string{
 	// functions
-	"DefaultDialer", "DefaultOptions", "ExitCode", "ParsePreamble", "Probe", "Sentence",
+	"DefaultDialer", "DefaultOptions", "ExitCode", "ParsePreamble", "Probe", "RunAs", "Sentence",
 	// types
 	"Conn", "Dialer", "Error", "Options", "Peer", "Preamble", "Reason", "Result", "Target",
 	// consts
@@ -97,6 +97,14 @@ func recvName(e ast.Expr) string {
 func compare(t *testing.T, what string, got, want []string) {
 	t.Helper()
 	sort.Strings(got)
+	// A name defined once per platform (RunAs) counts once.
+	uniq := got[:0]
+	for i, n := range got {
+		if i == 0 || n != got[i-1] {
+			uniq = append(uniq, n)
+		}
+	}
+	got = uniq
 	w := append([]string(nil), want...)
 	sort.Strings(w)
 	if strings.Join(got, ",") != strings.Join(w, ",") {
