@@ -82,16 +82,17 @@ test('SEC-01: no saved key or secret text on the start screen, the sources, the 
     await dialog.getByRole('button', { name: 'Open status: ' + name }).click();
     await expect(dialog.getByRole('region', { name })).toBeVisible();
     await expectClean(page, 'status of ' + name);
-    await dialog.getByRole('button', { name: 'Back to the list' }).click();
+    await dialog.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   }
   await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
   await dialog.getByLabel('Name', { exact: true }).fill('bb-sec');
   await expectClean(page, 'wizard, name');
-  for (const next of ['Next: Where', 'Next: Settings', 'Next: Review']) {
-    await dialog.getByRole('button', { name: next }).click();
-    await expectClean(page, 'wizard ' + next);
+  for (let step = 2; step <= 8; step++) {
+    await dialog.getByRole('button', { name: 'Next', exact: true }).click();
+    await expectClean(page, 'wizard step ' + step);
   }
-  await dialog.getByRole('button', { name: 'Leave set-up' }).click();
+  await dialog.getByRole('button', { name: 'Close set-up' }).click();
+  await dialog.getByRole('button', { name: 'Leave', exact: true }).click();
   await dialog.getByRole('button', { name: 'Add one by folder, share or address' }).click();
   await dialog.getByLabel(PLACE).fill('http://web-c:7788');
   await expectClean(page, 'add form');
@@ -114,7 +115,7 @@ test('SEC-01a: the saved key is a mask until Show, appears only in the Read key 
   await expectClean(page, 'after Hide');
   await block.getByRole('button', { name: 'Show', exact: true }).click();
   await expect(block.getByText('ubk-demo-a-NOT-A-REAL-KEY')).toBeVisible();
-  await dialog.getByRole('button', { name: 'Back to the list' }).click();
+  await dialog.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   await expectClean(page, 'after Back to the list');
   await dialog.getByRole('button', { name: 'Open status: web-a' }).click();
   await expectClean(page, 'after opening web-a again');
@@ -143,7 +144,7 @@ test('SEC-01b: a key being typed lives only in its field, and is gone after Canc
   await region.getByRole('button', { name: /Type a new read key/ }).click();
   await region.getByLabel('New read key').fill(typed);
   await expect(region.getByLabel('New read key')).toHaveAttribute('type', 'password');
-  await dialog.getByRole('button', { name: 'Back to the list' }).click();
+  await dialog.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   await page.keyboard.press('Escape');
   const closed = await surfaces(page);
   for (const [kind, text] of Object.entries(closed)) expect(text.includes(typed), 'after closing: ' + kind).toBe(false);
@@ -166,7 +167,7 @@ test('SEC-03: a typed read key, a refused one and one for an unreachable address
   await region.getByLabel('New read key').fill(key);
   await region.getByRole('button', { name: 'Save the new key' }).click();
   await expect(region.getByRole('alert')).toBeVisible();
-  await dialog.getByRole('button', { name: 'Back to the list' }).click();
+  await dialog.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
 
   await dialog.getByRole('button', { name: 'Add one by folder, share or address' }).click();
   await dialog.getByLabel(PLACE).fill('http://web-new.invalid:7788');
@@ -219,7 +220,7 @@ test('SEC-04: using a Blackbox in a case and saving a typed key leave no key in 
   await expect(a.region.getByRole('button', { name: 'Use in this case' })).toBeEnabled();
   await a.region.getByRole('button', { name: 'Use in this case' }).click();
   await expect(a.region.getByText('This case uses this Blackbox for Step 9.')).toBeVisible();
-  await a.dialog.getByRole('button', { name: 'Back to the list' }).click();
+  await a.dialog.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
 
   const typed = 'ubk-demo-c-NOT-A-REAL-KEY';
   await a.dialog.getByRole('button', { name: 'Open status: web-c' }).click();
@@ -262,20 +263,21 @@ test('SEC-05: a read route refuses a write verb with 405, and the Blackbox route
   expect(wrong.headers.get('allow')).toContain('DELETE');
 });
 
-test('SEC-09: the wizard says 127.0.0.1 is only this computer and a firewall rule is the person\'s own choice, and a wide bind is refused or called out', async ({ page }) => {
+test('SEC-09: the wizard says 127.0.0.1 is only this PC, and a wide bind is refused or called out', async ({ page, allow }) => {
+  allow(/422/, 'a wide listen address is refused on purpose');
   const dialog = await openDrawer(page);
   await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
   await dialog.getByLabel('Name', { exact: true }).fill('bb-fw');
-  await dialog.getByRole('button', { name: 'Next: Where' }).click();
-  await dialog.getByRole('button', { name: 'Next: Settings' }).click();
+  const next = dialog.getByRole('button', { name: 'Next', exact: true });
+  await next.click();
+  await dialog.getByRole('radio', { name: /On another server/ }).check();
+  for (let i = 0; i < 5; i++) await next.click();
+  await dialog.getByText('Advanced · port and who can connect').click();
   await expect(dialog.getByLabel('Listens on')).toHaveValue('127.0.0.1');
-  await expect(dialog.getByText(/127\.0\.0\.1 means only this computer can ask it/)).toBeVisible();
-  await expect(dialog.getByText('Unravis does not add a firewall rule. Adding one is your own choice.')).toBeVisible();
-  const next = dialog.getByRole('button', { name: 'Next: Review' });
+  await expect(dialog.getByText(/127\.0\.0\.1 means only this PC can connect/)).toBeVisible();
   for (const wide of ['*', '0.0.0.0/0']) {
     await dialog.getByLabel('Listens on').fill(wide);
     await next.click();
-    await expect(dialog.getByRole('list', { name: 'Part 3 of 4' }), wide).toBeVisible();
     await expect(dialog.getByText('Listens on needs an address such as 127.0.0.1, or a server name. Spaces and other symbols are not allowed.')).toBeVisible();
   }
   await dialog.getByLabel('Listens on').fill('0.0.0.0');
@@ -288,7 +290,7 @@ const BANNED = /\b(cause[sd]?|causing|because|due to|waiting on|blocked by|led t
 test('SEC-11: the words on the Blackbox screens and the key keeper cards avoid the banned overclaiming words', async ({ page }) => {
   const seen: string[] = [];
   const check = async (where: string, scope: Locator) => {
-    const text = await scope.innerText();
+    const text = await scope.first().innerText();
     const hit = BANNED.exec(text);
     if (hit) seen.push(where + ': "' + hit[0] + '"');
   };
@@ -310,14 +312,14 @@ test('SEC-11: the words on the Blackbox screens and the key keeper cards avoid t
     await dialog.getByRole('button', { name: 'Open status: ' + name }).click();
     await expect(dialog.getByRole('region', { name })).toBeVisible();
     await check('status of ' + name, dialog);
-    await dialog.getByRole('button', { name: 'Back to the list' }).click();
+    await dialog.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   }
   await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
   await dialog.getByLabel('Name', { exact: true }).fill('bb-lint');
   await check('wizard 1', dialog);
-  for (const next of ['Next: Where', 'Next: Settings', 'Next: Review']) {
-    await dialog.getByRole('button', { name: next }).click();
-    await check('wizard ' + next, dialog);
+  for (let step = 2; step <= 8; step++) {
+    await dialog.getByRole('button', { name: 'Next', exact: true }).click();
+    await check('wizard step ' + step, dialog);
   }
   expect(seen, 'banned words on screen').toEqual([]);
 });

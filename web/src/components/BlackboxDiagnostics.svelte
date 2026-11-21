@@ -39,7 +39,7 @@
   <strong>Diagnostics</strong>
   <p class="bb-note">Why is this Blackbox slow or late? This reads its timing log and says what it found.</p>
   <div class="bb-actions">
-    <button type="button" class="secondary-button" disabled={busy} onclick={load}>{answer ? 'Read again' : 'Find the cause'}</button>
+    <button type="button" class="secondary-button" disabled={busy} onclick={load}>{answer ? 'Read again' : 'Read the timing log'}</button>
     {#if answer}<button type="button" class="secondary-button" onclick={copy}>Copy diagnostics</button>{/if}
   </div>
   {#if busy}<p class="bb-note" role="status">Reading the log…</p>{/if}
