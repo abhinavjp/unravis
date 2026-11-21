@@ -88,21 +88,33 @@ try {
     $named = (& $tool feedsig -in (Join-Path $work "$Channel.json") -sig $feedSig -keys $prevKeys -want $Channel 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or "v$named" -ne $prevTag) { throw "The feed file does not carry a valid signature for $prevTag ($named). Someone may have changed it. Not signing." }
 
+    $baseKeys = $null
+    if ($TrustBaseline) {
+        if ($TrustBaseline -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9a-z.]+)?$') { throw "-TrustBaseline '$TrustBaseline' is not a release tag." }
+        $baseKeys = Join-Path $work 'base_trusted_keys.txt'
+        git -C $repoRoot show "${TrustBaseline}:internal/update/trusted_keys.txt" > $baseKeys
+        if ($LASTEXITCODE -ne 0) { throw "Could not read the trusted keys of $TrustBaseline." }
+    }
     if ($KeepInForce) {
         $cur = Join-Path $work 'current-control'; New-Item -ItemType Directory -Path $cur | Out-Null
         gh release download update-feed --repo $Repo --pattern "$Channel-control.json*" --dir $cur 2>&1 | Out-Null
         $cj = Join-Path $cur "$Channel-control.json"
-        if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $cj) -and (Test-Path -LiteralPath "$cj.sig")) {
-            $exp = try { ([datetime](Get-Content -Raw -LiteralPath $cj | ConvertFrom-Json).expires).ToUniversalTime() } catch { [datetime]::MaxValue }
-            & $tool verify -control -in $cj -sig "$cj.sig" -keys $prevKeys -channel $Channel -want $Channel 2>&1 | Out-Null
-            # Expired: nothing is in force. Not expired but not verifying: stop rather than drop holds that may be real.
-            if ($LASTEXITCODE -ne 0 -and $exp -gt (Get-Date).ToUniversalTime()) { throw "The $Channel control file on the feed does not verify with the keys of $prevTag, so its holds cannot be kept safely. Check it, then run without -KeepInForce naming every hold." }
-            if ($LASTEXITCODE -eq 0) {
+        if ((Test-Path -LiteralPath $cj) -and (Test-Path -LiteralPath "$cj.sig")) {
+            # Signature first, ignoring expiry; the expiry is then read from the verified content (an edited date proves nothing).
+            # Keys of the release on the feed, and of -TrustBaseline: a genuine older file may be signed with a key since rotated out.
+            $kl = @($prevKeys); if ($baseKeys) { $kl += $baseKeys }
+            $exp = (& $tool controlsig -in $cj -sig "$cj.sig" -keys ($kl -join ',') -want $Channel 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) { throw "The $Channel control file on the feed does not verify ($exp), so its holds cannot be kept safely. Check it, then run without -KeepInForce naming every hold." }
+            if ([datetime]::Parse($exp, [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal) -gt (Get-Date).ToUniversalTime()) {
                 $old = Get-Content -Raw -LiteralPath $cj | ConvertFrom-Json
                 if ($old.pause) { $Pause = $true }
                 $Block = @(@($old.blocked) + $Block | Where-Object { $_ } | Select-Object -Unique)
                 Write-Host "Keeping the holds in force: pause=$([bool]$old.pause), withdrawn: $($Block -join ', ')."
             } else { Write-Host 'The control file on the feed has expired; nothing to keep from it.' -ForegroundColor Yellow }
+        } else {
+            # Missing from the feed: fine only if this PC never published one that would still be in force (clients keep the last one).
+            $last = @(Get-Content -LiteralPath $audit -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} } | Where-Object { $_.event -eq 'control-published' -and $_.channel -eq $Channel }) | Select-Object -Last 1
+            if ($last -and ([datetime]$last.expires).ToUniversalTime() -gt (Get-Date).ToUniversalTime()) { throw "The $Channel control file is missing from the feed, but one published from this PC is still in force until $($last.expires). Someone removed it; check before signing a new one." }
         }
     }
     $file = Join-Path $work "$Channel-control.json"
@@ -122,16 +134,14 @@ try {
     Invoke-Checked 'verifying with the keys built into this checkout' { & $tool verify -control -in $file -sig "$file.sig" -trusted -channel $Channel -want $Channel }
     Invoke-Checked "verifying with the keys installed copies trust ($prevTag)" { & $tool verify -control -in $file -sig "$file.sig" -keys $prevKeys -channel $Channel -want $Channel }
     if ($TrustBaseline) {
-        if ($TrustBaseline -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9a-z.]+)?$') { throw "-TrustBaseline '$TrustBaseline' is not a release tag." }
-        $baseKeys = Join-Path $work 'base_trusted_keys.txt'
-        git -C $repoRoot show "${TrustBaseline}:internal/update/trusted_keys.txt" > $baseKeys
-        if ($LASTEXITCODE -ne 0) { throw "Could not read the trusted keys of $TrustBaseline." }
         Invoke-Checked "verifying with the keys copies on $TrustBaseline trust" { & $tool verify -control -in $file -sig "$file.sig" -keys $baseKeys -channel $Channel -want $Channel }
     }
     Invoke-Checked 'uploading to the update feed' { gh release upload update-feed $file "$file.sig" --repo $Repo --clobber }
     $back = Join-Path $work 'back'; New-Item -ItemType Directory -Path $back | Out-Null
     Invoke-Checked 'reading back the published pair' { gh release download update-feed --repo $Repo --pattern "$Channel-control.json*" --dir $back }
     Invoke-Checked 'verifying the published pair' { & $tool verify -control -in (Join-Path $back "$Channel-control.json") -sig (Join-Path $back "$Channel-control.json.sig") -keys $prevKeys -channel $Channel -want $Channel }
+    $pub = Get-Content -Raw -LiteralPath $file | ConvertFrom-Json
+    Write-AuditEntry $audit @{ event = 'control-published'; channel = $Channel; pause = [bool]$pub.pause; blocked = @($pub.blocked | Where-Object { $_ }); expires = ([datetime]$pub.expires).ToUniversalTime().ToString('o'); control_sha256 = (Get-FileSha256 $file) }
     Write-Host "Published. Machines pick it up at their next check (within about 30 minutes)." -ForegroundColor Green
 } finally {
     if ($wt) { Remove-ToolWorktree $repoRoot $wt.Dir }

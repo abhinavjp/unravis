@@ -407,3 +407,41 @@ func TestFeedsig(t *testing.T) {
 		t.Fatal("an edited feed file verified")
 	}
 }
+
+func TestControlsig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UNRAVIS_KEY_PASSPHRASE", "correct horse battery")
+	var out bytes.Buffer
+	kp, pp := filepath.Join(dir, "k.json"), filepath.Join(dir, "k.pub")
+	if err := run([]string{"keygen", "-role", "rc", "-out", kp, "-pub", pp}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	cf, sg := filepath.Join(dir, "c.json"), filepath.Join(dir, "c.json.sig")
+	if err := run([]string{"control", "-channel", "rc", "-block", "0.1.0-rc.40", "-days", "10", "-out", cf}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"sign", "-control", "-key", kp, "-in", cf, "-out", sg}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	k, _ := readPub(pp)
+	keys := filepath.Join(dir, "keys.txt")
+	os.WriteFile(keys, []byte("rc "+hexOf(k.Pub)+"\n"), 0o644)
+	empty := filepath.Join(dir, "empty.txt")
+	os.WriteFile(empty, []byte("# none\n"), 0o644)
+	out.Reset()
+	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", empty + "," + keys, "-want", "rc"}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	exp, err := time.Parse(time.RFC3339, strings.TrimSpace(out.String()))
+	if err != nil || exp.Before(time.Now().Add(9*24*time.Hour)) {
+		t.Fatalf("expiry %q %v", out.String(), err)
+	}
+	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", empty, "-want", "rc"}, nil, &out); err == nil {
+		t.Fatal("verified with no matching key")
+	}
+	b, _ := os.ReadFile(cf)
+	os.WriteFile(cf, bytes.Replace(b, []byte(`"expires": "`), []byte(`"expires": "1`), 1), 0o644)
+	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", keys, "-want", "rc"}, nil, &out); err == nil {
+		t.Fatal("an edited expiry verified")
+	}
+}

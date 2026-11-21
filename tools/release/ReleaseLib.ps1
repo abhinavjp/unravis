@@ -245,6 +245,9 @@ function Invoke-SigningGates {
         $cmp = gh api "repos/$Repo/compare/master...$Commit" --jq .status 2>$null
         if ($LASTEXITCODE -ne 0 -or ($cmp -ne 'behind' -and $cmp -ne 'identical')) { throw "$Context ($($Commit.Substring(0, 7))) is not part of GitHub's master (compare says '$cmp'). Not signing. Merge it through a pull request first." }
         if ($Baseline) {
+            # The commit must come after the release on the feed; an older one would make the PR range empty and pass.
+            git -C $RepoRoot merge-base --is-ancestor $Baseline $Commit
+            if ($LASTEXITCODE -ne 0) { throw "$Context ($($Commit.Substring(0, 7))) does not contain $Baseline, the release on the feed. Not signing an older or side commit." }
             $pr = Get-CommitPullRequests $RepoRoot $Repo $Baseline $Commit
             if ($pr.Missing.Count) { throw "These commits on master since $Baseline did not come through a merged pull request: $(($pr.Missing | ForEach-Object { $_.Substring(0, 7) }) -join ', '). Not signing." }
         }
