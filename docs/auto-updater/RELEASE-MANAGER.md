@@ -74,7 +74,7 @@ At the end (and when it stops) it prints the version, key id, manifest SHA-256, 
 
 - A withdraw is a control file that lives 90 days at most (the feed still points at the withdrawn version). Release a fixed version before then. A later `Set-Control.ps1` run replaces the whole control file, so name the withdrawn version again with `-Block` when you run it. `Refresh-Feed.ps1` refuses to re-sign a withdrawn version.
 - If verify did not pass and the withdraw itself failed, state says `withdraw-pending`; the next run only retries the withdraw.
-- Go is run with `GOFLAGS`, `GOWORK`, `GOENV` cleared or off and `GOTOOLCHAIN=auto` (Go's default), so settings outside git cannot change what the signing tool is built from. Release.ps1 and Sign-Release.ps1 build it in a throw-away worktree; Set-Control.ps1 and Refresh-Feed.ps1 build it in the checked clean checkout.
+- Go is run with `GOFLAGS`, `GOWORK`, `GOENV` cleared or off and `GOTOOLCHAIN=auto` (Go's default), so settings outside git cannot change what the signing tool is built from. Every script builds it in a throw-away worktree of the commit being used.
 - PowerShell 7 logging policies (both Windows PowerShell and PowerShellCore keys, and `powershell.config.json`) are checked before every passphrase read.
 
 ## Not done here (by design)
