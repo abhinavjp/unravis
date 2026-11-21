@@ -36,6 +36,12 @@ On a PC that does not make releases there is no release log. Steps then show "un
 - Live progress inside a CI run (build log lines). Step level only.
 - Any action button (release, withdraw, pause). Release stays with the script.
 
-## Auto-update (not built yet, BL-199)
+## Auto-update (BL-199)
 
-Plan: ride the Unravis OTA instead of a second signing product. The releases app is packed into the Unravis setup payload (like the Blackbox helper), so it is replaced by the signed, hash-pinned setup with the same key checks, rollback and silent-update rules, and the Start Menu entry points at the installed copy. Cost: `build.ps1`, `cmd/unravis-setup` and the payload manifest change (sensitive paths, need review and one live rc run). A second signed product in the release manager is not planned: it would double the key and feed handling for a read-only tool.
+The releases app rides the Unravis OTA instead of being a second signed product. `build.ps1` builds `dist\unravis-releases.exe` and puts it in the setup payload (an optional companion, like the Blackbox helper): the same signed manifest, SHA-256 pin, key checks, silent-update rules and rollback cover it. Setup places it beside `unravis.exe` and adds a Start-menu entry "Unravis Releases" (with its own icon). Uninstall removes both. A setup program built without it installs exactly as before.
+
+- It updates when Unravis updates, so the release manager needs no change and there is no second feed.
+- If the releases window is open during an update, the old file is moved aside and the new one placed; the open window keeps running the old version until it is closed and opened again.
+- Installed copies: setup writes the link in the profile through the same window-owned step as the Unravis link, and only when the file is really there.
+
+Not verified: needs `go test ./internal/setup ./cmd/unravis-setup` on Windows (these tests are Windows-only; on Linux they fail the same way with or without this change), then one real rc release and an update on a PC that has the app installed.

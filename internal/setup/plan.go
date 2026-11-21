@@ -382,6 +382,10 @@ func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
 	// The Blackbox program is always staged: it is placed beside the app (the app looks for it there) and, when a
 	// Blackbox is being installed, the same staged copy goes to the Blackbox folder.
 	names = append(names, BlackboxExeName)
+	// The releases window is an optional companion: it is staged only when this setup program carries it.
+	if _, ok := p.r.Payload.file(ReleasesExeName); ok {
+		names = append(names, ReleasesExeName)
+	}
 	for _, n := range names {
 		dst, err := p.stageFile(ctx, staging, n)
 		if err != nil {
@@ -411,6 +415,7 @@ func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
 	if p.Opts.Scope == ScopeMachine {
 		place = append(place, struct{ name, to string }{KeeperExeName, p.Layout.KeeperExe})
 	}
+	place = append(place, struct{ name, to string }{ReleasesExeName, p.Layout.ReleasesExe}) // skipped below when not staged
 	for _, f := range place {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -758,6 +763,7 @@ func (p *Plan) shortcuts(ctx context.Context, t *Txn) error {
 	quit := Shortcut{Target: l.AppExe, Args: quitLinkArg, WorkDir: l.InstallDir, Description: "Quit Unravis", Icon: l.AppExe}
 	startup := open
 	startup.Args = startupLinkArg
+	releases := Shortcut{Target: l.ReleasesExe, WorkDir: l.InstallDir, Description: "Unravis Releases: read-only release status", Icon: l.ReleasesExe}
 	// write puts one link in place. A link inside a folder that is itself a junction or link (guard) is skipped with a log line; it
 	// never fails the install and never touches the other links.
 	write := func(link string, s Shortcut, guard bool) error {
@@ -780,8 +786,8 @@ func (p *Plan) shortcuts(ctx context.Context, t *Txn) error {
 	for _, c := range []struct {
 		link string
 		s    Shortcut
-	}{{l.StartMenuLink, open}, {l.QuitLink, quit}} {
-		if c.link == "" || (p.r.NoProfileLinks && p.r.isProfileLink(c.link)) {
+	}{{l.StartMenuLink, open}, {l.QuitLink, quit}, {l.ReleasesLink, releases}} {
+		if c.link == "" || (c.link == l.ReleasesLink && p.staged[ReleasesExeName] == "") || (p.r.NoProfileLinks && p.r.isProfileLink(c.link)) {
 			continue
 		}
 		if err := write(c.link, c.s, false); err != nil {
