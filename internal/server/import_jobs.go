@@ -224,6 +224,25 @@ func (j *importJobs) remove(job *importJob) {
 	j.mu.Unlock()
 }
 
+// anyRunning says whether a job is queued or running.
+func (j *importJobs) anyRunning() bool {
+	j.mu.Lock()
+	jobs := make([]*importJob, 0, len(j.m))
+	for _, job := range j.m {
+		jobs = append(jobs, job)
+	}
+	j.mu.Unlock()
+	for _, job := range jobs {
+		job.mu.Lock()
+		st := job.state
+		job.mu.Unlock()
+		if st == jobQueued || st == jobRunning {
+			return true
+		}
+	}
+	return false
+}
+
 // cancelCase cancels every job of the case that has not finished.
 func (j *importJobs) cancelCase(caseID casestore.CaseID) {
 	j.mu.Lock()

@@ -89,3 +89,64 @@ func TestStayingUpConfirms(t *testing.T) {
 		}
 	}
 }
+
+// writeJournal puts a journal of a cut-off run in a folder, aged so it counts as still.
+func writeJournal(t *testing.T, version string, committed bool, age time.Duration) (folders []string, started time.Time) {
+	t.Helper()
+	dir := t.TempDir()
+	started = time.Now().UTC().Add(-age).Truncate(time.Second)
+	body := `{"op":"upgrade","version":"` + version + `","started":"` + started.Format(time.RFC3339) + `","undos":[]`
+	if committed {
+		body += `,"committed":true`
+	}
+	body += `}`
+	p := filepath.Join(dir, update.JournalFile)
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-age)
+	_ = os.Chtimes(p, old, old)
+	return []string{dir}, started
+}
+
+func TestCutOffUpdateHandsOverToTheKeptSetupOnce(t *testing.T) {
+	tr, m := healthRig(t)
+	folders, _ := writeJournal(t, "1.1.0", false, time.Hour)
+	var gotVer string
+	launch := func(p, s, v string) error { gotVer = v; return nil }
+	note := func(update.ApplyResult) { t.Fatal("no note when the hand-over worked") }
+	if !recoverCutOff(tr, folders, time.Now(), launch, note, func(string, ...any) {}) || gotVer != m.From {
+		t.Fatalf("it must hand over to the setup of %s, got %q", m.From, gotVer)
+	}
+	if tr.Skipped(m.To) {
+		t.Fatal("a cut-off run is not the version's fault: it must not be skipped")
+	}
+	if recoverCutOff(tr, folders, time.Now(), launch, note, func(string, ...any) {}) {
+		t.Fatal("a run is tried once")
+	}
+}
+
+func TestCutOffUpdateWithoutItsKeptSetupLeavesANote(t *testing.T) {
+	tr, _ := healthRig(t)
+	folders, _ := writeJournal(t, "9.9.9", false, time.Hour) // another update than the kept setup's
+	var got update.ApplyResult
+	stopped := recoverCutOff(tr, folders, time.Now(), func(string, string, string) error { t.Fatal("must not launch"); return nil },
+		func(r update.ApplyResult) { got = r }, func(string, ...any) {})
+	if stopped || got.Outcome != "failed" || !strings.Contains(got.Message, "Repair") {
+		t.Fatalf("%v %+v", stopped, got)
+	}
+}
+
+func TestJournalsThatAreNotCutOffAreLeftAlone(t *testing.T) {
+	tr, _ := healthRig(t)
+	for name, c := range map[string]struct {
+		committed bool
+		age       time.Duration
+	}{"committed": {true, time.Hour}, "a setup still running": {false, time.Second}} {
+		folders, _ := writeJournal(t, "1.1.0", c.committed, c.age)
+		if recoverCutOff(tr, folders, time.Now(), func(string, string, string) error { t.Fatal(name); return nil },
+			func(update.ApplyResult) { t.Fatal(name) }, func(string, ...any) {}) {
+			t.Fatal(name)
+		}
+	}
+}

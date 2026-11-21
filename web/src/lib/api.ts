@@ -185,7 +185,7 @@ export const api = {
   uiPresence: () => request<{ ok: boolean }>('/ui/presence', { method: 'POST' }),
   /** The person has read what the last unattended update did. */
   updateResultDismiss: () => request<UpdateCheckReply>('/update/result/dismiss', { method: 'POST' }),
-  updateSettings: (auto: boolean, intervalMinutes: number) => request<UpdateCheckReply>('/update/settings', { method: 'PUT', body: JSON.stringify({ auto, intervalMinutes }) }),
+  updateSettings: (auto: boolean, intervalMinutes: number, applyAuto?: boolean) => request<UpdateCheckReply>('/update/settings', { method: 'PUT', body: JSON.stringify(applyAuto === undefined ? { auto, intervalMinutes } : { auto, intervalMinutes, applyAuto }) }),
   /** preview: a keeper screenshot preview (saved or stopped), answered only in the demo. */
   sources: (preview = '') => request<Source[]>('/sources' + (preview ? '?preview=' + encodeURIComponent(preview) : '')),
   recentConnections: () => request<RecentConnection[]>('/connections/recent'),

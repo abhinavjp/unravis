@@ -113,8 +113,8 @@ Legend: `[ ]` open, `[x]` done, `[~]` dropped.
 - [ ] **BL-156** Release passphrase from Proton Pass CLI (`-PassphraseFromProtonPass`, `tools/release/ProtonPass.ps1`). Failure paths tested in CI with a fake pass-cli. Tick only after nachi runs one real release with it (real `pass-cli item view` output is not verified; pass-cli needs a paid Proton Pass plan).
 - [ ] **BL-168** Silent, idle-aware OTA update (`docs/auto-updater/SILENT-UPDATE.md`): auto download, apply only when the app is not in use (page presence), no window, quit, replace, restart, result note, "Apply now / Later" bar. Tick only after a real silent update on a PC.
 - [ ] **BL-169** Silent rollback: after 3 bad starts the app runs the kept old setup silently (no window), restarts, shows the note. Tick only after a real rollback.
-- [ ] **BL-170** Power loss or setup killed mid-update: at app start, if the setup journal is still on disk, run setup silently to roll back. Needs design (the app may not be startable).
-- [ ] **BL-171** Busy hook and MCP: count running imports, exports, a capture and an MCP client using `unravis.exe --mcp` as "in use" (today only page presence counts, and setup closes every unravis.exe in the folder). Also a checkbox for `applyAuto` in Help > Updates.
+- [ ] **BL-170** Power loss or setup killed mid-update: built (app start finds the journal, hands over to the kept setup of that update; once per run; else a note). Tick only after a real cut-off on a PC. Not covered: an app that cannot start at all (the next setup run recovers first).
+- [ ] **BL-171** Busy hook and MCP: built (MCP requests for 5 min, running import jobs and non-GET requests count as in use; Help > Updates has the "Install by itself when I am not using it" box). Tick after a live check. Left: setup still closes an idle `--mcp` copy.
 - [ ] **BL-155** OTA gaps before stable: pause/blocked list in the signed feed (G2), rollout percent (G3), manifest expiry refresh (G5), second free feed host (G4), Blackbox folder/share source and status display in Unravis (G7).
 
 ## Blackbox expansion (design and reviews done; groups 1-8 built on branch `bbx/all-groups` (PR #12), awaiting live checks)

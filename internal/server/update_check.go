@@ -42,6 +42,9 @@ func WithUpdater(u *Updater) Option {
 		state.mu.Lock()
 		state.updater = u
 		state.mu.Unlock()
+		if u != nil {
+			u.AddBusy(h.jobs.anyRunning) // an import or a check that is still running is work an update must wait for
+		}
 	}
 }
 

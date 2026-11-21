@@ -335,6 +335,7 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 		}
 		req, _ := http.NewRequestWithContext(reqCtx, method, base+path, bytes.NewReader(payload))
 		req.Header.Set("X-Audit-Token", token)
+		req.Header.Set("User-Agent", "unravis-mcp") // the dashboard counts an MCP client at work as "in use" for updates
 		if input != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}

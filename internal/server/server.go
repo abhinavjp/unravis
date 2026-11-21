@@ -99,6 +99,9 @@ func WithHistory(value savedHistory) Option { return func(h *handler) { h.histor
 
 func WithSQLConnections(value savedSQL) Option { return func(h *handler) { h.sqlConns = value } }
 
+// mcpUserAgent is what unravis --mcp sends (internal/mcp), so the dashboard can tell an assistant is at work.
+const mcpUserAgent = "unravis-mcp"
+
 func New(repo audit.Repository, assets fs.FS, token string, demo bool, options ...Option) http.Handler {
 	h := &handler{repo: repo, assets: assets, token: token, demo: demo}
 	h.tests.limit = connectionTestsPerWindow
@@ -189,6 +192,15 @@ func (l *connectionTestLimiter) allow() bool {
 
 // ServeHTTP is the logging middleware (httplog.go) around serve.
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if u, _ := h.updaterAndDemo(); u != nil && strings.HasPrefix(r.URL.Path, "/api/") {
+		// An update waits while a request that changes something runs (an import, an export, a capture) and while an MCP client works.
+		if r.Header.Get("User-Agent") == mcpUserAgent {
+			u.NoteMCP()
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !strings.HasPrefix(r.URL.Path, "/api/ui/") && !strings.HasPrefix(r.URL.Path, "/api/update") {
+			defer u.WorkBegin()()
+		}
+	}
 	h.serveHTTP(w, r)
 }
 
