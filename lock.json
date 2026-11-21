@@ -1,24 +1,24 @@
 {
   "v": 1,
-  "state": "held",
+  "state": "free",
   "id": "b76724ffc76c487a8220f2e6f1d00e6d",
   "host": "9f484c6ac779",
   "pid": 77136,
   "requester": "ota",
   "started": "2026-11-21T23:55:26.4069619Z",
-  "heartbeat": "2026-11-21T23:56:30.2891515Z",
+  "heartbeat": "2026-11-21T23:58:35.1035273Z",
   "channel": "rc",
   "version": "0.1.0-rc.56",
-  "stage": "Verify",
+  "stage": "idle",
   "commit": "e107bb17fb3c3fa6c293d194067b3811ebf5d753",
   "holdMerges": false,
   "lease_minutes": 180,
   "reason": "",
   "last": {
+    "outcome": "done",
     "version": "0.1.0-rc.56",
-    "reason": "No valid build attestation for unravis-lite-v0.1.0-rc.56-windows-x64.zip from abhinavjp/unravis/.github/workflows/release.yml : \r\nError: failed to choose verifier based on provided bundle issuer: public good verifier is not available (initialization may have failed)\r\n",
-    "at": "2026-11-21T23:54:55.230011Z",
-    "outcome": "stopped",
+    "reason": "",
+    "at": "2026-11-21T23:58:34.6514248Z",
     "requester": "ota"
   }
 }
