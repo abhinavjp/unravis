@@ -89,3 +89,82 @@ func TestStayingUpConfirms(t *testing.T) {
 		}
 	}
 }
+
+// writeJournal puts a journal of a cut-off run in a folder, aged so it counts as still.
+func writeJournal(t *testing.T, version string, committed bool, age time.Duration) (folders []string, started time.Time) {
+	t.Helper()
+	dir := t.TempDir()
+	started = time.Now().UTC().Add(-age).Truncate(time.Second)
+	body := `{"op":"upgrade","version":"` + version + `","started":"` + started.Format(time.RFC3339) + `","undos":[]`
+	if committed {
+		body += `,"committed":true`
+	}
+	body += `}`
+	p := filepath.Join(dir, update.JournalFile)
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-age)
+	_ = os.Chtimes(p, old, old)
+	return []string{dir}, started
+}
+
+func noLaunch(t *testing.T) func(string) error {
+	return func(string) error { t.Fatal("must not launch"); return nil }
+}
+
+func TestCutOffUpdateStartsTheSetupRecoverFlagWhenItKnowsIt(t *testing.T) {
+	tr, _ := healthRig(t)
+	folders, _ := writeJournal(t, "1.1.0", false, time.Hour)
+	var started []string
+	launch := func(p string) error { started = append(started, p); return nil }
+	note := func(update.ApplyResult) { t.Fatal("the setup leaves the note, not the app") }
+	canRecover := func(string) bool { return true }
+	if !recoverCutOff(tr, folders, time.Now(), "C:/x/unravis-setup.exe", canRecover, launch, note, func(string, ...any) {}) || len(started) != 1 || started[0] != "C:/x/unravis-setup.exe" {
+		t.Fatalf("%v", started)
+	}
+	// a recovery can fail for reasons that pass (another setup holds the lock): it is tried at the next starts, three times in all
+	for i := 0; i < 5; i++ {
+		recoverCutOff(tr, folders, time.Now(), "C:/x/unravis-setup.exe", canRecover, launch, note, func(string, ...any) {})
+	}
+	if len(started) != update.MaxJournalTries {
+		t.Fatalf("started %d times", len(started))
+	}
+}
+
+func TestCutOffUpdateWithAnOlderSetupLeavesOneNoteAndStartsNothing(t *testing.T) {
+	tr, _ := healthRig(t)
+	folders, _ := writeJournal(t, "1.1.0", false, time.Hour)
+	var got []update.ApplyResult
+	note := func(r update.ApplyResult) { got = append(got, r) }
+	for i := 0; i < 4; i++ {
+		recoverCutOff(tr, folders, time.Now(), "x", func(string) bool { return false }, noLaunch(t), note, func(string, ...any) {})
+	}
+	if len(got) != 1 || got[0].Outcome != "failed" || !strings.Contains(got[0].Message, "Repair") {
+		t.Fatalf("one note, once: %+v", got)
+	}
+}
+
+func TestCutOffUpdateWhoseSetupCannotStartLeavesANote(t *testing.T) {
+	tr, _ := healthRig(t)
+	folders, _ := writeJournal(t, "1.1.0", false, time.Hour)
+	var got []update.ApplyResult
+	recoverCutOff(tr, folders, time.Now(), "x", func(string) bool { return true }, func(string) error { return errors.New("no") },
+		func(r update.ApplyResult) { got = append(got, r) }, func(string, ...any) {})
+	if len(got) != 1 {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestJournalsThatAreNotCutOffAreLeftAlone(t *testing.T) {
+	tr, _ := healthRig(t)
+	for name, c := range map[string]struct {
+		committed bool
+		age       time.Duration
+	}{"committed": {true, time.Hour}, "a setup still running": {false, time.Second}} {
+		folders, _ := writeJournal(t, "1.1.0", c.committed, c.age)
+		if recoverCutOff(tr, folders, time.Now(), "x", func(string) bool { return true }, noLaunch(t), func(update.ApplyResult) { t.Fatal(name) }, func(string, ...any) {}) {
+			t.Fatal(name)
+		}
+	}
+}

@@ -40,7 +40,7 @@ test('D-C-09: every update sentence has the exact wording and passes the copy li
 
 test('D-C-09: the Help panel labels exist and pass the copy lint', () => {
   const glossary = read('src/components/Glossary.svelte');
-  const labels = ['Check for updates', 'Checking...', 'Open the release page', 'Check automatically', 'How often', 'Could not save this choice. It was not changed.', 'Unravis looks for a new version on its own and tells you here. It never installs one by itself.'];
+  const labels = ['Check for updates', 'Checking...', 'Open the release page', 'Check automatically', 'How often', 'Could not save this choice. It was not changed.', 'Unravis looks for a new version on its own and tells you here. With the second box ticked it also installs it by itself, but only when you are not using it, and then starts again. Otherwise you press Apply.'];
   for (const label of labels) assert.ok(glossary.includes(label), 'Glossary.svelte shows: ' + label);
   assert.deepEqual(lintCopy(labels.map((text, index) => ({ id: 'update-label-' + index, text })), deck.terms), []);
 });

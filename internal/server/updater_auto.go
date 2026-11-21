@@ -80,12 +80,46 @@ func (u *Updater) EnableSilentApply(launch Launcher, canSilently func() bool, bu
 // Presence is the tracker the page pings.
 func (u *Updater) Presence() *Presence { return &u.presence }
 
-// InUse says whether the app counts as in use now: a recent sign of use on the page, or work that must not be cut off.
+// mcpWindow is how long after its last request an MCP client (unravis --mcp) still counts as in use: an assistant works in bursts.
+const mcpWindow = 5 * time.Minute
+
+// AddBusy adds a check for work that must not be cut off (a running import, say).
+func (u *Updater) AddBusy(f func() bool) {
+	if f != nil {
+		u.busyMu.Lock()
+		u.extraBusy = append(u.extraBusy, f)
+		u.busyMu.Unlock()
+	}
+}
+
+// WorkBegin counts one request in flight (an import, export or capture runs inside one); call the returned func when it ends.
+func (u *Updater) WorkBegin() func() {
+	u.inflight.Add(1)
+	return func() { u.inflight.Add(-1) }
+}
+
+// NoteMCP records a request from an MCP client.
+func (u *Updater) NoteMCP() { u.mcp.Touch() }
+
+// InUse says whether the app counts as in use now: a recent sign of use on the page, an MCP client at work, a request still running, or
+// other work that must not be cut off.
 func (u *Updater) InUse() bool {
-	if u.presence.Active(time.Now(), presenceWindow) {
+	now := time.Now()
+	if u.presence.Active(now, presenceWindow) || u.mcp.Active(now, mcpWindow) || u.inflight.Load() > 0 {
 		return true
 	}
-	return u.busy != nil && u.busy()
+	if u.busy != nil && u.busy() {
+		return true
+	}
+	u.busyMu.Lock()
+	fs := append([]func() bool(nil), u.extraBusy...)
+	u.busyMu.Unlock()
+	for _, f := range fs {
+		if f() {
+			return true
+		}
+	}
+	return false
 }
 
 // RunAuto is the quiet-time loop. It stops when ctx ends. It does nothing for a development build, while updates are off, or when

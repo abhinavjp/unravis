@@ -448,6 +448,15 @@ func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "Invalid or missing session token.")
 		return
 	}
+	// Only a request with the session token counts as use (a tokenless one from another local process must not hold updates back).
+	if u, _ := h.updaterAndDemo(); u != nil {
+		if r.Header.Get("User-Agent") == mcpUserAgent {
+			u.NoteMCP()
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !strings.HasPrefix(r.URL.Path, "/api/ui/") && !strings.HasPrefix(r.URL.Path, "/api/update") {
+			defer u.WorkBegin()() // an import, export or capture runs inside its request
+		}
+	}
 	if !found {
 		writeError(w, http.StatusNotFound, "API route was not found.")
 		return
