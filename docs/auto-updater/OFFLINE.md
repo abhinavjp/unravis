@@ -56,6 +56,8 @@ A recorder on a server that cannot reach GitHub can still update itself, from a 
 
 Restart the recorder service once (the file is read when it starts). From then on it checks that folder on its normal timer. It checks exactly what an online recorder checks: the signature on the feed file, the size and SHA-256 of the zip against the signed manifest, the program hash inside the zip, and the rule that it never goes back to an older release. The signed files expire (feed files up to 180 days, control files up to 90), so refresh the folder from the release page at least that often. Only administrators should be able to write to the share: the checks stop a forged file, but anyone who can write there can still withhold updates. A wrong or tampered file in the folder is refused; a missing file shows as "Could not read the update folder" on its status page. The folder is not trusted because of where it is.
 
+A folder-only server cannot see newer control files you did not copy in: someone who can write the share can serve it an older, still unexpired control file (up to 90 days) and so undo a later pause or withdrawal. Keep the share admin-only and copy the newest control file with each release. Setting `update-source.txt` also switches off the "managed by Unravis" handover on that server.
+
 Updating the folder is all it takes to roll a new version out to every server that points at it. To stop, delete `update-source.txt` and restart the service: the recorder reads the internet again (or is updated by Unravis, if Unravis manages it).
 
 Not verified on a live server yet (needs a Windows server and a share); unit-tested with a local folder only.
