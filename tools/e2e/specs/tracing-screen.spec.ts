@@ -81,7 +81,8 @@ test('TRACE-02: three lanes in order with plain labels, one shared UTC axis and 
   await expect(heads.nth(1)).toContainText('Were database calls slow, blocked or failing?');
   await expect(heads.nth(2)).toContainText('Were web requests slow or failing before reaching the app?');
   await expect(heads.nth(0).locator('.origin')).toContainText('Read just now');
-  await expect(heads.nth(1).locator('.origin')).toContainText('From saved logs');
+  // In 15:00 to 18:00 the imported SQL file has nothing, so the SQL lane falls back to the SQL time the live audit rows carry (api-seen): read just now.
+  await expect(heads.nth(1).locator('.origin')).toContainText('Read just now');
   await expect(heads.nth(2).locator('.origin')).toContainText('From saved logs');
   // Panel titles name what is plotted.
   await expect(page.locator('.panel[data-lane=audit] .panel-title')).toHaveText('How many requests, and how slow they were');
@@ -116,13 +117,13 @@ test('TRACE-03: the audit lane draws exactly 11 event bars, scaled to its talles
   const heights = await bars(page, 'audit').evaluateAll((els) => els.map((e) => parseFloat((e as HTMLElement).style.height)));
   expect(Math.max(...heights)).toBe(100);
   expect(Math.min(...heights)).toBeGreaterThan(0);
-  // SQL and IIS have files that cover the time but nothing happened inside it.
-  for (const lane of ['sql', 'iis']) {
-    const p = page.locator(`.panel[data-lane=${lane}]`);
-    await expect(p).toHaveAttribute('data-state', 'none-seen');
-    await expect(p.getByText('No events in this period')).toBeVisible();
-    await expect(p.locator('.bar')).toHaveCount(0);
-  }
+  // The IIS files cover the time but nothing happened inside it. The imported SQL file also has nothing here, so the SQL lane draws the
+  // SQL time the live audit rows carry (the api-seen fallback in tracing.go) instead of saying nothing was seen.
+  const iisLane = page.locator('.panel[data-lane=iis]');
+  await expect(iisLane).toHaveAttribute('data-state', 'none-seen');
+  await expect(iisLane.getByText('No events in this period')).toBeVisible();
+  await expect(iisLane.locator('.bar')).toHaveCount(0);
+  await expect(page.locator('.panel[data-lane=sql]')).toHaveAttribute('data-state', 'events');
   // With no 5xx in the demo audit rows, no bar carries an error share.
   await expect(page.locator('.panel[data-lane=audit] .bar-err')).toHaveCount(0);
 });
@@ -132,7 +133,9 @@ test('TRACE-04: all three lanes draw bars on a window with SQL and IIS events; l
   await trace(page, WIN_B);
   await expect(page.locator('.overlay .column')).toHaveCount(48);
   await expect(bars(page, 'audit')).toHaveCount(2);
-  await expect(bars(page, 'sql')).toHaveCount(11);
+  // The SQL bars are the Query Store figures saved with the case (one bar per 15 minutes, 14 here); the 11 imported slow statements are
+  // kept as the lane's events, never added to the bars (reason code layered-sql).
+  await expect(bars(page, 'sql')).toHaveCount(14);
   await expect(bars(page, 'iis')).toHaveCount(10);
   // Lane swatches: computed colour equals the CSS variable's colour, never a hex literal.
   const same = await page.evaluate(() => {
@@ -153,8 +156,15 @@ test('TRACE-04: all three lanes draw bars on a window with SQL and IIS events; l
   expect(same.swatches).toEqual(same.want);
   expect(same.tools).toEqual(same.want);
   expect(new Set(same.want).size).toBe(3);
-  // Bars are filled with their lane colour token.
-  expect(same.bar).toBe(same.want[1]);
+  // Bars are filled with their lane colour token. The SQL bars are the saved Query Store figures, drawn as a fainter fill (30%) of the
+  // same colour so the line and the diamonds on top stay readable; compare the colour, not its opacity.
+  const rgb = (c: string) => {
+    const m = /^rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)/.exec(c) ?? /^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(c);
+    if (!m) return [];
+    const k = c.startsWith('color(') ? 255 : 1;
+    return [1, 2, 3].map((i) => Math.round(Number(m[i]) * k));
+  };
+  expect(rgb(same.bar)).toEqual(rgb(same.want[1]));
   // The IIS and SQL lanes are stored reads and carry an "as of" time in the lane head.
   await expect(page.locator('.lane-label').nth(1).locator('.origin')).toContainText('From saved logs');
 });
@@ -336,13 +346,13 @@ test('TRACE-10: hover and keyboard tooltips come from the dictionary; lane heads
   const overlay = (await page.locator('.overlay').boundingBox())!;
   const colW = overlay.width / 48;
   const mid = async (lane: string) => { await page.locator(`.panel[data-lane=${lane}]`).scrollIntoViewIfNeeded(); const b = (await page.locator(`.panel[data-lane=${lane}]`).boundingBox())!; return b.y + b.height / 2; };
-  // SQL lane, slot 13 (09:05): calls from saved logs.
-  await page.mouse.move(overlay.x + colW * 13.5, await mid('sql'));
+  // SQL lane, slot 12 (09:00): the saved Query Store bar says how many calls ran and how long they took.
+  await page.mouse.move(overlay.x + colW * 12.5, await mid('sql'));
   const tip = page.locator('#tc-tip');
   await expect(tip).toBeVisible();
   await expect(tip).toContainText('Database (SQL Server)');
-  await expect(tip).toContainText('19 Oct 09:05 to 19 Oct 09:10 UTC');
-  await expect(tip).toContainText(/\d+ calls?/);
+  await expect(tip).toContainText('19 Oct 09:00 to 19 Oct 09:05 UTC');
+  await expect(tip).toContainText(/[\d,]+ calls?/);
   await expect(tip).toContainText('From saved logs (as of ');
   await expect(tip).not.toContainText('API requests (audit log)');
   // IIS lane: the "IIS point" caveat from the dictionary.
