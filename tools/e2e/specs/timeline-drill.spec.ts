@@ -83,6 +83,9 @@ test('DRILL-03: Esc returns to the timeline without another read, with focus ins
   const screen = page.getByTestId('slow-call-screen');
   await expect(screen).toBeVisible();
   await expect(page.locator('.tracing-paper')).toBeHidden();
+  // Let the opening reads settle first (a slow machine can still be answering the last one), so only a read caused by Esc is counted.
+  await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(500);
   const beforeEscape = tracingRequests;
   expect(beforeEscape, 'the tracing request counter observed the opening read').toBeGreaterThan(0);
   await page.keyboard.press('Escape');

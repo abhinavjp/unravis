@@ -22,7 +22,7 @@ import { join } from 'node:path';
 const FILES = join(__dirname, '..', 'fixtures', 'files');
 const W3C = join(FILES, 'u_ex261020.log');
 const NOTES = join(FILES, 'notes.txt');
-const SHOTS = 'D:\\Projects\\api-audit-explorer\\.dev\\import-shots';
+const SHOTS = join(__dirname, '..', '..', '..', '.dev', 'import-shots');
 
 const payload = (name: string, buffer: Buffer) => ({ name, mimeType: 'text/plain', buffer });
 // The same log under another letter case of its server name: different bytes, so it is not a duplicate, and the host list still knows it.

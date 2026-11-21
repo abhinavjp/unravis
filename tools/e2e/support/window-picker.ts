@@ -1,7 +1,7 @@
 // How the specs drive the Investigation Timeline's two period pickers (WindowPicker.svelte, popover variant).
-// Each picker is a button that opens a dialog with the quick ranges, a calendar, two date text boxes and two 12-hour time boxes (each time
-// is three drop-downs: hour 1 to 12, minute, AM or PM; all UTC). Apply commits; Cancel, Escape and a click outside discard.
-// The specs keep speaking 24-hour `HH:mm`: fillTime and readTime translate to and from the three drop-downs.
+// Each picker is a button that opens a dialog with the quick ranges, a calendar, two date text boxes and two 24-hour time boxes (each time
+// is two drop-downs: hour 00 to 23 and minute; UTC because the test browser starts with UTC chosen). Apply commits; Cancel, Escape and a click outside discard.
+// The specs keep speaking 24-hour `HH:mm`: fillTime and readTime translate to and from the two drop-downs.
 import { expect, type Locator, type Page } from '@playwright/test';
 
 export type WhichWindow = 'incident' | 'comparison';
@@ -14,17 +14,17 @@ const DIALOG_NAME: Record<WhichWindow, string> = { incident: 'Choose the inciden
 export const pickerButton = (page: Page, which: WhichWindow): Locator => page.getByRole('button', { name: new RegExp('^' + WINDOW_NAME[which] + ': ') });
 export const pickerDialog = (page: Page, which: WhichWindow): Locator => page.getByRole('dialog', { name: DIALOG_NAME[which] });
 
-/** One of the two date text boxes inside the open picker (the times are 12-hour boxes: see pickerTime). */
+/** One of the two date text boxes inside the open picker (the times are 24-hour boxes: see pickerTime). */
 export const pickerBox = (page: Page, which: WhichWindow, part: 'start date' | 'end date'): Locator =>
   pickerDialog(page, which).getByRole('textbox', { name: `${WINDOW_NAME[which]} ${part}`, exact: true });
 
-/** The 12-hour time box (a group of three drop-downs) inside the open picker. */
+/** The 24-hour time box (a group of two drop-downs) inside the open picker. */
 export const pickerTime = (page: Page, which: WhichWindow, part: 'start time' | 'end time'): Locator =>
   pickerDialog(page, which).getByRole('group', { name: `${WINDOW_NAME[which]} ${part}`, exact: true });
 
-const timeSelectIn = (scope: Locator, boxName: string, word: 'hour' | 'minute' | 'AM or PM'): Locator => scope.getByRole('combobox', { name: `${boxName} ${word}`, exact: true });
+const timeSelectIn = (scope: Locator, boxName: string, word: 'hour' | 'minute'): Locator => scope.getByRole('combobox', { name: `${boxName} ${word}`, exact: true });
 
-/** Sets a 12-hour time box (found by its spoken name, for example "Incident window start time") inside `scope` from a 24-hour `HH:mm`. 22:30 picks 10, 30, PM; '' clears the hour and the minute. */
+/** Sets a 24-hour time box (found by its spoken name, for example "Incident window start time") inside `scope` from `HH:mm`. '' clears the hour and the minute. */
 export async function fillTimeIn(scope: Locator, boxName: string, hhmm: string): Promise<void> {
   const m = /^(\d{2}):(\d{2})$/.exec(hhmm);
   if (!m) {
@@ -32,19 +32,16 @@ export async function fillTimeIn(scope: Locator, boxName: string, hhmm: string):
     await timeSelectIn(scope, boxName, 'minute').selectOption('');
     return;
   }
-  const h = +m[1];
-  await timeSelectIn(scope, boxName, 'AM or PM').selectOption(h >= 12 ? 'PM' : 'AM');
-  await timeSelectIn(scope, boxName, 'hour').selectOption(String(h % 12 === 0 ? 12 : h % 12));
+  await timeSelectIn(scope, boxName, 'hour').selectOption(String(+m[1]));
   await timeSelectIn(scope, boxName, 'minute').selectOption(String(+m[2]));
 }
 
-/** Reads a 12-hour time box back as a 24-hour `HH:mm`, or '' when the hour and the minute show "--". */
+/** Reads a 24-hour time box back as `HH:mm`, or '' when the hour or the minute shows "--". */
 export async function readTimeIn(scope: Locator, boxName: string): Promise<string> {
   const hour = await timeSelectIn(scope, boxName, 'hour').inputValue();
   const minute = await timeSelectIn(scope, boxName, 'minute').inputValue();
-  const period = await timeSelectIn(scope, boxName, 'AM or PM').inputValue();
   if (hour === '' || minute === '') return '';
-  return `${String((+hour % 12) + (period === 'PM' ? 12 : 0)).padStart(2, '0')}:${minute.padStart(2, '0')}`;
+  return `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
 }
 
 /** Sets one time box of an open picker from a 24-hour `HH:mm`. */

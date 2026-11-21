@@ -74,6 +74,11 @@ export const test = base.extend<Fixtures, { reaper: void }>({
   page: async ({ page, demo }, use, testInfo) => {
     // Windows now and then answers a local connection with ERR_NO_BUFFER_SPACE (a full socket buffer on the test PC, not an app
     // fault). Only that one error is tried again, and only before the test has done anything.
+    // The app shows London time by default (2026-11-21). The specs read times and labels in UTC, so every page starts with UTC chosen,
+    // unless the test (or an earlier step of it) has already chosen a zone.
+    await page.addInitScript(() => {
+      try { if (localStorage.getItem('unravis.timeZone') === null) localStorage.setItem('unravis.timeZone', 'utc'); } catch { /* blocked storage: the app default applies */ }
+    });
     for (let attempt = 1; ; attempt++) {
       try {
         await page.goto(demo.base + '/#t=' + demo.token);

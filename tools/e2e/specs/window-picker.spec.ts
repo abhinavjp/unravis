@@ -206,7 +206,7 @@ test('PICK-08: bad text marks the box and keeps the last good value; an emptied 
   await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(dialog, 'bad text is not applied').toBeVisible();
   await pickerBox(page, 'incident', 'start date').fill('2026-10-19');
-  // A 12-hour time box cannot hold an impossible time: the hour and the minute only offer real values, and clearing both is the "no time" state.
+  // A 24-hour time box cannot hold an impossible time: the hour and the minute only offer real values, and clearing both is the "no time" state.
   await fillTime(page, 'incident', 'start time', '');
   await expect(note(page, 'incident')).toHaveText('Pick a start and an end first.');
   await fillTime(page, 'incident', 'start time', '15:00');
@@ -266,7 +266,7 @@ test('PICK-10: the keyboard reaches everything; arrows move over the days; Enter
   await expect(day(page, 'incident', 'October 26, 2026')).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(day(page, 'incident', 'October 26, 2026')).toHaveAttribute('aria-pressed', 'true');
-  // Enter on an hour, minute or AM/PM drop-down is the drop-down's own: it does not apply the draft and does not start a read.
+  // Enter on an hour or minute drop-down is the drop-down's own: it does not apply the draft and does not start a read.
   await typeRange(page, 'incident', '2026-10-19T10:00', '2026-10-19T10:30');
   await pickerTime(page, 'incident', 'end time').getByRole('combobox', { name: 'Incident window end time minute', exact: true }).press('Enter');
   await expect(dialog).toBeVisible();
