@@ -1,24 +1,24 @@
 {
   "v": 1,
-  "state": "held",
+  "state": "free",
   "id": "c0b294e95b124c7895891fb73da2cbb2",
   "host": "9f484c6ac779",
   "pid": 12072,
   "requester": "ota",
   "started": "2026-11-21T23:36:35.0865128Z",
-  "heartbeat": "2026-11-21T23:42:20.7724683Z",
+  "heartbeat": "2026-11-21T23:42:49.6074992Z",
   "channel": "rc",
   "version": "0.1.0-rc.56",
-  "stage": "Sign",
+  "stage": "idle",
   "commit": "e107bb17fb3c3fa6c293d194067b3811ebf5d753",
   "holdMerges": false,
   "lease_minutes": 180,
   "reason": "",
   "last": {
-    "requester": "dryrun-coord-thread",
-    "reason": "",
-    "at": "2026-11-21T23:20:21.092946Z",
-    "version": "",
-    "outcome": "check-only"
+    "version": "0.1.0-rc.56",
+    "outcome": "stopped",
+    "requester": "ota",
+    "at": "2026-11-21T23:42:49.2222876Z",
+    "reason": "No valid build attestation for unravis-blackbox-v0.1.0-rc.56-windows-x64.zip from abhinavjp/unravis/.github/workflows/release.yml : error creating Sigstore verifier: no valid Sigstore verifiers could be initialized\r\n"
   }
 }
