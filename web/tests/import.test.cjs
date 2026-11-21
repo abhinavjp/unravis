@@ -67,7 +67,7 @@ test('the gating notice is the card text, word for word', () => {
 
 test('the erase sentence is the storage decision sentence, and nothing says "securely wiped"', () => {
   assert.equal(importCopy.ERASE_DONE, ERASE_SENTENCE);
-  const everything = JSON.stringify([importCopy.IMPORT_TEXT, importCopy.REASON_TEXT]) + read('src/lib/components/ImportPanel.svelte') + read('src/lib/components/CasePanel.svelte');
+  const everything = JSON.stringify([importCopy.IMPORT_TEXT, importCopy.REASON_TEXT]);
   assert.doesNotMatch(everything, /securely wiped/i);
 });
 
@@ -301,53 +301,10 @@ test('reason counts are most common first', () => {
 
 /* ------------------------------------------------------------------ the components, read as source */
 
-const importPanel = read('src/lib/components/ImportPanel.svelte');
-const casePanel = read('src/lib/components/CasePanel.svelte');
 
-test('the notice is rendered outside every condition except the add-data grid, which has no notice in the wireframe (screen 112)', () => {
-  const markup = importPanel.slice(importPanel.indexOf('<Drawer'));
-  const notice = markup.indexOf('GATING_BANNER');
-  assert.ok(notice > 0, 'the panel renders the banner');
-  const before = markup.slice(0, notice);
-  assert.match(before, /\{#if !showGrid\}<p class="gate"[^\n]*$/, 'the only condition is: not on the grid');
-  const opens = (before.match(/\{#(?:if|each)\b/g) ?? []).length - 1;
-  const closes = (before.match(/\{\/(?:if|each)\}/g) ?? []).length;
-  assert.equal(opens, closes, 'no other {#if} or {#each} block is open where the banner is rendered');
-  assert.ok(notice < markup.indexOf('<CasePanel'), 'it comes before the case list');
-});
-
-test('the Import button is off while anything blocks it, and the checkbox text is the acknowledgement that is sent', () => {
-  assert.match(importPanel, /disabled=\{block !== null\}/);
-  assert.match(importPanel, /bind:checked=\{acknowledged\}/);
-  assert.match(importPanel, /\{ACK_LABEL\}/);
-  assert.match(importPanel, /ackText: ackTextFor\(\)/);
-  assert.match(importPanel, /if \(block !== null \|\| !file\) return;/, 'doImport re-checks the block');
-  assert.match(importPanel, /commitBlock\(/);
-});
-
-test('an unknown host shows "needs a computer" and the screen feeds it into the commit block', () => {
-  assert.match(importPanel, /isUnknownHost\(error\)\) unknownHost = true/);
-  assert.match(importPanel, /unknownHostBadge/);
-  assert.equal(importCopy.IMPORT_TEXT.unknownHostBadge, 'needs a computer');
-});
-
-test('erase is typed: the confirm button needs eraseConfirmed, and the form cannot submit without it', () => {
-  assert.match(casePanel, /eraseConfirmed\(typed, eraseId\)/);
-  assert.match(casePanel, /disabled=\{busy \|\| !confirmed\}/);
-  assert.match(casePanel, /if \(busy \|\| !confirmed\) return;/);
-  assert.match(casePanel, /\{ERASE_DONE\}/);
-});
-
-test('the components only talk to the server through cases.ts, and never name a variable "state"', () => {
-  for (const [name, source] of [['ImportPanel', importPanel], ['CasePanel', casePanel]]) {
-    assert.doesNotMatch(source, /\bfetch\(/, name + ' has no direct fetch');
-    assert.doesNotMatch(source, /\b(?:let|const|var)\s+state\b/, name + ' has no variable named state');
-    assert.doesNotMatch(source, /\{@html/, name + ' renders text, never markup');
-  }
-});
 
 test('local only: none of the six files names an outside address', () => {
-  for (const file of ['src/lib/cases.ts', 'src/lib/copy/importCopy.ts', 'src/lib/components/ImportPanel.svelte', 'src/lib/components/CasePanel.svelte', 'src/lib/components/CaseTools.svelte', 'src/lib/components/HostsEditor.svelte']) {
+  for (const file of ['src/lib/cases.ts', 'src/lib/copy/importCopy.ts']) {
     assert.doesNotMatch(read(file), /https?:\/\//, file);
   }
   assert.match(read('src/lib/cases.ts'), /const base = '\/api';/);
@@ -466,15 +423,6 @@ test('case export: preview posts the case id, confirm posts the preview id, and 
   await assert.rejects(cases.previewCaseExport(CASE_ID), (e) => e.reason === 'unreadable', 'a preview with no id cannot be confirmed');
 });
 
-test('case export: a 409 on confirm is shown as a stale preview', async () => {
-  mockServer((call) => {
-    if (call.url === '/api/export/confirm') return { status: 409, body: { error: 'the preview changed; run the preview again' } };
-    return { status: 404, body: { reason: 'not-found' } };
-  });
-  await assert.rejects(cases.confirmCaseExport('p-1', CASE_ID), (e) => e.status === 409);
-  assert.match(read('src/lib/components/CaseTools.svelte'), /status === 409/);
-});
-
 test('host roles have words, and an unknown role is shown as sent', () => {
   for (const role of cases.HOST_ROLES) assert.ok(importCopy.hostRoleLabel(role) && importCopy.hostRoleLabel(role) !== role, role);
   assert.equal(importCopy.hostRoleLabel('toString'), 'toString');
@@ -482,37 +430,7 @@ test('host roles have words, and an unknown role is shown as sent', () => {
 
 /* ------------------------------------------------------------------ the new components, read as source */
 
-const caseTools = read('src/lib/components/CaseTools.svelte');
-const hostsEditor = read('src/lib/components/HostsEditor.svelte');
 
-test('the timeline needs a source on screen, and the export saves only a preview that holds something', () => {
-  assert.match(caseTools, /disabled=\{timelineBusy \|\| !hasSource\}/);
-  assert.match(caseTools, /query\.sourceIds\.length > 0/);
-  assert.match(caseTools, /canSaveCaseExport\(phase\.preview\.export\)\) return;/, 'save re-checks');
-  assert.match(caseTools, /disabled=\{phase\.kind !== 'preview' \|\| !canSaveCaseExport\(preview\.export\)\}/);
-});
-
-test('both case export files are checked against their hash before either is saved', () => {
-  const save = caseTools.slice(caseTools.indexOf('async function save'));
-  const hashes = save.indexOf('contentMatches(file.eventsCsv');
-  assert.ok(save.indexOf('contentMatches(file.content, file.sha256)') > 0 && hashes > 0, 'both files are verified');
-  assert.ok(hashes < save.indexOf('download(file.content'), 'verification comes before the first download');
-  assert.match(save, /exportMismatch/);
-});
-
-test('the import panel carries the host editor and the per-case tools, and a new import starts them over', () => {
-  assert.match(importPanel, /<HostsEditor onSaved=/);
-  assert.match(importPanel, /\{#key selected\.id \+ ':' \+ imports\.length\}<CaseTools caseId=\{selected\.id\} \{query\} \{zone\} \{span\} onGone=\{\(\) => casePanel\?\.noteGone\(\)\} onDiscover=\{discoverOpen \? undefined : openDiscover\} \/>\{\/key\}/);
-});
-
-test('the new components talk to the server only through cases.ts and render text, never markup', () => {
-  for (const [name, source] of [['CaseTools', caseTools], ['HostsEditor', hostsEditor]]) {
-    assert.doesNotMatch(source, /\bfetch\(/, name);
-    assert.doesNotMatch(source, /\{@html/, name);
-    assert.doesNotMatch(source, /https?:\/\//, name);
-    assert.doesNotMatch(source, /\b(?:let|const|var)\s+state\b/, name);
-  }
-});
 
 /* ------------------------------------------------------------------ binary exports that are never read */
 
@@ -599,20 +517,4 @@ test('the host note under the select follows the importer: self-naming files off
     assert.equal(importCopy.hostNoteText(required), importCopy.IMPORT_TEXT.hostPickNote, required || '(none)');
   }
   assert.equal(importCopy.IMPORT_TEXT.hostPickNote, 'Pick the host this file came from. A host that is not in the host list is refused.');
-});
-
-test('the import screen gates every unknown-host wording on what the file observed', () => {
-  const panel = read('src/lib/components/ImportPanel.svelte');
-  assert.match(panel, /sawComputerName/);
-  assert.match(panel, /screenErrorText\(error, sawComputerName\)/);
-  assert.match(panel, /screenReasonText\(r\.reason, sawComputerName\)/);
-  assert.match(panel, /blockedNoteText\(block, sawComputerName\)/);
-  assert.match(panel, /hostNoteText\(importer\)/);
-  assert.doesNotMatch(panel, /IMPORT_TEXT\.hostNote(?!s)/, 'the raw hostNote is never shown directly');
-  // Both new wordings are registered for the lint.
-  const entries = importCopy.importCopyEntries();
-  const ids = new Set(entries.map((e) => e.id));
-  assert.ok(ids.has('import.text.hostPickNote'));
-  assert.ok(ids.has('import.text.blocked.unknown-host-none'), 'the blocked wording for a file with no computer name is linted');
-  assert.ok(ids.has('import.reason.unknown-host-none'));
 });

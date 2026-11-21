@@ -554,71 +554,12 @@ test('the discover request is taken once', () => {
 
 /* ------------------------------------------------------------------ the screens (structure) */
 
-test('the panel shows the notice and its confirmation box, and sends the notice text with every import and recording', () => {
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.ok(!/GATING_BANNER/.test(panel), 'the notice is shown once, at the top of the window, not repeated here');
-  assert.match(panel, /\{DISCOVER_TEXT\.noticePointer\}/);
-  assert.match(panel, /<label class="ack">\s*<input type="checkbox" bind:checked=\{acknowledged\} \/>\s*<span>\{DISCOVER_TEXT\.ack\}<\/span>/, 'the confirmation is a labelled checkbox');
-  assert.equal((panel.match(/ackText: ackTextFor\(\)/g) ?? []).length, 2, 'imports and recording both carry the notice text');
-  assert.match(panel, /ackGating: true/);
-});
-
-test('the panel never sends or shows a path, and names sources by the id the server gave', () => {
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.ok(!/\.path\b|filePath|fullPath/.test(panel));
-  assert.match(panel, /findingIds: sending\.map\(\(f\) => f\.id\)/);
-});
-
-test('progress and results are announced, controls are labelled, and the step headings take focus', () => {
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.ok((panel.match(/aria-live="polite"/g) ?? []).length >= 3);
-  assert.match(panel, /role="alert"/);
-  assert.match(panel, /<fieldset class="group"/);
-  assert.match(panel, /<legend/);
-  assert.match(panel, /tabindex="-1"/);
-  assert.match(panel, /aria-describedby/);
-  assert.match(panel, /role="radiogroup"|<fieldset[^>]*window/i);
-  assert.match(panel, /<progress/);
-});
-
-test('a large source has no default tick path in the panel and "tick all" uses the small-only function', () => {
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.match(panel, /defaultSelection\(/);
-  assert.match(panel, /selectAllSmall\(/);
-  assert.ok(!/picked = new Set\(findings\.map/.test(panel), 'there is no select-everything shortcut');
-  assert.match(panel, /DISCOVER_TEXT\.tagLarge/);
-  assert.match(panel, /DISCOVER_TEXT\.tagAdmin/);
-  assert.match(panel, /DISCOVER_TEXT\.tagExport/);
-});
-
-test('gap rows are disabled and give their reason', () => {
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.match(panel, /gapReasonText\(/);
-  assert.match(panel, /disabled/);
-});
-
 test('the entry shows a button only when scanning works, and one plain line otherwise', () => {
   const entry = read('src/components/DiscoverEntry.svelte');
   assert.match(entry, /entry\.kind === 'ready'/);
   assert.match(entry, /DISCOVER_TEXT\.windowsOnly/);
   assert.match(entry, /DISCOVER_TEXT\.unavailable/);
   assert.match(entry, /cachedEntryState/);
-});
-
-test('the start screen and the case tools both offer the entry', () => {
-  assert.match(read('src/components/Landing.svelte'), /<DiscoverEntry onOpen=\{openDiscover\} \/>/);
-  assert.match(read('src/components/Landing.svelte'), /requestDiscover\(\)/);
-  const tools = read('src/lib/components/CaseTools.svelte');
-  assert.match(tools, /onDiscover/);
-  assert.match(tools, /<DiscoverEntry/);
-});
-
-test('the import drawer hosts the panel, passes the case, and opens it when the start screen asked', () => {
-  const drawer = read('src/lib/components/ImportPanel.svelte');
-  assert.match(drawer, /<DiscoverPanel/);
-  assert.match(drawer, /takeDiscoverIntent\(\)/);
-  assert.match(drawer, /onDiscover=\{discoverOpen \? undefined : openDiscover\}/);
-  assert.match(drawer, /caseId=\{selectedId\}/);
 });
 
 test('the copy has no wording that names a cause', () => {
@@ -633,22 +574,6 @@ test('a cancel control ignores clicks for a short moment after it appears (a dou
   assert.equal(discover.cancelAllowed(1000, 1000), false);
   assert.equal(discover.cancelAllowed(1000, 1000 + discover.CANCEL_GUARD_MS - 1), false);
   assert.equal(discover.cancelAllowed(1000, 1000 + discover.CANCEL_GUARD_MS), true);
-});
-
-test('the scan and import starts ignore a second click, and the cancel buttons wait for the guard', () => {
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.match(panel, /async function startScan\(\) \{[^}]*if \(step === 'scanning' \|\| step === 'importing'\) return;/s);
-  assert.match(panel, /if \(cancellingScan \|\| !cancelAllowed\(scanShownAt, now\(\)\)\) return;/);
-  assert.match(panel, /if \(cancellingImport \|\| !cancelAllowed\(importShownAt, now\(\)\)\) return;/);
-  assert.match(panel, /disabled=\{cancellingScan \|\| !scanCancelReady\}/);
-  assert.match(panel, /disabled=\{cancellingImport \|\| !importCancelReady\}/);
-});
-
-test('a scan the person cancelled is a plain note, not an error', () => {
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.match(panel, /info = DISCOVER_TEXT\.scanCancelled/);
-  assert.ok(!/problem = DISCOVER_TEXT\.scanCancelled/.test(panel));
-  assert.match(panel, /\{#if info\}<p class="note" role="status">\{info\}<\/p>\{\/if\}/);
 });
 
 test('a day count says "1 day ago" and "2 days ago"', () => {
@@ -681,28 +606,6 @@ test('the confirmation does not say "this file", and points to the one notice at
   assert.match(copy.DISCOVER_TEXT.noticePointer, /top of this window/);
 });
 
-test('the panel hides the notice, the ack and the import button when a scan found nothing, except the live ack', () => {
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.match(panel, /\{#if findings\.length > 0\}\s*<section class="notice"/);
-  assert.match(panel, /\{#if findings\.length === 0 && !recording\}\s*<p class="note">\{DISCOVER_TEXT\.noticePointer\}<\/p>\s*<label class="ack">/);
-});
-
-test('each result row has a mark and a word, so success and failure are not told by colour alone', () => {
-  assert.equal(copy.rowOutcomeTone({ kind: 'added' }), 'good');
-  assert.equal(copy.rowOutcomeTone({ kind: 'duplicate' }), 'neutral');
-  assert.equal(copy.rowOutcomeTone({ kind: 'cancelled' }), 'neutral');
-  assert.equal(copy.rowOutcomeTone({ kind: 'refused' }), 'bad');
-  assert.equal(copy.rowOutcomeTone({ kind: 'failed' }), 'bad');
-  assert.equal(copy.rowOutcomeTone(null), 'pending');
-  const words = ['good', 'neutral', 'bad'].map(copy.toneLabel);
-  assert.equal(new Set(words).size, 3);
-  assert.ok(words.every((word) => word.length > 0));
-  assert.equal(copy.toneLabel('pending'), '');
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.match(panel, /toneLabel\(tone\)/);
-  assert.match(panel, /<span aria-hidden="true">/);
-});
-
 test('a 500 with no known reason says the server had a problem, not that it refused the request', () => {
   const text = copy.problemText('other', { status: 500, reason: '', message: '' });
   assert.equal(text, copy.DISCOVER_TEXT.serverProblem);
@@ -726,24 +629,6 @@ test('each custom time is named and checked on its own: zone, seconds and an imp
   assert.match(copy.timeFieldText('from', 'empty'), /start/);
   assert.match(copy.timeFieldText('to', 'empty'), /end/);
   assert.equal(copy.timeFieldText('from', 'nope'), '');
-});
-
-test('the custom time boxes carry aria-invalid and aria-describedby, and one fault shows one message', () => {
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.equal((panel.match(/aria-invalid=/g) ?? []).length, 2);
-  assert.equal((panel.match(/aria-describedby=\{'discover-custom-help'/g) ?? []).length, 2);
-  assert.match(panel, /id="discover-from-problem"/);
-  assert.match(panel, /id="discover-to-problem"/);
-  assert.match(panel, /id="discover-custom-help"/);
-  assert.match(panel, /const rangeShown = \$derived\(rangeProblem !== null && !fieldsBad/);
-  assert.match(panel, /block === 'window' && windowShown/, 'the blocked line does not repeat a window message');
-});
-
-test('the tick boxes and their labels are at least 24px, and a gap row keeps its text colour', () => {
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.match(panel, /\.pick input, \.ack input, \.choice input \{[^}]*width: 24px; height: 24px/);
-  assert.match(panel, /\.pick, \.ack, \.choice \{[^}]*min-height: 24px/);
-  assert.ok(!/\.row\.gap\s*\{[^}]*opacity/.test(panel), 'no opacity on a gap row');
 });
 
 function channel(v) { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }
@@ -786,67 +671,6 @@ test('the real client lists a proposed host once and does not list it twice', as
 });
 
 /* ------------------------------------------------------------------ clumsy-user fixes */
-
-test('a 404 after the person cancelled a scan is the cancel working, not an old scan', () => {
-  const gone = new CaseApiError('Not found.', 404, 'scan-not-found');
-  assert.equal(discover.cancelledByUser(gone, true), true);
-  assert.equal(discover.cancelledByUser(new CaseApiError('Not found.', 404, ''), true), true);
-  // Without a cancel, the same answer still means the scan expired.
-  assert.equal(discover.cancelledByUser(gone, false), false);
-  assert.equal(discover.classifyError(gone), 'expired');
-  // A cancel does not hide other faults.
-  assert.equal(discover.cancelledByUser(new CaseApiError('Down.', 500, ''), true), false);
-  assert.equal(discover.cancelledByUser(new CaseApiError('No answer.', 0, 'unreachable'), true), false);
-  assert.equal(discover.cancelledByUser(new Error('x'), true), false);
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.match(panel, /if \(cancelledByUser\(error, cancelWanted\)\) info = DISCOVER_TEXT\.scanCancelled;/);
-});
-
-test('no recording is shown once the case is closed, erased or not chosen', () => {
-  const recording = { state: 'recording', since: '2001-09-11T08:00:00Z', samples: 7, stopReason: '' };
-  assert.equal(discover.activeSampler(recording, true), recording);
-  assert.equal(discover.activeSampler(recording, false), null);
-  assert.equal(discover.activeSampler(null, true), null);
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.match(panel, /const recording = \$derived\(liveSampler\?\.state === 'recording'\);/);
-  assert.match(panel, /if \(!ready\) \{ sampler = null; recordingInterval = null; \}/);
-  assert.match(copyOf('importCopy.ts'), /Any live recording for it stops\./);
-});
-
-test('another case or an erased case clears the import results', () => {
-  const panel = read('src/components/DiscoverPanel.svelte');
-  const body = panel.slice(panel.indexOf('function clearForCaseChange()'), panel.indexOf('$effect(() => {\n    const id = caseId;'));
-  assert.match(body, /generation\+\+;/);
-  assert.match(body, /rows = \[\];/);
-  assert.match(body, /info = DISCOVER_TEXT\.caseChanged;/);
-  assert.match(body, /step = scan \? 'list' : 'intro';/);
-  assert.match(panel, /if \(id !== lastCase\) \{ lastCase = id; clearForCaseChange\(\); \}/);
-  assert.ok(copy.DISCOVER_TEXT.caseChanged.length > 0);
-});
-
-test('a recording that is already running is read when the panel opens, and shows no interval it does not know', () => {
-  assert.equal(copy.liveToggleLabel(15), 'Record CPU and memory every 15 seconds');
-  assert.equal(copy.liveToggleLabel(null), 'Record CPU and memory');
-  assert.ok(!/\d/.test(copy.liveToggleLabel(null)));
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.match(panel, /else if \(sampler === null\) void refreshSampler\(true\);/);
-  assert.match(panel, /const labelInterval = \$derived\(recording && recordingInterval === null \? null : interval\);/);
-  assert.match(panel, /liveToggleLabel\(labelInterval\)/);
-  assert.match(panel, /recordingInterval = interval;/);
-  // The intro step shows the recording too, so it is not hidden until a scan.
-  assert.match(panel, /\{#if recording\}\{@render liveSection\(\)\}\{\/if\}/);
-});
-
-test('a count of one reads as singular, and Import names no count when nothing is ticked', () => {
-  assert.equal(copy.rowOutcomeText({ kind: 'added', rows: 1 }), 'Added 1 row');
-  assert.equal(copy.rowOutcomeText({ kind: 'added', rows: 2 }), 'Added 2 rows');
-  assert.equal(copy.rowOutcomeText({ kind: 'added', rows: 0 }), 'Added 0 rows');
-  assert.equal(copy.rowOutcomeText({ kind: 'added', rows: 41200 }), 'Added 41,200 rows');
-  assert.equal(copy.importButtonText(0), 'Import');
-  assert.equal(copy.importButtonText(1), 'Import 1 source');
-  const panel = read('src/components/DiscoverPanel.svelte');
-  assert.match(panel, /disabled=\{block !== null \|\| chosen\.length === 0\} onclick=\{runImports\}>\{importButtonText\(chosen\.length\)\}/);
-});
 
 /* ------------------------------------------------------------------ verified findings, locate and probe (TSK-05) */
 

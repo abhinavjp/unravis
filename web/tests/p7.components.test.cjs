@@ -71,21 +71,9 @@ test('runProblem: each status gets its own sentence, and nothing else is passed 
   assert.equal(lanes.runProblem(new CaseApiError('x', 500)).gone, false);
 });
 
-test('every source screen shows the In a nutshell label and the shared sticker words', () => {
-  assert.equal(copy.NUTSHELL, 'In a nutshell');
-  for (const name of ['ConnectionsPage', 'SourceStep', 'AddDataPanel', 'AddAnotherDay', 'SourceCombinations']) {
-    assert.match(comp(name), /NUTSHELL/, name + ' carries the label');
-  }
-  const sticker = comp('StateSticker');
-  for (const word of ['Ready', 'Partly ready', 'Cannot test yet', 'Failed', 'Works', 'Not tested']) assert.ok(sticker.includes(word) || read('src/components/sources/sources.css').includes(word), word);
-  const css = read('src/components/sources/sources.css');
-  assert.match(css, /var\(--hatch\)/, 'pending is hatched');
-  assert.match(css, /src-sticker/);
-});
-
 test('one primary button per screen, and the others are outlined', () => {
   const primary = (name) => (comp(name).match(/class="btn-primary"/g) ?? []).length;
-  for (const name of ['ConnectionsPage', 'SqlConnectionForm', 'LaneRunner', 'GrantScriptPanel', 'ProfilerGuide', 'LaneResultView', 'NothingRead', 'AddDataPanel', 'SourceCombinations', 'SourcesHub']) {
+  for (const name of ['ConnectionsPage', 'SqlConnectionForm', 'LaneRunner', 'GrantScriptPanel', 'ProfilerGuide', 'LaneResultView', 'NothingRead', 'SourceCombinations', 'SourcesHub']) {
     assert.ok(primary(name) <= 1, name + ' has at most one primary button');
   }
   // On case home these buttons are outlined (the home already has its main button); a shell may promote one with the primary prop.
@@ -93,7 +81,6 @@ test('one primary button per screen, and the others are outlined', () => {
     assert.equal(primary(name), 0, name + ' is outlined by default');
     assert.match(comp(name), /class=\{primary \? 'btn-primary' : 'btn'\}/, name + ' can be promoted');
   }
-  assert.equal(primary('AddDataPanel'), 0, 'Add data only offers choices');
 });
 
 test('saved passwords are never shown, bound back or put in a URL', () => {

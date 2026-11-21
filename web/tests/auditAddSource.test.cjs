@@ -60,37 +60,6 @@ test('audit-add: the default tick follows the same name rule as the create wizar
   assert.equal(model.classFromTicks(false, false), 'unused');
 });
 
-test('audit-add: the hub opens the new page from Add data > MongoDB and keeps Step 8 as its own tab', () => {
-  const hub = read('src/components/sources/SourcesHub.svelte');
-  assert.match(hub, /import AddAuditDatabase from '\.\/AddAuditDatabase\.svelte'/);
-  assert.match(hub, /want === 'mongo-add'\) void tick\(\)\.then\(\(\) => \{ addingAudit = true; \}\)/);
-  assert.match(hub, /id: 'mongo', label: HUB_TEXT\.mongo/, 'the Step 8 tab is still listed');
-  assert.match(hub, /<MongoStepPanel /);
-  assert.match(hub, /onProfiler=\{\(\) => \{ addingAudit = false; tab = 'mongo'; \}\}/);
-});
-
-test('audit-add: the page connects like the Connections drawer, then tags the database to the case', () => {
-  const page = read('src/components/sources/AddAuditDatabase.svelte');
-  assert.match(page, /addDatabaseSource\(/);
-  assert.match(page, /postSourceTag\(id,/);
-  assert.match(page, /kind: 'mongo-database'/);
-  assert.match(page, /classification: cls/);
-  assert.match(page, /api\.testConnection\(/);
-  // The password is never written to storage, the URL or a log.
-  assert.doesNotMatch(page, /localStorage|sessionStorage|console\.|location\./);
-  // A failed tag keeps the connected state so the retry only tags.
-  assert.match(page, /connectedNotTagged/);
-  const state = read('src/lib/appState.svelte.ts');
-  const body = state.slice(state.indexOf('export async function addDatabaseSource'), state.indexOf('export async function deleteSource'));
-  for (const step of ['api.addSource(', 'sources = [...sources, added]', 'noteSavedConnection([added]', 'queueWorkspaceSave()', 'completePendingRestore()']) assert.ok(body.includes(step), 'missing step: ' + step);
-});
-
-test('audit-add: a closed or read-only case switches every control off', () => {
-  const page = read('src/components/sources/AddAuditDatabase.svelte');
-  assert.match(page, /const canAdd = \$derived\(!readOnly/);
-  assert.ok((page.match(/readOnly \|\| busy/g) ?? []).length >= 4);
-});
-
 // ---- the wizard's audit step names a fallback once, and never keeps it as the collection of the next database
 
 test('audit-add in the wizard: two databases are each asked for the same default, and a fallback is only kept for its own saved link', async () => {

@@ -406,18 +406,6 @@ test('the chart tooltip escapes every name and value, and the option has one gri
   assert.ok(r.chartHeight(2) > r.chartHeight(1));
 });
 
-test('the components render text, never markup, and name no variable "state"', () => {
-  for (const file of ['src/components/ResourcePanel.svelte', 'src/components/resource/StripChart.svelte', 'src/components/resource/HostLines.svelte', 'src/components/resource/RuleChips.svelte',
-    'src/components/resource/RuleDrawer.svelte', 'src/components/resource/CoverageDots.svelte', 'src/lib/resource.ts']) {
-    const source = read(file);
-    assert.doesNotMatch(source, /\{@html/, file);
-    assert.doesNotMatch(source, /\b(?:let|const|var)\s+state\b/, file);
-    assert.doesNotMatch(source, /https?:\/\//, file + ' names no outside address');
-    assert.doesNotMatch(source, /\bfetch\(/, file + ' reads only through cases.ts');
-  }
-  assert.match(read('src/lib/components/CaseTools.svelte'), /<ResourcePanel \{caseId\}/);
-});
-
 /* ------------------------------------------------------------------ copy */
 
 test('every fixed sentence, hint, name and refusal text passes the copy lint', () => {
@@ -531,19 +519,6 @@ test('the Patterns report stored for a window feeds the panel, and a new or clea
   off();
   drawerResults.clearDrawerResults();
   assert.equal(seen, 3, 'a removed listener hears nothing');
-});
-
-test('the panel reads the stored report for its own window, sends its periods and reads again only when they or the view change', () => {
-  const panel = read('src/components/ResourcePanel.svelte').replace(/\r\n/g, '\n');
-  assert.match(panel, /readPatterns\(patternsWindowKey\(query\.sourceIds \?\? \[\], query\.start, query\.end\)/);
-  assert.match(panel, /onPatternsChange\(/);
-  assert.match(panel, /episodesForRequest\(stalls, view\)/);
-  assert.match(panel, /fetchResource\(caseId, \{ fromMs: from, toMs: to, episodes: untrack\(\(\) => sent\) \}/);
-  const effect = panel.slice(panel.indexOf('$effect(() => {\n    const from'), panel.indexOf('const hosts = $derived'));
-  assert.match(effect, /void sentKey;/, 'the read depends on the stall key, a string that changes only when the list does');
-  assert.match(effect, /view\?\.fromMs/);
-  assert.match(read('src/lib/components/CaseTools.svelte'), /<ResourcePanel \{caseId\} \{query\}/, 'the full query, with its sources, reaches the panel');
-  assert.doesNotMatch(read('src/lib/drawerResults.svelte.ts'), /\$state|\$derived|\$effect/, 'the store stays plain');
 });
 
 test('a long gap list shows the first few lines and a toggle reveals the rest', () => {

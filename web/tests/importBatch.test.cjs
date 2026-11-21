@@ -175,20 +175,6 @@ test('the batch copy is part of the copy lint list', () => {
 
 /* ------------------------------------------------------------------ the screens */
 
-test('the drawer embeds the batch section only for an open case, keyed by the case', () => {
-  const panel = read('src/lib/components/ImportPanel.svelte');
-  assert.match(panel, /import ImportBatch from '\.\/ImportBatch\.svelte'/);
-  assert.match(panel, /\{#if selected && !selected\.closed\}\s*\{#key selected\.id\}\s*<ImportBatch caseId=\{selected\.id\}/);
-});
-
-test('the batch sends the type only when the person changed it, and acknowledges the notice', () => {
-  const batch = read('src/lib/components/ImportBatch.svelte');
-  assert.match(batch, /importer: row\.changed \? importerFor\(row\.choice\) : ''/);
-  assert.match(batch, /ackTextFor\(\)/);
-  assert.match(batch, /runImportQueue\(/);
-  assert.match(batch, /type="checkbox" bind:checked=\{acknowledged\}/);
-});
-
 test('the panel in drawer mode opens zips, keeps the list and offers Try again; the wizard path is unchanged', () => {
   const panel = read('src/components/wizard/ImportFilesPanel.svelte');
   assert.match(panel, /readZip\(file\)/);

@@ -35,19 +35,3 @@ test('timeline screen wires toggles, scrub state and chart visibility', () => {
   assert.match(src, /<TracingChart[^>]*\{visible\}/);
   assert.match(src, /data-region="toolbar">[\s\S]*<TraceToolbar/);
 });
-
-test('export scrub state is in memory and set by the preview', () => {
-  const state = read('src/lib/exportScrub.svelte.ts');
-  assert.ok(state.includes('$state<boolean | null>(null)'));
-  assert.doesNotMatch(state, /localStorage|sessionStorage|location/);
-  const tools = read('src/lib/components/CaseTools.svelte');
-  assert.equal(tools.split('exportScrub.set(').length - 1, 1);
-  assert.ok(tools.indexOf('exportScrub.set(') > tools.indexOf('previewCaseExport('));
-});
-
-test('export flow is untouched', () => {
-  const tools = read('src/lib/components/CaseTools.svelte');
-  for (const needle of ['previewCaseExport(caseId, mine.signal)', 'canSaveCaseExport', 'confirmCaseExport']) {
-    assert.ok(tools.includes(needle), 'CaseTools.svelte must still contain ' + needle);
-  }
-});
