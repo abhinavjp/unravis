@@ -1,5 +1,6 @@
 <script lang="ts">
   import { timeZone } from '../lib/timeZone.svelte';
+  import { formatTime } from '../lib/time';
   import { onMount, tick } from 'svelte';
   import {
     blackboxApi, defaultSettings, fieldProblemNow, needsReload, pcControls, refusalText, settingsChanges, settingsProblem, shownTime,
@@ -103,7 +104,7 @@
     loadError = '';
     try {
       list = await blackboxApi.list();
-      checkedAt = new Date().toISOString().slice(11, 16) + ' UTC';
+      checkedAt = formatTime(Date.now(), { zone: timeZone.zone, precision: 'minute', date: false });
     } catch (error) {
       loadError = failed(error);
     } finally {

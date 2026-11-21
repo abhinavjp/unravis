@@ -1,5 +1,7 @@
 <script lang="ts">
   import { nothingRead, type LaneDay } from '../../lib/lanes';
+  import { formatTimeRange } from '../../lib/time';
+  import { timeZone } from '../../lib/timeZone.svelte';
   import { STATE_NOTE, STEP_TEXT, GRANT_TEXT } from '../../lib/copy/sourcesCopy';
   import NothingRead from './NothingRead.svelte';
   import StateSticker from './StateSticker.svelte';
@@ -13,7 +15,8 @@
   const word = $derived(lane ? lane.state : day.state);
   const fixes = $derived((lane?.checks ?? []).filter(c => c.fix !== null));
   const answers = $derived(Object.entries(lane?.answers ?? {}).sort(([a], [b]) => a.localeCompare(b)));
-  const range = (w: { start: string; end: string }) => `${w.start.slice(0, 16).replace('T', ' ')} to ${w.end.slice(0, 16).replace('T', ' ')} UTC`;
+  // The read window in the header's time zone, like every other time on screen.
+  const range = (w: { start: string; end: string }) => formatTimeRange(w.start, w.end, { zone: timeZone.zone, precision: 'minute', year: true });
   let copied = $state('');
   async function copy(id: string, text: string) {
     try { await navigator.clipboard.writeText(text); copied = id; } catch { copied = 'no'; }
