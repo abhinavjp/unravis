@@ -86,6 +86,9 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $order = 'Preflight', 'Tag', 'Wait', 'Sign', 'Publish', 'Feed', 'Verify'
 $data = Get-ReleaseDataDir
 $audit = Join-Path $data 'audit.jsonl'
+# No git hook of the shared clone may run during a release (worktree add and checkout run post-checkout hooks): hooks are pointed at an
+# empty folder for this process and everything it starts.
+$env:GIT_CONFIG_COUNT = '1'; $env:GIT_CONFIG_KEY_0 = 'core.hooksPath'; $env:GIT_CONFIG_VALUE_0 = (Join-Path $data 'no-hooks')
 
 if ($CheckAudit) {
     $c = Test-AuditChain $audit
@@ -104,7 +107,8 @@ $boundParams = $PSBoundParameters
 function Invoke-ReleaseBootstrap {
     $repoRoot0 = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
     $machine = [Environment]::MachineName
-    $me = if ($Requester) { $Requester } elseif ($env:UNRAVIS_RELEASE_REQUESTER) { $env:UNRAVIS_RELEASE_REQUESTER } else { "$([Environment]::UserName)@$machine" }
+    $hostId = Get-HostId   # the lock record on GitHub carries this opaque id, never the machine or user name
+    $me = if ($Requester) { $Requester } elseif ($env:UNRAVIS_RELEASE_REQUESTER) { $env:UNRAVIS_RELEASE_REQUESTER } else { "unnamed-$($hostId.Substring(0, 6))" }
     foreach ($t in 'git', 'gh') { if (-not (Get-Command $t -ErrorAction SilentlyContinue)) { Write-Host "$t is not installed or not on PATH." -ForegroundColor Red; return 1 } }
     & gh auth status *> $null; if ($LASTEXITCODE -ne 0) { Write-Host 'gh is not signed in (run: gh auth login).' -ForegroundColor Red; return 1 }
     $asked = [string]$boundParams['Channel']
@@ -119,11 +123,12 @@ function Invoke-ReleaseBootstrap {
         if ($osLock) {
             try {
                 $cur = Read-RemoteLock $Repo
-                $b = Test-ReleaseLockBusy $cur.Record $machine (Get-Date) $true
-                if ($b.Busy) { $busy = Format-LockBusy $cur.Record (Get-Date) }
+                $alive = [bool]$cur.Record -and (Test-HolderAlive ([int]$cur.Record.pid) $cur.Record.started)
+                $b = Test-ReleaseLockBusy $cur.Record $hostId (Get-Date) $true $alive
+                if ($b.Busy) { $busy = Format-LockBusy $cur.Record (Get-Date) $hostId }
                 else {
                     if ($b.Stale) { $stale = $b.Reason; Write-Host "Taking over: $stale" -ForegroundColor Yellow }
-                    $rec = New-LockRecord @{ id = $id; machine = $machine; user = [Environment]::UserName; pid = $PID; requester = $me; started = [DateTime]::UtcNow.ToString('o')
+                    $rec = New-LockRecord @{ id = $id; host = $hostId; pid = $PID; requester = $me; started = [DateTime]::UtcNow.ToString('o')
                                              heartbeat = [DateTime]::UtcNow.ToString('o'); channel = $asked; version = [string]$Version; stage = 'Starting'; holdMerges = (-not $CheckOnly); last = $cur.Record.last }
                     try { $null = Write-RemoteLock $Repo $rec $cur.Sha "release lock: $me starts"; $busy = $null }
                     catch { if ($_.Exception.Message -match '^LOCK-CONFLICT') { $busy = 'BUSY: somebody claimed the release lock a moment before you. Run -Status, or pass -WaitMinutes.' } else { throw } }
@@ -154,10 +159,14 @@ function Invoke-ReleaseBootstrap {
                 # The tag exists: the build is of that commit, whatever master has become.
                 $pinned = (git rev-list -n 1 "v$($plan.Version)").Trim(); $how = "resume of v$($plan.Version)"
                 if ($LASTEXITCODE -ne 0 -or -not $pinned) { Write-Host "The tag v$($plan.Version) is on GitHub but not in this clone." -ForegroundColor Red; return 1 }
+                # Anyone who can push a tag could name a commit of their own here, and its scripts would then run with the passphrase.
+                # The commit must be the one THIS PC's audit log says it tagged for this version.
+                $taggedBefore = Get-AuditTaggedCommit $audit $plan.Version
+                if (-not $taggedBefore -or $taggedBefore -ne $pinned) { Write-Host "Tag v$($plan.Version) is on commit $($pinned.Substring(0, 7)), but this PC's audit log says it tagged $(if ($taggedBefore) { $taggedBefore.Substring(0, 7) } else { 'nothing' }) for that version. Not resuming: someone else made or moved that tag. Run -Status and look at the tag on GitHub." -ForegroundColor Red; return 1 }
             } elseif ($CheckOnly) {
                 $pinned = (git rev-parse "origin/$Branch").Trim(); $how = 'check only (the run itself waits for CI)'
             } else {
-                $started = Get-Date; $stop = $started.AddMinutes($CiWaitMinutes); $n = 0; $said = $false
+                $started = Get-Date; $lastBeat = $started; $stop = $started.AddMinutes($CiWaitMinutes); $n = 0; $said = $false
                 while ($true) {
                     git fetch origin $Branch --quiet 2>&1 | Out-Null
                     $commits = @(git rev-list --first-parent -n 20 "origin/$Branch")
@@ -171,8 +180,26 @@ function Invoke-ReleaseBootstrap {
                     if ((Get-Date) -gt $stop) { Write-Host "CI on master $($commits[0].Substring(0,7)) is still not green after $CiWaitMinutes minutes. Pass -LastGreen to release the newest green commit." -ForegroundColor Red; return 1 }
                     if (-not $said) { Write-Host "CI on master $($commits[0].Substring(0,7)) is not finished ($($sel.Why)); waiting up to $CiWaitMinutes min. Merges to master are on hold while this waits (lock: hold merges)." ; $said = $true }
                     $n++; Start-Sleep -Seconds (Get-BackoffSeconds $n 30)
+                    if (((Get-Date) - $lastBeat).TotalMinutes -ge 10) {   # keep the lease alive during a long CI wait
+                        try { $null = Update-RemoteLock $Repo $id @{ stage = 'WaitCI' } 'release lock: waiting for CI'; $lastBeat = Get-Date } catch { Write-Host $_.Exception.Message -ForegroundColor Red; return 1 }
+                    }
                 }
             }
+            # Whatever way it was chosen, the commit must be part of master and not older than the newest release.
+            git merge-base --is-ancestor $pinned "origin/$Branch"
+            if ($LASTEXITCODE -ne 0) { Write-Host "Commit $($pinned.Substring(0, 7)) is not part of origin/$Branch. Not releasing it." -ForegroundColor Red; return 1 }
+            $newestAll = Get-NewestVersion $tags
+            if ($newestAll -and -not $plan.Resuming) {
+                git merge-base --is-ancestor "v$newestAll" $pinned 2>$null
+                if ($LASTEXITCODE -ne 0) { Write-Host "Commit $($pinned.Substring(0, 7)) does not contain v$newestAll, the newest release. A release must not go back in history (-LastGreen picked an older commit?)." -ForegroundColor Red; return 1 }
+            }
+            # The scripts running this bootstrap must be master's own at that commit: the bootstrap holds the locks and chooses what runs.
+            # (Not on a resume: that run is of the tag's own commit, vouched for by the audit log above, and master may have moved on.)
+            if (-not $plan.Resuming) { foreach ($f in 'Release.ps1', 'ReleaseLib.ps1', 'ProtonPass.ps1') {
+                $want = (git rev-parse "${pinned}:tools/release/$f" 2>$null)
+                $have = (git hash-object -- (Join-Path $PSScriptRoot $f) 2>$null)
+                if ($want -and $have -and $want.Trim() -ne $have.Trim()) { Write-Host "tools/release/$f here is not the one at the pinned commit $($pinned.Substring(0, 7)) (an edited or older copy). Run the release from an up-to-date clean checkout of master." -ForegroundColor Red; return 1 }
+            } }
             Write-Host "Pinned commit $($pinned.Substring(0,7)): $how." -ForegroundColor Green
             Write-AuditEntry $audit @{ event = 'pinned'; id = $id; commit = $pinned; why = $how }
             # 3. nothing new? (two sessions asking for an rc at the same time: the second finds it already done)
@@ -194,7 +221,7 @@ function Invoke-ReleaseBootstrap {
             $wt = Join-Path $workRoot ('r' + (Get-Date -Format 'MMddHHmmss'))
             git -c core.longpaths=true worktree add --detach $wt $pinned 2>&1 | Out-Null
             if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $wt 'tools\release\Release.ps1'))) { Write-Host "Could not make a worktree of $($pinned.Substring(0,7)) at $wt." -ForegroundColor Red; return 1 }
-            $fwd = @('-NoProfile', '-NonInteractive', '-File', (Join-Path $wt 'tools\release\Release.ps1'))
+            $fwd = @('-NoProfile', '-File', (Join-Path $wt 'tools\release\Release.ps1'))
             foreach ($kv in $boundParams.GetEnumerator()) {
                 if (@('WaitMinutes', 'Requester', 'LastGreen', 'Again', 'CiWaitMinutes', 'Pinned', 'LockId') -contains $kv.Key) { continue }
                 if ($kv.Value -is [System.Management.Automation.SwitchParameter]) { if ($kv.Value.IsPresent) { $fwd += "-$($kv.Key)" } }

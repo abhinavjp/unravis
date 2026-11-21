@@ -496,6 +496,12 @@ function Write-RemoteLock([string]$Repo, $Record, [string]$ExpectSha, [string]$M
             $ref = Invoke-GhApi @('-X', 'POST', "repos/$Repo/git/refs", '-f', "ref=refs/heads/$script:ReleaseLockBranch", '-f', "sha=$($commit.Json.sha)")
             if ($ref.Ok) { return [string]$blob.Json.sha }
             $r = $ref
+            if ($ref.Status -eq 422 -and $ref.Text -match 'already exists') {
+                # The branch is there but lock.json is gone (deleted by hand): create the file on it. Fails if it exists (somebody was first).
+                $put = Invoke-GhApi @('-X', 'PUT', "repos/$Repo/contents/lock.json", '-f', "message=$Message", '-f', "content=$b64", '-f', "branch=$script:ReleaseLockBranch")
+                if ($put.Ok) { return [string]$put.Json.content.sha }
+                $r = $put
+            }
         }
         if ($r.Status -eq 409 -or $r.Status -eq 422 -or $r.Text -match 'does not match|already exists') { throw "LOCK-CONFLICT: somebody else changed the release lock first ($($r.Status))." }
         Start-Sleep -Seconds (2 * $try)
@@ -505,7 +511,7 @@ function Write-RemoteLock([string]$Repo, $Record, [string]$ExpectSha, [string]$M
 
 # Pure. The lock record. No secret can be put in it.
 function New-LockRecord([hashtable]$Fields) {
-    $r = [ordered]@{ v = 1; state = 'held'; id = ''; machine = ''; user = ''; pid = 0; requester = ''; started = ''; heartbeat = ''
+    $r = [ordered]@{ v = 1; state = 'held'; id = ''; host = ''; pid = 0; requester = ''; started = ''; heartbeat = ''
                      channel = ''; version = ''; stage = ''; commit = ''; holdMerges = $true; lease_minutes = $script:ReleaseLockLeaseMinutes; reason = ''; last = $null }
     foreach ($k in $Fields.Keys) {
         if ($k -match 'pass|secret|token|key') { throw "Lock field '$k' is not allowed." }
@@ -516,24 +522,50 @@ function New-LockRecord([hashtable]$Fields) {
 
 # Pure. Is this record a live claim on the release? LocalFree = this process holds release.lock on this PC, so no other process
 # here can be running a release: a "held" record from this PC is then a crashed run's.
-function Test-ReleaseLockBusy($Rec, [string]$Machine, [datetime]$Now, [bool]$LocalFree) {
+function Test-ReleaseLockBusy($Rec, [string]$HostId, [datetime]$Now, [bool]$LocalFree, [bool]$HolderAlive = $false) {
     if (-not $Rec -or $Rec.state -ne 'held') { return [pscustomobject]@{ Busy = $false; Stale = $false; Reason = 'free' } }
-    if ($Rec.machine -eq $Machine) {
+    if ($Rec.host -eq $HostId) {
+        # HolderAlive: the process named in the record still runs (it can hold a different release.lock when UNRAVIS_RELEASE_DATA differs).
+        if ($HolderAlive) { return [pscustomobject]@{ Busy = $true; Stale = $false; Reason = 'running on this PC (its process is alive)' } }
         if ($LocalFree) { return [pscustomobject]@{ Busy = $false; Stale = $true; Reason = "stale: $($Rec.version) was started on this PC and its process is gone (crashed run); it is continued, not dropped" } }
         return [pscustomobject]@{ Busy = $true; Stale = $false; Reason = 'running on this PC' }
     }
     $lease = if ($Rec.lease_minutes) { [double]$Rec.lease_minutes } else { $script:ReleaseLockLeaseMinutes }
     $age = ($Now.ToUniversalTime() - ([datetime]$Rec.heartbeat).ToUniversalTime()).TotalMinutes
     if ($age -gt $lease) { return [pscustomobject]@{ Busy = $false; Stale = $true; Reason = ("stale: no sign of life from $($Rec.machine) for {0:N0} minutes (lease $lease)" -f $age) } }
-    return [pscustomobject]@{ Busy = $true; Stale = $false; Reason = "running on $($Rec.machine)" }
+    return [pscustomobject]@{ Busy = $true; Stale = $false; Reason = 'running on another PC' }
+}
+
+# Opaque id of this PC for the lock record (the record is on GitHub: no machine or user name goes there).
+function Get-HostId { return (Get-TextSha256 ('unravis-release|' + [Environment]::MachineName.ToLowerInvariant())).Substring(0, 12) }
+
+# Is the process named in a lock record still the one that started it? (A reused pid starts later than the record.)
+function Test-HolderAlive([int]$ProcId, $Started) {
+    if ($ProcId -le 0) { return $false }
+    try {
+        $p = Get-Process -Id $ProcId -ErrorAction Stop
+        return ($p.StartTime.ToUniversalTime() -le ([datetime]$Started).ToUniversalTime().AddSeconds(10))
+    } catch { return $false }
+}
+
+# The commit the audit log says was tagged for this version ('' if there is none). A resumed run must pin exactly that commit.
+function Get-AuditTaggedCommit([string]$AuditPath, [string]$Version) {
+    if (-not (Test-Path -LiteralPath $AuditPath)) { return '' }
+    $c = ''
+    foreach ($l in (Get-Content -LiteralPath $AuditPath)) {
+        if (-not $l) { continue }
+        try { $e = $l | ConvertFrom-Json } catch { continue }
+        if ($e.event -eq 'tagged' -and $e.version -eq $Version -and $e.commit) { $c = [string]$e.commit }
+    }
+    return $c
 }
 
 # Pure. One line a person or an agent can act on.
-function Format-LockBusy($Rec, [datetime]$Now) {
+function Format-LockBusy($Rec, [datetime]$Now, [string]$HostId = '') {
     $age = ''
     try { $age = ', last sign of life {0:N0} min ago' -f ($Now.ToUniversalTime() - ([datetime]$Rec.heartbeat).ToUniversalTime()).TotalMinutes } catch {}
     $v = if ($Rec.version) { $Rec.version } else { '(choosing the version)' }
-    return "BUSY: a release is running: $v ($($Rec.channel)), step '$($Rec.stage)', started $($Rec.started) by $($Rec.requester) on $($Rec.machine)$age. Hold merges to master: $($Rec.holdMerges). Pass -WaitMinutes N to queue behind it, or run -Status."
+    return "BUSY: a release is running: $v ($($Rec.channel)), step '$($Rec.stage)', started $($Rec.started) by $($Rec.requester)$(if ($HostId) { if ($Rec.host -eq $HostId) { ' on this PC' } else { ' on another PC' } })$age. Hold merges to master: $($Rec.holdMerges). Pass -WaitMinutes N to queue behind it, or run -Status."
 }
 
 # Claims or changes the record while holding it. Throws 'lock lost' when the record now belongs to another run.
@@ -624,7 +656,7 @@ function Show-ReleaseStatus([string]$Repo, [string]$Dir, [bool]$AsJson) {
     $l = $s.Lock
     if ($s.LockError) { Write-Host "Lock: could not be read ($($s.LockError))" -ForegroundColor Yellow }
     elseif (-not $l) { Write-Host 'Lock: free (nobody has ever released with it).' -ForegroundColor Green }
-    elseif ($l.state -eq 'held') { Write-Host (Format-LockBusy $l (Get-Date)) -ForegroundColor Yellow; Write-Host "  pinned commit: $($l.commit)" }
+    elseif ($l.state -eq 'held') { Write-Host (Format-LockBusy $l (Get-Date) (Get-HostId)) -ForegroundColor Yellow; Write-Host "  pinned commit: $($l.commit)" }
     else { Write-Host "Lock: free. Last: $($l.last.version) $($l.last.outcome) at $($l.last.at) (asked by $($l.last.requester))." -ForegroundColor Green }
     if ($s.State) { Write-Host "This PC: release $($s.State.version): last finished stage '$($s.State.stage)', $($s.State.status)$(if ($s.State.reason) { ': ' + $s.State.reason })  (updated $($s.State.updated))" }
     if ($s.LocalLock) { Write-Host "This PC's lock holder: $($s.LocalLock.requester), pid $($s.LocalLock.pid)" }

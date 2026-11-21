@@ -150,19 +150,24 @@ try {
         Assert-That 'lock: a refused run is told who holds it, which version and step' ($m -match 'thread-OTA' -and $m -match 'rc\.56' -and $m -match "'Wait'" -and $m -match 'WaitMinutes') $m
     } finally { $l1.Dispose() }
     $now = [datetime]'2026-11-21T23:00:00Z'
-    $held = [pscustomobject]@{ state = 'held'; machine = 'PC-A'; version = '0.1.0-rc.56'; channel = 'rc'; stage = 'Wait'; requester = 'thread-OTA'; started = '2026-11-21T22:30:00Z'; heartbeat = '2026-11-21T22:55:00Z'; lease_minutes = 180; holdMerges = $false }
-    $free = [pscustomobject]@{ state = 'free'; machine = 'PC-A' }
+    $held = [pscustomobject]@{ state = 'held'; host = 'PC-A'; pid = 4242; version = '0.1.0-rc.56'; channel = 'rc'; stage = 'Wait'; requester = 'thread-OTA'; started = '2026-11-21T22:30:00Z'; heartbeat = '2026-11-21T22:55:00Z'; lease_minutes = 180; holdMerges = $false }
+    $free = [pscustomobject]@{ state = 'free'; host = 'PC-A' }
     Assert-That 'lock busy: no record is free' (-not (Test-ReleaseLockBusy $null 'PC-A' $now $true).Busy)
     Assert-That 'lock busy: a free record is free' (-not (Test-ReleaseLockBusy $free 'PC-A' $now $true).Busy)
     Assert-That 'lock busy: held by a live process on this PC is busy' (Test-ReleaseLockBusy $held 'PC-A' $now $false).Busy
     $t = Test-ReleaseLockBusy $held 'PC-A' $now $true
     Assert-That 'lock busy: held from this PC but the PC lock is free = crashed run, taken over' (-not $t.Busy -and $t.Stale)
     Assert-That 'lock busy: another PC with a fresh heartbeat is busy' (Test-ReleaseLockBusy $held 'PC-B' $now $true).Busy
+    $t = Test-ReleaseLockBusy $held 'PC-A' $now $true $true
+    Assert-That 'lock busy: same PC, own lock free, but the recorded process is alive (other data folder) = busy, not taken over' ($t.Busy -and -not $t.Stale)
+    Assert-That 'holder alive: this very process counts, a made-up pid does not' ((Test-HolderAlive $PID ([DateTime]::UtcNow.AddMinutes(-5))) -and -not (Test-HolderAlive 2147483000 '2026-01-01T00:00:00Z'))
+    Assert-That 'host id: opaque, stable, no machine name in it' ((Get-HostId) -eq (Get-HostId) -and (Get-HostId) -notmatch [regex]::Escape([Environment]::MachineName) -and (Get-HostId).Length -eq 12)
     $old = $held.PSObject.Copy(); $old.heartbeat = '2026-11-21T18:00:00Z'
     $t = Test-ReleaseLockBusy $old 'PC-B' $now $true
     Assert-That 'lock busy: another PC silent for longer than the lease is stale' (-not $t.Busy -and $t.Stale)
     $msg = Format-LockBusy $held $now
-    Assert-That 'lock busy: the message names version, step, who and the machine' ($msg -match 'rc\.56' -and $msg -match "'Wait'" -and $msg -match 'thread-OTA' -and $msg -match 'PC-A' -and $msg -match '5 min ago') $msg
+    Assert-That 'lock busy: the message names version, step and who, and not a machine' ($msg -match 'rc\.56' -and $msg -match "'Wait'" -and $msg -match 'thread-OTA' -and $msg -notmatch 'PC-A' -and $msg -match '5 min ago') $msg
+    Assert-That 'lock busy: the message says whether it is this PC' ((Format-LockBusy $held $now 'PC-A') -match 'this PC' -and (Format-LockBusy $held $now 'PC-B') -match 'another PC')
     Assert-That 'lock record: a field that could hold a secret is refused' ([bool](Get-ThrownMessage { New-LockRecord @{ passphrase = 'x' } }))
     Assert-That 'lock record: defaults hold merges and carry the lease' ((New-LockRecord @{ id = 'x' }).holdMerges -eq $true -and (New-LockRecord @{}).lease_minutes -eq 180)
 
@@ -212,11 +217,14 @@ try {
         $stdin = (@($input) -join '')
         $fail = { param($code, $why) $global:LASTEXITCODE = 1; "gh: $why (HTTP $code)" }
         if ($path -like '*/contents/lock.json*' -and $method -eq 'GET') {
-            if (-not $script:fake.exists) { return (& $fail 404 'Not Found') }
+            if (-not $script:fake.exists -or $script:fake.fileGone) { return (& $fail 404 'Not Found') }
             return (@{ sha = $script:fake.sha; content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($script:fake.text)) } | ConvertTo-Json -Compress)
         }
         if ($path -like '*/contents/lock.json*' -and $method -eq 'PUT') {
-            if ($f['sha'] -ne $script:fake.sha) { return (& $fail 409 'lock.json does not match') }
+            if (-not $f.ContainsKey('sha')) {
+                if (-not $script:fake.fileGone) { return (& $fail 422 'Invalid request. "sha" wasn''t supplied.') }
+                $script:fake.fileGone = $false
+            } elseif ($f['sha'] -ne $script:fake.sha) { return (& $fail 409 'lock.json does not match') }
             $script:fake.n++; $script:fake.sha = "s$($script:fake.n)"; $script:fake.text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($f['content']))
             return (@{ content = @{ sha = $script:fake.sha } } | ConvertTo-Json -Compress)
         }
@@ -231,7 +239,7 @@ try {
     }
     $r0 = Read-RemoteLock 'o/r'
     Assert-That 'remote lock: no branch yet reads as free' ($r0.Sha -eq '' -and $null -eq $r0.Record)
-    $rec1 = New-LockRecord @{ id = 'run-1'; machine = 'PC-A'; requester = 'thread-A'; version = '0.1.0-rc.56'; stage = 'Starting'; started = '2026-11-21T22:00:00Z'; heartbeat = '2026-11-21T22:00:00Z' }
+    $rec1 = New-LockRecord @{ id = 'run-1'; host = 'PC-A'; requester = 'thread-A'; version = '0.1.0-rc.56'; stage = 'Starting'; started = '2026-11-21T22:00:00Z'; heartbeat = '2026-11-21T22:00:00Z' }
     $sha1 = Write-RemoteLock 'o/r' $rec1 '' 'first'
     $r1 = Read-RemoteLock 'o/r'
     Assert-That 'remote lock: the first claim creates the branch and reads back' ($r1.Sha -eq $sha1 -and $r1.Record.id -eq 'run-1' -and $r1.Record.state -eq 'held')
@@ -244,7 +252,27 @@ try {
     $null = Update-RemoteLock 'o/r' 'run-1' @{ state = 'free'; stage = 'idle'; last = @{ version = '0.1.0-rc.56'; outcome = 'done' } }
     $r3 = Read-RemoteLock 'o/r'
     Assert-That 'remote lock: freeing keeps what the last run was' ($r3.Record.state -eq 'free' -and $r3.Record.last.outcome -eq 'done' -and -not (Test-ReleaseLockBusy $r3.Record 'PC-B' $now $true).Busy)
+    # lock.json deleted by hand while the branch stays: the next claim still works (creates the file on the branch)
+    $script:fake.text = ''; $script:fake.exists = $true; $script:fake.sha = 'orphan'; $script:fake.fileGone = $true
+    $rg = Read-RemoteLock 'o/r'
+    Assert-That 'remote lock: branch without lock.json reads as free' ($rg.Sha -eq '' -and $null -eq $rg.Record)
+    $shaG = Write-RemoteLock 'o/r' (New-LockRecord @{ id = 'run-9' }) '' 'again'
+    Assert-That 'remote lock: a claim on a branch whose lock.json was deleted works' ((Read-RemoteLock 'o/r').Record.id -eq 'run-9')
     Remove-Item function:gh
+
+    # ---- the audit log names the commit a version was tagged on; the bootstrap never runs a tag the log does not vouch for ---------
+    $al = Join-Path $root 'audit-tagged.jsonl'
+    Write-AuditEntry $al @{ event = 'tagged'; version = '0.1.0-rc.56'; commit = ('a' * 40) }
+    Write-AuditEntry $al @{ event = 'tagged'; version = '0.1.0-rc.57'; commit = ('b' * 40) }
+    Assert-That 'audit tagged: the commit of that version' ((Get-AuditTaggedCommit $al '0.1.0-rc.56') -eq ('a' * 40))
+    Assert-That 'audit tagged: unknown version gives nothing' ((Get-AuditTaggedCommit $al '0.1.0-rc.99') -eq '')
+    Assert-That 'audit tagged: no log gives nothing' ((Get-AuditTaggedCommit (Join-Path $root 'none.jsonl') '0.1.0-rc.56') -eq '')
+    # Things that broke or would break unseen (these cannot be run without a release, so the text is held to them):
+    $rel = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Release.ps1')
+    Assert-That 'bootstrap: the re-run is not -NonInteractive (typed confirmations without -Yes must still work)' ($rel -notmatch "'-NonInteractive'")
+    Assert-That 'bootstrap: git hooks are switched off for the run' ($rel -match 'GIT_CONFIG_KEY_0.*core\.hooksPath')
+    Assert-That 'bootstrap: every pin is checked to be part of master' ($rel -match 'merge-base --is-ancestor \$pinned')
+    Assert-That 'bootstrap: a resumed pin must match the audit log''s tagged commit' ($rel -match 'Get-AuditTaggedCommit')
 
     # ---- passphrase: never a prompt under -Yes; the pipe reaches the program ----------------------------------------------------
     $m = Get-ThrownMessage { Get-SigningPassphrase -ProtonPassRef '' -KeyFile 'k' -Yes }

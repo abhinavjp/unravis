@@ -97,6 +97,7 @@ jobs:
             if ($last -and $last.status -eq 'completed' -and $last.conclusion -eq 'success') { $skip = 'true'; Write-Host "CI run $($last.databaseId) passed on this commit: tests are skipped here." }
           }
           if ($skip -ne 'true') { Write-Host 'No green CI run found for this commit: running every test here.' }
+          $global:LASTEXITCODE = 0   # a failed gh call above is handled (tests run); it must not fail this step
           "tests_done=$skip" >> $env:GITHUB_OUTPUT
 
       - name: Set up Go
