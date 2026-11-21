@@ -34,14 +34,22 @@ async function noSidewaysScroll(page: Page) {
   })).toBeLessThanOrEqual(0);
   const moved = await page.evaluate(() => { window.scrollTo(300, 0); document.documentElement.scrollLeft = 300; return window.scrollX + document.documentElement.scrollLeft; });
   expect(moved).toBe(0);
-  const wide = await page.evaluate(() => {
+  // A box inside a scroller that itself fits (the wizard step list scrolls on its own) is not sideways scroll of the page, so it is not counted.
+  // The measure repeats until the narrow layout has settled: a Windows run caught it mid-change.
+  await expect.poll(() => page.evaluate(() => {
     const vw = document.documentElement.clientWidth;
+    const clipped = (el: Element) => {
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        const ox = getComputedStyle(p).overflowX;
+        if (ox !== 'visible' && p.getBoundingClientRect().right <= vw + 1) return true;
+      }
+      return false;
+    };
     return Array.from(document.querySelectorAll('body *')).filter((el) => {
       const r = el.getBoundingClientRect();
-      return r.width > 0 && r.right > vw + 1 && getComputedStyle(el).position !== 'fixed';
+      return r.width > 0 && r.right > vw + 1 && getComputedStyle(el).position !== 'fixed' && !clipped(el);
     }).slice(0, 5).map((el) => el.tagName + '.' + String(el.className).slice(0, 40));
-  });
-  expect(wide).toEqual([]);
+  })).toEqual([]);
 }
 
 const row = (page: Page, name: string) => page.getByRole('row').filter({ has: page.getByText(name, { exact: true }) });

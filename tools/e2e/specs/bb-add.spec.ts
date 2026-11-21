@@ -416,7 +416,7 @@ test('BB-17: Build the pack gives unravis-blackbox-<name>.zip with the recorder 
   await expect(pop(page).getByText('Pack built')).toBeVisible();
 });
 
-test('BB-17a: the pack README and the on-screen steps give the same install command', async ({ page }, testInfo) => {
+test('BB-17a: the pack README has the exact install command, the screen says to run install as an administrator, and neither adds a flag', async ({ page }, testInfo) => {
   test.skip(process.platform !== 'win32', 'the pack folder is a D:\\ path, which the server refuses off Windows');
   const download = await buildPack(page, 'bb-test-4');
   const zip = testInfo.outputPath('pack4.zip');
@@ -427,7 +427,9 @@ test('BB-17a: the pack README and the on-screen steps give the same install comm
   const readme = readFileSync(join(out, 'README.txt'), 'utf8');
   await expect(pop(page).getByText('Pack built')).toBeVisible();
   const screen = await pop(page).innerText();
-  expect(screen).toContain('unravis-blackbox.exe install');
+  // The screen keeps to plain words (no command line); the README holds the exact command. Neither adds a flag the other never mentions.
+  expect(screen).toContain('Unzip it and run install as an administrator.');
+  expect(screen).not.toContain('install --');
   expect(readme).toContain('unravis-blackbox.exe install');
   expect(readme, 'the README does not add a flag the screen never mentions').not.toContain('install --name');
 });
