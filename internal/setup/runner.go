@@ -145,18 +145,26 @@ func (r *Runner) ensureJournalDir(elevated bool) (string, error) {
 // RecoverJournal rolls back a journal left by a run that was cut off. It returns what could not be put back.
 func (r *Runner) RecoverJournal(elevated bool) (found bool, left []string, err error) {
 	p := filepath.Join(r.journalDir(elevated), JournalName)
+	if _, serr := os.Lstat(p); errors.Is(serr, os.ErrNotExist) {
+		return false, nil, nil
+	}
+	if elevated {
+		// Only read and replay a journal in a real folder nobody but administrators can write. This is checked before the file is
+		// parsed: a link or a folder others can change must not make the elevated process read what is in it.
+		dir := filepath.Dir(p)
+		if fi, lerr := os.Lstat(dir); lerr == nil && fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+			return true, nil, fmt.Errorf("an earlier setup left a journal in a folder that is a link, so it is not used")
+		}
+		if err := datadirCheck(r.Sys.Sec, dir); err != nil {
+			return true, nil, fmt.Errorf("an earlier setup left a journal in a folder others can change, so it is not used: %v", err)
+		}
+	}
 	j, err := LoadJournal(p)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil, nil
 	}
 	if err != nil {
 		return true, nil, err
-	}
-	if elevated {
-		// Only replay a journal in a folder nobody but administrators can write.
-		if err := datadirCheck(r.Sys.Sec, filepath.Dir(p)); err != nil {
-			return true, nil, fmt.Errorf("an earlier setup left a journal in a folder others can change, so it is not used: %v", err)
-		}
 	}
 	if j.f.Committed {
 		// That run finished; only its journal could not be deleted. Replaying it would undo a good install.

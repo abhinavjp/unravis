@@ -1043,6 +1043,19 @@ func TestJournalInAFolderOthersCanWriteIsNotReplayed(t *testing.T) {
 	}
 }
 
+// BL-183 (a): the folder is checked before the journal is parsed, so a file in a folder others can change is never read, not even to
+// report that it is broken.
+func TestJournalInAFolderOthersCanWriteIsRefusedBeforeItIsParsed(t *testing.T) {
+	e := newEnv(t, "1.2.0")
+	dir := MachineJournalDir(e.dirs)
+	writeFile(t, filepath.Join(dir, JournalName), `this is not json`)
+	_ = e.f.Sec.SetSDDL(dir, "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;BU)")
+	found, _, err := e.r.RecoverJournal(true)
+	if !found || err == nil || !strings.Contains(err.Error(), "others can change") {
+		t.Fatalf("the folder was not refused first: %v %v", found, err)
+	}
+}
+
 // ---- log and shortcut ----
 
 func TestRedactHidesSecrets(t *testing.T) {
