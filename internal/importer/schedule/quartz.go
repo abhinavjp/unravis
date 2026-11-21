@@ -141,19 +141,19 @@ var (
 // quartzExceptions are the Quartz exception types the importer stores by name.
 // Short names (as the message text writes them) map to the full name.
 var quartzExceptions = map[string]string{
-	"Quartz.JobExecutionException":                    "Quartz.JobExecutionException",
-	"Quartz.SchedulerException":                       "Quartz.SchedulerException",
-	"Quartz.JobPersistenceException":                  "Quartz.JobPersistenceException",
-	"Quartz.ObjectAlreadyExistsException":             "Quartz.ObjectAlreadyExistsException",
-	"Quartz.SchedulerConfigException":                 "Quartz.SchedulerConfigException",
-	"Quartz.UnableToInterruptJobException":            "Quartz.UnableToInterruptJobException",
-	"Quartz.Impl.AdoJobStore.LockException":           "Quartz.Impl.AdoJobStore.LockException",
-	"Quartz.Impl.AdoJobStore.NoRecordFoundException":  "Quartz.Impl.AdoJobStore.NoRecordFoundException",
-	"JobExecutionException":                           "Quartz.JobExecutionException",
-	"SchedulerException":                              "Quartz.SchedulerException",
-	"JobPersistenceException":                         "Quartz.JobPersistenceException",
-	"ObjectAlreadyExistsException":                    "Quartz.ObjectAlreadyExistsException",
-	"SchedulerConfigException":                        "Quartz.SchedulerConfigException",
+	"Quartz.JobExecutionException":                   "Quartz.JobExecutionException",
+	"Quartz.SchedulerException":                      "Quartz.SchedulerException",
+	"Quartz.JobPersistenceException":                 "Quartz.JobPersistenceException",
+	"Quartz.ObjectAlreadyExistsException":            "Quartz.ObjectAlreadyExistsException",
+	"Quartz.SchedulerConfigException":                "Quartz.SchedulerConfigException",
+	"Quartz.UnableToInterruptJobException":           "Quartz.UnableToInterruptJobException",
+	"Quartz.Impl.AdoJobStore.LockException":          "Quartz.Impl.AdoJobStore.LockException",
+	"Quartz.Impl.AdoJobStore.NoRecordFoundException": "Quartz.Impl.AdoJobStore.NoRecordFoundException",
+	"JobExecutionException":                          "Quartz.JobExecutionException",
+	"SchedulerException":                             "Quartz.SchedulerException",
+	"JobPersistenceException":                        "Quartz.JobPersistenceException",
+	"ObjectAlreadyExistsException":                   "Quartz.ObjectAlreadyExistsException",
+	"SchedulerConfigException":                       "Quartz.SchedulerConfigException",
 }
 
 // QuartzExceptionNames lists the Quartz exception type names the importer can

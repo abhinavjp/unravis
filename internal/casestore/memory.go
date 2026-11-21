@@ -32,9 +32,9 @@ func NewMemoryWith(caps Caps, now func() time.Time) Store {
 type memStore struct {
 	createMu sync.Mutex // CreateFor's scan-then-create is one step
 	mu       sync.Mutex
-	cases map[CaseID]*memData
-	caps  Caps
-	now   func() time.Time
+	cases    map[CaseID]*memData
+	caps     Caps
+	now      func() time.Time
 	// archive holds the unresolved-files list (P3).
 	archOnce sync.Once
 	archive  *memArchive
@@ -68,7 +68,7 @@ type memData struct {
 	// workspace is the case's workspace note JSON (see WorkspaceBlobStore).
 	workspace []byte
 	// plan holds the saved views and checklist (see PlanStore, plan_memory.go).
-	plan *memPlan
+	plan      *memPlan
 	retries   []RetryItem // the needs-another-try list (see RetryStore)
 	nextRetry int64
 	// cookieAllow is the cookie-name allowlist; cookieKey is its HMAC key,

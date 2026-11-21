@@ -491,7 +491,7 @@ type pathBackend struct {
 	stateCalls int
 }
 
-func (p *pathBackend) State() UIState   { p.stateCalls++; return UIState{LogPath: p.log} }
+func (p *pathBackend) State() UIState  { p.stateCalls++; return UIState{LogPath: p.log} }
 func (p *pathBackend) LogFile() string { return p.log }
 
 func TestOpenLogFolderReportsFailuresAndSkipsTheStateWalk(t *testing.T) {

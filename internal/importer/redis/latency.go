@@ -77,14 +77,14 @@ func (Latency) Detect(head []byte, fileName string) int {
 }
 
 type latState struct {
-	sink   *sink
-	rep    *importer.Report
-	opts   importer.Options
-	host   string
-	event  string
-	seen   map[latKey]struct{}
-	other  bool
-	labels int
+	sink    *sink
+	rep     *importer.Report
+	opts    importer.Options
+	host    string
+	event   string
+	seen    map[latKey]struct{}
+	other   bool
+	labels  int
 	ordinal int
 }
 

@@ -251,12 +251,12 @@ func frebAttr(se xml.StartElement, name string) (string, bool) {
 
 // frebEvt is what is kept of one trace event.
 type frebEvt struct {
-	stamp, computer           string
-	module, notif             string
-	subStatus, errCode        string
-	opcode                    string
-	modCapped, notifCapped    bool
-	opcodeCapped, hostCapped  bool
+	stamp, computer          string
+	module, notif            string
+	subStatus, errCode       string
+	opcode                   string
+	modCapped, notifCapped   bool
+	opcodeCapped, hostCapped bool
 }
 
 func (f *frebReader) event() (frebEvt, error) {
