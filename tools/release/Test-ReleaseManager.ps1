@@ -142,6 +142,110 @@ try {
     Assert-That 'resume: nothing done yet starts at Preflight' ((Get-ResumeStage $order '') -eq 'Preflight')
     Assert-That 'resume: after Verify there is nothing' ($null -eq (Get-ResumeStage $order 'Verify'))
 
+    # ---- lock details, pinned commit, resume plan, nothing-new rule ---------------------------------------------------------------
+    $l1 = Enter-ReleaseLock $d
+    try {
+        Set-LockInfo $d @{ id = 'abc'; pid = 4242; requester = 'thread-OTA'; version = '0.1.0-rc.56'; stage = 'Wait'; started = '2026-11-21T22:00:00Z' }
+        $m = Get-ThrownMessage { Enter-ReleaseLock $d }
+        Assert-That 'lock: a refused run is told who holds it, which version and step' ($m -match 'thread-OTA' -and $m -match 'rc\.56' -and $m -match "'Wait'" -and $m -match 'WaitMinutes') $m
+    } finally { $l1.Dispose() }
+    $now = [datetime]'2026-11-21T23:00:00Z'
+    $held = [pscustomobject]@{ state = 'held'; machine = 'PC-A'; version = '0.1.0-rc.56'; channel = 'rc'; stage = 'Wait'; requester = 'thread-OTA'; started = '2026-11-21T22:30:00Z'; heartbeat = '2026-11-21T22:55:00Z'; lease_minutes = 180; holdMerges = $false }
+    $free = [pscustomobject]@{ state = 'free'; machine = 'PC-A' }
+    Assert-That 'lock busy: no record is free' (-not (Test-ReleaseLockBusy $null 'PC-A' $now $true).Busy)
+    Assert-That 'lock busy: a free record is free' (-not (Test-ReleaseLockBusy $free 'PC-A' $now $true).Busy)
+    Assert-That 'lock busy: held by a live process on this PC is busy' (Test-ReleaseLockBusy $held 'PC-A' $now $false).Busy
+    $t = Test-ReleaseLockBusy $held 'PC-A' $now $true
+    Assert-That 'lock busy: held from this PC but the PC lock is free = crashed run, taken over' (-not $t.Busy -and $t.Stale)
+    Assert-That 'lock busy: another PC with a fresh heartbeat is busy' (Test-ReleaseLockBusy $held 'PC-B' $now $true).Busy
+    $old = $held.PSObject.Copy(); $old.heartbeat = '2026-11-21T18:00:00Z'
+    $t = Test-ReleaseLockBusy $old 'PC-B' $now $true
+    Assert-That 'lock busy: another PC silent for longer than the lease is stale' (-not $t.Busy -and $t.Stale)
+    $msg = Format-LockBusy $held $now
+    Assert-That 'lock busy: the message names version, step, who and the machine' ($msg -match 'rc\.56' -and $msg -match "'Wait'" -and $msg -match 'thread-OTA' -and $msg -match 'PC-A' -and $msg -match '5 min ago') $msg
+    Assert-That 'lock record: a field that could hold a secret is refused' ([bool](Get-ThrownMessage { New-LockRecord @{ passphrase = 'x' } }))
+    Assert-That 'lock record: defaults hold merges and carry the lease' ((New-LockRecord @{ id = 'x' }).holdMerges -eq $true -and (New-LockRecord @{}).lease_minutes -eq 180)
+
+    $c1 = 'a' * 40; $c2 = 'b' * 40; $c3 = 'c' * 40
+    $run = { param($sha, $st, $co, $id) [pscustomobject]@{ headSha = $sha; status = $st; conclusion = $co; databaseId = $id } }
+    $sel = Select-PinnedCommit @($c1, $c2, $c3) @((& $run $c1 'completed' 'success' 30), (& $run $c2 'completed' 'success' 20))
+    Assert-That 'pin: a green head is pinned' ($sel.Status -eq 'green' -and $sel.Commit -eq $c1)
+    $sel = Select-PinnedCommit @($c1, $c2, $c3) @((& $run $c1 'in_progress' $null 30), (& $run $c2 'completed' 'success' 20))
+    Assert-That 'pin: an unfinished head waits (does not fall back unless asked)' ($sel.Status -eq 'waiting' -and -not $sel.Commit)
+    $sel = Select-PinnedCommit @($c1, $c2, $c3) @((& $run $c1 'in_progress' $null 30), (& $run $c2 'completed' 'success' 20)) -LastGreen
+    Assert-That 'pin: -LastGreen takes the newest green commit' ($sel.Status -eq 'green' -and $sel.Commit -eq $c2)
+    $sel = Select-PinnedCommit @($c1, $c2) @((& $run $c1 'completed' 'failure' 30))
+    Assert-That 'pin: a red head is refused' ($sel.Status -eq 'red')
+    $sel = Select-PinnedCommit @($c1, $c2) @((& $run $c1 'completed' 'failure' 5), (& $run $c1 'completed' 'success' 9))
+    Assert-That 'pin: the newest run of a commit decides (a green re-run outranks an older red one)' ($sel.Status -eq 'green')
+    $sel = Select-PinnedCommit @($c1, $c2) @((& $run $c1 'completed' 'success' 5), (& $run $c1 'completed' 'failure' 9))
+    Assert-That 'pin: ... and a red re-run outranks an older green one' ($sel.Status -eq 'red')
+    $sel = Select-PinnedCommit @($c1) @() -LastGreen
+    Assert-That 'pin: -LastGreen with no green commit says none' ($sel.Status -eq 'none')
+    $sel = Select-PinnedCommit @($c1) @()
+    Assert-That 'pin: a head with no CI run yet waits' ($sel.Status -eq 'waiting' -and $sel.Why -match 'norun')
+    $sel = Select-PinnedCommit @($c1) @((& $run $c1 'completed' 'cancelled' 5))
+    Assert-That 'pin: a cancelled head (superseded by a merge) waits instead of failing' ($sel.Status -eq 'waiting')
+
+    $tags2 = @('v0.1.0-rc.54', 'v0.1.0-rc.55')
+    $stOpen = [pscustomobject]@{ version = '0.1.0-rc.56'; stage = 'Tag'; status = 'stopped' }
+    Assert-That 'resume plan: an unfinished newer release is continued' ((Get-ResumePlan $stOpen 'rc' '' $tags2 $false).Resuming)
+    Assert-That 'resume plan: -CheckOnly never resumes' (-not (Get-ResumePlan $stOpen 'rc' '' $tags2 $true).Resuming)
+    Assert-That 'resume plan: another -Version is a different release' (-not (Get-ResumePlan $stOpen 'rc' '0.1.0-rc.57' $tags2 $false).Resuming)
+    Assert-That 'resume plan: the other channel is not resumed' (-not (Get-ResumePlan $stOpen 'stable' '' $tags2 $false).Resuming)
+    Assert-That 'resume plan: a done release is not resumed' (-not (Get-ResumePlan ([pscustomobject]@{ version = '0.1.0-rc.56'; stage = 'Verify'; status = 'done' }) 'rc' '' $tags2 $false).Resuming)
+    Assert-That 'resume plan: a state older than the newest tag is not resumed' (-not (Get-ResumePlan ([pscustomobject]@{ version = '0.1.0-rc.54'; stage = 'Tag'; status = 'stopped' }) 'rc' '' $tags2 $false).Resuming)
+    $done55 = [pscustomobject]@{ version = '0.1.0-rc.55'; stage = 'Verify'; status = 'done' }
+    Assert-That 'nothing new: same commit, release finished = done' ((Get-AlreadyReleased 'rc' 'v0.1.0-rc.55' $c1 $c1 $done55) -eq 'done')
+    Assert-That 'nothing new: master moved on = go on' ($null -eq (Get-AlreadyReleased 'rc' 'v0.1.0-rc.55' $c1 $c2 $done55))
+    Assert-That 'nothing new: same commit but withdrawn = refused' ((Get-AlreadyReleased 'rc' 'v0.1.0-rc.55' $c1 $c1 ([pscustomobject]@{ version = '0.1.0-rc.55'; status = 'withdrawn' })) -eq 'withdrawn')
+    Assert-That 'nothing new: no tag of this kind yet = go on' ($null -eq (Get-AlreadyReleased 'stable' '' '' $c1 $done55))
+    Assert-That 'backoff: grows and is capped' ((Get-BackoffSeconds 1) -eq 5 -and (Get-BackoffSeconds 3) -eq 15 -and (Get-BackoffSeconds 50) -eq 30 -and (Get-BackoffSeconds 50 60) -eq 60)
+
+    # ---- the lock record on GitHub, against a fake gh that behaves like the contents API ------------------------------------------
+    $script:fake = @{ exists = $false; sha = ''; text = ''; n = 0; blob = '' }
+    function gh {
+        $a = @($args); $global:LASTEXITCODE = 0
+        $path = $a | Where-Object { $_ -like 'repos/*' } | Select-Object -First 1
+        $mi = [array]::IndexOf($a, '-X'); $method = if ($mi -ge 0) { $a[$mi + 1] } else { 'GET' }
+        $f = @{}; for ($k = 0; $k -lt $a.Count - 1; $k++) { if ($a[$k] -eq '-f') { $kv = $a[$k + 1] -split '=', 2; $f[$kv[0]] = $kv[1] } }
+        $stdin = (@($input) -join '')
+        $fail = { param($code, $why) $global:LASTEXITCODE = 1; "gh: $why (HTTP $code)" }
+        if ($path -like '*/contents/lock.json*' -and $method -eq 'GET') {
+            if (-not $script:fake.exists) { return (& $fail 404 'Not Found') }
+            return (@{ sha = $script:fake.sha; content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($script:fake.text)) } | ConvertTo-Json -Compress)
+        }
+        if ($path -like '*/contents/lock.json*' -and $method -eq 'PUT') {
+            if ($f['sha'] -ne $script:fake.sha) { return (& $fail 409 'lock.json does not match') }
+            $script:fake.n++; $script:fake.sha = "s$($script:fake.n)"; $script:fake.text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($f['content']))
+            return (@{ content = @{ sha = $script:fake.sha } } | ConvertTo-Json -Compress)
+        }
+        if ($path -like '*/git/blobs') { $script:fake.blob = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($f['content'])); return '{"sha":"blob1"}' }
+        if ($path -like '*/git/trees') { return '{"sha":"tree1"}' }
+        if ($path -like '*/git/commits') { return '{"sha":"commit1"}' }
+        if ($path -like '*/git/refs') {
+            if ($script:fake.exists) { return (& $fail 422 'Reference already exists') }
+            $script:fake.exists = $true; $script:fake.sha = 'blob1'; $script:fake.text = $script:fake.blob; return '{}'
+        }
+        $global:LASTEXITCODE = 1; "fake gh: unexpected call $a"
+    }
+    $r0 = Read-RemoteLock 'o/r'
+    Assert-That 'remote lock: no branch yet reads as free' ($r0.Sha -eq '' -and $null -eq $r0.Record)
+    $rec1 = New-LockRecord @{ id = 'run-1'; machine = 'PC-A'; requester = 'thread-A'; version = '0.1.0-rc.56'; stage = 'Starting'; started = '2026-11-21T22:00:00Z'; heartbeat = '2026-11-21T22:00:00Z' }
+    $sha1 = Write-RemoteLock 'o/r' $rec1 '' 'first'
+    $r1 = Read-RemoteLock 'o/r'
+    Assert-That 'remote lock: the first claim creates the branch and reads back' ($r1.Sha -eq $sha1 -and $r1.Record.id -eq 'run-1' -and $r1.Record.state -eq 'held')
+    Assert-That 'remote lock: a second first-claim loses' ((Get-ThrownMessage { Write-RemoteLock 'o/r' (New-LockRecord @{ id = 'run-2' }) '' 'second' }) -match '^LOCK-CONFLICT')
+    Assert-That 'remote lock: a write with a stale sha loses' ((Get-ThrownMessage { Write-RemoteLock 'o/r' (New-LockRecord @{ id = 'run-2' }) 'old-sha' 'stale' }) -match '^LOCK-CONFLICT')
+    $null = Update-RemoteLock 'o/r' 'run-1' @{ stage = 'Wait'; holdMerges = $false }
+    $r2 = Read-RemoteLock 'o/r'
+    Assert-That 'remote lock: the owner can change the step and keeps the other fields' ($r2.Record.stage -eq 'Wait' -and $r2.Record.holdMerges -eq $false -and $r2.Record.requester -eq 'thread-A' -and $r2.Sha -ne $sha1)
+    Assert-That 'remote lock: another run cannot change it ("lock lost")' ((Get-ThrownMessage { Update-RemoteLock 'o/r' 'run-2' @{ stage = 'Tag' } }) -match 'lock lost')
+    $null = Update-RemoteLock 'o/r' 'run-1' @{ state = 'free'; stage = 'idle'; last = @{ version = '0.1.0-rc.56'; outcome = 'done' } }
+    $r3 = Read-RemoteLock 'o/r'
+    Assert-That 'remote lock: freeing keeps what the last run was' ($r3.Record.state -eq 'free' -and $r3.Record.last.outcome -eq 'done' -and -not (Test-ReleaseLockBusy $r3.Record 'PC-B' $now $true).Busy)
+    Remove-Item function:gh
+
     # ---- passphrase: never a prompt under -Yes; the pipe reaches the program ----------------------------------------------------
     $m = Get-ThrownMessage { Get-SigningPassphrase -ProtonPassRef '' -KeyFile 'k' -Yes }
     Assert-That 'passphrase: -Yes without a reference stops instead of asking' ($m -match 'never asks')

@@ -17,14 +17,17 @@ That is all. It picks:
 | Passphrase | The Proton Pass entry that belongs to that key (table in [RELEASING.md](RELEASING.md)). `-PassphraseFromProtonPass` overrides. |
 | Where to start | If the last run stopped part way (and was not withdrawn), it continues that version from the stage after the last one that finished, with the same key it checked. A tag is only made right after a preflight in the same run. `-From` overrides. |
 
+Many sessions can ask at once: one release at a time (lock on GitHub that says who and which step), the commit is pinned and built from a private worktree, and a second request for the same commit is a no-op. Details, the busy answer and the rules for other sessions: [RELEASE-COORDINATION.md](RELEASE-COORDINATION.md). `-Status` shows where everything is. `-WaitMinutes N` queues behind a running release. `-LastGreen` releases the newest green master commit without waiting for CI on the head. `-Requester` names you in the lock.
+
 Other switches: `-CheckOnly` (all checks, including the passphrase opening the key, then stop; changes nothing), `-CheckAudit` (check the audit log chain and stop), `-SkipVerify`, `-FirstRelease`. The old form `-Version X -KeyFile K -PassphraseFromProtonPass R -Yes` still works.
 
 ## Stages
 
+0. **Bootstrap** (before the numbered stages): claims the lock (PC and GitHub), picks the commit (master head when its CI is green, waits for CI, or `-LastGreen`), makes a private worktree of it and runs the stages from there.
 1. **Preflight** (nothing is changed)
    - tools: git, gh (signed in), go, pass-cli
-   - on `master`, clean tree, same commit as `origin/master`
-   - CI (`ci.yml`) on this commit: **waits** while it is queued or running (up to 45 min), stops if it failed
+   - the worktree is clean, at the pinned commit, and that commit is still part of `origin/master`
+   - CI (`ci.yml`) on this commit: green (the bootstrap already waited for it; a check-only run waits here, up to 45 min), stops if it failed
    - every first-parent commit since the release on the feed is a merged PR (no direct pushes)
    - version valid and newer than every tag; tag and release not used yet
    - feed: readable, its release tag is in this clone, it expires in more than 30 days (warns otherwise)
@@ -64,7 +67,9 @@ With `-Yes` no script in `tools/release` waits for typed input. Where a person u
 |---|---|
 | `audit.jsonl` | One JSON line per event: run start, preflight result, tag, build run, signing gates (diff hash, keys added or removed), signed manifest SHA-256 and key id, publish, feed, feed read-back, verify, withdraw, stop reason. Each line holds the SHA-256 of the line before (`prev`), so an edit breaks the chain; `-CheckAudit` finds it. No secrets: field names with pass, secret or token are refused. |
 | `state.json` | Version, last stage that finished, running / stopped / done, reason. A Claude session reads this to report or continue. |
-| `release.lock` | Held open while a run is going. A second run on the same PC stops at once. The OS lets go if the process dies. |
+| `release.lock` | Held open while a run is going. A second run on the same PC stops at once. The OS lets go if the process dies. `lock-info.json` beside it says who holds it. |
+| `work\` | The private worktree of the pinned commit the run executes from. Removed at the end. |
+| GitHub branch `release-lock` | `lock.json`: who holds the release (or the last result), version, step, pinned commit, whether merges to master should wait. Readable by any session. See [RELEASE-COORDINATION.md](RELEASE-COORDINATION.md). |
 
 ## Report
 

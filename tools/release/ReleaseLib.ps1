@@ -206,16 +206,23 @@ function Get-CommitPullRequests([string]$RepoRoot, [string]$Repo, [string]$Base,
     $shas = @(git -C $RepoRoot rev-list --first-parent "$Base..$Head")
     if ($LASTEXITCODE -ne 0) { throw "git rev-list $Base..$Head failed." }
     $missing = @(); $prs = @{}
-    foreach ($c in $shas) {
+    # One call per commit, run side by side (a release since the last one is often 10 to 40 commits). Nothing is cached on disk:
+    # a cache file an agent could edit would let a direct push pass as "merged".
+    $found = @($shas | ForEach-Object -ThrottleLimit 8 -Parallel {
+        $c = $_
         # The commit must BE the PR's merge (squash) commit: a PR that GitHub marks merged only because its head was pushed straight
         # to master names another merge commit. (Checked live 21 Nov 2026: every first-parent commit since rc.53 matches.) Branch
         # rules on master (BL-197) are the real stop for direct pushes.
-        $json = gh api "repos/$Repo/commits/$c/pulls" 2>$null
+        $json = gh api "repos/$($using:Repo)/commits/$c/pulls" 2>$null
         $n = $null
         if ($LASTEXITCODE -eq 0 -and $json) {
             $n = @(($json -join "`n") | ConvertFrom-Json | Where-Object { $_.merged_at -and $_.base.ref -eq 'master' -and $_.merge_commit_sha -eq $c } | Select-Object -First 1).number
         }
-        if (-not $n) { $missing += $c } else { $prs[$c] = [int]$n }
+        [pscustomobject]@{ Sha = $c; N = $n }
+    })
+    foreach ($c in $shas) {
+        $hit = $found | Where-Object { $_.Sha -eq $c } | Select-Object -First 1
+        if (-not $hit -or -not $hit.N) { $missing += $c } else { $prs[$c] = [int]$hit.N }
     }
     return [pscustomobject]@{ Missing = $missing; Prs = $prs }
 }
@@ -416,10 +423,213 @@ function Test-AuditChain([string]$Path) {
 }
 
 # One release at a time on this PC. The OS drops the lock if the process dies, so a crash never leaves it stuck.
+# lock-info.json (beside it) says who holds it, so a second run can answer "busy: who, which step" instead of a bare refusal.
 function Enter-ReleaseLock([string]$Dir) {
     $p = Join-Path $Dir 'release.lock'
     try { return [System.IO.File]::Open($p, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None) }
-    catch { throw 'Another release is running on this PC (release.lock is held). Wait for it to finish.' }
+    catch {
+        $who = ''
+        try {
+            $i = Get-Content -Raw -LiteralPath (Join-Path $Dir 'lock-info.json') | ConvertFrom-Json
+            $who = " Held by $($i.requester) (pid $($i.pid)) for $($i.version), at '$($i.stage)', since $($i.started)."
+        } catch {}
+        throw "Another release is running on this PC (release.lock is held).$who Wait for it, or pass -WaitMinutes."
+    }
+}
+function Set-LockInfo([string]$Dir, [hashtable]$Fields) {
+    $tmp = Join-Path $Dir 'lock-info.json.tmp'
+    [System.IO.File]::WriteAllText($tmp, ($Fields | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $tmp -Destination (Join-Path $Dir 'lock-info.json') -Force
+}
+
+# ---- release lock on GitHub (one release at a time for everyone; readable from any session) ---------------------------------------
+# A branch "release-lock" with one file, lock.json. Writes are compare-and-swap through the contents API (the file's blob sha must be
+# the one that was read), so two claims at once cannot both win. It is advisory for everything except Release.ps1: other sessions
+# read it to see "busy, who, which step" and whether merges to master should wait. It carries no secret and is never trusted for
+# signing: every signing decision still comes from git, the feed and the checks.
+$script:ReleaseLockBranch = 'release-lock'
+$script:ReleaseLockLeaseMinutes = 180
+
+function Invoke-GhApi([string[]]$Arguments, [string]$Body) {
+    # Returns @{ Ok; Status; Json; Text }. Never throws; a transient failure is retried by the caller. Body (JSON) goes in on stdin.
+    $out = if ($Body) { $Body | gh api @Arguments --input - 2>&1 } else { gh api @Arguments 2>&1 }
+    $code = $LASTEXITCODE
+    $text = ($out | ForEach-Object { "$_" }) -join "`n"
+    $status = if ($text -match 'HTTP (\d{3})') { [int]$Matches[1] } else { 0 }
+    $json = $null
+    if ($code -eq 0 -and $text) { try { $json = $text | ConvertFrom-Json } catch {} }
+    return [pscustomobject]@{ Ok = ($code -eq 0); Status = $status; Json = $json; Text = $text }
+}
+
+# What the lock says now: @{ Sha = blob sha ('' when the branch does not exist yet); Record = object or $null }.
+function Read-RemoteLock([string]$Repo) {
+    for ($try = 1; $try -le 3; $try++) {
+        $r = Invoke-GhApi @("repos/$Repo/contents/lock.json?ref=$script:ReleaseLockBranch")
+        if ($r.Ok -and $r.Json.content) {
+            $rec = $null
+            try { $rec = ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(([string]$r.Json.content -replace '\s', ''))) | ConvertFrom-Json) } catch { throw "lock.json on the $script:ReleaseLockBranch branch is not readable. Fix or delete that branch." }
+            return [pscustomobject]@{ Sha = [string]$r.Json.sha; Record = $rec }
+        }
+        if ($r.Status -eq 404 -or $r.Text -match 'Not Found') { return [pscustomobject]@{ Sha = ''; Record = $null } }
+        Start-Sleep -Seconds (2 * $try)
+    }
+    throw 'Could not read the release lock from GitHub (network or token). A release needs GitHub anyway; try again.'
+}
+
+# Writes the record. ExpectSha is the blob sha that was read ('' to create the branch). Returns the new blob sha, or throws a message
+# starting with LOCK-CONFLICT when somebody else wrote first.
+function Write-RemoteLock([string]$Repo, $Record, [string]$ExpectSha, [string]$Message) {
+    $json = ($Record | ConvertTo-Json -Depth 6)
+    $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($json + "`n"))
+    for ($try = 1; $try -le 3; $try++) {
+        if ($ExpectSha) {
+            $r = Invoke-GhApi @('-X', 'PUT', "repos/$Repo/contents/lock.json", '-f', "message=$Message", '-f', "content=$b64", '-f', "branch=$script:ReleaseLockBranch", '-f', "sha=$ExpectSha")
+            if ($r.Ok) { return [string]$r.Json.content.sha }
+        } else {
+            # First write ever: an orphan commit holding only lock.json. Creating the ref fails if it exists, which is the compare step.
+            $blob = Invoke-GhApi @('-X', 'POST', "repos/$Repo/git/blobs", '-f', "content=$b64", '-f', 'encoding=base64')
+            if (-not $blob.Ok) { Start-Sleep -Seconds (2 * $try); continue }
+            $tree = Invoke-GhApi @('-X', 'POST', "repos/$Repo/git/trees") (@{ tree = @(@{ path = 'lock.json'; mode = '100644'; type = 'blob'; sha = [string]$blob.Json.sha }) } | ConvertTo-Json -Depth 4 -Compress)
+            if (-not $tree.Ok) { Start-Sleep -Seconds (2 * $try); continue }
+            $commit = Invoke-GhApi @('-X', 'POST', "repos/$Repo/git/commits", '-f', "message=$Message", '-f', "tree=$($tree.Json.sha)")
+            if (-not $commit.Ok) { Start-Sleep -Seconds (2 * $try); continue }
+            $ref = Invoke-GhApi @('-X', 'POST', "repos/$Repo/git/refs", '-f', "ref=refs/heads/$script:ReleaseLockBranch", '-f', "sha=$($commit.Json.sha)")
+            if ($ref.Ok) { return [string]$blob.Json.sha }
+            $r = $ref
+        }
+        if ($r.Status -eq 409 -or $r.Status -eq 422 -or $r.Text -match 'does not match|already exists') { throw "LOCK-CONFLICT: somebody else changed the release lock first ($($r.Status))." }
+        Start-Sleep -Seconds (2 * $try)
+    }
+    throw 'Could not write the release lock to GitHub (network or token).'
+}
+
+# Pure. The lock record. No secret can be put in it.
+function New-LockRecord([hashtable]$Fields) {
+    $r = [ordered]@{ v = 1; state = 'held'; id = ''; machine = ''; user = ''; pid = 0; requester = ''; started = ''; heartbeat = ''
+                     channel = ''; version = ''; stage = ''; commit = ''; holdMerges = $true; lease_minutes = $script:ReleaseLockLeaseMinutes; reason = ''; last = $null }
+    foreach ($k in $Fields.Keys) {
+        if ($k -match 'pass|secret|token|key') { throw "Lock field '$k' is not allowed." }
+        $r[$k] = $Fields[$k]
+    }
+    return $r
+}
+
+# Pure. Is this record a live claim on the release? LocalFree = this process holds release.lock on this PC, so no other process
+# here can be running a release: a "held" record from this PC is then a crashed run's.
+function Test-ReleaseLockBusy($Rec, [string]$Machine, [datetime]$Now, [bool]$LocalFree) {
+    if (-not $Rec -or $Rec.state -ne 'held') { return [pscustomobject]@{ Busy = $false; Stale = $false; Reason = 'free' } }
+    if ($Rec.machine -eq $Machine) {
+        if ($LocalFree) { return [pscustomobject]@{ Busy = $false; Stale = $true; Reason = "stale: $($Rec.version) was started on this PC and its process is gone (crashed run); it is continued, not dropped" } }
+        return [pscustomobject]@{ Busy = $true; Stale = $false; Reason = 'running on this PC' }
+    }
+    $lease = if ($Rec.lease_minutes) { [double]$Rec.lease_minutes } else { $script:ReleaseLockLeaseMinutes }
+    $age = ($Now.ToUniversalTime() - ([datetime]$Rec.heartbeat).ToUniversalTime()).TotalMinutes
+    if ($age -gt $lease) { return [pscustomobject]@{ Busy = $false; Stale = $true; Reason = ("stale: no sign of life from $($Rec.machine) for {0:N0} minutes (lease $lease)" -f $age) } }
+    return [pscustomobject]@{ Busy = $true; Stale = $false; Reason = "running on $($Rec.machine)" }
+}
+
+# Pure. One line a person or an agent can act on.
+function Format-LockBusy($Rec, [datetime]$Now) {
+    $age = ''
+    try { $age = ', last sign of life {0:N0} min ago' -f ($Now.ToUniversalTime() - ([datetime]$Rec.heartbeat).ToUniversalTime()).TotalMinutes } catch {}
+    $v = if ($Rec.version) { $Rec.version } else { '(choosing the version)' }
+    return "BUSY: a release is running: $v ($($Rec.channel)), step '$($Rec.stage)', started $($Rec.started) by $($Rec.requester) on $($Rec.machine)$age. Hold merges to master: $($Rec.holdMerges). Pass -WaitMinutes N to queue behind it, or run -Status."
+}
+
+# Claims or changes the record while holding it. Throws 'lock lost' when the record now belongs to another run.
+function Update-RemoteLock([string]$Repo, [string]$Id, [hashtable]$Fields, [string]$Message = 'release lock') {
+    for ($try = 1; $try -le 2; $try++) {
+        $cur = Read-RemoteLock $Repo
+        if (-not $cur.Record -or $cur.Record.id -ne $Id) { throw 'lock lost: the release lock now belongs to another run (or was removed). Stopping.' }
+        $rec = [ordered]@{}
+        foreach ($p in $cur.Record.PSObject.Properties) { $rec[$p.Name] = $p.Value }
+        foreach ($k in $Fields.Keys) {
+            if ($k -match 'pass|secret|token|key') { throw "Lock field '$k' is not allowed." }
+            $rec[$k] = $Fields[$k]
+        }
+        $rec['heartbeat'] = [DateTime]::UtcNow.ToString('o')
+        try { return (Write-RemoteLock $Repo $rec $cur.Sha $Message) } catch { if ($_.Exception.Message -notmatch '^LOCK-CONFLICT' -or $try -eq 2) { throw } }
+    }
+}
+
+# ---- choosing what to release -----------------------------------------------------------------------------------------------
+
+# Pure. Which master commit to release, from the CI runs on master (newest run per commit decides). Commits are newest first
+# (first-parent history of origin/master). Result.Status: green (Commit is set), waiting (head's CI is not finished), red (head's CI
+# failed), none (LastGreen asked and no recent commit has a green run).
+function Select-PinnedCommit([string[]]$Commits, $Runs, [switch]$LastGreen) {
+    $verdict = {
+        param($sha)
+        $r = @($Runs | Where-Object { $_.headSha -eq $sha } | Sort-Object { [long]$_.databaseId } -Descending | Select-Object -First 1)
+        if (-not $r.Count -or -not $r[0]) { return 'norun' }
+        if ($r[0].status -ne 'completed') { return 'waiting' }
+        if ($r[0].conclusion -eq 'success') { return 'green' }
+        if ($r[0].conclusion -eq 'cancelled') { return 'cancelled' }
+        return 'red'
+    }
+    if (-not $Commits.Count) { return [pscustomobject]@{ Status = 'none'; Commit = $null; Why = 'no commits' } }
+    $head = & $verdict $Commits[0]
+    if ($head -eq 'green') { return [pscustomobject]@{ Status = 'green'; Commit = $Commits[0]; Why = 'master head has green CI' } }
+    if ($LastGreen) {
+        foreach ($c in $Commits) { if ((& $verdict $c) -eq 'green') { return [pscustomobject]@{ Status = 'green'; Commit = $c; Why = "newest master commit with green CI (head is $head)" } } }
+        return [pscustomobject]@{ Status = 'none'; Commit = $null; Why = 'no recent master commit has green CI' }
+    }
+    if ($head -eq 'red') { return [pscustomobject]@{ Status = 'red'; Commit = $null; Why = 'CI failed on master head' } }
+    return [pscustomobject]@{ Status = 'waiting'; Commit = $null; Why = "CI on master head is $head" }
+}
+
+# Pure. Is the unfinished release in state.json the one to continue? Same rule Release.ps1 always used, kept here so the bootstrap
+# (which pins a commit) and the run (which chooses the version) cannot disagree.
+function Get-ResumePlan($State, [string]$AskedChannel, [string]$Version, [string[]]$Tags, [bool]$CheckOnly) {
+    $no = [pscustomobject]@{ Resuming = $false; Version = $null }
+    if ($CheckOnly -or -not $State -or -not $State.version) { return $no }
+    if (@('done', 'withdrawn') -contains $State.status) { return $no }
+    if ($Version -and $Version -ne $State.version) { return $no }
+    $sv = [string]$State.version
+    $svChannel = if ($sv.Contains('-')) { 'rc' } else { 'stable' }
+    $newest = Get-NewestVersion $Tags
+    if ($AskedChannel -and $AskedChannel -ne $svChannel) { return $no }
+    if ($newest -and (Compare-SemVer $sv $newest) -lt 0) { return $no }
+    return [pscustomobject]@{ Resuming = $true; Version = $sv }
+}
+
+# Pure. "Nothing new to release": the newest tag of this kind already holds this commit and that release finished.
+# Returns 'done' (say so and stop), 'withdrawn' (refuse: merge a fix first) or $null (go on).
+function Get-AlreadyReleased([string]$Channel, [string]$NewestTagOfKind, [string]$NewestTagCommit, [string]$Pinned, $State) {
+    if (-not $NewestTagOfKind -or $NewestTagCommit -ne $Pinned) { return $null }
+    if ($State -and $State.version -eq ($NewestTagOfKind -replace '^v', '')) {
+        if ($State.status -eq 'done') { return 'done' }
+        if ($State.status -eq 'withdrawn') { return 'withdrawn' }
+    }
+    return $null
+}
+
+# Waits with a growing pause (5 s, 10 s, 15 s ... capped) instead of a fixed one: quick when the thing finishes soon, light when it does not.
+function Get-BackoffSeconds([int]$Attempt, [int]$Cap = 30) { return [Math]::Min($Cap, 5 * [Math]::Max(1, $Attempt)) }
+
+# One place to read where the release machinery is: the GitHub lock (who holds it, which step, whether merges should wait), this PC's
+# state.json (the release being worked on) and the last audit entries (the same files the releases dashboard reads).
+function Get-ReleaseStatus([string]$Repo, [string]$Dir) {
+    $remote = $null; $err = $null
+    try { $remote = (Read-RemoteLock $Repo).Record } catch { $err = $_.Exception.Message }
+    $info = $null; try { $info = Get-Content -Raw -LiteralPath (Join-Path $Dir 'lock-info.json') | ConvertFrom-Json } catch {}
+    $audit = Join-Path $Dir 'audit.jsonl'
+    $tail = @()
+    if (Test-Path -LiteralPath $audit) { $tail = @(Get-Content -LiteralPath $audit -Tail 8 | ForEach-Object { try { $_ | ConvertFrom-Json } catch { $null } } | Where-Object { $_ }) }
+    return [pscustomobject]@{ Lock = $remote; LockError = $err; LocalLock = $info; State = (Get-ReleaseState $Dir); AuditTail = $tail; AuditOk = (Test-AuditChain $audit).Ok }
+}
+function Show-ReleaseStatus([string]$Repo, [string]$Dir, [bool]$AsJson) {
+    $s = Get-ReleaseStatus $Repo $Dir
+    if ($AsJson) { $s | ConvertTo-Json -Depth 8; return }
+    $l = $s.Lock
+    if ($s.LockError) { Write-Host "Lock: could not be read ($($s.LockError))" -ForegroundColor Yellow }
+    elseif (-not $l) { Write-Host 'Lock: free (nobody has ever released with it).' -ForegroundColor Green }
+    elseif ($l.state -eq 'held') { Write-Host (Format-LockBusy $l (Get-Date)) -ForegroundColor Yellow; Write-Host "  pinned commit: $($l.commit)" }
+    else { Write-Host "Lock: free. Last: $($l.last.version) $($l.last.outcome) at $($l.last.at) (asked by $($l.last.requester))." -ForegroundColor Green }
+    if ($s.State) { Write-Host "This PC: release $($s.State.version): last finished stage '$($s.State.stage)', $($s.State.status)$(if ($s.State.reason) { ': ' + $s.State.reason })  (updated $($s.State.updated))" }
+    if ($s.LocalLock) { Write-Host "This PC's lock holder: $($s.LocalLock.requester), pid $($s.LocalLock.pid)" }
+    Write-Host "Audit log: $(if ($s.AuditOk) { 'chain unbroken' } else { 'CHAIN BROKEN (run -CheckAudit)' }). Last entries:"
+    foreach ($e in $s.AuditTail) { Write-Host ("  {0}  {1}  {2}" -f $e.ts, $e.event, $e.version) }
 }
 
 # Where a release got to: { version; stage (last stage that finished); status (running|stopped|done); reason; updated }.
