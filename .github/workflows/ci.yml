@@ -63,18 +63,22 @@ jobs:
             tools/screens/package-lock.json
 
       - name: Web - install
+        if: ${{ !cancelled() }}
         working-directory: web
         run: npm ci
 
       - name: Web - type check
+        if: ${{ !cancelled() }}
         working-directory: web
         run: npm run check
 
       - name: Web - tests
+        if: ${{ !cancelled() }}
         working-directory: web
         run: npm test
 
       - name: Web - build
+        if: ${{ !cancelled() }}
         working-directory: web
         run: npm run build
 
@@ -226,8 +230,16 @@ jobs:
 
       - name: Go - lint (only code changed since the base branch or the previous head)
         run: |
+          before="${{ github.event.before }}"
           if [ "${{ github.event_name }}" = "push" ]; then
-            golangci-lint run --new-from-rev=${{ github.event.before }}
+            # First push of a branch has an all-zero "before"; after a force-push it may not exist any more.
+            # Then fall back to the config (new-from-merge-base: origin/master). --new-from-rev wins over it when given.
+            if [ -n "$before" ] && ! echo "$before" | grep -Eq '^0+$' && git cat-file -e "$before^{commit}" 2>/dev/null; then
+              golangci-lint run --new-from-rev="$before"
+            else
+              echo "No usable previous head ($before); linting against the merge base with origin/master."
+              golangci-lint run
+            fi
           else
             golangci-lint run
           fi
@@ -240,7 +252,17 @@ jobs:
           CGO_ENABLED: "1" # the race detector needs cgo; product builds keep CGO_ENABLED=0
         # -skip: these two tests hang until the timeout on Linux (the blackbox host waits for a port that never frees).
         # They are the only skips; every other Linux failure is in the baseline file.
-        run: go test -race -count=1 -timeout 25m -coverprofile=go-linux.cover -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' -json ./... > go-test.json
+        # The baseline holds known failures, so go test exits 1 on every run. Tolerate that exit code here;
+        # the compare step below is the pass/fail gate. Fail here only when go test produced no JSON at all
+        # (build or setup problem) or exited with something other than a test failure (0 or 1).
+        run: |
+          set +e
+          go test -race -count=1 -timeout 25m -coverprofile=go-linux.cover -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' -json ./... > go-test.json
+          code=$?
+          echo "go test exit code: $code"
+          if [ ! -s go-test.json ]; then echo "go test produced no JSON"; exit 1; fi
+          if [ "$code" -gt 1 ]; then exit "$code"; fi
+          exit 0
 
       - name: Go - compare failures with the baseline
         if: ${{ always() && hashFiles('go-test.json') != '' }}
@@ -255,18 +277,22 @@ jobs:
           retention-days: 14
 
       - name: Web - install
+        if: ${{ !cancelled() }}
         working-directory: web
         run: npm ci
 
       - name: Web - type check
+        if: ${{ !cancelled() }}
         working-directory: web
         run: npm run check
 
       - name: Web - tests
+        if: ${{ !cancelled() }}
         working-directory: web
         run: npm test
 
       - name: Web - build
+        if: ${{ !cancelled() }}
         working-directory: web
         run: npm run build
 

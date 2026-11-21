@@ -25,7 +25,7 @@ Date 2026-11-21. Method: read `.github/workflows/*`, and ran the Linux gates in 
 ## Deviations from spec 08 (BL-441)
 
 - `Compare-GoFailures.ps1` and its test are Node scripts (`tools/ci/compare-go-failures.mjs`, `tools/ci/test-compare.mjs`) because there is no pwsh here to run a script against; the Node ones were run. Other specs name the .ps1; rename or add a wrapper when pwsh is at hand.
-- `pkg.<package>` entries may be in the baseline (spec: always new). Two packages panic on Linux today; without this the gate would be red from day one.
+- `pkg.<package>` entries may be in the baseline (spec: always new). Two packages panic on Linux today; without this the gate would be red from day one. Cost, stated plainly: `internal/setup` and `internal/server` (about 145 tests) are effectively ungated, because a new failure or panic there is invisible to the comparer. Tracked as BL-441b.
 - `Test-PathFilters.ps1` not added: it checks `desktop-windows.yml`, which does not exist until BL-442.
 - `all-green` is not part of BL-441 (spec lists it only in the workflow-name section); not added.
 - Go 1.27.4 bump (D16): not done; no way to check `go.dev/dl` for 1.27.4 from here and the 1.27.3 toolchain is what ran.
