@@ -23,6 +23,11 @@ import (
 // not the GitHub API, so the API's 60-requests-an-hour limit does not apply.
 const DefaultFeedBase = "https://github.com/abhinavjp/unravis/releases/download/update-feed"
 
+// DefaultMirrorBases are tried, in order, only when the main address cannot be reached (network error, rate limit, server
+// error). They hold byte-for-byte copies of the same signed files (the mirror-feed workflow copies them). Trust is the
+// signature, never the host, so a mirror can be stale or hostile and the worst it does is fail to help.
+var DefaultMirrorBases = []string{"https://raw.githubusercontent.com/abhinavjp/unravis/feed-mirror"}
+
 const (
 	fetchTimeout   = 10 * time.Second
 	maxRedirects   = 3
@@ -75,7 +80,14 @@ type Result struct {
 
 // Fetcher checks the feed. Zero values are filled with safe defaults.
 type Fetcher struct {
-	Base      string       // feed base URL, https only, no user info, query or fragment
+	Base string // feed base URL, https only, no user info, query or fragment
+	// Mirrors are other addresses of the same signed files, tried in order only when Base cannot be reached. When Base is left
+	// empty (the real feed) and Mirrors is nil, DefaultMirrorBases is used.
+	Mirrors []string
+	// Folder, when set, reads the feed files from this folder (a local path or a share such as \\server\feed) instead of
+	// from the internet, for servers that cannot reach it. The files are the same signed ones and go through every check;
+	// nothing in the folder is trusted because of where it is. Base and Mirrors are then unused.
+	Folder    string
 	HTTP      *http.Client // nil builds one shared client with the redirect rules below
 	Keys      []Key
 	Build     string // channel of the running build: stable or rc
@@ -141,6 +153,30 @@ func DefaultAllowHost(host string) bool {
 	return false
 }
 
+// mirrorPath is the only place on raw.githubusercontent.com a program reads from. The host serves every repository, so it is
+// allowed by exact path and never as a host.
+const mirrorHost, mirrorPath = "raw.githubusercontent.com", "/abhinavjp/unravis/feed-mirror"
+
+// allowURL is allow for a whole address: the default hosts, plus the one backup path. A custom AllowHost (tests) decides alone.
+func (f *Fetcher) allowURL(u *url.URL) bool {
+	if f.AllowHost != nil {
+		return f.AllowHost(u.Hostname())
+	}
+	if u.Hostname() == mirrorHost {
+		// No dot segments and no escaped slashes or dots: the path must mean what it says.
+		if u.EscapedPath() != u.Path {
+			return false
+		}
+		for _, seg := range strings.Split(u.Path, "/") {
+			if seg == "." || seg == ".." {
+				return false
+			}
+		}
+		return u.Path == mirrorPath || strings.HasPrefix(u.Path, mirrorPath+"/")
+	}
+	return DefaultAllowHost(u.Hostname())
+}
+
 func (f *Fetcher) allow(h string) bool {
 	if f.AllowHost != nil {
 		return f.AllowHost(h)
@@ -164,7 +200,7 @@ func (f *Fetcher) client() *http.Client {
 
 func (f *Fetcher) validBase(base string) error {
 	u, err := url.Parse(base)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !f.allow(u.Hostname()) {
+	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !f.allowURL(u) {
 		return errors.New("the feed address is not an allowed https address")
 	}
 	if p := u.Port(); p != "" && p != "443" && f.AllowHost == nil {
@@ -192,8 +228,19 @@ func (f *Fetcher) Check(ctx context.Context) Result {
 		return Result{Status: StatusRejected, Detail: "a stable build only follows the stable channel"}
 	}
 	base := f.Base
+	mirrors := f.Mirrors
+	if f.Folder != "" {
+		now := time.Now
+		if f.Now != nil {
+			now = f.Now
+		}
+		return f.checkAt(ctx, "folder:"+f.Folder, want, now)
+	}
 	if base == "" {
 		base = DefaultFeedBase
+		if mirrors == nil {
+			mirrors = DefaultMirrorBases
+		}
 	}
 	if err := f.validBase(base); err != nil {
 		return Result{Status: StatusRejected, Detail: err.Error()}
@@ -202,7 +249,35 @@ func (f *Fetcher) Check(ctx context.Context) Result {
 	if f.Now != nil {
 		now = f.Now
 	}
+	res := f.checkAt(ctx, base, want, now)
+	if res.Status != StatusUnreachable || ctx.Err() != nil {
+		return res
+	}
+	// Only "could not reach" moves on to a backup address. A rejected answer (bad signature, rollback) never does.
+	for _, m := range mirrors {
+		if f.validBase(m) != nil {
+			continue
+		}
+		r2 := f.checkAt(ctx, m, want, now)
+		if r2.Status == StatusAvailable || r2.Status == StatusLatest { // a stale or odd backup never replaces the honest "could not reach"
+			if r2.Status == StatusAvailable {
+				// The backup may be behind: it cannot prove that this release was not paused or withdrawn since. So it can say a
+				// newer version exists, but it never starts an install. The main address (or a later check) decides.
+				r2.Status, r2.Held = StatusLatest, true
+				r2.Detail = "version " + r2.Manifest.Version + " exists, but the main update address could not be reached, so it is waiting until that can confirm it is safe to install"
+			}
+			r2.Backoff, r2.RetryIn = res.Backoff, res.RetryIn // the main address still asked us to slow down
+			return r2
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return res
+}
 
+// checkAt runs one check against one address, with the one retry for a pair that failed its check mid-upload.
+func (f *Fetcher) checkAt(ctx context.Context, base, want string, now func() time.Time) Result {
 	res := f.once1(ctx, base, want, now, true)
 	if res.Status == StatusRejected && res.retryable {
 		wait := f.RetryWait
@@ -228,7 +303,8 @@ type attempt struct {
 
 func (f *Fetcher) once1(ctx context.Context, base, want string, now func() time.Time, useCache bool) attempt {
 	f.mu.Lock()
-	c, haveCache := f.cache[want]
+	ck := base + "|" + want // the validators of one address mean nothing at another
+	c, haveCache := f.cache[ck]
 	f.mu.Unlock()
 	sentETag := ""
 	if haveCache && useCache {
@@ -298,13 +374,13 @@ func (f *Fetcher) once1(ctx context.Context, base, want string, now func() time.
 	if f.cache == nil {
 		f.cache = map[string]cached{}
 	}
-	f.cache[want] = cached{manifest, sig, newETag} // stored only now: the ETag is never trusted before the pair verified
+	f.cache[ck] = cached{manifest, sig, newETag} // stored only now: the ETag is never trusted before the pair verified
 	f.mu.Unlock()
 	if err := f.saveState(st); err != nil && !strings.Contains(note, "could not save") {
 		note += " (could not save the update memory: " + err.Error() + ")"
 	}
 	if d == DecisionInstall {
-		hold, why := f.applyControl(&st, mem, ctl, want, m.Version, now())
+		hold, why := f.applyControl(&st, mem, ctl, want, m.Version, now(), f.Folder != "")
 		_ = f.saveState(st) // the control file and the rollout draw are remembered either way
 		if hold {
 			return attempt{Result: Result{Status: StatusLatest, Manifest: m, Detail: why, Held: true}}
@@ -333,10 +409,10 @@ func (f *Fetcher) fetchControl(ctx context.Context, base, want string, now time.
 	return c
 }
 
-// applyControl merges a freshly read control file into the state and says whether this machine must hold the release back.
+// applyControl merges (required: hold the release when there is no live control file at all) a freshly read control file into the state and says whether this machine must hold the release back.
 // A file with a lower seq than the highest ever accepted is ignored (a replay), even when the file that set that floor has
 // since expired. Call with stateMu held; the caller saves the state.
-func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, want, version string, now time.Time) (bool, string) {
+func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, want, version string, now time.Time, required bool) (bool, string) {
 	if st.Control == nil {
 		st.Control = map[string]*Control{}
 	}
@@ -361,6 +437,11 @@ func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, want, ve
 	st.ControlSeq[want], mem.ctlSeq[want] = floor, floor
 	if !ctlLive(cur, now) {
 		delete(st.Control, want)
+		if required {
+			// A folder or share is writable by more people than the feed is, so a missing control file there could be a deleted one.
+			// Without a valid, unexpired control file the release is held until one is copied in (Set-Control.ps1, no switches).
+			return true, "the update folder has no valid control file, so version " + version + " is on hold; copy a current " + want + "-control.json and .sig into the folder"
+		}
 		return false, ""
 	}
 	return cur.Hold(version, func() int {
@@ -384,8 +465,11 @@ func isDev(v string) bool { _, err := ParseVersion(v); return err != nil }
 
 // get reads one feed file. It returns a Result only when the check must stop.
 func (f *Fetcher) get(ctx context.Context, rawURL, etag string) (body []byte, newETag string, notModified bool, stop *Result) {
+	if f.Folder != "" {
+		return f.readFolderFile(rawURL)
+	}
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Scheme != "https" || !f.allow(u.Hostname()) {
+	if err != nil || u.Scheme != "https" || !f.allowURL(u) {
 		return nil, "", false, &Result{Status: StatusRejected, Detail: "the feed address is not an allowed https address"}
 	}
 	cl := *f.client()
@@ -393,7 +477,7 @@ func (f *Fetcher) get(ctx context.Context, rawURL, etag string) (body []byte, ne
 		if len(via) > maxRedirects {
 			return errors.New("too many redirects")
 		}
-		if req.URL.Scheme != "https" || !f.allow(req.URL.Hostname()) {
+		if req.URL.Scheme != "https" || !f.allow(req.URL.Hostname()) { // a redirect may only go to the release hosts, never to the backup host
 			return errors.New("redirect to a host that is not allowed")
 		}
 		return nil
@@ -552,4 +636,33 @@ func NextDelay(interval time.Duration, failures int, retryIn time.Duration, rnd 
 		d += time.Duration(rnd.Int63n(int64(d)/10 + 1))
 	}
 	return d
+}
+
+// readFolderFile reads one feed file from Folder. rawURL is "folder:<path>/<name>"; only the file name is used. The file must
+// be a regular file (not a link) no larger than a feed file. A missing file is "could not reach", like an offline server.
+func (f *Fetcher) readFolderFile(rawURL string) ([]byte, string, bool, *Result) {
+	name := rawURL[strings.LastIndex(rawURL, "/")+1:]
+	if name == "" || strings.ContainsAny(name, `\:`) {
+		return nil, "", false, &Result{Status: StatusRejected, Detail: "the feed file name is not allowed"}
+	}
+	path := filepath.Join(f.Folder, name)
+	if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() {
+		return nil, "", false, &Result{Status: StatusUnreachable, Detail: "the update folder has no " + name, Backoff: true}
+	}
+	fh, err := os.Open(path)
+	if err != nil {
+		return nil, "", false, &Result{Status: StatusUnreachable, Detail: "the update folder could not be read", Backoff: true}
+	}
+	defer fh.Close()
+	if fi, err := fh.Stat(); err != nil || !fi.Mode().IsRegular() { // the file that is open, not the name that may have been swapped
+		return nil, "", false, &Result{Status: StatusUnreachable, Detail: "the update folder has no " + name, Backoff: true}
+	}
+	b, err := io.ReadAll(io.LimitReader(fh, MaxManifestSize+1))
+	if err != nil {
+		return nil, "", false, &Result{Status: StatusUnreachable, Detail: "the update folder could not be read", Backoff: true}
+	}
+	if len(b) > MaxManifestSize {
+		return nil, "", false, &Result{Status: StatusUnreachable, Detail: "the update folder has a feed file that is too large", Backoff: true}
+	}
+	return b, "", false, nil
 }

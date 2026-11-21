@@ -94,6 +94,9 @@ try {
     $back = Join-Path $work 'back'; New-Item -ItemType Directory -Path $back | Out-Null
     Invoke-Checked 'reading back the published pair' { gh release download update-feed --repo $Repo --pattern "$Channel.json*" --dir $back }
     Invoke-Checked 'verifying the published pair' { & $tool verify -in (Join-Path $back "$Channel.json") -sig (Join-Path $back "$Channel.json.sig") -keys $prevKeys -channel $Channel -want $Channel }
+    gh workflow run mirror-feed.yml --repo $Repo 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'Could not start the mirror-feed workflow. The backup copy refreshes by itself every 30 minutes.' }
+    $global:LASTEXITCODE = 0
     Write-Host "Refreshed. The feed is valid again until the new expiry." -ForegroundColor Green
     $done = $true
 } finally {

@@ -1,0 +1,53 @@
+# Copies the signed update-feed files (rc.json, stable.json, the control files and their .sig) to the "feed-mirror" branch, so
+# installed copies have a second place to read them from (raw.githubusercontent.com) when github.com is rate limited or down.
+# It copies bytes and nothing else: trust is the signature, which every program checks, so this workflow holds no key and a
+# wrong copy can only fail to help. Runs every 30 minutes, and right after the release scripts change the feed.
+name: mirror-feed
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17,47 * * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mirror-feed
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Copy the feed files to the feed-mirror branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/feed"
+          gh release download update-feed --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/feed" --pattern '*.json' --pattern '*.json.sig' --clobber
+          # Only the expected names, only small files: nothing else ever goes on the branch.
+          for f in "$RUNNER_TEMP"/feed/*; do
+            n=$(basename "$f")
+            # Anything else on the release is left alone (never copied), so a new asset cannot freeze the mirror.
+            [[ "$n" =~ ^(rc|stable)(-control)?\.json(\.sig)?$ ]] || { echo "skipping $n"; rm -f "$f"; continue; }
+            [ "$(stat -c %s "$f")" -le 65536 ] || { echo "$n is too large"; exit 1; }
+          done
+          ls -l "$RUNNER_TEMP/feed"
+          if git fetch --depth=1 origin feed-mirror 2>/dev/null; then
+            git checkout -q --detach FETCH_HEAD
+            if diff -r -x .git "$RUNNER_TEMP/feed" . >/dev/null 2>&1; then echo "mirror is already current"; exit 0; fi
+          fi
+          git checkout -q --orphan mirror-new
+          git rm -rfq . 2>/dev/null || true
+          cp "$RUNNER_TEMP"/feed/* .
+          git add -- rc.json rc.json.sig stable.json stable.json.sig rc-control.json rc-control.json.sig stable-control.json stable-control.json.sig 2>/dev/null || true
+          git add -A
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -q -m "Mirror of the update-feed release files"
+          # One commit, replaced each time: the branch never grows.
+          git push --force origin mirror-new:feed-mirror
