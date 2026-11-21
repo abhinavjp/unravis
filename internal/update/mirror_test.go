@@ -72,3 +72,23 @@ func TestMirrorCannotRollBackOrForge(t *testing.T) {
 		t.Fatalf("good mirror: %+v", r)
 	}
 }
+
+func TestBackupHostIsAllowedOnlyForItsOwnPath(t *testing.T) {
+	f := &Fetcher{}
+	for url, want := range map[string]bool{
+		"https://raw.githubusercontent.com/abhinavjp/unravis/feed-mirror/rc.json":    true,
+		"https://raw.githubusercontent.com/abhinavjp/unravis/feed-mirror":            true,
+		"https://raw.githubusercontent.com/someone/else/main/rc.json":                false,
+		"https://raw.githubusercontent.com/abhinavjp/unravis/main/rc.json":           false,
+		"https://raw.githubusercontent.com/abhinavjp/unravis/feed-mirror-evil/x":     false,
+		"https://github.com/abhinavjp/unravis/releases/download/update-feed/rc.json": true,
+	} {
+		if err := f.validBase(url); (err == nil) != want {
+			t.Errorf("%s: allowed=%v want %v", url, err == nil, want)
+		}
+	}
+	// The release downloader never gets the backup host.
+	if (&Downloader{}).allow("raw.githubusercontent.com") {
+		t.Error("the downloader allows raw.githubusercontent.com")
+	}
+}

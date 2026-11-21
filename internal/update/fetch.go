@@ -147,10 +147,25 @@ type cached struct {
 // DefaultAllowHost lets the GitHub release-download hosts and nothing else.
 func DefaultAllowHost(host string) bool {
 	switch host {
-	case "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com", "raw.githubusercontent.com":
+	case "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com":
 		return true
 	}
 	return false
+}
+
+// mirrorPath is the only place on raw.githubusercontent.com a program reads from. The host serves every repository, so it is
+// allowed by exact path and never as a host.
+const mirrorHost, mirrorPath = "raw.githubusercontent.com", "/abhinavjp/unravis/feed-mirror"
+
+// allowURL is allow for a whole address: the default hosts, plus the one backup path. A custom AllowHost (tests) decides alone.
+func (f *Fetcher) allowURL(u *url.URL) bool {
+	if f.AllowHost != nil {
+		return f.AllowHost(u.Hostname())
+	}
+	if u.Hostname() == mirrorHost {
+		return u.Path == mirrorPath || strings.HasPrefix(u.Path, mirrorPath+"/")
+	}
+	return DefaultAllowHost(u.Hostname())
 }
 
 func (f *Fetcher) allow(h string) bool {
@@ -176,7 +191,7 @@ func (f *Fetcher) client() *http.Client {
 
 func (f *Fetcher) validBase(base string) error {
 	u, err := url.Parse(base)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !f.allow(u.Hostname()) {
+	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !f.allowURL(u) {
 		return errors.New("the feed address is not an allowed https address")
 	}
 	if p := u.Port(); p != "" && p != "443" && f.AllowHost == nil {
@@ -356,7 +371,7 @@ func (f *Fetcher) once1(ctx context.Context, base, want string, now func() time.
 		note += " (could not save the update memory: " + err.Error() + ")"
 	}
 	if d == DecisionInstall {
-		hold, why := f.applyControl(&st, mem, ctl, want, m.Version, now())
+		hold, why := f.applyControl(&st, mem, ctl, want, m.Version, now(), f.Folder != "")
 		_ = f.saveState(st) // the control file and the rollout draw are remembered either way
 		if hold {
 			return attempt{Result: Result{Status: StatusLatest, Manifest: m, Detail: why, Held: true}}
@@ -385,10 +400,10 @@ func (f *Fetcher) fetchControl(ctx context.Context, base, want string, now time.
 	return c
 }
 
-// applyControl merges a freshly read control file into the state and says whether this machine must hold the release back.
+// applyControl merges (required: hold the release when there is no live control file at all) a freshly read control file into the state and says whether this machine must hold the release back.
 // A file with a lower seq than the highest ever accepted is ignored (a replay), even when the file that set that floor has
 // since expired. Call with stateMu held; the caller saves the state.
-func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, want, version string, now time.Time) (bool, string) {
+func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, want, version string, now time.Time, required bool) (bool, string) {
 	if st.Control == nil {
 		st.Control = map[string]*Control{}
 	}
@@ -413,6 +428,11 @@ func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, want, ve
 	st.ControlSeq[want], mem.ctlSeq[want] = floor, floor
 	if !ctlLive(cur, now) {
 		delete(st.Control, want)
+		if required {
+			// A folder or share is writable by more people than the feed is, so a missing control file there could be a deleted one.
+			// Without a valid, unexpired control file the release is held until one is copied in (Set-Control.ps1, no switches).
+			return true, "the update folder has no valid control file, so version " + version + " is on hold; copy a current " + want + "-control.json and .sig into the folder"
+		}
 		return false, ""
 	}
 	return cur.Hold(version, func() int {
@@ -440,7 +460,7 @@ func (f *Fetcher) get(ctx context.Context, rawURL, etag string) (body []byte, ne
 		return f.readFolderFile(rawURL)
 	}
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Scheme != "https" || !f.allow(u.Hostname()) {
+	if err != nil || u.Scheme != "https" || !f.allowURL(u) {
 		return nil, "", false, &Result{Status: StatusRejected, Detail: "the feed address is not an allowed https address"}
 	}
 	cl := *f.client()
@@ -448,7 +468,7 @@ func (f *Fetcher) get(ctx context.Context, rawURL, etag string) (body []byte, ne
 		if len(via) > maxRedirects {
 			return errors.New("too many redirects")
 		}
-		if req.URL.Scheme != "https" || !f.allow(req.URL.Hostname()) {
+		if req.URL.Scheme != "https" || !f.allow(req.URL.Hostname()) { // a redirect may only go to the release hosts, never to the backup host
 			return errors.New("redirect to a host that is not allowed")
 		}
 		return nil

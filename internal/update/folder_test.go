@@ -21,6 +21,17 @@ func writeFolderFeed(t *testing.T, dir, channel string, m Manifest, k Key, priv 
 	}
 }
 
+func writeFolderControl(t *testing.T, dir, channel string, c Control, k Key, priv ed25519.PrivateKey) {
+	t.Helper()
+	b, _ := json.Marshal(c)
+	if err := os.WriteFile(filepath.Join(dir, channel+"-control.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, channel+"-control.json.sig"), []byte(FormatSignature(k.Pub, ed25519.Sign(priv, b))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func folderFetcher(t *testing.T, dir string, k Key) *Fetcher {
 	return &Fetcher{Folder: dir, Keys: []Key{k}, Build: ChannelRC, Current: "0.1.0-rc.47",
 		StatePath: filepath.Join(t.TempDir(), "state.json"), Now: func() time.Time { return now }}
@@ -34,9 +45,20 @@ func TestFolderFeedIsVerifiedLikeTheInternetOne(t *testing.T) {
 		t.Fatalf("empty folder: %+v", r)
 	}
 	writeFolderFeed(t, dir, "rc", goodManifest("0.1.0-rc.48", ChannelRC), k, priv)
+	// No control file in a folder: held, because a deleted control file must not undo a pause or withdrawal.
+	if r := f.Check(t.Context()); r.Status != StatusLatest || !r.Held {
+		t.Fatalf("no control file in the folder: %+v", r)
+	}
+	writeFolderControl(t, dir, "rc", goodControl(ChannelRC), k, priv)
 	if r := f.Check(t.Context()); r.Status != StatusAvailable || r.Manifest.Version != "0.1.0-rc.48" {
 		t.Fatalf("%+v", r)
 	}
+	// Deleting the control file afterwards changes nothing: the remembered one still counts until it expires.
+	os.Remove(filepath.Join(dir, "rc-control.json"))
+	if r := f.Check(t.Context()); r.Status != StatusAvailable {
+		t.Fatalf("after the control file was removed: %+v", r)
+	}
+	writeFolderControl(t, dir, "rc", goodControl(ChannelRC), k, priv)
 	// A manifest signed by someone else is refused, wherever it sits.
 	other, op := key(t, ChannelRC)
 	writeFolderFeed(t, dir, "rc", goodManifest("0.1.0-rc.49", ChannelRC), other, op)
@@ -53,10 +75,8 @@ func TestFolderFeedIsVerifiedLikeTheInternetOne(t *testing.T) {
 	// A control file in the folder works too.
 	writeFolderFeed(t, dir, "rc", goodManifest("0.1.0-rc.48", ChannelRC), k, priv)
 	c := goodControl(ChannelRC)
-	c.Pause = true
-	cb, _ := json.Marshal(c)
-	os.WriteFile(filepath.Join(dir, "rc-control.json"), cb, 0o644)
-	os.WriteFile(filepath.Join(dir, "rc-control.json.sig"), []byte(FormatSignature(k.Pub, ed25519.Sign(priv, cb))), 0o644)
+	c.Seq, c.Pause = 500, true
+	writeFolderControl(t, dir, "rc", c, k, priv)
 	if r := f.Check(t.Context()); r.Status != StatusLatest || !r.Held {
 		t.Fatalf("control in folder: %+v", r)
 	}
