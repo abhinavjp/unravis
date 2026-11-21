@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 
@@ -20,9 +21,12 @@ var afterProofHook func()
 
 // ReadFileProven opens path once without following a link and proves it on that handle before reading a byte: a plain disk file,
 // not a folder, not a link, one name only (a hard link would let a person's own file stand here), at the path asked for, owned by the
-// system, the administrators or the account running, and writable by nobody else. The bytes (at most max) come from the same handle;
+// system or the administrators group (not the account running: its owner could rewrite the list unseen), and writable by nobody else. The bytes (at most max) come from the same handle;
 // the path is never opened again. The file is opened share-read only, so nobody can write, rename or delete it while it is read.
 func (osSecurity) ReadFileProven(path string, max int64) ([]byte, error) {
+	if max <= 0 || max == math.MaxInt64 {
+		return nil, fmt.Errorf("%w: the size limit %d is not usable", ErrNotProven, max)
+	}
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
@@ -31,8 +35,12 @@ func (osSecurity) ReadFileProven(path string, max int64) ([]byte, error) {
 	h, err := windows.CreateFile(p, windows.GENERIC_READ, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING,
 		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
-		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
+		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
 			return nil, os.ErrNotExist
+		}
+		if errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
+			// A folder above the file is gone, or is a link to nothing: that is not "no journal", it is a path nobody proved.
+			return nil, fmt.Errorf("%w: a folder above it is not there", ErrNotProven)
 		}
 		return nil, err
 	}
@@ -73,9 +81,8 @@ func (osSecurity) ReadFileProven(path string, max int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	self, _ := CurrentUserSID()
-	if !journalFileOwnerOK(fs.Owner, self) {
-		return refuse(fmt.Sprintf("it is owned by %s", fs.Owner))
+	if !journalFileOwnerOK(fs.Owner) {
+		return refuse(fmt.Sprintf("it is owned by %s, not the system or the administrators", fs.Owner))
 	}
 	if err := checkNoOthersWrite(path, fs); err != nil {
 		return refuse(err.Error())

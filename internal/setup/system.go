@@ -119,9 +119,12 @@ type FileSecurity interface {
 	// moment when it has the parent's permissions. It fails with os.ErrExist when the file is already there.
 	CreateFileSDDL(path, sddl string, data []byte) error
 	// ReadFileProven opens path once without following a link, proves it on that handle (a plain disk file, no link, one name, the
-	// owner and access list of a file only administrators made) and returns at most max bytes read from the same handle; it never
-	// reopens the path. os.ErrNotExist: not there. errors.Is(err, ErrNotProven): refused (the text says why). Any other error is a
-	// refusal too. The file is never changed.
+	// path is the real path, owned by the system or the administrators group, and nobody else may write it or change its list) and
+	// returns at most max bytes read from the same handle; it never reopens the path. path must be the full long (canonical) path:
+	// an 8.3 short name or a mapped drive is refused. The folders above the file are NOT proven here (the open follows a link in
+	// them, and the final-path check then refuses it); the caller proves them. os.ErrNotExist: the file is not there (the folder
+	// above it is, or Windows said so). errors.Is(err, ErrNotProven): refused (the text says why), which includes a missing folder
+	// above it. Any other error is a refusal too. The file is never changed.
 	ReadFileProven(path string, max int64) ([]byte, error)
 }
 

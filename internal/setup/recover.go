@@ -24,15 +24,14 @@ func (r *Runner) JournalPending(elevated bool) bool {
 	return err != nil || !j.f.Committed // one that cannot be read is dealt with (and reported) by the replay
 }
 
-// journalFileOwnerOK says whether owner is an account that may own the machine journal file: the system, the administrators, or self
-// (the account of the elevated process that is reading it; "" means none known). The file sits in a folder only administrators can
-// write, but Windows does not always give a new file the owner the list names, so the account that made it is accepted too.
-func journalFileOwnerOK(owner, self string) bool {
-	switch owner {
-	case "S-1-5-18", "S-1-5-32-544":
-		return true
-	}
-	return self != "" && strings.EqualFold(owner, self)
+// journalFileOwnerOK says whether owner may own the machine journal file: only the system or the administrators group. The account
+// that runs the elevated copy is deliberately not accepted. A normal administrator runs an elevated and an unelevated process under
+// the same account, and the owner of a file always holds the right to rewrite its access list (WRITE_DAC), which no entry in the list
+// shows: an unelevated program could open the file, grant itself write, change the undo list and put the list back, and the file
+// would still look administrators-only. A group the unelevated token holds only as "deny only" (Administrators) has no such right.
+// A journal that the elevated account itself owns is therefore refused (and kept); setup writes it so that it is not.
+func journalFileOwnerOK(owner string) bool {
+	return owner == "S-1-5-18" || owner == "S-1-5-32-544"
 }
 
 // MachineJournalTrusted says whether the machine journal's folder is one only administrators can change, which is the condition for

@@ -3,6 +3,7 @@ package setup
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,22 +15,20 @@ import (
 )
 
 func TestJournalFileOwnerRule(t *testing.T) {
-	const self = "S-1-5-21-2000"
 	for _, c := range []struct {
-		owner, self string
-		want        bool
+		owner string
+		want  bool
 	}{
-		{"S-1-5-18", "", true},
-		{"S-1-5-32-544", "", true},
-		{self, self, true},
-		{strings.ToLower(self), self, true},
-		{"S-1-5-21-1000", self, false},
-		{"", "", false},
-		{"S-1-5-21-1000", "", false},
-		{"S-1-5-32-545", self, false}, // Users
+		{"S-1-5-18", true},
+		{"S-1-5-32-544", true},
+		{"S-1-5-21-1000", false}, // a person, also the account an elevated copy runs as: it could rewrite the list unseen
+		{"S-1-5-21-2000", false},
+		{"", false},
+		{"S-1-5-32-545", false}, // Users
+		{"S-1-3-0", false},      // creator owner
 	} {
-		if got := journalFileOwnerOK(c.owner, c.self); got != c.want {
-			t.Errorf("journalFileOwnerOK(%q, %q) = %v, want %v", c.owner, c.self, got, c.want)
+		if got := journalFileOwnerOK(c.owner); got != c.want {
+			t.Errorf("journalFileOwnerOK(%q) = %v, want %v", c.owner, got, c.want)
 		}
 	}
 }
@@ -121,6 +120,11 @@ func TestFakeReadFileProvenRefusesALinkAndAnOversizeFile(t *testing.T) {
 	}
 	if _, err := e.f.Sec.ReadFileProven(dir, 100); !errors.Is(err, ErrNotProven) {
 		t.Fatalf("a folder gave %v, want ErrNotProven", err)
+	}
+	for _, bad := range []int64{0, -1, math.MaxInt64} {
+		if _, err := e.f.Sec.ReadFileProven(real, bad); !errors.Is(err, ErrNotProven) {
+			t.Fatalf("max %d gave %v, want ErrNotProven", bad, err)
+		}
 	}
 }
 

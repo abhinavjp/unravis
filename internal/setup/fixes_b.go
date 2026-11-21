@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -176,7 +177,7 @@ func (r *Runner) splitApps(running []Process) (mine, others []Process) {
 
 // ReadFileProven is the fake of FileSecurity.ReadFileProven. The file must be a plain file (not a link of any kind) of at most max
 // bytes; its list is its own when one was set, else the folder's (a file inherits, as on Windows); the owner must pass the owner rule
-// with no "running account" and nobody else may write it. The fake cannot count hard links: that proof is the Windows one's.
+// (system or administrators only) and nobody else may write it. The fake cannot count hard links: that proof is the Windows one's.
 func (f *FakeSecurity) ReadFileProven(path string, max int64) ([]byte, error) {
 	if err := f.Faults.check("sec.ReadFileProven:" + path); err != nil {
 		return nil, err
@@ -187,6 +188,9 @@ func (f *FakeSecurity) ReadFileProven(path string, max int64) ([]byte, error) {
 	}
 	if !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: it is not a plain file", ErrNotProven)
+	}
+	if max <= 0 || max == math.MaxInt64 {
+		return nil, fmt.Errorf("%w: the size limit %d is not usable", ErrNotProven, max)
 	}
 	if fi.Size() > max {
 		return nil, fmt.Errorf("%w: it is too large (%d bytes, at most %d)", ErrNotProven, fi.Size(), max)
@@ -204,7 +208,7 @@ func (f *FakeSecurity) ReadFileProven(path string, max int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !journalFileOwnerOK(fs.Owner, "") {
+	if !journalFileOwnerOK(fs.Owner) {
 		return nil, fmt.Errorf("%w: it is owned by %s", ErrNotProven, fs.Owner)
 	}
 	if err := checkNoOthersWrite(path, fs); err != nil {
