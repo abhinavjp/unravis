@@ -20,7 +20,7 @@ Eight specs were written in parallel and disagreed in places. These rulings are 
 | CI | `ci.yml` stays on `windows-2022`. New desktop jobs in `desktop-windows.yml` on `windows-2025`. One always-run `ci / all-green` job is the required check. Code sandbox gets `code-sandbox.yml`. |
 | Rust layout | `desktop/` is a Cargo workspace: `src-tauri` plus pure crate `desktop/ipc-core` (parsers, policy tables; testable on Linux). Lock at `desktop/Cargo.lock`. |
 | Contracts | JSON Schema plus golden files in `contracts/`. No OpenAPI generation (supersedes DECISIONS section 11). |
-| Go test baseline | Today 9 failing `internal/server` tests on Linux (not 19). BL-441 writes `docs/desktop/baseline-go-tests.txt`; cite the file. |
+| Go test baseline | Today on Linux about 382 Go tests fail (internal/blackbox 176, internal/setup 136+, cmd/unravis-blackbox 33, cmd/unravis-setup 11, autostart 10, internal/server 9+, others; all Windows-only causes). BL-441 wrote `docs/desktop/baseline-go-tests.txt`; cite the file. |
 | Bulk chart data | Pipe through the Rust relay. Loopback only if BL-313 benchmark fails the p95 <= 100 ms for 1 MB rule, and then as a recorded exception. |
 | WebView2 config | One file `lockdown.rs` with `security()` (02) and `network()` (07). `build_main_window` is the only window constructor. |
 | Window idle | BL-308 simple hide/destroy first; BL-427 replaces the timer with `idle.rs`. Idle clock is `Updater.InUse()` plus `internal/power`. |
