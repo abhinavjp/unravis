@@ -180,32 +180,37 @@ test('AUDIT-04: on a closed case every control of the page is off', async ({ pag
   await expect(page.getByRole('tabpanel').getByRole('button', { name: 'Add Mongo source' })).toBeDisabled();
 });
 
-test('AUDIT-05: the create wizard ticks the audit-looking database by default, the review does not warn, and the case is made with it connected and tagged', async ({ page }) => {
+test('AUDIT-05: the create wizard suggests the audit-looking database without switching it on, the review does not warn, and the case is made with it connected and tagged', async ({ page }) => {
   const edge = await mockMongo(page);
   await goHome(page);
   await page.getByRole('button', { name: 'Create a new case' }).click();
   await page.getByLabel('Case name').fill('QA audit database wizard');
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
-  await page.getByRole('button', { name: 'Connect to MongoDB' }).click();
+  await page.getByRole('button', { name: /^MongoDB/ }).click();
   await page.getByLabel('Use a saved connection').selectOption({ index: 1 });
   await page.getByRole('button', { name: 'Test and list databases' }).click();
   const auditDb = page.getByRole('group', { name: AUDIT_DB });
   const appDb = page.getByRole('group', { name: APP_DB });
-  await expect(auditDb.getByRole('checkbox', { name: /API audit logs/ })).toBeChecked();
-  await expect(auditDb.getByRole('checkbox', { name: /Application data/ })).not.toBeChecked();
-  await expect(appDb.getByRole('checkbox', { name: /API audit logs/ })).not.toBeChecked();
-  await shot(page, 'p6-1-wizard-audit-ticked-by-default');
+  // The audit-looking name is suggested, not switched on for the person.
+  await expect(auditDb.getByRole('switch', { name: /API audit logs/ })).not.toBeChecked();
+  await expect(auditDb.getByText('The name looks like an API audit log. Switch it on if it is.')).toBeVisible();
+  await expect(auditDb.getByRole('switch', { name: /Application data/ })).not.toBeChecked();
+  await expect(appDb.getByRole('switch', { name: /API audit logs/ })).not.toBeChecked();
+  await shot(page, 'p6-1-wizard-audit-suggested');
 
-  // Unticked, the review says plainly that no API audit source will be read.
-  await auditDb.getByRole('checkbox', { name: /API audit logs/ }).uncheck();
+  // Not switched on, the review says plainly that no API audit source will be read.
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByText('No API audit source will be read.')).toBeVisible();
   await shot(page, 'p6-2-review-no-audit-source');
   await page.getByRole('button', { name: 'Back' }).click();
-  const open = page.getByRole('button', { name: 'Connect to MongoDB' });
-  if (await open.getAttribute('aria-expanded') !== 'true') await open.click();
-  await auditDb.getByRole('checkbox', { name: /API audit logs/ }).check();
+  const open = page.getByRole('button', { name: /^MongoDB/ });
+  if (await open.count()) await open.click();
+  if (!(await auditDb.count())) {
+    await page.getByLabel('Use a saved connection').selectOption({ index: 1 });
+    await page.getByRole('button', { name: 'Test and list databases' }).click();
+  }
+  await auditDb.getByRole('switch', { name: /API audit logs/ }).check();
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByText('No API audit source will be read.')).toHaveCount(0);
   await shot(page, 'p6-3-review-with-audit-source');
@@ -223,11 +228,11 @@ async function createWizardCase(page: Page, name: string, collection = '') {
   await page.getByRole('button', { name: 'Create a new case' }).click();
   await page.getByLabel('Case name').fill(name);
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('button', { name: 'Connect to MongoDB' }).click();
+  await page.getByRole('button', { name: /^MongoDB/ }).click();
   await page.getByLabel('Use a saved connection').selectOption({ index: 1 });
   if (collection !== '') await page.getByLabel('Audit log collection').fill(collection);
   await page.getByRole('button', { name: 'Test and list databases' }).click();
-  await expect(page.getByRole('group', { name: AUDIT_DB }).getByRole('checkbox', { name: /API audit logs/ })).toBeChecked();
+  await page.getByRole('group', { name: AUDIT_DB }).getByRole('switch', { name: /API audit logs/ }).check();
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('button', { name: 'Create case', exact: true }).click();
 }
