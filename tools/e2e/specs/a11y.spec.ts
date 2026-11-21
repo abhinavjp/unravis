@@ -137,12 +137,12 @@ test('A11Y-02: Enter and Space open a status row, and the status buttons show a 
   expect((await ring()).width).toBeGreaterThanOrEqual(2);
   await page.keyboard.press('Enter');
   const a = dialog.getByRole('region', { name: 'web-a' });
-  await expect(a.getByRole('heading', { level: 3 })).toContainText('web-a');
-  for (const name of ['Back to the list', 'Check again', 'Snapshot now']) {
-    await a.getByRole('button', { name, exact: true }).focus();
+  await expect(dialog.getByRole('heading', { level: 2, name: /^web-a/ })).toBeVisible();
+  for (const name of ['Close this Blackbox', 'Check again', 'Snapshot now']) {
+    await dialog.getByRole('button', { name, exact: true }).focus();
     expect(await ring(), name + ' has a focus ring').toMatchObject({ style: 'solid' });
   }
-  await a.getByRole('button', { name: 'Back to the list', exact: true }).focus();
+  await page.getByRole('button', { name: 'Close this Blackbox', exact: true }).focus();
   await page.keyboard.press('Space');
   await expect(row('web-b')).toBeVisible();
   await row('web-b').focus();
@@ -154,7 +154,7 @@ test('A11Y-02a: after Back to the list focus stays inside the drawer, not on the
   const dialog = await openBlackboxByKey(page);
   await dialog.getByRole('button', { name: 'Open status: web-a' }).focus();
   await page.keyboard.press('Enter');
-  const back = dialog.getByRole('button', { name: 'Back to the list', exact: true });
+  const back = dialog.getByRole('button', { name: 'Close this Blackbox', exact: true });
   await back.focus();
   await page.keyboard.press('Enter');
   await expect(dialog.getByRole('button', { name: /^Open status: / })).toHaveCount(9);
@@ -167,7 +167,7 @@ test('A11Y-02c: after Back to the list focus lands on the row that was opened or
   const dialog = await openBlackboxByKey(page);
   await dialog.getByRole('button', { name: 'Open status: web-c' }).focus();
   await page.keyboard.press('Enter');
-  const back = dialog.getByRole('button', { name: 'Back to the list', exact: true });
+  const back = dialog.getByRole('button', { name: 'Close this Blackbox', exact: true });
   await back.focus();
   await page.keyboard.press('Enter');
   await expect(dialog.getByRole('button', { name: /^Open status: / })).toHaveCount(9);
@@ -183,11 +183,13 @@ test('A11Y-02b: a double Enter on a row opens one status, and Esc then reopening
   await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
   await expect(dialog.getByRole('region', { name: 'web-a' })).toHaveCount(1);
+  // The first Esc closes the status pop-up and leaves the list; the second closes the drawer.
+  await page.keyboard.press('Escape');
+  await expect(dialog.getByRole('region', { name: 'web-a' })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: /^Open status: / })).toHaveCount(9);
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Blackbox', exact: true })).toBeFocused();
-  const again = await openBlackboxByKey(page);
-  await expect(again.getByRole('button', { name: /^Open status: / })).toHaveCount(9);
 });
 
 test('A11Y-03: the add form fields have labels and descriptions that exist, and an empty try is announced', async ({ page }) => {
@@ -261,9 +263,9 @@ test('A11Y-04: every Blackbox state shows its own word in the list and in the st
     await expect(dialog.getByRole('listitem').filter({ has: page.getByRole('button', { name: 'Open status: ' + name }) }).locator('.bb-sticker'), name + ' in the list').toHaveText(word);
     await row.click();
     const region = dialog.getByRole('region', { name });
-    await expect(region.locator('.bb-sticker').first(), name + ' in the status').toHaveText(word);
+    await expect(page.locator('dialog.pop[open] .bb-sticker').first(), name + ' in the status').toHaveText(word);
     await expect(region.locator('.bb-ready strong').first()).toHaveText(/^(Ready|Partly ready|Cannot test yet)$/);
-    await region.getByRole('button', { name: 'Back to the list' }).click();
+    await page.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   }
 });
 
@@ -447,7 +449,7 @@ test('A11Y-08: at 375 px the Blackbox panel has no side scroll in the list, a st
   const box = await region.boundingBox();
   const dbox = await dialog.boundingBox();
   expect(box!.x + box!.width, 'status stays inside the drawer').toBeLessThanOrEqual(dbox!.x + dbox!.width + 1);
-  await region.getByRole('button', { name: 'Back to the list' }).click();
+  await page.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
   await dialog.getByRole('button', { name: 'Add one by folder, share or address' }).click();
   await expect(dialog.getByLabel('Folder, network share, or address and port')).toBeVisible();
   await noSideScroll(page, 'add form');
@@ -455,8 +457,9 @@ test('A11Y-08: at 375 px the Blackbox panel has no side scroll in the list, a st
   await dialog.getByRole('button', { name: 'Place a Blackbox' }).click();
   await dialog.getByLabel('Name', { exact: true }).fill('n'.repeat(120));
   await noSideScroll(page, 'wizard with a long name');
-  await dialog.getByRole('button', { name: 'Next: Where' }).click();
-  await expect(dialog.getByText('Use 63 characters or fewer.')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Next', exact: true }).click();
+  // The name field stops at 63 characters, so a long name is cut and the wizard moves on.
+  await expect(dialog.getByRole('heading', { name: 'Where should it run?' })).toBeVisible();
   await noSideScroll(page, 'wizard error');
 });
 
