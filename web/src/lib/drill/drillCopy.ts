@@ -229,10 +229,12 @@ export const DRILL_TEXT = {
   dbSrcOffKept: 'Query Store (off), kept history',
   dbMsgOffKept: (from: string | null, to: string | null): string =>
     from && to
-      ? `Query Store is off. The blocks show the history it kept, from ${from} to ${to}. The time outside that range is unknown, not zero.`
+      ? `Query Store is off. The blocks show the history it kept, from the block starting ${from} to the block starting ${to}. The time outside that range is unknown, not zero.`
       : 'Query Store is off. The blocks show history saved earlier. The time outside it is unknown, not zero.',
   dbMsgOffOutside: (from: string, to: string): string =>
-    `Query Store is off. It kept history from ${from} to ${to}, but none of it is for this time. The database owner can switch it on; Unravis never does.`,
+    `Query Store is off. It kept history from the block starting ${from} to the block starting ${to}, but none of it is for this time. The database owner can switch it on; Unravis never does.`,
+  dbMsgOffNotRead: (from: string, to: string): string =>
+    `Query Store is off. It kept history from the block starting ${from} to the block starting ${to}, which may include this time, but the database was not read for it. Go back to the timeline and read the database for a window that covers this call.`,
   dbMsgReadOnly: 'Query Store is read-only, so it has stopped saving new history. This often happens when its storage is full. Older history is still shown.',
   dbMsgLate: (time: string): string => `Query Store has nothing before ${time}. It was switched on later, or the older history was cleaned up. The time before that is unknown, not zero.`,
   dbMsgDenied: 'The saved database login is not allowed to read Query Store. It needs the VIEW DATABASE STATE permission. Ask the database owner, or add a login that has it.',
@@ -375,6 +377,7 @@ const SAMPLE = {
   dbMsgLate: '10:30',
   dbMsgOffKept: ['11 Nov 2026, 10:00', '11 Nov 2026, 10:45'] as const,
   dbMsgOffOutside: ['11 Nov 2026, 10:00', '11 Nov 2026, 10:45'] as const,
+  dbMsgOffNotRead: ['11 Nov 2026, 10:00', '11 Nov 2026, 10:45'] as const,
   tabNearbyCalls: 12,
   tabAllSources: 12,
   nearbyHint: ['10:00', '10:30', 12] as const,
@@ -443,6 +446,7 @@ export const drillCopyEntries = (): LintEntry[] => {
     ['dbMsgLate', DRILL_TEXT.dbMsgLate(SAMPLE.dbMsgLate)],
     ['dbMsgOffKept', DRILL_TEXT.dbMsgOffKept(...SAMPLE.dbMsgOffKept)],
     ['dbMsgOffOutside', DRILL_TEXT.dbMsgOffOutside(...SAMPLE.dbMsgOffOutside)],
+    ['dbMsgOffNotRead', DRILL_TEXT.dbMsgOffNotRead(...SAMPLE.dbMsgOffNotRead)],
     ['tabNearbyCalls', DRILL_TEXT.tabNearbyCalls(SAMPLE.tabNearbyCalls)],
     ['tabAllSources', DRILL_TEXT.tabAllSources(SAMPLE.tabAllSources)],
     ['nearbyHint', DRILL_TEXT.nearbyHint(...SAMPLE.nearbyHint)],

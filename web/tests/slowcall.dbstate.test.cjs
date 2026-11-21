@@ -24,7 +24,9 @@ function loadTypeScript(relativePath) {
 }
 
 const { dbState, DB_STATE_KEYS } = loadTypeScript('src/lib/drill/dbState.ts');
-const { DRILL_TEXT: T } = loadTypeScript('src/lib/drill/drillCopy.ts');
+const { DRILL_TEXT: T, drillCopyEntries } = loadTypeScript('src/lib/drill/drillCopy.ts');
+const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
+const { deck } = loadTypeScript('src/lib/copy/deck.ts');
 
 const fmt = { date: (iso) => 'D(' + iso.slice(0, 10) + ')', time: (iso) => 'T(' + iso.slice(11, 16) + ')' };
 const WS = Date.parse('2026-11-11T10:00:00Z');
@@ -191,11 +193,12 @@ test('offkept: off with a drawn held series', () => {
   assert.equal(v.key, 'offkept');
   assert.equal(v.shape, 'blocks');
   assert.equal(v.source, T.dbSrcOffKept);
-  assert.equal(v.message, T.dbMsgOffKept(stampOf(FIRST), stampOf('2026-11-11T11:00:00Z')));
+  // The range ends at the START of the newest block: that block may be partial, so no block length is added.
+  assert.equal(v.message, T.dbMsgOffKept(stampOf(FIRST), stampOf(LAST)));
   assert.equal(v.short, T.dbShortOffKept);
 });
 
-test('offkept without a block length ends the range at the newest block start', () => {
+test('offkept without a block length gives the same range', () => {
   const v = run({ ...held, queryStore: { state: 'off', firstData: FIRST, lastData: LAST } });
   assert.equal(v.key, 'offkept');
   assert.equal(v.message, T.dbMsgOffKept(stampOf(FIRST), stampOf(LAST)));
@@ -223,12 +226,48 @@ test('off with events and a held series is offkept', () => {
   assert.equal(run({ ...held, hasEvents: true, queryStore: { state: 'off' } }).key, 'offkept');
 });
 
-test('off with first and last but no shape names the range', () => {
-  const v = run({ queryStore: { state: 'off', firstData: FIRST, lastData: LAST } });
+// The window of the call is 10:00 to 11:00 on 11 Nov. The kept range ends with a block that starts at 10:45 and lasts 15 minutes.
+const kept = (firstData, lastData, over = {}) => run({ blockSeconds: 900, queryStore: { state: 'off', firstData, lastData }, ...over });
+const outside = (from, to) => T.dbMsgOffOutside(stampOf(from), stampOf(to));
+const notRead = (from, to) => T.dbMsgOffNotRead(stampOf(from), stampOf(to));
+
+test('off, no shape, window inside the kept range: not read for this time, never "none of it is for this time"', () => {
+  const v = kept('2026-11-11T09:00:00Z', LAST);
   assert.equal(v.key, 'off');
-  assert.equal(v.message, T.dbMsgOffOutside(stampOf(FIRST), stampOf(LAST)));
+  assert.equal(v.message, notRead('2026-11-11T09:00:00Z', LAST));
+  assert.notEqual(v.message, outside('2026-11-11T09:00:00Z', LAST));
   assert.equal(v.short, T.dbShortOff);
   assert.equal(v.shape, 'none');
+  assert.doesNotMatch(v.message, /none of it is for this time/);
+});
+
+test('off, no shape, window that overlaps either end of the kept range: not read', () => {
+  assert.equal(kept('2026-11-11T10:30:00Z', '2026-11-11T12:00:00Z').message, notRead('2026-11-11T10:30:00Z', '2026-11-11T12:00:00Z'));
+  assert.equal(kept('2026-11-10T00:00:00Z', '2026-11-11T10:15:00Z').message, notRead('2026-11-10T00:00:00Z', '2026-11-11T10:15:00Z'));
+});
+
+test('off, no shape, window after the kept range: none of it is for this time', () => {
+  const last = '2026-11-11T09:30:00Z'; // the newest block ends at 09:45, before the window starts at 10:00
+  assert.equal(kept(FIRST, last).message, outside(FIRST, last));
+  // A block that ends exactly where the window starts is outside, a block still running into the window is not.
+  assert.equal(kept(FIRST, '2026-11-11T09:45:00Z').message, outside(FIRST, '2026-11-11T09:45:00Z'));
+  assert.equal(kept(FIRST, '2026-11-11T09:46:00Z').message, notRead(FIRST, '2026-11-11T09:46:00Z'));
+});
+
+test('off, no shape, window before the kept range: none of it is for this time', () => {
+  const first = '2026-11-11T11:00:00Z'; // the window ends at 11:00, as the oldest block starts
+  assert.equal(kept(first, '2026-11-11T12:00:00Z').message, outside(first, '2026-11-11T12:00:00Z'));
+  assert.equal(kept('2026-11-11T10:59:00Z', '2026-11-11T12:00:00Z').message, notRead('2026-11-11T10:59:00Z', '2026-11-11T12:00:00Z'));
+});
+
+test('off, no shape, block length unknown: the end of the range cannot be placed, so a later window is not read, not outside', () => {
+  const v = run({ queryStore: { state: 'off', firstData: FIRST, lastData: '2026-11-11T09:30:00Z' } });
+  assert.equal(v.message, notRead(FIRST, '2026-11-11T09:30:00Z'));
+  // The saved block length from the day is used when the lane sent none.
+  const w = run({ queryStore: { state: 'off', firstData: FIRST, lastData: '2026-11-11T09:30:00Z', intervalMinutes: 15 } });
+  assert.equal(w.message, outside(FIRST, '2026-11-11T09:30:00Z'));
+  // A window before the range is outside whatever the block length is.
+  assert.equal(run({ queryStore: { state: 'off', firstData: '2026-11-11T11:00:00Z', lastData: '2026-11-11T12:00:00Z' } }).message, outside('2026-11-11T11:00:00Z', '2026-11-11T12:00:00Z'));
 });
 
 test('off with only a first time keeps the plain off message', () => {
@@ -241,4 +280,12 @@ test('denied still wins over a drawn off series', () => {
 
 test('offkept is real-data only: it is not one of the demo keys', () => {
   assert.equal(DB_STATE_KEYS.includes('offkept'), false);
+});
+
+test('every off-with-history sentence passes the copy lint, including the one without times', () => {
+  const extra = [
+    { id: 'drill.dbMsgOffKept.notimes', text: T.dbMsgOffKept(null, null) },
+    { id: 'drill.dbMsgOffNotRead.sample', text: T.dbMsgOffNotRead('11 Nov 2026, 10:00', '11 Nov 2026, 10:45') }
+  ];
+  assert.deepEqual(lintScreenStrings([...drillCopyEntries(), ...extra], deck.terms), []);
 });
