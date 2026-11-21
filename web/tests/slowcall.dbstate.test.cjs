@@ -179,3 +179,66 @@ test('every pretended state has words and uses sample values when there is no re
 test('shape is none for off, denied and notread in every route', () => {
   for (const key of ['off', 'denied', 'notread']) assert.equal(run({ pretend: key }).shape, 'none', key);
 });
+
+// BL-016: Query Store is off but the lane still draws blocks it kept.
+const FIRST = '2026-11-10T00:00:00Z';
+const LAST = '2026-11-11T10:45:00Z';
+const held = { laneReasonCode: 'held-sql', laneHasShape: true };
+const stampOf = (iso) => fmt.date(iso) + ', ' + fmt.time(iso);
+
+test('offkept: off with a drawn held series', () => {
+  const v = run({ ...held, blockSeconds: 900, queryStore: { state: 'off', firstData: FIRST, lastData: LAST } });
+  assert.equal(v.key, 'offkept');
+  assert.equal(v.shape, 'blocks');
+  assert.equal(v.source, T.dbSrcOffKept);
+  assert.equal(v.message, T.dbMsgOffKept(stampOf(FIRST), stampOf('2026-11-11T11:00:00Z')));
+  assert.equal(v.short, T.dbShortOffKept);
+});
+
+test('offkept without a block length ends the range at the newest block start', () => {
+  const v = run({ ...held, queryStore: { state: 'off', firstData: FIRST, lastData: LAST } });
+  assert.equal(v.key, 'offkept');
+  assert.equal(v.message, T.dbMsgOffKept(stampOf(FIRST), stampOf(LAST)));
+});
+
+test('offkept without times says saved earlier', () => {
+  const v = run({ ...held, blockSeconds: 900, queryStore: { state: 'off' } });
+  assert.equal(v.key, 'offkept');
+  assert.equal(v.message, T.dbMsgOffKept(null, null));
+  assert.match(v.message, /saved earlier/);
+});
+
+test('offkept: layered-sql counts as a drawn series', () => {
+  assert.equal(run({ laneReasonCode: 'layered-sql', laneHasShape: true, queryStore: { state: 'off' } }).key, 'offkept');
+});
+
+test('off with no series is unchanged', () => {
+  const v = run({ queryStore: { state: 'off' } });
+  assert.equal(v.key, 'off');
+  assert.equal(v.message, T.dbMsgOff);
+  assert.equal(run({ ...held, laneHasShape: false, queryStore: { state: 'off' } }).key, 'off');
+});
+
+test('off with events and a held series is offkept', () => {
+  assert.equal(run({ ...held, hasEvents: true, queryStore: { state: 'off' } }).key, 'offkept');
+});
+
+test('off with first and last but no shape names the range', () => {
+  const v = run({ queryStore: { state: 'off', firstData: FIRST, lastData: LAST } });
+  assert.equal(v.key, 'off');
+  assert.equal(v.message, T.dbMsgOffOutside(stampOf(FIRST), stampOf(LAST)));
+  assert.equal(v.short, T.dbShortOff);
+  assert.equal(v.shape, 'none');
+});
+
+test('off with only a first time keeps the plain off message', () => {
+  assert.equal(run({ queryStore: { state: 'off', firstData: FIRST } }).message, T.dbMsgOff);
+});
+
+test('denied still wins over a drawn off series', () => {
+  assert.equal(run({ ...held, queryStore: { state: 'denied' } }).key, 'denied');
+});
+
+test('offkept is real-data only: it is not one of the demo keys', () => {
+  assert.equal(DB_STATE_KEYS.includes('offkept'), false);
+});
