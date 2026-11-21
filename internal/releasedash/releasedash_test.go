@@ -193,3 +193,18 @@ func TestHooksRunForPageAndBye(t *testing.T) {
 		t.Fatal("bye without the code must be ignored")
 	}
 }
+
+func TestClipPathCases(t *testing.T) {
+	for in, want := range map[string]string{
+		`opened C:\Users\Some One\keys\rc-1.key.json today`: "opened <path>",
+		`share \\srv\my share\x failed`:                      "share <path>",
+		`see ..\secret\k and more`:                          "see <path> and more",
+		`ratio 50/50 held`:                                  "ratio 50/50 held",
+		`path /home/me/.ssh/id failed`:                      "path <path> failed",
+		`used rc-2.key.json for sign`:                       "used <path> for sign",
+	} {
+		if got := clip(in); got != want {
+			t.Errorf("%q -> %q, want %q", in, got, want)
+		}
+	}
+}
