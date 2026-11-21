@@ -249,7 +249,7 @@
 </section>
 
 <style>
-  .wizard { display: grid; gap: var(--space-4); width: 100%; max-width: 1100px; min-width: 0; margin: 0 auto; font-size: var(--fs-5); }
+  .wizard { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); width: 100%; max-width: 1100px; min-width: 0; margin: 0 auto; font-size: var(--fs-5); }
   .wiz-top { display: grid; gap: var(--space-2); max-width: 72ch; }
   .wiz-top-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
   .wiz-name { margin: 0; font-size: var(--fs-6); font-weight: 600; }
@@ -301,6 +301,8 @@
   .env-notes { display: grid; gap: var(--space-1); }
 
   .bar { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) 0; background: var(--bg); border-top: var(--hairline-width) solid var(--line); }
+  /* Focus not obscured (WCAG 2.4.11): a control that gets focus scrolls clear of the sticky bar, not under it. */
+  :global(html:has(.wizard .bar)) { scroll-padding-bottom: 96px; }
   .bar .spacer { flex: 1 1 0; }
   .chosen { color: var(--text-2); font-size: var(--fs-3); }
   .blocked { color: var(--text-2); font-size: var(--fs-3); }

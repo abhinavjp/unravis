@@ -18,12 +18,11 @@
 
   // The Blackbox charts view: what one Blackbox recorded, drawn like Perfmon (pick counters, linear or log scale, a figures bar
   // under the chart). The numbers come from POST /api/blackbox/{id}/series, which reads the recordings with the same reader as the
-  // host check. Nothing is collected here. A value that was not read is a break in the line, never 0. Times are UTC, like the panel.
+  // host check. Nothing is collected here. A value that was not read is a break in the line, never 0. Times follow the header's time zone choice, like the panel.
   echarts.use([MarkAreaComponent]);
 
   let { item, onClose }: { item: BlackboxItem; onClose: () => void } = $props();
 
-  const ZONE = 'UTC';
   const POINTS = 600;
   const STORE = 'unravis.bbCharts.';
 
@@ -188,7 +187,7 @@
     const q = everySearch.trim().toLowerCase();
     return pickerGroups(answer.lines).map((g) => ({ ...g, lines: q ? g.lines.filter((l) => (seriesTitle(l.key) + ' ' + l.key).toLowerCase().includes(q)) : g.lines })).filter((g) => g.lines.length);
   });
-  const whenText = (ms: number | null | undefined) => ms == null ? '' : chartTime(ms, ZONE, { seconds: false });
+  const whenText = (ms: number | null | undefined) => ms == null ? '' : chartTime(ms, timeZone.zone, { seconds: false });
   const focusLine = $derived(drawn.find((d) => d.key === focusKey));
   function ask(q: QuickQuestion, ks: string[]) { void q; tab = 'counters'; view = 'charts'; keys = ks; focusKey = ''; }
   function toggleGroup(g: string) { openGroups = openGroups.includes(g) ? openGroups.filter((x) => x !== g) : [...openGroups, g]; }
@@ -202,12 +201,13 @@
 
   const ticks = (w: Win) => {
     const longSpan = w.endMs - w.startMs > 20 * 3_600_000;
-    return (v: number) => chartTime(v, ZONE, { seconds: false, zone: false, date: longSpan });
+    return (v: number) => chartTime(v, timeZone.zone, { seconds: false, zone: false, date: longSpan });
   };
 
   $effect(() => {
     if (!chart) return;
     void theme.epoch;
+    void timeZone.zone; // a new zone choice redraws the axis
     const p = palette();
     const a = answer;
     const w = win;
@@ -271,7 +271,7 @@
             const range = pt[2] !== pt[3] ? ' (' + formatValue(d.unit, pt[2]) + ' to ' + formatValue(d.unit, pt[3]) + ')' : '';
             return it.seriesName + ': ' + formatValue(d.unit, pt[1]) + range;
           }).filter(Boolean);
-          return chartTime(t, ZONE) + '\n' + rows.join('\n');
+          return chartTime(t, timeZone.zone) + '\n' + rows.join('\n');
         }
       }
     }, true);
@@ -296,7 +296,7 @@
   <header class="bbc-head">
     <div>
       <h2 id="bbc-title">{T.title(item.name)}</h2>
-      <p class="bbc-note">{[facts?.firstSample && facts?.lastSample ? T.recordedSpan(shownTime(facts.firstSample, timeZone.zone), shownTime(facts.lastSample, timeZone.zone)) : '', T.timesUtc, T.sameAsPerfmon].filter(Boolean).join(' ')}</p>
+      <p class="bbc-note">{[facts?.firstSample && facts?.lastSample ? T.recordedSpan(shownTime(facts.firstSample, timeZone.zone), shownTime(facts.lastSample, timeZone.zone)) : '', T.timesIn(timeZone.short), T.sameAsPerfmon].filter(Boolean).join(' ')}</p>
       {#if chips.length}
         <ul class="bbc-chips" aria-label={T.chipsLabel}>
           {#each chips as c (c.id)}<li><span class="bbc-chip {c.id}" title={c.hint}>{c.text}<span class="bbc-sr">. {c.hint}</span></span></li>{/each}

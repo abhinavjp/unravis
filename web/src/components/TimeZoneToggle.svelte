@@ -20,6 +20,8 @@
   @media (max-width: 1100px) { .zone-word { display: none; } }
   /* On a phone the box is only as wide as the short names; the open list still shows every name in full. */
   @media (max-width: 640px) { .zone-toggle select { max-width: 96px; text-overflow: ellipsis; } }
+  /* At 320 px the header row must still fit (WCAG reflow): the box shrinks to the short name with a tight arrow. */
+  @media (max-width: 359px) { .zone-toggle select { max-width: 68px; padding-inline: 4px 0; } }
   /* Touch targets on a phone, a tablet and any touch screen: 40 px high, never under 32. */
   @media (max-width: 1024px), (pointer: coarse) { .zone-toggle select { min-height: 40px; } }
 </style>
