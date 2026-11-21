@@ -1086,3 +1086,74 @@ func TestLaneQueryStoreLastDataJSON(t *testing.T) {
 		t.Fatalf("round trip: %v %+v", err, back)
 	}
 }
+
+// A read-only database stopped recording at a moment nobody knows (often a full store), so it follows the same rule as an off one: no "no"
+// unless a block starts at or after the incident end.
+func readOnlySQL(first, last time.Time) fakeQ {
+	q := healthySQL("16.0.1")
+	q.by["unravis:qs_options"] = offOpts("READ_ONLY")
+	q.by["unravis:qs_range"] = []Row{{"first_start": first, "last_start": last}}
+	return q
+}
+
+func TestSQLLaneQueryStoreReadOnlyNotCoveredNeverSaysNo(t *testing.T) {
+	r := RunSQLLane(context.Background(), readOnlySQL(at(2, 0, 0), at(20, 10, 15)), "Prod", laneReq, fixedNow)
+	c := checkByID(t, r, CheckQueryStore)
+	if c.State != StateReady || !strings.Contains(c.Summary, "may have stopped recording during the incident") || !strings.Contains(c.Summary, `A "no" is not given.`) {
+		t.Fatalf("check = %+v", c)
+	}
+	for _, id := range []string{"D3", "D14", "D15"} {
+		if v, ok := r.Lane.Answers[id]; ok {
+			t.Errorf("%s = %q although the read-only store may have stopped before the incident ended", id, v)
+		}
+	}
+	qs := r.Lane.QueryStore
+	if qs == nil || qs.State != QSStateReadOnly || qs.FirstData == nil || !qs.FirstData.Equal(at(2, 0, 0)) || qs.LastData != nil {
+		t.Errorf("queryStore = %+v (lastData is saved only for an off database)", qs)
+	}
+}
+
+func TestSQLLaneQueryStoreReadOnlyStillSaysYes(t *testing.T) {
+	q := readOnlySQL(at(2, 0, 0), at(20, 10, 15))
+	q.by["unravis:qs_stats"] = []Row{qsRow(1, 10, "ref", 60, 10, 100), qsRow(1, 11, "inc", 60, 30, 100)}
+	r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if r.Lane.Answers["D3"] != AnswerYes {
+		t.Fatalf("answers = %v", r.Lane.Answers)
+	}
+}
+
+func TestSQLLaneQueryStoreReadOnlyCoveredGivesNo(t *testing.T) {
+	r := RunSQLLane(context.Background(), readOnlySQL(at(2, 0, 0), at(20, 11, 0)), "Prod", laneReq, fixedNow)
+	if r.Lane.Answers["D3"] != AnswerNo || r.Lane.Answers["D15"] != AnswerNo || r.Lane.Answers["D14"] != AnswerNo {
+		t.Fatalf("answers = %v", r.Lane.Answers)
+	}
+	if strings.Contains(checkByID(t, r, CheckQueryStore).Summary, "is not given") {
+		t.Errorf("summary = %s", checkByID(t, r, CheckQueryStore).Summary)
+	}
+}
+
+// With no newest block known, nothing proves the store recorded to the end, so no "no" is given either.
+func TestSQLLaneQueryStoreReadOnlyWithoutNewestBlockNeverSaysNo(t *testing.T) {
+	q := readOnlySQL(at(2, 0, 0), time.Time{})
+	q.by["unravis:qs_range"] = []Row{{"first_start": at(2, 0, 0), "last_start": nil}}
+	r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	for _, id := range []string{"D3", "D14", "D15"} {
+		if v, ok := r.Lane.Answers[id]; ok {
+			t.Errorf("%s = %q without a known newest block", id, v)
+		}
+	}
+	delete(q.by, "unravis:qs_range")
+	r = RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if _, ok := r.Lane.Answers["D3"]; ok {
+		t.Errorf("D3 answered with no range row: %v", r.Lane.Answers)
+	}
+}
+
+// ON is unchanged: it still reads qs_first, never qs_range, and still gives its no.
+func TestSQLLaneQueryStoreOnKeepsFirstReadAndItsNo(t *testing.T) {
+	rec, counts := countTags(healthySQL("16.0.1"), "unravis:qs_first", "unravis:qs_range")
+	r := RunSQLLane(context.Background(), rec, "Prod", laneReq, fixedNow)
+	if counts["unravis:qs_first"] != 1 || counts["unravis:qs_range"] != 0 || r.Lane.Answers["D3"] != AnswerNo {
+		t.Fatalf("counts %v answers %v", counts, r.Lane.Answers)
+	}
+}

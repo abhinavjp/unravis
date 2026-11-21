@@ -502,7 +502,9 @@ func evalLaneQueryStore(opt qsOptions, first time.Time, hasFirst bool, last time
 	// An off database kept blocks up to some moment. Unless the newest block starts at or after the incident end, it may have been switched off
 	// during the incident: a missing change is then not evidence of none, so no "no" is given. It is the block start that counts, not its end,
 	// because the last block of an off (forced) database may be partial.
-	covered := off && !last.Before(req.Incident.End)
+	// A read-only database is the same: it stopped recording at a moment nobody knows, so without a block at or after the incident end no "no" is given.
+	covered := hasLast && !last.Before(req.Incident.End)
+	limited := off || opt.state == "READ_ONLY"
 	if off {
 		summary = append(summary, offLead(first, last))
 		if !covered {
@@ -520,6 +522,9 @@ func evalLaneQueryStore(opt qsOptions, first time.Time, hasFirst bool, last time
 	}
 	if opt.state == "READ_ONLY" {
 		summary = append(summary, "It is read-only"+reasonSuffix(opt.reason)+", so it may have stopped recording before the incident ended.")
+		if !covered {
+			summary = append(summary, roNotCovered)
+		}
 	}
 	matched, newPlans, slowNew, grown, readsUp := 0, 0, 0, 0, 0
 	worst := 0.0
@@ -589,7 +594,7 @@ func evalLaneQueryStore(opt qsOptions, first time.Time, hasFirst bool, last time
 	} else if opt.found {
 		summary = append(summary, "Query Store keeps "+fmtInt(opt.intervalMin)+"-minute intervals, too coarse to place when it started.")
 	}
-	if off && !covered {
+	if limited && !covered {
 		for id, v := range out.answers {
 			if v == AnswerNo {
 				delete(out.answers, id)
@@ -729,6 +734,7 @@ const (
 	sentenceNoRow   = "This database gave no Query Store settings, so Unravis cannot tell whether it is on or off."
 	sentenceNoState = "This database gave no Query Store state, so Unravis cannot tell whether it is on or off."
 	offNotCovered   = "Its newest block starts before the incident ended, so it may have been switched off during the incident. A \"no\" is not given."
+	roNotCovered    = "Its newest block starts before the incident ended, so it may have stopped recording during the incident. A \"no\" is not given."
 )
 
 // qsCannotTell is the check for a Query Store state that is neither on nor off: no history is read and no switch-on script is offered.
@@ -784,14 +790,24 @@ func (s *sqlLane) checkQueryStore(ctx context.Context) LaneCheck {
 	case opt.state == "OFF":
 		return s.checkQueryStoreOff(ctx, opt, query)
 	}
-	var first time.Time
-	hasFirst := false
-	if rows, err := query(qLaneQSFirst, checkTimeout); err == nil && len(rows) > 0 {
+	// A read-only database stopped recording at a moment this check does not know, so it also needs the start of its newest block (the same
+	// range read an off database uses); an ON database keeps the plain first-block read.
+	firstQ := qLaneQSFirst
+	if opt.state == "READ_ONLY" {
+		firstQ = qLaneQSRange
+	}
+	var first, last time.Time
+	hasFirst, hasLast := false, false
+	if rows, err := query(firstQ, checkTimeout); err == nil && len(rows) > 0 {
 		first, hasFirst = rowTime(rows[0]["first_start"])
 		first = first.UTC()
 		if hasFirst {
 			f := first
 			s.b.res.QueryStore.FirstData = &f
+		}
+		if firstQ == qLaneQSRange {
+			last, hasLast = rowTime(rows[0]["last_start"])
+			last = last.UTC()
 		}
 	} else if err != nil {
 		return s.failed(CheckQueryStore, err, s.req.Database)
@@ -801,7 +817,7 @@ func (s *sqlLane) checkQueryStore(ctx context.Context) LaneCheck {
 	if err != nil {
 		return s.failed(CheckQueryStore, err, s.req.Database)
 	}
-	o := evalLaneQueryStore(opt, first, hasFirst, time.Time{}, false, stats, intervals, truncated, s.req)
+	o := evalLaneQueryStore(opt, first, hasFirst, last, hasLast, stats, intervals, truncated, s.req)
 	return s.finishQueryStore(o, intervals, len(batches))
 }
 
