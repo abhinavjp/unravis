@@ -19,7 +19,7 @@ function loadTypeScript(relativePath) {
   return module.exports;
 }
 
-const { resolveHelpLink, titleFromSource, PAGE_ORDER } = loadTypeScript('src/lib/help/links.ts');
+const { resolveHelpLink, titleFromSource, PAGE_ORDER, UNLISTED_PAGES } = loadTypeScript('src/lib/help/links.ts');
 const known = ['index', 'cases', 'getting-started'];
 const none = { kind: 'none' };
 
@@ -78,8 +78,20 @@ test('PAGE_ORDER has no duplicates and every name has a docs file', () => {
   }
 });
 
-test('every docs/user page except screenshots.md is in PAGE_ORDER', () => {
+test('every docs/user page except screenshots.md and the unlisted guided pages is in PAGE_ORDER', () => {
   const files = fs.readdirSync(path.join(root, '..', 'docs', 'user')).filter((f) => f.endsWith('.md') && f !== 'screenshots.md');
-  for (const f of files) assert.ok(PAGE_ORDER.includes(f.replace(/\.md$/, '')), f);
+  for (const f of files) {
+    const slug = f.replace(/\.md$/, '');
+    assert.ok(PAGE_ORDER.includes(slug) !== UNLISTED_PAGES.includes(slug), f);
+  }
   assert.ok(!PAGE_ORDER.includes('screenshots'));
+});
+
+test('BL-180: the guide does not list guided analysis or its Manual tools, and no listed page links to them', () => {
+  assert.deepEqual([...UNLISTED_PAGES], ['guided-analysis', 'manual-tools']);
+  for (const slug of UNLISTED_PAGES) assert.ok(!PAGE_ORDER.includes(slug), slug);
+  for (const slug of PAGE_ORDER) {
+    const text = fs.readFileSync(path.join(root, '..', 'docs', 'user', slug + '.md'), 'utf8');
+    assert.doesNotMatch(text, /\]\((?:\.\/)?(?:guided-analysis|manual-tools)\.md/, slug);
+  }
 });

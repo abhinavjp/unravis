@@ -467,11 +467,11 @@
         <div class="win-box">
           <h3>{WINDOW_TEXT.incidentHeading}</h3>
           <p class="win-help">{WINDOW_TEXT.incidentHelp}</p>
-          <!-- The legend keeps the group's spoken name ("Incident window (UTC)"); the heading above is what is drawn. -->
+          <!-- The legend keeps the group's spoken name ("Incident window"); the heading above is what is drawn. The picker says the zone. -->
           <fieldset class="window-set">
             <legend class="visually-hidden">{WINDOW_TEXT.incidentLabel}</legend>
             <WindowPicker label={WINDOW_TEXT.incidentLabel} bind:start={fields.incidentStart} bind:end={fields.incidentEnd} invalidStart={isInvalid('incidentStart')} invalidEnd={isInvalid('incidentEnd')}
-              describedby={describedBy} disabled={readOnly} quickRanges={incidentQuick} onquick={onIncidentQuick} onchange={onFieldInput} now={pickerNow} />
+              describedby={describedBy} disabled={readOnly} quickRanges={incidentQuick} onquick={onIncidentQuick} onchange={onFieldInput} now={pickerNow} zone={timeZone.zone} zoneName={timeZone.short} />
           </fieldset>
         </div>
         <div class="win-box">
@@ -480,7 +480,7 @@
           <fieldset class="window-set">
             <legend class="visually-hidden">{WINDOW_TEXT.referenceLabel}</legend>
             <WindowPicker label={WINDOW_TEXT.referenceLabel} bind:start={fields.referenceStart} bind:end={fields.referenceEnd} invalidStart={isInvalid('referenceStart')} invalidEnd={isInvalid('referenceEnd')}
-              describedby={describedBy} disabled={readOnly} quickRanges={referenceQuick} onchange={onFieldInput} now={pickerNow} />
+              describedby={describedBy} disabled={readOnly} quickRanges={referenceQuick} onchange={onFieldInput} now={pickerNow} zone={timeZone.zone} zoneName={timeZone.short} />
           </fieldset>
         </div>
       </div>

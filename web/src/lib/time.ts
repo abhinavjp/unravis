@@ -72,7 +72,7 @@ export const quickRange = (id: QuickRangeId, now: Date): Pick<Query, 'start' | '
 
 // ---------------------------------------------------------------------------------------------------------------------
 // One way to show a timestamp. Every screen formats through formatTime so the pattern is always "24 Oct 15:19:37 UTC",
-// and the UTC / Local choice (see timeZone.svelte.ts) flips every timestamp together.
+// and the time zone choice (see timeZone.svelte.ts) flips every timestamp together.
 // ---------------------------------------------------------------------------------------------------------------------
 export type TimePrecision = 'minute' | 'second' | 'ms';
 export interface FormatTimeOptions {

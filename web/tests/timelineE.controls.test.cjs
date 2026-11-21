@@ -31,23 +31,20 @@ const { deck } = loadTypeScript('src/lib/copy/deck.ts');
 const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
 const windows = loadTypeScript('src/lib/tracing/windows.ts');
 
-test('12-hour time parts: every minute of the day survives the round trip through the three boxes', () => {
+test('24-hour time parts (owner call 2026-11-21, BL-181): every minute of the day survives the round trip through the two boxes', () => {
   for (let h = 0; h < 24; h++) {
     for (const m of [0, 1, 29, 30, 59]) {
       const time = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
       const parts = picker.timeParts(time);
-      assert.ok(parts.hour >= 1 && parts.hour <= 12, time);
-      assert.equal(parts.pm, h >= 12, time);
-      assert.equal(picker.timeFromParts(parts.hour, parts.minute, parts.pm), time);
+      assert.deepEqual(parts, { hour: h, minute: m }, time);
+      assert.equal(picker.timeFromParts(parts.hour, parts.minute), time);
     }
   }
-  assert.deepEqual(picker.timeParts('00:00'), { hour: 12, minute: 0, pm: false });
-  assert.deepEqual(picker.timeParts('12:00'), { hour: 12, minute: 0, pm: true });
-  assert.deepEqual(picker.timeParts('23:59'), { hour: 11, minute: 59, pm: true });
   assert.equal(picker.timeParts(''), null);
   assert.equal(picker.timeParts('24:00'), null);
-  assert.equal(picker.HOURS_12.length, 12);
+  assert.deepEqual([...picker.HOURS_24], Array.from({ length: 24 }, (_, i) => i));
   assert.equal(picker.MINUTES_60.length, 60);
+  assert.equal(picker.HOURS_12, undefined, 'no 12-hour box is left');
 });
 
 test('typed times: 24-hour text is still accepted, 12-hour text is read, nonsense is refused', () => {
@@ -56,22 +53,21 @@ test('typed times: 24-hour text is still accepted, 12-hour text is read, nonsens
   for (const bad of ['24:00', '13:00 PM', '0:30 AM', '10:75', 'ten', '']) assert.equal(picker.parseTime(bad), null, bad);
 });
 
-test('the time box is three labelled selects over the same 24-hour value, and the pickers use it', () => {
+test('the time box is two labelled 24-hour selects, hour 00 to 23 and minute, and the pickers use it', () => {
   const box = read('src/lib/components/TimeBox.svelte');
   assert.ok(box.includes('role="group"'));
-  for (const label of ['hour', 'minute', 'AM or PM']) assert.ok(box.includes(label), label);
-  assert.equal((box.match(/<select/g) || []).length, 3);
+  for (const label of ['hourWord', 'minuteWord']) assert.ok(box.includes(label), label);
+  assert.ok(!/AM|PM|periodWord/.test(box), 'no AM or PM box');
+  assert.equal((box.match(/<select/g) || []).length, 2);
+  assert.match(box, /HOURS_24 as h/);
+  assert.match(box, /\{two\(h\)\}/, 'hours show as 00 to 23');
   for (const file of ['src/lib/components/WindowPicker.svelte', 'src/lib/components/StampField.svelte']) assert.ok(read(file).includes('<TimeBox'), file);
 });
 
-test('the AM or PM box offers "--" like the other two, an empty time shows it, and picking it clears the time', () => {
+test('both boxes offer "--", an empty time shows it, and picking it clears the time', () => {
   const box = read('src/lib/components/TimeBox.svelte');
-  assert.equal((box.match(/<option value="">\{PICKER_TEXT\.unset\}<\/option>/g) || []).length, 3, 'all three boxes can be unset');
-  const period = /<select class="tp"[\s\S]*?<\/select>/.exec(box);
-  assert.ok(period, 'the period select exists');
-  assert.ok(period[0].indexOf('{PICKER_TEXT.unset}') < period[0].indexOf('{PICKER_TEXT.am}'), '-- is the first period option');
-  assert.match(box, /value=\{parts \? \(parts\.pm \? 'PM' : 'AM'\) : ''\}/, 'an empty time shows -- in the period box');
-  assert.match(box, /change\.period === ''/, 'choosing -- for the period clears the whole time');
+  assert.equal((box.match(/<option value="">\{PICKER_TEXT\.unset\}<\/option>/g) || []).length, 2, 'both boxes can be unset');
+  assert.match(box, /change\.hour === '' \|\| change\.minute === ''/, 'choosing -- clears the whole time');
 });
 
 test('one controls card holds the quick range, both windows, the UTC readout, the sources row and the notices', () => {

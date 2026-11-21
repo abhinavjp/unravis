@@ -6,7 +6,7 @@ import { test, expect, type Page } from '../support/fixtures';
 import { exePath } from '../support/launcher';
 
 const ROOT = resolve(__dirname, '..', '..', '..');
-const SLUGS = ['index', 'getting-started', 'install', 'cases', 'sources', 'blackbox', 'guided-analysis', 'manual-tools', 'upgrade-and-uninstall', 'troubleshooting', 'security', 'logs'];
+const SLUGS = ['index', 'getting-started', 'install', 'cases', 'sources', 'blackbox', 'upgrade-and-uninstall', 'troubleshooting', 'security', 'logs'];
 
 async function openHelp(page: Page) {
   await page.getByRole('button', { name: 'Glossary', exact: true }).click();

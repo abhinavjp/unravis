@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { timeZone } from '../lib/timeZone.svelte';
   import { onMount, untrack } from 'svelte';
   import { MarkAreaComponent } from 'echarts/components';
   import { echarts, palette } from '../lib/charts';
@@ -295,7 +296,7 @@
   <header class="bbc-head">
     <div>
       <h2 id="bbc-title">{T.title(item.name)}</h2>
-      <p class="bbc-note">{[facts?.firstSample && facts?.lastSample ? T.recordedSpan(shownTime(facts.firstSample), shownTime(facts.lastSample)) : '', T.timesUtc, T.sameAsPerfmon].filter(Boolean).join(' ')}</p>
+      <p class="bbc-note">{[facts?.firstSample && facts?.lastSample ? T.recordedSpan(shownTime(facts.firstSample, timeZone.zone), shownTime(facts.lastSample, timeZone.zone)) : '', T.timesUtc, T.sameAsPerfmon].filter(Boolean).join(' ')}</p>
       {#if chips.length}
         <ul class="bbc-chips" aria-label={T.chipsLabel}>
           {#each chips as c (c.id)}<li><span class="bbc-chip {c.id}" title={c.hint}>{c.text}<span class="bbc-sr">. {c.hint}</span></span></li>{/each}
