@@ -23,6 +23,8 @@ func StartProgram(exe string) error                      { return errWindowsOnly
 func StartProgramBackground(exe string) error            { return errWindowsOnly }
 func DialWorkerPipe(string, uint32) (*WorkerPipe, error) { return nil, errWindowsOnly }
 
+func RunElevatedWait(string, []string, time.Duration) (int, error) { return 0, errWindowsOnly }
+
 type OSElevator struct {
 	SetupExe string
 	// ExtraArgs are added to the worker's command line (the --expect-* checks).

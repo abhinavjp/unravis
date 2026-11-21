@@ -148,3 +148,23 @@ func hidden(extra []string) bool {
 	}
 	return false
 }
+
+// LaunchRecover starts `setup --recover` from the program folder: no window, detached from this program. The setup puts back what a
+// cut-off run changed, asks this program to quit if it must, and starts it again. path must be an absolute path to the regular file
+// unravis-setup.exe next to this program; it is the same trust as this program's own folder. It does not wait for the result.
+func LaunchRecover(path string) error {
+	if !filepath.IsAbs(path) {
+		return errors.New("the setup file is not valid")
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return errors.New("the setup file is not a plain file")
+	}
+	cmd := exec.Command(path, "--recover")
+	cmd.Dir = filepath.Dir(path)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: detachedProcess | createNewProcessGroup, HideWindow: true}
+	if err := cmd.Start(); err != nil {
+		return errors.New("could not start the setup program")
+	}
+	return cmd.Process.Release()
+}

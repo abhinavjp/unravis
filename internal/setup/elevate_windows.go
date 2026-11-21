@@ -238,3 +238,45 @@ func DialWorkerPipe(name string, parentPID uint32) (*WorkerPipe, error) {
 	}
 	return &WorkerPipe{Conn: f, SID: sid, Profile: profile}, nil
 }
+
+// RunElevatedWait starts exe with args under the runas verb (the Windows approval prompt), hidden, and waits for it to end. It returns
+// its exit code. No at the prompt is ErrUACCancelled. wait bounds the wait (the process is left running when it passes).
+func RunElevatedWait(exe string, args []string, wait time.Duration) (int, error) {
+	verb, _ := windows.UTF16PtrFromString("runas")
+	file, err := windows.UTF16PtrFromString(exe)
+	if err != nil {
+		return 0, err
+	}
+	params := ""
+	for i, a := range args {
+		if i > 0 {
+			params += " "
+		}
+		params += windows.EscapeArg(a)
+	}
+	p, _ := windows.UTF16PtrFromString(params)
+	info := shellExecuteInfo{fMask: seeMaskNoCloseProcess, lpVerb: verb, lpFile: file, lpParameters: p, nShow: windows.SW_HIDE}
+	info.cbSize = uint32(unsafe.Sizeof(info))
+	if r, _, callErr := procShellExecuteEx.Call(uintptr(unsafe.Pointer(&info))); r == 0 {
+		if errors.Is(callErr, windows.ERROR_CANCELLED) {
+			return 0, ErrUACCancelled
+		}
+		return 0, callErr
+	}
+	if info.hProcess == 0 {
+		return 0, errors.New("Windows started the administrator part without saying which process it is")
+	}
+	defer windows.CloseHandle(info.hProcess)
+	ev, err := windows.WaitForSingleObject(info.hProcess, uint32(wait/time.Millisecond))
+	if err != nil {
+		return 0, err
+	}
+	if ev == uint32(windows.WAIT_TIMEOUT) {
+		return 0, errors.New("the administrator part did not finish in time")
+	}
+	var code uint32
+	if err := windows.GetExitCodeProcess(info.hProcess, &code); err != nil {
+		return 0, err
+	}
+	return int(code), nil
+}

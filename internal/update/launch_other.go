@@ -26,3 +26,8 @@ func StartVerified(path, sha256hex string, args ...string) error {
 func LaunchSilent(path, sha256hex, version string) error {
 	return errors.New("installing an update works on Windows only")
 }
+
+// LaunchRecover does not exist off Windows.
+func LaunchRecover(path string) error {
+	return errors.New("recovering a cut-off update works on Windows only")
+}
