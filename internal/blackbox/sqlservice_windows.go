@@ -209,6 +209,11 @@ func resolveSettingsPath(path string) (string, error) {
 	if !filepath.IsAbs(clean) {
 		return "", fmt.Errorf("blackbox: the settings file path must be absolute")
 	}
+	// A mapped network drive and a subst alias both look like a local drive letter, and a subst drive hides a writable parent (the chain
+	// would stop at the alias's target). Only a letter that is a local disk volume is proven.
+	if err := localDriveProblem(clean[:2]); err != nil {
+		return "", err
+	}
 	resolved, err := filepath.EvalSymlinks(clean)
 	if err != nil {
 		return "", err
@@ -226,11 +231,19 @@ func resolveSettingsPath(path string) (string, error) {
 // verifySettingsFileOnly proves the file itself: no reparse point in its chain, a trusted owner, and a list that lets only SYSTEM and
 // Administrators change it. It reads nothing about the folders above the file beyond their attributes.
 func verifySettingsFileOnly(path string) error {
-	resolved, err := resolveSettingsPath(path)
-	if err != nil {
+	// No EvalSymlinks here: it lists folders on the way, and the service holds only traverse on the program folder. The path string the
+	// service will open is the one judged, and refuseSettingsFileChain refuses a link or reparse point anywhere on it.
+	if err := settingsPathProblem(path); err != nil {
 		return err
 	}
-	return verifySettingsFileResolved(resolved)
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		return fmt.Errorf("blackbox: the settings file path must be absolute")
+	}
+	if err := localDriveProblem(clean[:2]); err != nil {
+		return err
+	}
+	return verifySettingsFileResolved(clean)
 }
 
 // verifySettingsFileResolved is verifySettingsFileOnly for a path already resolved by resolveSettingsPath.
@@ -1013,4 +1026,31 @@ func fileAttributes(path string) (uint32, error) {
 		return 0, err
 	}
 	return attrs, nil
+}
+
+// localDriveProblem refuses a drive letter that is not a local disk: not a fixed drive, or a DOS-device target that is not a disk volume
+// (a mapped network drive resolves to a redirector, a subst alias to another path).
+func localDriveProblem(drive string) error {
+	root, err := windows.UTF16PtrFromString(drive + `\`)
+	if err != nil {
+		return err
+	}
+	if windows.GetDriveType(root) != windows.DRIVE_FIXED {
+		return fmt.Errorf("blackbox: the settings file must be on a fixed local drive")
+	}
+	name, err := windows.UTF16PtrFromString(drive)
+	if err != nil {
+		return err
+	}
+	buf := make([]uint16, 1024)
+	n, err := windows.QueryDosDevice(name, &buf[0], uint32(len(buf)))
+	if err != nil {
+		return err
+	}
+	// The result is a list of NUL-separated targets; the first is the current one.
+	target := windows.UTF16ToString(buf[:n])
+	if !localVolumeTarget(target) {
+		return fmt.Errorf("blackbox: the settings file's drive is a network or alias drive, not a local disk")
+	}
+	return nil
 }

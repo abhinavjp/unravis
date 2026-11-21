@@ -383,14 +383,24 @@ func adminOnlyDACL(present bool, aces []fileACE) error {
 	return nil
 }
 
-// settingsPathProblem refuses a settings path that cannot be proven locally: a network (UNC) path or a device path (\\?\, \\.\). The
-// owner and access list of a file on a share are the file server's to change, so no proof here could stand for them. Pure, so it is tested
-// on every platform. The real path is resolved once, in Windows code, before any other check (resolveSettingsPath).
+// settingsPathProblem accepts only a plain drive path: a drive letter, a colon and a separator (`C:\...`). Everything else is refused: a network
+// (UNC) path, any device or NT-namespace path (`\\?\`, `\\.\`, `\??\UNC\...`, `\??\GLOBALROOT\...`), a path that starts with a separator
+// in any mix of slashes, and a drive-relative path (`C:foo`). The owner and list of a file on a share are the file server's to change, so
+// no proof here could stand for them. Pure, so it is tested on every platform. Which drive the letter really is (a local disk, a mapped share
+// or a subst alias) is decided in Windows code: see localDriveProblem.
 func settingsPathProblem(path string) error {
-	if strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//") {
-		return errors.New("blackbox: the settings file must be on a local drive, not a network or device path")
+	if len(path) >= 3 && isASCIILetter(path[0]) && path[1] == ':' && (path[2] == '\\' || path[2] == '/') {
+		return nil
 	}
-	return nil
+	return errors.New("blackbox: the settings file must be on a local drive, written like C:\\folder\\file")
+}
+
+func isASCIILetter(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
+
+// localVolumeTarget reports whether a DOS-device target (QueryDosDevice of "C:") is a disk volume of this computer. A mapped network drive
+// resolves to a redirector (`\Device\LanmanRedirector\...`) and a subst alias to `\??\<path>`; neither is a disk the proof can stand for.
+func localVolumeTarget(target string) bool {
+	return strings.HasPrefix(strings.ToLower(target), `\device\harddiskvolume`)
 }
 
 // BL-140: the folders above the settings file. The file's own access list proves

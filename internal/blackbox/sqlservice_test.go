@@ -2068,18 +2068,40 @@ func TestAdminOnlyDirDACLRule(t *testing.T) {
 	}
 }
 
-// BL-140: a network or device path cannot be proven locally.
+// BL-140: only a plain drive path can be proven locally.
 func TestSettingsPathProblem(t *testing.T) {
 	for path, wantErr := range map[string]bool{
-		`C:\Program Files\Unravis\blackbox.json`: false,
-		`D:\x\blackbox.json`:                     false,
-		`\\server\share\blackbox.json`:           true,
-		`\\?\C:\x\blackbox.json`:                 true,
-		`\\.\C:\x\blackbox.json`:                 true,
-		`//server/share/blackbox.json`:           true,
+		`C:\Program Files\Unravis\blackbox.json`:    false,
+		`d:/x/blackbox.json`:                        false,
+		`\\server\share\blackbox.json`:              true,
+		`\\?\C:\x\blackbox.json`:                    true,
+		`\\.\C:\x\blackbox.json`:                    true,
+		`//server/share/blackbox.json`:              true,
+		`/\server\share\blackbox.json`:              true,
+		`\??\UNC\server\share\blackbox.json`:        true,
+		`\??\GLOBALROOT\Device\Mup\x\blackbox.json`: true,
+		`\??\C:\x\blackbox.json`:                    true,
+		`C:blackbox.json`:                           true,
+		`\x\blackbox.json`:                          true,
+		`blackbox.json`:                             true,
+		``:                                          true,
 	} {
 		if err := settingsPathProblem(path); (err != nil) != wantErr {
 			t.Errorf("settingsPathProblem(%q) = %v, want error %v", path, err, wantErr)
+		}
+	}
+}
+
+func TestLocalVolumeTarget(t *testing.T) {
+	for target, want := range map[string]bool{
+		`\Device\HarddiskVolume3`:               true,
+		`\device\harddiskvolume12`:              true,
+		`\Device\LanmanRedirector\;Z:000\srv\s`: false,
+		`\??\C:\Users\bob`:                      false,
+		``:                                      false,
+	} {
+		if got := localVolumeTarget(target); got != want {
+			t.Errorf("localVolumeTarget(%q) = %v, want %v", target, got, want)
 		}
 	}
 }
