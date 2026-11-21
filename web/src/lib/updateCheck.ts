@@ -9,6 +9,7 @@ const OWN_RELEASE_PREFIX = 'https://github.com/abhinavjp/unravis/';
 export function updateCheckNote(reply: UpdateCheckReply): string {
   switch (reply.status) {
     case 'latest':
+      if (reply.held) return `You are on v${reply.current}. A newer version exists, but it is on hold: ${reply.held}.`;
       return `You are on the latest version (v${reply.current}).`;
     case 'available':
       return `Version ${reply.latest} is available. You have v${reply.current}.`;
@@ -77,6 +78,7 @@ export function updateCheckSentences(): string[] {
   return [
     updateCheckNote({ status: 'latest', current: '1.2.0', latest: '1.2.0', url: '' }),
     updateCheckNote({ status: 'available', current: '1.2.0', latest: '1.3.0', url: 'https://github.com/abhinavjp/unravis/releases/tag/v1.3.0' }),
+    updateCheckNote({ status: 'latest', current: '1.2.0', latest: '1.2.0', url: '', held: 'updates are paused' }),
     updateCheckNote({ status: 'dev', current: 'dev', latest: '', url: '' }),
     updateCheckNote({ status: 'unreachable', current: '1.2.0', latest: '', url: '' }),
     updateCheckNote({ status: 'unverified', current: '1.2.0', latest: '', url: '' })

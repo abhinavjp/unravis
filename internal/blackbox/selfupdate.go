@@ -241,6 +241,10 @@ func (u *SelfUpdater) CheckOnce(ctx context.Context) update.Result {
 	if ctx.Err() != nil {
 		return res
 	}
+	if res.Held && res.Manifest != nil {
+		u.set("held", res.Manifest.Version, "A newer version is on hold: "+res.Detail+".")
+		return res
+	}
 	if res.Status != update.StatusAvailable || res.Manifest == nil {
 		u.set("idle", "", resultSentence(res))
 		return res
