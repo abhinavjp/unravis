@@ -55,7 +55,7 @@ async function toCheck(page: Page) {
 /** Ticks the read-only box and presses Import, whatever number of files the button counts. */
 async function importAll(page: Page) {
   await ack(page).check();
-  const send = popup(page).getByRole('button', { name: /^Import \d+ files?$/ });
+  const send = popup(page).getByRole('button', { name: /^Add \d+ files?$/ });
   await expect(send).toBeEnabled();
   await send.click();
 }
