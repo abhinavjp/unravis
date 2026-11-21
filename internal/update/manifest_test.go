@@ -284,3 +284,30 @@ func flipSig(t *testing.T, sigFile []byte) []byte {
 	sig[10] ^= 1
 	return []byte(sigPrefix + " " + id + " " + base64.StdEncoding.EncodeToString(sig) + "\n")
 }
+
+func TestVerifySignatureOnly(t *testing.T) {
+	k, priv := key(t, ChannelRC)
+	m := goodManifest("0.1.0-rc.48", ChannelRC)
+	m.Expires = now.Add(-time.Hour) // already run out: the dates are not this function's job
+	b, _ := json.Marshal(m)
+	sig := []byte(FormatSignature(k.Pub, ed25519.Sign(priv, b)))
+	if got, err := VerifySignatureOnly(b, sig, Trust{Keys: []Key{k}}); err != nil || got.Version != "0.1.0-rc.48" {
+		t.Fatalf("%v", err)
+	}
+	if _, err := Verify(b, sig, Trust{Keys: []Key{k}, Channel: ChannelRC, Want: ChannelRC}, now); err == nil {
+		t.Fatal("Verify accepted an expired manifest")
+	}
+	other, otherPriv := key(t, ChannelStable)
+	if _, err := VerifySignatureOnly(b, []byte(FormatSignature(other.Pub, ed25519.Sign(otherPriv, b))), Trust{Keys: []Key{k}}); err == nil {
+		t.Error("unknown key accepted")
+	}
+	if _, err := VerifySignatureOnly(b, []byte(FormatSignature(other.Pub, ed25519.Sign(otherPriv, b))), Trust{Keys: []Key{other}}); err == nil {
+		t.Error("a stable key signed an rc manifest")
+	}
+	if _, err := VerifySignatureOnly(append(b, ' '), sig, Trust{Keys: []Key{k}}); err == nil {
+		t.Error("changed bytes accepted")
+	}
+	if _, err := VerifySignatureOnly(make([]byte, MaxManifestSize+1), sig, Trust{Keys: []Key{k}}); err == nil {
+		t.Error("oversize accepted")
+	}
+}

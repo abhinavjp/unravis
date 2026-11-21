@@ -53,3 +53,12 @@ pwsh ./tools/release/Release.ps1 -Version 0.1.0-rc.52 -KeyFile D:\secret\rc-1.ke
 ## Steps, if you want them one at a time
 
 `-From Preflight|Tag|Wait|Sign|Publish|Feed|Verify` resumes at a stage.
+
+## Hands-off signing (-Yes) and what still protects the key
+
+With `-Yes` the script asks nobody anything (owner's standing approval, 21 Nov 2026). Two things replace the typed prompts, both automatic:
+
+- **Signing code:** the diff of `tools/release/sigtool` and `internal/update` since the release now on the feed is no longer typed over. Instead the commit being signed must already be part of GitHub's `master` (`gh api compare` says behind or identical), which only takes changes through a pull request with the required CI check. A tampered signing tool that never went through master stops the run. The SHA-256 of that diff is appended to `%LOCALAPPDATA%\Unravis\release\signing-code-approvals.log` for later audit.
+- **Trusted keys:** if `trusted_keys.txt` changed since the last signed release, or this is the channel's first signed release, `-Yes` refuses and says to run `Sign-Release.ps1` by hand. It never prompts.
+
+Without `-Yes` the old typed prompts (`reviewed`, `keys ok`) still apply.
