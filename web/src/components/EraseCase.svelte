@@ -61,11 +61,11 @@
 <svelte:window onkeydown={escape} />
 <section class="erase" aria-labelledby="erase-title" bind:this={sectionEl}>
   {#if finished}
-    <h3 id="erase-title">{ERASE_TEXT.title}</h3>
+    <h2 id="erase-title">{ERASE_TEXT.title}</h2>
     <p class="note" role="status">{eraseDoneText(code)}</p>
     <div class="actions"><button type="button" class="secondary-button" bind:this={doneButton} onclick={onDone}>{ERASE_TEXT.back}</button></div>
   {:else}
-    <h3 id="erase-title">{ERASE_TEXT.title}</h3>
+    <h2 id="erase-title">{ERASE_TEXT.title}</h2>
     <p class="note">{eraseBody(archivePath)}</p>
     <form onsubmit={submit}>
       <label for="erase-code">{erasePromptText(code)}</label>
@@ -82,7 +82,7 @@
 
 <style>
   .erase { display: grid; gap: var(--space-3); box-sizing: border-box; width: 100%; max-width: 560px; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
-  .erase h3 { margin: 0; font-size: 18px; font-weight: 600; }
+  .erase h2 { margin: 0; font-size: 18px; font-weight: 600; }
   .note { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .note[hidden] { display: none; }
   form { display: grid; gap: var(--space-2); justify-items: start; }

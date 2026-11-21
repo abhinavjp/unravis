@@ -59,7 +59,7 @@
 </section>
 
 <style>
-  .unlock { display: grid; gap: var(--space-3); max-width: 480px; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-family: var(--mono); }
+  .unlock { display: grid; gap: var(--space-3); max-width: 480px; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .unlock h2 { margin: 0; font-size: 20px; font-weight: 600; }
   .intro { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   form { display: grid; gap: var(--space-2); justify-items: start; }

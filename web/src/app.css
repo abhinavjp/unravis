@@ -109,6 +109,7 @@ input, textarea { caret-color: var(--accent); }
 
 /* ---------- Stage and depth views ---------- */
 .stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 22px 24px 48px; scroll-padding-bottom: 80px; }
+.stage:focus { outline: none; }
 .stage-inner { max-width: 1560px; margin: 0 auto; display: grid; gap: 12px; min-width: 0; }
 .stage-views { display: contents; }
 .view { min-width: 0; display: grid; gap: 12px; align-content: start; animation: reveal 200ms var(--ease) both; }

@@ -34,7 +34,7 @@
 </section>
 
 <style>
-  .rewrap { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-2) var(--space-3); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-family: var(--mono); }
+  .rewrap { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-2) var(--space-3); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .rewrap-text { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .rewrap-text:empty { display: none; }
 </style>
