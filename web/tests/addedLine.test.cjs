@@ -29,3 +29,10 @@ test('the wizard step shows the line through one live region for every kind', ()
   assert.match(step, /role="status" data-added-note>\{addedNote\}/);
   assert.match(read('src/lib/copy/sourceWizardCopy.ts'), /Nothing is read until the last button\./);
 });
+
+// UX-10: the lane "?" buttons came out 21 px on a 14 px root; the floor is 24 px (WCAG 2.5.8).
+test('the Timeline lane help buttons are never below 24 px', () => {
+  const chart = read('src/components/TracingChart.svelte');
+  assert.match(chart, /\.hint-btn \{ flex: none; width: max\(1\.5rem, 24px\); height: max\(1\.5rem, 24px\);/);
+  assert.match(read('src/lib/copy/fileKindsCopy.ts'), /'1 file is ready to add\.'/);
+});

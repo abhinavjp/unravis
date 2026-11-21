@@ -50,7 +50,7 @@ test('FILES-01: two IIS files and one unknown file show their kinds, the guide i
   const add = page.getByRole('button', { name: 'Add 2 files' });
   await expect(add).toBeEnabled();
   await add.click();
-  await expect(page.getByText('2 files were added to your sources. 1 file was left out.')).toBeVisible();
+  await expect(page.getByText('2 files are ready to add. 1 file was left out.')).toBeVisible();
   await expect(page.getByRole('heading', { level: 4, name: /Your sources/ })).toBeVisible();
 
   // Review: the files are shown as chosen, and nothing asks for them again.
@@ -89,7 +89,7 @@ test('FILES-03: removing a source takes its file with it, and Review has nothing
   await openPanel(page, 'QA Import Files Remove');
   await page.getByLabel('Choose files to import').setInputFiles([W3C]);
   await page.getByRole('button', { name: 'Add 1 file' }).click();
-  await expect(page.getByText('1 file was added to your sources.')).toBeVisible();
+  await expect(page.getByText('1 file is ready to add.')).toBeVisible();
   await page.getByRole('button', { name: /^Remove/ }).first().click();
   await expect(page.getByText('No sources are chosen yet.')).toBeVisible();
   await page.getByRole('button', { name: 'Next' }).click();
@@ -142,7 +142,7 @@ test('FILES-05: a file can be dropped from the list, and a source taken out late
   await page.getByLabel('What u_ex261022.log is').selectOption('');
   await expect(page.getByRole('button', { name: 'Add 2 files' })).toBeEnabled();
   await page.getByRole('button', { name: 'Add 2 files' }).click();
-  await expect(page.getByText('2 files were added to your sources. 1 file was left out.')).toBeVisible();
+  await expect(page.getByText('2 files are ready to add. 1 file was left out.')).toBeVisible();
 
   // After adding: one source is taken out. The other keeps its file.
   await page.getByRole('button', { name: 'Remove u_ex261021.log' }).click();
