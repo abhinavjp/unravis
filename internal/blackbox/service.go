@@ -526,7 +526,26 @@ func (m *Manager) Start() error {
 	if err := m.Svc.Start(ServiceName); err != nil {
 		return err
 	}
-	return m.waitFor(SvcRunning, 15*time.Second)
+	if err := m.waitFor(SvcRunning, 15*time.Second); err != nil {
+		return err
+	}
+	m.markStoppedByUser(false)
+	return nil
+}
+
+// markStoppedByUser leaves (on) or removes (off) the marker that says a person
+// stopped the recorder on purpose. Best effort: a failure never blocks a stop or a start.
+func (m *Manager) markStoppedByUser(on bool) {
+	dir, err := m.Env.ProgramDir()
+	if err != nil {
+		return
+	}
+	path := filepath.Join(dir, StoppedByUserMarkerName)
+	if on {
+		_ = os.WriteFile(path, []byte("A person stopped the Blackbox on purpose. An Unravis upgrade leaves it stopped until it is started again.\r\n"), 0o644)
+		return
+	}
+	_ = os.Remove(path)
 }
 
 // Stop stops the service and waits. Stopping a stopped service is not an error.
@@ -548,7 +567,11 @@ func (m *Manager) Stop() error {
 	if err := m.Svc.Stop(ServiceName); err != nil {
 		return err
 	}
-	return m.waitFor(SvcStopped, 30*time.Second)
+	if err := m.waitFor(SvcStopped, 30*time.Second); err != nil {
+		return err
+	}
+	m.markStoppedByUser(true)
+	return nil
 }
 
 // ApplyResult says what Apply did.
@@ -886,6 +909,7 @@ func (m *Manager) Remove(cfg Config, keyPath string, deleteRecordings bool, conf
 		// The "managed by Unravis" marker must not outlive the recorder it described: a standalone recorder installed here
 		// later would otherwise never update itself.
 		_ = os.Remove(filepath.Join(dir, ManagedMarkerName))
+		_ = os.Remove(filepath.Join(dir, StoppedByUserMarkerName))
 	}
 	return res, nil
 }

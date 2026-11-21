@@ -452,6 +452,33 @@ func TestStartStopApply(t *testing.T) {
 	}
 }
 
+func TestStopWritesStoppedByUserMarkerStartClearsIt(t *testing.T) {
+	g := newSvcRig(t)
+	if _, err := g.m.Install(g.cfg); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := g.m.Env.ProgramDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, StoppedByUserMarkerName)
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("marker present while running")
+	}
+	if err := g.m.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("Stop did not leave the marker: %v", err)
+	}
+	if err := g.m.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("Start left the marker behind")
+	}
+}
+
 func TestApplyWithBrokenConfigStopsNothing(t *testing.T) {
 	g := newSvcRig(t)
 	if _, err := g.m.Install(g.cfg); err != nil {
