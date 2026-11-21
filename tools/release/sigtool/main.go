@@ -127,7 +127,7 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		t := time.Now().UTC().Truncate(time.Second)
 		c := update.Control{Schema: update.ControlSchema, Product: update.Product, Channel: *channel, Seq: uint64(t.Unix()),
 			Published: t, Expires: t.Add(time.Duration(*days) * 24 * time.Hour), Pause: *pause, Blocked: []string{},
-			RolloutVersion: *rollV, RolloutPercent: *pct, Note: *note}
+			RolloutVersion: strings.TrimSpace(*rollV), RolloutPercent: *pct, Note: *note}
 		for _, v := range strings.Split(*block, ",") {
 			if v = strings.TrimSpace(v); v != "" {
 				c.Blocked = append(c.Blocked, v)

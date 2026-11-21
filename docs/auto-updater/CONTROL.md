@@ -5,7 +5,7 @@ A second signed file per channel, next to the manifest on the `update-feed` rele
 - `rc-control.json` and `rc-control.json.sig`
 - `stable-control.json` and `stable-control.json.sig`
 
-It is a separate file because the manifest is read strictly: a new field there would make every installed copy refuse the feed. Older programs never ask for the control file, so they keep working. A missing file means no control.
+It is a separate file because the manifest is read strictly: a new field there would make every installed copy refuse the feed. Older programs never ask for the control file, so they keep working. Versions must be written like `0.1.0-rc.48` (no `v`, no spaces); anything else is refused when signing. A missing file never lifts a hold a machine already remembers: to lift, publish a new control file with nothing set (run the script with no switches).
 
 ## What it can do
 
@@ -15,7 +15,7 @@ It is a separate file because the manifest is read strictly: a new field there w
 | `blocked` | Versions that are never offered (a withdrawn release). |
 | `rolloutVersion`, `rolloutPercent` | Only that percent of machines may take that one version. Any other version is not held back. |
 | `note` | Short plain words, shown in the update status. |
-| `seq` | The signing time in Unix seconds. A lower seq than the one a machine already holds is ignored (replay). |
+| `seq` | The signing time in Unix seconds. A machine remembers the highest seq it ever accepted (even after that file expires) and ignores a lower one (replay). |
 | `expires` | At most 90 days after `published`. A forgotten pause ends by itself. |
 
 It can only hold a release back. It cannot install anything, and it cannot lower the version.

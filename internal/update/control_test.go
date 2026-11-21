@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -192,5 +193,70 @@ func TestControlNotAskedWhenNothingToInstall(t *testing.T) {
 	f.Check(t.Context())
 	if asked.Load() {
 		t.Fatal("asked for the control file with nothing to install")
+	}
+}
+
+func TestControlOldPauseCannotBeReplayedAfterLiftExpires(t *testing.T) {
+	k, priv := key(t, ChannelRC)
+	fs := newFeed(t)
+	long := goodManifest("0.1.0-rc.48", ChannelRC)
+	long.Expires = now.Add(300 * 24 * time.Hour)
+	fs.publish(t, "rc", long, k, priv)
+	f := fs.fetcher(t, k, ChannelRC, "0.1.0-rc.47")
+	pause := goodControl(ChannelRC)
+	pause.Seq, pause.Pause, pause.Expires = 100, true, now.Add(80*24*time.Hour)
+	lift := goodControl(ChannelRC)
+	lift.Seq, lift.Expires = 200, now.Add(20*24*time.Hour)
+	fs.publishControl(t, "rc", lift, k, priv)
+	if r := f.Check(t.Context()); r.Status != StatusAvailable {
+		t.Fatalf("%+v", r)
+	}
+	// 40 days later the lift has expired; an attacker serves the old, still valid, genuinely signed pause.
+	later := now.Add(40 * 24 * time.Hour)
+	f.Now = func() time.Time { return later }
+	fs.publishControl(t, "rc", pause, k, priv)
+	if r := f.Check(t.Context()); r.Status != StatusAvailable {
+		t.Fatalf("replayed pause held the update: %+v", r)
+	}
+	// Same with the state file lost: the in-process floor holds.
+	_ = os.Remove(f.StatePath)
+	if r := f.Check(t.Context()); r.Status != StatusAvailable {
+		t.Fatalf("replay after a lost state file: %+v", r)
+	}
+}
+
+func TestControlVersionsMustBeCanonical(t *testing.T) {
+	k, priv := key(t, ChannelRC)
+	trust := Trust{Keys: []Key{k}, Channel: ChannelRC, Want: ChannelRC}
+	for _, v := range []string{"v0.1.0-rc.48", " 0.1.0-rc.48", "0.1.0-rc.48 "} {
+		c := goodControl(ChannelRC)
+		c.Blocked = []string{v}
+		b, _ := json.Marshal(c)
+		if _, err := VerifyControl(b, []byte(FormatSignature(k.Pub, ed25519.Sign(priv, b))), trust, now); err == nil {
+			t.Errorf("blocked %q accepted", v)
+		}
+		c = goodControl(ChannelRC)
+		c.RolloutVersion, c.RolloutPercent = v, 10
+		b, _ = json.Marshal(c)
+		if _, err := VerifyControl(b, []byte(FormatSignature(k.Pub, ed25519.Sign(priv, b))), trust, now); err == nil {
+			t.Errorf("rollout %q accepted", v)
+		}
+	}
+}
+
+func TestControlDrawStableWhenStateCannotBeSaved(t *testing.T) {
+	k, priv := key(t, ChannelRC)
+	fs := newFeed(t)
+	fs.publish(t, "rc", goodManifest("0.1.0-rc.48", ChannelRC), k, priv)
+	c := goodControl(ChannelRC)
+	c.RolloutVersion, c.RolloutPercent = "0.1.0-rc.48", 10
+	fs.publishControl(t, "rc", c, k, priv)
+	f := fs.fetcher(t, k, ChannelRC, "0.1.0-rc.47")
+	f.StatePath = "" // nothing can be saved
+	first := f.Check(t.Context()).Status
+	for i := 0; i < 60; i++ {
+		if s := f.Check(t.Context()).Status; s != first {
+			t.Fatalf("answer flipped from %s to %s", first, s)
+		}
 	}
 }

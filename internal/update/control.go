@@ -71,9 +71,9 @@ func (c *Control) Validate(now time.Time) error {
 	if len(c.Blocked) > maxControlBlocked {
 		return errors.New("control file: too many blocked versions")
 	}
-	for _, v := range c.Blocked {
-		if _, err := ParseVersion(v); err != nil {
-			return errors.New("control file: a blocked version is not valid")
+	for _, s := range c.Blocked {
+		if v, err := ParseVersion(s); err != nil || v.String() != s {
+			return errors.New("control file: a blocked version must be written like 0.1.0-rc.48 (no v, no spaces)")
 		}
 	}
 	if c.RolloutVersion == "" {
@@ -81,8 +81,8 @@ func (c *Control) Validate(now time.Time) error {
 			return errors.New("control file: a rollout needs a version")
 		}
 	} else {
-		if _, err := ParseVersion(c.RolloutVersion); err != nil {
-			return errors.New("control file: the rollout version is not valid")
+		if v, err := ParseVersion(c.RolloutVersion); err != nil || v.String() != c.RolloutVersion {
+			return errors.New("control file: the rollout version must be written like 0.1.0-rc.48 (no v, no spaces)")
 		}
 		if c.RolloutPercent < 1 || c.RolloutPercent > 100 {
 			return errors.New("control file: rollout percent must be 1 to 100")

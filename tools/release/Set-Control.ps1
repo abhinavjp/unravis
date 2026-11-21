@@ -46,11 +46,24 @@ try {
     if (git -C $repoRoot status --porcelain) { throw 'The working folder has changes. Use a clean checkout of master.' }
     Invoke-Checked 'fetching master' { git -C $repoRoot fetch --quiet origin master }
     if ((git -C $repoRoot rev-parse HEAD) -ne (git -C $repoRoot rev-parse origin/master)) { throw 'This checkout is not the same as origin/master. Run git pull first.' }
+    # What installed copies trust today is the release now on the feed. The signing code and key list are shown against it, like Sign-Release.ps1.
+    Invoke-Checked 'reading the feed' { gh release download update-feed --repo $Repo --pattern "$Channel.json" --dir $work }
+    $prevTag = 'v' + (Get-Content -Raw (Join-Path $work "$Channel.json") | ConvertFrom-Json).version
+    git -C $repoRoot rev-parse --verify --quiet "refs/tags/$prevTag^{commit}" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "The feed's current release $prevTag is not in this clone. Run: git fetch --tags" }
+    $prevKeys = Join-Path $work 'prev_trusted_keys.txt'
+    git -C $repoRoot show "${prevTag}:internal/update/trusted_keys.txt" > $prevKeys
+    if ($LASTEXITCODE -ne 0) { throw "Could not read the trusted keys of $prevTag." }
+    $codeDiff = git -C $repoRoot diff --stat $prevTag HEAD -- tools/release/sigtool internal/update ':!internal/update/trusted_keys.txt'
+    if ($codeDiff) { Write-Host "Signing and verifying code changed since ${prevTag}:"; $codeDiff | Write-Host; if ((Read-Host "You have read that diff (git diff) and it is yours. Type 'reviewed' to go on") -ne 'reviewed') { throw 'Stopped. Nothing was signed.' } }
+    $keyDiff = git -C $repoRoot diff $prevTag HEAD -- internal/update/trusted_keys.txt
+    if ($keyDiff) { Write-Host 'The list of trusted public keys CHANGED:'; $keyDiff | Write-Host; if ((Read-Host "Every added or removed key is one you made or removed on purpose. Type 'keys ok' to go on") -ne 'keys ok') { throw 'Stopped. Nothing was signed.' } }
     $tool = Join-Path $work 'sigtool.exe'
     Push-Location $repoRoot
     try { Invoke-Checked 'building the signing tool' { go build -mod=readonly -o $tool ./tools/release/sigtool } } finally { Pop-Location }
 
     $file = Join-Path $work "$Channel-control.json"
+    if ($Percent -ne 0 -and -not $Rollout) { throw '-Percent needs -Rollout <version>.' }
     $a = @('control', '-channel', $Channel, '-days', $Days, '-out', $file)
     if ($Pause) { $a += '-pause' }
     if ($Block.Count) { $a += @('-block', ($Block -join ',')) }
@@ -70,7 +83,11 @@ try {
     try { $plain | & $tool sign -control -key $KeyFile -in $file -out "$file.sig" } finally { $plain = $null; $secure.Dispose() }
     if ($LASTEXITCODE -ne 0) { throw 'Signing failed. Nothing was uploaded.' }
     Invoke-Checked 'verifying with the keys built into this checkout' { & $tool verify -control -in $file -sig "$file.sig" -trusted -channel $Channel -want $Channel }
+    Invoke-Checked "verifying with the keys installed copies trust ($prevTag)" { & $tool verify -control -in $file -sig "$file.sig" -keys $prevKeys -channel $Channel -want $Channel }
     Invoke-Checked 'uploading to the update feed' { gh release upload update-feed $file "$file.sig" --repo $Repo --clobber }
+    $back = Join-Path $work 'back'; New-Item -ItemType Directory -Path $back | Out-Null
+    Invoke-Checked 'reading back the published pair' { gh release download update-feed --repo $Repo --pattern "$Channel-control.json*" --dir $back }
+    Invoke-Checked 'verifying the published pair' { & $tool verify -control -in (Join-Path $back "$Channel-control.json") -sig (Join-Path $back "$Channel-control.json.sig") -keys $prevKeys -channel $Channel -want $Channel }
     Write-Host "Published. Machines pick it up at their next check (within about 30 minutes)." -ForegroundColor Green
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue

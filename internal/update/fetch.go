@@ -47,6 +47,9 @@ type State struct {
 	// DrawFor and Draw are, per channel, the version a rollout draw was made for and the draw (0 to 99).
 	DrawFor map[string]string `json:"drawFor,omitempty"`
 	Draw    map[string]int    `json:"draw,omitempty"`
+	// ControlSeq is the highest control seq accepted per channel. It is never lowered or dropped when a file expires, so a
+	// genuinely signed old file cannot be replayed to bring back a pause the owner lifted.
+	ControlSeq map[string]uint64 `json:"controlSeq,omitempty"`
 }
 
 // Status is the result of one check.
@@ -98,6 +101,10 @@ type Fetcher struct {
 type seenMem struct {
 	seq  map[string]uint64
 	hash map[string]string
+	// control seq floor and rollout draw, kept here too so an unsaved or lost state file cannot reopen a replay or redraw
+	ctlSeq  map[string]uint64
+	drawFor map[string]string
+	draw    map[string]int
 }
 
 var (
@@ -297,10 +304,10 @@ func (f *Fetcher) once1(ctx context.Context, base, want string, now func() time.
 		note += " (could not save the update memory: " + err.Error() + ")"
 	}
 	if d == DecisionInstall {
-		hold, why := f.applyControl(&st, ctl, want, m.Version, now())
+		hold, why := f.applyControl(&st, mem, ctl, want, m.Version, now())
 		_ = f.saveState(st) // the control file and the rollout draw are remembered either way
 		if hold {
-			return attempt{Result: Result{Status: StatusLatest, Manifest: m, Detail: why + note, Held: true}}
+			return attempt{Result: Result{Status: StatusLatest, Manifest: m, Detail: why, Held: true}}
 		}
 		return attempt{Result: Result{Status: StatusAvailable, Manifest: m, Detail: "version " + m.Version + " is available" + note}}
 	}
@@ -327,19 +334,31 @@ func (f *Fetcher) fetchControl(ctx context.Context, base, want string, now time.
 }
 
 // applyControl merges a freshly read control file into the state and says whether this machine must hold the release back.
-// An older seq than the remembered one is ignored (a replayed file). Call with stateMu held; the caller saves the state.
-func (f *Fetcher) applyControl(st *State, fresh *Control, want, version string, now time.Time) (bool, string) {
+// A file with a lower seq than the highest ever accepted is ignored (a replay), even when the file that set that floor has
+// since expired. Call with stateMu held; the caller saves the state.
+func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, want, version string, now time.Time) (bool, string) {
 	if st.Control == nil {
 		st.Control = map[string]*Control{}
+	}
+	if st.ControlSeq == nil {
+		st.ControlSeq = map[string]uint64{}
+	}
+	if mem.ctlSeq == nil {
+		mem.ctlSeq, mem.drawFor, mem.draw = map[string]uint64{}, map[string]string{}, map[string]int{}
 	}
 	cur := st.Control[want]
 	if cur != nil && cur.Channel != want {
 		cur = nil
 	}
-	if fresh != nil && (cur == nil || fresh.Seq >= cur.Seq) {
-		cur = fresh
+	floor := max(st.ControlSeq[want], mem.ctlSeq[want])
+	if cur != nil {
+		floor = max(floor, cur.Seq)
+	}
+	if fresh != nil && fresh.Seq >= floor {
+		cur, floor = fresh, fresh.Seq
 		st.Control[want] = fresh
 	}
+	st.ControlSeq[want], mem.ctlSeq[want] = floor, floor
 	if !ctlLive(cur, now) {
 		delete(st.Control, want)
 		return false, ""
@@ -348,10 +367,16 @@ func (f *Fetcher) applyControl(st *State, fresh *Control, want, version string, 
 		if st.Draw == nil {
 			st.Draw, st.DrawFor = map[string]int{}, map[string]string{}
 		}
-		if st.DrawFor[want] != version {
-			st.Draw[want], st.DrawFor[want] = newDraw(), version
+		if st.DrawFor[want] == version {
+			d := st.Draw[want]
+			mem.draw[want], mem.drawFor[want] = d, version
+			return d
 		}
-		return st.Draw[want]
+		if mem.drawFor[want] != version {
+			mem.draw[want], mem.drawFor[want] = newDraw(), version
+		}
+		st.Draw[want], st.DrawFor[want] = mem.draw[want], version
+		return mem.draw[want]
 	})
 }
 
@@ -460,7 +485,7 @@ func (f *Fetcher) loadState() (State, string, error) {
 	if s.SeenHash != nil {
 		st.SeenHash = s.SeenHash
 	}
-	st.Control, st.DrawFor, st.Draw = s.Control, s.DrawFor, s.Draw
+	st.Control, st.DrawFor, st.Draw, st.ControlSeq = s.Control, s.DrawFor, s.Draw, s.ControlSeq
 	return st, "", nil
 }
 
