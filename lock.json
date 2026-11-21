@@ -1,24 +1,24 @@
 {
   "v": 1,
-  "state": "held",
+  "state": "free",
   "id": "c582673f587041f99331c763ca967393",
   "host": "9f484c6ac779",
   "pid": 22064,
   "requester": "ota",
   "started": "2026-11-21T23:54:20.1737907Z",
-  "heartbeat": "2026-11-21T23:54:31.0339194Z",
+  "heartbeat": "2026-11-21T23:54:55.6242191Z",
   "channel": "rc",
   "version": "0.1.0-rc.56",
-  "stage": "Sign",
+  "stage": "idle",
   "commit": "e107bb17fb3c3fa6c293d194067b3811ebf5d753",
   "holdMerges": false,
   "lease_minutes": 180,
   "reason": "",
   "last": {
     "version": "0.1.0-rc.56",
+    "reason": "No valid build attestation for unravis-lite-v0.1.0-rc.56-windows-x64.zip from abhinavjp/unravis/.github/workflows/release.yml : \r\nError: failed to choose verifier based on provided bundle issuer: public good verifier is not available (initialization may have failed)\r\n",
+    "at": "2026-11-21T23:54:55.2300110Z",
     "outcome": "stopped",
-    "requester": "ota",
-    "at": "2026-11-21T23:42:49.2222876Z",
-    "reason": "No valid build attestation for unravis-blackbox-v0.1.0-rc.56-windows-x64.zip from abhinavjp/unravis/.github/workflows/release.yml : error creating Sigstore verifier: no valid Sigstore verifiers could be initialized\r\n"
+    "requester": "ota"
   }
 }
