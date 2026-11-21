@@ -17,9 +17,11 @@ type fakeSavedSQL struct {
 	saveErr error
 }
 
-func (f *fakeSavedSQL) List() ([]sqlconn.Recent, error)               { return nil, nil }
-func (f *fakeSavedSQL) Save(sqlconn.Input) (sqlconn.Recent, error)    { return sqlconn.Recent{}, f.saveErr }
-func (f *fakeSavedSQL) Delete(string) error                           { return nil }
+func (f *fakeSavedSQL) List() ([]sqlconn.Recent, error) { return nil, nil }
+func (f *fakeSavedSQL) Save(sqlconn.Input) (sqlconn.Recent, error) {
+	return sqlconn.Recent{}, f.saveErr
+}
+func (f *fakeSavedSQL) Delete(string) error { return nil }
 func (f *fakeSavedSQL) Resolve(id string) (sqlconn.Input, error) {
 	if id != "saved1" {
 		return sqlconn.Input{}, sqlconn.ErrNotFound
@@ -30,7 +32,7 @@ func (f *fakeSavedSQL) Resolve(id string) (sqlconn.Input, error) {
 type emptyQueryer struct{}
 
 func (emptyQueryer) Query(context.Context, string) ([]dbhealth.Row, error) { return nil, nil }
-func (emptyQueryer) Close()                                                  {}
+func (emptyQueryer) Close()                                                {}
 
 // stubDrivers replaces the SQL driver calls and records the login each one received.
 func stubDrivers(t *testing.T) *[]dbhealth.SQLTarget {
@@ -147,11 +149,11 @@ func TestHealthRunRefusals(t *testing.T) {
 	healthEnv(t, &fakeSavedSQL{}, func(t *testing.T, e *caseEnv, id string) {
 		run := "/api/cases/" + id + "/health/run"
 		for body, want := range map[string]int{
-			`{"kind":"oracle"}`:                                  http.StatusBadRequest,
-			`{"kind":"sql"}`:                                     http.StatusBadRequest,
-			`{"kind":"sql","sql":{"server":"bad","auth":"windows"}}`: http.StatusBadRequest,
-			`{"kind":"mongo","mongo":{"uri":"mongodb://h"}}`:       http.StatusBadRequest,
-			`{"kind":"mongo","mongo":{"uri":"mongodb://h","database":"a b"}}`: http.StatusBadRequest,
+			`{"kind":"oracle"}`: http.StatusBadRequest,
+			`{"kind":"sql"}`:    http.StatusBadRequest,
+			`{"kind":"sql","sql":{"server":"bad","auth":"windows"}}`:            http.StatusBadRequest,
+			`{"kind":"mongo","mongo":{"uri":"mongodb://h"}}`:                    http.StatusBadRequest,
+			`{"kind":"mongo","mongo":{"uri":"mongodb://h","database":"a b"}}`:   http.StatusBadRequest,
 			`{"kind":"mongo","mongo":{"uri":"mongodb://h","database":"audit"}}`: http.StatusBadRequest, // repository cannot open a command client
 		} {
 			if res := e.json(http.MethodPost, run, body); res.Code != want {

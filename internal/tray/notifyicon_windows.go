@@ -29,12 +29,12 @@ const (
 
 // Icon loading constants.
 const (
-	imageIcon     = 1
-	lrShared      = 0x8000
-	smCxSmIcon    = 49
-	smCySmIcon    = 50
+	imageIcon      = 1
+	lrShared       = 0x8000
+	smCxSmIcon     = 49
+	smCySmIcon     = 50
 	idiApplication = 32512
-	exeIconRes    = 1
+	exeIconRes     = 1
 )
 
 var (

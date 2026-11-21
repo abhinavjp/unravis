@@ -23,7 +23,9 @@ func demoFilterCases() []demoFilterCase {
 		{"ip list", func(q *Query) { q.UserIPs = []string{"203.0.113.10", "203.0.113.11"} }, func(r RequestRecord) bool { return r.UserIP == "203.0.113.10" || r.UserIP == "203.0.113.11" }},
 		{"url contains", func(q *Query) { q.URLContains = "/PAYROLL/" }, func(r RequestRecord) bool { return strings.Contains(r.URL, "/payroll/") }},
 		{"url contains is literal", func(q *Query) { q.URLContains = "/.*" }, func(r RequestRecord) bool { return false }},
-		{"status codes", func(q *Query) { q.StatusCodes = []string{"200"} }, func(r RequestRecord) bool { return strings.HasPrefix(r.Status, "200") && strings.TrimSpace(r.Status) == "200" }},
+		{"status codes", func(q *Query) { q.StatusCodes = []string{"200"} }, func(r RequestRecord) bool {
+			return strings.HasPrefix(r.Status, "200") && strings.TrimSpace(r.Status) == "200"
+		}},
 		{"status code miss", func(q *Query) { q.StatusCodes = []string{"500"} }, func(r RequestRecord) bool { return false }},
 		{"operation", func(q *Query) { q.Operation = "Reports.Generate" }, func(r RequestRecord) bool { return r.Controller == "Reports" && r.Action == "Generate" }},
 		{"completion complete", func(q *Query) { q.Completion = "complete" }, func(r RequestRecord) bool { return true }},
