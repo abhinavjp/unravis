@@ -159,7 +159,7 @@ func (a *AutoUpdate) validate() error {
 // UpdateStatus is what /status says about updates. It never carries a URL, a file path or an error text from the network.
 type UpdateStatus struct {
 	Mode    string     `json:"mode"`
-	State   string     `json:"state"` // idle, available, skipped, downloading, installing, failed, off
+	State   string     `json:"state"` // idle, managed, available, held, skipped, downloading, installing, failed, off
 	Latest  string     `json:"latest,omitempty"`
 	Checked *time.Time `json:"checked,omitempty"`
 	// Result is one plain sentence about the last check.

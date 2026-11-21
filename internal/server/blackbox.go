@@ -211,6 +211,38 @@ type bbFacts struct {
 	// Unread is the number of recording files that could not be read to the end. It is what makes a Blackbox Incomplete.
 	Unread      int      `json:"unread,omitempty"`
 	FreePercent *float64 `json:"freePercent,omitempty"`
+	// Update is the recorder's own self-update state, copied from its status page. Absent from a recorder that does not report it.
+	Update *bbUpdate `json:"update,omitempty"`
+}
+
+// bbUpdate is the recorder's update state as Unravis shows it. The words come from a recorder over plain HTTP, so each one is
+// cut short and only the known states pass; the page shows them as text.
+type bbUpdate struct {
+	Mode    string     `json:"mode,omitempty"`
+	State   string     `json:"state"`
+	Latest  string     `json:"latest,omitempty"`
+	Checked *time.Time `json:"checked,omitempty"`
+	Result  string     `json:"result,omitempty"`
+}
+
+var bbUpdateStates = map[string]bool{"idle": true, "managed": true, "available": true, "held": true, "skipped": true, "downloading": true, "installing": true, "failed": true, "off": true}
+
+func capRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
+}
+
+func bbUpdateFrom(u *blackbox.UpdateStatus) *bbUpdate {
+	if u == nil || !bbUpdateStates[u.State] {
+		return nil
+	}
+	out := &bbUpdate{Mode: capRunes(u.Mode, 20), State: u.State, Latest: capRunes(u.Latest, 40), Checked: u.Checked, Result: capRunes(u.Result, 300)}
+	if u.State == "failed" {
+		out.Result = "" // the recorder's failure text can carry a path or a network error; the page says it in its own words
+	}
+	return out
 }
 
 type bbItem struct {
@@ -292,6 +324,7 @@ func (b *blackboxHub) facts(rd *blackbox.Reading, rep *blackbox.ReadReport) *bbF
 	}
 	if rd.Status != nil {
 		f.FreePercent = rd.Status.FreePercent
+		f.Update = bbUpdateFrom(rd.Status.Update)
 	}
 	return f
 }
