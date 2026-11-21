@@ -1,6 +1,11 @@
 name: CI
 
 # Runs on every push to master and on every pull request.
+# Committed web build (BL-031): web/dist, cmd/unravis-setup/ui and cmd/unravis-lite/ui are committed and
+# embedded in the exe. A pull request that changes web/src, web/index.html, web/setup, web/lite, docs/user/*.md
+# or web/package-lock.json must commit the rebuilt folders (run `npm run build` in web). The step "Web - built
+# files match what is committed" compares the build output with the commit byte for byte and fails otherwise.
+#
 # The runner is pinned (windows-2022, not windows-latest): it is also the reference
 # renderer for the screenshots, so it must not change without anyone choosing it.
 #
@@ -56,7 +61,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: '22.23.5'
           cache: npm
           cache-dependency-path: |
             web/package-lock.json
@@ -77,6 +82,15 @@ jobs:
       - name: Web - build
         working-directory: web
         run: npm run build
+
+      - name: Web - built files match what is committed
+        # BL-031. Fails when `npm run build` gives bytes other than the committed web/dist,
+        # cmd/unravis-setup/ui and cmd/unravis-lite/ui. Fix: run `npm run build` in web and commit them.
+        working-directory: web
+        run: |
+          node --version
+          npm --version
+          node scripts/check-dist.cjs
 
       - name: Go - vet
         run: go vet ./...
