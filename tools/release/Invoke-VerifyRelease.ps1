@@ -23,12 +23,15 @@
 .PARAMETER Tag      The new, published tag (vX.Y.Z or vX.Y.Z-rc.N).
 .PARAMETER Previous An older published tag to upgrade from. Leave out for the very first signed release (nothing before it trusts the keys).
 .PARAMETER WaitMinutes How long B5 waits for the recorder to update itself (default 12).
+.PARAMETER Part     All (default), Main (A1-A3 and B1-B4) or Recorder (B5 alone). verify-release.yml runs Main and Recorder on two machines at
+                    once: B5 mostly waits for the recorder's own first update check (1 to 5 minutes) and shares nothing with the other steps.
 #>
 param(
     [Parameter(Mandatory)] [string]$Tag,
     [string]$Previous,
     [string]$Repo = 'abhinavjp/unravis',
-    [int]$WaitMinutes = 12
+    [int]$WaitMinutes = 12,
+    [ValidateSet('All', 'Main', 'Recorder')] [string]$Part = 'All'
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
@@ -41,6 +44,8 @@ New-Item -ItemType Directory -Path $work | Out-Null
 $failures = [System.Collections.Generic.List[string]]::new()
 
 function Step([string]$id, [scriptblock]$body) {
+    $isRecorder = $id -like 'B5*'
+    if (($Part -eq 'Main' -and $isRecorder) -or ($Part -eq 'Recorder' -and -not $isRecorder)) { return }
     try { & $body; Write-Host "PASS $id" -ForegroundColor Green }
     catch { Write-Host "FAIL $id : $($_.Exception.Message)" -ForegroundColor Red; $script:failures.Add("$id : $($_.Exception.Message)") }
 }
@@ -52,9 +57,11 @@ function Get-Release([string]$tag, [string]$dir) {
 }
 
 $newDir = Join-Path $work 'new'
-Get-Release $Tag $newDir
-$newSetup = (Get-ChildItem $newDir -Filter 'unravis-setup-*.exe' | Select-Object -First 1).FullName
-Expect ([bool]$newSetup) 'the release has no setup program'
+if ($Part -ne 'Recorder') {
+    Get-Release $Tag $newDir
+    $newSetup = (Get-ChildItem $newDir -Filter 'unravis-setup-*.exe' | Select-Object -First 1).FullName
+    Expect ([bool]$newSetup) 'the release has no setup program'
+}
 
 Step 'A1 public feed names this version' {
     $base = "https://github.com/$Repo/releases/download/update-feed"
@@ -128,12 +135,15 @@ if ($Previous) {
         Expect ($LASTEXITCODE -ne 0) 'a downgrade was accepted'
         Expect ((Get-BbVersion) -eq $ver) 'the recorder version changed'
     }
-    Step 'B5 standalone recorder updates itself with nobody there' {
-        # Remove the Unravis install (keeps data); then install ONLY the previous recorder, with no managed marker.
+    Step 'B4u setup --uninstall removes the app and exits 0' {
         $un = Join-Path $work 'un.json'
         @{ uninstall = @{ deleteCases = $false; deleteRecordings = $false } } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 -LiteralPath $un
         & $newSetup --uninstall --silent --config $un --log (Join-Path $work 'uninstall.log') | Out-Host
         Expect ($LASTEXITCODE -eq 0) "uninstall exit $LASTEXITCODE"
+    }
+    Step 'B5 standalone recorder updates itself with nobody there' {
+        # Install ONLY the previous recorder, with no managed marker. (On a single machine, -Part All, the step above has just removed
+        # the Unravis install; on its own machine, -Part Recorder, there was none.)
         $zip = Get-ChildItem $oldDir -Filter 'unravis-blackbox-*.zip' | Select-Object -First 1
         Expect ([bool]$zip) 'previous release has no recorder zip'
         # Setup's uninstall can leave this marker behind, and with it a recorder never updates itself (it is "managed by Unravis").
@@ -144,7 +154,7 @@ if ($Previous) {
         Expect ($LASTEXITCODE -eq 0) "recorder install exit $LASTEXITCODE"
         Expect ((Get-BbVersion) -eq $pver) "installed recorder is '$(Get-BbVersion)', expected $pver"
         $deadline = (Get-Date).AddMinutes($WaitMinutes)
-        while ((Get-Date) -lt $deadline) { $cur = try { Get-BbVersion } catch { '' }; if ($cur -eq $ver) { break }; Start-Sleep -Seconds 20 }
+        while ((Get-Date) -lt $deadline) { $cur = try { Get-BbVersion } catch { '' }; if ($cur -eq $ver) { break }; Start-Sleep -Seconds 5 }
         Expect ((Get-BbVersion) -eq $ver) "after $WaitMinutes minutes the recorder is still '$(Get-BbVersion)'"
         Start-Sleep -Seconds 10
         Expect ((Get-Service UnravisBlackbox).Status -eq 'Running') 'service not running after its own update'
@@ -153,7 +163,7 @@ if ($Previous) {
 
 Remove-Item -LiteralPath (Join-Path $work 'bb-install.txt'), (Join-Path $work 'readkey.txt') -Force -ErrorAction SilentlyContinue   # both hold a read key
 if ($failures.Count -gt 0) {
-    Write-Host "`n$($failures.Count) step(s) FAILED:" -ForegroundColor Red
+    Write-Host "`n$($failures.Count) step(s) FAILED ($Part):" -ForegroundColor Red
     $failures | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
     exit 1
 }
