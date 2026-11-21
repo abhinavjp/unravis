@@ -111,8 +111,23 @@ try {
         }
         if ($checker -eq $setupExe) { Say '    Note: no earlier install to check with, so the downloaded setup checks its own release (its built-in keys decide).' }
         Say '    Checking signature, expiry and hashes (unravis-setup --verify)'
-        & $checker --verify $work
-        if ($LASTEXITCODE -ne 0) { Fail "The release folder did not verify (exit $LASTEXITCODE). Nothing was installed. There is no way to skip this check." }
+        $ErrorActionPreference = 'Continue'   # Windows PowerShell 5.1 turns native stderr into errors under Stop
+        $verifyOut = & $checker --verify $work 2>&1 | ForEach-Object { "$_" }
+        $verifyExit = $LASTEXITCODE
+        $ErrorActionPreference = 'Stop'
+        $verifyOut | ForEach-Object { Write-Host "    $_" }
+        if ($verifyExit -ne 0 -and $checker -ne $setupExe -and ($verifyOut -join ' ') -match 'no trusted update keys') {
+            # The installed program is an old build with no keys (the one-time hop onto the signed feed). Check with the downloaded
+            # setup's built-in keys instead, and also require GitHub's build attestation for that file (built by our workflow from the tag).
+            Say '    The installed setup has no trusted keys (an old build). Checking with the downloaded setup instead, plus GitHub build attestation.'
+            & gh attestation verify $setupExe --repo $Repo
+            if ($LASTEXITCODE -ne 0) { Fail 'GitHub does not attest that the downloaded setup was built by this repository. Nothing was installed.' }
+            $ErrorActionPreference = 'Continue'
+            & $setupExe --verify $work
+            $verifyExit = $LASTEXITCODE
+            $ErrorActionPreference = 'Stop'
+        }
+        if ($verifyExit -ne 0) { Fail "The release folder did not verify (exit $verifyExit). Nothing was installed. There is no way to skip this check." }
     } else {
         Say '1/6 Building this checkout (pinned release build)'
         # A hashtable, not an array: splatting an array passes "-Release" as a positional value (it became build.ps1's -GoPath).
