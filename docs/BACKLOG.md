@@ -296,6 +296,7 @@ Spec per area: `docs/desktop/spec/`. Items per area: `docs/desktop/groom/` (scop
 - [ ] **BL-417** Release manager and feed carry the desktop files (size M, P4; see `docs/desktop/groom/06-distribution.md`)
 - [ ] **BL-420** Baseline footprint harness and today's numbers (size ?, ?; see `docs/desktop/groom/07-performance.md`)
 - [ ] **BL-421** Go build flags and no-UPX guard (size ?, ?; see `docs/desktop/groom/07-performance.md`)
+  - Status: built in PR, not verified on live PC (flags in build.ps1/build-blackbox.ps1, guard in tools/release/Test-NoUpx.ps1; PowerShell parts and the installed-build check still need CI/live run).
 - [ ] **BL-422** Sidecar build without embedded UI (`tauri_sidecar` tag) (size ?, ?; see `docs/desktop/groom/07-performance.md`)
 - [ ] **BL-423** Go memory tuning with a bounded SQLite pool (size ?, ?; see `docs/desktop/groom/07-performance.md`)
 - [ ] **BL-424** Go idle wakeup audit and goroutine-leak test (size ?, ?; see `docs/desktop/groom/07-performance.md`)

@@ -130,6 +130,14 @@ jobs:
         # The web step above already built web/dist, so it is skipped here; the Go tests step above already ran go test, so they are skipped too.
         run: ./build.ps1 -SkipWeb -SkipTests -Version "ci-$($env:GITHUB_SHA.Substring(0, 7))"
 
+      - name: No UPX in dist (BL-421 guard and its self-test)
+        shell: pwsh
+        run: |
+          ./tools/release/Test-NoUpx.Tests.ps1
+          ./tools/release/Test-NoUpx.ps1 -Path dist
+          if ($LASTEXITCODE -ne 0) { throw 'a packed exe is in dist.' }
+          Get-ChildItem dist -Filter *.exe | Select-Object Name, Length
+
       - name: Screenshots - install
         working-directory: tools/screens
         run: |
