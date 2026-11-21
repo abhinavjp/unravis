@@ -36,3 +36,8 @@ test('the Timeline lane help buttons are never below 24 px', () => {
   assert.match(chart, /\.hint-btn \{ flex: none; width: max\(1\.5rem, 24px\); height: max\(1\.5rem, 24px\);/);
   assert.match(read('src/lib/copy/fileKindsCopy.ts'), /'1 file is ready to add\.'/);
 });
+
+// UX-9: at phone width the result badge wrapped to "Reject/ed".
+test('the result badge in the create/add progress table never wraps', () => {
+  assert.match(read('src/components/wizard/CreateProgress.svelte'), /\.badge \{[^}]*white-space: nowrap;/);
+});
