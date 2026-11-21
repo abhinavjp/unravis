@@ -1,18 +1,24 @@
 {
   "v": 1,
-  "state": "held",
+  "state": "free",
   "id": "719888ebbe8e4274a86780b73b58beca",
   "host": "9f484c6ac779",
   "pid": 74208,
   "requester": "dryrun-coord-thread",
   "started": "2026-11-21T23:07:43.2393344Z",
-  "heartbeat": "2026-11-21T23:07:47.4214633Z",
+  "heartbeat": "2026-11-21T23:20:21.4970811Z",
   "channel": "rc",
   "version": "",
-  "stage": "Pinned",
+  "stage": "idle",
   "commit": "868553f11cda8fa406bc7f70a025843b38a5ee7c",
   "holdMerges": false,
   "lease_minutes": 180,
   "reason": "",
-  "last": null
+  "last": {
+    "requester": "dryrun-coord-thread",
+    "reason": "",
+    "at": "2026-11-21T23:20:21.0929460Z",
+    "version": "",
+    "outcome": "check-only"
+  }
 }
