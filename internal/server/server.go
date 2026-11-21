@@ -192,15 +192,6 @@ func (l *connectionTestLimiter) allow() bool {
 
 // ServeHTTP is the logging middleware (httplog.go) around serve.
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if u, _ := h.updaterAndDemo(); u != nil && strings.HasPrefix(r.URL.Path, "/api/") {
-		// An update waits while a request that changes something runs (an import, an export, a capture) and while an MCP client works.
-		if r.Header.Get("User-Agent") == mcpUserAgent {
-			u.NoteMCP()
-		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && !strings.HasPrefix(r.URL.Path, "/api/ui/") && !strings.HasPrefix(r.URL.Path, "/api/update") {
-			defer u.WorkBegin()()
-		}
-	}
 	h.serveHTTP(w, r)
 }
 

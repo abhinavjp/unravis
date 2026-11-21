@@ -68,6 +68,10 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 		}
 		return false, 1
 	}
+	// Keep a copy of the settings that "Scan this PC" can read (the program folder is for administrators only). Best effort.
+	if perr := blackbox.PublishThisPC(blackbox.OSEnv{}, cfg); perr != nil && logf != nil {
+		logf("could not keep the settings copy for Scan this PC: %v", perr)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	opts := blackbox.HostOptions{Config: cfg, KeyPath: h.keyPath, Version: version, Log: logf}

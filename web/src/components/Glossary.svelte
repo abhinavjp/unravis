@@ -136,7 +136,7 @@
       <p>Unravis looks for a new version on its own and tells you here. With the second box ticked it also installs it by itself, but only when you are not using it, and then starts again. Otherwise you press Apply.</p>
       {#if canChange}
         <label class="updates-auto"><input type="checkbox" data-testid="update-auto" checked={auto} onchange={(event) => { const box = event.currentTarget; void saveSettings(box.checked, minutes, () => { box.checked = auto; }); }} /> Check automatically</label>
-        <label class="updates-auto"><input type="checkbox" data-testid="update-apply-auto" checked={applyAuto} disabled={!auto} onchange={(event) => { const box = event.currentTarget; void saveSettings(auto, minutes, () => { box.checked = applyAuto; }, box.checked); }} /> Install by itself when I am not using it</label>
+        <label class="updates-auto"><input type="checkbox" data-testid="update-apply-auto" checked={applyAuto} disabled={!auto} onchange={(event) => { const box = event.currentTarget; void saveSettings(auto, minutes, () => { box.checked = applyAuto; }, box.checked); }} /> Install by itself when I am not using it (only when Windows needs no approval for it)</label>
         <label class="updates-every" for="update-every">How often</label>
         <select id="update-every" data-testid="update-every" value={minutes} disabled={!auto} onchange={(event) => { const pick = event.currentTarget; void saveSettings(auto, Number(pick.value), () => { pick.value = String(minutes); }); }}>
           {#each intervalChoices as item (item.minutes)}<option value={item.minutes}>{item.label}</option>{/each}

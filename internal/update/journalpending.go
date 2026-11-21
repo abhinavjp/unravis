@@ -8,8 +8,9 @@ import (
 )
 
 // A setup run that was cut off (power loss, a killed process) leaves its journal on disk (internal/setup/journal.go). The next setup
-// run puts things back first, but nobody may run one. So the app looks for a journal at start and, when the old setup kept by this very
-// update is there, hands over to it (BL-170). The names below equal setup's; a test in internal/setup keeps them equal.
+// run puts things back first, but nobody may run one. So the app looks for a journal at start and tells the person (BL-170). It starts
+// nothing from a journal: anyone can write one in a folder they can create, and a hand-over to an old setup could downgrade a good
+// install. The names below equal setup's; a test in internal/setup keeps them equal.
 const (
 	// JournalFolder is the folder name under ProgramData (an elevated run) or the local app data (a run without administrator rights).
 	JournalFolder = "Unravis Setup"
@@ -28,8 +29,9 @@ type PendingJournal struct {
 	Started time.Time
 }
 
-// FindPendingJournal looks in each folder for a journal that is not committed and has been still for journalSettle. now is the clock.
-func FindPendingJournal(folders []string, now time.Time) (PendingJournal, bool) {
+// FindPendingJournal looks in each folder for a journal that is not committed, has been still for journalSettle and was not tried yet
+// (tried says so for a run's start time). now is the clock.
+func FindPendingJournal(folders []string, now time.Time, tried func(time.Time) bool) (PendingJournal, bool) {
 	for _, dir := range folders {
 		if dir == "" {
 			continue
@@ -44,7 +46,7 @@ func FindPendingJournal(folders []string, now time.Time) (PendingJournal, bool) 
 			Started   time.Time `json:"started"`
 			Committed bool      `json:"committed"`
 		}
-		if readJSONBig(p, &j) != nil || j.Committed {
+		if readJSONBig(p, &j) != nil || j.Committed || j.Started.IsZero() || (tried != nil && tried(j.Started)) {
 			continue
 		}
 		return PendingJournal{Path: p, Version: j.Version, Started: j.Started}, true

@@ -109,31 +109,30 @@ func writeJournal(t *testing.T, version string, committed bool, age time.Duratio
 	return []string{dir}, started
 }
 
-func TestCutOffUpdateHandsOverToTheKeptSetupOnce(t *testing.T) {
-	tr, m := healthRig(t)
+func TestCutOffUpdateLeavesOneNoteAndStartsNothing(t *testing.T) {
+	tr, _ := healthRig(t)
 	folders, _ := writeJournal(t, "1.1.0", false, time.Hour)
-	var gotVer string
-	launch := func(p, s, v string) error { gotVer = v; return nil }
-	note := func(update.ApplyResult) { t.Fatal("no note when the hand-over worked") }
-	if !recoverCutOff(tr, folders, time.Now(), launch, note, func(string, ...any) {}) || gotVer != m.From {
-		t.Fatalf("it must hand over to the setup of %s, got %q", m.From, gotVer)
+	var got []update.ApplyResult
+	note := func(r update.ApplyResult) { got = append(got, r) }
+	if !noteCutOff(tr, folders, time.Now(), note, func(string, ...any) {}) || len(got) != 1 || got[0].Outcome != "failed" || !strings.Contains(got[0].Message, "Repair") {
+		t.Fatalf("%+v", got)
 	}
-	if tr.Skipped(m.To) {
-		t.Fatal("a cut-off run is not the version's fault: it must not be skipped")
-	}
-	if recoverCutOff(tr, folders, time.Now(), launch, note, func(string, ...any) {}) {
-		t.Fatal("a run is tried once")
+	if noteCutOff(tr, folders, time.Now(), note, func(string, ...any) {}) || len(got) != 1 {
+		t.Fatal("a run is told once")
 	}
 }
 
-func TestCutOffUpdateWithoutItsKeptSetupLeavesANote(t *testing.T) {
+func TestEveryJournalFolderIsLookedAtEvenWhenTheFirstWasTold(t *testing.T) {
 	tr, _ := healthRig(t)
-	folders, _ := writeJournal(t, "9.9.9", false, time.Hour) // another update than the kept setup's
-	var got update.ApplyResult
-	stopped := recoverCutOff(tr, folders, time.Now(), func(string, string, string) error { t.Fatal("must not launch"); return nil },
-		func(r update.ApplyResult) { got = r }, func(string, ...any) {})
-	if stopped || got.Outcome != "failed" || !strings.Contains(got.Message, "Repair") {
-		t.Fatalf("%v %+v", stopped, got)
+	a, _ := writeJournal(t, "1.1.0", false, time.Hour)
+	b, _ := writeJournal(t, "1.2.0", false, 2*time.Hour)
+	folders := append(a, b...)
+	n := 0
+	note := func(update.ApplyResult) { n++ }
+	noteCutOff(tr, folders, time.Now(), note, func(string, ...any) {})
+	noteCutOff(tr, folders, time.Now(), note, func(string, ...any) {})
+	if n != 2 {
+		t.Fatalf("both runs are told, once each: %d", n)
 	}
 }
 
@@ -144,8 +143,7 @@ func TestJournalsThatAreNotCutOffAreLeftAlone(t *testing.T) {
 		age       time.Duration
 	}{"committed": {true, time.Hour}, "a setup still running": {false, time.Second}} {
 		folders, _ := writeJournal(t, "1.1.0", c.committed, c.age)
-		if recoverCutOff(tr, folders, time.Now(), func(string, string, string) error { t.Fatal(name); return nil },
-			func(update.ApplyResult) { t.Fatal(name) }, func(string, ...any) {}) {
+		if noteCutOff(tr, folders, time.Now(), func(update.ApplyResult) { t.Fatal(name) }, func(string, ...any) {}) {
 			t.Fatal(name)
 		}
 	}

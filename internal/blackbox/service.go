@@ -422,6 +422,7 @@ func (m *Manager) Install(cfg Config) (res InstallResult, err error) {
 	if serr := SaveConfig(p.ConfigPath, cfg, true); serr != nil {
 		return res, folderErr(serr)
 	}
+	_ = PublishThisPC(m.Env, cfg) // a copy "Scan this PC" can read; the recorder works without it
 
 	spec := ServiceSpec{Name: ServiceName, DisplayName: "Unravis Blackbox",
 		Description: "Records CPU, memory, disk, network and process load every few seconds so the evidence exists when something goes wrong. Read only.",
@@ -704,6 +705,11 @@ func (m *Manager) ApplyConfig(cfg Config) (res ApplyResult, err error) {
 
 	undo.add(fileMemory(installed))
 	undo.add(fileMemory(installed + ".bak"))
+	defer func() {
+		if err == nil {
+			_ = PublishThisPC(m.Env, cfg)
+		}
+	}()
 	if err = SaveConfig(installed, cfg, true); err != nil {
 		return res, applySaveError(err)
 	}
@@ -909,6 +915,7 @@ func (m *Manager) Remove(cfg Config, keyPath string, deleteRecordings bool, conf
 		_ = os.Remove(filepath.Join(dir, InstalledExeName))
 		_ = os.Remove(p.ConfigPath)
 		_ = os.Remove(p.ConfigPath + ".bak")
+		RemovePublicThisPC()
 		// The "managed by Unravis" marker must not outlive the recorder it described: a standalone recorder installed here
 		// later would otherwise never update itself.
 		_ = os.Remove(filepath.Join(dir, ManagedMarkerName))

@@ -7,25 +7,52 @@ import (
 	"time"
 )
 
-// An MCP request leaves a mark, and nothing stays in flight after a request ends.
-func TestServeHTTPMarksMCPForUpdates(t *testing.T) {
+func mcpRig(t *testing.T) (*Updater, *handler) {
+	t.Helper()
 	u := &Updater{}
-	h := &handler{}
+	h := &handler{token: "session-token-for-test"}
 	WithUpdater(u)(h)
-	r := httptest.NewRequest(http.MethodGet, "/api/cases", nil)
+	return u, h
+}
+
+func askAs(h *handler, token string) {
+	r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/not-a-route", nil)
 	r.Header.Set("User-Agent", mcpUserAgent)
+	if token != "" {
+		r.Header.Set("X-Audit-Token", token)
+	}
 	h.ServeHTTP(httptest.NewRecorder(), r)
-	if !u.mcp.Active(time.Now(), mcpWindow) {
-		t.Fatal("an MCP request must leave a mark")
+}
+
+// Only a request that carries the session token counts as an assistant at work: another local process must not hold updates back.
+func TestOnlyATokenedMCPRequestCountsAsUse(t *testing.T) {
+	u, h := mcpRig(t)
+	askAs(h, "")
+	askAs(h, "wrong-token-of-the-same-length")
+	if u.mcp.Active(time.Now(), mcpWindow) || u.InUse() {
+		t.Fatal("a request without the token must not count")
+	}
+	askAs(h, h.token)
+	if !u.mcp.Active(time.Now(), mcpWindow) || !u.InUse() {
+		t.Fatal("an MCP request with the token counts")
 	}
 	if u.inflight.Load() != 0 {
 		t.Fatal("nothing is in flight after the request")
 	}
-	u2 := &Updater{}
-	h2 := &handler{}
-	WithUpdater(u2)(h2)
-	h2.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/cases", nil))
-	if u2.mcp.Active(time.Now(), mcpWindow) || u2.inflight.Load() != 0 {
-		t.Fatal("a page request is not an MCP request")
+}
+
+// The archive, verify and export work that goes on after its request returned keeps the app in use.
+func TestCaseFileWorkKeepsTheAppInUse(t *testing.T) {
+	u, h := mcpRig(t)
+	if u.InUse() {
+		t.Fatal("idle")
+	}
+	h.caseFiles().busy.Store(true)
+	if !u.InUse() {
+		t.Fatal("an export or restore that streams a database is work")
+	}
+	h.caseFiles().busy.Store(false)
+	if u.InUse() {
+		t.Fatal("idle again")
 	}
 }

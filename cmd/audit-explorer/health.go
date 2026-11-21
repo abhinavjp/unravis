@@ -69,9 +69,7 @@ func startHealth(demo bool, getenv func(string) string) (end func(runErr error),
 	if t == nil {
 		return end, false
 	}
-	if recoverCutOff(t, update.JournalFolders(os.Getenv("ProgramData"), os.Getenv("LOCALAPPDATA")), time.Now(), update.LaunchRollback, writeNote, log.Printf) {
-		return end, true
-	}
+	noteCutOff(t, update.JournalFolders(os.Getenv("ProgramData"), os.Getenv("LOCALAPPDATA")), time.Now(), writeNote, log.Printf)
 	switch act, m := t.Begin(); act {
 	case update.ActRecover:
 		return end, goBack(t, m, update.LaunchRollback, log.Printf)
@@ -81,33 +79,19 @@ func startHealth(demo bool, getenv func(string) string) (end func(runErr error),
 	return end, false
 }
 
-// recoverCutOff is BL-170: an update that was cut off (power loss, a killed setup) left its journal on disk. When the old setup kept
-// by that same update is here, hand over to it: it puts back what the run changed, then installs the old version again, silently.
-// Without it the app starts as usual and leaves a plain note for the person. It reports true when it handed over, so the app stops.
-// A run is tried once.
-func recoverCutOff(t *update.Tracker, folders []string, now time.Time, launch func(path, sha, version string) error, note func(update.ApplyResult), logf func(string, ...any)) bool {
-	pj, ok := update.FindPendingJournal(folders, now)
-	if !ok || t.JournalTried(pj.Started) {
+// noteCutOff is BL-170, the safe half: an update that was cut off (power loss, a killed setup) left its journal on disk. Every setup run
+// puts that back before it does anything else, but nobody may run one. The app starts nothing itself: handing over to an old setup
+// from a journal could downgrade a good install (a cut-off Repair, a journal planted by another user), so it only says, once per run,
+// that Setup > Repair finishes the job. It returns true when it left a note.
+func noteCutOff(t *update.Tracker, folders []string, now time.Time, note func(update.ApplyResult), logf func(string, ...any)) bool {
+	pj, ok := update.FindPendingJournal(folders, now, t.JournalTried)
+	if !ok {
 		return false
 	}
 	t.MarkJournalTried(pj.Started)
-	logf("an earlier update to %s was cut off (journal %s)", pj.Version, pj.Path)
-	fail := func(why string) bool {
-		logf("cannot recover it: %s", why)
-		note(update.ApplyResult{To: pj.Version, Outcome: "failed", At: now,
-			Message: "An update to " + pj.Version + " was cut off before it finished, and Unravis could not put it back by itself. Run Unravis Setup from the Unravis program folder and choose Repair."})
-		return false
-	}
-	m, err := update.ReadMarker(t.PrevDir)
-	if err != nil {
-		return fail("the old setup is not kept")
-	}
-	if m.To != pj.Version {
-		return fail("the kept setup belongs to another update")
-	}
-	if err := launch(t.SetupPath(), m.SetupSHA256, m.From); err != nil {
-		return fail(err.Error())
-	}
+	logf("an earlier setup run (to %s) was cut off (journal %s)", pj.Version, pj.Path)
+	note(update.ApplyResult{To: pj.Version, Outcome: "failed", At: now,
+		Message: "An update to " + pj.Version + " was cut off before it finished. Unravis may not be fully updated. Run Unravis Setup from the Unravis program folder and choose Repair; it puts back what was changed first."})
 	return true
 }
 

@@ -43,7 +43,13 @@ func WithUpdater(u *Updater) Option {
 		state.updater = u
 		state.mu.Unlock()
 		if u != nil {
-			u.AddBusy(h.jobs.anyRunning) // an import or a check that is still running is work an update must wait for
+			// Work that goes on after its request returned is work an update must wait for: an import or a check, an archive or a test
+			// restore, and an export or restore that streams a whole database.
+			u.AddBusy(h.jobs.anyRunning)
+			u.AddBusy(func() bool {
+				cf := h.caseFiles()
+				return cf.busy.Load() || cf.jobs.anyRunning(jobArchive) || cf.jobs.anyRunning(jobVerify)
+			})
 		}
 	}
 }
