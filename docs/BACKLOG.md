@@ -102,7 +102,7 @@ Legend: `[ ]` open, `[x]` done, `[~]` dropped.
 - [x] **BL-054** Call detail side panel: "Compared with normal" line (this call against the lowest, typical and highest per-step slowest-5% values of the API lane; said plainly as "not enough data" when none). (source: chat 2026-11-15) Unit-tested only; not yet checked live.
 - [x] **BL-055** Call detail "While this call ran" now reads the whole span of the call (highest API, IIS and database value while it ran), not one instant. Explainer panels (Not shown, How to read) collapse. (source: chat 2026-11-15) Unit-tested only; not yet checked live.
 - [ ] **BL-056** [Needs the audited app to write `_perfSqlMs`, `_perfRedisMs`, `_perfHttpMs`] Call detail breakdown bar and lead sentence. The live Brain Sandbox case has none of these fields, so the screen says "not recorded"; cannot be live-verified here. Latency-over-time switch and overlap highlight in Nearby calls stay deferred for the owner's go. (source: chat 2026-11-15)
-- [ ] **BL-198** Optional: bump Vite 8.3.5 to 8.3.8 with a regenerated dist, after the BL-031 gate has been green a while (hashed names change; the gate proves the result). Low urgency: the fix is for an exposed dev server and Unravis binds 127.0.0.1. Needs the owner's go. (source: BL-031 groom 2026-11-21)
+- [ ] **BL-201** Optional: bump Vite 8.3.5 to 8.3.8 with a regenerated dist, after the BL-031 gate has been green a while (hashed names change; the gate proves the result). Low urgency: the fix is for an exposed dev server and Unravis binds 127.0.0.1. Needs the owner's go. (source: BL-031 groom 2026-11-21)
 
 ## Auto-updater (spec drafted 2026-11-20; build waits for the owner's go; see `docs/auto-updater/SPEC.md`)
 
