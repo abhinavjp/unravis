@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -722,5 +723,366 @@ func TestLaneReportCarriesNoConnectionDetails(t *testing.T) {
 	}
 	if len(r.Findings) != 4 || r.Findings[0].Status != OK {
 		t.Errorf("findings = %+v", r.Findings)
+	}
+}
+
+/* ---- Query Store off: the history it kept (BL-016) ---- */
+
+const offSentenceToday = "Query Store is switched off in this database, so it holds no plans or timings. The script below, run by the database owner, switches it on; it only helps for incidents after that."
+
+func offOpts(state string) []Row {
+	return []Row{{"actual_state_desc": state, "desired_state_desc": state, "readonly_reason": int64(0), "interval_length_minutes": int64(15)}}
+}
+
+// offSQL is a healthy server whose Query Store is off and kept blocks from first to last (start times). healthySQL's stats and intervals rows
+// are the history; the tests replace them when they need other rows.
+func offSQL(first, last time.Time) fakeQ {
+	q := healthySQL("16.0.1")
+	q.by["unravis:qs_options"] = offOpts("OFF")
+	q.by["unravis:qs_range"] = []Row{{"first_start": first, "last_start": last}}
+	q.by["unravis:qs_intervals"] = []Row{
+		{"start_time": at(19, 10, 0), "execs": int64(50), "avg_ms": 10.0, "win": "ref"},
+		{"start_time": at(20, 10, 0), "execs": int64(50), "avg_ms": 11.0, "win": "inc"},
+		{"start_time": at(20, 10, 45), "execs": int64(50), "avg_ms": 11.0, "win": "inc"},
+	}
+	return q
+}
+
+func countTags(inner Queryer, tags ...string) (Queryer, map[string]int) {
+	counts := map[string]int{}
+	return recordingQ{inner: inner, fn: func(s string) {
+		for _, tag := range tags {
+			if strings.Contains(s, tag) {
+				counts[tag]++
+			}
+		}
+	}}, counts
+}
+
+func TestSQLLaneQueryStoreOffNoHistoryIsTodaysMessage(t *testing.T) {
+	q := healthySQL("16.0.1")
+	q.by["unravis:qs_options"] = offOpts("OFF")
+	q.by["unravis:qs_range"] = []Row{{"first_start": nil, "last_start": nil}}
+	rec, counts := countTags(q, "unravis:qs_stats", "unravis:qs_intervals", "unravis:qs_range")
+	r := RunSQLLane(context.Background(), rec, "Prod", laneReq, fixedNow)
+	c := checkByID(t, r, CheckQueryStore)
+	if c.State != StateNotYet || c.Fix == nil || !strings.Contains(c.Fix.Script, "SET QUERY_STORE = ON") || !strings.Contains(c.Fix.Script, "[AuditDb]") {
+		t.Fatalf("check = %+v", c)
+	}
+	if c.Summary != offSentenceToday {
+		t.Errorf("summary = %q", c.Summary)
+	}
+	if counts["unravis:qs_stats"] != 0 || counts["unravis:qs_intervals"] != 0 || counts["unravis:qs_range"] != 1 {
+		t.Errorf("counts = %v", counts)
+	}
+	qs := r.Lane.QueryStore
+	if qs == nil || qs.State != QSStateOff || qs.FirstData != nil || qs.LastData != nil || len(r.Lane.Series) != 0 {
+		t.Errorf("queryStore = %+v series %d", qs, len(r.Lane.Series))
+	}
+	// No row at all from the range query is the same.
+	delete(q.by, "unravis:qs_range")
+	r = RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if c := checkByID(t, r, CheckQueryStore); c.Summary != offSentenceToday || c.Fix == nil {
+		t.Errorf("no row: %+v", c)
+	}
+}
+
+func TestSQLLaneQueryStoreOffWithHistoryCarriesSeries(t *testing.T) {
+	r := RunSQLLane(context.Background(), offSQL(at(2, 0, 0), at(20, 10, 45)), "Prod", laneReq, fixedNow)
+	c := checkByID(t, r, CheckQueryStore)
+	if c.State != StateReady || c.Fix != nil {
+		t.Fatalf("check = %+v", c)
+	}
+	qs := r.Lane.QueryStore
+	if qs == nil || qs.State != QSStateOff || qs.FirstData == nil || qs.LastData == nil || !qs.FirstData.Equal(at(2, 0, 0)) || !qs.LastData.Equal(at(20, 10, 45)) || qs.IntervalMinutes != 15 {
+		t.Fatalf("queryStore = %+v", qs)
+	}
+	if len(r.Lane.Series) == 0 {
+		t.Error("no series saved")
+	}
+	if !strings.Contains(c.Summary, "Query Store is off. It kept history from 2026-10-02 00:00 UTC") {
+		t.Errorf("summary = %s", c.Summary)
+	}
+}
+
+func TestSQLLaneQueryStoreOffNotCoveredNeverSaysNo(t *testing.T) {
+	// The same rows with Query Store on give D3, D14 and D15 as "no".
+	on := RunSQLLane(context.Background(), healthySQL("16.0.1"), "Prod", laneReq, fixedNow)
+	for _, id := range []string{"D3", "D14", "D15"} {
+		if on.Lane.Answers[id] != AnswerNo {
+			t.Fatalf("control: %s = %q", id, on.Lane.Answers[id])
+		}
+	}
+	r := RunSQLLane(context.Background(), offSQL(at(2, 0, 0), at(20, 10, 45)), "Prod", laneReq, fixedNow)
+	for _, id := range []string{"D3", "D14", "D15"} {
+		if v, ok := r.Lane.Answers[id]; ok {
+			t.Errorf("%s = %q although Query Store may have been switched off during the incident", id, v)
+		}
+	}
+	if !strings.Contains(checkByID(t, r, CheckQueryStore).Summary, `A "no" is not given.`) {
+		t.Errorf("summary = %s", checkByID(t, r, CheckQueryStore).Summary)
+	}
+}
+
+func TestSQLLaneQueryStoreOffNotCoveredStillSaysYes(t *testing.T) {
+	q := offSQL(at(2, 0, 0), at(20, 10, 45))
+	q.by["unravis:qs_stats"] = []Row{qsRow(1, 10, "ref", 60, 10, 100), qsRow(1, 11, "inc", 60, 30, 100)}
+	r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if r.Lane.Answers["D3"] != AnswerYes {
+		t.Fatalf("answers = %v; %s", r.Lane.Answers, checkByID(t, r, CheckQueryStore).Summary)
+	}
+}
+
+func TestSQLLaneQueryStoreOffCoveredGivesNo(t *testing.T) {
+	r := RunSQLLane(context.Background(), offSQL(at(2, 0, 0), at(20, 11, 0)), "Prod", laneReq, fixedNow)
+	if r.Lane.Answers["D3"] != AnswerNo || r.Lane.Answers["D15"] != AnswerNo {
+		t.Fatalf("answers = %v", r.Lane.Answers)
+	}
+	if strings.Contains(checkByID(t, r, CheckQueryStore).Summary, "is not given") {
+		t.Errorf("summary = %s", checkByID(t, r, CheckQueryStore).Summary)
+	}
+	// One minute short of the incident end is not covered.
+	r = RunSQLLane(context.Background(), offSQL(at(2, 0, 0), at(20, 10, 59)), "Prod", laneReq, fixedNow)
+	if _, ok := r.Lane.Answers["D3"]; ok {
+		t.Errorf("a newest block starting before the incident end must not give a no: %v", r.Lane.Answers)
+	}
+}
+
+func TestSQLLaneQueryStoreOffOnlyReadsSlicesInsideTheRange(t *testing.T) {
+	req := laneReq
+	req.Incident = Window{laneInc.Start, laneInc.Start.Add(30 * 24 * time.Hour)}
+	q := offSQL(at(20, 10, 0), at(22, 0, 0))
+	var texts []string
+	rec := recordingQ{inner: q, fn: func(s string) {
+		if strings.Contains(s, "unravis:qs_stats") {
+			texts = append(texts, s)
+		}
+	}}
+	RunSQLLane(context.Background(), rec, "Prod", req, fixedNow)
+	want := 0
+	for _, spans := range laneBatches(req) {
+		for _, w := range spans {
+			if w.End.After(at(20, 10, 0)) && !w.Start.After(at(22, 0, 0)) {
+				want++
+				break
+			}
+		}
+	}
+	if want == 0 || want >= 10 || len(texts) != want {
+		t.Fatalf("read %d stats queries, want %d (fewer than the 10 slices of a month)", len(texts), want)
+	}
+	// Every datetime literal comes from the request windows, never from the range the database returned.
+	allowed := map[string]bool{sqlOffsetLit(req.Incident.Start): true}
+	for _, w := range append(laneSlices(req.Reference), laneSlices(req.Incident)...) {
+		allowed[sqlOffsetLit(w.Start)], allowed[sqlOffsetLit(w.End)] = true, true
+	}
+	lit := regexp.MustCompile(`CAST\('[^']*' AS datetimeoffset\(0\)\)`)
+	for _, text := range texts {
+		found := lit.FindAllString(text, -1)
+		if len(found) == 0 {
+			t.Fatalf("no literal in %s", text)
+		}
+		for _, l := range found {
+			if !allowed[l] {
+				t.Errorf("literal %s is not a bound of a requested window", l)
+			}
+		}
+	}
+}
+
+func TestSQLLaneQueryStoreOffHistoryOutsideWindows(t *testing.T) {
+	rec, counts := countTags(offSQL(at(1, 0, 0), at(1, 0, 0)), "unravis:qs_stats", "unravis:qs_intervals")
+	r := RunSQLLane(context.Background(), rec, "Prod", laneReq, fixedNow)
+	c := checkByID(t, r, CheckQueryStore)
+	if c.State != StateNotYet || c.Fix != nil || !strings.Contains(c.Summary, "none of it falls inside the windows asked") {
+		t.Fatalf("check = %+v", c)
+	}
+	if counts["unravis:qs_stats"] != 0 || counts["unravis:qs_intervals"] != 0 {
+		t.Errorf("counts = %v", counts)
+	}
+	qs := r.Lane.QueryStore
+	if qs == nil || qs.State != QSStateOff || qs.FirstData == nil || qs.LastData == nil || len(r.Lane.Series) != 0 {
+		t.Errorf("queryStore = %+v", qs)
+	}
+}
+
+func TestSQLLaneQueryStoreOffReferenceOnlyHistory(t *testing.T) {
+	q := offSQL(at(2, 0, 0), at(19, 10, 45))
+	q.by["unravis:qs_stats"] = []Row{qsRow(1, 10, "ref", 50, 10, 100)}
+	q.by["unravis:qs_intervals"] = []Row{
+		{"start_time": at(19, 10, 0), "execs": int64(50), "avg_ms": 10.0, "win": "ref"},
+		{"start_time": at(19, 10, 30), "execs": int64(40), "avg_ms": 12.0, "win": "ref"},
+	}
+	r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	c := checkByID(t, r, CheckQueryStore)
+	if c.State != StateNotYet || !strings.Contains(c.Summary, "none of it falls inside the incident window") {
+		t.Fatalf("check = %+v", c)
+	}
+	if len(r.Lane.Series) != 2 {
+		t.Errorf("series = %+v", r.Lane.Series)
+	}
+	for _, id := range []string{"D3", "D14", "D15"} {
+		if _, ok := r.Lane.Answers[id]; ok {
+			t.Errorf("%s answered from a check that could not test", id)
+		}
+	}
+}
+
+func TestSQLLaneQueryStoreOffRangeReadFailsKeepsOff(t *testing.T) {
+	q := offSQL(at(2, 0, 0), at(20, 11, 0))
+	q.err = map[string]error{"unravis:qs_range": errors.New("connection reset by peer")}
+	r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	c := checkByID(t, r, CheckQueryStore)
+	if c.State != StateFailed || !strings.HasPrefix(c.Summary, "Query Store is off, and the history it may have kept could not be read.") {
+		t.Fatalf("check = %+v", c)
+	}
+	if r.Lane.QueryStore == nil || r.Lane.QueryStore.State != QSStateOff {
+		t.Errorf("queryStore = %+v", r.Lane.QueryStore)
+	}
+}
+
+func TestSQLLaneQueryStoreOffRangePermissionKeepsOffNotDenied(t *testing.T) {
+	q := offSQL(at(2, 0, 0), at(20, 11, 0))
+	q.err = map[string]error{"unravis:qs_range": errors.New("The user does not have permission to perform this action.")}
+	r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	c := checkByID(t, r, CheckQueryStore)
+	if r.Lane.QueryStore == nil || r.Lane.QueryStore.State != QSStateOff {
+		t.Fatalf("queryStore = %+v", r.Lane.QueryStore)
+	}
+	if c.Fix == nil || !strings.Contains(c.Fix.Script, "GRANT") || !strings.HasPrefix(c.Summary, "Query Store is off, and the history it may have kept could not be read.") {
+		t.Fatalf("check = %+v", c)
+	}
+}
+
+func TestSQLLaneQueryStoreErrorAndNoRowNeverSayOff(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rows []Row
+		want string
+	}{
+		{"error", offOpts("ERROR"), sentenceError},
+		{"empty state", []Row{{"actual_state_desc": "", "desired_state_desc": "", "interval_length_minutes": int64(15)}}, sentenceNoState},
+		{"no row", nil, sentenceNoRow},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := offSQL(at(2, 0, 0), at(20, 11, 0))
+			q.by["unravis:qs_options"] = tc.rows
+			rec, counts := countTags(q, "unravis:qs_range", "unravis:qs_stats", "unravis:qs_intervals")
+			r := RunSQLLane(context.Background(), rec, "Prod", laneReq, fixedNow)
+			c := checkByID(t, r, CheckQueryStore)
+			if c.State != StateNotYet || c.Fix != nil || c.Summary != tc.want || strings.Contains(c.Summary, "switched off") {
+				t.Fatalf("check = %+v", c)
+			}
+			if counts["unravis:qs_range"] != 0 || counts["unravis:qs_stats"] != 0 || counts["unravis:qs_intervals"] != 0 {
+				t.Errorf("counts = %v", counts)
+			}
+			if r.Lane.QueryStore == nil || r.Lane.QueryStore.State != QSStateUnknown || len(r.Lane.Series) != 0 {
+				t.Errorf("queryStore = %+v", r.Lane.QueryStore)
+			}
+		})
+	}
+}
+
+func TestSQLLaneQueryStoreOffSliceFailureSavesNoSeries(t *testing.T) {
+	q := offSQL(at(2, 0, 0), at(20, 11, 0))
+	q.err = map[string]error{"unravis:qs_intervals": errors.New("connection reset by peer")}
+	r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	c := checkByID(t, r, CheckQueryStore)
+	if c.State != StateFailed || len(r.Lane.Series) != 0 {
+		t.Fatalf("check = %+v series %d", c, len(r.Lane.Series))
+	}
+	qs := r.Lane.QueryStore
+	if qs == nil || qs.State != QSStateOff || qs.FirstData == nil || qs.LastData == nil {
+		t.Errorf("queryStore = %+v", qs)
+	}
+	if !strings.HasPrefix(c.Summary, "Query Store is off. It kept history from") {
+		t.Errorf("summary = %s", c.Summary)
+	}
+}
+
+// The Query Store reads are single, fixed reads: no write verb, no EXEC, no query text view, no comment other than the leading marker.
+func TestQueryStoreQueriesAreReadOnlyAndLeaveTextAlone(t *testing.T) {
+	spans := []Window{laneRef, laneInc}
+	for name, text := range map[string]string{
+		"options": qLaneQSOptions, "first": qLaneQSFirst, "range": qLaneQSRange,
+		"stats": qLaneQSStats(laneReq, spans), "intervals": qLaneQSIntervals(laneReq, spans),
+	} {
+		body := strings.ToLower(text[strings.Index(text, "*/")+2:])
+		for _, bad := range []string{"query_text", "alter ", "insert ", "update ", "delete ", "drop ", ";", "--"} {
+			if strings.Contains(body, bad) {
+				t.Errorf("%s contains %q: %s", name, bad, text)
+			}
+		}
+		// EXEC as a word; the column names execs and count_executions are not the statement.
+		if regexp.MustCompile(`\bexec(ute)?\b`).MatchString(body) {
+			t.Errorf("%s runs a procedure: %s", name, text)
+		}
+	}
+}
+
+func TestClipBatches(t *testing.T) {
+	w := func(a, b int) Window { return Window{at(a, 0, 0), at(b, 0, 0)} }
+	lo, hi := at(10, 0, 0), at(20, 0, 0)
+	for _, tc := range []struct {
+		name string
+		in   [][]Window
+		want [][]Window
+	}{
+		{"all inside", [][]Window{{w(11, 12), w(13, 14)}}, [][]Window{{w(11, 12), w(13, 14)}}},
+		{"all before", [][]Window{{w(1, 5)}, {w(5, 10)}}, [][]Window{}},
+		{"all after", [][]Window{{w(21, 25)}}, [][]Window{}},
+		{"starts exactly at the newest block", [][]Window{{w(20, 25)}}, [][]Window{{w(20, 25)}}},
+		{"straddle both ends", [][]Window{{w(5, 12)}, {w(18, 25)}}, [][]Window{{w(5, 12)}, {w(18, 25)}}},
+		{"one span dropped from a batch", [][]Window{{w(1, 5), w(12, 13)}}, [][]Window{{w(12, 13)}}},
+		{"empty batch", [][]Window{{}}, [][]Window{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := make([][]Window, len(tc.in))
+			for i := range tc.in {
+				in[i] = append([]Window(nil), tc.in[i]...)
+			}
+			got := clipBatches(tc.in, lo, hi)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if len(got[i]) != len(tc.want[i]) {
+					t.Fatalf("batch %d: got %v, want %v", i, got[i], tc.want[i])
+				}
+				for j := range got[i] {
+					if !got[i][j].Start.Equal(tc.want[i][j].Start) || !got[i][j].End.Equal(tc.want[i][j].End) {
+						t.Errorf("span %d.%d rewritten: %v", i, j, got[i][j])
+					}
+				}
+			}
+			for i := range in {
+				for j := range in[i] {
+					if in[i][j] != tc.in[i][j] {
+						t.Errorf("input mutated at %d.%d", i, j)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestLaneQueryStoreLastDataJSON(t *testing.T) {
+	first, last := at(2, 0, 0), at(20, 10, 45)
+	b, err := json.Marshal(LaneQueryStore{State: QSStateOff, FirstData: &first, IntervalMinutes: 15})
+	if err != nil || strings.Contains(string(b), "lastData") {
+		t.Fatalf("lastData must be left out when nil: %s (%v)", b, err)
+	}
+	b, err = json.Marshal(LaneQueryStore{State: QSStateOff, FirstData: &first, LastData: &last, IntervalMinutes: 15})
+	want := `{"state":"off","firstData":"2026-10-02T00:00:00Z","lastData":"2026-10-20T10:45:00Z","intervalMinutes":15}`
+	if err != nil || string(b) != want {
+		t.Fatalf("marshal = %s (%v)", b, err)
+	}
+	var old LaneQueryStore
+	if err := json.Unmarshal([]byte(`{"state":"off","firstData":"2026-10-02T00:00:00Z","intervalMinutes":15}`), &old); err != nil || old.LastData != nil || old.FirstData == nil {
+		t.Fatalf("old document: %v %+v", err, old)
+	}
+	var back LaneQueryStore
+	if err := json.Unmarshal(b, &back); err != nil || back.LastData == nil || !back.LastData.Equal(last) {
+		t.Fatalf("round trip: %v %+v", err, back)
 	}
 }
