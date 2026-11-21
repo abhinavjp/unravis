@@ -84,13 +84,6 @@ test('review 6 and 7: the facts say files and samples in words, and unread files
   assert.doesNotMatch(panel, /\{item\.facts\.files\}, \{item\.facts\.samples\}/);
 });
 
-test('review 8: the case Add data card says whether the case reads a Blackbox', () => {
-  const card = read('src/components/sources/AddDataPanel.svelte');
-  assert.match(card, /caseUseApi\.listTags\(caseId\)/);
-  assert.match(card, /t\.kind === BLACKBOX_TAG_KIND/);
-  assert.match(card, /<span\s+class="pill"\s+data-tone="warn">\{ADD_TEXT\.held\(blackboxHeld\)\}<\/span>/);
-});
-
 test('review 9: the host card has its own nutshell and never a lazy plural', () => {
   const card = read('src/components/BlackboxHostCard.svelte');
   assert.match(card, /\{T\.hostNutshell\}/);

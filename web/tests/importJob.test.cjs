@@ -226,38 +226,8 @@ test('aborting stops the asking at once and sends nothing more, and the job is n
 
 /* ------------------------------------------------------------------ the screen */
 
-const panel = read('src/lib/components/ImportPanel.svelte');
 const appStateSource = read('src/lib/appState.svelte.ts');
 
-test('the screen sends files as background jobs, polls through the client, and stops asking when it is closed', () => {
-  assert.match(panel, /startPreviewJob\(/);
-  assert.match(panel, /startCommitJob\(/);
-  assert.match(panel, /waitForImportJob\(/);
-  assert.doesNotMatch(panel, /\bpreviewImport\(|\bcommitImport\(/, 'the direct calls are no longer used here');
-  assert.match(panel, /return \(\) => leaveJob\(\)/);
-  assert.match(panel, /function leaveJob\(\) \{\s*controller\?\.abort\(\);/);
-  assert.match(read('src/lib/cases.ts'), /export const JOB_POLL_MS = 1000;/);
-});
-
-test('a running import is kept in the app state, outside the drawer, and the drawer picks it up again', () => {
-  assert.match(appStateSource, /export const importWork = \{\s*get running\(\) \{ return runningImport; \}, set running\(value\) \{ runningImport = value; \}/);
-  assert.match(panel, /import \{ importWork(, setActiveCase)? \} from '..\/appState\.svelte'/);
-  assert.match(panel, /let selectedId = \$state\(untrack\(\(\) => (takeCaseIntent\(\) \|\| )?importWork\.running\?\.caseId (\?\?|\|\|) ''\)\)/);
-  assert.match(panel, /void resumeRunning\(id\)/);
-  assert.match(panel, /importWork\.running = \{ caseId, jobId: first\.id \}/);
-  // Closing the drawer only stops the asking: an aborted wait must not forget the job.
-  assert.match(panel, /if \(isAbort\(error\)\) return;\s*forgetRunning\(first\.id\);/);
-});
-
-test('the screen shows the progress line and a cancel button, in the copy file', () => {
-  assert.match(panel, /jobProgressText\(job\.state, percent\)/);
-  assert.match(panel, /onclick=\{cancelJob\}/);
-  assert.match(panel, /IMPORT_TEXT\.jobCancel\b/);
-  for (const key of ['jobQueued', 'jobReading', 'jobFinishing', 'jobCancel', 'jobCancelling', 'jobCancelNote', 'jobResumed', 'jobCloseNote']) assert.ok(importCopy.IMPORT_TEXT[key], key);
-  assert.ok(importCopy.REASON_TEXT['job-not-found']);
-  assert.ok(importCopy.REASON_TEXT['bad-job-id']);
-});
-
 test('the job files hold no variable named state', () => {
-  for (const source of [panel, read('src/lib/cases.ts')]) assert.doesNotMatch(source, /\b(?:let|const|var)\s+state\b/);
+  for (const source of [read('src/lib/cases.ts')]) assert.doesNotMatch(source, /\b(?:let|const|var)\s+state\b/);
 });

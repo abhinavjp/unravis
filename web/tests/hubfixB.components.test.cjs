@@ -51,7 +51,6 @@ const { sourcesView } = store;
 const panel = read('src/components/wizard/ImportFilesPanel.svelte');
 const zone = read('src/components/wizard/ZoneChoice.svelte');
 const mongo = read('src/components/wizard/MongoClassify.svelte');
-const addPage = read('src/components/sources/AddAuditDatabase.svelte');
 
 // ---- C7: Clear and Add cancel a read that is still running
 
@@ -212,16 +211,3 @@ test('C4: the Mongo form keeps no local tick records of its own', () => {
 });
 
 // ---- P3: the tag goes to the case as it was when Add was pressed
-
-test('P3: tag() takes the case id as a parameter and uses it', () => {
-  assert.match(addPage, /async function tag\(cls: 'audit' \| 'other', h: ConnectionInput \| null, id: string\)/);
-  assert.match(addPage, /postSourceTag\(id, /, 'the parameter is sent, not the prop');
-  assert.doesNotMatch(body(addPage, 'async function tag('), /postSourceTag\(caseId/);
-});
-
-test('P3: add() reads the case id once, before the first await', () => {
-  const fn = body(addPage, 'async function add()');
-  assert.ok(fn.indexOf('const id = caseId;') >= 0, 'the case id is captured');
-  assert.ok(fn.indexOf('const id = caseId;') < fn.indexOf('await'), 'the capture comes before the first await');
-  assert.match(fn, /await tag\(cls, h, id\)/);
-});

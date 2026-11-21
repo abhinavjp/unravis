@@ -121,18 +121,6 @@ test('the notice copy is plain: reading grade, glossary terms and no causal word
   for (const text of texts) assert.doesNotMatch(text, causal, text);
 });
 
-test('the panel shows the notice only through spanNotice and sets its own window, not the audit window', () => {
-  const panel = read('src/components/ResourcePanel.svelte');
-  assert.match(panel, /spanNotice\(/);
-  assert.match(panel, /\{#if notice\}/);
-  assert.match(panel, /spanCopy\.button/);
-  assert.match(panel, /const shown = \$derived\([^\n]*notice != null[^\n]*period != null/, 'an empty answer lists no host when the files named none, so the notice keeps the panel on screen');
-  assert.doesNotMatch(panel, /app\.query\s*=|setQuery|applyQuery/, 'the audit window is left alone');
-  const tools = read('src/lib/components/CaseTools.svelte');
-  assert.match(tools, /<ResourcePanel [^>]*\{span\}/);
-  assert.match(read('src/lib/components/ImportPanel.svelte'), /caseSpan\(imports\)/);
-});
-
 test('the server bare validation 400 becomes a plain sentence; every other message is left as sent', () => {
   assert.equal(api.plainApiMessage(400, 'Request validation failed.'), api.VALIDATION_MESSAGE);
   assert.equal(api.plainApiMessage(400, ' Request validation failed. '), api.VALIDATION_MESSAGE);

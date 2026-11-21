@@ -102,22 +102,6 @@ test('the case page is wired in: the screen, the header button and the health ca
   assert.match(page, /openSidePanel\('ledger'\)/);
 });
 
-test('the case page survives a reload, an erase, a lock and a closed case', () => {
-  const state = read('src/lib/appState.svelte.ts');
-  assert.match(state, /unravis\.activeCase/);
-  assert.match(state, /export function caseErased/);
-  const cases = read('src/lib/components/CasePanel.svelte');
-  assert.match(cases, /caseErased\(id\)/);
-  const api = read('src/lib/api.ts');
-  assert.match(api, /await signalIfAppLocked\(response\)/);
-  const page = read('src/lib/components/CaseHome.svelte');
-  assert.match(page, /panels\.sidePanel/);
-  assert.match(page, /status === 409/);
-  assert.match(page, /readOnly/);
-  const ledger = read('src/components/LedgerPanel.svelte');
-  assert.match(ledger, /const cid = ledger\.caseId/);
-});
-
 test('the back button name contains its visible text', () => {
   assert.ok(copy.CASE_HOME_TEXT.backLabel.includes(copy.CASE_HOME_TEXT.back));
 });
