@@ -3,6 +3,8 @@
 # sees it with --check-update, upgrades to it, cannot be forced back, and a standalone Blackbox service updates itself.
 # Reads public data only. Needs no secret and publishes nothing. Started by hand, or by tools/release/Release.ps1.
 name: verify-release
+# The nonce makes each run findable by the script that started it (Release.ps1 matches on it).
+run-name: verify-release ${{ inputs.tag }} ${{ inputs.nonce }}
 
 on:
   workflow_dispatch:
@@ -14,6 +16,11 @@ on:
       previous:
         description: 'Older published tag to upgrade from (leave empty for the first signed release)'
         required: false
+        type: string
+      nonce:
+        description: 'Id that Release.ps1 puts in the run name to find this run (leave empty when starting by hand)'
+        required: false
+        default: ''
         type: string
       wait_minutes:
         description: 'Minutes to wait for the standalone recorder to update itself'

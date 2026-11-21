@@ -103,10 +103,12 @@ try {
     Assert-That 'assert-next: beta.1 refused (no such channel)' ([bool](Get-ThrownMessage { Assert-NextVersion '0.2.0-beta.1' $tags }))
 
     # ---- signing tool dependencies ------------------------------------------------------------------------------------------
-    $deps = @('fmt', 'crypto/ed25519', 'vendor/golang.org/x/crypto/chacha20', 'api-audit-explorer/internal/update', 'api-audit-explorer/tools/release/sigtool')
-    Assert-That 'deps: today''s set is allowed' ((Get-ForbiddenSigtoolDeps $deps).Count -eq 0)
-    $f = Get-ForbiddenSigtoolDeps ($deps + 'github.com/evil/exfil' + 'api-audit-explorer/internal/server')
-    Assert-That 'deps: a third-party module and another internal package are refused' ($f.Count -eq 2)
+    $deps = @('api-audit-explorer/internal/update', 'api-audit-explorer/tools/release/sigtool', '')
+    Assert-That 'deps: today''s non-standard set is allowed' ((Get-ForbiddenSigtoolDeps $deps).Count -eq 0)
+    $f = Get-ForbiddenSigtoolDeps ($deps + 'github.com/evil/exfil' + 'api-audit-explorer/internal/server' + 'exfil')
+    Assert-That 'deps: a module, another internal package and a dot-less replaced module are refused' ($f.Count -eq 3)
+    $real = Get-SigtoolNonStdDeps (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    Assert-That 'deps: the real signing tool passes the rule' ((Get-ForbiddenSigtoolDeps $real).Count -eq 0) ($real -join ', ')
 
     # ---- audit log ----------------------------------------------------------------------------------------------------------
     $log = Join-Path $root 'audit.jsonl'
@@ -130,9 +132,11 @@ try {
     try { Assert-That 'lock: a second run is refused' ([bool](Get-ThrownMessage { Enter-ReleaseLock $d })) } finally { $l1.Dispose() }
     $l2 = Enter-ReleaseLock $d; $l2.Dispose()
     Assert-That 'lock: free again after the first run ends' $true
-    Set-ReleaseState $d '0.1.0-rc.55' 'Sign' 'stopped' 'network'
+    Set-ReleaseState $d '0.1.0-rc.55' 'Sign' 'stopped' 'network' @{ key = 'rc-2'; passref = 'pass://Work/Unravis Passphrases/rc.2 passphrase'; prev_feed = 'v0.1.0-rc.54' }
     $st = Get-ReleaseState $d
     Assert-That 'state: round trip' ($st.version -eq '0.1.0-rc.55' -and $st.stage -eq 'Sign' -and $st.status -eq 'stopped')
+    Assert-That 'state: key, Proton Pass reference and the previous feed release are kept' ($st.key -eq 'rc-2' -and $st.prev_feed -eq 'v0.1.0-rc.54' -and $st.passref -match 'rc\.2')
+    Assert-That 'state: a field named like a secret is refused' ([bool](Get-ThrownMessage { Set-ReleaseState $d 'x' 'Tag' 'running' '' @{ passphrase = 'x' } }))
     $order = 'Preflight', 'Tag', 'Wait', 'Sign', 'Publish', 'Feed', 'Verify'
     Assert-That 'resume: after Sign comes Publish' ((Get-ResumeStage $order 'Sign') -eq 'Publish')
     Assert-That 'resume: nothing done yet starts at Preflight' ((Get-ResumeStage $order '') -eq 'Preflight')

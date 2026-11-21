@@ -55,7 +55,7 @@ function Get-OwnerKeys([string]$Dir) {
         $k = Get-KeyFileInfo $f.FullName
         $pubFile = Join-Path $Dir "$($k.Name).pub"
         if (-not $k.Problem -and (Test-Path -LiteralPath $pubFile)) {
-            $p = (Get-Content -Raw -LiteralPath $pubFile).Trim() -split '\s+'
+            $p = ("$(Get-Content -Raw -LiteralPath $pubFile)").Trim() -split '\s+'
             if ($p.Count -ne 2 -or $p[0] -ne $k.Role -or $p[1].ToLowerInvariant() -ne $k.Pub) { $k.Problem = "does not match $($k.Name).pub beside it (one of the two was changed or swapped)" }
         }
         $out += $k
@@ -174,13 +174,17 @@ function Assert-NextVersion([string]$Version, [string[]]$Tags) {
 # ---- signing-code checks ----------------------------------------------------------------------------------------------------
 
 # Packages sigtool is built from must be the Go standard library or the two packages of this repository it is meant to use.
-# Input: the lines of "go list -deps ./tools/release/sigtool". Output: the packages that are not allowed.
+# Input: the NON-standard packages, as printed by Get-SigtoolNonStdDeps (go itself decides what is standard, so a module named
+# without a dot cannot pass as standard). Output: the packages that are not allowed.
 function Get-ForbiddenSigtoolDeps([string[]]$Lines) {
     $ok = @('api-audit-explorer/internal/update', 'api-audit-explorer/tools/release/sigtool')
-    return , @($Lines | Where-Object { $_ } | ForEach-Object { $_.Trim() } | Where-Object {
-                $first = ($_ -split '/')[0]
-                -not ($ok -contains $_) -and ($first.Contains('.') -or $first -eq 'api-audit-explorer')
-            })
+    return , @($Lines | Where-Object { $_ } | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not ($ok -contains $_) })
+}
+function Get-SigtoolNonStdDeps([string]$Dir) {
+    Push-Location $Dir
+    try { $d = @(go list -mod=readonly -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./tools/release/sigtool) } finally { Pop-Location }
+    if ($LASTEXITCODE -ne 0 -or -not $d.Count) { throw 'go list could not read the signing tool''s dependencies. Not signing.' }
+    return , $d
 }
 
 # SHA-256 of a text, lower-case hex.
@@ -196,8 +200,15 @@ function Get-CommitPullRequests([string]$RepoRoot, [string]$Repo, [string]$Base,
     if ($LASTEXITCODE -ne 0) { throw "git rev-list $Base..$Head failed." }
     $missing = @(); $prs = @{}
     foreach ($c in $shas) {
-        $n = gh api "repos/$Repo/commits/$c/pulls" --jq '[.[] | select(.merged_at != null and .base.ref == "master") | .number] | first // empty' 2>$null
-        if ($LASTEXITCODE -ne 0 -or -not $n) { $missing += $c } else { $prs[$c] = [int]$n }
+        # The commit must BE the PR's merge (squash) commit: a PR that GitHub marks merged only because its head was pushed straight
+        # to master names another merge commit. (Checked live 21 Nov 2026: every first-parent commit since rc.53 matches.) Branch
+        # rules on master (BL-197) are the real stop for direct pushes.
+        $json = gh api "repos/$Repo/commits/$c/pulls" 2>$null
+        $n = $null
+        if ($LASTEXITCODE -eq 0 -and $json) {
+            $n = @(($json -join "`n") | ConvertFrom-Json | Where-Object { $_.merged_at -and $_.base.ref -eq 'master' -and $_.merge_commit_sha -eq $c } | Select-Object -First 1).number
+        }
+        if (-not $n) { $missing += $c } else { $prs[$c] = [int]$n }
     }
     return [pscustomobject]@{ Missing = $missing; Prs = $prs }
 }
@@ -232,6 +243,7 @@ function Invoke-SigningGates {
             Write-Host "-Yes: every trusted key has its key file in $KeyDir." -ForegroundColor Yellow
             $r.KeysAdded = @($c.Added | ForEach-Object { "$($_.Role) $($_.Pub.Substring(0, 16))" })
         } else { & $ask 'keys ok' "These are your keys and nobody else's." }
+        if ($AuditPath) { Write-AuditEntry $AuditPath @{ event = 'signing-gates'; context = $Context; baseline = 'first-release'; commit = $Commit; keys_added = $r.KeysAdded; mode = $(if ($Yes) { 'auto' } else { 'typed' }) } }
         return [pscustomobject]$r
     }
     $codeDiff = git -C $RepoRoot diff --stat $Baseline $Commit -- $script:ReleaseSigningPaths
@@ -246,9 +258,7 @@ function Invoke-SigningGates {
             $pr = Get-CommitPullRequests $RepoRoot $Repo $Baseline $Commit
             if ($pr.Missing.Count) { throw "These commits on master since $Baseline did not come through a merged pull request: $(($pr.Missing | ForEach-Object { $_.Substring(0, 7) }) -join ', '). Not signing." }
             # SourceDir is a clean checkout of Commit (Sign-Release.ps1 passes its throw-away worktree).
-            Push-Location $SourceDir; try { $deps = @(go list -deps ./tools/release/sigtool) } finally { Pop-Location }
-            if ($LASTEXITCODE -ne 0 -or -not $deps.Count) { throw 'go list could not read the signing tool''s dependencies. Not signing.' }
-            $bad = Get-ForbiddenSigtoolDeps $deps
+            $bad = Get-ForbiddenSigtoolDeps (Get-SigtoolNonStdDeps $SourceDir)
             if ($bad.Count) { throw "The signing tool now depends on code outside the standard library and internal/update: $($bad -join ', '). Not signing." }
             Write-Host "-Yes: the signing code is on master through merged PRs; diff sha256 $($r.DiffSha256)." -ForegroundColor Yellow
         } else { & $ask 'reviewed' 'You have read that diff (git diff) and it is yours.' }
@@ -274,6 +284,8 @@ function Invoke-SigningGates {
 # The key passphrase as a SecureString. From Proton Pass when a reference is given. Under -Yes it never falls back to typing
 # (a hidden prompt in a window nobody watches stalls the release); it throws with the reason instead.
 function Get-SigningPassphrase([string]$ProtonPassRef, [string]$KeyFile, [switch]$Yes) {
+    $risks = Get-PassphraseLoggingRisks
+    if ($risks.Count) { throw "This PC could log the passphrase: $($risks -join '; '). Turn that policy off for release runs. Not reading it." }
     if ($ProtonPassRef) {
         try { $s = Get-ProtonPassSecret -Reference $ProtonPassRef; Write-Host 'Passphrase read from Proton Pass (not shown).'; return $s }
         catch {
@@ -354,8 +366,10 @@ function Get-ReleaseState([string]$Dir) {
     if (-not (Test-Path -LiteralPath $p)) { return $null }
     try { return Get-Content -Raw -LiteralPath $p | ConvertFrom-Json } catch { return $null }
 }
-function Set-ReleaseState([string]$Dir, [string]$Version, [string]$Stage, [string]$Status, [string]$Reason = '') {
+# Extra: fields kept from one run to the next (key, Proton Pass reference, the feed's release before this one). Never secrets.
+function Set-ReleaseState([string]$Dir, [string]$Version, [string]$Stage, [string]$Status, [string]$Reason = '', [hashtable]$Extra = @{}) {
     $s = [ordered]@{ version = $Version; stage = $Stage; status = $Status; reason = $Reason; updated = [DateTime]::UtcNow.ToString('o') }
+    foreach ($k in $Extra.Keys) { if ($k -match 'pass(?!ref)|secret|token') { throw "State field '$k' is not allowed." }; $s[$k] = $Extra[$k] }
     $tmp = Join-Path $Dir 'state.json.tmp'
     [System.IO.File]::WriteAllText($tmp, ($s | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $tmp -Destination (Join-Path $Dir 'state.json') -Force

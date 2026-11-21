@@ -15,7 +15,7 @@ That is all. It picks:
 | Version | Next one after the newest tag: `0.1.0-rc.54` → `0.1.0-rc.55`. Stable: the `X.Y.Z` of the newest rc. `-Version` overrides; it must be newer than every tag. |
 | Key | From `-KeyDir` (default `D:\secret`): the first `<channel>-N.key.json` whose public key is trusted by both the commit being released and the release now on the feed. `-KeyFile` overrides. |
 | Passphrase | The Proton Pass entry that belongs to that key (table in [RELEASING.md](RELEASING.md)). `-PassphraseFromProtonPass` overrides. |
-| Where to start | If the last run of this version stopped part way, it continues from the stage after the last one that finished. `-From` overrides. |
+| Where to start | If the last run stopped part way (and was not withdrawn), it continues that version from the stage after the last one that finished, with the same key it checked. A tag is only made right after a preflight in the same run. `-From` overrides. |
 
 Other switches: `-CheckOnly` (all checks, including the passphrase opening the key, then stop; changes nothing), `-CheckAudit` (check the audit log chain and stop), `-SkipVerify`, `-FirstRelease`. The old form `-Version X -KeyFile K -PassphraseFromProtonPass R -Yes` still works.
 
@@ -37,8 +37,8 @@ Other switches: `-CheckOnly` (all checks, including the passphrase opening the k
 3. **Wait**: waits for `release.yml` (build, attestation, smoke test, draft).
 4. **Sign**: `Sign-Release.ps1` with the chosen key; same gates as preflight, run again on the tag's clean worktree; attestation, hashes, sign, check against new and old keys, upload.
 5. **Publish**: draft becomes public (refused without the signature).
-6. **Feed**: moves the channel's feed to this version, then **reads the feed back and verifies it** (signature against the old and new keys, version is this one).
-7. **Verify**: `verify-release.yml` on a clean runner. **If it fails**, the version is withdrawn at once with a signed control file (`Set-Control.ps1 -Block <version>`, keeping any pause or blocks already set) and the run stops with the reason. Machines that have not installed it are not offered it.
+6. **Feed**: moves the channel's feed to this version (Sign-Release checks the signature against the old and new keys first), then **reads the feed back** and checks it is byte for byte the signed pair of this release.
+7. **Verify**: `verify-release.yml` on a clean runner, found by a one-off id in its run name. **If it fails, or cannot start or be found**, the version is withdrawn at once with a signed control file (`Set-Control.ps1 -Block <version>`, keeping any pause or blocks already set, signed with a key the previous release trusts) and the run stops with the reason. A withdrawn version is finished: the next run makes a newer one. Machines that have not installed it are not offered it.
 
 ## Key problems it finds by itself
 

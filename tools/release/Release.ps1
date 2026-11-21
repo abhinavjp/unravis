@@ -61,6 +61,8 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 Remove-Item Env:UNRAVIS_KEY_PASSPHRASE -ErrorAction SilentlyContinue
 
+# PowerShell names ignore case: $channel below would overwrite -Channel, so keep what was asked for apart.
+$askedChannel = [string]$PSBoundParameters['Channel']
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $order = 'Preflight', 'Tag', 'Wait', 'Sign', 'Publish', 'Feed', 'Verify'
 $data = Get-ReleaseDataDir
@@ -75,13 +77,14 @@ if ($CheckAudit) {
 $script:stage = 'Preflight'
 $script:report = [ordered]@{}
 function Stage([string]$name, [string]$what) { $script:stage = $name; Write-Host "`n[$($order.IndexOf($name) + 1)/7] $what" -ForegroundColor Cyan }
-function Done([string]$name) { if (-not $CheckOnly) { Set-ReleaseState $data $Version $name 'running' } }
-function Fail([string]$msg) {
+$script:extra = @{}
+function Done([string]$name) { if (-not $CheckOnly) { Set-ReleaseState $data $Version $name 'running' '' $script:extra } }
+function Fail([string]$msg, [string]$status = 'stopped') {
     Write-Host "`nSTOPPED at $script:stage : $msg" -ForegroundColor Red
     if ($Version -and -not $CheckOnly) {
-        Set-ReleaseState $data $Version (Get-LastDone) 'stopped' $msg
+        Set-ReleaseState $data $Version (Get-LastDone) $status $msg $script:extra
         try { Write-AuditEntry $audit @{ event = 'stopped'; version = $Version; stage = $script:stage; reason = $msg } } catch {}
-        Write-Host "Fix it, then run the same command again: it continues at $script:stage by itself." -ForegroundColor Yellow
+        if ($status -eq 'stopped') { Write-Host "Fix it, then run the same command again: it continues at $script:stage by itself." -ForegroundColor Yellow }
     }
     exit 1
 }
@@ -109,9 +112,12 @@ function Wait-CiGreen([string]$sha, [int]$minutes) {
     while ($true) {
         $runs = @(gh run list --repo $Repo --workflow ci.yml --commit $sha --json conclusion,status,databaseId | ConvertFrom-Json)
         if ($LASTEXITCODE -ne 0) { Fail 'gh could not list CI runs.' }
-        if ($runs | Where-Object { $_.conclusion -eq 'success' }) { return }
-        $going = @($runs | Where-Object { $_.status -ne 'completed' })
-        if (-not $going.Count -and $runs.Count) { Fail "CI (ci.yml) failed on $($sha.Substring(0,7)): https://github.com/$Repo/actions/runs/$($runs[0].databaseId). Fix master first." }
+        # The newest run decides (a re-run that failed outranks an older green one).
+        $last = $runs | Sort-Object { [long]$_.databaseId } -Descending | Select-Object -First 1
+        if ($last -and $last.status -eq 'completed') {
+            if ($last.conclusion -eq 'success') { return }
+            Fail "CI (ci.yml) is $($last.conclusion) on $($sha.Substring(0,7)): https://github.com/$Repo/actions/runs/$($last.databaseId). Fix master first."
+        }
         if (-not $runs.Count -and ((Get-Date) - $seenAt).TotalMinutes -gt 5) { Fail "No CI run (ci.yml) on $($sha.Substring(0,7)) after 5 minutes. Was it pushed through a PR?" }
         if ((Get-Date) -gt $deadline) { Fail "CI on $($sha.Substring(0,7)) is still running after $minutes minutes." }
         if (-not $said) { Write-Host "CI on $($sha.Substring(0,7)) is still running; waiting (up to $minutes min)."; $said = $true }
@@ -145,30 +151,32 @@ try {
     # ---- which version, and where to start -------------------------------------------------------------------------------------
     $state = Get-ReleaseState $data
     $resuming = $false
-    if (-not $Version -and $state -and $state.status -ne 'done' -and $state.version) {
+    # A done or withdrawn release is finished; -CheckOnly never resumes. The same -Version as the stopped run also resumes it.
+    if (-not $CheckOnly -and $state -and $state.version -and @('done', 'withdrawn') -notcontains $state.status -and (-not $Version -or $Version -eq $state.version)) {
         $sv = [string]$state.version
         $svChannel = if ($sv.Contains('-')) { 'rc' } else { 'stable' }
         $newest = Get-NewestVersion $tags
-        if ((-not $Channel -or $Channel -eq $svChannel) -and (-not $newest -or (Compare-SemVer $sv $newest) -ge 0)) {
+        if ((-not $askedChannel -or $askedChannel -eq $svChannel) -and (-not $newest -or (Compare-SemVer $sv $newest) -ge 0)) {
             $Version = $sv; $resuming = $true
+            foreach ($k in 'key', 'passref', 'prev_feed') { if ($state.$k) { $script:extra[$k] = [string]$state.$k } }
             Write-Host "Unfinished release $Version found (last finished stage: '$($state.stage)', $($state.status): $($state.reason)). Continuing it." -ForegroundColor Yellow
         }
     }
     if (-not $Version) {
-        if (-not $Channel) { Fail 'Pass -Channel rc or -Channel stable (or -Version).' }
-        try { $Version = Get-NextVersion $tags $Channel } catch { Fail $_.Exception.Message }
-        Write-Host "Next $Channel version: $Version"
+        if (-not $askedChannel) { Fail 'Pass -Channel rc or -Channel stable (or -Version).' }
+        try { $Version = Get-NextVersion $tags $askedChannel } catch { Fail $_.Exception.Message }
+        Write-Host "Next $askedChannel version: $Version"
     }
     if (-not (ConvertTo-SemVer $Version)) { Fail "Version '$Version' is not X.Y.Z or X.Y.Z-rc.N (lower case, no leading v)." }
     $tag = "v$Version"
     $channel = if ($Version.Contains('-')) { 'rc' } else { 'stable' }
-    if ($Channel -and $Channel -ne $channel) { Fail "Version $Version is a $channel version, not $Channel." }
+    if ($askedChannel -and $askedChannel -ne $channel) { Fail "Version $Version is a $channel version, not $askedChannel." }
     if (-not $From) {
         $From = if ($resuming) { Get-ResumeStage $order ([string]$state.stage) } else { 'Preflight' }
         # A tag is only ever made right after a preflight in the same run (master may have moved since the last one).
         # If the tag is already on GitHub, the build is what comes next.
-        if ($From -eq 'Tag') { $From = if (git ls-remote --tags origin "refs/tags/$tag") { 'Wait' } else { 'Preflight' } }
     }
+    if ($From -eq 'Tag') { $From = if (git ls-remote --tags origin "refs/tags/$tag") { 'Wait' } else { 'Preflight' } }
     if (-not $From) { Write-Host "Release $tag already finished." -ForegroundColor Green; exit 0 }
     if ($CheckOnly -and $From -ne 'Preflight') { Fail '-CheckOnly only works from Preflight.' }
     function Reach([string]$s) { $order.IndexOf($s) -ge $order.IndexOf($From) }
@@ -190,16 +198,25 @@ try {
     if (-not (Test-Path -LiteralPath $KeyDir -PathType Container)) { Fail "Key folder $KeyDir not found. Is the key drive plugged in? (-KeyDir to use another folder)" }
     $owner = Get-OwnerKeys $KeyDir
     $trustedNewText = (git show "${refCommit}:$script:ReleaseTrustedKeysPath") -join "`n"
-    # The keys installed copies accept today: those of the release on the feed (for a resumed run past Feed, the one before is gone
-    # from the feed, so the new tag's own list is used).
-    $trustedOld = if ($feed) { ConvertFrom-TrustedKeys ((git show "$($feed.Tag):$script:ReleaseTrustedKeysPath") -join "`n") } else { $null }
+    # The keys installed copies accept today: those of the release on the feed (for a resumed run past Feed, the release that was on
+    # the feed before this one, kept in state.json).
+    $oldTag = if ($feed -and $feed.Tag -eq $tag -and $script:extra.prev_feed) { $script:extra.prev_feed } elseif ($feed) { $feed.Tag } else { $null }
+    if ($feed -and $feed.Tag -eq $tag -and -not $script:extra.prev_feed) { Write-Host "  note: the feed already serves $tag and the release before it is not recorded; key checks use $tag's own list." -ForegroundColor Yellow }
+    $trustedOld = if ($oldTag) { ConvertFrom-TrustedKeys ((git show "${oldTag}:$script:ReleaseTrustedKeysPath") -join "`n") } else { $null }
     $sel = Select-SigningKey $channel $owner (ConvertFrom-TrustedKeys $trustedNewText) $trustedOld $KeyFile
     foreach ($p in $sel.Problems) { Write-Host "  key problem: $p" -ForegroundColor Yellow }
     if (-not $sel.Usable.Count) { Fail "No usable $channel key in ${KeyDir}: $($sel.Problems -join '; ')" }
     if ($KeyFile -and -not $sel.Key) { Fail "The key you passed cannot be used: $($sel.Problems -join '; ')" }
     $candidates = if ($KeyFile) { @($sel.Key) } else { @($sel.Usable) }
     $chosen = $candidates[0]
-    $passRef = if ($PassphraseFromProtonPass) { $PassphraseFromProtonPass } else { Get-ProtonPassRefForKey $chosen.Name }
+    if ($resuming -and $script:extra.key -and -not $KeyFile) {
+        # Use the key preflight checked (its passphrase opened it), not simply the first usable one.
+        $chosen = $candidates | Where-Object { $_.Name -eq $script:extra.key } | Select-Object -First 1
+        if (-not $chosen) { Fail "The key preflight chose, $($script:extra.key), cannot be used now: $($sel.Problems -join '; ')" }
+    }
+    $passRef = if ($PassphraseFromProtonPass) { $PassphraseFromProtonPass } elseif ($resuming -and $script:extra.passref -and $chosen.Name -eq $script:extra.key) { $script:extra.passref } else { Get-ProtonPassRefForKey $chosen.Name }
+    if ($Yes -and -not $passRef) { Fail "No Proton Pass entry is known for key $($chosen.Name), and -Yes never asks for a passphrase. Pass -PassphraseFromProtonPass." }
+    if (-not $resuming) { $script:extra = @{ prev_feed = "$($feed.Tag)" } }
 
     # 1 Preflight -------------------------------------------------------------------------------------------------------------
     if (Reach 'Preflight') {
@@ -208,10 +225,11 @@ try {
         if (git status --porcelain) { Fail 'The working tree has changes. A release is built from a clean commit.' }
         $head = (git rev-parse HEAD).Trim(); $remote = (git rev-parse "origin/$Branch").Trim()
         if ($head -ne $remote) { Fail "Local $Branch ($($head.Substring(0,7))) differs from origin/$Branch ($($remote.Substring(0,7))). Run git pull --ff-only first." }
-        if ($tagExists -or (git tag -l $tag)) { Fail "Tag $tag already exists. Pass -From Tag to continue that release, or let the next run pick the next version." }
+        if ($tagExists) { Fail "Tag $tag is already on GitHub. Run again without -From to continue that release, or pass a newer -Version." }
+        if ((git tag -l $tag) -and (git rev-list -n 1 $tag).Trim() -ne $head) { Fail "A local tag $tag points at another commit. Delete it (git tag -d $tag) if it was never pushed." }
         $existing = (gh release list --repo $Repo --limit 100 --json tagName | ConvertFrom-Json).tagName
         if ($existing -contains $tag) { Fail "A release $tag already exists." }
-        try { Assert-NextVersion $Version $tags } catch { Fail $_.Exception.Message }
+        try { Assert-NextVersion $Version @($tags | Where-Object { $_ -ne $tag }) } catch { Fail $_.Exception.Message }
         Wait-CiGreen $head 45
         Write-Host "CI green on $($head.Substring(0,7))."
         $risks = Get-PassphraseLoggingRisks
@@ -223,29 +241,36 @@ try {
             $kc = Compare-KeyLists ((git show "$($feedBase.Tag):$script:ReleaseTrustedKeysPath") -join "`n") $trustedNewText $owner
             if ($kc.Foreign.Count) { Fail "trusted_keys.txt gained a key you hold no key file for in ${KeyDir}: $(($kc.Foreign | ForEach-Object { "$($_.Role) $($_.Pub)" }) -join '; '). Someone else's key; do not release." }
             if ($kc.Added.Count -or $kc.Removed.Count) { Write-Host "Trusted keys changed since $($feedBase.Tag): $($kc.Added.Count) added (all yours), $($kc.Removed.Count) removed." }
-            if (git diff --stat $feedBase.Tag $head -- $script:ReleaseSigningPaths) {
-                $deps = @(go list -deps ./tools/release/sigtool)
-                if ($LASTEXITCODE -ne 0) { Fail 'go list could not read the signing tool''s dependencies.' }
-                $bad = Get-ForbiddenSigtoolDeps $deps
-                if ($bad.Count) { Fail "The signing tool now depends on code outside the standard library and internal/update: $($bad -join ', ')." }
-                Write-Host 'Signing code changed since the feed''s release; it came through merged PRs and depends on nothing new.'
-            }
             $left = ($feedBase.Expires - (Get-Date).ToUniversalTime()).TotalDays
             if ($left -lt 30) { Write-Host ("The $channel feed expires in {0:N0} days; this release renews it." -f $left) -ForegroundColor Yellow }
         }
+        if (-not $feedBase) {
+            # First release of the channel: every listed key must be one the owner holds.
+            $kc = Compare-KeyLists '' $trustedNewText $owner
+            if ($kc.Foreign.Count) { Fail "trusted_keys.txt lists a key you hold no key file for in ${KeyDir}: $(($kc.Foreign | ForEach-Object { "$($_.Role) $($_.Pub)" }) -join '; '). Someone else's key; do not release." }
+        }
+        # The signing tool (it will see the passphrase) may depend only on the standard library and internal/update. Built and listed
+        # from a throw-away worktree of HEAD, never from the working folder (hidden or ignored files there do not count).
+        $wt = Join-Path ([System.IO.Path]::GetTempPath()) ('unravis-pre-' + [guid]::NewGuid().ToString('N'))
+        try { Run 'git worktree add' { git worktree add --detach $wt $head } | Out-Null } catch { Fail $_.Exception.Message }
+        try {
+            try { $bad = Get-ForbiddenSigtoolDeps (Get-SigtoolNonStdDeps $wt) } catch { Fail $_.Exception.Message }
+            if ($bad.Count) { Fail "The signing tool depends on code outside the standard library and internal/update: $($bad -join ', ')." }
         # The passphrase must open the key now, before anything is tagged. A key whose passphrase fails is skipped for the next one.
         if ($passRef -or $Yes) {
             $tool = Join-Path ([System.IO.Path]::GetTempPath()) ('unravis-keycheck-' + [guid]::NewGuid().ToString('N') + '.exe')
             try {
-                try { Run 'building the key check tool' { go build -mod=readonly -o $tool ./tools/release/sigtool } | Out-Null } catch { Fail $_.Exception.Message }
+                Push-Location $wt
+                try { Run 'building the key check tool' { go build -mod=readonly -o $tool ./tools/release/sigtool } | Out-Null } catch { Fail $_.Exception.Message } finally { Pop-Location }
                 $ok = $null; $why = @()
                 foreach ($k in $candidates) {
                     $ref = if ($PassphraseFromProtonPass) { $PassphraseFromProtonPass } else { Get-ProtonPassRefForKey $k.Name }
                     if (-not $ref) { $why += "$($k.Name): no Proton Pass entry is known for it (pass -PassphraseFromProtonPass)"; continue }
                     try { $sec = Get-ProtonPassSecret -Reference $ref } catch { $why += "$($k.Name): Proton Pass: $($_.Exception.Message)"; continue }
-                    try { $null = Invoke-WithPassphrase $sec $tool @('keycheck', '-key', $k.Path, '-role', $channel) } finally { $sec.Dispose() }
+                    # sigtool's own error (no secret in it) says which: wrong passphrase, damaged file, wrong role.
+                    try { $kout = Invoke-WithPassphrase $sec $tool @('keycheck', '-key', $k.Path, '-role', $channel) 2>&1 } finally { $sec.Dispose() }
                     if ($LASTEXITCODE -eq 0) { $ok = $k; $passRef = $ref; break }
-                    $why += "$($k.Name): the passphrase in '$ref' does not open this key file"
+                    $why += "$($k.Name) with '$ref': $(if ($kout) { (@($kout) | ForEach-Object { "$_" }) -join ' ' -replace '^sigtool:\s*', '' } else { 'the passphrase does not open this key file, or the file is damaged' })"
                 }
             } finally { Remove-Item -LiteralPath $tool -Force -ErrorAction SilentlyContinue }
             if (-not $ok) { Fail "No $channel key could be opened: $($why -join '; ')" }
@@ -253,11 +278,13 @@ try {
             $chosen = $ok
             Write-Host "Key: $($chosen.Name) ($($chosen.Pub.Substring(0,16))...), passphrase from Proton Pass opens it." -ForegroundColor Green
         } else { Write-Host "Key: $($chosen.Name). No Proton Pass reference: you will type the passphrase at the Sign stage." }
+        } finally { git worktree remove --force $wt 2>&1 | Out-Null; git worktree prune 2>&1 | Out-Null }
+        $script:extra = @{ key = $chosen.Name; passref = "$passRef"; prev_feed = "$($feed.Tag)" }
         & (Join-Path $PSScriptRoot 'Test-Release.ps1') | Out-Host
         if ($LASTEXITCODE -ne 0) { Fail 'Test-Release.ps1 failed.' }
         Write-Host "Preflight OK: $Branch at $($head.Substring(0,7)), CI green, $tag is free, key $($chosen.Name)." -ForegroundColor Green
         if ($CheckOnly) { Write-Host "`nCHECK ONLY. Would release $tag with key $($chosen.Name). Nothing was changed." -ForegroundColor Yellow; exit 0 }
-        Write-AuditEntry $audit @{ event = 'preflight-ok'; version = $Version; commit = $head; key = $chosen.Name; key_pub = $chosen.Pub; feed = "$($feed.Tag)"; sensitive_prs = @($script:report.sensitive) }
+        Write-AuditEntry $audit @{ event = 'preflight-ok'; version = $Version; commit = $head; key = $chosen.Name; key_pub = $chosen.Pub; feed = "$($feed.Tag)"; sensitive_prs = @($script:report.sensitive | Where-Object { $_ }) }
         Done 'Preflight'
     }
     # 2 Tag -------------------------------------------------------------------------------------------------------------------
@@ -272,7 +299,11 @@ try {
             try {
                 if (-not $localTag) { Run 'git tag' { git tag $tag $head } | Out-Null }
                 Run 'git push tag' { git push origin $tag } | Out-Null
-            } catch { Fail $_.Exception.Message }
+            } catch {
+                # Not on GitHub: drop the local tag so the next run starts clean from preflight.
+                if (-not (git ls-remote --tags origin "refs/tags/$tag")) { git tag -d $tag 2>&1 | Out-Null }
+                Fail $_.Exception.Message
+            }
             Write-Host "Pushed $tag."
             Write-AuditEntry $audit @{ event = 'tagged'; version = $Version; commit = $head }
         } else { Write-Host "Tag $tag is already on GitHub; continuing." }
@@ -343,7 +374,7 @@ try {
     }
     # 7 Verify ----------------------------------------------------------------------------------------------------------------
     if (Reach 'Verify') {
-        if ($SkipVerify) { Write-Host "`nVerify skipped by -SkipVerify. Run the verify-release workflow yourself." -ForegroundColor Yellow; Set-ReleaseState $data $Version 'Feed' 'stopped' 'verify skipped'; exit 0 }
+        if ($SkipVerify) { Write-Host "`nVerify skipped by -SkipVerify. Run the verify-release workflow yourself." -ForegroundColor Yellow; Set-ReleaseState $data $Version 'Feed' 'stopped' 'verify skipped' $script:extra; exit 0 }
         Stage 'Verify' 'Verify on a clean machine (verify-release.yml)'
         if (-not $Previous -and -not $FirstRelease) {
             foreach ($r in (gh release list --repo $Repo --limit 50 --json tagName,isDraft,publishedAt | ConvertFrom-Json | Where-Object { -not $_.isDraft -and $_.tagName -match '^v[0-9]' -and $_.tagName -ne $tag -and ($_.tagName.Contains('-') -eq ($channel -eq 'rc')) } | Sort-Object publishedAt -Descending)) {
@@ -351,27 +382,37 @@ try {
                 if ($assets -contains 'update-manifest.json.sig') { $Previous = $r.tagName; break }
             }
         }
-        $wf = @('workflow', 'run', 'verify-release.yml', '--repo', $Repo, '--ref', $Branch, '-f', "tag=$tag")
+        # A one-off id in the run's name, so this run is found and no other (another session's verify, or a clock that is off).
+        $nonce = [guid]::NewGuid().ToString('N').Substring(0, 12)
+        $wf = @('workflow', 'run', 'verify-release.yml', '--repo', $Repo, '--ref', $Branch, '-f', "tag=$tag", '-f', "nonce=$nonce")
         if ($Previous) { $wf += @('-f', "previous=$Previous"); Write-Host "Upgrading from $Previous." } else { Write-Host 'No earlier signed release: part A only (feed, offline verify, tamper refusals).' }
-        $before = (Get-Date).ToUniversalTime()
-        try { Run 'start verify' { gh @wf } | Out-Null } catch { Fail $_.Exception.Message }
-        Start-Sleep -Seconds 10
-        $id = $null
-        $deadline = (Get-Date).AddMinutes(2)
-        while (-not $id -and (Get-Date) -lt $deadline) {
-            $id = (gh run list --repo $Repo --workflow verify-release.yml --limit 5 --json databaseId,createdAt | ConvertFrom-Json | Where-Object { ([datetime]$_.createdAt).ToUniversalTime() -ge $before.AddSeconds(-30) } | Sort-Object createdAt -Descending | Select-Object -First 1).databaseId
-            if (-not $id) { Start-Sleep -Seconds 5 }
+        $id = $null; $why = $null
+        try { Run 'start verify' { gh @wf } | Out-Null } catch { $why = "the verify run could not be started: $($_.Exception.Message)" }
+        if (-not $why) {
+            $deadline = (Get-Date).AddMinutes(3)
+            while (-not $id -and (Get-Date) -lt $deadline) {
+                Start-Sleep -Seconds 10
+                $id = (gh run list --repo $Repo --workflow verify-release.yml --limit 20 --json databaseId,displayTitle | ConvertFrom-Json | Where-Object { "$($_.displayTitle)" -match [regex]::Escape($nonce) } | Select-Object -First 1).databaseId
+            }
+            if (-not $id) { $why = "the verify run (id $nonce) did not show up within 3 minutes" }
         }
-        if (-not $id) { Fail 'The verify run did not start.' }
-        gh run watch $id --repo $Repo --exit-status --interval 30 | Out-Host
-        if ($LASTEXITCODE -ne 0) {
-            $url = "https://github.com/$Repo/actions/runs/$id"
-            Write-Host "`nVERIFY FAILED: $url" -ForegroundColor Red
-            Write-AuditEntry $audit @{ event = 'verify-failed'; version = $Version; run = "$id" }
-            # Withdraw it now: a signed control file that blocks this version, keeping any pause or blocks already in force.
+        if ($id) {
+            gh run watch $id --repo $Repo --exit-status --interval 30 | Out-Host
+            if ($LASTEXITCODE -ne 0) { $why = "it failed its clean-machine check: https://github.com/$Repo/actions/runs/$id" }
+        }
+        if ($why) {
+            # Not proven good while every copy is already offered it: withdraw it now (signed control file that blocks this version,
+            # keeping any pause or blocks already in force). An unverified release is treated like a failed one.
+            Write-Host "`nVERIFY DID NOT PASS: $why" -ForegroundColor Red
+            Write-AuditEntry $audit @{ event = 'verify-failed'; version = $Version; run = "$id"; reason = $why }
             Write-Host "Withdrawing $Version (signed control file) so machines that have not installed it are not offered it." -ForegroundColor Yellow
-            $c = @{ Channel = $channel; KeyFile = $chosen.Path; Block = @($Version); Note = "Withdrawn: $Version failed its clean-machine check."; Repo = $Repo; Yes = $true }
-            if ($passRef) { $c.ProtonPassRef = $passRef } else { $c.Remove('Yes') }
+            if ($Yes -and -not $passRef) { Fail "Verify did not pass ($why) and no Proton Pass entry is known to sign the withdraw. Run Set-Control.ps1 -Block $Version now." }
+            $c = @{ Channel = $channel; KeyFile = $chosen.Path; Block = @($Version); Note = "Withdrawn: $Version did not pass its clean-machine check."; Repo = $Repo }
+            if ($Yes) { $c.Yes = $true }
+            if ($passRef) { $c.ProtonPassRef = $passRef }
+            # The release that was on the feed before this one: installed copies on it must accept the control file.
+            $base = if ($script:extra.prev_feed) { $script:extra.prev_feed } else { $null }
+            if ($base -and $base -ne $tag) { $c.TrustBaseline = $base }
             $ctlDir = Join-Path ([System.IO.Path]::GetTempPath()) ('unravis-ctl-' + [guid]::NewGuid().ToString('N'))
             New-Item -ItemType Directory -Path $ctlDir | Out-Null
             gh release download update-feed --repo $Repo --pattern "$channel-control.json" --dir $ctlDir 2>&1 | Out-Null
@@ -389,19 +430,17 @@ try {
             Remove-Item -LiteralPath $ctlDir -Recurse -Force -ErrorAction SilentlyContinue
             # Set-Control.ps1 signs from a checkout equal to origin/master; master may have moved during the verify run.
             git fetch origin $Branch --quiet 2>&1 | Out-Null; git merge --ff-only --quiet "origin/$Branch" 2>&1 | Out-Null
-            try {
-                & (Join-Path $PSScriptRoot 'Set-Control.ps1') @c
-                Write-AuditEntry $audit @{ event = 'withdrawn'; version = $Version; run = "$id" }
-                Fail "Verify failed ($url). $Version is WITHDRAWN on the $channel feed. Fix the cause and release a newer version."
-            } catch {
-                Fail "Verify failed ($url) AND the withdraw failed: $($_.Exception.Message). Run: ./tools/release/Set-Control.ps1 -Channel $channel -KeyFile '$($chosen.Path)' -Block $Version -Yes -ProtonPassRef '$passRef'"
+            try { & (Join-Path $PSScriptRoot 'Set-Control.ps1') @c } catch {
+                Fail "Verify did not pass ($why) AND the withdraw failed: $($_.Exception.Message). Run now: ./tools/release/Set-Control.ps1 -Channel $channel -KeyFile '$($chosen.Path)' -Block $Version -Yes -ProtonPassRef '$passRef'"
             }
+            Write-AuditEntry $audit @{ event = 'withdrawn'; version = $Version; run = "$id" }
+            Fail "Verify did not pass ($why). $Version is WITHDRAWN on the $channel feed. Fix the cause; the next run makes a newer version." 'withdrawn'
         }
         Write-Host "`nVerified on a clean machine: https://github.com/$Repo/actions/runs/$id" -ForegroundColor Green
         Write-AuditEntry $audit @{ event = 'verified'; version = $Version; run = "$id" }
         $script:report.verify = "https://github.com/$Repo/actions/runs/$id"
     }
-    Set-ReleaseState $data $Version 'Verify' 'done'
+    Set-ReleaseState $data $Version 'Verify' 'done' '' $script:extra
     Write-AuditEntry $audit @{ event = 'done'; version = $Version }
     Write-Host "`nRelease $tag is done." -ForegroundColor Green
     Write-Host "  key:        $($chosen.Name) ($($chosen.Pub.Substring(0,16))...)"

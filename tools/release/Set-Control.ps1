@@ -31,6 +31,9 @@ param(
     [ValidateRange(1, 90)] [int]$Days = 30,
     [string]$Repo = 'abhinavjp/unravis',
     [string]$ProtonPassRef,
+    # A release whose installed copies must also accept this control file (Release.ps1 passes the release that was on the feed
+    # before the one it withdraws). Its trusted keys are checked as well as those of the release now on the feed.
+    [string]$TrustBaseline,
     [switch]$Yes
 )
 $ErrorActionPreference = 'Stop'
@@ -79,6 +82,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Signing failed. Nothing was uploaded.' }
     Invoke-Checked 'verifying with the keys built into this checkout' { & $tool verify -control -in $file -sig "$file.sig" -trusted -channel $Channel -want $Channel }
     Invoke-Checked "verifying with the keys installed copies trust ($prevTag)" { & $tool verify -control -in $file -sig "$file.sig" -keys $prevKeys -channel $Channel -want $Channel }
+    if ($TrustBaseline) {
+        if ($TrustBaseline -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9a-z.]+)?$') { throw "-TrustBaseline '$TrustBaseline' is not a release tag." }
+        $baseKeys = Join-Path $work 'base_trusted_keys.txt'
+        git -C $repoRoot show "${TrustBaseline}:internal/update/trusted_keys.txt" > $baseKeys
+        if ($LASTEXITCODE -ne 0) { throw "Could not read the trusted keys of $TrustBaseline." }
+        Invoke-Checked "verifying with the keys copies on $TrustBaseline trust" { & $tool verify -control -in $file -sig "$file.sig" -keys $baseKeys -channel $Channel -want $Channel }
+    }
     Invoke-Checked 'uploading to the update feed' { gh release upload update-feed $file "$file.sig" --repo $Repo --clobber }
     $back = Join-Path $work 'back'; New-Item -ItemType Directory -Path $back | Out-Null
     Invoke-Checked 'reading back the published pair' { gh release download update-feed --repo $Repo --pattern "$Channel-control.json*" --dir $back }
