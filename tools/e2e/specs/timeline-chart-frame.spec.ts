@@ -166,7 +166,7 @@ test('TLF-06: the API lane shows the Run Analysis chart with a legend, a red dia
   await expect(audit.locator('.mark.flagged')).toHaveCount(1);
   await expect(audit.locator('.mark-label')).toHaveText('60 s');
 
-  const legend = page.locator('.hero-legend:not(.web-legend)');
+  const legend = page.locator('.hero-legend:not(.web-legend):not(.sql-legend)');
   await expect(legend).toContainText('Requests per interval');
   await expect(legend).toContainText('Slow end (P95)');
   await expect(legend).toContainText('No timed requests between');
@@ -205,7 +205,7 @@ test('TLF-07: with no timed requests the API lane draws bars only, without a leg
   const audit = page.locator('.panel[data-lane="audit"]');
   await expect(audit).toHaveAttribute('data-state', 'events');
   await expect(audit).not.toHaveAttribute('data-hero', 'true');
-  await expect(page.locator('.hero-legend:not(.web-legend)')).toHaveCount(0);
+  await expect(page.locator('.hero-legend:not(.web-legend):not(.sql-legend)')).toHaveCount(0);
   await expect(page.locator('.axis-right[data-lane="audit"] .tick')).toHaveCount(0);
 });
 

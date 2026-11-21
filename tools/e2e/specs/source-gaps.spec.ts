@@ -153,6 +153,15 @@ async function addThroughPopup(page: Page, name: string, content: string) {
 
 test('SRCGAP-04: a hand-picked list also switches on the file the popup added, once the popup closes', async ({ page, api }) => {
   const { id, importId } = await caseWithFile(api, 'QA Source New File');
+  // The SQL lane draws live api-seen time when it can, and then offers no Add files. The answer is changed so the lane has no data, as for a case with no SQL time at all.
+  await page.route('**/tracing', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const res = await route.fetch();
+    const body = await res.json();
+    const sql = (body.lanes ?? []).find((lane: any) => lane.key === 'sql');
+    if (sql) Object.assign(sql, { state: 'no-data', scanned: 0, buckets: [], events: [], origin: undefined, reasonCode: undefined });
+    await route.fulfill({ response: res, json: body });
+  });
   await openTimeline(page, 'QA Source New File');
   await expect(chip(page, 'imp_' + importId)).toHaveAttribute('aria-pressed', 'true');
   // Hand-pick: switch the live audit source Demo East off, which leaves a list of explicit sources.

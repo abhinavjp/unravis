@@ -100,30 +100,30 @@ test.beforeEach(async ({ page }) => {
   await goHome(page);
 });
 
-test('HAND-01: typed windows start the tracing; audit has 11 bars in 36 slots, SQL and IIS are empty', async ({ page }) => {
+test('HAND-01: typed windows start the tracing; audit has 11 bars in 36 slots, IIS is empty, SQL draws the live api-seen fallback', async ({ page }) => {
   await startTracing(page);
   await expect(page.locator('.panel[data-lane=audit] .bar')).toHaveCount(AUDIT_SLOTS.length);
-  await expect(page.locator('.panel[data-lane=sql]')).toContainText('No events in this period');
+  // The imported SQL file has nothing in this window, so the SQL lane draws the SQL time the live audit rows carry (api-seen).
+  await expect(page.locator('.panel[data-lane=sql]')).toHaveAttribute('data-state', 'events');
   await expect(page.locator('.panel[data-lane=iis]')).toContainText('No events in this period');
-  const group = page.getByRole('group', { name: /^Time buckets\./ });
+  const group = page.getByRole('slider', { name: /^Time buckets\./ });
   await expect(group).toHaveAttribute('aria-roledescription', 'bucket selector');
   await expect(group).toHaveAttribute('tabindex', '0');
   expect(await page.evaluate(() => location.hash)).toBe('');
 });
 
-test('HAND-02: a bar with events sets the 5-minute window, opens the analysis, and Run analysis applies it', async ({ page }) => {
+test('HAND-02: a bar with events sets the 5-minute window, opens the analysis, and the analysis runs on that window by itself', async ({ page }) => {
   await startTracing(page);
   await pickBar(page, 12);
   await expectAnalysisOpen(page);
-  // Hand-off only changes the filters: the figures stay from the last run until Run analysis is pressed.
-  await expect(page.getByText(STALE_NOTE)).toBeVisible();
-  await expect(page.getByText(showing(12), { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'This case', exact: true })).toBeVisible();
-  expect(await page.evaluate(() => location.hash)).toBe('');
-  await expect(runButton(page)).toHaveClass(/primary-button/);
-  await runButton(page).click();
+  // The hand-off sets the window and the analysis runs on it as it opens (handoffRunPending in appState), so no stale note is left.
   await expect(page.getByText(showing(12), { exact: true }).first()).toBeVisible();
   await expect(page.getByText(STALE_NOTE)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'This case', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => location.hash)).toBe('');
+  // Run analysis stays available and gives the same window again.
+  await runButton(page).click();
+  await expect(page.getByText(showing(12), { exact: true }).first()).toBeVisible();
   expect(await page.evaluate(() => location.hash)).toBe('');
 });
 
@@ -260,7 +260,7 @@ for (const [id, scheme] of [['HAND-10', 'dark'], ['HAND-11', 'light']] as const)
     else expect(lum, 'page background is light').toBeGreaterThan(384);
     await noHorizontalScroll(page, 'tracing chart');
     // The selected bar is outlined in the accent colour in either scheme.
-    const overlay = page.getByRole('group', { name: /^Time buckets\./ });
+    const overlay = page.getByRole('slider', { name: /^Time buckets\./ });
     await overlay.focus();
     await page.keyboard.press('ArrowRight');
     const accent = await token(page, '--accent');
@@ -287,7 +287,7 @@ for (const [id, scheme] of [['HAND-10', 'dark'], ['HAND-11', 'light']] as const)
 
 test('HAND-12: keyboard only, arrows move between slots, Enter hands off the selected slot', async ({ page }) => {
   await startTracing(page);
-  const overlay = page.getByRole('group', { name: /^Time buckets\./ });
+  const overlay = page.getByRole('slider', { name: /^Time buckets\./ });
   await overlay.focus();
   await expect(overlay).toBeFocused();
   // Enter with nothing selected does nothing.
