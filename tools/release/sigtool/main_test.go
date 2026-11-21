@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -289,3 +290,54 @@ func TestControlFileEndToEnd(t *testing.T) {
 		t.Fatal("wrote a file for bad input")
 	}
 }
+
+func TestRefreshKeepsTheReleaseAndMovesTheDates(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UNRAVIS_KEY_PASSPHRASE", "correct horse battery")
+	var out bytes.Buffer
+	kp, pp := filepath.Join(dir, "k.json"), filepath.Join(dir, "k.pub")
+	if err := run([]string{"keygen", "-role", "rc", "-out", kp, "-pub", pp}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	writeAssets(t, dir, "0.1.0-rc.48", false)
+	mf, sg := filepath.Join(dir, "m.json"), filepath.Join(dir, "m.json.sig")
+	if err := run([]string{"manifest", "-dir", dir, "-version", "0.1.0-rc.48", "-seq", "4800", "-commit", commitA, "-out", mf}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"sign", "-key", kp, "-in", mf, "-out", sg}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	keys := filepath.Join(dir, "keys.txt")
+	pub, _ := os.ReadFile(pp)
+	_ = pub
+	k, err := readPub(pp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(keys, []byte("rc "+hexOf(k.Pub)+"\n"), 0o644)
+	nf, ns := filepath.Join(dir, "new.json"), filepath.Join(dir, "new.json.sig")
+	if err := run([]string{"refresh", "-in", mf, "-sig", sg, "-keys", keys, "-days", "90", "-out", nf}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"sign", "-key", kp, "-in", nf, "-out", ns}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"verify", "-in", nf, "-sig", ns, "-keys", keys, "-channel", "rc", "-want", "rc"}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	ob, _ := os.ReadFile(mf)
+	nb, _ := os.ReadFile(nf)
+	if !strings.Contains(string(nb), `"seq": 4801`) || !strings.Contains(string(nb), `"commit": "`+commitA+`"`) || !strings.Contains(string(nb), "rc.48") || string(ob) == string(nb) {
+		t.Fatalf("refresh changed the wrong things:\n%s", nb)
+	}
+	// A tampered or unsigned input is refused; no keys given is refused.
+	os.WriteFile(mf, bytes.Replace(ob, []byte(`"size": 1`), []byte(`"size": 2`), 1), 0o644)
+	if err := run([]string{"refresh", "-in", mf, "-sig", sg, "-keys", keys, "-out", nf + "2"}, nil, &out); err == nil {
+		t.Fatal("refreshed a tampered manifest")
+	}
+	if err := run([]string{"refresh", "-in", mf, "-sig", sg, "-out", nf + "3"}, nil, &out); err == nil {
+		t.Fatal("refreshed without keys")
+	}
+}
+
+func hexOf(b []byte) string { return hex.EncodeToString(b) }
