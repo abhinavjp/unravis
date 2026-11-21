@@ -182,8 +182,7 @@
   .status > :global(*), .utilities > :global(*) { flex-shrink: 0; }
   .utilities { gap: 4px; padding-left: 12px; border-left: 1px solid var(--line); }
   .utilities > :global(.zone-toggle) { margin: 0 4px; }
-  /* A rule between "Demo data" and the reference time, so the two read as two facts (UX-5). */
-  .reference { display: none; padding-left: var(--space-2); border-left: var(--hairline-width) solid var(--line); }
+  .reference { display: none; }
   .ref-short { display: none; }
   /* Between 1200 and 1279px the label shortens to "Ref." so the bar still fits; the full words stay for screen readers. */
   @media (max-width: 1279px) {
