@@ -54,6 +54,8 @@ export interface UpdateCheckReply {
   inUse?: boolean;
   /** What the last update nobody watched did, until dismissed. */
   result?: UpdateNotice;
+  /** A newer release exists but the publisher is holding it back; plain words say why. */
+  held?: string;
 }
 /** The plain-words result of an update nobody watched. */
 export interface UpdateNotice { outcome: 'done' | 'rolled-back' | 'failed'; from: string; to: string; message: string }
