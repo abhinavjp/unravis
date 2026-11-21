@@ -187,15 +187,54 @@ func refuseSettingsFileChain(path string) error {
 
 // verifyAdminOnlyFile is the real Windows proof behind OSEnv.VerifyAdminOnlyFile.
 func verifyAdminOnlyFile(path string) error {
-	if err := verifySettingsFileOnly(path); err != nil {
+	// The final path is resolved ONCE and every check below reads that same path, so a link, a short 8.3 name or a case alias cannot make
+	// the file and the folders above it be judged under different names (BL-140).
+	resolved, err := resolveSettingsPath(path)
+	if err != nil {
 		return err
 	}
-	return verifySettingsFolderChain(path)
+	if err := verifySettingsFileResolved(resolved); err != nil {
+		return err
+	}
+	return verifySettingsFolderChain(resolved)
+}
+
+// resolveSettingsPath refuses a network or device path, then returns the file's final path (links, short names and case resolved). A path
+// that is not already in that final form is refused: the proof is only about the file the service will really open.
+func resolveSettingsPath(path string) (string, error) {
+	if err := settingsPathProblem(path); err != nil {
+		return "", err
+	}
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		return "", fmt.Errorf("blackbox: the settings file path must be absolute")
+	}
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return "", err
+	}
+	resolved = strings.TrimPrefix(resolved, `\\?\`)
+	if err := settingsPathProblem(resolved); err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(filepath.Clean(resolved), clean) {
+		return "", fmt.Errorf("blackbox: the settings file path goes through a link or an alias; give its real path")
+	}
+	return filepath.Clean(resolved), nil
 }
 
 // verifySettingsFileOnly proves the file itself: no reparse point in its chain, a trusted owner, and a list that lets only SYSTEM and
 // Administrators change it. It reads nothing about the folders above the file beyond their attributes.
 func verifySettingsFileOnly(path string) error {
+	resolved, err := resolveSettingsPath(path)
+	if err != nil {
+		return err
+	}
+	return verifySettingsFileResolved(resolved)
+}
+
+// verifySettingsFileResolved is verifySettingsFileOnly for a path already resolved by resolveSettingsPath.
+func verifySettingsFileResolved(path string) error {
 	path = filepath.Clean(path)
 	if err := refuseSettingsFileChain(path); err != nil {
 		return err

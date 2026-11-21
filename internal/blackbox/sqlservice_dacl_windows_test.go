@@ -18,3 +18,12 @@ func TestDescribeFileDACLReadsARealList(t *testing.T) {
 		t.Fatal("a real folder's access list came back with no entries")
 	}
 }
+
+// The final-path step refuses what it cannot prove, before any file is read.
+func TestResolveSettingsPathRefusals(t *testing.T) {
+	for _, p := range []string{`\\server\share\blackbox.json`, `\\?\C:\x\blackbox.json`, `blackbox.json`, `relative\blackbox.json`} {
+		if _, err := resolveSettingsPath(p); err == nil {
+			t.Errorf("resolveSettingsPath(%q) = nil, want a refusal", p)
+		}
+	}
+}

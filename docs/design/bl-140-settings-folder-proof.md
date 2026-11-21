@@ -16,6 +16,8 @@ Status: built 2026-11-21 (PR for this branch). Windows proof run on a real PC is
 6. **One rule, pure Go.** `adminOnlyDirDACL` decides from described entries, so it is unit-tested on any platform (`TestAdminOnlyDirDACLRule`). The Windows code only reads owners and lists (`verifySettingsFolderChain`) and fails closed on any read error.
 7. **Not done:** a read through an already-open handle to close the window between proof and read. The service account cannot change the chain once the proof passes, and the start proof runs immediately before the read; the remaining window needs an administrator to be already compromised.
 
+8. **Refuse network and device paths; resolve the final path once.** A `\\server\share` or `\\?\` path is refused (`settingsPathProblem`): the owner and list of a file on a share belong to the file server. The path is then resolved once to its final form (`resolveSettingsPath`, links and short names resolved) and the file proof and the folder chain both read that one path; a path that is not already in its final form is refused. (Review follow-up, 2026-11-21.)
+
 ## Effects
 
 - Default install (program folder under Program Files) passes: the stock lists contain only trusted trustees with change rights.

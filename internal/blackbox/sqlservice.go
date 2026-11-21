@@ -383,6 +383,16 @@ func adminOnlyDACL(present bool, aces []fileACE) error {
 	return nil
 }
 
+// settingsPathProblem refuses a settings path that cannot be proven locally: a network (UNC) path or a device path (\\?\, \\.\). The
+// owner and access list of a file on a share are the file server's to change, so no proof here could stand for them. Pure, so it is tested
+// on every platform. The real path is resolved once, in Windows code, before any other check (resolveSettingsPath).
+func settingsPathProblem(path string) error {
+	if strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//") {
+		return errors.New("blackbox: the settings file must be on a local drive, not a network or device path")
+	}
+	return nil
+}
+
 // BL-140: the folders above the settings file. The file's own access list proves
 // nobody else can edit it, but whoever may DELETE it, or delete or rename a folder
 // above it, can swap in a file of their own, and the SQL service reads that file

@@ -2067,3 +2067,19 @@ func TestAdminOnlyDirDACLRule(t *testing.T) {
 		}
 	}
 }
+
+// BL-140: a network or device path cannot be proven locally.
+func TestSettingsPathProblem(t *testing.T) {
+	for path, wantErr := range map[string]bool{
+		`C:\Program Files\Unravis\blackbox.json`: false,
+		`D:\x\blackbox.json`:                     false,
+		`\\server\share\blackbox.json`:           true,
+		`\\?\C:\x\blackbox.json`:                 true,
+		`\\.\C:\x\blackbox.json`:                 true,
+		`//server/share/blackbox.json`:           true,
+	} {
+		if err := settingsPathProblem(path); (err != nil) != wantErr {
+			t.Errorf("settingsPathProblem(%q) = %v, want error %v", path, err, wantErr)
+		}
+	}
+}
