@@ -225,7 +225,7 @@ type bbUpdate struct {
 	Result  string     `json:"result,omitempty"`
 }
 
-var bbUpdateStates = map[string]bool{"idle": true, "available": true, "held": true, "skipped": true, "downloading": true, "installing": true, "failed": true, "off": true}
+var bbUpdateStates = map[string]bool{"idle": true, "managed": true, "available": true, "held": true, "skipped": true, "downloading": true, "installing": true, "failed": true, "off": true}
 
 func capRunes(s string, n int) string {
 	if r := []rune(s); len(r) > n {
@@ -238,7 +238,11 @@ func bbUpdateFrom(u *blackbox.UpdateStatus) *bbUpdate {
 	if u == nil || !bbUpdateStates[u.State] {
 		return nil
 	}
-	return &bbUpdate{Mode: capRunes(u.Mode, 20), State: u.State, Latest: capRunes(u.Latest, 40), Checked: u.Checked, Result: capRunes(u.Result, 300)}
+	out := &bbUpdate{Mode: capRunes(u.Mode, 20), State: u.State, Latest: capRunes(u.Latest, 40), Checked: u.Checked, Result: capRunes(u.Result, 300)}
+	if u.State == "failed" {
+		out.Result = "" // the recorder's failure text can carry a path or a network error; the page says it in its own words
+	}
+	return out
 }
 
 type bbItem struct {

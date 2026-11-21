@@ -20,3 +20,15 @@ func TestBBUpdateFromStatus(t *testing.T) {
 		t.Errorf("got %+v", u)
 	}
 }
+
+func TestBBUpdateEveryRecorderState(t *testing.T) {
+	for _, st := range []string{"idle", "managed", "available", "held", "skipped", "downloading", "installing", "failed", "off"} {
+		u := bbUpdateFrom(&blackbox.UpdateStatus{State: st, Result: "Could not write C:\\x: access denied"})
+		if u == nil || u.State != st {
+			t.Errorf("state %q was dropped", st)
+		}
+		if st == "failed" && u != nil && u.Result != "" {
+			t.Error("failed state kept the recorder's error text")
+		}
+	}
+}
