@@ -46,7 +46,7 @@ func TestUseAskQuitCanRemoveOnlyMyProcesses(t *testing.T) {
 	f.Proc.List_ = []Process{
 		{PID: 1, Exe: `C:\u\unravis.exe`, SID: f.UserSID},
 		{PID: 2, Exe: `C:\u\unravis.exe`, SID: "S-1-5-21-2000"},
-		{PID: 3, Exe: `C:\u\unravis.exe`}, // no SID: not the person's, so it stays
+		{PID: 3, Exe: `C:\u\unravis.exe`},
 		{PID: 4, Exe: `C:\u\unravis.exe`, SID: UnknownOwner},
 	}
 	if err := s.AskQuit(); err != nil {
@@ -64,7 +64,7 @@ func TestUseAskQuitCanRemoveOnlyMyProcesses(t *testing.T) {
 		left = append(left, q.PID)
 	}
 	if len(left) != 3 || left[0] != 2 || left[1] != 3 || left[2] != 4 {
-		t.Errorf("processes left %v, want the other users' 2 and 4 and the one with no SID, 3", left)
+		t.Errorf("processes left %v, want 2, 3 (no owner) and 4, which are not the person's", left)
 	}
 }
 
