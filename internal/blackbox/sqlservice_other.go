@@ -29,6 +29,9 @@ func revokeSQLLaunchGrants([]sqlLaunchGrant) error { return errNoService }
 // still lives in sqlservice.go and is tested on every platform.
 func (OSEnv) VerifyAdminOnlyFile(string) error { return errNoService }
 
+// VerifySettingsFileForStart is not available off Windows (fails closed).
+func (OSEnv) VerifySettingsFileForStart(string) error { return errNoService }
+
 // verifyAdminOnlyFile is not available off Windows.
 func verifyAdminOnlyFile(string) error { return errNoService }
 

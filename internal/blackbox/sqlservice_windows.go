@@ -74,6 +74,12 @@ func (OSEnv) GrantSQLLaunchAccess(exePath, configPath, sid string) error {
 // that it is fine. The DACL rule itself is decided in pure Go (adminOnlyDACL).
 func (OSEnv) VerifyAdminOnlyFile(path string) error { return verifyAdminOnlyFile(path) }
 
+// VerifySettingsFileForStart is the proof the SQL service repeats at every start (BL-140). It runs as NT SERVICE\UnravisBlackboxSql,
+// which can read the settings file's own owner and access list (it holds read on that file) but holds only traverse on the program
+// folder, so it cannot read a folder's access list. The folder chain was proven by an administrator at install-sql and enable-sql; a file
+// swapped in later is owned by whoever swapped it, so this file-only proof refuses it at the next start.
+func (OSEnv) VerifySettingsFileForStart(path string) error { return verifySettingsFileOnly(path) }
+
 // LockSQLInstallMarker locks the SQL install record to SYSTEM and
 // Administrators only (SEC-3): a protected DACL with full control for SY/BA
 // and nothing for anyone else — not even the SQL service SID, which never
@@ -181,6 +187,67 @@ func refuseSettingsFileChain(path string) error {
 
 // verifyAdminOnlyFile is the real Windows proof behind OSEnv.VerifyAdminOnlyFile.
 func verifyAdminOnlyFile(path string) error {
+	// The final path is resolved ONCE and every check below reads that same path, so a link, a short 8.3 name or a case alias cannot make
+	// the file and the folders above it be judged under different names (BL-140).
+	resolved, err := resolveSettingsPath(path)
+	if err != nil {
+		return err
+	}
+	if err := verifySettingsFileResolved(resolved); err != nil {
+		return err
+	}
+	return verifySettingsFolderChain(resolved)
+}
+
+// resolveSettingsPath refuses a network or device path, then returns the file's final path (links, short names and case resolved). A path
+// that is not already in that final form is refused: the proof is only about the file the service will really open.
+func resolveSettingsPath(path string) (string, error) {
+	if err := settingsPathProblem(path); err != nil {
+		return "", err
+	}
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		return "", fmt.Errorf("blackbox: the settings file path must be absolute")
+	}
+	// A mapped network drive and a subst alias both look like a local drive letter, and a subst drive hides a writable parent (the chain
+	// would stop at the alias's target). Only a letter that is a local disk volume is proven.
+	if err := localDriveProblem(clean[:2]); err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return "", err
+	}
+	resolved = strings.TrimPrefix(resolved, `\\?\`)
+	if err := settingsPathProblem(resolved); err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(filepath.Clean(resolved), clean) {
+		return "", fmt.Errorf("blackbox: the settings file path goes through a link or an alias; give its real path")
+	}
+	return filepath.Clean(resolved), nil
+}
+
+// verifySettingsFileOnly proves the file itself: no reparse point in its chain, a trusted owner, and a list that lets only SYSTEM and
+// Administrators change it. It reads nothing about the folders above the file beyond their attributes.
+func verifySettingsFileOnly(path string) error {
+	// No EvalSymlinks here: it lists folders on the way, and the service holds only traverse on the program folder. The path string the
+	// service will open is the one judged, and refuseSettingsFileChain refuses a link or reparse point anywhere on it.
+	if err := settingsPathProblem(path); err != nil {
+		return err
+	}
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		return fmt.Errorf("blackbox: the settings file path must be absolute")
+	}
+	if err := localDriveProblem(clean[:2]); err != nil {
+		return err
+	}
+	return verifySettingsFileResolved(clean)
+}
+
+// verifySettingsFileResolved is verifySettingsFileOnly for a path already resolved by resolveSettingsPath.
+func verifySettingsFileResolved(path string) error {
 	path = filepath.Clean(path)
 	if err := refuseSettingsFileChain(path); err != nil {
 		return err
@@ -204,6 +271,34 @@ func verifyAdminOnlyFile(path string) error {
 		return err
 	}
 	return adminOnlyDACL(present, aces)
+}
+
+// verifySettingsFolderChain proves every folder from the settings file's parent
+// up to the volume root is owned by a trusted account and changeable only by
+// SYSTEM, Administrators and TrustedInstaller (BL-140). Without it a custom
+// --config inside a folder an ordinary user can write could be deleted and
+// replaced after the file itself had been proven. Any unreadable owner or list
+// refuses the file.
+func verifySettingsFolderChain(path string) error {
+	for p := filepath.Dir(filepath.Clean(path)); ; p = filepath.Dir(p) {
+		owner, err := ownerSID(p)
+		if err != nil {
+			return err
+		}
+		if !trustedChainOwner(owner) {
+			return fmt.Errorf("blackbox: a folder above the settings file has an untrusted owner")
+		}
+		present, aces, err := describeFileDACL(p, "a folder above the settings file")
+		if err != nil {
+			return err
+		}
+		if err := adminOnlyDirDACL(present, aces); err != nil {
+			return err
+		}
+		if filepath.Dir(p) == p {
+			return nil
+		}
+	}
 }
 
 // describeAdminDACL reads the file's DACL and describes every ACE for the pure
@@ -254,11 +349,14 @@ func describeACEs(path, what string) (describedDACL, error) {
 		return describedDACL{}, err
 	}
 	defer runtime.KeepAlive(sd)
-	dacl, present, err := sd.DACL()
+	// The second value of SECURITY_DESCRIPTOR.DACL() is "defaulted" (the list came from a default source), NOT "present". A missing or NULL
+	// list comes back as a nil ACL, so that is the only test for "no list". Reading the second value as "present" made every real list look
+	// absent (found on a Windows PC, BL-140).
+	dacl, _, err := sd.DACL()
 	if err != nil {
 		return describedDACL{}, err
 	}
-	if !present || dacl == nil {
+	if dacl == nil {
 		return describedDACL{}, nil
 	}
 	// The ACL header is 8 bytes: revision, a spare byte, the total size, the
@@ -928,4 +1026,31 @@ func fileAttributes(path string) (uint32, error) {
 		return 0, err
 	}
 	return attrs, nil
+}
+
+// localDriveProblem refuses a drive letter that is not a local disk: not a fixed drive, or a DOS-device target that is not a disk volume
+// (a mapped network drive resolves to a redirector, a subst alias to another path).
+func localDriveProblem(drive string) error {
+	root, err := windows.UTF16PtrFromString(drive + `\`)
+	if err != nil {
+		return err
+	}
+	if windows.GetDriveType(root) != windows.DRIVE_FIXED {
+		return fmt.Errorf("blackbox: the settings file must be on a fixed local drive")
+	}
+	name, err := windows.UTF16PtrFromString(drive)
+	if err != nil {
+		return err
+	}
+	buf := make([]uint16, 1024)
+	n, err := windows.QueryDosDevice(name, &buf[0], uint32(len(buf)))
+	if err != nil {
+		return err
+	}
+	// The result is a list of NUL-separated targets; the first is the current one.
+	target := windows.UTF16ToString(buf[:n])
+	if !localVolumeTarget(target) {
+		return fmt.Errorf("blackbox: the settings file's drive is a network or alias drive, not a local disk")
+	}
+	return nil
 }
