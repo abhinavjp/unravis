@@ -8,6 +8,9 @@
 #  - The pure functions (no git, gh or file system writes) are tested by Test-ReleaseManager.ps1 in CI.
 
 $script:ReleaseTrustedKeysPath = 'internal/update/trusted_keys.txt'
+# Go settings outside git (go env -w, GOFLAGS overlays, a go.work) could swap the code the signing tool is built from. The release
+# scripts build with none of them: module mode from the checkout only, the installed toolchain.
+$env:GOFLAGS = ''; $env:GOWORK = 'off'; $env:GOENV = 'off'; $env:GOTOOLCHAIN = 'local'
 # The code that sees the passphrase or decides what installed copies accept.
 $script:ReleaseSigningPaths = @('tools/release/sigtool', 'internal/update', ':!internal/update/trusted_keys.txt')
 # Paths whose PRs are named in the release report (they change what is built, signed or trusted).
@@ -247,6 +250,7 @@ function Invoke-SigningGates {
         return [pscustomobject]$r
     }
     $codeDiff = git -C $RepoRoot diff --stat $Baseline $Commit -- $script:ReleaseSigningPaths
+    if ($LASTEXITCODE -ne 0) { throw "git diff $Baseline $Commit failed; cannot tell whether the signing code changed. Not signing." }
     if ($codeDiff) {
         $r.CodeChanged = $true
         Write-Host "Signing and verifying code changed since ${Baseline}:"; $codeDiff | Write-Host
@@ -307,12 +311,26 @@ function Invoke-WithPassphrase([System.Security.SecureString]$Secure, [string]$T
 function Get-PassphraseLoggingRisks {
     $out = @()
     if (-not $IsWindows) { return , $out }
+    $checks = @(@('Transcription', 'EnableTranscripting', 'PowerShell transcription'), @('ModuleLogging', 'EnableModuleLogging', 'PowerShell module logging'))
+    # pwsh 7 reads PowerShellCore policies (and the Windows PowerShell ones when told to); check both, plus its config file.
     foreach ($hive in 'HKLM:', 'HKCU:') {
-        $base = "$hive\SOFTWARE\Policies\Microsoft\Windows\PowerShell"
-        foreach ($p in @(@('Transcription', 'EnableTranscripting', 'PowerShell transcription'), @('ModuleLogging', 'EnableModuleLogging', 'PowerShell module logging'))) {
-            $v = (Get-ItemProperty -LiteralPath "$base\$($p[0])" -Name $p[1] -ErrorAction SilentlyContinue).($p[1])
-            if ($v -eq 1) { $out += "$($p[2]) is on ($hive policy)" }
+        foreach ($base in "$hive\SOFTWARE\Policies\Microsoft\Windows\PowerShell", "$hive\SOFTWARE\Policies\Microsoft\PowerShellCore") {
+            foreach ($p in $checks) {
+                $v = (Get-ItemProperty -LiteralPath "$base\$($p[0])" -Name $p[1] -ErrorAction SilentlyContinue).($p[1])
+                if ($v -eq 1) { $out += "$($p[2]) is on ($base policy)" }
+            }
         }
+    }
+    $cfg = Join-Path $PSHOME 'powershell.config.json'
+    if (Test-Path -LiteralPath $cfg) {
+        try {
+            $j = Get-Content -Raw -LiteralPath $cfg | ConvertFrom-Json
+            foreach ($scope in @($j.PowerShellPolicies, $j.'Microsoft.PowerShell:PowerShellPolicies')) {
+                if (-not $scope) { continue }
+                if ($scope.Transcription.EnableTranscripting) { $out += "PowerShell transcription is on ($cfg)" }
+                if ($scope.ModuleLogging.EnableModuleLogging) { $out += "PowerShell module logging is on ($cfg)" }
+            }
+        } catch { $out += "$cfg cannot be read, so its logging settings are unknown" }
     }
     return , $out
 }

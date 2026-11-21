@@ -70,6 +70,13 @@ With `-Yes` no script in `tools/release` waits for typed input. Where a person u
 
 At the end (and when it stops) it prints the version, key id, manifest SHA-256, verify run link, and the PRs in this release that touched sensitive paths (`tools/release`, `internal/update`, workflows, `go.mod`/`go.sum`, `installer`).
 
+## Limits to know
+
+- A withdraw is a control file that lives 90 days at most (the feed still points at the withdrawn version). Release a fixed version before then. A later `Set-Control.ps1` run replaces the whole control file, so name the withdrawn version again with `-Block` when you run it. `Refresh-Feed.ps1` refuses to re-sign a withdrawn version.
+- If verify did not pass and the withdraw itself failed, state says `withdraw-pending`; the next run only retries the withdraw.
+- Go is run with `GOFLAGS`, `GOWORK`, `GOENV` cleared or off and `GOTOOLCHAIN=local`, so settings outside git cannot change what the signing tool is built from. Release.ps1 and Sign-Release.ps1 build it in a throw-away worktree; Set-Control.ps1 and Refresh-Feed.ps1 build it in the checked clean checkout.
+- PowerShell 7 logging policies (both Windows PowerShell and PowerShellCore keys, and `powershell.config.json`) are checked before every passphrase read.
+
 ## Not done here (by design)
 
 - No GUI app. See the threat model: it would add a program that touches the key and passphrase and remove no threat.

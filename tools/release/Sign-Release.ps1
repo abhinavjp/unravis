@@ -156,7 +156,11 @@ try {
         Invoke-Checked 'checking the files against the manifest' { & $tool check-assets -manifest $manifest -dir $files }
         Invoke-Checked 'verifying the published pair' { & $tool verify -in $manifest -sig "$manifest.sig" -trusted -channel $channel -want $channel }
         if ($prevKeys) { Invoke-Checked "verifying with the keys installed copies trust ($prevTag)" { & $tool verify -in $manifest -sig "$manifest.sig" -keys $prevKeys -channel $channel -want $channel } }
-        Invoke-Checked 'checking the manifest against the tag and the feed' { & $tool preflight -manifest $manifest -tag $Tag -commit $sha @feedArgs }
+        # A feed that already holds exactly this release (a run that stopped after or during the upload) is finished again, not refused
+        # as "does not move forward": the same verified pair is uploaded once more.
+        $already = $haveFeed -and ((Get-FileHash -Algorithm SHA256 -LiteralPath $feedFile).Hash -eq (Get-FileHash -Algorithm SHA256 -LiteralPath $manifest).Hash)
+        if ($already) { Write-Host "The feed already holds $Tag; uploading the same signed pair again." }
+        else { Invoke-Checked 'checking the manifest against the tag and the feed' { & $tool preflight -manifest $manifest -tag $Tag -commit $sha @feedArgs } }
         gh release view update-feed --repo $Repo --json tagName 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
             Invoke-Checked 'creating the update-feed release' { gh release create update-feed --repo $Repo --target $sha --prerelease --latest=false --title 'update-feed' --notes 'Signed pointers to the newest release of each channel. Read by the updater. Do not edit by hand.' }
