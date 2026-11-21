@@ -230,13 +230,30 @@ func leftText(u Undo) string {
 	return u.Note
 }
 
+// asideSuffix names a file that could not be deleted (a program that is running, a scanner holding it) and was moved out of the way.
+const asideSuffix = ".undo-old"
+
+// removeOrAside deletes path. A file that cannot be deleted because it is in use (Windows lets a running program be renamed, not
+// deleted) is renamed to path+asideSuffix instead, so what the journal puts back can take its place. That is what makes
+// `unravis-setup.exe --recover` able to put back unravis-setup.exe, the very file it runs from. The moved file is removed the next
+// time it is in the way (and by the next install, which clears the folder's leftovers).
+func removeOrAside(path string) error {
+	err := os.Remove(path)
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	aside := path + asideSuffix
+	_ = os.Remove(aside) // an earlier one, now unused
+	if rerr := os.Rename(path, aside); rerr != nil {
+		return err
+	}
+	return nil
+}
+
 func undoOne(sys *System, u Undo) error {
 	switch u.Kind {
 	case UndoRemoveFile:
-		if err := os.Remove(u.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		return nil
+		return removeOrAside(u.Path)
 	case UndoRestoreFile:
 		if _, err := os.Stat(u.Backup); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -244,7 +261,7 @@ func undoOne(sys *System, u Undo) error {
 			}
 			return err
 		}
-		if err := os.Remove(u.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeOrAside(u.Path); err != nil {
 			return err
 		}
 		return os.Rename(u.Backup, u.Path)

@@ -97,10 +97,10 @@ func osEnv() env {
 }
 
 type options struct {
-	silent, uninstall, repair, upgrade, allowDowngrade, worker, noBrowser, showVersion, capture, closeApp, recover bool
-	config, logPath, pipe, verify                                                                                  string
-	expectSHA, expectVersion                                                                                       string // --expect-sha256 / --expect-version: what the updater verified
-	parent                                                                                                         uint
+	silent, uninstall, repair, upgrade, allowDowngrade, worker, noBrowser, showVersion, capture, closeApp, recover, noRestart bool
+	config, logPath, pipe, verify                                                                                             string
+	expectSHA, expectVersion                                                                                                  string // --expect-sha256 / --expect-version: what the updater verified
+	parent                                                                                                                    uint
 }
 
 func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
@@ -119,6 +119,7 @@ func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
 	fl.StringVar(&o.verify, "verify", "", "check a release in this folder offline (update-manifest.json, its .sig and the files) and print the result; installs nothing")
 	fl.BoolVar(&o.closeApp, "close-app", false, "with --silent --upgrade and the --expect flags: ask a running Unravis to quit, upgrade, then start it again (what an automatic update does)")
 	fl.BoolVar(&o.recover, "recover", false, "put back what a setup run that was cut off (power loss, a killed setup) changed, from its journal, and start Unravis again; installs nothing")
+	fl.BoolVar(&o.noRestart, "no-restart", false, "")
 	fl.BoolVar(&o.noBrowser, "no-browser", false, "do not open the setup window; print its address instead")
 	fl.BoolVar(&o.showVersion, "version", false, "print the version and exit")
 	// The worker flags are for the copy the window starts with "run as administrator"; they are not shown in the help.

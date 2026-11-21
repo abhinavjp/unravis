@@ -69,18 +69,34 @@ func startHealth(demo bool, getenv func(string) string) (end func(runErr error),
 	if t == nil {
 		return end, false
 	}
+	// A cut-off update is put back a little after start, when the app listens for a quit request: setup asks it to quit first, and an
+	// app killed in the middle of its own start would count as a failed start. The timer stops with the app.
+	var recoverTimer *time.Timer
 	if exe, err := os.Executable(); err == nil {
-		recoverCutOff(t, update.JournalFolders(os.Getenv("ProgramData"), os.Getenv("LOCALAPPDATA")), time.Now(),
-			filepath.Join(filepath.Dir(exe), "unravis-setup.exe"), update.SetupCanRecover, update.LaunchRecover, writeNote, log.Printf)
+		setupPath := filepath.Join(filepath.Dir(exe), "unravis-setup.exe")
+		recoverTimer = time.AfterFunc(recoverDelay, func() {
+			recoverCutOff(t, update.JournalFolders(os.Getenv("ProgramData"), os.Getenv("LOCALAPPDATA")), time.Now(),
+				setupPath, update.SetupCanRecover, update.LaunchRecover, writeNote, log.Printf)
+		})
+	}
+	stopRecover := func() {
+		if recoverTimer != nil {
+			recoverTimer.Stop()
+		}
 	}
 	switch act, m := t.Begin(); act {
 	case update.ActRecover:
+		stopRecover()
 		return end, goBack(t, m, update.LaunchRollback, log.Printf)
 	case update.ActWatch:
-		return watchHealth(t, update.HealthyAfter), false
+		watch := watchHealth(t, update.HealthyAfter)
+		return func(runErr error) { stopRecover(); watch(runErr) }, false
 	}
-	return end, false
+	return func(error) { stopRecover() }, false
 }
+
+// recoverDelay is how long after start the app looks for a cut-off update.
+const recoverDelay = 30 * time.Second
 
 // recoverCutOff is BL-170: an update that was cut off (power loss, a killed setup) left its journal on disk. The setup program in the
 // program folder knows how to put that back (`unravis-setup.exe --recover`): it starts it, hidden, when that file knows the flag, and the

@@ -53,3 +53,40 @@ func quote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+// The setup program that runs --recover is itself a file the cut-off run replaced. Windows will not delete a running program, so the
+// undo moves it aside and puts the old one back; here a file that cannot be deleted stands for it.
+func TestUndoMovesAFileThatCannotBeDeletedAside(t *testing.T) {
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "unravis-setup.exe")
+	backup := filepath.Join(dir, "backup.exe")
+	writeFile(t, locked, "new setup")
+	writeFile(t, backup, "old setup")
+	// A non-empty folder at that name cannot be removed by os.Remove, as a running exe cannot; the move aside still works.
+	if err := os.Remove(locked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(locked, "child"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeOrAside(locked); err != nil {
+		t.Fatalf("a file that cannot be deleted must be moved aside: %v", err)
+	}
+	if _, err := os.Stat(locked); !os.IsNotExist(err) {
+		t.Fatal("the path must be free for the old file")
+	}
+	if err := os.Rename(backup, locked); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(locked); string(got) != "old setup" {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestACommittedJournalIsNotPending(t *testing.T) {
+	e := newEnv(t, "1.2.0")
+	writeFile(t, filepath.Join(UserJournalDir(e.dirs), JournalName), `{"op":"upgrade","version":"1.2.0","started":"2026-11-21T10:00:00Z","committed":true,"undos":[]}`)
+	if e.r.JournalPending(false) {
+		t.Fatal("a finished run's journal is not pending")
+	}
+}

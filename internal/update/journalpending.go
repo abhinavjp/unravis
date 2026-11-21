@@ -88,18 +88,34 @@ func (t *Tracker) triedPath() string { return filepath.Join(t.StateDir, "journal
 // (another setup holds the lock, the person refuses the Windows prompt), so it is tried again at the next start, a few times.
 const MaxJournalTries = 3
 
-type journalTries struct {
+type journalTry struct {
 	Started time.Time `json:"started"`
 	Tries   int       `json:"tries"`
 }
 
+type journalTries struct {
+	Runs []journalTry `json:"runs"`
+}
+
+// maxJournalRuns is how many runs' counts are kept. Two journals (machine and person) can be stuck at once and each keeps its own count.
+const maxJournalRuns = 8
+
+func (t *Tracker) loadTries() journalTries {
+	var s journalTries
+	if readJSON(t.triedPath(), &s) != nil {
+		return journalTries{}
+	}
+	return s
+}
+
 // JournalTries says how many times the app already acted on the run that started at started.
 func (t *Tracker) JournalTries(started time.Time) int {
-	var s journalTries
-	if readJSON(t.triedPath(), &s) != nil || !s.Started.Equal(started) {
-		return 0
+	for _, r := range t.loadTries().Runs {
+		if r.Started.Equal(started) {
+			return r.Tries
+		}
 	}
-	return s.Tries
+	return 0
 }
 
 // JournalTried says the app used up its tries for that run.
@@ -109,7 +125,20 @@ func (t *Tracker) JournalTried(started time.Time) bool {
 
 // MarkJournalTried counts one more try for the run that started at started.
 func (t *Tracker) MarkJournalTried(started time.Time) {
-	n := t.JournalTries(started) + 1
+	s := t.loadTries()
+	found := false
+	for i := range s.Runs {
+		if s.Runs[i].Started.Equal(started) {
+			s.Runs[i].Tries++
+			found = true
+		}
+	}
+	if !found {
+		s.Runs = append(s.Runs, journalTry{Started: started, Tries: 1})
+	}
+	if len(s.Runs) > maxJournalRuns {
+		s.Runs = s.Runs[len(s.Runs)-maxJournalRuns:]
+	}
 	_ = os.MkdirAll(t.StateDir, 0o700)
-	_ = writeJSON(t.triedPath(), journalTries{Started: started, Tries: n})
+	_ = writeJSON(t.triedPath(), s)
 }

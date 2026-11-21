@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSetupCanRecoverFindsTheHelpLineAnywhereInALargeFile(t *testing.T) {
@@ -32,5 +33,22 @@ func TestSetupCanRecoverFindsTheHelpLineAnywhereInALargeFile(t *testing.T) {
 	}
 	if SetupCanRecover(filepath.Join(dir, "missing")) || SetupCanRecover(dir) {
 		t.Fatal("a missing file or a folder cannot recover")
+	}
+}
+
+// Two journals can be stuck at once (the machine's and the person's); each keeps its own count, so neither resets the other's.
+func TestEachJournalKeepsItsOwnTries(t *testing.T) {
+	tr := &Tracker{StateDir: t.TempDir()}
+	a := time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
+	b := a.Add(time.Hour)
+	for i := 0; i < MaxJournalTries; i++ {
+		tr.MarkJournalTried(a)
+		tr.MarkJournalTried(b)
+	}
+	if !tr.JournalTried(a) || !tr.JournalTried(b) {
+		t.Fatalf("a %d b %d", tr.JournalTries(a), tr.JournalTries(b))
+	}
+	if tr.JournalTried(a.Add(time.Minute)) {
+		t.Fatal("another run starts at zero")
 	}
 }
