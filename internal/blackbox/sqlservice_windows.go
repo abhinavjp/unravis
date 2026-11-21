@@ -203,7 +203,38 @@ func verifyAdminOnlyFile(path string) error {
 	if err != nil {
 		return err
 	}
-	return adminOnlyDACL(present, aces)
+	if err := adminOnlyDACL(present, aces); err != nil {
+		return err
+	}
+	return verifySettingsFolderChain(path)
+}
+
+// verifySettingsFolderChain proves every folder from the settings file's parent
+// up to the volume root is owned by a trusted account and changeable only by
+// SYSTEM, Administrators and TrustedInstaller (BL-140). Without it a custom
+// --config inside a folder an ordinary user can write could be deleted and
+// replaced after the file itself had been proven. Any unreadable owner or list
+// refuses the file.
+func verifySettingsFolderChain(path string) error {
+	for p := filepath.Dir(filepath.Clean(path)); ; p = filepath.Dir(p) {
+		owner, err := ownerSID(p)
+		if err != nil {
+			return err
+		}
+		if !trustedChainOwner(owner) {
+			return fmt.Errorf("blackbox: a folder above the settings file has an untrusted owner")
+		}
+		present, aces, err := describeFileDACL(p, "a folder above the settings file")
+		if err != nil {
+			return err
+		}
+		if err := adminOnlyDirDACL(present, aces); err != nil {
+			return err
+		}
+		if filepath.Dir(p) == p {
+			return nil
+		}
+	}
 }
 
 // describeAdminDACL reads the file's DACL and describes every ACE for the pure

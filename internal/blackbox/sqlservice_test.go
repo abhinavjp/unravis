@@ -2009,3 +2009,59 @@ func TestApplyResecuresTheSQLSettingsFile(t *testing.T) {
 		}
 	}
 }
+
+// BL-140: a folder above the settings file must be changeable only by SYSTEM,
+// Administrators and TrustedInstaller. Same fake-ACL approach as the file rule.
+func TestAdminOnlyDirDACLRule(t *testing.T) {
+	const (
+		sy   = "S-1-5-18"
+		ba   = "S-1-5-32-544"
+		ti   = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+		bu   = "S-1-5-32-545"
+		au   = "S-1-5-11" // Authenticated Users
+		co   = "S-1-3-0"  // CREATOR OWNER
+		user = "S-1-5-21-111-222-333-1001"
+		full = uint32(0x1F01FF)
+		mod  = uint32(0x1301BF) // Modify
+		rx   = uint32(0x1200A9) // Read and execute
+	)
+	allow := func(mask uint32, trustee string, flags byte) fileACE {
+		return fileACE{Type: 0x0, Flags: flags, Mask: mask, Trustee: trustee}
+	}
+	const inheritOnly, containerInherit = byte(0x08), byte(0x02)
+	for _, tc := range []struct {
+		name    string
+		present bool
+		aces    []fileACE
+		wantErr bool
+	}{
+		{"NULL list is everyone-writable", false, nil, true},
+		{"stock C:\\ : create folders for authenticated users, modify inherit-only", true, []fileACE{
+			allow(full, ti, 0), allow(full, sy, containerInherit), allow(full, ba, containerInherit), allow(0x4, au, 0), allow(mod, au, containerInherit|inheritOnly), allow(rx, bu, containerInherit)}, false},
+		{"stock Program Files", true, []fileACE{allow(full, ti, 0), allow(full, sy, 0), allow(full, ba, 0), allow(rx, bu, 0), allow(full, co, containerInherit|inheritOnly)}, false},
+		{"stock ProgramData: users may create files and folders", true, []fileACE{allow(full, sy, 0), allow(full, ba, 0), allow(0x6, bu, 0), allow(full, co, inheritOnly)}, false},
+		{"users hold modify on the folder itself", true, []fileACE{allow(full, sy, 0), allow(full, ba, 0), allow(mod, bu, containerInherit)}, true},
+		{"one user holds delete-child", true, []fileACE{allow(full, sy, 0), allow(0x40, user, 0)}, true},
+		{"one user holds delete", true, []fileACE{allow(0x10000, user, 0)}, true},
+		{"one user can rewrite the access list", true, []fileACE{allow(0x40000, user, 0)}, true},
+		{"one user can take ownership", true, []fileACE{allow(0x80000, user, 0)}, true},
+		{"everyone has full control", true, []fileACE{allow(full, "S-1-1-0", 0)}, true},
+		{"creator owner with full control on the folder itself", true, []fileACE{allow(full, co, 0)}, true},
+		{"an inherit-only entry does not apply to the folder", true, []fileACE{allow(full, user, inheritOnly)}, false},
+		{"a deny entry grants nothing", true, []fileACE{{Type: 0x1, Mask: full, Trustee: user}}, false},
+		{"a callback allow for a user is refused", true, []fileACE{{Type: 0x9, Mask: 0x10000, Trustee: user}}, true},
+		{"an unknown entry type is refused", true, []fileACE{{Type: 0x99, Mask: 0, Trustee: user}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := adminOnlyDirDACL(tc.present, tc.aces)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("adminOnlyDirDACL = %v, want error %v", err, tc.wantErr)
+			}
+		})
+	}
+	for sid, want := range map[string]bool{"S-1-5-18": true, "s-1-5-32-544": true, "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464": true, "S-1-5-32-545": false, "S-1-5-21-1-2-3-1001": false, "": false} {
+		if got := trustedChainOwner(sid); got != want {
+			t.Errorf("trustedChainOwner(%q) = %v, want %v", sid, got, want)
+		}
+	}
+}

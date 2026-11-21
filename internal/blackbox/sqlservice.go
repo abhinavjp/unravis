@@ -383,6 +383,76 @@ func adminOnlyDACL(present bool, aces []fileACE) error {
 	return nil
 }
 
+// BL-140: the folders above the settings file. The file's own access list proves
+// nobody else can edit it, but whoever may DELETE it, or delete or rename a folder
+// above it, can swap in a file of their own, and the SQL service reads that file
+// again at its next start. So every folder from the file's parent up to the volume
+// root must also be changeable only by SYSTEM, Administrators and TrustedInstaller.
+//
+// adminOnlyDirChangeMask is every right that lets a trustee remove, rename, or
+// re-own a folder, or remove an entry from it: delete-child, delete, DACL-change,
+// owner-change and the generic/maximum grants that map onto them. Creating a file
+// or a subfolder (add-file, add-subdirectory) is not in the mask: it cannot
+// replace an entry that exists, and the stock root and ProgramData folders grant
+// it to ordinary users.
+const adminOnlyDirChangeMask uint32 = 0x00000040 | // FILE_DELETE_CHILD
+	0x00010000 | // DELETE
+	0x00040000 | // WRITE_DAC
+	0x00080000 | // WRITE_OWNER
+	0x02000000 | // MAXIMUM_ALLOWED
+	0x10000000 | // GENERIC_ALL
+	0x40000000 // GENERIC_WRITE
+
+const (
+	sidAdministratorsSID = "S-1-5-32-544"
+	// sidTrustedInstallerSID is NT SERVICE\TrustedInstaller, which owns C:\ and
+	// Program Files on a stock Windows.
+	sidTrustedInstallerSID = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+	// aceInheritOnly marks an entry that only passes to children and does not
+	// apply to the folder it sits on.
+	aceInheritOnly byte = 0x08
+)
+
+// trustedChainTrustee reports whether sid may hold change rights on a folder
+// above the settings file.
+func trustedChainTrustee(sid string) bool {
+	return strings.EqualFold(sid, sidSystemSID) || strings.EqualFold(sid, sidAdministratorsSID) || strings.EqualFold(sid, sidTrustedInstallerSID)
+}
+
+// trustedChainOwner reports whether sid may OWN a folder above the settings file.
+// An owner holds implicit WRITE_DAC whatever the list says, so an ordinary user
+// who owns any folder in the chain could re-grant themselves delete rights.
+func trustedChainOwner(sid string) bool { return trustedChainTrustee(sid) }
+
+// adminOnlyDirDACL decides whether a described folder access list leaves the
+// folder (and the entries in it) changeable only by SYSTEM, Administrators and
+// TrustedInstaller. Same fail-closed shape as adminOnlyDACL: a missing (NULL)
+// list, an unrecognized entry type, or any allow-family entry (plain, object or
+// callback) that carries a change right for another trustee refuses the folder.
+// An entry marked inherit-only does not apply to the folder itself, so it is
+// skipped (the stock CREATOR OWNER and Authenticated Users entries are of that
+// kind). Deny, audit, alarm and label entries grant nothing and are skipped.
+func adminOnlyDirDACL(present bool, aces []fileACE) error {
+	if !present {
+		return errors.New("blackbox: a folder above the settings file has no access list, so anyone may change it")
+	}
+	for _, a := range aces {
+		switch a.Type {
+		case 0x1, 0x6, 0xA, 0xC, // access-denied
+			0x2, 0x3, 0x7, 0x8, 0xD, 0xE, 0xF, 0x10, 0x11, 0x12, 0x13: // audit, alarm, label, attribute, policy
+			continue
+		case 0x0, 0x5, 0x9, 0xB: // access-allowed (plain, object, callback)
+			if a.Flags&aceInheritOnly != 0 || a.Mask&adminOnlyDirChangeMask == 0 || trustedChainTrustee(a.Trustee) {
+				continue
+			}
+			return errors.New("blackbox: a folder above the settings file lets a non-administrator delete or rename it, or its entries")
+		default:
+			return fmt.Errorf("blackbox: an unrecognized access entry (type %d) on a folder above the settings file", a.Type)
+		}
+	}
+	return nil
+}
+
 // The least-privilege launch rights (W7-01) as pure literals, so the grant plan,
 // its idempotency rule and its revocation decide off Windows exactly as the
 // Windows code applies them (the precedent is adminOnlyWriteMask). The values are
