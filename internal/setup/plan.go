@@ -36,6 +36,8 @@ type Plan struct {
 	staged        map[string]string
 	readKey       string
 	appWasRunning bool
+	// svcWasRunning: the services that ran when an upgrade or repair began, so they are started again at the end.
+	svcWasRunning map[string]bool
 	unState       *uninstallState
 }
 
@@ -139,6 +141,9 @@ func installSteps(p *Plan) []Step {
 		if p.Opts.Firewall != nil {
 			steps = append(steps, Step{ID: "firewall", Title: "Open the Blackbox port to the listed PCs", Do: p.firewall})
 		}
+	}
+	if p.Op != OpInstall {
+		steps = append(steps, Step{ID: "restart-services", Title: "Start the Unravis services again", Do: p.restartServices})
 	}
 	steps = append(steps,
 		Step{ID: "shortcuts", Title: "Add the Start menu shortcut", Do: p.shortcuts},
@@ -245,8 +250,47 @@ func (p *Plan) stopServices(ctx context.Context, t *Txn) error {
 	for _, name := range []string{keeper.ServiceName, blackbox.ServiceName} {
 		// A service that is not installed or already stopped needs no rights at all to see that (Services.State is read-only); only
 		// a real stop failure below needs administrator rights.
-		if _, err := t.StopService(name); err != nil {
+		was, err := t.StopService(name)
+		if err != nil {
 			return stopServiceError(name, err)
+		}
+		if was {
+			if p.svcWasRunning == nil {
+				p.svcWasRunning = map[string]bool{}
+			}
+			p.svcWasRunning[name] = true
+		}
+	}
+	return nil
+}
+
+// restartServices starts again what stopServices stopped. An upgrade used to stop the Blackbox and leave it stopped (only an upgrade that
+// also chose Blackbox settings started it), so a recorder could sit off for hours. Now a service that ran is started again, and the
+// Blackbox also when it was already stopped, unless a person stopped it on purpose (the stopped-by-user marker). A start that fails is
+// logged and never undoes the upgrade.
+func (p *Plan) restartServices(ctx context.Context, t *Txn) error {
+	for _, name := range []string{keeper.ServiceName, blackbox.ServiceName} {
+		// These steps already start the service they own.
+		if name == blackbox.ServiceName && p.Opts.Blackbox != nil {
+			continue
+		}
+		if name == keeper.ServiceName && p.Opts.Scope == ScopeMachine {
+			continue
+		}
+		st, err := p.r.Sys.Svc.State(name)
+		if err != nil || st == blackbox.SvcNotInstalled || st == blackbox.SvcRunning {
+			continue
+		}
+		want := p.svcWasRunning[name]
+		if name == blackbox.ServiceName && !want {
+			_, merr := os.Stat(filepath.Join(p.Layout.BlackboxDir, blackbox.StoppedByUserMarkerName))
+			want = merr != nil // no marker: nobody asked for it to stay off
+		}
+		if !want {
+			continue
+		}
+		if err := t.StartService(name); err != nil {
+			t.log("could not start " + name + " again: " + err.Error())
 		}
 	}
 	return nil
@@ -640,6 +684,12 @@ func (p *Plan) blackboxKeep(t *Txn, exe, cfgPath, keyPath string, st blackbox.Sv
 	}
 	_ = cfg
 	p.markManaged(t)
+	// A person stopped it on purpose and it was not running when setup began: leave it off.
+	if !p.svcWasRunning[blackbox.ServiceName] {
+		if _, merr := os.Stat(filepath.Join(p.Layout.BlackboxDir, blackbox.StoppedByUserMarkerName)); merr == nil {
+			return nil
+		}
+	}
 	return t.StartService(blackbox.ServiceName)
 }
 

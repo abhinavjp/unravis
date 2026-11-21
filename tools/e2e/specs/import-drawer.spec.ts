@@ -343,17 +343,17 @@ test('IMPORT-09: a file from a server the computer list lacks gets a fix card: l
   await expect(card).toContainText('Unravis will not guess which computer wrote a log. Add it once and every file from that server is accepted.');
   await expect(card).toContainText('IIS logs are already UTC, no time zone needed.');
   // Nothing can be sent while the card is open.
-  await expect(dlg.getByText('1 fix needed before you can import')).toBeVisible();
+  await expect(dlg.getByText('1 fix needed before you can add')).toBeVisible();
   await expect(ack(page)).toBeDisabled();
   await expect(dlg.getByRole('button', { name: 'Add 1 file', exact: true })).toBeDisabled();
 
   // Leave the file out, then bring it back.
   await card.getByRole('button', { name: 'Leave this 1 file out', exact: true }).click();
   await expect(card).toContainText('1 IIS file left out');
-  await expect(dlg.getByText('1 fix needed before you can import')).toHaveCount(0);
+  await expect(dlg.getByText('1 fix needed before you can add')).toHaveCount(0);
   await expect(dlg.getByRole('button', { name: 'Add 0 files', exact: true })).toBeDisabled();
   await card.getByRole('button', { name: 'Bring them back', exact: true }).click();
-  await expect(dlg.getByText('1 fix needed before you can import')).toBeVisible();
+  await expect(dlg.getByText('1 fix needed before you can add')).toBeVisible();
 
   // Add the computer once, and the file is accepted.
   await card.getByRole('button', { name: 'Add ISS-PROD-07 as a computer and accept 1 file', exact: true }).click();

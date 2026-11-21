@@ -55,7 +55,7 @@ test('L4N-01: a log4net block file is read by its content and asks for a compute
   await shot(page, 'popup-before');
   await dlg.getByRole('button', { name: 'Continue', exact: true }).click();
   // The server found the log4net layout, so the file is not "not supported"; a log names no computer, so a card asks for one before it is sent.
-  await expect(dlg.getByText('1 fix needed before you can import')).toBeVisible({ timeout: 60_000 });
+  await expect(dlg.getByText('1 fix needed before you can add')).toBeVisible({ timeout: 60_000 });
   await expect(dlg.locator('.fix')).toHaveCount(1);
   await expect(dlg.locator('.notsupp')).toHaveCount(0);
   await expect(ack(page)).toBeDisabled();
@@ -93,7 +93,7 @@ test('L4N-02: a file named log.txt is suggested as an application log, and a pro
   await dlg.getByRole('button', { name: 'Continue', exact: true }).click();
 
   // Prose is not a log: no importer claims it, so it is not supported rather than guessed. The log asks for a computer.
-  await expect(dlg.getByText('1 fix needed before you can import')).toBeVisible({ timeout: 60_000 });
+  await expect(dlg.getByText('1 fix needed before you can add')).toBeVisible({ timeout: 60_000 });
   await expect(dlg.locator('.notsupp')).toContainText('1 file is not supported');
   await expect(dlg.locator('.notsupp-row').filter({ hasText: 'notes.txt' })).toBeVisible();
   await expect(dlg.locator('.notsupp-row').filter({ hasText: 'log.txt' })).toHaveCount(0);

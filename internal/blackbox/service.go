@@ -331,6 +331,7 @@ func (m *Manager) Install(cfg Config) (res InstallResult, err error) {
 	if st != SvcNotInstalled {
 		return res, &InstallError{Reason: ReasonExists, Message: fmt.Sprintf("A service named %s already exists. A Blackbox is already installed here. Open its status, or Remove it first.", ServiceName)}
 	}
+	m.markStoppedByUser(false) // a fresh install starts running; no old "keep it off" applies
 	if perr := m.Env.PortFree(cfg.Bind, cfg.Port); perr != nil {
 		return res, &InstallError{Reason: ReasonPortBusy, Message: fmt.Sprintf("Port %d is busy. Another program uses it. Change the port in Settings, or stop that program.", cfg.Port), Cause: perr}
 	}
@@ -521,12 +522,32 @@ func (m *Manager) Start() error {
 	case SvcNotInstalled:
 		return ErrNotInstalled
 	case SvcRunning:
+		m.markStoppedByUser(false)
 		return nil
 	}
 	if err := m.Svc.Start(ServiceName); err != nil {
 		return err
 	}
-	return m.waitFor(SvcRunning, 15*time.Second)
+	if err := m.waitFor(SvcRunning, 15*time.Second); err != nil {
+		return err
+	}
+	m.markStoppedByUser(false)
+	return nil
+}
+
+// markStoppedByUser leaves (on) or removes (off) the marker that says a person
+// stopped the recorder on purpose. Best effort: a failure never blocks a stop or a start.
+func (m *Manager) markStoppedByUser(on bool) {
+	dir, err := m.Env.ProgramDir()
+	if err != nil {
+		return
+	}
+	path := filepath.Join(dir, StoppedByUserMarkerName)
+	if on {
+		_ = os.WriteFile(path, []byte("A person stopped the Blackbox on purpose. An Unravis upgrade leaves it stopped until it is started again.\r\n"), 0o644)
+		return
+	}
+	_ = os.Remove(path)
 }
 
 // Stop stops the service and waits. Stopping a stopped service is not an error.
@@ -543,9 +564,13 @@ func (m *Manager) Stop() error {
 	case SvcNotInstalled:
 		return ErrNotInstalled
 	case SvcStopped:
+		m.markStoppedByUser(true) // asked to keep it off, whatever stopped it before
 		return nil
 	}
+	// The marker goes first: a slow stop that ends after the wait gave up is still a stop on purpose.
+	m.markStoppedByUser(true)
 	if err := m.Svc.Stop(ServiceName); err != nil {
+		m.markStoppedByUser(false)
 		return err
 	}
 	return m.waitFor(SvcStopped, 30*time.Second)
@@ -805,6 +830,7 @@ func (m *Manager) Remove(cfg Config, keyPath string, deleteRecordings bool, conf
 	}
 	installed := st != SvcNotInstalled
 	if !installed && !deleteRecordings {
+		m.markStoppedByUser(false)
 		return res, &RemoveError{Reason: "not-installed", Message: ErrNotInstalled.Error() + " There is nothing to remove. If it is still in the list, take it off the list instead.", Cause: ErrNotInstalled}
 	}
 	wasRunning := installed && st != SvcStopped
@@ -886,6 +912,7 @@ func (m *Manager) Remove(cfg Config, keyPath string, deleteRecordings bool, conf
 		// The "managed by Unravis" marker must not outlive the recorder it described: a standalone recorder installed here
 		// later would otherwise never update itself.
 		_ = os.Remove(filepath.Join(dir, ManagedMarkerName))
+		_ = os.Remove(filepath.Join(dir, StoppedByUserMarkerName))
 	}
 	return res, nil
 }

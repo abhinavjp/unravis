@@ -37,7 +37,7 @@ async function openPopup(page: Page, api: ApiFn, title: string): Promise<Locator
 
 const picker = (dialog: Locator) => dialog.getByLabel('Choose files to import');
 const ack = (dialog: Locator) => dialog.getByRole('checkbox', { name: 'Confirm read-only' });
-const importButton = (dialog: Locator, n: number) => dialog.getByRole('button', { name: `Import ${n} ${n === 1 ? 'file' : 'files'}`, exact: true });
+const importButton = (dialog: Locator, n: number) => dialog.getByRole('button', { name: `Add ${n} ${n === 1 ? 'file' : 'files'}`, exact: true });
 
 /** Presses Continue and waits until the check has answered (the read-only box is drawn only then). */
 async function runCheck(dialog: Locator) {
@@ -73,7 +73,7 @@ test('IP-01: Choose lists the files grouped by kind, and Continue starts the che
   });
   const dialog = await openPopup(page, api, 'QA Popup Choose');
   await expect(dialog.locator('.prog-line')).toContainText('Step 1 of 3 · Choose files to import');
-  await expect(dialog.getByText('Nothing is sent until you press Import.')).toBeVisible();
+  await expect(dialog.getByText('Nothing is sent until you press Add.')).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Continue' })).toBeDisabled();
 
   await picker(dialog).setInputFiles([iis('u_ex261001.log', 'web-a'), iis('u_ex261002.log', 'web-a'), text('ERRORLOG'), text('log.txt'), text('notes.txt')]);
@@ -108,7 +108,7 @@ test('IP-02: Check shows the ready group with a box for each file, and unticking
   const group = dialog.locator('[data-grp="kind:iis-w3c"]');
   await expect(group).toContainText('3 files, ready');
   await expect(group.locator('.grp-badge')).toHaveText('ready');
-  await expect(dialog.getByText(/needed before you can import/)).toHaveCount(0);
+  await expect(dialog.getByText(/needed before you can add/)).toHaveCount(0);
   // The count and the button wait for the read-only box.
   await expect(importButton(dialog, 3)).toBeDisabled();
   await ack(dialog).check();
@@ -186,7 +186,7 @@ test('IP-13: the Result step counts the files, lists Imported and Not imported, 
   await picker(dialog).setInputFiles([iis('u_ex261031.log', 'iis_alpha'), iis('u_ex261032.log', 'iis_alpha'), iis('u_ex261033.log', 'iis_beta'), text('app-backup.zip', 'this is not an archive')]);
   await runCheck(dialog);
   await dialog.getByRole('button', { name: 'Add all 2 servers' }).first().click();
-  await expect(dialog.getByText(/needed before you can import/)).toHaveCount(0);
+  await expect(dialog.getByText(/needed before you can add/)).toHaveCount(0);
   await ack(dialog).check();
   await importButton(dialog, 3).click();
 

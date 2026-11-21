@@ -84,7 +84,7 @@ test('GRID-01: the header Import and Add a file open the same popup with the wir
   await expect(dlg.getByText('IIS web logs, log4net, SQL error logs, Windows event logs. Text and CSV only.')).toBeVisible();
   await expect(dlg.getByRole('button', { name: 'Add files', exact: true })).toBeVisible();
   await expect(dlg.getByRole('button', { name: 'Add a folder', exact: true })).toBeVisible();
-  await expect(dlg.getByText('Nothing is sent until you press Import.')).toBeVisible();
+  await expect(dlg.getByText('Nothing is sent until you press Add.')).toBeVisible();
   await expect(dlg.getByRole('button', { name: 'Continue', exact: true })).toBeDisabled();
   // The cards of the old drawer are gone, and so is its heading.
   await expect(page.locator('[data-drawer-card]')).toHaveCount(0);
