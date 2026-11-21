@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unravis Releases</title>
+<link rel="icon" href="favicon.ico"><link rel="stylesheet" href="app.css"></head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">Unravis Releases</div>
+    <div class="chan" id="chan-rc"></div>
+    <div class="chan" id="chan-stable"></div>
+    <button id="refresh" type="button" title="Read again (R)">Refresh</button>
+  </header>
+  <div id="run" role="status"></div>
+  <div class="body">
+    <nav class="list"><ul id="list" role="listbox" tabindex="0" aria-label="Releases"></ul></nav>
+    <section class="detail" id="detail"></section>
+  </div>
+  <footer class="foot" id="foot"></footer>
+</div>
+<script src="app.js"></script></body></html>

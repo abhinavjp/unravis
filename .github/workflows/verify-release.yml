@@ -32,6 +32,8 @@ permissions:
   contents: read
 
 jobs:
+  # Two machines at once. The recorder test (B5) mostly waits for the recorder's own first update check (1 to 5 minutes) and shares
+  # nothing with the other steps, so it gets its own runner; the run passes only if both jobs pass (Release.ps1 reads the run's result).
   verify:
     runs-on: windows-2022
     timeout-minutes: 45
@@ -41,7 +43,29 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
 
-      - name: Verify the published release
+      - name: Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PREVIOUS: ${{ inputs.previous }}
+        run: |
+          $a = @{ Tag = $env:INPUT_TAG; Part = 'Main' }
+          if ($env:INPUT_PREVIOUS) { $a.Previous = $env:INPUT_PREVIOUS }
+          ./tools/release/Invoke-VerifyRelease.ps1 @a
+
+  recorder:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    # Nothing to test without an older release to start from (the very first signed release).
+    if: ${{ inputs.previous != '' }}
+    steps:
+      - name: Check out the code at the tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Verify the standalone recorder updates itself
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -49,6 +73,4 @@ jobs:
           INPUT_PREVIOUS: ${{ inputs.previous }}
           INPUT_WAIT: ${{ inputs.wait_minutes }}
         run: |
-          $a = @{ Tag = $env:INPUT_TAG; WaitMinutes = [int]$env:INPUT_WAIT }
-          if ($env:INPUT_PREVIOUS) { $a.Previous = $env:INPUT_PREVIOUS }
-          ./tools/release/Invoke-VerifyRelease.ps1 @a
+          ./tools/release/Invoke-VerifyRelease.ps1 -Tag $env:INPUT_TAG -Previous $env:INPUT_PREVIOUS -WaitMinutes ([int]$env:INPUT_WAIT) -Part Recorder
