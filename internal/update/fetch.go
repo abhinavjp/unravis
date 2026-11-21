@@ -163,6 +163,15 @@ func (f *Fetcher) allowURL(u *url.URL) bool {
 		return f.AllowHost(u.Hostname())
 	}
 	if u.Hostname() == mirrorHost {
+		// No dot segments and no escaped slashes or dots: the path must mean what it says.
+		if u.EscapedPath() != u.Path {
+			return false
+		}
+		for _, seg := range strings.Split(u.Path, "/") {
+			if seg == "." || seg == ".." {
+				return false
+			}
+		}
 		return u.Path == mirrorPath || strings.HasPrefix(u.Path, mirrorPath+"/")
 	}
 	return DefaultAllowHost(u.Hostname())
