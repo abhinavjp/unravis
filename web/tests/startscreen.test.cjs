@@ -210,3 +210,8 @@ test('BL-158: when the case list fails, Enter and Create are off and say why', (
   assert.match(src, /disabled=\{phase === 'failed'\} onclick=\{onCreate\}/);
   assert.match(src, /\{#if phase === 'failed'\}<p class="card-note">\{START_TEXT\.waitForList\}<\/p>\s*\n\s*\{:else if enter\}/);
 });
+
+test('BL-163: the header More label shows down to 380 px and hides only below', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'AppHeader.svelte'), 'utf8');
+  assert.match(src, /@media \(max-width: 379px\) \{ \.more-label \{ display: none; \}/);
+});

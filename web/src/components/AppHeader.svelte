@@ -219,7 +219,7 @@
     .utilities { padding-left: 8px; }
     .crumbbar { position: sticky; top: var(--header-h); padding: 2px 14px; }
   }
-  @media (max-width: 599px) { .more-label { display: none; } .more-button { padding: 6px 9px; } }
+  @media (max-width: 379px) { .more-label { display: none; } .more-button { padding: 6px 9px; } }
   /* At 320px the single row ran 35px past the edge; tighter gaps keep it inside without hiding anything. */
   @media (max-width: 359px) {
     .topbar { padding: 0 8px; gap: 4px; }
