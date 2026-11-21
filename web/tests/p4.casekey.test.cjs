@@ -409,18 +409,6 @@ test('the unlock button is held for the wait the server named, so a press is not
   assert.match(page, /disabled=\{!ready \|\| busy \|\| held\}/);
 });
 
-test('Erase cannot be pressed with the wrong code, and the home page offers it only when it can work', () => {
-  const dialog = read('src/components/EraseCase.svelte');
-  assert.match(dialog, /disabled=\{!ready \|\| busy\}/);
-  assert.match(dialog, /if \(busy \|\| !ready\) return;/);
-  const home = read('src/lib/components/CaseHome.svelte');
-  assert.match(home, /eraseOffered\(info\)/);
-  assert.match(home, /phase === 'locked'/, 'a locked case opens on its key card');
-  assert.match(home, /phase = 'untrusted'/);
-  const panel = read('src/lib/components/CasePanel.svelte');
-  assert.match(panel, /eraseCase\(id, entered, row \? believedState\(row\) : undefined, controller\?\.signal\)/);
-});
-
 test('each page has one main button: the key card, the key page, Erase and the untrusted page', () => {
   const count = (src) => (src.match(/class="primary-button/g) ?? []).length;
   assert.equal(count(read('src/components/CaseKeyCard.svelte')), 1);

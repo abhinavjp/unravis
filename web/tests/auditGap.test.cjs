@@ -6,7 +6,7 @@ const test = require('node:test');
 const ts = require('typescript');
 
 // Audit database gaps on Add data > MongoDB (existing case): the readiness chip, the collection-name check, the database list, and the fixes
-// the hub review asked of AddAuditDatabase.svelte (C3, C4, C7, C8, C11, P7) and appState.addDatabaseSource (P2).
+// the hub review asked of the removed AddAuditDatabase page (C3, C4, C7, C8, C11, P7) and appState.addDatabaseSource (P2).
 
 const root = path.resolve(__dirname, '..');
 const cache = new Map();
@@ -103,45 +103,6 @@ test('copy: registered, plain, and lint-clean', () => {
   assert.deepEqual(lintScreenStrings(entries, deck.terms), []);
   const why = ['testing', 'not-tested', 'no-database', 'no-use', 'collection', 'test-failed', 'add-failed', 'connected-not-tagged', 'app-only', 'added-audit', 'added-app', 'ready'];
   for (const w of why) assert.ok(copy.readyHintText({ word: 'Ready', cls: 'ready', why: w }).length > 0, w);
-});
-
-test('component: C3 the saved connection cannot change during a test, and a late answer is ignored', () => {
-  const c = read('src/components/sources/AddAuditDatabase.svelte');
-  assert.match(c, /id="\{uid\}-saved" value=\{savedId\} disabled=\{readOnly \|\| busy \|\| testing\}/);
-  assert.match(c, /const gen = \+\+testGen;/);
-  assert.match(c, /if \(gen !== testGen \|\| savedId !== id\) return;/);
-  assert.match(c, /testGen\+\+; testing = false;/, 'a reset invalidates a test in flight');
-  assert.match(c, /finally \{ if \(gen === testGen\) testing = false; \}/);
-});
-
-test('component: C4 Add waits for a test and works on the connection held when it was pressed', () => {
-  const c = read('src/components/sources/AddAuditDatabase.svelte');
-  assert.match(c, /const canAdd = \$derived\(!readOnly && !busy && !testing && tested/);
-  assert.match(c, /const h = held;\s+if \(!canAdd \|\| !h \|\| !recent\) return;/);
-  assert.doesNotMatch(c.slice(c.indexOf('async function add()'), c.indexOf('function another()')), /\bheld\b(?!;)/, 'add() uses h, not held, after the first read');
-});
-
-test('component: C8 and P7 a finished add locks its ticks and collection; a connected database cannot be swapped', () => {
-  const c = read('src/components/sources/AddAuditDatabase.svelte');
-  assert.match(c, /<fieldset class="uses" disabled=\{readOnly \|\| busy \|\| connected \|\| tagged\}>/);
-  assert.match(c, /id="\{uid\}-col"[^>]*disabled=\{readOnly \|\| busy \|\| connected \|\| tagged\}/);
-  assert.match(c, /id="\{uid\}-db" value=\{database\} disabled=\{readOnly \|\| busy \|\| connected\}/);
-  assert.match(c, /function pick\(name: string\) \{[^}]*if \(connected\) return;/s);
-});
-
-test('component: C11 the server warning and a cut list are shown', () => {
-  const c = read('src/components/sources/AddAuditDatabase.svelte');
-  assert.match(c, /data-test-warning/);
-  assert.match(c, /data-list-cut/);
-  assert.match(c, /safeServerLine\(out\.warning, secretsOf\(input\)\)/, 'the warning is cleaned of the address and credentials');
-});
-
-test('component: gaps are on screen, and Attach to a server is not offered', () => {
-  const c = read('src/components/sources/AddAuditDatabase.svelte');
-  assert.match(c, /data-testid="audit-ready-chip"/);
-  assert.match(c, /data-collection-check=/);
-  assert.match(c, /data-testid="audit-check-permission"/);
-  assert.doesNotMatch(c, /Attach to a server/);
 });
 
 test('appState P2: addDatabaseSource leaves the open case alone when it changed during the add', () => {

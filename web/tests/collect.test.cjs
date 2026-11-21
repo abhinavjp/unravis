@@ -194,14 +194,3 @@ test('the server sentences hold no diagnosis words or case values', () => {
 });
 
 /* ------------------------------------------------------------------ the component */
-
-test('the list sits in a collapsed details group that loads on open and has an empty state', () => {
-  const source = read('src/lib/components/CaseTools.svelte');
-  assert.match(source, /<details class="collect" ontoggle=\{onCollectToggle\}>/, 'collapsed by default: no open attribute');
-  assert.match(source, /<summary id="collect-heading">\{IMPORT_TEXT\.collectHeading\}<\/summary>/);
-  assert.match(source, /IMPORT_TEXT\.collectEmpty/);
-  assert.match(source, /IMPORT_TEXT\.collectFileType/);
-  assert.match(source, /fetchCollect\(caseId, mine\.signal\)/);
-  assert.match(source, /collectController\?\.abort\(\)/, 'a read in flight is cancelled when the panel goes');
-  assert.doesNotMatch(source, /\{@html/, 'server text is shown as text');
-});

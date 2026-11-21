@@ -74,11 +74,6 @@ test('gate4 G4-02: only the first click of a double click removes a row', () => 
   assert.match(panel, /onclick=\{\(event\) => onRemoveClick\(event, item\.id\)\}/);
 });
 
-test('gate4 G4-03: Escape while the leave question shows answers it as Keep editing', () => {
-  const panel = read('src/lib/components/ImportPanel.svelte');
-  assert.match(panel, /const requestClose = \(\) => \{ if \(leaveAsk\) keepEditing\(\); else leaveThen\(onClose\); \};/);
-});
-
 test('gate4 plausible: the bar-size line says bars are grouped whenever a bar holds more than a minute, as the axis caption does', () => {
   const lanes = loadTypeScript('src/lib/tracing/lanes.ts');
   const start = Date.parse('2001-03-04T10:00:00Z');

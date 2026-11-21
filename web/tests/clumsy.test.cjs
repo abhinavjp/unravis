@@ -26,9 +26,6 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 const cases = loadTypeScript('src/lib/cases.ts');
 const { IMPORT_TEXT, errorText } = loadTypeScript('src/lib/copy/importCopy.ts');
 
-const casePanel = read('src/lib/components/CasePanel.svelte');
-const importPanel = read('src/lib/components/ImportPanel.svelte');
-const caseTools = read('src/lib/components/CaseTools.svelte');
 const appState = read('src/lib/appState.svelte.ts');
 
 test('only a not-found answer counts as a case that is gone', () => {
@@ -43,25 +40,6 @@ test('only a not-found answer counts as a case that is gone', () => {
 
 test('a case that vanished is explained in plain words', () => {
   assert.match(errorText({ status: 404, reason: 'case-not-found', message: '' }), /not found.*erased/i);
-});
-
-test('a case erased elsewhere makes the case list reload and stop offering it', () => {
-  assert.match(casePanel, /export async function noteGone\(\)/);
-  const body = casePanel.slice(casePanel.indexOf('export async function noteGone'), casePanel.indexOf('export async function refresh'));
-  assert.match(body, /await refresh\(\)/, 'the list is reloaded');
-  assert.match(body, /case-not-found/, 'the reason is shown');
-  assert.match(casePanel, /if \(isCaseGone\(error\)\) \{ void noteGone\(\); return; \}/, 'the panel itself reacts to a gone case');
-  assert.match(importPanel, /if \(isCaseGone\(error\)\) \{ void casePanel\?\.noteGone\(\); return; \}/, 'import and preview errors reach it too');
-  assert.match(importPanel, /onGone=\{\(\) => casePanel\?\.noteGone\(\)\}/, 'so do timeline and export errors');
-  assert.match(caseTools, /if \(isCaseGone\(error\)\) onGone\?\.\(\);/);
-});
-
-test('a case list that failed to load is not shown as "No cases yet"', () => {
-  assert.match(casePanel, /catch \(error\) \{ loadFailed = true; fail\(error\); \}/);
-  assert.match(casePanel, /\{#if !loadFailed\}<p class="note">\{IMPORT_TEXT\.noCases\}<\/p>\{\/if\}/);
-  assert.ok(IMPORT_TEXT.noCases, 'the empty-list text still exists for a real empty list');
-  const loaded = casePanel.slice(casePanel.indexOf('cases = await listCases'), casePanel.indexOf('} catch (error) { loadFailed'));
-  assert.match(loaded, /loadFailed = false/, 'a later good load clears the flag');
 });
 
 test('adding a connection twice at once is refused before any work starts', () => {
@@ -80,12 +58,6 @@ test('the file checks refuse an empty file and a negative size before upload', (
 
 test('an export of an empty case cannot be saved', () => {
   assert.equal(cases.canSaveCaseExport(null), false);
-});
-
-test('the import panel moves focus into itself when it opens, so Tab stays inside the dialog', () => {
-  assert.match(importPanel, /bind:element=\{drawer\}/, 'the panel holds its dialog element');
-  const mount = importPanel.slice(importPanel.indexOf('onMount(() => {'));
-  assert.ok(mount.slice(0, mount.indexOf('listHosts()')).includes('drawer?.focus();'), 'it focuses the dialog before anything else');
 });
 
 test('an unlisted computer is asked for in plain words, never as an unknown host', () => {

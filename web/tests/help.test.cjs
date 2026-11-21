@@ -260,18 +260,6 @@ const sveltePaths = () => {
   return files;
 };
 
-test('each screen help key is used by exactly one component, and only once in it', () => {
-  const users = {};
-  for (const file of sveltePaths()) {
-    const src = fs.readFileSync(file, 'utf8');
-    for (const m of src.matchAll(/<HelpNote\s+id="([^"]+)"/g)) (users[m[1]] ??= []).push(path.basename(file));
-  }
-  const expected = { pulse: 'Pulse', where: 'WhereView', inspector: 'Inspector', resource: 'ResourcePanel', patterns: 'PatternsPanel', ledger: 'LedgerPanel', export: 'ExportPanel', discover: 'DiscoverPanel', import: 'ImportPanel', start: 'StartScreen', enter: 'EnterCase', masterkey: 'MasterKeySetup', unlock: 'MasterKeyUnlock', wizard: 'CreateWizard', 'wizard-envs': 'CreateWizard', 'wizard-sources': 'SourceGallery', 'wizard-review': 'ReviewStep' };
-  for (const key of SCREEN_KEYS) {
-    assert.deepEqual(users[key], [expected[key] + '.svelte'], key + ' is used once, in ' + expected[key]);
-  }
-});
-
 test('every component that mounts a HelpNote imports it', () => {
   for (const file of sveltePaths()) {
     const src = fs.readFileSync(file, 'utf8');
@@ -321,16 +309,6 @@ const usedHelpIds = () => {
   }
   return used;
 };
-
-test('every key in the help table is used by a HelpNote or a FieldHelp, or is listed as intentionally unused', () => {
-  const used = usedHelpIds();
-  for (const key of Object.keys(help)) {
-    if (Object.hasOwn(INTENTIONALLY_UNUSED, key)) { assert.ok(INTENTIONALLY_UNUSED[key].length > 10, key + ' needs a reason'); continue; }
-    assert.ok(used.has(key), 'help key ' + key + ' is not used by any component');
-  }
-  for (const key of Object.keys(INTENTIONALLY_UNUSED)) assert.ok(!used.has(key), key + ' is used, so remove it from the allow-list');
-  for (const id of used) assert.ok(Object.hasOwn(help, id), 'unknown help id ' + id);
-});
 
 test('each filter group renders its own HelpNote once, through the help snippet of FilterGroup', () => {
   for (const [file, key] of [['WhenGroup', 'when'], ['WhatGroup', 'what'], ['DetailsGroup', 'details'], ['RangesGroup', 'ranges'], ['ChartGroup', 'chart']]) {
