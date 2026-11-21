@@ -204,3 +204,9 @@ test('a missing row has an Erase button and no Open button, and the form asks fo
   assert.match(src, /if \(isCaseGone\(error\)\) \{ cases = cases\.filter\(\(c\) => c\.id !== id\);/);
   assert.match(src, /caseErased\(id\);/);
 });
+
+test('BL-158: when the case list fails, Enter and Create are off and say why', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'StartScreen.svelte'), 'utf8');
+  assert.match(src, /disabled=\{phase === 'failed'\} onclick=\{onCreate\}/);
+  assert.match(src, /\{#if phase === 'failed'\}<p class="card-note">\{START_TEXT\.waitForList\}<\/p>\s*\n\s*\{:else if enter\}/);
+});

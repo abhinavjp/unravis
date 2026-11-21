@@ -28,6 +28,7 @@ export const START_TEXT = {
 
   enterTitle: 'Enter an existing case',
   enterText: 'Type a case code to open a case on this computer, or restore one from a case file.',
+  waitForList: 'The list of cases could not be read, so this is off for now. Press Try again first.',
   enterSoon: 'Entering a case code is not ready yet.',
 
   createTitle: 'Create a new one',
