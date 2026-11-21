@@ -233,13 +233,15 @@
 
       <section class="card" aria-labelledby="card-enter">
         <h3 id="card-enter">{START_TEXT.enterTitle}</h3>
-        {#if enter}{@render enter()}{:else}<p class="card-note">{START_TEXT.enterSoon}</p>{/if}
+        {#if phase === 'failed'}<p class="card-note">{START_TEXT.waitForList}</p>
+        {:else if enter}{@render enter()}{:else}<p class="card-note">{START_TEXT.enterSoon}</p>{/if}
       </section>
 
       <section class="card" aria-labelledby="card-create">
         <h3 id="card-create">{START_TEXT.createTitle}</h3>
         <p class="card-text">{START_TEXT.createText}</p>
-        <button type="button" class="primary-button" onclick={onCreate}>{START_TEXT.createButton}</button>
+        {#if phase === 'failed'}<p class="card-note">{START_TEXT.waitForList}</p>{/if}
+        <button type="button" class="primary-button" disabled={phase === 'failed'} onclick={onCreate}>{START_TEXT.createButton}</button>
       </section>
     </div>
 
