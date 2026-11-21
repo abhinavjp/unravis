@@ -186,7 +186,8 @@
                   <button type="button" class="secondary-button" aria-label={openLabel(row.fullTitle)} onclick={() => onOpen(row.id, { held: row.keyLocked || row.untrusted })}>{START_TEXT.open}</button>
                 {/if}
                 {#if row.missing && !row.archiving}
-                  <p class="missing-help">{START_TEXT.missingHelp} <button type="button" class="link-button" onclick={requestRestore}>{START_TEXT.missingRestore}</button></p>
+                  <p class="missing-help">{START_TEXT.missingHelp}</p>
+                  <button type="button" class="secondary-button" onclick={requestRestore}>{START_TEXT.missingRestore}</button>
                 {/if}
                 {#if eraseId === row.id}
                   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
