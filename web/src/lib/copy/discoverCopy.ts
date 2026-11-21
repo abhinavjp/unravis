@@ -17,7 +17,7 @@ export const DISCOVER_TEXT = {
   intro: 'Unravis can look on this computer for logs and data it can import. It reads file names and sizes first. It opens nothing until you choose.',
   badgeElevated: 'Running as administrator',
   badgeStandard: 'Running as a standard user',
-  scanButton: 'Scan this computer',
+  scanButton: 'Scan this PC',
   scanAgain: 'Scan again',
 
   scanning: 'Looking on this computer',

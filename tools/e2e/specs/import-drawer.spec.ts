@@ -431,7 +431,7 @@ test('READY-01: the sources step of the create wizard names each found source wi
   await page.getByLabel('Case name').fill('QA Ready Chips');
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
-  await page.getByRole('button', { name: 'Scan this computer' }).click();
+  await page.getByRole('button', { name: 'Scan this PC' }).click();
   const chips = page.locator('ul.chips li.chip:first-child');
   await expect.poll(async () => chips.count(), { timeout: 20_000 }).toBe(3);
   const words = new Set(['Ready', 'Partly ready', 'Cannot test yet', 'Failed']);
