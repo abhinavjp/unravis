@@ -3,6 +3,7 @@ package setup
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -171,6 +172,57 @@ func (r *Runner) splitApps(running []Process) (mine, others []Process) {
 		}
 	}
 	return mine, others
+}
+
+// ReadFileProven is the fake of FileSecurity.ReadFileProven. The file must be a plain file (not a link of any kind) of at most max
+// bytes; its list is its own when one was set, else the folder's (a file inherits, as on Windows); the owner must pass the owner rule
+// with no "running account" and nobody else may write it. The fake cannot count hard links: that proof is the Windows one's.
+func (f *FakeSecurity) ReadFileProven(path string, max int64) ([]byte, error) {
+	if err := f.Faults.check("sec.ReadFileProven:" + path); err != nil {
+		return nil, err
+	}
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: it is not a plain file", ErrNotProven)
+	}
+	if fi.Size() > max {
+		return nil, fmt.Errorf("%w: it is too large (%d bytes, at most %d)", ErrNotProven, fi.Size(), max)
+	}
+	f.mu.Lock()
+	sddl, _, err := f.current(path)
+	if _, own := f.m[strings.ToLower(filepath.Clean(path))]; !own && err == nil {
+		sddl, _, err = f.current(filepath.Dir(path))
+	}
+	f.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	fs, err := ParseSDDL(sddl)
+	if err != nil {
+		return nil, err
+	}
+	if !journalFileOwnerOK(fs.Owner, "") {
+		return nil, fmt.Errorf("%w: it is owned by %s", ErrNotProven, fs.Owner)
+	}
+	if err := checkNoOthersWrite(path, fs); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNotProven, err)
+	}
+	in, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer in.Close()
+	data, err := io.ReadAll(io.LimitReader(in, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("%w: it is too large (more than %d bytes)", ErrNotProven, max)
+	}
+	return data, nil
 }
 
 // CreateFileSDDL is the fake of FileSecurity.CreateFileSDDL: the file is made new (never over an existing one), written, and given

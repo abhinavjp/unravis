@@ -24,6 +24,17 @@ func (r *Runner) JournalPending(elevated bool) bool {
 	return err != nil || !j.f.Committed // one that cannot be read is dealt with (and reported) by the replay
 }
 
+// journalFileOwnerOK says whether owner is an account that may own the machine journal file: the system, the administrators, or self
+// (the account of the elevated process that is reading it; "" means none known). The file sits in a folder only administrators can
+// write, but Windows does not always give a new file the owner the list names, so the account that made it is accepted too.
+func journalFileOwnerOK(owner, self string) bool {
+	switch owner {
+	case "S-1-5-18", "S-1-5-32-544":
+		return true
+	}
+	return self != "" && strings.EqualFold(owner, self)
+}
+
 // MachineJournalTrusted says whether the machine journal's folder is one only administrators can change, which is the condition for
 // replaying it as an administrator. A normal run asks it before it shows a Windows prompt for that journal.
 func (r *Runner) MachineJournalTrusted() error {

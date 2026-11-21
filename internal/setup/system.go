@@ -118,7 +118,15 @@ type FileSecurity interface {
 	// CreateFileSDDL creates a new file holding data with the owner and access list already set in the create call, so there is no
 	// moment when it has the parent's permissions. It fails with os.ErrExist when the file is already there.
 	CreateFileSDDL(path, sddl string, data []byte) error
+	// ReadFileProven opens path once without following a link, proves it on that handle (a plain disk file, no link, one name, the
+	// owner and access list of a file only administrators made) and returns at most max bytes read from the same handle; it never
+	// reopens the path. os.ErrNotExist: not there. errors.Is(err, ErrNotProven): refused (the text says why). Any other error is a
+	// refusal too. The file is never changed.
+	ReadFileProven(path string, max int64) ([]byte, error)
 }
+
+// ErrNotProven is what FileSecurity.ReadFileProven wraps when the file is not one only administrators made.
+var ErrNotProven = errors.New("the file is not one only administrators made")
 
 // Paths turns a path into the one Windows would really use.
 type Paths interface {
