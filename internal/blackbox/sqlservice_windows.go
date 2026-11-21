@@ -74,6 +74,12 @@ func (OSEnv) GrantSQLLaunchAccess(exePath, configPath, sid string) error {
 // that it is fine. The DACL rule itself is decided in pure Go (adminOnlyDACL).
 func (OSEnv) VerifyAdminOnlyFile(path string) error { return verifyAdminOnlyFile(path) }
 
+// VerifySettingsFileForStart is the proof the SQL service repeats at every start (BL-140). It runs as NT SERVICE\UnravisBlackboxSql,
+// which can read the settings file's own owner and access list (it holds read on that file) but holds only traverse on the program
+// folder, so it cannot read a folder's access list. The folder chain was proven by an administrator at install-sql and enable-sql; a file
+// swapped in later is owned by whoever swapped it, so this file-only proof refuses it at the next start.
+func (OSEnv) VerifySettingsFileForStart(path string) error { return verifySettingsFileOnly(path) }
+
 // LockSQLInstallMarker locks the SQL install record to SYSTEM and
 // Administrators only (SEC-3): a protected DACL with full control for SY/BA
 // and nothing for anyone else — not even the SQL service SID, which never
@@ -181,6 +187,15 @@ func refuseSettingsFileChain(path string) error {
 
 // verifyAdminOnlyFile is the real Windows proof behind OSEnv.VerifyAdminOnlyFile.
 func verifyAdminOnlyFile(path string) error {
+	if err := verifySettingsFileOnly(path); err != nil {
+		return err
+	}
+	return verifySettingsFolderChain(path)
+}
+
+// verifySettingsFileOnly proves the file itself: no reparse point in its chain, a trusted owner, and a list that lets only SYSTEM and
+// Administrators change it. It reads nothing about the folders above the file beyond their attributes.
+func verifySettingsFileOnly(path string) error {
 	path = filepath.Clean(path)
 	if err := refuseSettingsFileChain(path); err != nil {
 		return err
@@ -203,10 +218,7 @@ func verifyAdminOnlyFile(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := adminOnlyDACL(present, aces); err != nil {
-		return err
-	}
-	return verifySettingsFolderChain(path)
+	return adminOnlyDACL(present, aces)
 }
 
 // verifySettingsFolderChain proves every folder from the settings file's parent

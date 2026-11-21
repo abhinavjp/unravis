@@ -23,9 +23,20 @@ func TestRunSQLServiceRefusesUnlockedSettings(t *testing.T) {
 	if ran {
 		t.Fatal("the runner started although the proof refused")
 	}
-	for _, l := range logged {
-		if l != "sql: settings-not-locked" {
-			t.Fatalf("log line %q is not a fixed code", l)
-		}
+	if len(logged) != 1 || logged[0] != "sql: settings-not-locked" {
+		t.Fatalf("log = %v, want one fixed code line", logged)
+	}
+}
+
+// A proof that passes (or no proof, as in tests) does not stop the start: the error, if any, is not the refusal.
+func TestRunSQLServiceProofPassDoesNotRefuse(t *testing.T) {
+	for name, verify := range map[string]func(string) error{"passing proof": func(string) error { return nil }, "no proof": nil} {
+		t.Run(name, func(t *testing.T) {
+			d := deps{verifyConfig: verify, sqlRun: func(context.Context, sqlRunOptions) error { return nil }}
+			err := runSQLService(context.Background(), blackbox.Paths{ConfigPath: `C:\nowhere\settings.json`}, d, nil)
+			if errors.Is(err, errSQLSettingsNotLocked) {
+				t.Fatalf("the proof passed but the start was refused: %v", err)
+			}
+		})
 	}
 }

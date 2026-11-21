@@ -86,9 +86,11 @@ type deps struct {
 	// sqlRun is the SQL runner of the sql-service mode (BBX-5-10). Tests inject
 	// a fake; realDeps binds the real runner in sqlrunner.go.
 	sqlRun func(ctx context.Context, o sqlRunOptions) error
-	// verifyConfig proves the settings file, and every folder above it, can be
-	// changed only by administrators (BL-140). The SQL service runs it at every
-	// start before it reads the file. realDeps binds the real proof; a nil value
+	// verifyConfig proves the settings file is administrator-locked (owner and
+	// access list). The SQL service runs it at every start before it reads the
+	// file (BL-140). It is the file-only proof: the service account cannot read
+	// folder access lists, and the folder chain is proven by an administrator at
+	// install-sql and enable-sql. realDeps binds the real proof; a nil value
 	// (tests) skips it.
 	verifyConfig func(path string) error
 	// elev is the Windows elevate helper. No command here may use it (C14):
@@ -101,7 +103,7 @@ func realDeps() deps {
 	disk := blackbox.OSDisk{}
 	sqlMgr := &blackbox.SQLManager{Svc: blackbox.WinService{}, Env: blackbox.OSEnv{}}
 	return deps{
-		verifyConfig: func(path string) error { return blackbox.OSEnv{}.VerifyAdminOnlyFile(path) },
+		verifyConfig: func(path string) error { return blackbox.OSEnv{}.VerifySettingsFileForStart(path) },
 		// remove also removes the SQL service (E2E-10), through the same SQLManager.
 		mgr: &blackbox.Manager{Svc: blackbox.WinService{}, Env: blackbox.OSEnv{}, Disk: disk, SQL: sqlMgr},
 		// Pinned (wave 7): the SQLManager talks to blackbox.WinService DIRECTLY.
@@ -652,7 +654,7 @@ type sqlRunOptions struct {
 }
 
 // errSQLSettingsNotLocked is the fixed sentence for a start the proof refused.
-var errSQLSettingsNotLocked = errors.New("The SQL service did not start: its settings file, or a folder above it, can be changed by an ordinary user. Move the settings into the program folder, or lock the folders, then run enable-sql again.")
+var errSQLSettingsNotLocked = errors.New("The SQL service did not start: its settings file is not locked to administrators. Run enable-sql again from an elevated prompt.")
 
 // runSQLService loads the settings and runs the SQL runner until ctx is done.
 // It never starts the host recorder or its status page: no HTTP in this mode.
@@ -660,8 +662,8 @@ var errSQLSettingsNotLocked = errors.New("The SQL service did not start: its set
 // advertising an old enabled:true record after the service ends.
 func runSQLService(ctx context.Context, p blackbox.Paths, d deps, logf func(string, ...any)) error {
 	// BL-140: the service reads this file with its own rights at every start, so the
-	// proof is repeated here, not only at install-sql and enable-sql. A file or a
-	// folder above it that an ordinary user can change stops the start.
+	// file proof is repeated here, not only at install-sql and enable-sql. A file
+	// swapped in by an ordinary user is not owned by an administrator and stops the start.
 	if d.verifyConfig != nil {
 		if verr := d.verifyConfig(p.ConfigPath); verr != nil {
 			if logf != nil {

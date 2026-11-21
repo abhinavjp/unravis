@@ -2049,6 +2049,8 @@ func TestAdminOnlyDirDACLRule(t *testing.T) {
 		{"creator owner with full control on the folder itself", true, []fileACE{allow(full, co, 0)}, true},
 		{"an inherit-only entry does not apply to the folder", true, []fileACE{allow(full, user, inheritOnly)}, false},
 		{"a deny entry grants nothing", true, []fileACE{{Type: 0x1, Mask: full, Trustee: user}}, false},
+		{"generic all alone is refused", true, []fileACE{allow(0x10000000, user, 0)}, true},
+		{"an object allow with delete-child is refused", true, []fileACE{{Type: 0x5, Mask: 0x40, Trustee: user}}, true},
 		{"a callback allow for a user is refused", true, []fileACE{{Type: 0x9, Mask: 0x10000, Trustee: user}}, true},
 		{"an unknown entry type is refused", true, []fileACE{{Type: 0x99, Mask: 0, Trustee: user}}, true},
 	} {
