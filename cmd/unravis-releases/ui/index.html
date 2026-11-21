@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unravis releases</title><link rel="stylesheet" href="app.css"></head>
+<body><main>
+<header><div><h1>Unravis releases</h1><div class="mut" id="sub">Read only. Loading...</div></div>
+<button id="refresh" type="button">Refresh now</button></header>
+<div id="run"></div>
+<h2>Feed (signed, checked with the app's keys)</h2><div class="cards" id="feeds"></div>
+<h2>Releases</h2>
+<table><thead><tr><th>Version</th><th>Channel</th><th>Status</th><th>Steps</th><th>Published</th></tr></thead><tbody id="rows"></tbody></table>
+<p class="mut" id="src"></p>
+<p class="mut">Steps come from the release manager's log on this PC. On another PC they show as unknown. The GitHub list is not signature checked; the feed cards are.</p>
+</main><script src="app.js"></script></body></html>
