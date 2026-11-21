@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { timeZone } from '../../lib/timeZone.svelte';
+  import { formatTime } from '../../lib/time';
   import { blackboxApi, BlackboxError } from '../../lib/blackbox';
   import { recorderEntryName } from '../../lib/wizardBlackbox';
   import type { FolderCandidate, ThisPc } from '../../lib/blackbox';
@@ -84,7 +86,7 @@
     saving = false;
   }
 
-  const ageLine = (f: FolderCandidate) => [f.recordings > 0 ? WIZ.blackbox.recordings(f.recordings) : '', f.newest ? WIZ.blackbox.newest + ': ' + new Date(f.newest).toLocaleString() : ''].filter(Boolean).join(' · ');
+  const ageLine = (f: FolderCandidate) => [f.recordings > 0 ? WIZ.blackbox.recordings(f.recordings) : '', f.newest ? WIZ.blackbox.newest + ': ' + formatTime(f.newest, { zone: timeZone.zone, precision: 'minute', year: true, fallback: f.newest }) : ''].filter(Boolean).join(' · ');
 </script>
 
 <div class="bb">

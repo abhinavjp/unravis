@@ -35,6 +35,10 @@ unravis.exe --version
 
 The line shows the version, the commit it was built from and the build date, for example `Unravis v1.0.0 (commit 065fbfd, built 2026-10-27)`. A build that was not made from a release shows a short commit name in place of the version number. Quote this line when you ask for help.
 
+## Times and time zones
+
+Every time on screen uses the 24-hour clock and the zone chosen under **Times in** at the top of the page. London is the default. You can pick Dublin, UTC, India, Australia (Sydney) or the zone of this computer instead. The times you type in a window, for example when you read the host from a Blackbox or start tracing, are in the same zone. Unravis still reads and keeps every time in UTC, so changing the zone never changes your data. The choice is remembered in this browser.
+
 ## Try the demo
 
 ```

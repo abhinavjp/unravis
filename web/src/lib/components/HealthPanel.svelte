@@ -9,6 +9,8 @@
   import { DEFAULT_COLLECTION } from '../wizardConnections';
   import type { RecentConnection, SavedSqlConnection, SqlTestRequest } from '../types';
   import { app } from '../appState.svelte';
+  import { timeZone } from '../timeZone.svelte';
+  import { formatTime } from '../time';
   import { onConnectionsChanged } from '../../components/sources/connectionMemory';
 
   // Read-only checks of a SQL Server or MongoDB the case depends on. Nothing here runs by itself: a check starts only on "Run checks".
@@ -154,7 +156,8 @@
     openId = item.id; shown = item;
   }
 
-  const when = (iso: string): string => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(); };
+  // Earlier runs follow the header's time zone choice, like every other time on screen (BL-181).
+  const when = (iso: string): string => formatTime(iso, { zone: timeZone.zone, precision: 'minute', year: true, fallback: iso });
 </script>
 
 <svelte:element this={embedded ? 'div' : 'section'} class="tools" aria-labelledby={embedded ? undefined : 'health-heading'}>
