@@ -4,7 +4,7 @@
 //	sigtool manifest -dir dist -version V -seq N -out manifest.json  describe a release (CI runs this; it signs nothing)
 //	sigtool sign     -key key.json -in manifest.json -out manifest.json.sig
 //	sigtool feedsig  -in rc.json -sig rc.json.sig -trusted|-keys K -want C   signature only (ignores expiry): which version the feed really names
-//	sigtool controlsig -in c.json -sig c.json.sig -keys K[,K2] -want C   control file signature check that ignores expiry; prints its expiry
+//	sigtool controlsig -in c.json -sig c.json.sig -keys K[,K2] -want C   control file signature check that ignores expiry; prints its expiry and seq
 //	sigtool keycheck -key key.json [-role rc|stable]   check the passphrase opens the key (signs nothing, writes nothing)
 //	sigtool refresh  -in rc.json -sig rc.json.sig -trusted -want C -version V -commit SHA -days D -out new.json   same release, later expiry, seq + 1 (then sign it)
 //	sigtool control  -channel C [-pause] [-block V,..] [-rollout V -percent N] [-note T] [-days D] -out control.json
@@ -303,7 +303,7 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("the control file does not verify: %w", err)
 		}
-		fmt.Fprintf(out, "%s\n", c.Expires.UTC().Format(time.RFC3339))
+		fmt.Fprintf(out, "%s %d\n", c.Expires.UTC().Format(time.RFC3339), c.Seq)
 		return nil
 
 	case "keycheck":

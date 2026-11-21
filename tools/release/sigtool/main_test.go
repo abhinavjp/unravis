@@ -439,7 +439,11 @@ func TestControlsig(t *testing.T) {
 	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", keys, "-want", "rc"}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
-	exp, err := time.Parse(time.RFC3339, strings.TrimSpace(out.String()))
+	f := strings.Fields(out.String())
+	if len(f) != 2 {
+		t.Fatalf("controlsig output %q", out.String())
+	}
+	exp, err := time.Parse(time.RFC3339, f[0])
 	if err != nil || exp.Before(time.Now().Add(9*24*time.Hour)) {
 		t.Fatalf("expiry %q %v", out.String(), err)
 	}

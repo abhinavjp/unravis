@@ -114,9 +114,12 @@ try {
             ((@(Get-Content -LiteralPath $prevKeys) + @($(if ($baseKeys) { Get-Content -LiteralPath $baseKeys }))) -join "`n") | Set-Content -LiteralPath $kl
             $exp = (& $tool controlsig -in $cj -sig "$cj.sig" -keys $kl -want $Channel 2>&1 | Out-String).Trim()
             if ($LASTEXITCODE -ne 0) { throw "The $Channel control file on the feed does not verify ($exp), so its holds cannot be kept safely. Check it, then run without -KeepInForce naming every hold." }
-            $expAt = [datetime]::Parse($exp, [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal)
-            # A genuine but older file put back (a replay) expires earlier than the one this PC last published: refuse it.
-            if ($lastLive -and (Get-FileSha256 $cj) -ne $last.control_sha256 -and $expAt -lt ([datetime]$last.expires).ToUniversalTime()) { throw "The $Channel control file on the feed is older than the one published from this PC (in force until $($last.expires)). Someone put an old one back; check before signing." }
+            $parts = $exp -split '\s+'
+            $expAt = [datetime]::Parse($parts[0], [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal)
+            $seq = [uint64]$parts[1]
+            # A genuine but older file put back (a replay) has a lower seq than the one this PC last published: refuse it.
+            if ($last -and $null -ne $last.seq -and $seq -lt [uint64]$last.seq) { throw "The $Channel control file on the feed (seq $seq) is older than the one published from this PC (seq $($last.seq)). Someone put an old one back; check before signing." }
+            if (-not $last) { Write-Host "Note: this PC has no record of earlier $Channel control files, so an old genuine one put back would not be noticed here." -ForegroundColor Yellow }
             if ($expAt -gt (Get-Date).ToUniversalTime()) {
                 $old = Get-Content -Raw -LiteralPath $cj | ConvertFrom-Json
                 if ($old.pause) { $Pause = $true }
@@ -151,7 +154,7 @@ try {
     Invoke-Checked 'reading back the published pair' { gh release download update-feed --repo $Repo --pattern "$Channel-control.json*" --dir $back }
     Invoke-Checked 'verifying the published pair' { & $tool verify -control -in (Join-Path $back "$Channel-control.json") -sig (Join-Path $back "$Channel-control.json.sig") -keys $prevKeys -channel $Channel -want $Channel }
     $pub = Get-Content -Raw -LiteralPath $file | ConvertFrom-Json
-    Write-AuditEntry $audit @{ event = 'control-published'; channel = $Channel; pause = [bool]$pub.pause; blocked = @($pub.blocked | Where-Object { $_ }); expires = ([datetime]$pub.expires).ToUniversalTime().ToString('o'); control_sha256 = (Get-FileSha256 $file) }
+    Write-AuditEntry $audit @{ event = 'control-published'; channel = $Channel; pause = [bool]$pub.pause; blocked = @($pub.blocked | Where-Object { $_ }); expires = ([datetime]$pub.expires).ToUniversalTime().ToString('o'); seq = [string]$pub.seq; control_sha256 = (Get-FileSha256 $file) }
     Write-Host "Published. Machines pick it up at their next check (within about 30 minutes)." -ForegroundColor Green
 } finally {
     if ($wt) { Remove-ToolWorktree $repoRoot $wt.Dir }
