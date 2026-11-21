@@ -59,6 +59,8 @@ export interface Facts {
   /** Recording files that were not read to the end (dropped or missing). Absent when none. */
   unread?: number;
   freePercent?: number;
+  /** The recorder's own update state, from its status page. Absent from a recorder that does not report it. */
+  update?: { mode?: string; state: string; latest?: string; checked?: string; result?: string };
 }
 
 export type LocationKind = 'folder' | 'share' | 'url';
