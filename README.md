@@ -110,6 +110,10 @@ To skip web dependency installation and rebuild only the Go executable using the
 .\build.ps1 -SkipWeb
 ```
 
+The built web files are committed: `web/dist`, `cmd/unravis-setup/ui` and `cmd/unravis-lite/ui`. A change to `web/src`, `web/index.html`, `web/setup`, `web/lite`, `docs/user/*.md` or `web/package-lock.json` must commit the rebuilt folders too. Run `npm run build` in `web`, then commit those three folders.
+CI rebuilds and compares them with the commit byte for byte (`node web/scripts/check-dist.cjs` does the same on your PC after a build). It fails when they differ.
+If a Windows checkout shows those folders as modified only because of line endings, run `git checkout -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui` or build again.
+
 
 
 
