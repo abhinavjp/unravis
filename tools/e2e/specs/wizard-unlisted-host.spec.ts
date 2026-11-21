@@ -4,7 +4,7 @@
 //   UNLISTED-02  The same log with no computer picked: it is refused as needing a computer, and the row tells the person to pick the computer.
 // The same file in the Import files popup of an open case is covered by IMPORT-09 and IMPORT-10 (import-drawer.spec.ts): a fix card adds the computer.
 import { test, expect, type Page } from '../support/fixtures';
-import { goHome } from '../support/ui';
+import { goHome, filesTile } from '../support/ui';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -18,7 +18,7 @@ async function holdFile(page: Page, title: string) {
   await page.getByLabel('Case name').fill(title);
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
-  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await filesTile(page).click();
   await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toBeVisible();
   await page.getByLabel('Choose files to import').setInputFiles([FILE]);
 }
@@ -72,6 +72,6 @@ test('UNLISTED-02: the same log with no computer picked is refused as needing a 
   const line = table.getByRole('row').filter({ hasText: 'u_ex261021.log' });
   await expect(line).toContainText('Rejected');
   await expect(line).toContainText('needs a computer');
-  await expect(line).toContainText('Pick the computer that wrote this file');
-  await expect(line).not.toContainText('ISS-PROD-07');
+  await expect(line).toContainText('Add it to the list, then try again');
+  await expect(line).toContainText('is not on your computer list');
 });
