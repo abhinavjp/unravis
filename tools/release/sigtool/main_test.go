@@ -6,11 +6,14 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"api-audit-explorer/internal/update"
 )
 
 const commitA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -348,3 +351,123 @@ func TestRefreshKeepsTheReleaseAndMovesTheDates(t *testing.T) {
 }
 
 func hexOf(b []byte) string { return hex.EncodeToString(b) }
+
+func TestKeycheck(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	kp, pp := filepath.Join(dir, "k.json"), filepath.Join(dir, "k.pub")
+	if err := run([]string{"keygen", "-role", "rc", "-out", kp, "-pub", pp}, strings.NewReader("correct horse battery\n"), &out); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := run([]string{"keycheck", "-key", kp, "-role", "rc"}, strings.NewReader("correct horse battery\n"), &out); err != nil {
+		t.Fatal(err)
+	}
+	k, err := readPub(pp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), hexOf(k.Pub)) || strings.Contains(out.String(), "horse") {
+		t.Fatalf("keycheck output: %q", out.String())
+	}
+	if err := run([]string{"keycheck", "-key", kp}, strings.NewReader("wrong passphrase!!\n"), &out); err == nil {
+		t.Fatal("a wrong passphrase was accepted")
+	}
+	if err := run([]string{"keycheck", "-key", kp, "-role", "stable"}, strings.NewReader("correct horse battery\n"), &out); err == nil {
+		t.Fatal("an rc key passed as stable")
+	}
+}
+
+func TestFeedsig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UNRAVIS_KEY_PASSPHRASE", "correct horse battery")
+	var out bytes.Buffer
+	kp, pp := filepath.Join(dir, "k.json"), filepath.Join(dir, "k.pub")
+	if err := run([]string{"keygen", "-role", "rc", "-out", kp, "-pub", pp}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	writeAssets(t, dir, "0.1.0-rc.48", false)
+	mf, sg := filepath.Join(dir, "m.json"), filepath.Join(dir, "m.json.sig")
+	if err := run([]string{"manifest", "-dir", dir, "-version", "0.1.0-rc.48", "-seq", "4800", "-commit", commitA, "-out", mf}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"sign", "-key", kp, "-in", mf, "-out", sg}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	k, _ := readPub(pp)
+	keys := filepath.Join(dir, "keys.txt")
+	os.WriteFile(keys, []byte("rc "+hexOf(k.Pub)+"\n"), 0o644)
+	out.Reset()
+	if err := run([]string{"feedsig", "-in", mf, "-sig", sg, "-keys", keys, "-want", "rc"}, nil, &out); err != nil || strings.TrimSpace(out.String()) != "0.1.0-rc.48" {
+		t.Fatalf("feedsig: %v %q", err, out.String())
+	}
+	if err := run([]string{"feedsig", "-in", mf, "-sig", sg, "-keys", keys, "-want", "stable"}, nil, &out); err == nil {
+		t.Fatal("wrong channel accepted")
+	}
+	b, _ := os.ReadFile(mf)
+	os.WriteFile(mf, bytes.Replace(b, []byte("rc.48"), []byte("rc.99"), 1), 0o644)
+	if err := run([]string{"feedsig", "-in", mf, "-sig", sg, "-keys", keys, "-want", "rc"}, nil, &out); err == nil {
+		t.Fatal("an edited feed file verified")
+	}
+}
+
+func TestControlsig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UNRAVIS_KEY_PASSPHRASE", "correct horse battery")
+	var out bytes.Buffer
+	kp, pp := filepath.Join(dir, "k.json"), filepath.Join(dir, "k.pub")
+	op, opp := filepath.Join(dir, "o.json"), filepath.Join(dir, "o.pub")
+	for _, a := range [][]string{{"keygen", "-role", "rc", "-out", kp, "-pub", pp}, {"keygen", "-role", "rc", "-out", op, "-pub", opp}} {
+		if err := run(a, nil, &out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cf, sg := filepath.Join(dir, "c.json"), filepath.Join(dir, "c.json.sig")
+	if err := run([]string{"control", "-channel", "rc", "-block", "0.1.0-rc.40", "-days", "10", "-out", cf}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"sign", "-control", "-key", kp, "-in", cf, "-out", sg}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	k, _ := readPub(pp)
+	o, _ := readPub(opp)
+	keys := filepath.Join(dir, "keys.txt")
+	os.WriteFile(keys, []byte("rc "+hexOf(o.Pub)+"\nrc "+hexOf(k.Pub)+"\n"), 0o644)
+	other := filepath.Join(dir, "other.txt")
+	os.WriteFile(other, []byte("rc "+hexOf(o.Pub)+"\n"), 0o644)
+	out.Reset()
+	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", keys, "-want", "rc"}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	f := strings.Fields(out.String())
+	if len(f) != 2 {
+		t.Fatalf("controlsig output %q", out.String())
+	}
+	exp, err := time.Parse(time.RFC3339, f[0])
+	if err != nil || exp.Before(time.Now().Add(9*24*time.Hour)) {
+		t.Fatalf("expiry %q %v", out.String(), err)
+	}
+	// Another real key of the same role does not verify it.
+	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", other, "-want", "rc"}, nil, &out); err == nil {
+		t.Fatal("verified with a key that did not sign it")
+	}
+	// A valid but different expiry (one year later) parses fine and must fail on the signature alone.
+	b, _ := os.ReadFile(cf)
+	c, err := update.ParseControl(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldExp, _ := json.Marshal(c.Expires)
+	newExp, _ := json.Marshal(c.Expires.AddDate(1, 0, 0))
+	edited := bytes.Replace(b, oldExp, newExp, 1)
+	if bytes.Equal(edited, b) {
+		t.Fatal("test could not edit the expiry")
+	}
+	if _, err := update.ParseControl(edited); err != nil {
+		t.Fatalf("edited file should still parse: %v", err)
+	}
+	os.WriteFile(cf, edited, 0o644)
+	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", keys, "-want", "rc"}, nil, &out); err == nil || !strings.Contains(err.Error(), "does not verify") {
+		t.Fatalf("an edited expiry verified: %v", err)
+	}
+}

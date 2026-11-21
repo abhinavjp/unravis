@@ -21,6 +21,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ProtonPass.ps1')
+. (Join-Path $PSScriptRoot 'ReleaseLib.ps1')
 $PSNativeCommandUseErrorActionPreference = $false
 Remove-Item Env:UNRAVIS_KEY_PASSPHRASE -ErrorAction SilentlyContinue
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -28,6 +29,7 @@ $work = Join-Path ([System.IO.Path]::GetTempPath()) ("unravis-refresh-" + [guid]
 New-Item -ItemType Directory -Path $work | Out-Null
 function Invoke-Checked([string]$what, [scriptblock]$cmd) { & $cmd; if ($LASTEXITCODE -ne 0) { throw "$what failed (exit code $LASTEXITCODE)." } }
 $done = $false
+$wt = $null
 try {
     # The signing tool is built from a clean checkout that matches GitHub, never from a changed working folder.
     if (git -C $repoRoot status --porcelain) { throw 'The working folder has changes. Use a clean checkout of master.' }
@@ -41,13 +43,14 @@ try {
     $prevKeys = Join-Path $work 'prev_trusted_keys.txt'
     git -C $repoRoot show "${prevTag}:internal/update/trusted_keys.txt" > $prevKeys
     if ($LASTEXITCODE -ne 0) { throw "Could not read the trusted keys of $prevTag." }
-    $codeDiff = git -C $repoRoot diff --stat $prevTag HEAD -- tools/release/sigtool internal/update ':!internal/update/trusted_keys.txt'
-    if ($codeDiff) { Write-Host "Signing and verifying code changed since ${prevTag}:"; $codeDiff | Write-Host; if ((Read-Host "You have read that diff (git diff) and it is yours. Type 'reviewed' to go on") -ne 'reviewed') { throw 'Stopped. Nothing was signed.' } }
-    $keyDiff = git -C $repoRoot diff $prevTag HEAD -- internal/update/trusted_keys.txt
-    if ($keyDiff) { Write-Host 'The list of trusted public keys CHANGED:'; $keyDiff | Write-Host; if ((Read-Host "Every added or removed key is one you made or removed on purpose. Type 'keys ok' to go on") -ne 'keys ok') { throw 'Stopped. Nothing was signed.' } }
-    $tool = Join-Path $work 'sigtool.exe'
-    Push-Location $repoRoot
-    try { Invoke-Checked 'building the signing tool' { go build -mod=readonly -o $tool ./tools/release/sigtool } } finally { Pop-Location }
+    # Same gates as Sign-Release.ps1 (ReleaseLib.ps1): typed words without -Yes, fixed rules with -Yes.
+    $keyDir = Split-Path -Parent (Resolve-Path -LiteralPath $KeyFile).Path
+    $audit = Join-Path (Get-ReleaseDataDir) 'audit.jsonl'
+    # The signing tool is built from a throw-away worktree of this commit, never from the working folder itself.
+    $head = (git -C $repoRoot rev-parse HEAD).Trim()
+    $wt = New-ToolWorktree $repoRoot $head $work
+    $tool = $wt.Tool
+    $null = Invoke-SigningGates -RepoRoot $repoRoot -Repo $Repo -Baseline $prevTag -Commit $head -KeyDir $keyDir -Yes:$Yes -Context "refresh $Channel" -AuditPath $audit -SourceDir $wt.Dir -Tool $tool
 
     $old = Join-Path $work "$Channel.json"
     $file = Join-Path $work "$Channel-new.json"
@@ -76,14 +79,8 @@ try {
     Write-Host ''; Get-Content -Raw $file | Write-Host
     if (-not $Yes -and (Read-Host "Publish this refreshed $Channel manifest? Type 'yes' to go on") -ne 'yes') { throw 'Stopped. Nothing was signed or published.' }
 
-    $secure = $null
-    if ($ProtonPassRef) {
-        try { $secure = Get-ProtonPassSecret -Reference $ProtonPassRef; Write-Host 'Passphrase read from Proton Pass (not shown).' }
-        catch { Write-Host "Proton Pass: $($_.Exception.Message)" -ForegroundColor Yellow; Write-Host 'Falling back to typing the passphrase.' -ForegroundColor Yellow }
-    }
-    if (-not $secure) { $secure = Read-Host "Passphrase for $KeyFile" -AsSecureString }
-    $plain = [System.Net.NetworkCredential]::new('', $secure).Password
-    try { $plain | & $tool sign -key $KeyFile -in $file -out "$file.sig" } finally { $plain = $null; $secure.Dispose() }
+    $secure = Get-SigningPassphrase -ProtonPassRef $ProtonPassRef -KeyFile $KeyFile -Yes:$Yes
+    try { Invoke-WithPassphrase $secure $tool @('sign', '-key', $KeyFile, '-in', $file, '-out', "$file.sig") } finally { $secure.Dispose() }
     if ($LASTEXITCODE -ne 0) { throw 'Signing failed. Nothing was uploaded.' }
     Invoke-Checked 'verifying with the keys built into this checkout' { & $tool verify -in $file -sig "$file.sig" -trusted -channel $Channel -want $Channel }
     Invoke-Checked "verifying with the keys installed copies trust ($prevTag)" { & $tool verify -in $file -sig "$file.sig" -keys $prevKeys -channel $Channel -want $Channel }
@@ -100,6 +97,7 @@ try {
     Write-Host "Refreshed. The feed is valid again until the new expiry." -ForegroundColor Green
     $done = $true
 } finally {
+    if ($wt) { Remove-ToolWorktree $repoRoot $wt.Dir }
     if ($done) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
     else { Write-Host "Stopped. The working folder is kept so nothing is lost: $work (it holds the signed file if the upload failed)." -ForegroundColor Yellow }
 }
