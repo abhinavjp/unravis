@@ -122,8 +122,8 @@ test('TLPAR-03: Add evidence sits in the "Sources traced" row and opens the Impo
   const add = sourcesRow(page).getByRole('button', { name: 'Add evidence' });
   await expect(add).toBeVisible();
   await add.click();
-  await expect(page.getByRole('dialog', { name: 'Import files' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Add files' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Add files', level: 2 })).toBeVisible();
 });
 
 test('TLPAR-04: Start tracing is disabled during the first read, repeats the request, and reads the chip\'s new window', async ({ page }) => {
@@ -170,7 +170,7 @@ test('TLPAR-05: closing the Add evidence popup reads the timeline again', async 
   const traces = countTraces(page);
   const before = traces.count();
 
-  const popup = page.getByRole('dialog', { name: 'Import files' });
+  const popup = page.getByRole('dialog', { name: 'Add files' });
   await sourcesRow(page).getByRole('button', { name: 'Add evidence' }).click();
   await expect(popup).toBeVisible();
 

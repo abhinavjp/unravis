@@ -135,7 +135,7 @@ async function openTimeline(page: Page, title: string) {
 /** Adds one more IIS file through the Import files popup that "Add files" on an empty SQL lane opens, then closes the popup. */
 async function addThroughPopup(page: Page, name: string, content: string) {
   await page.locator('.panel[data-lane=sql] [data-testid=lane-add-files]').click();
-  const popup = page.getByRole('dialog', { name: 'Import files' });
+  const popup = page.getByRole('dialog', { name: 'Add files' });
   await expect(popup).toBeVisible();
   await page.getByLabel('Choose files to import').setInputFiles([{ name, mimeType: 'text/plain', buffer: Buffer.from(content) }]);
   await popup.getByRole('button', { name: 'Continue' }).click();
@@ -145,7 +145,7 @@ async function addThroughPopup(page: Page, name: string, content: string) {
   const fix = popup.getByRole('button', { name: /^Add .+ as a computer and accept \d+ files$/ });
   if ((await fix.count()) > 0) await fix.first().click();
   await ack.check();
-  await popup.getByRole('button', { name: 'Import 1 file' }).click();
+  await popup.getByRole('button', { name: 'Add 1 file' }).click();
   await expect(popup.getByRole('button', { name: 'Open timeline' })).toBeVisible({ timeout: 60_000 });
   await popup.getByRole('button', { name: 'Close import' }).click();
   await expect(popup).toHaveCount(0);

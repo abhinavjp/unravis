@@ -86,7 +86,7 @@ test('CASE-21b: importing files opens a centred popup, not a side drawer', async
   await openCase(page, 'QA Import Not Drawer');
   await page.getByRole('button', { name: 'Add a file' }).click();
 
-  const popup = page.getByRole('dialog', { name: 'Import files' });
+  const popup = page.getByRole('dialog', { name: 'Add files' });
   await expect(popup).toBeVisible();
   // None of the drawer's parts are there: its class, its scrim and close button, its heading id and the old wording.
   await expect(popup).not.toHaveClass(/connections-drawer/);

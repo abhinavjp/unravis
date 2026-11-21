@@ -17,7 +17,7 @@ async function openPopup(page: Page, api: ApiFn, title: string): Promise<Locator
   await goHome(page);
   await openCase(page, title);
   await page.getByRole('button', { name: 'Add a file' }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'Import files' });
+  const dialog = page.getByRole('dialog', { name: 'Add files' });
   await expect(dialog).toBeVisible();
   return dialog;
 }
@@ -68,7 +68,7 @@ test('IP-11: a not-supported file says so, Remove drops it, and "Tell us what th
   // An archive cannot be told apart by naming a kind, so it only offers Remove from list.
   await expect(zip.getByRole('combobox')).toHaveCount(0);
   await expect(zip.getByRole('button', { name: 'Remove from list', exact: true })).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Import 0 files', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Add 0 files', exact: true })).toBeDisabled();
 
   // The kind picker lists the kinds in the wireframe's order, and keeps the one picked.
   const pick = log.getByRole('combobox', { name: 'Tell us what this is' });

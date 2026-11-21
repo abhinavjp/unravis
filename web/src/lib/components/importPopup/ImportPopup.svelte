@@ -7,6 +7,7 @@
   import ImportingStep from './ImportingStep.svelte';
   import ResultStep from './ResultStep.svelte';
   import { createPopupState, type PopupState } from './popupState.svelte';
+  import { takeImportSeed } from './importSeed';
 
   // The "Import files" popup (wireframe: prototype/import-popup-WIREFRAME.html): scrim, title row, stepper, progress line, the body and
   // footer of the step the popup state is on, and the discard confirmation. The popup state decides and does the work (check, import,
@@ -55,6 +56,9 @@
   onMount(() => {
     if (retryServerName) popup.openRetry(retryServerName);
     popupEl?.focus({ preventScroll: true });
+    // Files dropped on the Add data > Files tile arrive here and are checked like files picked in step 1.
+    const seeded = takeImportSeed();
+    if (seeded.length > 0) void popup.addFiles(seeded);
   });
 
   // The element may not be drawn yet (a card appears once the check is back), so the request stays until it is found.

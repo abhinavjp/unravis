@@ -303,9 +303,9 @@ test('FILES-09: a file that was not read can be left out, and Add more files ope
   await expect(page.getByRole('button', { name: 'Try the failed files again' })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Add more files' }).click();
-  const popup = page.getByRole('dialog', { name: 'Import files' });
+  const popup = page.getByRole('dialog', { name: 'Add files' });
   await expect(popup).toBeVisible();
-  await expect(popup.getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
+  await expect(popup.getByRole('heading', { name: 'Add files', level: 2 })).toBeVisible();
   await expect(popup.locator('.case-chip')).toContainText('QA Files Leave Out');
 });
 
