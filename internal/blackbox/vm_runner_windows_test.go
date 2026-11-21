@@ -3,6 +3,7 @@
 package blackbox
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -36,9 +37,18 @@ func TestRealVMNotApplicableOnHostedRunner(t *testing.T) {
 		t.Skip("runs on the GitHub hosted runner only")
 	}
 	addErr := rawVMAddStatus(t)
-	t.Logf("PDH status for %s on this runner: err=%v", vmBalloonPath, addErr)
+	var se *pdhStatusErr
+	if !errors.As(addErr, &se) {
+		t.Fatalf("PdhAddEnglishCounter(%s) on the hosted runner: err = %v, want a PDH status error (the object is absent)", vmBalloonPath, addErr)
+	}
+	t.Logf("real PDH status for %s on the hosted runner: 0x%X", vmBalloonPath, se.code)
+	if !pdhAbsentStatus(se.code) {
+		t.Fatalf("real PDH status 0x%X for a missing VM Memory object is not in the absent set; add it to pdhAbsentStatus", se.code)
+	}
 	g, err := newVMGroup(GroupDeps{})
-	t.Logf("newVMGroup on this runner: group=%v err=%v", g, err)
+	if !errors.Is(err, errNotApplicable) || g != nil {
+		t.Fatalf("newVMGroup on the hosted runner = (%v, %v), want (nil, errNotApplicable)", g, err)
+	}
 }
 
 // TestRealVMOnThisPC logs what this PC does with the vm group: not applicable
