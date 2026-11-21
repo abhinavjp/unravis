@@ -308,15 +308,15 @@ func TestRefreshKeepsTheReleaseAndMovesTheDates(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys := filepath.Join(dir, "keys.txt")
-	pub, _ := os.ReadFile(pp)
-	_ = pub
 	k, err := readPub(pp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(keys, []byte("rc "+hexOf(k.Pub)+"\n"), 0o644)
+	if err := os.WriteFile(keys, []byte("rc "+hexOf(k.Pub)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	nf, ns := filepath.Join(dir, "new.json"), filepath.Join(dir, "new.json.sig")
-	if err := run([]string{"refresh", "-in", mf, "-sig", sg, "-keys", keys, "-days", "90", "-out", nf}, nil, &out); err != nil {
+	if err := run([]string{"refresh", "-in", mf, "-sig", sg, "-keys", keys, "-want", "rc", "-version", "0.1.0-rc.48", "-commit", commitA, "-days", "90", "-out", nf}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	if err := run([]string{"sign", "-key", kp, "-in", nf, "-out", ns}, nil, &out); err != nil {
@@ -330,12 +330,19 @@ func TestRefreshKeepsTheReleaseAndMovesTheDates(t *testing.T) {
 	if !strings.Contains(string(nb), `"seq": 4801`) || !strings.Contains(string(nb), `"commit": "`+commitA+`"`) || !strings.Contains(string(nb), "rc.48") || string(ob) == string(nb) {
 		t.Fatalf("refresh changed the wrong things:\n%s", nb)
 	}
+	// Wrong channel, version or commit: refused before anything is written.
+	for _, bad := range [][]string{{"-want", "stable", "-version", "0.1.0-rc.48", "-commit", commitA}, {"-want", "rc", "-version", "0.1.0-rc.49", "-commit", commitA}, {"-want", "rc", "-version", "0.1.0-rc.48", "-commit", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, {"-want", "rc"}} {
+		a := append([]string{"refresh", "-in", mf, "-sig", sg, "-keys", keys, "-out", nf + "4"}, bad...)
+		if err := run(a, nil, &out); err == nil {
+			t.Fatalf("refreshed with %v", bad)
+		}
+	}
 	// A tampered or unsigned input is refused; no keys given is refused.
 	os.WriteFile(mf, bytes.Replace(ob, []byte(`"size": 1`), []byte(`"size": 2`), 1), 0o644)
-	if err := run([]string{"refresh", "-in", mf, "-sig", sg, "-keys", keys, "-out", nf + "2"}, nil, &out); err == nil {
+	if err := run([]string{"refresh", "-in", mf, "-sig", sg, "-keys", keys, "-want", "rc", "-version", "0.1.0-rc.48", "-commit", commitA, "-out", nf + "2"}, nil, &out); err == nil {
 		t.Fatal("refreshed a tampered manifest")
 	}
-	if err := run([]string{"refresh", "-in", mf, "-sig", sg, "-out", nf + "3"}, nil, &out); err == nil {
+	if err := run([]string{"refresh", "-in", mf, "-sig", sg, "-want", "rc", "-version", "0.1.0-rc.48", "-commit", commitA, "-out", nf + "3"}, nil, &out); err == nil {
 		t.Fatal("refreshed without keys")
 	}
 }

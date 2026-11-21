@@ -27,6 +27,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("unravis-refresh-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 function Invoke-Checked([string]$what, [scriptblock]$cmd) { & $cmd; if ($LASTEXITCODE -ne 0) { throw "$what failed (exit code $LASTEXITCODE)." } }
+$done = $false
 try {
     # The signing tool is built from a clean checkout that matches GitHub, never from a changed working folder.
     if (git -C $repoRoot status --porcelain) { throw 'The working folder has changes. Use a clean checkout of master.' }
@@ -50,7 +51,28 @@ try {
 
     $old = Join-Path $work "$Channel.json"
     $file = Join-Path $work "$Channel-new.json"
-    Invoke-Checked 'checking the feed pair and building the refreshed file' { & $tool refresh -in $old -sig "$old.sig" -keys $prevKeys -days $Days -out $file }
+    # The feed file is untrusted until checked: it must be the newest published release of this channel, and it must verify
+    # against BOTH the keys in this checkout and the keys of that release (a key removed from master must not be revivable).
+    $ver = $prevTag.Substring(1)
+    $commit = (git -C $repoRoot rev-parse "$prevTag^{commit}").Trim()
+    $isRc = ($Channel -eq 'rc')
+    $newest = gh release list --repo $Repo --limit 50 --json tagName,isDraft,publishedAt | ConvertFrom-Json |
+        Where-Object { -not $_.isDraft -and $_.tagName -match '^v[0-9]' -and ($_.tagName.Contains('-') -eq $isRc) } | Sort-Object publishedAt -Descending | Select-Object -First 1
+    if (-not $newest -or $newest.tagName -ne $prevTag) { throw "The feed points at $prevTag, but the newest published $Channel release is $($newest.tagName). Refresh only the newest one; publish it to the feed first." }
+    Write-Host "Checking that the files of $prevTag are still published and match the manifest:"
+    $rel = Join-Path $work 'release'; New-Item -ItemType Directory -Path $rel | Out-Null
+    Invoke-Checked 'downloading the release' { gh release download $prevTag --repo $Repo --dir $rel }
+    Invoke-Checked 'checking the files against the manifest' { & $tool check-assets -manifest $old -dir $rel }
+    # The safety brake: never re-sign a release that is paused or withdrawn.
+    $ctl = Join-Path $work 'ctl'; New-Item -ItemType Directory -Path $ctl | Out-Null
+    gh release download update-feed --repo $Repo --pattern "$Channel-control.json" --dir $ctl 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $ctl "$Channel-control.json"))) {
+        $c = Get-Content -Raw (Join-Path $ctl "$Channel-control.json") | ConvertFrom-Json
+        if ($c.pause -or ($c.blocked -contains $ver)) { throw "The $Channel control file pauses updates or withdraws $ver. Lift that first (Set-Control.ps1 with no switches), then refresh." }
+    }
+    $common = @('-want', $Channel, '-version', $ver, '-commit', $commit, '-days', $Days)
+    Invoke-Checked 'checking the feed pair against the keys in this checkout' { & $tool refresh -in $old -sig "$old.sig" -trusted @common -out (Join-Path $work 'check.json') }
+    Invoke-Checked 'checking the feed pair and building the refreshed file' { & $tool refresh -in $old -sig "$old.sig" -keys $prevKeys @common -out $file }
     Write-Host ''; Get-Content -Raw $file | Write-Host
     if (-not $Yes -and (Read-Host "Publish this refreshed $Channel manifest? Type 'yes' to go on") -ne 'yes') { throw 'Stopped. Nothing was signed or published.' }
 
@@ -73,6 +95,8 @@ try {
     Invoke-Checked 'reading back the published pair' { gh release download update-feed --repo $Repo --pattern "$Channel.json*" --dir $back }
     Invoke-Checked 'verifying the published pair' { & $tool verify -in (Join-Path $back "$Channel.json") -sig (Join-Path $back "$Channel.json.sig") -keys $prevKeys -channel $Channel -want $Channel }
     Write-Host "Refreshed. The feed is valid again until the new expiry." -ForegroundColor Green
+    $done = $true
 } finally {
-    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    if ($done) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+    else { Write-Host "Stopped. The working folder is kept so nothing is lost: $work (it holds the signed file if the upload failed)." -ForegroundColor Yellow }
 }

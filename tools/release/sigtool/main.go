@@ -3,7 +3,7 @@
 //	sigtool keygen   -role stable|rc -out key.json -pub key.pub     make an encrypted key pair (offline, on the owner's PC)
 //	sigtool manifest -dir dist -version V -seq N -out manifest.json  describe a release (CI runs this; it signs nothing)
 //	sigtool sign     -key key.json -in manifest.json -out manifest.json.sig
-//	sigtool refresh  -in rc.json -sig rc.json.sig -trusted -days D -out new.json   same release, later expiry, seq + 1 (then sign it)
+//	sigtool refresh  -in rc.json -sig rc.json.sig -trusted -want C -version V -commit SHA -days D -out new.json   same release, later expiry, seq + 1 (then sign it)
 //	sigtool control  -channel C [-pause] [-block V,..] [-rollout V -percent N] [-note T] [-days D] -out control.json
 //	sigtool sign     -control -key key.json -in control.json -out control.json.sig   (a control file: pause, withdraw, staged rollout)
 //	sigtool check-assets -manifest manifest.json -dir downloaded   re-hash the real files against the manifest before signing
@@ -151,8 +151,14 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		keysFile := fs.String("keys", "", "or against a trusted_keys.txt file")
 		days := fs.Int("days", 180, "days until the new copy expires")
 		outFile := fs.String("out", "", "file to write")
+		want := fs.String("want", "", "channel the file must be for: stable or rc (required)")
+		wantVer := fs.String("version", "", "version the file must be for (required)")
+		wantCommit := fs.String("commit", "", "git commit the file must name (required)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
+		}
+		if (*want != update.ChannelStable && *want != update.ChannelRC) || *wantVer == "" || *wantCommit == "" {
+			return errors.New("refresh needs -want, -version and -commit, so it only refreshes the release you mean")
 		}
 		var keys []update.Key
 		var err error
@@ -181,6 +187,9 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		old, err := update.VerifySignatureOnly(mb, sb, update.Trust{Keys: keys})
 		if err != nil {
 			return fmt.Errorf("the manifest on the feed does not verify: %w", err)
+		}
+		if old.Channel != *want || old.Version != *wantVer || old.Commit != *wantCommit {
+			return fmt.Errorf("the file on the feed is %s %s (commit %s), not %s %s (commit %s)", old.Channel, old.Version, old.Commit, *want, *wantVer, *wantCommit)
 		}
 		now := time.Now().UTC().Truncate(time.Second)
 		nw := *old
