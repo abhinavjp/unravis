@@ -40,7 +40,8 @@ func run(args []string) error {
 	fl := flag.NewFlagSet("unravis-releases", flag.ContinueOnError)
 	data := fl.String("data", "", "release manager data folder (default: the one Release.ps1 uses)")
 	port := fl.Int("port", 0, "local port (0 picks a free one)")
-	open := fl.Bool("open", false, "also open the link in the default browser")
+	open := fl.Bool("open", false, "open the link in the default browser instead of the app window")
+	browserOnly := fl.Bool("print-link", false, "only print the link; open no window (for tests and servers)")
 	if err := fl.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -58,10 +59,11 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	state := ""
-	if c, err := os.UserCacheDir(); err == nil {
-		state = filepath.Join(c, "Unravis", "releases-dashboard", "state.json")
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		cache = os.TempDir()
 	}
+	state := filepath.Join(cache, "Unravis", "releases-dashboard", "state.json")
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
 		return errors.New("could not make a local session code")
@@ -76,13 +78,24 @@ func run(args []string) error {
 		return err
 	}
 	link := fmt.Sprintf("http://127.0.0.1:%d/?t=%s", ln.Addr().(*net.TCPAddr).Port, token)
-	fmt.Println("Unravis releases (read only). Open this link in your browser:\n  " + link + "\nPress Ctrl+C to stop.")
-	if *open {
-		openBrowser(link)
-	}
-	srv := &http.Server{Handler: releasedash.Handler(releasedash.New(dir, state, keys), token, ui), ReadHeaderTimeout: 10 * time.Second}
+	fmt.Println("Unravis releases (read only). Link:\n  " + link + "\nPress Ctrl+C to stop.")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	switch {
+	case *open:
+		openBrowser(link)
+	case !*browserOnly && runtime.GOOS == "windows":
+		profile := filepath.Join(filepath.Dir(state), "window")
+		cmd, werr := appWindow(link, profile)
+		if werr != nil {
+			fmt.Println("Could not open the app window (" + werr.Error() + "), opening your browser instead.")
+			openBrowser(link)
+			break
+		}
+		// Closing the window ends the program.
+		go func() { _ = cmd.Wait(); stop() }()
+	}
+	srv := &http.Server{Handler: releasedash.Handler(releasedash.New(dir, state, keys), token, ui), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		sc, c := context.WithTimeout(context.Background(), 3*time.Second)
