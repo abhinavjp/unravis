@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/setup"
+	"api-audit-explorer/internal/update"
 )
 
 // syncBuf is a bytes.Buffer safe for the window goroutines.
@@ -156,6 +157,9 @@ func TestFlagErrorsExitTwoAndChangeNothing(t *testing.T) {
 		{"--capture"}, // only in the screenshot build
 		{"install"},
 		{"--no-such-flag"},
+		{"--close-app"}, // only for an update the app started
+		{"--silent", "--upgrade", "--close-app"},
+		{"--upgrade", "--close-app", "--expect-sha256", strings.Repeat("a", 64), "--expect-version", "1.2.3"},
 	} {
 		rg := newRig(t)
 		before := rg.f.Snapshot()
@@ -530,3 +534,74 @@ func TestWindowEndsWhenThePageGoesQuiet(t *testing.T) {
 func jsonString(s string) string { b, _ := json.Marshal(s); return string(b) }
 
 func exists(p string) bool { _, err := os.Lstat(p); return err == nil }
+
+func TestSilentUpgradeNeedsNoConfigAndCloseAppNeedsTheExpectFlags(t *testing.T) {
+	sha := strings.Repeat("a", 64)
+	for _, args := range [][]string{
+		{"--silent", "--upgrade"},
+		{"--silent", "--upgrade", "--close-app", "--expect-sha256", sha, "--expect-version", "1.2.3"},
+	} {
+		if _, err := parseFlags(args, osEnv(), io.Discard); err != nil {
+			t.Errorf("%q: %v", args, err)
+		}
+	}
+}
+
+func TestAfterUnattendedStartsTheAppAndLeavesANote(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		outcome setup.Outcome
+		want    string
+	}{{"good run", setup.OutcomeDone, "done"}, {"rolled back", setup.OutcomeRolledBack, "rolled-back"}, {"refused", setup.OutcomePreflightFailed, "failed"}} {
+		rg := newRig(t)
+		var started []string
+		rg.env.startBackground = func(exe string) error { started = append(started, exe); return nil }
+		loc := filepath.Join(rg.dirs.LocalAppData, "Programs", "Unravis")
+		old := &setup.Installed{Location: loc, Version: "1.0.0"}
+		l, _ := openLog(options{}, rg.env, rg.dirs.LocalAppData, false)
+		afterUnattended(options{expectVersion: "1.1.0"}, rg.env, rg.dirs, old, setup.Result{Outcome: tc.outcome, Message: "x"}, func(string, ...any) {}, l)
+		closeLog(l)
+		if len(started) != 1 || started[0] != filepath.Join(loc, "unravis.exe") {
+			t.Errorf("%s: started %v", tc.name, started)
+		}
+		got, ok := update.ReadApplyResult(filepath.Join(rg.dirs.LocalAppData, "Unravis", "update-result"))
+		if !ok || got.Outcome != tc.want || got.From != "1.0.0" || got.To != "1.1.0" || !got.Restarted {
+			t.Errorf("%s: result %+v %v", tc.name, got, ok)
+		}
+	}
+}
+
+func TestAfterUnattendedWritesTheNoteBeforeTheMessageBox(t *testing.T) {
+	rg := newRig(t)
+	rg.env.startBackground = func(string) error { return errors.New("blocked") }
+	noteDir := filepath.Join(rg.dirs.LocalAppData, "Unravis", "update-result")
+	var noteWasThere, boxShown bool
+	rg.env.notice = func(title, text string) {
+		boxShown = true
+		_, noteWasThere = update.ReadApplyResult(noteDir)
+		if !strings.Contains(text, "Start menu") {
+			t.Errorf("box text %q", text)
+		}
+	}
+	old := &setup.Installed{Location: filepath.Join(rg.dirs.LocalAppData, "Programs", "Unravis"), Version: "1.0.0"}
+	l, _ := openLog(options{}, rg.env, rg.dirs.LocalAppData, false)
+	afterUnattended(options{expectVersion: "1.1.0"}, rg.env, rg.dirs, old, setup.Result{Outcome: setup.OutcomeDone}, func(string, ...any) {}, l)
+	closeLog(l)
+	if !boxShown || !noteWasThere {
+		t.Fatalf("box shown %v, note there when it was %v", boxShown, noteWasThere)
+	}
+	got, _ := update.ReadApplyResult(noteDir)
+	if got.Restarted || !strings.Contains(got.Message, "Start menu") {
+		t.Errorf("result %+v", got)
+	}
+}
+
+// The app decides whether a kept setup can go back silently by looking for this line of its help text (internal/update closeAppMarker).
+// "close-app" alone cannot tell, because it is also a step name in every older setup.
+func TestHelpTextHasTheLineTheRollbackLooksFor(t *testing.T) {
+	var out bytes.Buffer
+	_, _ = parseFlags([]string{"--help"}, osEnv(), &out)
+	if !strings.Contains(out.String(), "what an automatic update does") {
+		t.Fatalf("the --close-app help line changed; update closeAppMarker in internal/update/launch_windows.go with it:\n%s", out.String())
+	}
+}

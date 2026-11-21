@@ -50,6 +50,18 @@ func ShowFolder(dir string) error {
 	return nil
 }
 
+// StartProgramBackground starts Unravis in the tray with no browser tab (--background), as an update nobody watches must: the app
+// comes back the way it was, with nothing opening on the desktop.
+func StartProgramBackground(exe string) error {
+	cmd := exec.Command(exe, "--background")
+	cmd.Dir = filepath.Dir(exe)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait()
+	return nil
+}
+
 // StartProgram starts Unravis as the person running the window (never from the elevated worker).
 func StartProgram(exe string) error {
 	cmd := exec.Command(exe)

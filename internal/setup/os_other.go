@@ -20,6 +20,7 @@ func ProfileOf(sid string) (string, error)               { return "", errWindows
 func OpenWindow(browser, url string) error               { return errWindowsOnly }
 func ShowFolder(dir string) error                        { return errWindowsOnly }
 func StartProgram(exe string) error                      { return errWindowsOnly }
+func StartProgramBackground(exe string) error            { return errWindowsOnly }
 func DialWorkerPipe(string, uint32) (*WorkerPipe, error) { return nil, errWindowsOnly }
 
 type OSElevator struct {

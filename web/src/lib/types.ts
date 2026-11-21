@@ -48,7 +48,15 @@ export interface UpdateCheckReply {
   /** True when this build can download and start the installer (Windows). */
   canInstall?: boolean;
   install?: UpdateInstall;
+  /** A verified update is applied by itself while nobody is using the app. */
+  applyAuto?: boolean;
+  /** The app counts as in use right now. */
+  inUse?: boolean;
+  /** What the last update nobody watched did, until dismissed. */
+  result?: UpdateNotice;
 }
+/** The plain-words result of an update nobody watched. */
+export interface UpdateNotice { outcome: 'done' | 'rolled-back' | 'failed'; from: string; to: string; message: string }
 /** The download and install step of an available update. */
 export interface UpdateInstall { state: 'idle' | 'downloading' | 'ready' | 'failed' | 'launched'; version: string; done: number; total: number; error?: string }
 /** Record-level completion: complete rows have a usable duration, pending rows are accepted asynchronous jobs. */

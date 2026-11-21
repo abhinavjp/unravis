@@ -147,3 +147,29 @@ func TestSkipListKeepsTheNewestByInsertionNotByText(t *testing.T) {
 		t.Fatal("the oldest entry should go, not the one that sorts first")
 	}
 }
+
+func TestApplyResultRoundTripAndClear(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r")
+	if _, ok := ReadApplyResult(dir); ok {
+		t.Fatal("a result from nowhere")
+	}
+	in := ApplyResult{From: "1.0.0", To: "1.1.0", Outcome: "rolled-back", Message: strings.Repeat("x", 900), Restarted: true, At: time.Now().UTC()}
+	if err := WriteApplyResult(dir, in); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := ReadApplyResult(dir)
+	if !ok || got.Outcome != "rolled-back" || len(got.Message) != 400 {
+		t.Fatalf("%+v %v", got, ok)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ApplyResultName), []byte(`{"outcome":"weird"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ReadApplyResult(dir); ok {
+		t.Fatal("an unknown outcome was accepted")
+	}
+	ClearApplyResult(dir)
+	ClearApplyResult(dir) // twice is fine
+	if _, err := os.Stat(filepath.Join(dir, ApplyResultName)); err == nil {
+		t.Fatal("not cleared")
+	}
+}
