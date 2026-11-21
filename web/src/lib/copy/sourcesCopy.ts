@@ -168,6 +168,7 @@ export const STEP_TEXT = {
   fixHeading: 'To fix',
   stateCol: 'State',
   checkCol: 'Check',
+  summaryCol: 'What it found',
   daysHeading: 'Days read',
   readAt: 'Read',
   loadFailed: 'The days that were read could not be loaded. Try again.',

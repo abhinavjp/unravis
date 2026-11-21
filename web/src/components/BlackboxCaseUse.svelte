@@ -67,7 +67,7 @@
 </script>
 
 <section class="bb-case" aria-label={T.caseUseTitle}>
-  <h4>{T.caseUseTitle}</h4>
+  <h3>{T.caseUseTitle}</h3>
   <p class="bb-note">{T.caseUseIntro}</p>
   {#if !caseId}
     <p class="bb-note">{T.caseUseNoCase}</p>
@@ -100,7 +100,7 @@
 
 <style>
   .bb-case { display: grid; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--line); min-width: 0; }
-  .bb-case h4 { margin: 0; font-size: 14px; font-weight: 600; }
+  .bb-case h3 { margin: 0; font-size: 14px; font-weight: 600; }
   .bb-case p { margin: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
   .bb-case p.bb-note { font-size: 12px; }
 </style>

@@ -8,6 +8,18 @@ import { believedState, type CaseInfo, type CaseState, type RetryItem } from './
 /** hidden: nothing to show (the case is open). enabled: press to reopen. busy: a reopen is running. disabled: shown, but the case cannot come back. */
 export type ReopenButton = 'hidden' | 'enabled' | 'busy' | 'disabled';
 
+/** hidden: no Close here (the case is not open, or untrusted). enabled: press to close. busy: a close is running. */
+export type CloseButton = 'hidden' | 'enabled' | 'busy';
+
+/**
+ * Close is for an Open case only, and lives on Case home beside Reopen, so the two halves of one move sit in one place. It was in the Import
+ * drawer's case list until that drawer became the Import files pop-up (2026-11-05), which left no way to close a case.
+ */
+export function closeButton(c: Pick<CaseInfo, 'state' | 'closed' | 'untrusted'>, busy: boolean): CloseButton {
+  if (c.untrusted || believedState(c) !== 'open') return 'hidden';
+  return busy ? 'busy' : 'enabled';
+}
+
 /**
  * Reopen is for a Closed case only. An Open case has nothing to reopen, so the button is hidden. An archived (or archiving) case has no Reopen
  * either (spec section 9: n/a): its way back is Restore, so the page offers that and never a button that cannot work. An untrusted or erased case

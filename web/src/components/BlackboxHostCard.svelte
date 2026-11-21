@@ -58,7 +58,7 @@
 </script>
 
 <section class="bb-host" aria-label={T.hostTitle}>
-  <h4>{T.hostTitle}</h4>
+  <h3>{T.hostTitle}</h3>
   <p class="bb-note">{T.hostQuestion}</p>
 
   <details class="bb-windows" open>
@@ -94,7 +94,7 @@
           </div>
         {/if}
 
-        <h5>{T.hostChecks}</h5>
+        <h4>{T.hostChecks}</h4>
         {#if answer.step.findings?.length}
           <ul class="bb-list">{#each answer.step.findings as finding, i (i)}<li>{finding}</li>{/each}</ul>
         {/if}
@@ -110,8 +110,8 @@
 
 <style>
   .bb-host { display: grid; gap: var(--space-3); min-width: 0; }
-  .bb-host h4 { margin: 0; font-size: 14px; font-weight: 600; }
-  .bb-host h5 { margin: var(--space-2) 0 0; font-size: 13px; font-weight: 600; }
+  .bb-host h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .bb-host h4 { margin: var(--space-2) 0 0; font-size: 13px; font-weight: 600; }
   .bb-windows summary { width: fit-content; color: var(--text-2); font-size: 13px; }
   .bb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--space-3); margin: var(--space-2) 0; }
   .bb-grid fieldset { display: grid; gap: var(--space-2); margin: 0; padding: 0; border: 0; min-width: 0; }

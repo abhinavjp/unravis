@@ -56,7 +56,7 @@
 </script>
 
 <section class="bb-key" aria-label={T.keyTitle}>
-  <h4>{T.keyTitle}</h4>
+  <h3>{T.keyTitle}</h3>
   <p class="bb-key-value">{#if key}<code>{key}</code>{:else}<span aria-hidden="true">••••••••••••••••</span><span class="bb-sr">{T.keyHiddenNow}</span>{/if}</p>
   <p class="bb-note">{T.keyHereOnly}</p>
   <div class="bb-actions">
@@ -78,7 +78,7 @@
 
 <style>
   .bb-key { display: grid; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--line); min-width: 0; }
-  .bb-key h4 { margin: 0; font-size: 14px; font-weight: 600; }
+  .bb-key h3 { margin: 0; font-size: 14px; font-weight: 600; }
   .bb-key p { margin: 0; font-size: 13px; line-height: 1.5; }
   .bb-key-value { overflow-wrap: anywhere; word-break: break-all; }
   .bb-key-value code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }

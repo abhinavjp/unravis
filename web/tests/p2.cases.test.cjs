@@ -167,6 +167,23 @@ test('p2: the Reopen button is shown for a Closed case only, and is off while it
   assert.equal(life.reopenButton({ closed: 'x' }, false), 'enabled', 'an older server with only the closed stamp still reads as Closed');
 });
 
+test('p2: the Close button is shown for an Open case only, and is off while it runs (BL-178)', () => {
+  assert.equal(life.closeButton({ state: 'open', closed: null }, false), 'enabled');
+  assert.equal(life.closeButton({ state: 'open', closed: null }, true), 'busy');
+  assert.equal(life.closeButton({ closed: null }, false), 'enabled', 'an older server with no state reads as Open');
+  for (const state of ['closed', 'archived', 'archiving', 'erased']) assert.equal(life.closeButton({ state, closed: 'x' }, false), 'hidden', state);
+  assert.equal(life.closeButton({ state: 'open', closed: null, untrusted: true }, false), 'hidden');
+});
+
+test('p2: Case home wires Close beside Reopen, with the same guards (BL-178)', () => {
+  const home = read('src/lib/components/CaseHome.svelte');
+  assert.match(home, /closeButton\(info, closing\)/);
+  assert.match(home, /closeCase\(id, believedState\(info\)\)/, 'Close sends what the page believes, so a move made in another tab is caught (M2)');
+  assert.match(home, /if \(!info \|\| closing \|\| stale \|\| closeState !== 'enabled'\) return;/);
+  assert.match(home, /disabled=\{closeState !== 'enabled' \|\| stale\}/);
+  assert.match(home, /CASE_HOME_TEXT\.closeHint/, 'the 30-day erase is said before the press');
+});
+
 test('p2: each retry item offers what the case state allows', () => {
   const open = { state: 'open', closed: null };
   assert.equal(life.retryAction({ kind: 'environments' }, open), 'retry');

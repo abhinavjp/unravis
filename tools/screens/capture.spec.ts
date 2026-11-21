@@ -6,6 +6,7 @@ import { join } from 'node:path';
 //   { "goto": "/" }                     open the app (the session token is added) or a hash route
 //   { "click": "<selector>" }           click one element
 //   { "fill": ["<selector>", "text"] }  type into one field
+//   { "select": ["<selector>", "value"] } pick one option of a <select> by its value
 //   { "waitFor": "<selector>" }         wait until one element shows
 //   { "scrollTo": "<selector>" }        bring one element into view
 //   { "theme": "dark" | "light" }       force the page theme (the project's colour scheme decides otherwise)
@@ -18,13 +19,15 @@ type Step = (
   | { goto: string }
   | { click: string }
   | { fill: [string, string] }
+  | { select: [string, string] }
   | { waitFor: string }
   | { scrollTo: string }
   | { theme: 'dark' | 'light' }
   | { aside: Step[] }
 ) & { when?: 'narrow' | 'wide' };
 // `after` runs once the picture is taken, to put back what the steps changed on the demo (the demo is shared by every screen).
-interface Screen { id: string; phase: string; doc: string; narrow: boolean; app?: 'setup'; steps: Step[]; after?: Step[] }
+// `retired` names why a screen can no longer be reached in the app; it is skipped and its saved picture is kept as it is.
+interface Screen { id: string; phase: string; doc: string; narrow: boolean; app?: 'setup'; retired?: string; steps: Step[]; after?: Step[] }
 
 const screens: Screen[] = JSON.parse(readFileSync(join(__dirname, 'screens.json'), 'utf8')).screens;
 const only = (process.env.UNRAVIS_ONLY ?? '').split(',').map((part) => part.trim()).filter(Boolean);
@@ -79,6 +82,8 @@ async function run(page: Page, step: Step, app?: 'setup'): Promise<void> {
     await page.locator(step.click).first().click();
   } else if ('fill' in step) {
     await page.locator(step.fill[0]).first().fill(step.fill[1]);
+  } else if ('select' in step) {
+    await page.locator(step.select[0]).first().selectOption(step.select[1]);
   } else if ('waitFor' in step) {
     await page.locator(step.waitFor).first().waitFor({ state: 'visible' });
   } else if ('scrollTo' in step) {
@@ -86,13 +91,14 @@ async function run(page: Page, step: Step, app?: 'setup'): Promise<void> {
   } else if ('theme' in step) {
     await page.evaluate((theme) => document.documentElement.setAttribute('data-theme', theme), step.theme);
   } else {
-    throw new Error('A step in screens.json has no known action: ' + JSON.stringify(step) + '. Use goto, click, fill, waitFor, scrollTo, theme or aside.');
+    throw new Error('A step in screens.json has no known action: ' + JSON.stringify(step) + '. Use goto, click, fill, select, waitFor, scrollTo, theme or aside.');
   }
 }
 
 for (const screen of screens) {
   if (only.length && !only.includes(screen.id)) continue;
   test(screen.id, async ({ page }, info) => {
+    test.skip(!!screen.retired, 'retired: ' + screen.retired);
     test.skip(info.project.name.endsWith('-narrow') && !screen.narrow, 'this screen has no narrow picture');
     test.skip(screen.app === 'setup' && !setupUrl, 'the setup window is not running (run-screens.ps1 starts it when Go is found)');
     test.skip(screen.app !== 'setup' && !process.env.UNRAVIS_BASE_URL, 'the demo is not running');
