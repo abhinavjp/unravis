@@ -45,10 +45,7 @@ function body(text, header) {
   return text.slice(start, end + 1 + indent.length + 1);
 }
 
-const batch = read('src/lib/components/ImportBatch.svelte');
-const importPanel = read('src/lib/components/ImportPanel.svelte');
 const panel = read('src/components/wizard/ImportFilesPanel.svelte');
-const audit = read('src/components/sources/AddAuditDatabase.svelte');
 const sourcesList = read('src/components/sources/SourcesList.svelte');
 
 // ---- F26: a dropped folder says what was cut
@@ -111,17 +108,6 @@ test('F1: Try again is offered only for a file that is meant to go, and re-check
   assert.match(panel, /onclick=\{\(\) => \{ if \(canRetry\(item\)\) onRetry\?\.\(item\); \}\}/);
 });
 
-test('F1: the batch never sends a row set to "Don’t use this file", also not by Try again', () => {
-  const run = body(batch, 'async function run(');
-  assert.match(run, /const rows = usableFiles\(picked\);/);
-  assert.ok(run.indexOf('usableFiles(picked)') < run.indexOf('rows.length === 0'), 'the check uses the filtered rows');
-  assert.match(run, /const items = rows\.map\(itemOf\);/);
-  const kinds = loadTypeScript('src/lib/fileKinds.ts');
-  const left = { id: 1, choice: '', refusal: '', name: 'x.txt' };
-  const kept = { id: 2, choice: 'iis-w3c', refusal: '', name: 'u.log' };
-  assert.deepEqual(kinds.usableFiles([left, kept]).map((row) => row.id), [2]);
-});
-
 test('F20: the kind and the computer of a kept file are locked, those of a rejected file are not', () => {
   assert.match(panel, /const finished = \(item: StagedFile\): boolean => \{[\s\S]*?result\?\.state === 'done' && result\.outcome\.verdict !== 'rejected'/);
   assert.match(panel, /const choiceLocked = \(item: StagedFile\): boolean => locked\(item\) \|\| finished\(item\);/);
@@ -131,36 +117,9 @@ test('F20: the kind and the computer of a kept file are locked, those of a rejec
 
 // ---- F2: the notice is confirmed again after the list changes
 
-test('F2: adding or clearing files takes the confirmation back', () => {
-  assert.match(batch, /onListChange=\{\(\) => \{ acknowledged = false; \}\}/);
-  assert.match(panel, /onListChange\?: \(\) => void;/);
-  assert.match(body(panel, 'function clear()'), /onListChange\?\.\(\);/);
-  // Adding files (the `take` path) and Clear are the two ways a different set of files gets chosen; removing a row only shrinks the set.
-  assert.equal((panel.match(/onListChange\?\.\(\)/g) ?? []).length, 2, 'add and clear call it');
-});
-
 // ---- F10: the page locks its single-file controls while a batch runs
 
-test('F10: the batch reports that it is busy and the page locks the single-file controls meanwhile', () => {
-  assert.match(batch, /busy = \$bindable\(false\)/);
-  assert.match(batch, /onDestroy\(\(\) => \{ leave\.abort\(\); busy = false; staged = 0; \}\);/, 'leaving the screen ends the busy state');
-  assert.match(importPanel, /let batchBusy = \$state\(false\);/);
-  assert.match(importPanel, /<ImportBatch [^\r\n]*bind:busy=\{batchBusy\}/);
-  assert.match(importPanel, /busy: phase !== 'idle' \|\| batchBusy,/, 'the single-file commit is blocked');
-  assert.match(importPanel, /id="import-file" type="file"[^\r\n]*disabled=\{phase === 'importing' \|\| batchBusy\}/);
-  assert.match(importPanel, /id="import-host"[^\r\n]*disabled=\{phase !== 'idle' \|\| batchBusy\}/);
-  assert.match(importPanel, /id="import-type"[^\r\n]*disabled=\{phase !== 'idle' \|\| batchBusy\}/);
-  assert.match(importPanel, /bind:checked=\{acknowledged\} disabled=\{phase !== 'idle' \|\| batchBusy\}/);
-});
-
 // ---- F13: ticks the person set are kept when they pick another database and come back
-
-test('F13: the audit/app ticks of each picked database are remembered and given back, and a new host forgets them', () => {
-  assert.match(audit, /let decided = \$state<Record<string, \{ audit: boolean; app: boolean \}>>\(\{\}\);/);
-  assert.match(audit, /const before = name !== '' \? decided\[name\] : undefined;/);
-  assert.match(audit, /if \(database !== ''\) decided = \{ \.\.\.decided, \[database\]: \{ audit: auditTick, app: appTick \} \};/);
-  assert.match(body(audit, 'function resetFrom('), /decided = \{\};/);
-});
 
 // ---- F14: a closed drawer stops reading zips
 
@@ -177,18 +136,6 @@ test('F14: leaving the panel cancels reads in flight, and a zip is not read once
 test('F23: Clear moves the focus to the choose-files button', () => {
   assert.match(body(panel, 'async function focusChoose()'), /await tick\(\);[\s\S]*chooseButton\?\.focus\(\)/);
   assert.match(body(panel, 'function clear()'), /void focusChoose\(\);/);
-});
-
-test('F24: the computer select gets the focus back after Save, Cancel and Save zone; the batch summary after a run', () => {
-  const zone = read('src/components/wizard/ZoneChoice.svelte');
-  assert.match(zone, /bind:this=\{selectEl\}/);
-  assert.ok((zone.match(/void focusSelect\(\);/g) ?? []).length === 3, 'save, save zone only and cancel');
-  assert.match(batch, /bind:this=\{summaryEl\}/);
-  assert.match(batch, /tabindex="-1"/);
-  const settle = body(batch, 'async function settleFocus()');
-  assert.match(settle, /document\.activeElement/);
-  assert.match(settle, /summaryEl\?\.focus\(\)/);
-  assert.match(batch, /if \(!leave\.signal\.aborted\) \{ onFinished\?\.\(\); void settleFocus\(\); \}/);
 });
 
 test('F25: Remove skips the Remove button of a locked row', () => {

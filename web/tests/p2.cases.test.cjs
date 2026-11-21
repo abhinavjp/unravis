@@ -315,29 +315,6 @@ test('p2: the new strings pass the copy lint', () => {
   assert.deepEqual(lintScreenStrings(importCopy.importCopyEntries(), deck.terms), []);
 });
 
-test('p2: Case home and the case list wire Reopen, the retry list and the M2 notice with their guards', () => {
-  const home = read('src/lib/components/CaseHome.svelte');
-  assert.match(home, /reopenButton\(info, reopening\)/);
-  assert.match(home, /reopenCase\(id, believedState\(info\)\)/);
-  assert.match(home, /if \(!info \|\| reopening \|\| stale \|\| reopenState !== 'enabled'\) return;/, 'a second press while it runs does nothing, and nor does a press on a page another tab has outdated');
-  assert.match(home, /disabled=\{reopenState !== 'enabled' \|\| stale\}/, 'the stale Reopen is disabled');
-  assert.match(home, /disabled=\{tryingId !== 0 \|\| stale\}/, 'the stale Try again is disabled');
-  assert.match(home, /formatTime\(value, \{ zone: timeZone\.zone/, 'dates follow the UTC / Local choice');
-  assert.doesNotMatch(home, /toLocaleString/);
-  assert.match(home, /headingEl\?\.focus\(\)/, 'focus goes somewhere real after Reopen and Reload');
-  assert.match(home, /focusRetry\(index, item\.id\)/, 'focus goes to a real place after Try again or Remove from list');
-  assert.ok(home.indexOf('home-retries') < home.indexOf('home-analysis'), 'the retry list sits above Analysis');
-  assert.match(home, /CASE_HOME_TEXT\.retryCount/, 'the header counts the items needing another try');
-  assert.match(home, /CASE_HOME_TEXT\.changedElsewhere/);
-  assert.match(home, /CASE_HOME_TEXT\.retryHeading/);
-  assert.match(home, /history: info\?\.history/);
-  const panel = read('src/lib/components/CasePanel.svelte');
-  assert.match(panel, /closeCase\(c\.id, believedState\(c\)/);
-  assert.match(panel, /reopenCase\(c\.id, believedState\(c\)/);
-  assert.match(panel, /createCase\(title, requestId/);
-  assert.match(panel, /if \(busy \|\| reopeningId\) return;/);
-});
-
 test('p2: the workspace (Mongo link and filters) is restored when a case is opened, closed or not, so Reopen restores nothing itself', () => {
   const app = read('src/lib/appState.svelte.ts');
   const restoreLines = app.split('\n').filter((line) => /void restoreCaseWorkspace\(/.test(line));

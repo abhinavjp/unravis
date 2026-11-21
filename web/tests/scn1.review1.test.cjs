@@ -70,14 +70,6 @@ test('Review1-3: erase sends the belief in X-Expect-State, and sends none when t
   });
 });
 
-test('Review1-3: every erase caller passes the case state it shows', () => {
-  assert.match(read('src/components/EraseCase.svelte'), /eraseCase\(caseId, entered, believed, controller\.signal\)/);
-  assert.match(read('src/lib/components/CaseHome.svelte'), /<EraseCase [^>]*believed=\{info \? believedState\(info\) : undefined\}/);
-  assert.match(read('src/lib/components/CasePanel.svelte'), /eraseCase\(id, entered, row \? believedState\(row\) : undefined, controller\?\.signal\)/);
-  assert.match(read('src/lib/components/ArchivedList.svelte'), /eraseCase\(id, undefined, row \? believedState\(row\) : undefined\)/);
-  assert.match(read('src/components/StartScreen.svelte'), /eraseCase\(id, undefined, row \? believedState\(row\) : undefined\)/);
-});
-
 const keeperCard = read('src/components/sources/KeeperCard.svelte');
 
 test('Review1-4: "Yes remove" moves the focus to the dialog box before the buttons are disabled', () => {

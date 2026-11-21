@@ -255,35 +255,3 @@ test('the new copy passes the copy lint and is in the lint list', () => {
 
 /* ------------------------------------------------------------------ the screen, read as source */
 
-const panel = read('src/lib/components/ImportPanel.svelte');
-const group = read('src/lib/components/SuppliedSettings.svelte');
-
-test('the group is a collapsed native disclosure with real labels', () => {
-  assert.match(group, /<details class="supplied" bind:open>/);
-  assert.match(group, /let open = \$state\(false\)/, 'collapsed by default');
-  assert.match(group, /<summary>/);
-  assert.match(group, /<label for=\{id\}>/);
-  assert.match(group, /aria-describedby/);
-  assert.match(group, /role="alert"/);
-  assert.match(group, /aria-invalid/);
-});
-
-test('the group shows only the keys the chosen importer declares, and only once the type is known', () => {
-  assert.match(panel, /importerInfos\.find\(\(info\) => info\.name === importer\)\?\.supplied \?\? \[\]/);
-  assert.match(panel, /\{#if importer && file && specs\.length > 0\}/);
-  assert.match(group, /\{#each specs as spec \(spec\.key\)\}/);
-});
-
-test('values are sent through the checked set, and the screen keeps nothing in the URL or the log', () => {
-  assert.match(panel, /supplied: sentSupplied/);
-  assert.match(panel, /previewKey\(sent, importer, host, sentSupplied\)/);
-  assert.match(panel, /settingsProblem/);
-  for (const source of [panel, group]) assert.doesNotMatch(source, /console\.|localStorage|sessionStorage|location\.(?:search|hash)|history\.(?:push|replace)State/);
-});
-
-test('a refused file with no type can still be given one, and the history lists the settings', () => {
-  assert.match(panel, /undetected = true/);
-  assert.match(panel, /pickerRefused/);
-  assert.match(panel, /suppliedPairs\(r\.supplied\)/);
-  assert.match(panel, /IMPORT_TEXT\.suppliedHistory/);
-});

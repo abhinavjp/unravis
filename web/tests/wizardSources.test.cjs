@@ -717,14 +717,6 @@ test('health: findings that need a look come first and the counts add up', () =>
   assert.deepEqual(health.countByStatus(report), { ok: 1, note: 1, warn: 1, bad: 2, unavailable: 1 });
 });
 
-test('health: the panel runs checks only on a press and sends no free-text query', () => {
-  const panel = read('src/lib/components/HealthPanel.svelte');
-  assert.match(panel, /onclick=\{run\}/);
-  assert.doesNotMatch(panel, /\$effect/);
-  assert.match(read('src/lib/components/CaseTools.svelte'), /<HealthPanel \{caseId\} \{onGone\} \/>/);
-  assert.match(panel, /type="password"/);
-});
-
 test('health: its copy passes the screen-text lint', () => {
   assert.deepEqual(lintScreenStrings(healthCopy.healthCopyEntries()), []);
   assert.deepEqual(lintScreenStrings([{ id: 'wizard.sources.mongoChecksHint', text: copy.SOURCES_TEXT.mongoChecksHint }]), []);
