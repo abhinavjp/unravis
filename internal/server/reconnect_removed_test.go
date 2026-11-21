@@ -68,6 +68,31 @@ func TestRemovingASourceKeepsTheLinkOfAnotherSavedConnectionWithTheSameDatabase(
 	}
 }
 
+// BL-143: the source has no selection key and no connection label, and two saved connections share its database and collection. It
+// cannot be matched to one of them, so removing it keeps both links.
+func TestRemovingAnUnlabelledSourceKeepsLinksWhenTwoConnectionsShareItsDatabase(t *testing.T) {
+	store := realLinkStore(t)
+	for _, l := range []sourcelinks.Link{
+		{SavedConnectionID: "saved-1", Database: "shared", Collection: "audit", Label: "Shared audit"},
+		{SavedConnectionID: "saved-2", Database: "shared", Collection: "audit", Label: "Shared audit"},
+	} {
+		if err := store.Add(l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo := newReconnRepo(audit.Source{ID: "src-1", Label: "Shared audit", Database: "shared", Collection: "audit"})
+	h, ok := New(repo, nil, testToken, false, WithHistory(&reconnHistory{}), WithSourceLinks(store)).(*handler)
+	if !ok {
+		t.Fatal("New did not return the handler")
+	}
+	if res := request(h, http.MethodDelete, "/api/sources/src-1", "", true); res.Code != http.StatusNoContent {
+		t.Fatalf("delete = %d %s", res.Code, res.Body)
+	}
+	if got := storedDatabases(t, store); got != "saved-1/shared,saved-2/shared" {
+		t.Errorf("links after removing an unlabelled source = %q, want both kept", got)
+	}
+}
+
 // A failed delete puts back exactly the link it took, not a neighbour's.
 func TestAFailedRemoveRestoresOnlyItsOwnLinkWhenConnectionsShareADatabase(t *testing.T) {
 	store := realLinkStore(t)
