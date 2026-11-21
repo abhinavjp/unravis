@@ -195,6 +195,9 @@ try {
         Copy-Item "$manifest.sig" (Join-Path $files "$channel.json.sig")
         # The two uploads are not one atomic step; a client that reads between them fails the signature check and tries again later.
         Invoke-Checked 'updating the feed' { gh release upload update-feed (Join-Path $files "$channel.json") (Join-Path $files "$channel.json.sig") --repo $Repo --clobber }
+        gh workflow run mirror-feed.yml --repo $Repo 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Warning 'Could not start the mirror-feed workflow. The backup copy refreshes by itself every 30 minutes.' }
+        $global:LASTEXITCODE = 0
         Write-Host "Feed updated: $channel now points at $Tag."
     }
 } finally {

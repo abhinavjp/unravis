@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,14 @@ const (
 	// recorder programs, which refuse keys they do not know.
 	ManagedMarkerName = "managed-by-unravis"
 
+	// UpdateSourceFileName is a file in the program folder (administrators only) whose first line is a folder or share, for example
+	// \\fileserver\unravis-feed. The recorder then reads the signed feed files and the Blackbox package from there instead of the
+	// internet, for servers that cannot reach it. The files are the ones from the release page and go through the same checks
+	// (signature, hashes, anti-rollback); where they sit is not trusted. A marker file, not a settings key, so an older recorder
+	// program that does not know it still reads its settings. The service reads the folder as the computer account, so the share must
+	// let that account read.
+	UpdateSourceFileName = "update-source.txt"
+
 	// StoppedByUserMarkerName is a file left in the program folder when a person
 	// asked for the recorder to stop (the app's Stop, or the stop command). While
 	// it is there, an Unravis upgrade leaves the recorder stopped; without it an
@@ -55,6 +64,55 @@ const (
 	// accident. Start removes it. The folder is writable by administrators only.
 	StoppedByUserMarkerName = "stopped-by-user"
 )
+
+// ReadUpdateSource returns the update folder named in the program folder's update-source.txt, or "" for none. A relative or
+// odd value is refused with an error (the recorder then uses the internet, as before, and logs why).
+func ReadUpdateSource(progDir string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(progDir, UpdateSourceFileName))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("%s could not be read", UpdateSourceFileName)
+	}
+	if len(b) > 2048 {
+		return "", fmt.Errorf("%s is too large", UpdateSourceFileName)
+	}
+	line := ""
+	for _, l := range strings.Split(strings.TrimPrefix(string(b), "\ufeff"), "\n") {
+		if l = strings.Trim(strings.TrimSpace(l), `"`); l != "" {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		return "", nil
+	}
+	if !fullPathOK(line) {
+		return "", fmt.Errorf("%s must name a full path such as D:\\updates or \\\\server\\share", UpdateSourceFileName)
+	}
+	return line, nil
+}
+
+// fullPathOK accepts a drive path (C:\x), a share (\\server\share) or a rooted path, and nothing with a NUL or a ".." part.
+func fullPathOK(s string) bool {
+	if len(s) > 520 || strings.ContainsRune(s, 0) || strings.HasPrefix(s, `\\?\`) || strings.HasPrefix(s, `\\.\`) {
+		return false // device and long-path forms are not an update folder
+	}
+	for _, part := range strings.FieldsFunc(s, func(r rune) bool { return r == '\\' || r == '/' }) {
+		if part == ".." {
+			return false
+		}
+	}
+	switch {
+	case len(s) >= 3 && s[1] == ':' && (s[2] == '\\' || s[2] == '/') && ((s[0] >= 'a' && s[0] <= 'z') || (s[0] >= 'A' && s[0] <= 'Z')):
+		return true
+	case strings.HasPrefix(s, `\\`):
+		parts := strings.FieldsFunc(s[2:], func(r rune) bool { return r == '\\' })
+		return len(parts) >= 2 && !strings.HasPrefix(s, `\\\`) // \\server\share, both parts present
+	}
+	return runtime.GOOS != "windows" && strings.HasPrefix(s, "/") // a rooted path is not a full path on Windows
+}
 
 // MarkManaged leaves the managed marker in the Blackbox program folder.
 func MarkManaged(progDir string) error {
@@ -286,6 +344,9 @@ func resultSentence(r update.Result) string {
 	case update.StatusLatest:
 		return "Up to date."
 	case update.StatusUnreachable:
+		if strings.HasPrefix(r.Detail, "the update folder") { // plain words from the folder reader: no path, no OS text
+			return "T" + r.Detail[1:] + "."
+		}
 		return "Could not reach the update feed."
 	case update.StatusRejected:
 		return "The update feed was refused (it did not pass the signature checks)."
@@ -343,6 +404,11 @@ func NewServiceUpdater(cfg Config, version, exe string, logf func(string, ...any
 	dir := filepath.Join(filepath.Dir(exe), "updates")
 	fetcher := &update.Fetcher{Keys: keys, Build: update.ChannelOf(v), Current: v.String(), StatePath: filepath.Join(dir, "state.json")}
 	dl := &update.Downloader{Dir: dir, Current: v.String()}
+	src, serr := ReadUpdateSource(filepath.Dir(exe))
+	if serr != nil && logf != nil {
+		logf("update source: %v; using the internet", serr)
+	}
+	fetcher.Folder, dl.Folder = src, src
 	u := &SelfUpdater{
 		Mode: cfg.UpdateMode(), Interval: cfg.UpdateInterval(), Version: v.String(), Dir: dir, Log: logf,
 		Check: func(ctx context.Context) update.Result {
@@ -366,7 +432,12 @@ func NewServiceUpdater(cfg Config, version, exe string, logf func(string, ...any
 		Confirm: 2 * time.Minute,
 	}
 	// Managed by Unravis: updated with it, unless the settings ask for self-update by name.
-	if cfg.AutoUpdate == nil {
+	if src != "" && logf != nil {
+		if _, merr := os.Stat(filepath.Join(filepath.Dir(exe), ManagedMarkerName)); merr == nil {
+			logf("update source: this recorder is also marked as managed by Unravis; both may try to update it")
+		}
+	}
+	if cfg.AutoUpdate == nil && src == "" { // naming an update folder is asking for self-update
 		marker := filepath.Join(filepath.Dir(exe), ManagedMarkerName)
 		u.Managed = func() bool { _, serr := os.Stat(marker); return serr == nil }
 	}
