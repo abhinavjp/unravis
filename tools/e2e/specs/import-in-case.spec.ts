@@ -6,14 +6,14 @@ import { test, expect, type Page } from '../support/fixtures';
 import { createCase } from '../support/api';
 import { goHome, openCase } from '../support/ui';
 
-const popup = (page: Page) => page.getByRole('dialog', { name: 'Import files' });
+const popup = (page: Page) => page.getByRole('dialog', { name: 'Add files' });
 const useThisCase = (page: Page) => page.getByRole('button', { name: /^Use this case/ });
 
 /** The popup is on the Choose step of the case with this title: no case list, the file picker is there, and the page names the case by its code. */
 async function expectPopupOfThisCase(page: Page, title: string, id: string) {
   const d = popup(page);
   await expect(d).toHaveCount(1);
-  await expect(d.getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
+  await expect(d.getByRole('heading', { name: 'Add files', level: 2 })).toBeVisible();
   await expect(d.locator('.case-chip')).toContainText(title);
   await expect(d.locator('.prog-line')).toContainText('Step 1 of 3 · Choose files to import');
   await expect(d.getByText('Drop files or a folder here')).toBeVisible();

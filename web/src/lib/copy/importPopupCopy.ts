@@ -17,7 +17,7 @@ function addFailReason(reason: string): string {
 }
 
 export const POPUP_TEXT = {
-  title: 'Import files',
+  title: 'Add files',
   stepNames: ['Choose', 'Check', 'Result'],
   prog: {
     1: 'Step 1 of 3 · Choose files to import',
@@ -31,7 +31,7 @@ export const POPUP_TEXT = {
   addFiles: 'Add files',
   addFolder: 'Add a folder',
   continueBtn: 'Continue',
-  nothingSent: 'Nothing is sent until you press Import.',
+  nothingSent: 'Nothing is sent until you press Add.',
 
   checking: (n: number): string => 'Checking ' + n + filesWord(n) + ' with the server…',
   checkingSub: 'Nothing is imported yet.',
@@ -61,8 +61,8 @@ export const POPUP_TEXT = {
   kinds: ['IIS web log', 'log4net', 'SQL error log', 'Windows event log', 'Hangfire', 'other'],
 
   ack: 'I understand this is read-only and nothing is changed on these computers',
-  importBtn: (n: number): string => 'Import ' + n + filesWord(n),
-  fixesNeeded: (n: number): string => n + (n === 1 ? ' fix' : ' fixes') + ' needed before you can import',
+  importBtn: (n: number): string => 'Add ' + n + filesWord(n),
+  fixesNeeded: (n: number): string => n + (n === 1 ? ' fix' : ' fixes') + ' needed before you can add',
 
   discardTitle: (n: number): string => 'Discard ' + n + filesWord(n) + '?',
   discardBody: 'These files are still on the list. Discarding clears them and closes the popup.',

@@ -31,15 +31,15 @@ async function openPopup(page: Page, api: ApiFn, title: string): Promise<Locator
   await goHome(page);
   await openCase(page, title);
   await page.getByRole('button', { name: 'Add a file' }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'Import files' });
+  const dialog = page.getByRole('dialog', { name: 'Add files' });
   await expect(dialog).toBeVisible();
   return dialog;
 }
 
 const picker = (dialog: Locator) => dialog.getByLabel('Choose files to import');
 const ack = (dialog: Locator) => dialog.getByRole('checkbox', { name: 'Confirm read-only' });
-const importButton = (dialog: Locator, n: number) => dialog.getByRole('button', { name: `Import ${n} ${n === 1 ? 'file' : 'files'}`, exact: true });
-const fixesHint = (dialog: Locator, n: number) => dialog.getByText(`${n} ${n === 1 ? 'fix' : 'fixes'} needed before you can import`);
+const importButton = (dialog: Locator, n: number) => dialog.getByRole('button', { name: `Add ${n} ${n === 1 ? 'file' : 'files'}`, exact: true });
+const fixesHint = (dialog: Locator, n: number) => dialog.getByText(`${n} ${n === 1 ? 'fix' : 'fixes'} needed before you can add`);
 const hostsOf = async (api: ApiFn) => (await api('GET', '/api/hosts')).json.hosts as Array<{ label: string; tz?: string }>;
 
 /** Presses Continue and waits until the check has answered (the read-only box is drawn only then). */

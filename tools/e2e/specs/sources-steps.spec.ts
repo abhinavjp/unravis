@@ -114,7 +114,7 @@ test('GUIDE-21: the Add data tab has five cards with their counts and each butto
   await page.getByRole('tab', { name: 'Add data', exact: true }).click();
   await card('files').getByRole('button', { name: 'Add files' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(1);
-  await expect(page.getByRole('heading', { name: 'Import files' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Add files' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Add data' })).toBeVisible();
