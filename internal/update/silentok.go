@@ -21,5 +21,10 @@ func SilentNoUAC(dir string) bool {
 	if json.Unmarshal(b, &s) != nil {
 		return false
 	}
-	return s.Scope == "user" && (len(s.Blackbox) == 0 || string(s.Blackbox) == "null")
+	if s.Scope != "user" || (len(s.Blackbox) != 0 && string(s.Blackbox) != "null") {
+		return false
+	}
+	// Setup also asks for approval when a key keeper or Blackbox service is left from an earlier install for everyone; it decides
+	// the same way, from the service list (no administrator rights are needed to ask).
+	return !anyServiceInstalled("UnravisKeeper", "UnravisBlackbox")
 }

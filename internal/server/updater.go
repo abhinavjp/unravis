@@ -224,6 +224,12 @@ func (u *Updater) Status() UpdateStatus {
 	default:
 		st.Status = "unreachable"
 	}
+	// A run nobody watched that ended badly: the bar must not go on saying "being applied".
+	if st.Result != nil && st.Result.Outcome != "done" && st.Install != nil && st.Install.State == "launched" && st.Install.Version == st.Result.To {
+		c := *st.Install
+		c.State, c.Error = "failed", st.Result.Message
+		st.Install = &c
+	}
 	// An update found earlier stays on offer while a later check fails: it was verified, and the file may already be downloaded.
 	if st.Status == "unreachable" || st.Status == "unverified" {
 		if m := u.validAvail(); m != nil {

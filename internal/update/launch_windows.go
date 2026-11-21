@@ -3,6 +3,7 @@
 package update
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -54,7 +55,12 @@ func LaunchSetup(path, sha256hex, version string) error {
 // started again by the setup program). The caller passes the path, hash and version from the
 // marker the installer wrote; nothing from the network reaches this call.
 func LaunchRollback(path, sha256hex, version string) error {
-	return launchSetup(path, sha256hex, version, []string{"--allow-downgrade", "--silent", "--close-app"})
+	extra := []string{"--allow-downgrade"}
+	// The kept setup is the OLD version's. Only one that knows --close-app can go back silently; an older one does it in its window.
+	if data, err := os.ReadFile(path); err == nil && bytes.Contains(data, []byte("close-app")) {
+		extra = append(extra, "--silent", "--close-app")
+	}
+	return launchSetup(path, sha256hex, version, extra)
 }
 
 // LaunchSilent starts the downloaded setup with no window of any kind: --silent --upgrade --close-app. The setup program asks this

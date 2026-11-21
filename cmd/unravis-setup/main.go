@@ -53,6 +53,8 @@ type env struct {
 	openWindow func(browser, url string) error
 	openFolder func(dir string) error
 	startApp   func(exe string) error
+	// startBackground starts Unravis in the tray with no browser tab (an unattended update's restart).
+	startBackground func(exe string) error
 	// notice shows a message box; used only when an unattended update leaves no running program (nil in tests).
 	notice func(title, text string)
 	// dialWorker is the worker's end of the pipe.
@@ -82,7 +84,7 @@ func osEnv() env {
 			return setup.LoadPayload(sub)
 		},
 		static:     func() (fs.FS, error) { return fs.Sub(uiFiles, "ui") },
-		openWindow: setup.OpenWindow, openFolder: setup.ShowFolder, startApp: setup.StartProgram, notice: setup.ShowNotice,
+		openWindow: setup.OpenWindow, openFolder: setup.ShowFolder, startApp: setup.StartProgram, startBackground: setup.StartProgramBackground, notice: setup.ShowNotice,
 		dialWorker: setup.DialWorkerPipe, listen: setup.Listen, idleAfter: 3 * time.Minute,
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) {
 			return signal.NotifyContext(ctx, os.Interrupt)
@@ -294,6 +296,10 @@ func runSilent(o options, e env) int {
 	}
 	old, _ := setup.Detect(r.Sys.Reg)
 	setup.FillRecordingsConfirmation(&req, old)
+	wasRunning := false
+	if o.closeApp && old != nil {
+		wasRunning, _ = appRunning(e, old.Location) // only an app that was up is started again
+	}
 	opts := req.Options
 	if old != nil {
 		opts = old.State.Options() // upgrade, repair, uninstall and a second install keep the choices of the install
@@ -319,7 +325,7 @@ func runSilent(o options, e env) int {
 	}
 	report(say, res, logPath)
 	if o.closeApp {
-		afterUnattended(o, e, d, old, res, say, l)
+		afterUnattended(o, e, d, old, wasRunning, res, say, l)
 	}
 	return res.Outcome.ExitCode()
 }
@@ -327,7 +333,7 @@ func runSilent(o options, e env) int {
 // afterUnattended is the end of an update the app started and nobody watches: start the app again if it was running, and leave a
 // plain note for the next start (or the current one) to show. A failed run was rolled back by the engine; the old version is started
 // again then too, so the person is never left with no program.
-func afterUnattended(o options, e env, d setup.Dirs, old *setup.Installed, res setup.Result, say func(string, ...any), l *setup.FileLog) {
+func afterUnattended(o options, e env, d setup.Dirs, old *setup.Installed, wasRunning bool, res setup.Result, say func(string, ...any), l *setup.FileLog) {
 	from := ""
 	loc := ""
 	if old != nil {
@@ -349,25 +355,29 @@ func afterUnattended(o options, e env, d setup.Dirs, old *setup.Installed, res s
 		r.Outcome = "failed"
 		r.Message = "The update to " + o.expectVersion + " did not happen. Unravis stays on " + from + ". " + res.Message
 	}
-	// In this mode the app itself asked for the update, so it was running: start it again (the new version after a good run, the old
-	// one after a rollback) unless it is already up.
-	if loc != "" && e.startApp != nil {
+	// The app that asked for the update was running (the snapshot before the run says so): start it again, in the tray with no browser
+	// tab (the new version after a good run, the old one after a rollback) unless it is already up. An app that was not running
+	// (the person quit it, or an administrator ran this by hand) is left alone.
+	failedToStart := false
+	if wasRunning && loc != "" && e.startBackground != nil {
 		if running, _ := appRunning(e, loc); !running {
-			if err := e.startApp(filepath.Join(loc, "unravis.exe")); err != nil {
+			if err := e.startBackground(filepath.Join(loc, "unravis.exe")); err != nil {
 				l.Line("restart: could not start Unravis: " + err.Error())
 				r.Message += " Unravis could not be started again; open it from the Start menu."
-				if e.notice != nil {
-					e.notice("Unravis", r.Message)
-				}
+				failedToStart = true
 			} else {
 				r.Restarted = true
 			}
 		}
 	}
+	// The note is written first: the message box below waits for a click, and the note must not wait with it.
 	if d.LocalAppData != "" {
 		if err := update.WriteApplyResult(filepath.Join(d.LocalAppData, "Unravis", "update-result"), r); err != nil {
 			l.Line("result: could not write the update result: " + err.Error())
 		}
+	}
+	if failedToStart && e.notice != nil {
+		e.notice("Unravis", r.Message)
 	}
 	say("update result: %s", r.Outcome)
 }

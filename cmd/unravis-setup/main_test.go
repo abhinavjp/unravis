@@ -555,11 +555,11 @@ func TestAfterUnattendedStartsTheAppAndLeavesANote(t *testing.T) {
 	}{{"good run", setup.OutcomeDone, "done"}, {"rolled back", setup.OutcomeRolledBack, "rolled-back"}, {"refused", setup.OutcomePreflightFailed, "failed"}} {
 		rg := newRig(t)
 		var started []string
-		rg.env.startApp = func(exe string) error { started = append(started, exe); return nil }
+		rg.env.startBackground = func(exe string) error { started = append(started, exe); return nil }
 		loc := filepath.Join(rg.dirs.LocalAppData, "Programs", "Unravis")
 		old := &setup.Installed{Location: loc, Version: "1.0.0"}
 		l, _ := openLog(options{}, rg.env, rg.dirs.LocalAppData, false)
-		afterUnattended(options{expectVersion: "1.1.0"}, rg.env, rg.dirs, old, setup.Result{Outcome: tc.outcome, Message: "x"}, func(string, ...any) {}, l)
+		afterUnattended(options{expectVersion: "1.1.0"}, rg.env, rg.dirs, old, true, setup.Result{Outcome: tc.outcome, Message: "x"}, func(string, ...any) {}, l)
 		closeLog(l)
 		if len(started) != 1 || started[0] != filepath.Join(loc, "unravis.exe") {
 			t.Errorf("%s: started %v", tc.name, started)
@@ -569,14 +569,44 @@ func TestAfterUnattendedStartsTheAppAndLeavesANote(t *testing.T) {
 			t.Errorf("%s: result %+v %v", tc.name, got, ok)
 		}
 	}
-	// If Unravis cannot be started the note says so.
+}
+
+func TestAfterUnattendedLeavesAnAppThatWasNotRunning(t *testing.T) {
 	rg := newRig(t)
-	rg.env.startApp = func(string) error { return errors.New("blocked") }
+	started := 0
+	rg.env.startBackground = func(string) error { started++; return nil }
 	old := &setup.Installed{Location: filepath.Join(rg.dirs.LocalAppData, "Programs", "Unravis"), Version: "1.0.0"}
 	l, _ := openLog(options{}, rg.env, rg.dirs.LocalAppData, false)
-	afterUnattended(options{expectVersion: "1.1.0"}, rg.env, rg.dirs, old, setup.Result{Outcome: setup.OutcomeDone}, func(string, ...any) {}, l)
+	afterUnattended(options{expectVersion: "1.1.0"}, rg.env, rg.dirs, old, false, setup.Result{Outcome: setup.OutcomeDone}, func(string, ...any) {}, l)
 	closeLog(l)
-	got, _ := update.ReadApplyResult(filepath.Join(rg.dirs.LocalAppData, "Unravis", "update-result"))
+	if started != 0 {
+		t.Fatal("started an app that was not running before the update")
+	}
+	if got, ok := update.ReadApplyResult(filepath.Join(rg.dirs.LocalAppData, "Unravis", "update-result")); !ok || got.Restarted {
+		t.Fatalf("result %+v %v", got, ok)
+	}
+}
+
+func TestAfterUnattendedWritesTheNoteBeforeTheMessageBox(t *testing.T) {
+	rg := newRig(t)
+	rg.env.startBackground = func(string) error { return errors.New("blocked") }
+	noteDir := filepath.Join(rg.dirs.LocalAppData, "Unravis", "update-result")
+	var noteWasThere, boxShown bool
+	rg.env.notice = func(title, text string) {
+		boxShown = true
+		_, noteWasThere = update.ReadApplyResult(noteDir)
+		if !strings.Contains(text, "Start menu") {
+			t.Errorf("box text %q", text)
+		}
+	}
+	old := &setup.Installed{Location: filepath.Join(rg.dirs.LocalAppData, "Programs", "Unravis"), Version: "1.0.0"}
+	l, _ := openLog(options{}, rg.env, rg.dirs.LocalAppData, false)
+	afterUnattended(options{expectVersion: "1.1.0"}, rg.env, rg.dirs, old, true, setup.Result{Outcome: setup.OutcomeDone}, func(string, ...any) {}, l)
+	closeLog(l)
+	if !boxShown || !noteWasThere {
+		t.Fatalf("box shown %v, note there when it was %v", boxShown, noteWasThere)
+	}
+	got, _ := update.ReadApplyResult(noteDir)
 	if got.Restarted || !strings.Contains(got.Message, "Start menu") {
 		t.Errorf("result %+v", got)
 	}

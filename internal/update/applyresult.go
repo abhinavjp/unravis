@@ -8,7 +8,7 @@ import (
 )
 
 // ApplyResult is what a silent, unattended update run leaves behind (docs/auto-updater/SILENT-UPDATE.md). Nobody watches that run, so
-// the next time Unravis starts it reads this file and tells the person plainly what happened. It holds no path and no secret.
+// the next time Unravis starts it reads this file and tells the person plainly what happened. It holds no secret; its message is setup's plain text (it can name a folder).
 type ApplyResult struct {
 	From      string    `json:"from"`
 	To        string    `json:"to"`

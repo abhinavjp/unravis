@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -43,8 +46,9 @@ func (p *Presence) Active(now time.Time, window time.Duration) bool {
 }
 
 type autoState struct {
-	mu    sync.Mutex
-	tries map[string]int // version -> automatic applies that did not end the app
+	mu     sync.Mutex
+	tries  map[string]int // version -> automatic applies tried; also kept on disk, so a restart does not forget it
+	loaded bool
 	// Failed automatic downloads wait longer each time (5 minutes, then 15, 60, and 6 hours at most), so a PC with no route to the
 	// feed does not try every minute.
 	dlFails int
@@ -108,9 +112,7 @@ func (u *Updater) autoStep() {
 	if m == nil {
 		return
 	}
-	u.auto.mu.Lock()
-	tries := u.auto.tries[m.Version]
-	u.auto.mu.Unlock()
+	tries := u.autoTries(m.Version)
 	if tries >= autoMaxTries {
 		return // it did not work twice; the bar tells the person and they decide
 	}
@@ -124,6 +126,15 @@ func (u *Updater) autoStep() {
 		u.auto.mu.Lock()
 		u.auto.dlFails, u.auto.dlNext = 0, time.Time{}
 		u.auto.mu.Unlock()
+	case state == "failed" && ver == m.Version && u.fileStillThere(m):
+		// The file is fine: it was the start of the setup program that failed (a blocked or refused launch), not the download. Back
+		// to "ready" so the next tick can try again, within the cap above; it is not a download failure and earns no download wait.
+		u.inst.mu.Lock()
+		if u.inst.info.State == "failed" && u.inst.info.Version == m.Version {
+			u.inst.info = InstallInfo{State: "ready", Version: m.Version, Done: u.inst.info.Total, Total: u.inst.info.Total}
+		}
+		u.inst.mu.Unlock()
+		return
 	case state == "" || ver != m.Version || state == "failed":
 		// A download is small next to the day and does not interrupt anyone, so it starts whether or not the app is in use.
 		u.auto.mu.Lock()
@@ -147,13 +158,8 @@ func (u *Updater) autoStep() {
 	if u.InUse() || (u.canSilently != nil && !u.canSilently()) {
 		return
 	}
-	u.auto.mu.Lock()
-	if u.auto.tries == nil {
-		u.auto.tries = map[string]int{}
-	}
-	u.auto.tries[m.Version]++
-	u.auto.mu.Unlock()
-	_ = u.Install() // quits this app through the setup program; the new (or, after a rollback, old) version starts by itself
+	u.bumpAutoTries(m.Version) // written before the launch: a try that kills the app is still counted after the restart
+	_ = u.Install()            // quits this app through the setup program; the new (or, after a rollback, old) version starts by itself
 }
 
 // SetResultDir says where the setup program leaves the result of an unattended update. Status reports it until it is dismissed.
@@ -164,4 +170,50 @@ func (u *Updater) DismissResult() {
 	if u.resultDir != "" {
 		update.ClearApplyResult(u.resultDir)
 	}
+}
+
+// The count of automatic applies per version is kept in auto-tries.json beside the settings. A try that closes the app and ends in a
+// rollback restarts the program, and a counter held only in memory would start again from zero: the same failing update would be
+// applied again every few minutes. Only the version on offer is kept; a newer version starts fresh.
+type autoTriesFile struct {
+	Version string `json:"version"`
+	Tries   int    `json:"tries"`
+}
+
+func (u *Updater) autoTriesPath() string { return filepath.Join(u.dir, "auto-tries.json") }
+
+func (u *Updater) autoTries(version string) int {
+	u.auto.mu.Lock()
+	defer u.auto.mu.Unlock()
+	if !u.auto.loaded {
+		u.auto.loaded = true
+		if b, err := os.ReadFile(u.autoTriesPath()); err == nil && len(b) < 1024 {
+			var f autoTriesFile
+			if json.Unmarshal(b, &f) == nil && f.Version != "" && f.Tries > 0 {
+				if u.auto.tries == nil {
+					u.auto.tries = map[string]int{}
+				}
+				u.auto.tries[f.Version] = f.Tries
+			}
+		}
+	}
+	return u.auto.tries[version]
+}
+
+func (u *Updater) bumpAutoTries(version string) {
+	n := u.autoTries(version) + 1
+	u.auto.mu.Lock()
+	defer u.auto.mu.Unlock()
+	u.auto.tries = map[string]int{version: n}
+	if b, err := json.Marshal(autoTriesFile{Version: version, Tries: n}); err == nil {
+		if os.MkdirAll(u.dir, 0o700) == nil {
+			_ = os.WriteFile(u.autoTriesPath(), b, 0o600)
+		}
+	}
+}
+
+// fileStillThere says the downloaded setup for m is still on disk and unchanged.
+func (u *Updater) fileStillThere(m *update.Manifest) bool {
+	_, ok := u.dl.Recheck(m, update.AssetSetup)
+	return ok
 }
