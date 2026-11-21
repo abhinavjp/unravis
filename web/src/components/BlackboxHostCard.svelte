@@ -2,6 +2,7 @@
   import { blackboxApi, defaultHostWindows, gapSummary, refusalText, shownTime, type BlackboxItem, type HostAnswer } from '../lib/blackbox';
   import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
   import WindowPicker from '../lib/components/WindowPicker.svelte';
+  import { timeZone } from '../lib/timeZone.svelte';
 
   // Step 9, host and network, read from one Blackbox for two windows. A gap of 2 minutes or less warns and the check
   // runs on the minutes that exist. A longer gap makes the minutes inside it Cannot test yet. Missing minutes are never zero.
@@ -64,14 +65,14 @@
   <details class="bb-windows" open>
     <summary>{T.hostRead}: {item.name}</summary>
     <div class="bb-grid">
-      <fieldset><legend>{T.hostIncident} (UTC)</legend>
-        <WindowPicker variant="inline" label={`${T.hostIncident} (UTC)`} bind:start={incStart} bind:end={incEnd} />
+      <fieldset><legend>{T.hostIncident} ({timeZone.short})</legend>
+        <WindowPicker variant="inline" label={T.hostIncident} bind:start={incStart} bind:end={incEnd} zone={timeZone.zone} zoneName={timeZone.short} />
       </fieldset>
-      <fieldset><legend>{T.hostReference} (UTC)</legend>
-        <WindowPicker variant="inline" label={`${T.hostReference} (UTC)`} bind:start={refStart} bind:end={refEnd} />
+      <fieldset><legend>{T.hostReference} ({timeZone.short})</legend>
+        <WindowPicker variant="inline" label={T.hostReference} bind:start={refStart} bind:end={refEnd} zone={timeZone.zone} zoneName={timeZone.short} />
       </fieldset>
     </div>
-    {#if noEarlier}<p class="bb-note" id="bb-host-no-earlier">{T.hostNoEarlier(shownTime(item.facts?.firstSample))}</p>{/if}
+    {#if noEarlier}<p class="bb-note" id="bb-host-no-earlier">{T.hostNoEarlier(shownTime(item.facts?.firstSample, timeZone.zone))}</p>{/if}
     <button type="button" class="secondary-button" disabled={busy} onclick={read} aria-describedby={noEarlier ? 'bb-host-no-earlier' : undefined}>{busy ? T.hostRunning : T.hostRun}</button>
   </details>
 
@@ -89,7 +90,7 @@
             {#if gaps.shortMinutes > 0}<p>{T.hostGapShort(gaps.shortMinutes)}</p>{/if}
             {#if gaps.longMinutes > 0}<p>{T.hostGapLong(gaps.longMinutes)}</p>{/if}
             <ul class="bb-list" aria-label={T.hostGapList}>
-              {#each answer.gaps as gap, i (i)}<li>{shownTime(gap.start)} to {shownTime(gap.end)}: {T.hostGapMinutes(gap.minutes)} ({gap.window})</li>{/each}
+              {#each answer.gaps as gap, i (i)}<li>{shownTime(gap.start, timeZone.zone)} to {shownTime(gap.end, timeZone.zone)}: {T.hostGapMinutes(gap.minutes)} ({gap.window})</li>{/each}
             </ul>
           </div>
         {/if}
@@ -98,7 +99,7 @@
         {#if answer.step.findings?.length}
           <ul class="bb-list">{#each answer.step.findings as finding, i (i)}<li>{finding}</li>{/each}</ul>
         {/if}
-        {#if answer.onset}<p class="bb-note">{T.hostOnset} {shownTime(answer.onset)}.</p>{/if}
+        {#if answer.onset}<p class="bb-note">{T.hostOnset} {shownTime(answer.onset, timeZone.zone)}.</p>{/if}
         {#if answer.topProcess}<p class="bb-note">{T.hostTopProcess}: {answer.topProcess}</p>{/if}
         <p class="bb-note">{T.hostMinutes(answer.covered)} {T.hostReadNote(answer.read.files, answer.read.samples)}</p>
         {#if answer.read.torn > 0}<p class="bb-note">{T.hostTorn(answer.read.torn)}</p>{/if}

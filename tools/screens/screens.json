@@ -1062,7 +1062,7 @@
         {
           "select": [
             "role=combobox[name=\"Incident window start time hour\"]",
-            "7"
+            "8"
           ]
         },
         {
@@ -1073,26 +1073,14 @@
         },
         {
           "select": [
-            "role=combobox[name=\"Incident window start time AM or PM\"]",
-            "AM"
-          ]
-        },
-        {
-          "select": [
             "role=combobox[name=\"Incident window end time hour\"]",
-            "7"
+            "8"
           ]
         },
         {
           "select": [
             "role=combobox[name=\"Incident window end time minute\"]",
             "55"
-          ]
-        },
-        {
-          "select": [
-            "role=combobox[name=\"Incident window end time AM or PM\"]",
-            "AM"
           ]
         },
         {
@@ -1104,7 +1092,7 @@
         {
           "select": [
             "role=combobox[name=\"Reference window start time hour\"]",
-            "7"
+            "8"
           ]
         },
         {
@@ -1115,26 +1103,14 @@
         },
         {
           "select": [
-            "role=combobox[name=\"Reference window start time AM or PM\"]",
-            "AM"
-          ]
-        },
-        {
-          "select": [
             "role=combobox[name=\"Reference window end time hour\"]",
-            "7"
+            "8"
           ]
         },
         {
           "select": [
             "role=combobox[name=\"Reference window end time minute\"]",
             "30"
-          ]
-        },
-        {
-          "select": [
-            "role=combobox[name=\"Reference window end time AM or PM\"]",
-            "AM"
           ]
         },
         {
@@ -1190,7 +1166,7 @@
         {
           "select": [
             "role=combobox[name=\"Incident window start time hour\"]",
-            "7"
+            "8"
           ]
         },
         {
@@ -1201,26 +1177,14 @@
         },
         {
           "select": [
-            "role=combobox[name=\"Incident window start time AM or PM\"]",
-            "AM"
-          ]
-        },
-        {
-          "select": [
             "role=combobox[name=\"Incident window end time hour\"]",
-            "7"
+            "8"
           ]
         },
         {
           "select": [
             "role=combobox[name=\"Incident window end time minute\"]",
             "55"
-          ]
-        },
-        {
-          "select": [
-            "role=combobox[name=\"Incident window end time AM or PM\"]",
-            "AM"
           ]
         },
         {
@@ -1232,7 +1196,7 @@
         {
           "select": [
             "role=combobox[name=\"Reference window start time hour\"]",
-            "6"
+            "7"
           ]
         },
         {
@@ -1243,26 +1207,14 @@
         },
         {
           "select": [
-            "role=combobox[name=\"Reference window start time AM or PM\"]",
-            "AM"
-          ]
-        },
-        {
-          "select": [
             "role=combobox[name=\"Reference window end time hour\"]",
-            "7"
+            "8"
           ]
         },
         {
           "select": [
             "role=combobox[name=\"Reference window end time minute\"]",
             "20"
-          ]
-        },
-        {
-          "select": [
-            "role=combobox[name=\"Reference window end time AM or PM\"]",
-            "AM"
           ]
         },
         {

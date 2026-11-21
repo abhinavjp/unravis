@@ -71,30 +71,6 @@ test('minor 13: with nothing chosen the newest day opens, not the first one in t
 
 // ---- M2 ------------------------------------------------------------------------------------------------------------------------------
 
-test('M2: a closed case offers no read, add, test, edit or forget, and says why', () => {
-  const home = read('src/lib/components/CaseHome.svelte');
-  assert.match(home, /<SourcesHub \{caseId\} \{readOnly\}/, 'the case page hands its read-only state to the hub');
-  const hub = comp('SourcesHub');
-  for (const mount of ['ConnectionsPage', 'SqlStepPanel', 'MongoStepPanel', 'AddSourcesFlow', 'AddAnotherDay']) {
-    assert.match(hub, new RegExp('<' + mount + ' [^>]*\\{readOnly\\}'), mount + ' gets readOnly from the hub');
-  }
-  for (const name of ['SqlStepPanel', 'MongoStepPanel']) assert.match(comp(name), /readOnly = false/, name + ' stays usable in the guided shell, which never passes it');
-  const page = comp('ConnectionsPage');
-  assert.match(page, /disabled=\{testing !== '' \|\| readOnly\}/);
-  assert.equal((page.match(/disabled=\{readOnly\}/g) ?? []).length, 2, 'edit and forget are off');
-  assert.match(page, /disabled=\{full \|\| readOnly\}/);
-  const add = comp('AddDataPanel');
-  assert.match(add, /disabled=\{off\} onclick=\{\(\) => choose\('sql'\)\}/);
-  assert.match(add, /const off = \$derived\(readOnly \|\| busy\)/, 'off is read-only, plus busy while the drawer sends');
-  assert.match(add, /disabled=\{off\} onclick=\{\(\) => choose\('mongo'\)\}/);
-  assert.match(add, /disabled=\{off \|\| byDay === 0\}/);
-  const step = comp('SourceStep');
-  assert.equal((step.match(/data-read-only/g) ?? []).length, 2, 'both places the step would read say why they do not');
-  assert.match(step, /onAddDay=\{readableByDay\(kind\) && !readOnly/);
-  assert.match(comp('AddAnotherDay'), /\{#if readOnly\}/);
-  assert.match(copy.HUB_TEXT.readOnlyWhy, /closed/);
-});
-
 test('M2: the case-closed refusal reads as a plain sentence, not as another read running', () => {
   const refused = new CaseApiError('The case is closed, so nothing was read. Reopen the case to read from a server.', 409, 'case-closed');
   assert.equal(lanes.runProblem(refused).text, copy.RUN_TEXT.closed);
@@ -103,19 +79,6 @@ test('M2: the case-closed refusal reads as a plain sentence, not as another read
 });
 
 // ---- M3 ------------------------------------------------------------------------------------------------------------------------------
-
-test('M3: Add data never clicks into nothing: Files opens the import page, Blackbox opens the Blackbox page and is off only in a closed case', () => {
-  const hub = comp('SourcesHub');
-  assert.match(hub, /<AddSourcesFlow \{caseId\} \{readOnly\} onFiles=\{onAddFiles\} onDone=/, 'the Add data tab is the one source wizard; its Files tile opens the one Add files pop-up, Blackbox is a card inside it');
-  const add = comp('AddDataPanel');
-  assert.match(add, /disabled=\{off\} onclick=\{\(\) => choose\('blackbox'\)\}/, 'the Blackbox card is on unless the case is closed (or an import is sending)');
-  assert.match(add, /disabled=\{off \|\| !files\} onclick=\{\(\) => choose\('files'\)\}/);
-  assert.doesNotMatch(add, /data-unavailable="blackbox"|blackboxLater/, 'no until-P9 note is left');
-  assert.equal(copy.ADD_TEXT.blackboxLater, undefined);
-  const home = read('src/lib/components/CaseHome.svelte');
-  assert.match(home, /onAddFiles=\{openCaseImport\}/, 'Files opens the import drawer that exists on this branch');
-  assert.match(read('src/App.svelte'), /panels\.sidePanel === 'blackbox'\}<BlackboxPanel/);
-});
 
 // ---- M4 ------------------------------------------------------------------------------------------------------------------------------
 

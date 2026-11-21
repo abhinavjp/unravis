@@ -224,7 +224,7 @@ test('wiring: the screens use the picker and no browser date-time box is left', 
 test('wiring: the picker keeps its keyboard and screen-reader contract', () => {
   const picker = read('src/lib/components/WindowPicker.svelte');
   assert.match(picker, /role="dialog"/);
-  assert.match(picker, /aria-label=\{dialogLabel\(label\)\}/);
+  assert.match(picker, /aria-label=\{dialogLabel\(label, zoneName\)\}/);
   assert.match(picker, /aria-pressed/);
   assert.match(picker, /dayLabel\(/);
   assert.match(picker, /aria-invalid/);

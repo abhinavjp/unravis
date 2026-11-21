@@ -139,3 +139,28 @@ test('overview tiles are hairline-separated columns with no coloured side stripe
   assert.doesNotMatch(style, /border-(left|inline-start)\s*:\s*[^;]*var\(--(accent|bad|warn|good)/);
   assert.doesNotMatch(style, /border-radius:\s*var/);
 });
+
+test('BL-181 (owner call 2026-11-21): London is the default zone; Dublin, UTC, India, Australia (Sydney) and this computer can be picked', () => {
+  const store = read('src/lib/timeZone.svelte.ts');
+  assert.match(store, /DEFAULT_TIME_ZONE: TimeZoneChoice = 'london'/);
+  for (const [id, zone] of [['london', 'Europe/London'], ['dublin', 'Europe/Dublin'], ['utc', 'UTC'], ['india', 'Asia/Kolkata'], ['australia', 'Australia/Sydney']]) {
+    assert.ok(store.includes(`id: '${id}'`) && store.includes(`zone: '${zone}'`), id);
+  }
+  assert.match(store, /id: 'local'/, 'the earlier Local choice is still offered and a stored "local" or "utc" is kept');
+  const toggle = read('src/components/TimeZoneToggle.svelte');
+  assert.match(toggle, /<select aria-label="Show and type times in"/);
+  assert.match(toggle, /timeZone\.set\(/);
+});
+
+test('BL-181: Health checks earlier runs and the Blackbox times follow the zone choice, not the browser default', () => {
+  const health = read('src/lib/components/HealthPanel.svelte');
+  assert.doesNotMatch(health, /toLocaleString\(\)/);
+  assert.match(health, /formatTime\(iso, \{ zone: timeZone\.zone/);
+  assert.doesNotMatch(read('src/components/sourcewiz/BlackboxCard.svelte'), /toLocaleString\(\)/);
+  for (const file of ['BlackboxPanel', 'BlackboxCharts', 'BlackboxHostCard', 'BlackboxAdd']) {
+    const source = read('src/components/' + file + '.svelte');
+    for (const call of source.match(/shownTime\([^)]*\)/g) || []) assert.match(call, /timeZone\.zone\)$/, file + ': ' + call);
+  }
+  const host = read('src/components/BlackboxHostCard.svelte');
+  assert.equal((host.match(/zone=\{timeZone\.zone\} zoneName=\{timeZone\.short\}/g) || []).length, 2, 'both host-read windows are typed in the chosen zone');
+});

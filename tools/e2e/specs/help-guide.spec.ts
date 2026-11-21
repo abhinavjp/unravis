@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { test, expect, type Page, type Locator } from '../support/fixtures';
 
 const ROOT = resolve(__dirname, '..', '..', '..');
-const SLUGS = ['index', 'getting-started', 'install', 'cases', 'sources', 'blackbox', 'guided-analysis', 'manual-tools', 'upgrade-and-uninstall', 'troubleshooting', 'security'];
+const SLUGS = ['index', 'getting-started', 'install', 'cases', 'sources', 'blackbox', 'upgrade-and-uninstall', 'troubleshooting', 'security'];
 const CASE = 'Checkout slowdown, 17 October';
 
 async function openGuide(page: Page): Promise<Locator> {
@@ -39,25 +39,25 @@ test('HELP-06: a page link inside the guide changes the in-app page, an anchor l
   await gotoPage(dialog, 'security');
   await dialog.getByTestId('guide-body').getByRole('button', { name: /^Upgrade and uninstall/ }).first().click();
   await expect(dialog.getByTestId('guide-nav-upgrade-and-uninstall')).toHaveAttribute('aria-current', 'page');
-  await gotoPage(dialog, 'guided-analysis');
-  await dialog.getByTestId('guide-body').getByRole('button', { name: /the screens/i }).first().click();
-  await expect.poll(async () => (await focused(page)).id).toMatch(/^help-guided-analysis-the-screens/);
-  await expect(dialog.getByTestId('guide-nav-guided-analysis')).toHaveAttribute('aria-current', 'page');
+  await gotoPage(dialog, 'install');
+  await dialog.getByTestId('guide-body').getByRole('button', { name: 'After install', exact: true }).first().click();
+  await expect.poll(async () => (await focused(page)).id).toMatch(/^help-install-after-install/);
+  await expect(dialog.getByTestId('guide-nav-install')).toHaveAttribute('aria-current', 'page');
   expect(page.url(), 'the address did not change').toBe(url);
 });
 
 test('HELP-06a: a link that names a page and an anchor opens that page with the heading focused, and a second press keeps focus there', async ({ page }) => {
   const dialog = await openGuide(page);
-  await gotoPage(dialog, 'manual-tools');
-  const link = dialog.getByTestId('guide-body').getByRole('button', { name: 'Guided analysis', exact: true }).first();
+  await gotoPage(dialog, 'install');
+  const link = dialog.getByTestId('guide-body').getByRole('button', { name: 'I do not see the Unravis icon', exact: true }).first();
   await link.click();
-  await expect(dialog.getByTestId('guide-nav-guided-analysis')).toHaveAttribute('aria-current', 'page');
-  await expect.poll(async () => (await focused(page)).id).toMatch(/^help-guided-analysis-export-screens/);
-  await gotoPage(dialog, 'guided-analysis');
-  const same = dialog.getByTestId('guide-body').getByRole('button', { name: /the screens/i }).first();
+  await expect(dialog.getByTestId('guide-nav-troubleshooting')).toHaveAttribute('aria-current', 'page');
+  await expect.poll(async () => (await focused(page)).id).toMatch(/^help-troubleshooting-i-do-not-see-the-unravis-icon/);
+  await gotoPage(dialog, 'troubleshooting');
+  const same = dialog.getByTestId('guide-body').getByRole('button', { name: 'Unravis will not start on my port', exact: true }).first();
   await same.click();
   await same.click();
-  await expect.poll(async () => (await focused(page)).id).toMatch(/^help-guided-analysis-the-screens/);
+  await expect.poll(async () => (await focused(page)).id).toMatch(/^help-troubleshooting-unravis-will-not-start-on-my-port/);
 });
 
 test('HELP-06b: no guide page holds a link that leaves the app, and the update check offers the only https link', async ({ page }) => {
@@ -163,7 +163,7 @@ test('HELP-10: each page starts at the top with its first heading focused, also 
       }
       return 0;
     });
-  for (const slug of ['security', 'index', 'guided-analysis']) {
+  for (const slug of ['security', 'index', 'troubleshooting']) {
     await gotoPage(dialog, slug);
     const f = await focused(page);
     expect(f.tag, slug + ' first heading is focused').toBe('H3');

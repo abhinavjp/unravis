@@ -2,12 +2,14 @@
   import { tick, untrack } from 'svelte';
   import { PICKER_TEXT, dayLabel, dialogLabel, partLabel, triggerLabel } from '../copy/pickerCopy';
   import TimeBox from './TimeBox.svelte';
+  import { utcToWall, wallToUtc } from '../zoneStamp';
   import {
     DAY_MS, daysInMonth, dayName, dayRole, draftFrom, draftWithDays, formatStamp, isDateText, monthGrid, parseStamp, parseTime, pickDay,
     rangeSpanText, rangeText, readDraft, readParts, shiftMonth, splitStamp, syncParts, type DraftText, type QuickRange
   } from '../tracing/pickerModel';
 
-  // A time window in UTC as a start and an end, bound to `YYYY-MM-DDTHH:mm` strings (the shape the screens already check).
+  // A time window as a start and an end, bound to `YYYY-MM-DDTHH:mm` strings in UTC (the shape the screens already check). The person sees and
+  // types the wall clock of `zone` (the header's time zone choice); every value goes out in UTC.
   //  - popover: a button that shows the window; it opens quick ranges, a calendar and four time boxes. Apply keeps the draft; Cancel, Escape and a click outside drop it.
   //  - inline: the date and the two times as text boxes beside each other, with a switch for a window that ends on another day.
   // Typing is free in both. An empty box clears its value; text that is not a real date or time keeps the previous good value, marks the box, and goes back on leaving it.
@@ -25,7 +27,9 @@
     quickRanges,
     onquick,
     onchange,
-    now = () => Date.now()
+    now = () => Date.now(),
+    zone = 'UTC',
+    zoneName = 'UTC'
   }: {
     start?: string;
     end?: string;
@@ -47,15 +51,23 @@
     onchange?: () => void;
     /** The moment "today" is marked from; the demo data has its own clock. */
     now?: () => number;
+    /** The IANA zone the person types in. The bound values stay UTC. */
+    zone?: string;
+    /** The words shown beside the times: "London time", "UTC". */
+    zoneName?: string;
   } = $props();
 
   const uid = $props.id();
   const off = $derived(disabled || readOnly);
   const hintId = $derived(hint ? `${uid}-hint` : undefined);
+  // The window as the person reads it: the wall clock of `zone`. Writes go back through `toUtc`.
+  const wStart = $derived(utcToWall(start, zone));
+  const wEnd = $derived(utcToWall(end, zone));
+  const toUtc = (stamp: string): string => wallToUtc(stamp, zone);
   const describedAll = $derived([describedby, hintId].filter(Boolean).join(' ') || undefined);
 
   /* ------------------------------------------------------------------ what the window says, in words */
-  const summary = $derived(rangeText({ start, end }) || (start && end ? `${start.replace('T', ' ')} → ${end.replace('T', ' ')}` : ''));
+  const summary = $derived(rangeText({ start: wStart, end: wEnd }) || (wStart && wEnd ? `${wStart.replace('T', ' ')} → ${wEnd.replace('T', ' ')}` : ''));
   const span = $derived(rangeSpanText({ start, end }));
 
   /* ------------------------------------------------------------------ popover */
@@ -73,7 +85,7 @@
 
   const reading = $derived(readDraft(draft));
   const grid = $derived(monthGrid(month.year, month.month));
-  const today = $derived(formatStamp(now()).slice(0, 10));
+  const today = $derived(utcToWall(formatStamp(now()), zone).slice(0, 10));
   const dayState = $derived({ startDay: draft.startDate.trim(), endDay: picking ? '' : draft.endDate.trim(), picking });
   const tabDay = $derived.by(() => {
     if (grid.days.some((c) => c.date === focusDate)) return focusDate;
@@ -92,11 +104,11 @@
   });
 
   async function openPopover() {
-    draft = draftFrom({ start, end });
+    draft = draftFrom({ start: wStart, end: wEnd });
     picking = false;
     tried = false;
     quicks = quickRanges?.() ?? [];
-    const anchor = splitStamp(start).date || splitStamp(end).date || formatStamp(now()).slice(0, 10);
+    const anchor = splitStamp(wStart).date || splitStamp(wEnd).date || today;
     month = { year: +anchor.slice(0, 4), month: +anchor.slice(5, 7) - 1 };
     focusDate = '';
     shift = 0;
@@ -132,8 +144,8 @@
       tried = true;
       return;
     }
-    start = range.start;
-    end = range.end;
+    start = toUtc(range.start);
+    end = toUtc(range.end);
     closePopover(true);
     onchange?.();
   }
@@ -213,7 +225,7 @@
   }
 
   /* ------------------------------------------------------------------ inline */
-  const first = untrack(() => ({ s: splitStamp(start), e: splitStamp(end) }));
+  const first = untrack(() => ({ s: splitStamp(wStart), e: splitStamp(wEnd) }));
   let sd = $state(first.s.date);
   let st = $state(first.s.time);
   let ed = $state(first.e.date);
@@ -226,8 +238,8 @@
 
   // A value set from outside (a quick pick, "move the comparison period") replaces the text; text the person is still fixing is left alone.
   $effect(() => {
-    const s0 = start;
-    const e0 = end;
+    const s0 = wStart;
+    const e0 = wEnd;
     if (variant !== 'inline') return;
     untrack(() => {
       const s1 = syncParts(sd, st, s0);
@@ -252,27 +264,27 @@
   });
 
   function readInline() {
-    const endDate = otherDay ? ed : isDateText(sd.trim()) ? sd.trim() : splitStamp(end).date;
-    const s = readParts(sd, st, start);
-    const e = readParts(endDate, et, end);
+    const endDate = otherDay ? ed : isDateText(sd.trim()) ? sd.trim() : splitStamp(wEnd).date;
+    const s = readParts(sd, st, wStart);
+    const e = readParts(endDate, et, wEnd);
     badSd = s.badDate;
     badSt = s.badTime;
     badEd = otherDay && e.badDate;
     badEt = e.badTime;
     if (!otherDay) ed = endDate;
-    if (s.value !== start) start = s.value;
-    if (e.value !== end) end = e.value;
+    if (s.value !== wStart) start = toUtc(s.value);
+    if (e.value !== wEnd) end = toUtc(e.value);
     onchange?.();
   }
   function toggleOtherDay() {
-    if (!otherDay) ed = splitStamp(end).date || sd;
+    if (!otherDay) ed = splitStamp(wEnd).date || sd;
     readInline();
   }
   const settle = (which: 'sd' | 'st' | 'ed' | 'et') => {
-    if (which === 'sd' && badSd) { sd = splitStamp(start).date; badSd = false; }
-    if (which === 'st' && badSt) { st = splitStamp(start).time; badSt = false; }
-    if (which === 'ed' && badEd) { ed = splitStamp(end).date; badEd = false; }
-    if (which === 'et' && badEt) { et = splitStamp(end).time; badEt = false; }
+    if (which === 'sd' && badSd) { sd = splitStamp(wStart).date; badSd = false; }
+    if (which === 'st' && badSt) { st = splitStamp(wStart).time; badSt = false; }
+    if (which === 'ed' && badEd) { ed = splitStamp(wEnd).date; badEd = false; }
+    if (which === 'et' && badEt) { et = splitStamp(wEnd).time; badEt = false; }
   };
   const inlineProblem = $derived(badSd || badEd ? PICKER_TEXT.badDate : badSt || badEt ? PICKER_TEXT.badTime : '');
   const problemId = $derived(inlineProblem ? `${uid}-bad` : undefined);
@@ -284,15 +296,15 @@
 {#if variant === 'popover'}
   <div class="pkwrap" bind:this={wrap}>
     <button type="button" class="pkbtn" bind:this={trigger} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? `${uid}-dialog` : undefined}
-      aria-label={triggerLabel(label, summary)} aria-describedby={describedAll} data-invalid={invalidStart || invalidEnd ? 'true' : undefined} disabled={off} onclick={toggle}>
+      aria-label={triggerLabel(label, summary, zoneName)} aria-describedby={describedAll} data-invalid={invalidStart || invalidEnd ? 'true' : undefined} disabled={off} onclick={toggle}>
       <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="3" width="13" height="11.5" rx="1" fill="none" stroke="currentColor" /><path d="M1.5 6.5h13M5 1.5v3M11 1.5v3" stroke="currentColor" fill="none" /></svg>
       <span class="pk-text">
         <b class="pk-main">{summary || PICKER_TEXT.choose}</b>
-        <span class="pk-sub">{PICKER_TEXT.zone}{span ? ` · ${span}` : ''}</span>
+        <span class="pk-sub">{zoneName}{span ? ` · ${span}` : ''}</span>
       </span>
     </button>
     {#if open}
-      <div class="pk" class:noquick={quicks.length === 0} id={`${uid}-dialog`} role="dialog" aria-label={dialogLabel(label)} tabindex="-1" bind:this={dialog} onkeydown={onDialogKey} style:--pk-shift={`${shift}px`}>
+      <div class="pk" class:noquick={quicks.length === 0} id={`${uid}-dialog`} role="dialog" aria-label={dialogLabel(label, zoneName)} tabindex="-1" bind:this={dialog} onkeydown={onDialogKey} style:--pk-shift={`${shift}px`}>
         {#if quicks.length > 0}
           <div class="pkc" role="group" aria-labelledby={`${uid}-quick`}>
             <p class="pk-title" id={`${uid}-quick`}>{PICKER_TEXT.quickHeading}</p>
@@ -358,7 +370,7 @@
         aria-invalid={invalidEnd || badEd ? true : undefined} aria-describedby={inlineDescribed} disabled={off} value={ed} oninput={(e) => { ed = e.currentTarget.value; readInline(); }} onblur={() => settle('ed')} />
     {/if}
     <TimeBox label={partLabel(label, 'end time')} invalid={invalidEnd || badEt} describedby={inlineDescribed} disabled={off} value={et} onchange={(next) => { et = next; readInline(); }} />
-    <span class="tz">{PICKER_TEXT.zone}</span>
+    <span class="tz">{zoneName}</span>
   </div>
   <label class="other"><input type="checkbox" bind:checked={otherDay} disabled={off} onchange={toggleOtherDay} /> {PICKER_TEXT.otherDay}</label>
   {#if inlineProblem}<span class="err" id={problemId} role="alert">{inlineProblem}</span>{/if}

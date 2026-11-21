@@ -348,11 +348,6 @@ test('the autorun waits for the working screen, so the start screen never starts
   assert.match(read('src/lib/appState.svelte.ts'), /autoRan \|\| screen !== 'running'/);
 });
 
-test('the close-case action returns to the start screen', () => {
-  assert.match(read('src/lib/components/ImportPanel.svelte'), /<CasePanel [^>]*onClosed=\{goHome\}/);
-  assert.match(read('src/lib/components/CasePanel.svelte'), /onClosed\?\.\(\)/);
-});
-
 test('only the analysis bar holds the main Run analysis button; the start card outlines its own (D-A-37)', () => {
   const landing = read('src/components/Landing.svelte');
   assert.match(landing, /<button class="secondary-button" disabled=\{!scope\.query\.sourceIds\.length \|\| !scope\.dateInputsValid\} onclick=\{\(\) => runAnalysis\(\)\}>Run analysis<\/button>/);

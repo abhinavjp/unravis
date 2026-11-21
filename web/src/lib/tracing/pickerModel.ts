@@ -32,8 +32,8 @@ export function parseStamp(value: string): number {
   return Number.isFinite(ms) && formatStamp(ms) === value ? ms : NaN;
 }
 
-/** The hours (1 to 12) and minutes (0 to 59) a 12-hour time box offers. */
-export const HOURS_12: readonly number[] = Array.from({ length: 12 }, (_, i) => i + 1);
+/** The hours (00 to 23) and minutes (00 to 59) a 24-hour time box offers. */
+export const HOURS_24: readonly number[] = Array.from({ length: 24 }, (_, i) => i);
 export const MINUTES_60: readonly number[] = Array.from({ length: 60 }, (_, i) => i);
 
 const DATE_TEXT = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -69,16 +69,15 @@ export function parseTime(text: string): string | null {
   return `${pad(hour)}:${pad(minute)}`;
 }
 
-/** The three parts a 12-hour time box shows for a 24-hour `HH:mm`: the hour 1 to 12, the minute, and whether it is PM. Null for an empty or unusable time. */
-export function timeParts(time: string): { hour: number; minute: number; pm: boolean } | null {
+/** The two parts a 24-hour time box shows for `HH:mm`: the hour 0 to 23 and the minute. Null for an empty or unusable time. */
+export function timeParts(time: string): { hour: number; minute: number } | null {
   if (!isTimeText(time)) return null;
-  const h = +time.slice(0, 2);
-  return { hour: h % 12 === 0 ? 12 : h % 12, minute: +time.slice(3), pm: h >= 12 };
+  return { hour: +time.slice(0, 2), minute: +time.slice(3) };
 }
 
-/** The 24-hour `HH:mm` for a 12-hour hour (1 to 12), a minute and AM or PM. */
-export function timeFromParts(hour: number, minute: number, pm: boolean): string {
-  return `${pad((hour % 12) + (pm ? 12 : 0))}:${pad(minute)}`;
+/** The 24-hour `HH:mm` for an hour (0 to 23) and a minute. */
+export function timeFromParts(hour: number, minute: number): string {
+  return `${pad(hour)}:${pad(minute)}`;
 }
 
 /** The date part and the time part of a stamp. An empty or malformed stamp gives two empty strings. */

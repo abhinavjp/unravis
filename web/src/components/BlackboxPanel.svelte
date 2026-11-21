@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { timeZone } from '../lib/timeZone.svelte';
   import { onMount, tick } from 'svelte';
   import {
     blackboxApi, defaultSettings, fieldProblemNow, needsReload, pcControls, refusalText, settingsChanges, settingsProblem, shownTime,
@@ -286,7 +287,7 @@
   const sampleLine = (item: BlackboxItem) => {
     const at = item.facts?.lastSample;
     const age = ageWords(at);
-    return age ? age + ' (' + shownTime(at) + ')' : shownTime(at);
+    return age ? age + ' (' + shownTime(at, timeZone.zone) + ')' : shownTime(at, timeZone.zone);
   };
   // A this-PC address with a refused or missing key can be repaired here. Another server's can always be.
   const canChangeKey = (item: BlackboxItem) => item.kind === 'url' && (!item.thisPc || !item.hasKey || item.state.reason === 'key');
