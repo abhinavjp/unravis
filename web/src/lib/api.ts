@@ -181,6 +181,10 @@ export const api = {
   updateDownload: (preview = '') => request<UpdateCheckReply>('/update/download' + (preview ? '?preview=' + encodeURIComponent(preview) : ''), { method: 'POST' }),
   /** Opens the installer for the downloaded, re-checked file. preview: demo only. */
   updateInstall: (preview = '') => request<UpdateCheckReply>('/update/install' + (preview ? '?preview=' + encodeURIComponent(preview) : ''), { method: 'POST' }),
+  /** Says a person is using the page, so an update is not applied under them. Sent only while the page is visible and was touched. */
+  uiPresence: () => request<{ ok: boolean }>('/ui/presence', { method: 'POST' }),
+  /** The person has read what the last unattended update did. */
+  updateResultDismiss: () => request<UpdateCheckReply>('/update/result/dismiss', { method: 'POST' }),
   updateSettings: (auto: boolean, intervalMinutes: number) => request<UpdateCheckReply>('/update/settings', { method: 'PUT', body: JSON.stringify({ auto, intervalMinutes }) }),
   /** preview: a keeper screenshot preview (saved or stopped), answered only in the demo. */
   sources: (preview = '') => request<Source[]>('/sources' + (preview ? '?preview=' + encodeURIComponent(preview) : '')),

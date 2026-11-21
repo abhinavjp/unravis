@@ -181,6 +181,8 @@ var routes = []route{
 	{pattern: "/api/update/status", match: exactPath("/api/update/status"), methods: get((*handler).updateStatus)},
 	{pattern: "/api/update/download", match: exactPath("/api/update/download"), methods: post((*handler).updateDownload)},
 	{pattern: "/api/update/install", match: exactPath("/api/update/install"), methods: post((*handler).updateInstall)},
+	{pattern: "/api/ui/presence", match: exactPath("/api/ui/presence"), methods: post((*handler).updatePresence)},
+	{pattern: "/api/update/result/dismiss", match: exactPath("/api/update/result/dismiss"), methods: post((*handler).updateResultDismiss)},
 	{pattern: "/api/update/settings", match: exactPath("/api/update/settings"), methods: map[string]routeFunc{
 		http.MethodPut: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.updateSettingsPut(w, r) },
 	}},

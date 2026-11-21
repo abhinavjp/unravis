@@ -21,3 +21,8 @@ func LaunchRollback(path, sha256hex, version string) error {
 func StartVerified(path, sha256hex string, args ...string) error {
 	return errors.New("starting a verified program works on Windows only")
 }
+
+// LaunchSilent does not exist off Windows.
+func LaunchSilent(path, sha256hex, version string) error {
+	return errors.New("installing an update works on Windows only")
+}

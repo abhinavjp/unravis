@@ -3,6 +3,7 @@
 package update
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -50,10 +51,27 @@ func LaunchSetup(path, sha256hex, version string) error {
 }
 
 // LaunchRollback starts the old setup kept by the last upgrade, to go back to version. It is the same hand-off as LaunchSetup, with
-// the one flag that lets setup install an older version over a newer one. The caller passes the path, hash and version from the
+// the one flag that lets setup install an older version over a newer one, and it is silent too (no window, the app is closed and
+// started again by the setup program). The caller passes the path, hash and version from the
 // marker the installer wrote; nothing from the network reaches this call.
 func LaunchRollback(path, sha256hex, version string) error {
-	return launchSetup(path, sha256hex, version, []string{"--allow-downgrade"})
+	extra := []string{"--allow-downgrade"}
+	// The kept setup is the OLD version's. Only one that knows --close-app can go back silently; an older one does it in its window.
+	if data, err := os.ReadFile(path); err == nil && bytes.Contains(data, []byte(closeAppMarker)) {
+		extra = append(extra, "--silent", "--close-app")
+	}
+	return launchSetup(path, sha256hex, version, extra)
+}
+
+// closeAppMarker is text that only a setup program that knows --close-app contains (the flag's help line). "close-app" alone is also a
+// step name in every older setup, so it cannot tell them apart.
+const closeAppMarker = "what an automatic update does"
+
+// LaunchSilent starts the downloaded setup with no window of any kind: --silent --upgrade --close-app. The setup program asks this
+// app to quit, replaces the program files, starts the app again (the old version again if the update had to be undone) and leaves a
+// plain note of the result for the app to show. The same hash and version checks as LaunchSetup apply.
+func LaunchSilent(path, sha256hex, version string) error {
+	return launchSetup(path, sha256hex, version, []string{"--silent", "--close-app"})
 }
 
 func launchSetup(path, sha256hex, version string, extra []string) error {
@@ -77,7 +95,7 @@ func launchSetup(path, sha256hex, version string, extra []string) error {
 	}
 	cmd := exec.Command(path, append([]string{"--upgrade", "--expect-sha256", sha256hex, "--expect-version", version}, extra...)...)
 	cmd.Dir = filepath.Dir(path)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: detachedProcess | createNewProcessGroup}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: detachedProcess | createNewProcessGroup, HideWindow: hidden(extra)}
 	if err := cmd.Start(); err != nil {
 		return errors.New("could not start the setup program")
 	}
@@ -119,4 +137,14 @@ func StartVerified(path, sha256hex string, args ...string) error {
 		return errors.New("could not start the program")
 	}
 	return cmd.Process.Release()
+}
+
+// hidden says the setup runs silently: nothing it starts may show a window.
+func hidden(extra []string) bool {
+	for _, a := range extra {
+		if a == "--silent" {
+			return true
+		}
+	}
+	return false
 }

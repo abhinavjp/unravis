@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { dismissUpdate, installing, startUpdateDownload, startUpdateInstall, updateBarVisible, updates } from '../lib/updateState.svelte';
+  import { dismissUpdate, dismissUpdateResult, installing, startUpdateDownload, startUpdateInstall, updateBarVisible, updates } from '../lib/updateState.svelte';
   import { downloadPercent, installAnnouncement, installNote, isOwnReleaseUrl, updateCheckNote } from '../lib/updateCheck';
 
   // The bar under the header when a newer, signed version exists. Nothing downloads or installs until the person presses a button.
@@ -21,6 +21,13 @@
   }
 </script>
 
+{#if reply?.result}
+  <div class="notice update-bar update-result" role="status" tabindex="-1" data-testid="update-result" data-outcome={reply.result.outcome}>
+    <span class="update-bar-text" data-testid="update-result-text">{reply.result.message}</span>
+    <button type="button" class="quiet-button" data-testid="update-result-dismiss" onclick={() => dismissUpdateResult()}>OK</button>
+  </div>
+{/if}
+
 {#if show && reply}
   <div class="notice update-bar" bind:this={bar} tabindex="-1" data-testid="update-bar" data-state={stage}>
     <span class="sr-only" role="status" data-testid="update-bar-announce">{announcement}</span>
@@ -31,16 +38,16 @@
     {#if stage === 'idle' && reply.canInstall}
       <button type="button" class="primary-button update-bar-action" data-testid="update-bar-download" disabled={installing.busy} onclick={() => press(startUpdateDownload)}>Update now</button>
     {:else if stage === 'ready'}
-      <button type="button" class="primary-button update-bar-action" data-testid="update-bar-install" disabled={installing.busy} onclick={() => press(startUpdateInstall)}>Install</button>
+      <button type="button" class="primary-button update-bar-action" data-testid="update-bar-install" disabled={installing.busy} onclick={() => press(startUpdateInstall)}>Apply now</button>
     {:else if stage === 'launched'}
-      <button type="button" class="primary-button update-bar-action" data-testid="update-bar-reopen" disabled={installing.busy} onclick={() => press(startUpdateInstall)}>Open the updater again</button>
+      <button type="button" class="primary-button update-bar-action" data-testid="update-bar-reopen" disabled={installing.busy} onclick={() => press(startUpdateInstall)}>Apply now</button>
     {:else if stage === 'failed'}
       <button type="button" class="primary-button update-bar-action" data-testid="update-bar-retry" disabled={installing.busy} onclick={() => press(startUpdateDownload)}>Try again</button>
     {/if}
     {#if stage === 'idle' && reply.url && isOwnReleaseUrl(reply.url)}<a class="update-bar-link" data-testid="update-bar-link" href={reply.url} target="_blank" rel="noopener noreferrer">Open the release page <span class="sr-only">(opens in a new tab)</span></a>{/if}
     {#if installing.error}<span class="update-bar-error" role="alert" data-testid="update-bar-error">{installing.error}</span>{/if}
-    {#if stage === 'idle' || stage === 'failed' || stage === 'launched'}
-      <button type="button" class="quiet-button" data-testid="update-bar-dismiss" aria-label={`Hide the update bar for version ${reply.latest}`} onclick={() => dismissUpdate(reply.latest)}>Not now</button>
+    {#if stage === 'idle' || stage === 'failed' || stage === 'launched' || stage === 'ready'}
+      <button type="button" class="quiet-button" data-testid="update-bar-dismiss" aria-label={`Hide the update bar for version ${reply.latest}`} onclick={() => dismissUpdate(reply.latest)}>{stage === 'ready' ? 'Later' : 'Not now'}</button>
     {/if}
   </div>
 {/if}
