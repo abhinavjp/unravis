@@ -168,3 +168,28 @@ func TestStateFileMustBeSmallAndRegular(t *testing.T) {
 		t.Fatal("an oversized state file must be ignored")
 	}
 }
+
+func TestHooksRunForPageAndBye(t *testing.T) {
+	d := New(t.TempDir(), "", nil)
+	d.GH = &GH{URL: "http://127.0.0.1:1/x", MinGap: time.Hour}
+	d.FeedGap, d.feedAt = time.Hour, time.Now()
+	reqs, byes := 0, 0
+	d.OnRequest, d.OnBye = func() { reqs++ }, func() { byes++ }
+	h := Handler(d, "tok", fstest.MapFS{"index.html": {Data: []byte("hi")}})
+	get := func(path string) int {
+		r := httptest.NewRequest("GET", "http://127.0.0.1:80"+path, nil)
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: "tok"})
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	get("/api/snapshot")
+	if get("/api/bye") != 204 || reqs != 2 || byes != 1 {
+		t.Fatal(reqs, byes)
+	}
+	r := httptest.NewRequest("GET", "http://127.0.0.1:80/api/bye", nil) // no cookie: nothing runs
+	h.ServeHTTP(httptest.NewRecorder(), r)
+	if byes != 1 {
+		t.Fatal("bye without the code must be ignored")
+	}
+}

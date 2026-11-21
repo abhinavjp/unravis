@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"api-audit-explorer/internal/releasedash"
@@ -41,6 +42,7 @@ func run(args []string) error {
 	data := fl.String("data", "", "release manager data folder (default: the one Release.ps1 uses)")
 	port := fl.Int("port", 0, "local port (0 picks a free one)")
 	open := fl.Bool("open", false, "open the link in the default browser instead of the app window")
+	exitWhenClosed := fl.Bool("exit-when-closed", false, "stop when the page closes (always on in the app window; for tests)")
 	browserOnly := fl.Bool("print-link", false, "only print the link; open no window (for tests and servers)")
 	if err := fl.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -81,21 +83,41 @@ func run(args []string) error {
 	fmt.Println("Unravis releases (read only). Link:\n  " + link + "\nPress Ctrl+C to stop.")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	windowMode := *exitWhenClosed
 	switch {
 	case *open:
 		openBrowser(link)
 	case !*browserOnly && runtime.GOOS == "windows":
 		profile := filepath.Join(filepath.Dir(state), "window")
-		cmd, werr := appWindow(link, profile)
+		_, werr := appWindow(link, profile)
 		if werr != nil {
 			fmt.Println("Could not open the app window (" + werr.Error() + "), opening your browser instead.")
 			openBrowser(link)
 			break
 		}
-		// Closing the window ends the program.
-		go func() { _ = cmd.Wait(); stop() }()
+		// msedge.exe returns at once when Edge is already running, so the window cannot be waited on. The page says so when it
+		// closes (see /api/bye); no page at all within a minute also ends the program.
+		windowMode = true
 	}
-	srv := &http.Server{Handler: releasedash.Handler(releasedash.New(dir, state, keys), token, ui), ReadHeaderTimeout: 10 * time.Second}
+	dash := releasedash.New(dir, state, keys)
+	if windowMode {
+		var mu sync.Mutex
+		var timer *time.Timer
+		arm := func(d time.Duration) {
+			mu.Lock()
+			defer mu.Unlock()
+			if timer != nil {
+				timer.Stop()
+			}
+			timer = time.AfterFunc(d, stop)
+		}
+		arm(60 * time.Second)
+		// Any request proves the window is there; a window that vanished without saying so is noticed after 150 seconds
+		// (the page pings every 20 seconds, and a minimised window may be slowed to once a minute).
+		dash.OnRequest = func() { arm(150 * time.Second) }
+		dash.OnBye = func() { arm(4 * time.Second) } // a reload comes back within this time and cancels it
+	}
+	srv := &http.Server{Handler: releasedash.Handler(dash, token, ui), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		sc, c := context.WithTimeout(context.Background(), 3*time.Second)

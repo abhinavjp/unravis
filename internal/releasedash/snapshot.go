@@ -78,6 +78,10 @@ type Dash struct {
 	Keys      []update.Key
 	GH        *GH
 	FeedGap   time.Duration // zero: 5 minutes
+	// OnRequest runs for every accepted request and OnBye when the page says it is closing. The desktop program uses them to
+	// stop itself when its window is closed.
+	OnRequest func()
+	OnBye     func()
 
 	mu       sync.Mutex
 	feeds    []Feed

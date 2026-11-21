@@ -29,7 +29,7 @@ function status(r) {
   return ['', 'mut'];
 }
 
-let snap = null, selected = '', timer = 0, busy = false;
+let snap = null, selected = '', timer = 0, busy = false, failed = false;
 try { selected = sessionStorage.getItem('rd.sel') || ''; } catch (e) { /* the choice just is not kept */ }
 
 async function load(refresh) {
@@ -37,15 +37,15 @@ async function load(refresh) {
   try {
     const r = await fetch('/api/snapshot' + (refresh ? '?refresh=1' : ''), { cache: 'no-store' });
     if (!r.ok) throw new Error('status ' + r.status);
-    snap = await r.json(); render();
+    snap = await r.json(); failed = false; render();
   } catch (e) {
-    $('foot').replaceChildren(el('span', '', 'Cannot read the dashboard program. Close this window and open it again.'));
+    $('foot').replaceChildren(el('span', '', 'Lost the connection to the program. Trying again...')); failed = true; return;
   } finally { busy = false; schedule(); }
 }
 function schedule() {
   clearTimeout(timer);
   const running = snap && snap.run && snap.run.status === 'running';
-  timer = setTimeout(() => { if (!document.hidden) load(false); else schedule(); }, running ? 5000 : 30000);
+  timer = setTimeout(() => { if (!document.hidden) load(false); else schedule(); }, running || failed ? 5000 : 30000);
 }
 
 function channelBox(id, name, f) {
@@ -147,3 +147,5 @@ document.addEventListener('keydown', (e) => {
 $('refresh').addEventListener('click', () => load(true));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) load(false); });
 load(false);
+window.addEventListener('pagehide', () => { try { fetch('/api/bye', { keepalive: true, cache: 'no-store' }); } catch (e) { /* closing anyway */ } });
+setInterval(() => { fetch('/api/ping', { cache: 'no-store' }).catch(() => {}); }, 20000);

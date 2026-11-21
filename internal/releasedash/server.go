@@ -25,6 +25,14 @@ func Handler(d *Dash, token string, ui fs.FS) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s)
 	})
+	mux.HandleFunc("/api/ping", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("/api/bye", func(w http.ResponseWriter, r *http.Request) {
+		// The page is closing (or reloading). The program stops after a short wait unless the page comes back.
+		if d.OnBye != nil {
+			d.OnBye()
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.Handle("/", files)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -47,6 +55,9 @@ func Handler(d *Dash, token string, ui fs.FS) http.Handler {
 		if c, err := r.Cookie(cookieName); err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(token)) != 1 {
 			http.Error(w, "Open the link printed by unravis-releases.", http.StatusUnauthorized)
 			return
+		}
+		if d.OnRequest != nil {
+			d.OnRequest()
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
