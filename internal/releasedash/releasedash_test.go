@@ -136,3 +136,35 @@ func TestHandlerNeedsCodeLoopbackAndReadOnly(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 }
+
+func TestClipHidesPathsAndKeepsUTF8(t *testing.T) {
+	if got := clip(`cannot open D:\secret\rc-1.key.json now`); strings.Contains(got, "secret") || !strings.Contains(got, "<path>") {
+		t.Fatal(got)
+	}
+	long := strings.Repeat("é", 400)
+	if got := clip(long); len([]rune(got)) != maxReason || strings.ContainsRune(got, '\uFFFD') {
+		t.Fatal("cut mid character")
+	}
+}
+
+func TestCancelledRequestIsNotRemembered(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) }))
+	defer srv.Close()
+	g := &GH{URL: srv.URL, MinGap: time.Hour}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := g.Get(ctx, false); err != "" {
+		t.Fatal("a cancelled call must not leave an error behind:", err)
+	}
+	if _, okAt, err := g.Get(context.Background(), false); err != "" || okAt.IsZero() {
+		t.Fatal("the next call must try again", err)
+	}
+}
+
+func TestStateFileMustBeSmallAndRegular(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "state.json"), append([]byte(`{"version":"0.1.0-rc.1","pad":"`), append([]byte(strings.Repeat("a", 70<<10)), []byte(`"}`)...)...), 0o600)
+	if ReadLocal(dir).Run != nil {
+		t.Fatal("an oversized state file must be ignored")
+	}
+}

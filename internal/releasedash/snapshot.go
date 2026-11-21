@@ -155,6 +155,10 @@ func (d *Dash) readFeeds(ctx context.Context, force bool) ([]Feed, string) {
 		}
 		out = append(out, fd)
 	}
+	if ctx.Err() != nil { // the caller went away: keep the last answer and ask again next time
+		d.feedAt = time.Time{}
+		return d.feeds, d.feedErr
+	}
 	if unreachable == 2 { // one channel may simply have no release yet; both failing means the feed is not reachable
 		bad = "could not reach the update feed"
 	}
@@ -168,7 +172,7 @@ func (d *Dash) Snapshot(ctx context.Context, force bool) Snapshot {
 	s := Snapshot{At: now.Format(time.RFC3339), Releases: []Release{}}
 	loc := ReadLocal(d.DataDir)
 	s.Run = loc.Run
-	s.Local = Source{OK: loc.Found, Detail: loc.Dir}
+	s.Local = Source{OK: loc.Found}
 	if !loc.Found {
 		s.Local.Detail = "No release log on this PC. Step by step status only shows on the PC that makes releases."
 	}

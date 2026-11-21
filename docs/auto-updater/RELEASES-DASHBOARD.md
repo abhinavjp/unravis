@@ -23,8 +23,8 @@ On a PC that does not make releases there is no release log. Steps then show "un
 
 ## Safety
 
-- Read only: GET and HEAD only. Never writes a file in the release folder.
-- No keys, no passphrase, no tokens. Machine, user and key names in the audit log are dropped before they reach the page.
+- Read only: GET and HEAD only. Never writes in the release folder. Its only file is its own small update memory (`%LOCALAPPDATA%\\Unravis\\releases-dashboard\\state.json`, used by the same feed checks the app uses); delete it any time.
+- No keys, no passphrase, no tokens. Machine, user and key names in the audit log are dropped, and file paths in reasons are replaced by `<path>`, before they reach the page.
 - Loopback only, answers only to `127.0.0.1` or `localhost`, needs the one-time code (cookie, same site only), strict content security policy, page text set with `textContent` only.
 - Footprint: one small process, no timers while the tab is hidden, 30 s local reads (5 s during a run).
 - The audit chain is not re-verified here; use `Release.ps1 -CheckAudit`.

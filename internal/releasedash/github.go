@@ -57,6 +57,10 @@ func (g *GH) Get(ctx context.Context, force bool) (rels []Rel, okAt time.Time, e
 	g.at = time.Now()
 	g.err = ""
 	if err := g.fetch(ctx); err != nil {
+		if ctx.Err() != nil { // the caller went away: that says nothing about GitHub, so do not remember it
+			g.at = time.Time{}
+			return g.rels, g.okAt, g.err
+		}
 		g.err = err.Error()
 	}
 	return g.rels, g.okAt, g.err

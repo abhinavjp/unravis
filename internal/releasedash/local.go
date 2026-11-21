@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -63,6 +64,9 @@ type Local struct {
 	Events []Event
 }
 
+// pathRE hides file paths (they can hold a user name or a key file name) in free text from the log.
+var pathRE = regexp.MustCompile(`(?:[A-Za-z]:[\\/]|\\\\|/)[^\s"']+`)
+
 func clip(s string) string {
 	s = strings.Map(func(r rune) rune {
 		if r < 32 || r == 127 {
@@ -70,8 +74,9 @@ func clip(s string) string {
 		}
 		return r
 	}, s)
-	if len(s) > maxReason {
-		s = s[:maxReason]
+	s = pathRE.ReplaceAllString(s, "<path>")
+	if r := []rune(s); len(r) > maxReason {
+		s = string(r[:maxReason])
 	}
 	return strings.TrimSpace(s)
 }
@@ -100,11 +105,14 @@ func ReadLocal(dir string) Local {
 		return l
 	}
 	l.Found = true
-	if b, err := os.ReadFile(filepath.Join(dir, "state.json")); err == nil && len(b) < 64<<10 {
-		var r Run
-		if json.Unmarshal(b, &r) == nil && r.Version != "" {
-			r.Reason, r.Stage, r.Status = clip(r.Reason), clip(r.Stage), clip(r.Status)
-			l.Run = &r
+	sp := filepath.Join(dir, "state.json")
+	if fi, err := os.Stat(sp); err == nil && fi.Mode().IsRegular() && fi.Size() <= 64<<10 {
+		if b, err := os.ReadFile(sp); err == nil {
+			var r Run
+			if json.Unmarshal(b, &r) == nil && r.Version != "" {
+				r.Reason, r.Stage, r.Status = clip(r.Reason), clip(r.Stage), clip(r.Status)
+				l.Run = &r
+			}
 		}
 	}
 	l.Events = readAuditTail(filepath.Join(dir, "audit.jsonl"))
