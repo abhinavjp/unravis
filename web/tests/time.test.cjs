@@ -164,3 +164,19 @@ test('BL-181: Health checks earlier runs and the Blackbox times follow the zone 
   const host = read('src/components/BlackboxHostCard.svelte');
   assert.equal((host.match(/zone=\{timeZone\.zone\} zoneName=\{timeZone\.short\}/g) || []).length, 2, 'both host-read windows are typed in the chosen zone');
 });
+
+test('BL-191: no screen glues " UTC" onto a time any more; Blackbox charts and the read-day range follow the zone choice', () => {
+  assert.doesNotMatch(read('src/components/BlackboxPanel.svelte'), /toISOString\(\)\.slice\(11, 16\) \+ ' UTC'/);
+  const charts = read('src/components/BlackboxCharts.svelte');
+  assert.doesNotMatch(charts, /const ZONE = 'UTC'/);
+  assert.match(charts, /void timeZone\.zone;/, 'a new zone choice redraws the charts');
+  assert.match(charts, /T\.timesIn\(timeZone\.short\)/);
+  assert.match(read('src/components/sources/LaneResultView.svelte'), /formatTimeRange\(w\.start, w\.end, \{ zone: timeZone\.zone/);
+});
+
+test('BL-192: the case wizard column cannot grow past the screen, and focus scrolls clear of its sticky bar', () => {
+  const wizard = read('src/components/CreateWizard.svelte');
+  assert.match(wizard, /\.wizard \{ display: grid; grid-template-columns: minmax\(0, 1fr\);/);
+  assert.match(wizard, /:global\(html:has\(\.wizard \.bar\)\) \{ scroll-padding-bottom: 96px; \}/);
+  assert.match(read('src/components/TimeZoneToggle.svelte'), /@media \(max-width: 359px\) \{ \.zone-toggle select \{ max-width: 68px;/);
+});
