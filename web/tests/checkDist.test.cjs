@@ -10,7 +10,10 @@ const { ROOTS, checkDist, blobId } = require('../scripts/check-dist.cjs');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'check-dist.cjs');
 const REPO_ROOT = path.join(__dirname, '..', '..');
-const ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull, GITHUB_ACTIONS: '' };
+// An empty file, not os.devNull: git on Windows refuses the device name '\\.\nul'.
+const EMPTY_CONFIG = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'checkdist-cfg-')), 'gitconfig');
+fs.writeFileSync(EMPTY_CONFIG, '');
+const ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: EMPTY_CONFIG, GITHUB_ACTIONS: '' };
 
 function git(cwd, ...args) {
   const r = spawnSync('git', args, { cwd, env: ENV, encoding: 'utf8' });
@@ -48,6 +51,7 @@ function write(dir, rel, content) {
 }
 
 test.after(() => {
+  fs.rmSync(path.dirname(EMPTY_CONFIG), { recursive: true, force: true });
   for (const d of made) fs.rmSync(d, { recursive: true, force: true });
 });
 
