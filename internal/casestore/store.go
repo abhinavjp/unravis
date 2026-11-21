@@ -404,7 +404,7 @@ type Case interface {
 }
 
 var (
-	ErrCapExceeded  = errors.New("case cap exceeded")
+	ErrCapExceeded = errors.New("case cap exceeded")
 	// ErrFileCapExceeded is ErrCapExceeded for the cap of one file (its bytes or
 	// its rows); ErrCaseCapExceeded is ErrCapExceeded for the cap of the case (the
 	// bytes it holds or the size of its database). Both satisfy
@@ -417,12 +417,12 @@ var (
 	// by a write to a case while an import holds it, instead of waiting for the
 	// import to finish. The write was not made; try again when the import ends.
 	ErrImportRunning = errors.New("an import is running on this case")
-	ErrNotFound     = errors.New("case not found")
-	ErrDuplicate    = errors.New("file already imported")
-	ErrAckRequired  = errors.New("acknowledgement required")
-	ErrBadID        = errors.New("invalid case id")
-	ErrBadTitle     = errors.New("invalid case title")
-	ErrHandleClosed = errors.New("case handle closed")
+	ErrNotFound      = errors.New("case not found")
+	ErrDuplicate     = errors.New("file already imported")
+	ErrAckRequired   = errors.New("acknowledgement required")
+	ErrBadID         = errors.New("invalid case id")
+	ErrBadTitle      = errors.New("invalid case title")
+	ErrHandleClosed  = errors.New("case handle closed")
 	// ErrCaseClosed is returned by Import for a case that CloseCase has closed.
 	// A closed case takes no more files, however its handle was opened.
 	ErrCaseClosed = errors.New("case is closed")

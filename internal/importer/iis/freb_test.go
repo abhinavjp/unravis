@@ -49,7 +49,7 @@ func looseOpts() importer.Options {
 func frebFixtures(t testing.TB) importertest.Fixtures {
 	return importertest.Fixtures{
 		Good: fixture(t, "freb_good.xml"),
-		Bad: []byte(frebReqXML("a", `statusCode="500"`, frebEvent(importertest.Sentinel, ""))),
+		Bad:  []byte(frebReqXML("a", `statusCode="500"`, frebEvent(importertest.Sentinel, ""))),
 		// Large is the third request of Good repeated: a valid file over two head sizes
 		Large:   []byte(strings.Repeat(frebReqXML("login", `statusCode="404" timeTaken="12" failureReason="STATUS_CODE"`, frebEvent("2001-03-17T10:09:30.500Z", `<EventData><Data Name="ModuleName">StaticFileModule</Data></EventData>`)+frebEvent("2001-03-17T10:09:30.512Z", "")), 700)),
 		Options: frebOpts(),
@@ -454,15 +454,15 @@ func TestFREBTimeParsing(t *testing.T) {
 func TestFREBErrorCode(t *testing.T) {
 	for in, want := range map[string]string{
 		"Access is denied. (0x80070005)": "2147942405",
-		"(0x0)":                           "0",
-		"(0x80070002)":                    "2147942402",
-		"1234":                            "1234",
-		"":                                "",
-		"(0x)":                            "",
-		"(0x123456789)":                   "",
-		"(0xZZ)":                          "",
-		"no number":                       "",
-		"SENTINEL-7f3a":                   "",
+		"(0x0)":                          "0",
+		"(0x80070002)":                   "2147942402",
+		"1234":                           "1234",
+		"":                               "",
+		"(0x)":                           "",
+		"(0x123456789)":                  "",
+		"(0xZZ)":                         "",
+		"no number":                      "",
+		"SENTINEL-7f3a":                  "",
 	} {
 		got, ok := frebErrorCode(in)
 		if got != want || ok != (want != "") {
@@ -486,10 +486,10 @@ func TestFREBFrebPath(t *testing.T) {
 	for in, want := range map[string]string{
 		"http://web-a.example.test:80/api/v1/orders/1042?page=2": "/api/v1/orders/{id}",
 		"https://user:pw@web-a.example.test/login":               "/login",
-		"/rel/path?q=1":                                          "/rel/path",
-		"http://web-a.example.test":                              "",
-		"http://web-a.example.test?x=1":                          "",
-		"nonsense":                                               "",
+		"/rel/path?q=1":                 "/rel/path",
+		"http://web-a.example.test":     "",
+		"http://web-a.example.test?x=1": "",
+		"nonsense":                      "",
 	} {
 		got, ok := frebPath(in)
 		if got != want || ok != (want != "") {

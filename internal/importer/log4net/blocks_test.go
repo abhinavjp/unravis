@@ -185,7 +185,9 @@ func TestBlocksLogTimeUTC(t *testing.T) {
 }
 
 func TestBlocksTimeShapes(t *testing.T) {
-	utc := func(y, mo, d, h, mi, s, ns int) time.Time { return time.Date(y, time.Month(mo), d, h, mi, s, ns, time.UTC) }
+	utc := func(y, mo, d, h, mi, s, ns int) time.Time {
+		return time.Date(y, time.Month(mo), d, h, mi, s, ns, time.UTC)
+	}
 	cases := []struct {
 		name, label, val string
 		order            string

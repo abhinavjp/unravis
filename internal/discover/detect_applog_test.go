@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	site     = `C:\inetpub\shop`
+	site = `C:\inetpub\shop`
 )
 
 var t0 = time.Date(2001, 10, 25, 12, 0, 0, 0, time.UTC)
@@ -482,19 +482,19 @@ func TestUNCAndUnsafePathsAreRefused(t *testing.T) {
 		file, content string
 		want          discover.Reason
 	}{
-		"log4net UNC": {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="\\fileserver\share\app.log"/></appender></log4net></c>`, discover.ReasonUnsafePath},
-		"nlog UNC":    {`\nlog.config`, `<nlog><targets><target type="File" fileName="\\fileserver\share\app.log"/></targets></nlog>`, discover.ReasonUnsafePath},
-		"serilog UNC": {`\appsettings.json`, `{"Serilog":{"WriteTo":[{"Name":"File","Args":{"path":"\\\\fileserver\\share\\app-.txt"}}]}}`, discover.ReasonUnsafePath},
-		"dotdot":      {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="..\..\Windows\app.log"/></appender></log4net></c>`, discover.ReasonUnsafePath},
-		"device":      {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="\\.\C:\app.log"/></appender></log4net></c>`, discover.ReasonUnsafePath},
-		"ads":         {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="C:\logs\app.log:hidden"/></appender></log4net></c>`, discover.ReasonUnsafePath},
-		"alias 8.3":   {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="C:\PROGRA~1\app.log"/></appender></log4net></c>`, discover.ReasonUnsafePath},
-		"reserved":    {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="C:\logs\con.log"/></appender></log4net></c>`, discover.ReasonUnsafePath},
-		"secret word": {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="C:\logs\token\app.log"/></appender></log4net></c>`, discover.ReasonConfigUnparsed},
-		"key=":        {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="C:\logs\a;b=c\app.log"/></appender></log4net></c>`, discover.ReasonConfigUnparsed},
-		"url":         {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="https://example.test/app.log"/></appender></log4net></c>`, discover.ReasonUnsafePath},
-		"env token":   {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="%TEMP%\app.log"/></appender></log4net></c>`, discover.ReasonConfigUnparsed},
-		"dollar":      {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="${TMP}\app.log"/></appender></log4net></c>`, discover.ReasonConfigUnparsed},
+		"log4net UNC":             {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="\\fileserver\share\app.log"/></appender></log4net></c>`, discover.ReasonUnsafePath},
+		"nlog UNC":                {`\nlog.config`, `<nlog><targets><target type="File" fileName="\\fileserver\share\app.log"/></targets></nlog>`, discover.ReasonUnsafePath},
+		"serilog UNC":             {`\appsettings.json`, `{"Serilog":{"WriteTo":[{"Name":"File","Args":{"path":"\\\\fileserver\\share\\app-.txt"}}]}}`, discover.ReasonUnsafePath},
+		"dotdot":                  {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="..\..\Windows\app.log"/></appender></log4net></c>`, discover.ReasonUnsafePath},
+		"device":                  {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="\\.\C:\app.log"/></appender></log4net></c>`, discover.ReasonUnsafePath},
+		"ads":                     {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="C:\logs\app.log:hidden"/></appender></log4net></c>`, discover.ReasonUnsafePath},
+		"alias 8.3":               {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="C:\PROGRA~1\app.log"/></appender></log4net></c>`, discover.ReasonUnsafePath},
+		"reserved":                {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="C:\logs\con.log"/></appender></log4net></c>`, discover.ReasonUnsafePath},
+		"secret word":             {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="C:\logs\token\app.log"/></appender></log4net></c>`, discover.ReasonConfigUnparsed},
+		"key=":                    {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="C:\logs\a;b=c\app.log"/></appender></log4net></c>`, discover.ReasonConfigUnparsed},
+		"url":                     {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="https://example.test/app.log"/></appender></log4net></c>`, discover.ReasonUnsafePath},
+		"env token":               {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="%TEMP%\app.log"/></appender></log4net></c>`, discover.ReasonConfigUnparsed},
+		"dollar":                  {`\web.config`, `<c><log4net><appender type="FileAppender"><file value="${TMP}\app.log"/></appender></log4net></c>`, discover.ReasonConfigUnparsed},
 		"relative serilog escape": {`\appsettings.json`, `{"Serilog":{"WriteTo":[{"Name":"File","Args":{"path":"../../outside/app-.txt"}}]}}`, discover.ReasonUnsafePath},
 	}
 	for name, c := range cases {

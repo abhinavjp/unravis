@@ -1,9 +1,8 @@
 package server
 
 import (
-	"encoding/json"
-	"time"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -11,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/importer"

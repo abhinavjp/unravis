@@ -2,9 +2,9 @@ package sqlite
 
 import (
 	"bytes"
-	"fmt"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
