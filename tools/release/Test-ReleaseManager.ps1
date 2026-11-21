@@ -269,6 +269,9 @@ try {
     Write-AuditEntry $al @{ event = 'tagged'; version = '0.1.0-rc.56'; commit = ('a' * 40) }
     Write-AuditEntry $al @{ event = 'tagged'; version = '0.1.0-rc.57'; commit = ('b' * 40) }
     Assert-That 'audit tagged: the commit of that version' ((Get-AuditTaggedCommit $al '0.1.0-rc.56') -eq ('a' * 40))
+    Write-AuditEntry $al @{ event = 'tagging'; version = '0.1.0-rc.58'; commit = ('c' * 40) }
+    Write-AuditEntry $al @{ event = 'tag-failed'; version = '0.1.0-rc.58'; commit = ('c' * 40) }
+    Assert-That 'audit tagged: a push that failed vouches for nothing' ((Get-AuditTaggedCommit $al '0.1.0-rc.58') -eq '')
     Assert-That 'audit tagged: unknown version gives nothing' ((Get-AuditTaggedCommit $al '0.1.0-rc.99') -eq '')
     Assert-That 'audit tagged: no log gives nothing' ((Get-AuditTaggedCommit (Join-Path $root 'none.jsonl') '0.1.0-rc.56') -eq '')
     # Things that broke or would break unseen (these cannot be run without a release, so the text is held to them):

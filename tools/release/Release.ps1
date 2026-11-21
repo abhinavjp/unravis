@@ -253,7 +253,7 @@ function Invoke-ReleaseBootstrap {
         # Only a state.json written by THIS run counts; an older release's "done" must not be reported as this run's result.
         $fresh = $false; try { $fresh = [bool]$st -and (([datetime]$st.updated).ToUniversalTime() -ge $runStart) } catch {}
         if (-not $fresh) { $st = $null }
-        $outcome = if ($CheckOnly) { 'check-only' } elseif ($code -eq 0 -and $st -and $st.status -eq 'done') { 'done' } elseif ($code -eq 0) { 'nothing-new' } elseif ($st) { [string]$st.status } else { 'stopped' }
+        $outcome = if ($CheckOnly) { 'check-only' } elseif ($code -eq 0 -and $st -and $st.status -eq 'done') { 'done' } elseif ($st) { [string]$st.status } elseif ($code -eq 0) { 'nothing-new' } else { 'stopped' }
         $freeFields = @{ state = 'free'; holdMerges = $false; stage = 'idle'; reason = '' }
         if ($outcome -ne 'nothing-new') { $freeFields.last = @{ version = $(if ($st) { [string]$st.version } else { '' }); outcome = $outcome; at = [DateTime]::UtcNow.ToString('o'); requester = $me; reason = $(if ($st) { [string]$st.reason } else { '' }) } }
         try { $null = Update-RemoteLock $Repo $id $freeFields "release lock: free ($outcome)" }
@@ -574,7 +574,7 @@ try {
                 Run 'git push tag' { git push origin $tag } | Out-Null
             } catch {
                 # Not on GitHub: drop the local tag so the next run starts clean from preflight.
-                if (-not (git ls-remote --tags origin "refs/tags/$tag")) { git tag -d $tag 2>&1 | Out-Null }
+                if (-not (git ls-remote --tags origin "refs/tags/$tag")) { git tag -d $tag 2>&1 | Out-Null; Write-AuditEntry $audit @{ event = 'tag-failed'; version = $Version; commit = $head } }
                 Fail $_.Exception.Message
             }
             Write-Host "Pushed $tag."

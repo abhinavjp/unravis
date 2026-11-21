@@ -560,6 +560,7 @@ function Get-AuditTaggedCommit([string]$AuditPath, [string]$Version) {
         if (-not $l) { continue }
         try { $e = $l | ConvertFrom-Json } catch { continue }
         if (($e.event -eq 'tagged' -or $e.event -eq 'tagging') -and $e.version -eq $Version -and $e.commit) { $c = [string]$e.commit }
+        elseif ($e.event -eq 'tag-failed' -and $e.version -eq $Version) { $c = '' }   # the push did not leave a tag on GitHub: that attempt vouches for nothing
     }
     return $c
 }
@@ -575,7 +576,7 @@ function Format-LockBusy($Rec, [datetime]$Now, [string]$HostId = '') {
     $age = ''
     try { $age = ', last sign of life {0:N0} min ago' -f ($Now.ToUniversalTime() - ([datetime]$Rec.heartbeat).ToUniversalTime()).TotalMinutes } catch {}
     $v = if ($Rec.version) { Get-SafeText $Rec.version 30 } else { '(choosing the version)' }
-    return "BUSY: a release is running: $v ($(Get-SafeText $Rec.channel 10)), step '$(Get-SafeText $Rec.stage 20)', started $(Get-SafeText $Rec.started 30) by $(Get-SafeText $Rec.requester 40)$(if ($HostId) { if ($Rec.host -eq $HostId) { ' on this PC' } else { ' on another PC' } })$age. Hold merges to master: $($Rec.holdMerges). Pass -WaitMinutes N to queue behind it, or run -Status."
+    return "BUSY: a release is running: $v ($(Get-SafeText $Rec.channel 10)), step '$(Get-SafeText $Rec.stage 20)', started $(Get-SafeText $Rec.started 30) by $(Get-SafeText $Rec.requester 40)$(if ($HostId) { if ($Rec.host -eq $HostId) { ' on this PC' } else { ' on another PC' } })$age. Hold merges to master: $([bool]$Rec.holdMerges). Pass -WaitMinutes N to queue behind it, or run -Status."
 }
 
 # Claims or changes the record while holding it. Throws 'lock lost' when the record now belongs to another run.
@@ -667,8 +668,8 @@ function Show-ReleaseStatus([string]$Repo, [string]$Dir, [bool]$AsJson) {
     $l = $s.Lock
     if ($s.LockError) { Write-Host "Lock: could not be read ($($s.LockError))" -ForegroundColor Yellow }
     elseif (-not $l) { Write-Host 'Lock: free (nobody has ever released with it).' -ForegroundColor Green }
-    elseif ($l.state -eq 'held') { Write-Host (Format-LockBusy $l (Get-Date) (Get-HostId)) -ForegroundColor Yellow; Write-Host "  pinned commit: $($l.commit)" }
-    else { Write-Host "Lock: free. Last: $($l.last.version) $($l.last.outcome) at $($l.last.at) (asked by $($l.last.requester))." -ForegroundColor Green }
+    elseif ($l.state -eq 'held') { Write-Host (Format-LockBusy $l (Get-Date) (Get-HostId)) -ForegroundColor Yellow; Write-Host "  pinned commit: $(Get-SafeText $l.commit 40)" }
+    else { Write-Host "Lock: free. Last: $(Get-SafeText $l.last.version 30) $(Get-SafeText $l.last.outcome 20) at $(Get-SafeText $l.last.at 30) (asked by $(Get-SafeText $l.last.requester 40))." -ForegroundColor Green }
     if ($s.State) { Write-Host "This PC: release $($s.State.version): last finished stage '$($s.State.stage)', $($s.State.status)$(if ($s.State.reason) { ': ' + $s.State.reason })  (updated $($s.State.updated))" }
     if ($s.LocalLock) { Write-Host "This PC's lock holder: $($s.LocalLock.requester), pid $($s.LocalLock.pid)" }
     Write-Host "Audit log: $(if ($s.AuditOk) { 'chain unbroken' } else { 'CHAIN BROKEN (run -CheckAudit)' }). Last entries:"
