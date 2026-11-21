@@ -297,6 +297,20 @@ func linkBelongsToSource(l sourcelinks.Link, src audit.Source) bool {
 	return src.ConnectionLabel == "" || l.ConnectionLabel == src.ConnectionLabel
 }
 
+// ambiguousLinks says the source cannot be matched to one saved connection: it has no selection key and no connection label, and the
+// links that share its database and collection belong to more than one saved connection. Dropping any of them could drop the wrong
+// connection's link, so the caller keeps them all.
+func ambiguousLinks(src audit.Source, held []sourcelinks.Link) bool {
+	if src.SelectionKey != "" || src.ConnectionLabel != "" {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, l := range held {
+		seen[l.SavedConnectionID] = true
+	}
+	return len(seen) > 1
+}
+
 // dropLinkOfSource removes the link of an open source before it is deleted, and returns a function that puts it back if the delete
 // fails. With no link store, or no such source, it does nothing.
 func (h *handler) dropLinkOfSource(ctx context.Context, id string) (restore func()) {
@@ -312,6 +326,9 @@ func (h *handler) dropLinkOfSource(ctx context.Context, id string) (restore func
 				held = append(held, l)
 			}
 		}
+	}
+	if ambiguousLinks(src, held) {
+		return func() {}
 	}
 	h.forgetOpenedSource(src, held, listErr == nil)
 	return func() {
