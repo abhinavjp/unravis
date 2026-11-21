@@ -224,6 +224,7 @@ Spec per area: `docs/desktop/spec/`. Items per area: `docs/desktop/groom/` (scop
 - [ ] **BL-333** `unravis --mcp` and CLI over the pipe with grants (size ?, ?; see `docs/desktop/groom/02-security.md`)
 - [ ] **BL-334** Key Keeper stays the secret boundary (verification) (size S, P3; see `docs/desktop/groom/02-security.md`)
 - [ ] **BL-335** Supply-chain CI gates (size M, P2; see `docs/desktop/groom/02-security.md`)
+  - Status: built in PR, not verified on live PC (wt-bl335): files and local npm/pin proofs done; govulncheck, osv-scanner and trufflehog not run (no network to vuln DBs here), cargo-deny deferred until desktop/ exists, Go build flags in build.ps1 not changed.
 - [ ] **BL-336** SBOM and reproducible builds (size M, P4; see `docs/desktop/groom/02-security.md`)
 - [ ] **BL-337** Real-data hostile-content test (size M, P3 (core) with a rerun in P4; see `docs/desktop/groom/02-security.md`)
 - [ ] **BL-340** Baseline: current MCP bridge on six real hosts (size M, P0; see `docs/desktop/groom/03-mcp.md`)

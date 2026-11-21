@@ -1,0 +1,21 @@
+# BL-335. Grouped update PRs, never auto-merged. The cargo ecosystem starts working
+# once desktop/src-tauri/Cargo.toml exists.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule: { interval: weekly }
+    groups: { go: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /web
+    schedule: { interval: weekly }
+    cooldown: { default-days: 3 }
+    groups: { npm: { patterns: ["*"] } }
+  - package-ecosystem: cargo
+    directory: /desktop/src-tauri
+    schedule: { interval: weekly }
+    groups: { cargo: { patterns: ["*"] } }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups: { actions: { patterns: ["*"] } }
