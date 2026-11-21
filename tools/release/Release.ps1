@@ -28,6 +28,7 @@
 .PARAMETER FirstRelease  Only for the first release of a channel (nothing on the feed yet); passed to Sign-Release.ps1.
 .PARAMETER Previous    The published tag to upgrade from in the verify stage. Default: the newest earlier release that has a signed manifest.
 .PARAMETER PassphraseFromProtonPass  A Proton Pass reference, pass://Vault/Item/password, that holds the key passphrase. Read only at the signing step, held in memory, never written anywhere. If pass-cli is missing, logged out or locked you are asked to type it instead. The typed confirmations (tag, yes, publish, feed) stay.
+.PARAMETER Yes  Hands-off (owner's choice, rc and stable): skips the typed confirmations for tag, sign, publish and feed. Every check still runs (CI green, attestation, manifest and feed checks, signature, no downgrade, verify run) and any failure still stops. The two security gates in Sign-Release.ps1 (changed signing code, changed trusted keys) still ask.
 .PARAMETER SkipVerify  Stop after the feed update. Use it only when you will run verify-release.yml yourself.
 .PARAMETER RunId       Continue at Wait with this release.yml run (use it after re-running the build from the Actions tab).
 .PARAMETER Branch      The branch a release is made from (default master).
@@ -37,6 +38,7 @@ param(
     [string]$KeyFile,
     [ValidateSet('Preflight', 'Tag', 'Wait', 'Sign', 'Publish', 'Feed', 'Verify')] [string]$From = 'Preflight',
     [switch]$FirstRelease,
+    [switch]$Yes,
     [string]$PassphraseFromProtonPass,
     [string]$Previous,
     [switch]$SkipVerify,
@@ -62,6 +64,7 @@ function Stage([string]$n, [string]$name) { Write-Host "`n[$n/7] $name" -Foregro
 function Run([string]$what, [scriptblock]$cmd) { $out = & $cmd 2>&1; if ($LASTEXITCODE -ne 0) { throw "$what failed: $($out | Out-String)" }; $out }
 function Confirm-Typed([string]$word, [string]$why) {
     Write-Host $why
+    if ($Yes) { Write-Host "-Yes: continuing without typing '$word'." -ForegroundColor Yellow; return }
     $a = Read-Host "Type '$word' to continue, anything else stops"
     if ($a -ne $word) { Write-Host 'Stopped by you. Nothing further was done.'; exit 2 }
 }
@@ -144,6 +147,7 @@ try {
         Stage 4 'Sign (you type the passphrase and yes)'
         if (-not $KeyFile) { Fail 'Sign' 'Pass -KeyFile.' }
         $a = @{ Tag = $tag; KeyFile = $KeyFile }
+        if ($Yes) { $a.Yes = $true }
         if ($FirstRelease) { $a.FirstRelease = $true }
         $a.Repo = $Repo
         if ($PassphraseFromProtonPass) { $a.ProtonPassRef = $PassphraseFromProtonPass }

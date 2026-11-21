@@ -11,7 +11,11 @@ pwsh ./tools/release/Release.ps1 -Version 0.1.0-rc.52 -KeyFile D:\secret\rc-1.ke
 First release on a channel (nothing trusts the keys yet): add `-FirstRelease`.
 Dry run (checks only, changes nothing): add `-DryRun`.
 
-It stops to ask you to type: the tag, `yes` (sign), `publish`, `feed`. Stable (non-rc) releases: ask first.
+By default it stops to ask you to type: the tag, `yes` (sign), `publish`, `feed`.
+
+**Hands-off:** add `-Yes` (rc or stable). It skips those four typed confirmations. All checks still run and any failure still stops it (CI green, build attestation, manifest and feed checks, signature, no downgrade, verify run). Two gates in Sign-Release.ps1 still ask, on purpose: signing code changed since the last release, and trusted keys changed.
+
+With `-Yes` and `-PassphraseFromProtonPass` there is nothing to type (if pass-cli is logged out it falls back to asking for the passphrase).
 
 ## Read the passphrase from Proton Pass (optional)
 
@@ -42,8 +46,9 @@ pwsh ./tools/release/Test-ProtonPass.ps1 -Reference 'pass://Vault/Item/password'
 Put the whole reference in quotes (it has spaces). Use the reference that matches `-KeyFile` (rc-1 key with the rc.1 field). A wrong one just fails to sign; nothing is uploaded.
 
 ```powershell
-pwsh ./tools/release/Release.ps1 -Version 0.1.0-rc.52 -KeyFile D:\secret\rc-1.key.json -FirstRelease -PassphraseFromProtonPass 'pass://Work/Unravis Passphrases/rc.1 passphrase'
+pwsh ./tools/release/Release.ps1 -Version 0.1.0-rc.52 -KeyFile D:\secret\rc-1.key.json -PassphraseFromProtonPass 'pass://Work/Unravis Passphrases/rc.1 passphrase' -Yes
 ```
+(Add `-FirstRelease` only for the first release of a channel.)
 
 ## Steps, if you want them one at a time
 

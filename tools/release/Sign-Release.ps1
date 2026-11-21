@@ -36,7 +36,9 @@ param(
     [switch]$FirstRelease,
     [string]$Repo = 'abhinavjp/unravis',
     # A Proton Pass reference (pass://Vault/Item/password) the key passphrase is read from. Optional; if it cannot be read the script asks you to type it.
-    [string]$ProtonPassRef
+    [string]$ProtonPassRef,
+    # Release.ps1 -Yes: skips the plain 'Sign this release?' confirmation. The key and signing-code gates still ask.
+    [switch]$Yes
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ProtonPass.ps1')
@@ -141,7 +143,7 @@ try {
         Invoke-Checked 'checking the manifest against the tag and the feed' { & $tool preflight -manifest $manifest -tag $Tag -commit $sha @feedArgs }
         Write-Host 'Checking that GitHub attests these files were built by the release workflow from the tag:'
         Assert-Attested $files $Repo $Tag $sha
-        Confirm-Typed 'yes' 'Sign this release?'
+        if ($Yes) { Write-Host "-Yes: signing without typing 'yes'." -ForegroundColor Yellow } else { Confirm-Typed 'yes' 'Sign this release?' }
         $secure = $null
         if ($ProtonPassRef) {
             try { $secure = Get-ProtonPassSecret -Reference $ProtonPassRef; Write-Host 'Passphrase read from Proton Pass (not shown).' }
