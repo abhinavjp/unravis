@@ -63,15 +63,26 @@ function Assert-Attested([string]$dir, [string]$repo, [string]$tag, [string]$com
     $workflow = "$repo/.github/workflows/release.yml"
     $files = @(Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Name -match '^(unravis-.*\.(zip|exe)|update-manifest\.json)$' })
     if (-not $files.Count) { throw 'No release files to check the attestation of. Do not sign.' }
+    # Warm-up: on a PC that has never verified an attestation, gh must first fetch and cache the Sigstore trust root. Several gh calls
+    # doing that at once fail with "no valid Sigstore verifiers could be initialized" (seen live on rc.56). One call on its own first
+    # fills the cache. Its result is not used: every file is still checked below.
+    $warmErr = Join-Path $dir '.attest-err-warmup.txt'
+    $null = gh attestation verify $files[0].FullName --repo $repo --signer-workflow $workflow --format json 2>$warmErr
+    Remove-Item -LiteralPath $warmErr -Force -ErrorAction SilentlyContinue
     # One gh call per file, run side by side (each is a round trip to GitHub); every file is still checked on its own, and one failure
-    # fails the lot. Each call writes its own error file so their output cannot mix.
+    # fails the lot. Each call writes its own error file so their output cannot mix. A verifier set-up error is tried again (up to 3
+    # times, a few seconds apart); any other failure is final. A retry can only pass with a valid attestation, so this stays fail closed.
     $results = @($files | ForEach-Object -ThrottleLimit 5 -Parallel {
         $f = $_
         $errFile = Join-Path $using:dir ('.attest-err-' + $f.Name + '.txt')   # gh prints progress on stderr; keep it out of the JSON
-        $json = gh attestation verify $f.FullName --repo $using:repo --signer-workflow $using:workflow --format json 2>$errFile
-        $code = $LASTEXITCODE
-        $err = if (Test-Path -LiteralPath $errFile) { Get-Content -Raw -ErrorAction SilentlyContinue $errFile } else { '' }
-        Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
+        for ($try = 1; $try -le 3; $try++) {
+            $json = gh attestation verify $f.FullName --repo $using:repo --signer-workflow $using:workflow --format json 2>$errFile
+            $code = $LASTEXITCODE
+            $err = if (Test-Path -LiteralPath $errFile) { Get-Content -Raw -ErrorAction SilentlyContinue $errFile } else { '' }
+            Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
+            if ($code -eq 0 -or "$err" -notmatch '(?i)verifier') { break }
+            Start-Sleep -Seconds (5 * $try)
+        }
         $found = $false
         if ($code -eq 0) {
             foreach ($r in ($json | ConvertFrom-Json)) {
