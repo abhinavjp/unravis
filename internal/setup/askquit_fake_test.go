@@ -63,8 +63,8 @@ func TestUseAskQuitCanRemoveOnlyMyProcesses(t *testing.T) {
 	for _, q := range f.Proc.List_ {
 		left = append(left, q.PID)
 	}
-	if len(left) != 2 || left[0] != 2 || left[1] != 4 {
-		t.Errorf("processes left %v, want the other users' 2 and 4", left)
+	if len(left) != 3 || left[0] != 2 || left[1] != 3 || left[2] != 4 {
+		t.Errorf("processes left %v, want 2, 3 (no owner) and 4, which are not the person's", left)
 	}
 }
 
