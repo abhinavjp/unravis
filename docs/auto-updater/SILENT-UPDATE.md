@@ -39,7 +39,7 @@ Status: **done** = handled and tested before this work; **new** = built and test
 | 17 | Blackbox service on the PC | Updated by setup in the same run (needs approval, so Apply now); a standalone service updates itself | done (U6) |
 | 18 | A console or setup window appears | Setup is a console-subsystem program, started detached and hidden by the app, so no window shows. Setup itself shows no window in silent mode. The elevated worker (Apply now on an install that needs approval) is started hidden through Windows; whether a default Windows Terminal honours that is **not verified** | new, needs a live check |
 | 20 | Setup shows a message box (app could not be restarted) | The note is written first, so it never waits for a click | new |
-| 21 | The app restarts after an update | Started with `--background` (tray, no browser tab), only if it was running before the run | new |
+| 21 | The app restarts after an update | Started with `--background` (tray, no browser tab). `--close-app` is only passed by the app itself, so setup always restarts it (never loses the app if it left early) | new |
 | 22 | An MCP copy of unravis.exe is in use by an AI client | Not counted as "in use", and setup closes every copy in the install folder | **gap** BL-171 |
 | 19 | Updater cannot show the note (app not running) | Note stays on disk, shown at the next start | new |
 

@@ -559,7 +559,7 @@ func TestAfterUnattendedStartsTheAppAndLeavesANote(t *testing.T) {
 		loc := filepath.Join(rg.dirs.LocalAppData, "Programs", "Unravis")
 		old := &setup.Installed{Location: loc, Version: "1.0.0"}
 		l, _ := openLog(options{}, rg.env, rg.dirs.LocalAppData, false)
-		afterUnattended(options{expectVersion: "1.1.0"}, rg.env, rg.dirs, old, true, setup.Result{Outcome: tc.outcome, Message: "x"}, func(string, ...any) {}, l)
+		afterUnattended(options{expectVersion: "1.1.0"}, rg.env, rg.dirs, old, setup.Result{Outcome: tc.outcome, Message: "x"}, func(string, ...any) {}, l)
 		closeLog(l)
 		if len(started) != 1 || started[0] != filepath.Join(loc, "unravis.exe") {
 			t.Errorf("%s: started %v", tc.name, started)
@@ -568,22 +568,6 @@ func TestAfterUnattendedStartsTheAppAndLeavesANote(t *testing.T) {
 		if !ok || got.Outcome != tc.want || got.From != "1.0.0" || got.To != "1.1.0" || !got.Restarted {
 			t.Errorf("%s: result %+v %v", tc.name, got, ok)
 		}
-	}
-}
-
-func TestAfterUnattendedLeavesAnAppThatWasNotRunning(t *testing.T) {
-	rg := newRig(t)
-	started := 0
-	rg.env.startBackground = func(string) error { started++; return nil }
-	old := &setup.Installed{Location: filepath.Join(rg.dirs.LocalAppData, "Programs", "Unravis"), Version: "1.0.0"}
-	l, _ := openLog(options{}, rg.env, rg.dirs.LocalAppData, false)
-	afterUnattended(options{expectVersion: "1.1.0"}, rg.env, rg.dirs, old, false, setup.Result{Outcome: setup.OutcomeDone}, func(string, ...any) {}, l)
-	closeLog(l)
-	if started != 0 {
-		t.Fatal("started an app that was not running before the update")
-	}
-	if got, ok := update.ReadApplyResult(filepath.Join(rg.dirs.LocalAppData, "Unravis", "update-result")); !ok || got.Restarted {
-		t.Fatalf("result %+v %v", got, ok)
 	}
 }
 
@@ -601,7 +585,7 @@ func TestAfterUnattendedWritesTheNoteBeforeTheMessageBox(t *testing.T) {
 	}
 	old := &setup.Installed{Location: filepath.Join(rg.dirs.LocalAppData, "Programs", "Unravis"), Version: "1.0.0"}
 	l, _ := openLog(options{}, rg.env, rg.dirs.LocalAppData, false)
-	afterUnattended(options{expectVersion: "1.1.0"}, rg.env, rg.dirs, old, true, setup.Result{Outcome: setup.OutcomeDone}, func(string, ...any) {}, l)
+	afterUnattended(options{expectVersion: "1.1.0"}, rg.env, rg.dirs, old, setup.Result{Outcome: setup.OutcomeDone}, func(string, ...any) {}, l)
 	closeLog(l)
 	if !boxShown || !noteWasThere {
 		t.Fatalf("box shown %v, note there when it was %v", boxShown, noteWasThere)
@@ -609,5 +593,15 @@ func TestAfterUnattendedWritesTheNoteBeforeTheMessageBox(t *testing.T) {
 	got, _ := update.ReadApplyResult(noteDir)
 	if got.Restarted || !strings.Contains(got.Message, "Start menu") {
 		t.Errorf("result %+v", got)
+	}
+}
+
+// The app decides whether a kept setup can go back silently by looking for this line of its help text (internal/update closeAppMarker).
+// "close-app" alone cannot tell, because it is also a step name in every older setup.
+func TestHelpTextHasTheLineTheRollbackLooksFor(t *testing.T) {
+	var out bytes.Buffer
+	_, _ = parseFlags([]string{"--help"}, osEnv(), &out)
+	if !strings.Contains(out.String(), "what an automatic update does") {
+		t.Fatalf("the --close-app help line changed; update closeAppMarker in internal/update/launch_windows.go with it:\n%s", out.String())
 	}
 }

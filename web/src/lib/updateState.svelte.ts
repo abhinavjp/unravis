@@ -95,11 +95,13 @@ export async function dismissUpdateResult(): Promise<void> {
 // update is never applied while the app is being used. The program decides "in use" from these pings (two minutes after the last).
 const PRESENCE_MS = 45 * 1000;
 const TOUCH_WINDOW_MS = 5 * 60 * 1000;
-let lastTouch = 0; // opening the page is not a touch: an app that comes back after an update must not look in use
+// Opening the page counts as a touch only while it is visible and focused (a person just opened it); a page that comes back in the
+// background after an update does not.
+let lastTouch = (typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus()) ? Date.now() : 0;
 
 function startPresence(): () => void {
   const touch = () => { lastTouch = Date.now(); };
-  const events = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const;
+  const events = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'] as const;
   for (const name of events) window.addEventListener(name, touch, { passive: true });
   const ping = () => {
     if (document.visibilityState !== 'visible' || Date.now() - lastTouch > TOUCH_WINDOW_MS) return;

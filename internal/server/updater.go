@@ -225,7 +225,7 @@ func (u *Updater) Status() UpdateStatus {
 		st.Status = "unreachable"
 	}
 	// A run nobody watched that ended badly: the bar must not go on saying "being applied".
-	if st.Result != nil && st.Result.Outcome != "done" && st.Install != nil && st.Install.State == "launched" && st.Install.Version == st.Result.To {
+	if st.Result != nil && st.Result.Outcome != "done" && st.Install != nil && st.Install.State == "launched" && st.Install.Version == st.Result.To && u.resultIsFromThisLaunch() {
 		c := *st.Install
 		c.State, c.Error = "failed", st.Result.Message
 		st.Install = &c
@@ -359,4 +359,15 @@ func (u *Updater) currentSettings() UpdaterSettings {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.settings
+}
+
+// resultIsFromThisLaunch says the note on disk was written after the last successful launch, so it is that run's, not an earlier one's.
+func (u *Updater) resultIsFromThisLaunch() bool {
+	r, ok := update.ReadApplyResult(u.resultDir)
+	if !ok {
+		return false
+	}
+	u.inst.mu.Lock()
+	defer u.inst.mu.Unlock()
+	return !u.inst.launchedAt.IsZero() && r.At.After(u.inst.launchedAt)
 }

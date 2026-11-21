@@ -57,11 +57,15 @@ func LaunchSetup(path, sha256hex, version string) error {
 func LaunchRollback(path, sha256hex, version string) error {
 	extra := []string{"--allow-downgrade"}
 	// The kept setup is the OLD version's. Only one that knows --close-app can go back silently; an older one does it in its window.
-	if data, err := os.ReadFile(path); err == nil && bytes.Contains(data, []byte("close-app")) {
+	if data, err := os.ReadFile(path); err == nil && bytes.Contains(data, []byte(closeAppMarker)) {
 		extra = append(extra, "--silent", "--close-app")
 	}
 	return launchSetup(path, sha256hex, version, extra)
 }
+
+// closeAppMarker is text that only a setup program that knows --close-app contains (the flag's help line). "close-app" alone is also a
+// step name in every older setup, so it cannot tell them apart.
+const closeAppMarker = "what an automatic update does"
 
 // LaunchSilent starts the downloaded setup with no window of any kind: --silent --upgrade --close-app. The setup program asks this
 // app to quit, replaces the program files, starts the app again (the old version again if the update had to be undone) and leaves a

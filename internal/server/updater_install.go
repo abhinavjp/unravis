@@ -27,13 +27,14 @@ type InstallInfo struct {
 type Launcher func(path, sha256hex, version string) error
 
 type installState struct {
-	mu      sync.Mutex
-	info    InstallInfo
-	m       *update.Manifest // the verified manifest this download belongs to
-	cancel  context.CancelFunc
-	running bool // a download is in progress
-	busy    bool // an Install is in progress
-	gen     int  // bumped when a download starts or is thrown away; an old download's result is then ignored
+	mu         sync.Mutex
+	info       InstallInfo
+	m          *update.Manifest // the verified manifest this download belongs to
+	cancel     context.CancelFunc
+	running    bool      // a download is in progress
+	busy       bool      // an Install is in progress
+	launchedAt time.Time // when the last setup launch succeeded; a result note older than this belongs to an earlier run
+	gen        int       // bumped when a download starts or is thrown away; an old download's result is then ignored
 }
 
 // EnableInstall lets this Updater download and hand off updates. dir is the download folder; launch starts the installer.
@@ -212,6 +213,9 @@ func (u *Updater) Install() error {
 		return err
 	}
 	u.setInstall(gen, InstallInfo{State: "launched", Version: m.Version, Done: got.Size, Total: got.Size})
+	u.inst.mu.Lock()
+	u.inst.launchedAt = time.Now()
+	u.inst.mu.Unlock()
 	return nil
 }
 

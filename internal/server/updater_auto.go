@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -49,6 +50,9 @@ type autoState struct {
 	mu     sync.Mutex
 	tries  map[string]int // version -> automatic applies tried; also kept on disk, so a restart does not forget it
 	loaded bool
+	// failedByAuto is set when an automatic apply was launched; only then may autoStep turn a launch failure back into "ready"
+	// (a failure of the person's own Apply now stays on screen with its reason).
+	failedByAuto bool
 	// Failed automatic downloads wait longer each time (5 minutes, then 15, 60, and 6 hours at most), so a PC with no route to the
 	// feed does not try every minute.
 	dlFails int
@@ -127,8 +131,14 @@ func (u *Updater) autoStep() {
 		u.auto.dlFails, u.auto.dlNext = 0, time.Time{}
 		u.auto.mu.Unlock()
 	case state == "failed" && ver == m.Version && u.fileStillThere(m):
+		if !u.autoFailed() {
+			return // the person's own Apply now failed: leave it on screen with its reason; nothing is downloaded again
+		}
 		// The file is fine: it was the start of the setup program that failed (a blocked or refused launch), not the download. Back
 		// to "ready" so the next tick can try again, within the cap above; it is not a download failure and earns no download wait.
+		u.auto.mu.Lock()
+		u.auto.failedByAuto = false
+		u.auto.mu.Unlock()
 		u.inst.mu.Lock()
 		if u.inst.info.State == "failed" && u.inst.info.Version == m.Version {
 			u.inst.info = InstallInfo{State: "ready", Version: m.Version, Done: u.inst.info.Total, Total: u.inst.info.Total}
@@ -159,7 +169,15 @@ func (u *Updater) autoStep() {
 		return
 	}
 	u.bumpAutoTries(m.Version) // written before the launch: a try that kills the app is still counted after the restart
-	_ = u.Install()            // quits this app through the setup program; the new (or, after a rollback, old) version starts by itself
+	u.auto.mu.Lock()
+	u.auto.failedByAuto = true
+	u.auto.mu.Unlock()
+	if err := u.Install(); errors.Is(err, errBusy) || errors.Is(err, errNotReady) || errors.Is(err, errNoUpdate) || errors.Is(err, errNoInstall) {
+		u.unbumpAutoTries(m.Version) // nothing was launched (the person pressed Apply now at the same moment, or the file is not ready): not a try
+		u.auto.mu.Lock()
+		u.auto.failedByAuto = false
+		u.auto.mu.Unlock()
+	} // quits this app through the setup program; the new (or, after a rollback, old) version starts by itself
 }
 
 // SetResultDir says where the setup program leaves the result of an unattended update. Status reports it until it is dismissed.
@@ -216,4 +234,25 @@ func (u *Updater) bumpAutoTries(version string) {
 func (u *Updater) fileStillThere(m *update.Manifest) bool {
 	_, ok := u.dl.Recheck(m, update.AssetSetup)
 	return ok
+}
+
+func (u *Updater) autoFailed() bool {
+	u.auto.mu.Lock()
+	defer u.auto.mu.Unlock()
+	return u.auto.failedByAuto
+}
+
+func (u *Updater) unbumpAutoTries(version string) {
+	n := u.autoTries(version) - 1
+	u.auto.mu.Lock()
+	defer u.auto.mu.Unlock()
+	if n <= 0 {
+		u.auto.tries = map[string]int{}
+		_ = os.Remove(u.autoTriesPath())
+		return
+	}
+	u.auto.tries = map[string]int{version: n}
+	if b, err := json.Marshal(autoTriesFile{Version: version, Tries: n}); err == nil {
+		_ = os.WriteFile(u.autoTriesPath(), b, 0o600)
+	}
 }

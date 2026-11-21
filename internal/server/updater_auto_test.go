@@ -164,6 +164,13 @@ func TestALaunchFailureGoesBackToReadyAndIsNotADownloadFailure(t *testing.T) {
 	u.inst.mu.Lock()
 	u.inst.info.State, u.inst.info.Error = "failed", "the setup program closed right away"
 	u.inst.mu.Unlock()
+	u.autoStep() // the person's own failed Apply now stays on screen: no reset
+	if s := u.Status(); s.Install == nil || s.Install.State != "failed" || s.Install.Error == "" {
+		t.Fatalf("a failed Apply now was reset: %+v", s.Install)
+	}
+	u.auto.mu.Lock()
+	u.auto.failedByAuto = true // as if the automatic apply had caused it
+	u.auto.mu.Unlock()
 	u.autoStep() // file is fine: back to ready, no new download, no wait recorded
 	if s := u.Status(); s.Install == nil || s.Install.State != "ready" {
 		t.Fatalf("state %+v", s.Install)
@@ -188,11 +195,31 @@ func TestLaunchedBarDoesNotStayWhenTheRunFailed(t *testing.T) {
 	u.inst.mu.Lock()
 	u.inst.info.State = "launched"
 	ver := u.inst.info.Version
+	u.inst.launchedAt = time.Now().Add(-time.Minute)
 	u.inst.mu.Unlock()
+	// a note from BEFORE this launch is an earlier run's: it does not change the state
+	if err := update.WriteApplyResult(dir, update.ApplyResult{From: "0.1.0-rc.47", To: ver, Outcome: "failed", Message: "old", At: time.Now().Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if s := u.Status(); s.Install == nil || s.Install.State != "launched" {
+		t.Fatalf("an earlier run's note changed this launch: %+v", s.Install)
+	}
 	if err := update.WriteApplyResult(dir, update.ApplyResult{From: "0.1.0-rc.47", To: ver, Outcome: "failed", Message: "Windows asked for approval and it was refused.", At: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if s := u.Status(); s.Install == nil || s.Install.State != "failed" || s.Install.Error == "" {
 		t.Fatalf("%+v", s.Install)
+	}
+}
+
+func TestABusyInstallIsNotCountedAsATry(t *testing.T) {
+	rg, applied := autoRig(t)
+	u := rg.u
+	u.inst.mu.Lock()
+	u.inst.busy = true // the person pressed Apply now at the same moment
+	u.inst.mu.Unlock()
+	u.autoStep()
+	if applied.Load() != 0 || u.autoTries(u.inst.info.Version) != 0 {
+		t.Fatalf("applied %d, tries %d", applied.Load(), u.autoTries(u.inst.info.Version))
 	}
 }

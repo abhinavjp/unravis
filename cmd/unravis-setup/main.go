@@ -296,10 +296,6 @@ func runSilent(o options, e env) int {
 	}
 	old, _ := setup.Detect(r.Sys.Reg)
 	setup.FillRecordingsConfirmation(&req, old)
-	wasRunning := false
-	if o.closeApp && old != nil {
-		wasRunning, _ = appRunning(e, old.Location) // only an app that was up is started again
-	}
 	opts := req.Options
 	if old != nil {
 		opts = old.State.Options() // upgrade, repair, uninstall and a second install keep the choices of the install
@@ -325,7 +321,7 @@ func runSilent(o options, e env) int {
 	}
 	report(say, res, logPath)
 	if o.closeApp {
-		afterUnattended(o, e, d, old, wasRunning, res, say, l)
+		afterUnattended(o, e, d, old, res, say, l)
 	}
 	return res.Outcome.ExitCode()
 }
@@ -333,7 +329,7 @@ func runSilent(o options, e env) int {
 // afterUnattended is the end of an update the app started and nobody watches: start the app again if it was running, and leave a
 // plain note for the next start (or the current one) to show. A failed run was rolled back by the engine; the old version is started
 // again then too, so the person is never left with no program.
-func afterUnattended(o options, e env, d setup.Dirs, old *setup.Installed, wasRunning bool, res setup.Result, say func(string, ...any), l *setup.FileLog) {
+func afterUnattended(o options, e env, d setup.Dirs, old *setup.Installed, res setup.Result, say func(string, ...any), l *setup.FileLog) {
 	from := ""
 	loc := ""
 	if old != nil {
@@ -355,11 +351,11 @@ func afterUnattended(o options, e env, d setup.Dirs, old *setup.Installed, wasRu
 		r.Outcome = "failed"
 		r.Message = "The update to " + o.expectVersion + " did not happen. Unravis stays on " + from + ". " + res.Message
 	}
-	// The app that asked for the update was running (the snapshot before the run says so): start it again, in the tray with no browser
-	// tab (the new version after a good run, the old one after a rollback) unless it is already up. An app that was not running
-	// (the person quit it, or an administrator ran this by hand) is left alone.
+	// --close-app is only ever passed by the app itself, so the app was running when it asked. Start it again in the tray with no
+	// browser tab (the new version after a good run, the old one after a rollback) unless it is already up. Waiting for a snapshot
+	// would lose the app when it left before setup looked.
 	failedToStart := false
-	if wasRunning && loc != "" && e.startBackground != nil {
+	if loc != "" && e.startBackground != nil {
 		if running, _ := appRunning(e, loc); !running {
 			if err := e.startBackground(filepath.Join(loc, "unravis.exe")); err != nil {
 				l.Line("restart: could not start Unravis: " + err.Error())
