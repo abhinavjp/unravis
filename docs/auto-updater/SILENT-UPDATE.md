@@ -41,6 +41,7 @@ Status: **done** = handled and tested before this work; **new** = built and test
 | 20 | Setup shows a message box (app could not be restarted) | The note is written first, so it never waits for a click | new |
 | 21 | The app restarts after an update | Started with `--background` (tray, no browser tab). `--close-app` is only passed by the app itself, so setup always restarts it (never loses the app if it left early) | new |
 | 22 | An MCP copy of unravis.exe is in use by an AI client | Requests from `unravis --mcp` count as use for 5 minutes, and so do imports, exports and captures that are running. An idle MCP copy is still closed by setup; the AI client starts it again on its next call | built, BL-171 |
+| 23 | The feed is unreachable, or puts the release on hold (pause, withdrawal, staged rollout), at the moment of apply | The feed is asked once more right before the start, by Apply now, the automatic apply and the Blackbox recorder alike. Anything but "this very file is still on offer" starts nothing: a hold shows the reason, an unreachable or refused answer says so and keeps the download. The automatic apply waits 5 min, 15 min, 1 h, then 6 h before looking again, and none of this counts as a try | built, unit-tested, not live |
 | 19 | Updater cannot show the note (app not running) | Note stays on disk, shown at the next start | new |
 
 ## Not proven yet

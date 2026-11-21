@@ -57,6 +57,10 @@ type autoState struct {
 	// feed does not try every minute.
 	dlFails int
 	dlNext  time.Time
+	// The same wait for the last look at the feed before a start: when it cannot be reached or its answer is refused, the next try
+	// is later (5 minutes, then 15, 60, and 6 hours at most).
+	rcFails int
+	rcNext  time.Time
 }
 
 func dlBackoff(fails int) time.Duration {
@@ -163,7 +167,11 @@ func (u *Updater) autoStep() {
 	case state == "ready" && ver == m.Version:
 		u.auto.mu.Lock()
 		u.auto.dlFails, u.auto.dlNext = 0, time.Time{}
+		waitRC := time.Now().Before(u.auto.rcNext)
 		u.auto.mu.Unlock()
+		if waitRC {
+			return // the feed could not confirm it a moment ago; no call every minute
+		}
 	case state == "failed" && ver == m.Version && u.fileStillThere(m):
 		if !u.autoFailed() {
 			return // the person's own Apply now failed: leave it on screen with its reason; nothing is downloaded again
@@ -206,7 +214,18 @@ func (u *Updater) autoStep() {
 	u.auto.mu.Lock()
 	u.auto.failedByAuto = true
 	u.auto.mu.Unlock()
-	if err := u.Install(); errors.Is(err, errBusy) || errors.Is(err, errNotReady) || errors.Is(err, errNoUpdate) || errors.Is(err, errNoInstall) {
+	err := u.Install()
+	u.auto.mu.Lock()
+	switch {
+	case errors.Is(err, errRecheckOffline), errors.Is(err, errRecheckRefused):
+		u.auto.rcFails++
+		u.auto.rcNext = time.Now().Add(dlBackoff(u.auto.rcFails))
+	default:
+		u.auto.rcFails, u.auto.rcNext = 0, time.Time{}
+	}
+	u.auto.mu.Unlock()
+	if errors.Is(err, errBusy) || errors.Is(err, errNotReady) || errors.Is(err, errNoUpdate) || errors.Is(err, errNoInstall) ||
+		errors.Is(err, errRecheckHeld) || errors.Is(err, errRecheckOffline) || errors.Is(err, errRecheckRefused) {
 		u.unbumpAutoTries(m.Version) // nothing was launched (the person pressed Apply now at the same moment, or the file is not ready): not a try
 		u.auto.mu.Lock()
 		u.auto.failedByAuto = false

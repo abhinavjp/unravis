@@ -323,6 +323,22 @@ func (u *SelfUpdater) CheckOnce(ctx context.Context) update.Result {
 		u.set("failed", v, "Could not prepare version "+v+": "+err.Error())
 		return res
 	}
+	// One more look at the feed before the start: a pause or withdrawal that came out while the file was being prepared must win, and
+	// a feed that cannot confirm the release starts nothing (it tries again on the next turn of the loop).
+	again := u.Check(ctx)
+	if ctx.Err() != nil {
+		return again
+	}
+	if again.Held && again.Manifest != nil {
+		u.logf("update %s: put on hold while it was prepared; nothing was started", v)
+		u.set("held", v, "A newer version is on hold: "+again.Detail+".")
+		return again
+	}
+	if !sameBlackboxRelease(res.Manifest, again) {
+		u.logf("update %s: the feed could not confirm it; nothing was started", v)
+		u.set("idle", "", "Could not confirm that version "+v+" is still safe to install ("+strings.TrimSuffix(resultSentence(again), ".")+"). It will try again.")
+		return again
+	}
 	pend, _ := json.Marshal(pending{From: u.Version, To: v, At: u.now().UTC()})
 	if err := os.WriteFile(filepath.Join(u.Dir, pendingName), pend, 0o600); err != nil {
 		u.set("failed", v, "Could not write the update marker; nothing was changed.")
@@ -337,6 +353,14 @@ func (u *SelfUpdater) CheckOnce(ctx context.Context) update.Result {
 	}
 	u.logf("update %s started", v)
 	return res
+}
+
+// sameBlackboxRelease says whether the second look names the very release the first one did (same version, same recorder file,
+// same program hash).
+func sameBlackboxRelease(first *update.Manifest, again update.Result) bool {
+	m := again.Manifest
+	return again.Status == update.StatusAvailable && !again.Held && first != nil && m != nil && m.Version == first.Version &&
+		m.Assets[update.AssetBlackbox] == first.Assets[update.AssetBlackbox] && strings.EqualFold(m.BlackboxExeSHA256, first.BlackboxExeSHA256)
 }
 
 func resultSentence(r update.Result) string {
