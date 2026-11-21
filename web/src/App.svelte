@@ -111,7 +111,7 @@
     {#if panels.importPopup}<ImportPopup caseId={panels.importPopup.caseId} caseTitle={panels.importPopup.caseTitle} query={scope.query} {zone} retryServerName={panels.importPopup.retryServerName} onClose={() => void closeImportPopup()} onOpenTimeline={openTimeline} />{/if}
     {#if panels.sidePanel === 'blackbox'}<BlackboxPanel onClose={closeSidePanel} />{/if}
 
-    <main class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={panels.modalOpen}>
+    <main id="main-content" tabindex="-1" class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={panels.modalOpen}>
       <div class="stage-inner">
         {#if !app.initError && (!info || app.screen === 'loading')}
           <Landing mode="loading" />

@@ -215,6 +215,7 @@ func openDemoCases(getenv func(string) string, hypotheses ledger.Store, now time
 		now:     clk.Now,
 		newID:   ids.next,
 		perUser: true,
+		seal:    demoSeal,
 		keySalt: func() []byte { return []byte(demoCaseKeySalt) },
 		wrapLegacy: func(inner func(casestore.CaseID) error) func(casestore.CaseID) error {
 			return func(id casestore.CaseID) error {

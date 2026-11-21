@@ -252,7 +252,7 @@
 {/if}
 
 <style>
-  .start { display: grid; gap: var(--space-4); min-width: 0; font-family: var(--mono); }
+  .start { display: grid; gap: var(--space-4); min-width: 0; }
   .start-head { display: grid; gap: var(--space-2); max-width: 64ch; }
   .start-head h2 { margin: 0; font-size: 20px; font-weight: 600; }
   .start-head p { margin: 0; color: var(--text-2); font-size: var(--fs-3); }

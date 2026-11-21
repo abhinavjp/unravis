@@ -13,6 +13,7 @@ import (
 	"api-audit-explorer/internal/hosts"
 	"api-audit-explorer/internal/importer/all"
 	"api-audit-explorer/internal/ledger"
+	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/server"
 )
 
@@ -135,14 +136,18 @@ type caseSeams struct {
 	now        func() time.Time
 	newID      func() (casestore.CaseID, error)
 	wrapLegacy func(inner func(casestore.CaseID) error) func(casestore.CaseID) error
-	keySalt    func() []byte // a fixed key salt for the demo's keyed case; nil in live mode
-	perUser    bool          // the demo's capture store always uses the per-user layout under AUDIT_CONFIG_DIR
+	keySalt    func() []byte                        // a fixed key salt for the demo's keyed case; nil in live mode
+	perUser    bool                                 // the demo's capture store always uses the per-user layout under AUDIT_CONFIG_DIR
+	seal       func() (sealedfile.Protector, error) // the demo's sealer (works off Windows); nil in live mode
 }
 
 func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams caseSeams) (*casesWiring, error) {
 	st := storageFor(getenv)
 	if seams.perUser {
 		st = userStorage()
+	}
+	if seams.seal != nil {
+		st.seal = seams.seal
 	}
 	base, err := st.base(getenv)
 	if err != nil {

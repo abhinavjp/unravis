@@ -249,7 +249,7 @@
 </section>
 
 <style>
-  .wizard { display: grid; gap: var(--space-4); width: 100%; max-width: 1100px; min-width: 0; margin: 0 auto; font-family: var(--mono); font-size: var(--fs-5); }
+  .wizard { display: grid; gap: var(--space-4); width: 100%; max-width: 1100px; min-width: 0; margin: 0 auto; font-size: var(--fs-5); }
   .wiz-top { display: grid; gap: var(--space-2); max-width: 72ch; }
   .wiz-top-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
   .wiz-name { margin: 0; font-size: var(--fs-6); font-weight: 600; }
