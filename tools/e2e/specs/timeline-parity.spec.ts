@@ -99,7 +99,7 @@ test('TLPAR-01: the Quick range chips sit above the windows, in order; "Last 4 h
   await expect(dialog).toBeHidden();
 });
 
-test('TLPAR-02: the "Investigation window" and "Compare it with" headings with their help; the legends and "UTC" stay', async ({ page }) => {
+test('TLPAR-02: the "Investigation window" and "Compare it with" headings with their help; the legends and the zone note stay', async ({ page }) => {
   await openTimeline(page);
 
   await expect(page.getByRole('heading', { level: 3, name: 'Investigation window', exact: true })).toBeVisible();
@@ -108,12 +108,12 @@ test('TLPAR-02: the "Investigation window" and "Compare it with" headings with t
   await expect(page.getByText('This earlier period is only used for comparison. It may not have been healthy.', { exact: true })).toBeVisible();
 
   // The visually hidden legends keep the groups' spoken names, unchanged.
-  await expect(page.getByRole('group', { name: 'Incident window (UTC)' })).toBeVisible();
-  await expect(page.getByRole('group', { name: 'Comparison period (UTC)' })).toBeVisible();
-  await expect(page.locator('fieldset.window-set legend')).toHaveText(['Incident window (UTC)', 'Comparison period (UTC)']);
+  await expect(page.getByRole('group', { name: 'Incident window' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Comparison period' })).toBeVisible();
+  await expect(page.locator('fieldset.window-set legend')).toHaveText(['Incident window', 'Comparison period']);
 
-  // "UTC" is still said on the page.
-  await expect(page.getByText('Times are typed in UTC.', { exact: true })).toBeVisible();
+  // The zone is said on the page (the choice sits at the top; the pickers name it in their button and dialog).
+  await expect(page.getByText('Times are typed in the zone chosen at the top.', { exact: true })).toBeVisible();
 });
 
 test('TLPAR-03: Add evidence sits in the "Sources traced" row and opens the Import files popup', async ({ page }) => {

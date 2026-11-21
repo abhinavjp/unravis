@@ -48,12 +48,12 @@ test('TRACE-01: the screen opens with the picker, toolbar, chart and notes regio
   // Pickers: incident first, then comparison (one button each, no browser date box), UTC note, one start button, a way back.
   const sets = page.locator('[data-region=windows] fieldset');
   await expect(sets).toHaveCount(2);
-  await expect(sets.nth(0).locator('legend')).toHaveText('Incident window (UTC)');
-  await expect(sets.nth(1).locator('legend')).toHaveText('Comparison period (UTC)');
+  await expect(sets.nth(0).locator('legend')).toHaveText('Incident window');
+  await expect(sets.nth(1).locator('legend')).toHaveText('Comparison period');
   await expect(page.locator('input[type=datetime-local]')).toHaveCount(0);
   await expect(pickerButton(page, 'incident')).toBeVisible();
   await expect(pickerButton(page, 'comparison')).toBeVisible();
-  await expect(page.getByText('Times are typed in UTC.')).toBeVisible();
+  await expect(page.getByText('Times are typed in the zone chosen at the top.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start tracing' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Case home', exact: true })).toBeVisible();
   // The defaults are the hour before now, and the hour before that (real clock, so only the shape is checked).
@@ -527,22 +527,22 @@ test('TRACE-16: with no tooltip to show, the tooltip element is not drawn at all
 
 test.describe('time zone', () => {
   test.use({ timezoneId: 'Asia/Kolkata' });
-  test('TRACE-15: the UTC / Local switch moves the axis labels and caption only; the window and the data stay', async ({ page }) => {
+  test('TRACE-15: the time zone choice moves the axis labels, caption and picker times; the data stay and nothing is read again', async ({ page }) => {
     await openTracing(page);
     await trace(page, WIN_A);
     let posts = 0;
     page.on('request', (r) => { if (r.url().includes('/tracing') && r.method() === 'POST') posts++; });
     await expect(page.locator('.axcap')).toContainText('Time (UTC).');
-    const group = page.getByRole('group', { name: 'Show times in' });
-    await group.getByRole('button', { name: /^Local/ }).click();
+    const zone = page.getByRole('combobox', { name: 'Show and type times in' });
+    await zone.selectOption('local');
     await expect(page.locator('.axcap')).not.toContainText('Time (UTC).');
     await expect(page.locator('.axtick').first()).toHaveText(/^19 Oct (20:30|21:00) /); // the same instant as 15:00 UTC; which round step shows depends on the plot width
-    // The picker still says UTC and still holds the UTC times typed.
-    await expect(page.getByText('Times are typed in UTC.')).toBeVisible();
-    await expect(pickerButton(page, 'incident')).toContainText('19 Oct 2026 15:00 → 18:00');
+    // The picker follows the zone: the same instants, shown and typed in India time (UTC+5:30).
+    await expect(pickerButton(page, 'incident')).toContainText('19 Oct 2026 20:30 → 23:30');
     await expect(bars(page, 'audit')).toHaveCount(11);
-    await group.getByRole('button', { name: 'UTC', exact: true }).click();
+    await zone.selectOption('utc');
     await expect(page.locator('.axtick').first()).toHaveText('19 Oct 15:00 UTC');
+    await expect(pickerButton(page, 'incident')).toContainText('19 Oct 2026 15:00 → 18:00');
     expect(posts).toBe(0);
   });
 });
