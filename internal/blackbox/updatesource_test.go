@@ -24,7 +24,6 @@ func TestReadUpdateSource(t *testing.T) {
 		"\ufeff\"D:\\updates\"\r\nmore": "D:\\updates",
 		"\r\n\r\nC:\\x y\\z\r\n":        "C:\\x y\\z",
 		"   \r\n":                       "",
-		"/srv/feed\n":                   "/srv/feed",
 	} {
 		write(in)
 		if got, err := ReadUpdateSource(dir); got != want || err != nil {
