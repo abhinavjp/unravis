@@ -134,6 +134,7 @@ jobs:
         shell: pwsh
         run: |
           ./tools/release/Test-NoUpx.Tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Test-NoUpx self-test failed.' }
           ./tools/release/Test-NoUpx.ps1 -Path dist
           if ($LASTEXITCODE -ne 0) { throw 'a packed exe is in dist.' }
           Get-ChildItem dist -Filter *.exe | Select-Object Name, Length
