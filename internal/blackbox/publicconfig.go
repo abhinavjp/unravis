@@ -34,7 +34,9 @@ func PublicConfigPath() string {
 
 // PublishThisPC writes the copy. The folder is locked first (administrators and SYSTEM write, everyone reads), so a person cannot put a
 // file of their own there for the scan to trust. It is best effort for the caller: the recorder works without the copy.
-func PublishThisPC(env interface{ SecureDir(dir string, usersRead bool) error }, cfg Config) error {
+func PublishThisPC(env interface {
+	SecureDir(dir string, usersRead bool) error
+}, cfg Config) error {
 	dir := PublicConfigDir()
 	if dir == "" {
 		return errors.New("this PC has no ProgramData folder")
