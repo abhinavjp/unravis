@@ -8,7 +8,7 @@ export const AUDIT_GAP_TEXT = {
   collectionOk: 'The name has a valid shape.',
   collectionNote: 'One exact collection name. The first read of the database confirms the documents.',
   permissionLink: 'Check permission',
-  permissionHelp: 'Step 8: MongoDB checks what the login may read and gives the script for the owner of the server to run.',
+  permissionHelp: 'Read MongoDB checks what the login may read and gives the script for the owner of the server to run.',
   warningLead: 'The server said:',
   cutNote: 'Only the first ' + DATABASE_CAP + ' databases are listed. If yours is missing, use a login that can see fewer databases.'
 } as const;

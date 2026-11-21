@@ -1,4 +1,4 @@
-import{$ as e,A as t,B as n,E as r,F as i,G as a,H as o,I as s,J as c,L as l,M as u,P as d,S as f,V as p,W as m,Y as h,at as g,b as _,c as v,et as y,f as b,g as x,h as S,ht as C,it as w,j as T,k as E,lt as ee,m as te,mt as D,n as O,nt as k,p as A,pt as ne,r as j,st as M,tt as N,ut as re,w as ie,y as ae}from"./disclose-version-Cz0YKkiE.js";import{i as P}from"./api-DwiiVb6M.js";import{n as F,t as I}from"./lookup-erXAX2sz.js";import{Bn as L,In as oe,Jn as se,Kn as ce,Ln as le,Pn as R,cr as ue,dr as de,fr as fe,kt as pe,lr as me,pr as he,qn as z,sr as ge,ur as _e}from"./index-CWpRIzIC.js";function ve(e){let t=(e?.version??``).trim();if(!t)return``;let n=/^\d/.test(t)?`v`+t:t,r=[],i=(e?.commit??``).trim().slice(0,7);i&&r.push(`build `+i);let a=(e?.date??``).trim();return a&&r.push(a),`Unravis `+n+(r.length?` (`+r.join(`, `)+`)`:``)}var B=`# Unravis Blackbox
+import{$ as e,A as t,B as n,E as r,F as i,G as a,H as o,I as s,J as c,L as l,M as u,P as d,S as f,V as p,W as m,Y as h,at as g,b as _,c as v,et as y,f as b,g as x,h as S,ht as C,it as w,j as T,k as E,lt as ee,m as te,mt as D,n as O,nt as k,p as A,pt as ne,r as j,st as M,tt as N,ut as re,w as ie,y as ae}from"./disclose-version-Cz0YKkiE.js";import{i as P}from"./api-CNczW9gM.js";import{n as F,t as I}from"./lookup-erXAX2sz.js";import{Bn as L,In as oe,Jn as se,Kn as ce,Ln as le,Pn as R,cr as ue,dr as de,fr as fe,kt as pe,lr as me,pr as he,qn as z,sr as ge,ur as _e}from"./index-PF22stjl.js";function ve(e){let t=(e?.version??``).trim();if(!t)return``;let n=/^\d/.test(t)?`v`+t:t,r=[],i=(e?.commit??``).trim().slice(0,7);i&&r.push(`build `+i);let a=(e?.date??``).trim();return a&&r.push(a),`Unravis `+n+(r.length?` (`+r.join(`, `)+`)`:``)}var B=`# Unravis Blackbox
 
 The Blackbox is a small program that sits on a server and keeps a flight recorder of it. When an incident happens, Unravis reads the recording and shows what the server was doing at that minute. It only reads the server. It never changes anything on it except its own recordings folder.
 
@@ -1248,7 +1248,7 @@ The demo uses sample sources and does not let you add real ones, so the pictures
 
 A case can read a SQL Server and a MongoDB server on top of its audit logs. They answer two questions the logs cannot: did the database slow down, and when did it start. Unravis only reads. It never changes a server, never runs a grant for you and never switches a profiler on.
 
-The case page has a section called SQL Server and MongoDB. It holds six tabs: Connections, Step 7: SQL Server, Step 8: MongoDB, Add data, Add another day and Combinations. The guided steps show the same Step 7 and Step 8 panels.
+The case page has a section called SQL Server and MongoDB. It holds seven tabs: Connections, Sources, Read SQL Server, Read MongoDB, Add data, Add another day and Combinations.
 
 Pictures for this page come from the screenshot tool (see \`screenshots.md\`). Each screen below has a dark and a light picture. They were made on a developer PC and are replaced when the reference runner regenerates the baselines.
 
@@ -1321,9 +1321,9 @@ This is the same form after Test: the word Works and the server version sit unde
 ![A SQL Server connection test that works, dark](screenshots/P7/p7-sql-test-ok-dark.png)
 ![A SQL Server connection test that works, light](screenshots/P7/p7-sql-test-ok-light.png)
 
-### Step 7: SQL Server
+### Read SQL Server
 
-Step 7 reads one day of a SQL Server with four fixed read-only checks. Nothing you type is ever run as a query.
+Read SQL Server reads one day of a SQL Server with four fixed read-only checks. Nothing you type is ever run as a query.
 
 | Check | Reads | Answers |
 |---|---|---|
@@ -1334,10 +1334,10 @@ Step 7 reads one day of a SQL Server with four fixed read-only checks. Nothing y
 
 A check that cannot run says Cannot test yet and shows the permission it is missing with the lines to fix it. The question is then left unanswered. It is never a No and never a pass. Only a check that ran, and is Ready, gives an answer. The whole read is Ready when every check ran, Partly ready when some did, Cannot test yet when none could and Failed when the server could not be read.
 
-This is Step 7. With no SQL Server read yet it says Cannot test yet, shows the grant script and offers to add one.
+This is Read SQL Server. With no SQL Server read yet it says Cannot test yet, shows the grant script and offers to add one.
 
-![Step 7, SQL Server, dark](screenshots/P7/p7-step-7-dark.png)
-![Step 7, SQL Server, light](screenshots/P7/p7-step-7-light.png)
+![Read SQL Server, dark](screenshots/P7/p7-step-7-dark.png)
+![Read SQL Server, light](screenshots/P7/p7-step-7-light.png)
 
 ### Grants for the owner to run
 
@@ -1359,20 +1359,20 @@ These pictures show the same panel with each version chosen (2019 and 2022). Typ
 ![The grant script for SQL Server 2022 or later, dark](screenshots/P7/p7-grant-script-2022-dark.png)
 ![The grant script for SQL Server 2022 or later, light](screenshots/P7/p7-grant-script-2022-light.png)
 
-### Step 8: MongoDB
+### Read MongoDB
 
-Step 8 reads the MongoDB server itself, not the audit logs. The user needs the clusterMonitor role on admin and the read role on the audit database. The panel shows the script for the owner to run in mongosh.
+Read MongoDB reads the MongoDB server itself, not the audit logs. The user needs the clusterMonitor role on admin and the read role on the audit database. The panel shows the script for the owner to run in mongosh.
 
-Step 8 currently checks the slow operations the profiler recorded (answer M6) and when they began. Other Mongo questions need a time series and are not read yet. The screen says so rather than guessing.
+Read MongoDB currently checks the slow operations the profiler recorded (answer M6) and when they began. Other Mongo questions need a time series and are not read yet. The screen says so rather than guessing.
 
-This is Step 8. With no MongoDB server read it says Cannot test yet and shows the roles script and the profiler guide.
+This is Read MongoDB. With no MongoDB server read it says Cannot test yet and shows the roles script and the profiler guide.
 
-![Step 8, MongoDB, dark](screenshots/P7/p7-step-8-dark.png)
-![Step 8, MongoDB, light](screenshots/P7/p7-step-8-light.png)
+![Read MongoDB, dark](screenshots/P7/p7-step-8-dark.png)
+![Read MongoDB, light](screenshots/P7/p7-step-8-light.png)
 
 ### The profiler guide
 
-The MongoDB profiler is how slow operations are seen. It is off by default. The Switched on? guide explains why it matters, what it costs, and the steps. It has three scripts: Check that it is on (read-only), Switch it on and Switch it off again. The switch-on script replaces the profiler record collection, so older records are lost. Pick a quiet moment, run it as a MongoDB administrator, then read the database again. Unravis cannot switch it on and never tries. The guide appears on Step 8 and carries the database name you gave.
+The MongoDB profiler is how slow operations are seen. It is off by default. The Switched on? guide explains why it matters, what it costs, and the steps. It has three scripts: Check that it is on (read-only), Switch it on and Switch it off again. The switch-on script replaces the profiler record collection, so older records are lost. Pick a quiet moment, run it as a MongoDB administrator, then read the database again. Unravis cannot switch it on and never tries. The guide appears on Read MongoDB and carries the database name you gave.
 
 ### Add data
 
