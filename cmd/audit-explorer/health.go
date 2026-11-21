@@ -69,6 +69,7 @@ func startHealth(demo bool, getenv func(string) string) (end func(runErr error),
 	if t == nil {
 		return end, false
 	}
+	noteCutOff(t, update.JournalFolders(os.Getenv("ProgramData"), os.Getenv("LOCALAPPDATA")), time.Now(), writeNote, log.Printf)
 	switch act, m := t.Begin(); act {
 	case update.ActRecover:
 		return end, goBack(t, m, update.LaunchRollback, log.Printf)
@@ -76,4 +77,27 @@ func startHealth(demo bool, getenv func(string) string) (end func(runErr error),
 		return watchHealth(t, update.HealthyAfter), false
 	}
 	return end, false
+}
+
+// noteCutOff is BL-170, the safe half: an update that was cut off (power loss, a killed setup) left its journal on disk. Every setup run
+// puts that back before it does anything else, but nobody may run one. The app starts nothing itself: handing over to an old setup
+// from a journal could downgrade a good install (a cut-off Repair, a journal planted by another user), so it only says, once per run,
+// that Setup > Repair finishes the job. It returns true when it left a note.
+func noteCutOff(t *update.Tracker, folders []string, now time.Time, note func(update.ApplyResult), logf func(string, ...any)) bool {
+	pj, ok := update.FindPendingJournal(folders, now, t.JournalTried)
+	if !ok {
+		return false
+	}
+	t.MarkJournalTried(pj.Started)
+	logf("an earlier setup run (to %s) was cut off (journal %s)", pj.Version, pj.Path)
+	note(update.ApplyResult{To: pj.Version, Outcome: "failed", At: now,
+		Message: "An update to " + pj.Version + " was cut off before it finished. Unravis may not be fully updated. Run Unravis Setup from the Unravis program folder and choose Repair; it puts back what was changed first."})
+	return true
+}
+
+// writeNote leaves a result note for the app to show (the same note a silent update leaves).
+func writeNote(r update.ApplyResult) {
+	if cache, err := os.UserCacheDir(); err == nil {
+		_ = update.WriteApplyResult(filepath.Join(cache, "Unravis", "update-result"), r)
+	}
 }

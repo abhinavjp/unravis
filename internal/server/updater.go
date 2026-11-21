@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"api-audit-explorer/internal/update"
@@ -56,6 +57,10 @@ type Updater struct {
 	canSilently func() bool
 	busy        func() bool
 	presence    Presence
+	mcp         Presence
+	inflight    atomic.Int32
+	busyMu      sync.Mutex
+	extraBusy   []func() bool
 	auto        autoState
 	resultDir   string // where the setup program leaves the result of an unattended update
 	inst        installState

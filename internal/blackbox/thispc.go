@@ -488,6 +488,12 @@ func ScanThisPC(svc ServiceControl, env Env, load func(path string) (Config, err
 	}
 	cfg, err := load(filepath.Join(dir, ConfigFileName))
 	if err != nil {
+		// The program folder is for administrators only: read the copy the recorder keeps for this (BL-166).
+		if p := PublicConfigPath(); p != "" {
+			cfg, err = load(p)
+		}
+	}
+	if err != nil {
 		f.ConfigUnreadable = true
 		return f, nil
 	}

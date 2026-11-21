@@ -89,3 +89,62 @@ func TestStayingUpConfirms(t *testing.T) {
 		}
 	}
 }
+
+// writeJournal puts a journal of a cut-off run in a folder, aged so it counts as still.
+func writeJournal(t *testing.T, version string, committed bool, age time.Duration) (folders []string, started time.Time) {
+	t.Helper()
+	dir := t.TempDir()
+	started = time.Now().UTC().Add(-age).Truncate(time.Second)
+	body := `{"op":"upgrade","version":"` + version + `","started":"` + started.Format(time.RFC3339) + `","undos":[]`
+	if committed {
+		body += `,"committed":true`
+	}
+	body += `}`
+	p := filepath.Join(dir, update.JournalFile)
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-age)
+	_ = os.Chtimes(p, old, old)
+	return []string{dir}, started
+}
+
+func TestCutOffUpdateLeavesOneNoteAndStartsNothing(t *testing.T) {
+	tr, _ := healthRig(t)
+	folders, _ := writeJournal(t, "1.1.0", false, time.Hour)
+	var got []update.ApplyResult
+	note := func(r update.ApplyResult) { got = append(got, r) }
+	if !noteCutOff(tr, folders, time.Now(), note, func(string, ...any) {}) || len(got) != 1 || got[0].Outcome != "failed" || !strings.Contains(got[0].Message, "Repair") {
+		t.Fatalf("%+v", got)
+	}
+	if noteCutOff(tr, folders, time.Now(), note, func(string, ...any) {}) || len(got) != 1 {
+		t.Fatal("a run is told once")
+	}
+}
+
+func TestEveryJournalFolderIsLookedAtEvenWhenTheFirstWasTold(t *testing.T) {
+	tr, _ := healthRig(t)
+	a, _ := writeJournal(t, "1.1.0", false, time.Hour)
+	b, _ := writeJournal(t, "1.2.0", false, 2*time.Hour)
+	folders := append(a, b...)
+	n := 0
+	note := func(update.ApplyResult) { n++ }
+	noteCutOff(tr, folders, time.Now(), note, func(string, ...any) {})
+	noteCutOff(tr, folders, time.Now(), note, func(string, ...any) {})
+	if n != 2 {
+		t.Fatalf("both runs are told, once each: %d", n)
+	}
+}
+
+func TestJournalsThatAreNotCutOffAreLeftAlone(t *testing.T) {
+	tr, _ := healthRig(t)
+	for name, c := range map[string]struct {
+		committed bool
+		age       time.Duration
+	}{"committed": {true, time.Hour}, "a setup still running": {false, time.Second}} {
+		folders, _ := writeJournal(t, "1.1.0", c.committed, c.age)
+		if noteCutOff(tr, folders, time.Now(), func(update.ApplyResult) { t.Fatal(name) }, func(string, ...any) {}) {
+			t.Fatal(name)
+		}
+	}
+}

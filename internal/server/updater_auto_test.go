@@ -223,3 +223,48 @@ func TestABusyInstallIsNotCountedAsATry(t *testing.T) {
 		t.Fatalf("applied %d, tries %d", applied.Load(), u.autoTries(u.inst.info.Version))
 	}
 }
+
+func TestInUseCountsMCPRequestsRunningWorkAndExtraBusyChecks(t *testing.T) {
+	u := &Updater{}
+	if u.InUse() {
+		t.Fatal("a fresh updater is idle")
+	}
+	end := u.WorkBegin()
+	if !u.InUse() {
+		t.Fatal("a request in flight is work")
+	}
+	end()
+	if u.InUse() {
+		t.Fatal("the request ended")
+	}
+	u.NoteMCP()
+	if !u.InUse() {
+		t.Fatal("an MCP client that just asked counts as in use")
+	}
+	u2 := &Updater{}
+	var busy atomic.Bool
+	u2.AddBusy(busy.Load)
+	busy.Store(true)
+	if !u2.InUse() {
+		t.Fatal("an extra busy check counts")
+	}
+	busy.Store(false)
+	if u2.InUse() {
+		t.Fatal("the extra check says idle")
+	}
+}
+
+func TestAnImportJobStillRunningIsBusy(t *testing.T) {
+	var j importJobs
+	if j.anyRunning() {
+		t.Fatal("no jobs")
+	}
+	j.m = map[string]*importJob{"a": {state: jobDone}, "b": {state: jobRunning}}
+	if !j.anyRunning() {
+		t.Fatal("a running job must count")
+	}
+	j.m["b"].state = jobFailed
+	if j.anyRunning() {
+		t.Fatal("only finished jobs")
+	}
+}

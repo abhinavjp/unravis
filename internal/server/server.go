@@ -99,6 +99,9 @@ func WithHistory(value savedHistory) Option { return func(h *handler) { h.histor
 
 func WithSQLConnections(value savedSQL) Option { return func(h *handler) { h.sqlConns = value } }
 
+// mcpUserAgent is what unravis --mcp sends (internal/mcp), so the dashboard can tell an assistant is at work.
+const mcpUserAgent = "unravis-mcp"
+
 func New(repo audit.Repository, assets fs.FS, token string, demo bool, options ...Option) http.Handler {
 	h := &handler{repo: repo, assets: assets, token: token, demo: demo}
 	h.tests.limit = connectionTestsPerWindow
