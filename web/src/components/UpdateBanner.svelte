@@ -29,7 +29,7 @@
 {/if}
 
 {#if show && reply}
-  <div class="notice update-bar" bind:this={bar} tabindex="-1" data-testid="update-bar" data-state={stage}>
+  <div class="notice update-bar" role="region" aria-label="Unravis update" bind:this={bar} tabindex="-1" data-testid="update-bar" data-state={stage}>
     <span class="sr-only" role="status" data-testid="update-bar-announce">{announcement}</span>
     <span class="update-bar-text" data-testid="update-bar-text">{text}</span>
     {#if stage === 'downloading'}

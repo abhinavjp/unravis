@@ -2,8 +2,8 @@
   import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../api';
   import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing, panels } from '../appState.svelte';
-  import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
-  import { archiveButton, readsCaseData, reopenButton, retryAction, retryServerName } from '../caseLifecycle';
+  import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, closeCase, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
+  import { archiveButton, closeButton, readsCaseData, reopenButton, retryAction, retryServerName } from '../caseLifecycle';
   import { archiveFilePath, archivedActions, type ArchiveDrawerKind } from '../archiveModel';
   import { ARCHIVE_TEXT, filesMadeText, restoredNewNotice } from '../copy/archiveCopy';
   import ArchiveDrawers from './ArchiveDrawers.svelte';
@@ -48,6 +48,7 @@
   let info = $state.raw<CaseView | null>(null);
   // The "needs another try" list the case keeps, the item being tried, and the notes this page shows about a move on the case.
   let reopening = $state(false);
+  let closing = $state(false);
   let changed = $state(false);
   let lifeProblem = $state('');
   let tryingId = $state(0);
@@ -87,6 +88,7 @@
   // A case that is not open (closed, archived) or is untrusted is read-only: nothing can be added, so the buttons that add say so up front.
   const readOnly = $derived(!!info && (!!info.untrusted || believedState(info) !== 'open'));
   const reopenState = $derived(info ? reopenButton(info, reopening) : 'hidden');
+  const closeState = $derived(info ? closeButton(info, closing) : 'hidden');
   // Once another tab has moved the case this page is out of date: nothing that moves the case is offered until it is reloaded.
   const stale = $derived(changed);
   const retries = $derived(info?.retries ?? []);
@@ -308,6 +310,21 @@
     if (done) { await tick(); headingEl?.focus(); }
   }
 
+  async function close() {
+    const id = caseId;
+    if (!info || closing || stale || closeState !== 'enabled') return;
+    closing = true;
+    lifeProblem = '';
+    let done = false;
+    try {
+      await closeCase(id, believedState(info));
+      await rereadFiles();
+      done = true;
+    } catch (error) { lifeFailed(error); } finally { closing = false; }
+    // The Close button is gone now (Reopen takes its place), so focus goes to the case name.
+    if (done) { await tick(); headingEl?.focus(); }
+  }
+
   async function reload() {
     changed = false; lifeProblem = '';
     if (!caseId) return;
@@ -445,6 +462,12 @@
           {#if archivedMoves?.free}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={(e) => openArchiveDrawer('free', e.currentTarget)}>{ARCHIVE_TEXT.freeMenu}</button>{/if}
         </div>
       {/if}
+      {#if closeState !== 'hidden'}
+        <div class="actions">
+          <button type="button" class="secondary-button" disabled={closeState !== 'enabled' || stale} aria-busy={closeState === 'busy'} aria-describedby="home-close-hint" onclick={() => void close()}>{closeState === 'busy' ? CASE_HOME_TEXT.closing : CASE_HOME_TEXT.closeButton}</button>
+        </div>
+        <p class="note" id="home-close-hint">{CASE_HOME_TEXT.closeHint}</p>
+      {/if}
       {#if reopenState !== 'hidden'}
         <div class="actions">
           <button type="button" class="secondary-button" disabled={reopenState !== 'enabled' || stale} aria-busy={reopenState === 'busy'} onclick={() => void reopen()}>{reopenState === 'busy' ? CASE_HOME_TEXT.reopening : CASE_HOME_TEXT.reopenButton}</button>
@@ -558,7 +581,7 @@
     <section class="block" aria-labelledby="home-health">
       <h3 id="home-health">{CASE_HOME_TEXT.healthHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.healthText}</p>
-      <HealthPanel {caseId} onGone={gone} onRan={() => void rereadHealth()} />
+      <HealthPanel {caseId} embedded onGone={gone} onRan={() => void rereadHealth()} />
     </section>
 
     <section class="block" aria-labelledby="home-sources">

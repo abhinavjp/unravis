@@ -34,7 +34,7 @@
   {#if lane && lane.checks.length > 0}
     <div class="table-wrap">
       <table>
-        <thead><tr><th scope="col">{STEP_TEXT.checkCol}</th><th scope="col">{STEP_TEXT.stateCol}</th><th scope="col"></th></tr></thead>
+        <thead><tr><th scope="col">{STEP_TEXT.checkCol}</th><th scope="col">{STEP_TEXT.stateCol}</th><th scope="col">{STEP_TEXT.summaryCol}</th></tr></thead>
         <tbody>
           {#each lane.checks as check (check.id)}
             <tr data-check={check.id}>
