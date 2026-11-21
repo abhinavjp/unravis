@@ -147,6 +147,25 @@ func (h *handler) updateStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, u.Status(), 4096)
 }
 
+// updatePresence answers POST /api/ui/presence: the page says a person is using it. It changes nothing and returns nothing.
+func (h *handler) updatePresence(w http.ResponseWriter, r *http.Request) {
+	if u, _ := h.updaterAndDemo(); u != nil {
+		u.Presence().Touch()
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true}, 64)
+}
+
+// updateResultDismiss answers POST /api/update/result/dismiss: the person has read what the last unattended update did.
+func (h *handler) updateResultDismiss(w http.ResponseWriter, r *http.Request) {
+	u, _ := h.updaterAndDemo()
+	if u == nil {
+		writeError(w, http.StatusConflict, "Update checks are not available in this build.")
+		return
+	}
+	u.DismissResult()
+	writeJSON(w, http.StatusOK, u.Status(), 4096)
+}
+
 // updateSettingsPut answers PUT /api/update/settings.
 func (h *handler) updateSettingsPut(w http.ResponseWriter, r *http.Request) {
 	u, _ := h.updaterAndDemo()

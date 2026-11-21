@@ -31,6 +31,8 @@ var updateFirstDelay = 60 * time.Second
 type UpdaterSettings struct {
 	Auto            bool `json:"auto"`
 	IntervalMinutes int  `json:"intervalMinutes"`
+	// ApplyAuto lets a verified update be applied by itself while nobody is using the app (default on).
+	ApplyAuto bool `json:"applyAuto"`
 }
 
 // Updater owns the background check, its settings file and the last answer.
@@ -39,27 +41,33 @@ type Updater struct {
 	fetcher *update.Fetcher
 	channel string // channel of this build; "" for a development build
 
-	mu       sync.Mutex
-	settings UpdaterSettings
-	last     update.Result
-	checked  time.Time
-	haveLast bool
-	failures int
-	wake     chan struct{}
-	checkMu  sync.Mutex       // one check at a time
-	avail    *update.Manifest // newest verified newer release; a later failed check does not erase it
-	dl       *update.Downloader
-	launch   Launcher
-	inst     installState
-	saveMu   sync.Mutex // one settings save at a time
-	rnd      *rand.Rand
+	mu          sync.Mutex
+	settings    UpdaterSettings
+	last        update.Result
+	checked     time.Time
+	haveLast    bool
+	failures    int
+	wake        chan struct{}
+	checkMu     sync.Mutex       // one check at a time
+	avail       *update.Manifest // newest verified newer release; a later failed check does not erase it
+	dl          *update.Downloader
+	launch      Launcher
+	silent      Launcher // starts the setup program without a window (see updater_auto.go)
+	canSilently func() bool
+	busy        func() bool
+	presence    Presence
+	auto        autoState
+	resultDir   string // where the setup program leaves the result of an unattended update
+	inst        installState
+	saveMu      sync.Mutex // one settings save at a time
+	rnd         *rand.Rand
 }
 
 // NewUpdater reads the saved settings from dir (created on first save). keys are the public keys this program trusts.
 func NewUpdater(dir string, keys []update.Key) *Updater {
 	u := &Updater{
 		dir:      dir,
-		settings: UpdaterSettings{Auto: true, IntervalMinutes: updateDefaultMinutes},
+		settings: UpdaterSettings{Auto: true, IntervalMinutes: updateDefaultMinutes, ApplyAuto: true},
 		wake:     make(chan struct{}, 1),
 		rnd:      rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
@@ -85,7 +93,7 @@ func (u *Updater) loadSettings() {
 	if err != nil {
 		return
 	}
-	s := UpdaterSettings{Auto: true, IntervalMinutes: updateDefaultMinutes}
+	s := UpdaterSettings{Auto: true, IntervalMinutes: updateDefaultMinutes, ApplyAuto: true}
 	if json.Unmarshal(b, &s) != nil {
 		return
 	}
@@ -167,13 +175,31 @@ type UpdateStatus struct {
 	// CanInstall is true when this build can download and start the installer (Windows). Install is the state of that step.
 	CanInstall bool         `json:"canInstall"`
 	Install    *InstallInfo `json:"install,omitempty"`
+	// ApplyAuto: a verified update is applied by itself while nobody uses the app. InUse: the app counts as in use now.
+	ApplyAuto bool `json:"applyAuto"`
+	InUse     bool `json:"inUse"`
+	// Result is what the last unattended update did, until the person dismisses it.
+	Result *UpdateNotice `json:"result,omitempty"`
+}
+
+// UpdateNotice is the plain-words result of an update nobody watched.
+type UpdateNotice struct {
+	Outcome string `json:"outcome"` // done, rolled-back or failed
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Message string `json:"message"`
 }
 
 // Status is the last known answer plus the settings. It makes no network call.
 func (u *Updater) Status() UpdateStatus {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	st := UpdateStatus{Status: "none", Current: version.Version, Channel: u.channel, Auto: u.settings.Auto, IntervalMinutes: u.settings.IntervalMinutes}
+	st := UpdateStatus{Status: "none", Current: version.Version, Channel: u.channel, Auto: u.settings.Auto, IntervalMinutes: u.settings.IntervalMinutes, ApplyAuto: u.settings.ApplyAuto, InUse: u.InUse()}
+	if u.resultDir != "" {
+		if r, ok := update.ReadApplyResult(u.resultDir); ok {
+			st.Result = &UpdateNotice{Outcome: r.Outcome, From: r.From, To: r.To, Message: r.Message}
+		}
+	}
 	if u.channel == "" {
 		st.Status = "dev"
 		return st

@@ -203,7 +203,11 @@ func (u *Updater) Install() error {
 		u.setInstall(gen, InstallInfo{State: "failed", Version: m.Version, Error: errFileChange.Error()})
 		return errFileChange
 	}
-	if err := u.launch(got.Path, got.SHA256, m.Version); err != nil {
+	launch := u.launch
+	if u.silent != nil {
+		launch = u.silent // no window: the setup program quits this app, updates and starts it again
+	}
+	if err := launch(got.Path, got.SHA256, m.Version); err != nil {
 		u.setInstall(gen, InstallInfo{State: "failed", Version: m.Version, Error: failText(err)})
 		return err
 	}

@@ -127,9 +127,11 @@ export function installNote(reply: UpdateCheckReply): string {
     case 'downloading':
       return `Downloading version ${step.version}... ${downloadPercent(step.done, step.total)}%`;
     case 'ready':
-      return `Version ${step.version} is downloaded and checked. Install opens the updater; Unravis closes while it updates.`;
+      return reply.applyAuto
+        ? `Version ${step.version} is ready. It installs by itself when you are not using Unravis, or press Apply now. Unravis restarts on its own.`
+        : `Version ${step.version} is ready. Apply now closes Unravis, updates it and starts it again.`;
     case 'launched':
-      return 'The updater is open. Finish the update there. If you closed it, open it again.';
+      return 'The update is being applied. Unravis closes and starts again by itself. If nothing happens, press Apply now again.';
     case 'failed':
       return `The update did not go through. ${step.error ?? ''}`.trim();
     default:

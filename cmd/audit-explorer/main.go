@@ -271,6 +271,14 @@ func run(args []string, getenv func(string) string) error {
 					// Downloads are big and need not follow the person to another PC, so they go to the local cache folder, not Roaming.
 					if cache, cerr := os.UserCacheDir(); cerr == nil {
 						updater.EnableInstall(filepath.Join(cache, "Unravis", "updates"), update.LaunchSetup)
+						// Silent apply: no window, the setup program quits this app, updates and starts it again. Automatic only when it
+						// needs no administrator prompt (a just-for-me install with no Blackbox); otherwise the person presses Apply now.
+						exeDir := ""
+						if exe, xerr := os.Executable(); xerr == nil {
+							exeDir = filepath.Dir(exe)
+						}
+						updater.EnableSilentApply(update.LaunchSilent, func() bool { return update.SilentNoUAC(exeDir) }, nil)
+						updater.SetResultDir(filepath.Join(cache, "Unravis", "update-result"))
 					}
 				}
 				serverOptions = append(serverOptions, server.WithUpdater(updater))
@@ -281,6 +289,7 @@ func run(args []string, getenv func(string) string) error {
 	if updater != nil {
 		updaterDone := make(chan struct{})
 		go func() { defer close(updaterDone); updater.Run(signalContext) }()
+		go updater.RunAuto(signalContext)
 		defer func() { cancel(); updater.Close(); <-updaterDone }()
 	}
 	if !f.demo {

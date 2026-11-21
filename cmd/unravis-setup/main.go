@@ -14,10 +14,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"api-audit-explorer/internal/setup"
+	"api-audit-explorer/internal/update"
 	"api-audit-explorer/internal/version"
 )
 
@@ -51,6 +53,8 @@ type env struct {
 	openWindow func(browser, url string) error
 	openFolder func(dir string) error
 	startApp   func(exe string) error
+	// notice shows a message box; used only when an unattended update leaves no running program (nil in tests).
+	notice func(title, text string)
 	// dialWorker is the worker's end of the pipe.
 	dialWorker func(name string, parent uint32) (*setup.WorkerPipe, error)
 	// listen opens the window's loopback port.
@@ -78,7 +82,7 @@ func osEnv() env {
 			return setup.LoadPayload(sub)
 		},
 		static:     func() (fs.FS, error) { return fs.Sub(uiFiles, "ui") },
-		openWindow: setup.OpenWindow, openFolder: setup.ShowFolder, startApp: setup.StartProgram,
+		openWindow: setup.OpenWindow, openFolder: setup.ShowFolder, startApp: setup.StartProgram, notice: setup.ShowNotice,
 		dialWorker: setup.DialWorkerPipe, listen: setup.Listen, idleAfter: 3 * time.Minute,
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) {
 			return signal.NotifyContext(ctx, os.Interrupt)
@@ -88,10 +92,10 @@ func osEnv() env {
 }
 
 type options struct {
-	silent, uninstall, repair, upgrade, allowDowngrade, worker, noBrowser, showVersion, capture bool
-	config, logPath, pipe, verify                                                               string
-	expectSHA, expectVersion                                                                    string // --expect-sha256 / --expect-version: what the updater verified
-	parent                                                                                      uint
+	silent, uninstall, repair, upgrade, allowDowngrade, worker, noBrowser, showVersion, capture, closeApp bool
+	config, logPath, pipe, verify                                                                         string
+	expectSHA, expectVersion                                                                              string // --expect-sha256 / --expect-version: what the updater verified
+	parent                                                                                                uint
 }
 
 func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
@@ -108,6 +112,7 @@ func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
 	fl.StringVar(&o.expectSHA, "expect-sha256", "", "refuse to run unless this setup program's own file has this SHA-256 (the update check passes it)")
 	fl.StringVar(&o.expectVersion, "expect-version", "", "refuse to run unless this setup installs exactly this version (the update check passes it)")
 	fl.StringVar(&o.verify, "verify", "", "check a release in this folder offline (update-manifest.json, its .sig and the files) and print the result; installs nothing")
+	fl.BoolVar(&o.closeApp, "close-app", false, "with --silent --upgrade and the --expect flags: ask a running Unravis to quit, upgrade, then start it again (what an automatic update does)")
 	fl.BoolVar(&o.noBrowser, "no-browser", false, "do not open the setup window; print its address instead")
 	fl.BoolVar(&o.showVersion, "version", false, "print the version and exit")
 	// The worker flags are for the copy the window starts with "run as administrator"; they are not shown in the help.
@@ -148,10 +153,13 @@ func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
 	if err := o.checkExpectFlags(); err != nil {
 		return o, err
 	}
+	if o.closeApp && !(o.silent && o.upgrade && o.hasExpect()) {
+		return o, errors.New("--close-app is for an update the app started: use it with --silent --upgrade --expect-sha256 --expect-version")
+	}
 	if o.config != "" && !o.silent {
 		return o, errors.New("--config is for --silent; add --silent, or leave --config out to open the setup window")
 	}
-	if o.silent && o.config == "" && !o.uninstall && !o.repair {
+	if o.silent && o.config == "" && !o.uninstall && !o.repair && !o.upgrade {
 		return o, errors.New("--silent needs --config setup.json (see install.md for its keys)")
 	}
 	if o.worker != (o.pipe != "") || (o.worker && o.parent == 0) {
@@ -271,6 +279,7 @@ func runSilent(o options, e env) int {
 		return exitInvalid
 	}
 	req.AllowDowngrade = o.allowDowngrade
+	req.Options.CloseRunningApp = o.closeApp
 	if p, err := e.payload(); err == nil {
 		r.Payload = p
 	} else if o.op() != setup.OpUninstall {
@@ -309,7 +318,58 @@ func runSilent(o options, e env) int {
 		res = r.Perform(context.Background(), req)
 	}
 	report(say, res, logPath)
+	if o.closeApp {
+		afterUnattended(o, e, d, old, res, say, l)
+	}
 	return res.Outcome.ExitCode()
+}
+
+// afterUnattended is the end of an update the app started and nobody watches: start the app again if it was running, and leave a
+// plain note for the next start (or the current one) to show. A failed run was rolled back by the engine; the old version is started
+// again then too, so the person is never left with no program.
+func afterUnattended(o options, e env, d setup.Dirs, old *setup.Installed, res setup.Result, say func(string, ...any), l *setup.FileLog) {
+	from := ""
+	loc := ""
+	if old != nil {
+		from, loc = old.Version, old.Location
+	}
+	r := update.ApplyResult{From: from, To: o.expectVersion, At: e.now().UTC()}
+	switch res.Outcome {
+	case setup.OutcomeDone:
+		r.Outcome = "done"
+		r.Message = "Updated to " + o.expectVersion + "."
+		if o.allowDowngrade { // the app went back to the kept version because the new one kept failing to start
+			r.Outcome = "rolled-back"
+			r.Message = "Version " + from + " did not start properly, so Unravis went back to " + o.expectVersion + ". That version will not be offered again."
+		}
+	case setup.OutcomeRolledBack:
+		r.Outcome = "rolled-back"
+		r.Message = "The update to " + o.expectVersion + " did not work and was undone. Unravis stays on " + from + ". " + res.Message
+	default:
+		r.Outcome = "failed"
+		r.Message = "The update to " + o.expectVersion + " did not happen. Unravis stays on " + from + ". " + res.Message
+	}
+	// In this mode the app itself asked for the update, so it was running: start it again (the new version after a good run, the old
+	// one after a rollback) unless it is already up.
+	if loc != "" && e.startApp != nil {
+		if running, _ := appRunning(e, loc); !running {
+			if err := e.startApp(filepath.Join(loc, "unravis.exe")); err != nil {
+				l.Line("restart: could not start Unravis: " + err.Error())
+				r.Message += " Unravis could not be started again; open it from the Start menu."
+				if e.notice != nil {
+					e.notice("Unravis", r.Message)
+				}
+			} else {
+				r.Restarted = true
+			}
+		}
+	}
+	if d.LocalAppData != "" {
+		if err := update.WriteApplyResult(filepath.Join(d.LocalAppData, "Unravis", "update-result"), r); err != nil {
+			l.Line("result: could not write the update result: " + err.Error())
+		}
+	}
+	say("update result: %s", r.Outcome)
 }
 
 // report prints the end of a silent run. It never prints the read key: that went to readKeyFile.
@@ -474,4 +534,23 @@ func serve(o options, e env, be setup.UIBackend, scenarios map[string]setup.UIBa
 	defer done()
 	_ = hs.Shutdown(shut)
 	return 0
+}
+
+// appRunning says whether the installed Unravis program is running now.
+func appRunning(e env, loc string) (bool, error) {
+	sys, err := e.system()
+	if err != nil {
+		return false, err
+	}
+	list, err := sys.Proc.List()
+	if err != nil {
+		return false, err
+	}
+	want := strings.ToLower(filepath.Join(loc, "unravis.exe"))
+	for _, q := range list {
+		if strings.ToLower(filepath.Clean(q.Exe)) == want {
+			return true, nil
+		}
+	}
+	return false, nil
 }
