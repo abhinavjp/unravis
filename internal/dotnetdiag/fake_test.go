@@ -55,6 +55,7 @@ type fakeDialer struct {
 	peer    func(i int) Peer  // nil: the target as asked
 	dialErr func(i int) error // nil or returns nil: dial succeeds
 	targets []Target
+	ctxErrs []error // ctx.Err() as each Dial was called
 	conns   []*recConn
 	panicOn func(i int) bool // wrap the client conn so Read panics after the reply
 }
@@ -63,6 +64,7 @@ func (f *fakeDialer) Dial(ctx context.Context, t Target) (Conn, Peer, error) {
 	f.mu.Lock()
 	i := len(f.targets)
 	f.targets = append(f.targets, t)
+	f.ctxErrs = append(f.ctxErrs, ctx.Err())
 	f.mu.Unlock()
 	if f.dialErr != nil {
 		if err := f.dialErr(i); err != nil {
@@ -189,3 +191,5 @@ func (h *honest) handle(i int, s net.Conn) {
 		h.once.Do(func() { close(h.stopped) })
 	}
 }
+
+func hexDecode(s string) ([]byte, error) { return hex.DecodeString(s) }
