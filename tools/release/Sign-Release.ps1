@@ -37,7 +37,7 @@ param(
     [string]$Repo = 'abhinavjp/unravis',
     # A Proton Pass reference (pass://Vault/Item/password) the key passphrase is read from. Optional; if it cannot be read the script asks you to type it.
     [string]$ProtonPassRef,
-    # Release.ps1 -Yes: skips the plain 'Sign this release?' confirmation. The key and signing-code gates still ask.
+    # Release.ps1 -Yes: skips the plain 'Sign this release?' confirmation. The signing-code prompt becomes an automatic on-master guard; a changed trusted-key list is refused (not prompted).
     [switch]$Yes
 )
 $ErrorActionPreference = 'Stop'
@@ -130,11 +130,32 @@ try {
         $baseline = if ($prevTag) { $prevTag } else { $null }
         if ($baseline) {
             $codeDiff = git -C $repoRoot diff --stat $baseline $sha -- tools/release/sigtool internal/update ':!internal/update/trusted_keys.txt'
-            if ($codeDiff) { Write-Host "Signing and verifying code changed since ${baseline}:"; $codeDiff | Write-Host; Confirm-Typed 'reviewed' 'You have read that diff (git diff) and it is yours.' }
+            if ($codeDiff) {
+                Write-Host "Signing and verifying code changed since ${baseline}:"; $codeDiff | Write-Host
+                if ($Yes) {
+                    # Owner's standing approval (-Yes): no typed prompt. In its place an automatic guard: the signing code at the tag must
+                    # already be on GitHub's master, which only takes changes through a pull request with the required CI check. A tampered
+                    # signing tool that was never merged there stops the run. The hash of the diff is logged for later audit.
+                    $cmp = gh api "repos/$Repo/compare/master...$sha" --jq .status 2>$null
+                    if ($LASTEXITCODE -ne 0 -or ($cmp -ne 'behind' -and $cmp -ne 'identical')) { throw "The signing code at $Tag is not part of GitHub's master (compare says '$cmp'). Not signing. Merge it through a pull request first." }
+                    $diffText = (git -C $repoRoot diff $baseline $sha -- tools/release/sigtool internal/update ':!internal/update/trusted_keys.txt') -join "`n"
+                    $h = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($diffText))).Replace('-', '').ToLower()
+                    $logDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Unravis\release'
+                    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+                    Add-Content -Path (Join-Path $logDir 'signing-code-approvals.log') -Value "$([DateTime]::UtcNow.ToString('o')) $Tag since $baseline diff-sha256=$h on-master=$cmp mode=auto(-Yes)"
+                    Write-Host "-Yes: the signing code is on master; diff sha256 $h logged. Not asking for 'reviewed'." -ForegroundColor Yellow
+                } else { Confirm-Typed 'reviewed' 'You have read that diff (git diff) and it is yours.' }
+            }
             $keyDiff = git -C $repoRoot diff $baseline $sha -- internal/update/trusted_keys.txt
-            if ($keyDiff) { Write-Host 'The list of trusted public keys CHANGED:'; $keyDiff | Write-Host; Confirm-Typed 'keys ok' 'Every added or removed key is one you made or removed on purpose.' }
+            if ($keyDiff) {
+                Write-Host 'The list of trusted public keys CHANGED:'; $keyDiff | Write-Host
+                # Under -Yes nobody is asked: a changed key list is refused outright (a new key would let its owner sign updates for everyone).
+                if ($Yes) { throw 'The list of trusted public keys changed since the last signed release. Refusing to sign under -Yes. Run Sign-Release.ps1 by hand (without -Yes) and confirm the keys.' }
+                Confirm-Typed 'keys ok' 'Every added or removed key is one you made or removed on purpose.'
+            }
         } else {
             Write-Host 'Trusted public keys in this release:'; Get-Content (Join-Path $src 'internal/update/trusted_keys.txt') | Write-Host
+            if ($Yes) { throw 'This is the first signed release of the channel; the key list must be confirmed by hand. Run Sign-Release.ps1 without -Yes.' }
             Confirm-Typed 'keys ok' 'These are your keys and nobody else''s.'
         }
 

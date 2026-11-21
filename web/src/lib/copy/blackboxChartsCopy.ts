@@ -117,5 +117,5 @@ export const BBC_TEXT = {
   markRestart: 'Restart',
   tooMany: (n: number) => 'Only the first ' + n + ' counters are drawn. Remove some to see the rest.',
   sameAsPerfmon: 'Same counters as Perfmon. Names in brackets are what Perfmon calls them.',
-  timesUtc: 'Times are UTC.'
+  timesIn: (zone: string) => 'Times are in ' + zone + '.'
 } as const;

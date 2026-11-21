@@ -115,7 +115,7 @@ func (m *Manifest) Validate(now time.Time) error {
 		return errors.New("manifest lifetime is too long")
 	}
 	if !now.Before(m.Expires) {
-		return errors.New("manifest has expired")
+		return errors.New("manifest has expired (the signed feed was not refreshed in time; updates resume when the owner publishes again)")
 	}
 	if m.MinUpdateFrom != "" {
 		floor, err := ParseVersion(m.MinUpdateFrom)
@@ -267,6 +267,37 @@ func Verify(manifest, sigFile []byte, t Trust, now time.Time) (*Manifest, error)
 		return nil, fmt.Errorf("this is the %s channel, but %s was asked for", m.Channel, t.Want)
 	}
 	return m, nil
+}
+
+// VerifySignatureOnly checks only that the detached signature is good, from a key this build trusts, over exactly these bytes,
+// and that the key's role matches the manifest's channel. It does not look at dates, so the owner can refresh a manifest that
+// has run out. The caller must still treat the content as the owner's own data, never as something to install.
+func VerifySignatureOnly(manifest, sigFile []byte, t Trust) (*Manifest, error) {
+	if len(manifest) == 0 || len(manifest) > MaxManifestSize {
+		return nil, errors.New("manifest size is not allowed")
+	}
+	keyID, sig, err := parseSignature(sigFile)
+	if err != nil {
+		return nil, err
+	}
+	for i := range t.Keys {
+		k := t.Keys[i]
+		if len(k.Pub) != ed25519.PublicKeySize || KeyID(k.Pub) != keyID {
+			continue
+		}
+		if !ed25519.Verify(k.Pub, manifest, sig) {
+			return nil, errors.New("manifest signature does not match")
+		}
+		m, err := ParseManifest(manifest)
+		if err != nil {
+			return nil, err
+		}
+		if m.Channel != k.Role {
+			return nil, fmt.Errorf("a %s key cannot sign a %s manifest", k.Role, m.Channel)
+		}
+		return m, nil
+	}
+	return nil, errors.New("manifest is signed by a key this program does not trust")
 }
 
 // Decision is what a program does with a verified manifest.
