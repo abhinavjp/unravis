@@ -47,6 +47,13 @@ const (
 	// separately would no longer match that pin. A marker file (not a settings key) keeps the settings file readable by older
 	// recorder programs, which refuse keys they do not know.
 	ManagedMarkerName = "managed-by-unravis"
+
+	// StoppedByUserMarkerName is a file left in the program folder when a person
+	// asked for the recorder to stop (the app's Stop, or the stop command). While
+	// it is there, an Unravis upgrade leaves the recorder stopped; without it an
+	// upgrade starts the recorder again, so a recorder is never left off by
+	// accident. Start removes it. The folder is writable by administrators only.
+	StoppedByUserMarkerName = "stopped-by-user"
 )
 
 // MarkManaged leaves the managed marker in the Blackbox program folder.
