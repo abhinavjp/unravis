@@ -84,19 +84,32 @@ func readJSONBig(path string, v any) error {
 
 func (t *Tracker) triedPath() string { return filepath.Join(t.StateDir, "journal-tried.json") }
 
-// JournalTried says the app already tried to recover from the run that started at started. It tries a run once, so a setup that cannot
-// finish (or a person who refuses its administrator prompt) never makes the app loop.
-func (t *Tracker) JournalTried(started time.Time) bool {
-	var s struct {
-		Started time.Time `json:"started"`
-	}
-	return readJSON(t.triedPath(), &s) == nil && s.Started.Equal(started)
+// MaxJournalTries is how many starts of the app act on one cut-off run's journal. A recovery can fail without being the journal's fault
+// (another setup holds the lock, the person refuses the Windows prompt), so it is tried again at the next start, a few times.
+const MaxJournalTries = 3
+
+type journalTries struct {
+	Started time.Time `json:"started"`
+	Tries   int       `json:"tries"`
 }
 
-// MarkJournalTried records that the app tried the run that started at started.
+// JournalTries says how many times the app already acted on the run that started at started.
+func (t *Tracker) JournalTries(started time.Time) int {
+	var s journalTries
+	if readJSON(t.triedPath(), &s) != nil || !s.Started.Equal(started) {
+		return 0
+	}
+	return s.Tries
+}
+
+// JournalTried says the app used up its tries for that run.
+func (t *Tracker) JournalTried(started time.Time) bool {
+	return t.JournalTries(started) >= MaxJournalTries
+}
+
+// MarkJournalTried counts one more try for the run that started at started.
 func (t *Tracker) MarkJournalTried(started time.Time) {
+	n := t.JournalTries(started) + 1
 	_ = os.MkdirAll(t.StateDir, 0o700)
-	_ = writeJSON(t.triedPath(), struct {
-		Started time.Time `json:"started"`
-	}{started})
+	_ = writeJSON(t.triedPath(), journalTries{Started: started, Tries: n})
 }

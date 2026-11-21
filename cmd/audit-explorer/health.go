@@ -69,7 +69,10 @@ func startHealth(demo bool, getenv func(string) string) (end func(runErr error),
 	if t == nil {
 		return end, false
 	}
-	noteCutOff(t, update.JournalFolders(os.Getenv("ProgramData"), os.Getenv("LOCALAPPDATA")), time.Now(), writeNote, log.Printf)
+	if exe, err := os.Executable(); err == nil {
+		recoverCutOff(t, update.JournalFolders(os.Getenv("ProgramData"), os.Getenv("LOCALAPPDATA")), time.Now(),
+			filepath.Join(filepath.Dir(exe), "unravis-setup.exe"), update.SetupCanRecover, update.LaunchRecover, writeNote, log.Printf)
+	}
 	switch act, m := t.Begin(); act {
 	case update.ActRecover:
 		return end, goBack(t, m, update.LaunchRollback, log.Printf)
@@ -79,19 +82,31 @@ func startHealth(demo bool, getenv func(string) string) (end func(runErr error),
 	return end, false
 }
 
-// noteCutOff is BL-170, the safe half: an update that was cut off (power loss, a killed setup) left its journal on disk. Every setup run
-// puts that back before it does anything else, but nobody may run one. The app starts nothing itself: handing over to an old setup
-// from a journal could downgrade a good install (a cut-off Repair, a journal planted by another user), so it only says, once per run,
-// that Setup > Repair finishes the job. It returns true when it left a note.
-func noteCutOff(t *update.Tracker, folders []string, now time.Time, note func(update.ApplyResult), logf func(string, ...any)) bool {
+// recoverCutOff is BL-170: an update that was cut off (power loss, a killed setup) left its journal on disk. The setup program in the
+// program folder knows how to put that back (`unravis-setup.exe --recover`): it starts it, hidden, when that file knows the flag, and the
+// setup leaves the result note itself. It never takes the app to another version, and it never reads the journal itself, so a journal
+// someone planted can make it run only that fixed command. Without a setup that knows the flag (a version from before this one) the app
+// says, once, to run Setup > Repair. A run is acted on at most update.MaxJournalTries times, so a recovery that cannot finish never loops.
+func recoverCutOff(t *update.Tracker, folders []string, now time.Time, setupPath string, canRecover func(string) bool, launch func(string) error, note func(update.ApplyResult), logf func(string, ...any)) bool {
 	pj, ok := update.FindPendingJournal(folders, now, t.JournalTried)
 	if !ok {
 		return false
 	}
+	first := t.JournalTries(pj.Started) == 0
 	t.MarkJournalTried(pj.Started)
 	logf("an earlier setup run (to %s) was cut off (journal %s)", pj.Version, pj.Path)
-	note(update.ApplyResult{To: pj.Version, Outcome: "failed", At: now,
-		Message: "An update to " + pj.Version + " was cut off before it finished. Unravis may not be fully updated. Run Unravis Setup from the Unravis program folder and choose Repair; it puts back what was changed first."})
+	if canRecover(setupPath) {
+		if err := launch(setupPath); err == nil {
+			logf("started setup --recover")
+			return true
+		} else {
+			logf("could not start setup --recover: %v", err)
+		}
+	}
+	if first {
+		note(update.ApplyResult{To: pj.Version, Outcome: "failed", At: now,
+			Message: "An update to " + pj.Version + " was cut off before it finished. Unravis may not be fully updated. Run Unravis Setup from the Unravis program folder and choose Repair; it puts back what was changed first."})
+	}
 	return true
 }
 

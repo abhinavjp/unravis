@@ -605,3 +605,12 @@ func TestHelpTextHasTheLineTheRollbackLooksFor(t *testing.T) {
 		t.Fatalf("the --close-app help line changed; update closeAppMarker in internal/update/launch_windows.go with it:\n%s", out.String())
 	}
 }
+
+// The app starts `setup --recover` only when the setup file contains this text (internal/update RecoverMarker).
+func TestHelpTextHasTheLineTheRecoveryLooksFor(t *testing.T) {
+	var out bytes.Buffer
+	_, _ = parseFlags([]string{"--help"}, osEnv(), &out)
+	if !strings.Contains(out.String(), update.RecoverMarker) {
+		t.Fatalf("the --recover help line changed; update RecoverMarker in internal/update/recover.go with it:\n%s", out.String())
+	}
+}
