@@ -76,12 +76,15 @@ func TestMirrorCannotRollBackOrForge(t *testing.T) {
 func TestBackupHostIsAllowedOnlyForItsOwnPath(t *testing.T) {
 	f := &Fetcher{}
 	for url, want := range map[string]bool{
-		"https://raw.githubusercontent.com/abhinavjp/unravis/feed-mirror/rc.json":    true,
-		"https://raw.githubusercontent.com/abhinavjp/unravis/feed-mirror":            true,
-		"https://raw.githubusercontent.com/someone/else/main/rc.json":                false,
-		"https://raw.githubusercontent.com/abhinavjp/unravis/main/rc.json":           false,
-		"https://raw.githubusercontent.com/abhinavjp/unravis/feed-mirror-evil/x":     false,
-		"https://github.com/abhinavjp/unravis/releases/download/update-feed/rc.json": true,
+		"https://raw.githubusercontent.com/abhinavjp/unravis/feed-mirror/rc.json":             true,
+		"https://raw.githubusercontent.com/abhinavjp/unravis/feed-mirror":                     true,
+		"https://raw.githubusercontent.com/someone/else/main/rc.json":                         false,
+		"https://raw.githubusercontent.com/abhinavjp/unravis/main/rc.json":                    false,
+		"https://raw.githubusercontent.com/abhinavjp/unravis/feed-mirror-evil/x":              false,
+		"https://github.com/abhinavjp/unravis/releases/download/update-feed/rc.json":          true,
+		"https://raw.githubusercontent.com/abhinavjp/unravis/feed-mirror/../x":                false,
+		"https://raw.githubusercontent.com/abhinavjp/unravis/feed-mirror/%2e%2e/%2e%2e/o/r/m": false,
+		"https://raw.githubusercontent.com/abhinavjp/unravis/feed-mirror%2F..%2F..%2Fevil":    false,
 	} {
 		if err := f.validBase(url); (err == nil) != want {
 			t.Errorf("%s: allowed=%v want %v", url, err == nil, want)
