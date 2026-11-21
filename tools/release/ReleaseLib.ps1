@@ -9,8 +9,9 @@
 
 $script:ReleaseTrustedKeysPath = 'internal/update/trusted_keys.txt'
 # Go settings outside git (go env -w, GOFLAGS overlays, a go.work) could swap the code the signing tool is built from. The release
-# scripts build with none of them: module mode from the checkout only, the installed toolchain.
-$env:GOFLAGS = ''; $env:GOWORK = 'off'; $env:GOENV = 'off'; $env:GOTOOLCHAIN = 'local'
+# scripts build with none of them: module mode from the checkout only. GOTOOLCHAIN is reset to Go's default ('auto': the go.mod
+# version, fetched and checked against the Go checksum database when the installed Go is older), so a stray setting cannot pick it.
+$env:GOFLAGS = ''; $env:GOWORK = 'off'; $env:GOENV = 'off'; $env:GOTOOLCHAIN = 'auto'
 # The code that sees the passphrase or decides what installed copies accept.
 # All of tools/release: the PowerShell scripts read and pipe the passphrase too.
 # Case-insensitive: on Windows Internal/Update/x.go lands in the same folder and is compiled in.
