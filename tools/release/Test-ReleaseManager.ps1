@@ -160,7 +160,7 @@ try {
     Assert-That 'lock busy: another PC with a fresh heartbeat is busy' (Test-ReleaseLockBusy $held 'PC-B' $now $true).Busy
     $t = Test-ReleaseLockBusy $held 'PC-A' $now $true $true
     Assert-That 'lock busy: same PC, own lock free, but the recorded process is alive (other data folder) = busy, not taken over' ($t.Busy -and -not $t.Stale)
-    Assert-That 'holder alive: this very process counts, a made-up pid does not' ((Test-HolderAlive $PID ([DateTime]::UtcNow.AddMinutes(-5))) -and -not (Test-HolderAlive 2147483000 '2026-01-01T00:00:00Z'))
+    Assert-That 'holder alive: this very process counts, a made-up pid does not' ((Test-HolderAlive $PID ([DateTime]::UtcNow.AddMinutes(1))) -and -not (Test-HolderAlive 2147483000 '2026-01-01T00:00:00Z'))
     Assert-That 'host id: opaque, stable, no machine name in it' ((Get-HostId) -eq (Get-HostId) -and (Get-HostId) -notmatch [regex]::Escape([Environment]::MachineName) -and (Get-HostId).Length -eq 12)
     $old = $held.PSObject.Copy(); $old.heartbeat = '2026-11-21T18:00:00Z'
     $t = Test-ReleaseLockBusy $old 'PC-B' $now $true
