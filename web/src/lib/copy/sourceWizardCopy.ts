@@ -14,6 +14,11 @@ export const WIZ = {
   railHeading: 'Your sources',
   railEmpty: 'Nothing added yet. Pick a kind above.',
   tray: (n: number) => (n === 1 ? '1 source ready to add' : n + ' sources ready to add'),
+  added: {
+    one: (label: string): string => 'Added ' + label + '. Nothing is read until the last button.',
+    many: (n: number): string => 'Added ' + n + ' sources. Nothing is read until the last button.',
+    recorder: 'The recorder is saved now.'
+  },
   back: 'Back to the list',
   addedBadge: (n: number) => n + ' added',
   remove: 'Remove',
