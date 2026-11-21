@@ -61,7 +61,7 @@ test('GUIDE-24: Combinations lists the five rows and what this case holds today'
 });
 
 test('GUIDE-24a: the case that read nothing says so on Step 7, never that a check passed, and its Add another day and Add data buttons send nothing', async ({ page }) => {
-  const panel = await hub(page, NOTHING, 'Step 7: SQL Server');
+  const panel = await hub(page, NOTHING, 'Read SQL Server');
   await expect(panel.getByText('Nothing could be read', { exact: true })).toBeVisible();
   await expect(panel.getByText('The case is not broken. Every source answered, but the window held nothing to read.')).toBeVisible();
   const table = panel.getByRole('table', { name: 'What this case can answer' });
@@ -103,14 +103,14 @@ test('GUIDE-21: the Add data tab has five cards with their counts and each butto
   await expect(panel.getByText('Reading does not change any server.')).toBeVisible();
 
   await card('sql').getByRole('button', { name: 'Add SQL source' }).click();
-  await expect(page.getByRole('tab', { name: 'Step 7: SQL Server', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Read SQL Server', exact: true })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('tab', { name: 'Add data', exact: true }).click();
   await card('mongo').getByRole('button', { name: 'Add Mongo source' }).click();
   // The Mongo card now adds an API audit database from a saved connection; the Step 8 profiler is its own tab, reached by a separate button.
   await expect(panel.getByText('Add an API audit database', { exact: true })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Add data', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await panel.getByRole('button', { name: 'Open Step 8: MongoDB' }).click();
-  await expect(page.getByRole('tab', { name: 'Step 8: MongoDB', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await panel.getByRole('button', { name: 'Open Read MongoDB' }).click();
+  await expect(page.getByRole('tab', { name: 'Read MongoDB', exact: true })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('tab', { name: 'Add data', exact: true }).click();
   await card('files').getByRole('button', { name: 'Add files' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(1);
@@ -147,10 +147,10 @@ test('GUIDE-23a: with no SQL day in the case, Add another day says to read one f
 });
 
 test('GUIDE-22: with nothing read, Step 7 says Cannot test yet, offers the read form and shows the grant script that is never run', async ({ page }) => {
-  const panel = await hub(page, OPEN, 'Step 7: SQL Server');
+  const panel = await hub(page, OPEN, 'Read SQL Server');
   const none = panel.locator('[data-no-source]');
   await expect(none).toContainText('Cannot test yet');
-  await expect(none).toContainText('No SQL Server has been read for this case yet. Step 7 says Cannot test yet until one is added.');
+  await expect(none).toContainText('No SQL Server has been read for this case yet, so nothing can be tested. Read a day from one below.');
   await expect(form(panel)).toBeVisible();
   await expect(panel.getByRole('heading', { name: 'Permissions to give the login' })).toBeVisible();
   await expect(panel.getByText('Unravis never runs this script. It only shows it, so the owner of the server can run it.')).toBeVisible();
@@ -160,7 +160,7 @@ test('GUIDE-22: with nothing read, Step 7 says Cannot test yet, offers the read 
 });
 
 test('GUIDE-22a: the read form refuses a missing connection, database or time with its own sentence and sends nothing', async ({ page }) => {
-  const panel = await hub(page, OPEN, 'Step 7: SQL Server');
+  const panel = await hub(page, OPEN, 'Read SQL Server');
   const f = form(panel);
   const posts: string[] = [];
   page.on('request', (r) => { if (r.method() === 'POST') posts.push(r.url()); });
@@ -191,7 +191,7 @@ test('GUIDE-22a: the read form refuses a missing connection, database or time wi
 });
 
 test('GUIDE-22b: the grant panel fills in the login and database, switches between the 2022 and 2019 scripts and refuses a hostile login name', async ({ page }) => {
-  const panel = await hub(page, OPEN, 'Step 7: SQL Server');
+  const panel = await hub(page, OPEN, 'Read SQL Server');
   const grant = panel.getByRole('region', { name: 'Permissions to give the login' });
   const script = grant.locator('pre.script');
   await expect(script).toContainText('[login]');
@@ -217,7 +217,7 @@ test('GUIDE-22b: the grant panel fills in the login and database, switches betwe
 
 test('GUIDE-22c: Copy script puts the shown script on the clipboard and says so', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  const panel = await hub(page, OPEN, 'Step 7: SQL Server');
+  const panel = await hub(page, OPEN, 'Read SQL Server');
   const grant = panel.getByRole('region', { name: 'Permissions to give the login' });
   const script = grant.locator('pre.script');
   await expect(script).toContainText('VIEW SERVER PERFORMANCE STATE');
@@ -229,7 +229,7 @@ test('GUIDE-22c: Copy script puts the shown script on the clipboard and says so'
 });
 
 test('GUIDE-22d: reading AuditDb adds a Ready day with the read message and lists it under Days read', async ({ page }) => {
-  const panel = await hub(page, OPEN, 'Step 7: SQL Server');
+  const panel = await hub(page, OPEN, 'Read SQL Server');
   const f = form(panel);
   const posts: string[] = [];
   page.on('request', (r) => { if (r.method() === 'POST') posts.push(r.url()); });
@@ -250,7 +250,7 @@ test('GUIDE-22d: reading AuditDb adds a Ready day with the read message and list
 });
 
 test('GUIDE-22e: NoGrantDb reads Partly ready, names the missing permission with a To fix script and answers no question as a pass', async ({ page }) => {
-  const panel = await hub(page, OPEN, 'Step 7: SQL Server');
+  const panel = await hub(page, OPEN, 'Read SQL Server');
   await readDay(page, panel, 'NoGrantDb', 'sql');
   await expect(panel.getByText('Partly ready', { exact: true }).first()).toBeVisible();
   await expect(panel.getByText('Cannot read this yet: the login is missing VIEW DATABASE PERFORMANCE STATE.').first()).toBeVisible();
@@ -260,7 +260,7 @@ test('GUIDE-22e: NoGrantDb reads Partly ready, names the missing permission with
 });
 
 test('GUIDE-22f: EmptyDb reads Cannot test yet, shows Nothing could be read and leaves every question unanswered', async ({ page }) => {
-  const panel = await hub(page, OPEN, 'Step 7: SQL Server');
+  const panel = await hub(page, OPEN, 'Read SQL Server');
   await readDay(page, panel, 'EmptyDb', 'sql');
   const nothing = panel.locator('[data-nothing-read]');
   await expect(nothing.getByRole('heading', { name: 'Nothing could be read' })).toBeVisible();
@@ -273,7 +273,7 @@ test('GUIDE-22f: EmptyDb reads Cannot test yet, shows Nothing could be read and 
 });
 
 test('GUIDE-22g: Step 8 reads Mongo AuditDb as Ready, NoGrantDb as Partly ready with a To fix, and ProfilerOffDb with the Switched on guide', async ({ page }) => {
-  const panel = await hub(page, OPEN, 'Step 8: MongoDB');
+  const panel = await hub(page, OPEN, 'Read MongoDB');
   await expect(panel.locator('[data-no-source]')).toContainText('No MongoDB server has been read for this case yet.');
   await readDay(page, panel, 'AuditDb', 'mongo');
   await expect(panel.getByText('Ready', { exact: true }).first()).toBeVisible();
@@ -291,7 +291,7 @@ test('GUIDE-22g: Step 8 reads Mongo AuditDb as Ready, NoGrantDb as Partly ready 
 });
 
 test('GUIDE-22h: on a closed case Step 7 has no read form and says the case cannot take new data', async ({ page }) => {
-  const panel = await hub(page, CLOSED, 'Step 7: SQL Server');
+  const panel = await hub(page, CLOSED, 'Read SQL Server');
   await expect(panel.locator('[data-read-only]')).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Read this day' })).toHaveCount(0);
   await expect(panel.getByRole('button', { name: 'Add a SQL Server' })).toHaveCount(0);
