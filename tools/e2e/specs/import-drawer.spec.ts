@@ -431,14 +431,16 @@ test('READY-01: the sources step of the create wizard names each found source wi
   await page.getByLabel('Case name').fill('QA Ready Chips');
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
-  await page.getByRole('button', { name: 'Scan this PC' }).click();
-  const chips = page.locator('ul.chips li.chip:first-child');
-  await expect.poll(async () => chips.count(), { timeout: 20_000 }).toBe(3);
-  const words = new Set(['Ready', 'Partly ready', 'Cannot test yet', 'Failed']);
+  await page.getByRole('button', { name: /^Find on this PC/ }).click();
+  await page.getByRole('button', { name: 'Look on this PC' }).click();
+  // The found list: Works / Not readable yet / Needs steps (or Found for a database), each with a tooltip.
+  const chips = page.locator('.status[title]');
+  await expect.poll(async () => chips.count(), { timeout: 20_000 }).toBeGreaterThanOrEqual(3);
+  const words = new Set(['Works', 'Not readable yet', 'Needs an export', 'Found', 'Added']);
   const texts = (await chips.allInnerTexts()).map((t) => t.trim());
-  for (const text of texts) expect(words.has(text), 'chip: ' + text).toBe(true);
-  expect(texts.filter((t) => t === 'Ready')).toHaveLength(1);
-  expect(texts.filter((t) => t === 'Cannot test yet')).toHaveLength(2);
+  for (const text of texts) expect(words.has(text), 'status: ' + text).toBe(true);
+  expect(texts.filter((t) => t === 'Not readable yet')).toHaveLength(1);
+  expect(texts.filter((t) => t === 'Needs an export')).toHaveLength(1);
   for (const tip of await chips.evaluateAll((all) => all.map((el) => el.getAttribute('title') ?? ''))) expect(tip.length).toBeGreaterThan(10);
   await expect(page.locator('body')).not.toContainText(/Not checked|Needs steps|Could not be read/);
 });

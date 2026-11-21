@@ -1,7 +1,7 @@
 // The "Import files" panel of the create-a-case wizard (gaps G1, G2, G8): choose several files at once, see what each one looks like,
 // read the IIS guide, add them, and find on the last step that the files are already held and are not asked for again.
 import { test, expect, type Page } from '../support/fixtures';
-import { goHome } from '../support/ui';
+import { goHome, filesTile } from '../support/ui';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -17,7 +17,7 @@ async function openPanel(page: Page, title: string) {
   await page.getByLabel('Case name').fill(title);
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
-  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await filesTile(page).click();
   await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toBeVisible();
 }
 
@@ -89,9 +89,10 @@ test('FILES-03: removing a source takes its file with it, and Review has nothing
   await openPanel(page, 'QA Import Files Remove');
   await page.getByLabel('Choose files to import').setInputFiles([W3C]);
   await page.getByRole('button', { name: 'Add 1 file' }).click();
-  await expect(page.getByText('1 file is ready to add.')).toBeVisible();
+  await expect(page.locator('[data-added-note]')).toContainText(/^Added /);
   await page.getByRole('button', { name: /^Remove/ }).first().click();
-  await expect(page.getByText('No sources are chosen yet.')).toBeVisible();
+  await expect(page.getByText('Nothing added yet. Pick a kind above.')).toBeVisible();
+  await page.getByRole('button', { name: 'Back to the list' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByText('No sources chosen. The case will be made empty')).toBeVisible();
   await expect(page.locator('input[type="file"]')).toHaveCount(0);

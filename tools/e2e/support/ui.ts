@@ -15,3 +15,6 @@ export async function openCase(page: Page, title: string): Promise<void> {
   await page.getByRole('button', { name: 'Open case ' + title }).click();
   await expect(page.getByRole('button', { name: /^All cases/ })).toBeVisible();
 }
+
+/** The "Files" tile of the source wizard (name is "Files IIS, app logs, exports"). */
+export const filesTile = (page: Page) => page.getByRole('button', { name: /^Files\b/ });

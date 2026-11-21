@@ -2,7 +2,7 @@
 // before the files are read, so the Sources tab has to pair them by the file name (the saved label is the base name only).
 //   TWOIIS-01  Two files, two environments: the Sources tab shows two rows, each with its own environment, and the filter finds the right file.
 import { test, expect, type Page } from '../support/fixtures';
-import { goHome } from '../support/ui';
+import { goHome, filesTile } from '../support/ui';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -16,7 +16,7 @@ async function openFilesPanel(page: Page, title: string) {
   await page.getByLabel('Case name').fill(title);
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
-  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await filesTile(page).click();
   await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toBeVisible();
 }
 
@@ -31,7 +31,9 @@ test('TWOIIS-01: two IIS logs tagged Production and UAT keep their own environme
     { name: 'u_ex261021.log', mimeType: 'text/plain', buffer: Buffer.from(NEXT_DAY) }
   ]);
   await page.getByRole('button', { name: 'Add 2 files' }).click();
-  await expect(page.getByText('2 files are ready to add.')).toBeVisible();
+  await expect(page.locator('[data-added-note]')).toContainText(/^Added 2 sources\./);
+  await page.getByRole('button', { name: 'Back to the list' }).click();
+  await page.getByText('Names (optional)').click();
 
   // The first file is Production, the second UAT.
   const prod = page.getByRole('group', { name: /u_ex261020\.log/ }).getByLabel('Environment');

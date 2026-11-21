@@ -6,7 +6,7 @@
 //   L4N-03  Create wizard: the Application logs card holds the file, the case is made with it, and the file was read as log4net blocks.
 //   L4N-04  The Investigation Timeline of the case lists the file among the Sources traced.
 import { test, expect, type Page } from '../support/fixtures';
-import { goHome, openCase } from '../support/ui';
+import { goHome, openCase, filesTile } from '../support/ui';
 import { createCase, ensureHost, importFile } from '../support/api';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -107,7 +107,7 @@ test('L4N-03: the create wizard holds the file from the Application logs card an
   await page.getByLabel('Case name').fill('QA Log4net Wizard');
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
-  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await filesTile(page).click();
   await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toBeVisible();
 
   await page.getByLabel('Choose Application logs files').setInputFiles([L4N]);

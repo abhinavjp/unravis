@@ -6,7 +6,7 @@
 //   IP-20  A retry with no computer name, or a different refusal, still opens Choose.
 import { test, expect, type Page } from '../support/fixtures';
 import type { Locator } from '@playwright/test';
-import { goHome, openCase } from '../support/ui';
+import { goHome, openCase, filesTile } from '../support/ui';
 import { createCase, ensureHost, type ApiFn } from '../support/api';
 
 const FIELDS =
@@ -91,7 +91,7 @@ test('IP-19: Try again on a saved unlisted-computer retry opens Check on its fix
   await page.getByRole('button', { name: 'Create a new case' }).click();
   await page.getByLabel('Case name').fill(title);
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await filesTile(page).click();
   await page.getByLabel('Choose files to import').setInputFiles([file]);
   await page.getByRole('button', { name: 'Add 1 file' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
