@@ -25,16 +25,13 @@ export const PICKER_TEXT = {
   /** Under a date box that holds text that is not a real day. */
   badDate: 'Use a real date, written like 2026-10-26.',
   /** Under a time box that holds text that is not a time. */
-  badTime: 'Use a time like 10:30 PM. A 24-hour time such as 22:30 also works.',
+  badTime: 'Use a 24-hour time such as 22:30.',
   datePlaceholder: 'YYYY-MM-DD',
   timePlaceholder: 'HH:mm',
-  /** The three parts of a 12-hour time box, and what an empty hour or minute shows. */
+  /** The two parts of a 24-hour time box, and what an empty hour or minute shows. */
   hourWord: 'hour',
   minuteWord: 'minute',
-  periodWord: 'AM or PM',
   unset: '--',
-  am: 'AM',
-  pm: 'PM',
   otherDay: 'Ends on a different day',
   to: 'to',
   weekdays: ['S', 'M', 'T', 'W', 'T', 'F', 'S'],
@@ -43,17 +40,17 @@ export const PICKER_TEXT = {
 
 export type PickerPart = 'start date' | 'start time' | 'end date' | 'end time';
 
-/** The label without a trailing "(UTC)": every picker already says UTC on its own, so the spoken names do not say it twice. */
-const bare = (label: string): string => label.replace(/\s*\(UTC\)\s*$/, '');
+/** The label without a trailing zone such as "(UTC)" or "(London time)": every picker already says its zone on its own, so the spoken names do not say it twice. */
+const bare = (label: string): string => label.replace(/\s*\((?:UTC|[^()]* time|[A-Za-z]+\/[A-Za-z_]+)\)\s*$/, '');
 
 /** The spoken name of one text box: "Incident window start date". */
 export const partLabel = (label: string, part: PickerPart): string => `${bare(label)} ${part}`;
 
 /** The name of the button that opens the popover: "Incident window: 26 Oct 2026 10:30 → 11:00, UTC". */
-export const triggerLabel = (label: string, summary: string): string => `${bare(label)}: ${summary || PICKER_TEXT.choose}, ${PICKER_TEXT.zone}`;
+export const triggerLabel = (label: string, summary: string, zone: string = PICKER_TEXT.zone): string => `${bare(label)}: ${summary || PICKER_TEXT.choose}, ${zone}`;
 
 /** The name of the popover: "Choose the incident window (UTC)". */
-export const dialogLabel = (label: string): string => `Choose the ${bare(label).toLowerCase()} (${PICKER_TEXT.zone})`;
+export const dialogLabel = (label: string, zone: string = PICKER_TEXT.zone): string => `Choose the ${bare(label).toLowerCase()} (${zone})`;
 
 /** The spoken name of a calendar day: "October 26, 2026, start". `role` is 'start', 'end' or '' for a day outside the pick. */
 export const dayLabel = (name: string, role: 'start' | 'end' | 'between' | 'none'): string => (role === 'start' || role === 'end' ? `${name}, ${role}` : name);

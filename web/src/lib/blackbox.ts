@@ -1,4 +1,6 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
+import { utcToWall } from './zoneStamp';
+import { zoneAbbreviation } from './time';
 
 /**
  * Client for the Blackbox routes (internal/server/blackbox.go) and the pure rules the Blackbox panel follows.
@@ -597,12 +599,14 @@ export const needsKey = (location: string): boolean => guessKind(location) === '
 /** The sticker class for a state tone. A sticker is information: it is never styled like a button. */
 export const stickerTone = (tone: string): Tone => (tone === 'good' || tone === 'warn' || tone === 'bad' ? tone : 'idle');
 
-/** A sample time as the panel shows it: date and time in UTC, or a dash. */
-export function shownTime(value: string | undefined | null): string {
+/** A sample time as the panel shows it: date and 24-hour time in `zone` (the header's choice) with the zone's short name, or a dash. */
+export function shownTime(value: string | undefined | null, zone = 'UTC'): string {
   if (!value) return '-';
   const t = Date.parse(value);
   if (!Number.isFinite(t)) return '-';
-  return new Date(t).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  const utc = new Date(t).toISOString().slice(0, 16);
+  if (zone === 'UTC') return utc.replace('T', ' ') + ' UTC';
+  return utcToWall(utc, zone).replace('T', ' ') + ' ' + zoneAbbreviation(zone, t);
 }
 
 /** A size as a short plain number. */

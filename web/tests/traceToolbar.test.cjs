@@ -92,7 +92,7 @@ test('lane toggles come from the single lane order and stay at least 32 px high 
   assert.match(phone[1], /\.pill/);
   assert.match(phone[1], /min-height: var\(--space-10\)/);
   const zone = read('src/components/TimeZoneToggle.svelte');
-  assert.match(zone, /@media \(max-width: 1024px\), \(pointer: coarse\) \{ \.zone-toggle button \{ min-height: 40px; \} \}/, 'UTC and Local reach 40 px too, up to tablet width (UI-R2-08, UI-R3-05)');
+  assert.match(zone, /@media \(max-width: 1024px\), \(pointer: coarse\) \{ \.zone-toggle select \{ min-height: 40px; \} \}/, 'the time zone choice reaches 40 px too, up to tablet width (UI-R2-08, UI-R3-05)');
   // Spacing and radius come from tokens, not literal px (the swatch dot size and the visually hidden rule are the fixed sizes).
   const css = source.slice(source.indexOf('<style>'), source.indexOf('.sr-only {'));
   assert.ok(!/\b(?:padding|gap|margin|border-radius|min-height)\s*:[^;]*\d+px/.test(css));

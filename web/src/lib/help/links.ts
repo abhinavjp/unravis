@@ -6,9 +6,13 @@ export type HelpTarget =
   | { kind: 'external'; href: string }
   | { kind: 'none' };
 
+// guided-analysis.md and manual-tools.md stay in docs/user (the Go docs test reads the first) but are not listed: nothing in the app opens
+// guided analysis or its Manual tools since D-2 (owner call, 2026-11-21, BL-180).
+export const UNLISTED_PAGES: readonly string[] = ['guided-analysis', 'manual-tools'];
+
 export const PAGE_ORDER: readonly string[] = [
   'index', 'getting-started', 'install', 'cases', 'sources', 'blackbox',
-  'guided-analysis', 'manual-tools', 'upgrade-and-uninstall', 'troubleshooting', 'security', 'logs',
+  'upgrade-and-uninstall', 'troubleshooting', 'security', 'logs',
 ];
 
 const NONE: HelpTarget = { kind: 'none' };

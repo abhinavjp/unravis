@@ -118,8 +118,8 @@ export function checkWindows(f: WindowFields): WindowCheck {
 
 /** Every fixed string the window picker shows. */
 export const WINDOW_TEXT = {
-  incidentLabel: 'Incident window (UTC)',
-  referenceLabel: 'Comparison period (UTC)',
+  incidentLabel: 'Incident window',
+  referenceLabel: 'Comparison period',
   start: 'Start',
   end: 'End',
   startTracing: 'Start tracing',
@@ -140,8 +140,8 @@ export const WINDOW_TEXT = {
   metaCompared: 'compared with',
   metaUnset: 'not set',
   metaZoneLead: 'Times are in',
-  metaZoneTail: '(change it with the UTC / Local switch at the top). The timeline always reads and stores UTC.',
-  utcNote: 'Times are typed in UTC.',
+  metaZoneTail: '(change it with Times in at the top). The timeline always reads and stores UTC.',
+  utcNote: 'Times are typed in the zone chosen at the top.',
   endNote: 'A window includes its start and stops just before its end.',
   keptPrevious: 'The chart still shows the previous window.',
   noEvents: 'No events in this window. Try a wider one.',
