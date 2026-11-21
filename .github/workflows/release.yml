@@ -36,6 +36,8 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+      # Reads the result of CI on this commit (the step "Did CI already pass").
+      actions: read
       # Build attestation (docs/auto-updater/SPEC.md U1b): GitHub signs "this workflow, at this commit, built these files".
       id-token: write
       attestations: write
@@ -77,6 +79,27 @@ jobs:
           ref: ${{ steps.tag.outputs.tag }}
           fetch-depth: 0 # full history: the notes generator walks git log back to the previous tag
 
+      - name: Did CI already pass on this exact commit?
+        id: ci
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The tests below are the same ones ci.yml runs on every master commit, and Release.ps1 tags only a commit whose CI is green.
+          # Running them again here cost about 7 of the 11 minutes. They are skipped only when the NEWEST ci.yml run for this exact
+          # commit on master succeeded (the same rule Release.ps1 uses); a tag on any other commit, or with no green CI, runs them all.
+          # Nothing that is built, attested or signed depends on this: the compile steps below always run.
+          $skip = 'false'
+          $sha = (git rev-parse HEAD).Trim()   # the commit checked out above (a manual re-run starts on master, but builds the tag)
+          $json = gh run list --repo $env:GITHUB_REPOSITORY --workflow ci.yml --commit $sha --branch master --event push --limit 10 --json databaseId,status,conclusion
+          if ($LASTEXITCODE -eq 0 -and $json) {
+            $last = @(($json -join "`n") | ConvertFrom-Json) | Sort-Object { [long]$_.databaseId } -Descending | Select-Object -First 1
+            if ($last -and $last.status -eq 'completed' -and $last.conclusion -eq 'success') { $skip = 'true'; Write-Host "CI run $($last.databaseId) passed on this commit: tests are skipped here." }
+          }
+          if ($skip -ne 'true') { Write-Host 'No green CI run found for this commit: running every test here.' }
+          $global:LASTEXITCODE = 0   # a failed gh call above is handled (tests run); it must not fail this step
+          "tests_done=$skip" >> $env:GITHUB_OUTPUT
+
       - name: Set up Go
         uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
@@ -94,10 +117,12 @@ jobs:
         run: npm ci
 
       - name: Web - type check
+        if: ${{ steps.ci.outputs.tests_done != 'true' }}
         working-directory: web
         run: npm run check
 
       - name: Web - tests
+        if: ${{ steps.ci.outputs.tests_done != 'true' }}
         working-directory: web
         run: npm test
 
@@ -117,12 +142,15 @@ jobs:
           node scripts/check-dist.cjs
 
       - name: Go - vet
+        if: ${{ steps.ci.outputs.tests_done != 'true' }}
         run: go vet ./...
 
       - name: Go - tests
+        if: ${{ steps.ci.outputs.tests_done != 'true' }}
         run: go test -p 2 -timeout 25m ./...
 
       - name: Release scripts - checksum self-test
+        if: ${{ steps.ci.outputs.tests_done != 'true' }}
         shell: pwsh
         run: ./tools/release/Test-Release.ps1
 
