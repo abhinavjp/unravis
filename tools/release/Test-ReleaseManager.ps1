@@ -190,7 +190,11 @@ try {
     $sel = Select-PinnedCommit @($c1) @()
     Assert-That 'pin: a head with no CI run yet waits' ($sel.Status -eq 'waiting' -and $sel.Why -match 'norun')
     $sel = Select-PinnedCommit @($c1) @((& $run $c1 'completed' 'cancelled' 5))
-    Assert-That 'pin: a cancelled head (superseded by a merge) waits instead of failing' ($sel.Status -eq 'waiting')
+    Assert-That 'pin: a cancelled head is stopped with a hint (it would never finish)' ($sel.Status -eq 'red' -and $sel.Why -match 'LastGreen')
+    Assert-That 'lock busy: a damaged heartbeat counts as expired, it does not throw' (-not (Test-ReleaseLockBusy ([pscustomobject]@{ state = 'held'; host = 'PC-A'; heartbeat = 'garbage'; version = 'x' }) 'PC-B' $now $true).Busy)
+    Assert-That 'safe text: control characters and long text are cut' ((Get-SafeText "a`n b`e[31m") -notmatch "[`n`e]" -and (Get-SafeText ('x' * 500)).Length -lt 70)
+    $ownRun = Enter-RunLock $d
+    try { Assert-That 'run lock: a second holder is refused' ([bool](Get-ThrownMessage { Enter-RunLock $d })) } finally { $ownRun.Dispose() }
 
     $tags2 = @('v0.1.0-rc.54', 'v0.1.0-rc.55')
     $stOpen = [pscustomobject]@{ version = '0.1.0-rc.56'; stage = 'Tag'; status = 'stopped' }
@@ -273,6 +277,10 @@ try {
     Assert-That 'bootstrap: git hooks are switched off for the run' ($rel -match 'GIT_CONFIG_KEY_0.*core\.hooksPath')
     Assert-That 'bootstrap: every pin is checked to be part of master' ($rel -match 'merge-base --is-ancestor \$pinned')
     Assert-That 'bootstrap: a resumed pin must match the audit log''s tagged commit' ($rel -match 'Get-AuditTaggedCommit')
+    Assert-That 'bootstrap: the checks of a fresh pin are gated on "pinned from a tag", not on resuming' ($rel -match 'if \(\$newestAll -and -not \$fromTag\)')
+    Assert-That 'bootstrap: the tag is logged before it is pushed' ($rel -match "(?s)event = 'tagging'.*git push origin")
+    Assert-That 'run: the run proves it was started by the bootstrap and takes its own lock' ($rel -match 'UNRAVIS_RELEASE_NONCE' -and $rel -match 'Enter-RunLock')
+    Assert-That 'bootstrap: a release.ps1 without the protocol marker is not re-run' ($rel -match 'ReleaseProtocol = 2')
 
     # ---- passphrase: never a prompt under -Yes; the pipe reaches the program ----------------------------------------------------
     $m = Get-ThrownMessage { Get-SigningPassphrase -ProtonPassRef '' -KeyFile 'k' -Yes }

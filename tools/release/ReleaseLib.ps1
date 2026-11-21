@@ -436,6 +436,11 @@ function Enter-ReleaseLock([string]$Dir) {
         throw "Another release is running on this PC (release.lock is held).$who Wait for it, or pass -WaitMinutes."
     }
 }
+# The running release process (the re-run from the worktree) holds its own lock for as long as it lives. A bootstrap that was killed
+# leaves that process running: nobody may take the release over, or clean up its worktree, while it holds this.
+function Enter-RunLock([string]$Dir) {
+    return [System.IO.File]::Open((Join-Path $Dir 'run.lock'), [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+}
 function Set-LockInfo([string]$Dir, [hashtable]$Fields) {
     $tmp = Join-Path $Dir 'lock-info.json.tmp'
     [System.IO.File]::WriteAllText($tmp, ($Fields | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
@@ -531,8 +536,8 @@ function Test-ReleaseLockBusy($Rec, [string]$HostId, [datetime]$Now, [bool]$Loca
         return [pscustomobject]@{ Busy = $true; Stale = $false; Reason = 'running on this PC' }
     }
     $lease = if ($Rec.lease_minutes) { [double]$Rec.lease_minutes } else { $script:ReleaseLockLeaseMinutes }
-    $age = ($Now.ToUniversalTime() - ([datetime]$Rec.heartbeat).ToUniversalTime()).TotalMinutes
-    if ($age -gt $lease) { return [pscustomobject]@{ Busy = $false; Stale = $true; Reason = ("stale: no sign of life from $($Rec.machine) for {0:N0} minutes (lease $lease)" -f $age) } }
+    $age = try { ($Now.ToUniversalTime() - ([datetime]$Rec.heartbeat).ToUniversalTime()).TotalMinutes } catch { [double]::MaxValue }   # damaged record = expired
+    if ($age -gt $lease) { return [pscustomobject]@{ Busy = $false; Stale = $true; Reason = ("stale: no sign of life from the other PC for {0:N0} minutes (lease $lease)" -f $age) } }
     return [pscustomobject]@{ Busy = $true; Stale = $false; Reason = 'running on another PC' }
 }
 
@@ -542,10 +547,9 @@ function Get-HostId { return (Get-TextSha256 ('unravis-release|' + [Environment]
 # Is the process named in a lock record still the one that started it? (A reused pid starts later than the record.)
 function Test-HolderAlive([int]$ProcId, $Started) {
     if ($ProcId -le 0) { return $false }
-    try {
-        $p = Get-Process -Id $ProcId -ErrorAction Stop
-        return ($p.StartTime.ToUniversalTime() -le ([datetime]$Started).ToUniversalTime().AddSeconds(10))
-    } catch { return $false }
+    $p = try { Get-Process -Id $ProcId -ErrorAction Stop } catch { return $false }
+    # A process whose start time cannot be read (access denied) still exists: counted as alive, so nothing is taken over from under it.
+    try { return ($p.StartTime.ToUniversalTime() -le ([datetime]$Started).ToUniversalTime().AddSeconds(10)) } catch { return $true }
 }
 
 # The commit the audit log says was tagged for this version ('' if there is none). A resumed run must pin exactly that commit.
@@ -555,17 +559,23 @@ function Get-AuditTaggedCommit([string]$AuditPath, [string]$Version) {
     foreach ($l in (Get-Content -LiteralPath $AuditPath)) {
         if (-not $l) { continue }
         try { $e = $l | ConvertFrom-Json } catch { continue }
-        if ($e.event -eq 'tagged' -and $e.version -eq $Version -and $e.commit) { $c = [string]$e.commit }
+        if (($e.event -eq 'tagged' -or $e.event -eq 'tagging') -and $e.version -eq $Version -and $e.commit) { $c = [string]$e.commit }
     }
     return $c
 }
 
 # Pure. One line a person or an agent can act on.
+# Text from the lock record is shown to people and agents: only printable characters, cut short, so it cannot carry instructions in bulk.
+function Get-SafeText($Text, [int]$Max = 60) {
+    $t = ([string]$Text -replace '[^\p{L}\p{N} ._:@/+\-]', '?')
+    if ($t.Length -gt $Max) { $t = $t.Substring(0, $Max) + '...' }
+    return $t
+}
 function Format-LockBusy($Rec, [datetime]$Now, [string]$HostId = '') {
     $age = ''
     try { $age = ', last sign of life {0:N0} min ago' -f ($Now.ToUniversalTime() - ([datetime]$Rec.heartbeat).ToUniversalTime()).TotalMinutes } catch {}
-    $v = if ($Rec.version) { $Rec.version } else { '(choosing the version)' }
-    return "BUSY: a release is running: $v ($($Rec.channel)), step '$($Rec.stage)', started $($Rec.started) by $($Rec.requester)$(if ($HostId) { if ($Rec.host -eq $HostId) { ' on this PC' } else { ' on another PC' } })$age. Hold merges to master: $($Rec.holdMerges). Pass -WaitMinutes N to queue behind it, or run -Status."
+    $v = if ($Rec.version) { Get-SafeText $Rec.version 30 } else { '(choosing the version)' }
+    return "BUSY: a release is running: $v ($(Get-SafeText $Rec.channel 10)), step '$(Get-SafeText $Rec.stage 20)', started $(Get-SafeText $Rec.started 30) by $(Get-SafeText $Rec.requester 40)$(if ($HostId) { if ($Rec.host -eq $HostId) { ' on this PC' } else { ' on another PC' } })$age. Hold merges to master: $($Rec.holdMerges). Pass -WaitMinutes N to queue behind it, or run -Status."
 }
 
 # Claims or changes the record while holding it. Throws 'lock lost' when the record now belongs to another run.
@@ -607,6 +617,7 @@ function Select-PinnedCommit([string[]]$Commits, $Runs, [switch]$LastGreen) {
         return [pscustomobject]@{ Status = 'none'; Commit = $null; Why = 'no recent master commit has green CI' }
     }
     if ($head -eq 'red') { return [pscustomobject]@{ Status = 'red'; Commit = $null; Why = 'CI failed on master head' } }
+    if ($head -eq 'cancelled') { return [pscustomobject]@{ Status = 'red'; Commit = $null; Why = 'CI on master head was cancelled (re-run it, or use -LastGreen)' } }
     return [pscustomobject]@{ Status = 'waiting'; Commit = $null; Why = "CI on master head is $head" }
 }
 

@@ -135,15 +135,15 @@ if ($Previous) {
         Expect ($LASTEXITCODE -ne 0) 'a downgrade was accepted'
         Expect ((Get-BbVersion) -eq $ver) 'the recorder version changed'
     }
+    Step 'B4u setup --uninstall removes the app and exits 0' {
+        $un = Join-Path $work 'un.json'
+        @{ uninstall = @{ deleteCases = $false; deleteRecordings = $false } } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 -LiteralPath $un
+        & $newSetup --uninstall --silent --config $un --log (Join-Path $work 'uninstall.log') | Out-Host
+        Expect ($LASTEXITCODE -eq 0) "uninstall exit $LASTEXITCODE"
+    }
     Step 'B5 standalone recorder updates itself with nobody there' {
-        # Remove the Unravis install (keeps data); then install ONLY the previous recorder, with no managed marker.
-        # On its own machine (-Part Recorder) there is no Unravis install to remove.
-        if ($Part -ne 'Recorder') {
-            $un = Join-Path $work 'un.json'
-            @{ uninstall = @{ deleteCases = $false; deleteRecordings = $false } } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 -LiteralPath $un
-            & $newSetup --uninstall --silent --config $un --log (Join-Path $work 'uninstall.log') | Out-Host
-            Expect ($LASTEXITCODE -eq 0) "uninstall exit $LASTEXITCODE"
-        }
+        # Install ONLY the previous recorder, with no managed marker. (On a single machine, -Part All, the step above has just removed
+        # the Unravis install; on its own machine, -Part Recorder, there was none.)
         $zip = Get-ChildItem $oldDir -Filter 'unravis-blackbox-*.zip' | Select-Object -First 1
         Expect ([bool]$zip) 'previous release has no recorder zip'
         # Setup's uninstall can leave this marker behind, and with it a recorder never updates itself (it is "managed by Unravis").

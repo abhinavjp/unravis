@@ -88,7 +88,8 @@ $data = Get-ReleaseDataDir
 $audit = Join-Path $data 'audit.jsonl'
 # No git hook of the shared clone may run during a release (worktree add and checkout run post-checkout hooks): hooks are pointed at an
 # empty folder for this process and everything it starts.
-$env:GIT_CONFIG_COUNT = '1'; $env:GIT_CONFIG_KEY_0 = 'core.hooksPath'; $env:GIT_CONFIG_VALUE_0 = (Join-Path $data 'no-hooks')
+$env:GIT_CONFIG_COUNT = '2'; $env:GIT_CONFIG_KEY_0 = 'core.hooksPath'; $env:GIT_CONFIG_VALUE_0 = (Join-Path $data 'no-hooks')
+$env:GIT_CONFIG_KEY_1 = 'core.fsmonitor'; $env:GIT_CONFIG_VALUE_1 = 'false'   # a program named in the clone's config must not run either
 
 if ($CheckAudit) {
     $c = Test-AuditChain $audit
@@ -103,8 +104,10 @@ if ($Status) { Show-ReleaseStatus $Repo $data ([bool]$Json); exit 0 }
 # What this closes: two threads cutting a release at once, a merge landing mid-release (CI on master cancels the older run), and a
 # shared working folder that is on another branch or half edited. The bootstrap holds both locks, picks the commit, makes a private
 # worktree of exactly that commit and runs THIS script from it (so the code that sees the passphrase is the code of that commit).
+$ReleaseProtocol = 2   # a bootstrap only re-runs a Release.ps1 that carries this marker (older ones know nothing of -Pinned and the locks)
 $boundParams = $PSBoundParameters
 function Invoke-ReleaseBootstrap {
+    $callerDir = (Get-Location).Path   # relative -KeyFile / -KeyDir mean this folder, not the repository
     $repoRoot0 = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
     $machine = [Environment]::MachineName
     $hostId = Get-HostId   # the lock record on GitHub carries this opaque id, never the machine or user name
@@ -120,7 +123,13 @@ function Invoke-ReleaseBootstrap {
     while ($true) {
         $busy = $null
         $osLock = try { Enter-ReleaseLock $data } catch { $busy = $_.Exception.Message; $null }
+        $runBusy = $false
         if ($osLock) {
+            # A release process of an earlier (killed) bootstrap may still be running: it holds run.lock. Then nobody takes over.
+            $probe = try { Enter-RunLock $data } catch { $null }
+            if ($probe) { $probe.Dispose() } else { $runBusy = $true; $busy = 'BUSY: a release process started from this PC earlier is still running (run.lock is held), although its starter is gone. Wait for it to finish, or end that pwsh process. Run -Status.' }
+        }
+        if ($osLock -and -not $runBusy) {
             try {
                 $cur = Read-RemoteLock $Repo
                 $alive = [bool]$cur.Record -and (Test-HolderAlive ([int]$cur.Record.pid) $cur.Record.started)
@@ -142,7 +151,9 @@ function Invoke-ReleaseBootstrap {
         Write-Host "$busy`nWaiting (until $($deadline.ToString('HH:mm:ss'))) ..." -ForegroundColor Yellow
         Start-Sleep -Seconds ([Math]::Min(60, 10 * $attempt))
     }
-    Set-LockInfo $data @{ id = $id; pid = $PID; requester = $me; version = [string]$Version; stage = 'Starting'; started = [DateTime]::UtcNow.ToString('o') }
+    $nonce = [guid]::NewGuid().ToString('N')   # handed to the re-run through its environment: the lock id on GitHub is public and proves nothing
+    Set-LockInfo $data @{ id = $id; pid = $PID; requester = $me; version = [string]$Version; stage = 'Starting'; started = [DateTime]::UtcNow.ToString('o'); nonce = $nonce }
+    $runStart = [DateTime]::UtcNow
     Write-AuditEntry $audit @{ event = 'lock-acquired'; id = $id; requester = $me; machine = $machine; stale = "$stale"; hold_merges = (-not $CheckOnly) }
     $code = 1; $wt = $null; $pinned = $null
     try {
@@ -154,10 +165,10 @@ function Invoke-ReleaseBootstrap {
             $tags = @(git tag -l 'v*')
             $state = Get-ReleaseState $data
             $plan = Get-ResumePlan $state $asked $Version $tags ([bool]$CheckOnly)
-            $how = ''
+            $how = ''; $fromTag = $false
             if ($plan.Resuming -and (git ls-remote --tags origin "refs/tags/v$($plan.Version)")) {
                 # The tag exists: the build is of that commit, whatever master has become.
-                $pinned = (git rev-list -n 1 "v$($plan.Version)").Trim(); $how = "resume of v$($plan.Version)"
+                $pinned = (git rev-list -n 1 "v$($plan.Version)").Trim(); $how = "resume of v$($plan.Version)"; $fromTag = $true
                 if ($LASTEXITCODE -ne 0 -or -not $pinned) { Write-Host "The tag v$($plan.Version) is on GitHub but not in this clone." -ForegroundColor Red; return 1 }
                 # Anyone who can push a tag could name a commit of their own here, and its scripts would then run with the passphrase.
                 # The commit must be the one THIS PC's audit log says it tagged for this version.
@@ -188,18 +199,20 @@ function Invoke-ReleaseBootstrap {
             # Whatever way it was chosen, the commit must be part of master and not older than the newest release.
             git merge-base --is-ancestor $pinned "origin/$Branch"
             if ($LASTEXITCODE -ne 0) { Write-Host "Commit $($pinned.Substring(0, 7)) is not part of origin/$Branch. Not releasing it." -ForegroundColor Red; return 1 }
-            $newestAll = Get-NewestVersion $tags
-            if ($newestAll -and -not $plan.Resuming) {
+            $newestAll = Get-NewestVersion @(git tag --merged "origin/$Branch" -l 'v*')   # a stray tag off master must not block every release
+            if ($newestAll -and -not $fromTag) {
                 git merge-base --is-ancestor "v$newestAll" $pinned 2>$null
                 if ($LASTEXITCODE -ne 0) { Write-Host "Commit $($pinned.Substring(0, 7)) does not contain v$newestAll, the newest release. A release must not go back in history (-LastGreen picked an older commit?)." -ForegroundColor Red; return 1 }
             }
             # The scripts running this bootstrap must be master's own at that commit: the bootstrap holds the locks and chooses what runs.
             # (Not on a resume: that run is of the tag's own commit, vouched for by the audit log above, and master may have moved on.)
-            if (-not $plan.Resuming) { foreach ($f in 'Release.ps1', 'ReleaseLib.ps1', 'ProtonPass.ps1') {
+            if (-not $fromTag) { foreach ($f in 'Release.ps1', 'ReleaseLib.ps1', 'ProtonPass.ps1') {
                 $want = (git rev-parse "${pinned}:tools/release/$f" 2>$null)
                 $have = (git hash-object -- (Join-Path $PSScriptRoot $f) 2>$null)
                 if ($want -and $have -and $want.Trim() -ne $have.Trim()) { Write-Host "tools/release/$f here is not the one at the pinned commit $($pinned.Substring(0, 7)) (an edited or older copy). Run the release from an up-to-date clean checkout of master." -ForegroundColor Red; return 1 }
             } }
+            $pinnedScript = (git show "${pinned}:tools/release/Release.ps1" 2>$null) -join "`n"
+            if ($pinnedScript -notmatch '\$ReleaseProtocol = 2') { Write-Host "The Release.ps1 of the pinned commit $($pinned.Substring(0, 7)) is from before the lock and pinned-commit change, so it cannot be run from here. Finish this release with the old command from a checkout of that commit (docs/auto-updater/RELEASING.md), or run -Again after a newer commit." -ForegroundColor Red; return 1 }
             Write-Host "Pinned commit $($pinned.Substring(0,7)): $how." -ForegroundColor Green
             Write-AuditEntry $audit @{ event = 'pinned'; id = $id; commit = $pinned; why = $how }
             # 3. nothing new? (two sessions asking for an rc at the same time: the second finds it already done)
@@ -212,7 +225,7 @@ function Invoke-ReleaseBootstrap {
                 if ($ar -eq 'done') { Write-Host "Nothing new: $($pinned.Substring(0,7)) is already released as v$nt ($kind). Nothing was done. Merge something first, or pass -Again." -ForegroundColor Green; $code = 0; return 0 }
                 if ($ar -eq 'withdrawn') { Write-Host "v$nt holds this same commit and was WITHDRAWN. Releasing it again would build the same files. Merge the fix first, or pass -Again." -ForegroundColor Red; return 1 }
             }
-            $null = Update-RemoteLock $Repo $id @{ commit = $pinned; stage = 'Pinned' } "release lock: pinned $($pinned.Substring(0,7))"
+            $null = Update-RemoteLock $Repo $id @{ commit = $pinned; stage = 'Pinned'; holdMerges = ((-not $CheckOnly) -and -not $fromTag) } "release lock: pinned $($pinned.Substring(0,7))"
             # 4. a private worktree of exactly that commit; this script runs again from there
             $workRoot = Join-Path $data 'work'
             if (Test-Path -LiteralPath $workRoot) { foreach ($d in Get-ChildItem -LiteralPath $workRoot -Directory) { git worktree remove --force $d.FullName 2>&1 | Out-Null; Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue } }
@@ -225,18 +238,25 @@ function Invoke-ReleaseBootstrap {
             foreach ($kv in $boundParams.GetEnumerator()) {
                 if (@('WaitMinutes', 'Requester', 'LastGreen', 'Again', 'CiWaitMinutes', 'Pinned', 'LockId') -contains $kv.Key) { continue }
                 if ($kv.Value -is [System.Management.Automation.SwitchParameter]) { if ($kv.Value.IsPresent) { $fwd += "-$($kv.Key)" } }
-                elseif ($kv.Key -eq 'KeyFile') { $fwd += '-KeyFile'; $fwd += [System.IO.Path]::GetFullPath([string]$kv.Value, (Get-Location).Path) }
+                elseif ([string]::IsNullOrEmpty("$($kv.Value)")) { continue }   # an empty value would swallow the next argument on PowerShell 7.2
+                elseif ($kv.Key -eq 'KeyFile' -or $kv.Key -eq 'KeyDir') { $fwd += "-$($kv.Key)"; $fwd += [System.IO.Path]::GetFullPath([string]$kv.Value, $callerDir) }
                 else { $fwd += "-$($kv.Key)"; $fwd += "$($kv.Value)" }
             }
             $fwd += @('-Pinned', $pinned, '-LockId', $id)
             $exe = (Get-Process -Id $PID).Path
-            & $exe @fwd | Out-Host   # the run's own output goes to the screen, not into this function's result
+            $env:UNRAVIS_RELEASE_NONCE = $nonce
+            try { & $exe @fwd | Out-Host } finally { Remove-Item Env:UNRAVIS_RELEASE_NONCE -ErrorAction SilentlyContinue }   # the run's own output goes to the screen, not into this function's result
             $code = $LASTEXITCODE
         } finally { Pop-Location }
     } finally {
         $st = Get-ReleaseState $data
-        $outcome = if ($CheckOnly) { 'check-only' } elseif ($code -eq 0 -and $st -and $st.status -eq 'done') { 'done' } elseif ($st -and $st.version -and $pinned) { [string]$st.status } else { 'stopped' }
-        try { $null = Update-RemoteLock $Repo $id @{ state = 'free'; holdMerges = $false; stage = 'idle'; reason = ''; last = @{ version = $(if ($st) { [string]$st.version } else { '' }); outcome = $outcome; at = [DateTime]::UtcNow.ToString('o'); requester = $me; reason = $(if ($st) { [string]$st.reason } else { '' }) } } "release lock: free ($outcome)" }
+        # Only a state.json written by THIS run counts; an older release's "done" must not be reported as this run's result.
+        $fresh = $false; try { $fresh = [bool]$st -and (([datetime]$st.updated).ToUniversalTime() -ge $runStart) } catch {}
+        if (-not $fresh) { $st = $null }
+        $outcome = if ($CheckOnly) { 'check-only' } elseif ($code -eq 0 -and $st -and $st.status -eq 'done') { 'done' } elseif ($code -eq 0) { 'nothing-new' } elseif ($st) { [string]$st.status } else { 'stopped' }
+        $freeFields = @{ state = 'free'; holdMerges = $false; stage = 'idle'; reason = '' }
+        if ($outcome -ne 'nothing-new') { $freeFields.last = @{ version = $(if ($st) { [string]$st.version } else { '' }); outcome = $outcome; at = [DateTime]::UtcNow.ToString('o'); requester = $me; reason = $(if ($st) { [string]$st.reason } else { '' }) } }
+        try { $null = Update-RemoteLock $Repo $id $freeFields "release lock: free ($outcome)" }
         catch { if ($_.Exception.Message -match 'lock lost') { Write-Host $_.Exception.Message -ForegroundColor Yellow } else { Write-Host "Could not free the release lock on GitHub: $($_.Exception.Message) The next run on this PC takes it over." -ForegroundColor Yellow } }
         try { Write-AuditEntry $audit @{ event = 'lock-released'; id = $id; outcome = $outcome } } catch {}
         if ($wt) { Push-Location $repoRoot0; try { git worktree remove --force $wt 2>&1 | Out-Null; git worktree prune 2>&1 | Out-Null } finally { Pop-Location } }
@@ -247,6 +267,12 @@ function Invoke-ReleaseBootstrap {
 }
 if (-not $Pinned) { exit (Invoke-ReleaseBootstrap) }
 if (-not $LockId) { throw '-Pinned and -LockId are set by the bootstrap only. Run Release.ps1 without them.' }
+# Proof that the bootstrap on this PC started this run (the lock id on GitHub is public), and this process's own lock: while it lives,
+# nobody takes the release over or removes its worktree, even if the bootstrap that started it was killed.
+$li = try { Get-Content -Raw -LiteralPath (Join-Path $data 'lock-info.json') | ConvertFrom-Json } catch { $null }
+if (-not $env:UNRAVIS_RELEASE_NONCE -or -not $li -or $li.nonce -ne $env:UNRAVIS_RELEASE_NONCE -or $li.id -ne $LockId) { throw 'This run was not started by the release bootstrap on this PC (-Pinned and -LockId are not for typing). Run Release.ps1 without them.' }
+Remove-Item Env:UNRAVIS_RELEASE_NONCE -ErrorAction SilentlyContinue
+$runLock = try { Enter-RunLock $data } catch { throw 'Another release process is already running on this PC (run.lock is held).' }
 
 $script:stage = 'Preflight'
 $script:report = [ordered]@{}
@@ -259,7 +285,7 @@ function Set-LockStage([string]$stage, [hashtable]$more = @{}) {
     $f = @{ stage = $stage }
     foreach ($k in $more.Keys) { $f[$k] = $more[$k] }
     try { $null = Update-RemoteLock $Repo $LockId $f "release lock: $Version $stage" }
-    catch { if ($_.Exception.Message -match 'lock lost') { Fail $_.Exception.Message } else { Write-Host "  (lock record not updated: $($_.Exception.Message))" -ForegroundColor Yellow } }
+    catch { if ($_.Exception.Message -match 'lock lost') { $script:ownsVersion = $false; Fail $_.Exception.Message } else { Write-Host "  (lock record not updated: $($_.Exception.Message))" -ForegroundColor Yellow } }
 }
 $script:extra = @{}
 $script:ownsVersion = $false   # state.json is only written once this run has settled which release it is working on
@@ -541,6 +567,8 @@ try {
         if ($localTag -and (git rev-list -n 1 $tag).Trim() -ne $head -and -not $remoteTag) { Fail "Local tag $tag points at a different commit than HEAD ($($head.Substring(0,7)))." }
         if (-not $remoteTag) {
             Confirm-Typed $tag "This creates tag $tag on $($head.Substring(0,7)) ($(git log -1 --format=%s)) and pushes it. CI then builds a DRAFT release."
+            # Written BEFORE the push: if the push succeeds but its answer is lost, this line is what lets a later run resume that tag.
+            Write-AuditEntry $audit @{ event = 'tagging'; version = $Version; commit = $head }
             try {
                 if (-not $localTag) { Run 'git tag' { git -c tag.gpgSign=false tag $tag $head } | Out-Null }
                 Run 'git push tag' { git push origin $tag } | Out-Null
