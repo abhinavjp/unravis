@@ -5,7 +5,7 @@
   import { sourceKey, FILE_KINDS } from '../../lib/wizardSources';
   import { groupOf } from '../../lib/discover';
   import { releaseOrphanFiles } from '../../lib/wizardFiles.svelte';
-  import { railGroups, connectPrefill } from '../../lib/sourceWizard';
+  import { railGroups, connectPrefill, addedLine } from '../../lib/sourceWizard';
   import { DISCOVER_TEXT } from '../../lib/copy/discoverCopy';
   import { kindLabel } from '../../lib/copy/wizardSourcesCopy';
   import { WIZ } from '../../lib/copy/sourceWizardCopy';
@@ -50,6 +50,14 @@
     return f ? DISCOVER_TEXT.groups[groupOf(f)] : kindLabel('discover');
   };
   const groups = $derived(railGroups(wizard.sources, titleOf));
+  // One confirmation line after any add, whatever the kind. It stays until the list changes again; a removal clears it.
+  let addedNote = $state('');
+  let seenKeys: string[] = wizard.sources.map((s) => sourceKey(s));
+  $effect(() => {
+    const now = wizard.sources.map((s) => ({ key: sourceKey(s), kind: s.kind, label: s.label || s.ref }));
+    addedNote = addedLine(seenKeys, now, WIZ.added);
+    seenKeys = now.map((n) => n.key);
+  });
   const existingGroups = $derived(railGroups(existing.map((e) => ({ ...e, ref: e.label })), (e) => kindLabel(e.kind)));
 
   async function back() { card = ''; dropNote = ''; seed = undefined; await tick(); heading?.focus(); }
@@ -102,6 +110,7 @@
         </ul>
       {/each}
       <p class="tray" role="status">{WIZ.tray(wizard.sources.length)}</p>
+      <p class="added-note" role="status" data-added-note>{addedNote}</p>
     </aside>
 
     <section class="main">
@@ -159,6 +168,8 @@
   .lbl { overflow-wrap: anywhere; min-width: 0; }
   .ro { color: var(--text-2); }
   .tray { margin: var(--space-2) 0 0; font-weight: 600; }
+  .added-note { margin: var(--space-1) 0 0; color: var(--text-2); font-size: var(--fs-3); }
+  .added-note:empty { display: none; }
   .main { display: grid; gap: var(--space-3); min-width: 0; align-content: start; }
   .tiles { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: var(--space-3); }
   @media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

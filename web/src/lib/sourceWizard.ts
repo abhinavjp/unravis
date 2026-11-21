@@ -22,3 +22,16 @@ export const canFinish = (adding: boolean, count: number, busy: boolean, closed:
 export function connectPrefill(kind: 'mongo' | 'sql'): string {
   return kind === 'mongo' ? 'mongodb://localhost:27017' : 'localhost';
 }
+
+/**
+ * The one confirmation line after sources join the list, for every kind (Files, Mongo, SQL, Redis, Blackbox, found on this PC) and in both
+ * the new-case and the add-to-a-case wizard. `before` and `after` are the source keys of the list; `labelOf` names one by key.
+ * Returns '' when nothing was added (a removal or no change). The Blackbox suffix is there because that recorder is saved at once.
+ */
+export function addedLine(before: readonly string[], after: ReadonlyArray<{ key: string; kind: string; label: string }>, text: { one: (label: string) => string; many: (n: number) => string; recorder: string }): string {
+  const known = new Set(before);
+  const fresh = after.filter((a) => !known.has(a.key));
+  if (fresh.length === 0) return '';
+  const line = fresh.length === 1 ? text.one(fresh[0].label) : text.many(fresh.length);
+  return fresh.some((f) => f.kind === 'blackbox') ? line + ' ' + text.recorder : line;
+}
