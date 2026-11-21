@@ -133,7 +133,7 @@ try {
     $HelperExe = Join-Path $UtilityRoot 'dist\unravis-blackbox.exe'
     $HelperVersion = $Version.TrimStart('v')
     $HelperLdFlags = "$LdFlags -X main.version=$HelperVersion"
-    Invoke-Checked $GoExe @('build', '-trimpath', '-ldflags', $HelperLdFlags, '-o', $HelperExe, './cmd/unravis-blackbox')
+    Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $HelperLdFlags, '-o', $HelperExe, './cmd/unravis-blackbox')
     $HelperSha = (Get-FileHash -LiteralPath $HelperExe -Algorithm SHA256).Hash.ToLowerInvariant()
     $AppLdFlags = $GuiLdFlags
     if ($Unpinned) {
@@ -144,7 +144,7 @@ try {
         Write-Host "Pinning unravis.exe to unravis-blackbox.exe SHA-256 $HelperSha"
     }
     if ($Release -and -not $HelperSha) { throw 'Release build: the helper hash is empty, so the app cannot be pinned.' }
-    Invoke-Checked $GoExe @('build', '-trimpath', '-ldflags', $AppLdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis.exe'), './cmd/audit-explorer')
+    Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $AppLdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis.exe'), './cmd/audit-explorer')
     if (-not $Unpinned) {
         # The pin must really be inside the program: the hash text appears in its bytes.
         $AppBytes = [System.IO.File]::ReadAllBytes((Join-Path $UtilityRoot 'dist\unravis.exe'))
@@ -154,7 +154,7 @@ try {
     # Compatibility copy for MCP client configs that still point at dist\api-audit-explorer.exe.
     # Remove this copy and the MCP.md note after 2026-12-31 (one release after the rename).
     Copy-Item -LiteralPath (Join-Path $UtilityRoot 'dist\unravis.exe') -Destination (Join-Path $UtilityRoot 'dist\api-audit-explorer.exe') -Force
-    Invoke-Checked $GoExe @('build', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-keeper.exe'), './cmd/unravis-keeper')
+    Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-keeper.exe'), './cmd/unravis-keeper')
 
     # The one-file installer comes last: it embeds the programs above with a manifest of their SHA-256, so setup refuses a
     # payload that was changed after the build. The payload folder is cleared first and is not committed (see its README.txt).
@@ -176,9 +176,9 @@ try {
     $Manifest = [ordered]@{ version = $Version; files = $PayloadFiles } | ConvertTo-Json -Depth 4
     [System.IO.File]::WriteAllText((Join-Path $PayloadDir 'manifest.json'), $Manifest, (New-Object System.Text.UTF8Encoding($false)))
     try {
-        Invoke-Checked $GoExe @('build', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-setup.exe'), './cmd/unravis-setup')
+        Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-setup.exe'), './cmd/unravis-setup')
         # Unravis Lite: a small console viewer for one Blackbox (docs/auto-updater/SPEC.md). It stays a console program so it can print the one-time link.
-        Invoke-Checked $GoExe @('build', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-lite.exe'), './cmd/unravis-lite')
+        Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-lite.exe'), './cmd/unravis-lite')
         # Subsystem check: the app must be GUI (2) so it opens no console; every other program built here stays console (3).
         $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis.exe')
         if ($Subsystem -ne 2) { throw "unravis.exe: PE subsystem $Subsystem, expected 2" }
