@@ -20,6 +20,7 @@ test('SEC-02: a missing or wrong session token is refused with 401 on read and w
 });
 
 test('SEC-07: the listener is on 127.0.0.1 and never on all addresses', async ({ demo }) => {
+  test.skip(process.platform !== 'win32', 'reads the listener with netstat, which is the Windows tool here');
   const url = new URL(demo.base);
   expect(url.hostname).toBe('127.0.0.1');
   const out = execFileSync('netstat', ['-ano', '-p', 'tcp'], { encoding: 'utf8', windowsHide: true });
