@@ -152,7 +152,7 @@ test('SRCLIST-03: details say why a state is what it is, the list can change not
   await expect(old.getByTestId('srclist-why')).toHaveCount(0);
   await more.click();
   await old.getByRole('button', { name: 'Add files again' }).click();
-  await expect(page.getByRole('heading', { name: 'Import files' }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Add files' }).first()).toBeVisible();
   expect(writes).toEqual([]);
 });
 

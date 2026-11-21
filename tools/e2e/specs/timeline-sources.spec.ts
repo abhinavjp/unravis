@@ -290,7 +290,7 @@ test('TSRC-07: a SQL or IIS lane with no file says to add a file, and Add files 
   // The API lane is a live lane and has no such button.
   await expect(page.locator('.panel[data-lane=audit] [data-testid=lane-add-files]')).toHaveCount(0);
   await page.locator('.panel[data-lane=sql] [data-testid=lane-add-files]').click();
-  await expect(page.getByRole('dialog', { name: 'Import files' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Add files' })).toBeVisible();
 });
 
 test('TSRC-09: files listed for a SQL or IIS lane but never imported are called "not imported", not "no file"', async ({ page }) => {
@@ -307,7 +307,7 @@ test('TSRC-09: files listed for a SQL or IIS lane but never imported are called 
     await expect(page.locator(`.panel[data-lane=${lane}] [data-testid=lane-add-files]`)).toBeVisible();
   }
   await page.locator('.panel[data-lane=iis] [data-testid=lane-add-files]').click();
-  await expect(page.getByRole('dialog', { name: 'Import files' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Add files' })).toBeVisible();
 });
 
 test('TSRC-11: a source that was never imported says so on its chip', async ({ page }) => {
@@ -483,7 +483,7 @@ test('TSRC-10: a SQL lane with no saved database data says what the Timeline doe
   const status = page.locator('.panel[data-lane=sql] [data-testid=lane-status]');
   await expect(status).toContainText('No database data is saved in this case for this window');
   await page.locator('.panel[data-lane=sql] [data-testid=lane-add-files]').click();
-  await expect(page.getByRole('dialog', { name: 'Import files' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Add files' })).toBeVisible();
 });
 
 for (const [name, scheme, width] of [['light', 'light', 1280], ['dark', 'dark', 1280], ['375', 'light', 375]] as const) {

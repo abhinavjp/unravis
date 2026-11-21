@@ -19,7 +19,7 @@ const W3C = join(FILES, 'u_ex261020.log');
 const W3C_UNLISTED = readFileSync(W3C, 'utf8').replace(/\bWEB-A\b/g, 'ISS-PROD-07');
 
 const payload = (name: string, buffer: Buffer) => ({ name, mimeType: 'text/plain', buffer });
-const popup = (page: Page) => page.getByRole('dialog', { name: 'Import files' });
+const popup = (page: Page) => page.getByRole('dialog', { name: 'Add files' });
 const closeButton = (page: Page) => popup(page).getByRole('button', { name: 'Close import' });
 const picker = (page: Page) => popup(page).getByLabel('Choose files to import', { exact: true });
 const ack = (page: Page) => popup(page).getByRole('checkbox', { name: 'Confirm read-only' });
@@ -75,7 +75,7 @@ test('GRID-01: the header Import and Add a file open the same popup with the wir
   await openFromHeader(page, 'QA Grid Words');
 
   const dlg = popup(page);
-  await expect(dlg.getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
+  await expect(dlg.getByRole('heading', { name: 'Add files', level: 2 })).toBeVisible();
   await expect(dlg.locator('.case-chip')).toContainText('QA Grid Words');
   await expect(dlg.locator('.stepper .stp')).toHaveText([/Choose/, /Check/, /Result/]);
   await expect(dlg.locator('.stepper .stp.cur')).toContainText('Choose');
@@ -96,7 +96,7 @@ test('GRID-01: the header Import and Add a file open the same popup with the wir
   await expect(popup(page)).toHaveCount(0);
   await page.getByRole('button', { name: 'This case', exact: true }).click();
   await page.getByRole('button', { name: 'Add a file' }).click();
-  await expect(dlg.getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
+  await expect(dlg.getByRole('heading', { name: 'Add files', level: 2 })).toBeVisible();
   await expect(dlg.locator('.prog-line')).toContainText('Step 1 of 3 · Choose files to import');
   await expect(page.locator('[data-drawer-card]')).toHaveCount(0);
 });
@@ -187,7 +187,7 @@ test('GRID-05: while an import is sending, the popup cannot be closed or stepped
   const dlg = popup(page);
   await stageAndCheck(page, payload('u_ex261020.log', readFileSync(W3C)));
   await ack(page).check();
-  await dlg.getByRole('button', { name: 'Import 1 file', exact: true }).click();
+  await dlg.getByRole('button', { name: 'Add 1 file', exact: true }).click();
 
   await expect(dlg.locator('.prog-line')).toContainText('Step 3 of 3 · Importing — do not close');
   await expect(dlg.getByText('Importing 0 of 1 file')).toBeVisible();
@@ -243,7 +243,7 @@ test('GRID-07: with one SQL day read, the popup still takes files only', async (
 
   await openFromHeader(page, 'QA Grid Day');
   const dlg = popup(page);
-  await expect(dlg.getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
+  await expect(dlg.getByRole('heading', { name: 'Add files', level: 2 })).toBeVisible();
   await expect(dlg.getByRole('button', { name: /another day/i })).toHaveCount(0);
   await expect(page.locator('[data-drawer-card]')).toHaveCount(0);
   await expect(dlg.getByText('Drop files or a folder here')).toBeVisible();

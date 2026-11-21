@@ -41,3 +41,17 @@ test('the Timeline lane help buttons are never below 24 px', () => {
 test('the result badge in the create/add progress table never wraps', () => {
   assert.match(read('src/components/wizard/CreateProgress.svelte'), /\.badge \{[^}]*white-space: nowrap;/);
 });
+
+// BL-164: on a case that exists, the Files tile and a drop on it open the one Add files pop-up; the new-case wizard still stages files itself.
+test('Add data > Files opens the Add files pop-up and hands over dropped files once', () => {
+  const step = read('src/components/sourcewiz/SourceStep.svelte');
+  assert.match(step, /if \(c === 'files' && adding && onFiles\) \{ if \(dropped\) setImportSeed\(dropped\.files\); onFiles\(\); return; \}/);
+  const seed = load('src/lib/components/importPopup/importSeed.ts');
+  const a = { name: 'a.log' };
+  seed.setImportSeed([a]);
+  assert.deepEqual(seed.takeImportSeed(), [a]);
+  assert.deepEqual(seed.takeImportSeed(), []);
+  const popup = read('src/lib/components/importPopup/ImportPopup.svelte');
+  assert.match(popup, /takeImportSeed\(\)[\s\S]*popup\.addFiles\(seeded\)/);
+  assert.match(read('src/lib/copy/importPopupCopy.ts'), /title: 'Add files'/);
+});

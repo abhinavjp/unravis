@@ -17,7 +17,7 @@
 
   // Add sources to a case that is already open: the same Add sources step as the create wizard, then a short Review & add, then the run.
   // The case already exists, so the run starts with its id set and never makes a case.
-  let { caseId, readOnly = false, onDone }: { caseId: string; readOnly?: boolean; onDone: () => void } = $props();
+  let { caseId, readOnly = false, onDone, onFiles }: { caseId: string; readOnly?: boolean; onDone: () => void; onFiles?: () => void } = $props();
 
   type Screen = 'add' | 'review';
   let screen = $state<Screen>('add');
@@ -83,7 +83,7 @@
   {:else if started}
     <CreateProgress adding onOpen={() => { resetWizard(); onDone(); }} onAddMore={() => void addMore()} />
   {:else if screen === 'add'}
-    <SourceStep adding {caseId} {closed} {existing} />
+    <SourceStep adding {caseId} {closed} {existing} {onFiles} />
     <div class="actions">
       <button type="button" class="primary-button" disabled={wizard.sources.length === 0 || closed} onclick={() => void go('review')}>Review</button>
     </div>

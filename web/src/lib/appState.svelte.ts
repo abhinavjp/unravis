@@ -224,7 +224,7 @@ let importPopup = $state<{ caseId: string; caseTitle: string; retryServerName: s
 let importPopupReturnFocus: HTMLElement | null = null;
 // The one line the start screen shows after Import was asked for with no case open (see showImportPopup).
 // On until a case is opened (setActiveCase) or the line is dismissed on the start screen.
-export const IMPORT_CASE_HINT = 'Pick a case first, then choose Import files.';
+export const IMPORT_CASE_HINT = 'Pick a case first, then choose Add files.';
 let importCaseHint = $state(false);
 // The file import the person started that is still running on the server. It lives here, not in the import drawer, so closing and reopening the drawer finds it again.
 let runningImport = $state.raw<RunningImport | null>(null);

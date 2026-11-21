@@ -9,7 +9,7 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 test('IP-17: Import with no case open leads to the start screen and sets the hint, before any popup work', () => {
   const state = read('src/lib/appState.svelte.ts');
-  assert.match(state, /export const IMPORT_CASE_HINT = 'Pick a case first, then choose Import files\.';/);
+  assert.match(state, /export const IMPORT_CASE_HINT = 'Pick a case first, then choose Add files\.';/);
   const fn = state.slice(state.indexOf('function showImportPopup('));
   const body = fn.slice(0, fn.indexOf('\n}'));
   assert.match(body, /if \(!id\) \{[^}]*go\('start'\)[^}]*importCaseHint = true;[^}]*return;\s*\}/);

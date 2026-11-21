@@ -18,11 +18,12 @@
   import SourceTagRow from '../wizard/SourceTagRow.svelte';
   import AddAnotherDay from '../sources/AddAnotherDay.svelte';
   import FindOnPc from './FindOnPc.svelte';
+  import { setImportSeed } from '../../lib/components/importPopup/importSeed';
   import BlackboxCard from './BlackboxCard.svelte';
 
   // The one "Add sources" step, for a new case and for an open one. Left: what is already chosen, grouped by type. Right: pick a kind, fill
   // its short card, come back to the list. Nothing is read here: the last button of the wizard does the reading.
-  let { adding = false, caseId = '', closed = false, existing = [] }: { adding?: boolean; caseId?: string; closed?: boolean; existing?: Array<{ kind: string; label: string }> } = $props();
+  let { adding = false, caseId = '', closed = false, existing = [], onFiles }: { adding?: boolean; caseId?: string; closed?: boolean; existing?: Array<{ kind: string; label: string }>; onFiles?: () => void } = $props();
 
   type Card = '' | 'pc' | 'mongo' | 'sql' | 'redis' | 'files' | 'blackbox' | 'another';
   let card = $state<Card>('');
@@ -61,7 +62,10 @@
   const existingGroups = $derived(railGroups(existing.map((e) => ({ ...e, ref: e.label })), (e) => kindLabel(e.kind)));
 
   async function back() { card = ''; dropNote = ''; seed = undefined; await tick(); heading?.focus(); }
-  async function open(c: Card, finding = '', dropped?: { files: File[]; folder: boolean; says: string[] }) { seed = dropped; card = c; dropNote = ''; from = finding; await tick(); cardEl?.focus(); }
+  async function open(c: Card, finding = '', dropped?: { files: File[]; folder: boolean; says: string[] }) {
+    // On a case that exists, files go through the one Add files pop-up (it checks them with the server first). The new-case wizard has no case yet, so it stages them here.
+    if (c === 'files' && adding && onFiles) { if (dropped) setImportSeed(dropped.files); onFiles(); return; }
+    seed = dropped; card = c; dropNote = ''; from = finding; await tick(); cardEl?.focus(); }
   function leaveForm() { from = ''; card = 'pc'; }
   function markConnected() { if (from !== '' && !connected.includes(from)) connected = [...connected, from]; }
   function connectedDone() { if (from !== '' && !connected.includes(from)) connected = [...connected, from]; from = ''; card = 'pc'; }

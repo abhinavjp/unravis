@@ -57,7 +57,7 @@ test('G4-03: Escape on the popup discard question answers Keep them and the stag
   await goHome(page);
   await openCase(page, 'QA G4 escape prompt');
   await page.getByRole('button', { name: 'Add a file' }).click();
-  const popup = page.getByRole('dialog', { name: 'Import files' });
+  const popup = page.getByRole('dialog', { name: 'Add files' });
   await expect(popup).toBeVisible();
   await picker(page).setInputFiles([W3C]);
   const staged = popup.locator('[data-grp="kind:iis-w3c"]');

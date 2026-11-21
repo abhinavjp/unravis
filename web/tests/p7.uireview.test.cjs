@@ -106,7 +106,7 @@ test('M2: the case-closed refusal reads as a plain sentence, not as another read
 
 test('M3: Add data never clicks into nothing: Files opens the import page, Blackbox opens the Blackbox page and is off only in a closed case', () => {
   const hub = comp('SourcesHub');
-  assert.match(hub, /<AddSourcesFlow \{caseId\} \{readOnly\} onDone=/, 'the Add data tab is the one source wizard; Files and Blackbox are cards inside it');
+  assert.match(hub, /<AddSourcesFlow \{caseId\} \{readOnly\} onFiles=\{onAddFiles\} onDone=/, 'the Add data tab is the one source wizard; its Files tile opens the one Add files pop-up, Blackbox is a card inside it');
   const add = comp('AddDataPanel');
   assert.match(add, /disabled=\{off\} onclick=\{\(\) => choose\('blackbox'\)\}/, 'the Blackbox card is on unless the case is closed (or an import is sending)');
   assert.match(add, /disabled=\{off \|\| !files\} onclick=\{\(\) => choose\('files'\)\}/);

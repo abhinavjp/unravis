@@ -31,7 +31,7 @@ const W3C_OTHER = readFileSync(W3C, 'utf8').replace(/\bWEB-A\b/g, 'web-a');
 const W3C_UNLISTED = readFileSync(W3C, 'utf8').replace(/\bWEB-A\b/g, 'ISS-PROD-07');
 const BAD_LOG = '#Software: Microsoft Internet Information Services 10.0\n#Fields: date time\nnot a log line at all\n';
 
-const popup = (page: Page) => page.getByRole('dialog', { name: 'Import files' });
+const popup = (page: Page) => page.getByRole('dialog', { name: 'Add files' });
 const picker = (page: Page) => popup(page).getByLabel('Choose files to import', { exact: true });
 const ack = (page: Page) => popup(page).getByRole('checkbox', { name: 'Confirm read-only' });
 const hero = (page: Page) => popup(page).locator('.result-hero');
@@ -43,7 +43,7 @@ async function openPopup(page: Page, title: string) {
   await openCase(page, title);
   await page.getByRole('button', { name: 'Add a file' }).click();
   await expect(popup(page)).toBeVisible();
-  await expect(popup(page).getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
+  await expect(popup(page).getByRole('heading', { name: 'Add files', level: 2 })).toBeVisible();
 }
 
 /** Presses Continue and waits until the check is back (the read-only box is drawn once it is). */
@@ -131,7 +131,7 @@ test('IMPORT-01: several files at once each show a kind, the unknown one is not 
   await expect(notSupportedRow(page, 'notes.txt')).toBeVisible();
   await expect(dlg.getByText('I understand this is read-only and nothing is changed on these computers')).toBeVisible();
   // The button waits for the read-only box and counts only files that will be sent.
-  const send = dlg.getByRole('button', { name: 'Import 2 files', exact: true });
+  const send = dlg.getByRole('button', { name: 'Add 2 files', exact: true });
   await expect(send).toBeDisabled();
   await ack(page).check();
   await expect(send).toBeEnabled();
@@ -156,14 +156,14 @@ test('IMPORT-02: any file can be left out: untick, Remove and Close with the Dis
   const dlg = popup(page);
   await picker(page).setInputFiles([payload('u_ex261020.log', readFileSync(W3C)), payload('u_ex261021.log', Buffer.from(W3C_OTHER)), payload('notes.txt', readFileSync(NOTES))]);
   await toCheck(page);
-  await expect(dlg.getByRole('button', { name: 'Import 2 files', exact: true })).toBeVisible();
+  await expect(dlg.getByRole('button', { name: 'Add 2 files', exact: true })).toBeVisible();
 
   // Untick one file of the ready group: the button counts one less. Ticking it again brings it back.
   await group(page, 'kind:iis-w3c').locator('.grp-head').click();
   await dlg.getByRole('checkbox', { name: 'u_ex261020.log', exact: true }).uncheck();
-  await expect(dlg.getByRole('button', { name: 'Import 1 file', exact: true })).toBeVisible();
+  await expect(dlg.getByRole('button', { name: 'Add 1 file', exact: true })).toBeVisible();
   await dlg.getByRole('checkbox', { name: 'u_ex261020.log', exact: true }).check();
-  await expect(dlg.getByRole('button', { name: 'Import 2 files', exact: true })).toBeVisible();
+  await expect(dlg.getByRole('button', { name: 'Add 2 files', exact: true })).toBeVisible();
 
   // Remove takes a file that is not supported off the list.
   await notSupportedRow(page, 'notes.txt').getByRole('button', { name: 'Remove', exact: true }).click();
@@ -177,7 +177,7 @@ test('IMPORT-02: any file can be left out: untick, Remove and Close with the Dis
   await expect(ask).toContainText('These files are still on the list. Discarding clears them and closes the popup.');
   await ask.getByRole('button', { name: 'Keep them' }).click();
   await expect(ask).toHaveCount(0);
-  await expect(dlg.getByRole('button', { name: 'Import 2 files', exact: true })).toBeVisible();
+  await expect(dlg.getByRole('button', { name: 'Add 2 files', exact: true })).toBeVisible();
   await dlg.getByRole('button', { name: 'Close import' }).click();
   await expect(ask).toBeVisible();
   await page.keyboard.press('Escape');
@@ -212,7 +212,7 @@ test('IMPORT-03: a .zip is opened in the page and its files join the list; a fil
   await expect(dlg.getByText('._u_ex261020.log')).toHaveCount(0);
 
   await toCheck(page);
-  await expect(dlg.getByRole('button', { name: 'Import 2 files', exact: true })).toBeVisible();
+  await expect(dlg.getByRole('button', { name: 'Add 2 files', exact: true })).toBeVisible();
   await importAll(page);
   await expect(hero(page)).toContainText('2 files imported', { timeout: 60_000 });
 
@@ -225,7 +225,7 @@ test('IMPORT-03: a .zip is opened in the page and its files join the list; a fil
   const row = notSupportedRow(page, 'fake.zip');
   await expect(row).toContainText('This is a compressed file. Extract it first, then choose the extracted file.');
   await expect(row.getByRole('button', { name: 'Remove from list', exact: true })).toBeVisible();
-  await expect(dlg.getByRole('button', { name: 'Import 0 files', exact: true })).toBeDisabled();
+  await expect(dlg.getByRole('button', { name: 'Add 0 files', exact: true })).toBeDisabled();
 });
 
 test('IMPORT-04: a file that fails never stops the others; it is listed under Not imported', async ({ page, api, allow }) => {
@@ -269,7 +269,7 @@ test('IMPORT-05: a file already in the case is not sent again, and the new file 
   await toCheck(page);
   // The check reads every file without keeping it, so it already knows the first one is in the case: that file is left out of the count.
   await expect(notSupportedRow(page, 'u_ex261020.log')).toBeVisible();
-  await expect(dlg.getByRole('button', { name: 'Import 1 file', exact: true })).toBeVisible();
+  await expect(dlg.getByRole('button', { name: 'Add 1 file', exact: true })).toBeVisible();
   await importAll(page);
   await expect(hero(page)).toContainText('1 file imported', { timeout: 60_000 });
   await expect(dlg.locator('.result-line').filter({ hasText: 'u_ex261020.log' })).toBeVisible();
@@ -286,7 +286,7 @@ test('IMPORT-06: one file goes through the same three steps as many', async ({ p
   await expect(page.getByText('Many files at once')).toHaveCount(0);
   await picker(page).setInputFiles([payload('u_ex261020.log', readFileSync(W3C))]);
   await toCheck(page);
-  const send = dlg.getByRole('button', { name: 'Import 1 file', exact: true });
+  const send = dlg.getByRole('button', { name: 'Add 1 file', exact: true });
   await expect(send).toBeDisabled();
   await importAll(page);
   await expect(hero(page)).toContainText('1 file imported', { timeout: 60_000 });
@@ -345,13 +345,13 @@ test('IMPORT-09: a file from a server the computer list lacks gets a fix card: l
   // Nothing can be sent while the card is open.
   await expect(dlg.getByText('1 fix needed before you can import')).toBeVisible();
   await expect(ack(page)).toBeDisabled();
-  await expect(dlg.getByRole('button', { name: 'Import 1 file', exact: true })).toBeDisabled();
+  await expect(dlg.getByRole('button', { name: 'Add 1 file', exact: true })).toBeDisabled();
 
   // Leave the file out, then bring it back.
   await card.getByRole('button', { name: 'Leave this 1 file out', exact: true }).click();
   await expect(card).toContainText('1 IIS file left out');
   await expect(dlg.getByText('1 fix needed before you can import')).toHaveCount(0);
-  await expect(dlg.getByRole('button', { name: 'Import 0 files', exact: true })).toBeDisabled();
+  await expect(dlg.getByRole('button', { name: 'Add 0 files', exact: true })).toBeDisabled();
   await card.getByRole('button', { name: 'Bring them back', exact: true }).click();
   await expect(dlg.getByText('1 fix needed before you can import')).toBeVisible();
 
@@ -386,7 +386,7 @@ test('IMPORT-10: a computer that left the list after the check sends the person 
 
   // The list changes between the check and the import: web-a is gone, so the server refuses the file for its computer.
   expect((await api('PUT', '/api/hosts', { version: 1, hosts: [{ label: 'WEB-B', role: 'iis', tz: 'UTC' }] })).status).toBe(200);
-  await dlg.getByRole('button', { name: 'Import 1 file', exact: true }).click();
+  await dlg.getByRole('button', { name: 'Add 1 file', exact: true }).click();
 
   // Back on the Check step, on the card of that server, which is open and focused.
   const card = dlg.locator('.fix');

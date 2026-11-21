@@ -70,7 +70,7 @@
       <div class="actions"><button type="button" class="link" onclick={() => { addingAudit = false; }}>{ADD_TEXT.back}</button></div>
       <AddAuditDatabase {caseId} {readOnly} onProfiler={() => { addingAudit = false; tab = 'mongo'; }} />
     {:else if tab === 'add'}
-      <AddSourcesFlow {caseId} {readOnly} onDone={() => { tab = 'list'; }} />
+      <AddSourcesFlow {caseId} {readOnly} onFiles={onAddFiles} onDone={() => { tab = 'list'; }} />
     {:else if tab === 'day'}
       <AddAnotherDay {caseId} {readOnly} {onGone} onCancel={() => { tab = 'add'; }} />
     {:else}

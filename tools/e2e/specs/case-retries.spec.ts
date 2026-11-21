@@ -48,7 +48,7 @@ test('CASE-11b: the import item offers Add the file again, which opens the impor
   await expect(again).toBeEnabled();
   await again.dblclick();
   await expect(page.getByRole('dialog')).toHaveCount(1);
-  await expect(page.getByRole('heading', { name: 'Import files' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Add files' })).toBeVisible();
   // The item is still on the list: nothing was retried or removed.
   await page.keyboard.press('Escape');
   await expect(section(page).getByRole('listitem')).toHaveCount(2);

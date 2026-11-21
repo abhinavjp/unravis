@@ -32,7 +32,7 @@ async function openPopup(page: Page, api: ApiFn, title: string): Promise<{ id: s
   await goHome(page);
   await openCase(page, title);
   await page.getByRole('button', { name: 'Add a file' }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'Import files' });
+  const dialog = page.getByRole('dialog', { name: 'Add files' });
   await expect(dialog).toBeVisible();
   return { id, dialog };
 }
@@ -49,7 +49,7 @@ test('IP-15: after an import, Open timeline shows the case Investigation Timelin
   const ack = dialog.getByRole('checkbox', { name: 'Confirm read-only' });
   await expect(ack).toBeVisible({ timeout: 30_000 });
   await ack.check();
-  await dialog.getByRole('button', { name: 'Import 2 files', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Add 2 files', exact: true }).click();
   await expect(dialog.locator('.result-hero')).toContainText('2 files imported', { timeout: 90_000 });
 
   // The case holds both files.

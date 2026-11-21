@@ -25,7 +25,7 @@ async function openPopup(page: Page, api: ApiFn, title: string): Promise<Locator
   await goHome(page);
   await openCase(page, title);
   await page.getByRole('button', { name: 'Add a file' }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'Import files' });
+  const dialog = page.getByRole('dialog', { name: 'Add files' });
   await expect(dialog).toBeVisible();
   return dialog;
 }
@@ -107,7 +107,7 @@ test('IP-19: Try again on a saved unlisted-computer retry opens Check on its fix
   ]);
   await page.getByRole('button', { name: 'Open the case anyway', exact: true }).click();
   await page.getByRole('button', { name: 'Add the file again', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Import files' });
+  const dialog = page.getByRole('dialog', { name: 'Add files' });
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('.prog-line')).toContainText('Step 2 of 3');
   await expect(dialog.locator('.fix[data-card="open"]')).toContainText('iis_missing is not on your computer list.');
@@ -139,7 +139,7 @@ test('IP-20: a retry without an unlisted computer name still opens Choose', asyn
   await openCase(page, title);
   for (const label of ['No computer name', 'Other refusal']) {
     await page.locator('li[data-retry]').filter({ hasText: label }).getByRole('button', { name: 'Add the file again', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Import files' });
+    const dialog = page.getByRole('dialog', { name: 'Add files' });
     await expect(dialog.locator('.prog-line')).toContainText('Step 1 of 3');
     await expect(dialog.getByLabel('Choose files to import')).toBeAttached();
     await expect(dialog.locator('.fix')).toHaveCount(0);

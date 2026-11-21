@@ -16,13 +16,13 @@ const L4N = join(FILES, 'app-log4net.txt');
 const NOTES = join(FILES, 'notes.txt');
 const SHOTS = join(__dirname, '..', '..', '..', '.dev', 'l4n-shots');
 
-const popup = (page: Page) => page.getByRole('dialog', { name: 'Import files' });
+const popup = (page: Page) => page.getByRole('dialog', { name: 'Add files' });
 const ack = (page: Page) => popup(page).getByRole('checkbox', { name: 'Confirm read-only' });
 
 async function openPopup(page: Page, title: string) {
   await openCase(page, title);
   await page.getByRole('button', { name: 'Add a file' }).click();
-  await expect(popup(page).getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
+  await expect(popup(page).getByRole('heading', { name: 'Add files', level: 2 })).toBeVisible();
 }
 
 /** Picks a computer for every row that asks for one. */
