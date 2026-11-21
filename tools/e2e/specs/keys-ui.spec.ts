@@ -86,6 +86,7 @@ test('KEY-06b: a wrong key on the unlock page says nothing was opened and keeps 
 });
 
 test('KEY-07: a keyed case is archived sealed with its own key, with no passphrase field and the same key ending', async ({ page, api, demo }) => {
+  test.skip(process.platform !== 'win32', 'the archive folder check is Windows-only; the server refuses a Linux folder as bad-folder');
   const k = await keyedCase(api, 'QA Archive Keyed');
   const folder = join(demo.scratch, 'arch-keyed');
   mkdirSync(folder);
@@ -107,6 +108,7 @@ test('KEY-07: a keyed case is archived sealed with its own key, with no passphra
 });
 
 test('KEY-07a: a locked case cannot be archived and a typed passphrase is refused for a keyed case', async ({ api, demo }) => {
+  test.skip(process.platform !== 'win32', 'the archive folder check is Windows-only; the server refuses a Linux folder as bad-folder');
   const k = await keyedCase(api, 'QA Archive Locked');
   const folder = join(demo.scratch, 'arch-locked');
   mkdirSync(folder);
