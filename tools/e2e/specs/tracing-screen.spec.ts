@@ -150,7 +150,7 @@ test('TRACE-04: all three lanes draw bars on a window with SQL and IIS events; l
     const swatches = [...document.querySelectorAll('.lane-label .swatch')].map((s) => getComputedStyle(s).backgroundColor);
     const tools = [...document.querySelectorAll('.tt-swatch')].map((s) => getComputedStyle(s).backgroundColor);
     const want = ['--lane-audit', '--lane-sql', '--lane-iis'].map(probe);
-    return { swatches, tools, want, bar: getComputedStyle(document.querySelector('.panel[data-lane=sql] .bar')!).backgroundColor, accent: probe('--accent') };
+    return { swatches, tools, want, accent: probe('--accent') };
   });
   expect(same.want.every((c) => c !== 'rgba(0, 0, 0, 0)')).toBe(true);
   expect(same.swatches).toEqual(same.want);
@@ -164,7 +164,8 @@ test('TRACE-04: all three lanes draw bars on a window with SQL and IIS events; l
     const k = c.startsWith('color(') ? 255 : 1;
     return [1, 2, 3].map((i) => Math.round(Number(m[i]) * k));
   };
-  expect(rgb(same.bar)).toEqual(rgb(same.want[1]));
+  // The bar colour may still be in its fade when first read (it can be an oklab() value then), so it is read again until it has settled.
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector('.panel[data-lane=sql] .bar')!).backgroundColor).then(rgb)).toEqual(rgb(same.want[1]));
   // The IIS and SQL lanes are stored reads and carry an "as of" time in the lane head.
   await expect(page.locator('.lane-label').nth(1).locator('.origin')).toContainText('From saved logs');
 });
