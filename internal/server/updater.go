@@ -185,6 +185,8 @@ type UpdateStatus struct {
 	InUse     bool `json:"inUse"`
 	// Result is what the last unattended update did, until the person dismisses it.
 	Result *UpdateNotice `json:"result,omitempty"`
+	// Held is plain words when a newer release exists but the publisher is holding it back (paused, withdrawn, staged rollout).
+	Held string `json:"held,omitempty"`
 }
 
 // UpdateNotice is the plain-words result of an update nobody watched.
@@ -222,6 +224,9 @@ func (u *Updater) Status() UpdateStatus {
 		}
 	case update.StatusLatest:
 		st.Status = "latest"
+		if u.last.Held {
+			st.Held = u.last.Detail
+		}
 	case update.StatusRejected:
 		st.Status = "unverified"
 	case update.StatusDev:
