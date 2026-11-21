@@ -4,7 +4,7 @@
 //   G4-02  A double click on Remove should drop one file, not two.
 //   G4-03  Escape on the Import files popup's "Discard N files?" question answers Keep them, and the staged files stay.
 import { test, expect, type Page } from '../support/fixtures';
-import { goHome, openCase } from '../support/ui';
+import { goHome, openCase, filesTile } from '../support/ui';
 import { createCase, ensureHost } from '../support/api';
 import { join } from 'node:path';
 
@@ -21,7 +21,7 @@ async function openFilesPanelInWizard(page: Page, title: string) {
   await page.getByRole('button', { name: 'Create a new case' }).click();
   await page.getByLabel('Case name').fill(title);
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await filesTile(page).click();
   await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toBeVisible();
 }
 

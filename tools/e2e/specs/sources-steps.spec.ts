@@ -74,69 +74,46 @@ test('GUIDE-24a: the case that read nothing says so on Step 7, never that a chec
 
   // Add another day opens the read form on this same step; no request is made until Read this day is pressed.
   const posts: string[] = [];
-  page.on('request', (r) => { if (r.method() === 'POST') posts.push(r.url()); });
+  page.on('request', (r) => { if (r.method() === 'POST' && !r.url().endsWith('/api/client-log')) posts.push(r.url()); });
   await panel.getByRole('button', { name: 'Add another day' }).click();
   await expect(form(panel)).toBeVisible();
   expect(posts).toEqual([]);
-  // Add data leads to the five cards.
+  // Add data leads to the list of kinds.
   await panel.getByRole('button', { name: 'Add data', exact: true }).click();
-  await expect(page.locator('[data-card=sql]')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'What do you want to add to this case?' })).toBeVisible();
   expect(posts).toEqual([]);
 });
 
-test('GUIDE-21: the Add data tab has five cards with their counts and each button leads where it says', async ({ page }) => {
+test('GUIDE-21: the Add data tab shows one list of kinds and each tile leads where it says', async ({ page }) => {
   const panel = await hub(page, OPEN, 'Add data');
-  const card = (id: string) => panel.locator('[data-card=' + id + ']');
-  await expect(card('sql')).toContainText('Saved connection ready');
-  await expect(card('mongo')).toContainText('Saved connection ready');
-  // Only the Files card says None yet; a source with nothing in this case shows no extra line.
-  await expect(card('sql')).not.toContainText('None yet');
-  await expect(card('mongo')).not.toContainText('None yet');
-  await expect(card('blackbox')).not.toContainText('None yet');
-  // The open demo case already holds one file, which the Files card counts; the Files card of a case with none says None yet (GUIDE-21b).
-  await expect(card('files')).toContainText('1 found here');
-  await expect(card('files')).not.toContainText('None yet');
-  await expect(card('files')).toBeVisible();
-  await expect(card('day')).toContainText('0 of 0 sources can be read by day');
-  await expect(card('day').getByRole('button', { name: 'Add another day' })).toBeDisabled();
-  await expect(panel.getByText('A step that ran before the new data arrived is marked Out of date, rerun. It does not change by itself.')).toBeVisible();
-  await expect(panel.getByText('Reading does not change any server.')).toBeVisible();
+  const tile = (name: RegExp) => panel.getByRole('button', { name });
+  await expect(panel.getByRole('heading', { name: 'What do you want to add to this case?' })).toBeVisible();
+  for (const name of [/^Find on this PC/, /^MongoDB/, /^SQL Server/, /^Redis/, /^Files/, /^Blackbox recorder/]) await expect(tile(name)).toBeEnabled();
 
-  await card('sql').getByRole('button', { name: 'Add SQL source' }).click();
-  await expect(page.getByRole('tab', { name: 'Read SQL Server', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await page.getByRole('tab', { name: 'Add data', exact: true }).click();
-  await card('mongo').getByRole('button', { name: 'Add Mongo source' }).click();
-  // The Mongo card now adds an API audit database from a saved connection; the Step 8 profiler is its own tab, reached by a separate button.
-  await expect(panel.getByText('Add an API audit database', { exact: true })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Add data', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await panel.getByRole('button', { name: 'Open Read MongoDB' }).click();
-  await expect(page.getByRole('tab', { name: 'Read MongoDB', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await page.getByRole('tab', { name: 'Add data', exact: true }).click();
-  await card('files').getByRole('button', { name: 'Add files' }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(1);
-  await expect(page.getByRole('heading', { name: 'Add files' })).toBeVisible();
+  // A database tile opens its own form inside the tab, with a way back to the list.
+  await tile(/^SQL Server/).click();
+  await expect(panel.getByRole('button', { name: 'Back to the list' })).toBeVisible();
+  await panel.getByRole('button', { name: 'Back to the list' }).click();
+  await tile(/^MongoDB/).click();
+  await expect(panel.getByRole('button', { name: 'Back to the list' })).toBeVisible();
+  await panel.getByRole('button', { name: 'Back to the list' }).click();
+  await tile(/^Blackbox recorder/).click();
+  await expect(panel.getByRole('button', { name: 'Back to the list' })).toBeVisible();
+  await panel.getByRole('button', { name: 'Back to the list' }).click();
+
+  // Files opens the one file-add popup of this case.
+  await tile(/^Files/).click();
+  await expect(page.getByRole('dialog', { name: 'Add files' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Add data' })).toBeVisible();
-  await card('blackbox').getByRole('button', { name: 'Add a Blackbox' }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(1);
-  await expect(page.getByRole('dialog').getByText(/recorder/i).first()).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(panel.getByRole('heading', { name: 'What do you want to add to this case?' })).toBeVisible();
 });
 
-test('GUIDE-21a: on a closed case every Add data button is off and the note says why', async ({ page }) => {
+test('GUIDE-21a: on a closed case every Add data tile is off', async ({ page }) => {
   const panel = await hub(page, CLOSED, 'Add data');
-  await expect(panel.getByText('This case cannot take new data right now: it is closed, or it changed somewhere else. Reopen or refresh it first. What it already holds can still be read here.')).toBeVisible();
-  for (const name of ['Add SQL source', 'Add Mongo source', 'Add a Blackbox', 'Add files', 'Add another day']) {
-    await expect(panel.getByRole('button', { name }), name).toBeDisabled();
+  for (const name of [/^Find on this PC/, /^MongoDB/, /^SQL Server/, /^Redis/, /^Files/, /^Blackbox recorder/]) {
+    await expect(panel.getByRole('button', { name }), String(name)).toBeDisabled();
   }
-});
-
-test('GUIDE-21b: the Files card of a case that holds no file says None yet', async ({ page, api }) => {
-  await createCase(api, 'QA Add Data Empty');
-  const panel = await hub(page, 'QA Add Data Empty', 'Add data');
-  await expect(panel.locator('[data-card=files]')).toContainText('None yet');
 });
 
 test('GUIDE-23a: with no SQL day in the case, Add another day says to read one first', async ({ page }) => {
@@ -163,7 +140,7 @@ test('GUIDE-22a: the read form refuses a missing connection, database or time wi
   const panel = await hub(page, OPEN, 'Read SQL Server');
   const f = form(panel);
   const posts: string[] = [];
-  page.on('request', (r) => { if (r.method() === 'POST') posts.push(r.url()); });
+  page.on('request', (r) => { if (r.method() === 'POST' && !r.url().endsWith('/api/client-log')) posts.push(r.url()); });
   const read = f.getByRole('button', { name: 'Read this day' });
   const problem = f.locator('[data-problem]');
   // The one saved connection is already picked, so the database comes first.
@@ -232,7 +209,7 @@ test('GUIDE-22d: reading AuditDb adds a Ready day with the read message and list
   const panel = await hub(page, OPEN, 'Read SQL Server');
   const f = form(panel);
   const posts: string[] = [];
-  page.on('request', (r) => { if (r.method() === 'POST') posts.push(r.url()); });
+  page.on('request', (r) => { if (r.method() === 'POST' && !r.url().endsWith('/api/client-log')) posts.push(r.url()); });
   await f.getByLabel('Audit database', { exact: true }).fill('AuditDb');
   await setTimes(f, WIN);
   await f.getByRole('button', { name: 'Read this day' }).dblclick();
@@ -274,7 +251,7 @@ test('GUIDE-22f: EmptyDb reads Cannot test yet, shows Nothing could be read and 
 
 test('GUIDE-22g: Step 8 reads Mongo AuditDb as Ready, NoGrantDb as Partly ready with a To fix, and ProfilerOffDb with the Switched on guide', async ({ page }) => {
   const panel = await hub(page, OPEN, 'Read MongoDB');
-  await expect(panel.locator('[data-no-source]')).toContainText('No MongoDB server has been read for this case yet.');
+  await expect(panel.locator('[data-no-source]')).toContainText('No MongoDB server has been read for this case yet');
   await readDay(page, panel, 'AuditDb', 'mongo');
   await expect(panel.getByText('Ready', { exact: true }).first()).toBeVisible();
   await readDay(page, panel, 'NoGrantDb', 'mongo');
@@ -330,7 +307,7 @@ test('GUIDE-23b: the prefilled day is added next to the first one, and the same 
   const day = panel.locator('[data-add-day]');
   const f = form(panel);
   const posts: string[] = [];
-  page.on('request', (r) => { if (r.method() === 'POST') posts.push(r.url()); });
+  page.on('request', (r) => { if (r.method() === 'POST' && !r.url().endsWith('/api/client-log')) posts.push(r.url()); });
   await f.getByRole('button', { name: 'Read this day' }).dblclick();
   await expect(day.locator('[data-said]')).toHaveText('Day added to the case.');
   expect(posts.length).toBe(1);
@@ -352,7 +329,7 @@ test('GUIDE-23c: hours that overlap a day without being the same are refused wit
   const day = panel.locator('[data-add-day]');
   const f = form(panel);
   const posts: string[] = [];
-  page.on('request', (r) => { if (r.method() === 'POST') posts.push(r.url()); });
+  page.on('request', (r) => { if (r.method() === 'POST' && !r.url().endsWith('/api/client-log')) posts.push(r.url()); });
   // A good read first so a stale success message could show.
   await f.getByLabel('Incident starts (UTC)', { exact: true }).fill('2026-10-23 08:45');
   await f.getByLabel('Incident ends (UTC)', { exact: true }).fill('2026-10-23 09:00');
@@ -381,7 +358,7 @@ test('GUIDE-23d: a reversed range, a zero-length range, seconds and zone letters
   await pickAuditDb(panel);
   const f = form(panel);
   const posts: string[] = [];
-  page.on('request', (r) => { if (r.method() === 'POST') posts.push(r.url()); });
+  page.on('request', (r) => { if (r.method() === 'POST' && !r.url().endsWith('/api/client-log')) posts.push(r.url()); });
   const problem = f.locator('[data-problem]');
   const read = f.getByRole('button', { name: 'Read this day' });
   const tryTimes = async (s: string, e: string) => {

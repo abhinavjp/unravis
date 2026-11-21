@@ -170,7 +170,7 @@ test('SRCGAP-04: a hand-picked list also switches on the file the popup added, o
   await expect(page.getByTestId('tp-source-cap')).toHaveCount(0);
 });
 
-test('SRCGAP-05: a switch that would pass 50 picked sources is refused with a short note, and nothing is sent', async ({ page, api }) => {
+test('SRCGAP-05: a switch that would pass 8 picked sources is refused with a short note, and nothing is sent', async ({ page, api }) => {
   await caseWithFile(api, 'QA Source Cap');
   // The demo case has a handful of sources, so the answer is changed to list 54 more files.
   const fake = Array.from({ length: 54 }, (_, i) => ({ sourceId: 'imp_' + (9000 + i), label: 'Extra file ' + (i + 1) }));
@@ -187,7 +187,7 @@ test('SRCGAP-05: a switch that would pass 50 picked sources is refused with a sh
   const sent: string[] = [];
   page.on('request', (r) => { if (r.url().includes('/tracing') && r.method() === 'POST') sent.push(r.postData() ?? ''); });
   await chip(page, 'imp_9000').click();
-  await expect(page.getByTestId('tp-source-cap')).toHaveText('At most 50 sources can be traced at once. Switch one off first.');
+  await expect(page.getByTestId('tp-source-cap')).toHaveText('At most 8 sources can be traced at once. Switch one off first.');
   await expect(chip(page, 'imp_9000')).toHaveAttribute('aria-pressed', 'true');
   expect(sent).toHaveLength(0);
 });

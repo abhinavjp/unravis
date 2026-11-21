@@ -6,7 +6,7 @@
 //             Remove and Clear still work.
 //   WCARD-05  the step fits at 375 px with no sideways scroll.
 import { test, expect, type Page } from '../support/fixtures';
-import { goHome } from '../support/ui';
+import { goHome, filesTile } from '../support/ui';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -22,7 +22,7 @@ async function openPanel(page: Page, title: string) {
   await page.getByLabel('Case name').fill(title);
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
-  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await filesTile(page).click();
   await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toBeVisible();
 }
 
@@ -139,7 +139,7 @@ test('WCARD-03: the restored kinds are in the select and every choice can be und
   // Choose again, add, and the file is held for the last step.
   await kind.selectOption({ label: 'Hangfire jobs (CSV export)' });
   await page.getByRole('button', { name: 'Add 1 file' }).click();
-  await expect(page.getByText(/^1 file was added to your sources\./)).toBeVisible();
+  await expect(page.locator('[data-added-note]')).toContainText(/^Added .*Nothing is read until the last button\./);
 });
 
 test('WCARD-04: staged rows survive switching add-source forms and closing Import files; Remove and Clear still work', async ({ page }) => {
@@ -150,10 +150,11 @@ test('WCARD-04: staged rows survive switching add-source forms and closing Impor
   await expect(row(page, 'u_ex261020.log')).toBeVisible();
 
   // Another add-source form replaces this one: the rows are still staged when it comes back.
-  await page.getByRole('button', { name: 'Connect to MongoDB' }).click();
+  await page.getByRole('button', { name: 'Back to the list' }).click();
   await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toHaveCount(0);
-  await page.getByRole('button', { name: 'SQL Server by address' }).click();
-  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await page.getByRole('button', { name: /^SQL Server\b/ }).click();
+  await page.getByRole('button', { name: 'Back to the list' }).click();
+  await filesTile(page).click();
   await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toBeVisible();
   await expect(row(page, 'u_ex261020.log')).toBeVisible();
   await expect(row(page, 'httperr1.log')).toBeVisible();
@@ -161,9 +162,9 @@ test('WCARD-04: staged rows survive switching add-source forms and closing Impor
   await expect(count(page, 'iis')).toHaveText('1 file chosen');
 
   // Closing and opening the files form does not lose them either.
-  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to the list' }).click();
   await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await filesTile(page).click();
   await expect(row(page, 'httperr1.log')).toBeVisible();
   await expect(page.getByLabel('What notes.txt is')).toHaveValue('file');
 
@@ -173,8 +174,8 @@ test('WCARD-04: staged rows survive switching add-source forms and closing Impor
   await expect(row(page, 'notes.txt')).toBeVisible();
   await page.getByRole('button', { name: 'Clear' }).click();
   await expect(page.getByRole('row')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Connect to MongoDB' }).click();
-  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to the list' }).click();
+  await filesTile(page).click();
   await expect(page.getByRole('row')).toHaveCount(0);
 });
 

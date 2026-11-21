@@ -4,7 +4,7 @@
 //   TLWIZ-01  A listed server, one IIS log through the wizard: the trace holds no "no file" warning, the IIS lane is not "no-data", and the page does not say it.
 //   TLWIZ-02  The same log under another name, from a server not in the host list, with a computer picked: the same three facts hold.
 import { test, expect, type Page } from '../support/fixtures';
-import { goHome } from '../support/ui';
+import { goHome, filesTile } from '../support/ui';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -28,7 +28,7 @@ async function makeCaseWith(page: Page, title: string, file: { name: string; buf
   await page.getByLabel('Case name').fill(title);
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
-  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await filesTile(page).click();
   await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toBeVisible();
   await page.getByLabel('Choose files to import').setInputFiles([{ name: file.name, mimeType: 'text/plain', buffer: file.buffer }]);
   if (pick) await page.getByLabel(`Which computer wrote ${file.name}`).selectOption(pick);
