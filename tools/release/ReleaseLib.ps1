@@ -12,7 +12,8 @@ $script:ReleaseTrustedKeysPath = 'internal/update/trusted_keys.txt'
 # scripts build with none of them: module mode from the checkout only, the installed toolchain.
 $env:GOFLAGS = ''; $env:GOWORK = 'off'; $env:GOENV = 'off'; $env:GOTOOLCHAIN = 'local'
 # The code that sees the passphrase or decides what installed copies accept.
-$script:ReleaseSigningPaths = @('tools/release/sigtool', 'internal/update', ':!internal/update/trusted_keys.txt')
+# All of tools/release: the PowerShell scripts read and pipe the passphrase too.
+$script:ReleaseSigningPaths = @('tools/release', 'internal/update', ':!internal/update/trusted_keys.txt')
 # Paths whose PRs are named in the release report (they change what is built, signed or trusted).
 $script:ReleaseSensitivePaths = @('tools/release', 'internal/update', '.github/workflows', 'go.mod', 'go.sum', 'installer')
 # Proton Pass entries for each key (docs/auto-updater/RELEASING.md, vault "Work", item "Unravis Passphrases").

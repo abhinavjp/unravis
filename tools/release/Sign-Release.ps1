@@ -123,6 +123,13 @@ try {
         $prevKeys = Join-Path $work 'prev_trusted_keys.txt'
         git -C $repoRoot show "${prevTag}:internal/update/trusted_keys.txt" > $prevKeys
         if ($LASTEXITCODE -ne 0) { throw "Could not read the trusted keys of $prevTag." }
+
+        # The feed's JSON names the baseline for every gate; a token holder could edit it. Its signature must hold with the keys of the
+        # release it names (an old genuine pair can be replayed, but it then names its own older release, which only widens the checks).
+        $feedSig = "$feedFile.sig"
+        Invoke-Checked 'downloading the feed signature' { gh release download update-feed --repo $Repo --pattern "$channel.json.sig" --output $feedSig --clobber }
+        $named = (& $tool feedsig -in $feedFile -sig $feedSig -keys $prevKeys -want $channel 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or "v$named" -ne $prevTag) { throw "The feed file does not carry a valid signature for $prevTag ($named). Someone may have changed it. Not signing." }
     }
 
     if (-not $Feed) {

@@ -130,8 +130,7 @@ try {
     $d = Get-ReleaseDataDir
     $l1 = Enter-ReleaseLock $d
     try { Assert-That 'lock: a second run is refused' ([bool](Get-ThrownMessage { Enter-ReleaseLock $d })) } finally { $l1.Dispose() }
-    $l2 = Enter-ReleaseLock $d; $l2.Dispose()
-    Assert-That 'lock: free again after the first run ends' $true
+    Assert-That 'lock: free again after the first run ends' (-not (Get-ThrownMessage { (Enter-ReleaseLock $d).Dispose() }))
     Set-ReleaseState $d '0.1.0-rc.55' 'Sign' 'stopped' 'network' @{ key = 'rc-2'; passref = 'pass://Work/Unravis Passphrases/rc.2 passphrase'; prev_feed = 'v0.1.0-rc.54' }
     $st = Get-ReleaseState $d
     Assert-That 'state: round trip' ($st.version -eq '0.1.0-rc.55' -and $st.stage -eq 'Sign' -and $st.status -eq 'stopped')

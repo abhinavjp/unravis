@@ -3,6 +3,7 @@
 //	sigtool keygen   -role stable|rc -out key.json -pub key.pub     make an encrypted key pair (offline, on the owner's PC)
 //	sigtool manifest -dir dist -version V -seq N -out manifest.json  describe a release (CI runs this; it signs nothing)
 //	sigtool sign     -key key.json -in manifest.json -out manifest.json.sig
+//	sigtool feedsig  -in rc.json -sig rc.json.sig -trusted|-keys K -want C   signature only (ignores expiry): which version the feed really names
 //	sigtool keycheck -key key.json [-role rc|stable]   check the passphrase opens the key (signs nothing, writes nothing)
 //	sigtool refresh  -in rc.json -sig rc.json.sig -trusted -want C -version V -commit SHA -days D -out new.json   same release, later expiry, seq + 1 (then sign it)
 //	sigtool control  -channel C [-pause] [-block V,..] [-rollout V -percent N] [-note T] [-days D] -out control.json
@@ -206,6 +207,54 @@ func run(args []string, in io.Reader, out io.Writer) error {
 			return err
 		}
 		fmt.Fprintf(out, "wrote %s: %s again, seq %d -> %d, expires %s\n", *outFile, nw.Version, old.Seq, nw.Seq, nw.Expires.Format("2006-01-02"))
+		return nil
+
+	case "feedsig":
+		// The release scripts take the version on the feed as the baseline for their gates. A token holder could edit that JSON, so
+		// its signature is checked first. Expiry is ignored on purpose: an expired feed still names its release truly.
+		inFile := fs.String("in", "", "the manifest on the feed")
+		sigFile := fs.String("sig", "", "its signature file")
+		trusted := fs.Bool("trusted", false, "check against the keys built into this source tree")
+		keysFile := fs.String("keys", "", "or against a trusted_keys.txt file")
+		want := fs.String("want", "", "channel the file must be for: stable or rc (required)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *want != update.ChannelStable && *want != update.ChannelRC {
+			return errors.New("-want must be stable or rc")
+		}
+		var keys []update.Key
+		var err error
+		switch {
+		case *trusted:
+			keys, err = update.TrustedKeys()
+		case *keysFile != "":
+			var kb []byte
+			if kb, err = os.ReadFile(*keysFile); err == nil {
+				keys, err = update.ParseKeys(string(kb))
+			}
+		default:
+			err = errors.New("pass -trusted or -keys")
+		}
+		if err != nil {
+			return err
+		}
+		mb, err := os.ReadFile(*inFile)
+		if err != nil {
+			return err
+		}
+		sb, err := os.ReadFile(*sigFile)
+		if err != nil {
+			return err
+		}
+		m, err := update.VerifySignatureOnly(mb, sb, update.Trust{Keys: keys})
+		if err != nil {
+			return fmt.Errorf("the feed file does not verify: %w", err)
+		}
+		if m.Channel != *want {
+			return fmt.Errorf("the feed file is for %s, not %s", m.Channel, *want)
+		}
+		fmt.Fprintf(out, "%s\n", m.Version)
 		return nil
 
 	case "keycheck":

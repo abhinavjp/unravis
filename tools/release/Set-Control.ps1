@@ -34,6 +34,9 @@ param(
     # A release whose installed copies must also accept this control file (Release.ps1 passes the release that was on the feed
     # before the one it withdraws). Its trusted keys are checked as well as those of the release now on the feed.
     [string]$TrustBaseline,
+    # Keep what the signed control file now in force holds back (pause, withdrawn versions), after checking its signature.
+    [switch]$KeepInForce,
+    [switch]$AllowBehindMaster,
     [switch]$Yes
 )
 $ErrorActionPreference = 'Stop'
@@ -49,7 +52,12 @@ try {
     # The signing tool is built from a clean checkout that matches GitHub, never from a changed working folder.
     if (git -C $repoRoot status --porcelain) { throw 'The working folder has changes. Use a clean checkout of master.' }
     Invoke-Checked 'fetching master' { git -C $repoRoot fetch --quiet origin master }
-    if ((git -C $repoRoot rev-parse HEAD) -ne (git -C $repoRoot rev-parse origin/master)) { throw 'This checkout is not the same as origin/master. Run git pull first.' }
+    if ((git -C $repoRoot rev-parse HEAD) -ne (git -C $repoRoot rev-parse origin/master)) {
+        # -AllowBehindMaster (Release.ps1's automatic withdraw): this checkout may be an older commit of master, never anything else.
+        # It is not fast-forwarded first, so the scripts that run are the ones the release run started with.
+        git -C $repoRoot merge-base --is-ancestor HEAD origin/master
+        if (-not $AllowBehindMaster -or $LASTEXITCODE -ne 0) { throw 'This checkout is not the same as origin/master. Run git pull first.' }
+    }
     # What installed copies trust today is the release now on the feed. The signing code and key list are shown against it, like Sign-Release.ps1.
     Invoke-Checked 'reading the feed' { gh release download update-feed --repo $Repo --pattern "$Channel.json" --dir $work }
     $prevTag = 'v' + (Get-Content -Raw (Join-Path $work "$Channel.json") | ConvertFrom-Json).version
@@ -66,6 +74,27 @@ try {
     Push-Location $repoRoot
     try { Invoke-Checked 'building the signing tool' { go build -mod=readonly -o $tool ./tools/release/sigtool } } finally { Pop-Location }
 
+    # The feed's JSON names the baseline for every gate; a token holder could edit it. Its signature must hold with the keys of the
+    # release it names (an old genuine pair can be replayed, but it then names its own older release, which only widens the checks).
+    $feedSig = Join-Path $work "$Channel.json.sig"
+    Invoke-Checked 'downloading the feed signature' { gh release download update-feed --repo $Repo --pattern "$Channel.json.sig" --output $feedSig --clobber }
+    $named = (& $tool feedsig -in (Join-Path $work "$Channel.json") -sig $feedSig -keys $prevKeys -want $Channel 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or "v$named" -ne $prevTag) { throw "The feed file does not carry a valid signature for $prevTag ($named). Someone may have changed it. Not signing." }
+
+    if ($KeepInForce) {
+        $cur = Join-Path $work 'current-control'; New-Item -ItemType Directory -Path $cur | Out-Null
+        gh release download update-feed --repo $Repo --pattern "$Channel-control.json*" --dir $cur 2>&1 | Out-Null
+        $cj = Join-Path $cur "$Channel-control.json"
+        if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $cj) -and (Test-Path -LiteralPath "$cj.sig")) {
+            & $tool verify -control -in $cj -sig "$cj.sig" -keys $prevKeys -channel $Channel -want $Channel 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                $old = Get-Content -Raw -LiteralPath $cj | ConvertFrom-Json
+                if ($old.pause) { $Pause = $true }
+                $Block = @(@($old.blocked) + $Block | Where-Object { $_ } | Select-Object -Unique)
+                Write-Host "Keeping the holds in force: pause=$([bool]$old.pause), withdrawn: $($Block -join ', ')."
+            } else { Write-Host 'The control file on the feed does not verify (or has expired); not keeping anything from it.' -ForegroundColor Yellow }
+        }
+    }
     $file = Join-Path $work "$Channel-control.json"
     if ($Percent -ne 0 -and -not $Rollout) { throw '-Percent needs -Rollout <version>.' }
     $a = @('control', '-channel', $Channel, '-days', $Days, '-out', $file)

@@ -171,6 +171,15 @@ try {
     if (-not $Version) {
         if (-not $askedChannel) { Fail 'Pass -Channel rc or -Channel stable (or -Version).' }
         try { $Version = Get-NextVersion $tags $askedChannel } catch { Fail $_.Exception.Message }
+        # Compared with the rc feed: an rc follows the rc feed, a stable release takes the X.Y.Z of the rc on the feed.
+        $fr = Get-FeedRelease 'rc'
+        if ($fr) {
+            # A stray tag (typo, or a token holder) must not move every later version: the guess stays next to the signed feed.
+            $a1 = ConvertTo-SemVer $Version; $b1 = ConvertTo-SemVer $fr.Version
+            $sameCore = $a1.Major -eq $b1.Major -and $a1.Minor -eq $b1.Minor -and $a1.Patch -eq $b1.Patch
+            $nextPatch = $askedChannel -eq 'rc' -and $a1.Major -eq $b1.Major -and $a1.Minor -eq $b1.Minor -and $a1.Patch -eq $b1.Patch + 1
+            if (-not ($sameCore -or $nextPatch)) { Fail "The next version from the tags is $Version, far from the $askedChannel feed ($($fr.Version)). A stray tag? Pass -Version to say what you want." }
+        }
         Write-Host "Next $askedChannel version: $Version"
     }
     if (-not (ConvertTo-SemVer $Version)) { Fail "Version '$Version' is not X.Y.Z or X.Y.Z-rc.N (lower case, no leading v)." }
@@ -277,6 +286,19 @@ try {
             try {
                 Push-Location $wt
                 try { Run 'building the key check tool' { go build -mod=readonly -o $tool ./tools/release/sigtool } | Out-Null } catch { Fail $_.Exception.Message } finally { Pop-Location }
+                if ($feed) {
+                    # The feed's JSON names the baseline of every check above; it must carry a real signature for the release it names.
+                    $fd = Join-Path ([System.IO.Path]::GetTempPath()) ('unravis-feedsig-' + [guid]::NewGuid().ToString('N'))
+                    New-Item -ItemType Directory -Path $fd | Out-Null
+                    try {
+                        gh release download update-feed --repo $Repo --pattern "$channel.json*" --dir $fd 2>&1 | Out-Null
+                        if ($LASTEXITCODE -ne 0) { Fail 'Could not download the feed pair to check its signature.' }
+                        git show "$($feed.Tag):$script:ReleaseTrustedKeysPath" | Set-Content -LiteralPath (Join-Path $fd 'keys.txt')
+                        $named = (& $tool feedsig -in (Join-Path $fd "$channel.json") -sig (Join-Path $fd "$channel.json.sig") -keys (Join-Path $fd 'keys.txt') -want $channel 2>&1 | Out-String).Trim()
+                        if ($LASTEXITCODE -ne 0 -or "v$named" -ne $feed.Tag) { Fail "The $channel feed file does not carry a valid signature for $($feed.Tag) ($named). Someone may have changed it; do not release." }
+                    } finally { Remove-Item -LiteralPath $fd -Recurse -Force -ErrorAction SilentlyContinue }
+                    Write-Host "Feed signature OK: it really names $($feed.Tag)."
+                }
                 $ok = $null; $why = @()
                 foreach ($k in $candidates) {
                     $ref = if ($PassphraseFromProtonPass) { $PassphraseFromProtonPass } else { Get-ProtonPassRefForKey $k.Name }
@@ -451,26 +473,11 @@ try {
             # The release that was on the feed before this one: installed copies on it must accept the control file.
             $base = if ($script:extra.prev_feed) { $script:extra.prev_feed } else { $null }
             if ($base -and $base -ne $tag) { $c.TrustBaseline = $base }
-            $ctlDir = Join-Path ([System.IO.Path]::GetTempPath()) ('unravis-ctl-' + [guid]::NewGuid().ToString('N'))
-            New-Item -ItemType Directory -Path $ctlDir | Out-Null
-            gh release download update-feed --repo $Repo --pattern "$channel-control.json" --dir $ctlDir 2>&1 | Out-Null
-            $cf = Join-Path $ctlDir "$channel-control.json"
-            if ($LASTEXITCODE -eq 0 -and (Test-Path $cf)) {
-                # Only ever adds holds: unverified content here can only make the new file stricter, never offer anything.
-                try {
-                    $old = Get-Content -Raw $cf | ConvertFrom-Json
-                    if (([datetime]$old.expires).ToUniversalTime() -gt (Get-Date).ToUniversalTime()) {
-                        if ($old.pause) { $c.Pause = $true }
-                        $c.Block = @(@($old.blocked) + $Version | Where-Object { $_ } | Select-Object -Unique)
-                    }
-                } catch {}
-            }
-            Remove-Item -LiteralPath $ctlDir -Recurse -Force -ErrorAction SilentlyContinue
-            # Set-Control.ps1 signs from a checkout equal to origin/master; master may have moved during the verify run.
-            $manual = "./tools/release/Set-Control.ps1 -Channel $channel -KeyFile '$($chosen.Path)' -Block $Version -Days 90 -Yes -ProtonPassRef '$passRef'"
-            if ((git rev-parse --abbrev-ref HEAD) -ne $Branch -or (git status --porcelain)) { Fail "Verify did not pass ($why). The withdraw needs a clean $Branch checkout here. Clean it and run again (it only withdraws), or run: $manual" 'withdraw-pending' }
-            git fetch origin $Branch --quiet 2>&1 | Out-Null; git merge --ff-only --quiet "origin/$Branch" 2>&1 | Out-Null
-            if ((git rev-parse HEAD).Trim() -ne (git rev-parse "origin/$Branch").Trim()) { Fail "Verify did not pass ($why). This checkout cannot fast-forward to origin/$Branch, so the withdraw cannot be signed here. Run: $manual" 'withdraw-pending' }
+            # Set-Control keeps the holds already in force after checking their signature, and signs from this checkout even if master
+            # moved on meanwhile (no fast-forward: the scripts that run stay the ones this release run started with).
+            $c.KeepInForce = $true; $c.AllowBehindMaster = $true
+            $manual = "./tools/release/Set-Control.ps1 -Channel $channel -KeyFile '$($chosen.Path)' -Block $Version -Days 90 -KeepInForce -Yes -ProtonPassRef '$passRef'"
+            if ((git status --porcelain)) { Fail "Verify did not pass ($why). The withdraw needs a clean checkout here. Clean it and run again (it only withdraws), or run: $manual" 'withdraw-pending' }
             try { & (Join-Path $PSScriptRoot 'Set-Control.ps1') @c } catch {
                 Fail "Verify did not pass ($why) AND the withdraw failed: $($_.Exception.Message). Run again (it only withdraws) or run: $manual" 'withdraw-pending'
             }

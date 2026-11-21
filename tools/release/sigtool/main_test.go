@@ -374,3 +374,36 @@ func TestKeycheck(t *testing.T) {
 		t.Fatal("an rc key passed as stable")
 	}
 }
+
+func TestFeedsig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UNRAVIS_KEY_PASSPHRASE", "correct horse battery")
+	var out bytes.Buffer
+	kp, pp := filepath.Join(dir, "k.json"), filepath.Join(dir, "k.pub")
+	if err := run([]string{"keygen", "-role", "rc", "-out", kp, "-pub", pp}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	writeAssets(t, dir, "0.1.0-rc.48", false)
+	mf, sg := filepath.Join(dir, "m.json"), filepath.Join(dir, "m.json.sig")
+	if err := run([]string{"manifest", "-dir", dir, "-version", "0.1.0-rc.48", "-seq", "4800", "-commit", commitA, "-out", mf}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"sign", "-key", kp, "-in", mf, "-out", sg}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	k, _ := readPub(pp)
+	keys := filepath.Join(dir, "keys.txt")
+	os.WriteFile(keys, []byte("rc "+hexOf(k.Pub)+"\n"), 0o644)
+	out.Reset()
+	if err := run([]string{"feedsig", "-in", mf, "-sig", sg, "-keys", keys, "-want", "rc"}, nil, &out); err != nil || strings.TrimSpace(out.String()) != "0.1.0-rc.48" {
+		t.Fatalf("feedsig: %v %q", err, out.String())
+	}
+	if err := run([]string{"feedsig", "-in", mf, "-sig", sg, "-keys", keys, "-want", "stable"}, nil, &out); err == nil {
+		t.Fatal("wrong channel accepted")
+	}
+	b, _ := os.ReadFile(mf)
+	os.WriteFile(mf, bytes.Replace(b, []byte("rc.48"), []byte("rc.99"), 1), 0o644)
+	if err := run([]string{"feedsig", "-in", mf, "-sig", sg, "-keys", keys, "-want", "rc"}, nil, &out); err == nil {
+		t.Fatal("an edited feed file verified")
+	}
+}
