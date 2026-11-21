@@ -155,6 +155,9 @@ try {
     Invoke-Checked 'verifying the published pair' { & $tool verify -control -in (Join-Path $back "$Channel-control.json") -sig (Join-Path $back "$Channel-control.json.sig") -keys $prevKeys -channel $Channel -want $Channel }
     $pub = Get-Content -Raw -LiteralPath $file | ConvertFrom-Json
     Write-AuditEntry $audit @{ event = 'control-published'; channel = $Channel; pause = [bool]$pub.pause; blocked = @($pub.blocked | Where-Object { $_ }); expires = ([datetime]$pub.expires).ToUniversalTime().ToString('o'); seq = [string]$pub.seq; control_sha256 = (Get-FileSha256 $file) }
+    gh workflow run mirror-feed.yml --repo $Repo 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'Could not start the mirror-feed workflow. The backup copy refreshes by itself every 30 minutes.' }
+    $global:LASTEXITCODE = 0
     Write-Host "Published. Machines pick it up at their next check (within about 30 minutes)." -ForegroundColor Green
 } finally {
     if ($wt) { Remove-ToolWorktree $repoRoot $wt.Dir }
