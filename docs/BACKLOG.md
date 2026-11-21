@@ -313,7 +313,7 @@ Spec per area: `docs/desktop/spec/`. Items per area: `docs/desktop/groom/` (scop
 - [ ] **BL-436** Pre-release hardware power sweep (size ?, ?; see `docs/desktop/groom/07-performance.md`)
 - [ ] **BL-437** Document the WebView2 OneAuth leak and optional firewall block (size ?, ?; see `docs/desktop/groom/07-performance.md`)
 - [ ] **BL-440** CI baseline audit, repo visibility and plan decision (size S, P0; see `docs/desktop/groom/08-testing-repo.md`)
-- [ ] **BL-441** Linux gates: lint, typecheck, race tests, known-failure baseline, Dependabot (size M, P0; see `docs/desktop/groom/08-testing-repo.md`)
+- [ ] **BL-441** Linux gates: lint, typecheck, race tests, known-failure baseline, Dependabot (size M, P0; see `docs/desktop/groom/08-testing-repo.md`) **Status 2026-11-21: built in PR, not verified on live PC.** Proven on Linux here: `go vet`, the web checks, the baseline compare (0 new on a `-race` run), lint flags a deliberate errcheck. Not proven: the `linux-gates` job on GitHub Actions, Dependabot PRs, the Windows `go test` compare (live PC). Findings, deviations and the real failure count (382 tests, not 9) are in `docs/desktop/ci-audit.md`.
 - [ ] **BL-442** Windows CI job skeleton with cache, Defender exclusions and build timing (size M, P2; see `docs/desktop/groom/08-testing-repo.md`)
 - [ ] **BL-443** Rust `tauri::test` harness and comctl32 manifest fix (size M, P2; see `docs/desktop/groom/08-testing-repo.md`)
 - [ ] **BL-444** Go Windows tests: named pipe, MCP subprocess, Session 0 pipe peer (size M, P1; see `docs/desktop/groom/08-testing-repo.md`)

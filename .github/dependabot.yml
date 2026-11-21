@@ -1,0 +1,34 @@
+# Weekly, one grouped PR per ecosystem, never merged automatically (no automerge label, no auto-merge setting).
+# `cargo` for /desktop is added by BL-442 when desktop/ exists.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    commit-message: { prefix: "deps:" }
+    groups: { gomod: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /web
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    commit-message: { prefix: "deps:" }
+    groups: { npm-web: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /tools/e2e
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    commit-message: { prefix: "deps:" }
+    groups: { npm-e2e: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /tools/screens
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    commit-message: { prefix: "deps:" }
+    groups: { npm-screens: { patterns: ["*"] } }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    commit-message: { prefix: "deps:" }
+    groups: { github-actions: { patterns: ["*"] } }
