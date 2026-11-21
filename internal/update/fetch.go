@@ -41,6 +41,15 @@ var stateMu sync.Mutex
 type State struct {
 	SeenSeq  map[string]uint64 `json:"seenSeq"`
 	SeenHash map[string]string `json:"seenHash"`
+	// Control is, per channel, the newest verified control file (see control.go). It is kept so a pause or a withdrawn
+	// version still holds when the control file cannot be fetched for a while, until its own expiry.
+	Control map[string]*Control `json:"control,omitempty"`
+	// DrawFor and Draw are, per channel, the version a rollout draw was made for and the draw (0 to 99).
+	DrawFor map[string]string `json:"drawFor,omitempty"`
+	Draw    map[string]int    `json:"draw,omitempty"`
+	// ControlSeq is the highest control seq accepted per channel. It is never lowered or dropped when a file expires, so a
+	// genuinely signed old file cannot be replayed to bring back a pause the owner lifted.
+	ControlSeq map[string]uint64 `json:"controlSeq,omitempty"`
 }
 
 // Status is the result of one check.
@@ -61,6 +70,7 @@ type Result struct {
 	Detail   string        // plain words for the log/UI; never contains a response body
 	Backoff  bool          // true when the caller should slow down
 	RetryIn  time.Duration // a server-requested wait, 0 if none
+	Held     bool          // a newer release exists but the signed control file holds it back (Detail says why)
 }
 
 // Fetcher checks the feed. Zero values are filled with safe defaults.
@@ -91,6 +101,10 @@ type Fetcher struct {
 type seenMem struct {
 	seq  map[string]uint64
 	hash map[string]string
+	// control seq floor and rollout draw, kept here too so an unsaved or lost state file cannot reopen a replay or redraw
+	ctlSeq  map[string]uint64
+	drawFor map[string]string
+	draw    map[string]int
 }
 
 var (
@@ -241,6 +255,12 @@ func (f *Fetcher) once1(ctx context.Context, base, want string, now func() time.
 	}
 	sum := sha256.Sum256(manifest)
 	hash := hex.EncodeToString(sum[:])
+	var ctl *Control // only worth a request when this release would be an upgrade
+	if cur, e1 := ParseVersion(f.Current); e1 == nil {
+		if next, e2 := ParseVersion(m.Version); e2 == nil && Compare(next, cur) > 0 {
+			ctl = f.fetchControl(ctx, base, want, now())
+		}
+	}
 
 	stateMu.Lock()
 	defer stateMu.Unlock()
@@ -284,9 +304,80 @@ func (f *Fetcher) once1(ctx context.Context, base, want string, now func() time.
 		note += " (could not save the update memory: " + err.Error() + ")"
 	}
 	if d == DecisionInstall {
+		hold, why := f.applyControl(&st, mem, ctl, want, m.Version, now())
+		_ = f.saveState(st) // the control file and the rollout draw are remembered either way
+		if hold {
+			return attempt{Result: Result{Status: StatusLatest, Manifest: m, Detail: why, Held: true}}
+		}
 		return attempt{Result: Result{Status: StatusAvailable, Manifest: m, Detail: "version " + m.Version + " is available" + note}}
 	}
 	return attempt{Result: Result{Status: StatusLatest, Manifest: m, Detail: why + note}}
+}
+
+// fetchControl reads and verifies the channel's control file. Any problem (missing, unreachable, bad signature) returns nil:
+// the caller then uses the last one it accepted, if it has not expired. A control file can only hold an update back, so
+// failing to read it never blocks a release by itself.
+func (f *Fetcher) fetchControl(ctx context.Context, base, want string, now time.Time) *Control {
+	body, _, _, stop := f.get(ctx, base+"/"+want+"-control.json", "")
+	if stop != nil || body == nil {
+		return nil
+	}
+	sig, _, _, stop := f.get(ctx, base+"/"+want+"-control.json.sig", "")
+	if stop != nil || sig == nil {
+		return nil
+	}
+	c, err := VerifyControl(body, sig, Trust{Keys: f.Keys, Channel: f.Build, Want: want}, now)
+	if err != nil {
+		return nil
+	}
+	return c
+}
+
+// applyControl merges a freshly read control file into the state and says whether this machine must hold the release back.
+// A file with a lower seq than the highest ever accepted is ignored (a replay), even when the file that set that floor has
+// since expired. Call with stateMu held; the caller saves the state.
+func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, want, version string, now time.Time) (bool, string) {
+	if st.Control == nil {
+		st.Control = map[string]*Control{}
+	}
+	if st.ControlSeq == nil {
+		st.ControlSeq = map[string]uint64{}
+	}
+	if mem.ctlSeq == nil {
+		mem.ctlSeq, mem.drawFor, mem.draw = map[string]uint64{}, map[string]string{}, map[string]int{}
+	}
+	cur := st.Control[want]
+	if cur != nil && cur.Channel != want {
+		cur = nil
+	}
+	floor := max(st.ControlSeq[want], mem.ctlSeq[want])
+	if cur != nil {
+		floor = max(floor, cur.Seq)
+	}
+	if fresh != nil && fresh.Seq >= floor {
+		cur, floor = fresh, fresh.Seq
+		st.Control[want] = fresh
+	}
+	st.ControlSeq[want], mem.ctlSeq[want] = floor, floor
+	if !ctlLive(cur, now) {
+		delete(st.Control, want)
+		return false, ""
+	}
+	return cur.Hold(version, func() int {
+		if st.Draw == nil {
+			st.Draw, st.DrawFor = map[string]int{}, map[string]string{}
+		}
+		if st.DrawFor[want] == version {
+			d := st.Draw[want]
+			mem.draw[want], mem.drawFor[want] = d, version
+			return d
+		}
+		if mem.drawFor[want] != version {
+			mem.draw[want], mem.drawFor[want] = newDraw(), version
+		}
+		st.Draw[want], st.DrawFor[want] = mem.draw[want], version
+		return mem.draw[want]
+	})
 }
 
 func isDev(v string) bool { _, err := ParseVersion(v); return err != nil }
@@ -394,6 +485,7 @@ func (f *Fetcher) loadState() (State, string, error) {
 	if s.SeenHash != nil {
 		st.SeenHash = s.SeenHash
 	}
+	st.Control, st.DrawFor, st.Draw, st.ControlSeq = s.Control, s.DrawFor, s.Draw, s.ControlSeq
 	return st, "", nil
 }
 

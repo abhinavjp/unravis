@@ -241,3 +241,51 @@ func TestPassphraseMustBePlainAscii(t *testing.T) {
 		t.Fatal("non-ASCII passphrase accepted")
 	}
 }
+
+func TestControlFileEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UNRAVIS_KEY_PASSPHRASE", "correct horse battery")
+	var out bytes.Buffer
+	kp, pp := filepath.Join(dir, "k.json"), filepath.Join(dir, "k.pub")
+	sp, pp2 := filepath.Join(dir, "s.json"), filepath.Join(dir, "s.pub")
+	for _, a := range [][]string{{"keygen", "-role", "rc", "-out", kp, "-pub", pp}, {"keygen", "-role", "stable", "-out", sp, "-pub", pp2}} {
+		if err := run(a, nil, &out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cf, sg := filepath.Join(dir, "rc-control.json"), filepath.Join(dir, "rc-control.json.sig")
+	if err := run([]string{"control", "-channel", "rc", "-pause", "-block", "0.1.0-rc.40, 0.1.0-rc.41", "-note", "looking at a problem", "-out", cf}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"sign", "-control", "-key", sp, "-in", cf, "-out", sg}, nil, &out); err == nil {
+		t.Fatal("stable key signed an rc control file")
+	}
+	if err := run([]string{"sign", "-control", "-key", kp, "-in", cf, "-out", sg}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"verify", "-control", "-in", cf, "-sig", sg, "-pub", pp + "," + pp2, "-channel", "rc", "-want", "rc"}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	// A control file is not accepted as a manifest, and a manifest-signing path refuses it.
+	if err := run([]string{"verify", "-in", cf, "-sig", sg, "-pub", pp, "-channel", "rc", "-want", "rc"}, nil, &out); err == nil {
+		t.Fatal("control file verified as a manifest")
+	}
+	if err := run([]string{"sign", "-key", kp, "-in", cf, "-out", sg}, nil, &out); err == nil {
+		t.Fatal("control file signed as a manifest")
+	}
+	// Bad input is refused before anything is written.
+	bad := filepath.Join(dir, "bad.json")
+	for _, a := range [][]string{
+		{"control", "-channel", "rc", "-percent", "20", "-out", bad},
+		{"control", "-channel", "rc", "-rollout", "0.1.0-rc.50", "-percent", "0", "-out", bad},
+		{"control", "-channel", "beta", "-out", bad},
+		{"control", "-channel", "rc", "-days", "200", "-out", bad},
+	} {
+		if err := run(a, nil, &out); err == nil {
+			t.Fatalf("accepted %v", a)
+		}
+	}
+	if _, err := os.Stat(bad); err == nil {
+		t.Fatal("wrote a file for bad input")
+	}
+}
