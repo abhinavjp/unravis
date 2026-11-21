@@ -297,11 +297,14 @@ func describeACEs(path, what string) (describedDACL, error) {
 		return describedDACL{}, err
 	}
 	defer runtime.KeepAlive(sd)
-	dacl, present, err := sd.DACL()
+	// The second value of SECURITY_DESCRIPTOR.DACL() is "defaulted" (the list came from a default source), NOT "present". A missing or NULL
+	// list comes back as a nil ACL, so that is the only test for "no list". Reading the second value as "present" made every real list look
+	// absent (found on a Windows PC, BL-140).
+	dacl, _, err := sd.DACL()
 	if err != nil {
 		return describedDACL{}, err
 	}
-	if !present || dacl == nil {
+	if dacl == nil {
 		return describedDACL{}, nil
 	}
 	// The ACL header is 8 bytes: revision, a spare byte, the total size, the

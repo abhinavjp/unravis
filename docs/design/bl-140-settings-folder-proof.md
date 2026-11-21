@@ -26,3 +26,17 @@ Status: built 2026-11-21 (PR for this branch). Windows proof run on a real PC is
 
 - Linux: rule unit tests (14 cases plus the owner rule). `GOOS=windows go vet` clean for `internal/blackbox` and `cmd/unravis-blackbox`.
 - Not verified: the real Windows reads on a PC (owner and list of `C:\`, `Program Files`, a data drive), a real service start under the service account (the file-only proof must pass there), and the new `cmd/unravis-blackbox` start tests, which only build on Windows.
+
+## Windows check, 2026-11-21 (PC, not elevated)
+
+The first Windows run found a bug that was older than this change: `describeACEs` read the second value of `SECURITY_DESCRIPTOR.DACL()` as "present", but it is "defaulted". Every real access list looked absent, so every proof refused ("has no access list"). This also affected the existing file proof used by install-sql and enable-sql, so BL-141 (the live enable-sql check) could not have passed. Fixed, with a Windows test that reads a real folder list (`TestDescribeFileDACLReadsARealList`). The pure rule tests could not see it.
+
+With the reader fixed, the folder rule gave (owners and entries read from the real folders):
+
+| Folder | Result | Why |
+|---|---|---|
+| `C:\Program Files`, `C:\Windows` | accept | TrustedInstaller owns; SYSTEM, Administrators, TrustedInstaller hold change rights; Users only read |
+| `C:\ProgramData` | accept | SYSTEM owns; Users hold read and create only |
+| `C:\Users\Public` | accept | no delete or delete-child for ordinary users; they may add files (decision 2: not refused) |
+| `D:\` on this PC | refuse | Authenticated Users hold modify on the root, including delete |
+| a new folder under `D:\` or in the user profile | refuse | owned by the user's own account |
