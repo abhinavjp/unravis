@@ -62,7 +62,7 @@ export function safeZone(zone: string): string {
   return result;
 }
 /** The instant whose wall clock in `zone` reads `localMs` (a wall clock written as if it were UTC). A time the clocks skip lands just after the gap. */
-function localToInstant(localMs: number, zone: string): number {
+export function localToInstant(localMs: number, zone: string): number {
   // The two offsets that can apply nearby: the one a day before and the one a day after. A wall clock read twice takes the first
   // time; one the clocks skip takes the moment they change.
   const candidates = [...new Set([zoneOffsetMs(localMs - DAY, zone), zoneOffsetMs(localMs + DAY, zone)])].map(offset => localMs - offset);

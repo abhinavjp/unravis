@@ -388,7 +388,7 @@
     return () => clearTimeout(timer);
   });
 
-  // Every date on this page follows the UTC / Local choice in the header, like the start screen's case list.
+  // Every date on this page follows the time zone choice in the header (London by default), like the start screen's case list.
   const when = (value: string): string => formatTime(value, { zone: timeZone.zone, year: true, precision: 'minute', fallback: value });
   const kindLabel = { case: CASE_HOME_TEXT.kindCase, file: CASE_HOME_TEXT.kindFile, health: CASE_HOME_TEXT.kindHealth, theory: CASE_HOME_TEXT.kindTheory } as const;
 </script>

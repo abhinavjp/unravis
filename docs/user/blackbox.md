@@ -110,7 +110,7 @@ To use one, open the case, open **Blackbox** in the header, open the Blackbox an
 ![Step 9 read from web-a, dark](screenshots/P9/p9-step-9-dark.png)
 ![Step 9 read from web-a, light](screenshots/P9/p9-step-9-light.png)
 
-The panel can also run the same read by hand: open a Blackbox, open **Read for a case window**, type the two windows (UTC) and press **Read the host for these windows**. This is how the pictures here were made. In this release the host data gives CPU, memory, disk and network. Checks that need the database or the process list stay **Cannot test yet**, so Step 9 is at most **Partly ready**.
+The panel can also run the same read by hand: open a Blackbox, open **Read for a case window**, type the two windows and press **Read the host for these windows**. This is how the pictures here were made. In this release the host data gives CPU, memory, disk and network. Checks that need the database or the process list stay **Cannot test yet**, so Step 9 is at most **Partly ready**.
 
 ### Gaps
 

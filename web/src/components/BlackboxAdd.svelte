@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { timeZone } from '../lib/timeZone.svelte';
   import { onMount } from 'svelte';
   import { BlackboxError, blackboxApi, guessKind, needsKey, refusalText, shownTime, type BlackboxItem, type StateInfo, type TestAnswer } from '../lib/blackbox';
   import { BB_REFUSAL, BB_TEXT as T, addFailReasonsFor, ageWords, intervalWords } from '../lib/copy/blackboxCopy';
@@ -100,7 +101,7 @@
       <div class="bb-result" role="status">
         <p><Sticker info={outcome.answer.state} /> <strong>{outcome.answer.name}</strong></p>
         <p class="bb-note">{outcome.answer.state.detail}</p>
-        {#if outcome.answer.facts}<p class="bb-note">{T.lastSample}: {ageWords(outcome.answer.facts.lastSample) || shownTime(outcome.answer.facts.lastSample)}. {intervalWords(outcome.answer.facts.intervalSeconds, outcome.answer.facts.effectiveIntervalSeconds)}.</p>{/if}
+        {#if outcome.answer.facts}<p class="bb-note">{T.lastSample}: {ageWords(outcome.answer.facts.lastSample) || shownTime(outcome.answer.facts.lastSample, timeZone.zone)}. {intervalWords(outcome.answer.facts.intervalSeconds, outcome.answer.facts.effectiveIntervalSeconds)}.</p>{/if}
         <p class="bb-note">{T.addLooksGood}</p>
       </div>
     {/if}
