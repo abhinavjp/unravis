@@ -160,7 +160,7 @@ test('rows carry the short case code so a restored copy is not a twin', () => {
   const b = caseRow({ id: '9c01bd44bbbbbbbbbbbbbbbbbb', title: 'Checkout slowdown', created: '2026-10-17T10:00:00Z', imports: 1 });
   assert.equal(a.codeText, 'Code 3f9a27c1');
   assert.notEqual(a.codeText, b.codeText);
-  assert.match(read('src/components/StartScreen.svelte'), /\{row\.counts\} · \{row\.codeText\}/);
+  assert.match(read('src/components/StartScreen.svelte'), /\[row\.created, row\.counts, row\.codeText\]\.filter\(Boolean\)\.join\(' · '\)/, 'the code is in every row, and an empty part leaves no stray separator');
   assert.match(read('src/lib/components/ArchivedList.svelte'), /\{row\.codeText\}/);
 });
 

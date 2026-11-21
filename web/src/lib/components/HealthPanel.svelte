@@ -14,7 +14,8 @@
   // Read-only checks of a SQL Server or MongoDB the case depends on. Nothing here runs by itself: a check starts only on "Run checks".
   // The server writes the checks; nothing typed here is ever run as a query. A password typed for a run is sent once and not kept.
   // onRan tells the page around it that a run was made, so a list built from the case's runs (the case story) can read them again.
-  let { caseId, onGone, onRan }: { caseId: string; onGone?: () => void; onRan?: () => void } = $props();
+  // embedded: Case home already gives the block its "Health checks" heading and section, so the panel adds neither (one landmark, one heading).
+  let { caseId, onGone, onRan, embedded = false }: { caseId: string; onGone?: () => void; onRan?: () => void; embedded?: boolean } = $props();
 
   let sqlKept = $state.raw<SavedSqlConnection[]>([]);
   let mongoKept = $state.raw<RecentConnection[]>([]);
@@ -156,8 +157,8 @@
   const when = (iso: string): string => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(); };
 </script>
 
-<section class="tools" aria-labelledby="health-heading">
-  <h3 id="health-heading">{HEALTH_TEXT.heading}</h3>
+<svelte:element this={embedded ? 'div' : 'section'} class="tools" aria-labelledby={embedded ? undefined : 'health-heading'}>
+  {#if !embedded}<h3 id="health-heading">{HEALTH_TEXT.heading}</h3>{/if}
   <p class="note">{HEALTH_TEXT.intro}</p>
   <p class="note">{HEALTH_TEXT.clickNote}</p>
 
@@ -267,7 +268,7 @@
     </ul>
   {/if}
   <OrphanFiles {caseId} />
-</section>
+</svelte:element>
 
 <style>
   .tools { display: grid; gap: var(--space-2); min-width: 0; padding-top: var(--space-4); border-top: 1px solid var(--hairline); }

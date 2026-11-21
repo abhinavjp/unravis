@@ -150,12 +150,12 @@ export const STATE_NOTE: Record<string, string> = {
 };
 
 export const STEP_TEXT = {
-  sqlHeading: 'Step 7: SQL Server',
-  mongoHeading: 'Step 8: MongoDB',
+  sqlHeading: 'Read SQL Server',
+  mongoHeading: 'Read MongoDB',
   sqlLead: 'Did a session block others, or did a query turn slow? Each check names the permission it needs.',
   mongoLead: 'Did the database itself slow down? The profiler holds the slow operations.',
-  noSql: 'No SQL Server has been read for this case yet. Step 7 says Cannot test yet until one is added.',
-  noMongo: 'No MongoDB server has been read for this case yet. Step 8 says Cannot test yet until one is added.',
+  noSql: 'No SQL Server has been read for this case yet, so nothing can be tested. Read a day from one below.',
+  noMongo: 'No MongoDB server has been read for this case yet, so nothing can be tested. Read a day from one below.',
   noMongoWhy: 'The audit logs may come from MongoDB, but this step needs the server itself: its profiler and its health.',
   addSql: 'Add a SQL Server',
   addMongo: 'Add a MongoDB server',
@@ -168,6 +168,7 @@ export const STEP_TEXT = {
   fixHeading: 'To fix',
   stateCol: 'State',
   checkCol: 'Check',
+  summaryCol: 'What it found',
   daysHeading: 'Days read',
   readAt: 'Read',
   loadFailed: 'The days that were read could not be loaded. Try again.',
@@ -288,7 +289,7 @@ export const AUDIT_ADD_TEXT = {
   closedCase: 'The case is closed. Reopen it to add data.',
   profilerHeading: 'Server profiler and health',
   profilerBody: 'This is separate. It reads the MongoDB server itself (slow operations and connections), not an API audit log.',
-  profilerOpen: 'Open Step 8: MongoDB'
+  profilerOpen: 'Open Read MongoDB'
 } as const;
 
 export const DAY_TEXT = {
@@ -363,11 +364,11 @@ export const NOTHING_TEXT = {
 
 export const HUB_TEXT = {
   heading: 'SQL Server and MongoDB',
-  intro: 'Saved connections, the SQL Server and MongoDB steps, and what to add next.',
+  intro: 'Saved connections, the sources of this case, what SQL Server and MongoDB show for a day, and what to add next.',
   label: 'SQL Server and MongoDB sections',
   connections: 'Connections',
-  sql: 'Step 7: SQL Server',
-  mongo: 'Step 8: MongoDB',
+  sql: 'Read SQL Server',
+  mongo: 'Read MongoDB',
   add: 'Add data',
   day: 'Add another day',
   combos: 'Combinations',

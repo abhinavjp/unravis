@@ -129,10 +129,10 @@
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
         },
         {
-          "waitFor": "#health-heading"
+          "waitFor": "#home-health"
         },
         {
-          "scrollTo": "#health-heading"
+          "scrollTo": "#home-health"
         }
       ]
     },
@@ -181,7 +181,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Import\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -189,13 +189,16 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Import\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Close case: Checkout slowdown, 17 October\"]"
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
         },
         {
-          "scrollTo": "#case-heading"
+          "waitFor": "role=button[name=\"Close this case\"]"
+        },
+        {
+          "scrollTo": "role=button[name=\"Close this case\"]"
         }
       ]
     },
@@ -362,7 +365,7 @@
             },
             {
               "when": "wide",
-              "click": "role=button[name=\"Import\"s]"
+              "click": "role=button[name=\"All cases\"s]"
             },
             {
               "when": "narrow",
@@ -370,13 +373,16 @@
             },
             {
               "when": "narrow",
-              "click": "role=menuitem[name=\"Import\"s]"
+              "click": "role=menuitem[name=\"All cases\"s]"
             },
             {
-              "click": "role=button[name=\"Close case: Ledger posting lag, 12 October\"]"
+              "click": "role=button[name=\"Open case Ledger posting lag, 12 October\"]"
             },
             {
-              "waitFor": "#start-title"
+              "click": "role=button[name=\"Close this case\"]"
+            },
+            {
+              "waitFor": "role=button[name=\"Reopen this case\"]"
             }
           ]
         }
@@ -515,7 +521,7 @@
           ]
         },
         {
-          "click": "role=button[name=\"Next: Where\"s]"
+          "click": "role=button[name=\"Next\"s]"
         },
         {
           "waitFor": "role=radio[name=/On another server/]"
@@ -565,7 +571,7 @@
           ]
         },
         {
-          "click": "role=button[name=\"Next: Where\"s]"
+          "click": "role=button[name=\"Next\"s]"
         },
         {
           "waitFor": "role=radio[name=/On another server/]"
@@ -574,10 +580,10 @@
           "click": "role=radio[name=/On another server/]"
         },
         {
-          "click": "role=button[name=\"Next: Settings\"s]"
+          "click": "role=button[name=\"Next\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Next: Review\"s]"
+          "waitFor": "role=heading[name=\"What should it record?\"]"
         }
       ]
     },
@@ -621,7 +627,7 @@
           ]
         },
         {
-          "click": "role=button[name=\"Next: Where\"s]"
+          "click": "role=button[name=\"Next\"s]"
         },
         {
           "waitFor": "role=radio[name=/On another server/]"
@@ -630,16 +636,28 @@
           "click": "role=radio[name=/On another server/]"
         },
         {
-          "click": "role=button[name=\"Next: Settings\"s]"
+          "click": "role=button[name=\"Next\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Next: Review\"s]"
+          "waitFor": "role=heading[name=\"What should it record?\"]"
         },
         {
-          "click": "role=button[name=\"Next: Review\"s]"
+          "click": "role=button[name=\"Next\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Download the pack\"s]"
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Build the pack\"s]"
         }
       ]
     },
@@ -674,7 +692,7 @@
           "click": "role=button[name=\"Open status: web-a\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Back to the list\"s]"
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
         }
       ]
     },
@@ -709,7 +727,7 @@
           "click": "role=button[name=\"Open status: web-a\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Back to the list\"s]"
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
         },
         {
           "click": "role=button[name=\"Show\"s]"
@@ -753,7 +771,7 @@
           "click": "role=button[name=\"Open status: web-b\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Back to the list\"s]"
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
         }
       ]
     },
@@ -788,7 +806,7 @@
           "click": "role=button[name=\"Open status: web-old\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Back to the list\"s]"
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
         }
       ]
     },
@@ -823,7 +841,7 @@
           "click": "role=button[name=\"Open status: web-c\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Back to the list\"s]"
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
         }
       ]
     },
@@ -858,7 +876,7 @@
           "click": "role=button[name=\"Open status: web-d\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Back to the list\"s]"
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
         }
       ]
     },
@@ -893,7 +911,7 @@
           "click": "role=button[name=\"Open status: old-box\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Back to the list\"s]"
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
         }
       ]
     },
@@ -928,7 +946,7 @@
           "click": "role=button[name=\"Open status: web-e\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Back to the list\"s]"
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
         }
       ]
     },
@@ -963,7 +981,7 @@
           "click": "role=button[name=\"Open status: web-f\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Back to the list\"s]"
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
         }
       ]
     },
@@ -998,7 +1016,7 @@
           "click": "role=button[name=\"Open status: web-g\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Back to the list\"s]"
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
         }
       ]
     },
@@ -1033,30 +1051,90 @@
           "click": "role=button[name=\"Open status: web-a\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Back to the list\"s]"
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
         },
         {
           "fill": [
-            ".bb-grid input >> nth=0",
-            "2026-10-20T07:40"
+            "role=textbox[name=\"Incident window start date\"]",
+            "2026-10-20"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Incident window start time hour\"]",
+            "7"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Incident window start time minute\"]",
+            "40"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Incident window start time AM or PM\"]",
+            "AM"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Incident window end time hour\"]",
+            "7"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Incident window end time minute\"]",
+            "55"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Incident window end time AM or PM\"]",
+            "AM"
           ]
         },
         {
           "fill": [
-            ".bb-grid input >> nth=1",
-            "2026-10-20T07:55"
+            "role=textbox[name=\"Reference window start date\"]",
+            "2026-10-20"
           ]
         },
         {
-          "fill": [
-            ".bb-grid input >> nth=2",
-            "2026-10-20T07:00"
+          "select": [
+            "role=combobox[name=\"Reference window start time hour\"]",
+            "7"
           ]
         },
         {
-          "fill": [
-            ".bb-grid input >> nth=3",
-            "2026-10-20T07:30"
+          "select": [
+            "role=combobox[name=\"Reference window start time minute\"]",
+            "0"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Reference window start time AM or PM\"]",
+            "AM"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Reference window end time hour\"]",
+            "7"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Reference window end time minute\"]",
+            "30"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Reference window end time AM or PM\"]",
+            "AM"
           ]
         },
         {
@@ -1101,30 +1179,90 @@
           "click": "role=button[name=\"Open status: web-b\"s]"
         },
         {
-          "waitFor": "role=button[name=\"Back to the list\"s]"
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
         },
         {
           "fill": [
-            ".bb-grid input >> nth=0",
-            "2026-10-20T07:40"
+            "role=textbox[name=\"Incident window start date\"]",
+            "2026-10-20"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Incident window start time hour\"]",
+            "7"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Incident window start time minute\"]",
+            "40"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Incident window start time AM or PM\"]",
+            "AM"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Incident window end time hour\"]",
+            "7"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Incident window end time minute\"]",
+            "55"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Incident window end time AM or PM\"]",
+            "AM"
           ]
         },
         {
           "fill": [
-            ".bb-grid input >> nth=1",
-            "2026-10-20T07:55"
+            "role=textbox[name=\"Reference window start date\"]",
+            "2026-10-20"
           ]
         },
         {
-          "fill": [
-            ".bb-grid input >> nth=2",
-            "2026-10-20T06:50"
+          "select": [
+            "role=combobox[name=\"Reference window start time hour\"]",
+            "6"
           ]
         },
         {
-          "fill": [
-            ".bb-grid input >> nth=3",
-            "2026-10-20T07:20"
+          "select": [
+            "role=combobox[name=\"Reference window start time minute\"]",
+            "50"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Reference window start time AM or PM\"]",
+            "AM"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Reference window end time hour\"]",
+            "7"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Reference window end time minute\"]",
+            "20"
+          ]
+        },
+        {
+          "select": [
+            "role=combobox[name=\"Reference window end time AM or PM\"]",
+            "AM"
           ]
         },
         {
@@ -1295,7 +1433,7 @@
           "waitFor": "#home-sources"
         },
         {
-          "click": "role=tab[name=\"Step 7: SQL Server\"]"
+          "click": "role=tab[name=\"Read SQL Server\"]"
         },
         {
           "click": "role=button[name=\"SQL Server 2019 or earlier\"]"
@@ -1336,7 +1474,7 @@
           "waitFor": "#home-sources"
         },
         {
-          "click": "role=tab[name=\"Step 7: SQL Server\"]"
+          "click": "role=tab[name=\"Read SQL Server\"]"
         },
         {
           "click": "role=button[name=\"SQL Server 2022 or later\"]"
@@ -1377,7 +1515,7 @@
           "waitFor": "#home-sources"
         },
         {
-          "click": "role=tab[name=\"Step 7: SQL Server\"]"
+          "click": "role=tab[name=\"Read SQL Server\"]"
         },
         {
           "waitFor": "#step-sql-head"
@@ -1415,7 +1553,7 @@
           "waitFor": "#home-sources"
         },
         {
-          "click": "role=tab[name=\"Step 8: MongoDB\"]"
+          "click": "role=tab[name=\"Read MongoDB\"]"
         },
         {
           "waitFor": "#step-mongo-head"
@@ -1491,7 +1629,7 @@
           "waitFor": "#home-sources"
         },
         {
-          "click": "role=tab[name=\"Step 7: SQL Server\"]"
+          "click": "role=tab[name=\"Read SQL Server\"]"
         },
         {
           "waitFor": "[data-nothing-read]"
@@ -1558,7 +1696,8 @@
         {
           "waitFor": "text=Incident window"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-step-1",
@@ -1626,7 +1765,8 @@
         {
           "waitFor": "#step-title-1"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-step-2",
@@ -1694,7 +1834,8 @@
         {
           "waitFor": "#step-title-2"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-step-3",
@@ -1762,7 +1903,8 @@
         {
           "waitFor": "#step-title-3"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-step-4",
@@ -1830,7 +1972,8 @@
         {
           "waitFor": "#step-title-4"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-step-5",
@@ -1898,7 +2041,8 @@
         {
           "waitFor": "#step-title-5"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-step-6",
@@ -1966,7 +2110,8 @@
         {
           "waitFor": "#step-title-6"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-step-7",
@@ -2034,7 +2179,8 @@
         {
           "waitFor": "#step-title-7"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-step-8",
@@ -2102,7 +2248,8 @@
         {
           "waitFor": "#step-title-8"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-step-9",
@@ -2170,7 +2317,8 @@
         {
           "waitFor": "#step-title-9"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-step-10",
@@ -2238,7 +2386,8 @@
         {
           "waitFor": "#step-title-10"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-no-clear-origin",
@@ -2306,7 +2455,8 @@
         {
           "waitFor": "text=No clear origin"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-checklist",
@@ -2344,7 +2494,8 @@
         {
           "waitFor": "text=Add suggested checks"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-after-fix-1",
@@ -2412,7 +2563,8 @@
         {
           "waitFor": "text=The later day (UTC)"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-after-fix-2",
@@ -2489,7 +2641,8 @@
         {
           "waitFor": "text=Change vs the earlier day"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-tools-1",
@@ -2530,7 +2683,8 @@
         {
           "waitFor": "#tools-title"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-tools-2",
@@ -2607,7 +2761,8 @@
         {
           "waitFor": "text=Only APIs matching"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-tools-3",
@@ -2654,7 +2809,8 @@
         {
           "waitFor": "text=Cannot test yet"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-export-1",
@@ -2692,7 +2848,8 @@
         {
           "waitFor": "role=button[name=\"Download report (HTML)\"]"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p6-export-2",
@@ -2763,7 +2920,8 @@
         {
           "waitFor": "iframe"
         }
-      ]
+      ],
+      "retired": "Guided analysis is kept but unlisted (owner decision D-2, docs/guided-unlisted.md): Case home has no entry to it, so this screen cannot be reached. The saved picture is the last one taken."
     },
     {
       "id": "p3-archive",
@@ -3613,58 +3771,133 @@
       ]
     },
     {
-      "id": "p12-update-none", "phase": "P12", "doc": "upgrade-and-uninstall.md", "narrow": false,
+      "id": "p12-update-none",
+      "phase": "P12",
+      "doc": "upgrade-and-uninstall.md",
+      "narrow": false,
       "steps": [
-        {"goto": "/"},
-        {"goto": "#update=latest"},
-        {"click": "role=button[name=\"Glossary\"]"},
-        {"waitFor": "#glossary-title"},
-        {"click": "[data-testid=update-check-button]"},
-        {"waitFor": "[data-testid=update-check-result]"}
+        {
+          "goto": "/"
+        },
+        {
+          "goto": "#update=latest"
+        },
+        {
+          "click": "role=button[name=\"Glossary\"]"
+        },
+        {
+          "waitFor": "#glossary-title"
+        },
+        {
+          "click": "[data-testid=update-check-button]"
+        },
+        {
+          "waitFor": "[data-testid=update-check-result]"
+        }
       ]
     },
     {
-      "id": "p12-update-available", "phase": "P12", "doc": "upgrade-and-uninstall.md", "narrow": false,
+      "id": "p12-update-available",
+      "phase": "P12",
+      "doc": "upgrade-and-uninstall.md",
+      "narrow": false,
       "steps": [
-        {"goto": "/"},
-        {"goto": "#update=available"},
-        {"click": "role=button[name=\"Glossary\"]"},
-        {"waitFor": "#glossary-title"},
-        {"click": "[data-testid=update-check-button]"},
-        {"waitFor": "[data-testid=update-check-result]"}
+        {
+          "goto": "/"
+        },
+        {
+          "goto": "#update=available"
+        },
+        {
+          "click": "role=button[name=\"Glossary\"]"
+        },
+        {
+          "waitFor": "#glossary-title"
+        },
+        {
+          "click": "[data-testid=update-check-button]"
+        },
+        {
+          "waitFor": "[data-testid=update-check-result]"
+        }
       ]
     },
     {
-      "id": "p12-update-offline", "phase": "P12", "doc": "upgrade-and-uninstall.md", "narrow": false,
+      "id": "p12-update-offline",
+      "phase": "P12",
+      "doc": "upgrade-and-uninstall.md",
+      "narrow": false,
       "steps": [
-        {"goto": "/"},
-        {"goto": "#update=offline"},
-        {"click": "role=button[name=\"Glossary\"]"},
-        {"waitFor": "#glossary-title"},
-        {"click": "[data-testid=update-check-button]"},
-        {"waitFor": "[data-testid=update-check-result]"}
+        {
+          "goto": "/"
+        },
+        {
+          "goto": "#update=offline"
+        },
+        {
+          "click": "role=button[name=\"Glossary\"]"
+        },
+        {
+          "waitFor": "#glossary-title"
+        },
+        {
+          "click": "[data-testid=update-check-button]"
+        },
+        {
+          "waitFor": "[data-testid=update-check-result]"
+        }
       ]
     },
     {
-      "id": "p13-guide-index", "phase": "P13", "doc": "getting-started.md", "narrow": false,
+      "id": "p13-guide-index",
+      "phase": "P13",
+      "doc": "getting-started.md",
+      "narrow": false,
       "steps": [
-        {"goto": "/"},
-        {"click": "role=button[name=\"Glossary\"]"},
-        {"waitFor": "#glossary-title"},
-        {"click": "[data-testid=guide-open]"},
-        {"waitFor": "[data-testid=guide-nav-index]"}
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"Glossary\"]"
+        },
+        {
+          "waitFor": "#glossary-title"
+        },
+        {
+          "click": "[data-testid=guide-open]"
+        },
+        {
+          "waitFor": "[data-testid=guide-nav-index]"
+        }
       ]
     },
     {
-      "id": "p13-guide-page", "phase": "P13", "doc": "getting-started.md", "narrow": false,
+      "id": "p13-guide-page",
+      "phase": "P13",
+      "doc": "getting-started.md",
+      "narrow": false,
       "steps": [
-        {"goto": "/"},
-        {"click": "role=button[name=\"Glossary\"]"},
-        {"waitFor": "#glossary-title"},
-        {"click": "[data-testid=guide-open]"},
-        {"waitFor": "[data-testid=guide-nav-index]"},
-        {"click": "[data-testid=guide-nav-getting-started]"},
-        {"waitFor": "[data-testid=guide-nav-getting-started][aria-current=page]"}
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"Glossary\"]"
+        },
+        {
+          "waitFor": "#glossary-title"
+        },
+        {
+          "click": "[data-testid=guide-open]"
+        },
+        {
+          "waitFor": "[data-testid=guide-nav-index]"
+        },
+        {
+          "click": "[data-testid=guide-nav-getting-started]"
+        },
+        {
+          "waitFor": "[data-testid=guide-nav-getting-started][aria-current=page]"
+        }
       ]
     },
     {
@@ -3707,7 +3940,7 @@
           "waitFor": "role=heading[name=\"Choose what to look at\"]"
         },
         {
-          "click": "role=button[name=\"Import files\"s]"
+          "click": "role=button[name=/^Files/]"
         },
         {
           "waitFor": "role=heading[name=\"Add files by type\"]"
@@ -3745,19 +3978,13 @@
           "waitFor": "#home-sources"
         },
         {
-          "click": "role=button[name=\"Open the analysis\"]"
+          "click": "role=tab[name=\"Add data\"s]"
         },
         {
-          "click": "role=button[name=\"Import\"s]"
+          "waitFor": "role=heading[name=\"What do you want to add to this case?\"]"
         },
         {
-          "click": "role=button[name=\"Use this case: Checkout slowdown, 17 October\"]"
-        },
-        {
-          "waitFor": "#drawer-add-head"
-        },
-        {
-          "scrollTo": "[data-drawer-card=\"files\"]"
+          "scrollTo": "role=heading[name=\"What do you want to add to this case?\"]"
         }
       ]
     },

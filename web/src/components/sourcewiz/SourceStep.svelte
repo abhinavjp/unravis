@@ -95,7 +95,7 @@
   {#if closed}<p class="inline-error" role="alert">{WIZ.closedCase}</p>{/if}
 
   <div class="layout">
-    <aside class="rail" aria-label={WIZ.railHeading}>
+    <section class="rail" aria-label={WIZ.railHeading}>
       {#if adding && existing.length > 0}
         <h4>{WIZ.alreadyHeading}</h4>
         {#each existingGroups as g (g.title)}
@@ -115,7 +115,7 @@
       {/each}
       <p class="tray" role="status">{WIZ.tray(wizard.sources.length)}</p>
       <p class="added-note" role="status" data-added-note>{addedNote}</p>
-    </aside>
+    </section>
 
     <section class="main">
       {#if card === ''}

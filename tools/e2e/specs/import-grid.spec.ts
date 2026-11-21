@@ -130,8 +130,8 @@ test('GRID-03: the other kinds of data are not in the popup; the case page still
   await expect(popup(page)).toHaveCount(0);
 
   await page.getByRole('button', { name: 'This case', exact: true }).click();
-  await page.getByRole('tab', { name: 'Step 7: SQL Server', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Step 7: SQL Server', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('tab', { name: 'Read SQL Server', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Read SQL Server', exact: true })).toHaveAttribute('aria-selected', 'true');
 });
 
 test('GRID-04: leaving with files listed asks first; Keep them keeps them, Discard drops them; nothing listed asks nothing', async ({ page, api }) => {
@@ -229,7 +229,7 @@ test('GRID-07: with one SQL day read, the popup still takes files only', async (
   await createCase(api, 'QA Grid Day');
   await goHome(page);
   await openCase(page, 'QA Grid Day');
-  await page.getByRole('tab', { name: 'Step 7: SQL Server', exact: true }).click();
+  await page.getByRole('tab', { name: 'Read SQL Server', exact: true }).click();
   const panel = page.getByRole('tabpanel');
   const read = panel.getByRole('region', { name: 'Read from a server' });
   await expect(read).toBeVisible();

@@ -68,9 +68,9 @@ Export builds a file of the findings in the window you are looking at. You see a
 
 ## Close and Reopen
 
-Close puts a case away without losing anything. A closed case can be read, but nothing can be added to it: no files, no theories, no checks. Close is on the Import page, next to each open case. Case home then says "This case is closed. You can read it, but nothing can be added." and the story shows "Case closed".
+Close puts a case away without losing anything. A closed case can be read, but nothing can be added to it: no files, no theories, no checks. Press "Close this case" on Case home; the line under it says that a closed case is erased after 30 days unless you reopen it. Case home then says "This case is closed. You can read it, but nothing can be added." and the story shows "Case closed".
 
-Closing is not final. Press Reopen on Case home (or on the Import page, in the row of the closed case) and the case is open again. Reopen:
+Closing is not final. Press "Reopen this case" on Case home, in the same place, and the case is open again. Reopen:
 
 - changes nothing but the state: the case is open again and what you may add to it is back;
 - never starts anything by itself. Sampling and checks start only when you press them;
@@ -80,9 +80,9 @@ A closed case is still erased 30 days after it was closed, unless you reopen it.
 
 The MongoDB link and the filters the case had are not part of Reopen. They are saved with the case as you work, and Unravis puts them back whenever you open the case, closed or not. While the case is closed they cannot be changed, so nothing new is saved; once you reopen it, saving carries on.
 
-The first picture is the case list on the Import page. The second is a closed case with its buttons turned off. The third is the same case with the Reopen button. The pictures are made by `tools/screens/run-screens.ps1 -Update`.
+The first picture is Case home with the Close button. The second is a closed case with its buttons turned off. The third is the same case with the Reopen button. The pictures are made by `tools/screens/run-screens.ps1 -Update`.
 
-![Close case, in the Import page case list, light](screenshots/P2/p2-close-light.png)
+![Close this case, on Case home, light](screenshots/P2/p2-close-light.png)
 ![A closed case, read only, light, narrow](screenshots/P2/p2-closed-readonly-light-narrow.png)
 ![A closed case with the Reopen button, dark, narrow](screenshots/P2/p2-reopen-dark-narrow.png)
 

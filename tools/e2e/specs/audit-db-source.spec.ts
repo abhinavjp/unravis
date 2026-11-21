@@ -91,7 +91,7 @@ test('AUDIT-01: Add data > MongoDB lists the saved connection, the audit-looking
   await shot(page, 'p7-1-add-data-mongo-opened');
   // The Step 8 profiler is kept, and says it is a separate thing.
   await expect(section.locator('[data-profiler-route]')).toContainText('separate');
-  await expect(section.getByRole('button', { name: 'Open Step 8: MongoDB' })).toBeEnabled();
+  await expect(section.getByRole('button', { name: 'Open Read MongoDB' })).toBeEnabled();
 
   await section.getByLabel('Saved connection').selectOption({ label: SAVED });
   await section.getByRole('button', { name: 'Test and list databases' }).click();

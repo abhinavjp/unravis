@@ -12,7 +12,7 @@
 //   AUDITGAP-04 The saved connection cannot be changed during a test, and a late answer for another connection is ignored (C3).
 //   AUDITGAP-05 A second test with the password field empty sends the password again (C7); a failed retest leaves Add off and does not break it (C4).
 //   AUDITGAP-06 After an Application-data-only add the ticks and the collection are locked (C8); a connected database cannot be swapped (P7).
-//   AUDITGAP-07 Check permission opens Step 8: MongoDB.
+//   AUDITGAP-07 Check permission opens Read MongoDB.
 //   AUDITGAP-08 Screenshots for the review: light, dark and 375 px wide.
 // The demo cannot reach a real MongoDB or hold these files, so the edges are answered with page.route: the sources, imports and computers lists of
 // the Sources tab, the trace answer of the timeline, and the Mongo test, connect and tag. The page and the requests it sends are the code under test.
@@ -421,13 +421,13 @@ test('AUDITGAP-06: a connected audit database cannot be swapped (P7); after an A
   expect(edge.connects.length).toBe(1);
 });
 
-test('AUDITGAP-07: Check permission opens Step 8: MongoDB', async ({ page }) => {
+test('AUDITGAP-07: Check permission opens Read MongoDB', async ({ page }) => {
   await mockMongo(page);
   const section = await openAddAudit(page);
   const link = section.getByTestId('audit-check-permission');
   await expect(link).toHaveText('Check permission');
   await link.click();
-  await expect(page.getByRole('tab', { name: 'Step 8: MongoDB', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Read MongoDB', exact: true })).toHaveAttribute('aria-selected', 'true');
 });
 
 // ---------------------------------------------------------------- screenshots
