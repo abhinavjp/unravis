@@ -3,6 +3,7 @@ package blackbox
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"api-audit-explorer/internal/update"
@@ -28,6 +29,17 @@ func TestReadUpdateSource(t *testing.T) {
 		write(in)
 		if got, err := ReadUpdateSource(dir); got != want || err != nil {
 			t.Errorf("%q: got %q, %v want %q", in, got, err, want)
+		}
+	}
+	if runtime.GOOS != "windows" { // a rooted path is a full path only off Windows
+		write("/srv/feed\n")
+		if got, err := ReadUpdateSource(dir); got != "/srv/feed" || err != nil {
+			t.Errorf("rooted path: %q %v", got, err)
+		}
+	} else {
+		write("/srv/feed\n")
+		if got, err := ReadUpdateSource(dir); got != "" || err == nil {
+			t.Errorf("rooted path accepted on Windows: %q", got)
 		}
 	}
 	for _, bad := range []string{"feed", "..\\x", "D:feed", "D:\\a\\..\\b", "\\\\", "\\\\server", "\\\\?\\C:\\x", "\\\\.\\pipe\\x", "C:\\a\x00b", "http://example.com/feed"} {
