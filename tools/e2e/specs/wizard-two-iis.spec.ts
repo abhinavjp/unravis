@@ -31,7 +31,7 @@ test('TWOIIS-01: two IIS logs tagged Production and UAT keep their own environme
     { name: 'u_ex261021.log', mimeType: 'text/plain', buffer: Buffer.from(NEXT_DAY) }
   ]);
   await page.getByRole('button', { name: 'Add 2 files' }).click();
-  await expect(page.getByText('2 files were added to your sources.')).toBeVisible();
+  await expect(page.getByText('2 files are ready to add.')).toBeVisible();
 
   // The first file is Production, the second UAT.
   const prod = page.getByRole('group', { name: /u_ex261020\.log/ }).getByLabel('Environment');
