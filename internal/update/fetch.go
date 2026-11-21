@@ -666,3 +666,17 @@ func (f *Fetcher) readFolderFile(rawURL string) ([]byte, string, bool, *Result) 
 	}
 	return b, "", false, nil
 }
+
+// ReadState reads a state file without changing it, for a read-only viewer. A missing, oversized or unreadable file is an error.
+func ReadState(path string) (State, error) {
+	var s State
+	fi, err := os.Stat(path)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxStateSize {
+		return s, errReadMemo
+	}
+	b, err := os.ReadFile(path)
+	if err != nil || json.Unmarshal(b, &s) != nil {
+		return s, errReadMemo
+	}
+	return s, nil
+}

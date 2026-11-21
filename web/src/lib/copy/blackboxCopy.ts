@@ -43,6 +43,19 @@ export const BB_TEXT = {
   gaps: 'Gaps',
   files: 'Files',
   diskFree: 'Recordings drive free',
+  updates: 'Recorder updates',
+  updateLine(u: { state: string; latest?: string; checked?: string; result?: string }): string {
+    const v = u.latest ? ' ' + u.latest : '';
+    switch (u.state) {
+      case 'available': return 'Recorder' + v + ' is ready to install.';
+      case 'held': return 'Recorder' + v + ' is on hold.';
+      case 'downloading': return 'Downloading recorder' + v + '.';
+      case 'installing': return 'Installing recorder' + v + '.';
+      case 'skipped': return 'Recorder' + v + ' was skipped.';
+      case 'failed': return 'The last update failed.';
+      default: return u.checked || u.state === 'managed' || u.state === 'off' ? (u.result || 'Checked.') : 'Not checked yet.';
+    }
+  },
   intervalHelp: 'Unravis slows recording when the PC is busy, so the recorder stays light.',
   checkedAt: 'Checked',
   host: 'Host',
@@ -581,6 +594,7 @@ export function blackboxCopyEntries(): LintEntry[] {
       else if (key === 'targetsAdded' || key === 'targetsRemoved') add(key, fn('W3SVC'));
       else if (key === 'reviewKeepsText') add(key, fn(7, 2, 10));
       else if (key === 'reviewTargetsText') { add(key + '.both', fn(['PoolA', 'PoolB'], ['SvcOne'])); add(key + '.pools', fn(['PoolA'], [])); add(key + '.services', fn([], ['SvcOne'])); }
+      else if (key === 'updateLine') { for (const st of ['idle', 'managed', 'available', 'held', 'skipped', 'downloading', 'installing', 'failed', 'off']) add(key + '.' + st, fn({ state: st, latest: 'v1.2.3' })); add(key + '.idle.checked', fn({ state: 'idle', checked: '2026-11-21T10:00:00Z', result: 'Could not reach the update feed.' })); }
       else if (key === 'filesAndSamples') { add(key + '.1', fn(1, 1)); add(key + '.2', fn(4, 960)); }
       else if (key === 'gapsText') {
         add(key + '.none', fn(0, 0)); add(key + '.gaps', fn(2, 0)); add(key + '.unread', fn(0, 1)); add(key + '.both', fn(1, 3));
