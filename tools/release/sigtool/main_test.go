@@ -6,11 +6,14 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"api-audit-explorer/internal/update"
 )
 
 const commitA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -413,8 +416,11 @@ func TestControlsig(t *testing.T) {
 	t.Setenv("UNRAVIS_KEY_PASSPHRASE", "correct horse battery")
 	var out bytes.Buffer
 	kp, pp := filepath.Join(dir, "k.json"), filepath.Join(dir, "k.pub")
-	if err := run([]string{"keygen", "-role", "rc", "-out", kp, "-pub", pp}, nil, &out); err != nil {
-		t.Fatal(err)
+	op, opp := filepath.Join(dir, "o.json"), filepath.Join(dir, "o.pub")
+	for _, a := range [][]string{{"keygen", "-role", "rc", "-out", kp, "-pub", pp}, {"keygen", "-role", "rc", "-out", op, "-pub", opp}} {
+		if err := run(a, nil, &out); err != nil {
+			t.Fatal(err)
+		}
 	}
 	cf, sg := filepath.Join(dir, "c.json"), filepath.Join(dir, "c.json.sig")
 	if err := run([]string{"control", "-channel", "rc", "-block", "0.1.0-rc.40", "-days", "10", "-out", cf}, nil, &out); err != nil {
@@ -424,24 +430,40 @@ func TestControlsig(t *testing.T) {
 		t.Fatal(err)
 	}
 	k, _ := readPub(pp)
+	o, _ := readPub(opp)
 	keys := filepath.Join(dir, "keys.txt")
-	os.WriteFile(keys, []byte("rc "+hexOf(k.Pub)+"\n"), 0o644)
-	empty := filepath.Join(dir, "empty.txt")
-	os.WriteFile(empty, []byte("# none\n"), 0o644)
+	os.WriteFile(keys, []byte("rc "+hexOf(o.Pub)+"\nrc "+hexOf(k.Pub)+"\n"), 0o644)
+	other := filepath.Join(dir, "other.txt")
+	os.WriteFile(other, []byte("rc "+hexOf(o.Pub)+"\n"), 0o644)
 	out.Reset()
-	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", empty + "," + keys, "-want", "rc"}, nil, &out); err != nil {
+	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", keys, "-want", "rc"}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	exp, err := time.Parse(time.RFC3339, strings.TrimSpace(out.String()))
 	if err != nil || exp.Before(time.Now().Add(9*24*time.Hour)) {
 		t.Fatalf("expiry %q %v", out.String(), err)
 	}
-	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", empty, "-want", "rc"}, nil, &out); err == nil {
-		t.Fatal("verified with no matching key")
+	// Another real key of the same role does not verify it.
+	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", other, "-want", "rc"}, nil, &out); err == nil {
+		t.Fatal("verified with a key that did not sign it")
 	}
+	// A valid but different expiry (one year later) parses fine and must fail on the signature alone.
 	b, _ := os.ReadFile(cf)
-	os.WriteFile(cf, bytes.Replace(b, []byte(`"expires": "`), []byte(`"expires": "1`), 1), 0o644)
-	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", keys, "-want", "rc"}, nil, &out); err == nil {
-		t.Fatal("an edited expiry verified")
+	c, err := update.ParseControl(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldExp, _ := json.Marshal(c.Expires)
+	newExp, _ := json.Marshal(c.Expires.AddDate(1, 0, 0))
+	edited := bytes.Replace(b, oldExp, newExp, 1)
+	if bytes.Equal(edited, b) {
+		t.Fatal("test could not edit the expiry")
+	}
+	if _, err := update.ParseControl(edited); err != nil {
+		t.Fatalf("edited file should still parse: %v", err)
+	}
+	os.WriteFile(cf, edited, 0o644)
+	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", keys, "-want", "rc"}, nil, &out); err == nil || !strings.Contains(err.Error(), "does not verify") {
+		t.Fatalf("an edited expiry verified: %v", err)
 	}
 }
