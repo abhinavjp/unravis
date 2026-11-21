@@ -55,6 +55,12 @@ type State struct {
 	// ControlSeq is the highest control seq accepted per channel. It is never lowered or dropped when a file expires, so a
 	// genuinely signed old file cannot be replayed to bring back a pause the owner lifted.
 	ControlSeq map[string]uint64 `json:"controlSeq,omitempty"`
+	// ControlHash is, per channel, the SHA-256 (hex) of the exact bytes of the control file accepted at ControlSeq. It is kept
+	// after that file expires, like ControlSeq, so the same seq with other bytes is refused.
+	ControlHash map[string]string `json:"controlHash,omitempty"`
+	// KeptBlocked is, per channel, the withdrawn list of the newest accepted control file. It does not end when that file
+	// expires: only a newer accepted control file replaces it. Pause and rollout still end at expiry.
+	KeptBlocked map[string][]string `json:"keptBlocked,omitempty"`
 }
 
 // Status is the result of one check.
@@ -117,6 +123,9 @@ type seenMem struct {
 	ctlSeq  map[string]uint64
 	drawFor map[string]string
 	draw    map[string]int
+	// control hash and withdrawn list, kept here too for the same reason
+	ctlHash map[string]string
+	kept    map[string][]string
 }
 
 var (
@@ -332,9 +341,10 @@ func (f *Fetcher) once1(ctx context.Context, base, want string, now func() time.
 	sum := sha256.Sum256(manifest)
 	hash := hex.EncodeToString(sum[:])
 	var ctl *Control // only worth a request when this release would be an upgrade
+	var ctlHash string
 	if cur, e1 := ParseVersion(f.Current); e1 == nil {
 		if next, e2 := ParseVersion(m.Version); e2 == nil && Compare(next, cur) > 0 {
-			ctl = f.fetchControl(ctx, base, want, now())
+			ctl, ctlHash = f.fetchControl(ctx, base, want, now())
 		}
 	}
 
@@ -380,7 +390,7 @@ func (f *Fetcher) once1(ctx context.Context, base, want string, now func() time.
 		note += " (could not save the update memory: " + err.Error() + ")"
 	}
 	if d == DecisionInstall {
-		hold, why := f.applyControl(&st, mem, ctl, want, m.Version, now(), f.Folder != "")
+		hold, why := f.applyControl(&st, mem, ctl, ctlHash, want, m.Version, now(), f.Folder != "")
 		_ = f.saveState(st) // the control file and the rollout draw are remembered either way
 		if hold {
 			return attempt{Result: Result{Status: StatusLatest, Manifest: m, Detail: why, Held: true}}
@@ -393,34 +403,44 @@ func (f *Fetcher) once1(ctx context.Context, base, want string, now func() time.
 // fetchControl reads and verifies the channel's control file. Any problem (missing, unreachable, bad signature) returns nil:
 // the caller then uses the last one it accepted, if it has not expired. A control file can only hold an update back, so
 // failing to read it never blocks a release by itself.
-func (f *Fetcher) fetchControl(ctx context.Context, base, want string, now time.Time) *Control {
+func (f *Fetcher) fetchControl(ctx context.Context, base, want string, now time.Time) (*Control, string) {
 	body, _, _, stop := f.get(ctx, base+"/"+want+"-control.json", "")
 	if stop != nil || body == nil {
-		return nil
+		return nil, ""
 	}
 	sig, _, _, stop := f.get(ctx, base+"/"+want+"-control.json.sig", "")
 	if stop != nil || sig == nil {
-		return nil
+		return nil, ""
 	}
 	c, err := VerifyControl(body, sig, Trust{Keys: f.Keys, Channel: f.Build, Want: want}, now)
 	if err != nil {
-		return nil
+		return nil, ""
 	}
-	return c
+	sum := sha256.Sum256(body)
+	return c, hex.EncodeToString(sum[:])
 }
 
 // applyControl merges (required: hold the release when there is no live control file at all) a freshly read control file into the state and says whether this machine must hold the release back.
 // A file with a lower seq than the highest ever accepted is ignored (a replay), even when the file that set that floor has
 // since expired. Call with stateMu held; the caller saves the state.
-func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, want, version string, now time.Time, required bool) (bool, string) {
+func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, freshHash, want, version string, now time.Time, required bool) (bool, string) {
 	if st.Control == nil {
 		st.Control = map[string]*Control{}
 	}
 	if st.ControlSeq == nil {
 		st.ControlSeq = map[string]uint64{}
 	}
+	if st.ControlHash == nil {
+		st.ControlHash = map[string]string{}
+	}
+	if st.KeptBlocked == nil {
+		st.KeptBlocked = map[string][]string{}
+	}
 	if mem.ctlSeq == nil {
 		mem.ctlSeq, mem.drawFor, mem.draw = map[string]uint64{}, map[string]string{}, map[string]int{}
+	}
+	if mem.ctlHash == nil {
+		mem.ctlHash, mem.kept = map[string]string{}, map[string][]string{}
 	}
 	cur := st.Control[want]
 	if cur != nil && cur.Channel != want {
@@ -430,17 +450,54 @@ func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, want, ve
 	if cur != nil {
 		floor = max(floor, cur.Seq)
 	}
-	if fresh != nil && fresh.Seq >= floor {
+	known := st.ControlHash[want]
+	if known == "" {
+		known = mem.ctlHash[want]
+	}
+	accept := false
+	switch {
+	case fresh == nil || fresh.Seq < floor:
+		// nothing new, or a replay
+	case fresh.Seq > floor:
+		accept = true
+	case known != "": // the same number: only the very same file counts
+		accept = known == freshHash
+	case cur != nil && cur.Seq == fresh.Seq: // a state written before hashes were kept: compare what the file says
+		accept = sameControl(cur, fresh)
+	default:
+		accept = true // first sight of this number
+	}
+	if accept {
 		cur, floor = fresh, fresh.Seq
 		st.Control[want] = fresh
+		st.ControlHash[want], mem.ctlHash[want] = freshHash, freshHash
 	}
 	st.ControlSeq[want], mem.ctlSeq[want] = floor, floor
-	if !ctlLive(cur, now) {
+	if ctlLive(cur, now) {
+		// The withdrawn list of the newest live file is kept past its expiry; only a newer accepted file replaces it.
+		if len(cur.Blocked) > 0 {
+			st.KeptBlocked[want] = append([]string(nil), cur.Blocked...)
+		} else {
+			delete(st.KeptBlocked, want)
+		}
+		mem.kept[want] = st.KeptBlocked[want]
+	} else {
 		delete(st.Control, want)
 		if required {
 			// A folder or share is writable by more people than the feed is, so a missing control file there could be a deleted one.
 			// Without a valid, unexpired control file the release is held until one is copied in (Set-Control.ps1, no switches).
 			return true, "the update folder has no valid control file, so version " + version + " is on hold; copy a current " + want + "-control.json and .sig into the folder"
+		}
+		kept := st.KeptBlocked[want]
+		if kept == nil {
+			kept = mem.kept[want]
+		} else {
+			mem.kept[want] = kept
+		}
+		for _, b := range kept {
+			if b == version {
+				return true, "version " + version + " was withdrawn"
+			}
 		}
 		return false, ""
 	}
@@ -459,6 +516,13 @@ func (f *Fetcher) applyControl(st *State, mem *seenMem, fresh *Control, want, ve
 		st.Draw[want], st.DrawFor[want] = mem.draw[want], version
 		return mem.draw[want]
 	})
+}
+
+// sameControl reports whether two control files say the same thing (the bytes were proven equal to this form when they were read).
+func sameControl(a, b *Control) bool {
+	x, err1 := json.Marshal(a)
+	y, err2 := json.Marshal(b)
+	return err1 == nil && err2 == nil && string(x) == string(y)
 }
 
 func isDev(v string) bool { _, err := ParseVersion(v); return err != nil }
@@ -570,6 +634,7 @@ func (f *Fetcher) loadState() (State, string, error) {
 		st.SeenHash = s.SeenHash
 	}
 	st.Control, st.DrawFor, st.Draw, st.ControlSeq = s.Control, s.DrawFor, s.Draw, s.ControlSeq
+	st.ControlHash, st.KeptBlocked = s.ControlHash, s.KeptBlocked
 	return st, "", nil
 }
 

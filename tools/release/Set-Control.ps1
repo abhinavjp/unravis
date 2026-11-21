@@ -120,12 +120,17 @@ try {
             # A genuine but older file put back (a replay) has a lower seq than the one this PC last published: refuse it.
             if ($last -and $null -ne $last.seq -and $seq -lt [uint64]$last.seq) { throw "The $Channel control file on the feed (seq $seq) is older than the one published from this PC (seq $($last.seq)). Someone put an old one back; check before signing." }
             if (-not $last) { Write-Host "Note: this PC has no record of earlier $Channel control files, so an old genuine one put back would not be noticed here." -ForegroundColor Yellow }
+            $old = Get-Content -Raw -LiteralPath $cj | ConvertFrom-Json
             if ($expAt -gt (Get-Date).ToUniversalTime()) {
-                $old = Get-Content -Raw -LiteralPath $cj | ConvertFrom-Json
                 if ($old.pause) { $Pause = $true }
                 $Block = @(@($old.blocked) + $Block | Where-Object { $_ } | Select-Object -Unique)
                 Write-Host "Keeping the holds in force: pause=$([bool]$old.pause), withdrawn: $($Block -join ', ')."
-            } else { Write-Host 'The control file on the feed has expired; nothing to keep from it.' -ForegroundColor Yellow }
+            } else {
+                # Machines keep the withdrawn list of the newest control file after it expires (until a newer file replaces it), so the
+                # next file must carry it too, or the withdrawal would be lifted by accident. A pause or a rollout ends with its file.
+                $Block = @(@($old.blocked) + $Block | Where-Object { $_ } | Select-Object -Unique)
+                Write-Host "The control file on the feed has expired; keeping its withdrawn versions: $($Block -join ', ')." -ForegroundColor Yellow
+            }
         } elseif ($lastLive) {
             throw "The $Channel control file is missing from the feed, but one published from this PC is still in force until $($last.expires). Someone removed it; check before signing a new one."
         }

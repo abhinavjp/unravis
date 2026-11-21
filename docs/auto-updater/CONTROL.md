@@ -25,8 +25,9 @@ It can only hold a release back. It cannot install anything, and it cannot lower
 1. The check reads and verifies the manifest as before.
 2. Only if that release would be an upgrade, it reads the control file. Nothing extra is fetched when the machine is up to date.
 3. The signature, the key role (an rc key signs only rc, a stable key only stable), the channel and the product are checked, with the same strict reading as the manifest.
-4. Anything wrong, missing or unreachable: the last control file the machine accepted still holds until its own expiry. Never a block by itself.
+4. Anything wrong, missing or unreachable: the last control file the machine accepted still holds until its own expiry. Never a block by itself. After that expiry a pause and a staged rollout end, but the machine keeps the withdrawn list of that file (`keptBlocked` in its update memory) until a newer accepted file replaces it. Only the exact withdrawn versions are held, so the next release is never held by an old list.
 5. A held release shows as "latest" with the reason in plain words (paused, withdrawn, or going out in stages). Manual "Check now" is held too.
+5a. **One number, one file.** The machine remembers the SHA-256 of the control file it accepted at each number. A different file with the same number is refused (the remembered one stays), whichever arrived first. The same file again is fine.
 6. Staged rollout: the machine draws a number 0 to 99 once per version and keeps it, so the answer does not flip between checks. It is never sent anywhere. Raise the percent to let more machines in; 100 lets all.
 
 The Blackbox recorder uses the same check, so it follows the same control file.
@@ -45,5 +46,6 @@ Each run replaces the whole file, so say everything you want to hold in that run
 ## Limits
 
 - A machine that has never been able to read the file cannot be held. The control file is a brake for machines that can reach the feed.
+- **To lift a withdrawal, publish a newer control file without it** (`Set-Control.ps1 -Channel rc -KeyFile ...` with no switches). `-KeepInForce` keeps the withdrawn list even when the file on the feed has expired, because machines keep it too.
 - A withdrawn version already installed stays installed. Rolling a machine back is a separate matter (see SILENT-UPDATE.md).
 - Not verified on a live feed yet. The BL-155 item stays unticked until a control file is published and a PC shows the hold.
