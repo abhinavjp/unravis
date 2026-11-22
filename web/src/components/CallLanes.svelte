@@ -630,7 +630,8 @@
     position: absolute;
     right: 0;
     top: 16px;
-    font-size: 10px;
+    font-size: 11px;
+    line-height: 12px;
   }
   .scall-xtitle {
     position: absolute;
@@ -657,7 +658,7 @@
     position: absolute;
     left: 4px;
     padding: 0 3px;
-    font-size: 10px;
+    font-size: 11px;
     line-height: 12px;
     background: var(--surface);
     pointer-events: none;

@@ -9,6 +9,8 @@ export type Step = (
   | { select: [string, string] }
   | { waitFor: string }
   | { scrollTo: string }
+  /** A mouse click on the middle of an element that takes no pointer events itself (a mark drawn under the chart's click layer): what a person's click does. */
+  | { clickCentre: string }
   | { theme: 'dark' | 'light' }
   | { aside: Step[] }
   /** Hands made-up fixture files (lib/fixtures.ts, by key) to a file input: [selector of the input, [fixture keys]]. */
@@ -120,6 +122,12 @@ async function runStep(page: Page, step: Step, env: Env, app?: AppName): Promise
     await page.locator(step.waitFor).first().waitFor({ state: 'visible' });
   } else if ('scrollTo' in step) {
     await page.locator(step.scrollTo).first().scrollIntoViewIfNeeded();
+  } else if ('clickCentre' in step) {
+    const target = page.locator(step.clickCentre).first();
+    await target.scrollIntoViewIfNeeded();
+    const box = await target.boundingBox();
+    if (!box) throw new Error('clickCentre: no box for ' + step.clickCentre);
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   } else if ('upload' in step) {
     // The real file input of the screen (a visually hidden <input type=file>): the page takes the files as if they were chosen in the dialog.
     await page.locator(step.upload[0]).first().setInputFiles(makeUploads(step.upload[1]));

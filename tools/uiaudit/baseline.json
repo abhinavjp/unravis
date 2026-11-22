@@ -63,6 +63,28 @@
       "label": "Show the programs*",
       "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
       "item": "BL-475"
+    },
+    {
+      "screen": "x-slow-call",
+      "check": "small-target",
+      "label": "Timeline",
+      "why": "The Back to Timeline button of the Slow call screen is 50 x 19 px. Found when the audit reached this screen (BL-483); filed as BL-492, not changed here.",
+      "item": "BL-492"
+    },
+    {
+      "screen": "x-slow-call",
+      "check": "small-target",
+      "label": "Payroll.Run*",
+      "why": "The bars of the lane charts are 8 to 10 px tall (the Slow call lane rule keeps the lanes this height). Found when the audit reached this screen (BL-483); filed as BL-492, not changed here.",
+      "item": "BL-492"
+    },
+    {
+      "screen": "x-slow-call",
+      "size": "phone",
+      "check": "small-target",
+      "label": "The part of the strip the big chart shows*",
+      "why": "The minimap box is 17 x 64 px on a phone. Found when the audit reached this screen (BL-483); filed as BL-492, not changed here.",
+      "item": "BL-492"
     }
   ]
 }
