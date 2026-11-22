@@ -72,7 +72,7 @@ func readOpenedSettings(path string) ([]byte, error) {
 	clean := filepath.Clean(path)
 	p, err := windows.UTF16PtrFromString(clean)
 	if err != nil {
-		return nil, err
+		return nil, refuse(WordPath, err)
 	}
 	var h windows.Handle
 	for try := 0; ; try++ {

@@ -64,9 +64,9 @@ func TestRunSQLServiceStartsFromTheVerifiedReadersBytes(t *testing.T) {
 	}
 }
 
-// The three words that mean "this account or a share mode cannot do the read" fall back, once, to the by-path proof and read.
-func TestRunSQLServiceFallsBackOnlyOnTheThreeOperationalWords(t *testing.T) {
-	for _, w := range []string{blackbox.WordAccess, blackbox.WordUnreadable, blackbox.WordSharing} {
+// The two words that mean "this account cannot open or read the file" fall back, once, to the by-path proof and read.
+func TestRunSQLServiceFallsBackOnlyOnAccessAndUnreadable(t *testing.T) {
+	for _, w := range []string{blackbox.WordAccess, blackbox.WordUnreadable} {
 		t.Run(w, func(t *testing.T) {
 			r := startWith(t, fallbackFile(t), refusing(w), pass)
 			if r.err != nil || !r.started || r.proofs != 1 || r.cfg.Name != "fallback" {
@@ -80,11 +80,13 @@ func TestRunSQLServiceFallsBackOnlyOnTheThreeOperationalWords(t *testing.T) {
 	}
 }
 
-// Every other word is a verdict on the file: the start stops with the fixed sentence, the by-path proof is never tried and nothing is read
-// by path.
+// Every other word, including sharing, is a verdict on the file (or a timing signal): the start stops with the fixed sentence, the by-path
+// proof is never tried and nothing is read by path.
 func TestRunSQLServiceStopsOnEveryOtherWord(t *testing.T) {
-	for _, w := range []string{blackbox.WordPath, blackbox.WordChain, blackbox.WordNotFound, blackbox.WordNotDisk, blackbox.WordFolder, blackbox.WordLink,
-		blackbox.WordNames, blackbox.WordTooLarge, blackbox.WordMoved, blackbox.WordOwner, blackbox.WordList, blackbox.WordNoReader} {
+	for _, w := range blackbox.Words() {
+		if w == blackbox.WordAccess || w == blackbox.WordUnreadable {
+			continue
+		}
 		t.Run(w, func(t *testing.T) {
 			r := startWith(t, fallbackFile(t), refusing(w), func(string) error { t.Error("the weaker by-path proof was tried"); return nil })
 			if !errors.Is(r.err, errSQLSettingsNotLocked) || r.started || r.proofs != 0 {
@@ -109,16 +111,21 @@ func TestRunSQLServiceNilReaderRefuses(t *testing.T) {
 	}
 }
 
-// A reader error with no word, or with a word that is not in the fixed list, is "unreadable" and may fall back; its text is never logged.
-func TestRunSQLServiceUntaggedAndUnknownWordsAreUnreadable(t *testing.T) {
+// An error with no word, a word that is not in the fixed list, and a refusal built by hand all STOP the start (fail closed). They are
+// logged as "unreadable" (the clamp is for the log only) and their text never reaches a log line.
+func TestRunSQLServiceUntaggedAndUnknownWordsStop(t *testing.T) {
 	for name, read := range map[string]func(string) ([]byte, error){
 		"untagged": func(string) ([]byte, error) { return nil, errors.New(leakyCause) },
 		"unknown":  refusing(`C:\secret free text`),
+		"by hand":  func(string) ([]byte, error) { return nil, &blackbox.SettingsRefusal{Word: blackbox.WordAccess} },
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := startWith(t, fallbackFile(t), read, pass)
-			if r.err != nil || !r.started || len(r.logged) != 1 || !strings.Contains(r.logged[0], "("+blackbox.WordUnreadable+")") {
-				t.Fatalf("err=%v started=%v log=%q, want a fallback logged as unreadable", r.err, r.started, r.logged)
+			r := startWith(t, fallbackFile(t), read, func(string) error { t.Error("the weaker by-path proof was tried"); return nil })
+			if !errors.Is(r.err, errSQLSettingsNotLocked) || r.started || r.proofs != 0 {
+				t.Fatalf("err=%v started=%v proofs=%d, want the fixed sentence and no start", r.err, r.started, r.proofs)
+			}
+			if len(r.logged) != 1 || !strings.HasPrefix(r.logged[0], "sql: settings-not-locked (") {
+				t.Fatalf("log = %q, want one not-locked line", r.logged)
 			}
 			noLeak(t, r)
 		})

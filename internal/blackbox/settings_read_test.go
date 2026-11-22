@@ -149,18 +149,47 @@ func TestSettingsHandleProblemNamesTheCause(t *testing.T) {
 	}
 }
 
-// The by-path fallback is allowed for exactly three words (BL-140 PR 7, temporary until probe P1 passes); every other word stops the start.
-func TestFallbackAllowedOnlyForTheThreeOperationalWords(t *testing.T) {
-	all := []string{WordNoReader, WordPath, WordChain, WordNotFound, WordSharing, WordAccess, WordNotDisk, WordFolder, WordLink, WordNames,
-		WordTooLarge, WordMoved, WordOwner, WordList, WordUnreadable}
-	for _, w := range all {
-		want := w == WordAccess || w == WordUnreadable || w == WordSharing
+// The by-path fallback is allowed for exactly two words (BL-140 PR 7, temporary until probe P1 passes); every other word, including
+// sharing and any word not in the list, stops the start. The list is the one allWords, so a new word is covered without editing this test.
+func TestFallbackAllowedOnlyForAccessAndUnreadable(t *testing.T) {
+	for _, w := range Words() {
+		want := w == WordAccess || w == WordUnreadable
 		if FallbackAllowed(w) != want {
 			t.Errorf("FallbackAllowed(%q) = %v, want %v", w, !want, want)
 		}
+		if got := FallbackAllowedFor(NewSettingsRefusal(w, errors.New("x"))); got != want {
+			t.Errorf("FallbackAllowedFor(%q) = %v, want %v", w, got, want)
+		}
 	}
-	if FallbackAllowed("") || FallbackAllowed("anything else") {
-		t.Error("an unknown word must not allow the fallback")
+	for _, w := range []string{"", "anything else", `C:\secret`} {
+		if FallbackAllowed(w) || FallbackAllowedFor(NewSettingsRefusal(w, errors.New("x"))) {
+			t.Errorf("an unknown word %q must not allow the fallback", w)
+		}
+	}
+	if FallbackAllowedFor(nil) || FallbackAllowedFor(errors.New("untagged")) || FallbackAllowedFor(&SettingsRefusal{Word: WordAccess}) {
+		t.Error("nil, untagged and hand-built refusals must stop the start")
+	}
+}
+
+// ParseVerifiedSettings keeps the decision taken from the reader's own error: an untagged or unknown error is logged as unreadable but
+// must not fall back, while a real access refusal still can.
+func TestParseVerifiedSettingsFallbackDecisionIgnoresTheClampedWord(t *testing.T) {
+	for name, c := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"access":   {NewSettingsRefusal(WordAccess, errors.New("x")), true},
+		"sharing":  {NewSettingsRefusal(WordSharing, errors.New("x")), false},
+		"untagged": {errors.New("x"), false},
+		"unknown":  {NewSettingsRefusal("new-word", errors.New("x")), false},
+	} {
+		_, err := ParseVerifiedSettings(func(string) ([]byte, error) { return nil, c.err }, "p", nil)
+		if FallbackAllowedFor(err) != c.want {
+			t.Errorf("%s: FallbackAllowedFor = %v, want %v", name, !c.want, c.want)
+		}
+	}
+	if _, err := ParseVerifiedSettings(nil, "p", nil); FallbackAllowedFor(err) {
+		t.Error("a nil reader must not fall back")
 	}
 }
 

@@ -31,6 +31,9 @@ const (
 type SettingsRefusal struct {
 	Word string
 	err  error
+	// fallbackOK is decided once, from the word the reader itself gave (FallbackAllowed), never from a word that was clamped for the log. The
+	// zero value is STOP, so a refusal built any other way stops the start.
+	fallbackOK bool
 }
 
 func (r *SettingsRefusal) Error() string {
@@ -42,19 +45,32 @@ func (r *SettingsRefusal) Error() string {
 func (r *SettingsRefusal) Unwrap() error { return r.err }
 
 // refuse tags err with its fixed word.
-func refuse(word string, err error) error { return &SettingsRefusal{Word: word, err: err} }
+func refuse(word string, err error) error {
+	return &SettingsRefusal{Word: word, err: err, fallbackOK: FallbackAllowed(word)}
+}
 
 // NewSettingsRefusal is refuse for callers outside the package (tests): err is the cause, which is kept for the reader's own callers and
 // is never logged.
 func NewSettingsRefusal(word string, err error) error { return refuse(word, err) }
 
-var knownWords = map[string]bool{
-	WordNoReader: true, WordPath: true, WordChain: true, WordNotFound: true, WordSharing: true, WordAccess: true, WordNotDisk: true,
-	WordFolder: true, WordLink: true, WordNames: true, WordTooLarge: true, WordMoved: true, WordOwner: true, WordList: true, WordUnreadable: true,
-}
+// allWords is the one list of the words above. knownWords and Words are made from it, so a new word has one place to go.
+var allWords = []string{WordNoReader, WordPath, WordChain, WordNotFound, WordSharing, WordAccess, WordNotDisk, WordFolder, WordLink, WordNames,
+	WordTooLarge, WordMoved, WordOwner, WordList, WordUnreadable}
 
-// RefusalWord is the fixed word for an error from the settings reader: its own word, or WordUnreadable for anything untagged or any word
-// that is not in the list above, so free text can never reach a log line.
+var knownWords = func() map[string]bool {
+	m := make(map[string]bool, len(allWords))
+	for _, w := range allWords {
+		m[w] = true
+	}
+	return m
+}()
+
+// Words is a copy of the list of fixed words (for tests).
+func Words() []string { return append([]string(nil), allWords...) }
+
+// RefusalWord is the fixed word for an error from the settings reader, for the LOG only: its own word, or WordUnreadable for anything
+// untagged or any word that is not in the list, so free text can never reach a log line. It must not be used to decide the fallback: the
+// clamp turns an unknown word into a fallback word. Use FallbackAllowedFor.
 func RefusalWord(err error) string {
 	var r *SettingsRefusal
 	if errors.As(err, &r) && knownWords[r.Word] {
@@ -63,13 +79,20 @@ func RefusalWord(err error) string {
 	return WordUnreadable
 }
 
-// FallbackAllowed says whether the service may, for now, fall back to the by-path proof and read after the verified read refused with this
-// word. Only the three words that mean "this account or a share mode cannot do the read" (WordAccess, WordUnreadable, WordSharing) are
-// allowed: they are the live unknowns of probe P1. Every other word is a verdict on the file (or no reader), and the by-path proof is weaker
-// than the handle proof (it never checks the link count or the final path) and re-opens the proof-to-read window, so it stops the start.
-// TEMPORARY: the fallback is removed, and this function with it, once P1 passes.
+// FallbackAllowed says whether a known refusal word may, for now, fall back to the by-path proof and read. Only WordAccess and
+// WordUnreadable (this account cannot open or read the file: the live unknowns of probe P1) are allowed. Every other word, a word that is not
+// in the list, and the word "sharing" stop the start: they are verdicts on the file, or (sharing) a signal an attacker can time with an
+// oplock, and the by-path proof is weaker than the handle proof (no link count, no final path, no share-deny-write during the read, an
+// unbounded read) and re-opens the proof-to-read window. TEMPORARY: removed, with FallbackAllowedFor, once P1 passes.
 func FallbackAllowed(word string) bool {
-	return word == WordAccess || word == WordUnreadable || word == WordSharing
+	return knownWords[word] && (word == WordAccess || word == WordUnreadable)
+}
+
+// FallbackAllowedFor is the decision for an error from ParseVerifiedSettings (or from a reader): true only for a refusal that carries a word
+// that FallbackAllowed lets through. An untagged error, an unknown word, a nil error and anything built by hand stop the start (fail closed).
+func FallbackAllowedFor(err error) bool {
+	var r *SettingsRefusal
+	return errors.As(err, &r) && r.fallbackOK
 }
 
 // ParseVerifiedSettings is how the SQL service gets its settings: read is the only thing that touches the disk (OSEnv.ReadVerifiedSettings,
@@ -95,7 +118,8 @@ func ParseVerifiedSettings(read func(path string) ([]byte, error), path string, 
 		if note != nil {
 			note(word)
 		}
-		return Config{}, refuse(word, ErrSettingsNotProven)
+		// The fallback decision is taken from the reader's own error, before the word is clamped for the log.
+		return Config{}, &SettingsRefusal{Word: word, err: ErrSettingsNotProven, fallbackOK: FallbackAllowedFor(err)}
 	}
 	return ParseConfig(data)
 }

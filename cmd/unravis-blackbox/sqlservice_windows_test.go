@@ -53,7 +53,13 @@ func TestSQLServiceHandlerStopsCleanly(t *testing.T) {
 	if st.Accepts&svc.AcceptStop == 0 || st.Accepts&svc.AcceptShutdown == 0 {
 		t.Fatalf("the SQL service must accept Stop and Shutdown: %v", st.Accepts)
 	}
-	<-blocked
+	select {
+	case <-blocked:
+	case r := <-done:
+		t.Fatalf("the service ended before the runner started (ok=%v code=%d): the settings were refused or unreadable", r.ok, r.code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the runner did not start within 5 seconds")
+	}
 	req <- svc.ChangeRequest{Cmd: svc.Stop}
 	waitState(svc.StopPending)
 	select {

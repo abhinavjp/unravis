@@ -101,8 +101,8 @@ type deps struct {
 	verifyConfig func(path string) error
 	// readSettings is the verified reader (BL-140 PR 7): it opens the settings file
 	// once, proves it on that handle and returns the bytes. The SQL service tries it
-	// first. nil refuses the start (fail closed). For the words access, unreadable
-	// and sharing only, a TEMPORARY fallback to verifyConfig plus a read by path
+	// first. nil refuses the start (fail closed). For the words access and unreadable
+	// only, a TEMPORARY fallback to verifyConfig plus a read by path
 	// applies (removed once probe P1 passes).
 	readSettings func(path string) ([]byte, error)
 	// elev is the Windows elevate helper. No command here may use it (C14):
@@ -683,21 +683,21 @@ var errSQLSettingsNotLocked = errors.New("The SQL service did not start: its set
 
 // loadSQLSettings reads the SQL service settings. BL-140: the service reads this file with its own rights at every start, so the file is
 // proven here, not only at install-sql and enable-sql. It reads through the verified reader (one open, proof on that handle, no second open
-// by path). A missing reader, or a refusal for any word except access, unreadable and sharing, stops the start with the fixed "not locked"
-// sentence and logs the fixed word.
+// by path). A missing reader, an untagged or unknown refusal, or a refusal for any word except access and unreadable, stops the start with
+// the fixed "not locked" sentence and logs the fixed word.
 //
-// TEMPORARY FALLBACK (removed once probe P1 passes on the PC, see docs/design/bl-140-settings-folder-proof.md decision 7): for those three
-// words only (this account or a share mode cannot do the read, the open unknowns of P1) the service logs one line and uses the old by-path
-// proof plus a read by path. That path is weaker than the handle proof (it does not check the link count or the final path) and it
-// re-opens the proof-to-read window, so it is allowed only where the verified read could not run at all. A missing by-path proof also
-// refuses. Bytes that were proven but do not parse are a settings error and are returned as they are.
+// TEMPORARY FALLBACK (removed once probe P1 passes on the PC, see docs/design/bl-140-settings-folder-proof.md decision 7): for those two
+// words only (this account cannot open or read the file, the open unknowns of P1) the service logs one line and uses the old by-path proof
+// plus a read by path. That path is weaker than the handle proof (no link count, no final path, no share-deny-write during the read, an
+// unbounded read) and it re-opens the proof-to-read window; a person who controls a folder in the path can force "access" and so reach it.
+// It is allowed only where the verified read could not run at all. A missing by-path proof also refuses. Bytes that were proven but do not parse are a settings error and are returned as they are.
 func loadSQLSettings(path string, d deps, logf func(string, ...any)) (blackbox.Config, error) {
 	cfg, err := blackbox.ParseVerifiedSettings(d.readSettings, path, nil)
 	if err == nil || !errors.Is(err, blackbox.ErrSettingsNotProven) {
 		return cfg, err
 	}
-	word := blackbox.RefusalWord(err)
-	if !blackbox.FallbackAllowed(word) {
+	word := blackbox.RefusalWord(err) // for the log only; the decision is taken from the reader's own error
+	if !blackbox.FallbackAllowedFor(err) {
 		if logf != nil {
 			logf("sql: settings-not-locked (%s)", word)
 		}
