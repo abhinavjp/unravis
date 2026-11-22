@@ -32,6 +32,7 @@ import (
 	"api-audit-explorer/internal/instance"
 	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/mcp"
+	"api-audit-explorer/internal/pipesrv"
 	"api-audit-explorer/internal/server"
 	"api-audit-explorer/internal/store"
 	"api-audit-explorer/internal/tray"
@@ -79,6 +80,9 @@ type runFlags struct {
 	quit                bool
 	checkUpdate         bool
 	background          bool
+	pipeServer          bool
+	pipeOnly            bool
+	loopback            bool
 }
 
 // parseFlags parses and validates the command line. Every privacy and
@@ -98,6 +102,9 @@ func parseFlags(args []string) (runFlags, error) {
 	flags.BoolVar(&f.quit, "quit", false, "ask the running Unravis to quit")
 	flags.BoolVar(&f.checkUpdate, "check-update", false, "check the signed update feed once, print the answer as one line of JSON and exit (0 = latest or newer available, 2 = could not check); keeps no state")
 	flags.BoolVar(&f.background, "background", false, "start in the tray without opening a browser; used by start at sign-in")
+	flags.BoolVar(&f.pipeServer, "pipe-server", false, "serve the dashboard over two secured named pipes (ui and ag) and open no TCP port unless --loopback is also given (Windows)")
+	flags.BoolVar(&f.pipeOnly, "pipe-only", false, "like --pipe-server, and never opens a TCP port or writes a session file; used by the desktop shell (Windows)")
+	flags.BoolVar(&f.loopback, "loopback", false, "with --pipe-server: also keep the loopback listener and the session file, as browser mode does")
 	if err := flags.Parse(args); err != nil {
 		return runFlags{}, err
 	}
@@ -122,6 +129,9 @@ func parseFlags(args []string) (runFlags, error) {
 	}
 	if f.background && f.mcp {
 		return runFlags{}, fmt.Errorf("--background starts the dashboard; do not combine it with --mcp")
+	}
+	if err := checkPipeFlags(f); err != nil {
+		return runFlags{}, err
 	}
 	if f.port < 0 || f.port > 65535 {
 		return runFlags{}, fmt.Errorf("port must be between 0 and 65535")
@@ -184,8 +194,9 @@ func run(args []string, getenv func(string) string) error {
 	// One interactive copy per user. --no-browser (the e2e launcher) never
 	// reaches the gate: no mutex, no events. --mcp, --version and --quit have
 	// already returned.
-	interactive := !f.noBrowser && hostOS == "windows"
-	background := f.background
+	pipeMode := f.pipeServer || f.pipeOnly
+	interactive := !f.noBrowser && hostOS == "windows" && !pipeMode
+	background := f.background || pipeMode
 	openBrowser := interactive && !background
 	var instanceNames instance.Names
 	if interactive {
@@ -223,9 +234,22 @@ func run(args []string, getenv func(string) string) error {
 	defer wired.closeRepo()
 	serverOptions := wired.options
 
-	listener, err := listenLoopback(f.port)
-	if err != nil {
-		return err
+	// Pipe mode opens the two pipes and, only with --loopback, the TCP listener; --pipe-only never has one.
+	var listener net.Listener
+	if !pipeMode || f.loopback {
+		if listener, err = listenTCP(f.port); err != nil {
+			return err
+		}
+	}
+	var pipes *pipesrv.Pipes
+	if pipeMode {
+		if pipes, err = openPipes(); err != nil {
+			if listener != nil {
+				_ = listener.Close()
+			}
+			return err
+		}
+		defer func() { _ = pipes.Close() }()
 	}
 	// Listen for Ctrl+C before the session file exists, so an early interrupt
 	// still takes the clean path that removes it.
@@ -235,7 +259,10 @@ func run(args []string, getenv func(string) string) error {
 	defer cancel()
 	signalContext, stop := signal.NotifyContext(appCtx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	localURL := "http://" + listener.Addr().String()
+	localURL := ""
+	if listener != nil {
+		localURL = "http://" + listener.Addr().String()
+	}
 	// The session token never goes on a command line or into a log line. The
 	// browser is opened on a single-use /launch link; the server answers it with
 	// a redirect that carries the token in the fragment, which the browser never
@@ -308,11 +335,22 @@ func run(args []string, getenv func(string) string) error {
 	// imports stop and roll back before the store closes.
 	defer server.CancelImports(served)
 	httpServer := newHTTPServer(served)
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- httpServer.Serve(listener) }()
-
-	removeSession := writeSessionFile(getenv, listener, token)
-	defer removeSession()
+	serveDone := make(chan error, 3)
+	var stopServers stoppers
+	removeSession := func() {}
+	if listener != nil {
+		stopServers = append(stopServers, httpServer)
+		go func() { serveDone <- httpServer.Serve(listener) }()
+		removeSession = writeSessionFile(getenv, listener, token)
+		defer removeSession()
+	}
+	if pipes != nil {
+		group := pipesrv.Serve(pipes, pipesrv.Handler(served, token), newHTTPServer)
+		stopServers = append(stopServers, group)
+		go func() { serveDone <- <-group.Done() }()
+		log.Printf("Serving over pipes ui=%s ag=%s", pipes.UIName, pipes.AGName)
+	}
+	afterServing(cancel)
 
 	if interactive {
 		defer startInteractive(appCtx, cancel, reo, instanceNames)()
@@ -323,15 +361,17 @@ func run(args []string, getenv func(string) string) error {
 		opened = openInBrowser(launchLink(localURL, code)) == nil
 	}
 	printed := false
-	if code == "" {
+	if pipeMode {
+		log.Printf("%s running as a pipe server (demo=%t, loopback=%t)", version.Short(), f.demo, listener != nil)
+	} else if code == "" {
 		log.Printf("%s running in the tray at %s (demo=%t)", version.Short(), localURL, f.demo)
 	} else {
 		printed = printStartup(startupLines(localURL, code, codeLife, f.demo, opened), opened, func(s string) { log.Print(s) }, os.Stderr)
 	}
 	if logFile != nil {
-		logStart(logFile, getenv, listener, f.demo, launchOutcome(opened, printed))
+		logStart(logFile, getenv, listenerPort(listener), f.demo, launchOutcome(opened, printed))
 	}
-	err = awaitShutdown(signalContext, serveDone, removeSession, httpServer)
+	err = awaitShutdown(signalContext, serveDone, removeSession, stopServers)
 	endHealth(err)
 	return err
 }
@@ -504,7 +544,7 @@ func launchOutcome(opened, printed bool) string {
 }
 
 // logStart writes the start line to the support log: what is running, where, and how the user gets in.
-func logStart(logFile *applog.File, getenv func(string) string, listener net.Listener, demo bool, launch string) {
+func logStart(logFile *applog.File, getenv func(string) string, port int, demo bool, launch string) {
 	layout := datadir.Default(getenv)
 	dataDir := layout.Base
 	if layout.Root != "" {
@@ -513,7 +553,7 @@ func logStart(logFile *applog.File, getenv func(string) string, listener net.Lis
 	logFile.Logger.Info("start",
 		"version", version.Version,
 		"os", runtime.GOOS+"/"+runtime.GOARCH,
-		"port", listener.Addr().(*net.TCPAddr).Port,
+		"port", port,
 		"data_dir", dataDir,
 		"demo", demo,
 		"launch", launch)

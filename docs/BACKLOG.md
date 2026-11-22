@@ -196,6 +196,7 @@ Spec per area: `docs/desktop/spec/`. Items per area: `docs/desktop/groom/` (scop
 
 - [ ] **BL-300** Baseline measurements of today's browser runtime (size M, P0; see `docs/desktop/groom/01-shell-sidecar.md`)
 - [ ] **BL-301** Go `--pipe-server` mode on a secured named pipe (size ?, ?; see `docs/desktop/groom/01-shell-sidecar.md`)
+  - Status 2026-11-22 (not ticked, needs a Windows run): code and Linux tests done. `--pipe-server` / `--pipe-only` serve the mux over `pipesec` ui and ag pipes (`internal/pipesrv`); `TestPipeOnlyNoListenerNoSessionFile` passes on Linux with fake pipes. Windows CI job `desktop-sidecar` runs the real-pipe test and `tools/desktop/Test-Sidecar.ps1 -Check NoPort`; not yet seen green. Not verified: real cases over the ui pipe equal loopback bytes (live PC), second-user/network denial, baseline compare.
 - [ ] **BL-302** Attach-or-start, singleton and locator file (size M, P1; see `docs/desktop/groom/01-shell-sidecar.md`)
 - [ ] **BL-303** Shutdown RPC with SQLite WAL checkpoint (size S, P1; see `docs/desktop/groom/01-shell-sidecar.md`)
 - [ ] **BL-304** Refuse-administrator gate (Go side) (size S, P1; see `docs/desktop/groom/01-shell-sidecar.md`)

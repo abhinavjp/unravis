@@ -240,9 +240,9 @@ jobs:
       - name: Vet (default and e2e tags)
         shell: pwsh
         run: |
-          go vet ./internal/pipesec/...
+          go vet ./internal/pipesec/... ./internal/pipesrv/... ./cmd/audit-explorer/...
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          go vet -tags e2e ./internal/pipesec/...
+          go vet -tags e2e ./internal/pipesec/... ./internal/pipesrv/...
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Pipe security tests
@@ -252,6 +252,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           go test -count=1 -tags e2e ./internal/pipesec/...
           if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Pipe server tests (BL-301)
+        # internal/pipesrv serves the handler over the real ui and ag pipes; cmd/audit-explorer holds TestPipeOnlyNoListenerNoSessionFile
+        # and the flag rules. The Windows build job runs them too (go test ./...).
+        shell: pwsh
+        run: |
+          go test -count=1 -v ./internal/pipesrv/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          go test -count=1 -v -run 'Pipe|ListenerPort' ./cmd/audit-explorer/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Real exe in pipe-only mode (no port, no session file, both pipes)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check NoPort
 
   linux-gates:
     # BL-441. Lint, vet, race tests against a known-failure baseline, and the web checks, on Linux.
