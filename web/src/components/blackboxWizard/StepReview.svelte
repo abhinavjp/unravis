@@ -159,8 +159,9 @@
   .value { min-width: 0; overflow-wrap: anywhere; }
   .paths { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-1); }
   code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12.5px; overflow-wrap: anywhere; }
-  /* 24px tap target (BL-475): the link sits in a 13px text row (18.84px); padding and an equal negative margin add the hit area without moving the row. */
-  .with-change .change { box-sizing: border-box; min-height: 24px; padding: 2.58px var(--space-1); margin-block: -2.58px; }
+  /* 24px tap target (BL-475): the link sits in a 13px text row (18.84px). The hit area grows in a pseudo-element, so the box, the row and the focus ring stay exactly as they were. */
+  .with-change .change { position: relative; min-height: 0; padding: 0 var(--space-1); }
+  .with-change .change::after { content: ''; position: absolute; inset: -3px 0; }
   .tag { display: inline-block; margin-left: var(--space-2); padding: 1px var(--space-2); border: 1px solid var(--warn); border-radius: var(--radius-sm); color: var(--warn); font-size: var(--fs-2); white-space: nowrap; }
   .change { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; min-width: 40px; min-height: 32px; padding: var(--space-2) var(--space-1); border: 0; background: transparent; color: var(--text-2); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
   .change:hover:not(:disabled) { color: var(--text); }

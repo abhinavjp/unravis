@@ -13,6 +13,22 @@
   // ---------- small helpers ----------
   function cs(el) { return getComputedStyle(el); }
   function rectOf(el) { return el.getBoundingClientRect(); }
+  /** The box of an element joined with its absolutely positioned, clickable ::before and ::after (the control must be positioned: the pseudo-element is placed against its padding box). */
+  function hitArea(el, r) {
+    var cs0 = getComputedStyle(el);
+    var out = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    if (cs0.position !== 'static') {
+      ['::before', '::after'].forEach(function (p) {
+        var s = getComputedStyle(el, p);
+        if (!s || s.content === 'none' || s.content === 'normal' || s.position !== 'absolute' || s.pointerEvents === 'none' || s.display === 'none' || s.visibility === 'hidden') return;
+        var w = parseFloat(s.width), h = parseFloat(s.height), l = parseFloat(s.left), t = parseFloat(s.top);
+        if (!(w > 0 && h > 0) || isNaN(l) || isNaN(t)) return;
+        var x = r.left + (parseFloat(cs0.borderLeftWidth) || 0) + l, y = r.top + (parseFloat(cs0.borderTopWidth) || 0) + t;
+        out = { left: Math.min(out.left, x), top: Math.min(out.top, y), right: Math.max(out.right, x + w), bottom: Math.max(out.bottom, y + h) };
+      });
+    }
+    return { width: out.right - out.left, height: out.bottom - out.top };
+  }
   function docRect(r) { return { x: Math.round(r.left + scrollX), y: Math.round(r.top + scrollY), w: Math.round(r.width), h: Math.round(r.height) }; }
 
   function ownText(el) {
@@ -317,8 +333,11 @@
       var s = cs(box);
       // A link in the middle of a sentence is exempt (WCAG 2.5.8): inline display inside a text block.
       if (el.tagName === 'A' && s.display === 'inline') return;
-      if (r.width < 24 || r.height < 24) {
-        add('small-target', 'warn', 'Tap target is ' + Math.round(r.width) + ' x ' + Math.round(r.height) + ' px (the web accessibility rule WCAG 2.2 asks for at least 24 x 24).', el);
+      // A hit area drawn by an absolutely positioned ::before or ::after of the control (a click on it is a click on the control) counts
+      // as part of the target: the box and the focus ring stay as they are and only the area that answers a press grows.
+      var hit = (r.width < 24 || r.height < 24) ? hitArea(box, r) : r;
+      if (hit.width < 24 || hit.height < 24) {
+        add('small-target', 'warn', 'Tap target is ' + Math.round(hit.width) + ' x ' + Math.round(hit.height) + ' px (the web accessibility rule WCAG 2.2 asks for at least 24 x 24).', el);
         small.push(el);
       } else if (phone && (r.width < 40 || r.height < 36) && s.display !== 'inline') {
         add('small-target', 'info', 'Tap target is ' + Math.round(r.width) + ' x ' + Math.round(r.height) + ' px on a phone (a thumb needs about 44 x 44).', el);

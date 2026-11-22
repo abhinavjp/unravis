@@ -547,3 +547,4 @@ The archive suite runs before a release and on a schedule, not in the default ru
 | UIFIX-14c | ui-layout.spec.ts | covered |
 | UIFIX-14d | ui-layout.spec.ts | covered |
 | UIFIX-14e | ui-layout.spec.ts | covered |
+| UIFIX-14f | ui-layout.spec.ts | covered |
