@@ -30,7 +30,7 @@ func stopServer(s net.Conn, stopped func()) {
 		return
 	}
 	if bytes.Equal(buf, encodeStop(binary.LittleEndian.Uint64(buf[20:]))) {
-		s.Write(okReply(binary.LittleEndian.Uint64(buf[20:])))
+		_, _ = s.Write(okReply(binary.LittleEndian.Uint64(buf[20:])))
 		if stopped != nil {
 			stopped()
 		}
@@ -106,15 +106,15 @@ func TestProbeHostileServer(t *testing.T) {
 			readStart(s)
 			b := okReply(7)
 			b[3] ^= 0xFF
-			s.Write(b)
-			io.Copy(io.Discard, s)
+			_, _ = s.Write(b)
+			_, _ = io.Copy(io.Discard, s)
 		}},
 		{name: "size 65535", reason: ReasonBadReply, first: func(s net.Conn, _ <-chan struct{}) {
 			readStart(s)
 			b := okReply(7)
 			binary.LittleEndian.PutUint16(b[14:], 65535)
-			s.Write(b)
-			io.Copy(io.Discard, s)
+			_, _ = s.Write(b)
+			_, _ = io.Copy(io.Discard, s)
 		}},
 		{name: "reply in one byte writes is accepted", reason: "",
 			first: good(nil, writeSplit, preambleThen(nil)),
@@ -125,7 +125,7 @@ func TestProbeHostileServer(t *testing.T) {
 			}},
 		{name: "reply stalls forever", reason: ReasonTimeout, first: func(s net.Conn, _ <-chan struct{}) {
 			readStart(s)
-			io.Copy(io.Discard, s)
+			_, _ = io.Copy(io.Discard, s)
 		}, check: func(t *testing.T, res Result, d *fakeDialer) {
 			if d.dials() != 1 {
 				t.Fatalf("%d dials, a stop must not follow an unanswered start", d.dials())
@@ -134,13 +134,13 @@ func TestProbeHostileServer(t *testing.T) {
 		{name: "server closes at once", reason: ReasonBadReply, first: func(s net.Conn, _ <-chan struct{}) {}},
 		{name: "reply cut in the header", reason: ReasonBadReply, first: func(s net.Conn, _ <-chan struct{}) {
 			readStart(s)
-			s.Write(okReply(7)[:11])
+			_, _ = s.Write(okReply(7)[:11])
 		}},
 		{name: "error reply unsupported", reason: ReasonUnsupported, first: func(s net.Conn, _ <-chan struct{}) {
 			readStart(s)
 			b, _ := hexDecode(goldenErr)
-			s.Write(b)
-			io.Copy(io.Discard, s)
+			_, _ = s.Write(b)
+			_, _ = io.Copy(io.Discard, s)
 		}, check: func(t *testing.T, res Result, d *fakeDialer) {
 			if res.Code != 0x80131515 || d.dials() != 1 {
 				t.Fatalf("%+v dials %d", res, d.dials())
@@ -156,15 +156,15 @@ func TestProbeHostileServer(t *testing.T) {
 				}
 			})),
 			check: func(t *testing.T, res Result, d *fakeDialer) {
-				if res.BytesBefore+res.BytesAfter > uint64(hostileOptions().StreamCap)+4096 {
+				if res.BytesBefore+res.BytesAfter > u64(hostileOptions().StreamCap)+4096 {
 					t.Fatalf("read %d+%d bytes, cap %d", res.BytesBefore, res.BytesAfter, hostileOptions().StreamCap)
 				}
-				if res.BytesBefore < uint64(hostileOptions().StreamCap) || !res.StopAck {
+				if res.BytesBefore < u64(hostileOptions().StreamCap) || !res.StopAck {
 					t.Fatalf("%+v", res)
 				}
 			}},
 		{name: "garbage preamble", reason: ReasonBadStream,
-			first: good(nil, whole, func(s net.Conn) { s.Write(bytes.Repeat([]byte{0xAA}, 300)) }),
+			first: good(nil, whole, func(s net.Conn) { _, _ = s.Write(bytes.Repeat([]byte{0xAA}, 300)) }),
 			check: func(t *testing.T, res Result, d *fakeDialer) {
 				if !res.StopAck || res.PreambleOK {
 					t.Fatalf("a bad preamble must still stop the session: %+v", res)
@@ -197,9 +197,9 @@ func TestProbeHostileServer(t *testing.T) {
 		{name: "runtime closes the stream early", reason: "",
 			first: func(s net.Conn, _ <-chan struct{}) {
 				readStart(s)
-				s.Write(okReply(7))
-				s.Write(buildPreamble(pid, 8, 4))
-				s.Write(bytes.Repeat([]byte{1}, 500))
+				_, _ = s.Write(okReply(7))
+				_, _ = s.Write(buildPreamble(pid, 8, 4))
+				_, _ = s.Write(bytes.Repeat([]byte{1}, 500))
 			},
 			check: func(t *testing.T, res Result, d *fakeDialer) {
 				if !res.EndedEarly || !res.PreambleOK || d.dials() != 1 {
@@ -223,7 +223,7 @@ func TestProbeHostileServer(t *testing.T) {
 					if _, err := io.ReadFull(s, buf); err != nil {
 						return
 					}
-					s.Write(okReply(8))
+					_, _ = s.Write(okReply(8))
 					once.Do(func() { close(stopped) })
 				}
 			}
@@ -371,7 +371,7 @@ func FuzzProbeHostileServer(f *testing.F) {
 				t.Fatalf("conn 1 got %x", w)
 			}
 		}
-		if res.BytesBefore+res.BytesAfter > uint64(o.StreamCap)+4096 {
+		if res.BytesBefore+res.BytesAfter > u64(o.StreamCap)+4096 {
 			t.Fatalf("read %d+%d bytes", res.BytesBefore, res.BytesAfter)
 		}
 	})
@@ -382,4 +382,77 @@ func waitStopShort(stopped <-chan struct{}) {
 	case <-stopped:
 	case <-time.After(300 * time.Millisecond):
 	}
+}
+
+// FuzzProbeHostileStopReply fuzzes what the runtime sends back on the STOP
+// connection: the start side is honest (session 7), the second connection
+// answers with the fuzz input. The probe must not panic, hang or write
+// anything but the two fixed messages; it may report success only when the
+// reply really was an OK for session 7, and otherwise stop-failed.
+func FuzzProbeHostileStopReply(f *testing.F) {
+	pid := testPID()
+	f.Add(okReply(7))
+	f.Add(okReply(8))
+	f.Add(okReply(0))
+	f.Add(mustHex(f, goldenErr))
+	f.Add(append(okReply(7), bytes.Repeat([]byte{0xFF}, 4096)...))
+	f.Add([]byte{})
+	f.Add(okReply(7)[:27])
+	for _, c := range rejectCases(f) {
+		f.Add(c.in)
+	}
+	o := Options{Duration: 20 * time.Millisecond, ReplyTimeout: 40 * time.Millisecond,
+		StopTimeout: 100 * time.Millisecond, StreamCap: 8 << 10}
+	f.Fuzz(func(t *testing.T, in []byte) {
+		h := newHonest(7, pid)
+		handler := func(i int, s net.Conn) {
+			if i == 0 {
+				h.handle(0, s)
+				return
+			}
+			// The stop connection: read the stop message, then send the fuzz input.
+			buf := make([]byte, 28)
+			if _, err := io.ReadFull(s, buf); err != nil {
+				return
+			}
+			_, _ = s.Write(in)
+			h.once.Do(func() { close(h.stopped) })
+		}
+		d := &fakeDialer{handler: handler}
+		var res Result
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			res, _ = Probe(context.Background(), d, Target{PID: pid}, o)
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Probe did not return within 2 s")
+		}
+		if w := d.conn(0).Written(); !bytes.Equal(w, encodeStart()) {
+			t.Fatalf("conn 0 got %x", w)
+		}
+		if w := d.conn(1).Written(); !bytes.Equal(w, encodeStop(7)) {
+			t.Fatalf("conn 1 got %x", w)
+		}
+		switch res.Reason {
+		case "":
+			if !res.StopAck || !res.StopSession {
+				t.Fatalf("success without a matching stop reply: %+v", res)
+			}
+			if len(in) < okReplyLen || !bytes.Equal(in[:okReplyLen], okReply(7)) {
+				t.Fatalf("success on a stop reply that is not OK for session 7: %x", in)
+			}
+		case ReasonStopFailed:
+		case ReasonBadStream:
+			// The stream side is honest, so this would be a bug.
+			t.Fatalf("unexpected bad-stream: %+v", res)
+		default:
+			t.Fatalf("unexpected reason %q: %+v", res.Reason, res)
+		}
+		if !d.conn(0).Closed() || !d.conn(1).Closed() {
+			t.Fatal("a connection was left open")
+		}
+	})
 }

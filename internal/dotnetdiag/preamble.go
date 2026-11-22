@@ -1,6 +1,9 @@
 package dotnetdiag
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"math"
+)
 
 // PreambleLen is the number of stream bytes ParsePreamble reads: the nettrace
 // magic, the FastSerialization header and the whole Trace object header.
@@ -11,8 +14,8 @@ type Preamble struct {
 	Version      uint32 // Trace object version, 4 or 5
 	MinReader    uint32 // minimum reader version the writer asks for
 	SyncTime     [8]uint16
-	QPCSync      int64
-	QPCFreq      int64  // always > 0
+	QPCSync      uint64
+	QPCFreq      uint64 // 1 to MaxInt64
 	PointerSize  uint32 // 4 or 8
 	PID          uint32 // always > 0
 	Processors   uint32
@@ -29,13 +32,13 @@ const (
 // bytes of a stream. Fewer bytes, a wrong literal, a wrong tag, a type name of
 // another length, a version outside 4..5, a pointer size other than 4 or 8, a
 // zero clock frequency or a process id of 0 is ReasonBadStream. Code holds the
-// offending number for numeric fields and the byte offset for literals and
-// tags. Block parsing is not part of this step; bytes after offset 102 are
+// offending number for numeric fields and the byte offset for literals, tags and
+// the clock frequency. Block parsing is not part of this step; bytes after offset 102 are
 // ignored.
 func ParsePreamble(b []byte) (Preamble, error) {
 	var p Preamble
 	if len(b) < PreambleLen {
-		return p, newErr(ReasonBadStream, uint32(len(b)))
+		return p, newErr(ReasonBadStream, uint32(len(b))) //nolint:gosec // len(b) < PreambleLen (102) in this branch
 	}
 	b = b[:PreambleLen]
 	bad := func(code uint32) (Preamble, error) { return Preamble{}, newErr(ReasonBadStream, code) }
@@ -73,20 +76,20 @@ func ParsePreamble(b []byte) (Preamble, error) {
 	for i := range p.SyncTime {
 		p.SyncTime[i] = le.Uint16(b[53+2*i:])
 	}
-	p.QPCSync = int64(le.Uint64(b[69:77]))
-	p.QPCFreq = int64(le.Uint64(b[77:85]))
-	if p.QPCFreq <= 0 {
-		return bad(uint32(p.QPCFreq))
+	p.QPCSync = le.Uint64(b[69:77])
+	p.QPCFreq = le.Uint64(b[77:85])
+	if p.QPCFreq == 0 || p.QPCFreq > math.MaxInt64 {
+		return bad(77) // the byte offset of the clock frequency
 	}
 	p.PointerSize = le.Uint32(b[85:89])
 	if p.PointerSize != 4 && p.PointerSize != 8 {
 		return bad(p.PointerSize)
 	}
-	pid := int32(le.Uint32(b[89:93]))
-	if pid <= 0 {
-		return bad(uint32(pid))
+	pid := le.Uint32(b[89:93])
+	if pid == 0 || pid > math.MaxInt32 { // a process id is a positive int32 in the stream
+		return bad(pid)
 	}
-	p.PID = uint32(pid)
+	p.PID = pid
 	p.Processors = le.Uint32(b[93:97])
 	p.SamplingRate = le.Uint32(b[97:101])
 	if b[101] != 6 { // end of the Trace object
