@@ -145,6 +145,8 @@ test('Case home reads the case again quietly for each signal, with no loading sc
   const reread = home.match(/async function rereadFiles\(\) \{[\s\S]*?\n  \}\n/)[0];
   assert.doesNotMatch(reread, /phase\s*=|focus\(|load\(/, 'the quiet read never shows the loading text or moves focus');
   assert.match(reread, /mine !== rereadRun/, 'an older read never overwrites a newer one');
+  const loadFn = home.match(/async function load\(id: string, quiet = false\) \{[\s\S]*?controller\?\.abort\(\);/)[0];
+  assert.match(loadFn, /rereadRun \+= 1;/, 'a quiet load also outranks a re-read that is still on its way');
   assert.match(home, /\$effect\(\(\) => \{\s*const seq = caseAdded\.seq;\s*if \(seq === seenAdd\) return;\s*seenAdd = seq;/, 'one read for each signal');
   assert.doesNotMatch(home, /drawerWas/, 'the read no longer waits for the pop-up to close');
 });

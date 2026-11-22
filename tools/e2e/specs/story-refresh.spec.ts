@@ -1,11 +1,13 @@
 // BL-162 / BL-164 leftover: "Story so far" on Case home shows what was just added without leaving the screen.
 //   STORY-01  A file added through the Add files pop-up shows in "Story so far" behind the pop-up as soon as it is kept (not after the pop-up closes),
 //             with one re-read of the case, the page not going back to its loading text, and focus staying inside the pop-up.
-//   STORY-02  A file the case did not keep (the same file again) adds nothing to the story and makes no re-read.
+//   STORY-02  A file the real server refuses as a duplicate (the same file went in by the API after the pop-up had checked it) adds nothing to the story and makes no re-read.
 //   STORY-03  A source added in Add data (Redis by address) makes one re-read of the case, with no loading text and focus not pulled onto the story.
+//             A source added this way (Redis, SQL, Mongo, Blackbox) has no line in "Story so far": the story is built from case history, files, health runs
+//             and theories, and the server writes no history for a source. Only files and found-on-this-PC logs (which are files) show a new line.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
-import { createCase, ensureHost, HOST } from '../support/api';
+import { createCase, ensureHost, importFile, HOST } from '../support/api';
 
 const FIELDS = '#Fields: date time s-sitename s-computername s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Cookie) cs(Referer) sc-status sc-substatus sc-win32-status time-taken';
 const iisLog = (tag: string) => ({
@@ -39,12 +41,14 @@ async function openPopup(page: Page, title: string) {
   return dialog;
 }
 
-async function addOne(dialog: ReturnType<Page['getByRole']>, file: ReturnType<typeof iisLog>) {
+/** Picks the file, runs the check, ticks the box, then (optionally) runs `beforeAdd` and presses Add. */
+async function addOne(dialog: ReturnType<Page['getByRole']>, file: ReturnType<typeof iisLog>, beforeAdd?: () => Promise<void>) {
   await dialog.getByLabel('Choose files to import').setInputFiles([file]);
   await dialog.getByRole('button', { name: 'Continue' }).click();
   const ack = dialog.getByRole('checkbox', { name: 'Confirm read-only' });
   await expect(ack).toBeVisible({ timeout: 30_000 });
   await ack.check();
+  await beforeAdd?.();
   await dialog.getByRole('button', { name: 'Add 1 file', exact: true }).click();
 }
 
@@ -75,21 +79,23 @@ test('STORY-01: a file added in the Add files pop-up shows in Story so far at on
   expect(reads).toEqual({ story: 1, files: 1 });
 });
 
-test('STORY-02: a file the server did not keep adds nothing to the story and makes no re-read', async ({ page, api }) => {
+test('STORY-02: a file the server refuses as a duplicate adds nothing to the story and makes no re-read', async ({ page, api }) => {
   await ensureHost(api);
   const title = 'QA Story No Change';
   const id = await createCase(api, title);
-  // The server's answer to the import itself is a refusal (a read that kept nothing); the check before it is the real one.
-  await page.route(/\/api\/cases\/[^/]+\/imports\?/, async (route) => {
-    if (route.request().method() !== 'POST' || route.request().url().includes('preview=1')) { await route.fallback(); return; }
-    const result = { importer: 'iis-w3c', score: 1, tied: [], report: null, record: null };
-    await route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ id: 'b'.repeat(32), state: 'done', kind: 'import', bytesRead: 0, bytesTotal: 0, result }) });
-  });
   const dialog = await openPopup(page, title);
+  const file = iisLog('02');
   const reads = watchReads(page, id);
-  await addOne(dialog, iisLog('02'));
+  // The check passes; then the same file goes into the case by the API, so the pop-up's own import reaches the real server second and is refused as a duplicate.
+  await addOne(dialog, file, async () => {
+    const first = await importFile(api, id, file.buffer, { name: file.name, importer: 'iis-w3c', host: HOST });
+    expect(first.status).toBeLessThan(300);
+  });
   await expect(dialog.locator('.prog-line')).toContainText('Step 3 of 3 · Result', { timeout: 60_000 });
   await expect(dialog.locator('.result-section h4').filter({ hasText: 'Not imported' })).toBeVisible();
+  await expect(dialog.locator('.result-section h4').filter({ hasText: /^Imported/ })).toHaveCount(0);
+  // The page never read the case again: the file the API added is not in its story (it is only there after a reload).
+  await page.waitForTimeout(500);
   await expect(storyFiles(page)).toHaveCount(0);
   expect(reads).toEqual({ story: 0, files: 0 });
 });

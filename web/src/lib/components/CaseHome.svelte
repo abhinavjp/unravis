@@ -76,6 +76,7 @@
   // The tab title names the screen: the timeline, else the case. The cleanup puts the plain app title back.
   $effect(() => { if (phase === 'ready') return setDocTitle(timelineShown ? TRACING_TEXT.heading : info?.title || caseCode(caseId)); });
   let controller: AbortController | null = null;
+  let rereadRun = 0;
   let loadedFor = '';
 
   // An archived case offers no analysis, files, checks or theories (spec section 9): the page shows its record and the way back.
@@ -167,6 +168,8 @@
 
   // quiet: the page is read again after a move on the case (archive, restore, free), so it stays on screen and does not show the loading text.
   async function load(id: string, quiet = false) {
+    // The newest read wins: a quiet re-read that is still on its way (after an add) must not put its older answer over this one.
+    rereadRun += 1;
     controller?.abort();
     const mine = new AbortController();
     controller = mine;
@@ -272,7 +275,6 @@
 
   // Whatever is added to this case (files in the Add files pop-up, or a source in Add data) shows in the story at once, without waiting for the pop-up
   // to close: the case and its files are read again, quietly (no loading screen, no focus move). One read for each successful add, none for a failed one.
-  let rereadRun = 0;
   async function rereadFiles() {
     const id = caseId;
     if (!id || phase !== 'ready') return;
