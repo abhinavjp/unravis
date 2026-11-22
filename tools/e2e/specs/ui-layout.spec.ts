@@ -7,6 +7,8 @@
 //   UIFIX-05  The selected-lines notes of the timeline and the chart help line are at least 11px (BL-478)
 //   UIFIX-06  Tap targets of 24 x 24 px or more: Daily view, Show matching requests, Help guide index links, Stop showing, Mark the line (BL-475 group 1)
 //   UIFIX-09  Desktop does not move: tables that got bigger tap targets keep every row height and column width (BL-475 group 1)
+//   UIFIX-10  Tap targets of 24 x 24 px or more: the hour squares of the Daily and hourly view and the two zoom slider handles; a press 9px inside the edge grabs the handle (BL-475 groups 2 and 3)
+//   UIFIX-11  Desktop does not move: the hour grid and the zoom strip keep every size and position, the painted square and the grip keep their old size (BL-475 groups 2 and 3)
 //   UIFIX-07  Add files on a phone: the column heads are painted nowhere, yet stay in the page for screen readers (BL-482). A guard only: the finding was a false positive of the audit, so the audit run proves the fix
 //   UIFIX-08  Phone header with "Choose sources" fits the window (BL-472); 390 and 360 px fail on the old header, 320 px is a no-regression case
 import { test, expect, type Page } from '../support/fixtures';
@@ -326,4 +328,115 @@ test('UIFIX-09d Blackbox charts: the figures table keeps its row heights and col
   await expect(page.locator('dialog.bbc[open] canvas').first()).toBeVisible();
   await expect(page.locator('dialog.bbc[open] .bbc-x').first()).toBeVisible();
   await expectSameAsDevelop(page, 'dialog.bbc[open] table:has(.bbc-x)', 'Charts figures');
+});
+
+// BL-475 groups 2 and 3. The hour squares are 24px tall buttons that paint their 20px square in a ::before, and the zoom handles are 24px
+// wide with the same 4px grip. Nothing may move on desktop: the same old-rules comparison as UIFIX-09, plus the painted parts.
+async function openDailyHourly(page: Page): Promise<void> {
+  await page.getByRole('button', { name: /^Daily and hourly view/ }).click();
+  await expect(page.locator('.hm-grid')).toBeVisible();
+  await expect(page.locator('button.hm-cell').first()).toBeVisible();
+}
+
+test('UIFIX-10a Daily and hourly view: every hour square is 24 x 24 px or more', async ({ page }) => {
+  await openDailyHourly(page);
+  const sizes = await page.locator('button.hm-cell').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { w: r.width, h: r.height, name: e.getAttribute('aria-label') }; }));
+  expect(sizes.length).toBeGreaterThan(100);
+  for (const z of sizes) {
+    expect(z.h, z.name ?? 'hour square').toBeGreaterThanOrEqual(24);
+    expect(z.w, z.name ?? 'hour square').toBeGreaterThanOrEqual(24);
+  }
+});
+
+test('UIFIX-10b Daily and hourly view on a phone: the hour squares are 24 x 24 px and no two overlap', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDailyHourly(page);
+  const cells = await page.locator('button.hm-cell').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
+  for (const c of cells) { expect(c.w).toBeGreaterThanOrEqual(24); expect(c.h).toBeGreaterThanOrEqual(24); }
+  const clashes = cells.flatMap((a, i) => cells.slice(i + 1).filter((b) => overlap(a, b) > 0).map(() => i));
+  expect(clashes, 'squares that overlap another square').toEqual([]);
+});
+
+test('UIFIX-10c Daily and hourly view: the two zoom handles are 24 x 24 px or more', async ({ page }) => {
+  await openDailyHourly(page);
+  const handles = page.locator('.nav-handle');
+  expect(await handles.count()).toBe(2);
+  for (const h of await handles.all()) {
+    const box = (await h.boundingBox())!;
+    expect(box.width, await h.getAttribute('aria-label') ?? 'zoom handle').toBeGreaterThanOrEqual(24);
+    expect(box.height).toBeGreaterThanOrEqual(24);
+  }
+});
+
+test('UIFIX-10d Zoom strip: a press 9px inside the edge grabs the handle (the grab zone is the handle, 12px each side)', async ({ page }) => {
+  await openDailyHourly(page);
+  const start = page.locator('.nav-handle').first();
+  const end = page.locator('.nav-handle').nth(1);
+  const endBefore = await end.getAttribute('aria-valuenow');
+  const startBefore = await start.getAttribute('aria-valuenow');
+  await start.scrollIntoViewIfNeeded();
+  const box = (await start.boundingBox())!;
+  const x = box.x + box.width / 2 + 9, y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 300, y, { steps: 3 });
+  // while the button is down the handles show the preview: the start edge has moved, the end edge has not (a press that missed the handle would draw a new range)
+  await expect.poll(async () => start.getAttribute('aria-valuenow')).not.toBe(startBefore);
+  expect(await end.getAttribute('aria-valuenow'), 'only the start edge moves').toBe(endBefore);
+  await page.mouse.up();
+});
+
+test('UIFIX-11a Daily and hourly view: the hour grid keeps every row and square where it was', async ({ page }) => {
+  await openDailyHourly(page);
+  const r = await page.locator('.hm-grid').evaluate((grid) => {
+    const box = (e: Element) => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; };
+    const slots = () => [...grid.querySelectorAll('.hm-cell-wrap')].map(box);
+    const rows = () => [...grid.querySelectorAll('.hm-row')].map(box);
+    const now = { grid: box(grid), slots: slots(), rows: rows() };
+    const cells = [...grid.querySelectorAll<HTMLElement>('button.hm-cell')];
+    const saved = cells.map((c) => c.getAttribute('style'));
+    // the old rules of the square: 20px tall, no margin, and its paint on the button itself
+    for (const c of cells) for (const [k, v] of Object.entries({ height: '20px', margin: '0' })) c.style.setProperty(k, v, 'important');
+    void document.body.offsetHeight;
+    const old = { grid: box(grid), slots: slots(), rows: rows() };
+    cells.forEach((c, i) => { if (saved[i] === null) c.removeAttribute('style'); else c.setAttribute('style', saved[i]!); });
+    // the painted square: a 20px high square, 2px in from the 24px button
+    const first = cells[0];
+    const cs = getComputedStyle(first, '::before');
+    return { now, old, paint: { top: cs.top, height: cs.height, width: cs.width, cell: first.getBoundingClientRect().width, cellH: first.getBoundingClientRect().height } };
+  });
+  const near = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.05);
+  expect(near(r.now.grid, r.old.grid), 'grid box now ' + r.now.grid + ' old ' + r.old.grid).toBe(true);
+  expect(r.now.slots.length).toBeGreaterThan(100);
+  r.now.slots.forEach((s, i) => expect(near(s, r.old.slots[i]), 'slot ' + i + ' now ' + s + ' old ' + r.old.slots[i]).toBe(true));
+  r.now.rows.forEach((s, i) => expect(near(s, r.old.rows[i]), 'row ' + i + ' now ' + s + ' old ' + r.old.rows[i]).toBe(true));
+  expect(r.paint.cellH).toBe(24);
+  expect(r.paint.top).toBe('2px');
+  expect(r.paint.height).toBe('20px');
+  expect(parseFloat(r.paint.width)).toBeCloseTo(r.paint.cell, 2);
+});
+
+test('UIFIX-11b Zoom strip: the strip, the 4px grip and the focus ring keep their old size and place', async ({ page }) => {
+  await openDailyHourly(page);
+  const r = await page.locator('.navigator').evaluate((nav) => {
+    const box = (e: Element) => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; };
+    const handles = [...nav.querySelectorAll<HTMLElement>('.nav-handle')];
+    const centres = () => handles.map((h) => { const b = h.getBoundingClientRect(); return b.x + b.width / 2; });
+    const now = { nav: box(nav), track: box(nav.querySelector('.nav-track')!), centres: centres() };
+    const saved = handles.map((h) => h.getAttribute('style'));
+    // the old rules of the handle: 12px wide, centred on the edge
+    for (const h of handles) for (const [k, v] of Object.entries({ width: '12px', 'margin-left': '-6px' })) h.style.setProperty(k, v, 'important');
+    void document.body.offsetHeight;
+    const old = { nav: box(nav), track: box(nav.querySelector('.nav-track')!), centres: centres() };
+    handles.forEach((h, i) => { if (saved[i] === null) h.removeAttribute('style'); else h.setAttribute('style', saved[i]!); });
+    const grip = getComputedStyle(handles[0], '::before');
+    const ring = getComputedStyle(handles[0], '::after');
+    return { now, old, grip: { w: grip.width, left: grip.left, ml: grip.marginLeft }, ring: { left: ring.left, right: ring.right, w: ring.width } };
+  });
+  const near = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.05);
+  expect(near(r.now.nav, r.old.nav), 'strip box now ' + r.now.nav + ' old ' + r.old.nav).toBe(true);
+  expect(near(r.now.track, r.old.track), 'track box now ' + r.now.track + ' old ' + r.old.track).toBe(true);
+  expect(near(r.now.centres, r.old.centres), 'handle centres now ' + r.now.centres + ' old ' + r.old.centres).toBe(true);
+  expect(r.grip.w).toBe('4px');
+  expect(r.ring.w, 'the focus ring is still the old 12px wide').toBe('12px');
 });

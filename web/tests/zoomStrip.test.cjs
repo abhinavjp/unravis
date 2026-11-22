@@ -284,13 +284,15 @@ test('keys on a handle go through brushKey with a 300 ms debounce and leave othe
   assert.equal(brushLib.brushKey('end', 'Tab', rootWindow, view, dayModel.brush.stepMs), null);
 });
 
-test('coarse pointers get wider handles and the page can still scroll up and down over the strip', () => {
+test('the handles are 24px wide for every pointer and the page can still scroll up and down over the strip', () => {
   const style = styleOf();
-  const coarse = style.match(/@media \(pointer: coarse\) \{([\s\S]*?)\n  \}/);
-  assert.ok(coarse, 'a coarse-pointer block');
-  const width = coarse[1].match(/\.nav-handle \{ width: (\d+)px/);
-  assert.ok(width && Number(width[1]) >= 24, 'a 24px hit area');
+  // BL-475: the handle itself is the 24px hit area, a mouse included; the grip (::before) stays 4px wide
+  const width = style.match(/\n  \.nav-handle \{[^}]*?width: (\d+)px; margin-left: -(\d+)px/);
+  assert.ok(width && Number(width[1]) >= 24 && Number(width[2]) * 2 === Number(width[1]), 'a 24px hit area centred on the edge');
+  assert.match(style, /\.nav-handle::before \{[^}]*width: 4px/);
   assert.match(style, /touch-action: pan-y/);
+  // a press anywhere on the handle grabs it, so the grab zone is as wide as the handle
+  assert.match(source, /const halfHit = \(\) => 12;/);
 });
 
 test('no transition or animation, no colour literal, radius and accent only from tokens', () => {
