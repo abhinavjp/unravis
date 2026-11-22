@@ -65,6 +65,7 @@ test('what ECharts is asked to build: no shape per point on a long gapped line, 
   const n = 400;
   const data = Array.from({ length: n }, (_, i) => (i % 4 === 3 ? null : i % 50));
   data[100] = 20; data[99] = null; data[101] = null; // the one lone point
+  const shapes = (svg) => (svg.match(/<path/g) || []).length;
   const render = (series) => {
     const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 800, height: 200 });
     chart.setOption({ animation: false, xAxis: { type: 'category', data: data.map((_, i) => 'p' + i) }, yAxis: { type: 'value' }, series });
@@ -77,17 +78,57 @@ test('what ECharts is asked to build: no shape per point on a long gapped line, 
   const lone = cp.lonePointFlags(data);
   const before = render([line({ showSymbol: true, symbolSize: (_v, p) => (lone[p.dataIndex] ? 5 : 0) })]);
   const after = render([line({ ...cp.lineSeriesPerf(data, 5) }), ...cp.lonePointSeries(data, { color: '#c00', size: 5 })]);
-  const shapes = (svg) => (svg.match(/<path/g) || []).length;
   assert.ok(shapes(before) > 200, 'the old option made a shape per point: ' + shapes(before));
   assert.ok(shapes(after) < 40, 'the new one makes a few paths for the line, axes and the one lone point: ' + shapes(after));
   assert.ok(shapes(after) < shapes(before) / 5);
-  // The hover dot: the axis pointer highlights a point of a showSymbol:false line and draws it at symbolSize.
+  // The hover dot: highlighting a point of a showSymbol:false line (what the axis pointer does) adds a temporary symbol at symbolSize.
   const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 800, height: 200 });
   chart.setOption({ animation: false, xAxis: { type: 'category', data: data.map((_, i) => 'p' + i) }, yAxis: { type: 'value' }, series: [line({ ...cp.lineSeriesPerf(data, 5) })] });
-  const seriesModel = chart.getModel().getSeriesByIndex(0);
-  assert.equal(seriesModel.get('showSymbol'), false);
-  assert.equal(seriesModel.get('symbolSize'), 5, 'the hover dot has a size');
+  const quiet = shapes(chart.renderToSVGString());
+  chart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: 10 });
+  assert.equal(shapes(chart.renderToSVGString()), quiet + 1, 'the point under the pointer gets one dot');
   chart.dispose();
+});
+
+test('hiding a line in the legend hides its lone dots too (the scatter carries the line\'s name), and the legend still shows one entry', () => {
+  const echarts = require('echarts/core');
+  const { LineChart, ScatterChart } = require('echarts/charts');
+  const { GridComponent, TooltipComponent, LegendComponent } = require('echarts/components');
+  const { SVGRenderer } = require('echarts/renderers');
+  echarts.use([LineChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent, SVGRenderer]);
+  const LINE = '#0a0a0a', DOT = '#c00123';
+  const data = Array.from({ length: 60 }, (_, i) => (i % 4 === 3 ? null : i % 9));
+  data[30] = 7; data[29] = null; data[31] = null; // the lone point
+  const named = (name) => [
+    { type: 'line', name: 'Current P95', connectNulls: false, data, lineStyle: { color: LINE }, itemStyle: { color: LINE }, ...cp.lineSeriesPerf(data, 6) },
+    ...cp.lonePointSeries(data, { color: DOT, size: 6, name })
+  ];
+  const make = (series) => {
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 800, height: 240 });
+    chart.setOption({ animation: false, legend: { type: 'scroll', top: 0 }, xAxis: { type: 'category', data: data.map((_, i) => 'p' + i) }, yAxis: { type: 'value' }, series });
+    return chart;
+  };
+  const dots = (svg) => (svg.match(new RegExp(DOT.slice(1), 'gi')) || []).length;
+  const withName = make(named('Current P95'));
+  assert.ok(dots(withName.renderToSVGString()) > 0, 'the lone dot is drawn');
+  const legendEntries = withName.getModel().getComponent('legend').getData().length;
+  assert.equal(legendEntries, 1, 'one legend entry, not two');
+  withName.dispatchAction({ type: 'legendUnSelect', name: 'Current P95' });
+  assert.equal(dots(withName.renderToSVGString()), 0, 'hidden with its line');
+  withName.dispatchAction({ type: 'legendSelect', name: 'Current P95' });
+  assert.ok(dots(withName.renderToSVGString()) > 0, 'and back with it');
+  withName.dispose();
+  // Without the name the dot would stay behind: this is what the name is for.
+  const nameless = make(named(undefined));
+  nameless.dispatchAction({ type: 'legendUnSelect', name: 'Current P95' });
+  assert.ok(dots(nameless.renderToSVGString()) > 0, 'a nameless scatter is not hidden by the legend');
+  nameless.dispose();
+});
+
+test('every lone-point scatter in charts.ts carries the name of its line', () => {
+  const calls = [...read('lib/charts.ts').matchAll(/lonePointSeries\([^)]*\)/g)].map((m) => m[0]);
+  assert.equal(calls.length, 5);
+  for (const call of calls) assert.match(call, /name: '/, call);
 });
 
 test('stripsOption: a long resource line has no dot shapes and its lone points come from the scatter', () => {

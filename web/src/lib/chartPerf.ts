@@ -56,15 +56,16 @@ export function lonePairs(data: ArrayLike<Cell>): Array<[unknown, unknown]> {
 
 /**
  * The scatter that carries the lone points of a line series that no longer draws a dot per point (see lineSeriesPerf): [] when the line
- * is short enough to keep its dots (unless `always`) or has no lone point. The series is silent, has no name and no tooltip, so it adds
- * nothing to the legend, the axis tooltip or the pointer events; it has the line's colour, z and axes.
+ * is short enough to keep its dots (unless `always`) or has no lone point. The series is silent and has no tooltip, so it adds nothing to
+ * the axis tooltip or the pointer events; it has the line's colour, z and axes. Give it `name`: the line's own name, so that a chart with
+ * a legend shows one entry and hiding the line in the legend hides its lone dots too. Without a name (a chart with no legend) it is nameless.
  */
-export function lonePointSeries(data: ArrayLike<Cell>, opts: { color: string; size: number; xAxisIndex?: number; yAxisIndex?: number; z?: number; always?: boolean }): unknown[] {
+export function lonePointSeries(data: ArrayLike<Cell>, opts: { color: string; size: number; name?: string; xAxisIndex?: number; yAxisIndex?: number; z?: number; always?: boolean }): unknown[] {
   if (!opts.always && data.length < SYMBOL_MAX_POINTS) return [];
   const pairs = lonePairs(data);
   if (pairs.length === 0) return [];
   return [{
-    type: 'scatter', name: '', silent: true, tooltip: { show: false }, data: pairs, symbolSize: opts.size, itemStyle: { color: opts.color }, z: opts.z ?? 3,
+    type: 'scatter', name: opts.name ?? '', silent: true, tooltip: { show: false }, data: pairs, symbolSize: opts.size, itemStyle: { color: opts.color }, z: opts.z ?? 3,
     ...(opts.xAxisIndex === undefined ? {} : { xAxisIndex: opts.xAxisIndex }), ...(opts.yAxisIndex === undefined ? {} : { yAxisIndex: opts.yAxisIndex })
   }];
 }

@@ -98,7 +98,8 @@ for (const kind of ['import', 'check']) {
         doc.set('hidden');
         const before = answers.seen;
         await tick(hiddenMs);
-        assert.ok(answers.seen - before <= Math.ceil(hiddenMs / 5000) + 1, 'hidden ' + hiddenMs + ' ms asked ' + (answers.seen - before) + ' times');
+        // The wait that was already running ends on time (one ask when it is under 1 s from done); after that one ask every 5 s.
+        assert.equal(answers.seen - before, { 2000: 1, 12_000: 3, 600: 0 }[hiddenMs], 'asks while hidden for ' + hiddenMs + ' ms');
         const atShow = answers.seen;
         doc.set('visible');
         await tick(0);
@@ -111,7 +112,7 @@ for (const kind of ['import', 'check']) {
       doc.set('hidden');
       answers.doneAfter = answers.seen + 1;
       await tick(5000);
-      assert.equal(answers.seen, answers.doneAfter - 1 + 1, 'the hidden wait asked once more and saw it done');
+      assert.equal(answers.seen, answers.doneAfter, 'the hidden wait asked once more and saw it done');
       await tick(0);
       await waiting;
       assert.equal(finished, true);
@@ -172,10 +173,11 @@ test('the drawer wait pattern (cancel, re-arm with pacedTimeout): one timer at a
     doc.set('hidden');
     await tick(5000);
     running = false;
+    const hiddenAsks = asked;
     doc.set('visible'); await tick(0);
-    const last = asked;
+    assert.equal(asked, hiddenAsks + 1, 'shown: one ask at once, and it finds the job over');
     await tick(10_000);
-    assert.ok(asked - last <= 2);
+    assert.equal(asked, hiddenAsks + 1, 'and no timer is armed after that');
     assert.equal(doc.handlers.size, 0, 'nothing listening once the job is over');
   });
 });
