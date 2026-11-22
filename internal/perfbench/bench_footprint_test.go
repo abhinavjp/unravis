@@ -112,7 +112,7 @@ func TestBenchOpenCaseFootprint(t *testing.T) {
 	t.Log(line)
 	if env := os.Getenv("UNRAVIS_BENCH_OUT"); env != "" {
 		out := filepath.Clean(env)
-		if f, err := os.OpenFile(out, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+		if f, err := os.OpenFile(out, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil { //nolint:gosec // test-only output path from an env var set by the person running the benchmark
 			_, _ = fmt.Fprintln(f, line)
 			_ = f.Close()
 		}
