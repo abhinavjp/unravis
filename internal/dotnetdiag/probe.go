@@ -42,10 +42,15 @@ type Dialer interface {
 	Dial(ctx context.Context, t Target) (Conn, Peer, error)
 }
 
-// DefaultDialer is the transport of this platform, for the command line the
-// owner runs. On Linux it may take the socket directory from the caller's
-// $TMPDIR; a service must not use it for that (see socketDialer).
-func DefaultDialer() Dialer { return platformDialer() }
+// DefaultDialer is the transport of this platform for any caller, including a
+// service. It never reads the environment: on Linux the socket directory is
+// /tmp.
+func DefaultDialer() Dialer { return platformDialer(false) }
+
+// CLIDialer is the transport for the command line the owner runs. On Linux it
+// may take the socket directory from the caller's $TMPDIR, because the person
+// running the probe chose that environment. A service must not use it.
+func CLIDialer() Dialer { return platformDialer(true) }
 
 // Options bound the probe. A zero field takes its default.
 type Options struct {

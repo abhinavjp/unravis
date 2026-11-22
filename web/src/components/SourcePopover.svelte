@@ -89,7 +89,7 @@
   /* On a narrow screen the long status words wrap; the hatch behind bold wrapped words is busy, so here the held-down sticker is a plain outline. */
   .source-choice .src-sticker.held { padding: 1px 6px; line-height: 1.25; }
   .source-choice .src-sticker.held.down { background-image: none; }
-  .keeper-note { margin: 0 0 var(--space-2); color: var(--text-2); font-size: var(--fs-2); }
+  .keeper-note { margin: 0 6px var(--space-2); color: var(--text-2); font-size: var(--fs-2); }
   /* A long source summary is cut with an ellipsis (the full text is in the aria-label) so the header row never overflows. */
   .header-button .label { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (max-width: 720px) { .header-button .label { max-width: 11ch; } }
