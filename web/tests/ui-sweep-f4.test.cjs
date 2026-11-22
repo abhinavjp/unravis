@@ -400,3 +400,7 @@ test('SWEEP-F4-32: the wizard body is the containing block of its visually hidde
   assert.match(src, /\.shell-body \{ position: relative;[^}]*overflow: auto/);
   assert.match(read('src/components/blackboxWizard/FigureRow.svelte'), /\.visually-hidden \{ position: absolute;/);
 });
+
+test('SWEEP-F4-33: the checkbox in a counter row does not shrink beside a long name, so every name starts at the same place', () => {
+  assert.match(read('src/components/BlackboxCharts.svelte'), /\.bbc-pick input \{ flex: 0 0 auto; \}/);
+});

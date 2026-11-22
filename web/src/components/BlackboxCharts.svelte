@@ -688,6 +688,8 @@
   .bbc-list summary { cursor: pointer; font-size: 13px; font-weight: 600; padding: 4px 0; }
   .bbc-count { color: var(--text-2); font-weight: 400; font-size: 12px; }
   .bbc-pick { display: flex; align-items: center; gap: 6px; padding: 3px 0 3px 4px; font-size: 12.5px; line-height: 1.3; cursor: pointer; }
+  /* A checkbox never shrinks beside a long name, so the names of all rows start at the same place. */
+  .bbc-pick input { flex: 0 0 auto; }
   /* A swatch is the line itself: a solid bar, or a dashed or dotted one for a colour that a crowded chart has to use again. */
   .bbc-swatch { --sw: currentColor; display: inline-block; flex: 0 0 auto; width: 16px; height: 0; border-top: 3px solid var(--sw); vertical-align: middle; }
   .bbc-swatch.dashed { border-top-style: dashed; }
