@@ -123,6 +123,6 @@ func (d *Dash) registerDetail(mux *http.ServeMux) {
 		if end > total {
 			end = total
 		}
-		writeJSON(w, map[string]any{"lines": lines[from:end], "from": from, "total": total, "cut": cut})
+		writeJSON(w, map[string]any{"lines": lines[from:end], "from": from, "total": total, "cut": cut, "rev": foldRev(lines)})
 	})
 }

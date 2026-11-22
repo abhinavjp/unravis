@@ -10,8 +10,9 @@ import (
 // writes the log (tools/release/ReleaseLib.ps1, Protect-LogLine); this does the same again when the page reads it, so an older
 // or hand-edited log is covered too. It keeps state across lines, because a private key spans many of them.
 type Redactor struct {
-	inKey bool
-	names []string
+	inKey    bool
+	keyLines int // lines hidden in the current key block
+	names    []string
 }
 
 // NewRedactor hides the given machine and user names as well (names shorter than three characters are ignored).
@@ -32,16 +33,41 @@ var (
 	pairRE    = regexp.MustCompile(`(?i)([\w-]*(?:pass(?:word|phrase)|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|.+)`)
 	keyBeginR = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
 	keyEndR   = regexp.MustCompile(`-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
+	// A line that can still belong to a key block: nothing, base64, or a header such as "Proc-Type: 4,ENCRYPTED". After the CI prefix
+	// ("job<TAB>step<TAB>") and the time stamp are taken off. Anything else (a sentence, a test result) ends a block that never closed.
+	// "[ \t\r\f\v]" and not \s: the PowerShell twin must agree, and .NET counts more characters as \s than Go does. A "*" is a value GitHub masked.
+	keyBodyR = regexp.MustCompile(`^[ \t\r\f\v]*$|^[ \t\r\f\v]*[A-Za-z0-9+/=_*-]+[ \t\r\f\v]*$|^[ \t\r\f\v]*[A-Za-z][A-Za-z0-9-]{0,30}:[ \t\r\f\v].*$`)
+	// What a tool puts in front of each line it echoes: BuildKit "#7 0.512 ", nl or cat -n "  12<TAB>", "> ", "+ ". A key printed that way stays hidden.
+	keyPfxR   = regexp.MustCompile(`^(?:#\d+[ \t]+[\d.]+[ \t]+|[ \t]*\d+\t|[>+][ \t]?)`)
+	keyRunR   = regexp.MustCompile(`[A-Za-z0-9+/=]{40,}`) // a long base64 run is key text wherever it sits on the line
+	stampPfx  = regexp.MustCompile(`^\d{4}-\d\d-\d\dT[\d:.]+Z ?`)
 	keyFileRE = regexp.MustCompile(`(?i)[\w.-]+\.(?:key|pem|pfx|p12|ppk)\b`)
 	userDirRE = regexp.MustCompile(`(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"']+`)
 	maxLine   = 2000
 )
+
+const maxKeyLines = 400 // a 4096-bit key is about 30 lines; this only stops a runaway block
+
+// keyBody is the text of a log line without its CI prefix ("job<TAB>step<TAB>") and time stamp.
+func keyBody(s string) string {
+	if p := strings.SplitN(s, "\t", 3); len(p) == 3 {
+		s = p[2]
+	}
+	return stampPfx.ReplaceAllString(strings.TrimSuffix(s, "\r"), "")
+}
+
+// keyText says whether a line (CI prefix and time stamp already off) can still belong to a key block.
+func keyText(body string) bool {
+	b := strings.Trim(keyPfxR.ReplaceAllString(body, ""), "\"',")
+	return keyBodyR.MatchString(b) || keyRunR.MatchString(body)
+}
 
 // Line returns the line cleaned of colour codes and control characters, with every secret hidden. The empty string is a valid
 // answer (an empty line stays empty).
 func (r *Redactor) Line(s string) string {
 	s = strings.TrimPrefix(s, "\uFEFF")
 	s = ansiRE.ReplaceAllString(s, "")
+	body := keyBody(s)
 	s = strings.Map(func(c rune) rune {
 		if c == '\t' {
 			return ' '
@@ -54,12 +80,18 @@ func (r *Redactor) Line(s string) string {
 	if r.inKey {
 		if keyEndR.MatchString(s) {
 			r.inKey = false
+			return "<private key hidden>"
 		}
-		return "<private key hidden>"
+		// A block whose END line never came (a header printed on its own, a cut log) must not hide the rest of the log.
+		if r.keyLines < maxKeyLines && keyText(body) {
+			r.keyLines++
+			return "<private key hidden>"
+		}
+		r.inKey = false
 	}
 	if keyBeginR.MatchString(s) {
 		if !keyEndR.MatchString(s) {
-			r.inKey = true
+			r.inKey, r.keyLines = true, 0
 		}
 		return "<private key hidden>"
 	}

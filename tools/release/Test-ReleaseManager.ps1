@@ -366,9 +366,29 @@ try {
     $red2 = New-LogRedactor @('Abhinav')
     foreach ($c in @(@('GH_TOKEN=abc123secret', 'abc123secret'), @('SIGNING_PASSPHRASE=hunter2', 'hunter2'), @('keyPassword=hunter2', 'hunter2'), @('passphrase: correct horse battery', 'battery'), @('-----BEGIN PGP PRIVATE KEY BLOCK-----', 'BEGIN PGP'))) {
         $got = Protect-LogLine $c[0] (New-LogRedactor)
-        Assert-That "log redaction: '$($c[0])' hides '$($c[1])'" (-not $got.Contains($c[1])) "got '$got'"
+        # The label must not print the raw case: a BEGIN header in a check name would itself be hidden by the redactor in the CI log.
+        Assert-That "log redaction: a $($c[0].Length)-character case hides its secret" (-not $got.Contains($c[1])) "got '$got'"
     }
-    Assert-That 'log redaction: a passed-test line is kept' ((Protect-LogLine '--- PASS: TestX (0.00s)' (New-LogRedactor)) -eq '--- PASS: TestX (0.00s)')
+    $uk = New-LogRedactor
+    $ukOut = '-----BEGIN PGP PRIVATE KEY BLOCK-----', 'ok   log redaction: nothing secret left', '--- PASS: TestX (0.00s)' | ForEach-Object { Protect-LogLine $_ $uk }
+    Assert-That 'log redaction: a key header with no END line hides only itself' (($ukOut -join '|') -eq '<private key hidden>|ok   log redaction: nothing secret left|--- PASS: TestX (0.00s)') "got '$($ukOut -join '|')'"
+    $ck = New-LogRedactor
+    $pre = "job`tstep`t2026-11-22T11:32:17.6419460Z "
+    $ckOut = @('-----BEGIN RSA PRIVATE KEY-----', 'MIIEvQIBADANBgkqhkiG9w0B', 'Proc-Type: 4,ENCRYPTED', 'AAAABBBB', '-----END RSA PRIVATE KEY-----', 'ok   after the key') | ForEach-Object { Protect-LogLine ($pre + $_) $ck -KeepTabs }
+    Assert-That 'log redaction: a key block behind a CI prefix is hidden whole and the next line is kept' ((($ckOut | Select-Object -First 5) -join '|') -eq ((1..5 | ForEach-Object { '<private key hidden>' }) -join '|') -and $ckOut[5].EndsWith('ok   after the key')) "got '$($ckOut -join '|')'"
+    $ck2 = New-LogRedactor
+    $ck2Out = @('-----BEGIN PRIVATE KEY-----', 'MIIEvQIBADANBgkqhkiG9w0B', 'ok   a sentence ends a block that lost its END line') | ForEach-Object { Protect-LogLine ($pre + $_) $ck2 -KeepTabs }
+    Assert-That 'log redaction: a block that lost its END line ends at the first sentence' ($ck2Out[2].EndsWith('ok   a sentence ends a block that lost its END line')) "got '$($ck2Out -join '|')'"
+    $b64 = 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7'
+    foreach ($ep in @('#7 0.512 ', "     2`t", '> ', '+ ', '"')) {
+        $ek = New-LogRedactor
+        $ekOut = @('-----BEGIN PRIVATE KEY-----', $b64, $b64, 'Xk2pQ9=', '-----END PRIVATE KEY-----') | ForEach-Object { Protect-LogLine ($pre + $ep + $_) $ek -KeepTabs }
+        Assert-That "log redaction: key lines echoed with the prefix '$($ep.Trim())' stay hidden" (-not (($ekOut -join '|') -match 'MIIE|Xk2p|Bgkq')) "got '$($ekOut -join '|')'"
+    }
+    $ek2 = New-LogRedactor
+    $null = Protect-LogLine '-----BEGIN PRIVATE KEY-----' $ek2
+    Assert-That 'log redaction: a no-break space line ends an unclosed block, as in Go' ((Protect-LogLine ([string][char]0xA0 + 'Xk2pQ9=') $ek2) -ne '<private key hidden>')
+    Assert-That 'log redaction: a passed-test line is kept'((Protect-LogLine '--- PASS: TestX (0.00s)' (New-LogRedactor)) -eq '--- PASS: TestX (0.00s)')
     $gotUrl = Protect-LogLine 'https://github.com/abhinavjp/unravis/actions/runs/1 by Abhinav' $red2
     Assert-That 'log redaction: a user name inside a repository name is kept, the name alone is hidden' ($gotUrl.Contains('github.com/abhinavjp/unravis') -and -not $gotUrl.Contains('by Abhinav')) "got '$gotUrl'"
     $kr = New-LogRedactor
@@ -411,7 +431,19 @@ try {
     $ids = Get-ReleaseAuditRuns $aud '9.9.9-rc.1' $now.AddMinutes(5)
     Assert-That 'ci log: entries older than this run are ignored' ($ids.release -eq '' -and $ids.verify -eq '')
     $rel2 = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Release.ps1')
-    Assert-That 'bootstrap: the worker output goes through the run log tee and the exit code is read right after' ($rel2 -match 'Write-ReleaseRunLog -Path \$runLog' -and $rel2 -match '(?s)finally \{ Remove-Item Env:UNRAVIS_RELEASE_NONCE[^\r\n]*\r?\n\s*\$code = \$LASTEXITCODE')
+    Assert-That 'bootstrap: the worker output goes through the run log tee and the exit code is read right after' ($rel2 -match 'Write-ReleaseRunLog -Path \$runLog' -and $rel2 -match '(?s)finally \{\s*Remove-Item Env:UNRAVIS_RELEASE_NONCE[^\r\n]*\r?\n[^\r\n]*\r?\n\s*\}\s*\r?\n\s*\$code = \$LASTEXITCODE')
+    Assert-That 'bootstrap: the console is read as UTF-8 around the worker and put back afterwards (no check mark shown as "Γ£ô")' ($rel2 -match '(?s)\$prevEnc = \[Console\]::OutputEncoding; \[Console\]::OutputEncoding = \[System\.Text\.UTF8Encoding\]::new\(\$false\).*?& \$exe @fwd.*?if \(\$prevEnc\) \{[^\r\n]*OutputEncoding = \$prevEnc')
+    Assert-That 'worker: prints UTF-8 back to the bootstrap' ($rel2 -match '(?s)Remove-Item Env:UNRAVIS_RELEASE_NONCE -ErrorAction SilentlyContinue\r?\n#[^\r\n]*\r?\ntry \{ \[Console\]::OutputEncoding = \[System\.Text\.UTF8Encoding\]::new\(\$false\) \} catch \{\}')
+    $prevEnc = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+        $u8 = (New-RunLogPath $logs) -replace '\d{2}Z', '59Z'
+        $mark = [string][char]0x2713
+        $child8 = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false); [Console]::Out.Write(([string][char]0x2713) + ' ok' + [char]10); [Console]::Out.Flush()"
+        $seen8 = @(& $hostExe -NoProfile -Command $child8 | Write-ReleaseRunLog -Path $u8 | ForEach-Object { "$_" })
+        $saved8 = @(Get-Content -LiteralPath $u8 -Encoding UTF8)
+        Assert-That 'run log: a check mark printed as UTF-8 reaches the screen and the saved log intact' ($seen8.Count -eq 1 -and $seen8[0] -eq "$mark ok" -and $saved8.Count -eq 1 -and $saved8[0].EndsWith("$mark ok")) (($seen8 + $saved8) -join '|')
+    } finally { [Console]::OutputEncoding = $prevEnc }
     Assert-That 'bootstrap: CI logs are saved only after the locks are free' ($rel2 -match '(?s)\$osLock\.Dispose\(\) \}\s*#[^\r\n]*\r?\n\s*if \(-not \$CheckOnly -and \$st[^\r\n]*Save-ReleaseRunLogs')
 } finally {
     Remove-Item Env:UNRAVIS_RELEASE_DATA -ErrorAction SilentlyContinue

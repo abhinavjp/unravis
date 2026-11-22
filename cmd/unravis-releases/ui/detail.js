@@ -113,7 +113,7 @@ function makeViewer(file, from) {
     }
     if (!shownIdx.length) frag.append(el('div', 'vnone', v.err || (v.busy ? 'Reading the log...' : v.q ? 'No line has that text.' : 'This log is empty so far.')));
     body.append(frag);
-    const n = hi - v.from;
+    const n = Math.max(0, hi - v.from);
     info.textContent = v.q ? count(idx.length) + ' of ' + count(n) + ' lines match' : count(n) + ' lines';
     more.replaceChildren();
     if (idx.length > shownIdx.length) {
@@ -156,7 +156,10 @@ function makeViewer(file, from) {
       let guard = 0;
       while (v.lines.length < want && guard++ < 12) {
         const j = await getJSON('/api/log?file=' + encodeURIComponent(file) + '&from=' + v.lines.length + '&n=' + PAGE);
-        if (j.total < v.lines.length) { v.lines = []; v.markSeen = false; continue; } // the log was started again
+        if (j.total < v.lines.length) { v.lines = []; v.markSeen = false; v.rev = j.rev; continue; } // the log was started again
+        // A running log folds its older status blocks as new ones arrive, which rewrites lines already here: read it again from the top.
+        if (v.lines.length && j.rev !== v.rev) { v.lines = []; v.markSeen = false; v.rev = j.rev; continue; }
+        v.rev = j.rev;
         v.total = j.total; v.cut = !!j.cut; v.err = '';
         v.lines.push(...j.lines);
         if (!j.lines.length || v.lines.length >= j.total) break;
@@ -393,11 +396,13 @@ function panelTests(p, rep) {
     sec.append(h);
     const sum = el('div', 'tsum');
     const bad = res.failed > 0;
-    sum.append(chip(bad ? 'bad' : res.passed > 0 ? 'ok' : 'mut', bad ? 'Failed' : res.passed > 0 ? 'Passed' : 'Nothing found'));
+    const reused = !res.suites.length && !res.passed && !res.failed && res.reusedCi;
+    sum.append(chip(bad ? 'bad' : res.passed > 0 ? 'ok' : 'mut', bad ? 'Failed' : res.passed > 0 ? 'Passed' : reused ? 'Skipped on purpose' : 'Nothing found'));
     sum.append(el('span', 'big', count(res.passed) + ' passed'), el('span', bad ? 'big bad' : 'big', count(res.failed) + ' failed'), el('span', 'big', count(res.skipped) + ' skipped'));
     const a = link(run.url, 'Open run ' + run.run + ' on GitHub'); if (a) sum.append(a);
     sec.append(sum);
-    if (!res.suites.length) sec.append(el('p', 'note', 'No test output was found in this run log.'));
+    if (reused) sec.append(el('p', 'note', 'The release build did not run the tests again. CI run ' + res.reusedCi + ' had already passed them on this exact commit, so they were skipped on purpose. Its results are in the CI section of this tab.'));
+    else if (!res.suites.length) sec.append(el('p', 'note', 'No test output was found in this run log.'));
     for (const s of res.suites) {
       const id = 'suite-' + run.kind + '-' + s.job + '-' + s.step;
       const det = el('details', 'suite' + (s.failed && !s.reportOnly ? ' bad' : '')); bindOpen(det, id);
