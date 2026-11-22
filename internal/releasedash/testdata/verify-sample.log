@@ -1,0 +1,294 @@
+# run 44999449803 verify https://github.com/abhinavjp/unravis/actions/runs/44999449803
+recorder	Set up job	﻿2026-11-22T07:42:36.3174611Z Current runner version: '2.338.2'
+recorder	Set up job	2026-11-22T07:42:36.3222752Z ##[group]Runner Image Provisioner
+recorder	Set up job	2026-11-22T07:42:36.3223501Z Hosted Compute Agent
+recorder	Set up job	2026-11-22T07:42:36.3223955Z Version: 20261111.635
+recorder	Set up job	2026-11-22T07:42:36.3224441Z Commit: b8a594ea514ff44cadb5342986c68b1eac6e22ed
+recorder	Set up job	2026-11-22T07:42:36.3225125Z Build Date: 2026-11-11T01:49:01Z
+recorder	Set up job	2026-11-22T07:42:36.3225646Z Worker ID: {642058d9-333a-47ee-bc69-b128f2f504d9}
+recorder	Set up job	2026-11-22T07:42:36.3226218Z Region: southcentralus
+recorder	Set up job	2026-11-22T07:42:36.3226678Z Cloud: Azure
+recorder	Set up job	2026-11-22T07:42:36.3227082Z ##[endgroup]
+recorder	Set up job	2026-11-22T07:42:36.3228195Z ##[group]Operating System
+recorder	Set up job	2026-11-22T07:42:36.3228691Z Microsoft Windows Server 2022
+recorder	Set up job	2026-11-22T07:42:36.3229160Z 10.0.20348
+recorder	Set up job	2026-11-22T07:42:36.3229594Z Datacenter
+recorder	Set up job	2026-11-22T07:42:36.3230011Z ##[endgroup]
+recorder	Set up job	2026-11-22T07:42:36.3230470Z ##[group]Runner Image
+recorder	Set up job	2026-11-22T07:42:36.3230916Z Image: windows-2022
+recorder	Set up job	2026-11-22T07:42:36.3231339Z Version: 20261116.370.1
+recorder	Set up job	2026-11-22T07:42:36.3232206Z Included Software: https://github.com/actions/runner-images/blob/win22/20261116.370/images/windows/Windows2022-Readme.md
+recorder	Set up job	2026-11-22T07:42:36.3233779Z Image Release: https://github.com/actions/runner-images/releases/tag/win22%2F20261116.370
+recorder	Set up job	2026-11-22T07:42:36.3234520Z ##[endgroup]
+recorder	Set up job	2026-11-22T07:42:36.3235404Z ##[group]GITHUB_TOKEN Permissions
+recorder	Set up job	2026-11-22T07:42:36.3236989Z Contents: read
+recorder	Set up job	2026-11-22T07:42:36.3237447Z Metadata: read
+recorder	Set up job	2026-11-22T07:42:36.3237896Z ##[endgroup]
+recorder	Set up job	2026-11-22T07:42:36.3239719Z Secret source: Actions
+recorder	Set up job	2026-11-22T07:42:36.3240439Z Cache mode: write
+recorder	Set up job	2026-11-22T07:42:36.3240997Z Prepare workflow directory
+recorder	Set up job	2026-11-22T07:42:36.3590741Z Prepare all required actions
+recorder	Set up job	2026-11-22T07:42:36.3635139Z Getting action download info
+recorder	Set up job	2026-11-22T07:42:36.6070520Z Download action repository 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683' (SHA:11bd71901bbe5b1630ceea73d27597364c9af683)
+recorder	Set up job	2026-11-22T07:42:37.3481387Z Complete job name: recorder
+recorder	Check out the code at the tag	﻿2026-11-22T07:42:37.8174903Z ##[group]Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8176279Z with:
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8176654Z   ref: v0.1.0-rc.58
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8177053Z   repository: abhinavjp/unravis
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8180725Z   token: ***
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8181091Z   ssh-strict: true
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8181457Z   ssh-user: git
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8181835Z   persist-credentials: true
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8182242Z   clean: true
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8182619Z   sparse-checkout-cone-mode: true
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8183063Z   fetch-depth: 1
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8183422Z   fetch-tags: false
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8183791Z   show-progress: true
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8184168Z   lfs: false
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8184516Z   submodules: false
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8184925Z   set-safe-directory: true
+recorder	Check out the code at the tag	2026-11-22T07:42:37.8185510Z ##[endgroup]
+recorder	Check out the code at the tag	2026-11-22T07:42:37.9427081Z Syncing repository: abhinavjp/unravis
+recorder	Check out the code at the tag	2026-11-22T07:42:37.9428932Z ##[group]Getting Git version info
+recorder	Check out the code at the tag	2026-11-22T07:42:37.9429652Z Working directory is 'D:\a\unravis\unravis'
+recorder	Check out the code at the tag	2026-11-22T07:42:38.0430770Z [command]"C:\Program Files\Git\bin\git.exe" version
+recorder	Check out the code at the tag	2026-11-22T07:42:38.4707501Z git version 2.56.1.windows.1
+recorder	Check out the code at the tag	2026-11-22T07:42:38.4748238Z ##[endgroup]
+recorder	Check out the code at the tag	2026-11-22T07:42:38.4765212Z Temporarily overriding HOME='D:\a\_temp\830ede72-6858-4929-931e-d9283afded03' before making global git config changes
+recorder	Check out the code at the tag	2026-11-22T07:42:38.4767095Z Adding repository directory to the temporary git global config as a safe directory
+recorder	Check out the code at the tag	2026-11-22T07:42:38.4774835Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\unravis\unravis
+recorder	Check out the code at the tag	2026-11-22T07:42:38.5345210Z Deleting the contents of 'D:\a\unravis\unravis'
+recorder	Check out the code at the tag	2026-11-22T07:42:38.5349892Z ##[group]Initializing the repository
+recorder	Check out the code at the tag	2026-11-22T07:42:38.5357779Z [command]"C:\Program Files\Git\bin\git.exe" init D:\a\unravis\unravis
+recorder	Check out the code at the tag	2026-11-22T07:42:38.5951054Z Initialized empty Git repository in D:/a/unravis/unravis/.git/
+recorder	Check out the code at the tag	2026-11-22T07:42:38.5987855Z [command]"C:\Program Files\Git\bin\git.exe" remote add origin https://github.com/abhinavjp/unravis
+recorder	Check out the code at the tag	2026-11-22T07:42:38.6515507Z ##[endgroup]
+recorder	Check out the code at the tag	2026-11-22T07:42:38.6517160Z ##[group]Disabling automatic garbage collection
+recorder	Check out the code at the tag	2026-11-22T07:42:38.6522934Z [command]"C:\Program Files\Git\bin\git.exe" config --local gc.auto 0
+recorder	Check out the code at the tag	2026-11-22T07:42:38.6783824Z ##[endgroup]
+recorder	Check out the code at the tag	2026-11-22T07:42:38.6785430Z ##[group]Setting up auth
+recorder	Check out the code at the tag	2026-11-22T07:42:38.6794306Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+recorder	Check out the code at the tag	2026-11-22T07:42:38.7059750Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+recorder	Check out the code at the tag	2026-11-22T07:42:39.9883028Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+recorder	Check out the code at the tag	2026-11-22T07:42:40.0162819Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+recorder	Check out the code at the tag	2026-11-22T07:42:40.4443866Z [command]"C:\Program Files\Git\bin\git.exe" config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ***"
+recorder	Check out the code at the tag	2026-11-22T07:42:40.4719461Z ##[endgroup]
+recorder	Check out the code at the tag	2026-11-22T07:42:40.4719975Z ##[group]Fetching the repository
+recorder	Check out the code at the tag	2026-11-22T07:42:40.4731033Z [command]"C:\Program Files\Git\bin\git.exe" -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +refs/heads/v0.1.0-rc.58*:refs/remotes/origin/v0.1.0-rc.58* +refs/tags/v0.1.0-rc.58*:refs/tags/v0.1.0-rc.58*
+recorder	Check out the code at the tag	2026-11-22T07:42:44.3671192Z From https://github.com/abhinavjp/unravis
+recorder	Check out the code at the tag	2026-11-22T07:42:44.3671907Z  * [new tag]         v0.1.0-rc.58 -> v0.1.0-rc.58
+recorder	Check out the code at the tag	2026-11-22T07:42:44.3703770Z ##[endgroup]
+recorder	Check out the code at the tag	2026-11-22T07:42:44.3704448Z ##[group]Determining the checkout info
+recorder	Check out the code at the tag	2026-11-22T07:42:44.3723242Z [command]"C:\Program Files\Git\bin\git.exe" branch --list --remote origin/v0.1.0-rc.58
+recorder	Check out the code at the tag	2026-11-22T07:42:44.4114462Z [command]"C:\Program Files\Git\bin\git.exe" tag --list v0.1.0-rc.58
+recorder	Check out the code at the tag	2026-11-22T07:42:44.4417250Z v0.1.0-rc.58
+recorder	Check out the code at the tag	2026-11-22T07:42:44.4448369Z ##[endgroup]
+recorder	Check out the code at the tag	2026-11-22T07:42:44.4458359Z [command]"C:\Program Files\Git\bin\git.exe" sparse-checkout disable
+recorder	Check out the code at the tag	2026-11-22T07:42:44.4865797Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all extensions.worktreeConfig
+recorder	Check out the code at the tag	2026-11-22T07:42:44.5170946Z ##[group]Checking out the ref
+recorder	Check out the code at the tag	2026-11-22T07:42:44.5179160Z [command]"C:\Program Files\Git\bin\git.exe" checkout --progress --force refs/tags/v0.1.0-rc.58
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3569817Z Note: switching to 'refs/tags/v0.1.0-rc.58'.
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3570210Z 
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3570440Z You are in 'detached HEAD' state. You can look around, make experimental
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3570976Z changes and commit them, and you can discard any commits you make in this
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3571901Z state without impacting any branches by switching back to a branch.
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3572320Z 
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3572517Z If you want to create a new branch to retain commits you create, you may
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3572888Z do so (now or later) by using -c with the switch command. Example:
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3573094Z 
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3573192Z   git switch -c <new-branch-name>
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3573341Z 
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3573460Z Or undo this operation with:
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3573616Z 
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3573681Z   git switch -
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3573784Z 
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3573953Z Turn off this advice by setting config variable advice.detachedHead to false
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3574213Z 
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3574462Z HEAD is now at 001d182 BL-016 web: show the history Query Store kept while it is off (#96)
+recorder	Check out the code at the tag	2026-11-22T07:42:45.3694362Z ##[endgroup]
+recorder	Check out the code at the tag	2026-11-22T07:42:45.4430235Z [command]"C:\Program Files\Git\bin\git.exe" log -1 --format=%H
+recorder	Check out the code at the tag	2026-11-22T07:42:45.4688548Z 001d182ef4ac3177c6653b14309fb73c20f05b37
+recorder	Verify the standalone recorder updates itself	﻿2026-11-22T07:42:45.5034907Z ##[group]Run ./tools/release/Invoke-VerifyRelease.ps1 -Tag $env:INPUT_TAG -Previous $env:INPUT_PREVIOUS -WaitMinutes ([int]$env:INPUT_WAIT) -Part Recorder
+recorder	Verify the standalone recorder updates itself	2026-11-22T07:42:45.5036619Z ^[[36;1m./tools/release/Invoke-VerifyRelease.ps1 -Tag $env:INPUT_TAG -Previous $env:INPUT_PREVIOUS -WaitMinutes ([int]$env:INPUT_WAIT) -Part Recorder^[[0m
+recorder	Verify the standalone recorder updates itself	2026-11-22T07:42:45.5636770Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+recorder	Verify the standalone recorder updates itself	2026-11-22T07:42:45.5637104Z env:
+recorder	Verify the standalone recorder updates itself	2026-11-22T07:42:45.5639468Z   GH_TOKEN: ***
+recorder	Verify the standalone recorder updates itself	2026-11-22T07:42:45.5639648Z   INPUT_TAG: v0.1.0-rc.58
+recorder	Verify the standalone recorder updates itself	2026-11-22T07:42:45.5639837Z   INPUT_PREVIOUS: v0.1.0-rc.57
+recorder	Verify the standalone recorder updates itself	2026-11-22T07:42:45.5640029Z   INPUT_WAIT: 12
+recorder	Verify the standalone recorder updates itself	2026-11-22T07:42:45.5640190Z ##[endgroup]
+recorder	Verify the standalone recorder updates itself	2026-11-22T07:44:50.8444028Z PASS B5 standalone recorder updates itself with nobody there
+recorder	Verify the standalone recorder updates itself	2026-11-22T07:44:50.8475406Z 
+recorder	Verify the standalone recorder updates itself	2026-11-22T07:44:50.8476147Z All steps passed for v0.1.0-rc.58 (upgraded from v0.1.0-rc.57).
+recorder	Post Check out the code at the tag	﻿2026-11-22T07:44:50.8900797Z Post job cleanup.
+recorder	Post Check out the code at the tag	2026-11-22T07:44:51.0469613Z [command]"C:\Program Files\Git\bin\git.exe" version
+recorder	Post Check out the code at the tag	2026-11-22T07:44:51.0729380Z git version 2.56.1.windows.1
+recorder	Post Check out the code at the tag	2026-11-22T07:44:51.0789165Z Temporarily overriding HOME='D:\a\_temp\869ece84-f3b0-4232-823c-6c8b1659b583' before making global git config changes
+recorder	Post Check out the code at the tag	2026-11-22T07:44:51.0789857Z Adding repository directory to the temporary git global config as a safe directory
+recorder	Post Check out the code at the tag	2026-11-22T07:44:51.0799488Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\unravis\unravis
+recorder	Post Check out the code at the tag	2026-11-22T07:44:51.1082892Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+recorder	Post Check out the code at the tag	2026-11-22T07:44:51.1379419Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+recorder	Post Check out the code at the tag	2026-11-22T07:44:51.6106421Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+recorder	Post Check out the code at the tag	2026-11-22T07:44:51.6355754Z http.https://github.com/.extraheader
+recorder	Post Check out the code at the tag	2026-11-22T07:44:51.6413986Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+recorder	Post Check out the code at the tag	2026-11-22T07:44:51.6705121Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+recorder	Complete job	﻿2026-11-22T07:44:52.0937577Z Cleaning up orphan processes
+recorder	Complete job	2026-11-22T07:44:52.1910732Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify	Set up job	﻿2026-11-22T07:42:36.0977302Z Current runner version: '2.338.2'
+verify	Set up job	2026-11-22T07:42:36.1037228Z ##[group]Runner Image Provisioner
+verify	Set up job	2026-11-22T07:42:36.1038102Z Hosted Compute Agent
+verify	Set up job	2026-11-22T07:42:36.1038702Z Version: 20261111.635
+verify	Set up job	2026-11-22T07:42:36.1039285Z Commit: b8a594ea514ff44cadb5342986c68b1eac6e22ed
+verify	Set up job	2026-11-22T07:42:36.1040471Z Build Date: 2026-11-11T01:49:01Z
+verify	Set up job	2026-11-22T07:42:36.1041317Z Worker ID: {537328a1-6043-442c-bb8c-0893e4240af7}
+verify	Set up job	2026-11-22T07:42:36.1042089Z Region: northcentralus
+verify	Set up job	2026-11-22T07:42:36.1042855Z Cloud: Azure
+verify	Set up job	2026-11-22T07:42:36.1043375Z ##[endgroup]
+verify	Set up job	2026-11-22T07:42:36.1044805Z ##[group]Operating System
+verify	Set up job	2026-11-22T07:42:36.1045513Z Microsoft Windows Server 2022
+verify	Set up job	2026-11-22T07:42:36.1046295Z 10.0.20348
+verify	Set up job	2026-11-22T07:42:36.1046803Z Datacenter
+verify	Set up job	2026-11-22T07:42:36.1047284Z ##[endgroup]
+verify	Set up job	2026-11-22T07:42:36.1047770Z ##[group]Runner Image
+verify	Set up job	2026-11-22T07:42:36.1049612Z Image: windows-2022
+verify	Set up job	2026-11-22T07:42:36.1050277Z Version: 20261116.370.1
+verify	Set up job	2026-11-22T07:42:36.1051457Z Included Software: https://github.com/actions/runner-images/blob/win22/20261116.370/images/windows/Windows2022-Readme.md
+verify	Set up job	2026-11-22T07:42:36.1053647Z Image Release: https://github.com/actions/runner-images/releases/tag/win22%2F20261116.370
+verify	Set up job	2026-11-22T07:42:36.1054563Z ##[endgroup]
+verify	Set up job	2026-11-22T07:42:36.1055755Z ##[group]GITHUB_TOKEN Permissions
+verify	Set up job	2026-11-22T07:42:36.1058120Z Contents: read
+verify	Set up job	2026-11-22T07:42:36.1058673Z Metadata: read
+verify	Set up job	2026-11-22T07:42:36.1059166Z ##[endgroup]
+verify	Set up job	2026-11-22T07:42:36.1061158Z Secret source: Actions
+verify	Set up job	2026-11-22T07:42:36.1061993Z Cache mode: write
+verify	Set up job	2026-11-22T07:42:36.1062650Z Prepare workflow directory
+verify	Set up job	2026-11-22T07:42:36.1377174Z Prepare all required actions
+verify	Set up job	2026-11-22T07:42:36.1444598Z Getting action download info
+verify	Set up job	2026-11-22T07:42:36.3317157Z Download action repository 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683' (SHA:11bd71901bbe5b1630ceea73d27597364c9af683)
+verify	Set up job	2026-11-22T07:42:36.5510622Z Complete job name: verify
+verify	Check out the code at the tag	﻿2026-11-22T07:42:36.7152215Z ##[group]Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+verify	Check out the code at the tag	2026-11-22T07:42:36.7153834Z with:
+verify	Check out the code at the tag	2026-11-22T07:42:36.7154346Z   ref: v0.1.0-rc.58
+verify	Check out the code at the tag	2026-11-22T07:42:36.7154840Z   repository: abhinavjp/unravis
+verify	Check out the code at the tag	2026-11-22T07:42:36.7159146Z   token: ***
+verify	Check out the code at the tag	2026-11-22T07:42:36.7159624Z   ssh-strict: true
+verify	Check out the code at the tag	2026-11-22T07:42:36.7160081Z   ssh-user: git
+verify	Check out the code at the tag	2026-11-22T07:42:36.7160609Z   persist-credentials: true
+verify	Check out the code at the tag	2026-11-22T07:42:36.7161132Z   clean: true
+verify	Check out the code at the tag	2026-11-22T07:42:36.7161602Z   sparse-checkout-cone-mode: true
+verify	Check out the code at the tag	2026-11-22T07:42:36.7162150Z   fetch-depth: 1
+verify	Check out the code at the tag	2026-11-22T07:42:36.7162590Z   fetch-tags: false
+verify	Check out the code at the tag	2026-11-22T07:42:36.7163116Z   show-progress: true
+verify	Check out the code at the tag	2026-11-22T07:42:36.7163608Z   lfs: false
+verify	Check out the code at the tag	2026-11-22T07:42:36.7164081Z   submodules: false
+verify	Check out the code at the tag	2026-11-22T07:42:36.7164547Z   set-safe-directory: true
+verify	Check out the code at the tag	2026-11-22T07:42:36.7165268Z ##[endgroup]
+verify	Check out the code at the tag	2026-11-22T07:42:36.8546477Z Syncing repository: abhinavjp/unravis
+verify	Check out the code at the tag	2026-11-22T07:42:36.8548320Z ##[group]Getting Git version info
+verify	Check out the code at the tag	2026-11-22T07:42:36.8549125Z Working directory is 'D:\a\unravis\unravis'
+verify	Check out the code at the tag	2026-11-22T07:42:36.9376484Z [command]"C:\Program Files\Git\bin\git.exe" version
+verify	Check out the code at the tag	2026-11-22T07:42:37.2952584Z git version 2.56.1.windows.1
+verify	Check out the code at the tag	2026-11-22T07:42:37.2993958Z ##[endgroup]
+verify	Check out the code at the tag	2026-11-22T07:42:37.3013150Z Temporarily overriding HOME='D:\a\_temp\d3b72a0d-a00e-4ec1-a721-be0eaf639268' before making global git config changes
+verify	Check out the code at the tag	2026-11-22T07:42:37.3014585Z Adding repository directory to the temporary git global config as a safe directory
+verify	Check out the code at the tag	2026-11-22T07:42:37.3023867Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\unravis\unravis
+verify	Check out the code at the tag	2026-11-22T07:42:37.3659458Z Deleting the contents of 'D:\a\unravis\unravis'
+verify	Check out the code at the tag	2026-11-22T07:42:37.3664772Z ##[group]Initializing the repository
+verify	Check out the code at the tag	2026-11-22T07:42:37.3673401Z [command]"C:\Program Files\Git\bin\git.exe" init D:\a\unravis\unravis
+verify	Check out the code at the tag	2026-11-22T07:42:37.4326306Z Initialized empty Git repository in D:/a/unravis/unravis/.git/
+verify	Check out the code at the tag	2026-11-22T07:42:37.4368352Z [command]"C:\Program Files\Git\bin\git.exe" remote add origin https://github.com/abhinavjp/unravis
+verify	Check out the code at the tag	2026-11-22T07:42:37.5046069Z ##[endgroup]
+verify	Check out the code at the tag	2026-11-22T07:42:37.5047194Z ##[group]Disabling automatic garbage collection
+verify	Check out the code at the tag	2026-11-22T07:42:37.5057182Z [command]"C:\Program Files\Git\bin\git.exe" config --local gc.auto 0
+verify	Check out the code at the tag	2026-11-22T07:42:37.5372761Z ##[endgroup]
+verify	Check out the code at the tag	2026-11-22T07:42:37.5374361Z ##[group]Setting up auth
+verify	Check out the code at the tag	2026-11-22T07:42:37.5385710Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+verify	Check out the code at the tag	2026-11-22T07:42:37.5685826Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+verify	Check out the code at the tag	2026-11-22T07:42:38.9983130Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+verify	Check out the code at the tag	2026-11-22T07:42:39.0282003Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+verify	Check out the code at the tag	2026-11-22T07:42:39.4950539Z [command]"C:\Program Files\Git\bin\git.exe" config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ***"
+verify	Check out the code at the tag	2026-11-22T07:42:39.5257781Z ##[endgroup]
+verify	Check out the code at the tag	2026-11-22T07:42:39.5258671Z ##[group]Fetching the repository
+verify	Check out the code at the tag	2026-11-22T07:42:39.5270552Z [command]"C:\Program Files\Git\bin\git.exe" -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +refs/heads/v0.1.0-rc.58*:refs/remotes/origin/v0.1.0-rc.58* +refs/tags/v0.1.0-rc.58*:refs/tags/v0.1.0-rc.58*
+verify	Check out the code at the tag	2026-11-22T07:42:42.0590007Z From https://github.com/abhinavjp/unravis
+verify	Check out the code at the tag	2026-11-22T07:42:42.0590779Z  * [new tag]         v0.1.0-rc.58 -> v0.1.0-rc.58
+verify	Check out the code at the tag	2026-11-22T07:42:42.0627301Z ##[endgroup]
+verify	Check out the code at the tag	2026-11-22T07:42:42.0628361Z ##[group]Determining the checkout info
+verify	Check out the code at the tag	2026-11-22T07:42:42.0647801Z [command]"C:\Program Files\Git\bin\git.exe" branch --list --remote origin/v0.1.0-rc.58
+verify	Check out the code at the tag	2026-11-22T07:42:42.1088413Z [command]"C:\Program Files\Git\bin\git.exe" tag --list v0.1.0-rc.58
+verify	Check out the code at the tag	2026-11-22T07:42:42.1416014Z v0.1.0-rc.58
+verify	Check out the code at the tag	2026-11-22T07:42:42.1447080Z ##[endgroup]
+verify	Check out the code at the tag	2026-11-22T07:42:42.1462057Z [command]"C:\Program Files\Git\bin\git.exe" sparse-checkout disable
+verify	Check out the code at the tag	2026-11-22T07:42:42.1917575Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all extensions.worktreeConfig
+verify	Check out the code at the tag	2026-11-22T07:42:42.2209171Z ##[group]Checking out the ref
+verify	Check out the code at the tag	2026-11-22T07:42:42.2217750Z [command]"C:\Program Files\Git\bin\git.exe" checkout --progress --force refs/tags/v0.1.0-rc.58
+verify	Check out the code at the tag	2026-11-22T07:42:42.9737578Z Note: switching to 'refs/tags/v0.1.0-rc.58'.
+verify	Check out the code at the tag	2026-11-22T07:42:42.9739088Z 
+verify	Check out the code at the tag	2026-11-22T07:42:42.9739440Z You are in 'detached HEAD' state. You can look around, make experimental
+verify	Check out the code at the tag	2026-11-22T07:42:42.9740234Z changes and commit them, and you can discard any commits you make in this
+verify	Check out the code at the tag	2026-11-22T07:42:42.9740942Z state without impacting any branches by switching back to a branch.
+verify	Check out the code at the tag	2026-11-22T07:42:42.9741393Z 
+verify	Check out the code at the tag	2026-11-22T07:42:42.9741701Z If you want to create a new branch to retain commits you create, you may
+verify	Check out the code at the tag	2026-11-22T07:42:42.9742298Z do so (now or later) by using -c with the switch command. Example:
+verify	Check out the code at the tag	2026-11-22T07:42:42.9742680Z 
+verify	Check out the code at the tag	2026-11-22T07:42:42.9742844Z   git switch -c <new-branch-name>
+verify	Check out the code at the tag	2026-11-22T07:42:42.9743106Z 
+verify	Check out the code at the tag	2026-11-22T07:42:42.9743228Z Or undo this operation with:
+verify	Check out the code at the tag	2026-11-22T07:42:42.9743442Z 
+verify	Check out the code at the tag	2026-11-22T07:42:42.9743571Z   git switch -
+verify	Check out the code at the tag	2026-11-22T07:42:42.9743795Z 
+verify	Check out the code at the tag	2026-11-22T07:42:42.9744082Z Turn off this advice by setting config variable advice.detachedHead to false
+verify	Check out the code at the tag	2026-11-22T07:42:42.9744415Z 
+verify	Check out the code at the tag	2026-11-22T07:42:42.9744720Z HEAD is now at 001d182 BL-016 web: show the history Query Store kept while it is off (#96)
+verify	Check out the code at the tag	2026-11-22T07:42:42.9900040Z ##[endgroup]
+verify	Check out the code at the tag	2026-11-22T07:42:43.0333048Z [command]"C:\Program Files\Git\bin\git.exe" log -1 --format=%H
+verify	Check out the code at the tag	2026-11-22T07:42:43.0894112Z 001d182ef4ac3177c6653b14309fb73c20f05b37
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	﻿2026-11-22T07:42:43.1276012Z ##[group]Run $a = @{ Tag = $env:INPUT_TAG; Part = 'Main' }
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:43.1277620Z ^[[36;1m$a = @{ Tag = $env:INPUT_TAG; Part = 'Main' }^[[0m
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:43.1278183Z ^[[36;1mif ($env:INPUT_PREVIOUS) { $a.Previous = $env:INPUT_PREVIOUS }^[[0m
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:43.1278682Z ^[[36;1m./tools/release/Invoke-VerifyRelease.ps1 @a^[[0m
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:43.1389243Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:43.1389769Z env:
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:43.1392807Z   GH_TOKEN: ***
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:43.1393109Z   INPUT_TAG: v0.1.0-rc.58
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:43.1393411Z   INPUT_PREVIOUS: v0.1.0-rc.57
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:43.1393701Z ##[endgroup]
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:49.4414359Z PASS A1 public feed names this version
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:50.7502377Z Signature good. Release 0.1.0-rc.58 (rc channel), signed and not expired.
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:50.7505142Z It is not an upgrade for this setup (0.1.0-rc.58): already up to date
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:50.7505899Z   not here app       unravis-v0.1.0-rc.58-windows-x64.zip
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:50.7508397Z   OK       blackbox  unravis-blackbox-v0.1.0-rc.58-windows-x64.zip  4830074 bytes  sha256 e284b35b9b9a203fafa547969eca8c3e517b9f8d96076eca1449bc7b38714245
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:50.7509751Z   not here lite      unravis-lite-v0.1.0-rc.58-windows-x64.zip
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:50.7511024Z   OK       setup     unravis-setup-v0.1.0-rc.58-windows-x64.exe  79711232 bytes  sha256 27999bbaccf6b81f8addd50c353c291148cc33d4affaccd4897e7ed840457ac6
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:50.7512206Z Every file listed as OK matches the signed release byte for byte.
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:50.7540908Z PASS A2 release verifies offline (signature, expiry, hashes)
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:50.8418026Z PASS A3a damaged signature is refused
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:50.9233725Z PASS A3b changed file is refused
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:56.3188786Z done: Unravis 0.1.0-rc.57 is installed.
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:56.3190714Z Log: C:\Users\runneradmin\AppData\Local\Temp\unravis-verify-57283e7b15fc4b3e8c520112f28e5de2\old-install.log
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:57.3470922Z PASS B1 previous release installs silently
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:57.6191370Z {"status":"available","current":"0.1.0-rc.57","latest":"0.1.0-rc.58","url":"https://github.com/abhinavjp/unravis/releases/tag/v0.1.0-rc.58","channel":"rc","checkedAt":"2026-11-22T07:42:57Z","auto":true,"intervalMinutes":30,"canInstall":false,"applyAuto":true,"inUse":false}
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:42:57.6227005Z PASS B2 the old app sees the new release on the real feed
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:43:00.0472831Z done: Unravis is upgraded to 0.1.0-rc.58. Your cases and saved connections were kept.
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:43:00.0475551Z Log: C:\Users\runneradmin\AppData\Local\Temp\unravis-verify-57283e7b15fc4b3e8c520112f28e5de2\upgrade.log
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:43:02.9371849Z PASS B3 upgrade with the hash and version pin
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:43:03.2196106Z PASS B4 old setup cannot put the old version back (no downgrade)
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:43:04.8870333Z done: Unravis is uninstalled.
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:43:04.8894756Z Log: C:\Users\runneradmin\AppData\Local\Temp\unravis-verify-57283e7b15fc4b3e8c520112f28e5de2\uninstall.log
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:43:04.8944145Z PASS B4u setup --uninstall removes the app and exits 0
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:43:04.9001495Z 
+verify	Verify the published release (feed, offline check, tamper refusals, upgrade, no downgrade)	2026-11-22T07:43:04.9002353Z All steps passed for v0.1.0-rc.58 (upgraded from v0.1.0-rc.57).
+verify	Post Check out the code at the tag	﻿2026-11-22T07:43:04.9509894Z Post job cleanup.
+verify	Post Check out the code at the tag	2026-11-22T07:43:05.1331839Z [command]"C:\Program Files\Git\bin\git.exe" version
+verify	Post Check out the code at the tag	2026-11-22T07:43:05.1631606Z git version 2.56.1.windows.1
+verify	Post Check out the code at the tag	2026-11-22T07:43:05.1704342Z Temporarily overriding HOME='D:\a\_temp\6f9806ce-50c0-4245-8f14-23bda4056ae7' before making global git config changes
+verify	Post Check out the code at the tag	2026-11-22T07:43:05.1705358Z Adding repository directory to the temporary git global config as a safe directory
+verify	Post Check out the code at the tag	2026-11-22T07:43:05.1715726Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\unravis\unravis
+verify	Post Check out the code at the tag	2026-11-22T07:43:05.2046635Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+verify	Post Check out the code at the tag	2026-11-22T07:43:05.2386319Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+verify	Post Check out the code at the tag	2026-11-22T07:43:05.8510743Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+verify	Post Check out the code at the tag	2026-11-22T07:43:05.8829685Z http.https://github.com/.extraheader
+verify	Post Check out the code at the tag	2026-11-22T07:43:05.8873874Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+verify	Post Check out the code at the tag	2026-11-22T07:43:05.9268339Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+verify	Complete job	﻿2026-11-22T07:43:06.4707815Z Cleaning up orphan processes
+verify	Complete job	2026-11-22T07:43:06.5199146Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

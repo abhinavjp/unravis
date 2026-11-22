@@ -345,6 +345,74 @@ try {
     Assert-That 'passphrase: Invoke-WithPassphrase puts it on the program''s standard input' ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
     $sec.Dispose()
     Assert-That 'logging risks: returns a list' ($null -ne (Get-PassphraseLoggingRisks))
+
+    # ---- run logs for the dashboard: secrets never reach the file, and the tee never changes what the run does -------------------
+    $red = New-LogRedactor @('DESKTOP-ABC', 'nachi')
+    $fakeTok = 'ghp_' + ('a1B2' * 9)
+    $cases = [ordered]@{
+        "push with $fakeTok done"                  = '<token hidden>'
+        'Authorization: Bearer abcdefghijklmnop1234' = '<hidden>'
+        'passphrase=hunter2hunter2'                = '<hidden>'
+        'loaded C:\Users\nachi\keys\release.key'   = '<key file>'
+        'on DESKTOP-ABC as someone'                = '<name>'
+        "$([char]27)[36;1mcolour$([char]27)[0m"    = 'colour'
+        '/home/runner/work and /Users/bob/x'       = '<user>'
+    }
+    foreach ($k in $cases.Keys) {
+        $got = Protect-LogLine $k $red
+        Assert-That "log redaction: $($cases[$k])" ($got.Contains($cases[$k])) "got '$got'"
+        Assert-That "log redaction: nothing secret left in '$($cases[$k])' case" (-not ($got -match 'ghp_a1B2|hunter2|release\.key|DESKTOP-ABC|nachi|abcdefghijklmnop1234')) "got '$got'"
+    }
+    $red2 = New-LogRedactor @('Abhinav')
+    foreach ($c in @(@('GH_TOKEN=abc123secret', 'abc123secret'), @('SIGNING_PASSPHRASE=hunter2', 'hunter2'), @('keyPassword=hunter2', 'hunter2'), @('passphrase: correct horse battery', 'battery'), @('-----BEGIN PGP PRIVATE KEY BLOCK-----', 'BEGIN PGP'))) {
+        $got = Protect-LogLine $c[0] (New-LogRedactor)
+        Assert-That "log redaction: '$($c[0])' hides '$($c[1])'" (-not $got.Contains($c[1])) "got '$got'"
+    }
+    Assert-That 'log redaction: a passed-test line is kept' ((Protect-LogLine '--- PASS: TestX (0.00s)' (New-LogRedactor)) -eq '--- PASS: TestX (0.00s)')
+    $gotUrl = Protect-LogLine 'https://github.com/abhinavjp/unravis/actions/runs/1 by Abhinav' $red2
+    Assert-That 'log redaction: a user name inside a repository name is kept, the name alone is hidden' ($gotUrl.Contains('github.com/abhinavjp/unravis') -and -not $gotUrl.Contains('by Abhinav')) "got '$gotUrl'"
+    $kr = New-LogRedactor
+    $blk = 'before', '-----BEGIN PRIVATE KEY-----', 'MIIEvQIBADANBgkqhkiG9w0B', '-----END PRIVATE KEY-----', 'after' | ForEach-Object { Protect-LogLine $_ $kr }
+    Assert-That 'log redaction: a private key block is hidden line by line' (($blk -join '|') -eq 'before|<private key hidden>|<private key hidden>|<private key hidden>|after')
+    Assert-That 'log redaction: an ordinary line is unchanged' ((Protect-LogLine 'ok  pkg  1.2s' (New-LogRedactor)) -eq 'ok  pkg  1.2s')
+    Assert-That 'log redaction: -KeepTabs keeps the tab separators of a CI log line' ((Protect-LogLine "job`tstep`ttext" (New-LogRedactor) -KeepTabs) -eq "job`tstep`ttext")
+
+    $logs = Get-ReleaseLogDir $env:UNRAVIS_RELEASE_DATA
+    $runLog = New-RunLogPath $logs
+    Assert-That 'run log: the file name is run-<utc time>.log' ((Split-Path $runLog -Leaf) -match '^run-\d{8}T\d{6}Z\.log$')
+    $hostExe = (Get-Process -Id $PID).Path
+    $child = "Write-Host '[1/7] Preflight'; Write-Host 'token ' + '$fakeTok'.ToString(); Write-Host 'line two'; exit 7"
+    $seen = @(& $hostExe -NoProfile -Command $child | Write-ReleaseRunLog -Path $runLog | ForEach-Object { "$_" })
+    Assert-That 'run log: the exit code of the run survives the tee' ($LASTEXITCODE -eq 7) "exit $LASTEXITCODE"
+    Assert-That 'run log: every line still reaches the screen, unchanged' ($seen.Count -eq 3 -and $seen[0] -eq '[1/7] Preflight' -and $seen[2] -eq 'line two') ($seen -join '|')
+    $saved = @(Get-Content -LiteralPath $runLog)
+    Assert-That 'run log: one time-stamped line per output line' ($saved.Count -eq 3 -and ($saved | Where-Object { $_ -notmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ ' }).Count -eq 0) ($saved -join '|')
+    Assert-That 'run log: the saved copy has the token hidden' (-not ($saved -join "`n").Contains('ghp_a1B2')) ($saved -join '|')
+    $big = New-RunLogPath $logs; $big = $big -replace '\d{6}Z', '000001Z'
+    $n = @(1..30 | Write-ReleaseRunLog -Path $big -MaxLines 10 | ForEach-Object { $_ })
+    Assert-That 'run log: a cap stops the file, not the run' ($n.Count -eq 30 -and @(Get-Content -LiteralPath $big).Count -eq 11)
+    $blocked = Join-Path $logs 'is-a-folder.log'; New-Item -ItemType Directory -Path $blocked | Out-Null
+    $n = @(1..3 | Write-ReleaseRunLog -Path $blocked | ForEach-Object { $_ })
+    Assert-That 'run log: a file that cannot be written does not stop the run' ($n.Count -eq 3)
+
+    foreach ($i in 1..8) { Set-Content -LiteralPath (Join-Path $logs ('run-2026010{0}T000000Z.log' -f $i)) -Value 'x'; (Get-Item (Join-Path $logs ('run-2026010{0}T000000Z.log' -f $i))).LastWriteTimeUtc = [datetime]"2026-01-0${i}T00:00:00Z" }
+    Set-Content -LiteralPath (Join-Path $logs 'notes.txt') -Value 'keep me'
+    Remove-OldReleaseLogs $logs 5
+    $left = @(Get-ChildItem -LiteralPath $logs -File | Where-Object { $_.Name -match '^(run-|ci-)' })
+    Assert-That 'run log: only the newest N log files are kept' ($left.Count -eq 5) "$($left.Count) left"
+    Assert-That 'run log: other files in the folder are never touched' (Test-Path -LiteralPath (Join-Path $logs 'notes.txt'))
+    Assert-That 'ci log: a bad run id, tag or kind is refused before anything runs' (-not (Save-CiRunLog 'o/r' '12; calc' 'v1.0.0' 'ci' $logs) -and -not (Save-CiRunLog 'o/r' '12' '../x' 'ci' $logs) -and -not (Save-CiRunLog 'o/r' '12' 'v1.0.0' 'other' $logs))
+
+    $aud = Join-Path $env:UNRAVIS_RELEASE_DATA 'audit-runs.jsonl'
+    $now = [DateTime]::UtcNow
+    foreach ($e in @(@{ event = 'built'; version = '9.9.9-rc.1'; run = '111' }, @{ event = 'verify-failed'; version = '9.9.9-rc.1'; run = '222' }, @{ event = 'verified'; version = '9.9.9-rc.1'; run = '333' }, @{ event = 'built'; version = '9.9.8'; run = '444' }, @{ event = 'built'; version = '9.9.9-rc.1'; run = 'not-a-number' })) { Write-AuditEntry $aud $e }
+    $ids = Get-ReleaseAuditRuns $aud '9.9.9-rc.1' $now.AddMinutes(-5)
+    Assert-That 'ci log: run ids come from this version''s audit entries (newest of each kind, digits only)' ($ids.release -eq '111' -and $ids.verify -eq '333') "$($ids | ConvertTo-Json -Compress)"
+    $ids = Get-ReleaseAuditRuns $aud '9.9.9-rc.1' $now.AddMinutes(5)
+    Assert-That 'ci log: entries older than this run are ignored' ($ids.release -eq '' -and $ids.verify -eq '')
+    $rel2 = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Release.ps1')
+    Assert-That 'bootstrap: the worker output goes through the run log tee and the exit code is read right after' ($rel2 -match 'Write-ReleaseRunLog -Path \$runLog' -and $rel2 -match '(?s)finally \{ Remove-Item Env:UNRAVIS_RELEASE_NONCE[^\r\n]*\r?\n\s*\$code = \$LASTEXITCODE')
+    Assert-That 'bootstrap: CI logs are saved only after the locks are free' ($rel2 -match '(?s)\$osLock\.Dispose\(\) \}\s*#[^\r\n]*\r?\n\s*if \(-not \$CheckOnly -and \$st[^\r\n]*Save-ReleaseRunLogs')
 } finally {
     Remove-Item Env:UNRAVIS_RELEASE_DATA -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

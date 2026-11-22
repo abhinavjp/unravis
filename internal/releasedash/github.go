@@ -19,12 +19,14 @@ const (
 
 // Rel is one public GitHub release. This list is information only: it is not signature-checked.
 type Rel struct {
-	Tag        string `json:"tag_name"`
-	Name       string `json:"name"`
-	Prerelease bool   `json:"prerelease"`
-	Draft      bool   `json:"draft"`
-	Published  string `json:"published_at"`
-	URL        string `json:"html_url"`
+	Tag        string  `json:"tag_name"`
+	Name       string  `json:"name"`
+	Prerelease bool    `json:"prerelease"`
+	Draft      bool    `json:"draft"`
+	Published  string  `json:"published_at"`
+	URL        string  `json:"html_url"`
+	Target     string  `json:"target_commitish"`
+	Assets     []Asset `json:"assets"`
 }
 
 // GH reads the release list with a conditional request and a minimum gap between network calls.
@@ -32,6 +34,10 @@ type GH struct {
 	Client *http.Client
 	URL    string // tests only
 	MinGap time.Duration
+	Base   string // API address of the repository, tests only
+
+	jmu sync.Mutex
+	jc  map[string]*jsonEntry
 
 	mu   sync.Mutex
 	etag string
@@ -108,6 +114,8 @@ func (g *GH) fetch(ctx context.Context) error {
 	}
 	for i := range rels {
 		rels[i].Tag, rels[i].Name = clip(rels[i].Tag), clip(rels[i].Name)
+		rels[i].Target = hexOnly(rels[i].Target, 40)
+		rels[i].Assets = cleanAssets(rels[i].Assets)
 		if !strings.HasPrefix(rels[i].URL, RepoURL) {
 			rels[i].URL = ""
 		}
