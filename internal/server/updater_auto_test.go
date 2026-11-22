@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -312,5 +313,30 @@ func TestAutoStepRecheckOfflineBacksOff(t *testing.T) {
 	rg.u.autoStep()
 	if applied.Load() != 1 {
 		t.Fatalf("not applied after the wait (applied %d)", applied.Load())
+	}
+}
+
+// The downloaded file is hashed once, not every minute, while a failed Apply now stays on screen.
+func TestFileStillThereIsRemembered(t *testing.T) {
+	rg, _ := autoRig(t)
+	m := rg.u.availableManifest()
+	if m == nil || !rg.u.fileStillThere(m) {
+		t.Fatal("the downloaded file was not found")
+	}
+	got, ok := rg.u.dl.Recheck(m, update.AssetSetup)
+	if !ok {
+		t.Fatal("recheck")
+	}
+	if err := os.Remove(got.Path); err != nil {
+		t.Fatal(err)
+	}
+	if !rg.u.fileStillThere(m) { // the answer is remembered for ten minutes; Install hashes again before any start
+		t.Fatal("the remembered answer was dropped")
+	}
+	rg.u.auto.mu.Lock()
+	rg.u.auto.fileOKAt = time.Now().Add(-11 * time.Minute)
+	rg.u.auto.mu.Unlock()
+	if rg.u.fileStillThere(m) {
+		t.Fatal("a missing file was reported as there after the memory expired")
 	}
 }

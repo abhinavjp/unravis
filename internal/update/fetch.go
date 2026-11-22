@@ -336,7 +336,9 @@ func (f *Fetcher) once1(ctx context.Context, base, want string, now func() time.
 	}
 	m, err := Verify(manifest, sig, Trust{Keys: f.Keys, Channel: f.Build, Want: want}, now())
 	if err != nil {
-		return attempt{Result: Result{Status: StatusRejected, Detail: err.Error()}, retryable: fresh}
+		// Backoff: a feed that fails its checks (expired, bad signature) is not asked again at full rate; the usual doubling applies,
+		// capped at 6 hours, and "Check for updates" still asks at once.
+		return attempt{Result: Result{Status: StatusRejected, Detail: err.Error(), Backoff: true}, retryable: fresh}
 	}
 	sum := sha256.Sum256(manifest)
 	hash := hex.EncodeToString(sum[:])

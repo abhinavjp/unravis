@@ -465,3 +465,16 @@ func restart() {
 	memByPath = map[string]*seenMem{}
 	stateMu.Unlock()
 }
+
+// A feed that fails its checks asks the caller to back off, so a broken or expired feed does not cost the fleet a full-rate retry.
+func TestRejectedAnswerAsksForBackoff(t *testing.T) {
+	k, priv := key(t, ChannelRC)
+	fs := newFeed(t)
+	m := goodManifest("0.1.0-rc.48", ChannelRC)
+	m.Expires = now.Add(-time.Hour) // expired
+	fs.publish(t, "rc", m, k, priv)
+	r := fs.fetcher(t, k, ChannelRC, "0.1.0-rc.47").Check(t.Context())
+	if r.Status != StatusRejected || !r.Backoff {
+		t.Fatalf("%+v", r)
+	}
+}

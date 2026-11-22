@@ -3,6 +3,8 @@ package blackbox
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -531,12 +533,18 @@ func stageFromZip(zipPath, stageDir, want string) (string, string, error) {
 	return dst, strings.ToLower(got), nil
 }
 
+// fileSHA256Hex hashes the file as it reads it, so a 200 MiB program is never held in memory by a service that must stay small.
 func fileSHA256Hex(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	return sha256Hex(data), nil
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // DropStalePending removes a pending update marker beside exe without judging it. The service calls it when self-update cannot run

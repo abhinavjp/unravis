@@ -46,6 +46,7 @@ Each run replaces the whole file, so say everything you want to hold in that run
 
 ## Limits
 
+- **The control file fails open on the network path (decided 2026-11-22, SWP-1021-5).** If the control file cannot be fetched or does not verify, a machine keeps using the last one it accepted (its pause and rollout until their expiry, its withdrawn list until a newer file replaces it). A machine that has never read one installs a release the owner paused or withdrew only if the control file stays unreachable for it. Nothing unsigned can be installed. Holding every new release until a control file was read (a grace window) was weighed and not built: a blocked or rate-limited host would then freeze updates for a whole fleet, which is the worse failure. A folder or share is the exception: there a missing control file holds the release.
 - A machine that has never been able to read the file cannot be held. The control file is a brake for machines that can reach the feed.
 - **To lift a withdrawal, publish a newer control file without it** (`Set-Control.ps1 -Channel rc -KeyFile ...` with no switches). `-KeepInForce` keeps the withdrawn list even when the file on the feed has expired, because machines keep it too.
 - A withdrawn version already installed stays installed. Rolling a machine back is a separate matter (see SILENT-UPDATE.md).

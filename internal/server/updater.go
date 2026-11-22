@@ -210,13 +210,18 @@ type UpdateNotice struct {
 
 // Status is the last known answer plus the settings. It makes no network call.
 func (u *Updater) Status() UpdateStatus {
+	// The result file is read before the lock is taken: a slow disk must not hold up the check loop and the minute tick.
+	var lastRes *update.ApplyResult
+	if u.resultDir != "" {
+		if r, ok := update.ReadApplyResult(u.resultDir); ok {
+			lastRes = &r
+		}
+	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	st := UpdateStatus{Status: "none", Current: version.Version, Channel: u.channel, Auto: u.settings.Auto, IntervalMinutes: u.settings.IntervalMinutes, ApplyAuto: u.settings.ApplyAuto, InUse: u.InUse()}
-	if u.resultDir != "" {
-		if r, ok := update.ReadApplyResult(u.resultDir); ok {
-			st.Result = &UpdateNotice{Outcome: r.Outcome, From: r.From, To: r.To, Message: r.Message}
-		}
+	if lastRes != nil {
+		st.Result = &UpdateNotice{Outcome: lastRes.Outcome, From: lastRes.From, To: lastRes.To, Message: lastRes.Message}
 	}
 	if u.channel == "" {
 		st.Status = "dev"
@@ -246,7 +251,7 @@ func (u *Updater) Status() UpdateStatus {
 		st.Status = "unreachable"
 	}
 	// A run nobody watched that ended badly: the bar must not go on saying "being applied".
-	if st.Result != nil && st.Result.Outcome != "done" && st.Install != nil && st.Install.State == "launched" && st.Install.Version == st.Result.To && u.resultIsFromThisLaunch() {
+	if st.Result != nil && st.Result.Outcome != "done" && st.Install != nil && st.Install.State == "launched" && st.Install.Version == st.Result.To && u.resultIsFromThisLaunch(lastRes) {
 		c := *st.Install
 		c.State, c.Error = "failed", st.Result.Message
 		st.Install = &c
@@ -383,9 +388,8 @@ func (u *Updater) currentSettings() UpdaterSettings {
 }
 
 // resultIsFromThisLaunch says the note on disk was written after the last successful launch, so it is that run's, not an earlier one's.
-func (u *Updater) resultIsFromThisLaunch() bool {
-	r, ok := update.ReadApplyResult(u.resultDir)
-	if !ok {
+func (u *Updater) resultIsFromThisLaunch(r *update.ApplyResult) bool {
+	if r == nil {
 		return false
 	}
 	u.inst.mu.Lock()

@@ -61,6 +61,9 @@ type autoState struct {
 	// is later (5 minutes, then 15, 60, and 6 hours at most).
 	rcFails int
 	rcNext  time.Time
+	// fileOKFor and fileOKAt remember that the downloaded file of that version was found intact (see fileStillThere).
+	fileOKFor string
+	fileOKAt  time.Time
 }
 
 func dlBackoff(fails int) time.Duration {
@@ -284,8 +287,21 @@ func (u *Updater) bumpAutoTries(version string) {
 }
 
 // fileStillThere says the downloaded setup for m is still on disk and unchanged.
+// A positive answer is remembered for ten minutes: the check reads and hashes the whole file (tens of MB), and the minute tick asks
+// it every time while a failed Apply now stays on screen. The start itself (Install) always hashes the file again.
 func (u *Updater) fileStillThere(m *update.Manifest) bool {
+	u.auto.mu.Lock()
+	if u.auto.fileOKFor == m.Version && time.Since(u.auto.fileOKAt) < 10*time.Minute {
+		u.auto.mu.Unlock()
+		return true
+	}
+	u.auto.mu.Unlock()
 	_, ok := u.dl.Recheck(m, update.AssetSetup)
+	if ok {
+		u.auto.mu.Lock()
+		u.auto.fileOKFor, u.auto.fileOKAt = m.Version, time.Now()
+		u.auto.mu.Unlock()
+	}
 	return ok
 }
 
