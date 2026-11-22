@@ -13,6 +13,7 @@
 //   UIFIX-08  Phone header with "Choose sources" fits the window (BL-472); 390 and 360 px fail on the old header, 320 px is a no-regression case
 //   UIFIX-14  Tap targets of 24 x 24 px or more and desktop does not move: the "Change" link of the Review step (14a), the "Open the release page" link of the update bar (14b), the unfinished-request counts of Where is it? (14c), and the keyboard focus rings and rest pictures of those three, which stay the old ones (14f) (BL-475 group 4)
 //   UIFIX-10  Slow call screen: the time zone label, the peak and zero labels and the "drag" hint are at least 11px, the lanes and the minimap do not move, nothing collides (BL-483)
+//   UIFIX-17  Investigation timeline: the UTC times of the incident and comparison windows are drawn as visible text (not only a tooltip), stay UTC when "Times in" changes, fit at 320, 360 and 390 px, and the one-line readout does not grow on a wide desktop
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase } from '../support/ui';
 
@@ -866,3 +867,133 @@ for (const scheme of ['dark', 'light'] as const) {
     });
   }
 }
+
+// UIFIX-17: the UTC times of the two windows of the Investigation timeline were only in a title (tooltip) and in clipped, visually hidden text.
+// They come from the same fields as the tooltip (the window boxes, sent to the server as UTC) and are now drawn in the readout under the pickers.
+async function openTimelineReadout(page: Page): Promise<void> {
+  await openSlowCallScreenStart(page);
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
+  await expect(page.locator('.tracing-chart')).toBeVisible();
+}
+
+async function openSlowCallScreenStart(page: Page): Promise<void> {
+  if (!(await page.locator('#start-title').isVisible())) {
+    const direct = page.getByRole('button', { name: /^All cases/ }).first();
+    if (await direct.isVisible()) await direct.click();
+    else {
+      await page.getByRole('button', { name: 'More', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'All cases', exact: true }).click();
+    }
+  }
+  await expect(page.locator('#start-title')).toBeVisible();
+  await openCase(page, 'Orders API stall, 19 October');
+}
+
+/** What is drawn for one UTC echo: painted text boxes, not clipped, not hidden, inside the card, 4.5:1 text contrast. */
+async function utcEchoFacts(page: Page, testId: string) {
+  return page.evaluate((id) => {
+    const el = document.querySelector<HTMLElement>('[data-testid="' + id + '"]')!;
+    const card = document.querySelector<HTMLElement>('.trctl')!.getBoundingClientRect();
+    const s = getComputedStyle(el);
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const rects = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+    const parse = (c: string) => { const m = /rgba?\(([^)]+)\)/.exec(c)!; const p = m[1].split(/[ ,/]+/).map(Number); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; };
+    const lin = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    const lum = (c: { r: number; g: number; b: number }) => 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+    let bg = { r: 255, g: 255, b: 255, a: 1 };
+    for (let e: Element | null = el; e; e = e.parentElement) { const c = parse(getComputedStyle(e).backgroundColor); if (c.a > 0.99) { bg = c; break; } }
+    const l1 = lum(parse(s.color)), l2 = lum(bg);
+    let clipped = false;
+    for (let e: HTMLElement | null = el; e && e !== document.body; e = e.parentElement) {
+      const t = getComputedStyle(e);
+      if (t.clipPath !== 'none' || t.visibility === 'hidden' || t.display === 'none' || t.opacity === '0') clipped = true;
+    }
+    const top = rects.length ? document.elementFromPoint(rects[0].x + rects[0].width / 2, rects[0].y + rects[0].height / 2) : null;
+    return {
+      text: (el.textContent || '').replace(/\s+/g, ' ').trim(),
+      painted: rects.length,
+      narrowest: Math.min(...rects.map((r) => r.width)),
+      tallest: Math.max(...rects.map((r) => r.height)),
+      inCard: rects.every((r) => r.left >= card.left - 0.5 && r.right <= card.right + 0.5 && r.top >= card.top - 0.5 && r.bottom <= card.bottom + 0.5),
+      position: s.position,
+      fontSize: parseFloat(s.fontSize),
+      clipped,
+      onTop: !!top && (el === top || el.contains(top) || top.contains(el)),
+      ratio: (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)
+    };
+  }, testId);
+}
+
+for (const scheme of ['dark', 'light'] as const) {
+  test('UIFIX-17a Investigation timeline (' + scheme + '): both UTC times are drawn text, not clipped, readable, and follow the windows', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await openTimelineReadout(page);
+    const incident = await utcEchoFacts(page, 'utc-echo-incident');
+    const reference = await utcEchoFacts(page, 'utc-echo-reference');
+    // The demo clock is 2026-10-20T09:00Z: incident 08:00-09:00 UTC, comparison 07:00-08:00 UTC (the same fields the tooltip reads).
+    expect(incident.text).toBe('UTC 2026-10-20T08:00:00Z \u2013 2026-10-20T09:00:00Z');
+    expect(reference.text).toBe('UTC 2026-10-20T07:00:00Z \u2013 2026-10-20T08:00:00Z');
+    for (const [name, f] of [['incident', incident], ['comparison', reference]] as const) {
+      expect(f.painted, name + ': text boxes painted').toBeGreaterThan(0);
+      expect(f.narrowest, name + ': not a 1 px clipped box').toBeGreaterThan(20);
+      expect(f.tallest, name + ': not a 1 px clipped box').toBeGreaterThan(8);
+      expect(f.position, name + ': not pulled out of the flow').not.toBe('absolute');
+      expect(f.clipped, name + ': no clip, hidden or transparent ancestor').toBe(false);
+      expect(f.inCard, name + ': inside the controls card').toBe(true);
+      expect(f.onTop, name + ': nothing covers it').toBe(true);
+      expect(f.fontSize, name + ': at least 11 px').toBeGreaterThanOrEqual(11);
+      expect(f.ratio, name + ': text contrast').toBeGreaterThanOrEqual(4.5);
+    }
+    // A quick range changes the visible text, so it is read live from the window boxes and not a constant.
+    await page.locator('.trctl .chip[data-quick-id="4h"]').click();
+    await expect(page.getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-20T05:00:00Z \u2013 2026-10-20T09:00:00Z');
+    expect((await utcEchoFacts(page, 'utc-echo-incident')).painted).toBeGreaterThan(0);
+  });
+}
+
+test('UIFIX-17b Investigation timeline: the UTC text stays UTC when "Times in" changes; only the zone name beside it changes', async ({ page }) => {
+  await openTimelineReadout(page);
+  const line = page.getByTestId('tp-metaline');
+  const zone = line.locator('b');
+  const echo = async () => [await page.getByTestId('utc-echo-incident').innerText(), await page.getByTestId('utc-echo-reference').innerText()];
+  const before = await echo();
+  const zoneBefore = await zone.innerText();
+  await page.getByLabel('Show and type times in').selectOption({ label: 'India' });
+  await expect(zone).not.toHaveText(zoneBefore);
+  expect(await echo(), 'the UTC strings did not move with the zone').toEqual(before);
+  expect((await utcEchoFacts(page, 'utc-echo-incident')).painted).toBeGreaterThan(0);
+  await expect(line).toContainText('Times are in');
+});
+
+for (const width of [320, 360, 390]) {
+  for (const scheme of ['dark', 'light'] as const) {
+    test('UIFIX-17c Investigation timeline at ' + width + ' px (' + scheme + '): the UTC lines wrap inside the card and the page does not scroll sideways', async ({ page }) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      await openTimelineReadout(page);
+      await page.setViewportSize({ width, height: 800 });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), { message: 'no sideways scroll' }).toBe(true);
+      for (const id of ['utc-echo-incident', 'utc-echo-reference']) {
+        const f = await utcEchoFacts(page, id);
+        expect(f.painted, id).toBeGreaterThan(0);
+        expect(f.inCard, id + ' inside the card').toBe(true);
+        expect(f.clipped, id).toBe(false);
+      }
+      const spill = await page.evaluate(() => { const m = document.querySelector<HTMLElement>('[data-testid="tp-metaline"]')!; return m.scrollWidth - m.clientWidth; });
+      expect(spill, 'the readout paragraph has nothing wider than itself').toBeLessThanOrEqual(1);
+    });
+  }
+}
+
+test('UIFIX-17d Investigation timeline on a wide desktop: the readout is still one line and the controls card is not taller', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openTimelineReadout(page);
+  const m = await page.evaluate(() => {
+    const line = document.querySelector<HTMLElement>('[data-testid="tp-metaline"]')!;
+    const lh = parseFloat(getComputedStyle(line).lineHeight) || parseFloat(getComputedStyle(line).fontSize) * 1.4;
+    return { h: line.getBoundingClientRect().height, lh, card: document.querySelector('.trctl')!.getBoundingClientRect().height };
+  });
+  expect(m.h, 'one line of text at 1440 px (measured 17 px before the change)').toBeLessThanOrEqual(m.lh * 1.5);
+  expect(m.card, 'the controls card keeps its measured height at 1440 px (320 px before the change)').toBeLessThanOrEqual(322);
+});

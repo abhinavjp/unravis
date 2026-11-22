@@ -484,7 +484,7 @@
           </fieldset>
         </div>
       </div>
-      <p class="metaline" data-testid="tp-metaline" title={echoUtc(fields.incidentStart, fields.incidentEnd) + ' ' + WINDOW_TEXT.metaCompared + ' ' + echoUtc(fields.referenceStart, fields.referenceEnd)}><span class="utc-echo echo-hidden" data-testid="utc-echo-incident">{echoUtc(fields.incidentStart, fields.incidentEnd)}</span><span class="echo-hidden"> {WINDOW_TEXT.metaCompared} </span><span class="utc-echo echo-hidden" data-testid="utc-echo-reference">{echoUtc(fields.referenceStart, fields.referenceEnd)}</span> {WINDOW_TEXT.metaZoneLead} <b>{timeZone.zone}</b> {WINDOW_TEXT.metaZoneTail}</p>
+      <p class="metaline" data-testid="tp-metaline" title={echoUtc(fields.incidentStart, fields.incidentEnd) + ' ' + WINDOW_TEXT.metaCompared + ' ' + echoUtc(fields.referenceStart, fields.referenceEnd)}><span class="utc-echo" data-testid="utc-echo-incident">{echoUtc(fields.incidentStart, fields.incidentEnd)}</span><span> {WINDOW_TEXT.metaCompared} </span><span class="utc-echo" data-testid="utc-echo-reference">{echoUtc(fields.referenceStart, fields.referenceEnd)}</span> {WINDOW_TEXT.metaZoneLead} <b>{timeZone.zone}</b> {WINDOW_TEXT.metaZoneTail}</p>
       <div class="window-actions">
         <small>{WINDOW_TEXT.endNote}</small>
       </div>
@@ -623,9 +623,9 @@
   .trctl-notices { display: grid; gap: var(--space-2); min-width: 0; }
   .trctl-notices:empty { display: none; }
   .metaline { margin: 0; color: var(--text-2); font-size: var(--fs-2); overflow-wrap: anywhere; }
-  .utc-echo { font-family: var(--mono); white-space: nowrap; }
-  /* The exact UTC times are read by screen readers and shown as a tooltip, not as a third line of raw text (ANALYSIS-16). */
-  .echo-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  /* The exact UTC times of both windows are drawn as text (not only a tooltip), so a keyboard or touch user can read them and match them to a server log.
+     The line breaks at the spaces around the dash, so each timestamp stays whole on a phone. */
+  .utc-echo { font-family: var(--mono); }
   .metaline b { color: var(--text); font-weight: 600; }
   .windows { display: grid; gap: var(--space-2); }
   .quick-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
