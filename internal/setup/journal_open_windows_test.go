@@ -453,13 +453,18 @@ func TestAPlainWriteInTheAdminOnlyFolderIsJudgedByItsRealOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := strings.SplitN(strings.TrimPrefix(sddl, "O:"), "D:", 2)[0]
+	// The SDDL also names the group (G:), so it is parsed, not cut at "D:". CI showed O:BA with a domain-users group for an elevated runner.
+	parsed, err := ParseSDDL(sddl)
+	if err != nil {
+		t.Fatalf("cannot read %q: %v", sddl, err)
+	}
+	owner := parsed.Owner
 	t.Logf("a journal written by a plain os.WriteFile in the administrators-only folder gets owner %q (SDDL %s)", owner, sddl)
 	_, found, err := r.readJournal(true)
 	if !found {
 		t.Fatalf("the file is there but readJournal says it is not: %v", err)
 	}
-	ownerOK := owner == "BA" || owner == "SY" || owner == "S-1-5-32-544" || owner == "S-1-5-18"
+	ownerOK := journalFileOwnerOK(owner)
 	switch {
 	case ownerOK && err != nil:
 		t.Fatalf("owner %q is accepted by the rule but the journal was refused: %v", owner, err)
