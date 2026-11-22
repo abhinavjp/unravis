@@ -1,24 +1,24 @@
 {
   "v": 1,
-  "state": "held",
+  "state": "free",
   "id": "ddb7031f0cbe4577985d50f58a625006",
   "host": "9f484c6ac779",
   "pid": 45464,
   "requester": "Cut next rc from master",
   "started": "2026-11-22T11:43:59.3206761Z",
-  "heartbeat": "2026-11-22T11:50:33.8715443Z",
+  "heartbeat": "2026-11-22T11:55:29.1152648Z",
   "channel": "rc",
   "version": "0.1.0-rc.59",
-  "stage": "Verify",
+  "stage": "idle",
   "commit": "2f12bf5150f980025d3f0a228450dfa8ed7eaebc",
   "holdMerges": false,
   "lease_minutes": 180,
   "reason": "",
   "last": {
+    "requester": "Cut next rc from master",
+    "version": "0.1.0-rc.59",
     "reason": "",
-    "at": "2026-11-22T07:44:55.3392045Z",
-    "version": "0.1.0-rc.58",
-    "requester": "unravis-release-thread",
-    "outcome": "done"
+    "outcome": "done",
+    "at": "2026-11-22T11:55:28.7192347Z"
   }
 }
