@@ -145,7 +145,8 @@
   async function refresh(signal?: AbortSignal) {
     if (createView.running || started || addGuard.preparing) return;
     await Promise.all([checkCase(signal), loadCase(signal)]);
-    if (signal?.aborted || !owned) return;
+    // A press made while this read ran starts its own read, which does the left-out check: this one must not change the list under it.
+    if (signal?.aborted || !owned || addGuard.preparing) return;
     dropDuplicates();
   }
 
@@ -224,7 +225,7 @@
     </div>
   {/if}
   {#if addGuard.preparing}
-    <p class="hint" role="status" tabindex="-1" bind:this={statusEl} data-checking-case>{WIZ.readingCase}</p>
+    <p class="hint" tabindex="-1" bind:this={statusEl} data-checking-case>{WIZ.readingCase}</p>
   {/if}
   {#if checking}
     <p class="hint" role="status">{WIZ.checkingCase}</p>
@@ -255,14 +256,14 @@
       {/each}
       {#if plan.scan > 0}
         <label class="field">How far back to read the logs of this computer
-          <select value={createView.window} onchange={(e) => chooseWindow((e.currentTarget as HTMLSelectElement).value as typeof createView.window)}>
+          <select value={createView.window} disabled={addGuard.preparing} onchange={(e) => chooseWindow((e.currentTarget as HTMLSelectElement).value as typeof createView.window)}>
             {#each REVIEW_WINDOWS as w (w)}<option value={w}>{windowChoiceLabel(w)}</option>{/each}
           </select>
         </label>
       {/if}
       {#if needsNotice}
         <p class="hint">{GATING_BANNER}</p>
-        <label class="ack"><input type="checkbox" checked={createView.ack} onchange={(e) => setAck((e.currentTarget as HTMLInputElement).checked)} /> {ACK_LABEL}</label>
+        <label class="ack"><input type="checkbox" checked={createView.ack} disabled={addGuard.preparing} onchange={(e) => setAck((e.currentTarget as HTMLInputElement).checked)} /> {ACK_LABEL}</label>
       {/if}
       {#if pending.includes('scan-busy') || pending.includes('scan-stale')}<p class="inline-error" role="alert">The list of things found on this PC is out of date. Go back and use Look again.</p>{/if}
       {#if pending.includes('files')}<p class="inline-error" role="alert">A file is missing. Go back and pick it again.</p>{/if}

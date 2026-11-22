@@ -5,7 +5,7 @@
  * and no DOM: the component only positions what this module returns.
  */
 import { gapBridge, heroOutliers, type HeroSlot } from '../chartHero';
-import { axisDuration } from '../chartScale';
+import { durationText } from '../chartAxis';
 import { percentileValue, type Percentile, type ZoomRange } from './canvas';
 import type { TracingBucket } from './model';
 import type { SlotGrid } from './lanes';
@@ -148,7 +148,7 @@ export function heroLayout(
   const marks: HeroMark[] = slots.flatMap((slot, k) => {
     if (slot.max == null) return [];
     const isLabelled = labelled.has(k);
-    return [{ index: range.from + k, leftPct: xOf(k), bottomPct: (slot.max / maxMs) * 100, ms: slot.max, flagged: flagged.has(k), labelled: isLabelled, text: isLabelled ? axisDuration(slot.max) : '' }];
+    return [{ index: range.from + k, leftPct: xOf(k), bottomPct: (slot.max / maxMs) * 100, ms: slot.max, flagged: flagged.has(k), labelled: isLabelled, text: isLabelled ? (durationText(slot.max) ?? '') : '' }];
   });
   const topFlaggedMs = outliers.flagged.length > 0 ? Math.max(...outliers.flagged.map((k) => slots[k].max as number)) : null;
   return {
@@ -167,13 +167,13 @@ export function heroLayout(
 /** The same sentence for the SQL lane, which speaks of statements. */
 export function heroSqlSentence(layout: HeroLayout): string {
   if (layout.flaggedCount === 0 || layout.topFlaggedMs === null) return '';
-  const top = axisDuration(layout.topFlaggedMs);
+  const top = durationText(layout.topFlaggedMs) ?? '';
   return layout.flaggedCount === 1 ? HERO_TEXT.sqlOutlierOne(top) : HERO_TEXT.sqlOutlierMany(layout.flaggedCount, top);
 }
 
 /** The sentence under the chart about the flagged diamonds; '' when nothing is flagged. */
 export function heroSentence(layout: HeroLayout): string {
   if (layout.flaggedCount === 0 || layout.topFlaggedMs === null) return '';
-  const top = axisDuration(layout.topFlaggedMs);
+  const top = durationText(layout.topFlaggedMs) ?? '';
   return layout.flaggedCount === 1 ? HERO_TEXT.outlierOne(top) : HERO_TEXT.outlierMany(layout.flaggedCount, top);
 }

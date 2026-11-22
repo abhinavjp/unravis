@@ -59,8 +59,11 @@ test('the tabs are off while the case is read again before a send, and a read th
   assert.match(flow, /if \(!\(await prepare\(\)\)\) return;\s+\/\/[^\n]*\n\s+if \(screen !== 'review'\) return;\s+const dropped = dropDuplicates\(\);/, 'a send happens only from the Review the person saw');
   assert.match(flow, /gone = true; if \(iSetPreparing\)/, 'only the flow that set the flag clears it');
   assert.match(flow, /disabled=\{addGuard\.preparing\} onclick=\{\(\) => void go\('add'\)\}/, 'Back is off while the case is read');
-  assert.match(flow, /role="status" tabindex="-1" bind:this=\{statusEl\}/, 'a status says why, and focus rests on it');
+  assert.match(flow, /tabindex="-1" bind:this=\{statusEl\}/, 'a line says why, and focus rests on it (no live region, so it is read once)');
   assert.match(flow, /const target = caseId;/);
+  assert.match(flow, /if \(signal\?\.aborted \|\| !owned \|\| addGuard\.preparing\) return;\s+dropDuplicates\(\);/, 'the focus re-read never edits the list under a press');
+  assert.match(flow, /<select value=\{createView\.window\} disabled=\{addGuard\.preparing\}/);
+  assert.match(flow, /checked=\{createView\.ack\} disabled=\{addGuard\.preparing\}/);
 });
 
 test('leaving the Add data tab keeps an unfinished list and failures on screen, and nothing else', () => {
