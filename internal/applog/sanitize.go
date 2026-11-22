@@ -29,8 +29,15 @@ var (
 	// A quoted or braced value is cut at its closing quote or brace (or the end
 	// of the text when it never closes), so a value with spaces or semicolons
 	// goes whole. AccountKey/SharedAccessKey need no word boundary before them.
-	reKVSecret  = regexp.MustCompile(`(?i)(\b(?:password|passwd|pwd|secret|token|api[-_]?key|key)|accountkey|sharedaccesskey)\s*=\s*(?:"[^"]*"?|'[^']*'?|\{[^}]*\}?|[^\s&;,]+)`)
-	reLongToken = regexp.MustCompile(`[A-Za-z0-9+/_-]{25,}={0,2}`)
+	// Password keys have their own rules below.
+	reKVSecret = regexp.MustCompile(`(?i)(\b(?:secret|token|api[-_]?key|key)|accountkey|sharedaccesskey)\s*=\s*(?:"[^"]*"?|'[^']*'?|\{[^}]*\}?|[^\s&;,]+)`)
+	// A password in a URL query string (?password=x&y=1) ends at "&", ";", "," or a space.
+	reKVPasswordQuery = regexp.MustCompile(`(?i)([?&](?:password|passwd|pwd))\s*=\s*(?:"[^"]*"?|'[^']*'?|\{[^}]*\}?|[^\s&;,]+)`)
+	// Any other password key (an ADO connection string, free text): a password may
+	// hold spaces, so an unquoted value runs to the next ";" or the end of the
+	// line, not to the next space. "}}" is an escaped brace in a braced value.
+	reKVPassword = regexp.MustCompile(`(?im)(^|[^?&\w])((?:password|passwd|pwd))[ \t]*=[ \t]*(?:"[^"]*"?|'[^']*'?|\{(?:[^}]|\}\})*\}?|[^;\r\n]*)`)
+	reLongToken  = regexp.MustCompile(`[A-Za-z0-9+/_-]{25,}={0,2}`)
 )
 
 const redacted = "[redacted]"
@@ -104,6 +111,8 @@ func Sanitize(text string) string {
 	out = reJSONSecret.ReplaceAllString(out, "${1}"+redacted+`"`)
 	out = reURLCreds.ReplaceAllString(out, "${1}://"+redacted+"@")
 	out = reBareCreds.ReplaceAllString(out, redacted+"@")
+	out = reKVPasswordQuery.ReplaceAllString(out, "${1}="+redacted)
+	out = reKVPassword.ReplaceAllString(out, "${1}${2}="+redacted)
 	out = reKVSecret.ReplaceAllString(out, "${1}="+redacted)
 	out = reLongToken.ReplaceAllStringFunc(out, func(m string) string {
 		if looksLikeSecret(m) {

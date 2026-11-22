@@ -1253,3 +1253,28 @@ func TestStopServiceErrorMessagesHaveOnePeriodAndTheRightFix(t *testing.T) {
 		})
 	}
 }
+
+// A password may hold spaces and semicolons: an unquoted value runs to the next
+// ";" or the end of the line, a quoted or braced value to its closing mark. In a
+// URL query string it still ends at "&" (OTA-2).
+func TestRedactPasswordValueShapes(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"report string (spaces, text after stays)", "Password=correct horse battery;Server=x", "Password=[hidden];Server=x"},
+		{"connection string", "Server=db;User ID=sa;Password=correct horse battery;Encrypt=true", "Server=db;User ID=sa;Password=[hidden];Encrypt=true"},
+		{"single quoted", "password='ab cd'", "password=[hidden]"},
+		{"double quoted", `password="ab cd";x=1`, `password=[hidden];x=1`},
+		{"braced with a semicolon and a space", "Password = {a;b c}", "Password = [hidden]"},
+		{"braced with }} escape", "pwd={a}}b c};Encrypt=true", "pwd=[hidden];Encrypt=true"},
+		{"value at end of line", "config pwd: correct horse battery", "config pwd: [hidden]"},
+		{"stops at a line break", "Password=correct horse\nnext line stays", "Password=[hidden]\nnext line stays"},
+		{"url query form stops at &", "http://h/x?password=hunter2&y=1", "http://h/x?password=[hidden]&y=1"},
+		{"secret keeps the old rule, single quote now known", "secret='a b' next", "secret=[hidden] next"},
+		{"innocuous line is unchanged", "copy-files: ok; Encrypt=true", "copy-files: ok; Encrypt=true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Redact(tc.in); got != tc.want {
+				t.Errorf("Redact(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

@@ -111,3 +111,31 @@ func TestSanitizeProfilePathBecomesPlaceholder(t *testing.T) {
 		t.Errorf("profile path not replaced: %q", out)
 	}
 }
+
+// A password may hold spaces and semicolons: an unquoted value runs to the next
+// ";" or the end of the line (ADO syntax), a quoted or braced value to its
+// closing mark. In a URL query string it still ends at "&" (OTA-2).
+func TestSanitizePasswordValueShapes(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"report string (spaces, text after stays)",
+			"Server=db;User ID=sa;Password=correct horse battery;Encrypt=true",
+			"Server=db;User ID=sa;Password=[redacted];Encrypt=true"},
+		{"braced with a semicolon and a space", "Password = {a;b c}", "Password=[redacted]"},
+		{"braced with }} escape", "pwd={a}}b c};Encrypt=true", "pwd=[redacted];Encrypt=true"},
+		{"double quoted", `Password="correct horse";Encrypt=true`, `Password=[redacted];Encrypt=true`},
+		{"single quoted", `pwd='correct horse';Encrypt=true`, `pwd=[redacted];Encrypt=true`},
+		{"value at end of line", "login failed Password=correct horse battery", "login failed Password=[redacted]"},
+		{"stops at a line break", "Password=correct horse\nnext line stays", "Password=[redacted]\nnext line stays"},
+		{"url query form stops at &", "GET /x?password=hunter2&y=1 HTTP/1.1", "GET /x?password=[redacted]&y=1 HTTP/1.1"},
+		{"url query form, later parameter", "GET /x?a=1&Pwd=hunter2&y=1", "GET /x?a=1&Pwd=[redacted]&y=1"},
+		{"url query form with spaces ends at the space", "GET /x?password=hunter2 HTTP/1.1", "GET /x?password=[redacted] HTTP/1.1"},
+		{"token keeps the old rule", "token=abc and more", "token=[redacted] and more"},
+		{"innocuous line is unchanged", "the password was reset; Encrypt=true on db01", "the password was reset; Encrypt=true on db01"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Sanitize(tc.in); got != tc.want {
+				t.Errorf("Sanitize(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

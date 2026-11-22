@@ -18,7 +18,12 @@ var redactions = []struct {
 }{
 	{regexp.MustCompile(`(?i)ubk-[a-z0-9-]*`), "ubk-[hidden]"},
 	{regexp.MustCompile(`(?i)([#?&](?:t|k|key|token|launch)=)[^\s&"']+`), "${1}[hidden]"},
-	{regexp.MustCompile(`(?i)\b(password|pwd|secret|readkey)(\s*[=:]\s*)("[^"]*"|[^\s;,]+)`), "${1}${2}[hidden]"},
+	// A password in a URL query string (?password=x&y=1) ends at "&", ";", "," or a space.
+	{regexp.MustCompile(`(?i)([?&](?:password|passwd|pwd)[=:][ \t]*)("[^"]*"|'[^']*'|[^\s&;,"']+)`), "${1}[hidden]"},
+	// Any other password key: a password may hold spaces, so an unquoted value runs to the next ";" or the end of the line
+	// ("}}" is an escaped brace in a braced value).
+	{regexp.MustCompile(`(?im)(^|[^?&\w])((?:password|passwd|pwd)[ \t]*[=:][ \t]*)("[^"]*"|'[^']*'|\{(?:[^}]|\}\})*\}|[^;\r\n]*)`), "${1}${2}[hidden]"},
+	{regexp.MustCompile(`(?i)\b(secret|readkey)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s;,]+)`), "${1}${2}[hidden]"},
 }
 
 // Redact hides secrets in a log line.
