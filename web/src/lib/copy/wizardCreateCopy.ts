@@ -33,7 +33,7 @@ export const CREATE_TEXT = {
   noticeLabel: 'Notice',
   needAck: 'Tick the box above to confirm the notice.',
   needFiles: 'Choose a file for each file source, or go back and take it off the list.',
-  needHost: 'Pick the computer for each file below that asks for one, or take that file off the list. The case cannot be made until each has one.',
+  needHost: 'A file below still needs a computer or a time zone. Fix the one marked, or take that file off the list. The case cannot be made until then.',
   needWindow: 'Choose how far back to read.',
   keepNote: 'If something cannot be read, the case is still kept. You will see which source failed, and you can try it again from Add more data.',
 
@@ -214,6 +214,24 @@ export function rowText(row: { status: string; percent: number | null; outcome: 
   return CREATE_TEXT.waiting;
 }
 
+/** The "Computers" part of the review: which computer each file was filed under, picked by the wizard. */
+export const HOSTS_TEXT = {
+  heading: 'Computers',
+  picking: 'Choosing the computer for each file…',
+  help: 'Some logs do not say which computer wrote them. Each file is filed under the computer it names, else the one computer you have, else this PC. Change it if that is wrong. A web log that names its own computer always stays under that name.',
+  change: 'Change',
+  done: 'Done',
+  pickAllLabel: 'Use one computer for every file',
+  pickAllNone: 'Pick a computer…',
+  zoneOnce: (label: string, count: number): string => (count === 1 ? '1 file comes' : count + ' files come') + ' from ' + label + ', and its clock’s time zone is not saved yet. Give it once and every one of them uses it.',
+  failed: 'The list of computers could not be read or saved, so none was picked for you. Pick one for each file below, or try again.',
+  retry: 'Try again'
+} as const;
+
+/** "3 files: WEB01. 2 files: this-pc." from the computers the files are filed under. */
+export const hostSummaryText = (rows: ReadonlyArray<{ label: string; count: number }>): string =>
+  rows.map((row) => (row.count === 1 ? '1 file' : row.count + ' files') + ' under ' + row.label).join(', ') + '.';
+
 /** Every fixed sentence and a sample of each built one, for the copy lint. */
 export const wizardCreateCopyEntries = (): LintEntry[] => [
   ...Object.entries(CREATE_TEXT).map(([id, text]) => ({ id: 'wizard.create.' + id, text })),
@@ -238,6 +256,10 @@ export const wizardCreateCopyEntries = (): LintEntry[] => [
   { id: 'wizard.create.sample.status.not', text: fileStatusText({ status: 'failed', outcome: null }) },
   { id: 'wizard.create.sample.status.reading', text: fileStatusText({ status: 'running', outcome: null }) },
   { id: 'wizard.create.sample.status.waiting', text: fileStatusText({ status: 'waiting', outcome: null }) },
+  ...Object.entries(HOSTS_TEXT).filter(([, text]) => typeof text === 'string').map(([id, text]) => ({ id: 'wizard.create.hosts.' + id, text: text as string })),
+  { id: 'wizard.create.hosts.sample.zone', text: HOSTS_TEXT.zoneOnce('WEB01', 3) },
+  { id: 'wizard.create.hosts.sample.zone1', text: HOSTS_TEXT.zoneOnce('WEB01', 1) },
+  { id: 'wizard.create.hosts.sample.summary', text: hostSummaryText([{ label: 'WEB01', count: 3 }, { label: 'this-pc', count: 1 }]) },
   { id: 'wizard.create.sample.reading', text: readingText(40) },
   { id: 'wizard.create.sample.reading0', text: readingText(null) }
 ];

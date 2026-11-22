@@ -2,7 +2,7 @@
 // before the import (import id 0, not yet linked to anything); the Web server (IIS) lane then said "This case has no file for this source"
 // although the file had imported. The server pairs such a tag to its import by file name.
 //   TLWIZ-01  A listed server, one IIS log through the wizard: the trace holds no "no file" warning, the IIS lane is not "no-data", and the page does not say it.
-//   TLWIZ-02  The same log under another name, from a server not in the host list, with a computer picked: the same three facts hold.
+//   TLWIZ-02  The same log under another name, from a server not in the host list (the wizard adds the server by itself): the same three facts hold.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, filesTile } from '../support/ui';
 import { readFileSync } from 'node:fs';
@@ -97,12 +97,12 @@ test('TLWIZ-01: an IIS log added in the wizard for a listed server shows on the 
   await expectPageHasTheFile(page, await openTimelineOf(page));
 });
 
-test('TLWIZ-02: the same log from a server that is not in the host list, with a computer picked, shows on the Timeline too', async ({ page, api }) => {
+test('TLWIZ-02: the same log from a server that is not in the host list shows on the Timeline too', async ({ page, api }) => {
   expect((await api('PUT', '/api/hosts', { version: 1, hosts: [{ label: 'WEB-B', role: 'iis', tz: 'UTC' }] })).status).toBe(200);
   const title = 'QA Wizard Unlisted File On Timeline';
   // Synthetic server name, not in the host list; the other name the log is known by in this suite (UNLISTED-01).
   const buffer = Buffer.from(RAW.replace(/\bWEB-A\b/g, 'ISS-PROD-07'));
-  await makeCaseWith(page, title, { name: 'u_ex261021.log', buffer }, 'WEB-B');
+  await makeCaseWith(page, title, { name: 'u_ex261021.log', buffer });
 
   const id = await caseWithOneImport(api, title);
   await expectTraceHasTheFile(api, id);

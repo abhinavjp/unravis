@@ -84,9 +84,11 @@ test('IP-14: a file refused for a missing computer reopens the popup on that fix
 
 test('IP-19: Try again on a saved unlisted-computer retry opens Check on its fix card', async ({ page, api, allow }) => {
   test.setTimeout(150_000);
-  allow(/422|409/, 'a wizard file refused because its computer is not on the list');
+  allow(/422|409|500/, 'a wizard file refused because its computer is not on the list, and a host list that cannot be saved');
   const title = 'QA Saved Popup Retry';
   const file = iis('u_ex261119.log', 'iis_missing');
+  // The wizard adds an unlisted computer by itself; with saving blocked it cannot, so the server refuses the file as the retry needs.
+  await page.route('**/api/hosts', (route) => (route.request().method() === 'PUT' ? route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"blocked for the test"}' }) : route.continue()));
   await goHome(page);
   await page.getByRole('button', { name: 'Create a new case' }).click();
   await page.getByLabel('Case name').fill(title);
@@ -98,6 +100,7 @@ test('IP-19: Try again on a saved unlisted-computer retry opens Check on its fix
   await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
   await expect(page.getByRole('table', { name: /result for each file/i })).toContainText('Rejected', { timeout: 90_000 });
+  await page.unroute('**/api/hosts');
 
   // Read the saved case, not a popup state supplied by the test. No files are held after leaving the wizard.
   const made = (await api('GET', '/api/cases')).json.cases.find((c: { title: string }) => c.title === title);

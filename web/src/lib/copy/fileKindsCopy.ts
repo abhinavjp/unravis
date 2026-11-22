@@ -120,6 +120,8 @@ export const zoneWarnText = (count: number): string =>
   count + (count === 1 ? ' file writes' : ' files write') + ' server local time. Until you say which time zone, the timeline cannot line ' + (count === 1 ? 'it' : 'them') + ' up with other sources.';
 export const hostWarnText = (count: number): string =>
   count + (count === 1 ? ' file needs' : ' files need') + ' a computer named. Pick one in the list, or add it on the last step. The case cannot be made until each has one.';
+/** The line under the file list in the create guide: the computer is picked for the person, so there is nothing to answer here. */
+export const hostAutoHint = 'Logs that do not say which computer wrote them are filed under the computer they name, else your one computer, else this PC. You can change it on the last step.';
 export const dropUnreadableText = (count: number): string => (count === 1 ? '1 item could not be read and was left out.' : count + ' items could not be read and were left out.');
 export const addedText = (count: number): string => (count === 1 ? '1 file is ready to add.' : count + ' files are ready to add.');
 export const skippedText = (count: number): string => (count === 1 ? '1 file was left out.' : count + ' files were left out.');
@@ -268,6 +270,7 @@ export const fileKindsCopyEntries = (): LintEntry[] => [
   { id: 'files.sample.zone1', text: zoneWarnText(1) },
   { id: 'files.sample.host', text: hostWarnText(2) },
   { id: 'files.sample.host1', text: hostWarnText(1) },
+  { id: 'files.sample.hostauto', text: hostAutoHint },
   { id: 'files.sample.unreadable', text: dropUnreadableText(1) },
   { id: 'files.sample.unreadable2', text: dropUnreadableText(3) },
   { id: 'files.sample.added', text: addedText(3) },

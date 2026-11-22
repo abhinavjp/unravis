@@ -1,4 +1,4 @@
-import { pickFile, pickedFile, heldFileKeys } from './wizardCreate.svelte';
+import { pickFile, pickedFile, heldFileKeys, autoPickHosts } from './wizardCreate.svelte';
 import { onWizardReset, setSources, wizard } from './wizard.svelte';
 import { addSource, fileSource, nextFileNumber, sourceKey } from './wizardSources';
 import type { DraftSource } from './wizardFlow';
@@ -113,6 +113,8 @@ export function addStagedFiles(list: readonly StagedFile[]): AddFilesResult {
   setSources(next);
   for (const { key, item } of held) { pickFile(key, item.file, importerHint(item), item.host); result.keys.push(key); }
   result.added = held.length;
+  // The computers are named for the held files at once, so none is refused later for lacking one.
+  void autoPickHosts(result.keys);
   return result;
 }
 

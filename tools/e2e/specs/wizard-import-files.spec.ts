@@ -44,7 +44,9 @@ test('FILES-01: two IIS files and one unknown file show their kinds, the guide i
   await expect(httperr).toContainText('UTC (as this type writes it)');
   await expect(notes).toContainText('Not recognised, so it is left out.');
   await expect(w3c).toContainText(/\d+(\.\d+)? (B|KB)/);
-  await expect(page.getByText(/^1 file needs a computer named\./)).toBeVisible();
+  // The computer is picked for the person: the panel says so and asks nothing per file.
+  await expect(page.getByText(/^Logs that do not say which computer wrote them are filed under/)).toBeVisible();
+  await expect(page.getByLabel('Which computer wrote httperr1.log')).toHaveCount(0);
   await expect(page.getByText('What will be read')).toBeVisible();
 
   const add = page.getByRole('button', { name: 'Add 2 files' });
@@ -187,53 +189,59 @@ async function toCreate(page: Page) {
   await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
 }
 
-test('FILES-06: a file that needs a computer says so, a computer can be added from the row, and the pick is kept on the last step', async ({ page, api }) => {
+// A save of the computer list that fails, so the wizard cannot pick the computers itself and falls back to asking per file.
+async function blockHostSaves(page: Page) {
+  await page.route('**/api/hosts', (route) => (route.request().method() === 'PUT' ? route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"blocked for the test"}' }) : route.continue()));
+}
+const unblockHostSaves = (page: Page) => page.unroute('**/api/hosts');
+
+test('FILES-06: the computers are picked for the person, shown on the last step, and can be changed for every file at once or one by one', async ({ page, api }) => {
   expect((await putHosts(api, ['WEB-A'])).status).toBe(200);
   await holdFiles(page, 'QA Files Computer', [HTTPERR, W3C]);
-
-  // The W3C log names its own server, so its computer choice is optional and starts empty. HTTP.sys names none, so its choice is needed, and it is UTC.
-  await expect(page.getByLabel('Which computer wrote u_ex261020.log')).toHaveValue('');
-  const pick = page.getByLabel('Which computer wrote httperr1.log');
-  await expect(pick).toHaveValue('');
   await expect(row(page, 'httperr1.log')).toContainText('UTC (as this type writes it)');
-  await expect(page.getByText(/^1 file needs a computer named\./)).toBeVisible();
+  await page.getByRole('button', { name: 'Add 2 files' }).click();
+  await page.getByRole('button', { name: 'Next' }).click();
 
-  // A name the server would refuse is caught before any call, with the reason in words.
+  // The one computer in the list takes both files: nothing was asked, and the line says where each went.
+  const section = page.locator('section.hosts');
+  await expect(section.locator('[data-hosts-summary]')).toHaveText('2 files under WEB-A.');
+  await expect(page.getByLabel('Which computer wrote httperr1.log')).toHaveCount(0);
+  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await expect(page.getByRole('button', { name: 'Create case' })).toBeEnabled();
+
+  // Change: one file at a time. A name the server would refuse is caught before any call, with the reason in words.
+  await section.getByRole('button', { name: 'Change' }).click();
+  const pick = page.getByLabel('Which computer wrote httperr1.log');
   await pick.selectOption({ label: 'Add a computer…' });
   await page.getByLabel('Name of the computer').fill('bad name');
   await page.getByRole('button', { name: 'Save this computer' }).click();
   await expect(page.getByText('Use letters, digits, dot, dash or underscore, and start with a letter or digit.')).toBeVisible();
-  // The time zone is not needed for a type that writes UTC.
   await page.getByLabel('Name of the computer').fill('WEB-H');
   await page.getByRole('button', { name: 'Save this computer' }).click();
   await expect(pick).toHaveValue('WEB-H');
-  await expect(page.getByText(/need a computer named/)).toHaveCount(0);
-  const saved = JSON.stringify((await api('GET', '/api/hosts')).json);
-  expect(saved).toContain('WEB-H');
-  expect(saved).toContain('WEB-A');
+  expect(JSON.stringify((await api('GET', '/api/hosts')).json)).toContain('WEB-H');
+  await section.getByRole('button', { name: 'Done' }).click();
+  await expect(section.locator('[data-hosts-summary]')).toHaveText('1 file under WEB-A, 1 file under WEB-H.');
 
-  // Changing the kind lets go of the pick: a type that names its own server shows an optional choice, empty.
-  await page.getByLabel('What httperr1.log is').selectOption('iis-w3c');
-  await expect(page.getByLabel('Which computer wrote httperr1.log')).toHaveValue('');
-  await page.getByLabel('What httperr1.log is').selectOption('iis-httperr');
-  await expect(page.getByLabel('Which computer wrote httperr1.log')).toHaveValue('');
-  await page.getByLabel('Which computer wrote httperr1.log').selectOption('WEB-H');
-
-  await page.getByRole('button', { name: 'Add 2 files' }).click();
-  await page.getByRole('button', { name: 'Next' }).click();
-  await expect(page.getByLabel('Which computer wrote httperr1.log')).toHaveValue('WEB-H');
+  // Change: one computer for every file. A web log that names its own computer stays under that name, so it offers no pick.
+  await section.getByRole('button', { name: 'Change' }).click();
+  await expect(page.getByLabel('Which computer wrote u_ex261020.log')).toHaveCount(0);
+  await section.getByLabel('Use one computer for every file').selectOption('WEB-A');
+  await section.getByRole('button', { name: 'Done' }).click();
+  await expect(section.locator('[data-hosts-summary]')).toHaveText('2 files under WEB-A.');
 });
 
-test('FILES-07: Create waits for a computer, and the computer named on the last step is the one the server records', async ({ page, api }) => {
-  expect((await putHosts(api, ['WEB-H'])).status).toBe(200);
+test('FILES-07: with no computer list at all, a file that names no computer still goes in, and the computer the server records is the one the wizard picked', async ({ page, api }) => {
+  expect((await putHosts(api, [])).status).toBe(200);
   await holdFiles(page, 'QA Files Host Sent', [HTTPERR]);
-  // Added without a computer: allowed, with a warning, and the last step will not let the case be made until one is named.
   await page.getByRole('button', { name: 'Add 1 file' }).click();
   await toCreate(page);
-  await expect(page.getByText('Pick the computer for each file below that asks for one, or take that file off the list.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Create case' })).toBeDisabled();
-  await page.getByLabel('Which computer wrote httperr1.log').selectOption('WEB-H');
+  // Nothing to pick: Create is ready, and the last step says where the file will be filed.
+  await expect(page.locator('[data-hosts-summary]')).toContainText('1 file under');
+  await expect(page.getByText(/needs a computer or a time zone/)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Create case' })).toBeEnabled();
+  const label = ((await page.locator('[data-hosts-summary]').innerText()).match(/under (\S+)\.$/) ?? [])[1];
+  expect(label).toBeTruthy();
   await page.getByRole('button', { name: 'Create case' }).click();
 
   // The result table: file, type, the result (Used, Partly used or Rejected) and why.
@@ -246,17 +254,54 @@ test('FILES-07: Create waits for a computer, and the computer named on the last 
   const made = (await api('GET', '/api/cases')).json.cases.find((c: { title: string }) => c.title === 'QA Files Host Sent');
   const recorded = JSON.stringify((await api('GET', `/api/cases/${made.id}/imports`)).json);
   expect(recorded).toContain('httperr1.log');
-  expect(recorded).toContain('WEB-H');
+  expect(recorded).toContain(label);
+  // The computer was added to the list too, so the next case finds it.
+  expect(JSON.stringify((await api('GET', '/api/hosts')).json)).toContain(label);
+});
+
+test('FILES-11: an IIS log that names no computer is filed under the only computer in the list, with nothing asked', async ({ page, api }) => {
+  expect((await putHosts(api, ['WEB-H'])).status).toBe(200);
+  const nameless = { name: 'u_ex261024.log', mimeType: 'text/plain', buffer: Buffer.from(readFileSync(W3C, 'utf8').replace(/\bWEB-A\b/g, '-')) };
+  await openPanel(page, 'QA Files Nameless');
+  await page.getByLabel('Choose files to import').setInputFiles([nameless]);
+  await page.getByRole('button', { name: 'Add 1 file' }).click();
+  await toCreate(page);
+  await expect(page.locator('[data-hosts-summary]')).toHaveText('1 file under WEB-H.');
+  await page.getByRole('button', { name: 'Create case' }).click();
+  const line = page.getByRole('table', { name: /result for each file/i }).getByRole('row').filter({ hasText: 'u_ex261024.log' });
+  await expect(line).toContainText('Used');
+  const made = (await api('GET', '/api/cases')).json.cases.find((c: { title: string }) => c.title === 'QA Files Nameless');
+  await expect.poll(async () => JSON.stringify((await api('GET', `/api/cases/${made.id}/imports`)).json), { timeout: 20000 }).toContain('WEB-H');
+});
+
+test('FILES-12: when the computer list cannot be saved, the last step says so, offers Try again, and falls back to one pick per file', async ({ page, api, allow }) => {
+  allow(/500/, 'the host list cannot be saved, on purpose');
+  // Two computers and no clue which one: this PC would have to be added to the list, and that save fails.
+  expect((await putHosts(api, ['WEB-H', 'WEB-Z'])).status).toBe(200);
+  await blockHostSaves(page);
+  await holdFiles(page, 'QA Files List Locked', [HTTPERR]);
+  await page.getByRole('button', { name: 'Add 1 file' }).click();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await expect(page.getByText(/could not be read or saved/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create case' })).toBeDisabled();
+  await page.getByLabel('Which computer wrote httperr1.log').selectOption('WEB-H');
+  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await expect(page.getByRole('button', { name: 'Create case' })).toBeEnabled();
+  await unblockHostSaves(page);
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.getByText(/could not be read or saved/)).toHaveCount(0);
 });
 
 test('FILES-08: a file that was not read tells why and can be tried again, and the end of the run offers the timeline, the case and more files', async ({ page, api, allow }) => {
-  allow(/422|409/, 'a file the server refuses on purpose');
-  // Only WEB-H is known, so the W3C log (which names WEB-A) is refused and the HTTP.sys log (picked on WEB-H) is read.
+  allow(/422|409|500/, 'a file the server refuses on purpose, and a host list that cannot be saved');
+  // Only WEB-H is known and saving is blocked, so the W3C log (which names WEB-A) is refused and the HTTP.sys log (picked on WEB-H) is read.
   expect((await putHosts(api, ['WEB-H'])).status).toBe(200);
+  await blockHostSaves(page);
   await holdFiles(page, 'QA Files Result Table', [W3C, HTTPERR]);
-  await page.getByLabel('Which computer wrote httperr1.log').selectOption('WEB-H');
   await page.getByRole('button', { name: 'Add 2 files' }).click();
-  await toCreate(page);
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByLabel('Which computer wrote httperr1.log').selectOption('WEB-H');
+  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
 
   const table = page.getByRole('table', { name: /result for each file/i });
@@ -272,6 +317,7 @@ test('FILES-08: a file that was not read tells why and can be tried again, and t
   await expect(page.getByRole('button', { name: 'Add more files' })).toBeVisible();
 
   // The person adds the missing computer (the list belongs to the server), then tries that file again.
+  await unblockHostSaves(page);
   expect((await putHosts(api, ['WEB-H', 'WEB-A'])).status).toBe(200);
   await page.getByRole('button', { name: 'Try u_ex261020.log again' }).click();
   await expect(bad).toContainText('Used');
@@ -287,12 +333,14 @@ test('FILES-08: a file that was not read tells why and can be tried again, and t
 });
 
 test('FILES-09: a file that was not read can be left out, and Add more files opens the Import files popup on the case', async ({ page, api, allow }) => {
-  allow(/422|409/, 'a file the server refuses on purpose');
+  allow(/422|409|500/, 'a file the server refuses on purpose, and a host list that cannot be saved');
   expect((await putHosts(api, ['WEB-H'])).status).toBe(200);
+  await blockHostSaves(page);
   await holdFiles(page, 'QA Files Leave Out', [W3C, HTTPERR]);
-  await page.getByLabel('Which computer wrote httperr1.log').selectOption('WEB-H');
   await page.getByRole('button', { name: 'Add 2 files' }).click();
-  await toCreate(page);
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByLabel('Which computer wrote httperr1.log').selectOption('WEB-H');
+  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
 
   const table = page.getByRole('table', { name: /result for each file/i });
