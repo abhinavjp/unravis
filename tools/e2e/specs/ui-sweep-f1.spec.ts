@@ -10,6 +10,7 @@
 //   SWEEP-F1-09  The wizard bar sits on the window edge while the step scrolls (CASES-01)
 //   SWEEP-F1-10  The seven hub tabs sit on one row and the chosen one has a bar under it (CASES-11)
 //   SWEEP-F1-11  Secondary buttons and chips have a 3:1 border (SETUP-A11Y-10)
+//   SWEEP-F1-12  One button size: sources buttons as tall as the global ones (SETUP-A11Y-11)
 import { test, expect, type Page } from '../support/fixtures';
 
 /** The relative luminance contrast of two "rgb(r, g, b)" strings. */
@@ -135,8 +136,8 @@ test('SWEEP-F1-08 a details row has one chevron: right when closed, down when op
   expect(closed.after).toBe('none');
   expect(closed.listStyle).toBe('none');
   await summary.click();
-  const open = await state();
-  expect(open.transform).not.toBe(closed.transform);
+  // the chevron turns over a short transition, so read it until it has settled
+  await expect.poll(async () => (await state()).transform).not.toBe(closed.transform);
 });
 
 test('SWEEP-F1-09 the wizard bar sits on the window edge while a step scrolls', async ({ page }) => {
@@ -166,6 +167,25 @@ test('SWEEP-F1-10 the hub tabs sit on one row and the chosen one has a bar under
   const selected = page.locator('.src .tabs [role=tab][aria-selected="true"]');
   const bar = await selected.evaluate((e) => getComputedStyle(e).borderBottomWidth);
   expect(bar).toBe('3px');
+  // Pointing at the chosen tab must keep its accent bar (the plain button hover turned it grey), and an other tab shows no accent bar.
+  const rest = await selected.evaluate((e) => getComputedStyle(e).borderBottomColor);
+  await selected.hover();
+  expect(await selected.evaluate((e) => getComputedStyle(e).borderBottomColor)).toBe(rest);
+  const other = page.locator('.src .tabs [role=tab][aria-selected="false"]').first();
+  await other.hover();
+  expect(await other.evaluate((e) => getComputedStyle(e).borderBottomColor)).not.toBe(rest);
+});
+
+test('SWEEP-F1-12 one button size on the case home: the sources buttons are as tall as the global ones, with the same text size', async ({ page }) => {
+  await page.getByRole('button', { name: 'All cases' }).click();
+  await page.getByRole('button', { name: /Open case Night batch/ }).click();
+  const global = page.getByRole('button', { name: 'Save case file' });
+  const source = page.locator('.src button.btn:not([role=tab])').first();
+  await expect(global).toBeVisible();
+  await expect(source).toBeVisible();
+  const [a, b] = await Promise.all([global, source].map((l) => l.evaluate((e) => ({ h: e.getBoundingClientRect().height, f: getComputedStyle(e).fontSize }))));
+  expect(Math.abs(a.h - b.h), JSON.stringify({ a, b })).toBeLessThanOrEqual(1);
+  expect(a.f).toBe(b.f);
 });
 
 test('SWEEP-F1-11 secondary buttons and chips have a border that is at least 3:1 against the page', async ({ page }) => {

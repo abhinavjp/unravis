@@ -77,7 +77,7 @@
 .src .tabs button[aria-pressed='true'] { color: var(--text); background: transparent; border-bottom-color: var(--accent); font-weight: 700; }
 /* Hover must also show on the selected tab: its rule above is more specific than the plain hover. */
 .src .tabs button[aria-selected='true']:hover:not(:disabled),
-.src .tabs button[aria-pressed='true']:hover:not(:disabled) { background: var(--surface-2); }
+.src .tabs button[aria-pressed='true']:hover:not(:disabled) { background: var(--surface-2); border-bottom-color: var(--accent); }
 @media (pointer: coarse), (max-width: 720px) { .src .tabs button { min-height: 44px; } }
 /* Windows high contrast drops colours: the chosen tab gets the system highlight pair, as in the app's own tab rows. */
 @media (forced-colors: active) {
