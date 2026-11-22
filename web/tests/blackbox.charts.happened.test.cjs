@@ -260,7 +260,7 @@ test('the view prints recorded text as plain text, frees the chart, caps what it
   assert.doesNotMatch(v, /fetch\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon/);
   assert.match(v, /made\.off\('datazoom', onZoom\)/);
   assert.match(v, /made\.dispose\(\)/);
-  assert.match(v, /observer\.disconnect\(\)/);
+  assert.match(v, /stopSize\(\)/, 'the size watcher (watchSize) is stopped with the chart');
   assert.match(v, /\.slice\(0, MAX_LINES\)/);
   assert.match(v, /MAX_DRAWN/);
   assert.match(v, /renderMode: 'richText'/, 'the chart tooltip is plain text');
