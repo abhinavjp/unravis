@@ -115,7 +115,7 @@ test('F: Where shows the scan notice and the helper-missing line, and Next stays
   assert.match(wrapper, /whereChoices\(thisPc, canPack\)\.none !== null/);
   assert.match(wrapper, /busy \|\| checking \|\| whereBlocked/);
   assert.match(wrapper, /W\['where\.nextOff'\]/);
-  assert.match(wrapper, /aria-describedby=\{whereBlocked \? nextReasonId : undefined\}/);
+  assert.match(wrapper, /const primaryDescribedBy = \$derived\(whereBlocked \? nextReasonId : [^;]*;[\s\S]*aria-describedby=\{primaryDescribedBy\}/);
 });
 
 test('G: Name shows the no-spaces and the 63-character notes (defect G)', () => {

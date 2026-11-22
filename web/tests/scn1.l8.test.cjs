@@ -85,7 +85,7 @@ test('D-B-43 pin: the page says the plain install command, with no --name', () =
 test('D-B-45: the other-server status view shows the short read-only line', () => {
   assert.equal(T.statusReadOnly, 'Unravis only reads here. Nothing was changed on that server.');
   const panel = read('src/components/BlackboxPanel.svelte');
-  assert.match(panel, /\{#if !item\.thisPc\}<p class="bb-note">\{T\.statusReadOnly\}<\/p>\{\/if\}/);
+  assert.match(panel, /item\.thisPc \? '' : T\.statusReadOnly/);
   // It sits in the top block of the status view, before the facts list.
   assert.ok(panel.indexOf('T.statusReadOnly') < panel.indexOf('<dl class="bb-facts">'));
 });
@@ -173,7 +173,7 @@ test('D-B-49: the pop-up takes Esc on its own dialog, so the drawer behind it ne
   // The drawer wizard listened for Esc on the window in the capture phase and stepped back. The pop-up is a native modal
   // dialog: its keys reach only its own handler, which stops them there (this replaces the capture-phase assertions).
   const dialog = read('src/components/blackboxWizard/WizardDialog.svelte');
-  assert.match(dialog, /<dialog class="pop" bind:this=\{dialog\} aria-labelledby=\{titleId\} oncancel=\{onCancel\} onclose=\{onClose\} onkeydown=\{onKey\}>/);
+  assert.match(dialog, /<dialog class="pop" class:fixed=\{fixedHeight\} bind:this=\{dialog\} aria-labelledby=\{titleId\} oncancel=\{onCancel\} onclose=\{onClose\} onkeydown=\{onKey\}>/);
   assert.match(dialog, /dialog\.showModal\(\)/);
   assert.match(dialog, /if \(event\.key === 'Escape'\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);/);
   assert.match(dialog, /function onCancel\(event: Event\): void \{\s*event\.preventDefault\(\);/);
@@ -277,8 +277,8 @@ test('D-B-50: the pop-up and Apply put a field problem beside the field and focu
   assert.match(wizard, /<StepName \{wizard\} showProblem=\{attempted\} /);
   assert.match(wizard, /<StepFolder bind:wizard \{attempted\} \/>/);
   assert.match(wizard, /<StepWatch bind:wizard problem=\{watchProblem\} \/>/);
-  assert.match(wizard, /reviewProblem = refusalText\(error, BB_REFUSAL\);/);
-  assert.match(wizard, /\{#if reviewProblem\}<p class="problem" role="alert">\{reviewProblem\}<\/p>\{\/if\}/);
+  assert.match(wizard, /reviewProblem = field \? refusedSetting\(field\) : refusalText\(error, BB_REFUSAL\);/);
+  assert.match(wizard, /\{#if reviewProblem\}\s*<div class="problem-box" id=\{reviewProblemId\} role="alert">\s*<p class="problem">\{reviewProblem\}<\/p>/);
   assert.match(read('src/components/blackboxWizard/StepName.svelte'), /<p class="inline-error" id=\{`\$\{uid\}-problem`\} role="alert">\{words\}<\/p>/);
   const panel = read('src/components/BlackboxPanel.svelte');
   assert.match(panel, /const applyFieldShown = \$derived\(fieldProblemNow\(applyField, applySettings, applyLogs\)\);/);

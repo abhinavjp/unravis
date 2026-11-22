@@ -46,7 +46,7 @@ async function setInlineWindow(details: Locator, name: 'Incident' | 'Reference',
 
 /** Set the four datetime fields of the Step 9 block (UTC, "YYYY-MM-DDTHH:MM") and read. */
 async function readHost(region: Locator, incident: [string, string], reference?: [string, string]) {
-  const details = region.locator('details', { hasText: 'Read for a case window' });
+  const details = region.locator('details', { hasText: 'Step 9: choose the windows to read' });
   if ((await details.getAttribute('open')) === null) await details.locator('summary').click();
   await setInlineWindow(details, 'Incident', incident);
   if (reference) await setInlineWindow(details, 'Reference', reference);
@@ -141,10 +141,10 @@ test('BB-12b: empty windows and a window longer than seven days are refused the 
   const { region } = await openStatus(page, 'web-a');
   await readHost(region, ['2026-10-20T07:30', '2026-10-20T08:10']);
   await expect(region.getByText('The host first moved at 2026-10-20 07:40 UTC')).toBeVisible();
-  const details = region.locator('details', { hasText: 'Read for a case window' });
+  const details = region.locator('details', { hasText: 'Step 9: choose the windows to read' });
   await readHost(region, ['2026-10-01T00:00', '2026-10-20T08:10']);
   await expect(region.getByText(WINDOW_PROBLEM)).toBeVisible();
-  const inc = details.getByRole('group', { name: 'Incident window (UTC)' });
+  const inc = details.getByRole('group', { name: 'Incident window' });
   await inc.getByRole('textbox', { name: 'Incident window start date', exact: true }).fill('');
   await details.getByRole('button', { name: 'Read the host for these windows' }).click();
   await expect(region.getByText(WINDOW_PROBLEM)).toBeVisible();
