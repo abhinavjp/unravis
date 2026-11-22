@@ -41,20 +41,20 @@ const (
 // read the folders' access lists, which install-sql and enable-sql proved), then readOpenedSettings.
 func readVerifiedSettings(path string) ([]byte, error) {
 	if err := settingsPathProblem(path); err != nil {
-		return nil, refuse(WordPath, err)
+		return nil, refusePreOpen(WordPath, err)
 	}
 	clean := filepath.Clean(path)
 	if !filepath.IsAbs(clean) {
-		return nil, refuse(WordPath, fmt.Errorf("blackbox: the settings file path must be absolute"))
+		return nil, refusePreOpen(WordPath, fmt.Errorf("blackbox: the settings file path must be absolute"))
 	}
 	if err := localDriveProblem(clean[:2]); err != nil {
-		return nil, refuse(WordPath, err)
+		return nil, refusePreOpen(WordPath, err)
 	}
 	if err := refuseSettingsFileChain(clean); err != nil {
 		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
-			return nil, refuse(WordNotFound, err)
+			return nil, refusePreOpen(WordNotFound, err)
 		}
-		return nil, refuse(WordChain, err)
+		return nil, refusePreOpen(WordChain, err)
 	}
 	return readOpenedSettings(clean)
 }
@@ -72,7 +72,7 @@ func readOpenedSettings(path string) ([]byte, error) {
 	clean := filepath.Clean(path)
 	p, err := windows.UTF16PtrFromString(clean)
 	if err != nil {
-		return nil, refuse(WordPath, err)
+		return nil, refusePreOpen(WordPath, err)
 	}
 	var h windows.Handle
 	for try := 0; ; try++ {
@@ -82,10 +82,12 @@ func readOpenedSettings(path string) ([]byte, error) {
 			break
 		}
 		if !errors.Is(err, windows.ERROR_SHARING_VIOLATION) || try >= settingsOpenRetries {
-			return nil, refuse(openWord(err), err)
+			// The one stage the temporary fallback may act on: no handle exists, so no part of the one-handle proof was running.
+			return nil, refuseOpen(openWord(err), err)
 		}
 		settingsSleep(settingsOpenPause)
 	}
+	// From here the file is OPEN: every refusal below is an after-open refusal (refuse), whatever its word, and never falls back.
 	// The handle is closed on every refusal; once step 5 starts, f owns it.
 	owned := false
 	defer func() {
