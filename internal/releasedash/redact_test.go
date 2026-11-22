@@ -135,3 +135,31 @@ func TestRedactorLongBase64LineStaysHidden(t *testing.T) {
 		t.Errorf("block did not end: %q", got)
 	}
 }
+
+func TestRedactorEchoedKeyLinesStayHidden(t *testing.T) {
+	b64 := "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7"
+	short := "Xk2pQ9="
+	prefixes := []string{"2026-11-22T10:00:00.0000000Z #7 0.512 ", "     2\t", "> ", "+ ", "job\tstep\t2026-11-22T10:00:00.1Z ", `"`}
+	for _, p := range prefixes {
+		r := NewRedactor()
+		r.Line("-----BEGIN PRIVATE KEY-----")
+		for i, l := range []string{b64, b64, short, "-----END PRIVATE KEY-----"} {
+			if got := r.Line(p + l); strings.Contains(got, "MIIE") || strings.Contains(got, "Xk2p") || strings.Contains(got, "Bgkq") {
+				t.Errorf("prefix %q line %d leaked: %q", p, i, got)
+			}
+		}
+	}
+	// a masked line in the middle of a key does not end the block
+	r := NewRedactor()
+	r.Line("-----BEGIN PRIVATE KEY-----")
+	r.Line("***")
+	if got := r.Line(b64); got != "<private key hidden>" {
+		t.Errorf("line after a masked line leaked: %q", got)
+	}
+	// non-ASCII spaces are not key text in Go or PowerShell alike
+	r = NewRedactor()
+	r.Line("-----BEGIN PRIVATE KEY-----")
+	if got := r.Line("\u00a0Xk2pQ9="); got == "<private key hidden>" {
+		t.Errorf("a no-break space line should end the block, got %q", got)
+	}
+}

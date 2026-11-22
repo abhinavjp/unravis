@@ -801,7 +801,11 @@ $script:LogRx = @{
     KeyEnd  = [regex]::new('-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
     # A line that can still belong to a key block (nothing, base64, or a header such as Proc-Type: ...), after the CI prefix and time stamp
     # are taken off. Anything else ends a block whose END line never came, so one stray BEGIN line cannot hide the rest of a log.
-    KeyBody = [regex]::new('^\s*$|^\s*[A-Za-z0-9+/=_-]+\s*$|^\s*[A-Za-z][A-Za-z0-9-]{0,30}:\s.*$', 'Compiled')
+    # Explicit space characters and not \s, so this agrees with the Go reader (.NET counts more characters as \s). A * is a value GitHub masked.
+    KeyBody = [regex]::new('^[ \t\r\f\v]*$|^[ \t\r\f\v]*[A-Za-z0-9+/=_*-]+[ \t\r\f\v]*$|^[ \t\r\f\v]*[A-Za-z][A-Za-z0-9-]{0,30}:[ \t\r\f\v].*$', 'Compiled')
+    # What a tool puts in front of each line it echoes (BuildKit "#7 0.512 ", nl or cat -n "  12<TAB>", "> ", "+ "), and a long base64 run.
+    KeyPfx  = [regex]::new('^(?:#\d+[ \t]+[\d.]+[ \t]+|[ \t]*\d+\t|[>+][ \t]?)', 'Compiled')
+    KeyRun  = [regex]::new('[A-Za-z0-9+/=]{40,}', 'Compiled')
     StampPfx = [regex]::new('^\d{4}-\d\d-\d\dT[\d:.]+Z ?', 'Compiled')
     KeyFile = [regex]::new('(?i)[\w.-]+\.(?:key|pem|pfx|p12|ppk)\b', 'Compiled')
     UserDir = [regex]::new('(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"'']+', 'Compiled')
@@ -826,7 +830,7 @@ function Protect-LogLine([string]$Line, $Redactor, [switch]$KeepTabs) {
     $s = $rx.Ctrl.Replace($s, '')
     if ($Redactor.InKey) {
         if ($rx.KeyEnd.IsMatch($s)) { $Redactor.InKey = $false; return '<private key hidden>' }
-        if ($Redactor.KeyLines -lt 400 -and $rx.KeyBody.IsMatch($body)) { $Redactor.KeyLines++; return '<private key hidden>' }
+        if ($Redactor.KeyLines -lt 400 -and ($rx.KeyBody.IsMatch($rx.KeyPfx.Replace($body, '').Trim([char[]]@([char]34, [char]39, [char]44))) -or $rx.KeyRun.IsMatch($body))) { $Redactor.KeyLines++; return '<private key hidden>' }
         $Redactor.InKey = $false   # the block never closed: stop hiding
     }
     if ($rx.KeyBeg.IsMatch($s)) { if (-not $rx.KeyEnd.IsMatch($s)) { $Redactor.InKey = $true; $Redactor.KeyLines = 0 }; return '<private key hidden>' }

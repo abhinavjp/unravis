@@ -379,7 +379,16 @@ try {
     $ck2 = New-LogRedactor
     $ck2Out = @('-----BEGIN PRIVATE KEY-----', 'MIIEvQIBADANBgkqhkiG9w0B', 'ok   a sentence ends a block that lost its END line') | ForEach-Object { Protect-LogLine ($pre + $_) $ck2 -KeepTabs }
     Assert-That 'log redaction: a block that lost its END line ends at the first sentence' ($ck2Out[2].EndsWith('ok   a sentence ends a block that lost its END line')) "got '$($ck2Out -join '|')'"
-    Assert-That 'log redaction: a passed-test line is kept' ((Protect-LogLine '--- PASS: TestX (0.00s)' (New-LogRedactor)) -eq '--- PASS: TestX (0.00s)')
+    $b64 = 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7'
+    foreach ($ep in @('#7 0.512 ', "     2`t", '> ', '+ ', '"')) {
+        $ek = New-LogRedactor
+        $ekOut = @('-----BEGIN PRIVATE KEY-----', $b64, $b64, 'Xk2pQ9=', '-----END PRIVATE KEY-----') | ForEach-Object { Protect-LogLine ($pre + $ep + $_) $ek -KeepTabs }
+        Assert-That "log redaction: key lines echoed with the prefix '$($ep.Trim())' stay hidden" (-not (($ekOut -join '|') -match 'MIIE|Xk2p|Bgkq')) "got '$($ekOut -join '|')'"
+    }
+    $ek2 = New-LogRedactor
+    $null = Protect-LogLine '-----BEGIN PRIVATE KEY-----' $ek2
+    Assert-That 'log redaction: a no-break space line ends an unclosed block, as in Go' ((Protect-LogLine ([string][char]0xA0 + 'Xk2pQ9=') $ek2) -ne '<private key hidden>')
+    Assert-That 'log redaction: a passed-test line is kept'((Protect-LogLine '--- PASS: TestX (0.00s)' (New-LogRedactor)) -eq '--- PASS: TestX (0.00s)')
     $gotUrl = Protect-LogLine 'https://github.com/abhinavjp/unravis/actions/runs/1 by Abhinav' $red2
     Assert-That 'log redaction: a user name inside a repository name is kept, the name alone is hidden' ($gotUrl.Contains('github.com/abhinavjp/unravis') -and -not $gotUrl.Contains('by Abhinav')) "got '$gotUrl'"
     $kr = New-LogRedactor

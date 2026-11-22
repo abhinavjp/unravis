@@ -35,7 +35,11 @@ var (
 	keyEndR   = regexp.MustCompile(`-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
 	// A line that can still belong to a key block: nothing, base64, or a header such as "Proc-Type: 4,ENCRYPTED". After the CI prefix
 	// ("job<TAB>step<TAB>") and the time stamp are taken off. Anything else (a sentence, a test result) ends a block that never closed.
-	keyBodyR  = regexp.MustCompile(`^\s*$|^\s*[A-Za-z0-9+/=_-]+\s*$|^\s*[A-Za-z][A-Za-z0-9-]{0,30}:\s.*$`)
+	// "[ \t\r\f\v]" and not \s: the PowerShell twin must agree, and .NET counts more characters as \s than Go does. A "*" is a value GitHub masked.
+	keyBodyR = regexp.MustCompile(`^[ \t\r\f\v]*$|^[ \t\r\f\v]*[A-Za-z0-9+/=_*-]+[ \t\r\f\v]*$|^[ \t\r\f\v]*[A-Za-z][A-Za-z0-9-]{0,30}:[ \t\r\f\v].*$`)
+	// What a tool puts in front of each line it echoes: BuildKit "#7 0.512 ", nl or cat -n "  12<TAB>", "> ", "+ ". A key printed that way stays hidden.
+	keyPfxR = regexp.MustCompile(`^(?:#\d+[ \t]+[\d.]+[ \t]+|[ \t]*\d+\t|[>+][ \t]?)`)
+	keyRunR = regexp.MustCompile(`[A-Za-z0-9+/=]{40,}`) // a long base64 run is key text wherever it sits on the line
 	stampPfx  = regexp.MustCompile(`^\d{4}-\d\d-\d\dT[\d:.]+Z ?`)
 	keyFileRE = regexp.MustCompile(`(?i)[\w.-]+\.(?:key|pem|pfx|p12|ppk)\b`)
 	userDirRE = regexp.MustCompile(`(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"']+`)
@@ -50,6 +54,12 @@ func keyBody(s string) string {
 		s = p[2]
 	}
 	return stampPfx.ReplaceAllString(strings.TrimSuffix(s, "\r"), "")
+}
+
+// keyText says whether a line (CI prefix and time stamp already off) can still belong to a key block.
+func keyText(body string) bool {
+	b := strings.Trim(keyPfxR.ReplaceAllString(body, ""), "\"',")
+	return keyBodyR.MatchString(b) || keyRunR.MatchString(body)
 }
 
 // Line returns the line cleaned of colour codes and control characters, with every secret hidden. The empty string is a valid
@@ -73,7 +83,7 @@ func (r *Redactor) Line(s string) string {
 			return "<private key hidden>"
 		}
 		// A block whose END line never came (a header printed on its own, a cut log) must not hide the rest of the log.
-		if r.keyLines < maxKeyLines && keyBodyR.MatchString(body) {
+		if r.keyLines < maxKeyLines && keyText(body) {
 			r.keyLines++
 			return "<private key hidden>"
 		}
