@@ -1302,7 +1302,7 @@ func TestFileLogHidesAPasswordAfterALoneCR(t *testing.T) {
 	l.Line("connect Password=\rhunter2")
 	l.Line("connect Password= \r  hunter two")
 	_ = l.Close()
-	data, _ := os.ReadFile(p)
+	data, _ := os.ReadFile(filepath.Clean(p))
 	if s := string(data); strings.Contains(s, "hunter") || !strings.Contains(s, "[hidden]") {
 		t.Fatalf("log %q", s)
 	}
