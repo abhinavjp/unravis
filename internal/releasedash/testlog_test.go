@@ -109,3 +109,32 @@ func TestParseTestsSummaryWithoutStepName(t *testing.T) {
 		}
 	}
 }
+
+// The release build skips its tests when CI already passed on the commit. The log says so in one line, and the page must say
+// "skipped on purpose" rather than "nothing found". The echoed script text (which holds the same words) must not count.
+func TestParseTestsReusedCI(t *testing.T) {
+	tab := "\t"
+	log := strings.Join([]string{
+		"build" + tab + "Did CI already pass on this exact commit?" + tab + `2026-11-22T11:45:06.5090713Z   if ($last) { Write-Host "CI run $($last.databaseId) passed on this commit: tests are skipped here." }`,
+		"build" + tab + "Did CI already pass on this exact commit?" + tab + "2026-11-22T11:45:07.1000000Z CI run 45017753576 passed on this commit: tests are skipped here.",
+		"build" + tab + "Build the programs and the installer" + tab + "2026-11-22T11:45:10.0000000Z building",
+	}, "\n")
+	res := ParseTests(strings.NewReader(log), nil)
+	if res.ReusedCI != "45017753576" || len(res.Suites) != 0 {
+		t.Fatalf("reused CI: %+v", res)
+	}
+	echoOnly := "build" + tab + "Did CI already pass on this exact commit?" + tab + `2026-11-22T11:45:06.5090713Z   if ($last) { Write-Host "CI run $($last.databaseId) passed on this commit: tests are skipped here." }`
+	if r := ParseTests(strings.NewReader(echoOnly), nil); r.ReusedCI != "" {
+		t.Fatalf("the echoed script must not count: %+v", r)
+	}
+}
+
+// A sharded job prints every step as "UNKNOWN STEP"; the page names the suite by what it is instead.
+func TestParseTestsUnknownStepGetsAName(t *testing.T) {
+	log := "go-tests (1/3)\tUNKNOWN STEP\t2026-11-22T11:33:00.1000000Z ok  \tpkg/a\t1.0s\n" +
+		"go-tests (1/3)\tUNKNOWN STEP\t2026-11-22T11:33:00.2000000Z ok  \tpkg/b\t1.0s\n"
+	res := ParseTests(strings.NewReader(log), nil)
+	if len(res.Suites) != 1 || res.Suites[0].Step != "Go tests" || res.Suites[0].Job != "go-tests (1/3)" {
+		t.Fatalf("suites: %+v", res.Suites)
+	}
+}

@@ -54,6 +54,9 @@ type TestResults struct {
 	Passed  int     `json:"passed"`
 	Failed  int     `json:"failed"`
 	Skipped int     `json:"skipped"`
+	// ReusedCI is the id of the CI run whose passed tests the release build trusted instead of running them again (the step "Did CI
+	// already pass on this exact commit?" in release.yml). Set only when the log says so, so the page can say "skipped on purpose".
+	ReusedCI string `json:"reusedCi,omitempty"`
 }
 
 const (
@@ -74,6 +77,8 @@ var (
 	failRE    = regexp.MustCompile(`^FAIL (\S+) ?: ?(.*)$`)
 	scriptOK  = regexp.MustCompile(`^ok {2,}(\S.*)$`)
 	scriptBad = regexp.MustCompile(`^FAIL +(\S.*)$`)
+	// The line release.yml prints when it skips the tests. Anchored, so the echoed script text (which contains it too) does not count.
+	reusedCIRE = regexp.MustCompile(`^CI run (\d{1,20}) passed on this commit: tests are skipped here`)
 )
 
 type logGroup struct {
@@ -110,6 +115,9 @@ func ParseTests(r io.Reader, names []string) TestResults {
 		s := strings.TrimPrefix(parts[2], bomMark)
 		s = ansiRE.ReplaceAllString(s, "")
 		s = stampRE.ReplaceAllString(s, "")
+		if m := reusedCIRE.FindStringSubmatch(s); m != nil {
+			res.ReusedCI = m[1]
+		}
 		g.raw = append(g.raw, strings.TrimRight(s, "\r"))
 		g.red = append(g.red, reds[g].Line(s))
 	}
@@ -131,8 +139,16 @@ func ParseTests(r io.Reader, names []string) TestResults {
 	return res
 }
 
+// unknownStepWord names a suite when gh could not say which step printed it (it prints "UNKNOWN STEP", as it does for the whole
+// of a sharded job): the kind of suite is still known from its output.
+var unknownStepWord = map[string]string{"go": "Go tests", "node": "Web tests", "verify": "Install check", "script": "Script tests"}
+
 func (g *logGroup) suite(kind string) *Suite {
-	return &Suite{Job: g.job, Step: g.step, Kind: kind}
+	step := g.step
+	if strings.EqualFold(strings.TrimSpace(step), "UNKNOWN STEP") && unknownStepWord[kind] != "" {
+		step = unknownStepWord[kind]
+	}
+	return &Suite{Job: g.job, Step: step, Kind: kind}
 }
 
 func addCase(s *Suite, name, status string) {

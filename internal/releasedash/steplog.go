@@ -3,6 +3,7 @@ package releasedash
 import (
 	"bufio"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +11,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding/charmap"
 )
 
 // The release script keeps two kinds of log in <data folder>\logs:
@@ -127,12 +131,16 @@ func ReadLog(dir, name string, names []string) (lines []LogLine, cut bool, err e
 		ln := LogLine{}
 		if runLogRE.MatchString(name) {
 			ln.T, raw = splitStamp(raw)
+			raw = fixMojibake(raw)
 		}
 		ln.Text = red.Line(raw)
 		lines = append(lines, ln)
 		if len(lines) > maxLines {
 			lines, cut = lines[len(lines)-maxLines:], true
 		}
+	}
+	if runLogRE.MatchString(name) {
+		lines = collapseRefresh(lines)
 	}
 	if lines == nil {
 		lines = []LogLine{} // an empty log is an empty list for the page, not null
@@ -148,6 +156,76 @@ func splitStamp(s string) (string, string) {
 		}
 	}
 	return "", s
+}
+
+// fixMojibake repairs text that the release script's child process wrote as UTF-8 but the parent console read as the OEM code page
+// 437 ("✓" arriving as "Γ£ô", "·" as "┬╖"). It only acts when every character of the line fits code page 437 AND the resulting bytes
+// are valid UTF-8, so an honest "café" or "Γ" on its own is left alone.
+func fixMojibake(s string) string {
+	ascii := true
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return s
+	}
+	b, err := charmap.CodePage437.NewEncoder().String(s)
+	if err != nil || !utf8.ValidString(b) || b == s {
+		return s
+	}
+	return b
+}
+
+var refreshRE = regexp.MustCompile(`^Refreshing run status every \d+ seconds`)
+
+// collapseRefresh folds the repeated status blocks that "gh run watch" redraws every ten seconds (one "Refreshing run status ..."
+// line followed by the run and job list, tens of lines each time) into the last one, with a note where the others were. A block
+// ends at the next one or at the next "[n/7]" step heading. Done on the lines the page asks for, so line numbers stay consistent.
+func collapseRefresh(lines []LogLine) []LogLine {
+	var starts []int
+	for i, l := range lines {
+		if refreshRE.MatchString(l.Text) {
+			starts = append(starts, i)
+		}
+	}
+	if len(starts) < 2 {
+		return lines
+	}
+	dropEnd := map[int]int{} // frame start -> end (exclusive) for frames that are folded away
+	for k := 0; k+1 < len(starts); k++ {
+		heading := false
+		for j := starts[k] + 1; j < starts[k+1]; j++ {
+			if stepHdr.MatchString(lines[j].Text) {
+				heading = true
+				break
+			}
+		}
+		if !heading {
+			dropEnd[starts[k]] = starts[k+1]
+		}
+	}
+	if len(dropEnd) == 0 {
+		return lines
+	}
+	out := make([]LogLine, 0, len(lines))
+	folded := 0
+	for i := 0; i < len(lines); {
+		if e, ok := dropEnd[i]; ok {
+			folded++
+			i = e
+			continue
+		}
+		if folded > 0 && refreshRE.MatchString(lines[i].Text) {
+			out = append(out, LogLine{T: lines[i].T, Text: fmt.Sprintf("(%d earlier copies of this status block are folded away; the latest one follows)", folded)})
+			folded = 0
+		}
+		out = append(out, lines[i])
+		i++
+	}
+	return out
 }
 
 // StepLog is the part of a run log that belongs to one step.

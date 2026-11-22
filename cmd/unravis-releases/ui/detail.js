@@ -393,11 +393,13 @@ function panelTests(p, rep) {
     sec.append(h);
     const sum = el('div', 'tsum');
     const bad = res.failed > 0;
-    sum.append(chip(bad ? 'bad' : res.passed > 0 ? 'ok' : 'mut', bad ? 'Failed' : res.passed > 0 ? 'Passed' : 'Nothing found'));
+    const reused = !res.suites.length && !res.passed && !res.failed && res.reusedCi;
+    sum.append(chip(bad ? 'bad' : res.passed > 0 ? 'ok' : 'mut', bad ? 'Failed' : res.passed > 0 ? 'Passed' : reused ? 'Skipped on purpose' : 'Nothing found'));
     sum.append(el('span', 'big', count(res.passed) + ' passed'), el('span', bad ? 'big bad' : 'big', count(res.failed) + ' failed'), el('span', 'big', count(res.skipped) + ' skipped'));
     const a = link(run.url, 'Open run ' + run.run + ' on GitHub'); if (a) sum.append(a);
     sec.append(sum);
-    if (!res.suites.length) sec.append(el('p', 'note', 'No test output was found in this run log.'));
+    if (reused) sec.append(el('p', 'note', 'The release build did not run the tests again. CI run ' + res.reusedCi + ' had already passed them on this exact commit, so they were skipped on purpose. Its results are in the CI section of this tab.'));
+    else if (!res.suites.length) sec.append(el('p', 'note', 'No test output was found in this run log.'));
     for (const s of res.suites) {
       const id = 'suite-' + run.kind + '-' + s.job + '-' + s.step;
       const det = el('details', 'suite' + (s.failed && !s.reportOnly ? ' bad' : '')); bindOpen(det, id);

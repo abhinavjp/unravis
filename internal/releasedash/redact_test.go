@@ -80,3 +80,41 @@ func TestRedactorKeepsTestLines(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactorUnclosedKeyBlockEnds(t *testing.T) {
+	r := NewRedactor()
+	got := []string{}
+	for _, l := range []string{
+		"-----BEGIN PGP PRIVATE KEY BLOCK-----", // a header with no END line, as the release self-test prints
+		"ok   log redaction: nothing secret left",
+		"--- PASS: TestX (0.00s)",
+	} {
+		got = append(got, r.Line(l))
+	}
+	if got[0] != "<private key hidden>" || got[1] != "ok   log redaction: nothing secret left" || got[2] != "--- PASS: TestX (0.00s)" {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestRedactorKeyBlockWithCIPrefix(t *testing.T) {
+	r := NewRedactor()
+	pfx := "job\tstep\t2026-11-22T11:32:17.6419460Z "
+	in := []string{pfx + "-----BEGIN PRIVATE KEY-----", pfx + "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC", pfx + "Proc-Type: 4,ENCRYPTED", pfx + "aGVsbG8=", pfx + "-----END PRIVATE KEY-----", pfx + "ok   after the key"}
+	for i, l := range in {
+		got := r.Line(l)
+		if i < 5 && got != "<private key hidden>" {
+			t.Errorf("line %d leaked: %q", i, got)
+		}
+		if i == 5 && !strings.Contains(got, "ok   after the key") {
+			t.Errorf("line after the key was hidden: %q", got)
+		}
+	}
+	// a key whose END line was lost: body lines stay hidden, the first sentence ends the block
+	r = NewRedactor()
+	for i, l := range []string{pfx + "-----BEGIN PRIVATE KEY-----", pfx + "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC", pfx + "ok   next step"} {
+		got := r.Line(l)
+		if (i < 2) != (got == "<private key hidden>") {
+			t.Errorf("line %d: %q", i, got)
+		}
+	}
+}
