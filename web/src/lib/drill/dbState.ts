@@ -5,13 +5,14 @@ import type { LaneMeasure } from './callLanes';
  * Which state the Database lane is in on the Slow call screen, and the words that go with it.
  * Pure: it only decides from data the app already has. All text comes from DRILL_TEXT.
  */
-export type DbStateKey = 'qs' | 'qsfile' | 'api' | 'off' | 'ro' | 'late' | 'denied' | 'events' | 'notread' | 'blackbox';
+export type DbStateKey = 'qs' | 'qsfile' | 'api' | 'off' | 'offkept' | 'ro' | 'late' | 'denied' | 'events' | 'notread' | 'blackbox';
 
 export const DB_STATE_KEYS: readonly DbStateKey[] = ['qs', 'qsfile', 'api', 'off', 'ro', 'late', 'denied', 'events', 'notread'];
 
 export interface QueryStoreInfo {
   state: 'on' | 'off' | 'read-only' | 'denied' | 'unknown';
   firstData?: string | null;
+  lastData?: string | null;
   intervalMinutes?: number | null;
 }
 
@@ -70,6 +71,7 @@ const SHAPE: Record<DbStateKey, DbStateView['shape']> = {
   blackbox: 'blocks',
   api: 'apiseen',
   events: 'markers',
+  offkept: 'blocks',
   off: 'none',
   denied: 'none',
   notread: 'none'
@@ -85,7 +87,11 @@ function pickKey(input: DbStateInput): DbStateKey {
   if (input.laneReasonCode === 'blackbox' && (input.laneHasObservations ?? input.laneHasShape)) return 'blackbox';
   const qs = input.queryStore;
   if (qs?.state === 'denied') return 'denied';
-  if (qs?.state === 'off') return input.hasEvents ? 'events' : 'off';
+  if (qs?.state === 'off') {
+    // Query Store is off now, but the lane still draws blocks it kept earlier (or a saved day read while it was on).
+    if ((input.laneReasonCode === 'held-sql' || input.laneReasonCode === 'layered-sql') && input.laneHasShape) return 'offkept';
+    return input.hasEvents ? 'events' : 'off';
+  }
   if (input.laneReasonCode === 'qs-file' && input.laneHasShape) return 'qsfile';
   if ((input.laneReasonCode === 'held-sql' || input.laneReasonCode === 'layered-sql') && input.laneHasShape) {
     const first = qs?.firstData ? Date.parse(qs.firstData) : NaN;
@@ -96,6 +102,24 @@ function pickKey(input: DbStateInput): DbStateKey {
   if (input.laneReasonCode === 'api-seen' && input.laneHasShape) return 'api';
   if (input.hasEvents) return 'events';
   return 'notread';
+}
+
+/**
+ * The words for an off database whose lane draws nothing, from where the window sits against the history it kept. "None of it is for this
+ * time" is said only when the window ends before the oldest kept block or starts after the newest block has ended. A window that overlaps the
+ * kept range (or one where the block length is unknown, so the end of the range cannot be placed) was simply not read: that is said instead,
+ * never a "no history". Without both kept times nothing can be compared, and the plain off sentence stays.
+ */
+function offMessage(input: DbStateInput, from: string | null, to: string | null): string {
+  const T = DRILL_TEXT;
+  const first = input.queryStore?.firstData ? Date.parse(input.queryStore.firstData) : NaN;
+  const last = input.queryStore?.lastData ? Date.parse(input.queryStore.lastData) : NaN;
+  if (!from || !to || !Number.isFinite(first) || !Number.isFinite(last)) return T.dbMsgOff;
+  const interval = input.blockSeconds ?? (typeof input.queryStore?.intervalMinutes === 'number' ? input.queryStore.intervalMinutes * 60 : NaN);
+  const blockMs = Number.isFinite(interval) && interval > 0 ? interval * 1000 : NaN;
+  const before = input.windowEnd <= first;
+  const after = Number.isFinite(blockMs) && input.windowStart >= last + blockMs;
+  return before || after ? T.dbMsgOffOutside(from, to) : T.dbMsgOffNotRead(from, to);
 }
 
 export function dbState(input: DbStateInput, fmt: DbStateFormat): DbStateView {
@@ -110,6 +134,12 @@ export function dbState(input: DbStateInput, fmt: DbStateFormat): DbStateView {
     : null;
   const firstData = input.queryStore?.firstData;
   const time = firstData ? fmt.time(firstData) : SAMPLE_TIME;
+  // The kept range, only from times the server sent and the parser can read. Both ends are the START of a block: the newest block may be partial
+  // (an off database may stop mid-block), so no block length is added to the end when it is shown.
+  const stampOf = (iso: string | null | undefined): string | null =>
+    iso && !Number.isNaN(Date.parse(iso)) ? fmt.date(iso) + ', ' + fmt.time(iso) : null;
+  const keptFrom = stampOf(input.queryStore?.firstData);
+  const keptTo = stampOf(input.queryStore?.lastData);
   const shape = SHAPE[key];
   // The 'blackbox' reason code is the host batch-throughput contract; every other state draws concurrency.
   const measure: LaneMeasure = key === 'blackbox' ? 'batch-rate' : 'at-once';
@@ -120,8 +150,10 @@ export function dbState(input: DbStateInput, fmt: DbStateFormat): DbStateView {
       return { key, source: T.dbSrcFile(date), message: T.dbMsgFile(date), short: T.laneBlocks(minutes), shape, measure };
     case 'api':
       return { key, source: T.dbSrcApi, message: T.dbMsgApi, short: T.laneApiOnly, shape, measure };
+    case 'offkept':
+      return { key, source: T.dbSrcOffKept, message: T.dbMsgOffKept(keptFrom, keptTo), short: T.dbShortOffKept, shape, measure };
     case 'off':
-      return { key, source: T.dbSrcNone, message: T.dbMsgOff, short: T.dbShortOff, shape, measure };
+      return { key, source: T.dbSrcNone, message: offMessage(input, keptFrom, keptTo), short: T.dbShortOff, shape, measure };
     case 'ro':
       return { key, source: T.dbSrcReadOnly, message: T.dbMsgReadOnly, short: T.laneBlocks(minutes), shape, measure };
     case 'late':

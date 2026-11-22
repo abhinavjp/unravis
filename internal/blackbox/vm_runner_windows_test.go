@@ -33,7 +33,9 @@ func rawVMAddStatus(t *testing.T) error {
 // applicable" path. The GitHub hosted Windows runner is an Azure VM without
 // VMware Tools, so the VM Memory object must be absent there.
 func TestRealVMNotApplicableOnHostedRunner(t *testing.T) {
-	if os.Getenv("GITHUB_ACTIONS") != "true" {
+	// RUNNER_ENVIRONMENT is "github-hosted" on GitHub's own runners; a self-hosted
+	// runner also sets GITHUB_ACTIONS and could be a VMware guest.
+	if os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("RUNNER_ENVIRONMENT") != "github-hosted" {
 		t.Skip("runs on the GitHub hosted runner only")
 	}
 	addErr := rawVMAddStatus(t)

@@ -13,9 +13,10 @@ var errPDHAbsent = errors.New("PDH object or counter is not present on this host
 // pdhAbsentStatus reports the PDH statuses that mean "no such object or
 // counter": 0xC0000BB8 PDH_CSTATUS_NO_OBJECT, 0xC0000BB9 PDH_CSTATUS_NO_COUNTER,
 // 0xC0000BBF PDH_CSTATUS_NO_COUNTERNAME, 0xC0000BC0 PDH_CSTATUS_BAD_COUNTERNAME.
-// The values are from memory of pdhmsg.h and are confirmed on a real Windows
-// PDH by the hosted-runner test in the vm group PR; the set is deliberately
-// small. Any other status stays a real failure.
+// The four values match pdhmsg.h. Only the one status that a missing VM Memory
+// object returns on a hosted Windows runner is confirmed on a real PDH (by
+// TestRealVMNotApplicableOnHostedRunner); the other three are from the header
+// alone. The set is deliberately small. Any other status stays a real failure.
 func pdhAbsentStatus(code uint32) bool {
 	switch code {
 	case 0xC0000BB8, 0xC0000BB9, 0xC0000BBF, 0xC0000BC0:
