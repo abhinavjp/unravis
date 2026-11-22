@@ -675,6 +675,8 @@
     .bbc-intro ol { grid-template-columns: minmax(0, 1fr); gap: 2px; }
     .bbc-main { grid-template-columns: 1fr; overflow: auto; }
     .bbc-side { border-right: 0; border-bottom: 1px solid var(--line); max-height: 40vh; }
+    /* The side box is a scrolling column here, and the tab strip (overflow: hidden, so no minimum height) was squeezed to 10px; it keeps its own height (BL-475). */
+    .bbc-tabs { flex-shrink: 0; }
     .bbc-lane { grid-template-columns: 84px minmax(0, 1fr); }
     .bbc-axis { margin-left: 92px; }
   }

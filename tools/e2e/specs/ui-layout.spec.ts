@@ -11,6 +11,7 @@
 //   UIFIX-13  Desktop does not move: the hour grid, its legend and the zoom strip look the same pixel for pixel as with the old rules put back (BL-475 groups 2 and 3)
 //   UIFIX-07  Add files on a phone: the column heads are painted nowhere, yet stay in the page for screen readers (BL-482). A guard only: the finding was a false positive of the audit, so the audit run proves the fix
 //   UIFIX-08  Phone header with "Choose sources" fits the window (BL-472); 390 and 360 px fail on the old header, 320 px is a no-regression case
+//   UIFIX-14  Tap targets of 24 x 24 px or more and desktop does not move: the "Change" link of the Review step (14a), the "Open the release page" link of the update bar (14b), the unfinished-request counts of Where is it? (14c), the Counters / Programs tabs of the Blackbox charts on a phone (14d) (BL-475 group 4)
 //   UIFIX-10  Slow call screen: the time zone label, the peak and zero labels and the "drag" hint are at least 11px, the lanes and the minimap do not move, nothing collides (BL-483)
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase } from '../support/ui';
@@ -199,7 +200,7 @@ test('UIFIX-06c Help guide: the index links are 24 px tall and sit in their rows
 });
 
 test('UIFIX-07 Add files on a phone: the column heads are not painted, and are still in the page (guard; the audit itself is the proof of BL-482)', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 390, height: 600 }); // short, so the side box (40vh) scrolls: that is where the tabs were squeezed
   await page.getByRole('button', { name: 'More', exact: true }).click();
   await page.getByRole('menuitem', { name: 'All cases', exact: true }).click();
   await page.getByRole('button', { name: 'Create a new case' }).click();
@@ -351,7 +352,7 @@ test('UIFIX-12a Daily and hourly view: every hour square is 24 x 24 px or more',
 });
 
 test('UIFIX-12b Daily and hourly view on a phone: the hour squares are 24 x 24 px and no two overlap', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 390, height: 600 }); // short, so the side box (40vh) scrolls: that is where the tabs were squeezed
   await openDailyHourly(page);
   const cells = await page.locator('button.hm-cell').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
   for (const c of cells) { expect(c.w).toBeGreaterThanOrEqual(24); expect(c.h).toBeGreaterThanOrEqual(24); }
@@ -645,3 +646,132 @@ for (const width of [320, 360, 390]) {
     for (const s of facts.sizes) expect(s).toBeGreaterThanOrEqual(11);
   });
 }
+
+// BL-475 group 4: the last small targets of the audit. Like UIFIX-09 the old rules of each target are put back as inline styles and every
+// rectangle of the page part is compared in one evaluation: a target may grow (that is the point), but it may not move anything else, and its
+// margin box (the box plus its margins, which is what the neighbours see) must stay what it was. Desktop wins over the phone.
+type Rules = [string, Record<string, string>][];
+
+/** Every box inside `root` now and with `rules` put back. `moved` lists the boxes that differ; targets are compared by margin box. */
+async function layoutMoves(page: Page, root: string, rules: Rules): Promise<{ touched: number; moved: string[]; total: number }> {
+  return page.locator(root).first().evaluate((container, rs) => {
+    const targets = new Set<Element>();
+    for (const [selector] of rs) container.querySelectorAll(selector).forEach((e) => targets.add(e));
+    const snap = () => [...container.querySelectorAll('*')].filter((e) => !e.closest('svg') || e.tagName.toLowerCase() === 'svg').map((e) => {
+      const r = e.getBoundingClientRect();
+      const m = targets.has(e) ? getComputedStyle(e) : null;
+      const ml = m ? parseFloat(m.marginLeft) : 0, mt = m ? parseFloat(m.marginTop) : 0, mr = m ? parseFloat(m.marginRight) : 0, mb = m ? parseFloat(m.marginBottom) : 0;
+      return { name: e.tagName.toLowerCase() + '.' + (e.getAttribute('class') ?? '').split(' ')[0] + ' ' + (e.textContent ?? '').trim().slice(0, 24), box: [r.left - ml, r.top - mt, r.width + ml + mr, r.height + mt + mb] };
+    });
+    const now = snap();
+    const saved: [HTMLElement, string | null][] = [];
+    for (const [selector, declarations] of rs) {
+      container.querySelectorAll<HTMLElement>(selector).forEach((el) => {
+        saved.push([el, el.getAttribute('style')]);
+        for (const [k, v] of Object.entries(declarations)) el.style.setProperty(k, v, 'important');
+      });
+    }
+    void document.body.offsetHeight;
+    const old = snap();
+    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.setAttribute('style', style); }
+    const moved: string[] = [];
+    now.forEach((n, i) => { if (!old[i] || n.box.some((v, j) => Math.abs(v - old[i].box[j]) > 0.05)) moved.push(n.name + ' now ' + n.box.map((v) => v.toFixed(2)).join(',') + ' old ' + (old[i]?.box ?? []).map((v) => v.toFixed(2)).join(',')); });
+    return { touched: saved.length, moved: moved.slice(0, 6), total: now.length };
+  }, rules);
+}
+
+async function expectNothingMoved(page: Page, root: string, rules: Rules, label: string): Promise<void> {
+  const facts = await layoutMoves(page, root, rules);
+  expect(facts.touched, label + ': no target found to compare').toBeGreaterThan(0);
+  expect(facts.total, label + ': nothing measured').toBeGreaterThan(5);
+  expect(facts.moved, label + ': boxes that moved against the old rules').toEqual([]);
+}
+
+async function openReviewStep(page: Page): Promise<void> {
+  await openBlackbox(page);
+  await page.getByRole('button', { name: 'Open status: web-a' }).waitFor();
+  await page.getByRole('button', { name: 'Place a Blackbox' }).click();
+  await page.getByRole('textbox', { name: /^Name/ }).fill('sql-prod-01');
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await page.getByRole('radio', { name: /On another server/ }).click();
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'What should it record?' })).toBeVisible();
+  for (let i = 0; i < 5; i++) await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Build the pack' })).toBeVisible();
+  await expect(page.locator('.with-change button.change').first()).toBeVisible();
+}
+
+const REVIEW_OLD: Rules = [['.with-change .change', { 'min-height': '0', padding: '0 var(--space-1)', margin: '0', transition: 'none' }]];
+
+test('UIFIX-14a Place a Blackbox, Review: the "Change" link next to "Runs" is 24 x 24 px or more and the card does not move', async ({ page, allow }) => {
+  allow(/blackbox\/validate/, 'the wizard asks the server to check the name step on the way to Review');
+  await openReviewStep(page);
+  const sizes = await page.locator('.with-change button.change').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { w: r.width, h: r.height }; }));
+  expect(sizes.length).toBeGreaterThan(0);
+  for (const z of sizes) { expect(z.w).toBeGreaterThanOrEqual(24); expect(z.h).toBeGreaterThanOrEqual(24); }
+  await expectNothingMoved(page, '.cards', REVIEW_OLD, 'Review step');
+});
+
+const UPDATE_OLD: Rules = [['.update-bar-link', { 'min-height': '0', padding: '0', margin: '0', transition: 'none' }]];
+
+async function openUpdateBar(page: Page): Promise<void> {
+  await page.evaluate(() => { location.hash = '#update=available'; });
+  const direct = page.getByRole('button', { name: 'Glossary', exact: true });
+  if (await direct.isVisible()) await direct.click();
+  else {
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Glossary' }).click();
+  }
+  const dialog = page.getByRole('dialog').first();
+  await dialog.getByTestId('update-check-button').click();
+  await expect(page.getByTestId('update-bar-link')).toBeAttached();
+}
+
+for (const width of [1440, 390]) {
+  test('UIFIX-14b Update bar at ' + width + ' px: "Open the release page" is 24 px tall and the bar keeps its size', async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await openUpdateBar(page);
+    const r = await page.getByTestId('update-bar-link').evaluate((e) => { const b = e.getBoundingClientRect(); return { w: b.width, h: b.height }; });
+    expect(r.w).toBeGreaterThanOrEqual(24);
+    expect(r.h).toBeGreaterThanOrEqual(24);
+    await expectNothingMoved(page, '.update-bar', UPDATE_OLD, 'Update bar');
+  });
+}
+
+const COUNT_OLD: Rules = [['td.numeric .api-select', { 'min-width': '0', padding: '4px 0', margin: '0', transition: 'none' }]];
+
+for (const width of [1440, 390]) {
+  test('UIFIX-14c Where is it? at ' + width + ' px: the unfinished-request counts are 24 px wide and the table does not move', async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.getByRole('button', { name: 'Where is it?', exact: true }).click();
+    await page.locator('summary', { hasText: 'Quality of the data' }).click();
+    const counts = page.locator('td.numeric button.api-select');
+    await expect(counts.first()).toBeVisible();
+    const sizes = await counts.evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { w: r.width, h: r.height }; }));
+    for (const z of sizes) { expect(z.w).toBeGreaterThanOrEqual(24); expect(z.h).toBeGreaterThanOrEqual(24); }
+    await expectNothingMoved(page, 'table:has(td.numeric button.api-select)', COUNT_OLD, 'Unfinished-requests table');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow').toBeLessThanOrEqual(0);
+  });
+}
+
+async function openChartsDialog(page: Page): Promise<void> {
+  await openBlackbox(page);
+  await page.getByRole('button', { name: /^Open status: web-a/ }).first().click();
+  await page.getByRole('button', { name: 'Open charts' }).first().click();
+  await expect(page.locator('dialog.bbc[open] .bbc-tabs button').first()).toBeVisible();
+}
+
+test('UIFIX-14d Blackbox charts on a phone: the Counters and Programs tabs keep their height (they were squeezed to 10 px)', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 600 }); // short, so the side box (40vh) scrolls: that is where the tabs were squeezed
+  await openChartsDialog(page);
+  const sizes = await page.locator('dialog.bbc[open] .bbc-tabs button').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { w: r.width, h: r.height }; }));
+  expect(sizes.length).toBe(2);
+  for (const z of sizes) { expect(z.w).toBeGreaterThanOrEqual(24); expect(z.h).toBeGreaterThanOrEqual(24); }
+});
+
+test('UIFIX-14e Blackbox charts on desktop: the side box does not move (the tab rule is for narrow windows only)', async ({ page }) => {
+  await openChartsDialog(page);
+  await expectNothingMoved(page, 'dialog.bbc[open]', [['.bbc-tabs', { 'flex-shrink': '1' }]], 'Charts side box');
+  const h = await page.locator('dialog.bbc[open] .bbc-tabs').evaluate((e) => e.getBoundingClientRect().height);
+  expect(h).toBeGreaterThanOrEqual(24);
+});
