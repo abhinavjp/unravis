@@ -41,17 +41,20 @@ const (
 // read the folders' access lists, which install-sql and enable-sql proved), then readOpenedSettings.
 func readVerifiedSettings(path string) ([]byte, error) {
 	if err := settingsPathProblem(path); err != nil {
-		return nil, err
+		return nil, refuse(WordPath, err)
 	}
 	clean := filepath.Clean(path)
 	if !filepath.IsAbs(clean) {
-		return nil, fmt.Errorf("blackbox: the settings file path must be absolute")
+		return nil, refuse(WordPath, fmt.Errorf("blackbox: the settings file path must be absolute"))
 	}
 	if err := localDriveProblem(clean[:2]); err != nil {
-		return nil, err
+		return nil, refuse(WordPath, err)
 	}
 	if err := refuseSettingsFileChain(clean); err != nil {
-		return nil, err
+		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
+			return nil, refuse(WordNotFound, err)
+		}
+		return nil, refuse(WordChain, err)
 	}
 	return readOpenedSettings(clean)
 }
@@ -79,7 +82,7 @@ func readOpenedSettings(path string) ([]byte, error) {
 			break
 		}
 		if !errors.Is(err, windows.ERROR_SHARING_VIOLATION) || try >= settingsOpenRetries {
-			return nil, err
+			return nil, refuse(openWord(err), err)
 		}
 		settingsSleep(settingsOpenPause)
 	}
@@ -93,11 +96,11 @@ func readOpenedSettings(path string) ([]byte, error) {
 
 	t, err := windows.GetFileType(h)
 	if err != nil {
-		return nil, err
+		return nil, refuse(WordUnreadable, err)
 	}
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
-		return nil, err
+		return nil, refuse(WordUnreadable, err)
 	}
 	size := uint64(info.FileSizeHigh)<<32 | uint64(info.FileSizeLow)
 	if err := settingsHandleProblem(t == windows.FILE_TYPE_DISK, info.FileAttributes, info.NumberOfLinks, size); err != nil {
@@ -105,32 +108,32 @@ func readOpenedSettings(path string) ([]byte, error) {
 	}
 	final, err := finalPath(h)
 	if err != nil {
-		return nil, err
+		return nil, refuse(WordUnreadable, err)
 	}
 	if !strings.EqualFold(filepath.Clean(final), clean) {
-		return nil, errors.New("blackbox: the settings file is reached through a link or an alias")
+		return nil, refuse(WordMoved, errors.New("blackbox: the settings file is reached through a link or an alias"))
 	}
 	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
-		return nil, err
+		return nil, refuse(WordAccess, err)
 	}
 	owner, _, err := sd.Owner()
 	if err != nil {
-		return nil, err
+		return nil, refuse(WordAccess, err)
 	}
 	if owner == nil || !trustedFileOwner(owner.String()) {
-		return nil, errors.New("blackbox: the settings file has an untrusted owner")
+		return nil, refuse(WordOwner, errors.New("blackbox: the settings file has an untrusted owner"))
 	}
 	list, err := describeSD(sd, "the settings file")
 	if err != nil {
-		return nil, err
+		return nil, refuse(WordAccess, err)
 	}
 	aces := make([]fileACE, 0, len(list.entries))
 	for _, e := range list.entries {
 		aces = append(aces, e.ace)
 	}
 	if err := adminOnlyDACL(list.present, aces); err != nil {
-		return nil, err
+		return nil, refuse(WordList, err)
 	}
 	if afterSettingsOpen != nil {
 		afterSettingsOpen()
@@ -140,10 +143,23 @@ func readOpenedSettings(path string) ([]byte, error) {
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, maxConfigBytes+1))
 	if err != nil {
-		return nil, err
+		return nil, refuse(WordUnreadable, err)
 	}
 	if len(data) > maxConfigBytes {
-		return nil, errors.New("blackbox: the settings file is too large")
+		return nil, refuse(WordTooLarge, errors.New("blackbox: the settings file is too large"))
 	}
 	return data, nil
+}
+
+// openWord is the fixed word for a failed open.
+func openWord(err error) string {
+	switch {
+	case errors.Is(err, windows.ERROR_FILE_NOT_FOUND), errors.Is(err, windows.ERROR_PATH_NOT_FOUND):
+		return WordNotFound
+	case errors.Is(err, windows.ERROR_SHARING_VIOLATION):
+		return WordSharing
+	case errors.Is(err, windows.ERROR_ACCESS_DENIED):
+		return WordAccess
+	}
+	return WordUnreadable
 }
