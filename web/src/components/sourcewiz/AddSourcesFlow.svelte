@@ -86,7 +86,7 @@
     window.addEventListener('focus', looksAgain);
     document.addEventListener('visibilitychange', looksAgain);
     return () => {
-      gone = true; addGuard.preparing = false;
+      gone = true; if (iSetPreparing) { addGuard.preparing = false; iSetPreparing = false; }
       mine.abort();
       window.removeEventListener('focus', looksAgain);
       document.removeEventListener('visibilitychange', looksAgain);
@@ -168,13 +168,22 @@
   // The failures of the run on screen are not saved anywhere in add mode, so clearing them asks first.
   const requestAddMore = () => { if (progressSummary().failures.length > 0) askAddMore = true; else void addMore(); };
 
+  // Only the flow that set the flag clears it, so a flow that was left cannot switch the tabs on under a newer one that is still reading.
+  let iSetPreparing = false;
+  let statusEl = $state<HTMLParagraphElement>();
+  /** Reads the case and its list again. While it runs the list is frozen (Back, Review and the tabs are off) and a status says why. Returns false when this tab was left meanwhile. */
+  async function prepare(): Promise<boolean> {
+    addGuard.preparing = true; iSetPreparing = true;
+    await tick(); statusEl?.focus();
+    await Promise.all([checkCase(), loadCase()]);
+    if (iSetPreparing) { addGuard.preparing = false; iSetPreparing = false; }
+    return !gone;
+  }
+
   async function go(to: Screen) {
     if (to === 'review') {
       // The case is read again first: it may have closed, or gained one of these sources, since the list was made.
-      addGuard.preparing = true;
-      await Promise.all([checkCase(), loadCase()]);
-      addGuard.preparing = false;
-      if (gone) return;
+      if (!(await prepare())) return;
       dropDuplicates();
       if (closed || wizard.sources.length === 0) { await tick(); flowEl?.focus(); return; }
     }
@@ -184,17 +193,18 @@
   async function run() {
     // The blockers are read fresh (a scan can expire while this screen is open); the run skips them once the id is set.
     if (!ready || blockers().length > 0) return;
-    addGuard.preparing = true;
-    await Promise.all([checkCase(), loadCase()]);
-    addGuard.preparing = false;
-    if (gone) return;
+    const target = caseId;
+    if (!(await prepare())) return;
+    // The list is frozen during the read (Back is off), so what is sent is what Review showed; if the screen changed anyway, nothing is sent.
+    if (screen !== 'review') return;
     const dropped = dropDuplicates();
-    if (closed) return;
-    if (dropped.length > 0) { if (wizard.sources.length === 0) await go('add'); return; }
+    if (closed) { await tick(); head?.focus(); return; }
+    if (dropped.length > 0) { if (wizard.sources.length === 0) await go('add'); else { await tick(); head?.focus(); } return; }
     if (wizard.sources.length === 0 || blockers().length > 0) return;
     createView.appendOnly = true;
-    createView.submit.caseId = caseId;
+    createView.submit.caseId = target;
     createView.submit.caseTitle = '';
+    void tick().then(() => flowEl?.focus());
     await createNow();
   }
 
@@ -212,6 +222,9 @@
       <span>{WIZ.leftOutSome(leftOut)}</span>
       <button type="button" class="quiet-button" onclick={() => { leftOut = []; }}>{WIZ.leftOutDismiss}</button>
     </div>
+  {/if}
+  {#if addGuard.preparing}
+    <p class="hint" role="status" tabindex="-1" bind:this={statusEl} data-checking-case>{WIZ.readingCase}</p>
   {/if}
   {#if checking}
     <p class="hint" role="status">{WIZ.checkingCase}</p>
@@ -231,7 +244,7 @@
   {:else if screen === 'add'}
     <SourceStep adding {caseId} {closed} {closedNote} {existing} {onFiles} />
     <div class="actions">
-      <button type="button" class="primary-button" disabled={wizard.sources.length === 0 || closed} onclick={() => void go('review')}>Review</button>
+      <button type="button" class="primary-button" disabled={wizard.sources.length === 0 || closed || addGuard.preparing} onclick={() => void go('review')}>Review</button>
     </div>
   {:else}
     <section class="review" aria-labelledby="add-review-h">
@@ -259,7 +272,7 @@
       <p class="hint">{WIZ.reviewStays} {WIZ.reviewStale}</p>
       <p class="hint">{WIZ.footerAdd}</p>
       <div class="actions">
-        <button type="button" class="quiet-button" onclick={() => void go('add')}>← Back</button>
+        <button type="button" class="quiet-button" disabled={addGuard.preparing} onclick={() => void go('add')}>← Back</button>
         <button type="button" class="primary-button" disabled={!ready} onclick={() => void run()}>{lastButton(true, wizard.sources.length, createView.running)}</button>
       </div>
     </section>

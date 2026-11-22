@@ -301,6 +301,36 @@ test('WIZG-09: the hub tabs are off while the case is read again after Add is pr
   await expect(tab(page, 'Add data')).toHaveAttribute('aria-selected', 'true');
 });
 
+test('WIZG-10: the list is held still while the case is read after Add: Back is off, a status says why, and exactly what Review showed is sent', async ({ page, api }) => {
+  const title = 'QA Guard Frozen';
+  const id = await createCase(api, title);
+  await openAddData(page, title);
+  await addRedis(page, 'cache-first:6379');
+  await hub(page).getByRole('button', { name: 'Review' }).click();
+  await expect(hub(page).getByRole('heading', { name: 'Review & add' })).toBeVisible();
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((r) => { release = r; });
+  let reads = 0;
+  await page.route(new RegExp('/api/cases/' + id + '$'), async (route) => {
+    if (route.request().method() === 'GET') { reads++; await held; }
+    await route.continue();
+  });
+  const posts: string[] = [];
+  page.on('request', (r) => { if (r.method() === 'POST' && r.url().includes(`/api/cases/${id}/sources`)) posts.push(r.url()); });
+  await hub(page).getByRole('button', { name: /^Add 1 source/ }).click();
+  await expect.poll(() => reads).toBeGreaterThan(0);
+  // The status explains the grey controls and holds focus; Back cannot be pressed, so the list cannot change.
+  const status = hub(page).locator('[data-checking-case]');
+  await expect(status).toContainText('Checking this case again before it is sent.');
+  await expect(status).toBeFocused();
+  await expect(hub(page).getByRole('button', { name: '← Back' })).toBeDisabled();
+  expect(posts).toEqual([]);
+  release();
+  await expect(tab(page, 'Sources')).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(async () => (await tags(api, id)).map((t) => t.label)).toEqual(['cache-first:6379']);
+  expect(posts.length).toBe(1);
+});
+
 test('WIZG-06: a case closed somewhere else is noticed before the draft question, at Review and at the run, and nothing is sent', async ({ page, api }) => {
   // Part 1: an unfinished new-case draft is waiting; the case is closed in "another window" before the Add data tab opens.
   const titleA = 'QA Guard Closed A';

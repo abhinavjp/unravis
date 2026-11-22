@@ -60,6 +60,8 @@ const DEFAULT_PORT: Readonly<Record<string, string>> = { redis: '6379', 'sql-ser
 /** A name as it is compared: lower case, no trailing dot on the host, and no default port. A name that is not host or host:port is only lower-cased. */
 export function nameKey(kind: string, label: string): string {
   const text = label.trim().toLowerCase();
+  // Only the kinds that are a host and a port get this; a Blackbox name or path is only lower-cased.
+  if (!(kind in DEFAULT_PORT)) return text;
   const m = /^([^:,\\\[\]\s]+?)\.?(?::(\d+))?$/.exec(text);
   if (!m) return text;
   return m[2] && m[2] !== DEFAULT_PORT[kind] ? m[1] + ':' + m[2] : m[1];

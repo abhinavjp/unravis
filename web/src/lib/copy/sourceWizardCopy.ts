@@ -31,6 +31,7 @@ export const WIZ = {
   closedCase: 'This case cannot take new data right now: it is closed, or it changed somewhere else.',
   goneCase: 'This case is not on this computer any more. It was erased somewhere else, so nothing can be added.',
   checkingCase: 'Checking this case first…',
+  readingCase: 'Checking this case again before it is sent. Your list is held still until that is done.',
   draftKept: 'The new case you had not finished is still there. Nothing was thrown away.',
   runBusy: 'A case is being made right now. Wait for it to finish, then add sources here.',
   leftOutSome: (labels: readonly string[]): string => (labels.length === 1 ? labels[0] + ' is already in this case, so it was left out of your list.' : labels.length + ' sources are already in this case, so they were left out of your list: ' + labels.slice(0, 4).join(', ') + (labels.length > 4 ? ' and more.' : '.')),

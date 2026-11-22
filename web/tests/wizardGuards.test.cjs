@@ -45,6 +45,7 @@ test('names are compared without case, trailing dot or the default port', () => 
   assert.equal(g.nameKey('sql-server', 'DB1.:1433'), 'db1');
   assert.equal(g.nameKey('sql-server', '192.168.4.2,1655'), '192.168.4.2,1655');
   assert.equal(g.nameKey('blackbox', 'Server 1'), 'server 1');
+  assert.equal(g.nameKey('blackbox', 'Rec.'), 'rec.', 'a recorder named with a dot is not the one without');
   assert.equal(g.nameKey('blackbox', 'D:\\Blackbox'), 'd:\\blackbox');
   const found = g.alreadyInCase([{ kind: 'redis', ref: 'a', label: 'cache-1:6379' }, { kind: 'redis', ref: 'b', label: 'cache-1:6380' }], [{ kind: 'redis', label: 'CACHE-1.' }]);
   assert.deepEqual(found.map((s) => s.ref), ['a']);
@@ -55,8 +56,11 @@ test('the tabs are off while the case is read again before a send, and a read th
   assert.match(hub, /disabled=\{createView\.running \|\| addGuard\.preparing\}/);
   assert.match(hub, /if \(next === tab \|\| addGuard\.preparing\) return;/);
   const flow = read('src/components/sourcewiz/AddSourcesFlow.svelte');
-  assert.match(flow, /addGuard\.preparing = false;\s+if \(gone\) return;\s+const dropped = dropDuplicates\(\);/);
-  assert.match(flow, /gone = true; addGuard\.preparing = false;/);
+  assert.match(flow, /if \(!\(await prepare\(\)\)\) return;\s+\/\/[^\n]*\n\s+if \(screen !== 'review'\) return;\s+const dropped = dropDuplicates\(\);/, 'a send happens only from the Review the person saw');
+  assert.match(flow, /gone = true; if \(iSetPreparing\)/, 'only the flow that set the flag clears it');
+  assert.match(flow, /disabled=\{addGuard\.preparing\} onclick=\{\(\) => void go\('add'\)\}/, 'Back is off while the case is read');
+  assert.match(flow, /role="status" tabindex="-1" bind:this=\{statusEl\}/, 'a status says why, and focus rests on it');
+  assert.match(flow, /const target = caseId;/);
 });
 
 test('leaving the Add data tab keeps an unfinished list and failures on screen, and nothing else', () => {
@@ -121,8 +125,9 @@ test('the Add sources flow reads the case before the draft question, again at Re
   const flow = read('src/components/sourcewiz/AddSourcesFlow.svelte');
   assert.match(flow, /await Promise\.all\(\[checkCase\(signal\), loadCase\(signal\)\]\);[\s\S]*if \(foreign\) \{ checking = false; if \(gate === 'open' && !readOnly\) askDiscard = true; \}/);
   assert.match(flow, /window\.addEventListener\('focus', looksAgain\)/);
-  assert.match(flow, /async function go\(to: Screen\) \{\s+if \(to === 'review'\) \{[\s\S]*checkCase\(\), loadCase\(\)/);
-  assert.match(flow, /async function run\(\) \{[\s\S]*await Promise\.all\(\[checkCase\(\), loadCase\(\)\]\);[\s\S]*const dropped = dropDuplicates\(\);[\s\S]*if \(closed\) return;/);
+  assert.match(flow, /async function prepare\(\)[\s\S]*await Promise\.all\(\[checkCase\(\), loadCase\(\)\]\)/);
+  assert.match(flow, /async function go\(to: Screen\) \{\s+if \(to === 'review'\) \{[\s\S]*await prepare\(\)/);
+  assert.match(flow, /async function run\(\) \{[\s\S]*await prepare\(\)[\s\S]*const dropped = dropDuplicates\(\);[\s\S]*if \(closed\)/);
   assert.match(flow, /\{:else if foreign && !owned\}/, 'a draft left in the way is never reset when the case cannot take data');
   assert.match(flow, /if \(!resetWizard\(\)\) return;/, 'a refused reset changes nothing on screen');
 });
