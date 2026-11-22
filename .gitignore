@@ -45,3 +45,8 @@ Thumbs.db
 /unravis-blackbox
 *.key.json
 /unravis-lite
+!testdata/upx/fake-upx.exe
+
+# Desktop shell (Rust)
+/desktop/target/
+/desktop/src-tauri/gen/

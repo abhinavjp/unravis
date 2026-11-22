@@ -140,8 +140,15 @@ func TestAsyncImportCommitsInTheBackground(t *testing.T) {
 	if n := len(e.importsOf(id)); n != 1 {
 		t.Fatalf("imports = %d", n)
 	}
-	if entries, _ := os.ReadDir(spool); len(entries) != 0 {
-		t.Fatalf("spool left %d file(s)", len(entries))
+	// The job reports done just before it removes its spool file, and Windows can delay a delete: look again for a moment.
+	var left []os.DirEntry
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if left, _ = os.ReadDir(spool); len(left) == 0 {
+			break
+		}
+	}
+	if len(left) != 0 {
+		t.Fatalf("spool left %d file(s)", len(left))
 	}
 	// The same file imported synchronously into a fresh case gives the same answer.
 	other := e.newCase("Sync case")

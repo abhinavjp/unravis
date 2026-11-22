@@ -226,6 +226,15 @@ export const DRILL_TEXT = {
       : 'Read from a Query Store export file. The import date was not recorded. It ends where the export ended.',
   dbMsgApi: "Query Store has no data for this period, so this lane shows the time this API's own calls spent inside the database. It leaves out other apps, so it can read lower than the real database load.",
   dbMsgOff: 'Query Store is switched off on this database, so it saved no history. Switching it on needs the database owner (the script is in Setup). Unravis never switches it on itself.',
+  dbSrcOffKept: 'Query Store (off), kept history',
+  dbMsgOffKept: (from: string | null, to: string | null): string =>
+    from && to
+      ? `Query Store is off. The blocks show the history it kept, from the block starting ${from} to the block starting ${to}. The time outside that range is unknown, not zero.`
+      : 'Query Store is off. The blocks show history saved earlier. The time outside it is unknown, not zero.',
+  dbMsgOffOutside: (from: string, to: string): string =>
+    `Query Store is off. It kept history from the block starting ${from} to the block starting ${to}, but none of it is for this time. The database owner can switch it on; Unravis never does.`,
+  dbMsgOffNotRead: (from: string, to: string): string =>
+    `Query Store is off. It kept history from the block starting ${from} to the block starting ${to}, which may include this time, but the database was not read for it. Go back to the timeline and read the database for a window that covers this call.`,
   dbMsgReadOnly: 'Query Store is read-only, so it has stopped saving new history. This often happens when its storage is full. Older history is still shown.',
   dbMsgLate: (time: string): string => `Query Store has nothing before ${time}. It was switched on later, or the older history was cleaned up. The time before that is unknown, not zero.`,
   dbMsgDenied: 'The saved database login is not allowed to read Query Store. It needs the VIEW DATABASE STATE permission. Ask the database owner, or add a login that has it.',
@@ -250,6 +259,7 @@ export const DRILL_TEXT = {
     ' The window is what SQL Server reports; we have not checked it live.' +
     ' Gaps stay unknown, not zero.',
   dbShortOff: 'Not recorded: Query Store is off',
+  dbShortOffKept: 'Kept history, Query Store is off',
   dbShortDenied: 'Not recorded: no permission',
   dbShortEvents: 'Not recorded: only events, no volumes',
   dbShortLate: 'Not recorded: Query Store has no history here',
@@ -365,6 +375,9 @@ const SAMPLE = {
   dbMsgLive: 15,
   dbMsgFile: '11 Nov 2026',
   dbMsgLate: '10:30',
+  dbMsgOffKept: ['11 Nov 2026, 10:00', '11 Nov 2026, 10:45'] as const,
+  dbMsgOffOutside: ['11 Nov 2026, 10:00', '11 Nov 2026, 10:45'] as const,
+  dbMsgOffNotRead: ['11 Nov 2026, 10:00', '11 Nov 2026, 10:45'] as const,
   tabNearbyCalls: 12,
   tabAllSources: 12,
   nearbyHint: ['10:00', '10:30', 12] as const,
@@ -431,6 +444,9 @@ export const drillCopyEntries = (): LintEntry[] => {
     ['dbMsgLive', DRILL_TEXT.dbMsgLive(SAMPLE.dbMsgLive)],
     ['dbMsgFile', DRILL_TEXT.dbMsgFile(SAMPLE.dbMsgFile)],
     ['dbMsgLate', DRILL_TEXT.dbMsgLate(SAMPLE.dbMsgLate)],
+    ['dbMsgOffKept', DRILL_TEXT.dbMsgOffKept(...SAMPLE.dbMsgOffKept)],
+    ['dbMsgOffOutside', DRILL_TEXT.dbMsgOffOutside(...SAMPLE.dbMsgOffOutside)],
+    ['dbMsgOffNotRead', DRILL_TEXT.dbMsgOffNotRead(...SAMPLE.dbMsgOffNotRead)],
     ['tabNearbyCalls', DRILL_TEXT.tabNearbyCalls(SAMPLE.tabNearbyCalls)],
     ['tabAllSources', DRILL_TEXT.tabAllSources(SAMPLE.tabAllSources)],
     ['nearbyHint', DRILL_TEXT.nearbyHint(...SAMPLE.nearbyHint)],
