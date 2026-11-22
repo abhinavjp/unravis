@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -122,10 +123,12 @@ func BuildGroups(d GroupDeps) []Group {
 			// This host cannot have the group's counters (for example no VMware
 			// Tools). The group stays silent and looks again every
 			// notApplicableRecheck.
-			built = &lazyGroup{
+			lg := &lazyGroup{
 				name: name, optional: regs[name].optional,
-				factory: regs[name].factory, deps: gd, dormant: true,
+				factory: regs[name].factory, deps: gd,
 			}
+			lg.dormant.Store(true)
+			built = lg
 		case err != nil:
 			built = &lazyGroup{
 				name: name, optional: regs[name].optional,
@@ -204,6 +207,23 @@ func (t *trackedGroup) Close() error {
 // picked up without a restart).
 const notApplicableRecheck = 30 * time.Minute
 
+// dormantGroup is implemented by a group that is "not applicable" on this host
+// right now (silent, re-checking on a long interval). The tick uses it so that a
+// slow or still-running re-check of such a group leaves no trace either: on a
+// physical server the re-check can take longer than the one-second group budget,
+// and a timeout there must not read as "vm: slow" or count a budget strike.
+type dormantGroup interface{ Dormant() bool }
+
+// dormantNow reports whether g is a not-applicable group at this moment.
+func dormantNow(g Group) bool {
+	d, ok := g.(dormantGroup)
+	return ok && d.Dormant()
+}
+
+func (g *lazyGroup) Dormant() bool { return g.dormant.Load() }
+
+func (t *trackedGroup) Dormant() bool { return dormantNow(t.inner) }
+
 // groupRetryMax caps the retry backoff for an unavailable group.
 const groupRetryMax = 5 * time.Minute
 
@@ -232,7 +252,9 @@ type lazyGroup struct {
 	failures int
 	// dormant is true while the last factory answer was errNotApplicable. A
 	// dormant group reports errNotApplicable (silent), not errGroupUnavailable.
-	dormant bool
+	// It is atomic because the tick goroutine reads it (dormantNow) while a worker
+	// that is still inside a slow recheck may write it.
+	dormant atomic.Bool
 }
 
 func (g *lazyGroup) Name() string   { return g.name }
@@ -242,14 +264,14 @@ func (g *lazyGroup) Collect(now time.Time, dt float64) (any, error) {
 	if g.real != nil {
 		return g.real.Collect(now, dt)
 	}
-	if g.dormant && g.next.IsZero() {
+	if g.dormant.Load() && g.next.IsZero() {
 		// BuildGroups already asked the factory and got errNotApplicable: that
 		// answer counts as the first check, so wait a full interval.
 		g.next = now.Add(notApplicableRecheck)
 		return nil, errNotApplicable
 	}
 	if now.Before(g.next) {
-		if g.dormant {
+		if g.dormant.Load() {
 			return nil, errNotApplicable
 		}
 		return nil, errGroupUnavailable
@@ -257,17 +279,19 @@ func (g *lazyGroup) Collect(now time.Time, dt float64) (any, error) {
 	real, err := g.factory(g.deps)
 	if err != nil {
 		if errors.Is(err, errNotApplicable) {
-			g.dormant, g.failures = true, 0
+			g.dormant.Store(true)
+			g.failures = 0
 			g.next = now.Add(notApplicableRecheck)
 			return nil, errNotApplicable
 		}
-		g.dormant = false
+		g.dormant.Store(false)
 		if !errors.Is(err, errNoTargets) {
 			g.failures++
 		}
 		g.next = now.Add(groupRetryDelay(g.failures + 1))
 		return nil, errGroupUnavailable
 	}
+	g.dormant.Store(false) // before g.real: the tick reads dormant without a lock
 	g.real, g.failures = real, 0
 	return real.Collect(now, dt)
 }
@@ -505,6 +529,10 @@ func (c *groupCollector) runGroup(i int, g Group, now time.Time, dt float64, s *
 	name := g.Name()
 	w := &c.slots[i]
 	if !w.idle() {
+		if dormantNow(g) {
+			// A re-check of a not-applicable group is still running: say nothing.
+			return
+		}
 		// The previous tick is still inside this provider. Do not start another
 		// worker and do not re-mark it slow: re-marking every cycle would pin the
 		// group forever (the livelock this budget already had once).
@@ -515,6 +543,11 @@ func (c *groupCollector) runGroup(i int, g Group, now time.Time, dt float64, s *
 	start := time.Now()
 	v, err, timedOut := w.run(func() (any, error) { return g.Collect(now, dt) }, budgetMaxGroup)
 	if timedOut {
+		if dormantNow(g) {
+			// The re-check of a not-applicable group ran long. The slot stays busy
+			// until it ends; nothing is named, timed or counted against the budget.
+			return
+		}
 		c.budget.GroupTiming(name, budgetMaxGroup+time.Millisecond, g.Optional())
 		s.Missing = append(s.Missing, name+": slow")
 		// A group that ran out of time is the slowest one, whatever else ran.
