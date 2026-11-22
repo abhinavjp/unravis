@@ -52,8 +52,10 @@ func TestSystemProberSelfAndPipes(t *testing.T) {
 	}
 	exe, _ := os.Executable()
 	policy := pipesec.PeerPolicy{InstallDir: filepath.Dir(exe), AllowedBase: []string{filepath.Base(exe)}, RequireSameLogon: true}
-	ui, _ := pipesec.NewName(pipesec.KindUI)
-	ag, _ := pipesec.NewName(pipesec.KindAG)
+	ui, ag, err := pipesec.NewNamePair()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if p.PipeExists(ui) {
 		t.Fatal("a pipe that was never created exists")
 	}
