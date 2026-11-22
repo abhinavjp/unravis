@@ -1,0 +1,378 @@
+{
+  "screens": [
+    {
+      "id": "x-analysis-more-filters",
+      "phase": "X",
+      "note": "The analysis page with the More filters panel open.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "text=More filters"
+        },
+        {
+          "waitFor": "text=Request details"
+        }
+      ]
+    },
+    {
+      "id": "x-analysis-more-detail",
+      "phase": "X",
+      "note": "The analysis page with More detail open under the findings.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"More detail\"s]"
+        },
+        {
+          "waitFor": "text=Less detail"
+        }
+      ]
+    },
+    {
+      "id": "x-analysis-daily-hourly",
+      "phase": "X",
+      "note": "The analysis page with the daily and hourly view open.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "text=Daily and hourly view"
+        }
+      ]
+    },
+    {
+      "id": "x-where-is-it",
+      "phase": "X",
+      "note": "Where is it? (lens on requests).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"Where is it?\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Where is it?\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-where-quality",
+      "phase": "X",
+      "note": "Where is it? with the data-quality section open.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"Where is it?\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Where is it?\"]"
+        },
+        {
+          "click": "summary:has-text(\"Quality of the data\")"
+        }
+      ]
+    },
+    {
+      "id": "x-where-groups",
+      "phase": "X",
+      "note": "Where is it? with the API groups table open.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"Where is it?\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Where is it?\"]"
+        },
+        {
+          "click": "summary:has-text(\"API groups\")"
+        }
+      ]
+    },
+    {
+      "id": "x-where-about",
+      "phase": "X",
+      "note": "Where is it? with the notes about the calculation open.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"Where is it?\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Where is it?\"]"
+        },
+        {
+          "click": "summary:has-text(\"About these results\")"
+        }
+      ]
+    },
+    {
+      "id": "x-all-failures",
+      "phase": "X",
+      "note": "All operations, Failures tab.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"All operations\"s]"
+        },
+        {
+          "waitFor": "role=tab[name=\"Failures\"s]"
+        }
+      ]
+    },
+    {
+      "id": "x-all-slowest",
+      "phase": "X",
+      "note": "All operations, Slowest tab.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"All operations\"s]"
+        },
+        {
+          "waitFor": "role=tab[name=\"Failures\"s]"
+        },
+        {
+          "click": "role=tab[name=\"Slowest\"s]"
+        }
+      ]
+    },
+    {
+      "id": "x-all-breakdown",
+      "phase": "X",
+      "note": "All operations, Breakdown tab.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"All operations\"s]"
+        },
+        {
+          "waitFor": "role=tab[name=\"Failures\"s]"
+        },
+        {
+          "click": "role=tab[name=\"Breakdown\"s]"
+        }
+      ]
+    },
+    {
+      "id": "x-patterns",
+      "phase": "X",
+      "note": "The Patterns panel.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"Patterns\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"Patterns\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Patterns\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-ledger",
+      "phase": "X",
+      "note": "The Ledger panel.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"Ledger\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"Ledger\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Ledger\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-case-timeline",
+      "phase": "X",
+      "note": "The case Investigation Timeline.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "text=Case started"
+        },
+        {
+          "click": "role=button[name=\"Open the Investigation Timeline\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Start tracing\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-case-analysis",
+      "phase": "X",
+      "note": "The analysis opened from a case.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "text=Case started"
+        },
+        {
+          "click": "role=button[name=\"Open the analysis\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Run analysis\"s]"
+        }
+      ]
+    },
+    {
+      "id": "x-case-add-theory",
+      "phase": "X",
+      "note": "The case page with the add-a-theory form open.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "text=Case started"
+        },
+        {
+          "click": "role=button[name=\"Add a theory\"s]"
+        }
+      ]
+    },
+    {
+      "id": "x-blackbox-charts",
+      "phase": "X",
+      "note": "Blackbox charts for a running recorder.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"Blackbox\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"Blackbox\"s]"
+        },
+        {
+          "waitFor": "#blackbox-title"
+        },
+        {
+          "click": "role=button[name=\"Open status: web-a\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
+        },
+        {
+          "click": "role=button[name=/charts/i]"
+        },
+        {
+          "waitFor": "role=dialog"
+        }
+      ]
+    }
+  ]
+}
