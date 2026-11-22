@@ -98,10 +98,13 @@ type VMProbeLine struct {
 	Samples   []VMProbeSample `json:"samples,omitempty"`
 }
 
-// VMProbeTry is one instance form that was tried and did not open.
+// VMProbeTry is one instance form that was tried and did not give a reading.
 type VMProbeTry struct {
 	Path   string `json:"path"`
 	Status string `json:"status"`
+	// Opened is true when the form was accepted by PDH but its first read gave no
+	// usable value (Status is then the status of that read).
+	Opened bool `json:"opened,omitempty"`
 }
 
 // VMProbeResult is the whole capture.
@@ -138,16 +141,27 @@ func RunVMProbe(open VMProbeOpen, n int, sleep func(time.Duration)) VMProbeResul
 	for i, path := range vmProbePaths {
 		line := VMProbeLine{Path: path}
 		var failedNoStatus bool
-		for k, variant := range vmProbeVariants(path) {
+		var chosen, fallback CounterSource
+		chosenK, fallbackK := 0, 0
+		variants := vmProbeVariants(path)
+		for k, variant := range variants {
 			src, err := open(variant)
 			if err == nil && src != nil {
-				line.Found = true
-				if k > 0 {
-					line.Variant = variant
+				// PDH often accepts a path without an instance on a multi-instance
+				// object and only fails the read (PDH_CSTATUS_NO_INSTANCE), so a form
+				// counts as found only when its first read gives a usable value.
+				status, ok := firstProbeRead(src)
+				if ok {
+					chosen, chosenK = src, k
+					break
 				}
-				srcs[i] = src
-				res.Found++
-				break
+				line.AlsoTried = append(line.AlsoTried, VMProbeTry{Path: variant, Status: status, Opened: true})
+				if fallback == nil {
+					fallback, fallbackK = src, k // keep it: better "found, unreadable" than "absent"
+				} else {
+					_ = src.Close()
+				}
+				continue
 			}
 			var se *pdhStatusErr
 			hasStatus := err != nil && errors.As(err, &se)
@@ -163,8 +177,31 @@ func RunVMProbe(open VMProbeOpen, n int, sleep func(time.Duration)) VMProbeResul
 				line.AlsoTried = append(line.AlsoTried, VMProbeTry{Path: variant, Status: "none"})
 			}
 		}
-		if line.Found {
-			line.AbsentStatus, line.Failure, line.AlsoTried = "", "", nil
+		if chosen == nil && fallback != nil {
+			chosen, chosenK = fallback, fallbackK
+			fallback = nil
+		}
+		if fallback != nil {
+			_ = fallback.Close()
+		}
+		if chosen != nil {
+			line.Found = true
+			if chosenK > 0 {
+				line.Variant = variants[chosenK]
+			}
+			srcs[i] = chosen
+			res.Found++
+			line.AbsentStatus, line.Failure = "", ""
+			kept := line.AlsoTried[:0]
+			for _, t := range line.AlsoTried {
+				if t.Opened { // forms that opened but could not be read stay on the line
+					kept = append(kept, t)
+				}
+			}
+			line.AlsoTried = kept
+			if len(line.AlsoTried) == 0 {
+				line.AlsoTried = nil
+			}
 		} else if failedNoStatus {
 			noStatus++
 		}
@@ -185,6 +222,21 @@ func RunVMProbe(open VMProbeOpen, n int, sleep func(time.Duration)) VMProbeResul
 
 // maxProbeInstances bounds how many instances (vCPUs) one round may report.
 const maxProbeInstances = 256
+
+// firstProbeRead takes the verifying read of a freshly opened form: ok when at
+// least one reading is usable. status is the first reading's PDH status in hex.
+func firstProbeRead(src CounterSource) (status string, ok bool) {
+	readings, err := src.Collect()
+	if err != nil || len(readings) == 0 {
+		return "none", false
+	}
+	for _, r := range readings {
+		if r.OK && CounterStatusOK(r.Status) && !math.IsNaN(r.Value) && !math.IsInf(r.Value, 0) {
+			return hex32(r.Status), true
+		}
+	}
+	return hex32(readings[0].Status), false
+}
 
 func readProbeSamples(src CounterSource, base string) []VMProbeSample {
 	readings, err := src.Collect()
@@ -229,16 +281,13 @@ func FormatVMProbeText(r VMProbeResult) string {
 				}
 				parts = append(parts, fmt.Sprintf("%s [%s]", v, s.Status))
 			}
-			fmt.Fprintf(&b, "%s: found; %s\n", c.Path, strings.Join(parts, ", "))
+			fmt.Fprintf(&b, "%s: found; %s%s\n", c.Path, strings.Join(parts, ", "), foundNote(c))
 		case c.AbsentStatus != "":
 			word := "failed"
 			if code, err := strconv.ParseUint(strings.TrimPrefix(c.AbsentStatus, "0x"), 16, 32); err == nil && pdhAbsentStatus(uint32(code)) {
 				word = "absent"
 			}
-			also := ""
-			for _, t := range c.AlsoTried {
-				also += fmt.Sprintf("; %s: %s", t.Path, t.Status)
-			}
+			also := alsoTriedText(c.AlsoTried)
 			fmt.Fprintf(&b, "%s: %s (PDH status %s%s)\n", c.Path, word, c.AbsentStatus, also)
 		default:
 			fmt.Fprintf(&b, "%s: not read (no PDH status)\n", c.Path)
@@ -253,4 +302,32 @@ func FormatVMProbeText(r VMProbeResult) string {
 		fmt.Fprintf(&b, "Found %d of %d VMware counters.\n", r.Found, len(r.Counters))
 	}
 	return b.String()
+}
+
+func alsoTriedText(tries []VMProbeTry) string {
+	var b strings.Builder
+	for _, t := range tries {
+		if t.Opened {
+			fmt.Fprintf(&b, "; %s: opened, read status %s", t.Path, t.Status)
+		} else {
+			fmt.Fprintf(&b, "; %s: %s", t.Path, t.Status)
+		}
+	}
+	return b.String()
+}
+
+// foundNote says which form gave the value when it was not the plain path, and
+// which forms opened but could not be read.
+func foundNote(c VMProbeLine) string {
+	if c.Variant == "" && len(c.AlsoTried) == 0 {
+		return ""
+	}
+	note := ""
+	if c.Variant != "" {
+		note = " (read through " + c.Variant + ")"
+	}
+	if len(c.AlsoTried) > 0 {
+		note += " (not readable" + alsoTriedText(c.AlsoTried) + ")"
+	}
+	return note
 }

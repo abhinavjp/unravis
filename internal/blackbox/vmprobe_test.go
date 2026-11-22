@@ -29,17 +29,21 @@ func (f *probeFake) Collect() ([]CounterReading, error) {
 func (f *probeFake) Close() error { *f.closed++; return nil }
 
 type probeRig struct {
-	present  map[string]float64
-	failWith map[string]error // open errors by path
-	opened   []string
-	closed   int
-	sleeps   []time.Duration
+	present    map[string]float64
+	failWith   map[string]error  // open errors by path
+	unreadable map[string]uint32 // paths that open but read with this PDH status
+	opened     []string
+	closed     int
+	sleeps     []time.Duration
 }
 
 func (r *probeRig) open(path string) (CounterSource, error) {
 	r.opened = append(r.opened, path)
 	if err, ok := r.failWith[path]; ok {
 		return nil, err
+	}
+	if code, ok := r.unreadable[path]; ok {
+		return &probeFake{path: path, status: code, ok: false, closed: &r.closed}, nil
 	}
 	if v, ok := r.present[path]; ok {
 		return &probeFake{path: path, value: v, ok: true, closed: &r.closed}, nil
@@ -226,13 +230,14 @@ func TestVMProbeUnusableValuesAreNotPrinted(t *testing.T) {
 }
 
 func TestVMProbeCollectFailureIsRecorded(t *testing.T) {
-	closed := 0
+	closed, opened := 0, 0
 	open := func(path string) (CounterSource, error) {
+		opened++
 		return &probeFake{path: path, err: errors.New("boom"), closed: &closed}, nil
 	}
 	res := RunVMProbe(open, 2, func(time.Duration) {})
-	if closed != len(VMProbePaths()) {
-		t.Errorf("closed %d, want all %d", closed, len(VMProbePaths()))
+	if closed != opened {
+		t.Errorf("closed %d of %d opened sources, want all", closed, opened)
 	}
 	s := res.Counters[0].Samples
 	if len(s) != 2 || s[0].OK || s[0].Value != nil || s[0].Status != "none" {
@@ -342,3 +347,71 @@ func (m multiFake) Collect() ([]CounterReading, error) {
 	return out, nil
 }
 func (m multiFake) Close() error { *m.closed++; return nil }
+
+// PDH usually accepts a path without an instance on a multi-instance object and
+// only fails the read with NO_INSTANCE. The probe must then move on to (_Total).
+func TestVMProbeMovesOnWhenThePlainPathOpensButCannotBeRead(t *testing.T) {
+	plain := `\VM Processor\CPU stolen time`
+	r := &probeRig{
+		present:    map[string]float64{`\VM Processor(_Total)\CPU stolen time`: 42},
+		unreadable: map[string]uint32{plain: 0x800007D1},
+	}
+	res := RunVMProbe(r.open, 2, r.sleep)
+	var line VMProbeLine
+	for _, c := range res.Counters {
+		if c.Path == plain {
+			line = c
+		}
+	}
+	if !line.Found || line.Variant != `\VM Processor(_Total)\CPU stolen time` {
+		t.Fatalf("line = %+v, want found through (_Total)", line)
+	}
+	if len(line.Samples) != 2 || line.Samples[0].Value == nil || *line.Samples[0].Value != 42 || !line.Samples[0].OK {
+		t.Fatalf("samples = %+v, want two readings of 42", line.Samples)
+	}
+	if len(line.AlsoTried) != 1 || line.AlsoTried[0].Path != plain || !line.AlsoTried[0].Opened || line.AlsoTried[0].Status != "0x800007D1" {
+		t.Fatalf("AlsoTried = %+v, want the plain path opened but unreadable (0x800007D1)", line.AlsoTried)
+	}
+	text := FormatVMProbeText(res)
+	want := plain + ": found; \\VM Processor(_Total)\\CPU stolen time=42 [0x0], \\VM Processor(_Total)\\CPU stolen time=42 [0x0] (read through \\VM Processor(_Total)\\CPU stolen time) (not readable; " + plain + ": opened, read status 0x800007D1)"
+	if !strings.Contains(text, want) {
+		t.Fatalf("text lacks the form note:\n%s\nwant: %s", text, want)
+	}
+	if r.closed != 2 { // the unreadable plain source at once, the (_Total) one at the end
+		t.Errorf("closed %d sources, want 2", r.closed)
+	}
+}
+
+// When no form can be read, the first form that opened stays on the line as
+// found-but-unreadable, so the capture shows the status instead of "absent".
+func TestVMProbeKeepsTheFirstOpenedFormWhenNothingReads(t *testing.T) {
+	plain := `\VM Processor\CPU stolen time`
+	r := &probeRig{
+		present: map[string]float64{},
+		unreadable: map[string]uint32{
+			plain:                                   0x800007D1,
+			`\VM Processor(_Total)\CPU stolen time`: 0x800007D1,
+		},
+	}
+	res := RunVMProbe(r.open, 1, r.sleep)
+	var line VMProbeLine
+	for _, c := range res.Counters {
+		if c.Path == plain {
+			line = c
+		}
+	}
+	if !line.Found || line.Variant != "" {
+		t.Fatalf("line = %+v, want found through the plain path (the first that opened)", line)
+	}
+	if len(line.Samples) != 1 || line.Samples[0].OK || line.Samples[0].Status != "0x800007D1" {
+		t.Fatalf("samples = %+v, want one unreadable sample with the status", line.Samples)
+	}
+	if len(line.AlsoTried) != 2 {
+		t.Fatalf("AlsoTried = %+v, want both opened-but-unreadable forms", line.AlsoTried)
+	}
+	// The extra source that was opened but not kept is closed: plain stays open
+	// until the end, the (_Total) one is closed at once, and both end up closed.
+	if r.closed != 2 {
+		t.Errorf("closed %d sources, want 2 (the unused one at once, the kept one at the end)", r.closed)
+	}
+}
