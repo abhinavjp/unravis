@@ -223,7 +223,7 @@ function Get-PromotionSideCommits([string]$RepoRoot, [string]$Commit) {
         if ($sp.Count -eq 2) {
             git -C $RepoRoot merge-base --is-ancestor $sp[1] $p1 2>$null
             if ($LASTEXITCODE -eq 0) {
-                $mt = @(git -C $RepoRoot merge-tree --write-tree $sp[0] $sp[1] 2>$null)   # all output first, so the exit code is git's
+                $mt = @(git -C $RepoRoot -c merge.renames=true -c diff.renames=true -c diff.renameLimit=0 merge-tree --write-tree $sp[0] $sp[1] 2>$null)   # all output first, so the exit code is git's
                 $clean = ($LASTEXITCODE -eq 0)
                 $tree = if ($mt.Count) { "$($mt[0])" } else { '' }
                 $have = (git -C $RepoRoot rev-parse "$s^{tree}").Trim()
@@ -280,11 +280,27 @@ function Get-CommitPullRequests([string]$RepoRoot, [string]$Repo, [string]$Base,
         $prs[$c] = $onMaster[$c].N
         if (Test-PromotionHeadRef $onMaster[$c].HeadRef) {
             $s = Get-PromotionSideCommits $RepoRoot $c
-            if (-not $s.Count) { $missing.Add($c); continue }   # promotion squashed or rebased: its develop side cannot be checked
+            if (-not $s.Count) { $missing.Add($c); continue }   # promotion squashed or rebased (or empty): its develop side cannot be checked
             foreach ($x in $s) { $side.Add($x) }
         }
     }
     $onDevelop = Find-MergedPullRequests $Repo @($side | ForEach-Object { $_.Sha }) 'develop'
+    # GitHub may answer commits/{sha}/pulls for a develop squash commit with only the promotion PR. Then look the commit up in the
+    # most recent closed PRs into develop (up to 300) by their merge commit. Same rule: the commit must BE that PR's merge commit.
+    $open = @($side | Where-Object { -not $onDevelop.ContainsKey($_.Sha) -and $_.Kind -eq 'pr' })
+    if ($open.Count) {
+        for ($page = 1; $page -le 3; $page++) {
+            $json = gh api "repos/$Repo/pulls?base=develop&state=closed&sort=updated&direction=desc&per_page=100&page=$page" 2>$null
+            if ($LASTEXITCODE -ne 0 -or -not $json) { break }
+            $list = @(($json -join "`n") | ConvertFrom-Json)
+            foreach ($pr in $list) {
+                if ($pr.merged_at -and $pr.base.ref -eq 'develop' -and $pr.merge_commit_sha -and -not $onDevelop.ContainsKey($pr.merge_commit_sha)) {
+                    $onDevelop[$pr.merge_commit_sha] = [pscustomobject]@{ Sha = $pr.merge_commit_sha; N = [int]$pr.number; HeadRef = "$($pr.head.ref)" }
+                }
+            }
+            if (@($open | Where-Object { -not $onDevelop.ContainsKey($_.Sha) }).Count -eq 0 -or $list.Count -lt 100) { break }
+        }
+    }
     foreach ($x in $side) {
         if ($onDevelop.ContainsKey($x.Sha)) { $prs[$x.Sha] = $onDevelop[$x.Sha].N; $develop.Add($x.Sha); continue }
         if ($x.Kind -eq 'mergein' -and $x.Ok) { continue }   # clean merge of master: nothing new, and not named in the report
@@ -299,7 +315,7 @@ function Get-SensitivePullRequests([string]$RepoRoot, [string]$Base, [string]$He
     $hits = @(git -C $RepoRoot rev-list --first-parent "$Base..$Head" -- $script:ReleaseSensitivePaths)
     foreach ($d in $Develop) {
         git -C $RepoRoot diff --quiet "$d^1" $d -- $script:ReleaseSensitivePaths 2>$null
-        if ($LASTEXITCODE -eq 1) { $hits += $d }
+        if ($LASTEXITCODE -ne 0) { $hits += $d }   # 1 = changed; any git error also names it (report fails safe)
     }
     return , @($hits | ForEach-Object { if ($Prs.ContainsKey($_)) { "#$($Prs[$_])" } else { $_.Substring(0, 7) } } | Select-Object -Unique)
 }
