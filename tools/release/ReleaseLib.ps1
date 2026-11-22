@@ -825,6 +825,14 @@ $script:LogRx = @{
     Pair    = [regex]::new('(?i)(?<![\w-])([\w-]*(?:pass(?:word|phrase)|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|.+)', 'Compiled')
     KeyBeg  = [regex]::new('-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
     KeyEnd  = [regex]::new('-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
+    # A line that can still belong to a key block (nothing, base64, or a header such as Proc-Type: ...), after the CI prefix and time stamp
+    # are taken off. Anything else ends a block whose END line never came, so one stray BEGIN line cannot hide the rest of a log.
+    # Explicit space characters and not \s, so this agrees with the Go reader (.NET counts more characters as \s). A * is a value GitHub masked.
+    KeyBody = [regex]::new('^[ \t\r\f\v]*$|^[ \t\r\f\v]*[A-Za-z0-9+/=_*-]+[ \t\r\f\v]*$|^[ \t\r\f\v]*[A-Za-z][A-Za-z0-9-]{0,30}:[ \t\r\f\v].*$', 'Compiled')
+    # What a tool puts in front of each line it echoes (BuildKit "#7 0.512 ", nl or cat -n "  12<TAB>", "> ", "+ "), and a long base64 run.
+    KeyPfx  = [regex]::new('^(?:#\d+[ \t]+[\d.]+[ \t]+|[ \t]*\d+\t|[>+][ \t]?)', 'Compiled')
+    KeyRun  = [regex]::new('[A-Za-z0-9+/=]{40,}', 'Compiled')
+    StampPfx = [regex]::new('^\d{4}-\d\d-\d\dT[\d:.]+Z ?', 'Compiled')
     KeyFile = [regex]::new('(?i)[\w.-]+\.(?:key|pem|pfx|p12|ppk)\b', 'Compiled')
     UserDir = [regex]::new('(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"'']+', 'Compiled')
 }
@@ -833,7 +841,7 @@ $script:LogRx = @{
 # are hidden too; names shorter than three characters are ignored.
 function New-LogRedactor([string[]]$Names = @()) {
     $n = @(@($Names) + @([Environment]::MachineName, [Environment]::UserName) | Where-Object { $_ -and $_.Trim().Length -ge 3 } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
-    return [pscustomobject]@{ InKey = $false; Names = $n }
+    return [pscustomobject]@{ InKey = $false; KeyLines = 0; Names = $n }
 }
 
 # Pure apart from the redactor's key-block memory. -KeepTabs keeps the tab separators of a "gh run view --log" line.
@@ -841,10 +849,17 @@ function Protect-LogLine([string]$Line, $Redactor, [switch]$KeepTabs) {
     $rx = $script:LogRx
     $s = $Line.TrimStart([char]0xFEFF)
     $s = $rx.Ansi.Replace($s, '')
+    $tp = $s.Split("`t", 3)
+    $body = if ($tp.Count -eq 3) { $tp[2] } else { $s }
+    $body = $rx.StampPfx.Replace($body.TrimEnd("`r"), '')
     if (-not $KeepTabs) { $s = $s.Replace("`t", ' ') }
     $s = $rx.Ctrl.Replace($s, '')
-    if ($Redactor.InKey) { if ($rx.KeyEnd.IsMatch($s)) { $Redactor.InKey = $false }; return '<private key hidden>' }
-    if ($rx.KeyBeg.IsMatch($s)) { if (-not $rx.KeyEnd.IsMatch($s)) { $Redactor.InKey = $true }; return '<private key hidden>' }
+    if ($Redactor.InKey) {
+        if ($rx.KeyEnd.IsMatch($s)) { $Redactor.InKey = $false; return '<private key hidden>' }
+        if ($Redactor.KeyLines -lt 400 -and ($rx.KeyBody.IsMatch($rx.KeyPfx.Replace($body, '').Trim([char[]]@([char]34, [char]39, [char]44))) -or $rx.KeyRun.IsMatch($body))) { $Redactor.KeyLines++; return '<private key hidden>' }
+        $Redactor.InKey = $false   # the block never closed: stop hiding
+    }
+    if ($rx.KeyBeg.IsMatch($s)) { if (-not $rx.KeyEnd.IsMatch($s)) { $Redactor.InKey = $true; $Redactor.KeyLines = 0 }; return '<private key hidden>' }
     $s = $rx.Token.Replace($s, '<token hidden>')
     $s = $rx.Bearer.Replace($s, '$1 <hidden>')
     $s = $rx.Pair.Replace($s, '$1$2<hidden>')

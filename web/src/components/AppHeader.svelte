@@ -217,6 +217,9 @@
     .topbar { padding: 0 14px; gap: 8px; flex-wrap: nowrap; align-content: normal; }
     .actions { gap: 8px; }
     .utilities { padding-left: 8px; }
+    /* "Choose sources" is the widest the Sources button gets and pushed the row 23px past a 390px window (BL-472): the group may shrink here, and the Sources label gives way with its "..." (the full text is in the button's name). */
+    .actions, .status { flex-shrink: 1; min-width: 0; }
+    .status > :global(.popover-wrap) { flex-shrink: 1; min-width: 0; }
     .crumbbar { position: sticky; top: var(--header-h); padding: 2px 14px; }
   }
   @media (max-width: 379px) { .more-label { display: none; } .more-button { padding: 6px 9px; } }

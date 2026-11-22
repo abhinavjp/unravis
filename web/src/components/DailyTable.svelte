@@ -82,7 +82,7 @@
   .tag { display: inline-block; margin-left: 4px; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--text-2); font-size: 11px; font-weight: 500; }
   tr.low td, tr.low th { color: var(--text-2); }
   tr.low .day-name { font-weight: 500; }
-  /* Dimmed by the muted text colour and a lighter number weight only: a see-through row fell to 3.9:1 in the light theme (BL-476). */
+  /* Dimmed by the muted text colour, a lighter day name and the "Few requests" tag only: a see-through row fell to 3.9:1 in the light theme (BL-476). */
   tr.partial .day-name { font-style: italic; }
   .trend { min-width: 7.5rem; }
   .trend-text { color: var(--text-2); font-size: 12px; }
