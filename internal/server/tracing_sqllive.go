@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -77,6 +78,10 @@ func layerSQLLane(imported, held tracingLane) (tracingLane, bool) {
 	out.Truncated = imported.Truncated
 	out.Complete = held.Complete && imported.Complete
 	out.ReasonCode, out.Reason = tracingReasonLayeredSQL, tracingLayeredSQLMsg
+	// What the held lane added after its own sentence (Query Store was off when the day was read) stays on the layered lane.
+	if note, ok := strings.CutPrefix(held.Reason, tracingHeldSQLMsg); ok {
+		out.Reason += note
+	}
 	out.Sources = append(append(make([]tracingRef, 0, len(held.Sources)+len(imported.Sources)), imported.Sources...), held.Sources...)
 	// The imported files' time range stays on the lane the owner sees.
 	if out.ImportedFrom == nil {

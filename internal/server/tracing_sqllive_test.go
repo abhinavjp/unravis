@@ -105,6 +105,15 @@ func TestLayerSQLLaneKeepsQueryStoreBucketsAndImportedEvents(t *testing.T) {
 	if len(got.Events) != 1 || got.Hidden != 2 || len(got.Sources) != 2 {
 		t.Fatalf("events %d hidden %d sources %d", len(got.Events), got.Hidden, len(got.Sources))
 	}
+	// A note the held lane added after its own sentence (Query Store was off when the day was read) stays on the layered lane.
+	off := held
+	off.Reason = tracingHeldSQLMsg + tracingQSOffWithSeriesMsg
+	if got, ok := layerSQLLane(imported, off); !ok || got.Reason != tracingLayeredSQLMsg+tracingQSOffWithSeriesMsg {
+		t.Fatalf("layered reason = %q", got.Reason)
+	}
+	if got, _ := layerSQLLane(imported, held); got.Reason != tracingLayeredSQLMsg {
+		t.Fatalf("layered reason without a note = %q", got.Reason)
+	}
 	// An imported lane with no events, or one that is not plain events, is left as it is.
 	noEvents := imported
 	noEvents.Events = nil
