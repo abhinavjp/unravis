@@ -7,8 +7,9 @@
     value,
     onChange,
     help,
+    helpLabel = '',
     zone = ''
-  }: { id: string; label: string; value: string; onChange: (datePart: string, timePart: string) => void; help?: string; zone?: string } = $props();
+  }: { id: string; label: string; value: string; onChange: (datePart: string, timePart: string) => void; help?: string; helpLabel?: string; zone?: string } = $props();
 </script>
 
 <fieldset class="date-time-field">
@@ -17,5 +18,5 @@
     <div class="date-time-control"><label for={`${id}-date`}>Date</label><input id={`${id}-date`} type="date" value={value.slice(0, 10)} onchange={(event) => onChange(event.currentTarget.value, value.slice(11, 23))} /></div>
     <div class="date-time-control"><label for={`${id}-time`}>Time{#if zone} ({zone}){/if}</label><input id={`${id}-time`} type="time" step="0.001" value={value.slice(11, 23)} onchange={(event) => onChange(value.slice(0, 10), event.currentTarget.value)} /></div>
   </div>
-  {#if help}<div class="label-line date-time-help"><FieldHelp id={help} /></div>{/if}
+  {#if help}<div class="label-line date-time-help"><FieldHelp id={help} label={helpLabel} /></div>{/if}
 </fieldset>

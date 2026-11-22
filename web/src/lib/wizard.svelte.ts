@@ -39,9 +39,9 @@ function restoreDraft(): void {
   if (saved.keyOn) wizard.caseKey.on = true;
 }
 
-/** Keeps the name and environments for a reload of this tab. An empty draft clears the stored copy. */
-export function persistDraft(): void {
-  if (!draftIsDirty(wizard)) { clearSavedDraft(); return; }
+/** Keeps the name and environments for a reload of this tab. An empty draft clears the stored copy, and so does a case that is already made (a reload must not offer its name again). */
+export function persistDraft(made = false): void {
+  if (made || !draftIsDirty(wizard)) { clearSavedDraft(); return; }
   saveDraft({ title: wizard.title, envText: wizard.envText, keyOn: wizard.caseKey.on });
 }
 

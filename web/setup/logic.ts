@@ -53,6 +53,11 @@ export interface RailStep { id: string; label: string }
 
 export const CONFIRM_DELETE_WORD = 'DELETE';
 
+/** The "Close Unravis for me" box goes under the "Unravis open" row, and only while Unravis is open (that row is not Ready). */
+export function showsCloseBox(check: Pick<Check, 'id' | 'status'>): boolean {
+  return check.id === 'app-running' && check.status !== 'ready';
+}
+
 /** The folded line over the checks that are ready: "6 more checks are ready", or "All 7 checks are ready" when nothing else needs a look. */
 export function readyLine(count: number, others: boolean): string {
   if (others) return count === 1 ? '1 more check is ready' : count + ' more checks are ready';

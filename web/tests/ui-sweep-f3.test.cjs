@@ -5,7 +5,7 @@ const test = require('node:test');
 const { loadTypeScript } = require('./helpers/loadTs.cjs');
 
 // UI sweep, package F3 (cases, create wizard, keys, erase, update bar, names). Each test is named with the finding it covers.
-// Logic goes through loadTypeScript; layout and focus are covered by tools/e2e/specs/ui-sweep-F3.spec.ts.
+// Logic goes through loadTypeScript; layout and focus are covered by tools/e2e/specs/ui-sweep-f3.spec.ts.
 
 const root = path.resolve(__dirname, '..');
 const read = (r) => fs.readFileSync(path.join(root, r), 'utf8').replace(/\r\n/g, '\n');
@@ -94,7 +94,7 @@ test('SWEEP-F3-08 (CASES-25): the draft keeps only the name, the environments an
   const wizard = read('src/lib/wizard.svelte.ts');
   assert.doesNotMatch(wizard, /sessionStorage|localStorage/, 'the wizard state itself never touches a browser store');
   assert.match(wizard, /persistDraft/);
-  assert.match(read('src/components/CreateWizard.svelte'), /persistDraft\(\)/);
+  assert.match(read('src/components/CreateWizard.svelte'), /persistDraft\(caseMade\(\)\)/);
   assert.doesNotMatch(read('src/lib/wizardDraftStore.ts').replace(/\/\/.*$/gm, ''), /password|passphrase|connection/i, 'the stored shape has no secret field');
 });
 
@@ -105,8 +105,14 @@ test('SWEEP-F3-09 (CASES-03, CASES-04): one name, "Add files" for the action and
   assert.equal(ledger.ledgerCopy.addLabel, 'New theory');
   assert.match(ledger.ledgerCopy.empty, /No theories yet/);
   assert.doesNotMatch(JSON.stringify(ledger.ledgerCopy), /hypothes/i, 'what the person reads speaks of theories');
-  const hub = read('src/components/sources/SourcesHub.svelte') + read('src/lib/copy/sourcesCopy.ts');
-  assert.match(hub, /Add files/);
+  // The hub tab, its drawer and the guided button keep "Add data": they hold SQL Server, MongoDB, Blackbox, Files and Another day (review B3).
+  assert.equal(sources.HUB_TEXT.add, 'Add data');
+  assert.equal(sources.ADD_TEXT.heading, 'Add data');
+  assert.equal(sources.ADD_TEXT.drawerTitle('k7m2qx4a'), 'Add data, case k7m2qx4a');
+  assert.equal(sources.ADD_TEXT.addFiles, 'Add files', 'the Files card button is the file import');
+  assert.equal(loadTypeScript('src/lib/copy/guidedCopy.ts').GUIDED_TEXT.addData, 'Add data');
+  assert.match(read('src/lib/copy/caseRestoreCopy.ts'), /collection_missing: '[^']*Open Add data, pick the right collection/);
+  assert.doesNotMatch(read('src/lib/copy/wizardCreateCopy.ts'), /Open Add files|from Add files/);
 });
 
 test('SWEEP-F3-10 (CASES-16): the file cards in the wizard have the same height and a select wide enough for its words', () => {

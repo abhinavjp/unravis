@@ -9,7 +9,7 @@
   import {
     approvalReason, blockedLine, blocked, buildRequest, canFinish, checksFailedFirst, CONFIRM_DELETE_WORD, doneHeading, failedHeading, formatBytes, mergeEvents,
     parseAddresses, problemNotice, progressHeading, progressPercent, railPosition, railSteps, retryHelps, screenAfterResult, settleSteps, stepAnnouncement, uninstallReady,
-    uninstallWhy, validateOptions, welcomeHeading, welcomeNutshell,
+    showsCloseBox, uninstallWhy, validateOptions, welcomeHeading, welcomeNutshell,
     type BlackboxOptions, type Check, type Op, type Options, type Problem, type Result, type Scope, type Screen, type StepEvent,
     type UIChanges, type UIState, type UninstallOptions
   } from './logic.ts';
@@ -321,8 +321,12 @@
   {/if}
 {/snippet}
 
+{#snippet noticeLine()}
+  {#if notice}<p class="notice" role="alert">{notice}</p>{/if}
+{/snippet}
+
 {#snippet closeNote(check: Check)}
-  {#if check.id === 'app-running'}
+  {#if showsCloseBox(check)}
     <label class="tick under-row"><input type="checkbox" bind:checked={options.closeRunningApp} /> Close Unravis for me</label>
   {/if}
 {/snippet}
@@ -354,10 +358,10 @@
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="content" onkeydown={enterInField}>
             <p class="stepline" aria-hidden="true">Step {stepNumber} of {rail.length}: {stepLabel}</p>
-            {#if notice}<p class="notice" role="alert">{notice}</p>{/if}
 
             {#if screen === 'welcome'}
               <h1>{welcomeHeading(ui)}</h1>
+              {@render noticeLine()}
               <div class="nutshell"><b>In a nutshell</b>
                 {welcomeNutshell(op)}
               </div>
@@ -366,6 +370,7 @@
 
             {:else if screen === 'options'}
               <h1>Where and how</h1>
+              {@render noticeLine()}
               <fieldset class="scope">
                 <legend class="sr">Who it is for</legend>
                 <label class="tick"><input type="radio" name="scope" checked={options.scope === 'user'} onchange={() => setScope('user')} /> Just for me <span class="quiet">(no admin needed)</span></label>
@@ -400,6 +405,7 @@
 
             {:else if screen === 'approval'}
               <h1>Windows will ask for admin approval</h1>
+              {@render noticeLine()}
               <div class="nutshell"><b>In a nutshell</b>
                 {approvalReason(op, wanted(), ui.installed?.scope)} needs administrator rights. Windows shows its own prompt next; choose Yes to go on. Here is exactly what changes.
               </div>
@@ -411,6 +417,7 @@
 
             {:else if screen === 'progress'}
               <h1>{progressHeading(op)}</h1>
+              {@render noticeLine()}
               <div class="bar" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent(rows)} aria-valuetext={progressPercent(rows) + ' percent'}>
                 <span style:width={progressPercent(rows) + '%'}></span>
               </div>
@@ -418,6 +425,7 @@
 
             {:else if screen === 'done' && result}
               <h1>{doneHeading(op)}</h1>
+              {@render noticeLine()}
               {#if op === 'uninstall'}
                 {#if result.message && result.message.replace(/\.$/, '') !== doneHeading(op)}<p>{result.message}</p>{/if}
                 {#if result.kept?.length}
@@ -444,6 +452,7 @@
 
             {:else if screen === 'failed' && result}
               <h1>{failedHeading(result)}</h1>
+              {@render noticeLine()}
               <p>{result.message}</p>
               <StepList rows={rows} fix={result.fix ?? ''} onretry={op === 'install' && retryHelps(result) ? run : undefined} />
               {#if result.left?.length}
@@ -453,6 +462,7 @@
 
             {:else if screen === 'uninstall'}
               <h1>Remove Unravis</h1>
+              {@render noticeLine()}
               <div class="nutshell"><b>In a nutshell</b>
                 Always removed: the program, its shortcuts and the Installed apps entry{everyone ? ', the key keeper service' : ''}{blackboxName ? ', the Blackbox service and its firewall rule' : ''}. Your data stays unless you tick it below.
               </div>
@@ -543,9 +553,6 @@
   .quiet { color: var(--text-2); }
   .nutshell { padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius-sm); font-size: 13px; line-height: 1.5; }
   .nutshell b { display: block; margin-bottom: 2px; font-size: 12px; color: var(--text-2); }
-  /* The notice sits under the heading, not above it, so a failed Next does not push the heading down (the heading is drawn first, the step line before it). */
-  h1 { order: -1; }
-  .stepline { order: -2; }
   .why { min-width: 0; font-size: 12px; color: var(--text-2); }
   .under-row { margin-top: 6px; }
   .notice { padding: 8px 12px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 14%, var(--surface)); font-size: 13px; }

@@ -33,7 +33,7 @@
     }
     try {
       const previous = query.bucketSeconds, typed = isManualBucket(query);
-      query[field] = fromZonedParts(datePart, timePart, zone);
+      query[field] = fromZonedParts(datePart, timePart, zone, query[field]);
       query.bucketSeconds = bucketForWindows(query.start, query.end, query.baselineStart, query.baselineEnd);
       intervalNote.set(typed ? intervalReplacedNote(previous, query) : '');
       invalidWindows = invalidWindows.filter(item => item !== field);
@@ -53,8 +53,8 @@
       <div class="label-line"><h3 id="current-range-label">Investigate</h3><FieldHelp id="current-range" /></div>
       <p class="when-sub">Requests in the period you want to inspect.</p>
       <div class="window-bounds">
-        <DateTimeField id="current-start" label="From" help="current-start" zone={zoneAt(query.start)} value={localValue(query.start)} onChange={(date, time) => setWindow('start', date, time)} />
-        <DateTimeField id="current-end" label="To" help="current-end" zone={zoneAt(query.end)} value={localValue(query.end)} onChange={(date, time) => setWindow('end', date, time)} />
+        <DateTimeField id="current-start" label="From" help="current-start" helpLabel="Investigate from" zone={zoneAt(query.start)} value={localValue(query.start)} onChange={(date, time) => setWindow('start', date, time)} />
+        <DateTimeField id="current-end" label="To" help="current-end" helpLabel="Investigate to" zone={zoneAt(query.end)} value={localValue(query.end)} onChange={(date, time) => setWindow('end', date, time)} />
       </div>
       {#if !invalidWindows.some(field => field === 'start' || field === 'end')}<p class="utc-echo">UTC <time datetime={query.start}>{query.start}</time> – <time datetime={query.end}>{query.end}</time></p>{/if}
     </section>
@@ -62,8 +62,8 @@
       <div class="label-line"><h3 id="reference-range-label">Reference<Hint termId="reference-period" /></h3><FieldHelp id="reference-range" /></div>
       <p class="when-sub">An earlier period to compare with.</p>
       <div class="window-bounds">
-        <DateTimeField id="reference-start" label="From" help="reference-start" zone={zoneAt(query.baselineStart)} value={localValue(query.baselineStart)} onChange={(date, time) => setWindow('baselineStart', date, time)} />
-        <DateTimeField id="reference-end" label="To" help="reference-end" zone={zoneAt(query.baselineEnd)} value={localValue(query.baselineEnd)} onChange={(date, time) => setWindow('baselineEnd', date, time)} />
+        <DateTimeField id="reference-start" label="From" help="reference-start" helpLabel="Reference from" zone={zoneAt(query.baselineStart)} value={localValue(query.baselineStart)} onChange={(date, time) => setWindow('baselineStart', date, time)} />
+        <DateTimeField id="reference-end" label="To" help="reference-end" helpLabel="Reference to" zone={zoneAt(query.baselineEnd)} value={localValue(query.baselineEnd)} onChange={(date, time) => setWindow('baselineEnd', date, time)} />
       </div>
       {#if !invalidWindows.some(field => field === 'baselineStart' || field === 'baselineEnd')}<p class="utc-echo">UTC <time datetime={query.baselineStart}>{query.baselineStart}</time> – <time datetime={query.baselineEnd}>{query.baselineEnd}</time></p>{/if}
     </section>

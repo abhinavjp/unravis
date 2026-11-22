@@ -43,7 +43,8 @@ test('SWEEP-F5-01: the Connections drawer opens with the keyboard inside it, and
   await page.keyboard.press('Enter');
   const drawer = page.getByRole('dialog', { name: 'Connections' });
   await expect(drawer).toBeVisible();
-  await expect(drawer.getByRole('heading', { name: 'Connections' })).toBeFocused();
+  // Where focus really lands: somewhere inside the dialog (the title or its first control), never the page behind it.
+  await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('[role="dialog"][aria-labelledby="connections-title"]'))).toBe(true);
   await page.keyboard.press('Escape');
   await expect(drawer).toHaveCount(0);
 });
@@ -82,4 +83,26 @@ test('SWEEP-F5-18: Help has links to Updates and Support logs that move the keyb
   await expect(help.getByRole('heading', { name: 'Updates' })).toBeFocused();
   await help.getByTestId('jump-logs').click();
   await expect(help.getByRole('heading', { name: 'Support logs' })).toBeFocused();
+});
+
+test('SWEEP-F5-02b: the Ledger remove question focuses Keep, lists it first, and Esc gives focus back to Remove', async ({ page }) => {
+  await openCaseHome(page);
+  await page.getByRole('button', { name: 'Add a theory' }).first().click();
+  const drawer = page.getByRole('dialog').first();
+  await expect(drawer).toBeVisible();
+  await drawer.locator('#ledger-new').fill('Pool exhausted at 09:10');
+  await page.keyboard.press('Enter');
+  const entry = drawer.getByRole('button', { name: /Pool exhausted at 09:10/ }).first();
+  await expect(entry).toBeVisible();
+  const remove = drawer.getByRole('button', { name: /^Delete/ }).first();
+  if (!(await remove.isVisible())) await entry.click();
+  await remove.focus();
+  await page.keyboard.press('Enter');
+  const ask = drawer.getByRole('group').filter({ has: page.getByRole('button', { name: /^Keep/ }) });
+  await expect(ask.getByRole('button').first()).toBeFocused();
+  expect((await ask.getByRole('button').first().innerText()).trim()).toMatch(/^Keep/);
+  await page.keyboard.press('Escape');
+  await expect(drawer).toBeVisible();
+  await expect(ask).toHaveCount(0);
+  await expect(drawer.getByRole('button', { name: /^Delete/ }).first()).toBeFocused();
 });

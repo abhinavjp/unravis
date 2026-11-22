@@ -63,7 +63,7 @@ Always removed: the program files, the shortcuts and the Installed apps entry. T
 
 Your data stays unless you tick it:
 
-- **Also delete my cases and saved connections** (just for me), or **Also delete the cases and saved connections of everyone on this PC** (for everyone). Ticking it asks you to type `DELETE` to confirm. **Remove** stays off until you do. The screen shows the folder and its size.
+- **Also delete my cases and saved connections** (just for me), or **Also delete the cases and saved connections of everyone on this PC** (for everyone). Ticking it asks you to type `DELETE` to confirm. **Remove and delete data** stays off until you do (the button is red and has that name while a box is ticked; with nothing ticked it says **Remove**). The screen shows the folder and its size.
 - **Also delete the Blackbox recordings.** Ticking it asks you to type the Blackbox's name exactly.
 
 The approval screen repeats what you ticked before Windows asks. Deleted data is deleted for good, not moved to the Recycle Bin. This cannot be undone. Copy anything you want to keep first.

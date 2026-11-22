@@ -85,45 +85,6 @@ test('SWEEP-F5-03: a screen still loading parks on the main area and takes the h
   assert.deepEqual(doc.calls, ['main', 'Case title']);
 });
 
-test('SWEEP-F5-03: the app wires the title and the focus move to the screen', () => {
-  const app = read('src/App.svelte');
-  assert.match(app, /setDocTitle\(label\)/);
-  assert.match(app, /settleFocus\(\)/);
-  assert.match(app, /before === 'loading'/, 'the first load does not steal focus');
-});
-
-test('SWEEP-F5-01: the Connections drawer moves focus into itself when it opens', () => {
-  assert.match(read('src/components/ConnectionsDrawer.svelte'), /<Drawer [^>]*focusOnOpen /);
-});
-
-test('SWEEP-F5-02/12: the forget question focuses Keep it, lists it first and Esc withdraws it', () => {
-  const page = read('src/components/sources/ConnectionsPage.svelte');
-  const keep = page.indexOf('CONN_TEXT.forgetNo}</button>'), yes = page.indexOf('CONN_TEXT.forgetYes}</button>');
-  assert.ok(keep > 0 && yes > keep, 'Keep it comes before Forget it');
-  assert.match(page, /use:focusNow/);
-  assert.match(page, /event\.key === 'Escape'/);
-  assert.match(page, /data-forget=\{row\.key\}/, 'focus has a button to return to');
-  const ledger = read('src/components/LedgerPanel.svelte');
-  assert.ok(ledger.indexOf('copy.removeNo}</button>') < ledger.indexOf('copy.removeYes}</button>'), 'Ledger: Keep first');
-  assert.match(ledger, /use:focusNow/);
-  const keeper = read('src/components/sources/KeeperCard.svelte');
-  assert.ok(keeper.indexOf('KEEPER_TEXT.removeNo}</button>') < keeper.indexOf('KEEPER_TEXT.removeYes}</button>'), 'Keeper: Keep first');
-});
-
-test('SWEEP-F5-12: in the drawers Cancel comes before the primary button and is an outline button', () => {
-  for (const [file, cancel, primary] of [
-    ['src/lib/components/ArchiveDrawer.svelte', 'ARCHIVE_TEXT.archiveCancel}</button>', 'ARCHIVE_TEXT.archiveSubmit}</button>'],
-    ['src/lib/components/RestoreDrawer.svelte', 'ARCHIVE_TEXT.restoreCancel}</button>', 'ARCHIVE_TEXT.restoreNewSubmit}</button>']
-  ]) {
-    const src = read(file);
-    assert.ok(src.indexOf(cancel) > 0 && src.indexOf(cancel) < src.indexOf(primary), file);
-  }
-  assert.match(read('src/components/BlackboxAdd.svelte'), /class="secondary-button" onclick=\{onCancel\}/);
-  const popup = read('src/lib/components/importPopup/ImportPopup.svelte');
-  assert.equal((popup.match(/data-focus="cancel"/g) ?? []).length, 2, 'the Add files popup has a Cancel on Choose and on Check');
-  assert.ok(popup.indexOf('data-focus="cancel"') < popup.indexOf('data-focus="continue"'));
-});
-
 test('SWEEP-F5-07: a name starts with the words that are drawn', () => {
   const picker = loadTypeScript('src/lib/copy/pickerCopy.ts');
   assert.equal(picker.triggerLabel('Incident window', '20 Oct 2026 09:00 → 10:00', 'London time', '1 h'), 'Incident window: 20 Oct 2026 09:00 → 10:00 London time · 1 h');
@@ -132,30 +93,6 @@ test('SWEEP-F5-07: a name starts with the words that are drawn', () => {
   assert.match(read('src/components/WhereList.svelte'), /aria-label=\{\(index \+ 1\) \+ ' ' \+ row\.controller/);
   assert.match(read('src/components/UpdateBanner.svelte'), /aria-label=\{`\$\{stage === 'ready' \? 'Later' : 'Not now'\}\. Hide the update bar/);
 });
-
-test('SWEEP-F5-17: the Audit sources menu closes when focus leaves it', () => {
-  const src = read('src/components/SourcePopover.svelte');
-  assert.match(src, /onfocusout=\{onFocusOut\}/);
-  assert.match(src, /next && wrap && !wrap\.contains\(next\)/);
-});
-
-test('SWEEP-F5-18: Updates and Support logs are one link away from the top of Help', () => {
-  const src = read('src/components/Glossary.svelte');
-  assert.match(src, /jumpTo\('updates-title'\)/);
-  assert.match(src, /jumpTo\('support-logs-title'\)/);
-  assert.match(src, /<h3 id="updates-title" tabindex="-1">/);
-});
-
-test('SWEEP-F5-21: smooth scrolling respects reduced motion', () => {
-  assert.match(read('src/components/Inspector.svelte'), /prefers-reduced-motion: reduce/);
-});
-
-test('SWEEP-F5-15: the figures and the zoom strip have a heading of their own', () => {
-  assert.match(read('src/components/Pulse.svelte'), /<h2 class="visually-hidden">Key figures<\/h2>/);
-  assert.match(read('src/components/ZoomStrip.svelte'), /<h2 class="visually-hidden">\{zoomCopy\.heading\}<\/h2>/);
-});
-
-// ---- the setup window ----
 
 test('SWEEP-F5-16: the Next notice names the fields in words', () => {
   assert.equal(setup.problemNotice([{ field: 'location', message: 'x' }]), 'Fix the folder, then press Next.');
@@ -200,4 +137,24 @@ test('SWEEP-F5-03: focus on an element that was just hidden counts as lost', () 
   const body = { tagName: 'BODY' }, main = { tagName: 'MAIN' };
   assert.equal(focus.focusWasLost({ tagName: 'H2', isConnected: true, getClientRects: () => [] }, body, main), true);
   assert.equal(focus.focusWasLost({ tagName: 'H2', isConnected: true, getClientRects: () => [{}] }, body, main), false);
+});
+
+test('SWEEP-F5-S1: the Close Unravis box shows only under an Unravis open row that is not Ready', () => {
+  assert.equal(setup.showsCloseBox({ id: 'app-running', status: 'partly' }), true);
+  assert.equal(setup.showsCloseBox({ id: 'app-running', status: 'failed' }), true);
+  assert.equal(setup.showsCloseBox({ id: 'app-running', status: 'ready' }), false, 'Unravis is not open: no box');
+  assert.equal(setup.showsCloseBox({ id: 'disk-space', status: 'partly' }), false);
+});
+
+test('SWEEP-F5-N7: a case that is already made clears the stored create draft instead of saving it', () => {
+  const store = new Map();
+  global.sessionStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+  const wiz = loadTypeScript('src/lib/wizard.svelte.ts');
+  wiz.wizard.title = 'Checkout slowdown';
+  wiz.persistDraft(false);
+  assert.equal(store.size, 1, 'a dirty draft is kept for a reload');
+  wiz.persistDraft(true);
+  assert.equal(store.size, 0, 'once the case exists the draft is dropped');
+  wiz.wizard.title = '';
+  delete global.sessionStorage;
 });

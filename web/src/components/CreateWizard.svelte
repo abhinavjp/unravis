@@ -72,7 +72,7 @@
   });
 
   // The name and environments are kept for a reload of this tab (never a key, password or source).
-  $effect(() => { void wizard.title; void wizard.envText; void wizard.caseKey.on; persistDraft(); });
+  $effect(() => { void wizard.title; void wizard.envText; void wizard.caseKey.on; persistDraft(caseMade()); });
 
   // A page reload or a closed tab would lose the draft, so the browser asks first while there is something to lose.
   $effect(() => {
