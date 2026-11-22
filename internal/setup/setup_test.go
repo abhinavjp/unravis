@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/datadir"
 	"api-audit-explorer/internal/keeper"
+	"api-audit-explorer/internal/racedetect"
 )
 
 func t0ctx() context.Context { return context.Background() }
@@ -1308,5 +1310,78 @@ func TestFileLogHidesAPasswordAfterALoneCR(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Clean(p))
 	if s := string(data); strings.Contains(s, "hunter") || !strings.Contains(s, "[hidden]") {
 		t.Fatalf("log %q", s)
+	}
+}
+
+// A backslash escapes a quote (JSON, Python repr), a key may carry a prefix or be
+// quoted, and XML or web.config hold the password as text or an attribute.
+func TestRedactEscapesJSONPrefixesAndXML(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"JSON value with an escaped quote", `{"password":"ab\"cd ef","user":"bob"}`, `{"password":[hidden],"user":"bob"}`},
+		{"Python repr value with an escaped quote", `{'password': 'it\'s secret two'}`, `{'password': [hidden]}`},
+		{"JSON prefixed key", `{"DB_PWD": "a b"}`, `{"DB_PWD": [hidden]}`},
+		{"colon form, no space", "passwd:hunter two", "passwd:[hidden]"},
+		{"colon form, indented and quoted", `  password: "x y"`, "  password: [hidden]"},
+		{"prefixed key, equals", "DB_PASSWORD=hunter two", "DB_PASSWORD=[hidden]"},
+		{"prefixed key, quoted value", `export MYSQL_PWD="a b"`, "export MYSQL_PWD=[hidden]"},
+		{"dotted key", "spring.datasource.password=a b;x=1", "spring.datasource.password=[hidden];x=1"},
+		{"pass after a separator", "db_pass=hunter two", "db_pass=[hidden]"},
+		{"prefixed key in a URL query stops at &", "http://h/x?db_password=a&y=1", "http://h/x?db_password=[hidden]&y=1"},
+		{"XML element", "<password>hunter two</password>", "<password>[hidden]</password>"},
+		{"XML element with an attribute", `<Password attr="x">hunter two</Password>`, `<Password attr="x">[hidden]</Password>`},
+		{"XML element with CDATA", "<password><![CDATA[a b]]></password>", "<password>[hidden]</password>"},
+		{"web.config key first", `<add key="Password" value="hunter two"/>`, `<add key="Password" value="[hidden]"/>`},
+		{"web.config single quotes", `<add key='pwd' value='hunter two'/>`, `<add key='pwd' value="[hidden]"/>`},
+		{"web.config value first", `<add value="hunter two" key="Password"/>`, `<add value="[hidden]" key="Password"/>`},
+		{"web.config name attribute", `<add name="DB_PASSWORD" value="hunter two" />`, `<add name="DB_PASSWORD" value="[hidden]" />`},
+		{"web.config other key stays", `<add key="PasswordPolicy" value="8 chars"/>`, `<add key="PasswordPolicy" value="8 chars"/>`},
+		{"colon form after a semicolon", "user=sa;Password: Secr3t Two", "user=sa;Password: [hidden]"},
+		{"colon form after an equals sign", "err=password: x", "err=password: [hidden]"},
+		{"colon form after a pipe", "user|password: x", "user|password: [hidden]"},
+		{"colon form after an angle bracket", "<password: x", "<password: [hidden]"},
+		{"JSON number password", `{"password": 12345678, "user":"bob"}`, `{"password": [hidden]`},
+		{"JSON db_pass", `{"db_pass":"Secr3t Two"}`, `{"db_pass":[hidden]}`},
+		{"repr pass", `{'pass': 'x'}`, `{'pass': [hidden]}`},
+		{"JSON short client_secret, access_token, refresh_token", `{"client_secret":"x","access_token":"y","refresh_token":"z"}`, `{"client_secret":[hidden],"access_token":[hidden],"refresh_token":[hidden]}`},
+		{"JSON number token", `{"refresh_token": 12345}`, `{"refresh_token": [hidden]}`},
+		{"spaced value after a prefixed key in a query", "a?b.password=Secr3t Two", "a?b.password=[hidden]"},
+		{"prefixed key in a query stops at &, even with a space", "GET /x?db_password=a b&y=1", "GET /x?db_password=[hidden]&y=1"},
+		{"CDATA on its own line", "<password>\n  <![CDATA[Secr3tCD]]>\n</password>", "<password>[hidden]</password>"},
+		{"CDATA with spaces around it", "<Password> <![CDATA[Secr3tSp]]> </Password>", "<Password>[hidden]</Password>"},
+		{"Hibernate property", `<property name="hibernate.connection.password">Secr3tHib</property>`, `<property name="hibernate.connection.password">[hidden]</property>`},
+		{"Java properties entry", `<entry key="password">Secr3tEntry</entry>`, `<entry key="password">[hidden]</entry>`},
+		{"app.config setting with a value child", `<setting name="Password" serializeAs="String"><value>Secr3tSet</value></setting>`, `<setting name="Password" serializeAs="String"><value>[hidden]</value></setting>`},
+		{"self-closing entry does not eat the text after it", "<add key=\"Password\" value=\"x\"/>\n<add key=\"Other\" value=\"y\"/>", "<add key=\"Password\" value=\"[hidden]\"/>\n<add key=\"Other\" value=\"y\"/>"},
+		{"pass words stay", "passes=3 compass: north passwordless=true tokens=5 PasswordExpiry: 90 days", "passes=3 compass: north passwordless=true tokens=5 PasswordExpiry: 90 days"},
+		{"policy element and paths stay", `<PasswordPolicy>8</PasswordPolicy> /usr/lib/password-store/foo.go {"pass_count": 3}`, `<PasswordPolicy>8</PasswordPolicy> /usr/lib/password-store/foo.go {"pass_count": 3}`},
+		// Lines that must stay as they are.
+		{"prose with the word", "the password was wrong", "the password was wrong"},
+		{"policy text", "password policy: 8 chars min", "password policy: 8 chars min"},
+		{"plural", "passwords: none", "passwords: none"},
+		{"bypass is not pass", "bypass=1 and boarding-pass: gate 4", "bypass=1 and boarding-pass: gate 4"},
+		{"plain XML", "<user>bob</user><note>a b</note>", "<user>bob</user><note>a b</note>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Redact(tc.in); got != tc.want {
+				t.Errorf("Redact(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// Every new pattern stays linear on 256 KB of hostile text (RE2 only).
+func TestRedactStaysLinear(t *testing.T) {
+	if testing.Short() || racedetect.Enabled {
+		t.Skip("timing test; the race detector slows it 5 to 20 times (see internal/racedetect)")
+	}
+	for _, unit := range []string{
+		`<password a="x">`, `<add key="Password" `, `<add value="a" `, `"password":"\\\"`, "DB_PASSWORD:\n ",
+	} {
+		in := strings.Repeat(unit, (256<<10)/len(unit))
+		start := time.Now()
+		_ = Redact(in)
+		if d := time.Since(start); d > 10*time.Second {
+			t.Errorf("Redact on 256 KB of %q took %v", unit, d)
+		}
 	}
 }
