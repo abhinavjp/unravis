@@ -333,6 +333,66 @@ try {
     G merge -q --no-ff --no-edit promote3
     $side3 = Get-PromotionSideCommits $g (G rev-parse HEAD).Trim()
     Assert-That 'train: a merge of a branch that is not master is refused' (@($side3 | Where-Object { $_.Sha -eq $bad3 -and -not $_.Ok }).Count -eq 1)
+    # The generated web files commit of a promotion (docs/pipeline/dist-on-promotion.md): accepted only with its subject, only the three
+    # generated folders (case sensitive), and only above every develop pull request commit.
+    function Get-Side([string]$Branch, [scriptblock]$Make) {
+        G checkout -q -b $Branch $d2
+        & $Make
+        G checkout -q -b "m-$Branch" $h
+        G merge -q --no-ff --no-edit $Branch
+        return Get-PromotionSideCommits $g (G rev-parse HEAD).Trim()
+    }
+    function Set-DistFile([string]$Rel, [string]$Text) { $f = Join-Path $g $Rel; New-Item -ItemType Directory -Path (Split-Path $f) -Force | Out-Null; Set-Content -LiteralPath $f $Text }
+    $script:dd = @{}
+    $sideA = Get-Side 'promote4' {
+        Set-DistFile 'web/dist/index.html' 'built'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'; $script:dd.ok = (G rev-parse HEAD).Trim()
+        Set-DistFile 'web/dist/assets/old.js' 'x'; G add -A; G commit -q -m 'Update the web files'; $script:dd.subject = (G rev-parse HEAD).Trim()   # generated paths, another subject
+    }
+    Assert-That 'train: generated files under another subject are treated as a pull request commit' (@($sideA | Where-Object { $_.Sha -eq $script:dd.subject -and $_.Kind -eq 'pr' -and -not $_.Ok }).Count -eq 1)
+    Assert-That 'train: a generated commit buried below another commit is refused' (@($sideA | Where-Object { $_.Sha -eq $script:dd.ok -and $_.Kind -eq 'pr' -and -not $_.Ok }).Count -eq 1)
+    # A direct-push generated commit with a develop pull request MERGE commit (two parents) on top of it: the position rule must see through
+    # the merge commit, as develop's own history is made of them.
+    $sideBuried = Get-Side 'promote11' {
+        Set-DistFile 'web/dist/evil.js' 'e'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'; $script:dd.buried = (G rev-parse HEAD).Trim()
+        G checkout -q -b feat11 $d2
+        Set-Content -LiteralPath (Join-Path $g 'feat11.txt') 'f'; G add -A; G commit -q -m 'F11'
+        G checkout -q promote11
+        G merge -q --no-ff -m 'Merge pull request #11 from x/feat11' feat11; $script:dd.prmerge = (G rev-parse HEAD).Trim()
+    }
+    Assert-That 'train: a generated commit buried below a pull request merge commit is refused' (@($sideBuried | Where-Object { $_.Sha -eq $script:dd.buried -and $_.Kind -eq 'pr' -and -not $_.Ok }).Count -eq 1) (($sideBuried | ForEach-Object { "$($_.Sha.Substring(0,7)) $($_.Kind) $($_.Ok)" }) -join '; ')
+    Assert-That 'train: the pull request merge commit itself is not taken for a merge of master' (@($sideBuried | Where-Object { $_.Sha -eq $script:dd.prmerge -and $_.Kind -eq 'mergein' -and -not $_.Ok }).Count -eq 1)
+    $sideB = Get-Side 'promote5' {
+        Set-DistFile 'web/dist/index.html' 'built'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'; $script:dd.first = (G rev-parse HEAD).Trim()
+        G merge -q --no-edit $h   # a re-run after master moved: the merge of master comes after the generated commit
+        $script:dd.mi = (G rev-parse HEAD).Trim()
+        Set-DistFile 'web/dist/index.html' 'built again'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'; $script:dd.second = (G rev-parse HEAD).Trim()
+    }
+    Assert-That 'train: a generated commit at the tip end is accepted' (@($sideB | Where-Object { $_.Sha -eq $script:dd.second -and $_.Kind -eq 'dist' -and $_.Ok }).Count -eq 1) (($sideB | ForEach-Object { "$($_.Sha.Substring(0,7)) $($_.Kind) $($_.Ok)" }) -join '; ')
+    Assert-That 'train: a re-run (generated, merge of master, generated) is accepted' (@($sideB | Where-Object { $_.Sha -eq $script:dd.first -and $_.Kind -eq 'dist' -and $_.Ok }).Count -eq 1 -and @($sideB | Where-Object { $_.Sha -eq $script:dd.mi -and $_.Kind -eq 'mergein' -and $_.Ok }).Count -eq 1)
+    $sideC = Get-Side 'promote6' {
+        Set-DistFile 'web/dist/index.html' 'built'; Set-DistFile 'sneaky.txt' 's'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'; $script:dd.sneaky = (G rev-parse HEAD).Trim()
+    }
+    Assert-That 'train: that subject with another file in the commit is treated as a pull request commit' (@($sideC | Where-Object { $_.Sha -eq $script:dd.sneaky -and $_.Kind -eq 'pr' -and -not $_.Ok }).Count -eq 1)
+    $sideD = Get-Side 'promote7' {
+        Set-DistFile 'cmd/unravis-setup/UI/x.js' 'x'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'; $script:dd.upper = (G rev-parse HEAD).Trim()
+    }
+    Assert-That 'train: a path with another letter case (UI, not ui) is refused' (@($sideD | Where-Object { $_.Sha -eq $script:dd.upper -and $_.Kind -eq 'pr' -and -not $_.Ok }).Count -eq 1)
+    $sideE = Get-Side 'promote8' {
+        Set-DistFile 'web/dist/index.html' 'built'; Set-DistFile 'web/dist/assets/gone.js' 'x'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'
+        G rm -q web/dist/assets/gone.js; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'; $script:dd.del = (G rev-parse HEAD).Trim()
+    }
+    Assert-That 'train: a generated commit that only deletes generated files is accepted' (@($sideE | Where-Object { $_.Sha -eq $script:dd.del -and $_.Kind -eq 'dist' -and $_.Ok }).Count -eq 1)
+    $sideF = Get-Side 'promote9' {
+        Set-DistFile "web/dist/$([char]0xE9).js" 'x'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'; $script:dd.accent = (G rev-parse HEAD).Trim()
+    }
+    Assert-That 'train: a non-ASCII generated file name is not misread (quotepath)' (@($sideF | Where-Object { $_.Sha -eq $script:dd.accent -and $_.Kind -eq 'dist' -and $_.Ok }).Count -eq 1)
+    # A merge commit with that subject (two parents) is never the generated commit.
+    G checkout -q -b side2 $d1
+    Set-DistFile 'web/dist/s.js' 's'; G add -A; G commit -q -m S2
+    $sideG = Get-Side 'promote10' {
+        G merge -q --no-edit --no-ff -m 'Rebuild web files for promotion 1a2b3c4' side2; $script:dd.mergey = (G rev-parse HEAD).Trim()
+    }
+    Assert-That 'train: a merge commit with the generated subject is not the generated commit' (@($sideG | Where-Object { $_.Sha -eq $script:dd.mergey -and $_.Kind -ne 'dist' }).Count -eq 1)
 
     # ---- passphrase: never a prompt under -Yes; the pipe reaches the program ----------------------------------------------------
     $m = Get-ThrownMessage { Get-SigningPassphrase -ProtonPassRef '' -KeyFile 'k' -Yes }

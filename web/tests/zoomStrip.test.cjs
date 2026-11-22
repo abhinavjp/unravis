@@ -284,13 +284,23 @@ test('keys on a handle go through brushKey with a 300 ms debounce and leave othe
   assert.equal(brushLib.brushKey('end', 'Tab', rootWindow, view, dayModel.brush.stepMs), null);
 });
 
-test('coarse pointers get wider handles and the page can still scroll up and down over the strip', () => {
+test('the handles are 24px wide for every pointer and the page can still scroll up and down over the strip', () => {
   const style = styleOf();
-  const coarse = style.match(/@media \(pointer: coarse\) \{([\s\S]*?)\n  \}/);
-  assert.ok(coarse, 'a coarse-pointer block');
-  const width = coarse[1].match(/\.nav-handle \{ width: (\d+)px/);
-  assert.ok(width && Number(width[1]) >= 24, 'a 24px hit area');
+  // BL-475: the handle itself is the 24px hit area, a mouse included; the grip (::before) stays 4px wide
+  const width = style.match(/\n  \.nav-handle \{[^}]*?width: (\d+)px; margin-left: -(\d+)px/);
+  assert.ok(width && Number(width[1]) >= 24 && Number(width[2]) * 2 === Number(width[1]), 'a 24px hit area centred on the edge');
+  assert.match(style, /\.nav-handle::before \{[^}]*width: 4px/);
   assert.match(style, /touch-action: pan-y/);
+  // a press anywhere on the handle grabs it, so the grab zone is as wide as the handle
+  const half = Number(/const halfHit = \(\) => (\d+);/.exec(source)?.[1]);
+  assert.equal(half, 12);
+  // behaviour: on a 1000px track, a press 9px inside the start edge of the whole period grabs that edge (it was a "move" at the old 6px)
+  const whole = { left: 0, right: 1 };
+  assert.equal(brushLib.brushHit(9 / 1000, whole, half / 1000), 'start');
+  assert.equal(brushLib.brushHit(9 / 1000, whole, 6 / 1000), 'move');
+  assert.equal(brushLib.brushHit(1 - 9 / 1000, whole, half / 1000), 'end');
+  // and 13px in is still the body
+  assert.equal(brushLib.brushHit(13 / 1000, whole, half / 1000), 'move');
 });
 
 test('no transition or animation, no colour literal, radius and accent only from tokens', () => {

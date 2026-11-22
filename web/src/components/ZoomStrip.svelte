@@ -54,7 +54,8 @@
   $effect(() => () => clearTimeout(timer));
 
   const msAt = (clientX: number, rect: DOMRect) => brush.rootStart + Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1) * rootWidth;
-  const halfHit = () => (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 12 : 6);
+  // Half the handle's 24px width: a press where the pointer shows the resize cursor grabs the edge (it was 6 for a mouse, 12 for touch).
+  const halfHit = () => 12;
 
   /** The one place that reports a window to the page. An unchanged window reports nothing. */
   function emit(win: ZoomWindow) { if (!sameWindow(win, view)) onBrush(win); }
@@ -219,10 +220,13 @@
   .overview .bar { fill: var(--text-2); opacity: .55; }
   .nav-body { position: absolute; top: 0; bottom: 0; min-width: 2px; box-sizing: border-box; background: color-mix(in srgb, var(--accent) 20%, transparent); border: var(--hairline-width) solid var(--accent); cursor: grab; }
   .nav-body:active { cursor: grabbing; }
-  .nav-handle { position: absolute; top: 0; bottom: 0; width: 12px; margin-left: -6px; cursor: ew-resize; touch-action: pan-y; }
+  /* The handle is 24px wide (WCAG 2.2 target size, BL-475) and centred on the edge; the grip and the focus ring keep their old 4px and 12px size. */
+  .nav-handle { position: absolute; top: 0; bottom: 0; width: 24px; margin-left: -12px; cursor: ew-resize; touch-action: pan-y; }
   /* The grip is a small outlined bar on the edge: no solid accent fill outside primary buttons. */
   .nav-handle::before { content: ''; position: absolute; top: 4px; bottom: 4px; left: 50%; width: 4px; margin-left: -2px; box-sizing: border-box; background: var(--surface); border: var(--hairline-width) solid var(--accent); border-radius: var(--radius-sm); }
-  .nav-handle:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+  .nav-handle::after { content: ''; position: absolute; top: 0; bottom: 0; left: 6px; right: 6px; pointer-events: none; }
+  .nav-handle:focus-visible { outline: none; }
+  .nav-handle:focus-visible::after { outline: 2px solid var(--focus); outline-offset: 0; }
   .zoom-note { color: var(--text-2); font-size: var(--fs-2); }
   .hint { color: var(--text-2); }
   .zoom-more { display: grid; gap: var(--space-1); padding: var(--space-2) var(--space-3); background: var(--surface-2); border-inline-start: var(--hairline-width) solid var(--accent); }
@@ -237,10 +241,10 @@
   .zoom-message[data-tone='warn'] { color: var(--text); font-weight: 600; }
   .zoom-message[data-tone='error'] { color: var(--bad); font-weight: 600; }
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-  /* Touch: the handles get a 24px hit area (the grip stays the same size). */
+  /* Touch: a bigger margin for the track, and the focus ring follows the whole 24px handle. */
   @media (pointer: coarse) {
     .nav-track { margin: 0 var(--space-3); }
-    .nav-handle { width: 24px; margin-left: -12px; }
+    .nav-handle::after { left: 0; right: 0; }
     .nav-row .quiet-button { min-height: 32px; }
   }
   @media (max-width: 520px) {

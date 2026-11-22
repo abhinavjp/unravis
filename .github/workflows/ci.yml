@@ -20,10 +20,13 @@ name: CI
 # and saved by pushes to master, once a week, so a pull request starts warm.
 #
 # Committed web build (BL-031): web/dist, cmd/unravis-setup/ui and cmd/unravis-lite/ui are committed and
-# embedded in the exe. A pull request that changes web/src, web/index.html, web/setup, web/lite, docs/user/*.md
-# or web/package-lock.json must commit the rebuilt folders (run `npm run build` in web). The step "Web - built
-# files match what is committed" compares the build output with the commit byte for byte and fails otherwise.
-# The exe is built from those committed files, which that step proves equal to a fresh build.
+# embedded in the exe, but pull requests into develop do NOT rebuild them (docs/pipeline/dist-on-promotion.md): the
+# promotion (tools/release/Promote-Develop.ps1) rebuilds and commits them once. So the step "Web - built files match
+# what is committed" compares the build output with the commit byte for byte on the promotion pull request and on
+# master (the release gate), and is skipped on pushes to develop, where the committed files are the last promoted ones.
+# On master the exe is built from the committed files, which that step proves equal to a fresh build. On develop the
+# exe (and so the screenshots, which only warn until RUNNER-BASELINES.txt exists) is built from the last promoted files:
+# no second web build is run per push (Windows minutes). The `web` job above still builds the current source on every run.
 #
 # The runner is pinned (windows-2022, not windows-latest): it is also the reference
 # renderer for the screenshots, so it must not change without anyone choosing it.
@@ -148,7 +151,10 @@ jobs:
 
       - name: Web - built files match what is committed
         # BL-031. Fails when `npm run build` gives bytes other than the committed web/dist,
-        # cmd/unravis-setup/ui and cmd/unravis-lite/ui. Fix: run `npm run build` in web and commit them.
+        # cmd/unravis-setup/ui and cmd/unravis-lite/ui. Runs on the promotion pull request and on master, not on develop
+        # (develop holds the last promoted files by design). Fix on a promotion: run Promote-Develop.ps1 again (it rebuilds
+        # and commits them); on a hotfix pull request into master: run `npm run build` in web and commit the three folders.
+        if: ${{ github.ref != 'refs/heads/develop' }}
         working-directory: web
         run: |
           node --version
@@ -227,6 +233,15 @@ jobs:
         with:
           # Full history, so the formatting step can find where the pull request branched off.
           fetch-depth: 0
+
+      - name: Screenshot baselines are not regenerated on develop
+        # develop holds the last promoted web files, so a run here would photograph the old UI (docs/pipeline/dist-on-promotion.md).
+        # Run "Regenerate screenshot baselines" on a promote/* branch or on master.
+        if: ${{ inputs.regenerate_baselines == true && github.ref == 'refs/heads/develop' }}
+        shell: bash
+        run: |
+          echo "::error::Do not regenerate the screenshot baselines on develop: its exe embeds the last promoted web files, not the current source. Run it on a promote/* branch or on master."
+          exit 1
 
       - name: Set up Go
         uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
@@ -316,8 +331,9 @@ jobs:
         run: ./tools/release/Test-Release.ps1
 
       - name: Build dist\unravis.exe
-        # The web files are the committed ones (the `web` job proves they equal a fresh build), so the web build is skipped here;
-        # the go-tests jobs already ran go test, so the tests are skipped too.
+        # The web files are the committed ones, so the web build is skipped. On master and on promotion the `web` job proves they
+        # equal a fresh build; on develop they are the last promoted ones (docs/pipeline/dist-on-promotion.md). The go-tests jobs
+        # already ran go test, so the tests are skipped too.
         run: ./build.ps1 -SkipWeb -SkipTests -Version "ci-$($env:GITHUB_SHA.Substring(0, 7))"
 
       - name: No UPX in dist (BL-421 guard and its self-test)

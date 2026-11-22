@@ -3,24 +3,6 @@
   "note": "Problems the audit found that are known and tracked. An entry needs a reason and, where there is one, a backlog item (docs/BACKLOG.md). Entries may use * in screen, size, check and label. Do not add an entry to turn a run green: fix the screen or file the item first.",
   "entries": [
     {
-      "check": "small-target",
-      "label": "*GMT*",
-      "why": "Group 2 (BL-475): the hour cells and the day bars of the Daily view heat map are under 24 x 24 px.",
-      "item": "BL-475"
-    },
-    {
-      "check": "small-target",
-      "label": "*BST*",
-      "why": "Group 2 (BL-475): the hour cells and the day bars of the Daily view heat map are under 24 x 24 px.",
-      "item": "BL-475"
-    },
-    {
-      "check": "small-target",
-      "label": "*of the zoomed window",
-      "why": "Group 3 (BL-475): the two zoom slider thumbs of the chart navigator are 12 x 34 px.",
-      "item": "BL-475"
-    },
-    {
       "screen": "p11-*",
       "check": "small-target",
       "label": "",
@@ -63,6 +45,28 @@
       "label": "Show the programs*",
       "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
       "item": "BL-475"
+    },
+    {
+      "screen": "x-slow-call",
+      "check": "small-target",
+      "label": "Timeline",
+      "why": "The Back to Timeline button of the Slow call screen is 50 x 19 px. Found when the audit reached this screen (BL-483); filed as BL-492, not changed here.",
+      "item": "BL-492"
+    },
+    {
+      "screen": "x-slow-call",
+      "check": "small-target",
+      "label": "Payroll.Run*",
+      "why": "The bars of the lane charts are 8 to 10 px tall (the Slow call lane rule keeps the lanes this height). Found when the audit reached this screen (BL-483); filed as BL-492, not changed here.",
+      "item": "BL-492"
+    },
+    {
+      "screen": "x-slow-call",
+      "size": "phone",
+      "check": "small-target",
+      "label": "The part of the strip the big chart shows*",
+      "why": "The minimap box is 17 x 64 px on a phone. Found when the audit reached this screen (BL-483); filed as BL-492, not changed here.",
+      "item": "BL-492"
     }
   ]
 }
