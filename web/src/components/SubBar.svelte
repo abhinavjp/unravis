@@ -42,3 +42,15 @@
   {#if intervalNote.text}<p class="interval-note" role="status">{intervalNote.text}</p>{/if}
   {#if !moreOpen}<FilterChips chips={scope.filterChipList} onRemove={removeChip} onClear={clearChips} onEmpty={() => summaryEl?.focus()} />{/if}
 </section>
+
+<style>
+  /* The hint under the Run button sits in space the bar always has, so a "Filters changed" line appearing or going never moves the bar or the page below it
+     (ANALYSIS-04). The hint takes no width, so it cannot push the chips onto a second row. On a phone the hint stays in the flow, as before. */
+  @media (min-width: 721px) {
+    .scope-main { align-items: flex-start; }
+    .scope-main .run-actions { position: relative; align-self: flex-start; padding-bottom: 20px; margin-bottom: -14px; }
+    .scope-main .run-hint { position: absolute; right: 0; bottom: 0; margin: 0; max-width: min(520px, 60vw); line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .scope-main .run-hint:empty { margin: 0; }
+    .scope-main .run-hint.stale { padding: 0 0 0 8px; font-size: 12px; background: transparent; }
+  }
+</style>
