@@ -2,6 +2,10 @@ package blackbox
 
 import (
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"strings"
 	"testing"
 )
@@ -149,47 +153,184 @@ func TestSettingsHandleProblemNamesTheCause(t *testing.T) {
 	}
 }
 
-// The by-path fallback is allowed for exactly two words (BL-140 PR 7, temporary until probe P1 passes); every other word, including
-// sharing and any word not in the list, stops the start. The list is the one allWords, so a new word is covered without editing this test.
-func TestFallbackAllowedOnlyForAccessAndUnreadable(t *testing.T) {
+// The by-path fallback is allowed for exactly one case (BL-140 PR 7 and its sweep fix, temporary until probe P1 passes): the OPEN of the file
+// was refused with the word access or unreadable. Every other word at the open stage, every refusal before the open, and every refusal after
+// it (even with the word access or unreadable), a stage that is not in the list and any word not in the list stop the start. The lists are
+// allWords and the stages, so a new word is covered without editing this test.
+func TestFallbackAllowedOnlyForAnOpenStageAccessOrUnreadable(t *testing.T) {
+	for _, stage := range []string{StagePreOpen, StageOpen, StageAfterOpen} {
+		for _, w := range Words() {
+			want := stage == StageOpen && (w == WordAccess || w == WordUnreadable)
+			if FallbackAllowed(stage, w) != want {
+				t.Errorf("FallbackAllowed(%q, %q) = %v, want %v", stage, w, !want, want)
+			}
+			if got := FallbackAllowedFor(NewSettingsRefusalAt(stage, w, errors.New("x"))); got != want {
+				t.Errorf("FallbackAllowedFor(%q, %q) = %v, want %v", stage, w, got, want)
+			}
+		}
+	}
+	// The default constructor is the after-open stage: it never falls back, so a refusal added without a stage stops the start.
 	for _, w := range Words() {
-		want := w == WordAccess || w == WordUnreadable
-		if FallbackAllowed(w) != want {
-			t.Errorf("FallbackAllowed(%q) = %v, want %v", w, !want, want)
+		if FallbackAllowedFor(NewSettingsRefusal(w, errors.New("x"))) || FallbackAllowedFor(refuse(w, errors.New("x"))) {
+			t.Errorf("the default (after-open) refusal %q must not fall back", w)
 		}
-		if got := FallbackAllowedFor(NewSettingsRefusal(w, errors.New("x"))); got != want {
-			t.Errorf("FallbackAllowedFor(%q) = %v, want %v", w, got, want)
-		}
-	}
-	for _, w := range []string{"", "anything else", `C:\secret`} {
-		if FallbackAllowed(w) || FallbackAllowedFor(NewSettingsRefusal(w, errors.New("x"))) {
-			t.Errorf("an unknown word %q must not allow the fallback", w)
+		if RefusalStage(NewSettingsRefusal(w, errors.New("x"))) != StageAfterOpen {
+			t.Errorf("the default stage of %q is not after-open", w)
 		}
 	}
-	if FallbackAllowedFor(nil) || FallbackAllowedFor(errors.New("untagged")) || FallbackAllowedFor(&SettingsRefusal{Word: WordAccess}) {
+	for _, bad := range []string{"", "anything else", `C:\secret`, "OPEN", "open "} {
+		for _, w := range []string{WordAccess, WordUnreadable} {
+			if FallbackAllowed(bad, w) || FallbackAllowedFor(NewSettingsRefusalAt(bad, w, errors.New("x"))) {
+				t.Errorf("an unknown stage %q with word %q must not allow the fallback", bad, w)
+			}
+			if got := RefusalStage(NewSettingsRefusalAt(bad, w, errors.New("x"))); got != StageUnknown {
+				t.Errorf("an unknown stage %q is logged as %q, want %q", bad, got, StageUnknown)
+			}
+		}
+		if FallbackAllowed(StageOpen, bad) || FallbackAllowedFor(NewSettingsRefusalAt(StageOpen, bad, errors.New("x"))) {
+			t.Errorf("an unknown word %q must not allow the fallback", bad)
+		}
+	}
+	if FallbackAllowedFor(nil) || FallbackAllowedFor(errors.New("untagged")) || FallbackAllowedFor(&SettingsRefusal{Word: WordAccess}) ||
+		FallbackAllowedFor(&SettingsRefusal{Word: WordAccess, Stage: StageOpen}) {
 		t.Error("nil, untagged and hand-built refusals must stop the start")
+	}
+	if RefusalStage(nil) != StageUnknown || RefusalStage(errors.New("untagged")) != StageUnknown {
+		t.Error("an error with no stage is logged as unknown")
+	}
+	if RefusalStage(refusePreOpen(WordPath, errors.New("x"))) != StagePreOpen || RefusalStage(refuseOpen(WordAccess, errors.New("x"))) != StageOpen {
+		t.Error("the stage constructors tag the wrong stage")
 	}
 }
 
-// ParseVerifiedSettings keeps the decision taken from the reader's own error: an untagged or unknown error is logged as unreadable but
-// must not fall back, while a real access refusal still can.
+// ParseVerifiedSettings keeps the decision, and the stage, taken from the reader's own error: an untagged or unknown error is logged as
+// unreadable but must not fall back, an after-open access or unreadable must not fall back, while an open-stage access still can.
 func TestParseVerifiedSettingsFallbackDecisionIgnoresTheClampedWord(t *testing.T) {
 	for name, c := range map[string]struct {
-		err  error
-		want bool
+		err   error
+		want  bool
+		stage string
 	}{
-		"access":   {NewSettingsRefusal(WordAccess, errors.New("x")), true},
-		"sharing":  {NewSettingsRefusal(WordSharing, errors.New("x")), false},
-		"untagged": {errors.New("x"), false},
-		"unknown":  {NewSettingsRefusal("new-word", errors.New("x")), false},
+		"open access":          {refuseOpen(WordAccess, errors.New("x")), true, StageOpen},
+		"open unreadable":      {refuseOpen(WordUnreadable, errors.New("x")), true, StageOpen},
+		"open sharing":         {refuseOpen(WordSharing, errors.New("x")), false, StageOpen},
+		"open not-found":       {refuseOpen(WordNotFound, errors.New("x")), false, StageOpen},
+		"after-open access":    {refuse(WordAccess, errors.New("x")), false, StageAfterOpen},
+		"after-open unread":    {refuse(WordUnreadable, errors.New("x")), false, StageAfterOpen},
+		"default stage":        {NewSettingsRefusal(WordAccess, errors.New("x")), false, StageAfterOpen},
+		"pre-open access":      {refusePreOpen(WordAccess, errors.New("x")), false, StagePreOpen},
+		"untagged":             {errors.New("x"), false, StageUnknown},
+		"unknown word":         {refuseOpen("new-word", errors.New("x")), false, StageOpen},
+		"unknown stage":        {NewSettingsRefusalAt("late", WordAccess, errors.New("x")), false, StageUnknown},
+		"hand-built, no stage": {&SettingsRefusal{Word: WordAccess}, false, StageUnknown},
 	} {
 		_, err := ParseVerifiedSettings(func(string) ([]byte, error) { return nil, c.err }, "p", nil)
 		if FallbackAllowedFor(err) != c.want {
 			t.Errorf("%s: FallbackAllowedFor = %v, want %v", name, !c.want, c.want)
 		}
+		if got := RefusalStage(err); got != c.stage {
+			t.Errorf("%s: stage %q, want %q", name, got, c.stage)
+		}
 	}
-	if _, err := ParseVerifiedSettings(nil, "p", nil); FallbackAllowedFor(err) {
-		t.Error("a nil reader must not fall back")
+	_, err := ParseVerifiedSettings(nil, "p", nil)
+	if FallbackAllowedFor(err) || RefusalStage(err) != StagePreOpen {
+		t.Error("a nil reader must not fall back, and is a pre-open refusal")
+	}
+}
+
+// scan records every use of the identifiers refuseOpen and refuseAt under n, and fails on a SettingsRefusal built by hand outside
+// settings_read.go.
+func scan(n ast.Node, file string, uses map[string][]string, t *testing.T) {
+	ast.Inspect(n, func(m ast.Node) bool {
+		switch x := m.(type) {
+		case *ast.Ident:
+			if x.Name == "refuseOpen" || x.Name == "refuseAt" {
+				uses[x.Name] = append(uses[x.Name], file)
+			}
+		case *ast.CompositeLit:
+			if id, ok := x.Type.(*ast.Ident); ok && id.Name == "SettingsRefusal" && file != "settings_read.go" {
+				t.Errorf("%s builds a SettingsRefusal by hand; only settings_read.go may", file)
+			}
+		}
+		return true
+	})
+}
+
+// The Windows reader is not run on Linux, so its stage tagging is pinned by its source: the only open-stage refusal is the one on the
+// CreateFile loop, every refusal before it is pre-open, every refusal after it is the default after-open one, and nothing outside
+// settings_read.go sets a stage by hand. A later edit that tags a post-open failure as an open-stage refusal fails here, also through an
+// alias (var ro = refuseOpen) or from a helper in another file of the package, so every non-test .go file is parsed, whatever its build tag,
+// and the bare identifier is counted, not the text "refuseOpen(". The real-NTFS stage tests run only on Windows, so until probe P1 runs on a
+// PC the "open" stage is held on Linux by this scan alone.
+func TestWindowsReaderTagsOnlyTheOpenAsOpenStage(t *testing.T) {
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uses := map[string][]string{} // identifier -> the file of each use, not counting a function's own declaration name
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0) // no build constraint is applied: every file is read
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			// A function's own declaration name is not a use; everything else in the declaration is.
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok {
+				scan(d, name, uses, t)
+				continue
+			}
+			scan(fd.Type, name, uses, t)
+			if fd.Body != nil {
+				scan(fd.Body, name, uses, t)
+			}
+		}
+	}
+	if got := uses["refuseOpen"]; len(got) != 1 || got[0] != "settings_open_windows.go" {
+		t.Fatalf("refuseOpen is used in %v, want exactly once, in settings_open_windows.go (the CreateFile refusal)", got)
+	}
+	for _, f := range uses["refuseAt"] {
+		if f != "settings_read.go" {
+			t.Errorf("refuseAt is used in %s; only settings_read.go (its own helpers) may set a stage directly", f)
+		}
+	}
+	raw, err := os.ReadFile("settings_open_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	open := strings.Index(src, "refuseOpen(")
+	loop := strings.Index(src, "windows.CreateFile(p,")
+	if loop < 0 || open < loop {
+		t.Fatal("the open-stage refusal must follow the CreateFile call")
+	}
+	// Plain refuse( calls: none before the open (those are refusePreOpen), all after it.
+	for i := 0; i < len(src); {
+		j := strings.Index(src[i:], "refuse(")
+		if j < 0 {
+			break
+		}
+		at := i + j
+		i = at + len("refuse(")
+		if at < open {
+			t.Errorf("an after-open refuse( appears before the open at offset %d", at)
+		}
+	}
+	for i := 0; i < len(src); {
+		j := strings.Index(src[i:], "refusePreOpen(")
+		if j < 0 {
+			break
+		}
+		at := i + j
+		i = at + 1
+		if at > loop {
+			t.Errorf("a pre-open refusal appears after the CreateFile call at offset %d", at)
+		}
 	}
 }
 
