@@ -66,6 +66,14 @@ func mayWriteLink(path, exe string) bool {
 
 // profileLinkData builds a shortcut file as the plan does.
 func profileLinkData(l Layout, quit, startup bool) ([]byte, error) {
+	return profileLinkDataFor(l, quit, startup, false)
+}
+
+// profileLinkDataFor is profileLinkData, or the releases window's link when releases is true.
+func profileLinkDataFor(l Layout, quit, startup, releases bool) ([]byte, error) {
+	if releases {
+		return Shortcut{Target: l.ReleasesExe, WorkDir: l.InstallDir, Icon: l.ReleasesExe, Description: "Unravis Releases: read-only release status"}.Bytes()
+	}
 	s := Shortcut{Target: l.AppExe, WorkDir: l.InstallDir, Icon: l.AppExe, Description: "Unravis"}
 	switch {
 	case quit:
@@ -103,12 +111,12 @@ func (r *Runner) WriteProfileLinks(l Layout, startAtSignIn bool, onLog func(stri
 		}
 	}
 	var first error
-	write := func(link string, quit, startup bool) {
+	write := func(link string, quit, startup bool, releases ...bool) {
 		if err := r.refuseLink(filepath.Dir(link)); err != nil {
 			log("shortcut skipped: " + err.Error())
 			return
 		}
-		data, err := profileLinkData(l, quit, startup)
+		data, err := profileLinkDataFor(l, quit, startup, len(releases) > 0 && releases[0])
 		if err == nil {
 			err = writeLinkFile(link, data)
 		}
@@ -124,6 +132,12 @@ func (r *Runner) WriteProfileLinks(l Layout, startAtSignIn bool, onLog func(stri
 	}
 	if l.QuitLink != "" && r.isProfileLink(l.QuitLink) {
 		write(l.QuitLink, true, false)
+	}
+	// The releases link is written only when the releases window is really there (an older setup program does not carry it).
+	if l.ReleasesLink != "" && r.isProfileLink(l.ReleasesLink) {
+		if fi, err := os.Stat(l.ReleasesExe); err == nil && fi.Mode().IsRegular() {
+			write(l.ReleasesLink, false, false, true)
+		}
 	}
 	if l.DesktopLink != "" && mayWriteLink(l.DesktopLink, l.AppExe) {
 		write(l.DesktopLink, false, false)
@@ -166,5 +180,14 @@ func (r *Runner) RemoveProfileLinks(l Layout) []string {
 	}
 	remove(l.DesktopLink)
 	remove(l.StartupLink)
+	if r.isProfileLink(l.ReleasesLink) {
+		if exists, ours := linkIsOurs(l.ReleasesLink, l.ReleasesExe); exists {
+			if !ours {
+				lines = append(lines, "Shortcut "+l.ReleasesLink+" (kept: it points to another program)")
+			} else if err := os.Remove(l.ReleasesLink); err != nil && !errors.Is(err, os.ErrNotExist) {
+				lines = append(lines, "Shortcut "+l.ReleasesLink+" ("+err.Error()+")")
+			}
+		}
+	}
 	return lines
 }

@@ -87,9 +87,12 @@ func CheckUserDirs(u UserDirs) error {
 const (
 	AppExeName    = "unravis.exe"
 	KeeperExeName = "unravis-keeper.exe"
-	SetupExeName  = "unravis-setup.exe"
-	StateFileName = "setup-state.json"
-	ShortcutName  = "Unravis.lnk"
+	// ReleasesExeName is the read-only releases window. It is an optional companion: a payload without it installs as before.
+	ReleasesExeName      = "unravis-releases.exe"
+	ReleasesShortcutName = "Unravis Releases.lnk"
+	SetupExeName         = "unravis-setup.exe"
+	StateFileName        = "setup-state.json"
+	ShortcutName         = "Unravis.lnk"
 	// QuitShortcutName is the Start-menu entry that asks the running Unravis to quit.
 	QuitShortcutName = "Quit Unravis.lnk"
 	ProductName      = "Unravis"
@@ -117,6 +120,9 @@ type Layout struct {
 	InstallDir string
 	AppExe     string
 	KeeperExe  string
+	// ReleasesExe is the releases window kept beside the app; ReleasesLink is its Start-menu entry (next to StartMenuLink).
+	ReleasesExe  string
+	ReleasesLink string
 	// BlackboxExe is the Blackbox program kept beside the app, which is where the app looks for it when it
 	// installs a Blackbox on this PC or builds a pack. It is always placed, whatever the Blackbox options are.
 	BlackboxExe string
@@ -143,6 +149,7 @@ func NewLayout(o Options, d Dirs) Layout {
 	l := Layout{Scope: o.Scope, InstallDir: filepath.Clean(o.Location)}
 	l.AppExe = filepath.Join(l.InstallDir, AppExeName)
 	l.BlackboxExe = filepath.Join(l.InstallDir, BlackboxExeName)
+	l.ReleasesExe = filepath.Join(l.InstallDir, ReleasesExeName)
 	l.SetupExe = filepath.Join(l.InstallDir, SetupExeName)
 	l.StateFile = filepath.Join(l.InstallDir, StateFileName)
 	l.BlackboxDir = filepath.Join(d.ProgramFiles, BlackboxProgramFolder)
@@ -164,6 +171,7 @@ func NewLayout(o Options, d Dirs) Layout {
 		l.DesktopLink = filepath.Join(d.Desktop, ShortcutName)
 	}
 	l.QuitLink = filepath.Join(filepath.Dir(l.StartMenuLink), QuitShortcutName)
+	l.ReleasesLink = filepath.Join(filepath.Dir(l.StartMenuLink), ReleasesShortcutName)
 	return l
 }
 

@@ -17,6 +17,8 @@ type SilentConfig struct {
 	Firewall      *FirewallOptions `json:"firewall"`
 	StartAtSignIn *bool            `json:"startAtSignIn"`
 	OpenWhenDone  *bool            `json:"openWhenDone"`
+	// Releases installs the optional read-only Unravis Releases window. Off unless true.
+	Releases *bool `json:"releases"`
 	// ReadKeyFile is where the Blackbox read key is written once, readable by the current user only. It is required when a Blackbox
 	// is placed, because silent mode has no window to show the key in and never writes it to the log.
 	ReadKeyFile string           `json:"readKeyFile"`
@@ -173,6 +175,7 @@ func (c SilentConfig) Request(op Op) (WorkRequest, error) {
 	}
 	// Silent mode never opens a window, so openWhenDone is ignored whatever the file says.
 	o.OpenWhenDone = false
+	o.Releases = c.Releases != nil && *c.Releases
 	req.Options = o
 	return req, nil
 }
@@ -186,7 +189,7 @@ func FillRecordingsConfirmation(req *WorkRequest, old *Installed) {
 }
 
 var silentKeys = map[string]map[string]bool{
-	"":          {"scope": true, "location": true, "blackbox": true, "firewall": true, "startAtSignIn": true, "openWhenDone": true, "readKeyFile": true, "uninstall": true},
+	"":          {"scope": true, "location": true, "blackbox": true, "firewall": true, "startAtSignIn": true, "openWhenDone": true, "releases": true, "readKeyFile": true, "uninstall": true},
 	"blackbox":  {"name": true, "folder": true, "keepDays": true, "maxGB": true, "minFreePercent": true, "port": true},
 	"firewall":  {"remoteAddresses": true},
 	"uninstall": {"deleteCases": true, "deleteRecordings": true},
