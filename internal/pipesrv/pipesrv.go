@@ -58,6 +58,11 @@ const tokenHeader = "X-Audit-Token" //nolint:gosec // a header name, not a crede
 // ShutdownPath is the shutdown RPC (BL-303). It exists only on the ui pipe: loopback and the ag pipe never serve it.
 const ShutdownPath = "/api/internal/shutdown"
 
+// HelloPath is the shell's bootstrap call on the ui pipe: it returns the session token to a peer that already passed the pipe's peer
+// check (DACL, logon SID, session, image in the install dir). The locator carries no token (PLAN section 1), so an attaching shell has no
+// other way to learn it. The token is not the boundary (spec 01 D6); this route hands it only over the ui pipe, never on loopback or ag.
+const HelloPath = "/api/desktop/hello"
+
 // Option changes what Handler serves on the ui pipe.
 type Option func(*config)
 
@@ -70,6 +75,22 @@ type config struct {
 // every other API call); stop starts the normal quit, the one --quit and Ctrl+C run, and is called after the 202 is written.
 func WithShutdown(token string, stop func()) Option {
 	return func(c *config) { c.token, c.stop = token, stop }
+}
+
+// helloRoute answers GET HelloPath with {"token": ...}. Like the shutdown route it refuses a request that carries an Origin.
+func (c *config) helloRoute(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.Header.Get("Origin") != "" {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"token": c.token})
 }
 
 // shutdownRoute answers the shutdown RPC. The caller has already put the request on the ui role.
@@ -119,6 +140,10 @@ func Handler(served http.Handler, opts ...Option) http.Handler {
 		}
 		switch role {
 		case RoleUI:
+			if r.URL.Path == HelloPath && cfg.token != "" {
+				cfg.helloRoute(w, r)
+				return
+			}
 			if r.URL.Path == ShutdownPath && cfg.stop != nil {
 				cfg.shutdownRoute(w, r)
 				return

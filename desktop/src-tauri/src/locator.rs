@@ -17,9 +17,11 @@ use windows_sys::Win32::System::Threading::{
 };
 
 /// What the shell holds for its lifetime. `_job` is Some only when this shell started the owner: closing it kills the owner.
-#[allow(dead_code)] // `record` is read by the pipe relay (BL-314)
+#[allow(dead_code)] // read by the supervisor and the pipe relay (BL-307, BL-314)
 pub struct Backend {
     pub record: Record,
+    /// Full path of the sidecar this shell trusts (what the pipe server's image must equal).
+    pub sidecar: PathBuf,
     pub _job: Option<Job>,
     pub _child: Option<Child>,
 }
@@ -111,7 +113,7 @@ fn attach_only(dir: &Path, exe: &Path, wait: Duration) -> Option<Backend> {
     let deadline = Instant::now() + wait;
     loop {
         if let Some(r) = read_record(dir).filter(|r| alive(r, exe)) {
-            return Some(Backend { record: r, _job: None, _child: None });
+            return Some(Backend { record: r, sidecar: exe.to_path_buf(), _job: None, _child: None });
         }
         if Instant::now() >= deadline {
             return None;
@@ -132,7 +134,7 @@ pub fn attach_or_spawn_with(dir: &Path, exe: &Path) -> Result<Backend, String> {
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline {
         if let Some(r) = read_record(dir).filter(|r| r.pid == child.pid && alive(r, exe)) {
-            return Ok(Backend { record: r, _job: Some(job), _child: Some(child) });
+            return Ok(Backend { record: r, sidecar: exe.to_path_buf(), _job: Some(job), _child: Some(child) });
         }
         match child.exit_code() {
             Some(EXIT_ATTACHED) => {
@@ -187,6 +189,23 @@ mod tests {
         let pid = first.record.pid;
         let second = attach_or_spawn_with(&dir, &exe).expect("attach");
         assert!(second._job.is_none() && second.record.pid == pid, "the second call attaches to the same owner");
+
+        // The real pipe: hello gives the token, the token passes the session check, a wrong token and a wrong server do not.
+        let client =
+            crate::pipe_peer::Client { name: second.record.ui.clone(), expect: crate::pipe_peer::ServerExpect { pid, image: exe.clone() } };
+        let token = client.hello().expect("hello over the ui pipe");
+        assert!(client.health(&token), "GET /api/version with the token answers 200");
+        assert!(!client.health("not-the-token-not-the-token-xx"), "a wrong token is refused");
+        let wrong = crate::pipe_peer::Client {
+            name: client.name.clone(),
+            expect: crate::pipe_peer::ServerExpect { pid, image: root.join("other.exe") },
+        };
+        assert!(matches!(wrong.hello(), Err(crate::pipe_peer::PipeError::ServerMismatch(_))), "a server that is not our image is refused");
+        let wrong_pid = crate::pipe_peer::Client {
+            name: client.name.clone(),
+            expect: crate::pipe_peer::ServerExpect { pid: pid + 4, image: exe.clone() },
+        };
+        assert!(matches!(wrong_pid.hello(), Err(crate::pipe_peer::PipeError::ServerMismatch(_))));
 
         drop(second);
         drop(first); // closes the job: KILL_ON_JOB_CLOSE
