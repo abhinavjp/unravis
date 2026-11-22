@@ -14,6 +14,14 @@ Legend: `[ ]` open, `[x]` done, `[~]` dropped.
 
 ## Planned now (owner wants these built)
 
+### Claimed by the parallel build thread (2026-11-22, so other threads skip these)
+- Story so far refreshes after any add (leftover of BL-162 and BL-164): web, Case home.
+- BL-423 and BL-424: Go memory tuning with a bounded SQLite pool; idle wakeup audit and goroutine-leak test.
+- BL-430: M4 downsampling in Go for chart series.
+- BL-429: web idle behaviour (visibility pause, ECharts settings).
+- BL-441a and BL-441b: store test data races, un-baseline `internal/server` and `internal/setup`.
+- Each ships as its own pull request into `develop`. This list is removed when they are merged.
+
 ### Slow call pop-up (plan: `.forge/investigation-timeline/drill/plan.md`)
 - [ ] **BL-001** Hide SQL, Redis and web-call rows in the pop-up when not recorded. (built 2026-11-12; awaiting live check)
 - [ ] **BL-002** One horizontal API breakdown bar on the Overview tab. (built 2026-11-12; awaiting live check)
