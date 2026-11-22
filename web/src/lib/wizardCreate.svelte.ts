@@ -55,6 +55,8 @@ let pickedHosts: Record<string, string> = {};
  * name is in the list, whatever computer is picked, so a pick for it would change nothing: the review step does not offer one.
  */
 let selfNamed: Record<string, string> = {};
+/** Files that name their own computer when that name could not be added to the list. A picker cannot change it, so the server's refusal (with its Try again) is the way out, not a pick. */
+let unsavedNamed: Record<string, true> = {};
 let fileVersion = $state(0);
 
 export const pickedFile = (key: string): File | null => { void fileVersion; return pickedFiles[key] ?? null; };
@@ -108,6 +110,8 @@ async function namedBy(key: string): Promise<string> {
 }
 
 let autoTail: Promise<unknown> = Promise.resolve();
+/** Counts resets. A pick that started before a reset ends without touching the new draft or the counter. */
+let autoEpoch = 0;
 
 /**
  * Names a computer for every held file that needs or offers one and has none yet, so no file is refused for lacking one and nobody is asked
@@ -124,9 +128,11 @@ async function pickMissingHosts(keys: readonly string[] | undefined, api: HostsA
   const wanted = (keys ?? Object.keys(pickedFiles)).filter((key) => pickedFiles[key] !== undefined && !pickedHosts[key] && hostNeed(kindOfKey(key)) !== 'none');
   // Nothing left to pick (the person chose, or every file has one): an earlier failure no longer matters.
   if (wanted.length === 0) { hostsAuto.failed = false; return; }
+  const epoch = autoEpoch;
   hostsAuto.working++;
   try {
     await loadHosts(false, api);
+    if (epoch !== autoEpoch) return;
     if (hostsView.entries === null) { hostsAuto.failed = true; return; }
     const thisPc = sourcesView.host?.label ?? '';
     const plan: Array<[string, string]> = [];
@@ -140,8 +146,14 @@ async function pickMissingHosts(keys: readonly string[] | undefined, api: HostsA
     const fresh = [...new Set(plan.map(([, label]) => label).filter((label) => listedLabel(label, hostsView.entries) === ''))];
     if (fresh.length > 0) {
       const saved = await saveHosts(fresh, api);
-      if (!saved.ok) { hostsAuto.failed = true; return; }
+      if (epoch !== autoEpoch) return;
+      if (!saved.ok) {
+        for (const key of Object.keys(named)) unsavedNamed = { ...unsavedNamed, [key]: true };
+        hostsAuto.failed = true;
+        return;
+      }
     }
+    if (epoch !== autoEpoch) return;
     for (const [key, label] of plan) {
       // The person may have picked one while this ran, or taken the file off: that choice stands.
       if (pickedFiles[key] !== undefined && !pickedHosts[key]) {
@@ -149,11 +161,12 @@ async function pickMissingHosts(keys: readonly string[] | undefined, api: HostsA
         if (named[key] !== undefined) selfNamed = { ...selfNamed, [key]: pickedHosts[key] };
       }
     }
+    unsavedNamed = {};
     hostsAuto.failed = false;
   } catch {
-    hostsAuto.failed = true;
+    if (epoch === autoEpoch) hostsAuto.failed = true;
   } finally {
-    hostsAuto.working--;
+    if (epoch === autoEpoch) hostsAuto.working--;
   }
 }
 
@@ -214,6 +227,7 @@ export const heldFileKeys = (): string[] => { void fileVersion; return Object.ke
 export function resetCreate(): void {
   forgetRequestId();
   autoTried.clear();
+  autoEpoch++;
   hostsAuto.working = 0;
   hostsAuto.failed = false;
   Object.assign(createView, blank());
@@ -221,6 +235,7 @@ export function resetCreate(): void {
   pickedImporters = {};
   pickedHosts = {};
   selfNamed = {};
+  unsavedNamed = {};
   fileVersion++;
 }
 onWizardReset(resetCreate);
@@ -240,7 +255,7 @@ export const titleRepeats = (title: string): boolean => createView.titles !== nu
 export const caseMade = (): boolean => createView.submit.caseId !== '';
 
 /** What stops "Create case" from being pressed, in the order the screen shows it. Empty when nothing does. */
-export type Blocker = 'scan-busy' | 'scan-stale' | 'no-ack' | 'files' | 'zone';
+export type Blocker = 'scan-busy' | 'scan-stale' | 'no-ack' | 'files' | 'zone' | 'computer-busy';
 
 /** True when scan sources are chosen but the scan they came from is gone (a new one is running, or it was stopped or failed). */
 export const scanMissing = (): boolean => importPlan(wizard.sources).scan > 0 && (sourcesView.phase !== 'done' || sourcesView.scanId === '');
@@ -252,6 +267,8 @@ export function blockers(now: number = Date.now()): Blocker[] {
   if (plan.scan > 0 && scanIsStale(now)) out.push('scan-stale');
   if (plan.scan + plan.files > 0 && !createView.ack) out.push('no-ack');
   if (filesMissing(wizard.sources, pickedFiles).length > 0) out.push('files');
+  // The computers are still being chosen: a file sent now could go out with none and be refused.
+  if (hostsAuto.working > 0) out.push('computer-busy');
   if (hostsMissing().length > 0) out.push('zone');
   return out;
 }
@@ -261,7 +278,10 @@ export function hostsMissing(): string[] {
   void fileVersion;
   return wizard.sources.filter((source) => {
     const key = sourceKey(source);
-    return pickedFiles[key] !== undefined && hostProblem(source.kind, pickedHosts[key] ?? '', hostsView.entries) !== '';
+    if (pickedFiles[key] === undefined) return false;
+    // When the computer list could not be used, a file that offers a computer and has none must be given one by hand.
+    if (hostsAuto.failed && !pickedHosts[key] && hostNeed(source.kind) !== 'none' && unsavedNamed[key] === undefined) return true;
+    return hostProblem(source.kind, pickedHosts[key] ?? '', hostsView.entries) !== '';
   }).map(sourceKey);
 }
 

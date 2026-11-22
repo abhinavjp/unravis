@@ -45,7 +45,7 @@ test('FILES-01: two IIS files and one unknown file show their kinds, the guide i
   await expect(notes).toContainText('Not recognised, so it is left out.');
   await expect(w3c).toContainText(/\d+(\.\d+)? (B|KB)/);
   // The computer is picked for the person: the panel says so and asks nothing per file.
-  await expect(page.getByText(/^Logs that do not say which computer wrote them are filed under/)).toBeVisible();
+  await expect(page.getByText(/^Each log is filed under the computer it names\./)).toBeVisible();
   await expect(page.getByLabel('Which computer wrote httperr1.log')).toHaveCount(0);
   await expect(page.getByText('What will be read')).toBeVisible();
 

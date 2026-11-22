@@ -436,8 +436,8 @@
         </div>
       {:else}
         <div class="actions">
-          <button type="button" class="primary-button" disabled={ready.length === 0} onclick={() => void add()}>{addFilesText(ready.length)}</button>
-          {#if leftOut.length >= 2}<button type="button" class="quiet-button" data-remove-left-out onclick={() => void removeLeftOut()}>{removeLeftOutText(leftOut.length)}</button>{/if}
+          <button type="button" class="primary-button" disabled={ready.length === 0 || reading} onclick={() => void add()}>{addFilesText(ready.length)}</button>
+          {#if leftOut.length >= 2}<button type="button" class="quiet-button" data-remove-left-out disabled={reading} onclick={() => void removeLeftOut()}>{removeLeftOutText(leftOut.length)}</button>{/if}
           <button type="button" class="quiet-button" onclick={clear}>{FILES_TEXT.clear}</button>
         </div>
       {/if}

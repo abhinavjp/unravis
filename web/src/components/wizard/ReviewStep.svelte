@@ -56,6 +56,16 @@
 
   onMount(() => { void loadTitles(); void loadHosts(); void autoPickHosts(); });
 
+  /** The zone row stands for every file of its computer, so a different computer chosen there moves all of them, not just the first. */
+  function pickZoneGroup(key: string, label: string) {
+    const first = hostFiles.find((source) => sourceKey(source) === key);
+    const from = pickedHost(key);
+    for (const source of hostFiles) {
+      const other = sourceKey(source);
+      if (other === key || (first && source.kind === first.kind && pickedHost(other) === from)) pickHost(other, label);
+    }
+  }
+
   function chosen(key: string, event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     pickFile(key, input.files?.[0] ?? null);
@@ -145,7 +155,7 @@
           {#if source}
             <div class="trouble">
               {#if row.problem === 'no-zone'}<p class="hint">{HOSTS_TEXT.zoneOnce(row.label, row.more)}</p>{/if}
-              <ZoneChoice kind={source.kind} host={row.label} name={row.name} onChange={(label) => pickHost(row.key, label)} />
+              <ZoneChoice kind={source.kind} host={row.label} name={row.name} onChange={(label) => pickZoneGroup(row.key, label)} />
             </div>
           {/if}
         {/each}

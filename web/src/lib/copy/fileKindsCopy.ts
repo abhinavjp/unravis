@@ -121,7 +121,7 @@ export const zoneWarnText = (count: number): string =>
 export const hostWarnText = (count: number): string =>
   count + (count === 1 ? ' file needs' : ' files need') + ' a computer named. Pick one in the list, or add it on the last step. The case cannot be made until each has one.';
 /** The line under the file list in the create guide: the computer is picked for the person, so there is nothing to answer here. */
-export const hostAutoHint = 'Logs that do not say which computer wrote them are filed under the computer they name, else your one computer, else this PC. You can change it on the last step.';
+export const hostAutoHint = 'Each log is filed under the computer it names. If it names none, it goes under your only computer, or else this PC. A new name is added to your list of computers. You can change this on the last step.';
 export const dropUnreadableText = (count: number): string => (count === 1 ? '1 item could not be read and was left out.' : count + ' items could not be read and were left out.');
 export const addedText = (count: number): string => (count === 1 ? '1 file is ready to add.' : count + ' files are ready to add.');
 export const removeLeftOutText = (count: number): string => 'Remove the ' + count + ' files left out';

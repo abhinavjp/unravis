@@ -180,6 +180,60 @@ test('autoPickHosts: a list that cannot be saved picks nothing', async () => {
   assert.equal(create.hostsAuto.failed, true);
 });
 
+test('a pick in progress blocks Create case; a failed list counts the held file as missing', async () => {
+  const [k] = setup(['iis-httperr']);
+  hold(k, 'h.log', 'x');
+  let release;
+  const slow = fakeApi([]);
+  const realGet = slow.get;
+  let first = true;
+  slow.get = () => { if (!first) return realGet(); first = false; return new Promise((resolve) => { release = () => resolve(realGet()); }); };
+  const run = create.autoPickHosts(undefined, slow);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(create.hostsAuto.working, 1);
+  assert.ok(create.blockers().includes('computer-busy'), 'Create case waits while the computer is being picked');
+  release();
+  await run;
+  assert.equal(create.hostsAuto.working, 0);
+  assert.ok(!create.blockers().includes('computer-busy'));
+
+  const [j] = setup(['iis-httperr']);
+  hold(j, 'h.log', 'x');
+  await create.autoPickHosts(undefined, fakeApi([], { getFails: true }));
+  assert.equal(create.hostsAuto.failed, true);
+  assert.deepEqual(create.hostsMissing(), [j], 'a failed list leaves the file asking for a pick, never silently filed');
+});
+
+test('a reset while the pick runs drops its late result', async () => {
+  const [k] = setup(['iis-httperr']);
+  hold(k, 'h.log', 'x');
+  let release;
+  const slow = fakeApi([]);
+  const realGet = slow.get;
+  let first = true;
+  slow.get = () => { if (!first) return realGet(); first = false; return new Promise((resolve) => { release = () => resolve(realGet()); }); };
+  const run = create.autoPickHosts(undefined, slow);
+  await new Promise((r) => setTimeout(r, 0));
+  create.resetCreate();
+  release();
+  await run;
+  assert.equal(create.pickedHost(k), '', 'the old run must not file anything after a reset');
+  assert.equal(create.hostsAuto.working, 0, 'and must not leave the busy count off by one');
+  assert.equal(create.hostsAuto.failed, false);
+});
+
+test('a log that names its computer but cannot be added is left to the server, not to a picker that could not change it', async () => {
+  const [k] = setup(['iis-w3c']);
+  hold(k, 'u_ex1.log', W3C('WEB07'));
+  await create.autoPickHosts(undefined, fakeApi([entry('OTHER')], { putStatus: 500 }));
+  assert.equal(create.hostsAuto.failed, true);
+  assert.deepEqual(create.hostsMissing(), [], 'Create case stays possible: the refusal row explains and offers Try again');
+  const [h] = setup(['iis-httperr']);
+  hold(h, 'h.log', 'x');
+  await create.autoPickHosts(undefined, fakeApi([entry('OTHER'), entry('B')], { putStatus: 500 }));
+  assert.deepEqual(create.hostsMissing(), [h], 'a nameless log still asks for a pick when the list cannot be saved');
+});
+
 test('pickHostForAll sets one computer on every held file that uses one', async () => {
   const keys = setup(['iis-httperr', 'iis-w3c', 'iis-logs']);
   for (const k of keys) hold(k, 'x.log', 'x');
