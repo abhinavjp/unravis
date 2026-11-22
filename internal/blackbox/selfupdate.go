@@ -3,6 +3,8 @@ package blackbox
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +40,8 @@ const (
 	MinUpdateMinutes     = 30
 	MaxUpdateMinutes     = 24 * 60
 	DefaultUpdateMinutes = 30
+	// DefaultStableUpdateMinutes is the default for a stable build: every 6 hours.
+	DefaultStableUpdateMinutes = 360
 
 	maxProgramSize = 200 << 20
 	programName    = "unravis-blackbox.exe"
@@ -119,7 +123,7 @@ func MarkManaged(progDir string) error {
 	return os.WriteFile(filepath.Join(progDir, ManagedMarkerName), []byte("Unravis updates this Blackbox together with itself.\r\n"), 0o644)
 }
 
-// AutoUpdate is the "autoUpdate" block of blackbox.json. A missing block means the defaults: install, every 30 minutes.
+// AutoUpdate is the "autoUpdate" block of blackbox.json. A missing block means the defaults: install, every 30 minutes (stable builds: every 6 hours).
 type AutoUpdate struct {
 	Mode            string `json:"mode,omitempty"`
 	IntervalMinutes int    `json:"intervalMinutes,omitempty"`
@@ -133,9 +137,16 @@ func (c Config) UpdateMode() string {
 	return c.AutoUpdate.Mode
 }
 
-// UpdateInterval is the time between checks.
-func (c Config) UpdateInterval() time.Duration {
+// UpdateInterval is the time between checks for a release candidate build.
+func (c Config) UpdateInterval() time.Duration { return c.UpdateIntervalFor(update.ChannelRC) }
+
+// UpdateIntervalFor is the time between checks for a build of channel: what the file says, else 6 hours for stable and 30 minutes
+// for anything else.
+func (c Config) UpdateIntervalFor(channel string) time.Duration {
 	if c.AutoUpdate == nil || c.AutoUpdate.IntervalMinutes == 0 {
+		if channel == update.ChannelStable {
+			return DefaultStableUpdateMinutes * time.Minute
+		}
 		return DefaultUpdateMinutes * time.Minute
 	}
 	return time.Duration(c.AutoUpdate.IntervalMinutes) * time.Minute
@@ -323,6 +334,22 @@ func (u *SelfUpdater) CheckOnce(ctx context.Context) update.Result {
 		u.set("failed", v, "Could not prepare version "+v+": "+err.Error())
 		return res
 	}
+	// One more look at the feed before the start: a pause or withdrawal that came out while the file was being prepared must win, and
+	// a feed that cannot confirm the release starts nothing (it tries again on the next turn of the loop).
+	again := u.Check(ctx)
+	if ctx.Err() != nil {
+		return again
+	}
+	if again.Held && again.Manifest != nil {
+		u.logf("update %s: put on hold while it was prepared; nothing was started", v)
+		u.set("held", v, "A newer version is on hold: "+again.Detail+".")
+		return again
+	}
+	if !sameBlackboxRelease(res.Manifest, again) {
+		u.logf("update %s: the feed could not confirm it; nothing was started", v)
+		u.set("idle", "", "Could not confirm that version "+v+" is still safe to install ("+strings.TrimSuffix(resultSentence(again), ".")+"). It will try again.")
+		return again
+	}
 	pend, _ := json.Marshal(pending{From: u.Version, To: v, At: u.now().UTC()})
 	if err := os.WriteFile(filepath.Join(u.Dir, pendingName), pend, 0o600); err != nil {
 		u.set("failed", v, "Could not write the update marker; nothing was changed.")
@@ -337,6 +364,14 @@ func (u *SelfUpdater) CheckOnce(ctx context.Context) update.Result {
 	}
 	u.logf("update %s started", v)
 	return res
+}
+
+// sameBlackboxRelease says whether the second look names the very release the first one did (same version, same recorder file,
+// same program hash).
+func sameBlackboxRelease(first *update.Manifest, again update.Result) bool {
+	m := again.Manifest
+	return again.Status == update.StatusAvailable && !again.Held && first != nil && m != nil && m.Version == first.Version &&
+		m.Assets[update.AssetBlackbox] == first.Assets[update.AssetBlackbox] && strings.EqualFold(m.BlackboxExeSHA256, first.BlackboxExeSHA256)
 }
 
 func resultSentence(r update.Result) string {
@@ -410,7 +445,7 @@ func NewServiceUpdater(cfg Config, version, exe string, logf func(string, ...any
 	}
 	fetcher.Folder, dl.Folder = src, src
 	u := &SelfUpdater{
-		Mode: cfg.UpdateMode(), Interval: cfg.UpdateInterval(), Version: v.String(), Dir: dir, Log: logf,
+		Mode: cfg.UpdateMode(), Interval: cfg.UpdateIntervalFor(update.ChannelOf(v)), Version: v.String(), Dir: dir, Log: logf,
 		Check: func(ctx context.Context) update.Result {
 			if err := os.MkdirAll(dir, 0o700); err != nil {
 				return update.Result{Status: update.StatusUnreachable, Detail: "no update folder"}
@@ -498,12 +533,18 @@ func stageFromZip(zipPath, stageDir, want string) (string, string, error) {
 	return dst, strings.ToLower(got), nil
 }
 
+// fileSHA256Hex hashes the file as it reads it, so a 200 MiB program is never held in memory by a service that must stay small.
 func fileSHA256Hex(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	return sha256Hex(data), nil
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // DropStalePending removes a pending update marker beside exe without judging it. The service calls it when self-update cannot run

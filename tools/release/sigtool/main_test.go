@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -469,5 +470,20 @@ func TestControlsig(t *testing.T) {
 	os.WriteFile(cf, edited, 0o644)
 	if err := run([]string{"controlsig", "-in", cf, "-sig", sg, "-keys", keys, "-want", "rc"}, nil, &out); err == nil || !strings.Contains(err.Error(), "does not verify") {
 		t.Fatalf("an edited expiry verified: %v", err)
+	}
+}
+
+func TestControlSeqIsAboveAfterSeq(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "c.json")
+	var out bytes.Buffer
+	far := uint64(time.Now().Unix()) + 1000
+	if err := run([]string{"control", "-channel", "rc", "-after-seq", strconv.FormatUint(far, 10), "-out", f}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(f)
+	var c struct{ Seq uint64 }
+	if err := json.Unmarshal(b, &c); err != nil || c.Seq != far+1 {
+		t.Fatalf("seq %d err %v, want %d", c.Seq, err, far+1)
 	}
 }

@@ -51,3 +51,6 @@ func (OSEnv) LockSQLSettingsFile(string) error { return errNoService }
 
 // lockSQLSettingsFile is not available off Windows.
 func lockSQLSettingsFile(string) error { return errNoService }
+
+// ReadVerifiedSettings is not available off Windows (fails closed).
+func (OSEnv) ReadVerifiedSettings(string) ([]byte, error) { return nil, errNoService }

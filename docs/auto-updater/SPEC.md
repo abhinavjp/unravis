@@ -93,7 +93,7 @@ A permanent release tagged `update-feed` holds two small files, replaced on each
 ## 6. Client side: check (Unravis app)
 
 - **Where:** `internal/update` (new), used by the existing server.
-- **Default: ON, every 30 minutes** (D1; overturns A52). The user can change the interval or turn it off in Settings. Minimum allowed 5 min. After the stable version is launched we raise the default (see D9). Mode: `Off`, `Notify`, `Notify + download` (default: Notify).
+- **Default: ON, every 30 minutes for a release candidate and every 6 hours for a stable build** (D1 and D9, built; overturns A52). The user can change the interval or turn it off in Settings. Minimum allowed 5 min. After the stable version is launched we raise the default (see D9). Mode: `Off`, `Notify`, `Notify + download` (default: Notify).
 - **Cadence:** first check 60 s after start, then every interval plus random jitter of up to 10%. Only while the app runs. No service, no scheduled task. Cost: one sleeping timer, one ~1 KB request per 30 min (about 50 KB/day worst case, less with `304`).
 - **Channels:** `stable` or `rc`. Default = channel of the running build (an rc build stays on rc). The channel inside the signed manifest must equal the one asked for.
 - **Proxy:** Windows system proxy. On error: "Could not check", retry next cycle, back off x2 up to 6 h, never loop.
@@ -292,3 +292,5 @@ Not verified at all: whether `github.com/.../releases/download/...` has a reques
 **U6 review changes:** the managed marker is checked before every check (it can appear after the service started); `update` run from Unravis (`--answer-file`) also writes it; a fresh program must stay up 2 min before the pending marker is dropped as success (the helper rolls back on a bad start, and then the old program skips that version); the helper gets `--expect-sha256` and refuses a different program; a stale pending marker is dropped when self-update cannot run. Known: an `autoUpdate` key makes older recorder programs refuse the settings file, so a setup rollback or repair by a pre-U6 setup fails on a Blackbox that opted in; the default (key absent) is safe. Known: if the helper fails before stopping the service, the next start skips that version once (it never ran); a newer version clears it.
 
 **As built (U8):** `unravis-setup.exe --verify <folder>`; guide in `OFFLINE.md`. The in-app Import button and the folder/share source (8.2) are not built.
+
+**Authenticode (stable only, untested):** see BACKLOG BL-155. Order matters: sign the Blackbox first (the app pins its signed hash and the manifest carries `blackboxExeSha256` of the shipped bytes), then the app and keeper (before the installer embeds them), then the installer and Lite. The Blackbox self-update compares the staged exe to the signed manifest hash, so it works with signed files unchanged.

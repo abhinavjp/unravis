@@ -211,7 +211,7 @@ func TestStillRunningMatchesPIDAndPath(t *testing.T) {
 func TestUpgradeTerminatesOnlyWhatIsLeftInTheLastRound(t *testing.T) {
 	h := newQuitHarness(t)
 	first := addApp(h.e, h.e.r.UserSID)
-	second := addApp(h.e, "")
+	second := addApp(h.e, h.e.r.UserSID)
 	h.e.sys.AskQuit = func() error { return nil }
 	res := h.upgradeWithSleep(true, func(n int) {
 		if n == 3 {
