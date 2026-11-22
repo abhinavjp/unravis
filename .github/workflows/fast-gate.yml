@@ -83,16 +83,16 @@ jobs:
 
       - name: Go - formatting of changed files
         if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.gofiles != '' }}
-        env:
-          FILES: ${{ steps.scope.outputs.gofiles }}
         run: |
           set -euo pipefail
           # Judged on the committed text, like ci.yml. Older files on master that are not gofmt-clean are a separate pass (BL-032).
+          # The list is read line by line from git (a name with a space is one name); deleted files are left out.
           unformatted=()
-          for f in $FILES; do
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
             out="$(git show "HEAD:$f" | gofmt -l)"
             [ -z "$out" ] || unformatted+=("$f")
-          done
+          done < <(git diff --no-renames --diff-filter=d --name-only HEAD^1 HEAD -- '*.go')
           if [ "${#unformatted[@]}" -gt 0 ]; then
             echo "::error::These Go files changed by this pull request are not gofmt-clean:"
             printf '  %s\n' "${unformatted[@]}"

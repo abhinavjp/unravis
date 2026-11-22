@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: desktop-windows-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
   desktop-core:
