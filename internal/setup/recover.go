@@ -55,36 +55,52 @@ func (r *Runner) readJournal(elevated bool) (j *Journal, found bool, err error) 
 		case errors.Is(lerr, os.ErrNotExist):
 			return nil, false, nil
 		case lerr != nil:
-			return nil, true, fmt.Errorf("an earlier setup may have left a journal in a folder that cannot be looked at, so it is not used: %v", lerr)
+			return nil, true, fmt.Errorf("an earlier setup may have left a journal in a folder that cannot be looked at, so it is not used: %v.%s", lerr, journalFolderAdvice(dir))
 		case fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0:
-			return nil, true, fmt.Errorf("an earlier setup left a journal in a folder that is a link, so it is not used")
+			return nil, true, fmt.Errorf("an earlier setup left a journal in a folder that is a link, so it is not used.%s", journalFolderAdvice(dir))
 		}
 	}
 	// Whether a file is there is metadata only: a folder nobody trusts and that holds no journal is not a pending journal.
 	if _, lerr := os.Lstat(p); errors.Is(lerr, os.ErrNotExist) {
 		return nil, false, nil
 	} else if lerr != nil {
-		return nil, true, fmt.Errorf("an earlier setup left a journal that cannot be looked at, so it is not used: %v", lerr)
+		return nil, true, fmt.Errorf("an earlier setup left a journal that cannot be looked at, so it is not used: %v.%s", lerr, journalFileAdvice(p))
 	}
 	if cerr := datadirCheck(r.Sys.Sec, dir); cerr != nil {
-		return nil, true, fmt.Errorf("an earlier setup left a journal in a folder others can change, so it is not used: %v", cerr)
+		return nil, true, fmt.Errorf("an earlier setup left a journal in a folder others can change, so it is not used: %v.%s", cerr, journalFolderAdvice(dir))
 	}
 	data, rerr := r.Sys.Sec.ReadFileProven(p, maxJournalBytes)
 	if errors.Is(rerr, os.ErrNotExist) {
 		return nil, false, nil // gone between the look and the open
 	}
 	if errors.Is(rerr, ErrNotProven) {
-		return nil, true, fmt.Errorf("an earlier setup left a journal that is not a plain file only administrators made, so it is not used: %v", rerr)
+		return nil, true, fmt.Errorf("an earlier setup left a journal that is not a plain file only administrators made, so it is not used: %v.%s", rerr, journalFileAdvice(p))
 	}
 	if rerr != nil {
-		return nil, true, fmt.Errorf("an earlier setup left a journal that could not be opened safely, so it is not used: %v", rerr)
+		return nil, true, fmt.Errorf("an earlier setup left a journal that could not be opened safely, so it is not used: %v.%s", rerr, journalFileAdvice(p))
 	}
 	j, err = ParseJournal(data, p)
-	if err == nil {
-		// A journal marked committed by the replay is written again: with the same owner, so it is still one that can be read.
-		j.w = &journalWriter{sec: r.Sys.Sec, sddl: MachineJournalFileSDDL}
+	if err != nil {
+		return nil, true, fmt.Errorf("%w.%s", err, journalFileAdvice(p))
 	}
-	return j, true, err
+	// A journal marked committed by the replay is written again: with the same owner, so it is still one that can be read.
+	j.w = &journalWriter{sec: r.Sys.Sec, sddl: MachineJournalFileSDDL}
+	return j, true, nil
+}
+
+// journalFileAdvice and journalFolderAdvice end every refusal of the machine journal. A refused journal is kept and blocks every elevated
+// setup until somebody deals with it, so the person is told which file it is, that nothing was deleted, and what they can do: move it
+// (moving keeps it, deleting does not), then run setup again. Neither action deletes anything.
+func journalFileAdvice(p string) string {
+	return " The journal is the file " + p + ". It was not used and it was not deleted. To go on: open it in Notepad to see what it lists," +
+		" then, while no Unravis setup is running, move the file out of its folder (for example to your Desktop; do not delete it)." +
+		" Then run setup again. If the earlier run left things half done, choose Repair."
+}
+
+func journalFolderAdvice(dir string) string {
+	return " The folder is " + dir + ". Nothing in it was used and nothing was deleted. To go on: an administrator makes sure only SYSTEM and" +
+		" Administrators can change that folder, or, while no Unravis setup is running, renames the folder (for example to \"Unravis Setup old\";" +
+		" do not delete it). Then run setup again; it makes a new one. If the earlier run left things half done, choose Repair."
 }
 
 // journalFileOwnerOK says whether owner may own the machine journal file: only the system or the administrators group. The account
@@ -208,4 +224,13 @@ func (r *Runner) closeAppIn(dir string) bool {
 		_ = r.Sys.Proc.TerminateIf(q.PID, q.Exe)
 	}
 	return true
+}
+
+// MachineJournalHelp is what a person can do when the administrator part of a recovery failed because it refused the machine journal. The
+// normal run cannot look inside that folder (administrators only) and the administrator part's output is not shown, so this names the file
+// and says that moving it keeps it (nothing is deleted). It is worded as a condition: the same failure can have another cause. It is short
+// on purpose: the result note that carries it is cut at 400 bytes, so the advice comes first and the path last.
+func (r *Runner) MachineJournalHelp() string {
+	return " If it refused the journal, move that file out of its folder (do not delete it) and run setup again: " +
+		filepath.Join(r.journalDir(true), JournalName) + "."
 }

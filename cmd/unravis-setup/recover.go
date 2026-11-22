@@ -4,10 +4,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"api-audit-explorer/internal/setup"
 	"api-audit-explorer/internal/update"
 	"api-audit-explorer/internal/version"
+)
+
+// askWait is how long the notice before the Windows prompt waits for an answer; no answer counts as Cancel.
+const askWait = 10 * time.Minute
+
+// recoverNotice is the box shown before the app is closed and before the Windows prompt (BL-183 b). It is the only thing that tells the
+// person why a prompt is about to appear from a run they did not start.
+const (
+	recoverNoticeTitle = "Unravis"
+	recoverNoticeText  = "An Unravis update was cut off before it finished.\n\nTo put things back, Windows will ask for administrator approval next. Click OK, then answer Yes.\n\nClick Cancel to leave it for now."
+	recoverDeclinedMsg = "An update was cut off before it finished. You chose not to approve it, so it was not put back. Run Unravis Setup from the Unravis program folder and choose Repair."
 )
 
 // runRecover is --recover (BL-170): put back what a cut-off setup run changed, from its journal, and nothing else. A normal run replays
@@ -59,6 +71,15 @@ func runRecover(o options, e env) int {
 		say("Nothing to put back.")
 		return 0
 	}
+	// Before anything is closed and before any prompt: a box that says what is about to happen. Cancel (or a closed box, or no answer)
+	// leaves the machine journal and the running app alone. The elevated copy never asks, and a nil ask (tests) goes on.
+	declined := false
+	if pendingMachine && e.ask != nil {
+		if !e.ask(recoverNoticeTitle, recoverNoticeText) {
+			declined, pendingMachine = true, false
+			l.Line("recover: the person did not approve the Windows prompt at the notice; the machine journal is kept")
+		}
+	}
 	res := setup.RecoverResult{}
 	if pendingHere {
 		res = r.Recover(admin, loc)
@@ -88,13 +109,16 @@ func runRecover(o options, e env) int {
 				l.Line("recover: the administrator part did not run: " + err.Error())
 				problems = append(problems, "The administrator-level part did not run ("+err.Error()+").")
 			} else if c != 0 {
-				problems = append(problems, "The administrator-level part could not put everything back.")
+				// The administrator part cannot tell this run why in words (its output is not shown). A refused journal is its usual reason,
+				// so say which file it is and what can be done, without deleting anything.
+				problems = append(problems, "The administrator-level part could not put everything back."+r.MachineJournalHelp())
 			} else {
 				res.Found = true
 			}
 		}
 	}
 	if res.Err != nil {
+		l.Line("recover: " + res.Err.Error())
 		problems = append(problems, res.Err.Error()+".")
 	}
 	for _, x := range res.Left {
@@ -107,7 +131,14 @@ func runRecover(o options, e env) int {
 	if old != nil {
 		note.From = old.Version
 	}
-	if len(problems) == 0 && res.Found {
+	if declined {
+		note.Outcome = "failed"
+		note.Message = recoverDeclinedMsg
+		for _, p := range problems {
+			note.Message += " " + p
+		}
+		code = setup.OutcomeCancelledUAC.ExitCode()
+	} else if len(problems) == 0 && res.Found {
 		note.Outcome = "rolled-back"
 		note.Message = "An update was cut off before it finished. Unravis put back what it had changed."
 	} else if len(problems) == 0 {
@@ -120,6 +151,9 @@ func runRecover(o options, e env) int {
 		}
 		note.Message += " Run Unravis Setup from the Unravis program folder and choose Repair."
 		code = setup.OutcomeRollbackLeft.ExitCode()
+	}
+	if note.Message != "" {
+		l.Line("recover: result: " + note.Message) // the note is cut at 400 bytes; the log keeps all of it
 	}
 	// The elevated part never starts the app (it would run with administrator rights); the normal run that asked for it does.
 	if res.Closed && loc != "" && !o.noRestart && e.startBackground != nil {
