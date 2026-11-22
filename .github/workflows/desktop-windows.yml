@@ -2,12 +2,13 @@
 name: desktop-windows
 
 on:
-  # Not per pull request into develop (docs/ci/RELEASE-TRAIN.md): it runs on every push to develop and on the pull request
-  # that promotes develop to master.
+  # Not per pull request into develop and not on every push to develop (docs/ci/RELEASE-TRAIN.md): it runs on the pull request
+  # that promotes develop to master and on the push to master. "Run workflow" runs it by hand on develop.
   pull_request:
     branches: [master]
   push:
-    branches: [master, develop]
+    branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: read

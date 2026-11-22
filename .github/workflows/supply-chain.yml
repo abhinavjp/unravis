@@ -13,12 +13,13 @@ name: Supply chain
 # same PR that creates desktop/ (no Rust exists yet). Until then dependabot's cargo entry
 # is inert and osv-scanner skips the Cargo.lock.
 on:
-  # Pull requests into develop get the action-pin check in fast-gate.yml; the rest runs on the push to develop and on the
-  # pull request that promotes develop to master (docs/ci/RELEASE-TRAIN.md).
+  # Pull requests into develop get the action-pin check in fast-gate.yml; the rest runs on the pull request that promotes
+  # develop to master and on the push to master (docs/ci/RELEASE-TRAIN.md), not on every push to develop. "Run workflow" runs it by hand.
   push:
-    branches: [master, develop]
+    branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -5,7 +5,7 @@ Status: live since 2026-11-22. `develop` exists and is the default branch (new p
 ## The idea in four lines
 
 - Every pull request merges into one long-lived branch, `develop`, after a **fast gate** (`fast-gate.yml`, aim: under a minute or two, see the numbers below).
-- The full CI (`ci.yml`: Windows tests, race, exe build, screenshots, docs, supply chain, desktop shell) runs on every push to `develop` (newest wins) and **once** on the pull request that promotes `develop` to `master`.
+- The full CI (`ci.yml`: Windows tests, race, exe build, screenshots, docs) runs on every push to `develop` (newest wins) and **once** on the pull request that promotes `develop` to `master`. The two heavy side workflows, `supply-chain.yml` and `desktop-windows.yml`, run only on that promotion pull request and on the push to `master` (not on every push to `develop`; "Run workflow" starts them by hand on `develop`). Why: the repository is public, so runner minutes are free, but a Free plan allows 20 jobs at once; on 2026-11-22 those two workflows plus `ci.yml` filled the queue and made the fast gate wait about 4 minutes.
 - When a version is ready, one script promotes `develop` (all of it, or up to a chosen commit) to `master`: `tools/release/Promote-Develop.ps1`.
 - The release manager is unchanged. It cuts from `master` after the promotion.
 
@@ -13,16 +13,16 @@ Status: live since 2026-11-22. `develop` exists and is the default branch (new p
 
 | | Before PR #123 (master runs, Nov 20 to 21) | After PR #123 (one pull request run) | Fast gate, per PR into develop |
 |---|---|---|---|
-| Per pull request, wall clock | about 11 to 17 min | about 6 min | **estimate: about 0.5 to 1 min for notes, small Go change about 1 to 1.5 min, web change about 2 to 3 min** |
+| Per pull request, wall clock | about 11 to 17 min | about 6 min | **measured once (PR 134, notes and config only, 2026-11-22): 51 s from the first job start to a green `fast-build` (go 25 s, web 12 s, gate 5 s), after about 4 min waiting for a free runner while the queue was full. Estimates for the rest: small Go change about 1 to 1.5 min, web change about 2 to 3 min** |
 | Runs per merged PR | full, each time | full, each time | fast, each time; full only on develop and on promotion |
 
-The fast-gate row is an estimate until the first real pull request into `develop` has run. Runner start, checkout and cache restore alone probably cost 15 to 25 s (an estimate, not measured), so "under 30 s" is reachable only for notes-only or tiny changes; a typical Go change cannot honestly be 30 s. The measured numbers are written into this table when `develop` exists (checklist in BL-462).
+Only the notes-and-config case is measured so far (one run). The Go-change and web-change figures are still estimates until such pull requests have run. Runner start, checkout and cache restore alone probably cost 15 to 25 s (an estimate, not measured), so "under 30 s" is reachable only for notes-only or tiny changes; a typical Go change cannot honestly be 30 s. The measured numbers are written into this table when `develop` exists (checklist in BL-462).
 
 ## What the fast gate checks per pull request (and what it does not)
 
 Checks (all required through the job `fast-build`): scope of the change (`tools/ci/fast-scope.mjs`: the changed packages plus every package that imports them, widened to everything when the path is unknown or `go.mod`, `go.sum`, `baseline-go-tests.txt` or `ci.yml` changed), gofmt of changed files, `go vet` on Linux and Windows cross-compile of those packages, their tests on Linux compared with the Linux failure baseline (the package graph is read for Linux and for Windows), `go mod tidy` when modules changed, the action-pin check, the self-tests of the CI tools; when `web/` or `docs/user/` changed: type check, tests, build and the committed-build check (BL-031). Tests that read files of another directory are covered by a short list in `fast-scope.mjs`: a change under `web/src/lib/copy/` also tests `internal/evidence` and `internal/server`; a change in `internal/setup` or `cmd/unravis-setup` also tests `cmd/audit-explorer`; a change under `internal/server`, `internal/blackbox`, `internal/calltrace` or `tools/e2e` also runs the web checks. A new test that reads across directories must be added to that list. golangci-lint runs on new code only and is advisory, as before.
 
-**Not checked per pull request any more** (checked on the push to `develop` and on promotion): Windows tests, the race run, the exe build and its smoke, the screenshots, the docs check, govulncheck, osv, secret scan, the desktop shell, `desktop-sidecar`. Packages that do not import the changed ones are not tested per PR.
+**Not checked per pull request any more** (checked on the push to `develop` for Windows tests, the race run, the exe build and its smoke, the screenshots and the docs check; on promotion only for govulncheck, osv, secret scan, the desktop shell and `desktop-sidecar`): all of these. Packages that do not import the changed ones are not tested per PR.
 
 The trade, stated plainly: a Windows-only break, a race, a docs error or a vulnerable dependency can now merge into `develop` and show up in the push run on `develop` (red within the full-CI time, a few minutes) instead of on the pull request. It cannot reach `master`: the promotion pull request runs the same full `build` that every pull request ran before, and `master` keeps its protection. Nothing on `master` is weaker than today. What changed is where a break is found: in `develop`, minutes after the merge, not on the pull request.
 
@@ -62,7 +62,7 @@ Only one promotion at a time: it is a merge to `master`, so the same release-loc
 3. **Branch protection (nachi, in GitHub: Settings > Branches > Add branch ruleset, or classic rule), for `develop`:** require a pull request before merging; require status check `fast-build` (the Fast gate job; app GitHub Actions); require conversation resolution; block force pushes and deletion; **do not** require branches to be up to date (strict off), so merged pull requests do not each wait for a rebase; allow squash merge and merge commits (merge commits are for the master-into-develop sync and for promotion). Keep `master`'s rule exactly as it is (required `build`, strict, pull request required). The two gates have different names on purpose: `fast-build` on `develop`, `build` (the full `ci.yml`) on `master`. Also turn on **Allow merge commits** in Settings > General (promotion needs it), and set `develop` as the default branch only if you want new pull requests to open against it (optional).
 4. Retarget open pull requests: `gh pr edit <n> --base develop`, then close and reopen each one (a retarget alone does not start the fast gate). Done for all open pull requests.
 5. A small pull request updates `CLAUDE.md` (rule line) and `dependabot.yml` (`target-branch: develop`).
-6. First real pull request into `develop`: measure the fast gate and write the seconds into the table above; tick BL-462.
+6. First real pull request into `develop`: measured (notes case, table above). BL-462 is ticked only after a promotion has merged with a green full `build`.
 
 ## Rollback
 
