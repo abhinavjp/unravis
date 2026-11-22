@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { watchSize } from '../lib/chartPerf';
   import { formatCount } from '../lib/format';
   import { onMount } from 'svelte';
   import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Query } from '../lib/types';
@@ -27,8 +28,8 @@
   onMount(() => {
     if (!node) return;
     chart = echarts.init(node);
-    const observer = new ResizeObserver(() => chart?.resize()); observer.observe(node);
-    return () => { observer.disconnect(); chart?.dispose(); };
+    const stopSize = watchSize(node, () => chart?.resize());
+    return () => { stopSize(); chart?.dispose(); };
   });
   $effect(() => { void theme.epoch; if (chart) chart.setOption(failureTrendOption(analysis, zone, cohortKeys), true); });
 </script>

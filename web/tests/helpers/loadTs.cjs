@@ -10,15 +10,17 @@ const ts = require('typescript');
 const root = path.resolve(__dirname, '..', '..');
 const cache = new Map();
 
-function loadTypeScript(relativePath) {
+// overrides: { './api': {...} } hands the loaded file that object for that import instead of the real module (and skips the cache).
+function loadTypeScript(relativePath, overrides) {
   const filename = path.join(root, relativePath);
-  if (cache.has(filename)) return cache.get(filename).exports;
+  if (!overrides && cache.has(filename)) return cache.get(filename).exports;
   const source = fs.readFileSync(filename, 'utf8');
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
   const module = { exports: {} };
-  cache.set(filename, module);
+  if (!overrides) cache.set(filename, module);
   const nodeRequire = createRequire(filename);
   const load = (request) => {
+    if (overrides && Object.prototype.hasOwnProperty.call(overrides, request)) return overrides[request];
     if (/^\.\.?\//.test(request)) {
       const plain = path.join(path.dirname(filename), request + '.ts');
       const store = path.join(path.dirname(filename), request + '.svelte.ts');
