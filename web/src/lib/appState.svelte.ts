@@ -219,7 +219,7 @@ let glossaryOpen = $state(false);
 let sidePanel = $state<'patterns' | 'ledger' | 'export' | 'blackbox' | null>(null);
 let sidePanelReturnFocus: HTMLElement | null = null;
 // The "Import files" popup, centred over the page. It is not a side panel, but `panels.sidePanel` still reads 'import' while it is open
-// (see `panels`), so the pages that re-read their files when the import closes keep working.
+// (see `panels`), so the pages that look at it (the timeline) keep working. Case home no longer waits for the close: it re-reads when an add succeeds (`caseAdded.svelte.ts`).
 let importPopup = $state<{ caseId: string; caseTitle: string; retryServerName: string | null } | null>(null);
 let importPopupReturnFocus: HTMLElement | null = null;
 // The one line the start screen shows after Import was asked for with no case open (see showImportPopup).
