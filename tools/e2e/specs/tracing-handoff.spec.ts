@@ -1,4 +1,4 @@
-// Phase 05 gate: guided is unlisted from case home, and a bar on the Investigation Timeline hands its 5-minute slot to the analysis.
+// Phase 05 gate: guided is unlisted from case home, and a bar on the Investigation timeline hands its 5-minute slot to the analysis.
 // The demo case "Orders API stall, 19 October" has 11 audit bars in 36 five-minute slots (15:00 to 18:00 UTC, 19 Oct); SQL and IIS are empty.
 import { test, expect } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
@@ -27,7 +27,7 @@ function showing(slot: number): string {
 /** Open the demo case, open the timeline, type the windows (UTC) and start tracing. */
 async function startTracing(page: Page, title = CASE): Promise<void> {
   await openCase(page, title);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
   await expect(pickerButton(page, 'incident')).toBeVisible();
   await fillWindows(page, ['2026-10-19T15:00', '2026-10-19T18:00', '2026-10-19T12:00', '2026-10-19T15:00']);
   await page.getByRole('button', { name: 'Start tracing' }).click();
@@ -173,7 +173,7 @@ test('HAND-06: a double click opens one analysis screen and one history step', a
   await expectAnalysisOpen(page);
   await expect(runButton(page)).toHaveCount(1);
   await expect(page.locator('main, #main').first()).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toHaveCount(0);
 });
 
 test('HAND-07: reload on the analysis screen keeps the hand-off window', async ({ page }) => {
@@ -187,16 +187,16 @@ test('HAND-07: reload on the analysis screen keeps the hand-off window', async (
   expect(await page.evaluate(() => location.hash)).toBe('');
 });
 
-test('HAND-08: This case returns to case home, which has no Guided section and shows Analysis then Investigation Timeline', async ({ page }) => {
+test('HAND-08: This case returns to case home, which has no Guided section and shows Analysis then Investigation timeline', async ({ page }) => {
   await startTracing(page);
   await pickBar(page, 12);
   await expectAnalysisOpen(page);
   await page.getByRole('button', { name: 'This case', exact: true }).click();
   await expect(page.getByRole('heading', { level: 2, name: CASE })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Analysis', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open the analysis' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Open the Investigation Timeline' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Open the Investigation timeline' })).toBeEnabled();
   await expect(page.getByRole('heading', { name: /guided/i })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /guided/i })).toHaveCount(0);
   await expect(page.getByRole('link', { name: /guided/i })).toHaveCount(0);
@@ -205,7 +205,7 @@ test('HAND-08: This case returns to case home, which has no Guided section and s
     const t = document.getElementById('home-tracing');
     return !!a && !!t && !!(a.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING);
   });
-  expect(order, 'Analysis comes before Investigation Timeline').toBe(true);
+  expect(order, 'Analysis comes before Investigation timeline').toBe(true);
 });
 
 test('HAND-09: 375px wide, nothing scrolls sideways and the hand-off still works', async ({ page }) => {
@@ -213,7 +213,7 @@ test('HAND-09: 375px wide, nothing scrolls sideways and the hand-off still works
   await openCase(page, CASE);
   await expect(page.locator('#home-analysis')).toBeVisible();
   await noHorizontalScroll(page, 'case home');
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
   await expect(pickerButton(page, 'incident')).toBeVisible();
   await noHorizontalScroll(page, 'timeline windows');
   await fillWindows(page, ['2026-10-19T15:00', '2026-10-19T18:00', '2026-10-19T12:00', '2026-10-19T15:00']);
@@ -324,7 +324,7 @@ test('HAND-13: a closed case keeps Analysis and opens the timeline as a viewer w
   await expect(page.locator('#home-tracing')).toBeVisible();
   await expect(page.locator('#home-tracing-open')).toBeEnabled();
   await page.locator('#home-tracing-open').click();
-  await expect(page.getByRole('heading', { level: 2, name: 'Investigation Timeline' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Investigation timeline' })).toBeVisible();
   await expect(page.getByTestId('tp-closed-line')).toHaveText('This case is closed. You can look at the timeline but not change the case.');
   await expect(page.getByRole('button', { name: 'Case home', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Case home', exact: true }).click();
@@ -338,7 +338,7 @@ test('HAND-14: a saved (archived) case home offers neither Analysis nor the time
   await expect(page.getByRole('heading', { level: 2, name: 'Month-end batch stall, 2 October' })).toBeVisible();
   await expect(page.locator('#home-analysis')).toHaveCount(0);
   await expect(page.locator('#home-tracing')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Open the Investigation Timeline' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Open the Investigation timeline' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Open the analysis' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: /guided/i })).toHaveCount(0);
 });
@@ -373,7 +373,7 @@ test('HAND-16: case home matches the wireframe order and button styles', async (
   expect(secondary.border).not.toBe('0px');
   expect(secondary.style).not.toBe('none');
   const heads = await page.locator('h3#home-analysis, h3#home-tracing').allInnerTexts();
-  expect(heads).toEqual(['Analysis', 'Investigation Timeline']);
+  expect(heads).toEqual(['Analysis', 'Investigation timeline']);
 });
 
 test('HAND-17: the timeline screen matches the wireframe: region order, lane order, shared time axis, token colours', async ({ page }) => {

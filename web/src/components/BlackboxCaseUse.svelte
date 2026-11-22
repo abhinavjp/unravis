@@ -76,7 +76,7 @@
   {:else if !readable && use?.state !== 'this'}
     <p class="bb-note">{T.caseUseNotReadable}</p>
   {:else if use?.state === 'this'}
-    <p>{T.caseUseOn}</p>
+    {#if !note}<p>{T.caseUseOn}</p>{/if}
   {:else if use?.state === 'other'}
     <p>{T.caseUseOther(use.name)}</p>
   {/if}

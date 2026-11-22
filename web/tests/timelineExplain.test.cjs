@@ -5,7 +5,7 @@ const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
 
-// The explanation block of the Investigation Timeline: its fixed words pass the copy lint, and its
+// The explanation block of the Investigation timeline: its fixed words pass the copy lint, and its
 // "Timeline details" rows follow the lane rules (lane order, skipped lanes, cut-short wording).
 
 const root = path.resolve(__dirname, '..');

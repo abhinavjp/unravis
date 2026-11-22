@@ -5,7 +5,7 @@ const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
 
-// Packet P11: the Sources list (tags and time-zone state per source) and the time-zone notice on the Investigation Timeline.
+// Packet P11: the Sources list (tags and time-zone state per source) and the time-zone notice on the Investigation timeline.
 
 const root = path.resolve(__dirname, '..');
 const cache = new Map();

@@ -88,8 +88,8 @@
     {#if made}
       <p class="done" role="status">{restoredNewNotice(made.title || caseCode(made.id), caseCode(made.id))}</p>
       <div class="actions">
-        <button type="button" class="primary-button" onclick={() => onOpenNew(made?.id ?? '')}>{ARCHIVE_TEXT.restoreOpenNew}</button>
         <button type="button" class="secondary-button" onclick={onClose}>{ARCHIVE_TEXT.restoreClose}</button>
+        <button type="button" class="primary-button" onclick={() => onOpenNew(made?.id ?? '')}>{ARCHIVE_TEXT.restoreOpenNew}</button>
       </div>
     {:else if placed}
       <p class="done" role="status">{ARCHIVE_TEXT.restoreInPlaceDone}</p>
@@ -104,8 +104,8 @@
           <p class="hint">{caseKeyed ? ARCHIVE_TEXT.restoreCaseKeyHint : ARCHIVE_TEXT.restoreKeyHint}</p>
         {/if}
         <div class="actions">
-          <button type="submit" class="primary-button" disabled={!canSubmit}>{busy ? ARCHIVE_TEXT.restoreWorking : mode === 'in-place' ? ARCHIVE_TEXT.restoreInPlaceSubmit : ARCHIVE_TEXT.restoreNewSubmit}</button>
           <button type="button" class="secondary-button" disabled={busy} onclick={onClose}>{ARCHIVE_TEXT.restoreCancel}</button>
+          <button type="submit" class="primary-button" disabled={!canSubmit}>{busy ? ARCHIVE_TEXT.restoreWorking : mode === 'in-place' ? ARCHIVE_TEXT.restoreInPlaceSubmit : ARCHIVE_TEXT.restoreNewSubmit}</button>
         </div>
       </form>
     {/if}

@@ -18,9 +18,11 @@ function ago(s) {
 }
 // One word for where a release stands, plus the colour family. The word always carries the meaning; colour only helps.
 function status(r) {
-  if (r.withdrawn) return ['Withdrawn', 'bad'];
+  // Withdrawn is a decision someone made, so it is amber and not the red of a release that broke.
+  if (r.withdrawn) return ['Withdrawn', 'warn'];
   if (r.verify === 'failed') return ['Verify failed', 'bad'];
-  if (r.steps.some((s) => s.state === 'failed')) return ['Stopped', 'bad'];
+  const broke = r.steps.find((s) => s.state === 'failed');
+  if (broke) return ['Stopped at ' + broke.name, 'bad'];
   if (r.steps.some((s) => s.state === 'running')) return ['Running', 'run'];
   if (r.verify === 'passed') return [r.onFeed ? 'Live, verified' : 'Verified', 'ok'];
   if (r.verify === 'pending') return ['Verifying', 'warn'];
@@ -50,6 +52,25 @@ function schedule() {
   timer = setTimeout(() => { if (!document.hidden) load(false); else schedule(); }, running || failed ? 5000 : 30000);
 }
 
+// The running banner names a release, so it is a link to that release's page (it looked like one and did nothing).
+function runLink(text, version) {
+  const a = el('a', 'on', text); a.href = '#';
+  a.addEventListener('click', (e) => { e.preventDefault(); if (shown.some((r) => r.version === version)) pick(version); });
+  return a;
+}
+
+// Nothing was found: say why, one line for each place the list comes from, and what to do about it (BLACKBOX-08).
+function emptyState(s) {
+  const box = $('nolist'); box.replaceChildren();
+  box.append(el('p', 'nl-title', 'No releases found yet.'));
+  const ul = el('ul', 'nl-causes');
+  const row = (name, ok, word) => { const li = el('li', ok ? 'ok' : 'bad'); li.append(el('span', 'nl-name', name), el('span', 'nl-word', word)); ul.append(li); };
+  row('GitHub list', s.github.ok, s.github.ok ? 'read ' + ago(s.github.at) : (s.github.detail || 'not read'));
+  row('Update feed', s.feed.ok, s.feed.ok ? 'read' : (s.feed.detail || 'not read'));
+  row('Release log', s.local.ok, s.local.ok ? 'found on this PC' : 'not on this PC');
+  box.append(ul, el('p', 'nl-next', 'Check the network, or run Release.ps1 on the release PC. Then press Refresh.'));
+}
+
 function channelBox(id, name, f) {
   const box = $(id); box.replaceChildren(el('div', 'k', name));
   if (!f || f.status === 'none') { box.append(el('div', 'v', 'No release yet'), el('div', 's', 'Nothing published here, or not reachable.')); return; }
@@ -73,9 +94,9 @@ function render() {
   if (lv) {
     const who = lv.version ? 'Release ' + lv.version : 'A release';
     if (lv.gone) run.append(el('span', 'off', who + ' stopped without saying why.'), ' ' + lv.label + '. Started ' + ago(lv.started) + '. Run Release.ps1 -Status on the release PC.');
-    else run.append(el('span', 'on', who + ' is running.'), ' ' + lv.label + '. Started ' + ago(lv.started) + '.');
+    else run.append(runLink(who + ' is running.', lv.version || NEXT), ' ' + lv.label + '. Started ' + ago(lv.started) + '.');
   } else if (s.run) {
-    if (s.run.status === 'running') run.append(el('span', 'on', 'Release ' + s.run.version + ' is running.'), ' Last step finished: ' + (s.run.stage || 'none') + '.');
+    if (s.run.status === 'running') run.append(runLink('Release ' + s.run.version + ' is running.', s.run.version), ' Last step finished: ' + (s.run.stage || 'none') + '.');
     else if (s.run.status === 'stopped') run.append(el('span', 'off', 'Release ' + s.run.version + ' stopped'), ' after ' + (s.run.stage || 'the start') + (s.run.reason ? ': ' + s.run.reason : '.'));
   }
   const rels = (s.releases || []).slice();
@@ -86,7 +107,8 @@ function render() {
   liveKey = key;
   if (!rels.some((r) => r.version === selected)) selected = rels.length ? rels[0].version : '';
   const ul = $('list'); ul.replaceChildren();
-  if (!rels.length) ul.append(el('li', 'empty', 'No releases found yet.'));
+  ul.hidden = !rels.length; $('nolist').hidden = !!rels.length; $('refresh').classList.toggle('primary', !rels.length);
+  if (!rels.length) emptyState(s);
   for (const r of rels) {
     const li = el('li', r.withdrawn ? 'wd' : ''); li.id = 'r-' + r.version.replace(/[^A-Za-z0-9_.-]/g, '_'); li.setAttribute('role', 'option');
     li.setAttribute('aria-selected', String(r.version === selected)); li.dataset.v = r.version;

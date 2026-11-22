@@ -68,21 +68,26 @@
 <section class="damaged" aria-labelledby="damaged-title">
   {#if phase === 'offer'}
     <h2 id="damaged-title" tabindex="-1" bind:this={title}>{DAMAGED_TEXT.title}</h2>
-    <p class="intro">{DAMAGED_TEXT.what}</p>
-    <p class="intro">{DAMAGED_TEXT.unchanged}</p>
+    <p class="intro">{DAMAGED_TEXT.what} {DAMAGED_TEXT.unchanged}</p>
     <p class="intro">{DAMAGED_TEXT.dpapi}</p>
-    <p class="intro">{DAMAGED_TEXT.option}</p>
-    <p class="intro">{DAMAGED_TEXT.keptAside}</p>
-    {#if freed > 0}<p class="warning" id="damaged-freed">{freedArchivesWarning(freed)}</p>{/if}
-    <p class="warning">{DAMAGED_TEXT.warning}</p>
-    {#if impact.length}
-      <ul class="impact" aria-label={DAMAGED_TEXT.impactLabel}>{#each impact as line (line)}<li>{line}</li>{/each}</ul>
-    {/if}
-    <form onsubmit={submit}>
-      <label class="ack"><input type="checkbox" bind:this={box} bind:checked={ack} disabled={busy} aria-describedby={problem ? 'damaged-problem' : undefined} /> <span>{DAMAGED_TEXT.ackLabel}</span></label>
-      <p id="damaged-problem" class="inline-error" role="alert" hidden={!problem}>{problem}</p>
-      <div class="actions"><button type="submit" class="primary-button" disabled={!ready}>{busy ? DAMAGED_TEXT.resetting : DAMAGED_TEXT.reset}</button></div>
-    </form>
+    <section class="step" aria-labelledby="damaged-backup">
+      <h3 id="damaged-backup">{DAMAGED_TEXT.backupHeading}</h3>
+      <p class="intro">{DAMAGED_TEXT.backupText}</p>
+    </section>
+    <section class="step" aria-labelledby="damaged-over">
+      <h3 id="damaged-over">{DAMAGED_TEXT.startOverHeading}</h3>
+      <p class="intro">{DAMAGED_TEXT.option} {DAMAGED_TEXT.keptAside}</p>
+      {#if freed > 0}<p class="warning" id="damaged-freed">{freedArchivesWarning(freed)}</p>{/if}
+      <p class="warning">{DAMAGED_TEXT.lostLine}</p>
+      {#if impact.length}
+        <ul class="impact" aria-label={DAMAGED_TEXT.impactLabel}>{#each impact as line (line)}<li>{line}</li>{/each}</ul>
+      {/if}
+      <form onsubmit={submit}>
+        <label class="ack"><input type="checkbox" bind:this={box} bind:checked={ack} disabled={busy} aria-describedby={problem ? 'damaged-problem' : undefined} /> <span>{DAMAGED_TEXT.ackLabel}</span></label>
+        <p id="damaged-problem" class="inline-error" role="alert" hidden={!problem}>{problem}</p>
+        <div class="actions"><button type="submit" class="secondary-button danger" disabled={!ready}>{busy ? DAMAGED_TEXT.resetting : DAMAGED_TEXT.reset}</button></div>
+      </form>
+    </section>
   {:else}
     <h2 id="damaged-title" tabindex="-1" bind:this={title}>{DAMAGED_TEXT.doneTitle}</h2>
     {#if keptAs}<p class="intro">{DAMAGED_TEXT.doneKept} <code>{keptAs}</code>.</p>{/if}
@@ -92,10 +97,15 @@
 </section>
 
 <style>
-  .damaged { display: grid; gap: var(--space-3); max-width: 560px; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-family: var(--mono); }
+  .damaged { display: grid; gap: var(--space-3); max-width: 560px; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .damaged h2 { margin: 0; font-size: 20px; font-weight: 600; }
   .damaged h2:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .step { display: grid; gap: var(--space-2); padding-top: var(--space-3); border-top: var(--hairline-width) solid var(--line); }
+  .step h3 { margin: 0; font-size: var(--fs-5); font-weight: 600; }
   .intro, .warning { margin: 0; font-size: var(--fs-3); }
+  /* The reset is the one destructive step on this screen, so it looks like one: red text and border, no fill until it can be pressed. */
+  .danger { color: var(--bad); border-color: var(--bad); }
+  .danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 12%, var(--surface)); color: var(--bad); }
   .intro { color: var(--text-2); }
   .warning { font-weight: 600; }
   .impact { margin: 0; padding-left: var(--space-4); display: grid; gap: var(--space-1); font-size: var(--fs-3); color: var(--text-2); }

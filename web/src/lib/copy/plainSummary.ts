@@ -323,8 +323,11 @@ export function plainIncomplete(input: IncompleteInput): PlainSummary {
   const unfinished = incomplete + pending;
   const base = completed + unfinished;
   const when = where(input.window);
+  // The big figure above counts every request, unusable ones too, so say how the two numbers fit: "of 508, 2 had a timing that could not be used" (ANALYSIS-20).
   const unusable = invalid
-    ? ' ' + (invalid === 1 ? '1 more request had a timing that could not be used. It is' : count(invalid) + ' more requests had a timing that could not be used. They are') + ' not counted here.'
+    ? ' ' + (base > 0
+      ? 'Of all ' + requests(base + invalid) + ', ' + count(invalid) + ' had' + ' a timing that could not be used, so ' + (invalid === 1 ? 'it is' : 'they are') + ' left out of the ' + count(base) + ' above.'
+      : (invalid === 1 ? '1 request had a timing that could not be used. It is' : count(invalid) + ' requests had a timing that could not be used. They are') + ' not counted here.')
     : '';
 
   if (base === 0 && invalid === 0) {

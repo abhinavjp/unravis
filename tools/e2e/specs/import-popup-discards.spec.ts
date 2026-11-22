@@ -13,7 +13,7 @@ async function openPopup(page: Page, api: ApiFn, title: string): Promise<Locator
   await createCase(api, title);
   await goHome(page);
   await openCase(page, title);
-  await page.getByRole('button', { name: 'Add a file' }).first().click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'Add files' });
   await expect(dialog).toBeVisible();
   return dialog;
@@ -32,7 +32,7 @@ test('IP-03: Esc with files listed asks "Discard N files?"; Keep them goes back 
   // Nothing listed: Esc closes at once, with no question.
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
-  await page.getByRole('button', { name: 'Add a file' }).first().click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).first().click();
   await expect(dialog).toBeVisible();
 
   await dialog.getByLabel('Choose files to import').setInputFiles([text('u_ex261041.log'), text('u_ex261042.log'), text('ERRORLOG')]);
@@ -66,7 +66,7 @@ test('IP-03: Esc with files listed asks "Discard N files?"; Keep them goes back 
   await expect(question(page)).toHaveCount(0);
 
   // A new popup starts empty.
-  await page.getByRole('button', { name: 'Add a file' }).first().click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).first().click();
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('[data-grp]')).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: 'Continue' })).toBeDisabled();

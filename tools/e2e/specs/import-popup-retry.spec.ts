@@ -24,7 +24,7 @@ async function openPopup(page: Page, api: ApiFn, title: string): Promise<Locator
   await createCase(api, title);
   await goHome(page);
   await openCase(page, title);
-  await page.getByRole('button', { name: 'Add a file' }).first().click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'Add files' });
   await expect(dialog).toBeVisible();
   return dialog;
@@ -97,7 +97,7 @@ test('IP-19: Try again on a saved unlisted-computer retry opens Check on its fix
   await page.getByLabel('Choose files to import').setInputFiles([file]);
   await page.getByRole('button', { name: 'Add 1 file' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
   await expect(page.getByRole('table', { name: /result for each file/i })).toContainText('Rejected', { timeout: 90_000 });
   await page.unroute('**/api/hosts');

@@ -21,7 +21,7 @@
   let { caseId, readOnly = false, onGone, onAddFiles, onAddMongo }: { caseId: string; readOnly?: boolean; onGone?: () => void; onAddFiles?: () => void; onAddMongo?: () => void } = $props();
   type Tab = 'list' | 'connections' | 'sql' | 'mongo' | 'add' | 'day' | 'combos';
   let tab = $state<Tab>('connections');
-  // The Investigation Timeline asks for the Sources tab from its time-zone notice (packet P11).
+  // The Investigation timeline asks for the Sources tab from its time-zone notice (packet P11).
   $effect(() => { if (sourcesNav.wantList) { sourcesNav.wantList = false; tab = 'list'; } });
   // The import drawer's Add data cards (screen 112) ask for the SQL tab, Add another day, or the page that adds a Mongo audit database.
   $effect(() => {
@@ -62,7 +62,7 @@
     {:else if tab === 'add'}
       <AddSourcesFlow {caseId} {readOnly} onFiles={onAddFiles} onDone={() => { tab = 'list'; }} />
     {:else if tab === 'day'}
-      <AddAnotherDay {caseId} {readOnly} {onGone} onCancel={() => { tab = 'add'; }} />
+      <AddAnotherDay {caseId} {readOnly} {onGone} onCancel={() => { tab = 'add'; }} onReadSql={() => { tab = 'sql'; }} />
     {:else}
       <SourceCombinations {caseId} />
     {/if}

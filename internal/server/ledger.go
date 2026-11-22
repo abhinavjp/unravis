@@ -32,7 +32,7 @@ func (h *handler) serveLedger(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := url.PathUnescape(idPart)
 	if err != nil || id == "" || strings.Contains(id, "/") {
-		writeError(w, http.StatusBadRequest, "Invalid hypothesis identifier.")
+		writeError(w, http.StatusBadRequest, "Invalid theory identifier.")
 		return
 	}
 	switch {

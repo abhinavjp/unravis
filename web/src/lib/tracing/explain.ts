@@ -1,5 +1,5 @@
 /**
- * The explanation block of the Investigation Timeline (WP-17 follow-up): the fixed words for how to read the
+ * The explanation block of the Investigation timeline (WP-17 follow-up): the fixed words for how to read the
  * chart, what each lane shows and how the axis was worked out, plus the "Timeline details" rows that say where
  * each lane's data came from. Pure TypeScript, no Svelte; `TracingExplain.svelte` draws what this file builds.
  * Every static sentence is linted by the copy lint (tests/timelineExplain.test.cjs).

@@ -122,8 +122,8 @@
           <li>
             <span class="what"><span class="name">{item.label}</span>
               <span class="hint">{item.auth === 'windows' ? SOURCES_TEXT.sqlWindowsLogin : item.username}{item.database ? ' · ' + item.database : ''} · {item.hasPassword ? SOURCES_TEXT.sqlHasPassword : SOURCES_TEXT.sqlNoPassword}</span></span>
-            <button type="button" class="link-button" aria-label="{SOURCES_TEXT.sqlUse}: {item.label}" onclick={() => use(item)}>{SOURCES_TEXT.sqlUse}</button>
-            <button type="button" class="link-button" aria-label="{SOURCES_TEXT.sqlForget}: {item.label}" onclick={() => void forget(item.id)}>{SOURCES_TEXT.sqlForget}</button>
+            <button type="button" class="secondary-button" aria-label="{SOURCES_TEXT.sqlUse}: {item.label}" onclick={() => use(item)}>{SOURCES_TEXT.sqlUse}</button>
+            <button type="button" class="quiet-button" aria-label="{SOURCES_TEXT.sqlForget}: {item.label}" onclick={() => void forget(item.id)}>{SOURCES_TEXT.sqlForget}</button>
           </li>
         {/each}
       </ul>
@@ -187,7 +187,7 @@
     <input id="{uid}-name" type="text" bind:value={form.label} maxlength="200" autocomplete="off" spellcheck="false" onkeydown={onKey} />
     <p class="hint">{SOURCES_TEXT.sqlNameHint}</p>
   </div>
-  <div class="actions"><button type="button" class="primary-button" disabled={busy || testing} onclick={() => void add()}>{busy ? SOURCES_TEXT.sqlAdding : SOURCES_TEXT.sqlAdd}</button></div>
+  <div class="actions"><button type="button" class="secondary-button" disabled={busy || testing} onclick={() => void add()}>{busy ? SOURCES_TEXT.sqlAdding : SOURCES_TEXT.sqlAdd}</button></div>
   <p class="line" class:bad={failed} class:good={!failed && line !== '' && !busy && !testing} id="{uid}-line" role="status" hidden={line === ''}>{line}</p>
 </div>
 

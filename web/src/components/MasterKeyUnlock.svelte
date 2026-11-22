@@ -56,15 +56,17 @@
     <button type="submit" class="primary-button" disabled={busy}>{busy ? KEY_TEXT.unlocking : KEY_TEXT.unlockSubmit}</button>
     <p id="unlock-problem" class="inline-error" role="alert" hidden={!problem}>{problem}</p>
   </form>
+  <p class="forgot">{KEY_TEXT.unlockForgot}</p>
 </section>
 
 <style>
   .unlock { display: grid; gap: var(--space-3); max-width: 480px; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .unlock h2 { margin: 0; font-size: 20px; font-weight: 600; }
+  .forgot { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .intro { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   form { display: grid; gap: var(--space-2); justify-items: start; }
   label { font-size: var(--fs-3); font-weight: 600; }
-  input { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 36px; padding: 6px 10px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-3); }
+  input { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 44px; padding: 6px 10px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-3); }
   input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
   .inline-error { margin: 0; }
   .inline-error[hidden] { display: none; }

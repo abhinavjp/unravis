@@ -1,4 +1,4 @@
-// How the specs drive the Investigation Timeline's two period pickers (WindowPicker.svelte, popover variant).
+// How the specs drive the Investigation timeline's two period pickers (WindowPicker.svelte, popover variant).
 // Each picker is a button that opens a dialog with the quick ranges, a calendar, two date text boxes and two 24-hour time boxes (each time
 // is two drop-downs: hour 00 to 23 and minute; UTC because the test browser starts with UTC chosen). Apply commits; Cancel, Escape and a click outside discard.
 // The specs keep speaking 24-hour `HH:mm`: fillTime and readTime translate to and from the two drop-downs.
@@ -102,7 +102,7 @@ export async function windowValues(page: Page): Promise<string[]> {
 
 /**
  * Puts values into the kept windows of this browser tab that the picker itself will not let a person apply (an end before the start,
- * an empty box), then opens the Investigation Timeline again so it starts from them. This is the only way to reach the screen's own
+ * an empty box), then opens the Investigation timeline again so it starts from them. This is the only way to reach the screen's own
  * refusals for those values, which a person gets by reloading a tab that holds bad values.
  */
 export async function primeWindows(page: Page, w: readonly string[]): Promise<void> {
@@ -117,6 +117,6 @@ export async function primeWindows(page: Page, w: readonly string[]): Promise<vo
   }, w);
   expect(wrote, 'the screen kept the windows of this case').toBe(1);
   await page.getByRole('button', { name: 'Case home', exact: true }).click();
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
 }

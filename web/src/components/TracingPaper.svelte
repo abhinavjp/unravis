@@ -34,7 +34,7 @@
   // Kept as a variable: a new run clears it (the Slow call screen itself is opened through the app state).
   let drillSlot = $state<number | null>(null);
 
-  // The Investigation Timeline screen shell (WP-16b): one request on open, a loading state with Cancel, a plain
+  // The Investigation timeline screen shell (WP-16b): one request on open, a loading state with Cancel, a plain
   // error with Try again, and four stable regions (windows, toolbar, chart, notes) that later packets fill in.
   // `readOnly` disables the window inputs and Start tracing (read in the template below). `closed` only adds the one line saying the case cannot be changed: the timeline reads, so a closed case is a viewer, not locked.
   // `title` names the case being traced (shown as text under the heading).
@@ -484,9 +484,8 @@
           </fieldset>
         </div>
       </div>
-      <p class="metaline" data-testid="tp-metaline"><span class="utc-echo" data-testid="utc-echo-incident">{echoUtc(fields.incidentStart, fields.incidentEnd)}</span> {WINDOW_TEXT.metaCompared} <span class="utc-echo" data-testid="utc-echo-reference">{echoUtc(fields.referenceStart, fields.referenceEnd)}</span> · {WINDOW_TEXT.metaZoneLead} <b>{timeZone.zone}</b> {WINDOW_TEXT.metaZoneTail}</p>
+      <p class="metaline" data-testid="tp-metaline" title={echoUtc(fields.incidentStart, fields.incidentEnd) + ' ' + WINDOW_TEXT.metaCompared + ' ' + echoUtc(fields.referenceStart, fields.referenceEnd)}><span class="utc-echo echo-hidden" data-testid="utc-echo-incident">{echoUtc(fields.incidentStart, fields.incidentEnd)}</span><span class="echo-hidden"> {WINDOW_TEXT.metaCompared} </span><span class="utc-echo echo-hidden" data-testid="utc-echo-reference">{echoUtc(fields.referenceStart, fields.referenceEnd)}</span> {WINDOW_TEXT.metaZoneLead} <b>{timeZone.zone}</b> {WINDOW_TEXT.metaZoneTail}</p>
       <div class="window-actions">
-        <small>{WINDOW_TEXT.utcNote}</small>
         <small>{WINDOW_TEXT.endNote}</small>
       </div>
     </form>
@@ -625,6 +624,8 @@
   .trctl-notices:empty { display: none; }
   .metaline { margin: 0; color: var(--text-2); font-size: var(--fs-2); overflow-wrap: anywhere; }
   .utc-echo { font-family: var(--mono); white-space: nowrap; }
+  /* The exact UTC times are read by screen readers and shown as a tooltip, not as a third line of raw text (ANALYSIS-16). */
+  .echo-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .metaline b { color: var(--text); font-weight: 600; }
   .windows { display: grid; gap: var(--space-2); }
   .quick-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }

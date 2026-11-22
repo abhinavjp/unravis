@@ -1,6 +1,6 @@
 /**
  * The browser tab title. index.html names the app ("Unravis"); a screen that wants to be named adds its own words in front
- * ("Investigation Timeline - Unravis") and the returned function puts the app name back when the screen leaves.
+ * ("Investigation timeline - Unravis") and the returned function puts the app name back when the screen leaves.
  */
 const APP_TITLE = 'Unravis';
 

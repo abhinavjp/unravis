@@ -58,7 +58,7 @@ const WHAT_FIELDS = ['outcome', 'rf-completion', 'controller', 'action', 'rf-ope
 const DETAIL_FIELDS = ['rf-user-ids', 'rf-ui-versions', 'rf-user-ips', 'rf-status-codes', 'rf-agent', 'rf-url', 'rf-audit-id'];
 const RANGE_ROWS = ['observedMs', 'apiTimeMs', 'auditCreateTimeMs', 'requestKb', 'responseKb', 'incompleteAgeMs'].map((key) => 'rf-' + key);
 const CHART_FIELDS = ['metric', 'bucket', 'latency-target'];
-const SCREENS = ['drill-navigator', 'drill-investigate', 'drill-back', 'pulse', 'where', 'inspector', 'resource', 'patterns', 'ledger', 'export', 'import', 'discover', 'start', 'enter', 'masterkey', 'unlock', 'wizard', 'wizard-envs', 'wizard-sources', 'wizard-review'];
+const SCREENS = ['drill-navigator', 'drill-investigate', 'drill-back', 'pulse', 'pulse-chart', 'where', 'inspector', 'resource', 'patterns', 'ledger', 'export', 'import', 'discover', 'start', 'enter', 'masterkey', 'unlock', 'wizard', 'wizard-envs', 'wizard-sources', 'wizard-review'];
 const REQUIRED = [...GROUPS, ...WHEN_FIELDS, ...WHAT_FIELDS, ...DETAIL_FIELDS, ...RANGE_ROWS, ...CHART_FIELDS, ...SCREENS];
 const sentences = (text) => text.split(/[.!?]+(?=\s|$)/).filter((part) => /[A-Za-z0-9]/.test(part)).length;
 
@@ -131,7 +131,7 @@ test('HelpNote renders the plain line and a labelled disclosure button', () => {
   assert.match(src, /aria-controls=\{blockId\}/);
   assert.match(src, /id=\{blockId\}/);
   assert.match(src, />In simple words</);
-  assert.match(src, /eli10\.on \|\| open/, 'the shared flag opens every block');
+  assert.match(src, /eli10\.on \? !folded : open/, 'the shared flag opens every block, and one block can still be folded (CASES-23)');
   assert.match(src, /hidden=\{!shown\}/, 'the block stays mounted so aria-controls always resolves');
   assert.match(src, />\?<\/button>/);
   assert.doesNotMatch(src, /\{@html|innerHTML/);
@@ -185,7 +185,9 @@ test('help "?" and "i" buttons have a 24px hit area (32px on touch or narrow scr
     assert.match(style, new RegExp('\\.' + cls + ' \\{[^}]*width: 24px; height: 24px'), file + ' base size');
     assert.match(style, new RegExp('@media \\(pointer: coarse\\), \\(max-width: 720px\\) \\{ \\.' + cls + ' \\{ width: 32px; height: 32px'), file + ' touch size');
     assert.match(style, new RegExp('\\.' + cls + '::before \\{[^}]*inset: 4px'), file + ' circle stays 16px inside the target');
-    assert.match(src, /aria-label=\{eli10\.on \? 'Open: Explain simply is on' : /, file + ' disabled label');
+    // HelpNote stays a working toggle while "Explain simply" is on (CASES-23); FieldHelp is disabled then and says so in its name, which also names the field (ANALYSIS-06).
+    if (file === 'HelpNote') { assert.match(src, /aria-label="Explain in simple words"/); assert.doesNotMatch(src, /disabled=/); }
+    else assert.match(src, /aria-label=\{eli10\.on \? about \+ ' \(open: Explain simply is on\)' : about\}/, file + ' disabled label');
   }
 });
 
@@ -337,10 +339,12 @@ test('the field keys are wired to the controls they describe', () => {
   assert.match(ranges, /part="block" open=\{helpOpen\[field\.key\]\}/);
 });
 
-test('the drill-down controls carry their notes: investigate with the chip, back with the Back button', () => {
+test('the drill-down controls carry their notes: Back and investigate behind the zoom "?" in visible text (ANALYSIS-11, SWEEP-F2-S7), the navigator in its own note', () => {
   const src = read('src/components/ZoomStrip.svelte');
-  assert.match(src, /\{#if !model\.isRoot\}<div class="zoom-help"><HelpNote id="drill-investigate" \/><\/div>\{\/if\}/, 'shown only while the chip is shown');
-  assert.match(src, /\{#if model\.canBack\}<div class="zoom-help"><HelpNote id="drill-back" \/><\/div>\{\/if\}/);
+  assert.doesNotMatch(src, /<HelpNote id="drill-(?:investigate|back)"/, 'one sentence per state: the two notes no longer stack above the strip');
+  assert.doesNotMatch(src, /title=\{help\['drill-back'\]/, 'a title never shows on keyboard focus or touch');
+  assert.match(src, /<p class="zoom-note">\{help\['drill-back'\]\.plain\}<\/p>/);
+  assert.match(src, /\{#if !model\.isRoot\}<p class="zoom-note">\{help\['drill-investigate'\]\.plain\}<\/p>\{\/if\}/, 'shown only while the chip is shown');
   assert.match(src, /<HelpNote id="drill-navigator" \/>/);
   // The chip keeps its own disabled logic.
   assert.match(src, /aria-disabled=\{!investigate\.enabled\} aria-describedby=\{investigate\.enabled \? undefined : reasonId\}/);
@@ -348,7 +352,7 @@ test('the drill-down controls carry their notes: investigate with the chip, back
 
 test('FieldHelp is a labelled disclosure that adds no tab stop beyond its button and uses tokens only', () => {
   const src = read('src/components/FieldHelp.svelte');
-  assert.match(src, /let \{ id, part = 'both', open = \$bindable\(false\) \}/);
+  assert.match(src, /let \{ id, part = 'both', open = \$bindable\(false\), label = '' \}/);
   assert.match(src, /import \{ help \} from '\.\.\/lib\/copy\/helpCopy'/);
   assert.match(src, /<button type="button"[^>]*aria-expanded=\{shown\}[^>]*aria-controls=\{blockId\}/);
   assert.match(src, /disabled=\{eli10\.on\}/);

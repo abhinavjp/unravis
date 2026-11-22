@@ -23,7 +23,7 @@
     if (!list || !active) return;
     const tab = list.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
     const box = list.getBoundingClientRect(), at = tab?.getBoundingClientRect();
-    if (tab && at && (at.left < box.left || at.right > box.right)) list.scrollTo({ left: list.scrollLeft + (at.left - box.left) - 12, behavior: 'smooth' });
+    if (tab && at && (at.left < box.left || at.right > box.right)) list.scrollTo({ left: list.scrollLeft + (at.left - box.left) - 12, behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   });
 </script>
 

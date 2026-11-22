@@ -238,7 +238,7 @@ test('the target words and the invalid-config refusal are plain sentences, and t
   // No file name, no field name, no reason code: a first-time investigator reads what to do.
   const words = BB_REFUSAL['invalid-config'] + ' ' + BB_TEXT.settingProblems.targets + ' ' + Object.values(BB_TEXT.targetProblems).join(' ');
   assert.doesNotMatch(words, /blackbox\.json|invalid-config|"name"|"folder"|not valid|Validate/i);
-  assert.match(BB_REFUSAL['invalid-config'], /nothing was changed/i, 'the refusal says what happened');
+  assert.match(BB_REFUSAL['invalid-config'], /nothing was saved/i, 'the refusal says what happened');
 });
 
 test('a refused settings call reads the plain sentence, and the server own words still win', () => {

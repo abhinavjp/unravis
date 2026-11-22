@@ -41,6 +41,7 @@ export const KEY_TEXT = {
   unlockTitle: 'Unlock your cases',
   unlockIntro: 'Type the master key for this PC to see your cases. The key is not sent anywhere.',
   unlockLabel: 'Master key',
+  unlockForgot: 'If you forgot the key, your cases cannot be opened. Open the Glossary in the header to read what you can do.',
   unlockSubmit: 'Unlock',
   unlocking: 'Unlocking…',
 
@@ -143,6 +144,10 @@ export const DAMAGED_TEXT = {
   title: 'The master key file is damaged',
   what: 'The file that holds the master key for this PC cannot be read. It may be damaged, empty or replaced. No master key can open it.',
   unchanged: 'Nothing was changed. Your cases and the file are still where they were.',
+  backupHeading: 'First, try to put the file back',
+  backupText: 'Look for a backup of the master key file and put it back where it was. If the file turns out to be fine, this screen goes away by itself.',
+  startOverHeading: 'If there is no backup',
+  lostLine: 'Starting over costs you every case that the old master key protects. Those cases stay unreadable.',
   dpapi: 'Cases that were saved before you set a master key are not affected.',
   option: 'If you cannot put the file back from a backup, you can start over with a new master key.',
   keptAside: 'The damaged file is kept aside, not deleted. If it turns out to be fine, it can be put back under its old name.',

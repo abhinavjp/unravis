@@ -2,7 +2,7 @@ import type { LintEntry } from './copylint';
 import { waitText } from './masterKeyCopy';
 
 /**
- * Every fixed sentence of the "Enter an existing case" card, and the small helpers that build the rest. Pure: no DOM, no fetch.
+ * Every fixed sentence of the "Open with a case code" card, and the small helpers that build the rest. Pure: no DOM, no fetch.
  * Rules: plain words; one message for every case code that does not open, one message for every case file that does not open; say that
  * restoring always makes a new case; no text here ever holds a master key, a path or a code that was typed.
  */

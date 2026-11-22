@@ -294,7 +294,7 @@ func (h *handler) exportLedger(w http.ResponseWriter, r *http.Request, body expo
 	} else if h.ledger != nil {
 		items, err := h.ledger.List()
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "The hypothesis ledger could not be read.")
+			writeError(w, http.StatusInternalServerError, "The ledger could not be read.")
 			return nil, "", false
 		}
 		all = items

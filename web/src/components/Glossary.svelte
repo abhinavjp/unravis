@@ -22,6 +22,12 @@
   // The user guide: when set, it replaces the help parts below. Back returns to them and puts focus on the button that opened it.
   let guide = $state<{ slug: string; anchor: string } | null>(null);
   let guideOpen = $state<HTMLButtonElement>();
+  // Updates and Support logs sit after the whole glossary: two links in the Start here block take the keyboard straight to them.
+  function jumpTo(id: string) {
+    const heading = drawer?.querySelector<HTMLElement>('#' + id);
+    heading?.scrollIntoView({ block: 'start' });
+    heading?.focus({ preventScroll: true });
+  }
   async function closeGuide() {
     guide = null;
     await tick();
@@ -105,6 +111,7 @@
         {#each HELP_STEPS as step (step)}<li>{step}</li>{/each}
       </ol>
       <button type="button" class="update-button guide-open" data-testid="guide-open" bind:this={guideOpen} onclick={() => { guide = { slug: 'index', anchor: '' }; }}>{HELP_GUIDE_TEXT.guideButton}</button>
+      <p class="help-jumps" data-testid="help-jumps">Also in this panel: <button type="button" class="link-button" data-testid="jump-updates" onclick={() => jumpTo('updates-title')}>Updates</button> and <button type="button" class="link-button" data-testid="jump-logs" onclick={() => jumpTo('support-logs-title')}>Support logs</button>.</p>
     </section>
     <h3 class="glossary-heading">{HELP_TEXT.termsHeading}</h3>
     <div class="glossary-search">
@@ -125,14 +132,14 @@
     </dl>
     {#if build}<p class="build-line" data-testid="build-line">{build}</p>{/if}
     <section class="support-logs" aria-labelledby="support-logs-title">
-      <h3 id="support-logs-title">Support logs</h3>
+      <h3 id="support-logs-title" tabindex="-1">Support logs</h3>
       <p>Unravis keeps a log of what it did and what went wrong, so a problem can be traced afterwards.</p>
       {#if logs}<p class="log-path" data-testid="log-folder-path">{logs.dir}</p>
       <button type="button" class="update-button" data-testid="copy-log-folder" onclick={copyLogFolderPath}>Copy folder path</button>{#if logPathCopied}<span class="log-copied" role="status">Copied</span>{/if}{/if}
       <p>Send the newest unravis.log to your contact; it contains no passwords or case data.</p>
     </section>
     <section class="updates" aria-labelledby="updates-title">
-      <h3 id="updates-title">Updates</h3>
+      <h3 id="updates-title" tabindex="-1">Updates</h3>
       <p>Unravis looks for a new version on its own and tells you here. With the second box ticked it also installs it by itself, but only when you are not using it, and then starts again. Otherwise you press Apply.</p>
       {#if canChange}
         <label class="updates-auto"><input type="checkbox" data-testid="update-auto" checked={auto} onchange={(event) => { const box = event.currentTarget; void saveSettings(box.checked, minutes, () => { box.checked = auto; }); }} /> Check automatically</label>
@@ -186,6 +193,10 @@
   .update-check { margin-top: 10px; display: grid; gap: 8px; justify-items: start; }
   .update-button { border: 1px solid var(--control-line); background: transparent; color: var(--text); padding: 6px 12px; border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
   .guide-open { margin-top: 10px; }
+  .help-jumps { margin: 10px 0 0; }
+  .link-button { display: inline-flex; align-items: center; min-height: 24px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+  .link-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .support-logs h3:focus-visible, .updates h3:focus-visible { outline-offset: 3px; border-radius: var(--radius-sm); }
   .guide-top { margin: 13px 0 12px; }
   .update-button:hover { background: var(--surface-2); }
   .update-button:focus-visible { outline: 2px solid var(--focus); }

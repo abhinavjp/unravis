@@ -316,7 +316,7 @@ test('no call carries a password, a connection string or a path', async () => {
 test('the review shows the gating notice and the tick box before the Create button', () => {
   const source = read('src/components/wizard/ReviewStep.svelte');
   assert.match(source, /GATING_BANNER/);
-  assert.match(source, /ACK_LABEL/);
+  assert.match(source, /ackLabelFor\(/);
   assert.match(source, /type="checkbox"/);
   // The button is in the footer of the frame, drawn after the review snippet, so the notice is always above it.
   const landing = read('src/components/Landing.svelte');

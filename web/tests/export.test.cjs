@@ -45,7 +45,7 @@ test('describeCount shows the server text, and falls back without guessing', () 
   assert.equal(exp.describeCount({ masked: false, text: '' }), '');
 });
 
-test('exportSummary counts findings, low n, pseudonyms and ledger entries', () => {
+test('exportSummary counts findings, low n, pseudonyms and theories', () => {
   const s = exp.exportSummary(exported());
   assert.equal(s.records, 2);
   assert.equal(s.lowN, 1);
@@ -54,7 +54,7 @@ test('exportSummary counts findings, low n, pseudonyms and ledger entries', () =
   assert.deepEqual(s.statements, ['Counts below 20 are shown as <20.']);
   assert.equal(s.line, '2 findings, 1 low n');
   const full = exp.exportSummary(exported({ pseudonyms: [{ label: 'user-3fa91c2e', requests: { masked: true, text: '<20' } }], ledger: [{ text: 't', state: 'open', evidenceIds: [] }] }));
-  assert.equal(full.line, '2 findings, 1 low n, 1 pseudonym, 1 ledger entry');
+  assert.equal(full.line, '2 findings, 1 low n, 1 pseudonym, 1 theory');
   const none = exp.exportSummary(exported({ records: [] }));
   assert.equal(none.empty, true);
   assert.equal(none.line, '0 findings, 0 low n');

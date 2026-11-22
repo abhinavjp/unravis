@@ -47,13 +47,13 @@
     {#if stage === 'idle' && reply.url && isOwnReleaseUrl(reply.url)}<a class="update-bar-link" data-testid="update-bar-link" href={reply.url} target="_blank" rel="noopener noreferrer">Open the release page <span class="sr-only">(opens in a new tab)</span></a>{/if}
     {#if installing.error}<span class="update-bar-error" role="alert" data-testid="update-bar-error">{installing.error}</span>{/if}
     {#if stage === 'idle' || stage === 'failed' || stage === 'launched' || stage === 'ready'}
-      <button type="button" class="quiet-button" data-testid="update-bar-dismiss" aria-label={`Hide the update bar for version ${reply.latest}`} onclick={() => dismissUpdate(reply.latest)}>{stage === 'ready' ? 'Later' : 'Not now'}</button>
+      <button type="button" class="quiet-button" data-testid="update-bar-dismiss" aria-label={`${stage === 'ready' ? 'Later' : 'Not now'}. Hide the update bar for version ${reply.latest}`} onclick={() => dismissUpdate(reply.latest)}>{stage === 'ready' ? 'Later' : 'Not now'}</button>
     {/if}
   </div>
 {/if}
 
 <style>
-  .update-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0; border-radius: 0; border-width: 0 0 1px; row-gap: 0; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); color: var(--text); padding: 8px 24px; }
+  .update-bar { box-sizing: border-box; min-height: 46px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0; border-radius: 0; border-width: 0 0 1px; row-gap: 0; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); color: var(--text); padding: 8px 24px; }
   .update-bar:focus { outline: none; }
   .update-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .update-bar-text { font-weight: 500; }
@@ -64,7 +64,10 @@
   .update-bar-progress { width: 160px; height: 8px; accent-color: var(--accent); }
   .update-bar-action { padding: 3px 12px; font-size: 13px; margin: 0; }
   @media (max-width: 720px) { .update-bar-action { margin: 4px 0; } }
-  .update-bar .quiet-button { margin-left: auto; }
+  /* A failed update is bad news, so it is not drawn in the green of good news (CASES-08). */
+  .update-bar[data-state='failed'] { background: color-mix(in srgb, var(--bad) 10%, var(--surface)); border-bottom-color: var(--bad); }
+  /* Not now sits next to the main button, not 600 px away at the edge. */
+  .update-bar .quiet-button { margin-left: 0; }
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   @media (max-width: 720px) { .update-bar { padding: 8px 16px; } }
 </style>

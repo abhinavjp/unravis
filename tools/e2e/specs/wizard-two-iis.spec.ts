@@ -46,7 +46,7 @@ test('TWOIIS-01: two IIS logs tagged Production and UAT keep their own environme
   await expect(uat).toHaveValue('UAT');
 
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
   await expect.poll(async () => ((await api('GET', '/api/cases')).json.cases as Array<{ title: string }>).some((c) => c.title === title), { timeout: 15000 }).toBe(true);
   const made = (await api('GET', '/api/cases')).json.cases.find((c: { title: string }) => c.title === title);

@@ -231,9 +231,9 @@ export const timelineOption = (analysis: Analysis, selected: Comparison | null, 
     dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, zoomSlider(p)],
     series: [
       { name: 'Current median', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: points.map(point => finite(point.p50?.valueMs)), lineStyle: { color: p.text2, width: 2.5 }, itemStyle: { color: p.text2 } },
-      { name: 'Current p95', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: points.map(point => finite(point.p95?.valueMs)), lineStyle: { color: p.accent, width: 2.5 }, itemStyle: { color: p.accent } },
+      { name: 'Current P95', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: points.map(point => finite(point.p95?.valueMs)), lineStyle: { color: p.accent, width: 2.5 }, itemStyle: { color: p.accent } },
       { name: 'Reference median', type: 'line', showSymbol: false, data: labels.map(() => finite(chosen?.reference.p50?.valueMs)), lineStyle: { color: p.text2, type: 'dashed', opacity: .55 }, itemStyle: { color: p.text2 } },
-      { name: 'Reference p95', type: 'line', showSymbol: false, data: labels.map(() => finite(chosen?.reference.p95?.valueMs)), lineStyle: { color: p.accent, type: 'dashed', opacity: .55 }, itemStyle: { color: p.accent } },
+      { name: 'Reference P95', type: 'line', showSymbol: false, data: labels.map(() => finite(chosen?.reference.p95?.valueMs)), lineStyle: { color: p.accent, type: 'dashed', opacity: .55 }, itemStyle: { color: p.accent } },
       ...(targetMs == null ? [] : [{ name: 'Response-time target', type: 'line', showSymbol: false, data: labels.map(() => targetMs), lineStyle: { color: p.series[0], type: 'dotted', width: 2 }, itemStyle: { color: p.series[0] } }])
     ]
   };

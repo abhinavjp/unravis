@@ -4,7 +4,7 @@
 //           left out and the case lists it.
 //   L4N-02  Import files popup: a file named log.txt is suggested as an application log from its name alone, and a prose file is not supported.
 //   L4N-03  Create wizard: the Application logs card holds the file, the case is made with it, and the file was read as log4net blocks.
-//   L4N-04  The Investigation Timeline of the case lists the file among the Sources traced.
+//   L4N-04  The Investigation timeline of the case lists the file among the Sources traced.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase, filesTile } from '../support/ui';
 import { createCase, ensureHost, importFile } from '../support/api';
@@ -21,7 +21,7 @@ const ack = (page: Page) => popup(page).getByRole('checkbox', { name: 'Confirm r
 
 async function openPopup(page: Page, title: string) {
   await openCase(page, title);
-  await page.getByRole('button', { name: 'Add a file' }).click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).click();
   await expect(popup(page).getByRole('heading', { name: 'Add files', level: 2 })).toBeVisible();
 }
 
@@ -119,7 +119,7 @@ test('L4N-03: the create wizard holds the file from the Application logs card an
   await page.getByRole('button', { name: 'Add 1 file' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByText(/^File chosen: app-log4net\.txt/)).toBeVisible();
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
 
   await expect.poll(async () => ((await api('GET', '/api/cases')).json.cases as Array<{ title: string }>).some((c) => c.title === 'QA Log4net Wizard'), { timeout: 15_000 }).toBe(true);
@@ -130,7 +130,7 @@ test('L4N-03: the create wizard holds the file from the Application logs card an
   expect(text).toContain('log4net-blocks');
 });
 
-test('L4N-04: the Investigation Timeline lists the file among the Sources traced', async ({ page, api }) => {
+test('L4N-04: the Investigation timeline lists the file among the Sources traced', async ({ page, api }) => {
   const id = await createCase(api, 'QA Log4net Timeline');
   const form = new FormData();
   form.append('ackGating', 'true');
@@ -142,8 +142,8 @@ test('L4N-04: the Investigation Timeline lists the file among the Sources traced
 
   await goHome(page);
   await openCase(page, 'QA Log4net Timeline');
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   const sources = page.locator('[data-testid=trace-sources]');
   await expect(sources).toBeVisible();
   // The application log has no lane of its own on the timeline; the file is listed as a source that is traced.

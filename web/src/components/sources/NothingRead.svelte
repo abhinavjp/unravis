@@ -28,3 +28,8 @@
     {#if onAddData}<button type="button" class="btn" onclick={() => onAddData?.()}>{NOTHING_TEXT.addData}</button>{/if}
   </div>
 </section>
+
+<style>
+  /* The caption sits with the table, on the left, not centred above it (CASES-29d). */
+  caption { text-align: left; font-family: inherit; padding-bottom: var(--space-1); }
+</style>

@@ -122,8 +122,8 @@ test('SRC-08: Forget asks first, Keep it changes nothing, Forget it removes the 
   const block = await savedConnections(page);
   const rows = rowsOf(block);
   const before = await rows.count();
-  const counter = block.getByText(/SQL Server connections saved: \d+ \/ 20/);
-  const countBefore = Number(((await counter.innerText()).match(/saved: (\d+)/) as RegExpMatchArray)[1]);
+  const counter = block.getByText(/\d+ of 20 SQL Server connections saved\./);
+  const countBefore = Number(((await counter.innerText()).match(/(\d+) of 20/) as RegExpMatchArray)[1]);
   const target = rows.filter({ hasText: 'qa-sql2.example.invalid' });
   await expect(target).toHaveCount(1);
   const name = (await target.getByRole('button', { name: /^Forget/ }).getAttribute('aria-label')) as string;
@@ -135,7 +135,7 @@ test('SRC-08: Forget asks first, Keep it changes nothing, Forget it removes the 
   await block.getByRole('button', { name: 'Forget it' }).click();
   await expect(rows).toHaveCount(before - 1);
   await expect(block.getByText('qa-sql2.example.invalid')).toHaveCount(0);
-  await expect(block.getByText(new RegExp('SQL Server connections saved: ' + (countBefore - 1) + ' / 20'))).toBeVisible();
+  await expect(block.getByText(new RegExp('^' + (countBefore - 1) + ' of 20 SQL Server connections saved\\.'))).toBeVisible();
   // The other rows are untouched.
   await expect(rows.filter({ hasText: 'Demo MongoDB' })).toHaveCount(1);
 });

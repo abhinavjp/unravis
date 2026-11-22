@@ -148,7 +148,7 @@
                 onchange={(event) => setRecord(row.toggle!, event.currentTarget.checked)}
               />
             {:else}
-              <input type="checkbox" checked disabled title={BBW_TEXT['record.tag.whenPresentHelp']} />
+              <span class="locked" title={BBW_TEXT['record.lockedMark']} aria-hidden="true">✓</span>
             {/if}
             <span class="grp-t">
               <span class="grp-name"><b>{row.title}</b>{#if row.tag}<span class="tag" class:warn={row.sql}>{row.tag}</span>{/if}</span>
@@ -228,7 +228,7 @@
   .grp-h { display: grid; grid-template-columns: 20px 1fr auto; gap: var(--space-3); align-items: start; min-height: 48px; padding: var(--space-3) var(--space-4); cursor: pointer; }
   .grp-h:hover { background: var(--surface-2); }
   .grp-h input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); }
-  .grp-h input:disabled { cursor: default; }
+  .locked { display: grid; place-items: center; width: 18px; height: 18px; margin: 2px 0 0; color: var(--tone-ok); font-weight: 700; line-height: 1; }
   .grp-t { display: grid; gap: 0; min-width: 0; }
   .grp-name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
   .grp-name b { font-weight: 600; }

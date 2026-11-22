@@ -250,6 +250,31 @@ export function refusalText(error: unknown, table: Record<string, string>): stri
   return table.offline ?? 'The request failed.';
 }
 
+const REFUSED_FIELD: Record<string, SettingsProblem> = {
+  name: 'name', folder: 'folder', intervalSeconds: 'interval', keepDays: 'keep', maxGB: 'size', minFreePercent: 'free', port: 'port', bind: 'bind', logPaths: 'logs'
+};
+
+/**
+ * The setting a refused "settings are not valid" call is about, read from the field name in the server's own message
+ * (for example `blackbox.json is not valid: "folder" must be a full path`). Null when it names none we know.
+ */
+export function refusedField(error: unknown): SettingsProblem | null {
+  if (!(error instanceof BlackboxError) || error.refusal.reason !== 'invalid-config') return null;
+  const m = /"(\w+)"/.exec(error.refusal.error ?? '');
+  return (m && REFUSED_FIELD[m[1]]) || null;
+}
+
+/** The step of the Place wizard that owns a setting, so a refusal can send the person there. */
+export function stepOfSetting(field: SettingsProblem): 'name' | 'record' | 'watch' | 'keep' | 'folder' {
+  switch (field) {
+    case 'name': return 'name';
+    case 'interval': case 'logs': return 'record';
+    case 'targets': return 'watch';
+    case 'keep': case 'size': case 'free': return 'keep';
+    default: return 'folder';
+  }
+}
+
 /** The machine reason of a refused call ('offline', 'no_session', 'rate' ...), or '' for any other thrown value. */
 export function refusalReason(error: unknown): string {
   return error instanceof BlackboxError ? error.refusal.reason : '';

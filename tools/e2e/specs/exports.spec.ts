@@ -140,7 +140,7 @@ test('EXP-06a: an analysed report on a closed case still builds, and a short win
   expect(backwards.status).toBe(400);
 });
 
-test('EXP-08a: a hypothesis is not in the shared export unless Include my ledger is ticked', async ({ api }) => {
+test('EXP-08a: a hypothesis is not in the shared export unless Include my theories is ticked', async ({ api }) => {
   const id = demoId('demoopen');
   const win = { sourceIds: WIN.sourceIds, start: '2026-10-20T08:00:00Z', end: '2026-10-20T09:00:00Z' };
   const first = await api('POST', '/api/export/preview', { ...win, includeLedger: true });
@@ -162,7 +162,7 @@ test('EXP-08a: a hypothesis is not in the shared export unless Include my ledger
   expect(JSON.stringify(shared.json.export.body)).not.toContain('Retries at the gateway');
 });
 
-test('EXP-08: Include my ledger puts the case hypothesis that cites a record into the export', async ({ api }) => {
+test('EXP-08: Include my theories puts the case hypothesis that cites a record into the export', async ({ api }) => {
   const id = await createCase(api, 'QA Ledger Share');
   const win = { sourceIds: WIN.sourceIds, start: '2026-10-20T08:00:00Z', end: '2026-10-20T09:00:00Z' };
   const first = await api('POST', '/api/export/preview', { ...win, includeLedger: true });

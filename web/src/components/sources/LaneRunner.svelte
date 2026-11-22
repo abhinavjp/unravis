@@ -3,10 +3,12 @@
   import { api } from '../../lib/api';
   import { DEFAULT_COLLECTION } from '../../lib/wizardConnections';
   import {
-    laneWindowTooLong, overlapProblem, runMongoLane, runNotice, runProblem, runSqlLane, unreadableTime, utcInput, utcWindow, type LaneDay, type LaneRunResult, type LaneWindow
+    laneWindowTooLong, overlapProblem, runMongoLane, runNotice, runProblem, runSqlLane, unreadableTime, utcInput, utcTextToIso, utcWindow, type LaneDay, type LaneRunResult, type LaneWindow
   } from '../../lib/lanes';
   import { RUN_TEXT, DAY_TEXT } from '../../lib/copy/sourcesCopy';
   import type { RecentConnection, SavedSqlConnection } from '../../lib/types';
+  import { formatTime } from '../../lib/time';
+  import { timeZone } from '../../lib/timeZone.svelte';
   import './sources.css';
 
   // Reads one day from a saved SQL Server or MongoDB connection and adds it to the case. Read-only: the server runs fixed checks and nothing typed
@@ -60,6 +62,14 @@
     })();
     return () => mine.abort();
   });
+
+  // The boxes take UTC (the server reads UTC), but the page and the header speak the zone the person chose. Under each box the same moment is shown there, so
+  // nobody types a London time into a UTC box without seeing the difference (CASES-12). In UTC the line would say the same thing twice, so it is left out.
+  const inHeaderZone = (text: string): string => {
+    if (timeZone.zone === 'UTC') return '';
+    const iso = utcTextToIso(text);
+    return iso ? '= ' + formatTime(iso, { zone: timeZone.zone, precision: 'minute', year: true }) : '';
+  };
 
   /** The server name a day is held under: the connection's name for SQL, and the fixed word MongoDB for MongoDB. */
   const heldLabel = (): string => (kind === 'sql' ? (sqlPicked ? sqlPicked.label || sqlPicked.server : '') : 'MongoDB');
@@ -139,11 +149,13 @@
       </div>
     {/if}
   </div>
-  <div class="pair">
-    <div class="field"><label for="{uid}-is">{RUN_TEXT.incidentStart}</label><input id="{uid}-is" type="text" placeholder="2026-10-26 10:30" bind:value={incStart} autocomplete="off" /></div>
-    <div class="field"><label for="{uid}-ie">{RUN_TEXT.incidentEnd}</label><input id="{uid}-ie" type="text" placeholder="2026-10-26 11:00" bind:value={incEnd} autocomplete="off" /></div>
-    <div class="field"><label for="{uid}-rs">{RUN_TEXT.referenceStart}</label><input id="{uid}-rs" type="text" placeholder="2026-10-26 09:30" bind:value={refStart} autocomplete="off" /></div>
-    <div class="field"><label for="{uid}-re">{RUN_TEXT.referenceEnd}</label><input id="{uid}-re" type="text" placeholder="2026-10-26 10:30" bind:value={refEnd} autocomplete="off" /></div>
+  <div class="pair pair-times">
+    <div class="field"><label for="{uid}-is">{RUN_TEXT.incidentStart}</label><input id="{uid}-is" type="text" placeholder={RUN_TEXT.timePlaceholder} bind:value={incStart} autocomplete="off" aria-describedby="{uid}-is-echo" /><p class="echo" id="{uid}-is-echo" data-echo="incident-start">{inHeaderZone(incStart)}</p></div>
+    <div class="field"><label for="{uid}-ie">{RUN_TEXT.incidentEnd}</label><input id="{uid}-ie" type="text" placeholder={RUN_TEXT.timePlaceholder} bind:value={incEnd} autocomplete="off" aria-describedby="{uid}-ie-echo" /><p class="echo" id="{uid}-ie-echo" data-echo="incident-end">{inHeaderZone(incEnd)}</p></div>
+  </div>
+  <div class="pair pair-times">
+    <div class="field"><label for="{uid}-rs">{RUN_TEXT.referenceStart}</label><input id="{uid}-rs" type="text" placeholder={RUN_TEXT.timePlaceholder} bind:value={refStart} autocomplete="off" aria-describedby="{uid}-rs-echo" /><p class="echo" id="{uid}-rs-echo" data-echo="reference-start">{inHeaderZone(refStart)}</p></div>
+    <div class="field"><label for="{uid}-re">{RUN_TEXT.referenceEnd}</label><input id="{uid}-re" type="text" placeholder={RUN_TEXT.timePlaceholder} bind:value={refEnd} autocomplete="off" aria-describedby="{uid}-re-echo" /><p class="echo" id="{uid}-re-echo" data-echo="reference-end">{inHeaderZone(refEnd)}</p></div>
   </div>
   <p class="hint">{RUN_TEXT.timesHint}</p>
   <p class="hint">{DAY_TEXT.checkAgain}</p>
@@ -155,3 +167,10 @@
     {#if done}<p class="say good" role="status">{done}</p>{/if}
   </div>
 </section>
+
+<style>
+  /* The four times are two rows of two: the incident pair, then the reference pair, so a row never wraps three and one (CASES-12). */
+  .pair-times { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .echo { min-height: 1.4em; margin: 0; color: var(--text-2); font-size: var(--fs-2); font-variant-numeric: tabular-nums; }
+  @media (max-width: 520px) { .pair-times { grid-template-columns: minmax(0, 1fr); } }
+</style>

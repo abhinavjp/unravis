@@ -31,4 +31,9 @@
   .u-rail li.current { color: var(--text); font-weight: 600; background: var(--surface-2); }
   .u-rail li.current::before { background: var(--accent); }
   .u-rail li.ahead::before { background: var(--hatch); width: 4px; opacity: .7; }
+  /* Forced colors (Windows high contrast) removes background colours: the current step keeps a real border and the rest are told apart by it. */
+  @media (forced-colors: active) {
+    .u-rail li.current { border-left: 3px solid Highlight; padding-left: 11px; }
+    .u-rail li.current::before { display: none; }
+  }
 </style>

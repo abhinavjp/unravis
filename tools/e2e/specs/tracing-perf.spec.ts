@@ -1,4 +1,4 @@
-// Performance check of the Investigation Timeline on a large generated dataset (cmd/unravis-perfdata).
+// Performance check of the Investigation timeline on a large generated dataset (cmd/unravis-perfdata).
 // Off unless UNRAVIS_PERF_CFG points at the cfg folder of a generated dataset, for example
 //   .dev\perf-data\S\cfg      (manifest.json sits next to it, one folder up)
 // The real app (UNRAVIS_LIVE_EXE, default unravis.exe beside the demo exe) is started on a COPY of that folder,
@@ -33,8 +33,8 @@ const box = (ms: number) => new Date(ms).toISOString().slice(0, 16);
 
 async function openTracing(page: Page, title: string) {
   await page.getByRole('button', { name: 'Open case ' + title }).click();
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect(page.locator('.tracing-chart')).toBeVisible({ timeout: 60_000 });
 }
 
@@ -51,7 +51,7 @@ async function trace(page: Page, w: readonly string[]): Promise<{ ms: number; st
   return { ms: Date.now() - t0, status: res.status(), bytes: body.length };
 }
 
-test.describe('Investigation Timeline on a generated dataset', () => {
+test.describe('Investigation timeline on a generated dataset', () => {
   test.skip(!CFG, 'Set UNRAVIS_PERF_CFG to the cfg folder of a generated dataset to run the performance checks.');
   test.describe.configure({ mode: 'serial' });
   test.setTimeout(240_000);

@@ -15,6 +15,4 @@ Unravis helps you find out what went wrong in production. It reads your audit lo
 | [Security](security.md) | What Unravis reads, what it keeps, and what it never does |
 | [Screenshots](screenshots.md) | How the pictures in these pages are made (for contributors) |
 
-Not yet run on a clean PC: install, upgrade and uninstall, the key keeper and the Blackbox service.
-
 The same pages are in the app, under Help.

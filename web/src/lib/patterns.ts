@@ -24,7 +24,8 @@ export const PATTERNS_TEXT = {
   running: 'Looking…',
   runNote: 'This reads the slowest requests in the window. It only runs when you press the button.',
   thresholds: 'Thresholds',
-  intro: 'Patterns looks at the slowest requests in this window and groups the ones that happened close together. Each group is an episode. Several separate episodes may mean the same thing keeps happening.',
+  // The note under the title already says what Patterns reads and groups; the intro adds only what an episode is (ANALYSIS-20: it was said twice).
+  intro: 'Each group of slow requests is an episode. Several separate episodes may mean the same thing keeps happening.',
   rangeLabel: 'Range',
   rangeNote: 'This is the same range as the page behind this panel.',
   stallLabel: 'Slow request (s)',
@@ -119,7 +120,8 @@ export const nBadge = (n: number) => `n = ${n}`;
 
 /** Counts of rows that could not be placed. Always shown, even at zero. */
 export function qualityLine(quality: PatternReport['quality']): string {
-  return `${quality.incomplete} incomplete, ${quality.pending} pending, ${quality.invalid} invalid`;
+  // The same words as the Quality of the data strip: missing timing, pending, unusable timing (ANALYSIS-13).
+  return `${quality.incomplete} with missing timing, ${quality.pending} pending, ${quality.invalid} with unusable timing`;
 }
 
 const pct = (value: number | undefined) => value == null || !Number.isFinite(value) ? 'unknown' : Number(value.toFixed(1)) + '%';
@@ -173,10 +175,10 @@ export const operationText = (row: { controller: string; action: string }) => ro
 
 /** The ranges the drawer offers, in order. They are ids of the page's own quick ranges, so one click here is one click there. */
 export const PATTERN_RANGES = [
-  { id: '15m', label: '15 min' },
-  { id: '1h', label: '1 h' },
-  { id: '4h', label: '4 h' },
-  { id: '24h', label: '24 h' }
+  { id: '15m', label: 'Last 15 min' },
+  { id: '1h', label: 'Last hour' },
+  { id: '4h', label: 'Last 4 hours' },
+  { id: '24h', label: 'Last 24 hours' }
 ] as const;
 
 // ---- Thresholds in seconds ----

@@ -8,8 +8,8 @@
   import { api, ApiError } from './api.ts';
   import {
     approvalReason, blockedLine, blocked, buildRequest, canFinish, checksFailedFirst, CONFIRM_DELETE_WORD, doneHeading, failedHeading, formatBytes, mergeEvents,
-    parseAddresses, progressHeading, progressPercent, railPosition, railSteps, retryHelps, screenAfterResult, settleSteps, stepAnnouncement, uninstallReady,
-    validateOptions, welcomeHeading, welcomeNutshell,
+    parseAddresses, problemNotice, progressHeading, progressPercent, railPosition, railSteps, retryHelps, screenAfterResult, settleSteps, stepAnnouncement, uninstallReady,
+    showsCloseBox, uninstallWhy, validateOptions, welcomeHeading, welcomeNutshell,
     type BlackboxOptions, type Check, type Op, type Options, type Problem, type Result, type Scope, type Screen, type StepEvent,
     type UIChanges, type UIState, type UninstallOptions
   } from './logic.ts';
@@ -73,6 +73,9 @@
   const stepNumber = $derived(Math.max(0, rail.findIndex((step) => step.id === position.current)) + 1);
   const stepLabel = $derived(rail.find((step) => step.id === position.current)?.label ?? '');
   const deleting = $derived(op === 'uninstall' && (uninst.deleteCases || uninst.deleteRecordings));
+  // Said beside a footer button that is off, so a greyed button always has its reason on the screen.
+  const removeWhy = $derived(uninstallWhy(uninst, blackboxName));
+  const finishWhy = $derived(op !== 'uninstall' && result && !canFinish(result, keySaved) ? 'Tick \u201cI have saved the read key\u201d to go on.' : '');
   // Said to a screen reader, not shown: a screen change names the step; the two end screens say how the run ended (D-C-26).
   const announcement = $derived(fatal || !ui ? '' : closed ? 'Setup is closed.' : stepAnnouncement(op, screen, stepNumber, rail.length, stepLabel, result));
 
@@ -175,7 +178,7 @@
     notice = '';
     problems = validateOptions(wanted());
     if (problems.length) {
-      notice = problems.length === 1 ? 'Fix the item marked in red, then press Next.' : 'Fix the ' + problems.length + ' items marked in red, then press Next.';
+      notice = problemNotice(problems);
       await tick();
       document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
       return;
@@ -188,6 +191,15 @@
     if (!uninstallReady(uninst, blackboxName)) return;
     if (await check()) await proceed();
   });
+
+  // Enter in a text box of the Options screen does what Next does (it did nothing before). A button or a tick box keeps its own Enter.
+  function enterInField(event: KeyboardEvent) {
+    if (event.key !== 'Enter' || screen !== 'options' || event.defaultPrevented) return;
+    const target = event.target as HTMLElement;
+    if (!(target instanceof HTMLInputElement) || (target.type !== 'text' && target.type !== 'number')) return;
+    event.preventDefault();
+    if (!settling) void optionsNext();
+  }
 
   async function proceed() {
     if (blocked(checks)) return;
@@ -309,6 +321,16 @@
   {/if}
 {/snippet}
 
+{#snippet noticeLine()}
+  {#if notice}<p class="notice" role="alert">{notice}</p>{/if}
+{/snippet}
+
+{#snippet closeNote(check: Check)}
+  {#if showsCloseBox(check)}
+    <label class="tick under-row"><input type="checkbox" bind:checked={options.closeRunningApp} /> Close Unravis for me</label>
+  {/if}
+{/snippet}
+
 {#snippet closeCheckbox()}
   {#if appRunning}
     <label class="tick"><input type="checkbox" bind:checked={options.closeRunningApp} /> Close Unravis for me</label>
@@ -333,21 +355,22 @@
       <div class="body">
         <aside><StepRail steps={rail} current={position.current} done={position.done} skipped={position.skipped} label="Setup steps" /></aside>
         <main>
-          <div class="content">
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="content" onkeydown={enterInField}>
             <p class="stepline" aria-hidden="true">Step {stepNumber} of {rail.length}: {stepLabel}</p>
-            {#if notice}<p class="notice" role="alert">{notice}</p>{/if}
 
             {#if screen === 'welcome'}
               <h1>{welcomeHeading(ui)}</h1>
+              {@render noticeLine()}
               <div class="nutshell"><b>In a nutshell</b>
                 {welcomeNutshell(op)}
               </div>
               {#if blockedNote}<p class="blocked" role="alert">{blockedNote}</p>{/if}
-              {#if checking && !checks.length}<p class="quiet">Checking this PC…</p>{:else}<CheckList checks={orderedChecks} />{/if}
-              {@render closeCheckbox()}
+              {#if checking && !checks.length}<p class="quiet">Checking this PC…</p>{:else}<CheckList checks={orderedChecks} rowNote={closeNote} />{/if}
 
             {:else if screen === 'options'}
               <h1>Where and how</h1>
+              {@render noticeLine()}
               <fieldset class="scope">
                 <legend class="sr">Who it is for</legend>
                 <label class="tick"><input type="radio" name="scope" checked={options.scope === 'user'} onchange={() => setScope('user')} /> Just for me <span class="quiet">(no admin needed)</span></label>
@@ -382,6 +405,7 @@
 
             {:else if screen === 'approval'}
               <h1>Windows will ask for admin approval</h1>
+              {@render noticeLine()}
               <div class="nutshell"><b>In a nutshell</b>
                 {approvalReason(op, wanted(), ui.installed?.scope)} needs administrator rights. Windows shows its own prompt next; choose Yes to go on. Here is exactly what changes.
               </div>
@@ -393,6 +417,7 @@
 
             {:else if screen === 'progress'}
               <h1>{progressHeading(op)}</h1>
+              {@render noticeLine()}
               <div class="bar" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent(rows)} aria-valuetext={progressPercent(rows) + ' percent'}>
                 <span style:width={progressPercent(rows) + '%'}></span>
               </div>
@@ -400,6 +425,7 @@
 
             {:else if screen === 'done' && result}
               <h1>{doneHeading(op)}</h1>
+              {@render noticeLine()}
               {#if op === 'uninstall'}
                 {#if result.message && result.message.replace(/\.$/, '') !== doneHeading(op)}<p>{result.message}</p>{/if}
                 {#if result.kept?.length}
@@ -426,6 +452,7 @@
 
             {:else if screen === 'failed' && result}
               <h1>{failedHeading(result)}</h1>
+              {@render noticeLine()}
               <p>{result.message}</p>
               <StepList rows={rows} fix={result.fix ?? ''} onretry={op === 'install' && retryHelps(result) ? run : undefined} />
               {#if result.left?.length}
@@ -435,6 +462,7 @@
 
             {:else if screen === 'uninstall'}
               <h1>Remove Unravis</h1>
+              {@render noticeLine()}
               <div class="nutshell"><b>In a nutshell</b>
                 Always removed: the program, its shortcuts and the Installed apps entry{everyone ? ', the key keeper service' : ''}{blackboxName ? ', the Blackbox service and its firewall rule' : ''}. Your data stays unless you tick it below.
               </div>
@@ -479,12 +507,12 @@
               <span class="grow"></span>
               <Button onclick={press(cancelRun)} disabled={cancelling} aria-disabled={hold}>{cancelling ? 'Cancelling…' : 'Cancel'}</Button>
             {:else if screen === 'done'}
-              <span class="grow"></span>
+              <span class="grow why" id="finish-why">{finishWhy}</span>
               {#if op === 'uninstall'}
                 <Button kind="primary" onclick={press(closeSetup)} aria-disabled={hold}>Close</Button>
               {:else}
-                <Button onclick={press(closeSetup)} disabled={!canFinish(result, keySaved)} aria-disabled={hold}>Close</Button>
-                <Button kind="primary" onclick={press(openApp)} disabled={!canFinish(result, keySaved)} aria-disabled={hold}>Open Unravis</Button>
+                <Button onclick={press(closeSetup)} disabled={!canFinish(result, keySaved)} aria-disabled={hold} aria-describedby={finishWhy ? 'finish-why' : undefined}>Close</Button>
+                <Button kind="primary" onclick={press(openApp)} disabled={!canFinish(result, keySaved)} aria-disabled={hold} aria-describedby={finishWhy ? 'finish-why' : undefined}>Open Unravis</Button>
               {/if}
             {:else if screen === 'failed'}
               <span class="grow"></span>
@@ -495,9 +523,9 @@
                 <Button kind="primary" onclick={run} disabled={busy || result?.outcome === 'rollback-incomplete'} aria-disabled={hold}>Try again</Button>
               {/if}
             {:else if screen === 'uninstall'}
-              <span class="grow"></span>
+              <span class="grow why" id="remove-why">{removeWhy}</span>
               <Button onclick={press(closeSetup)} aria-disabled={hold}>Cancel</Button>
-              <Button kind="primary" onclick={removeNext} disabled={checking || busy || !uninstallReady(uninst, blackboxName)} aria-disabled={hold}>Remove</Button>
+              <Button kind={deleting ? 'danger' : 'primary'} onclick={removeNext} disabled={checking || busy || !uninstallReady(uninst, blackboxName)} aria-disabled={hold} aria-describedby={removeWhy ? 'remove-why' : undefined}>{deleting ? 'Remove and delete data' : 'Remove'}</Button>
             {/if}
           </footer>
         </main>
@@ -508,8 +536,8 @@
 
 <style>
   /* The setup window is the card: it fills the window at any size, so there is no dead band around it. */
-  .page { box-sizing: border-box; height: 100vh; }
-  .frame { box-sizing: border-box; width: 100%; height: 100%; min-height: 480px; display: flex; flex-direction: column; background: var(--surface); overflow: hidden; }
+  .page { box-sizing: border-box; height: 100vh; height: 100dvh; }
+  .frame { box-sizing: border-box; width: 100%; height: 100%; display: flex; flex-direction: column; background: var(--surface); overflow: hidden; }
   header { flex: 0 0 56px; height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 1px solid var(--line); }
   .version { font-size: 12px; color: var(--text-2); }
   .body { flex: 1; min-height: 0; display: grid; grid-template-columns: 200px minmax(0, 1fr); }
@@ -525,6 +553,8 @@
   .quiet { color: var(--text-2); }
   .nutshell { padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius-sm); font-size: 13px; line-height: 1.5; }
   .nutshell b { display: block; margin-bottom: 2px; font-size: 12px; color: var(--text-2); }
+  .why { min-width: 0; font-size: 12px; color: var(--text-2); }
+  .under-row { margin-top: 6px; min-height: 24px; }
   .notice { padding: 8px 12px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 14%, var(--surface)); font-size: 13px; }
   .problem { color: var(--bad); font-size: 12px; }
   .blocked { padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--bad); font-size: 13px; }
@@ -543,6 +573,11 @@
   .lists ul, .plain { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; }
   .bar { height: 4px; background: var(--line); border-radius: 1px; overflow: hidden; }
   .bar span { display: block; height: 100%; background: var(--accent); transition: width var(--dur) var(--ease); }
+  /* Forced colors (Windows high contrast) removes background colours: the track gets a border and the fill is the system highlight, so progress stays visible. */
+  @media (forced-colors: active) {
+    .bar { border: 1px solid CanvasText; }
+    .bar span { background: Highlight; forced-color-adjust: none; }
+  }
   .key { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
   .key h2 { margin: 0; }
   .key-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -554,8 +589,7 @@
     .body { grid-template-columns: minmax(0, 1fr); }
     .stepline { display: block; }
     aside { display: none; }
-    .page { height: auto; min-height: 100vh; }
-    .frame { height: auto; min-height: 600px; }
+    /* The frame keeps the height of the window on a narrow or zoomed screen: the content scrolls and the footer buttons stay in view (SETUP-A11Y-06). */
     .grid { grid-template-columns: 1fr 1fr; }
     .grid .wide { grid-column: span 2; }
     .lists { grid-template-columns: 1fr; }

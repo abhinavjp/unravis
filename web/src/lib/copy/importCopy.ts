@@ -15,6 +15,11 @@ export const GATING_BANNER = 'Parsers are built and tested on synthetic files on
 /** The checkbox that must be ticked for each import. The banner above is what gets sent as ackText (see ackTextFor). */
 export const ACK_LABEL = 'I confirm this file meets the conditions in the notice above.';
 
+/** The same confirmation when more than one file is chosen (CASES-03). */
+export const ACK_LABEL_MANY = 'I confirm these files meet the conditions in the notice above.';
+
+export const ackLabelFor = (files: number): string => (files > 1 ? ACK_LABEL_MANY : ACK_LABEL);
+
 /** The only sentence shown after an erase (storage decision, "What the UI says, and only this"). */
 export const ERASE_DONE = 'Case data deleted and its encryption key destroyed. Remaining fragments on disk are unreadable.';
 

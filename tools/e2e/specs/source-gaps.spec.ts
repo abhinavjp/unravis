@@ -1,4 +1,4 @@
-// Source-side gaps on the Sources tab and the Investigation Timeline, each driven in the page against the demo server with real requests:
+// Source-side gaps on the Sources tab and the Investigation timeline, each driven in the page against the demo server with real requests:
 //   SRCGAP-01  Edit labels on a file's row saves its Environment, Portal and API (the first save makes the tag), and they stay after a reload.
 //   SRCGAP-02  The time zone of a file's computer is saved from its row, and the list says the computer's zone applies to every file from it.
 //   SRCGAP-03  An audit database row shows how many documents it holds and how old the newest one is.
@@ -127,8 +127,8 @@ const chip = (page: Page, sourceId: string) => page.locator('[data-testid=trace-
 async function openTimeline(page: Page, title: string) {
   await goHome(page);
   await openCase(page, title);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect(page.locator('[data-testid=trace-sources]')).toBeVisible();
 }
 

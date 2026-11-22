@@ -2,7 +2,7 @@ import type { LintEntry } from '../copy/copylint';
 import type { ReconnectAction, TracingResponse, TracingSourceRef } from './model';
 
 /**
- * The "Sources traced" picker of the Investigation Timeline (the chip row of the wireframe's timeline toolbar). Pure module, no
+ * The "Sources traced" picker of the Investigation timeline (the chip row of the wireframe's timeline toolbar). Pure module, no
  * Svelte. A source is on or off; nothing is selected by default, so the starting state is "all". The picker keeps three states
  * apart because they mean three different things to the server and to the person:
  *   all  - nothing is sent ("sourceIds" absent), the server traces every source of the case;

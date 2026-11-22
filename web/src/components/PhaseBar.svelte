@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { PhaseMeans } from '../lib/types';
   import { phaseMs, phaseSegments, phaseTip } from '../lib/phases';
-  let { phases = null, delta = null }: { phases?: PhaseMeans | null; delta?: PhaseMeans | null } = $props();
+  // `compact` puts the two figures and the payload time on one short line (a table row); the tooltip still says what each part is.
+  let { phases = null, delta = null, compact = false }: { phases?: PhaseMeans | null; delta?: PhaseMeans | null; compact?: boolean } = $props();
   let segments = $derived(phaseSegments(phases));
   let hasPayload = $derived(phases?.payloadMs != null && Number.isFinite(phases.payloadMs));
 </script>
@@ -13,9 +14,9 @@
         {#if segments.audit != null && segments.auditPct > 0}<span class="phase-audit" style:width={segments.auditPct + '%'}></span>{/if}
         {#if segments.api != null && segments.apiPct > 0}<span class="phase-api" style:width={segments.apiPct + '%'}></span>{/if}
       </div>
-      <small>Audit write {phaseMs(segments.audit)} · API work {phaseMs(segments.api)}</small>
+      <small>Audit write {phaseMs(segments.audit)} · API work {phaseMs(segments.api)}{#if compact && hasPayload}{' · '}Payload write {phaseMs(phases?.payloadMs)}{/if}</small>
     {/if}
-    {#if hasPayload}<small>Payload write {phaseMs(phases?.payloadMs)}, after the user got the response</small>{/if}
+    {#if hasPayload && !(compact && segments)}<small>Payload write {phaseMs(phases?.payloadMs)}{#if !compact}, after the user got the response{/if}</small>{/if}
   </div>
 {/if}
 

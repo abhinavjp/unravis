@@ -46,8 +46,8 @@ const bare = (label: string): string => label.replace(/\s*\((?:UTC|[^()]* time|[
 /** The spoken name of one text box: "Incident window start date". */
 export const partLabel = (label: string, part: PickerPart): string => `${bare(label)} ${part}`;
 
-/** The name of the button that opens the popover: "Incident window: 26 Oct 2026 10:30 → 11:00, UTC". */
-export const triggerLabel = (label: string, summary: string, zone: string = PICKER_TEXT.zone): string => `${bare(label)}: ${summary || PICKER_TEXT.choose}, ${zone}`;
+/** The name of the button that opens the popover: "Incident window: 26 Oct 2026 10:30 → 11:00 UTC · 30 min". It holds the button's visible words unbroken, so a voice command such as "click 10:30" finds it (WCAG 2.5.3). */
+export const triggerLabel = (label: string, summary: string, zone: string = PICKER_TEXT.zone, span = ''): string => `${bare(label)}: ${summary || PICKER_TEXT.choose} ${zone}${span ? ` · ${span}` : ''}`;
 
 /** The name of the popover: "Choose the incident window (UTC)". */
 export const dialogLabel = (label: string, zone: string = PICKER_TEXT.zone): string => `Choose the ${bare(label).toLowerCase()} (${zone})`;

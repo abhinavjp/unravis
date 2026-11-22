@@ -137,8 +137,8 @@
       <div role="alertdialog" aria-modal="true" aria-label={KEEPER_TEXT.removeAsk} tabindex="-1" onkeydown={escape} bind:this={dialogEl}>
         <p class="hint">{KEEPER_TEXT.removeAsk}</p>
         <div class="actions">
-          <button type="button" class="btn" disabled={busy !== ''} onclick={() => void run('remove')}>{KEEPER_TEXT.removeYes}</button>
           <button type="button" class="btn" data-keep disabled={busy !== ''} onclick={() => void ask(false)}>{KEEPER_TEXT.removeNo}</button>
+          <button type="button" class="btn" disabled={busy !== ''} onclick={() => void run('remove')}>{KEEPER_TEXT.removeYes}</button>
         </div>
       </div>
     {:else}

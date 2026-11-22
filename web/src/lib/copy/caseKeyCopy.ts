@@ -11,6 +11,7 @@ import type { CaseKeyFailure } from '../caseKey';
 export const CASE_KEY_TEXT = {
   // Create step (screens 8 and 9)
   createToggle: 'Protect this case with its own key',
+  createHelpOn: 'Only people with the key can open this case. A lost key cannot be recovered.',
   createHelp: 'Off by default. If you turn it on, only this case needs the key. The PC key is separate.',
   createKeyLabel: 'Case key',
   createKeyHelp: 'At least 12 characters. Unravis cannot recover it.',

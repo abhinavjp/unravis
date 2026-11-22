@@ -9,7 +9,7 @@
   const count = $derived(ledger.items.length);
 </script>
 
-{#if count > 0}<span class="ledger-count" aria-hidden="true">{count}</span><span class="visually-hidden">, {count} {count === 1 ? 'hypothesis' : 'hypotheses'}</span>{/if}
+{#if count > 0}<span class="ledger-count" aria-hidden="true">{count}</span><span class="visually-hidden">, {count} {count === 1 ? 'theory' : 'theories'}</span>{/if}
 
 <style>
   .ledger-count { margin-left: var(--space-2); color: var(--text-2); font-size: var(--fs-2); font-variant-numeric: tabular-nums; }

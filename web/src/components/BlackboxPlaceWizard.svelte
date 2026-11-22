@@ -7,15 +7,15 @@
   // Nothing is saved or changed until the last button.
   import { onMount, tick } from 'svelte';
   import {
-    BlackboxError, blackboxApi, defaultSettings, refusalText, saveBlob,
+    BlackboxError, blackboxApi, defaultSettings, refusalText, refusedField, saveBlob, stepOfSetting,
     type BlackboxItem, type InstallAnswer, type Settings, type SettingsProblem, type ThisPc
   } from '../lib/blackbox';
   import { fetchDrives } from '../lib/blackboxDrives';
   import {
-    applyDefaultFolder, back, buildSettings, goTo, initialState, next, setSqlSeen, stepProblem, steps, useDefaultsToReview, whereChoices,
+    applyDefaultFolder, back, buildSettings, changeStep, goTo, initialState, next, setSqlSeen, stepProblem, steps, useDefaultsToReview, whereChoices,
     type StepId, type WizardState
   } from '../lib/blackboxWizard';
-  import { BB_REFUSAL, BB_TEXT } from '../lib/copy/blackboxCopy';
+  import { BB_REFUSAL, BB_TEXT, refusedSetting } from '../lib/copy/blackboxCopy';
   import { BBW_TEXT as W } from '../lib/copy/blackboxWizardCopy';
   import WizardDialog from './blackboxWizard/WizardDialog.svelte';
   import ProgressRail from './blackboxWizard/ProgressRail.svelte';
@@ -62,6 +62,8 @@
   let checking = $state(false);
   // The server refused the answers at the check before Review. Shown on Review and holds the Place button.
   let reviewProblem = $state('');
+  // The step that owns the refused setting, when the server named it, so the message can offer a way straight there.
+  let reviewFix = $state<StepId | null>(null);
   let dialog = $state<ReturnType<typeof WizardDialog> | null>(null);
   let bodyEl = $state<HTMLElement | null>(null);
   let reviewRun = 0;
@@ -82,7 +84,7 @@
   const problem = $derived(stepProblem(wizard, wizard.step));
   // The rail always shows all eight steps (the wireframe): a step this path does not need, such as SQL, stays in place, greyed.
   const ALL: StepId[] = ['name', 'where', 'record', 'sql', 'watch', 'keep', 'folder', 'review'];
-  const railSteps = $derived(ALL.map((id) => ({ id, label: W[('rail.' + id) as `rail.${StepId}`], skipped: !list.includes(id) })));
+  const railSteps = $derived(ALL.map((id) => ({ id, label: W[('rail.' + id) as `rail.${StepId}`], skipped: wizard.where !== null && !list.includes(id) })));
   const railCurrent = $derived(ALL.indexOf(wizard.step));
   const railMax = $derived(ALL.indexOf(list[Math.min(wizard.maxSeen, list.length - 1)] ?? 'name'));
 
@@ -151,6 +153,7 @@
     if (!moved) return;
     reviewRun += 1;
     reviewProblem = '';
+    reviewFix = null;
     checking = false;
     void afterStepChange();
     if (to.step === 'review') void enterReview();
@@ -173,7 +176,12 @@
       await blackboxApi.validate($state.snapshot(buildSettings(wizard)) as Settings);
       if (run === reviewRun && wizard.step === 'review') reviewProblem = '';
     } catch (error) {
-      if (run === reviewRun && wizard.step === 'review') reviewProblem = refusalText(error, BB_REFUSAL);
+      if (run === reviewRun && wizard.step === 'review') {
+        // BLACKBOX-01: the server names the setting it refused; say which one, and offer the step that owns it.
+        const field = refusedField(error);
+        reviewProblem = field ? refusedSetting(field) : refusalText(error, BB_REFUSAL);
+        reviewFix = field ? stepOfSetting(field) : null;
+      }
     } finally {
       if (run === reviewRun) checking = false;
     }
@@ -264,10 +272,17 @@
     apply({ ...wizard, step: 'folder', returnTo: 'review' });
   }
 
+  function fixRefused(): void {
+    if (!reviewFix) return;
+    const to = changeStep(wizard, reviewFix);
+    if (to !== wizard) apply(to);
+  }
+
   function reviewChanged(): void {
     attempted = false;
     reviewRun += 1;
     reviewProblem = '';
+    reviewFix = null;
     checking = false;
     void afterStepChange();
   }
@@ -307,7 +322,14 @@
   );
   // Enter must never place or build from the page: on Review only the Place or Build button itself acts (its own click).
   const enterNeedsButton = $derived(wizard.step === 'review' && phase.kind === 'idle');
+  // Nothing typed or chosen yet: the close button and Esc leave at once, with no question (BLACKBOX-11).
+  const pristine = $derived(
+    phase.kind === 'idle' && wizard.step === 'name' && wizard.where === null && wizard.maxSeen === 0 && wizard.settings.name === initialState().settings.name
+  );
   const nextReasonId = uid + '-next-reason';
+  const reviewProblemId = uid + '-review-problem';
+  // A button that is off says why: the Where step's note, or the refusal shown above the cards on Review.
+  const primaryDescribedBy = $derived(whereBlocked ? nextReasonId : primaryDisabled && reviewProblem && wizard.step === 'review' ? reviewProblemId : undefined);
 
   // A held-down Enter on the focused primary button would repeat its click. Only the first press acts.
   function primaryKey(e: KeyboardEvent): void {
@@ -341,7 +363,8 @@
   {open}
   {titleId}
   {busy}
-  {finished}
+  finished={finished || pristine}
+  fixedHeight
   {enterNeedsButton}
   {labels}
   onLeave={leave}
@@ -386,12 +409,18 @@
       {:else if wizard.step === 'folder'}
         <StepFolder bind:wizard {attempted} />
       {:else}
-        <StepReview bind:wizard disabled={busy || checking} onChange={reviewChanged} />
+        <!-- BLACKBOX-01: a refusal sits right under the heading, above the cards, where it cannot scroll out of sight. -->
         <div class="review-status">
           {#if checking}<p class="status" role="status">{W['review.checking']}</p>{/if}
           {#if busy}<p class="status" role="status">{wizard.where === 'pc' ? BB_TEXT.installing : BB_TEXT.building}</p>{/if}
-          {#if reviewProblem}<p class="problem" role="alert">{reviewProblem}</p>{/if}
+          {#if reviewProblem}
+            <div class="problem-box" id={reviewProblemId} role="alert">
+              <p class="problem">{reviewProblem}</p>
+              {#if reviewFix}<button type="button" class="secondary-button" onclick={fixRefused}>{W['review.fixAt'](W[('rail.' + reviewFix) as `rail.${StepId}`])}</button>{/if}
+            </div>
+          {/if}
         </div>
+        <StepReview bind:wizard disabled={busy || checking} onChange={reviewChanged} />
       {/if}
     </div>
   {/snippet}
@@ -413,7 +442,7 @@
       type="button"
       class="primary-button"
       disabled={primaryDisabled}
-      aria-describedby={whereBlocked ? nextReasonId : undefined}
+      aria-describedby={primaryDescribedBy}
       onkeydown={primaryKey}
       onclick={primary}
     >{primaryLabel}</button>
@@ -427,6 +456,8 @@
   .head-lead { margin: 0; color: var(--text-2); font-size: var(--fs-4); }
   .step-body { display: grid; gap: var(--space-4); min-width: 0; }
   .review-status { display: grid; gap: var(--space-2); }
+  .review-status:empty { display: none; }
+  .problem-box { display: grid; gap: var(--space-2); justify-items: start; padding: var(--space-3); border: 1px solid var(--bad); border-left-width: 3px; border-radius: var(--radius-sm); }
   .status { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .problem { margin: 0; color: var(--bad); font-size: var(--fs-3); overflow-wrap: anywhere; }
   .saved-note { flex: 0 1 auto; margin: 0; color: var(--text-2); font-size: var(--fs-2); }

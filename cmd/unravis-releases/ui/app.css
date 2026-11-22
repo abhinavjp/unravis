@@ -11,9 +11,9 @@ html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;font-variant-numeric:tabular-nums}
 .app{display:grid;grid-template-rows:auto auto 1fr auto;height:100vh}
 .top{display:grid;grid-template-columns:auto 1fr 1fr auto;gap:0 24px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
-.brand{font-weight:600;font-size:14px;letter-spacing:.01em;display:flex;align-items:center;gap:8px}.brand::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--accent)}
+.brand{margin:0;font-weight:600;font-size:14px;letter-spacing:.01em;display:flex;align-items:center;gap:8px}.brand::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--accent)}
 .chan{min-width:0;line-height:1.3}
-.chan .k{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
+.chan .k{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
 .chan .v{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chan .s{font-size:12px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 button{font:inherit;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:4px;padding:4px 12px;cursor:pointer}
@@ -27,15 +27,15 @@ button:hover{background:var(--sel)}
 .list li{display:grid;grid-template-columns:1fr auto;gap:0 8px;padding:7px 16px;border-bottom:1px solid var(--line);cursor:pointer}
 .list li[aria-selected=true]{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}
 .list li:hover{background:var(--sel)}
-.list .ver{font-family:"Cascadia Mono",Consolas,monospace;font-size:12.5px}
-.list .when{grid-column:1/3;font-size:11.5px;color:var(--mut)}
+.list .ver{font-family:"Cascadia Mono",Consolas,monospace;font-size:13px}
+.list .when{grid-column:1/3;font-size:12px;color:var(--mut)}
 .tag{font-size:12px;white-space:nowrap}
 .tag.ok{color:var(--ok)}.tag.bad{color:var(--bad)}.tag.warn{color:var(--warn)}.tag.run{color:var(--run)}.tag.mut{color:var(--mut)}
 .wd .ver{text-decoration:line-through;color:var(--mut)}
 .detail{overflow:auto;padding:18px 24px;min-width:0}
-.detail h1{margin:0;font:600 20px/1.2 "Cascadia Mono",Consolas,monospace}
+.detail .dtitle{margin:0;font:600 20px/1.2 "Cascadia Mono",Consolas,monospace}
 .detail .meta{margin:4px 0 16px;color:var(--mut)}
-.detail h2{margin:20px 0 8px;font-size:11px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
+.detail h3{margin:20px 0 8px;font-size:12px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
 .steps{list-style:none;margin:0;padding:0;max-width:560px}
 .steps li{display:grid;grid-template-columns:22px 110px 1fr;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--line)}
 .steps .g{font-weight:700}
@@ -46,7 +46,7 @@ button:hover{background:var(--sel)}
 .note{max-width:560px;color:var(--mut);margin-top:14px}
 a{color:var(--link)}
 .empty{color:var(--mut);padding:24px}
-.foot{padding:6px 16px;border-top:1px solid var(--line);color:var(--mut);font-size:11.5px;background:var(--panel);display:flex;flex-wrap:wrap;gap:4px 18px}
+.foot{padding:6px 16px;border-top:1px solid var(--line);color:var(--mut);font-size:12px;background:var(--panel);display:flex;flex-wrap:wrap;gap:4px 18px}
 @media (max-width:720px){.top{grid-template-columns:1fr auto}.chan{grid-column:1/3}.body{grid-template-columns:1fr;grid-template-rows:40% 1fr}.list{border-right:0;border-bottom:1px solid var(--line)}}
 @media (prefers-reduced-motion:no-preference){.list li{transition:background .08s}}
 .note.bad{color:var(--bad)}
@@ -54,8 +54,8 @@ a{color:var(--link)}
 .detail .facts,.detail .note,.detail .steps{max-width:none}
 .detail .note{max-width:72ch}
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin:0 0 4px;overflow-x:auto}
-.tab{border:0;border-bottom:2px solid transparent;border-radius:0;padding:7px 12px;color:var(--mut);white-space:nowrap}
-.tab[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+.tab{border:0;border-bottom:2px solid transparent;border-radius:0;padding:7px 12px;color:var(--mut);white-space:nowrap;font-weight:500}
+.tab[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent)}
 .tab:hover{background:var(--sel)}
 .panel{min-width:0}
 .mono,.hash{font-family:"Cascadia Mono",Consolas,monospace;font-size:12px;overflow-wrap:anywhere}
@@ -107,7 +107,7 @@ details>summary.srow:hover{background:var(--sel)}
 .rows.chg li{grid-template-columns:76px minmax(0,1fr) auto}
 .rows .at{color:var(--mut)}
 .files{border-collapse:collapse;width:100%;margin-bottom:6px}
-.files th{text-align:left;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;font-weight:600;padding:4px 10px 4px 0;border-bottom:1px solid var(--line)}
+.files th{text-align:left;font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;font-weight:600;padding:4px 10px 4px 0;border-bottom:1px solid var(--line)}
 .files td{padding:6px 10px 6px 0;border-bottom:1px solid var(--line);vertical-align:top}
 .files td.hash{max-width:380px}
 .note.warn{color:var(--warn)}
@@ -117,3 +117,14 @@ details>summary.srow:hover{background:var(--sel)}
 details>summary.srow .at::after,.logd>summary .at::after{content:"  ▸";color:var(--accent)}
 details[open]>summary.srow .at::after{content:"  ▾"}
 .fail button{margin-top:2px}
+
+#run a.on{color:var(--run);font-weight:600;text-decoration:underline;text-underline-offset:2px}
+#refresh.primary{background:var(--accent);color:var(--bg);border-color:var(--accent);font-weight:600}
+.nolist{padding:16px}
+.nl-title{margin:0 0 8px;font-weight:600;font-size:14px}
+.nl-causes{list-style:none;margin:0 0 12px;padding:0;border-top:1px solid var(--line)}
+.nl-causes li{display:grid;grid-template-columns:1fr auto;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)}
+.nl-causes .nl-word{text-align:right}
+.nl-causes li.ok .nl-word{color:var(--ok)}.nl-causes li.bad .nl-word{color:var(--bad)}
+.nl-next{margin:0;color:var(--mut)}
+.fail .fnext{margin:8px 0 0;color:var(--ink)}

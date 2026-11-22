@@ -182,7 +182,7 @@
         <input id="{uid}-auth" type="text" bind:value={authSource} oninput={edited} autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" onkeydown={onKey} />
       </div>
     </div>
-    <div class="actions"><button type="button" class="primary-button" disabled={busy} onclick={() => void test()}>{busy ? SOURCES_TEXT.mongoTesting : SOURCES_TEXT.mongoTest}</button></div>
+    <div class="actions"><button type="button" class="secondary-button" disabled={busy} onclick={() => void test()}>{busy ? SOURCES_TEXT.mongoTesting : SOURCES_TEXT.mongoTest}</button></div>
     <p class="line" class:bad={failed} id="{uid}-line" role="status" hidden={line === ''}>{line}</p>
     {#if connectedTo !== '' && !failed}<p class="hint connected">{SOURCES_TEXT.mongoConnectedTo}: {connectedTo}</p>{/if}
   </div>
@@ -235,7 +235,7 @@
 </div>
 
 <style>
-  .mongo { display: grid; gap: var(--space-3); min-width: 0; max-width: 760px; }
+  .mongo { display: grid; gap: var(--space-3); min-width: 0; max-width: 640px; }
   .form { display: grid; gap: var(--space-3); min-width: 0; }
   .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--space-3); }
   .field { display: grid; gap: var(--space-1); align-content: start; min-width: 0; }

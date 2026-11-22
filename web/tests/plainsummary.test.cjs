@@ -204,7 +204,7 @@ test('incomplete: only one kind, singular, invalid rows, none, empty', () => {
   assert.match(check(plain.plainIncomplete({ completed: 99, pending: 1, window })).summary, /1 of 100 requests \(1%\).*Of these, 1 was accepted but has no finished record yet\.$/);
   assert.match(check(plain.plainIncomplete({ completed: 5, incomplete: 5, window })).summary, /Of these, 5 had no recorded finish\.$/);
   const withInvalid = check(plain.plainIncomplete({ completed: 8, incomplete: 2, invalid: 4, window }));
-  assert.match(withInvalid.summary, /4 more requests had a timing that could not be used\. They are not counted here\./);
+  assert.match(withInvalid.summary, /Of all 14 requests, 4 had a timing that could not be used, so they are left out of the 10 above\./);
   assert.match(withInvalid.detail, /Unusable requests are not in it/);
   const none = check(plain.plainIncomplete({ completed: 50, window }));
   assert.equal(none.summary, 'All 50 requests had a final result on 24 Oct, 14:45–14:50 UTC.');

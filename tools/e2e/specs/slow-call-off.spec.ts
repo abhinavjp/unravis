@@ -29,8 +29,8 @@ async function openTimeline(page: Page): Promise<Win> {
   });
   await goHome(page);
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect.poll(() => win, 'the timeline read its window').not.toBeNull();
   return win as unknown as Win;
 }
@@ -73,7 +73,7 @@ test('SCALL-07: an off database that kept nothing adds no off note', async ({ pa
   expect(lane.reasonCode).toBe('layered-sql');
   expect(lane.note ?? '').toBe('');
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await readWindow(page);
   await expect(page.locator('.panel[data-lane=sql]')).toHaveAttribute('data-state', 'events');
   await expect(page.getByTestId('lane-extra-note')).toHaveCount(0);
@@ -90,7 +90,7 @@ test('SCALL-08: an off database that kept blocks is layered, says Query Store wa
   expect(lane.note).not.toContain('saved no history');
   expect(lane.scanned).toBeGreaterThan(0);
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await readWindow(page);
   await expect(page.locator('.panel[data-lane=sql]')).toHaveAttribute('data-state', 'events');
   // The note is drawn above the bars of the SQL lane, in the owner's own view of the Timeline.

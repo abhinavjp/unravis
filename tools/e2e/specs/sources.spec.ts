@@ -67,14 +67,13 @@ test('SRC-04: saved connections show two rows, no password text, the counters an
   await expect(rows.nth(1)).toContainText('Demo MongoDB');
   await expect(block.getByText('password saved')).toHaveCount(2);
   await expect(rows.getByText('Not tested')).toHaveCount(2);
-  await expect(block).toContainText(/SQL Server connections saved: 1 \/ 20/);
-  await expect(block).toContainText('MongoDB connections listed (no limit): 1.');
+  await expect(block).toContainText('1 of 20 SQL Server connections saved.');
+  await expect(block).toContainText('1 MongoDB connection saved.');
   for (const b of ['+ SQL Server', '+ MongoDB']) await expect(block.getByRole('button', { name: b, exact: true }), b).toBeVisible();
   for (const name of ['Demo SQL Server', 'Demo MongoDB']) {
     await expect(block.getByRole('button', { name: 'Test: ' + name })).toBeVisible();
     await expect(block.getByRole('button', { name: 'Forget: ' + name })).toBeVisible();
   }
-  await expect(block).toContainText('Works, Failed and Not tested describe one connection test only.');
   expect(await page.locator('body').innerText()).not.toMatch(/password\s*[:=]\s*\S+/i);
   // The scenario wants one primary button; the case home shows two (Open the analysis, Run checks). Not asserted here.
 });
