@@ -217,6 +217,82 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  desktop-sidecar:
+    # BL-330. The Windows-only tests of the desktop sidecar's pipe code (internal/pipesec: first instance, full instance pool,
+    # logon-SID DACL, remote reject, peer and server checks). Later sidecar items (BL-301 and on) add their packages here.
+    # Also builds with the `e2e` tag, which only tests use, so that variant cannot rot.
+    # Matrix windows-2022 and windows-2025 for the pipe tests, as spec 08 D2 says. The Windows `build` job also runs these tests (go test ./...).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Vet (default and e2e tags)
+        shell: pwsh
+        run: |
+          go vet ./internal/pipesec/... ./internal/pipesrv/... ./internal/locator/... ./internal/appdirs/... ./cmd/audit-explorer/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          go vet -tags e2e ./internal/pipesec/... ./internal/pipesrv/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Pipe security tests
+        shell: pwsh
+        run: |
+          go test -count=1 -v ./internal/pipesec/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          go test -count=1 -tags e2e ./internal/pipesec/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Pipe server tests (BL-301)
+        # internal/pipesrv serves the handler over the real ui and ag pipes; cmd/audit-explorer holds TestPipeOnlyNoListenerNoSessionFile
+        # and the flag rules. The Windows build job runs them too (go test ./...).
+        shell: pwsh
+        run: |
+          go test -count=1 -v ./internal/pipesrv/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          go test -count=1 -v -run '^(TestPipeOnlyNoListenerNoSessionFile|TestPipeServerLoopbackKeepsBrowserModeListener|TestPipeFlagRules|TestPipeRejectsRemoteFlag|TestServeOverPipeSameJSONAsLoopback|TestListenerPortNilIsZero|TestNoTCPListenerInPipeMode)$' ./cmd/audit-explorer/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Locator tests (BL-302)
+        # internal/locator: round trip, alive/dead/reused pid, real pipes through WaitNamedPipe, owner-only ACL (icacls).
+        # cmd/audit-explorer: ten concurrent real starts leave one owner (the rest exit 12); a killed owner's locator is replaced.
+        shell: pwsh
+        run: |
+          go test -count=1 -v ./internal/locator/... ./internal/appdirs/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          go test -count=1 -v -run '^(TestPipeModeSecondCopyExits12|TestPipeModeSecondCopyNoLocator|TestPipeModeWritesAndRemovesLocator|TestPipeModeLocatorFailureIsFatal|TestTenConcurrentStartsOneOwner|TestStaleLocatorReplacedAfterKill)$' ./cmd/audit-explorer/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Real exe in pipe-only mode (no port, no session file, both pipes)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check NoPort
+
+      - name: Real exe in pipe-only mode (a second listener on the same pipe name is refused)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check Squat
+
+      - name: Real exe, ten simultaneous starts (one owner)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check TenStarts
+
+      - name: Real exe, killed owner (stale locator replaced)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check Stale
+
+      - name: Real exe, locator file ACL (icacls)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check Acl
+
   linux-gates:
     # BL-441. Lint, vet, race tests against a known-failure baseline, and the web checks, on Linux.
     # The Windows `build` job stays the correctness gate. A few tests are Windows-only and fail here;
