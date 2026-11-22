@@ -92,7 +92,7 @@ func TestRecoverCancelAtTheNoticeStopsTheMachinePart(t *testing.T) {
 		t.Error("something was put back without approval")
 	}
 	got, ok := update.ReadApplyResult(filepath.Join(rg.dirs.LocalAppData, "Unravis", "update-result"))
-	if !ok || got.Outcome != "failed" || !strings.Contains(got.Message, "not to approve") || !strings.Contains(got.Message, "Repair") {
+	if !ok || got.Outcome != "failed" || !strings.Contains(got.Message, "not approved") || !strings.Contains(got.Message, "Repair") {
 		t.Fatalf("%+v %v", got, ok)
 	}
 }
@@ -204,5 +204,17 @@ func TestRecoverFailedAdministratorPartNamesTheJournalAndAWayOut(t *testing.T) {
 	}
 	if !setupJournalStillThere(rg) {
 		t.Error("the journal was touched")
+	}
+}
+
+// --silent means no window: the box is never shown and never waited for, and the run goes on as it did before the box existed.
+func TestRecoverSilentNeverAsks(t *testing.T) {
+	rg := newRig(t)
+	pendingMachineRun(t, rg)
+	rg.env.ask = func(string, string) bool { t.Fatal("--recover --silent must not show the notice"); return false }
+	calls := 0
+	rg.env.elevateWait = func(string, []string) (int, error) { calls++; return 0, nil }
+	if code := run([]string{"--recover", "--silent", "--repair"}, rg.env); code != 0 || calls != 1 {
+		t.Fatalf("%d, prompt calls %d", code, calls)
 	}
 }

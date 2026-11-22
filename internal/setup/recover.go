@@ -55,9 +55,9 @@ func (r *Runner) readJournal(elevated bool) (j *Journal, found bool, err error) 
 		case errors.Is(lerr, os.ErrNotExist):
 			return nil, false, nil
 		case lerr != nil:
-			return nil, true, fmt.Errorf("an earlier setup may have left a journal in a folder that cannot be looked at, so it is not used: %v.%s", lerr, journalFolderAdvice(dir))
+			return nil, true, fmt.Errorf("an earlier setup may have left a journal in a folder that cannot be looked at, so it is not used: %v.%s", lerr, journalFolderAdvice(d, d == r.Dirs.ProgramData))
 		case fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0:
-			return nil, true, fmt.Errorf("an earlier setup left a journal in a folder that is a link, so it is not used.%s", journalFolderAdvice(dir))
+			return nil, true, fmt.Errorf("an earlier setup left a journal in a folder that is a link, so it is not used.%s", journalFolderAdvice(d, d == r.Dirs.ProgramData))
 		}
 	}
 	// Whether a file is there is metadata only: a folder nobody trusts and that holds no journal is not a pending journal.
@@ -67,7 +67,7 @@ func (r *Runner) readJournal(elevated bool) (j *Journal, found bool, err error) 
 		return nil, true, fmt.Errorf("an earlier setup left a journal that cannot be looked at, so it is not used: %v.%s", lerr, journalFileAdvice(p))
 	}
 	if cerr := datadirCheck(r.Sys.Sec, dir); cerr != nil {
-		return nil, true, fmt.Errorf("an earlier setup left a journal in a folder others can change, so it is not used: %v.%s", cerr, journalFolderAdvice(dir))
+		return nil, true, fmt.Errorf("an earlier setup left a journal in a folder others can change, so it is not used: %v.%s", cerr, journalFolderAdvice(dir, false))
 	}
 	data, rerr := r.Sys.Sec.ReadFileProven(p, maxJournalBytes)
 	if errors.Is(rerr, os.ErrNotExist) {
@@ -92,13 +92,20 @@ func (r *Runner) readJournal(elevated bool) (j *Journal, found bool, err error) 
 // setup until somebody deals with it, so the person is told which file it is, that nothing was deleted, and what they can do: move it
 // (moving keeps it, deleting does not), then run setup again. Neither action deletes anything.
 func journalFileAdvice(p string) string {
-	return " The journal is the file " + p + ". It was not used and it was not deleted. To go on: open it in Notepad to see what it lists," +
-		" then, while no Unravis setup is running, move the file out of its folder (for example to your Desktop; do not delete it)." +
+	return " The journal is the file " + p + ". It was not used and it was not deleted. To go on, as an administrator (for example from an Explorer" +
+		" window that asks for approval, because only administrators can open that folder): open the file in Notepad to see what it lists," +
+		" then, while no Unravis setup is running, move the file out of its folder (for example to the Desktop; do not delete it)." +
 		" Then run setup again. If the earlier run left things half done, choose Repair."
 }
 
-func journalFolderAdvice(dir string) string {
-	return " The folder is " + dir + ". Nothing in it was used and nothing was deleted. To go on: an administrator makes sure only SYSTEM and" +
+// journalFolderAdvice is the advice for a refused folder: the journal folder, or ProgramData itself when that is the link. ProgramData is
+// not renamed: it holds other programs' data, so an administrator has to put it right.
+func journalFolderAdvice(dir string, programData bool) string {
+	if programData {
+		return " The folder is " + dir + ". Nothing in it was used and nothing was deleted. It is a link, not a real folder; an administrator has to" +
+			" put that right (do not delete or rename it yourself: other programs keep their data in it). Then run setup again."
+	}
+	return " The folder is " + dir + ". Nothing in it was used and nothing was deleted. To go on, an administrator makes sure only SYSTEM and" +
 		" Administrators can change that folder, or, while no Unravis setup is running, renames the folder (for example to \"Unravis Setup old\";" +
 		" do not delete it). Then run setup again; it makes a new one. If the earlier run left things half done, choose Repair."
 }

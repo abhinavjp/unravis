@@ -136,3 +136,24 @@ func TestMachineJournalHelpFitsTheResultNote(t *testing.T) {
 		t.Fatal(help)
 	}
 }
+
+// A link at ProgramData is refused with advice about ProgramData, not about renaming the journal folder.
+func TestAProgramDataLinkIsAdvisedAboutProgramData(t *testing.T) {
+	e := newEnv(t, "1.2.0")
+	machineJournal(t, e)
+	real := e.dirs.ProgramData + ".real"
+	if err := os.Rename(e.dirs.ProgramData, real); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, e.dirs.ProgramData); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	_, _, err := e.r.RecoverJournal(true)
+	if err == nil || !strings.Contains(err.Error(), e.dirs.ProgramData) || !strings.Contains(err.Error(), "an administrator has to") ||
+		strings.Contains(err.Error(), "renames the folder") || strings.Contains(err.Error(), "Unravis Setup old") {
+		t.Fatalf("wrong advice for a ProgramData link:\n%v", err)
+	}
+	if !strings.Contains(err.Error(), "do not delete") {
+		t.Fatalf("no warning against deleting:\n%v", err)
+	}
+}

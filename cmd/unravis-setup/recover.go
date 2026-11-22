@@ -19,7 +19,7 @@ const askWait = 10 * time.Minute
 const (
 	recoverNoticeTitle = "Unravis"
 	recoverNoticeText  = "An Unravis update was cut off before it finished.\n\nTo put things back, Windows will ask for administrator approval next. Click OK, then answer Yes.\n\nClick Cancel to leave it for now."
-	recoverDeclinedMsg = "An update was cut off before it finished. You chose not to approve it, so it was not put back. Run Unravis Setup from the Unravis program folder and choose Repair."
+	recoverDeclinedMsg = "An update was cut off before it finished. It was not approved (Cancel, or no answer within 10 minutes), so it was not put back. Run Unravis Setup from the Unravis program folder and choose Repair."
 )
 
 // runRecover is --recover (BL-170): put back what a cut-off setup run changed, from its journal, and nothing else. A normal run replays
@@ -74,10 +74,15 @@ func runRecover(o options, e env) int {
 	// Before anything is closed and before any prompt: a box that says what is about to happen. Cancel (or a closed box, or no answer)
 	// leaves the machine journal and the running app alone. The elevated copy never asks, and a nil ask (tests) goes on.
 	declined := false
-	if pendingMachine && e.ask != nil {
-		if !e.ask(recoverNoticeTitle, recoverNoticeText) {
+	// --silent means no window at all, so it never shows the box and never waits for it: it behaves as it did before the box existed.
+	ask := e.ask
+	if o.silent {
+		ask = nil
+	}
+	if pendingMachine && ask != nil {
+		if !ask(recoverNoticeTitle, recoverNoticeText) {
 			declined, pendingMachine = true, false
-			l.Line("recover: the person did not approve the Windows prompt at the notice; the machine journal is kept")
+			l.Line("recover: not approved at the notice (Cancel, closed, or no answer); the machine journal is kept")
 		}
 	}
 	res := setup.RecoverResult{}
