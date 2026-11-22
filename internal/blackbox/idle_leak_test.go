@@ -17,6 +17,7 @@ func TestRecorderRunLeavesNoGoroutines(t *testing.T) {
 	leakcheck.Cycles(t, 5, leakcheck.Options{}, func(int) {
 		g := newRig(t, nil)
 		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		done := make(chan error, 1)
 		go func() { done <- g.r.Run(ctx) }()
 		deadline := time.Now().Add(5 * time.Second)
@@ -34,11 +35,16 @@ func TestRecorderRunLeavesNoGoroutines(t *testing.T) {
 		}
 		cancel()
 		select {
-		case <-done:
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("the recorder stopped with an error: %v", err)
+			}
 		case <-time.After(10 * time.Second):
 			t.Fatal("the recorder did not stop")
 		}
-		_ = g.s.Close("stopped")
+		if err := g.s.Close("stopped"); err != nil {
+			t.Fatalf("closing the store: %v", err)
+		}
 	})
 }
 

@@ -19,35 +19,37 @@ rounds. The case is closed between requests (`openCase` closes it), as in the ap
 
 Two runs each, same machine, 4 cores, alternating before and after.
 
-| | before (cache 64 MiB x up to 4, 2 idle) | after (cache 16 MiB read, 64 MiB import conn dropped after use, 1 idle, 30 s idle close) |
+| | before (cache 64 MiB x up to 4, 2 idle) | after (cache 16 MiB read, 64 MiB import conn dropped after use, 2 idle, 30 s idle close) |
 |---|---|---|
 | peak resident during the four chart requests | 226 to 231 MiB | 112 MiB |
 | resident after the requests | 40 MiB | 39 to 41 MiB |
-| request phase wall (12 requests) | 2.2 to 2.8 s | 2.6 to 2.9 s |
-| first request after 35 s idle (reconnect) vs warm | 250 to 256 ms vs 234 to 242 ms | 245 to 262 ms vs 236 to 260 ms |
+| request phase wall (12 requests) | 2.2 to 2.8 s | 2.6 to 2.9 s (from the same up to about 30 percent slower in the worst pairing) |
 | import of the 285 k events | 27.2 k and 27.6 k events/s | 29.1 k and 26.5 k events/s |
-| idle wakeups per minute (rig: handler plus store, nothing open) | 8 and 12 (30 s window) | 8 and 24 (30 s window; noise of a few counts) |
+| idle context switches per minute (rig: handler plus store, nothing open) | 8 and 12 (30 s window) | 8 and 24 (30 s window; noise of a few counts) |
 
-Real `run()` (`--pipe-server --loopback --demo`, `TestIdleWakeups`, 20 s idle): 15 to 18 wakeups per minute,
-3 goroutines afterwards. That includes the Go runtime's own sysmon and netpoll; the application adds none.
+Real `run()` (`--pipe-server --loopback --demo`, `TestIdleWakeups`, 20 s idle): 15 to 18 context switches per minute,
+3 goroutines afterwards. The counter is /proc context switches, voluntary and preemptions, of all threads, so it is an upper bound for wakeups. That includes the Go runtime's own sysmon and netpoll; the application adds none.
 
 ## Decisions taken from the measurements
 
 - Page cache of the pooled (read) connections: 64 MiB to 16 MiB (spec 3.2 default). Sweep, one run each, taken
   while other jobs shared the machine, so the times are rough: peak resident / request-phase wall: 8 MiB
   84 MiB / 3.3 s; 16 MiB 120 MiB / 4.2 s; 64 MiB 215 MiB / 5.0 s. The quiet before/after pairs above show 16 MiB
-  against 64 MiB at 2.6 to 2.9 s against 2.2 to 2.8 s: at most about 10 % slower on this 6 h synthetic case, for
-  half the peak memory. The spec rule (smallest value within 10 % of the best p95) is decided on the owner's
-  largest real case, which this Linux run cannot replace.
+  against 64 MiB at 2.6 to 2.9 s against 2.2 to 2.8 s: from about the same up to about 30 percent slower in the worst
+  pairing (the spread between runs is itself 10 to 20 percent), for half the peak memory. The spec rule
+  (smallest value within 10 percent of the best p95) has to be decided on the owner's largest real case, which this
+  Linux run cannot replace.
 - The import connection keeps 64 MiB: with 16 MiB for everything, import throughput fell from about 24 k to
   about 14.5 k events per second (-40 %, three runs each), well past the 10 % rule in the spec. The import
   connection is thrown away when the import ends (`driver.ErrBadConn` from `Conn.Raw`), so the big cache is
   not kept in the pool.
-- Pool: four connections stay (`TestReadsDoNotWaitForImport`); one idle connection is kept, an idle one is
-  closed after 30 s. The first request after the pool emptied costs a reconnect, within run-to-run noise here (about 10 to 20 ms).
-- Soft memory limit: `max(256 MiB, min(RAM/4, 512 MiB))`, never below today's 256 MiB (`memtune.go`; RAM from
-  `GlobalMemoryStatusEx` on Windows, floor elsewhere). The spec's example table (2 GiB and 4 GiB giving
-  256 MiB) disagrees with its own formula (a quarter of 2 GiB is 512 MiB); the formula was followed.
+- Pool: four connections stay (`TestReadsDoNotWaitForImport`); an idle connection is closed after 30 s. The
+  idle size stays at the old 2, not the spec's 1 (see the next section).
+- Soft memory limit: `clamp(RAM/16, 256 MiB, 512 MiB)`: 1, 2 and 4 GiB give 256 MiB, 8 GiB and up 512 MiB
+  (`memtune.go`; RAM from `GlobalMemoryStatusEx` on Windows, the floor elsewhere). Spec 3.2 gave a formula
+  (`min(RAM/4, 512 MiB)`) and a test table (256, 256, 256, 512, 512 MiB for 1, 2, 4, 8, 32 GiB) that disagree
+  (the formula gives 512 MiB already at 2 GiB). The table was built because it matches the 2 GB VM in the
+  acceptance. A `GOMEMLIMIT` set in the environment is respected (not overridden). Never below 256 MiB.
 - GC percent 50 was NOT applied (spec 3.2 proposed it). Import with `GOGC=50` against `GOGC=100`, three runs
   each: CPU 10.8 s against 9.7 s (+10 %), wall +8 to +15 %, heap in use 9 to 15 MiB against 12 to 13 MiB. It
   costs CPU and saves nothing, because the Go heap is not where the memory is. A person's `GOGC` still wins.
@@ -55,6 +57,27 @@ Real `run()` (`--pipe-server --loopback --demo`, `TestIdleWakeups`, 20 s idle): 
   there is nothing to shrink, and `FreeOSMemory` only moved the resident set by 5 to 9 MiB. The idle hook belongs
   to BL-425 (`power.Policy`), which must take its "in use" answer from `Updater.InUse` (one definition shared
   with the silent updater, BL-168 and BL-171); this change adds no second idle clock.
+
+## Idle connections: 1 or 2, and what the reconnect costs
+
+The app opens a case per request and closes it after (`Case.Close` shuts the pool down with the last handle),
+so in the normal one-request case the pool's idle size and the 30 s idle close never come into play; the
+earlier "first request after 35 s idle" row measured nothing and is removed. They matter only while some handle
+stays open: an import, a recording, or overlapping requests. `UNRAVIS_BENCH_HOLD=1` holds one handle open
+through the standard run, which measures that. Two runs each (idle 1 / idle 2), same four-chart run:
+
+| | handle per request (normal) idle 1 | idle 2 | handle held open, idle 1 | idle 2 |
+|---|---|---|---|---|
+| peak resident | 107, 112 MiB | 111, 113 MiB | 113, 112 MiB | 111, 107 MiB |
+| request phase wall | 2.10, 2.47 s | 2.20, 2.53 s | 1.73, 1.05 s | 0.98, 0.58 s |
+| resident right after the requests | 39, 38 MiB | 41, 41 MiB | 60, 56 MiB | 73, 76 MiB |
+| resident after 35 s idle (pool closed) | 39, 38 MiB | 41, 41 MiB | 43, 39 MiB | 40, 42 MiB |
+| first request after the idle close vs warm | n/a (no pool kept) | n/a | 226 vs 175, 189 vs 161 ms | 165 vs 151, 188 vs 209 ms |
+
+With a handle held, one idle slot made the overlapping chart requests close and reopen connections (each reopen
+runs `initConn` and builds a new SQLite instance): 25 to 45 percent slower for the same peak memory, and the
+second idle one costs about 17 MiB more only until the 30 s idle close. In the normal case the two are the same.
+So the idle size stays at 2. A reconnect after the idle close costs about 25 to 50 ms on a first request.
 
 ## BL-424 audit: every ticker, timer and poll in the Go code
 
@@ -85,6 +108,19 @@ Nothing needed rewriting. Reported, not changed (update chain, owned by the secu
 `RunAuto` keeps a one minute ticker alive although `autoStep` returns at once when automatic apply is off or
 nothing is downloaded; it could sleep on the existing `wake` channel and arm a timer only while a manifest is
 waiting. Cost today is one wakeup a minute.
+
+## Spec items left out
+
+- `TestTuneMemoryRespectsGOGCEnv` as written: the app does not set the GC percent, so there is nothing to
+  override; a test that GOGC stays untouched replaces it. `TestTuneMemoryRespectsGOMEMLIMITEnv` is added.
+- The CI job that sets `GOEXPERIMENT=goroutineleakprofile`: Go 1.27.3 here rejects that experiment and has no
+  `goroutineleak` profile, so there is nothing to switch on; `leakcheck.Cycles` checks the profile by name when a
+  toolchain has it. The workflow file was not touched.
+- `internal/server/idle_audit_test.go` (goroutine profile of the handler at idle) and the `go/ast` scan in
+  `internal/server/ticker_scan_test.go`: the scan lives in `internal/leakcheck` instead and covers `cmd` and all of
+  `internal`; the idle goroutine count is checked by the `run()` leak test (at most 30) and by `TestIdleWakeups`.
+- The tray cycles (`trayapp_test.go` fake deps): `run()` is started and stopped five times through the ui and ag
+  pipes, which is the same lifecycle minus the tray package (Windows only).
 
 ## Leak tests (BL-424)
 

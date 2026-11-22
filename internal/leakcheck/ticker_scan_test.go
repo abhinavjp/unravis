@@ -21,6 +21,11 @@ import (
 //	// idle-ok: <why it does not run while the app is idle>
 //
 // on the line of the call or the line above it.
+//
+// It covers tickers only: a loop that re-arms time.NewTimer, time.AfterFunc or
+// time.After (the recorder's deadline timer is one) is not seen, nor is an aliased
+// import of time or Ticker.Reset. Those are audited by hand in
+// docs/desktop/bench-bl423.md.
 
 const idleOK = "idle-ok:"
 

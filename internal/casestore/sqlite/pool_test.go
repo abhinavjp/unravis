@@ -115,8 +115,8 @@ func TestIdleConnectionsClose(t *testing.T) {
 }
 
 // TestImportConnectionIsNotKept (BL-423): the import connection (large page cache)
-// is discarded when the import ends; the pool is back to at most one idle
-// connection, so the large cache does not stay resident.
+// is discarded when the import ends; the pool is back to at most its idle cap
+// of connections, so the large cache does not stay resident.
 func TestImportConnectionIsNotKept(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)

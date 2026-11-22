@@ -8,10 +8,11 @@ import (
 	"strconv"
 )
 
-// Wakeups sums the context switches of every thread of this process. A thread
-// that sleeps and is woken (a timer, a netpoll return, a futex) counts one
-// voluntary switch, so the change over an idle window is the Linux stand-in for
-// "timer wakeups per minute". ok is false when /proc cannot be read.
+// Wakeups sums the context switches (voluntary and preemptions) of every thread of
+// this process. A thread that sleeps and is woken (a timer, a netpoll return, a
+// futex) counts one voluntary switch, so the change over an idle window is the
+// Linux stand-in for "timer wakeups per minute"; read it as context switches, it
+// also includes preemptions. ok is false when /proc cannot be read.
 func Wakeups() (n uint64, ok bool) {
 	dirs, err := os.ReadDir("/proc/self/task")
 	if err != nil {

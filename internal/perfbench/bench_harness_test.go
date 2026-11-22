@@ -272,6 +272,7 @@ type rig struct {
 	client  *http.Client
 	caseID  string
 	caseDir string
+	store   *sqlite.Store
 }
 
 // newRig builds the production wiring (cmd/audit-explorer/cases.go): the DPAPI
@@ -280,6 +281,9 @@ type rig struct {
 func newRig(t *testing.T, dir string) *rig {
 	t.Helper()
 	protector, err := sealedfile.CurrentUser()
+	if err != nil && runtime.GOOS == "windows" {
+		t.Skipf("encrypted storage is unavailable: %v", err)
+	}
 	if err != nil {
 		// Off Windows there is no DPAPI. The measurement still runs against the same
 		// encrypted SQLite code with a random in-memory protector (the engine, the
@@ -298,7 +302,7 @@ func newRig(t *testing.T, dir string) *rig {
 	h := server.New(nil, nil, benchToken, false, server.WithCases(store, hm, all.Registry()))
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	r := &rig{t: t, srv: srv, root: root, client: &http.Client{Timeout: 0}}
+	r := &rig{t: t, srv: srv, store: store, root: root, client: &http.Client{Timeout: 0}}
 	res := r.do(http.MethodPost, "/api/cases", "application/json", strings.NewReader(`{"title":"perf bench"}`))
 	var created struct {
 		ID string `json:"id"`

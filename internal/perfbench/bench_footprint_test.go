@@ -1,16 +1,20 @@
 package perfbench
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"sync"
 	"testing"
 	"time"
+
+	"api-audit-explorer/internal/casestore"
 )
 
 // TestBenchOpenCaseFootprint is the BL-423 / BL-424 standard run: import a
@@ -41,6 +45,15 @@ func TestBenchOpenCaseFootprint(t *testing.T) {
 	}
 	paths := []string{chart(0, 10), chart(10, 10), chart(20, 10), chart(30, 10)}
 
+	hold := os.Getenv("UNRAVIS_BENCH_HOLD") == "1"
+	if hold {
+		h, err := r.store.Open(context.Background(), casestore.CaseID(r.caseID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = h.Close() }()
+	}
+
 	debug.FreeOSMemory()
 	ws0, _, _ := osMem()
 	var ms0 runtime.MemStats
@@ -55,7 +68,7 @@ func TestBenchOpenCaseFootprint(t *testing.T) {
 				defer wg.Done()
 				res := r.do(http.MethodGet, p, "", nil)
 				_, _ = io.Copy(io.Discard, res.Body)
-				res.Body.Close()
+				_ = res.Body.Close()
 			}()
 		}
 		wg.Wait()
@@ -88,18 +101,19 @@ func TestBenchOpenCaseFootprint(t *testing.T) {
 		t0 := time.Now()
 		res := r.do(http.MethodGet, paths[0], "", nil)
 		_, _ = io.Copy(io.Discard, res.Body)
-		res.Body.Close()
+		_ = res.Body.Close()
 		return time.Since(t0)
 	}
 	cold, warm := timed(), timed()
 
-	line := fmt.Sprintf("FOOTPRINT before: heapInuse=%sMiB rss=%sMiB | requests: peak-heapInuse=%sMiB peak-heapSys=%sMiB peak-rss=%sMiB hwm=%sMiB | after requests: heapInuse=%sMiB rss=%sMiB | after 35 s idle: heapInuse=%sMiB rss=%sMiB | after FreeOSMemory: heapInuse=%sMiB rss=%sMiB | idle: wakeups/min=%.0f (counted=%t) cpu-ms/min=%.1f goroutines=%d | request-phase wall=%.2fs cold-after-idle=%s warm=%s",
-		mib(ms0.HeapInuse), mib(ws0), mib(meas.MaxHeapInuse), mib(meas.MaxSys), mib(meas.MaxWS), mib(meas.PeakWS),
+	line := fmt.Sprintf("FOOTPRINT hold=%t before: heapInuse=%sMiB rss=%sMiB | requests: peak-heapInuse=%sMiB peak-heapSys=%sMiB peak-rss=%sMiB hwm=%sMiB | after requests: heapInuse=%sMiB rss=%sMiB | after 35 s idle: heapInuse=%sMiB rss=%sMiB | after FreeOSMemory: heapInuse=%sMiB rss=%sMiB | idle: wakeups/min=%.0f (counted=%t) cpu-ms/min=%.1f goroutines=%d | request-phase wall=%.2fs cold-after-idle=%s warm=%s",
+		hold, mib(ms0.HeapInuse), mib(ws0), mib(meas.MaxHeapInuse), mib(meas.MaxSys), mib(meas.MaxWS), mib(meas.PeakWS),
 		mib(msA.HeapInuse), mib(wsA), mib(msB.HeapInuse), mib(wsB), mib(msC.HeapInuse), mib(wsC), perMin, ok, cpuMs, runtime.NumGoroutine(), meas.Wall.Seconds(), cold.Round(time.Millisecond), warm.Round(time.Millisecond))
 	t.Log(line)
-	if out := os.Getenv("UNRAVIS_BENCH_OUT"); out != "" {
+	if env := os.Getenv("UNRAVIS_BENCH_OUT"); env != "" {
+		out := filepath.Clean(env)
 		if f, err := os.OpenFile(out, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
-			fmt.Fprintln(f, line)
+			_, _ = fmt.Fprintln(f, line)
 			_ = f.Close()
 		}
 	}

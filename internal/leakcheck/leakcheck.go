@@ -76,9 +76,8 @@ func Cycles(t testing.TB, n int, o Options, cycle func(i int)) int {
 	if n < 1 {
 		t.Fatal("leakcheck: n must be at least 1")
 	}
-	cycle(-1)                         // warm-up
-	time.Sleep(50 * time.Millisecond) // let the warm-up's goroutines finish before the baseline
-	base := Count()
+	cycle(-1) // warm-up
+	base := stableCount()
 	for i := 0; i < n; i++ {
 		cycle(i)
 		if got, ok := Settle(base+o.slack(), o.wait()); !ok {
@@ -97,6 +96,25 @@ func Cycles(t testing.TB, n int, o Options, cycle func(i int)) int {
 		t.Fatalf("leakcheck: goroutineleak profile is not empty:\n%s", b.String())
 	}
 	return base
+}
+
+// stableCount waits until the goroutine count has been the same for three looks in
+// a row (at most two seconds), so goroutines still leaving after the warm-up are
+// not part of the baseline.
+func stableCount() int {
+	last, same := -1, 0
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		n := Count()
+		if n == last {
+			if same++; same >= 3 {
+				return n
+			}
+		} else {
+			last, same = n, 0
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return Count()
 }
 
 // Dump returns every goroutine stack, grouped by identical stack, for a failure
