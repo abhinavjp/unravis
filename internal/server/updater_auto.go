@@ -325,3 +325,10 @@ func (u *Updater) unbumpAutoTries(version string) {
 		_ = os.WriteFile(u.autoTriesPath(), b, 0o600)
 	}
 }
+
+// fileOKClear forgets a remembered "file is intact" answer (the file was found changed).
+func (u *Updater) fileOKClear() {
+	u.auto.mu.Lock()
+	u.auto.fileOKFor, u.auto.fileOKAt = "", time.Time{}
+	u.auto.mu.Unlock()
+}

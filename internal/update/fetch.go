@@ -82,6 +82,9 @@ type Result struct {
 	Backoff  bool          // true when the caller should slow down
 	RetryIn  time.Duration // a server-requested wait, 0 if none
 	Held     bool          // a newer release exists but the signed control file holds it back (Detail says why)
+	// ViaMirror is set with Held when the hold is only because the main address could not be reached and a backup address
+	// answered. The publisher put nothing on hold.
+	ViaMirror bool
 }
 
 // Fetcher checks the feed. Zero values are filled with safe defaults.
@@ -272,7 +275,7 @@ func (f *Fetcher) Check(ctx context.Context) Result {
 			if r2.Status == StatusAvailable {
 				// The backup may be behind: it cannot prove that this release was not paused or withdrawn since. So it can say a
 				// newer version exists, but it never starts an install. The main address (or a later check) decides.
-				r2.Status, r2.Held = StatusLatest, true
+				r2.Status, r2.Held, r2.ViaMirror = StatusLatest, true, true
 				r2.Detail = "version " + r2.Manifest.Version + " exists, but the main update address could not be reached, so it is waiting until that can confirm it is safe to install"
 			}
 			r2.Backoff, r2.RetryIn = res.Backoff, res.RetryIn // the main address still asked us to slow down

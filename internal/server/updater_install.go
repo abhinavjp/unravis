@@ -202,18 +202,25 @@ func (u *Updater) Install() error {
 	u.inst.mu.Unlock()
 	defer func() { u.inst.mu.Lock(); u.inst.busy = false; u.inst.mu.Unlock() }()
 
+	// The hash of a big file happens outside the lock, so status reads are never held up. It runs first, so the last look at the
+	// feed is the final step before the start.
+	got, ok := u.dl.Recheck(m, update.AssetSetup)
+	if !ok {
+		u.fileOKClear()
+		u.setInstall(gen, InstallInfo{State: "failed", Version: m.Version, Error: errFileChange.Error()})
+		return errFileChange
+	}
 	// Ask the feed once more right before the start: a pause or a withdrawal that came out while the file was downloading, or since
 	// the last check, must win. Any answer other than "this very file is still on offer" starts nothing (fail closed).
 	m, err := u.recheckFeed(m)
 	if err != nil {
 		return err
 	}
-
-	// The hash of a big file and the process start happen outside the lock, so status reads are never held up.
-	got, ok := u.dl.Recheck(m, update.AssetSetup)
-	if !ok {
-		u.setInstall(gen, InstallInfo{State: "failed", Version: m.Version, Error: errFileChange.Error()})
-		return errFileChange
+	u.inst.mu.Lock()
+	changed := u.inst.gen != gen
+	u.inst.mu.Unlock()
+	if changed {
+		return errNotReady // a check during the last look replaced or withdrew the offer
 	}
 	launch := u.launch
 	if u.silent != nil {
@@ -267,6 +274,9 @@ func (u *Updater) recheckFeed(m *update.Manifest) (*update.Manifest, error) {
 		}
 		return nil, errNotReady // a newer release replaced it; the old download was dropped
 	case update.StatusLatest:
+		if res.Held && res.ViaMirror {
+			return nil, errRecheckOffline // only the backup address answered: not a hold by the publisher
+		}
 		if res.Held {
 			return nil, heldError{res.Detail}
 		}
