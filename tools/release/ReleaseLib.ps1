@@ -822,7 +822,11 @@ $script:LogRx = @{
     Ctrl    = [regex]::new('[\x00-\x08\x0a-\x1f\x7f]', 'Compiled')
     Token   = [regex]::new('\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})', 'Compiled')
     Bearer  = [regex]::new('(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}', 'Compiled')
-    Pair    = [regex]::new('(?i)(?<![\w-])([\w-]*(?:pass(?:word|phrase)|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|.+)', 'Compiled')
+    Pair    = [regex]::new('(?i)(?<![\w-])([\w-]*(?:pass(?:word|phrase)|_pass|_pin|nonce|seed|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|.+)', 'Compiled')
+    # A secret after a flag with a space and no colon or equals sign, and user:password in a URL or after -u (same patterns as the Go reader).
+    Flag    = [regex]::new('(?i)(\s--?(?:pass\w*|pwd|token|secret|nonce|pin)\s+)\S+', 'Compiled')
+    UrlCred = [regex]::new('(://)[^\s/:@]+:[^\s/@]+@', 'Compiled')
+    UserFlag = [regex]::new('(\s-u\s+)\S+', 'Compiled')
     KeyBeg  = [regex]::new('-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
     KeyEnd  = [regex]::new('-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
     # A line that can still belong to a key block (nothing, base64, or a header such as Proc-Type: ...), after the CI prefix and time stamp
@@ -863,6 +867,9 @@ function Protect-LogLine([string]$Line, $Redactor, [switch]$KeepTabs) {
     $s = $rx.Token.Replace($s, '<token hidden>')
     $s = $rx.Bearer.Replace($s, '$1 <hidden>')
     $s = $rx.Pair.Replace($s, '$1$2<hidden>')
+    $s = $rx.Flag.Replace($s, '$1<hidden>')
+    $s = $rx.UrlCred.Replace($s, '${1}<hidden>@')
+    $s = $rx.UserFlag.Replace($s, '$1<hidden>')
     $s = $rx.KeyFile.Replace($s, '<key file>')
     $s = $rx.UserDir.Replace($s, '${1}<user>')
     foreach ($n in $Redactor.Names) { $s = [regex]::Replace($s, '(?<![A-Za-z0-9])' + [regex]::Escape($n) + '(?![A-Za-z0-9])', '<name>', 'IgnoreCase') }

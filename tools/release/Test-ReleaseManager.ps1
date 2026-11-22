@@ -429,6 +429,14 @@ try {
         # The label must not print the raw case: a BEGIN header in a check name would itself be hidden by the redactor in the CI log.
         Assert-That "log redaction: a $($c[0].Length)-character case hides its secret" (-not $got.Contains($c[1])) "got '$got'"
     }
+    # More shapes (sweep 2026-11-22, REL-4): a flag with a space, env names that end in _PASS, _PIN or NONCE, a seed, user:password in a URL or after -u.
+    foreach ($c in @(@('sigtool sign --passphrase hunter2hunter2 manifest.json', 'hunter2'), @('set SIGN_PASS=hunter2hunter2', 'hunter2'), @('UNRAVIS_RELEASE_NONCE=hunter2hunter2', 'hunter2'), @('PROTON_PASS_PIN=4321', '4321'), @('{"seed":"hunter2hunter2"}', 'hunter2'), @('curl -u bob:hunter2hunter2 https://x.example', 'hunter2'), @('git clone https://bob:hunter2hunter2@host.example/r.git', 'hunter2'))) {
+        $got = Protect-LogLine $c[0] (New-LogRedactor)
+        Assert-That "log redaction: shape '$($c[0].Substring(0, 8))...' hides its secret" (-not $got.Contains($c[1])) "got '$got'"
+    }
+    foreach ($ok in @('git clone https://github.com/abhinavjp/unravis.git', 'shipping: 3 files, mapping ok, ping 12ms', 'go test -count=1 ./...')) {
+        Assert-That "log redaction: ordinary line kept: $ok" ((Protect-LogLine $ok (New-LogRedactor)) -eq $ok)
+    }
     $uk = New-LogRedactor
     $ukOut = '-----BEGIN PGP PRIVATE KEY BLOCK-----', 'ok   log redaction: nothing secret left', '--- PASS: TestX (0.00s)' | ForEach-Object { Protect-LogLine $_ $uk }
     Assert-That 'log redaction: a key header with no END line hides only itself' (($ukOut -join '|') -eq '<private key hidden>|ok   log redaction: nothing secret left|--- PASS: TestX (0.00s)') "got '$($ukOut -join '|')'"

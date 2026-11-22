@@ -27,12 +27,16 @@ func NewRedactor(names ...string) *Redactor {
 }
 
 var (
-	ansiRE    = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07`)
-	tokenRE   = regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})`)
-	bearerRE  = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}`)
-	pairRE    = regexp.MustCompile(`(?i)([\w-]*(?:pass(?:word|phrase)|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|.+)`)
-	keyBeginR = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
-	keyEndR   = regexp.MustCompile(`-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
+	ansiRE   = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07`)
+	tokenRE  = regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})`)
+	bearerRE = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}`)
+	pairRE   = regexp.MustCompile(`(?i)([\w-]*(?:pass(?:word|phrase)|_pass|_pin|nonce|seed|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|.+)`)
+	// A secret that follows a flag with a space and no colon or equals sign ("--passphrase <value>"), and user:password in a URL or after "-u".
+	flagRE     = regexp.MustCompile(`(?i)(\s--?(?:pass\w*|pwd|token|secret|nonce|pin)\s+)\S+`)
+	urlCredRE  = regexp.MustCompile(`(://)[^\s/:@]+:[^\s/@]+@`)
+	userFlagRE = regexp.MustCompile(`(\s-u\s+)\S+`)
+	keyBeginR  = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
+	keyEndR    = regexp.MustCompile(`-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
 	// A line that can still belong to a key block: nothing, base64, or a header such as "Proc-Type: 4,ENCRYPTED". After the CI prefix
 	// ("job<TAB>step<TAB>") and the time stamp are taken off. Anything else (a sentence, a test result) ends a block that never closed.
 	// "[ \t\r\f\v]" and not \s: the PowerShell twin must agree, and .NET counts more characters as \s than Go does. A "*" is a value GitHub masked.
@@ -98,6 +102,9 @@ func (r *Redactor) Line(s string) string {
 	s = tokenRE.ReplaceAllString(s, "<token hidden>")
 	s = bearerRE.ReplaceAllString(s, "$1 <hidden>")
 	s = pairRE.ReplaceAllString(s, "$1$2<hidden>")
+	s = flagRE.ReplaceAllString(s, "$1<hidden>")
+	s = urlCredRE.ReplaceAllString(s, "${1}<hidden>@")
+	s = userFlagRE.ReplaceAllString(s, "$1<hidden>")
 	s = keyFileRE.ReplaceAllString(s, "<key file>")
 	s = userDirRE.ReplaceAllString(s, "${1}<user>")
 	for _, n := range r.names {

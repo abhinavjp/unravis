@@ -314,8 +314,10 @@ function Done([string]$name) { if (-not $CheckOnly) { Set-ReleaseState $data $Ve
 function Fail([string]$msg, [string]$status = 'stopped') {
     Write-Host "`nSTOPPED at $script:stage : $msg" -ForegroundColor Red
     if ($script:ownsVersion -and -not $CheckOnly) {
-        Set-ReleaseState $data $Version (Get-LastDone) $status $msg $script:extra
-        try { Write-AuditEntry $audit @{ event = 'stopped'; version = $Version; stage = $script:stage; reason = $msg } } catch {}
+        # The reason can be the output of a failed command (Run throws it whole): it goes to state.json and audit.jsonl, which the Releases app shows.
+        $safe = Protect-LogLine $msg (New-LogRedactor)
+        Set-ReleaseState $data $Version (Get-LastDone) $status $safe $script:extra
+        try { Write-AuditEntry $audit @{ event = 'stopped'; version = $Version; stage = $script:stage; reason = $safe } } catch {}
         if ($status -ne 'withdrawn') { Write-Host "Fix it, then run the same command again: it continues at $script:stage by itself." -ForegroundColor Yellow }
     }
     exit 1

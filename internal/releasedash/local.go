@@ -148,6 +148,7 @@ func ReadLocal(dir string) Local {
 		}
 	}
 	l.Events, l.Names = readAudit(filepath.Join(dir, "audit.jsonl"))
+	l.hideSecrets()
 	l.Live = readLive(dir, l.Events, time.Now())
 	return l
 }
@@ -212,4 +213,23 @@ func readAudit(path string) ([]Event, []string) {
 			Commit: hexOnly(str(m, "commit"), 7, 40), KeyPub: hexOnly(str(m, "key_pub"), 64), Manifest: hexOnly(str(m, "manifest_sha256"), 64)})
 	}
 	return out, names
+}
+
+// hideSecrets runs every free-text field read from state.json and audit.jsonl through the Redactor (with the machine and user names
+// found in the audit). The release script writes a stop reason as it got it, and that can be the output of a failed command, so a
+// token or passphrase printed by a tool must not reach the page by this road (the run log is redacted when it is read; these fields were not).
+func (l *Local) hideSecrets() {
+	hide := func(s string) string {
+		if s == "" {
+			return s
+		}
+		return NewRedactor(l.Names...).Line(s)
+	}
+	if l.Run != nil {
+		l.Run.Reason, l.Run.Stage = hide(l.Run.Reason), hide(l.Run.Stage)
+	}
+	for i := range l.Events {
+		e := &l.Events[i]
+		e.Name, e.Stage, e.Reason, e.From = hide(e.Name), hide(e.Stage), hide(e.Reason), hide(e.From)
+	}
 }
