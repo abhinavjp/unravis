@@ -8,6 +8,7 @@
   import { ERASE_DONE, IMPORT_TEXT, erasePrompt } from '../copy/importCopy';
   import { caseRow } from '../startScreen';
   import { formatTime } from '../time';
+  import { timeZone } from '../timeZone.svelte';
   import ArchiveDrawers from './ArchiveDrawers.svelte';
 
   // The archived cases, 50 at a time, apart from the working list. Each row says how it is kept (working copy kept, space freed, or missing) and offers
@@ -60,7 +61,7 @@
     return () => controller?.abort();
   });
 
-  const when = (value: string): string => formatTime(value, { year: true, precision: 'minute', fallback: '' });
+  const when = (value: string): string => formatTime(value, { zone: timeZone.zone, year: true, precision: 'minute', fallback: '' });
   const archivedOn = (c: CaseInfo): string => when(c.archive?.at ?? '');
   const countsOf = (c: CaseInfo): string => {
     const counts = c.archive?.current?.counts;
@@ -158,7 +159,7 @@
     <ul class="cases">
       {#each rows as c (c.id)}
         {@const actions = archivedActions(c)}
-        {@const row = caseRow(c)}
+        {@const row = caseRow(c, timeZone.zone)}
         <li class="case-row">
           <div class="line">
             <div class="case-info">

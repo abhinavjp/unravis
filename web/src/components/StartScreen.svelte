@@ -14,6 +14,7 @@
   import { KEY_TEXT } from '../lib/copy/masterKeyCopy';
   import { START_TEXT, oldCasesText, openLabel } from '../lib/copy/startCopy';
   import { startView } from '../lib/startScreen';
+  import { timeZone } from '../lib/timeZone.svelte';
   import { app, caseErased, noteKeyStatus, noteLocked } from '../lib/appState.svelte';
   import HelpNote from './HelpNote.svelte';
   import RewrapNotice from './RewrapNotice.svelte';
@@ -53,7 +54,7 @@
   let eraseNote = $state('');
   const confirmed = $derived(eraseId !== '' && eraseConfirmed(typed, eraseId));
 
-  const view = $derived(startView(lock, cases, pages, erased));
+  const view = $derived(startView(lock, cases, pages, erased, timeZone.zone));
 
   async function load() {
     const signal = controller?.signal;

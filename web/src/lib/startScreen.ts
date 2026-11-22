@@ -76,13 +76,14 @@ export function caseCounts(c: Pick<StartCase, 'imports' | 'sources'>): string {
 }
 
 /** The erase date of a closed case, said in the list row too. A case that is locked or unreadable says nothing. */
-function eraseNoteOf(c: StartCase): string {
+function eraseNoteOf(c: StartCase, zone: string): string {
   if (!c.closed || needsAttention(c)) return '';
   const at = closedEraseAt(c.closed);
-  return at ? closedEraseText(formatTime(at, { year: true, precision: 'minute', fallback: '' })).replace(/ Save a case file to keep it\.$/, '') : '';
+  return at ? closedEraseText(formatTime(at, { zone, year: true, precision: 'minute', fallback: '' })).replace(/ Save a case file to keep it\.$/, '') : '';
 }
 
-export function caseRow(c: StartCase): CaseRow {
+/** `zone` is the zone the header chose ("Times in"), so a case's date in the list agrees with the case page; it is UTC when the caller names none (CASES-13). */
+export function caseRow(c: StartCase, zone = 'UTC'): CaseRow {
   // A case that is locked, or that cannot be opened, is named by its short code: its title is not read.
   const byCode = needsAttention(c);
   const named = byCode ? 'Case ' + caseCode(c.id) : '';
@@ -92,12 +93,12 @@ export function caseRow(c: StartCase): CaseRow {
     fullTitle: named || c.title.trim() || START_TEXT.untitled,
     keyLocked: c.keyLocked === true,
     keyEnding: c.ownKey === true ? keyEndingLabel(c.keyEnding) : '',
-    created: byCode ? '' : formatTime(c.created, { year: true, precision: 'minute', fallback: '' }),
+    created: byCode ? '' : formatTime(c.created, { zone, year: true, precision: 'minute', fallback: '' }),
     counts: byCode ? '' : caseCounts(c),
     codeText: START_TEXT.codeLabel + ' ' + caseCode(c.id),
     closed: Boolean(c.closed),
     closedLabel: START_TEXT.closedLabel,
-    eraseNote: eraseNoteOf(c),
+    eraseNote: eraseNoteOf(c, zone),
     untrusted: c.untrusted === true,
     untrustedLabel: START_TEXT.untrustedLabel,
     archiving: c.state === 'archiving',
@@ -132,9 +133,9 @@ export interface StartView {
   erased: ErasedRow[];
 }
 
-export function erasedRow(line: ErasedLine): ErasedRow {
+export function erasedRow(line: ErasedLine, zone = 'UTC'): ErasedRow {
   const code = caseCode(line.id);
-  return { id: line.id, code, text: erasedLineText(code, formatTime(line.at, { year: true, precision: 'minute', fallback: line.at })), sticker: ERASE_TEXT.erasedSticker };
+  return { id: line.id, code, text: erasedLineText(code, formatTime(line.at, { zone, year: true, precision: 'minute', fallback: line.at })), sticker: ERASE_TEXT.erasedSticker };
 }
 
 /** How many rows to show for a "Show more" count: the first page, then a page more each time. */
@@ -151,14 +152,15 @@ export function orderedCases<T extends Pick<StartCase, 'keyLocked' | 'untrusted'
 /**
  * Everything the screen shows, from the key state and the case list. A locked key returns no rows, no titles and no counts, even
  * if a list is passed in. `lock` of null means the status has not been read yet: show the cards without the setup link.
+ * `zone` is the zone the header chose, so the dates in the list agree with the case page (CASES-13); it is UTC when none is named.
  */
-export function startView(lock: LockState | null, cases: readonly StartCase[], pages = 1, erased: readonly ErasedLine[] = []): StartView {
+export function startView(lock: LockState | null, cases: readonly StartCase[], pages = 1, erased: readonly ErasedLine[] = [], zone = 'UTC'): StartView {
   if (lock === 'locked' || lock === 'damaged') {
     return { locked: true, cards: [], rows: [], hidden: 0, total: 0, shown: '', empty: '', offerSetup: false, erased: [] };
   }
   const total = cases.length;
   const limit = visibleCount(pages);
-  const rows = orderedCases(cases).slice(0, limit).map(caseRow);
+  const rows = orderedCases(cases).slice(0, limit).map((c) => caseRow(c, zone));
   const hidden = Math.max(0, total - rows.length);
   return {
     locked: false,
@@ -169,6 +171,6 @@ export function startView(lock: LockState | null, cases: readonly StartCase[], p
     shown: hidden > 0 ? shownText(rows.length, total) : '',
     empty: total === 0 ? START_TEXT.existingEmpty : '',
     offerSetup: lock === 'none',
-    erased: erased.map(erasedRow)
+    erased: erased.map((line) => erasedRow(line, zone))
   };
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { fetchLaneDays, groupSources, newestDay, readableByDay, runNotice, shiftDays, type LaneDay, type LaneRunResult, type LaneSource } from '../../lib/lanes';
+  import { fetchLaneDays, groupSources, newestDay, zoneThenUtc, readableByDay, runNotice, shiftDays, type LaneDay, type LaneRunResult, type LaneSource } from '../../lib/lanes';
   import { runProblem } from '../../lib/lanes';
   import { HUB_TEXT, NUTSHELL, STEP_TEXT } from '../../lib/copy/sourcesCopy';
   import { formatTime } from '../../lib/time';
@@ -98,7 +98,7 @@
           <ul class="rows">
             {#each source.days as day (day.id)}
               <li>
-                <span class="what"><span class="name">{day.incident.start.slice(0, 16).replace('T', ' ')} UTC</span><span class="hint">{STEP_TEXT.readAt} {when(day.at)}</span></span>
+                <span class="what"><span class="name">{zoneThenUtc(day.incident.start, timeZone.zone)}</span><span class="hint">{STEP_TEXT.readAt} {when(day.at)}</span></span>
                 <StateSticker word={day.state} />
                 <button type="button" class="btn" aria-pressed={open?.id === day.id} onclick={() => { openId = day.id; unsaved = null; }}>{open?.id === day.id ? STEP_TEXT.shown : STEP_TEXT.show}</button>
               </li>
