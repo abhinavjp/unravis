@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// quotedOrBraced is a quoted or braced value. A quote inside a quoted value is doubled (as in an apostrophe written twice), and "}}" is an
+// escaped brace, as ADO writes them. The closing mark is optional: a value that never closes runs to the end of the text.
+const quotedOrBraced = `"(?:[^"]|"")*"?|'(?:[^']|'')*'?|\{(?:[^}]|\}\})*\}?`
+
 // The setup log never holds a secret. Every line goes through Redact, which hides anything shaped like a Blackbox read key, a launch
 // token in a link, or a password setting, in case one ever reaches a message by mistake. The read key itself is never given to the log.
 var redactions = []struct {
@@ -18,7 +22,12 @@ var redactions = []struct {
 }{
 	{regexp.MustCompile(`(?i)ubk-[a-z0-9-]*`), "ubk-[hidden]"},
 	{regexp.MustCompile(`(?i)([#?&](?:t|k|key|token|launch)=)[^\s&"']+`), "${1}[hidden]"},
-	{regexp.MustCompile(`(?i)\b(password|pwd|secret|readkey)(\s*[=:]\s*)("[^"]*"|[^\s;,]+)`), "${1}${2}[hidden]"},
+	// A password in a URL query string (?password=x&y=1) ends at "&", ";", "," or a space.
+	{regexp.MustCompile(`(?i)([?&](?:password|passwd|pwd)[ \t]*[=:][ \t]*)(?:` + quotedOrBraced + `|[^\s&;,]+)`), "${1}[hidden]"},
+	// Any other password key: a password may hold spaces, so an unquoted value runs to the next ";" or the end of the line.
+	// When nothing follows the key on its line, the value is the text after one line break (CRLF, LF or a lone CR); blank lines end the search.
+	{regexp.MustCompile(`(?im)(^|[^?&\w])((?:password|passwd|pwd)[ \t]*[=:][ \t]*)(?:` + quotedOrBraced + `|[^;\r\n]+|(?:(?:\r\n?|\n)[ \t]*(?:` + quotedOrBraced + `|[^;\r\n]+))?)`), "${1}${2}[hidden]"},
+	{regexp.MustCompile(`(?i)\b(secret|readkey)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s;,]+)`), "${1}${2}[hidden]"},
 }
 
 // Redact hides secrets in a log line.
