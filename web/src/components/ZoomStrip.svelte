@@ -141,7 +141,7 @@
       </nav>
     </div>
     <div class="zoom-buttons">
-      <button type="button" class="quiet-button" disabled={!model.canBack} title={help['drill-back'].plain} onclick={onBack}>{zoomCopy.back}</button>
+      <button type="button" class="quiet-button" disabled={!model.canBack} onclick={onBack}>{zoomCopy.back}</button>
       <button type="button" class="quiet-button" disabled={!model.canIn} onclick={onZoomIn}>{zoomCopy.zoomIn}</button>
       <button type="button" class="quiet-button" disabled={!model.canOut} onclick={onZoomOut}>{zoomCopy.zoomOut}</button>
       <button type="button" class="quiet-button" disabled={!model.canReset} onclick={onReset}>{zoomCopy.reset}</button>
@@ -183,6 +183,7 @@
     <button type="button" class="zoom-more-toggle" aria-expanded={moreShown} aria-controls={moreId} aria-label={zoomCopy.moreLabel} onclick={() => moreShown = !moreShown}>{'?'}</button></p>
   <div class="zoom-more" id={moreId} hidden={!moreShown}>
     <p class="zoom-note">{zoomCopy.howTo}</p>
+    <p class="zoom-note">{help['drill-back'].plain}</p>
     {#if !model.isRoot}<p class="zoom-note">{help['drill-investigate'].plain}</p>{/if}
     {#if model.scopeLine}<p class="zoom-note">{model.scopeLine} {model.referenceLine}</p>{/if}
     {#if model.asOfLine}<p class="zoom-note">{model.asOfLine} {zoomCopy.asOfNote}</p>{/if}

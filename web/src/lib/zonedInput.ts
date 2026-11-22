@@ -28,10 +28,12 @@ export const toZonedInput = (value: string | number | Date, zone: string): strin
 };
 
 /**
- * The UTC instant (ISO text) for a date and a time typed on the wall clock of `zone`. A time that happens twice when the clocks go back takes the first one.
+ * The UTC instant (ISO text) for a date and a time typed on the wall clock of `zone`. A time that happens twice when the clocks go back takes the first one,
+ * unless `previous` (the instant the box held before this edit) was itself in the second pass of that same repeated hour: then the edit keeps the second pass, so
+ * changing only the date or the seconds of "01:30 GMT" does not silently move the window to "01:30 GMT+1", an hour earlier.
  * A time the clocks skip (the hour lost when they go forward) does not exist: it throws a RangeError that says so, and the person chooses another time.
  */
-export const fromZonedParts = (datePart: string, timePart: string, zone: string): string => {
+export const fromZonedParts = (datePart: string, timePart: string, zone: string, previous?: string): string => {
   const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
   const timeMatch = /^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(timePart);
   if (!dateMatch || !timeMatch) throw new RangeError('Enter a valid date and time.');
@@ -47,5 +49,30 @@ export const fromZonedParts = (datePart: string, timePart: string, zone: string)
   const at = localToInstant(wall, z);
   // localToInstant moves a skipped time to just after the gap; a typed time that does not read back as itself is one the clocks skip.
   if (at + zoneOffsetMs(at, z) !== wall) throw new RangeError('That time does not exist in this time zone on this date because the clocks change. Choose another time.');
+  if (previous) {
+    const later = laterPassOf(wall, previous, z);
+    if (later !== null) return new Date(later).toISOString();
+  }
   return new Date(at).toISOString();
+};
+
+const DAY_MS = 86_400_000;
+/** Every instant whose wall clock in `zone` reads `wall`: none in the hour a clock change skips, two in the hour it repeats. Oldest first. */
+const instantsFor = (wall: number, zone: string): number[] => {
+  const found = new Set<number>();
+  for (const probe of [wall - DAY_MS, wall + DAY_MS]) {
+    const at = wall - zoneOffsetMs(probe, zone);
+    if (at + zoneOffsetMs(at, zone) === wall) found.add(at);
+  }
+  return [...found].sort((a, b) => a - b);
+};
+/** The later pass of a repeated wall time, when `previous` was the later pass of the same repeated hour; otherwise null. */
+const laterPassOf = (wall: number, previous: string, zone: string): number | null => {
+  const now = instantsFor(wall, zone);
+  const was = Date.parse(previous);
+  if (now.length !== 2 || !Number.isFinite(was)) return null;
+  const wasWall = was + zoneOffsetMs(was, zone);
+  const before = instantsFor(wasWall, zone);
+  const repeat = now[1] - now[0];
+  return before.length === 2 && was === before[1] && Math.abs(wall - wasWall) < repeat ? now[1] : null;
 };

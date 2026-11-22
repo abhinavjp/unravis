@@ -339,10 +339,11 @@ test('the field keys are wired to the controls they describe', () => {
   assert.match(ranges, /part="block" open=\{helpOpen\[field\.key\]\}/);
 });
 
-test('the drill-down controls carry their notes: Back by its title, investigate behind the zoom "?" (ANALYSIS-11), the navigator in its own note', () => {
+test('the drill-down controls carry their notes: Back and investigate behind the zoom "?" in visible text (ANALYSIS-11, SWEEP-F2-S7), the navigator in its own note', () => {
   const src = read('src/components/ZoomStrip.svelte');
   assert.doesNotMatch(src, /<HelpNote id="drill-(?:investigate|back)"/, 'one sentence per state: the two notes no longer stack above the strip');
-  assert.match(src, /title=\{help\['drill-back'\]\.plain\}/);
+  assert.doesNotMatch(src, /title=\{help\['drill-back'\]/, 'a title never shows on keyboard focus or touch');
+  assert.match(src, /<p class="zoom-note">\{help\['drill-back'\]\.plain\}<\/p>/);
   assert.match(src, /\{#if !model\.isRoot\}<p class="zoom-note">\{help\['drill-investigate'\]\.plain\}<\/p>\{\/if\}/, 'shown only while the chip is shown');
   assert.match(src, /<HelpNote id="drill-navigator" \/>/);
   // The chip keeps its own disabled logic.

@@ -408,6 +408,8 @@
       {/if}
       {#if back.length}<button type="button" class="quiet-button" title={T.zoomBackHint} onclick={goBack}>{T.zoomBack}</button>{/if}
     </div>
+    <!-- What the log scale means is written out while it is chosen, not only in a tooltip that keyboard and touch users never see (SWEEP-F2-S7). -->
+    {#if view === 'charts' && log}<p class="bbc-note">{T.scaleHint}</p>{/if}
 
     <div class="bbc-main" class:wide={view !== 'charts'}>
       {#if view === 'charts'}

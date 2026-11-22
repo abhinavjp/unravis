@@ -110,7 +110,7 @@ test('SWEEP-F2-01: the When group reads and writes in the header zone and says s
   const when = read('src/components/filters/WhenGroup.svelte');
   assert.match(when, /import \{ fromZonedParts, toZonedInput \} from '\.\.\/\.\.\/lib\/zonedInput'/);
   assert.match(when, /import \{ TIME_ZONE_OPTIONS, timeZone \} from '\.\.\/\.\.\/lib\/timeZone\.svelte'/);
-  assert.match(when, /query\[field\] = fromZonedParts\(datePart, timePart, zone\)/);
+  assert.match(when, /query\[field\] = fromZonedParts\(datePart, timePart, zone, query\[field\]\)/);
   assert.match(when, /const localValue = \(value: string\) => toZonedInput\(value, zone\)/);
   assert.match(when, /Times are in <strong>\{zoneLabel\}<\/strong>/);
   assert.doesNotMatch(when, /browser time zone|resolvedOptions|fromLocalParts|toLocalDatePart|toLocalTimePart/, 'nothing reads the browser zone any more');
@@ -172,11 +172,15 @@ test('SWEEP-F2-04: one stale message (in the bar), and the bar reserves its plac
   assert.doesNotMatch(app, /The figures below are from the last run/, 'the second message is gone');
   assert.match(read('src/lib/appState.svelte.ts'), /FILTERS_CHANGED_HINT = 'Filters changed\. Click Run analysis to use the new window\.'/);
   const bar = read('src/components/SubBar.svelte');
-  assert.match(bar, /<span class="run-hint" class:stale=\{results\.displayedRunIsStale && !loading\} id="run-hint" role="status">/);
+  assert.match(bar, /<span class="run-hint" class:stale=\{results\.displayedRunIsStale && !loading\} class:reserved=\{reservedHint\} id="run-hint" role="status">\{hintText\}<\/span>/);
   const style = bar.slice(bar.indexOf('<style>'));
   assert.match(style, /@media \(min-width: 721px\)/);
   assert.match(style, /\.scope-main \.run-actions \{[^}]*position: relative[^}]*padding-bottom: 20px; margin-bottom: -14px/);
-  assert.match(style, /\.scope-main \.run-hint \{ position: absolute; right: 0; bottom: 0;/, 'the hint takes no room in the row, so it cannot wrap the bar');
+  assert.match(style, /\.scope-main \.run-hint\.reserved \{ position: absolute; right: 0; bottom: 0;/, 'the short line takes no room in the row, so it cannot wrap the bar');
+  // SWEEP-F2-S3: only the short line is reserved. A validation sentence is never cut: no ellipsis and no hidden overflow anywhere in the bar.
+  assert.doesNotMatch(style, /text-overflow|overflow: hidden/);
+  assert.match(style, /\.scope-main \.run-hint:not\(\.reserved\) \{[^}]*overflow-wrap: anywhere/);
+  assert.match(bar, /const reservedHint = \$derived\(hintText === '' \|\| hintText === FILTERS_CHANGED_HINT\)/);
   assert.doesNotMatch(read('src/lib/appState.svelte.ts'), /autoRunDecision|createCoalescer/, 'the manual run stays: nothing wires the auto-run helpers into the page');
 });
 
@@ -250,7 +254,7 @@ test('SWEEP-F2-11: the zoom strip says how to zoom once, and the rest sits behin
   assert.match(src, /aria-expanded=\{moreShown\} aria-controls=\{moreId\} aria-label=\{zoomCopy\.moreLabel\}/);
   // Scope, reference and as-of lines share one block, which stays in the page (hidden) so aria-controls always points at something.
   assert.match(src, /<div class="zoom-more" id=\{moreId\} hidden=\{!moreShown\}>/);
-  assert.equal((src.match(/class="zoom-note"/g) ?? []).length, 4, 'four lines, all inside the "?" block');
+  assert.equal((src.match(/class="zoom-note"/g) ?? []).length, 5, 'five lines, all inside the "?" block');
   const { zoomCopy } = loadTypeScript('src/lib/copy/zoomCopy.ts');
   assert.equal(zoomCopy.moreLabel, 'More about zooming');
   assert.match(zoomCopy.asOfNote, /when the zoomed read finished/);
@@ -350,4 +354,42 @@ test('SWEEP-F2-C12: the four UTC boxes say what they hold, sit two by two, and e
   assert.equal(RUN_TEXT.timePlaceholder, 'yyyy-mm-dd hh:mm', 'a format, not a date that looks filled in');
   assert.equal(RUN_TEXT.incidentStart, 'Incident starts (UTC)', 'the labels the other screens and specs use stay');
   assert.match(runner, /\.pair-times \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Round 2 (review S3, S6, S7, N2).
+// ---------------------------------------------------------------------------------------------------------------------
+test('SWEEP-F2-N2: the open More filters panel has one scroller, the panel body', () => {
+  const css = read('src/app.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(css, /\.scope:has\(\.more-filters\[open\]\)/);
+  assert.match(css, /\.more-filters\[open\] > \.more-body \{ max-height: max\(200px, calc\(100dvh - var\(--header-h\) - 400px\)\); overflow-y: auto;/);
+});
+
+test('SWEEP-F2-S6: editing a box that holds the second pass of a repeated hour keeps the second pass', () => {
+  // London, 25 Oct 2026: 01:00 UTC the clocks go back, so 01:00 to 02:00 happens twice (BST at 00:30Z, GMT at 01:30Z).
+  const second = '2026-10-25T01:30:00.000Z';
+  assert.equal(zi.toZonedInput(second, 'Europe/London'), '2026-10-25T01:30:00.000');
+  // An edit that leaves the wall time as it was, or changes only the seconds or the minutes inside the repeated hour, keeps GMT.
+  assert.equal(zi.fromZonedParts('2026-10-25', '01:30:00.000', 'Europe/London', second), second);
+  assert.equal(zi.fromZonedParts('2026-10-25', '01:30:05', 'Europe/London', second), '2026-10-25T01:30:05.000Z');
+  assert.equal(zi.fromZonedParts('2026-10-25', '01:45', 'Europe/London', second), '2026-10-25T01:45:00.000Z');
+  // Without a previous value, or when the previous value was the first pass or another day, the first occurrence is still taken.
+  assert.equal(zi.fromZonedParts('2026-10-25', '01:30', 'Europe/London'), '2026-10-25T00:30:00.000Z');
+  assert.equal(zi.fromZonedParts('2026-10-25', '01:30', 'Europe/London', '2026-10-25T00:30:00.000Z'), '2026-10-25T00:30:00.000Z');
+  assert.equal(zi.fromZonedParts('2026-10-25', '01:30', 'Europe/London', '2026-10-24T12:00:00.000Z'), '2026-10-25T00:30:00.000Z');
+  // Moving out of the repeated hour reads normally, whatever the previous value was.
+  assert.equal(zi.fromZonedParts('2026-10-25', '03:00', 'Europe/London', second), '2026-10-25T03:00:00.000Z');
+  assert.equal(zi.fromZonedParts('2026-10-25', '00:15', 'Europe/London', second), '2026-10-24T23:15:00.000Z');
+  // A date change to another day with an ordinary 01:30 is not affected.
+  assert.equal(zi.fromZonedParts('2026-10-26', '01:30', 'Europe/London', second), '2026-10-26T01:30:00.000Z');
+  // The same rule in New York (1 Nov 2026, 01:00-02:00 twice) and Sydney (5 Apr 2026, 02:00-03:00 twice).
+  assert.equal(zi.fromZonedParts('2026-11-01', '01:30', 'America/New_York', '2026-11-01T06:30:00.000Z'), '2026-11-01T06:30:00.000Z');
+  assert.equal(zi.fromZonedParts('2026-04-05', '02:30', 'Australia/Sydney', '2026-04-04T16:30:00.000Z'), '2026-04-04T16:30:00.000Z');
+  // The window start/end that a person never touched cannot drift: every instant in the repeated hour survives an edit of its own box.
+  for (const at of [Date.parse('2026-10-25T00:00:00Z'), Date.parse('2026-10-25T00:30:00Z'), Date.parse('2026-10-25T01:00:00Z'), Date.parse('2026-10-25T01:59:00Z'), Date.parse('2026-10-25T02:00:00Z')]) {
+    const iso = new Date(at).toISOString();
+    const box = zi.toZonedInput(iso, 'Europe/London');
+    assert.equal(zi.fromZonedParts(box.slice(0, 10), box.slice(11), 'Europe/London', iso), iso, iso);
+  }
+  assert.match(read('src/components/filters/WhenGroup.svelte'), /fromZonedParts\(datePart, timePart, zone, query\[field\]\)/);
 });

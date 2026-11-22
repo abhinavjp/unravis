@@ -775,9 +775,8 @@ th.numeric { text-align: right; }
   .rail-item { width: 100%; }
   .rail-count { margin-left: auto; }
   .rail-item.on { box-shadow: inset -1px 0 0 var(--accent); }
-  /* The open panel must leave the results at least about 250px (ANALYSIS-03): the header and the bar are outside the scrolling area. */
+  /* The open panel must leave the results at least about 250px (ANALYSIS-03): the header and the bar are outside the scrolling area, and the panel body is the only scroller (no scroller inside a scroller). */
   .more-filters[open] > .more-body { max-height: max(200px, calc(100dvh - var(--header-h) - 400px)); overflow-y: auto; overscroll-behavior: contain; }
-  .scope:has(.more-filters[open]) { max-height: 62dvh; overflow-y: auto; overscroll-behavior: contain; }
 }
 
 /* Tablet widths and touch screens: the main buttons are at least 40px tall (the rule below makes them 44px on a phone). */

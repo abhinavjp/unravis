@@ -71,3 +71,26 @@ test('SWEEP-F2-13: the case list shows dates in the header zone', async ({ page 
   await zoneSelect(page).selectOption({ label: 'UTC' });
   await expect(page.getByText(/17 Oct 2026 09:00 (UTC|GMT\+0)/).first()).toBeVisible();
 });
+
+test('SWEEP-F2-S3: a sentence that says why the run will not start is shown whole, never cut with an ellipsis', async ({ page }) => {
+  await openWhen(page);
+  await page.locator('input[type=date]').first().fill('2026-10-05');
+  const hint = page.locator('#run-hint');
+  await expect(hint).toContainText(/7 days/);
+  const metrics = await hint.evaluate((e) => {
+    const style = getComputedStyle(e);
+    return { clipped: e.scrollWidth > e.clientWidth + 1, ellipsis: style.textOverflow, overflow: style.overflow, height: e.getBoundingClientRect().height };
+  });
+  expect(metrics.clipped).toBe(false);
+  expect(metrics.ellipsis).not.toBe('ellipsis');
+  expect(metrics.overflow).not.toBe('hidden');
+  // The whole sentence is on screen: its box is inside the viewport and wraps to more than one line when it has to.
+  const box = await hint.boundingBox();
+  expect(box && box.x >= 0 && box.x + box.width <= 1440).toBe(true);
+});
+
+test('SWEEP-F2-N2: with More filters open only the panel body scrolls', async ({ page }) => {
+  await page.getByText('More filters').first().click();
+  const scrollers = await page.evaluate(() => [...document.querySelectorAll('.scope, .scope *')].filter((e) => /(auto|scroll)/.test(getComputedStyle(e).overflowY)).map((e) => e.className));
+  expect(scrollers.filter((name) => /scope(\s|$)/.test(String(name)) && !/scope-main/.test(String(name)))).toEqual([]);
+});

@@ -1631,7 +1631,8 @@ test('the redesign keeps its contrast, status and navigation fixes in the source
 
 test('the run hint is a persistent status region tied to the run button, the back link has a full label, and no screen says "Run comparison"', () => {
   const app = appSource();
-  assert.match(app, /<span class="run-hint"[^>]* id="run-hint" role="status">\{loading && waiting\.slow \? WAIT_TEXT\.stillReading : runHint\}<\/span>/);
+  assert.match(app, /<span class="run-hint"[^>]* id="run-hint" role="status">\{hintText\}<\/span>/);
+  assert.match(app, /hintText = \$derived\(loading && waiting\.slow \? WAIT_TEXT\.stillReading : runHint\)/);
   assert.doesNotMatch(app, /\{#if runHint\}/);
   assert.match(app, /class="primary-button" aria-describedby="run-hint"/);
   assert.match(fs.readFileSync(path.join(root, 'src/components/Breadcrumb.svelte'), 'utf8'), /aria-label=\{'Back to ' \+ crumb\.label\}/);

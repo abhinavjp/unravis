@@ -362,3 +362,12 @@ test('a pointer move does not read layout: the track box is taken once, when the
   assert.equal((down.match(/getBoundingClientRect/g) || []).length, 1);
   assert.match(down, /rect \}/);
 });
+
+test('SWEEP-F2-S7: the Back sentence is real text inside the "?" block, not only a tooltip', () => {
+  const out = html(topModel).replace(/<!--.*?-->/g, '');
+  const start = out.indexOf('zoom-more');
+  assert.ok(start > 0, 'the block is in the page');
+  const more = out.slice(start, out.indexOf('sr-only', start));
+  assert.ok(more.includes(help['drill-back'].plain), 'the Back sentence is read there');
+  assert.doesNotMatch(out, /<button[^>]*title="[^"]*"[^>]*>Back</, 'no title on the Back button');
+});
