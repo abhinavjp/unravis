@@ -32,7 +32,7 @@ func mustAdvise(t *testing.T, err error, thing string) {
 func TestEveryJournalRefusalNamesTheFileAndAWayOutWithoutDeletingAnything(t *testing.T) {
 	// A file that is refused: its owner is a person.
 	e := newEnv(t, "1.2.0")
-	journal, victim := machineJournal(t, e)
+	journal, _ := machineJournal(t, e)
 	if err := e.f.Sec.SetSDDL(journal, "O:S-1-5-21-1000D:P(A;;FA;;;SY)(A;;FA;;;BA)"); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestEveryJournalRefusalNamesTheFileAndAWayOutWithoutDeletingAnything(t *tes
 
 	// A folder others can change: the folder is named, and the way out is about the folder.
 	e = newEnv(t, "1.2.0")
-	journal, victim = machineJournal(t, e)
+	journal, victim := machineJournal(t, e)
 	dir := filepath.Dir(journal)
 	_ = e.f.Sec.SetSDDL(dir, AdminOnlySDDL+"(A;OICI;FA;;;BU)")
 	_, _, err = e.r.RecoverJournal(true)

@@ -19,14 +19,14 @@ func pendingMachineRun(t *testing.T, rg *testRig) (made string, appPID uint32) {
 	t.Helper()
 	rg.f.Mach.Admin = false
 	made = filepath.Join(rg.root, "half.txt")
-	if err := os.WriteFile(made, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(made, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	putJournal(t, setup.MachineJournalDir(rg.dirs), journalBody(t, made))
 	trustMachine(t, rg)
 	exe, _ := rg.env.setupExe()
 	app := filepath.Join(filepath.Dir(exe), "unravis.exe")
-	if err := os.WriteFile(app, []byte("app"), 0o644); err != nil {
+	if err := os.WriteFile(app, []byte("app"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return made, rg.f.Proc.Run(app)
@@ -101,7 +101,7 @@ func TestRecoverCancelStillReplaysThePersonsOwnJournal(t *testing.T) {
 	rg := newRig(t)
 	_, _ = pendingMachineRun(t, rg)
 	mine := filepath.Join(rg.root, "mine.txt")
-	if err := os.WriteFile(mine, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(mine, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	putJournal(t, setup.UserJournalDir(rg.dirs), journalBody(t, mine))
