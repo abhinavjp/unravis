@@ -338,6 +338,14 @@ func safe(f func()) {
 // read without a bound, so the probe stops with ReasonOther instead.
 func setDeadline(c Conn, t time.Time) *Error {
 	if err := c.SetDeadline(t); err != nil {
+		// A connection the peer already closed refuses a deadline too
+		// (net.Pipe does), but it cannot block: the next write or read fails
+		// at once and is reported as what it is (a bad reply), so this is
+		// not "no deadlines". Only a live connection that cannot be bounded
+		// is refused.
+		if errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrClosed) {
+			return nil
+		}
 		return newErr(ReasonOther, 0)
 	}
 	return nil

@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -349,9 +350,11 @@ func TestWindowsReadDeadline(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		run()
 	}
+	runtime.GC() // lets finalizers of files the runtime itself opened run before counting
 	time.Sleep(300 * time.Millisecond)
 	const rounds, perRound, noise = 4, 15, 4
 	prev := handleCount(t)
+	start := prev
 	minGrowth := 1 << 30
 	var growth []int
 	for r := 0; r < rounds; r++ {
@@ -366,9 +369,9 @@ func TestWindowsReadDeadline(t *testing.T) {
 		}
 		prev = now
 	}
-	t.Logf("handle growth per round of %d probes: %v", perRound, growth)
+	t.Logf("handle count %d after warm-up, %d after %d more probes; growth per round of %d: %v", start, prev, rounds*perRound, perRound, growth)
 	if minGrowth > noise {
-		t.Fatalf("handle count grew by more than %d in every round (%v): a handle leaks", noise, growth)
+		t.Fatalf("handle count %d after warm-up, %d after %d more probes; every round of %d grew by more than %d (%v): a handle leaks", start, prev, rounds*perRound, perRound, noise, growth)
 	}
 }
 
