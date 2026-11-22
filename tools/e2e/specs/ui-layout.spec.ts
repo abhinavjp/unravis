@@ -11,6 +11,7 @@
 //   UIFIX-13  Desktop does not move: the hour grid, its legend and the zoom strip look the same pixel for pixel as with the old rules put back (BL-475 groups 2 and 3)
 //   UIFIX-07  Add files on a phone: the column heads are painted nowhere, yet stay in the page for screen readers (BL-482). A guard only: the finding was a false positive of the audit, so the audit run proves the fix
 //   UIFIX-08  Phone header with "Choose sources" fits the window (BL-472); 390 and 360 px fail on the old header, 320 px is a no-regression case
+//   UIFIX-14  Tap targets of 24 x 24 px or more and desktop does not move: the "Change" link of the Review step (14a), the "Open the release page" link of the update bar (14b), the unfinished-request counts of Where is it? (14c), and the keyboard focus rings and rest pictures of those three, which stay the old ones (14f) (BL-475 group 4)
 //   UIFIX-10  Slow call screen: the time zone label, the peak and zero labels and the "drag" hint are at least 11px, the lanes and the minimap do not move, nothing collides (BL-483)
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase } from '../support/ui';
@@ -644,4 +645,224 @@ for (const width of [320, 360, 390]) {
     expect(facts.over, 'sideways overflow in px').toBeLessThanOrEqual(0);
     for (const s of facts.sizes) expect(s).toBeGreaterThanOrEqual(11);
   });
+}
+
+// BL-475 group 4: the last small targets of the audit. Like UIFIX-09 the old rules of each target are put back as inline styles and every
+// rectangle of the page part is compared in one evaluation: a target may grow (that is the point), but it may not move anything else, and its
+// margin box (the box plus its margins, which is what the neighbours see) must stay what it was. Desktop wins over the phone.
+type Rules = [string, Record<string, string>][];
+
+/** Every box inside `root` now and with `rules` put back. `moved` lists the boxes that differ; targets are compared by margin box. */
+async function layoutMoves(page: Page, root: string, rules: Rules, hideCss = ''): Promise<{ touched: number; moved: string[]; total: number }> {
+  return page.locator(root).first().evaluate((container, [rs, css]) => {
+    const targets = new Set<Element>();
+    for (const [selector] of rs) container.querySelectorAll(selector).forEach((e) => targets.add(e));
+    const snap = () => [...container.querySelectorAll('*')].filter((e) => !e.closest('svg') || e.tagName.toLowerCase() === 'svg').map((e) => {
+      const r = e.getBoundingClientRect();
+      const m = targets.has(e) ? getComputedStyle(e) : null;
+      const ml = m ? parseFloat(m.marginLeft) : 0, mt = m ? parseFloat(m.marginTop) : 0, mr = m ? parseFloat(m.marginRight) : 0, mb = m ? parseFloat(m.marginBottom) : 0;
+      return { name: e.tagName.toLowerCase() + '.' + (e.getAttribute('class') ?? '').split(' ')[0] + ' ' + (e.textContent ?? '').trim().slice(0, 24), box: [r.left - ml, r.top - mt, r.width + ml + mr, r.height + mt + mb] };
+    });
+    const now = snap();
+    const saved: [HTMLElement, string | null][] = [];
+    for (const [selector, declarations] of rs) {
+      container.querySelectorAll<HTMLElement>(selector).forEach((el) => {
+        saved.push([el, el.getAttribute('style')]);
+        for (const [k, v] of Object.entries(declarations)) el.style.setProperty(k, v, 'important');
+      });
+    }
+    const sheet = document.createElement('style');
+    sheet.textContent = css;
+    document.head.appendChild(sheet);
+    void document.body.offsetHeight;
+    const old = snap();
+    sheet.remove();
+    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.setAttribute('style', style); }
+    const moved: string[] = [];
+    now.forEach((n, i) => { if (!old[i] || n.box.some((v, j) => Math.abs(v - old[i].box[j]) > 0.05)) moved.push(n.name + ' now ' + n.box.map((v) => v.toFixed(2)).join(',') + ' old ' + (old[i]?.box ?? []).map((v) => v.toFixed(2)).join(',')); });
+    return { touched: saved.length, moved: moved.slice(0, 6), total: now.length };
+  }, [rules, hideCss] as [Rules, string]);
+}
+
+async function expectNothingMoved(page: Page, root: string, rules: Rules, label: string, hideCss = ''): Promise<void> {
+  const facts = await layoutMoves(page, root, rules, hideCss);
+  expect(facts.touched, label + ': no target found to compare').toBeGreaterThan(0);
+  expect(facts.total, label + ': nothing measured').toBeGreaterThan(5);
+  expect(facts.moved, label + ': boxes that moved against the old rules').toEqual([]);
+}
+
+/**
+ * The area that answers a press: the box of every match joined with its absolutely positioned ::after. It must be 24 x 24 px or more, and a
+ * press just inside each corner of it must land on the control (nothing in front of it). The box itself is not asked to grow (develop's
+ * focus ring and layout stay as they are).
+ */
+async function expectHitArea(page: Page, selector: string, label: string): Promise<void> {
+  const facts = await page.locator(selector).evaluateAll((els) => els.map((e) => {
+    const r = e.getBoundingClientRect(), cs = getComputedStyle(e), p = getComputedStyle(e, '::after');
+    let left = r.left, top = r.top, right = r.right, bottom = r.bottom;
+    if (p.content !== 'none' && p.position === 'absolute' && p.pointerEvents !== 'none') {
+      const x = r.left + (parseFloat(cs.borderLeftWidth) || 0) + parseFloat(p.left), y = r.top + (parseFloat(cs.borderTopWidth) || 0) + parseFloat(p.top);
+      left = Math.min(left, x); top = Math.min(top, y); right = Math.max(right, x + parseFloat(p.width)); bottom = Math.max(bottom, y + parseFloat(p.height));
+    }
+    e.scrollIntoView({ block: 'center' });
+    const q = e.getBoundingClientRect(), dx = q.left - r.left, dy = q.top - r.top;
+    const wrong = [[left + 1, top + 1], [right - 1, top + 1], [left + 1, bottom - 1], [right - 1, bottom - 1], [(left + right) / 2, top + 1], [(left + right) / 2, bottom - 1]]
+      .filter(([x, y]) => document.elementFromPoint(x + dx, y + dy)?.closest('button, a') !== e).length;
+    return { w: right - left, h: bottom - top, wrong };
+  }));
+  expect(facts.length, label + ': nothing found').toBeGreaterThan(0);
+  for (const f of facts) {
+    expect(f.w, label + ' hit area width').toBeGreaterThanOrEqual(24);
+    expect(f.h, label + ' hit area height').toBeGreaterThanOrEqual(24);
+    expect(f.wrong, label + ': presses inside the hit area that miss the control').toBe(0);
+  }
+}
+
+async function openReviewStep(page: Page): Promise<void> {
+  await openBlackbox(page);
+  await page.getByRole('button', { name: 'Open status: web-a' }).waitFor();
+  await page.getByRole('button', { name: 'Place a Blackbox' }).click();
+  await page.getByRole('textbox', { name: /^Name/ }).fill('sql-prod-01');
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await page.getByRole('radio', { name: /On another server/ }).click();
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'What should it record?' })).toBeVisible();
+  for (let i = 0; i < 5; i++) await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Build the pack' })).toBeVisible();
+  await expect(page.locator('.with-change button.change').first()).toBeVisible();
+}
+
+// develop has no pseudo-element on these targets: the old state is the same page with the pseudo-element removed.
+const REVIEW_OLD: Rules = [['.with-change .change', { position: 'static' }]];
+const REVIEW_HIDE = '.with-change .change::after { content: none !important; }';
+
+test('UIFIX-14a Place a Blackbox, Review: the "Change" link next to "Runs" answers a press in 24 x 24 px or more and the card does not move', async ({ page, allow }) => {
+  allow(/blackbox\/validate/, 'the wizard asks the server to check the name step on the way to Review');
+  await openReviewStep(page);
+  await expectHitArea(page, '.with-change button.change', 'Review Change link');
+  await expectNothingMoved(page, '.cards', REVIEW_OLD, 'Review step', REVIEW_HIDE);
+});
+
+const UPDATE_OLD: Rules = [['.update-bar-link', { position: 'static' }]];
+const UPDATE_HIDE = '.update-bar-link::after { content: none !important; }';
+
+async function openUpdateBar(page: Page): Promise<void> {
+  await page.evaluate(() => { location.hash = '#update=available'; });
+  const direct = page.getByRole('button', { name: 'Glossary', exact: true });
+  if (await direct.isVisible()) await direct.click();
+  else {
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Glossary' }).click();
+  }
+  const dialog = page.getByRole('dialog').first();
+  await dialog.getByTestId('update-check-button').click();
+  await expect(page.getByTestId('update-bar-link')).toBeAttached();
+}
+
+for (const width of [1440, 390]) {
+  test('UIFIX-14b Update bar at ' + width + ' px: "Open the release page" answers a press in 24 px or more and the bar keeps its size', async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await openUpdateBar(page);
+    await page.keyboard.press('Escape'); // the help window is modal: close it so nothing sits in front of the bar
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expectHitArea(page, '[data-testid=update-bar-link]', 'Update bar link');
+    await expectNothingMoved(page, '.update-bar', UPDATE_OLD, 'Update bar', UPDATE_HIDE);
+  });
+}
+
+const COUNT_OLD: Rules = [['td.numeric .api-select', { position: 'static' }]];
+const COUNT_HIDE = 'td.numeric .api-select::after { content: none !important; }';
+
+for (const width of [1440, 390]) {
+  test('UIFIX-14c Where is it? at ' + width + ' px: the unfinished-request counts answer a press in 24 px or more and the table does not move', async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.getByRole('button', { name: 'Where is it?', exact: true }).click();
+    await page.locator('summary', { hasText: 'Quality of the data' }).click();
+    const counts = page.locator('td.numeric button.api-select');
+    await expect(counts.first()).toBeVisible();
+    await expectHitArea(page, 'td.numeric button.api-select', 'Unfinished count');
+    await expectNothingMoved(page, 'table:has(td.numeric button.api-select)', COUNT_OLD, 'Unfinished-requests table', COUNT_HIDE);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow').toBeLessThanOrEqual(0);
+  });
+}
+
+// BL-475 group 4, review of PR 156: the keyboard focus ring and the look at rest of these targets are what develop draws (the hit area is a
+// pseudo-element, the box is untouched). Like UIFIX-13 this takes the pseudo-element away as a stylesheet and compares the pictures byte for byte.
+/** How many pixels differ between two PNG pictures, and the largest step of any colour channel (compared in the browser, so no image library is needed). */
+async function pictureDifference(page: Page, a: Buffer, b: Buffer): Promise<{ pixels: number; levels: number; sameSize: boolean }> {
+  return page.evaluate(async ([x, y]) => {
+    const load = async (b64: string) => {
+      const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0)); // no fetch of a data: address (the page's security policy refuses it)
+      const bmp = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+      const c = new OffscreenCanvas(bmp.width, bmp.height), g = c.getContext('2d')!;
+      g.drawImage(bmp, 0, 0);
+      return g.getImageData(0, 0, bmp.width, bmp.height);
+    };
+    const p = await load(x), q = await load(y);
+    if (p.width !== q.width || p.height !== q.height) return { pixels: Infinity, levels: 255, sameSize: false };
+    let pixels = 0, levels = 0;
+    for (let i = 0; i < p.data.length; i += 4) {
+      let m = 0;
+      for (let k = 0; k < 4; k++) m = Math.max(m, Math.abs(p.data[i + k] - q.data[i + k]));
+      if (m) { pixels++; levels = Math.max(levels, m); }
+    }
+    return { pixels, levels, sameSize: true };
+  }, [a.toString('base64'), b.toString('base64')]);
+}
+
+const OLD_FOCUS: Record<string, { css: string; open: (page: Page) => Promise<void> }> = {
+  'Review Change link': { css: '.with-change .change { position: static; } .with-change .change::after { content: none; }', open: openReviewStep },
+  'update bar link': {
+    css: '.update-bar-link { position: static; } .update-bar-link::after { content: none; }',
+    open: async (page) => { await openUpdateBar(page); await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toHaveCount(0); }
+  },
+  'unfinished count': {
+    css: 'td.numeric .api-select { position: static; } td.numeric .api-select::after { content: none; }',
+    open: async (page) => { await page.getByRole('button', { name: 'Where is it?', exact: true }).click(); await page.locator('summary', { hasText: 'Quality of the data' }).click(); }
+  }
+};
+const FOCUS_TARGET: Record<string, string> = { 'Review Change link': '.with-change button.change', 'update bar link': '[data-testid=update-bar-link]', 'unfinished count': 'td.numeric button.api-select' };
+
+for (const scheme of ['dark', 'light'] as const) {
+  for (const name of Object.keys(OLD_FOCUS)) {
+    test('UIFIX-14f ' + name + ': the keyboard focus ring and the rest look are what the old rules draw (' + scheme + ')', async ({ page, allow }) => {
+      allow(/blackbox\/validate/, 'the wizard asks the server to check the name step on the way to Review');
+      await page.emulateMedia({ colorScheme: scheme });
+      await OLD_FOCUS[name].open(page);
+      const target = page.locator(FOCUS_TARGET[name]).first();
+      await expect(target).toBeVisible();
+      await target.scrollIntoViewIfNeeded();
+      // the old margin box (what the neighbours see), widened by 14px for the ring
+      const clip = await target.evaluate((e) => {
+        const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+        const x = r.left - parseFloat(s.marginLeft) - 14, y = r.top - parseFloat(s.marginTop) - 14;
+        const fx = Math.max(0, Math.floor(x)), fy = Math.max(0, Math.floor(y)); // whole pixels: a fractional clip is resampled
+        return { x: fx, y: fy, width: Math.ceil(x + r.width + parseFloat(s.marginLeft) + parseFloat(s.marginRight) + 28 - fx), height: Math.ceil(y + r.height + parseFloat(s.marginTop) + parseFloat(s.marginBottom) + 28 - fy) };
+      });
+      await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }' });
+      const take = async (): Promise<Buffer[]> => {
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        await page.mouse.move(0, 0);
+        const rest = await page.screenshot({ clip });
+        await target.focus();
+        await page.keyboard.press('Shift');
+        const focused = await page.screenshot({ clip });
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        return [rest, focused];
+      };
+      const now = await take();
+      const style = await page.addStyleTag({ content: important(OLD_FOCUS[name].css) });
+      const old = await take();
+      await style.evaluate((el) => el.remove());
+      // Byte for byte, except the rounded ring of the Review link: a positioned control rasterises the four arcs of its ring a hair differently
+      // (measured: 4 pixels, up to 7 of 255 colour levels, dark theme only), so there a handful of pixels may differ slightly. A moved or resized ring differs by far more.
+      const tolerance = name === 'Review Change link' ? { pixels: 8, levels: 8 } : { pixels: 0, levels: 0 };
+      for (const [i, what] of ['at rest', 'focused'].entries()) {
+        const d = await pictureDifference(page, now[i], old[i]);
+        expect(d.pixels, what + ': pixels that differ from the old rules (largest step ' + d.levels + ')').toBeLessThanOrEqual(tolerance.pixels);
+        expect(d.levels, what + ': the largest colour step against the old rules').toBeLessThanOrEqual(tolerance.levels);
+      }
+      expect(now[1].equals(now[0]), 'focused: nothing is drawn, so the ring is missing').toBe(false);
+    });
+  }
 }

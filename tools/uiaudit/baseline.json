@@ -3,50 +3,6 @@
   "note": "Problems the audit found that are known and tracked. An entry needs a reason and, where there is one, a backlog item (docs/BACKLOG.md). Entries may use * in screen, size, check and label. Do not add an entry to turn a run green: fix the screen or file the item first.",
   "entries": [
     {
-      "screen": "p11-*",
-      "check": "small-target",
-      "label": "",
-      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
-      "item": "BL-475"
-    },
-    {
-      "screen": "p11-*",
-      "check": "small-target",
-      "label": "scope",
-      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
-      "item": "BL-475"
-    },
-    {
-      "check": "small-target",
-      "label": "Open the release page*",
-      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
-      "item": "BL-475"
-    },
-    {
-      "check": "small-target",
-      "label": "ChangeWhere",
-      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
-      "item": "BL-475"
-    },
-    {
-      "check": "small-target",
-      "label": "Opens the unfinished requests*",
-      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
-      "item": "BL-475"
-    },
-    {
-      "check": "small-target",
-      "label": "Pick Windows counters*",
-      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
-      "item": "BL-475"
-    },
-    {
-      "check": "small-target",
-      "label": "Show the programs*",
-      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
-      "item": "BL-475"
-    },
-    {
       "screen": "x-slow-call",
       "check": "small-target",
       "label": "Timeline",

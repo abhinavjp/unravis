@@ -60,4 +60,7 @@
   .incomplete-panel { margin-bottom: 14px; }
   .stale-error { color: var(--bad); }
   .incomplete-note { margin: 0; padding: 8px 12px; color: var(--text-2); font-size: 12px; }
+  /* 24px wide tap target (BL-475): a one-digit count is 8px wide. The hit area grows 8px each side in a pseudo-element, so the number, the column and the focus ring stay exactly as they were. */
+  td.numeric .api-select { position: relative; }
+  td.numeric .api-select::after { content: ''; position: absolute; inset: 0 -8px; }
 </style>

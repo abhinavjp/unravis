@@ -561,7 +561,8 @@
   .danger { color: var(--bad); font-size: 13px; font-weight: 600; }
   .stepline { display: none; font-size: 12px; color: var(--text-2); }
   h1:focus-visible { outline: none; }
-  .tick { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  /* 24px tap target (BL-475): the row is 18.84px of text; padding and an equal negative margin add the hit area without moving anything. */
+  .tick { display: flex; align-items: center; gap: 8px; font-size: 13px; box-sizing: border-box; min-height: 24px; padding-block: 2.58px; margin-block: -2.58px; }
   .scope { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .field { display: grid; gap: 4px; font-size: 12px; color: var(--text-2); }

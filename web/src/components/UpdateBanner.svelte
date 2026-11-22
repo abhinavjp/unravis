@@ -57,7 +57,9 @@
   .update-bar:focus { outline: none; }
   .update-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .update-bar-text { font-weight: 500; }
-  .update-bar-link { font-size: 13px; }
+  /* 24px tap target (BL-475): the hit area grows in a pseudo-element, so the link, the bar and the focus ring stay exactly as they were. */
+  .update-bar-link { position: relative; font-size: 13px; }
+  .update-bar-link::after { content: ''; position: absolute; inset: -3px 0; }
   .update-bar-error { font-size: 13px; color: var(--bad); }
   .update-bar-progress { width: 160px; height: 8px; accent-color: var(--accent); }
   .update-bar-action { padding: 3px 12px; font-size: 13px; margin: 0; }

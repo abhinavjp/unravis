@@ -44,3 +44,17 @@ test('hidden things are not reported (closed details, display none)', async ({ p
   const r = (await page.evaluate(() => (window as any).__uiaudit.run({}))) as { findings: { check: string }[] };
   expect(r.findings.filter((f) => f.check === 'small-target')).toEqual([]);
 });
+
+test('a hit area drawn by an absolutely positioned ::after counts for the tap target size, a decoration does not', async ({ page }) => {
+  await page.setContent(`<!doctype html><html lang="en"><title>t</title><style>
+    body { margin: 20px; } button { position: relative; width: 14px; height: 14px; padding: 0; border: 0; margin: 20px; display: block; }
+    #grown::after { content: ''; position: absolute; inset: -6px; }
+    #ring::after { content: ''; position: absolute; inset: -6px; pointer-events: none; }
+    #slim::after { content: ''; position: absolute; inset: -2px; }
+    #static { position: static; } #static::after { content: ''; position: absolute; inset: -6px; }
+  </style><body><button id="grown">a</button><button id="ring">b</button><button id="slim">c</button><button id="static">d</button></body></html>`);
+  await page.evaluate(checks);
+  const r = (await page.evaluate(() => (window as any).__uiaudit.run({}))) as { findings: { check: string; severity: string; label: string; message: string }[] };
+  const small = r.findings.filter((f) => f.check === 'small-target' && f.severity === 'warn').map((f) => f.label);
+  expect(small.sort()).toEqual(['b', 'c', 'd']);
+});
