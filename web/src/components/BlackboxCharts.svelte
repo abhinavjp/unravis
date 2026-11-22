@@ -611,7 +611,7 @@
   .bbc-figs th, .bbc-figs td { font-family: inherit; background: transparent; letter-spacing: normal; text-transform: none; padding: 4px 8px; text-align: right; border-top: 1px solid var(--line); white-space: nowrap; }
   .bbc-figs th[scope="row"], .bbc-figs thead th:nth-child(2) { text-align: left; white-space: normal; font-weight: 500; }
   .bbc-figs thead th { color: var(--text-2); font-weight: 500; border-top: 0; }
-  .bbc-x { min-width: 24px; min-height: 24px; padding: 0 6px; color: var(--text-2); background: transparent; border: 0; font-size: 16px; cursor: pointer; }
+  .bbc-x { box-sizing: border-box; min-width: 24px; min-height: 24px; padding: 0 6px; color: var(--text-2); background: transparent; border: 0; font-size: 16px; cursor: pointer; }
   .bbc-head-actions { display: flex; align-items: flex-start; gap: var(--space-2); }
   .bbc-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); list-style: none; margin: 6px 0 0; padding: 0; }
   .bbc-chip { display: inline-block; padding: 2px 10px; font-size: 12px; font-weight: 600; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; cursor: help; }
@@ -629,7 +629,7 @@
   .bbc-main.wide { grid-template-columns: minmax(0, 1fr); }
   .bbc-h { margin: var(--space-4) 0 0; font-size: var(--fs-5, 15px); font-weight: 600; }
   .bbc-cap { caption-side: top; text-align: left; padding: 0 8px 4px; color: var(--text-2); font-size: 12px; }
-  .bbc-rowbtn { padding: 4px 0; margin-block: -4px; font: inherit; color: inherit; text-align: left; background: transparent; border: 0; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+  .bbc-rowbtn { box-sizing: border-box; min-height: 24px; padding: 0; margin-block: -4px; font: inherit; color: inherit; text-align: left; background: transparent; border: 0; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
   .bbc-rowbtn[aria-pressed='true'] { font-weight: 700; text-decoration: underline; }
   tr.focus { background: var(--surface-2); }
   .bbc-when { color: var(--text-2); }

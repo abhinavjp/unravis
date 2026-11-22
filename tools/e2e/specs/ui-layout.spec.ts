@@ -5,9 +5,9 @@
 //   UIFIX-03  Daily and hourly view: dimmed rows keep full opacity and 4.5:1 text contrast in both themes (BL-476)
 //   UIFIX-04  All operations: first column, pager and header start on one line; the Sources note lines up with the list (BL-477)
 //   UIFIX-05  The selected-lines notes of the timeline and the chart help line are at least 11px (BL-478)
-//   UIFIX-06  Tap targets of 24 x 24 px or more: Daily view, Show matching requests, Help guide index links (BL-475 group 1)
-//   UIFIX-07  Add files on a phone: the hidden column heads do not run out of their box (BL-482)
-//   UIFIX-08  Phone header with "Choose sources" fits the window (BL-472)
+//   UIFIX-06  Tap targets of 24 x 24 px or more: Daily view, Show matching requests, Help guide index links, Stop showing, Mark the line (BL-475 group 1)
+//   UIFIX-07  Add files on a phone: the column heads are painted nowhere, yet stay in the page for screen readers (BL-482). A guard only: the finding was a false positive of the audit, so the audit run proves the fix
+//   UIFIX-08  Phone header with "Choose sources" fits the window (BL-472); 390 and 360 px fail on the old header, 320 px is a no-regression case
 import { test, expect, type Page } from '../support/fixtures';
 
 type Box = { x: number; y: number; w: number; h: number };
@@ -137,7 +137,7 @@ test('UIFIX-05 The selected-lines notes of the Where is it? timeline are at leas
   for (const s of sizes) expect(s).toBeGreaterThanOrEqual(11);
 });
 
-test('UIFIX-06a Where is it?: the Daily view buttons are 24 x 24 px or more and keep their place', async ({ page }) => {
+test('UIFIX-06a Where is it?: the Daily view buttons are 24 x 24 px or more', async ({ page }) => {
   await page.getByRole('button', { name: 'Where is it?', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Where is it?' })).toBeVisible();
   await page.locator('summary', { hasText: 'API groups' }).click();
@@ -158,6 +158,24 @@ test('UIFIX-06b All operations, Breakdown: "Show matching requests" buttons are 
   for (const b of await picks.all()) expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(24);
 });
 
+test('UIFIX-06d Blackbox charts: "Stop showing" and "Mark the line" are 24 px or more', async ({ page }) => {
+  await openBlackbox(page);
+  await page.getByRole('button', { name: /^Open status: web-a/ }).first().click();
+  await page.getByRole('button', { name: 'Open charts' }).first().click();
+  const charts = page.locator('dialog.bbc[open]');
+  await expect(charts.locator('canvas').first()).toBeVisible();
+  const rowButtons = charts.locator('.bbc-rowbtn');
+  await expect(rowButtons.first()).toBeVisible();
+  for (const b of await rowButtons.all()) expect((await b.boundingBox())!.height, 'Mark the line').toBeGreaterThanOrEqual(24);
+  const stops = charts.locator('.bbc-x');
+  expect(await stops.count()).toBeGreaterThan(0);
+  for (const b of await stops.all()) {
+    const box = (await b.boundingBox())!;
+    expect(box.height, 'Stop showing').toBeGreaterThanOrEqual(24);
+    expect(box.width, 'Stop showing').toBeGreaterThanOrEqual(24);
+  }
+});
+
 test('UIFIX-06c Help guide: the index links are 24 px tall and sit in their rows', async ({ page }) => {
   await page.getByRole('button', { name: 'Glossary', exact: true }).click();
   await page.locator('#glossary-title').waitFor();
@@ -175,7 +193,7 @@ test('UIFIX-06c Help guide: the index links are 24 px tall and sit in their rows
   }
 });
 
-test('UIFIX-07 Add files on a phone: no column head runs out of its box', async ({ page }) => {
+test('UIFIX-07 Add files on a phone: the column heads are not painted, and are still in the page (guard; the audit itself is the proof of BL-482)', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'More', exact: true }).click();
   await page.getByRole('menuitem', { name: 'All cases', exact: true }).click();
@@ -186,27 +204,35 @@ test('UIFIX-07 Add files on a phone: no column head runs out of its box', async 
   await page.getByRole('heading', { name: 'Add files by type' }).waitFor();
   await page.setInputFiles('input[aria-label="Choose files to import"]', [{ name: 'u_ex201020.log', mimeType: 'text/plain', buffer: Buffer.from('#Software: Microsoft Internet Information Services 10.0\n#Version: 1.0\n#Fields: date time cs-method cs-uri-stem sc-status\n2026-10-20 09:00:00 GET /a 200\n') }]);
   await page.locator('[data-file="u_ex201020.log"]').waitFor();
-  const spill = await page.evaluate(() => {
+  // What matters to a person: no pixel of a column head is painted (the heads are a 1px clipped box, each cell is labelled from them).
+  // Measured as the area of the head text that is left inside every clipping ancestor.
+  const painted = await page.evaluate(() => {
     const out: string[] = [];
     document.querySelectorAll<HTMLElement>('thead th').forEach((th) => {
-      const cs = getComputedStyle(th);
-      // cut away completely (not drawn at all) or inside its own box
-      const hidden = cs.clipPath === 'inset(50%)' || cs.display === 'none' || cs.visibility === 'hidden';
       const r = document.createRange();
       r.selectNodeContents(th);
-      const t = r.getBoundingClientRect();
-      const b = th.getBoundingClientRect();
-      if (!hidden && t.width > b.width + 1.5) out.push((th.textContent || '').trim() + ' ' + Math.round(t.width - b.width));
+      const box = r.getBoundingClientRect();
+      let area = { l: box.left, t: box.top, r: box.right, b: box.bottom };
+      for (let a: HTMLElement | null = th; a; a = a.parentElement) {
+        const cs = getComputedStyle(a);
+        if (/(hidden|clip)/.test(cs.overflowX) || /(hidden|clip)/.test(cs.overflowY) || cs.clip === 'rect(0px, 0px, 0px, 0px)') {
+          const b = a.getBoundingClientRect();
+          area = { l: Math.max(area.l, b.left), t: Math.max(area.t, b.top), r: Math.min(area.r, b.right), b: Math.min(area.b, b.bottom) };
+          if (cs.clip === 'rect(0px, 0px, 0px, 0px)') area = { l: 0, t: 0, r: 0, b: 0 };
+        }
+      }
+      const w = Math.max(0, area.r - area.l), h = Math.max(0, area.b - area.t);
+      if (w * h > 1) out.push((th.textContent || '').trim() + ' ' + Math.round(w) + 'x' + Math.round(h));
     });
     return out;
   });
-  expect(spill, 'column heads wider than their box').toEqual([]);
+  expect(painted, 'column heads that can be seen on a phone').toEqual([]);
   // the heads are still there for assistive technology
   expect(await page.locator('thead th').count()).toBeGreaterThanOrEqual(4);
 });
 
 for (const width of [390, 360, 320]) {
-  test('UIFIX-08 Phone header with "Choose sources" fits a ' + width + ' px window', async ({ page }) => {
+  test('UIFIX-08 Phone header with "Choose sources" fits a ' + width + ' px window' + (width === 320 ? ' (no regression: already fitted before)' : ''), async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.evaluate(() => { location.hash = '#keeper=stopped'; });
     const trigger = page.getByRole('button', { name: /^Audit sources/ });
