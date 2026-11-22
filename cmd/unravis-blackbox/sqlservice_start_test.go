@@ -19,7 +19,14 @@ const leakyCause = `CreateFile C:\secret\blackbox.json: Access is denied`
 
 // refusing is a reader that refuses with a fixed word and a cause full of text that must never be logged.
 func refusing(word string) func(string) ([]byte, error) {
-	return func(string) ([]byte, error) { return nil, blackbox.NewSettingsRefusal(word, errors.New(leakyCause)) }
+	return refusingAt(blackbox.StageAfterOpen, word)
+}
+
+// refusingAt is refusing with the stage of the refusal.
+func refusingAt(stage, word string) func(string) ([]byte, error) {
+	return func(string) ([]byte, error) {
+		return nil, blackbox.NewSettingsRefusalAt(stage, word, errors.New(leakyCause))
+	}
 }
 
 type startResult struct {
@@ -64,39 +71,43 @@ func TestRunSQLServiceStartsFromTheVerifiedReadersBytes(t *testing.T) {
 	}
 }
 
-// The two words that mean "this account cannot open or read the file" fall back, once, to the by-path proof and read.
-func TestRunSQLServiceFallsBackOnlyOnAccessAndUnreadable(t *testing.T) {
+// The one case that means "this account cannot open the file" (the open itself refused with access or unreadable) falls back, once, to the
+// by-path proof and read.
+func TestRunSQLServiceFallsBackOnlyOnAnOpenStageAccessOrUnreadable(t *testing.T) {
 	for _, w := range []string{blackbox.WordAccess, blackbox.WordUnreadable} {
 		t.Run(w, func(t *testing.T) {
-			r := startWith(t, fallbackFile(t), refusing(w), pass)
+			r := startWith(t, fallbackFile(t), refusingAt(blackbox.StageOpen, w), pass)
 			if r.err != nil || !r.started || r.proofs != 1 || r.cfg.Name != "fallback" {
 				t.Fatalf("err=%v started=%v proofs=%d cfg=%+v, want a start from the by-path read after one proof", r.err, r.started, r.proofs, r.cfg)
 			}
-			if len(r.logged) != 1 || !strings.Contains(r.logged[0], "("+w+")") {
-				t.Fatalf("log = %q, want exactly one line with the fixed word %q", r.logged, w)
+			if len(r.logged) != 1 || !strings.Contains(r.logged[0], "("+w+", open)") {
+				t.Fatalf("log = %q, want exactly one line with the fixed word %q and the stage open", r.logged, w)
 			}
 			noLeak(t, r)
 		})
 	}
 }
 
-// Every other word, including sharing, is a verdict on the file (or a timing signal): the start stops with the fixed sentence, the by-path
-// proof is never tried and nothing is read by path.
-func TestRunSQLServiceStopsOnEveryOtherWord(t *testing.T) {
-	for _, w := range blackbox.Words() {
-		if w == blackbox.WordAccess || w == blackbox.WordUnreadable {
-			continue
+// Every other refusal, at every stage, is a verdict on the file, a timing signal, or a failure after the file was opened (the one-handle proof
+// was running; the sweep found access and unreadable are also produced there): the start stops with the fixed sentence, the by-path proof is
+// never tried and nothing is read by path.
+func TestRunSQLServiceStopsOnEveryOtherStageAndWord(t *testing.T) {
+	for _, stage := range []string{blackbox.StagePreOpen, blackbox.StageOpen, blackbox.StageAfterOpen} {
+		for _, w := range blackbox.Words() {
+			if stage == blackbox.StageOpen && (w == blackbox.WordAccess || w == blackbox.WordUnreadable) {
+				continue
+			}
+			t.Run(stage+"/"+w, func(t *testing.T) {
+				r := startWith(t, fallbackFile(t), refusingAt(stage, w), func(string) error { t.Error("the weaker by-path proof was tried"); return nil })
+				if !errors.Is(r.err, errSQLSettingsNotLocked) || r.started || r.proofs != 0 {
+					t.Fatalf("err=%v started=%v proofs=%d, want the fixed sentence and no start", r.err, r.started, r.proofs)
+				}
+				if len(r.logged) != 1 || r.logged[0] != "sql: settings-not-locked ("+w+", "+stage+")" {
+					t.Fatalf("log = %q, want one line with the fixed word %q and the stage %q", r.logged, w, stage)
+				}
+				noLeak(t, r)
+			})
 		}
-		t.Run(w, func(t *testing.T) {
-			r := startWith(t, fallbackFile(t), refusing(w), func(string) error { t.Error("the weaker by-path proof was tried"); return nil })
-			if !errors.Is(r.err, errSQLSettingsNotLocked) || r.started || r.proofs != 0 {
-				t.Fatalf("err=%v started=%v proofs=%d, want the fixed sentence and no start", r.err, r.started, r.proofs)
-			}
-			if len(r.logged) != 1 || r.logged[0] != "sql: settings-not-locked ("+w+")" {
-				t.Fatalf("log = %q, want one line with the fixed word %q", r.logged, w)
-			}
-			noLeak(t, r)
-		})
 	}
 }
 
@@ -106,7 +117,7 @@ func TestRunSQLServiceNilReaderRefuses(t *testing.T) {
 	if !errors.Is(r.err, errSQLSettingsNotLocked) || r.started || r.proofs != 0 {
 		t.Fatalf("err=%v started=%v proofs=%d, want a refusal and no start", r.err, r.started, r.proofs)
 	}
-	if len(r.logged) != 1 || r.logged[0] != "sql: settings-not-locked (no-reader)" {
+	if len(r.logged) != 1 || r.logged[0] != "sql: settings-not-locked (no-reader, pre-open)" {
 		t.Fatalf("log = %q", r.logged)
 	}
 }
@@ -118,6 +129,10 @@ func TestRunSQLServiceUntaggedAndUnknownWordsStop(t *testing.T) {
 		"untagged": func(string) ([]byte, error) { return nil, errors.New(leakyCause) },
 		"unknown":  refusing(`C:\secret free text`),
 		"by hand":  func(string) ([]byte, error) { return nil, &blackbox.SettingsRefusal{Word: blackbox.WordAccess} },
+		"by hand, open stage": func(string) ([]byte, error) {
+			return nil, &blackbox.SettingsRefusal{Word: blackbox.WordAccess, Stage: blackbox.StageOpen}
+		},
+		"unknown stage": refusingAt("late", blackbox.WordAccess),
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := startWith(t, fallbackFile(t), read, func(string) error { t.Error("the weaker by-path proof was tried"); return nil })
@@ -136,7 +151,7 @@ func TestRunSQLServiceUntaggedAndUnknownWordsStop(t *testing.T) {
 func TestRunSQLServiceFallbackStillNeedsThePathProof(t *testing.T) {
 	for name, proof := range map[string]func(string) error{"proof refuses": func(string) error { return errors.New("not locked") }, "no proof": nil} {
 		t.Run(name, func(t *testing.T) {
-			r := startWith(t, fallbackFile(t), refusing(blackbox.WordAccess), proof)
+			r := startWith(t, fallbackFile(t), refusingAt(blackbox.StageOpen, blackbox.WordAccess), proof)
 			if !errors.Is(r.err, errSQLSettingsNotLocked) || r.started {
 				t.Fatalf("err=%v started=%v, want the fixed refusal and no start", r.err, r.started)
 			}
