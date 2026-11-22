@@ -1,4 +1,47 @@
 {
+  "macros": {
+    "open-add-files": [
+      {
+        "goto": "/"
+      },
+      {
+        "when": "wide",
+        "click": "role=button[name=\"All cases\"s]"
+      },
+      {
+        "when": "narrow",
+        "click": "role=button[name=/^More/]"
+      },
+      {
+        "when": "narrow",
+        "click": "role=menuitem[name=\"All cases\"s]"
+      },
+      {
+        "click": "role=button[name=\"Create a new case\"]"
+      },
+      {
+        "waitFor": "text=Nothing is saved until the last step."
+      },
+      {
+        "fill": [
+          "role=textbox[name=\"Case name\"]",
+          "Audit files case"
+        ]
+      },
+      {
+        "click": "role=button[name=\"Next\"s]"
+      },
+      {
+        "waitFor": "role=heading[name=\"Choose what to look at\"]"
+      },
+      {
+        "click": "role=button[name=/^Files/]"
+      },
+      {
+        "waitFor": "role=heading[name=\"Add files by type\"]"
+      }
+    ]
+  },
   "screens": [
     {
       "id": "x-analysis-more-filters",
@@ -531,6 +574,237 @@
           "waitFor": "text=Open charts"
         }
       ]
+    },
+    {
+      "id": "p10-files-1",
+      "phase": "P10",
+      "note": "Add files: an IIS log from each of two computers and a log4net-style .txt with no telling name (fixture uploads through the real file input). Shows what each row says about its kind and its computer.",
+      "narrow": true,
+      "steps": [
+        {
+          "macro": "open-add-files"
+        },
+        {
+          "upload": [
+            "input[aria-label=\"Choose files to import\"]",
+            [
+              "iis-web-01",
+              "iis-web-02",
+              "app-no-name"
+            ]
+          ]
+        },
+        {
+          "waitFor": "[data-file=\"orders.txt\"]"
+        },
+        {
+          "scrollTo": "[data-file=\"orders.txt\"]"
+        }
+      ]
+    },
+    {
+      "id": "p10-files-2",
+      "phase": "P10",
+      "note": "Add files: files that are refused or not recognised (an unknown binary, a compressed file, an empty file, a plain note) next to one good IIS log.",
+      "narrow": true,
+      "steps": [
+        {
+          "macro": "open-add-files"
+        },
+        {
+          "upload": [
+            "input[aria-label=\"Choose files to import\"]",
+            [
+              "iis-web-01",
+              "binary",
+              "compressed",
+              "empty",
+              "notes"
+            ]
+          ]
+        },
+        {
+          "waitFor": "[data-file=\"blob.bin\"]"
+        }
+      ]
+    },
+    {
+      "id": "p10-files-3",
+      "phase": "P10",
+      "note": "Add files: the other kinds (HTTP error log, SQL Server error log, IIS log) and what each says about its computer.",
+      "narrow": true,
+      "steps": [
+        {
+          "macro": "open-add-files"
+        },
+        {
+          "upload": [
+            "input[aria-label=\"Choose files to import\"]",
+            [
+              "httperr",
+              "sql-errorlog",
+              "iis-web-01"
+            ]
+          ]
+        },
+        {
+          "waitFor": "[data-file=\"ERRORLOG\"]"
+        }
+      ]
+    },
+    {
+      "id": "p10-files-4",
+      "phase": "P10",
+      "note": "Add files: left-out files with the Remove all button (only builds that have the button; others are reported as not reachable on this build).",
+      "narrow": true,
+      "steps": [
+        {
+          "macro": "open-add-files"
+        },
+        {
+          "upload": [
+            "input[aria-label=\"Choose files to import\"]",
+            [
+              "iis-web-01",
+              "binary",
+              "empty",
+              "notes"
+            ]
+          ]
+        },
+        {
+          "waitFor": "[data-file=\"blob.bin\"]"
+        },
+        {
+          "feature": [
+            "[data-remove-left-out]",
+            "the Remove all button for left-out files"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "p10-files-5",
+      "phase": "P10",
+      "note": "Add files: the list after Remove all was pressed for the left-out files (only builds that have the button).",
+      "narrow": true,
+      "steps": [
+        {
+          "macro": "open-add-files"
+        },
+        {
+          "upload": [
+            "input[aria-label=\"Choose files to import\"]",
+            [
+              "iis-web-01",
+              "binary",
+              "empty",
+              "notes"
+            ]
+          ]
+        },
+        {
+          "waitFor": "[data-file=\"blob.bin\"]"
+        },
+        {
+          "feature": [
+            "[data-remove-left-out]",
+            "the Remove all button for left-out files"
+          ]
+        },
+        {
+          "click": "[data-remove-left-out]"
+        },
+        {
+          "waitFor": "[data-file=\"u_ex261020.log\"]"
+        }
+      ]
+    },
+    {
+      "id": "p10-files-6",
+      "phase": "P10",
+      "note": "Create case, last step, after adding two IIS logs from two computers and a log4net-style .txt: which computer each held file is filed under.",
+      "narrow": true,
+      "steps": [
+        {
+          "macro": "open-add-files"
+        },
+        {
+          "upload": [
+            "input[aria-label=\"Choose files to import\"]",
+            [
+              "iis-web-01",
+              "iis-web-02",
+              "app-no-name"
+            ]
+          ]
+        },
+        {
+          "waitFor": "[data-file=\"orders.txt\"]"
+        },
+        {
+          "click": "role=button[name=/^Add \\d+ files?$/]"
+        },
+        {
+          "waitFor": "role=heading[name=/Your sources/]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "text=/^File chosen: u_ex261020\\.log/"
+        }
+      ],
+      "restoreHosts": true
+    },
+    {
+      "id": "p10-files-7",
+      "phase": "P10",
+      "note": "Create case, last step: the computers the wizard picked by itself, one line, and the Change choice open (only builds that pick the computer itself).",
+      "narrow": true,
+      "steps": [
+        {
+          "macro": "open-add-files"
+        },
+        {
+          "upload": [
+            "input[aria-label=\"Choose files to import\"]",
+            [
+              "iis-web-01",
+              "iis-web-02",
+              "app-no-name"
+            ]
+          ]
+        },
+        {
+          "waitFor": "[data-file=\"orders.txt\"]"
+        },
+        {
+          "click": "role=button[name=/^Add \\d+ files?$/]"
+        },
+        {
+          "waitFor": "role=heading[name=/Your sources/]"
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "text=/^File chosen: u_ex261020\\.log/"
+        },
+        {
+          "feature": [
+            "[data-hosts-summary]",
+            "the computers picked by themselves, summed up on the last step"
+          ]
+        },
+        {
+          "click": "role=button[name=\"Change\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Done\"s]"
+        }
+      ],
+      "restoreHosts": true
     }
   ]
 }

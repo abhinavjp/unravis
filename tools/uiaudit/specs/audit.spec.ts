@@ -4,7 +4,7 @@
 import { test, type Page } from '@playwright/test';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runSteps, type Screen, type Env } from '../lib/steps';
+import { runSteps, expandMacros, NotOnBuild, type Screen, type Env, type Step } from '../lib/steps';
 import { ALLOWED } from '../../e2e/support/allow-list';
 
 const root = join(__dirname, '..');
@@ -14,7 +14,8 @@ mkdirSync(join(reportDir, 'shots'), { recursive: true });
 
 const pageChecks = readFileSync(join(root, 'lib', 'page-checks.js'), 'utf8');
 const base: Screen[] = JSON.parse(readFileSync(join(root, '..', 'screens', 'screens.json'), 'utf8')).screens;
-const extra: Screen[] = JSON.parse(readFileSync(join(root, 'extra-screens.json'), 'utf8')).screens;
+const extraFile: { macros?: Record<string, Step[]>; screens: Screen[] } = JSON.parse(readFileSync(join(root, 'extra-screens.json'), 'utf8'));
+const extra: Screen[] = extraFile.screens.map((s) => ({ ...s, steps: expandMacros(s.steps, extraFile.macros ?? {}), after: s.after && expandMacros(s.after, extraFile.macros ?? {}) }));
 const only = (process.env.UIAUDIT_ONLY ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 const screens = [...base, ...extra].filter((s) => !only.length || only.includes(s.id));
 
@@ -31,6 +32,15 @@ async function freeSetup(env: Env): Promise<void> {
     if (!state.running) return;
     await new Promise((done) => setTimeout(done, 100));
   }
+}
+
+// The list of computers is shared by the whole demo, and the add-files review adds the computers the files name to it.
+// A screen marked restoreHosts reads the list first and puts it back afterwards, so later screens and looks start from the same list.
+async function hostsCall(env: Env, body?: string): Promise<string | null> {
+  try {
+    const r = await fetch(env.base + '/api/hosts', { method: body === undefined ? 'GET' : 'PUT', headers: { 'X-Audit-Token': env.token, 'Content-Type': 'application/json' }, body });
+    return r.ok ? await r.text() : null;
+  } catch { return null; }
 }
 
 async function settle(page: Page): Promise<void> {
@@ -117,10 +127,13 @@ for (const screen of screens) {
     }, scheme);
     await page.clock.setFixedTime(env.demoNow);
 
+    const hostsBefore = screen.restoreHosts ? await hostsCall(env) : null;
     try {
       try {
         await runSteps(page, screen.steps, env, screen.app);
       } catch (err) {
+        // A part of the screen this build does not have yet (an earlier build, a change not merged): recorded, not a failure.
+        if (err instanceof NotOnBuild) return write({ status: 'absent', reason: 'not reachable on this build: ' + err.message });
         const msg = String((err as Error).message).split('\n').slice(0, 3).join(' ').slice(0, 400);
         return write({ status: 'unreachable', reason: msg });
       }
@@ -147,6 +160,10 @@ for (const screen of screens) {
     } finally {
       // Put back what the steps changed on the shared demo, whatever happened above (a screen that could not be reached included).
       await page.setViewportSize({ width, height: baseHeight }).catch(() => undefined);
+      if (hostsBefore !== null) {
+        const list = (JSON.parse(hostsBefore) as { hosts?: unknown[] }).hosts ?? [];
+        await hostsCall(env, JSON.stringify({ version: 1, hosts: list }));
+      }
       if (screen.after) {
         await runSteps(page, screen.after, env, screen.app).catch((err) => {
           throw new Error('The clean-up steps of ' + screen.id + ' failed, so later screens may start from the wrong state: ' + String((err as Error).message).split('\n')[0]);
