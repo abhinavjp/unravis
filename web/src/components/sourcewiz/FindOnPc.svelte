@@ -15,6 +15,7 @@
   import { recorderEntryName } from '../../lib/wizardBlackbox';
   import LocateFolder from '../wizard/LocateFolder.svelte';
   import OpenFolderButton from './OpenFolderButton.svelte';
+  import ConfirmAsk from './ConfirmAsk.svelte';
 
   // "Find on this PC": the first tile. One scan of this computer; each row has a status word and (when Unravis can read it) a tick box.
   // Ticks are collected here and added together by "Add N ticked", so a row is linked to its source by the finding id and nothing is added by accident.
@@ -62,7 +63,11 @@
   const statusOf = (e: GalleryEntry): string => (isChosen(sourceKey({ kind: 'discover', ref: e.finding.id })) || connected.includes(e.finding.id) ? WIZ.find.added : e.state === 'ready' ? WIZ.find.statusWorks : e.state === 'unverified' ? WIZ.find.statusNotReadable : dbKind(e.finding) ? WIZ.find.statusFound : WIZ.find.statusNeedsSteps);
   const metaOf = (e: GalleryEntry): string => rowMetaText(e.finding, ageMinutes(e.finding.newest, Date.now()));
 
-  async function onScan() { scanClickedAt = Date.now(); note = ''; ticked = {}; await startScan(); }
+  // "Look again" empties the ticks, so it asks first when some are set and not added yet.
+  let askAgain = $state(false);
+  const hasTicks = (): boolean => Object.values(ticked).some((on) => on);
+  function onScan() { if (sourcesView.phase === 'done' && hasTicks()) { askAgain = true; return; } void scanNow(); }
+  async function scanNow() { askAgain = false; scanClickedAt = Date.now(); note = ''; ticked = {}; await startScan(); }
   async function onStop() { if (cancelAllowed(scanClickedAt, Date.now())) await cancelScan(); }
 
   async function addBlackbox(): Promise<boolean> {
@@ -112,7 +117,7 @@
       {#if running}
         <button type="button" class="secondary-button" disabled={sourcesView.cancelling} onclick={() => void onStop()}>{sourcesView.cancelling ? SOURCES_TEXT.scanCancelling : WIZ.find.cancel}</button>
       {:else}
-        <button type="button" class="primary-button" onclick={() => void onScan()}>{sourcesView.phase === 'done' ? WIZ.find.again : WIZ.find.start}</button>
+        <button type="button" class="primary-button" onclick={onScan}>{sourcesView.phase === 'done' ? WIZ.find.again : WIZ.find.start}</button>
       {/if}
     </div>
     {#if running}
@@ -199,6 +204,9 @@
         <button type="button" class="primary-button" disabled={bbBusy || toAdd.length + (bbTick && bbReady && !bbAdded ? 1 : 0) === 0} onclick={() => void addTicked()}>{WIZ.find.addTicked(toAdd.length + (bbTick && bbReady && !bbAdded ? 1 : 0))}</button>
       </div>
     {/if}
+  {/if}
+  {#if askAgain}
+    <ConfirmAsk id="look-again" title={WIZ.guard.lookAgainTitle} text={WIZ.guard.lookAgainText} keepLabel={WIZ.guard.lookAgainKeep} leaveLabel={WIZ.guard.lookAgainGo} onKeep={() => { askAgain = false; }} onLeave={() => void scanNow()} />
   {/if}
 </div>
 

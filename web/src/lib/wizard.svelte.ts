@@ -57,12 +57,27 @@ export function onWizardReset(hook: () => void) {
   if (!resetHooks.includes(hook)) resetHooks.push(hook);
 }
 
-/** Throws the draft away (leave, or after the case was created). Held connections are forgotten too. */
-export function resetWizard() {
+const resetBlockers: Array<() => boolean> = [];
+
+/**
+ * Registers a reason the draft must not be thrown away right now (a run is writing the case). While any blocker says yes, `resetWizard`
+ * does nothing, so no screen can wipe the list a run is working from (BL-148). A blocker is added once.
+ */
+export function onWizardResetBlocked(blocker: () => boolean) {
+  if (!resetBlockers.includes(blocker)) resetBlockers.push(blocker);
+}
+
+/** True while something is writing from the draft, so a reset would pull the list from under it. */
+export const wizardResetBlocked = (): boolean => resetBlockers.some((blocked) => blocked());
+
+/** Throws the draft away (leave, or after the case was created). Held connections are forgotten too. Returns false and keeps everything while a run is in flight. */
+export function resetWizard(): boolean {
+  if (wizardResetBlocked()) return false;
   Object.assign(wizard, blank());
   clearSavedDraft();
   releaseConnections();
   for (const hook of resetHooks) hook();
+  return true;
 }
 
 /** True when leaving would throw something away. */

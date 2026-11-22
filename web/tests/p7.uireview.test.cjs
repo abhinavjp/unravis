@@ -193,7 +193,7 @@ test('minor 8: the tab row has one tab stop and answers the arrow keys, Home and
   const hub = comp('SourcesHub');
   assert.match(hub, /tabindex=\{tab === item\.id \? 0 : -1\}/);
   assert.match(hub, /onkeydown=\{roving\}/);
-  assert.match(hub, /event\.preventDefault\(\);\s+tab = tabs\[to\]\.id;\s+document\.getElementById\('hub-tab-' \+ tab\)\?\.focus\(\)/, 'the tab it lands on opens and takes focus');
+  assert.match(hub, /event\.preventDefault\(\);\s+goTab\(tabs\[to\]\.id\);\s+if \(askTab === ''\) document\.getElementById\('hub-tab-' \+ tab\)\?\.focus\(\)/, 'the tab it lands on opens and takes focus');
 });
 
 test('minor 10 and 11: the tab row looks like tabs (CASES-11), is flush in the panel, and hover shows on the selected tab', () => {
