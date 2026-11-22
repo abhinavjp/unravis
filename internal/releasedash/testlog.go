@@ -126,6 +126,7 @@ func ParseTests(r io.Reader, names []string) TestResults {
 			if s := parse(g); s != nil {
 				// gh may print "UNKNOWN STEP" instead of the step name, so a count summary also marks a suite as report only.
 				s.ReportOnly = strings.Contains(strings.ToLower(g.step), "report only") || s.fromSummary
+				hideNames(s, names)
 				res.Suites = append(res.Suites, *s)
 				if !s.ReportOnly && s.Unit != "packages" {
 					res.Passed += s.Passed
@@ -338,3 +339,14 @@ func parseScript(g *logGroup) *Suite {
 
 // bomMark is the byte order mark GitHub puts at the start of the first line of each step.
 var bomMark = string(rune(0xFEFF))
+
+// hideNames redacts the test names of a suite (a subtest name can carry a value from a fixture or the environment).
+func hideNames(s *Suite, names []string) {
+	hide := func(n string) string { return NewRedactor(names...).Line(n) }
+	for i := range s.Cases {
+		s.Cases[i].Name = hide(s.Cases[i].Name)
+	}
+	for i := range s.Failures {
+		s.Failures[i].Name = hide(s.Failures[i].Name)
+	}
+}

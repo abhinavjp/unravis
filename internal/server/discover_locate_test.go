@@ -532,9 +532,8 @@ func TestLocateWorkerCeilingHoldsAndFreesWhenWorkersFinish(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Errorf("after the workers finished = %d %s", res.Code, res.Body)
 	}
-	if len(locateSlots) != 0 {
-		t.Errorf("slot leaked after a normal call: %d", len(locateSlots))
-	}
+	// The slot is given back as the handler returns, which can be just after the answer is read (seen under -race).
+	waitUntil(t, "the slot of a normal call to come back", func() bool { return len(locateSlots) == 0 })
 }
 
 func TestLocateDeadlineStopsTheWalkerBetweenSteps(t *testing.T) {
