@@ -15,9 +15,14 @@ const (
 	tokenElevationTypeLimited = 3 // the filtered token of a normal start
 )
 
-// isElevated is true only when the process token is elevated and its elevation
-// type is full. Where UAC is off the type is "default", so such a user is not
-// locked out.
+// Mandatory integrity levels (the last sub-authority of the label SID).
+const integrityHigh = 0x3000
+
+// isElevated is true when the process token is a full elevated administrator
+// token: TokenElevationType is full and either TokenElevation is set or the
+// integrity level is High or above. Where UAC is off the type is "default", so
+// such an administrator is allowed on purpose (spec 01, BL-304). An unreadable
+// token counts as elevated.
 func isElevated() bool {
 	token := windows.GetCurrentProcessToken()
 	var flag, kind, size uint32
@@ -25,14 +30,48 @@ func isElevated() bool {
 	if err == nil {
 		err = windows.GetTokenInformation(token, windows.TokenElevationType, (*byte)(unsafe.Pointer(&kind)), uint32(unsafe.Sizeof(kind)), &size)
 	}
-	return elevationDecision(flag != 0, kind, err)
+	// The integrity level is read only for a full token, so an unreadable label
+	// can never lock out a normal (limited or default) start.
+	var level uint32
+	if err == nil && kind == tokenElevationTypeFull {
+		level, err = integrityLevel(token)
+	}
+	return elevationDecision(flag != 0, kind, level, err)
+}
+
+// integrityLevel reads the token's mandatory integrity level.
+func integrityLevel(token windows.Token) (uint32, error) {
+	var need uint32
+	err := windows.GetTokenInformation(token, windows.TokenIntegrityLevel, nil, 0, &need)
+	if err != windows.ERROR_INSUFFICIENT_BUFFER || need == 0 {
+		if err == nil {
+			err = windows.ERROR_INVALID_DATA
+		}
+		return 0, err
+	}
+	if need < uint32(unsafe.Sizeof(windows.Tokenmandatorylabel{})) {
+		return 0, windows.ERROR_INVALID_DATA
+	}
+	buf := make([]byte, need)
+	if err := windows.GetTokenInformation(token, windows.TokenIntegrityLevel, &buf[0], need, &need); err != nil {
+		return 0, err
+	}
+	label := (*windows.Tokenmandatorylabel)(unsafe.Pointer(&buf[0]))
+	sid := label.Label.Sid
+	count := uint32(sid.SubAuthorityCount())
+	if count == 0 {
+		return 0, windows.ERROR_INVALID_DATA
+	}
+	return sid.SubAuthority(count - 1), nil
 }
 
 // elevationDecision fails closed: an unreadable token counts as elevated, so a
-// possibly elevated copy is refused rather than allowed to take the name.
-func elevationDecision(elevated bool, kind uint32, err error) bool {
+// possibly elevated copy is refused rather than allowed to take the name. Only
+// a full token is refused; type default (UAC off, or no split token) is allowed
+// whatever its flag or integrity level.
+func elevationDecision(elevated bool, kind, integrity uint32, err error) bool {
 	if err != nil {
 		return true
 	}
-	return elevated && kind == tokenElevationTypeFull
+	return kind == tokenElevationTypeFull && (elevated || integrity >= integrityHigh)
 }

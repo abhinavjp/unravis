@@ -32,6 +32,18 @@ const (
 	exitNoOwner  = 13
 )
 
+// refuseElevated is the one administrator check. Today enterSingleInstance (the
+// interactive start) calls it before it touches a name or a mutex. --mcp,
+// --no-browser, --version and --quit do not reach it; the --pipe-server branch
+// (BL-301, not built yet) must call it first. Setup's elevated worker only runs
+// "unravis.exe --version", which returns before the gate.
+func refuseElevated(elevated func() bool) error {
+	if elevated() {
+		return ErrElevated
+	}
+	return nil
+}
+
 // gateDeps are the system calls the gate makes, so tests can use fakes.
 type gateDeps struct {
 	names    func(app string) (instance.Names, error)
@@ -82,11 +94,11 @@ type gateResult struct {
 // open a tab and does not proceed; a second --background copy exits silently. A second pipe-mode copy never signals Open (there is no
 // tab): it waits up to 40 x 250 ms for the owner's locator to go live and reports attached, or exits quietly with exitNoOwner if none does (BL-302).
 func enterSingleInstance(demo, background, pipeMode bool, d gateDeps) (gateResult, error) {
-	if d.elevated() {
+	if err := refuseElevated(d.elevated); err != nil {
 		if pipeMode {
-			return gateResult{}, &exitCodeError{code: exitElevated, msg: ErrElevated.Error()}
+			return gateResult{}, &exitCodeError{code: exitElevated, msg: err.Error()}
 		}
-		return gateResult{}, ErrElevated
+		return gateResult{}, err
 	}
 	app := instance.DefaultApp
 	if demo {

@@ -116,7 +116,7 @@ func TestSidecarPipeClientHelper(t *testing.T) {
 	fmt.Println("FINAL", acked.Load())
 }
 
-type sidecar struct {
+type shutdownSidecar struct {
 	cmd      *exec.Cmd
 	getenv   func(string) string
 	dataDir  string
@@ -154,7 +154,7 @@ func longTempDir(t *testing.T) string {
 }
 
 // startSidecar builds unravis.exe (once per test), starts it as --pipe-only --demo with real demo cases and waits for its ui pipe.
-func startSidecar(t *testing.T) *sidecar {
+func startShutdownSidecar(t *testing.T) *shutdownSidecar {
 	t.Helper()
 	dir := longTempDir(t)
 	data := filepath.Join(dir, "data")
@@ -165,25 +165,12 @@ func startSidecar(t *testing.T) *sidecar {
 		"AUDIT_CONFIG_DIR": data, "AUDIT_SESSION_TOKEN": testToken,
 		envDemoCases: "1", envDemoNow: demoTestNow.Format(time.RFC3339),
 	}
-	return startSidecarOn(t, buildExe(t, dir), data, env, true)
+	return startShutdownSidecarOn(t, buildExe(t, dir), data, env, true)
 }
 
-// buildExe builds the app into dir and returns the exe path.
-func buildExe(t *testing.T, dir string) string {
-	t.Helper()
-	if testing.Short() {
-		t.Skip("builds the exe")
-	}
-	exePath := filepath.Join(dir, "unravis.exe")
-	if out, err := exec.Command("go", "build", "-o", exePath, ".").CombinedOutput(); err != nil {
-		t.Fatalf("go build: %v\n%s", err, out)
-	}
-	return exePath
-}
-
-// startSidecarOn starts exePath as --pipe-only (with --demo when demo) on data and waits for its new ui pipe. It can be called again on
+// startShutdownSidecarOn starts exePath as --pipe-only (with --demo when demo) on data and waits for its new ui pipe. It can be called again on
 // the same exe and data to restart it. The process is killed and waited for at the end of the test, so the folder can be removed.
-func startSidecarOn(t *testing.T, exePath, data string, env map[string]string, demo bool) *sidecar {
+func startShutdownSidecarOn(t *testing.T, exePath, data string, env map[string]string, demo bool) *shutdownSidecar {
 	t.Helper()
 	before := uiPipes()
 	args := []string{"--pipe-only"}
@@ -198,7 +185,7 @@ func startSidecarOn(t *testing.T, exePath, data string, env map[string]string, d
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	s := &sidecar{cmd: cmd, getenv: envOf(env), dataDir: data, exePath: exePath, demo: demo, done: make(chan struct{})}
+	s := &shutdownSidecar{cmd: cmd, getenv: envOf(env), dataDir: data, exePath: exePath, demo: demo, done: make(chan struct{})}
 	go func() {
 		s.exitErr = cmd.Wait()
 		s.exitedAt.Store(time.Now().UnixNano())
@@ -255,7 +242,7 @@ func uiPipes() map[string]bool {
 
 // runClient copies this test binary beside the sidecar exe as unravis-desktop.exe and runs the helper in mode. onLine sees each output
 // line (ACKED, SHUTDOWN, FINAL). It returns when the helper has ended.
-func (s *sidecar) runClient(t *testing.T, mode, caseID string, onLine func(line string)) {
+func (s *shutdownSidecar) runClient(t *testing.T, mode, caseID string, onLine func(line string)) {
 	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
@@ -323,7 +310,7 @@ func (c *savedTexts) line(line string) {
 
 // shutdownAndProve runs the "shutdown" helper against s and checks: the call answered 202 with {"state":"stopping"}, the exe exited 0 at
 // most 5 s after the call, and no -wal/-shm is left. It returns the texts the app acknowledged.
-func shutdownAndProve(t *testing.T, s *sidecar, caseID string) []string {
+func shutdownAndProve(t *testing.T, s *shutdownSidecar, caseID string) []string {
 	t.Helper()
 	var got savedTexts
 	var called time.Time
@@ -367,7 +354,7 @@ func shutdownAndProve(t *testing.T, s *sidecar, caseID string) []string {
 // over the real ui pipe; the exe exits 0 within 5 s of the call, leaves no -wal or -shm, the case passes integrity_check and keeps every
 // saved line.
 func TestShutdownCleanRealExe(t *testing.T) {
-	s := startSidecar(t)
+	s := startShutdownSidecar(t)
 	saved := shutdownAndProve(t, s, string(demoCaseOpenID))
 	verifyCaseAfterStop(t, s.getenv, string(demoCaseOpenID), saved)
 }
@@ -376,7 +363,7 @@ func TestShutdownCleanRealExe(t *testing.T) {
 // writers are busy, leaving a -wal behind. The exe is then started again on the same folder: it must open the case, take writes and stop
 // cleanly, and the case must pass integrity_check and still hold every line the first run said it saved.
 func TestKillDuringWriteReopens(t *testing.T) {
-	s := startSidecar(t)
+	s := startShutdownSidecar(t)
 	var got savedTexts
 	var acked int64
 	killed := false
@@ -402,7 +389,7 @@ func TestKillDuringWriteReopens(t *testing.T) {
 		"AUDIT_CONFIG_DIR": s.dataDir, "AUDIT_SESSION_TOKEN": testToken,
 		envDemoCases: "1", envDemoNow: demoTestNow.Format(time.RFC3339),
 	}
-	s2 := startSidecarOn(t, s.exePath, s.dataDir, env, true)
+	s2 := startShutdownSidecarOn(t, s.exePath, s.dataDir, env, true)
 	more := shutdownAndProve(t, s2, string(demoCaseOpenID))
 	verifyCaseAfterStop(t, s2.getenv, string(demoCaseOpenID), append(got.texts, more...))
 }
@@ -419,7 +406,7 @@ func TestShutdownCleanRealCase(t *testing.T) {
 	}
 	exe := buildExe(t, longTempDir(t))
 	env := map[string]string{"AUDIT_CONFIG_DIR": data, "AUDIT_SESSION_TOKEN": testToken}
-	s := startSidecarOn(t, exe, data, env, false)
+	s := startShutdownSidecarOn(t, exe, data, env, false)
 	saved := shutdownAndProve(t, s, caseID)
 	if len(saved) < 20 {
 		t.Fatalf("only %d writes were saved on the real case", len(saved))
