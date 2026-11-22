@@ -92,8 +92,20 @@ test('TIME24-07: no native time box is left in the When filter; the box is a lab
   assert.match(field, /<label for=\{`\$\{id\}-time`\}>Time\{#if zone\}\{' '\}\(\{zone\}\)\{\/if\}<\/label>/, 'the label still names the zone');
   assert.match(field, /aria-describedby=/);
   assert.match(field, /aria-invalid=/);
-  assert.match(field, /inputmode="numeric"/);
+  assert.doesNotMatch(field, /inputmode=/, 'no numeric keypad: a phone keypad of digits has no ":" key');
+  assert.doesNotMatch(field, /maxlength/, 'a long paste is refused with the message, not cut');
+  assert.match(read('src/app.css'), /input\.time24 \{ font-family: var\(--mono\)/, 'the same mono face as the Date box');
   assert.match(when, /errorId="when-time-error"/);
   assert.match(when, /class="inline-error" role="alert" id="when-time-error"/);
   assert.match(read('src/app.css'), /\.date-time-controls input\[aria-invalid='true'\]/);
+});
+
+test('TIME24-08: what a run would use is what the box shows: refused text stays refused when only the date changes', () => {
+  assert.equal(t24.timeForQuery('13:05'), '13:05:00.000');
+  assert.equal(t24.timeForQuery(' 2:30 PM '), '2:30 PM', 'a 12-hour text is handed over as typed, so the filter refuses it again');
+  assert.equal(t24.timeForQuery(''), '', 'empty stays empty');
+  assert.equal(t24.parseTime24(t24.timeForQuery('2:30 PM')), null);
+  const field = read('src/components/DateTimeField.svelte');
+  assert.match(field, /onchange=\{\(event\) => onChange\(event\.currentTarget\.value, timeForQuery\(text\)\)\}/, 'a date change sends the box text, not the older committed time');
+  assert.doesNotMatch(field, /onChange\([^)]*committed/, 'no change handler sends the older committed time');
 });

@@ -34,7 +34,7 @@ test('SWEEP-F2-01: typing a time in the header zone asks for that moment, not th
   const first = timeBoxes(page).first();
   const echo = page.locator('.utc-echo').first();
   await first.fill('10:00');
-  await first.blur(); // the 24-hour box takes the value when the person leaves it or presses Enter
+  await first.blur(); // a complete time takes effect as it is typed; leaving the box or Enter tidies it
   // 10:00 in India is 04:30 UTC.
   await expect(echo).toContainText('T04:30:00.000Z');
 });

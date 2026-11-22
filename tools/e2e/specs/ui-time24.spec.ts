@@ -5,6 +5,7 @@
 //   UIFIX-18b  Typed time reaches the real analysis request (start, end, baselineStart, baselineEnd) in the Times in zone (UTC, London, India)
 //   UIFIX-18c  Typing short forms, pasting and the arrow keys; the box shows the normal form after
 //   UIFIX-18d  Empty, 12-hour and malformed text: the box and its message say so (aria-invalid, alert), the run is held back, and a fix clears it
+//   UIFIX-18f  Bad text then a date change: the box and its error stay, Run stays off, and the fixed time sends the new date and time together
 //   UIFIX-18e  Tap target 24 px or more, focus order Date then Time, labels, 320/360/390 px do not scroll sideways, both themes keep 4.5:1 text
 import { test, expect, type Page } from '../support/fixtures';
 
@@ -222,4 +223,49 @@ test('UIFIX-18e The boxes are 24 px or more, in order, readable in both themes, 
       expect(b.w, width + ' px: wide enough to show 12 characters').toBeGreaterThanOrEqual(90);
     }
   }
+});
+
+test('UIFIX-18f Refused text stays refused when only the date changes; fixing the time then sends the new date with it', async ({ page }) => {
+  await openWhen(page);
+  await zoneSelect(page).selectOption({ label: 'UTC' });
+  const input = box(page, 'current-end');
+  const date = page.locator('#current-end-date');
+  let sent = 0;
+  page.on('request', (r) => { if (r.url().includes('/api/analyze')) sent++; });
+  await input.fill('2:30 PM');
+  await input.blur();
+  await expect(input).toHaveAttribute('aria-invalid', 'true');
+  await date.fill('2026-10-20');
+  await date.blur();
+  // Nothing may look fine while the box still shows text the run would not use.
+  await expect(input).toHaveValue('2:30 PM');
+  await expect(input).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.locator('#when-time-error')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Run analysis' })).toBeDisabled();
+  expect(sent).toBe(0);
+  // Fixing the time sends the date the person chose, not the older one.
+  await input.fill('14:30');
+  await input.blur();
+  await expect(input).not.toHaveAttribute('aria-invalid', 'true');
+  const body = await runAndRead(page);
+  expect(body.end).toBe('2026-10-20T14:30:00.000Z');
+  // An empty box is the same: a date change keeps it refused.
+  await input.fill('');
+  await input.blur();
+  await date.fill('2026-10-20');
+  await date.blur();
+  await expect(input).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByRole('button', { name: 'Run analysis' })).toBeDisabled();
+  // ArrowUp on an empty box fills a time, as the native box did.
+  await input.focus();
+  await page.keyboard.press('ArrowUp');
+  await expect(input).toHaveValue('00:00:00.000');
+  await expect(input).not.toHaveAttribute('aria-invalid', 'true');
+});
+
+test('UIFIX-18g The time box uses the same mono face as the Date box and a keypad that has a colon', async ({ page }) => {
+  await openWhen(page);
+  const fonts = await page.evaluate(() => [document.querySelector('#current-start-date'), document.querySelector('#current-start-time')].map((e) => getComputedStyle(e!).fontFamily));
+  expect(fonts[1]).toBe(fonts[0]);
+  expect(await box(page, 'current-start').getAttribute('inputmode')).toBeNull();
 });

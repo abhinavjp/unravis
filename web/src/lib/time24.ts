@@ -48,3 +48,10 @@ export const stepTime24 = (text: string, caret: number, delta: 1 | -1): { text: 
   const next = `${pad(values.hour)}:${pad(values.minute)}:${pad(values.second)}.${pad(values.milli, 3)}`;
   return { text: next, select: [seg.start, seg.end] };
 };
+
+/**
+ * The time part to hand to the filter for whatever the box shows: the normal form for a 24-hour time, otherwise the text as typed (trimmed, possibly empty),
+ * which the filter refuses with its message. A date change uses this too, so the box never shows text that differs from the time a run would use
+ * (a refused text keeps the field invalid and Run off until the text is a time).
+ */
+export const timeForQuery = (text: string): string => parseTime24(text) ?? text.trim();
