@@ -5,7 +5,7 @@
 
 <script lang="ts">
   import { DRILL_TEXT } from '../lib/drill/drillCopy';
-  import { cellValue, formatAtOnce, laneGapText, sameReadout, type CallLane, type LaneBar, type LaneCell } from '../lib/drill/callLanes';
+  import { barPressAreas, cellValue, formatAtOnce, laneGapText, sameReadout, type CallLane, type LaneBar, type LaneCell, type PressArea } from '../lib/drill/callLanes';
   import { readoutAt, type Readout, type SourceItem } from '../lib/drill/callReadout';
   import type { DbStateView } from '../lib/drill/dbState';
   import { formatDuration } from '../lib/format';
@@ -60,6 +60,8 @@
   // Real pixel size of the plot, so diamonds stay square and the call column keeps a 2 px minimum.
   let plotW = $state(0);
   let plotH = $state(0);
+  // The height of each lane's own drawing (the lanes can differ: a head that wraps on a phone leaves less for the plot). Used for the bar press areas.
+  let laneH = $state<Record<string, number>>({ audit: 0, iis: 0, sql: 0 });
 
   let hoverMs = $state<number | null>(null);
   let pinnedMs = $state<number | null>(null);
@@ -173,6 +175,17 @@
   const barKey = (name: LaneName, bar: LaneBar): string => `${PREFIX[name]}:${bar.id}`;
   const barX = (bar: LaneBar): number => x(bar.start);
   const barW = (bar: LaneBar): number => Math.max(x(bar.end) - x(bar.start), 3 * pxX);
+  // BL-492: a bar is only 5 to 9 px tall (the Slow call lane rule fixes the lane height), so each bar gets an invisible press area of up to
+  // 24 x 24 px around it (see barPressAreas: the areas never overlap, a bar with room reaches 24 px, a bar in a stack gets what its row allows).
+  const HIT = 24;
+  function hitBoxes(name: LaneName): Map<string, PressArea> {
+    const boxes = drawnBars(name).map((bar) => {
+      const x1 = barX(bar);
+      const y1 = 3 + bar.row * ROW_STEP;
+      return { key: bar.id + ':' + bar.start, x: { a: x1, b: x1 + barW(bar) }, y: { a: y1, b: y1 + ROW_H } };
+    });
+    return barPressAreas(boxes, HIT * pxX, HIT * (H / (laneH[name] > 0 ? laneH[name] : plotH > 0 ? plotH : 72)), W, H);
+  }
   const barLabel = (bar: LaneBar): string => `${bar.label}, ${formatDuration(bar.end - bar.start)}`;
 
   const laneMarkers = (name: LaneName): SourceItem[] =>
@@ -373,6 +386,7 @@
       {@const name = lane.name}
       {@const color = COLOR[name]}
       {@const path = shapePath(name)}
+      {@const hitMap = hitBoxes(name)}
       <div class="scall-lane" data-lane={name} data-testid="scall-lane-{name}">
         <div class="scall-head">
           <span class="scall-name" style="color: {color}">{lane.title}</span>
@@ -383,7 +397,7 @@
           <span class="scall-shape">{headShape(name)}</span>
         </div>
         <div class="scall-plot" bind:clientWidth={plotW} bind:clientHeight={plotH}>
-          <svg viewBox="0 0 {W} {H}" preserveAspectRatio="none" aria-hidden="false" role="group" aria-label={laneAria(name, lane.title)}>
+          <svg viewBox="0 0 {W} {H}" preserveAspectRatio="none" bind:clientHeight={laneH[name]} aria-hidden="false" role="group" aria-label={laneAria(name, lane.title)}>
             {#each gapRuns(name) as run}
               <rect class="gap" x={run.x1} y="0" width={run.x2 - run.x1} height={H} fill="url(#{patternId})" />
             {/each}
@@ -399,6 +413,7 @@
             {/if}
             {#each drawnBars(name) as bar (bar.id + ':' + bar.start)}
               {@const key = barKey(name, bar)}
+              {@const area = hitMap.get(bar.id + ':' + bar.start)}
               <g
                 class="bar-g"
                 class:selected={selectedKey === key}
@@ -409,6 +424,9 @@
                 onclick={(e) => pick(e, key)}
                 onkeydown={(e) => pickKey(e, key)}
               >
+                {#if area}
+                  <rect class="bar-hit" x={area.x.a} y={area.y.a} width={area.x.b - area.x.a} height={area.y.b - area.y.a} />
+                {/if}
                 <rect class="bar" data-key={key} x={barX(bar)} y={3 + bar.row * ROW_STEP} width={barW(bar)} height={ROW_H} fill={color} />
               </g>
             {/each}
@@ -570,6 +588,12 @@
   }
   .bar {
     fill-opacity: 0.9;
+  }
+  /* BL-492: the invisible press area of a bar. It paints nothing and stays under the bar and the markers. */
+  .bar-hit {
+    fill: transparent;
+    stroke: none;
+    pointer-events: all;
   }
   .scall-note {
     position: absolute;
