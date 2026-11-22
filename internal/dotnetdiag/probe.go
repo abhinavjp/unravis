@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+// ownPID is this process id; tests replace it to point the probe at an
+// in-process server.
+var ownPID = func() uint32 { return uint32(os.Getpid()) }
+
 // Target names the process to probe. StartTicks 0 means no expectation.
 type Target struct {
 	PID        uint32
@@ -117,7 +121,7 @@ const (
 // Result.Reason is not "". The stop path runs on cancel, on a failed
 // preamble and on a panic.
 func Probe(ctx context.Context, d Dialer, t Target, o Options) (res Result, err error) {
-	if t.PID == 0 || t.PID == uint32(os.Getpid()) {
+	if t.PID == 0 || t.PID == ownPID() {
 		return Result{}, ErrBadTarget
 	}
 	p := &prober{d: d, t: t, o: o.withDefaults(), began: time.Now()}
