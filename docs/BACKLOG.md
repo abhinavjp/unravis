@@ -346,7 +346,7 @@ Spec per area: `docs/desktop/spec/`. Items per area: `docs/desktop/groom/` (scop
 - [ ] **BL-427** Tray-hide: grace, suspend, destroy, recreate the window (size ?, ?; see `docs/desktop/groom/07-performance.md`)
 - [ ] **BL-428** WebView2 memory-target and suspend spike on Runtime 157 (size ?, ?; see `docs/desktop/groom/07-performance.md`)
 - [ ] **BL-429** Web UI idle behaviour (visibility pause, ECharts settings) (size ?, ?; see `docs/desktop/groom/07-performance.md`)
-- [ ] **BL-430** M4 downsampling in Go for chart series (size ?, ?; see `docs/desktop/groom/07-performance.md`)
+- [ ] **BL-430** M4 downsampling in Go for chart series (size ?, ?; see `docs/desktop/groom/07-performance.md`) Built, demo-verified (Linux unit and server tests, real SQLite store benchmark; not yet on a Windows PC with a real 1M-row case): optional `width` on `GET /api/cases/{id}/series` and `width` plus `shape:"m4"` on the Blackbox series add first/last per pixel column, at most 4 values per pixel, spikes kept. The web client sends no width yet (BL-431).
 - [ ] **BL-431** Chart client: binary series fetch and debounced zoom/pan (size ?, ?; see `docs/desktop/groom/07-performance.md`)
 - [ ] **BL-432** Bulk chart transport benchmark (pipe vs IPC vs loopback) (size ?, ?; see `docs/desktop/groom/07-performance.md`)
 - [ ] **BL-433** WebView2 network-silence settings (size ?, ?; see `docs/desktop/groom/07-performance.md`)

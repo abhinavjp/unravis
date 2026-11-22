@@ -39,6 +39,7 @@ const (
 const (
 	SeriesBadTime        = "bad-time"
 	SeriesBadBucket      = "bad-bucket"
+	SeriesBadWidth       = "bad-width"
 	SeriesTooManyBuckets = "too-many-buckets"
 	SeriesBadSelector    = "bad-selector"
 	SeriesTooManySeries  = "too-many-series"
@@ -78,6 +79,15 @@ type SeriesQuery struct {
 	BucketMs int64
 	Sel      []string
 
+	// Width, when above zero, is the chart width in pixels and turns on M4
+	// (BL-430): the bucket is made wide enough that the range holds at most
+	// M4Width(Width) buckets (a BucketMs that is already wider is kept, and
+	// BucketMs may then be 0), and every point also carries First and Last, so
+	// first, min, max and last of each pixel column are on the wire: at most
+	// four values per pixel. Min, Max, Mean, Count and Q still come from every
+	// raw event. Zero keeps the answer as it was.
+	Width int
+
 	// MaxScan and MaxScanTime lower the scan budget (see EventQuery).
 	MaxScan     int64
 	MaxScanTime time.Duration
@@ -91,6 +101,10 @@ type SeriesPoint struct {
 	Mean  float64 `json:"mean"`
 	Max   float64 `json:"max"`
 	Count int64   `json:"count"`
+	// First and Last are the values of the earliest and the latest event of the
+	// bucket (M4, only when SeriesQuery.Width is set).
+	First *float64 `json:"first,omitempty"`
+	Last  *float64 `json:"last,omitempty"`
 	// Q is the per-bucket quantile asked for with q=, read from log-1.1 bins.
 	Q *float64 `json:"q,omitempty"`
 	// ByClass counts the bucket's events by status class (group=statusclass).
@@ -114,6 +128,7 @@ type SeriesResult struct {
 	To       time.Time   `json:"to"`
 	BucketMs int64       `json:"bucketMs"`
 	Buckets  int         `json:"buckets"`
+	Width    int         `json:"width,omitempty"` // the pixel width the answer was cut for (M4), as echoed
 	Partial  bool        `json:"partial"`
 	Scanned  int64       `json:"scanned"`
 	Series   []SeriesOut `json:"series"`
@@ -258,6 +273,7 @@ type seriesAgg struct {
 	count    []int64
 	sum      []float64
 	min, max []float64
+	edges    []M4Edges // per bucket; only with SeriesQuery.Width
 	unit     string
 	unitSet  bool
 	mixed    bool
@@ -322,6 +338,14 @@ func Series(ctx context.Context, c Case, q SeriesQuery) (SeriesResult, error) {
 	if span < 0 || span > int64(200*365*24*time.Hour/time.Millisecond) {
 		return res, seriesErr(SeriesBadTime, "The time range is too wide.")
 	}
+	if q.Width < 0 {
+		return res, seriesErr(SeriesBadWidth, "The width must be a whole number of pixels, 1 or more.")
+	}
+	if q.Width > 0 {
+		q.Width = M4Width(q.Width)
+		// Never finer than asked, never more buckets than pixels.
+		q.BucketMs = max(q.BucketMs, M4BucketMs(span, q.Width))
+	}
 	if q.BucketMs < 1 {
 		return res, seriesErr(SeriesBadBucket, "The bucket must be a whole number of milliseconds, 1 or more.")
 	}
@@ -383,6 +407,12 @@ func Series(ctx context.Context, c Case, q SeriesQuery) (SeriesResult, error) {
 			a.max = make([]float64, nb)
 		}
 		v := *p
+		if q.Width > 0 {
+			if a.edges == nil {
+				a.edges = make([]M4Edges, nb)
+			}
+			a.edges[b].Add(ev.Start.UnixNano(), v)
+		}
 		if a.count[b] == 0 {
 			a.min[b], a.max[b] = v, v
 		} else {
@@ -542,7 +572,7 @@ func Series(ctx context.Context, c Case, q SeriesQuery) (SeriesResult, error) {
 	}
 
 	res = SeriesResult{
-		From: q.From.UTC(), To: q.To.UTC(), BucketMs: q.BucketMs, Buckets: int(nb),
+		From: q.From.UTC(), To: q.To.UTC(), BucketMs: q.BucketMs, Buckets: int(nb), Width: q.Width,
 		Partial: partial, Scanned: scanned, Series: make([]SeriesOut, len(sels)),
 	}
 	for i := range sels {
@@ -555,6 +585,10 @@ func Series(ctx context.Context, c Case, q SeriesQuery) (SeriesResult, error) {
 			pt := SeriesPoint{
 				T: fromMs + int64(b)*q.BucketMs, Min: a.min[b], Max: a.max[b],
 				Mean: a.sum[b] / float64(a.count[b]), Count: a.count[b],
+			}
+			if a.edges != nil {
+				f, l := a.edges[b].First, a.edges[b].Last
+				pt.First, pt.Last = &f, &l
 			}
 			if sels[i].q > 0 && a.bins != nil && a.bins[b] != nil {
 				qv := binQuantile(a.bins[b], a.count[b], sels[i].q, a.min[b], a.max[b])

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/blackbox"
+	"api-audit-explorer/internal/casestore"
 )
 
 // The charts view reads what a Blackbox recorded and answers it as downsampled
@@ -35,10 +36,22 @@ type bbSeriesBody struct {
 	Start  time.Time `json:"start"`
 	End    time.Time `json:"end"`
 	Points int       `json:"points"`
+	// Width is the chart width in pixels (BL-430, optional). With it the answer
+	// holds at most min(Width, bbSeriesMaxPoints) buckets: at most four values
+	// per pixel once first and last are asked for (Shape "m4"). Without it the
+	// answer is cut to Points, as before.
+	Width int `json:"width"`
+	// Shape is "" (the points are [t, avg, lo, hi]) or "m4" (the points are
+	// [t, avg, lo, hi, first, last]).
+	Shape string `json:"shape"`
 }
 
 // bbSeriesPoint is [bucket start in ms, average, lowest, highest].
 type bbSeriesPoint [4]float64
+
+// bbSeriesPointM4 is [bucket start in ms, average, lowest, highest, first, last]:
+// the lowest and highest are the whole bucket's, the first and last are by time.
+type bbSeriesPointM4 [6]float64
 
 type bbSeriesLine struct {
 	Key    string          `json:"key"`   // for example "memCommit" or "sqlHost.SQLEXPRESS.batchRequestsPerSec"
@@ -46,6 +59,19 @@ type bbSeriesLine struct {
 	Label  string          `json:"label"`
 	Unit   string          `json:"unit"` // "pct", "bytes", "bytesPerSec", "ms", "sec", "perSec", "count"
 	Points []bbSeriesPoint `json:"points"`
+	// M4, when set (Shape "m4"), is what the answer carries as "points" instead.
+	M4 []bbSeriesPointM4 `json:"-"`
+}
+
+func (l bbSeriesLine) MarshalJSON() ([]byte, error) {
+	type plain bbSeriesLine
+	if l.M4 == nil {
+		return json.Marshal(plain(l))
+	}
+	return json.Marshal(struct {
+		plain
+		Points []bbSeriesPointM4 `json:"points"`
+	}{plain(l), l.M4})
 }
 
 type bbSeriesGroupCover struct {
@@ -65,6 +91,22 @@ type bbSeriesProc struct {
 	CPU    []bbSeriesPoint `json:"cpu"`
 	WS     []bbSeriesPoint `json:"workingSet"`
 	Priv   []bbSeriesPoint `json:"privateBytes"`
+	// With Shape "m4" these (M4On set) are answered as cpu, workingSet and privateBytes instead.
+	M4On                bool              `json:"-"`
+	M4CPU, M4WS, M4Priv []bbSeriesPointM4 `json:"-"`
+}
+
+func (p bbSeriesProc) MarshalJSON() ([]byte, error) {
+	type plain bbSeriesProc
+	if !p.M4On {
+		return json.Marshal(plain(p))
+	}
+	return json.Marshal(struct {
+		plain
+		CPU  []bbSeriesPointM4 `json:"cpu"`
+		WS   []bbSeriesPointM4 `json:"workingSet"`
+		Priv []bbSeriesPointM4 `json:"privateBytes"`
+	}{plain(p), p.M4CPU, p.M4WS, p.M4Priv})
 }
 
 type bbSeriesEventID struct {
@@ -114,6 +156,7 @@ type bbSeriesAnswer struct {
 	Truncated       bool                 `json:"truncated,omitempty"` // more measurements than the answer carries
 }
 
+// bbAcc is the sum, lowest, highest and count of one bucket of one measurement.
 type bbAcc struct {
 	sum, lo, hi float64
 	n           int
@@ -129,7 +172,9 @@ func (a *bbAcc) add(v float64) {
 	a.n++
 }
 
-// bbBuckets collects values per key and time bucket.
+// bbBuckets collects values per key and time bucket. With m4 set it also keeps
+// the first and last value of every bucket by time (BL-430), in edges, so the
+// default answer pays nothing for them.
 type bbBuckets struct {
 	start  time.Time
 	width  time.Duration
@@ -137,6 +182,8 @@ type bbBuckets struct {
 	byKey  map[string][]bbAcc
 	maxKey int
 	over   bool
+	m4     bool
+	edges  map[string][]casestore.M4Edges
 }
 
 func (b *bbBuckets) add(key string, t time.Time, v float64) {
@@ -155,8 +202,14 @@ func (b *bbBuckets) add(key string, t time.Time, v float64) {
 		}
 		row = make([]bbAcc, b.n)
 		b.byKey[key] = row
+		if b.m4 {
+			b.edges[key] = make([]casestore.M4Edges, b.n)
+		}
 	}
 	row[i].add(v)
+	if b.m4 {
+		b.edges[key][i].Add(t.UnixNano(), v)
+	}
 }
 
 func (b *bbBuckets) points(key string) []bbSeriesPoint {
@@ -167,6 +220,19 @@ func (b *bbBuckets) points(key string) []bbSeriesPoint {
 			continue
 		}
 		out = append(out, bbSeriesPoint{float64(b.start.Add(time.Duration(i) * b.width).UnixMilli()), a.sum / float64(a.n), a.lo, a.hi})
+	}
+	return out
+}
+
+// pointsM4 is points with the first and last value of each bucket added.
+func (b *bbBuckets) pointsM4(key string) []bbSeriesPointM4 {
+	row, edges := b.byKey[key], b.edges[key]
+	out := make([]bbSeriesPointM4, 0, len(row))
+	for i, a := range row {
+		if a.n == 0 {
+			continue
+		}
+		out = append(out, bbSeriesPointM4{float64(b.start.Add(time.Duration(i) * b.width).UnixMilli()), a.sum / float64(a.n), a.lo, a.hi, edges[i].First, edges[i].Last})
 	}
 	return out
 }
@@ -319,13 +385,11 @@ func (h *handler) bbSeries(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, http.StatusBadRequest, "Request validation failed.")
 		return
 	}
-	points := body.Points
-	if points <= 0 {
-		points = bbSeriesDefaultPoints
+	if body.Shape != "" && body.Shape != "m4" || body.Width < 0 {
+		writeError(w, http.StatusBadRequest, "Request validation failed.")
+		return
 	}
-	if points > bbSeriesMaxPoints {
-		points = bbSeriesMaxPoints
-	}
+	points := bbSeriesPointCount(body.Points, body.Width)
 	e, err := b.deps.Store.Get(id)
 	if err != nil {
 		bbStoreFailure(w, err)
@@ -339,10 +403,35 @@ func (h *handler) bbSeries(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	rp := rep
 	state := blackbox.DeriveState(blackbox.StateInput{Placed: true, Reading: &rd, Report: &rp})
-	writeJSON(w, http.StatusOK, buildBBSeries(rd.Manifest, samples, rep, state, win, points), maxResponseBytes)
+	writeJSON(w, http.StatusOK, buildBBSeriesShape(rd.Manifest, samples, rep, state, win, points, body.Shape == "m4"), maxResponseBytes)
+}
+
+// bbSeriesPointCount is the number of buckets to answer: the asked points (the
+// default when none), cut to the chart width in pixels when one is given, and
+// never above bbSeriesMaxPoints. A width alone asks for one bucket per pixel.
+func bbSeriesPointCount(points, width int) int {
+	if points <= 0 {
+		points = bbSeriesDefaultPoints
+		if width > 0 {
+			points = width
+		}
+	}
+	if width > 0 && points > width {
+		points = width
+	}
+	if points > bbSeriesMaxPoints {
+		points = bbSeriesMaxPoints
+	}
+	return points
 }
 
 func buildBBSeries(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.ReadReport, state blackbox.StateInfo, win bbWindow, points int) bbSeriesAnswer {
+	return buildBBSeriesShape(m, samples, rep, state, win, points, false)
+}
+
+// buildBBSeriesShape is buildBBSeries; with m4 set every point also carries the
+// first and last value of its bucket (BL-430).
+func buildBBSeriesShape(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.ReadReport, state blackbox.StateInfo, win bbWindow, points int, m4 bool) bbSeriesAnswer {
 	width := win.End.Sub(win.Start) / time.Duration(points)
 	// A point is never narrower than the recorder's real cadence (it may be slowed to keep the PC light),
 	// so a normal reading is one bucket and a line only breaks where readings are really missing.
@@ -353,8 +442,8 @@ func buildBBSeries(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.
 		width = time.Second
 	}
 	n := int(win.End.Sub(win.Start)/width) + 1
-	bk := &bbBuckets{start: win.Start, width: width, n: n, byKey: map[string][]bbAcc{}, maxKey: bbSeriesMaxKeys}
-	procBk := &bbBuckets{start: win.Start, width: width, n: n, byKey: map[string][]bbAcc{}, maxKey: bbSeriesMaxKeys * 3}
+	bk := &bbBuckets{start: win.Start, width: width, n: n, byKey: map[string][]bbAcc{}, maxKey: bbSeriesMaxKeys, m4: m4, edges: map[string][]casestore.M4Edges{}}
+	procBk := &bbBuckets{start: win.Start, width: width, n: n, byKey: map[string][]bbAcc{}, maxKey: bbSeriesMaxKeys * 3, m4: m4, edges: map[string][]casestore.M4Edges{}}
 	cover := map[string]*bbSeriesGroupCover{}
 	for _, g := range bbSeriesGroups {
 		cover[g] = &bbSeriesGroupCover{Group: g}
@@ -452,7 +541,13 @@ func buildBBSeries(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.
 	sort.Strings(keys)
 	lines := make([]bbSeriesLine, 0, len(keys))
 	for _, k := range keys {
-		lines = append(lines, bbSeriesLine{Key: k, Group: bbSeriesGroupOf(k), Label: k, Unit: bbSeriesUnit(k), Points: bk.points(k)})
+		line := bbSeriesLine{Key: k, Group: bbSeriesGroupOf(k), Label: k, Unit: bbSeriesUnit(k)}
+		if m4 {
+			line.M4 = bk.pointsM4(k)
+		} else {
+			line.Points = bk.points(k)
+		}
+		lines = append(lines, line)
 	}
 
 	// The busiest processes over the window, by their highest CPU reading.
@@ -484,7 +579,14 @@ func buildBBSeries(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.
 	}
 	procs := make([]bbSeriesProc, 0, len(names))
 	for _, nm := range names {
-		procs = append(procs, bbSeriesProc{Name: nm, PeakCP: peak[nm], CPU: procBk.points("p." + nm + ".cpu"), WS: procBk.points("p." + nm + ".ws"), Priv: procBk.points("p." + nm + ".priv")})
+		pr := bbSeriesProc{Name: nm, PeakCP: peak[nm]}
+		if m4 {
+			pr.M4On = true
+			pr.M4CPU, pr.M4WS, pr.M4Priv = procBk.pointsM4("p."+nm+".cpu"), procBk.pointsM4("p."+nm+".ws"), procBk.pointsM4("p."+nm+".priv")
+		} else {
+			pr.CPU, pr.WS, pr.Priv = procBk.points("p."+nm+".cpu"), procBk.points("p."+nm+".ws"), procBk.points("p."+nm+".priv")
+		}
+		procs = append(procs, pr)
 	}
 
 	evs := make([]bbSeriesEventID, 0, len(ids))
