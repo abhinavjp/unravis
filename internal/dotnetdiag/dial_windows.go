@@ -54,7 +54,8 @@ type pipeDialer struct {
 	ownerOverride func(h windows.Handle) (*windows.SID, error)
 }
 
-func platformDialer() Dialer { return &pipeDialer{} }
+// platformDialer ignores cli: the Windows pipe name is built from a number only.
+func platformDialer(bool) Dialer { return &pipeDialer{} }
 
 func errno(err error) uint32 {
 	var en syscall.Errno

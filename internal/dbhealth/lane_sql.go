@@ -865,6 +865,7 @@ func (s *sqlLane) finishQueryStore(o qsOutcome, intervals []Row, slices int) Lan
 func (s *sqlLane) checkQueryStoreOff(ctx context.Context, opt qsOptions, query qsQuery) LaneCheck {
 	rows, err := query(qLaneQSRange, checkTimeout)
 	if err != nil {
+		s.b.res.QueryStore.HistoryUnread = true
 		c := s.failed(CheckQueryStore, err, s.req.Database)
 		c.Summary = "Query Store is off, and the history it may have kept could not be read. " + c.Summary
 		return c
@@ -891,6 +892,7 @@ func (s *sqlLane) checkQueryStoreOff(ctx context.Context, opt qsOptions, query q
 	}
 	stats, intervals, truncated, err := s.readQSBatches(ctx, query, batches)
 	if err != nil {
+		s.b.res.QueryStore.HistoryUnread = true
 		c := s.failed(CheckQueryStore, err, s.req.Database)
 		c.Summary = offLead(first, last) + " " + c.Summary
 		return c

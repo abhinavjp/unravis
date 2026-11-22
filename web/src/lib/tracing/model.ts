@@ -74,6 +74,8 @@ export interface TracingLane {
   state: TracingLaneState;
   /** The server's own wording for a missing or partial state; may be empty. */
   reason: string;
+  /** A second plain sentence the server adds to a lane that draws bars (Query Store was off when the saved day was read). Absent when the server sent none. */
+  note?: string;
   /** Read from the lane field `reasonCode` when present. */
   incompleteReason?: TracingReason;
   /** Why an empty SQL or IIS lane is empty when files are listed for it: never imported, or set aside on import. `reason` carries the words. */
@@ -288,6 +290,7 @@ function parseLane(value: unknown): TracingLane | null {
     sources: parseSourceRefs(value.sources),
     buckets
   };
+  if (isText(value.note) && value.note.trim() !== '') lane.note = value.note;
   if (value.reasonCode === 'not-imported' || value.reasonCode === 'import-skipped') lane.emptyBecause = value.reasonCode;
   // The optional fields stay off the lane when the server did not send them, so a lane read in one piece is unchanged.
   if (isNumber(value.chunksTotal) && value.chunksTotal > 0) lane.chunksTotal = Math.floor(value.chunksTotal);

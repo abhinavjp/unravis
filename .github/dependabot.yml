@@ -1,15 +1,18 @@
+# Pull requests open against develop (release train, docs/ci/RELEASE-TRAIN.md).
 # Weekly, one grouped PR per ecosystem, never merged automatically (no automerge label, no auto-merge setting).
 # cargo for /desktop (workspace lock desktop/Cargo.lock).
 version: 2
 updates:
   - package-ecosystem: gomod
     directory: /
+    target-branch: develop
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }
     groups: { gomod: { patterns: ["*"] } }
   - package-ecosystem: npm
     directory: /web
+    target-branch: develop
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }
@@ -17,24 +20,28 @@ updates:
     groups: { npm-web: { patterns: ["*"] } }
   - package-ecosystem: npm
     directory: /tools/e2e
+    target-branch: develop
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }
     groups: { npm-e2e: { patterns: ["*"] } }
   - package-ecosystem: npm
     directory: /tools/screens
+    target-branch: develop
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }
     groups: { npm-screens: { patterns: ["*"] } }
   - package-ecosystem: github-actions
     directory: /
+    target-branch: develop
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }
     groups: { github-actions: { patterns: ["*"] } }
   - package-ecosystem: cargo
     directory: /desktop
+    target-branch: develop
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }

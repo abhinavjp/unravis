@@ -27,7 +27,7 @@ export interface ProfilerGuide { title: string; why: string; cost: string; steps
 export interface LaneResult {
   incident: LaneWindow; reference: LaneWindow; era: string; checks: LaneCheck[]; answers: Record<string, string>;
   onset: string; sources: string[]; guide: ProfilerGuide | null; state: LaneState;
-  queryStore?: { state: 'on' | 'off' | 'read-only' | 'denied' | 'unknown'; firstData?: string | null; lastData?: string | null; intervalMinutes?: number | null } | null;
+  queryStore?: { state: 'on' | 'off' | 'read-only' | 'denied' | 'unknown'; firstData?: string | null; lastData?: string | null; intervalMinutes?: number | null; historyUnread?: boolean } | null;
 }
 export interface LaneDay { id: number; at: string; kind: 'sql' | 'mongo'; label: string; database: string; state: LaneState; incident: LaneWindow; reference: LaneWindow; lane: LaneResult | null }
 
@@ -76,6 +76,8 @@ const toQueryStore = (v: unknown): LaneResult['queryStore'] => {
   const out: NonNullable<LaneResult['queryStore']> = { state, firstData, intervalMinutes };
   // lastData is added only when it is a readable date, so older saved reports keep exactly the shape they had.
   if (typeof q.lastData === 'string' && !Number.isNaN(Date.parse(q.lastData))) out.lastData = q.lastData;
+  // historyUnread is added only when the server said true: a failed or refused read of an off database's history. Absent for every older report.
+  if (q.historyUnread === true) out.historyUnread = true;
   return out;
 };
 
