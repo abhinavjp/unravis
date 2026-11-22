@@ -24,7 +24,7 @@ import (
 	"api-audit-explorer/internal/server"
 )
 
-const token = "uiaudit-lite-fixture-token-0123456789"
+const sessionCode = "uiaudit-lite-fixture-code-0123456789"
 
 func main() {
 	uiDir := flag.String("ui", "cmd/unravis-lite/ui", "the built Lite page")
@@ -40,7 +40,7 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	end := now.Add(-20 * time.Second)
 	if *stopped {
 		end = now.Add(-40 * time.Minute)
@@ -53,7 +53,7 @@ func main() {
 		fail(err)
 	}
 	loc := blackbox.Location{Kind: blackbox.LocFolder, Path: `D:\Blackbox`}
-	inner := server.New(lite.NoData{}, ui, token, false,
+	inner := server.New(lite.NoData{}, ui, sessionCode, false,
 		server.WithBlackbox(server.BlackboxDeps{
 			Store: lite.NewStore("Web server 01", loc, now),
 			Now:   func() time.Time { return now },
@@ -65,7 +65,7 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	fmt.Printf("listening at http://%s token=%s\n", ln.Addr().String(), token)
+	fmt.Printf("listening at http://%s token=%s\n", ln.Addr().String(), sessionCode)
 	srv := &http.Server{Handler: lite.Wrap(inner), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		c := make(chan os.Signal, 1)
@@ -84,7 +84,7 @@ func fail(err error) {
 }
 
 // shape gives each tick a reading that rises and falls the way a busy server's does, with one busy spell.
-type shape struct{ n int }
+type shape struct{ n uint64 }
 
 func (s *shape) Collect(time.Time) (blackbox.Sample, error) {
 	s.n++
@@ -97,7 +97,7 @@ func (s *shape) Collect(time.Time) (blackbox.Sample, error) {
 	commit := uint64(9.1e9 + 0.6e9*math.Sin(x/120))
 	queue := math.Max(0, 0.4+0.5*math.Sin(x/23))
 	ms := 3 + 2*math.Sin(x/31)
-	in, out := uint64(s.n)*1_300_000, uint64(s.n)*480_000
+	in, out := s.n*1_300_000, s.n*480_000
 	return blackbox.Sample{CPU: &cpu, MemAvail: &avail, MemCommit: &commit, DiskQueue: &queue, DiskMs: &ms, NetIn: &in, NetOut: &out}, nil
 }
 func (*shape) Close() error { return nil }
