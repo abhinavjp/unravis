@@ -2,6 +2,7 @@ package setup
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,14 +15,88 @@ import (
 // nothing is installed: it never takes the app to another version.
 
 // JournalPending says whether a journal of a run that did not finish is on disk for this scope. A journal marked committed (the run
-// finished and only its deletion failed) is not pending: it is never replayed, so nothing needs the app closed or a prompt shown.
+// finished and only its deletion failed) is not pending: it is never replayed, so nothing needs the app closed or a prompt shown. A
+// journal that was found but refused (not proven, cannot be read) counts as pending: the replay reports it and keeps it. It goes
+// through readJournal, the one place a journal is read, so the check cannot read a byte the replay would not.
 func (r *Runner) JournalPending(elevated bool) bool {
-	p := filepath.Join(r.journalDir(elevated), JournalName)
-	if _, err := os.Stat(p); err != nil {
+	j, found, err := r.readJournal(elevated)
+	if !found {
 		return false
 	}
-	j, err := LoadJournal(p)
-	return err != nil || !j.f.Committed // one that cannot be read is dealt with (and reported) by the replay
+	return err != nil || !j.f.Committed
+}
+
+// readJournal is the one way a journal is read. found is false only when there is no journal file. err != nil with found == true
+// says a journal is there and was refused (a link, a folder others can change, a file that is not proven, too large, not JSON) or
+// could not be read: the file is left alone, never deleted, never replayed. Any error from the reader other than "not there" is a
+// refusal, whatever its kind (a sharing violation and access denied are refusals too).
+//
+// Not elevated: the person's own file, read by path as the person. Elevated: no byte of the file is read until every folder from
+// ProgramData down to the journal folder is a real folder, the journal folder is one only administrators can change, and the file
+// itself is proven on the handle it is read from (FileSecurity.ReadFileProven: no link, one name, owner and list, at most 8 MiB).
+func (r *Runner) readJournal(elevated bool) (j *Journal, found bool, err error) {
+	p := filepath.Join(r.journalDir(elevated), JournalName)
+	if !elevated {
+		if _, serr := os.Lstat(p); errors.Is(serr, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		j, err = LoadJournal(p)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return j, true, err
+	}
+	dir := filepath.Dir(p)
+	// The folders first, so a link in the way is a refusal and never "no journal": a junction in the middle that points at a folder
+	// without the file would otherwise look like an absent file.
+	for _, d := range []string{r.Dirs.ProgramData, dir} {
+		fi, lerr := os.Lstat(d)
+		switch {
+		case errors.Is(lerr, os.ErrNotExist):
+			return nil, false, nil
+		case lerr != nil:
+			return nil, true, fmt.Errorf("an earlier setup may have left a journal in a folder that cannot be looked at, so it is not used: %v", lerr)
+		case fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0:
+			return nil, true, fmt.Errorf("an earlier setup left a journal in a folder that is a link, so it is not used")
+		}
+	}
+	// Whether a file is there is metadata only: a folder nobody trusts and that holds no journal is not a pending journal.
+	if _, lerr := os.Lstat(p); errors.Is(lerr, os.ErrNotExist) {
+		return nil, false, nil
+	} else if lerr != nil {
+		return nil, true, fmt.Errorf("an earlier setup left a journal that cannot be looked at, so it is not used: %v", lerr)
+	}
+	if cerr := datadirCheck(r.Sys.Sec, dir); cerr != nil {
+		return nil, true, fmt.Errorf("an earlier setup left a journal in a folder others can change, so it is not used: %v", cerr)
+	}
+	data, rerr := r.Sys.Sec.ReadFileProven(p, maxJournalBytes)
+	if errors.Is(rerr, os.ErrNotExist) {
+		return nil, false, nil // gone between the look and the open
+	}
+	if errors.Is(rerr, ErrNotProven) {
+		return nil, true, fmt.Errorf("an earlier setup left a journal that is not a plain file only administrators made, so it is not used: %v", rerr)
+	}
+	if rerr != nil {
+		return nil, true, fmt.Errorf("an earlier setup left a journal that could not be opened safely, so it is not used: %v", rerr)
+	}
+	j, err = ParseJournal(data, p)
+	if err == nil {
+		// A journal marked committed by the replay is written again: with the same owner, so it is still one that can be read.
+		j.w = &journalWriter{sec: r.Sys.Sec, sddl: MachineJournalFileSDDL}
+	}
+	return j, true, err
+}
+
+// journalFileOwnerOK says whether owner may own the machine journal file: only the system or the administrators group. The account
+// that runs the elevated copy is deliberately not accepted. A normal administrator runs an elevated and an unelevated process under
+// the same account, and the owner of a file always holds the right to rewrite its access list (WRITE_DAC), which no entry in the list
+// shows: an unelevated program could open the file, grant itself write, change the undo list and put the list back, and the file
+// would still look administrators-only. A group the unelevated token holds only as "deny only" (Administrators) has no such right.
+// A journal that the elevated account itself owns is therefore refused (and kept). Setup's own writer therefore makes the machine
+// journal with owner Administrators (Journal.save with MachineJournalFileSDDL), and a Windows test reads back what the real writer
+// wrote; it does not rely on the default owner of the token, which is not always that group.
+func journalFileOwnerOK(owner string) bool {
+	return owner == "S-1-5-18" || owner == "S-1-5-32-544"
 }
 
 // MachineJournalTrusted says whether the machine journal's folder is one only administrators can change, which is the condition for

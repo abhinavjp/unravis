@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -62,7 +64,7 @@ func (f *fakeGate) deps() gateDeps {
 
 func TestGateFirstCopyProceeds(t *testing.T) {
 	f := &fakeGate{first: true}
-	res, err := enterSingleInstance(false, false, f.deps())
+	res, err := enterSingleInstance(false, false, false, f.deps())
 	if err != nil || !res.proceed {
 		t.Fatalf("proceed=%v err=%v, want proceed", res.proceed, err)
 	}
@@ -83,7 +85,7 @@ func TestGateFirstCopyProceeds(t *testing.T) {
 
 func TestGateSecondCopySignalsOpenAndExitsZero(t *testing.T) {
 	f := &fakeGate{}
-	res, err := enterSingleInstance(false, false, f.deps())
+	res, err := enterSingleInstance(false, false, false, f.deps())
 	if err != nil || res.proceed {
 		t.Fatalf("proceed=%v err=%v, want no proceed and no error", res.proceed, err)
 	}
@@ -94,7 +96,7 @@ func TestGateSecondCopySignalsOpenAndExitsZero(t *testing.T) {
 
 func TestGateBackgroundSecondCopyExitsSilently(t *testing.T) {
 	f := &fakeGate{}
-	res, err := enterSingleInstance(false, true, f.deps())
+	res, err := enterSingleInstance(false, true, false, f.deps())
 	if err != nil || res.proceed {
 		t.Fatalf("proceed=%v err=%v, want no proceed and no error", res.proceed, err)
 	}
@@ -105,7 +107,7 @@ func TestGateBackgroundSecondCopyExitsSilently(t *testing.T) {
 
 func TestGateRetriesWhileTheFirstCopyIsStarting(t *testing.T) {
 	f := &fakeGate{signalErrs: []error{instance.ErrNoInstance, instance.ErrNoInstance, instance.ErrNoInstance, nil}}
-	res, err := enterSingleInstance(false, false, f.deps())
+	res, err := enterSingleInstance(false, false, false, f.deps())
 	if err != nil || res.proceed {
 		t.Fatalf("proceed=%v err=%v, want no proceed and no error", res.proceed, err)
 	}
@@ -116,7 +118,7 @@ func TestGateRetriesWhileTheFirstCopyIsStarting(t *testing.T) {
 
 func TestGateGivesUpWithErrAlreadyRunning(t *testing.T) {
 	f := &fakeGate{signalErrs: []error{instance.ErrNoInstance}}
-	_, err := enterSingleInstance(false, false, f.deps())
+	_, err := enterSingleInstance(false, false, false, f.deps())
 	if !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("err %v, want ErrAlreadyRunning", err)
 	}
@@ -131,7 +133,7 @@ func TestGateAnotherAccountIsReportedClearly(t *testing.T) {
 		"signal":  {signalErrs: []error{instance.ErrAccessDenied}},
 	}
 	for name, f := range cases {
-		res, err := enterSingleInstance(false, false, f.deps())
+		res, err := enterSingleInstance(false, false, false, f.deps())
 		if !errors.Is(err, ErrRunningForAnotherAccount) || res.proceed {
 			t.Fatalf("%s: err %v proceed %v, want ErrRunningForAnotherAccount", name, err, res.proceed)
 		}
@@ -146,7 +148,7 @@ func TestGateAnotherAccountIsReportedClearly(t *testing.T) {
 
 func TestGateUsesTheDemoNamesForDemo(t *testing.T) {
 	f := &fakeGate{first: true}
-	if _, err := enterSingleInstance(true, false, f.deps()); err != nil {
+	if _, err := enterSingleInstance(true, false, false, f.deps()); err != nil {
 		t.Fatal(err)
 	}
 	if f.app != instance.DemoApp {
@@ -157,7 +159,7 @@ func TestGateUsesTheDemoNamesForDemo(t *testing.T) {
 func TestGateRefusesWhenElevatedBeforeTouchingTheMutex(t *testing.T) {
 	for _, background := range []bool{false, true} {
 		f := &fakeGate{first: true, isElevated: true}
-		res, err := enterSingleInstance(false, background, f.deps())
+		res, err := enterSingleInstance(false, background, false, f.deps())
 		if !errors.Is(err, ErrElevated) || res.proceed {
 			t.Fatalf("background=%v: err %v proceed %v, want ErrElevated", background, err, res.proceed)
 		}
@@ -173,7 +175,7 @@ func TestGateReportsASquattedName(t *testing.T) {
 		"signal":  {signalErrs: []error{instance.ErrNameHeldByOther}},
 	}
 	for name, f := range cases {
-		res, err := enterSingleInstance(false, false, f.deps())
+		res, err := enterSingleInstance(false, false, false, f.deps())
 		if !errors.Is(err, ErrNameHeld) || res.proceed {
 			t.Fatalf("%s: err %v proceed %v, want ErrNameHeld", name, err, res.proceed)
 		}
@@ -250,5 +252,88 @@ func TestMainSkipsTheGateWithNoBrowser(t *testing.T) {
 	}
 	if end < 0 || call > end {
 		t.Fatalf("enterSingleInstance (%d) sits outside the `if interactive` block (ends %d)", call, end)
+	}
+}
+
+func TestRefuseElevated(t *testing.T) {
+	if err := refuseElevated(func() bool { return true }); !errors.Is(err, ErrElevated) {
+		t.Fatalf("elevated: err %v, want ErrElevated", err)
+	}
+	if err := refuseElevated(func() bool { return false }); err != nil {
+		t.Fatalf("normal start: err %v, want nil", err)
+	}
+}
+
+func TestReportFatalExitsElevatedCode(t *testing.T) {
+	oldExit, oldMsg, oldStderr := exitProcess, showMessage, stderrUnusable
+	defer func() { exitProcess, showMessage, stderrUnusable = oldExit, oldMsg, oldStderr }()
+	var got []int
+	exitProcess = func(code int) { got = append(got, code) }
+	showMessage = func(string, string) {}
+	stderrUnusable = func() bool { return false }
+	reportFatal(fmt.Errorf("wrapped: %w", ErrElevated))
+	reportFatal(errors.New("other"))
+	if len(got) != 2 || got[0] != 11 || got[1] != 1 {
+		t.Fatalf("exit codes %v, want [11 1]", got)
+	}
+}
+
+// Setup's elevated worker verifies the placed program by running
+// "unravis.exe --version" (internal/setup/plan.go verify) with its elevated
+// token. That probe must return before the gate, or an install would fail with
+// exit 11. The worker itself must never start the app (StartProgram is the
+// window's doing, as the user).
+func TestVersionProbeIsNotGated(t *testing.T) {
+	var out strings.Builder
+	old := stdout
+	stdout = &out
+	defer func() { stdout = old }()
+	if err := run([]string{"--version"}, func(string) string { return "" }); err != nil {
+		t.Fatalf("--version failed: %v", err)
+	}
+	if strings.TrimSpace(out.String()) == "" {
+		t.Fatal("--version printed nothing")
+	}
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	v := strings.Index(src, "if f.version {")
+	g := strings.Index(src, "enterSingleInstance(")
+	if v < 0 || g < 0 || v > g {
+		t.Fatalf("--version (%d) must return before enterSingleInstance (%d)", v, g)
+	}
+}
+
+func TestSetupWorkerDoesNotStartTheApp(t *testing.T) {
+	b, err := os.ReadFile("../unravis-setup/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	start := strings.Index(src, "func runWorker(")
+	end := strings.Index(src, "func runWindow(")
+	if start < 0 || end < start {
+		t.Fatal("runWorker not found in cmd/unravis-setup/main.go")
+	}
+	body := src[start:end]
+	for _, word := range []string{"startApp", "startBackground", "StartProgram"} {
+		if strings.Contains(body, word) {
+			t.Errorf("runWorker mentions %s: the elevated worker must not start unravis.exe", word)
+		}
+	}
+	files, _ := filepath.Glob("../../internal/setup/*.go")
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") || strings.HasSuffix(f, "window_windows.go") || strings.HasSuffix(f, "os_other.go") {
+			continue
+		}
+		fb, err := os.ReadFile(f) //nolint:gosec // fixed glob in the repo, test only
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(fb), "StartProgram") {
+			t.Errorf("%s calls StartProgram: only the window may start the app", f)
+		}
 	}
 }

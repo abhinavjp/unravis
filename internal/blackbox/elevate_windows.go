@@ -34,9 +34,6 @@ type OSElevator struct {
 	Timeout time.Duration
 }
 
-// AnswerFileFlag is the helper argument that names the file its answer goes to.
-const AnswerFileFlag = "--answer-file"
-
 const seeMaskNoCloseProcess = 0x00000040
 
 type shellExecuteInfo struct {
