@@ -13,7 +13,7 @@ export const CONN_TEXT = {
   intro: 'One list of every saved connection, SQL Server and MongoDB. Cases pick from it. Each row says what its last test found and whether a password is saved.',
   addSql: '+ SQL Server',
   addMongo: '+ MongoDB',
-  mongoHere: 'A MongoDB connection is set up in the Connections window, which + MongoDB opens. Save it there, come back and press Refresh to see it in this list.',
+  mongoHere: 'Press + MongoDB to set one up in the side panel. Save it there, then press Refresh to see it in this list.',
   mongoNowhere: 'A MongoDB connection cannot be added from this page here.',
   refresh: 'Refresh',
   noneHeading: 'No saved connections yet',
@@ -28,10 +28,7 @@ export const CONN_TEXT = {
   pwSaved: 'password saved',
   pwNone: 'no password saved',
   pwNotNeeded: 'no password needed',
-  wordsNote: 'Works, Failed and Not tested describe one connection test only. They are not the readiness words used for sources (Ready, Partly ready, Cannot test yet, Failed).',
   origin: 'Passwords are sealed on this PC with Windows data protection, only when you tick Remember password, and are never sent back to this screen. Up to 20 SQL connections. Forget removes the saved connection and its password. It does not touch any server.',
-  countSql: 'SQL Server connections saved:',
-  countMongo: 'MongoDB connections listed (no limit):',
   full: 'You have 20 of 20 saved SQL Server connections. Forget one before you save another.',
   demo: 'Saved connections are not available here. Real ones are saved on your own computer.',
   loadFailed: 'The saved connections could not be read. Try again.',
@@ -293,8 +290,13 @@ export const AUDIT_ADD_TEXT = {
   profilerOpen: 'Open Read MongoDB'
 } as const;
 
+/** "1 of 20 SQL Server connections saved. 1 MongoDB connection saved." The MongoDB list has no limit, so it shows only a count. */
+export const connectionCountText = (sql: number, limit: number, mongo: number): string =>
+  sql + ' of ' + limit + ' SQL Server connections saved. ' + mongo + ' MongoDB ' + (mongo === 1 ? 'connection' : 'connections') + ' saved.';
+
 export const DAY_TEXT = {
   heading: 'Add another day',
+  readFirst: 'Read a SQL Server day',
   lead: 'Read more hours of a source the case already holds, for example the day after a fix. It is read separately and added to the case. Nothing already read is replaced.',
   holds: 'What the case already holds',
   source: 'Source',

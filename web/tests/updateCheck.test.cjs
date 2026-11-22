@@ -38,7 +38,7 @@ test('the latest answer names the current version', () => {
 });
 
 test('the available answer names both versions', () => {
-  assert.equal(upd.updateCheckNote({ status: 'available', current: '1.2.0', latest: '1.3.0', url: 'https://github.com/abhinavjp/unravis/releases/tag/v1.3.0' }), 'Version 1.3.0 is available. You have v1.2.0.');
+  assert.equal(upd.updateCheckNote({ status: 'available', current: '1.2.0', latest: '1.3.0', url: 'https://github.com/abhinavjp/unravis/releases/tag/v1.3.0' }), 'Version 1.3.0 is available. You have version 1.2.0.');
 });
 
 test('the unreachable answer says the check could not be made', () => {

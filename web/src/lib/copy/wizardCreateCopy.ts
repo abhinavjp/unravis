@@ -2,6 +2,7 @@ import type { LintEntry } from './copylint';
 import type { Failure, StepState } from '../wizardSubmit';
 import { rowOutcomeText } from './discoverCopy';
 import { isCatalogKind } from '../fileKinds';
+import { hostShown } from './zoneChoiceCopy';
 
 /**
  * Every fixed sentence of the review step and the "creating your case" screen (TSK-19), and the small helpers that build the rest.
@@ -247,7 +248,7 @@ export const HOSTS_TEXT = {
 
 /** "3 files: WEB01. 2 files: this-pc." from the computers the files are filed under. */
 export const hostSummaryText = (rows: ReadonlyArray<{ label: string; count: number }>): string =>
-  rows.map((row) => (row.count === 1 ? '1 file' : row.count + ' files') + ' under ' + row.label).join(', ') + '.';
+  rows.map((row) => (row.count === 1 ? '1 file' : row.count + ' files') + ' under ' + hostShown(row.label)).join(', ') + '.';
 
 /** Every fixed sentence and a sample of each built one, for the copy lint. */
 export const wizardCreateCopyEntries = (): LintEntry[] => [

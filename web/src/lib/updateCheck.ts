@@ -12,7 +12,7 @@ export function updateCheckNote(reply: UpdateCheckReply): string {
       if (reply.held) return `You are on v${reply.current}. A newer version exists, but it is on hold: ${reply.held}.`;
       return `You are on the latest version (v${reply.current}).`;
     case 'available':
-      return `Version ${reply.latest} is available. You have v${reply.current}.`;
+      return `Version ${reply.latest} is available. You have version ${reply.current}.`;
     case 'dev':
       return 'This is a development build, so there is nothing to compare.';
     case 'unverified':

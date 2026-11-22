@@ -62,7 +62,7 @@
     {:else if tab === 'add'}
       <AddSourcesFlow {caseId} {readOnly} onFiles={onAddFiles} onDone={() => { tab = 'list'; }} />
     {:else if tab === 'day'}
-      <AddAnotherDay {caseId} {readOnly} {onGone} onCancel={() => { tab = 'add'; }} />
+      <AddAnotherDay {caseId} {readOnly} {onGone} onCancel={() => { tab = 'add'; }} onReadSql={() => { tab = 'sql'; }} />
     {:else}
       <SourceCombinations {caseId} />
     {/if}

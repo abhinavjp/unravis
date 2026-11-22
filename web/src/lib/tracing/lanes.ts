@@ -64,7 +64,7 @@ export const READ_TEXT = {
 export const COVER_TEXT = {
   outside: (from: string, to: string): string => `Imported files cover ${from} to ${to}; nothing falls inside this window.`,
   some: (from: string, to: string): string => `Some imported files cover ${from} to ${to}; the other files have no recorded range.`,
-  noRange: 'Some files for this row have no recorded time range, or were not imported, so the times they cover are not known.'
+  noRange: 'Some files here have no time range, so the times they cover are not known.'
 } as const;
 
 /** The sentence for a lane whose imported files all sit outside the window, or '' when it does not apply. */

@@ -421,9 +421,12 @@
 </script>
 
 <div class="case-home" class:wide={timelineShown}>
+  <!-- On the timeline (and the slow call screen inside it) the one way back is the timeline's own button, so "All cases" is not drawn a second time (ANALYSIS-15). -->
+  {#if !timelineShown}
   <div class="top">
     <button type="button" class="secondary-button" aria-label={CASE_HOME_TEXT.backLabel} onclick={goHome}>&larr; {CASE_HOME_TEXT.back}</button>
   </div>
+  {/if}
 
   {#if !caseId || phase === 'gone'}
     <div class="notice" role="alert">{CASE_HOME_TEXT.gone}</div>

@@ -25,7 +25,7 @@ test('UPD-01: latest says you are on the latest version and offers no release li
 test('UPD-02: available names both versions and links to the project releases only', async ({ page }) => {
   const { dialog, result } = await check(page, 'available');
   await expect(result).toHaveAttribute('data-state', 'available');
-  await expect(result).toContainText('Version 1.3.0 is available. You have v1.2.0.');
+  await expect(result).toContainText('Version 1.3.0 is available. You have version 1.2.0.');
   const link = dialog.getByRole('link', { name: /release page/i });
   await expect(link).toHaveAttribute('href', /^https:\/\/github\.com\/abhinavjp\/unravis\//);
   await expect(link).toHaveAttribute('rel', /noopener/);

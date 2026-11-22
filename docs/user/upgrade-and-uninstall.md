@@ -11,7 +11,7 @@ Unravis checks for a new version by itself, every 30 minutes by default. You can
 There are four answers:
 
 - **You are on the latest version (v1.2.0).** Nothing to do.
-- **Version 1.3.0 is available. You have v1.2.0.** A link, **Open the release page**, opens the release on GitHub.
+- **Version 1.3.0 is available. You have version 1.2.0.** A link, **Open the release page**, opens the release on GitHub.
 - **Could not check for updates. Check your connection and try again later.** This also shows when you are offline or GitHub has rate-limited the check.
 - **This is a development build, so there is nothing to compare.** Development builds do not check for updates.
 

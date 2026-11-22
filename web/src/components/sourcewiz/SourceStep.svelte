@@ -160,8 +160,8 @@
   .nutshell b { font-size: var(--fs-2); letter-spacing: .04em; text-transform: uppercase; color: var(--text-2); }
   .nutshell p { margin: 0; color: var(--text); font-size: var(--fs-3); max-width: 70ch; }
   .layout { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr); gap: var(--space-5); align-items: start; }
-  @media (max-width: 720px) { .layout { grid-template-columns: minmax(0, 1fr); } }
-  .rail { display: grid; gap: var(--space-2); align-content: start; min-width: 0; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  @media (max-width: 720px) { .layout { grid-template-columns: minmax(0, 1fr); } .rail { position: static; } }
+  .rail { position: sticky; top: 8px; display: grid; gap: var(--space-2); align-content: start; min-width: 0; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .railtop { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
   .count { min-width: 22px; padding: 0 var(--space-2); text-align: center; color: var(--text-2); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); }
   .empty { margin: 0; padding: var(--space-3); color: var(--text-2); font-size: var(--fs-3); border: var(--hairline-width) dashed var(--control-line); border-radius: var(--radius-sm); }

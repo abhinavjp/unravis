@@ -12,6 +12,7 @@
   import { windowChoiceLabel } from '../../lib/copy/discoverCopy';
   import { CREATE_TEXT, HOSTS_TEXT, chooseFileLabel, failureText, fileHeldText, hostSummaryText, summaryText, tagLine, whatHappens } from '../../lib/copy/wizardCreateCopy';
   import { formatBytes } from '../../lib/copy/importCopy';
+  import { hostShown } from '../../lib/copy/zoneChoiceCopy';
   import { hostNeed } from '../../lib/fileKinds';
   import HelpNote from '../HelpNote.svelte';
   import ZoneChoice from './ZoneChoice.svelte';
@@ -145,7 +146,7 @@
           <span>{HOSTS_TEXT.pickAllLabel}</span>
           <select aria-label={HOSTS_TEXT.pickAllLabel} value="" onchange={(event) => { if (event.currentTarget.value !== '') pickHostForAll(event.currentTarget.value); event.currentTarget.value = ''; }}>
             <option value="">{HOSTS_TEXT.pickAllNone}</option>
-            {#each hostsView.entries ?? [] as entry (entry.label)}<option value={entry.label}>{entry.label}</option>{/each}
+            {#each hostsView.entries ?? [] as entry (entry.label)}<option value={entry.label}>{hostShown(entry.label)}</option>{/each}
           </select>
         </label>
       {/if}
