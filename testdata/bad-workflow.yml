@@ -1,0 +1,8 @@
+# Fixture for tools/security/check-action-pins.test.mjs. Intentionally unpinned; never run.
+name: bad
+on: push
+jobs:
+  x:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4

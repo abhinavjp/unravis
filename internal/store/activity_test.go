@@ -8,32 +8,42 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestActivityQueriesAllSourcesOnceWithOverlapAndNoPayload(t *testing.T) {
-	var handle *fakeClient
+	// Every client the store opens answers through the same function, however many it opens and in whatever order, so the
+	// test does not depend on which client was created last.
+	var (
+		fnMu sync.Mutex
+		fn   func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error)
+	)
 	s := newStore(func(context.Context, string, *tls.Config) (clientHandle, error) {
-		handle = &fakeClient{}
-		return handle, nil
+		return &fakeClient{aggregateFn: func(ctx context.Context, d, c string, p mongo.Pipeline) (mongoCursor, error) {
+			fnMu.Lock()
+			f := fn
+			fnMu.Unlock()
+			return f(ctx, d, c, p)
+		}}, nil
 	})
 	one := addFakeSource(t, s, "one")
 	two := addFakeSource(t, s, "two")
-	calls := 0
-	handle.aggregateFn = func(_ context.Context, _, _ string, p mongo.Pipeline) (mongoCursor, error) {
-		calls++
+	var calls atomic.Int32
+	fn = func(_ context.Context, _, _ string, p mongo.Pipeline) (mongoCursor, error) {
+		calls.Add(1)
 		raw, _ := bson.MarshalExtJSON(bson.D{{Key: "pipeline", Value: p}}, false, false)
 		text := string(raw)
 		for _, want := range []string{"RequestCompletedAt", "$gt", "$expr", "$limit"} {
 			if !strings.Contains(text, want) {
-				t.Fatalf("missing overlap constraint %s", want)
+				t.Errorf("missing overlap constraint %s", want)
 			}
 		}
 		for _, bad := range []string{"RequestPayload", "ResponsePayload"} {
 			if strings.Contains(text, bad) {
-				t.Fatal("payload selected")
+				t.Error("payload selected")
 			}
 		}
 		return &fakeCursor{}, nil
@@ -43,8 +53,8 @@ func TestActivityQueriesAllSourcesOnceWithOverlapAndNoPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 2 || len(p.Sources) != 2 {
-		t.Fatalf("calls=%d sources=%d", calls, len(p.Sources))
+	if calls.Load() != 2 || len(p.Sources) != 2 {
+		t.Fatalf("calls=%d sources=%d", calls.Load(), len(p.Sources))
 	}
 }
 

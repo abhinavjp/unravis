@@ -143,10 +143,9 @@ jobs:
         run: npm run build
 
       - name: Web - built files match what is committed
-        # BL-031. Made blocking after 3 green runs of ci.yml on master (remove continue-on-error then).
+        # BL-031. Blocking: a tag whose committed web build is stale stops here, before any build or signing step.
         # Fails when `npm run build` gives bytes other than the committed web/dist,
         # cmd/unravis-setup/ui and cmd/unravis-lite/ui. Fix: run `npm run build` in web and commit them.
-        continue-on-error: true
         working-directory: web
         run: |
           node --version
@@ -185,6 +184,12 @@ jobs:
           if ($env:SIGN -eq 'true') { $sign.SignScript = './tools/release/Sign-Binaries.ps1' }
           ./build.ps1 -SkipWeb -SkipTests -Release -Version "${{ steps.tag.outputs.version }}" @sign
           Copy-Item -LiteralPath 'dist/unravis-setup.exe' -Destination "dist/unravis-setup-v${{ steps.tag.outputs.version }}-windows-x64.exe" -Force
+
+      - name: No UPX in dist (BL-421)
+        shell: pwsh
+        run: |
+          ./tools/release/Test-NoUpx.ps1 -Path dist
+          if ($LASTEXITCODE -ne 0) { throw 'a packed exe is in dist.' }
 
       - name: Build dist\unravis-blackbox.exe and its zip
         # The Blackbox is built once, by build.ps1 (with -trimpath and -X main.version), and the app is pinned to
