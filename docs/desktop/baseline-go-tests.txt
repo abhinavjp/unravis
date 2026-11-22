@@ -306,6 +306,7 @@ api-audit-explorer/internal/setup.TestInstallWithoutStartAtSignInWritesNoStartup
 api-audit-explorer/internal/setup.TestInstallWithoutTheReleasesFileWritesNoReleasesLink
 api-audit-explorer/internal/setup.TestInstallWritesTheDesktopShortcut
 api-audit-explorer/internal/setup.TestInstallWritesTheQuitShortcut
+api-audit-explorer/internal/setup.TestJournalFolderOfAnotherAccountIsRefused
 api-audit-explorer/internal/setup.TestJournalThatCannotBeDeletedIsNotReplayedAfterSuccess
 api-audit-explorer/internal/setup.TestKeeperFolderListIsPutBackWhenDifferent
 api-audit-explorer/internal/setup.TestKeeperFolderListIsPutBackWhenDifferent/extra_reader
