@@ -17,7 +17,7 @@
 //   UIFIX-10  Slow call screen: the time zone label, the peak and zero labels and the "drag" hint are at least 11px, the lanes and the minimap do not move, nothing collides (BL-483)
 //   UIFIX-17  Investigation timeline: the UTC times of the incident and comparison windows are drawn as visible text (not only a tooltip), stay UTC when "Times in" changes, fit at 320, 360 and 390 px, and the one-line readout does not grow on a wide desktop
 //   UIFIX-30  Requests over time (home): the left, right and bottom axes have a title with the unit, painted inside the same chart box, in both themes; the box and the rectangles around it do not move; 4.5:1 contrast (BL-495 part)
-//   UIFIX-31  Requests over time on real value ranges (a busy hour in the millions, a slow hour in seconds, a sub-millisecond hour, no timing at all): one unit and one precision on each axis, tooltip with the interval's start and end and the P95 and slowest request alike, no NaN
+//   UIFIX-31  Requests over time on real value ranges (also: one slow request reads the same in the tooltip and the note, 31e) (a busy hour in the millions, a slow hour in seconds, a sub-millisecond hour, no timing at all): one unit and one precision on each axis, tooltip with the interval's start and end and the P95 and slowest request alike, no NaN
 //   UIFIX-32  Requests over time on a phone (320, 360, 390 px): the axis titles are painted, the page does not scroll sideways and the chart box keeps its 220 px
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase } from '../support/ui';
@@ -1179,11 +1179,11 @@ for (const scheme of ['dark', 'light'] as const) for (const size of HERO_SIZES) 
     expect(f.head[1] + f.head[3], 'the heading sits above the box').toBeLessThanOrEqual(f.stage[1]);
     // The three axis titles are long stretches of ink where no tick label reaches (a 22-letter title is well over 90 rows tall; three tick labels are about 30).
     expect(f.leftRows, 'left title "Requests per interval"').toBeGreaterThan(90);
-    expect(f.rightRows, 'right title "P95 response time (ms)"').toBeGreaterThan(90);
+    expect(f.rightRows, 'right title "Response time (ms)"').toBeGreaterThan(90);
     expect(f.bottomCols, 'bottom title "Time (UTC)" in the middle of the bottom strip').toBeGreaterThan(20);
     expect(f.outer, 'nothing is painted on the outermost 2 px of the box (titles fit inside it)').toBe(0);
     expect(f.label).toContain('Left axis: requests per interval, whole requests.');
-    expect(f.label).toContain('Right axis: P95 response time in milliseconds.');
+    expect(f.label).toContain('Right axis: response time in milliseconds');
     expect(f.label).toContain('Bottom axis: time, in UTC.');
     // Same page, no sideways scroll.
     const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -1255,7 +1255,7 @@ async function heroTip(page: Page, wanted: RegExp): Promise<string> {
 test('UIFIX-31a Requests over time, a slow hour: P95 and the slowest request in seconds with one decimal each, interval start and end named', async ({ page }) => {
   await rerunWithWindows(page, (i) => ({ count: 1200 + i, p95: i === 3 ? 65_700 : 900 + i * 10, max: i === 3 ? 68_000 : 1500 }));
   const f = await heroFacts(page);
-  expect(f.label).toContain('Right axis: P95 response time in seconds.');
+  expect(f.label).toContain('Right axis: response time in seconds');
   expect(f.rightRows, 'right title painted').toBeGreaterThan(90);
   expect(f.outer).toBe(0);
   const tip = await heroTip(page, /Slowest request: 68\.0 s/);
@@ -1263,19 +1263,37 @@ test('UIFIX-31a Requests over time, a slow hour: P95 and the slowest request in 
   expect(tip, 'no NaN or undefined').not.toMatch(/NaN|undefined|Infinity/);
 });
 
-test('UIFIX-31b Requests over time, a busy hour: counts in the millions keep whole numbers with separators and room for the title', async ({ page }) => {
-  await rerunWithWindows(page, (i) => ({ count: 2_000_000 + i * 150_000, p95: 120 + i, max: 400 }));
-  const f = await heroFacts(page);
-  expect(f.leftRows, 'left title painted beside millions').toBeGreaterThan(90);
-  expect(f.outer, 'title and wide labels stay inside the box').toBe(0);
-  const tip = await heroTip(page, /P95: ≈ 122 ms/);
-  expect(tip).toContain('Requests: 2,300,000 P95: ≈ 122 ms Slowest request: 400 ms');
+// Millions of requests make the left labels wide ("3,000,000"): the left margin grows from 44 to about 94 px, and the title must still fit inside the same box.
+for (const size of [{ width: 1100, height: 800 }, { width: 1280, height: 720 }, { width: 1440, height: 900 }, { width: 1920, height: 1080 }, { width: 320, height: 800 }]) {
+  test('UIFIX-31b Requests over time, a busy hour at ' + size.width + ' px: counts in the millions keep whole numbers with separators and room for the title', async ({ page }) => {
+    await page.setViewportSize(size);
+    await rerunWithWindows(page, (i) => ({ count: 2_000_000 + i * 150_000, p95: 120 + i, max: 400 }));
+    const f = await heroFacts(page);
+    expect(f.stage[3], 'the box keeps its height').toBe(size.width < 500 ? 220 : 280);
+    expect(f.leftRows, 'left title painted beside millions').toBeGreaterThan(90);
+    expect(f.rightRows, 'right title painted').toBeGreaterThan(90);
+    expect(f.outer, 'title and wide labels stay inside the box').toBe(0);
+    const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(over, 'sideways overflow in px').toBeLessThanOrEqual(0);
+    const tip = await heroTip(page, /P95: ≈ 12\d ms/);
+    expect(tip).toMatch(/Requests: 2,\d{3},\d{3} P95: ≈ 12\d ms Slowest request: 400 ms/);
+  });
+}
+
+test('UIFIX-31e Requests over time, a fast P95 with one 68 s outlier: the tooltip and the note under the chart write the slowest request alike, never "68,000 ms"', async ({ page }) => {
+  await rerunWithWindows(page, (i) => ({ count: 30, p95: 43, max: i === 3 ? 68_000 : 80 }));
+  const tip = await heroTip(page, /Slowest request: 68\.0 s/);
+  expect(tip).toContain('P95: ≈ 43 ms');
+  expect(tip).not.toContain('68,000');
+  const note = page.locator('.hero-note');
+  await expect(note).toContainText('up to 68.0 s');
+  await expect(note).not.toContainText('68,000');
 });
 
 test('UIFIX-31c Requests over time, a sub-millisecond hour and an hour with no timing: no NaN, the axis starts at 0 and the title is there', async ({ page }) => {
   await rerunWithWindows(page, (i) => i % 2 ? { count: 4, p95: null, max: null } : { count: 7, p95: 0.4, max: 0.9 });
   const f = await heroFacts(page);
-  expect(f.label).toContain('Right axis: P95 response time in milliseconds.');
+  expect(f.label).toContain('Right axis: response time in milliseconds');
   expect(f.leftRows).toBeGreaterThan(90);
   expect(f.rightRows).toBeGreaterThan(90);
   const noTiming = await heroTip(page, /P95: no timed requests/);

@@ -41,6 +41,12 @@ test('niceStep: 1, 2 or 5 times a power of ten, never below the floor, and a bad
   assert.equal(axis.niceStep(0.1, 1), 1);
   for (const bad of [NaN, -5, 0, Infinity, undefined, null]) assert.equal(axis.niceStep(bad, 1), 1, String(bad));
   assert.equal(axis.niceStep(NaN), 1);
+  // The float tolerance: noise above a step stays on the step, a real excess does not.
+  assert.equal(axis.niceStep(5 + 5e-13), 5);
+  assert.equal(axis.niceStep(0.1 * 3 + 0.2 * 1e-12), 0.5);
+  assert.equal(axis.niceStep(2 * (1 + 1e-10)), 2);
+  assert.equal(axis.niceStep(5.0001), 10);
+  assert.equal(axis.niceStep(2.001), 5);
   function niceStepOf(v) { return axis.niceStep(v); }
 });
 
@@ -104,8 +110,6 @@ test('durationAxis: ms below one second, seconds from one second, one precision 
   assert.equal(new Set(labels.map(decimalsOf)).size, 1, 'one number of decimals');
   const long = axis.durationAxis(68_000, 4, 'en-GB');
   assert.deepEqual(ticksOf(long).map(long.format), ['0', '20', '40', '60', '80']);
-  assert.equal(long.formatWithUnit(68_000), '68 s');
-  assert.equal(sec.formatWithUnit(1500), '1.5 s');
 });
 
 test('durationAxis: tiny, huge, zero and bad values', () => {
@@ -137,23 +141,42 @@ test('durationAxis: floating point noise never prints a long tail', () => {
   }
 });
 
-test('durationSet: P95 and slowest request share a unit and a precision (the sweep case: 65.7 s next to 68 s)', () => {
+test('durationText: one rule for one value, whoever shows it: <1 ms, whole ms under a second, seconds with one decimal from a second', () => {
+  const t = (v) => axis.durationText(v, 'en-GB');
+  assert.equal(t(0), '0 ms');
+  assert.equal(t(0.4), '<1 ms');
+  assert.equal(t(1), '1 ms');
+  assert.equal(t(43.4), '43 ms');
+  assert.equal(t(999.4), '999 ms');
+  assert.equal(t(999.6), '1.0 s', 'a value that rounds to 1000 ms is a second, as 1000 is');
+  assert.equal(t(1000), '1.0 s');
+  assert.equal(t(1049), '1.0 s');
+  assert.equal(t(1050), '1.1 s');
+  assert.equal(t(65_700), '65.7 s');
+  assert.equal(t(68_000), '68.0 s');
+  assert.equal(t(60_000), '60.0 s', 'no false second decimal on a minute');
+  assert.equal(t(5_400_000), '5,400.0 s');
+  assert.equal(axis.durationText(68_000, 'de-DE'), '68,0 s');
+  for (const bad of [null, undefined, NaN, -1, Infinity, '12']) assert.equal(axis.durationText(bad), null, String(bad));
+});
+
+test('durationSet: the P95 and the slowest request of one interval are written by the same rule (65.7 s next to 68.0 s)', () => {
   assert.deepEqual(axis.durationSet([65_700, 68_000], 'en-GB'), ['65.7 s', '68.0 s']);
   assert.deepEqual(axis.durationSet([2500, 68_000], 'en-GB'), ['2.5 s', '68.0 s']);
-  assert.deepEqual(axis.durationSet([900, 3200], 'en-GB'), ['0.90 s', '3.20 s']);
-  assert.deepEqual(axis.durationSet([340, 60_000], 'en-GB'), ['0.34 s', '60.00 s'], 'a sub-second value keeps two digits');
   assert.deepEqual(axis.durationSet([120, 420], 'en-GB'), ['120 ms', '420 ms']);
 });
 
-test('durationSet: a short P95 beside a long outlier stays in milliseconds, never rounds to 0.0 s', () => {
-  assert.deepEqual(axis.durationSet([3, 68_000], 'en-GB'), ['3 ms', '68,000 ms']);
+test('durationSet: a short P95 beside a long outlier is never "68,000 ms" and the outlier reads the same as everywhere else', () => {
+  assert.deepEqual(axis.durationSet([43, 68_000], 'en-GB'), ['43 ms', '68.0 s']);
+  assert.deepEqual(axis.durationSet([340, 60_000], 'en-GB'), ['340 ms', '60.0 s']);
+  assert.deepEqual(axis.durationSet([3, 68_000], 'en-GB'), ['3 ms', '68.0 s']);
   assert.deepEqual(axis.durationSet([0.4, 2], 'en-GB'), ['<1 ms', '2 ms']);
-  // a zero is not "short": it prints with the same decimals as the rest
-  assert.deepEqual(axis.durationSet([0, 68_000], 'en-GB'), ['0.0 s', '68.0 s']);
+  assert.deepEqual(axis.durationSet([0, 68_000], 'en-GB'), ['0 ms', '68.0 s']);
+  for (const out of [68_000, 60_000, 1500, 999.6]) assert.equal(axis.durationSet([43, out], 'en-GB')[1], axis.durationText(out, 'en-GB'));
 });
 
 test('durationSet: missing, NaN, negative and infinite values come back null, the rest still print', () => {
-  assert.deepEqual(axis.durationSet([null, 1500], 'en-GB'), [null, '1.50 s']);
+  assert.deepEqual(axis.durationSet([null, 1500], 'en-GB'), [null, '1.5 s']);
   assert.deepEqual(axis.durationSet([NaN, undefined, -3, Infinity]), [null, null, null, null]);
   assert.deepEqual(axis.durationSet([]), []);
   assert.deepEqual(axis.durationSet([null, null]), [null, null]);
@@ -173,8 +196,8 @@ test('titles: the time title names the zone; an empty zone falls back to UTC; th
   assert.equal(axis.requestsAxisTitle, 'Requests per interval');
   assert.equal(axis.timeAxisTitle('Europe/London'), 'Time (Europe/London)');
   assert.equal(axis.timeAxisTitle('  '), 'Time (UTC)');
-  assert.equal(axis.latencyAxisTitle('P95', 's'), 'P95 response time (s)');
-  assert.equal(axis.latencyAxisTitle('P95', 'ms'), 'P95 response time (ms)');
+  assert.equal(axis.latencyAxisTitle('s'), 'Response time (s)');
+  assert.equal(axis.latencyAxisTitle('ms'), 'Response time (ms)');
 });
 
 const MIN = 60_000;
@@ -185,7 +208,7 @@ test('heroOption: both value axes and the time axis have a title with the unit',
   const o = heroOption(windows, 'UTC', true);
   assert.equal(o.xAxis.name, 'Time (UTC)');
   assert.equal(o.yAxis[0].name, 'Requests per interval');
-  assert.equal(o.yAxis[1].name, 'P95 response time (s)');
+  assert.equal(o.yAxis[1].name, 'Response time (s)', 'the axis holds the P95 and the slowest request, so it is not titled for the P95 alone');
   assert.equal(o.yAxis[1].position, 'right');
 });
 
@@ -265,11 +288,31 @@ test('heroOption: the diamond label uses the axis precision, and a slot with no 
   const scatter = o.series.find(s => s.name === 'Slowest request');
   const diamond = scatter.data[1];
   assert.equal(diamond.symbol, 'diamond');
-  assert.equal(diamond.label.formatter(), '68 s');
+  assert.equal(diamond.label.formatter(), '68.0 s');
   assert.ok(o.tooltip.formatter([{ dataIndex: 2 }]).includes('P95: no timed requests'));
 });
 
 test('heroOption: German-style locales are not hard-wired: the tick labels come from the one formatter', () => {
   const o = heroOption([slot(0, 4_200_000, null, null)], 'UTC', false);
   assert.match(o.yAxis[0].axisLabel.formatter(2_000_000), /^2.000.000$|^2,000,000$|^2\s000\s000$/);
+});
+
+test('one slow request reads the same on the diamond, in the tooltip and in the note (P95 43 ms, slowest 68 s)', () => {
+  const windows = [slot(0, 10, 43, 60), slot(1, 10, 43, 68_000), slot(2, 10, 45, 70)];
+  const o = heroOption(windows, 'UTC', true);
+  const diamond = o.series.find(s => s.name === 'Slowest request').data[1].label.formatter();
+  const tip = o.tooltip.formatter([{ dataIndex: 1 }]);
+  const note = axis.durationText(68_000);
+  assert.equal(diamond, '68.0 s');
+  assert.equal(note, '68.0 s');
+  assert.ok(tip.includes('P95: ≈ 43 ms'), tip);
+  assert.ok(tip.includes('Slowest request: ' + diamond), tip);
+  assert.ok(!/68,000/.test(tip + diamond + note));
+});
+
+test('heroOption: the right margin and the left margin follow the data (a count in the millions takes 94 px, a count under 100 takes 44)', () => {
+  const small = heroOption([slot(0, 10, 200, 300)], 'UTC', true);
+  const millions = heroOption([slot(0, 2_450_000, 200, 300)], 'UTC', true);
+  assert.equal(small.grid.left, 44);
+  assert.ok(millions.grid.left >= 90 && millions.grid.left <= 100, 'left margin ' + millions.grid.left);
 });

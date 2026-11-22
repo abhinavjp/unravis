@@ -164,7 +164,7 @@ test('TLF-06: the API lane shows the Run Analysis chart with a legend, a red dia
   expect(await audit.locator('.dot').count(), 'a dot per interval with a P95').toBeGreaterThanOrEqual(2);
   expect(await audit.locator('.mark').count(), 'a mark per interval with a slowest request').toBeGreaterThanOrEqual(2);
   await expect(audit.locator('.mark.flagged')).toHaveCount(1);
-  await expect(audit.locator('.mark-label')).toHaveText('60 s');
+  await expect(audit.locator('.mark-label')).toHaveText('60.0 s');
 
   const legend = page.locator('.hero-legend:not(.web-legend):not(.sql-legend)');
   await expect(legend).toContainText('Requests per interval');
@@ -172,7 +172,7 @@ test('TLF-06: the API lane shows the Run Analysis chart with a legend, a red dia
   await expect(legend).toContainText('No timed requests between');
   await expect(legend).toContainText('Slowest request in the interval');
   await expect(page.getByTestId('hero-note')).toContainText('red diamond');
-  await expect(page.getByTestId('hero-note')).toContainText('60 s');
+  await expect(page.getByTestId('hero-note')).toContainText('60.0 s');
 
   await expect(page.locator('.axis-right[data-lane="audit"] .tick-top')).toHaveText(/ms|s/);
   await expect(page.locator('.axis-right[data-lane="audit"] .y-title')).toContainText('slowness (Slow end (P95))');
@@ -187,8 +187,8 @@ test('TLF-06: the API lane shows the Run Analysis chart with a legend, a red dia
   const tip = page.locator('#tc-tip');
   await expect(tip).toBeVisible();
   await expect(tip).toContainText('Slow end (P95)');
-  await expect(tip).toContainText('Slowest request: 60.00 s'); // the P95 beside it (0.30 s) is written in the same unit and the same two decimals (BL-495)
-  await expect(tip).toContainText('Slow end (P95): 0.30 s');
+  await expect(tip).toContainText('Slowest request: 60.0 s'); // the same text as the diamond (60.0 s) and the sentence under the chart; the P95 beside it is under a second, so it is whole milliseconds (BL-495)
+  await expect(tip).toContainText('Slow end (P95): 300 ms');
   await expect(tip).toContainText('far above the usual P95');
 });
 

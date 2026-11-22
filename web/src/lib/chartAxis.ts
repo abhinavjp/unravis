@@ -74,8 +74,6 @@ export interface DurationAxis {
   decimals: number;
   /** A tick label: the number only, the unit is in the axis title. */
   format: (ms: number) => string;
-  /** A figure that carries its unit ("1.5 s"), in the precision of this axis. */
-  formatWithUnit: (ms: number) => string;
   widest: string;
 }
 
@@ -94,35 +92,34 @@ export const durationAxis = (largestMs: number, wantedTicks = 4, locale?: string
   const maxMs = Number((topInUnit * factor).toPrecision(12));
   return {
     unit, factor, maxMs, intervalMs: Number((step * factor).toPrecision(12)), decimals, format,
-    formatWithUnit: (ms: number) => format(ms) + ' ' + unit, widest: format(maxMs)
+    widest: format(maxMs)
   };
 };
 
 /**
- * Several durations that are read side by side (the P95 and the slowest request of one interval): one unit and one number of decimals for all.
- * Seconds when every positive value is at least 100 ms (so the shortest still shows a digit), with one decimal when every value is 1 s or more and the largest is 10 s or more, and two otherwise,
- * else milliseconds with thousands separators ("68,000 ms"), so a short P95 is never rounded to "0.0 s". A value under 1 ms prints "<1 ms".
- * Missing or not finite values come back as null.
+ * THE way one duration is written wherever a single request or interval figure is shown (a diamond label, a tooltip line, the sentence under a chart):
+ * under 1 ms "<1 ms" (0 is "0 ms"), up to 999 ms whole milliseconds, from one second on seconds with one decimal ("65.7 s", "68.0 s", "1,204.5 s").
+ * The unit depends on the value alone, never on its neighbours, so one request reads the same on every surface and never "68,000 ms".
+ * Two figures that are both a second or more therefore share a unit and a precision. Missing, negative or not finite values give null.
  */
-export const durationSet = (valuesMs: ReadonlyArray<number | null | undefined>, locale?: string | string[]): Array<string | null> => {
-  const finite = valuesMs.filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0);
-  const largest = Math.max(0, ...finite);
-  const smallestPositive = Math.min(Infinity, ...finite.filter(value => value > 0));
-  const inSeconds = largest >= 1000 && smallestPositive >= 100;
-  // One decimal is enough when even the shortest value is a second or more (65.7 s, 68.0 s); a shorter one keeps two digits (0.34 s, 60.00 s).
-  const decimals = largest >= 10_000 && smallestPositive >= 1000 ? 1 : 2;
-  return valuesMs.map(value => {
-    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
-    if (inSeconds) return fixedNumber(value / 1000, decimals, locale) + ' s';
-    if (value > 0 && value < 1) return '<1 ms';
-    return fixedNumber(value, 0, locale) + ' ms';
-  });
+export const durationText = (ms: number | null | undefined, locale?: string | string[]): string | null => {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return null;
+  if (ms === 0) return '0 ms';
+  if (ms < 1) return '<1 ms';
+  // A value that rounds to 1000 ms is a second: 999.6 and 1000 must not read "1,000 ms" and "1.0 s".
+  if (Math.round(ms) < 1000) return fixedNumber(ms, 0, locale) + ' ms';
+  return fixedNumber(ms / 1000, 1, locale) + ' s';
 };
+
+/** `durationText` for several values (the P95 and the slowest request of one interval). */
+export const durationSet = (valuesMs: ReadonlyArray<number | null | undefined>, locale?: string | string[]): Array<string | null> =>
+  valuesMs.map(value => durationText(value, locale));
 
 /** The axis titles of the Requests-over-time chart. The unit of the latency axis follows its scale (see durationAxis). */
 export const requestsAxisTitle = 'Requests per interval';
 export const timeAxisTitle = (zone: string): string => 'Time (' + (zone.trim() || 'UTC') + ')';
-export const latencyAxisTitle = (label: string, unit: DurationUnit): string => label + ' response time (' + unit + ')';
+/** The right axis holds the P95 line and the slowest request of each interval, so it is titled for the response time, not for the P95 alone. */
+export const latencyAxisTitle = (unit: DurationUnit): string => 'Response time (' + unit + ')';
 
 /**
  * Width in pixels of the widest label, for the margin beside an axis. Canvas text is not measured in tests, so this is an estimate: 7.2 px per

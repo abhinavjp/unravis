@@ -5,7 +5,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import type { Analysis, Comparison, Point } from './types';
 import { axisLabels, chartRange, chartTime } from './chartTime';
 import { axisDuration, niceHistogram } from './chartScale';
-import { countAxis, durationAxis, durationSet, fixedNumber, labelWidth, latencyAxisTitle, requestsAxisTitle, timeAxisTitle } from './chartAxis';
+import { countAxis, durationAxis, durationSet, durationText, fixedNumber, labelWidth, latencyAxisTitle, requestsAxisTitle, timeAxisTitle } from './chartAxis';
 import { gapBridge, heroOutliers, type HeroSlot } from './chartHero';
 import { MIN_SAMPLE } from './thresholds';
 import { lightFallback } from '../brand/fallback';
@@ -155,7 +155,7 @@ export const heroOption = (windows: HeroSlot[], zone: string, withLatency: boole
     const max = finite(window.max);
     if (max == null) return null;
     return flagged.has(index)
-      ? { value: max, symbol: 'diamond', symbolSize: 11, itemStyle: { color: p.bad }, label: { show: labelled.has(index), position: 'top', distance: 4, color: p.bad, fontSize: 11, formatter: () => times.formatWithUnit(max) } }
+      ? { value: max, symbol: 'diamond', symbolSize: 11, itemStyle: { color: p.bad }, label: { show: labelled.has(index), position: 'top', distance: 4, color: p.bad, fontSize: 11, formatter: () => durationText(max) ?? '' } }
       : { value: max, symbol: 'circle', symbolSize: 5, itemStyle: { color: 'transparent', borderColor: p.text2, borderWidth: 1, opacity: .7 } };
   });
   // Axis titles sit outside the tick labels. Labels start 8 px from the axis line; the title (12 px text, 14 px tall) is centred a half title and 4 px
@@ -187,7 +187,7 @@ export const heroOption = (windows: HeroSlot[], zone: string, withLatency: boole
     yAxis: [
       { type: 'value', min: 0, max: counts.max, interval: counts.interval, name: requestsAxisTitle, nameLocation: 'middle', nameGap: leftGap, nameTextStyle: titleStyle,
         axisLabel: { color: axis, formatter: (value: number) => counts.format(value) }, splitLine: { lineStyle: { color: p.grid } } },
-      ...(withLatency ? [{ type: 'value', min: 0, max: times.maxMs, interval: times.intervalMs, position: 'right', name: latencyAxisTitle(latencyLabel, times.unit), nameLocation: 'middle', nameGap: rightGap, nameTextStyle: titleStyle,
+      ...(withLatency ? [{ type: 'value', min: 0, max: times.maxMs, interval: times.intervalMs, position: 'right', name: latencyAxisTitle(times.unit), nameLocation: 'middle', nameGap: rightGap, nameTextStyle: titleStyle,
         axisLabel: { color: p.accent, formatter: (value: number) => times.format(value) }, splitLine: { show: false } }] : [])
     ],
     series: [
