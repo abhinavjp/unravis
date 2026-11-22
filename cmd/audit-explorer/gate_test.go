@@ -62,7 +62,7 @@ func (f *fakeGate) deps() gateDeps {
 
 func TestGateFirstCopyProceeds(t *testing.T) {
 	f := &fakeGate{first: true}
-	res, err := enterSingleInstance(false, false, f.deps())
+	res, err := enterSingleInstance(false, false, false, f.deps())
 	if err != nil || !res.proceed {
 		t.Fatalf("proceed=%v err=%v, want proceed", res.proceed, err)
 	}
@@ -83,7 +83,7 @@ func TestGateFirstCopyProceeds(t *testing.T) {
 
 func TestGateSecondCopySignalsOpenAndExitsZero(t *testing.T) {
 	f := &fakeGate{}
-	res, err := enterSingleInstance(false, false, f.deps())
+	res, err := enterSingleInstance(false, false, false, f.deps())
 	if err != nil || res.proceed {
 		t.Fatalf("proceed=%v err=%v, want no proceed and no error", res.proceed, err)
 	}
@@ -94,7 +94,7 @@ func TestGateSecondCopySignalsOpenAndExitsZero(t *testing.T) {
 
 func TestGateBackgroundSecondCopyExitsSilently(t *testing.T) {
 	f := &fakeGate{}
-	res, err := enterSingleInstance(false, true, f.deps())
+	res, err := enterSingleInstance(false, true, false, f.deps())
 	if err != nil || res.proceed {
 		t.Fatalf("proceed=%v err=%v, want no proceed and no error", res.proceed, err)
 	}
@@ -105,7 +105,7 @@ func TestGateBackgroundSecondCopyExitsSilently(t *testing.T) {
 
 func TestGateRetriesWhileTheFirstCopyIsStarting(t *testing.T) {
 	f := &fakeGate{signalErrs: []error{instance.ErrNoInstance, instance.ErrNoInstance, instance.ErrNoInstance, nil}}
-	res, err := enterSingleInstance(false, false, f.deps())
+	res, err := enterSingleInstance(false, false, false, f.deps())
 	if err != nil || res.proceed {
 		t.Fatalf("proceed=%v err=%v, want no proceed and no error", res.proceed, err)
 	}
@@ -116,7 +116,7 @@ func TestGateRetriesWhileTheFirstCopyIsStarting(t *testing.T) {
 
 func TestGateGivesUpWithErrAlreadyRunning(t *testing.T) {
 	f := &fakeGate{signalErrs: []error{instance.ErrNoInstance}}
-	_, err := enterSingleInstance(false, false, f.deps())
+	_, err := enterSingleInstance(false, false, false, f.deps())
 	if !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("err %v, want ErrAlreadyRunning", err)
 	}
@@ -131,7 +131,7 @@ func TestGateAnotherAccountIsReportedClearly(t *testing.T) {
 		"signal":  {signalErrs: []error{instance.ErrAccessDenied}},
 	}
 	for name, f := range cases {
-		res, err := enterSingleInstance(false, false, f.deps())
+		res, err := enterSingleInstance(false, false, false, f.deps())
 		if !errors.Is(err, ErrRunningForAnotherAccount) || res.proceed {
 			t.Fatalf("%s: err %v proceed %v, want ErrRunningForAnotherAccount", name, err, res.proceed)
 		}
@@ -146,7 +146,7 @@ func TestGateAnotherAccountIsReportedClearly(t *testing.T) {
 
 func TestGateUsesTheDemoNamesForDemo(t *testing.T) {
 	f := &fakeGate{first: true}
-	if _, err := enterSingleInstance(true, false, f.deps()); err != nil {
+	if _, err := enterSingleInstance(true, false, false, f.deps()); err != nil {
 		t.Fatal(err)
 	}
 	if f.app != instance.DemoApp {
@@ -157,7 +157,7 @@ func TestGateUsesTheDemoNamesForDemo(t *testing.T) {
 func TestGateRefusesWhenElevatedBeforeTouchingTheMutex(t *testing.T) {
 	for _, background := range []bool{false, true} {
 		f := &fakeGate{first: true, isElevated: true}
-		res, err := enterSingleInstance(false, background, f.deps())
+		res, err := enterSingleInstance(false, background, false, f.deps())
 		if !errors.Is(err, ErrElevated) || res.proceed {
 			t.Fatalf("background=%v: err %v proceed %v, want ErrElevated", background, err, res.proceed)
 		}
@@ -173,7 +173,7 @@ func TestGateReportsASquattedName(t *testing.T) {
 		"signal":  {signalErrs: []error{instance.ErrNameHeldByOther}},
 	}
 	for name, f := range cases {
-		res, err := enterSingleInstance(false, false, f.deps())
+		res, err := enterSingleInstance(false, false, false, f.deps())
 		if !errors.Is(err, ErrNameHeld) || res.proceed {
 			t.Fatalf("%s: err %v proceed %v, want ErrNameHeld", name, err, res.proceed)
 		}

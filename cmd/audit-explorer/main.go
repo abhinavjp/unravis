@@ -1,6 +1,7 @@
 package main
 
 import (
+	"api-audit-explorer/internal/locator"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -201,8 +202,18 @@ func run(args []string, getenv func(string) string) error {
 	background := f.background || pipeMode
 	openBrowser := interactive && !background
 	var instanceNames instance.Names
+	var runDir string
+	if pipeMode {
+		// One owner per user also in pipe mode (BL-302; pipemode.go).
+		release, rd, err := enterPipeSingleton(f.demo, getenv)
+		if err != nil {
+			return err
+		}
+		runDir = rd
+		defer release()
+	}
 	if interactive {
-		gate, err := enterSingleInstance(f.demo, background, productionGateDeps())
+		gate, err := enterSingleInstance(f.demo, background, false, productionGateDeps())
 		if err != nil {
 			return err
 		}
@@ -351,6 +362,14 @@ func run(args []string, getenv func(string) string) error {
 		stopServers = append(stopServers, group)
 		go func() { serveDone <- <-group.Done() }()
 		log.Print("Serving over the ui and ag pipes")
+		// Publish the locator only now that both pipes serve, so a reader that finds it can connect. A locator that cannot be written
+		// leaves the owner unreachable, so it is fatal.
+		removeLocator, lerr := writeLocator(locator.FilePath(runDir, f.demo), pipes)
+		if lerr != nil {
+			_ = stopServers.Close()
+			return lerr
+		}
+		defer removeLocator()
 	}
 	afterServing(cancel)
 

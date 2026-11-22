@@ -240,7 +240,7 @@ jobs:
       - name: Vet (default and e2e tags)
         shell: pwsh
         run: |
-          go vet ./internal/pipesec/... ./internal/pipesrv/... ./cmd/audit-explorer/...
+          go vet ./internal/pipesec/... ./internal/pipesrv/... ./internal/locator/... ./internal/appdirs/... ./cmd/audit-explorer/...
           if ($LASTEXITCODE -ne 0) { exit 1 }
           go vet -tags e2e ./internal/pipesec/... ./internal/pipesrv/...
           if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -263,6 +263,16 @@ jobs:
           go test -count=1 -v -run '^(TestPipeOnlyNoListenerNoSessionFile|TestPipeServerLoopbackKeepsBrowserModeListener|TestPipeFlagRules|TestPipeRejectsRemoteFlag|TestServeOverPipeSameJSONAsLoopback|TestListenerPortNilIsZero|TestNoTCPListenerInPipeMode)$' ./cmd/audit-explorer/...
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      - name: Locator tests (BL-302)
+        # internal/locator: round trip, alive/dead/reused pid, real pipes through WaitNamedPipe, owner-only ACL (icacls).
+        # cmd/audit-explorer: ten concurrent real starts leave one owner (the rest exit 12); a killed owner's locator is replaced.
+        shell: pwsh
+        run: |
+          go test -count=1 -v ./internal/locator/... ./internal/appdirs/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          go test -count=1 -v -run '^(TestPipeModeSecondCopyExits12|TestPipeModeSecondCopyNoLocator|TestPipeModeWritesAndRemovesLocator|TestPipeModeLocatorFailureIsFatal|TestTenConcurrentStartsOneOwner|TestStaleLocatorReplacedAfterKill)$' ./cmd/audit-explorer/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - name: Real exe in pipe-only mode (no port, no session file, both pipes)
         shell: pwsh
         run: ./tools/desktop/Test-Sidecar.ps1 -Check NoPort
@@ -270,6 +280,18 @@ jobs:
       - name: Real exe in pipe-only mode (a second listener on the same pipe name is refused)
         shell: pwsh
         run: ./tools/desktop/Test-Sidecar.ps1 -Check Squat
+
+      - name: Real exe, ten simultaneous starts (one owner)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check TenStarts
+
+      - name: Real exe, killed owner (stale locator replaced)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check Stale
+
+      - name: Real exe, locator file ACL (icacls)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check Acl
 
   linux-gates:
     # BL-441. Lint, vet, race tests against a known-failure baseline, and the web checks, on Linux.

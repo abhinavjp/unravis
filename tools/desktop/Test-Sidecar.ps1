@@ -6,9 +6,12 @@
   (1) is still running, (2) has no listening TCP socket, (3) wrote no session.json, and (4) serves one ui and one ag pipe
   (\\.\pipe\unravis.ui.<32hex>, \\.\pipe\unravis.ag.<32hex>). The process is always stopped at the end.
   -Check Squat: starts the same way, then tries to create a second listener with the name of each running pipe; both attempts must fail
-  (first-instance flag plus full instance pool, spec 01 BL-301). Later sidecar items add checks here (OtherUser, TenStarts ...). Not run on Linux.
+  (first-instance flag plus full instance pool, spec 01 BL-301). -Check TenStarts, Stale, Acl (BL-302): ten simultaneous `--pipe-server --demo` starts leave exactly one running owner (the others exit 12) and one
+  live backend.demo.json; `taskkill /f` on the owner and a new start give a new pid in a live locator; icacls on the locator shows only the
+  current user (and SYSTEM), no Everyone/Users, nothing inherited. The locator is <AUDIT_CONFIG_DIR>\run\backend.demo.json here (backend.json
+  without --demo). Later sidecar items add checks here (OtherUser, TenStarts ...). Not run on Linux.
 #>
-param([ValidateSet('NoPort', 'Squat')][string]$Check = 'NoPort')
+param([ValidateSet('NoPort', 'Squat', 'TenStarts', 'Stale', 'Acl')][string]$Check = 'NoPort')
 $ErrorActionPreference = 'Stop'
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $work = Join-Path ([IO.Path]::GetTempPath()) ("unravis-sidecar-" + [guid]::NewGuid().ToString('N'))
@@ -20,6 +23,63 @@ try { go build -o $exe ./cmd/audit-explorer; if ($LASTEXITCODE -ne 0) { throw 'g
 $data = Join-Path $work 'data'
 New-Item -ItemType Directory -Path $data | Out-Null
 $env:AUDIT_CONFIG_DIR = $data
+$locatorFile = Join-Path $data 'run\backend.demo.json'
+
+function Wait-LiveLocator {
+    for ($i = 0; $i -lt 120; $i++) {
+        if (Test-Path $locatorFile) {
+            $rec = Get-Content -Raw $locatorFile | ConvertFrom-Json
+            $p = Get-Process -Id $rec.pid -ErrorAction SilentlyContinue
+            $pipes = [IO.Directory]::GetFiles('\\.\pipe\') | ForEach-Object { Split-Path $_ -Leaf }
+            if ($p -and ($pipes -contains (Split-Path $rec.ui -Leaf)) -and ($pipes -contains (Split-Path $rec.ag -Leaf))) { return $rec }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "no live locator at $locatorFile"
+}
+
+if ($Check -in 'TenStarts', 'Stale', 'Acl') {
+    $procs = @()
+    $fail = $null
+    try {
+        if ($Check -eq 'TenStarts') {
+            1..10 | ForEach-Object { $procs += Start-Process -FilePath $exe -ArgumentList '--pipe-server', '--demo' -PassThru -WindowStyle Hidden }
+            $rec = Wait-LiveLocator
+            Start-Sleep -Seconds 3
+            $running = @($procs | Where-Object { -not $_.HasExited })
+            $codes = @($procs | Where-Object { $_.HasExited } | ForEach-Object { $_.ExitCode })
+            if ($running.Count -ne 1) { throw "expected exactly 1 running owner, found $($running.Count)" }
+            if ($running[0].Id -ne $rec.pid) { throw "running pid $($running[0].Id) is not the locator pid $($rec.pid)" }
+            if (@($codes | Where-Object { $_ -ne 12 }).Count -ne 0) { throw "non-owner exit codes: $codes (want all 12)" }
+            Write-Host "TenStarts OK: one owner pid $($rec.pid), 9 copies exited 12"
+        } elseif ($Check -eq 'Stale') {
+            $a = Start-Process -FilePath $exe -ArgumentList '--pipe-server', '--demo' -PassThru -WindowStyle Hidden
+            $procs += $a
+            $r1 = Wait-LiveLocator
+            & taskkill /f /pid $a.Id | Out-Null
+            $a.WaitForExit()
+            $b = Start-Process -FilePath $exe -ArgumentList '--pipe-server', '--demo' -PassThru -WindowStyle Hidden
+            $procs += $b
+            $r2 = Wait-LiveLocator
+            if ($r2.pid -eq $r1.pid) { throw 'locator pid did not change after the owner was killed' }
+            if ($r2.pid -ne $b.Id) { throw "locator pid $($r2.pid) is not the new owner $($b.Id)" }
+            Write-Host "Stale OK: pid $($r1.pid) -> $($r2.pid), live"
+        } else {
+            $a = Start-Process -FilePath $exe -ArgumentList '--pipe-server', '--demo' -PassThru -WindowStyle Hidden
+            $procs += $a
+            $null = Wait-LiveLocator
+            $acl = (& icacls $locatorFile) -join "`n"
+            foreach ($bad in 'Everyone', 'BUILTIN\Users', 'Authenticated Users', '(I)') { if ($acl.Contains($bad)) { throw "locator ACL has $bad`n$acl" } }
+            if (-not $acl.Contains($env:USERNAME)) { throw "locator ACL does not name $env:USERNAME`n$acl" }
+            Write-Host "Acl OK: only the current user (and SYSTEM) on backend.demo.json"
+        }
+    } catch { $fail = $_ } finally {
+        foreach ($q in $procs) { if (-not $q.HasExited) { Stop-Process -Id $q.Id -Force -ErrorAction SilentlyContinue } }
+        Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+    }
+    if ($fail) { Write-Error $fail; exit 1 }
+    return
+}
 $proc = Start-Process -FilePath $exe -ArgumentList '--pipe-only', '--demo' -PassThru -WindowStyle Hidden
 $fail = $null
 try {

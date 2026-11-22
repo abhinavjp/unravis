@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"os"
 
@@ -28,6 +29,11 @@ const (
 // started from Explorer, the tray or the Startup folder), and exits with 1.
 func reportFatal(err error) {
 	log.Print(err)
+	var ee *exitCodeError
+	if errors.As(err, &ee) {
+		exitProcess(ee.code) // a planned exit (attached to an owner): no message box, the caller reads the code
+		return
+	}
 	if stderrUnusable() {
 		showMessage(fatalTitle, fatalText(err))
 	}
@@ -47,3 +53,11 @@ func fatalText(err error) string {
 	}
 	return msg + fatalTextJoiner + fatalFooter
 }
+
+// exitCodeError ends the process with a specific code and no message box. Today: exitAttached.
+type exitCodeError struct {
+	code int
+	msg  string
+}
+
+func (e *exitCodeError) Error() string { return e.msg }

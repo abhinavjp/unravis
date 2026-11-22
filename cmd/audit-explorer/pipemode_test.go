@@ -7,10 +7,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"api-audit-explorer/internal/locator"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/pipesrv"
 )
@@ -69,6 +71,11 @@ func (m *memListener) get(path, token string) (int, string, error) {
 	return resp.StatusCode, string(b), nil
 }
 
+const (
+	testUIPipe = `\\.\pipe\unravis.ui.0123456789abcdef0123456789abcdef`
+	testAGPipe = `\\.\pipe\unravis.ag.fedcba9876543210fedcba9876543210`
+)
+
 const testToken = "pipe-test-token-0123456789abcdef0123456789"
 
 // swapPipeSeams installs fake pipes and returns them; tcp reports whether the TCP listener was asked for.
@@ -76,14 +83,17 @@ func swapPipeSeams(t *testing.T, onServing func(cancel context.CancelFunc)) (ui,
 	t.Helper()
 	ui, ag = newMem(), newMem()
 	asked := false
-	oldTCP, oldPipes, oldAfter, oldOS := listenTCP, openPipes, afterServing, hostOS
+	oldTCP, oldPipes, oldAfter, oldOS, oldStart := listenTCP, openPipes, afterServing, hostOS, selfStart
+	selfStart = func() (time.Time, error) { return time.Now(), nil }
 	listenTCP = func(port int) (net.Listener, error) { asked = true; return oldTCP(port) }
 	openPipes = func() (*pipesrv.Pipes, error) {
-		return &pipesrv.Pipes{UI: ui, AG: ag, UIName: `\\.\pipe\unravis.ui.test`, AGName: `\\.\pipe\unravis.ag.test`}, nil
+		return &pipesrv.Pipes{UI: ui, AG: ag, UIName: testUIPipe, AGName: testAGPipe}, nil
 	}
 	afterServing = onServing
 	hostOS = "windows"
-	t.Cleanup(func() { listenTCP, openPipes, afterServing, hostOS = oldTCP, oldPipes, oldAfter, oldOS })
+	t.Cleanup(func() {
+		listenTCP, openPipes, afterServing, hostOS, selfStart = oldTCP, oldPipes, oldAfter, oldOS, oldStart
+	})
 	return ui, ag, &asked
 }
 
@@ -281,5 +291,113 @@ func TestServeOverPipeSameJSONAsLoopback(t *testing.T) {
 		} else if r.pipe != r.tcp || r.pipe == "" {
 			t.Errorf("%s differs:\npipe: %.200s\ntcp:  %.200s", route, r.pipe, r.tcp)
 		}
+	}
+}
+
+// pipeGateWith makes run use a fake singleton gate in pipe mode.
+func pipeGateWith(t *testing.T, f *fakeGate, live func() bool) {
+	t.Helper()
+	old := pipeGateDepsFn
+	pipeGateDepsFn = func(string, bool) gateDeps {
+		d := f.deps()
+		d.liveLocator = live
+		return d
+	}
+	t.Cleanup(func() { pipeGateDepsFn = old })
+}
+
+// TestPipeModeSecondCopyExits12: a pipe-mode copy that is not the owner never signals Open, waits for the live locator and exits 12
+// without a message box.
+func TestPipeModeSecondCopyExits12(t *testing.T) {
+	getenv := envOf(map[string]string{"AUDIT_CONFIG_DIR": t.TempDir(), "AUDIT_SESSION_TOKEN": testToken})
+	f := &fakeGate{first: false}
+	polls := 0
+	pipeGateWith(t, f, func() bool { polls++; return polls >= 3 }) // the owner's locator goes live on the third look
+	opened := false
+	swapPipeSeams(t, func(cancel context.CancelFunc) { opened = true; cancel() })
+	err := run([]string{"--pipe-only", "--demo"}, getenv)
+	var ee *exitCodeError
+	if !errors.As(err, &ee) || ee.code != 12 {
+		t.Fatalf("err = %v, want exit code 12", err)
+	}
+	if opened {
+		t.Error("the second copy started serving")
+	}
+	if f.signalCalls != 0 {
+		t.Errorf("signalled Open %d times; pipe mode has no tab to open", f.signalCalls)
+	}
+	if f.sleepCalls != 2 {
+		t.Errorf("sleeps = %d, want 2 (polled 250 ms apart until live)", f.sleepCalls)
+	}
+	// The exit goes through reportFatal: code 12, no message box.
+	var code int
+	shown := false
+	oldExit, oldShow, oldUnusable := exitProcess, showMessage, stderrUnusable
+	exitProcess, showMessage, stderrUnusable = func(c int) { code = c }, func(string, string) { shown = true }, func() bool { return true }
+	t.Cleanup(func() { exitProcess, showMessage, stderrUnusable = oldExit, oldShow, oldUnusable })
+	reportFatal(err)
+	if code != 12 || shown {
+		t.Errorf("exit code %d, message box shown %v; want 12 and none", code, shown)
+	}
+}
+
+// TestPipeModeSecondCopyNoLocator: no live locator within 40 x 250 ms is an ordinary failure (exit 1), not an attach.
+func TestPipeModeSecondCopyNoLocator(t *testing.T) {
+	getenv := envOf(map[string]string{"AUDIT_CONFIG_DIR": t.TempDir(), "AUDIT_SESSION_TOKEN": testToken})
+	f := &fakeGate{first: false}
+	pipeGateWith(t, f, func() bool { return false })
+	swapPipeSeams(t, func(cancel context.CancelFunc) { cancel() })
+	err := run([]string{"--pipe-only", "--demo"}, getenv)
+	if !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("err = %v, want ErrAlreadyRunning", err)
+	}
+	if f.sleepCalls != 39 {
+		t.Errorf("sleeps = %d, want 39 (40 looks)", f.sleepCalls)
+	}
+}
+
+// TestPipeModeWritesAndRemovesLocator: the owner publishes backend.json (no token) while serving, replaces a stale one, and removes its
+// own on a clean stop. The legacy session file is not written in pipe-only mode.
+func TestPipeModeWritesAndRemovesLocator(t *testing.T) {
+	dir := t.TempDir()
+	getenv := envOf(map[string]string{"AUDIT_CONFIG_DIR": dir, "AUDIT_SESSION_TOKEN": testToken})
+	path := locator.FilePath(filepath.Join(dir, "run"), true)
+	stale := locator.Record{Version: locator.Schema, PID: 999999, StartTime: time.Unix(1, 0).UTC(), Exe: "old.exe", UI: testUIPipe, AG: testAGPipe}
+	if err := locator.Write(path, stale, locator.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	var seen locator.Record
+	var seenErr error
+	var raw []byte
+	swapPipeSeams(t, func(cancel context.CancelFunc) {
+		defer cancel()
+		seen, seenErr = locator.Read(path)
+		raw, _ = os.ReadFile(path) //nolint:gosec // test path
+	})
+	if err := run([]string{"--pipe-only", "--demo"}, getenv); err != nil {
+		t.Fatal(err)
+	}
+	if seenErr != nil || seen.PID != os.Getpid() || seen.UI != testUIPipe || seen.AG != testAGPipe || seen.Exe == "" {
+		t.Fatalf("locator while serving: %+v, %v", seen, seenErr)
+	}
+	if strings.Contains(strings.ToLower(string(raw)), testToken) || strings.Contains(strings.ToLower(string(raw)), "token") {
+		t.Errorf("locator carries a token: %s", raw)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("locator after a clean stop: %v", err)
+	}
+}
+
+// TestPipeModeLocatorFailureIsFatal: an owner nobody can find must not keep running.
+func TestPipeModeLocatorFailureIsFatal(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	getenv := envOf(map[string]string{"AUDIT_CONFIG_DIR": dir, "UNRAVIS_RUN_DIR": filepath.Join(blocker, "run"), "AUDIT_SESSION_TOKEN": testToken})
+	swapPipeSeams(t, func(cancel context.CancelFunc) { cancel() })
+	if err := run([]string{"--pipe-only", "--demo"}, getenv); err == nil {
+		t.Fatal("run succeeded without a locator")
 	}
 }

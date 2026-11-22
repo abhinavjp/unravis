@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/instance"
+	"api-audit-explorer/internal/locator"
 )
 
 // The text of each error is the message the user sees.
@@ -20,6 +21,10 @@ const (
 	// the mutex but has not created its events yet.
 	gateSignalTries = 20
 	gateSignalWait  = 250 * time.Millisecond
+	// A pipe-mode copy that is not the owner waits this long for the owner's locator to go live (spec 01 BL-302: 40 x 250 ms).
+	gateLocatorTries = 40
+	// exitAttached is the exit code of a pipe-mode copy that found a live owner: nothing is wrong, the caller attaches through the locator.
+	exitAttached = 12
 )
 
 // gateDeps are the system calls the gate makes, so tests can use fakes.
@@ -29,6 +34,8 @@ type gateDeps struct {
 	signal   func(instance.Names, instance.Kind) error
 	sleep    func(time.Duration)
 	elevated func() bool
+	// liveLocator reports whether the locator of this run names a live owner. Only pipe mode uses it.
+	liveLocator func() bool
 }
 
 // productionGateDeps is the gate wired to the real mutex, events and clock.
@@ -42,19 +49,34 @@ func productionGateDeps() gateDeps {
 	}
 }
 
+// pipeGateDeps is productionGateDeps plus the locator check pipe mode needs.
+func pipeGateDeps(runDir string, demo bool) gateDeps {
+	d := productionGateDeps()
+	path := locator.FilePath(runDir, demo)
+	prober := locator.SystemProber()
+	d.liveLocator = func() bool {
+		r, err := locator.Read(path)
+		return err == nil && locator.Alive(r, prober)
+	}
+	return d
+}
+
 // gateResult is the outcome of enterSingleInstance. proceed is true only for the
 // first copy, which must call release when it exits.
 type gateResult struct {
 	release func()
 	names   instance.Names
 	proceed bool
+	// attached is true for a pipe-mode copy that is not the owner and found the owner's live locator. The caller exits with exitAttached.
+	attached bool
 }
 
 // enterSingleInstance makes sure only one interactive copy runs per user. An
 // elevated copy is refused before any name or mutex is touched, so it can never
 // take the name and lock a normal start out. A second copy asks the first to
-// open a tab and does not proceed; a second --background copy exits silently.
-func enterSingleInstance(demo, background bool, d gateDeps) (gateResult, error) {
+// open a tab and does not proceed; a second --background copy exits silently. A second pipe-mode copy never signals Open (there is no
+// tab): it waits up to 40 x 250 ms for the owner's locator to go live and reports attached, or fails if none does (BL-302).
+func enterSingleInstance(demo, background, pipeMode bool, d gateDeps) (gateResult, error) {
 	if d.elevated() {
 		return gateResult{}, ErrElevated
 	}
@@ -78,6 +100,17 @@ func enterSingleInstance(demo, background bool, d gateDeps) (gateResult, error) 
 	}
 	if release != nil {
 		release()
+	}
+	if pipeMode {
+		for try := 1; try <= gateLocatorTries; try++ {
+			if d.liveLocator != nil && d.liveLocator() {
+				return gateResult{names: names, attached: true}, nil
+			}
+			if try < gateLocatorTries {
+				d.sleep(gateSignalWait)
+			}
+		}
+		return gateResult{}, ErrAlreadyRunning
 	}
 	if background {
 		return gateResult{names: names}, nil
