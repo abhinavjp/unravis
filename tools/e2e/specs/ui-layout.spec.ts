@@ -7,11 +7,13 @@
 //   UIFIX-05  The selected-lines notes of the timeline and the chart help line are at least 11px (BL-478)
 //   UIFIX-06  Tap targets of 24 x 24 px or more: Daily view, Show matching requests, Help guide index links, Stop showing, Mark the line (BL-475 group 1)
 //   UIFIX-09  Desktop does not move: tables that got bigger tap targets keep every row height and column width (BL-475 group 1)
-//   UIFIX-10  Tap targets of 24 x 24 px or more: the hour squares of the Daily and hourly view and the two zoom slider handles; a press 9px inside the edge grabs the handle; a press on a painted square lands on that square (BL-475 groups 2 and 3)
-//   UIFIX-11  Desktop does not move: the hour grid, its legend and the zoom strip look the same pixel for pixel as with the old rules put back (BL-475 groups 2 and 3)
+//   UIFIX-12  Tap targets of 24 x 24 px or more: the hour squares of the Daily and hourly view and the two zoom slider handles; a press 9px inside the edge grabs the handle; a press on a painted square lands on that square (BL-475 groups 2 and 3)
+//   UIFIX-13  Desktop does not move: the hour grid, its legend and the zoom strip look the same pixel for pixel as with the old rules put back (BL-475 groups 2 and 3)
 //   UIFIX-07  Add files on a phone: the column heads are painted nowhere, yet stay in the page for screen readers (BL-482). A guard only: the finding was a false positive of the audit, so the audit run proves the fix
 //   UIFIX-08  Phone header with "Choose sources" fits the window (BL-472); 390 and 360 px fail on the old header, 320 px is a no-regression case
+//   UIFIX-10  Slow call screen: the time zone label, the peak and zero labels and the "drag" hint are at least 11px, the lanes and the minimap do not move, nothing collides (BL-483)
 import { test, expect, type Page } from '../support/fixtures';
+import { openCase } from '../support/ui';
 
 type Box = { x: number; y: number; w: number; h: number };
 
@@ -338,7 +340,7 @@ async function openDailyHourly(page: Page): Promise<void> {
   await expect(page.locator('button.hm-cell').first()).toBeVisible();
 }
 
-test('UIFIX-10a Daily and hourly view: every hour square is 24 x 24 px or more', async ({ page }) => {
+test('UIFIX-12a Daily and hourly view: every hour square is 24 x 24 px or more', async ({ page }) => {
   await openDailyHourly(page);
   const sizes = await page.locator('button.hm-cell').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { w: r.width, h: r.height, name: e.getAttribute('aria-label') }; }));
   expect(sizes.length).toBeGreaterThan(100);
@@ -348,7 +350,7 @@ test('UIFIX-10a Daily and hourly view: every hour square is 24 x 24 px or more',
   }
 });
 
-test('UIFIX-10b Daily and hourly view on a phone: the hour squares are 24 x 24 px and no two overlap', async ({ page }) => {
+test('UIFIX-12b Daily and hourly view on a phone: the hour squares are 24 x 24 px and no two overlap', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openDailyHourly(page);
   const cells = await page.locator('button.hm-cell').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
@@ -357,7 +359,7 @@ test('UIFIX-10b Daily and hourly view on a phone: the hour squares are 24 x 24 p
   expect(clashes, 'squares that overlap another square').toEqual([]);
 });
 
-test('UIFIX-10c Daily and hourly view: the two zoom handles are 24 x 24 px or more', async ({ page }) => {
+test('UIFIX-12c Daily and hourly view: the two zoom handles are 24 x 24 px or more', async ({ page }) => {
   await openDailyHourly(page);
   const handles = page.locator('.nav-handle');
   expect(await handles.count()).toBe(2);
@@ -368,7 +370,7 @@ test('UIFIX-10c Daily and hourly view: the two zoom handles are 24 x 24 px or mo
   }
 });
 
-test('UIFIX-10d Zoom strip: a press 9px inside the edge grabs the handle (the grab zone is the handle, 12px each side)', async ({ page }) => {
+test('UIFIX-12d Zoom strip: a press 9px inside the edge grabs the handle (the grab zone is the handle, 12px each side)', async ({ page }) => {
   await openDailyHourly(page);
   const start = page.locator('.nav-handle').first();
   const end = page.locator('.nav-handle').nth(1);
@@ -421,7 +423,7 @@ async function paintedBoth(page: Page, take: () => Promise<Buffer[]>): Promise<{
 }
 
 for (const scheme of ['dark', 'light'] as const) {
-  test('UIFIX-11a Daily and hourly view: the hour grid and its legend look exactly as before (' + scheme + ')', async ({ page }) => {
+  test('UIFIX-13a Daily and hourly view: the hour grid and its legend look exactly as before (' + scheme + ')', async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme });
     await openDailyHourly(page);
     const hm = page.locator('.hm');
@@ -451,7 +453,7 @@ for (const scheme of ['dark', 'light'] as const) {
     expect(colours.slice(0, 4)).toEqual([colours[4], colours[4], colours[4], colours[4]]);
   });
 
-  test('UIFIX-11b Zoom strip: the strip, the grip and the focus ring look exactly as before (' + scheme + ')', async ({ page }) => {
+  test('UIFIX-13b Zoom strip: the strip, the grip and the focus ring look exactly as before (' + scheme + ')', async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme });
     await openDailyHourly(page);
     const nav = page.locator('.navigator');
@@ -473,7 +475,7 @@ for (const scheme of ['dark', 'light'] as const) {
   });
 }
 
-test('UIFIX-11c Daily and hourly view: the size and place of every row and square equal the old rules', async ({ page }) => {
+test('UIFIX-13c Daily and hourly view: the size and place of every row and square equal the old rules', async ({ page }) => {
   await openDailyHourly(page);
   const grid = page.locator('.hm-grid');
   const measure = () => grid.evaluate((g) => {
@@ -491,7 +493,7 @@ test('UIFIX-11c Daily and hourly view: the size and place of every row and squar
   now.rows.forEach((box, i) => expect(near(box, old.rows[i]), 'row ' + i + ' now ' + box + ' old ' + old.rows[i]).toBe(true));
 });
 
-test('UIFIX-10e Daily and hourly view: a press anywhere on a painted square, edges included, lands on that square', async ({ page }) => {
+test('UIFIX-12e Daily and hourly view: a press anywhere on a painted square, edges included, lands on that square', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 3000 }); // elementFromPoint only sees what is on screen
   await openDailyHourly(page);
   const facts = await page.evaluate(() => {
@@ -515,3 +517,131 @@ test('UIFIX-10e Daily and hourly view: a press anywhere on a painted square, edg
   expect(facts.checked).toBeGreaterThan(500);
   expect(facts.wrong).toEqual([]);
 });
+// BL-483: four labels of the Slow call screen were 10px, under the app's own 11px floor. Raising them must not move the lanes (Slow call lane
+// rule, BL-005: no inner scrolling, the lanes stay visible together) and the owner rule is that desktop wins over the phone. Like UIFIX-09
+// this puts the old 10px back as inline styles and compares the rectangles in one evaluation, so nothing moves in between.
+const SCALL_LABELS = ['.scall-zone', '.y-peak', '.y-zero', '.scall-map-drag'];
+
+async function openSlowCallScreen(page: Page): Promise<void> {
+  // The start screen: "All cases" is in the header on a wide window and in the More menu on a narrow one.
+  if (!(await page.locator('#start-title').isVisible())) {
+    const direct = page.getByRole('button', { name: /^All cases/ }).first();
+    if (await direct.isVisible()) await direct.click();
+    else {
+      await page.getByRole('button', { name: 'More', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'All cases', exact: true }).click();
+    }
+  }
+  await expect(page.locator('#start-title')).toBeVisible();
+  await openCase(page, 'Orders API stall, 19 October');
+  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  const diamond = page.locator('.panel[data-lane=audit] .mark.flagged').first();
+  await expect(diamond).toBeVisible();
+  await diamond.scrollIntoViewIfNeeded();
+  const box = await diamond.boundingBox();
+  if (!box) throw new Error('the diamond has no box');
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.getByTestId('slow-call-screen')).toBeVisible();
+  await expect(page.getByTestId('scall-lanes')).toBeVisible();
+  await expect(page.getByTestId('scall-lane-sql')).toBeVisible();
+  await expect(page.locator('.y-peak').first()).toBeVisible();
+}
+
+test('UIFIX-10a Slow call screen: the zone label, the peak and zero labels and the "drag" hint are at least 11px', async ({ page }) => {
+  await openSlowCallScreen(page);
+  await expect(page.getByTestId('scall-map-box')).toBeVisible();
+  for (const selector of SCALL_LABELS) {
+    const sizes = await page.locator(selector).evaluateAll((els) => els.map((e) => parseFloat(getComputedStyle(e).fontSize)));
+    expect(sizes.length, selector + ' is on the screen').toBeGreaterThan(0);
+    for (const s of sizes) expect(s, selector + ' font size').toBeGreaterThanOrEqual(11);
+  }
+});
+
+type Rect = { l: number; t: number; w: number; h: number };
+
+/** Lane, minimap and label rectangles now, then again with the old 10px put back on the four labels. */
+async function scallRects(page: Page): Promise<{ now: Record<string, Rect[]>; old: Record<string, Rect[]>; labels: number }> {
+  return page.evaluate((selectors) => {
+    const rect = (e: Element): Rect => { const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, w: r.width, h: r.height }; };
+    const grab = (): Record<string, Rect[]> => ({
+      lanes: [...document.querySelectorAll('[data-testid^="scall-lane-"]')].map(rect),
+      chart: [...document.querySelectorAll('[data-testid^="scall-lane-"] svg')].map(rect),
+      map: [...document.querySelectorAll('[data-testid="scall-map"], [data-testid="scall-map-box"]')].map(rect),
+      axis: [...document.querySelectorAll('.scall-axis')].map(rect),
+      readout: [...document.querySelectorAll('[data-testid="scall-readout"]')].map(rect),
+      page: [rect(document.documentElement)]
+    });
+    const now = grab();
+    const saved: [HTMLElement, string | null][] = [];
+    document.querySelectorAll<HTMLElement>(selectors.join(',')).forEach((el) => {
+      saved.push([el, el.getAttribute('style')]);
+      el.style.setProperty('font-size', '10px', 'important');
+    });
+    void document.body.offsetHeight;
+    const old = grab();
+    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.setAttribute('style', style); }
+    return { now, old, labels: saved.length };
+  }, SCALL_LABELS);
+}
+
+for (const size of [{ width: 1440, height: 900 }, { width: 1100, height: 800 }, { width: 1024, height: 768 }]) {
+  test('UIFIX-10b Slow call screen at ' + size.width + 'x' + size.height + ': the lanes and the minimap keep every rectangle, and the labels fit', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowCallScreen(page);
+    await expect(page.getByTestId('scall-map-box')).toBeVisible();
+    const { now, old, labels } = await scallRects(page);
+    expect(labels, 'labels found to compare').toBeGreaterThanOrEqual(4);
+    for (const key of Object.keys(now)) {
+      expect(now[key].length, key + ' rectangles found').toBeGreaterThan(0);
+      expect(now[key].length, key + ' count').toBe(old[key].length);
+      now[key].forEach((r, i) => {
+        const o = old[key][i];
+        for (const f of ['l', 't', 'w', 'h'] as const) expect(Math.abs(r[f] - o[f]), key + '[' + i + '].' + f + ' now ' + r[f] + ', with 10px labels ' + o[f]).toBeLessThan(0.05);
+      });
+    }
+    // Each label sits inside the box that carries it, the peak and zero labels of a lane do not touch, and the zone label keeps clear of the axis title and the ticks.
+    const facts = await page.evaluate(() => {
+      type B = { x: number; y: number; w: number; h: number };
+      const r = (e: Element | Range): B => { const b = e.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; };
+      // The painted line of text: as wide as the text and one font size tall, centred in the line (the font's own leading is not ink).
+      const text = (e: Element): B => { const range = document.createRange(); range.selectNodeContents(e); const b = r(range); const fs = parseFloat(getComputedStyle(e).fontSize); return { x: b.x, y: b.y + (b.h - fs) / 2, w: b.w, h: fs }; };
+      const inside = (a: B, p: B) => a.x >= p.x - 0.5 && a.y >= p.y - 0.5 && a.x + a.w <= p.x + p.w + 0.5 && a.y + a.h <= p.y + p.h + 0.5;
+      const touch = (a: B, b: B) => Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 0 && Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 0;
+      const out: string[] = [];
+      document.querySelectorAll('.y-peak').forEach((peak) => {
+        const zero = peak.parentElement?.querySelector('.y-zero');
+        const host = peak.parentElement;
+        if (!zero || !host) { out.push('peak without zero or host'); return; }
+        const a = r(peak), b = r(zero), h = r(host);
+        if (!inside(a, h)) out.push('peak outside its lane: ' + JSON.stringify([a, h]));
+        if (!inside(b, h)) out.push('zero outside its lane: ' + JSON.stringify([b, h]));
+        if (touch(a, b)) out.push('peak and zero overlap: ' + JSON.stringify([a, b]));
+      });
+      const zone = document.querySelector('.scall-zone'), axis = document.querySelector('.scall-axis'), title = document.querySelector('.scall-xtitle');
+      if (zone && axis) {
+        const z = r(zone);
+        if (!inside(z, r(axis))) out.push('zone label outside the axis: ' + JSON.stringify([z, r(axis)]));
+        if (title && touch(text(title), text(zone))) out.push('zone label touches the axis title');
+        document.querySelectorAll('.tick').forEach((tick) => { if (touch(text(tick), text(zone))) out.push('zone label touches a tick'); });
+      }
+      const drag = document.querySelector('.scall-map-drag'), box = document.querySelector('[data-testid="scall-map-box"]');
+      if (drag && box && !inside(r(drag), r(box))) out.push('drag hint outside the minimap box: ' + JSON.stringify([r(drag), r(box)]));
+      return out;
+    });
+    expect(facts, 'label collisions').toEqual([]);
+  });
+}
+
+for (const width of [320, 360, 390]) {
+  test('UIFIX-10c Slow call screen on a ' + width + ' px phone: the page does not scroll sideways, the labels are 11px', async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await openSlowCallScreen(page);
+    const facts = await page.evaluate((selectors) => ({
+      over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      sizes: selectors.flatMap((s) => [...document.querySelectorAll(s)].map((e) => parseFloat(getComputedStyle(e).fontSize)))
+    }), SCALL_LABELS);
+    expect(facts.over, 'sideways overflow in px').toBeLessThanOrEqual(0);
+    for (const s of facts.sizes) expect(s).toBeGreaterThanOrEqual(11);
+  });
+}

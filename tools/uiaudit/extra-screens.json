@@ -313,6 +313,47 @@
       ]
     },
     {
+      "id": "x-slow-call",
+      "phase": "X",
+      "note": "The Slow call screen, opened from the first red diamond of the API lane in the case Timeline (BL-483). The audit reads the HTML labels of the lanes (time zone, peak, zero, drag hint) but not text inside the chart drawing itself.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Orders API stall, 19 October\"]"
+        },
+        {
+          "waitFor": "text=Case started"
+        },
+        {
+          "click": "role=button[name=\"Open the Investigation Timeline\"s]"
+        },
+        {
+          "waitFor": ".panel[data-lane=audit] .mark.flagged"
+        },
+        {
+          "clickCentre": ".panel[data-lane=audit] .mark.flagged"
+        },
+        {
+          "waitFor": ".y-peak"
+        }
+      ]
+    },
+    {
       "id": "x-case-analysis",
       "phase": "X",
       "note": "The analysis opened from a case.",
