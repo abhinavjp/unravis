@@ -65,6 +65,8 @@ Commands that change the service (run as administrator):
 Other commands:
   snapshot    Copy the recordings into <folder>\snapshots\<name>-<date>-<time>.
   run         Record in this window instead of as a service (Ctrl+C to stop).
+  vm-probe    Read-only: list which VMware counters this host has and what they
+              read. Options: --samples <1-10> --json
   diag-probe  Test, read-only: ask one running .NET process for 20 s of runtime counters, then stop it. Needs --pid.
   version     Print the version.
 
@@ -85,6 +87,8 @@ type deps struct {
 	snapOpt  blackbox.SnapshotOptions
 	driveOK  func(root string) bool
 	sqlMgr   *blackbox.SQLManager
+	// vmProbe is the vm-probe reading. nil means the real PDH probe (BL-113).
+	vmProbe func(n int) blackbox.VMProbeResult
 	// sqlRun is the SQL runner of the sql-service mode (BBX-5-10). Tests inject
 	// a fake; realDeps binds the real runner in sqlrunner.go.
 	sqlRun func(ctx context.Context, o sqlRunOptions) error
@@ -289,6 +293,9 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	if cmd == "version" || cmd == "--version" {
 		fmt.Fprintln(stdout, "unravis-blackbox "+version)
 		return exitOK
+	}
+	if cmd == "vm-probe" {
+		return runVMProbe(rest, stdout, stderr, d.vmProbe)
 	}
 	// diag-probe needs no config, key or manager: dispatch before all of that.
 	if cmd == "diag-probe" {
