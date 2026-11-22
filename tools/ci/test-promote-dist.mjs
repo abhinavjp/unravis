@@ -304,6 +304,45 @@ test('a build that plants a git filter, attributes, proxy or config in any clone
   }
 });
 
+test('a process the build left running plants a filter in the commit clone after the freshness check: no token is printed and nothing is pushed', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const marker = join(f.base, 'late-filter.txt');
+    // The build starts a detached child that waits until the commit clone has the built folders (the first freshness check is behind
+    // us, `git add` is next) and then plants a clean filter for every file plus attributes, and an http.proxy for the push.
+    writeFileSync(join(f.base, 'late.cjs'), `
+      const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
+      const end = Date.now() + 60000;
+      const tick = () => {
+        let hit = '';
+        for (const d of fs.readdirSync(os.tmpdir())) {
+          if (!d.startsWith('unravis-dist-') || d.startsWith('unravis-dist-build-')) continue;
+          const repo = path.join(os.tmpdir(), d, 'repo');
+          let txt = ''; try { txt = fs.readFileSync(path.join(repo, 'web', 'dist', 'index.html'), 'utf8'); } catch {}
+          if (txt.includes('new') && fs.existsSync(path.join(repo, '.git', 'config'))) hit = repo; // the built file, not the committed one ('old')
+        }
+        if (!hit) { if (Date.now() < end) setTimeout(tick, 2); return; }
+        fs.mkdirSync(path.join(hit, '.git', 'info'), { recursive: true });
+        fs.appendFileSync(path.join(hit, '.git', 'info', 'attributes'), '* filter=x\\n');
+        fs.appendFileSync(path.join(hit, '.git', 'config'), '[filter "x"]\\n\\tclean = \\"sh -c \\'echo token=$GH_TOKEN$GITHUB_TOKEN >> ' + ${JSON.stringify(marker)} + '; cat\\'\\"\\n[http]\\n\\tproxy = http://127.0.0.1:9\\n');
+      };
+      tick();
+    `);
+    writeFileSync(join(f.base, 'spawn-late.cjs'), `require('node:child_process').spawn(process.execPath, [${JSON.stringify(join(f.base, 'late.cjs'))}], { detached: true, stdio: 'ignore' }).unref();`);
+    const before = remoteHead(f);
+    const r = promote(f, [], { env: { ...process.env, GH_TOKEN: 'tok-from-parent', GITHUB_TOKEN: 'tok-from-parent' }, build: 'node ' + JSON.stringify(join(f.base, 'spawn-late.cjs')) + ' && node build.cjs' });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stderr, /fresh clone/);
+    assert.equal(remoteHead(f), before, 'nothing was pushed');
+    // The filter really ran (the test is not vacuous), and what it saw holds no token.
+    assert.equal(existsSync(marker), true, 'the late filter never ran, so the test proves nothing');
+    const lines = readFileSync(marker, 'utf8').trim().split('\n');
+    assert.ok(lines.length > 0 && lines.every((l) => l === 'token='), 'the filter saw a token: ' + lines[0]);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('the build clone is gone before the commit clone exists, and the commit clone is fresh', () => {
   const f = fixture('new', { dist: 'old' });
   try {
@@ -349,9 +388,10 @@ test('assertFreshClone refuses a filter, a hook, a proxy and an info/attributes 
 });
 
 test('gitBaseEnv drops variables that redirect git, keeps the rest', () => {
-  const e = gitBaseEnv({ GIT_DIR: '/x', GIT_WORK_TREE: '/y', GIT_INDEX_FILE: '/z', GIT_SSH_COMMAND: 'evil', GIT_ASKPASS: 'a', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'k', GIT_CONFIG_VALUE_0: 'v', GIT_CONFIG_GLOBAL: '/g', GIT_CONFIG_NOSYSTEM: '1', PATH: '/bin', GH_TOKEN: 't' });
+  const e = gitBaseEnv({ GIT_DIR: '/x', GIT_WORK_TREE: '/y', GIT_INDEX_FILE: '/z', GIT_SSH_COMMAND: 'evil', GIT_ASKPASS: 'a', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'k', GIT_CONFIG_VALUE_0: 'v', GIT_CONFIG_GLOBAL: '/g', GIT_CONFIG_NOSYSTEM: '1', GIT_SSL_CAINFO: '/ca.pem', PATH: '/bin', GH_TOKEN: 't', GITHUB_TOKEN: 't', NPM_TOKEN: 't', MY_SECRET: 's' });
+  for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'NPM_TOKEN', 'MY_SECRET']) assert.equal(k in e, false, k);
   for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_SSH_COMMAND', 'GIT_ASKPASS', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']) assert.equal(k in e, false, k);
-  assert.deepEqual([e.GIT_CONFIG_GLOBAL, e.GIT_CONFIG_NOSYSTEM, e.PATH, e.GIT_NO_REPLACE_OBJECTS, e.GIT_TERMINAL_PROMPT], ['/g', '1', '/bin', '1', '0']);
+  assert.deepEqual([e.GIT_CONFIG_GLOBAL, e.GIT_CONFIG_NOSYSTEM, e.GIT_SSL_CAINFO, e.PATH, e.GIT_NO_REPLACE_OBJECTS, e.GIT_TERMINAL_PROMPT], ['/g', '1', '/ca.pem', '/bin', '1', '0']);
 });
 
 test('a GIT_DIR in the caller\'s environment does not send the commit to another repository', () => {

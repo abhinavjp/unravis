@@ -248,6 +248,12 @@ func (h *handler) sessionProof(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Invalid session proof request.")
 		return
 	}
+	// The bridge is not a browser and sends no Sec-Fetch-* headers. A request that carries one came from a web page, which has no
+	// use for the proof: refuse it before it counts against the limit, so a page cannot lock the bridge out (sweep WEB-2).
+	if r.Header.Get("Sec-Fetch-Site") != "" || r.Header.Get("Sec-Fetch-Mode") == "no-cors" {
+		writeError(w, http.StatusForbidden, "Not for web pages.")
+		return
+	}
 	if !h.proofs.allow() {
 		writeError(w, http.StatusTooManyRequests, "Too many session proof requests.")
 		return

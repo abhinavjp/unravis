@@ -345,6 +345,16 @@ function Get-BuriedGeneratedCommits([object[]]$Chain) {
     return $buried   # plain return: callers wrap the call in @() so zero, one or many results all have a true .Count
 }
 
+# Promote-Develop.ps1: the file rule of the generated web files commit, on the list of names the GitHub commit API gives (every
+# `filename`, and a renamed file's `previous_filename` too). Ok only when the list is not empty, has fewer than 3000 names (the API
+# stops listing there, so more is not trusted) and every name is under one of the three generated folders (case sensitive). The same
+# rule Get-PromotionSideCommits applies with git (`diff --no-renames --name-only`). Line ends are tolerated (a CRLF from gh on Windows).
+function Test-GeneratedFileList([string[]]$Files) {
+    $names = @($Files | ForEach-Object { "$_".TrimEnd("`r") } | Where-Object { $_ -ne '' })
+    $outside = @($names | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' })
+    return [pscustomobject]@{ Ok = ($names.Count -gt 0 -and $names.Count -lt 3000 -and $outside.Count -eq 0); Count = $names.Count; Outside = $outside }
+}
+
 # Promote-Develop.ps1, re-run on a branch that already exists: the first-parent line of the promote branch from its tip ($Tip) down to
 # the chosen develop commit ($Stop, not included), tip first, as the entries Get-BuriedGeneratedCommits reads. It is a function of its
 # own so Test-ReleaseManager.ps1 can run the very code Promote-Develop runs, over real git, and compare it with Get-PromotionSideCommits.
@@ -940,7 +950,13 @@ $script:LogRx = @{
     Ctrl    = [regex]::new('[\x00-\x08\x0a-\x1f\x7f]', 'Compiled')
     Token   = [regex]::new('\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})', 'Compiled')
     Bearer  = [regex]::new('(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}', 'Compiled')
-    Pair    = [regex]::new('(?i)(?<![\w-])([\w-]*(?:pass(?:word|phrase)|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|.+)', 'Compiled')
+    Pair    = [regex]::new('(?i)(?<![\w-])([\w-]*(?:pass(?:word|phrase)|nonce|seed[-_ ]?phrase|key[-_ ]?seed|_seed|mnemonic|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|.+)', 'Compiled')
+    # More secret shapes, the same patterns as the Go reader (explicit [ \t] and [A-Za-z], not \s and \w, so the two agree): a flag with its value
+    # after a space or =, an environment style name ending in _PASS or _PIN, and user:password in a URL or after curl -u / --user.
+    Flag    = [regex]::new('(?i)((?:^|[ \t])--?(?:pass(?:word|phrase|wd)?|pwd|token|secret|nonce|pin)(?:[ \t]+|=))(?:"[^"]*"|''[^'']*''|[^ \t\r\n\f\v]+)', 'Compiled')
+    EnvPass = [regex]::new('(?i)([A-Za-z0-9_]*_(?:pass|passwd|pin)[ \t]*=[ \t]*)[^ \t\r\n\f\v]+', 'Compiled')
+    UrlCred = [regex]::new('(://)[^ \t\r\n\f\v/:@]+:[^ \t\r\n\f\v/]+@', 'Compiled')
+    UserFlag = [regex]::new('((?:^|[ \t])--?(?:u|user)[ \t]+)[^ \t\r\n\f\v:]+:[^ \t\r\n\f\v]+', 'Compiled')
     KeyBeg  = [regex]::new('-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
     KeyEnd  = [regex]::new('-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
     # A line that can still belong to a key block (nothing, base64, or a header such as Proc-Type: ...), after the CI prefix and time stamp
@@ -981,11 +997,28 @@ function Protect-LogLine([string]$Line, $Redactor, [switch]$KeepTabs) {
     $s = $rx.Token.Replace($s, '<token hidden>')
     $s = $rx.Bearer.Replace($s, '$1 <hidden>')
     $s = $rx.Pair.Replace($s, '$1$2<hidden>')
+    $s = $rx.Flag.Replace($s, '$1<hidden>')
+    $s = $rx.EnvPass.Replace($s, '$1<hidden>')
+    $s = $rx.UrlCred.Replace($s, '${1}<hidden>@')
+    $s = $rx.UserFlag.Replace($s, '$1<hidden>')
     $s = $rx.KeyFile.Replace($s, '<key file>')
     $s = $rx.UserDir.Replace($s, '${1}<user>')
     foreach ($n in $Redactor.Names) { $s = [regex]::Replace($s, '(?<![A-Za-z0-9])' + [regex]::Escape($n) + '(?![A-Za-z0-9])', '<name>', 'IgnoreCase') }
     if ($s.Length -gt 2000) { $s = $s.Substring(0, 2000) + ' ...(line cut)' }
     return $s.TrimEnd(' ')
+}
+
+# A free text reason (the output of a failed command, often several lines) made safe to store: every line goes through the same redactor
+# (so a private key block that spans lines is still hidden, and one hidden line hides only itself), empty lines are dropped and the
+# lines are joined with a space. If the redaction itself fails the reason is replaced, so a redactor bug never stops the state write.
+function Protect-ReasonText([string]$Text) {
+    try {
+        $red = New-LogRedactor
+        $parts = foreach ($l in ($Text -split "\r\n|\n|\r")) { $p = Protect-LogLine $l $red; if ($p.Trim().Length -gt 0) { $p.Trim() } }
+        $out = New-Object System.Collections.Generic.List[string]
+        foreach ($p in @($parts)) { if (-not ($p -eq '<private key hidden>' -and $out.Count -gt 0 -and $out[$out.Count - 1] -eq $p)) { $out.Add($p) } }   # one marker for a whole key block
+        return ($out -join ' ')
+    } catch { return '(reason hidden: redaction failed)' }
 }
 
 function Get-ReleaseLogDir([string]$Dir) {

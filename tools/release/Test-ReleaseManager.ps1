@@ -459,7 +459,20 @@ try {
     $pd = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Promote-Develop.ps1')
     Assert-That 'promote: branch reuse runs Get-PromoteBranchChain and Get-BuriedGeneratedCommits (wrapped in @()) before a pull request exists' ($pd -match '\$chain = @\(Get-PromoteBranchChain' -and $pd -match '\$buried = @\(Get-BuriedGeneratedCommits \$chain\)' -and $pd -match '\$buried\.Count -gt 0' -and $pd.IndexOf('$buried = @(Get-BuriedGeneratedCommits') -lt $pd.IndexOf('gh pr list'))
     Assert-That 'promote: a generated-looking commit is accepted only through the position rule' ($pd -notmatch '\$np = \[int\]' -and $pd -match 'okDist')
-    Assert-That 'promote: the pushed web files commit is checked against the same file rule before the pull request (renames count with the old name)' ($pd -match '\$distOutside' -and ([regex]::Matches($pd, 'previous_filename')).Count -ge 2 -and $pd.IndexOf('$distOutside') -lt $pd.IndexOf('gh pr list'))
+    # The file rule Promote-Develop applies to the generated commit (Test-GeneratedFileList), on lists as the commit API gives them.
+    function Test-List([string[]]$Files) { return Test-GeneratedFileList $Files }
+    Assert-That 'file list: only generated files is ok' ((Test-List 'web/dist/index.html', 'web/dist/assets/a.js', 'cmd/unravis-setup/ui/x.js', 'cmd/unravis-lite/ui/y.css').Ok)
+    Assert-That 'file list: an extra file outside the folders is refused and named' ((-not (Test-List 'web/dist/index.html', 'web/src/App.svelte').Ok) -and (Test-List 'web/dist/index.html', 'web/src/App.svelte').Outside[0] -eq 'web/src/App.svelte')
+    Assert-That 'file list: an empty list (no file changed) is refused' (-not (Test-List @()).Ok)
+    Assert-That 'file list: a null list is refused' (-not (Test-GeneratedFileList $null).Ok)
+    Assert-That 'file list: a rename from outside the folders into them is refused (previous_filename counts)' (-not (Test-List 'web/dist/a.js', 'web/src/a.js').Ok)
+    Assert-That 'file list: a rename inside the folders is ok' ((Test-List 'web/dist/assets/new.js', 'web/dist/assets/old.js', 'cmd/unravis-lite/ui/assets/new.js', 'web/dist/assets/old.js').Ok)
+    Assert-That 'file list: a rename from the folders to outside is refused' (-not (Test-List 'docs/a.js', 'web/dist/a.js').Ok)
+    Assert-That 'file list: letter case matters (Web/dist, web/Dist, cmd/unravis-setup/UI)' ((-not (Test-List 'Web/dist/a.js').Ok) -and (-not (Test-List 'web/Dist/a.js').Ok) -and (-not (Test-List 'cmd/unravis-setup/UI/a.js').Ok))
+    Assert-That 'file list: a name that only starts like a folder is refused (web/distance/x, web/dist)' ((-not (Test-List 'web/distance/x.js').Ok) -and (-not (Test-List 'web/dist').Ok))
+    Assert-That 'file list: line ends from a Windows gh are tolerated' ((Test-List "web/dist/a.js`r", "web/dist/b.js`r").Ok)
+    Assert-That 'file list: 3000 names or more is not trusted, 2999 is' ((-not (Test-List (1..3000 | ForEach-Object { "web/dist/f$_.js" })).Ok) -and (Test-List (1..2999 | ForEach-Object { "web/dist/f$_.js" })).Ok)
+    Assert-That 'promote: both the reuse check and the pushed commit use that function' ([regex]::Matches($pd, 'Test-GeneratedFileList').Count -eq 2 -and $pd.IndexOf('Test-GeneratedFileList $distFiles') -lt $pd.IndexOf('gh pr list') -and ([regex]::Matches($pd, 'previous_filename')).Count -eq 2)
 
     # ---- promotion safety (SUP-1): only the head that was built and checked is merged; "Merge master into" is a claim, not a proof ----
     $sha40 = 'a' * 40; $other40 = 'b' * 40
@@ -601,6 +614,27 @@ try {
         # The label must not print the raw case: a BEGIN header in a check name would itself be hidden by the redactor in the CI log.
         Assert-That "log redaction: a $($c[0].Length)-character case hides its secret" (-not $got.Contains($c[1])) "got '$got'"
     }
+    # More shapes (sweep 2026-11-22, REL-4): a flag with a space or =, env names that end in _PASS or _PIN, nonce, a key seed, user:password in a URL or after -u / --user.
+    foreach ($c in @(@('sigtool sign --passphrase hunter2hunter2 manifest.json', 'hunter2'), @('--token hunter2hunter2 at the start', 'hunter2'), @('tool --pin=4321 run', '4321'), @('set SIGN_PASS=hunter2hunter2', 'hunter2'), @('UNRAVIS_RELEASE_NONCE=hunter2hunter2', 'hunter2'), @('PROTON_PASS_PIN=4321', '4321'), @('{"key_seed":"hunter2hunter2"}', 'hunter2'), @('curl -u bob:hunter2hunter2 https://x.example', 'hunter2'), @('curl --user bob:hunter2hunter2 https://x.example', 'hunter2'), @('git clone https://bob:hunter2hunter2@host.example/r.git', 'hunter2'))) {
+        $got = Protect-LogLine $c[0] (New-LogRedactor)
+        Assert-That "log redaction: shape '$($c[0].Substring(0, 8))...' hides its secret" (-not $got.Contains($c[1])) "got '$got'"
+    }
+    foreach ($ok in @('git clone https://github.com/abhinavjp/unravis.git', 'shipping: 3 files, mapping ok, ping 12ms', 'go test -count=1 ./...', 'go get -u ./...', 'git add -u .', 'sort -u names.txt', '--- FAIL: TestPassword/seed=42 (0.00s)', 'jest Seed: 1234567 (use --seed to repeat)', 'TESTS_PASS: 120 of 120', 'pytest --passes 3 suite')) {
+        Assert-That "log redaction: ordinary line kept: $ok" ((Protect-LogLine $ok (New-LogRedactor)) -eq $ok) "got '$(Protect-LogLine $ok (New-LogRedactor))'"
+    }
+    # A reason of several lines (what Run throws) keeps its lines apart; one hidden line hides only itself; a key block is hidden whole.
+    $multi = "git fetch failed: fatal: unable to reach host`r`nremote: Support for password authentication was removed.`nAuthorization: token hunter2hunter2`nhint: run gh auth refresh`n-----BEGIN CERTIFICATE-----`nMIIBkTCB+wIJAKHBfpegPjMCMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBnVu`n-----END CERTIFICATE-----`nthe real cause is here"
+    $mr = Protect-ReasonText $multi
+    Assert-That 'reason text: lines stay apart (a space, not glued)' ($mr.Contains('unable to reach host remote:')) "got '$mr'"
+    Assert-That 'reason text: the lines after a hidden line are kept' ($mr.Contains('gh auth refresh') -and $mr.Contains('the real cause is here')) "got '$mr'"
+    Assert-That 'reason text: the secret and the certificate body are hidden' (-not ($mr.Contains('hunter2') -or $mr.Contains('MIIBkTCB'))) "got '$mr'"
+    foreach ($c in @(@('tool --password "two words here" run', 'words'), @("tool --token 'it is secret' run", 'secret'), @('git clone https://u:p@ss@host.example/', 'ss@'), @('MYSQL_PASSWD=hunter2hunter2', 'hunter2'))) {
+        $got = Protect-LogLine $c[0] (New-LogRedactor)
+        Assert-That "log redaction: quoted flag value, URL password with @, PASSWD env: '$($c[0].Substring(0, 10))...'" (-not $got.Contains($c[1])) "got '$got'"
+    }
+    $kr = Protect-ReasonText "step one`rstep two`r`n-----BEGIN PRIVATE KEY-----`nMIIBkTCB`nAAAA`n-----END PRIVATE KEY-----`nafter"
+    Assert-That 'reason text: a lone CR separates lines and a key block is one marker' ($kr -eq 'step one step two <private key hidden> after') "got '$kr'"
+    Assert-That 'reason text: an empty reason stays empty' ((Protect-ReasonText '') -eq '')
     $uk = New-LogRedactor
     $ukOut = '-----BEGIN PGP PRIVATE KEY BLOCK-----', 'ok   log redaction: nothing secret left', '--- PASS: TestX (0.00s)' | ForEach-Object { Protect-LogLine $_ $uk }
     Assert-That 'log redaction: a key header with no END line hides only itself' (($ukOut -join '|') -eq '<private key hidden>|ok   log redaction: nothing secret left|--- PASS: TestX (0.00s)') "got '$($ukOut -join '|')'"

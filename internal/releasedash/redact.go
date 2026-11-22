@@ -27,12 +27,19 @@ func NewRedactor(names ...string) *Redactor {
 }
 
 var (
-	ansiRE    = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07`)
-	tokenRE   = regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})`)
-	bearerRE  = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}`)
-	pairRE    = regexp.MustCompile(`(?i)([\w-]*(?:pass(?:word|phrase)|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|.+)`)
-	keyBeginR = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
-	keyEndR   = regexp.MustCompile(`-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
+	ansiRE   = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07`)
+	tokenRE  = regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})`)
+	bearerRE = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}`)
+	pairRE   = regexp.MustCompile(`(?i)([\w-]*(?:pass(?:word|phrase)|nonce|seed[-_ ]?phrase|key[-_ ]?seed|_seed|mnemonic|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|.+)`)
+	// More secret shapes. Spaces and tabs are written out ("[ \t]") and not \s, and letters as [A-Za-z], so the PowerShell twin agrees
+	// (.NET counts more characters as \s and \w than Go does). A flag with its value after a space or "=" ("--passphrase <v>"); an
+	// environment style name ending in _PASS or _PIN ("SIGN_PASS=<v>"); user:password in a URL or after curl's -u or --user.
+	flagRE     = regexp.MustCompile(`(?i)((?:^|[ \t])--?(?:pass(?:word|phrase|wd)?|pwd|token|secret|nonce|pin)(?:[ \t]+|=))(?:"[^"]*"|'[^']*'|[^ \t\r\n\f\v]+)`)
+	envPassRE  = regexp.MustCompile(`(?i)([A-Za-z0-9_]*_(?:pass|passwd|pin)[ \t]*=[ \t]*)[^ \t\r\n\f\v]+`)
+	urlCredRE  = regexp.MustCompile(`(://)[^ \t\r\n\f\v/:@]+:[^ \t\r\n\f\v/]+@`)
+	userFlagRE = regexp.MustCompile(`((?:^|[ \t])--?(?:u|user)[ \t]+)[^ \t\r\n\f\v:]+:[^ \t\r\n\f\v]+`)
+	keyBeginR  = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
+	keyEndR    = regexp.MustCompile(`-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
 	// A line that can still belong to a key block: nothing, base64, or a header such as "Proc-Type: 4,ENCRYPTED". After the CI prefix
 	// ("job<TAB>step<TAB>") and the time stamp are taken off. Anything else (a sentence, a test result) ends a block that never closed.
 	// "[ \t\r\f\v]" and not \s: the PowerShell twin must agree, and .NET counts more characters as \s than Go does. A "*" is a value GitHub masked.
@@ -45,6 +52,8 @@ var (
 	userDirRE = regexp.MustCompile(`(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"']+`)
 	maxLine   = 2000
 )
+
+const keyHidden = "<private key hidden>"
 
 const maxKeyLines = 400 // a 4096-bit key is about 30 lines; this only stops a runaway block
 
@@ -98,6 +107,10 @@ func (r *Redactor) Line(s string) string {
 	s = tokenRE.ReplaceAllString(s, "<token hidden>")
 	s = bearerRE.ReplaceAllString(s, "$1 <hidden>")
 	s = pairRE.ReplaceAllString(s, "$1$2<hidden>")
+	s = flagRE.ReplaceAllString(s, "$1<hidden>")
+	s = envPassRE.ReplaceAllString(s, "$1<hidden>")
+	s = urlCredRE.ReplaceAllString(s, "${1}<hidden>@")
+	s = userFlagRE.ReplaceAllString(s, "$1<hidden>")
 	s = keyFileRE.ReplaceAllString(s, "<key file>")
 	s = userDirRE.ReplaceAllString(s, "${1}<user>")
 	for _, n := range r.names {

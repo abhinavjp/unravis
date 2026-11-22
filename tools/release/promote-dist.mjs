@@ -13,11 +13,13 @@
 //      the folders are copied again; the two copies must be byte for byte equal (a build that is not reproducible stops here, nothing
 //      pushed; the Windows runner's check-dist on the promotion pull request is the proof across machines).
 //   4. The build clone and everything dependency code could write to are DELETED. Only then is the COMMIT clone made, in a new folder:
-//      a fresh clone of the branch, whose local git config is checked to hold nothing a build could have added. The copied folders are
+//      a fresh clone of the branch (no templates), whose local git config, hooks and info/attributes are checked to hold nothing a
+//      build could have added; the check is repeated right before the push (a process the build left running could plant meanwhile). The copied folders are
 //      put into it, node web/scripts/check-dist.cjs is run there (same bytes as committed: nothing to do; different: the three folders
 //      are committed with the subject "Rebuild web files for promotion <branch>", which ReleaseLib.ps1 knows).
-//   5. Pushes the branch from the commit clone (a plain push, never a force). Every git command that carries the token runs there, with
-//      hooks and core.fsmonitor off and without GIT_DIR and the like from the caller's environment.
+//   5. Pushes the branch from the commit clone (a plain push, never a force). Only clone and push carry the token (one header, in
+//      their environment); every git command runs with hooks and core.fsmonitor off, without GIT_DIR and the like and without any
+//      GH_TOKEN-like variable from the caller's environment.
 // Last line printed: DIST_COMMIT=<sha> or DIST_COMMIT=none. Promote-Develop.ps1 requires that line and stops without it. Exit 0 ok, 1 build or check failed, 2 cannot run.
 //
 // Test hooks (used by tools/ci/test-promote-dist.mjs only): --remote <url or path> replaces https://github.com/<repo>.git,
@@ -53,8 +55,10 @@ const TOKEN_VALUE = /(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/;
  * process's environment (Linux: /proc/<parent pid>/environ; Windows: ReadProcessMemory), call a program by its absolute path (a gh.exe
  * that reads its login from the operating system's keyring even with an empty GH_CONFIG_DIR), or ask the OS credential store directly.
  * What protects the result is that the lock file pins the dependencies, that check-dist compares the bytes, and the ORDER in main():
- * the build clone is deleted before the commit clone exists and only copies of the three generated folders cross over, so no hook,
- * filter, fsmonitor or proxy setting planted by build code is ever read by a git command that carries the token (gitEnv).
+ * the build clone is deleted before the commit clone exists and only copies of the three generated folders cross over, so the
+ * build's own writes never reach the commit clone. A process the build left running (a detached child) could still wait for the commit
+ * clone and plant something in it, so: git commands that do not push get no token (neither GH_TOKEN nor the header), and the commit
+ * clone's config, hooks and info/attributes are checked again right before the push, the only command that carries the token.
  * Settings in the person's own ~/.npmrc are not read (HOME is private): a registry mirror or CA must come in as npm_config_registry,
  * npm_config_cafile, HTTPS_PROXY, NODE_EXTRA_CA_CERTS or SSL_CERT_FILE, which are kept when they carry no password. The npm cache is
  * private and empty, so every promotion downloads every package.
@@ -179,11 +183,15 @@ function run(cmd, args, opts = {}) {
 }
 
 // Environment for git commands: the caller's, without the variables that send git to another repository or make it run another program
-// (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_SSH_COMMAND, GIT_ASKPASS, GIT_CONFIG_COUNT and its KEY/VALUE, ...), and without replace refs.
-const GIT_REDIRECTS = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|SSH|SSH_COMMAND|SSH_VARIANT|PROXY_COMMAND|ASKPASS|EXTERNAL_DIFF|PAGER|EDITOR|SEQUENCE_EDITOR|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+|CONFIG_PARAMETERS|EXEC_PATH|TEMPLATE_DIR|REPLACE_REF_BASE|TRACE\w*|CURL_VERBOSE|SSL_\w+)$/i;
+// (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_SSH_COMMAND, GIT_ASKPASS, GIT_CONFIG_COUNT and its KEY/VALUE, ...), without variables that
+// carry a secret, and without replace refs. GIT_SSL_CAINFO and the like are kept (a PC may need them to reach github.com).
+const GIT_REDIRECTS = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|SSH|SSH_COMMAND|SSH_VARIANT|PROXY_COMMAND|ASKPASS|EXTERNAL_DIFF|PAGER|EDITOR|SEQUENCE_EDITOR|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+|CONFIG_PARAMETERS|EXEC_PATH|TEMPLATE_DIR|REPLACE_REF_BASE|TRACE\w*|CURL_VERBOSE)$/i;
+// Names that carry a secret (GH_TOKEN, GITHUB_TOKEN, NPM_TOKEN, ...): git commands that do not push never get them, so a filter or hook
+// that something plants in the commit clone cannot read one. Clone and push get the token only as the one header in gitEnv.
+const SECRET_NAME = /(TOKEN|SECRET|PASSWORD|PASSPHRASE)/i;
 export function gitBaseEnv(env) {
   const out = {};
-  for (const [k, v] of Object.entries(env)) if (!GIT_REDIRECTS.test(k)) out[k] = v;
+  for (const [k, v] of Object.entries(env)) if (!GIT_REDIRECTS.test(k) && !SECRET_NAME.test(k)) out[k] = v;
   out.GIT_NO_REPLACE_OBJECTS = '1';
   out.GIT_TERMINAL_PROMPT = '0';
   return out;
@@ -290,8 +298,9 @@ export function main(argv, env = process.env) {
     tmp = mkdtempSync(join(tmpdir(), 'unravis-dist-'));
     const dir = join(tmp, 'repo');
     console.log('> cloning ' + o.branch + ' to commit in ' + dir);
-    git(tmp, ['clone', '--quiet', '--single-branch', '--branch', o.branch, '--depth', '1', remote, dir], { env: gitEnv });
-    assertFreshClone(dir, gitEnv);
+    // --template= : no hooks or info files from the person's init.templateDir (they would make the freshness check refuse).
+    git(tmp, ['clone', '--quiet', '--template=', '--single-branch', '--branch', o.branch, '--depth', '1', remote, dir], { env: gitEnv });
+    assertFreshClone(dir);
     copyRoots(out1, dir);
 
     let made = 'none';
@@ -317,6 +326,9 @@ export function main(argv, env = process.env) {
 
     if (made !== 'none') {
       if (o.push) {
+        // Checked again right before the one command that carries the token: something that outlived the build (a detached child process
+        // can wait for the commit clone to appear) may have planted a setting since the first check. Only a push is left after this.
+        assertFreshClone(dir);
         git(dir, ['push', '--quiet', 'origin', 'HEAD:refs/heads/' + o.branch], { env: gitEnv });
         console.log('Pushed to ' + o.branch + '.');
       } else console.log('--no-push: the commit stays in ' + dir + ' (--keep).');
