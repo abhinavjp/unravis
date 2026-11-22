@@ -40,8 +40,10 @@ func (winProber) ProcessStart(pid int) (time.Time, error) {
 	return time.Unix(0, creation.Nanoseconds()).UTC(), nil
 }
 
-// PipeExists asks the pipe file system without connecting: "no such pipe" is the only answer that means absent. A busy pipe (all
-// instances in use) or an access error still means the name is taken by a live server.
+// PipeExists asks the pipe file system without connecting. Success, a busy pipe (all instances in use), a wait timeout (a server with
+// no free instance) and an access error mean the name is taken by a live server. Any other error fails closed: the pipe is reported
+// absent, so an unexpected failure never makes a dead owner look alive. This is existence only, not server identity (see the package
+// comment).
 func (winProber) PipeExists(name string) bool {
 	p, err := windows.UTF16PtrFromString(name)
 	if err != nil {
@@ -51,7 +53,7 @@ func (winProber) PipeExists(name string) bool {
 	if r != 0 {
 		return true
 	}
-	return !errors.Is(callErr, windows.ERROR_FILE_NOT_FOUND) && !errors.Is(callErr, windows.ERROR_PATH_NOT_FOUND)
+	return errors.Is(callErr, windows.ERROR_SEM_TIMEOUT) || errors.Is(callErr, windows.ERROR_PIPE_BUSY) || errors.Is(callErr, windows.ERROR_ACCESS_DENIED)
 }
 
 var procWaitNamedPipe = windows.NewLazySystemDLL("kernel32.dll").NewProc("WaitNamedPipeW")

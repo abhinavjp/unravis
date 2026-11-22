@@ -22,17 +22,33 @@ func buildExe(t *testing.T, dir string) string {
 	return exe
 }
 
-func startSidecar(t *testing.T, exe, data string) (*exec.Cmd, chan error) {
+// sidecar is one started copy of the exe. done is closed, with err set, when the process has exited and been reaped.
+type sidecar struct {
+	cmd  *exec.Cmd
+	done chan struct{}
+	err  error
+}
+
+// startSidecar starts one copy. Its cleanup kills the process and waits for the exit, so the per-user mutex of this copy is gone before
+// the next test starts (all tests share the per-user demo mutex).
+func startSidecar(t *testing.T, exe, data string) *sidecar {
 	t.Helper()
 	cmd := exec.Command(exe, "--pipe-server", "--demo")
 	cmd.Env = append(os.Environ(), "AUDIT_CONFIG_DIR="+data)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
-	t.Cleanup(func() { _ = cmd.Process.Kill() })
-	return cmd, exited
+	s := &sidecar{cmd: cmd, done: make(chan struct{})}
+	go func() { s.err = cmd.Wait(); close(s.done) }()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		select {
+		case <-s.done:
+		case <-time.After(15 * time.Second):
+			t.Errorf("pid %d did not exit after Kill", cmd.Process.Pid)
+		}
+	})
+	return s
 }
 
 func waitLive(t *testing.T, path string) locator.Record {
@@ -56,32 +72,20 @@ func TestTenConcurrentStartsOneOwner(t *testing.T) {
 	if err := os.Mkdir(data, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	type proc struct {
-		cmd    *exec.Cmd
-		exited chan error
-	}
-	var procs []proc
+	var procs []*sidecar
 	for range 10 {
-		cmd := exec.Command(exe, "--pipe-server", "--demo")
-		cmd.Env = append(os.Environ(), "AUDIT_CONFIG_DIR="+data)
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
-		}
-		p := proc{cmd, make(chan error, 1)}
-		go func() { p.exited <- p.cmd.Wait() }()
-		t.Cleanup(func() { _ = p.cmd.Process.Kill() })
-		procs = append(procs, p)
+		procs = append(procs, startSidecar(t, exe, data))
 	}
 	rec := waitLive(t, locator.FilePath(filepath.Join(data, "run"), true))
 	running, attached := 0, 0
 	deadline := time.After(30 * time.Second)
 	for _, p := range procs {
 		select {
-		case err := <-p.exited:
-			if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == exitAttached {
+		case <-p.done:
+			if ee, ok := p.err.(*exec.ExitError); ok && ee.ExitCode() == exitAttached {
 				attached++
 			} else {
-				t.Errorf("pid %d exited with %v, want exit %d", p.cmd.Process.Pid, err, exitAttached)
+				t.Errorf("pid %d exited with %v, want exit %d", p.cmd.Process.Pid, p.err, exitAttached)
 			}
 		case <-time.After(2 * time.Second):
 			running++
@@ -110,15 +114,15 @@ func TestStaleLocatorReplacedAfterKill(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := locator.FilePath(filepath.Join(data, "run"), true)
-	first, exited := startSidecar(t, exe, data)
+	first := startSidecar(t, exe, data)
 	r1 := waitLive(t, path)
-	if r1.PID != first.Process.Pid {
-		t.Fatalf("locator pid %d, started %d", r1.PID, first.Process.Pid)
+	if r1.PID != first.cmd.Process.Pid {
+		t.Fatalf("locator pid %d, started %d", r1.PID, first.cmd.Process.Pid)
 	}
-	if err := first.Process.Kill(); err != nil {
+	if err := first.cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	<-exited
+	<-first.done
 	stale, err := locator.Read(path)
 	if err != nil || stale.PID != r1.PID {
 		t.Fatalf("the killed owner's file should still be there: %+v, %v", stale, err)
@@ -126,11 +130,11 @@ func TestStaleLocatorReplacedAfterKill(t *testing.T) {
 	if locator.Alive(stale, locator.SystemProber()) {
 		t.Fatal("the locator of a killed owner is reported alive")
 	}
-	second, _ := startSidecar(t, exe, data)
+	second := startSidecar(t, exe, data)
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		r2, err := locator.Read(path)
-		if err == nil && r2.PID == second.Process.Pid && locator.Alive(r2, locator.SystemProber()) {
+		if err == nil && r2.PID == second.cmd.Process.Pid && locator.Alive(r2, locator.SystemProber()) {
 			if r2.PID == r1.PID {
 				t.Fatal("pid did not change")
 			}

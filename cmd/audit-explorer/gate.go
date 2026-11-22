@@ -25,6 +25,11 @@ const (
 	gateLocatorTries = 40
 	// exitAttached is the exit code of a pipe-mode copy that found a live owner: nothing is wrong, the caller attaches through the locator.
 	exitAttached = 12
+	// Pipe mode has no console and no window, so its failures are exit codes and never a message box (the caller is a shell, the CLI or
+	// MCP, and reads the code). exitElevated: the copy runs as administrator (BL-304). exitNoOwner: another copy holds the singleton
+	// but no live locator appeared within the wait, for example because that copy is browser mode (it writes none) or is still starting.
+	exitElevated = 11
+	exitNoOwner  = 13
 )
 
 // gateDeps are the system calls the gate makes, so tests can use fakes.
@@ -75,9 +80,12 @@ type gateResult struct {
 // elevated copy is refused before any name or mutex is touched, so it can never
 // take the name and lock a normal start out. A second copy asks the first to
 // open a tab and does not proceed; a second --background copy exits silently. A second pipe-mode copy never signals Open (there is no
-// tab): it waits up to 40 x 250 ms for the owner's locator to go live and reports attached, or fails if none does (BL-302).
+// tab): it waits up to 40 x 250 ms for the owner's locator to go live and reports attached, or exits quietly with exitNoOwner if none does (BL-302).
 func enterSingleInstance(demo, background, pipeMode bool, d gateDeps) (gateResult, error) {
 	if d.elevated() {
+		if pipeMode {
+			return gateResult{}, &exitCodeError{code: exitElevated, msg: ErrElevated.Error()}
+		}
 		return gateResult{}, ErrElevated
 	}
 	app := instance.DefaultApp
@@ -110,7 +118,7 @@ func enterSingleInstance(demo, background, pipeMode bool, d gateDeps) (gateResul
 				d.sleep(gateSignalWait)
 			}
 		}
-		return gateResult{}, ErrAlreadyRunning
+		return gateResult{}, &exitCodeError{code: exitNoOwner, msg: "another Unravis copy owns the name but published no live locator"}
 	}
 	if background {
 		return gateResult{names: names}, nil

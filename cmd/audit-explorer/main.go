@@ -1,7 +1,6 @@
 package main
 
 import (
-	"api-audit-explorer/internal/locator"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -32,6 +31,7 @@ import (
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/instance"
 	"api-audit-explorer/internal/ledger"
+	"api-audit-explorer/internal/locator"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/pipesrv"
 	"api-audit-explorer/internal/server"
@@ -205,11 +205,11 @@ func run(args []string, getenv func(string) string) error {
 	var runDir string
 	if pipeMode {
 		// One owner per user also in pipe mode (BL-302; pipemode.go).
-		release, rd, err := enterPipeSingleton(f.demo, getenv)
+		release, rd, names, err := enterPipeSingleton(f.demo, getenv)
 		if err != nil {
 			return err
 		}
-		runDir = rd
+		runDir, instanceNames = rd, names
 		defer release()
 	}
 	if interactive {
@@ -373,6 +373,9 @@ func run(args []string, getenv func(string) string) error {
 	}
 	afterServing(cancel)
 
+	if pipeMode {
+		defer listenInstanceEvents(appCtx, cancel, instanceNames)()
+	}
 	if interactive {
 		defer startInteractive(appCtx, cancel, reo, instanceNames)()
 	}

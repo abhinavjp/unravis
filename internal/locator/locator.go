@@ -6,6 +6,12 @@
 // caller passes the ACL function, so this package stays portable) and is replaced atomically. The singleton mutex, not this file, decides
 // who the owner is: a file left by a dead owner is stale, and the next owner overwrites it.
 //
+// Alive is not authentication. It proves that a process with the recorded pid and creation time runs and that two pipe names exist; it
+// does not prove that this process is the server of those pipes. Pipe names are listed for every user by \\.\pipe\ enumeration, and
+// FILE_FLAG_FIRST_PIPE_INSTANCE keeps a squatter out only while the real owner lives. A caller (Attach users such as the CLI, MCP and the
+// shell) must therefore check the server identity when it connects, with GetNamedPipeServerProcessId against Record.PID (or the
+// pipesec client check), before it sends a token or any request.
+//
 // Everything here is portable. Only the process and pipe probes (Prober) and the detached start are Windows code.
 package locator
 
@@ -18,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -43,7 +50,7 @@ var (
 	ErrNoOwner       = errors.New("locator: no running owner")
 )
 
-var pipeName = regexp.MustCompile(`^\\\\\.\\pipe\\unravis\.(ui|ag)\.[0-9a-f]{32}$`)
+var pipeName = regexp.MustCompile(`^\\\\\.\\pipe\\unravis\.(ui|ag)\.([0-9a-f]{32})$`)
 
 // Record is the content of backend.json.
 type Record struct {
@@ -70,12 +77,16 @@ func (r Record) Validate() error {
 	if !pipeName.MatchString(r.AG) || !hasRole(r.AG, "ag") {
 		return fmt.Errorf("%w: ag pipe name", ErrInvalid)
 	}
+	// One owner makes both names from one nonce (pipesec.NewNamePair).
+	if pipeName.FindStringSubmatch(r.UI)[2] != pipeName.FindStringSubmatch(r.AG)[2] {
+		return fmt.Errorf("%w: ui and ag pipe names have different nonces", ErrInvalid)
+	}
 	return nil
 }
 
 func hasRole(name, role string) bool {
 	m := pipeName.FindStringSubmatch(name)
-	return len(m) == 2 && m[1] == role
+	return len(m) == 3 && m[1] == role
 }
 
 // FilePath is the locator path inside runDir.
@@ -103,6 +114,11 @@ func Write(path string, r Record, o Options) error {
 		return fmt.Errorf("locator: create run folder: %w", err)
 	}
 	if o.SecureDir != nil {
+		// SecureDir sets an inheriting DACL, which rewrites the ACLs of everything below dir. Never do that to a folder that holds
+		// anything but locator files (UNRAVIS_RUN_DIR can point anywhere).
+		if err := onlyLocatorFiles(dir); err != nil {
+			return err
+		}
 		if err := o.SecureDir(dir); err != nil {
 			return fmt.Errorf("locator: restrict run folder: %w", err)
 		}
@@ -142,14 +158,36 @@ func Write(path string, r Record, o Options) error {
 	return nil
 }
 
-// renameRetry retries briefly: on Windows a reader that has the target open can make the replace fail for a moment.
+// onlyLocatorFiles fails when dir holds an entry that is not a locator file or its temp file.
+func onlyLocatorFiles(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("locator: read run folder: %w", err)
+	}
+	for _, e := range entries {
+		if n := e.Name(); e.IsDir() || !strings.HasPrefix(n, "backend") {
+			return fmt.Errorf("locator: run folder %s holds %q, which is not a locator file; refusing to restrict it", dir, n)
+		}
+	}
+	return nil
+}
+
+// Rename retry budget. On Windows a reader that opened the target without FILE_SHARE_DELETE (Go os.Open, Get-Content, a polling
+// caller) makes the replace fail until it closes the file. Readers hold it for milliseconds, so 5 s is generous; the owner cannot
+// serve without a locator, so a failure after the budget is still an error.
+const (
+	renameTries = 100
+	renameWait  = 50 * time.Millisecond
+)
+
+// renameRetry retries for renameTries x renameWait.
 func renameRetry(from, to string) error {
 	var err error
-	for range 10 {
+	for i := 0; i < renameTries; i++ {
 		if err = os.Rename(from, to); err == nil {
 			return nil
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(renameWait)
 	}
 	return err
 }

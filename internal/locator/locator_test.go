@@ -12,7 +12,7 @@ import (
 
 const (
 	uiName = `\\.\pipe\unravis.ui.0123456789abcdef0123456789abcdef`
-	agName = `\\.\pipe\unravis.ag.fedcba9876543210fedcba9876543210`
+	agName = `\\.\pipe\unravis.ag.0123456789abcdef0123456789abcdef`
 )
 
 var t0 = time.Date(2026, 11, 22, 10, 0, 0, 123000000, time.UTC)
@@ -153,6 +153,7 @@ func TestLocatorRejectsBadContent(t *testing.T) {
 		func(r *Record) { r.UI, r.AG = r.AG, r.UI }, // roles swapped
 		func(r *Record) { r.AG = `\\.\pipe\unravis.ag.XYZ` },
 		func(r *Record) { r.StartTime = time.Time{} },
+		func(r *Record) { r.AG = `\\.\pipe\unravis.ag.fedcba9876543210fedcba9876543210` }, // different nonce
 	} {
 		r := rec()
 		mut(&r)
@@ -244,5 +245,31 @@ func TestAttachTimesOutAndWithoutStart(t *testing.T) {
 	}
 	if _, _, err := Attach(AttachOptions{Path: path, Prober: p, Start: func() error { return errors.New("boom") }}); err == nil {
 		t.Fatal("start error swallowed")
+	}
+}
+
+// SecureDir sets an inheriting DACL, so Write must not call it on a folder that holds other files (UNRAVIS_RUN_DIR can point anywhere).
+func TestWriteRefusesToSecureAForeignFolder(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	o := Options{SecureDir: func(string) error { called = true; return nil }}
+	if err := Write(FilePath(dir, false), rec(), o); err == nil {
+		t.Fatal("Write restricted a folder that holds a foreign file")
+	}
+	if called {
+		t.Fatal("SecureDir was called on a foreign folder")
+	}
+	// A folder with only locator files (a previous owner's file and temp file) is fine.
+	clean := t.TempDir()
+	for _, n := range []string{FileName, DemoFileName, FileName + ".1.tmp"} {
+		if err := os.WriteFile(filepath.Join(clean, n), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Write(FilePath(clean, false), rec(), o); err != nil || !called {
+		t.Fatalf("locator-only folder: err=%v called=%v", err, called)
 	}
 }

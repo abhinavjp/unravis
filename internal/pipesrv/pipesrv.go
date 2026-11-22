@@ -120,22 +120,21 @@ type Pipes struct {
 // there is never a half-served state.
 func Open(listen ListenFunc, policy pipesec.PeerPolicy) (*Pipes, error) {
 	p := &Pipes{}
-	var err error
-	if p.UIName, p.UI, err = open(listen, pipesec.KindUI, policy); err != nil {
+	uiName, agName, err := pipesec.NewNamePair()
+	if err != nil {
 		return nil, err
 	}
-	if p.AGName, p.AG, err = open(listen, pipesec.KindAG, policy); err != nil {
+	if p.UIName, p.UI, err = open(listen, uiName, pipesec.KindUI, policy); err != nil {
+		return nil, err
+	}
+	if p.AGName, p.AG, err = open(listen, agName, pipesec.KindAG, policy); err != nil {
 		_ = p.UI.Close()
 		return nil, err
 	}
 	return p, nil
 }
 
-func open(listen ListenFunc, kind pipesec.Kind, policy pipesec.PeerPolicy) (string, net.Listener, error) {
-	name, err := pipesec.NewName(kind)
-	if err != nil {
-		return "", nil, err
-	}
+func open(listen ListenFunc, name string, kind pipesec.Kind, policy pipesec.PeerPolicy) (string, net.Listener, error) {
 	l, err := listen(pipesec.ListenConfig{Name: name, Policy: policy})
 	if err != nil {
 		return "", nil, fmt.Errorf("open %s pipe: %w", kind, err)

@@ -1,15 +1,17 @@
 package main
 
 import (
-	"api-audit-explorer/internal/appdirs"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"sync"
 
+	"api-audit-explorer/internal/appdirs"
 	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/instance"
 	"api-audit-explorer/internal/locator"
 	"api-audit-explorer/internal/pipesec"
 	"api-audit-explorer/internal/pipesrv"
@@ -26,7 +28,22 @@ var (
 	pipeGateDepsFn = pipeGateDeps
 	// selfStart is this process's creation time for the locator; tests swap it off Windows.
 	selfStart = locator.SelfStart
+	// instanceListen receives Open and Quit signals from other copies; tests swap it.
+	instanceListen = instance.Listen
 )
+
+// listenInstanceEvents lets other copies reach a pipe-mode owner through the per-user instance events, as they reach a browser-mode owner:
+// --quit (setup, OTA, the tray) cancels the app, and a browser-mode start that lost the mutex signals Open and exits quietly. Open has no
+// tab to show here: the shell is what shows the window, and swapping Open for the shell's open call is D19 (BL-306), so for now it is
+// only logged. If the events cannot be created the owner still runs.
+func listenInstanceEvents(ctx context.Context, cancel context.CancelFunc, names instance.Names) (stop func()) {
+	stop, err := instanceListen(ctx, names, func() { log.Print("Open requested; pipe mode has no window to show") }, cancel)
+	if err != nil {
+		log.Printf("Other copies cannot reach this one (--quit will not work): %v", err)
+		return func() {}
+	}
+	return stop
+}
 
 // writeLocator publishes backend.json for the owner (ui and ag pipe names, pid, creation time, exe, version) and returns the function
 // that removes it. The file is restricted to the current user before any content is written.
@@ -108,20 +125,20 @@ func (s stoppers) Close() error {
 
 // enterPipeSingleton takes the per-user singleton for a pipe-mode start. A copy that is not the owner waits for the owner's live locator
 // and returns an exitCodeError with exitAttached; the owner gets the release function and the run folder of its locator.
-func enterPipeSingleton(demo bool, getenv func(string) string) (release func(), runDir string, err error) {
+func enterPipeSingleton(demo bool, getenv func(string) string) (release func(), runDir string, names instance.Names, err error) {
 	runDir, err = appdirs.RunDir(getenv)
 	if err != nil {
-		return nil, "", err
+		return nil, "", instance.Names{}, err
 	}
 	gate, err := enterSingleInstance(demo, true, true, pipeGateDepsFn(runDir, demo))
 	if err != nil {
-		return nil, "", err
+		return nil, "", instance.Names{}, err
 	}
 	if gate.attached {
-		return nil, "", &exitCodeError{code: exitAttached, msg: "Unravis is already running; attach through " + locator.FilePath(runDir, demo)}
+		return nil, "", instance.Names{}, &exitCodeError{code: exitAttached, msg: "Unravis is already running; attach through " + locator.FilePath(runDir, demo)}
 	}
 	if !gate.proceed {
-		return nil, "", errors.New("pipe mode: the singleton gate neither proceeded nor attached")
+		return nil, "", instance.Names{}, errors.New("pipe mode: the singleton gate neither proceeded nor attached")
 	}
-	return gate.release, runDir, nil
+	return gate.release, runDir, gate.names, nil
 }

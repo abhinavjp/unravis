@@ -25,6 +25,19 @@ New-Item -ItemType Directory -Path $data | Out-Null
 $env:AUDIT_CONFIG_DIR = $data
 $locatorFile = Join-Path $data 'run\backend.demo.json'
 
+# Starts the exe with System.Diagnostics.Process.Start, which keeps the process handle open. With Start-Process -PassThru a copy that exits
+# before its handle is opened (the nine losers exit within milliseconds) later reports a null ExitCode and can throw on WaitForExit.
+function Start-Sidecar([string[]]$ArgList) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe
+    $psi.Arguments = $ArgList -join ' '
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $null = $p.Handle
+    return $p
+}
+
 function Wait-LiveLocator {
     for ($i = 0; $i -lt 120; $i++) {
         if (Test-Path $locatorFile) {
@@ -43,29 +56,30 @@ if ($Check -in 'TenStarts', 'Stale', 'Acl') {
     $fail = $null
     try {
         if ($Check -eq 'TenStarts') {
-            1..10 | ForEach-Object { $procs += Start-Process -FilePath $exe -ArgumentList '--pipe-server', '--demo' -PassThru -WindowStyle Hidden }
+            1..10 | ForEach-Object { $procs += Start-Sidecar @('--pipe-server', '--demo') }
             $rec = Wait-LiveLocator
             Start-Sleep -Seconds 3
             $running = @($procs | Where-Object { -not $_.HasExited })
-            $codes = @($procs | Where-Object { $_.HasExited } | ForEach-Object { $_.ExitCode })
+            $codes = @($procs | Where-Object { $_.HasExited } | ForEach-Object { [int]$_.ExitCode })
+            if ($codes.Count -ne 9) { throw "expected 9 exited copies, found $($codes.Count)" }
             if ($running.Count -ne 1) { throw "expected exactly 1 running owner, found $($running.Count)" }
             if ($running[0].Id -ne $rec.pid) { throw "running pid $($running[0].Id) is not the locator pid $($rec.pid)" }
             if (@($codes | Where-Object { $_ -ne 12 }).Count -ne 0) { throw "non-owner exit codes: $codes (want all 12)" }
             Write-Host "TenStarts OK: one owner pid $($rec.pid), 9 copies exited 12"
         } elseif ($Check -eq 'Stale') {
-            $a = Start-Process -FilePath $exe -ArgumentList '--pipe-server', '--demo' -PassThru -WindowStyle Hidden
+            $a = Start-Sidecar @('--pipe-server', '--demo')
             $procs += $a
             $r1 = Wait-LiveLocator
             & taskkill /f /pid $a.Id | Out-Null
-            $a.WaitForExit()
-            $b = Start-Process -FilePath $exe -ArgumentList '--pipe-server', '--demo' -PassThru -WindowStyle Hidden
+            if (-not $a.WaitForExit(15000)) { throw "owner pid $($a.Id) did not exit after taskkill" }
+            $b = Start-Sidecar @('--pipe-server', '--demo')
             $procs += $b
             $r2 = Wait-LiveLocator
             if ($r2.pid -eq $r1.pid) { throw 'locator pid did not change after the owner was killed' }
             if ($r2.pid -ne $b.Id) { throw "locator pid $($r2.pid) is not the new owner $($b.Id)" }
             Write-Host "Stale OK: pid $($r1.pid) -> $($r2.pid), live"
         } else {
-            $a = Start-Process -FilePath $exe -ArgumentList '--pipe-server', '--demo' -PassThru -WindowStyle Hidden
+            $a = Start-Sidecar @('--pipe-server', '--demo')
             $procs += $a
             $null = Wait-LiveLocator
             $acl = (& icacls $locatorFile) -join "`n"

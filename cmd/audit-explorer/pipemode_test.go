@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"api-audit-explorer/internal/instance"
 	"api-audit-explorer/internal/locator"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/pipesrv"
@@ -73,7 +74,7 @@ func (m *memListener) get(path, token string) (int, string, error) {
 
 const (
 	testUIPipe = `\\.\pipe\unravis.ui.0123456789abcdef0123456789abcdef`
-	testAGPipe = `\\.\pipe\unravis.ag.fedcba9876543210fedcba9876543210`
+	testAGPipe = `\\.\pipe\unravis.ag.0123456789abcdef0123456789abcdef`
 )
 
 const testToken = "pipe-test-token-0123456789abcdef0123456789"
@@ -341,18 +342,84 @@ func TestPipeModeSecondCopyExits12(t *testing.T) {
 	}
 }
 
-// TestPipeModeSecondCopyNoLocator: no live locator within 40 x 250 ms is an ordinary failure (exit 1), not an attach.
+// TestPipeModeSecondCopyNoLocator: no live locator within 40 x 250 ms (the owner is browser mode, or still starting) is a quiet exit 13:
+// no message box, because a pipe-mode copy runs detached with no window.
 func TestPipeModeSecondCopyNoLocator(t *testing.T) {
 	getenv := envOf(map[string]string{"AUDIT_CONFIG_DIR": t.TempDir(), "AUDIT_SESSION_TOKEN": testToken})
 	f := &fakeGate{first: false}
 	pipeGateWith(t, f, func() bool { return false })
 	swapPipeSeams(t, func(cancel context.CancelFunc) { cancel() })
 	err := run([]string{"--pipe-only", "--demo"}, getenv)
-	if !errors.Is(err, ErrAlreadyRunning) {
-		t.Fatalf("err = %v, want ErrAlreadyRunning", err)
-	}
+	assertQuietExit(t, err, exitNoOwner)
 	if f.sleepCalls != 39 {
 		t.Errorf("sleeps = %d, want 39 (40 looks)", f.sleepCalls)
+	}
+}
+
+// TestPipeModeElevatedExits11: an elevated pipe-mode start is refused with exit 11 and no message box, before any name is touched.
+func TestPipeModeElevatedExits11(t *testing.T) {
+	getenv := envOf(map[string]string{"AUDIT_CONFIG_DIR": t.TempDir(), "AUDIT_SESSION_TOKEN": testToken})
+	f := &fakeGate{first: true, isElevated: true}
+	pipeGateWith(t, f, func() bool { return false })
+	swapPipeSeams(t, func(cancel context.CancelFunc) { cancel() })
+	err := run([]string{"--pipe-only", "--demo"}, getenv)
+	assertQuietExit(t, err, exitElevated)
+	if f.acquireCalls != 0 {
+		t.Errorf("acquired the mutex %d times while elevated", f.acquireCalls)
+	}
+}
+
+// assertQuietExit checks that err ends the process with code and, through reportFatal, shows no message box even when there is no console.
+func assertQuietExit(t *testing.T, err error, want int) {
+	t.Helper()
+	var ee *exitCodeError
+	if !errors.As(err, &ee) || ee.code != want {
+		t.Fatalf("err = %v, want exit code %d", err, want)
+	}
+	var code int
+	shown := false
+	oldExit, oldShow, oldUnusable := exitProcess, showMessage, stderrUnusable
+	exitProcess, showMessage, stderrUnusable = func(c int) { code = c }, func(string, string) { shown = true }, func() bool { return true }
+	t.Cleanup(func() { exitProcess, showMessage, stderrUnusable = oldExit, oldShow, oldUnusable })
+	reportFatal(err)
+	if code != want || shown {
+		t.Errorf("exit code %d, message box shown %v; want %d and none", code, shown, want)
+	}
+}
+
+// TestPipeModeOwnerListensForInstanceEvents: the owner registers for Open and Quit on the per-user instance names, so --quit and a
+// browser-mode second start reach it. Quit runs the normal shutdown; Open is harmless.
+func TestPipeModeOwnerListensForInstanceEvents(t *testing.T) {
+	getenv := envOf(map[string]string{"AUDIT_CONFIG_DIR": t.TempDir(), "AUDIT_SESSION_TOKEN": testToken})
+	f := &fakeGate{first: true}
+	pipeGateWith(t, f, func() bool { return false })
+	var got instance.Names
+	stopped := false
+	old := instanceListen
+	instanceListen = func(ctx context.Context, n instance.Names, onOpen, onQuit func()) (func(), error) {
+		got = n
+		onOpen() // must not panic or block
+		go onQuit()
+		return func() { stopped = true }, nil
+	}
+	t.Cleanup(func() { instanceListen = old })
+	// Without a Quit the owner would serve forever: the only thing that ends this run is the Quit the fake listener sends.
+	swapPipeSeams(t, func(context.CancelFunc) {})
+	done := make(chan error, 1)
+	go func() { done <- run([]string{"--pipe-only", "--demo"}, getenv) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("Quit did not stop the pipe-mode owner")
+	}
+	if want, _ := instance.NewNames(instance.DemoApp, "S-1-5-21-1-2-3-1001"); got != want {
+		t.Errorf("listened on %+v, want %+v", got, want)
+	}
+	if !stopped {
+		t.Error("the instance listener was not stopped on exit")
 	}
 }
 
