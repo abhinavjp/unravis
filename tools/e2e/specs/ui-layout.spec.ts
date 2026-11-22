@@ -404,7 +404,7 @@ const OLD_HEATMAP_CSS = `
   .hm-cell.noise { border: 1px dashed var(--text-2); }
   .hm-cell:hover:not(.empty) { outline: 1px solid var(--text); outline-offset: 0; }
   .hm-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; position: relative; z-index: 1; }
-  .hm-swatch { display: inline-block; width: 16px; height: 12px; border: 1px solid var(--line-soft); border-radius: 1px; background: var(--surface-2); }
+  .hm-swatch { display: inline-block; width: 16px; height: 12px; border: 1px solid var(--control-line); border-radius: 1px; background: var(--surface-2); } /* PR 157 (ANALYSIS) gave the legend squares the control line colour on purpose */
   .hm-swatch.noise { background: var(--surface-2); border: 1px dashed var(--text-2); margin-left: 8px; }
   .hm-swatch.empty { background: transparent; margin-left: 8px; }
   .nav-handle { position: absolute; top: 0; bottom: 0; width: 12px; margin-left: -6px; cursor: ew-resize; touch-action: pan-y; }
