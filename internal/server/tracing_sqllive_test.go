@@ -54,8 +54,8 @@ func TestTracingDrawsKeptBlocksOfAnOffDatabase(t *testing.T) {
 		t.Fatalf("lane = %s %s sum %d", lane.State, lane.ReasonCode, tracingBucketSum(lane))
 	}
 	// The newest kept block starts at 10:45 (15 minutes before the incident ends).
-	if !strings.Contains(lane.Reason, "Query Store was off when this day was read") || !strings.Contains(lane.Reason, "2026-10-20T10:45:00Z") {
-		t.Fatalf("reason = %q", lane.Reason)
+	if lane.Reason != tracingHeldSQLMsg || !strings.Contains(lane.Note, "Query Store was off when this saved day was read") || !strings.Contains(lane.Note, "2026-10-20T10:45:00Z") {
+		t.Fatalf("reason = %q note = %q", lane.Reason, lane.Note)
 	}
 	// No block is drawn after the newest kept one.
 	for _, b := range lane.Buckets {
@@ -105,14 +105,14 @@ func TestLayerSQLLaneKeepsQueryStoreBucketsAndImportedEvents(t *testing.T) {
 	if len(got.Events) != 1 || got.Hidden != 2 || len(got.Sources) != 2 {
 		t.Fatalf("events %d hidden %d sources %d", len(got.Events), got.Hidden, len(got.Sources))
 	}
-	// A note the held lane added after its own sentence (Query Store was off when the day was read) stays on the layered lane.
+	// The note the held lane carries (Query Store was off when its day was read) stays on the layered lane; the sentence stays the layered one.
 	off := held
-	off.Reason = tracingHeldSQLMsg + tracingQSOffWithSeriesMsg
-	if got, ok := layerSQLLane(imported, off); !ok || got.Reason != tracingLayeredSQLMsg+tracingQSOffWithSeriesMsg {
-		t.Fatalf("layered reason = %q", got.Reason)
+	off.Note = tracingQSOffWithSeriesNote
+	if got, ok := layerSQLLane(imported, off); !ok || got.Reason != tracingLayeredSQLMsg || got.Note != tracingQSOffWithSeriesNote {
+		t.Fatalf("layered reason %q note %q", got.Reason, got.Note)
 	}
-	if got, _ := layerSQLLane(imported, held); got.Reason != tracingLayeredSQLMsg {
-		t.Fatalf("layered reason without a note = %q", got.Reason)
+	if got, _ := layerSQLLane(imported, held); got.Note != "" {
+		t.Fatalf("layered note without one = %q", got.Note)
 	}
 	// An imported lane with no events, or one that is not plain events, is left as it is.
 	noEvents := imported

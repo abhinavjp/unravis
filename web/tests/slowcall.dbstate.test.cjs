@@ -291,7 +291,16 @@ test('off, history read failed, no kept range: says it could not be read, never 
 test('off, a later slice read failed, kept range known: names the range and says the database was not read for it', () => {
   const v = kept(FIRST, LAST, { queryStore: { state: 'off', firstData: FIRST, lastData: LAST, historyUnread: true } });
   assert.equal(v.message, notRead(FIRST, LAST));
-  assert.equal(v.short, T.dbShortOff);
+  // The window may hold kept blocks, so the short label never claims they were not recorded.
+  assert.equal(v.short, T.dbShortOffUnread);
+  assert.doesNotMatch(v.short, /Not recorded/);
+  // A window provably outside the kept range keeps the plain label: nothing was recorded for it.
+  const out = kept(FIRST, '2026-11-11T09:30:00Z', { queryStore: { state: 'off', firstData: FIRST, lastData: '2026-11-11T09:30:00Z', historyUnread: true } });
+  assert.equal(out.message, outside(FIRST, '2026-11-11T09:30:00Z'));
+  assert.equal(out.short, T.dbShortOff);
+  // Without a block length the end of the range cannot be placed: not provably outside, so not "not recorded".
+  const open = run({ queryStore: { state: 'off', firstData: FIRST, lastData: '2026-11-11T09:30:00Z', historyUnread: true } });
+  assert.equal(open.short, T.dbShortOffUnread);
 });
 
 test('off, a window after a range shorter than Query Store block length is not outside', () => {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,14 +44,17 @@ const (
 	tracingQSOffMsg      = tracingQSCheckLead + "Query Store is switched off on this database, so it saved no history. Switching it on needs the database owner (the script is in Setup). Unravis never switches it on itself."
 	tracingQSReadOnlyMsg = tracingQSCheckLead + "Query Store is read-only, so it has stopped saving new history. This often happens when its storage is full. Older history is still shown."
 	tracingQSDeniedMsg   = tracingQSCheckLead + "The saved database login is not allowed to read Query Store. It needs the VIEW DATABASE STATE permission. Ask the database owner, or add a login that has it."
-	// The off messages below are for an off database whose saved day holds no block in the window. Two are formats: their verbs are UTC times, the start
-	// of the oldest and of the newest block Query Store kept. The unread one is for a day whose read of the history failed or was refused: whether
-	// anything was kept is not known, so it never says "saved no history".
-	tracingQSOffUnreadMsg     = tracingQSCheckLead + "Query Store is switched off on this database, and Unravis could not read the history it may have kept, so whether it saved any is not known. Read the database again to find out."
-	tracingQSOffOutsideMsg    = tracingQSCheckLead + "Query Store is switched off. It kept history from the block starting %s to the block starting %s, but none of it is for this window."
-	tracingQSOffNotReadMsg    = tracingQSCheckLead + "Query Store is switched off. It kept history from the block starting %s to the block starting %s, which may include this window, but this case holds no saved block for it. Read the database for this window."
-	tracingQSOffWithSeriesMsg = " Query Store was off when this day was read, so these blocks are history it kept."
-	tracingQSOffNewestMsg     = " Query Store was off when this day was read, so these blocks are history it kept; its newest block starts at %s."
+	// The off messages below are for an off database whose saved day holds no block in the window. The three with a range are formats: their verbs
+	// are UTC times, the start of the oldest and of the newest block Query Store kept. The unread ones are for a day whose read of the history failed
+	// or was refused: whether anything was kept is not known, so they never say "saved no history".
+	tracingQSOffUnreadMsg      = tracingQSCheckLead + "Query Store is switched off on this database, and Unravis could not read the history it may have kept, so whether it saved any is not known. Read the database again to find out."
+	tracingQSOffOutsideMsg     = tracingQSCheckLead + "Query Store is switched off. It kept history from the block starting %s to the block starting %s, but none of it is for this window."
+	tracingQSOffRangeUnreadMsg = tracingQSCheckLead + "Query Store is switched off. It kept history from the block starting %s to the block starting %s, but reading its blocks for this day failed, so whether it holds any for this window is not known. Read the database again."
+	tracingQSOffEmptyMsg       = tracingQSCheckLead + "Query Store is switched off. It kept history from the block starting %s to the block starting %s. This window was read, and no block with activity falls in it."
+	tracingQSOffNotReadMsg     = tracingQSCheckLead + "Query Store is switched off. It kept history from the block starting %s to the block starting %s, which may include this window, but this case holds no saved block for it. Read the database for this window."
+	// The note a Timeline lane that draws blocks carries when the newest saved day was read while Query Store was off (lane.Note; the web shows it above the bars).
+	tracingQSOffWithSeriesNote = "Query Store was off when this saved day was read, so these blocks are history it kept."
+	tracingQSOffNewestNote     = "Query Store was off when this saved day was read, so these blocks are history it kept; its newest block starts at %s."
 	// tracingQSLateMsg is a format: its one verb is the UTC time Query Store's history starts.
 	tracingQSLateMsg = tracingQSCheckLead + "Query Store has nothing before %s. It was switched on later, or the older history was cleaned up. The time before that is unknown, not zero."
 )
@@ -78,10 +80,8 @@ func layerSQLLane(imported, held tracingLane) (tracingLane, bool) {
 	out.Truncated = imported.Truncated
 	out.Complete = held.Complete && imported.Complete
 	out.ReasonCode, out.Reason = tracingReasonLayeredSQL, tracingLayeredSQLMsg
-	// What the held lane added after its own sentence (Query Store was off when the day was read) stays on the layered lane.
-	if note, ok := strings.CutPrefix(held.Reason, tracingHeldSQLMsg); ok {
-		out.Reason += note
-	}
+	// The held lane's note (Query Store was off when its day was read) stays on the layered lane.
+	out.Note = held.Note
 	out.Sources = append(append(make([]tracingRef, 0, len(held.Sources)+len(imported.Sources)), imported.Sources...), held.Sources...)
 	// The imported files' time range stays on the lane the owner sees.
 	if out.ImportedFrom == nil {
@@ -145,7 +145,7 @@ func heldSQLQueryStoreLane(held []laneRun, axis tracingAxis, source string) (tra
 	case qs.State == dbhealth.QSStateDenied:
 		code, msg = tracingReasonQSDenied, tracingQSDeniedMsg
 	case qs.State == dbhealth.QSStateOff:
-		code, msg = tracingReasonQSOff, tracingQSOffMessage(qs, axis)
+		code, msg = tracingReasonQSOff, tracingQSOffMessage(qs, newest.Report.Lane, axis)
 	case qs.State == dbhealth.QSStateReadOnly:
 		code, msg = tracingReasonQSReadOnly, tracingQSReadOnlyMsg
 	case qs.FirstData != nil && qs.FirstData.After(axis.Start):
@@ -167,23 +167,42 @@ func heldSQLQueryStoreLane(held []laneRun, axis tracingAxis, source string) (tra
 
 // tracingQSOffMessage says why an off database's saved day gives this window no block. A failed or refused read of the history is never turned into
 // "saved no history". With the kept range known, the words follow the Slow call screen: "none of it is for this window" only when the window ends before
-// the oldest block or starts after the newest block has ended (the block length must be known to place that end); otherwise the saved day simply holds
-// no block for the window. With no range, the plain off sentence stays.
-func tracingQSOffMessage(qs *dbhealth.LaneQueryStore, axis tracingAxis) string {
-	if qs.HistoryUnread {
-		return tracingQSOffUnreadMsg
-	}
+// the oldest block or starts after the newest block has ended (the block length must be known to place that end). Otherwise, when the day's read failed
+// the words say that is not known; when the window lies inside a window the day read cleanly they say it was read and no block with activity falls in it;
+// else the case simply holds no saved block for it. With no range, the plain off sentence stays (or the unread one).
+func tracingQSOffMessage(qs *dbhealth.LaneQueryStore, lane *dbhealth.LaneResult, axis tracingAxis) string {
 	if qs.FirstData == nil || qs.LastData == nil {
+		if qs.HistoryUnread {
+			return tracingQSOffUnreadMsg
+		}
 		return tracingQSOffMsg
 	}
 	first, last := qs.FirstData.UTC(), qs.LastData.UTC()
 	from, to := first.Format(time.RFC3339), last.Format(time.RFC3339)
 	before := !axis.End.After(first)
 	after := qs.IntervalMinutes > 0 && !axis.Start.Before(last.Add(time.Duration(qs.IntervalMinutes)*time.Minute))
-	if before || after {
+	switch {
+	case before || after:
 		return fmt.Sprintf(tracingQSOffOutsideMsg, from, to)
+	case qs.HistoryUnread:
+		return fmt.Sprintf(tracingQSOffRangeUnreadMsg, from, to)
+	case laneReadWindow(lane, axis):
+		return fmt.Sprintf(tracingQSOffEmptyMsg, from, to)
 	}
 	return fmt.Sprintf(tracingQSOffNotReadMsg, from, to)
+}
+
+// laneReadWindow says whether the Timeline window lies inside one of the two windows the saved day read (its incident or its comparison period).
+func laneReadWindow(lane *dbhealth.LaneResult, axis tracingAxis) bool {
+	if lane == nil {
+		return false
+	}
+	for _, w := range []dbhealth.Window{lane.Incident, lane.Reference} {
+		if !w.Start.IsZero() && w.End.After(w.Start) && !axis.Start.Before(w.Start) && !axis.End.After(w.End) {
+			return true
+		}
+	}
+	return false
 }
 
 // heldReportDecodes counts the saved reports decoded from JSON for the held SQL lane. Tests read it to prove a repeated
@@ -295,7 +314,9 @@ func tracingHeldSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis,
 	intervalMin := 0
 	// maxPointBlock is the longest span one saved point covers: lane downsampling merges points (DATA-04).
 	var maxPointBlock int64
-	for _, lr := range sqlRuns {
+	// newestDrew is set when the newest day with blocks gave a block inside the window (older days of the source may have been read while it was on).
+	newestDrew := false
+	for i, lr := range sqlRuns {
 		if lr.source() != source {
 			continue
 		}
@@ -322,6 +343,9 @@ func tracingHeldSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis,
 			a.sumMs += p.AvgMs * float64(p.Execs)
 			a.maxMs = max(a.maxMs, p.MaxMs)
 			a.filled = true
+			if i == 0 {
+				newestDrew = true
+			}
 			total += p.Execs
 			maxPointBlock = max(maxPointBlock, p.BlockSeconds)
 		}
@@ -372,15 +396,16 @@ func tracingHeldSQLLane(ctx context.Context, c casestore.Case, axis tracingAxis,
 		}
 	}
 	sort.Slice(lane.Buckets, func(i, j int) bool { return lane.Buckets[i].Start.Before(lane.Buckets[j].Start) })
-	// The newest saved day with blocks was read while Query Store was off: the blocks are what it kept, and the lane says so.
-	if qs := sqlRuns[0].Report.Lane.QueryStore; qs != nil && qs.State == dbhealth.QSStateOff {
+	// The newest saved day with blocks was read while Query Store was off, and it drew at least one of these blocks: the lane says so (Note, not Reason,
+	// so the sentence over a drawn lane stays the plain one).
+	if qs := sqlRuns[0].Report.Lane.QueryStore; qs != nil && qs.State == dbhealth.QSStateOff && newestDrew {
 		if qs.LastData != nil {
-			lane.Reason += fmt.Sprintf(tracingQSOffNewestMsg, qs.LastData.UTC().Format(time.RFC3339))
+			lane.Note = fmt.Sprintf(tracingQSOffNewestNote, qs.LastData.UTC().Format(time.RFC3339))
 		} else {
-			lane.Reason += tracingQSOffWithSeriesMsg
+			lane.Note = tracingQSOffWithSeriesNote
 		}
 		if at := sqlRuns[0].Run.At.UTC(); at.Before(axis.End) {
-			lane.Reason += fmt.Sprintf(tracingQSStaleMsg, at.Format(time.RFC3339))
+			lane.Note += fmt.Sprintf(tracingQSStaleMsg, at.Format(time.RFC3339))
 		}
 	}
 	_ = now

@@ -115,17 +115,30 @@ function pickKey(input: DbStateInput): DbStateKey {
  */
 function offMessage(input: DbStateInput, from: string | null, to: string | null): string {
   const T = DRILL_TEXT;
+  if (!from || !to || !offRange(input)) return input.queryStore?.historyUnread ? T.dbMsgOffUnread : T.dbMsgOff;
+  return offOutside(input) ? T.dbMsgOffOutside(from, to) : T.dbMsgOffNotRead(from, to);
+}
+
+/** The kept range as numbers, or null when either end is missing or unreadable. */
+function offRange(input: DbStateInput): { first: number; last: number } | null {
   const first = input.queryStore?.firstData ? Date.parse(input.queryStore.firstData) : NaN;
   const last = input.queryStore?.lastData ? Date.parse(input.queryStore.lastData) : NaN;
-  if (!from || !to || !Number.isFinite(first) || !Number.isFinite(last)) return input.queryStore?.historyUnread ? T.dbMsgOffUnread : T.dbMsgOff;
+  return Number.isFinite(first) && Number.isFinite(last) ? { first, last } : null;
+}
+
+/**
+ * True only when the window is provably outside the kept range: it ends before the oldest block starts, or starts after the newest block has ended
+ * (the block length, the longer of the lane's and Query Store's own, must be known to place that end). Anything else may hold kept blocks.
+ */
+function offOutside(input: DbStateInput): boolean {
+  const range = offRange(input);
+  if (!range) return false;
   // The longer of the lane's block length and Query Store's own: a shorter one would pull the end of the range in and call a window "outside" that
   // the newest block still covers.
   const lengths = [input.blockSeconds, typeof input.queryStore?.intervalMinutes === 'number' ? input.queryStore.intervalMinutes * 60 : null]
     .filter((n): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0);
   const blockMs = lengths.length ? Math.max(...lengths) * 1000 : NaN;
-  const before = input.windowEnd <= first;
-  const after = Number.isFinite(blockMs) && input.windowStart >= last + blockMs;
-  return before || after ? T.dbMsgOffOutside(from, to) : T.dbMsgOffNotRead(from, to);
+  return input.windowEnd <= range.first || (Number.isFinite(blockMs) && input.windowStart >= range.last + blockMs);
 }
 
 export function dbState(input: DbStateInput, fmt: DbStateFormat): DbStateView {
@@ -146,8 +159,8 @@ export function dbState(input: DbStateInput, fmt: DbStateFormat): DbStateView {
     iso && !Number.isNaN(Date.parse(iso)) ? fmt.date(iso) + ', ' + fmt.time(iso) : null;
   const keptFrom = stampOf(input.queryStore?.firstData);
   const keptTo = stampOf(input.queryStore?.lastData);
-  // An off database whose history read failed, with no kept range to compare: the short label says not read, never "not recorded".
-  const offUnread = input.queryStore?.historyUnread === true && !(keptFrom && keptTo);
+  // An off database whose history read failed, unless the window is provably outside the kept range: the short label says not read, never "not recorded".
+  const offUnread = input.queryStore?.historyUnread === true && !offOutside(input);
   const shape = SHAPE[key];
   // The 'blackbox' reason code is the host batch-throughput contract; every other state draws concurrency.
   const measure: LaneMeasure = key === 'blackbox' ? 'batch-rate' : 'at-once';
