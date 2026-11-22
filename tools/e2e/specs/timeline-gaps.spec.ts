@@ -98,16 +98,16 @@ test('TLGAP-02: the UTC readout names both periods, follows a quick range and a 
   await openTimeline(page);
   const traces = countTraces(page);
   const echo = card(page).getByTestId('tp-metaline');
-  await expect(echo).toContainText('UTC 2026-10-20T08:00:00Z – 2026-10-20T09:00:00Z');
+  await expect(echo).toContainText('UTC 2026-10-20T08:00Z – 2026-10-20T09:00Z');
   await expect(echo).toContainText('compared with');
-  await expect(echo).toContainText('UTC 2026-10-20T07:00:00Z – 2026-10-20T08:00:00Z');
+  await expect(echo).toContainText('UTC 2026-10-20T07:00Z – 2026-10-20T08:00Z');
   await expect(echo).toContainText('Times are in');
   await expect(echo).toContainText('stores UTC');
   await card(page).locator('.chip[data-quick-id="4h"]').click();
-  await expect(card(page).getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-20T05:00:00Z – 2026-10-20T09:00:00Z');
-  await expect(card(page).getByTestId('utc-echo-reference')).toHaveText('UTC 2026-10-20T01:00:00Z – 2026-10-20T05:00:00Z');
+  await expect(card(page).getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-20T05:00Z – 2026-10-20T09:00Z');
+  await expect(card(page).getByTestId('utc-echo-reference')).toHaveText('UTC 2026-10-20T01:00Z – 2026-10-20T05:00Z');
   await setWindow(page, 'incident', '2026-10-19T22:30', '2026-10-20T01:30');
-  await expect(card(page).getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-19T22:30:00Z – 2026-10-20T01:30:00Z');
+  await expect(card(page).getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-19T22:30Z – 2026-10-20T01:30Z');
   expect(traces.count(), 'a quick range and a picker never read by themselves').toBe(0);
 });
 
@@ -132,7 +132,7 @@ test('TLGAP-03: the time boxes are 24-hour (hour 00-23 and minute) and the windo
   await expect(dialog).toBeHidden();
   await setWindow(page, 'incident', '2026-10-19T22:30', '2026-10-20T01:30');
   await expect(pickerButton(page, 'incident')).toContainText('22:30');
-  await expect(card(page).getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-19T22:30:00Z – 2026-10-20T01:30:00Z');
+  await expect(card(page).getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-19T22:30Z – 2026-10-20T01:30Z');
   // The box is a keyboard control: a drop-down takes the arrow keys and Escape still closes the picker.
   await openPicker(page, 'incident');
   await pickerTime(page, 'incident', 'end time').getByRole('combobox', { name: 'Incident window end time hour', exact: true }).focus();

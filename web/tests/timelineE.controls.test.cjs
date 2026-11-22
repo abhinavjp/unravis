@@ -89,10 +89,11 @@ test('the UTC readout wording is fixed and comes from the window text', () => {
   const w = windows.WINDOW_TEXT;
   assert.equal(w.metaCompared, 'compared with');
   assert.equal(w.metaUnset, 'not set');
-  assert.ok(w.metaZoneTail.includes('stores UTC'));
+  assert.ok(w.metaStoresUtc.includes('stores UTC'), 'the fact is kept, for screen readers and the tooltip');
+  assert.ok(!w.metaZoneTail.includes('stores UTC'), 'but it is not drawn: it made the readout a second line on a desktop');
   const paper = read('src/components/TracingPaper.svelte');
-  assert.ok(paper.includes('`UTC ${start}:00Z – ${end}:00Z`'));
-  assert.deepEqual(lintScreenStrings(['controlsLabel', 'metaCompared', 'metaUnset', 'metaZoneLead', 'metaZoneTail'].map((key) => ({ id: 'window.' + key, text: w[key] })), deck.terms), []);
+  assert.ok(paper.includes('`UTC ${start}Z – ${end}Z`'));
+  assert.deepEqual(lintScreenStrings(['controlsLabel', 'metaCompared', 'metaUnset', 'metaZoneLead', 'metaZoneTail', 'metaStoresUtc'].map((key) => ({ id: 'window.' + key, text: w[key] })), deck.terms), []);
 });
 
 test('the chart says how much time one bar covers, from the grid it draws', () => {
