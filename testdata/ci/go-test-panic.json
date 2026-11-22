@@ -1,0 +1,4 @@
+{"Action":"fail","Package":"p/b","Test":"TestKnown","Elapsed":0}
+{"Action":"output","Package":"p/e","Test":"TestCrash","Output":"panic: runtime error: boom [recovered, repanicked]\n"}
+{"Action":"fail","Package":"p/e","Test":"TestCrash","Elapsed":0}
+{"Action":"fail","Package":"p/e","Elapsed":0}

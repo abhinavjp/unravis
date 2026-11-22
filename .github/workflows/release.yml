@@ -186,6 +186,12 @@ jobs:
           ./build.ps1 -SkipWeb -SkipTests -Release -Version "${{ steps.tag.outputs.version }}" @sign
           Copy-Item -LiteralPath 'dist/unravis-setup.exe' -Destination "dist/unravis-setup-v${{ steps.tag.outputs.version }}-windows-x64.exe" -Force
 
+      - name: No UPX in dist (BL-421)
+        shell: pwsh
+        run: |
+          ./tools/release/Test-NoUpx.ps1 -Path dist
+          if ($LASTEXITCODE -ne 0) { throw 'a packed exe is in dist.' }
+
       - name: Build dist\unravis-blackbox.exe and its zip
         # The Blackbox is built once, by build.ps1 (with -trimpath and -X main.version), and the app is pinned to
         # its SHA-256. -Reuse packs those same bytes, so the zip's exe is the one the app accepts as its helper
