@@ -116,12 +116,12 @@ test('C: the four cards keep the wireframe words', () => {
   const byId = Object.fromEntries(copy.FILE_CARDS.map((card) => [card.id, card]));
   assert.deepEqual(copy.FILE_CARDS.map((card) => card.button), ['Add IIS logs', 'Add app logs', 'Add export', 'Add audit export']);
   assert.equal(byId.iis.title, 'IIS logs (W3C)');
-  assert.match(byId.iis.text, /^Gives time-taken per request\. Used for O in Step 3\./);
+  assert.match(byId.iis.text, /^Gives how long each web request took, so slow calls can be found\./);
   assert.equal(byId.iis.chip, 'needs time-taken field');
-  assert.equal(byId.app.text, 'Errors and warnings near onset. Used by Step 5 only.');
+  assert.equal(byId.app.text, 'Errors and warnings from around the time of the problem.');
   assert.equal(byId.querystore.text, 'For SQL you cannot connect to. A CSV from the sys.query_store views.');
   assert.match(byId.audit.text, /^For a Mongo you cannot connect to\./);
-  assert.equal(copy.CARDS_TEXT.footer, 'No step needs application logs or a Query Store export to start. IIS logs and audit exports feed the main steps (2 to 4).');
+  assert.equal(copy.CARDS_TEXT.footer, 'You can start with only IIS logs or an audit export. Application logs and a Query Store export are extras.');
 });
 
 test('C: every card input has its own name', () => {

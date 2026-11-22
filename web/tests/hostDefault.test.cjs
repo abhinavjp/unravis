@@ -238,3 +238,27 @@ test('createNow does not loop on a file that is refused again', async () => {
   // First run, one mend, one re-read. Never a third.
   assert.ok(api.log.length <= 2, 'tried at most twice, got ' + api.log.length);
 });
+
+// ---- recognising a file by its content when its name says nothing
+
+const { sniffKind } = loadTypeScript('src/lib/sniffKind.ts');
+const copyCreate = loadTypeScript('src/lib/copy/wizardCreateCopy.ts');
+
+test('sniffKind: an IIS web log, an HTTP.sys log and a log4net block log are recognised without their names', () => {
+  assert.equal(sniffKind('#Software: Microsoft Internet Information Services 10.0\r\n#Fields: date time s-computername\r\n'), 'iis-w3c');
+  assert.equal(sniffKind('﻿#Fields: date time cs-uri-stem time-taken\n2026-10-20 08:00:06 /a 12\n'), 'iis-w3c');
+  assert.equal(sniffKind('#Software: Microsoft HTTP API 2.0\n#Fields: date time c-ip s-reason\n'), 'iis-httperr');
+  assert.equal(sniffKind('Logger name: A.B\nType: INFO\nServer Time: 2026-10-19 09:57:07.013\n'), 'app-log');
+});
+
+test('sniffKind: prose, CSV and an empty head are left unrecognised', () => {
+  assert.equal(sniffKind('Just some notes about the outage.\nNothing else.'), '');
+  assert.equal(sniffKind('a,b,c\n1,2,3\n'), '');
+  assert.equal(sniffKind(''), '');
+  assert.equal(sniffKind('#Fields: a b c\n'), '');
+});
+
+test('a source with no environment, portal or API reads as one plain line, not three "not named"', () => {
+  assert.equal(copyCreate.tagLine({ env: '', portal: '', api: '' }), 'Not tied to an environment, portal or API.');
+  assert.equal(copyCreate.tagLine({ env: 'Production', portal: '', api: '' }), 'Production > not named > not named');
+});

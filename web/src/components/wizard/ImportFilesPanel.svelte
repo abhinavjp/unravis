@@ -8,7 +8,7 @@
   import { isZipName, readZip } from '../../lib/zipRead';
   import { BATCH_TEXT, batchHostWarnText, batchImportText, batchReasonText, formatBytes, sizeProblemText, verdictLabel, zipSkippedText } from '../../lib/copy/importCopy';
   import {
-    CARDS_TEXT, FILES_TEXT, FILE_CARDS, FILE_KIND_LABELS, EXTRA_KIND_LABELS, addFilesText, cardCountText, cardGroupHeading, cardInputLabel, addedText, alreadyListedText, chosenKindText, dropUnreadableText, hostAutoHint, kindSelectLabel, removeRowLabel, looksLikeText, readsText, skippedText, zoneText, zoneWarnText
+    CARDS_TEXT, FILES_TEXT, FILE_CARDS, FILE_KIND_LABELS, EXTRA_KIND_LABELS, addFilesText, cardCountText, cardGroupHeading, cardInputLabel, addedText, alreadyListedText, chosenKindText, dropUnreadableText, hostAutoHint, kindSelectLabel, removeRowLabel, looksLikeText, readsText, removeLeftOutText, skippedText, zoneText, zoneWarnText
   } from '../../lib/copy/fileKindsCopy';
   import type { FileCard } from '../../lib/copy/fileKindsCopy';
   import IisGuide from './IisGuide.svelte';
@@ -272,6 +272,13 @@
     void focusChoose();
   }
 
+  // Files that will not be read (not recognised, empty, too big) can be dropped all at once, so a folder with a few strays is not a clean-up job.
+  const leftOut = $derived(list.filter((item) => !ready.includes(item)));
+  async function removeLeftOut() {
+    staging.setList(list.filter((item) => ready.includes(item)));
+    await focusChoose();
+  }
+
   async function add() {
     const left = list.length - ready.length;
     const result = addStagedFiles(ready);
@@ -430,6 +437,7 @@
       {:else}
         <div class="actions">
           <button type="button" class="primary-button" disabled={ready.length === 0} onclick={() => void add()}>{addFilesText(ready.length)}</button>
+          {#if leftOut.length >= 2}<button type="button" class="quiet-button" data-remove-left-out onclick={() => void removeLeftOut()}>{removeLeftOutText(leftOut.length)}</button>{/if}
           <button type="button" class="quiet-button" onclick={clear}>{FILES_TEXT.clear}</button>
         </div>
       {/if}

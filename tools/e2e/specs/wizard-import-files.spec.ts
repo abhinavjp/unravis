@@ -64,6 +64,23 @@ test('FILES-01: two IIS files and one unknown file show their kinds, the guide i
   await expect(page.getByText('Choose a file for each file source')).toHaveCount(0);
 });
 
+test('FILES-13: a file whose name says nothing is recognised by what is inside it, and two or more left-out files can be removed at once', async ({ page }) => {
+  await openPanel(page, 'QA Content Sniff');
+  // app-log4net.txt does not look like a log by its name; its first lines do.
+  await page.getByLabel('Choose files to import').setInputFiles([join(FILES, 'app-log4net.txt'), NOTES, join(FILES, 'empty.log'), join(FILES, 'report-empty.csv')]);
+  await expect(page.getByLabel('What app-log4net.txt is')).not.toHaveValue('');
+  await expect(page.getByLabel('What notes.txt is')).toHaveValue('');
+  const remove = page.locator('[data-remove-left-out]');
+  // notes.txt, empty.log and report-empty.csv are all left out.
+  await expect(remove).toHaveText('Remove the 3 files left out');
+  await remove.click();
+  await expect(remove).toHaveCount(0);
+  await expect(page.getByLabel('What notes.txt is')).toHaveCount(0);
+  await expect(page.getByLabel('What empty.log is')).toHaveCount(0);
+  // The recognised file stays.
+  await expect(page.getByLabel('What app-log4net.txt is')).not.toHaveValue('');
+});
+
 test('FILES-02: a kind can be changed, a zip that is not a zip is left out with a note, and Clear empties the list', async ({ page }) => {
   await openPanel(page, 'QA Import Files Change');
   await page.getByLabel('Choose files to import').setInputFiles([

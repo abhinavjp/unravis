@@ -20,6 +20,7 @@ export const CREATE_TEXT = {
   keyOff: 'None. This case has no key of its own.',
   sourcesLabel: 'Sources',
   notNamed: 'not named',
+  noTags: 'Not tied to an environment, portal or API.',
   noEnvs: 'No environments named. You can name them later.',
   noSources: 'No sources chosen. The case will be made empty, and you can add data from inside it.',
   windowLabel: 'How far back to read the logs of this computer',
@@ -99,8 +100,9 @@ export function summaryText(counts: { environments: number; portals: number; api
   return plural(counts.environments, 'environment', 'environments') + ', ' + plural(counts.portals, 'portal', 'portals') + ', ' + plural(counts.apis, 'API', 'APIs') + ', ' + plural(counts.shared, 'shared source', 'shared sources');
 }
 
-/** The tags of one source in words: "Production > Portal A > not named". */
+/** The tags of one source in words: "Production > Portal A > not named", or one plain line when none is named. */
 export function tagLine(source: { env: string; portal: string; api: string }): string {
+  if (!source.env && !source.portal && !source.api) return CREATE_TEXT.noTags;
   return [source.env, source.portal, source.api].map((part) => part || CREATE_TEXT.notNamed).join(' > ');
 }
 
