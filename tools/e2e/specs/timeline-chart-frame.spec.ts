@@ -235,14 +235,14 @@ test('TLF-08: the web-server lane shows refused answers, a response-time line an
   expect(await iis.locator('[data-testid="bar-warn"]').count(), 'an amber part on bars with refused answers').toBeGreaterThanOrEqual(1);
   expect(await iis.locator('svg.latency polyline.p95').count(), 'a solid P95 line').toBeGreaterThanOrEqual(1);
   await expect(iis.locator('.mark.flagged')).toHaveCount(1);
-  await expect(iis.locator('.mark-label')).toHaveText('45 s');
+  await expect(iis.locator('.mark-label')).toHaveText('45.0 s');
 
   const legend = page.getByTestId('web-legend');
   await expect(legend).toContainText('Web-server requests per interval');
   await expect(legend).toContainText('Refused or not found (4xx)');
   await expect(legend).toContainText('Slow end (P95)');
   await expect(page.getByTestId('web-note')).toContainText('were refused or not found (4xx)');
-  await expect(page.getByTestId('web-outlier-note')).toContainText('45 s');
+  await expect(page.getByTestId('web-outlier-note')).toContainText('45.0 s');
 });
 
 // TLF-09  The SQL lane drawn from a saved Query Store day: statements per interval (bars), an average-time line, a red diamond for
@@ -276,5 +276,5 @@ test('TLF-09: the SQL lane shows statements per interval, an average-time line a
   await expect(legend).toContainText('Statements run per interval');
   await expect(legend).toContainText('Slowest statement');
   await expect(legend).toContainText('Far slower than usual');
-  await expect(page.getByTestId('sql-outlier-note')).toContainText('30 s');
+  await expect(page.getByTestId('sql-outlier-note')).toContainText('30.0 s');
 });

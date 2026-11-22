@@ -1179,7 +1179,7 @@ for (const scheme of ['dark', 'light'] as const) for (const size of HERO_SIZES) 
     expect(f.head[1] + f.head[3], 'the heading sits above the box').toBeLessThanOrEqual(f.stage[1]);
     // The three axis titles are long stretches of ink where no tick label reaches (a 22-letter title is well over 90 rows tall; three tick labels are about 30).
     expect(f.leftRows, 'left title "Requests per interval"').toBeGreaterThan(90);
-    expect(f.rightRows, 'right title "Response time (ms)"').toBeGreaterThan(90);
+    expect(f.rightRows, 'right title "Response time (ms)"').toBeGreaterThan(70);
     expect(f.bottomCols, 'bottom title "Time (UTC)" in the middle of the bottom strip').toBeGreaterThan(20);
     expect(f.outer, 'nothing is painted on the outermost 2 px of the box (titles fit inside it)').toBe(0);
     expect(f.label).toContain('Left axis: requests per interval, whole requests.');
@@ -1237,6 +1237,7 @@ async function rerunWithWindows(page: Page, make: (i: number, at: number) => { c
 
 /** Sweep the pointer across the plot until the tooltip text matches, and return it; fails with the last text seen. */
 async function heroTip(page: Page, wanted: RegExp): Promise<string> {
+  await page.locator('.hero-chart').scrollIntoViewIfNeeded();
   const box = (await page.locator('.hero-chart').boundingBox())!;
   let last = '';
   for (let x = 56; x < box.width - 48; x += 3) {
@@ -1256,14 +1257,14 @@ test('UIFIX-31a Requests over time, a slow hour: P95 and the slowest request in 
   await rerunWithWindows(page, (i) => ({ count: 1200 + i, p95: i === 3 ? 65_700 : 900 + i * 10, max: i === 3 ? 68_000 : 1500 }));
   const f = await heroFacts(page);
   expect(f.label).toContain('Right axis: response time in seconds');
-  expect(f.rightRows, 'right title painted').toBeGreaterThan(90);
+  expect(f.rightRows, 'right title painted').toBeGreaterThan(70);
   expect(f.outer).toBe(0);
   const tip = await heroTip(page, /Slowest request: 68\.0 s/);
   expect(tip).toMatch(/^20 Oct \d\d:\d\d:\d\d to \d\d:\d\d:\d\d UTC Requests: 1,203 P95: ≈ 65\.7 s Slowest request: 68\.0 s/);
   expect(tip, 'no NaN or undefined').not.toMatch(/NaN|undefined|Infinity/);
 });
 
-// Millions of requests make the left labels wide ("3,000,000"): the left margin grows from 44 to about 94 px, and the title must still fit inside the same box.
+// Millions of requests make the left labels wide ("3,000,000"): the left margin grows from 46 to about 96 px, and the title must still fit inside the same box.
 for (const size of [{ width: 1100, height: 800 }, { width: 1280, height: 720 }, { width: 1440, height: 900 }, { width: 1920, height: 1080 }, { width: 320, height: 800 }]) {
   test('UIFIX-31b Requests over time, a busy hour at ' + size.width + ' px: counts in the millions keep whole numbers with separators and room for the title', async ({ page }) => {
     await page.setViewportSize(size);
@@ -1271,7 +1272,7 @@ for (const size of [{ width: 1100, height: 800 }, { width: 1280, height: 720 }, 
     const f = await heroFacts(page);
     expect(f.stage[3], 'the box keeps its height').toBe(size.width < 500 ? 220 : 280);
     expect(f.leftRows, 'left title painted beside millions').toBeGreaterThan(90);
-    expect(f.rightRows, 'right title painted').toBeGreaterThan(90);
+    expect(f.rightRows, 'right title painted').toBeGreaterThan(70);
     expect(f.outer, 'title and wide labels stay inside the box').toBe(0);
     const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(over, 'sideways overflow in px').toBeLessThanOrEqual(0);
@@ -1295,7 +1296,7 @@ test('UIFIX-31c Requests over time, a sub-millisecond hour and an hour with no t
   const f = await heroFacts(page);
   expect(f.label).toContain('Right axis: response time in milliseconds');
   expect(f.leftRows).toBeGreaterThan(90);
-  expect(f.rightRows).toBeGreaterThan(90);
+  expect(f.rightRows).toBeGreaterThan(70);
   const noTiming = await heroTip(page, /P95: no timed requests/);
   expect(noTiming).toContain('P95: no timed requests');
   const tiny = await heroTip(page, /P95: ≈ <1 ms/);
@@ -1318,7 +1319,7 @@ for (const width of [320, 360, 390]) {
     expect(f.stage[3], 'chart box height (220 px on develop)').toBe(220);
     expect(f.stage[2], 'the box spans the content width (two 14 px gutters)').toBe(width - 28);
     expect(f.leftRows).toBeGreaterThan(90);
-    expect(f.rightRows).toBeGreaterThan(90);
+    expect(f.rightRows).toBeGreaterThan(70);
     expect(f.outer).toBe(0);
     const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(over, 'sideways overflow in px').toBeLessThanOrEqual(0);

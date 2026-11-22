@@ -158,9 +158,10 @@ export const heroOption = (windows: HeroSlot[], zone: string, withLatency: boole
       ? { value: max, symbol: 'diamond', symbolSize: 11, itemStyle: { color: p.bad }, label: { show: labelled.has(index), position: 'top', distance: 4, color: p.bad, fontSize: 11, formatter: () => durationText(max) ?? '' } }
       : { value: max, symbol: 'circle', symbolSize: 5, itemStyle: { color: 'transparent', borderColor: p.text2, borderWidth: 1, opacity: .7 } };
   });
-  // Axis titles sit outside the tick labels. Labels start 8 px from the axis line; the title (12 px text, 14 px tall) is centred a half title and 4 px
-  // beyond the widest label, and the margin holds the whole title plus 3 px, so the title never touches a label or the edge of the chart box.
-  const leftGap = labelWidth(counts.widest) + 19, rightGap = labelWidth(times.widest) + 19, titleMargin = 10;
+  // Axis titles sit outside the tick labels. Labels start 8 px from the axis line. ECharts puts the title's near edge `nameGap` from the axis line and
+  // the 12 px text (about 14 px with descenders) runs outward from there, so the gap is the widest label plus 6 px of air, and the margin holds
+  // the gap, the whole title and 3 px, which keeps the title inside the chart box (measured with the pixels in UIFIX-30 and 31).
+  const leftGap = labelWidth(counts.widest) + 14, rightGap = labelWidth(times.widest) + 14, titleMargin = 17;
   const titleStyle = { color: p.text2, fontSize: 12 };
   return {
     animation: false,

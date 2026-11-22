@@ -238,7 +238,7 @@ test('heroOption: the margins grow with the label width (a count in the millions
   assert.ok(many.grid.left > few.grid.left);
   assert.ok(many.yAxis[0].nameGap > few.yAxis[0].nameGap);
   // the title never sits on the tick labels
-  assert.ok(many.grid.left >= many.yAxis[0].nameGap + 7 + 3, 'half the title and 3 px of air beyond its centre');
+  assert.ok(many.grid.left >= many.yAxis[0].nameGap + 14 + 3, 'the whole title and 3 px of air beyond the gap');
 });
 
 test('heroOption: tooltip names the interval start and end and writes P95 and the slowest request alike', () => {
@@ -310,9 +310,9 @@ test('one slow request reads the same on the diamond, in the tooltip and in the 
   assert.ok(!/68,000/.test(tip + diamond + note));
 });
 
-test('heroOption: the right margin and the left margin follow the data (a count in the millions takes 94 px, a count under 100 takes 44)', () => {
+test('heroOption: the right margin and the left margin follow the data (a count in the millions takes about 96 px, a count under 100 takes 46)', () => {
   const small = heroOption([slot(0, 10, 200, 300)], 'UTC', true);
   const millions = heroOption([slot(0, 2_450_000, 200, 300)], 'UTC', true);
-  assert.equal(small.grid.left, 44);
-  assert.ok(millions.grid.left >= 90 && millions.grid.left <= 100, 'left margin ' + millions.grid.left);
+  assert.equal(small.grid.left, 46);
+  assert.ok(millions.grid.left >= 92 && millions.grid.left <= 102, 'left margin ' + millions.grid.left);
 });
