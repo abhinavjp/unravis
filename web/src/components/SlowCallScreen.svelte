@@ -568,8 +568,8 @@
     [data-layout='w1'].scall-grid { grid-template-columns: minmax(0, 1fr); }
   }
 
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 8px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
-  .btn.outlined { color: var(--text); background: transparent; border: 1px solid var(--line); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 33px; padding: 8px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+  .btn.outlined { color: var(--text); background: transparent; border: 1px solid var(--control-line); }
   .btn.outlined:hover { border-color: var(--text-2); background: var(--surface-2); }
   .btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 

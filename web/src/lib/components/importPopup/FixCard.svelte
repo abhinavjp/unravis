@@ -202,7 +202,7 @@
   .resolved-line svg { flex: 0 0 auto; }
   .fail { margin: 0; color: var(--bad); font-size: 12px; }
 
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: var(--radius); padding: 8px 14px; font-size: 13px; font-weight: 600; min-height: 36px; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: var(--radius); padding: 8px 14px; font-size: 13px; font-weight: 600; min-height: 33px; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
   .btn-primary { color: var(--accent-ink); background: var(--accent); border: 1px solid var(--accent); }
   .btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
   .btn-primary:disabled { color: var(--text-2); background: var(--surface-2); border-color: var(--control-line); cursor: default; }

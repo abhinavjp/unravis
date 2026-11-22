@@ -139,8 +139,8 @@
   .drop-sub { margin: 0; color: var(--text-2); font-size: 13px; }
   .drop-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 8px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
-  .btn-secondary { color: var(--text); background: transparent; border: 1px solid var(--line); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 33px; padding: 8px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+  .btn-secondary { color: var(--text); background: transparent; border: 1px solid var(--control-line); }
   .btn-secondary:hover { border-color: var(--text-2); background: var(--surface-2); }
 
   .groups { margin-top: 14px; }
