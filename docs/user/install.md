@@ -142,6 +142,7 @@ unravis-setup.exe --silent --config setup.json [--log C:\path\setup.log]
 - `scope` is required: `"user"` or `"machine"`. `location` is optional.
 - `blackbox` and `firewall` are optional. `firewall` needs `blackbox`.
 - `readKeyFile` is required when a Blackbox is placed. The read key is written there once, readable only by you. The file must not exist yet: setup never replaces a file, and it makes the new file with its permissions already set. Silent mode shows it nowhere else.
+- `releases` (optional, default false) also installs the read-only Unravis Releases window (Start menu entry "Unravis Releases"). The same switch on the command line is `--with-releases`. Once installed it is kept up to date by updates.
 - `startAtSignIn` defaults to true. `openWhenDone` is accepted but ignored: silent mode never opens a window.
 - Keys are case sensitive. An unknown key, a wrong type, a second JSON value or a file over 64 KB stops setup with a sentence that names the problem, before it changes anything. A Notepad UTF-8 mark at the start is fine.
 - A key set to `null` counts as left out, as if it were not in the file. For `scope` that gives the same sentence as a missing `scope`.
