@@ -1,6 +1,7 @@
 name: CI
 
-# Runs on every push to master and on every pull request.
+# Full CI. Runs on every push to master and to develop, and on every pull request into master (with the release train
+# that is the pull request that promotes develop; pull requests into develop run fast-gate.yml instead, see docs/ci/RELEASE-TRAIN.md).
 #
 # Shape (BL-197 speed-up). The required status check is the job named `build` and nothing else:
 # it is a thin gate that needs the parallel jobs below and fails when any of them fails. Branch
@@ -41,8 +42,9 @@ name: CI
 # commit it (the marker file comes with the pictures).
 on:
   push:
-    branches: [master]
+    branches: [master, develop]
   pull_request:
+    branches: [master]
   workflow_dispatch:
     inputs:
       regenerate_baselines:
@@ -54,8 +56,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A push to master gets its own group per commit and is never cancelled: the release manager pins a master commit whose
+  # run on master is green, and a newer merge must not cancel that run. A push to develop is cancelled by the next one
+  # (only the newest develop commit needs the full run). A pull request is cancelled by its own next push.
+  group: ci-${{ github.workflow }}-${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/develop' }}
 
 jobs:
   changes:
@@ -202,8 +207,8 @@ jobs:
           # shellcheck disable=SC2086
           go test -p 2 -timeout 25m $packages
 
-      - name: Go build cache - save (master only, once a week)
-        if: ${{ success() && github.ref == 'refs/heads/master' && steps.gocache.outputs.cache-hit != 'true' }}
+      - name: Go build cache - save (master and develop pushes, once a week)
+        if: ${{ success() && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop') && steps.gocache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ${{ steps.cachekey.outputs.dir }}
@@ -384,8 +389,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Exe build cache - save (master only, once a week)
-        if: ${{ success() && github.ref == 'refs/heads/master' && steps.execache.outputs.cache-hit != 'true' }}
+      - name: Exe build cache - save (master and develop pushes, once a week)
+        if: ${{ success() && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop') && steps.execache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
@@ -393,8 +398,8 @@ jobs:
             .dev/toolchains/cache/mod
           key: go-exe-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cachekey.outputs.week }}
 
-      - name: Go build cache (vet) - save (master only, once a week)
-        if: ${{ success() && github.ref == 'refs/heads/master' && steps.vetcache.outputs.cache-hit != 'true' }}
+      - name: Go build cache (vet) - save (master and develop pushes, once a week)
+        if: ${{ success() && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop') && steps.vetcache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ${{ steps.cachekey.outputs.dir }}
