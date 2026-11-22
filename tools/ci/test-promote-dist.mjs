@@ -2,7 +2,7 @@
 //   node tools/ci/test-promote-dist.mjs
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -63,8 +63,8 @@ function fixture(srcValue, { dist = srcValue, extra = {} } = {}) {
 }
 const remoteName = (p) => p;
 
-const promote = (f, extra = []) =>
-  spawnSync(process.execPath, [script, '--repo', 'o/r', '--remote', f.url, '--branch', 'promote/abc1234', '--node-version', nodeNow, '--install-cmd', 'node -e 0', '--build-cmd', 'node build.cjs', ...extra], { encoding: 'utf8' });
+const promote = (f, extra = [], opts = {}) =>
+  spawnSync(process.execPath, [opts.script || script, '--repo', 'o/r', '--remote', f.url, '--branch', 'promote/abc1234', '--node-version', nodeNow, '--install-cmd', 'node -e 0', '--build-cmd', opts.build || 'node build.cjs', ...extra], { encoding: 'utf8', env: opts.env || process.env });
 const remoteHead = (f) => sh(f.bare, 'git', ['rev-parse', 'refs/heads/promote/abc1234']);
 
 test('stale committed files: one commit, only the three folders, pushed', () => {
@@ -80,6 +80,45 @@ test('stale committed files: one commit, only the three folders, pushed', () => 
     assert.deepEqual(names, ['cmd/unravis-lite/ui/assets/a.js', 'cmd/unravis-lite/ui/index.html', 'cmd/unravis-setup/ui/assets/a.js', 'cmd/unravis-setup/ui/index.html', 'web/dist/assets/a.js', 'web/dist/index.html']);
     assert.equal(sh(f.bare, 'git', ['log', '-1', '--format=%s', after]), 'Rebuild web files for promotion abc1234');
     assert.equal(sh(f.bare, 'git', ['rev-list', '--count', before + '..' + after]), '1');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('no git identity and no signing prompt: the fallback identity is used', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', HOME: f.base };
+    const r = promote(f, [], { env });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(sh(f.bare, 'git', ['log', '-1', '--format=%an <%ae>', 'promote/abc1234']), 'Unravis promotion <noreply@users.noreply.github.com>');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('the install and the build get no GitHub token; the install runs twice (clean node_modules second time)', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const env = { ...process.env, GH_TOKEN: 'secret', GITHUB_TOKEN: 'secret' };
+    const r = promote(f, [], { env, build: 'node -e "process.exit(process.env.GH_TOKEN || process.env.GITHUB_TOKEN ? 7 : 0)" && node build.cjs' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal((r.stdout.match(/^> install/gm) || []).length, 2);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('started through a symlink: it still does the work (real path compare)', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const link = join(f.base, 'linked');
+    symlinkSync(join(repoRoot, 'tools', 'release'), link, 'dir');
+    const before = remoteHead(f);
+    const r = promote(f, [], { script: join(link, 'promote-dist.mjs') });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /DIST_COMMIT=[0-9a-f]{40}/);
+    assert.notEqual(remoteHead(f), before);
   } finally {
     f.cleanup();
   }

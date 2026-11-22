@@ -205,7 +205,8 @@ function Get-FileSha256([string]$Path) { return (Get-FileHash -Algorithm SHA256 
 # promote/<sha>" made by GitHub. Returns one entry per first-parent commit on that side (Commit^1..Commit^2):
 #   Kind 'pr'      : must be the squash or merge commit of a pull request merged into develop (checked against GitHub by the caller)
 #   Kind 'dist'    : the generated web files commit of the promotion (subject "Rebuild web files for promotion ...", changes only the three
-#                    generated folders). Ok is true then; any other commit with that subject is Kind 'pr'.
+#                    generated folders, case sensitive, and sits above every develop pull request commit). Ok is true then; any
+#                    other commit with that subject is Kind 'pr'.
 #   Kind 'mergein' : a merge whose second parent is already on master (Commit^1) and whose tree is exactly what git's own merge of
 #                    its parents gives (git merge-tree), so it brings in nothing that was not on master or develop. Ok tells.
 # A commit with one parent returns nothing (not a promotion).
@@ -218,6 +219,7 @@ function Get-PromotionSideCommits([string]$RepoRoot, [string]$Commit) {
     $side = @(git -C $RepoRoot rev-list --first-parent "$p1..$p2")
     if ($LASTEXITCODE -ne 0) { throw "git rev-list $p1..$p2 failed." }
     $out = @()
+    $top = $true   # true while only generated/merge-in commits have been seen from the tip of the promote branch downwards
     foreach ($s in $side) {
         $sp = @((git -C $RepoRoot rev-list --parents -n 1 $s) -split ' ' | Select-Object -Skip 1)
         if ($sp.Count -eq 1) {
@@ -225,13 +227,17 @@ function Get-PromotionSideCommits([string]$RepoRoot, [string]$Commit) {
             # rebuilt on the promote branch. It is no pull request. It passes only when its subject is the fixed one AND it changes nothing
             # but the three generated folders. That the bytes equal a fresh build is proved by check-dist in ci.yml (promotion pull request)
             # and release.yml (the tag); a commit with that subject that touches anything else falls through to 'pr' and is refused.
+            # It must also sit at the tip end of the promote branch: only other generated commits and merges of master may come after
+            # it (promote-dist.mjs runs last), so a generated-looking commit buried below a develop pull request is refused. The path
+            # test is case sensitive (-cnotmatch): "UI" is not "ui". Names are read unquoted (core.quotepath=off).
             $subject = (git -C $RepoRoot log -n 1 --format=%s $s)
-            if ($LASTEXITCODE -eq 0 -and "$subject".StartsWith('Rebuild web files for promotion', [StringComparison]::Ordinal)) {
-                $names = @(git -C $RepoRoot diff --no-renames --name-only "$s^1" $s)
-                if ($LASTEXITCODE -eq 0 -and $names.Count -gt 0 -and @($names | Where-Object { $_ -notmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' }).Count -eq 0) {
+            if ($top -and $LASTEXITCODE -eq 0 -and "$subject".StartsWith('Rebuild web files for promotion', [StringComparison]::Ordinal)) {
+                $names = @(git -C $RepoRoot -c core.quotepath=off diff --no-renames --name-only "$s^1" $s)
+                if ($LASTEXITCODE -eq 0 -and $names.Count -gt 0 -and @($names | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' }).Count -eq 0) {
                     $out += [pscustomobject]@{ Sha = $s; Kind = 'dist'; Ok = $true; Why = '' }; continue
                 }
             }
+            $top = $false
             $out += [pscustomobject]@{ Sha = $s; Kind = 'pr'; Ok = $false; Why = '' }; continue
         }
         $ok = $false; $why = 'merge commit that is not a clean merge of master'
@@ -318,7 +324,8 @@ function Get-CommitPullRequests([string]$RepoRoot, [string]$Repo, [string]$Base,
     }
     foreach ($x in $side) {
         if ($onDevelop.ContainsKey($x.Sha)) { $prs[$x.Sha] = $onDevelop[$x.Sha].N; $develop.Add($x.Sha); continue }
-        if (($x.Kind -eq 'mergein' -or $x.Kind -eq 'dist') -and $x.Ok) { continue }   # clean merge of master, or the generated web files commit: nothing new, and not named in the report
+        if ($x.Kind -eq 'dist' -and $x.Ok) { Write-Host "Generated web files commit $($x.Sha.Substring(0, 7)) in the promotion: accepted (subject, folders and position checked; check-dist proves the bytes)."; continue }
+        if ($x.Kind -eq 'mergein' -and $x.Ok) { continue }   # clean merge of master, or the generated web files commit: nothing new, and not named in the report
         $missing.Add($x.Sha)
     }
     return [pscustomobject]@{ Missing = @($missing | Select-Object -Unique); Prs = $prs; Develop = @($develop) }

@@ -122,6 +122,16 @@ if ($LASTEXITCODE -eq 0 -and $existing) {
     foreach ($e in $extra) {
         $esha, $emsg = $e -split ' ', 2
         if ($emsg -like "Merge master into $branch*") { continue }
+        # The generated web files commit of an earlier run of this script (step 4b; the same rule as Get-PromotionSideCommits in
+        # ReleaseLib.ps1): the fixed subject, one parent, and only files under the three generated folders (case sensitive: -cnotmatch).
+        # Without this a re-run after -NoMerge, a slow or failed CI run, or a refused merge would call that commit foreign and demand
+        # that the branch be deleted (closing the pull request and wasting a full CI run). The commit API lists at most 300 files: more is not trusted.
+        if ($emsg -like 'Rebuild web files for promotion*') {
+            $np = [int](Invoke-Gh api "repos/$Repo/commits/$esha" --jq '.parents | length')
+            $gfiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$esha" --jq '.files[].filename')
+            $outside = @($gfiles | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' })
+            if ($np -eq 1 -and $gfiles.Count -gt 0 -and $gfiles.Count -lt 300 -and $outside.Count -eq 0) { continue }
+        }
         if ([int](Invoke-Gh api "repos/$Repo/compare/master...$esha" --jq '.ahead_by') -eq 0) { continue }
         $foreign += $esha.Substring(0, 7)
     }
@@ -131,13 +141,18 @@ if ($LASTEXITCODE -eq 0 -and $existing) {
 else { $null = Invoke-Gh api "repos/$Repo/git/refs" -f "ref=refs/heads/$branch" -f "sha=$sha" }
 if ($cmp.behind -gt 0) {
     $null = & gh api "repos/$Repo/merges" -f "base=$branch" -f 'head=master' -f "commit_message=Merge master into $branch" 2>&1
-    if ($LASTEXITCODE -ne 0) { Stop-Here "master could not be merged into $branch on GitHub (a conflict, most likely). Merge origin/master into develop by pull request, resolve it there, then run again. The branch $branch is left for you to delete." }
+    if ($LASTEXITCODE -ne 0) { Stop-Here "master could not be merged into $branch on GitHub (a conflict, most likely). Merge origin/master into develop by pull request (a merge commit), resolve it there (for the three generated web folders take master's files: git checkout origin/master -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui), then run again. The branch $branch is left for you to delete." }
 }
 # --- 4b. the generated web files, built once for the whole promotion ------------------------------------------------------
 # Runs before the pull request is opened, so its CI run starts once, on the final head. Idempotent: a branch that already holds the
 # rebuilt files gets no new commit. A failure here stops the promotion (nothing is merged; the branch is left for the next run).
-& node (Join-Path $PSScriptRoot 'promote-dist.mjs') --repo $Repo --branch $branch --node-version $DistNodeVersion
-if ($LASTEXITCODE -ne 0) { Stop-Here "Rebuilding the web files for $branch failed (see above). Nothing was merged. Fix the cause and run again; the branch $branch is reused." }
+# The script's own output is shown as it comes and also read: it must end with DIST_COMMIT=none or DIST_COMMIT=<sha>. Without that line
+# (Node exited 0 without doing the work) the promotion stops here instead of opening a pull request that check-dist would fail.
+$distLines = @(& node (Join-Path $PSScriptRoot 'promote-dist.mjs') --repo $Repo --branch $branch --node-version $DistNodeVersion | ForEach-Object { Write-Host $_; $_ })
+$distExit = $LASTEXITCODE
+if ($distExit -ne 0) { Stop-Here "Rebuilding the web files for $branch failed (see above). Nothing was merged. Fix the cause and run again; the branch $branch is reused." }
+$distDone = @($distLines | Where-Object { "$_" -match '^DIST_COMMIT=(none|[0-9a-f]{40})\s*$' })
+if ($distDone.Count -ne 1) { Stop-Here "promote-dist.mjs did not report DIST_COMMIT=none or DIST_COMMIT=<sha>, so it is not known that the web files were rebuilt. Nothing was merged. Run it again, or ask for help; the branch $branch is reused." }
 
 $prList = & gh pr list --repo $Repo --head $branch --base master --state open --json number --jq '.[0].number' 2>$null
 if ($prList) { $pr = [int]$prList; Write-Host "Pull request #$pr already open." }

@@ -24,8 +24,9 @@ name: CI
 # promotion (tools/release/Promote-Develop.ps1) rebuilds and commits them once. So the step "Web - built files match
 # what is committed" compares the build output with the commit byte for byte on the promotion pull request and on
 # master (the release gate), and is skipped on pushes to develop, where the committed files are the last promoted ones.
-# On master the exe is built from the committed files, which that step proves equal to a fresh build; on develop the
-# exe build runs the web build itself, so the develop run tests the current source.
+# On master the exe is built from the committed files, which that step proves equal to a fresh build. On develop the
+# exe (and so the screenshots, which only warn until RUNNER-BASELINES.txt exists) is built from the last promoted files:
+# no second web build is run per push (Windows minutes). The `web` job above still builds the current source on every run.
 #
 # The runner is pinned (windows-2022, not windows-latest): it is also the reference
 # renderer for the screenshots, so it must not change without anyone choosing it.
@@ -321,13 +322,10 @@ jobs:
         run: ./tools/release/Test-Release.ps1
 
       - name: Build dist\unravis.exe
-        # On master and on promotion the web files are the committed ones (the `web` job proves they equal a fresh build), so the
-        # web build is skipped. On develop they are the last promoted ones, not the current source, so build.ps1 builds the web
-        # files itself there (npm ci, check, build). The go-tests jobs already ran go test, so the tests are skipped too.
-        run: |
-          $p = @{ SkipTests = $true; Version = "ci-$($env:GITHUB_SHA.Substring(0, 7))" }
-          if ($env:GITHUB_REF -ne 'refs/heads/develop') { $p.SkipWeb = $true }
-          ./build.ps1 @p
+        # The web files are the committed ones, so the web build is skipped. On master and on promotion the `web` job proves they
+        # equal a fresh build; on develop they are the last promoted ones (docs/pipeline/dist-on-promotion.md). The go-tests jobs
+        # already ran go test, so the tests are skipped too.
+        run: ./build.ps1 -SkipWeb -SkipTests -Version "ci-$($env:GITHUB_SHA.Substring(0, 7))"
 
       - name: No UPX in dist (BL-421 guard and its self-test)
         shell: pwsh
