@@ -226,16 +226,39 @@ func Mask(s, mask string) string {
 	if len(s) < 4 {
 		return s
 	}
-	s = maskXML(s, mask)
-	return maskKV(s, mask)
+	out, _ := maskPend(s, mask)
+	return out
+}
+
+// What a line leaves open for the next one (see Carry).
+const (
+	pendNone         = 0
+	pendBlock        = 1 // a YAML block scalar header ("password: |") ends the line: the indented lines after it are the value
+	pendNext         = 2 // a key ends the line with no value: the next line is the value
+	pendNextIndented = 3 // the same for a compound name after a colon ("client_secret:"): only an indented next line is the value
+)
+
+// maskPend is Mask that also says what the text leaves open at its end.
+func maskPend(s, mask string) (string, int) {
+	if len(s) < 4 {
+		return s, pendNone
+	}
+	s, p1 := maskXML(s, mask)
+	s, p2 := maskKV(s, mask)
+	if p2 > p1 {
+		p1 = p2
+	}
+	return s, p1
 }
 
 // maskKV masks the value after "key=" or "key:" for every secret key in s.
-func maskKV(s, mask string) string {
+func maskKV(s, mask string) (string, int) {
 	locs := findWords(s)
 	if len(locs) == 0 {
-		return s
+		return s, pendNone
 	}
+	pending := pendNone
+	failHi, failClasses := -1, 0 // the classes already tried (and failed) for the name that ends at failHi
 	var edits []edit
 	pos := 0      // everything before pos is read already
 	identEnd := 0 // where the name that the last word sits in ends
@@ -266,8 +289,21 @@ func maskKV(s, mask string) string {
 		}
 		bare := hi-lo == m[1]-m[0]
 		inQuery := lo > 0 && (s[lo-1] == '?' || s[lo-1] == '&')
-		from, to, next, ok := readValue(s, hi, class, inQuery, bare, lo)
+		// A name made of many secret words ("password_password_...") is read once per class, not once per word: the answer depends
+		// on where the name ends and on the class, and reading the same long stretch again for each word would be quadratic.
+		if failHi != hi {
+			failHi, failClasses = hi, 0
+		}
+		if failClasses&(1<<class) != 0 {
+			continue
+		}
+		pend := pendNone
+		from, to, next, ok := readValue(s, hi, class, inQuery, bare, lo, &pend)
+		if pend > pending {
+			pending = pend
+		}
 		if !ok {
+			failClasses |= 1 << class
 			continue
 		}
 		if to > from && s[from:to] != mask {
@@ -275,12 +311,12 @@ func maskKV(s, mask string) string {
 		}
 		pos = next
 	}
-	return apply(s, mask, edits)
+	return apply(s, mask, edits), pending
 }
 
 // readValue reads what follows a key that ends at i: an optional closing quote of the key, the "=" or ":", and the value. It
 // returns the span of the value to mask, where reading went on to, and false when no value follows.
-func readValue(s string, i int, class int, inQuery, bare bool, keyAt int) (from, to, next int, ok bool) {
+func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *int) (from, to, next int, ok bool) {
 	j := i
 	jsonKey := false
 	k := j
@@ -332,10 +368,22 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int) (from,
 			if from, to, found := blockText(s, hdrEnd, keyAt); found {
 				return from, to, to, true
 			}
+			if hdrEnd >= len(s) || (s[hdrEnd] == '\r' && hdrEnd+1 == len(s)) {
+				*pend = pendBlock // the header ends the text: the indented lines that follow are the value
+			}
 			return 0, 0, 0, false
 		}
 	}
 	if j >= len(s) || s[j] == '\r' || s[j] == '\n' {
+		if j >= len(s) || (s[j] == '\r' && j+1 == len(s)) {
+			switch {
+			case colon && class == classToken && !jsonKey && bare:
+			case colon && class != classPassword && !jsonKey:
+				*pend = pendNextIndented
+			default:
+				*pend = pendNext
+			}
+		}
 		if colon && class == classToken && !jsonKey && bare {
 			return 0, 0, 0, false
 		}
@@ -587,7 +635,16 @@ func bracketEnd(s string, i int) int {
 // blockHeader says whether the text at j is the header of a YAML block scalar ("|", ">", "|-", ">+", "|2") that ends its line. It
 // returns where the header ends.
 func blockHeader(s string, j int) (end int, ok bool) {
-	if s[j] != '|' && s[j] != '>' {
+	// A tag ("!!str", "!secret") or an anchor ("&a") may come first.
+	for n := 0; n < 2 && j < len(s) && (s[j] == '!' || s[j] == '&'); n++ {
+		for j < len(s) && s[j] != ' ' && s[j] != '\t' && s[j] != '\r' && s[j] != '\n' {
+			j++
+		}
+		for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+			j++
+		}
+	}
+	if j >= len(s) || (s[j] != '|' && s[j] != '>') {
 		return 0, false
 	}
 	k := j + 1
@@ -596,6 +653,11 @@ func blockHeader(s string, j int) (end int, ok bool) {
 	}
 	for k < len(s) && (s[k] == ' ' || s[k] == '\t') {
 		k++
+	}
+	if k < len(s) && s[k] == '#' && k > 0 && (s[k-1] == ' ' || s[k-1] == '\t') {
+		for k < len(s) && s[k] != '\r' && s[k] != '\n' {
+			k++ // a comment after the header
+		}
 	}
 	if k < len(s) && s[k] != '\r' && s[k] != '\n' {
 		return 0, false

@@ -53,6 +53,39 @@ func TestRedactorSecretFormsFromTheSweep(t *testing.T) {
 	}
 }
 
+// The reader sees one line at a time: the forms that go on over the next lines are hidden through the carry.
+func TestRedactorHidesValuesOnTheNextLines(t *testing.T) {
+	for name, lines := range map[string][]string{
+		"yaml block":                {"db:", "  password: |", "    FAKEPW", "    FAKEPW two", "  host: h"},
+		"yaml folded and stripped":  {"password: >-", "  FAKEPW"},
+		"yaml header with tag":      {"password: !!str |", "  FAKEPW"},
+		"yaml header with comment":  {"password: | # c", "  FAKEPW"},
+		"list item":                 {"- password: |", "    FAKEPW"},
+		"client secret yaml":        {"client_secret:", "  FAKEPW"},
+		"api key yaml":              {"api_key:", "  FAKEPW"},
+		"env style":                 {"PASSWORD=", "FAKEPW"},
+		"colon":                     {"password:", "  FAKEPW"},
+		"xml element on own lines":  {"<Password>", "  FAKEPW", "</Password>"},
+		"with a time stamp and job": {"job\tstep\t2026-11-22T10:00:00.000Z password: |", "job\tstep\t2026-11-22T10:00:00.001Z   FAKEPW"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := NewRedactor()
+			for _, l := range lines {
+				if got := r.Line(l); strings.Contains(got, fakePW) {
+					t.Errorf("a fake secret was left: %q", blank(got))
+				}
+			}
+		})
+	}
+	r := NewRedactor()
+	for _, l := range []string{"password: |", "  FAKEPW", "next: 1", "ok  pkg 1.2s"} {
+		r.Line(l)
+	}
+	if got := r.Line("  indented text after the block"); got != "  indented text after the block" {
+		t.Errorf("a line after the block changed: %q", got)
+	}
+}
+
 func TestRedactorHostileInputIsFast(t *testing.T) {
 	const size = 1 << 17
 	rep := func(unit string) string { return strings.Repeat(unit, size/len(unit)+1)[:size] }

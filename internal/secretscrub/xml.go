@@ -21,10 +21,11 @@ func isNameChar(c byte) bool  { return isIdent(c) || c == ':' }
 
 // maskXML masks XML forms: the text of a secret element, the value attribute next to a secret key attribute, the value of a secret
 // attribute, and a connectionString attribute that holds a secret.
-func maskXML(s, mask string) string {
+func maskXML(s, mask string) (string, int) {
 	if strings.IndexByte(s, '<') < 0 {
-		return s
+		return s, pendNone
 	}
+	pending := pendNone
 	var edits []edit
 	pos := 0
 	for pos < len(s) {
@@ -48,7 +49,7 @@ func maskXML(s, mask string) string {
 			continue
 		}
 		pos = end
-		if !plain && !(len(attrs) == 1 && attrs[0].name == "hidden") {
+		if !plain && (len(attrs) != 1 || attrs[0].name != "hidden") {
 			// An attribute without a value ("<Password x>") is still a tag. Only "<token hidden>", which an earlier redaction leaves
 			// ("<private key hidden>" and the like have no secret name), is a marker and not a tag.
 			plain = true
@@ -90,6 +91,8 @@ func maskXML(s, mask string) string {
 				if to > pos {
 					pos = to
 				}
+			} else if strings.TrimRight(s[end:], " \t\r\n") == "" {
+				pending = pendNext // the tag ends the text: the value is on the next line
 			}
 		}
 		for _, sp := range sortEdits(spans) {
@@ -98,7 +101,7 @@ func maskXML(s, mask string) string {
 			}
 		}
 	}
-	return apply(s, mask, sortEdits(edits))
+	return apply(s, mask, sortEdits(edits)), pending
 }
 
 // plainName says whether v reads as the name of a setting ("db.password", "Admin Password"), not as a value.

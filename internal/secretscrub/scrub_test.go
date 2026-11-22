@@ -136,6 +136,97 @@ func TestMaskURLUserinfoSecondReviewBypasses(t *testing.T) {
 	}
 }
 
+// Inputs from the third security review of this package (PR 181). Fake values only.
+func TestMaskThirdReviewBypasses(t *testing.T) {
+	run(t, []tcase{
+		{"yaml header with a comment", "password: | # note\n  FAKEPW\n", "password: | # note\n  [m]\n"},
+		{"yaml header with a tag", "password: !!str |\n  FAKEPW\n", "password: !!str |\n  [m]\n"},
+		{"yaml header with an anchor", "password: &a |\n  FAKEPW\n", "password: &a |\n  [m]\n"},
+		{"yaml header with a tag and an anchor and a comment", "password: !!str &a >- # c\n  FAKEPW\n", "password: !!str &a >- # c\n  [m]\n"},
+		{"yaml tag with a plain value", "password: !secret db_pw\nnext: 1", "password: [m]\nnext: 1"},
+	})
+}
+
+// Carry: the same forms, one line at a time (the Releases reader).
+func TestCarryMasksWhatGoesOnOverTheNextLines(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  []string
+	}{
+		{"block scalar", []string{"db:", "  password: |", "    FAKEPW", "    FAKEPW two", "  host: h"}, []string{"db:", "  password: |", "    [m]", "    [m]", "  host: h"}},
+		{"block scalar with a blank line", []string{"password: >-", "  FAKEPW", "", "  FAKEPW", "next: 1"}, []string{"password: >-", "  [m]", "", "  [m]", "next: 1"}},
+		{"block with a comment header", []string{"password: | # c", "  FAKEPW"}, []string{"password: | # c", "  [m]"}},
+		{"list item block", []string{"- password: |", "    FAKEPW"}, []string{"- password: |", "    [m]"}},
+		{"env style value on the next line", []string{"DB_PASSWORD=", "FAKEPW", "next"}, []string{"DB_PASSWORD=", "[m]", "next"}},
+		{"colon value on the next line", []string{"password:", "  FAKEPW", "next"}, []string{"password:", "  [m]", "next"}},
+		{"yaml client_secret", []string{"client_secret:", "  FAKEPW", "next: 1"}, []string{"client_secret:", "  [m]", "next: 1"}},
+		{"yaml api_key", []string{"api_key:", "  FAKEPW"}, []string{"api_key:", "  [m]"}},
+		{"xml element on its own lines", []string{"<Password>", "  FAKEPW", "</Password>"}, []string{"<Password>", "  [m]", "</Password>"}},
+		{"unindented line after a compound name is kept", []string{"api_key:", "see the docs"}, []string{"api_key:", "see the docs"}},
+		{"blank line ends the search", []string{"DB_PASSWORD=", "", "later line"}, []string{"DB_PASSWORD=", "", "later line"}},
+		{"ordinary lines", []string{"token_count=5", "  indented text", "password was reset"}, []string{"token_count=5", "  indented text", "password was reset"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var c Carry
+			for i, l := range tc.lines {
+				got := c.Line(l, m)
+				if got != tc.want[i] {
+					t.Errorf("line %d: got %q, want %q", i, shown(got), shown(tc.want[i]))
+				}
+				if strings.Contains(got, fake) {
+					t.Errorf("line %d: a fake secret was left", i)
+				}
+			}
+		})
+	}
+}
+
+// A long name made of many secret words, then a long stretch that the value reader scans and fails on, used to be read again for each
+// word (quadratic). The time must grow in step with the size.
+func TestMaskLongNamesAreLinear(t *testing.T) {
+	shape := func(unit, tail string, n int) string {
+		return strings.Repeat(unit, n/len(unit)) + "a" + tail
+	}
+	spaces := func(n int) string { return strings.Repeat(" ", n) + "x" }
+	blanks := func(n int) string { return strings.Repeat("\n", n) }
+	slashes := func(n int) string { return strings.Repeat(`\`, n) }
+	for _, tc := range []struct {
+		name string
+		gen  func(n int) string
+	}{
+		{"password_ then spaces", func(n int) string { return shape("password_", spaces(n/2), n/2) }},
+		{"password_ then block and blank lines", func(n int) string { return shape("password_", ": |\n"+blanks(n/2), n/2) }},
+		{"pwd. then block and blank lines", func(n int) string { return shape("pwd.", ": |\n"+blanks(n/2), n/2) }},
+		{"token- then spaces", func(n int) string { return shape("token-", spaces(n/2), n/2) }},
+		{"api_key_ then spaces", func(n int) string { return shape("api_key_", spaces(n/2), n/2) }},
+		{"password_ then backslashes", func(n int) string { return shape("password_", slashes(n/4), n/2) }},
+		{"password_ then colon and blank lines", func(n int) string { return shape("password_", ":\n"+blanks(n/2), n/2) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			best := func(n int) time.Duration {
+				in := tc.gen(n)
+				b := time.Hour
+				for i := 0; i < 3; i++ {
+					start := time.Now()
+					_ = Mask(in, m)
+					if d := time.Since(start); d < b {
+						b = d
+					}
+				}
+				return b
+			}
+			small, big := best(256<<10), best(1<<20)
+			if big > time.Second {
+				t.Errorf("1 MiB took %v", big)
+			}
+			if big > 10*small+100*time.Millisecond { // 4x is linear, 16x is quadratic
+				t.Errorf("1 MiB took %v, 256 KiB took %v: not linear", big, small)
+			}
+		})
+	}
+}
+
 // Form 2: KEY=value with a prefix, in app logs, setup logs and connection text.
 func TestMaskPrefixedKeys(t *testing.T) {
 	run(t, []tcase{
