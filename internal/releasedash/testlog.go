@@ -202,10 +202,10 @@ func parseGo(g *logGroup) *Suite {
 			continue
 		}
 		if m := goPkgRE.FindStringSubmatch(t); m != nil {
-			switch {
-			case m[1] == "ok":
+			switch m[1] {
+			case "ok":
 				pkgOK++
-			case m[1] == "FAIL":
+			case "FAIL":
 				pkgFail++
 			}
 		}

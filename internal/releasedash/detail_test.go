@@ -45,7 +45,7 @@ func writeLogs(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, _ := os.Create(filepath.Join(ld, "ci-v0.1.0-rc.55-ci-777.log.gz"))
+	f, _ := os.Create(filepath.Join(ld, "ci-v0.1.0-rc.55-ci-777.log.gz")) //nolint:gosec // test file in t.TempDir
 	zw := gzip.NewWriter(f)
 	_, _ = zw.Write(sample)
 	_ = zw.Close()

@@ -94,7 +94,7 @@ func (g *GH) GetJSON(ctx context.Context, path string, ttl time.Duration, out an
 	if derr != nil {
 		return fail("could not reach GitHub")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	switch {
 	case resp.StatusCode == http.StatusNotModified && e != nil:
 		e.at = time.Now()
