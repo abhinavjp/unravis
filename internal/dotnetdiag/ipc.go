@@ -84,7 +84,7 @@ const (
 // with a final NUL. It is only ever called with the two constants above.
 func appendUTF16(b []byte, s string) []byte {
 	u := utf16.Encode([]rune(s))
-	b = binary.LittleEndian.AppendUint32(b, uint32(len(u)+1)) //nolint:gosec // only called with the two short constants above (15 and 26 chars)
+	b = binary.LittleEndian.AppendUint32(b, uint32(len(u)+1)) //nolint:gosec // only called with the two short constants above (14 and 25 chars, 15 and 26 with the NUL)
 	for _, c := range u {
 		b = binary.LittleEndian.AppendUint16(b, c)
 	}

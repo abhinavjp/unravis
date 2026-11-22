@@ -33,6 +33,7 @@ var uiFiles embed.FS
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "unravis-releases: "+err.Error())
+		showError("Unravis Releases could not start:\n\n" + err.Error()) // the Windows build has no console to print to
 		os.Exit(1)
 	}
 }
@@ -83,7 +84,8 @@ func run(args []string) error {
 	fmt.Println("Unravis releases (read only). Link:\n  " + link + "\nPress Ctrl+C to stop.")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	windowMode := *exitWhenClosed
+	// Without a console (the Windows build) nobody can press Ctrl+C, so the program must end by itself when its page is gone.
+	windowMode := *exitWhenClosed || (runtime.GOOS == "windows" && !*browserOnly)
 	switch {
 	case *open:
 		openBrowser(link)
@@ -97,7 +99,6 @@ func run(args []string) error {
 		}
 		// msedge.exe returns at once when Edge is already running, so the window cannot be waited on. The page says so when it
 		// closes (see /api/bye); no page at all within a minute also ends the program.
-		windowMode = true
 	}
 	dash := releasedash.New(dir, state, keys)
 	if windowMode {

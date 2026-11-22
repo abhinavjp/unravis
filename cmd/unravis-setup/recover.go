@@ -4,10 +4,46 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"api-audit-explorer/internal/setup"
 	"api-audit-explorer/internal/update"
 	"api-audit-explorer/internal/version"
+)
+
+// askWait is how long the notice before the Windows prompt waits for an answer; no answer counts as Cancel.
+const askWait = 10 * time.Minute
+
+// The notice box is built but OFF by default: it has not been seen on a real PC yet (plan P3), and a box that does not show would turn every
+// automatic recovery into a 10-minute wait. recoverNoticeDefault is the one place to flip once P3 passes; until then the box appears only
+// when the environment variable below is "1" (and never when it is "0").
+const (
+	recoverNoticeEnv     = "UNRAVIS_RECOVER_NOTICE"
+	recoverNoticeDefault = false
+)
+
+// recoverAsk is what production puts in env.ask: the OK/Cancel box when the notice is on, otherwise nil (--recover goes straight on, with no
+// box and no wait, as it did before the box existed).
+func recoverAsk(getenv func(string) string) func(title, text string) bool {
+	on := recoverNoticeDefault
+	switch getenv(recoverNoticeEnv) {
+	case "1":
+		on = true
+	case "0":
+		on = false
+	}
+	if !on {
+		return nil
+	}
+	return func(title, text string) bool { return setup.AskOKCancel(title, text, askWait) }
+}
+
+// recoverNotice is the box shown before the app is closed and before the Windows prompt (BL-183 b). It is the only thing that tells the
+// person why a prompt is about to appear from a run they did not start.
+const (
+	recoverNoticeTitle = "Unravis"
+	recoverNoticeText  = "An Unravis update was cut off before it finished.\n\nTo put things back, Windows will ask for administrator approval next. Click OK, then answer Yes.\n\nClick Cancel to leave it for now."
+	recoverDeclinedMsg = "An update was cut off before it finished. It was not approved (Cancel, or no answer within 10 minutes), so it was not put back. Run Unravis Setup from the Unravis program folder and choose Repair."
 )
 
 // runRecover is --recover (BL-170): put back what a cut-off setup run changed, from its journal, and nothing else. A normal run replays
@@ -59,6 +95,20 @@ func runRecover(o options, e env) int {
 		say("Nothing to put back.")
 		return 0
 	}
+	// Before anything is closed and before any prompt: a box that says what is about to happen. Cancel (or a closed box, or no answer)
+	// leaves the machine journal and the running app alone. The elevated copy never asks, and a nil ask (tests) goes on.
+	declined := false
+	// --silent means no window at all, so it never shows the box and never waits for it: it behaves as it did before the box existed.
+	ask := e.ask
+	if o.silent {
+		ask = nil
+	}
+	if pendingMachine && ask != nil {
+		if !ask(recoverNoticeTitle, recoverNoticeText) {
+			declined, pendingMachine = true, false
+			l.Line("recover: not approved at the notice (Cancel, closed, or no answer); the machine journal is kept")
+		}
+	}
 	res := setup.RecoverResult{}
 	if pendingHere {
 		res = r.Recover(admin, loc)
@@ -88,13 +138,16 @@ func runRecover(o options, e env) int {
 				l.Line("recover: the administrator part did not run: " + err.Error())
 				problems = append(problems, "The administrator-level part did not run ("+err.Error()+").")
 			} else if c != 0 {
-				problems = append(problems, "The administrator-level part could not put everything back.")
+				// The administrator part cannot tell this run why in words (its output is not shown). A refused journal is its usual reason,
+				// so say which file it is and what can be done, without deleting anything.
+				problems = append(problems, "The administrator-level part could not put everything back."+r.MachineJournalHelp())
 			} else {
 				res.Found = true
 			}
 		}
 	}
 	if res.Err != nil {
+		l.Line("recover: " + res.Err.Error())
 		problems = append(problems, res.Err.Error()+".")
 	}
 	for _, x := range res.Left {
@@ -107,7 +160,14 @@ func runRecover(o options, e env) int {
 	if old != nil {
 		note.From = old.Version
 	}
-	if len(problems) == 0 && res.Found {
+	if declined {
+		note.Outcome = "failed"
+		note.Message = recoverDeclinedMsg
+		for _, p := range problems {
+			note.Message += " " + p
+		}
+		code = setup.OutcomeCancelledUAC.ExitCode()
+	} else if len(problems) == 0 && res.Found {
 		note.Outcome = "rolled-back"
 		note.Message = "An update was cut off before it finished. Unravis put back what it had changed."
 	} else if len(problems) == 0 {
@@ -120,6 +180,9 @@ func runRecover(o options, e env) int {
 		}
 		note.Message += " Run Unravis Setup from the Unravis program folder and choose Repair."
 		code = setup.OutcomeRollbackLeft.ExitCode()
+	}
+	if note.Message != "" {
+		l.Line("recover: result: " + note.Message) // the note is cut at 400 bytes; the log keeps all of it
 	}
 	// The elevated part never starts the app (it would run with administrator rights); the normal run that asked for it does.
 	if res.Closed && loc != "" && !o.noRestart && e.startBackground != nil {

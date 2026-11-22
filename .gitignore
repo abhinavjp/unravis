@@ -50,3 +50,7 @@ Thumbs.db
 # Desktop shell (Rust)
 /desktop/target/
 /desktop/src-tauri/gen/
+/tools/uiaudit/node_modules/
+/tools/uiaudit/report/
+/tools/uiaudit/test-results/
+/tools/uiaudit/test-results-selftest/

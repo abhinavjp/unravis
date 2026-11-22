@@ -2,16 +2,19 @@
 name: desktop-windows
 
 on:
+  # Not per pull request into develop (docs/ci/RELEASE-TRAIN.md): it runs on every push to develop and on the pull request
+  # that promotes develop to master.
   pull_request:
-  push:
     branches: [master]
+  push:
+    branches: [master, develop]
 
 permissions:
   contents: read
 
 concurrency:
   group: desktop-windows-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
   desktop-core:
@@ -75,7 +78,7 @@ jobs:
         shell: pwsh
         working-directory: .
         run: |
-          go build -o "$env:RUNNER_TEMP\sidecar\unravis.exe" ./cmd/audit-explorer
+          go build -tags e2e -o "$env:RUNNER_TEMP\sidecar\unravis.exe" ./cmd/audit-explorer
           if ($LASTEXITCODE -ne 0) { exit 1 }
           "UNRAVIS_TEST_SIDECAR=$env:RUNNER_TEMP\sidecar\unravis.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
