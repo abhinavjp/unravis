@@ -6,7 +6,7 @@ import type { LintEntry } from '../copy/copylint';
  */
 export const DRILL_TEXT = {
   title: 'Call detail',
-  close: 'Close',
+  close: 'Close panel',
   openAnalysis: 'Open in Analysis',
   openThisCall: 'Open this call',
   vsNormalTitle: 'Compared with normal',
