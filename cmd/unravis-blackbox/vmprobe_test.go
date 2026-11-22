@@ -146,7 +146,7 @@ func TestVMProbeJSONKeys(t *testing.T) {
 	for _, c := range counters {
 		for k := range c {
 			switch k {
-			case "path", "found", "absentStatus", "failure", "samples":
+			case "path", "found", "variant", "absentStatus", "failure", "alsoTried", "samples":
 			default:
 				t.Errorf("unexpected counter key %q", k)
 			}
