@@ -263,6 +263,15 @@ jobs:
           go test -count=1 -v -run '^(TestPipeOnlyNoListenerNoSessionFile|TestPipeServerLoopbackKeepsBrowserModeListener|TestPipeFlagRules|TestPipeRejectsRemoteFlag|TestServeOverPipeSameJSONAsLoopback|TestListenerPortNilIsZero|TestNoTCPListenerInPipeMode)$' ./cmd/audit-explorer/...
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      - name: Shutdown RPC tests (BL-303)
+        # Linux-portable proofs (route on the ui pipe only, token, WAL checkpoint on app-created cases) plus the Windows-only ones:
+        # TestShutdownCleanRealExe (real exe, real ui pipe, writers busy, exit 0 within 5 s, no -wal/-shm, integrity_check ok) and
+        # TestKillDuringWriteReopens (TerminateProcess mid-write, reopen, integrity_check ok, saved lines kept).
+        shell: pwsh
+        run: |
+          go test -count=1 -v -run '^(TestShutdown.*|TestKillDuringWriteReopens)$' ./cmd/audit-explorer/... ./internal/pipesrv/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - name: Real exe in pipe-only mode (no port, no session file, both pipes)
         shell: pwsh
         run: ./tools/desktop/Test-Sidecar.ps1 -Check NoPort

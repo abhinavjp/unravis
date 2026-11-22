@@ -6,11 +6,20 @@
   (1) is still running, (2) has no listening TCP socket, (3) wrote no session.json, and (4) serves one ui and one ag pipe
   (\\.\pipe\unravis.ui.<32hex>, \\.\pipe\unravis.ag.<32hex>). The process is always stopped at the end.
   -Check Squat: starts the same way, then tries to create a second listener with the name of each running pipe; both attempts must fail
-  (first-instance flag plus full instance pool, spec 01 BL-301). Later sidecar items add checks here (OtherUser, TenStarts ...). Not run on Linux.
+  (first-instance flag plus full instance pool, spec 01 BL-301).   -Check ShutdownClean / KillDuringWrite (BL-303): run the Go tests of the same names on app-created demo cases (the real-case run is a live-PC step).
+  Later sidecar items add checks here (OtherUser, TenStarts ...). Not run on Linux.
 #>
-param([ValidateSet('NoPort', 'Squat')][string]$Check = 'NoPort')
+param([ValidateSet('NoPort', 'Squat', 'ShutdownClean', 'KillDuringWrite')][string]$Check = 'NoPort')
 $ErrorActionPreference = 'Stop'
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..')
+if ($Check -in 'ShutdownClean', 'KillDuringWrite') {
+    # BL-303. The Go tests build and drive the real exe over its real ui pipe (a copy of the test binary named unravis-desktop.exe is the client).
+    $name = if ($Check -eq 'ShutdownClean') { 'TestShutdownCleanRealExe' } else { 'TestKillDuringWriteReopens' }
+    Push-Location $repo
+    try { go test -count=1 -v -run "^$name$" ./cmd/audit-explorer/...; if ($LASTEXITCODE -ne 0) { Write-Error "$Check failed"; exit 1 } } finally { Pop-Location }
+    Write-Host "$Check OK"
+    return
+}
 $work = Join-Path ([IO.Path]::GetTempPath()) ("unravis-sidecar-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 $exe = Join-Path $work 'unravis.exe'
