@@ -45,7 +45,7 @@ func TestTargetFromEnv(t *testing.T) {
 	if err != nil || tg.Auth != "windows" || tg.Database != "D" || tg.Username != "" || tg.TrustServerCertificate {
 		t.Fatalf("windows: %+v %v", tg, err)
 	}
-	tg, _ = targetFromEnv(env(map[string]string{envServer: "h", envUser: "u", envPass: "p", envTrust: "1"}), "D")
+	tg, _ = targetFromEnv(env(map[string]string{envServer: "h", envUser: "u", envLoginKey: "p", envTrust: "1"}), "D")
 	if tg.Auth != "sql" || tg.Username != "u" || tg.Password != "p" || !tg.TrustServerCertificate {
 		t.Fatalf("sql: %+v", tg)
 	}

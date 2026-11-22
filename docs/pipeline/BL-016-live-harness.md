@@ -1,12 +1,12 @@
 # BL-016 live harness: do the Query Store views return rows while the state is OFF?
 
-One command, run on a PC that has a real SQL Server. It uses the app's own read (`internal/dbhealth` `RunSQLLane`) and prints a plain answer. It only reads: it never runs `ALTER DATABASE`, never switches Query Store on or off, never writes. Every text it sends passes a read-only guard that refuses anything else.
+One command, run on a PC that has a real SQL Server. It uses the app's own read (`internal/dbhealth` `RunSQLLane`) and prints a plain answer. It only reads: it sends only the app's fixed read texts, never runs `ALTER DATABASE`, never switches Query Store on or off, never writes. As a backstop, every text also passes an allowlist guard (the three error-log reads, otherwise one plain `SELECT` per text; nothing with `INTO`, `EXEC`, `sp_`/`xp_` names, a second comment or a semicolon). The guard is a second line, not a proof: the safety comes from the probe sending only the app's own fixed texts.
 
 Nothing here is run by CI. The probe does nothing unless `UNRAVIS_LIVE_SQL_SERVER` is set.
 
 ## 1. Prepare an OFF database (you run these, by hand)
 
-Use a throwaway or a restored copy, never a database that matters. In SSMS, connected as a login that may alter the database:
+Do this on a test or dev SQL Server instance, never production, with a throwaway or restored database that does not matter. In SSMS, connected as a login that may alter the database:
 
 ```sql
 -- 1. A scratch database.
@@ -16,11 +16,18 @@ GO
 ALTER DATABASE [unravis_qs_off_test] SET QUERY_STORE = ON
   (OPERATION_MODE = READ_WRITE, INTERVAL_LENGTH_MINUTES = 1, QUERY_CAPTURE_MODE = ALL, DATA_FLUSH_INTERVAL_SECONDS = 60);
 GO
--- 3. Make some queries, in that database. Run this block twice, a minute or two apart.
+-- 3. Make some queries, in that database, on a table of your own. Run this block twice, a minute or two apart.
 USE [unravis_qs_off_test];
-SELECT TOP 5 name FROM sys.objects;
-SELECT COUNT(*) FROM sys.columns;
+IF OBJECT_ID('dbo.t') IS NULL CREATE TABLE dbo.t (i int);
+INSERT dbo.t VALUES (1);
+SELECT * FROM dbo.t WHERE i = 1;
+SELECT COUNT(*) FROM dbo.t;
 EXEC sp_query_store_flush_db;
+GO
+-- 3b. Still ON, after the second run of step 3: check that history was captured. Both must show data; write the numbers down.
+USE [unravis_qs_off_test];
+SELECT COUNT(*) AS stat_rows FROM sys.query_store_runtime_stats;                       -- must be > 0
+SELECT MIN(start_time) AS first_block, MAX(start_time) AS last_block FROM sys.query_store_runtime_stats_interval;  -- must not be NULL
 GO
 -- 4. Switch it OFF. History stays on disk; whether the views still return it is what the probe checks.
 ALTER DATABASE [unravis_qs_off_test] SET QUERY_STORE = OFF;
@@ -32,9 +39,9 @@ SELECT desired_state_desc, actual_state_desc FROM sys.database_query_store_optio
 
 Optional second case, `OFF (FORCED)`: use `SET QUERY_STORE = OFF (FORCED)` in step 4 on a second scratch database. It is not available on every build; if the server rejects it, skip it.
 
-A third case is a database that never had Query Store on: expect "NO".
+A third case is a database that never had Query Store on: expect "NO" (nothing was ever captured, so that NO says nothing about OFF history).
 
-When done: `DROP DATABASE [unravis_qs_off_test];` (yours to run).
+When done, in SSMS (yours to run; leave the database first): `USE master; DROP DATABASE [unravis_qs_off_test];`
 
 ## 2. Run the probe
 
@@ -53,8 +60,10 @@ SQL login instead:
 ```powershell
 $env:UNRAVIS_LIVE_SQL_SERVER = 'localhost\SQLEXPRESS'
 $env:UNRAVIS_LIVE_SQL_USER = 'unravis_ro'
-$env:UNRAVIS_LIVE_SQL_PASS = Read-Host 'password'        # the password is read from the environment only
+$s = Read-Host 'password' -AsSecureString               # not echoed
+$env:UNRAVIS_LIVE_SQL_PASS = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))
 go run ./tools/dev/qsoffprobe -database unravis_qs_off_test
+Remove-Item Env:UNRAVIS_LIVE_SQL_PASS                    # when done
 ```
 
 Without `UNRAVIS_LIVE_SQL_SERVER` it prints "refusing to run" and does nothing.
@@ -66,13 +75,13 @@ It prints: server version and edition, the database, Query Store desired and act
 | Verdict | Meaning |
 | --- | --- |
 | `YES: the Query Store views returned rows while the state is OFF on this build.` | The OFF history read works on this build. |
-| `NO: Query Store is OFF here and the views returned no history on this build.` | Not readable while OFF on this build; the app keeps today's message. |
+| `NO: Query Store is OFF here and the views returned no history on this build.` | The views returned no rows while OFF. This means "not readable on this build" only if step 3b showed rows before the switch-off; otherwise nothing was captured, redo step 3. The app keeps today's message. |
 | `NO ROWS READ: Query Store is OFF and reports kept blocks, but no rows came back for them.` | Odd case: send the whole output. |
-| `NOT ANSWERED: this database is not in the OFF state ...` | Wrong database or Query Store is not OFF; redo step 1. |
-| `NOT ANSWERED: the history could not be read ...` | A permission or connection problem; the sentence above says which. |
+| `NOT ANSWERED: this database is not in the OFF state ...` | The state was read and it is not OFF (wrong database, or step 4 was not run); redo step 1. |
+| `NOT ANSWERED: the history could not be read ...` | The state or the history could not be read (permission, connection, timeout); the sentence above says which. Not a statement about the data. |
 
 Send the whole output back, with the SQL Server version it prints. Record it in `docs/BACKLOG.md` under BL-016. BL-016 is ticked only after a real OFF run says YES (or "does not stay readable on build X" is agreed with the owner).
 
 ## What is verified
 
-Verified without a server (fake runner): the printing, the read-only guard, the opt-in refusal and each verdict. NOT verified: any real SQL Server. Not run on a real OFF database yet.
+Verified without a server (fake runner): the printing, the allowlist guard (including bypass strings), the opt-in refusal and each verdict. NOT verified: any real SQL Server. Not run on a real OFF database yet.

@@ -12,7 +12,8 @@ import (
 // The live probe for BL-016 (tools/dev/qsoffprobe): one question asked of a real SQL Server, "do the Query Store views return rows while the
 // state is OFF on this build?". It runs the SAME read the app runs (RunSQLLane) and adds only fixed read-only selects of its own (the server
 // version and the Query Store options row, to print the desired state). Nothing here switches Query Store on or off or writes to the server;
-// the probe wraps its connection in a guard that refuses any text that is not a plain read, so a later edit cannot add a write by accident.
+// the probe sends only the app's fixed read texts. As a backstop it wraps its connection in an allowlist guard (the three error-log EXECs, otherwise one
+// plain SELECT per text); the guard is a second line, not a proof, and a text it would let through is still the app's own text.
 
 // QSProbe is what one probe run found. Zero values mean "not read" and are printed as such.
 type QSProbe struct {
@@ -52,34 +53,55 @@ func (p QSProbe) Verdict() string {
 	switch {
 	case p.State == "" && p.Check.State == "":
 		return VerdictUnread
+	case !p.OptionsRead || p.State == QSStateUnknown || p.State == QSStateDenied:
+		return VerdictUnread
 	case p.State != QSStateOff:
 		return VerdictNotOff
 	case p.Points > 0:
 		return VerdictRows
-	case p.FirstData == nil && p.Check.State != StateFailed:
-		return VerdictNoRows
-	case p.FirstData == nil:
+	case p.Check.State == StateFailed:
 		return VerdictUnread
+	case p.FirstData == nil:
+		return VerdictNoRows
 	default:
 		return VerdictNoneInSpan
 	}
 }
 
-// readOnlyBad lists the words that never belong in one of the probe's texts. EXEC is allowed only for the two error-log reads the lane makes.
-var readOnlyBad = regexp.MustCompile(`(?i)\b(insert|update|delete|drop|alter|create|grant|revoke|truncate|merge|shutdown|kill|reconfigure|dbcc|xp_cmdshell)\b|;`)
-var readOnlyExec = regexp.MustCompile(`(?i)\bexec(ute)?\b`)
+// The guard is an allowlist. An EXEC text must equal one of the three error-log reads the lane makes. Every other text must be one
+// `/* unravis:<tag> */ SELECT ...` with no second comment, no semicolon, no INTO, no EXEC, no sp_ or xp_ name and none of the words that start
+// another statement. T-SQL does not need a semicolon between statements, so the word list matters as much as the shape.
+var (
+	readOnlyHead = regexp.MustCompile(`^/\* unravis:[a-z_:]+ \*/ SELECT `)
+	readOnlyBad  = regexp.MustCompile(`(?i)\b(into|exec|execute|insert|update|delete|drop|alter|create|grant|revoke|deny|truncate|merge|backup|restore|checkpoint|` +
+		`disable|enable|use|set|declare|begin|commit|rollback|waitfor|goto|shutdown|kill|reconfigure|dbcc|bulk|openrowset|opendatasource|openquery)\b|\b(sp|xp)_\w+|;|--|/\*`)
+)
 
-// ErrProbeNotReadOnly is returned by the guard for a text that is not a plain read.
+// errorLogReads are the only EXEC texts the guard lets through.
+var errorLogReads = map[string]bool{qLaneLogFlush: true, qLaneLogStart: true, qLaneLogEnum: true}
+
+// ErrProbeNotReadOnly is returned by the guard for a text that is not on the allowlist.
 var ErrProbeNotReadOnly = errors.New("refused: the probe only runs read-only SQL")
 
-// readOnlyQueryer passes a text on only when it is a single plain read.
+// readOnlyQueryer passes a text on only when it is on the allowlist. It is a backstop for the probe: the probe sends the app's fixed read texts.
 type readOnlyQueryer struct {
 	inner   Queryer
 	refused int
 }
 
+func allowedRead(text string) bool {
+	if errorLogReads[text] {
+		return true
+	}
+	if !readOnlyHead.MatchString(text) {
+		return false
+	}
+	// The head comment is the only comment; everything after it is checked.
+	return !readOnlyBad.MatchString(text[strings.Index(text, "*/")+2:])
+}
+
 func (g *readOnlyQueryer) Query(ctx context.Context, text string) ([]Row, error) {
-	if readOnlyBad.MatchString(text) || (readOnlyExec.MatchString(text) && !strings.Contains(text, "sp_readerrorlog 0, 1,") && !strings.Contains(text, "sp_enumerrorlogs 1")) {
+	if !allowedRead(text) {
 		g.refused++
 		return nil, ErrProbeNotReadOnly
 	}

@@ -5,8 +5,9 @@
 //
 //	qsoffprobe -database <name>
 //
-// It only reads. It never runs ALTER DATABASE, never switches Query Store on or off and never writes; every text it sends passes a read-only
-// guard. The person who runs it prepares an OFF database by hand (docs/pipeline/BL-016-live-harness.md).
+// It only reads. It sends only the app's fixed read texts, never runs ALTER DATABASE, never switches Query Store on or off and never writes. As a
+// backstop every text also passes an allowlist guard (a second line, not a proof). The person who runs it prepares an OFF database by hand
+// (docs/pipeline/BL-016-live-harness.md).
 //
 // It does nothing unless you opt in with UNRAVIS_LIVE_SQL_SERVER (the server, for example localhost\SQLEXPRESS or host,1433), so a build or
 // a test run never reaches a server. Other variables: UNRAVIS_LIVE_SQL_USER and UNRAVIS_LIVE_SQL_PASS (SQL login; without a user the
@@ -29,11 +30,11 @@ import (
 
 // Environment variable names.
 const (
-	envServer = "UNRAVIS_LIVE_SQL_SERVER"
-	envUser   = "UNRAVIS_LIVE_SQL_USER"
-	envPass   = "UNRAVIS_LIVE_SQL_PASS"
-	envTrust  = "UNRAVIS_LIVE_SQL_TRUST_CERT"
-	envDB     = "UNRAVIS_LIVE_SQL_DB"
+	envServer   = "UNRAVIS_LIVE_SQL_SERVER"
+	envUser     = "UNRAVIS_LIVE_SQL_USER"
+	envLoginKey = "UNRAVIS_LIVE_SQL_PASS"
+	envTrust    = "UNRAVIS_LIVE_SQL_TRUST_CERT"
+	envDB       = "UNRAVIS_LIVE_SQL_DB"
 )
 
 // errNoOptIn is returned, before any connection is tried, when the opt-in variable is not set.
@@ -65,7 +66,7 @@ func targetFromEnv(getenv func(string) string, database string) (dbhealth.SQLTar
 	}
 	t := dbhealth.SQLTarget{Server: server, Auth: "windows", Database: database, Encrypt: "mandatory"}
 	if u := getenv(envUser); u != "" {
-		t.Auth, t.Username, t.Password = "sql", u, getenv(envPass)
+		t.Auth, t.Username, t.Password = "sql", u, getenv(envLoginKey)
 	}
 	switch strings.ToLower(strings.TrimSpace(getenv(envTrust))) {
 	case "1", "true", "yes":
@@ -76,7 +77,10 @@ func targetFromEnv(getenv func(string) string, database string) (dbhealth.SQLTar
 
 func run(args []string, getenv func(string) string, out io.Writer, open opener, now func() time.Time) error {
 	fs := flag.NewFlagSet("qsoffprobe", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() {
+		_, _ = fmt.Fprintln(os.Stderr, "usage: qsoffprobe -database <name>\nset "+envServer+" to the SQL Server to read (opt-in); see docs/pipeline/BL-016-live-harness.md")
+	}
 	database := fs.String("database", "", "the database to read (or set "+envDB+")")
 	if err := fs.Parse(args); err != nil {
 		return err

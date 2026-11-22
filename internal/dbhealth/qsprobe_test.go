@@ -60,7 +60,7 @@ func TestProbeKeptBlocksButNoRowsIsNotYes(t *testing.T) {
 func TestProbeUnreadableServer(t *testing.T) {
 	q := fakeQ{err: map[string]error{"unravis:": errors.New("boom")}}
 	p := ProbeQueryStoreOff(context.Background(), q, "Prod", "AuditDb", probeNow)
-	if p.Verdict() == VerdictRows || p.Verdict() == VerdictNoRows || p.BaseErr == "" {
+	if p.Verdict() != VerdictUnread || p.BaseErr == "" {
 		t.Fatalf("probe = %+v verdict %s", p, p.Verdict())
 	}
 	if !strings.Contains(p.Format(), "Server version:              not read") {
@@ -86,7 +86,7 @@ func TestProbeSendsOnlyReads(t *testing.T) {
 func TestReadOnlyGuardRefusesWrites(t *testing.T) {
 	inner := recordingQ{fn: func(string) { t.Error("a refused text reached the server") }, inner: fakeQ{}}
 	g := &readOnlyQueryer{inner: inner}
-	for _, bad := range []string{
+	bad := []string{
 		"ALTER DATABASE [X] SET QUERY_STORE = OFF",
 		"alter database x set query_store = on",
 		"UPDATE t SET a = 1",
@@ -95,18 +95,91 @@ func TestReadOnlyGuardRefusesWrites(t *testing.T) {
 		"EXEC sp_query_store_flush_db",
 		"EXEC sp_readerrorlog 0, 1, N'x'; DROP TABLE t",
 		"INSERT INTO t VALUES (1)",
-	} {
-		if _, err := g.Query(context.Background(), bad); !errors.Is(err, ErrProbeNotReadOnly) {
-			t.Errorf("%q: err = %v", bad, err)
+		// Bypasses of the first guard: a procedure named without EXEC, a comment that held the magic substring, SELECT INTO, other verbs.
+		"sp_query_store_flush_db",
+		"sp_query_store_remove_query 1",
+		"/* sp_readerrorlog 0, 1, */ EXEC sp_query_store_reset_exec_stats 1",
+		"/* unravis:x */ EXEC sp_query_store_reset_exec_stats 1",
+		"/* unravis:x */ SELECT * INTO dbo.x FROM sys.objects",
+		"SELECT * INTO dbo.x FROM sys.objects",
+		"BACKUP DATABASE [X] TO DISK = 'x'",
+		"/* unravis:x */ SELECT 1 BACKUP DATABASE X TO DISK = 'x'",
+		"DENY SELECT ON t TO u",
+		"CHECKPOINT",
+		"/* unravis:x */ SELECT 1 CHECKPOINT",
+		"DISABLE TRIGGER ALL ON DATABASE",
+		"USE master",
+		"SET NOCOUNT ON",
+		"/* unravis:x */ SELECT 1 sp_configure 'x', 1",
+		"/* unravis:x */ SELECT 1\nDROP TABLE t",
+		"/* unravis:x */ SELECT 1 /* more */",
+		"/* unravis:x */ SELECT 1 -- note",
+		"EXEC sp_readerrorlog 0, 1, N'cachestore flush' ",
+		"EXEC sp_readerrorlog 0, 1, N'anything else'",
+		"/* unravis:x */ select 1 from xp_dirtree",
+		"-- x\nSELECT 1",
+		"",
+	}
+	for _, b := range bad {
+		if _, err := g.Query(context.Background(), b); !errors.Is(err, ErrProbeNotReadOnly) {
+			t.Errorf("%q: err = %v", b, err)
 		}
 	}
-	if g.refused != 8 {
-		t.Errorf("refused = %d", g.refused)
+	if g.refused != len(bad) {
+		t.Errorf("refused = %d of %d", g.refused, len(bad))
 	}
 	g2 := &readOnlyQueryer{inner: fakeQ{}}
-	for _, ok := range []string{qLaneBase, qLaneQSOptions, qLaneQSRange, qLaneLogFlush, qLaneLogEnum} {
+	for _, ok := range []string{qLaneBase, qLaneServer, qLaneQSOptions, qLaneQSFirst, qLaneQSRange, qLaneLogFlush, qLaneLogStart, qLaneLogEnum} {
 		if _, err := g2.Query(context.Background(), ok); err != nil {
 			t.Errorf("%q refused: %v", ok, err)
 		}
+	}
+}
+
+// Every text the lane can send, over the fixtures the lane tests use (every era, QS on, off, read-only, a window of many slices), is on the
+// allowlist: a new lane text that the guard refuses fails here, not on the owner's PC.
+func TestReadOnlyGuardAllowsEveryLaneText(t *testing.T) {
+	long := laneReq
+	long.Incident = Window{time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC), time.Date(2026, 10, 29, 11, 0, 0, 0, time.UTC)}
+	long.Reference = Window{time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC), time.Date(2026, 10, 10, 11, 0, 0, 0, time.UTC)}
+	fixtures := map[string]fakeQ{
+		"2019 on":   healthySQL("15.0.2000"),
+		"2022 on":   healthySQL("16.0.1000"),
+		"off":       offSQL(at(2, 0, 0), at(20, 10, 45)),
+		"read-only": readOnlySQL(at(2, 0, 0), at(20, 10, 45)),
+	}
+	for name, f := range fixtures {
+		for _, req := range []LaneRequest{laneReq, long} {
+			g := &readOnlyQueryer{inner: f}
+			RunSQLLane(context.Background(), g, "Prod", req, fixedNow)
+			if g.refused != 0 {
+				t.Errorf("%s: the guard refused %d lane texts", name, g.refused)
+			}
+		}
+	}
+}
+
+func TestProbeFailedReadIsNeverNoRows(t *testing.T) {
+	// The range read works, then the stats read fails.
+	q := offSQL(at(2, 0, 0), at(20, 10, 45))
+	q.err = map[string]error{"unravis:qs_stats": errors.New("timeout")}
+	p := ProbeQueryStoreOff(context.Background(), q, "Prod", "AuditDb", probeNow)
+	if p.Verdict() != VerdictUnread {
+		t.Fatalf("verdict %s probe %+v", p.Verdict(), p)
+	}
+}
+
+func TestProbeDeniedOrUnknownStateIsNotNotOff(t *testing.T) {
+	q := healthySQL("16.0.1")
+	q.err = map[string]error{"unravis:qs_options": errors.New("The user does not have permission to perform this action.")}
+	p := ProbeQueryStoreOff(context.Background(), q, "Prod", "AuditDb", probeNow)
+	if p.Verdict() != VerdictUnread {
+		t.Errorf("denied: verdict %s state %s", p.Verdict(), p.State)
+	}
+	q = healthySQL("16.0.1")
+	q.by["unravis:qs_options"] = nil
+	p = ProbeQueryStoreOff(context.Background(), q, "Prod", "AuditDb", probeNow)
+	if p.Verdict() != VerdictUnread {
+		t.Errorf("no options row: verdict %s state %s", p.Verdict(), p.State)
 	}
 }
