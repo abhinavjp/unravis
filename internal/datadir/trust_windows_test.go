@@ -6,8 +6,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 // readAsPerson is ReadFolderSecurity (real file IDs, real ACLs) with the owner reported as a standard person's account whenever the real
@@ -105,5 +108,36 @@ func TestReadFolderSecurityOnThisPC(t *testing.T) {
 	}
 	if err := CheckFolder(pd, fs); err != nil {
 		t.Fatalf("%s should pass the owner and ACL check: %v (%+v)", pd, err, fs)
+	}
+}
+
+// SecurityOfHandle reads from a handle the caller opened; for a real folder it must say exactly what ReadFolderSecurity (which opens by
+// name and then calls it) says.
+func TestSecurityOfHandleMatchesReadFolderSecurity(t *testing.T) {
+	dir := t.TempDir()
+	want, err := ReadFolderSecurity(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := windows.CreateFile(p, windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(h)
+	got, err := SecurityOfHandle(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("SecurityOfHandle %+v, ReadFolderSecurity %+v", got, want)
+	}
+	if got.Owner == "" || got.ID == "" || len(got.ACEs) == 0 {
+		t.Fatalf("a real folder should have an owner, an ID and entries: %+v", got)
 	}
 }

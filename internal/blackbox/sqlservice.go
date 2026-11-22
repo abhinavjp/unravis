@@ -396,6 +396,26 @@ func settingsPathProblem(path string) error {
 	return errors.New("blackbox: the settings file must be on a local drive, written like C:\\folder\\file")
 }
 
+// settingsHandleProblem is the rule for what an open settings file may be, judged from what the handle itself reports: a file on a disk (not a
+// pipe or a device), not a folder (attribute 0x10), not a reparse point (0x400), with exactly one name (a hard link would let a file from a place
+// someone else can write stand here) and no larger than maxConfigBytes. Pure, so it is tested on every platform; the literals match the Windows
+// constants and are checked against them in settings_open_windows.go.
+func settingsHandleProblem(isDisk bool, attrs, links uint32, size uint64) error {
+	switch {
+	case !isDisk:
+		return refuse(WordNotDisk, errors.New("blackbox: the settings file is not a file on a disk"))
+	case attrs&0x10 != 0:
+		return refuse(WordFolder, errors.New("blackbox: the settings file is a folder"))
+	case attrs&0x400 != 0:
+		return refuse(WordLink, errors.New("blackbox: the settings file is a link"))
+	case links != 1:
+		return refuse(WordNames, fmt.Errorf("blackbox: the settings file has %d names", links))
+	case size > uint64(maxConfigBytes):
+		return refuse(WordTooLarge, errors.New("blackbox: the settings file is too large"))
+	}
+	return nil
+}
+
 func isASCIILetter(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
 
 // localVolumeTarget reports whether a DOS-device target (QueryDosDevice of "C:") is a disk volume of this computer. A mapped network drive

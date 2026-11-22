@@ -80,6 +80,12 @@ func (OSEnv) VerifyAdminOnlyFile(path string) error { return verifyAdminOnlyFile
 // swapped in later is owned by whoever swapped it, so this file-only proof refuses it at the next start.
 func (OSEnv) VerifySettingsFileForStart(path string) error { return verifySettingsFileOnly(path) }
 
+// ReadVerifiedSettings opens the settings file once, proves it on that handle (a plain disk file, not a link, one name, at the path
+// asked for, owner SYSTEM or Administrators, nobody else may change it, at most maxConfigBytes) and returns the bytes read from the same
+// handle. The service parses these bytes (ParseVerifiedSettings); it never opens the path again, so the file it proved is the file it uses
+// (BL-140). Every refusal and every read failure is an error: the caller never learns why beyond the log.
+func (OSEnv) ReadVerifiedSettings(path string) ([]byte, error) { return readVerifiedSettings(path) }
+
 // LockSQLInstallMarker locks the SQL install record to SYSTEM and
 // Administrators only (SEC-3): a protected DACL with full control for SY/BA
 // and nothing for anyone else — not even the SQL service SID, which never
@@ -348,6 +354,12 @@ func describeACEs(path, what string) (describedDACL, error) {
 	if err != nil {
 		return describedDACL{}, err
 	}
+	return describeSD(sd, what)
+}
+
+// describeSD describes the access list of a security descriptor that was already read (by name, as describeACEs does, or from an open
+// handle, as the settings reader does). The same fail-closed rules apply whichever way the descriptor was read.
+func describeSD(sd *windows.SECURITY_DESCRIPTOR, what string) (describedDACL, error) {
 	defer runtime.KeepAlive(sd)
 	// The second value of SECURITY_DESCRIPTOR.DACL() is "defaulted" (the list came from a default source), NOT "present". A missing or NULL
 	// list comes back as a nil ACL, so that is the only test for "no list". Reading the second value as "present" made every real list look
