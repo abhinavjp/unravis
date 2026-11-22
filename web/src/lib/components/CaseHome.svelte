@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { api, ApiError } from '../api';
-  import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing, panels } from '../appState.svelte';
+  import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing } from '../appState.svelte';
   import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, closeCase, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { archiveButton, closeButton, closedEraseAt, readsCaseData, reopenButton, retryAction, retryServerName } from '../caseLifecycle';
   import { archiveFilePath, archivedActions, type ArchiveDrawerKind } from '../archiveModel';
@@ -13,6 +13,7 @@
   import { stateLabel } from '../ledger';
   import { holdLedger, ledger, refreshLedger } from '../ledgerStore.svelte';
   import { buildStory, shortText } from '../story';
+  import { caseAdded } from '../caseAdded.svelte';
   import { guidedOpenFor } from '../guided/stepModel';
   import GuidedAnalysis from './guided/GuidedAnalysis.svelte';
   import { TRACING_TEXT } from '../copy/tracingCopy';
@@ -269,23 +270,27 @@
     }
   }
 
-  // Files added from the drawer show here once it closes: the list, the counts and the story are read again, without the loading screen.
-  let drawerWas: string | null = null;
+  // Whatever is added to this case (files in the Add files pop-up, or a source in Add data) shows in the story at once, without waiting for the pop-up
+  // to close: the case and its files are read again, quietly (no loading screen, no focus move). One read for each successful add, none for a failed one.
+  let rereadRun = 0;
   async function rereadFiles() {
     const id = caseId;
     if (!id || phase !== 'ready') return;
+    const mine = ++rereadRun;
     try {
       const fresh = await getCaseView(id);
       const files = readsCaseData(fresh) ? await listImports(id) : [];
-      if (id !== caseId) return;
+      if (id !== caseId || mine !== rereadRun) return;
       info = fresh;
       imports = files;
     } catch (error) { lockedUnder(error); /* otherwise the page keeps the list it had */ }
   }
+  let seenAdd = caseAdded.seq;
   $effect(() => {
-    const now = panels.sidePanel;
-    if (drawerWas === 'import' && now === null) void rereadFiles();
-    drawerWas = now;
+    const seq = caseAdded.seq;
+    if (seq === seenAdd) return;
+    seenAdd = seq;
+    if (caseAdded.caseId === untrack(() => caseId)) void untrack(() => rereadFiles());
   });
 
   async function rereadHealth() {
