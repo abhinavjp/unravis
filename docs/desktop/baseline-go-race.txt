@@ -1,3 +1,4 @@
 # Tests that fail ONLY under the race detector (go test -race), on top of docs/desktop/baseline-go-tests.txt.
 # A timing or budget test that is too slow under -race goes here. A real data race never does: the go-race job fails on any "WARNING: DATA RACE".
 # Same form as baseline-go-tests.txt: <package>.<Test>
+api-audit-explorer/internal/casestore/sqlite.TestSeriesWithPushedSelectorsMatchesGoSideMatching
