@@ -25,7 +25,7 @@ const (
 
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("testdata", name))
+	b, err := os.ReadFile(filepath.Join("testdata", name)) //nolint:gosec // a fixed testdata folder and names from this file
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,8 +107,8 @@ func TestFixtureReplayProbe(t *testing.T) {
 			if _, err := io.ReadFull(s, got); err != nil || !bytes.Equal(got, encodeStart()) {
 				return
 			}
-			s.Write(startReply)
-			s.Write(head)
+			_, _ = s.Write(startReply)
+			_, _ = s.Write(head)
 			select {
 			case <-stopped:
 			case <-time.After(3 * time.Second):
@@ -119,7 +119,7 @@ func TestFixtureReplayProbe(t *testing.T) {
 		if _, err := io.ReadFull(s, got); err != nil || !bytes.Equal(got, encodeStop(session)) {
 			return
 		}
-		s.Write(stopReply)
+		_, _ = s.Write(stopReply)
 		close(stopped)
 	}}
 	res, err := Probe(context.Background(), d, Target{PID: fixturePID}, testOptions())

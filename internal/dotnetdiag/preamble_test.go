@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 )
 
@@ -24,8 +25,8 @@ func buildPreambleFrom(p Preamble) []byte {
 	for _, v := range p.SyncTime {
 		b = le.AppendUint16(b, v)
 	}
-	b = le.AppendUint64(b, uint64(p.QPCSync))
-	b = le.AppendUint64(b, uint64(p.QPCFreq))
+	b = le.AppendUint64(b, p.QPCSync)
+	b = le.AppendUint64(b, p.QPCFreq)
 	b = le.AppendUint32(b, p.PointerSize)
 	b = le.AppendUint32(b, p.PID)
 	b = le.AppendUint32(b, p.Processors)
@@ -116,7 +117,7 @@ func TestParsePreambleRejects(t *testing.T) {
 		mod(fmt.Sprintf("pointer size %d", ps), func(p *Preamble) { p.PointerSize = ps })
 	}
 	mod("qpc frequency 0", func(p *Preamble) { p.QPCFreq = 0 })
-	mod("qpc frequency negative", func(p *Preamble) { p.QPCFreq = -1 })
+	mod("qpc frequency above int64", func(p *Preamble) { p.QPCFreq = 1 << 63 })
 	mod("process id 0", func(p *Preamble) { p.PID = 0 })
 	mod("process id negative", func(p *Preamble) { p.PID = 0x80000000 })
 
@@ -142,7 +143,7 @@ func FuzzParsePreamble(f *testing.F) {
 			return
 		}
 		if p.Version < 4 || p.Version > 5 || (p.PointerSize != 4 && p.PointerSize != 8) ||
-			p.QPCFreq <= 0 || p.PID == 0 || p.PID > 0x7FFFFFFF {
+			p.QPCFreq == 0 || p.QPCFreq > math.MaxInt64 || p.PID == 0 || p.PID > 0x7FFFFFFF {
 			t.Fatalf("accepted out-of-range fields %+v", p)
 		}
 		back, err := ParsePreamble(buildPreambleFrom(p))
