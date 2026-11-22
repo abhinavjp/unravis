@@ -195,7 +195,7 @@ func TestHooksRunForPageAndBye(t *testing.T) {
 }
 
 func TestClipPathCases(t *testing.T) {
-	for in, want := range map[string]string{
+	for in, want := range map[string]string{ //nolint:gosec // G101: these are file names the path hiding must remove, not credentials
 		`opened C:\Users\Some One\keys\rc-1.key.json today`: "opened <path>",
 		`share \\srv\my share\x failed`:                     "share <path>",
 		`see ..\secret\k and more`:                          "see <path> and more",
