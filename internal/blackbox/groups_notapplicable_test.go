@@ -229,7 +229,7 @@ func TestDormantRecheckTimeoutIsSilent(t *testing.T) {
 	}}
 	c, b := newNACollector(t, f)
 	t0 := time.Unix(1_000_000, 0)
-	c.Collect(t0)
+	_, _ = c.Collect(t0)
 
 	s, err := c.Collect(t0.Add(31 * time.Minute))
 	if err != nil {
