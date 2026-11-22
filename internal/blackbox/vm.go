@@ -44,6 +44,7 @@ type vmGroup struct {
 	// source the group owns is re-detected; a shared test source never is.
 	failures int       // consecutive ticks without a reading
 	retryAt  time.Time // earliest next attempt to open the counter again
+	attempts int       // reopens in a row that did not give a reading (backoff)
 	dormant  atomic.Bool
 }
 
@@ -51,6 +52,21 @@ type vmGroup struct {
 // opens the counter again to see whether it still exists (about a minute at the
 // 15 s base interval). Until then a bad tick is named in Missing, as before.
 const vmRedetectAfter = 4
+
+// vmReopenDelay is how long to wait before the next reopen after `attempts`
+// reopens in a row that still gave no reading: 1, 2, 4 minutes, then the group
+// retry ceiling. A counter that exists but keeps failing is visible in Missing
+// the whole time; it is only the query churn that backs off.
+func vmReopenDelay(attempts int) time.Duration {
+	d := time.Minute
+	for i := 1; i < attempts && d < groupRetryMax; i++ {
+		d *= 2
+	}
+	if d > groupRetryMax {
+		return groupRetryMax
+	}
+	return d
+}
 
 func newVMGroup(d GroupDeps) (Group, error) {
 	src, owned := d.Source, false
@@ -88,11 +104,11 @@ func (g *vmGroup) Collect(now time.Time, _ float64) (any, error) {
 	}
 	v, err := g.read(now)
 	if v != nil {
-		g.failures = 0
+		g.failures, g.attempts = 0, 0
 		return v, nil
 	}
 	g.failures++
-	if g.owned && g.failures >= vmRedetectAfter {
+	if g.owned && g.failures >= vmRedetectAfter && !now.Before(g.retryAt) {
 		return g.redetect(now)
 	}
 	return nil, err
@@ -135,16 +151,22 @@ func (g *vmGroup) redetect(now time.Time) (any, error) {
 		g.dormant.Store(false)
 		v, rerr := g.read(now)
 		if v == nil {
+			// The counter exists but gives nothing: wait longer before the next reopen.
+			g.attempts++
+			g.retryAt = now.Add(vmReopenDelay(g.attempts))
 			return nil, rerr
 		}
+		g.attempts = 0
 		return v, nil
 	case err != nil && errors.Is(err, errPDHAbsent):
 		g.dormant.Store(true)
+		g.attempts = 0
 		g.retryAt = now.Add(notApplicableRecheck)
 		return nil, errNotApplicable
 	default:
 		g.dormant.Store(false)
-		g.retryAt = now.Add(groupRetryDelay(2))
+		g.attempts++
+		g.retryAt = now.Add(vmReopenDelay(g.attempts))
 		return nil, errGroupUnavailable
 	}
 }
