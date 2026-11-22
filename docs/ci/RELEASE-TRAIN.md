@@ -1,6 +1,6 @@
 # Release train: develop, a fast gate per pull request, full CI once per version
 
-Status: live since 2026-11-22 (`develop` exists, open pull requests retargeted). GitHub protection for `develop` is still nachi's to set (see "Cutover"). Backlog: BL-462. Companion of the CI speed-up (BL-461).
+Status: live since 2026-11-22. `develop` exists and is the default branch (new pull requests open against it), its protection is set (required `fast-build`, strict off, merge commits allowed; conversation resolution not required). Backlog: BL-462. Companion of the CI speed-up (BL-461).
 
 ## The idea in four lines
 
@@ -55,7 +55,7 @@ Only one promotion at a time: it is a merge to `master`, so the same release-loc
 - A failing `develop` push run is everyone's priority: fix forward or revert before more merges pile on.
 - `docs/BACKLOG.md` items are ticked when the change reaches `master` and is verified on the real data path, not at the merge into `develop`.
 
-## Cutover (steps 1, 2, 4, 5 done 2026-11-22; step 3 is nachi's)
+## Cutover (all steps done 2026-11-22 except the measured seconds, step 6)
 
 1. Merge the pull request that adds this train. It is dormant: `fast-gate.yml` triggers only on `develop`, and the `ci.yml` triggers still cover `master`.
 2. Create `develop` from `master` (one command, or the GitHub branch dialog).
@@ -69,3 +69,9 @@ Only one promotion at a time: it is a merge to `master`, so the same release-loc
 Stop using `develop`: set pull requests back to `master` (`gh pr edit --base master`). Changing the base does not start `ci.yml` by itself (a retarget is an `edited` event, which `ci.yml` does not listen to): push a commit to each retargeted pull request, or close and reopen it, so the full `build` runs and master's required check can pass. The `ci.yml` triggers still cover `master` pull requests, so nothing else to undo. Delete `develop` when empty.
 
 A promotion pull request must be merged with a merge commit (`Promote-Develop.ps1` does). Nothing stops a person from squashing it on the GitHub button: master would then hold the changes without develop's commits, and the next promotion would conflict. Do not squash a `promote/*` pull request.
+
+## develop is the default branch
+
+- Pull requests open against `develop` without `--base`. Scheduled workflows (`mirror-feed.yml`, `ui-audit.yml`) and a manual "Run workflow" use the workflow file on `develop`, not on `master`.
+- Releases are unaffected: `Release.ps1` names `master` explicitly (`-Branch master`, `origin/master`), `Promote-Develop.ps1` names `--base master` and `develop` explicitly, `release.yml` runs on the pushed tag, and the lock lives on its own branch `release-lock`.
+- Closing keywords ("Closes #123") act when a pull request merges into the default branch, so they fire at the merge into `develop`.
