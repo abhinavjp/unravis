@@ -6,7 +6,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -265,25 +264,30 @@ func scan(n ast.Node, file string, uses map[string][]string, t *testing.T) {
 // PC the "open" stage is held on Linux by this scan alone.
 func TestWindowsReaderTagsOnlyTheOpenAsOpenStage(t *testing.T) {
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
 	uses := map[string][]string{} // identifier -> the file of each use, not counting a function's own declaration name
-	for _, pkg := range pkgs {
-		for name, f := range pkg.Files {
-			name = filepath.Base(name)
-			for _, d := range f.Decls {
-				// A function's own declaration name is not a use; everything else in the declaration is.
-				fd, ok := d.(*ast.FuncDecl)
-				if !ok {
-					scan(d, name, uses, t)
-					continue
-				}
-				scan(fd.Type, name, uses, t)
-				if fd.Body != nil {
-					scan(fd.Body, name, uses, t)
-				}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0) // no build constraint is applied: every file is read
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			// A function's own declaration name is not a use; everything else in the declaration is.
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok {
+				scan(d, name, uses, t)
+				continue
+			}
+			scan(fd.Type, name, uses, t)
+			if fd.Body != nil {
+				scan(fd.Body, name, uses, t)
 			}
 		}
 	}
