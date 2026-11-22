@@ -72,6 +72,10 @@
   .when-windows { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px var(--space-8); min-width: 0; }
   .when-window { display: grid; gap: 6px; align-content: start; min-width: 0; }
   .when-window h3 { display: flex; align-items: center; margin: 0; font-size: 12px; font-weight: 600; }
+  /* The "?" hint sits inside the heading and the "i" button follows the heading, so the gap has to come from the heading: the hint's 24px box
+     reaches 4px past the heading, and the "i" button on a touch or narrow screen reaches 4px back into it (BL-474). */
+  .when-window h3 { margin-inline-end: var(--space-1); }
+  @media (pointer: coarse), (max-width: 720px) { .when-window h3 { margin-inline-end: var(--space-2); } }
   .when-sub { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.45; }
   .window-bounds { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
   .utc-echo { margin: 0; color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
