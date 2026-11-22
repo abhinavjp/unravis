@@ -35,6 +35,7 @@ Sideways scroll, elements past the window edge, cut-off or spilling text, overla
 (under 24 px, and under 44 px on a phone as a note), text contrast (WCAG AA), text under 11 px, controls in a row or blocks in a
 stack that are a few pixels off line, broken pictures, code words on screen (`undefined`, `NaN`), buttons and fields with no name,
 duplicate ids, heading jumps, big surfaces of the wrong brightness for the theme, console errors, failed requests and server errors.
+A tap target smaller than 24 px may be grown by an absolutely positioned `::before` or `::after` of the control, but only when the browser confirms it (`elementFromPoint` at the centre and the four corners of that rectangle, all inside the window, must answer with the control) and the rectangle touches the control's box: a far-off, clipped, covered or shrunk pseudo-element does not count.
 `lib/page-checks.js` does the looking inside the page. Closed `<details>` and hidden things are skipped.
 The window is stretched to the height of the content before the checks, because the app is a fixed-height shell with inner scrollers.
 

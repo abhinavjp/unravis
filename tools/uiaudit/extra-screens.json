@@ -846,6 +846,38 @@
         }
       ],
       "restoreHosts": true
+    },
+    {
+      "id": "x-update-bar",
+      "phase": "X",
+      "note": "The update bar with its \"Open the release page\" link and nothing in front of it: the Glossary drawer is opened to check for an update and closed again. In the documentation screen p12-update-available the drawer's scrim covers the bar, so the audit cannot tell there whether the link's hit area answers a press (BL-497).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "goto": "#update=available"
+        },
+        {
+          "click": "role=button[name=\"Glossary\"]"
+        },
+        {
+          "waitFor": "#glossary-title"
+        },
+        {
+          "click": "[data-testid=update-check-button]"
+        },
+        {
+          "waitFor": "[data-testid=update-check-result]"
+        },
+        {
+          "click": ".glossary-drawer button.drawer-close"
+        },
+        {
+          "waitFor": "[data-testid=update-bar-link]"
+        }
+      ]
     }
   ]
 }

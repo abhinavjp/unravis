@@ -13,7 +13,27 @@
   // ---------- small helpers ----------
   function cs(el) { return getComputedStyle(el); }
   function rectOf(el) { return el.getBoundingClientRect(); }
-  /** The box of an element joined with its absolutely positioned, clickable ::before and ::after (the control must be positioned: the pseudo-element is placed against its padding box). */
+  /**
+   * True when a press on the rectangle (x, y, w, h) of `el`'s pseudo-element really goes to `el`. The pseudo-element's computed size and offsets only say
+   * where it would be: it may be placed far from the control, cut off by an ancestor (overflow), shrunk by a transform, or have another element on top.
+   * So the browser is asked (elementFromPoint, which sees clipping, transforms and stacking order): the centre and the four corners (1 px inside) must lie
+   * inside the viewport, and each must answer with `el` or something inside it. A rectangle that does not even touch the control's own box is not a grown
+   * hit area but a separate thing, and does not count either.
+   */
+  function pressGoesTo(el, r, x, y, w, h) {
+    var vw = window.innerWidth, vh = window.innerHeight;
+    if (x > r.right || x + w < r.left || y > r.bottom || y + h < r.top) return false;
+    var d = Math.min(1, w / 4, h / 4);
+    var pts = [[x + w / 2, y + h / 2], [x + d, y + d], [x + w - d, y + d], [x + d, y + h - d], [x + w - d, y + h - d]];
+    for (var i = 0; i < pts.length; i++) {
+      var px = pts[i][0], py = pts[i][1];
+      if (px < 0 || py < 0 || px >= vw || py >= vh) return false;
+      var hit = document.elementFromPoint(px, py);
+      if (!hit || !(hit === el || el.contains(hit))) return false;
+    }
+    return true;
+  }
+  /** The box of an element joined with its absolutely positioned, clickable ::before and ::after (the control must be positioned: the pseudo-element is placed against its padding box). Only a pseudo-element that really receives the press counts (see pressGoesTo). */
   function hitArea(el, r) {
     var cs0 = getComputedStyle(el);
     var out = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
@@ -24,6 +44,7 @@
         var w = parseFloat(s.width), h = parseFloat(s.height), l = parseFloat(s.left), t = parseFloat(s.top);
         if (!(w > 0 && h > 0) || isNaN(l) || isNaN(t)) return;
         var x = r.left + (parseFloat(cs0.borderLeftWidth) || 0) + l, y = r.top + (parseFloat(cs0.borderTopWidth) || 0) + t;
+        if (!pressGoesTo(el, r, x, y, w, h)) return;
         out = { left: Math.min(out.left, x), top: Math.min(out.top, y), right: Math.max(out.right, x + w), bottom: Math.max(out.bottom, y + h) };
       });
     }
