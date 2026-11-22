@@ -135,9 +135,123 @@ func TestHeldSQLLaneQSStateIgnoredWhenActivityExists(t *testing.T) {
 		if !ok {
 			t.Fatalf("state %s: no lane drawn from real activity", st)
 		}
-		if lane.State != calltrace.StateEvents || lane.ReasonCode != tracingReasonHeldSQL || lane.Reason != tracingHeldSQLMsg || lane.Scanned != 40 {
-			t.Fatalf("state %s: lane %s %s scanned %d, want events held-sql 40", st, lane.State, lane.ReasonCode, lane.Scanned)
+		// A day read while Query Store was off says so after the plain sentence; every other state leaves the sentence alone.
+		want := tracingHeldSQLMsg
+		if st == dbhealth.QSStateOff {
+			want += tracingQSOffWithSeriesMsg
 		}
+		if lane.State != calltrace.StateEvents || lane.ReasonCode != tracingReasonHeldSQL || lane.Reason != want || lane.Scanned != 40 {
+			t.Fatalf("state %s: lane %s %s scanned %d reason %q, want events held-sql 40 %q", st, lane.State, lane.ReasonCode, lane.Scanned, lane.Reason, want)
+		}
+	}
+}
+
+// Query Store off with blocks in the window: the lane draws them, keeps the held-sql code, and says the blocks are history it kept.
+func TestHeldSQLLaneQSOffWithSeriesDrawsBlocksAndSaysOff(t *testing.T) {
+	t0 := qsStateWindowStart.Unix()
+	series := []dbhealth.LaneSeriesPoint{{T: t0, Execs: 40, AvgMs: 10, MaxMs: 30}, {T: t0 + 900, Execs: 20, AvgMs: 12, MaxMs: 40}}
+	first, last := qsStateWindowStart.Add(-48*time.Hour), qsStateWindowStart.Add(45*time.Minute)
+	lane, ok := heldSQLQSLane(t, series, &dbhealth.LaneQueryStore{State: dbhealth.QSStateOff, FirstData: &first, LastData: &last, IntervalMinutes: 15})
+	if !ok || lane.State != calltrace.StateEvents || lane.ReasonCode != tracingReasonHeldSQL || lane.Scanned != 60 {
+		t.Fatalf("ok %v lane %s %s scanned %d", ok, lane.State, lane.ReasonCode, lane.Scanned)
+	}
+	for _, part := range []string{tracingHeldSQLMsg, "Query Store was off when this day was read", last.Format(time.RFC3339)} {
+		if !strings.Contains(lane.Reason, part) {
+			t.Errorf("reason %q lacks %q", lane.Reason, part)
+		}
+	}
+	if strings.Contains(lane.Reason, "saved no history") || strings.Contains(lane.Reason, "may have changed") {
+		t.Errorf("reason %q", lane.Reason)
+	}
+	drawn := 0
+	for _, b := range lane.Buckets {
+		if b.BusyMs != nil && b.Count > 0 {
+			drawn++
+		}
+	}
+	if drawn == 0 {
+		t.Error("no bucket carries figures")
+	}
+	// Without a newest block time the sentence still says the blocks were kept, and names no time.
+	lane, _ = heldSQLQSLane(t, series, &dbhealth.LaneQueryStore{State: dbhealth.QSStateOff})
+	if !strings.HasSuffix(lane.Reason, tracingQSOffWithSeriesMsg) || strings.Contains(lane.Reason, "newest block") {
+		t.Errorf("reason %q", lane.Reason)
+	}
+	// A day saved before the window ended says so, as the other state sentences do.
+	c := heldSQLQSCase(t, series, &dbhealth.LaneQueryStore{State: dbhealth.QSStateOff, LastData: &last})
+	saved := qsStateWindowStart.Add(30 * time.Minute)
+	c.runs[0].At = saved
+	lane, ok = tracingHeldSQLLane(context.Background(), c, newTracingAxis(qsStateWindowStart, qsStateWindowStart.Add(time.Hour)), time.Now())
+	if !ok || !strings.Contains(lane.Reason, "Query Store was off when this day was read") || !strings.Contains(lane.Reason, saved.Format(time.RFC3339)) || !strings.Contains(lane.Reason, "may have changed") {
+		t.Errorf("ok %v reason %q", ok, lane.Reason)
+	}
+}
+
+// Query Store off with a kept range but no block in the window: the lane names the range. "None of it is for this window" is said only when the
+// window lies outside the range; a window the range covers (or whose end cannot be placed) was simply not read.
+func TestHeldSQLLaneQSOffOutsideNamesRange(t *testing.T) {
+	win := func(first, last time.Time, interval int) string {
+		lane, ok := heldSQLQSLane(t, nil, &dbhealth.LaneQueryStore{State: dbhealth.QSStateOff, FirstData: &first, LastData: &last, IntervalMinutes: interval})
+		if !ok || lane.ReasonCode != tracingReasonQSOff || lane.State != calltrace.StateNoneSeen {
+			t.Fatalf("ok %v lane %s %s", ok, lane.State, lane.ReasonCode)
+		}
+		for _, part := range []string{first.Format(time.RFC3339), last.Format(time.RFC3339)} {
+			if !strings.Contains(lane.Reason, part) {
+				t.Errorf("reason %q lacks %q", lane.Reason, part)
+			}
+		}
+		if strings.Contains(lane.Reason, "saved no history") {
+			t.Errorf("a kept range was called no history: %q", lane.Reason)
+		}
+		return lane.Reason
+	}
+	const outside, notRead = "none of it is for this window", "holds no saved block for it"
+	h := func(n int) time.Time { return qsStateWindowStart.Add(time.Duration(n) * time.Hour) }
+	if r := win(h(-72), h(-48), 15); !strings.Contains(r, outside) { // the newest block ended long before the window
+		t.Errorf("after the range: %q", r)
+	}
+	if r := win(h(2), h(5), 15); !strings.Contains(r, outside) { // the oldest block starts after the window ended
+		t.Errorf("before the range: %q", r)
+	}
+	if r := win(h(-48), h(5), 15); !strings.Contains(r, notRead) || strings.Contains(r, outside) { // the range covers the window
+		t.Errorf("inside the range: %q", r)
+	}
+	// The newest block, 15 minutes long, still runs into the window: not outside. Exactly at its end is outside.
+	if r := win(h(-48), qsStateWindowStart.Add(-14*time.Minute), 15); !strings.Contains(r, notRead) {
+		t.Errorf("block runs into the window: %q", r)
+	}
+	if r := win(h(-48), qsStateWindowStart.Add(-15*time.Minute), 15); !strings.Contains(r, outside) {
+		t.Errorf("block ends where the window starts: %q", r)
+	}
+	// Block length unknown: the end of the range cannot be placed, so a later window is not read, never outside.
+	if r := win(h(-72), h(-48), 0); !strings.Contains(r, notRead) || strings.Contains(r, outside) {
+		t.Errorf("unknown block length: %q", r)
+	}
+}
+
+// A failed or refused read of the history is not "saved no history": the lane says it could not read, with or without a kept range.
+func TestHeldSQLLaneQSOffUnreadHistoryNeverSaysNoHistory(t *testing.T) {
+	first, last := qsStateWindowStart.Add(-48*time.Hour), qsStateWindowStart.Add(-47*time.Hour)
+	for name, qs := range map[string]*dbhealth.LaneQueryStore{
+		"no range":   {State: dbhealth.QSStateOff, HistoryUnread: true},
+		"with range": {State: dbhealth.QSStateOff, FirstData: &first, LastData: &last, IntervalMinutes: 15, HistoryUnread: true},
+	} {
+		lane, ok := heldSQLQSLane(t, nil, qs)
+		if !ok || lane.ReasonCode != tracingReasonQSOff || lane.State != calltrace.StateNoneSeen {
+			t.Fatalf("%s: ok %v lane %s %s", name, ok, lane.State, lane.ReasonCode)
+		}
+		if !strings.Contains(lane.Reason, "could not read the history") || !strings.Contains(lane.Reason, "not known") {
+			t.Errorf("%s: reason %q", name, lane.Reason)
+		}
+		for _, bad := range []string{"saved no history", "none of it is for this window"} {
+			if strings.Contains(lane.Reason, bad) {
+				t.Errorf("%s: reason %q says %q", name, lane.Reason, bad)
+			}
+		}
+	}
+	// The confirmed "none kept" case keeps today's sentence.
+	if lane, _ := heldSQLQSLane(t, nil, &dbhealth.LaneQueryStore{State: dbhealth.QSStateOff}); !strings.Contains(lane.Reason, "saved no history") {
+		t.Errorf("reason %q", lane.Reason)
 	}
 }
 

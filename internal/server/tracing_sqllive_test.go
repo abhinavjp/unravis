@@ -41,6 +41,40 @@ func TestTracingDrawsSQLLaneFromSavedQueryStoreDay(t *testing.T) {
 	}
 }
 
+// An off database that kept blocks: the demo read goes through the lane code and the case store, and the Timeline draws the kept blocks with a reason that
+// says Query Store was off. An off database with nothing kept draws nothing and still says "saved no history" (a confirmed none).
+func TestTracingDrawsKeptBlocksOfAnOffDatabase(t *testing.T) {
+	e, id := demoLaneEnv(t)
+	if res := e.json(http.MethodPost, "/api/cases/"+id+"/lanes/sql", demoSQLBody("OffKeptDb")); res.Code != http.StatusOK {
+		t.Fatalf("run = %d %s", res.Code, res.Body)
+	}
+	out, _ := tracingPost(t, e, id, tracingWindowBodyFor("2026-10-20T10:00:00Z", "2026-10-20T11:00:00Z"))
+	lane := tracingLaneOf(t, out, calltrace.LaneSQL)
+	if lane.State != calltrace.StateEvents || lane.ReasonCode != tracingReasonHeldSQL || tracingBucketSum(lane) == 0 {
+		t.Fatalf("lane = %s %s sum %d", lane.State, lane.ReasonCode, tracingBucketSum(lane))
+	}
+	// The newest kept block starts at 10:45 (15 minutes before the incident ends).
+	if !strings.Contains(lane.Reason, "Query Store was off when this day was read") || !strings.Contains(lane.Reason, "2026-10-20T10:45:00Z") {
+		t.Fatalf("reason = %q", lane.Reason)
+	}
+	// No block is drawn after the newest kept one.
+	for _, b := range lane.Buckets {
+		if b.Start.After(time.Date(2026, 10, 20, 10, 45, 0, 0, time.UTC)) && b.Count > 0 {
+			t.Fatalf("a bucket after the newest kept block carries figures: %+v", b)
+		}
+	}
+
+	e, id = demoLaneEnv(t)
+	if res := e.json(http.MethodPost, "/api/cases/"+id+"/lanes/sql", demoSQLBody("OffNoneDb")); res.Code != http.StatusOK {
+		t.Fatalf("run = %d %s", res.Code, res.Body)
+	}
+	out, _ = tracingPost(t, e, id, tracingWindowBodyFor("2026-10-20T10:00:00Z", "2026-10-20T11:00:00Z"))
+	lane = tracingLaneOf(t, out, calltrace.LaneSQL)
+	if lane.State != calltrace.StateNoneSeen || lane.ReasonCode != tracingReasonQSOff || !strings.Contains(lane.Reason, "saved no history") {
+		t.Fatalf("lane = %s %s %q", lane.State, lane.ReasonCode, lane.Reason)
+	}
+}
+
 // Only the saved days that fall in the window are drawn: a window with none leaves the lane as it was.
 func TestTracingSQLLaneStaysEmptyWhenTheSavedDayIsOutsideTheWindow(t *testing.T) {
 	e, id := demoLaneEnv(t)

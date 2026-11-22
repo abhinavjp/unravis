@@ -274,6 +274,32 @@ test('off with only a first time keeps the plain off message', () => {
   assert.equal(run({ queryStore: { state: 'off', firstData: FIRST } }).message, T.dbMsgOff);
 });
 
+// A failed or refused read of an off database's history is not a "No": the screen never says the database saved no history.
+test('off, history read failed, no kept range: says it could not be read, never "saved no history"', () => {
+  const v = run({ queryStore: { state: 'off', historyUnread: true } });
+  assert.equal(v.key, 'off');
+  assert.equal(v.message, T.dbMsgOffUnread);
+  assert.equal(v.short, T.dbShortOffUnread);
+  assert.equal(v.shape, 'none');
+  assert.match(v.message, /could not read the history/);
+  for (const text of [v.message, v.short]) assert.doesNotMatch(text, /saved no history|Not recorded/);
+  // A read that was not marked failed keeps today's sentence (an old saved report, or a confirmed "none kept").
+  assert.equal(run({ queryStore: { state: 'off', historyUnread: false } }).message, T.dbMsgOff);
+  assert.equal(run({ queryStore: { state: 'off' } }).short, T.dbShortOff);
+});
+
+test('off, a later slice read failed, kept range known: names the range and says the database was not read for it', () => {
+  const v = kept(FIRST, LAST, { queryStore: { state: 'off', firstData: FIRST, lastData: LAST, historyUnread: true } });
+  assert.equal(v.message, notRead(FIRST, LAST));
+  assert.equal(v.short, T.dbShortOff);
+});
+
+test('off, a window after a range shorter than Query Store block length is not outside', () => {
+  // The lane block is 5 minutes but Query Store keeps 15 minute blocks: the newest block starting at 09:50 ends at 10:05, inside the 10:00 window.
+  const v = run({ blockSeconds: 300, queryStore: { state: 'off', firstData: FIRST, lastData: '2026-11-11T09:50:00Z', intervalMinutes: 15 } });
+  assert.equal(v.message, notRead(FIRST, '2026-11-11T09:50:00Z'));
+});
+
 test('denied still wins over a drawn off series', () => {
   assert.equal(run({ ...held, queryStore: { state: 'denied' } }).key, 'denied');
 });
@@ -285,6 +311,8 @@ test('offkept is real-data only: it is not one of the demo keys', () => {
 test('every off-with-history sentence passes the copy lint, including the one without times', () => {
   const extra = [
     { id: 'drill.dbMsgOffKept.notimes', text: T.dbMsgOffKept(null, null) },
+    { id: 'drill.dbMsgOffUnread', text: T.dbMsgOffUnread },
+    { id: 'drill.dbShortOffUnread', text: T.dbShortOffUnread },
     { id: 'drill.dbMsgOffNotRead.sample', text: T.dbMsgOffNotRead('11 Nov 2026, 10:00', '11 Nov 2026, 10:45') }
   ];
   assert.deepEqual(lintScreenStrings([...drillCopyEntries(), ...extra], deck.terms), []);
