@@ -431,7 +431,7 @@ function Enter-ReleaseLock([string]$Dir) {
         $who = ''
         try {
             $i = Get-Content -Raw -LiteralPath (Join-Path $Dir 'lock-info.json') | ConvertFrom-Json
-            $who = " Held by $($i.requester) (pid $($i.pid)) for $($i.version), at '$($i.stage)', since $($i.started)."
+            $who = " Held by $($i.requester) (pid $($i.pid)) for $(if ($i.version) { $i.version } else { '(choosing the version)' }), at '$($i.stage)', since $($i.started)."
         } catch {}
         throw "Another release is running on this PC (release.lock is held).$who Wait for it, or pass -WaitMinutes."
     }
