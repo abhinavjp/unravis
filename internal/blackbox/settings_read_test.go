@@ -2,7 +2,11 @@ package blackbox
 
 import (
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -235,21 +239,67 @@ func TestParseVerifiedSettingsFallbackDecisionIgnoresTheClampedWord(t *testing.T
 	}
 }
 
+// scan records every use of the identifiers refuseOpen and refuseAt under n, and fails on a SettingsRefusal built by hand outside
+// settings_read.go.
+func scan(n ast.Node, file string, uses map[string][]string, t *testing.T) {
+	ast.Inspect(n, func(m ast.Node) bool {
+		switch x := m.(type) {
+		case *ast.Ident:
+			if x.Name == "refuseOpen" || x.Name == "refuseAt" {
+				uses[x.Name] = append(uses[x.Name], file)
+			}
+		case *ast.CompositeLit:
+			if id, ok := x.Type.(*ast.Ident); ok && id.Name == "SettingsRefusal" && file != "settings_read.go" {
+				t.Errorf("%s builds a SettingsRefusal by hand; only settings_read.go may", file)
+			}
+		}
+		return true
+	})
+}
+
 // The Windows reader is not run on Linux, so its stage tagging is pinned by its source: the only open-stage refusal is the one on the
-// CreateFile loop, every refusal before it is pre-open, every refusal after it is the default after-open one, and nothing in the file
-// sets a stage by hand. A later edit that tags a post-open failure as an open-stage refusal fails here.
+// CreateFile loop, every refusal before it is pre-open, every refusal after it is the default after-open one, and nothing outside
+// settings_read.go sets a stage by hand. A later edit that tags a post-open failure as an open-stage refusal fails here, also through an
+// alias (var ro = refuseOpen) or from a helper in another file of the package, so every non-test .go file is parsed, whatever its build tag,
+// and the bare identifier is counted, not the text "refuseOpen(". The real-NTFS stage tests run only on Windows, so until probe P1 runs on a
+// PC the "open" stage is held on Linux by this scan alone.
 func TestWindowsReaderTagsOnlyTheOpenAsOpenStage(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uses := map[string][]string{} // identifier -> the file of each use, not counting a function's own declaration name
+	for _, pkg := range pkgs {
+		for name, f := range pkg.Files {
+			name = filepath.Base(name)
+			for _, d := range f.Decls {
+				// A function's own declaration name is not a use; everything else in the declaration is.
+				fd, ok := d.(*ast.FuncDecl)
+				if !ok {
+					scan(d, name, uses, t)
+					continue
+				}
+				scan(fd.Type, name, uses, t)
+				if fd.Body != nil {
+					scan(fd.Body, name, uses, t)
+				}
+			}
+		}
+	}
+	if got := uses["refuseOpen"]; len(got) != 1 || got[0] != "settings_open_windows.go" {
+		t.Fatalf("refuseOpen is used in %v, want exactly once, in settings_open_windows.go (the CreateFile refusal)", got)
+	}
+	for _, f := range uses["refuseAt"] {
+		if f != "settings_read.go" {
+			t.Errorf("refuseAt is used in %s; only settings_read.go (its own helpers) may set a stage directly", f)
+		}
+	}
 	raw, err := os.ReadFile("settings_open_windows.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	src := string(raw)
-	if n := strings.Count(src, "refuseOpen("); n != 1 {
-		t.Fatalf("%d refuseOpen call(s) in settings_open_windows.go, want exactly 1 (the CreateFile refusal)", n)
-	}
-	if strings.Contains(src, "refuseAt(") || strings.Contains(src, "SettingsRefusal{") {
-		t.Fatal("settings_open_windows.go must tag stages only through refusePreOpen, refuseOpen and refuse")
-	}
 	open := strings.Index(src, "refuseOpen(")
 	loop := strings.Index(src, "windows.CreateFile(p,")
 	if loop < 0 || open < loop {

@@ -77,8 +77,9 @@ func refuseOpen(word string, err error) error { return refuseAt(StageOpen, word,
 // which is kept for the reader's own callers and is never logged.
 func NewSettingsRefusal(word string, err error) error { return refuse(word, err) }
 
-// NewSettingsRefusalAt is refuseAt for callers outside the package (tests): stage is one of the Stage constants; a stage that is not
-// known never falls back.
+// NewSettingsRefusalAt is refuseAt for callers outside the package. TESTS ONLY: it can build a refusal that falls back, so production code
+// must never call it; the real reader tags its refusals through refusePreOpen, refuseOpen and refuse. Stage is one of the Stage constants;
+// a stage that is not known never falls back.
 func NewSettingsRefusalAt(stage, word string, err error) error { return refuseAt(stage, word, err) }
 
 // allWords is the one list of the words above. knownWords and Words are made from it, so a new word has one place to go.
