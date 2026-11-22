@@ -249,6 +249,32 @@ export function pushArgs(remote, branch) {
   return ['push', '--quiet', remote, 'HEAD:refs/heads/' + branch];
 }
 
+/** The git subcommand of an argument list (`-c k=v` pairs and other leading options skipped): what an error should name. */
+export function gitSubcommand(args) {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '-c' || args[i] === '-C') { i++; continue; }
+    if (!String(args[i]).startsWith('-')) return args[i];
+  }
+  return String(args[0] ?? 'command');
+}
+
+/**
+ * Deletes a folder that holds nothing secret and is not needed any more: retries, then warns and carries on. A Windows lock (a virus
+ * scanner on a fresh pack file) must not stop a promotion; the folder is under a temp folder that is removed at the end anyway.
+ * `rm` is a test hook. Returns true when the folder is gone.
+ */
+export function removeBestEffort(path, rm = rmSync) {
+  for (let i = 0; i < 3; i++) {
+    try {
+      rm(path, { recursive: true, force: true, maxRetries: 3 });
+      return true;
+    } catch (e) {
+      if (i === 2) console.warn('promote-dist: could not delete ' + path + ' (' + String(e && e.message).split('\n')[0] + '); carrying on, it holds nothing secret.');
+    }
+  }
+  return false;
+}
+
 // git with line-ending conversion off, so the commit holds exactly the bytes the build wrote (the Windows default
 // core.autocrlf=true would otherwise rewrite the check-out and the commit).
 function git(dir, args, opts = {}) {
@@ -257,7 +283,7 @@ function git(dir, args, opts = {}) {
   const r = run('git', ['-c', 'core.hooksPath=' + devNull, '-c', 'core.fsmonitor=false', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', '-c', 'core.eol=lf', ...args], { ...opts, env: opts.env ?? gitBaseEnv(process.env), cwd: dir });
   if (r.status !== 0 && !opts.allowFail) {
     const why = String(r.stderr || '').trim().split('\n').slice(-3).join(' | ') || 'exit ' + r.status;
-    throw new Stop(1, 'git ' + args[0] + ' failed: ' + why);
+    throw new Stop(1, 'git ' + gitSubcommand(args) + ' failed: ' + why);
   }
   return r;
 }
@@ -295,6 +321,20 @@ export function makeCommitClone({ tmp, remote, branch, env, afterClone }) {
   if (afterClone) afterClone(dir);
   assertFreshClone(dir, { remote, branch });
   return dir;
+}
+
+/**
+ * A dry run of the commit clone, before the long build: a clone made the same way (from the build clone, on this disk, no token) with
+ * this PC's real git settings must pass the same check. A personal git setting the check refuses then costs seconds, not a whole
+ * build. The dry clone is deleted best-effort afterwards.
+ */
+export function dryRunCommitClone({ buildDir, branch, dryTmp, rm }) {
+  mkdirSync(dryTmp, { recursive: true });
+  try {
+    makeCommitClone({ tmp: dryTmp, remote: pathToFileURL(buildDir).href, branch, env: gitBaseEnv(process.env) });
+  } finally {
+    removeBestEffort(dryTmp, rm);
+  }
 }
 
 /**
@@ -346,10 +386,7 @@ export function main(argv, env = process.env) {
     // A dry run of the commit clone, before the long build: a clone made the same way (from the build clone, on this disk) with this
     // PC's real git settings must pass the same check. A personal git setting the check refuses then costs seconds, not a whole build.
     console.log('> checking that a commit clone can be made with this PC\'s git settings (before the build)');
-    const dryTmp = join(buildTmp, 'dry');
-    mkdirSync(dryTmp, { recursive: true });
-    makeCommitClone({ tmp: dryTmp, remote: pathToFileURL(buildDir).href, branch: o.branch, env: gitBaseEnv(process.env) });
-    rmSync(dryTmp, { recursive: true, force: true, maxRetries: 3 });
+    dryRunCommitClone({ buildDir, branch: o.branch, dryTmp: join(buildTmp, 'dry') });
 
     shellStep('install', o.install, web, stepEnv);
     shellStep('build', o.build, web, stepEnv);

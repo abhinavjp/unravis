@@ -6,7 +6,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { assertFreshClone, authEnv, buildEnv, pushArgs, copyRoots, gitBaseEnv, makeCommitClone, pushBranch, sameRoots } from '../release/promote-dist.mjs';
+import { assertFreshClone, authEnv, buildEnv, dryRunCommitClone, gitSubcommand, pushArgs, copyRoots, gitBaseEnv, makeCommitClone, pushBranch, removeBestEffort, sameRoots } from '../release/promote-dist.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..');
@@ -460,6 +460,128 @@ test('personal git settings that change what a clone writes do not make the run 
     assert.notEqual(remoteHead(f), before);
     // The dry run of the commit clone is made before the install and the build (a refusal costs seconds, not a whole build).
     assert.ok(r.stdout.indexOf("> checking that a commit clone can be made") > -1 && r.stdout.indexOf("> checking that a commit clone can be made") < r.stdout.indexOf('> install:'), 'dry run before the install');
+  } finally {
+    f.cleanup();
+  }
+});
+
+// A `git` first on PATH that records every call (one line, with the folder it runs in) into `log`, runs the real one, and, when
+// `plantOnDry` is set, writes that text into the config of a clone made in a `dry` folder (a stand-in for a personal git setting that
+// ends up in the clone's config and that the freshness check refuses).
+function recordingGit(base, log, plantOnDry) {
+  const bin = join(base, 'recbin');
+  mkdirSync(bin, { recursive: true });
+  const real = sh(base, 'sh', ['-c', 'command -v git']);
+  const plant = plantOnDry
+    ? 'case "$*" in *" clone "*"/dry/"*) for a in "$@"; do last="$a"; done; printf "%s" ' + JSON.stringify(plantOnDry) + ' >> "$last/.git/config";; esac\n'
+    : '';
+  writeFileSync(join(bin, 'git'), '#!/bin/sh\nprintf "GIT %s\\n" "$*" >> ' + JSON.stringify(log) + '\n' + (plantOnDry ? '"' + real + '" "$@"\nrc=$?\n' + plant + 'exit $rc\n' : 'exec ' + JSON.stringify(real) + ' "$@"\n'));
+  chmodSync(join(bin, 'git'), 0o755);
+  return bin;
+}
+const logging = (log, word) => 'node -e ' + JSON.stringify('require("fs").appendFileSync(' + JSON.stringify(log) + ',"' + word + '\\n")');
+
+test('the dry commit clone is made from the build clone before the install (recorded on the git command line)', () => {
+  if (process.platform === 'win32') return; // needs a shell wrapper
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const log = join(f.base, 'calls.log');
+    const bin = recordingGit(f.base, log);
+    const r = promote(f, ['--install-cmd', logging(log, 'INSTALL'), '--build-cmd', logging(log, 'BUILD') + ' && node build.cjs'], { env: { ...process.env, PATH: bin + ':' + process.env.PATH } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const lines = readFileSync(log, 'utf8').split('\n');
+    const firstInstall = lines.indexOf('INSTALL');
+    assert.ok(firstInstall > -1, 'the install ran');
+    const dry = lines.findIndex((l) => l.startsWith('GIT ') && / clone /.test(l) && l.includes('/dry/'));
+    assert.ok(dry > -1 && dry < firstInstall, 'a clone into the dry folder is recorded before the install:\n' + lines.join('\n'));
+    assert.ok(/ file:\/\/\/\S*unravis-dist-build-\S*\/build \S*\/dry\/repo$/.test(lines[dry]), 'the dry clone is made from the build clone (a file URL) into dry/repo: ' + lines[dry]);
+    assert.ok(!lines[dry].includes(f.url), 'the dry clone does not read the remote');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a dry commit clone that the freshness check refuses stops the run before any install or build command, and nothing is pushed', () => {
+  if (process.platform === 'win32') return;
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const log = join(f.base, 'calls.log');
+    const bin = recordingGit(f.base, log, '[filter "x"]\n\tclean = evil\n');
+    const before = remoteHead(f);
+    const r = promote(f, ['--install-cmd', logging(log, 'INSTALL'), '--build-cmd', logging(log, 'BUILD')], { env: { ...process.env, PATH: bin + ':' + process.env.PATH } });
+    assert.notEqual(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout + r.stderr, /Nothing was pushed|git settings/i);
+    const lines = readFileSync(log, 'utf8').split('\n');
+    assert.ok(!lines.includes('INSTALL') && !lines.includes('BUILD'), 'no install or build command ran:\n' + lines.join('\n'));
+    assert.ok(!/> install/.test(r.stdout), 'the install step did not start');
+    assert.equal(remoteHead(f), before);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('removeBestEffort retries, then warns and carries on (a locked folder must not stop a promotion)', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const dir = join(f.base, 'victim');
+    mkdirSync(dir);
+    // a lock that goes away on the third try: the folder is removed, no warning needed
+    let calls = 0;
+    const flaky = (p, o) => { if (++calls < 3) throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }); rmSync(p, o); };
+    assert.equal(removeBestEffort(dir, flaky), true);
+    assert.equal(calls, 3);
+    assert.equal(existsSync(dir), false);
+    // a lock that stays: false, one warning, no throw
+    mkdirSync(dir);
+    const warns = [];
+    const orig = console.warn;
+    console.warn = (...a) => warns.push(a.join(' '));
+    let res;
+    try { res = removeBestEffort(dir, () => { throw Object.assign(new Error('EBUSY: resource busy or locked\nsecond line'), { code: 'EBUSY' }); }); } finally { console.warn = orig; }
+    assert.equal(res, false);
+    assert.equal(warns.length, 1);
+    assert.match(warns[0], /could not delete .*EBUSY/);
+    assert.ok(!warns[0].includes('second line'), 'one line only');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a failing clean-up of the dry clone does not stop the run (and a refusal is still a refusal)', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const t = join(f.base, 'dryfail');
+    const orig = console.warn;
+    const warns = [];
+    console.warn = (...a) => warns.push(a.join(' '));
+    try {
+      // the clean-up fails every time: dryRunCommitClone still returns
+      dryRunCommitClone({ buildDir: f.bare, branch: 'promote/abc1234', dryTmp: t, rm: () => { throw new Error('EBUSY: locked'); } });
+      assert.equal(warns.length, 1, 'one warning');
+      // a refusal in the dry clone is thrown even when the clean-up fails too
+      assert.throws(() => dryRunCommitClone({ buildDir: join(f.base, 'no-such-clone'), branch: 'promote/abc1234', dryTmp: join(f.base, 'dryfail2'), rm: () => { throw new Error('EBUSY: locked'); } }), /git clone failed/);
+    } finally {
+      console.warn = orig;
+    }
+    // and with the real clean-up the dry folder is gone
+    const t2 = join(f.base, 'dryok');
+    dryRunCommitClone({ buildDir: f.bare, branch: 'promote/abc1234', dryTmp: t2 });
+    assert.equal(existsSync(t2), false);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a git error names the subcommand, not the first `-c` option', () => {
+  assert.equal(gitSubcommand(['-c', 'init.defaultRefFormat=files', '-c', 'core.sharedRepository=false', 'clone', '--quiet']), 'clone');
+  assert.equal(gitSubcommand(['push', '--quiet']), 'push');
+  assert.equal(gitSubcommand(['-C', '/x', '-c', 'a=b', 'config', '--local']), 'config');
+  assert.equal(gitSubcommand([]), 'command');
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const t = join(f.base, 'bad');
+    mkdirSync(t);
+    assert.throws(() => makeCommitClone({ tmp: t, remote: pathToFileURL(join(f.base, 'nope.git')).href, branch: 'promote/abc1234', env: gitBaseEnv(process.env) }), (e) => /^git clone failed: /.test(e.message) && !/git -c/.test(e.message));
   } finally {
     f.cleanup();
   }
