@@ -64,6 +64,7 @@ type Source struct {
 type Snapshot struct {
 	At       string    `json:"at"`
 	Run      *Run      `json:"run,omitempty"`
+	Live     *Live     `json:"live,omitempty"` // a release is running or waiting on this PC right now
 	Releases []Release `json:"releases"`
 	Feeds    []Feed    `json:"feeds"`
 	GitHub   Source    `json:"github"`
@@ -175,7 +176,7 @@ func (d *Dash) Snapshot(ctx context.Context, force bool) Snapshot {
 	now := time.Now().UTC()
 	s := Snapshot{At: now.Format(time.RFC3339), Releases: []Release{}}
 	loc := ReadLocal(d.DataDir)
-	s.Run = loc.Run
+	s.Run, s.Live = loc.Run, loc.Live
 	s.Local = Source{OK: loc.Found}
 	if !loc.Found {
 		s.Local.Detail = "No release log on this PC. Step by step status only shows on the PC that makes releases."
@@ -239,10 +240,13 @@ func merge(gh []Rel, feeds []Feed, loc Local) []Release {
 	if loc.Run != nil {
 		get(loc.Run.Version)
 	}
+	if loc.Live != nil && loc.Live.Version != "" {
+		get(loc.Live.Version)
+	}
 	out := make([]Release, 0, len(by))
 	for v, r := range by {
 		r.Withdrawn = blocked[v]
-		fillSteps(r, events[v], loc.Run)
+		fillSteps(r, events[v], loc.Run, loc.Live)
 		out = append(out, *r)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -253,7 +257,18 @@ func merge(gh []Rel, feeds []Feed, loc Local) []Release {
 	return out
 }
 
-func fillSteps(r *Release, ev []Event, run *Run) {
+// supersededByLive: a stop or failure from an earlier attempt must not hide that the same release is running again now (a resume
+// starts at the step that failed). Steps that finished stay finished.
+func supersededByLive(e Event, version string, live *Live) bool {
+	if live == nil || live.Gone || live.Version != version || (e.Name != "stopped" && e.Name != "verify-failed") {
+		return false
+	}
+	at, err1 := time.Parse(time.RFC3339Nano, e.At)
+	st, err2 := time.Parse(time.RFC3339Nano, live.Started)
+	return err1 == nil && err2 == nil && at.Before(st)
+}
+
+func fillSteps(r *Release, ev []Event, run *Run, live *Live) {
 	st := map[string]*Step{}
 	for _, n := range StageNames {
 		st[n] = &Step{Name: n, State: "unknown"}
@@ -265,6 +280,9 @@ func fillSteps(r *Release, ev []Event, run *Run) {
 		}
 	}
 	for _, e := range ev {
+		if supersededByLive(e, r.Version, live) {
+			continue
+		}
 		if n, ok := eventStage[e.Name]; ok {
 			st[n].State, st[n].At = "done", e.At
 			if e.Run != "" && (n == "Build" || n == "Verify") {
@@ -298,7 +316,19 @@ func fillSteps(r *Release, ev []Event, run *Run) {
 			st["Feed"].State = "done"
 		}
 	}
-	if run != nil && run.Version == r.Version && run.Status == "running" {
+	if live != nil && !live.Gone && live.Version == r.Version {
+		// The process itself says which step it is on (from its own audit lines), so the step shows as running at once, not
+		// only after the step before it has been written to state.json.
+		if s := st[live.Step]; s != nil && s.State != "done" && s.State != "failed" {
+			s.State, s.Reason = "running", ""
+			r.Recorded = true
+			for _, n := range StageNames { // a step with no news yet is waiting, not unknown
+				if st[n].State == "unknown" {
+					st[n].State = "pending"
+				}
+			}
+		}
+	} else if run != nil && run.Version == r.Version && run.Status == "running" && (live == nil || !live.Gone) {
 		for _, n := range StageNames {
 			if st[n].State == "pending" {
 				st[n].State = "running"

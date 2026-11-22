@@ -34,7 +34,7 @@ func TestRealRuntimeProbe(t *testing.T) {
 		}
 		o.Duration = time.Duration(n) * time.Second
 	}
-	res, perr := Probe(context.Background(), DefaultDialer(), Target{PID: uint32(pid)}, o)
+	res, perr := Probe(context.Background(), CLIDialer(), Target{PID: uint32(pid)}, o)
 	t.Logf("result: %+v", res)
 	t.Logf("sentence: %s", Sentence(res.Reason))
 	if perr != nil {

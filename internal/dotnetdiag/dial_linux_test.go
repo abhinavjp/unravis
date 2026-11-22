@@ -273,8 +273,8 @@ func TestLinuxStartKeyReadFailureAfterConnectIsRefused(t *testing.T) {
 	}
 }
 
-// $TMPDIR is for the command line only. A dialer not made by platformDialer
-// (a future service path) never reads it.
+// $TMPDIR is for the command line only. A dialer not made by CLIDialer,
+// including DefaultDialer (the one a service would take), never reads it.
 func TestLinuxTMPDIRIsOnlyForTheCommandLine(t *testing.T) {
 	env := t.TempDir()
 	t.Setenv("TMPDIR", env)
@@ -287,9 +287,12 @@ func TestLinuxTMPDIRIsOnlyForTheCommandLine(t *testing.T) {
 	if got := (&socketDialer{dir: "/x", fromEnv: true}).socketDir(); got != "/x" {
 		t.Fatalf("an explicit directory must win, got %q", got)
 	}
-	cli, ok := DefaultDialer().(*socketDialer)
+	cli, ok := CLIDialer().(*socketDialer)
 	if !ok || !cli.fromEnv {
-		t.Fatalf("DefaultDialer() is %T, want the command-line socketDialer", DefaultDialer())
+		t.Fatalf("CLIDialer() is %T, want the command-line socketDialer", CLIDialer())
+	}
+	if def, ok := DefaultDialer().(*socketDialer); !ok || def.fromEnv || def.socketDir() != "/tmp" {
+		t.Fatalf("DefaultDialer() = %#v, want a socketDialer that never reads $TMPDIR", DefaultDialer())
 	}
 	// And in effect: a socket under $TMPDIR is found by the command-line
 	// dialer but not by a plain one.
