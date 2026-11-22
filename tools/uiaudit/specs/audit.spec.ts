@@ -106,7 +106,7 @@ for (const screen of screens) {
     await page.addInitScript((choice) => {
       try {
         localStorage.setItem('unravis.theme', choice);
-        if (localStorage.getItem('unravis.timeZone') === null) localStorage.setItem('unravis.timeZone', 'utc');
+        // The time zone is left at the app's default (London): the steps of screens.json type their windows in it.
       } catch { /* blocked storage: the system colour scheme still applies */ }
     }, scheme);
     await page.clock.setFixedTime(env.demoNow);

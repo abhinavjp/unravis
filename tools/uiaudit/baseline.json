@@ -50,12 +50,6 @@
       "check": "small-text",
       "why": "Chart help lines and the result row of the Slow call list use text under 11 px.",
       "item": "BL-478"
-    },
-    {
-      "screen": "p9-gap-warning",
-      "check": "unreachable",
-      "why": "The gap warning only shows after the host read of a real Blackbox, which the Linux demo cannot do.",
-      "item": "BL-479"
     }
   ]
 }
