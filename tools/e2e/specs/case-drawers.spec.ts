@@ -63,7 +63,7 @@ test('CASE-21a: erase needs the typed code, a wrong code never erases, and an Er
   await expect(confirm).toBeDisabled();
   await dialog.getByRole('textbox').fill(' DEMO fail ');
   await confirm.click();
-  await expect(page.getByText('demofail is removed from this computer.')).toBeVisible();
+  await expect(page.getByText('Report export timeouts, 18 October is removed from this computer.')).toBeVisible();
   await page.getByRole('button', { name: 'Back to the list' }).click();
   await expect(page.getByText('Erased case demofail')).toBeVisible();
   await expect(page.getByRole('button', { name: /^Open case Report export timeouts/ })).toHaveCount(0);

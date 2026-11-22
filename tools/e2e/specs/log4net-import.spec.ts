@@ -119,7 +119,7 @@ test('L4N-03: the create wizard holds the file from the Application logs card an
   await page.getByRole('button', { name: 'Add 1 file' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByText(/^File chosen: app-log4net\.txt/)).toBeVisible();
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
 
   await expect.poll(async () => ((await api('GET', '/api/cases')).json.cases as Array<{ title: string }>).some((c) => c.title === 'QA Log4net Wizard'), { timeout: 15_000 }).toBe(true);

@@ -35,7 +35,7 @@ async function makeCaseWith(page: Page, title: string, file: { name: string; buf
   await page.getByRole('button', { name: 'Add 1 file' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   if (pick) await expect(page.getByLabel(`Which computer wrote ${file.name}`)).toHaveValue(pick);
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
 
   const table = page.getByRole('table', { name: /result for each file/i });

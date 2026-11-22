@@ -56,7 +56,7 @@ test('CASE-03: open a case and read its story, then come back with All cases', a
 test('CASE-04: a case code is accepted in any layout and refused with one sentence', async ({ page, allow }) => {
   // The page asks the server about an erased code and the server says 404; the browser logs it. That is the test.
   allow(/Failed to load resource.*404.*api.cases/, 'provoked on purpose');
-  const field = page.getByLabel('Case code');
+  const field = page.getByLabel('Case code', { exact: true });
   const open = page.getByRole('button', { name: 'Open case', exact: true });
   const refused = page.getByText('That code does not match a case on this computer.');
   await field.fill(demoId('demoopen'));
@@ -64,7 +64,7 @@ test('CASE-04: a case code is accepted in any layout and refused with one senten
   await expect(page.getByRole('button', { name: /^All cases/ })).toBeVisible();
   await page.getByRole('button', { name: 'All cases' }).click();
   await expect(page.locator('#start-title')).toBeVisible();
-  await page.getByLabel('Case code').fill('DEMO-OPEN aaaa aaaa aaaa aaaa aa');
+  await page.getByLabel('Case code', { exact: true }).fill('DEMO-OPEN aaaa aaaa aaaa aaaa aa');
   await open.click();
   await expect(page.getByRole('button', { name: /^All cases/ })).toBeVisible();
   await page.getByRole('button', { name: 'All cases' }).click();
@@ -75,19 +75,19 @@ test('CASE-04: a case code is accepted in any layout and refused with one senten
     ['demoopen1aaaaaaaaaaaaaaaaaa', 'That has a character a case code never uses. Codes use letters and the numbers 2 to 7.']
   ];
   for (const [bad, sentence] of shapes) {
-    await page.getByLabel('Case code').fill(bad);
+    await page.getByLabel('Case code', { exact: true }).fill(bad);
     await field.blur();
     await expect(page.getByText(sentence), bad).toBeVisible();
     await expect(open, bad).toBeDisabled();
     expect(page.url(), 'the typed code is not put in the address').not.toContain(bad);
   }
   // A code of the right shape that matches no case on this computer (an erased one) is asked about and refused with one sentence.
-  await page.getByLabel('Case code').fill(demoId('k7m2qx4a'));
+  await page.getByLabel('Case code', { exact: true }).fill(demoId('k7m2qx4a'));
   await open.click();
   await expect(refused).toBeVisible();
   expect(page.url(), 'the typed code is not put in the address').not.toContain(demoId('k7m2qx4a'));
   // An empty field is not asked about (D-A-04): the button is off.
-  await page.getByLabel('Case code').fill('');
+  await page.getByLabel('Case code', { exact: true }).fill('');
   await expect(open).toBeDisabled();
   await expect(page.locator('#start-title')).toBeVisible();
 });
