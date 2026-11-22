@@ -16,6 +16,7 @@
 //   UIFIX-16  Blackbox charts: the Counters / Programs tab strip is not squeezed (24 px or more) and nothing outside the side column moves (BL-496)
 //   UIFIX-10  Slow call screen: the time zone label, the peak and zero labels and the "drag" hint are at least 11px, the lanes and the minimap do not move, nothing collides (BL-483)
 //   UIFIX-17  Investigation timeline: the UTC times of the incident and comparison windows are drawn as visible text (not only a tooltip), stay UTC when "Times in" changes, fit at 320, 360 and 390 px, and the one-line readout does not grow on a wide desktop
+//   UIFIX-19  Slow call screen tap targets of 24 px (BL-492): the "Timeline" crumb button (19a), the minimap box on a phone (19b), the lane bars (19c); nothing moves and nothing is painted differently (19d, 19f); a press lands on the right bar and never on a neighbour (19e)
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase } from '../support/ui';
 
@@ -781,7 +782,7 @@ async function layoutMoves(page: Page, root: string, rules: Rules, hideCss = '')
   return page.locator(root).first().evaluate((container, [rs, css]) => {
     const targets = new Set<Element>();
     for (const [selector] of rs) container.querySelectorAll(selector).forEach((e) => targets.add(e));
-    const snap = () => [...container.querySelectorAll('*')].filter((e) => !e.closest('svg') || e.tagName.toLowerCase() === 'svg').map((e) => {
+    const snap = () => [...container.querySelectorAll('*')].filter((e) => !e.closest('svg') || e.tagName.toLowerCase() === 'svg').filter((e) => { const d = e.closest('details:not([open])'); return !d || e === d || !!e.closest('summary'); }).map((e) => {
       const r = e.getBoundingClientRect();
       const m = targets.has(e) ? getComputedStyle(e) : null;
       const ml = m ? parseFloat(m.marginLeft) : 0, mt = m ? parseFloat(m.marginTop) : 0, mr = m ? parseFloat(m.marginRight) : 0, mb = m ? parseFloat(m.marginBottom) : 0;
@@ -1127,3 +1128,277 @@ test('UIFIX-17d Investigation timeline on a desktop: the readout is one line and
     expect(m.card, width + ' px: the controls card keeps its measured height of 320 px').toBeLessThanOrEqual(322);
   }
 });
+
+// UIFIX-19 (BL-492): the three small tap targets of the Slow call screen get 24 px press areas without moving anything (Slow call lane rule, BL-005:
+// the lanes keep their height, nothing scrolls inside, the lanes stay visible together). The crumb button and the minimap box grow with an invisible ::after
+// (box, layout and focus ring stay develop's); the lane bars grow with an invisible rectangle inside the bar's <g> that is cut so that no two areas
+// overlap (a bar in a stack of bar rows gets what its row allows, a bar with room reaches 24 px).
+const SCALL_SIZES = [{ width: 1440, height: 900 }, { width: 1100, height: 800 }, { width: 1024, height: 768 }, { width: 390, height: 844 }];
+
+/** The press area of every match (its box joined with its ::after) must be 24 x 24 px or more, answer a press at its centre and corners, and leave every other control alone. */
+async function expectScallHitArea(page: Page, selector: string, label: string, minWidth = 24): Promise<void> {
+  const facts = await page.locator(selector).evaluateAll((els) => els.map((e) => {
+    e.scrollIntoView({ block: 'center' });
+    const r = e.getBoundingClientRect(), cs = getComputedStyle(e), p = getComputedStyle(e, '::after');
+    let left = r.left, top = r.top, right = r.right, bottom = r.bottom;
+    if (p.content !== 'none' && p.position === 'absolute' && p.pointerEvents !== 'none') {
+      const x = r.left + (parseFloat(cs.borderLeftWidth) || 0) + parseFloat(p.left), y = r.top + (parseFloat(cs.borderTopWidth) || 0) + parseFloat(p.top);
+      left = Math.min(left, x); top = Math.min(top, y); right = Math.max(right, x + parseFloat(p.width)); bottom = Math.max(bottom, y + parseFloat(p.height));
+    }
+    const corners = (l: number, t: number, rr: number, b: number) => [[l + 1, t + 1], [rr - 1, t + 1], [l + 1, b - 1], [rr - 1, b - 1]];
+    const spots = [...corners(r.left, r.top, r.right, r.bottom), [(left + right) / 2, (top + bottom) / 2]];
+    if (right - left > r.width + 0.5 || bottom - top > r.height + 0.5) {
+      const x = r.left + (parseFloat(cs.borderLeftWidth) || 0) + parseFloat(p.left), y = r.top + (parseFloat(cs.borderTopWidth) || 0) + parseFloat(p.top);
+      spots.push(...corners(x, y, x + parseFloat(p.width), y + parseFloat(p.height)));
+    }
+    const wrong = spots.filter(([x, y]) => { const hit = document.elementFromPoint(x, y); return !(hit === e || (hit && e.contains(hit))); }).length;
+    // every other control of the page must stay out of the press area
+    const others = [...document.querySelectorAll('button, a[href], input, select, summary, [role=button], [role=slider], [tabindex]:not([tabindex="-1"])')]
+      .filter((o) => o !== e && !o.contains(e) && !e.contains(o) && !(o.closest('svg') && e.closest('svg')))
+      .filter((o) => { const b = o.getBoundingClientRect(); return Math.min(b.right, right) - Math.max(b.left, left) > 0.5 && Math.min(b.bottom, bottom) - Math.max(b.top, top) > 0.5; })
+      .map((o) => (o.getAttribute('aria-label') || o.textContent || o.tagName).trim().slice(0, 30));
+    return { w: right - left, h: bottom - top, wrong, others };
+  }));
+  expect(facts.length, label + ': nothing found').toBeGreaterThan(0);
+  for (const f of facts) {
+    expect(f.w, label + ' press area width').toBeGreaterThanOrEqual(minWidth);
+    expect(f.h, label + ' press area height').toBeGreaterThanOrEqual(24);
+    expect(f.wrong, label + ': corners and centre of the press area that miss the control').toBe(0);
+    expect(f.others, label + ': other controls inside the press area').toEqual([]);
+  }
+}
+
+const CRUMB_OLD: Rules = [['.scall-crumb .link', { position: 'static' }]];
+const CRUMB_HIDE = '.scall-crumb .link::after { content: none !important; }';
+const MAPBOX_OLD: Rules = [['.scall-map-box', { position: 'absolute' }]];
+const MAPBOX_HIDE = '.scall-map-box::after { content: none !important; }';
+
+for (const size of SCALL_SIZES) {
+  test('UIFIX-19a Slow call screen at ' + size.width + ' px: the "Timeline" crumb answers a press in 24 px or more and the header does not move', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowCallScreen(page);
+    await expectScallHitArea(page, '[data-testid=scall-back]', 'Timeline crumb');
+    await expectNothingMoved(page, '[data-testid=slow-call-screen]', CRUMB_OLD, 'Slow call screen', CRUMB_HIDE);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow').toBeLessThanOrEqual(0);
+  });
+}
+
+for (const width of [1440, 1100, 1024, 390, 360, 320]) {
+  test('UIFIX-19b Slow call screen at ' + width + ' px: the minimap box answers a press in 24 px or more' + (width >= 1024 ? ' (a wide box gets no extra area)' : '') + ' and nothing moves', async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await openSlowCallScreen(page);
+    const box = page.getByTestId('scall-map-box');
+    await expect(box).toBeVisible();
+    await expectScallHitArea(page, '[data-testid=scall-map-box]', 'Minimap box');
+    const own = await box.evaluate((e) => { const r = e.getBoundingClientRect(), p = getComputedStyle(e, '::after'); return { w: r.width, afterW: parseFloat(p.width), afterL: parseFloat(p.left) }; });
+    // a box that is 24 px or wider has no growth at all (::after is the padding box); a narrower one grows to exactly 24 px, evenly on both sides
+    if (own.w >= 24) expect(own.afterL, 'no growth on a wide box').toBeGreaterThanOrEqual(0);
+    else expect(own.afterW, 'the grown area is 24 px wide').toBeCloseTo(24, 1);
+    await expectNothingMoved(page, '[data-testid=slow-call-screen]', MAPBOX_OLD, 'Slow call screen', MAPBOX_HIDE);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow').toBeLessThanOrEqual(0);
+  });
+}
+
+test('UIFIX-19b2 Slow call screen on a phone: a press just outside the narrow minimap box (inside its press area) grabs the box and drags it', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openSlowCallScreen(page);
+  const box = page.getByTestId('scall-map-box');
+  await box.scrollIntoViewIfNeeded();
+  const r = await box.boundingBox();
+  if (!r) throw new Error('no box');
+  expect(r.width, 'the box is narrower than 24 px on a phone').toBeLessThan(24);
+  const before = await box.getAttribute('aria-valuenow');
+  const y = r.y + r.height / 2;
+  const x = r.x - (24 - r.width) / 2 + 1; // 1 px inside the left end of the press area, outside the drawn box
+  expect(x).toBeLessThan(r.x);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 20, y, { steps: 4 });
+  await expect(box).toHaveClass(/dragging/);
+  await page.mouse.up();
+  await expect.poll(async () => box.getAttribute('aria-valuenow'), 'the box moved with the drag').not.toBe(before);
+});
+
+/** The drawn bars with their press rectangles, in screen pixels, and the lane drawing each one sits in. */
+async function barFacts(page: Page) {
+  await page.getByTestId('scall-lanes').scrollIntoViewIfNeeded();
+  // the lanes measure their own drawing after the first paint: wait until two reads a moment apart agree
+  const read = () => page.evaluate(() => [...document.querySelectorAll('.bar-hit')].map((e) => { const b = e.getBoundingClientRect(); return [b.left, b.top, b.width, b.height].map((v) => Math.round(v * 10)); }).join('|'));
+  let last = await read();
+  for (let i = 0; i < 20; i++) { await page.waitForTimeout(150); const now = await read(); if (now === last) break; last = now; }
+  return page.evaluate(() => {
+    const rect = (e: Element) => { const b = e.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom }; };
+    return [...document.querySelectorAll('.bar-g')].map((g, i) => ({
+      i,
+      label: g.getAttribute('aria-label') ?? '',
+      bar: rect(g.querySelector('.bar')!),
+      hit: rect(g.querySelector('.bar-hit')!),
+      svg: rect(g.closest('svg')!),
+      lane: g.closest('[data-lane]')?.getAttribute('data-lane') ?? ''
+    }));
+  });
+}
+
+for (const size of SCALL_SIZES) {
+  test('UIFIX-19c Slow call screen at ' + size.width + 'x' + size.height + ': every lane bar has a press area that holds the bar, stays in its lane, never overlaps another and is as big as its neighbours allow', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowCallScreen(page);
+    const bars = await barFacts(page);
+    expect(bars.length, 'bars on the screen').toBeGreaterThan(1);
+    const eps = 0.6;
+    const overlapArea = (a: { l: number; t: number; r: number; b: number }, b: { l: number; t: number; r: number; b: number }) =>
+      Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l)) * Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t));
+    for (const b of bars) {
+      // holds its bar, inside its own lane drawing (never reaches the lane above or below)
+      expect(b.hit.l, b.label + ' left').toBeLessThanOrEqual(b.bar.l + eps);
+      expect(b.hit.r, b.label + ' right').toBeGreaterThanOrEqual(b.bar.r - eps);
+      expect(b.hit.t, b.label + ' top').toBeLessThanOrEqual(b.bar.t + eps);
+      expect(b.hit.b, b.label + ' bottom').toBeGreaterThanOrEqual(b.bar.b - eps);
+      expect(b.hit.t, b.label + ' inside the lane drawing (top)').toBeGreaterThanOrEqual(b.svg.t - eps);
+      expect(b.hit.b, b.label + ' inside the lane drawing (bottom)').toBeLessThanOrEqual(b.svg.b + eps);
+      expect(b.hit.l, b.label + ' inside the lane drawing (left)').toBeGreaterThanOrEqual(b.svg.l - eps);
+      expect(b.hit.r, b.label + ' inside the lane drawing (right)').toBeLessThanOrEqual(b.svg.r + eps);
+      // grew: taller than the bar by something, and as wide as 24 px
+      expect(b.hit.b - b.hit.t, b.label + ' taller than the bar').toBeGreaterThan(b.bar.b - b.bar.t + 1);
+      expect(b.hit.r - b.hit.l, b.label + ' width').toBeGreaterThanOrEqual(24 - eps);
+      // as big as the neighbours allow: 24 px tall, or each end that is short touches the drawing's edge or the area of the next bar
+      const height = b.hit.b - b.hit.t;
+      if (height < 24 - eps) {
+        for (const end of ['t', 'b'] as const) {
+          const edge = end === 't' ? b.svg.t : b.svg.b;
+          const atEdge = Math.abs(b.hit[end] - edge) <= eps;
+          const atNeighbour = bars.some((o) => o !== b && o.lane === b.lane && Math.min(o.hit.r, b.hit.r) - Math.max(o.hit.l, b.hit.l) > 0 && Math.abs(o.hit[end === 't' ? 'b' : 't'] - b.hit[end]) <= eps);
+          expect(atEdge || atNeighbour, b.label + ' is short (' + height.toFixed(1) + ' px) and its ' + (end === 't' ? 'top' : 'bottom') + ' end touches neither the lane edge nor another area').toBe(true);
+        }
+      }
+      for (const o of bars) {
+        if (o === b) continue;
+        expect(overlapArea(b.hit, o.hit), b.label + ' press area overlaps another bar\'s').toBeLessThan(0.5);
+        expect(overlapArea(b.hit, o.bar), b.label + ' press area covers another bar').toBeLessThan(0.5);
+      }
+    }
+    // the browser agrees: the middle and the four corners of each area answer for that bar
+    const wrong = await page.evaluate(() => {
+      const out: string[] = [];
+      document.querySelectorAll('.bar-g').forEach((g) => {
+        const b = g.querySelector('.bar-hit')!.getBoundingClientRect();
+        for (const [x, y] of [[b.left + 1, b.top + 1], [b.right - 1, b.top + 1], [b.left + 1, b.bottom - 1], [b.right - 1, b.bottom - 1], [(b.left + b.right) / 2, (b.top + b.bottom) / 2]]) {
+          const hit = document.elementFromPoint(x, y);
+          if (hit?.closest('.bar-g') !== g) out.push(g.getAttribute('aria-label') + ' at ' + Math.round(x) + ',' + Math.round(y) + ' goes to ' + (hit?.getAttribute('class') ?? hit?.tagName));
+        }
+      });
+      return out;
+    });
+    expect(wrong, 'presses inside an area that miss its bar').toEqual([]);
+    // at least the lowest bar of the stack reaches the full 24 px on the desktop sizes (a stack of three rows shares its room)
+    if (size.width >= 1024) expect(Math.max(...bars.map((b) => b.hit.b - b.hit.t)), 'the bar with room above and below').toBeGreaterThanOrEqual(24 - eps);
+  });
+}
+
+for (const scheme of ['dark', 'light'] as const) {
+  for (const size of SCALL_SIZES) {
+    test('UIFIX-19d Slow call screen at ' + size.width + ' px (' + scheme + '): with the press areas hidden every box of the screen is where it was, and the painted lanes are the same pixels', async ({ page }) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.setViewportSize(size);
+      await openSlowCallScreen(page);
+      const lanes = page.getByTestId('scall-lanes');
+      await lanes.scrollIntoViewIfNeeded();
+      await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }' });
+      await page.mouse.move(0, 0);
+      const snap = () => page.evaluate(() => [...document.querySelectorAll('[data-testid=slow-call-screen] *')]
+        .filter((e) => !e.matches('.bar-hit, .bar-g') && !e.closest('.bar-hit') && (!e.closest('details:not([open])') || e.matches('details, summary')))
+        .map((e) => { const r = e.getBoundingClientRect(); return [e.tagName + '.' + (e.getAttribute('class') ?? '').split(' ')[0], r.left, r.top, r.width, r.height] as [string, number, number, number, number]; }));
+      const clip = await lanes.boundingBox();
+      if (!clip) throw new Error('no lanes box');
+      const now = await snap();
+      const shotNow = await page.screenshot({ clip: { x: Math.max(0, clip.x), y: Math.max(0, clip.y), width: clip.width, height: clip.height } });
+      const sheet = await page.addStyleTag({ content: '.bar-hit { display: none !important; } .scall-crumb .link::after, .scall-map-box::after { content: none !important; }' });
+      const old = await snap();
+      const shotOld = await page.screenshot({ clip: { x: Math.max(0, clip.x), y: Math.max(0, clip.y), width: clip.width, height: clip.height } });
+      await sheet.evaluate((el) => el.remove());
+      expect(now.length, size.width + ' ' + scheme + ': boxes compared').toBeGreaterThan(50);
+      expect(now.length).toBe(old.length);
+      now.forEach((n, i) => { for (let k = 1; k < 5; k++) expect(Math.abs((n[k] as number) - (old[i][k] as number)), size.width + ' ' + scheme + ' ' + n[0] + ' value ' + k).toBeLessThan(0.05); });
+      const d = await pictureDifference(page, shotNow, shotOld);
+      expect(d.pixels, size.width + ' ' + scheme + ': pixels of the lanes that differ (largest step ' + d.levels + ')').toBe(0);
+    });
+  }
+}
+
+test('UIFIX-19e Slow call screen: a press goes to the bar it is nearest to, an area never takes a press from the chart outside it or from the next lane', async ({ page }) => {
+  await openSlowCallScreen(page);
+  const bars = await barFacts(page);
+  const stack = bars.filter((b) => b.lane === bars[0].lane).sort((a, b) => a.bar.t - b.bar.t);
+  expect(stack.length, 'a stack of bars in one lane').toBeGreaterThan(1);
+  const pressed = async () => page.evaluate(() => [...document.querySelectorAll('.bar-g')].map((g) => g.getAttribute('aria-pressed') === 'true'));
+  const click = async (x: number, y: number) => { await page.mouse.click(x, y); };
+  const cx = (b: typeof stack[number]) => (b.bar.l + b.bar.r) / 2;
+  // the gap between two stacked bars: 1 px on each side of the middle of the gap goes to the bar on that side
+  for (let k = 0; k + 1 < stack.length; k++) {
+    const upper = stack[k], lower = stack[k + 1];
+    const mid = (upper.bar.b + lower.bar.t) / 2;
+    await click(cx(upper), mid - 1);
+    expect((await pressed())[upper.i], 'just above the middle of the gap: the upper bar').toBe(true);
+    expect((await pressed())[lower.i], 'just above the middle of the gap: not the lower bar').toBe(false);
+    await click(cx(upper), mid + 1);
+    expect((await pressed())[lower.i], 'just below the middle of the gap: the lower bar').toBe(true);
+    expect((await pressed())[upper.i], 'just below the middle of the gap: not the upper bar').toBe(false);
+  }
+  // a press in the grown part below the lowest bar selects it; a press 2 px past its area belongs to the chart (the readout is pinned, the bar is not selected)
+  const lowest = stack[stack.length - 1];
+  const inside = Math.min(lowest.hit.b - 2, lowest.bar.b + 4);
+  await click(cx(lowest), inside);
+  expect((await pressed())[lowest.i], 'in the grown part below the bar').toBe(true);
+  await click(cx(stack[0]), stack[0].bar.t + 2); // a different bar is selected, so a press past the area that selects nothing leaves it as it is
+  expect((await pressed())[stack[0].i]).toBe(true);
+  const past = lowest.hit.b + 2;
+  expect(past, 'there is chart below the area').toBeLessThan(lowest.svg.b);
+  await click(cx(lowest), past);
+  expect((await pressed())[lowest.i], 'past the area the lowest bar is not selected (the chart takes the press)').toBe(false);
+  expect((await pressed())[stack[0].i], 'past the area the earlier selection stays').toBe(true);
+  await expect(page.locator('.scall-line.pinned')).toHaveCount(1);
+  // the lane boundary: one pixel below the drawing of a lane is not a bar of that lane
+  for (const b of bars) {
+    const below = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.bar-g')?.getAttribute('aria-label') ?? null, [(b.hit.l + b.hit.r) / 2, b.svg.b + 1] as [number, number]);
+    expect(below, 'one pixel below the lane drawing of ' + b.label).toBeNull();
+    const above = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.bar-g')?.getAttribute('aria-label') ?? null, [(b.hit.l + b.hit.r) / 2, b.svg.t - 1] as [number, number]);
+    expect(above, 'one pixel above the lane drawing of ' + b.label).toBeNull();
+  }
+});
+
+for (const scheme of ['dark', 'light'] as const) {
+  test('UIFIX-19f Slow call screen (' + scheme + '): the keyboard focus rings and the rest pictures of the crumb button, the minimap box and a lane bar are the old ones', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openSlowCallScreen(page);
+    await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }' });
+    for (const [name, selector] of [['crumb', '[data-testid=scall-back]'], ['minimap box', '[data-testid=scall-map-box]'], ['lane bar', '.bar-g']] as const) {
+      const target = page.locator(selector).first();
+      await target.scrollIntoViewIfNeeded();
+      const clip = await target.evaluate((e) => {
+        const r = e.getBoundingClientRect();
+        const fx = Math.max(0, Math.floor(r.left - 14)), fy = Math.max(0, Math.floor(r.top - 14));
+        return { x: fx, y: fy, width: Math.ceil(r.right + 14 - fx), height: Math.ceil(r.bottom + 14 - fy) };
+      });
+      const take = async (): Promise<Buffer[]> => {
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        await page.mouse.move(0, 0);
+        const rest = await page.screenshot({ clip });
+        await target.focus();
+        await page.keyboard.press('Shift');
+        const focused = await page.screenshot({ clip });
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        return [rest, focused];
+      };
+      const now = await take();
+      const style = await page.addStyleTag({ content: '.bar-hit { display: none !important; } .scall-crumb .link::after, .scall-map-box::after { content: none !important; } .scall-crumb .link { position: static !important; }' });
+      const old = await take();
+      await style.evaluate((el) => el.remove());
+      for (const [i, what] of ['at rest', 'focused'].entries()) {
+        const d = await pictureDifference(page, now[i], old[i]);
+        expect(d.pixels, name + ' ' + what + ': pixels that differ from the old rules (largest step ' + d.levels + ')').toBe(0);
+      }
+      expect(now[1].equals(now[0]), name + ' focused: nothing is drawn, so the ring is missing').toBe(false);
+    }
+  });
+}

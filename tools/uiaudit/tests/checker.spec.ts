@@ -99,3 +99,21 @@ test('a hit area that is far off, clipped, covered, shrunk or past the window ed
   // and each is reported with its own size, not the size of the lie
   for (const f of small) expect(f.message, f.label).toMatch(/Tap target is 14 x 14 px/);
 });
+
+// A bar of a chart is a <g role="button"> inside an <svg>. The box of a <g> is the box of everything in it, painted or not, so a transparent hit rectangle
+// would make any bar look big. It only counts when a press on it goes to the <g> (BL-492).
+test('an invisible hit rectangle inside an svg button counts only when a press on it reaches the button', async ({ page }) => {
+  await page.setViewportSize({ width: 600, height: 500 });
+  await page.setContent(`<!doctype html><html lang="en"><title>t</title><style>body { margin: 20px; } svg { display: block; }</style><body>
+    <svg width="400" height="300" viewBox="0 0 400 300">
+      <g role="button" tabindex="0" aria-label="good"><rect x="10" y="10" width="60" height="30" fill="transparent" pointer-events="all" /><rect x="10" y="20" width="60" height="8" fill="red" /></g>
+      <g role="button" tabindex="0" aria-label="nopress"><rect x="100" y="10" width="60" height="30" fill="transparent" pointer-events="none" /><rect x="100" y="20" width="60" height="8" fill="red" /></g>
+      <g role="button" tabindex="0" aria-label="plain"><rect x="200" y="20" width="60" height="8" fill="red" /></g>
+      <g role="button" tabindex="0" aria-label="under"><rect x="10" y="100" width="60" height="30" fill="transparent" pointer-events="all" /><rect x="10" y="110" width="60" height="8" fill="red" /></g>
+      <g role="button" tabindex="0" aria-label="over"><rect x="10" y="100" width="60" height="30" fill="blue" /></g>
+    </svg></body></html>`);
+  await page.evaluate(checks);
+  const r = (await page.evaluate(() => (window as any).__uiaudit.run({}))) as { findings: { check: string; severity: string; label: string; message: string }[] };
+  const small = r.findings.filter((f) => f.check === 'small-target' && f.severity === 'warn').map((f) => f.label);
+  expect(small.sort()).toEqual(['nopress', 'plain', 'under']);
+});

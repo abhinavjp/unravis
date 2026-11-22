@@ -351,3 +351,63 @@ export function formatAtOnce(n: number): string {
   if (tenth < 10) return tenth.toFixed(1);
   return String(Math.round(n));
 }
+
+/** A run of one axis, in drawing units. */
+export interface PressSpan { a: number; b: number }
+/** The box of a bar, or the invisible area around it that answers a press. */
+export interface PressArea { x: PressSpan; y: PressSpan }
+
+/**
+ * BL-492: the invisible press area of every bar. A bar is only a few pixels tall (the lane height is fixed, Slow call lane rule BL-005), so each bar
+ * gets an area of up to `needX` x `needY` drawing units (24 px) around it, inside 0..maxX and 0..maxY (the lane's own drawing). Two areas never
+ * overlap: where two bars sit close together (stacked bar rows, or bars side by side in one row) the free space between them is split at the
+ * middle of the gap between the two bars, and each bar then takes what is left on its other side. A bar with nothing close reaches the full size,
+ * a bar in a stack gets what its row allows. No area covers another bar.
+ */
+export function barPressAreas(
+  bars: readonly { key: string; x: PressSpan; y: PressSpan }[],
+  needX: number,
+  needY: number,
+  maxX: number,
+  maxY: number
+): Map<string, PressArea> {
+  // Grows a span to `need`, evenly on both sides, inside the limits; what one side cannot give is taken from the other.
+  const grow = (s: PressSpan, need: number, limit: PressSpan): PressSpan => {
+    const extra = Math.max(0, need - (s.b - s.a));
+    let a = s.a - extra / 2;
+    let b = s.b + extra / 2;
+    if (a < limit.a) { b = Math.min(limit.b, b + (limit.a - a)); a = limit.a; }
+    if (b > limit.b) { a = Math.max(limit.a, a - (b - limit.b)); b = limit.b; }
+    return { a: Math.min(a, s.a), b: Math.max(b, s.b) };
+  };
+  const overlap = (p: PressSpan, q: PressSpan): number => Math.min(p.b, q.b) - Math.max(p.a, q.a);
+  const room: PressArea[] = bars.map(() => ({ x: { a: 0, b: maxX }, y: { a: 0, b: maxY } }));
+  let hit: PressArea[] = [];
+  // Each pass grows every area inside its room, then cuts the room of two areas that still touch at the middle of the gap between their bars.
+  // Rooms only shrink, so the passes end; the last pass has no touching pair left.
+  for (let pass = 0; pass < 8; pass += 1) {
+    hit = bars.map((b, i) => ({ x: grow(b.x, needX, room[i].x), y: grow(b.y, needY, room[i].y) }));
+    let cut = false;
+    for (let i = 0; i < bars.length; i += 1) {
+      for (let j = i + 1; j < bars.length; j += 1) {
+        const ox = overlap(hit[i].x, hit[j].x);
+        const oy = overlap(hit[i].y, hit[j].y);
+        if (ox <= 0 || oy <= 0) continue;
+        // The bars are apart on x, on y or both: cut along an axis where there is a gap between the bars (the one that loses less when both).
+        const gapX = Math.max(bars[j].x.a - bars[i].x.b, bars[i].x.a - bars[j].x.b);
+        const gapY = Math.max(bars[j].y.a - bars[i].y.b, bars[i].y.a - bars[j].y.b);
+        const byY = gapY >= 0 && (gapX < 0 || oy / needY <= ox / needX);
+        if (!byY && gapX < 0) continue; // the bars themselves overlap: nothing to split
+        const axis = byY ? 'y' : 'x';
+        const lo = bars[i][axis].a <= bars[j][axis].a ? i : j;
+        const hi = lo === i ? j : i;
+        const mid = (bars[lo][axis].b + bars[hi][axis].a) / 2;
+        room[lo][axis] = { a: room[lo][axis].a, b: Math.min(room[lo][axis].b, mid) };
+        room[hi][axis] = { a: Math.max(room[hi][axis].a, mid), b: room[hi][axis].b };
+        cut = true;
+      }
+    }
+    if (!cut) break;
+  }
+  return new Map(bars.map((b, i) => [b.key, hit[i]]));
+}
