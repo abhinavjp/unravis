@@ -121,6 +121,8 @@ type LaneQueryStore struct {
 	State string `json:"state"`
 	// FirstData is the start of the oldest saved block, when one was found.
 	FirstData *time.Time `json:"firstData,omitempty"`
+	// LastData is the start of the newest block Query Store kept. It is set only when the lane read the history of a database that is off.
+	LastData *time.Time `json:"lastData,omitempty"`
 	// IntervalMinutes is the block length Query Store is set to, when known.
 	IntervalMinutes int `json:"intervalMinutes,omitempty"`
 }
