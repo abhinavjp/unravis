@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -56,7 +57,7 @@ func (c *srvConn) Write(p []byte) (int, error) {
 }
 
 func (c *srvConn) Close() error {
-	c.once.Do(func() { windows.CloseHandle(c.h) })
+	c.once.Do(func() { _ = windows.CloseHandle(c.h) })
 	return nil
 }
 func (c *srvConn) LocalAddr() net.Addr              { return nil }
@@ -99,7 +100,7 @@ func startPipeSrv(t *testing.T, name string, sa *windows.SecurityAttributes, max
 		for i := 0; ; i++ {
 			err := windows.ConnectNamedPipe(h, nil)
 			if (err != nil && !errors.Is(err, windows.ERROR_PIPE_CONNECTED)) || s.closed.Load() {
-				windows.CloseHandle(h)
+				_ = windows.CloseHandle(h)
 				return
 			}
 			next, nerr := s.create()
@@ -107,7 +108,7 @@ func startPipeSrv(t *testing.T, name string, sa *windows.SecurityAttributes, max
 			go func(i int, h windows.Handle) {
 				defer s.wg.Done()
 				c := &srvConn{h: h}
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				handler(i, c)
 			}(i, h)
 			if nerr != nil {
@@ -139,7 +140,7 @@ func (s *pipeSrv) close() {
 		}
 		h, err := windows.CreateFile(s.name16, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil, windows.OPEN_EXISTING, 0, 0)
 		if err == nil {
-			windows.CloseHandle(h)
+			_ = windows.CloseHandle(h)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -152,7 +153,7 @@ func selfTarget(t *testing.T, name string) (*pipeDialer, Target) {
 	ownPID = func() uint32 { return 0xFFFFFFFE }
 	t.Cleanup(func() { ownPID = old })
 	return &pipeDialer{nameFor: func(uint32) string { return name }, allowSelf: true, dialTimeout: 500 * time.Millisecond},
-		Target{PID: uint32(os.Getpid())}
+		Target{PID: pid32(os.Getpid())}
 }
 
 func winOptions() Options {
@@ -168,7 +169,7 @@ func TestWindowsPipeNameFromNumberOnly(t *testing.T) {
 
 func TestWindowsDialHappy(t *testing.T) {
 	name := uniquePipeName()
-	pid := uint32(os.Getpid())
+	pid := pid32(os.Getpid())
 	h := newHonest(7, pid)
 	startPipeSrv(t, name, nil, windows.PIPE_UNLIMITED_INSTANCES, h.handle)
 	d, tg := selfTarget(t, name)
@@ -200,10 +201,10 @@ func TestWindowsDialRejectsForeignServer(t *testing.T) {
 	if err := child.Start(); err != nil {
 		t.Skipf("cannot start ping: %v", err)
 	}
-	t.Cleanup(func() { child.Process.Kill(); child.Wait() })
+	t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait() })
 	// The expected server is the child; the pipe server is this process.
 	d := &pipeDialer{nameFor: func(uint32) string { return name }, dialTimeout: 500 * time.Millisecond}
-	res, err := Probe(context.Background(), d, Target{PID: uint32(child.Process.Pid)}, winOptions())
+	res, err := Probe(context.Background(), d, Target{PID: pid32(child.Process.Pid)}, winOptions())
 	if reasonOf(t, err) != ReasonPeerMismatch || res.Reason != ReasonPeerMismatch {
 		t.Fatalf("err %v result %+v", err, res)
 	}
@@ -247,8 +248,8 @@ func TestWindowsDialAbsent(t *testing.T) {
 	if err := alive.Start(); err != nil {
 		t.Skipf("cannot start ping: %v", err)
 	}
-	t.Cleanup(func() { alive.Process.Kill(); alive.Wait() })
-	_, _, err := d.Dial(context.Background(), Target{PID: uint32(alive.Process.Pid)})
+	t.Cleanup(func() { _ = alive.Process.Kill(); _ = alive.Wait() })
+	_, _, err := d.Dial(context.Background(), Target{PID: pid32(alive.Process.Pid)})
 	if reasonOf(t, err) != ReasonDisabled {
 		t.Fatalf("live process without a pipe: %v", err)
 	}
@@ -257,7 +258,7 @@ func TestWindowsDialAbsent(t *testing.T) {
 	if err := gone.Run(); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = d.Dial(context.Background(), Target{PID: uint32(gone.Process.Pid)})
+	_, _, err = d.Dial(context.Background(), Target{PID: pid32(gone.Process.Pid)})
 	if reasonOf(t, err) != ReasonNotRunning {
 		t.Fatalf("exited process: %v", err)
 	}
@@ -265,7 +266,7 @@ func TestWindowsDialAbsent(t *testing.T) {
 
 func TestWindowsDialRefusesBadTargets(t *testing.T) {
 	d := &pipeDialer{dialTimeout: 200 * time.Millisecond}
-	for _, pid := range []uint32{0, uint32(os.Getpid())} {
+	for _, pid := range []uint32{0, pid32(os.Getpid())} {
 		if _, _, err := d.Dial(context.Background(), Target{PID: pid}); reasonOf(t, err) != ReasonPeerMismatch {
 			t.Fatalf("pid %d: %v", pid, err)
 		}
@@ -274,9 +275,9 @@ func TestWindowsDialRefusesBadTargets(t *testing.T) {
 	if err := child.Start(); err != nil {
 		t.Skipf("cannot start ping: %v", err)
 	}
-	t.Cleanup(func() { child.Process.Kill(); child.Wait() })
+	t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait() })
 	// A start time that is not the process's: refused before any pipe is opened.
-	if _, _, err := d.Dial(context.Background(), Target{PID: uint32(child.Process.Pid), StartTicks: 1}); reasonOf(t, err) != ReasonPeerMismatch {
+	if _, _, err := d.Dial(context.Background(), Target{PID: pid32(child.Process.Pid), StartTicks: 1}); reasonOf(t, err) != ReasonPeerMismatch {
 		t.Fatalf("wrong start ticks: %v", err)
 	}
 }
@@ -292,7 +293,7 @@ func TestWindowsDialBusy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("holder: %v", err)
 	}
-	t.Cleanup(func() { windows.CloseHandle(holder) })
+	t.Cleanup(func() { _ = windows.CloseHandle(holder) })
 
 	d, tg := selfTarget(t, name)
 	start := time.Now()
@@ -310,7 +311,7 @@ var procGetProcessHandleCount = modkernel32.NewProc("GetProcessHandleCount")
 func handleCount(t *testing.T) int {
 	t.Helper()
 	var n uint32
-	r, _, err := procGetProcessHandleCount.Call(uintptr(windows.CurrentProcess()), uintptr(unsafe.Pointer(&n)))
+	r, _, err := procGetProcessHandleCount.Call(uintptr(windows.CurrentProcess()), uintptr(unsafe.Pointer(&n))) //nolint:gosec // out-parameter of GetProcessHandleCount
 	if r == 0 {
 		t.Fatalf("GetProcessHandleCount: %v", err)
 	}
@@ -321,7 +322,7 @@ func TestWindowsReadDeadline(t *testing.T) {
 	name := uniquePipeName()
 	// The server reads the start message and never answers.
 	startPipeSrv(t, name, nil, windows.PIPE_UNLIMITED_INSTANCES, func(i int, c net.Conn) {
-		io.Copy(io.Discard, c)
+		_, _ = io.Copy(io.Discard, c)
 	})
 	d, tg := selfTarget(t, name)
 	o := winOptions()
@@ -337,31 +338,110 @@ func TestWindowsReadDeadline(t *testing.T) {
 			t.Fatalf("timeout took %v, want within %v", el, o.ReplyTimeout+500*time.Millisecond)
 		}
 	}
-	// The Go runtime starts OS threads (each holds handles) for the test
-	// server's blocking pipe calls, and CI showed a fixed +6 between two
-	// readings that did not grow with the number of probes (5 or 15). So the
-	// check looks at growth, not at the level: after a settling window, 30 more
-	// probes must add (almost) nothing. A handle leaked once per probe would
-	// add 30; the dialer holds 5 handles per connection.
-	for i := 0; i < 10; i++ {
+	// The Go runtime starts OS threads (each holds a few handles) for the test
+	// server's blocking pipe calls, so the count can step up by a thread's
+	// worth (+6 and +12 were seen on CI) at any point, and that step does not
+	// depend on how many probes ran. A real leak differs: it adds handles on
+	// EVERY probe, so every round of probes grows the count. So the test runs
+	// several rounds after a settling window and fails only if every round
+	// grew by more than a few handles. The check of the pipe owner and session
+	// is also tested on its own, with no goroutine involved, by
+	// TestWindowsIdentityCheckLeaksNoHandle.
+	for i := 0; i < 5; i++ {
 		run()
 	}
+	runtime.GC() // lets finalizers of files the runtime itself opened run before counting
 	time.Sleep(300 * time.Millisecond)
-	settled := handleCount(t)
-	for i := 0; i < 30; i++ {
-		run()
+	const rounds, perRound, noise = 4, 15, 4
+	prev := handleCount(t)
+	start := prev
+	minGrowth := 1 << 30
+	var growth []int
+	for r := 0; r < rounds; r++ {
+		for i := 0; i < perRound; i++ {
+			run()
+		}
+		time.Sleep(200 * time.Millisecond)
+		now := handleCount(t)
+		growth = append(growth, now-prev)
+		if now-prev < minGrowth {
+			minGrowth = now - prev
+		}
+		prev = now
 	}
-	time.Sleep(300 * time.Millisecond)
-	after := handleCount(t)
-	t.Logf("handle count: %d after the settling window, %d after 30 more probes", settled, after)
-	if after > settled+4 {
-		t.Fatalf("handle count went from %d to %d over 30 probes: a handle leaks", settled, after)
+	t.Logf("handle count %d after warm-up, %d after %d more probes; growth per round of %d: %v", start, prev, rounds*perRound, perRound, growth)
+	if minGrowth > noise {
+		t.Fatalf("handle count %d after warm-up, %d after %d more probes; every round of %d grew by more than %d (%v): a handle leaks", start, prev, rounds*perRound, perRound, noise, growth)
+	}
+}
+
+// The owner and session check opens a process token and reads a security
+// descriptor. This runs it many times on one pipe handle, on this goroutine,
+// for each way it can end (trusted, foreign owner, owner unreadable). No
+// thread or goroutine is started, so the handle count must not move: a token
+// handle left open would add one per call.
+func TestWindowsIdentityCheckLeaksNoHandle(t *testing.T) {
+	name := uniquePipeName()
+	startPipeSrv(t, name, nil, windows.PIPE_UNLIMITED_INSTANCES, func(i int, c net.Conn) {
+		_, _ = io.Copy(io.Discard, c)
+	})
+	d, tg := selfTarget(t, name)
+	conn, _, err := d.Dial(context.Background(), tg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	pc, ok := conn.(*pipeConn)
+	if !ok {
+		t.Fatalf("conn is %T", conn)
+	}
+	ph, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, tg.PID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = windows.CloseHandle(ph) }()
+	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name  string
+		owner func(windows.Handle) (*windows.SID, error)
+		want  Reason
+	}{
+		{"real owner", nil, ""},
+		{"foreign owner", func(windows.Handle) (*windows.SID, error) { return everyone, nil }, ReasonPeerMismatch},
+		{"owner unreadable", func(windows.Handle) (*windows.SID, error) { return nil, windows.ERROR_ACCESS_DENIED }, ReasonPeerMismatch},
+	}
+	for _, c := range cases {
+		d.ownerOverride = c.owner
+		check := func() {
+			e := d.checkServerIdentity(pc.h, ph, tg.PID)
+			var got Reason
+			if e != nil {
+				got = e.Reason
+			}
+			if got != c.want {
+				t.Fatalf("%s: got %q want %q", c.name, got, c.want)
+			}
+		}
+		for i := 0; i < 20; i++ {
+			check()
+		}
+		before := handleCount(t)
+		for i := 0; i < 300; i++ {
+			check()
+		}
+		after := handleCount(t)
+		if after > before+2 {
+			t.Fatalf("%s: handle count went from %d to %d over 300 checks: a handle leaks", c.name, before, after)
+		}
 	}
 }
 
 func TestWindowsCancelEndsBlockedRead(t *testing.T) {
 	name := uniquePipeName()
-	h := newHonest(7, uint32(os.Getpid()))
+	h := newHonest(7, pid32(os.Getpid()))
 	h.chunks, h.gap = 100000, time.Millisecond
 	startPipeSrv(t, name, nil, windows.PIPE_UNLIMITED_INSTANCES, h.handle)
 	d, tg := selfTarget(t, name)
@@ -379,5 +459,112 @@ func TestWindowsCancelEndsBlockedRead(t *testing.T) {
 	}
 	if !res.StopAck || !res.StopSession {
 		t.Fatalf("the stop path must still run after a cancel: %+v", res)
+	}
+}
+
+// The pipe owner must be the target token's user or its default owner.
+func TestOwnerTrustedTable(t *testing.T) {
+	sid := func(s string) *windows.SID {
+		x, err := windows.StringToSid(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return x
+	}
+	user := sid("S-1-5-21-1111-2222-3333-1001")
+	admins := sid("S-1-5-32-544")
+	other := sid("S-1-5-21-1111-2222-3333-1002")
+	everyone := sid("S-1-1-0")
+	cases := []struct {
+		name  string
+		owner *windows.SID
+		want  bool
+	}{
+		{"the user", sid("S-1-5-21-1111-2222-3333-1001"), true},
+		{"the default owner (Administrators)", sid("S-1-5-32-544"), true},
+		{"another user", other, false},
+		{"Everyone", everyone, false},
+		{"no owner", nil, false},
+	}
+	for _, c := range cases {
+		if got := ownerTrusted(c.owner, user, admins); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+	if ownerTrusted(user, nil, nil) {
+		t.Error("with no token SIDs nothing is trusted")
+	}
+}
+
+// A pipe whose server pid is the target but whose owner is someone else is
+// refused before any byte is written (the pid-reuse hand-over case).
+func TestWindowsDialRejectsForeignOwner(t *testing.T) {
+	name := uniquePipeName()
+	var got atomic.Int64
+	seen := make(chan struct{}, 4)
+	startPipeSrv(t, name, nil, windows.PIPE_UNLIMITED_INSTANCES, func(i int, c net.Conn) {
+		n, _ := io.Copy(io.Discard, c)
+		got.Add(n)
+		seen <- struct{}{}
+	})
+	d, tg := selfTarget(t, name)
+	d.ownerOverride = func(windows.Handle) (*windows.SID, error) {
+		return windows.StringToSid("S-1-5-21-1-2-3-4242") // not the target's user or owner
+	}
+	res, err := Probe(context.Background(), d, tg, winOptions())
+	if reasonOf(t, err) != ReasonPeerMismatch || res.Reason != ReasonPeerMismatch {
+		t.Fatalf("err %v result %+v", err, res)
+	}
+	select {
+	case <-seen:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the server never saw the client hang up")
+	}
+	if got.Load() != 0 {
+		t.Fatalf("server received %d bytes, want 0", got.Load())
+	}
+}
+
+// An owner that cannot be read is refused, not skipped.
+func TestWindowsDialRefusesUnreadableOwner(t *testing.T) {
+	name := uniquePipeName()
+	startPipeSrv(t, name, nil, windows.PIPE_UNLIMITED_INSTANCES, func(i int, c net.Conn) {
+		_, _ = io.Copy(io.Discard, c)
+	})
+	d, tg := selfTarget(t, name)
+	d.ownerOverride = func(windows.Handle) (*windows.SID, error) { return nil, windows.ERROR_ACCESS_DENIED }
+	if _, _, err := d.Dial(context.Background(), tg); reasonOf(t, err) != ReasonPeerMismatch {
+		t.Fatalf("got %v, want peer-mismatch", err)
+	}
+}
+
+// The real owner of a pipe created by this process is trusted for this
+// process's own token. This runs the real GetSecurityInfo and token reads.
+func TestWindowsRealOwnerIsTrustedForOwnToken(t *testing.T) {
+	name := uniquePipeName()
+	startPipeSrv(t, name, nil, windows.PIPE_UNLIMITED_INSTANCES, func(i int, c net.Conn) {
+		_, _ = io.Copy(io.Discard, c)
+	})
+	name16, _ := windows.UTF16PtrFromString(name)
+	h, err := windows.CreateFile(name16, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil, windows.OPEN_EXISTING, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = windows.CloseHandle(h) }()
+	owner, err := pipeOwner(h)
+	if err != nil {
+		t.Fatalf("pipeOwner: %v", err)
+	}
+	var tok windows.Token
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &tok); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tok.Close() }()
+	user, defOwner, err := tokenSIDs(tok)
+	if err != nil {
+		t.Fatalf("tokenSIDs: %v", err)
+	}
+	if !ownerTrusted(owner, user, defOwner) {
+		t.Fatalf("owner %s is neither the token user %s nor its default owner %s", owner, user, defOwner)
 	}
 }
