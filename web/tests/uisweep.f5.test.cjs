@@ -195,3 +195,9 @@ test('SWEEP-F5-05/06: the setup window keeps its progress under forced colors an
   assert.match(read('src/brand/components/StepRail.svelte'), /forced-colors: active[\s\S]*border-left: 3px solid Highlight/);
   assert.match(read('src/brand/components/BrandMark.svelte'), /forced-colors: active[\s\S]*CanvasText/);
 });
+
+test('SWEEP-F5-03: focus on an element that was just hidden counts as lost', () => {
+  const body = { tagName: 'BODY' }, main = { tagName: 'MAIN' };
+  assert.equal(focus.focusWasLost({ tagName: 'H2', isConnected: true, getClientRects: () => [] }, body, main), true);
+  assert.equal(focus.focusWasLost({ tagName: 'H2', isConnected: true, getClientRects: () => [{}] }, body, main), false);
+});

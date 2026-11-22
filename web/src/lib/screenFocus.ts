@@ -24,12 +24,15 @@ export function placeKey(screen: Screen, depth: number): string {
   return screen === 'running' ? screen + ':' + depth : screen;
 }
 
-/** True when nothing useful holds focus: the page body, the document itself, nothing, a node that left the page, or the main area we parked on. */
+/** True when nothing useful holds focus: the page body, the document itself, nothing, a node that left the page or was hidden, or the main area we parked on. */
 export function focusWasLost(active: Element | null, body: Element | null, main: Element | null): boolean {
   if (!active || active === body) return true;
   if (active === main) return true;
   if (active.tagName === 'HTML') return true;
-  return (active as { isConnected?: boolean }).isConnected === false;
+  if ((active as { isConnected?: boolean }).isConnected === false) return true;
+  // The page has not caught up yet: focus still names an element that was just hidden (its view closed), so it is about to drop to the body.
+  const rects = (active as { getClientRects?: () => ArrayLike<unknown> }).getClientRects;
+  return typeof rects === 'function' && rects.call(active).length === 0;
 }
 
 type Doc = {
