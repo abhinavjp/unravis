@@ -59,6 +59,9 @@ type env struct {
 	elevateWait func(exe string, args []string) (int, error)
 	// notice shows a message box; used only when an unattended update leaves no running program (nil in tests).
 	notice func(title, text string)
+	// ask shows an OK/Cancel box and says whether the person clicked OK; used by --recover before the Windows approval prompt (nil in tests:
+	// the run goes on as if OK was clicked).
+	ask func(title, text string) bool
 	// dialWorker is the worker's end of the pipe.
 	dialWorker func(name string, parent uint32) (*setup.WorkerPipe, error)
 	// listen opens the window's loopback port.
@@ -87,6 +90,7 @@ func osEnv() env {
 		},
 		static:     func() (fs.FS, error) { return fs.Sub(uiFiles, "ui") },
 		openWindow: setup.OpenWindow, openFolder: setup.ShowFolder, startApp: setup.StartProgram, startBackground: setup.StartProgramBackground, notice: setup.ShowNotice,
+		ask:         recoverAsk(os.Getenv),
 		elevateWait: func(exe string, args []string) (int, error) { return setup.RunElevatedWait(exe, args, 5*time.Minute) },
 		dialWorker:  setup.DialWorkerPipe, listen: setup.Listen, idleAfter: 3 * time.Minute,
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -97,10 +101,10 @@ func osEnv() env {
 }
 
 type options struct {
-	silent, uninstall, repair, upgrade, allowDowngrade, worker, noBrowser, showVersion, capture, closeApp, recover, noRestart bool
-	config, logPath, pipe, verify                                                                                             string
-	expectSHA, expectVersion                                                                                                  string // --expect-sha256 / --expect-version: what the updater verified
-	parent                                                                                                                    uint
+	silent, uninstall, repair, upgrade, allowDowngrade, worker, noBrowser, showVersion, capture, closeApp, recover, noRestart, withReleases bool
+	config, logPath, pipe, verify                                                                                                           string
+	expectSHA, expectVersion                                                                                                                string // --expect-sha256 / --expect-version: what the updater verified
+	parent                                                                                                                                  uint
 }
 
 func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
@@ -119,6 +123,7 @@ func parseFlags(args []string, e env, errOut io.Writer) (options, error) {
 	fl.StringVar(&o.verify, "verify", "", "check a release in this folder offline (update-manifest.json, its .sig and the files) and print the result; installs nothing")
 	fl.BoolVar(&o.closeApp, "close-app", false, "with --silent --upgrade and the --expect flags: ask a running Unravis to quit, upgrade, then start it again (what an automatic update does)")
 	fl.BoolVar(&o.recover, "recover", false, "put back what a setup run that was cut off (power loss, a killed setup) changed, from its journal, and start Unravis again; installs nothing")
+	fl.BoolVar(&o.withReleases, "with-releases", false, "with --silent: also install (or keep) the optional read-only Unravis Releases window; off for a normal install")
 	fl.BoolVar(&o.noRestart, "no-restart", false, "")
 	fl.BoolVar(&o.noBrowser, "no-browser", false, "do not open the setup window; print its address instead")
 	fl.BoolVar(&o.showVersion, "version", false, "print the version and exit")
@@ -289,6 +294,7 @@ func runSilent(o options, e env) int {
 	}
 	req.AllowDowngrade = o.allowDowngrade
 	req.Options.CloseRunningApp = o.closeApp
+	req.Options.Releases = req.Options.Releases || o.withReleases
 	if p, err := e.payload(); err == nil {
 		r.Payload = p
 	} else if o.op() != setup.OpUninstall {

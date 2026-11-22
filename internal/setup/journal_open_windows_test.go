@@ -440,3 +440,42 @@ func TestRecoverJournalOnRealNTFSRefusesWhatIsNotProven(t *testing.T) {
 		t.Fatalf("a hard-linked journal was used: %v %v", found, err)
 	}
 }
+
+// BL-183 review of #105, SHOULD 3: what owner does a journal get when an older build (or anything) writes it with a plain os.WriteFile in the
+// administrators-only folder, with nothing forced? The CI runner answers here for its own configuration (an elevated administrator). The
+// test logs the owner, then checks the reader agrees with the owner rule, and that a refusal names the file and a way out.
+func TestAPlainWriteInTheAdminOnlyFolderIsJudgedByItsRealOwner(t *testing.T) {
+	r, p := machineRig(t)
+	if err := os.WriteFile(p, []byte(`{"op":"upgrade","version":"1.2.0","started":"2026-11-22T10:00:00Z","undos":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sddl, err := (osSecurity{}).SDDL(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The SDDL also names the group (G:), so it is parsed, not cut at "D:". CI showed O:BA with a domain-users group for an elevated runner.
+	parsed, err := ParseSDDL(sddl)
+	if err != nil {
+		t.Fatalf("cannot read %q: %v", sddl, err)
+	}
+	owner := parsed.Owner
+	t.Logf("a journal written by a plain os.WriteFile in the administrators-only folder gets owner %q (SDDL %s)", owner, sddl)
+	_, found, err := r.readJournal(true)
+	if !found {
+		t.Fatalf("the file is there but readJournal says it is not: %v", err)
+	}
+	ownerOK := journalFileOwnerOK(owner)
+	switch {
+	case ownerOK && err != nil:
+		t.Fatalf("owner %q is accepted by the rule but the journal was refused: %v", owner, err)
+	case !ownerOK && err == nil:
+		t.Fatalf("owner %q is not accepted by the rule but the journal was read", owner)
+	case !ownerOK:
+		if !strings.Contains(err.Error(), p) || !strings.Contains(err.Error(), "do not delete it") {
+			t.Fatalf("the refusal does not name the file and a way out: %v", err)
+		}
+		if _, serr := os.Stat(p); serr != nil {
+			t.Fatalf("a refused journal was deleted: %v", serr)
+		}
+	}
+}

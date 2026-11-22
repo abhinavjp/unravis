@@ -150,7 +150,17 @@ func (r *Runner) Preflight(in PreflightInput) []Check {
 	}
 
 	elevated := NeedsAdminFor(sys.Svc, opts) || in.Op == OpUninstall && (in.Old != nil && in.Old.Root == HKLM)
-	if _, err := os.Stat(filepath.Join(r.journalDir(elevated), JournalName)); err == nil {
+	if elevated && sys.Mach.IsAdmin() {
+		// An administrator reads the machine journal the way the replay does, so a journal that will be refused is said so now, with the
+		// file and what to do, and not after the person has clicked Install. A normal run cannot look inside that folder (it is for
+		// administrators only), so it keeps the plain check below.
+		if _, found, err := r.readJournal(true); err != nil {
+			add(Check{ID: "journal", Title: "Earlier setup", Status: CheckFailed, Detail: err.Error(),
+				Fix: "Deal with the journal as described, then run setup again."})
+		} else if found {
+			add(Check{ID: "journal", Title: "Earlier setup", Status: CheckPartly, Detail: "An earlier setup did not finish. Setup puts back what it changed before it starts."})
+		}
+	} else if _, err := os.Stat(filepath.Join(r.journalDir(elevated), JournalName)); err == nil {
 		add(Check{ID: "journal", Title: "Earlier setup", Status: CheckPartly, Detail: "An earlier setup did not finish. Setup puts back what it changed before it starts."})
 	}
 
