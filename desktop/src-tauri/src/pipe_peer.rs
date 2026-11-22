@@ -27,6 +27,7 @@ use windows_sys::Win32::System::Threading::{
 const UI_PREFIX: &str = r"\\.\pipe\unravis.ui.";
 const SECURITY_IDENTIFICATION: u32 = 0x0001_0000;
 const ERROR_PIPE_BUSY: i32 = 231;
+const ERROR_PIPE_NOT_CONNECTED: i32 = 233;
 /// Room for the status line and headers on top of the body limit.
 const HEAD_ROOM: usize = 16 * 1024;
 // The raw read also carries chunk framing, so it may be a little longer than the body limit.
@@ -170,7 +171,13 @@ impl Client {
                     if stop.load(Ordering::SeqCst) {
                         return Err(std::io::Error::other("cancelled"));
                     }
-                    let n = (&*io).read(&mut buf)?;
+                    // The Go server flushes and then disconnects its end: the client's next read fails with ERROR_PIPE_NOT_CONNECTED
+                    // (233), not ERROR_BROKEN_PIPE (109, which std already turns into end of stream). Both mean the answer is complete.
+                    let n = match (&*io).read(&mut buf) {
+                        Ok(n) => n,
+                        Err(e) if e.raw_os_error() == Some(ERROR_PIPE_NOT_CONNECTED) => 0,
+                        Err(e) => return Err(e),
+                    };
                     if n == 0 {
                         return Ok(out);
                     }
