@@ -142,7 +142,7 @@ func TestLiveStoppedAndDeadAndStale(t *testing.T) {
 		t.Fatalf("no lock note but live: %+v", l.Live)
 	}
 	// garbage lock note: nothing live, no panic
-	os.WriteFile(filepath.Join(dir, "lock-info.json"), []byte("{not json"), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "lock-info.json"), []byte("{not json"), 0o600)
 	if l := ReadLocal(dir); l.Live != nil {
 		t.Fatalf("garbage note shown: %+v", l.Live)
 	}
@@ -236,12 +236,12 @@ func TestGoneIgnoresStateFileRunning(t *testing.T) {
 func TestReadSharedWhileHeldOpen(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "x.json")
-	os.WriteFile(p, []byte("hello"), 0o600)
+	_ = os.WriteFile(p, []byte("hello"), 0o600)
 	f, err := openShared(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	b, err := readSmall(p, 100)
 	if err != nil || string(b) != "hello" {
 		t.Fatalf("got %q %v", b, err)

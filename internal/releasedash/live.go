@@ -3,8 +3,8 @@ package releasedash
 import (
 	"encoding/json"
 	"os"
-	"strconv"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )

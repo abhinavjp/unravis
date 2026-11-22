@@ -129,7 +129,7 @@ func readSmall(path string, max int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return io.ReadAll(io.LimitReader(f, max))
 }
 
@@ -138,7 +138,7 @@ func readAuditTail(path string) []Event {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	fi, err := f.Stat()
 	if err != nil || !fi.Mode().IsRegular() {
 		return nil
