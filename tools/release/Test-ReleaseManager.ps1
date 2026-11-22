@@ -394,47 +394,176 @@ try {
     }
     Assert-That 'train: a merge commit with the generated subject is not the generated commit' (@($sideG | Where-Object { $_.Sha -eq $script:dd.mergey -and $_.Kind -ne 'dist' }).Count -eq 1)
 
-    # Promote-Develop.ps1 reuses a branch only when the generated commit sits where Get-PromotionSideCommits wants it (sweep 2026-11-22,
-    # finding 5): both sides use Get-BuriedGeneratedCommits for the position. Pure function first (tip first: Kind dist | mergein | other).
+    # ---- Promote-Develop.ps1 reuses a branch only when the generated commit sits where Get-PromotionSideCommits wants it ----------
+    # (sweep 2026-11-22, finding 5). Both sides use Get-BuriedGeneratedCommits for the position; Promote-Develop builds its chain with
+    # Get-PromoteBranchChain. Callers wrap the call in @(): zero, one and many results must all count right.
     function New-Chain([string[]]$Kinds) { $list = @(); for ($i = 0; $i -lt $Kinds.Count; $i++) { $list += [pscustomobject]@{ Sha = "s$($i + 1)"; Kind = $Kinds[$i] } }; return , $list }
-    Assert-That 'position rule: nothing buried when the generated commit is on top' (@(Get-BuriedGeneratedCommits (New-Chain 'dist')).Count -eq 0)
-    Assert-That 'position rule: merges of master and further generated commits above it are fine' (@(Get-BuriedGeneratedCommits (New-Chain 'dist', 'mergein', 'dist', 'mergein')).Count -eq 0)
-    Assert-That 'position rule: a develop pull request commit above a generated commit buries it' ((@(Get-BuriedGeneratedCommits (New-Chain 'other', 'dist')) -join ',') -eq 's2')
-    Assert-That 'position rule: a merge that is not a clean merge of master (kind other) above it buries it' ((@(Get-BuriedGeneratedCommits (New-Chain 'dist', 'other', 'dist', 'dist')) -join ',') -eq 's3,s4')
-    Assert-That 'position rule: an empty chain (branch equals the chosen commit) buries nothing' (@(Get-BuriedGeneratedCommits @()).Count -eq 0)
-    # The same rule on real git: classify the first-parent line of each earlier scenario the way Promote-Develop does (it has
-    # no git, only the API; it does not redo the merge, so a merge counts when its second parent is on master) and the buried commits must be exactly the generated-subject commits that Get-PromotionSideCommits refused.
-    function Get-RawChain([string]$Promotion) {
-        $pp = @((git -C $g rev-list --parents -n 1 $Promotion) -split ' ' | Select-Object -Skip 1)
-        return @(git -C $g rev-list --first-parent "$($pp[0])..$($pp[1])" | ForEach-Object {
-            $c = $_
-            $cp = @((git -C $g rev-list --parents -n 1 $c) -split ' ' | Select-Object -Skip 1)
-            $subj = (git -C $g log -n 1 --format=%s $c)
-            $kind = 'other'
-            if ($cp.Count -eq 1) {
-                $names = @(git -C $g -c core.quotepath=off diff --no-renames --name-only "$c^1" $c)
-                if ("$subj".StartsWith('Rebuild web files for promotion', [StringComparison]::Ordinal) -and $names.Count -gt 0 -and @($names | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' }).Count -eq 0) { $kind = 'dist' }
-            }
-            elseif ($cp.Count -eq 2) {
-                # Promote-Develop's test: two parents and the second one is already on master (every merge in these scenarios is clean).
-                git -C $g merge-base --is-ancestor $cp[1] $pp[0] 2>$null
-                if ($LASTEXITCODE -eq 0) { $kind = 'mergein' }
-            }
-            [pscustomobject]@{ Sha = $c; Kind = $kind }
-        })
+    function Get-Buried([string[]]$Kinds) { return , @(Get-BuriedGeneratedCommits (New-Chain $Kinds)) }
+    Assert-That 'position rule: a clean chain (generated commit on top) buries nothing, and Count is 0' ((Get-Buried 'dist').Count -eq 0)
+    Assert-That 'position rule: merges of master and further generated commits above it are fine' ((Get-Buried 'dist', 'mergein', 'dist', 'mergein').Count -eq 0)
+    Assert-That 'position rule: a merge of master on top of a generated commit is fine (the re-run after master moved)' ((Get-Buried 'mergein', 'dist').Count -eq 0)
+    Assert-That 'position rule: a develop pull request commit above a generated commit buries exactly that one' ((Get-Buried 'other', 'dist').Count -eq 1 -and (Get-Buried 'other', 'dist')[0] -eq 's2')
+    Assert-That 'position rule: a merge that is not a clean merge of master (kind other) above it buries the ones below' (((Get-Buried 'dist', 'other', 'dist', 'dist') -join ',') -eq 's3,s4')
+    Assert-That 'position rule: an empty chain (branch equals the chosen commit) buries nothing' ((Get-Buried @()).Count -eq 0)
+    Assert-That 'position rule: Get-PromoteBranchChain of an empty line is empty, not an array holding an array' (@(Get-PromoteBranchChain 'x' 'x' { throw 'not called' } @{}).Count -eq 0)
+
+    # The code Promote-Develop runs (Get-PromoteBranchChain, then Get-BuriedGeneratedCommits) over real git, against the answer of
+    # Get-PromotionSideCommits (what Release.ps1 decides) for the same branch. $ReadCommit here is what the GitHub API gives there.
+    $readGit = {
+        param($c)
+        $cp = @((git -C $g rev-list --parents -n 1 $c) -split ' ' | Select-Object -Skip 1)
+        $subj = (git -C $g log -n 1 --format=%s $c)
+        $gen = $false
+        if ($cp.Count -eq 1) {
+            $names = @(git -C $g -c core.quotepath=off diff --no-renames --name-only "$c^1" $c)
+            $gen = ($names.Count -gt 0 -and @($names | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' }).Count -eq 0)
+        }
+        [pscustomobject]@{ Parents = $cp; Subject = "$subj"; IsGenerated = $gen }
     }
-    foreach ($sc in @(@('promote4', $sideA), @('promote11', $sideBuried), @('promote5', $sideB))) {
-        $promo = (git -C $g rev-parse "m-$($sc[0])").Trim()
-        $bur = @(Get-BuriedGeneratedCommits (Get-RawChain $promo))
-        $refused = @($sc[1] | Where-Object { $_.Kind -eq 'pr' -and -not $_.Ok } | ForEach-Object Sha)
-        $wasDist = @(Get-RawChain $promo | Where-Object { $_.Kind -eq 'dist' } | ForEach-Object Sha)
-        $expect = @($wasDist | Where-Object { $refused -contains $_ })
-        Assert-That "position rule: Promote-Develop and Get-PromotionSideCommits agree on $($sc[0])" ((($bur | Sort-Object) -join ',') -eq (($expect | Sort-Object) -join ',')) "buried=$($bur -join ',') refused=$($expect -join ',')"
+    function Get-PromoteDecision([string]$Branch, [string]$Master) {
+        $tip = (git -C $g rev-parse $Branch).Trim()
+        $mi = @{}
+        foreach ($c in @(git -C $g rev-list --first-parent "$d2..$tip")) { $mi[$c] = Test-CleanMasterMerge $g $c $Master }
+        $chain = @(Get-PromoteBranchChain $tip $d2 $readGit $mi)
+        return [pscustomobject]@{ Chain = $chain; Buried = @(Get-BuriedGeneratedCommits $chain) }
     }
-    Assert-That 'position rule: the buried scenarios are really buried (the check is not vacuous)' (@(Get-BuriedGeneratedCommits (Get-RawChain (git -C $g rev-parse "m-promote4").Trim())).Count -eq 1 -and @(Get-BuriedGeneratedCommits (Get-RawChain (git -C $g rev-parse "m-promote11").Trim())).Count -eq 1)
+    # The release manager's refusals of generated-looking commits: subject and shape right, yet not accepted as 'dist'.
+    function Get-ReleaseRefusedGenerated([object[]]$Side) {
+        return @($Side | Where-Object { $_.Kind -eq 'pr' -and -not $_.Ok -and (& $readGit $_.Sha).IsGenerated -and (& $readGit $_.Sha).Subject.StartsWith('Rebuild web files for promotion') } | ForEach-Object Sha)
+    }
+    # Branch, the scenario's side list from Get-PromotionSideCommits, the commits that must be refused as buried.
+    $sideH = Get-Side 'promote12' {
+        Set-DistFile 'web/dist/index.html' 'built'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'; $script:dd.h1 = (G rev-parse HEAD).Trim()
+        G merge -q --no-edit --no-ff -m 'Merge master into promote/12' $h   # a clean merge of master ON TOP of the generated commit
+        $script:dd.h2 = (G rev-parse HEAD).Trim()
+    }
+    $scen = @(
+        @{ Name = 'promote4';  Side = $sideA;      Buried = @($script:dd.ok) },        # generated commit below a commit with another subject
+        @{ Name = 'promote11'; Side = $sideBuried; Buried = @($script:dd.buried) },    # below a pull request merge commit
+        @{ Name = 'promote5';  Side = $sideB;      Buried = @() },                     # generated, merge of master, generated
+        @{ Name = 'promote12'; Side = $sideH;      Buried = @() },                     # generated, then a clean merge of master on top
+        @{ Name = 'promote6';  Side = $sideC;      Buried = @() },                     # other file in the commit: it is 'other', nothing is below it
+        @{ Name = 'promote8';  Side = $sideE;      Buried = @() }
+    )
+    foreach ($sc in $scen) {
+        $dec = Get-PromoteDecision $sc.Name $h
+        $want = @($sc.Buried | Sort-Object)
+        $gotP = @($dec.Buried | Sort-Object)
+        $gotR = @(Get-ReleaseRefusedGenerated $sc.Side | Sort-Object)
+        Assert-That "position rule: $($sc.Name): Promote-Develop buries exactly [$($want -join ',')]" (($gotP -join ',') -eq ($want -join ',') -and $gotP.Count -eq $want.Count) "got [$($gotP -join ',')]"
+        # Release.ps1 refuses exactly the commits Promote-Develop calls buried (a generated commit that fails its own test is a pull request commit to both).
+        Assert-That "position rule: $($sc.Name): Release.ps1's refused generated commits equal Promote-Develop's" ((@($gotR | Where-Object { $want -contains $_ }) -join ',') -eq ($want -join ',')) "release refused [$($gotR -join ',')]"
+        Assert-That "position rule: $($sc.Name): both sides agree on accept or refuse" (($dec.Buried.Count -gt 0) -eq ($gotR.Count -gt 0)) "promote buried $($dec.Buried.Count), release refused $($gotR.Count)"
+    }
+    Assert-That 'position rule: the check is not vacuous (two scenarios are buried, four are clean)' (@($scen | Where-Object { $_.Buried.Count -gt 0 }).Count -eq 2 -and @($scen | Where-Object { $_.Buried.Count -eq 0 }).Count -eq 4)
     $pd = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Promote-Develop.ps1')
-    Assert-That 'promote: branch reuse applies the position rule (Get-BuriedGeneratedCommits) and refuses before a pull request exists' ($pd -match 'Get-BuriedGeneratedCommits \$chain' -and $pd.IndexOf('$buried = @(Get-BuriedGeneratedCommits') -lt $pd.IndexOf('gh pr list'))
-    Assert-That 'promote: a generated-looking commit is no longer accepted anywhere in the compare list' ($pd -notmatch '\$np = \[int\]')
+    Assert-That 'promote: branch reuse runs Get-PromoteBranchChain and Get-BuriedGeneratedCommits (wrapped in @()) before a pull request exists' ($pd -match '\$chain = @\(Get-PromoteBranchChain' -and $pd -match '\$buried = @\(Get-BuriedGeneratedCommits \$chain\)' -and $pd -match '\$buried\.Count -gt 0' -and $pd.IndexOf('$buried = @(Get-BuriedGeneratedCommits') -lt $pd.IndexOf('gh pr list'))
+    Assert-That 'promote: a generated-looking commit is accepted only through the position rule' ($pd -notmatch '\$np = \[int\]' -and $pd -match 'okDist')
+
+    # ---- promotion safety (SUP-1): only the head that was built and checked is merged; "Merge master into" is a claim, not a proof ----
+    $sha40 = 'a' * 40; $other40 = 'b' * 40
+    Assert-That 'promote head: the expected head passes' ($null -eq (Get-ThrownMessage { Assert-PromotionHead $sha40 $sha40 'promote/aaaaaaa' }))
+    $msgHead = Get-ThrownMessage { Assert-PromotionHead $sha40 $other40 'promote/aaaaaaa' }
+    Assert-That 'promote head: a different head is refused with a clear message' ($msgHead -and $msgHead -match 'Someone pushed' -and $msgHead -match 'Nothing was merged') "$msgHead"
+    Assert-That 'promote head: an empty head is refused' ($null -ne (Get-ThrownMessage { Assert-PromotionHead $sha40 '' 'promote/aaaaaaa' }))
+    Assert-That 'promote head: no expected head is refused' ($null -ne (Get-ThrownMessage { Assert-PromotionHead '' $sha40 'promote/aaaaaaa' }))
+
+    $mr = Join-Path $root 'mergein'
+    New-Item -ItemType Directory -Path $mr | Out-Null
+    function M { git -C $mr -c user.name=t -c user.email=t@t -c commit.gpgsign=false @args; if ($LASTEXITCODE -ne 0) { throw "git $args failed" } }
+    M init -q -b master
+    Set-Content -LiteralPath (Join-Path $mr 'a.txt') 'a'; M add -A; M commit -q -m A
+    M checkout -q -b develop
+    Set-Content -LiteralPath (Join-Path $mr 'd.txt') 'd'; M add -A; M commit -q -m D1
+    $mDev = (M rev-parse HEAD).Trim()
+    M checkout -q master
+    Set-Content -LiteralPath (Join-Path $mr 'h.txt') 'h'; M add -A; M commit -q -m H
+    $mHot = (M rev-parse HEAD).Trim()
+    # good: what GitHub's merges API makes (a clean merge of master into the promote branch)
+    M checkout -q -b promote/good $mDev
+    M merge -q --no-ff -m 'Merge master into promote/good' master
+    $mGood = (M rev-parse HEAD).Trim()
+    # bad 1: a merge of master that also carries a file no pull request had, under the same subject
+    M checkout -q -b promote/extra $mDev
+    M merge -q --no-commit --no-ff master
+    Set-Content -LiteralPath (Join-Path $mr 'evil.txt') 'e'; M add -A; M commit -q -m 'Merge master into promote/extra'
+    $mExtra = (M rev-parse HEAD).Trim()
+    # bad 2: one parent, only the subject says "Merge master into" (code pushed by hand)
+    M checkout -q -b promote/plain $mDev
+    Set-Content -LiteralPath (Join-Path $mr 'evil2.txt') 'e'; M add -A; M commit -q -m 'Merge master into promote/plain'
+    $mPlain = (M rev-parse HEAD).Trim()
+    # bad 3: a merge whose second parent is not on master
+    M checkout -q -b side $mDev
+    Set-Content -LiteralPath (Join-Path $mr 's.txt') 's'; M add -A; M commit -q -m S
+    M checkout -q -b promote/side $mDev
+    M merge -q --no-ff -m 'Merge master into promote/side' side
+    $mSide = (M rev-parse HEAD).Trim()
+    foreach ($case in @(@('good', $mGood, $true), @('extra', $mExtra, $false), @('plain', $mPlain, $false), @('side', $mSide, $false))) {
+        $v = Test-RemoteMergeIns $mr "promote/$($case[0])" @($case[1]) ''
+        Assert-That "promote merge-in: '$($case[0])' is $(if ($case[2]) { 'accepted' } else { 'refused' })" ($v.ContainsKey($case[1]) -and ($v[$case[1]].Ok -eq $case[2])) ($v.Values | ForEach-Object { $_.Why }) 
+    }
+    Assert-That 'promote merge-in: a sha that is not on the branch is refused' (-not (Test-RemoteMergeIns $mr 'promote/good' @($sha40) '')[$sha40].Ok)
+    $envBefore = "$env:GIT_CONFIG_COUNT|$env:GIT_CONFIG_KEY_0|$env:GIT_CONFIG_VALUE_0|$env:GIT_TERMINAL_PROMPT"
+    $leftBefore = @(Get-ChildItem ([System.IO.Path]::GetTempPath()) -Filter 'unravis-mergein-*' -ErrorAction SilentlyContinue).Count
+    $v2 = Test-RemoteMergeIns $mr 'promote/good' @($mGood) 'tok-not-printed'
+    Assert-That 'promote merge-in: the throw-away repository is removed and the git environment is put back' ($v2[$mGood].Ok -and "$env:GIT_CONFIG_COUNT|$env:GIT_CONFIG_KEY_0|$env:GIT_CONFIG_VALUE_0|$env:GIT_TERMINAL_PROMPT" -eq $envBefore -and @(Get-ChildItem ([System.IO.Path]::GetTempPath()) -Filter 'unravis-mergein-*' -ErrorAction SilentlyContinue).Count -eq $leftBefore)
+
+    $pd = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Promote-Develop.ps1')
+    Assert-That 'promote: the merge is pinned to the expected head, not to the head read last' ($pd -match '--match-head-commit \$expectedHead' -and $pd -notmatch '--match-head-commit \$head\b')
+    Assert-That 'promote: the head is compared on every wait loop and once before the pull request' ($pd -match '(?s)\$head = .*?headRefOid.*?Assert-HeadIsExpected \$head' -and $pd -match '(?s)Assert-HeadIsExpected \(\(Invoke-Gh api[^\r\n]*git/ref/heads/\$branch')
+    Assert-That 'promote: the expected head is the DIST_COMMIT sha, else the head after the merge' ($pd -match '\$expectedHead = if \(\$distSha -ne ''none''\) \{ \$distSha \} else \{ \$headAfterMerge \}')
+    Assert-That 'promote: a "Merge master into" subject alone is not enough' ($pd -match 'Test-RemoteMergeIns' -and $pd -notmatch '(?m)^\s*if \(\$emsg -like "Merge master into \$branch\*"\) \{ continue \}')
+    Assert-That 'promote: the reused branch is judged at the commit read first, not at its name' ($pd -match 'compare/\$\{sha\}\.\.\.\$\{existing\}')
+
+    # A pull request head that GitHub shows late is not "someone pushed"; one that stays different is.
+    $seq = [System.Collections.Generic.Queue[string]]::new(); foreach ($x in @($other40, $other40, $sha40)) { $seq.Enqueue($x) }
+    $lag = Read-SettledPromotionHead { $seq.Dequeue() } $sha40 3 0
+    Assert-That 'promote head: a lagging head that catches up on a later read is accepted' ($lag -eq $sha40 -and $seq.Count -eq 0) "$lag"
+    $seq2 = [System.Collections.Generic.Queue[string]]::new(); foreach ($x in @($sha40, $other40)) { $seq2.Enqueue($x) }
+    $fast = Read-SettledPromotionHead { $seq2.Dequeue() } $sha40 3 0
+    Assert-That 'promote head: a matching first read stops reading' ($fast -eq $sha40 -and $seq2.Count -eq 1)
+    $rdCnt = [pscustomobject]@{ n = 0 }
+    $stuck = Read-SettledPromotionHead { $rdCnt.n++; $other40.ToUpperInvariant() } $sha40 3 0
+    Assert-That 'promote head: a head that stays different is read 3 times and then refused' ($rdCnt.n -eq 3 -and (Get-ThrownMessage { Assert-PromotionHead $sha40 $stuck 'promote/aaaaaaa' }) -match 'Someone pushed') "$($rdCnt.n) $stuck"
+    Assert-That 'promote head: the wait loop reads through Read-SettledPromotionHead' ((Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Promote-Develop.ps1')) -match 'Read-SettledPromotionHead \{ Invoke-Gh pr view')
+
+    # New-ToolWorktree: a build that fails leaves no registered worktree behind (Make-Keys, Set-Control and Refresh-Feed call it).
+    $tw = Join-Path $root 'toolwt'
+    New-Item -ItemType Directory -Path (Join-Path $tw 'tools/release/sigtool') -Force | Out-Null
+    function TW { git -C $tw -c user.name=t -c user.email=t@t -c commit.gpgsign=false @args; if ($LASTEXITCODE -ne 0) { throw "git $args failed" } }
+    TW init -q -b master
+    Set-Content -LiteralPath (Join-Path $tw 'go.mod') "module example.test/tw`n`ngo 1.21`n"
+    Set-Content -LiteralPath (Join-Path $tw 'tools/release/sigtool/main.go') "package main`nfunc main() { this is not go }`n"
+    TW add -A; TW commit -q -m broken
+    $twWork = Join-Path $root 'toolwt-work'; New-Item -ItemType Directory -Path $twWork | Out-Null
+    $twErr = Get-ThrownMessage { New-ToolWorktree $tw 'HEAD' $twWork }
+    Remove-Item -LiteralPath $twWork -Recurse -Force -ErrorAction SilentlyContinue   # what the callers' finally blocks do with their work folder
+    $twList = @(git -C $tw worktree list --porcelain)
+    Assert-That 'tool worktree: a failed build is reported' ($twErr -match 'building the signing tool failed') "$twErr"
+    Assert-That 'tool worktree: a failed build leaves no registered or prunable worktree' (@($twList | Where-Object { $_ -like 'worktree *' }).Count -eq 1 -and @($twList | Where-Object { $_ -like 'prunable*' }).Count -eq 0 -and -not (Test-Path (Join-Path $tw '.git/worktrees/src'))) ($twList -join '; ')
+    Set-Content -LiteralPath (Join-Path $tw 'tools/release/sigtool/main.go') "package main`nfunc main() {}`n"
+    TW add -A; TW commit -q -m fixed
+    $twWork2 = Join-Path $root 'toolwt-work2'; New-Item -ItemType Directory -Path $twWork2 | Out-Null
+    $twOk = New-ToolWorktree $tw 'HEAD' $twWork2
+    Assert-That 'tool worktree: a good build returns the tool and the worktree' ((Test-Path -LiteralPath $twOk.Tool) -and (Test-Path -LiteralPath $twOk.Dir))
+    Remove-ToolWorktree $tw $twOk.Dir
+    Assert-That 'tool worktree: Remove-ToolWorktree unregisters it' (@(git -C $tw worktree list --porcelain | Where-Object { $_ -like 'worktree *' }).Count -eq 1)
+
+    # ---- Make-Keys (SUP-3): the Go environment is neutralised and the key tool is built from a throw-away worktree of HEAD --------
+    $mk = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Make-Keys.ps1')
+    $mkTok = $null; $mkErr = $null
+    $mkAst = [System.Management.Automation.Language.Parser]::ParseInput($mk, [ref]$mkTok, [ref]$mkErr)
+    $mkCmds = @($mkAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true))
+    $dotLib = @($mkCmds | Where-Object { $_.InvocationOperator -eq 'Dot' -and $_.Extent.Text -match 'ReleaseLib\.ps1' })
+    $newWt = @($mkCmds | Where-Object { $_.GetCommandName() -eq 'New-ToolWorktree' })
+    $goBuild = @($mkCmds | Where-Object { $_.GetCommandName() -eq 'go' })
+    Assert-That 'make-keys: ReleaseLib (GOFLAGS, GOWORK, GOENV, GOTOOLCHAIN) is loaded before anything is built' ($dotLib.Count -eq 1 -and $newWt.Count -eq 1 -and $dotLib[0].Extent.StartOffset -lt $newWt[0].Extent.StartOffset)
+    Assert-That 'make-keys: it never runs go itself (no build in the working folder)' ($goBuild.Count -eq 0)
+    Assert-That 'make-keys: the throw-away worktree is made from the checked HEAD' ($newWt.Count -eq 1 -and $newWt[0].Extent.Text -match '\$head')
+    $hostPs = (Get-Process -Id $PID).Path
+    # What the dot-sourced file does to the environment, with hostile values set first (a child shell, so this run's own env is untouched).
+    $goEnv = & $hostPs -NoProfile -Command "`$env:GOFLAGS='-overlay=x.json'; `$env:GOWORK='x.work'; `$env:GOENV='x.env'; `$env:GOTOOLCHAIN='local'; . '$((Join-Path $PSScriptRoot 'ReleaseLib.ps1') -replace "'", "''")'; `"`$env:GOFLAGS|`$env:GOWORK|`$env:GOENV|`$env:GOTOOLCHAIN`""
+    Assert-That 'make-keys: the library neutralises hostile Go settings' ("$goEnv".Trim() -eq '|off|off|auto') "$goEnv"
 
     # ---- passphrase: never a prompt under -Yes; the pipe reaches the program ----------------------------------------------------
     $m = Get-ThrownMessage { Get-SigningPassphrase -ProtonPassRef '' -KeyFile 'k' -Yes }

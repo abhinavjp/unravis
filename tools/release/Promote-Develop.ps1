@@ -113,66 +113,84 @@ $branch = "promote/$short"
 $existing = & gh api "repos/$Repo/git/ref/heads/$branch" --jq '.object.sha' 2>$null
 if ($LASTEXITCODE -eq 0 -and $existing) {
     # Reuse only a branch that holds the chosen commit (it may also hold master merged in); anything else is somebody else's work.
-    $st = Invoke-Gh api "repos/$Repo/compare/${sha}...${branch}" --jq '.status'
+    # Judged at the commit read above ($existing), not at the branch name, so a push that lands during these checks is not covered by them.
+    $st = Invoke-Gh api "repos/$Repo/compare/${sha}...${existing}" --jq '.status'
     if ($st -notin 'identical', 'ahead') { Stop-Here "Branch $branch exists but does not contain $short. Delete it on GitHub (or use another -UpTo) and run again." }
     # What it holds beyond the chosen commit may be only commits master already has and this script's own "Merge master into ..."
     # commits; anything else is unreviewed code that would ride into master with the promotion.
-    $extra = Split-Lines (Invoke-Gh api "repos/$Repo/compare/${sha}...${branch}" --paginate --jq '.commits[] | .sha + " " + (.commit.message | split("\n")[0])')
+    $extra = Split-Lines (Invoke-Gh api "repos/$Repo/compare/${sha}...${existing}" --paginate --jq '.commits[] | .sha + " " + (.commit.message | split("\n")[0])')
+    $foreign = @()
+    # The subject "Merge master into ..." is only a claim: anyone with a push token can write it on a commit that carries code. Such a
+    # commit is accepted only when it is a CLEAN merge of master (its second parent is on master and its tree is what git's own merge
+    # of its parents gives: Test-CleanMasterMerge, the rule Get-PromotionSideCommits applies when the release is signed). One fetch
+    # into a throw-away bare repository judges them all.
+    $mergeIns = @{}
+    $claimed = @($extra | Where-Object { ($_ -split ' ', 2)[1] -like "Merge master into $branch*" } | ForEach-Object { ($_ -split ' ', 2)[0] })
+    if ($claimed.Count) {
+        $tok = (& gh auth token 2>$null | Out-String).Trim()
+        if (-not $tok) { Stop-Here 'No GitHub token (gh auth token) to fetch the branch for the merge check.' }
+        try { $mergeIns = Test-RemoteMergeIns "https://github.com/$Repo.git" $branch $claimed $tok } catch { Stop-Here "Could not check the 'Merge master into' commits of ${branch}: $($_.Exception.Message)" }
+    }
     # The generated web files commit of an earlier run of this script (step 4b) is judged by the SAME rule as the release manager
     # (Get-PromotionSideCommits in ReleaseLib.ps1): fixed subject, one parent, only files under the three generated folders (case
-    # sensitive: -cnotmatch), AND it sits at the tip end of the promote branch: only other generated commits and merges of master may
-    # come after it. So the first-parent line of the branch is walked from its tip down to the chosen commit, and the position rule is
-    # Get-BuriedGeneratedCommits. A branch that fails it is refused here, before a pull request is opened or merged, instead of being
-    # promoted and then refused by Release.ps1 as "Missing". The commit API pages its file list (read with --paginate) and holds at most
-    # 3000 files: more is not trusted.
-    $okSide = @{}   # sha -> true: generated-files commits and merges of master on the first-parent line, accepted below
-    $chain = @()
-    $cur = [string]$existing
-    $steps = 0
-    while ($cur -and $cur -ne $sha) {
-        $steps++
-        if ($steps -gt 200) { Stop-Here "Branch $branch has more than 200 commits above $short on its first-parent line. Delete the branch on GitHub and run again." }
-        $info = Invoke-Gh api "repos/$Repo/commits/$cur" --jq '(.parents | map(.sha) | join(" ")) + "|" + (.commit.message | split("\n")[0])'
+    # sensitive: -cnotmatch), AND it sits at the tip end of the promote branch: only other generated commits and CLEAN merges of master
+    # may come after it. So the first-parent line of the branch is walked from its tip ($existing) down to the chosen commit, and the
+    # position rule is Get-BuriedGeneratedCommits (ReleaseLib.ps1, the same function the release manager's rule is written as). A
+    # branch that fails it is refused here, before a pull request is opened or merged, instead of being promoted and then refused by
+    # Release.ps1 as "Missing". A merge of master counts as one only when Test-RemoteMergeIns (above) found it clean. The commit API
+    # pages its file list (read with --paginate) and holds at most 3000 files: more is not trusted.
+    $readCommit = {
+        param($c)
+        $info = Invoke-Gh api "repos/$Repo/commits/$c" --jq '(.parents | map(.sha) | join(" ")) + "|" + (.commit.message | split("\n")[0])'
         $parentText, $subject = "$info" -split '\|', 2
-        $parents = @("$parentText" -split ' ' | Where-Object { $_ })
-        if ($parents.Count -eq 0) { Stop-Here "Branch $branch does not reach $short along its first-parent line. Delete the branch on GitHub and run again." }
-        $kind = 'other'
+        $isGenerated = $false
         if ("$subject" -clike 'Rebuild web files for promotion*') {
-            if ($parents.Count -eq 1) {
-                $gfiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$cur" --paginate --jq '.files[].filename')
-                $outside = @($gfiles | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' })
-                if ($gfiles.Count -gt 0 -and $gfiles.Count -lt 3000 -and $outside.Count -eq 0) { $kind = 'dist' }
-            }
+            $gfiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$c" --paginate --jq '.files[].filename')
+            $outside = @($gfiles | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' })
+            $isGenerated = ($gfiles.Count -gt 0 -and $gfiles.Count -lt 3000 -and $outside.Count -eq 0)
         }
-        elseif ("$subject" -like "Merge master into $branch*" -and $parents.Count -eq 2) {
-            # The release manager also redoes the merge with git merge-tree; that cannot be done through the API. Here the second
-            # parent must already be on master (a branch that is not master's is the "merge of a branch that is not master" refusal).
-            if ([int](Invoke-Gh api "repos/$Repo/compare/master...$($parents[1])" --jq '.ahead_by') -eq 0) { $kind = 'mergein' }
-        }
-        if ($kind -ne 'other') { $okSide[$cur] = $true }
-        $chain += [pscustomobject]@{ Sha = $cur; Kind = $kind }
-        $cur = $parents[0]
+        [pscustomobject]@{ Parents = @("$parentText" -split ' ' | Where-Object { $_ }); Subject = "$subject"; IsGenerated = $isGenerated }
     }
+    try { $chain = @(Get-PromoteBranchChain ([string]$existing) $sha $readCommit $mergeIns) }
+    catch { Stop-Here "Branch ${branch}: $($_.Exception.Message). Delete the branch on GitHub and run again." }
+    $okDist = @{}   # sha -> true: generated-files commits on the first-parent line that pass the test, accepted in the loop below
+    foreach ($ch in $chain) { if ($ch.Kind -eq 'dist') { $okDist[$ch.Sha] = $true } }
     $buried = @(Get-BuriedGeneratedCommits $chain)
-    if ($buried.Count) {
-        Stop-Here "Branch $branch has the generated web files commit $(($buried | ForEach-Object { $_.Substring(0, 7) }) -join ', ') BELOW another commit. The release manager accepts that commit only at the tip end of the promote branch (ReleaseLib.ps1 Get-PromotionSideCommits), so this promotion would merge and then be refused as Missing. Delete the branch $branch on GitHub and run again (a fresh branch gets the web files commit on top)."
+    if ($buried.Count -gt 0) {
+        Stop-Here "Branch $branch has the generated web files commit $(($buried | ForEach-Object { "$_".Substring(0, 7) }) -join ', ') BELOW another commit. The release manager accepts that commit only at the tip end of the promote branch (ReleaseLib.ps1 Get-PromotionSideCommits), so this promotion would merge and then be refused as Missing. Delete the branch $branch on GitHub and run again (a fresh branch gets the web files commit on top)."
     }
-    $foreign = @()
     foreach ($e in $extra) {
-        $esha = ($e -split ' ', 2)[0]
-        if ($okSide.ContainsKey($esha)) { continue }
-        # Anything else must already be on master (the commits master brought in through "Merge master into ...").
+        $esha, $emsg = $e -split ' ', 2
+        if ($emsg -like "Merge master into $branch*") {
+            if ($mergeIns.ContainsKey($esha) -and $mergeIns[$esha].Ok) { continue }
+            $foreign += "$($esha.Substring(0, 7)) ($(if ($mergeIns.ContainsKey($esha)) { $mergeIns[$esha].Why } else { 'not checked' }))"; continue
+        }
+        # A generated web files commit that passed the test AND the position rule above (it is on the first-parent line).
+        if ($okDist.ContainsKey($esha)) { continue }
         if ([int](Invoke-Gh api "repos/$Repo/compare/master...$esha" --jq '.ahead_by') -eq 0) { continue }
         $foreign += $esha.Substring(0, 7)
     }
     if ($foreign.Count) { Stop-Here "Branch $branch has commits that are not on master and not 'Merge master into $branch': $($foreign -join ', '). Delete the branch on GitHub and run again." }
     Write-Host "Branch $branch already exists; reusing it."
+    $headAfterMerge = $existing.Trim().ToLowerInvariant()
 }
-else { $null = Invoke-Gh api "repos/$Repo/git/refs" -f "ref=refs/heads/$branch" -f "sha=$sha" }
+else { $null = Invoke-Gh api "repos/$Repo/git/refs" -f "ref=refs/heads/$branch" -f "sha=$sha"; $headAfterMerge = $sha.ToLowerInvariant() }
 if ($cmp.behind -gt 0) {
-    $null = & gh api "repos/$Repo/merges" -f "base=$branch" -f 'head=master' -f "commit_message=Merge master into $branch" 2>&1
-    if ($LASTEXITCODE -ne 0) { Stop-Here "master could not be merged into $branch on GitHub (a conflict, most likely). Merge origin/master into develop by pull request (a merge commit), resolve it there (for the three generated web folders take master's files: git restore --source=origin/master --staged --worktree -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui; it also deletes the files master does not have), then run again. The branch $branch is left for you to delete." }
+    $mergeOut = & gh api "repos/$Repo/merges" -f "base=$branch" -f 'head=master' -f "commit_message=Merge master into $branch" 2>&1
+    $mergeExit = $LASTEXITCODE
+    if ($mergeExit -eq 0) {
+        # 201 returns the new merge commit (its first parent must be the head this run checked); 204 (master already in) returns nothing.
+        $mj = $null; try { $mj = ($mergeOut | Out-String) | ConvertFrom-Json } catch { $mj = $null }
+        if ($mj -and $mj.sha) {
+            if (@($mj.parents).Count -ne 2 -or "$($mj.parents[0].sha)".ToLowerInvariant() -ne $headAfterMerge) { Stop-Here "The merge of master into $branch did not build on the head this run checked ($($headAfterMerge.Substring(0, 7))): someone pushed to the branch meanwhile. Nothing was merged. Delete the branch on GitHub if it is not yours, and run again." }
+            $headAfterMerge = "$($mj.sha)".ToLowerInvariant()
+        }
+    }
+    if ($mergeExit -ne 0) { Stop-Here "master could not be merged into $branch on GitHub (a conflict, most likely). Merge origin/master into develop by pull request (a merge commit), resolve it there (for the three generated web folders take master's files: git restore --source=origin/master --staged --worktree -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui; it also deletes the files master does not have), then run again. The branch $branch is left for you to delete." }
 }
+# $headAfterMerge: the head this run starts from (the branch as made or reused, with master merged in), tracked from the commits
+# checked above. Nothing may be added to it except by this script's own web files commit (step 4b); the pull request is merged only
+# at the head chosen below (SUP-1).
 # --- 4b. the generated web files, built once for the whole promotion ------------------------------------------------------
 # Runs before the pull request is opened, so its CI run starts once, on the final head. Idempotent: a branch that already holds the
 # rebuilt files gets no new commit. A failure here stops the promotion (nothing is merged; the branch is left for the next run).
@@ -183,6 +201,17 @@ $distExit = $LASTEXITCODE
 if ($distExit -ne 0) { Stop-Here "Rebuilding the web files for $branch failed (see above). Nothing was merged. Fix the cause and run again; the branch $branch is reused." }
 $distDone = @($distLines | Where-Object { "$_" -match '^DIST_COMMIT=(none|[0-9a-f]{40})\s*$' })
 if ($distDone.Count -ne 1) { Stop-Here "promote-dist.mjs did not report DIST_COMMIT=none or DIST_COMMIT=<sha>, so it is not known that the web files were rebuilt. Nothing was merged. Run it again, or ask for help; the branch $branch is reused." }
+
+# The one head this run may merge: the commit the web files step pushed, or (nothing to rebuild) the branch as it was before that step.
+$distSha = (("$($distDone[0])" -replace '^DIST_COMMIT=', '').Trim())
+$expectedHead = if ($distSha -ne 'none') { $distSha } else { $headAfterMerge }
+if ($distSha -ne 'none') {
+    # The web files commit must sit directly on the head this run checked, or a commit pushed during the build would ride under it.
+    $distParents = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$distSha" --jq '.parents[].sha')
+    if ($distParents.Count -ne 1 -or $distParents[0].ToLowerInvariant() -ne $headAfterMerge) { Stop-Here "The web files commit $($distSha.Substring(0, 7)) is not directly on the head this run checked ($($headAfterMerge.Substring(0, 7))): someone pushed to $branch meanwhile. Nothing was merged. Delete the branch on GitHub if it is not yours, and run again." }
+}
+function Assert-HeadIsExpected([string]$Actual) { try { Assert-PromotionHead $expectedHead $Actual $branch } catch { Stop-Here $_.Exception.Message } }
+Assert-HeadIsExpected ((Invoke-Gh api "repos/$Repo/git/ref/heads/$branch" --jq '.object.sha').ToLowerInvariant())
 
 $prList = & gh pr list --repo $Repo --head $branch --base master --state open --json number --jq '.[0].number' 2>$null
 if ($prList) { $pr = [int]$prList; Write-Host "Pull request #$pr already open." }
@@ -208,7 +237,9 @@ $until = (Get-Date).AddMinutes($CiWaitMinutes); $state = ''
 while ($true) {
     # Judge only the ci.yml run of THIS pull request (event pull_request, on the head commit), never the checks of other events or
     # workflows that happen to sit on the same commit (the push run of develop, the fast gate). Its job `build` is the gate.
-    $head = Invoke-Gh pr view $pr --repo $Repo --json headRefOid --jq '.headRefOid'
+    # GitHub moves a pull request's head a moment after a push: read again (3 reads, 5 s apart) before calling a difference a push by someone else.
+    $head = Read-SettledPromotionHead { Invoke-Gh pr view $pr --repo $Repo --json headRefOid --jq '.headRefOid' } $expectedHead
+    Assert-HeadIsExpected $head
     $runs = @(& gh run list --repo $Repo --workflow ci.yml --event pull_request --commit $head --json databaseId,status,createdAt | ConvertFrom-Json | Sort-Object createdAt -Descending)
     if ($runs.Count -and $runs[0].status -eq 'completed') {
         $jobs = (& gh run view $runs[0].databaseId --repo $Repo --json jobs | ConvertFrom-Json).jobs
@@ -225,6 +256,6 @@ Write-Host 'build is green.'
 # --- 6. lock again, then merge (a release may have started while CI ran) ---------------------------------------------
 $lock = Get-Lock
 if ($lock -and $lock.state -eq 'held' -and $lock.holdMerges) { Stop-Here "A release took the lock while CI ran (stage $($lock.stage)). Pull request #$pr stays open and green; run again after the release." }
-& gh pr merge $pr --repo $Repo --merge --match-head-commit $head 2>&1 | Out-Host
+& gh pr merge $pr --repo $Repo --merge --match-head-commit $expectedHead 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) { Stop-Here "The merge was refused (master may have moved: run again, it brings master in and waits for build once more)." }
 Write-Host "Promoted develop up to ${short} to master. The full CI run on master's new commit is the one the release manager waits for." -ForegroundColor Green

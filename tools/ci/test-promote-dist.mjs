@@ -6,7 +6,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { buildEnv } from '../release/promote-dist.mjs';
+import { buildEnv, copyRoots } from '../release/promote-dist.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..');
@@ -126,7 +126,7 @@ test('buildEnv: no token variable, no credential helper, private home, a gh that
     const out = buildEnv(dirty, scratch);
     const bad = Object.entries(out).filter(([k, v]) => /(TOKEN|SECRET|PASSPHRASE|PASSWORD|CREDENTIAL|ASKPASS|AUTH_SOCK)/i.test(k) || v.includes('ghp_') || v.includes('x-access-token') || v.includes(Buffer.from('x-access-token:' + LEAK).toString('base64')));
     assert.deepEqual(bad, []);
-    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'npm_config_registry', 'CUSTOM_VAR', 'SSL_CERT_FILE']) assert.equal(k in out, false, k);
+    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'CUSTOM_VAR', 'SSL_CERT_FILE']) assert.equal(k in out, false, k);
     // git: the credential helper list is reset, nothing from the system or the person's own git config is read.
     assert.deepEqual([out.GIT_CONFIG_COUNT, out.GIT_CONFIG_KEY_0, out.GIT_CONFIG_VALUE_0, out.GIT_CONFIG_NOSYSTEM, out.GIT_TERMINAL_PROMPT], ['1', 'credential.helper', '', '1', '0']);
     assert.ok(out.GIT_CONFIG_GLOBAL.startsWith(scratch) && readFileSync(out.GIT_CONFIG_GLOBAL, 'utf8') === '');
@@ -187,6 +187,87 @@ test('the real build and install run with that environment: no token variable, a
     assert.ok(!seen.gh.startsWith(LEAK));
   } finally {
     f.cleanup();
+  }
+});
+
+test('build code that plants a hook or git config in its clone never runs with the token', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const marker = join(f.base, 'hook-ran.txt');
+    // The "build" writes a pre-push and a post-commit hook, points core.hooksPath and core.fsmonitor at scripts, then builds normally.
+    writeFileSync(join(f.base, 'plant.cjs'), `
+      const fs = require('node:fs'), path = require('node:path');
+      const git = path.resolve('..', '.git');
+      const hooks = path.join(git, 'hooks'); fs.mkdirSync(hooks, { recursive: true });
+      const body = '#!/bin/sh\\necho ran >> ' + ${JSON.stringify(JSON.stringify(marker))} + '\\n';
+      for (const h of ['pre-push', 'post-commit', 'pre-commit', 'fsmonitor']) { fs.writeFileSync(path.join(hooks, h), body); fs.chmodSync(path.join(hooks, h), 0o755); }
+      fs.appendFileSync(path.join(git, 'config'), '[core]\\n\\thooksPath = ' + hooks.replace(/\\\\/g, '/') + '\\n\\tfsmonitor = ' + path.join(hooks, 'fsmonitor').replace(/\\\\/g, '/') + '\\n');
+    `);
+    const before = remoteHead(f);
+    const r = promote(f, [], { build: 'node ' + JSON.stringify(join(f.base, 'plant.cjs')) + ' && node build.cjs' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.notEqual(remoteHead(f), before, 'the commit was pushed');
+    assert.equal(existsSync(marker), false, 'a planted hook ran');
+    // The same hook in the commit clone's own folder, if it were there, would fire: prove the plant itself is effective in a clone.
+    const probe = join(f.base, 'probe');
+    sh(f.base, 'git', ['clone', '-q', f.url, probe]);
+    mkdirSync(join(probe, '.git', 'hooks'), { recursive: true });
+    writeFileSync(join(probe, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\necho ran >> ' + JSON.stringify(marker) + '\n');
+    chmodSync(join(probe, '.git', 'hooks', 'pre-commit'), 0o755);
+    writeFileSync(join(probe, 'x.txt'), 'x');
+    sh(probe, 'git', ['add', '-A']);
+    sh(probe, 'git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x']);
+    assert.equal(existsSync(marker), true, 'the test hook is not effective, so the check above proves nothing');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a build that leaves a link or a .git entry in a generated folder stops before any commit', () => {
+  for (const [name, plant] of [['link', "fs.symlinkSync('/etc/passwd', 'dist/assets/link.js')"], ['.git', "fs.mkdirSync('dist/.git')"]]) {
+    const f = fixture('new', { dist: 'old' });
+    try {
+      writeFileSync(join(f.base, 'plant2.cjs'), "const fs = require('node:fs'); " + plant + ';');
+      const before = remoteHead(f);
+      const r = promote(f, [], { build: 'node build.cjs && node ' + JSON.stringify(join(f.base, 'plant2.cjs')) });
+      assert.equal(r.status, 1, name + ': ' + r.stdout + r.stderr);
+      assert.match(r.stderr, /The build produced/);
+      assert.equal(remoteHead(f), before);
+    } finally {
+      f.cleanup();
+    }
+  }
+});
+
+test('copyRoots replaces the generated folders and nothing else', () => {
+  const base = mkdtempSync(join(tmpdir(), 'pd-copy-'));
+  try {
+    const a = join(base, 'a'), b = join(base, 'b');
+    for (const [root, text] of [['web/dist', 'new'], ['cmd/unravis-setup/ui', 'new']]) { mkdirSync(join(a, root, 'assets'), { recursive: true }); writeFileSync(join(a, root, 'assets', 'x.js'), text); }
+    mkdirSync(join(a, 'web', 'src'), { recursive: true }); writeFileSync(join(a, 'web', 'src', 'evil.txt'), 'e');
+    mkdirSync(join(b, 'web/dist'), { recursive: true }); writeFileSync(join(b, 'web/dist/old.js'), 'old');
+    mkdirSync(join(b, 'cmd/unravis-lite/ui'), { recursive: true }); writeFileSync(join(b, 'cmd/unravis-lite/ui/gone.js'), 'g');
+    copyRoots(a, b);
+    assert.equal(existsSync(join(b, 'web/dist/old.js')), false);
+    assert.equal(readFileSync(join(b, 'web/dist/assets/x.js'), 'utf8'), 'new');
+    assert.equal(existsSync(join(b, 'cmd/unravis-lite/ui')), false, 'a folder the build did not make is removed');
+    assert.equal(existsSync(join(b, 'web/src/evil.txt')), false, 'only the three folders are copied');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('buildEnv keeps registry and certificate settings that carry no password', () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'pd-env2-'));
+  try {
+    const out = buildEnv({ PATH: '/usr/bin', npm_config_registry: 'https://mirror.example/npm/', npm_config_cafile: '/etc/ca.pem', npm_config_proxy: 'http://user:pw@proxy.invalid:3128', npm_config__authtoken: 'x', SSL_CERT_FILE: '/etc/ca.pem' }, scratch);
+    assert.equal(out.npm_config_registry, 'https://mirror.example/npm/');
+    assert.equal(out.npm_config_cafile, '/etc/ca.pem');
+    assert.equal(out.SSL_CERT_FILE, '/etc/ca.pem');
+    assert.equal('npm_config_proxy' in out, false, 'a proxy with a password is dropped');
+    assert.equal('npm_config__authtoken' in out, false);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 });
 

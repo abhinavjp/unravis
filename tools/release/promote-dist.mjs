@@ -6,24 +6,27 @@
 //
 // What it does, in order:
 //   1. Stops unless this Node is exactly the pinned version (CI builds with the same one).
-//   2. Clones the branch into a temporary folder (the working copy of the person running it is never touched).
-//   3. npm ci and npm run build in web.
-//   4. node web/scripts/check-dist.cjs. Same bytes as committed: nothing to do. Different: commits the three folders
+//   2. Clones the branch into a temporary folder (the working copy of the person running it is never touched): the COMMIT clone. A
+//      second, local clone of it, the BUILD clone, is where dependency code runs (it can write anywhere in that clone, .git included).
+//   3. npm ci and npm run build in web of the BUILD clone, in a scrubbed environment (buildEnv). Then ONLY the three generated folders
+//      are copied into the commit clone (plain files only: a link or a .git entry stops the run). No git command that carries the
+//      token ever runs in the build clone, and the commit clone's .git is never seen by build code.
+//   4. node web/scripts/check-dist.cjs in the commit clone. Same bytes as committed: nothing to do. Different: commits the three folders
 //      with the subject "Rebuild web files for promotion <branch>" (ReleaseLib.ps1 knows this subject).
-//   5. Deletes web/node_modules, installs again (npm ci), builds once more and runs check-dist again. A build that does not give the same
-//      bytes twice stops here (nothing pushed). This proves the build is stable on this PC from a clean install; the Windows runner's
-//      check-dist on the promotion pull request is the proof across machines.
-//   6. Pushes the branch (a plain push, never a force).
+//   5. Deletes web/node_modules of the build clone, installs again (npm ci), builds once more, copies the folders again and runs
+//      check-dist again. A build that does not give the same bytes twice stops here (nothing pushed). This proves the build is stable on
+//      this PC from a clean install; the Windows runner's check-dist on the promotion pull request is the proof across machines.
+//   6. Pushes the branch from the commit clone (a plain push, never a force).
 // Last line printed: DIST_COMMIT=<sha> or DIST_COMMIT=none. Promote-Develop.ps1 requires that line and stops without it. Exit 0 ok, 1 build or check failed, 2 cannot run.
 //
 // Test hooks (used by tools/ci/test-promote-dist.mjs only): --remote <url or path> replaces https://github.com/<repo>.git,
 // --install-cmd and --build-cmd replace `npm ci` and `npm run build`.
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { devNull, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Keep equal to the node-version in .github/workflows (ci.yml web job, release.yml, fast-gate.yml). tools/ci/test-promote-dist.mjs checks it.
 export const NODE_VERSION = '22.23.5';
@@ -33,6 +36,8 @@ export const COMMIT_SUBJECT = 'Rebuild web files for promotion';
 // Environment names the install and the build keep. Everything else is dropped (an allow list, not a deny list: a token variable
 // nobody thought of is not passed on). Windows names are matched case-insensitively.
 const KEEP = /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|SYSTEMDRIVE|OS|TEMP|TMP|TMPDIR|LANG|LANGUAGE|LC_[A-Z]+|TZ|TERM|NO_COLOR|FORCE_COLOR|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMW6432|COMMONPROGRAMFILES|PROGRAMDATA|ALLUSERSPROFILE|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS|HTTP_PROXY|HTTPS_PROXY|NO_PROXY|ALL_PROXY|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS)$/i;
+// npm settings that point npm at a registry or a certificate (not the auth settings: npm_config__authtoken and the like stay out).
+const NPM_KEEP = /^npm_config_(registry|cafile|strict_ssl|proxy|https_proxy|noproxy)$/i;
 // A kept variable whose value looks like a GitHub token is dropped too (a token pasted into a proxy or certificate variable).
 const TOKEN_VALUE = /(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/;
 
@@ -43,15 +48,24 @@ const TOKEN_VALUE = /(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/;
  *    (GH_CONFIG_DIR is that empty folder, so `gh auth token` finds nothing) or credential store of the person running this is read;
  *  - git: no system config, an empty global config, no credential helper (GIT_CONFIG_COUNT/KEY/VALUE reset the helper list), no prompt;
  *  - a `gh` stub first on PATH that only fails, so a dependency script that runs `gh auth token` gets no token.
- * Not covered, and said plainly: dependency code that calls a program by its absolute path, or asks the operating system's own
- * credential store directly (Windows Credential Manager, macOS keychain), is not stopped by this. What protects the result is that
- * the lock file pins the dependencies and check-dist compares the bytes; the token git needs exists only in the git environment (gitEnv).
+ * This lowers the risk; it is NOT a security boundary. Dependency code runs as the same user as this script, so it can still read this
+ * process's environment (Linux: /proc/<parent pid>/environ; Windows: ReadProcessMemory), call a program by its absolute path (a gh.exe
+ * that reads its login from the operating system's keyring even with an empty GH_CONFIG_DIR), or ask the OS credential store directly.
+ * What protects the result is that the lock file pins the dependencies, that check-dist compares the bytes, and that the build runs in
+ * its own clone: no git command that carries the token ever runs there (a hook or core.fsmonitor planted in its .git never fires);
+ * the token git needs exists only in the git environment (gitEnv) of the commit clone.
+ * Settings in the person's own ~/.npmrc are not read (HOME is private): a registry mirror or CA must come in as npm_config_registry,
+ * npm_config_cafile, HTTPS_PROXY, NODE_EXTRA_CA_CERTS or SSL_CERT_FILE, which are kept when they carry no password. The npm cache is
+ * private and empty, so every promotion downloads every package.
  * Creates folders and files under `scratch`; returns the environment object.
  */
 export function buildEnv(env, scratch) {
   const out = {};
   for (const [k, v] of Object.entries(env)) {
-    if (typeof v === 'string' && KEEP.test(k) && !TOKEN_VALUE.test(v)) out[k] = v;
+    if (typeof v !== 'string' || TOKEN_VALUE.test(v)) continue;
+    if (KEEP.test(k)) out[k] = v;
+    // npm settings a registry mirror or a company certificate need, kept only when the value carries no password (no user:pass@host).
+    else if (NPM_KEEP.test(k) && !/:\/\/[^/]*@/.test(v)) out[k] = v;
   }
   const home = join(scratch, 'home'), cfg = join(scratch, 'gh-config'), bin = join(scratch, 'bin'), cache = join(scratch, 'cache');
   for (const d of [home, cfg, bin, cache, join(home, 'AppData', 'Roaming'), join(home, 'AppData', 'Local')]) mkdirSync(d, { recursive: true });
@@ -78,6 +92,32 @@ class Stop extends Error {
   constructor(code, message) {
     super(message);
     this.code = code;
+  }
+}
+
+/**
+ * Copies the generated folders (ROOTS) from the build clone into the commit clone, replacing what the commit clone has there.
+ * Only regular files and folders are copied. A link, a device, a name that is `.git` or the file with a NUL/newline in it stops the run:
+ * build code could use them to reach outside the folder or to plant git data in the commit clone.
+ */
+const lstatOrNull = (p) => { try { return lstatSync(p); } catch { return null; } };
+export function copyRoots(from, to) {
+  const bad = (rel, why) => new Stop(1, 'The build produced ' + why + ' in ' + rel + '. Nothing was pushed.');
+  const copy = (src, dst, rel) => {
+    const st = lstatSync(src);
+    if (st.isSymbolicLink()) throw bad(rel, 'a link');
+    if (st.isDirectory()) {
+      mkdirSync(dst, { recursive: true });
+      for (const name of readdirSync(src)) {
+        if (name.toLowerCase() === '.git' || /[\0\r\n]/.test(name)) throw bad(rel + '/' + name, 'a name that is not allowed');
+        copy(join(src, name), join(dst, name), rel + '/' + name);
+      }
+    } else if (st.isFile()) copyFileSync(src, dst);
+    else throw bad(rel, 'something that is not a file');
+  };
+  for (const root of ROOTS) {
+    rmSync(join(to, root), { recursive: true, force: true, maxRetries: 3 });
+    if (lstatOrNull(join(from, root))) copy(join(from, root), join(to, root), root);
   }
 }
 
@@ -120,7 +160,9 @@ function run(cmd, args, opts = {}) {
 // git with line-ending conversion off, so the commit holds exactly the bytes the build wrote (the Windows default
 // core.autocrlf=true would otherwise rewrite the check-out and the commit).
 function git(dir, args, opts = {}) {
-  const r = run('git', ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', '-c', 'core.eol=lf', ...args], { ...opts, cwd: dir });
+  // Hooks and the file system monitor are switched off for every git command (a hook or core.fsmonitor is code that would run with
+  // the environment of the command, which carries the token for clone and push).
+  const r = run('git', ['-c', 'core.hooksPath=' + devNull, '-c', 'core.fsmonitor=false', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', '-c', 'core.eol=lf', ...args], { ...opts, cwd: dir });
   if (r.status !== 0 && !opts.allowFail) {
     const why = String(r.stderr || '').trim().split('\n').slice(-3).join(' | ') || 'exit ' + r.status;
     throw new Stop(1, 'git ' + args[0] + ' failed: ' + why);
@@ -168,17 +210,21 @@ export function main(argv, env = process.env) {
   }
 
   const tmp = mkdtempSync(join(tmpdir(), 'unravis-dist-'));
-  const dir = join(tmp, 'repo');
+  const dir = join(tmp, 'repo');       // the commit clone: only this one is ever used for git commands that carry the token
+  const buildDir = join(tmp, 'build'); // the build clone: dependency code runs here and may write anything in it, .git included
   try {
     // The install and the build run dependency code: they get a scrubbed environment (buildEnv), not this one and not gitEnv.
     const stepEnv = buildEnv(env, join(tmp, 'build-env'));
     console.log('> cloning ' + o.branch + ' into ' + dir);
     git(tmp, ['clone', '--quiet', '--single-branch', '--branch', o.branch, '--depth', '1', remote, dir], { env: gitEnv });
     if (!existsSync(join(dir, 'web', 'scripts', 'check-dist.cjs'))) throw new Stop(1, o.branch + ' has no web/scripts/check-dist.cjs.');
-    const web = join(dir, 'web');
+    // The build clone is made from the commit clone on this disk (no token, no network, no shared object files).
+    git(tmp, ['clone', '--quiet', '--no-hardlinks', pathToFileURL(dir).href, buildDir], { env: stepEnv });
+    const web = join(buildDir, 'web');
 
     shellStep('install', o.install, web, stepEnv);
     shellStep('build', o.build, web, stepEnv);
+    copyRoots(buildDir, dir);
 
     let made = 'none';
     if (checkDist(dir)) {
@@ -203,6 +249,7 @@ export function main(argv, env = process.env) {
     rmSync(join(web, 'node_modules'), { recursive: true, force: true, maxRetries: 3 });
     shellStep('install again (clean node_modules)', o.install, web, stepEnv);
     shellStep('build again (reproducibility)', o.build, web, stepEnv);
+    copyRoots(buildDir, dir);
     if (!checkDist(dir)) throw new Stop(1, 'The second build gave different bytes than the commit: the build is not reproducible here. Nothing was pushed.');
 
     if (made !== 'none') {

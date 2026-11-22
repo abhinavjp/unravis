@@ -20,6 +20,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
+# ReleaseLib.ps1 sets GOFLAGS='' GOWORK=off GOENV=off GOTOOLCHAIN=auto, so Go settings kept outside git (go env -w, a GOFLAGS overlay,
+# a go.work) cannot swap the code of the tool that is about to read the passphrases. It also gives New-ToolWorktree (below).
+. (Join-Path $PSScriptRoot 'ReleaseLib.ps1')
 Remove-Item Env:UNRAVIS_KEY_PASSPHRASE -ErrorAction SilentlyContinue   # the tool would prefer it over the typed passphrase
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $status = git -C $repo status --porcelain
@@ -31,9 +34,17 @@ $repoSlash = $repo.TrimEnd('\') + '\'
 if (($full.TrimEnd('\') + '\').StartsWith($repoSlash, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Choose a folder outside the repository for the keys.' }
 New-Item -ItemType Directory -Force -Path $full | Out-Null
 $tool = Join-Path $full 'sigtool.exe'
-Write-Host "Building the key tool from commit $head"
-Push-Location $repo
-try { go build -mod=readonly -o $tool ./tools/release/sigtool; if ($LASTEXITCODE -ne 0) { throw 'go build failed.' } } finally { Pop-Location }
+Write-Host "Building the key tool from commit $head (a throw-away worktree of that commit, not this folder)"
+$work = Join-Path ([System.IO.Path]::GetTempPath()) ('unravis-keys-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $work | Out-Null
+$wt = $null
+try {
+    $wt = New-ToolWorktree $repo $head $work
+    Copy-Item -LiteralPath $wt.Tool -Destination $tool -Force
+} finally {
+    if ($wt) { Remove-ToolWorktree $repo $wt.Dir }
+    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 function New-UpdateKey([string]$role, [string]$name) {
     $keyFile = Join-Path $full "$name.key.json"
