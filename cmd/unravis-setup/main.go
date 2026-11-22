@@ -90,7 +90,7 @@ func osEnv() env {
 		},
 		static:     func() (fs.FS, error) { return fs.Sub(uiFiles, "ui") },
 		openWindow: setup.OpenWindow, openFolder: setup.ShowFolder, startApp: setup.StartProgram, startBackground: setup.StartProgramBackground, notice: setup.ShowNotice,
-		ask:         func(title, text string) bool { return setup.AskOKCancel(title, text, askWait) },
+		ask:         recoverAsk(os.Getenv),
 		elevateWait: func(exe string, args []string) (int, error) { return setup.RunElevatedWait(exe, args, 5*time.Minute) },
 		dialWorker:  setup.DialWorkerPipe, listen: setup.Listen, idleAfter: 3 * time.Minute,
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) {

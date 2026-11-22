@@ -14,6 +14,30 @@ import (
 // askWait is how long the notice before the Windows prompt waits for an answer; no answer counts as Cancel.
 const askWait = 10 * time.Minute
 
+// The notice box is built but OFF by default: it has not been seen on a real PC yet (plan P3), and a box that does not show would turn every
+// automatic recovery into a 10-minute wait. recoverNoticeDefault is the one place to flip once P3 passes; until then the box appears only
+// when the environment variable below is "1" (and never when it is "0").
+const (
+	recoverNoticeEnv     = "UNRAVIS_RECOVER_NOTICE"
+	recoverNoticeDefault = false
+)
+
+// recoverAsk is what production puts in env.ask: the OK/Cancel box when the notice is on, otherwise nil (--recover goes straight on, with no
+// box and no wait, as it did before the box existed).
+func recoverAsk(getenv func(string) string) func(title, text string) bool {
+	on := recoverNoticeDefault
+	switch getenv(recoverNoticeEnv) {
+	case "1":
+		on = true
+	case "0":
+		on = false
+	}
+	if !on {
+		return nil
+	}
+	return func(title, text string) bool { return setup.AskOKCancel(title, text, askWait) }
+}
+
 // recoverNotice is the box shown before the app is closed and before the Windows prompt (BL-183 b). It is the only thing that tells the
 // person why a prompt is about to appear from a run they did not start.
 const (

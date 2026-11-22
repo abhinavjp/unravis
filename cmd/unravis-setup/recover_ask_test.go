@@ -150,6 +150,7 @@ func TestRecoverNoNoticeWhenNothingPendingOrWhenTheJournalIsNotTrusted(t *testin
 	}
 }
 
+// The default (no environment variable): production has no box, so --recover goes straight to the prompt, as before the box existed.
 func TestRecoverNilAskProceeds(t *testing.T) {
 	rg := newRig(t)
 	pendingMachineRun(t, rg)
@@ -216,5 +217,34 @@ func TestRecoverSilentNeverAsks(t *testing.T) {
 	rg.env.elevateWait = func(string, []string) (int, error) { calls++; return 0, nil }
 	if code := run([]string{"--recover", "--silent", "--repair"}, rg.env); code != 0 || calls != 1 {
 		t.Fatalf("%d, prompt calls %d", code, calls)
+	}
+}
+
+// The box is off by default and on only with UNRAVIS_RECOVER_NOTICE=1; "0" and anything else keep the default.
+func TestRecoverNoticeIsOffByDefaultAndOnWithTheVariable(t *testing.T) {
+	with := func(v string) func(string) string {
+		return func(k string) string {
+			if k != recoverNoticeEnv {
+				t.Errorf("read %q", k)
+			}
+			return v
+		}
+	}
+	if (recoverAsk(with("")) != nil) != recoverNoticeDefault {
+		t.Error("unset must follow recoverNoticeDefault")
+	}
+	if recoverNoticeDefault {
+		t.Error("the box must stay off by default until P3 passes (flip recoverNoticeDefault and this test together)")
+	}
+	for _, v := range []string{"yes", "true", " 1"} {
+		if (recoverAsk(with(v)) != nil) != recoverNoticeDefault {
+			t.Errorf("%q must leave the default", v)
+		}
+	}
+	if recoverAsk(with("0")) != nil {
+		t.Error("0 must turn the box off")
+	}
+	if recoverAsk(with("1")) == nil {
+		t.Error("UNRAVIS_RECOVER_NOTICE=1 must turn the box on")
 	}
 }
