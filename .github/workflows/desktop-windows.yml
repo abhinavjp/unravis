@@ -95,6 +95,11 @@ jobs:
           if (-not (Test-Path $exe)) { throw "$exe was not built" }
           "{0} bytes" -f (Get-Item $exe).Length
 
+      - name: PE hardening flags (CFG, CET, ASLR, high-entropy VA, NX)
+        shell: pwsh
+        working-directory: .
+        run: ./tools/desktop/Check-Pe.ps1 -Exe desktop\target\release\unravis-desktop.exe
+
       - name: Cargo.lock is unchanged
         shell: pwsh
         run: |

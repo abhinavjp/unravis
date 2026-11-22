@@ -8,6 +8,8 @@
 #[cfg(windows)]
 mod elevation;
 #[cfg(windows)]
+mod hardening;
+#[cfg(windows)]
 mod job;
 #[cfg(windows)]
 mod locator;
@@ -24,6 +26,7 @@ fn main() {
     use ipc_core::policy::parse_args;
 
     lockdown::env_strip();
+    let _mitigations = hardening::set_process_mitigations();
     let args = parse_args(std::env::args().skip(1));
     // `--quit` is a signal only: no window, no dialog, no elevation refusal. Exit 0 = asked (or nothing was running), 1 = could not ask.
     if args.quit {
@@ -32,6 +35,10 @@ fn main() {
     if decide(elevation::token_facts()) == Decision::Refuse {
         elevation::show(MESSAGE);
         std::process::exit(EXIT_ADMIN);
+    }
+    if let Some(why) = hardening::webview2_policy_violation() {
+        elevation::show(&why);
+        std::process::exit(ipc_core::webview2_policy::EXIT_WEBVIEW2_POLICY);
     }
     // A copy started with `--background` (sign-in start) must not pull the first copy's window forward: it asks for nothing.
     let signal = if args.background { None } else { Some(singleton::Signal::Open) };
