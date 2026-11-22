@@ -83,6 +83,7 @@ Preflight records two lines in the audit log (`preflight-ok`: `go_installed`, `g
 2. To release: `pwsh ./tools/release/Release.ps1 -Channel rc -Yes -Requester <your thread name> [-WaitMinutes 30]`. Never pass `-Version` for a routine rc. Exit 0 with "Nothing new" is a success.
 3. To look: `Release.ps1 -Status`. The Releases dashboard reads the same `state.json` and `audit.jsonl`.
 4. Never write or delete the `release-lock` branch by hand. If a run is stuck, `-Status` says why; a crashed run is taken over by the next run on that PC by itself.
+5. With the release train (`docs/ci/RELEASE-TRAIN.md`) pull requests merge into `develop`, which a release does not touch, so rule 1 applies to merges into `master`: the promotion of `develop` (`tools/release/Promote-Develop.ps1` reads the lock, never writes it). The release manager is unchanged and cuts from `master` after the promotion; it waits for the push run of `ci.yml` on the promotion merge commit, which is never cancelled by a newer commit.
 
 ## Files and fields added
 

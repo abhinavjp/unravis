@@ -2,9 +2,12 @@
 name: desktop-windows
 
 on:
+  # Not per pull request into develop (docs/ci/RELEASE-TRAIN.md): it runs on every push to develop and on the pull request
+  # that promotes develop to master.
   pull_request:
-  push:
     branches: [master]
+  push:
+    branches: [master, develop]
 
 permissions:
   contents: read
