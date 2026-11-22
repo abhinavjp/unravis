@@ -523,7 +523,13 @@ func (osSecurity) Read(path string) (datadir.FolderSecurity, error) {
 }
 
 func (osSecurity) SDDL(path string) (string, error) {
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	// Read through a handle that does not follow a link, so the permissions put in the journal are those of this folder.
+	h, err := openNoFollow(path, windows.READ_CONTROL)
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(h)
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return "", err
 	}
@@ -568,7 +574,7 @@ func openNoFollow(path string, access uint32) (windows.Handle, error) {
 	if err != nil {
 		return 0, err
 	}
-	h, err := windows.CreateFile(p, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
+	h, err := windows.CreateFile(p, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil,
 		windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
 		return 0, err
@@ -579,6 +585,21 @@ func openNoFollow(path string, access uint32) (windows.Handle, error) {
 		return 0, err
 	}
 	if fi.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		windows.CloseHandle(h)
+		return 0, fmt.Errorf("%s: %w", path, errIsLink)
+	}
+	// Earlier parts of the path must not be links either: the handle must be at the place that was asked for.
+	buf := make([]uint16, 1024)
+	n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), 0)
+	if err == nil && int(n) > len(buf) {
+		buf = make([]uint16, n+1)
+		n, err = windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), 0)
+	}
+	if err != nil {
+		windows.CloseHandle(h)
+		return 0, err
+	}
+	if got := strings.TrimPrefix(windows.UTF16ToString(buf[:n]), `\\?\`); !samePath(got, path) {
 		windows.CloseHandle(h)
 		return 0, fmt.Errorf("%s: %w", path, errIsLink)
 	}
