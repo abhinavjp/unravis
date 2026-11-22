@@ -143,10 +143,9 @@ jobs:
         run: npm run build
 
       - name: Web - built files match what is committed
-        # BL-031. Made blocking after 3 green runs of ci.yml on master (remove continue-on-error then).
+        # BL-031. Blocking: a tag whose committed web build is stale stops here, before any build or signing step.
         # Fails when `npm run build` gives bytes other than the committed web/dist,
         # cmd/unravis-setup/ui and cmd/unravis-lite/ui. Fix: run `npm run build` in web and commit them.
-        continue-on-error: true
         working-directory: web
         run: |
           node --version
