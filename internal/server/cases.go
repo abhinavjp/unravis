@@ -1837,12 +1837,25 @@ func (h *handler) caseSeries(w http.ResponseWriter, r *http.Request, raw string)
 		}
 		*f.into = t.UTC()
 	}
-	bucket, err := strconv.ParseInt(query.Get("bucket"), 10, 64)
-	if err != nil {
-		writeCaseFailure(w, http.StatusBadRequest, casestore.SeriesBadBucket, "bucket must be a whole number of milliseconds.")
-		return
+	// width (optional, BL-430): the chart width in pixels. With it the answer
+	// holds at most that many buckets (4 values per pixel, M4) and bucket may be
+	// left out; without it the answer is the one it always was.
+	if v := query.Get("width"); v != "" {
+		width, err := strconv.Atoi(v)
+		if err != nil || width < 1 {
+			writeCaseFailure(w, http.StatusBadRequest, casestore.SeriesBadWidth, "width must be a whole number of pixels, 1 or more.")
+			return
+		}
+		q.Width = width
 	}
-	q.BucketMs = bucket
+	if v := query.Get("bucket"); v != "" || q.Width == 0 {
+		bucket, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || bucket < 1 {
+			writeCaseFailure(w, http.StatusBadRequest, casestore.SeriesBadBucket, "bucket must be a whole number of milliseconds.")
+			return
+		}
+		q.BucketMs = bucket
+	}
 	res, err := casestore.Series(ctx, c, q)
 	if err != nil {
 		var se *casestore.SeriesError

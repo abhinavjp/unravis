@@ -14,6 +14,7 @@ import { wizardSubmitApi } from './wizardSubmitApi';
 import { ackTextFor } from './copy/importCopy';
 import { sourceKey } from './wizardSources';
 import { forgetRequestId } from './createRequest';
+import { landedCount, noteCaseAdded } from './caseAdded.svelte';
 
 /**
  * The state of the last step of the create wizard (TSK-19): the choices made on the review (how far back to read, the ticked notice, the
@@ -315,6 +316,7 @@ export async function createNow(api: SubmitApi = wizardSubmitApi, only?: readonl
   if (createView.running) return null;
   if (!caseMade() && blockers().length > 0) return null;
   createView.running = true;
+  const landedBefore = landedCount(createView.submit);
   try {
     let result = await submitWizard(buildInput(Date.now(), only), api, createView.submit);
     // Files refused only for lacking a computer are mended and read again once, without asking.
@@ -323,6 +325,8 @@ export async function createNow(api: SubmitApi = wizardSubmitApi, only?: readonl
       if (mended.length > 0) result = await submitWizard(buildInput(Date.now(), mended), api, createView.submit);
     }
     createView.result = result;
+    // Something went into a case that already existed: its page reads the story again. Nothing landed (a failed or locked run): nothing is read.
+    if (createView.appendOnly && result.caseId && landedCount(createView.submit) > landedBefore) noteCaseAdded(result.caseId);
     // The case could not be made (the reply may have been lost after the server made it): read the names again so the repeat warning is true.
     if (!result.caseId && !result.locked) { createView.titles = null; void loadTitles(); }
     return result;

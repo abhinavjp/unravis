@@ -320,6 +320,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); paddi
 .date-time-control { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; }
 .date-time-controls label { color: var(--text-2); font-size: 12px; }
 .date-time-controls input { width: 100%; min-height: 34px; font-variant-numeric: tabular-nums; }
+.date-time-controls input[aria-invalid='true'] { border-color: var(--bad); }
 .auth-options { min-width: 0; border-top: 1px solid var(--line); }
 .auth-options summary { display: flex; align-items: center; gap: 8px; list-style: none; padding: 9px 0; color: var(--text); font-size: 13px; font-weight: 600; }
 .auth-options summary::-webkit-details-marker { display: none; }
@@ -634,7 +635,7 @@ th.numeric { text-align: right; }
 .mode-badge, .updated-label, .count-badge, .figure-label, .figure-value, .where-rank, .where-value strong, .where-value small, .where-delta,
 .overview-tile strong, .overview-tile span, .overview-tile small, .overview-rate, .quality-strip > div strong, .quality-strip > div span,
 .failure-summary strong, .selected-api-stats, .pagination-row, .estimate-tag, .state-pill, .state-badge, .saved-badge, .error-stage,
-.activity-axis, .activity-row-label small, table, th, td, input[type="number"], input[type="date"], input[type="time"] { font-family: var(--mono); }
+.activity-axis, .activity-row-label small, table, th, td, input[type="number"], input[type="date"], input[type="time"], input.time24 { font-family: var(--mono); }
 .figure-label, .overview-tile span, .quality-strip > div span { font-size: 12px; }
 .figure-value { font-weight: 500; }
 /* Panel and group titles: mono, 12px, medium, with a decorative "//" that assistive technology does not read. */

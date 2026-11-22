@@ -1277,3 +1277,24 @@ func TestSourceAddsAreRateLimited(t *testing.T) {
 		t.Fatalf("limit did not reset: %s", res.Body.String())
 	}
 }
+
+// WEB-2 (sweep 2026-11-22): a web page must not be able to use up the session-proof limit and lock the MCP bridge out.
+func TestSessionProofLimitIsNotSpentByWebPages(t *testing.T) {
+	h := New(audit.NewDemo(time.Now()), nil, testToken, true).(*handler)
+	local := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8765}
+	nonce, _ := sessionproof.NewNonce()
+	for i := 0; i < sessionProofsPerWindow+50; i++ {
+		req := httptest.NewRequest(http.MethodGet, sessionproof.Path+"?n="+nonce, nil)
+		req.Host = "127.0.0.1:8765"
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey, net.Addr(local)))
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		if res.Code != http.StatusForbidden {
+			t.Fatalf("page request %d = %d, want 403", i+1, res.Code)
+		}
+	}
+	if res := proofRequest(h, nonce, local); res.Code != http.StatusOK {
+		t.Fatalf("the bridge after the flood = %d, want 200", res.Code)
+	}
+}
