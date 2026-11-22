@@ -1,0 +1,4 @@
+{"Action":"run","Package":"p/a","Test":"TestA"}
+{"Action":"pass","Package":"p/a","Test":"TestA","Elapsed":0}
+{"Action":"fail","Package":"p/b","Test":"TestKnown","Elapsed":0}
+{"Action":"fail","Package":"p/b","Elapsed":0}

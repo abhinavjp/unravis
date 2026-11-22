@@ -1,0 +1,10 @@
+# Linker hardening for the shell (BL-326). The PE check in tools/desktop/Check-Pe.ps1 fails the build if a flag is missing.
+# DYNAMICBASE, HIGHENTROPYVA and NXCOMPAT are the MSVC defaults, named here so they cannot be dropped by accident.
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+  "-C", "control-flow-guard",
+  "-C", "link-arg=/DYNAMICBASE",
+  "-C", "link-arg=/HIGHENTROPYVA",
+  "-C", "link-arg=/NXCOMPAT",
+  "-C", "link-arg=/CETCOMPAT",
+]

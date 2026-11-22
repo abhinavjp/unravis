@@ -2,6 +2,10 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -60,5 +64,30 @@ func TestStartupLineNamesTheVersionAndKeepsTheListeningAtMarker(t *testing.T) {
 	withVersion(t, "dev", "", "")
 	if got := startupLines("http://127.0.0.1:1", "c", launchCodeLifeManual, false, true)[0]; got != "Unravis dev listening at http://127.0.0.1:1 (demo=false)" {
 		t.Fatalf("first line %q", got)
+	}
+}
+
+// TestVersionFromBuildInfoWithStrip builds with the release flags (BL-421) and checks that -s -w does not
+// remove the -X version, so --version still works in a stripped exe.
+func TestVersionFromBuildInfoWithStrip(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the program; skipped under -short")
+	}
+	exe := filepath.Join(t.TempDir(), "unravis-strip")
+	if runtime.GOOS == "windows" {
+		exe += ".exe"
+	}
+	ld := "-s -w -buildid= -X api-audit-explorer/internal/version.Version=9.8.7 -X api-audit-explorer/internal/version.Commit=0123456789abcdef -X api-audit-explorer/internal/version.Date=2026-11-21"
+	build := exec.Command("go", "build", "-trimpath", "-ldflags", ld, "-o", exe, ".") //nolint:gosec // test builds and runs its own throw-away binary
+	build.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	out, err := exec.Command(exe, "--version").CombinedOutput() //nolint:gosec // runs the binary just built above
+	if err != nil {
+		t.Fatalf("--version: %v\n%s", err, out)
+	}
+	if want := "Unravis v9.8.7 (commit 0123456, built 2026-11-21)"; strings.TrimSpace(string(out)) != want {
+		t.Fatalf("printed %q, want %q", out, want)
 	}
 }
