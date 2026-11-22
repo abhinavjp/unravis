@@ -6,6 +6,7 @@ import { filesFromDrop } from '../../dropEntries';
 import { stageFiles } from '../../fileKinds';
 import type { StagedFile } from '../../fileKinds';
 import type { Query } from '../../types';
+import { noteCaseAdded } from '../../caseAdded.svelte';
 import { saveHost } from '../../wizardHosts.svelte';
 import type { SaveHostResult } from '../../wizardHosts.svelte';
 import { isZipName, readZip } from '../../zipRead';
@@ -343,7 +344,10 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
     // A refusal for an unknown computer is not a failure of the file: the person can fix it on its card and send it again.
     const refused = done.filter((entry) => entry.outcome.verdict === 'rejected' && entry.outcome.reason === 'unknown-host');
     const refusedKeys = new Set(refused.map((entry) => entry.key));
-    settle(done.filter((entry) => !refusedKeys.has(entry.key)), groupNames);
+    const settled = done.filter((entry) => !refusedKeys.has(entry.key));
+    settle(settled, groupNames);
+    // A file the case kept (all of it or in part) is in the case now, so its page reads the story again, once for this run. None kept: nothing is read.
+    if (settled.some((entry) => entry.outcome.verdict !== 'rejected')) noteCaseAdded(s.caseId);
     s.importing = false; s.closeNote = '';
     if (cancelled) {
       s.stopping = false;

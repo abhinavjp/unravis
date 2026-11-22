@@ -200,6 +200,81 @@ function Get-TextSha256([string]$Text) {
 }
 function Get-FileSha256([string]$Path) { return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant() }
 
+# The "clean merge of master" rule, shared by Get-PromotionSideCommits and Promote-Develop.ps1 (the re-run of a promotion): Sha is a
+# two-parent merge whose second parent is already on MasterRef (an ancestor of it) and whose tree is exactly what git's own merge of
+# its parents gives (git merge-tree), so it brings in nothing that was not on master or develop. Returns @{ Ok; Why }.
+function Test-CleanMasterMerge([string]$RepoRoot, [string]$Sha, [string]$MasterRef) {
+    $ok = $false; $why = 'merge commit that is not a clean merge of master'
+    $sp = @((git -C $RepoRoot rev-list --parents -n 1 $Sha) -split ' ' | Select-Object -Skip 1)
+    if ($sp.Count -eq 2) {
+        git -C $RepoRoot merge-base --is-ancestor $sp[1] $MasterRef 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $mt = @(git -C $RepoRoot -c merge.renames=true -c diff.renames=true -c diff.renameLimit=0 merge-tree --write-tree $sp[0] $sp[1] 2>$null)   # all output first, so the exit code is git's
+            $clean = ($LASTEXITCODE -eq 0)
+            $tree = if ($mt.Count) { "$($mt[0])" } else { '' }
+            $have = (git -C $RepoRoot rev-parse "$Sha^{tree}").Trim()
+            if ($clean -and $tree -and $tree.Trim() -eq $have) { $ok = $true; $why = '' }
+            elseif (-not $clean) { $why = 'merge of master that git cannot redo cleanly' }
+            else { $why = 'merge of master with extra changes' }
+        } else { $why = 'merge whose second parent is not on master' }
+    }
+    return [pscustomobject]@{ Ok = $ok; Why = $why }
+}
+
+# Promote-Develop.ps1, re-run on a branch that already exists: the "Merge master into promote/<sha7>" commits the branch holds were
+# accepted by subject alone, so anyone with a push token could hide code in one. This fetches master and the branch into a throw-away
+# bare repository and applies Test-CleanMasterMerge to each. Returns a hashtable Sha -> @{ Ok; Why }. Token (GitHub remotes only) goes
+# in as one git header for this process, never in a URL or on a command line.
+function Test-RemoteMergeIns([string]$Remote, [string]$Branch, [string[]]$Shas, [string]$Token = '') {
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('unravis-mergein-' + [guid]::NewGuid().ToString('N'))
+    $saved = @{}; foreach ($k in 'GIT_TERMINAL_PROMPT', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0') { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+    $res = @{}
+    try {
+        git init --bare -q $dir 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'git init for the merge check failed.' }
+        $env:GIT_TERMINAL_PROMPT = '0'
+        if ($Token -and $Remote.StartsWith('https://github.com/')) {
+            $env:GIT_CONFIG_COUNT = '1'; $env:GIT_CONFIG_KEY_0 = 'http.https://github.com/.extraheader'
+            $env:GIT_CONFIG_VALUE_0 = 'AUTHORIZATION: basic ' + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$Token"))
+        }
+        $out = git -C $dir fetch -q --no-tags $Remote '+refs/heads/master:refs/remotes/o/master' "+refs/heads/${Branch}:refs/remotes/o/promote" 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "git fetch of master and $Branch for the merge check failed: $(($out | Out-String).Trim())" }
+        $master = (git -C $dir rev-parse refs/remotes/o/master).Trim()
+        foreach ($sha in $Shas) {
+            git -C $dir cat-file -e "$sha^{commit}" 2>$null
+            if ($LASTEXITCODE -ne 0) { $res[$sha] = [pscustomobject]@{ Ok = $false; Why = 'commit not found on the fetched branch' }; continue }
+            $res[$sha] = Test-CleanMasterMerge $dir $sha $master
+        }
+    } finally {
+        foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    return $res
+}
+
+# Promote-Develop.ps1: GitHub updates a pull request's head after a push a moment later, so one read that differs from the expected
+# head may only be stale. Reads (Read is a scriptblock giving the head sha) up to Reads times, PauseSeconds apart, and returns at once
+# when a read equals Expected. A mismatch that persists through every read is returned (the last value) for Assert-PromotionHead.
+function Read-SettledPromotionHead([scriptblock]$Read, [string]$Expected, [int]$Reads = 3, [int]$PauseSeconds = 5) {
+    $got = ''
+    for ($i = 1; $i -le $Reads; $i++) {
+        $got = "$(& $Read)".Trim().ToLowerInvariant()
+        if ($got -eq $Expected) { return $got }
+        if ($i -lt $Reads -and $PauseSeconds -gt 0) { Start-Sleep -Seconds $PauseSeconds }
+    }
+    return $got
+}
+
+# Promote-Develop.ps1: the head the script built and checked is the only head it may merge. Throws when the pull request head
+# (headRefOid) is not the expected one, so a commit pushed to promote/* during the CI wait is never merged unseen.
+function Assert-PromotionHead([string]$Expected, [string]$Actual, [string]$Branch) {
+    if ($Expected -notmatch '^[0-9a-f]{40}$') { throw "Internal error: no expected head for $Branch. Nothing was merged." }
+    if ($Actual -ne $Expected) {
+        $e7 = $Expected.Substring(0, 7); $a7 = if ("$Actual".Length -ge 7) { "$Actual".Substring(0, 7) } else { "$Actual" }
+        throw "The head of $Branch is $a7 but this run built and checked $e7. Someone pushed to the branch meanwhile. Nothing was merged. Look at what was pushed (git log $e7..$a7), delete the branch on GitHub if it is not yours, and run again."
+    }
+}
+
 # The develop side of a promotion merge (docs/ci/RELEASE-TRAIN.md). Master's first-parent commit $Commit with two parents is a
 # promotion: its second parent is promote/<sha>, which holds develop commits and, when master had moved, one "Merge master into
 # promote/<sha>" made by GitHub. Returns one entry per first-parent commit on that side (Commit^1..Commit^2):
@@ -242,19 +317,8 @@ function Get-PromotionSideCommits([string]$RepoRoot, [string]$Commit) {
             $top = $false
             $out += [pscustomobject]@{ Sha = $s; Kind = 'pr'; Ok = $false; Why = '' }; continue
         }
-        $ok = $false; $why = 'merge commit that is not a clean merge of master'
-        if ($sp.Count -eq 2) {
-            git -C $RepoRoot merge-base --is-ancestor $sp[1] $p1 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                $mt = @(git -C $RepoRoot -c merge.renames=true -c diff.renames=true -c diff.renameLimit=0 merge-tree --write-tree $sp[0] $sp[1] 2>$null)   # all output first, so the exit code is git's
-                $clean = ($LASTEXITCODE -eq 0)
-                $tree = if ($mt.Count) { "$($mt[0])" } else { '' }
-                $have = (git -C $RepoRoot rev-parse "$s^{tree}").Trim()
-                if ($clean -and $tree -and $tree.Trim() -eq $have) { $ok = $true; $why = '' }
-                elseif (-not $clean) { $why = 'merge of master that git cannot redo cleanly' }
-                else { $why = 'merge of master with extra changes' }
-            } else { $why = 'merge whose second parent is not on master' }
-        }
+        $v = Test-CleanMasterMerge $RepoRoot $s $p1
+        $ok = $v.Ok; $why = $v.Why
         # A merge commit may also be a pull request merged into develop with "merge commit": the caller tries that first.
         # Such a merge (not a clean merge of master) ends the tip end: a generated-looking commit below it is not accepted.
         if (-not $ok) { $top = $false }
@@ -438,8 +502,15 @@ function New-ToolWorktree([string]$RepoRoot, [string]$Commit, [string]$Work) {
     git -C $RepoRoot worktree add --detach $dir $Commit 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "git worktree add for $Commit failed." }
     $tool = Join-Path $Work 'sigtool.exe'
-    Push-Location $dir
-    try { go build -mod=readonly -o $tool ./tools/release/sigtool; if ($LASTEXITCODE -ne 0) { throw 'building the signing tool failed.' } } finally { Pop-Location }
+    # A failed build must not leave the worktree registered in the repository (the caller never gets $dir back to remove it).
+    try {
+        Push-Location $dir
+        try { go build -mod=readonly -o $tool ./tools/release/sigtool; if ($LASTEXITCODE -ne 0) { throw 'building the signing tool failed.' } } finally { Pop-Location }
+    } catch {
+        $err = $_
+        Remove-ToolWorktree $RepoRoot $dir
+        throw $err
+    }
     return [pscustomobject]@{ Dir = $dir; Tool = $tool }
 }
 function Remove-ToolWorktree([string]$RepoRoot, [string]$Dir) {
@@ -822,7 +893,13 @@ $script:LogRx = @{
     Ctrl    = [regex]::new('[\x00-\x08\x0a-\x1f\x7f]', 'Compiled')
     Token   = [regex]::new('\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})', 'Compiled')
     Bearer  = [regex]::new('(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}', 'Compiled')
-    Pair    = [regex]::new('(?i)(?<![\w-])([\w-]*(?:pass(?:word|phrase)|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|.+)', 'Compiled')
+    Pair    = [regex]::new('(?i)(?<![\w-])([\w-]*(?:pass(?:word|phrase)|nonce|seed[-_ ]?phrase|key[-_ ]?seed|_seed|mnemonic|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|.+)', 'Compiled')
+    # More secret shapes, the same patterns as the Go reader (explicit [ \t] and [A-Za-z], not \s and \w, so the two agree): a flag with its value
+    # after a space or =, an environment style name ending in _PASS or _PIN, and user:password in a URL or after curl -u / --user.
+    Flag    = [regex]::new('(?i)((?:^|[ \t])--?(?:pass(?:word|phrase|wd)?|pwd|token|secret|nonce|pin)(?:[ \t]+|=))(?:"[^"]*"|''[^'']*''|[^ \t\r\n\f\v]+)', 'Compiled')
+    EnvPass = [regex]::new('(?i)([A-Za-z0-9_]*_(?:pass|passwd|pin)[ \t]*=[ \t]*)[^ \t\r\n\f\v]+', 'Compiled')
+    UrlCred = [regex]::new('(://)[^ \t\r\n\f\v/:@]+:[^ \t\r\n\f\v/]+@', 'Compiled')
+    UserFlag = [regex]::new('((?:^|[ \t])--?(?:u|user)[ \t]+)[^ \t\r\n\f\v:]+:[^ \t\r\n\f\v]+', 'Compiled')
     KeyBeg  = [regex]::new('-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
     KeyEnd  = [regex]::new('-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
     # A line that can still belong to a key block (nothing, base64, or a header such as Proc-Type: ...), after the CI prefix and time stamp
@@ -863,11 +940,28 @@ function Protect-LogLine([string]$Line, $Redactor, [switch]$KeepTabs) {
     $s = $rx.Token.Replace($s, '<token hidden>')
     $s = $rx.Bearer.Replace($s, '$1 <hidden>')
     $s = $rx.Pair.Replace($s, '$1$2<hidden>')
+    $s = $rx.Flag.Replace($s, '$1<hidden>')
+    $s = $rx.EnvPass.Replace($s, '$1<hidden>')
+    $s = $rx.UrlCred.Replace($s, '${1}<hidden>@')
+    $s = $rx.UserFlag.Replace($s, '$1<hidden>')
     $s = $rx.KeyFile.Replace($s, '<key file>')
     $s = $rx.UserDir.Replace($s, '${1}<user>')
     foreach ($n in $Redactor.Names) { $s = [regex]::Replace($s, '(?<![A-Za-z0-9])' + [regex]::Escape($n) + '(?![A-Za-z0-9])', '<name>', 'IgnoreCase') }
     if ($s.Length -gt 2000) { $s = $s.Substring(0, 2000) + ' ...(line cut)' }
     return $s.TrimEnd(' ')
+}
+
+# A free text reason (the output of a failed command, often several lines) made safe to store: every line goes through the same redactor
+# (so a private key block that spans lines is still hidden, and one hidden line hides only itself), empty lines are dropped and the
+# lines are joined with a space. If the redaction itself fails the reason is replaced, so a redactor bug never stops the state write.
+function Protect-ReasonText([string]$Text) {
+    try {
+        $red = New-LogRedactor
+        $parts = foreach ($l in ($Text -split "\r\n|\n|\r")) { $p = Protect-LogLine $l $red; if ($p.Trim().Length -gt 0) { $p.Trim() } }
+        $out = New-Object System.Collections.Generic.List[string]
+        foreach ($p in @($parts)) { if (-not ($p -eq '<private key hidden>' -and $out.Count -gt 0 -and $out[$out.Count - 1] -eq $p)) { $out.Add($p) } }   # one marker for a whole key block
+        return ($out -join ' ')
+    } catch { return '(reason hidden: redaction failed)' }
 }
 
 function Get-ReleaseLogDir([string]$Dir) {
