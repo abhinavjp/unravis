@@ -36,8 +36,11 @@ test('the template has a header with title, intro and close, an optional footer,
 });
 
 test('drawer template uses chevron disclosures and plain finding rows, not markers, cards or pills', () => {
-  assert.match(drawer, /details > summary::-webkit-details-marker\) \{ display: none/);
-  assert.match(drawer, /details > summary::after\)/);
+  // The chevron is one app-wide rule (BLACKBOX-03, ANALYSIS-14): summary::before in app.css, not a second ::after in the drawer that a dialog could switch off.
+  const appCss = read('src/app.css');
+  assert.match(appCss, /details:not\([^)]*\)\) > summary::-webkit-details-marker \{ display: none/);
+  assert.match(appCss, /summary::before \{ content: ""/);
+  assert.doesNotMatch(drawer, /details > summary::after/);
   assert.match(drawer, /\.finding\) \{[^}]*border: 0; border-top: 1px solid var\(--hairline\)/);
   assert.match(drawer, /\.low-n\) \{[^}]*border: 0/);
 });

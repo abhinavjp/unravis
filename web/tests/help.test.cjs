@@ -131,7 +131,7 @@ test('HelpNote renders the plain line and a labelled disclosure button', () => {
   assert.match(src, /aria-controls=\{blockId\}/);
   assert.match(src, /id=\{blockId\}/);
   assert.match(src, />In simple words</);
-  assert.match(src, /eli10\.on \|\| open/, 'the shared flag opens every block');
+  assert.match(src, /eli10\.on \? !folded : open/, 'the shared flag opens every block, and one block can still be folded (CASES-23)');
   assert.match(src, /hidden=\{!shown\}/, 'the block stays mounted so aria-controls always resolves');
   assert.match(src, />\?<\/button>/);
   assert.doesNotMatch(src, /\{@html|innerHTML/);
@@ -185,7 +185,9 @@ test('help "?" and "i" buttons have a 24px hit area (32px on touch or narrow scr
     assert.match(style, new RegExp('\\.' + cls + ' \\{[^}]*width: 24px; height: 24px'), file + ' base size');
     assert.match(style, new RegExp('@media \\(pointer: coarse\\), \\(max-width: 720px\\) \\{ \\.' + cls + ' \\{ width: 32px; height: 32px'), file + ' touch size');
     assert.match(style, new RegExp('\\.' + cls + '::before \\{[^}]*inset: 4px'), file + ' circle stays 16px inside the target');
-    assert.match(src, /aria-label=\{eli10\.on \? 'Open: Explain simply is on' : /, file + ' disabled label');
+    // HelpNote stays a working toggle while "Explain simply" is on (CASES-23); FieldHelp is disabled then and says so in its name, which also names the field (ANALYSIS-06).
+    if (file === 'HelpNote') { assert.match(src, /aria-label="Explain in simple words"/); assert.doesNotMatch(src, /disabled=/); }
+    else assert.match(src, /aria-label=\{eli10\.on \? about \+ ' \(open: Explain simply is on\)' : about\}/, file + ' disabled label');
   }
 });
 
@@ -349,7 +351,7 @@ test('the drill-down controls carry their notes: Back by its title, investigate 
 
 test('FieldHelp is a labelled disclosure that adds no tab stop beyond its button and uses tokens only', () => {
   const src = read('src/components/FieldHelp.svelte');
-  assert.match(src, /let \{ id, part = 'both', open = \$bindable\(false\) \}/);
+  assert.match(src, /let \{ id, part = 'both', open = \$bindable\(false\), label = '' \}/);
   assert.match(src, /import \{ help \} from '\.\.\/lib\/copy\/helpCopy'/);
   assert.match(src, /<button type="button"[^>]*aria-expanded=\{shown\}[^>]*aria-controls=\{blockId\}/);
   assert.match(src, /disabled=\{eli10\.on\}/);

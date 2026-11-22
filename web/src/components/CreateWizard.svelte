@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import type { Snippet } from 'svelte';
-  import { backStep, draftEnvs, draftKeyProblem, goToStep, nextStep, resetWizard, resumeWizard, wipeCaseKey, wizard, wizardIsDirty } from '../lib/wizard.svelte';
+  import { backStep, draftEnvs, draftKeyProblem, goToStep, nextStep, persistDraft, resetWizard, resumeWizard, wipeCaseKey, wizard, wizardIsDirty } from '../lib/wizard.svelte';
   import { newKeyHint, repeatMismatch } from '../lib/caseKey';
   import { CASE_KEY_TEXT, newKeyProblemText } from '../lib/copy/caseKeyCopy';
   import { ENV_FIELD_MAX, hasDropped } from '../lib/wizardEnvs';
@@ -70,6 +70,9 @@
     if (wizardIsDirty()) { resumed = true; resumeWizard(); }
     void focusHeading();
   });
+
+  // The name and environments are kept for a reload of this tab (never a key, password or source).
+  $effect(() => { void wizard.title; void wizard.envText; void wizard.caseKey.on; persistDraft(); });
 
   // A page reload or a closed tab would lose the draft, so the browser asks first while there is something to lose.
   $effect(() => {
