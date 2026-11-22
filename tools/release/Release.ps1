@@ -481,8 +481,8 @@ try {
         if ($risks.Count) { Fail "This PC could log the passphrase: $($risks -join '; '). Turn that policy off for release runs." }
         if ($feedBase) {
             $prs = Get-CommitPullRequests $repoRoot $Repo $feedBase.Tag $head
-            if ($prs.Missing.Count) { Fail "These commits on $Branch since $($feedBase.Tag) did not come through a merged pull request: $(($prs.Missing | ForEach-Object { $_.Substring(0,7) }) -join ', '). Find out who pushed them before releasing." }
-            $script:report.sensitive = Get-SensitivePullRequests $repoRoot $feedBase.Tag $head $prs.Prs
+            if ($prs.Missing.Count) { Fail "These commits on $Branch since $($feedBase.Tag) (or, inside a promotion of develop, a pull request merged into develop or a clean merge of master) did not come through a merged pull request: $(($prs.Missing | ForEach-Object { $_.Substring(0,7) }) -join ', '). Find out who pushed them before releasing." }
+            $script:report.sensitive = Get-SensitivePullRequests $repoRoot $feedBase.Tag $head $prs.Prs $prs.Develop
             $kc = Compare-KeyLists ((git show "$($feedBase.Tag):$script:ReleaseTrustedKeysPath") -join "`n") $trustedNewText $owner
             if ($kc.Foreign.Count) { Fail "trusted_keys.txt gained a key you hold no key file for in ${KeyDir}: $(($kc.Foreign | ForEach-Object { "$($_.Role) $($_.Pub)" }) -join '; '). Someone else's key; do not release." }
             $script:addedKeys = @($kc.Added)
