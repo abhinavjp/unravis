@@ -312,3 +312,50 @@ func TestShutdownAcceptedStopsOnce(t *testing.T) {
 		t.Fatalf("%d %q stops %d, want 202 stopping and one stop", w.Code, w.Body.String(), stops)
 	}
 }
+
+func TestHelloOnlyOnUIPipeAndOnlyGet(t *testing.T) {
+	h := Handler(echoToken(), WithShutdown(tok, func() {}))
+	ui, ag := RoleUI, RoleAG
+	req := func(role *Role, method, origin string) *httptest.ResponseRecorder {
+		image := `C:\Program Files\Unravis\unravis-desktop.exe`
+		r := httptest.NewRequest(method, HelloPath, nil)
+		r = r.WithContext(WithPeerImage(WithRole(r.Context(), *role), image))
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if w := req(&ui, "GET", ""); w.Code != 200 || !strings.Contains(w.Body.String(), tok) {
+		t.Fatalf("ui GET: %d %q", w.Code, w.Body.String())
+	}
+	if w := req(&ui, "POST", ""); w.Code != 405 {
+		t.Errorf("POST: %d", w.Code)
+	}
+	if w := req(&ui, "GET", "http://x"); w.Code != 403 {
+		t.Errorf("with Origin: %d", w.Code)
+	}
+	if w := req(&ag, "GET", ""); w.Code != 404 {
+		t.Errorf("ag: %d, want 404", w.Code)
+	}
+	// The CLI and the MCP bridge may use the ui pipe, but they do not get the token from hello; neither does an unknown peer.
+	for _, img := range []string{`C:\Program Files\Unravis\unravis.exe`, `C:\x\notunravis-desktop.exe`, ""} {
+		r := httptest.NewRequest("GET", HelloPath, nil)
+		r = r.WithContext(WithPeerImage(WithRole(r.Context(), RoleUI), img))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != 403 || strings.Contains(w.Body.String(), tok) {
+			t.Errorf("image %q: %d %q, want 403 and no token", img, w.Code, w.Body.String())
+		}
+	}
+	// No token configured: the route is off and the request falls through to the served handler.
+	off := Handler(echoToken())
+	r := httptest.NewRequest("GET", HelloPath, nil)
+	r = r.WithContext(WithRole(r.Context(), RoleUI))
+	w := httptest.NewRecorder()
+	off.ServeHTTP(w, r)
+	if strings.Contains(w.Body.String(), `"token"`) {
+		t.Errorf("hello answered with no token configured: %q", w.Body.String())
+	}
+}
