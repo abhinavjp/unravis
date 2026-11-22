@@ -80,7 +80,7 @@ func run(args []string, out io.Writer, seal func() (sealedfile.Protector, error)
 	}
 	if *list {
 		for _, id := range ids {
-			fmt.Fprintln(out, id, openStatus(ctx, store, id))
+			_, _ = fmt.Fprintln(out, id, openStatus(ctx, store, id))
 		}
 		return nil
 	}
@@ -97,12 +97,12 @@ func run(args []string, out io.Writer, seal func() (sealedfile.Protector, error)
 		if len(left) > 0 {
 			bad = append(bad, "files left behind: "+strings.Join(left, ", "))
 		}
-		fmt.Fprintf(out, "left-over -wal/-shm/-journal files: %d\n", len(left))
+		_, _ = fmt.Fprintf(out, "left-over -wal/-shm/-journal files: %d\n", len(left))
 	}
 	if len(bad) > 0 {
 		return errors.New(strings.Join(bad, "; "))
 	}
-	fmt.Fprintf(out, "OK: %d case(s) checked\n", len(ids))
+	_, _ = fmt.Fprintf(out, "OK: %d case(s) checked\n", len(ids))
 	return nil
 }
 
@@ -133,7 +133,7 @@ func checkCase(ctx context.Context, s *sqlite.Store, id casestore.CaseID, textsF
 	if err := chk.IntegrityCheck(ctx); err != nil {
 		return "integrity_check: " + err.Error()
 	}
-	fmt.Fprintf(out, "%s integrity_check ok\n", id)
+	_, _ = fmt.Fprintf(out, "%s integrity_check ok\n", id)
 	if textsFile == "" {
 		return ""
 	}
@@ -153,7 +153,7 @@ func checkCase(ctx context.Context, s *sqlite.Store, id casestore.CaseID, textsF
 			have[it.Text]++
 		}
 	}
-	f, err := os.Open(textsFile)
+	f, err := os.Open(textsFile) //nolint:gosec // developer tool, the path is the operator's own argument
 	if err != nil {
 		return err.Error()
 	}
@@ -173,7 +173,7 @@ func checkCase(ctx context.Context, s *sqlite.Store, id casestore.CaseID, textsF
 	if err := sc.Err(); err != nil {
 		return err.Error()
 	}
-	fmt.Fprintf(out, "%s saved lines: %d expected, %d missing\n", id, want, missing)
+	_, _ = fmt.Fprintf(out, "%s saved lines: %d expected, %d missing\n", id, want, missing)
 	if want == 0 {
 		return "the texts file has no lines (the load never ran)"
 	}

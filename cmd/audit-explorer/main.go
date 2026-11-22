@@ -348,7 +348,7 @@ func run(args []string, getenv func(string) string) error {
 	// imports stop and roll back before the store closes.
 	defer server.CancelImports(served)
 	var running inflight
-	var servedHandler http.Handler = served
+	servedHandler := http.Handler(served)
 	if pipeMode {
 		servedHandler = running.wrap(served)
 	}
