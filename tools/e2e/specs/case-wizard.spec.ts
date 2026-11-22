@@ -17,7 +17,7 @@ test('CASE-06: an empty name blocks Next and the later steps are not available',
   await expect(next(page)).toBeDisabled();
   await expect(page.getByText('Give the case a name to go on.')).toBeVisible();
   await expect(page.getByRole('button', { name: '2 Sources, not available until the case has a name' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Step 3, Review, not available until the case has a name' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '3 Review, not available until the case has a name' })).toBeDisabled();
   await expect(page.getByRole('button', { name: '1 Name, current step' })).toBeVisible();
 });
 

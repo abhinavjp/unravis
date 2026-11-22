@@ -112,8 +112,9 @@ test('TLPAR-02: the "Investigation window" and "Compare it with" headings with t
   await expect(page.getByRole('group', { name: 'Comparison period' })).toBeVisible();
   await expect(page.locator('fieldset.window-set legend')).toHaveText(['Incident window', 'Comparison period']);
 
-  // The zone is said on the page (the choice sits at the top; the pickers name it in their button and dialog).
-  await expect(page.getByText('Times are typed in the zone chosen at the top.', { exact: true })).toBeVisible();
+  // The zone is said on the page (the choice sits at the top; the pickers name it in their button and dialog; the line under them says which zone the times are in).
+  await expect(page.getByTestId('tp-metaline')).toContainText('Times are in');
+  await expect(page.getByTestId('tp-metaline')).toContainText('change it with Times in at the top');
 });
 
 test('TLPAR-03: Add evidence sits in the "Sources traced" row and opens the Import files popup', async ({ page }) => {

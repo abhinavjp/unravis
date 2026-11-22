@@ -213,7 +213,7 @@ export const RUN_TEXT = {
 } as const;
 
 export const ADD_TEXT = {
-  heading: 'Add files',
+  heading: 'Add data',
   lead: 'Add a source after the case was created. New data is read on its own and does not touch what is there.',
   sqlTitle: 'SQL Server',
   sqlBody: 'Query Store, sessions, jobs, error log.',
@@ -241,10 +241,10 @@ export const ADD_TEXT = {
   drawerLead: 'Add a source after the case was created. Same cards as at creation. New data is imported separately and does not touch what is there.',
   busy: 'An import is already running. Stop it first.',
   staged: (n: number): string => (n === 1 ? '1 file staged, not imported' : n + ' files staged, not imported'),
-  backToData: 'Back to Add files',
+  backToData: 'Back to Add data',
   otherCase: 'Use another case',
   hideCases: 'Hide the case list',
-  drawerTitle: (code: string): string => 'Add files, case ' + code,
+  drawerTitle: (code: string): string => 'Add data, case ' + code,
   leaveHeading: 'Leave without importing?',
   leaveText: (files: number): string => (files === 1 ? '1 file and unsaved fields will be lost.' : files + ' files and unsaved fields will be lost.'),
   keepEditing: 'Keep editing',
@@ -352,7 +352,7 @@ export const NOTHING_TEXT = {
   hours: 'The hours may be wrong, or that hour is before the system was used.',
   change: 'Change the window, or add the day that holds data.',
   addDay: 'Add another day',
-  addData: 'Add files',
+  addData: 'Add data',
   tableHeading: 'What this case can answer',
   colQuestion: 'Question',
   colNeeds: 'Needs',
@@ -372,7 +372,7 @@ export const HUB_TEXT = {
   connections: 'Connections',
   sql: 'Read SQL Server',
   mongo: 'Read MongoDB',
-  add: 'Add files',
+  add: 'Add data',
   day: 'Add another day',
   combos: 'Combinations',
   readOnlyWhy: 'This case cannot take new data right now: it is closed, or it changed somewhere else. Reopen or refresh it first. What it already holds can still be read here.'

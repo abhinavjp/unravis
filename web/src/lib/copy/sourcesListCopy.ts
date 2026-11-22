@@ -13,7 +13,7 @@ export const SOURCES_LIST_TEXT = {
   loading: 'Reading the sources…',
   loadFailed: 'The sources could not be read. Try again.',
   retry: 'Try again',
-  empty: 'This case has no sources yet. Use Add files to add one.',
+  empty: 'This case has no sources yet. Use Add data to add one.',
   noEnv: 'no environment yet',
   filterLabel: 'Show only one environment',
   filterAll: 'Show all',

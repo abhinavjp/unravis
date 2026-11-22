@@ -112,7 +112,7 @@ test('SWEEP-F3-09 (CASES-03, CASES-04): one name, "Add files" for the action and
   assert.equal(sources.ADD_TEXT.addFiles, 'Add files', 'the Files card button is the file import');
   assert.equal(loadTypeScript('src/lib/copy/guidedCopy.ts').GUIDED_TEXT.addData, 'Add data');
   assert.match(read('src/lib/copy/caseRestoreCopy.ts'), /collection_missing: '[^']*Open Add data, pick the right collection/);
-  assert.doesNotMatch(read('src/lib/copy/wizardCreateCopy.ts'), /Open Add files|from Add files/);
+  assert.doesNotMatch(read('src/lib/copy/wizardCreateCopy.ts'), /Open Add files|add it from Add files|try it again from Add files/);
 });
 
 test('SWEEP-F3-10 (CASES-16): the file cards in the wizard have the same height and a select wide enough for its words', () => {

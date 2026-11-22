@@ -79,13 +79,13 @@ test('GUIDE-24a: the case that read nothing says so on Step 7, never that a chec
   await expect(form(panel)).toBeVisible();
   expect(posts).toEqual([]);
   // Add data leads to the list of kinds.
-  await panel.getByRole('button', { name: 'Add files', exact: true }).click();
+  await panel.getByRole('button', { name: 'Add data', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'What do you want to add to this case?' })).toBeVisible();
   expect(posts).toEqual([]);
 });
 
 test('GUIDE-21: the Add data tab shows one list of kinds and each tile leads where it says', async ({ page }) => {
-  const panel = await hub(page, OPEN, 'Add files');
+  const panel = await hub(page, OPEN, 'Add data');
   const tile = (name: RegExp) => panel.getByRole('button', { name });
   await expect(panel.getByRole('heading', { name: 'What do you want to add to this case?' })).toBeVisible();
   for (const name of [/^Find on this PC/, /^MongoDB/, /^SQL Server/, /^Redis/, /^Files/, /^Blackbox recorder/]) await expect(tile(name)).toBeEnabled();
@@ -110,7 +110,7 @@ test('GUIDE-21: the Add data tab shows one list of kinds and each tile leads whe
 });
 
 test('GUIDE-21a: on a closed case every Add data tile is off', async ({ page }) => {
-  const panel = await hub(page, CLOSED, 'Add files');
+  const panel = await hub(page, CLOSED, 'Add data');
   for (const name of [/^Find on this PC/, /^MongoDB/, /^SQL Server/, /^Redis/, /^Files/, /^Blackbox recorder/]) {
     await expect(panel.getByRole('button', { name }), String(name)).toBeDisabled();
   }
@@ -243,7 +243,7 @@ test('GUIDE-22f: EmptyDb reads Cannot test yet, shows Nothing could be read and 
   await expect(nothing.getByRole('heading', { name: 'Nothing could be read' })).toBeVisible();
   await expect(nothing).toContainText('The case is not broken. Every source answered, but the window held nothing to read.');
   await expect(nothing.getByRole('button', { name: 'Add another day' })).toBeVisible();
-  await expect(nothing.getByRole('button', { name: 'Add files', exact: true })).toBeVisible();
+  await expect(nothing.getByRole('button', { name: 'Add data', exact: true })).toBeVisible();
   await expect(panel.getByText('No question was answered. A missing answer is never a pass.')).toBeVisible();
   // Three databases are now held, newest first.
   await expect(panel.locator('[data-source]')).toHaveCount(3);

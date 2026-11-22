@@ -32,8 +32,8 @@ export function signInText(names: readonly string[]): string {
 
 /** What the server's source-stage codes mean here: a problem with the collection or the version of one database, not a sign-in problem. */
 const SOURCE_FAILED_TEXT: Readonly<Record<string, string>> = {
-  collection_missing: 'This database has no collection with the audit log name the case read. Open Add files, pick the right collection, then try the database again.',
-  permission_denied: 'The saved sign-in cannot read the audit collection of this database. Ask for read access, or pick another collection in Add files.',
+  collection_missing: 'This database has no collection with the audit log name the case read. Open Add data, pick the right collection, then try the database again.',
+  permission_denied: 'The saved sign-in cannot read the audit collection of this database. Ask for read access, or pick another collection in Add data.',
   unsupported_version: 'The MongoDB server version of this database is not supported. Unravis reads MongoDB 3.4 and 4.4 or newer.'
 };
 

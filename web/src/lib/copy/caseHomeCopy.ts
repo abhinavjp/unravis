@@ -39,7 +39,7 @@ export const CASE_HOME_TEXT = {
   retrying: 'Trying…',
   retryAddFile: 'Add the file again',
   retryDrop: 'Remove from list',
-  retryInPage: 'This one needs details only the wizard holds. Remove it, then add it again from Connections or Add files.',
+  retryInPage: 'This one needs details only the wizard holds. Remove it, then add it again from Connections or Add data.',
   retryFailed: 'It did not go through again. It stays on the list.',
   retryEnvironments: 'Environments not saved',
   retryTag: 'Source not saved',

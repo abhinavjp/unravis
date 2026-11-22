@@ -48,7 +48,7 @@ test('INCASE-01: Add files from an open case opens the popup for that case with 
   await page.keyboard.press('Escape');
   await expect(popup(page)).toHaveCount(0);
   const hub = page.locator('[data-sources-hub]');
-  await hub.getByRole('tab', { name: 'Add files', exact: true }).click();
+  await hub.getByRole('tab', { name: 'Add data', exact: true }).click();
   await hub.getByRole('button', { name: /^Files\b/ }).click();
   await expectPopupOfThisCase(page, title, id);
   await expect(popup(page)).not.toContainText('QA InCase Elsewhere');

@@ -53,7 +53,7 @@ test('TRACE-01: the screen opens with the picker, toolbar, chart and notes regio
   await expect(page.locator('input[type=datetime-local]')).toHaveCount(0);
   await expect(pickerButton(page, 'incident')).toBeVisible();
   await expect(pickerButton(page, 'comparison')).toBeVisible();
-  await expect(page.getByText('Times are typed in the zone chosen at the top.')).toBeVisible();
+  await expect(page.getByTestId('tp-metaline')).toContainText('Times are in');
   await expect(page.getByRole('button', { name: 'Start tracing' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Case home', exact: true })).toBeVisible();
   // The defaults are the hour before now, and the hour before that (real clock, so only the shape is checked).
