@@ -1,5 +1,6 @@
 import { CaseApiError, casePath, fetchImportJob, cancelImportJob, getHostEntries, isJobId, json, putHostEntries, send, type ImportJob } from './cases';
 import { unreadableText } from './copy/discoverCopy';
+import { pacedSleep } from './visibility';
 
 /**
  * Client for the "This computer" routes (host-discovery spec, section 7), and the pure rules the discover panel follows.
@@ -641,12 +642,8 @@ export function resetEntryCache(): void { entryCache = null; }
 export const SCAN_POLL_MS = 500;
 export const SCAN_MAX_UNREACHABLE = 5;
 
-const sleepFor = (ms: number, signal?: AbortSignal): Promise<void> => new Promise((resolve, reject) => {
-  if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
-  const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
-  const onAbort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
-  signal?.addEventListener('abort', onAbort, { once: true });
-});
+// Slower while the page is hidden, at once on show (visibility.ts); the scan and its jobs go on at the server either way.
+const sleepFor = pacedSleep;
 
 export interface WaitScanOptions {
   signal?: AbortSignal;

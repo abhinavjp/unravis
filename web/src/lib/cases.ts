@@ -1,6 +1,7 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
 import { WRONG_CASE_KEY_REASON, signalIfAppLocked } from './lockSignal';
 import { guardSignal, isAbortLike, READ_TIMEOUT_MS, TIMEOUT_CODE, timeoutMessage } from './requestTimeout';
+import { pacedSleep } from './visibility';
 import { parseTimelineView, type TimelineView } from './timeline';
 import { parseResource, parseSeries, type ResourceView, type SeriesView } from './resource';
 import { parseCollect, type CollectItem } from './collect';
@@ -708,14 +709,8 @@ export const JOB_POLL_MS = 1000;
 /** A few lost answers in a row are tolerated (the server may be busy); more than this and the wait gives up. */
 export const JOB_MAX_UNREACHABLE = 5;
 
-function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
-    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
-    const onAbort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
+// While the page is hidden the asking slows down (visibility.ts) and starts again at once on show; the job goes on at the server either way.
+const sleepFor = pacedSleep;
 
 export interface WaitOptions {
   signal?: AbortSignal;

@@ -266,6 +266,7 @@ func (j *importJobs) cancelCaseUntilStopped(caseID casestore.CaseID) func() {
 	stop, done := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(done)
+		// idle-ok: lives only while an erase waits for the case gate, then stops with the returned function.
 		tick := time.NewTicker(50 * time.Millisecond)
 		defer tick.Stop()
 		for {
