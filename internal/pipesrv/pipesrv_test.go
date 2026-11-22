@@ -308,7 +308,7 @@ func TestShutdownAcceptedStopsOnce(t *testing.T) {
 	h := Handler(echoToken(), WithShutdown(tok, func() { stops++ }))
 	ui := RoleUI
 	w := shutdownReq(h, &ui, "POST", tok)
-	if w.Code != 202 || strings.TrimSpace(w.Body.String()) != `{"status":"stopping"}` || stops != 1 {
+	if w.Code != 202 || strings.TrimSpace(w.Body.String()) != `{"state":"stopping"}` || stops != 1 {
 		t.Fatalf("%d %q stops %d, want 202 stopping and one stop", w.Code, w.Body.String(), stops)
 	}
 }

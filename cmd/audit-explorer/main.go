@@ -336,7 +336,12 @@ func run(args []string, getenv func(string) string) error {
 	// Registered after the case store's close, so it runs first: background
 	// imports stop and roll back before the store closes.
 	defer server.CancelImports(served)
-	httpServer := newHTTPServer(served)
+	var running inflight
+	var servedHandler http.Handler = served
+	if pipeMode {
+		servedHandler = running.wrap(served)
+	}
+	httpServer := newHTTPServer(servedHandler)
 	serveDone := make(chan error, 3)
 	var stopServers stoppers
 	removeSession := func() {}
@@ -347,7 +352,7 @@ func run(args []string, getenv func(string) string) error {
 		defer removeSession()
 	}
 	if pipes != nil {
-		group := pipesrv.Serve(pipes, pipesrv.Handler(served, pipesrv.WithShutdown(token, cancel)), newHTTPServer)
+		group := pipesrv.Serve(pipes, running.wrap(pipesrv.Handler(served, pipesrv.WithShutdown(token, cancel))), newHTTPServer)
 		stopServers = append(stopServers, group)
 		go func() { serveDone <- <-group.Done() }()
 		log.Print("Serving over the ui and ag pipes")
@@ -378,6 +383,9 @@ func run(args []string, getenv func(string) string) error {
 		drain = pipeShutdownTimeout
 	}
 	err = awaitShutdownWithin(signalContext, drain, serveDone, removeSession, stopServers)
+	if pipeMode {
+		err = settlePipeShutdown(err, &running, pipeHandlerWait)
+	}
 	endHealth(err)
 	return err
 }
@@ -687,7 +695,7 @@ func shutdownOnSignalWithin(drain time.Duration, removeSession func(), server sh
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		_ = server.Close()
-		return fmt.Errorf("server shutdown did not finish cleanly")
+		return errDrainTimeout
 	}
 	return nil
 }

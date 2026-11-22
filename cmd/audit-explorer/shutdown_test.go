@@ -184,9 +184,8 @@ func TestShutdownStopsRunWithoutAnySignal(t *testing.T) {
 	}
 }
 
-// walFiles lists every SQLite -wal, -shm and -journal file under root.
-func walFiles(t *testing.T, root string) []string {
-	t.Helper()
+// findWALFiles lists every SQLite -wal, -shm and -journal file under root. It never touches testing.T, so any goroutine may call it.
+func findWALFiles(root string) ([]string, error) {
 	var out []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -199,6 +198,13 @@ func walFiles(t *testing.T, root string) []string {
 		}
 		return nil
 	})
+	return out, err
+}
+
+// walFiles is findWALFiles for the test goroutine.
+func walFiles(t *testing.T, root string) []string {
+	t.Helper()
+	out, err := findWALFiles(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +225,10 @@ func TestShutdownCheckpointsWAL(t *testing.T) {
 	caseID := string(demoCaseOpenID)
 
 	var acked atomic.Int64
+	var savedMu sync.Mutex
+	var saved []string // the text of every write the app acknowledged
 	var walSeenWhileBusy atomic.Bool
+	var walErr error
 	var shutCode int
 	var callErr error
 	var mu sync.Mutex
@@ -239,10 +248,14 @@ func TestShutdownCheckpointsWAL(t *testing.T) {
 							return
 						default:
 						}
-						body, _ := json.Marshal(map[string]any{"list": casestore.ListToDo, "text": "line " + strconv.Itoa(w) + " " + time.Now().Format(time.RFC3339Nano)})
+						text := "line " + strconv.Itoa(w) + " " + strconv.Itoa(i) + " " + time.Now().Format(time.RFC3339Nano)
+						body, _ := json.Marshal(map[string]any{"list": casestore.ListToDo, "text": text})
 						code, _, err := ui.call("POST", "/api/cases/"+caseID+"/checklist", testToken, body)
 						if err == nil && code == http.StatusOK {
 							acked.Add(1)
+							savedMu.Lock()
+							saved = append(saved, text)
+							savedMu.Unlock()
 						}
 					}
 				}()
@@ -252,7 +265,11 @@ func TestShutdownCheckpointsWAL(t *testing.T) {
 			for acked.Load() < 20 && time.Now().Before(deadline) {
 				time.Sleep(10 * time.Millisecond)
 			}
-			if len(walFiles(t, dir)) > 0 {
+			if found, err := findWALFiles(dir); err != nil {
+				mu.Lock()
+				walErr = err
+				mu.Unlock()
+			} else if len(found) > 0 {
 				walSeenWhileBusy.Store(true)
 			}
 			var code int
@@ -275,17 +292,26 @@ func TestShutdownCheckpointsWAL(t *testing.T) {
 	if acked.Load() < 20 {
 		t.Fatalf("only %d writes were acknowledged; the load did not run (is the case writable?)", acked.Load())
 	}
-	t.Logf("%d acknowledged writes, -wal present while busy: %v", acked.Load(), walSeenWhileBusy.Load())
+	if walErr != nil {
+		t.Fatalf("looking for the -wal file while busy: %v", walErr)
+	}
+	// The proof only means something if the database really was in WAL mode with unmerged pages while the writers ran.
+	if !walSeenWhileBusy.Load() {
+		t.Fatal("no -wal file was seen while the writers were busy, so the checkpoint on close was not exercised")
+	}
+	t.Logf("%d acknowledged writes, -wal seen while busy", acked.Load())
 	if left := walFiles(t, dir); len(left) != 0 {
 		t.Fatalf("files left after shutdown: %v", left)
 	}
 
-	verifyCaseAfterStop(t, getenv, caseID, acked.Load())
+	savedMu.Lock()
+	defer savedMu.Unlock()
+	verifyCaseAfterStop(t, getenv, caseID, saved)
 }
 
 // verifyCaseAfterStop reopens the data folder the way the demo does and checks the case: PRAGMA integrity_check is ok and at least
-// minLines of the to-do lines the writers were told were saved are in it.
-func verifyCaseAfterStop(t *testing.T, getenv func(string) string, caseID string, minLines int64) {
+// every text in saved (the writes the app acknowledged) is a to-do line of it.
+func verifyCaseAfterStop(t *testing.T, getenv func(string) string, caseID string, saved []string) {
 	t.Helper()
 	wiring, err := openCasesWith(getenv, newDemoLedger(t), caseSeams{perUser: true, seal: demoSeal, keySalt: func() []byte { return []byte(demoCaseKeySalt) }, now: func() time.Time { return demoTestNow }})
 	if err != nil {
@@ -311,18 +337,28 @@ func verifyCaseAfterStop(t *testing.T, getenv func(string) string, caseID string
 	var out struct {
 		Items []struct {
 			List string `json:"list"`
+			Text string `json:"text"`
 		} `json:"items"`
 	}
 	if res.Code != 200 || json.Unmarshal(res.Body.Bytes(), &out) != nil {
 		t.Fatalf("GET checklist = %d %.200s", res.Code, res.Body)
 	}
-	got := 0
+	have := map[string]int{}
 	for _, it := range out.Items {
 		if it.List == casestore.ListToDo {
-			got++
+			have[it.Text]++
 		}
 	}
-	if int64(got) < minLines {
-		t.Fatalf("%d to-do lines persisted, but %d writes were acknowledged", got, minLines)
+	missing := 0
+	for _, text := range saved {
+		if have[text] == 0 {
+			missing++
+		}
+	}
+	if missing > 0 {
+		t.Fatalf("%d of %d acknowledged writes are not in the case", missing, len(saved))
+	}
+	if len(saved) == 0 {
+		t.Fatal("no write was acknowledged, nothing was proved")
 	}
 }

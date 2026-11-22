@@ -92,10 +92,12 @@ func (c *config) shutdownRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "stopping"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"state": "stopping"})
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+	// The route answers before the served handler, so its request log never sees this call; leave the line here.
+	log.Print("Shutdown requested over the ui pipe")
 	c.stop()
 }
 
