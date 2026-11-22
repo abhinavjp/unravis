@@ -105,42 +105,6 @@ function render() {
     el('span', '', 'Updated ' + ago(s.at)));
 }
 
-function renderDetail(r) {
-  const d = $('detail'); d.replaceChildren();
-  if (!r) { d.append(el('div', 'empty', 'Select a release.')); return; }
-  d.append(el('h1', '', r.label || r.version));
-  const [word, kind] = status(r);
-  const meta = el('div', 'meta'); meta.append(r.channel + ' channel · ');
-  const t = el('span', 'tag ' + kind, word || 'Not published'); meta.append(t); d.append(meta);
-
-  const lv = snap && snap.live;
-  if (lv && (lv.version || NEXT) === r.version) d.append(el('p', lv.gone ? 'note bad' : 'note', lv.label + (lv.gone ? '' : '. This page reads again every 5 seconds.')));
-  d.append(el('h2', '', 'Release steps'));
-  const ol = el('ol', 'steps');
-  for (const x of r.steps) {
-    const li = el('li'); const g = el('span', 'g tag ' + STEP_KIND[x.state], GLYPH[x.state]); g.setAttribute('aria-hidden', 'true');
-    li.append(g, el('span', '', x.name));
-    const right = el('span', 'at', x.state === 'done' && x.at ? when(x.at) : WORD[x.state]);
-    right.title = WORD[x.state]; li.append(right); ol.append(li);
-    if (x.reason) { const sub = el('li', 'sub'); sub.append(el('span', '', ''), el('span', '', x.reason)); ol.append(sub); }
-  }
-  d.append(ol);
-  if (!r.recorded) d.append(el('p', 'note', 'This PC has no release log for this version, so only Publish and Feed are worked out (from GitHub and the signed feed).'));
-
-  d.append(el('h2', '', 'Facts'));
-  const f = el('dl', 'facts');
-  const add = (k, v) => { f.append(el('dt', '', k)); const dd = el('dd'); if (v instanceof Node) dd.append(v); else dd.textContent = v; f.append(dd); };
-  add('Published', r.published ? when(r.published) : 'Not on GitHub');
-  add('On the signed feed', r.onFeed ? 'Yes, offered now' : 'No');
-  add('Withdrawn', r.withdrawn ? 'Yes, never offered' : 'No');
-  add('Verify', { passed: 'Passed on a clean machine', failed: 'Failed', pending: 'Not finished', unknown: 'Not recorded here' }[r.verify] || '');
-  const links = el('span'); const a = link(r.url, 'Release page'); const b = link(r.runUrl, 'CI run');
-  if (a) links.append(a); if (a && b) links.append('  ·  '); if (b) links.append(b);
-  if (links.childNodes.length) add('Links', links);
-  d.append(f);
-  if (r.reason) d.append(el('p', 'note', 'Last stop reason: ' + r.reason));
-}
-
 function pick(v) {
   selected = v; try { sessionStorage.setItem('rd.sel', v); } catch (e) { /* not kept */ }
   if (snap) render();
@@ -149,6 +113,8 @@ function pick(v) {
 $('list').addEventListener('click', (e) => { const li = e.target.closest('li[data-v]'); if (li) pick(li.dataset.v); });
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target; // typing in a search box, or scrolling a log, must not change the release or refresh
+  if (t && t.closest && t.closest('input, textarea, select, .vbody, .tabs')) return;
   if (e.key === 'r' || e.key === 'R') { load(true); return; }
   const list = shown; // the same rows the page draws, including the Next release row
   const i = list.findIndex((r) => r.version === selected);
