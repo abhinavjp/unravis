@@ -71,7 +71,7 @@ A branch `release-lock` on GitHub holds one file, `lock.json` (no secrets, and n
 
 Not changed: signing, the feed read-back, the withdraw-on-failed-verify, the clean-runner upgrade test, key and passphrase checks, the trusted-key and signing-code gates.
 
-Expected rc: preflight about 45 s, Wait about 4.5 min, Sign about 45 s, Feed 25 s, Verify about 4 min: roughly 11 to 12 min, down from 19 min 53 s. The largest remaining items are CI itself (about 15 min on master, mostly Go tests and screenshots; not part of a release when CI is already green) and the recorder's own first update check (1 to 5 min, set by the recorder).
+Measured on rc.56 (22 Nov 2026, from GitHub run times and the lock record): preflight and tag about 45 s, `release.yml` 5 min 01 s (was 11 min 48 s), verify 1 min 56 s (was 5 min 26 s), and the resumed Sign, Publish, Feed and Verify together 3 min 08 s (was about 7 min). That is about 9 to 10 min end to end, down from 19 min 53 s. rc.56 was not one unbroken run: Sign stopped once (see "Attestation set-up race" below) and was resumed, which also exercised the resume path. The largest remaining items are CI itself (about 15 min on master, mostly Go tests and screenshots; not part of a release when CI is already green) and the recorder's own first update check (1 to 5 min, set by the recorder).
 
 ### 4. BL-194: which Go builds the signing tool
 
@@ -93,4 +93,8 @@ Preflight records two lines in the audit log (`preflight-ok`: `go_installed`, `g
 - The lock is advisory for everything except `Release.ps1`. A token holder can write or delete the branch: that can stall releases or merges, never sign anything (signing decisions come from git, the feed and the checks, not from the lock).
 - Merge holding depends on other sessions reading the lock. Without that, `-LastGreen` and the pin still give a correct release.
 - Releases only run on the PC that holds the keys (`D:\secret`), so the cross-machine lease (180 min) exists for safety, not for normal use.
-- The speed numbers are estimates from step timings until the next real run; the run's own timings replace them (see the rc.56 notes in BACKLOG).
+- The speed numbers are from rc.56 (see above). A clean unbroken run has not been timed yet.
+
+## Attestation set-up race (found on rc.56)
+
+The first version checked the five build attestations side by side. On rc.56 the checks failed with `no valid Sigstore verifiers could be initialized`: `gh` sets up its Sigstore trust root on first use, and five calls doing that at the same moment collided. PR 95: the first file is checked alone, the rest run side by side, and a file whose check failed is checked once more alone. Every file is still checked and one failure still fails the lot. The resumed rc.56 passed after the trust root was set up; the new code path itself is only proven by CI, not yet by a release.

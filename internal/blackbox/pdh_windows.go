@@ -77,7 +77,7 @@ var (
 		}
 		var h uintptr
 		if r, _, _ := procPdhAddEnglishCounter.Call(query, uintptr(unsafe.Pointer(cp)), 0, uintptr(unsafe.Pointer(&h))); r != 0 {
-			return 0, fmt.Errorf("PdhAddEnglishCounter %q: 0x%x", path, r)
+			return 0, &pdhStatusErr{call: "PdhAddEnglishCounter", path: path, code: uint32(r)}
 		}
 		return h, nil
 	}
@@ -88,7 +88,7 @@ var (
 		}
 		var h uintptr
 		if r, _, _ := procPdhAddCounter.Call(query, uintptr(unsafe.Pointer(cp)), 0, uintptr(unsafe.Pointer(&h))); r != 0 {
-			return 0, fmt.Errorf("PdhAddCounter %q: 0x%x", path, r)
+			return 0, &pdhStatusErr{call: "PdhAddCounter", path: path, code: uint32(r)}
 		}
 		return h, nil
 	}
@@ -198,6 +198,9 @@ func newPDHSource(paths []string, tolerant bool) (*PDHSource, error) {
 	if r, _, _ := procPdhOpenQuery.Call(0, 0, uintptr(unsafe.Pointer(&p.query))); r != 0 {
 		return nil, fmt.Errorf("PdhOpenQuery: 0x%x", r)
 	}
+	// Tolerant sources count the plain adds that failed, so an all-absent result
+	// can be told apart from a mixed or real failure (see errPDHAbsent).
+	var addFailed, addAbsent int
 	for _, path := range paths {
 		if !isWildcard(path) {
 			if err := p.roomFor(1); err != nil {
@@ -206,6 +209,10 @@ func newPDHSource(paths []string, tolerant bool) (*PDHSource, error) {
 			}
 			if err := p.addCounter(path, false); err != nil {
 				if tolerant {
+					addFailed++
+					if errors.Is(err, errPDHAbsent) {
+						addAbsent++
+					}
 					continue
 				}
 				p.Close()
@@ -232,6 +239,9 @@ func newPDHSource(paths []string, tolerant bool) (*PDHSource, error) {
 	}
 	if tolerant && len(p.counters) == 0 {
 		p.Close()
+		if addFailed > 0 && addAbsent == addFailed {
+			return nil, fmt.Errorf("%w: %w", errPDHNoCounters, errPDHAbsent)
+		}
 		return nil, errPDHNoCounters
 	}
 	pdhCollectCall(p.query) // one priming collect
