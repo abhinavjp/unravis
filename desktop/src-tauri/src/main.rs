@@ -16,6 +16,8 @@ mod locator;
 #[cfg(windows)]
 mod lockdown;
 #[cfg(windows)]
+mod pipe_peer;
+#[cfg(windows)]
 mod singleton;
 #[cfg(windows)]
 mod spawn;
