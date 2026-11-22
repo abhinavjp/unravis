@@ -134,9 +134,11 @@ func TestReadOpenedSettingsRefusesAReparseLeaf(t *testing.T) {
 	}
 	link := filepath.Join(dir, "settings.json")
 	junction(t, link, target)
-	// The inner reader opens the link itself (OPEN_REPARSE_POINT), so the handle rule is what refuses it.
+	// The inner reader opens the link itself (OPEN_REPARSE_POINT). A junction is a folder, and Windows does not let CreateFile open a folder
+	// without FILE_FLAG_BACKUP_SEMANTICS (the reader never asks for it), so the open itself is refused with access denied (word "access").
+	// Were it ever opened, the handle rule refuses it (folder or link). Either way: no bytes.
 	got, err := readOpenedSettings(link)
-	mustRefuse(t, got, err, "a junction at the handle", WordFolder, WordLink)
+	mustRefuse(t, got, err, "a junction at the handle", WordAccess, WordFolder, WordLink)
 }
 
 func TestReadOpenedSettingsRefusesANonAdminOwner(t *testing.T) {
