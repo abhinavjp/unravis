@@ -6,6 +6,7 @@
 //   UIFIX-04  All operations: first column, pager and header start on one line; the Sources note lines up with the list (BL-477)
 //   UIFIX-05  The selected-lines notes of the timeline and the chart help line are at least 11px (BL-478)
 //   UIFIX-06  Tap targets of 24 x 24 px or more: Daily view, Show matching requests, Help guide index links, Stop showing, Mark the line (BL-475 group 1)
+//   UIFIX-09  Desktop does not move: tables that got bigger tap targets keep every row height and column width (BL-475 group 1)
 //   UIFIX-07  Add files on a phone: the column heads are painted nowhere, yet stay in the page for screen readers (BL-482). A guard only: the finding was a false positive of the audit, so the audit run proves the fix
 //   UIFIX-08  Phone header with "Choose sources" fits the window (BL-472); 390 and 360 px fail on the old header, 320 px is a no-regression case
 import { test, expect, type Page } from '../support/fixtures';
@@ -252,3 +253,77 @@ for (const width of [390, 360, 320]) {
     expect(label.shown).toBeGreaterThan(30);
   });
 }
+
+// BL-475 group 1 makes five kinds of target 24px big without moving anything (padding cancelled by negative margin). The owner rule is that
+// desktop must not change, not even by a sub-pixel. This puts the old rules of these targets back as a stylesheet and compares: font and
+// platform independent, and it fails as soon as a tap-target rule changes the size of its row or column.
+const DEVELOP_RULES: [string, Record<string, string>][] = [
+  ['.daily-open', { display: 'block', padding: '2px 0', margin: '0', 'min-height': '0', transition: 'none' }],
+  ['.breakdown-pick', { padding: '0', margin: '0', 'min-height': '0', transition: 'none' }],
+  ['.bbc-rowbtn', { padding: '0', margin: '0', 'min-height': '0', transition: 'none' }],
+  ['.bbc-x', { padding: '0 6px', margin: '0', 'min-width': '0', 'min-height': '0', transition: 'none' }],
+  ['td .guide-link, th .guide-link', { display: 'inline', padding: '0', margin: '0', 'min-height': '0', transition: 'none' }]
+];
+
+type Shape = { w: number; h: number; rows: number[]; cols: number[] };
+
+/** The table's size now, and with the old rules of the tap targets put back as inline styles. One evaluation, so nothing moves in between. */
+async function shapes(page: Page, table: string): Promise<{ now: Shape; old: Shape; touched: number }> {
+  return page.locator(table).first().evaluate((t, rules) => {
+    const r = (e: Element) => e.getBoundingClientRect();
+    const shape = (): Shape => ({ w: r(t).width, h: r(t).height, rows: [...t.querySelectorAll('tr')].map((x) => r(x).height), cols: [...(t.querySelector('tr')?.children ?? [])].map((x) => r(x).width) });
+    const now = shape();
+    const saved: [HTMLElement, string | null][] = [];
+    for (const [selector, declarations] of rules) {
+      t.querySelectorAll<HTMLElement>(selector).forEach((el) => {
+        saved.push([el, el.getAttribute('style')]);
+        for (const [k, v] of Object.entries(declarations)) el.style.setProperty(k, v, 'important');
+      });
+    }
+    void document.body.offsetHeight;
+    const old = shape();
+    for (const [el, style] of saved) { if (style === null) el.removeAttribute('style'); else el.setAttribute('style', style); }
+    return { now, old, touched: saved.length };
+  }, DEVELOP_RULES);
+}
+
+async function expectSameAsDevelop(page: Page, table: string, label: string): Promise<void> {
+  const { now, old, touched } = await shapes(page, table);
+  expect(touched, label + ': no tap target found to compare').toBeGreaterThan(0);
+  const near = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.05);
+  expect(near([now.w, now.h], [old.w, old.h]), label + ' table size now ' + now.w + ' x ' + now.h + ', with the old rules ' + old.w + ' x ' + old.h).toBe(true);
+  expect(near(now.rows, old.rows), label + ' row heights now ' + now.rows.join(',') + ' with the old rules ' + old.rows.join(',')).toBe(true);
+  expect(near(now.cols, old.cols), label + ' column widths now ' + now.cols.join(',') + ' with the old rules ' + old.cols.join(',')).toBe(true);
+}
+
+test('UIFIX-09a Where is it?: the API groups table keeps every row height', async ({ page }) => {
+  await page.getByRole('button', { name: 'Where is it?', exact: true }).click();
+  await page.locator('summary', { hasText: 'API groups' }).click();
+  await expect(page.locator('button.daily-open').first()).toBeVisible();
+  await expectSameAsDevelop(page, 'table:has(button.daily-open)', 'API groups');
+});
+
+test('UIFIX-09b All operations, Breakdown: the table keeps every row height', async ({ page }) => {
+  await page.getByRole('button', { name: 'All operations', exact: true }).click();
+  await page.getByRole('tab', { name: 'Breakdown' }).click();
+  await expect(page.locator('button.breakdown-pick').first()).toBeVisible();
+  await expectSameAsDevelop(page, 'table:has(button.breakdown-pick)', 'Breakdown');
+});
+
+test('UIFIX-09c Help guide index: the table keeps every row height', async ({ page }) => {
+  await page.getByRole('button', { name: 'Glossary', exact: true }).click();
+  await page.locator('#glossary-title').waitFor();
+  await page.locator('[data-testid=guide-open]').click();
+  await page.locator('[data-testid=guide-nav-index]').click();
+  await expect(page.locator('[data-testid=guide-body] td .guide-link').first()).toBeVisible();
+  await expectSameAsDevelop(page, '[data-testid=guide-body] table:has(.guide-link)', 'Guide index');
+});
+
+test('UIFIX-09d Blackbox charts: the figures table keeps its row heights and column widths', async ({ page }) => {
+  await openBlackbox(page);
+  await page.getByRole('button', { name: /^Open status: web-a/ }).first().click();
+  await page.getByRole('button', { name: 'Open charts' }).first().click();
+  await expect(page.locator('dialog.bbc[open] canvas').first()).toBeVisible();
+  await expect(page.locator('dialog.bbc[open] .bbc-x').first()).toBeVisible();
+  await expectSameAsDevelop(page, 'dialog.bbc[open] table:has(.bbc-x)', 'Charts figures');
+});
