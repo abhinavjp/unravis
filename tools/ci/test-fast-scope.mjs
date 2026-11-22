@@ -1,8 +1,8 @@
 // Self-test of tools/ci/fast-scope.mjs (pure parts). Run: node tools/ci/test-fast-scope.mjs
 import assert from 'node:assert/strict';
-import { classify, withDependents } from './fast-scope.mjs';
+import { classify, withDependents, CROSS_WEB } from './fast-scope.mjs';
 
-const dirs = new Set(['.', 'cmd/unravis-lite', 'internal/store', 'internal/investigate', 'internal/server']);
+const dirs = new Set(['.', 'cmd/unravis-lite', 'cmd/unravis-setup', 'cmd/audit-explorer', 'internal/store', 'internal/investigate', 'internal/server', 'internal/evidence', 'internal/setup']);
 const c = (files) => classify(files, dirs);
 const keys = (x) => ({ notes: x.notes, all: x.all, web: x.web, dirs: [...x.dirs].sort() });
 
@@ -26,10 +26,17 @@ for (const f of ['go.mod', 'go.sum', '.golangci.yml', 'build.ps1']) assert.equal
 assert.deepEqual(keys(c(['web/src/App.svelte'])), { notes: false, all: false, web: true, dirs: [] });
 assert.deepEqual(keys(c(['web/dist/index.html'])).dirs, ['.']);
 // Outside Go: no Go packages, not notes, not web (the rest of the checks still run).
-const o = c(['desktop/src/main.rs', 'tools/e2e/x.mjs', 'tools/ci/x.mjs', '.github/dependabot.yml']);
+const o = c(['desktop/src/main.rs', 'tools/ci/x.mjs', '.github/dependabot.yml']);
 assert.deepEqual(keys(o), { notes: false, all: false, web: false, dirs: [] });
 // A .go file under tools is still Go.
 assert.equal(c(['tools/release/x.go']).gofiles.length, 1);
+// Tests that read other directories (found in the review of PR 126): web/src also tests the Go packages that read it; setup code also tests the gate test.
+assert.deepEqual(keys(c(['web/src/lib/copy/wordings.ts'])), { notes: false, all: false, web: true, dirs: ['internal/evidence', 'internal/server'] });
+assert.deepEqual(keys(c(['internal/setup/plan.go'])).dirs, ['cmd/audit-explorer', 'internal/setup']);
+assert.deepEqual(keys(c(['cmd/unravis-setup/main.go'])).dirs, ['cmd/audit-explorer', 'cmd/unravis-setup']);
+assert.equal(c(['internal/server/routes.go']).web, true);   // web/tests/guidedKept reads it
+assert.equal(c(['internal/store/q.go']).web, false);
+assert.equal(CROSS_WEB.test('tools/e2e/archive/guided/x.json'), true);
 // Windows separators.
 assert.deepEqual(keys(c(['internal\\store\\q.go'])).dirs, ['internal/store']);
 

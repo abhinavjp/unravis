@@ -2,7 +2,7 @@
 //   node tools/ci/fast-scope.mjs [--base HEAD^1] [--head HEAD]     (run from the repo root, after `actions/checkout` fetch-depth 2)
 // Prints key=value lines (written to $GITHUB_OUTPUT when set) and a human summary:
 //   notes   true  only notes changed (docs outside docs/user, .forge, root *.md, LICENSE, NOTICE): nothing to run
-//   all     true  something changed that can break any package (go.mod, go.sum, tools/ci, an unknown path): test every package
+//   all     true  something changed that can break any package (go.mod, go.sum, ci.yml, the baseline, an unknown path): test every package
 //   go      true  Go packages are affected
 //   web     true  web/ changed: type check, tests, build and the committed-build check
 //   gofiles       changed .go files (for the gofmt step)
@@ -18,6 +18,8 @@ export const NOTES = /^(\.forge\/|docs\/|[^/]+\.md$|LICENSE$|NOTICE$)/;
 // Files that can change the result of any test in any package.
 const WIDE = /^(go\.mod$|go\.sum$|go\.work(\.sum)?$|\.golangci[^/]*$|build\.ps1$|\.github\/workflows\/ci\.yml$)/;
 // Paths that are not Go and not read by the Go tests (the desktop shell has its own workflow; other tooling has its own checks).
+// Go and tool paths that the web tests read (web/tests/*.cjs). The web job of fast-gate.yml uses the same list.
+export const CROSS_WEB = /^(internal\/(server|blackbox|calltrace)\/|tools\/e2e\/)/;
 const OUTSIDE_GO = /^(desktop\/|tools\/(ci|e2e|screens|security|desktop|release)\/|\.github\/(?!workflows\/ci\.yml$))/;
 
 /** Path -> what it affects. Pure; `pkgDirs` is the set of directories (relative, '.' for the root) that hold a Go package. */
@@ -38,6 +40,13 @@ export function classify(files, pkgDirs) {
     anyCode = true;
     if (WIDE.test(f)) { out.all = true; out.reasons.push(`${f}: can affect every package`); continue; }
     if (f.endsWith('.go')) out.gofiles.push(f);
+    // Tests that read files of another directory (found by reading the tests; extend when a new one appears):
+    //   internal/evidence and internal/server read web/src/lib/copy (wordings.ts, importCopy.ts);
+    //   cmd/audit-explorer reads cmd/unravis-setup/main.go and internal/setup/*.go (the elevated worker never starts unravis.exe);
+    //   the web tests read internal/server/routes.go, internal/blackbox, internal/calltrace and tools/e2e/archive.
+    if (f.startsWith('web/src/lib/copy/')) { out.dirs.add('internal/evidence'); out.dirs.add('internal/server'); }
+    if (/^(cmd\/unravis-setup\/|internal\/setup\/)/.test(f)) out.dirs.add('cmd/audit-explorer');
+    if (CROSS_WEB.test(f)) { out.web = true; out.reasons.push(`${f}: read by the web tests`); }
     if (f.startsWith('web/dist/')) { out.web = true; out.dirs.add('.'); out.reasons.push(`${f}: committed web build, embedded by the root package`); continue; }
     if (f.startsWith('web/')) { out.web = true; out.reasons.push(`${f}: web`); continue; }
     if (OUTSIDE_GO.test(f) && !f.endsWith('.go')) { out.reasons.push(`${f}: not read by the Go tests`); continue; }
@@ -78,14 +87,17 @@ function main() {
     return;
   }
   // One `go list` gives every package, its directory and its imports (including the imports of its tests).
-  const rows = execFileSync('go', ['list', '-f', '{{.ImportPath}}|{{.Dir}}|{{join .Imports " "}} {{join .TestImports " "}} {{join .XTestImports " "}}', './...'],
-    { encoding: 'utf8', maxBuffer: 64 << 20 }).split('\n').filter(Boolean);
+  // Twice: some imports exist only on Windows (the fast gate also vets for Windows), so the graph is the union of both.
+  const listArgs = ['list', '-f', '{{.ImportPath}}|{{.Dir}}|{{join .Imports " "}} {{join .TestImports " "}} {{join .XTestImports " "}}', './...'];
+  const goList = (goos) => execFileSync('go', listArgs, { encoding: 'utf8', maxBuffer: 64 << 20, env: { ...process.env, GOOS: goos } }).split('\n').filter(Boolean);
+  const rows = [...goList('linux'), ...goList('windows')];
   const root = process.cwd().replace(/\\/g, '/');
   const graph = new Map(), dirOf = new Map(), pkgDirs = new Set();
   for (const r of rows) {
     const [ip, dir, imps] = r.split('|');
     const rel = dir.replace(/\\/g, '/').startsWith(root) ? dir.replace(/\\/g, '/').slice(root.length).replace(/^\//, '') || '.' : dir;
-    graph.set(ip, imps.split(/\s+/).filter(Boolean)); dirOf.set(rel, ip); pkgDirs.add(rel);
+    const list = imps.split(/\s+/).filter(Boolean);
+    graph.set(ip, [...new Set([...(graph.get(ip) || []), ...list])]); dirOf.set(rel, ip); pkgDirs.add(rel);
   }
   const c = classify(files, pkgDirs);
   for (const r of c.reasons) console.log(r);

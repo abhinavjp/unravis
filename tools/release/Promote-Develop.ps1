@@ -37,11 +37,11 @@ function Gh { $out = & gh @args 2>&1; if ($LASTEXITCODE -ne 0) { throw "gh $($ar
 & gh auth status *> $null; if ($LASTEXITCODE -ne 0) { Stop-Here 'gh is not signed in (run: gh auth login).' }
 
 # --- 1. the release lock (read only) ---------------------------------------------------------------------------------
+. (Join-Path $PSScriptRoot 'ReleaseLib.ps1')
 function Get-Lock {
-    $json = & gh api "repos/$Repo/contents/lock.json?ref=release-lock" --jq '.content' 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $json) { return $null }   # no lock branch yet: nobody can hold it
-    $text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((($json -join '') -replace '\s', '')))
-    return $text | ConvertFrom-Json
+    # Read-RemoteLock treats only "no lock branch" (404) as free and THROWS on any other failure (network, rate limit, token),
+    # so a failed read can never look like a free lock.
+    return (Read-RemoteLock $Repo).Record
 }
 $deadline = (Get-Date).AddMinutes($WaitMinutes); $said = $false
 while ($true) {
@@ -70,6 +70,17 @@ if ($cmp.ahead -eq 0) { Write-Host "Nothing to promote: master already contains 
 $lines = @(Gh api "repos/$Repo/compare/${master}...${sha}" --paginate --jq '.commits[] | "- " + (.commit.message | split("\n")[0]) + " (" + .sha[0:7] + ")"')
 Write-Host "Promoting develop up to ${short}: $($cmp.ahead) commit(s) not on master; master is $($cmp.behind) commit(s) ahead of that point."
 $lines | ForEach-Object { Write-Host "  $_" }
+
+# Every commit being promoted must be the merge commit of a pull request merged into develop (no direct push, no admin bypass).
+# The release manager checks the same on master's side (BL-470); this stops it before a promotion pull request exists.
+$shas = @(Gh api "repos/$Repo/compare/${master}...${sha}" --paginate --jq '.commits[].sha') | Where-Object { $_ }
+$unreviewed = @()
+foreach ($c in $shas) {
+    $n = Gh api "repos/$Repo/commits/$c/pulls" --jq "[.[] | select(.merged_at != null and .merge_commit_sha == `"$c`" and .base.ref == `"develop`")] | length"
+    if ([int]$n -lt 1) { $unreviewed += $c.Substring(0, 7) }
+}
+if ($unreviewed.Count) { Stop-Here "These develop commits are not the merge of a pull request into develop: $($unreviewed -join ', '). Promote up to the last good commit with -UpTo, or fix develop by pull request." }
+Write-Host "Every one of the $($shas.Count) commit(s) is the merge of a pull request into develop."
 if ($DryRun) { Write-Host 'Dry run: nothing created.'; exit 0 }
 
 $allowMerge = Gh api "repos/$Repo" --jq '.allow_merge_commit'
@@ -78,7 +89,12 @@ if ($allowMerge -ne 'true') { Stop-Here 'This repository does not allow merge co
 # --- 4. branch, bring master in, pull request ------------------------------------------------------------------------
 $branch = "promote/$short"
 $existing = & gh api "repos/$Repo/git/ref/heads/$branch" --jq '.object.sha' 2>$null
-if ($LASTEXITCODE -eq 0 -and $existing) { Write-Host "Branch $branch already exists; reusing it." }
+if ($LASTEXITCODE -eq 0 -and $existing) {
+    # Reuse only a branch that holds the chosen commit (it may also hold master merged in); anything else is somebody else's work.
+    $st = Gh api "repos/$Repo/compare/${sha}...${branch}" --jq '.status'
+    if ($st -notin 'identical', 'ahead') { Stop-Here "Branch $branch exists but does not contain $short. Delete it on GitHub (or use another -UpTo) and run again." }
+    Write-Host "Branch $branch already exists; reusing it."
+}
 else { $null = Gh api "repos/$Repo/git/refs" -f "ref=refs/heads/$branch" -f "sha=$sha" }
 if ($cmp.behind -gt 0) {
     $null = & gh api "repos/$Repo/merges" -f "base=$branch" -f 'head=master' -f "commit_message=Merge master into $branch" 2>&1
@@ -95,7 +111,8 @@ Merge it with a merge commit (not a squash): the promotion script does that.
 $($lines -join "`n")
 "@
     $url = Gh pr create --repo $Repo --base master --head $branch --title "Promote develop $short to master" --body $body
-    $pr = [int]($url -replace '.*/', '')
+    if ($url -notmatch '/pull/(\d+)') { Stop-Here "Could not read the pull request number from: $url" }
+    $pr = [int]$Matches[1]   # gh may print warnings before the address
     Write-Host "Opened pull request #$pr ($url)."
 }
 if ($NoMerge) { Write-Host 'Stopped before merging (-NoMerge).'; exit 0 }
@@ -103,11 +120,15 @@ if ($NoMerge) { Write-Host 'Stopped before merging (-NoMerge).'; exit 0 }
 # --- 5. wait for `build` ---------------------------------------------------------------------------------------------
 $until = (Get-Date).AddMinutes($CiWaitMinutes); $state = ''
 while ($true) {
-    $roll = & gh pr view $pr --repo $Repo --json statusCheckRollup,mergeStateStatus | ConvertFrom-Json
-    $b = @($roll.statusCheckRollup | Where-Object { $_.name -eq 'build' })
-    if ($b.Count -and $b[0].status -eq 'COMPLETED') {
-        if ($b[0].conclusion -eq 'SUCCESS') { break }
-        Stop-Here "build finished as $($b[0].conclusion) on pull request #$pr. Fix it on develop (or revert the bad commit there), then run again."
+    # Judge only the ci.yml run of THIS pull request (event pull_request, on the head commit), never the checks of other events or
+    # workflows that happen to sit on the same commit (the push run of develop, the fast gate). Its job `build` is the gate.
+    $head = Gh pr view $pr --repo $Repo --json headRefOid --jq '.headRefOid'
+    $runs = @(& gh run list --repo $Repo --workflow ci.yml --event pull_request --commit $head --json databaseId,status,createdAt | ConvertFrom-Json | Sort-Object createdAt -Descending)
+    if ($runs.Count -and $runs[0].status -eq 'completed') {
+        $jobs = (& gh run view $runs[0].databaseId --repo $Repo --json jobs | ConvertFrom-Json).jobs
+        $b = @($jobs | Where-Object { $_.name -eq 'build' })
+        if ($b.Count -and $b[0].conclusion -eq 'success') { break }
+        Stop-Here "build did not pass in the ci.yml run of pull request #$pr (run $($runs[0].databaseId), build: $(if ($b.Count) { $b[0].conclusion } else { 'missing' })). Fix it on develop (or revert the bad commit there), then run again."
     }
     if ((Get-Date) -ge $until) { Stop-Here "build did not finish within $CiWaitMinutes min. Pull request #$pr is left open; run again to carry on." }
     if ($state -ne 'waiting') { Write-Host "Waiting for build on #$pr ..."; $state = 'waiting' }
@@ -118,6 +139,6 @@ Write-Host 'build is green.'
 # --- 6. lock again, then merge (a release may have started while CI ran) ---------------------------------------------
 $lock = Get-Lock
 if ($lock -and $lock.state -eq 'held' -and $lock.holdMerges) { Stop-Here "A release took the lock while CI ran (stage $($lock.stage)). Pull request #$pr stays open and green; run again after the release." }
-& gh pr merge $pr --repo $Repo --merge 2>&1 | Out-Host
+& gh pr merge $pr --repo $Repo --merge --match-head-commit $head 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) { Stop-Here "The merge was refused (master may have moved: run again, it brings master in and waits for build once more)." }
 Write-Host "Promoted develop up to ${short} to master. The full CI run on master's new commit is the one the release manager waits for." -ForegroundColor Green
