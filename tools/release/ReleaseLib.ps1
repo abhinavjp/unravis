@@ -355,6 +355,21 @@ function Test-GeneratedFileList([string[]]$Files) {
     return [pscustomobject]@{ Ok = ($names.Count -gt 0 -and $names.Count -lt 3000 -and $outside.Count -eq 0); Count = $names.Count; Outside = $outside }
 }
 
+# Promote-Develop.ps1, after promote-dist.mjs pushed the generated commit: throws (the message is shown as is) unless the commit sits
+# directly on the head this run checked (exactly one parent, equal to $ExpectedParent) and changes only the generated folders
+# (Test-GeneratedFileList on $Files, as the commit API lists them). A function that throws, so the call site has no condition to get wrong.
+function Assert-DistCommit([string]$DistSha, [string]$ExpectedParent, [string[]]$Parents, [string[]]$Files, [string]$Branch) {
+    $short = if ($DistSha.Length -ge 7) { $DistSha.Substring(0, 7) } else { $DistSha }
+    $parents = @($Parents | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    if ($parents.Count -ne 1 -or $parents[0].ToLowerInvariant() -ne $ExpectedParent.Trim().ToLowerInvariant()) {
+        throw "The web files commit $short is not directly on the head this run checked ($($ExpectedParent.Substring(0, [Math]::Min(7, $ExpectedParent.Length)))): someone pushed to $Branch meanwhile. Nothing was merged. Delete the branch on GitHub if it is not yours, and run again."
+    }
+    $check = Test-GeneratedFileList $Files
+    if (-not $check.Ok) {
+        throw "The web files commit $short changes files outside web/dist, cmd/unravis-setup/ui and cmd/unravis-lite/ui (or none, or too many to check): $(($check.Outside | Select-Object -First 5) -join ', '). Nothing was merged. Delete the branch $Branch on GitHub and run again."
+    }
+}
+
 # Promote-Develop.ps1, re-run on a branch that already exists: the first-parent line of the promote branch from its tip ($Tip) down to
 # the chosen develop commit ($Stop, not included), tip first, as the entries Get-BuriedGeneratedCommits reads. It is a function of its
 # own so Test-ReleaseManager.ps1 can run the very code Promote-Develop runs, over real git, and compare it with Get-PromotionSideCommits.

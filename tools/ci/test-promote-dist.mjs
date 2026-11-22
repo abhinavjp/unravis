@@ -6,7 +6,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { assertFreshClone, buildEnv, copyRoots, gitBaseEnv, sameRoots } from '../release/promote-dist.mjs';
+import { assertFreshClone, authEnv, buildEnv, pushArgs, copyRoots, gitBaseEnv, sameRoots } from '../release/promote-dist.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..');
@@ -341,6 +341,106 @@ test('a process the build left running plants a filter in the commit clone after
   } finally {
     f.cleanup();
   }
+});
+
+test('a late remote.origin.pushurl plus receivepack (planted after the first check) never runs and nothing is pushed', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const leak = join(f.base, 'receivepack-ran.txt');
+    const other = join(f.base, 'other.git');
+    sh(f.base, 'git', ['init', '-q', '--bare', other]);
+    writeFileSync(join(f.base, 'late2.cjs'), `
+      const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
+      const end = Date.now() + 60000;
+      const tick = () => {
+        let hit = '';
+        for (const d of fs.readdirSync(os.tmpdir())) {
+          if (!d.startsWith('unravis-dist-') || d.startsWith('unravis-dist-build-')) continue;
+          const repo = path.join(os.tmpdir(), d, 'repo');
+          let txt = ''; try { txt = fs.readFileSync(path.join(repo, 'web', 'dist', 'index.html'), 'utf8'); } catch {}
+          if (txt.includes('new') && fs.existsSync(path.join(repo, '.git', 'config'))) hit = repo;
+        }
+        if (!hit) { if (Date.now() < end) setTimeout(tick, 2); return; }
+        fs.appendFileSync(path.join(hit, '.git', 'config'), '[remote "origin"]\\n\\tpushurl = ' + ${JSON.stringify(pathToFileURL(other).href)} + '\\n\\treceivepack = \\"sh -c \\'env > ' + ${JSON.stringify(leak)} + '\\'\\"\\n');
+      };
+      tick();
+    `);
+    writeFileSync(join(f.base, 'spawn-late2.cjs'), `require('node:child_process').spawn(process.execPath, [${JSON.stringify(join(f.base, 'late2.cjs'))}], { detached: true, stdio: 'ignore' }).unref();`);
+    const before = remoteHead(f);
+    const r = promote(f, [], { env: { ...process.env, GH_TOKEN: 'tok-from-parent' }, build: 'node ' + JSON.stringify(join(f.base, 'spawn-late2.cjs')) + ' && node build.cjs' });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stderr, /fresh clone/);
+    assert.equal(existsSync(leak), false, 'the planted receivepack ran');
+    assert.equal(remoteHead(f), before, 'nothing was pushed');
+    assert.equal(sh(other, 'git', ['for-each-ref', '--count=1']), '', 'the planted pushurl got nothing');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('assertFreshClone is an allow list: other remote, branch, url and core settings are refused; the clone\'s own are accepted', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const c = join(f.base, 'ok');
+    sh(f.base, 'git', ['clone', '-q', '--template=', '--single-branch', '--branch', 'promote/abc1234', '--depth', '1', f.url, c]);
+    assertFreshClone(c, { remote: f.url, branch: 'promote/abc1234' });
+    assert.throws(() => assertFreshClone(c, { remote: f.url + 'x', branch: 'promote/abc1234' }), /fresh clone/, 'another url');
+    assert.throws(() => assertFreshClone(c, { remote: f.url, branch: 'promote/other' }), /fresh clone/, 'another branch');
+    const plants = {
+      pushurl: ['config', 'remote.origin.pushurl', 'file:///x'],
+      receivepack: ['config', 'remote.origin.receivepack', 'echo'],
+      uploadpack: ['config', 'remote.origin.uploadpack', 'echo'],
+      vcs: ['config', 'remote.origin.vcs', 'ext'],
+      'second remote': ['config', 'remote.evil.url', 'file:///x'],
+      insteadOf: ['config', 'url.file:///x.insteadOf', f.url],
+      'branch merge': ['config', 'branch.promote/abc1234.pushRemote', 'evil'],
+      'core.editor': ['config', 'core.editor', 'x'],
+      'core.sshCommand': ['config', 'core.sshCommand', 'x'],
+      'extra url': ['config', '--add', 'remote.origin.url', 'file:///x'],
+      'user.name': ['config', 'user.name', 'x'],
+    };
+    for (const [name, args] of Object.entries(plants)) {
+      const d = c + '-' + name.replace(/\W/g, '_');
+      sh(f.base, 'git', ['clone', '-q', '--template=', '--single-branch', '--branch', 'promote/abc1234', '--depth', '1', f.url, d]);
+      sh(d, 'git', args);
+      assert.throws(() => assertFreshClone(d, { remote: f.url, branch: 'promote/abc1234' }), /fresh clone/, name);
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a global init.templateDir with hooks does not make the run refuse (the commit clone is made with --template=)', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const tpl = join(f.base, 'tpl');
+    mkdirSync(join(tpl, 'hooks'), { recursive: true });
+    mkdirSync(join(tpl, 'info'), { recursive: true });
+    writeFileSync(join(tpl, 'hooks', 'pre-push'), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(tpl, 'hooks', 'pre-push'), 0o755);
+    writeFileSync(join(tpl, 'info', 'attributes'), '# template\n');
+    const cfg = join(f.base, 'gitconfig');
+    writeFileSync(cfg, '[init]\n\ttemplateDir = ' + tpl.replace(/\\/g, '/') + '\n');
+    const before = remoteHead(f);
+    const r = promote(f, [], { env: { ...process.env, GIT_CONFIG_GLOBAL: cfg } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.notEqual(remoteHead(f), before);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('the push carries the token in the environment only: authEnv and pushArgs (the https path, without network)', () => {
+  const tok = 'ghp_' + 'Abc123456789012345678901234567890123';
+  const e = authEnv({ PATH: '/bin', GH_TOKEN: tok, GITHUB_TOKEN: tok, GIT_DIR: '/x' }, tok);
+  assert.equal(e.GIT_CONFIG_COUNT, '1');
+  assert.equal(e.GIT_CONFIG_KEY_0, 'http.https://github.com/.extraheader');
+  assert.equal(e.GIT_CONFIG_VALUE_0, 'AUTHORIZATION: basic ' + Buffer.from('x-access-token:' + tok).toString('base64'));
+  assert.equal('GH_TOKEN' in e || 'GITHUB_TOKEN' in e || 'GIT_DIR' in e, false, 'no raw token variable next to the header');
+  assert.equal(e.PATH, '/bin');
+  const args = pushArgs('https://github.com/o/r.git', 'promote/abc1234');
+  assert.deepEqual(args, ['push', '--quiet', 'https://github.com/o/r.git', 'HEAD:refs/heads/promote/abc1234']);
+  assert.ok(!args.join(' ').includes(tok) && !args.includes('origin'), 'no token on the command line, no remote name');
 });
 
 test('the build clone is gone before the commit clone exists, and the commit clone is fresh', () => {

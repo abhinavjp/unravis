@@ -205,14 +205,12 @@ if ($distDone.Count -ne 1) { Stop-Here "promote-dist.mjs did not report DIST_COM
 $distSha = (("$($distDone[0])" -replace '^DIST_COMMIT=', '').Trim())
 $expectedHead = if ($distSha -ne 'none') { $distSha } else { $headAfterMerge }
 if ($distSha -ne 'none') {
-    # The web files commit must sit directly on the head this run checked, or a commit pushed during the build would ride under it.
+    # The web files commit must sit directly on the head this run checked (or a commit pushed during the build would ride under it) and
+    # change only the three generated folders (a renamed file counts with its old name too): refused here, before a pull request, not
+    # after the merge by Release.ps1. Assert-DistCommit (ReleaseLib.ps1) throws; there is no condition here to get the wrong way round.
     $distParents = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$distSha" --jq '.parents[].sha')
-    if ($distParents.Count -ne 1 -or $distParents[0].ToLowerInvariant() -ne $headAfterMerge) { Stop-Here "The web files commit $($distSha.Substring(0, 7)) is not directly on the head this run checked ($($headAfterMerge.Substring(0, 7))): someone pushed to $branch meanwhile. Nothing was merged. Delete the branch on GitHub if it is not yours, and run again." }
-    # And it must change only the three generated folders (the same test as the reuse check above; a renamed file counts with its old
-    # name too): a commit that carries anything else is refused here, before a pull request, not after the merge by Release.ps1.
     $distFiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$distSha" --paginate --jq '.files[] | .filename, (.previous_filename // empty)')
-    $distCheck = Test-GeneratedFileList $distFiles
-    if (-not $distCheck.Ok) { Stop-Here "The web files commit $($distSha.Substring(0, 7)) changes files outside web/dist, cmd/unravis-setup/ui and cmd/unravis-lite/ui (or none, or too many to check): $(($distCheck.Outside | Select-Object -First 5) -join ', '). Nothing was merged. Delete the branch $branch on GitHub and run again." }
+    try { Assert-DistCommit $distSha $headAfterMerge $distParents $distFiles $branch } catch { Stop-Here $_.Exception.Message }
 }
 function Assert-HeadIsExpected([string]$Actual) { try { Assert-PromotionHead $expectedHead $Actual $branch } catch { Stop-Here $_.Exception.Message } }
 Assert-HeadIsExpected ((Invoke-Gh api "repos/$Repo/git/ref/heads/$branch" --jq '.object.sha').ToLowerInvariant())

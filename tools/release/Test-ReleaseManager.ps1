@@ -472,7 +472,20 @@ try {
     Assert-That 'file list: a name that only starts like a folder is refused (web/distance/x, web/dist)' ((-not (Test-List 'web/distance/x.js').Ok) -and (-not (Test-List 'web/dist').Ok))
     Assert-That 'file list: line ends from a Windows gh are tolerated' ((Test-List "web/dist/a.js`r", "web/dist/b.js`r").Ok)
     Assert-That 'file list: 3000 names or more is not trusted, 2999 is' ((-not (Test-List (1..3000 | ForEach-Object { "web/dist/f$_.js" })).Ok) -and (Test-List (1..2999 | ForEach-Object { "web/dist/f$_.js" })).Ok)
-    Assert-That 'promote: both the reuse check and the pushed commit use that function' ([regex]::Matches($pd, 'Test-GeneratedFileList').Count -eq 2 -and $pd.IndexOf('Test-GeneratedFileList $distFiles') -lt $pd.IndexOf('gh pr list') -and ([regex]::Matches($pd, 'previous_filename')).Count -eq 2)
+    # The check on the pushed commit, as a function that throws (Promote-Develop calls it inside try/catch -> Stop-Here).
+    $head40 = 'c' * 40; $dist40 = 'd' * 40
+    function Get-DistProblem([string[]]$Parents, [string[]]$Files) { return Get-ThrownMessage { Assert-DistCommit $dist40 $head40 $Parents $Files 'promote/ddddddd' } }
+    Assert-That 'dist commit: on the checked head and only generated files: accepted' ($null -eq (Get-DistProblem @($head40) @('web/dist/index.html', 'cmd/unravis-lite/ui/a.js')))
+    Assert-That 'dist commit: another parent is refused (someone pushed meanwhile)' ((Get-DistProblem @('e' * 40) @('web/dist/index.html')) -match 'not directly on the head')
+    Assert-That 'dist commit: two parents is refused' ((Get-DistProblem @($head40, 'e' * 40) @('web/dist/index.html')) -match 'not directly on the head')
+    Assert-That 'dist commit: no parent is refused' ((Get-DistProblem @() @('web/dist/index.html')) -match 'not directly on the head')
+    Assert-That 'dist commit: an upper-case parent sha is the same sha' ($null -eq (Get-DistProblem @($head40.ToUpperInvariant()) @('web/dist/index.html')))
+    Assert-That 'dist commit: an extra file is refused and named' ((Get-DistProblem @($head40) @('web/dist/index.html', 'tools/x.ps1')) -match 'tools/x\.ps1')
+    Assert-That 'dist commit: a rename out of src is refused (previous_filename in the list)' ((Get-DistProblem @($head40) @('web/dist/a.js', 'web/src/a.js')) -match 'web/src/a\.js')
+    Assert-That 'dist commit: no changed file is refused' ($null -ne (Get-DistProblem @($head40) @()))
+    $pdRaw = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Promote-Develop.ps1')
+    Assert-That 'promote: the pushed commit is checked by Assert-DistCommit inside try/catch Stop-Here, before the pull request, with the previous_filename listing' ($pdRaw -match 'try \{ Assert-DistCommit \$distSha \$headAfterMerge \$distParents \$distFiles \$branch \} catch \{ Stop-Here' -and $pdRaw.IndexOf('Assert-DistCommit $distSha') -lt $pdRaw.IndexOf('gh pr list') -and ([regex]::Matches($pdRaw, 'previous_filename')).Count -eq 2)
+    Assert-That 'promote: the reuse check uses Test-GeneratedFileList' ($pdRaw -match '\$isGenerated = \(Test-GeneratedFileList \$gfiles\)\.Ok')
 
     # ---- promotion safety (SUP-1): only the head that was built and checked is merged; "Merge master into" is a claim, not a proof ----
     $sha40 = 'a' * 40; $other40 = 'b' * 40
