@@ -7,6 +7,7 @@
   import { blackboxApi, shownTime, type BlackboxItem } from '../src/lib/blackbox';
   import { hasSessionToken, NO_SESSION_MESSAGE } from '../src/lib/api';
   import { theme } from '../src/lib/theme.svelte';
+  import { timeZone } from '../src/lib/timeZone.svelte';
 
   let item = $state<BlackboxItem | null>(null);
   let problem = $state('');
@@ -51,8 +52,8 @@
       {#if item.facts}
         <dl>
           <div><dt>Host</dt><dd>{item.facts.host}</dd></div>
-          <div><dt>First reading</dt><dd>{shownTime(item.facts.firstSample)}</dd></div>
-          <div><dt>Last reading</dt><dd>{shownTime(item.facts.lastSample)}</dd></div>
+          <div><dt>First reading</dt><dd>{shownTime(item.facts.firstSample, timeZone.zone)}</dd></div>
+          <div><dt>Last reading</dt><dd>{shownTime(item.facts.lastSample, timeZone.zone)}</dd></div>
           <div><dt>Readings</dt><dd>{item.facts.samples}</dd></div>
           <div><dt>Gaps</dt><dd>{item.facts.gaps}</dd></div>
         </dl>
@@ -80,7 +81,7 @@
   dd { margin: 0; }
   .actions { display: flex; gap: 8px; margin-top: 6px; }
   button { padding: 6px 12px; border: 1px solid var(--control-line); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
-  button.primary { background: var(--accent); color: var(--on-accent, #fff); border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   .tone { font-weight: 600; }
   .tone.bad { color: var(--bad); }
   .note { color: var(--text-muted, inherit); font-size: 12px; }
