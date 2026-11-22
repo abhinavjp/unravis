@@ -36,17 +36,22 @@ var redactions = []struct {
 	{regexp.MustCompile(`(?i)ubk-[a-z0-9-]*`), "ubk-[hidden]"},
 	{regexp.MustCompile(`(?i)([#?&](?:t|k|key|token|launch)=)[^\s&"']+`), "${1}[hidden]"},
 	// XML: <password>x y</password> (the tags stay) and web.config pairs <add key="Password" value="x y"/>, the value before or after the key.
-	{regexp.MustCompile(`(?is)(<` + xmlKeyName + `(?:\s[^<>]*)?>)(?:<!\[CDATA\[.*?\]\]>|[^<]*)(</` + xmlKeyName + `\s*>)`), "${1}[hidden]${2}"},
+	{regexp.MustCompile(`(?is)(<` + xmlKeyName + `(?:\s[^<>]*)?>)(?:\s*<!\[CDATA\[.*?\]\]>\s*|[^<]*)(</` + xmlKeyName + `\s*>)`), "${1}[hidden]${2}"},
+	{regexp.MustCompile(`(?is)(<[\w:.-]+\s[^<>]*?` + xmlKeyAttr + `(?:[^<>]*[^<>/])?>\s*(?:<value>\s*)?)(?:\s*<!\[CDATA\[.*?\]\]>\s*|[^<]*)`), "${1}[hidden]"},
 	{regexp.MustCompile(`(?i)(<[\w:.-]+\s[^<>]*?` + xmlKeyAttr + `[^<>]*?\bvalue\s*=\s*)(?:"[^"]*"|'[^']*')`), `${1}"[hidden]"`},
 	{regexp.MustCompile(`(?i)(<[\w:.-]+\s[^<>]*?\bvalue\s*=\s*)(?:"[^"]*"|'[^']*')([^<>]*?` + xmlKeyAttr + `)`), `${1}"[hidden]"${2}`},
 	// A password in a URL query string (?password=x&y=1) ends at "&", ";", "," or a space.
-	{regexp.MustCompile(`(?i)([?&]` + loginKey + `[ \t]*[=:][ \t]*)(?:` + quotedOrBraced + `|[^\s&;,]+)`), "${1}[hidden]"},
+	{regexp.MustCompile(`(?i)([?&](?:password|passwd|pwd)[ \t]*[=:][ \t]*)(?:` + quotedOrBraced + `|[^\s&;,]+)`), "${1}[hidden]"},
+	// A prefixed key after ?/& (?db_password=x) is taken to the next "&", ";" or "," or the end of the line, so an unencoded space does not leave a tail.
+	{regexp.MustCompile(`(?i)([?&](?:[\w.-]+(?:password|passwd|pwd)|[\w.-]*[_.-]pass)[ \t]*[=:][ \t]*)(?:` + quotedOrBraced + `|[^&;,\r\n]+)`), "${1}[hidden]"},
 	// Any other password key: a password may hold spaces, so an unquoted value runs to the next ";" or the end of the line.
 	// When nothing follows the key on its line, the value is the text after one line break; blank lines end the search.
 	{regexp.MustCompile(`(?im)(^|[^?&\w.-])(` + loginKey + `[ \t]*=[ \t]*)` + loginValue), "${1}${2}[hidden]"},
-	// The colon form (password: x, DB_PASSWORD: x, "password": "x", 'pwd': 'x') counts only when the key starts a line or follows a
-	// space, quote, "{", "[", "(" or ",". "password policy: 8" and "the password was wrong" have no colon right after the key and stay.
-	{regexp.MustCompile(`(?im)(^|[\s"'{\[(,])([\w.-]*(?:password|passwd|pwd)["']?[ \t]*:[ \t]*)` + loginValue), "${1}${2}[hidden]"},
+	// The colon form (password: x, DB_PASSWORD: x, "password": "x", 'pwd': 'x') counts when the key is a whole token (not after a letter,
+	// digit, "_", ".", "-", "?" or "&") with the colon right after it. "password policy: 8" and "the password was wrong" stay.
+	{regexp.MustCompile(`(?im)(^|[^?&\w.-])([\w.-]*(?:password|passwd|pwd)["']?[ \t]*:[ \t]*)` + loginValue), "${1}${2}[hidden]"},
+	// The quoted-key JSON or repr form of the other keys ("db_pass": "x", 'client_secret': 'x', "refresh_token": 12345).
+	{regexp.MustCompile(`(?i)(["'](?:[\w.-]*(?:secret|token)|[\w.-]*[_.-]pass|pass)["'][ \t]*:[ \t]*)(?:` + quotedOrBraced + `|-?[0-9][^\s,}\]]*|true|false|null)`), "${1}[hidden]"},
 	{regexp.MustCompile(`(?i)\b(secret|readkey)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s;,]+)`), "${1}${2}[hidden]"},
 }
 

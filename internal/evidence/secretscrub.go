@@ -27,7 +27,9 @@ const loginKeyNames = `(?:password|passwd|pwd)`
 
 // secretValue is the value after "=" or ":" of the other keys: a quoted string,
 // or a run of characters up to a space, ";", ",", "&" or a quote.
-const secretValue = `(?:` + quotedString + `|[^\s;,&"']+)`
+// The escaped forms come first; the plain forms follow so a value that ends in a
+// backslash (secret="abc\") or has an odd quote still goes whole.
+const secretValue = `(?:` + quotedString + `|"[^"]*"|'[^']*'|[^\s;,&"']+)`
 
 // secretConnPair is one key=value pair of a connection string.
 const secretConnPair = `(?:(?:server|data source|address|addr|network address|initial catalog|database|user id|uid|user|integrated security|trusted_connection|host)\s*=\s*` + secretValue +
@@ -39,8 +41,9 @@ const accessKeyNames = `(?:api[_ -]?key|account[_ -]?key|access[_ -]?key|shared[
 // The XML patterns keep the tags and attribute names and replace only the value.
 const (
 	xmlKeyName               = `[\w.:-]*(?:password|passwd|pwd)`
-	xmlElementPattern        = `(?is)(<` + xmlKeyName + `(?:\s[^<>]*)?>)(?:<!\[CDATA\[.*?\]\]>|[^<]*)(</` + xmlKeyName + `\s*>)`
+	xmlElementPattern        = `(?is)(<` + xmlKeyName + `(?:\s[^<>]*)?>)(?:\s*<!\[CDATA\[.*?\]\]>\s*|[^<]*)(</` + xmlKeyName + `\s*>)`
 	xmlKeyAttr               = `\b(?:key|name)\s*=\s*(?:"` + xmlKeyName + `"|'` + xmlKeyName + `')`
+	xmlKeyedElementPattern   = `(?is)(<[\w:.-]+\s[^<>]*?` + xmlKeyAttr + `(?:[^<>]*[^<>/])?>\s*(?:<value>\s*)?)(?:\s*<!\[CDATA\[.*?\]\]>\s*|[^<]*)`
 	xmlAttrKeyFirstPattern   = `(?i)(<[\w:.-]+\s[^<>]*?` + xmlKeyAttr + `[^<>]*?\bvalue\s*=\s*)(?:"[^"]*"|'[^']*')`
 	xmlAttrValueFirstPattern = `(?i)(<[\w:.-]+\s[^<>]*?\bvalue\s*=\s*)(?:"[^"]*"|'[^']*')([^<>]*?` + xmlKeyAttr + `)`
 )
@@ -53,6 +56,7 @@ var xmlScrubbers = []struct {
 	repl string
 }{
 	{regexp.MustCompile(xmlElementPattern), "${1}" + secretRemoved + "${2}"},
+	{regexp.MustCompile(xmlKeyedElementPattern), "${1}" + secretRemoved},
 	{regexp.MustCompile(xmlAttrKeyFirstPattern), `${1}"` + secretRemoved + `"`},
 	{regexp.MustCompile(xmlAttrValueFirstPattern), `${1}"` + secretRemoved + `"${2}`},
 }
@@ -69,6 +73,8 @@ var secretScrubbers = []*regexp.Regexp{
 	// db_pass=x: "pass" counts only after a separator and only with "=", so
 	// "boarding-pass: gate 4" and "bypass=1" are left alone.
 	regexp.MustCompile(`(?i)[_.-]pass["']?[ \t]*=[ \t]*` + valueToSemicolon),
+	// {"db_pass": "x"} and {'pass': 'x'}: the quoted JSON or repr form of "pass".
+	regexp.MustCompile(`(?i)(?:[_.-]pass|["']pass)["']\s*:[ \t]*` + valueToSemicolon),
 	// scheme://anything, which includes mongodb://user:pw@host and https://host?token=x.
 	regexp.MustCompile(`\S*://\S*`),
 	// One key pair, plain or JSON form (`"api_key":"x"`).
@@ -77,7 +83,7 @@ var secretScrubbers = []*regexp.Regexp{
 	// JSON form (a closing quote after the key) or before a quoted value, so
 	// "token: expired" is left alone.
 	regexp.MustCompile(`(?i)(?:token|secret)(?:["']\s*[=:]|\s*=)\s*` + secretValue),
-	regexp.MustCompile(`(?i)(?:token|secret)\s*:\s*(?:` + quotedString + `)`),
+	regexp.MustCompile(`(?i)(?:token|secret)\s*:\s*(?:` + quotedString + `|"[^"]*"|'[^']*')`),
 	// A bearer token.
 	regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+/=-]{8,}`),
 	// An Authorization Basic credential.

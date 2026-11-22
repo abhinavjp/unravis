@@ -3,9 +3,11 @@ package applog
 import (
 	"bytes"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 type leakyStringer struct{ v string }
@@ -87,7 +89,8 @@ func TestSanitizeAttrRedactsByKey(t *testing.T) {
 	for _, key := range []string{
 		"password", "Password", "passwd", "pwd", "secret", "token", "apikey", "api_key", "api-key", "ApiKey", "accesskey", "access_key",
 		"accountkey", "sharedaccesskey", "authorization", "Authorization", "DB_PASSWORD", "mysql.pwd", "client_secret", "refresh_token",
-		"X-Api-Key", "db_pass",
+		"X-Api-Key", "db_pass", "cookie", "Cookie", "set-cookie", "Set-Cookie", "credentials", "credential", "cred", "private_key", "privatekey",
+		"passphrase", "key_passphrase", "dsn", "DSN", "connection_string", "ConnectionString", "pgpass", "PGPASS",
 	} {
 		t.Run(key, func(t *testing.T) {
 			var buf bytes.Buffer
@@ -130,4 +133,94 @@ func TestSanitizeAttrRedactsByKey(t *testing.T) {
 			t.Errorf("line %q", got)
 		}
 	})
+}
+
+// A group, or a WithGroup, named like a secret hides everything below it.
+func TestSanitizeAttrHidesSecretGroups(t *testing.T) {
+	newLogger := func(buf *bytes.Buffer) *slog.Logger {
+		return slog.New(sanitizeHandler{inner: slog.NewTextHandler(buf, nil)})
+	}
+	t.Run("Group", func(t *testing.T) {
+		var buf bytes.Buffer
+		newLogger(&buf).Info("m", slog.Group("password", "value", "Secr3tG", "n", 5), slog.Group("db", "host", "h1"))
+		got := buf.String()
+		if strings.Contains(got, "Secr3tG") || strings.Contains(got, "password.n=5") || !strings.Contains(got, "db.host=h1") {
+			t.Errorf("line %q", got)
+		}
+	})
+	t.Run("WithGroup", func(t *testing.T) {
+		var buf bytes.Buffer
+		newLogger(&buf).WithGroup("credentials").Info("m", "value", "Secr3tW")
+		if got := buf.String(); strings.Contains(got, "Secr3tW") {
+			t.Errorf("line %q", got)
+		}
+	})
+	t.Run("WithGroup then With", func(t *testing.T) {
+		var buf bytes.Buffer
+		newLogger(&buf).WithGroup("secret").With("value", "Secr3tWW").Info("m")
+		if got := buf.String(); strings.Contains(got, "Secr3tWW") {
+			t.Errorf("line %q", got)
+		}
+	})
+	t.Run("a plain group is untouched", func(t *testing.T) {
+		var buf bytes.Buffer
+		newLogger(&buf).WithGroup("db").Info("m", "host", "h1")
+		if got := buf.String(); !strings.Contains(got, "db.host=h1") {
+			t.Errorf("line %q", got)
+		}
+	})
+}
+
+// Header-like values hide the secret entries by key, whatever the value looks like.
+func TestSanitizeAttrHidesSecretHeaderValues(t *testing.T) {
+	for name, val := range map[string]any{
+		"http.Header":         http.Header{"X-Api-Key": {"Secr3tH"}, "Accept": {"*/*"}},
+		"map of string lists": map[string][]string{"Authorization": {"Secr3tH"}, "Accept": {"*/*"}},
+		"map of strings":      map[string]string{"Set-Cookie": "Secr3tH", "Accept": "*/*"},
+		"cookie header":       http.Header{"Cookie": {"sid=Secr3tH"}, "Accept": {"*/*"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			slog.New(sanitizeHandler{inner: slog.NewTextHandler(&buf, nil)}).Info("m", "headers", val)
+			got := buf.String()
+			if strings.Contains(got, "Secr3tH") || !strings.Contains(got, "Accept") {
+				t.Errorf("line %q", got)
+			}
+		})
+	}
+}
+
+// A nil pointer whose MarshalText or Error has a value receiver must not panic the logger.
+func TestSanitizeAttrNilPointerValues(t *testing.T) {
+	var tp *time.Time
+	var buf bytes.Buffer
+	l := slog.New(sanitizeHandler{inner: slog.NewTextHandler(&buf, nil)})
+	l.Info("m", "t", tp, "err", error((*nilError)(nil)))
+	if got := buf.String(); !strings.Contains(got, "t=") || !strings.Contains(got, "err=") {
+		t.Errorf("line %q", got)
+	}
+}
+
+type nilError struct{ msg string }
+
+func (e nilError) Error() string { return e.msg }
+
+// Every attribute pays for the key check, so it must not allocate for an ordinary key.
+func TestSanitizeAttrKeyCheckIsCheap(t *testing.T) {
+	a := slog.Int("rows", 3)
+	if n := testing.AllocsPerRun(100, func() { _ = sanitizeAttr(a) }); n > 1 {
+		t.Errorf("%v allocations for an int attribute", n)
+	}
+	b := slog.Int("db_rows", 3)
+	if n := testing.AllocsPerRun(100, func() { _ = sanitizeAttr(b) }); n > 2 {
+		t.Errorf("%v allocations for a key with a separator", n)
+	}
+}
+
+func BenchmarkSanitizeAttrInt(b *testing.B) {
+	a := slog.Int("rows", 3)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = sanitizeAttr(a)
+	}
 }

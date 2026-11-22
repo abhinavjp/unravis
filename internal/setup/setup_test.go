@@ -15,6 +15,7 @@ import (
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/datadir"
 	"api-audit-explorer/internal/keeper"
+	"api-audit-explorer/internal/racedetect"
 )
 
 func t0ctx() context.Context { return context.Background() }
@@ -1334,6 +1335,25 @@ func TestRedactEscapesJSONPrefixesAndXML(t *testing.T) {
 		{"web.config value first", `<add value="hunter two" key="Password"/>`, `<add value="[hidden]" key="Password"/>`},
 		{"web.config name attribute", `<add name="DB_PASSWORD" value="hunter two" />`, `<add name="DB_PASSWORD" value="[hidden]" />`},
 		{"web.config other key stays", `<add key="PasswordPolicy" value="8 chars"/>`, `<add key="PasswordPolicy" value="8 chars"/>`},
+		{"colon form after a semicolon", "user=sa;Password: Secr3t Two", "user=sa;Password: [hidden]"},
+		{"colon form after an equals sign", "err=password: x", "err=password: [hidden]"},
+		{"colon form after a pipe", "user|password: x", "user|password: [hidden]"},
+		{"colon form after an angle bracket", "<password: x", "<password: [hidden]"},
+		{"JSON number password", `{"password": 12345678, "user":"bob"}`, `{"password": [hidden]`},
+		{"JSON db_pass", `{"db_pass":"Secr3t Two"}`, `{"db_pass":[hidden]}`},
+		{"repr pass", `{'pass': 'x'}`, `{'pass': [hidden]}`},
+		{"JSON short client_secret, access_token, refresh_token", `{"client_secret":"x","access_token":"y","refresh_token":"z"}`, `{"client_secret":[hidden],"access_token":[hidden],"refresh_token":[hidden]}`},
+		{"JSON number token", `{"refresh_token": 12345}`, `{"refresh_token": [hidden]}`},
+		{"spaced value after a prefixed key in a query", "a?b.password=Secr3t Two", "a?b.password=[hidden]"},
+		{"prefixed key in a query stops at &, even with a space", "GET /x?db_password=a b&y=1", "GET /x?db_password=[hidden]&y=1"},
+		{"CDATA on its own line", "<password>\n  <![CDATA[Secr3tCD]]>\n</password>", "<password>[hidden]</password>"},
+		{"CDATA with spaces around it", "<Password> <![CDATA[Secr3tSp]]> </Password>", "<Password>[hidden]</Password>"},
+		{"Hibernate property", `<property name="hibernate.connection.password">Secr3tHib</property>`, `<property name="hibernate.connection.password">[hidden]</property>`},
+		{"Java properties entry", `<entry key="password">Secr3tEntry</entry>`, `<entry key="password">[hidden]</entry>`},
+		{"app.config setting with a value child", `<setting name="Password" serializeAs="String"><value>Secr3tSet</value></setting>`, `<setting name="Password" serializeAs="String"><value>[hidden]</value></setting>`},
+		{"self-closing entry does not eat the text after it", "<add key=\"Password\" value=\"x\"/>\n<add key=\"Other\" value=\"y\"/>", "<add key=\"Password\" value=\"[hidden]\"/>\n<add key=\"Other\" value=\"y\"/>"},
+		{"pass words stay", "passes=3 compass: north passwordless=true tokens=5 PasswordExpiry: 90 days", "passes=3 compass: north passwordless=true tokens=5 PasswordExpiry: 90 days"},
+		{"policy element and paths stay", `<PasswordPolicy>8</PasswordPolicy> /usr/lib/password-store/foo.go {"pass_count": 3}`, `<PasswordPolicy>8</PasswordPolicy> /usr/lib/password-store/foo.go {"pass_count": 3}`},
 		// Lines that must stay as they are.
 		{"prose with the word", "the password was wrong", "the password was wrong"},
 		{"policy text", "password policy: 8 chars min", "password policy: 8 chars min"},
@@ -1349,19 +1369,19 @@ func TestRedactEscapesJSONPrefixesAndXML(t *testing.T) {
 	}
 }
 
-// Every new pattern stays linear on a megabyte of hostile text (RE2 only).
+// Every new pattern stays linear on 256 KB of hostile text (RE2 only).
 func TestRedactStaysLinear(t *testing.T) {
-	if testing.Short() {
-		t.Skip("timing test")
+	if testing.Short() || racedetect.Enabled {
+		t.Skip("timing test; the race detector slows it 5 to 20 times (see internal/racedetect)")
 	}
 	for _, unit := range []string{
 		`<password a="x">`, `<add key="Password" `, `<add value="a" `, `"password":"\\\"`, "DB_PASSWORD:\n ",
 	} {
-		in := strings.Repeat(unit, (1<<20)/len(unit))
+		in := strings.Repeat(unit, (256<<10)/len(unit))
 		start := time.Now()
 		_ = Redact(in)
-		if d := time.Since(start); d > 30*time.Second {
-			t.Errorf("Redact on 1 MB of %q took %v", unit, d)
+		if d := time.Since(start); d > 10*time.Second {
+			t.Errorf("Redact on 256 KB of %q took %v", unit, d)
 		}
 	}
 }

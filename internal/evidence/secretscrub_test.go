@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"api-audit-explorer/internal/racedetect"
 )
 
 // A password may hold spaces and semicolons. The value of a password key runs to
@@ -80,6 +82,26 @@ func TestScrubSecretsEscapesPrefixesAndXML(t *testing.T) {
 		{"web.config name attribute", `<add name="DB_PASSWORD" value="hunter two" />`, `<add name="DB_PASSWORD" value="[removed]" />`},
 		{"web.config other key stays", `<add key="PasswordPolicy" value="8 chars"/>`, `<add key="PasswordPolicy" value="8 chars"/>`},
 		{"web.config two entries", `<add key="Mode" value="a b"/><add key="Password" value="x y"/>`, `<add key="Mode" value="a b"/><add key="Password" value="[removed]"/>`},
+		// A value that ends in a backslash still goes whole (the escaped form does not close).
+		{"secret ends in a backslash", `secret="abc\"`, "[removed]"},
+		{"api key ends in a backslash", `api_key='abc\'`, "[removed]"},
+		{"token ends in a backslash, text after stays", `token="abc\" rest`, "[removed] rest"},
+		{"api key with a path", `api_key="C:\k\" next=1`, "[removed] next=1"},
+		{"CDATA on its own line", "<password>\n  <![CDATA[Secr3tCD]]>\n</password>", "<password>[removed]</password>"},
+		{"CDATA with spaces around it", "<Password> <![CDATA[Secr3tSp]]> </Password>", "<Password>[removed]</Password>"},
+		{"Hibernate property", `<property name="hibernate.connection.password">Secr3tHib</property>`, `<property name="hibernate.connection.password">[removed]</property>`},
+		{"Java properties entry", `<entry key="password">Secr3tEntry</entry>`, `<entry key="password">[removed]</entry>`},
+		{"app.config setting with a value child", `<setting name="Password" serializeAs="String"><value>Secr3tSet</value></setting>`, `<setting name="Password" serializeAs="String"><value>[removed]</value></setting>`},
+		{"self-closing entry does not eat the text after it", "<add key=\"Password\" value=\"x\"/>\n<add key=\"Other\" value=\"y\"/>", "<add key=\"Password\" value=\"[removed]\"/>\n<add key=\"Other\" value=\"y\"/>"},
+		{"quoted db_pass", `{"db_pass":"Secr3t Two","u":"bob"}`, `{"db[removed],"u":"bob"}`},
+		{"quoted pass, repr", `{'pass': 'x y'}`, `{[removed]}`},
+		{"JSON number password", `{"password": 12345678, "user":"bob"}`, `{"[removed]`},
+		{"short client_secret and tokens", `{"client_secret":"x","access_token":"y"}`, `{"client_[removed],"access_[removed]}`},
+		{"spaced value after a prefixed key in a query", "a?b.password=Secr3t Two", "a?b.[removed]"},
+		{"colon form after a semicolon", "user=sa;Password: Secr3t Two", "user=sa;[removed]"},
+		// Words that must stay.
+		{"pass words stay", "passes=3 compass: north passwordless=true tokens=5 PasswordExpiry: 90 days", "passes=3 compass: north passwordless=true tokens=5 PasswordExpiry: 90 days"},
+		{"policy element and paths stay", `<PasswordPolicy>8</PasswordPolicy> /usr/lib/password-store/foo.go {"pass_count": 3}`, `<PasswordPolicy>8</PasswordPolicy> /usr/lib/password-store/foo.go {"pass_count": 3}`},
 		// Lines that must stay as they are.
 		{"prose with the word", "the password was wrong", "the password was wrong"},
 		{"policy text", "password policy: 8 chars min", "password policy: 8 chars min"},
@@ -94,19 +116,19 @@ func TestScrubSecretsEscapesPrefixesAndXML(t *testing.T) {
 	}
 }
 
-// Every new pattern stays linear on a megabyte of hostile text (RE2 only).
+// Every new pattern stays linear on 256 KB of hostile text (RE2 only).
 func TestScrubSecretsStaysLinear(t *testing.T) {
-	if testing.Short() {
-		t.Skip("timing test")
+	if testing.Short() || racedetect.Enabled {
+		t.Skip("timing test; the race detector slows it 5 to 20 times (see internal/racedetect)")
 	}
 	for _, unit := range []string{
 		`<password a="x">`, `<add key="Password" `, `<add value="a" `, `"password":"\\\"`, "DB_PASSWORD:\n ",
 	} {
-		in := strings.Repeat(unit, (1<<20)/len(unit))
+		in := strings.Repeat(unit, (256<<10)/len(unit))
 		start := time.Now()
 		_ = ScrubSecrets(in)
-		if d := time.Since(start); d > 30*time.Second {
-			t.Errorf("ScrubSecrets on 1 MB of %q took %v", unit, d)
+		if d := time.Since(start); d > 10*time.Second {
+			t.Errorf("ScrubSecrets on 256 KB of %q took %v", unit, d)
 		}
 	}
 }

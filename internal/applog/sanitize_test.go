@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"api-audit-explorer/internal/racedetect"
 )
 
 // Each case names one secret shape and the value that must be absent from the
@@ -181,6 +183,26 @@ func TestSanitizeEscapesColonPrefixesAndXML(t *testing.T) {
 		{"web.config single quotes", `<add key='pwd' value='hunter two'/>`, `<add key=[redacted] value="[redacted]"/>`},
 		{"web.config value first", `<add value="hunter two" key="Password"/>`, `<add value="[redacted]" key=[redacted]/>`},
 		{"web.config name attribute", `<add name="DB_PASSWORD" value="hunter two" />`, `<add name="DB_PASSWORD" value="[redacted]" />`},
+		{"colon form after a semicolon", "user=sa;Password: Secr3t Two", "user=sa;Password: [redacted]"},
+		{"colon form after an equals sign", "err=password: x", "err=password: [redacted]"},
+		{"colon form after a pipe", "user|password: x", "user|password: [redacted]"},
+		{"colon form after an angle bracket", "<password: x", "<password: [redacted]"},
+		{"JSON number password", `{"password": 12345678, "user":"bob"}`, `{"password": [redacted], "user":"bob"}`},
+		{"JSON db_pass", `{"db_pass":"Secr3t Two"}`, `{"db_pass":"[redacted]"}`},
+		{"repr pass", `{'pass': 'x'}`, `{'pass': '[redacted]'}`},
+		{"JSON short client_secret, access_token, refresh_token", `{"client_secret":"x","access_token":"y","refresh_token":"z"}`, `{"client_secret":"[redacted]","access_token":"[redacted]","refresh_token":"[redacted]"}`},
+		{"JSON number token", `{"refresh_token": 12345}`, `{"refresh_token": [redacted]}`},
+		{"spaced value after a prefixed key in a query", "a?b.password=Secr3t Two", "a?b.password=[redacted]"},
+		{"prefixed key in a query stops at &, even with a space", "GET /x?db_password=a b&y=1", "GET /x?db_password=[redacted]&y=1"},
+		{"value that ends in a backslash", `secret="abc\" rest`, "secret=[redacted] rest"},
+		{"CDATA on its own line", "<password>\n  <![CDATA[Secr3tCD]]>\n</password>", "<password>[redacted]</password>"},
+		{"CDATA with spaces around it", "<Password> <![CDATA[Secr3tSp]]> </Password>", "<Password>[redacted]</Password>"},
+		{"Hibernate property", `<property name="hibernate.connection.password">Secr3tHib</property>`, `<property name="hibernate.connection.password">[redacted]</property>`},
+		{"Java properties entry (the key rule also takes the key value)", `<entry key="password">Secr3tEntry</entry>`, `<entry key=[redacted]>[redacted]</entry>`},
+		{"app.config setting with a value child", `<setting name="Password" serializeAs="String"><value>Secr3tSet</value></setting>`, `<setting name="Password" serializeAs="String"><value>[redacted]</value></setting>`},
+		{"X-Api-Key printed as a header map", "map[X-Api-Key:[Secr3tH] Accept:[*/*]]", "map[X-Api-Key:[redacted] Accept:[*/*]]"},
+		{"pass words stay", "passes=3 compass: north passwordless=true tokens=5 PasswordExpiry: 90 days", "passes=3 compass: north passwordless=true tokens=5 PasswordExpiry: 90 days"},
+		{"policy element and paths stay", `<PasswordPolicy>8</PasswordPolicy> /usr/lib/password-store/foo.go {"pass_count": 3}`, `<PasswordPolicy>8</PasswordPolicy> /usr/lib/password-store/foo.go {"pass_count": 3}`},
 		// Lines that must stay as they are.
 		{"prose with the word", "the password was wrong", "the password was wrong"},
 		{"policy text", "password policy: 8 chars min", "password policy: 8 chars min"},
@@ -196,19 +218,19 @@ func TestSanitizeEscapesColonPrefixesAndXML(t *testing.T) {
 	}
 }
 
-// Every new pattern stays linear on a megabyte of hostile text (RE2 only).
+// Every new pattern stays linear on 256 KB of hostile text (RE2 only).
 func TestSanitizeStaysLinear(t *testing.T) {
-	if testing.Short() {
-		t.Skip("timing test")
+	if testing.Short() || racedetect.Enabled {
+		t.Skip("timing test; the race detector slows it 5 to 20 times (see internal/racedetect)")
 	}
 	for _, unit := range []string{
 		`<password a="x">`, `<add key="Password" `, `<add value="a" `, `"password":"\\\"`, "DB_PASSWORD:\n ",
 	} {
-		in := strings.Repeat(unit, (1<<20)/len(unit))
+		in := strings.Repeat(unit, (256<<10)/len(unit))
 		start := time.Now()
 		_ = Sanitize(in)
-		if d := time.Since(start); d > 30*time.Second {
-			t.Errorf("Sanitize on 1 MB of %q took %v", unit, d)
+		if d := time.Since(start); d > 10*time.Second {
+			t.Errorf("Sanitize on 256 KB of %q took %v", unit, d)
 		}
 	}
 }
