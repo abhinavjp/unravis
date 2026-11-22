@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { caseCode, eraseCase, type CaseState } from '../lib/cases';
   import { eraseFailureText, eraseReady } from '../lib/erase';
   import { ERASE_TEXT, eraseBody, eraseDoneText, erasePromptText } from '../lib/copy/eraseCopy';
@@ -7,7 +7,9 @@
   // Screens 138 and 139: Erase asks for the short case code to be typed, shows what goes, then says the case is removed.
   // The erase can wait up to 30 seconds for the case to be released (another tab may still be reading it), and says so while it waits.
   // Nothing typed here is kept: the code is cleared when the dialog closes. `onDone` runs when the person leaves the confirmation.
-  let { caseId, archivePath, believed, onDone, onCancel }: { caseId: string; archivePath?: string; believed?: CaseState; onDone: () => void; onCancel: () => void } = $props();
+  let { caseId, title = '', archivePath, believed, onDone, onCancel }: { caseId: string; title?: string; archivePath?: string; believed?: CaseState; onDone: () => void; onCancel: () => void } = $props();
+  // The name is kept from before the erase: after it the case is gone and cannot be asked for it (CASES-09).
+  const caseTitle = untrack(() => title.trim());
 
   let typed = $state('');
   let busy = $state(false);
@@ -62,10 +64,11 @@
 <section class="erase" aria-labelledby="erase-title" bind:this={sectionEl}>
   {#if finished}
     <h2 id="erase-title">{ERASE_TEXT.title}</h2>
-    <p class="note" role="status">{eraseDoneText(code)}</p>
+    <p class="note" role="status">{eraseDoneText(code, caseTitle)}</p>
     <div class="actions"><button type="button" class="secondary-button" bind:this={doneButton} onclick={onDone}>{ERASE_TEXT.back}</button></div>
   {:else}
     <h2 id="erase-title">{ERASE_TEXT.title}</h2>
+    {#if caseTitle}<p class="which" data-testid="erase-which">{ERASE_TEXT.youAreErasing} <strong>{caseTitle}</strong> <span class="code">({code})</span></p>{/if}
     <p class="note">{eraseBody(archivePath)}</p>
     <form onsubmit={submit}>
       <label for="erase-code">{erasePromptText(code)}</label>
@@ -83,6 +86,8 @@
 <style>
   .erase { display: grid; gap: var(--space-3); box-sizing: border-box; width: 100%; max-width: 560px; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .erase h2 { margin: 0; font-size: 18px; font-weight: 600; }
+  .which { margin: 0; font-size: var(--fs-4); overflow-wrap: anywhere; }
+  .which .code { color: var(--text-2); font-size: var(--fs-3); }
   .note { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .note[hidden] { display: none; }
   form { display: grid; gap: var(--space-2); justify-items: start; }

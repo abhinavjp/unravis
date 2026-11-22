@@ -2,7 +2,7 @@ import type { LintEntry } from './copylint';
 import type { TzCounts, TzState, TzView } from '../sourcesList';
 
 /**
- * The words of the Sources list (packet P11) and of the time-zone notice on the Investigation Timeline. Pure.
+ * The words of the Sources list (packet P11) and of the time-zone notice on the Investigation timeline. Pure.
  * Plain words: say what the state is and what it means for the timeline. A file's time-zone rule is fixed when it is read, so the way out of
  * "needs a check" is to add the file again with the right computer and time zone.
  */
@@ -13,7 +13,7 @@ export const SOURCES_LIST_TEXT = {
   loading: 'Reading the sources…',
   loadFailed: 'The sources could not be read. Try again.',
   retry: 'Try again',
-  empty: 'This case has no sources yet. Use Add data to add one.',
+  empty: 'This case has no sources yet. Use Add files to add one.',
   noEnv: 'no environment yet',
   filterLabel: 'Show only one environment',
   filterAll: 'Show all',
@@ -79,7 +79,7 @@ export const countsText = (counts: TzCounts): string => {
   return parts.join(', ');
 };
 
-/** The notice above the Investigation Timeline chart when a lane is left empty for a time zone that was not checked. */
+/** The notice above the Investigation timeline chart when a lane is left empty for a time zone that was not checked. */
 export const TZ_NOTICE_TEXT = {
   title: 'Time zone needs checking',
   lead: (labels: readonly string[]): string => 'A file for the ' + labels.join(' and ') + (labels.length === 1 ? ' lane' : ' lanes') + ' has no usable time zone, so ' + (labels.length === 1 ? 'that lane draws' : 'those lanes draw') + ' nothing.',

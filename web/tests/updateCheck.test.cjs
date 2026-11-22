@@ -129,7 +129,7 @@ test('download and install: percent, sentences and the preview names', () => {
   assert.equal(say({ state: 'downloading', version: '1.3.0', done: 42, total: 100 }), 'Downloading version 1.3.0... 42%');
   assert.match(say({ state: 'ready', version: '1.3.0', done: 1, total: 1 }), /is ready/);
   assert.match(say({ state: 'launched', version: '1.3.0', done: 1, total: 1 }), /being applied.*Apply now again/);
-  assert.equal(say({ state: 'failed', version: '1.3.0', done: 0, total: 0, error: 'The download was cut off.' }), 'The update did not go through. The download was cut off.');
+  assert.equal(say({ state: 'failed', version: '1.3.0', done: 0, total: 0, error: 'The download was cut off.' }), 'Update failed. The download was cut off.');
   assert.equal(say(undefined), '');
   for (const name of ['downloading', 'ready', 'failed', 'launched']) assert.equal(upd.updatePreviewFrom('#update=' + name), name);
 });

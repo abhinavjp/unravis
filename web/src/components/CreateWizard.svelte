@@ -8,6 +8,7 @@
   import { STEPS, TITLE_MAX, stepViews, titleLength, titleProblem, titleProblemShows } from '../lib/wizardFlow';
   import type { StepId } from '../lib/wizardFlow';
   import { STEP_TEXT, TITLE_PROBLEM_TEXT, WIZARD_TEXT, chosenText, envCountText, envNotes, nextBlockedLine, stepButtonLabel, stepOfText, titleCountText } from '../lib/copy/wizardCopy';
+  import { caseMade } from '../lib/wizardCreate.svelte';
   import HelpNote from './HelpNote.svelte';
 
   // The frame of the guide that creates a new case (layout B, Workspace): three steps (Name, Sources, Review), a progress strip, Back and Next,
@@ -216,7 +217,7 @@
             <input id="{uid}-own-key" type="checkbox" checked={wizard.caseKey.on} onchange={(event) => { wizard.caseKey.on = event.currentTarget.checked; if (!wizard.caseKey.on) wipeCaseKey(); }} aria-describedby="{uid}-own-key-help" />
             <span>{CASE_KEY_TEXT.createToggle}</span>
           </label>
-          <p class="hint" id="{uid}-own-key-help">{CASE_KEY_TEXT.createHelp}</p>
+          <p class="hint" id="{uid}-own-key-help">{wizard.caseKey.on ? CASE_KEY_TEXT.createHelpOn : CASE_KEY_TEXT.createHelp}</p>
           {#if wizard.caseKey.on}
             <label for="{uid}-ck">{CASE_KEY_TEXT.createKeyLabel}</label>
             <input id="{uid}-ck" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={wizard.caseKey.key} aria-describedby="{uid}-ck-hint" />
@@ -235,6 +236,8 @@
     {/if}
   </div>
 
+  <!-- Once the case is made the bar has nothing left to do (Back is off, nothing is blocked), and it sat over the result buttons: it is taken out (CASES-02). -->
+  {#if !caseMade()}
   <footer class="bar">
     {#if wizard.step !== STEPS[0]}<button type="button" class="secondary-button" disabled={busy} onclick={() => void onBack()}>{WIZARD_TEXT.back}</button>{/if}
     <span class="chosen" role="status">{chosenText(wizard.sources.length)}</span>
@@ -246,13 +249,16 @@
       <button type="button" class="primary-button" disabled={busy || nextBlocked} aria-describedby={nextBlocked ? nextHintId : undefined} onclick={() => void onNext()}>{WIZARD_TEXT.next}</button>
     {/if}
   </footer>
+  {/if}
 </section>
 
 <style>
   .wizard { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); width: 100%; max-width: 1100px; min-width: 0; margin: 0 auto; font-size: var(--fs-5); }
-  .wiz-top { display: grid; gap: var(--space-2); max-width: 72ch; }
+  /* The notes keep a readable line length, but the row with "Leave the guide" spans the page so the link sits at the right edge like the steps and the bar (CASES-15). */
+  .wiz-top { display: grid; gap: var(--space-2); }
+  .wiz-note, .wiz-resumed { max-width: 72ch; }
   .wiz-top-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  .wiz-name { margin: 0; font-size: var(--fs-6); font-weight: 600; }
+  .wiz-name { margin: 0; font-size: 24px; font-weight: 600; }
   .wiz-note { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .wiz-resumed { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .wiz-leave-ask { box-sizing: border-box; width: min(440px, calc(100vw - 32px)); padding: var(--space-5); color: var(--text); background: var(--surface); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; }
@@ -275,7 +281,7 @@
   /* Not ".stage": that name is the app's scroll container, and its overscroll-behavior stopped the mouse wheel from reaching it. */
   .step-body { display: grid; gap: var(--space-3); align-content: start; min-width: 0; }
   .step-count { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
-  .step-heading { margin: 0; font-size: clamp(24px, 4vw, 34px); font-weight: 600; line-height: 1.2; }
+  .step-heading { margin: 0; font-size: clamp(22px, 3vw, 28px); font-weight: 600; line-height: 1.2; }
   .step-heading:focus { outline: none; }
   .step-heading:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
   .lead { margin: 0; max-width: 64ch; color: var(--text-2); font-size: var(--fs-5); overflow-wrap: anywhere; }

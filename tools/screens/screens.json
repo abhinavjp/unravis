@@ -3930,7 +3930,7 @@
           "waitFor": "#home-sources"
         },
         {
-          "click": "role=tab[name=\"Add data\"s]"
+          "click": "role=tab[name=\"Add files\"s]"
         },
         {
           "waitFor": "role=heading[name=\"What do you want to add to this case?\"]"

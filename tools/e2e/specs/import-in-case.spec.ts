@@ -39,7 +39,7 @@ test('INCASE-01: Add files from an open case opens the popup for that case with 
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
 
   // Entry 1: the Files section's "Add a file".
-  await page.getByRole('button', { name: 'Add a file' }).click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).click();
   await expectPopupOfThisCase(page, title, id);
   // The other case is not offered anywhere inside the popup.
   await expect(popup(page)).not.toContainText('QA InCase Elsewhere');
@@ -48,7 +48,7 @@ test('INCASE-01: Add files from an open case opens the popup for that case with 
   await page.keyboard.press('Escape');
   await expect(popup(page)).toHaveCount(0);
   const hub = page.locator('[data-sources-hub]');
-  await hub.getByRole('tab', { name: 'Add data', exact: true }).click();
+  await hub.getByRole('tab', { name: 'Add files', exact: true }).click();
   await hub.getByRole('button', { name: /^Files\b/ }).click();
   await expectPopupOfThisCase(page, title, id);
   await expect(popup(page)).not.toContainText('QA InCase Elsewhere');

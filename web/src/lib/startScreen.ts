@@ -5,6 +5,8 @@ import { ARCHIVE_TEXT } from './copy/archiveCopy';
 import { START_TEXT, importsText, shownText, sourcesText } from './copy/startCopy';
 import { ERASE_TEXT, erasedLineText } from './copy/eraseCopy';
 import { formatTime } from './time';
+import { closedEraseAt } from './caseLifecycle';
+import { closedEraseText } from './copy/caseHomeCopy';
 
 /**
  * The start screen's model. Pure: no DOM, no fetch. StartScreen.svelte binds these helpers.
@@ -39,6 +41,8 @@ export interface CaseRow {
   codeText: string;
   closed: boolean;
   closedLabel: string;
+  /** For a closed case: "It will be erased on 19 Nov 2026 ...". Empty for any other case (CASES-10). */
+  eraseNote: string;
   /** True when an older version made this case and it cannot be opened: the row says so, and Open leads to a page that explains it. */
   untrusted: boolean;
   untrustedLabel: string;
@@ -71,6 +75,13 @@ export function caseCounts(c: Pick<StartCase, 'imports' | 'sources'>): string {
   return typeof c.sources === 'number' && Number.isFinite(c.sources) && c.sources >= 0 ? imports + ', ' + sourcesText(Math.floor(c.sources)) : imports;
 }
 
+/** The erase date of a closed case, said in the list row too. A case that is locked or unreadable says nothing. */
+function eraseNoteOf(c: StartCase): string {
+  if (!c.closed || needsAttention(c)) return '';
+  const at = closedEraseAt(c.closed);
+  return at ? closedEraseText(formatTime(at, { year: true, precision: 'minute', fallback: '' })).replace(/ Save a case file to keep it\.$/, '') : '';
+}
+
 export function caseRow(c: StartCase): CaseRow {
   // A case that is locked, or that cannot be opened, is named by its short code: its title is not read.
   const byCode = needsAttention(c);
@@ -86,6 +97,7 @@ export function caseRow(c: StartCase): CaseRow {
     codeText: START_TEXT.codeLabel + ' ' + caseCode(c.id),
     closed: Boolean(c.closed),
     closedLabel: START_TEXT.closedLabel,
+    eraseNote: eraseNoteOf(c),
     untrusted: c.untrusted === true,
     untrustedLabel: START_TEXT.untrustedLabel,
     archiving: c.state === 'archiving',

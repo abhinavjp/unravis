@@ -18,8 +18,8 @@ const REPORT_DIR = join(__dirname, '..', 'report');
 async function openTimeline(page: Page): Promise<void> {
   await goHome(page);
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
 }
 
 /** Clicks the first red diamond of the API lane at its centre. */

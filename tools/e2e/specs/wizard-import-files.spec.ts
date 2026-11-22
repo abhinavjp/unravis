@@ -346,7 +346,7 @@ test('FILES-08: a file that was not read tells why and can be tried again, and t
   await expect.poll(async () => (await api('GET', `/api/cases/${made.id}`)).json.imports, { timeout: 20000 }).toBe(2);
 
   await page.getByRole('button', { name: 'Open the timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
 });
 
 test('FILES-09: a file that was not read can be left out, and Add more files opens the Import files popup on the case', async ({ page, api, allow }) => {

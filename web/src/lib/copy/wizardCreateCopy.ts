@@ -33,10 +33,15 @@ export const CREATE_TEXT = {
   scanBusy: 'There is no finished scan of this computer right now. If one is still running, let it end first. If it was stopped, go back to the Sources step and scan again.',
   noticeLabel: 'Notice',
   needAck: 'Tick the box above to confirm the notice.',
+  blockedAck: 'Tick the notice above to create the case.',
+  blockedFiles: 'Choose a file for each file source above to create the case.',
+  blockedZone: 'Pick a computer and time zone for each file above to create the case.',
+  blockedScan: 'Scan this computer again on the Sources step to create the case.',
+  blockedWait: 'The computers are being picked. Create the case after that.',
   needFiles: 'Choose a file for each file source, or go back and take it off the list.',
   needHost: 'A file below still needs a computer or a time zone. Fix the one marked, or take that file off the list. The case cannot be made until then.',
   needWindow: 'Choose how far back to read.',
-  keepNote: 'If something cannot be read, the case is still kept. You will see which source failed, and you can try it again from Add more data.',
+  keepNote: 'If something cannot be read, the case is still kept. You will see which source failed, and you can try it again from Add files.',
 
   create: 'Create case',
   createEmpty: 'Create empty case',
@@ -64,7 +69,7 @@ export const CREATE_TEXT = {
   lockedButton: 'Continue',
   openCase: 'Open the case',
   openAnyway: 'Open the case anyway',
-  retryHint: 'The case was kept. Open it and use Add more data to try the failed sources again.',
+  retryHint: 'The case was kept. Open it and use Add files to try the failed sources again.',
   allDone: 'Your case is ready. Opening it now.',
   tryAgain: 'Try again',
 
@@ -106,6 +111,16 @@ export function tagLine(source: { env: string; portal: string; api: string }): s
   return [source.env, source.portal, source.api].map((part) => part || CREATE_TEXT.notNamed).join(' > ');
 }
 
+/** The line beside a switched-off Create case button: the first thing that stops it, in the order the screen shows it. Empty when nothing does. */
+export function createBlockedLine(blockers: readonly string[]): string {
+  if (blockers.includes('scan-busy') || blockers.includes('scan-stale')) return CREATE_TEXT.blockedScan;
+  if (blockers.includes('no-ack')) return CREATE_TEXT.blockedAck;
+  if (blockers.includes('files')) return CREATE_TEXT.blockedFiles;
+  if (blockers.includes('zone')) return CREATE_TEXT.blockedZone;
+  if (blockers.includes('computer-busy')) return CREATE_TEXT.blockedWait;
+  return '';
+}
+
 /** The button that ends the review. */
 export const createButtonText = (sources: number, busy: boolean): string => (busy ? CREATE_TEXT.creating : sources === 0 ? CREATE_TEXT.createEmpty : CREATE_TEXT.create);
 
@@ -129,18 +144,18 @@ const REASONS: Readonly<Record<string, string>> = {
   'no-file': 'No file was chosen for it.',
   'no-window': 'No period was chosen to read.',
   missing: 'No period was chosen to read.',
-  'no-scan': 'The scan of this computer was not ready, so nothing was read. Scan again, then add it from Add more data.',
+  'no-scan': 'The scan of this computer was not ready, so nothing was read. Scan again, then add it from Add files.',
   order: 'The period to read ends before it starts.',
   'too-long': 'The period to read is too long.',
   'not-started': 'The server did not start reading it.',
   unreachable: 'The server could not be reached.',
-  'rate-limited': 'The server is asking for a short pause after too many connection tests. Wait a minute, then add it from Add more data.',
-  'bad-request': 'The server did not accept the details. Check the connection, then add it from Add more data.',
-  'collection-missing': 'The database has no collection with the audit log name that was tried. Open Add more data, choose the right collection, then add it again.',
-  'no-access': 'The account is not allowed to read the audit collection. Ask for read access to it, or choose another collection from Add more data.',
-  'password-rejected': 'The database refused the saved sign-in. Test the connection again with the right password, then add it from Add more data.',
+  'rate-limited': 'The server is asking for a short pause after too many connection tests. Wait a minute, then add it from Add files.',
+  'bad-request': 'The server did not accept the details. Check the connection, then add it from Add files.',
+  'collection-missing': 'The database has no collection with the audit log name that was tried. Open Add files, choose the right collection, then add it again.',
+  'no-access': 'The account is not allowed to read the audit collection. Ask for read access to it, or choose another collection from Add files.',
+  'password-rejected': 'The database refused the saved sign-in. Test the connection again with the right password, then add it from Add files.',
   'old-server': 'This MongoDB server version is not supported. Unravis reads MongoDB 3.4 and 4.4 or newer.',
-  'db-unreachable': 'The database server could not be reached, or its certificate was refused. Check the address and your network, then add it from Add more data.',
+  'db-unreachable': 'The database server could not be reached, or its certificate was refused. Check the address and your network, then add it from Add files.',
   'bad-tag': 'A name was empty, too long, or looked like a password.',
   'tag-cap-exceeded': 'The case already holds as many names as it can.',
   'case-closed': 'The case is closed.',
@@ -148,7 +163,7 @@ const REASONS: Readonly<Record<string, string>> = {
   'bad-classification': 'The database was not marked as audit logs, other data or not used.',
   'database-not-tested': 'The connection to the database was not tested a moment ago, or it could not be reached. Test it again.',
   'connection-lost': 'The connection to the database is no longer held. Test it again.',
-  'needs-type': 'The file could be more than one kind. Add it from Add more data and choose the kind.',
+  'needs-type': 'The file could be more than one kind. Add it from Add files and choose the kind.',
   'unknown-type': 'The file is not a kind this app can read.',
   'unknown-host': 'This computer was not confirmed for reading.',
   locked: 'The master key was locked.'

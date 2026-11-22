@@ -65,7 +65,7 @@
   const failures = $derived(summary.failures.filter((failure) => !(failure.step === 'import' && fileKeys.has(failure.key))).map((failure) => {
     const row = failure.step === 'import' ? submit.imports[failure.key] : undefined;
     const text = failureText(failure, row?.outcome ? rowOutcomeText(row.outcome) : undefined);
-    // A failed audit database names the collections the server offered, so the person can pick the right one from Add more data.
+    // A failed audit database names the collections the server offered, so the person can pick the right one from Add files.
     const offered = suggestionLine(failure.suggestions);
     return { key: failure.step + ':' + failure.key, text: offered === '' ? text : text + ' ' + offered };
   }));

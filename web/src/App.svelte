@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { comparisonLabel, STARTUP_TITLE } from './lib/copy/startupCopy';
+  import { comparisonLabel, STARTUP_TEXT, STARTUP_TITLE } from './lib/copy/startupCopy';
   import { scopeProblem } from './lib/autorun';
   import { VALIDATION_MESSAGE } from './lib/api';
   import { WAIT_TEXT } from './lib/copy/waitCopy';
@@ -14,6 +14,8 @@
   import { backLabel, investigateState } from './lib/promote';
   import { lazyComponent } from './lib/lazy';
   import { readSubbarHint, writeSubbarHint } from './lib/subbarHint';
+  import { setDocTitle } from './lib/docTitle';
+  import { placeKey, screenTitle, settleFocus } from './lib/screenFocus';
 
   // The page shell. The state and the logic live in lib/appState.svelte.ts; each region of the page is its own component.
   // startApp registers the effects and the mount work (theme, first load, the glossary event) for this component.
@@ -50,6 +52,20 @@
   const analysis = $derived(results.analysis);
   const loading = $derived(results.loading);
   const depth = $derived(navigation.depth);
+  // Each screen names the tab ("All cases - Unravis"); the case page names itself. When the app moves to another screen (or climbs a level of the
+  // analysis) the new heading takes the keyboard focus unless a screen has already placed it, so Tab does not start again at the skip link.
+  $effect(() => {
+    const label = screenTitle(app.screen, depth);
+    if (label) return setDocTitle(label);
+  });
+  let placed = '';
+  $effect(() => {
+    const here = placeKey(app.screen, depth);
+    const before = placed;
+    placed = here;
+    if (before === '' || before === here || before === 'loading' || app.screen === 'loading') return;
+    return settleFocus();
+  });
   // Once a run starts (or an analysis is on screen) the analysis views are fetched, so they are ready by the time the figures arrive.
   $effect(() => { if (loading || analysis) for (const importView of analysisViews) void importView().catch(() => {}); });
   const zone = $derived(scope.zone);
@@ -92,7 +108,7 @@
   <AppHeader />
   <UpdateBanner />
 
-  {#if app.initError}<div class="banner error-banner" role="alert"><strong>{STARTUP_TITLE}</strong><span>{app.initError}</span>{#if app.initCanRetry}<button class="quiet-button" onclick={() => { app.initError = ''; void initialize(); }}>Retry</button>{/if}</div>{/if}
+  {#if app.initError}<div class="banner error-banner init-banner" role="alert"><strong>{STARTUP_TITLE}</strong><span>{app.initError}</span>{#if app.initCanRetry}<button class="secondary-button" onclick={() => { app.initError = ''; void initialize(); }}>Retry</button>{/if}</div>{/if}
 
   {#if app.lockError}<div class="banner error-banner" role="alert"><span>{app.lockError}</span><button class="quiet-button" onclick={() => { app.lockError = ''; }}>Dismiss</button></div>{/if}
 
@@ -135,7 +151,6 @@
           {#if restore.needsAttention || restore.working}<CaseReconnect compact />{/if}
           {#if results.error}<div class="banner error-banner" role="alert"><strong>{comparisonLabel(results.error, [VALIDATION_MESSAGE, scopeProblem(scope.query, scope.dateInputsValid)])}</strong><span>{results.error}</span>{#if results.error === WAIT_TEXT.timeout && !loading}<button type="button" class="secondary-button" title={WAIT_TEXT.retryTitle} onclick={() => runAnalysis()}>{WAIT_TEXT.retry}</button>{/if}</div>{/if}
           {#if analysis}
-            {#if results.displayedRunIsStale && !loading}<div class="notice frozen-run-note" role="status">The figures below are from the last run. Press <strong>Run analysis</strong> to apply your changes.</div>{/if}
             {#if failingSources.length}
               <div class="banner source-failure" role="alert"><strong>{failingSources.length === analysis.sources.length ? 'No sources returned data' : 'Some sources failed'}</strong>
                 {#each failingSources as failed}<span><b>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}:</b> {failed.error || failed.indexWarning || 'Source unavailable'}</span>{/each}
@@ -149,7 +164,7 @@
               <!-- D0 Pulse -->
               <div class="view" class:off={depth > 0}>
                 <Pulse {analysis} {zone} onOpen={openWhere} />
-                <div class="pulse-actions"><button type="button" class="primary-button" onclick={() => openWhere(navigation.lens)}>Where is it?</button><button type="button" class="secondary-button" onclick={openComparison}>All operations</button><button type="button" class="secondary-button" aria-haspopup="dialog" onclick={addData}>Add more data</button><p>Tap a figure, or open the ranked list of operations. Add more data to bring in SQL, Redis, IIS or server logs for the same period.</p></div>
+                <div class="pulse-actions"><button type="button" class="primary-button" onclick={() => openWhere(navigation.lens)}>Where is it?</button><button type="button" class="secondary-button" onclick={openComparison}>All operations</button><button type="button" class="secondary-button" aria-haspopup="dialog" onclick={addData}>Add files</button><p>Tap a figure, or open the ranked list of operations. Add files to bring in SQL, Redis, IIS or server logs for the same period.</p></div>
                 <RollupView />
               </div>
 
@@ -172,6 +187,8 @@
             <Landing mode="start" />
           {/if}
           <div class="notice frozen-run-note" role="status">{scope.restoredInTab ? 'Restored this tab’s investigation filters. ' : ''}{scope.investigationNotice} <button class="quiet-button" onclick={resetInvestigation}>Reset investigation</button></div>
+        {:else if app.initError}
+          <div class="welcome-state init-empty" data-testid="init-empty"><p>{STARTUP_TEXT.empty}</p></div>
         {/if}
       </div>
     </main>
@@ -179,6 +196,9 @@
 
 <style>
   .subbar-reserve { flex: 0 0 auto; }
+  /* The start error lines up with the page gutter (24 px, 16 px on a phone), not the window edge (CASES-27). */
+  .init-banner { align-items: center; margin: var(--space-3) 24px 0; }
+  @media (max-width: 720px) { .init-banner { margin-inline: 16px; } }
   /* Back is a real button (B8): it sits at the left of the record rather than stretching across it. */
   .record-view > .back-button { justify-self: start; align-self: flex-start; }
 </style>

@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const ts = require('typescript');
 
-// Opening the Investigation Timeline from the case page: a history step, remembered for a reload, and the export scrub setting read per case.
+// Opening the Investigation timeline from the case page: a history step, remembered for a reload, and the export scrub setting read per case.
 
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');

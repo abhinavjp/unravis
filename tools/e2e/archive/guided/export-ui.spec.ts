@@ -245,14 +245,14 @@ test('EXP-07: the evidence export previews without saving, then the saved file m
   await expect(drawer.getByText('Build a file of the findings in this window. You see everything in it before anything is saved.')).toBeVisible();
   await expect(drawer.getByText('This only builds a preview. Nothing is saved until you press Save file.')).toBeVisible();
   await drawer.getByRole('checkbox', { name: 'Include user pseudonyms' }).check();
-  await drawer.getByRole('checkbox', { name: 'Include my ledger' }).check();
+  await drawer.getByRole('checkbox', { name: 'Include my theories' }).check();
   await drawer.getByRole('button', { name: 'Preview export' }).click();
 
   await expect(drawer.getByRole('region', { name: 'What is hidden' })).toBeVisible();
   await expect(drawer.getByRole('region', { name: 'Findings' })).toBeVisible();
   await expect(drawer.getByRole('region', { name: 'Manifest' })).toBeVisible();
   await expect(drawer.getByText('Manifest and body SHA-256')).toBeVisible();
-  await expect(drawer.getByRole('region', { name: 'Ledger entries' }).getByText('No ledger entries in this file.')).toBeVisible();
+  await expect(drawer.getByRole('region', { name: 'Theories' }).getByText('No theories in this file.')).toBeVisible();
   await expect(drawer.getByRole('region', { name: 'User pseudonyms' })).toBeVisible();
   await drawer.getByText('Show the file content').click();
   const raw = await drawer.getByLabel('Show the file content').innerText();

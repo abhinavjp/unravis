@@ -184,7 +184,7 @@ test('D: a plain open leaves no files note, a files request leaves one and it is
 
 test('D: the drawer lead is the wireframe sentence', () => {
   assert.equal(sourcesCopy.ADD_TEXT.drawerLead, 'Add a source after the case was created. Same cards as at creation. New data is imported separately and does not touch what is there.');
-  assert.equal(sourcesCopy.ADD_TEXT.drawerTitle('k7m2qx4a'), 'Add data, case k7m2qx4a');
+  assert.equal(sourcesCopy.ADD_TEXT.drawerTitle('k7m2qx4a'), 'Add files, case k7m2qx4a');
   assert.equal(sourcesCopy.ADD_TEXT.busy, 'An import is already running. Stop it first.');
 });
 

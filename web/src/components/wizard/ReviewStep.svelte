@@ -8,7 +8,7 @@
   import { filesMissing, importPlan, isFileSource, reviewCounts } from '../../lib/wizardSubmit';
   import { noAuditSourceChosen, sourceKey } from '../../lib/wizardSources';
   import { SOURCES_TEXT, kindLabel } from '../../lib/copy/wizardSourcesCopy';
-  import { ACK_LABEL, GATING_BANNER } from '../../lib/copy/importCopy';
+  import { ackLabelFor, GATING_BANNER } from '../../lib/copy/importCopy';
   import { windowChoiceLabel } from '../../lib/copy/discoverCopy';
   import { CREATE_TEXT, HOSTS_TEXT, chooseFileLabel, failureText, fileHeldText, hostSummaryText, summaryText, tagLine, whatHappens } from '../../lib/copy/wizardCreateCopy';
   import { formatBytes } from '../../lib/copy/importCopy';
@@ -183,7 +183,7 @@
   {#if needsNotice}
     <div class="notice">
       <p class="gate" role="note" aria-label={CREATE_TEXT.noticeLabel}>{GATING_BANNER}</p>
-      <label class="ack"><input type="checkbox" checked={createView.ack} onchange={(event) => setAck(event.currentTarget.checked)} /> <span>{ACK_LABEL}</span></label>
+      <label class="ack"><input type="checkbox" checked={createView.ack} onchange={(event) => setAck(event.currentTarget.checked)} /> <span>{ackLabelFor(plan.files + plan.scan)}</span></label>
       <p class="hint" role="status">{#if !createView.ack && pending.includes('no-ack')}{CREATE_TEXT.needAck}{/if}</p>
     </div>
   {/if}

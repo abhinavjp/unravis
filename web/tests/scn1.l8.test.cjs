@@ -117,8 +117,8 @@ test('BL-131: status, remove, apply and snapshot open in the Place pop-up shell,
 test('D-B-51: the gaps fact says how long the longest gap was and what the rule is', () => {
   assert.equal(T.gapsText(1, 0, 90), '1 gap of 90 seconds. This is a warning only. Missing minutes are never counted as zero');
   assert.equal(T.gapsText(2, 0, 100), '2 gaps, the longest is 100 seconds. This is a warning only. Missing minutes are never counted as zero');
-  assert.equal(T.gapsText(1, 0, 300), '1 gap of 5 minutes. The minutes inside it are Cannot test yet');
-  assert.equal(T.gapsText(3, 1, 1800), '3 gaps, the longest is 30 minutes. The minutes inside it are Cannot test yet. 1 recording file was not read to the end');
+  assert.equal(T.gapsText(1, 0, 300), '1 gap of 5 minutes. For those minutes the step says "Cannot test yet"');
+  assert.equal(T.gapsText(3, 1, 1800), '3 gaps, the longest is 30 minutes. For those minutes the step says "Cannot test yet". 1 recording file was not read to the end');
   // No length: the old text, unchanged.
   assert.equal(T.gapsText(0, 0, 0), 'none');
   assert.equal(T.gapsText(2, 0), '2 gaps');

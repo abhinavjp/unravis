@@ -58,7 +58,7 @@ const WHAT_FIELDS = ['outcome', 'rf-completion', 'controller', 'action', 'rf-ope
 const DETAIL_FIELDS = ['rf-user-ids', 'rf-ui-versions', 'rf-user-ips', 'rf-status-codes', 'rf-agent', 'rf-url', 'rf-audit-id'];
 const RANGE_ROWS = ['observedMs', 'apiTimeMs', 'auditCreateTimeMs', 'requestKb', 'responseKb', 'incompleteAgeMs'].map((key) => 'rf-' + key);
 const CHART_FIELDS = ['metric', 'bucket', 'latency-target'];
-const SCREENS = ['drill-navigator', 'drill-investigate', 'drill-back', 'pulse', 'where', 'inspector', 'resource', 'patterns', 'ledger', 'export', 'import', 'discover', 'start', 'enter', 'masterkey', 'unlock', 'wizard', 'wizard-envs', 'wizard-sources', 'wizard-review'];
+const SCREENS = ['drill-navigator', 'drill-investigate', 'drill-back', 'pulse', 'pulse-chart', 'where', 'inspector', 'resource', 'patterns', 'ledger', 'export', 'import', 'discover', 'start', 'enter', 'masterkey', 'unlock', 'wizard', 'wizard-envs', 'wizard-sources', 'wizard-review'];
 const REQUIRED = [...GROUPS, ...WHEN_FIELDS, ...WHAT_FIELDS, ...DETAIL_FIELDS, ...RANGE_ROWS, ...CHART_FIELDS, ...SCREENS];
 const sentences = (text) => text.split(/[.!?]+(?=\s|$)/).filter((part) => /[A-Za-z0-9]/.test(part)).length;
 
@@ -337,10 +337,11 @@ test('the field keys are wired to the controls they describe', () => {
   assert.match(ranges, /part="block" open=\{helpOpen\[field\.key\]\}/);
 });
 
-test('the drill-down controls carry their notes: investigate with the chip, back with the Back button', () => {
+test('the drill-down controls carry their notes: Back by its title, investigate behind the zoom "?" (ANALYSIS-11), the navigator in its own note', () => {
   const src = read('src/components/ZoomStrip.svelte');
-  assert.match(src, /\{#if !model\.isRoot\}<div class="zoom-help"><HelpNote id="drill-investigate" \/><\/div>\{\/if\}/, 'shown only while the chip is shown');
-  assert.match(src, /\{#if model\.canBack\}<div class="zoom-help"><HelpNote id="drill-back" \/><\/div>\{\/if\}/);
+  assert.doesNotMatch(src, /<HelpNote id="drill-(?:investigate|back)"/, 'one sentence per state: the two notes no longer stack above the strip');
+  assert.match(src, /title=\{help\['drill-back'\]\.plain\}/);
+  assert.match(src, /\{#if !model\.isRoot\}<p class="zoom-note">\{help\['drill-investigate'\]\.plain\}<\/p>\{\/if\}/, 'shown only while the chip is shown');
   assert.match(src, /<HelpNote id="drill-navigator" \/>/);
   // The chip keeps its own disabled logic.
   assert.match(src, /aria-disabled=\{!investigate\.enabled\} aria-describedby=\{investigate\.enabled \? undefined : reasonId\}/);

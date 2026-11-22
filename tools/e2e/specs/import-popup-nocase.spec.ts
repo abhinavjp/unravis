@@ -10,18 +10,18 @@ test.beforeEach(async ({ api }) => {
 
 test('IP-17: header Import with no case open shows a hint on the start screen; with a case the popup opens', async ({ page, api }) => {
   // The app opens on the analysis with no case open yet.
-  const importButton = page.getByRole('button', { name: 'Import', exact: true });
+  const importButton = page.getByRole('button', { name: 'Add files', exact: true });
   await expect(importButton).toBeVisible();
   await importButton.click();
 
   // No popup. The start screen shows instead and says why nothing opened.
   await expect(page.getByRole('dialog', { name: 'Add files' })).toHaveCount(0);
   await expect(page.locator('#start-title')).toBeVisible();
-  await expect(page.getByText('Pick a case first, then choose Add files.')).toBeVisible();
+  await expect(page.getByText('Open a case first, then choose Add files.')).toBeVisible();
 
   // The hint can be dismissed.
   await page.getByRole('button', { name: 'Dismiss' }).click();
-  await expect(page.getByText('Pick a case first, then choose Add files.')).toHaveCount(0);
+  await expect(page.getByText('Open a case first, then choose Add files.')).toHaveCount(0);
 
   // With a case open, the same header button opens the popup.
   await createCase(api, 'QA Popup No Case');

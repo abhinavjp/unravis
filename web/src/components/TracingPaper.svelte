@@ -34,7 +34,7 @@
   // Kept as a variable: a new run clears it (the Slow call screen itself is opened through the app state).
   let drillSlot = $state<number | null>(null);
 
-  // The Investigation Timeline screen shell (WP-16b): one request on open, a loading state with Cancel, a plain
+  // The Investigation timeline screen shell (WP-16b): one request on open, a loading state with Cancel, a plain
   // error with Try again, and four stable regions (windows, toolbar, chart, notes) that later packets fill in.
   // `readOnly` disables the window inputs and Start tracing (read in the template below). `closed` only adds the one line saying the case cannot be changed: the timeline reads, so a closed case is a viewer, not locked.
   // `title` names the case being traced (shown as text under the heading).

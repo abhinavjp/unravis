@@ -33,7 +33,7 @@
 </script>
 
 <script lang="ts">
-  // The Investigation Timeline chart (WP-17b): one stacked row per lane (API audit, SQL, IIS) on one shared,
+  // The Investigation timeline chart (WP-17b): one stacked row per lane (API audit, SQL, IIS) on one shared,
   // server-floored UTC axis. Bars are exactly the buckets the server returned; nothing here sums, estimates
   // or recomputes the axis. WP-17c adds hover/focus text; WP-61 reads the bucket selector's onSelect.
   import { tick, untrack } from 'svelte';

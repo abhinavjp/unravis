@@ -16,9 +16,9 @@ const problem = (page: Page, text: string) => page.getByRole('alert').filter({ h
 test('CASE-06: an empty name blocks Next and the later steps are not available', async ({ page }) => {
   await expect(next(page)).toBeDisabled();
   await expect(page.getByText('Give the case a name to go on.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Step 2, Sources, not available until the case has a name' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '2 Sources, not available until the case has a name' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Step 3, Review, not available until the case has a name' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Step 1, Name, current step' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '1 Name, current step' })).toBeVisible();
 });
 
 test('CASE-06a: one letter is too short and 81 letters is too long, and each blocks Next', async ({ page }) => {

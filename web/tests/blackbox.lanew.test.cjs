@@ -37,8 +37,8 @@ test('UX-02: Unreachable advice follows the server reason', () => {
 });
 
 test('UX-13/14: paused differs from low, and this PC is told Stop then Start', () => {
-  assert.match(copy.stateNextFor({ state: 'disk-low', tone: 'bad' }, true), /paused/);
-  assert.match(copy.stateNextFor({ state: 'disk-low', tone: 'warn' }, true), /still recording/);
+  assert.match(copy.stateNextFor({ state: 'disk-low', tone: 'bad' }, true), /resumes by itself/);
+  assert.match(copy.stateNextFor({ state: 'disk-low', tone: 'warn' }, true), /before it pauses/);
   assert.match(copy.stateNextFor({ state: 'running-late' }, true), /Stop, then Start/);
   assert.match(copy.stateNextFor({ state: 'running-late' }, false), /Services/);
 });

@@ -18,8 +18,8 @@ const STILL_READING = 'Still reading. A large window can take a minute. You can 
 async function openTracing(page: Page) {
   await goHome(page);
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect(page.locator('.tracing-chart')).toBeVisible();
 }
 

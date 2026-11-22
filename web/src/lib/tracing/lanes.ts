@@ -1,5 +1,5 @@
 /**
- * Pure chart math and wording for the Investigation Timeline (WP-17b): the slot grid the chart draws on (always
+ * Pure chart math and wording for the Investigation timeline (WP-17b): the slot grid the chart draws on (always
  * the server's floor-aligned axis from `response.window`, never recomputed here), the bars built from exactly
  * the buckets the server returned (no summing, no estimates), and every lane sentence for a missing or partial
  * state. No Svelte here; `TracingChart.svelte` imports from this file and from `./model` for types only.
@@ -56,7 +56,7 @@ export function laneCutShort(lane: TracingLane): boolean {
 /** Fixed words for what was read and what was not. */
 export const READ_TEXT = {
   notRead: 'not read',
-  noFile: 'This case has no file for this source. Add a file to see this lane.',
+  noFile: 'This case has no file for this source. Add files to see this lane.',
   addFiles: 'Add files',
   tipUnread: 'This period was not read. That is not the same as no traffic.'
 } as const;

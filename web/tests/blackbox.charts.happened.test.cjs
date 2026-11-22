@@ -234,8 +234,8 @@ test('the new words pass the copy lint and the scale buttons use the plain names
   assert.deepEqual(lintCopy(items, []).filter((f) => f.severity === 'error'), []);
   const extra = [...c.QUICK_QUESTIONS.map((x) => ({ id: 'q-' + x.id, text: x.label + ' ' + x.hint }))];
   assert.deepEqual(lintCopy(extra, []).filter((f) => f.severity === 'error'), []);
-  assert.equal(BBC_TEXT.linear, 'Even steps');
-  assert.equal(BBC_TEXT.log, 'Times-10 steps');
+  assert.equal(BBC_TEXT.linear, 'Normal');
+  assert.equal(BBC_TEXT.log, 'Log (x10 steps)');
   assert.match(BBC_TEXT.linearHelp, /linear scale/);
   assert.match(BBC_TEXT.logHelp, /log scale/);
   const view = read('src/components/BlackboxCharts.svelte');

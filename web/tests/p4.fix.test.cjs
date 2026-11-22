@@ -129,7 +129,7 @@ test('Erase names the case file when the page knows it, and CaseHome passes the 
   assert.match(copy.eraseBody('D:\\a\\b.unravis-case'), /The case file D:\\a\\b\.unravis-case is not touched\./);
   assert.match(copy.eraseBody(), /A case file you saved is not touched\./);
   const home = read('src/lib/components/CaseHome.svelte');
-  assert.match(home, /<EraseCase \{caseId\} archivePath=\{archiveFilePath\(currentFile\) \|\| undefined\}/);
+  assert.match(home, /<EraseCase \{caseId\} title=\{info\?\.title \?\? ''\} archivePath=\{archiveFilePath\(currentFile\) \|\| undefined\}/);
 });
 
 test('the erase code accepts the short code with spaces or dashes in any case, and the whole id', () => {

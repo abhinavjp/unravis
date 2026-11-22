@@ -11,7 +11,7 @@ export const START_TEXT = {
   statusLoading: 'Checking whether your cases are locked…',
   statusFailed: 'Unravis could not check whether your cases are locked. The cases below may be out of date.',
 
-  existingTitle: 'Use an existing case',
+  existingTitle: 'Your cases on this computer',
   existingText: 'Open a case that is saved on this computer.',
   existingEmpty: 'No cases yet. Create a new case to begin.',
   existingLoading: 'Loading your cases…',
@@ -26,7 +26,7 @@ export const START_TEXT = {
   missingHelp: 'The working copy of this case is missing on this computer. If you have a case file for it, you can restore the case from that file.',
   missingRestore: 'Restore from a case file',
 
-  enterTitle: 'Enter an existing case',
+  enterTitle: 'Open with a case code',
   enterText: 'Type a case code to open a case on this computer, or restore one from a case file.',
   waitForList: 'The list of cases could not be read, so this is off for now. Press Try again first.',
   enterSoon: 'Entering a case code is not ready yet.',

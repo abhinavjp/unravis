@@ -9,8 +9,8 @@ test.beforeEach(async ({ page }) => {
 
 test('CASE-01: three cards, and one filled accent button only', async ({ page }) => {
   await expect(page.locator('#start-title')).toHaveText('Start an investigation');
-  await expect(page.locator('#card-existing')).toContainText('Use an existing case');
-  await expect(page.locator('#card-enter')).toContainText('Enter an existing case');
+  await expect(page.locator('#card-existing')).toContainText('Your cases on this computer');
+  await expect(page.locator('#card-enter')).toContainText('Open with a case code');
   await expect(page.locator('#card-create')).toContainText('Create a new one');
   const filled = page.locator('.primary-button:visible');
   await expect(filled).toHaveCount(1);
@@ -30,7 +30,7 @@ test('CASE-02: rows, stickers and the archived and erased lists', async ({ page,
   const list = await api('GET', '/api/cases');
   expect(list.json.cases).toHaveLength(8);
   expect(list.json.archivedTotal).toBe(2);
-  const card = page.getByRole('region', { name: 'Use an existing case' });
+  const card = page.getByRole('region', { name: 'Your cases on this computer' });
   await expect(card.getByRole('button', { name: 'Open case Checkout slowdown, 17 October' })).toBeVisible();
   await expect(card.getByRole('button', { name: 'Open case Night batch overrun, 10 October' })).toBeVisible();
   await expect(card.getByRole('button', { name: /^Open case Search index rebuild/ })).toHaveCount(0);
@@ -50,7 +50,7 @@ test('CASE-03: open a case and read its story, then come back with All cases', a
   await expect(page.getByText('Case started').first()).toBeVisible();
   await page.getByRole('button', { name: 'All cases' }).click();
   await expect(page.locator('#start-title')).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Use an existing case' })).toContainText('Checkout slowdown, 17 October');
+  await expect(page.getByRole('region', { name: 'Your cases on this computer' })).toContainText('Checkout slowdown, 17 October');
 });
 
 test('CASE-04: a case code is accepted in any layout and refused with one sentence', async ({ page, allow }) => {

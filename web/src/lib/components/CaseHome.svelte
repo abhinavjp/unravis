@@ -3,11 +3,11 @@
   import { api, ApiError } from '../api';
   import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing, panels } from '../appState.svelte';
   import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, closeCase, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
-  import { archiveButton, closeButton, readsCaseData, reopenButton, retryAction, retryServerName } from '../caseLifecycle';
+  import { archiveButton, closeButton, closedEraseAt, readsCaseData, reopenButton, retryAction, retryServerName } from '../caseLifecycle';
   import { archiveFilePath, archivedActions, type ArchiveDrawerKind } from '../archiveModel';
   import { ARCHIVE_TEXT, filesMadeText, restoredNewNotice } from '../copy/archiveCopy';
   import ArchiveDrawers from './ArchiveDrawers.svelte';
-  import { CASE_HOME_TEXT, retryKindLabel } from '../copy/caseHomeCopy';
+  import { CASE_HOME_TEXT, closedEraseText, retryKindLabel } from '../copy/caseHomeCopy';
   import { errorText, importerLabel, formatBytes } from '../copy/importCopy';
   import { fetchHealthRuns, type HealthRun } from '../health';
   import { stateLabel } from '../ledger';
@@ -67,7 +67,7 @@
   // The case the guided view was opened on. Another case starts at its own home.
   let guidedFor = $state('');
   const guidedOpen = $derived(guidedOpenFor(guidedFor, caseId));
-  // The case the Investigation Timeline is open on. The app holds it (not this page) so the browser's Back and Forward and a reload can open and close it.
+  // The case the Investigation timeline is open on. The app holds it (not this page) so the browser's Back and Forward and a reload can open and close it.
   const tracingOpen = $derived(!!caseId && app.tracingCase === caseId);
   // An archived case has no timeline (its files cannot be read). A reload or Back and Forward that lands on its timeline returns to the case page.
   // A closed case keeps its timeline as a viewer (UI-R2-03): it only reads, so closing the case in another tab does not send this page back.
@@ -80,6 +80,7 @@
   // An archived case offers no analysis, files, checks or theories (spec section 9): the page shows its record and the way back.
   const offersWork = $derived(!info || readsCaseData(info));
   const theories = $derived(offersWork ? ledger.items : []);
+  const showJump = $derived(offersWork);
   const story = $derived(buildStory({ info, imports, health, theories, history: info?.history }));
   const keptFiles = $derived(imports.filter(record => record.status === 'ok'));
   // An archived case reads no files, so the header counts them from the case record until the working copy is freed; after that there is no count.
@@ -99,6 +100,8 @@
   const archiveState = $derived(info ? archiveButton(info) : 'hidden');
   const isArchived = $derived(!!info && believedState(info) === 'archived');
   const isClosed = $derived(!!info && believedState(info) === 'closed');
+  // When a closed case will be erased: 30 days after it was closed. Said on the closed page, so the deadline is in view when it starts (CASES-10).
+  const eraseAt = $derived(isClosed ? closedEraseAt(info?.closed) : null);
   const timelineShown = $derived(tracingOpen && !isArchived);
   const archivedMoves = $derived(info ? archivedActions(info) : null);
   const madeCount = $derived(info?.archive?.files?.length || info?.filesMade || 0);
@@ -134,6 +137,30 @@
       if (opener?.isConnected && !(opener as HTMLButtonElement).disabled) { opener.focus(); return; }
       const now = document.activeElement; if (!now || now === document.body) headingEl?.focus();
     });
+  }
+  // The small "Jump to" row under the title: the page is long, so each part is one press away (CASES-28).
+  const JUMPS = [
+    { id: 'analysis', label: CASE_HOME_TEXT.analysisHeading },
+    { id: 'tracing', label: TRACING_TEXT.heading },
+    { id: 'theories', label: CASE_HOME_TEXT.theoriesHeading },
+    { id: 'health', label: CASE_HOME_TEXT.healthHeading },
+    { id: 'sources', label: HUB_TEXT.heading },
+    { id: 'files', label: CASE_HOME_TEXT.filesHeading },
+    { id: 'key', label: CASE_KEY_TEXT.homeLabel }
+  ];
+  function jumpTo(id: string) {
+    const heading = document.getElementById('home-' + id);
+    if (!heading) return;
+    heading.setAttribute('tabindex', '-1');
+    heading.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    heading.focus({ preventScroll: true });
+  }
+  // The saved case file's full path goes to the clipboard, so the person can paste it into a file dialog (CASES-20). A refused clipboard changes nothing.
+  let copiedFile = $state(false);
+  async function copyCaseFile() {
+    const path = archiveFilePath(currentFile);
+    if (!path) return;
+    try { await navigator.clipboard.writeText(path); copiedFile = true; setTimeout(() => { copiedFile = false; }, 2500); } catch { copiedFile = false; }
   }
   function archiveChanged() { archiveDrawer = null; changed = true; void tick().then(() => reloadEl?.focus()); }
 
@@ -279,7 +306,7 @@
 
   function gone() { phase = 'gone'; }
 
-  // The Investigation Timeline closes back onto this page; focus goes back to the button that opened it.
+  // The Investigation timeline closes back onto this page; focus goes back to the button that opened it.
   function leaveTracing() {
     closeTracing();
     void tick().then(() => document.getElementById('home-tracing-open')?.focus());
@@ -406,10 +433,10 @@
     <div class="inline-error" role="alert">{CASE_HOME_TEXT.failed}</div>
     <div><button type="button" class="secondary-button" onclick={() => void load(caseId)}>{CASE_HOME_TEXT.retry}</button></div>
   {:else if view === 'erase'}
-    <EraseCase {caseId} archivePath={archiveFilePath(currentFile) || undefined} believed={info ? believedState(info) : undefined} onDone={erasedDone} onCancel={() => void backFromDialog()} />
+    <EraseCase {caseId} title={info?.title ?? ''} archivePath={archiveFilePath(currentFile) || undefined} believed={info ? believedState(info) : undefined} onDone={erasedDone} onCancel={() => void backFromDialog()} />
   {:else if phase === 'locked'}
     <CaseKeyCard {caseId} ending={keyStatus.ending} onOpened={() => void load(caseId).then(() => tick()).then(() => headingEl?.focus())} onCancel={goHome} />
-    <div class="actions"><button type="button" class="secondary-button danger" aria-haspopup="dialog" onclick={() => { view = 'erase'; }}>{ERASE_TEXT.open}</button></div>
+    <p class="note forgot-key">{ERASE_TEXT.forgot} <button type="button" class="link-button" aria-haspopup="dialog" onclick={() => { view = 'erase'; }}>{ERASE_TEXT.open}</button></p>
   {:else if phase === 'untrusted'}
     <section class="block untrusted" aria-labelledby="untrusted-title">
       <p class="eyebrow">Case {caseCode(caseId)} · {ERASE_TEXT.untrustedEyebrow}</p>
@@ -443,36 +470,40 @@
         <div><dt>{CASE_HOME_TEXT.checksCount}</dt><dd>{health.length}</dd></div>
         {#if retries.length > 0}<div><dt>{CASE_HOME_TEXT.retryCount}</dt><dd>{retries.length}</dd></div>{/if}
       </dl>
+      {#if showJump}
+        <nav class="jump-row" aria-label={CASE_HOME_TEXT.jumpLabel}>
+          <span>{CASE_HOME_TEXT.jumpLabel}</span>
+          {#each JUMPS as jump (jump.id)}<button type="button" class="link-button" onclick={() => jumpTo(jump.id)}>{jump.label}</button>{/each}
+        </nav>
+      {/if}
       {#if madeCount > 0}<p class="note files-made">{filesMadeText(madeCount)}</p>{/if}
       {#if info?.untrusted}<p class="notice" role="status">{CASE_HOME_TEXT.untrusted}</p>
       {:else if isArchived}
         <p class="notice" role="status">{info?.missing ? ARCHIVE_TEXT.workingCopyMissing : info?.archive?.freed ? ARCHIVE_TEXT.freedNote : ARCHIVE_TEXT.archivedNote}</p>
         <p class="note">{ARCHIVE_TEXT.archivedWork}</p>
-        {#if currentFile}<p class="note">{ARCHIVE_TEXT.caseFileLine}: {currentFile.name}{currentFile.folder ? ' ' + ARCHIVE_TEXT.inFolder + ' ' + currentFile.folder : ''}{currentFile.keyEnding ? ' · ' + ARCHIVE_TEXT.keyEnding + ' ' + currentFile.keyEnding : ''}</p>{/if}
+        {#if currentFile}<p class="note case-file-line">{ARCHIVE_TEXT.caseFileLine}: <code>{currentFile.name}</code>{currentFile.folder ? ' ' + ARCHIVE_TEXT.inFolder + ' ' : ''}{#if currentFile.folder}<code>{currentFile.folder}</code>{/if}{currentFile.keyEnding ? ' · ' + ARCHIVE_TEXT.keyEnding + ' ' + currentFile.keyEnding : ''} <button type="button" class="quiet-button" data-testid="copy-case-file" onclick={() => void copyCaseFile()}>{copiedFile ? ARCHIVE_TEXT.copied : ARCHIVE_TEXT.copyPath}</button></p>{/if}
       {:else if archivingNow}
         <p class="notice" role="status">{ARCHIVE_TEXT.archivingNote}{info?.percent !== undefined ? ' ' + info.percent + '%' : ''}</p>
         <div class="actions"><button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={(e) => openArchiveDrawer('archive', e.currentTarget)}>{ARCHIVE_TEXT.showProgress}</button></div>
-      {:else if info && believedState(info) === 'closed'}<p class="notice" role="status">{CASE_HOME_TEXT.closedNote}</p>{/if}
+      {:else if info && believedState(info) === 'closed'}<p class="notice" role="status">{CASE_HOME_TEXT.closedNote}{#if eraseAt} {closedEraseText(when(eraseAt))}{/if}</p>{/if}
       {#if archiveNote}<p class="notice" role="status">{archiveNote}</p>{/if}
-      {#if archiveState !== 'hidden' || isArchived}
+      {#if archiveState !== 'hidden' || isArchived || closeState !== 'hidden'}
         <div class="actions">
           {#if archiveState !== 'hidden'}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={archiveState !== 'enabled' || stale} onclick={(e) => openArchiveDrawer('archive', e.currentTarget)}>{ARCHIVE_TEXT.archiveButton}</button>{/if}
           {#if archivedMoves?.restoreInPlace}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={(e) => openArchiveDrawer('restore-in-place', e.currentTarget)}>{ARCHIVE_TEXT.restore}</button>{/if}
           {#if archivedMoves?.restoreAsNew}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={(e) => openArchiveDrawer('restore-as-new', e.currentTarget)}>{ARCHIVE_TEXT.restoreAsNewMenu}</button>{/if}
-          {#if archivedMoves?.free}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={(e) => openArchiveDrawer('free', e.currentTarget)}>{ARCHIVE_TEXT.freeMenu}</button>{/if}
+          {#if archivedMoves?.free}<button type="button" class="secondary-button danger" aria-haspopup="dialog" disabled={stale} onclick={(e) => openArchiveDrawer('free', e.currentTarget)}>{ARCHIVE_TEXT.freeMenu}</button>{/if}
+          {#if closeState !== 'hidden'}<button type="button" class="secondary-button" disabled={closeState !== 'enabled' || stale} aria-busy={closeState === 'busy'} aria-describedby="home-close-hint" onclick={() => void close()}>{closeState === 'busy' ? CASE_HOME_TEXT.closing : CASE_HOME_TEXT.closeButton}</button>{/if}
         </div>
       {/if}
       {#if closeState !== 'hidden'}
-        <div class="actions">
-          <button type="button" class="secondary-button" disabled={closeState !== 'enabled' || stale} aria-busy={closeState === 'busy'} aria-describedby="home-close-hint" onclick={() => void close()}>{closeState === 'busy' ? CASE_HOME_TEXT.closing : CASE_HOME_TEXT.closeButton}</button>
-        </div>
-        <p class="note" id="home-close-hint">{CASE_HOME_TEXT.closeHint}</p>
+        <p class="note after-actions" id="home-close-hint">{CASE_HOME_TEXT.closeHint}</p>
       {/if}
       {#if reopenState !== 'hidden'}
         <div class="actions">
           <button type="button" class="secondary-button" disabled={reopenState !== 'enabled' || stale} aria-busy={reopenState === 'busy'} onclick={() => void reopen()}>{reopenState === 'busy' ? CASE_HOME_TEXT.reopening : CASE_HOME_TEXT.reopenButton}</button>
         </div>
-        {#if reopenState === 'enabled' && !stale}<p class="note">{CASE_HOME_TEXT.reopenHint}</p>{/if}
+        {#if reopenState === 'enabled' && !stale}<p class="note after-actions">{CASE_HOME_TEXT.reopenHint}</p>{/if}
       {/if}
       <div aria-live="polite">
         {#if changed}
@@ -514,9 +545,8 @@
     {#if offersWork}
     <section class="block" aria-labelledby="home-analysis">
       <h3 id="home-analysis">{CASE_HOME_TEXT.analysisHeading}</h3>
-      <p class="note">{CASE_HOME_TEXT.analysisText}</p>
+      <p class="note">{CASE_HOME_TEXT.analysisText} {CASE_HOME_TEXT.analysisHint}</p>
       <div><button type="button" class="primary-button" onclick={openAnalysis}>{CASE_HOME_TEXT.analysisButton}</button></div>
-      <p class="note">{CASE_HOME_TEXT.analysisHint}</p>
     </section>
 
     <section class="block" aria-labelledby="home-tracing">
@@ -628,7 +658,7 @@
   /* width: 100% matters: a grid item with margin auto shrinks to its content, so its width (and everything inside) moved sideways
      whenever hover text or table rows changed. With a fixed width the column only ever stops at its max-width. */
   .case-home { display: grid; gap: 20px; width: 100%; max-width: 880px; margin: 0 auto; padding: 8px 0 48px; }
-  /* The Investigation Timeline needs room for its plot; the other pages of the case keep the narrow column. */
+  /* The Investigation timeline needs room for its plot; the other pages of the case keep the narrow column. */
   .case-home.wide { max-width: 1480px; }
   .top { display: flex; }
   .head h2 { margin: 2px 0 6px; font-size: 24px; overflow-wrap: anywhere; }
@@ -644,6 +674,15 @@
   .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .head .actions { margin-top: 14px; }
   .head .actions + .actions { margin-top: 8px; }
+  /* The explanation belongs to the row of buttons above it, with a clear gap, not touching the last button (CASES-20). */
+  .after-actions { margin-top: 8px; max-width: 640px; }
+  .case-file-line code { overflow-wrap: anywhere; }
+  .forgot-key { margin: 0; }
+  .link-button { padding: 0; color: var(--accent); background: transparent; border: 0; font: inherit; text-decoration: underline; cursor: pointer; }
+  .link-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .jump-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 12px 0 0; font-size: 13px; }
+  .jump-row span { color: var(--text-2); }
+  .jump-row .link-button { font-size: 13px; }
   .story { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; border-left: 2px solid var(--line); }
   .story li { position: relative; display: grid; grid-template-columns: 170px 1fr; gap: 12px; padding: 8px 0 8px 16px; }
   .story li::before { content: ''; position: absolute; left: -6px; top: 14px; width: 10px; height: 10px; border-radius: 50%; background: var(--text-2); }

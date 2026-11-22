@@ -1,5 +1,5 @@
 /**
- * The Suspects rail of the Investigation Timeline (the wireframe's right-hand panel), worked out in the browser from the one answer the
+ * The Suspects rail of the Investigation timeline (the wireframe's right-hand panel), worked out in the browser from the one answer the
  * timeline already holds: per lane, the event counts in each bar, and where a lane has them the call times in each bar. Pure TypeScript; the panel is `SuspectsRail.svelte`.
  *
  * The rules are the wireframe's: a suspect names the readings it MUST have and the ones it should EXPECT. A reading is yes, no or

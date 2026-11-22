@@ -280,7 +280,7 @@
     {
       "id": "x-case-timeline",
       "phase": "X",
-      "note": "The case Investigation Timeline.",
+      "note": "The case Investigation timeline.",
       "narrow": true,
       "steps": [
         {
@@ -305,7 +305,7 @@
           "waitFor": "text=Case started"
         },
         {
-          "click": "role=button[name=\"Open the Investigation Timeline\"s]"
+          "click": "role=button[name=\"Open the Investigation timeline\"s]"
         },
         {
           "waitFor": "role=button[name=\"Start tracing\"]"

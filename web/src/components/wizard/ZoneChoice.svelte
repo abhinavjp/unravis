@@ -150,7 +150,7 @@
         {#if failure !== ''}<p class="hint bad" role="alert">{failure}</p>{/if}
         <div class="actions">
           <button type="button" class="secondary-button" disabled={saving || disabled} onclick={() => void save()}>{saving ? ZONE_CHOICE_TEXT.saving : ZONE_CHOICE_TEXT.save}</button>
-          <button type="button" class="quiet-button" disabled={saving || disabled} onclick={cancel}>{ZONE_CHOICE_TEXT.cancel}</button>
+          <button type="button" class="secondary-button" disabled={saving || disabled} onclick={cancel}>{ZONE_CHOICE_TEXT.cancel}</button>
         </div>
       </div>
     {:else if failure !== ''}

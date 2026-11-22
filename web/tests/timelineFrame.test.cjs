@@ -5,7 +5,7 @@ const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
 
-// The y-axis ticks of the Investigation Timeline chart: whole numbers from 0 to the tallest bar.
+// The y-axis ticks of the Investigation timeline chart: whole numbers from 0 to the tallest bar.
 
 const root = path.resolve(__dirname, '..');
 const cache = new Map();

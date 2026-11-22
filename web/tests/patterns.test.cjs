@@ -51,7 +51,7 @@ test('seconds labels', () => {
 });
 
 test('quality, n badge and coverage lines', () => {
-  assert.equal(patterns.qualityLine({ incomplete: 3, pending: 0, invalid: 1 }), '3 incomplete, 0 pending, 1 invalid');
+  assert.equal(patterns.qualityLine({ incomplete: 3, pending: 0, invalid: 1 }), '3 missing timing, 0 pending, 1 unusable timing');
   assert.equal(patterns.nBadge(4), 'n = 4');
   assert.equal(patterns.coverageLine(undefined), null);
   assert.equal(patterns.coverageLine({ run: false, note: 'The check did not run on a live source.' }), 'The check did not run on a live source.');

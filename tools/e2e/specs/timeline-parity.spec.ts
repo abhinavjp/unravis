@@ -1,4 +1,4 @@
-// The page-level parts of the Investigation Timeline (the tracing-paper wireframe): the "Quick range" chip row above the two windows,
+// The page-level parts of the Investigation timeline (the tracing-paper wireframe): the "Quick range" chip row above the two windows,
 // the plain headings and help lines ("Investigation window", "Compare it with (comparison period)"), Add evidence and Start tracing in
 // the "Sources traced" row, and the "windows changed" line. The demo clock is 2026-10-20T09:00Z, so the default incident window is
 // 08:00-09:00 UTC and the default comparison period 07:00-08:00. A chip sets the windows but never reads by itself; only Start tracing
@@ -27,8 +27,8 @@ type Body = Record<string, any>;
 async function openTimeline(page: Page): Promise<void> {
   await goHome(page);
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
 }
 
 const isTrace = (r: Request) => r.url().includes('/tracing') && r.method() === 'POST';

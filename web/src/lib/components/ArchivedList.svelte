@@ -225,12 +225,18 @@
   .case-title { font-size: var(--fs-3); font-weight: 600; overflow-wrap: anywhere; }
   .case-meta { color: var(--text-2); font-size: var(--fs-2); }
   .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-  .chip { padding: 0 var(--space-1); color: var(--text-2); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font-size: var(--fs-2); }
-  .chip.warn { color: var(--warn); border-color: var(--warn); }
+  /* Filled pills with no border: a status is not a control (CASES-22). */
+  .chip { padding: 1px var(--space-2); color: var(--text-2); background: var(--surface); border-radius: 999px; font-size: var(--fs-2); }
+  .chip.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, var(--surface)); }
   .buttons { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   /* The menu hangs from the card, not from the small More button, so it stays inside the card at any width. */
   .more { position: static; }
-  .more summary { cursor: pointer; padding: 0 var(--space-2); color: var(--text-2); font-size: var(--fs-3); list-style: none; }
+  /* A bordered button with a chevron, so More does not read as disabled text (CASES-22). */
+  .more summary { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 var(--space-3); color: var(--text); background: transparent; border: 1px solid var(--control-line); border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; cursor: pointer; list-style: none; }
+  .more summary::-webkit-details-marker { display: none; }
+  .more summary::after { content: ''; width: 6px; height: 6px; margin-top: -3px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); transition: transform var(--dur) var(--ease); }
+  .more[open] summary::after { margin-top: 3px; transform: rotate(-135deg); }
+  .more summary:hover { background: var(--surface-2); }
   .more summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .menu { position: absolute; right: var(--space-3); z-index: 2; display: grid; gap: var(--space-1); min-width: min(220px, calc(100% - 2 * var(--space-3))); margin-top: var(--space-1); padding: var(--space-2); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .menu :global(.quiet-button) { justify-self: start; text-align: left; }

@@ -1,4 +1,4 @@
-// The period pickers (WindowPicker.svelte, popover form) on the Investigation Timeline. The inline form on guided Step 0 and the Blackbox host card
+// The period pickers (WindowPicker.svelte, popover form) on the Investigation timeline. The inline form on guided Step 0 and the Blackbox host card
 // cannot be reached in the running app (case home no longer opens the guided analysis, and #/case/guided/N is not routed there), so those are covered
 // by tests/windowPicker.test.cjs only.
 // The demo clock is 2026-10-20T09:00:00Z. Nothing here changes demo data, so the tests may run in any order.
@@ -22,8 +22,8 @@ async function openTracing(page: Page, width?: number) {
   await goHome(page);
   if (width) await page.setViewportSize({ width, height: 812 });
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect(page.locator('.tracing-chart')).toBeVisible();
 }
 
@@ -111,7 +111,7 @@ test('PICK-03: Cancel discards, Escape and a click outside close, and focus goes
   expect(await windowValues(page)).toEqual(before);
   // A click outside closes and keeps nothing.
   dialog = await typeRange(page, 'incident', '2026-10-01T01:00', '2026-10-01T02:00');
-  await page.getByRole('heading', { name: 'Investigation Timeline' }).click();
+  await page.getByRole('heading', { name: 'Investigation timeline' }).click();
   await expect(dialog).toBeHidden();
   expect(await windowValues(page)).toEqual(before);
   // The button opens and closes it.

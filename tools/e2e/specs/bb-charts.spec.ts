@@ -20,8 +20,8 @@ async function openCharts(page: Page) {
 test('Blackbox charts: help card, plain scale words with a tooltip each, quick questions and the highest-at column', async ({ page }) => {
   const charts = await openCharts(page);
   await expect(charts.getByRole('heading', { name: 'How to read these charts' })).toBeVisible();
-  await expect(charts.getByRole('button', { name: 'Even steps' })).toHaveAttribute('title', /linear scale/);
-  await expect(charts.getByRole('button', { name: 'Times-10 steps' })).toHaveAttribute('title', /log scale/);
+  await expect(charts.getByRole('button', { name: 'Normal' })).toHaveAttribute('title', /linear scale/);
+  await expect(charts.getByRole('button', { name: 'Log (x10 steps)' })).toHaveAttribute('title', /log scale/);
   await expect(charts.getByRole('button', { name: 'Linear', exact: true })).toHaveCount(0);
   await expect(charts.getByRole('columnheader', { name: 'Highest at' })).toBeVisible();
   await charts.getByRole('button', { name: 'Is the disk slow?' }).click();

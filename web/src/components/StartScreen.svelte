@@ -173,7 +173,7 @@
                 <div class="case-info">
                   <strong class="case-title" title={row.fullTitle}>{row.title}</strong>
                   <span class="case-meta">{[row.created, row.counts, row.codeText].filter(Boolean).join(' · ')}</span>
-                  {#if row.closed}<span class="case-closed">{row.closedLabel}</span>{/if}
+                  {#if row.closed}<span class="case-closed">{row.closedLabel}</span>{#if row.eraseNote}<span class="case-meta">{row.eraseNote}</span>{/if}{/if}
                   {#if row.keyEnding}<span class="case-closed">{row.keyEnding}</span>{/if}
                   {#if row.untrusted}<span class="case-closed" role="note">{row.untrustedLabel}</span>{/if}
                 </div>
@@ -271,7 +271,8 @@
   .case-info { display: grid; gap: 2px; min-width: 0; }
   .case-title { font-size: var(--fs-3); font-weight: 600; overflow-wrap: anywhere; }
   .case-meta { color: var(--text-2); font-size: var(--fs-2); }
-  .case-closed { justify-self: start; padding: 0 var(--space-1); color: var(--text-2); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font-size: var(--fs-2); }
+  /* A status chip is a filled pill with no border, so it does not look like a button you can press (CASES-22). */
+  .case-closed { justify-self: start; padding: 1px var(--space-2); color: var(--text-2); background: var(--surface); border-radius: 999px; font-size: var(--fs-2); }
   .case-row :global(.secondary-button) { flex-shrink: 0; }
   .start-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
   .link-button { display: inline-flex; align-items: center; min-height: 24px; padding: 0; color: var(--accent); background: transparent; border: 0; font: inherit; font-size: var(--fs-3); text-decoration: underline; cursor: pointer; }

@@ -38,7 +38,7 @@ test('CASE-11: the list shows two items with different stickers and no secrets',
 test('CASE-11a: the audit item has no Try again, and says it needs the wizard and offers Remove', async ({ page }) => {
   const aud = section(page).getByRole('listitem').filter({ hasText: 'Reports database' });
   await expect(aud.getByRole('button', { name: 'Try again' })).toHaveCount(0);
-  await expect(aud.getByText('This one needs details only the wizard holds. Remove it, then add it again from Connections or Add a file.')).toBeVisible();
+  await expect(aud.getByText('This one needs details only the wizard holds. Remove it, then add it again from Connections or Add files.')).toBeVisible();
   await expect(aud.getByRole('button', { name: 'Remove from list' })).toBeEnabled();
 });
 

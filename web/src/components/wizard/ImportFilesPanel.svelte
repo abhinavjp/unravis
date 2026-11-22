@@ -454,7 +454,7 @@
     <div class="actions foot" aria-busy={reading}>
       <button type="button" class="secondary-button" bind:this={chooseButton} onclick={() => filesInput?.click()}>{FILES_TEXT.chooseFiles}</button>
       <button type="button" class="quiet-button" onclick={() => folderInput?.click()}>{FILES_TEXT.chooseFolder}</button>
-      <button type="button" class="quiet-button" data-cancel-files onclick={() => onCancel?.()}>{FILES_TEXT.cancel}</button>
+      <button type="button" class="secondary-button" data-cancel-files onclick={() => onCancel?.()}>{FILES_TEXT.cancel}</button>
     </div>
   {/if}
 </div>

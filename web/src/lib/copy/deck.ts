@@ -358,9 +358,9 @@ export const deck: Deck = {
     },
     {
       id: 'hypothesis-ledger',
-      term: 'Hypothesis ledger',
-      hint: 'A list of ideas to check, each with its evidence and references, kept in a local file.',
-      definition: 'The hypothesis ledger keeps ideas to check and links to their evidence. It is saved in a local file, and the app never sets an entry\'s state by itself.',
+      term: 'Ledger',
+      hint: 'A list of theories to check, each with its evidence and references, kept in a local file.',
+      definition: 'The ledger keeps theories to check and links to their evidence. It is saved in a local file, and the app never sets an entry\'s state by itself.',
       notMeaning: 'An entry is an idea to test, not a finding, and writing it down does not prove the idea is true.'
     },
     {
@@ -413,7 +413,7 @@ export const deck: Deck = {
       hint: 'Adding a file exported from a server to a case, where it stays on this computer.',
       definition: 'To import is to add a file exported from a server to a case. The copy stays on this computer and is encrypted, and you can erase it by erasing the case.',
       notMeaning: 'An import does not send the file anywhere, and it does not change the server it came from.',
-      aliases: ['Imported', 'Add a file']
+      aliases: ['Imported', 'Add files']
     },
     {
       id: 'computer',

@@ -84,7 +84,7 @@ test('CASE-21b: importing files opens a centred popup, not a side drawer', async
   await page.reload(); // the start screen was drawn before this case existed
   await goHome(page);
   await openCase(page, 'QA Import Not Drawer');
-  await page.getByRole('button', { name: 'Add a file' }).click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).click();
 
   const popup = page.getByRole('dialog', { name: 'Add files' });
   await expect(popup).toBeVisible();
@@ -107,7 +107,7 @@ test('CASE-21b: importing files opens a centred popup, not a side drawer', async
   // It closes with its own button and with Escape, as one dialog.
   await popup.getByRole('button', { name: 'Close import' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Add a file' }).click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).click();
   await expect(popup).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);

@@ -5,7 +5,7 @@ const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
 
-// Investigation Timeline gaps 1 to 3: the one controls card, the UTC readout, the 12-hour time boxes, and the "Each bar" line.
+// Investigation timeline gaps 1 to 3: the one controls card, the UTC readout, the 12-hour time boxes, and the "Each bar" line.
 
 const root = path.resolve(__dirname, '..');
 const loaded = new Map();

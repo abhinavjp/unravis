@@ -215,7 +215,7 @@ export const RUN_TEXT = {
 } as const;
 
 export const ADD_TEXT = {
-  heading: 'Add data',
+  heading: 'Add files',
   lead: 'Add a source after the case was created. New data is read on its own and does not touch what is there.',
   sqlTitle: 'SQL Server',
   sqlBody: 'Query Store, sessions, jobs, error log.',
@@ -243,10 +243,10 @@ export const ADD_TEXT = {
   drawerLead: 'Add a source after the case was created. Same cards as at creation. New data is imported separately and does not touch what is there.',
   busy: 'An import is already running. Stop it first.',
   staged: (n: number): string => (n === 1 ? '1 file staged, not imported' : n + ' files staged, not imported'),
-  backToData: 'Back to Add data',
+  backToData: 'Back to Add files',
   otherCase: 'Use another case',
   hideCases: 'Hide the case list',
-  drawerTitle: (code: string): string => 'Add data, case ' + code,
+  drawerTitle: (code: string): string => 'Add files, case ' + code,
   leaveHeading: 'Leave without importing?',
   leaveText: (files: number): string => (files === 1 ? '1 file and unsaved fields will be lost.' : files + ' files and unsaved fields will be lost.'),
   keepEditing: 'Keep editing',
@@ -349,7 +349,7 @@ export const NOTHING_TEXT = {
   hours: 'The hours may be wrong, or that hour is before the system was used.',
   change: 'Change the window, or add the day that holds data.',
   addDay: 'Add another day',
-  addData: 'Add data',
+  addData: 'Add files',
   tableHeading: 'What this case can answer',
   colQuestion: 'Question',
   colNeeds: 'Needs',
@@ -363,13 +363,13 @@ export const NOTHING_TEXT = {
 } as const;
 
 export const HUB_TEXT = {
-  heading: 'SQL Server and MongoDB',
+  heading: 'Sources and connections',
   intro: 'Saved connections, the sources of this case, what SQL Server and MongoDB show for a day, and what to add next.',
-  label: 'SQL Server and MongoDB sections',
+  label: 'Sources and connections sections',
   connections: 'Connections',
   sql: 'Read SQL Server',
   mongo: 'Read MongoDB',
-  add: 'Add data',
+  add: 'Add files',
   day: 'Add another day',
   combos: 'Combinations',
   readOnlyWhy: 'This case cannot take new data right now: it is closed, or it changed somewhere else. Reopen or refresh it first. What it already holds can still be read here.'
