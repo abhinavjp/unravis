@@ -34,7 +34,7 @@ func TestParseVerifiedSettingsBadJSONIsNotReportedAsUnlocked(t *testing.T) {
 }
 
 func TestParseVerifiedSettingsInvalidValuesAreNotReportedAsUnlocked(t *testing.T) {
-	read := func(string) ([]byte, error) { return []byte(`{"name":"x"}`), nil }
+	read := func(string) ([]byte, error) { return []byte(`{"name":"x","intervalSeconds":7}`), nil }
 	_, err := ParseVerifiedSettings(read, `C:\nowhere\settings.json`)
 	if err == nil || errors.Is(err, ErrSettingsNotProven) {
 		t.Fatalf("invalid values gave %v; want a validation error that is not ErrSettingsNotProven", err)
