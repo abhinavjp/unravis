@@ -97,8 +97,8 @@ func maskXML(s, mask string, w *work) (string, int) {
 				if to > pos {
 					pos = to
 				}
-			} else if strings.TrimRight(s[end:], " \t\r\n") == "" {
-				pending = pendNext // the tag ends the text: the value is on the next line
+			} else if onlySpace(s, end) {
+				pending = pendNextText // the tag ends the text: the value is on the next line
 			}
 		}
 		for _, sp := range sortEdits(spans) {
@@ -190,6 +190,7 @@ func parseTag(s string, n int, w *work) (attrs []attr, end int, selfClose, plain
 				q := s[j]
 				c := strings.IndexByte(s[j+1:limit], q)
 				if c < 0 {
+					i = limit // the search read up to the limit: charged
 					return nil, 0, false, false, false
 				}
 				a.hasValue, a.vFrom, a.vTo = true, j+1, j+1+c
@@ -266,6 +267,7 @@ func textNode(s string, p int, w *work) (from, to int, ok bool) {
 			}
 			r := strings.IndexByte(rest[:lim], '>')
 			if r < 0 {
+				far = q + lim // the search read up to the limit: charged
 				return 0, 0, false
 			}
 			p = q + r + 1
@@ -273,4 +275,12 @@ func textNode(s string, p int, w *work) (from, to int, ok bool) {
 		}
 	}
 	return 0, 0, false
+}
+
+// onlySpace says whether nothing but white space follows position p. It reads forward and stops at the first other character.
+func onlySpace(s string, p int) bool {
+	for p < len(s) && isSpace(s[p]) {
+		p++
+	}
+	return p >= len(s)
 }

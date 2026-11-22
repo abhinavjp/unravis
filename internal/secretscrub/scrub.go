@@ -236,6 +236,9 @@ const (
 	pendBlock        = 1 // a YAML block scalar header ("password: |") ends the line: the indented lines after it are the value
 	pendNext         = 2 // a key ends the line with no value: the next line is the value
 	pendNextIndented = 3 // the same for a compound name after a colon ("client_secret:"): only an indented next line is the value
+	pendNextStrong   = 4 // the name is clearly a secret ("DB_PASSWORD=", "<Password>"): an indented, quoted or listed next line is the value
+	pendNextText     = 6 // an XML secret element ends the line: the next line is its text unless it starts a tag
+	pendNextQuoted   = 5 // a bare "token:" or "secret:" (also a sentence word): only a quoted next line is the value
 )
 
 // maskPend is Mask that also says what the text leaves open at its end.
@@ -342,6 +345,7 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 	for k < len(s) && s[k] == '\\' {
 		k++
 	}
+	see(k)
 	if k < len(s) && (s[k] == '"' || s[k] == '\'') {
 		jsonKey = true // the key was quoted: "password":..., \"password\":..., 'password' =>
 		j = k + 1
@@ -399,15 +403,16 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 		if j >= len(s) || (s[j] == '\r' && j+1 == len(s)) {
 			switch {
 			case colon && class == classToken && !jsonKey && bare:
+				*pend = pendNextQuoted
 			case colon && class != classPassword && !jsonKey:
 				*pend = pendNextIndented
+			case !bare:
+				*pend = pendNextStrong
 			default:
 				*pend = pendNext
 			}
 		}
-		if colon && class == classToken && !jsonKey && bare {
-			return 0, 0, 0, false
-		}
+		quotedOnly := colon && class == classToken && !jsonKey && bare // "token:" is also a sentence word: only a quoted next line is a value
 		if j >= len(s) {
 			return 0, 0, 0, false
 		}
@@ -416,12 +421,13 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 		} else {
 			j++
 		}
-		if colon && class != classPassword && !jsonKey && (j >= len(s) || (s[j] != ' ' && s[j] != '\t')) {
+		if !quotedOnly && colon && class != classPassword && !jsonKey && (j >= len(s) || (s[j] != ' ' && s[j] != '\t')) {
 			return 0, 0, 0, false // a name such as client_secret: with its value on the next line counts only when that line is indented (YAML)
 		}
 		for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
 			j++
 		}
+		see(j)
 		// A comment line between the key and the value (YAML): the value is the line after it.
 		for n := 0; n < 4 && j < len(s) && s[j] == '#'; n++ {
 			j = w.lineEnd(s, j)
@@ -441,6 +447,9 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 		if j >= len(s) || s[j] == '\r' || s[j] == '\n' {
 			return 0, 0, 0, false
 		}
+		if quotedOnly && s[j] != '"' && s[j] != '\'' {
+			return 0, 0, 0, false
+		}
 	}
 	// A quoted value, plain ("..."), escaped (\"...\", JSON inside a JSON string) or in single quotes.
 	q, nest := j, 0
@@ -448,6 +457,7 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 		q++
 		nest++
 	}
+	see(q)
 	if q < len(s) && (s[q] == '"' || s[q] == '\'') {
 		end, after := closingQuote(s, q, nest)
 		see(after)
@@ -678,9 +688,17 @@ func bracketEnd(s string, i int) int {
 // blockHeader says whether the text at j is the header of a YAML block scalar ("|", ">", "|-", ">+", "|2") that ends its line. It
 // returns where the header ends.
 func blockHeader(s string, j int, w *work) (end int, ok bool) {
-	// A tag ("!!str", "!secret") or an anchor ("&a") may come first.
+	j0, k := j, 0
+	defer func() { // every exit is charged for the text this read
+		if k < j {
+			k = j
+		}
+		w.spend(k - j0 + 1)
+	}()
+	// A tag ("!!str", "!secret") or an anchor ("&a") may come first. One longer than maxIdent is not a tag: reading on to the next
+	// space would read the same stretch again for every key that follows it.
 	for n := 0; n < 2 && j < len(s) && (s[j] == '!' || s[j] == '&'); n++ {
-		for j < len(s) && s[j] != ' ' && s[j] != '\t' && s[j] != '\r' && s[j] != '\n' {
+		for t := j; j < len(s) && j-t < maxIdent && s[j] != ' ' && s[j] != '\t' && s[j] != '\r' && s[j] != '\n'; {
 			j++
 		}
 		for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
@@ -690,7 +708,7 @@ func blockHeader(s string, j int, w *work) (end int, ok bool) {
 	if j >= len(s) || (s[j] != '|' && s[j] != '>') {
 		return 0, false
 	}
-	k := j + 1
+	k = j + 1
 	for n := 0; n < 2 && k < len(s) && (s[k] == '+' || s[k] == '-' || (s[k] >= '1' && s[k] <= '9')); n++ {
 		k++
 	}
@@ -710,10 +728,7 @@ func blockHeader(s string, j int, w *work) (end int, ok bool) {
 // key (blank lines between them belong to it). It returns the span from the first text to the end of the last line of text.
 func blockText(s string, p, keyAt int, w *work) (from, to int, ok bool) {
 	ls := w.lineStart(s, keyAt)
-	keyIndent := 0
-	for k := ls; k < len(s) && (s[k] == ' ' || s[k] == '\t'); k++ {
-		keyIndent++
-	}
+	keyIndent := w.lineIndent(s, ls)
 	for p < len(s) {
 		// p is at a line break; the next line starts after it.
 		if s[p] == '\r' && p+1 < len(s) && s[p+1] == '\n' {

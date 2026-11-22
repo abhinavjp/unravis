@@ -143,6 +143,9 @@ func TestMaskThirdReviewBypasses(t *testing.T) {
 		{"yaml header with a tag", "password: !!str |\n  FAKEPW\n", "password: !!str |\n  [m]\n"},
 		{"yaml header with an anchor", "password: &a |\n  FAKEPW\n", "password: &a |\n  [m]\n"},
 		{"yaml header with a tag and an anchor and a comment", "password: !!str &a >- # c\n  FAKEPW\n", "password: !!str &a >- # c\n  [m]\n"},
+		{"quoted value under a bare token", "token:\n  \"FAKEPW\"\nnext", "token:\n  \"[m]\"\nnext"},
+		{"quoted value under a bare secret, single quotes", "secret:\n  'FAKEPW x'", "secret:\n  '[m]'"},
+		{"plain text under a bare token stays", "token:\n  expired", "token:\n  expired"},
 		{"yaml tag with a plain value", "password: !secret db_pw\nnext: 1", "password: [m]\nnext: 1"},
 	})
 }
@@ -201,6 +204,15 @@ func TestCarryKeepsOrdinaryLinesAndCapsBlocks(t *testing.T) {
 		{"quoted value on the next line", []string{"password:", `  "FAKEPW two"`}, []string{"password:", "  [m]"}},
 		{"text with spaces after a key is kept", []string{"PASSWORD=", "two words here"}, []string{"PASSWORD=", "two words here"}},
 		{"comment line before the value", []string{"password:", "  # the admin login", "  FAKEPW"}, []string{"password:", "  # the admin login", "  [m]"}},
+		{"quoted value under a bare token", []string{"token:", `  "FAKEPW"`}, []string{"token:", "  [m]"}},
+		{"quoted value under a bare secret, no indent", []string{"secret:", `'FAKEPW x'`}, []string{"secret:", "[m]"}},
+		{"text under a bare token stays", []string{"token:", "  expired, log in again"}, []string{"token:", "  expired, log in again"}},
+		{"password with spaces, indented, under a clear name", []string{"DB_PASSWORD=", "  my pass phrase"}, []string{"DB_PASSWORD=", "  [m]"}},
+		{"password with a tab, under a clear name", []string{"client_secret:", "\tFAKEPW\tx"}, []string{"client_secret:", "\t[m]"}},
+		{"list item under a clear name", []string{"DB_PASSWORD=", "- FAKEPW two"}, []string{"DB_PASSWORD=", "[m]"}},
+		{"xml element, value with spaces", []string{"<Password>", "FAKEPW two words"}, []string{"<Password>", "[m]"}},
+		{"a long indented value under a clear name", []string{"DB_PASSWORD=", "  " + strings.Repeat("FAKEPW ", 100)}, []string{"DB_PASSWORD=", "  [m]"}},
+		{"test runner line under a clear name stays", []string{"Set DB_PASSWORD=", "--- FAIL: TestLogin"}, []string{"Set DB_PASSWORD=", "--- FAIL: TestLogin"}},
 		{"tab indented block", []string{"password: |", "\tFAKEPW", "\tFAKEPW two", "next: 1"}, []string{"password: |", "\t[m]", "\t[m]", "next: 1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -550,6 +562,14 @@ func TestMaskHostileInputIsFast(t *testing.T) {
 		"yaml tagged header comment":  rep("password: !!str | #"),
 		"yaml header comment tab":     rep("password: |\t#"),
 		"yaml header no space":        rep("password:| #"),
+		"tag after token colon":       rep("token:!"),
+		"anchor after secret colon":   rep("secret:&"),
+		"tag after token equals":      rep("token:=!"),
+		"anchor after secret equals":  rep("secret:=&a"),
+		"anchor after password colon": rep("&password:&"),
+		"long tag":                    rep("password: !" + strings.Repeat("t", 200) + " "),
+		"key after long indent":       strings.Repeat(" ", 1<<19) + rep("password: | #"),
+		"trailing spaces after tags":  rep("<Password>") + strings.Repeat(" ", 1<<19),
 		"many words in one name":      rep("password_token_secret_"),
 	}
 	for name, in := range inputs {

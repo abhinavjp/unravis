@@ -18,6 +18,9 @@ type work struct {
 	eolFrom, eolAt int
 	// The start of the line that holds position lsAt.
 	lsAt, lsPos int
+	// The indent of the line that starts at indLs, when indOK.
+	indLs, indent int
+	indOK         bool
 }
 
 func newWork(n int) *work { return &work{left: workFactor*n + workFloor, eolFrom: -1} }
@@ -48,6 +51,7 @@ func (w *work) lineEnd(s string, k int) int {
 // lineStart returns the index where the line that holds at begins.
 func (w *work) lineStart(s string, at int) int {
 	if at < w.lsAt {
+		w.spend(at) // not expected (the keys of a text come in order); charged in full if it ever happens
 		return strings.LastIndexByte(s[:at], '\n') + 1
 	}
 	if i := strings.LastIndexByte(s[w.lsAt:at], '\n'); i >= 0 {
@@ -56,4 +60,19 @@ func (w *work) lineStart(s string, at int) int {
 	w.spend(at - w.lsAt)
 	w.lsAt = at
 	return w.lsPos
+}
+
+// lineIndent returns how many spaces and tabs the line that starts at ls begins with. The answer is remembered, so many keys on one
+// line with a long run of spaces in front of them read the run once.
+func (w *work) lineIndent(s string, ls int) int {
+	if w.indOK && w.indLs == ls {
+		return w.indent
+	}
+	n := 0
+	for k := ls; k < len(s) && (s[k] == ' ' || s[k] == '\t'); k++ {
+		n++
+	}
+	w.spend(n + 1)
+	w.indLs, w.indent, w.indOK = ls, n, true
+	return n
 }

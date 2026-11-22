@@ -33,4 +33,34 @@
 //
 // The key stays in the text and the value (or, for a quoted value, the text inside the quotes) becomes the mask; the callers keep
 // their own older patterns and run them after Mask.
+//
+// Scan audit. Every loop and every strings.Index call in the package is either charged to the work budget ("charged"), bounded by a
+// constant that does not depend on the input ("constant"), or moves the position past what it read so that no later step reads it
+// again ("consumed"):
+//
+//	findWords: ContainsAny, lowerASCII, one Index pass per word  once per call; 27 passes over the text (constant factor)
+//	wordClass, keyClass: tail and segment loops                  constant (maxIdent) per candidate; at most 4 candidates per byte
+//	maskKV: name start loop                                      constant (maxIdent)
+//	maskKV: name end loop                                        charged; remembered for every word of the same name
+//	maskKV: readValue per word                                   charged; a name is read once per class (at most 4 times)
+//	readValue: backslash, space and tab loops, next-line skips   charged (see)
+//	readValue: comment lines before a value                      at most 4 lines, each ending at the remembered line end (charged)
+//	closingQuote, bracketEnd, braced scan, unquotedEnd           charged; the position moves to their end (consumed)
+//	nextIsSetting, entityEnd, quoteEndsText                      constant (maxIdent, 7, one word) per call, from a step that is charged
+//	blockHeader: tag and anchor loops                            constant (maxIdent each, at most 2); every exit is charged for what it read
+//	blockHeader: comment to the end of the line                  charged once per line (remembered line end)
+//	blockText: key line start and key line indent                remembered and charged (lineStart, lineIndent)
+//	blockText: lines of the block, TrimRight, indent loop        charged per line; stops over budget
+//	maskXML: IndexByte for the next "<"                          consumed (the position moves past the tag name)
+//	maskXML: tag name loop                                       constant (maxIdent)
+//	maskXML: attribute loops, keyClass of attribute values       bounded by the tag (maxTag) and charged; a tag that parses is consumed
+//	maskXML: onlySpace                                           stops at the first non-space; the text node scan reads the same run once
+//	parseTag: all loops and the quote search                     limited to maxTag; charged (a failed read is charged up to its limit)
+//	textNode: space skip, text, CDATA, comment, tag              charged; comment and tag searches limited to maxTag; consumed on success
+//	MaskURLUserinfo: Index for "://", authority loop             charged; consumed (the position moves to the end of the authority)
+//	MaskURLUserinfo: login search past "/", "?", "#"             limited to loginReach (512); charged
+//	MaskURLUserinfo: LastIndexByte, IndexAny on the authority    inside the authority, which is consumed
+//	work.lineEnd, lineStart, lineIndent                          charged; each answer is remembered for the keys that follow
+//	Carry.Line: TrimRight, indentOf, HasPrefix, plausibleValue   once per line, linear in the line (plausibleValue reads at most 512 bytes)
+//	apply, sortEdits                                             once per call, linear (sort is n log n in the number of edits)
 package secretscrub

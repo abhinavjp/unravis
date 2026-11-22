@@ -100,6 +100,22 @@ func TestRedactorKeepsOrdinaryLinesAfterAnEmptyKey(t *testing.T) {
 	}
 }
 
+func TestRedactorHidesQuotedAndSpacedValuesOnTheNextLine(t *testing.T) {
+	for _, lines := range [][]string{
+		{"token:", `  "FAKEPW"`},
+		{"DB_PASSWORD=", "  my FAKEPW phrase"},
+		{"client_secret:", "\tFAKEPW two"},
+		{"DB_PASSWORD=", "- FAKEPW"},
+	} {
+		r := NewRedactor()
+		for _, l := range lines {
+			if got := r.Line(l); strings.Contains(got, fakePW) {
+				t.Errorf("a fake secret was left after %q: %q", lines[0], blank(got))
+			}
+		}
+	}
+}
+
 func TestRedactorHostileInputIsFast(t *testing.T) {
 	const size = 1 << 17
 	rep := func(unit string) string { return strings.Repeat(unit, size/len(unit)+1)[:size] }
@@ -110,6 +126,7 @@ func TestRedactorHostileInputIsFast(t *testing.T) {
 		"xml comment":  rep("<Password><!--"),
 		"xml cut tags": rep("<a b="),
 		"yaml header":  rep("password: | #"),
+		"tag colon":    rep("token:!"),
 		"url slashes":  rep("a://u:x/"),
 		"key comment":  rep(`<add key="password"><!--`),
 		"xml key attr": rep(`<add key="password" `),

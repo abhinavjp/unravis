@@ -43,7 +43,7 @@ func (c *Carry) Line(line, mask string) string {
 		case pend != pendBlock && strings.HasPrefix(text[ind:], "#") && c.comments < maxCommentLines:
 			c.comments++ // a comment line between the key and its value
 			return line
-		case (pend == pendNext || (pend == pendNextIndented && ind > 0)) && plausibleValue(text[ind:]):
+		case c.nextLineIsValue(pend, text, ind):
 			c.pend = pendNone
 			return line[:ind] + mask
 		}
@@ -54,6 +54,31 @@ func (c *Carry) Line(line, mask string) string {
 		c.pend, c.indent, c.lines, c.comments = pend, indentOf(line), 0, 0
 	}
 	return out
+}
+
+// nextLineIsValue says whether the line after a key with no value is that key's value.
+//
+//   - A name that is clearly a secret ("DB_PASSWORD=", "client_secret:", "<Password>"): an indented line, a quoted line or a list item
+//     ("- x") is the value whatever it holds (a password may hold spaces); so is one word. A line that is none of those ("--- FAIL:
+//     TestLogin") is ordinary text.
+//   - A bare word that is also a sentence word ("Password:", "token:"): only one word or quoted text; for "token:" and "secret:" only
+//     quoted text.
+func (c *Carry) nextLineIsValue(pend int, text string, ind int) bool {
+	rest := text[ind:]
+	quoted := rest[0] == '"' || rest[0] == '\''
+	switch pend {
+	case pendNextQuoted:
+		return quoted
+	case pendNextIndented:
+		return ind > 0
+	case pendNextText:
+		return rest[0] != '<'
+	case pendNextStrong:
+		return ind > 0 || quoted || strings.HasPrefix(rest, "- ") || rest == "-" || len(rest) > 512 || plausibleValue(rest)
+	case pendNext:
+		return plausibleValue(rest)
+	}
+	return false
 }
 
 // plausibleValue says whether a line can be the value of the key above it: one word with no space in it, or text in quotes.
