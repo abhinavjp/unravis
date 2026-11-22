@@ -128,3 +128,32 @@ func TestWrongLaunchCodeDoesNotSpendTheRealOne(t *testing.T) {
 		t.Fatalf("right code after a wrong guess = %d, want 302", res.Code)
 	}
 }
+
+// WEB-1 (sweep 2026-11-22): a web page must not be able to use up the launch limit with image or fetch requests.
+func TestLaunchLimitIsNotSpentByWebPageSubrequests(t *testing.T) {
+	code := strings.Repeat("a", 32)
+	h := New(&fakeRepository{}, testAssets(), testToken, false, WithLaunchCode(code, time.Now().Add(time.Minute))).(*handler)
+	req := func(dest string) int {
+		r := httptest.NewRequest(http.MethodGet, launchPath+"?c=junk", nil)
+		r.Host = "127.0.0.1:8765"
+		if dest != "" {
+			r.Header.Set("Sec-Fetch-Dest", dest)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	for i := 0; i < launchTriesPerWindow+50; i++ {
+		if got := req("image"); got != http.StatusNotFound {
+			t.Fatalf("image request = %d, want 404", got)
+		}
+	}
+	r := httptest.NewRequest(http.MethodGet, launchPath+"?c="+code, nil)
+	r.Host = "127.0.0.1:8765"
+	r.Header.Set("Sec-Fetch-Dest", "document") // a real navigation, as the browser sends it
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusFound {
+		t.Fatalf("the real link after the flood = %d, want 302", w.Code)
+	}
+}

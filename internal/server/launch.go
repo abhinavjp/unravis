@@ -96,6 +96,14 @@ p{font-size:1rem;line-height:1.5;margin:0}
 // serveLaunch answers GET /launch?c=<code>. It is public (the browser has no
 // token yet) and rate limited on its own bucket, apart from the session-proof route.
 func (h *handler) serveLaunch(w http.ResponseWriter, r *http.Request) {
+	// A browser says what a request is for. A start link is only ever opened as a page (document), so an image, script or fetch
+	// request from some web page is refused before it counts against the limit: otherwise a page could use up the whole minute
+	// with <img src="http://127.0.0.1:port/launch?c=x"> and the real link would answer 404 (sweep WEB-1). Clients that send no
+	// such header (a terminal, the tray, Edge --app) are not affected.
+	if dest := r.Header.Get("Sec-Fetch-Dest"); dest != "" && dest != "document" {
+		http.NotFound(w, r)
+		return
+	}
 	if h.token == "" || !h.launchTries.allow() {
 		http.NotFound(w, r)
 		return
