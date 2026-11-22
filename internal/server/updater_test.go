@@ -477,3 +477,42 @@ func TestUpdaterSaveFailureIs500(t *testing.T) {
 		t.Errorf("code = %d, want 500", rec.Code)
 	}
 }
+
+func TestDefaultIntervalFollowsTheChannel(t *testing.T) {
+	k, _ := rcKey(t)
+	setVersion(t, "0.1.0")
+	if got := NewUpdater(t.TempDir(), []update.Key{k}).Settings().IntervalMinutes; got != 360 {
+		t.Errorf("stable default = %d", got)
+	}
+	setVersion(t, "0.1.0-rc.55")
+	if got := NewUpdater(t.TempDir(), []update.Key{k}).Settings().IntervalMinutes; got != 30 {
+		t.Errorf("rc default = %d", got)
+	}
+}
+
+func TestSavedIntervalWinsOverTheStableDefault(t *testing.T) {
+	k, _ := rcKey(t)
+	setVersion(t, "0.1.0")
+	for body, want := range map[string]int{
+		`{"auto":true,"intervalMinutes":30,"applyAuto":true}`: 30,
+		`{"auto":true,"intervalMinutes":0,"applyAuto":true}`:  360,
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := NewUpdater(dir, []update.Key{k}).Settings().IntervalMinutes; got != want {
+			t.Errorf("%s: %d, want %d", body, got, want)
+		}
+	}
+}
+
+func TestSetSettingsZeroUsesTheChannelDefault(t *testing.T) {
+	k, _ := rcKey(t)
+	setVersion(t, "0.1.0")
+	u := NewUpdater(t.TempDir(), []update.Key{k})
+	got, err := u.SetSettings(UpdaterSettings{Auto: true})
+	if err != nil || got.IntervalMinutes != 360 {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
