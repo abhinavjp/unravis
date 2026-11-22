@@ -35,6 +35,17 @@ func ReadFolderSecurity(path string) (FolderSecurity, error) {
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
 		return FolderSecurity{}, errors.New("it is not a folder")
 	}
+	return SecurityOfHandle(h)
+}
+
+// SecurityOfHandle reads the file ID, owner, access list and link flag of an open file or folder, all from that one handle (it needs
+// READ_CONTROL and FILE_READ_ATTRIBUTES on it). It does not close the handle and never changes a permission. ReadFolderSecurity is
+// this after opening a folder by name.
+func SecurityOfHandle(h windows.Handle) (FolderSecurity, error) {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		return FolderSecurity{}, err
+	}
 	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return FolderSecurity{}, err

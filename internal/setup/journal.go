@@ -178,12 +178,22 @@ func (j *Journal) save() error {
 	return os.Rename(tmp, j.path)
 }
 
+// maxJournalBytes is the most a journal may hold when it is read through a proven handle. It equals the app's own limit in
+// internal/update/journalpending.go, so the two never disagree about what is too large.
+const maxJournalBytes = 8 << 20
+
 // LoadJournal reads a journal left by a run that did not finish. It returns os.ErrNotExist when there is none.
 func LoadJournal(path string) (*Journal, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	return ParseJournal(data, path)
+}
+
+// ParseJournal turns the bytes of the journal file at path into a journal. It reads nothing from disk, so the caller decides how the
+// bytes were read (LoadJournal by path, or a proven handle).
+func ParseJournal(data []byte, path string) (*Journal, error) {
 	var f JournalFile
 	if err := json.Unmarshal(data, &f); err != nil {
 		return nil, fmt.Errorf("the setup journal at %s cannot be read: %w", path, err)
