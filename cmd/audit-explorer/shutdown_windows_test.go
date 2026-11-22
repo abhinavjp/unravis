@@ -370,14 +370,17 @@ func TestKillDuringWriteReopens(t *testing.T) {
 	s.runClient(t, "load", string(demoCaseOpenID), func(line string) {
 		got.line(line)
 		lastCount(line, "ACKED", &acked)
+		// Kill only while a -wal exists: SQLite may merge the log between two commits, and a kill then leaves nothing to recover.
 		if acked >= 20 && !killed {
-			killed = true
-			_ = s.cmd.Process.Kill()
+			if found, err := findWALFiles(s.dataDir); err == nil && len(found) > 0 {
+				killed = true
+				_ = s.cmd.Process.Kill()
+			}
 		}
 	})
 	<-s.done
 	if !killed {
-		t.Fatal("the load never reached 20 saved writes")
+		t.Fatal("the load never reached 20 saved writes with a -wal file present")
 	}
 	left := walFiles(t, s.dataDir)
 	t.Logf("killed after %d reported saves; left behind: %v", acked, left)

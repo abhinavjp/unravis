@@ -403,15 +403,15 @@ func settingsPathProblem(path string) error {
 func settingsHandleProblem(isDisk bool, attrs, links uint32, size uint64) error {
 	switch {
 	case !isDisk:
-		return errors.New("blackbox: the settings file is not a file on a disk")
+		return refuse(WordNotDisk, errors.New("blackbox: the settings file is not a file on a disk"))
 	case attrs&0x10 != 0:
-		return errors.New("blackbox: the settings file is a folder")
+		return refuse(WordFolder, errors.New("blackbox: the settings file is a folder"))
 	case attrs&0x400 != 0:
-		return errors.New("blackbox: the settings file is a link")
+		return refuse(WordLink, errors.New("blackbox: the settings file is a link"))
 	case links != 1:
-		return fmt.Errorf("blackbox: the settings file has %d names", links)
+		return refuse(WordNames, fmt.Errorf("blackbox: the settings file has %d names", links))
 	case size > uint64(maxConfigBytes):
-		return errors.New("blackbox: the settings file is too large")
+		return refuse(WordTooLarge, errors.New("blackbox: the settings file is too large"))
 	}
 	return nil
 }
