@@ -23,7 +23,7 @@ test('Connect… on a found Mongo/SQL row opens the form with the address filled
 
 test('after a successful connect the row shows Added and the wizard returns to the Find list', () => {
   const step = read('src/components/sourcewiz/SourceStep.svelte');
-  assert.match(step, /function connectedDone\(\) \{ if \(from !== '' && !connected\.includes\(from\)\) connected = \[\.\.\.connected, from\]; from = ''; card = 'pc'; \}/);
+  assert.match(step, /function connectedDone\(\) \{ if \(from !== '' && !connected\.includes\(from\)\) connected = \[\.\.\.connected, from\]; clearEntry\(\); from = ''; card = 'pc'; \}/);
   const find = read('src/components/sourcewiz/FindOnPc.svelte');
   assert.match(find, /connected\.includes\(e\.finding\.id\) \? WIZ\.find\.added/);
   assert.match(find, /connected\.includes\(f\.id\) \? WIZ\.find\.added : WIZ\.find\.connect/);

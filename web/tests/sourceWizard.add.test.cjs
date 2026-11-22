@@ -6,7 +6,7 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 test('add mode: the flow reuses the source step and runs against the open case without making a new one', () => {
   const flow = read('src/components/sourcewiz/AddSourcesFlow.svelte');
-  assert.match(flow, /<SourceStep adding \{caseId\} \{closed\} \{existing\} \{onFiles\} \/>/);
+  assert.match(flow, /<SourceStep adding \{caseId\} \{closed\} \{closedNote\} \{existing\} \{onFiles\} \/>/);
   assert.match(flow, /createView\.submit\.caseId = caseId/);
   assert.match(flow, /lastButton\(true, wizard\.sources\.length, createView\.running\)/);
   assert.match(flow, /pending\.length === 0/, 'the ack, file and computer checks are made here, because createNow skips them once a case is set');

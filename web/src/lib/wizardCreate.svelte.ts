@@ -2,7 +2,7 @@ import { listCases } from './cases';
 import { windowFor } from './discover';
 import type { WindowChoice } from './discover';
 import { sourcesView, scanIsStale } from './wizardSources.svelte';
-import { draftCaseKey, draftSnapshot, onWizardReset, setSources, wipeCaseKey, wizard } from './wizard.svelte';
+import { draftCaseKey, draftSnapshot, onWizardReset, onWizardResetBlocked, setSources, wipeCaseKey, wizard } from './wizard.svelte';
 import { hostsView, loadHosts, saveHosts } from './wizardHosts.svelte';
 import type { HostsApi } from './wizardHosts.svelte';
 import { hostProblem } from './zoneChoice';
@@ -239,6 +239,8 @@ export function resetCreate(): void {
   fileVersion++;
 }
 onWizardReset(resetCreate);
+// A run reads the list it was started from: nothing may reset the draft until it ends (BL-148).
+onWizardResetBlocked(() => createView.running);
 
 export const chooseWindow = (choice: WindowChoice): void => { createView.window = choice; };
 export const setAck = (on: boolean): void => { createView.ack = on; };
