@@ -71,3 +71,12 @@ func TestRedactorReviewCases(t *testing.T) {
 		t.Errorf("name hiding must keep repository names whole: %q", got)
 	}
 }
+
+func TestRedactorKeepsTestLines(t *testing.T) {
+	r := NewRedactor()
+	for _, l := range []string{"--- PASS: TestX (0.00s)", "    --- PASS: TestY/sub (0.01s)", "--- SKIP: TestZ (0.00s)"} {
+		if got := r.Line(l); got != l {
+			t.Errorf("%q changed to %q", l, got)
+		}
+	}
+}

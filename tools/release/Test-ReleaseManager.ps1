@@ -319,6 +319,7 @@ try {
         $got = Protect-LogLine $c[0] (New-LogRedactor)
         Assert-That "log redaction: '$($c[0])' hides '$($c[1])'" (-not $got.Contains($c[1])) "got '$got'"
     }
+    Assert-That 'log redaction: a passed-test line is kept' ((Protect-LogLine '--- PASS: TestX (0.00s)' (New-LogRedactor)) -eq '--- PASS: TestX (0.00s)')
     $gotUrl = Protect-LogLine 'https://github.com/abhinavjp/unravis/actions/runs/1 by Abhinav' $red2
     Assert-That 'log redaction: a user name inside a repository name is kept, the name alone is hidden' ($gotUrl.Contains('github.com/abhinavjp/unravis') -and -not $gotUrl.Contains('by Abhinav')) "got '$gotUrl'"
     $kr = New-LogRedactor

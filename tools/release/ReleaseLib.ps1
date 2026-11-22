@@ -709,7 +709,7 @@ $script:LogRx = @{
     Ctrl    = [regex]::new('[\x00-\x08\x0a-\x1f\x7f]', 'Compiled')
     Token   = [regex]::new('\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})', 'Compiled')
     Bearer  = [regex]::new('(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}', 'Compiled')
-    Pair    = [regex]::new('(?i)([\w-]*(?:pass(?:word|phrase)?|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|.+)', 'Compiled')
+    Pair    = [regex]::new('(?i)(?<![\w-])([\w-]*(?:pass(?:word|phrase)|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|.+)', 'Compiled')
     KeyBeg  = [regex]::new('-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
     KeyEnd  = [regex]::new('-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
     KeyFile = [regex]::new('(?i)[\w.-]+\.(?:key|pem|pfx|p12|ppk)\b', 'Compiled')
