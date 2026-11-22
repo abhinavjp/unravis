@@ -373,6 +373,164 @@
           "waitFor": "role=dialog"
         }
       ]
+    },
+    {
+      "id": "r1-releases-home",
+      "phase": "R",
+      "note": "Releases dashboard: list, the release that is running, the newest release selected.",
+      "app": "releases",
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "waitFor": "css=#detail h1"
+        }
+      ]
+    },
+    {
+      "id": "r2-releases-all-done",
+      "phase": "R",
+      "note": "Releases dashboard: a release that went through every step and passed verify.",
+      "app": "releases",
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "css=li[data-v=\"0.1.0-rc.55\"]"
+        },
+        {
+          "waitFor": "text=Passed on a clean machine"
+        }
+      ]
+    },
+    {
+      "id": "r3-releases-verify-failed",
+      "phase": "R",
+      "note": "Releases dashboard: verify failed, with the reason under the step.",
+      "app": "releases",
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "css=li[data-v=\"0.1.0-rc.56\"]"
+        },
+        {
+          "waitFor": "text=did not reach the app"
+        }
+      ]
+    },
+    {
+      "id": "r4-releases-stopped",
+      "phase": "R",
+      "note": "Releases dashboard: a release that stopped at a step, with the stop reason.",
+      "app": "releases",
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "css=li[data-v=\"0.1.0-rc.57\"]"
+        },
+        {
+          "waitFor": "text=Last stop reason"
+        }
+      ]
+    },
+    {
+      "id": "r5-releases-withdrawn",
+      "phase": "R",
+      "note": "Releases dashboard: a withdrawn release.",
+      "app": "releases",
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "css=li[data-v=\"0.1.0-rc.58\"]"
+        },
+        {
+          "waitFor": "text=Yes, never offered"
+        }
+      ]
+    },
+    {
+      "id": "r6-releases-stable",
+      "phase": "R",
+      "note": "Releases dashboard: a stable release (the first in the list).",
+      "app": "releases",
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "css=li[data-v=\"0.1.0\"]"
+        },
+        {
+          "waitFor": "text=stable channel"
+        }
+      ]
+    },
+    {
+      "id": "r7-releases-empty",
+      "phase": "R",
+      "note": "Releases dashboard on a PC with no release log and no network: the empty list and the feed boxes.",
+      "app": "releases-empty",
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "waitFor": "text=No releases found yet."
+        }
+      ]
+    },
+    {
+      "id": "l1-lite-home",
+      "phase": "L",
+      "note": "Unravis Lite: one Blackbox that is recording, with its facts.",
+      "app": "lite",
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "waitFor": "text=Open charts"
+        }
+      ]
+    },
+    {
+      "id": "l2-lite-charts",
+      "phase": "L",
+      "note": "Unravis Lite: the charts of that Blackbox.",
+      "app": "lite",
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"Open charts\"s]"
+        },
+        {
+          "waitFor": "css=dialog[open] .bbc-chart-area"
+        }
+      ]
+    },
+    {
+      "id": "l3-lite-stopped",
+      "phase": "L",
+      "note": "Unravis Lite: a Blackbox that was stopped.",
+      "app": "lite-stopped",
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "waitFor": "text=Open charts"
+        }
+      ]
     }
   ]
 }

@@ -12,12 +12,15 @@ export type Step = (
   | { aside: Step[] }
 ) & { when?: 'narrow' | 'wide' };
 
+/** Which program a screen belongs to: none is the full app. The others are started by global-setup (see there). */
+export type AppName = 'setup' | 'releases' | 'releases-empty' | 'lite' | 'lite-stopped';
+
 export interface Screen {
   id: string;
   phase: string;
   doc?: string;
   narrow?: boolean;
-  app?: 'setup';
+  app?: AppName;
   retired?: string;
   steps: Step[];
   after?: Step[];
@@ -30,13 +33,15 @@ export interface Env {
   token: string;
   setupUrl: string;
   setupKey: string;
+  /** The other small programs, by app name: where they listen and the session code their page needs. */
+  apps: Partial<Record<AppName, { url: string; code: string }>>;
   demoNow: Date;
 }
 
 /** The header folds into a More menu below this width (same rule as screens.json). */
 export const NARROW_BELOW = 1100;
 
-export async function runSteps(page: Page, steps: Step[], env: Env, app?: 'setup'): Promise<void> {
+export async function runSteps(page: Page, steps: Step[], env: Env, app?: AppName): Promise<void> {
   const narrow = (page.viewportSize()?.width ?? 1440) < NARROW_BELOW;
   for (const step of steps) {
     if (step.when && (step.when === 'narrow') !== narrow) continue;
@@ -44,7 +49,7 @@ export async function runSteps(page: Page, steps: Step[], env: Env, app?: 'setup
   }
 }
 
-async function runStep(page: Page, step: Step, env: Env, app?: 'setup'): Promise<void> {
+async function runStep(page: Page, step: Step, env: Env, app?: AppName): Promise<void> {
   if ('aside' in step) {
     const other = await page.context().newPage();
     try {
@@ -56,6 +61,11 @@ async function runStep(page: Page, step: Step, env: Env, app?: 'setup'): Promise
     }
   } else if ('goto' in step && app === 'setup') {
     await page.goto(env.setupUrl + step.goto + '#k=' + env.setupKey);
+  } else if ('goto' in step && app && app !== 'setup') {
+    const a = env.apps[app];
+    if (!a) throw new Error('The ' + app + ' program was not started on this run.');
+    // Releases takes its code in the query (it sets a cookie), Lite and the full app in the fragment.
+    await page.goto(a.url + (app.startsWith('releases') ? '/?t=' + a.code : '/#t=' + a.code));
   } else if ('goto' in step) {
     const hash = step.goto.startsWith('#') ? step.goto : '#t=' + env.token;
     await page.goto(env.base + '/' + hash);

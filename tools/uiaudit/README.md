@@ -21,6 +21,11 @@ node run-audit.mjs --report-only         # rebuild REPORT.md from the last run's
 
 `run-audit.mjs` builds the demo exe with Go when `UNRAVIS_EXE` is not set, and the setup window's capture build
 (`go build -tags capture ./cmd/unravis-setup`) so the setup screens (p11-*) are checked too. With no Go, give it `UNRAVIS_EXE`.
+It also builds two more programs that have a page of their own and starts them next to the demo: the Releases dashboard
+(`./cmd/unravis-releases`, on made-up release files, kept offline; screens r1-r7) and a stand-in for Unravis Lite
+(`./tools/uiaudit/litefixture`; screens l1-l3). The stand-in records a Blackbox folder with the real recorder and serves it through
+the same handlers and the same built page as Lite. The real `unravis-lite` only accepts a Windows folder, and its own Go tests cover it.
+Give them `UNRAVIS_RELEASES_EXE` and `UNRAVIS_LITE_FIXTURE_EXE` when there is no Go.
 `PW_CHROMIUM` points at a Chromium to use instead of the one Playwright installed.
 Exit code: 0 = PASS (no new errors), 1 = FAIL, 2 = could not run.
 
@@ -67,6 +72,7 @@ npx playwright test -c playwright.selftest.config.ts   # lib/page-checks.js find
 
 ## CI
 
-`.github/workflows/ui-audit.yml` runs the audit on Linux (manual start, and weekly), uploads `report/` as an artifact and
-prints the verdict. It is not part of the pull request checks (about 20 minutes). On Linux the Windows-only screens are reported as
-not reached (see BL-441 for the Linux test baseline).
+`.github/workflows/ui-audit.yml` runs the audit on Linux (ubuntu-24.04) and on Windows (windows-2022): by hand, weekly, and on
+pull requests that change `tools/uiaudit` or the workflow itself. It uploads `report/` as an artifact per system and prints the
+verdict in the job summary. It is not a check on every pull request (about 20 minutes). On Linux the Windows-only screens are
+reported as not reached (see BL-441 for the Linux test baseline).

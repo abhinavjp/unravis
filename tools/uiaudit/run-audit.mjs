@@ -3,6 +3,7 @@
 //   node run-audit.mjs --only p1-home,p9-wizard-1
 //   node run-audit.mjs --report-only         rebuild REPORT.md from the last run's data files
 // Environment: UNRAVIS_EXE (demo exe; built with Go when unset), UNRAVIS_SETUP_EXE (capture build of the setup window; built when Go is there),
+// UNRAVIS_RELEASES_EXE (Releases dashboard), UNRAVIS_LITE_FIXTURE_EXE (tools/uiaudit/litefixture), both built when Go is there,
 // PW_CHROMIUM (a Chromium to use instead of the Playwright one).
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -45,6 +46,19 @@ if (!flag('--report-only')) {
     if (sh('go', ['build', '-tags', 'capture', '-o', out, './cmd/unravis-setup'], { cwd: repo }).status === 0) process.env.UNRAVIS_SETUP_EXE = out;
     else console.log('The setup window did not build here: its screens will be skipped.');
   }
+  if (!process.env.UNRAVIS_RELEASES_EXE && haveGo) {
+    const out = join(build, 'unravis-releases' + exeSuffix);
+    console.log('Building the Releases dashboard ...');
+    if (sh('go', ['build', '-o', out, './cmd/unravis-releases'], { cwd: repo }).status === 0) process.env.UNRAVIS_RELEASES_EXE = out;
+    else console.log('The Releases dashboard did not build here: its screens will be reported as not reached.');
+  }
+  if (!process.env.UNRAVIS_LITE_FIXTURE_EXE && haveGo) {
+    const out = join(build, 'litefixture' + exeSuffix);
+    console.log('Building the Lite stand-in ...');
+    if (sh('go', ['build', '-o', out, './tools/uiaudit/litefixture'], { cwd: repo }).status === 0) process.env.UNRAVIS_LITE_FIXTURE_EXE = out;
+    else console.log('The Lite stand-in did not build here: its screens will be reported as not reached.');
+  }
+  process.env.UNRAVIS_LITE_UI ??= join(repo, 'cmd', 'unravis-lite', 'ui');
   process.env.UIAUDIT_REPORT_DIR = reportDir;
   if (value('--only')) process.env.UIAUDIT_ONLY = value('--only');
   const pw = sh('npx', ['playwright', 'test', '--trace', 'off'], { cwd: here });

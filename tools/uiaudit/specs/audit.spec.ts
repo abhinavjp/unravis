@@ -74,6 +74,7 @@ for (const screen of screens) {
       token: process.env.UNRAVIS_TOKEN!,
       setupUrl: process.env.UNRAVIS_SETUP_URL ?? '',
       setupKey: process.env.UNRAVIS_SETUP_KEY ?? '',
+      apps: JSON.parse(process.env.UNRAVIS_APPS ?? '{}'),
       demoNow: new Date(process.env.UNRAVIS_DEMO_NOW ?? '2026-10-20T09:00:00Z')
     };
     const out = join(reportDir, 'data', screen.id + '__' + variant + '.json');
@@ -83,6 +84,11 @@ for (const screen of screens) {
     if (screen.retired) return write({ status: 'skipped', reason: 'retired: ' + screen.retired });
     // Not being able to reach a screen is a gap, never a pass: only a retired screen is skipped.
     if (screen.app === 'setup' && !env.setupUrl) return write({ status: 'unreachable', reason: 'the setup window (capture build) was not started on this run: it needs Go (go build -tags capture ./cmd/unravis-setup) or UNRAVIS_SETUP_EXE' });
+
+    if (screen.app && screen.app !== 'setup' && !env.apps[screen.app]) {
+      const how = screen.app.startsWith('releases') ? 'it needs Go (go build ./cmd/unravis-releases) or UNRAVIS_RELEASES_EXE' : 'it needs Go (go build ./tools/uiaudit/litefixture) or UNRAVIS_LITE_FIXTURE_EXE';
+      return write({ status: 'unreachable', reason: 'the ' + screen.app + ' program was not started on this run: ' + how });
+    }
 
     if (screen.app === 'setup') await freeSetup(env);
 
