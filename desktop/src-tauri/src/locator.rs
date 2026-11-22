@@ -181,6 +181,8 @@ mod tests {
         unsafe {
             std::env::set_var("AUDIT_CONFIG_DIR", &data);
             std::env::remove_var("UNRAVIS_RUN_DIR");
+            // The sidecar is an `e2e` build: it also accepts this test binary as a pipe client and as the "shell" for hello.
+            std::env::set_var("UNRAVIS_E2E_ALLOW_IMAGE", std::env::current_exe().unwrap());
         }
         let dir = run_dir().unwrap();
 
@@ -191,21 +193,33 @@ mod tests {
         assert!(second._job.is_none() && second.record.pid == pid, "the second call attaches to the same owner");
 
         // The real pipe: hello gives the token, the token passes the session check, a wrong token and a wrong server do not.
-        let client =
-            crate::pipe_peer::Client { name: second.record.ui.clone(), expect: crate::pipe_peer::ServerExpect { pid, image: exe.clone() } };
+        let client = crate::pipe_peer::Client {
+            name: second.record.ui.clone(),
+            expect: crate::pipe_peer::ServerExpect { pid, image: exe.clone(), start_time: second.record.start_time.clone() },
+        };
         let token = client.hello().expect("hello over the ui pipe");
         assert!(client.health(&token), "GET /api/version with the token answers 200");
         assert!(!client.health("not-the-token-not-the-token-xx"), "a wrong token is refused");
         let wrong = crate::pipe_peer::Client {
             name: client.name.clone(),
-            expect: crate::pipe_peer::ServerExpect { pid, image: root.join("other.exe") },
+            expect: crate::pipe_peer::ServerExpect { pid, image: root.join("other.exe"), start_time: second.record.start_time.clone() },
         };
         assert!(matches!(wrong.hello(), Err(crate::pipe_peer::PipeError::ServerMismatch(_))), "a server that is not our image is refused");
         let wrong_pid = crate::pipe_peer::Client {
             name: client.name.clone(),
-            expect: crate::pipe_peer::ServerExpect { pid: pid + 4, image: exe.clone() },
+            expect: crate::pipe_peer::ServerExpect { pid: pid + 4, image: exe.clone(), start_time: second.record.start_time.clone() },
         };
         assert!(matches!(wrong_pid.hello(), Err(crate::pipe_peer::PipeError::ServerMismatch(_))));
+        let wrong_start = crate::pipe_peer::Client {
+            name: client.name.clone(),
+            expect: crate::pipe_peer::ServerExpect { pid, image: exe.clone(), start_time: "2001-01-01T00:00:00Z".into() },
+        };
+        assert!(
+            matches!(wrong_start.hello(), Err(crate::pipe_peer::PipeError::ServerMismatch(_))),
+            "a reused pid (other start time) is refused"
+        );
+        let foreign = crate::pipe_peer::Client { name: r"\\evil\pipe\x".into(), expect: client.expect.clone() };
+        assert!(matches!(foreign.hello(), Err(crate::pipe_peer::PipeError::ServerMismatch(_))), "only local unravis ui pipes are dialled");
 
         drop(second);
         drop(first); // closes the job: KILL_ON_JOB_CLOSE

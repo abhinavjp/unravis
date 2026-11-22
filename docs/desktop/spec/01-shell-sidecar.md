@@ -119,7 +119,7 @@ Locator v2, `%LOCALAPPDATA%\Unravis\run\session.json` (file ACL owner-only throu
 
 Pipe wire: HTTP/1.1 keep-alive on the byte-mode pipe. Client sends `Host: localhost`, `X-Audit-Token`, no `Origin`. The Go server uses a second `http.Server` for pipes with `ConnContext` that adds the role (`server.ContextWithPipe`) and the same `newHTTPServer` limits. `allowedHost` and `allowedOrigin` stay as they are (Host `localhost` passes).
 
-Hello route (`GET /api/desktop/hello`, ui pipe only, no token needed, no `Origin`): returns `{"token":"..."}` to a peer that passed the pipe peer check. The locator holds no token (PLAN section 1), so this is how the shell learns it, after attach or spawn. The shell keeps it in memory only. Built in `internal/pipesrv` (`HelloPath`).
+Hello route (`GET /api/desktop/hello`, ui pipe only, no token needed, no `Origin`): returns `{"token":"..."}` only to a peer whose image is `unravis-desktop.exe` (after the pipe peer check; the CLI and MCP bridge get a 403). e2e test builds also take an image named in `UNRAVIS_E2E_ALLOW_IMAGE`. The locator holds no token (PLAN section 1), so this is how the shell learns it, after attach or spawn. The shell keeps it in memory only. Built in `internal/pipesrv` (`HelloPath`).
 
 Desktop state route (`GET /api/desktop/state`, role `ui` only, token):
 ```json

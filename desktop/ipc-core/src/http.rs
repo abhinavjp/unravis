@@ -51,15 +51,18 @@ fn dechunk(mut raw: &[u8], max: usize) -> Result<Vec<u8>, HttpError> {
         let eol = find(raw, b"\r\n").ok_or(HttpError::Incomplete)?;
         let size_txt = std::str::from_utf8(&raw[..eol]).map_err(|_| HttpError::Malformed("chunk size"))?;
         let size_txt = size_txt.split(';').next().unwrap_or("").trim();
-        let size = usize::from_str_radix(size_txt, 16).map_err(|_| HttpError::Malformed("chunk size"))?;
+        if size_txt.is_empty() || !size_txt.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(HttpError::Malformed("chunk size"));
+        }
+        let size = usize::from_str_radix(size_txt, 16).map_err(|_| HttpError::TooLarge)?;
         raw = &raw[eol + 2..];
         if size == 0 {
             return Ok(out);
         }
-        if out.len() + size > max {
+        if size > max.saturating_sub(out.len()) {
             return Err(HttpError::TooLarge);
         }
-        if raw.len() < size + 2 {
+        if raw.len() < size.saturating_add(2) {
             return Err(HttpError::Incomplete);
         }
         out.extend_from_slice(&raw[..size]);
@@ -85,10 +88,23 @@ pub fn parse_response(raw: &[u8], max_body: usize) -> Result<Response, HttpError
     for l in lines {
         let Some((k, v)) = l.split_once(':') else { return Err(HttpError::Malformed("header line")) };
         match k.trim().to_ascii_lowercase().as_str() {
-            "content-length" => length = Some(v.trim().parse::<usize>().map_err(|_| HttpError::Malformed("content-length"))?),
-            "transfer-encoding" => chunked = v.trim().eq_ignore_ascii_case("chunked"),
+            "content-length" => {
+                if length.is_some() {
+                    return Err(HttpError::Malformed("duplicate content-length"));
+                }
+                length = Some(v.trim().parse::<usize>().map_err(|_| HttpError::Malformed("content-length"))?);
+            }
+            "transfer-encoding" => {
+                if !v.trim().eq_ignore_ascii_case("chunked") || chunked {
+                    return Err(HttpError::Malformed("transfer-encoding"));
+                }
+                chunked = true;
+            }
             _ => {}
         }
+    }
+    if chunked && length.is_some() {
+        return Err(HttpError::Malformed("both content-length and chunked"));
     }
     let body = &raw[end + 4..];
     let body = if chunked {
@@ -189,5 +205,22 @@ mod tests {
         assert_eq!(parse_hello(br#"{"token":"short"}"#), None);
         assert_eq!(parse_hello(br#"{"token":"aaaaaaaaaaaaaaaa\r\nX: y"}"#), None);
         assert_eq!(parse_hello(b"nope"), None);
+    }
+
+    #[test]
+    fn chunk_size_overflow_is_an_error_not_a_panic() {
+        let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\nfffffffffffffffe\r\nx";
+        assert_eq!(parse_response(raw, 100), Err(HttpError::TooLarge));
+        let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffffffff\r\nx";
+        assert_eq!(parse_response(raw, 100), Err(HttpError::TooLarge));
+        let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n+3\r\nabc\r\n0\r\n\r\n";
+        assert_eq!(parse_response(raw, 100), Err(HttpError::Malformed("chunk size")));
+    }
+
+    #[test]
+    fn conflicting_framing_is_refused() {
+        assert!(parse_response(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nab", 10).is_err());
+        assert!(parse_response(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n", 10).is_err());
+        assert!(parse_response(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", 10).is_err());
     }
 }

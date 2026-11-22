@@ -317,8 +317,9 @@ func TestHelloOnlyOnUIPipeAndOnlyGet(t *testing.T) {
 	h := Handler(echoToken(), WithShutdown(tok, func() {}))
 	ui, ag := RoleUI, RoleAG
 	req := func(role *Role, method, origin string) *httptest.ResponseRecorder {
+		image := `C:\Program Files\Unravis\unravis-desktop.exe`
 		r := httptest.NewRequest(method, HelloPath, nil)
-		r = r.WithContext(WithRole(r.Context(), *role))
+		r = r.WithContext(WithPeerImage(WithRole(r.Context(), *role), image))
 		if origin != "" {
 			r.Header.Set("Origin", origin)
 		}
@@ -337,6 +338,16 @@ func TestHelloOnlyOnUIPipeAndOnlyGet(t *testing.T) {
 	}
 	if w := req(&ag, "GET", ""); w.Code != 404 {
 		t.Errorf("ag: %d, want 404", w.Code)
+	}
+	// The CLI and the MCP bridge may use the ui pipe, but they do not get the token from hello; neither does an unknown peer.
+	for _, img := range []string{`C:\Program Files\Unravis\unravis.exe`, `C:\x\notunravis-desktop.exe`, ""} {
+		r := httptest.NewRequest("GET", HelloPath, nil)
+		r = r.WithContext(WithPeerImage(WithRole(r.Context(), RoleUI), img))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != 403 || strings.Contains(w.Body.String(), tok) {
+			t.Errorf("image %q: %d %q, want 403 and no token", img, w.Code, w.Body.String())
+		}
 	}
 	// No token configured: the route is off and the request falls through to the served handler.
 	off := Handler(echoToken())

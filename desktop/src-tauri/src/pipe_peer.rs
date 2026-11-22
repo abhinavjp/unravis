@@ -13,19 +13,23 @@ use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use windows_sys::Win32::Foundation::CloseHandle;
+use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
 use windows_sys::Win32::System::IO::CancelIoEx;
 use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, GetNamedPipeServerSessionId, WaitNamedPipeW};
 use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows_sys::Win32::System::Threading::{
-    GetCurrentProcessId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    GetCurrentProcessId, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 
+/// Only the local pipe namespace and only our ui pipe: a `\\host\pipe\x` path would be an SMB connection to somebody else's server.
+const UI_PREFIX: &str = r"\\.\pipe\unravis.ui.";
 const SECURITY_IDENTIFICATION: u32 = 0x0001_0000;
 const ERROR_PIPE_BUSY: i32 = 231;
 /// Room for the status line and headers on top of the body limit.
 const HEAD_ROOM: usize = 16 * 1024;
+// The raw read also carries chunk framing, so it may be a little longer than the body limit.
 /// How long a connect waits while every pipe instance is busy.
 const BUSY_WAIT: Duration = Duration::from_secs(5);
 
@@ -55,13 +59,16 @@ pub struct ServerExpect {
     pub pid: u32,
     /// Full path of the sidecar the shell would start itself (not the `exe` field of the locator file).
     pub image: PathBuf,
+    /// The `startTime` of the locator record (RFC 3339): the process behind the pid must have been created then, so a reused pid fails.
+    pub start_time: String,
 }
 
 fn norm(p: &str) -> String {
     p.strip_prefix(r"\\?\").unwrap_or(p).replace('/', r"\").to_lowercase()
 }
 
-fn image_of(pid: u32) -> Option<String> {
+/// Image path and creation time (FILETIME as 100 ns ticks) of a process, read through one handle.
+fn image_of(pid: u32) -> Option<(String, u64)> {
     unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if h.is_null() {
@@ -69,9 +76,11 @@ fn image_of(pid: u32) -> Option<String> {
         }
         let mut buf = [0u16; 1024];
         let mut len = buf.len() as u32;
-        let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len) != 0;
+        let (mut c, mut e, mut k, mut u): (FILETIME, FILETIME, FILETIME, FILETIME) = std::mem::zeroed();
+        let ok =
+            QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len) != 0 && GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u) != 0;
         CloseHandle(h);
-        ok.then(|| String::from_utf16_lossy(&buf[..len as usize]))
+        ok.then(|| (String::from_utf16_lossy(&buf[..len as usize]), (u64::from(c.dwHighDateTime) << 32) | u64::from(c.dwLowDateTime)))
     }
 }
 
@@ -90,15 +99,22 @@ fn verify(f: &File, expect: &ServerExpect) -> Result<(), PipeError> {
     if pid != expect.pid {
         return Err(PipeError::ServerMismatch("server pid is not the one in the locator"));
     }
-    match image_of(pid) {
-        Some(img) if norm(&img) == norm(&expect.image.to_string_lossy()) => Ok(()),
-        _ => Err(PipeError::ServerMismatch("server image is not our sidecar")),
+    let Some((img, created)) = image_of(pid) else { return Err(PipeError::ServerMismatch("server process unreadable")) };
+    if norm(&img) != norm(&expect.image.to_string_lossy()) {
+        return Err(PipeError::ServerMismatch("server image is not our sidecar"));
+    }
+    match ipc_core::locator::start_unix_nanos(&expect.start_time) {
+        Some(rec) if ipc_core::locator::same_start(rec, ipc_core::locator::filetime_to_unix_nanos(created)) => Ok(()),
+        _ => Err(PipeError::ServerMismatch("server start time is not the one in the locator")),
     }
 }
 
 /// Open `name` at identification level and verify the server before returning. Waits up to `BUSY_WAIT` while all instances are busy.
-pub fn connect_verified(name: &str, expect: &ServerExpect) -> Result<File, PipeError> {
-    let deadline = Instant::now() + BUSY_WAIT;
+pub fn connect_verified(name: &str, expect: &ServerExpect, wait: Duration) -> Result<File, PipeError> {
+    if !name.starts_with(UI_PREFIX) {
+        return Err(PipeError::ServerMismatch("not a local unravis ui pipe name"));
+    }
+    let deadline = Instant::now() + wait.min(BUSY_WAIT);
     loop {
         match OpenOptions::new().read(true).write(true).security_qos_flags(SECURITY_IDENTIFICATION).open(name) {
             Ok(f) => {
@@ -125,7 +141,7 @@ pub struct Client {
 }
 
 impl Client {
-    /// One request. The whole call, connect included in the I/O part, is cancelled after `limit`.
+    /// One request. Connect and I/O together take at most `limit`; the I/O is cancelled when it runs out.
     pub fn call(
         &self,
         method: &str,
@@ -136,25 +152,50 @@ impl Client {
         limit: Duration,
     ) -> Result<Response, PipeError> {
         let req = build_request(method, path, token, body).map_err(PipeError::Http)?;
-        let file = Arc::new(connect_verified(&self.name, &self.expect)?);
+        let start = Instant::now();
+        let file = Arc::new(connect_verified(&self.name, &self.expect, limit)?);
+        let limit = limit.saturating_sub(start.elapsed());
+        let cap = max_body + max_body / 8 + HEAD_ROOM;
         let (tx, rx) = std::sync::mpsc::channel();
         let io = Arc::clone(&file);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let stop = Arc::clone(&cancelled);
         std::thread::spawn(move || {
             let r = (|| -> std::io::Result<Vec<u8>> {
                 (&*io).write_all(&req)?;
                 let mut out = Vec::new();
-                (&*io).take((max_body + HEAD_ROOM) as u64 + 1).read_to_end(&mut out)?;
-                Ok(out)
+                let mut buf = [0u8; 16 * 1024];
+                loop {
+                    // CancelIoEx only reaches I/O that is pending right now, so the flag stops the next read from starting.
+                    if stop.load(Ordering::SeqCst) {
+                        return Err(std::io::Error::other("cancelled"));
+                    }
+                    let n = (&*io).read(&mut buf)?;
+                    if n == 0 {
+                        return Ok(out);
+                    }
+                    out.extend_from_slice(&buf[..n]);
+                    if out.len() > cap {
+                        return Ok(out);
+                    }
+                }
             })();
             let _ = tx.send(r);
         });
         match rx.recv_timeout(limit) {
-            Ok(Ok(raw)) if raw.len() > max_body + HEAD_ROOM => Err(PipeError::Http(HttpError::TooLarge)),
+            Ok(Ok(raw)) if raw.len() > cap => Err(PipeError::Http(HttpError::TooLarge)),
             Ok(Ok(raw)) => parse_response(&raw, max_body).map_err(PipeError::Http),
             Ok(Err(e)) => Err(PipeError::Gone(e.to_string())),
             Err(_) => {
-                // Ends the blocked read or write so the worker thread returns and drops its handle.
-                unsafe { CancelIoEx(file.as_raw_handle(), std::ptr::null()) };
+                // Set the flag, then cancel again and again until the worker has handed back its result: a cancel that lands between
+                // two reads finds nothing, the next one finds the read that started meanwhile.
+                cancelled.store(true, Ordering::SeqCst);
+                for _ in 0..200 {
+                    unsafe { CancelIoEx(file.as_raw_handle(), std::ptr::null()) };
+                    if rx.recv_timeout(Duration::from_millis(10)).is_ok() {
+                        break;
+                    }
+                }
                 Err(PipeError::Timeout)
             }
         }
