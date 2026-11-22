@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/datadir"
+	"api-audit-explorer/internal/secretscrub"
 )
 
 // EnvLogLevel chooses the log level: UNRAVIS_LOG_LEVEL=debug turns on the
@@ -190,6 +191,11 @@ func (h sanitizeHandler) WithGroup(name string) slog.Handler {
 
 func sanitizeAttr(a slog.Attr) slog.Attr {
 	a.Value = a.Value.Resolve()
+	// The value of an attribute named like a secret ("password", "db_password", "api_key") goes whatever it holds: its text may be a
+	// bare password that no pattern could tell from a word.
+	if a.Value.Kind() != slog.KindGroup && secretscrub.IsSecretKey(a.Key) {
+		return slog.String(a.Key, redacted)
+	}
 	switch a.Value.Kind() {
 	case slog.KindString:
 		return slog.String(a.Key, Sanitize(a.Value.String()))

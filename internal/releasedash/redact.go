@@ -3,6 +3,8 @@ package releasedash
 import (
 	"regexp"
 	"strings"
+
+	"api-audit-explorer/internal/secretscrub"
 )
 
 // Redactor hides what must never reach the screen, the clipboard or a saved log: tokens, private keys, passphrase style
@@ -104,6 +106,8 @@ func (r *Redactor) Line(s string) string {
 		}
 		return "<private key hidden>"
 	}
+	// The shared pass first: the pair pattern below stops a quoted value at a backslash-escaped quote and does not read XML.
+	s = secretscrub.Mask(s, "<hidden>")
 	s = tokenRE.ReplaceAllString(s, "<token hidden>")
 	s = bearerRE.ReplaceAllString(s, "$1 <hidden>")
 	s = pairRE.ReplaceAllString(s, "$1$2<hidden>")

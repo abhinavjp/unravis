@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"api-audit-explorer/internal/secretscrub"
 )
 
 // quotedOrBraced is a quoted or braced value. A quote inside a quoted value is doubled (as in an apostrophe written twice), and "}}" is an
@@ -32,6 +34,10 @@ var redactions = []struct {
 
 // Redact hides secrets in a log line.
 func Redact(s string) string {
+	// The shared pass first (escaped quotes in JSON, prefixed keys such as DB_PASSWORD, XML forms, a login in a URL), then the
+	// patterns above.
+	s = secretscrub.MaskURLUserinfo(s, "[hidden]")
+	s = secretscrub.Mask(s, "[hidden]")
 	for _, r := range redactions {
 		s = r.re.ReplaceAllString(s, r.with)
 	}
