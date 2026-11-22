@@ -265,12 +265,19 @@ func TestShutdownCheckpointsWAL(t *testing.T) {
 			for acked.Load() < 20 && time.Now().Before(deadline) {
 				time.Sleep(10 * time.Millisecond)
 			}
-			if found, err := findWALFiles(dir); err != nil {
-				mu.Lock()
-				walErr = err
-				mu.Unlock()
-			} else if len(found) > 0 {
-				walSeenWhileBusy.Store(true)
+			// SQLite may merge the log between two commits, so one look can miss it. Look again for a few seconds while the writers run.
+			for walDeadline := time.Now().Add(5 * time.Second); time.Now().Before(walDeadline); time.Sleep(5 * time.Millisecond) {
+				found, err := findWALFiles(dir)
+				if err != nil {
+					mu.Lock()
+					walErr = err
+					mu.Unlock()
+					break
+				}
+				if len(found) > 0 {
+					walSeenWhileBusy.Store(true)
+					break
+				}
 			}
 			var code int
 			var err error
