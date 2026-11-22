@@ -7,6 +7,7 @@ import "strings"
 // last "@" before the first "/", "?", "#" or line end. A text with a space in it and no sign of a login (a sentence that mentions a
 // host and, further on, an e-mail address) is left alone.
 func MaskURLUserinfo(s, mask string) string {
+	w := newWork(len(s))
 	if !strings.Contains(s, "://") {
 		return s
 	}
@@ -18,6 +19,11 @@ func MaskURLUserinfo(s, mask string) string {
 			break
 		}
 		start := pos + i + 3
+		if w.out() {
+			edits = append(edits, edit{start, len(s)}) // over budget: fail closed, the rest of the text goes
+			break
+		}
+		w.spend(16)
 		end := len(s)
 		for k := start; k < len(s); k++ {
 			c := s[k]
@@ -26,6 +32,7 @@ func MaskURLUserinfo(s, mask string) string {
 				break
 			}
 		}
+		w.spend(end - start)
 		pos = end
 		if pos < start {
 			pos = start
@@ -49,6 +56,7 @@ func MaskURLUserinfo(s, mask string) string {
 					for stop < lim && !isSpace(s[stop]) {
 						stop++
 					}
+					w.spend(stop - end)
 					r := strings.LastIndexByte(s[end:stop], '@')
 					switch {
 					case r < 0:

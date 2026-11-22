@@ -21,7 +21,7 @@ func isNameChar(c byte) bool  { return isIdent(c) || c == ':' }
 
 // maskXML masks XML forms: the text of a secret element, the value attribute next to a secret key attribute, the value of a secret
 // attribute, and a connectionString attribute that holds a secret.
-func maskXML(s, mask string) (string, int) {
+func maskXML(s, mask string, w *work) (string, int) {
 	if strings.IndexByte(s, '<') < 0 {
 		return s, pendNone
 	}
@@ -34,6 +34,12 @@ func maskXML(s, mask string) (string, int) {
 			break
 		}
 		i += pos
+		if w.out() {
+			// Over budget: fail closed, the rest of the text goes.
+			edits = append(edits, edit{i, len(s)})
+			break
+		}
+		w.spend(16)
 		if i+1 >= len(s) || !isNameStart(s[i+1]) {
 			pos = i + 1
 			continue
@@ -43,7 +49,7 @@ func maskXML(s, mask string) (string, int) {
 			n++
 		}
 		name := s[i+1 : n]
-		attrs, end, selfClose, plain, ok := parseTag(s, n)
+		attrs, end, selfClose, plain, ok := parseTag(s, n, w)
 		if !ok {
 			pos = n
 			continue
@@ -86,7 +92,7 @@ func maskXML(s, mask string) (string, int) {
 			}
 		}
 		if (keyHit || elementHit) && !selfClose {
-			if from, to, found := textNode(s, end); found {
+			if from, to, found := textNode(s, end, w); found {
 				spans = append(spans, edit{from, to})
 				if to > pos {
 					pos = to
@@ -137,13 +143,14 @@ func secretfulConnString(v string) bool {
 // parseTag reads the attributes of a tag whose name ends at n. It returns the attributes, where the tag ends (after the ">"),
 // whether it is self-closing, and whether it is plain XML (every attribute has a value). ok is false when the tag does not end
 // within maxTag characters.
-func parseTag(s string, n int) (attrs []attr, end int, selfClose, plain, ok bool) {
+func parseTag(s string, n int, w *work) (attrs []attr, end int, selfClose, plain, ok bool) {
 	limit := n + maxTag
 	if limit > len(s) {
 		limit = len(s)
 	}
 	plain = true
 	i := n
+	defer func() { w.spend(i - n + 1) }()
 	for i < limit {
 		for i < limit && isSpace(s[i]) {
 			i++
@@ -205,12 +212,15 @@ func parseTag(s string, n int) (attrs []attr, end int, selfClose, plain, ok bool
 
 // textNode finds the text that follows a tag that ends at p: the text up to the next "<", a CDATA section, or, when another tag
 // opens first (<Password><Value>x</Value></Password>), the first text inside it. A close tag or the end of the text means no value.
-func textNode(s string, p int) (from, to int, ok bool) {
+func textNode(s string, p int, w *work) (from, to int, ok bool) {
+	start, far := p, p
+	defer func() { w.spend(far - start + 1) }()
 	for depth := 0; depth < 4; depth++ {
 		q := p
 		for q < len(s) && isSpace(s[q]) {
 			q++
 		}
+		far = q
 		if q >= len(s) {
 			return 0, 0, false
 		}
@@ -222,14 +232,17 @@ func textNode(s string, p int) (from, to int, ok bool) {
 			for e > q && isSpace(s[e-1]) {
 				e--
 			}
+			far = e
 			return q, e, e > q
 		}
 		rest := s[q:]
 		switch {
 		case strings.HasPrefix(rest, "<![CDATA["):
 			if r := strings.Index(rest[9:], "]]>"); r >= 0 {
+				far = q + 9 + r
 				return q + 9, q + 9 + r, r > 0
 			}
+			far = len(s)
 			return q + 9, len(s), len(s) > q+9 // never closed: the rest of the text
 		case strings.HasPrefix(rest, "</"):
 			return 0, 0, false
@@ -241,9 +254,11 @@ func textNode(s string, p int) (from, to int, ok bool) {
 			r := strings.Index(rest[4:lim], "-->")
 			if r < 0 {
 				// No end within reach: fail closed and take the rest of the text, which also keeps the reading linear.
+				far = q + lim
 				return q, len(s), true
 			}
 			p = q + 4 + r + 3
+			far = p
 		default:
 			lim := len(rest)
 			if lim > maxTag {
@@ -254,6 +269,7 @@ func textNode(s string, p int) (from, to int, ok bool) {
 				return 0, 0, false
 			}
 			p = q + r + 1
+			far = p
 		}
 	}
 	return 0, 0, false

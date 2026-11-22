@@ -182,6 +182,46 @@ func TestCarryMasksWhatGoesOnOverTheNextLines(t *testing.T) {
 	}
 }
 
+// Carry keeps ordinary text, caps a block, and looks past comment lines.
+func TestCarryKeepsOrdinaryLinesAndCapsBlocks(t *testing.T) {
+	run1 := func(lines []string) []string {
+		var c Carry
+		var out []string
+		for _, l := range lines {
+			out = append(out, c.Line(l, m))
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name        string
+		lines, want []string
+	}{
+		{"sentence after Password:", []string{"Password:", "sudo: 3 incorrect password attempts"}, []string{"Password:", "sudo: 3 incorrect password attempts"}},
+		{"test runner line after an empty key", []string{"Set DB_PASSWORD=", "--- FAIL: TestLogin"}, []string{"Set DB_PASSWORD=", "--- FAIL: TestLogin"}},
+		{"quoted value on the next line", []string{"password:", `  "FAKEPW two"`}, []string{"password:", "  [m]"}},
+		{"text with spaces after a key is kept", []string{"PASSWORD=", "two words here"}, []string{"PASSWORD=", "two words here"}},
+		{"comment line before the value", []string{"password:", "  # the admin login", "  FAKEPW"}, []string{"password:", "  # the admin login", "  [m]"}},
+		{"tab indented block", []string{"password: |", "\tFAKEPW", "\tFAKEPW two", "next: 1"}, []string{"password: |", "\t[m]", "\t[m]", "next: 1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := run1(tc.lines)
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("line %d: got %q, want %q", i, shown(got[i]), shown(tc.want[i]))
+				}
+			}
+		})
+	}
+	lines := []string{"password: |"}
+	for i := 0; i < maxBlockLines+50; i++ {
+		lines = append(lines, "  line")
+	}
+	got := run1(lines)
+	if got[maxBlockLines] != "  "+m || got[maxBlockLines+1] != "  line" {
+		t.Errorf("block cap: line %d is %q and line %d is %q", maxBlockLines, got[maxBlockLines], maxBlockLines+1, got[maxBlockLines+1])
+	}
+}
+
 // A long name made of many secret words, then a long stretch that the value reader scans and fails on, used to be read again for each
 // word (quadratic). The time must grow in step with the size.
 func TestMaskLongNamesAreLinear(t *testing.T) {
@@ -224,6 +264,94 @@ func TestMaskLongNamesAreLinear(t *testing.T) {
 				t.Errorf("1 MiB took %v, 256 KiB took %v: not linear", big, small)
 			}
 		})
+	}
+}
+
+// The work budget: a text that costs more than workFactor steps for each byte (plus a floor) is not scanned further and the rest of
+// it is masked, whatever shape it has. The test lowers the factor and feeds shapes that cost a lot of steps per byte.
+func TestMaskWorkBudgetFailsClosed(t *testing.T) {
+	old := workFactor
+	defer func() { workFactor = old }()
+	workFactor = 1
+	shapes := map[string]string{
+		"many keys":          strings.Repeat("password=abcdef;", 8000),
+		"many xml tags":      strings.Repeat("<a b=\"c\"><Password>x</Password>", 5000),
+		"many urls":          strings.Repeat("a://u:x/b ", 12000),
+		"many block headers": strings.Repeat("password: | #", 9000),
+		"many words":         strings.Repeat("token_password_", 9000),
+	}
+	for name, in := range shapes {
+		t.Run(name, func(t *testing.T) {
+			text := in + " password=" + fake + " <Password>" + fake + "</Password> ftp://u:" + fake + "@h/x"
+			start := time.Now()
+			got := Mask(MaskURLUserinfo(text, m), m)
+			if time.Since(start) > time.Second {
+				t.Errorf("took %v", time.Since(start))
+			}
+			if strings.Contains(got, fake) {
+				t.Errorf("a fake secret after the budget ran out was left in the output")
+			}
+		})
+	}
+	// Proof that the budget is what ended the scan: ordinary text after the shape is gone with a factor of 1 and kept with the default.
+	tailed := strings.Repeat("password=abcdef;", 8000) + " harmless tail"
+	if got := Mask(tailed, m); strings.Contains(got, "harmless tail") {
+		t.Errorf("the budget did not stop the scan")
+	}
+	workFactor = old
+	if got := Mask(tailed, m); !strings.HasSuffix(got, " harmless tail") {
+		t.Errorf("with the default budget the tail was lost: %q", got[len(got)-30:])
+	}
+	// A big text full of secrets (about 28 bytes per secret) is not cut short by the default budget.
+	busy := strings.Repeat("req ok password=x; token=y\n", 40000) + "the end"
+	if got := Mask(busy, m); !strings.HasSuffix(got, "\nthe end") {
+		t.Errorf("a busy text lost its tail under the default budget")
+	}
+	// With the default factor the same shapes are scanned to the end, and nothing but the secrets goes.
+	ok := strings.Repeat("host=db01 user=bob password=", 1) + fake + "; "
+	if got := Mask(ok+strings.Repeat("name=value ", 20000)+"end", m); !strings.HasSuffix(got, "name=value end") {
+		t.Errorf("a long ordinary text lost its tail: %q", shown(got[len(got)-40:]))
+	}
+}
+
+// Token grammar for the timing screens: every token alone and every pair, then random strings of three or four tokens, each repeated
+// to a fixed size. Each must finish in time, and none may leave the planted fake secret in its output.
+var grammar = []string{"<", "<a ", "<Password ", ">", "=", `"`, "'", "://", "u:", "@", "/", "?", "#", "password", "token", ":", "|", "\n", " ",
+	"<!--", "-->", "<![CDATA[", "]]>", "{", "[", `\`, "# ", "!!str ", "&a "}
+
+func TestMaskGrammarShapesAreFast(t *testing.T) {
+	check := func(unit string, size int) {
+		in := strings.Repeat(unit, size/len(unit)+1)[:size]
+		start := time.Now()
+		_ = Mask(in, m)
+		_ = MaskURLUserinfo(in, m)
+		var c Carry
+		for _, l := range strings.Split(in[:size/8], "\n") {
+			_ = c.Line(l, m)
+		}
+		if d := time.Since(start); d > time.Second {
+			t.Errorf("%q repeated to %d bytes took %v", unit, size, d)
+		}
+		tail := in + "\npassword=" + fake
+		if strings.Contains(Mask(tail, m), fake) {
+			t.Errorf("%q repeated, then a password: the fake was left", unit)
+		}
+	}
+	for _, a := range grammar {
+		check(a, 256<<10)
+	}
+	for _, a := range grammar {
+		for _, b := range grammar {
+			check(a+b, 32<<10)
+		}
+	}
+	r := rand.New(rand.NewSource(20261123)) //nolint:gosec // fixed seed for repeatable test rounds
+	for i := 0; i < 150; i++ {
+		var b strings.Builder
+		for n := 3 + r.Intn(2); n > 0; n-- {
+			b.WriteString(grammar[r.Intn(len(grammar))])
+		}
+		check(b.String(), 256<<10)
 	}
 }
 
@@ -416,6 +544,12 @@ func TestMaskHostileInputIsFast(t *testing.T) {
 		"yaml block headers":          rep("password: |\n"),
 		"yaml blocks":                 rep("password: |\n  x\n"),
 		"yaml next lines":             rep("client_secret:\n  "),
+		"yaml header comment":         rep("password: | #"),
+		"yaml header comment gt":      rep("password: > #"),
+		"yaml token header comment":   rep("token: | #"),
+		"yaml tagged header comment":  rep("password: !!str | #"),
+		"yaml header comment tab":     rep("password: |\t#"),
+		"yaml header no space":        rep("password:| #"),
 		"many words in one name":      rep("password_token_secret_"),
 	}
 	for name, in := range inputs {

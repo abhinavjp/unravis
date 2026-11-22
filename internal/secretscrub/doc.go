@@ -26,6 +26,8 @@
 //   - Readers that see one line at a time (the Releases log reader) use Carry, which hides a YAML block scalar under "password: |" and a
 //     value on the line after a key with nothing after it. They do not cover a quoted value or a JSON array that runs over several
 //     lines, or a tag split over lines.
+//   - A work budget (workFactor steps per byte plus a floor) bounds every call whatever the input: a text that costs more is not scanned
+//     further and the rest of it is masked.
 //   - Linear time. No regular expression here backtracks and every look-ahead is bounded or consumes what it reads, so one hostile
 //     megabyte cannot cost more than a few hundred milliseconds.
 //

@@ -86,6 +86,20 @@ func TestRedactorHidesValuesOnTheNextLines(t *testing.T) {
 	}
 }
 
+// A line after a key with no value is hidden only when it can be a value; ordinary text stays readable.
+func TestRedactorKeepsOrdinaryLinesAfterAnEmptyKey(t *testing.T) {
+	for _, tc := range [][2]string{
+		{"Password:", "sudo: 3 incorrect password attempts"},
+		{"Set DB_PASSWORD=", "--- FAIL: TestLogin"},
+	} {
+		r := NewRedactor()
+		r.Line(tc[0])
+		if got := r.Line(tc[1]); got != tc[1] {
+			t.Errorf("%q after %q became %q", tc[1], tc[0], got)
+		}
+	}
+}
+
 func TestRedactorHostileInputIsFast(t *testing.T) {
 	const size = 1 << 17
 	rep := func(unit string) string { return strings.Repeat(unit, size/len(unit)+1)[:size] }
@@ -95,6 +109,7 @@ func TestRedactorHostileInputIsFast(t *testing.T) {
 		"xml":          rep("<Password>"),
 		"xml comment":  rep("<Password><!--"),
 		"xml cut tags": rep("<a b="),
+		"yaml header":  rep("password: | #"),
 		"url slashes":  rep("a://u:x/"),
 		"key comment":  rep(`<add key="password"><!--`),
 		"xml key attr": rep(`<add key="password" `),

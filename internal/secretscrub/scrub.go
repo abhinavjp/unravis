@@ -243,8 +243,9 @@ func maskPend(s, mask string) (string, int) {
 	if len(s) < 4 {
 		return s, pendNone
 	}
-	s, p1 := maskXML(s, mask)
-	s, p2 := maskKV(s, mask)
+	w := newWork(len(s))
+	s, p1 := maskXML(s, mask, w)
+	s, p2 := maskKV(s, mask, w)
 	if p2 > p1 {
 		p1 = p2
 	}
@@ -252,7 +253,7 @@ func maskPend(s, mask string) (string, int) {
 }
 
 // maskKV masks the value after "key=" or "key:" for every secret key in s.
-func maskKV(s, mask string) (string, int) {
+func maskKV(s, mask string, w *work) (string, int) {
 	locs := findWords(s)
 	if len(locs) == 0 {
 		return s, pendNone
@@ -266,6 +267,16 @@ func maskKV(s, mask string) (string, int) {
 		if m[0] < pos {
 			continue
 		}
+		w.spend(32) // the name around the word and its class
+		if w.out() {
+			// Fail closed: the text costs more than the budget, so the rest of it goes.
+			from := m[1]
+			if from < pos {
+				from = pos
+			}
+			edits = append(edits, edit{from, len(s)})
+			break
+		}
 		lo := m[0]
 		for lo > pos && m[0]-lo < maxIdent && isIdent(s[lo-1]) {
 			lo--
@@ -277,6 +288,7 @@ func maskKV(s, mask string) (string, int) {
 			for identEnd < len(s) && isIdent(s[identEnd]) {
 				identEnd++
 			}
+			w.spend(identEnd - m[1])
 		}
 		hi := identEnd
 		idEnd := hi
@@ -298,7 +310,7 @@ func maskKV(s, mask string) (string, int) {
 			continue
 		}
 		pend := pendNone
-		from, to, next, ok := readValue(s, hi, class, inQuery, bare, lo, &pend)
+		from, to, next, ok := readValue(s, hi, class, inQuery, bare, lo, &pend, w)
 		if pend > pending {
 			pending = pend
 		}
@@ -316,8 +328,15 @@ func maskKV(s, mask string) (string, int) {
 
 // readValue reads what follows a key that ends at i: an optional closing quote of the key, the "=" or ":", and the value. It
 // returns the span of the value to mask, where reading went on to, and false when no value follows.
-func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *int) (from, to, next int, ok bool) {
+func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *int, w *work) (from, to, next int, ok bool) {
 	j := i
+	far := i // the furthest position read, for the work count
+	defer func() { w.spend(far - i + 1) }()
+	see := func(p int) {
+		if p > far {
+			far = p
+		}
+	}
 	jsonKey := false
 	k := j
 	for k < len(s) && s[k] == '\\' {
@@ -360,12 +379,14 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 	for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
 		j++
 	}
+	see(j)
 	// A value on the next line: nothing follows the key on its line, so the value is the next line (one line break, then spaces;
 	// a blank line ends the search).
 	if colon && j < len(s) {
 		// A YAML block scalar ("password: |" and the indented lines under it).
-		if hdrEnd, isBlock := blockHeader(s, j); isBlock {
-			if from, to, found := blockText(s, hdrEnd, keyAt); found {
+		if hdrEnd, isBlock := blockHeader(s, j, w); isBlock {
+			see(hdrEnd)
+			if from, to, found := blockText(s, hdrEnd, keyAt, w); found {
 				return from, to, to, true
 			}
 			if hdrEnd >= len(s) || (s[hdrEnd] == '\r' && hdrEnd+1 == len(s)) {
@@ -401,6 +422,22 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 		for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
 			j++
 		}
+		// A comment line between the key and the value (YAML): the value is the line after it.
+		for n := 0; n < 4 && j < len(s) && s[j] == '#'; n++ {
+			j = w.lineEnd(s, j)
+			see(j)
+			if j >= len(s) {
+				return 0, 0, 0, false
+			}
+			if s[j] == '\r' && j+1 < len(s) && s[j+1] == '\n' {
+				j += 2
+			} else {
+				j++
+			}
+			for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+				j++
+			}
+		}
 		if j >= len(s) || s[j] == '\r' || s[j] == '\n' {
 			return 0, 0, 0, false
 		}
@@ -413,15 +450,18 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 	}
 	if q < len(s) && (s[q] == '"' || s[q] == '\'') {
 		end, after := closingQuote(s, q, nest)
+		see(after)
 		if nest == 0 && after <= len(s) && end < len(s) && !valueSeparator(s, after) {
 			// "x"y: text sticks to the closing quote, so the quote was not the end of the value (fail closed: take the rest of it).
 			end = unquotedEnd(s, after, class, false, false)
+			see(end)
 			return q + 1, end, end, true
 		}
 		return q + 1, end, after, true
 	}
 	if jsonKey && (s[j] == '[' || s[j] == '{') {
 		end := bracketEnd(s, j)
+		see(end)
 		return j, end, end, true
 	}
 	if class == classToken && colon && !jsonKey && bare {
@@ -435,13 +475,16 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 					end += 2
 					continue
 				}
+				see(end + 1)
 				return j + 1, end, end + 1, true // the braces stay, so a pattern that runs after this one reads the value as braced
 			}
 			end++
 		}
+		see(len(s))
 		return j + 1, len(s), len(s), true // never closed: the rest of the text
 	}
 	end := unquotedEnd(s, j, class, jsonKey, inQuery)
+	see(end)
 	return j, end, end, true
 }
 
@@ -634,7 +677,7 @@ func bracketEnd(s string, i int) int {
 
 // blockHeader says whether the text at j is the header of a YAML block scalar ("|", ">", "|-", ">+", "|2") that ends its line. It
 // returns where the header ends.
-func blockHeader(s string, j int) (end int, ok bool) {
+func blockHeader(s string, j int, w *work) (end int, ok bool) {
 	// A tag ("!!str", "!secret") or an anchor ("&a") may come first.
 	for n := 0; n < 2 && j < len(s) && (s[j] == '!' || s[j] == '&'); n++ {
 		for j < len(s) && s[j] != ' ' && s[j] != '\t' && s[j] != '\r' && s[j] != '\n' {
@@ -655,9 +698,7 @@ func blockHeader(s string, j int) (end int, ok bool) {
 		k++
 	}
 	if k < len(s) && s[k] == '#' && k > 0 && (s[k-1] == ' ' || s[k-1] == '\t') {
-		for k < len(s) && s[k] != '\r' && s[k] != '\n' {
-			k++ // a comment after the header
-		}
+		k = w.lineEnd(s, k) // a comment after the header runs to the end of the line
 	}
 	if k < len(s) && s[k] != '\r' && s[k] != '\n' {
 		return 0, false
@@ -667,8 +708,8 @@ func blockHeader(s string, j int) (end int, ok bool) {
 
 // blockText finds the text of a block scalar whose header ends at p: the lines after it that are indented deeper than the line of the
 // key (blank lines between them belong to it). It returns the span from the first text to the end of the last line of text.
-func blockText(s string, p, keyAt int) (from, to int, ok bool) {
-	ls := strings.LastIndexByte(s[:keyAt], '\n') + 1
+func blockText(s string, p, keyAt int, w *work) (from, to int, ok bool) {
+	ls := w.lineStart(s, keyAt)
 	keyIndent := 0
 	for k := ls; k < len(s) && (s[k] == ' ' || s[k] == '\t'); k++ {
 		keyIndent++
@@ -681,8 +722,19 @@ func blockText(s string, p, keyAt int) (from, to int, ok bool) {
 			p++
 		}
 		e := p
-		for e < len(s) && s[e] != '\n' {
-			e++
+		if i := strings.IndexByte(s[p:], '\n'); i >= 0 {
+			e = p + i
+		} else {
+			e = len(s)
+		}
+		w.spend(e - p + 1)
+		if w.out() {
+			// Over budget: fail closed, the rest of the text is the value.
+			if !ok {
+				from, ok = p, true
+			}
+			to = len(s)
+			break
 		}
 		line := s[p:e]
 		text := strings.TrimRight(line, "\r \t")
