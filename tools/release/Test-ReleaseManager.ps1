@@ -394,6 +394,48 @@ try {
     }
     Assert-That 'train: a merge commit with the generated subject is not the generated commit' (@($sideG | Where-Object { $_.Sha -eq $script:dd.mergey -and $_.Kind -ne 'dist' }).Count -eq 1)
 
+    # Promote-Develop.ps1 reuses a branch only when the generated commit sits where Get-PromotionSideCommits wants it (sweep 2026-11-22,
+    # finding 5): both sides use Get-BuriedGeneratedCommits for the position. Pure function first (tip first: Kind dist | mergein | other).
+    function New-Chain([string[]]$Kinds) { $list = @(); for ($i = 0; $i -lt $Kinds.Count; $i++) { $list += [pscustomobject]@{ Sha = "s$($i + 1)"; Kind = $Kinds[$i] } }; return , $list }
+    Assert-That 'position rule: nothing buried when the generated commit is on top' (@(Get-BuriedGeneratedCommits (New-Chain 'dist')).Count -eq 0)
+    Assert-That 'position rule: merges of master and further generated commits above it are fine' (@(Get-BuriedGeneratedCommits (New-Chain 'dist', 'mergein', 'dist', 'mergein')).Count -eq 0)
+    Assert-That 'position rule: a develop pull request commit above a generated commit buries it' ((@(Get-BuriedGeneratedCommits (New-Chain 'other', 'dist')) -join ',') -eq 's2')
+    Assert-That 'position rule: a merge that is not a clean merge of master (kind other) above it buries it' ((@(Get-BuriedGeneratedCommits (New-Chain 'dist', 'other', 'dist', 'dist')) -join ',') -eq 's3,s4')
+    Assert-That 'position rule: an empty chain (branch equals the chosen commit) buries nothing' (@(Get-BuriedGeneratedCommits @()).Count -eq 0)
+    # The same rule on real git: classify the first-parent line of each earlier scenario the way Promote-Develop does (it has
+    # no git, only the API; it does not redo the merge, so a merge counts when its second parent is on master) and the buried commits must be exactly the generated-subject commits that Get-PromotionSideCommits refused.
+    function Get-RawChain([string]$Promotion) {
+        $pp = @((git -C $g rev-list --parents -n 1 $Promotion) -split ' ' | Select-Object -Skip 1)
+        return @(git -C $g rev-list --first-parent "$($pp[0])..$($pp[1])" | ForEach-Object {
+            $c = $_
+            $cp = @((git -C $g rev-list --parents -n 1 $c) -split ' ' | Select-Object -Skip 1)
+            $subj = (git -C $g log -n 1 --format=%s $c)
+            $kind = 'other'
+            if ($cp.Count -eq 1) {
+                $names = @(git -C $g -c core.quotepath=off diff --no-renames --name-only "$c^1" $c)
+                if ("$subj".StartsWith('Rebuild web files for promotion', [StringComparison]::Ordinal) -and $names.Count -gt 0 -and @($names | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' }).Count -eq 0) { $kind = 'dist' }
+            }
+            elseif ($cp.Count -eq 2) {
+                # Promote-Develop's test: two parents and the second one is already on master (every merge in these scenarios is clean).
+                git -C $g merge-base --is-ancestor $cp[1] $pp[0] 2>$null
+                if ($LASTEXITCODE -eq 0) { $kind = 'mergein' }
+            }
+            [pscustomobject]@{ Sha = $c; Kind = $kind }
+        })
+    }
+    foreach ($sc in @(@('promote4', $sideA), @('promote11', $sideBuried), @('promote5', $sideB))) {
+        $promo = (git -C $g rev-parse "m-$($sc[0])").Trim()
+        $bur = @(Get-BuriedGeneratedCommits (Get-RawChain $promo))
+        $refused = @($sc[1] | Where-Object { $_.Kind -eq 'pr' -and -not $_.Ok } | ForEach-Object Sha)
+        $wasDist = @(Get-RawChain $promo | Where-Object { $_.Kind -eq 'dist' } | ForEach-Object Sha)
+        $expect = @($wasDist | Where-Object { $refused -contains $_ })
+        Assert-That "position rule: Promote-Develop and Get-PromotionSideCommits agree on $($sc[0])" ((($bur | Sort-Object) -join ',') -eq (($expect | Sort-Object) -join ',')) "buried=$($bur -join ',') refused=$($expect -join ',')"
+    }
+    Assert-That 'position rule: the buried scenarios are really buried (the check is not vacuous)' (@(Get-BuriedGeneratedCommits (Get-RawChain (git -C $g rev-parse "m-promote4").Trim())).Count -eq 1 -and @(Get-BuriedGeneratedCommits (Get-RawChain (git -C $g rev-parse "m-promote11").Trim())).Count -eq 1)
+    $pd = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Promote-Develop.ps1')
+    Assert-That 'promote: branch reuse applies the position rule (Get-BuriedGeneratedCommits) and refuses before a pull request exists' ($pd -match 'Get-BuriedGeneratedCommits \$chain' -and $pd.IndexOf('$buried = @(Get-BuriedGeneratedCommits') -lt $pd.IndexOf('gh pr list'))
+    Assert-That 'promote: a generated-looking commit is no longer accepted anywhere in the compare list' ($pd -notmatch '\$np = \[int\]')
+
     # ---- passphrase: never a prompt under -Yes; the pipe reaches the program ----------------------------------------------------
     $m = Get-ThrownMessage { Get-SigningPassphrase -ProtonPassRef '' -KeyFile 'k' -Yes }
     Assert-That 'passphrase: -Yes without a reference stops instead of asking' ($m -match 'never asks')

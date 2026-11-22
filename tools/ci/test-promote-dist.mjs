@@ -2,10 +2,11 @@
 //   node tools/ci/test-promote-dist.mjs
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { buildEnv } from '../release/promote-dist.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..');
@@ -104,6 +105,86 @@ test('the install and the build get no GitHub token; the install runs twice (cle
     const r = promote(f, [], { env, build: 'node -e "process.exit(process.env.GH_TOKEN || process.env.GITHUB_TOKEN ? 7 : 0)" && node build.cjs' });
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.equal((r.stdout.match(/^> install/gm) || []).length, 2);
+  } finally {
+    f.cleanup();
+  }
+});
+
+const LEAK = 'ghp_' + 'Leak1234567890abcdefghijklmnopqrstuv';
+test('buildEnv: no token variable, no credential helper, private home, a gh that gives nothing', () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'pd-env-'));
+  try {
+    const dirty = {
+      PATH: '/usr/bin' + (process.platform === 'win32' ? ';' : ':') + '/bin', HOME: '/home/real', USERPROFILE: 'C:\\Users\\real',
+      GH_TOKEN: LEAK, GITHUB_TOKEN: LEAK, GH_ENTERPRISE_TOKEN: LEAK, GITHUB_ENTERPRISE_TOKEN: LEAK, NODE_AUTH_TOKEN: 'n', NPM_TOKEN: 'n',
+      npm_config__authtoken: 'n', npm_config_registry: 'https://example.invalid/', AWS_SECRET_ACCESS_KEY: 'a', SIGNING_PASSPHRASE: 'p',
+      GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader', GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic ' + Buffer.from('x-access-token:' + LEAK).toString('base64'),
+      GH_CONFIG_DIR: '/home/real/.config/gh', GIT_ASKPASS: '/usr/bin/askpass', SSH_AUTH_SOCK: '/tmp/agent', CUSTOM_VAR: 'x',
+      HTTPS_PROXY: 'http://proxy.invalid:3128', NODE_EXTRA_CA_CERTS: '/etc/ca.pem', LANG: 'C', TEMP: '/tmp',
+      SSL_CERT_FILE: LEAK, // a token pasted into an allowed name is still dropped
+    };
+    const out = buildEnv(dirty, scratch);
+    const bad = Object.entries(out).filter(([k, v]) => /(TOKEN|SECRET|PASSPHRASE|PASSWORD|CREDENTIAL|ASKPASS|AUTH_SOCK)/i.test(k) || v.includes('ghp_') || v.includes('x-access-token') || v.includes(Buffer.from('x-access-token:' + LEAK).toString('base64')));
+    assert.deepEqual(bad, []);
+    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'npm_config_registry', 'CUSTOM_VAR', 'SSL_CERT_FILE']) assert.equal(k in out, false, k);
+    // git: the credential helper list is reset, nothing from the system or the person's own git config is read.
+    assert.deepEqual([out.GIT_CONFIG_COUNT, out.GIT_CONFIG_KEY_0, out.GIT_CONFIG_VALUE_0, out.GIT_CONFIG_NOSYSTEM, out.GIT_TERMINAL_PROMPT], ['1', 'credential.helper', '', '1', '0']);
+    assert.ok(out.GIT_CONFIG_GLOBAL.startsWith(scratch) && readFileSync(out.GIT_CONFIG_GLOBAL, 'utf8') === '');
+    // A private home and gh config folder, both empty and under the scratch folder.
+    for (const k of ['HOME', 'USERPROFILE', 'GH_CONFIG_DIR', 'XDG_CONFIG_HOME', 'npm_config_cache']) assert.ok(out[k].startsWith(scratch), k + ' = ' + out[k]);
+    assert.deepEqual(readdirSync(out.GH_CONFIG_DIR), []);
+    // What it keeps, so a build still works.
+    assert.equal(out.HTTPS_PROXY, 'http://proxy.invalid:3128');
+    assert.equal(out.NODE_EXTRA_CA_CERTS, '/etc/ca.pem');
+    assert.equal(out.LANG, 'C');
+    assert.ok(out.PATH.startsWith(join(scratch, 'bin')) && out.PATH.includes('/usr/bin'));
+    assert.ok(existsSync(join(scratch, 'bin', 'gh')) && existsSync(join(scratch, 'bin', 'gh.cmd')));
+    // A Windows-style "Path" key is found and put first-in-line too.
+    const w = buildEnv({ Path: 'C:\\Windows', SystemRoot: 'C:\\Windows', GH_TOKEN: LEAK }, scratch);
+    assert.ok(w.Path.startsWith(join(scratch, 'bin')) && !('PATH' in w) && w.SystemRoot === 'C:\\Windows' && !('GH_TOKEN' in w));
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test('the real build and install run with that environment: no token variable, and `gh auth token` finds nothing', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    // A fake signed-in gh earlier on PATH than anything else, a gh config folder holding a login, and a credential helper in HOME.
+    const fake = join(f.base, 'fakebin');
+    mkdirSync(fake);
+    const ghHome = join(f.base, 'realhome');
+    mkdirSync(join(ghHome, '.config', 'gh'), { recursive: true });
+    writeFileSync(join(ghHome, '.config', 'gh', 'hosts.yml'), 'github.com:\n  oauth_token: ' + LEAK + '\n');
+    if (process.platform !== 'win32') {
+      writeFileSync(join(fake, 'gh'), '#!/bin/sh\necho ' + LEAK + '\n');
+      chmodSync(join(fake, 'gh'), 0o755);
+    }
+    const dump = join(f.base, 'dump.json');
+    // The script writes what the dependency code would see: every variable, what `gh auth token` prints, and what git says about credential.helper.
+    writeFileSync(join(f.base, 'probe.cjs'), `
+      const cp = require('node:child_process');
+      const o = { env: process.env, gh: '', git: '' };
+      const g = cp.spawnSync('gh', ['auth', 'token'], { encoding: 'utf8', shell: process.platform === 'win32' });
+      o.gh = String(g.stdout || '') + '|' + g.status;
+      const c = cp.spawnSync('git', ['config', '--get-all', 'credential.helper'], { encoding: 'utf8' });
+      o.git = String(c.stdout || '') + '|' + c.status;
+      require('node:fs').writeFileSync(${JSON.stringify(dump)}, JSON.stringify(o));
+    `);
+    const env = {
+      ...process.env, HOME: ghHome, USERPROFILE: ghHome, GH_TOKEN: LEAK, GITHUB_TOKEN: LEAK, GH_ENTERPRISE_TOKEN: LEAK,
+      PATH: fake + (process.platform === 'win32' ? ';' : ':') + (process.env.PATH || ''),
+    };
+    const probe = JSON.stringify(join(f.base, 'probe.cjs'));
+    const r = promote(f, [], { env, build: 'node ' + probe + ' && node build.cjs' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const seen = JSON.parse(readFileSync(dump, 'utf8'));
+    assert.ok(!JSON.stringify(seen).includes(LEAK), 'the token reached the build');
+    assert.deepEqual(Object.keys(seen.env).filter((k) => /TOKEN|SECRET|PASSWORD|CREDENTIAL/i.test(k)), []);
+    assert.notEqual(seen.env.HOME, ghHome);
+    assert.equal(seen.env.GIT_CONFIG_KEY_0, 'credential.helper');
+    assert.match(seen.gh, /\|(1|null)$/, 'gh gave a result: ' + seen.gh);
+    assert.ok(!seen.gh.startsWith(LEAK));
   } finally {
     f.cleanup();
   }

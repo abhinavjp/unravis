@@ -696,7 +696,7 @@
     {
       "id": "p10-files-4",
       "phase": "P10",
-      "note": "Add files: left-out files with the Remove all button (only builds that have the button; others are reported as not reachable on this build).",
+      "note": "Add files: left-out files with the Remove all button (a build without the button is reported as not reached, which fails the audit).",
       "narrow": true,
       "steps": [
         {
@@ -717,17 +717,14 @@
           "waitFor": "[data-file=\"blob.bin\"]"
         },
         {
-          "feature": [
-            "[data-remove-left-out]",
-            "the Remove all button for left-out files"
-          ]
+          "waitFor": "[data-remove-left-out]"
         }
       ]
     },
     {
       "id": "p10-files-5",
       "phase": "P10",
-      "note": "Add files: the list after Remove all was pressed for the left-out files (only builds that have the button).",
+      "note": "Add files: the list after Remove all was pressed for the left-out files.",
       "narrow": true,
       "steps": [
         {
@@ -748,10 +745,7 @@
           "waitFor": "[data-file=\"blob.bin\"]"
         },
         {
-          "feature": [
-            "[data-remove-left-out]",
-            "the Remove all button for left-out files"
-          ]
+          "waitFor": "[data-remove-left-out]"
         },
         {
           "click": "[data-remove-left-out]"
@@ -801,7 +795,7 @@
     {
       "id": "p10-files-7",
       "phase": "P10",
-      "note": "Create case, last step: the computers the wizard picked by itself, one line, and the Change choice open (only builds that pick the computer itself).",
+      "note": "Create case, last step: the computers the wizard picked by itself, one line, and the Change choice open (a build that does not pick the computer itself is reported as not reached, which fails the audit).",
       "narrow": true,
       "steps": [
         {
@@ -833,10 +827,7 @@
           "waitFor": "text=/^File chosen: u_ex261020\\.log/"
         },
         {
-          "feature": [
-            "[data-hosts-summary]",
-            "the computers picked by themselves, summed up on the last step"
-          ]
+          "waitFor": "[data-hosts-summary]"
         },
         {
           "click": "role=button[name=\"Change\"s]"

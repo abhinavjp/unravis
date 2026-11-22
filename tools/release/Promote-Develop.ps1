@@ -118,20 +118,50 @@ if ($LASTEXITCODE -eq 0 -and $existing) {
     # What it holds beyond the chosen commit may be only commits master already has and this script's own "Merge master into ..."
     # commits; anything else is unreviewed code that would ride into master with the promotion.
     $extra = Split-Lines (Invoke-Gh api "repos/$Repo/compare/${sha}...${branch}" --paginate --jq '.commits[] | .sha + " " + (.commit.message | split("\n")[0])')
+    # The generated web files commit of an earlier run of this script (step 4b) is judged by the SAME rule as the release manager
+    # (Get-PromotionSideCommits in ReleaseLib.ps1): fixed subject, one parent, only files under the three generated folders (case
+    # sensitive: -cnotmatch), AND it sits at the tip end of the promote branch: only other generated commits and merges of master may
+    # come after it. So the first-parent line of the branch is walked from its tip down to the chosen commit, and the position rule is
+    # Get-BuriedGeneratedCommits. A branch that fails it is refused here, before a pull request is opened or merged, instead of being
+    # promoted and then refused by Release.ps1 as "Missing". The commit API pages its file list (read with --paginate) and holds at most
+    # 3000 files: more is not trusted.
+    $okSide = @{}   # sha -> true: generated-files commits and merges of master on the first-parent line, accepted below
+    $chain = @()
+    $cur = [string]$existing
+    $steps = 0
+    while ($cur -and $cur -ne $sha) {
+        $steps++
+        if ($steps -gt 200) { Stop-Here "Branch $branch has more than 200 commits above $short on its first-parent line. Delete the branch on GitHub and run again." }
+        $info = Invoke-Gh api "repos/$Repo/commits/$cur" --jq '(.parents | map(.sha) | join(" ")) + "|" + (.commit.message | split("\n")[0])'
+        $parentText, $subject = "$info" -split '\|', 2
+        $parents = @("$parentText" -split ' ' | Where-Object { $_ })
+        if ($parents.Count -eq 0) { Stop-Here "Branch $branch does not reach $short along its first-parent line. Delete the branch on GitHub and run again." }
+        $kind = 'other'
+        if ("$subject" -clike 'Rebuild web files for promotion*') {
+            if ($parents.Count -eq 1) {
+                $gfiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$cur" --paginate --jq '.files[].filename')
+                $outside = @($gfiles | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' })
+                if ($gfiles.Count -gt 0 -and $gfiles.Count -lt 3000 -and $outside.Count -eq 0) { $kind = 'dist' }
+            }
+        }
+        elseif ("$subject" -like "Merge master into $branch*" -and $parents.Count -eq 2) {
+            # The release manager also redoes the merge with git merge-tree; that cannot be done through the API. Here the second
+            # parent must already be on master (a branch that is not master's is the "merge of a branch that is not master" refusal).
+            if ([int](Invoke-Gh api "repos/$Repo/compare/master...$($parents[1])" --jq '.ahead_by') -eq 0) { $kind = 'mergein' }
+        }
+        if ($kind -ne 'other') { $okSide[$cur] = $true }
+        $chain += [pscustomobject]@{ Sha = $cur; Kind = $kind }
+        $cur = $parents[0]
+    }
+    $buried = @(Get-BuriedGeneratedCommits $chain)
+    if ($buried.Count) {
+        Stop-Here "Branch $branch has the generated web files commit $(($buried | ForEach-Object { $_.Substring(0, 7) }) -join ', ') BELOW another commit. The release manager accepts that commit only at the tip end of the promote branch (ReleaseLib.ps1 Get-PromotionSideCommits), so this promotion would merge and then be refused as Missing. Delete the branch $branch on GitHub and run again (a fresh branch gets the web files commit on top)."
+    }
     $foreign = @()
     foreach ($e in $extra) {
-        $esha, $emsg = $e -split ' ', 2
-        if ($emsg -like "Merge master into $branch*") { continue }
-        # The generated web files commit of an earlier run of this script (step 4b; the same rule as Get-PromotionSideCommits in
-        # ReleaseLib.ps1): the fixed subject, one parent, and only files under the three generated folders (case sensitive: -cnotmatch).
-        # Without this a re-run after -NoMerge, a slow or failed CI run, or a refused merge would call that commit foreign and demand
-        # that the branch be deleted (closing the pull request and wasting a full CI run). The commit API pages its file list (read with --paginate) and holds at most 3000 files: more is not trusted.
-        if ($emsg -clike 'Rebuild web files for promotion*') {
-            $np = [int](Invoke-Gh api "repos/$Repo/commits/$esha" --jq '.parents | length')
-            $gfiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$esha" --paginate --jq '.files[].filename')
-            $outside = @($gfiles | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' })
-            if ($np -eq 1 -and $gfiles.Count -gt 0 -and $gfiles.Count -lt 3000 -and $outside.Count -eq 0) { continue }
-        }
+        $esha = ($e -split ' ', 2)[0]
+        if ($okSide.ContainsKey($esha)) { continue }
+        # Anything else must already be on master (the commits master brought in through "Merge master into ...").
         if ([int](Invoke-Gh api "repos/$Repo/compare/master...$esha" --jq '.ahead_by') -eq 0) { continue }
         $foreign += $esha.Substring(0, 7)
     }

@@ -263,6 +263,24 @@ function Get-PromotionSideCommits([string]$RepoRoot, [string]$Commit) {
     return , $out
 }
 
+# The position rule for the generated web files commit, as a pure function so Promote-Develop.ps1 (which reads the promote branch
+# through the GitHub API and cannot run git) and Get-PromotionSideCommits above (which reads it with git) apply the SAME rule.
+# $Chain is the first-parent line of the promote branch from its TIP DOWN to (not including) the chosen develop commit, one entry per
+# commit with Sha and Kind: 'dist' (passes the generated-files test: fixed subject, one parent, only the three generated folders),
+# 'mergein' (a clean merge of master) or anything else (a develop pull request commit, a merge that is not a clean merge of master, a
+# commit with the generated subject that fails the test). A 'dist' commit is accepted only while every commit above it (towards the
+# tip) is 'dist' or 'mergein'. Returns the Sha of every 'dist' commit that sits below another kind of commit; empty when the branch
+# is acceptable. Get-PromotionSideCommits keeps the same state in $top.
+function Get-BuriedGeneratedCommits([object[]]$Chain) {
+    $buried = @()
+    $top = $true
+    foreach ($c in $Chain) {
+        if ($c.Kind -eq 'dist') { if (-not $top) { $buried += $c.Sha } }
+        elseif ($c.Kind -ne 'mergein') { $top = $false }
+    }
+    return , $buried
+}
+
 # For each commit, the pull request merged into $Base whose merge (squash) commit IS that commit: @{ sha = @{ N; HeadRef } }.
 # One gh call per commit, run side by side (a release since the last one is often 10 to 40 commits). Nothing is cached on disk: a
 # cache file an agent could edit would let a direct push pass as "merged". Any gh error counts as "not shown to be a PR".

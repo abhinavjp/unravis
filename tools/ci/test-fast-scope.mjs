@@ -38,6 +38,13 @@ assert.deepEqual(keys(c(['cmd/unravis-setup/main.go'])).dirs, ['cmd/audit-explor
 assert.equal(c(['internal/server/routes.go']).web, true);   // web/tests/guidedKept reads it
 assert.equal(c(['internal/store/q.go']).web, false);
 assert.equal(CROSS_WEB.test('tools/e2e/archive/guided/x.json'), true);
+// guided.ui.test.cjs reads these two (sweep 2026-11-22 finding 3); a Go-only change to them must run the web job. test-web-scope.mjs checks every read.
+for (const f of ['internal/audit/models.go', 'internal/casestore/plan.go']) {
+  assert.equal(CROSS_WEB.test(f), true, f);
+  assert.equal(c([f]).web, true, f);
+}
+assert.equal(c(['internal/audit/other.go']).web, false);
+assert.equal(c(['docs/user/guide.md']).web, true);
 // Windows separators.
 assert.deepEqual(keys(c(['internal\\store\\q.go'])).dirs, ['internal/store']);
 

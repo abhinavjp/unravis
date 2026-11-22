@@ -20,15 +20,59 @@
 // --install-cmd and --build-cmd replace `npm ci` and `npm run build`.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, realpathSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Keep equal to the node-version in .github/workflows (ci.yml web job, release.yml, fast-gate.yml). tools/ci/test-promote-dist.mjs checks it.
 export const NODE_VERSION = '22.23.5';
 export const ROOTS = ['web/dist', 'cmd/unravis-setup/ui', 'cmd/unravis-lite/ui'];
 export const COMMIT_SUBJECT = 'Rebuild web files for promotion';
+
+// Environment names the install and the build keep. Everything else is dropped (an allow list, not a deny list: a token variable
+// nobody thought of is not passed on). Windows names are matched case-insensitively.
+const KEEP = /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|SYSTEMDRIVE|OS|TEMP|TMP|TMPDIR|LANG|LANGUAGE|LC_[A-Z]+|TZ|TERM|NO_COLOR|FORCE_COLOR|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMW6432|COMMONPROGRAMFILES|PROGRAMDATA|ALLUSERSPROFILE|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS|HTTP_PROXY|HTTPS_PROXY|NO_PROXY|ALL_PROXY|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS)$/i;
+// A kept variable whose value looks like a GitHub token is dropped too (a token pasted into a proxy or certificate variable).
+const TOKEN_VALUE = /(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/;
+
+/**
+ * The environment `npm ci` and `npm run build` run in (they run dependency code, so they get nothing that could reach GitHub):
+ *  - only the variables in KEEP, no GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN, npm_config_* (registry tokens), NODE_AUTH_TOKEN, ...;
+ *  - a private, empty HOME (and APPDATA, XDG_*, npm cache and npm rc files) under `scratch`, so no ~/.gitconfig, ~/.npmrc, gh login
+ *    (GH_CONFIG_DIR is that empty folder, so `gh auth token` finds nothing) or credential store of the person running this is read;
+ *  - git: no system config, an empty global config, no credential helper (GIT_CONFIG_COUNT/KEY/VALUE reset the helper list), no prompt;
+ *  - a `gh` stub first on PATH that only fails, so a dependency script that runs `gh auth token` gets no token.
+ * Not covered, and said plainly: dependency code that calls a program by its absolute path, or asks the operating system's own
+ * credential store directly (Windows Credential Manager, macOS keychain), is not stopped by this. What protects the result is that
+ * the lock file pins the dependencies and check-dist compares the bytes; the token git needs exists only in the git environment (gitEnv).
+ * Creates folders and files under `scratch`; returns the environment object.
+ */
+export function buildEnv(env, scratch) {
+  const out = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (typeof v === 'string' && KEEP.test(k) && !TOKEN_VALUE.test(v)) out[k] = v;
+  }
+  const home = join(scratch, 'home'), cfg = join(scratch, 'gh-config'), bin = join(scratch, 'bin'), cache = join(scratch, 'cache');
+  for (const d of [home, cfg, bin, cache, join(home, 'AppData', 'Roaming'), join(home, 'AppData', 'Local')]) mkdirSync(d, { recursive: true });
+  const emptyFile = join(scratch, 'empty.cfg');
+  writeFileSync(emptyFile, '');
+  // `gh` that cannot give a token: a shell script (found first on POSIX) and a .cmd (found first on Windows, where PATHEXT lists .CMD).
+  writeFileSync(join(bin, 'gh'), '#!/bin/sh\necho "gh is not available in the web build" >&2\nexit 1\n');
+  chmodSync(join(bin, 'gh'), 0o755);
+  writeFileSync(join(bin, 'gh.cmd'), '@echo gh is not available in the web build 1>&2\r\n@exit /b 1\r\n');
+  const pathKey = Object.keys(out).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
+  out[pathKey] = bin + delimiter + (out[pathKey] || '');
+  Object.assign(out, {
+    HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData', 'Roaming'), LOCALAPPDATA: join(home, 'AppData', 'Local'),
+    XDG_CONFIG_HOME: join(home, '.config'), XDG_CACHE_HOME: join(home, '.cache'), XDG_DATA_HOME: join(home, '.local', 'share'),
+    GH_CONFIG_DIR: cfg, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1',
+    npm_config_cache: cache, npm_config_userconfig: emptyFile, npm_config_globalconfig: emptyFile, npm_config_update_notifier: 'false',
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyFile, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never',
+    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '',
+  });
+  return out;
+}
 
 class Stop extends Error {
   constructor(code, message) {
@@ -123,13 +167,11 @@ export function main(argv, env = process.env) {
     gitEnv.GIT_CONFIG_VALUE_0 = header;
   }
 
-  // The install and the build run dependency code: they get no GitHub token (git has its own, in gitEnv above).
-  const stepEnv = { ...env };
-  for (const k of Object.keys(stepEnv)) if (/^(GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GIT_CONFIG_.*)$/.test(k)) delete stepEnv[k];
-
   const tmp = mkdtempSync(join(tmpdir(), 'unravis-dist-'));
   const dir = join(tmp, 'repo');
   try {
+    // The install and the build run dependency code: they get a scrubbed environment (buildEnv), not this one and not gitEnv.
+    const stepEnv = buildEnv(env, join(tmp, 'build-env'));
     console.log('> cloning ' + o.branch + ' into ' + dir);
     git(tmp, ['clone', '--quiet', '--single-branch', '--branch', o.branch, '--depth', '1', remote, dir], { env: gitEnv });
     if (!existsSync(join(dir, 'web', 'scripts', 'check-dist.cjs'))) throw new Stop(1, o.branch + ' has no web/scripts/check-dist.cjs.');

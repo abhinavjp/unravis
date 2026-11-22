@@ -4,7 +4,7 @@
 import { test, type Page } from '@playwright/test';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runSteps, expandMacros, NotOnBuild, type Screen, type Env, type Step } from '../lib/steps';
+import { runSteps, expandMacros, type Screen, type Env, type Step } from '../lib/steps';
 import { ALLOWED } from '../../e2e/support/allow-list';
 
 const root = join(__dirname, '..');
@@ -132,8 +132,6 @@ for (const screen of screens) {
       try {
         await runSteps(page, screen.steps, env, screen.app);
       } catch (err) {
-        // A part of the screen this build does not have yet (an earlier build, a change not merged): recorded, not a failure.
-        if (err instanceof NotOnBuild) return write({ status: 'absent', reason: 'not reachable on this build: ' + err.message });
         const msg = String((err as Error).message).split('\n').slice(0, 3).join(' ').slice(0, 400);
         return write({ status: 'unreachable', reason: msg });
       }
