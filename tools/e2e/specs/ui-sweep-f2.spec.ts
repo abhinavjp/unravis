@@ -94,3 +94,11 @@ test('SWEEP-F2-N2: with More filters open only the panel body scrolls', async ({
   const scrollers = await page.evaluate(() => [...document.querySelectorAll('.scope, .scope *')].filter((e) => /(auto|scroll)/.test(getComputedStyle(e).overflowY)).map((e) => e.className));
   expect(scrollers.filter((name) => /scope(\s|$)/.test(String(name)) && !/scope-main/.test(String(name)))).toEqual([]);
 });
+
+test('SWEEP-F2-R4: every sort button in the group table heading is at least 24 px tall at 1440', async ({ page }) => {
+  await page.getByRole('button', { name: 'Where is it?', exact: true }).first().click();
+  await page.getByText(/^All \d+ API groups/).click();
+  const heights = await page.locator('.group-table-scroll.scroll-cue th .sort-button').evaluateAll((els) => els.map((e) => ({ name: (e.textContent ?? '').trim(), h: e.getBoundingClientRect().height })));
+  expect(heights.length).toBeGreaterThan(3);
+  for (const item of heights) expect(item.h, item.name).toBeGreaterThanOrEqual(24);
+});

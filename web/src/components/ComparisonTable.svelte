@@ -152,6 +152,8 @@
     :global(.group-table-scroll .comparison-table td:nth-child(2)) { min-width: 220px; max-width: 340px; }
     :global(.group-table-scroll .comparison-table td.group-kind small) { max-width: 210px; overflow: visible; white-space: normal; }
     :global(.group-table-scroll .comparison-table td.group-status), :global(.group-table-scroll .comparison-table td[data-label="P99"]) { white-space: normal; min-width: 90px; }
+    /* The sort buttons in the headings are at least 24px tall to press; the text stays where it was, and the Reference hint under it is not overlapped (SWEEP-F2 round 4). */
+    :global(.group-table-scroll .comparison-table th .sort-button) { display: inline-flex; align-items: center; min-height: 24px; box-sizing: border-box; margin-top: -4px; }
     /* Eight pixels either side of each figure column (ten elsewhere) so the fourteen columns fit a 1440 screen without a sideways scroll. */
     :global(.group-table-scroll .comparison-table th:not(:first-child)), :global(.group-table-scroll .comparison-table td:not(:first-child)) { padding-left: 8px; padding-right: 8px; }
   }
