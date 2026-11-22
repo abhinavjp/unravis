@@ -64,8 +64,14 @@ function fixture(srcValue, { dist = srcValue, extra = {} } = {}) {
 }
 const remoteName = (p) => p;
 
-const promote = (f, extra = [], opts = {}) =>
-  spawnSync(process.execPath, [opts.script || script, '--repo', 'o/r', '--remote', f.url, '--branch', 'promote/abc1234', '--node-version', nodeNow, '--install-cmd', 'node -e 0', '--build-cmd', opts.build || 'node build.cjs', ...extra], { encoding: 'utf8', env: opts.env || process.env });
+// Each run gets its own temp folder (TMPDIR/TEMP/TMP): the plant scripts of some tests look for commit clones in the temp folder, and a
+// test run of somebody else (or a left-over detached helper of an earlier run) must never be inside what they can see.
+const promote = (f, extra = [], opts = {}) => {
+  const t = join(f.base, 'tmp');
+  mkdirSync(t, { recursive: true });
+  const env = { ...(opts.env || process.env), TMPDIR: t, TEMP: t, TMP: t };
+  return spawnSync(process.execPath, [opts.script || script, '--repo', 'o/r', '--remote', f.url, '--branch', 'promote/abc1234', '--node-version', nodeNow, '--install-cmd', 'node -e 0', '--build-cmd', opts.build || 'node build.cjs', ...extra], { encoding: 'utf8', env });
+};
 const remoteHead = (f) => sh(f.bare, 'git', ['rev-parse', 'refs/heads/promote/abc1234']);
 
 test('stale committed files: one commit, only the three folders, pushed', () => {
@@ -498,6 +504,10 @@ test('pushBranch pushes to the URL: a pushurl and receivepack planted after the 
   }
 });
 
+const configPath = (d) => join(d, '.git', 'config');
+const appendConfig = (d, text) => writeFileSync(configPath(d), readFileSync(configPath(d), 'utf8') + text);
+const editConfig = (d, fn) => writeFileSync(configPath(d), fn(readFileSync(configPath(d), 'utf8')));
+
 test('assertFreshClone: each value and shape rule is enforced (bare, format version, fetch, branch keys, duplicates)', () => {
   const f = fixture('new', { dist: 'old' });
   try {
@@ -505,7 +515,13 @@ test('assertFreshClone: each value and shape rule is enforced (bare, format vers
     const plants = {
       'core.bare=true': (d) => sh(d, 'git', ['config', 'core.bare', 'true']),
       'repositoryformatversion=1': (d) => sh(d, 'git', ['config', 'core.repositoryformatversion', '1']),
-      'extensions.refstorage': (d) => sh(d, 'git', ['config', 'extensions.refstorage', 'reftable']),
+      // Written straight into the file, not with `git config`: how git itself reacts to these differs by version (git 2.50+ refuses to read
+      // a version 0 repository that has v1-only extensions at all), and the plant must not depend on that. Either way the answer is a refusal.
+      'extensions.refstorage on a version 0 repository': (d) => appendConfig(d, '[extensions]\n\trefstorage = reftable\n'),
+      'extensions.refstorage on a version 1 repository': (d) => { editConfig(d, (t) => t.replace(/repositoryformatversion = 0/, 'repositoryformatversion = 1')); appendConfig(d, '[extensions]\n\trefstorage = reftable\n'); },
+      'extensions.worktreeconfig on a version 1 repository': (d) => { editConfig(d, (t) => t.replace(/repositoryformatversion = 0/, 'repositoryformatversion = 1')); appendConfig(d, '[extensions]\n\tworktreeConfig = true\n'); },
+      'an unknown extension': (d) => appendConfig(d, '[extensions]\n\tsomethingnew = yes\n'),
+      'a config file git cannot parse': (d) => appendConfig(d, '[core\n\tbroken\n'),
       'fetch of another branch': (d) => sh(d, 'git', ['config', 'remote.origin.fetch', '+refs/heads/other:refs/remotes/origin/other']),
       'fetch of every branch': (d) => sh(d, 'git', ['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*']),
       'fetch into a bare name': (d) => sh(d, 'git', ['config', 'remote.origin.fetch', '+refs/heads/' + B + ':refs/heads/' + B]),
@@ -522,6 +538,29 @@ test('assertFreshClone: each value and shape rule is enforced (bare, format vers
       plant(d);
       assert.throws(() => assertFreshClone(d, { remote: f.url, branch: B }), /fresh clone/, name);
     }
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('assertFreshClone fails closed when git cannot read the clone\'s config at all (as git 2.50+ does for a v1-only extension on a version 0 repository)', () => {
+  if (process.platform === 'win32') return; // needs a shell wrapper
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const c = join(f.base, 'c');
+    sh(f.base, 'git', ['clone', '-q', '--template=', f.url, c]);
+    const bin = join(f.base, 'failbin');
+    mkdirSync(bin);
+    // A git that answers `config` the way git 2.56.1 does for that clone (the text must not reach the message).
+    const real = sh(f.base, 'sh', ['-c', 'command -v git']);
+    writeFileSync(join(bin, 'git'), '#!/bin/sh\ncase " $* " in *" config "*) echo "warning: repo version is 0, but v1-only extension found:" >&2; echo "fatal: --local can only be used inside a git repository" >&2; exit 128;; esac\nexec ' + JSON.stringify(real) + ' "$@"\n');
+    chmodSync(join(bin, 'git'), 0o755);
+    let err;
+    try { assertFreshClone(c, { env: { ...gitBaseEnv(process.env), PATH: bin + ':' + process.env.PATH } }); } catch (e) { err = e; }
+    assert.ok(err, 'a git that cannot read the config must be a refusal');
+    assert.match(err.message, /fresh clone/);
+    assert.doesNotMatch(err.message, /fatal|warning|v1-only/, 'git\'s own text leaked: ' + err.message);
+    assert.equal(err.code, 1);
   } finally {
     f.cleanup();
   }
@@ -579,7 +618,7 @@ test('the build clone is gone before the commit clone exists, and the commit clo
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const kept = /Kept (\S+)/.exec(r.stdout)[1];
     try {
-      assert.equal(readFileSync(join(f.base, 'ls.txt'), 'utf8').split(',').filter((d) => d && join(tmpdir(), d) !== kept).length, 0, 'a commit clone folder existed during the build');
+      assert.equal(readFileSync(join(f.base, 'ls.txt'), 'utf8').split(',').filter((d) => d && join(f.base, 'tmp', d) !== kept).length, 0, 'a commit clone folder existed during the build');
       assert.equal(existsSync(join(kept, 'build')), false);
       assertFreshClone(join(kept, 'repo'));
     } finally {

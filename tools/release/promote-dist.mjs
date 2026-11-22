@@ -207,7 +207,12 @@ export function gitBaseEnv(env) {
  * .git/info/attributes. Run after the clone and again right before the push.
  */
 export function assertFreshClone(dir, { remote = '', branch = '', env = gitBaseEnv(process.env) } = {}) {
-  const lines = git(dir, ['config', '--local', '--list'], { env }).stdout.split('\n').map((l) => l.replace(/\r$/, '')).filter(Boolean);
+  // Fail closed: when git cannot read the clone's config at all (a planted extension such as extensions.refstorage on a version 0
+  // repository makes git 2.50+ stop with "fatal: --local can only be used inside a git repository"), that is a refusal with this
+  // wording, not git's own text.
+  const read = git(dir, ['config', '--local', '--list'], { env, allowFail: true });
+  if (read.status !== 0) throw new Stop(1, 'The fresh clone has git settings that a fresh clone does not have (git cannot read its local config). Nothing was pushed.');
+  const lines = String(read.stdout || '').split('\n').map((l) => l.replace(/\r$/, '')).filter(Boolean);
   const seen = new Set();
   const bad = [];
   for (const line of lines) {
