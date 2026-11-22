@@ -9,10 +9,30 @@ import (
 )
 
 // quotedOrBraced is a quoted or braced value. A quote inside a quoted value is
-// doubled (as in an apostrophe written twice), and "}}" is an escaped brace, as ADO writes
-// them. The closing mark is optional: a value that never closes runs to the end
-// of the text.
-const quotedOrBraced = `"(?:[^"]|"")*"?|'(?:[^']|'')*'?|\{(?:[^}]|\}\})*\}?`
+// doubled (as in an apostrophe written twice, the ADO way) or escaped with a
+// backslash (JSON and Python repr), and "}}" is an escaped brace. The closing
+// mark is optional: a value that never closes runs to the end of the text.
+const quotedOrBraced = `"(?:[^"\\]|\\(?s:.)|"")*"?|'(?:[^'\\]|\\(?s:.)|'')*'?|\{(?:[^}]|\}\})*\}?`
+
+// loginValue is the value of a login-password key: a quoted or braced value, else
+// text up to the next ";" or the end of the line, else (nothing after the key on
+// its line) the text after one line break (CRLF, LF or a lone CR) and spaces.
+// Blank lines end the search.
+const loginValue = `(?:` + quotedOrBraced + `|[^;\r\n]+|(?:(?:\r\n?|\n)[ \t]*(?:` + quotedOrBraced + `|[^;\r\n]+))?)`
+
+// loginKey is a login-password key with any prefix: password, DB_PASSWORD, db.pwd,
+// MYSQL_PWD, spring.datasource.password. "pass" counts only after a separator
+// (db_pass), so "bypass" is left alone.
+const loginKey = `[\w.-]*(?:password|passwd|pwd|[_.-]pass)`
+
+// xmlKeyName is an XML element or attribute-value name that holds a password.
+const xmlKeyName = `[\w.:-]*(?:password|passwd|pwd)`
+const xmlKeyAttr = `\b(?:key|name)\s*=\s*(?:"` + xmlKeyName + `"|'` + xmlKeyName + `')`
+
+// jsonKeyNames are the keys of a JSON or repr pair whose value is hidden: the password
+// family and "pass" with any prefix (db_pass), secret and token with any prefix
+// (client_secret, access_token), "pass" alone, api and account keys, and "key".
+const jsonKeyNames = `(?:[\w.-]*(?:password|passwd|pwd|secret|token)|[\w.-]*[_.-]pass|pass|api[-_]?key|accountkey|sharedaccesskey|key)`
 
 // Sanitize is the one helper every log line passes through. The log file is
 // written so the owner can hand it to a developer, so it must never carry a
@@ -27,11 +47,22 @@ const quotedOrBraced = `"(?:[^"]|"")*"?|'(?:[^']|'')*'?|\{(?:[^}]|\}\})*\}?`
 //
 // It is deliberately blunt: when a value might be a secret, it goes.
 var (
-	reBearer     = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+`)
-	reBasicAuth  = regexp.MustCompile(`(?i)(\bauthorization\s*[:=]\s*)basic\s+[A-Za-z0-9._~+/=-]+`)
-	reJSONSecret = regexp.MustCompile(`(?i)("(?:password|passwd|pwd|secret|token|api[-_]?key|accountkey|sharedaccesskey|key)"\s*:\s*")[^"]*"`)
-	reURLCreds   = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*)://[^\s/@:]+:[^\s/@]*@`)
-	reBareCreds  = regexp.MustCompile(`\b[^\s/:@]+:[^\s/@]+@`)
+	reBearer    = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+`)
+	reBasicAuth = regexp.MustCompile(`(?i)(\bauthorization\s*[:=]\s*)basic\s+[A-Za-z0-9._~+/=-]+`)
+	// JSON ("password": "x") and Python repr ('password': 'x') pairs; a backslash
+	// escapes a quote inside the value. The value keeps its quote style.
+	reJSONSecret   = regexp.MustCompile(`(?i)(["']` + jsonKeyNames + `["']\s*:\s*")(?:[^"\\]|\\(?s:.))*"?`)
+	reJSONSecretSq = regexp.MustCompile(`(?i)(["']` + jsonKeyNames + `["']\s*:\s*')(?:[^'\\]|\\(?s:.))*'?`)
+	// A number or literal in place of a string: {"password": 12345678}.
+	reJSONSecretBare = regexp.MustCompile(`(?i)(["']` + jsonKeyNames + `["']\s*:\s*)(?:-?[0-9][^\s,}\]]*|true|false|null)`)
+	// XML: <password>x y</password> (tags stay) and web.config pairs
+	// <add key="Password" value="x y"/>, the value before or after the key.
+	reXMLElement        = regexp.MustCompile(`(?is)(<` + xmlKeyName + `(?:\s[^<>]*)?>)(?:\s*<!\[CDATA\[.*?\]\]>\s*|[^<]*)(</` + xmlKeyName + `\s*>)`)
+	reXMLKeyedElement   = regexp.MustCompile(`(?is)(<[\w:.-]+\s[^<>]*?` + xmlKeyAttr + `(?:[^<>]*[^<>/])?>\s*(?:<value>\s*)?)(?:\s*<!\[CDATA\[.*?\]\]>\s*|[^<]*)`)
+	reXMLAttrKeyFirst   = regexp.MustCompile(`(?i)(<[\w:.-]+\s[^<>]*?` + xmlKeyAttr + `[^<>]*?\bvalue\s*=\s*)(?:"[^"]*"|'[^']*')`)
+	reXMLAttrValueFirst = regexp.MustCompile(`(?i)(<[\w:.-]+\s[^<>]*?\bvalue\s*=\s*)(?:"[^"]*"|'[^']*')([^<>]*?` + xmlKeyAttr + `)`)
+	reURLCreds          = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*)://[^\s/@:]+:[^\s/@]*@`)
+	reBareCreds         = regexp.MustCompile(`\b[^\s/:@]+:[^\s/@]+@`)
 	// A quoted or braced value is cut at its closing quote or brace (or the end
 	// of the text when it never closes), so a value with spaces or semicolons
 	// goes whole. AccountKey/SharedAccessKey need no word boundary before them.
@@ -39,12 +70,23 @@ var (
 	reKVSecret = regexp.MustCompile(`(?i)(\b(?:secret|token|api[-_]?key|key)|accountkey|sharedaccesskey)\s*=\s*(?:"[^"]*"?|'[^']*'?|\{[^}]*\}?|[^\s&;,]+)`)
 	// A password in a URL query string (?password=x&y=1) ends at "&", ";", "," or a space.
 	reKVPasswordQuery = regexp.MustCompile(`(?i)([?&](?:password|passwd|pwd))\s*=\s*(?:` + quotedOrBraced + `|[^\s&;,]+)`)
+	// A prefixed key after ?/& (?db_password=x) is taken to the next "&", ";" or "," or the
+	// end of the line, so an unencoded space in the value does not leave the tail behind.
+	reKVPasswordQueryPrefixed = regexp.MustCompile(`(?i)([?&](?:[\w.-]+(?:password|passwd|pwd)|[\w.-]*[_.-]pass))\s*=\s*(?:` + quotedOrBraced + `|[^&;,\r\n]+)`)
 	// Any other password key (an ADO connection string, free text): a password may
 	// hold spaces, so an unquoted value runs to the next ";" or the end of the
 	// line, not to the next space. When nothing follows the key on its line, the
 	// value is the text after one line break (CRLF, LF or a lone CR), not a blank line.
-	reKVPassword = regexp.MustCompile(`(?im)(^|[^?&\w])((?:password|passwd|pwd))[ \t]*=[ \t]*(?:` + quotedOrBraced + `|[^;\r\n]+|(?:(?:\r\n?|\n)[ \t]*(?:` + quotedOrBraced + `|[^;\r\n]+))?)`)
-	reLongToken  = regexp.MustCompile(`[A-Za-z0-9+/_-]{25,}={0,2}`)
+	reKVPassword = regexp.MustCompile(`(?im)(^|[^?&\w.-])(` + loginKey + `)[ \t]*=[ \t]*` + loginValue)
+	// The colon form (password: x, DB_PASSWORD: x, YAML or free text) counts when the key
+	// is a whole token (not after a letter, digit, "_", ".", "-", "?" or "&", as in the
+	// "=" rule) and the colon comes right after it, with no quote (the quoted-key JSON form
+	// is above). "password policy: 8" and "the password was wrong" have no colon right
+	// after the key and stay as they are.
+	reKVPasswordColon = regexp.MustCompile(`(?im)(^|[^?&\w.-])([\w.-]*(?:password|passwd|pwd))([ \t]*:[ \t]*)` + loginValue)
+	// An X-Api-Key header printed as a header map: X-Api-Key:[value].
+	reAPIKeyHeader = regexp.MustCompile(`(?i)(\bx-api-key["']?\s*[:=]\s*)\[?[^\s\]]+\]?`)
+	reLongToken    = regexp.MustCompile(`[A-Za-z0-9+/_-]{25,}={0,2}`)
 )
 
 const redacted = "[redacted]"
@@ -115,11 +157,20 @@ func Sanitize(text string) string {
 	}
 	out = reBearer.ReplaceAllString(out, "Bearer "+redacted)
 	out = reBasicAuth.ReplaceAllString(out, "${1}Basic "+redacted)
+	out = reXMLElement.ReplaceAllString(out, "${1}"+redacted+"${2}")
+	out = reXMLAttrKeyFirst.ReplaceAllString(out, "${1}\""+redacted+`"`)
+	out = reXMLAttrValueFirst.ReplaceAllString(out, "${1}\""+redacted+`"${2}`)
 	out = reJSONSecret.ReplaceAllString(out, "${1}"+redacted+`"`)
+	out = reJSONSecretSq.ReplaceAllString(out, "${1}"+redacted+`'`)
+	out = reJSONSecretBare.ReplaceAllString(out, "${1}"+redacted)
+	out = reXMLKeyedElement.ReplaceAllString(out, "${1}"+redacted)
 	out = reURLCreds.ReplaceAllString(out, "${1}://"+redacted+"@")
 	out = reBareCreds.ReplaceAllString(out, redacted+"@")
 	out = reKVPasswordQuery.ReplaceAllString(out, "${1}="+redacted)
+	out = reKVPasswordQueryPrefixed.ReplaceAllString(out, "${1}="+redacted)
+	out = reAPIKeyHeader.ReplaceAllString(out, "${1}"+redacted)
 	out = reKVPassword.ReplaceAllString(out, "${1}${2}="+redacted)
+	out = reKVPasswordColon.ReplaceAllString(out, "${1}${2}${3}"+redacted)
 	out = reKVSecret.ReplaceAllString(out, "${1}="+redacted)
 	out = reLongToken.ReplaceAllStringFunc(out, func(m string) string {
 		if looksLikeSecret(m) {
