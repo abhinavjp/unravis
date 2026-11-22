@@ -193,7 +193,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The split itself is tested first, and a shard that comes back empty fails (it would otherwise run no tests and pass).
+          node tools/ci/test-shard.mjs
+          node tools/ci/shard-go-packages.mjs --check --of 3
           packages="$(node tools/ci/shard-go-packages.mjs --shard "${{ matrix.shard }}" --of 3)"
+          [ -n "$packages" ] || { echo "::error::Shard ${{ matrix.shard }} has no packages."; exit 1; }
           echo "$packages"
           # shellcheck disable=SC2086
           go test -p 2 -timeout 25m $packages
@@ -416,7 +420,7 @@ jobs:
         run: |
           echo "changes=$CHANGES code=$CODE web=$WEB go-tests=$GO_TESTS package=$PACKAGE"
           if [ "$CHANGES" != "success" ]; then echo "::error::The changes job did not succeed ($CHANGES)."; exit 1; fi
-          if [ "$CODE" = "true" ]; then want=success; else want=skipped; fi
+          if [ "$CODE" = "true" ]; then want=success; elif [ "$CODE" = "false" ]; then want=skipped; else echo "::error::The changes job gave no answer (code='$CODE')."; exit 1; fi
           bad=0
           for pair in "web=$WEB" "go-tests=$GO_TESTS" "package=$PACKAGE"; do
             if [ "${pair#*=}" != "$want" ]; then echo "::error::${pair%%=*} is ${pair#*=}, expected $want."; bad=1; fi
@@ -427,7 +431,7 @@ jobs:
     # BL-330. The Windows-only tests of the desktop sidecar's pipe code (internal/pipesec: first instance, full instance pool,
     # logon-SID DACL, remote reject, peer and server checks). Later sidecar items (BL-301 and on) add their packages here.
     # Also builds with the `e2e` tag, which only tests use, so that variant cannot rot.
-    # Matrix windows-2022 and windows-2025 for the pipe tests, as spec 08 D2 says. The Windows `build` job also runs these tests (go test ./...).
+    # Matrix windows-2022 and windows-2025 for the pipe tests, as spec 08 D2 says. The go-tests shards of the `build` gate also run these tests (go test ./...).
     strategy:
       fail-fast: false
       matrix:
