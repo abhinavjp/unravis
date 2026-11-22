@@ -25,9 +25,11 @@ const (
 // exitElevated is the exit code of a refused elevated start (spec 01, BL-304).
 const exitElevated = 11
 
-// refuseElevated is the one administrator check. Every interactive entry point
-// calls it before it touches a name, a mutex or a pipe; the --pipe-server
-// branch (BL-301) calls it first. Setup's elevated worker never calls it.
+// refuseElevated is the one administrator check. Today enterSingleInstance (the
+// interactive start) calls it before it touches a name or a mutex. --mcp,
+// --no-browser, --version and --quit do not reach it; the --pipe-server branch
+// (BL-301, not built yet) must call it first. Setup's elevated worker only runs
+// "unravis.exe --version", which returns before the gate.
 func refuseElevated(elevated func() bool) error {
 	if elevated() {
 		return ErrElevated

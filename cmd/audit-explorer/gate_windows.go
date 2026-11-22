@@ -30,8 +30,10 @@ func isElevated() bool {
 	if err == nil {
 		err = windows.GetTokenInformation(token, windows.TokenElevationType, (*byte)(unsafe.Pointer(&kind)), uint32(unsafe.Sizeof(kind)), &size)
 	}
+	// The integrity level is read only for a full token, so an unreadable label
+	// can never lock out a normal (limited or default) start.
 	var level uint32
-	if err == nil {
+	if err == nil && kind == tokenElevationTypeFull {
 		level, err = integrityLevel(token)
 	}
 	return elevationDecision(flag != 0, kind, level, err)
@@ -46,6 +48,9 @@ func integrityLevel(token windows.Token) (uint32, error) {
 			err = windows.ERROR_INVALID_DATA
 		}
 		return 0, err
+	}
+	if need < uint32(unsafe.Sizeof(windows.Tokenmandatorylabel{})) {
+		return 0, windows.ERROR_INVALID_DATA
 	}
 	buf := make([]byte, need)
 	if err := windows.GetTokenInformation(token, windows.TokenIntegrityLevel, &buf[0], need, &need); err != nil {

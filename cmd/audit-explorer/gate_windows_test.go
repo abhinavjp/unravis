@@ -4,10 +4,23 @@ package main
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"golang.org/x/sys/windows"
 )
+
+// On the CI runner (an administrator with UAC off, spec 08 D4) the token type is
+// default, so the gate must let it run (spec 01 D13). This proves the allow path
+// on a live token; the refuse path on a live full token is a manual check.
+func TestUACOffAdminIsNotRefusedOnCI(t *testing.T) {
+	if os.Getenv("GITHUB_ACTIONS") != "true" {
+		t.Skip("only meaningful on the CI runner, whose token is a UAC-off administrator")
+	}
+	if isElevated() {
+		t.Fatal("the CI runner's token was refused; a UAC-off administrator must run (spec 01 D13)")
+	}
+}
 
 func TestIsElevatedAgreesWithTheTokenFlag(t *testing.T) {
 	if !windows.GetCurrentProcessToken().IsElevated() && isElevated() {

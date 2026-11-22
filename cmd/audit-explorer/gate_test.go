@@ -278,22 +278,62 @@ func TestReportFatalExitsElevatedCode(t *testing.T) {
 	}
 }
 
-// Setup's elevated worker must stay outside the gate: internal/setup may not
-// mention the check.
-func TestSetupWorkerNotGated(t *testing.T) {
-	files, err := filepath.Glob("../../internal/setup/*.go")
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no setup sources found: %v", err)
+// Setup's elevated worker verifies the placed program by running
+// "unravis.exe --version" (internal/setup/plan.go verify) with its elevated
+// token. That probe must return before the gate, or an install would fail with
+// exit 11. The worker itself must never start the app (StartProgram is the
+// window's doing, as the user).
+func TestVersionProbeIsNotGated(t *testing.T) {
+	var out strings.Builder
+	old := stdout
+	stdout = &out
+	defer func() { stdout = old }()
+	if err := run([]string{"--version"}, func(string) string { return "" }); err != nil {
+		t.Fatalf("--version failed: %v", err)
 	}
+	if strings.TrimSpace(out.String()) == "" {
+		t.Fatal("--version printed nothing")
+	}
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	v := strings.Index(src, "if f.version {")
+	g := strings.Index(src, "enterSingleInstance(")
+	if v < 0 || g < 0 || v > g {
+		t.Fatalf("--version (%d) must return before enterSingleInstance (%d)", v, g)
+	}
+}
+
+func TestSetupWorkerDoesNotStartTheApp(t *testing.T) {
+	b, err := os.ReadFile("../unravis-setup/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	start := strings.Index(src, "func runWorker(")
+	end := strings.Index(src, "func runWindow(")
+	if start < 0 || end < start {
+		t.Fatal("runWorker not found in cmd/unravis-setup/main.go")
+	}
+	body := src[start:end]
+	for _, word := range []string{"startApp", "startBackground", "StartProgram"} {
+		if strings.Contains(body, word) {
+			t.Errorf("runWorker mentions %s: the elevated worker must not start unravis.exe", word)
+		}
+	}
+	files, _ := filepath.Glob("../../internal/setup/*.go")
 	for _, f := range files {
-		b, err := os.ReadFile(f) //nolint:gosec // fixed glob in the repo, test only
+		if strings.HasSuffix(f, "_test.go") || strings.HasSuffix(f, "window_windows.go") || strings.HasSuffix(f, "os_other.go") {
+			continue
+		}
+		fb, err := os.ReadFile(f) //nolint:gosec // fixed glob in the repo, test only
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, word := range []string{"refuseElevated", "isElevated", "ErrElevated", "enterSingleInstance"} {
-			if strings.Contains(string(b), word) {
-				t.Errorf("%s mentions %s: setup's elevated worker must not be gated", f, word)
-			}
+		if strings.Contains(string(fb), "StartProgram") {
+			t.Errorf("%s calls StartProgram: only the window may start the app", f)
 		}
 	}
 }
