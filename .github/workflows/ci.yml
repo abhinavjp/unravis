@@ -287,10 +287,6 @@ jobs:
           if [ "$code" -gt 1 ]; then exit "$code"; fi
           exit 0
 
-      - name: Go - compare failures with the baseline
-        if: ${{ always() && hashFiles('go-test.json') != '' }}
-        run: node tools/ci/compare-go-failures.mjs --json go-test.json --baseline docs/desktop/baseline-go-tests.txt
-
       - name: Go - keep the coverage profile
         if: ${{ always() && hashFiles('go-linux.cover') != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -318,6 +314,11 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: web
         run: npm run build
+
+      - name: Go - compare failures with the baseline
+        if: ${{ always() && hashFiles('go-test.json') != '' }}
+        run: node tools/ci/compare-go-failures.mjs --json go-test.json --baseline docs/desktop/baseline-go-tests.txt
+
 
   powershell-syntax:
     # The release and install scripts are PowerShell nobody can run on every push. This at least proves each one parses:
