@@ -22,6 +22,19 @@ const (
 	gateSignalWait  = 250 * time.Millisecond
 )
 
+// exitElevated is the exit code of a refused elevated start (spec 01, BL-304).
+const exitElevated = 11
+
+// refuseElevated is the one administrator check. Every interactive entry point
+// calls it before it touches a name, a mutex or a pipe; the --pipe-server
+// branch (BL-301) calls it first. Setup's elevated worker never calls it.
+func refuseElevated(elevated func() bool) error {
+	if elevated() {
+		return ErrElevated
+	}
+	return nil
+}
+
 // gateDeps are the system calls the gate makes, so tests can use fakes.
 type gateDeps struct {
 	names    func(app string) (instance.Names, error)
@@ -55,8 +68,8 @@ type gateResult struct {
 // take the name and lock a normal start out. A second copy asks the first to
 // open a tab and does not proceed; a second --background copy exits silently.
 func enterSingleInstance(demo, background bool, d gateDeps) (gateResult, error) {
-	if d.elevated() {
-		return gateResult{}, ErrElevated
+	if err := refuseElevated(d.elevated); err != nil {
+		return gateResult{}, err
 	}
 	app := instance.DefaultApp
 	if demo {

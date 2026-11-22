@@ -199,6 +199,7 @@ Spec per area: `docs/desktop/spec/`. Items per area: `docs/desktop/groom/` (scop
 - [ ] **BL-302** Attach-or-start, singleton and locator file (size M, P1; see `docs/desktop/groom/01-shell-sidecar.md`)
 - [ ] **BL-303** Shutdown RPC with SQLite WAL checkpoint (size S, P1; see `docs/desktop/groom/01-shell-sidecar.md`)
 - [ ] **BL-304** Refuse-administrator gate (Go side) (size S, P1; see `docs/desktop/groom/01-shell-sidecar.md`)
+  - Status 2026-11-22: code and tests in (`refuseElevated`, exit 11, token integrity level, CI job `desktop-sidecar`). Not ticked: nothing has run on Windows yet (CI run, elevated prompt, UAC-off VM). The `--pipe-server` call site waits for BL-301.
 - [ ] **BL-305** Spike: same exe or split sidecar exe (size S, P1; see `docs/desktop/groom/01-shell-sidecar.md`)
 - [ ] **BL-306** Tauri shell skeleton: spawn, Job Object, attach (size L, P2; see `docs/desktop/groom/01-shell-sidecar.md`)
 - [ ] **BL-307** Sidecar supervisor: health, restart, circuit breaker (size M, P2; see `docs/desktop/groom/01-shell-sidecar.md`)

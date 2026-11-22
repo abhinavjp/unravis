@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -250,5 +252,48 @@ func TestMainSkipsTheGateWithNoBrowser(t *testing.T) {
 	}
 	if end < 0 || call > end {
 		t.Fatalf("enterSingleInstance (%d) sits outside the `if interactive` block (ends %d)", call, end)
+	}
+}
+
+func TestRefuseElevated(t *testing.T) {
+	if err := refuseElevated(func() bool { return true }); !errors.Is(err, ErrElevated) {
+		t.Fatalf("elevated: err %v, want ErrElevated", err)
+	}
+	if err := refuseElevated(func() bool { return false }); err != nil {
+		t.Fatalf("normal start: err %v, want nil", err)
+	}
+}
+
+func TestReportFatalExitsElevatedCode(t *testing.T) {
+	oldExit, oldMsg, oldStderr := exitProcess, showMessage, stderrUnusable
+	defer func() { exitProcess, showMessage, stderrUnusable = oldExit, oldMsg, oldStderr }()
+	var got []int
+	exitProcess = func(code int) { got = append(got, code) }
+	showMessage = func(string, string) {}
+	stderrUnusable = func() bool { return false }
+	reportFatal(fmt.Errorf("wrapped: %w", ErrElevated))
+	reportFatal(errors.New("other"))
+	if len(got) != 2 || got[0] != 11 || got[1] != 1 {
+		t.Fatalf("exit codes %v, want [11 1]", got)
+	}
+}
+
+// Setup's elevated worker must stay outside the gate: internal/setup may not
+// mention the check.
+func TestSetupWorkerNotGated(t *testing.T) {
+	files, err := filepath.Glob("../../internal/setup/*.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no setup sources found: %v", err)
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f) //nolint:gosec // fixed glob in the repo, test only
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, word := range []string{"refuseElevated", "isElevated", "ErrElevated", "enterSingleInstance"} {
+			if strings.Contains(string(b), word) {
+				t.Errorf("%s mentions %s: setup's elevated worker must not be gated", f, word)
+			}
+		}
 	}
 }

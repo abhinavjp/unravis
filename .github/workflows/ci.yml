@@ -320,6 +320,22 @@ jobs:
         run: node tools/ci/compare-go-failures.mjs --json go-test.json --baseline docs/desktop/baseline-go-tests.txt
 
 
+  desktop-sidecar:
+    # Windows-only tests of the desktop sidecar's gates (BL-304 admin refusal; later BL-301 to BL-303).
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Refuse-administrator gate and instance gate (BL-304)
+        run: go test ./cmd/audit-explorer -run 'Elevat|Elevation|Integrity|Gate|Fatal|SetupWorker' -count=1 -v
+
   powershell-syntax:
     # The release and install scripts are PowerShell nobody can run on every push. This at least proves each one parses:
     # in PowerShell 7 (release scripts) and in Windows PowerShell 5.1 (tools/dev, which must run on a stock PC).

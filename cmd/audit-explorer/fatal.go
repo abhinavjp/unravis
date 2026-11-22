@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"os"
 
@@ -25,11 +26,16 @@ const (
 
 // reportFatal is the one start-up failure path: it logs err, shows a short
 // message box when there is no console to read it on (a windowless build
-// started from Explorer, the tray or the Startup folder), and exits with 1.
+// started from Explorer, the tray or the Startup folder), and exits with 1,
+// or with 11 when the start was refused because it is elevated.
 func reportFatal(err error) {
 	log.Print(err)
 	if stderrUnusable() {
 		showMessage(fatalTitle, fatalText(err))
+	}
+	if errors.Is(err, ErrElevated) {
+		exitProcess(exitElevated)
+		return
 	}
 	exitProcess(1)
 }
