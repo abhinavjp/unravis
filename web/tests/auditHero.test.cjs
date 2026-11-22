@@ -73,14 +73,14 @@ test('a slowest request far above the usual P95 is a flagged, labelled diamond w
   const mark = layout.marks.find((m) => m.index === 4);
   assert.equal(mark.flagged, true);
   assert.equal(mark.labelled, true);
-  assert.equal(mark.text, '60 s');
+  assert.equal(mark.text, '60.0 s');
   assert.equal(layout.flaggedCount, 1);
   assert.equal(layout.topFlaggedMs, 60000);
   assert.equal(layout.typical, 300);
   const sentence = heroSentence(layout);
   assert.match(sentence, /red diamond/);
-  assert.match(sentence, /60 s/);
-  assert.match(sentence, /^One red diamond: a request far slower than usual, up to 60 s./);
+  assert.match(sentence, /60\.0 s/);
+  assert.match(sentence, /^One red diamond: a request far slower than usual, up to 60.0 s./);
   // Every other slot keeps an unflagged, unlabelled mark.
   assert.equal(layout.marks.length, 5);
   assert.equal(layout.marks.filter((m) => !m.flagged).length, 4);

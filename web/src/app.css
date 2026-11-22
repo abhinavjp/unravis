@@ -728,6 +728,8 @@ th.numeric { text-align: right; }
   .empty-actions { flex-direction: column; }
   .welcome-state, .loading-state { min-height: 200px; padding: 18px 16px; }
 }
+/* BL-429: nothing animates while the page is hidden (visibility.ts sets the attribute); a spinner on a minimised window only costs frames. */
+:root[data-page-hidden] *, :root[data-page-hidden] *::before, :root[data-page-hidden] *::after { animation-play-state: paused !important; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

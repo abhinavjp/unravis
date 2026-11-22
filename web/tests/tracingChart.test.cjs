@@ -212,7 +212,7 @@ test('chart zoom, brush and row visibility stay absolute-indexed (WP-23b)', () =
 
 test('latency line is plain svg with a P50/P95 selector (WP-23c)', () => {
   const src = read('src/components/TracingChart.svelte');
-  for (const needle of ['<polyline', 'aria-pressed={percentile === option}', 'PERCENTILE_LABEL[option]', 'CANVAS_TEXT.noLatency', 'formatDuration(', 'hasLatency(', 'latencySegments(']) {
+  for (const needle of ['<polyline', 'aria-pressed={percentile === option}', 'PERCENTILE_LABEL[option]', 'CANVAS_TEXT.noLatency', 'durationText(', 'hasLatency(', 'latencySegments(']) {
     assert.ok(src.includes(needle), 'TracingChart.svelte must contain ' + needle);
   }
   assert.doesNotMatch(src, /echarts|from '\.\.\/lib\/charts'/i);

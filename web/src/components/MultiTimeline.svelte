@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { watchSize } from '../lib/chartPerf';
   import { MIN_SAMPLE, P99_MIN_SAMPLE } from '../lib/thresholds';
   import { onMount } from 'svelte';
   import type { Analysis } from '../lib/types';
@@ -23,8 +24,8 @@
   onMount(() => {
     if (!node) return;
     chart = echarts.init(node);
-    const observer = new ResizeObserver(() => chart?.resize()); observer.observe(node);
-    return () => { observer.disconnect(); chart?.dispose(); };
+    const stopSize = watchSize(node, () => chart?.resize());
+    return () => { stopSize(); chart?.dispose(); };
   });
   const colors = $derived((void theme.epoch, seriesColors()));
   $effect(() => { void theme.epoch; if (chart) chart.setOption(multiTimelineOption(analysis, keys, sources, zone, mode, series), true); });

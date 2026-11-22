@@ -3,12 +3,14 @@ import { LineChart, BarChart, HeatmapChart, ScatterChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, LegendComponent, MarkLineComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { Analysis, Comparison, Point } from './types';
-import { axisLabels, chartTime } from './chartTime';
+import { axisLabels, chartRange, chartTime } from './chartTime';
 import { axisDuration, niceHistogram } from './chartScale';
+import { countAxis, durationAxis, durationSet, durationText, fixedNumber, labelWidth, latencyAxisTitle, requestsAxisTitle, timeAxisTitle } from './chartAxis';
 import { gapBridge, heroOutliers, type HeroSlot } from './chartHero';
 import { MIN_SAMPLE } from './thresholds';
 import { lightFallback } from '../brand/fallback';
 import { explain } from './copy/dictionary';
+import { lineSeriesPerf, lonePointSeries } from './chartPerf';
 
 echarts.use([LineChart, BarChart, HeatmapChart, ScatterChart, GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
 export { echarts };
@@ -126,58 +128,78 @@ export const failureTrendOption = (analysis: Analysis, zone: string, cohortKeys:
     yAxis: { type: 'value', name: 'Responses per interval', nameLocation: 'middle', nameGap: 44, min: 0, minInterval: 1, axisLabel: { color: axis }, splitLine: { lineStyle: { color: p.grid } } },
     dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, zoomSlider(p)],
     series: [
-      { name: '4xx client errors', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: client, lineStyle: { color: p.warn, width: 2.5 }, itemStyle: { color: p.warn } },
-      { name: '5xx server errors and failed jobs', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: server, lineStyle: { color: p.bad, width: 2.5 }, itemStyle: { color: p.bad } }
+      { name: '4xx client errors', type: 'line', connectNulls: false, ...lineSeriesPerf(client, 6), data: client, lineStyle: { color: p.warn, width: 2.5 }, itemStyle: { color: p.warn } },
+      { name: '5xx server errors and failed jobs', type: 'line', connectNulls: false, ...lineSeriesPerf(server, 6), data: server, lineStyle: { color: p.bad, width: 2.5 }, itemStyle: { color: p.bad } },
+      ...lonePointSeries(client, { color: p.warn, size: 6, name: '4xx client errors' }), ...lonePointSeries(server, { color: p.bad, size: 6, name: '5xx server errors and failed jobs' })
     ]
   };
 };
 
-const heroDuration = axisDuration;
 /**
  * The pulse's one timeline: requests per interval as pale bars behind, and (only when one request type is in scope, never pooled) the P95 as the
  * focal line on a second axis. An interval with no timed requests is an empty slot, not a zero latency: the line stops there and a dashed bridge
  * joins the neighbours. The slowest request of each interval is a small hollow dot, and one far above the usual P95 is a labelled diamond, so a
  * one-minute outlier does not read as noise.
+ *
+ * Both value axes carry a title with the unit, and every tick of an axis has the same number of decimals (BL-495): the left axis counts whole
+ * requests, the right axis is in milliseconds or seconds, chosen once from the largest value. The tooltip names the interval's start and end,
+ * and writes the P95 and the slowest request in one unit and one precision. The margins are made from the label widths, inside the same chart box.
  */
-export const heroOption = (windows: HeroSlot[], zone: string, withLatency: boolean) => {
+export const heroOption = (windows: HeroSlot[], zone: string, withLatency: boolean, latencyLabel = 'P95') => {
   const p = palette(), axis = p.text2;
   const labels = axisLabels(windows.map(window => window.at), zone);
   const latency = windows.map(window => finite(window.latency));
   const outliers = withLatency ? heroOutliers(windows) : { typical: null, flagged: [] as number[], labelled: [] as number[] };
   const flagged = new Set(outliers.flagged), labelled = new Set(outliers.labelled);
+  const counts = countAxis(Math.max(0, ...windows.map(window => finite(window.count) ?? 0)));
+  const times = durationAxis(Math.max(0, ...windows.flatMap(window => [finite(window.latency) ?? 0, finite(window.max) ?? 0])));
   const slowest = windows.map((window, index) => {
     const max = finite(window.max);
     if (max == null) return null;
     return flagged.has(index)
-      ? { value: max, symbol: 'diamond', symbolSize: 11, itemStyle: { color: p.bad }, label: { show: labelled.has(index), position: 'top', distance: 4, color: p.bad, fontSize: 11, formatter: () => axisDuration(max) } }
+      ? { value: max, symbol: 'diamond', symbolSize: 11, itemStyle: { color: p.bad }, label: { show: labelled.has(index), position: 'top', distance: 4, color: p.bad, fontSize: 11, formatter: () => durationText(max) ?? '' } }
       : { value: max, symbol: 'circle', symbolSize: 5, itemStyle: { color: 'transparent', borderColor: p.text2, borderWidth: 1, opacity: .7 } };
   });
+  // Axis titles sit outside the tick labels. Labels start 8 px from the axis line. ECharts puts the title's near edge `nameGap` from the axis line and
+  // the 12 px text (about 14 px with descenders) runs outward from there, so the gap is the widest label plus 6 px of air, and the margin holds
+  // the gap, the whole title and 3 px, which keeps the title inside the chart box (measured with the pixels in UIFIX-30 and 31).
+  const leftGap = labelWidth(counts.widest) + 14, rightGap = labelWidth(times.widest) + 14, titleMargin = 17;
+  const titleStyle = { color: p.text2, fontSize: 12 };
   return {
     animation: false,
-    grid: { left: 40, right: withLatency ? 52 : 14, top: 22, bottom: 26 },
+    grid: { left: leftGap + titleMargin, right: withLatency ? rightGap + titleMargin : 14, top: 22, bottom: 48 },
     tooltip: {
       ...tipStyle(p), trigger: 'axis',
       formatter: (items: Array<{ dataIndex: number }>) => {
         const index = items[0]?.dataIndex ?? 0;
         const window = windows[index];
         if (!window) return '';
-        return tooltipTimestamp(window.at, zone) + '<br/>Requests: ' + window.count.toLocaleString() +
-          (withLatency ? '<br/>P95: ' + (window.latency == null ? 'no timed requests' : '≈ ' + heroDuration(window.latency)) +
-            (window.max != null ? '<br/>Slowest request: ' + heroDuration(window.max) + (flagged.has(index) ? ' (far above the usual P95)' : '') : '') +
+        const [p95Text, slowestText] = durationSet([window.latency, window.max]);
+        const interval = window.end != null && window.end > (window.start ?? window.at)
+          ? escapeHTML(chartRange(window.start ?? window.at, window.end, zone)) : tooltipTimestamp(window.at, zone);
+        return interval + '<br/>Requests: ' + fixedNumber(window.count, 0) +
+          (withLatency ? '<br/>' + escapeHTML(latencyLabel) + ': ' + (p95Text == null ? 'no timed requests' : '≈ ' + p95Text) +
+            (slowestText != null ? '<br/>Slowest request: ' + slowestText + (flagged.has(index) ? ' (far above the usual P95)' : '') : '') +
             '<br/>' + escapeHTML(explain('latency.p95')) : '');
       }
     },
-    xAxis: { type: 'category', data: labels, axisTick: { show: false }, axisLabel: { color: axis, interval: 0, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } } },
+    xAxis: {
+      type: 'category', data: labels, axisTick: { show: false }, axisLabel: { color: axis, interval: 0, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } },
+      name: timeAxisTitle(zone), nameLocation: 'middle', nameGap: 30, nameTextStyle: titleStyle
+    },
     yAxis: [
-      { type: 'value', min: 0, minInterval: 1, splitNumber: 4, axisLabel: { color: axis }, splitLine: { lineStyle: { color: p.grid } } },
-      ...(withLatency ? [{ type: 'value', min: 0, minInterval: 1, splitNumber: 4, position: 'right', axisLabel: { color: p.accent, formatter: (value: number) => heroDuration(value) }, splitLine: { show: false } }] : [])
+      { type: 'value', min: 0, max: counts.max, interval: counts.interval, name: requestsAxisTitle, nameLocation: 'middle', nameGap: leftGap, nameTextStyle: titleStyle,
+        axisLabel: { color: axis, formatter: (value: number) => counts.format(value) }, splitLine: { lineStyle: { color: p.grid } } },
+      ...(withLatency ? [{ type: 'value', min: 0, max: times.maxMs, interval: times.intervalMs, position: 'right', name: latencyAxisTitle(times.unit), nameLocation: 'middle', nameGap: rightGap, nameTextStyle: titleStyle,
+        axisLabel: { color: p.accent, formatter: (value: number) => times.format(value) }, splitLine: { show: false } }] : [])
     ],
     series: [
       { name: 'Requests', type: 'bar', yAxisIndex: 0, data: windows.map(window => window.count), itemStyle: { color: withAlpha(p.accent, .3) }, barCategoryGap: '24%' },
       ...(withLatency ? [
         { name: 'P95 bridge', type: 'line', yAxisIndex: 1, silent: true, showSymbol: false, data: gapBridge(latency), lineStyle: { color: p.accent, width: 1.5, type: 'dashed', opacity: .7 }, tooltip: { show: false }, z: 2 },
-        { name: 'P95', type: 'line', yAxisIndex: 1, connectNulls: false, showSymbol: true, symbolSize: 5, data: latency, lineStyle: { color: p.accent, width: 2 }, itemStyle: { color: p.accent }, z: 3 },
-        { name: 'Slowest request', type: 'scatter', yAxisIndex: 1, data: slowest, z: 4 }
+        { name: 'P95', type: 'line', yAxisIndex: 1, connectNulls: false, ...lineSeriesPerf(latency, 5), data: latency, lineStyle: { color: p.accent, width: 2 }, itemStyle: { color: p.accent }, z: 3 },
+        { name: 'Slowest request', type: 'scatter', yAxisIndex: 1, data: slowest, z: 4 },
+        ...lonePointSeries(latency, { color: p.accent, size: 5, yAxisIndex: 1, name: 'P95' })
       ] : [])
     ]
   };
@@ -212,6 +234,7 @@ export const timelineOption = (analysis: Analysis, selected: Comparison | null, 
   const points = alignedPoints(analysis, selected?.key ?? null);
   const labels = axisTimeLabels(points, zone);
   const chosen = selected;
+  const current50 = points.map(point => finite(point.p50?.valueMs)), current95 = points.map(point => finite(point.p95?.valueMs));
   return {
     animation: false,
     grid: { left: 84, right: 18, top: 62, bottom: 58 },
@@ -230,8 +253,9 @@ export const timelineOption = (analysis: Analysis, selected: Comparison | null, 
     yAxis: { type: 'value', name: 'Response time', nameLocation: 'middle', nameGap: 52, min: 0, minInterval: 1, axisLabel: { color: axis, formatter: (value: number) => axisDuration(value) }, splitLine: { lineStyle: { color: p.grid } } },
     dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, zoomSlider(p)],
     series: [
-      { name: 'Current median', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: points.map(point => finite(point.p50?.valueMs)), lineStyle: { color: p.text2, width: 2.5 }, itemStyle: { color: p.text2 } },
-      { name: 'Current P95', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: points.map(point => finite(point.p95?.valueMs)), lineStyle: { color: p.accent, width: 2.5 }, itemStyle: { color: p.accent } },
+      { name: 'Current median', type: 'line', connectNulls: false, ...lineSeriesPerf(current50, 6), data: current50, lineStyle: { color: p.text2, width: 2.5 }, itemStyle: { color: p.text2 } },
+      { name: 'Current P95', type: 'line', connectNulls: false, ...lineSeriesPerf(current95, 6), data: current95, lineStyle: { color: p.accent, width: 2.5 }, itemStyle: { color: p.accent } },
+      ...lonePointSeries(current50, { color: p.text2, size: 6, name: 'Current median' }), ...lonePointSeries(current95, { color: p.accent, size: 6, name: 'Current P95' }),
       { name: 'Reference median', type: 'line', showSymbol: false, data: labels.map(() => finite(chosen?.reference.p50?.valueMs)), lineStyle: { color: p.text2, type: 'dashed', opacity: .55 }, itemStyle: { color: p.text2 } },
       { name: 'Reference P95', type: 'line', showSymbol: false, data: labels.map(() => finite(chosen?.reference.p95?.valueMs)), lineStyle: { color: p.accent, type: 'dashed', opacity: .55 }, itemStyle: { color: p.accent } },
       ...(targetMs == null ? [] : [{ name: 'Response-time target', type: 'line', showSymbol: false, data: labels.map(() => targetMs), lineStyle: { color: p.series[0], type: 'dotted', width: 2 }, itemStyle: { color: p.series[0] } }])

@@ -45,7 +45,7 @@
   } from '../lib/tracing/lanes';
   import { formatTime } from '../lib/time';
   import { needsYear } from '../lib/chartTime';
-  import { formatDuration } from '../lib/format';
+  import { durationSet, durationText, tickLabels } from '../lib/chartAxis';
   import { TOOLTIP_TEXT, barTipLines, formatCount, isTouchPointer, laneHeadHint } from '../lib/tracing/tooltip';
   import { WAIT_TEXT } from '../lib/copy/waitCopy';
   import { SOURCES_TEXT } from '../lib/tracing/sources';
@@ -56,7 +56,6 @@
     type Percentile, type ZoomRange
   } from '../lib/tracing/canvas';
   import { HERO_TEXT, heroLayout, heroSentence, heroSqlSentence, type HeroLayout } from '../lib/tracing/auditHero';
-  import { axisDuration } from '../lib/chartScale';
   import { hitFlagged, type FlagMark } from '../lib/drill/hit';
 
   let { response, zone, onSelect, focus = null, visible = {}, unselected = [], readOnly = false, onAddFiles, onDiamond }: {
@@ -311,8 +310,10 @@
       const dot = laneHero.dots.find((d) => d.index === slot);
       const mark = laneHero.marks.find((m) => m.index === slot);
       const isSql = lane.key === 'sql';
-      const timing = [dot ? `${isSql ? HERO_TEXT.tipSqlAverage : `${PERCENTILE_LABEL[percentile]}:`} ${axisDuration(dot.ms)}` : HERO_TEXT.tipNoTiming];
-      if (mark) timing.push(`${isSql ? HERO_TEXT.tipSqlSlowest : HERO_TEXT.tipSlowest} ${axisDuration(mark.ms)}${mark.flagged ? ` (${isSql ? HERO_TEXT.tipSqlOutlier : HERO_TEXT.tipOutlier})` : ''}`);
+      // Every duration goes through durationText, so the line, the slowest request, the diamond, the notes and the screen-reader text read alike.
+      const [dotText, markText] = durationSet([dot?.ms, mark?.ms]);
+      const timing = [dot ? `${isSql ? HERO_TEXT.tipSqlAverage : `${PERCENTILE_LABEL[percentile]}:`} ${dotText}` : HERO_TEXT.tipNoTiming];
+      if (mark) timing.push(`${isSql ? HERO_TEXT.tipSqlSlowest : HERO_TEXT.tipSlowest} ${markText}${mark.flagged ? ` (${isSql ? HERO_TEXT.tipSqlOutlier : HERO_TEXT.tipOutlier})` : ''}`);
       // Right after the request count line (the time range is line 0, the count line 1).
       if ((bar?.count ?? 0) > 0) lines.splice(2, 0, ...timing);
     }
@@ -718,7 +719,7 @@
                   <span class="mark-label" aria-hidden="true" style="left:{mark.leftPct}%;bottom:{mark.bottomPct}%">{mark.text}</span>
                 {/if}
               {/each}
-              <span class="latency-max">{lineName(lane.key)}: up to {formatDuration(peakOf(lane.key) > 0 ? peakOf(lane.key) : h.maxMs)}</span>
+              <span class="latency-max">{lineName(lane.key)}: up to {durationText(peakOf(lane.key) > 0 ? peakOf(lane.key) : h.maxMs)}</span>
             {/if}
           </div>
         {:else}
@@ -733,15 +734,16 @@
       <div class="axis axis-right" data-lane={lane.key} style="--row:{laneIndex + 1}">
         {#if heroOf(lane.key)}
           {@const h = heroOf(lane.key) as HeroLayout}
+          {@const tickText = tickLabels(h.ticks.map((t) => t.ms))}
           <span class="y-title">slowness ({lineName(lane.key)})</span>
           <div class="scale">
-            {#each h.ticks as tick (tick.ms)}
+            {#each h.ticks as tick, tickIndex (tick.ms)}
               {#if tick.bottomPct === 100}
-                <span class="tick tick-top">{axisDuration(tick.ms)}</span>
+                <span class="tick tick-top">{tickText[tickIndex]}</span>
               {:else if tick.bottomPct === 0}
-                <span class="tick tick-bottom">{axisDuration(tick.ms)}</span>
+                <span class="tick tick-bottom">{tickText[tickIndex]}</span>
               {:else}
-                <span class="tick" style="bottom:{tick.bottomPct}%">{axisDuration(tick.ms)}</span>
+                <span class="tick" style="bottom:{tick.bottomPct}%">{tickText[tickIndex]}</span>
               {/if}
             {/each}
           </div>
