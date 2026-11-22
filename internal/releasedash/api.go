@@ -42,7 +42,8 @@ func (d *Dash) registerDetail(mux *http.ServeMux) {
 		defer cancel()
 		out, stale, err := f(ctx, v)
 		if err != nil {
-			fail(w, http.StatusBadGateway, err.Error())
+			// GitHub being out of reach is a normal state for this page, not a server fault: answer 200 with the reason so the browser console stays quiet.
+			writeJSON(w, map[string]any{"data": nil, "stale": false, "error": err.Error()})
 			return
 		}
 		if stale {

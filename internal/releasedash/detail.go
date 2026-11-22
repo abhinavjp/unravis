@@ -176,7 +176,7 @@ func (d *Dash) logsFor(tag string, ev []Event, live bool, now time.Time) []LogRe
 	if live {
 		last = now
 	}
-	var runs, cis []LogRef
+	runs, cis := []LogRef{}, []LogRef{} // never nil: the page reads the JSON as a list
 	for _, l := range all {
 		switch {
 		case l.Kind == "run" && !first.IsZero():

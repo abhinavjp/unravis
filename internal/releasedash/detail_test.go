@@ -218,3 +218,14 @@ func TestArtifactsShowDigestKeyAndManifest(t *testing.T) {
 		t.Fatalf("%v %+v", err, info)
 	}
 }
+
+func TestReleaseWithoutLogsHasEmptyList(t *testing.T) {
+	d := New(writeLocal(t), "", nil) // no logs folder at all
+	det, err := d.Release("0.1.0-rc.55", time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if det.Logs == nil || len(det.Logs) != 0 {
+		t.Fatalf("logs must be an empty list, got %#v", det.Logs)
+	}
+}
