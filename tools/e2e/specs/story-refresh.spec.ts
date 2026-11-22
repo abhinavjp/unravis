@@ -5,6 +5,7 @@
 //   STORY-03  A source added in Add data (Redis by address) makes one re-read of the case, with no loading text and focus not pulled onto the story.
 //             A source added this way (Redis, SQL, Mongo, Blackbox) has no line in "Story so far": the story is built from case history, files, health runs
 //             and theories, and the server writes no history for a source. Only files and found-on-this-PC logs (which are files) show a new line.
+//   STORY-04  A file added while a read of the page is slow (held on the case read) still ends up in the story: the re-read waits for the page read, then runs once.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
 import { createCase, ensureHost, importFile, HOST } from '../support/api';
@@ -121,4 +122,44 @@ test('STORY-03: a source added in Add data makes one re-read of the case and the
   await expect(page.locator('.loading-state')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Story so far' })).toBeVisible();
   expect(await page.evaluate(() => !!document.activeElement?.closest('section[aria-labelledby="home-story"]') || document.activeElement?.id === 'home-story')).toBe(false);
+});
+
+test('STORY-04: a file added while a read of the page is slow still ends up in the story', async ({ page, api, allow }) => {
+  allow(/423|locked/i, 'the first re-read is answered with "case locked" on purpose, which makes the page read itself again');
+  await ensureHost(api);
+  const title = 'QA Story Slow Read';
+  const id = await createCase(api, title);
+  const dialog = await openPopup(page, title);
+
+  // File one is added; its re-read is answered 423 once (the case looks locked), so the page reads itself again. That page read is fetched at once
+  // from the real server but its answer is held back, so it carries file one only.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let caseReads = 0;
+  let held!: () => void;
+  const heldSeen = new Promise<void>((resolve) => (held = resolve));
+  await page.route(new RegExp(`/api/cases/${id}$`), async (route) => {
+    if (route.request().method() !== 'GET') { await route.fallback(); return; }
+    caseReads += 1;
+    if (caseReads === 1) {
+      await route.fulfill({ status: 423, contentType: 'application/json', body: JSON.stringify({ error: 'The case is locked.', reason: 'case-locked' }) });
+      return;
+    }
+    const answer = await route.fetch();
+    if (caseReads === 2) { held(); await gate; }
+    await route.fulfill({ response: answer });
+  });
+  await addOne(dialog, iisLog('04'));
+  await heldSeen;
+  await expect(dialog.locator('.prog-line')).toContainText('Step 3 of 3 · Result', { timeout: 60_000 });
+
+  // File two is added while that page read is still waiting. The story must not take its answer as the last word.
+  await dialog.getByRole('button', { name: 'Import more' }).click();
+  await addOne(dialog, iisLog('05'));
+  await expect(dialog.locator('.prog-line')).toContainText('Step 3 of 3 · Result', { timeout: 60_000 });
+  expect(caseReads).toBe(2);
+  release();
+  await expect(storyFiles(page)).toHaveCount(2);
+  expect(caseReads).toBe(3);
+  await expect(page.locator('.loading-state')).toHaveCount(0);
 });

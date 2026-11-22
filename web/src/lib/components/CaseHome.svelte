@@ -77,6 +77,8 @@
   $effect(() => { if (phase === 'ready') return setDocTitle(timelineShown ? TRACING_TEXT.heading : info?.title || caseCode(caseId)); });
   let controller: AbortController | null = null;
   let rereadRun = 0;
+  // Set when the page goes away: a re-read that was held for a read of the page is not run for a page that is no longer there.
+  let destroyed = false;
   let loadedFor = '';
 
   // An archived case offers no analysis, files, checks or theories (spec section 9): the page shows its record and the way back.
@@ -175,7 +177,7 @@
     loadsOpen += 1;
     try { await loadPage(id, quiet); } finally {
       loadsOpen -= 1;
-      if (loadsOpen === 0 && rereadWanted) { const wanted = rereadWanted; rereadWanted = ''; if (wanted === caseId) void rereadFiles(); }
+      if (loadsOpen === 0 && rereadWanted) { const wanted = rereadWanted; rereadWanted = ''; if (!destroyed && wanted === caseId) void rereadFiles(); }
     }
   }
   async function loadPage(id: string, quiet: boolean) {
@@ -203,7 +205,9 @@
     const reads = found ? readsCaseData(found) : !refused;
     holdLedger(id, !reads);
     const none = <T,>(value: T): Promise<T> => Promise.resolve(value);
-    const [files, runs, theory] = await Promise.allSettled([reads ? listImports(id, mine.signal) : none<ImportRecord[]>([]), reads ? fetchHealthRuns(id, mine.signal) : none<HealthRun[]>([]), reads ? refreshLedger() : none<void>(undefined)]);
+    // The theories read takes no signal: an aborted load stops waiting for it, so it never holds a re-read that is waiting for this load to end.
+    const aborted = new Promise<void>((resolve) => { if (mine.signal.aborted) resolve(); else mine.signal.addEventListener('abort', () => resolve(), { once: true }); });
+    const [files, runs, theory] = await Promise.allSettled([reads ? listImports(id, mine.signal) : none<ImportRecord[]>([]), reads ? fetchHealthRuns(id, mine.signal) : none<HealthRun[]>([]), reads ? Promise.race([refreshLedger(), aborted]) : none<void>(undefined)]);
     if (mine.signal.aborted || id !== caseId) return;
     if (files.status === 'rejected' && isCaseGone(files.reason)) { phase = 'gone'; return; }
     if (caseView.status === 'rejected' && isCaseGone(caseView.reason)) { phase = 'gone'; return; }
@@ -288,7 +292,7 @@
   // to close: the case and its files are read again, quietly (no loading screen, no focus move). One read for each successful add, none for a failed one.
   async function rereadFiles() {
     const id = caseId;
-    if (!id || phase !== 'ready') return;
+    if (!id || phase !== 'ready' || destroyed) return;
     const mine = ++rereadRun;
     try {
       const fresh = await getCaseView(id);
@@ -424,7 +428,7 @@
     const id = caseId;
     if (id && id !== loadedFor) void load(id);
   });
-  onMount(() => () => controller?.abort());
+  onMount(() => () => { destroyed = true; controller?.abort(); });
 
   // An archive that runs while its drawer is closed (closed on purpose, or the page was reloaded) is followed here, so it never finishes unseen.
   $effect(() => {

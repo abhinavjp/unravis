@@ -150,6 +150,8 @@ test('Case home reads the case again quietly for each signal, with no loading sc
   // The other way round: an add that lands while a read of the page is on its way waits for it, then reads once, so the read that started last is the one that shows.
   const loadWrap = home.match(/async function load\(id: string, quiet = false\) \{[\s\S]*?\n  \}\n/)[0];
   assert.match(loadWrap, /finally \{[\s\S]*loadsOpen === 0 && rereadWanted[\s\S]*void rereadFiles\(\)/, 'the re-read waits for the open read, then runs once');
+  assert.match(loadWrap, /!destroyed && wanted === caseId/, 'a held re-read is not run for a page that is gone');
+  assert.match(home, /Promise\.race\(\[refreshLedger\(\), aborted\]\)/, 'an aborted load stops waiting for the theories read');
   assert.match(home, /if \(loadsOpen > 0\) rereadWanted = id; else void untrack\(\(\) => rereadFiles\(\)\);/, 'a signal during a read is kept, not dropped, and not run beside it');
   assert.match(home, /\$effect\(\(\) => \{\s*const seq = caseAdded\.seq;\s*if \(seq === seenAdd\) return;\s*seenAdd = seq;/, 'one read for each signal');
   assert.doesNotMatch(home, /drawerWas/, 'the read no longer waits for the pop-up to close');

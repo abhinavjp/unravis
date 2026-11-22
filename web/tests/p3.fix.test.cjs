@@ -77,7 +77,7 @@ test('the case home reads the case first and asks for files, checks and theories
   assert.match(load, /getCaseView\(id, mine\.signal\), getCaseKeyStatus\(id, mine\.signal\)\]\);[\s\S]*readsCaseData\(found\)/, 'the view is read before anything else');
   assert.match(load, /reads \? listImports\(/);
   assert.match(load, /reads \? fetchHealthRuns\(/);
-  assert.match(load, /reads \? refreshLedger\(/);
+  assert.match(load, /reads \? Promise\.race\(\[refreshLedger\(\)/);
   assert.doesNotMatch(load, /Promise\.allSettled\(\[getCaseView\(id, mine\.signal\), listImports/, 'no read of an archived case in parallel with the view');
   const reread = home.match(/async function rereadFiles\(\) \{[\s\S]*?\n  \}\n/)[0];
   assert.match(reread, /readsCaseData\(fresh\) \? await listImports/, 'a reread of an archived case does not list files');
