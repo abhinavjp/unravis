@@ -43,7 +43,7 @@
   .detail { color: var(--text-2); }
   .fix { color: var(--text); }
   .ready { margin-top: 6px; font-size: 13px; }
-  .ready summary { display: flex; align-items: center; min-height: 24px; cursor: pointer; color: var(--text-2); padding: 4px 0; }
+  .ready summary { box-sizing: border-box; min-height: 24px; cursor: pointer; color: var(--text-2); padding: 4px 0; }
   .ready summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .ready ul { margin-top: 4px; }
 </style>

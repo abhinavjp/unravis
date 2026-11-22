@@ -554,7 +554,7 @@
   .nutshell { padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius-sm); font-size: 13px; line-height: 1.5; }
   .nutshell b { display: block; margin-bottom: 2px; font-size: 12px; color: var(--text-2); }
   .why { min-width: 0; font-size: 12px; color: var(--text-2); }
-  .under-row { margin-top: 6px; }
+  .under-row { margin-top: 6px; min-height: 24px; }
   .notice { padding: 8px 12px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 14%, var(--surface)); font-size: 13px; }
   .problem { color: var(--bad); font-size: 12px; }
   .blocked { padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--bad); font-size: 13px; }
