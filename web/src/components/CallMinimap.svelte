@@ -371,7 +371,7 @@
     outline-offset: 2px;
   }
   .scall-map-drag {
-    font-size: 10px;
+    font-size: 11px;
     line-height: 12px;
     padding: 0 3px;
     color: var(--text);
