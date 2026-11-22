@@ -66,9 +66,11 @@
   let checking = $state(foreign);
   let askDiscard = $state(false);
   let askAddMore = $state(false);
-  let preparing = $state(false);
+  // The case is read again just before Review and just before the send: the hub tabs are off for that moment (addGuard.preparing), and a read that
+  // ends after this tab was left sends nothing, so a send never happens off screen.
+  let gone = false;
   let leftOut = $state<string[]>([]);
-  const ready = $derived(canFinish(true, wizard.sources.length, createView.running, closed) && pending.length === 0 && !preparing);
+  const ready = $derived(canFinish(true, wizard.sources.length, createView.running, closed) && pending.length === 0 && !addGuard.preparing);
 
   onMount(() => {
     // A draft from the create wizard is not carried into this case: start from an empty list (after asking, when it holds work).
@@ -84,6 +86,7 @@
     window.addEventListener('focus', looksAgain);
     document.addEventListener('visibilitychange', looksAgain);
     return () => {
+      gone = true; addGuard.preparing = false;
       mine.abort();
       window.removeEventListener('focus', looksAgain);
       document.removeEventListener('visibilitychange', looksAgain);
@@ -140,7 +143,7 @@
 
   /** Reads the case again while the list is open (the window got focus back): another window may have closed the case or added the same source. */
   async function refresh(signal?: AbortSignal) {
-    if (createView.running || started || preparing) return;
+    if (createView.running || started || addGuard.preparing) return;
     await Promise.all([checkCase(signal), loadCase(signal)]);
     if (signal?.aborted || !owned) return;
     dropDuplicates();
@@ -168,9 +171,10 @@
   async function go(to: Screen) {
     if (to === 'review') {
       // The case is read again first: it may have closed, or gained one of these sources, since the list was made.
-      preparing = true;
+      addGuard.preparing = true;
       await Promise.all([checkCase(), loadCase()]);
-      preparing = false;
+      addGuard.preparing = false;
+      if (gone) return;
       dropDuplicates();
       if (closed || wizard.sources.length === 0) { await tick(); flowEl?.focus(); return; }
     }
@@ -180,10 +184,11 @@
   async function run() {
     // The blockers are read fresh (a scan can expire while this screen is open); the run skips them once the id is set.
     if (!ready || blockers().length > 0) return;
-    preparing = true;
+    addGuard.preparing = true;
     await Promise.all([checkCase(), loadCase()]);
+    addGuard.preparing = false;
+    if (gone) return;
     const dropped = dropDuplicates();
-    preparing = false;
     if (closed) return;
     if (dropped.length > 0) { if (wizard.sources.length === 0) await go('add'); return; }
     if (wizard.sources.length === 0 || blockers().length > 0) return;

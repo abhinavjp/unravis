@@ -37,7 +37,7 @@
   // says it would be lost). An unfinished list of sources is not lost: the flow keeps it for the way back (see AddSourcesFlow).
   let askTab = $state<Tab | ''>('');
   function goTab(next: Tab) {
-    if (next === tab) return;
+    if (next === tab || addGuard.preparing) return;
     if (tab === 'add' && addGuard.entryDirty) { askTab = next; return; }
     tab = next;
   }
@@ -60,7 +60,7 @@
 <div class="src" data-sources-hub>
   <div class="tabs" role="tablist" aria-label={HUB_TEXT.label}>
     {#each tabs as item (item.id)}
-      <button type="button" role="tab" class="btn" id="hub-tab-{item.id}" aria-selected={tab === item.id} disabled={createView.running} tabindex={tab === item.id ? 0 : -1} aria-controls="hub-panel" onkeydown={roving} onclick={() => goTab(item.id)}>{item.label}</button>
+      <button type="button" role="tab" class="btn" id="hub-tab-{item.id}" aria-selected={tab === item.id} disabled={createView.running || addGuard.preparing} tabindex={tab === item.id ? 0 : -1} aria-controls="hub-panel" onkeydown={roving} onclick={() => goTab(item.id)}>{item.label}</button>
     {/each}
   </div>
   <div id="hub-panel" role="tabpanel" aria-labelledby="hub-tab-{tab}">
@@ -81,6 +81,6 @@
     {/if}
   </div>
   {#if askTab !== ''}
-    <ConfirmAsk id="leave-tab" title={WIZ.guard.leaveTabTitle} text={WIZ.guard.leaveTabText} keepLabel={WIZ.guard.leaveFormKeep} leaveLabel={WIZ.guard.leaveFormLeave} onKeep={() => { askTab = ''; }} onLeave={() => { const next = askTab; askTab = ''; addGuard.entryDirty = false; if (next !== '') tab = next; }} />
+    <ConfirmAsk id="leave-tab" title={WIZ.guard.leaveTabTitle} text={WIZ.guard.leaveTabText} keepLabel={WIZ.guard.leaveFormKeep} leaveLabel={WIZ.guard.leaveFormLeave} onKeep={() => { askTab = ''; }} onLeave={() => { const next = askTab; askTab = ''; addGuard.entryDirty = false; if (next !== '') { tab = next; setTimeout(() => document.getElementById('hub-tab-' + next)?.focus(), 0); } }} />
   {/if}
 </div>

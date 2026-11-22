@@ -36,5 +36,5 @@ test('add mode never replaces the retry list the case keeps, and asks before dis
   assert.match(flow, /createView\.appendOnly = true/);
   assert.match(flow, /blockers\(\)\.length > 0\) return/, 'blockers are read fresh at the click');
   assert.match(flow, /askDiscard/);
-  assert.match(read('src/components/sources/SourcesHub.svelte'), /disabled=\{createView\.running\}/);
+  assert.match(read('src/components/sources/SourcesHub.svelte'), /disabled=\{createView\.running \|\| addGuard\.preparing\}/);
 });

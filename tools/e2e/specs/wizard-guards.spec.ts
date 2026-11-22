@@ -127,6 +127,16 @@ test('WIZG-02: a hub tab switch asks when the card holds typed input, and keeps 
   await expect(hub(page).getByRole('heading', { name: 'What do you want to add to this case?' })).toBeVisible();
   await expect(hub(page).getByText('1 source ready to add')).toHaveCount(0);
 
+  // The keyboard way out: arrow to the next tab, choose "Leave and lose it", and focus lands on the tab that opened (not the old one).
+  await typeRedis(page, 'cache-7b:6379');
+  await tab(page, 'Add data').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(ask).toBeVisible();
+  await ask.getByRole('button', { name: 'Leave and lose it' }).click();
+  await expect(tab(page, 'Add another day')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'Add another day')).toBeFocused();
+  await tab(page, 'Add data').click();
+
   // An unfinished list (one source on the tray, no card open) is not asked about and is still there when the person comes back.
   await addRedis(page, 'cache-7:6379');
   await tab(page, 'Sources').click();
@@ -148,6 +158,8 @@ test('WIZG-02: a hub tab switch asks when the card holds typed input, and keeps 
   await expect(hub(page).getByText('1 source ready to add')).toHaveCount(0);
 });
 
+// WIZG-02b and WIZG-05 are regression checks: they also pass on develop (nothing was kept there, and a run was not reset by these clicks), so they do not
+// prove a guard. The reset blocker itself is proven by the unit test in web/tests/wizardGuards.test.cjs.
 test('WIZG-02b: leaving the case drops the kept list, so the next case never starts with it', async ({ page, api }) => {
   const title = 'QA Guard Leave A';
   const other = 'QA Guard Leave B';
@@ -234,8 +246,9 @@ test('WIZG-05: nothing resets the list while the run writes it, and the run is s
   await openAddData(page, title);
   await addRedis(page, 'cache-4:6379');
   await hub(page).getByRole('button', { name: 'Review' }).click();
+  const sent = page.waitForRequest((r) => r.method() === 'POST' && r.url().includes(`/api/cases/${id}/sources`));
   await hub(page).getByRole('button', { name: /^Add 1 source/ }).click();
-  await expect(hub(page).getByRole('button', { name: 'Adding…' })).toHaveCount(0);
+  await sent;
 
   // While it runs the tab buttons are off, so no tab switch can drop the list.
   await expect(tab(page, 'Sources')).toBeDisabled();
@@ -251,6 +264,41 @@ test('WIZG-05: nothing resets the list while the run writes it, and the run is s
   await expect.poll(async () => (await tags(api, id)).map((t) => t.label), { timeout: 15_000 }).toEqual(['cache-4:6379']);
   await page.waitForTimeout(500);
   expect((await tags(api, id)).length).toBe(1);
+});
+
+test('WIZG-09: the hub tabs are off while the case is read again after Add is pressed, so the send cannot outlive its tab', async ({ page, api }) => {
+  const title = 'QA Guard Hold';
+  const id = await createCase(api, title);
+  await openAddData(page, title);
+  await addRedis(page, 'cache-hold:6379');
+  await hub(page).getByRole('button', { name: 'Review' }).click();
+  await expect(hub(page).getByRole('heading', { name: 'Review & add' })).toBeVisible();
+  // Hold the fresh read of the case that the press makes first.
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((r) => { release = r; });
+  let reads = 0;
+  await page.route(new RegExp('/api/cases/' + id + '$'), async (route) => {
+    if (route.request().method() === 'GET') { reads++; await held; }
+    await route.continue();
+  });
+  const posts: string[] = [];
+  page.on('request', (r) => { if (r.method() === 'POST' && r.url().includes(`/api/cases/${id}/sources`)) posts.push(r.url()); });
+  await hub(page).getByRole('button', { name: /^Add 1 source/ }).click();
+  await expect.poll(() => reads).toBeGreaterThan(0);
+  // While the read is held: every tab is off and the button cannot be pressed again.
+  await expect(tab(page, 'Sources')).toBeDisabled();
+  await expect(tab(page, 'Add data')).toBeDisabled();
+  await expect(hub(page).getByRole('button', { name: /^Add 1 source/ })).toBeDisabled();
+  expect(posts).toEqual([]);
+  release();
+  // The send happens once, on this tab, and the person ends on the list as usual (no bounce on a later visit).
+  await expect(tab(page, 'Sources')).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(async () => (await tags(api, id)).map((t) => t.label)).toEqual(['cache-hold:6379']);
+  expect(posts.length).toBe(1);
+  await tab(page, 'Add data').click();
+  await expect(hub(page).getByRole('heading', { name: 'What do you want to add to this case?' })).toBeVisible();
+  await page.waitForTimeout(500);
+  await expect(tab(page, 'Add data')).toHaveAttribute('aria-selected', 'true');
 });
 
 test('WIZG-06: a case closed somewhere else is noticed before the draft question, at Review and at the run, and nothing is sent', async ({ page, api }) => {

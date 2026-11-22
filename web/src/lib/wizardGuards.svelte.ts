@@ -8,7 +8,9 @@ export const addGuard = $state<{
   entryDirty: boolean;
   /** The case whose unfinished add list was kept when the person left the Add data tab ('' when none is kept). */
   keptFor: string;
-}>({ entryDirty: false, keptFor: '' });
+  /** The case is being read again just before Review or the send. The hub tabs are off until it ends, so a send cannot outlive its tab. */
+  preparing: boolean;
+}>({ entryDirty: false, keptFor: '', preparing: false });
 
 /** Drops the unfinished add list that was kept for the way back (the case page is left, or another case opens). Does nothing while a run is writing it. */
 export function dropKeptAddDraft(): void {

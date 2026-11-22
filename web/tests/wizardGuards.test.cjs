@@ -6,36 +6,57 @@ const { loadTypeScript } = require('./helpers/loadTs.cjs');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 const g = loadTypeScript('src/lib/wizardGuards.ts');
-const snap = (o) => ({ type: 'text', value: '', files: 0, touched: false, ...o });
+const snap = (o) => ({ type: 'text', filled: false, files: 0, touched: false, ...o });
 
 test('typed text counts as unsaved input only after the person typed it and while it is not blank', () => {
-  assert.equal(g.fieldHoldsInput(snap({ value: 'cache:6379', touched: true })), true);
-  assert.equal(g.fieldHoldsInput(snap({ value: 'mongodb://localhost:27017' })), false, 'a prefilled address is not input');
-  assert.equal(g.fieldHoldsInput(snap({ value: '   ', touched: true })), false);
-  assert.equal(g.fieldHoldsInput(snap({ value: '', touched: true })), false, 'typed and cleared again');
-  assert.equal(g.fieldHoldsInput(snap({ type: 'password', value: '*', touched: true })), true);
-  assert.equal(g.fieldHoldsInput(snap({ type: 'textarea', value: 'a', touched: true })), true);
+  assert.equal(g.fieldHoldsInput(snap({ filled: true, touched: true })), true);
+  assert.equal(g.fieldHoldsInput(snap({ filled: true })), false, 'a prefilled address is not input');
+  assert.equal(g.fieldHoldsInput(snap({ filled: false, touched: true })), false);
+  assert.equal(g.fieldHoldsInput(snap({ touched: true })), false, 'typed and cleared again');
+  assert.equal(g.fieldHoldsInput(snap({ type: 'password', filled: true, touched: true })), true);
+  assert.equal(g.fieldHoldsInput(snap({ type: 'textarea', filled: true, touched: true })), true);
 });
 
 test('ticks and lists count once the person changed them; buttons and hidden fields never do', () => {
   assert.equal(g.fieldHoldsInput(snap({ type: 'checkbox', touched: true })), true);
   assert.equal(g.fieldHoldsInput(snap({ type: 'checkbox' })), false, 'a tick the form made itself');
   assert.equal(g.fieldHoldsInput(snap({ type: 'select', touched: true })), true);
-  assert.equal(g.fieldHoldsInput(snap({ type: 'hidden', value: 'x', touched: true })), false);
-  assert.equal(g.fieldHoldsInput(snap({ type: 'submit', value: 'x', touched: true })), false);
+  assert.equal(g.fieldHoldsInput(snap({ type: 'hidden', filled: true, touched: true })), false);
+  assert.equal(g.fieldHoldsInput(snap({ type: 'submit', filled: true, touched: true })), false);
   assert.equal(g.fieldHoldsInput(snap({ type: 'file', files: 1 })), true);
   assert.equal(g.holdsUnsavedInput([snap(), snap({ type: 'checkbox' })]), false);
-  assert.equal(g.holdsUnsavedInput([snap(), snap({ value: 'x', touched: true })]), true);
+  assert.equal(g.holdsUnsavedInput([snap(), snap({ filled: true, touched: true })]), true);
 });
 
-test('the snapshot of a password field never carries the password out', () => {
+test('the snapshot of a field never copies its text, only whether there is any', () => {
   const field = { tagName: 'INPUT', type: 'password', value: 'hunter2', files: null };
   const root = { querySelectorAll: () => [field] };
-  const touched = new WeakSet([field]);
-  const [one] = g.snapshotFields(root, touched);
-  assert.equal(one.value, '*');
+  const [one] = g.snapshotFields(root, new WeakSet([field]));
+  assert.equal(one.filled, true);
   assert.equal(JSON.stringify(one).includes('hunter2'), false);
-  assert.equal(g.snapshotFields({ querySelectorAll: () => [{ ...field, value: '' }] }, new WeakSet())[0].value, '');
+  assert.equal('value' in one, false);
+  assert.equal(g.snapshotFields({ querySelectorAll: () => [{ ...field, value: '  ' }] }, new WeakSet())[0].filled, false);
+});
+
+test('names are compared without case, trailing dot or the default port', () => {
+  assert.equal(g.nameKey('redis', 'Cache-1.:6379'), 'cache-1');
+  assert.equal(g.nameKey('redis', 'cache-1'), 'cache-1');
+  assert.equal(g.nameKey('redis', 'cache-1:6380'), 'cache-1:6380');
+  assert.equal(g.nameKey('sql-server', 'DB1.:1433'), 'db1');
+  assert.equal(g.nameKey('sql-server', '192.168.4.2,1655'), '192.168.4.2,1655');
+  assert.equal(g.nameKey('blackbox', 'Server 1'), 'server 1');
+  assert.equal(g.nameKey('blackbox', 'D:\\Blackbox'), 'd:\\blackbox');
+  const found = g.alreadyInCase([{ kind: 'redis', ref: 'a', label: 'cache-1:6379' }, { kind: 'redis', ref: 'b', label: 'cache-1:6380' }], [{ kind: 'redis', label: 'CACHE-1.' }]);
+  assert.deepEqual(found.map((s) => s.ref), ['a']);
+});
+
+test('the tabs are off while the case is read again before a send, and a read that ends after the tab was left sends nothing', () => {
+  const hub = read('src/components/sources/SourcesHub.svelte');
+  assert.match(hub, /disabled=\{createView\.running \|\| addGuard\.preparing\}/);
+  assert.match(hub, /if \(next === tab \|\| addGuard\.preparing\) return;/);
+  const flow = read('src/components/sourcewiz/AddSourcesFlow.svelte');
+  assert.match(flow, /addGuard\.preparing = false;\s+if \(gone\) return;\s+const dropped = dropDuplicates\(\);/);
+  assert.match(flow, /gone = true; addGuard\.preparing = false;/);
 });
 
 test('leaving the Add data tab keeps an unfinished list and failures on screen, and nothing else', () => {
