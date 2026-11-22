@@ -54,3 +54,6 @@ func osCPU() (user, kernel time.Duration) {
 	}
 	return ft(u), ft(k)
 }
+
+// wakeups counts nothing off Linux (see leakcheck.Wakeups).
+func wakeups() (uint64, bool) { return 0, false }
