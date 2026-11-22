@@ -782,6 +782,7 @@ async function layoutMoves(page: Page, root: string, rules: Rules, hideCss = '')
   return page.locator(root).first().evaluate((container, [rs, css]) => {
     const targets = new Set<Element>();
     for (const [selector] of rs) container.querySelectorAll(selector).forEach((e) => targets.add(e));
+    // Boxes inside a closed <details> are skipped: the browser lays them out only when something asks, so the first read can say 0 x 0 and the second a real size (seen in the Slow call screen's closed "How to read" notes). They are not on screen, so they cannot have moved.
     const snap = () => [...container.querySelectorAll('*')].filter((e) => !e.closest('svg') || e.tagName.toLowerCase() === 'svg').filter((e) => { const d = e.closest('details:not([open])'); return !d || e === d || !!e.closest('summary'); }).map((e) => {
       const r = e.getBoundingClientRect();
       const m = targets.has(e) ? getComputedStyle(e) : null;

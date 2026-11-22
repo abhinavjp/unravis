@@ -362,7 +362,8 @@ export interface PressArea { x: PressSpan; y: PressSpan }
  * gets an area of up to `needX` x `needY` drawing units (24 px) around it, inside 0..maxX and 0..maxY (the lane's own drawing). Two areas never
  * overlap: where two bars sit close together (stacked bar rows, or bars side by side in one row) the free space between them is split at the
  * middle of the gap between the two bars, and each bar then takes what is left on its other side. A bar with nothing close reaches the full size,
- * a bar in a stack gets what its row allows. No area covers another bar.
+ * a bar in a stack gets what its row allows. No area covers another bar. Two bars drawn over each other split their shared part in the middle, so
+ * each keeps a pressable part of its own bar.
  */
 export function barPressAreas(
   bars: readonly { key: string; x: PressSpan; y: PressSpan }[],
@@ -378,7 +379,7 @@ export function barPressAreas(
     let b = s.b + extra / 2;
     if (a < limit.a) { b = Math.min(limit.b, b + (limit.a - a)); a = limit.a; }
     if (b > limit.b) { a = Math.max(limit.a, a - (b - limit.b)); b = limit.b; }
-    return { a: Math.min(a, s.a), b: Math.max(b, s.b) };
+    return { a, b };
   };
   const overlap = (p: PressSpan, q: PressSpan): number => Math.min(p.b, q.b) - Math.max(p.a, q.a);
   const room: PressArea[] = bars.map(() => ({ x: { a: 0, b: maxX }, y: { a: 0, b: maxY } }));
@@ -397,11 +398,14 @@ export function barPressAreas(
         const gapX = Math.max(bars[j].x.a - bars[i].x.b, bars[i].x.a - bars[j].x.b);
         const gapY = Math.max(bars[j].y.a - bars[i].y.b, bars[i].y.a - bars[j].y.b);
         const byY = gapY >= 0 && (gapX < 0 || oy / needY <= ox / needX);
-        if (!byY && gapX < 0) continue; // the bars themselves overlap: nothing to split
         const axis = byY ? 'y' : 'x';
         const lo = bars[i][axis].a <= bars[j][axis].a ? i : j;
         const hi = lo === i ? j : i;
-        const mid = (bars[lo][axis].b + bars[hi][axis].a) / 2;
+        // Two bars drawn over each other (a bar is drawn at least 3 px wide, so short items close in time can overlap on screen): the cut is
+        // the middle of the part they share, so each keeps a pressable part of its own bar and neither area covers what only the other bar shows.
+        const mid = !byY && gapX < 0
+          ? (bars[hi].x.a + Math.min(bars[lo].x.b, bars[hi].x.b)) / 2
+          : (bars[lo][axis].b + bars[hi][axis].a) / 2;
         room[lo][axis] = { a: room[lo][axis].a, b: Math.min(room[lo][axis].b, mid) };
         room[hi][axis] = { a: Math.max(room[hi][axis].a, mid), b: room[hi][axis].b };
         cut = true;

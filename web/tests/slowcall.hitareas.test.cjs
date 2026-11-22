@@ -82,19 +82,43 @@ test('a bar at a corner of another bar (apart on both axes) is cut along one axi
   assert.ok(contains(m.get('a'), a) && contains(m.get('b'), b));
 });
 
-test('whatever the bars, no area overlaps another, none covers another bar, each keeps its own bar and stays in the drawing', () => {
+test('two bars drawn over each other keep a pressable part each: the shared part is split in the middle', () => {
+  // short items close in time: each is drawn 3 px wide, so the drawings overlap although the times do not
+  const a = bar('A', 100, 103, 0);
+  const b = bar('B', 101, 104, 0);
+  const m = barPressAreas([a, b], 24, 24, 1000, 100);
+  assert.ok(!overlaps(m.get('A'), m.get('B')), 'areas do not overlap');
+  const inArea = (k, x) => m.get(k).x.a <= x && x < m.get(k).x.b;
+  assert.ok(inArea('A', 100.5), 'the part only A shows is A');
+  assert.ok(!inArea('B', 100.5), 'and B does not take it');
+  assert.ok(inArea('B', 103.5), 'the part only B shows is B');
+  assert.ok(!inArea('A', 103.5), 'and A does not take it');
+  assert.equal(m.get('A').x.b, 102);
+  assert.equal(m.get('B').x.a, 102);
+  // a bar inside a longer bar of the same row: both areas still exist and do not overlap
+  const n = barPressAreas([bar('long', 100, 200, 0), bar('short', 140, 143, 0)], 24, 24, 1000, 100);
+  assert.ok(!overlaps(n.get('long'), n.get('short')));
+});
+
+test('whatever the bars, no area overlaps another, each keeps a pressable part of its own bar, none takes what only another bar shows, all stay in the drawing', () => {
   let seed = 7;
   const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
   for (let run = 0; run < 300; run += 1) {
     const n = 1 + Math.floor(rnd() * 14);
     const bars = [];
+    // Half of the runs are crowded: short items close in time. As on the lanes, the true times of two items of one row never overlap, but a bar
+    // is drawn at least 3 units wide, so the drawings of two close items can overlap (never one inside the other).
+    const crowded = run % 2 === 1;
+    const spans = [];
     for (let i = 0; i < n; i += 1) {
       const row = Math.floor(rnd() * 3);
-      const x1 = Math.floor(rnd() * 960);
-      const w = 3 + Math.floor(rnd() * 80);
-      const cand = bar('k' + i, x1, Math.min(1000, x1 + w), row);
-      // the lanes never put two bars of one row on the same time
-      if (bars.every((o) => o.y.a !== cand.y.a || o.x.b <= cand.x.a || cand.x.b <= o.x.a)) bars.push(cand);
+      const x1 = crowded ? 400 + Math.floor(rnd() * 40) : Math.floor(rnd() * 960);
+      const tw = crowded ? Math.floor(rnd() * 9) : 3 + Math.floor(rnd() * 80);
+      const t = { row, a: x1, b: Math.min(1000, x1 + tw) };
+      if (spans.some((o) => o.row === row && o.a < t.b + 1e-9 && t.a < o.b + 1e-9 && !(o.b <= t.a || t.b <= o.a))) continue;
+      if (spans.some((o) => o.row === row && o.a === t.a)) continue;
+      spans.push(t);
+      bars.push(bar('k' + i, t.a, Math.min(1000, t.a + Math.max(tw, 3)), row));
     }
     const needX = 10 + rnd() * 30;
     const needY = 10 + rnd() * 30;
@@ -102,12 +126,26 @@ test('whatever the bars, no area overlaps another, none covers another bar, each
     assert.equal(m.size, bars.length);
     for (const b of bars) {
       const a = m.get(b.key);
-      assert.ok(contains(a, b), 'keeps its bar');
       assert.ok(a.x.a >= 0 && a.x.b <= 1000 && a.y.a >= 0 && a.y.b <= 100, 'inside the drawing');
+      assert.ok(a.x.b > a.x.a && a.y.b > a.y.a, 'not empty');
+      // own bar: something of it is inside the area (all of it when no other bar is drawn over it)
+      assert.ok(Math.min(a.x.b, b.x.b) > Math.max(a.x.a, b.x.a) && Math.min(a.y.b, b.y.b) > Math.max(a.y.a, b.y.a), 'a pressable part of its own bar');
+      const touched = bars.some((o) => o !== b && overlaps(b, o));
+      if (!touched) assert.ok(contains(a, b), 'keeps its whole bar when no bar is drawn over it');
       for (const o of bars) {
         if (o === b) continue;
         assert.ok(!overlaps(a, m.get(o.key)), 'areas do not overlap');
-        assert.ok(!overlaps(a, o), 'does not cover another bar');
+        if (!overlaps(b, o)) {
+          assert.ok(!overlaps(a, o), 'does not cover another bar');
+        } else {
+          // drawn over each other: no point that only the other bar shows (inside o, outside b) lies in this area
+          for (let k = 0; k <= 20; k += 1) {
+            const px = o.x.a + ((o.x.b - o.x.a) * k) / 20;
+            const outsideB = px < b.x.a || px > b.x.b;
+            const inside = px > a.x.a && px < a.x.b && o.y.a + 1 > a.y.a && o.y.a + 1 < a.y.b;
+            assert.ok(!(outsideB && inside), 'an area takes the part only another bar shows');
+          }
+        }
       }
     }
   }

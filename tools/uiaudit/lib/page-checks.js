@@ -62,7 +62,12 @@
     el.querySelectorAll('*').forEach(function (c) {
       var cr = c.getBoundingClientRect();
       if (!(cr.width > 0 && cr.height > 0)) return;
-      if (!pressGoesTo(el, r, cr.left, cr.top, cr.width, cr.height)) return;
+      // A rectangle is tried at its centre and corners; any other shape (a diamond, a path) only has a box, so only its centre is tried.
+      if (c.tagName.toLowerCase() === 'rect') { if (!pressGoesTo(el, r, cr.left, cr.top, cr.width, cr.height)) return; }
+      else {
+        var hit = document.elementFromPoint(cr.left + cr.width / 2, cr.top + cr.height / 2);
+        if (!hit || !(hit === el || el.contains(hit))) return;
+      }
       out = out ? { left: Math.min(out.left, cr.left), top: Math.min(out.top, cr.top), right: Math.max(out.right, cr.right), bottom: Math.max(out.bottom, cr.bottom) } : { left: cr.left, top: cr.top, right: cr.right, bottom: cr.bottom };
     });
     return out ? { width: out.right - out.left, height: out.bottom - out.top } : { width: 0, height: 0 };
@@ -376,7 +381,7 @@
       var hit = (r.width < 24 || r.height < 24) ? hitArea(box, r) : r;
       if (box.ownerSVGElement) hit = svgPressArea(box, r);
       if (hit.width < 24 || hit.height < 24) {
-        add('small-target', 'warn', 'Tap target is ' + Math.round(hit.width) + ' x ' + Math.round(hit.height) + ' px (the web accessibility rule WCAG 2.2 asks for at least 24 x 24).', el);
+        add('small-target', 'warn', hit.width > 0 && hit.height > 0 ? 'Tap target is ' + Math.round(hit.width) + ' x ' + Math.round(hit.height) + ' px (the web accessibility rule WCAG 2.2 asks for at least 24 x 24).' : 'No press on any part of this drawing reaches it (covered by something else, or it takes no presses).', el);
         small.push(el);
       } else if (phone && (r.width < 40 || r.height < 36) && s.display !== 'inline') {
         add('small-target', 'info', 'Tap target is ' + Math.round(r.width) + ' x ' + Math.round(r.height) + ' px on a phone (a thumb needs about 44 x 44).', el);

@@ -6,7 +6,7 @@
       "screen": "x-slow-call",
       "check": "small-target",
       "label": "Payroll.Run*",
-      "why": "The bars of the lane charts are 5 to 9 px tall and the Slow call lane rule (BL-005) keeps the lanes this height, so BL-492 gave each bar an invisible press area (UIFIX-19c). The bars of a stack of bar rows sit 13 drawing units apart and share the space between them: the upper bars of a stack are 14 to 15 px (desktop) or 11 to 12 px (phone) as a press area, the lowest bar of a stack and a lone bar reach 24 px. Remaining part of BL-492.",
+      "why": "The bars of the lane charts are 4.5 to 9 px tall (by window height) and the Slow call lane rule (BL-005) keeps the lanes this height, so BL-492 gave each bar an invisible press area (UIFIX-19c). The bars of a stack of bar rows sit 13 drawing units apart and share the space between them: the upper bars of a stack are 12.7 to 13.7 px tall as a press area at 1440 x 900 (36 x 14 and 38 x 15 in this audit) and 6.5 to 9 px at 1100 x 800 and below; on a phone 11 to 12 px. The lowest bar of a stack and a lone bar reach 24 px: the entry is by label so it would also hide a loss of that, which UIFIX-19c guards (the lowest bar must reach 24 px). Remaining part of BL-492.",
       "item": "BL-492"
     },
     {

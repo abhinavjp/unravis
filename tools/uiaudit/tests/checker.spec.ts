@@ -111,9 +111,14 @@ test('an invisible hit rectangle inside an svg button counts only when a press o
       <g role="button" tabindex="0" aria-label="plain"><rect x="200" y="20" width="60" height="8" fill="red" /></g>
       <g role="button" tabindex="0" aria-label="under"><rect x="10" y="100" width="60" height="30" fill="transparent" pointer-events="all" /><rect x="10" y="110" width="60" height="8" fill="red" /></g>
       <g role="button" tabindex="0" aria-label="over"><rect x="10" y="100" width="60" height="30" fill="blue" /></g>
+      <g role="button" tabindex="0" aria-label="diamond"><polygon points="300,100 310,110 300,120 290,110" fill="red" /></g>
     </svg></body></html>`);
   await page.evaluate(checks);
   const r = (await page.evaluate(() => (window as any).__uiaudit.run({}))) as { findings: { check: string; severity: string; label: string; message: string }[] };
   const small = r.findings.filter((f) => f.check === 'small-target' && f.severity === 'warn').map((f) => f.label);
-  expect(small.sort()).toEqual(['nopress', 'plain', 'under']);
+  expect(small.sort()).toEqual(['diamond', 'nopress', 'plain', 'under']);
+  // a shape that is not a rectangle is judged at its centre and reported with its own size; a bar nothing can reach says so in words
+  const msg = (label: string) => r.findings.find((f) => f.check === 'small-target' && f.severity === 'warn' && f.label === label)?.message ?? '';
+  expect(msg('diamond')).toMatch(/Tap target is 20 x 20 px/);
+  expect(msg('under')).toMatch(/No press on any part/);
 });
