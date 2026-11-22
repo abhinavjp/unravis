@@ -40,11 +40,11 @@ func runVMProbe(args []string, stdout, stderr io.Writer, probe func(n int) black
 		return exitUsage
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "unexpected argument %q\n", fs.Arg(0))
+		_, _ = fmt.Fprintf(stderr, "unexpected argument %q\n", fs.Arg(0))
 		return exitUsage
 	}
 	if *samples < 1 || *samples > blackbox.VMProbeMaxSamples {
-		fmt.Fprintf(stderr, "--samples must be from 1 to %d\n", blackbox.VMProbeMaxSamples)
+		_, _ = fmt.Fprintf(stderr, "--samples must be from 1 to %d\n", blackbox.VMProbeMaxSamples)
 		return exitUsage
 	}
 	if probe == nil {
@@ -54,7 +54,7 @@ func runVMProbe(args []string, stdout, stderr io.Writer, probe func(n int) black
 	if *asJSON {
 		_ = json.NewEncoder(stdout).Encode(res)
 	} else {
-		fmt.Fprint(stdout, blackbox.FormatVMProbeText(res))
+		_, _ = fmt.Fprint(stdout, blackbox.FormatVMProbeText(res))
 	}
 	if res.PDHUnavailable {
 		return exitFail // it could not run at all
