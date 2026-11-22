@@ -2,6 +2,7 @@
   import { tick } from 'svelte';
   import { HOURS_PER_ROW, cellLabel, cellValue, cellWindow, dayLabel, gridMax, gridMetrics, gridRows, moveInGrid, rollupCopy, shadeLevel, slowNote, type GridMetric, type HourGridResponse, type RollupWindow } from '../lib/rollup';
   import { GRID_TEXT } from '../lib/copy/waitCopy';
+  import { formatDuration } from '../lib/format';
   let { grid, zone, onChoose }: { grid: HourGridResponse; zone: string; onChoose: (window: RollupWindow) => void } = $props();
 
   let metric = $state<GridMetric>('p95');
@@ -17,6 +18,8 @@
     return [0, 0];
   });
   const hourMarks = [0, 3, 6, 9, 12, 15, 18, 21];
+  // The legend says what the darkest square stands for in this grid, so the colours carry a value and not only "lower" and "higher" (ANALYSIS-18).
+  const maxText = $derived(max > 0 ? (metric === 'p95' ? '≈ ' + formatDuration(max) : Math.round(max * 100) + '% slow') : '');
 
   async function onKey(event: KeyboardEvent, row: number, col: number) {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
@@ -77,7 +80,7 @@
     <div class="hm-legend" aria-hidden="true">
       <span>{GRID_TEXT.lower}</span>
       {#each [1, 2, 3, 4] as level}<span class="hm-swatch level-{level}"></span>{/each}
-      <span>{GRID_TEXT.higher}</span>
+      <span>{GRID_TEXT.higher}{#if maxText} ({maxText}){/if}</span>
       <span class="hm-swatch noise"></span><span>{GRID_TEXT.fewRequests}</span>
       <span class="hm-swatch empty"></span><span>None</span>
     </div>
@@ -110,7 +113,7 @@
   .hm-cell:hover:not(.empty) { outline: 1px solid var(--text); outline-offset: 0; }
   .hm-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; position: relative; z-index: 1; }
   .hm-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--text-2); font-size: 12px; }
-  .hm-swatch { display: inline-block; width: 16px; height: 12px; border: 1px solid var(--line-soft); border-radius: 1px; background: var(--surface-2); }
+  .hm-swatch { display: inline-block; width: 16px; height: 12px; border: 1px solid var(--control-line); border-radius: 1px; background: var(--surface-2); }
   .hm-swatch.noise { background: var(--surface-2); border: 1px dashed var(--text-2); margin-left: 8px; }
   .hm-swatch.empty { background: transparent; margin-left: 8px; }
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

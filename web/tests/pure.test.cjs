@@ -1238,7 +1238,7 @@ test('the incomplete panel and the Completion % column use existing tokens and s
   assert.match(panel, /parseStaleMinutes/);
   const table = fs.readFileSync(path.join(root, 'src/components/ComparisonTable.svelte'), 'utf8');
   assert.match(table, /Completion %/);
-  assert.match(table, /colspan="15"/);
+  assert.match(table, /colspan="14"/);
   assert.equal(overviewRate(null), '—');
   assert.equal(overviewRate(undefined), '—');
   assert.equal(overviewRate(0), '0.0%');

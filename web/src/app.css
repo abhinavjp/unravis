@@ -356,8 +356,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); paddi
   background:
     linear-gradient(to right, var(--cue-cover, var(--bg)) 30%, transparent) left center / 28px 100% no-repeat local,
     linear-gradient(to left, var(--cue-cover, var(--bg)) 30%, transparent) right center / 28px 100% no-repeat local,
-    radial-gradient(farthest-side at 0 50%, color-mix(in srgb, var(--text) 28%, transparent), transparent) left center / 10px 100% no-repeat scroll,
-    radial-gradient(farthest-side at 100% 50%, color-mix(in srgb, var(--text) 28%, transparent), transparent) right center / 10px 100% no-repeat scroll;
+    linear-gradient(to right, color-mix(in srgb, var(--text) 28%, transparent), transparent) left center / 10px 100% no-repeat scroll,
+    linear-gradient(to left, color-mix(in srgb, var(--text) 28%, transparent), transparent) right center / 10px 100% no-repeat scroll;
 }
 table { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; }
 th { text-align: left; color: var(--text-2); background: var(--surface-2); font-size: 12px; font-weight: 500; border-bottom: 0; box-shadow: inset 0 -1px 0 var(--line); padding: 6px 10px; white-space: normal; }

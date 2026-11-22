@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { ApiError, api, readSessionToken } from '../lib/api';
   import { DRAWER_RESULTS_TEXT, clearDrawerResults, foundAtText, patternsWindowKey, readPatterns, savePatterns } from '../lib/drawerResults.svelte';
-  import { formatTime, quickRange, quickRanges, type QuickRangeId } from '../lib/time';
+  import { formatTime, quickRange, quickRanges, zoneAbbreviation, type QuickRangeId } from '../lib/time';
   import { activeRangeId } from '../lib/depth';
   import { app, closeSidePanel, onScopeChange, scope, showRecord } from '../lib/appState.svelte';
   import { citeInLedger } from '../lib/citeInLedger';
@@ -58,6 +58,12 @@
   const sources = $derived(query.sourceIds.map((id) => sourceLabels.get(id) ?? id).join(', '));
   // Stalls and episodes can sit a few milliseconds apart, so every time here shows milliseconds.
   const at = (value: string) => formatTime(value, { zone, precision: 'ms' });
+  // The episodes table names the zone once in its headings and shows whole seconds: episodes are minutes apart, so the milliseconds and the zone suffix only made each time wrap onto three lines (ANALYSIS-08).
+  // When the episodes straddle a clock change, each cell names its own zone instead.
+  const shownReport = $derived(phase.kind === 'done' ? phase.report : null);
+  const episodeZones = $derived(new Set((shownReport?.episodes ?? []).flatMap((episode) => [episode.start, episode.end]).map((value) => zoneAbbreviation(zone, value))));
+  const episodeZone = $derived(zoneAbbreviation(zone, shownReport?.episodes[0]?.start ?? Date.now()));
+  const episodeAt = (value: string) => formatTime(value, { zone, precision: 'second', suffix: episodeZones.size > 1 });
   const clock = (value: string) => formatTime(value, { zone, precision: 'minute', date: false, suffix: false });
   const labelOf = (id: string) => sourceLabels.get(id) ?? id;
   const activeRange = $derived(activeRangeId(query, quickRanges));
@@ -231,7 +237,7 @@
           </ul>
         {/if}
         {#if repeatsLine}<p class="patterns-quality">{repeatsLine}</p>{/if}
-        <p class="patterns-quality">{qualityLine(report.quality)}<Hint termId="incomplete-request" /></p>
+        <p class="patterns-quality">{qualityLine(report.quality)}<Hint termId="missing-timing" /></p>
         {#if coverage}<p class="patterns-quality">{coverage}<Hint termId="coverage" /></p>{/if}
         {#each truncationNotices(report) as notice (notice)}<div class="notice" role="status">{notice}</div>{/each}
         {#each report.warnings as warning (warning)}<div class="notice" role="status">{warning}</div>{/each}
@@ -243,16 +249,16 @@
         {#if report.episodes.length === 0}
           <div class="empty-state patterns-empty"><strong>{PATTERNS_TEXT.emptyTitle}</strong><p>{emptyEpisodesText(report.params.stallMs)}</p></div>
         {:else}
-          <div class="table-scroll">
+          <div class="table-scroll scroll-cue">
             <table class="patterns-table">
-              <thead><tr><th scope="col">Start</th><th scope="col">End</th><th scope="col" class="num">Requests</th><th scope="col" class="num">Users</th><th scope="col" class="num">Longest</th><th scope="col">Operations</th><th scope="col">Ledger</th></tr></thead>
+              <thead><tr><th scope="col">Start{episodeZones.size > 1 ? '' : ' (' + episodeZone + ')'}</th><th scope="col">End{episodeZones.size > 1 ? '' : ' (' + episodeZone + ')'}</th><th scope="col" class="num">Requests</th><th scope="col" class="num">Users</th><th scope="col" class="num">Longest</th><th scope="col">Operations</th><th scope="col">Ledger</th></tr></thead>
               <tbody>
                 {#each report.episodes as episode (episode.index)}
                   {@const isOpen = openEpisodes.includes(episode.index)}
                   {@const episodeId = episodeEvidenceId(episode.start)}
                   <tr>
-                    <th scope="row"><button type="button" class="episode-toggle" aria-expanded={isOpen} aria-controls={'episode-' + episode.index} onclick={() => toggle(episode.index)}>{at(episode.start)}</button></th>
-                    <td>{at(episode.end)}</td>
+                    <th scope="row"><button type="button" class="episode-toggle" aria-expanded={isOpen} aria-controls={'episode-' + episode.index} onclick={() => toggle(episode.index)}>{episodeAt(episode.start)}</button></th>
+                    <td class="when">{episodeAt(episode.end)}</td>
                     <td class="num">{episode.requests}</td>
                     <td class="num">{episode.users}</td>
                     <td class="num">{formatElapsed(episode.maxMs)}</td>
@@ -509,6 +515,8 @@
 <style>
   .step-partial { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
   :global(.connections-drawer.patterns-drawer) { overflow-x: hidden; gap: var(--space-3); }
+  /* The episodes table has seven columns: a wider drawer gives it room so none is cut off (ANALYSIS-08). On a phone the drawer keeps its own width. */
+  @media (min-width: 721px) { :global(.connections-drawer.patterns-drawer) { width: min(680px, calc(100vw - 24px)); } }
   .patterns-window { display: grid; gap: 10px; margin-top: 13px; min-width: 0; }
   .range-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .range-label { margin-right: var(--space-1); color: var(--text-2); font-size: var(--fs-2); }
@@ -566,6 +574,8 @@
   .patterns-table thead th { background: var(--surface-2); color: var(--text-2); font-weight: 500; white-space: nowrap; }
   .patterns-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .patterns-table .ops { overflow-wrap: anywhere; }
+  .patterns-table .when, .patterns-table tbody th { white-space: nowrap; }
+  .table-scroll.scroll-cue { --cue-cover: var(--surface); }
   .patterns-table.inner { margin-bottom: 4px; }
   .episode-detail > td { background: var(--surface-2); }
   .episode-toggle { padding: 0; color: var(--text); background: none; border: 0; font: inherit; font-weight: 600; text-align: left; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
