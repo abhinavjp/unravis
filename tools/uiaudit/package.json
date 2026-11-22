@@ -1,0 +1,14 @@
+{
+  "name": "unravis-uiaudit",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Opens every Unravis screen of the demo app in dark and light, at desktop and phone width, checks the layout, and writes a Markdown report with screenshots.",
+  "scripts": {
+    "audit": "node run-audit.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "selftest": "playwright test -c playwright.selftest.config.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
+}

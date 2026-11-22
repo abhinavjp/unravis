@@ -12,7 +12,9 @@ a { color: var(--accent); text-underline-offset: 3px; }
 h1, h2, h3, h4, p { overflow-wrap: anywhere; }
 h1, h2, h3, h4 { font-weight: 600; letter-spacing: -.01em; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-summary { cursor: pointer; }
+summary { cursor: pointer; min-height: 24px; }
+/* A checkbox or radio row is a tap target: at least 24 px tall (WCAG 2.2 target size). Found by tools/uiaudit. */
+label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { min-height: 24px; }
 summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-sm); }
 ::selection { background: color-mix(in srgb, var(--accent) 38%, transparent); color: var(--text); }
 input, textarea { caret-color: var(--accent); }
@@ -333,7 +335,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); paddi
 .chart-empty { height: 110px; display: grid; place-items: center; color: var(--text-2); font-size: 13px; }
 .chart-stage .chart-empty { position: absolute; inset: 0; height: auto; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8px; padding: 24px; background: var(--chart-empty); color: var(--text-2); text-align: center; }
 .chart-empty p { margin: 0; max-width: 52ch; line-height: 1.6; }
-.table-scroll { width: 100%; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.table-scroll { position: relative; width: 100%; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; }
 th { text-align: left; color: var(--text-2); background: var(--surface-2); font-size: 12px; font-weight: 500; border-bottom: 0; box-shadow: inset 0 -1px 0 var(--line); padding: 6px 10px; white-space: normal; }
 td { color: var(--text); border-bottom: 1px solid var(--line-soft); padding: 6px 10px; vertical-align: middle; font-variant-numeric: tabular-nums; }
