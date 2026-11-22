@@ -223,6 +223,7 @@ Spec per area: `docs/desktop/spec/`. Items per area: `docs/desktop/groom/` (scop
 - [ ] **BL-328** WebView2 lockdown (builder and COM settings) (size M, P2; see `docs/desktop/groom/02-security.md`)
 - [ ] **BL-329** WebView2 runtime, data folder and policy checks (size M, P2 and P4; see `docs/desktop/groom/02-security.md`)
 - [ ] **BL-330** Go named-pipe server hardening (size ?, ?; see `docs/desktop/groom/02-security.md`)
+  - Status: built in PR, not verified on Windows or the live PC (wt-bl330): `internal/pipesec` (names, policy, listener with first-instance flag, 16-instance pool, logon-SID DACL 0x100087, remote reject, peer checks; `DialVerified`; `pipesectest.Name`) and the `desktop-sidecar` job in `ci.yml` written. Portable tests and `GOOS=windows go vet/build` pass on Linux; the Windows tests have not run anywhere yet. Tick after the first green `desktop-sidecar` run and the live PC steps (desktop and `--mcp` connect, second user denied via `runas`).
 - [ ] **BL-331** Rust pipe client and sidecar launch hardening (size M, P2/P3; see `docs/desktop/groom/02-security.md`)
 - [ ] **BL-332** Desktop mode without loopback HTTP or `session.json` (size L, P3; see `docs/desktop/groom/02-security.md`)
 - [ ] **BL-333** `unravis --mcp` and CLI over the pipe with grants (size ?, ?; see `docs/desktop/groom/02-security.md`)
