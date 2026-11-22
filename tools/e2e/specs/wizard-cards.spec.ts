@@ -66,17 +66,17 @@ test('WCARD-01: the four cards keep the wireframe words and each has its own Add
 
   const iis = card(page, 'iis');
   await expect(iis).toContainText('IIS logs (W3C)');
-  await expect(iis).toContainText('Gives time-taken per request. Used for O in Step 3.');
+  await expect(iis).toContainText('Gives how long each web request took, so slow calls can be found.');
   await expect(iis).toContainText('needs time-taken field');
   await expect(iis.getByRole('button', { name: 'Add IIS logs' })).toBeVisible();
-  await expect(card(page, 'app')).toContainText('Errors and warnings near onset. Used by Step 5 only.');
+  await expect(card(page, 'app')).toContainText('Errors and warnings from around the time of the problem.');
   await expect(card(page, 'app').getByRole('button', { name: 'Add app logs' })).toBeVisible();
   await expect(card(page, 'querystore')).toContainText('For SQL you cannot connect to. A CSV from the sys.query_store views.');
   await expect(card(page, 'querystore').getByRole('button', { name: 'Add export' })).toBeVisible();
   await expect(card(page, 'audit')).toContainText('For a Mongo you cannot connect to.');
   await expect(card(page, 'audit').getByRole('button', { name: 'Add audit export' })).toBeVisible();
 
-  await expect(page.getByText('No step needs application logs or a Query Store export to start. IIS logs and audit exports feed the main steps (2 to 4).')).toBeVisible();
+  await expect(page.getByText('You can start with only IIS logs or an audit export. Application logs and a Query Store export are extras.')).toBeVisible();
   await expect(page.getByText('Not sure what a file is? Add any file here and Unravis suggests what it is.')).toBeVisible();
 
   // Every card has its own named input, and nothing has been chosen yet.

@@ -108,6 +108,7 @@
       {#if pending.includes('scan-busy') || pending.includes('scan-stale')}<p class="inline-error" role="alert">The list of things found on this PC is out of date. Go back and use Look again.</p>{/if}
       {#if pending.includes('files')}<p class="inline-error" role="alert">A file is missing. Go back and pick it again.</p>{/if}
       {#if pending.includes('zone')}<p class="inline-error" role="alert">Name the computer each file came from. Go back to the Files card.</p>{/if}
+      {#if pending.includes('computer-busy')}<p class="inline-error" role="status">Choosing the computer for your files. One moment.</p>{/if}
       <p class="hint">{WIZ.reviewStays} {WIZ.reviewStale}</p>
       <p class="hint">{WIZ.footerAdd}</p>
       <div class="actions">
