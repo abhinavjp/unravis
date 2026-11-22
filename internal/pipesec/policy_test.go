@@ -125,3 +125,17 @@ func TestWinClean(t *testing.T) {
 		}
 	}
 }
+
+func TestIsShellImage(t *testing.T) {
+	for img, want := range map[string]bool{
+		`C:\Program Files\Unravis\unravis-desktop.exe`: true,
+		`c:\x\UNRAVIS-DESKTOP.EXE`:                     true,
+		`C:\Program Files\Unravis\unravis.exe`:         false,
+		`C:\x\notunravis-desktop.exe`:                  false,
+		``:                                             false,
+	} {
+		if got := IsShellImage(img); got != want {
+			t.Errorf("%q: %v, want %v", img, got, want)
+		}
+	}
+}

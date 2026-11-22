@@ -27,6 +27,7 @@ const (
 	qLaneLogEnum    = `/* unravis:errorlog:enum */ EXEC sp_enumerrorlogs 1`
 	qLaneQSOptions  = `/* unravis:qs_options */ SELECT TOP 1 actual_state_desc, desired_state_desc, readonly_reason, interval_length_minutes FROM sys.database_query_store_options`
 	qLaneQSFirst    = `/* unravis:qs_first */ SELECT MIN(start_time) AS first_start FROM sys.query_store_runtime_stats_interval`
+	qLaneQSRange    = `/* unravis:qs_range */ SELECT MIN(start_time) AS first_start, MAX(start_time) AS last_start FROM sys.query_store_runtime_stats_interval`
 	laneMinRuns     = 5   // a query counts only when it ran this often in both windows
 	laneSlowFactor  = 2.0 // "at least 2 times higher"
 	laneReadsFactor = 1.25
@@ -74,6 +75,24 @@ func laneBatches(req LaneRequest) [][]Window {
 			spans = append(spans, inc[i])
 		}
 		out = append(out, spans)
+	}
+	return out
+}
+
+// clipBatches drops the spans that cannot hold an interval starting in [lo, hi], and the batches left empty. The spans themselves are never
+// rewritten, so every datetime literal in a query still comes from the request, never from a value the database returned.
+func clipBatches(batches [][]Window, lo, hi time.Time) [][]Window {
+	out := make([][]Window, 0, len(batches))
+	for _, spans := range batches {
+		var kept []Window
+		for _, w := range spans {
+			if w.End.After(lo) && !w.Start.After(hi) {
+				kept = append(kept, w)
+			}
+		}
+		if len(kept) > 0 {
+			out = append(out, kept)
+		}
 	}
 	return out
 }
@@ -463,9 +482,14 @@ type qsOutcome struct {
 
 // evalLaneQueryStore compares the two windows. Plans are compared per query: a plan seen only in the incident, together with a duration at least
 // twice the reference, is a regression (D3); the same plans with reads and duration both at least twice as high is growth (D15).
-func evalLaneQueryStore(opt qsOptions, first time.Time, hasFirst bool, stats, intervals []Row, truncated bool, req LaneRequest) qsOutcome {
+func evalLaneQueryStore(opt qsOptions, first time.Time, hasFirst bool, last time.Time, hasLast bool, stats, intervals []Row, truncated bool, req LaneRequest) qsOutcome {
 	out := qsOutcome{answers: map[string]string{}}
 	ref, inc := qsGroup(stats, "ref"), qsGroup(stats, "inc")
+	off := opt.state == "OFF" && hasFirst && hasLast
+	if len(inc) == 0 && off {
+		out.check = LaneCheck{State: StateNotYet, Summary: offRangeNone(first, last, "the incident window")}
+		return out
+	}
 	if len(inc) == 0 {
 		msg := "Query Store holds nothing from the incident window (it was off then, or its history was cleaned up)."
 		if hasFirst && !first.Before(req.Incident.End) {
@@ -475,6 +499,18 @@ func evalLaneQueryStore(opt qsOptions, first time.Time, hasFirst bool, stats, in
 		return out
 	}
 	var summary []string
+	// An off database kept blocks up to some moment. Unless the newest block starts at or after the incident end, it may have been switched off
+	// during the incident: a missing change is then not evidence of none, so no "no" is given. It is the block start that counts, not its end,
+	// because the last block of an off (forced) database may be partial.
+	// A read-only database is the same: it stopped recording at a moment nobody knows, so without a block at or after the incident end no "no" is given.
+	covered := hasLast && !last.Before(req.Incident.End)
+	limited := off || opt.state == "READ_ONLY"
+	if off {
+		summary = append(summary, offLead(first, last))
+		if !covered {
+			summary = append(summary, offNotCovered)
+		}
+	}
 	if hasFirst {
 		if first.After(req.Reference.Start) {
 			// The oldest kept interval is when it was switched on or when older history was cleaned up; the two cannot be told apart here.
@@ -486,6 +522,9 @@ func evalLaneQueryStore(opt qsOptions, first time.Time, hasFirst bool, stats, in
 	}
 	if opt.state == "READ_ONLY" {
 		summary = append(summary, "It is read-only"+reasonSuffix(opt.reason)+", so it may have stopped recording before the incident ended.")
+		if !covered {
+			summary = append(summary, roNotCovered)
+		}
 	}
 	matched, newPlans, slowNew, grown, readsUp := 0, 0, 0, 0, 0
 	worst := 0.0
@@ -554,6 +593,13 @@ func evalLaneQueryStore(opt qsOptions, first time.Time, hasFirst bool, stats, in
 		}
 	} else if opt.found {
 		summary = append(summary, "Query Store keeps "+fmtInt(opt.intervalMin)+"-minute intervals, too coarse to place when it started.")
+	}
+	if limited && !covered {
+		for id, v := range out.answers {
+			if v == AnswerNo {
+				delete(out.answers, id)
+			}
+		}
 	}
 	out.check = LaneCheck{State: StateReady, Summary: strings.Join(summary, " ")}
 	return out
@@ -682,6 +728,37 @@ func queryStoreOf(opt qsOptions) *LaneQueryStore {
 	return qs
 }
 
+// The sentences of the Query Store check when the database does not say it is on. Server strings, fixed words.
+const (
+	sentenceError   = "Query Store reports an error state in this database, so Unravis cannot tell what it holds. The database owner has to look at it. Unravis does not change it."
+	sentenceNoRow   = "This database gave no Query Store settings, so Unravis cannot tell whether it is on or off."
+	sentenceNoState = "This database gave no Query Store state, so Unravis cannot tell whether it is on or off."
+	offNotCovered   = "Its newest block starts before the incident ended, so it may have been switched off during the incident. A \"no\" is not given."
+	roNotCovered    = "Its newest block starts before the incident ended, so it may have stopped recording during the incident. A \"no\" is not given."
+)
+
+// qsCannotTell is the check for a Query Store state that is neither on nor off: no history is read and no switch-on script is offered.
+func qsCannotTell(summary string) LaneCheck {
+	return LaneCheck{State: StateNotYet, Summary: summary}
+}
+
+// qsOffNoneCheck is the check for a database that is off and kept no history: the words and the owner-run script are the ones used before
+// the history of an off database was read.
+func qsOffNoneCheck(database string) LaneCheck {
+	fix := GrantFix{Permission: "Query Store switched on", Script: QueryStoreOnScript(database)}
+	return LaneCheck{State: StateNotYet, Summary: "Query Store is switched off in this database, so it holds no plans or timings. The script below, run by the database owner, switches it on; it only helps for incidents after that.", Fix: &fix}
+}
+
+func offLead(first, last time.Time) string {
+	return "Query Store is off. It kept history from " + utcText(first) + " (oldest block start) to " + utcText(last) + " (newest block start)."
+}
+
+func offRangeNone(first, last time.Time, where string) string {
+	return "Query Store is off. It kept history from " + utcText(first) + " to " + utcText(last) + ", but none of it falls inside " + where + "."
+}
+
+type qsQuery func(text string, limit time.Duration) ([]Row, error)
+
 func (s *sqlLane) checkQueryStore(ctx context.Context) LaneCheck {
 	if s.req.Database == "" {
 		return LaneCheck{State: StateNotYet, Summary: "Pick the application database. Query Store is read one database at a time."}
@@ -703,46 +780,73 @@ func (s *sqlLane) checkQueryStore(ctx context.Context) LaneCheck {
 	}
 	opt := evalQSOptions(optRows)
 	s.b.res.QueryStore = queryStoreOf(opt)
-	if !opt.found || opt.state == "OFF" || opt.state == "ERROR" || opt.state == "" {
-		fix := GrantFix{Permission: "Query Store switched on", Script: QueryStoreOnScript(s.req.Database)}
-		return LaneCheck{State: StateNotYet, Summary: "Query Store is switched off in this database, so it holds no plans or timings. The script below, run by the database owner, switches it on; it only helps for incidents after that.", Fix: &fix}
+	switch {
+	case !opt.found:
+		return qsCannotTell(sentenceNoRow)
+	case opt.state == "ERROR":
+		return qsCannotTell(sentenceError)
+	case opt.state == "":
+		return qsCannotTell(sentenceNoState)
+	case opt.state == "OFF":
+		return s.checkQueryStoreOff(ctx, opt, query)
 	}
-	var first time.Time
-	hasFirst := false
-	if rows, err := query(qLaneQSFirst, checkTimeout); err == nil && len(rows) > 0 {
+	// A read-only database stopped recording at a moment this check does not know, so it also needs the start of its newest block (the same
+	// range read an off database uses); an ON database keeps the plain first-block read.
+	firstQ := qLaneQSFirst
+	if opt.state == "READ_ONLY" {
+		firstQ = qLaneQSRange
+	}
+	var first, last time.Time
+	hasFirst, hasLast := false, false
+	if rows, err := query(firstQ, checkTimeout); err == nil && len(rows) > 0 {
 		first, hasFirst = rowTime(rows[0]["first_start"])
 		first = first.UTC()
 		if hasFirst {
 			f := first
 			s.b.res.QueryStore.FirstData = &f
 		}
+		if firstQ == qLaneQSRange {
+			last, hasLast = rowTime(rows[0]["last_start"])
+			last = last.UTC()
+		}
 	} else if err != nil {
 		return s.failed(CheckQueryStore, err, s.req.Database)
 	}
-	// The windows are read in slices. Rows of the same query and plan from different slices are added together by qsGroup, and the intervals of
-	// different slices never overlap, so the slices are simply joined.
-	var stats, intervals []Row
-	truncated := false
 	batches := laneBatches(s.req)
+	stats, intervals, truncated, err := s.readQSBatches(ctx, query, batches)
+	if err != nil {
+		return s.failed(CheckQueryStore, err, s.req.Database)
+	}
+	o := evalLaneQueryStore(opt, first, hasFirst, last, hasLast, stats, intervals, truncated, s.req)
+	return s.finishQueryStore(o, intervals, len(batches))
+}
+
+// readQSBatches reads the stats and the intervals of each batch. The windows are read in slices. Rows of the same query and plan from different
+// slices are added together by qsGroup, and the intervals of different slices never overlap, so the slices are simply joined.
+func (s *sqlLane) readQSBatches(ctx context.Context, query qsQuery, batches [][]Window) (stats, intervals []Row, truncated bool, err error) {
 	for _, spans := range batches {
 		if err := ctx.Err(); err != nil {
-			return s.failed(CheckQueryStore, err, s.req.Database)
+			return nil, nil, false, err
 		}
 		rows, err := query(qLaneQSStats(s.req, spans), laneQueryTimeout)
 		if err != nil {
-			return s.failed(CheckQueryStore, err, s.req.Database)
+			return nil, nil, false, err
 		}
 		truncated = truncated || len(rows) >= laneQSMaxRows
 		stats = append(stats, rows...)
 		rows, err = query(qLaneQSIntervals(s.req, spans), laneQueryTimeout)
 		if err != nil {
-			return s.failed(CheckQueryStore, err, s.req.Database)
+			return nil, nil, false, err
 		}
 		intervals = append(intervals, rows...)
 	}
-	o := evalLaneQueryStore(opt, first, hasFirst, stats, intervals, truncated, s.req)
-	if len(batches) > 1 && o.check.State == StateReady {
-		o.check.Summary += " The windows were read in " + fmtInt(float64(len(batches))) + " slices of up to 3 days."
+	return stats, intervals, truncated, nil
+}
+
+// finishQueryStore saves what a finished read gives: the series always, and the answers and the onset only for a check that is ready.
+func (s *sqlLane) finishQueryStore(o qsOutcome, intervals []Row, slices int) LaneCheck {
+	if slices > 1 && o.check.State == StateReady {
+		o.check.Summary += " The windows were read in " + fmtInt(float64(slices)) + " slices of up to 3 days."
 	}
 	s.b.setSeries(seriesOf(intervals))
 	if o.check.State == StateReady {
@@ -754,6 +858,45 @@ func (s *sqlLane) checkQueryStore(ctx context.Context) LaneCheck {
 		}
 	}
 	return o.check
+}
+
+// checkQueryStoreOff reads what an off database still holds. One small range query says whether any block is kept and when the oldest and the
+// newest start; only the slices of the asked windows that touch that range are then read. Nothing is switched on or changed.
+func (s *sqlLane) checkQueryStoreOff(ctx context.Context, opt qsOptions, query qsQuery) LaneCheck {
+	rows, err := query(qLaneQSRange, checkTimeout)
+	if err != nil {
+		c := s.failed(CheckQueryStore, err, s.req.Database)
+		c.Summary = "Query Store is off, and the history it may have kept could not be read. " + c.Summary
+		return c
+	}
+	if len(rows) == 0 {
+		return qsOffNoneCheck(s.req.Database)
+	}
+	first, hasFirst := rowTime(rows[0]["first_start"])
+	if !hasFirst {
+		return qsOffNoneCheck(s.req.Database)
+	}
+	first = first.UTC()
+	last, hasLast := rowTime(rows[0]["last_start"])
+	if !hasLast || last.Before(first) {
+		last = first
+	}
+	last = last.UTC()
+	f, l := first, last
+	s.b.res.QueryStore.FirstData = &f
+	s.b.res.QueryStore.LastData = &l
+	batches := clipBatches(laneBatches(s.req), first, last)
+	if len(batches) == 0 {
+		return LaneCheck{State: StateNotYet, Summary: offRangeNone(first, last, "the windows asked")}
+	}
+	stats, intervals, truncated, err := s.readQSBatches(ctx, query, batches)
+	if err != nil {
+		c := s.failed(CheckQueryStore, err, s.req.Database)
+		c.Summary = offLead(first, last) + " " + c.Summary
+		return c
+	}
+	o := evalLaneQueryStore(opt, first, true, last, true, stats, intervals, truncated, s.req)
+	return s.finishQueryStore(o, intervals, len(batches))
 }
 
 /* ------------------------------------------------------------- Agent jobs */

@@ -2,6 +2,7 @@
 
 pub mod elevation;
 pub mod floor;
+pub mod http;
 pub mod locator;
 pub mod policy;
 pub mod supervisor;

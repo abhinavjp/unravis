@@ -3,6 +3,7 @@
 package pipesec
 
 import (
+	"os"
 	"strings"
 	"sync"
 )
@@ -31,4 +32,11 @@ func extraAllowed(image string) bool {
 		}
 	}
 	return false
+}
+
+// A CI run that cannot call TestAllow (the shell's Rust test is a separate process) names the image in the environment.
+func init() {
+	if p := os.Getenv("UNRAVIS_E2E_ALLOW_IMAGE"); p != "" {
+		TestAllow(p)
+	}
 }
