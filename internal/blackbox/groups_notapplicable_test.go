@@ -183,8 +183,8 @@ func TestRealFailureStillMissing(t *testing.T) {
 	}
 }
 
-// A group that reports not applicable leaves no timing and no busy slot behind,
-// even when its Collect took measurable time.
+// A group that reports not applicable leaves no timing and no busy slot behind.
+// (A slow recheck is covered by TestDormantRecheckTimeoutIsSilent.)
 func TestRunGroupNotApplicableDoesNotCountSlowOrBusy(t *testing.T) {
 	g := &fakeGroup{name: "vm", optional: true, err: errNotApplicable}
 	b := NewBudget(15)
@@ -213,5 +213,68 @@ func TestRunGroupNotApplicableDoesNotCountSlowOrBusy(t *testing.T) {
 	}
 	if g.calls != 5 {
 		t.Fatalf("calls = %d, want 5 (slot freed every tick)", g.calls)
+	}
+}
+
+// A re-check of a not-applicable group that runs past the one-second group budget
+// (PDH refreshing its object list on a big physical server) leaves no trace: no
+// "slow", no "busy", no budget strike. A real group that times out is still named.
+func TestDormantRecheckTimeoutIsSilent(t *testing.T) {
+	release := make(chan struct{})
+	f := &naFactory{answer: func(n int) (Group, error) {
+		if n == 2 {
+			<-release // the recheck: slower than the group budget
+		}
+		return nil, errNotApplicable
+	}}
+	c, b := newNACollector(t, f)
+	t0 := time.Unix(1_000_000, 0)
+	_, _ = c.Collect(t0)
+
+	s, err := c.Collect(t0.Add(31 * time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Missing) != 0 {
+		t.Fatalf("slow recheck: Missing = %v, want empty", s.Missing)
+	}
+	if c.slowName != "" || len(c.GroupTimings()) != 0 {
+		t.Fatalf("slow recheck left timing: %q %v", c.slowName, c.GroupTimings())
+	}
+	if _, ok := b.groups["vm"]; ok || len(b.SlowGroups()) != 0 {
+		t.Fatal("slow recheck counted against the budget")
+	}
+	// The worker is still inside the factory: the next tick must not say "busy".
+	s, _ = c.Collect(t0.Add(31*time.Minute + 15*time.Second))
+	if len(s.Missing) != 0 || len(c.GroupTimings()) != 0 {
+		t.Fatalf("busy slot of a dormant group: Missing = %v timings = %v, want silent", s.Missing, c.GroupTimings())
+	}
+	close(release)
+	// Once the recheck ends the slot frees itself, and the group is still silent.
+	deadline := time.Now().Add(2 * time.Second)
+	for c.slots[0].busy && time.Now().Before(deadline) {
+		c.slots[0].idle()
+		time.Sleep(5 * time.Millisecond)
+	}
+	s, _ = c.Collect(t0.Add(31*time.Minute + 30*time.Second))
+	if len(s.Missing) != 0 || f.calls != 2 {
+		t.Fatalf("after the recheck: Missing = %v calls = %d, want silent and no new call", s.Missing, f.calls)
+	}
+}
+
+func TestSlowFactoryOfAGroupThatIsNotDormantIsStillNamed(t *testing.T) {
+	release := make(chan struct{})
+	f := &naFactory{answer: func(n int) (Group, error) {
+		if n == 1 {
+			return nil, errors.New("not ready")
+		}
+		<-release
+		return nil, errors.New("still not ready")
+	}}
+	c, _ := newNACollector(t, f)
+	s, _ := c.Collect(time.Unix(1_000_000, 0))
+	close(release)
+	if !missingHas(s, "vm: slow") {
+		t.Fatalf("Missing = %v, want \"vm: slow\" for a slow group that is not dormant", s.Missing)
 	}
 }
