@@ -42,7 +42,9 @@ type Dialer interface {
 	Dial(ctx context.Context, t Target) (Conn, Peer, error)
 }
 
-// DefaultDialer is the transport of this platform.
+// DefaultDialer is the transport of this platform, for the command line the
+// owner runs. On Linux it may take the socket directory from the caller's
+// $TMPDIR; a service must not use it for that (see socketDialer).
 func DefaultDialer() Dialer { return platformDialer() }
 
 // Options bound the probe. A zero field takes its default.
@@ -188,7 +190,7 @@ func asErr(ctx context.Context, err error, fallback Reason) *Error {
 	if errors.As(err, &de) {
 		return de
 	}
-	if ctx != nil && ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return newErr(ReasonCancelled, 0)
 	}
 	if isTimeout(err) {
@@ -249,7 +251,10 @@ func (p *prober) run(ctx context.Context) {
 		p.res.StartMatch = &m
 	}
 
-	c.SetDeadline(time.Now().Add(p.o.ReplyTimeout))
+	if e := setDeadline(c, time.Now().Add(p.o.ReplyTimeout)); e != nil {
+		p.fail(e)
+		return
+	}
 	if err := writeAll(c, encodeStart()); err != nil {
 		p.fail(asErr(ctx, err, ReasonBadReply))
 		return
@@ -269,11 +274,16 @@ func (p *prober) run(ctx context.Context) {
 	// Stream: read and throw away. A cancelled context interrupts the read by
 	// moving the deadline into the past.
 	streamEnd := time.Now().Add(p.o.Duration)
-	c.SetDeadline(streamEnd)
+	if e := setDeadline(c, streamEnd); e != nil {
+		p.fail(e)
+		return
+	}
 	fired := make(chan struct{})
 	stopAfter := context.AfterFunc(ctx, func() {
 		defer close(fired)
-		c.SetDeadline(time.Unix(1, 0))
+		// A failure here cannot be reported from this goroutine; the read then
+		// ends at streamEnd instead of at the cancel.
+		_ = c.SetDeadline(time.Unix(1, 0))
 	})
 	buf := make([]byte, readChunk)
 	zero := 0
@@ -301,7 +311,7 @@ func (p *prober) run(ctx context.Context) {
 	if ctx.Err() != nil {
 		p.fail(newErr(ReasonCancelled, 0))
 	}
-	p.res.BytesBefore = uint64(p.total)
+	p.res.BytesBefore = uint64(p.total) //nolint:gosec // p.total only grows by len(buf[:n]) and is never negative
 }
 
 // finish always runs: stop path, drain, close, preamble check. Each step is
@@ -320,8 +330,25 @@ func (p *prober) finish() {
 }
 
 func safe(f func()) {
-	defer func() { recover() }()
+	defer func() { _ = recover() }()
 	f()
+}
+
+// setDeadline sets a connection deadline. A Conn that cannot set one would
+// read without a bound, so the probe stops with ReasonOther instead.
+func setDeadline(c Conn, t time.Time) *Error {
+	if err := c.SetDeadline(t); err != nil {
+		// A connection the peer already closed refuses a deadline too
+		// (net.Pipe does), but it cannot block: the next write or read fails
+		// at once and is reported as what it is (a bad reply), so this is
+		// not "no deadlines". Only a live connection that cannot be bounded
+		// is refused.
+		if errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrClosed) {
+			return nil
+		}
+		return newErr(ReasonOther, 0)
+	}
+	return nil
 }
 
 // stop is step 7: a second connection, one fixed stop message, one reply.
@@ -339,26 +366,29 @@ func (p *prober) stop() {
 	}
 	c, peer, err := p.d.Dial(ctx, Target{PID: p.t.PID, StartTicks: p.peer1.StartTicks})
 	if err != nil {
-		failed(asErr(nil, err, ReasonOther).Code)
+		failed(asErr(context.Background(), err, ReasonOther).Code)
 		return
 	}
 	if c == nil {
 		failed(0)
 		return
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if peer.PID != p.t.PID || peer.StartTicks != p.peer1.StartTicks {
 		failed(0)
 		return
 	}
-	c.SetDeadline(time.Now().Add(p.o.StopTimeout))
+	if setDeadline(c, time.Now().Add(p.o.StopTimeout)) != nil {
+		failed(0)
+		return
+	}
 	if err := writeAll(c, encodeStop(p.session)); err != nil {
-		failed(asErr(nil, err, ReasonOther).Code)
+		failed(asErr(context.Background(), err, ReasonOther).Code)
 		return
 	}
 	r, err := decodeReply(c)
 	if err != nil {
-		failed(asErr(nil, err, ReasonBadReply).Code)
+		failed(asErr(context.Background(), err, ReasonBadReply).Code)
 		return
 	}
 	if r.IsError {
@@ -375,7 +405,7 @@ func (p *prober) stop() {
 func (p *prober) closeFirst() {
 	if c := p.conn1; c != nil {
 		p.conn1 = nil
-		c.Close()
+		_ = c.Close()
 	}
 }
 
@@ -390,13 +420,15 @@ func (p *prober) drainAndClose() {
 	if !p.started || p.res.EndedEarly || p.total >= p.o.StreamCap {
 		return
 	}
-	c.SetDeadline(time.Now().Add(p.o.StopTimeout))
+	if setDeadline(c, time.Now().Add(p.o.StopTimeout)) != nil {
+		return // no bound on the read: do not read; closeFirst closes it
+	}
 	buf := make([]byte, readChunk)
 	zero := 0
 	for p.total < p.o.StreamCap {
 		n, err := c.Read(buf)
 		p.take(buf[:n])
-		p.res.BytesAfter += uint64(n)
+		p.res.BytesAfter += uint64(n) //nolint:gosec // n is a Read count, never negative
 		if err != nil {
 			return
 		}
