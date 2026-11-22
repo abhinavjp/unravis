@@ -33,7 +33,7 @@ async function openStatus(page: Page, name: string) {
  * crosses midnight and left alone otherwise (the popover helper in support/window-picker.ts opens a dialog, which this form does not have).
  */
 async function setInlineWindow(details: Locator, name: 'Incident' | 'Reference', [start, end]: [string, string]) {
-  const group = details.getByRole('group', { name: `${name} window (UTC)` });
+  const group = details.getByRole('group', { name: `${name} window`, exact: true });
   const box = (part: string) => group.getByRole('textbox', { name: `${name} window ${part}`, exact: true });
   const [startDate = '', startTime = ''] = start.split('T');
   const [endDate = '', endTime = ''] = end.split('T');
@@ -59,8 +59,12 @@ test('BB-11: Use in this case shows Stop using it, survives closing the drawer, 
   await openCase(page, CASE);
   const { dialog, region } = await openStatus(page, 'web-a');
   await region.getByRole('button', { name: 'Use in this case' }).click();
-  await expect(region.getByText('This case uses this Blackbox for Step 9.')).toBeVisible();
+  // Right after the press the line says what was done (BLACKBOX-27: the standing line is not repeated beside it).
+  await expect(region.getByText(/^Added\. Step 9 reads this Blackbox/)).toBeVisible();
   await expect(region.getByRole('button', { name: 'Stop using it in this case' })).toBeVisible();
+  // Focus stays in the status pop-up after the press (BLACKBOX-02), so the first Esc closes only the pop-up and the second the drawer.
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog.pop[open]')).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   const again = await openStatus(page, 'web-a');
@@ -92,7 +96,7 @@ test('BB-11b: a double press on Use and on Stop ends in one clear state', async 
   const { region } = await openStatus(page, 'web-a');
   await region.getByRole('button', { name: 'Use in this case' }).dblclick();
   await expect(region.getByRole('button', { name: 'Stop using it in this case' })).toBeVisible();
-  await expect(region.getByText('This case uses this Blackbox for Step 9.')).toHaveCount(1);
+  await expect(region.getByText(/^Added\. Step 9 reads this Blackbox/)).toHaveCount(1);
   await region.getByRole('button', { name: 'Stop using it in this case' }).dblclick();
   await expect(region.getByRole('button', { name: 'Use in this case' })).toBeEnabled();
 });
@@ -144,7 +148,7 @@ test('BB-12b: empty windows and a window longer than seven days are refused the 
   const details = region.locator('details', { hasText: 'Step 9: choose the windows to read' });
   await readHost(region, ['2026-10-01T00:00', '2026-10-20T08:10']);
   await expect(region.getByText(WINDOW_PROBLEM)).toBeVisible();
-  const inc = details.getByRole('group', { name: 'Incident window' });
+  const inc = details.getByRole('group', { name: 'Incident window', exact: true });
   await inc.getByRole('textbox', { name: 'Incident window start date', exact: true }).fill('');
   await details.getByRole('button', { name: 'Read the host for these windows' }).click();
   await expect(region.getByText(WINDOW_PROBLEM)).toBeVisible();

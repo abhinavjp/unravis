@@ -122,7 +122,7 @@ test('SWEEP-F4-07: status words inside sentences are quoted, and the sentences r
     if (text !== T.changeKey) assert.doesNotMatch(text, /(?<!")Type a new read key(?!")/, 'unquoted button name in: ' + text);
   }
   assert.equal(T.adminNote, 'Windows asks for administrator approval for service changes. If you choose No in that prompt, nothing changes.');
-  assert.equal(T.gapsText(1, 0, 300), '1 gap of 5 minutes. For those minutes the step says "Cannot test yet"');
+  assert.equal(T.gapsText(1, 0, 300), '1 gap of 5 minutes. In a case, those minutes say "Cannot test yet"');
   assert.match(T.stateNext.incomplete, /makes the minutes inside it "Cannot test yet"\.$/);
   assert.match(copy.stateNextFor({ state: 'unreachable', reason: 'key' }, false), /Press "Type a new read key"/);
 });
@@ -330,4 +330,67 @@ test('SWEEP-F4-29: nothing imports ResourcePanel (report only; it is not deleted
   const files = walk(path.join(root, 'src')).filter((f) => /\.(svelte|ts)$/.test(f) && !f.endsWith('ResourcePanel.svelte') && !f.includes(path.sep + 'resource' + path.sep));
   const importers = files.filter((f) => /ResourcePanel/.test(fs.readFileSync(f, 'utf8')));
   assert.deepEqual(importers.map((f) => path.relative(root, f)), []);
+});
+
+// S2 (review 1): run the real load() text from lite/App.svelte with the page state as plain variables.
+function liteLoad(opts) {
+  const src = read('lite/App.svelte');
+  const body = src.slice(src.indexOf('async function load()'), src.indexOf('onMount('));
+  const factory = new Function('deps', `
+    let { item, problem, loading, refreshing, readAt } = deps.state;
+    const { hasSessionToken, NO_SESSION_MESSAGE, blackboxApi, formatTime, timeZone, T } = deps;
+    ${body}
+    return { load, get: () => ({ item, problem, loading, refreshing, readAt }) };
+  `);
+  return factory({
+    state: { item: opts.item ?? null, problem: '', loading: !opts.item, refreshing: false, readAt: '' },
+    hasSessionToken: () => opts.token !== false,
+    NO_SESSION_MESSAGE: 'Open Unravis from the link.',
+    blackboxApi: { list: opts.list ?? (async () => ({ items: [{ name: 'a' }] })) },
+    formatTime: () => '10:00:00',
+    timeZone: { zone: 'UTC' },
+    T: {}
+  });
+}
+
+test('SWEEP-F4-30: a Lite refresh without a session token does not leave Refresh stuck, and keeps the page', async () => {
+  const h = liteLoad({ item: { name: 'a' }, token: false });
+  await h.load();
+  let s = h.get();
+  assert.equal(s.refreshing, false);
+  assert.match(s.problem, /Unravis Lite/);
+  assert.ok(s.item, 'the page stays, so the Refresh button the person pressed is still there and keeps focus');
+  // Try again works: a second call is not swallowed by the refreshing guard.
+  let called = 0;
+  const h2 = liteLoad({ item: { name: 'a' }, list: async () => { called++; return { items: [{ name: 'b' }] }; } });
+  await h2.load();
+  await h2.load();
+  assert.equal(called, 2);
+  assert.equal(h2.get().refreshing, false);
+  assert.equal(h2.get().problem, '');
+});
+
+test('SWEEP-F4-30: a failed Lite refresh resets the busy flag and shows the problem above the buttons', async () => {
+  const h = liteLoad({ item: { name: 'a' }, list: async () => { throw new Error('Could not read it.'); } });
+  await h.load();
+  const s = h.get();
+  assert.equal(s.refreshing, false);
+  assert.equal(s.problem, 'Could not read it.');
+  assert.ok(s.item);
+  const l = read('lite/App.svelte');
+  assert.match(l, /\{:else if problem && !item\}/);
+  assert.match(l, /\{#if problem\}<p class="problem" role="alert">\{problem\}<\/p>\{\/if\}/);
+  assert.match(l, /\} finally \{\s*loading = false;\s*refreshing = false;/);
+});
+
+test('SWEEP-F4-31: a click or a Tab away from a parked button is never undone when the button comes back on (N6)', () => {
+  const src = read('src/components/blackboxWizard/WizardDialog.svelte');
+  // Tab to another control: focusin on it clears the parked button.
+  assert.match(src, /if \(t instanceof HTMLElement && t !== shell\) \{ lastFocus = t; if \(t !== parked\) parked = null; \}/);
+  // Pointer choice clears it too, and the listener is removed with the observer.
+  assert.match(src, /const chose = \(\) => \{ parked = null; \};/);
+  assert.match(src, /addEventListener\('pointerdown', chose\)/);
+  assert.match(src, /removeEventListener\('pointerdown', chose\)/);
+  // The pull-back needs focus to still be on the frame (or lost to the page).
+  assert.match(src, /\(document\.activeElement === shell \|\| gone\(\)\)/);
 });

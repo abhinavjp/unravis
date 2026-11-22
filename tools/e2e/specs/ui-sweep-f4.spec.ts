@@ -34,18 +34,19 @@ test('SWEEP-F4-02: focus is not lost to the page after Check again or Read the t
 test('SWEEP-F4-01: the status pop-up names a failure in one place and the other-server note is plain', async ({ page }) => {
   const pop = await openStatus(page, 'web-a');
   await expect(pop.locator('.bb-ready')).toHaveCount(1);
-  await expect(pop.getByText(/Unravis reads your servers\. It never changes them\./)).toBeVisible();
+  // The read-only line sits in the Blackbox list behind the pop-up, not in it.
+  await expect(page.getByText(/Unravis reads your servers\. It never changes them\./).first()).toBeAttached();
 });
 
 test('SWEEP-F4-09: the Step 9 block is named for what it does and has one column', async ({ page }) => {
   const pop = await openStatus(page, 'web-a');
   const details = pop.locator('details', { hasText: 'Step 9: choose the windows to read' });
-  await details.locator('summary').click();
-  await expect(details.getByRole('group', { name: 'Incident window' })).toBeVisible();
-  await expect(details.getByRole('group', { name: 'Reference window' })).toBeVisible();
+  if ((await details.getAttribute('open')) === null) await details.locator('summary').click();
+  await expect(details.getByRole('group', { name: 'Incident window', exact: true })).toBeVisible();
+  await expect(details.getByRole('group', { name: 'Reference window', exact: true })).toBeVisible();
   const boxes = await Promise.all([
-    details.getByRole('group', { name: 'Incident window' }).boundingBox(),
-    details.getByRole('group', { name: 'Reference window' }).boundingBox()
+    details.getByRole('group', { name: 'Incident window', exact: true }).boundingBox(),
+    details.getByRole('group', { name: 'Reference window', exact: true }).boundingBox()
   ]);
   // stacked, not side by side
   expect(boxes[1]!.y).toBeGreaterThan(boxes[0]!.y + boxes[0]!.height - 1);

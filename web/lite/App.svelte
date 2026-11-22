@@ -22,25 +22,28 @@
 
   async function load() {
     // The first read shows "Reading". A refresh keeps the page and the button where they are, so focus stays on Refresh.
+    // A failed refresh keeps the page too and shows the problem above the buttons (S2).
     if (item) { if (refreshing) return; refreshing = true; } else loading = true;
     problem = '';
-    if (!hasSessionToken()) {
-      problem = NO_SESSION_MESSAGE.replace('Unravis', 'Unravis Lite');
-      loading = false;
-      return;
-    }
     try {
-      const list = await blackboxApi.list();
-      item = list.items[0] ?? null;
-      readAt = formatTime(Date.now(), { zone: timeZone.zone, precision: 'second', date: false });
-      if (!item) problem = 'No Blackbox is set for this copy. Start Unravis Lite with --folder <recordings folder>.';
-    } catch (e) {
-      const text = e instanceof Error ? e.message : 'Could not read the Blackbox.';
-      // The full app's wording points at screens Lite does not have.
-      problem = text.replace(/Open Unravis from the link it printed when it started, or restart it\./, 'Open Unravis Lite from the link it printed, or start it again.');
+      if (!hasSessionToken()) {
+        problem = NO_SESSION_MESSAGE.replace('Unravis', 'Unravis Lite');
+        return;
+      }
+      try {
+        const list = await blackboxApi.list();
+        item = list.items[0] ?? null;
+        readAt = formatTime(Date.now(), { zone: timeZone.zone, precision: 'second', date: false });
+        if (!item) problem = 'No Blackbox is set for this copy. Start Unravis Lite with --folder <recordings folder>.';
+      } catch (e) {
+        const text = e instanceof Error ? e.message : 'Could not read the Blackbox.';
+        // The full app's wording points at screens Lite does not have.
+        problem = text.replace(/Open Unravis from the link it printed when it started, or restart it\./, 'Open Unravis Lite from the link it printed, or start it again.');
+      }
+    } finally {
+      loading = false;
+      refreshing = false;
     }
-    loading = false;
-    refreshing = false;
   }
 
   onMount(() => { theme.start(); void load(); });
@@ -50,12 +53,13 @@
   <header><BrandMark wordmark="Unravis Lite" /></header>
   {#if loading}
     <p role="status">Reading the Blackbox…</p>
-  {:else if problem}
+  {:else if problem && !item}
     <p class="problem" role="alert">{problem}</p>
     <button type="button" onclick={load}>Try again</button>
   {:else if item}
     <section aria-labelledby="bb-name">
       <h1 id="bb-name">{item.name}</h1>
+      {#if problem}<p class="problem" role="alert">{problem}</p>{/if}
       <p class="where">Blackbox on <span class="mono wrap">{item.location}</span></p>
       <p class="state"><Sticker info={item.state} /> <span>{item.state.detail}</span></p>
       {#if item.facts}

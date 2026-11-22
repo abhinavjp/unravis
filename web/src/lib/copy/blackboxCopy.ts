@@ -170,7 +170,7 @@ export const BB_TEXT = {
         const short = longestSeconds <= 120;
         const length = short ? longestSeconds + (longestSeconds === 1 ? ' second' : ' seconds') : Math.round(longestSeconds / 60) + ' minutes';
         text = (gaps === 1 ? '1 gap of ' + length : gaps + ' gaps, the longest is ' + length)
-          + (short ? '. This is a warning only. Missing minutes are never counted as zero' : '. For those minutes the step says "Cannot test yet"');
+          + (short ? '. This is a warning only. Missing minutes are never counted as zero' : '. In a case, those minutes say "Cannot test yet"');
       }
       parts.push(text);
     }

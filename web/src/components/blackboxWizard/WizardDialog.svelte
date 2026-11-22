@@ -145,8 +145,11 @@
       if (t instanceof HTMLElement && t !== shell) { lastFocus = t; if (t !== parked) parked = null; }
     };
     watch.observe(target, { subtree: true, attributes: true, attributeFilter: ['disabled'] });
+    // A click or touch is the person choosing where focus goes, so nothing is pulled back to the parked button afterwards (N6).
+    const chose = () => { parked = null; };
     target.addEventListener('focusin', seen);
-    return () => { watch.disconnect(); target.removeEventListener('focusin', seen); };
+    target.addEventListener('pointerdown', chose);
+    return () => { watch.disconnect(); target.removeEventListener('focusin', seen); target.removeEventListener('pointerdown', chose); };
   });
 
   // Work starting hides the leave question: nothing can be left while it runs.
