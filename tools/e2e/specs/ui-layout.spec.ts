@@ -7,6 +7,8 @@
 //   UIFIX-05  The selected-lines notes of the timeline and the chart help line are at least 11px (BL-478)
 //   UIFIX-06  Tap targets of 24 x 24 px or more: Daily view, Show matching requests, Help guide index links, Stop showing, Mark the line (BL-475 group 1)
 //   UIFIX-09  Desktop does not move: tables that got bigger tap targets keep every row height and column width (BL-475 group 1)
+//   UIFIX-12  Tap targets of 24 x 24 px or more: the hour squares of the Daily and hourly view and the two zoom slider handles; a press 9px inside the edge grabs the handle; a press on a painted square lands on that square (BL-475 groups 2 and 3)
+//   UIFIX-13  Desktop does not move: the hour grid, its legend and the zoom strip look the same pixel for pixel as with the old rules put back (BL-475 groups 2 and 3)
 //   UIFIX-07  Add files on a phone: the column heads are painted nowhere, yet stay in the page for screen readers (BL-482). A guard only: the finding was a false positive of the audit, so the audit run proves the fix
 //   UIFIX-08  Phone header with "Choose sources" fits the window (BL-472); 390 and 360 px fail on the old header, 320 px is a no-regression case
 //   UIFIX-10  Slow call screen: the time zone label, the peak and zero labels and the "drag" hint are at least 11px, the lanes and the minimap do not move, nothing collides (BL-483)
@@ -330,6 +332,191 @@ test('UIFIX-09d Blackbox charts: the figures table keeps its row heights and col
   await expectSameAsDevelop(page, 'dialog.bbc[open] table:has(.bbc-x)', 'Charts figures');
 });
 
+// BL-475 groups 2 and 3. The hour squares are 24px tall buttons that paint their 20px square in a ::before, and the zoom handles are 24px
+// wide with the same 4px grip. Nothing may move on desktop: the same old-rules comparison as UIFIX-09, plus the painted parts.
+async function openDailyHourly(page: Page): Promise<void> {
+  await page.getByRole('button', { name: /^Daily and hourly view/ }).click();
+  await expect(page.locator('.hm-grid')).toBeVisible();
+  await expect(page.locator('button.hm-cell').first()).toBeVisible();
+}
+
+test('UIFIX-12a Daily and hourly view: every hour square is 24 x 24 px or more', async ({ page }) => {
+  await openDailyHourly(page);
+  const sizes = await page.locator('button.hm-cell').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { w: r.width, h: r.height, name: e.getAttribute('aria-label') }; }));
+  expect(sizes.length).toBeGreaterThan(100);
+  for (const z of sizes) {
+    expect(z.h, z.name ?? 'hour square').toBeGreaterThanOrEqual(24);
+    expect(z.w, z.name ?? 'hour square').toBeGreaterThanOrEqual(24);
+  }
+});
+
+test('UIFIX-12b Daily and hourly view on a phone: the hour squares are 24 x 24 px and no two overlap', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDailyHourly(page);
+  const cells = await page.locator('button.hm-cell').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
+  for (const c of cells) { expect(c.w).toBeGreaterThanOrEqual(24); expect(c.h).toBeGreaterThanOrEqual(24); }
+  const clashes = cells.flatMap((a, i) => cells.slice(i + 1).filter((b) => overlap(a, b) > 0).map(() => i));
+  expect(clashes, 'squares that overlap another square').toEqual([]);
+});
+
+test('UIFIX-12c Daily and hourly view: the two zoom handles are 24 x 24 px or more', async ({ page }) => {
+  await openDailyHourly(page);
+  const handles = page.locator('.nav-handle');
+  expect(await handles.count()).toBe(2);
+  for (const h of await handles.all()) {
+    const box = (await h.boundingBox())!;
+    expect(box.width, await h.getAttribute('aria-label') ?? 'zoom handle').toBeGreaterThanOrEqual(24);
+    expect(box.height).toBeGreaterThanOrEqual(24);
+  }
+});
+
+test('UIFIX-12d Zoom strip: a press 9px inside the edge grabs the handle (the grab zone is the handle, 12px each side)', async ({ page }) => {
+  await openDailyHourly(page);
+  const start = page.locator('.nav-handle').first();
+  const end = page.locator('.nav-handle').nth(1);
+  const endBefore = await end.getAttribute('aria-valuenow');
+  const startBefore = await start.getAttribute('aria-valuenow');
+  await start.scrollIntoViewIfNeeded();
+  const box = (await start.boundingBox())!;
+  const x = box.x + box.width / 2 + 9, y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 300, y, { steps: 3 });
+  // while the button is down the handles show the preview: the start edge has moved, the end edge has not (a press that missed the handle would draw a new range)
+  await expect.poll(async () => start.getAttribute('aria-valuenow')).not.toBe(startBefore);
+  expect(await end.getAttribute('aria-valuenow'), 'only the start edge moves').toBe(endBefore);
+  await page.mouse.up();
+});
+
+// The rules of develop for the hour grid, its legend and the zoom handles, as they were before BL-475 groups 2 and 3 (copied from develop at e784a5f).
+// They are put back on the new build as a stylesheet in which every declaration is !important, followed by rules that switch the new
+// pseudo-elements off. The page must then look the same pixel for pixel: a rule that moves, resizes or recolours anything (the legend
+// squares included, which are grey on develop because `.hm-swatch` comes after `.level-N`) fails here.
+const OLD_HEATMAP_CSS = `
+  .hm-cell, .hm-gap { display: block; width: 100%; height: 20px; padding: 0; border-radius: 1px; }
+  .hm-cell { border: 1px solid var(--line-soft); background: var(--surface-2); cursor: pointer; }
+  .hm-cell.empty { cursor: default; background: transparent; }
+  .hm-gap { border: 1px solid transparent; }
+  .level-1 { background: var(--heat-1); }
+  .level-2 { background: var(--heat-2); }
+  .level-3 { background: var(--heat-3); }
+  .level-4 { background: var(--heat-4); }
+  .hm-cell.noise { border: 1px dashed var(--text-2); }
+  .hm-cell:hover:not(.empty) { outline: 1px solid var(--text); outline-offset: 0; }
+  .hm-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; position: relative; z-index: 1; }
+  .hm-swatch { display: inline-block; width: 16px; height: 12px; border: 1px solid var(--line-soft); border-radius: 1px; background: var(--surface-2); }
+  .hm-swatch.noise { background: var(--surface-2); border: 1px dashed var(--text-2); margin-left: 8px; }
+  .hm-swatch.empty { background: transparent; margin-left: 8px; }
+  .nav-handle { position: absolute; top: 0; bottom: 0; width: 12px; margin-left: -6px; cursor: ew-resize; touch-action: pan-y; }
+  .nav-handle:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+`;
+const OFF_NEW_CSS = '.hm-cell { margin: 0 !important; position: static !important; pointer-events: auto !important; } .hm-cell:focus-visible { position: relative !important; } .hm-cell::before, .hm-cell::after, .nav-handle::after { content: none !important; }';
+const important = (css: string) => css.replace(/;(?=\s*(\}|$))/g, ';').replace(/([^{};\s][^{};]*?);/g, (m) => (m.includes('!important') ? m : m.slice(0, -1) + ' !important;'));
+
+/** The same screenshots with the new rules and with the old ones put back. */
+async function paintedBoth(page: Page, take: () => Promise<Buffer[]>): Promise<{ now: Buffer[]; old: Buffer[] }> {
+  const now = await take();
+  const style = await page.addStyleTag({ content: important(OLD_HEATMAP_CSS) + OFF_NEW_CSS });
+  const old = await take();
+  await style.evaluate((el) => el.remove());
+  return { now, old };
+}
+
+for (const scheme of ['dark', 'light'] as const) {
+  test('UIFIX-13a Daily and hourly view: the hour grid and its legend look exactly as before (' + scheme + ')', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await openDailyHourly(page);
+    const hm = page.locator('.hm');
+    await hm.scrollIntoViewIfNeeded();
+    const cells = page.locator('button.hm-cell:not(.empty)');
+    expect(await cells.count()).toBeGreaterThan(8);
+    const { now, old } = await paintedBoth(page, async () => {
+      const shots: Buffer[] = [];
+      await page.mouse.move(0, 0);
+      shots.push(await hm.screenshot());
+      for (const i of [0, 3, 7]) {
+        await cells.nth(i).hover();
+        shots.push(await hm.screenshot()); // hover ring
+        await cells.nth(i).focus();
+        await page.keyboard.press('ArrowRight');
+        await page.keyboard.press('ArrowLeft');
+        await page.mouse.move(0, 0);
+        shots.push(await hm.screenshot()); // focus ring
+      }
+      await page.locator('body').click({ position: { x: 1, y: 1 } });
+      return shots;
+    });
+    const names = ['rest', 'hover 0', 'focus 0', 'hover 3', 'focus 3', 'hover 7', 'focus 7'];
+    now.forEach((shot, i) => expect(shot.equals(old[i]), names[i] + ': the picture differs from the old rules').toBe(true));
+    // and the legend squares, whatever colour develop gives them, stay the colour of the "few requests" square (grey, from `.hm-swatch`)
+    const colours = await page.locator('.hm-legend .hm-swatch').evaluateAll((els) => els.map((e) => getComputedStyle(e).backgroundColor));
+    expect(colours.slice(0, 4)).toEqual([colours[4], colours[4], colours[4], colours[4]]);
+  });
+
+  test('UIFIX-13b Zoom strip: the strip, the grip and the focus ring look exactly as before (' + scheme + ')', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await openDailyHourly(page);
+    const nav = page.locator('.navigator');
+    await nav.scrollIntoViewIfNeeded();
+    const { now, old } = await paintedBoth(page, async () => {
+      const shots: Buffer[] = [];
+      await page.mouse.move(0, 0);
+      shots.push(await nav.screenshot());
+      await page.locator('.nav-handle').first().focus();
+      await page.keyboard.press('Shift');
+      shots.push(await nav.screenshot()); // focus ring of the start handle
+      await page.locator('.nav-handle').nth(1).focus();
+      await page.keyboard.press('Shift');
+      shots.push(await nav.screenshot());
+      await page.locator('body').click({ position: { x: 1, y: 1 } });
+      return shots;
+    });
+    now.forEach((shot, i) => expect(shot.equals(old[i]), ['rest', 'focus start', 'focus end'][i] + ': the picture differs from the old rules').toBe(true));
+  });
+}
+
+test('UIFIX-13c Daily and hourly view: the size and place of every row and square equal the old rules', async ({ page }) => {
+  await openDailyHourly(page);
+  const grid = page.locator('.hm-grid');
+  const measure = () => grid.evaluate((g) => {
+    const box = (e: Element) => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; };
+    return { grid: box(g), slots: [...g.querySelectorAll('.hm-cell-wrap')].map(box), rows: [...g.querySelectorAll('.hm-row')].map(box) };
+  });
+  const now = await measure();
+  const style = await page.addStyleTag({ content: important(OLD_HEATMAP_CSS) + OFF_NEW_CSS });
+  const old = await measure();
+  await style.evaluate((el) => el.remove());
+  const near = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.05);
+  expect(near(now.grid, old.grid), 'grid box now ' + now.grid + ' old ' + old.grid).toBe(true);
+  expect(now.slots.length).toBeGreaterThan(100);
+  now.slots.forEach((box, i) => expect(near(box, old.slots[i]), 'slot ' + i + ' now ' + box + ' old ' + old.slots[i]).toBe(true));
+  now.rows.forEach((box, i) => expect(near(box, old.rows[i]), 'row ' + i + ' now ' + box + ' old ' + old.rows[i]).toBe(true));
+});
+
+test('UIFIX-12e Daily and hourly view: a press anywhere on a painted square, edges included, lands on that square', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 3000 }); // elementFromPoint only sees what is on screen
+  await openDailyHourly(page);
+  const facts = await page.evaluate(() => {
+    const cells = [...document.querySelectorAll<HTMLElement>('button.hm-cell')];
+    const wrong: string[] = [];
+    let checked = 0;
+    for (const c of cells.filter((_, i) => i % 3 === 0)) {
+      const b = c.getBoundingClientRect(); // the 24px button; the painted square is 2px in from top and bottom
+      const x = b.x + b.width / 2, top = b.top + 2, bottom = b.bottom - 2;
+      // the whole height of the square, in half pixel steps and at both edges: no press may fall through to the hour above or below
+      const ys = [top + 0.05, bottom - 0.05];
+      for (let y = top; y < bottom; y += 0.5) ys.push(y + 0.05);
+      for (const y of ys) {
+        checked++;
+        const hit = document.elementFromPoint(x, y)?.closest('button.hm-cell');
+        if (hit !== c) wrong.push((c.getAttribute('aria-label') ?? '') + ' at ' + (y - top).toFixed(2));
+      }
+    }
+    return { wrong: wrong.slice(0, 5), checked };
+  });
+  expect(facts.checked).toBeGreaterThan(500);
+  expect(facts.wrong).toEqual([]);
+});
 // BL-483: four labels of the Slow call screen were 10px, under the app's own 11px floor. Raising them must not move the lanes (Slow call lane
 // rule, BL-005: no inner scrolling, the lanes stay visible together) and the owner rule is that desktop wins over the phone. Like UIFIX-09
 // this puts the old 10px back as inline styles and compares the rectangles in one evaluation, so nothing moves in between.

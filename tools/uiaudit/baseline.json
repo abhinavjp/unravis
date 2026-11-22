@@ -3,24 +3,6 @@
   "note": "Problems the audit found that are known and tracked. An entry needs a reason and, where there is one, a backlog item (docs/BACKLOG.md). Entries may use * in screen, size, check and label. Do not add an entry to turn a run green: fix the screen or file the item first.",
   "entries": [
     {
-      "check": "small-target",
-      "label": "*GMT*",
-      "why": "Group 2 (BL-475): the hour cells and the day bars of the Daily view heat map are under 24 x 24 px.",
-      "item": "BL-475"
-    },
-    {
-      "check": "small-target",
-      "label": "*BST*",
-      "why": "Group 2 (BL-475): the hour cells and the day bars of the Daily view heat map are under 24 x 24 px.",
-      "item": "BL-475"
-    },
-    {
-      "check": "small-target",
-      "label": "*of the zoomed window",
-      "why": "Group 3 (BL-475): the two zoom slider thumbs of the chart navigator are 12 x 34 px.",
-      "item": "BL-475"
-    },
-    {
       "screen": "p11-*",
       "check": "small-target",
       "label": "",
