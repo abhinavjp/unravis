@@ -121,7 +121,7 @@ func TestRecoverCancelStillReplaysThePersonsOwnJournal(t *testing.T) {
 func TestRecoverElevatedCopyShowsNoNotice(t *testing.T) {
 	rg := newRig(t)
 	made := filepath.Join(rg.root, "half.txt")
-	if err := os.WriteFile(made, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(made, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	putJournal(t, setup.MachineJournalDir(rg.dirs), journalBody(t, made))
