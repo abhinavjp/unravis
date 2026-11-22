@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -186,6 +187,9 @@ func TestVMProbePDHUnavailableExitsOne(t *testing.T) {
 // Azure VM without VMware Tools) no VMware counter may exist; elsewhere it only
 // logs what it saw.
 func TestVMProbeRealPDH(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the real probe needs Windows performance counters")
+	}
 	c, out, errs := runProbeCmd([]string{"--samples", "1"}, nil)
 	t.Logf("exit %d\n%s%s", c, out, errs)
 	if c != exitOK {
