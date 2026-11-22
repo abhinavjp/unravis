@@ -106,7 +106,7 @@ func (h *handler) updaterAndDemo() (*Updater, bool) {
 }
 
 func noUpdater() updateCheckReply {
-	return updateCheckReply{Status: "dev", IntervalMinutes: updateDefaultMinutes}
+	return updateCheckReply{Status: "dev", IntervalMinutes: updateDefaultMinutesRC}
 }
 
 // updateCheck answers POST /api/update-check. It always answers 200; a failed check is status "unreachable" or "unverified".
@@ -186,7 +186,7 @@ func (h *handler) updateSettingsPut(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	if _, err := cleanUpdaterSettings(in); err != nil {
+	if _, err := cleanUpdaterSettings(in, defaultUpdateMinutes(u.channel)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

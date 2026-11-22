@@ -124,12 +124,19 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		pct := fs.Int("percent", 0, "share of machines that may take -rollout (1 to 100)")
 		note := fs.String("note", "", "short plain words shown to the person")
 		days := fs.Int("days", 30, "days until the file expires (at most 90)")
+		after := fs.Uint64("after-seq", 0, "the highest seq already published (or seen on the feed); the new file's seq is above it")
 		outFile := fs.String("out", "control.json", "file to write")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
 		t := time.Now().UTC().Truncate(time.Second)
-		c := update.Control{Schema: update.ControlSchema, Product: update.Product, Channel: *channel, Seq: uint64(t.Unix()),
+		// The number is the signing time in seconds, but never at or below one already used: machines keep the first file at a
+		// number and ignore a different one at the same number, so two files in one second (or a clock that is behind) would lose.
+		seq := uint64(t.Unix())
+		if *after >= seq {
+			seq = *after + 1
+		}
+		c := update.Control{Schema: update.ControlSchema, Product: update.Product, Channel: *channel, Seq: seq,
 			Published: t, Expires: t.Add(time.Duration(*days) * 24 * time.Hour), Pause: *pause, Blocked: []string{},
 			RolloutVersion: strings.TrimSpace(*rollV), RolloutPercent: *pct, Note: *note}
 		for _, v := range strings.Split(*block, ",") {
