@@ -1,0 +1,82 @@
+# run 45000205435 ci https://github.com/abhinavjp/unravis/actions/runs/45000205435
+build	Go - tests	2026-11-22T07:55:28.0462744Z ?   	api-audit-explorer	[no test files]
+build	Go - tests	2026-11-22T07:57:16.2423278Z ok  	api-audit-explorer/cmd/audit-explorer	98.257s
+build	Go - tests	2026-11-22T07:57:16.2423660Z ok  	api-audit-explorer/cmd/unravis-blackbox	3.668s
+build	Go - tests	2026-11-22T07:57:16.2423888Z ok  	api-audit-explorer/cmd/unravis-keeper	0.048s
+build	Go - tests	2026-11-22T07:57:16.2424109Z ok  	api-audit-explorer/cmd/unravis-lite	0.026s
+build	Go - tests	2026-11-22T07:57:16.2424347Z ?   	api-audit-explorer/cmd/unravis-perfdata	[no test files]
+build	Go - tests	2026-11-22T07:57:16.2424598Z ?   	api-audit-explorer/cmd/unravis-releases	[no test files]
+build	Go - tests	2026-11-22T07:57:16.2424832Z ok  	api-audit-explorer/cmd/unravis-setup	5.725s
+build	Go - tests	2026-11-22T07:57:16.2425040Z ok  	api-audit-explorer/internal/appdirs	0.010s
+build	Go - tests	2026-11-22T07:57:16.2425251Z ok  	api-audit-explorer/internal/applog	0.057s
+build	Go - tests	2026-11-22T07:57:16.2425730Z ok  	api-audit-explorer/internal/audit	2.875s
+build	Go - tests	2026-11-22T07:57:16.2426021Z ok  	api-audit-explorer/internal/autostart	0.068s
+build	Go - tests	2026-11-22T07:57:16.2426315Z ok  	api-audit-explorer/internal/bbsaved	1.319s
+build	Go - tests	2026-11-22T07:57:16.2426597Z ok  	api-audit-explorer/internal/bbsql	26.811s
+build	Go - tests	2026-11-22T07:57:34.7805532Z ok  	api-audit-explorer/internal/blackbox	63.726s
+build	Go - tests	2026-11-22T07:57:34.7806187Z ok  	api-audit-explorer/internal/calltrace	0.021s
+build	Go - tests	2026-11-22T07:57:34.7806714Z ok  	api-audit-explorer/internal/casekey	0.142s
+build	Go - tests	2026-11-22T07:57:36.2600570Z ok  	api-audit-explorer/internal/casestore	17.858s
+build	Go - tests	2026-11-22T07:58:41.1059249Z ok  	api-audit-explorer/internal/casestore/sqlite	60.736s
+build	Go - tests	2026-11-22T07:58:41.1059931Z ?   	api-audit-explorer/internal/casestore/storetest	[no test files]
+linux-gates	Web - tests	2026-11-22T08:02:47.6389173Z ok 1 - one added source names it, several count them, a removal says nothing
+linux-gates	Web - tests	2026-11-22T08:02:47.6392043Z ok 2 - a Blackbox add also says the recorder is saved at once
+linux-gates	Web - tests	2026-11-22T08:03:57.9915826Z # tests 3456
+linux-gates	Web - tests	2026-11-22T08:03:57.9915994Z # suites 0
+linux-gates	Web - tests	2026-11-22T08:03:57.9916553Z # pass 3456
+linux-gates	Web - tests	2026-11-22T08:03:57.9916705Z # fail 0
+linux-gates	Web - tests	2026-11-22T08:03:57.9916861Z # cancelled 0
+linux-gates	Web - tests	2026-11-22T08:03:57.9917017Z # skipped 0
+linux-gates	Web - tests	2026-11-22T08:03:57.9917171Z # todo 0
+desktop-sidecar (windows-2022)	Pipe server tests (BL-301)	﻿2026-11-22T07:53:59.8718304Z ##[group]Run go test -count=1 -v ./internal/pipesrv/...
+desktop-sidecar (windows-2022)	Pipe server tests (BL-301)	2026-11-22T07:53:59.8718870Z ^[[36;1mgo test -count=1 -v ./internal/pipesrv/...^[[0m
+desktop-sidecar (windows-2022)	Pipe server tests (BL-301)	2026-11-22T07:53:59.8719214Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit 1 }^[[0m
+desktop-sidecar (windows-2022)	Pipe server tests (BL-301)	2026-11-22T07:53:59.8720375Z ^[[36;1mgo test -count=1 -v -run '^(TestPipeOnlyNoListenerNoSessionFile|TestPipeServerLoopbackKeepsBrowserModeListener|TestPipeFlagRules|TestPipeRejectsRemoteFlag|TestServeOverPipeSameJSONAsLoopback|TestListenerPortNilIsZero|TestNoTCPListenerInPipeMode)$' ./cmd/audit-explorer/...^[[0m
+desktop-sidecar (windows-2022)	Pipe server tests (BL-301)	2026-11-22T07:53:59.8721586Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit 1 }^[[0m
+desktop-sidecar (windows-2022)	Pipe server tests (BL-301)	2026-11-22T07:53:59.8761904Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+desktop-sidecar (windows-2022)	Pipe server tests (BL-301)	2026-11-22T07:53:59.8762283Z ##[endgroup]
+desktop-sidecar (windows-2022)	Pipe server tests (BL-301)	2026-11-22T07:54:02.1909621Z === RUN   TestNoRoleIsRefused
+desktop-sidecar (windows-2022)	Pipe server tests (BL-301)	2026-11-22T07:54:02.1910913Z --- PASS: TestNoRoleIsRefused (0.00s)
+desktop-sidecar (windows-2022)	Pipe server tests (BL-301)	2026-11-22T07:54:02.1911610Z === RUN   TestUITokenPassesThroughUnchanged
+desktop-sidecar (windows-2022)	Pipe server tests (BL-301)	2026-11-22T07:54:02.1912162Z --- PASS: TestUITokenPassesThroughUnchanged (0.00s)
+desktop-sidecar (windows-2022)	Pipe server tests (BL-301)	2026-11-22T07:54:02.1912887Z === RUN   TestAGOnlyBridgeRoutesAndPrefixes
+linux-gates	Go - race detector (report only)	﻿2026-11-22T07:56:48.6720541Z ##[group]Run go test -race -count=1 -timeout 25m -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' ./... 2>&1 | grep -E 'DATA RACE|^--- FAIL' | sort | uniq -c | sort -rn | head -40 || true
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1239479Z       2 --- FAIL: TestApplyRestartFailurePutsThePreviousSettingsBack (0.00s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1240951Z       1 --- FAIL: TestWriteProfileLinksWritesDesktopAndStartup (0.00s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1241692Z       1 --- FAIL: TestWriteProfileLinksUserScopeAlsoWritesStartMenuAndQuit (0.00s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1242412Z       1 --- FAIL: TestWriteProfileLinksSkipsStartupWhenOff (0.00s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1242950Z       1 --- FAIL: TestWriteProfileLinksReplacesOurOlderLink (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1243491Z       1 --- FAIL: TestWriteProfileLinksReplacesAnOlderStartupLinkOfOurs (0.00s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1244075Z       1 --- FAIL: TestWriteProfileLinksRemovesItsTmpFileOnFailure (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1244682Z       1 --- FAIL: TestWriteProfileLinksMachineScopeLeavesStartMenuAndQuitToTheWorker (0.00s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1245358Z       1 --- FAIL: TestWriteProfileLinksKeepsAnUnreadableStartupFile (0.00s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1245880Z       1 --- FAIL: TestWriteProfileLinksKeepsAForeignStartupLink (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1246424Z       1 --- FAIL: TestWriteProfileLinksKeepsAForeignDesktopLink (0.00s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1246887Z       1 --- FAIL: TestWorkerServesOneRequestOverItsPipe (0.00s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1247395Z       1 --- FAIL: TestWorkerRunsTheRequestAndStreamsProgress (0.02s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1247886Z       1 --- FAIL: TestWorkerPrepareChecksWhoseFoldersTheyAre (0.00s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1248709Z       1 --- FAIL: TestWorkerPlanDoesNotReadTheStartupLink (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1249185Z       1 --- FAIL: TestWorkerLogIsNotWrittenAnywhere (0.00s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1249637Z       1 --- FAIL: TestWindowGoneCancelsTheWorkersRun (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1250096Z       1 --- FAIL: TestUserInstallNeedsNoApproval (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1250583Z       1 --- FAIL: TestUpgradeWithoutAskQuitSeamBehavesAsBefore (0.02s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1251125Z       1 --- FAIL: TestUpgradeWithSignInOffLeavesTheStartupFolderAlone (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1251671Z       1 --- FAIL: TestUpgradeTreatsALinkToAnotherProgramAsOff (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1252167Z       1 --- FAIL: TestUpgradeTerminatesWhatIgnoredTheQuitRequest (0.02s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1252758Z       1 --- FAIL: TestUpgradeTerminatesOnlyWhatIsLeftInTheLastRound (0.02s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1253356Z       1 --- FAIL: TestUpgradeRewritesAnOlderStartupShortcut (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1253912Z       1 --- FAIL: TestUpgradeRefusesAKeeperWithAnotherAccount (0.03s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1254412Z       1 --- FAIL: TestUpgradeNeverTouchesOtherUsersProcesses (0.05s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1254995Z       1 --- FAIL: TestUpgradeKeepsTheSavedValueWhenTheLinkCannotBeRead (0.02s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1255516Z       1 --- FAIL: TestUpgradeKeepsTheOldSetupAndAMarker (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1256066Z       1 --- FAIL: TestUpgradeKeepsStartAtSignInOnWhenTheShortcutExists (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1256653Z       1 --- FAIL: TestUpgradeKeepsStartAtSignInOffWhenTheShortcutWasRemoved (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1257255Z       1 --- FAIL: TestUpgradeKeepsCasesSealedFilesAndKeeperAccount (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1257778Z       1 --- FAIL: TestUpgradeFallsBackToTerminateWhenAskQuitFails (0.03s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1258509Z       1 --- FAIL: TestUpgradeDoesNotTerminateAReusedPID (0.02s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1259342Z       1 --- FAIL: TestUpgradeDoesNotAskWithoutConsent (0.03s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1259813Z       1 --- FAIL: TestUpgradeAsksTheAppToQuitFirst (0.02s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1260381Z       1 --- FAIL: TestUpdateWithoutAliveProberWatchesTheState (0.00s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1260863Z       1 --- FAIL: TestUpdateStoppedRecorderStaysStopped (0.00s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1261306Z       1 --- FAIL: TestUpdateStatusProbeFailureRollsBack (0.01s)
+linux-gates	Go - race detector (report only)	2026-11-22T08:02:32.1261772Z       1 --- FAIL: TestUpdateStartFailureRollsBack (0.00s)
