@@ -23,6 +23,7 @@ type suRig struct {
 	applies            int
 	appliedPath, sha   string
 	res                update.Result
+	res2               *update.Result // when set, every check after the first returns this
 	stageErr, applyErr error
 }
 
@@ -32,7 +33,13 @@ func newSURig(t *testing.T, mode string) *suRig {
 	r.res = update.Result{Status: update.StatusAvailable, Manifest: &update.Manifest{Version: "1.2.0"}}
 	r.u = &SelfUpdater{
 		Mode: mode, Interval: time.Hour, Version: "1.1.0", Dir: t.TempDir(),
-		Check: func(context.Context) update.Result { r.checks++; return r.res },
+		Check: func(context.Context) update.Result {
+			r.checks++
+			if r.res2 != nil && r.checks > 1 {
+				return *r.res2
+			}
+			return r.res
+		},
 		Stage: func(_ context.Context, m *update.Manifest) (string, string, error) {
 			r.stages++
 			return "/stage/" + m.Version + "/p.exe", strings.Repeat("c", 64), r.stageErr
@@ -328,5 +335,69 @@ func TestSuccessIsDecidedOnlyAfterTheConfirmTime(t *testing.T) {
 	<-done
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal("a stop before the confirm time must leave the marker for the next start")
+	}
+}
+
+func TestRecheckHeldAfterStageStartsNothing(t *testing.T) {
+	r := newSURig(t, UpdateInstall)
+	r.res2 = &update.Result{Status: update.StatusLatest, Held: true, Detail: "updates are paused for now", Manifest: &update.Manifest{Version: "1.2.0"}}
+	r.u.CheckOnce(context.Background())
+	if r.stages != 1 || r.applies != 0 || r.checks != 2 {
+		t.Fatalf("stages %d applies %d checks %d", r.stages, r.applies, r.checks)
+	}
+	if _, ok := r.marker(t); ok {
+		t.Error("a marker was written")
+	}
+	if s := r.u.Status(); s.State != "held" || !strings.Contains(s.Result, "paused") {
+		t.Fatalf("%+v", s)
+	}
+}
+
+func TestRecheckUnreachableAfterStageStartsNothing(t *testing.T) {
+	r := newSURig(t, UpdateInstall)
+	r.res2 = &update.Result{Status: update.StatusUnreachable, Backoff: true, Detail: "could not reach the update feed"}
+	got := r.u.CheckOnce(context.Background())
+	if r.applies != 0 || !got.Backoff {
+		t.Fatalf("applies %d backoff %v", r.applies, got.Backoff)
+	}
+	if _, ok := r.marker(t); ok {
+		t.Error("a marker was written")
+	}
+	if s := r.u.Status(); s.State != "idle" || !strings.Contains(s.Result, "confirm") {
+		t.Fatalf("%+v", s)
+	}
+}
+
+func TestRecheckOtherReleaseStartsNothing(t *testing.T) {
+	sha := strings.Repeat("a", 64)
+	for name, again := range map[string]*update.Manifest{
+		"newer version":      {Version: "1.3.0", BlackboxExeSHA256: sha},
+		"other program":      {Version: "1.2.0", BlackboxExeSHA256: strings.Repeat("b", 64)},
+		"other recorder zip": {Version: "1.2.0", BlackboxExeSHA256: sha, Assets: map[string]update.Asset{update.AssetBlackbox: {Name: "other.zip"}}},
+	} {
+		r := newSURig(t, UpdateInstall)
+		r.res.Manifest = &update.Manifest{Version: "1.2.0", BlackboxExeSHA256: sha}
+		r.res2 = &update.Result{Status: update.StatusAvailable, Manifest: again}
+		r.u.CheckOnce(context.Background())
+		if r.applies != 0 {
+			t.Errorf("%s: started", name)
+		}
+		if _, ok := r.marker(t); ok {
+			t.Errorf("%s: a marker was written", name)
+		}
+		if s := r.u.Status(); s.State != "idle" {
+			t.Errorf("%s: %+v", name, s)
+		}
+	}
+}
+
+func TestBlackboxUpdateIntervalForChannel(t *testing.T) {
+	var c Config
+	if c.UpdateIntervalFor(update.ChannelStable) != 6*time.Hour || c.UpdateIntervalFor(update.ChannelRC) != 30*time.Minute {
+		t.Errorf("defaults %v %v", c.UpdateIntervalFor(update.ChannelStable), c.UpdateIntervalFor(update.ChannelRC))
+	}
+	c.AutoUpdate = &AutoUpdate{IntervalMinutes: 60}
+	if c.UpdateIntervalFor(update.ChannelStable) != time.Hour || c.UpdateIntervalFor(update.ChannelRC) != time.Hour {
+		t.Error("a configured interval must win")
 	}
 }

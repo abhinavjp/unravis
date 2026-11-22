@@ -19,16 +19,19 @@ import (
 // exists. It downloads nothing and installs nothing; those are later slices and always wait for a click.
 
 const (
-	updateDefaultMinutes = 30
-	updateMinMinutes     = 5
-	updateMaxMinutes     = 7 * 24 * 60
-	updateSettingsLimit  = 4 * 1024
+	// A release candidate looks every 30 minutes; a stable build every 6 hours (a stable fleet does not need to chase a day's work,
+	// and a pause still reaches it because the last look before a start is made fresh).
+	updateDefaultMinutesRC     = 30
+	updateDefaultMinutesStable = 360
+	updateMinMinutes           = 5
+	updateMaxMinutes           = 7 * 24 * 60
+	updateSettingsLimit        = 4 * 1024
 )
 
 // updateFirstDelay is the wait before the first check after start; a variable only so a test can shorten it.
 var updateFirstDelay = 60 * time.Second
 
-// UpdaterSettings is what the person can change. A new install checks automatically every 30 minutes.
+// UpdaterSettings is what the person can change. A new install checks automatically: every 30 minutes (release candidate) or every 6 hours (stable).
 type UpdaterSettings struct {
 	Auto            bool `json:"auto"`
 	IntervalMinutes int  `json:"intervalMinutes"`
@@ -71,14 +74,14 @@ type Updater struct {
 // NewUpdater reads the saved settings from dir (created on first save). keys are the public keys this program trusts.
 func NewUpdater(dir string, keys []update.Key) *Updater {
 	u := &Updater{
-		dir:      dir,
-		settings: UpdaterSettings{Auto: true, IntervalMinutes: updateDefaultMinutes, ApplyAuto: true},
-		wake:     make(chan struct{}, 1),
-		rnd:      rand.New(rand.NewSource(time.Now().UnixNano())),
+		dir:  dir,
+		wake: make(chan struct{}, 1),
+		rnd:  rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	if v, err := update.ParseVersion(version.Version); err == nil {
 		u.channel = update.ChannelOf(v)
 	}
+	u.settings = UpdaterSettings{Auto: true, IntervalMinutes: defaultUpdateMinutes(u.channel), ApplyAuto: true}
 	u.fetcher = &update.Fetcher{
 		Keys: keys, Build: u.channel, Current: version.Version,
 		StatePath: filepath.Join(dir, "state.json"),
@@ -98,20 +101,28 @@ func (u *Updater) loadSettings() {
 	if err != nil {
 		return
 	}
-	s := UpdaterSettings{Auto: true, IntervalMinutes: updateDefaultMinutes, ApplyAuto: true}
+	s := UpdaterSettings{Auto: true, IntervalMinutes: defaultUpdateMinutes(u.channel), ApplyAuto: true}
 	if json.Unmarshal(b, &s) != nil {
 		return
 	}
-	if cleaned, err := cleanUpdaterSettings(s); err == nil {
+	if cleaned, err := cleanUpdaterSettings(s, defaultUpdateMinutes(u.channel)); err == nil {
 		u.settings = cleaned
 	} else {
 		u.settings.Auto = s.Auto // keep the on/off choice; only the bad interval falls back to the default
 	}
 }
 
-func cleanUpdaterSettings(s UpdaterSettings) (UpdaterSettings, error) {
+// defaultUpdateMinutes is the check interval of a channel: stable 6 hours, anything else 30 minutes.
+func defaultUpdateMinutes(channel string) int {
+	if channel == update.ChannelStable {
+		return updateDefaultMinutesStable
+	}
+	return updateDefaultMinutesRC
+}
+
+func cleanUpdaterSettings(s UpdaterSettings, def int) (UpdaterSettings, error) {
 	if s.IntervalMinutes == 0 {
-		s.IntervalMinutes = updateDefaultMinutes
+		s.IntervalMinutes = def
 	}
 	if s.IntervalMinutes < updateMinMinutes || s.IntervalMinutes > updateMaxMinutes {
 		return s, errors.New("the check interval must be between 5 minutes and 7 days")
@@ -121,7 +132,7 @@ func cleanUpdaterSettings(s UpdaterSettings) (UpdaterSettings, error) {
 
 // SetSettings validates, saves and applies new settings. A failed save is an error: the person sees that the choice was not kept.
 func (u *Updater) SetSettings(s UpdaterSettings) (UpdaterSettings, error) {
-	s, err := cleanUpdaterSettings(s)
+	s, err := cleanUpdaterSettings(s, defaultUpdateMinutes(u.channel))
 	if err != nil {
 		return s, err
 	}
@@ -199,13 +210,18 @@ type UpdateNotice struct {
 
 // Status is the last known answer plus the settings. It makes no network call.
 func (u *Updater) Status() UpdateStatus {
+	// The result file is read before the lock is taken: a slow disk must not hold up the check loop and the minute tick.
+	var lastRes *update.ApplyResult
+	if u.resultDir != "" {
+		if r, ok := update.ReadApplyResult(u.resultDir); ok {
+			lastRes = &r
+		}
+	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	st := UpdateStatus{Status: "none", Current: version.Version, Channel: u.channel, Auto: u.settings.Auto, IntervalMinutes: u.settings.IntervalMinutes, ApplyAuto: u.settings.ApplyAuto, InUse: u.InUse()}
-	if u.resultDir != "" {
-		if r, ok := update.ReadApplyResult(u.resultDir); ok {
-			st.Result = &UpdateNotice{Outcome: r.Outcome, From: r.From, To: r.To, Message: r.Message}
-		}
+	if lastRes != nil {
+		st.Result = &UpdateNotice{Outcome: lastRes.Outcome, From: lastRes.From, To: lastRes.To, Message: lastRes.Message}
 	}
 	if u.channel == "" {
 		st.Status = "dev"
@@ -235,7 +251,7 @@ func (u *Updater) Status() UpdateStatus {
 		st.Status = "unreachable"
 	}
 	// A run nobody watched that ended badly: the bar must not go on saying "being applied".
-	if st.Result != nil && st.Result.Outcome != "done" && st.Install != nil && st.Install.State == "launched" && st.Install.Version == st.Result.To && u.resultIsFromThisLaunch() {
+	if st.Result != nil && st.Result.Outcome != "done" && st.Install != nil && st.Install.State == "launched" && st.Install.Version == st.Result.To && u.resultIsFromThisLaunch(lastRes) {
 		c := *st.Install
 		c.State, c.Error = "failed", st.Result.Message
 		st.Install = &c
@@ -372,9 +388,8 @@ func (u *Updater) currentSettings() UpdaterSettings {
 }
 
 // resultIsFromThisLaunch says the note on disk was written after the last successful launch, so it is that run's, not an earlier one's.
-func (u *Updater) resultIsFromThisLaunch() bool {
-	r, ok := update.ReadApplyResult(u.resultDir)
-	if !ok {
+func (u *Updater) resultIsFromThisLaunch(r *update.ApplyResult) bool {
+	if r == nil {
 		return false
 	}
 	u.inst.mu.Lock()

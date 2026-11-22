@@ -58,11 +58,15 @@ func (u *Updater) Close() {
 }
 
 var (
-	errNoUpdate   = errors.New("There is no verified update to install. Check for updates first.")
-	errBusy       = errors.New("A download or install is already running.")
-	errNotReady   = errors.New("The update is not downloaded yet.")
-	errNoInstall  = errors.New("Installing updates is not available in this build.")
-	errFileChange = errors.New("The downloaded file changed after it was checked. It was not started. Download it again.")
+	errNoUpdate  = errors.New("There is no verified update to install. Check for updates first.")
+	errBusy      = errors.New("A download or install is already running.")
+	errNotReady  = errors.New("The update is not downloaded yet.")
+	errNoInstall = errors.New("Installing updates is not available in this build.")
+	// The last look at the feed before a start (the app's own Apply now and the automatic apply both ask).
+	errRecheckHeld    = errors.New("The publisher has put this update on hold. Nothing was started.")
+	errRecheckOffline = errors.New("Could not reach the update feed to confirm this update is still safe. Nothing was started; it will try again.")
+	errRecheckRefused = errors.New("The update feed's answer did not pass its checks, so this update was not started.")
+	errFileChange     = errors.New("The downloaded file changed after it was checked. It was not started. Download it again.")
 )
 
 // availableManifest is the newest verified manifest that is still valid. A later check that failed (offline, bad signature) does
@@ -198,11 +202,25 @@ func (u *Updater) Install() error {
 	u.inst.mu.Unlock()
 	defer func() { u.inst.mu.Lock(); u.inst.busy = false; u.inst.mu.Unlock() }()
 
-	// The hash of a big file and the process start happen outside the lock, so status reads are never held up.
+	// The hash of a big file happens outside the lock, so status reads are never held up. It runs first, so the last look at the
+	// feed is the final step before the start.
 	got, ok := u.dl.Recheck(m, update.AssetSetup)
 	if !ok {
+		u.fileOKClear()
 		u.setInstall(gen, InstallInfo{State: "failed", Version: m.Version, Error: errFileChange.Error()})
 		return errFileChange
+	}
+	// Ask the feed once more right before the start: a pause or a withdrawal that came out while the file was downloading, or since
+	// the last check, must win. Any answer other than "this very file is still on offer" starts nothing (fail closed).
+	m, err := u.recheckFeed(m)
+	if err != nil {
+		return err
+	}
+	u.inst.mu.Lock()
+	changed := u.inst.gen != gen
+	u.inst.mu.Unlock()
+	if changed {
+		return errNotReady // a check during the last look replaced or withdrew the offer
 	}
 	launch := u.launch
 	if u.silent != nil {
@@ -225,4 +243,46 @@ func (u *Updater) setInstall(gen int, info InstallInfo) {
 	if u.inst.gen == gen {
 		u.inst.info = info
 	}
+}
+
+// recheckTimeout bounds the last look at the feed before a setup is started.
+const recheckTimeout = 45 * time.Second
+
+// heldError is errRecheckHeld with the publisher's reason in plain words.
+type heldError struct{ detail string }
+
+func (e heldError) Error() string {
+	if e.detail == "" {
+		return errRecheckHeld.Error()
+	}
+	return "The publisher has put this update on hold: " + e.detail + ". Nothing was started."
+}
+func (e heldError) Is(target error) bool { return target == errRecheckHeld }
+
+// recheckFeed asks the feed again and returns the manifest to start, or the reason nothing may start. Call with no lock held.
+func (u *Updater) recheckFeed(m *update.Manifest) (*update.Manifest, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), recheckTimeout)
+	defer cancel()
+	res, ok := u.checkOnce(ctx)
+	if !ok {
+		return nil, errRecheckOffline
+	}
+	switch res.Status {
+	case update.StatusAvailable:
+		if res.Manifest != nil && sameSetup(m, res.Manifest) {
+			return res.Manifest, nil
+		}
+		return nil, errNotReady // a newer release replaced it; the old download was dropped
+	case update.StatusLatest:
+		if res.Held && res.ViaMirror {
+			return nil, errRecheckOffline // only the backup address answered: not a hold by the publisher
+		}
+		if res.Held {
+			return nil, heldError{res.Detail}
+		}
+		return nil, errNoUpdate
+	case update.StatusRejected:
+		return nil, errRecheckRefused
+	}
+	return nil, errRecheckOffline
 }
