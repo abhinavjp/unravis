@@ -66,6 +66,6 @@ test('WhenGroup keeps its window logic: quick-range repair state, interval notes
   assert.match(src, /if \(dateInputsValid\) untrack\(/);
   assert.match(src, /bucketForWindows\(query\.start, query\.end, query\.baselineStart, query\.baselineEnd\)/);
   assert.match(src, /intervalNote\.set\(typed \? intervalReplacedNote\(previous, query\) : ''\)/);
-  assert.match(src, /fromZonedParts\(datePart, timePart, zone\)/);
+  assert.match(src, /fromZonedParts\(datePart, timePart, zone, query\[field\]\)/);
   assert.doesNotMatch(src, /onScopeChange/);
 });
