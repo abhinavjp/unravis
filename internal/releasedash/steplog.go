@@ -95,11 +95,37 @@ type LogLine struct {
 
 // ReadLog reads and redacts a saved log. names are the machine and user names to hide too. For a run log that is too long, the
 // newest lines are kept. cut tells the page the log was shortened.
+//
+// The answer is kept for the next call while the file is unchanged (same size and time), because the page asks for a long log one
+// page at a time and every page used to unpack, redact and index the whole log again (a 64 MiB CI log took 22 s and 1.4 GB each time).
+// See memo for how it is kept. The returned lines are shared: callers must not change them.
 func ReadLog(dir, name string, names []string) (lines []LogLine, cut bool, err error) {
 	if !validLogName(name) {
 		return nil, false, os.ErrNotExist
 	}
-	f, err := openShared(filepath.Join(dir, logsDir, name))
+	path := filepath.Join(dir, logsDir, name)
+	fi, err := os.Stat(path) //nolint:gosec // the name passed validLogName above; the folder is the release data folder
+	if err != nil {
+		return nil, false, err
+	}
+	key := logKey{path: path, names: strings.Join(names, "\x00"), size: fi.Size(), mod: fi.ModTime().UnixNano()}
+	r, err := logCache.get(key, ciLogRE.MatchString(name), func(r readLogResult) int { return len(r.lines) + 1 }, func() (readLogResult, error) {
+		l, c, e := readLogFile(path, name, names)
+		return readLogResult{l, c}, e
+	})
+	return r.lines, r.cut, err
+}
+
+type readLogResult struct {
+	lines []LogLine
+	cut   bool
+}
+
+// 24 logs and 600 000 lines: about one full CI log plus the run logs of a release, which the detail page reads on every poll.
+var logCache = memo[readLogResult]{maxItems: 24, maxWeight: 600000}
+
+func readLogFile(path, name string, names []string) (lines []LogLine, cut bool, err error) {
+	f, err := openShared(path)
 	if err != nil {
 		return nil, false, err
 	}
