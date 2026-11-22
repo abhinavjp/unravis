@@ -8,11 +8,15 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/racedetect"
 )
 
 // secfix M1: a second-by-second cron repeated over many rows must hit the
 // per-file work budget and fail fast with a plain LimitError.
 func TestSecondCronRowsHitWorkBudget(t *testing.T) {
+	if racedetect.Enabled {
+		t.Skip("time-budget test: the race detector makes the 20 s bound meaningless (took 39 s under -race, BL-441a); the normal run checks it")
+	}
 	var sb strings.Builder
 	sb.WriteString(hfHead)
 	for i := 0; i < 5000; i++ {

@@ -879,7 +879,10 @@ func TestCancelBetweenSteps(t *testing.T) {
 			cancel()
 		}
 	}
-	p, _ := e.r.NewPlan(OpInstall, e.withBlackbox(e.machineOpts(), false), UninstallOptions{}, nil)
+	p, err := e.r.NewPlan(OpInstall, e.withBlackbox(e.machineOpts(), false), UninstallOptions{}, nil)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
 	res := e.r.Execute(ctx, p)
 	if res.Outcome != OutcomeCancelled {
 		t.Fatalf("%+v", res)

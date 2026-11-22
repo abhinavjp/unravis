@@ -14,6 +14,7 @@ import (
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/racedetect"
 )
 
 var seriesT0 = time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -61,6 +62,9 @@ func seriesQuery(spanMs, bucketMs int64, sel ...string) casestore.SeriesQuery {
 // 3M events, one per millisecond, in 50 one-minute buckets. The value of event
 // i is i%1000 plus ten for every bucket, so each bucket has an exact mean.
 func TestSeriesThreeMillionEventsGiveExactBucketStatistics(t *testing.T) {
+	if racedetect.Enabled {
+		t.Skip("scan-budget test: the race detector makes the 3M-event scan too slow for the budget (BL-441a); the normal run checks it")
+	}
 	const total, bucket = 3_000_000, 60_000
 	g := &genCase{n: total, make: func(i int) evidence.Event {
 		return evidence.Event{
