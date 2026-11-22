@@ -164,6 +164,21 @@ mod tests {
         assert!(!pipe_exists(r"\\.\pipe\unravis.ui.00000000000000000000000000000000"));
     }
 
+    /// Failure help: print the tail of every log file the sidecar wrote under `dir`.
+    fn dump_logs(dir: &Path) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                dump_logs(&p);
+            } else if p.extension().is_some_and(|x| x == "log" || x == "txt") {
+                let t = std::fs::read_to_string(&p).unwrap_or_default();
+                let tail: String = t.chars().rev().take(4000).collect::<Vec<_>>().into_iter().rev().collect();
+                eprintln!("--- {} ---\n{tail}", p.display());
+            }
+        }
+    }
+
     /// The real path: the real unravis.exe built by CI (UNRAVIS_TEST_SIDECAR) is started inside the job, a second call attaches to it,
     /// and closing the job ends it. Skipped when the variable is not set (no Go build on the machine).
     #[test]
@@ -197,7 +212,10 @@ mod tests {
             name: second.record.ui.clone(),
             expect: crate::pipe_peer::ServerExpect { pid, image: exe.clone(), start_time: second.record.start_time.clone() },
         };
-        let token = client.hello().expect("hello over the ui pipe");
+        let token = client.hello().unwrap_or_else(|e| {
+            dump_logs(&root);
+            panic!("hello over the ui pipe: {e:?}");
+        });
         assert!(client.health(&token), "GET /api/version with the token answers 200");
         assert!(!client.health("not-the-token-not-the-token-xx"), "a wrong token is refused");
         let wrong = crate::pipe_peer::Client {
