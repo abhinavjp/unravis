@@ -93,7 +93,7 @@ A permanent release tagged `update-feed` holds two small files, replaced on each
 ## 6. Client side: check (Unravis app)
 
 - **Where:** `internal/update` (new), used by the existing server.
-- **Default: ON, every 30 minutes** (D1; overturns A52). The user can change the interval or turn it off in Settings. Minimum allowed 5 min. After the stable version is launched we raise the default (see D9). Mode: `Off`, `Notify`, `Notify + download` (default: Notify).
+- **Default: ON, every 30 minutes for a release candidate and every 6 hours for a stable build** (D1 and D9, built; overturns A52). The user can change the interval or turn it off in Settings. Minimum allowed 5 min. After the stable version is launched we raise the default (see D9). Mode: `Off`, `Notify`, `Notify + download` (default: Notify).
 - **Cadence:** first check 60 s after start, then every interval plus random jitter of up to 10%. Only while the app runs. No service, no scheduled task. Cost: one sleeping timer, one ~1 KB request per 30 min (about 50 KB/day worst case, less with `304`).
 - **Channels:** `stable` or `rc`. Default = channel of the running build (an rc build stays on rc). The channel inside the signed manifest must equal the one asked for.
 - **Proxy:** Windows system proxy. On error: "Could not check", retry next cycle, back off x2 up to 6 h, never loop.
