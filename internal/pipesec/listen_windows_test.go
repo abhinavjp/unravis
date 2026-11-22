@@ -5,6 +5,7 @@ package pipesec
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -126,19 +127,24 @@ func TestAcceptedConnCarriesPeer(t *testing.T) {
 	}
 }
 
+// TestFirstInstanceWins: a squatter that already serves the name (max 16, one instance, so the pool limit does not get in the way) must
+// make Listen fail on instance 1 with ERROR_ACCESS_DENIED. Without FILE_FLAG_FIRST_PIPE_INSTANCE Listen would take instance 1 and
+// only fail later, on the pool limit (ERROR_PIPE_BUSY).
 func TestFirstInstanceWins(t *testing.T) {
 	name := pipesectest.Name(t)
-	listen(t, name, selfPolicy(t), 0)
-	if l2, err := Listen(ListenConfig{Name: name, Policy: selfPolicy(t)}); err == nil {
-		l2.Close()
-		t.Fatal("a second Listen took the same name")
-	}
-	// Even with the pool freed up one slot, FILE_FLAG_FIRST_PIPE_INSTANCE still refuses a new "first" instance.
 	namep, _ := windows.UTF16PtrFromString(name)
-	h, err := windows.CreateNamedPipe(namep, windows.PIPE_ACCESS_DUPLEX|windows.FILE_FLAG_FIRST_PIPE_INSTANCE, pipeMode, 16, 4096, 4096, 0, nil)
+	h, err := windows.CreateNamedPipe(namep, windows.PIPE_ACCESS_DUPLEX, pipeMode, DefaultMaxInstances, 4096, 4096, 0, nil)
+	if err != nil {
+		t.Fatalf("squatter: %v", err)
+	}
+	defer windows.CloseHandle(h)
+	l, err := Listen(ListenConfig{Name: name, Policy: selfPolicy(t)})
 	if err == nil {
-		windows.CloseHandle(h)
-		t.Fatal("CreateNamedPipe with the first-instance flag succeeded on a taken name")
+		l.Close()
+		t.Fatal("Listen took a name that something else already serves")
+	}
+	if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		t.Fatalf("want ERROR_ACCESS_DENIED from the first-instance flag, got %v", err)
 	}
 }
 
@@ -156,20 +162,59 @@ func TestSecondCreateIsBusy(t *testing.T) {
 	}
 }
 
-func TestRemoteClientsRejectedFlagReadBack(t *testing.T) {
-	// No documented API reads PIPE_REJECT_REMOTE_CLIENTS back from an instance, so this checks the mode the listener creates with and
-	// that a loopback network-path open (what a remote client would use) does not reach the pipe.
-	if pipeMode&windows.PIPE_REJECT_REMOTE_CLIENTS == 0 {
-		t.Fatal("listener mode lacks PIPE_REJECT_REMOTE_CLIENTS")
-	}
-	name := pipesectest.Name(t)
-	listen(t, name, selfPolicy(t), 0)
+// openLoopbackUNC opens the pipe through the SMB loopback path, which is how a remote client reaches a pipe.
+func openLoopbackUNC(name string) error {
 	unc, _ := windows.UTF16PtrFromString(`\\localhost\pipe\` + strings.TrimPrefix(name, PipePrefix))
 	h, err := windows.CreateFile(unc, clientAccess, 0, nil, windows.OPEN_EXISTING, 0, 0)
 	if err == nil {
 		windows.CloseHandle(h)
-		t.Fatal("pipe reachable through a network path")
 	}
+	return err
+}
+
+// TestRejectRemoteClients creates an instance through the listener's own create path, with a test-only DACL that lets Everyone in, so
+// the DACL cannot be the reason a network open fails. A control pipe made without PIPE_REJECT_REMOTE_CLIENTS must be reachable the same
+// way; if it is not (SMB loopback or the Server service is unavailable) the test cannot say anything and skips.
+func TestRejectRemoteClients(t *testing.T) {
+	sd, err := windows.SecurityDescriptorFromString("D:P(A;;GA;;;WD)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sa := &windows.SecurityAttributes{SecurityDescriptor: sd}
+	sa.Length = uint32(unsafe.Sizeof(*sa))
+
+	ctl := pipesectest.Name(t) + "-ctl"
+	ctlp, _ := windows.UTF16PtrFromString(ctl)
+	hc, err := windows.CreateNamedPipe(ctlp, windows.PIPE_ACCESS_DUPLEX, pipeMode&^windows.PIPE_REJECT_REMOTE_CLIENTS, 1, 4096, 4096, 0, sa)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(hc)
+	if err := openLoopbackUNC(ctl); err != nil {
+		skipOrFail(t, "control pipe not reachable through \\\\localhost, cannot test the reject flag: "+err.Error())
+		return
+	}
+
+	name := pipesectest.Name(t)
+	namep, _ := windows.UTF16PtrFromString(name)
+	l := &listener{name: name, namep: namep, sd: sd, sa: sa}
+	h, err := l.create(true, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(h)
+	if err := openLoopbackUNC(name); !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		t.Fatalf("network-path open of a listener instance: want ERROR_ACCESS_DENIED, got %v", err)
+	}
+}
+
+// skipOrFail skips locally but fails on CI, where a skip would hide a test that never runs.
+func skipOrFail(t *testing.T, msg string) {
+	t.Helper()
+	if os.Getenv("CI") != "" {
+		t.Fatal(msg)
+	}
+	t.Skip(msg)
 }
 
 func TestDaclNoEveryone(t *testing.T) {
@@ -183,8 +228,8 @@ func TestDaclNoEveryone(t *testing.T) {
 	if err != nil || dacl == nil {
 		t.Fatalf("no DACL (null DACL means Everyone): %v", err)
 	}
-	if dacl.AceCount != 1 {
-		t.Fatalf("want a single ACE, got %d", dacl.AceCount)
+	if dacl.AceCount != 2 {
+		t.Fatalf("want the logon SID ACE and the OWNER RIGHTS ACE, got %d ACEs", dacl.AceCount)
 	}
 	var ace *windows.ACCESS_ALLOWED_ACE
 	if err := windows.GetAce(dacl, 0, &ace); err != nil {
@@ -206,6 +251,74 @@ func TestDaclNoEveryone(t *testing.T) {
 		if sid.Equals(b) {
 			t.Fatalf("ACE grants %s", bad)
 		}
+	}
+	var oace *windows.ACCESS_ALLOWED_ACE
+	if err := windows.GetAce(dacl, 1, &oace); err != nil {
+		t.Fatal(err)
+	}
+	ow, _ := windows.StringToSid("S-1-3-4") // OWNER RIGHTS
+	osid := (*windows.SID)(unsafe.Pointer(&oace.SidStart))
+	if oace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !osid.Equals(ow) || uint32(oace.Mask) != ownerMask {
+		t.Fatalf("second ACE: type %d sid %s mask %#x", oace.Header.AceType, osid, oace.Mask)
+	}
+}
+
+// TestOwnerCannotWriteDAC: the owner's implicit WRITE_DAC must be gone, or the same user in another logon session could rewrite the DACL.
+func TestOwnerCannotWriteDAC(t *testing.T) {
+	name := pipesectest.Name(t)
+	listen(t, name, selfPolicy(t), 0)
+	namep, _ := windows.UTF16PtrFromString(name)
+	for _, access := range []uint32{windows.WRITE_DAC, windows.WRITE_OWNER} {
+		h, err := windows.CreateFile(namep, access, 0, nil, windows.OPEN_EXISTING, 0, 0)
+		if err == nil {
+			windows.CloseHandle(h)
+			t.Fatalf("pipe opened with access %#x", access)
+		}
+		if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			t.Fatalf("access %#x: want ERROR_ACCESS_DENIED, got %v", access, err)
+		}
+	}
+}
+
+// TestDeadlineWakesPendingRead: net/http sets a deadline in the past to stop a read that is already blocked.
+func TestDeadlineWakesPendingRead(t *testing.T) {
+	name := pipesectest.Name(t)
+	l := listen(t, name, selfPolicy(t), 1)
+	srv := make(chan net.Conn, 1)
+	go func() {
+		if c, err := l.Accept(); err == nil {
+			srv <- c
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cc, _, err := DialVerified(ctx, name, selfServerPolicy(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cc.Close()
+	var sc net.Conn
+	select {
+	case sc = <-srv:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no accept")
+	}
+	defer sc.Close()
+	for _, c := range []net.Conn{sc, cc} {
+		res := make(chan error, 1)
+		go func() { _, err := c.Read(make([]byte, 1)); res <- err }()
+		time.Sleep(200 * time.Millisecond) // let the read block with no deadline set
+		c.SetReadDeadline(time.Now().Add(-time.Second))
+		select {
+		case err := <-res:
+			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				t.Fatalf("want os.ErrDeadlineExceeded, got %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("a deadline set during a blocked Read did not wake it")
+		}
+		// Clear the deadline again.
+		c.SetReadDeadline(time.Time{})
 	}
 }
 
@@ -335,9 +448,10 @@ func TestDialBusyHonoursContext(t *testing.T) {
 
 func TestOtherLogonDenied(t *testing.T) {
 	const user = "unravisptest"
-	pass := "Zq9!" + strings.ReplaceAll(pipesectest.Name(t)[len(PipePrefix):], "-", "x")
-	if out, err := exec.Command("net", "user", user, pass, "/add").CombinedOutput(); err != nil {
-		t.Skipf("cannot create a second local user (needs an elevated runner); run on the live PC instead: %v %s", err, out)
+	pass := fmt.Sprintf("Zq9!Aa%08d", time.Now().UnixNano()%100000000) // 14 characters: no "longer than 14" prompt
+	exec.Command("net", "user", user, "/delete").Run()                 // a leftover from an aborted run
+	if out, err := exec.Command("net", "user", user, pass, "/add", "/Y").CombinedOutput(); err != nil {
+		skipOrFail(t, fmt.Sprintf("cannot create a second local user (needs an elevated runner); run on the live PC instead: %v %s", err, out))
 	}
 	t.Cleanup(func() { exec.Command("net", "user", user, "/delete").Run() })
 
@@ -383,7 +497,7 @@ func TestOtherLogonDenied(t *testing.T) {
 	}()
 	r := <-ch
 	if r.skip != "" {
-		t.Skip(r.skip + " (then verify with runas /user on the live PC)")
+		skipOrFail(t, r.skip+" (then verify with runas /user on the live PC)")
 	}
 	if !errors.Is(r.err, windows.ERROR_ACCESS_DENIED) {
 		t.Fatalf("second logon: want ERROR_ACCESS_DENIED, got %v", r.err)

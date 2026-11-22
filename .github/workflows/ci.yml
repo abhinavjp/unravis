@@ -221,7 +221,12 @@ jobs:
     # BL-330. The Windows-only tests of the desktop sidecar's pipe code (internal/pipesec: first instance, full instance pool,
     # logon-SID DACL, remote reject, peer and server checks). Later sidecar items (BL-301 and on) add their packages here.
     # Also builds with the `e2e` tag, which only tests use, so that variant cannot rot.
-    runs-on: windows-2022
+    # Matrix windows-2022 and windows-2025 for the pipe tests, as spec 08 D2 says. The Windows `build` job also runs these tests (go test ./...).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - name: Check out the code

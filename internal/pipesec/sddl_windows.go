@@ -29,11 +29,17 @@ func logonSID(tok windows.Token) (*windows.SID, error) {
 	return nil, fmt.Errorf("pipesec: token has no logon SID")
 }
 
-// pipeSDDL builds the one DACL both pipes use: a single allow entry for the current logon SID. No Everyone, no network, no null DACL.
+// ownerMask is READ_CONTROL. An OWNER RIGHTS (OW) entry stops Windows from giving the owner implicit READ_CONTROL and WRITE_DAC; without
+// it the same user in another logon session could open an idle instance with WRITE_DAC and rewrite the DACL. READ_CONTROL stays so the
+// DACL can be read back; WRITE_DAC and WRITE_OWNER are never granted.
+const ownerMask = 0x20000
+
+// pipeSDDL builds the one DACL both pipes use: an allow entry for the current logon SID, and an OWNER RIGHTS entry that grants only
+// READ_CONTROL. No Everyone, no network, no null DACL.
 func pipeSDDL() (string, error) {
 	sid, err := logonSID(windows.GetCurrentProcessToken())
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("D:P(A;;0x%x;;;%s)", pipeMask, sid.String()), nil
+	return fmt.Sprintf("D:P(A;;0x%x;;;%s)(A;;0x%x;;;OW)", pipeMask, sid.String(), ownerMask), nil
 }

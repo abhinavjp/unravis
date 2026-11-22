@@ -91,7 +91,7 @@ func impersonatedSIDs(h windows.Handle) (user, logon string, ok bool) {
 }
 
 // identify describes the other end of the pipe handle h. client is true on the server side (the other end is the client). The
-// process handle stays open until the returned release func runs, so the PID cannot be reused while the checks run.
+// process handle stays open until the returned release func runs, so the PID cannot be reused while the checks run. The PID is read before OpenProcess, so a tiny reuse window remains before the handle is taken.
 func identify(h windows.Handle, client bool) (Peer, func(), error) {
 	var p Peer
 	var err error

@@ -37,8 +37,9 @@ type pipeConn struct {
 	wov  *windows.Overlapped
 	wbuf []byte
 
-	dmu    sync.Mutex
-	rd, wd time.Time
+	dmu          sync.Mutex
+	rd, wd       time.Time
+	rwake, wwake windows.Handle // signalled when a deadline changes, so a pending wait re-reads it
 }
 
 func newPipeConn(h windows.Handle, name string, peer Peer, onDone func()) (*pipeConn, error) {
@@ -51,7 +52,20 @@ func newPipeConn(h windows.Handle, name string, peer Peer, onDone func()) (*pipe
 		windows.CloseHandle(re)
 		return nil, err
 	}
-	return &pipeConn{h: h, name: name, peer: peer, onDone: onDone,
+	rw, err := windows.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
+		windows.CloseHandle(re)
+		windows.CloseHandle(we)
+		return nil, err
+	}
+	ww, err := windows.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
+		windows.CloseHandle(re)
+		windows.CloseHandle(we)
+		windows.CloseHandle(rw)
+		return nil, err
+	}
+	return &pipeConn{h: h, name: name, peer: peer, onDone: onDone, rwake: rw, wwake: ww,
 		rov: &windows.Overlapped{HEvent: re}, wov: &windows.Overlapped{HEvent: we},
 		rbuf: make([]byte, pipeBuffer), wbuf: make([]byte, pipeBuffer)}, nil
 }
@@ -63,6 +77,7 @@ func (c *pipeConn) RemoteAddr() net.Addr { return pipeAddr(c.name) }
 func (c *pipeConn) SetDeadline(t time.Time) error {
 	c.dmu.Lock()
 	c.rd, c.wd = t, t
+	c.wake(true, true)
 	c.dmu.Unlock()
 	return nil
 }
@@ -70,6 +85,7 @@ func (c *pipeConn) SetDeadline(t time.Time) error {
 func (c *pipeConn) SetReadDeadline(t time.Time) error {
 	c.dmu.Lock()
 	c.rd = t
+	c.wake(true, false)
 	c.dmu.Unlock()
 	return nil
 }
@@ -77,8 +93,23 @@ func (c *pipeConn) SetReadDeadline(t time.Time) error {
 func (c *pipeConn) SetWriteDeadline(t time.Time) error {
 	c.dmu.Lock()
 	c.wd = t
+	c.wake(false, true)
 	c.dmu.Unlock()
 	return nil
+}
+
+// wake signals the pending waits so they re-read their deadline (net/http relies on this: it sets a deadline in the past to stop a
+// background read). Caller holds dmu; Close closes the events under dmu, after closed is set.
+func (c *pipeConn) wake(read, write bool) {
+	if c.closed.Load() {
+		return
+	}
+	if read {
+		windows.SetEvent(c.rwake)
+	}
+	if write {
+		windows.SetEvent(c.wwake)
+	}
 }
 
 func (c *pipeConn) waitMillis(read bool) (uint32, bool) {
@@ -110,18 +141,30 @@ func (c *pipeConn) finish(ov *windows.Overlapped, started error, n uint32, read 
 	if c.closed.Load() {
 		windows.CancelIoEx(c.h, ov)
 	}
-	ms, ok := c.waitMillis(read)
-	timedOut := !ok
-	if ok {
-		r, err := windows.WaitForSingleObject(ov.HEvent, ms)
+	wake := c.rwake
+	if !read {
+		wake = c.wwake
+	}
+	timedOut := false
+	for {
+		ms, ok := c.waitMillis(read)
+		if !ok {
+			timedOut = true
+			windows.CancelIoEx(c.h, ov)
+			break
+		}
+		idx, err := windows.WaitForMultipleObjects([]windows.Handle{ov.HEvent, wake}, false, ms)
 		if err != nil {
 			windows.CancelIoEx(c.h, ov)
-		} else if r == uint32(windows.WAIT_TIMEOUT) {
-			timedOut = true
+			break
 		}
-	}
-	if timedOut {
-		windows.CancelIoEx(c.h, ov)
+		if idx == windows.WAIT_OBJECT_0 {
+			break
+		}
+		if idx == windows.WAIT_OBJECT_0+1 {
+			windows.ResetEvent(wake)
+		}
+		// A changed deadline or a timeout slice: loop and read the deadline again.
 	}
 	err := windows.GetOverlappedResult(c.h, ov, &n, true)
 	runtime.KeepAlive(ov)
@@ -212,8 +255,13 @@ func (c *pipeConn) Close() error {
 	windows.CloseHandle(c.wov.HEvent)
 	c.wmu.Unlock()
 	c.rmu.Unlock()
+	c.dmu.Lock()
+	windows.CloseHandle(c.rwake)
+	windows.CloseHandle(c.wwake)
+	c.dmu.Unlock()
 	if c.onDone != nil {
-		c.onDone()
+		// release flushes and disconnects (up to about 4 s); do not make Close wait for it.
+		go c.onDone()
 		return nil
 	}
 	return windows.CloseHandle(c.h)
