@@ -100,7 +100,9 @@ func (h *handler) serveLaunch(w http.ResponseWriter, r *http.Request) {
 	// request from some web page is refused before it counts against the limit: otherwise a page could use up the whole minute
 	// with <img src="http://127.0.0.1:port/launch?c=x"> and the real link would answer 404 (sweep WEB-1). Clients that send no
 	// such header (a terminal, the tray, Edge --app) are not affected.
-	if dest := r.Header.Get("Sec-Fetch-Dest"); dest != "" && dest != "document" {
+	// Chrome's speculative loads (prefetch, prerender) ask for a document too but carry Sec-Purpose: they would spend a try, or even the
+	// one-time code, for a page nobody opened.
+	if dest := r.Header.Get("Sec-Fetch-Dest"); (dest != "" && dest != "document") || r.Header.Get("Sec-Purpose") != "" {
 		http.NotFound(w, r)
 		return
 	}

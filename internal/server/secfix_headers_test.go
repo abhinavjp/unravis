@@ -147,6 +147,16 @@ func TestLaunchLimitIsNotSpentByWebPageSubrequests(t *testing.T) {
 		if got := req("image"); got != http.StatusNotFound {
 			t.Fatalf("image request = %d, want 404", got)
 		}
+		// A speculative prefetch or prerender is a "document" too, but carries Sec-Purpose.
+		r := httptest.NewRequest(http.MethodGet, launchPath+"?c="+code, nil)
+		r.Host = "127.0.0.1:8765"
+		r.Header.Set("Sec-Fetch-Dest", "document")
+		r.Header.Set("Sec-Purpose", "prefetch")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("prefetch = %d, want 404 (and the one-time code must stay unspent)", w.Code)
+		}
 	}
 	r := httptest.NewRequest(http.MethodGet, launchPath+"?c="+code, nil)
 	r.Host = "127.0.0.1:8765"
