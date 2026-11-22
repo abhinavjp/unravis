@@ -1,73 +1,59 @@
-//! Refuse-administrator decision (BL-304 on the Go side, BL-306 here). The shell never runs elevated: a process with an admin token
-//! can be steered by anything that talks to its WebView, and the data lives per user.
+//! Refuse-administrator decision. Same rule as the Go side (`elevationDecision` in cmd/audit-explorer/gate_windows.go, spec 01 D13):
+//! only a FULL token is refused, and then only when it is flagged elevated or its integrity level is High or above. Token type
+//! "default" (UAC off, or the built-in Administrator) runs, whatever its flag. An unreadable token counts as elevated.
 
 /// Facts the shell reads from its own token (the Windows code fills this in).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokenFacts {
+    /// `TokenElevationType` is `TokenElevationTypeFull`.
+    pub full_token: bool,
     /// `TokenElevation.TokenIsElevated` is non-zero.
     pub elevated: bool,
-    /// The user is in the Administrators group but the token is the filtered one (normal UAC).
-    pub admin_member_filtered: bool,
-    /// UAC is off (`EnableLUA` = 0) and the user is an administrator: every process is full-admin.
-    pub uac_off_admin: bool,
+    /// The token's integrity level is High (0x3000) or above.
+    pub integrity_high: bool,
+}
+
+impl TokenFacts {
+    /// What the shell uses when any token read fails.
+    pub const UNREADABLE: TokenFacts = TokenFacts { full_token: true, elevated: true, integrity_high: true };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
     Run,
-    Refuse(Reason),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reason {
-    Elevated,
-    UacOffAdmin,
+    Refuse,
 }
 
 /// Exit code of the shell when it refuses (spec 01: 77 = administrator).
 pub const EXIT_ADMIN: i32 = 77;
 
-pub fn decide(f: TokenFacts) -> Decision {
-    if f.uac_off_admin {
-        return Decision::Refuse(Reason::UacOffAdmin);
-    }
-    if f.elevated {
-        return Decision::Refuse(Reason::Elevated);
-    }
-    // A filtered admin token is the normal case on a UAC machine: it runs as a standard user.
-    Decision::Run
-}
+pub const MESSAGE: &str = "Unravis does not run as administrator. Start it from a normal window.";
 
-pub fn message(r: Reason) -> &'static str {
-    match r {
-        Reason::Elevated => "Unravis does not run as administrator. Start it from a normal window.",
-        Reason::UacOffAdmin => {
-            "Unravis does not run when every program has administrator rights (UAC is off). Turn UAC on or use a standard user."
-        }
-    }
+pub fn decide(f: TokenFacts) -> Decision {
+    if f.full_token && (f.elevated || f.integrity_high) { Decision::Refuse } else { Decision::Run }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn f(elevated: bool, admin_member_filtered: bool, uac_off_admin: bool) -> TokenFacts {
-        TokenFacts { elevated, admin_member_filtered, uac_off_admin }
+    fn f(full_token: bool, elevated: bool, integrity_high: bool) -> TokenFacts {
+        TokenFacts { full_token, elevated, integrity_high }
     }
 
     #[test]
     fn elevation_decision_table() {
         assert_eq!(decide(f(false, false, false)), Decision::Run, "standard user");
-        assert_eq!(decide(f(false, true, false)), Decision::Run, "admin with UAC, filtered token");
-        assert_eq!(decide(f(true, false, false)), Decision::Refuse(Reason::Elevated));
-        assert_eq!(decide(f(true, true, false)), Decision::Refuse(Reason::Elevated));
-        assert_eq!(decide(f(false, false, true)), Decision::Refuse(Reason::UacOffAdmin));
-        assert_eq!(decide(f(true, false, true)), Decision::Refuse(Reason::UacOffAdmin), "UAC off: the more specific message");
+        assert_eq!(decide(f(false, false, false)), Decision::Run, "admin with UAC, filtered (limited) token");
+        assert_eq!(decide(f(false, true, true)), Decision::Run, "UAC off or built-in Administrator: type default, runs like the Go side");
+        assert_eq!(decide(f(true, true, true)), Decision::Refuse, "elevated full token");
+        assert_eq!(decide(f(true, true, false)), Decision::Refuse, "full token flagged elevated");
+        assert_eq!(decide(f(true, false, true)), Decision::Refuse, "full token at high integrity");
+        assert_eq!(decide(f(true, false, false)), Decision::Run, "full token that is neither flagged nor high");
     }
 
     #[test]
-    fn every_reason_has_a_message() {
-        assert!(message(Reason::Elevated).contains("administrator"));
-        assert!(message(Reason::UacOffAdmin).contains("UAC"));
+    fn unreadable_token_is_refused() {
+        assert_eq!(decide(TokenFacts::UNREADABLE), Decision::Refuse);
     }
 }

@@ -15,10 +15,10 @@ mod spawn;
 
 #[cfg(windows)]
 fn main() {
-    use ipc_core::elevation::{Decision, EXIT_ADMIN, decide, message};
+    use ipc_core::elevation::{Decision, EXIT_ADMIN, MESSAGE, decide};
 
-    if let Decision::Refuse(why) = decide(elevation::token_facts()) {
-        elevation::show(message(why));
+    if decide(elevation::token_facts()) == Decision::Refuse {
+        elevation::show(MESSAGE);
         std::process::exit(EXIT_ADMIN);
     }
     let backend = match locator::attach_or_spawn() {

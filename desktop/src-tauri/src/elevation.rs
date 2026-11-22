@@ -4,57 +4,61 @@ use ipc_core::elevation::TokenFacts;
 use std::mem::{size_of, zeroed};
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 use windows_sys::Win32::Security::{
-    CheckTokenMembership, CreateWellKnownSid, GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation, TokenElevationType,
-    WinBuiltinAdministratorsSid,
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TOKEN_ELEVATION, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenElevation,
+    TokenElevationType, TokenIntegrityLevel,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
 
-const ELEVATION_TYPE_DEFAULT: i32 = 1;
+const ELEVATION_TYPE_FULL: i32 = 2;
+const INTEGRITY_HIGH: u32 = 0x3000;
 
-/// Fails closed: when the token cannot be read the shell counts as elevated and refuses.
+/// Fails closed: when any read fails the shell counts as elevated and refuses.
 pub fn token_facts() -> TokenFacts {
-    let closed = TokenFacts { elevated: true, admin_member_filtered: false, uac_off_admin: false };
     unsafe {
         let mut tok: HANDLE = std::ptr::null_mut();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut tok) == 0 {
-            return closed;
+            return TokenFacts::UNREADABLE;
         }
-        let mut elev: TOKEN_ELEVATION = zeroed();
-        let mut n = 0u32;
-        let ok1 = GetTokenInformation(
-            tok,
-            TokenElevation,
-            (&mut elev as *mut TOKEN_ELEVATION).cast(),
-            size_of::<TOKEN_ELEVATION>() as u32,
-            &mut n,
-        );
-        let mut kind: i32 = 0;
-        let ok2 = GetTokenInformation(tok, TokenElevationType, (&mut kind as *mut i32).cast(), size_of::<i32>() as u32, &mut n);
+        let facts = read(tok);
         CloseHandle(tok);
-        if ok1 == 0 || ok2 == 0 {
-            return closed;
-        }
-        let admin = is_admin_member();
-        TokenFacts {
-            elevated: elev.TokenIsElevated != 0,
-            admin_member_filtered: kind == 3 && admin,
-            // Default type plus administrator membership: no UAC split, so every program runs with the full token.
-            uac_off_admin: kind == ELEVATION_TYPE_DEFAULT && admin,
-        }
+        facts.unwrap_or(TokenFacts::UNREADABLE)
     }
 }
 
-fn is_admin_member() -> bool {
-    let mut sid = [0u8; 68];
-    let mut len = sid.len() as u32;
+unsafe fn read(tok: HANDLE) -> Option<TokenFacts> {
     unsafe {
-        if CreateWellKnownSid(WinBuiltinAdministratorsSid, std::ptr::null_mut(), sid.as_mut_ptr().cast(), &mut len) == 0 {
-            return false;
+        let mut n = 0u32;
+        let mut elev: TOKEN_ELEVATION = zeroed();
+        if GetTokenInformation(tok, TokenElevation, (&mut elev as *mut TOKEN_ELEVATION).cast(), size_of::<TOKEN_ELEVATION>() as u32, &mut n)
+            == 0
+        {
+            return None;
         }
-        let mut member = 0;
-        // A null token asks about the effective token of the calling thread. For a filtered token the group is deny-only, so this is false.
-        CheckTokenMembership(std::ptr::null_mut(), sid.as_mut_ptr().cast(), &mut member) != 0 && member != 0
+        let mut kind: i32 = 0;
+        if GetTokenInformation(tok, TokenElevationType, (&mut kind as *mut i32).cast(), size_of::<i32>() as u32, &mut n) == 0 {
+            return None;
+        }
+        // TOKEN_MANDATORY_LABEL is a pointer to a SID that follows it in the same buffer; 256 bytes is far more than any label.
+        let mut buf = [0u64; 32];
+        if GetTokenInformation(tok, TokenIntegrityLevel, buf.as_mut_ptr().cast(), size_of_val(&buf) as u32, &mut n) == 0 {
+            return None;
+        }
+        let label = &*(buf.as_ptr().cast::<TOKEN_MANDATORY_LABEL>());
+        let sid = label.Label.Sid;
+        if sid.is_null() {
+            return None;
+        }
+        let count = *GetSidSubAuthorityCount(sid);
+        if count == 0 {
+            return None;
+        }
+        let level = *GetSidSubAuthority(sid, u32::from(count) - 1);
+        Some(TokenFacts {
+            full_token: kind == ELEVATION_TYPE_FULL,
+            elevated: elev.TokenIsElevated != 0,
+            integrity_high: level >= INTEGRITY_HIGH,
+        })
     }
 }
 

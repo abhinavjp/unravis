@@ -4,7 +4,7 @@
 use serde::Deserialize;
 
 pub const SCHEMA: u32 = 2;
-const MAX_BYTES: usize = 64 << 10;
+pub const MAX_BYTES: usize = 64 << 10;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
