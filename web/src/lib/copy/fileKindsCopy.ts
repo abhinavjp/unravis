@@ -120,8 +120,11 @@ export const zoneWarnText = (count: number): string =>
   count + (count === 1 ? ' file writes' : ' files write') + ' server local time. Until you say which time zone, the timeline cannot line ' + (count === 1 ? 'it' : 'them') + ' up with other sources.';
 export const hostWarnText = (count: number): string =>
   count + (count === 1 ? ' file needs' : ' files need') + ' a computer named. Pick one in the list, or add it on the last step. The case cannot be made until each has one.';
+/** The line under the file list in the create guide: the computer is picked for the person, so there is nothing to answer here. */
+export const hostAutoHint = 'Each log is filed under the computer it names. If it names none, it goes under your only computer, or else this PC. A new name is added to your list of computers. You can change this on the last step.';
 export const dropUnreadableText = (count: number): string => (count === 1 ? '1 item could not be read and was left out.' : count + ' items could not be read and were left out.');
 export const addedText = (count: number): string => (count === 1 ? '1 file is ready to add.' : count + ' files are ready to add.');
+export const removeLeftOutText = (count: number): string => 'Remove the ' + count + ' files left out';
 export const skippedText = (count: number): string => (count === 1 ? '1 file was left out.' : count + ' files were left out.');
 export const alreadyListedText = (count: number): string => (count === 1 ? 'That file is already in the list, so it was not added again.' : count + ' of those files are already in the list, so they were not added again.');
 
@@ -184,12 +187,12 @@ export interface FileCard {
 export const FILE_CARDS: readonly FileCard[] = [
   {
     id: 'iis', kind: 'iis-w3c', title: 'IIS logs (W3C)',
-    text: 'Gives time-taken per request. Used for O in Step 3. Usually in C:\\inetpub\\logs\\LogFiles. Loose .log files or a .zip of them.',
+    text: 'Gives how long each web request took, so slow calls can be found. Usually in C:\\inetpub\\logs\\LogFiles. Loose .log files or a .zip of them.',
     chip: 'needs time-taken field', button: 'Add IIS logs'
   },
   {
     id: 'app', kind: 'app-log', title: 'Application logs',
-    text: 'Errors and warnings near onset. Used by Step 5 only.',
+    text: 'Errors and warnings from around the time of the problem.',
     chip: 'text or JSON lines, .zip ok', button: 'Add app logs'
   },
   {
@@ -199,14 +202,14 @@ export const FILE_CARDS: readonly FileCard[] = [
   },
   {
     id: 'audit', kind: 'file', title: 'Audit export',
-    text: 'For a Mongo you cannot connect to. A JSON or CSV export of the audit documents (for example from mongoexport). Gives Steps 2 to 4 their calls.',
+    text: 'For a Mongo you cannot connect to. A JSON or CSV export of the audit documents (for example from mongoexport). Gives the investigation its list of calls.',
     chip: 'json or csv, .zip ok', button: 'Add audit export'
   }
 ];
 
 export const CARDS_TEXT = {
   heading: 'Add files by type',
-  footer: 'No step needs application logs or a Query Store export to start. IIS logs and audit exports feed the main steps (2 to 4).',
+  footer: 'You can start with only IIS logs or an audit export. Application logs and a Query Store export are extras.',
   unsure: 'Not sure what a file is? Add any file here and Unravis suggests what it is.',
   otherFiles: 'Other files',
   none: 'No files chosen yet'
@@ -268,10 +271,12 @@ export const fileKindsCopyEntries = (): LintEntry[] => [
   { id: 'files.sample.zone1', text: zoneWarnText(1) },
   { id: 'files.sample.host', text: hostWarnText(2) },
   { id: 'files.sample.host1', text: hostWarnText(1) },
+  { id: 'files.sample.hostauto', text: hostAutoHint },
   { id: 'files.sample.unreadable', text: dropUnreadableText(1) },
   { id: 'files.sample.unreadable2', text: dropUnreadableText(3) },
   { id: 'files.sample.added', text: addedText(3) },
   { id: 'files.sample.skipped', text: skippedText(2) },
+  { id: 'files.sample.removeleft', text: removeLeftOutText(3) },
   { id: 'files.sample.listed1', text: alreadyListedText(1) },
   { id: 'files.sample.listed', text: alreadyListedText(2) },
   { id: 'files.sample.supported', text: supportedText() },

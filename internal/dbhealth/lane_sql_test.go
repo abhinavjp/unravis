@@ -776,7 +776,8 @@ func TestSQLLaneQueryStoreOffNoHistoryIsTodaysMessage(t *testing.T) {
 		t.Errorf("counts = %v", counts)
 	}
 	qs := r.Lane.QueryStore
-	if qs == nil || qs.State != QSStateOff || qs.FirstData != nil || qs.LastData != nil || len(r.Lane.Series) != 0 {
+	// A confirmed "none kept" is not an unread history: only a failed or refused read sets that.
+	if qs == nil || qs.State != QSStateOff || qs.FirstData != nil || qs.LastData != nil || qs.HistoryUnread || len(r.Lane.Series) != 0 {
 		t.Errorf("queryStore = %+v series %d", qs, len(r.Lane.Series))
 	}
 	// No row at all from the range query is the same.
@@ -939,6 +940,9 @@ func TestSQLLaneQueryStoreOffRangeReadFailsKeepsOff(t *testing.T) {
 	if r.Lane.QueryStore == nil || r.Lane.QueryStore.State != QSStateOff {
 		t.Errorf("queryStore = %+v", r.Lane.QueryStore)
 	}
+	if r.Lane.QueryStore != nil && !r.Lane.QueryStore.HistoryUnread {
+		t.Errorf("a failed read of the history must be marked unread: %+v", r.Lane.QueryStore)
+	}
 }
 
 func TestSQLLaneQueryStoreOffRangePermissionKeepsOffNotDenied(t *testing.T) {
@@ -946,7 +950,7 @@ func TestSQLLaneQueryStoreOffRangePermissionKeepsOffNotDenied(t *testing.T) {
 	q.err = map[string]error{"unravis:qs_range": errors.New("The user does not have permission to perform this action.")}
 	r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
 	c := checkByID(t, r, CheckQueryStore)
-	if r.Lane.QueryStore == nil || r.Lane.QueryStore.State != QSStateOff {
+	if r.Lane.QueryStore == nil || r.Lane.QueryStore.State != QSStateOff || !r.Lane.QueryStore.HistoryUnread {
 		t.Fatalf("queryStore = %+v", r.Lane.QueryStore)
 	}
 	if c.Fix == nil || !strings.Contains(c.Fix.Script, "GRANT") || !strings.HasPrefix(c.Summary, "Query Store is off, and the history it may have kept could not be read.") {
@@ -992,7 +996,7 @@ func TestSQLLaneQueryStoreOffSliceFailureSavesNoSeries(t *testing.T) {
 		t.Fatalf("check = %+v series %d", c, len(r.Lane.Series))
 	}
 	qs := r.Lane.QueryStore
-	if qs == nil || qs.State != QSStateOff || qs.FirstData == nil || qs.LastData == nil {
+	if qs == nil || qs.State != QSStateOff || qs.FirstData == nil || qs.LastData == nil || !qs.HistoryUnread {
 		t.Errorf("queryStore = %+v", qs)
 	}
 	if !strings.HasPrefix(c.Summary, "Query Store is off. It kept history from") {
@@ -1076,6 +1080,14 @@ func TestLaneQueryStoreLastDataJSON(t *testing.T) {
 	want := `{"state":"off","firstData":"2026-10-02T00:00:00Z","lastData":"2026-10-20T10:45:00Z","intervalMinutes":15}`
 	if err != nil || string(b) != want {
 		t.Fatalf("marshal = %s (%v)", b, err)
+	}
+	b, err = json.Marshal(LaneQueryStore{State: QSStateOff, HistoryUnread: true})
+	if err != nil || string(b) != `{"state":"off","historyUnread":true}` {
+		t.Fatalf("historyUnread marshal = %s (%v)", b, err)
+	}
+	b, err = json.Marshal(LaneQueryStore{State: QSStateOff, FirstData: &first, LastData: &last, IntervalMinutes: 15})
+	if err != nil {
+		t.Fatal(err)
 	}
 	var old LaneQueryStore
 	if err := json.Unmarshal([]byte(`{"state":"off","firstData":"2026-10-02T00:00:00Z","intervalMinutes":15}`), &old); err != nil || old.LastData != nil || old.FirstData == nil {

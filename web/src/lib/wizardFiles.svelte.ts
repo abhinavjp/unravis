@@ -1,8 +1,9 @@
-import { pickFile, pickedFile, heldFileKeys } from './wizardCreate.svelte';
+import { pickFile, pickedFile, heldFileKeys, autoPickHosts } from './wizardCreate.svelte';
 import { onWizardReset, setSources, wizard } from './wizard.svelte';
 import { addSource, fileSource, nextFileNumber, sourceKey } from './wizardSources';
 import type { DraftSource } from './wizardFlow';
 import { baseName, importerFor, stageFiles, usableFiles } from './fileKinds';
+import { SNIFF_KIND_BYTES, sniffKind } from './sniffKind';
 import type { PanelKind, StagedFile } from './fileKinds';
 
 /**
@@ -51,6 +52,28 @@ export function createStaging(): Staging {
   let epoch = 0;
   let pending = 0;
   const cancel = () => { epoch += 1; pending = 0; state.reading = false; };
+  /**
+   * Names the kind of rows whose file NAME suggested nothing by reading the start of the file, so a web log called `site.txt` is not left out as
+   * "not recognised". Counts as a read in flight, so Add waits for it. A row the person has changed meanwhile is left as they set it.
+   */
+  async function recogniseByContent(ids: readonly number[]): Promise<void> {
+    const mine = epoch;
+    const rows = state.list.filter((row) => ids.includes(row.id) && row.refusal === '' && row.choice === '' && row.suggested === '');
+    if (rows.length === 0) return;
+    pending += 1;
+    state.reading = true;
+    try {
+      for (const row of rows) {
+        let kind: ReturnType<typeof sniffKind> = '';
+        try { kind = sniffKind(await row.file.slice(0, SNIFF_KIND_BYTES).text()); } catch { kind = ''; }
+        if (mine !== epoch) return;
+        if (kind === '') continue;
+        state.list = state.list.map((item) => (item.id === row.id && item.choice === '' && !item.changed ? { ...item, suggested: kind, choice: kind } : item));
+      }
+    } finally {
+      if (mine === epoch) { pending -= 1; state.reading = pending > 0; }
+    }
+  }
   return {
     state,
     beginRead() { pending += 1; state.reading = true; return epoch; },
@@ -69,6 +92,7 @@ export function createStaging(): Staging {
       nextId += rows.length;
       state.list = [...state.list, ...rows];
       state.fromFolder = folder;
+      void recogniseByContent(rows.map((row) => row.id));
     },
     setList(list) {
       state.list = list;
@@ -113,6 +137,8 @@ export function addStagedFiles(list: readonly StagedFile[]): AddFilesResult {
   setSources(next);
   for (const { key, item } of held) { pickFile(key, item.file, importerHint(item), item.host); result.keys.push(key); }
   result.added = held.length;
+  // The computers are named for the held files at once, so none is refused later for lacking one.
+  void autoPickHosts(result.keys);
   return result;
 }
 

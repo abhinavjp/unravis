@@ -246,7 +246,14 @@ function Invoke-ReleaseBootstrap {
             $fwd += @('-Pinned', $pinned, '-LockId', $id)
             $exe = (Get-Process -Id $PID).Path
             $env:UNRAVIS_RELEASE_NONCE = $nonce
-            try { & $exe @fwd | Out-Host } finally { Remove-Item Env:UNRAVIS_RELEASE_NONCE -ErrorAction SilentlyContinue }   # the run's own output goes to the screen, not into this function's result
+            # What the run prints is also kept (redacted, time-stamped, flushed per line) in <data>\logs for the releases dashboard. The
+            # copy is best effort: if the file cannot be made the run goes on exactly as before, and the exit code is the run's own.
+            try { $runLog = New-RunLogPath (Get-ReleaseLogDir $data); Remove-OldReleaseLogs (Split-Path $runLog) } catch { $runLog = $null }
+            $logNames = @($machine, [Environment]::UserName)
+            try {
+                if ($runLog) { & $exe @fwd | Write-ReleaseRunLog -Path $runLog -Names $logNames | Out-Host }
+                else { & $exe @fwd | Out-Host }   # the run's own output goes to the screen, not into this function's result
+            } finally { Remove-Item Env:UNRAVIS_RELEASE_NONCE -ErrorAction SilentlyContinue }
             $code = $LASTEXITCODE
         } finally { Pop-Location }
     } finally {
@@ -263,6 +270,8 @@ function Invoke-ReleaseBootstrap {
         if ($wt) { Push-Location $repoRoot0; try { git worktree remove --force $wt 2>&1 | Out-Null; git worktree prune 2>&1 | Out-Null } finally { Pop-Location } }
         Remove-Item -LiteralPath (Join-Path $data 'lock-info.json') -Force -ErrorAction SilentlyContinue
         if ($osLock) { $osLock.Dispose() }
+        # After the locks are free (nobody waits for this): keep the GitHub Actions logs of this release for the dashboard's tests and logs.
+        if (-not $CheckOnly -and $st -and $st.version -and $pinned) { Save-ReleaseRunLogs $Repo $data $audit ([string]$st.version) ([string]$pinned) $runStart @($machine, [Environment]::UserName) }
     }
     return $code
 }
@@ -481,8 +490,8 @@ try {
         if ($risks.Count) { Fail "This PC could log the passphrase: $($risks -join '; '). Turn that policy off for release runs." }
         if ($feedBase) {
             $prs = Get-CommitPullRequests $repoRoot $Repo $feedBase.Tag $head
-            if ($prs.Missing.Count) { Fail "These commits on $Branch since $($feedBase.Tag) did not come through a merged pull request: $(($prs.Missing | ForEach-Object { $_.Substring(0,7) }) -join ', '). Find out who pushed them before releasing." }
-            $script:report.sensitive = Get-SensitivePullRequests $repoRoot $feedBase.Tag $head $prs.Prs
+            if ($prs.Missing.Count) { Fail "These commits on $Branch since $($feedBase.Tag) (or, inside a promotion of develop, a pull request merged into develop or a clean merge of master) did not come through a merged pull request: $(($prs.Missing | ForEach-Object { $_.Substring(0,7) }) -join ', '). Find out who pushed them before releasing." }
+            $script:report.sensitive = Get-SensitivePullRequests $repoRoot $feedBase.Tag $head $prs.Prs $prs.Develop
             $kc = Compare-KeyLists ((git show "$($feedBase.Tag):$script:ReleaseTrustedKeysPath") -join "`n") $trustedNewText $owner
             if ($kc.Foreign.Count) { Fail "trusted_keys.txt gained a key you hold no key file for in ${KeyDir}: $(($kc.Foreign | ForEach-Object { "$($_.Role) $($_.Pub)" }) -join '; '). Someone else's key; do not release." }
             $script:addedKeys = @($kc.Added)

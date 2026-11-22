@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -46,14 +47,19 @@ type Run struct {
 	Updated string `json:"updated,omitempty"`
 }
 
-// Event is one audit line, cut down to what the screen shows. Machine, user, commit and key fields are dropped on purpose.
+// Event is one audit line, cut down to what the screen shows. The machine, user and key name are never put on the page; they are
+// kept only to hide them from the logs (see Local.Names). Commit, KeyPub and Manifest are public values (a hash, a public key).
 type Event struct {
-	At      string
-	Name    string
-	Version string
-	Stage   string
-	Reason  string
-	Run     string // CI run id, digits only
+	At       string
+	Name     string
+	Version  string
+	Stage    string
+	Reason   string
+	Run      string // CI run id, digits only
+	From     string // run-start: the step this run began at
+	Commit   string // 7 to 40 hex characters, else empty
+	KeyPub   string // preflight-ok: the signing key's public half, 64 hex characters, else empty
+	Manifest string // feed-updated: sha256 of the signed manifest, 64 hex characters, else empty
 }
 
 // Local is what was found in the release data folder.
@@ -62,6 +68,8 @@ type Local struct {
 	Dir    string
 	Run    *Run
 	Events []Event
+	Live   *Live    // the release process on this PC right now, from the very start of Release.ps1
+	Names  []string // machine and user names found in the audit log: hidden from every log line the page shows
 }
 
 // pathRE hides file paths (they can hold a user name or a key file name) in free text from the log. A Windows or share path
@@ -101,6 +109,24 @@ func digits(s string) string {
 
 func str(m map[string]any, k string) string { s, _ := m[k].(string); return s }
 
+// hexOnly returns s (lower case) when it is hex of one of the given lengths, else "".
+func hexOnly(s string, lens ...int) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	ok := false
+	for _, n := range lens {
+		ok = ok || len(s) == n
+	}
+	if !ok {
+		return ""
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return ""
+		}
+	}
+	return s
+}
+
 // ReadLocal reads state.json and the tail of audit.jsonl. A missing folder is normal (this is not the release PC).
 func ReadLocal(dir string) Local {
 	l := Local{Dir: dir}
@@ -113,7 +139,7 @@ func ReadLocal(dir string) Local {
 	l.Found = true
 	sp := filepath.Join(dir, "state.json")
 	if fi, err := os.Stat(sp); err == nil && fi.Mode().IsRegular() && fi.Size() <= 64<<10 {
-		if b, err := os.ReadFile(sp); err == nil {
+		if b, err := readSmall(sp, 64<<10); err == nil {
 			var r Run
 			if json.Unmarshal(b, &r) == nil && r.Version != "" {
 				r.Reason, r.Stage, r.Status = clip(r.Reason), clip(r.Stage), clip(r.Status)
@@ -121,30 +147,43 @@ func ReadLocal(dir string) Local {
 			}
 		}
 	}
-	l.Events = readAuditTail(filepath.Join(dir, "audit.jsonl"))
+	l.Events, l.Names = readAudit(filepath.Join(dir, "audit.jsonl"))
+	l.Live = readLive(dir, l.Events, time.Now())
 	return l
 }
 
-func readAuditTail(path string) []Event {
-	f, err := os.Open(path)
+// readSmall reads a whole small file without blocking the release script from replacing it.
+func readSmall(path string, max int64) ([]byte, error) {
+	f, err := openShared(path)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
+	return io.ReadAll(io.LimitReader(f, max))
+}
+
+func readAudit(path string) ([]Event, []string) {
+	f, err := openShared(path)
+	if err != nil {
+		return nil, nil
+	}
+	defer func() { _ = f.Close() }()
 	fi, err := f.Stat()
 	if err != nil || !fi.Mode().IsRegular() {
-		return nil
+		return nil, nil
 	}
 	off := int64(0)
 	if fi.Size() > auditTailBytes {
 		off = fi.Size() - auditTailBytes
 	}
 	if _, err := f.Seek(off, 0); err != nil {
-		return nil
+		return nil, nil
 	}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64<<10), 256<<10)
 	var out []Event
+	seen := map[string]bool{}
+	var names []string
 	first := off > 0 // the first line of a cut read is partial
 	for sc.Scan() {
 		if first {
@@ -163,7 +202,14 @@ func readAuditTail(path string) []Event {
 		if _, err := time.Parse(time.RFC3339Nano, str(m, "ts")); err != nil {
 			continue
 		}
-		out = append(out, Event{At: str(m, "ts"), Name: clip(str(m, "event")), Version: clip(v), Stage: clip(str(m, "stage")), Reason: clip(str(m, "reason")), Run: digits(str(m, "run"))})
+		for _, k := range []string{"machine", "user"} {
+			if n := strings.TrimSpace(str(m, k)); n != "" && !seen[strings.ToLower(n)] && len(names) < 8 {
+				seen[strings.ToLower(n)] = true
+				names = append(names, n)
+			}
+		}
+		out = append(out, Event{At: str(m, "ts"), Name: clip(str(m, "event")), Version: clip(v), Stage: clip(str(m, "stage")), Reason: clip(str(m, "reason")), Run: digits(str(m, "run")), From: clip(str(m, "from")),
+			Commit: hexOnly(str(m, "commit"), 7, 40), KeyPub: hexOnly(str(m, "key_pub"), 64), Manifest: hexOnly(str(m, "manifest_sha256"), 64)})
 	}
-	return out
+	return out, names
 }

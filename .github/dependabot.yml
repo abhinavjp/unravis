@@ -1,40 +1,52 @@
+# Pull requests open against develop (release train, docs/ci/RELEASE-TRAIN.md).
 # Weekly, one grouped PR per ecosystem, never merged automatically (no automerge label, no auto-merge setting).
 # cargo for /desktop (workspace lock desktop/Cargo.lock).
 version: 2
 updates:
   - package-ecosystem: gomod
     directory: /
+    target-branch: develop
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }
+    # go-sqlite3 0.37.0 breaks TestBucketCountsReadOneSnapshot (a writer between chunks changes the answer): bump it by hand
+    # after that is understood, not through the group.
+    ignore: [{ dependency-name: "github.com/ncruces/go-sqlite3" }]
     groups: { gomod: { patterns: ["*"] } }
   - package-ecosystem: npm
     directory: /web
+    target-branch: develop
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }
     cooldown: { default-days: 3 }
+    # typescript 7 does not install with svelte-check 4.7 (peer typescript ^5 || ^6): stay on 5.x until svelte-check allows 7.
+    ignore: [{ dependency-name: "typescript", update-types: ["version-update:semver-major"] }]
     groups: { npm-web: { patterns: ["*"] } }
   - package-ecosystem: npm
     directory: /tools/e2e
+    target-branch: develop
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }
     groups: { npm-e2e: { patterns: ["*"] } }
   - package-ecosystem: npm
     directory: /tools/screens
+    target-branch: develop
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }
     groups: { npm-screens: { patterns: ["*"] } }
   - package-ecosystem: github-actions
     directory: /
+    target-branch: develop
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }
     groups: { github-actions: { patterns: ["*"] } }
   - package-ecosystem: cargo
     directory: /desktop
+    target-branch: develop
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }

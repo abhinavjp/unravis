@@ -50,6 +50,38 @@
       "check": "small-text",
       "why": "Chart help lines and the result row of the Slow call list use text under 11 px.",
       "item": "BL-478"
+    },
+    {
+      "screen": "p10-files-*",
+      "size": "phone",
+      "check": "text-spill",
+      "label": "File",
+      "why": "In the stacked phone layout of the add-files list the column heads spill out of their box (desktop is clean).",
+      "item": "BL-482"
+    },
+    {
+      "screen": "p10-files-*",
+      "size": "phone",
+      "check": "text-spill",
+      "label": "Size",
+      "why": "In the stacked phone layout of the add-files list the column heads spill out of their box (desktop is clean).",
+      "item": "BL-482"
+    },
+    {
+      "screen": "p10-files-*",
+      "size": "phone",
+      "check": "text-spill",
+      "label": "What it is",
+      "why": "In the stacked phone layout of the add-files list the column heads spill out of their box (desktop is clean).",
+      "item": "BL-482"
+    },
+    {
+      "screen": "p10-files-*",
+      "size": "phone",
+      "check": "text-spill",
+      "label": "Computer and time zone",
+      "why": "In the stacked phone layout of the add-files list the column heads spill out of their box (desktop is clean).",
+      "item": "BL-482"
     }
   ]
 }

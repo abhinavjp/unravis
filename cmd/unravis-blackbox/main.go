@@ -96,9 +96,15 @@ type deps struct {
 	// access list). The SQL service runs it at every start before it reads the
 	// file (BL-140). It is the file-only proof: the service account cannot read
 	// folder access lists, and the folder chain is proven by an administrator at
-	// install-sql and enable-sql. realDeps binds the real proof; a nil value
-	// (tests) skips it.
+	// install-sql and enable-sql. realDeps binds the real proof. Now used only by
+	// the temporary fallback; a nil value there refuses the start.
 	verifyConfig func(path string) error
+	// readSettings is the verified reader (BL-140 PR 7): it opens the settings file
+	// once, proves it on that handle and returns the bytes. The SQL service tries it
+	// first. nil refuses the start (fail closed). For the words access and unreadable
+	// only, a TEMPORARY fallback to verifyConfig plus a read by path
+	// applies (removed once probe P1 passes).
+	readSettings func(path string) ([]byte, error)
 	// elev is the Windows elevate helper. No command here may use it (C14):
 	// this program IS the helper, and the SQL grant is run by the owner in
 	// SSMS. It stays nil; tests inject a fake to record that it is never called.
@@ -114,6 +120,7 @@ func realDeps() deps {
 	sqlMgr := &blackbox.SQLManager{Svc: blackbox.WinService{}, Env: blackbox.OSEnv{}}
 	return deps{
 		verifyConfig: func(path string) error { return blackbox.OSEnv{}.VerifySettingsFileForStart(path) },
+		readSettings: blackbox.OSEnv{}.ReadVerifiedSettings,
 		// remove also removes the SQL service (E2E-10), through the same SQLManager.
 		mgr: &blackbox.Manager{Svc: blackbox.WinService{}, Env: blackbox.OSEnv{}, Disk: disk, SQL: sqlMgr},
 		// Pinned (wave 7): the SQLManager talks to blackbox.WinService DIRECTLY.
@@ -674,23 +681,46 @@ type sqlRunOptions struct {
 // errSQLSettingsNotLocked is the fixed sentence for a start the proof refused.
 var errSQLSettingsNotLocked = errors.New("The SQL service did not start: its settings file is not locked to administrators. Run enable-sql again from an elevated prompt.")
 
+// loadSQLSettings reads the SQL service settings. BL-140: the service reads this file with its own rights at every start, so the file is
+// proven here, not only at install-sql and enable-sql. It reads through the verified reader (one open, proof on that handle, no second open
+// by path). A missing reader, an untagged or unknown refusal, or a refusal for any word except access and unreadable, stops the start with
+// the fixed "not locked" sentence and logs the fixed word.
+//
+// TEMPORARY FALLBACK (removed once probe P1 passes on the PC, see docs/design/bl-140-settings-folder-proof.md decision 7): for those two
+// words only (this account cannot open or read the file, the open unknowns of P1) the service logs one line and uses the old by-path proof
+// plus a read by path. That path is weaker than the handle proof (no link count, no final path, no share-deny-write during the read, an
+// unbounded read) and it re-opens the proof-to-read window; a person who controls a folder in the path can force "access" and so reach it.
+// It is allowed only where the verified read could not run at all. A missing by-path proof also refuses. Bytes that were proven but do not parse are a settings error and are returned as they are.
+func loadSQLSettings(path string, d deps, logf func(string, ...any)) (blackbox.Config, error) {
+	cfg, err := blackbox.ParseVerifiedSettings(d.readSettings, path, nil)
+	if err == nil || !errors.Is(err, blackbox.ErrSettingsNotProven) {
+		return cfg, err
+	}
+	word := blackbox.RefusalWord(err) // for the log only; the decision is taken from the reader's own error
+	if !blackbox.FallbackAllowedFor(err) {
+		if logf != nil {
+			logf("sql: settings-not-locked (%s)", word)
+		}
+		return blackbox.Config{}, errSQLSettingsNotLocked
+	}
+	if logf != nil {
+		logf("sql: verified settings read refused (%s), using the temporary by-path fallback", word)
+	}
+	if d.verifyConfig == nil || d.verifyConfig(path) != nil {
+		if logf != nil {
+			logf("sql: settings-not-locked (by-path)")
+		}
+		return blackbox.Config{}, errSQLSettingsNotLocked
+	}
+	return blackbox.LoadConfig(path)
+}
+
 // runSQLService loads the settings and runs the SQL runner until ctx is done.
 // It never starts the host recorder or its status page: no HTTP in this mode.
 // A clean stop publishes the off status (W8-04) so the host never keeps
 // advertising an old enabled:true record after the service ends.
 func runSQLService(ctx context.Context, p blackbox.Paths, d deps, logf func(string, ...any)) error {
-	// BL-140: the service reads this file with its own rights at every start, so the
-	// file proof is repeated here, not only at install-sql and enable-sql. A file
-	// swapped in by an ordinary user is not owned by an administrator and stops the start.
-	if d.verifyConfig != nil {
-		if verr := d.verifyConfig(p.ConfigPath); verr != nil {
-			if logf != nil {
-				logf("sql: settings-not-locked")
-			}
-			return errSQLSettingsNotLocked
-		}
-	}
-	cfg, err := blackbox.LoadConfig(p.ConfigPath)
+	cfg, err := loadSQLSettings(p.ConfigPath, d, logf)
 	if err != nil {
 		return err
 	}

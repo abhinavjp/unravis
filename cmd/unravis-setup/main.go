@@ -59,6 +59,9 @@ type env struct {
 	elevateWait func(exe string, args []string) (int, error)
 	// notice shows a message box; used only when an unattended update leaves no running program (nil in tests).
 	notice func(title, text string)
+	// ask shows an OK/Cancel box and says whether the person clicked OK; used by --recover before the Windows approval prompt (nil in tests:
+	// the run goes on as if OK was clicked).
+	ask func(title, text string) bool
 	// dialWorker is the worker's end of the pipe.
 	dialWorker func(name string, parent uint32) (*setup.WorkerPipe, error)
 	// listen opens the window's loopback port.
@@ -87,6 +90,7 @@ func osEnv() env {
 		},
 		static:     func() (fs.FS, error) { return fs.Sub(uiFiles, "ui") },
 		openWindow: setup.OpenWindow, openFolder: setup.ShowFolder, startApp: setup.StartProgram, startBackground: setup.StartProgramBackground, notice: setup.ShowNotice,
+		ask:         recoverAsk(os.Getenv),
 		elevateWait: func(exe string, args []string) (int, error) { return setup.RunElevatedWait(exe, args, 5*time.Minute) },
 		dialWorker:  setup.DialWorkerPipe, listen: setup.Listen, idleAfter: 3 * time.Minute,
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) {

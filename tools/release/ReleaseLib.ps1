@@ -200,36 +200,123 @@ function Get-TextSha256([string]$Text) {
 }
 function Get-FileSha256([string]$Path) { return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant() }
 
-# First-parent commits in Base..Head that are not the merge of a pull request on GitHub (a direct push to master).
-# Returns @{ Missing = sha[]; Prs = @{ sha = number } }. Uses gh (REST); any gh error counts as "not shown to be a PR".
+# The develop side of a promotion merge (docs/ci/RELEASE-TRAIN.md). Master's first-parent commit $Commit with two parents is a
+# promotion: its second parent is promote/<sha>, which holds develop commits and, when master had moved, one "Merge master into
+# promote/<sha>" made by GitHub. Returns one entry per first-parent commit on that side (Commit^1..Commit^2):
+#   Kind 'pr'      : must be the squash or merge commit of a pull request merged into develop (checked against GitHub by the caller)
+#   Kind 'mergein' : a merge whose second parent is already on master (Commit^1) and whose tree is exactly what git's own merge of
+#                    its parents gives (git merge-tree), so it brings in nothing that was not on master or develop. Ok tells.
+# A commit with one parent returns nothing (not a promotion).
+function Get-PromotionSideCommits([string]$RepoRoot, [string]$Commit) {
+    $parents = @((git -C $RepoRoot rev-list --parents -n 1 $Commit) -split ' ' | Select-Object -Skip 1)
+    if ($LASTEXITCODE -ne 0) { throw "git rev-list --parents $Commit failed." }
+    if ($parents.Count -lt 2) { return , @() }
+    if ($parents.Count -gt 2) { return , @([pscustomobject]@{ Sha = $Commit; Kind = 'mergein'; Ok = $false; Why = 'octopus merge' }) }
+    $p1 = $parents[0]; $p2 = $parents[1]
+    $side = @(git -C $RepoRoot rev-list --first-parent "$p1..$p2")
+    if ($LASTEXITCODE -ne 0) { throw "git rev-list $p1..$p2 failed." }
+    $out = @()
+    foreach ($s in $side) {
+        $sp = @((git -C $RepoRoot rev-list --parents -n 1 $s) -split ' ' | Select-Object -Skip 1)
+        if ($sp.Count -eq 1) { $out += [pscustomobject]@{ Sha = $s; Kind = 'pr'; Ok = $false; Why = '' }; continue }
+        $ok = $false; $why = 'merge commit that is not a clean merge of master'
+        if ($sp.Count -eq 2) {
+            git -C $RepoRoot merge-base --is-ancestor $sp[1] $p1 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $mt = @(git -C $RepoRoot -c merge.renames=true -c diff.renames=true -c diff.renameLimit=0 merge-tree --write-tree $sp[0] $sp[1] 2>$null)   # all output first, so the exit code is git's
+                $clean = ($LASTEXITCODE -eq 0)
+                $tree = if ($mt.Count) { "$($mt[0])" } else { '' }
+                $have = (git -C $RepoRoot rev-parse "$s^{tree}").Trim()
+                if ($clean -and $tree -and $tree.Trim() -eq $have) { $ok = $true; $why = '' }
+                elseif (-not $clean) { $why = 'merge of master that git cannot redo cleanly' }
+                else { $why = 'merge of master with extra changes' }
+            } else { $why = 'merge whose second parent is not on master' }
+        }
+        # A merge commit may also be a pull request merged into develop with "merge commit": the caller tries that first.
+        $out += [pscustomobject]@{ Sha = $s; Kind = 'mergein'; Ok = $ok; Why = $why }
+    }
+    return , $out
+}
+
+# For each commit, the pull request merged into $Base whose merge (squash) commit IS that commit: @{ sha = @{ N; HeadRef } }.
+# One gh call per commit, run side by side (a release since the last one is often 10 to 40 commits). Nothing is cached on disk: a
+# cache file an agent could edit would let a direct push pass as "merged". Any gh error counts as "not shown to be a PR".
+function Find-MergedPullRequests([string]$Repo, [string[]]$Shas, [string]$Base) {
+    $map = @{}
+    if (-not $Shas.Count) { return $map }
+    $found = @($Shas | ForEach-Object -ThrottleLimit 8 -Parallel {
+        $c = $_; $want = $using:Base
+        # The commit must BE the PR's merge (squash) commit: a PR that GitHub marks merged only because its head was pushed straight
+        # to the branch names another merge commit. (Checked live 21 Nov 2026: every first-parent commit since rc.53 matches.) Branch
+        # rules on master and develop (BL-197) are the real stop for direct pushes. GitHub answers this only for commits on the
+        # default branch, so master must stay the default branch.
+        $json = gh api "repos/$($using:Repo)/commits/$c/pulls" 2>$null
+        $hit = $null
+        if ($LASTEXITCODE -eq 0 -and $json) {
+            $hit = @(($json -join "`n") | ConvertFrom-Json | Where-Object { $_.merged_at -and $_.base.ref -eq $want -and $_.merge_commit_sha -eq $c } | Select-Object -First 1)[0]
+        }
+        [pscustomobject]@{ Sha = $c; N = $(if ($hit) { [int]$hit.number } else { $null }); HeadRef = $(if ($hit) { "$($hit.head.ref)" } else { '' }) }
+    })
+    foreach ($f in $found) { if ($f.N) { $map[$f.Sha] = $f } }
+    return $map
+}
+
+# A pull request into master from develop or a promote/ branch is a promotion of the release train.
+function Test-PromotionHeadRef([string]$HeadRef) { return ($HeadRef -ceq 'develop' -or $HeadRef.StartsWith('promote/', [StringComparison]::Ordinal)) }
+
+# First-parent commits in Base..Head that are not the merge of a pull request on GitHub (a direct push to master), and, inside each
+# promotion (a PR into master from develop or promote/...), develop commits that are not a pull request merged into develop (a direct
+# push to develop) nor a clean merge of master. A promotion must be a merge commit: squashed or rebased, its develop commits could not
+# be checked, so it counts as missing. Other PRs into master are not walked (their inner commits were the PR's own review).
+# Returns @{ Missing = sha[]; Prs = @{ sha = number }; Develop = sha[] (develop-side commits that came through a PR) }.
 function Get-CommitPullRequests([string]$RepoRoot, [string]$Repo, [string]$Base, [string]$Head) {
     $shas = @(git -C $RepoRoot rev-list --first-parent "$Base..$Head")
     if ($LASTEXITCODE -ne 0) { throw "git rev-list $Base..$Head failed." }
-    $missing = @(); $prs = @{}
-    # One call per commit, run side by side (a release since the last one is often 10 to 40 commits). Nothing is cached on disk:
-    # a cache file an agent could edit would let a direct push pass as "merged".
-    $found = @($shas | ForEach-Object -ThrottleLimit 8 -Parallel {
-        $c = $_
-        # The commit must BE the PR's merge (squash) commit: a PR that GitHub marks merged only because its head was pushed straight
-        # to master names another merge commit. (Checked live 21 Nov 2026: every first-parent commit since rc.53 matches.) Branch
-        # rules on master (BL-197) are the real stop for direct pushes.
-        $json = gh api "repos/$($using:Repo)/commits/$c/pulls" 2>$null
-        $n = $null
-        if ($LASTEXITCODE -eq 0 -and $json) {
-            $n = @(($json -join "`n") | ConvertFrom-Json | Where-Object { $_.merged_at -and $_.base.ref -eq 'master' -and $_.merge_commit_sha -eq $c } | Select-Object -First 1).number
-        }
-        [pscustomobject]@{ Sha = $c; N = $n }
-    })
+    $missing = [System.Collections.Generic.List[string]]::new(); $prs = @{}; $develop = [System.Collections.Generic.List[string]]::new()
+    $onMaster = Find-MergedPullRequests $Repo $shas 'master'
+    $side = [System.Collections.Generic.List[object]]::new()
     foreach ($c in $shas) {
-        $hit = $found | Where-Object { $_.Sha -eq $c } | Select-Object -First 1
-        if (-not $hit -or -not $hit.N) { $missing += $c } else { $prs[$c] = [int]$hit.N }
+        if (-not $onMaster.ContainsKey($c)) { $missing.Add($c); continue }
+        $prs[$c] = $onMaster[$c].N
+        if (Test-PromotionHeadRef $onMaster[$c].HeadRef) {
+            $s = Get-PromotionSideCommits $RepoRoot $c
+            if (-not $s.Count) { $missing.Add($c); continue }   # promotion squashed or rebased (or empty): its develop side cannot be checked
+            foreach ($x in $s) { $side.Add($x) }
+        }
     }
-    return [pscustomobject]@{ Missing = $missing; Prs = $prs }
+    $onDevelop = Find-MergedPullRequests $Repo @($side | ForEach-Object { $_.Sha }) 'develop'
+    # GitHub may answer commits/{sha}/pulls for a develop squash commit with only the promotion PR. Then look the commit up in the
+    # most recent closed PRs into develop (up to 300) by their merge commit. Same rule: the commit must BE that PR's merge commit.
+    $open = @($side | Where-Object { -not $onDevelop.ContainsKey($_.Sha) -and $_.Kind -eq 'pr' })
+    if ($open.Count) {
+        for ($page = 1; $page -le 3; $page++) {
+            $json = gh api "repos/$Repo/pulls?base=develop&state=closed&sort=updated&direction=desc&per_page=100&page=$page" 2>$null
+            if ($LASTEXITCODE -ne 0 -or -not $json) { break }
+            $list = @(($json -join "`n") | ConvertFrom-Json)
+            foreach ($pr in $list) {
+                if ($pr.merged_at -and $pr.base.ref -eq 'develop' -and $pr.merge_commit_sha -and -not $onDevelop.ContainsKey($pr.merge_commit_sha)) {
+                    $onDevelop[$pr.merge_commit_sha] = [pscustomobject]@{ Sha = $pr.merge_commit_sha; N = [int]$pr.number; HeadRef = "$($pr.head.ref)" }
+                }
+            }
+            if (@($open | Where-Object { -not $onDevelop.ContainsKey($_.Sha) }).Count -eq 0 -or $list.Count -lt 100) { break }
+        }
+    }
+    foreach ($x in $side) {
+        if ($onDevelop.ContainsKey($x.Sha)) { $prs[$x.Sha] = $onDevelop[$x.Sha].N; $develop.Add($x.Sha); continue }
+        if ($x.Kind -eq 'mergein' -and $x.Ok) { continue }   # clean merge of master: nothing new, and not named in the report
+        $missing.Add($x.Sha)
+    }
+    return [pscustomobject]@{ Missing = @($missing | Select-Object -Unique); Prs = $prs; Develop = @($develop) }
 }
 
-# PR numbers (from the map above) whose commit changed a sensitive path.
-function Get-SensitivePullRequests([string]$RepoRoot, [string]$Base, [string]$Head, $Prs) {
+# PR numbers (from the map above) whose commit changed a sensitive path: master's first-parent commits, and the develop commits
+# inside each promotion (so the report names the develop PR, not only "Promote develop ...").
+function Get-SensitivePullRequests([string]$RepoRoot, [string]$Base, [string]$Head, $Prs, [string[]]$Develop = @()) {
     $hits = @(git -C $RepoRoot rev-list --first-parent "$Base..$Head" -- $script:ReleaseSensitivePaths)
+    foreach ($d in $Develop) {
+        git -C $RepoRoot diff --quiet "$d^1" $d -- $script:ReleaseSensitivePaths 2>$null
+        if ($LASTEXITCODE -ne 0) { $hits += $d }   # 1 = changed; any git error also names it (report fails safe)
+    }
     return , @($hits | ForEach-Object { if ($Prs.ContainsKey($_)) { "#$($Prs[$_])" } else { $_.Substring(0, 7) } } | Select-Object -Unique)
 }
 
@@ -258,7 +345,7 @@ function Invoke-SigningGates {
             git -C $RepoRoot merge-base --is-ancestor $Baseline $Commit
             if ($LASTEXITCODE -ne 0) { throw "$Context ($($Commit.Substring(0, 7))) does not contain $Baseline, the release on the feed. Not signing an older or side commit." }
             $pr = Get-CommitPullRequests $RepoRoot $Repo $Baseline $Commit
-            if ($pr.Missing.Count) { throw "These commits on master since $Baseline did not come through a merged pull request: $(($pr.Missing | ForEach-Object { $_.Substring(0, 7) }) -join ', '). Not signing." }
+            if ($pr.Missing.Count) { throw "These commits on master since $Baseline (or, inside a promotion of develop, a pull request merged into develop or a clean merge of master) did not come through a merged pull request: $(($pr.Missing | ForEach-Object { $_.Substring(0, 7) }) -join ', '). Not signing." }
         }
         # SourceDir is a clean checkout of Commit (a throw-away worktree).
         $bad = Get-ForbiddenSigtoolDeps (Get-SigtoolNonStdDeps $SourceDir)
@@ -697,4 +784,196 @@ function Get-ResumeStage([string[]]$Order, [string]$LastDone) {
     if ($i -lt 0) { return $Order[0] }
     if ($i + 1 -ge $Order.Count) { return $null }
     return $Order[$i + 1]
+}
+
+# ---- run logs for the releases dashboard ------------------------------------------------------------------------------------------
+# Release.ps1 keeps what a run printed, and the GitHub Actions logs of its runs, in <data>\logs so the dashboard can show each step's
+# log and the tests that ran. Everything here is best effort: a failure only means there is no log, never a changed release. Every line
+# is redacted before it is written, and again when the dashboard reads it (internal/releasedash/redact.go: same rules).
+
+$script:LogRx = @{
+    Ansi    = [regex]::new('\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07', 'Compiled')
+    Ctrl    = [regex]::new('[\x00-\x08\x0a-\x1f\x7f]', 'Compiled')
+    Token   = [regex]::new('\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})', 'Compiled')
+    Bearer  = [regex]::new('(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}', 'Compiled')
+    Pair    = [regex]::new('(?i)(?<![\w-])([\w-]*(?:pass(?:word|phrase)|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|.+)', 'Compiled')
+    KeyBeg  = [regex]::new('-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
+    KeyEnd  = [regex]::new('-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
+    KeyFile = [regex]::new('(?i)[\w.-]+\.(?:key|pem|pfx|p12|ppk)\b', 'Compiled')
+    UserDir = [regex]::new('(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"'']+', 'Compiled')
+}
+
+# One redactor per log: it remembers that it is inside a private key block, which spans many lines. Names (this PC and this user)
+# are hidden too; names shorter than three characters are ignored.
+function New-LogRedactor([string[]]$Names = @()) {
+    $n = @(@($Names) + @([Environment]::MachineName, [Environment]::UserName) | Where-Object { $_ -and $_.Trim().Length -ge 3 } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
+    return [pscustomobject]@{ InKey = $false; Names = $n }
+}
+
+# Pure apart from the redactor's key-block memory. -KeepTabs keeps the tab separators of a "gh run view --log" line.
+function Protect-LogLine([string]$Line, $Redactor, [switch]$KeepTabs) {
+    $rx = $script:LogRx
+    $s = $Line.TrimStart([char]0xFEFF)
+    $s = $rx.Ansi.Replace($s, '')
+    if (-not $KeepTabs) { $s = $s.Replace("`t", ' ') }
+    $s = $rx.Ctrl.Replace($s, '')
+    if ($Redactor.InKey) { if ($rx.KeyEnd.IsMatch($s)) { $Redactor.InKey = $false }; return '<private key hidden>' }
+    if ($rx.KeyBeg.IsMatch($s)) { if (-not $rx.KeyEnd.IsMatch($s)) { $Redactor.InKey = $true }; return '<private key hidden>' }
+    $s = $rx.Token.Replace($s, '<token hidden>')
+    $s = $rx.Bearer.Replace($s, '$1 <hidden>')
+    $s = $rx.Pair.Replace($s, '$1$2<hidden>')
+    $s = $rx.KeyFile.Replace($s, '<key file>')
+    $s = $rx.UserDir.Replace($s, '${1}<user>')
+    foreach ($n in $Redactor.Names) { $s = [regex]::Replace($s, '(?<![A-Za-z0-9])' + [regex]::Escape($n) + '(?![A-Za-z0-9])', '<name>', 'IgnoreCase') }
+    if ($s.Length -gt 2000) { $s = $s.Substring(0, 2000) + ' ...(line cut)' }
+    return $s.TrimEnd(' ')
+}
+
+function Get-ReleaseLogDir([string]$Dir) {
+    $p = Join-Path $Dir 'logs'
+    New-Item -ItemType Directory -Force -Path $p | Out-Null
+    return $p
+}
+
+function New-RunLogPath([string]$LogDir) { return (Join-Path $LogDir ('run-' + [DateTime]::UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'") + '.log')) }
+
+# Keeps the newest $Keep log files (run logs and saved CI logs together) and removes the rest.
+function Remove-OldReleaseLogs([string]$LogDir, [int]$Keep = 60) {
+    $files = @(Get-ChildItem -LiteralPath $LogDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(run-\d{8}T\d{6}Z\.log|ci-v[0-9A-Za-z.+-]+-(ci|release|verify)-\d+\.log\.gz)$' } | Sort-Object LastWriteTimeUtc -Descending)
+    if ($files.Count -gt $Keep) { $files | Select-Object -Skip $Keep | Remove-Item -Force -ErrorAction SilentlyContinue }
+}
+
+# A pipeline step that passes every line through unchanged and writes a redacted, time-stamped copy to -Path as it goes (flushed per
+# line, so the dashboard can show a run live). It starts no program, so $LASTEXITCODE of the command before it in the pipeline is
+# untouched. If the file cannot be written it stops logging and carries on passing lines through. After MaxLines it writes one note.
+function Write-ReleaseRunLog {
+    [CmdletBinding()]
+    param([Parameter(ValueFromPipeline = $true)] $InputObject, [Parameter(Mandatory)] [string]$Path, [string[]]$Names = @(), [int]$MaxLines = 20000)
+    begin {
+        $w = $null; $n = 0; $red = New-LogRedactor $Names
+        try {
+            $fs = [System.IO.FileStream]::new($Path, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+            $w = [System.IO.StreamWriter]::new($fs, [System.Text.UTF8Encoding]::new($false)); $w.AutoFlush = $true
+        } catch { $w = $null }
+    }
+    process {
+        $InputObject
+        if ($w) {
+            try {
+                if ($n -lt $MaxLines) {
+                    $n++
+                    $w.WriteLine([DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") + ' ' + (Protect-LogLine ([string]$InputObject) $red))
+                } elseif ($n -eq $MaxLines) {
+                    $n++
+                    $w.WriteLine([DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") + " (the log stops here: $MaxLines lines; the release carried on)")
+                }
+            } catch { try { $w.Dispose() } catch {}; $w = $null }
+        }
+    }
+    end { if ($w) { try { $w.Dispose() } catch {} } }
+}
+
+# Saves the log of one GitHub Actions run, redacted, as gzip: ci-<tag>-<ci|release|verify>-<run id>.log.gz. Needs the signed-in gh (the
+# public API does not serve run logs). Gives up after $TimeoutSec and keeps nothing then. Returns $true when a file was written.
+function Save-CiRunLog([string]$Repo, [string]$RunId, [string]$Tag, [string]$Kind, [string]$LogDir, [string[]]$Names = @(), [int]$TimeoutSec = 90, [long]$MaxBytes = 64MB) {
+    if ($RunId -notmatch '^\d{1,20}$' -or $Tag -notmatch '^v\d[0-9A-Za-z.+-]{0,40}$' -or $Kind -notin 'ci', 'release', 'verify') { return $false }
+    $dest = Join-Path $LogDir "ci-$Tag-$Kind-$RunId.log.gz"
+    if (Test-Path -LiteralPath $dest) { return $true }
+    $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
+    if (-not $gh) { return $false }
+    $tmp = "$dest.part"; $p = $null; $w = $null; $done = $false
+    try {
+        $psi = [System.Diagnostics.ProcessStartInfo]::new($gh)
+        foreach ($a in 'run', 'view', $RunId, '--repo', $Repo, '--log') { $psi.ArgumentList.Add($a) }
+        $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+        $psi.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $null = $p.StandardError.ReadToEndAsync()   # drained so gh never blocks on it
+        $fs = [System.IO.File]::Create($tmp)
+        $w = [System.IO.StreamWriter]::new([System.IO.Compression.GZipStream]::new($fs, [System.IO.Compression.CompressionLevel]::Optimal), [System.Text.UTF8Encoding]::new($false))
+        $w.WriteLine("# run $RunId $Kind https://github.com/$Repo/actions/runs/$RunId")
+        $red = New-LogRedactor $Names
+        $limit = [DateTime]::UtcNow.AddSeconds($TimeoutSec); $bytes = 0L; $count = 0; $eof = $false; $timedOut = $false; $capped = $false
+        while ($true) {
+            $t = $p.StandardOutput.ReadLineAsync()
+            while (-not $t.IsCompleted) { if ([DateTime]::UtcNow -gt $limit) { $timedOut = $true; break }; $null = $t.Wait(500) }
+            if ($timedOut) { break }
+            $line = $t.Result
+            if ($null -eq $line) { $eof = $true; break }
+            $out = Protect-LogLine $line $red -KeepTabs
+            $bytes += $out.Length + 1; $count++
+            if ($bytes -gt $MaxBytes -or $count -gt 400000) { $capped = $true; break }
+            $w.WriteLine($out)
+        }
+        if ($timedOut -or $capped) { try { $p.Kill($true) } catch {} } else { $null = $p.WaitForExit(10000) }
+        $okExit = ($timedOut -or $capped) -or ($p.HasExited -and $p.ExitCode -eq 0)
+        if ($capped) { $w.WriteLine('# the log was cut here (size limit)') }
+        $w.Dispose(); $w = $null
+        if ($eof -or $capped) { if ($okExit -and $count -gt 0) { Move-Item -LiteralPath $tmp -Destination $dest -Force; $done = $true } }
+    } catch { $done = $false }
+    finally {
+        if ($w) { try { $w.Dispose() } catch {} }
+        if ($p) { try { if (-not $p.HasExited) { $p.Kill($true) } } catch {}; $p.Dispose() }
+        if (-not $done) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+    return $done
+}
+
+# The GitHub Actions run ids this release's audit entries name (release.yml = built, verify-release.yml = verified or verify-failed),
+# newest of each, for entries written since $Since. Returns @{ release; verify } with '' for a missing one.
+function Get-ReleaseAuditRuns([string]$AuditPath, [string]$Version, [datetime]$Since) {
+    $r = @{ release = ''; verify = '' }
+    if (-not $Version -or -not (Test-Path -LiteralPath $AuditPath)) { return $r }
+    foreach ($l in (Get-Content -LiteralPath $AuditPath -Tail 600)) {
+        if (-not $l) { continue }
+        try { $e = $l | ConvertFrom-Json } catch { continue }
+        if ($e.version -ne $Version -or "$($e.run)" -notmatch '^\d{1,20}$') { continue }
+        try { if (([datetime]$e.ts).ToUniversalTime() -lt $Since.ToUniversalTime()) { continue } } catch { continue }
+        if ($e.event -eq 'built') { $r.release = "$($e.run)" }
+        elseif ($e.event -eq 'verified' -or $e.event -eq 'verify-failed') { $r.verify = "$($e.run)" }
+    }
+    return $r
+}
+
+# Runs gh with a time limit and returns its output, or $null when it failed or took too long. Never throws.
+function Invoke-GhCapture([string[]]$GhArgs, [int]$TimeoutSec = 30) {
+    $p = $null
+    try {
+        $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
+        if (-not $gh) { return $null }
+        $psi = [System.Diagnostics.ProcessStartInfo]::new($gh)
+        foreach ($a in $GhArgs) { $psi.ArgumentList.Add($a) }
+        $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $err = $p.StandardError.ReadToEndAsync(); $out = $p.StandardOutput.ReadToEndAsync()
+        if (-not $p.WaitForExit($TimeoutSec * 1000)) { try { $p.Kill($true) } catch {}; return $null }
+        $null = $out.Wait(5000)
+        if ($p.ExitCode -ne 0 -or -not $out.IsCompleted) { return $null }
+        return $out.Result
+    } catch { return $null }
+}
+
+# After a run: saves the logs of its CI run (on the released commit), its release.yml run and its verify run. Never throws, and never
+# takes longer than $BudgetSec in all.
+function Save-ReleaseRunLogs([string]$Repo, [string]$Dir, [string]$AuditPath, [string]$Version, [string]$Commit, [datetime]$Since, [string[]]$Names = @(), [int]$BudgetSec = 150) {
+    try {
+        if ($Version -notmatch '^\d[0-9A-Za-z.+-]{0,40}$') { return }
+        $tag = "v$Version"; $logDir = Get-ReleaseLogDir $Dir; $end = [DateTime]::UtcNow.AddSeconds($BudgetSec)
+        $ids = Get-ReleaseAuditRuns $AuditPath $Version $Since
+        $todo = [System.Collections.Generic.List[object]]::new()
+        if ($Commit -match '^[0-9a-f]{7,40}$') {
+            $runs = @(); try { $js = Invoke-GhCapture @('run', 'list', '--repo', $Repo, '--workflow', 'ci.yml', '--commit', $Commit, '--limit', '10', '--json', 'databaseId,conclusion') 30; if ($js) { $runs = @($js | ConvertFrom-Json) } } catch {}
+            $pick = $runs | Where-Object { $_.conclusion -eq 'success' } | Select-Object -First 1
+            if (-not $pick) { $pick = $runs | Select-Object -First 1 }
+            if ($pick) { $todo.Add(@{ kind = 'ci'; id = "$($pick.databaseId)" }) }
+        }
+        if ($ids.release) { $todo.Add(@{ kind = 'release'; id = $ids.release }) }
+        if ($ids.verify) { $todo.Add(@{ kind = 'verify'; id = $ids.verify }) }
+        foreach ($t in $todo) {
+            $left = [int]($end - [DateTime]::UtcNow).TotalSeconds
+            if ($left -lt 10) { break }
+            if (Save-CiRunLog $Repo $t.id $tag $t.kind $logDir $Names ([Math]::Min($left, 90))) { Write-Host "Saved the $($t.kind) log of run $($t.id) for the releases dashboard." -ForegroundColor DarkGray }
+        }
+        Remove-OldReleaseLogs $logDir
+    } catch {}
 }

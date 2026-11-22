@@ -21,14 +21,16 @@ import (
 //
 // The database name steers the answer, so each screen can be reached by typing a name:
 //
-//	SQL Server: AuditDb reads fine; NoGrantDb lacks a permission (the grant script shows); EmptyDb holds nothing for the hours.
+//	SQL Server: AuditDb reads fine; NoGrantDb lacks a permission (the grant script shows); EmptyDb holds nothing for the hours;
+//	            OffKeptDb has Query Store switched off but still holding blocks (the last one starts before the incident ends);
+//	            OffNoneDb has Query Store switched off with no history at all (the owner-run script shows).
 //	MongoDB:    AuditDb reads fine; NoGrantDb lacks a role; ProfilerOffDb has the profiler switched off.
 const (
 	demoSQLServer   = "demo-sql.example.invalid"
 	demoMongoServer = "mongodb://demo-mongo.example.invalid:27017"
 )
 
-var demoSQLDatabases = []string{"AuditDb", "NoGrantDb", "EmptyDb"}
+var demoSQLDatabases = []string{"AuditDb", "NoGrantDb", "EmptyDb", "OffKeptDb", "OffNoneDb"}
 
 // demoNameHas says whether the typed database name asks for one of the demo's special answers (case does not matter).
 func demoNameHas(name, word string) bool { return strings.Contains(strings.ToLower(name), word) }
@@ -220,7 +222,24 @@ func demoSQLQueryer(req dbhealth.LaneRequest) healthQueryer {
 		"unravis:qs_stats":     {stat("ref", 10, 100), stat("inc", 11, 105)},
 		"unravis:qs_intervals": demoSQLIntervals(req),
 	}}
+	off := dbhealth.Row{"actual_state_desc": "OFF", "desired_state_desc": "OFF", "readonly_reason": int64(0), "interval_length_minutes": int64(15)}
 	switch {
+	case demoNameHas(req.Database, "offkept"):
+		// Off, but the blocks it kept run from two days before the reference window to 15 minutes before the incident ends: the newest block
+		// starts before the incident end, so a "no" is not given, and only the blocks up to that one are drawn.
+		last := req.Incident.End.Add(-15 * time.Minute)
+		var kept []dbhealth.Row
+		for _, r := range demoSQLIntervals(req) {
+			if t, ok := r["start_time"].(time.Time); ok && !t.After(last) {
+				kept = append(kept, r)
+			}
+		}
+		rows.by["unravis:qs_options"] = []dbhealth.Row{off}
+		rows.by["unravis:qs_range"] = []dbhealth.Row{{"first_start": ref.Start.Add(-48 * time.Hour), "last_start": last}}
+		rows.by["unravis:qs_intervals"] = kept
+	case demoNameHas(req.Database, "offnone"):
+		// Off and nothing kept: the range read finds no block, so the lane gives the owner-run script and reads nothing more.
+		rows.by["unravis:qs_options"] = []dbhealth.Row{off}
 	case demoNameHas(req.Database, "empty"):
 		// The server answers its version and then has nothing to read for these hours: every check says Cannot test yet, none has a permission to fix.
 		rows.rest = errors.New("Invalid object name 'sys.query_store_runtime_stats'.")

@@ -8,7 +8,7 @@
   import { isZipName, readZip } from '../../lib/zipRead';
   import { BATCH_TEXT, batchHostWarnText, batchImportText, batchReasonText, formatBytes, sizeProblemText, verdictLabel, zipSkippedText } from '../../lib/copy/importCopy';
   import {
-    CARDS_TEXT, FILES_TEXT, FILE_CARDS, FILE_KIND_LABELS, EXTRA_KIND_LABELS, addFilesText, cardCountText, cardGroupHeading, cardInputLabel, addedText, alreadyListedText, chosenKindText, dropUnreadableText, hostWarnText, kindSelectLabel, removeRowLabel, looksLikeText, readsText, skippedText, zoneText, zoneWarnText
+    CARDS_TEXT, FILES_TEXT, FILE_CARDS, FILE_KIND_LABELS, EXTRA_KIND_LABELS, addFilesText, cardCountText, cardGroupHeading, cardInputLabel, addedText, alreadyListedText, chosenKindText, dropUnreadableText, hostAutoHint, kindSelectLabel, removeRowLabel, looksLikeText, readsText, removeLeftOutText, skippedText, zoneText, zoneWarnText
   } from '../../lib/copy/fileKindsCopy';
   import type { FileCard } from '../../lib/copy/fileKindsCopy';
   import IisGuide from './IisGuide.svelte';
@@ -272,6 +272,13 @@
     void focusChoose();
   }
 
+  // Files that will not be read (not recognised, empty, too big) can be dropped all at once, so a folder with a few strays is not a clean-up job.
+  const leftOut = $derived(list.filter((item) => !ready.includes(item)));
+  async function removeLeftOut() {
+    staging.setList(list.filter((item) => ready.includes(item)));
+    await focusChoose();
+  }
+
   async function add() {
     const left = list.length - ready.length;
     const result = addStagedFiles(ready);
@@ -376,7 +383,7 @@
                 </td>
                 <td class="zone" data-label={FILES_TEXT.colComputer}>
                   {item.choice === '' || item.refusal !== '' ? FILES_TEXT.noZone : zoneText(item.choice)}
-                  {#if item.choice !== '' && item.refusal === '' && hostNeed(item.choice) !== 'none'}
+                  {#if drawer && item.choice !== '' && item.refusal === '' && hostNeed(item.choice) !== 'none'}
                     <ZoneChoice kind={item.choice} host={item.host} name={item.name} onChange={(label) => setHost(item.id, label)} disabled={choiceLocked(item)} />
                   {/if}
                 </td>
@@ -413,8 +420,13 @@
           <ul>{#each reads as id (id)}<li>{readsText(id)}</li>{/each}</ul>
         </div>
       {/if}
-      {#if hostRows.length > 0}<p class="warn" role="status">{drawer ? batchHostWarnText(hostRows.length) : hostWarnText(hostRows.length)}</p>{/if}
-      {#if zoneRows.length > 0}<p class="warn" role="status">{zoneWarnText(zoneRows.length)}</p>{/if}
+      {#if drawer}
+        {#if hostRows.length > 0}<p class="warn" role="status">{batchHostWarnText(hostRows.length)}</p>{/if}
+        {#if zoneRows.length > 0}<p class="warn" role="status">{zoneWarnText(zoneRows.length)}</p>{/if}
+      {:else if ready.some((item) => hostNeed(item.choice) !== 'none')}
+        <!-- The wizard picks the computer for each file itself once the files are added; the last step says which and lets it be changed. -->
+        <p class="hint" role="status">{hostAutoHint}</p>
+      {/if}
 
       {#if drawer}
         {@render footer?.()}
@@ -424,7 +436,8 @@
         </div>
       {:else}
         <div class="actions">
-          <button type="button" class="primary-button" disabled={ready.length === 0} onclick={() => void add()}>{addFilesText(ready.length)}</button>
+          <button type="button" class="primary-button" disabled={ready.length === 0 || reading} onclick={() => void add()}>{addFilesText(ready.length)}</button>
+          {#if leftOut.length >= 2}<button type="button" class="quiet-button" data-remove-left-out disabled={reading} onclick={() => void removeLeftOut()}>{removeLeftOutText(leftOut.length)}</button>{/if}
           <button type="button" class="quiet-button" onclick={clear}>{FILES_TEXT.clear}</button>
         </div>
       {/if}

@@ -69,3 +69,11 @@ test('lastData passes through only when it is a date', () => {
     assert.deepEqual(bad, { state: 'off', firstData: null, intervalMinutes: null });
   }
 });
+
+test('historyUnread passes through only when it is true', () => {
+  const qs = dayWith({ state: 'off', firstData: null, historyUnread: true }).lane.queryStore;
+  assert.equal(qs.historyUnread, true);
+  for (const historyUnread of [false, 'true', 1, {}, null, undefined]) {
+    assert.equal('historyUnread' in dayWith({ state: 'off', historyUnread }).lane.queryStore, false, String(historyUnread));
+  }
+});

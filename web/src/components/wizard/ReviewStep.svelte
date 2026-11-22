@@ -2,13 +2,15 @@
   import { onMount } from 'svelte';
   import { draftSnapshot, wizard } from '../../lib/wizard.svelte';
   import { scanIsStale, sourcesView } from '../../lib/wizardSources.svelte';
-  import { REVIEW_WINDOWS, blockers, chooseWindow, createView, loadTitles, pickFile, pickHost, pickedFile, pickedHost, setAck, titleRepeats } from '../../lib/wizardCreate.svelte';
+  import { REVIEW_WINDOWS, autoPickHosts, blockers, chooseWindow, createView, hostSummary, hostsAuto, loadTitles, namesItsComputer, pickFile, pickHost, pickHostForAll, pickedFile, pickedHost, setAck, titleRepeats } from '../../lib/wizardCreate.svelte';
+  import { hostsView, loadHosts } from '../../lib/wizardHosts.svelte';
+  import { hostProblem } from '../../lib/zoneChoice';
   import { filesMissing, importPlan, isFileSource, reviewCounts } from '../../lib/wizardSubmit';
   import { noAuditSourceChosen, sourceKey } from '../../lib/wizardSources';
   import { SOURCES_TEXT, kindLabel } from '../../lib/copy/wizardSourcesCopy';
   import { ACK_LABEL, GATING_BANNER } from '../../lib/copy/importCopy';
   import { windowChoiceLabel } from '../../lib/copy/discoverCopy';
-  import { CREATE_TEXT, chooseFileLabel, failureText, fileHeldText, summaryText, tagLine, whatHappens } from '../../lib/copy/wizardCreateCopy';
+  import { CREATE_TEXT, HOSTS_TEXT, chooseFileLabel, failureText, fileHeldText, hostSummaryText, summaryText, tagLine, whatHappens } from '../../lib/copy/wizardCreateCopy';
   import { formatBytes } from '../../lib/copy/importCopy';
   import { hostNeed } from '../../lib/fileKinds';
   import HelpNote from '../HelpNote.svelte';
@@ -30,7 +32,39 @@
   const noAudit = $derived(noAuditSourceChosen(draft.sources, sourcesView.connections.length));
   const caseProblem = $derived(createView.result && !createView.result.caseId && createView.result.failures.length > 0 ? createView.result.failures[0] : null);
 
-  onMount(() => { void loadTitles(); });
+  // Which computer each held file is filed under. The wizard picked them when the files were added; this shows the result and lets it be changed.
+  const hostFiles = $derived(draft.sources.filter((source) => isFileSource(source) && pickedFile(sourceKey(source)) !== null && hostNeed(source.kind) !== 'none'));
+  const summary = $derived(hostSummary());
+  let changing = $state(false);
+  // A file whose computer is missing, gone or without a time zone. Files that share one computer share its time zone, so it is asked once.
+  const trouble = $derived.by(() => {
+    const seen = new Set<string>();
+    const rows: Array<{ key: string; name: string; label: string; problem: string; more: number }> = [];
+    for (const source of hostFiles) {
+      const key = sourceKey(source);
+      const label = pickedHost(key);
+      const problem = hostProblem(source.kind, label, hostsView.entries);
+      if (problem === '') continue;
+      if (problem === 'no-zone' && seen.has(source.kind + '|' + label)) continue;
+      if (problem === 'no-zone') seen.add(source.kind + '|' + label);
+      const more = problem === 'no-zone' ? hostFiles.filter((other) => pickedHost(sourceKey(other)) === label && hostProblem(other.kind, label, hostsView.entries) === 'no-zone').length : 1;
+      rows.push({ key, name: pickedFile(key)?.name ?? source.label, label, problem, more });
+    }
+    return rows;
+  });
+  const showHostPickers = $derived(changing || hostsAuto.failed);
+
+  onMount(() => { void loadTitles(); void loadHosts(); void autoPickHosts(); });
+
+  /** The zone row stands for every file of its computer, so a different computer chosen there moves all of them, not just the first. */
+  function pickZoneGroup(key: string, label: string) {
+    const first = hostFiles.find((source) => sourceKey(source) === key);
+    const from = pickedHost(key);
+    for (const source of hostFiles) {
+      const other = sourceKey(source);
+      if (other === key || (first && source.kind === first.kind && pickedHost(other) === from)) pickHost(other, label);
+    }
+  }
 
   function chosen(key: string, event: Event) {
     const input = event.currentTarget as HTMLInputElement;
@@ -77,7 +111,7 @@
               {@const picked = pickedFile(key)}
               {#if picked}
                 <p class="hint held">{fileHeldText(picked.name, formatBytes(picked.size))}</p>
-                {#if hostNeed(source.kind) !== 'none'}<ZoneChoice kind={source.kind} host={pickedHost(key)} name={picked.name} onChange={(label) => pickHost(key, label)} />{/if}
+                {#if hostNeed(source.kind) !== 'none' && showHostPickers && !namesItsComputer(key)}<ZoneChoice kind={source.kind} host={pickedHost(key)} name={picked.name} onChange={(label) => pickHost(key, label)} />{/if}
               {:else}
                 <label class="pick" for="{uid}-f-{key}">{chooseFileLabel(source.label || kindLabel(source.kind))}</label>
                 <input id="{uid}-f-{key}" type="file" onchange={(event) => chosen(key, event)} />
@@ -90,6 +124,44 @@
     {/if}
     {#if noAudit}<p class="hint no-audit" role="status">{SOURCES_TEXT.reviewNoAuditSource}</p>{/if}
   </section>
+
+  {#if hostFiles.length > 0}
+    <section class="block hosts" aria-labelledby="{uid}-hosts">
+      <h4 id="{uid}-hosts">{HOSTS_TEXT.heading}</h4>
+      {#if hostsAuto.working > 0}
+        <p class="hint" role="status">{HOSTS_TEXT.picking}</p>
+      {:else if hostsAuto.failed}
+        <p class="problem" role="alert">{HOSTS_TEXT.failed}</p>
+        <div class="actions"><button type="button" class="secondary-button" onclick={() => void autoPickHosts()}>{HOSTS_TEXT.retry}</button></div>
+      {:else if summary.length > 0}
+        <p class="summary" data-hosts-summary>{hostSummaryText(summary)}</p>
+        <p class="hint">{HOSTS_TEXT.help}</p>
+        <div class="actions">
+          <button type="button" class="quiet-button" aria-expanded={changing} onclick={() => (changing = !changing)}>{changing ? HOSTS_TEXT.done : HOSTS_TEXT.change}</button>
+        </div>
+      {/if}
+      {#if changing && (hostsView.entries ?? []).length > 0}
+        <label class="all">
+          <span>{HOSTS_TEXT.pickAllLabel}</span>
+          <select aria-label={HOSTS_TEXT.pickAllLabel} value="" onchange={(event) => { if (event.currentTarget.value !== '') pickHostForAll(event.currentTarget.value); event.currentTarget.value = ''; }}>
+            <option value="">{HOSTS_TEXT.pickAllNone}</option>
+            {#each hostsView.entries ?? [] as entry (entry.label)}<option value={entry.label}>{entry.label}</option>{/each}
+          </select>
+        </label>
+      {/if}
+      {#if !showHostPickers}
+        {#each trouble as row (row.key)}
+          {@const source = draft.sources.find((item) => sourceKey(item) === row.key)}
+          {#if source}
+            <div class="trouble">
+              {#if row.problem === 'no-zone'}<p class="hint">{HOSTS_TEXT.zoneOnce(row.label, row.more)}</p>{/if}
+              <ZoneChoice kind={source.kind} host={row.label} name={row.name} onChange={(label) => pickZoneGroup(row.key, label)} />
+            </div>
+          {/if}
+        {/each}
+      {/if}
+    </section>
+  {/if}
 
   {#if plan.scan > 0}
     <fieldset class="block window">
@@ -106,7 +178,7 @@
   {#if scanGone}<p class="problem" role="alert">{CREATE_TEXT.scanBusy}</p>{/if}
   {#if stale}<p class="problem" role="alert">{CREATE_TEXT.scanStale}</p>{/if}
   {#if plan.files > 0 && missing > 0}<p class="hint" role="status">{CREATE_TEXT.needFiles}</p>{/if}
-  {#if pending.includes('zone')}<p class="problem" role="alert">{CREATE_TEXT.needHost}</p>{/if}
+  {#if pending.includes('zone') && hostsAuto.working === 0}<p class="problem" role="alert">{CREATE_TEXT.needHost}</p>{/if}
 
   {#if needsNotice}
     <div class="notice">
@@ -138,6 +210,10 @@
   .pick { font-size: var(--fs-3); font-weight: 600; }
   input[type='file'] { max-width: 100%; font: inherit; font-size: var(--fs-3); }
   input[type='file']:focus-visible, input[type='radio']:focus-visible, input[type='checkbox']:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .all { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--fs-3); }
+  .all select { font: inherit; font-size: var(--fs-3); min-height: 44px; }
+  .trouble { display: grid; gap: var(--space-1); }
   .radios { display: flex; flex-wrap: wrap; gap: var(--space-4); }
   .radio, .ack { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 44px; font-size: var(--fs-4); cursor: pointer; }
   .ack { align-items: flex-start; }

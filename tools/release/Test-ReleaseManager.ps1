@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
   Self-test for the release manager's checks (ReleaseLib.ps1): key files and key choice, trusted-key changes, versions, the
-  signing tool's dependency rule, the audit log chain, lock, state, and the no-prompt passphrase rules. Also parses every script
+  signing tool's dependency rule, the develop side of a promotion merge, the audit log chain, lock, state, and the no-prompt passphrase rules. Also parses every script
   in tools/release so a syntax error fails CI, not a release.
   Uses throw-away folders under the temp directory and fake key files (no real key, no passphrase, no network).
   Run from anywhere:  ./tools/release/Test-ReleaseManager.ps1     Exit code 0 when every check holds.
@@ -285,6 +285,55 @@ try {
     Assert-That 'run: the run proves it was started by the bootstrap and takes its own lock' ($rel -match 'UNRAVIS_RELEASE_NONCE' -and $rel -match 'Enter-RunLock')
     Assert-That 'bootstrap: a release.ps1 without the protocol marker is not re-run' ($rel -match 'ReleaseProtocol = 2')
 
+    # ---- release train: the develop side of a promotion merge (real git, throw-away repo, no network) ----------------------------
+    $g = Join-Path $root 'train'
+    New-Item -ItemType Directory -Path $g | Out-Null
+    function G { git -C $g -c user.name=t -c user.email=t@t -c commit.gpgsign=false @args; if ($LASTEXITCODE -ne 0) { throw "git $args failed" } }
+    G init -q -b master
+    Set-Content -LiteralPath (Join-Path $g 'a.txt') 'a'; G add -A; G commit -q -m A
+    G checkout -q -b develop
+    New-Item -ItemType Directory -Path (Join-Path $g 'tools/release') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $g 'tools/release/x.ps1') 'x'; G add -A; G commit -q -m D1   # a squash commit into develop
+    Set-Content -LiteralPath (Join-Path $g 'd.txt') 'd'; G add -A; G commit -q -m D2
+    $d1 = (G rev-parse HEAD~1).Trim(); $d2 = (G rev-parse HEAD).Trim()
+    G checkout -q master
+    Set-Content -LiteralPath (Join-Path $g 'h.txt') 'h'; G add -A; G commit -q -m H                    # a hotfix on master
+    $h = (G rev-parse HEAD).Trim()
+    G checkout -q -b promote $d2
+    G merge -q --no-edit master                                                                          # GitHub's "merge master in"
+    $mi = (G rev-parse HEAD).Trim()
+    G checkout -q master
+    G merge -q --no-ff --no-edit promote                                                                 # the promotion pull request
+    $p = (G rev-parse HEAD).Trim()
+    $side = Get-PromotionSideCommits $g $p
+    Assert-That 'train: a promotion lists every develop commit and the merge of master' ((($side | ForEach-Object Sha) -join ',') -eq "$mi,$d2,$d1") (($side | ForEach-Object Sha) -join ',')
+    Assert-That 'train: develop commits must be pull requests' (@($side | Where-Object { $_.Kind -eq 'pr' }).Count -eq 2)
+    Assert-That 'train: a clean merge of master is accepted' (@($side | Where-Object { $_.Sha -eq $mi -and $_.Kind -eq 'mergein' -and $_.Ok }).Count -eq 1)
+    Assert-That 'train: a plain commit is not a promotion' ((Get-PromotionSideCommits $g $h).Count -eq 0)
+    $sens = Get-SensitivePullRequests $g $h $p @{ $p = 7 } @($side | ForEach-Object Sha)
+    Assert-That 'train: the sensitive report names the develop commit, not only the promotion' ($sens -contains $d1.Substring(0, 7)) ($sens -join ',')
+    Assert-That 'train: develop commits off the sensitive paths are not named' ($sens -notcontains $d2.Substring(0, 7)) ($sens -join ',')
+    Assert-That 'train: promotion head refs' ((Test-PromotionHeadRef 'develop') -and (Test-PromotionHeadRef 'promote/1a2b3c4') -and -not (Test-PromotionHeadRef 'feature/promote') -and -not (Test-PromotionHeadRef 'Develop'))
+    # A "merge master in" that also changes a file (content no pull request carried) is refused.
+    G checkout -q -b promote2 $d2
+    G merge -q --no-commit $h
+    Set-Content -LiteralPath (Join-Path $g 'evil.txt') 'e'; G add -A; G commit -q -m 'Merge master into promote2'
+    $bad = (G rev-parse HEAD).Trim()
+    G checkout -q -b master2 $h
+    G merge -q --no-ff --no-edit promote2
+    $side2 = Get-PromotionSideCommits $g (G rev-parse HEAD).Trim()
+    Assert-That 'train: a merge of master with extra changes is refused' (@($side2 | Where-Object { $_.Sha -eq $bad -and -not $_.Ok }).Count -eq 1) (($side2 | ForEach-Object { "$($_.Sha.Substring(0,7)) $($_.Kind) $($_.Ok) $($_.Why)" }) -join '; ')
+    # A merge on the develop side whose second parent is not on master (a side branch merged without a pull request) is refused.
+    G checkout -q -b side $d1
+    Set-Content -LiteralPath (Join-Path $g 's.txt') 's'; G add -A; G commit -q -m S
+    G checkout -q -b promote3 $d2
+    G merge -q --no-edit side
+    $bad3 = (G rev-parse HEAD).Trim()
+    G checkout -q -b master3 $h
+    G merge -q --no-ff --no-edit promote3
+    $side3 = Get-PromotionSideCommits $g (G rev-parse HEAD).Trim()
+    Assert-That 'train: a merge of a branch that is not master is refused' (@($side3 | Where-Object { $_.Sha -eq $bad3 -and -not $_.Ok }).Count -eq 1)
+
     # ---- passphrase: never a prompt under -Yes; the pipe reaches the program ----------------------------------------------------
     $m = Get-ThrownMessage { Get-SigningPassphrase -ProtonPassRef '' -KeyFile 'k' -Yes }
     Assert-That 'passphrase: -Yes without a reference stops instead of asking' ($m -match 'never asks')
@@ -296,6 +345,74 @@ try {
     Assert-That 'passphrase: Invoke-WithPassphrase puts it on the program''s standard input' ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
     $sec.Dispose()
     Assert-That 'logging risks: returns a list' ($null -ne (Get-PassphraseLoggingRisks))
+
+    # ---- run logs for the dashboard: secrets never reach the file, and the tee never changes what the run does -------------------
+    $red = New-LogRedactor @('DESKTOP-ABC', 'nachi')
+    $fakeTok = 'ghp_' + ('a1B2' * 9)
+    $cases = [ordered]@{
+        "push with $fakeTok done"                  = '<token hidden>'
+        'Authorization: Bearer abcdefghijklmnop1234' = '<hidden>'
+        'passphrase=hunter2hunter2'                = '<hidden>'
+        'loaded C:\Users\nachi\keys\release.key'   = '<key file>'
+        'on DESKTOP-ABC as someone'                = '<name>'
+        "$([char]27)[36;1mcolour$([char]27)[0m"    = 'colour'
+        '/home/runner/work and /Users/bob/x'       = '<user>'
+    }
+    foreach ($k in $cases.Keys) {
+        $got = Protect-LogLine $k $red
+        Assert-That "log redaction: $($cases[$k])" ($got.Contains($cases[$k])) "got '$got'"
+        Assert-That "log redaction: nothing secret left in '$($cases[$k])' case" (-not ($got -match 'ghp_a1B2|hunter2|release\.key|DESKTOP-ABC|nachi|abcdefghijklmnop1234')) "got '$got'"
+    }
+    $red2 = New-LogRedactor @('Abhinav')
+    foreach ($c in @(@('GH_TOKEN=abc123secret', 'abc123secret'), @('SIGNING_PASSPHRASE=hunter2', 'hunter2'), @('keyPassword=hunter2', 'hunter2'), @('passphrase: correct horse battery', 'battery'), @('-----BEGIN PGP PRIVATE KEY BLOCK-----', 'BEGIN PGP'))) {
+        $got = Protect-LogLine $c[0] (New-LogRedactor)
+        Assert-That "log redaction: '$($c[0])' hides '$($c[1])'" (-not $got.Contains($c[1])) "got '$got'"
+    }
+    Assert-That 'log redaction: a passed-test line is kept' ((Protect-LogLine '--- PASS: TestX (0.00s)' (New-LogRedactor)) -eq '--- PASS: TestX (0.00s)')
+    $gotUrl = Protect-LogLine 'https://github.com/abhinavjp/unravis/actions/runs/1 by Abhinav' $red2
+    Assert-That 'log redaction: a user name inside a repository name is kept, the name alone is hidden' ($gotUrl.Contains('github.com/abhinavjp/unravis') -and -not $gotUrl.Contains('by Abhinav')) "got '$gotUrl'"
+    $kr = New-LogRedactor
+    $blk = 'before', '-----BEGIN PRIVATE KEY-----', 'MIIEvQIBADANBgkqhkiG9w0B', '-----END PRIVATE KEY-----', 'after' | ForEach-Object { Protect-LogLine $_ $kr }
+    Assert-That 'log redaction: a private key block is hidden line by line' (($blk -join '|') -eq 'before|<private key hidden>|<private key hidden>|<private key hidden>|after')
+    Assert-That 'log redaction: an ordinary line is unchanged' ((Protect-LogLine 'ok  pkg  1.2s' (New-LogRedactor)) -eq 'ok  pkg  1.2s')
+    Assert-That 'log redaction: -KeepTabs keeps the tab separators of a CI log line' ((Protect-LogLine "job`tstep`ttext" (New-LogRedactor) -KeepTabs) -eq "job`tstep`ttext")
+
+    $logs = Get-ReleaseLogDir $env:UNRAVIS_RELEASE_DATA
+    $runLog = New-RunLogPath $logs
+    Assert-That 'run log: the file name is run-<utc time>.log' ((Split-Path $runLog -Leaf) -match '^run-\d{8}T\d{6}Z\.log$')
+    $hostExe = (Get-Process -Id $PID).Path
+    $child = "Write-Host '[1/7] Preflight'; Write-Host 'token ' + '$fakeTok'.ToString(); Write-Host 'line two'; exit 7"
+    $seen = @(& $hostExe -NoProfile -Command $child | Write-ReleaseRunLog -Path $runLog | ForEach-Object { "$_" })
+    Assert-That 'run log: the exit code of the run survives the tee' ($LASTEXITCODE -eq 7) "exit $LASTEXITCODE"
+    Assert-That 'run log: every line still reaches the screen, unchanged' ($seen.Count -eq 3 -and $seen[0] -eq '[1/7] Preflight' -and $seen[2] -eq 'line two') ($seen -join '|')
+    $saved = @(Get-Content -LiteralPath $runLog)
+    Assert-That 'run log: one time-stamped line per output line' ($saved.Count -eq 3 -and ($saved | Where-Object { $_ -notmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ ' }).Count -eq 0) ($saved -join '|')
+    Assert-That 'run log: the saved copy has the token hidden' (-not ($saved -join "`n").Contains('ghp_a1B2')) ($saved -join '|')
+    $big = New-RunLogPath $logs; $big = $big -replace '\d{6}Z', '000001Z'
+    $n = @(1..30 | Write-ReleaseRunLog -Path $big -MaxLines 10 | ForEach-Object { $_ })
+    Assert-That 'run log: a cap stops the file, not the run' ($n.Count -eq 30 -and @(Get-Content -LiteralPath $big).Count -eq 11)
+    $blocked = Join-Path $logs 'is-a-folder.log'; New-Item -ItemType Directory -Path $blocked | Out-Null
+    $n = @(1..3 | Write-ReleaseRunLog -Path $blocked | ForEach-Object { $_ })
+    Assert-That 'run log: a file that cannot be written does not stop the run' ($n.Count -eq 3)
+
+    foreach ($i in 1..8) { Set-Content -LiteralPath (Join-Path $logs ('run-2026010{0}T000000Z.log' -f $i)) -Value 'x'; (Get-Item (Join-Path $logs ('run-2026010{0}T000000Z.log' -f $i))).LastWriteTimeUtc = [datetime]"2026-01-0${i}T00:00:00Z" }
+    Set-Content -LiteralPath (Join-Path $logs 'notes.txt') -Value 'keep me'
+    Remove-OldReleaseLogs $logs 5
+    $left = @(Get-ChildItem -LiteralPath $logs -File | Where-Object { $_.Name -match '^(run-|ci-)' })
+    Assert-That 'run log: only the newest N log files are kept' ($left.Count -eq 5) "$($left.Count) left"
+    Assert-That 'run log: other files in the folder are never touched' (Test-Path -LiteralPath (Join-Path $logs 'notes.txt'))
+    Assert-That 'ci log: a bad run id, tag or kind is refused before anything runs' (-not (Save-CiRunLog 'o/r' '12; calc' 'v1.0.0' 'ci' $logs) -and -not (Save-CiRunLog 'o/r' '12' '../x' 'ci' $logs) -and -not (Save-CiRunLog 'o/r' '12' 'v1.0.0' 'other' $logs))
+
+    $aud = Join-Path $env:UNRAVIS_RELEASE_DATA 'audit-runs.jsonl'
+    $now = [DateTime]::UtcNow
+    foreach ($e in @(@{ event = 'built'; version = '9.9.9-rc.1'; run = '111' }, @{ event = 'verify-failed'; version = '9.9.9-rc.1'; run = '222' }, @{ event = 'verified'; version = '9.9.9-rc.1'; run = '333' }, @{ event = 'built'; version = '9.9.8'; run = '444' }, @{ event = 'built'; version = '9.9.9-rc.1'; run = 'not-a-number' })) { Write-AuditEntry $aud $e }
+    $ids = Get-ReleaseAuditRuns $aud '9.9.9-rc.1' $now.AddMinutes(-5)
+    Assert-That 'ci log: run ids come from this version''s audit entries (newest of each kind, digits only)' ($ids.release -eq '111' -and $ids.verify -eq '333') "$($ids | ConvertTo-Json -Compress)"
+    $ids = Get-ReleaseAuditRuns $aud '9.9.9-rc.1' $now.AddMinutes(5)
+    Assert-That 'ci log: entries older than this run are ignored' ($ids.release -eq '' -and $ids.verify -eq '')
+    $rel2 = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Release.ps1')
+    Assert-That 'bootstrap: the worker output goes through the run log tee and the exit code is read right after' ($rel2 -match 'Write-ReleaseRunLog -Path \$runLog' -and $rel2 -match '(?s)finally \{ Remove-Item Env:UNRAVIS_RELEASE_NONCE[^\r\n]*\r?\n\s*\$code = \$LASTEXITCODE')
+    Assert-That 'bootstrap: CI logs are saved only after the locks are free' ($rel2 -match '(?s)\$osLock\.Dispose\(\) \}\s*#[^\r\n]*\r?\n\s*if \(-not \$CheckOnly -and \$st[^\r\n]*Save-ReleaseRunLogs')
 } finally {
     Remove-Item Env:UNRAVIS_RELEASE_DATA -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
