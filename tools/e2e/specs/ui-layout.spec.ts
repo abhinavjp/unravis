@@ -16,6 +16,9 @@
 //   UIFIX-16  Blackbox charts: the Counters / Programs tab strip is not squeezed (24 px or more) and nothing outside the side column moves (BL-496)
 //   UIFIX-10  Slow call screen: the time zone label, the peak and zero labels and the "drag" hint are at least 11px, the lanes and the minimap do not move, nothing collides (BL-483)
 //   UIFIX-17  Investigation timeline: the UTC times of the incident and comparison windows are drawn as visible text (not only a tooltip), stay UTC when "Times in" changes, fit at 320, 360 and 390 px, and the one-line readout does not grow on a wide desktop
+//   UIFIX-30  Requests over time (home): the left, right and bottom axes have a title with the unit, painted inside the same chart box, in both themes; the box and the rectangles around it do not move; 4.5:1 contrast (BL-495 part)
+//   UIFIX-31  Requests over time on real value ranges (a busy hour in the millions, a slow hour in seconds, a sub-millisecond hour, no timing at all): one unit and one precision on each axis, tooltip with the interval's start and end and the P95 and slowest request alike, no NaN
+//   UIFIX-32  Requests over time on a phone (320, 360, 390 px): the axis titles are painted, the page does not scroll sideways and the chart box keeps its 220 px
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase } from '../support/ui';
 
@@ -1127,3 +1130,179 @@ test('UIFIX-17d Investigation timeline on a desktop: the readout is one line and
     expect(m.card, width + ' px: the controls card keeps its measured height of 320 px').toBeLessThanOrEqual(322);
   }
 });
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// BL-495 part: axis titles and units on the Requests-over-time chart of the home screen (UIFIX-30 to 32).
+// The chart is a canvas, so these read it three ways: the accessible name (the axes in words), the pixels (a title is a long stretch of ink in
+// a strip no tick label reaches) and the hover text. The chart box and the boxes around it are compared with the sizes measured on develop.
+const HERO_SIZES = [{ width: 1440, height: 900 }, { width: 1280, height: 720 }, { width: 1100, height: 800 }];
+
+type HeroFacts = { stage: number[]; chart: number[]; canvas: number[]; head: number[]; legend: number[]; leftRows: number; rightRows: number; bottomCols: number; outer: number; label: string };
+
+/** Where the chart sits and what is painted in the strips that hold the axis titles. Strips are in canvas pixels (device scale 1). */
+async function heroFacts(page: Page): Promise<HeroFacts> {
+  await page.locator('.hero-chart canvas').first().waitFor();
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await page.waitForTimeout(300);
+  return page.evaluate(() => {
+    const r = (e: Element | null) => { const b = e!.getBoundingClientRect(); return [b.left, b.top, b.width, b.height]; };
+    const canvas = document.querySelector<HTMLCanvasElement>('.hero-chart canvas')!;
+    const w = canvas.width, h = canvas.height;
+    const data = canvas.getContext('2d')!.getImageData(0, 0, w, h).data;
+    const ink = (x: number, y: number) => data[(y * w + x) * 4 + 3] > 8;
+    // Rows with ink in a vertical strip (left title, right title) and columns with ink in the bottom strip, the middle half only (tick labels sit on the left and right).
+    const rowsIn = (x0: number, x1: number) => { let n = 0; for (let y = 0; y < h; y++) for (let x = x0; x < x1; x++) if (ink(x, y)) { n++; break; } return n; };
+    let bottom = 0;
+    for (let x = Math.floor(w * .45); x < Math.floor(w * .55); x++) for (let y = h - 22; y < h; y++) if (ink(x, y)) { bottom++; break; }
+    let outer = 0;
+    for (let y = 0; y < h; y++) for (const x of [0, 1, w - 2, w - 1]) if (ink(x, y)) outer++;
+    for (let x = 0; x < w; x++) for (const y of [0, 1, h - 2, h - 1]) if (ink(x, y)) outer++;
+    return {
+      stage: r(document.querySelector('.hero-stage')), chart: r(document.querySelector('.hero-chart')), canvas: [w, h], head: r(document.querySelector('.hero-head')), legend: r(document.querySelector('.hero-legend')),
+      leftRows: rowsIn(4, 26), rightRows: rowsIn(w - 24, w - 4), bottomCols: bottom, outer, label: document.querySelector('.hero-chart')!.getAttribute('aria-label') ?? ''
+    };
+  });
+}
+
+for (const scheme of ['dark', 'light'] as const) for (const size of HERO_SIZES) {
+  test('UIFIX-30a Requests over time at ' + size.width + 'x' + size.height + ' (' + scheme + '): axis titles are painted inside the chart box and the box does not move', async ({ page }) => {
+    await page.setViewportSize(size);
+    await page.emulateMedia({ colorScheme: scheme });
+    const f = await heroFacts(page);
+    // The box: measured on develop at these sizes, 280 px tall, as wide as the page content, the canvas as large as the box. Nothing around it moved.
+    expect(f.stage[3], 'chart box height (280 px on develop)').toBe(280);
+    expect(f.chart).toEqual(f.stage);
+    expect(f.canvas, 'canvas as large as its box').toEqual([Math.round(f.stage[2]), 280]);
+    expect(f.stage[0], 'the box starts at the content edge').toBe(24);
+    expect(f.stage[2], 'the box spans the content width (page width minus two 24 px gutters)').toBe(size.width - 48);
+    expect(f.legend[1] + f.legend[3], 'the key sits above the box').toBeLessThanOrEqual(f.stage[1]);
+    expect(f.head[1] + f.head[3], 'the heading sits above the box').toBeLessThanOrEqual(f.stage[1]);
+    // The three axis titles are long stretches of ink where no tick label reaches (a 22-letter title is well over 90 rows tall; three tick labels are about 30).
+    expect(f.leftRows, 'left title "Requests per interval"').toBeGreaterThan(90);
+    expect(f.rightRows, 'right title "P95 response time (ms)"').toBeGreaterThan(90);
+    expect(f.bottomCols, 'bottom title "Time (UTC)" in the middle of the bottom strip').toBeGreaterThan(20);
+    expect(f.outer, 'nothing is painted on the outermost 2 px of the box (titles fit inside it)').toBe(0);
+    expect(f.label).toContain('Left axis: requests per interval, whole requests.');
+    expect(f.label).toContain('Right axis: P95 response time in milliseconds.');
+    expect(f.label).toContain('Bottom axis: time, in UTC.');
+    // Same page, no sideways scroll.
+    const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(over).toBeLessThanOrEqual(0);
+  });
+}
+
+// Contrast of the colours the chart draws its text in (it reads these two tokens, see palette() in lib/charts.ts) against the page behind it.
+for (const scheme of ['dark', 'light'] as const) {
+  test('UIFIX-30b Requests over time (' + scheme + '): axis titles and tick labels have 4.5:1 contrast on the page', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.locator('.hero-chart canvas').first().waitFor();
+    const facts = await page.evaluate(() => {
+      const parse = (c: string) => { const m = /rgba?\(([^)]+)\)/.exec(c); if (m) { const p = m[1].split(/[ ,/]+/).map(Number); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; } const hex = c.trim().replace('#', ''); return { r: parseInt(hex.slice(0, 2), 16), g: parseInt(hex.slice(2, 4), 16), b: parseInt(hex.slice(4, 6), 16), a: 1 }; };
+      const lin = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+      const lum = (c: { r: number; g: number; b: number }) => 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+      let bg = { r: 255, g: 255, b: 255, a: 1 };
+      for (let e: Element | null = document.querySelector('.hero-stage'); e; e = e.parentElement) { const c = parse(getComputedStyle(e).backgroundColor); if (c.a > 0.99) { bg = c; break; } }
+      const root = getComputedStyle(document.documentElement);
+      const ratio = (token: string) => { const fg = parse(root.getPropertyValue(token)); const a = lum(fg), b = lum(bg); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); };
+      return { title: ratio('--text-2'), tick: ratio('--accent') };
+    });
+    expect(facts.title, 'axis title colour (--text-2)').toBeGreaterThanOrEqual(4.5);
+    expect(facts.tick, 'right axis tick colour (--accent)').toBeGreaterThanOrEqual(4.5);
+  });
+}
+
+type Window_ = { at: string; count: number; timing: { count: number; meanMs: number | null; minMs: number | null; maxMs: number | null; p50: null; p95: { valueMs: number; lowerMs: number; upperMs: number } | null; histogram: [] } };
+
+/** Run the analysis again with the load windows replaced by `make(index, slotStart)`: the page draws exactly what the server could send. */
+async function rerunWithWindows(page: Page, make: (i: number, at: number) => { count: number; p95: number | null; max: number | null }) {
+  await page.route('**/api/analyze', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const q = body.query;
+    const width = q.bucketSeconds * 1000, start = Math.floor(Date.parse(q.start) / width) * width;
+    const out: Window_[] = [];
+    for (let at = start, i = 0; at < Date.parse(q.end); at += width, i++) {
+      const w = make(i, at);
+      out.push({ at: new Date(at).toISOString(), count: w.count, timing: { count: w.p95 == null ? 0 : w.count, meanMs: null, minMs: null, maxMs: w.max, p50: null, p95: w.p95 == null ? null : { valueMs: w.p95, lowerMs: w.p95, upperMs: w.p95 }, histogram: [] } });
+    }
+    body.loadWindows = out;
+    await route.fulfill({ response, json: body });
+  });
+  const done = page.waitForResponse((r) => r.url().includes('/api/analyze'));
+  await page.getByRole('button', { name: 'Run analysis' }).click();
+  await done;
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.waitForTimeout(400);
+}
+
+/** Sweep the pointer across the plot until the tooltip text matches, and return it; fails with the last text seen. */
+async function heroTip(page: Page, wanted: RegExp): Promise<string> {
+  const box = (await page.locator('.hero-chart').boundingBox())!;
+  let last = '';
+  for (let x = 56; x < box.width - 48; x += 3) {
+    await page.mouse.move(box.x + x, box.y + box.height / 2);
+    const text = await page.locator('.hero-chart').evaluate((el) => {
+      const tips = [...el.querySelectorAll<HTMLElement>('div')].filter((d) => d.textContent?.startsWith('20 Oct') && d.textContent.includes('Requests:') && !d.querySelector('div'));
+      const shown = tips.filter((d) => getComputedStyle(d.parentElement!).opacity !== '0' && getComputedStyle(d.parentElement!).visibility !== 'hidden');
+      return (shown[0] ?? tips[0])?.innerText.replace(/\s+/g, ' ') ?? '';
+    });
+    if (text) last = text;
+    if (wanted.test(text)) return text;
+  }
+  throw new Error('no tooltip matched ' + wanted + '; the last one was: ' + last);
+}
+
+test('UIFIX-31a Requests over time, a slow hour: P95 and the slowest request in seconds with one decimal each, interval start and end named', async ({ page }) => {
+  await rerunWithWindows(page, (i) => ({ count: 1200 + i, p95: i === 3 ? 65_700 : 900 + i * 10, max: i === 3 ? 68_000 : 1500 }));
+  const f = await heroFacts(page);
+  expect(f.label).toContain('Right axis: P95 response time in seconds.');
+  expect(f.rightRows, 'right title painted').toBeGreaterThan(90);
+  expect(f.outer).toBe(0);
+  const tip = await heroTip(page, /Slowest request: 68\.0 s/);
+  expect(tip).toMatch(/^20 Oct \d\d:\d\d:\d\d to \d\d:\d\d:\d\d UTC Requests: 1,203 P95: ≈ 65\.7 s Slowest request: 68\.0 s/);
+  expect(tip, 'no NaN or undefined').not.toMatch(/NaN|undefined|Infinity/);
+});
+
+test('UIFIX-31b Requests over time, a busy hour: counts in the millions keep whole numbers with separators and room for the title', async ({ page }) => {
+  await rerunWithWindows(page, (i) => ({ count: 2_000_000 + i * 150_000, p95: 120 + i, max: 400 }));
+  const f = await heroFacts(page);
+  expect(f.leftRows, 'left title painted beside millions').toBeGreaterThan(90);
+  expect(f.outer, 'title and wide labels stay inside the box').toBe(0);
+  const tip = await heroTip(page, /P95: ≈ 122 ms/);
+  expect(tip).toContain('Requests: 2,300,000 P95: ≈ 122 ms Slowest request: 400 ms');
+});
+
+test('UIFIX-31c Requests over time, a sub-millisecond hour and an hour with no timing: no NaN, the axis starts at 0 and the title is there', async ({ page }) => {
+  await rerunWithWindows(page, (i) => i % 2 ? { count: 4, p95: null, max: null } : { count: 7, p95: 0.4, max: 0.9 });
+  const f = await heroFacts(page);
+  expect(f.label).toContain('Right axis: P95 response time in milliseconds.');
+  expect(f.leftRows).toBeGreaterThan(90);
+  expect(f.rightRows).toBeGreaterThan(90);
+  const noTiming = await heroTip(page, /P95: no timed requests/);
+  expect(noTiming).toContain('P95: no timed requests');
+  const tiny = await heroTip(page, /P95: ≈ <1 ms/);
+  expect(tiny).toContain('P95: ≈ <1 ms');
+  expect(tiny).toContain('Slowest request: <1 ms');
+  expect(tiny + noTiming).not.toMatch(/NaN|undefined|Infinity/);
+});
+
+test('UIFIX-31d Requests over time, a quiet hour (every interval zero): the empty message shows, not a chart of NaN', async ({ page }) => {
+  await rerunWithWindows(page, () => ({ count: 0, p95: null, max: null }));
+  await expect(page.locator('.hero-empty')).toBeVisible();
+  await expect(page.locator('.hero-empty')).toContainText('No requests in this period');
+  await expect(page.locator('.hero-chart')).toHaveAttribute('aria-hidden', 'true');
+});
+
+for (const width of [320, 360, 390]) {
+  test('UIFIX-32 Requests over time on a ' + width + ' px phone: titles painted, box 220 px, no sideways scroll', async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    const f = await heroFacts(page);
+    expect(f.stage[3], 'chart box height (220 px on develop)').toBe(220);
+    expect(f.stage[2], 'the box spans the content width (two 14 px gutters)').toBe(width - 28);
+    expect(f.leftRows).toBeGreaterThan(90);
+    expect(f.rightRows).toBeGreaterThan(90);
+    expect(f.outer).toBe(0);
+    const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(over, 'sideways overflow in px').toBeLessThanOrEqual(0);
+  });
+}

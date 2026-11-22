@@ -1,5 +1,9 @@
 /** One interval of the Pulse timeline. latency is the interval's P95; max its slowest request. */
-export interface HeroSlot { at: number; count: number; latency: number | null; max?: number | null }
+export interface HeroSlot {
+  at: number; count: number; latency: number | null; max?: number | null;
+  /** The interval's own start and end in ms (cut to the period shown); the tooltip names both. Missing: only `at` is known. */
+  start?: number; end?: number;
+}
 
 /**
  * Values for the dashed "no timed requests here" bridge: across each run of empty intervals that sits between two intervals with a value,

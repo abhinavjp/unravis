@@ -1,0 +1,275 @@
+// BL-495: axis titles, units and one precision on the Requests-over-time chart. Edge values on purpose: zero, tiny, huge, NaN, empty series,
+// thousands separators and a locale that swaps the marks.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const test = require('node:test');
+const ts = require('typescript');
+
+const root = path.resolve(__dirname, '..');
+const cache = new Map();
+function loadTypeScript(relativePath) {
+  const filename = path.join(root, relativePath);
+  if (cache.has(filename)) return cache.get(filename).exports;
+  const source = fs.readFileSync(filename, 'utf8');
+  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+  const module = { exports: {} };
+  cache.set(filename, module);
+  const nodeRequire = createRequire(filename);
+  const load = (request) => /^\.\.?\//.test(request) && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
+    ? loadTypeScript(path.relative(root, path.join(path.dirname(filename), request + '.ts')))
+    : nodeRequire(request);
+  new Function('require', 'module', 'exports', output)(load, module, module.exports);
+  return module.exports;
+}
+
+const axis = loadTypeScript('src/lib/chartAxis.ts');
+const { heroOption } = loadTypeScript('src/lib/charts.ts');
+
+// Tests read en-GB-style text: the decimal mark is a dot, the thousands mark a comma.
+const decimalsOf = (label) => (/\.(\d+)/.exec(label) || [])[1]?.length ?? 0;
+const ticksOf = (a, count) => Array.from({ length: Math.round(a.maxMs / a.intervalMs) + 1 }, (_, i) => i * a.intervalMs);
+
+test('niceStep: 1, 2 or 5 times a power of ten, never below the floor, and a bad number gives the floor', () => {
+  assert.equal(niceStepOf(0.3), 0.5);
+  assert.equal(niceStepOf(1), 1);
+  assert.equal(niceStepOf(1.1), 2);
+  assert.equal(niceStepOf(3), 5);
+  assert.equal(niceStepOf(7), 10);
+  assert.equal(niceStepOf(0.07), 0.1);
+  assert.equal(axis.niceStep(0.1, 1), 1);
+  for (const bad of [NaN, -5, 0, Infinity, undefined, null]) assert.equal(axis.niceStep(bad, 1), 1, String(bad));
+  assert.equal(axis.niceStep(NaN), 1);
+  function niceStepOf(v) { return axis.niceStep(v); }
+});
+
+test('decimalsFor and fixedNumber: the same decimals on every figure, no NaN, no -0', () => {
+  assert.equal(axis.decimalsFor(5), 0);
+  assert.equal(axis.decimalsFor(0.5), 1);
+  assert.equal(axis.decimalsFor(0.25), 2);
+  assert.equal(axis.decimalsFor(NaN), 0);
+  assert.equal(axis.fixedNumber(3, 1, 'en-GB'), '3.0');
+  assert.equal(axis.fixedNumber(3.04, 0, 'en-GB'), '3');
+  assert.equal(axis.fixedNumber(1234567.891, 2, 'en-GB'), '1,234,567.89');
+  assert.equal(axis.fixedNumber(NaN, 1), '—');
+  assert.equal(axis.fixedNumber(undefined, 1), '—');
+  assert.equal(axis.fixedNumber(Infinity, 1), '—');
+  assert.equal(axis.fixedNumber(-0.0001, 1, 'en-GB'), '0.0');
+  assert.equal(axis.fixedNumber(-0.0001, 1, 'en-GB').includes('-'), false);
+});
+
+test('fixedNumber: the locale changes the marks, never the number of decimals', () => {
+  assert.equal(axis.fixedNumber(1234.5, 1, 'de-DE'), '1.234,5');
+  assert.equal(axis.fixedNumber(1234, 1, 'de-DE'), '1.234,0');
+  assert.equal(axis.fixedNumber(1234, 0, 'de-DE'), '1.234');
+  assert.equal(axis.fixedNumber(1234.5, 1, 'en-US'), '1,234.5');
+});
+
+test('countAxis: whole numbers only, from 0, a top that is a whole multiple of the step', () => {
+  const small = axis.countAxis(3);
+  assert.deepEqual([small.interval, small.max], [1, 3]);
+  assert.deepEqual([...Array(small.max / small.interval + 1)].map((_, i) => small.format(i * small.interval)), ['0', '1', '2', '3']);
+  const big = axis.countAxis(1234, 4, 'en-GB');
+  assert.deepEqual([big.interval, big.max], [500, 1500]);
+  assert.equal(big.format(1500), '1,500');
+  const huge = axis.countAxis(98_765_432, 4, 'en-GB');
+  assert.equal(huge.max % huge.interval, 0);
+  assert.ok(huge.max >= 98_765_432);
+  assert.equal(huge.format(huge.max).includes('.'), false);
+  assert.equal(axis.countAxis(98_765_432, 4, 'de-DE').format(40_000_000), '40.000.000');
+  // fractions of a request cannot exist
+  assert.equal(axis.countAxis(0.2).max, 1);
+  assert.equal(axis.countAxis(1).max, 1);
+});
+
+test('countAxis: zero, empty, negative and not-a-number series still give a usable axis', () => {
+  for (const bad of [0, NaN, -4, Infinity, undefined, null, Math.max(...[])]) {
+    const a = axis.countAxis(bad);
+    assert.ok(Number.isFinite(a.max) && a.max >= 1, String(bad));
+    assert.ok(Number.isInteger(a.interval) && a.interval >= 1, String(bad));
+    assert.equal(a.format(0), '0');
+  }
+});
+
+test('durationAxis: ms below one second, seconds from one second, one precision on every tick', () => {
+  const ms = axis.durationAxis(840);
+  assert.equal(ms.unit, 'ms');
+  assert.deepEqual(ticksOf(ms).map(ms.format), ['0', '500', '1,000']);
+  assert.ok(ms.maxMs >= 840);
+  const sec = axis.durationAxis(1800, 4, 'en-GB');
+  assert.equal(sec.unit, 's');
+  const labels = ticksOf(sec).map(sec.format);
+  assert.deepEqual(labels, ['0.0', '0.5', '1.0', '1.5', '2.0']);
+  assert.equal(new Set(labels.map(decimalsOf)).size, 1, 'one number of decimals');
+  const long = axis.durationAxis(68_000, 4, 'en-GB');
+  assert.deepEqual(ticksOf(long).map(long.format), ['0', '20', '40', '60', '80']);
+  assert.equal(long.formatWithUnit(68_000), '68 s');
+  assert.equal(sec.formatWithUnit(1500), '1.5 s');
+});
+
+test('durationAxis: tiny, huge, zero and bad values', () => {
+  const tiny = axis.durationAxis(0.4);
+  assert.equal(tiny.unit, 'ms');
+  assert.ok(tiny.intervalMs >= 1, 'a fraction of a millisecond is never a step');
+  assert.ok(tiny.maxMs >= 1);
+  const huge = axis.durationAxis(5_400_000, 4, 'en-GB'); // 90 minutes
+  assert.equal(huge.unit, 's');
+  assert.ok(huge.maxMs >= 5_400_000);
+  assert.equal(huge.format(huge.maxMs).includes('.'), false);
+  assert.match(huge.format(huge.maxMs), /^\d{1,3}(,\d{3})*$/);
+  for (const bad of [0, NaN, -1, Infinity, undefined, null]) {
+    const a = axis.durationAxis(bad);
+    assert.equal(a.unit, 'ms', String(bad));
+    assert.ok(Number.isFinite(a.maxMs) && a.maxMs >= 1, String(bad));
+    assert.equal(a.format(0), '0');
+    assert.equal(a.format(NaN), '—');
+  }
+});
+
+test('durationAxis: floating point noise never prints a long tail', () => {
+  for (const top of [100, 300, 700, 1100, 2300, 2900, 9999, 10_001, 123_456, 7_654_321]) {
+    const a = axis.durationAxis(top);
+    const labels = ticksOf(a).map(a.format);
+    assert.ok(labels.every(label => !/\d{5,}\d*\.\d{4,}/.test(label)), top + ': ' + labels);
+    assert.equal(new Set(labels.map(decimalsOf)).size, 1, top + ': ' + labels.join(' '));
+    assert.ok(a.maxMs >= top);
+  }
+});
+
+test('durationSet: P95 and slowest request share a unit and a precision (the sweep case: 65.7 s next to 68 s)', () => {
+  assert.deepEqual(axis.durationSet([65_700, 68_000], 'en-GB'), ['65.7 s', '68.0 s']);
+  assert.deepEqual(axis.durationSet([2500, 68_000], 'en-GB'), ['2.5 s', '68.0 s']);
+  assert.deepEqual(axis.durationSet([900, 3200], 'en-GB'), ['0.90 s', '3.20 s']);
+  assert.deepEqual(axis.durationSet([340, 60_000], 'en-GB'), ['0.34 s', '60.00 s'], 'a sub-second value keeps two digits');
+  assert.deepEqual(axis.durationSet([120, 420], 'en-GB'), ['120 ms', '420 ms']);
+});
+
+test('durationSet: a short P95 beside a long outlier stays in milliseconds, never rounds to 0.0 s', () => {
+  assert.deepEqual(axis.durationSet([3, 68_000], 'en-GB'), ['3 ms', '68,000 ms']);
+  assert.deepEqual(axis.durationSet([0.4, 2], 'en-GB'), ['<1 ms', '2 ms']);
+  // a zero is not "short": it prints with the same decimals as the rest
+  assert.deepEqual(axis.durationSet([0, 68_000], 'en-GB'), ['0.0 s', '68.0 s']);
+});
+
+test('durationSet: missing, NaN, negative and infinite values come back null, the rest still print', () => {
+  assert.deepEqual(axis.durationSet([null, 1500], 'en-GB'), [null, '1.50 s']);
+  assert.deepEqual(axis.durationSet([NaN, undefined, -3, Infinity]), [null, null, null, null]);
+  assert.deepEqual(axis.durationSet([]), []);
+  assert.deepEqual(axis.durationSet([null, null]), [null, null]);
+  assert.deepEqual(axis.durationSet([12_345], 'de-DE'), ['12,3 s']);
+});
+
+test('tickLabels: the 0, half, top ticks of a lane axis share a unit and decimals', () => {
+  assert.deepEqual(axis.tickLabels([0, 1250, 2500], 'en-GB'), ['0.00 s', '1.25 s', '2.50 s']);
+  assert.deepEqual(axis.tickLabels([0, 0.5, 1], 'en-GB'), ['0.0 ms', '0.5 ms', '1.0 ms']);
+  assert.deepEqual(axis.tickLabels([0, 150, 300], 'en-GB'), ['0 ms', '150 ms', '300 ms']);
+  assert.deepEqual(axis.tickLabels([0, 30_000, 60_000], 'en-GB'), ['0 s', '30 s', '60 s']);
+  assert.deepEqual(axis.tickLabels([0, NaN, 10], 'en-GB'), ['0 ms', '—', '10 ms']);
+  assert.deepEqual(axis.tickLabels([]), []);
+});
+
+test('titles: the time title names the zone; an empty zone falls back to UTC; the latency title carries the unit', () => {
+  assert.equal(axis.requestsAxisTitle, 'Requests per interval');
+  assert.equal(axis.timeAxisTitle('Europe/London'), 'Time (Europe/London)');
+  assert.equal(axis.timeAxisTitle('  '), 'Time (UTC)');
+  assert.equal(axis.latencyAxisTitle('P95', 's'), 'P95 response time (s)');
+  assert.equal(axis.latencyAxisTitle('P95', 'ms'), 'P95 response time (ms)');
+});
+
+const MIN = 60_000;
+const slot = (i, count, latency, max, extra = {}) => ({ at: Date.UTC(2026, 9, 24, 10, 0) + i * 5 * MIN, count, latency, max, ...extra });
+
+test('heroOption: both value axes and the time axis have a title with the unit', () => {
+  const windows = [slot(0, 12, 800, 1400), slot(1, 0, null, null), slot(2, 30, 65_700, 68_000)];
+  const o = heroOption(windows, 'UTC', true);
+  assert.equal(o.xAxis.name, 'Time (UTC)');
+  assert.equal(o.yAxis[0].name, 'Requests per interval');
+  assert.equal(o.yAxis[1].name, 'P95 response time (s)');
+  assert.equal(o.yAxis[1].position, 'right');
+});
+
+test('heroOption: every tick of an axis has the same decimals, and the axes end on a whole step', () => {
+  const windows = [slot(0, 3, 800, 1400), slot(1, 7, 1500, 1800), slot(2, 1234, 65_700, 68_000)];
+  const o = heroOption(windows, 'UTC', true);
+  for (const y of o.yAxis) {
+    assert.equal(y.min, 0);
+    assert.equal(Math.round(y.max / y.interval) * y.interval, y.max, 'the top is a whole number of steps');
+    const labels = Array.from({ length: Math.round(y.max / y.interval) + 1 }, (_, i) => y.axisLabel.formatter(i * y.interval));
+    assert.equal(new Set(labels.map(decimalsOf)).size, 1, labels.join(' | '));
+  }
+  assert.ok(o.yAxis[0].axisLabel.formatter(o.yAxis[0].max).length > 0);
+});
+
+test('heroOption: without latency there is one value axis and no right-hand margin for a title', () => {
+  const o = heroOption([slot(0, 5, 200, 400)], 'UTC', false);
+  assert.equal(o.yAxis.length, 1);
+  assert.equal(o.grid.right, 14);
+  const withLatency = heroOption([slot(0, 5, 200, 400)], 'UTC', true);
+  assert.ok(withLatency.grid.right > 40);
+});
+
+test('heroOption: the margins grow with the label width (a count in the millions needs more room than 3)', () => {
+  const few = heroOption([slot(0, 3, null, null)], 'UTC', false);
+  const many = heroOption([slot(0, 4_200_000, null, null)], 'UTC', false);
+  assert.ok(many.grid.left > few.grid.left);
+  assert.ok(many.yAxis[0].nameGap > few.yAxis[0].nameGap);
+  // the title never sits on the tick labels
+  assert.ok(many.grid.left >= many.yAxis[0].nameGap + 7 + 3, 'half the title and 3 px of air beyond its centre');
+});
+
+test('heroOption: tooltip names the interval start and end and writes P95 and the slowest request alike', () => {
+  const start = Date.UTC(2026, 9, 24, 10, 0);
+  const windows = [{ ...slot(0, 1234, 65_700, 68_000), start, end: start + 5 * MIN }];
+  const text = heroOption(windows, 'UTC', true).tooltip.formatter([{ dataIndex: 0 }]);
+  assert.ok(text.includes('24 Oct 10:00:00 to 10:05:00 UTC'), text);
+  assert.ok(text.includes('P95: ≈ 65.7 s'), text);
+  assert.ok(text.includes('Slowest request: 68.0 s'), text);
+  assert.match(text, /Requests: 1.?234/);
+});
+
+test('heroOption: a tooltip without an end falls back to the start time; the end of a one-instant bucket is not repeated', () => {
+  const noEnd = heroOption([slot(0, 5, 200, 400)], 'UTC', true).tooltip.formatter([{ dataIndex: 0 }]);
+  assert.ok(noEnd.startsWith('24 Oct 10:00:00 UTC'), noEnd);
+  const at = Date.UTC(2026, 9, 24, 10, 0);
+  const same = heroOption([{ ...slot(0, 5, 200, 400), start: at, end: at }], 'UTC', true).tooltip.formatter([{ dataIndex: 0 }]);
+  assert.ok(same.startsWith('24 Oct 10:00:00 UTC'), same);
+});
+
+test('heroOption: empty, all-zero and NaN series build an option with finite axes and no NaN in any text', () => {
+  const cases = [
+    [],
+    [slot(0, 0, null, null)],
+    [slot(0, NaN, NaN, NaN)],
+    [slot(0, 0, 0, 0), slot(1, 0, 0, 0)],
+    [slot(0, 5, 0.3, 0.4)],
+    [slot(0, 5, null, 80_000), slot(1, 1, 3, 68_000)]
+  ];
+  for (const windows of cases) {
+    const o = heroOption(windows, 'UTC', true);
+    for (const y of o.yAxis) {
+      assert.ok(Number.isFinite(y.max) && y.max > 0 && Number.isFinite(y.interval) && y.interval > 0, JSON.stringify(windows));
+      assert.ok(!/NaN|undefined|Infinity/.test(y.axisLabel.formatter(y.max)), JSON.stringify(windows));
+    }
+    if (windows.length) {
+      const text = o.tooltip.formatter([{ dataIndex: 0 }]);
+      assert.ok(!/NaN|undefined|Infinity/.test(text), text);
+    }
+  }
+  assert.equal(heroOption([], 'UTC', true).tooltip.formatter([{ dataIndex: 0 }]), '');
+});
+
+test('heroOption: the diamond label uses the axis precision, and a slot with no timing says so', () => {
+  const windows = [slot(0, 10, 500, 500), slot(1, 10, 600, 68_000), slot(2, 4, null, null)];
+  const o = heroOption(windows, 'UTC', true);
+  const scatter = o.series.find(s => s.name === 'Slowest request');
+  const diamond = scatter.data[1];
+  assert.equal(diamond.symbol, 'diamond');
+  assert.equal(diamond.label.formatter(), '68 s');
+  assert.ok(o.tooltip.formatter([{ dataIndex: 2 }]).includes('P95: no timed requests'));
+});
+
+test('heroOption: German-style locales are not hard-wired: the tick labels come from the one formatter', () => {
+  const o = heroOption([slot(0, 4_200_000, null, null)], 'UTC', false);
+  assert.match(o.yAxis[0].axisLabel.formatter(2_000_000), /^2.000.000$|^2,000,000$|^2\s000\s000$/);
+});

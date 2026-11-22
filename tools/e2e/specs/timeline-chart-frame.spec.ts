@@ -130,7 +130,7 @@ test('TLF-05: when the answer carries a slowness figure the API lane gets a righ
   await readWindow(page, WIN_ALL);
   const right = page.locator('.axis-right[data-lane="audit"]');
   await expect(right.locator('.tick')).toHaveCount(3);
-  await expect(right.locator('.tick-bottom')).toHaveText(/^0\s?ms$|^0$/);
+  await expect(right.locator('.tick-bottom')).toHaveText(/^0\s?(ms|s)$|^0$/);
   await expect(right.locator('.y-title')).toContainText('slowness');
   await page.setViewportSize({ width: 375, height: 900 });
   await expect(right).toBeHidden();
@@ -187,7 +187,8 @@ test('TLF-06: the API lane shows the Run Analysis chart with a legend, a red dia
   const tip = page.locator('#tc-tip');
   await expect(tip).toBeVisible();
   await expect(tip).toContainText('Slow end (P95)');
-  await expect(tip).toContainText('Slowest request: 60 s');
+  await expect(tip).toContainText('Slowest request: 60.00 s'); // the P95 beside it (0.30 s) is written in the same unit and the same two decimals (BL-495)
+  await expect(tip).toContainText('Slow end (P95): 0.30 s');
   await expect(tip).toContainText('far above the usual P95');
 });
 
