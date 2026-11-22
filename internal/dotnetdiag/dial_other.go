@@ -1,12 +1,11 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package dotnetdiag
 
 import "context"
 
-// platformDialer has no transport on this platform yet: every Dial is ReasonUnsupported
-// and nothing is opened. The Windows dialer is in dial_windows.go; the Linux dialer PR narrows the
-// build tag of this file to the platforms that still have none.
+// platformDialer on a platform with no transport (neither Windows nor Linux):
+// every Dial is ReasonUnsupported and nothing is opened.
 func platformDialer() Dialer { return unsupportedDialer{} }
 
 type unsupportedDialer struct{}
