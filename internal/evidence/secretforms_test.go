@@ -37,6 +37,11 @@ func TestScrubSecretsFormsFromTheSweep(t *testing.T) {
 		{"json array", `{"password":["FAKEPW"],"u":1}`, `{"[removed]`},
 		{"compound token with a colon", "X-Auth-Token: FAKEPW", "X-Auth-Token: [removed]"},
 		{"client_secret colon", "client_secret: FAKEPW", "client_secret: [removed]"},
+		{"url login with a question mark", "ftp://u:SEK?FAKEPW@host", "[removed]"},
+		{"redis url with an empty user", "redis://:SEK/FAKEPW@h", "[removed]"},
+		{"all digit password with a slash", "ftp://admin:1234/FAKEPW@host", "[removed]"},
+		{"yaml block scalar", "password: |\n  FAKEPW\nnext: 1", "[removed]\n  [removed]\nnext: 1"},
+		{"yaml next line", "client_secret:\n  FAKEPW\n", "client_secret:\n  [removed]\n"},
 		{"ordinary note", "the password was reset; token_count=5; max_tokens=100", "the password was reset; token_count=5; max_tokens=100"},
 		{"ordinary xml", `<add key="Timeout" value="30"/><Host>db01</Host>`, `<add key="Timeout" value="30"/><Host>db01</Host>`},
 	} {

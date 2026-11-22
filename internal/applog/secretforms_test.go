@@ -39,6 +39,12 @@ func TestSanitizeSecretFormsFromTheSweep(t *testing.T) {
 		{"json array", `{"password":["FAKEPW"],"u":1}`, `{"password":[redacted],"u":1}`},
 		{"compound token with a colon", "X-Auth-Token: FAKEPW", "X-Auth-Token: [redacted]"},
 		{"client_secret colon", "client_secret: FAKEPW", "client_secret: [redacted]"},
+		{"url login with a question mark", "ftp://u:SEK?FAKEPW@host", "ftp://[redacted]@host"},
+		{"redis url with an empty user", "redis://:SEK/FAKEPW@h", "redis://[redacted]@h"},
+		{"all digit password with a slash", "ftp://admin:1234/FAKEPW@host", "ftp://[redacted]@host"},
+		{"yaml block scalar", "password: |\n  FAKEPW\nnext: 1", "password: |\n  [redacted]\nnext: 1"},
+		{"yaml next line", "client_secret:\n  FAKEPW\n", "client_secret:\n  [redacted]\n"},
+		{"xml tag with a valueless attribute", "<Password x>FAKEPW</Password>", "<Password x>[redacted]</Password>"},
 		// Ordinary text stays.
 		{"ordinary line", "source west read 120 rows in 45 ms; token_count=5 max_tokens=100", "source west read 120 rows in 45 ms; token_count=5 max_tokens=100"},
 		{"ordinary xml", `<add name="Timeout" value="30"/><Host>db01</Host>`, `<add name="Timeout" value="30"/><Host>db01</Host>`},

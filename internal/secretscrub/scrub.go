@@ -266,7 +266,7 @@ func maskKV(s, mask string) string {
 		}
 		bare := hi-lo == m[1]-m[0]
 		inQuery := lo > 0 && (s[lo-1] == '?' || s[lo-1] == '&')
-		from, to, next, ok := readValue(s, hi, class, inQuery, bare)
+		from, to, next, ok := readValue(s, hi, class, inQuery, bare, lo)
 		if !ok {
 			continue
 		}
@@ -280,7 +280,7 @@ func maskKV(s, mask string) string {
 
 // readValue reads what follows a key that ends at i: an optional closing quote of the key, the "=" or ":", and the value. It
 // returns the span of the value to mask, where reading went on to, and false when no value follows.
-func readValue(s string, i int, class int, inQuery, bare bool) (from, to, next int, ok bool) {
+func readValue(s string, i int, class int, inQuery, bare bool, keyAt int) (from, to, next int, ok bool) {
 	j := i
 	jsonKey := false
 	k := j
@@ -326,8 +326,17 @@ func readValue(s string, i int, class int, inQuery, bare bool) (from, to, next i
 	}
 	// A value on the next line: nothing follows the key on its line, so the value is the next line (one line break, then spaces;
 	// a blank line ends the search).
+	if colon && j < len(s) {
+		// A YAML block scalar ("password: |" and the indented lines under it).
+		if hdrEnd, isBlock := blockHeader(s, j); isBlock {
+			if from, to, found := blockText(s, hdrEnd, keyAt); found {
+				return from, to, to, true
+			}
+			return 0, 0, 0, false
+		}
+	}
 	if j >= len(s) || s[j] == '\r' || s[j] == '\n' {
-		if colon && class != classPassword && !jsonKey {
+		if colon && class == classToken && !jsonKey && bare {
 			return 0, 0, 0, false
 		}
 		if j >= len(s) {
@@ -337,6 +346,9 @@ func readValue(s string, i int, class int, inQuery, bare bool) (from, to, next i
 			j += 2
 		} else {
 			j++
+		}
+		if colon && class != classPassword && !jsonKey && (j >= len(s) || (s[j] != ' ' && s[j] != '\t')) {
+			return 0, 0, 0, false // a name such as client_secret: with its value on the next line counts only when that line is indented (YAML)
 		}
 		for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
 			j++
@@ -570,4 +582,62 @@ func bracketEnd(s string, i int) int {
 		}
 	}
 	return len(s)
+}
+
+// blockHeader says whether the text at j is the header of a YAML block scalar ("|", ">", "|-", ">+", "|2") that ends its line. It
+// returns where the header ends.
+func blockHeader(s string, j int) (end int, ok bool) {
+	if s[j] != '|' && s[j] != '>' {
+		return 0, false
+	}
+	k := j + 1
+	for n := 0; n < 2 && k < len(s) && (s[k] == '+' || s[k] == '-' || (s[k] >= '1' && s[k] <= '9')); n++ {
+		k++
+	}
+	for k < len(s) && (s[k] == ' ' || s[k] == '\t') {
+		k++
+	}
+	if k < len(s) && s[k] != '\r' && s[k] != '\n' {
+		return 0, false
+	}
+	return k, true
+}
+
+// blockText finds the text of a block scalar whose header ends at p: the lines after it that are indented deeper than the line of the
+// key (blank lines between them belong to it). It returns the span from the first text to the end of the last line of text.
+func blockText(s string, p, keyAt int) (from, to int, ok bool) {
+	ls := strings.LastIndexByte(s[:keyAt], '\n') + 1
+	keyIndent := 0
+	for k := ls; k < len(s) && (s[k] == ' ' || s[k] == '\t'); k++ {
+		keyIndent++
+	}
+	for p < len(s) {
+		// p is at a line break; the next line starts after it.
+		if s[p] == '\r' && p+1 < len(s) && s[p+1] == '\n' {
+			p += 2
+		} else {
+			p++
+		}
+		e := p
+		for e < len(s) && s[e] != '\n' {
+			e++
+		}
+		line := s[p:e]
+		text := strings.TrimRight(line, "\r \t")
+		indent := 0
+		for indent < len(text) && (text[indent] == ' ' || text[indent] == '\t') {
+			indent++
+		}
+		if indent < len(text) { // a line with text
+			if indent <= keyIndent {
+				break
+			}
+			if !ok {
+				from, ok = p+indent, true
+			}
+			to = p + len(text)
+		}
+		p = e
+	}
+	return from, to, ok
 }

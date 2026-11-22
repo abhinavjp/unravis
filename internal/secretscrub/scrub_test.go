@@ -99,6 +99,43 @@ func TestMaskURLUserinfoReviewedBypasses(t *testing.T) {
 	}
 }
 
+// Inputs from the second security review of this package (PR 181). Fake values only.
+func TestMaskSecondReviewBypasses(t *testing.T) {
+	run(t, []tcase{
+		{"yaml literal block", "password: |\n  FAKEPW\n  FAKEPW two\nnext: 1", "password: |\n  [m]\nnext: 1"},
+		{"yaml folded block, strip", "password: >-\n  FAKEPW\n", "password: >-\n  [m]\n"},
+		{"yaml client_secret block", "client_secret: |\n  FAKEPW\n", "client_secret: |\n  [m]\n"},
+		{"yaml block with a blank line inside", "password: |\n  FAKEPW\n\n  FAKEPW\nnext: 1", "password: |\n  [m]\nnext: 1"},
+		{"yaml block under a nested key", "db:\n  password: |\n    FAKEPW\n  host: h\n", "db:\n  password: |\n    [m]\n  host: h\n"},
+		{"yaml block with CRLF", "password: |\r\n  FAKEPW\r\nnext: 1", "password: |\r\n  [m]\r\nnext: 1"},
+		{"yaml client_secret on the next line", "client_secret:\n  FAKEPW\nnext: 1", "client_secret:\n  [m]\nnext: 1"},
+		{"yaml api_key on the next line", "api_key:\n  FAKEPW\n", "api_key:\n  [m]\n"},
+		{"compound name with an unindented next line is a sentence", "api_key:\nsee the docs", "api_key:\nsee the docs"},
+		{"xml tag with a valueless attribute", "<Password x>FAKEPW</Password>", "<Password x>[m]</Password>"},
+		{"xml marker of an earlier redaction", "<token hidden> then more text", "<token hidden> then more text"},
+		{"xml tag cut off before another tag", "<a b=<Password>FAKEPW</Password>", "<a b=<Password>[m]</Password>"},
+	})
+}
+
+func TestMaskURLUserinfoSecondReviewBypasses(t *testing.T) {
+	for _, tc := range []tcase{
+		{"question mark in the password", "ftp://u:SEK?FAKEPW@host", "ftp://[m]@host"},
+		{"hash in the password", "ftp://u:SEK#FAKEPW@host", "ftp://[m]@host"},
+		{"redis with an empty user", "redis://:SEK/FAKEPW@h", "redis://[m]@h"},
+		{"all digit password with a slash", "ftp://admin:1234/FAKEPW@host", "ftp://[m]@host"},
+		{"host port and a path with an at sign", "https://h:8080/users/@me", "https://h:8080/users/@me"},
+		{"host port and a name path", "https://h:8080/@me", "https://h:8080/@me"},
+		{"host port and a query with an at sign", "http://localhost:8080?mail=a@b.example", "http://localhost:8080?mail=a@b.example"},
+		{"two urls, the second has the login", "see a://u:x/y b://v:SEK/FAKEPW@h", "see a://u:x/y b://[m]@h"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := MaskURLUserinfo(tc.in, m); got != tc.want {
+				t.Errorf("got %q, want %q", shown(got), shown(tc.want))
+			}
+		})
+	}
+}
+
 // Form 2: KEY=value with a prefix, in app logs, setup logs and connection text.
 func TestMaskPrefixedKeys(t *testing.T) {
 	run(t, []tcase{
@@ -275,6 +312,19 @@ func TestMaskHostileInputIsFast(t *testing.T) {
 		"key attr and comment":        rep(`<add key="password"><!--`),
 		"comment ends the text":       rep("<Password><!--") + "-->",
 		"long name":                   "DB_PASSWORD" + rep("_X"),
+		"url slash login":             rep("a://u:x/"),
+		"url bare":                    rep("://u:"),
+		"url no slash":                rep("a://u:x"),
+		"url host port path at":       rep("a://h:1/x/@"),
+		"url question":                rep("a://u:x?"),
+		"xml unclosed attr":           rep("<a b="),
+		"xml unclosed password attr":  rep("<Password b="),
+		"xml unclosed key value":      rep(`<add key="password" value=`),
+		"xml bare names":              rep("<a "),
+		"xml valueless attrs":         rep("<Password x y z "),
+		"yaml block headers":          rep("password: |\n"),
+		"yaml blocks":                 rep("password: |\n  x\n"),
+		"yaml next lines":             rep("client_secret:\n  "),
 		"many words in one name":      rep("password_token_secret_"),
 	}
 	for name, in := range inputs {
@@ -282,7 +332,7 @@ func TestMaskHostileInputIsFast(t *testing.T) {
 			start := time.Now()
 			_ = Mask(in, m)
 			_ = MaskURLUserinfo(in, m)
-			if d := time.Since(start); d > 2*time.Second {
+			if d := time.Since(start); d > time.Second {
 				t.Errorf("took %v for %d bytes", d, len(in))
 			}
 		})
@@ -296,7 +346,7 @@ func secretForms(r *rand.Rand) (text, keep string) {
 	pw := []string{"FAKEPW", "FAKEPW x", "x FAKEPW y", "a;FAKEPW", "FAKEPW}b", `a"FAKEPW`, "a'FAKEPW", `FAKEPW\`, "FAKEPW@x", "p/FAKEPW"}
 	val := pw[r.Intn(len(pw))]
 	word := !strings.ContainsAny(val, " ;}\"'\\@/")
-	if !word && !(strings.HasPrefix(strings.ToLower(key), "p") || strings.Contains(strings.ToLower(key), "pwd") || strings.Contains(strings.ToLower(key), "password")) {
+	if lk := strings.ToLower(key); !word && !strings.HasPrefix(lk, "p") && !strings.Contains(lk, "pwd") && !strings.Contains(lk, "password") {
 		val = "FAKEPW" // a token is one word unless it is quoted
 	}
 	esc := func(v, q string) string {

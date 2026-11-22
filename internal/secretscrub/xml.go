@@ -48,8 +48,13 @@ func maskXML(s, mask string) string {
 			continue
 		}
 		pos = end
+		if !plain && !(len(attrs) == 1 && attrs[0].name == "hidden") {
+			// An attribute without a value ("<Password x>") is still a tag. Only "<token hidden>", which an earlier redaction leaves
+			// ("<private key hidden>" and the like have no secret name), is a marker and not a tag.
+			plain = true
+		}
 		if !plain {
-			continue // "<token hidden>" or "<private key hidden>": a marker left by an earlier redaction, not a tag
+			continue
 		}
 		local := name
 		if c := strings.LastIndexByte(local, ':'); c >= 0 {
@@ -181,7 +186,7 @@ func parseTag(s string, n int) (attrs []attr, end int, selfClose, plain, ok bool
 				i = j + 2 + c
 			} else {
 				vs := j
-				for j < limit && !isSpace(s[j]) && s[j] != '>' && (s[j] != '/' || j+1 >= len(s) || s[j+1] != '>') {
+				for j < limit && !isSpace(s[j]) && s[j] != '>' && s[j] != '<' && (s[j] != '/' || j+1 >= len(s) || s[j+1] != '>') {
 					j++
 				}
 				a.hasValue, a.vFrom, a.vTo = true, vs, j

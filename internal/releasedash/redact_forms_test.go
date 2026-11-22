@@ -29,6 +29,10 @@ func TestRedactorSecretFormsFromTheSweep(t *testing.T) {
 		{"json array", `{"password":["FAKEPW"],"u":1}`},
 		{"compound token with a colon", "X-Auth-Token: FAKEPW"},
 		{"client_secret colon", "client_secret: FAKEPW"},
+		{"url login with a question mark", "ftp://u:SEK?FAKEPW@host"},
+		{"redis url with an empty user", "redis://:SEK/FAKEPW@h"},
+		{"all digit password with a slash", "ftp://admin:1234/FAKEPW@host"},
+		{"xml tag with a valueless attribute", "<Password x>FAKEPW</Password>"},
 		{"connectionString attribute", `<add name="Db" connectionString="Server=a;Password=FAKEPW;" providerName="p"/>`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,6 +61,8 @@ func TestRedactorHostileInputIsFast(t *testing.T) {
 		"escaped":      `{"password":"` + rep(`\"`),
 		"xml":          rep("<Password>"),
 		"xml comment":  rep("<Password><!--"),
+		"xml cut tags": rep("<a b="),
+		"url slashes":  rep("a://u:x/"),
 		"key comment":  rep(`<add key="password"><!--`),
 		"xml key attr": rep(`<add key="password" `),
 		"long ident":   rep("DB_PASSWORD_"),
