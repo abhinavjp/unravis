@@ -553,6 +553,8 @@ try {
         $script:extra = @{ key = $chosen.Name; passref = "$passRef"; prev_feed = "$($feed.Tag)" }
         & (Join-Path $PSScriptRoot 'Test-Release.ps1') | Out-Host
         if ($LASTEXITCODE -ne 0) { Fail 'Test-Release.ps1 failed.' }
+        & (Join-Path $PSScriptRoot 'Test-NoUpx.Tests.ps1') | Out-Host
+        if ($LASTEXITCODE -ne 0) { Fail 'Test-NoUpx.Tests.ps1 failed.' }
         Write-Host "Preflight OK: $Branch at $($head.Substring(0,7)), CI green, $tag is free, key $($chosen.Name)." -ForegroundColor Green
         if ($CheckOnly) { Write-Host "`nCHECK ONLY. Would release $tag with key $($chosen.Name). Nothing was changed." -ForegroundColor Yellow; exit 0 }
         Write-AuditEntry $audit @{ event = 'preflight-ok'; version = $Version; commit = $head; go_installed = "$($script:report.go.installed)"; go_used = "$($script:report.go.used)"; key = $chosen.Name; key_pub = $chosen.Pub; feed = "$($feed.Tag)"; sensitive_prs = @($script:report.sensitive | Where-Object { $_ }) }

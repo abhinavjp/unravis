@@ -31,7 +31,9 @@ import (
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/instance"
 	"api-audit-explorer/internal/ledger"
+	"api-audit-explorer/internal/locator"
 	"api-audit-explorer/internal/mcp"
+	"api-audit-explorer/internal/pipesrv"
 	"api-audit-explorer/internal/server"
 	"api-audit-explorer/internal/store"
 	"api-audit-explorer/internal/tray"
@@ -79,6 +81,10 @@ type runFlags struct {
 	quit                bool
 	checkUpdate         bool
 	background          bool
+	pipeServer          bool
+	pipeOnly            bool
+	portSet             bool
+	loopback            bool
 }
 
 // parseFlags parses and validates the command line. Every privacy and
@@ -98,9 +104,13 @@ func parseFlags(args []string) (runFlags, error) {
 	flags.BoolVar(&f.quit, "quit", false, "ask the running Unravis to quit")
 	flags.BoolVar(&f.checkUpdate, "check-update", false, "check the signed update feed once, print the answer as one line of JSON and exit (0 = latest or newer available, 2 = could not check); keeps no state")
 	flags.BoolVar(&f.background, "background", false, "start in the tray without opening a browser; used by start at sign-in")
+	flags.BoolVar(&f.pipeServer, "pipe-server", false, "serve the dashboard over two secured named pipes (ui and ag) and open no TCP port unless --loopback is also given (Windows)")
+	flags.BoolVar(&f.pipeOnly, "pipe-only", false, "like --pipe-server, and never opens a TCP port or writes a session file; used by the desktop shell (Windows)")
+	flags.BoolVar(&f.loopback, "loopback", false, "with --pipe-server: also keep the loopback listener and the session file, as browser mode does")
 	if err := flags.Parse(args); err != nil {
 		return runFlags{}, err
 	}
+	flags.Visit(func(x *flag.Flag) { f.portSet = f.portSet || x.Name == "port" })
 	if f.version {
 		// Asking for the version wins over every other flag, so it never fails on them.
 		return runFlags{version: true}, nil
@@ -122,6 +132,9 @@ func parseFlags(args []string) (runFlags, error) {
 	}
 	if f.background && f.mcp {
 		return runFlags{}, fmt.Errorf("--background starts the dashboard; do not combine it with --mcp")
+	}
+	if err := checkPipeFlags(f); err != nil {
+		return runFlags{}, err
 	}
 	if f.port < 0 || f.port > 65535 {
 		return runFlags{}, fmt.Errorf("port must be between 0 and 65535")
@@ -184,12 +197,23 @@ func run(args []string, getenv func(string) string) error {
 	// One interactive copy per user. --no-browser (the e2e launcher) never
 	// reaches the gate: no mutex, no events. --mcp, --version and --quit have
 	// already returned.
-	interactive := !f.noBrowser && hostOS == "windows"
-	background := f.background
+	pipeMode := f.pipeServer || f.pipeOnly
+	interactive := !f.noBrowser && hostOS == "windows" && !pipeMode
+	background := f.background || pipeMode
 	openBrowser := interactive && !background
 	var instanceNames instance.Names
+	var runDir string
+	if pipeMode {
+		// One owner per user also in pipe mode (BL-302; pipemode.go).
+		release, rd, names, err := enterPipeSingleton(f.demo, getenv)
+		if err != nil {
+			return err
+		}
+		runDir, instanceNames = rd, names
+		defer release()
+	}
 	if interactive {
-		gate, err := enterSingleInstance(f.demo, background, productionGateDeps())
+		gate, err := enterSingleInstance(f.demo, background, false, productionGateDeps())
 		if err != nil {
 			return err
 		}
@@ -223,9 +247,22 @@ func run(args []string, getenv func(string) string) error {
 	defer wired.closeRepo()
 	serverOptions := wired.options
 
-	listener, err := listenLoopback(f.port)
-	if err != nil {
-		return err
+	// Pipe mode opens the two pipes and, only with --loopback, the TCP listener; --pipe-only never has one.
+	var listener net.Listener
+	if !pipeMode || f.loopback {
+		if listener, err = listenTCP(f.port); err != nil {
+			return err
+		}
+	}
+	var pipes *pipesrv.Pipes
+	if pipeMode {
+		if pipes, err = openPipes(); err != nil {
+			if listener != nil {
+				_ = listener.Close()
+			}
+			return err
+		}
+		defer func() { _ = pipes.Close() }()
 	}
 	// Listen for Ctrl+C before the session file exists, so an early interrupt
 	// still takes the clean path that removes it.
@@ -235,7 +272,10 @@ func run(args []string, getenv func(string) string) error {
 	defer cancel()
 	signalContext, stop := signal.NotifyContext(appCtx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	localURL := "http://" + listener.Addr().String()
+	localURL := ""
+	if listener != nil {
+		localURL = "http://" + listener.Addr().String()
+	}
 	// The session token never goes on a command line or into a log line. The
 	// browser is opened on a single-use /launch link; the server answers it with
 	// a redirect that carries the token in the fragment, which the browser never
@@ -307,13 +347,40 @@ func run(args []string, getenv func(string) string) error {
 	// Registered after the case store's close, so it runs first: background
 	// imports stop and roll back before the store closes.
 	defer server.CancelImports(served)
-	httpServer := newHTTPServer(served)
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- httpServer.Serve(listener) }()
+	var running inflight
+	servedHandler := http.Handler(served)
+	if pipeMode {
+		servedHandler = running.wrap(served)
+	}
+	httpServer := newHTTPServer(servedHandler)
+	serveDone := make(chan error, 3)
+	var stopServers stoppers
+	removeSession := func() {}
+	if listener != nil {
+		stopServers = append(stopServers, httpServer)
+		go func() { serveDone <- httpServer.Serve(listener) }()
+		removeSession = writeSessionFile(getenv, listener, token)
+		defer removeSession()
+	}
+	if pipes != nil {
+		group := pipesrv.Serve(pipes, running.wrap(pipesrv.Handler(served, pipesrv.WithShutdown(token, cancel))), newHTTPServer)
+		stopServers = append(stopServers, group)
+		go func() { serveDone <- <-group.Done() }()
+		log.Print("Serving over the ui and ag pipes")
+		// Publish the locator only now that both pipes serve, so a reader that finds it can connect. A locator that cannot be written
+		// leaves the owner unreachable, so it is fatal.
+		removeLocator, lerr := writeLocator(locator.FilePath(runDir, f.demo), pipes)
+		if lerr != nil {
+			_ = stopServers.Close()
+			return lerr
+		}
+		defer removeLocator()
+	}
+	afterServing(cancel)
 
-	removeSession := writeSessionFile(getenv, listener, token)
-	defer removeSession()
-
+	if pipeMode {
+		defer listenInstanceEvents(appCtx, cancel, instanceNames)()
+	}
 	if interactive {
 		defer startInteractive(appCtx, cancel, reo, instanceNames)()
 	}
@@ -323,15 +390,24 @@ func run(args []string, getenv func(string) string) error {
 		opened = openInBrowser(launchLink(localURL, code)) == nil
 	}
 	printed := false
-	if code == "" {
+	if pipeMode {
+		log.Printf("%s running as a pipe server (demo=%t, loopback=%t)", version.Short(), f.demo, listener != nil)
+	} else if code == "" {
 		log.Printf("%s running in the tray at %s (demo=%t)", version.Short(), localURL, f.demo)
 	} else {
 		printed = printStartup(startupLines(localURL, code, codeLife, f.demo, opened), opened, func(s string) { log.Print(s) }, os.Stderr)
 	}
 	if logFile != nil {
-		logStart(logFile, getenv, listener, f.demo, launchOutcome(opened, printed))
+		logStart(logFile, getenv, listenerPort(listener), f.demo, launchOutcome(opened, printed))
 	}
-	err = awaitShutdown(signalContext, serveDone, removeSession, httpServer)
+	drain := shutdownTimeout
+	if pipeMode {
+		drain = pipeShutdownTimeout
+	}
+	err = awaitShutdownWithin(signalContext, drain, serveDone, removeSession, stopServers)
+	if pipeMode {
+		err = settlePipeShutdown(err, &running, pipeHandlerWait)
+	}
 	endHealth(err)
 	return err
 }
@@ -504,16 +580,20 @@ func launchOutcome(opened, printed bool) string {
 }
 
 // logStart writes the start line to the support log: what is running, where, and how the user gets in.
-func logStart(logFile *applog.File, getenv func(string) string, listener net.Listener, demo bool, launch string) {
+func logStart(logFile *applog.File, getenv func(string) string, port int, demo bool, launch string) {
 	layout := datadir.Default(getenv)
 	dataDir := layout.Base
 	if layout.Root != "" {
 		dataDir = layout.Root
 	}
+	var shownPort any = port
+	if port <= 0 {
+		shownPort = "none" // pipe-only mode has no TCP listener
+	}
 	logFile.Logger.Info("start",
 		"version", version.Version,
 		"os", runtime.GOOS+"/"+runtime.GOARCH,
-		"port", listener.Addr().(*net.TCPAddr).Port,
+		"port", shownPort,
 		"data_dir", dataDir,
 		"demo", demo,
 		"launch", launch)
@@ -521,14 +601,21 @@ func logStart(logFile *applog.File, getenv func(string) string, listener net.Lis
 
 // awaitShutdown blocks until the server stops by itself or a quit signal arrives, then shuts it down cleanly.
 func awaitShutdown(signalContext context.Context, serveDone <-chan error, removeSession func(), httpServer shutdowner) error {
+	return awaitShutdownWithin(signalContext, shutdownTimeout, serveDone, removeSession, httpServer)
+}
+
+// awaitShutdownWithin is awaitShutdown with the drain time of the http servers given.
+func awaitShutdownWithin(signalContext context.Context, drain time.Duration, serveDone <-chan error, removeSession func(), httpServer shutdowner) error {
 	select {
 	case err := <-serveDone:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
+		// One server stopped on its own: stop the others now (the TCP server and both pipe servers), not at process exit.
+		_ = httpServer.Close()
 		return err
 	case <-signalContext.Done():
-		if err := shutdownOnSignal(removeSession, httpServer); err != nil {
+		if err := shutdownOnSignalWithin(drain, removeSession, httpServer); err != nil {
 			return err
 		}
 		if err := <-serveDone; err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -607,6 +694,10 @@ func startupLines(localURL, code string, life time.Duration, demo, opened bool) 
 // after its window is closed (CTRL_CLOSE_EVENT, delivered as SIGTERM).
 const shutdownTimeout = 4 * time.Second
 
+// pipeShutdownTimeout is the drain time in pipe mode. The desktop shell waits 5 s for a shutdown RPC (spec 01 BL-303); 2 s here leaves
+// the rest for the deferred import stop, the case checkpoint and close, and the process exit.
+const pipeShutdownTimeout = 2 * time.Second
+
 type shutdowner interface {
 	Shutdown(context.Context) error
 	Close() error
@@ -616,12 +707,17 @@ type shutdowner interface {
 // it drains requests never leaves a file pointing at a port it no longer
 // holds, then shuts the server down within shutdownTimeout.
 func shutdownOnSignal(removeSession func(), server shutdowner) error {
+	return shutdownOnSignalWithin(shutdownTimeout, removeSession, server)
+}
+
+// shutdownOnSignalWithin is shutdownOnSignal with the drain time given.
+func shutdownOnSignalWithin(drain time.Duration, removeSession func(), server shutdowner) error {
 	removeSession()
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), drain)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		_ = server.Close()
-		return fmt.Errorf("server shutdown did not finish cleanly")
+		return errDrainTimeout
 	}
 	return nil
 }
