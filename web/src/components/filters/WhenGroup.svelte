@@ -3,6 +3,7 @@
   import type { Query } from '../../lib/types';
   import { bucketForWindows, zoneAbbreviation } from '../../lib/time';
   import { fromZonedParts, toZonedInput } from '../../lib/zonedInput';
+  import { TIME24_HINT } from '../../lib/time24';
   import { TIME_ZONE_OPTIONS, timeZone } from '../../lib/timeZone.svelte';
   import { intervalReplacedNote } from '../../lib/autorun';
   import { intervalNote } from '../../lib/intervalNote.svelte';
@@ -23,12 +24,19 @@
   // The query keeps UTC; only the boxes convert. Each box names its zone at its own date, because the name changes across a clock change ("GMT" in winter, "GMT+1" in summer).
   const zone = $derived(timeZone.zone);
   const zoneLabel = $derived(timeZone.choice === 'local' ? timeZone.browserZone : TIME_ZONE_OPTIONS.find(option => option.id === timeZone.choice)?.label ?? zone);
+  // The time box hands over HH:MM:SS.mmm when the text is a 24-hour time; anything else came from text that is not one.
+  const TIME24 = /^\d{2}:\d{2}:\d{2}\.\d{3}$/;
   const localValue = (value: string) => toZonedInput(value, zone);
   const zoneAt = (value: string) => zoneAbbreviation(zone, value);
   const setWindow = (field: 'start' | 'end' | 'baselineStart' | 'baselineEnd', datePart: string, timePart: string) => {
     if (!datePart || !timePart) {
       invalidWindows = invalidWindows.includes(field) ? invalidWindows : [...invalidWindows, field];
       timeInputError = 'Enter both a date and time for every range. Choose another time if the clocks change made that local value invalid.';
+      return;
+    }
+    if (!TIME24.test(timePart)) {
+      invalidWindows = invalidWindows.includes(field) ? invalidWindows : [...invalidWindows, field];
+      timeInputError = TIME24_HINT;
       return;
     }
     try {
@@ -53,8 +61,8 @@
       <div class="label-line"><h3 id="current-range-label">Investigate</h3><FieldHelp id="current-range" /></div>
       <p class="when-sub">Requests in the period you want to inspect.</p>
       <div class="window-bounds">
-        <DateTimeField id="current-start" label="From" help="current-start" helpLabel="Investigate from" zone={zoneAt(query.start)} value={localValue(query.start)} onChange={(date, time) => setWindow('start', date, time)} />
-        <DateTimeField id="current-end" label="To" help="current-end" helpLabel="Investigate to" zone={zoneAt(query.end)} value={localValue(query.end)} onChange={(date, time) => setWindow('end', date, time)} />
+        <DateTimeField id="current-start" label="From" help="current-start" helpLabel="Investigate from" zone={zoneAt(query.start)} value={localValue(query.start)} invalid={invalidWindows.includes('start')} errorId="when-time-error" onChange={(date, time) => setWindow('start', date, time)} />
+        <DateTimeField id="current-end" label="To" help="current-end" helpLabel="Investigate to" zone={zoneAt(query.end)} value={localValue(query.end)} invalid={invalidWindows.includes('end')} errorId="when-time-error" onChange={(date, time) => setWindow('end', date, time)} />
       </div>
       {#if !invalidWindows.some(field => field === 'start' || field === 'end')}<p class="utc-echo">UTC <time datetime={query.start}>{query.start}</time> – <time datetime={query.end}>{query.end}</time></p>{/if}
     </section>
@@ -62,13 +70,13 @@
       <div class="label-line"><h3 id="reference-range-label">Reference<Hint termId="reference-period" /></h3><FieldHelp id="reference-range" /></div>
       <p class="when-sub">An earlier period to compare with.</p>
       <div class="window-bounds">
-        <DateTimeField id="reference-start" label="From" help="reference-start" helpLabel="Reference from" zone={zoneAt(query.baselineStart)} value={localValue(query.baselineStart)} onChange={(date, time) => setWindow('baselineStart', date, time)} />
-        <DateTimeField id="reference-end" label="To" help="reference-end" helpLabel="Reference to" zone={zoneAt(query.baselineEnd)} value={localValue(query.baselineEnd)} onChange={(date, time) => setWindow('baselineEnd', date, time)} />
+        <DateTimeField id="reference-start" label="From" help="reference-start" helpLabel="Reference from" zone={zoneAt(query.baselineStart)} value={localValue(query.baselineStart)} invalid={invalidWindows.includes('baselineStart')} errorId="when-time-error" onChange={(date, time) => setWindow('baselineStart', date, time)} />
+        <DateTimeField id="reference-end" label="To" help="reference-end" helpLabel="Reference to" zone={zoneAt(query.baselineEnd)} value={localValue(query.baselineEnd)} invalid={invalidWindows.includes('baselineEnd')} errorId="when-time-error" onChange={(date, time) => setWindow('baselineEnd', date, time)} />
       </div>
       {#if !invalidWindows.some(field => field === 'baselineStart' || field === 'baselineEnd')}<p class="utc-echo">UTC <time datetime={query.baselineStart}>{query.baselineStart}</time> – <time datetime={query.baselineEnd}>{query.baselineEnd}</time></p>{/if}
     </section>
   </div>
-  {#if timeInputError}<p class="inline-error" role="alert">{timeInputError}</p>{/if}
+  {#if timeInputError}<p class="inline-error" role="alert" id="when-time-error">{timeInputError}</p>{/if}
 </FilterGroup>
 
 <style>
