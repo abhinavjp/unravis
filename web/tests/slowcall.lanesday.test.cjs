@@ -59,3 +59,13 @@ test('a bad firstData or an interval that is not above zero becomes null', () =>
   const bare = dayWith({ state: 'denied' }).lane.queryStore;
   assert.deepEqual(bare, { state: 'denied', firstData: null, intervalMinutes: null });
 });
+
+test('lastData passes through only when it is a date', () => {
+  const qs = dayWith({ state: 'off', firstData: '2026-10-01T00:00:00Z', lastData: '2026-10-20T10:45:00Z', intervalMinutes: 15 }).lane.queryStore;
+  assert.deepEqual(qs, { state: 'off', firstData: '2026-10-01T00:00:00Z', intervalMinutes: 15, lastData: '2026-10-20T10:45:00Z' });
+  for (const lastData of ['not a date', '', 12, {}, null, undefined]) {
+    const bad = dayWith({ state: 'off', lastData }).lane.queryStore;
+    assert.equal('lastData' in bad, false, String(lastData));
+    assert.deepEqual(bad, { state: 'off', firstData: null, intervalMinutes: null });
+  }
+});
