@@ -14,8 +14,8 @@ const (
 	classKey      = 3 // an API or access key: the value is one word; a colon counts ("x-api-key: abc")
 )
 
-// maxIdent bounds how far a key name is read to each side of the word that marks it. A longer run is read as if it ended there
-// (fail closed), and the bound keeps the work per candidate small.
+// maxIdent bounds how far a key name is read to the left of the word that marks it, and how much of the text after the word is
+// weighed for its meaning ("_count"). The name itself is read to its end whatever its length.
 const maxIdent = 128
 
 // maxTag bounds the length of an XML tag read as one unit.
@@ -49,7 +49,7 @@ func lowerASCII(s string) string {
 
 // findWords returns the spans of the secret words in s, in order, without overlap; at one start the longest word wins.
 func findWords(s string) [][2]int {
-	if strings.IndexAny(s, firstBytes) < 0 {
+	if !strings.ContainsAny(s, firstBytes) {
 		return nil
 	}
 	low := lowerASCII(s)
@@ -113,6 +113,9 @@ func isLower(c byte) bool { return c >= 'a' && c <= 'z' }
 func wordClass(id string, ws, we int) int {
 	w := strings.ToLower(id[ws:we])
 	tail := id[we:]
+	if len(tail) > maxIdent {
+		tail = tail[:maxIdent] // only the first words of the tail matter; the cap keeps the work per word small
+	}
 	for i := 0; i < len(tail); i++ { // the name ends at the first character a name cannot hold
 		if !isIdent(tail[i]) {
 			tail = tail[:i]
@@ -129,7 +132,7 @@ func wordClass(id string, ws, we int) int {
 		class = classPassword
 	case "pass", "pin":
 		// Only the end of a longer name ("DB_PASS", "SIGN_PIN"): "pass=5" in a test report is not a secret.
-		if ws == 0 || !(id[ws-1] == '_' || id[ws-1] == '.' || id[ws-1] == '-') || tail != "" {
+		if ws == 0 || (id[ws-1] != '_' && id[ws-1] != '.' && id[ws-1] != '-') || tail != "" {
 			return classNone
 		}
 		return classPin
@@ -234,7 +237,8 @@ func maskKV(s, mask string) string {
 		return s
 	}
 	var edits []edit
-	pos := 0 // everything before pos is read already
+	pos := 0      // everything before pos is read already
+	identEnd := 0 // where the name that the last word sits in ends
 	for _, m := range locs {
 		if m[0] < pos {
 			continue
@@ -243,16 +247,26 @@ func maskKV(s, mask string) string {
 		for lo > pos && m[0]-lo < maxIdent && isIdent(s[lo-1]) {
 			lo--
 		}
-		hi := m[1]
-		for hi < len(s) && hi-m[1] < maxIdent && isIdent(s[hi]) {
-			hi++
+		// The name runs to its end however long it is (a name of 200 characters before "=" is still a name). The end is
+		// remembered, so a run made of many secret words is read once.
+		if m[0] >= identEnd {
+			identEnd = m[1]
+			for identEnd < len(s) && isIdent(s[identEnd]) {
+				identEnd++
+			}
 		}
-		class := wordClass(s[lo:hi], m[0]-lo, m[1]-lo)
+		hi := identEnd
+		idEnd := hi
+		if idEnd > m[1]+maxIdent {
+			idEnd = m[1] + maxIdent
+		}
+		class := wordClass(s[lo:idEnd], m[0]-lo, m[1]-lo)
 		if class == classNone {
 			continue
 		}
+		bare := hi-lo == m[1]-m[0]
 		inQuery := lo > 0 && (s[lo-1] == '?' || s[lo-1] == '&')
-		from, to, next, ok := readValue(s, hi, class, inQuery)
+		from, to, next, ok := readValue(s, hi, class, inQuery, bare)
 		if !ok {
 			continue
 		}
@@ -266,7 +280,7 @@ func maskKV(s, mask string) string {
 
 // readValue reads what follows a key that ends at i: an optional closing quote of the key, the "=" or ":", and the value. It
 // returns the span of the value to mask, where reading went on to, and false when no value follows.
-func readValue(s string, i int, class int, inQuery bool) (from, to, next int, ok bool) {
+func readValue(s string, i int, class int, inQuery, bare bool) (from, to, next int, ok bool) {
 	j := i
 	jsonKey := false
 	k := j
@@ -339,9 +353,18 @@ func readValue(s string, i int, class int, inQuery bool) (from, to, next int, ok
 	}
 	if q < len(s) && (s[q] == '"' || s[q] == '\'') {
 		end, after := closingQuote(s, q, nest)
+		if nest == 0 && after <= len(s) && end < len(s) && !valueSeparator(s, after) {
+			// "x"y: text sticks to the closing quote, so the quote was not the end of the value (fail closed: take the rest of it).
+			end = unquotedEnd(s, after, class, false, false)
+			return q + 1, end, end, true
+		}
 		return q + 1, end, after, true
 	}
-	if class == classToken && colon && !jsonKey {
+	if jsonKey && (s[j] == '[' || s[j] == '{') {
+		end := bracketEnd(s, j)
+		return j, end, end, true
+	}
+	if class == classToken && colon && !jsonKey && bare {
 		return 0, 0, 0, false // "token: expired" is a sentence; only a quoted value counts after a colon
 	}
 	if s[j] == '{' && class == classPassword {
@@ -464,7 +487,7 @@ func entityEnd(s string, i, j int) bool {
 			e := s[k+1 : i]
 			return len(e) > 1 && e[0] == '#'
 		}
-		if !(isLower(c) || isUpper(c) || c >= '0' && c <= '9' || c == '#') {
+		if !isLower(c) && !isUpper(c) && (c < '0' || c > '9') && c != '#' {
 			return false
 		}
 	}
@@ -510,4 +533,41 @@ func sortEdits(e []edit) []edit {
 		end = x.to
 	}
 	return out
+}
+
+// valueSeparator says whether the text at i can follow a finished value: the end of the text, a space, or a mark that ends a setting.
+func valueSeparator(s string, i int) bool {
+	if i >= len(s) {
+		return true
+	}
+	switch s[i] {
+	case ' ', '\t', '\r', '\n', ';', ',', '}', ']', ')', '>', '<', '&', '/', ':', '|', '"', '\'':
+		return true
+	}
+	return false
+}
+
+// bracketEnd returns where the JSON array or object that opens at i ends: after the matching close, with quoted text skipped. One that
+// never closes runs to the end of the text.
+func bracketEnd(s string, i int) int {
+	depth := 0
+	for k := i; k < len(s); k++ {
+		switch s[k] {
+		case '[', '{':
+			depth++
+		case ']', '}':
+			depth--
+			if depth == 0 {
+				return k + 1
+			}
+		case '"', '\'':
+			qc := s[k]
+			for k++; k < len(s) && s[k] != qc; k++ {
+				if s[k] == '\\' {
+					k++
+				}
+			}
+		}
+	}
+	return len(s)
 }

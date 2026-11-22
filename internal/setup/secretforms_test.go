@@ -31,6 +31,11 @@ func TestRedactSecretFormsFromTheSweep(t *testing.T) {
 		{"connectionString attribute", `<add name="Db" connectionString="Server=a;User Id=sa;Password=FAKEPW;" providerName="p"/>`, `<add name="Db" connectionString="[hidden]" providerName="p"/>`},
 		{"url login", "connect postgres://u:FAKEPW%40x@h:5432/db", "connect postgres://[hidden]@h:5432/db"},
 		{"url login with an @ in the password", "open mongodb://admin:FAKEPW@x@host/db", "open mongodb://[hidden]@host/db"},
+		{"url login with a space", "postgres://u:SEK FAKEPW@h/db", "postgres://[hidden]@h/db"},
+		{"url login with a slash", "ftp://u:SEK/FAKEPW@host", "ftp://[hidden]@host"},
+		{"json array", `{"password":["FAKEPW"],"u":1}`, `{"password":[hidden],"u":1}`},
+		{"compound token with a colon", "X-Auth-Token: FAKEPW", "X-Auth-Token: [hidden]"},
+		{"client_secret colon", "client_secret: FAKEPW", "client_secret: [hidden]"},
 		{"ordinary line", "copy-files: ok; token_count=5; Encrypt=true", "copy-files: ok; token_count=5; Encrypt=true"},
 		{"ordinary xml", `<add key="Timeout" value="30"/><Host>db01</Host>`, `<add key="Timeout" value="30"/><Host>db01</Host>`},
 		{"url without a login", "https://host.example/docs?a=b", "https://host.example/docs?a=b"},
@@ -66,7 +71,7 @@ func TestRedactHostileInputIsFast(t *testing.T) {
 }
 
 func TestRedactRandomInputNeverPanics(t *testing.T) {
-	r := rand.New(rand.NewSource(8))
+	r := rand.New(rand.NewSource(8)) //nolint:gosec // fixed seed for repeatable test rounds
 	frags := []string{"password", "DB_PWD", "=", ":", `"`, `'`, `\`, "{", "}", ";", "\n", " ", "<", ">", "</", "/>", "<![CDATA[", "key", "value", "://", "@", "x", "é", "\xff"}
 	for i := 0; i < 20000; i++ {
 		var b strings.Builder

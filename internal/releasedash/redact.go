@@ -107,6 +107,7 @@ func (r *Redactor) Line(s string) string {
 		return "<private key hidden>"
 	}
 	// The shared pass first: the pair pattern below stops a quoted value at a backslash-escaped quote and does not read XML.
+	s = secretscrub.MaskURLUserinfo(s, "<hidden>")
 	s = secretscrub.Mask(s, "<hidden>")
 	s = tokenRE.ReplaceAllString(s, "<token hidden>")
 	s = bearerRE.ReplaceAllString(s, "$1 <hidden>")

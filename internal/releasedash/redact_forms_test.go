@@ -23,6 +23,12 @@ func TestRedactorSecretFormsFromTheSweep(t *testing.T) {
 		{"XML element", "<Password>FAKEPW a;b</Password>"},
 		{"appSettings add key", `<add key="Password" value="FAKEPW x"/>`},
 		{"password attribute", `<Login user="bob" password="FAKEPW x" />`},
+		{"url login with an @ and a space", "open mongodb://admin:p@ss FAKEPW@host/db now"},
+		{"url login with a space", "postgres://u:SEK FAKEPW@h/db"},
+		{"url login with a slash", "ftp://u:SEK/FAKEPW@host"},
+		{"json array", `{"password":["FAKEPW"],"u":1}`},
+		{"compound token with a colon", "X-Auth-Token: FAKEPW"},
+		{"client_secret colon", "client_secret: FAKEPW"},
 		{"connectionString attribute", `<add name="Db" connectionString="Server=a;Password=FAKEPW;" providerName="p"/>`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -50,6 +56,8 @@ func TestRedactorHostileInputIsFast(t *testing.T) {
 		"password=":    rep("password="),
 		"escaped":      `{"password":"` + rep(`\"`),
 		"xml":          rep("<Password>"),
+		"xml comment":  rep("<Password><!--"),
+		"key comment":  rep(`<add key="password"><!--`),
 		"xml key attr": rep(`<add key="password" `),
 		"long ident":   rep("DB_PASSWORD_"),
 	} {
@@ -63,7 +71,7 @@ func TestRedactorHostileInputIsFast(t *testing.T) {
 }
 
 func TestRedactorRandomInputNeverPanics(t *testing.T) {
-	r := rand.New(rand.NewSource(10))
+	r := rand.New(rand.NewSource(10)) //nolint:gosec // fixed seed for repeatable test rounds
 	frags := []string{"password", "DB_PWD", "=", ":", `"`, `'`, `\`, "{", "}", ";", " ", "<", ">", "</", "/>", "<![CDATA[", "key", "value", "x", "é", "\xff", "-----BEGIN PRIVATE KEY-----"}
 	red := NewRedactor("abc")
 	for i := 0; i < 20000; i++ {

@@ -31,6 +31,12 @@ func TestScrubSecretsFormsFromTheSweep(t *testing.T) {
 		{"appSettings add key", `<add key="Password" value="FAKEPW x"/>`, `<add key="Password" value="[removed]"/>`},
 		{"password attribute", `<Login user="bob" password="FAKEPW x" />`, `<Login user="bob" [removed] />`},
 		{"connectionString attribute", `<add name="Db" connectionString="Server=a;User Id=sa;Password=FAKEPW;" providerName="p"/>`, `<add name="Db" connectionString="[removed]" providerName="p"/>`},
+		{"url login with an @ and a space", "open mongodb://admin:p@ss FAKEPW@host/db now", "open [removed] now"},
+		{"url login with a space", "postgres://u:SEK FAKEPW@h/db", "[removed]"},
+		{"url login with a slash", "ftp://u:SEK/FAKEPW@host", "[removed]"},
+		{"json array", `{"password":["FAKEPW"],"u":1}`, `{"[removed]`},
+		{"compound token with a colon", "X-Auth-Token: FAKEPW", "X-Auth-Token: [removed]"},
+		{"client_secret colon", "client_secret: FAKEPW", "client_secret: [removed]"},
 		{"ordinary note", "the password was reset; token_count=5; max_tokens=100", "the password was reset; token_count=5; max_tokens=100"},
 		{"ordinary xml", `<add key="Timeout" value="30"/><Host>db01</Host>`, `<add key="Timeout" value="30"/><Host>db01</Host>`},
 	} {
@@ -68,7 +74,7 @@ func TestScrubSecretsHostileInputIsFast(t *testing.T) {
 }
 
 func TestScrubSecretsRandomInputNeverPanics(t *testing.T) {
-	r := rand.New(rand.NewSource(9))
+	r := rand.New(rand.NewSource(9)) //nolint:gosec // fixed seed for repeatable test rounds
 	frags := []string{"password", "DB_PWD", "=", ":", `"`, `'`, `\`, "{", "}", ";", "\n", " ", "<", ">", "</", "/>", "<![CDATA[", "key", "value", "://", "@", "x", "é", "\xff"}
 	for i := 0; i < 20000; i++ {
 		var b strings.Builder

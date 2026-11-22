@@ -35,6 +35,10 @@ func TestSanitizeSecretFormsFromTheSweep(t *testing.T) {
 		{"password attribute", `<Login user="bob" password="FAKEPW x" />`, `<Login user="bob" password=[redacted] />`},
 		{"connectionString attribute", `<add name="Db" connectionString="Server=a;User Id=sa;Password=FAKEPW;" providerName="p"/>`, `<add name="Db" connectionString="[redacted]" providerName="p"/>`},
 		{"url login with an @ and a space in the password", "dial mongodb://admin:FAKEPW w0rd@host/db failed", "dial mongodb://[redacted]@host/db failed"},
+		{"url login with a slash", "ftp://u:SEK/FAKEPW@host", "ftp://[redacted]@host"},
+		{"json array", `{"password":["FAKEPW"],"u":1}`, `{"password":[redacted],"u":1}`},
+		{"compound token with a colon", "X-Auth-Token: FAKEPW", "X-Auth-Token: [redacted]"},
+		{"client_secret colon", "client_secret: FAKEPW", "client_secret: [redacted]"},
 		// Ordinary text stays.
 		{"ordinary line", "source west read 120 rows in 45 ms; token_count=5 max_tokens=100", "source west read 120 rows in 45 ms; token_count=5 max_tokens=100"},
 		{"ordinary xml", `<add name="Timeout" value="30"/><Host>db01</Host>`, `<add name="Timeout" value="30"/><Host>db01</Host>`},
@@ -85,7 +89,7 @@ func TestSanitizeHostileInputIsFast(t *testing.T) {
 }
 
 func TestSanitizeRandomInputNeverPanics(t *testing.T) {
-	r := rand.New(rand.NewSource(7))
+	r := rand.New(rand.NewSource(7)) //nolint:gosec // fixed seed for repeatable test rounds
 	frags := []string{"password", "DB_PWD", "=", ":", `"`, `'`, `\`, "{", "}", ";", "\n", " ", "<", ">", "</", "/>", "<![CDATA[", "key", "value", "://", "@", "x", "é", "\xff"}
 	for i := 0; i < 20000; i++ {
 		var b strings.Builder

@@ -33,6 +33,18 @@ func MaskURLUserinfo(s, mask string) string {
 		auth := s[start:end]
 		at := strings.LastIndexByte(auth, '@')
 		if at < 0 {
+			// "ftp://u:SEK/RIT9@host": a password with a "/" ends the authority early. When the text before the "/" reads as a login
+			// (user:text, not host:port) and an "@" follows before the next space, the login runs up to that "@".
+			if end < len(s) && s[end] == '/' && strings.IndexByte(auth, ':') > 0 && !isHostPort(auth) {
+				stop := end
+				for stop < len(s) && !isSpace(s[stop]) {
+					stop++
+				}
+				if r := strings.LastIndexByte(s[end:stop], '@'); r >= 0 {
+					edits = append(edits, edit{start, end + r})
+					pos = end + r + 1
+				}
+			}
 			continue
 		}
 		login := auth[:at]

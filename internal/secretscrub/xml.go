@@ -181,7 +181,7 @@ func parseTag(s string, n int) (attrs []attr, end int, selfClose, plain, ok bool
 				i = j + 2 + c
 			} else {
 				vs := j
-				for j < limit && !isSpace(s[j]) && s[j] != '>' && !(s[j] == '/' && j+1 < len(s) && s[j+1] == '>') {
+				for j < limit && !isSpace(s[j]) && s[j] != '>' && (s[j] != '/' || j+1 >= len(s) || s[j+1] != '>') {
 					j++
 				}
 				a.hasValue, a.vFrom, a.vTo = true, vs, j
@@ -226,9 +226,14 @@ func textNode(s string, p int) (from, to int, ok bool) {
 		case strings.HasPrefix(rest, "</"):
 			return 0, 0, false
 		case strings.HasPrefix(rest, "<!--"):
-			r := strings.Index(rest[4:], "-->")
+			lim := len(rest)
+			if lim > maxTag {
+				lim = maxTag
+			}
+			r := strings.Index(rest[4:lim], "-->")
 			if r < 0 {
-				return 0, 0, false
+				// No end within reach: fail closed and take the rest of the text, which also keeps the reading linear.
+				return q, len(s), true
 			}
 			p = q + 4 + r + 3
 		default:

@@ -57,6 +57,48 @@ func TestMaskEscapedQuotes(t *testing.T) {
 	})
 }
 
+// Inputs from the first security review of this package (PR 181). Fake values only.
+func TestMaskReviewedBypasses(t *testing.T) {
+	run(t, []tcase{
+		{"json array value", `{"password":["FAKEPW"]}`, `{"password":[m]}`},
+		{"json array of two", `{"password":["FAKEPW","FAKEPW b"],"user":"bob"}`, `{"password":[m],"user":"bob"}`},
+		{"json object value", `{"password":{"v":"FAKEPW]}","w":1},"user":"bob"}`, `{"password":[m],"user":"bob"}`},
+		{"json array never closes", `{"password":["FAKEPW", "b`, `{"password":[m]`},
+		{"X-Auth-Token colon", "X-Auth-Token: FAKEPW", "X-Auth-Token: [m]"},
+		{"refresh_token colon", "refresh_token: FAKEPW", "refresh_token: [m]"},
+		{"auth_token colon", "auth_token: FAKEPW", "auth_token: [m]"},
+		{"bearer_token colon", "bearer_token: FAKEPW", "bearer_token: [m]"},
+		{"client_secret colon (yaml)", "client_secret: FAKEPW", "client_secret: [m]"},
+		{"authToken colon", "authToken: FAKEPW", "authToken: [m]"},
+		{"bare token colon stays a sentence", "token: expired, retry", "token: expired, retry"},
+		{"bare secret colon stays a sentence", "secret: handled elsewhere", "secret: handled elsewhere"},
+		{"name longer than 128 characters", "DB_PASSWORD" + strings.Repeat("_X", 100) + "=FAKEPW", "DB_PASSWORD" + strings.Repeat("_X", 100) + "=[m]"},
+		{"password after a long name", strings.Repeat("a", 300) + "_password=FAKEPW", strings.Repeat("a", 300) + "_password=[m]"},
+		{"empty quoted value then text", `password=""FAKEPW`, `password="[m]`},
+		{"stray quote cuts the value", `password="FAKEPW"RIT9"`, `password="[m]"`},
+		{"quoted value then a separator is unchanged", `password="FAKEPW";x=1`, `password="[m]";x=1`},
+		{"comment between the tag and the value", "<Password><!-- note -->FAKEPW</Password>", "<Password><!-- note -->[m]</Password>"},
+		{"comment that never ends", "<Password><!-- FAKEPW and the rest", "<Password>[m]"},
+	})
+}
+
+func TestMaskURLUserinfoReviewedBypasses(t *testing.T) {
+	for _, tc := range []tcase{
+		{"at sign and space", "mongodb://admin:p@ss FAKEPW@host/db", "mongodb://[m]@host/db"},
+		{"space in the password", "postgres://u:SEK FAKEPW@h/db", "postgres://[m]@h/db"},
+		{"slash in the password", "ftp://u:SEK/FAKEPW@host", "ftp://[m]@host"},
+		{"slash in the password, path after", "ftp://u:SEK/FAKEPW@host/dir/f.txt", "ftp://[m]@host/dir/f.txt"},
+		{"host port then an at sign in the path", "https://host:8080/users/@me", "https://host:8080/users/@me"},
+		{"no colon, at sign in the path", "https://example.com/@user", "https://example.com/@user"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := MaskURLUserinfo(tc.in, m); got != tc.want {
+				t.Errorf("got %q, want %q", shown(got), shown(tc.want))
+			}
+		})
+	}
+}
+
 // Form 2: KEY=value with a prefix, in app logs, setup logs and connection text.
 func TestMaskPrefixedKeys(t *testing.T) {
 	run(t, []tcase{
@@ -202,39 +244,45 @@ func TestMaskHostileInputIsFast(t *testing.T) {
 	const size = 1 << 20
 	rep := func(unit string) string { return strings.Repeat(unit, size/len(unit)+1)[:size] }
 	inputs := map[string]string{
-		"password= repeated":         rep("password="),
-		"password=; repeated":        rep("password=;"),
-		"password=newline repeated":  rep("password=\n"),
-		"pwd: repeated":              rep("pwd: "),
-		"open quotes":                `password="` + rep(`"'{`),
-		"escaped quotes":             `{"password":"` + rep(`\"`),
-		"backslash run":              `{"password":"` + rep(`\`),
-		"nested escaped":             `\"password\":\"` + rep(`\\\"`),
-		"doubled quotes":             `Password='` + rep(`''`),
-		"braces":                     "Password={" + rep("}}"),
-		"unclosed xml elements":      rep("<Password>"),
-		"unclosed cdata":             rep("<Password><![CDATA["),
-		"xml open tags":              rep("<add key=\"password\" "),
-		"xml nested value":           rep("<Password><a><b><c>"),
-		"xml comments":               rep("<Password><!-- -->"),
-		"xml attribute quote":        rep(`<a b="`),
-		"long identifier":            rep("a") + "password=x",
-		"identifier of password":     rep("password"),
-		"identifier with underscore": rep("DB_PASSWORD_"),
-		"url markers":                rep("://"),
-		"url with at signs":          "x://" + rep("a@"),
-		"spaces after key":           "password=" + rep(" "),
-		"space newline pairs":        "password=" + rep(" \n"),
-		"setting-like words":         "password=" + rep("a=b "),
-		"angle brackets":             rep("<"),
-		"key attrs":                  rep(`<add key="password"`),
+		"password= repeated":          rep("password="),
+		"password=; repeated":         rep("password=;"),
+		"password=newline repeated":   rep("password=\n"),
+		"pwd: repeated":               rep("pwd: "),
+		"open quotes":                 `password="` + rep(`"'{`),
+		"escaped quotes":              `{"password":"` + rep(`\"`),
+		"backslash run":               `{"password":"` + rep(`\`),
+		"nested escaped":              `\"password\":\"` + rep(`\\\"`),
+		"doubled quotes":              `Password='` + rep(`''`),
+		"braces":                      "Password={" + rep("}}"),
+		"unclosed xml elements":       rep("<Password>"),
+		"unclosed cdata":              rep("<Password><![CDATA["),
+		"xml open tags":               rep("<add key=\"password\" "),
+		"xml nested value":            rep("<Password><a><b><c>"),
+		"xml comments":                rep("<Password><!-- -->"),
+		"xml attribute quote":         rep(`<a b="`),
+		"long identifier":             rep("a") + "password=x",
+		"identifier of password":      rep("password"),
+		"identifier with underscore":  rep("DB_PASSWORD_"),
+		"url markers":                 rep("://"),
+		"url with at signs":           "x://" + rep("a@"),
+		"spaces after key":            "password=" + rep(" "),
+		"space newline pairs":         "password=" + rep(" \n"),
+		"setting-like words":          "password=" + rep("a=b "),
+		"angle brackets":              rep("<"),
+		"key attrs":                   rep(`<add key="password"`),
+		"password and comment":        rep("<Password><!--"),
+		"password and closed comment": rep("<Password><!-- -->"),
+		"key attr and comment":        rep(`<add key="password"><!--`),
+		"comment ends the text":       rep("<Password><!--") + "-->",
+		"long name":                   "DB_PASSWORD" + rep("_X"),
+		"many words in one name":      rep("password_token_secret_"),
 	}
 	for name, in := range inputs {
 		t.Run(name, func(t *testing.T) {
 			start := time.Now()
 			_ = Mask(in, m)
 			_ = MaskURLUserinfo(in, m)
-			if d := time.Since(start); d > 5*time.Second {
+			if d := time.Since(start); d > 2*time.Second {
 				t.Errorf("took %v for %d bytes", d, len(in))
 			}
 		})
@@ -288,7 +336,7 @@ func secretForms(r *rand.Rand) (text, keep string) {
 
 // Random secrets in random forms never survive and the text around them stays; random bytes never panic.
 func TestMaskRandomForms(t *testing.T) {
-	r := rand.New(rand.NewSource(20261122))
+	r := rand.New(rand.NewSource(20261122)) //nolint:gosec // fixed seed for repeatable test rounds
 	for i := 0; i < 20000; i++ {
 		text, keep := secretForms(r)
 		got := Mask(text, m)
@@ -302,7 +350,7 @@ func TestMaskRandomForms(t *testing.T) {
 }
 
 func TestMaskRandomInputNeverPanics(t *testing.T) {
-	r := rand.New(rand.NewSource(1122))
+	r := rand.New(rand.NewSource(1122)) //nolint:gosec // fixed seed for repeatable test rounds
 	frags := []string{"password", "PWD", "=", ":", "=>", `"`, `'`, `\`, `\"`, "{", "}", "}}", ";", "\n", "\r", "\r\n", " ", "\t", "<", ">", "</", "/>", "<![CDATA[", "]]>", "<!--", "-->",
 		"key", "value", "name", "add", "Password", "token", "secret", "api_key", "://", "@", "&", "?", "x", "é", "\x00", "\xff", "DB_", "_pass", "connectionString", "&quot;", "[m]", "FAKEPW"}
 	for i := 0; i < 30000; i++ {

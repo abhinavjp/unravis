@@ -69,6 +69,7 @@ var secretScrubbers = []*regexp.Regexp{
 func ScrubSecrets(s string) string {
 	// The shared pass first: it reads the forms the patterns below do not (backslash-escaped quotes in JSON, prefixed keys such as
 	// DB_PASSWORD, XML elements and attributes). The patterns then run over what is left.
+	s = secretscrub.MaskURLUserinfo(s, secretRemoved)
 	s = secretscrub.Mask(s, secretRemoved)
 	for _, re := range secretScrubbers {
 		s = re.ReplaceAllString(s, secretRemoved)
