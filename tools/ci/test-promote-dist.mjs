@@ -6,7 +6,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { buildEnv, copyRoots } from '../release/promote-dist.mjs';
+import { assertFreshClone, buildEnv, copyRoots, gitBaseEnv, sameRoots } from '../release/promote-dist.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..');
@@ -268,6 +268,177 @@ test('buildEnv keeps registry and certificate settings that carry no password', 
     assert.equal('npm_config__authtoken' in out, false);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test('a build that plants a git filter, attributes, proxy or config in any clone next to it does not run it with the token', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const marker = join(f.base, 'filter-ran.txt');
+    // The "build" looks for every commit clone this program could have next to it (old layout: ../../repo; any unravis-dist-*/repo in the
+    // temp folder) and plants a clean filter for every file, a proxy and sslVerify=false. Under the right order there is nothing to plant in.
+    writeFileSync(join(f.base, 'plant3.cjs'), `
+      const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
+      const marker = ${JSON.stringify(marker)};
+      const targets = new Set([path.resolve('..', '..', 'repo')]);
+      for (const d of fs.readdirSync(os.tmpdir())) if (d.startsWith('unravis-dist-')) targets.add(path.join(os.tmpdir(), d, 'repo'));
+      let planted = 0;
+      for (const t of targets) {
+        const git = path.join(t, '.git');
+        if (!fs.existsSync(git)) continue;
+        planted++;
+        fs.mkdirSync(path.join(git, 'info'), { recursive: true });
+        fs.appendFileSync(path.join(git, 'info', 'attributes'), '* filter=x\\n');
+        fs.appendFileSync(path.join(git, 'config'), '[filter "x"]\\n\\tclean = \\"sh -c \\'echo token=$GH_TOKEN >> ' + marker + '; cat\\'\\"\\n[http]\\n\\tproxy = http://127.0.0.1:9\\n\\tsslVerify = false\\n');
+      }
+      fs.writeFileSync(${JSON.stringify(join(f.base, 'planted-count.txt'))}, String(planted));
+    `);
+    const before = remoteHead(f);
+    const r = promote(f, [], { env: { ...process.env, GH_TOKEN: 'tok-from-parent' }, build: 'node ' + JSON.stringify(join(f.base, 'plant3.cjs')) + ' && node build.cjs' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.notEqual(remoteHead(f), before, 'the commit was pushed');
+    assert.equal(existsSync(marker), false, 'a planted filter ran: ' + (existsSync(marker) ? readFileSync(marker, 'utf8') : ''));
+    assert.equal(readFileSync(join(f.base, 'planted-count.txt'), 'utf8'), '0', 'the commit clone existed while the build ran');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('the build clone is gone before the commit clone exists, and the commit clone is fresh', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    // The build lists the temp folder: no unravis-dist-* (commit clone) folder may exist yet.
+    writeFileSync(join(f.base, 'ls.cjs'), `const fs=require('node:fs'),os=require('node:os');fs.writeFileSync(${JSON.stringify(join(f.base, 'ls.txt'))}, fs.readdirSync(os.tmpdir()).filter((d)=>d.startsWith('unravis-dist-') && !d.startsWith('unravis-dist-build-')).join(','));`);
+    const r = promote(f, ['--no-push', '--keep'], { build: 'node ' + JSON.stringify(join(f.base, 'ls.cjs')) + ' && node build.cjs' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const kept = /Kept (\S+)/.exec(r.stdout)[1];
+    try {
+      assert.equal(readFileSync(join(f.base, 'ls.txt'), 'utf8').split(',').filter((d) => d && join(tmpdir(), d) !== kept).length, 0, 'a commit clone folder existed during the build');
+      assert.equal(existsSync(join(kept, 'build')), false);
+      assertFreshClone(join(kept, 'repo'));
+    } finally {
+      rmSync(kept, { recursive: true, force: true });
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('assertFreshClone refuses a filter, a hook, a proxy and an info/attributes file', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const c = join(f.base, 'clone');
+    sh(f.base, 'git', ['clone', '-q', f.url, c]);
+    assertFreshClone(c);
+    const plants = {
+      filter: (d) => sh(d, 'git', ['config', 'filter.x.clean', 'cat']),
+      http: (d) => sh(d, 'git', ['config', 'http.proxy', 'http://127.0.0.1:9']),
+      fsmonitor: (d) => sh(d, 'git', ['config', 'core.fsmonitor', 'true']),
+      hook: (d) => writeFileSync(join(d, '.git', 'hooks', 'pre-push'), '#!/bin/sh\n'),
+      attributes: (d) => { mkdirSync(join(d, '.git', 'info'), { recursive: true }); writeFileSync(join(d, '.git', 'info', 'attributes'), '* filter=x\n'); },
+    };
+    for (const [name, plant] of Object.entries(plants)) {
+      const d = c + '-' + name;
+      sh(f.base, 'git', ['clone', '-q', f.url, d]);
+      plant(d);
+      assert.throws(() => assertFreshClone(d), /fresh clone/, name);
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('gitBaseEnv drops variables that redirect git, keeps the rest', () => {
+  const e = gitBaseEnv({ GIT_DIR: '/x', GIT_WORK_TREE: '/y', GIT_INDEX_FILE: '/z', GIT_SSH_COMMAND: 'evil', GIT_ASKPASS: 'a', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'k', GIT_CONFIG_VALUE_0: 'v', GIT_CONFIG_GLOBAL: '/g', GIT_CONFIG_NOSYSTEM: '1', PATH: '/bin', GH_TOKEN: 't' });
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_SSH_COMMAND', 'GIT_ASKPASS', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']) assert.equal(k in e, false, k);
+  assert.deepEqual([e.GIT_CONFIG_GLOBAL, e.GIT_CONFIG_NOSYSTEM, e.PATH, e.GIT_NO_REPLACE_OBJECTS, e.GIT_TERMINAL_PROMPT], ['/g', '1', '/bin', '1', '0']);
+});
+
+test('a GIT_DIR in the caller\'s environment does not send the commit to another repository', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const other = join(f.base, 'other');
+    sh(f.base, 'git', ['init', '-q', other]);
+    const before = remoteHead(f);
+    const r = promote(f, [], { env: { ...process.env, GIT_DIR: join(other, '.git'), GIT_WORK_TREE: other } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.notEqual(remoteHead(f), before);
+    assert.equal(sh(other, 'git', ['rev-list', '--all', '--count']), '0');
+  } finally {
+    f.cleanup();
+  }
+});
+
+// A real npm, under the real buildEnv: a package with a local file: dependency and a lock file, offline. Catches an npm setting that
+// makes every `npm ci` fail (npm 10 stops with "double-loading config" when the user and global config are one file).
+function realNpmFixture(base) {
+  const dep = join(base, 'dep'), app = join(base, 'app');
+  mkdirSync(dep, { recursive: true }); mkdirSync(app, { recursive: true });
+  writeFileSync(join(dep, 'package.json'), JSON.stringify({ name: 'dep', version: '1.0.0', main: 'index.js' }));
+  writeFileSync(join(dep, 'index.js'), 'module.exports = 7;\n');
+  writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'app', version: '1.0.0', private: true, dependencies: { dep: 'file:../dep' } }));
+  return app;
+}
+const npmRun = (args, cwd, env) => spawnSync('npm', args, { cwd, env, encoding: 'utf8', shell: process.platform === 'win32' });
+
+test('a real `npm ci` works under buildEnv (and the config files npm loads are three different ones)', () => {
+  const base = mkdtempSync(join(tmpdir(), 'pd-npm-'));
+  try {
+    const app = realNpmFixture(base);
+    const env = buildEnv(process.env, join(base, 'scratch'));
+    assert.equal(new Set([env.npm_config_userconfig, env.npm_config_globalconfig, env.GIT_CONFIG_GLOBAL]).size, 3);
+    const lock = npmRun(['install', '--package-lock-only', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], app, env);
+    assert.equal(lock.status, 0, lock.stdout + lock.stderr);
+    const ci = npmRun(['ci', '--offline', '--no-audit', '--no-fund'], app, env);
+    assert.equal(ci.status, 0, ci.stdout + ci.stderr);
+    assert.ok(!/double-loading/.test(ci.stdout + ci.stderr));
+    assert.equal(spawnSync(process.execPath, ['-e', 'process.exit(require("dep") === 7 ? 0 : 3)'], { cwd: app }).status, 0, 'dep was installed');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('promote-dist runs a real `npm ci` (offline) from its own install step, in the build clone only', () => {
+  const base = mkdtempSync(join(tmpdir(), 'pd-npm2-'));
+  try {
+    const app = realNpmFixture(base);
+    const lockEnv = buildEnv(process.env, join(base, 'scratch'));
+    assert.equal(npmRun(['install', '--package-lock-only', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], app, lockEnv).status, 0);
+    // The fixture repository gets the package (web/package.json, the lock file and the dep) and the same build as the other tests.
+    const dep = join(base, 'dep');
+    const f = fixture('new', { dist: 'old', extra: {} });
+    try {
+      const w = join(f.work, 'web');
+      writeFileSync(join(w, 'package.json'), JSON.stringify({ name: 'app', version: '1.0.0', private: true, dependencies: { dep: 'file:../dep' } }));
+      writeFileSync(join(w, 'package-lock.json'), readFileSync(join(app, 'package-lock.json'), 'utf8'));
+      cpSync(dep, join(f.work, 'dep'), { recursive: true });
+      git(f.work, 'add', '-A');
+      git(f.work, 'commit', '-q', '-m', 'package');
+      git(f.work, 'push', '-q', f.url, 'promote/abc1234');
+      const before = remoteHead(f);
+      const r = spawnSync(process.execPath, [script, '--repo', 'o/r', '--remote', f.url, '--branch', 'promote/abc1234', '--node-version', nodeNow, '--install-cmd', 'npm ci --offline --no-audit --no-fund', '--build-cmd', 'node build.cjs'], { encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.notEqual(remoteHead(f), before);
+      assert.ok(!/double-loading/.test(r.stdout + r.stderr));
+    } finally {
+      f.cleanup();
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('sameRoots compares names and bytes of the three folders', () => {
+  const base = mkdtempSync(join(tmpdir(), 'pd-same-'));
+  try {
+    const mk = (d, text) => { mkdirSync(join(base, d, 'web/dist'), { recursive: true }); writeFileSync(join(base, d, 'web/dist/a.js'), text); };
+    mk('a', 'x'); mk('b', 'x'); mk('c', 'y');
+    assert.equal(sameRoots(join(base, 'a'), join(base, 'b')), true);
+    assert.equal(sameRoots(join(base, 'a'), join(base, 'c')), false);
+    writeFileSync(join(base, 'b', 'web/dist/extra.js'), 'x');
+    assert.equal(sameRoots(join(base, 'a'), join(base, 'b')), false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
   }
 });
 

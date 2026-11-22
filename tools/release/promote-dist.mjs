@@ -6,24 +6,25 @@
 //
 // What it does, in order:
 //   1. Stops unless this Node is exactly the pinned version (CI builds with the same one).
-//   2. Clones the branch into a temporary folder (the working copy of the person running it is never touched): the COMMIT clone. A
-//      second, local clone of it, the BUILD clone, is where dependency code runs (it can write anywhere in that clone, .git included).
-//   3. npm ci and npm run build in web of the BUILD clone, in a scrubbed environment (buildEnv). Then ONLY the three generated folders
-//      are copied into the commit clone (plain files only: a link or a .git entry stops the run). No git command that carries the
-//      token ever runs in the build clone, and the commit clone's .git is never seen by build code.
-//   4. node web/scripts/check-dist.cjs in the commit clone. Same bytes as committed: nothing to do. Different: commits the three folders
-//      with the subject "Rebuild web files for promotion <branch>" (ReleaseLib.ps1 knows this subject).
-//   5. Deletes web/node_modules of the build clone, installs again (npm ci), builds once more, copies the folders again and runs
-//      check-dist again. A build that does not give the same bytes twice stops here (nothing pushed). This proves the build is stable on
-//      this PC from a clean install; the Windows runner's check-dist on the promotion pull request is the proof across machines.
-//   6. Pushes the branch from the commit clone (a plain push, never a force).
+//   2. Clones the branch into a temporary folder: the BUILD clone. Dependency code runs only there (it can write anywhere in it, .git
+//      included, and next to it).
+//   3. npm ci and npm run build in web of the build clone, in a scrubbed environment (buildEnv); the three generated folders are copied
+//      out (plain files only: a link or a .git entry stops the run). Then web/node_modules is deleted, npm ci and the build run again and
+//      the folders are copied again; the two copies must be byte for byte equal (a build that is not reproducible stops here, nothing
+//      pushed; the Windows runner's check-dist on the promotion pull request is the proof across machines).
+//   4. The build clone and everything dependency code could write to are DELETED. Only then is the COMMIT clone made, in a new folder:
+//      a fresh clone of the branch, whose local git config is checked to hold nothing a build could have added. The copied folders are
+//      put into it, node web/scripts/check-dist.cjs is run there (same bytes as committed: nothing to do; different: the three folders
+//      are committed with the subject "Rebuild web files for promotion <branch>", which ReleaseLib.ps1 knows).
+//   5. Pushes the branch from the commit clone (a plain push, never a force). Every git command that carries the token runs there, with
+//      hooks and core.fsmonitor off and without GIT_DIR and the like from the caller's environment.
 // Last line printed: DIST_COMMIT=<sha> or DIST_COMMIT=none. Promote-Develop.ps1 requires that line and stops without it. Exit 0 ok, 1 build or check failed, 2 cannot run.
 //
 // Test hooks (used by tools/ci/test-promote-dist.mjs only): --remote <url or path> replaces https://github.com/<repo>.git,
 // --install-cmd and --build-cmd replace `npm ci` and `npm run build`.
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { devNull, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -51,9 +52,9 @@ const TOKEN_VALUE = /(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/;
  * This lowers the risk; it is NOT a security boundary. Dependency code runs as the same user as this script, so it can still read this
  * process's environment (Linux: /proc/<parent pid>/environ; Windows: ReadProcessMemory), call a program by its absolute path (a gh.exe
  * that reads its login from the operating system's keyring even with an empty GH_CONFIG_DIR), or ask the OS credential store directly.
- * What protects the result is that the lock file pins the dependencies, that check-dist compares the bytes, and that the build runs in
- * its own clone: no git command that carries the token ever runs there (a hook or core.fsmonitor planted in its .git never fires);
- * the token git needs exists only in the git environment (gitEnv) of the commit clone.
+ * What protects the result is that the lock file pins the dependencies, that check-dist compares the bytes, and the ORDER in main():
+ * the build clone is deleted before the commit clone exists and only copies of the three generated folders cross over, so no hook,
+ * filter, fsmonitor or proxy setting planted by build code is ever read by a git command that carries the token (gitEnv).
  * Settings in the person's own ~/.npmrc are not read (HOME is private): a registry mirror or CA must come in as npm_config_registry,
  * npm_config_cafile, HTTPS_PROXY, NODE_EXTRA_CA_CERTS or SSL_CERT_FILE, which are kept when they carry no password. The npm cache is
  * private and empty, so every promotion downloads every package.
@@ -69,8 +70,9 @@ export function buildEnv(env, scratch) {
   }
   const home = join(scratch, 'home'), cfg = join(scratch, 'gh-config'), bin = join(scratch, 'bin'), cache = join(scratch, 'cache');
   for (const d of [home, cfg, bin, cache, join(home, 'AppData', 'Roaming'), join(home, 'AppData', 'Local')]) mkdirSync(d, { recursive: true });
-  const emptyFile = join(scratch, 'empty.cfg');
-  writeFileSync(emptyFile, '');
+  // Three DIFFERENT empty files: npm 10 stops with "double-loading config" when the user and the global config are the same file.
+  const emptyUser = join(scratch, 'empty-user.npmrc'), emptyGlobal = join(scratch, 'empty-global.npmrc'), emptyGit = join(scratch, 'empty-git.cfg');
+  for (const f of [emptyUser, emptyGlobal, emptyGit]) writeFileSync(f, '');
   // `gh` that cannot give a token: a shell script (found first on POSIX) and a .cmd (found first on Windows, where PATHEXT lists .CMD).
   writeFileSync(join(bin, 'gh'), '#!/bin/sh\necho "gh is not available in the web build" >&2\nexit 1\n');
   chmodSync(join(bin, 'gh'), 0o755);
@@ -81,8 +83,8 @@ export function buildEnv(env, scratch) {
     HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData', 'Roaming'), LOCALAPPDATA: join(home, 'AppData', 'Local'),
     XDG_CONFIG_HOME: join(home, '.config'), XDG_CACHE_HOME: join(home, '.cache'), XDG_DATA_HOME: join(home, '.local', 'share'),
     GH_CONFIG_DIR: cfg, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1',
-    npm_config_cache: cache, npm_config_userconfig: emptyFile, npm_config_globalconfig: emptyFile, npm_config_update_notifier: 'false',
-    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyFile, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never',
+    npm_config_cache: cache, npm_config_userconfig: emptyUser, npm_config_globalconfig: emptyGlobal, npm_config_update_notifier: 'false',
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyGit, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never',
     GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '',
   });
   return out;
@@ -121,6 +123,25 @@ export function copyRoots(from, to) {
   }
 }
 
+/** True when the ROOTS under `a` and `b` hold the same files with the same bytes (names compared as written). */
+export function sameRoots(a, b) {
+  const list = (base) => {
+    const out = new Map();
+    const walk = (rel) => {
+      const st = lstatOrNull(join(base, rel));
+      if (!st) return;
+      if (st.isDirectory()) for (const n of readdirSync(join(base, rel)).sort()) walk(rel + '/' + n);
+      else out.set(rel, readFileSync(join(base, rel)));
+    };
+    for (const r of ROOTS) walk(r);
+    return out;
+  };
+  const x = list(a), y = list(b);
+  if (x.size !== y.size) return false;
+  for (const [k, v] of x) if (!y.has(k) || !v.equals(y.get(k))) return false;
+  return true;
+}
+
 function parseArgs(argv) {
   const o = { repo: '', branch: '', node: NODE_VERSION, push: true, keep: false, remote: '', install: 'npm ci', build: 'npm run build' };
   for (let i = 0; i < argv.length; i++) {
@@ -157,12 +178,38 @@ function run(cmd, args, opts = {}) {
   return r;
 }
 
+// Environment for git commands: the caller's, without the variables that send git to another repository or make it run another program
+// (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_SSH_COMMAND, GIT_ASKPASS, GIT_CONFIG_COUNT and its KEY/VALUE, ...), and without replace refs.
+const GIT_REDIRECTS = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|SSH|SSH_COMMAND|SSH_VARIANT|PROXY_COMMAND|ASKPASS|EXTERNAL_DIFF|PAGER|EDITOR|SEQUENCE_EDITOR|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+|CONFIG_PARAMETERS|EXEC_PATH|TEMPLATE_DIR|REPLACE_REF_BASE|TRACE\w*|CURL_VERBOSE|SSL_\w+)$/i;
+export function gitBaseEnv(env) {
+  const out = {};
+  for (const [k, v] of Object.entries(env)) if (!GIT_REDIRECTS.test(k)) out[k] = v;
+  out.GIT_NO_REPLACE_OBJECTS = '1';
+  out.GIT_TERMINAL_PROMPT = '0';
+  return out;
+}
+
+/**
+ * Throws unless `dir` is a fresh clone with nothing a build could have planted: no filter, hook, fsmonitor, proxy, include or
+ * credential setting in its local config, no hook that is not a sample, no .git/info/attributes. (The commit clone is made after the
+ * build clone is deleted, so this is a belt on the braces.)
+ */
+export function assertFreshClone(dir, env = gitBaseEnv(process.env)) {
+  const cfg = git(dir, ['config', '--local', '--list'], { env }).stdout.split('\n').map((l) => l.split('=')[0].trim()).filter(Boolean);
+  const bad = cfg.filter((k) => /^(filter\.|core\.(hookspath|fsmonitor|sshcommand|gitproxy|pager|editor|askpass|attributesfile|excludesfile|worktree)|https?\.|credential\.|include|url\.|alias\.|diff\.|merge\.|protocol\.|safe\.|submodule\.|extensions\.worktreeconfig)/i.test(k));
+  if (bad.length) throw new Stop(1, 'The fresh clone has git settings that a fresh clone does not have (' + bad.slice(0, 5).join(', ') + '). Nothing was pushed.');
+  const hooks = join(dir, '.git', 'hooks');
+  const live = existsSync(hooks) ? readdirSync(hooks).filter((n) => !n.endsWith('.sample')) : [];
+  if (live.length) throw new Stop(1, 'The fresh clone has hooks (' + live.slice(0, 5).join(', ') + '). Nothing was pushed.');
+  if (existsSync(join(dir, '.git', 'info', 'attributes'))) throw new Stop(1, 'The fresh clone has .git/info/attributes. Nothing was pushed.');
+}
+
 // git with line-ending conversion off, so the commit holds exactly the bytes the build wrote (the Windows default
 // core.autocrlf=true would otherwise rewrite the check-out and the commit).
 function git(dir, args, opts = {}) {
   // Hooks and the file system monitor are switched off for every git command (a hook or core.fsmonitor is code that would run with
   // the environment of the command, which carries the token for clone and push).
-  const r = run('git', ['-c', 'core.hooksPath=' + devNull, '-c', 'core.fsmonitor=false', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', '-c', 'core.eol=lf', ...args], { ...opts, cwd: dir });
+  const r = run('git', ['-c', 'core.hooksPath=' + devNull, '-c', 'core.fsmonitor=false', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', '-c', 'core.eol=lf', ...args], { ...opts, env: opts.env ?? gitBaseEnv(process.env), cwd: dir });
   if (r.status !== 0 && !opts.allowFail) {
     const why = String(r.stderr || '').trim().split('\n').slice(-3).join(' | ') || 'exit ' + r.status;
     throw new Stop(1, 'git ' + args[0] + ' failed: ' + why);
@@ -179,7 +226,7 @@ function shellStep(label, command, cwd, env) {
 
 // check-dist exits 0 equal, 1 different, 2 cannot run. Its own text goes to the terminal.
 function checkDist(repoDir) {
-  const r = run(process.execPath, [join(repoDir, 'web', 'scripts', 'check-dist.cjs'), '--repo', repoDir], { cwd: repoDir });
+  const r = run(process.execPath, [join(repoDir, 'web', 'scripts', 'check-dist.cjs'), '--repo', repoDir], { cwd: repoDir, env: gitBaseEnv(process.env) });
   const text = (String(r.stdout || '') + String(r.stderr || '')).trim();
   if (text) console.log(text);
   if (r.status !== 0 && r.status !== 1) throw new Stop(1, 'check-dist could not run (exit ' + r.status + ').');
@@ -198,7 +245,7 @@ export function main(argv, env = process.env) {
   }
 
   // Private environment for git: the token (if the remote is on GitHub) goes in as one header for this process only.
-  const gitEnv = { ...env, GIT_TERMINAL_PROMPT: '0' };
+  const gitEnv = gitBaseEnv(env);
   const remote = o.remote || 'https://github.com/' + o.repo + '.git';
   if (remote.startsWith('https://github.com/')) {
     const tok = String(env.GH_TOKEN || env.GITHUB_TOKEN || run('gh', ['auth', 'token']).stdout || '').trim();
@@ -209,22 +256,43 @@ export function main(argv, env = process.env) {
     gitEnv.GIT_CONFIG_VALUE_0 = header;
   }
 
-  const tmp = mkdtempSync(join(tmpdir(), 'unravis-dist-'));
-  const dir = join(tmp, 'repo');       // the commit clone: only this one is ever used for git commands that carry the token
-  const buildDir = join(tmp, 'build'); // the build clone: dependency code runs here and may write anything in it, .git included
+  // Two folders, in this order: the build one (dependency code writes in it and next to it) and, only after the first is deleted,
+  // the commit one. No build code runs while the commit clone exists.
+  const buildTmp = mkdtempSync(join(tmpdir(), 'unravis-dist-build-'));
+  let tmp = '';
   try {
     // The install and the build run dependency code: they get a scrubbed environment (buildEnv), not this one and not gitEnv.
-    const stepEnv = buildEnv(env, join(tmp, 'build-env'));
-    console.log('> cloning ' + o.branch + ' into ' + dir);
-    git(tmp, ['clone', '--quiet', '--single-branch', '--branch', o.branch, '--depth', '1', remote, dir], { env: gitEnv });
-    if (!existsSync(join(dir, 'web', 'scripts', 'check-dist.cjs'))) throw new Stop(1, o.branch + ' has no web/scripts/check-dist.cjs.');
-    // The build clone is made from the commit clone on this disk (no token, no network, no shared object files).
-    git(tmp, ['clone', '--quiet', '--no-hardlinks', pathToFileURL(dir).href, buildDir], { env: stepEnv });
+    const stepEnv = buildEnv(env, join(buildTmp, 'env'));
+    const buildDir = join(buildTmp, 'build');
+    const out1 = join(buildTmp, 'out1'), out2 = join(buildTmp, 'out2');
+    console.log('> cloning ' + o.branch + ' to build in ' + buildDir);
+    git(buildTmp, ['clone', '--quiet', '--single-branch', '--branch', o.branch, '--depth', '1', remote, buildDir], { env: gitEnv });
+    if (!existsSync(join(buildDir, 'web', 'scripts', 'check-dist.cjs'))) throw new Stop(1, o.branch + ' has no web/scripts/check-dist.cjs.');
     const web = join(buildDir, 'web');
 
     shellStep('install', o.install, web, stepEnv);
     shellStep('build', o.build, web, stepEnv);
-    copyRoots(buildDir, dir);
+    copyRoots(buildDir, out1);
+
+    // Same build again from a clean install: the bytes must not move. Catches a build that is not reproducible before anything is pushed.
+    rmSync(join(web, 'node_modules'), { recursive: true, force: true, maxRetries: 3 });
+    shellStep('install again (clean node_modules)', o.install, web, stepEnv);
+    shellStep('build again (reproducibility)', o.build, web, stepEnv);
+    copyRoots(buildDir, out2);
+    if (!sameRoots(out1, out2)) throw new Stop(1, 'The second build gave different bytes than the first: the build is not reproducible here. Nothing was pushed.');
+
+    // The build clone, its environment folders and the second copy are gone before the commit clone exists.
+    rmSync(buildDir, { recursive: true, force: true, maxRetries: 3 });
+    rmSync(join(buildTmp, 'env'), { recursive: true, force: true, maxRetries: 3 });
+    rmSync(out2, { recursive: true, force: true, maxRetries: 3 });
+    if (existsSync(buildDir)) throw new Stop(1, 'The build clone could not be deleted (' + buildDir + '). Nothing was pushed.');
+
+    tmp = mkdtempSync(join(tmpdir(), 'unravis-dist-'));
+    const dir = join(tmp, 'repo');
+    console.log('> cloning ' + o.branch + ' to commit in ' + dir);
+    git(tmp, ['clone', '--quiet', '--single-branch', '--branch', o.branch, '--depth', '1', remote, dir], { env: gitEnv });
+    assertFreshClone(dir, gitEnv);
+    copyRoots(out1, dir);
 
     let made = 'none';
     if (checkDist(dir)) {
@@ -243,14 +311,9 @@ export function main(argv, env = process.env) {
       git(dir, ['-c', 'commit.gpgsign=false', ...who, 'commit', '--quiet', '-m', COMMIT_SUBJECT + ' ' + o.branch.replace(/^promote\//, ''), '-m', 'Generated by tools/release/promote-dist.mjs (Node ' + o.node + '). Only ' + ROOTS.join(', ') + ' change.']);
       made = git(dir, ['rev-parse', 'HEAD']).stdout.trim();
       console.log('Committed ' + staged.length + ' changed file(s) as ' + made.slice(0, 7) + '.');
+      // What was committed is what the two builds made (check-dist of the commit against the folders on disk).
+      if (!checkDist(dir)) throw new Stop(1, 'The commit does not equal the built files (check-dist). Nothing was pushed.');
     }
-
-    // Same build again on the same files: the bytes must not move. Catches a build that is not reproducible before it is pushed.
-    rmSync(join(web, 'node_modules'), { recursive: true, force: true, maxRetries: 3 });
-    shellStep('install again (clean node_modules)', o.install, web, stepEnv);
-    shellStep('build again (reproducibility)', o.build, web, stepEnv);
-    copyRoots(buildDir, dir);
-    if (!checkDist(dir)) throw new Stop(1, 'The second build gave different bytes than the commit: the build is not reproducible here. Nothing was pushed.');
 
     if (made !== 'none') {
       if (o.push) {
@@ -261,13 +324,18 @@ export function main(argv, env = process.env) {
     console.log('DIST_COMMIT=' + made);
     return 0;
   } finally {
-    if (!o.keep && o.push) {
+    try {
+      rmSync(buildTmp, { recursive: true, force: true, maxRetries: 3 });
+    } catch {
+      // a locked file on Windows: the folder is in the temp area, leave it
+    }
+    if (tmp && !o.keep && o.push) {
       try {
         rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });
       } catch {
         // a locked file on Windows: the folder is in the temp area, leave it
       }
-    } else console.log('Kept ' + tmp);
+    } else if (tmp) console.log('Kept ' + tmp);
   }
 }
 

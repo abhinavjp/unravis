@@ -459,6 +459,7 @@ try {
     $pd = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Promote-Develop.ps1')
     Assert-That 'promote: branch reuse runs Get-PromoteBranchChain and Get-BuriedGeneratedCommits (wrapped in @()) before a pull request exists' ($pd -match '\$chain = @\(Get-PromoteBranchChain' -and $pd -match '\$buried = @\(Get-BuriedGeneratedCommits \$chain\)' -and $pd -match '\$buried\.Count -gt 0' -and $pd.IndexOf('$buried = @(Get-BuriedGeneratedCommits') -lt $pd.IndexOf('gh pr list'))
     Assert-That 'promote: a generated-looking commit is accepted only through the position rule' ($pd -notmatch '\$np = \[int\]' -and $pd -match 'okDist')
+    Assert-That 'promote: the pushed web files commit is checked against the same file rule before the pull request (renames count with the old name)' ($pd -match '\$distOutside' -and ([regex]::Matches($pd, 'previous_filename')).Count -ge 2 -and $pd.IndexOf('$distOutside') -lt $pd.IndexOf('gh pr list'))
 
     # ---- promotion safety (SUP-1): only the head that was built and checked is merged; "Merge master into" is a claim, not a proof ----
     $sha40 = 'a' * 40; $other40 = 'b' * 40

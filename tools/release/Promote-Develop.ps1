@@ -145,7 +145,7 @@ if ($LASTEXITCODE -eq 0 -and $existing) {
         $parentText, $subject = "$info" -split '\|', 2
         $isGenerated = $false
         if ("$subject" -clike 'Rebuild web files for promotion*') {
-            $gfiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$c" --paginate --jq '.files[].filename')
+            $gfiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$c" --paginate --jq '.files[] | .filename, (.previous_filename // empty)')
             $outside = @($gfiles | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' })
             $isGenerated = ($gfiles.Count -gt 0 -and $gfiles.Count -lt 3000 -and $outside.Count -eq 0)
         }
@@ -209,6 +209,11 @@ if ($distSha -ne 'none') {
     # The web files commit must sit directly on the head this run checked, or a commit pushed during the build would ride under it.
     $distParents = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$distSha" --jq '.parents[].sha')
     if ($distParents.Count -ne 1 -or $distParents[0].ToLowerInvariant() -ne $headAfterMerge) { Stop-Here "The web files commit $($distSha.Substring(0, 7)) is not directly on the head this run checked ($($headAfterMerge.Substring(0, 7))): someone pushed to $branch meanwhile. Nothing was merged. Delete the branch on GitHub if it is not yours, and run again." }
+    # And it must change only the three generated folders (the same test as the reuse check above; a renamed file counts with its old
+    # name too): a commit that carries anything else is refused here, before a pull request, not after the merge by Release.ps1.
+    $distFiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$distSha" --paginate --jq '.files[] | .filename, (.previous_filename // empty)')
+    $distOutside = @($distFiles | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' })
+    if ($distFiles.Count -eq 0 -or $distFiles.Count -ge 3000 -or $distOutside.Count -gt 0) { Stop-Here "The web files commit $($distSha.Substring(0, 7)) changes files outside web/dist, cmd/unravis-setup/ui and cmd/unravis-lite/ui (or none, or too many to check): $(($distOutside | Select-Object -First 5) -join ', '). Nothing was merged. Delete the branch $branch on GitHub and run again." }
 }
 function Assert-HeadIsExpected([string]$Actual) { try { Assert-PromotionHead $expectedHead $Actual $branch } catch { Stop-Here $_.Exception.Message } }
 Assert-HeadIsExpected ((Invoke-Gh api "repos/$Repo/git/ref/heads/$branch" --jq '.object.sha').ToLowerInvariant())
