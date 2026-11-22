@@ -144,23 +144,8 @@ func (r *Runner) ensureJournalDir(elevated bool) (string, error) {
 
 // RecoverJournal rolls back a journal left by a run that was cut off. It returns what could not be put back.
 func (r *Runner) RecoverJournal(elevated bool) (found bool, left []string, err error) {
-	p := filepath.Join(r.journalDir(elevated), JournalName)
-	if _, serr := os.Lstat(p); errors.Is(serr, os.ErrNotExist) {
-		return false, nil, nil
-	}
-	if elevated {
-		// Only read and replay a journal in a real folder nobody but administrators can write. This is checked before the file is
-		// parsed: a link or a folder others can change must not make the elevated process read what is in it.
-		dir := filepath.Dir(p)
-		if fi, lerr := os.Lstat(dir); lerr == nil && fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
-			return true, nil, fmt.Errorf("an earlier setup left a journal in a folder that is a link, so it is not used")
-		}
-		if err := datadirCheck(r.Sys.Sec, dir); err != nil {
-			return true, nil, fmt.Errorf("an earlier setup left a journal in a folder others can change, so it is not used: %v", err)
-		}
-	}
-	j, err := LoadJournal(p)
-	if errors.Is(err, os.ErrNotExist) {
+	j, found, err := r.readJournal(elevated)
+	if !found {
 		return false, nil, nil
 	}
 	if err != nil {
@@ -222,7 +207,23 @@ func (r *Runner) Execute(ctx context.Context, p *Plan) Result {
 		res.Message = "Setup could not make its journal folder, so nothing was changed: " + err.Error()
 		return res
 	}
-	j, err := NewJournal(filepath.Join(dir, JournalName), p.Op, p.Version, r.Sys.now())
+	load, w := LoadJournal, (*journalWriter)(nil)
+	if elevated {
+		// The machine journal is read back only through the proven reader, so it is also checked that way here, and it is written with
+		// the owner that reader accepts.
+		load = func(string) (*Journal, error) {
+			j, found, err := r.readJournal(true)
+			switch {
+			case err != nil:
+				return nil, err
+			case !found:
+				return nil, os.ErrNotExist
+			}
+			return j, nil
+		}
+		w = &journalWriter{sec: r.Sys.Sec, sddl: MachineJournalFileSDDL}
+	}
+	j, err := NewJournalWith(filepath.Join(dir, JournalName), p.Op, p.Version, r.Sys.now(), load, w)
 	if err != nil {
 		res.Outcome = OutcomeRolledBack
 		res.Message = "Setup could not start its journal, so nothing was changed: " + err.Error()
