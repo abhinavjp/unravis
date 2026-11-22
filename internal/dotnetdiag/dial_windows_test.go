@@ -337,25 +337,102 @@ func TestWindowsReadDeadline(t *testing.T) {
 			t.Fatalf("timeout took %v, want within %v", el, o.ReplyTimeout+500*time.Millisecond)
 		}
 	}
-	// The Go runtime starts OS threads (each holds handles) for the test
-	// server's blocking pipe calls, and CI showed a fixed +6 between two
-	// readings that did not grow with the number of probes (5 or 15). So the
-	// check looks at growth, not at the level: after a settling window, 30 more
-	// probes must add (almost) nothing. A handle leaked once per probe would
-	// add 30; the dialer holds 5 handles per connection.
-	for i := 0; i < 10; i++ {
+	// The Go runtime starts OS threads (each holds a few handles) for the test
+	// server's blocking pipe calls, so the count can step up by a thread's
+	// worth (+6 and +12 were seen on CI) at any point, and that step does not
+	// depend on how many probes ran. A real leak differs: it adds handles on
+	// EVERY probe, so every round of probes grows the count. So the test runs
+	// several rounds after a settling window and fails only if every round
+	// grew by more than a few handles. The check of the pipe owner and session
+	// is also tested on its own, with no goroutine involved, by
+	// TestWindowsIdentityCheckLeaksNoHandle.
+	for i := 0; i < 5; i++ {
 		run()
 	}
 	time.Sleep(300 * time.Millisecond)
-	settled := handleCount(t)
-	for i := 0; i < 30; i++ {
-		run()
+	const rounds, perRound, noise = 4, 15, 4
+	prev := handleCount(t)
+	minGrowth := 1 << 30
+	var growth []int
+	for r := 0; r < rounds; r++ {
+		for i := 0; i < perRound; i++ {
+			run()
+		}
+		time.Sleep(200 * time.Millisecond)
+		now := handleCount(t)
+		growth = append(growth, now-prev)
+		if now-prev < minGrowth {
+			minGrowth = now - prev
+		}
+		prev = now
 	}
-	time.Sleep(300 * time.Millisecond)
-	after := handleCount(t)
-	t.Logf("handle count: %d after the settling window, %d after 30 more probes", settled, after)
-	if after > settled+4 {
-		t.Fatalf("handle count went from %d to %d over 30 probes: a handle leaks", settled, after)
+	t.Logf("handle growth per round of %d probes: %v", perRound, growth)
+	if minGrowth > noise {
+		t.Fatalf("handle count grew by more than %d in every round (%v): a handle leaks", noise, growth)
+	}
+}
+
+// The owner and session check opens a process token and reads a security
+// descriptor. This runs it many times on one pipe handle, on this goroutine,
+// for each way it can end (trusted, foreign owner, owner unreadable). No
+// thread or goroutine is started, so the handle count must not move: a token
+// handle left open would add one per call.
+func TestWindowsIdentityCheckLeaksNoHandle(t *testing.T) {
+	name := uniquePipeName()
+	startPipeSrv(t, name, nil, windows.PIPE_UNLIMITED_INSTANCES, func(i int, c net.Conn) {
+		_, _ = io.Copy(io.Discard, c)
+	})
+	d, tg := selfTarget(t, name)
+	conn, _, err := d.Dial(context.Background(), tg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	pc, ok := conn.(*pipeConn)
+	if !ok {
+		t.Fatalf("conn is %T", conn)
+	}
+	ph, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, tg.PID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = windows.CloseHandle(ph) }()
+	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name  string
+		owner func(windows.Handle) (*windows.SID, error)
+		want  Reason
+	}{
+		{"real owner", nil, ""},
+		{"foreign owner", func(windows.Handle) (*windows.SID, error) { return everyone, nil }, ReasonPeerMismatch},
+		{"owner unreadable", func(windows.Handle) (*windows.SID, error) { return nil, windows.ERROR_ACCESS_DENIED }, ReasonPeerMismatch},
+	}
+	for _, c := range cases {
+		d.ownerOverride = c.owner
+		check := func() {
+			e := d.checkServerIdentity(pc.h, ph, tg.PID)
+			var got Reason
+			if e != nil {
+				got = e.Reason
+			}
+			if got != c.want {
+				t.Fatalf("%s: got %q want %q", c.name, got, c.want)
+			}
+		}
+		for i := 0; i < 20; i++ {
+			check()
+		}
+		before := handleCount(t)
+		for i := 0; i < 300; i++ {
+			check()
+		}
+		after := handleCount(t)
+		if after > before+2 {
+			t.Fatalf("%s: handle count went from %d to %d over 300 checks: a handle leaks", c.name, before, after)
+		}
 	}
 }
 
