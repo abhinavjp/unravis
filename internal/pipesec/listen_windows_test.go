@@ -235,7 +235,7 @@ func TestDaclNoEveryone(t *testing.T) {
 	if err := windows.GetAce(dacl, 0, &ace); err != nil {
 		t.Fatal(err)
 	}
-	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || uint32(ace.Mask) != 0x100087 {
+	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || uint32(ace.Mask) != 0x12019f {
 		t.Fatalf("ACE type %d mask %#x", ace.Header.AceType, ace.Mask)
 	}
 	sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))

@@ -8,8 +8,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// pipeMask is read data, write data, create pipe instance, read attributes and synchronize (0x100087). Never FILE_GENERIC_WRITE.
-const pipeMask = 0x100087
+// pipeMask is FILE_GENERIC_READ | FILE_GENERIC_WRITE (0x12019f). CreateNamedPipe with PIPE_ACCESS_DUPLEX asks for generic read and write,
+// and Windows checks that request against the first instance's DACL when it creates instance 2 and up; a smaller mask (we tried
+// 0x100087) fails with Access is denied (found on the first Windows CI run). It contains no WRITE_DAC and no WRITE_OWNER. Because the pool
+// is full (all 16 instances are created at start), a same-user process cannot add a squatting instance even though it holds create-instance.
+const pipeMask = 0x12019f
 
 // clientAccess is what a client asks for when it opens the pipe: pipeMask without FILE_CREATE_PIPE_INSTANCE. Generic rights would
 // map to bits the DACL does not grant, so the open would be denied.
