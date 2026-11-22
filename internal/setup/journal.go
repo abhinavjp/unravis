@@ -195,7 +195,15 @@ func (j *Journal) save() error {
 	if j.w != nil {
 		// The file is made new, with its owner and list in the create call. The rename keeps them: a file moved within a folder keeps
 		// its own security descriptor.
-		if err := os.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
+		// A temp file left by a write that was cut off is cleared; anything else in its place (a folder, a link) is not ours to remove.
+		if fi, err := os.Lstat(tmp); err == nil {
+			if !fi.Mode().IsRegular() {
+				return fmt.Errorf("%s is not a plain file, so the journal cannot be written", tmp)
+			}
+			if err := os.Remove(tmp); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		if err := j.w.sec.CreateFileSDDL(tmp, j.w.sddl, data); err != nil {

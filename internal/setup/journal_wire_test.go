@@ -399,3 +399,27 @@ func TestNewJournalWithReplacesACommittedJournalAndRefusesAnUnreadableOne(t *tes
 		t.Fatal("a journal that could not be read was replaced")
 	}
 }
+
+// A folder (or anything but a plain file) where the temp file goes is an error, as it is for a plain write; a stale temp file is cleared.
+func TestJournalWriterRefusesAFolderAtTheTempNameAndClearsAStaleFile(t *testing.T) {
+	e := newEnv(t, "1.2.0")
+	journal, _ := machineJournal(t, e)
+	j, found, err := e.r.readJournal(true)
+	if err != nil || !found {
+		t.Fatalf("%v %v", found, err)
+	}
+	tmp := journal + ".tmp"
+	writeFile(t, tmp, "left by a write that was cut off")
+	if err := j.save(); err != nil {
+		t.Fatalf("a stale temp file blocked the write: %v", err)
+	}
+	if err := os.Mkdir(tmp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.save(); err == nil {
+		t.Fatal("the journal was written although a folder sits at its temp name")
+	}
+	if fi, err := os.Lstat(tmp); err != nil || !fi.IsDir() {
+		t.Fatal("the folder at the temp name was removed")
+	}
+}
