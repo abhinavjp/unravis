@@ -294,7 +294,7 @@ test('the free drawer cannot skip the check and cannot be sent with a wrong code
 test('the archive drawer clears the passphrase and stops polling when it closes', () => {
   const src = read('src/lib/components/ArchiveDrawer.svelte');
   assert.match(src, /passphrase = '';/);
-  assert.match(src, /clearTimeout\(timer\)/);
+  assert.match(src, /cancelTimer\?\.\(\)/);
   assert.match(src, /alive = false/);
   assert.ok(!/localStorage|sessionStorage/.test(src), 'nothing typed is stored');
 });

@@ -1,10 +1,13 @@
 import { api } from './api';
 import { updatePreviewNow } from './updateCheck';
 import type { UpdateCheckReply } from './types';
+import { visiblePoll } from './visibility';
 
 // The update status shown across the app: the "Version X is available" bar and the Help panel's Updates section.
 // The program checks on its own timer; this only reads the last answer from the local server (no network call), when the page
 // opens and every ten minutes after, so a long-open window still hears about a new version.
+// While the page is hidden nothing is read (BL-429, visibility.ts): the first look after it is shown again happens at once when a full
+// interval has passed, so a window that was minimised for an hour is current as soon as it is seen.
 
 const DISMISSED_KEY = 'unravis.updateDismissed';
 const REFRESH_MS = 10 * 60 * 1000;
@@ -44,12 +47,16 @@ export function updateBarVisible(reply: UpdateCheckReply | null, dismissed: stri
   return reply.latest !== dismissed;
 }
 
-let poll: ReturnType<typeof setInterval> | undefined;
+let stopDownloadPoll: (() => void) | undefined;
+// The progress read while a download runs: once a second while the bar can be seen, not at all while it cannot. On show the next read
+// is at once (more than a second has passed), so the bar jumps to where the download is.
 function pollWhileDownloading(): void {
-  if (poll) return;
-  poll = setInterval(async () => {
+  if (stopDownloadPoll) return;
+  stopDownloadPoll = visiblePoll(async () => {
     await refreshUpdateStatus();
-    if (updates.reply?.install?.state !== 'downloading') { clearInterval(poll); poll = undefined; }
+    if (updates.reply?.install?.state === 'downloading') return true;
+    stopDownloadPoll = undefined; // the poll ends itself when its run answers false
+    return false;
   }, 1000);
 }
 
@@ -103,19 +110,21 @@ function startPresence(): () => void {
   const touch = () => { lastTouch = Date.now(); };
   const events = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'] as const;
   for (const name of events) window.addEventListener(name, touch, { passive: true });
+  // The rule is unchanged: a ping goes out only while the page is visible and was touched in the last five minutes. A hidden page sends
+  // nothing, so the program sees no ping, and two minutes after the last one it counts the app as not in use. The timer itself now
+  // sleeps while hidden (a wake-up that sent nothing); on show it pings at once if the last look was more than 45 seconds ago.
   const ping = () => {
     if (document.visibilityState !== 'visible' || Date.now() - lastTouch > TOUCH_WINDOW_MS) return;
     void api.uiPresence().catch(() => { /* a missed ping only makes the app look idle for a moment */ });
   };
-  ping();
-  const timer = setInterval(ping, PRESENCE_MS);
-  return () => { clearInterval(timer); for (const name of events) window.removeEventListener(name, touch); };
+  const stop = visiblePoll(ping, PRESENCE_MS, { immediate: true });
+  return () => { stop(); for (const name of events) window.removeEventListener(name, touch); };
 }
 
 /** Starts reading the status. Returns the function that stops it. */
 export function startUpdateWatch(): () => void {
-  void refreshUpdateStatus();
-  const timer = setInterval(() => { void refreshUpdateStatus(); }, REFRESH_MS);
+  // The first read is at once; the next ones every ten minutes, only while the page is visible.
+  const stopStatus = visiblePoll(async () => { await refreshUpdateStatus(); }, REFRESH_MS, { immediate: true });
   const stopPresence = startPresence();
-  return () => { clearInterval(timer); stopPresence(); };
+  return () => { stopStatus(); stopPresence(); };
 }

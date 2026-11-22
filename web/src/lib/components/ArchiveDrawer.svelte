@@ -5,6 +5,7 @@
   import { folderText, jobRunning, needsTypedPassphrase, passphraseOk, type FileJob } from '../archiveModel';
   import { app } from '../appState.svelte';
   import { CaseApiError, JOB_MAX_UNREACHABLE, JOB_POLL_MS, believedState, isCaseChanged, isCaseGone, type CaseInfo } from '../cases';
+  import { pacedTimeout } from '../visibility';
   import { ARCHIVE_TEXT, archiveReasonText, jobFailureText, keyEndingText, runningText } from '../copy/archiveCopy';
   import { formatBytes } from '../copy/importCopy';
 
@@ -28,7 +29,7 @@
   let starting = $state(false);
   let stopping = $state(false);
   let unreachable = $state(0);
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelTimer: (() => void) | undefined;
   let alive = true;
 
   // A case with a key of its own is sealed with that key: nothing is asked, whatever the master key is doing.
@@ -55,8 +56,9 @@
   }
 
   function schedule() {
-    clearTimeout(timer);
-    if (alive) timer = setTimeout(() => void poll(), JOB_POLL_MS);
+    cancelTimer?.();
+    // Slower while the page is hidden, at once on show (BL-429).
+    if (alive) cancelTimer = pacedTimeout(() => void poll(), JOB_POLL_MS);
   }
 
   async function poll() {
@@ -108,7 +110,7 @@
         if (now.state === 'running') { job = now; schedule(); }
       } catch { /* the form simply shows */ }
     })();
-    return () => { alive = false; clearTimeout(timer); passphrase = ''; };
+    return () => { alive = false; cancelTimer?.(); passphrase = ''; };
   });
 </script>
 

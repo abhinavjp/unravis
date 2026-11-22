@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { watchSize } from '../lib/chartPerf';
   import { timeZone } from '../lib/timeZone.svelte';
   import { onMount, untrack } from 'svelte';
   import { MarkAreaComponent } from 'echarts/components';
@@ -70,7 +71,7 @@
     const target = node;
     if (!target) return;
     let made: ReturnType<typeof echarts.init> | undefined;
-    const observer = new ResizeObserver(() => {
+    const stopSize = watchSize(target, () => {
       if (!made) {
         if (target.clientWidth > 0 && target.clientHeight > 0) {
           made = echarts.init(target);
@@ -81,9 +82,8 @@
       }
       made.resize();
     });
-    observer.observe(target);
     return () => {
-      observer.disconnect();
+      stopSize();
       if (made) { made.off('datazoom', onZoom); made.dispose(); made = undefined; }
       chart = undefined;
     };

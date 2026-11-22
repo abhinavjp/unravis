@@ -19,6 +19,7 @@
   import ProvenanceNote from './ProvenanceNote.svelte';
   import Drawer from './Drawer.svelte';
   import HelpNote from './HelpNote.svelte';
+  import { visiblePoll } from '../lib/visibility';
 
   // The Patterns drawer. It never runs by itself: the button starts one search over the window already on screen.
   // Summary first (verdict, findings, counts), then the episode table, which opens one episode at a time.
@@ -91,8 +92,8 @@
   // Keeps "N min ago" honest while a saved report stays on screen.
   $effect(() => {
     if (savedAt === null) return;
-    const timer = setInterval(() => { now = Date.now(); }, 30_000);
-    return () => clearInterval(timer);
+    // Stops while the page is hidden; on show it is brought up to date at once (BL-429).
+    return visiblePoll(() => { now = Date.now(); }, 30_000);
   });
 
   function pickRange(id: QuickRangeId) {

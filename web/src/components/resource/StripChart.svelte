@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { watchSize } from '../../lib/chartPerf';
   import { onMount } from 'svelte';
   import { MarkAreaComponent, TitleComponent } from 'echarts/components';
   import { echarts, palette } from '../../lib/charts';
@@ -24,15 +25,14 @@
     // A sliding drawer or a hidden section can give the node no width yet, and ECharts warns when it starts on a zero-size node.
     // So the chart starts on the first size the node reports, and resizes after that.
     const target = node;
-    const observer = new ResizeObserver(() => {
+    const stopSize = watchSize(target, () => {
       if (!chart) {
         if (target.clientWidth > 0 && target.clientHeight > 0) chart = echarts.init(target);
         return;
       }
       chart.resize();
     });
-    observer.observe(target);
-    return () => { observer.disconnect(); chart?.dispose(); chart = undefined; };
+    return () => { stopSize(); chart?.dispose(); chart = undefined; };
   });
 
   $effect(() => {

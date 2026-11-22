@@ -9,6 +9,7 @@ import { gapBridge, heroOutliers, type HeroSlot } from './chartHero';
 import { MIN_SAMPLE } from './thresholds';
 import { lightFallback } from '../brand/fallback';
 import { explain } from './copy/dictionary';
+import { lineSeriesPerf, lonePointSeries } from './chartPerf';
 
 echarts.use([LineChart, BarChart, HeatmapChart, ScatterChart, GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
 export { echarts };
@@ -126,8 +127,9 @@ export const failureTrendOption = (analysis: Analysis, zone: string, cohortKeys:
     yAxis: { type: 'value', name: 'Responses per interval', nameLocation: 'middle', nameGap: 44, min: 0, minInterval: 1, axisLabel: { color: axis }, splitLine: { lineStyle: { color: p.grid } } },
     dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, zoomSlider(p)],
     series: [
-      { name: '4xx client errors', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: client, lineStyle: { color: p.warn, width: 2.5 }, itemStyle: { color: p.warn } },
-      { name: '5xx server errors and failed jobs', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: server, lineStyle: { color: p.bad, width: 2.5 }, itemStyle: { color: p.bad } }
+      { name: '4xx client errors', type: 'line', connectNulls: false, ...lineSeriesPerf(client, 6), data: client, lineStyle: { color: p.warn, width: 2.5 }, itemStyle: { color: p.warn } },
+      { name: '5xx server errors and failed jobs', type: 'line', connectNulls: false, ...lineSeriesPerf(server, 6), data: server, lineStyle: { color: p.bad, width: 2.5 }, itemStyle: { color: p.bad } },
+      ...lonePointSeries(client, { color: p.warn, size: 6, name: '4xx client errors' }), ...lonePointSeries(server, { color: p.bad, size: 6, name: '5xx server errors and failed jobs' })
     ]
   };
 };
@@ -176,8 +178,9 @@ export const heroOption = (windows: HeroSlot[], zone: string, withLatency: boole
       { name: 'Requests', type: 'bar', yAxisIndex: 0, data: windows.map(window => window.count), itemStyle: { color: withAlpha(p.accent, .3) }, barCategoryGap: '24%' },
       ...(withLatency ? [
         { name: 'P95 bridge', type: 'line', yAxisIndex: 1, silent: true, showSymbol: false, data: gapBridge(latency), lineStyle: { color: p.accent, width: 1.5, type: 'dashed', opacity: .7 }, tooltip: { show: false }, z: 2 },
-        { name: 'P95', type: 'line', yAxisIndex: 1, connectNulls: false, showSymbol: true, symbolSize: 5, data: latency, lineStyle: { color: p.accent, width: 2 }, itemStyle: { color: p.accent }, z: 3 },
-        { name: 'Slowest request', type: 'scatter', yAxisIndex: 1, data: slowest, z: 4 }
+        { name: 'P95', type: 'line', yAxisIndex: 1, connectNulls: false, ...lineSeriesPerf(latency, 5), data: latency, lineStyle: { color: p.accent, width: 2 }, itemStyle: { color: p.accent }, z: 3 },
+        { name: 'Slowest request', type: 'scatter', yAxisIndex: 1, data: slowest, z: 4 },
+        ...lonePointSeries(latency, { color: p.accent, size: 5, yAxisIndex: 1, name: 'P95' })
       ] : [])
     ]
   };
@@ -212,6 +215,7 @@ export const timelineOption = (analysis: Analysis, selected: Comparison | null, 
   const points = alignedPoints(analysis, selected?.key ?? null);
   const labels = axisTimeLabels(points, zone);
   const chosen = selected;
+  const current50 = points.map(point => finite(point.p50?.valueMs)), current95 = points.map(point => finite(point.p95?.valueMs));
   return {
     animation: false,
     grid: { left: 84, right: 18, top: 62, bottom: 58 },
@@ -230,8 +234,9 @@ export const timelineOption = (analysis: Analysis, selected: Comparison | null, 
     yAxis: { type: 'value', name: 'Response time', nameLocation: 'middle', nameGap: 52, min: 0, minInterval: 1, axisLabel: { color: axis, formatter: (value: number) => axisDuration(value) }, splitLine: { lineStyle: { color: p.grid } } },
     dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, zoomSlider(p)],
     series: [
-      { name: 'Current median', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: points.map(point => finite(point.p50?.valueMs)), lineStyle: { color: p.text2, width: 2.5 }, itemStyle: { color: p.text2 } },
-      { name: 'Current P95', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: points.map(point => finite(point.p95?.valueMs)), lineStyle: { color: p.accent, width: 2.5 }, itemStyle: { color: p.accent } },
+      { name: 'Current median', type: 'line', connectNulls: false, ...lineSeriesPerf(current50, 6), data: current50, lineStyle: { color: p.text2, width: 2.5 }, itemStyle: { color: p.text2 } },
+      { name: 'Current P95', type: 'line', connectNulls: false, ...lineSeriesPerf(current95, 6), data: current95, lineStyle: { color: p.accent, width: 2.5 }, itemStyle: { color: p.accent } },
+      ...lonePointSeries(current50, { color: p.text2, size: 6, name: 'Current median' }), ...lonePointSeries(current95, { color: p.accent, size: 6, name: 'Current P95' }),
       { name: 'Reference median', type: 'line', showSymbol: false, data: labels.map(() => finite(chosen?.reference.p50?.valueMs)), lineStyle: { color: p.text2, type: 'dashed', opacity: .55 }, itemStyle: { color: p.text2 } },
       { name: 'Reference P95', type: 'line', showSymbol: false, data: labels.map(() => finite(chosen?.reference.p95?.valueMs)), lineStyle: { color: p.accent, type: 'dashed', opacity: .55 }, itemStyle: { color: p.accent } },
       ...(targetMs == null ? [] : [{ name: 'Response-time target', type: 'line', showSymbol: false, data: labels.map(() => targetMs), lineStyle: { color: p.series[0], type: 'dotted', width: 2 }, itemStyle: { color: p.series[0] } }])
