@@ -1,5 +1,5 @@
 # Weekly, one grouped PR per ecosystem, never merged automatically (no automerge label, no auto-merge setting).
-# `cargo` for /desktop is added by BL-442 when desktop/ exists.
+# cargo for /desktop (workspace lock desktop/Cargo.lock).
 version: 2
 updates:
   - package-ecosystem: gomod
@@ -34,7 +34,7 @@ updates:
     commit-message: { prefix: "deps:" }
     groups: { github-actions: { patterns: ["*"] } }
   - package-ecosystem: cargo
-    directory: /desktop/src-tauri
+    directory: /desktop
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }
