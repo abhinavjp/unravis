@@ -253,12 +253,14 @@ func (g goSideOnly) Each(ctx context.Context, q casestore.EventQuery, fn func(ev
 // Series answers the same with the selector pushed into SQL as with the match
 // made in Go over the whole kind, on a mid-size case, and reads fewer events.
 //
-// The Go-side pass is a plain Each scan, so it runs under casestore.MaxScanTime (10 s):
-// past it Series answers Partial, which this test reads as a failure. Under
-// -race that scan is about 14 times slower (400 samples = 11 200 events: 0.4 s
-// plain, 5.8 s under -race on an idle 4-core box, 14 s for the whole test on one
-// loaded core), so a slower runner crosses 10 s. 120 samples keep three 10-minute buckets, every selector shape and the
-// pushed-reads-fewer check, in a third of the time.
+// The Go-side pass is a plain Each scan, so it runs under casestore.MaxScanTime
+// (10 s): past it Series answers Partial, which this test reads as a failure.
+// Under -race that scan is about 14 times slower. Measured with 400 samples
+// (11 200 events): the scan alone 0.4 s plain and 5.8 s under -race on an idle
+// 4-core box; the whole test 12 s under -race on 4 cores and 14 s on one loaded
+// core, so a slower runner can cross 10 s. 120 samples keep three 10-minute
+// buckets, every selector shape and the pushed-reads-fewer check, in a third of
+// the time.
 func TestSeriesWithPushedSelectorsMatchesGoSideMatching(t *testing.T) {
 	const samples = 120
 	s, _ := newTestStore(t)

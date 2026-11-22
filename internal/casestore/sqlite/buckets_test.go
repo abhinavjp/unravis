@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"reflect"
@@ -787,5 +788,39 @@ func TestBucketCountsTimingSumExact(t *testing.T) {
 	}
 	if scanTotal != gotTotal || gotTotal != 3500 {
 		t.Fatalf("sum SQL=%v scan=%v, want 3500", gotTotal, scanTotal)
+	}
+}
+
+// A read transaction that SQLite already rolled back on its own (an I/O error
+// mid-query) makes tx.Rollback fail. The pooled connection must not stay
+// query_only afterwards, or a later write on it fails "attempt to write a readonly
+// database". go-sqlite3 0.37 reset query_only after ROLLBACK in one statement and
+// skipped the reset when the ROLLBACK failed; 0.38 resets it first.
+func TestReadOnlyTxAutoRollbackLeavesConnectionWritable(t *testing.T) {
+	s, _ := newTestStore(t)
+	c := mustOpen(t, s, mustCreate(t, s, "ro-reset").ID)
+	ctx := context.Background()
+	conn, err := c.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, "ROLLBACK"); err != nil { // stands in for SQLite's own rollback
+		t.Fatal(err)
+	}
+	_ = tx.Rollback() // "no transaction is active"
+	var qo int
+	if err := conn.QueryRowContext(ctx, "PRAGMA query_only").Scan(&qo); err != nil {
+		t.Fatal(err)
+	}
+	if qo != 0 {
+		t.Fatal("the connection stayed query_only after a failed rollback of a read transaction")
+	}
+	if _, err := conn.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS probe_rw(a)"); err != nil {
+		t.Fatalf("write on the connection after the read transaction: %v", err)
 	}
 }
