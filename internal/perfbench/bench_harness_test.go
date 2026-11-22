@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/casestore/sqlite"
+	"api-audit-explorer/internal/casestore/storetest"
 	"api-audit-explorer/internal/hosts"
 	"api-audit-explorer/internal/importer/all"
 	"api-audit-explorer/internal/sealedfile"
@@ -280,7 +281,10 @@ func newRig(t *testing.T, dir string) *rig {
 	t.Helper()
 	protector, err := sealedfile.CurrentUser()
 	if err != nil {
-		t.Skipf("encrypted storage is unavailable on this platform: %v", err)
+		// Off Windows there is no DPAPI. The measurement still runs against the same
+		// encrypted SQLite code with a random in-memory protector (the engine, the
+		// pool and the page cache do not depend on who seals the key).
+		protector = storetest.RandomProtector()
 	}
 	root := filepath.Join(dir, "cases")
 	store, err := sqlite.New(sqlite.Options{Root: root, Protector: protector})

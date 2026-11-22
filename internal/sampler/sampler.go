@@ -153,6 +153,7 @@ func start(cfg Config, newTicker func(time.Duration) (<-chan time.Time, func()),
 	}
 	if newTicker == nil {
 		newTicker = func(d time.Duration) (<-chan time.Time, func()) {
+			// idle-ok: runs only while a recording is on, and the interval is 5, 15, 30 or 60 s (checked above).
 			t := time.NewTicker(d)
 			return t.C, t.Stop
 		}
