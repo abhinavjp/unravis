@@ -148,3 +148,45 @@ func TestSettingsHandleProblemNamesTheCause(t *testing.T) {
 		}
 	}
 }
+
+// The by-path fallback is allowed for exactly three words (BL-140 PR 7, temporary until probe P1 passes); every other word stops the start.
+func TestFallbackAllowedOnlyForTheThreeOperationalWords(t *testing.T) {
+	all := []string{WordNoReader, WordPath, WordChain, WordNotFound, WordSharing, WordAccess, WordNotDisk, WordFolder, WordLink, WordNames,
+		WordTooLarge, WordMoved, WordOwner, WordList, WordUnreadable}
+	for _, w := range all {
+		want := w == WordAccess || w == WordUnreadable || w == WordSharing
+		if FallbackAllowed(w) != want {
+			t.Errorf("FallbackAllowed(%q) = %v, want %v", w, !want, want)
+		}
+	}
+	if FallbackAllowed("") || FallbackAllowed("anything else") {
+		t.Error("an unknown word must not allow the fallback")
+	}
+}
+
+// The refusal ParseVerifiedSettings returns wraps ErrSettingsNotProven, carries the fixed word, and leaks neither the cause nor free text.
+func TestParseVerifiedSettingsRefusalCarriesOnlyTheFixedWord(t *testing.T) {
+	cause := `CreateFile C:\secret\blackbox.json: Access is denied`
+	for _, c := range []struct {
+		err  error
+		word string
+	}{
+		{NewSettingsRefusal(WordOwner, errors.New(cause)), WordOwner},
+		{NewSettingsRefusal(`C:\secret free text`, errors.New(cause)), WordUnreadable},
+		{errors.New(cause), WordUnreadable},
+	} {
+		_, err := ParseVerifiedSettings(func(string) ([]byte, error) { return nil, c.err }, `C:\x\blackbox.json`, nil)
+		if !errors.Is(err, ErrSettingsNotProven) || RefusalWord(err) != c.word {
+			t.Fatalf("err=%v word=%q, want ErrSettingsNotProven and word %q", err, RefusalWord(err), c.word)
+		}
+		if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "denied") {
+			t.Fatalf("the refusal leaks: %q", err.Error())
+		}
+	}
+	if _, err := ParseVerifiedSettings(nil, "p", nil); RefusalWord(err) != WordNoReader {
+		t.Fatalf("a nil reader gave word %q, want %q", RefusalWord(err), WordNoReader)
+	}
+	if got := (&SettingsRefusal{Word: WordList}).Error(); !strings.Contains(got, WordList) {
+		t.Fatalf("a refusal with no cause printed %q", got)
+	}
+}

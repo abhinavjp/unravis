@@ -96,13 +96,14 @@ type deps struct {
 	// access list). The SQL service runs it at every start before it reads the
 	// file (BL-140). It is the file-only proof: the service account cannot read
 	// folder access lists, and the folder chain is proven by an administrator at
-	// install-sql and enable-sql. realDeps binds the real proof; a nil value
-	// (tests) skips it.
+	// install-sql and enable-sql. realDeps binds the real proof. Now used only by
+	// the temporary fallback; a nil value there refuses the start.
 	verifyConfig func(path string) error
 	// readSettings is the verified reader (BL-140 PR 7): it opens the settings file
 	// once, proves it on that handle and returns the bytes. The SQL service tries it
-	// first; if it refuses or fails for any reason the service logs one line and
-	// falls back to verifyConfig plus a read by path. nil (tests) skips it.
+	// first. nil refuses the start (fail closed). For the words access, unreadable
+	// and sharing only, a TEMPORARY fallback to verifyConfig plus a read by path
+	// applies (removed once probe P1 passes).
 	readSettings func(path string) ([]byte, error)
 	// elev is the Windows elevate helper. No command here may use it (C14):
 	// this program IS the helper, and the SQL grant is run by the owner in
@@ -680,32 +681,36 @@ type sqlRunOptions struct {
 // errSQLSettingsNotLocked is the fixed sentence for a start the proof refused.
 var errSQLSettingsNotLocked = errors.New("The SQL service did not start: its settings file is not locked to administrators. Run enable-sql again from an elevated prompt.")
 
-// loadSQLSettings reads the SQL service settings. BL-140: the service reads this file
-// with its own rights at every start, so the file is proven here, not only at
-// install-sql and enable-sql. It first tries the verified reader (one open, proof on
-// that handle, no second open by path). If that refuses or fails for any reason the
-// start is not stopped by it: one plain line says why (a fixed word, never a path)
-// and the settings come from the by-path proof plus a by-path read, exactly as
-// before, so nothing wider is ever read. Bytes that were proven but do not parse are
-// a settings error and are returned as they are. The path proof can still refuse.
+// loadSQLSettings reads the SQL service settings. BL-140: the service reads this file with its own rights at every start, so the file is
+// proven here, not only at install-sql and enable-sql. It reads through the verified reader (one open, proof on that handle, no second open
+// by path). A missing reader, or a refusal for any word except access, unreadable and sharing, stops the start with the fixed "not locked"
+// sentence and logs the fixed word.
+//
+// TEMPORARY FALLBACK (removed once probe P1 passes on the PC, see docs/design/bl-140-settings-folder-proof.md decision 7): for those three
+// words only (this account or a share mode cannot do the read, the open unknowns of P1) the service logs one line and uses the old by-path
+// proof plus a read by path. That path is weaker than the handle proof (it does not check the link count or the final path) and it
+// re-opens the proof-to-read window, so it is allowed only where the verified read could not run at all. A missing by-path proof also
+// refuses. Bytes that were proven but do not parse are a settings error and are returned as they are.
 func loadSQLSettings(path string, d deps, logf func(string, ...any)) (blackbox.Config, error) {
-	if d.readSettings != nil {
-		cfg, err := blackbox.ParseVerifiedSettings(d.readSettings, path, func(word string) {
-			if logf != nil {
-				logf("sql: verified settings read refused (%s), using the by-path proof", word)
-			}
-		})
-		if err == nil || !errors.Is(err, blackbox.ErrSettingsNotProven) {
-			return cfg, err
-		}
+	cfg, err := blackbox.ParseVerifiedSettings(d.readSettings, path, nil)
+	if err == nil || !errors.Is(err, blackbox.ErrSettingsNotProven) {
+		return cfg, err
 	}
-	if d.verifyConfig != nil {
-		if verr := d.verifyConfig(path); verr != nil {
-			if logf != nil {
-				logf("sql: settings-not-locked")
-			}
-			return blackbox.Config{}, errSQLSettingsNotLocked
+	word := blackbox.RefusalWord(err)
+	if !blackbox.FallbackAllowed(word) {
+		if logf != nil {
+			logf("sql: settings-not-locked (%s)", word)
 		}
+		return blackbox.Config{}, errSQLSettingsNotLocked
+	}
+	if logf != nil {
+		logf("sql: verified settings read refused (%s), using the temporary by-path fallback", word)
+	}
+	if d.verifyConfig == nil || d.verifyConfig(path) != nil {
+		if logf != nil {
+			logf("sql: settings-not-locked (by-path)")
+		}
+		return blackbox.Config{}, errSQLSettingsNotLocked
 	}
 	return blackbox.LoadConfig(path)
 }

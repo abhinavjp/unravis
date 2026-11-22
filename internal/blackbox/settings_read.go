@@ -33,26 +33,50 @@ type SettingsRefusal struct {
 	err  error
 }
 
-func (r *SettingsRefusal) Error() string { return r.err.Error() }
+func (r *SettingsRefusal) Error() string {
+	if r.err == nil {
+		return "blackbox: settings refused (" + r.Word + ")"
+	}
+	return r.err.Error()
+}
 func (r *SettingsRefusal) Unwrap() error { return r.err }
 
 // refuse tags err with its fixed word.
 func refuse(word string, err error) error { return &SettingsRefusal{Word: word, err: err} }
 
-// RefusalWord is the fixed word for an error from the settings reader: its own word, or WordUnreadable for anything untagged.
+// NewSettingsRefusal is refuse for callers outside the package (tests): err is the cause, which is kept for the reader's own callers and
+// is never logged.
+func NewSettingsRefusal(word string, err error) error { return refuse(word, err) }
+
+var knownWords = map[string]bool{
+	WordNoReader: true, WordPath: true, WordChain: true, WordNotFound: true, WordSharing: true, WordAccess: true, WordNotDisk: true,
+	WordFolder: true, WordLink: true, WordNames: true, WordTooLarge: true, WordMoved: true, WordOwner: true, WordList: true, WordUnreadable: true,
+}
+
+// RefusalWord is the fixed word for an error from the settings reader: its own word, or WordUnreadable for anything untagged or any word
+// that is not in the list above, so free text can never reach a log line.
 func RefusalWord(err error) string {
 	var r *SettingsRefusal
-	if errors.As(err, &r) {
+	if errors.As(err, &r) && knownWords[r.Word] {
 		return r.Word
 	}
 	return WordUnreadable
+}
+
+// FallbackAllowed says whether the service may, for now, fall back to the by-path proof and read after the verified read refused with this
+// word. Only the three words that mean "this account or a share mode cannot do the read" (WordAccess, WordUnreadable, WordSharing) are
+// allowed: they are the live unknowns of probe P1. Every other word is a verdict on the file (or no reader), and the by-path proof is weaker
+// than the handle proof (it never checks the link count or the final path) and re-opens the proof-to-read window, so it stops the start.
+// TEMPORARY: the fallback is removed, and this function with it, once P1 passes.
+func FallbackAllowed(word string) bool {
+	return word == WordAccess || word == WordUnreadable || word == WordSharing
 }
 
 // ParseVerifiedSettings is how the SQL service gets its settings: read is the only thing that touches the disk (OSEnv.ReadVerifiedSettings,
 // which opens the file once and proves it on the handle it reads from), and the bytes it returns are parsed here. There is no second open
 // of path, so the file that was proven is the file that is used.
 //
-//   - a nil read, or a read that returns an error, is ErrSettingsNotProven (fail closed; the cause is dropped, so no text leaks), and note,
+//   - a nil read, or a read that returns an error, is ErrSettingsNotProven (fail closed; the cause is dropped, so no text leaks; the error is a SettingsRefusal that wraps it, so RefusalWord(err) gives the fixed word), and note,
 //     when it is not nil, is told the one fixed word for it (RefusalWord) so the service can log why;
 //   - bytes that were read are parsed by ParseConfig, and its error is returned as it is: a proven file with bad JSON or bad values is a
 //     settings error, not a file that is "not locked".
@@ -63,14 +87,15 @@ func ParseVerifiedSettings(read func(path string) ([]byte, error), path string, 
 		if note != nil {
 			note(WordNoReader)
 		}
-		return Config{}, ErrSettingsNotProven
+		return Config{}, refuse(WordNoReader, ErrSettingsNotProven)
 	}
 	data, err := read(path)
 	if err != nil {
+		word := RefusalWord(err)
 		if note != nil {
-			note(RefusalWord(err))
+			note(word)
 		}
-		return Config{}, ErrSettingsNotProven
+		return Config{}, refuse(word, ErrSettingsNotProven)
 	}
 	return ParseConfig(data)
 }

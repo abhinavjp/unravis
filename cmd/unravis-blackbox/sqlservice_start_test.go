@@ -13,41 +13,141 @@ import (
 	"api-audit-explorer/internal/blackbox"
 )
 
-// BL-140: the SQL service proves its settings before it reads them, at every start.
-func TestRunSQLServiceRefusesUnlockedSettings(t *testing.T) {
-	ran := false
-	d := deps{
-		verifyConfig: func(string) error { return errors.New("driver text C:\\secret must never reach the answer") },
-		sqlRun:       func(context.Context, sqlRunOptions) error { ran = true; return nil },
+// BL-140 PR 7. The verified reader is a fake here, so nothing in this file proves the real reader on a PC (probe P1 is still owed).
+
+const leakyCause = `CreateFile C:\secret\blackbox.json: Access is denied`
+
+// refusing is a reader that refuses with a fixed word and a cause full of text that must never be logged.
+func refusing(word string) func(string) ([]byte, error) {
+	return func(string) ([]byte, error) { return nil, blackbox.NewSettingsRefusal(word, errors.New(leakyCause)) }
+}
+
+type startResult struct {
+	err     error
+	logged  []string
+	started bool
+	proofs  int
+	cfg     blackbox.Config
+}
+
+func startWith(t *testing.T, path string, read func(string) ([]byte, error), proof func(string) error) *startResult {
+	t.Helper()
+	r := &startResult{}
+	d := deps{readSettings: read, sqlRun: func(_ context.Context, o sqlRunOptions) error { r.started = true; r.cfg = o.Config; return nil }}
+	if proof != nil {
+		d.verifyConfig = func(p string) error { r.proofs++; return proof(p) }
 	}
-	var logged []string
-	err := runSQLService(context.Background(), blackbox.Paths{ConfigPath: `C:\nowhere\settings.json`}, d, func(f string, a ...any) { logged = append(logged, f) })
-	if !errors.Is(err, errSQLSettingsNotLocked) {
-		t.Fatalf("err = %v, want the fixed sentence", err)
+	r.err = runSQLService(context.Background(), blackbox.Paths{ConfigPath: path}, d, func(f string, a ...any) { r.logged = append(r.logged, fmt.Sprintf(f, a...)) })
+	return r
+}
+
+func noLeak(t *testing.T, r *startResult) {
+	t.Helper()
+	all := strings.Join(r.logged, "\n")
+	if r.err != nil {
+		all += "\n" + r.err.Error()
 	}
-	if ran {
-		t.Fatal("the runner started although the proof refused")
-	}
-	if len(logged) != 1 || logged[0] != "sql: settings-not-locked" {
-		t.Fatalf("log = %v, want one fixed code line", logged)
+	if strings.Contains(all, "secret") || strings.Contains(all, "denied") || strings.Contains(all, "CreateFile") {
+		t.Fatalf("the cause text reached a log line or the answer: %q", all)
 	}
 }
 
-// A proof that passes (or no proof, as in tests) does not stop the start: the error, if any, is not the refusal.
-func TestRunSQLServiceProofPassDoesNotRefuse(t *testing.T) {
-	for name, verify := range map[string]func(string) error{"passing proof": func(string) error { return nil }, "no proof": nil} {
-		t.Run(name, func(t *testing.T) {
-			d := deps{verifyConfig: verify, sqlRun: func(context.Context, sqlRunOptions) error { return nil }}
-			err := runSQLService(context.Background(), blackbox.Paths{ConfigPath: `C:\nowhere\settings.json`}, d, nil)
-			if errors.Is(err, errSQLSettingsNotLocked) {
-				t.Fatalf("the proof passed but the start was refused: %v", err)
+func pass(string) error { return nil }
+
+func TestRunSQLServiceStartsFromTheVerifiedReadersBytes(t *testing.T) {
+	var reads []string
+	read := func(p string) ([]byte, error) { reads = append(reads, p); return settingsJSON(t, "verified"), nil }
+	path := `C:\nowhere\settings.json` // never opened by path: a second open would fail
+	r := startWith(t, path, read, func(string) error { t.Fatal("the by-path proof ran although the verified read worked"); return nil })
+	if r.err != nil || !r.started || r.cfg.Name != "verified" || len(reads) != 1 || reads[0] != path || len(r.logged) != 0 {
+		t.Fatalf("err=%v started=%v cfg=%+v reads=%v log=%v, want a start from one verified read and no log", r.err, r.started, r.cfg, reads, r.logged)
+	}
+}
+
+// The three words that mean "this account or a share mode cannot do the read" fall back, once, to the by-path proof and read.
+func TestRunSQLServiceFallsBackOnlyOnTheThreeOperationalWords(t *testing.T) {
+	for _, w := range []string{blackbox.WordAccess, blackbox.WordUnreadable, blackbox.WordSharing} {
+		t.Run(w, func(t *testing.T) {
+			r := startWith(t, fallbackFile(t), refusing(w), pass)
+			if r.err != nil || !r.started || r.proofs != 1 || r.cfg.Name != "fallback" {
+				t.Fatalf("err=%v started=%v proofs=%d cfg=%+v, want a start from the by-path read after one proof", r.err, r.started, r.proofs, r.cfg)
 			}
+			if len(r.logged) != 1 || !strings.Contains(r.logged[0], "("+w+")") {
+				t.Fatalf("log = %q, want exactly one line with the fixed word %q", r.logged, w)
+			}
+			noLeak(t, r)
 		})
 	}
 }
 
-// BL-140 PR 7: the verified reader is tried first. These use a real temp file for the by-path fallback; the verified reader is a fake, so
-// nothing here proves the real reader on a real PC (probe P1 is still owed).
+// Every other word is a verdict on the file: the start stops with the fixed sentence, the by-path proof is never tried and nothing is read
+// by path.
+func TestRunSQLServiceStopsOnEveryOtherWord(t *testing.T) {
+	for _, w := range []string{blackbox.WordPath, blackbox.WordChain, blackbox.WordNotFound, blackbox.WordNotDisk, blackbox.WordFolder, blackbox.WordLink,
+		blackbox.WordNames, blackbox.WordTooLarge, blackbox.WordMoved, blackbox.WordOwner, blackbox.WordList, blackbox.WordNoReader} {
+		t.Run(w, func(t *testing.T) {
+			r := startWith(t, fallbackFile(t), refusing(w), func(string) error { t.Error("the weaker by-path proof was tried"); return nil })
+			if !errors.Is(r.err, errSQLSettingsNotLocked) || r.started || r.proofs != 0 {
+				t.Fatalf("err=%v started=%v proofs=%d, want the fixed sentence and no start", r.err, r.started, r.proofs)
+			}
+			if len(r.logged) != 1 || r.logged[0] != "sql: settings-not-locked ("+w+")" {
+				t.Fatalf("log = %q, want one line with the fixed word %q", r.logged, w)
+			}
+			noLeak(t, r)
+		})
+	}
+}
+
+// A nil reader refuses (fail closed); it does not skip the proof.
+func TestRunSQLServiceNilReaderRefuses(t *testing.T) {
+	r := startWith(t, fallbackFile(t), nil, pass)
+	if !errors.Is(r.err, errSQLSettingsNotLocked) || r.started || r.proofs != 0 {
+		t.Fatalf("err=%v started=%v proofs=%d, want a refusal and no start", r.err, r.started, r.proofs)
+	}
+	if len(r.logged) != 1 || r.logged[0] != "sql: settings-not-locked (no-reader)" {
+		t.Fatalf("log = %q", r.logged)
+	}
+}
+
+// A reader error with no word, or with a word that is not in the fixed list, is "unreadable" and may fall back; its text is never logged.
+func TestRunSQLServiceUntaggedAndUnknownWordsAreUnreadable(t *testing.T) {
+	for name, read := range map[string]func(string) ([]byte, error){
+		"untagged": func(string) ([]byte, error) { return nil, errors.New(leakyCause) },
+		"unknown":  refusing(`C:\secret free text`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := startWith(t, fallbackFile(t), read, pass)
+			if r.err != nil || !r.started || len(r.logged) != 1 || !strings.Contains(r.logged[0], "("+blackbox.WordUnreadable+")") {
+				t.Fatalf("err=%v started=%v log=%q, want a fallback logged as unreadable", r.err, r.started, r.logged)
+			}
+			noLeak(t, r)
+		})
+	}
+}
+
+// The fallback is not a way round the proof: a refusing or missing by-path proof still stops the start.
+func TestRunSQLServiceFallbackStillNeedsThePathProof(t *testing.T) {
+	for name, proof := range map[string]func(string) error{"proof refuses": func(string) error { return errors.New("not locked") }, "no proof": nil} {
+		t.Run(name, func(t *testing.T) {
+			r := startWith(t, fallbackFile(t), refusing(blackbox.WordAccess), proof)
+			if !errors.Is(r.err, errSQLSettingsNotLocked) || r.started {
+				t.Fatalf("err=%v started=%v, want the fixed refusal and no start", r.err, r.started)
+			}
+			if len(r.logged) != 2 || r.logged[1] != "sql: settings-not-locked (by-path)" {
+				t.Fatalf("log = %q, want the fallback line then the not-locked line", r.logged)
+			}
+			noLeak(t, r)
+		})
+	}
+}
+
+func TestRunSQLServiceBadVerifiedSettingsAreNotReportedAsUnlocked(t *testing.T) {
+	r := startWith(t, `C:\nowhere\settings.json`, func(string) ([]byte, error) { return []byte("{"), nil }, func(string) error { t.Error("proof ran for proven bytes"); return nil })
+	if r.err == nil || errors.Is(r.err, errSQLSettingsNotLocked) || r.started || len(r.logged) != 0 {
+		t.Fatalf("err=%v started=%v log=%q, want a settings error that is not the unlocked sentence", r.err, r.started, r.logged)
+	}
+}
+
 // settingsJSON is valid settings text for the OS the test runs on (an absolute folder; no default Windows log paths).
 func settingsJSON(t *testing.T, name string) []byte {
 	t.Helper()
@@ -65,95 +165,4 @@ func fallbackFile(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return p
-}
-
-func TestRunSQLServiceStartsFromTheVerifiedReadersBytes(t *testing.T) {
-	var reads []string
-	var got blackbox.Config
-	d := deps{
-		readSettings: func(p string) ([]byte, error) { reads = append(reads, p); return settingsJSON(t, "verified"), nil },
-		verifyConfig: func(string) error { t.Fatal("the by-path proof ran although the verified read worked"); return nil },
-		sqlRun:       func(_ context.Context, o sqlRunOptions) error { got = o.Config; return nil },
-	}
-	var logged []string
-	p := blackbox.Paths{ConfigPath: `C:\nowhere\settings.json`} // never opened by path: a second open would fail
-	_ = runSQLService(context.Background(), p, d, func(f string, a ...any) { logged = append(logged, fmt.Sprintf(f, a...)) })
-	if len(reads) != 1 || reads[0] != p.ConfigPath {
-		t.Fatalf("reads = %v, want one read of the config path", reads)
-	}
-	if got.Name != "verified" {
-		t.Fatalf("the service ran with %+v, want the verified bytes", got)
-	}
-	if len(logged) != 0 {
-		t.Fatalf("a good read logged %v", logged)
-	}
-}
-
-// Every refusal word, a plain error and no reader all fall back to today's path (proof, then read by path), log one line, never crash.
-func TestRunSQLServiceFallsBackOnEveryRefusal(t *testing.T) {
-	words := []string{blackbox.WordPath, blackbox.WordChain, blackbox.WordNotFound, blackbox.WordSharing, blackbox.WordAccess, blackbox.WordNotDisk,
-		blackbox.WordFolder, blackbox.WordLink, blackbox.WordNames, blackbox.WordTooLarge, blackbox.WordMoved, blackbox.WordOwner, blackbox.WordList, blackbox.WordUnreadable}
-	for _, w := range words {
-		t.Run(w, func(t *testing.T) {
-			path := fallbackFile(t)
-			proofs, runs := 0, 0
-			var got blackbox.Config
-			d := deps{
-				readSettings: func(string) ([]byte, error) {
-					// The refusal's own text is never read (only its Word), so it is left empty.
-					return nil, &blackbox.SettingsRefusal{Word: w}
-				},
-				verifyConfig: func(string) error { proofs++; return nil },
-				sqlRun:       func(_ context.Context, o sqlRunOptions) error { runs++; got = o.Config; return nil },
-			}
-			var logged []string
-			err := runSQLService(context.Background(), blackbox.Paths{ConfigPath: path}, d, func(f string, a ...any) { logged = append(logged, fmt.Sprintf(f, a...)) })
-			if err != nil || runs != 1 || proofs != 1 || got.Name != "fallback" {
-				t.Fatalf("err=%v runs=%d proofs=%d cfg=%+v, want a start from the by-path read after one proof", err, runs, proofs, got)
-			}
-			if len(logged) != 1 || !strings.Contains(logged[0], "("+w+")") || strings.Contains(logged[0], "secret") || strings.Contains(logged[0], "denied") {
-				t.Fatalf("log = %q, want one line with the fixed word %q and no path or system text", logged, w)
-			}
-		})
-	}
-}
-
-func TestRunSQLServiceFallbackStillRefusesAnUnlockedFile(t *testing.T) {
-	ran := false
-	d := deps{
-		readSettings: func(string) ([]byte, error) { return nil, errors.New("refused") },
-		verifyConfig: func(string) error { return errors.New("not locked") },
-		sqlRun:       func(context.Context, sqlRunOptions) error { ran = true; return nil },
-	}
-	var logged []string
-	err := runSQLService(context.Background(), blackbox.Paths{ConfigPath: fallbackFile(t)}, d, func(f string, a ...any) { logged = append(logged, fmt.Sprintf(f, a...)) })
-	if !errors.Is(err, errSQLSettingsNotLocked) || ran {
-		t.Fatalf("err=%v ran=%v, want the fixed refusal and no start (the fallback must not widen what is read)", err, ran)
-	}
-	if len(logged) != 2 || logged[1] != "sql: settings-not-locked" {
-		t.Fatalf("log = %q, want the fallback line then the not-locked line", logged)
-	}
-}
-
-func TestRunSQLServiceBadVerifiedSettingsAreNotReportedAsUnlocked(t *testing.T) {
-	d := deps{
-		readSettings: func(string) ([]byte, error) { return []byte("{"), nil },
-		verifyConfig: func(string) error { t.Fatal("proof ran for bytes that were already proven"); return nil },
-		sqlRun:       func(context.Context, sqlRunOptions) error { t.Fatal("started with bad settings"); return nil },
-	}
-	var logged []string
-	err := runSQLService(context.Background(), blackbox.Paths{ConfigPath: `C:\nowhere\settings.json`}, d, func(f string, a ...any) { logged = append(logged, fmt.Sprintf(f, a...)) })
-	if err == nil || errors.Is(err, errSQLSettingsNotLocked) {
-		t.Fatalf("err = %v, want a settings error that is not the unlocked sentence", err)
-	}
-	if len(logged) != 0 {
-		t.Fatalf("log = %q, want none", logged)
-	}
-}
-
-func TestRunSQLServiceNoReaderFallsBackQuietly(t *testing.T) {
-	d := deps{sqlRun: func(context.Context, sqlRunOptions) error { return nil }}
-	if err := runSQLService(context.Background(), blackbox.Paths{ConfigPath: fallbackFile(t)}, d, nil); err != nil {
-		t.Fatalf("err = %v", err)
-	}
 }
