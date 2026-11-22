@@ -228,14 +228,10 @@ api-audit-explorer/internal/blackbox.TestUpdateStartFailureRollsBack
 api-audit-explorer/internal/blackbox.TestUpdateStatusProbeFailureRollsBack
 api-audit-explorer/internal/blackbox.TestUpdateStoppedRecorderStaysStopped
 api-audit-explorer/internal/blackbox.TestUpdateWithoutAliveProberWatchesTheState
-api-audit-explorer/internal/casestore.TestMemoryContract
-api-audit-explorer/internal/casestore.TestMemoryContract/each-scan-budget
-api-audit-explorer/internal/casestore.TestSeriesThreeMillionEventsGiveExactBucketStatistics
 api-audit-explorer/internal/casestore/sqlite.TestCapKinds
 api-audit-explorer/internal/casestore/sqlite.TestCapKinds/free_disk_floor
 api-audit-explorer/internal/casestore/sqlite.TestCapsRefusedWithCaseUntouched
 api-audit-explorer/internal/casestore/sqlite.TestCapsRefusedWithCaseUntouched/free_disk_floor
-api-audit-explorer/internal/importer/schedule.TestSecondCronRowsHitWorkBudget
 api-audit-explorer/internal/server.TestBlackboxInstallOverAnEntryAddedByHand
 api-audit-explorer/internal/server.TestBlackboxInstallSealsTheKeyAndNeverReturnsIt
 api-audit-explorer/internal/server.TestBlackboxInstallWarnsWhenListeningBeyondThisPC
