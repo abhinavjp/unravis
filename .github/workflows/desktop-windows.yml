@@ -57,6 +57,8 @@ jobs:
         run: |
           cargo clippy --locked --workspace --all-targets -- -D warnings
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          cargo clippy --locked -p unravis-desktop --features e2e -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Tests (Job Object test included)
         shell: pwsh
