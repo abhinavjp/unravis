@@ -825,9 +825,9 @@ $script:LogRx = @{
     Pair    = [regex]::new('(?i)(?<![\w-])([\w-]*(?:pass(?:word|phrase)|nonce|seed[-_ ]?phrase|key[-_ ]?seed|_seed|mnemonic|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|.+)', 'Compiled')
     # More secret shapes, the same patterns as the Go reader (explicit [ \t] and [A-Za-z], not \s and \w, so the two agree): a flag with its value
     # after a space or =, an environment style name ending in _PASS or _PIN, and user:password in a URL or after curl -u / --user.
-    Flag    = [regex]::new('(?i)((?:^|[ \t])--?(?:pass(?:word|phrase|wd)?|pwd|token|secret|nonce|pin)(?:[ \t]+|=))[^ \t\r\n\f\v]+', 'Compiled')
-    EnvPass = [regex]::new('(?i)([A-Za-z0-9_]*_(?:pass|pin)[ \t]*=[ \t]*)[^ \t\r\n\f\v]+', 'Compiled')
-    UrlCred = [regex]::new('(://)[^ \t\r\n\f\v/:@]+:[^ \t\r\n\f\v/@]+@', 'Compiled')
+    Flag    = [regex]::new('(?i)((?:^|[ \t])--?(?:pass(?:word|phrase|wd)?|pwd|token|secret|nonce|pin)(?:[ \t]+|=))(?:"[^"]*"|''[^'']*''|[^ \t\r\n\f\v]+)', 'Compiled')
+    EnvPass = [regex]::new('(?i)([A-Za-z0-9_]*_(?:pass|passwd|pin)[ \t]*=[ \t]*)[^ \t\r\n\f\v]+', 'Compiled')
+    UrlCred = [regex]::new('(://)[^ \t\r\n\f\v/:@]+:[^ \t\r\n\f\v/]+@', 'Compiled')
     UserFlag = [regex]::new('((?:^|[ \t])--?(?:u|user)[ \t]+)[^ \t\r\n\f\v:]+:[^ \t\r\n\f\v]+', 'Compiled')
     KeyBeg  = [regex]::new('-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
     KeyEnd  = [regex]::new('-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
@@ -886,8 +886,10 @@ function Protect-LogLine([string]$Line, $Redactor, [switch]$KeepTabs) {
 function Protect-ReasonText([string]$Text) {
     try {
         $red = New-LogRedactor
-        $parts = foreach ($l in ($Text -split "\r?\n")) { $p = Protect-LogLine $l $red; if ($p.Trim().Length -gt 0) { $p.Trim() } }
-        return (@($parts) -join ' ')
+        $parts = foreach ($l in ($Text -split "\r\n|\n|\r")) { $p = Protect-LogLine $l $red; if ($p.Trim().Length -gt 0) { $p.Trim() } }
+        $out = New-Object System.Collections.Generic.List[string]
+        foreach ($p in @($parts)) { if (-not ($p -eq '<private key hidden>' -and $out.Count -gt 0 -and $out[$out.Count - 1] -eq $p)) { $out.Add($p) } }   # one marker for a whole key block
+        return ($out -join ' ')
     } catch { return '(reason hidden: redaction failed)' }
 }
 

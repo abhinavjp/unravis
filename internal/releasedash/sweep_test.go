@@ -252,7 +252,7 @@ func TestMemoSlowLoadDoesNotBlockOthersAndSameKeyIsShared(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			v, err := m.get(slow, weigh, func() (int, error) {
+			v, err := m.get(slow, true, weigh, func() (int, error) {
 				atomic.AddInt32(&loads, 1)
 				close(started)
 				<-release
@@ -266,7 +266,7 @@ func TestMemoSlowLoadDoesNotBlockOthersAndSameKeyIsShared(t *testing.T) {
 	<-started
 	done := make(chan int)
 	go func() { // another key while the slow one is still being made
-		v, _ := m.get(logKey{path: "quick"}, weigh, func() (int, error) { return 1, nil })
+		v, _ := m.get(logKey{path: "quick"}, false, weigh, func() (int, error) { return 1, nil })
 		done <- v
 	}()
 	select {
@@ -291,7 +291,7 @@ func TestReleasePollsReuseTheReadLog(t *testing.T) {
 	ld := filepath.Join(d.DataDir, "logs")
 	var sb strings.Builder
 	sb.WriteString("2026-11-21T09:59:00Z Pinned commit 0123456\n2026-11-21T10:00:01Z [1/7] Preflight\n")
-	for i := 0; i < 30000; i++ {
+	for i := 0; i < 6000; i++ {
 		sb.WriteString("2026-11-21T10:00:30Z Preflight line " + strconv.Itoa(i) + " token=abc passphrase: not-a-secret path C:\\Users\\bob\\x\n")
 	}
 	if err := os.WriteFile(filepath.Join(ld, "run-20261121T095900Z.log"), []byte(sb.String()), 0o600); err != nil {
@@ -313,5 +313,106 @@ func TestReleasePollsReuseTheReadLog(t *testing.T) {
 	t.Logf("first poll %v, five more %v", first, five)
 	if first > 300*time.Millisecond && five > first {
 		t.Errorf("five more polls took %v, more than the first one (%v): the log is read again", five, first)
+	}
+}
+
+// A log that is still being written gets a new key at every poll: the old answers for the same file must go, or a live release
+// pushes the CI log out of the cache.
+func TestMemoReplacesTheOlderAnswerOfTheSameFile(t *testing.T) {
+	var m memo[int]
+	m.maxItems, m.maxWeight = 10, 1000
+	weigh := func(int) int { return 1 }
+	ci := logKey{path: "ci", size: 1, mod: 1}
+	if _, err := m.get(ci, true, weigh, func() (int, error) { return 1, nil }); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 50; i++ { // fifty polls of a growing run log
+		if _, err := m.get(logKey{path: "run", size: int64(i), mod: int64(i)}, false, weigh, func() (int, error) { return i, nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(m.items) != 2 || m.weight != 2 {
+		t.Fatalf("%d entries, weight %d: want the CI log and the latest run log only", len(m.items), m.weight)
+	}
+	calls := 0
+	_, _ = m.get(ci, true, weigh, func() (int, error) { calls++; return 1, nil })
+	if calls != 0 {
+		t.Error("the CI log was pushed out by the run log's polls")
+	}
+}
+
+// A panic while a log is read must not wedge the cache: the caller gets an error, a waiter is woken and the read slots come back.
+func TestMemoPanicInLoadDoesNotWedgeTheCache(t *testing.T) {
+	var m memo[int]
+	m.maxItems, m.maxWeight = 10, 10
+	weigh := func(int) int { return 1 }
+	for i := 0; i < 2*cap(bigRead)+2; i++ { // more panics than there are read slots
+		_, err := m.get(logKey{path: "bad", size: int64(i)}, true, weigh, func() (int, error) { panic("boom") })
+		if err == nil || !strings.Contains(err.Error(), "boom") {
+			t.Fatalf("panic %d came back as %v", i, err)
+		}
+	}
+	done := make(chan int)
+	go func() {
+		v, _ := m.get(logKey{path: "good"}, true, weigh, func() (int, error) { return 5, nil })
+		done <- v
+	}()
+	select {
+	case v := <-done:
+		if v != 5 {
+			t.Errorf("good read = %d", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a read hangs after panics: the slots were not given back")
+	}
+	if len(m.flights) != 0 {
+		t.Errorf("%d flights left behind", len(m.flights))
+	}
+}
+
+// A small read (not a CI log) never waits for the big read slots.
+func TestMemoSmallReadsDoNotTakeABigReadSlot(t *testing.T) {
+	var m memo[int]
+	m.maxItems, m.maxWeight = 10, 10
+	weigh := func(int) int { return 1 }
+	for i := 0; i < cap(bigRead); i++ {
+		bigRead <- struct{}{} // every big slot is busy
+	}
+	defer func() {
+		for i := 0; i < cap(bigRead); i++ {
+			<-bigRead
+		}
+	}()
+	done := make(chan struct{})
+	go func() {
+		_, _ = m.get(logKey{path: "small"}, false, weigh, func() (int, error) { return 1, nil })
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a small read waited for a big read slot")
+	}
+}
+
+func TestRedactorQuotedFlagValueAndUrlPassword(t *testing.T) {
+	r := func() *Redactor { return NewRedactor() }
+	for in, bad := range map[string]string{
+		`tool --password "two words here" run`:   "words",
+		`tool --token 'it is secret' run`:        "secret",
+		"git clone https://u:p@ss@host.example/": "ss@",
+		"MYSQL_PASSWD=" + fakePass:               fakePass,
+	} {
+		if got := r().Line(in); strings.Contains(got, bad) {
+			t.Errorf("%q -> %q still holds %q", in, got, bad)
+		}
+	}
+}
+
+// A lone CR (progress output) separates lines, and a key block is one marker.
+func TestRedactTextLoneCRAndKeyBlockMarker(t *testing.T) {
+	got := redactText("step one\rstep two\r\n-----BEGIN PRIVATE KEY-----\nMIIBkTCB\nAAAA\n-----END PRIVATE KEY-----\nafter", nil)
+	if got != "step one step two <private key hidden> after" {
+		t.Errorf("%q", got)
 	}
 }

@@ -109,7 +109,7 @@ func ReadLog(dir, name string, names []string) (lines []LogLine, cut bool, err e
 		return nil, false, err
 	}
 	key := logKey{path: path, names: strings.Join(names, "\x00"), size: fi.Size(), mod: fi.ModTime().UnixNano()}
-	r, err := logCache.get(key, func(r readLogResult) int { return len(r.lines) + 1 }, func() (readLogResult, error) {
+	r, err := logCache.get(key, ciLogRE.MatchString(name), func(r readLogResult) int { return len(r.lines) + 1 }, func() (readLogResult, error) {
 		l, c, e := readLogFile(path, name, names)
 		return readLogResult{l, c}, e
 	})

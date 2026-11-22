@@ -443,6 +443,12 @@ try {
     Assert-That 'reason text: lines stay apart (a space, not glued)' ($mr.Contains('unable to reach host remote:')) "got '$mr'"
     Assert-That 'reason text: the lines after a hidden line are kept' ($mr.Contains('gh auth refresh') -and $mr.Contains('the real cause is here')) "got '$mr'"
     Assert-That 'reason text: the secret and the certificate body are hidden' (-not ($mr.Contains('hunter2') -or $mr.Contains('MIIBkTCB'))) "got '$mr'"
+    foreach ($c in @(@('tool --password "two words here" run', 'words'), @("tool --token 'it is secret' run", 'secret'), @('git clone https://u:p@ss@host.example/', 'ss@'), @('MYSQL_PASSWD=hunter2hunter2', 'hunter2'))) {
+        $got = Protect-LogLine $c[0] (New-LogRedactor)
+        Assert-That "log redaction: quoted flag value, URL password with @, PASSWD env: '$($c[0].Substring(0, 10))...'" (-not $got.Contains($c[1])) "got '$got'"
+    }
+    $kr = Protect-ReasonText "step one`rstep two`r`n-----BEGIN PRIVATE KEY-----`nMIIBkTCB`nAAAA`n-----END PRIVATE KEY-----`nafter"
+    Assert-That 'reason text: a lone CR separates lines and a key block is one marker' ($kr -eq 'step one step two <private key hidden> after') "got '$kr'"
     Assert-That 'reason text: an empty reason stays empty' ((Protect-ReasonText '') -eq '')
     $uk = New-LogRedactor
     $ukOut = '-----BEGIN PGP PRIVATE KEY BLOCK-----', 'ok   log redaction: nothing secret left', '--- PASS: TestX (0.00s)' | ForEach-Object { Protect-LogLine $_ $uk }

@@ -34,9 +34,9 @@ var (
 	// More secret shapes. Spaces and tabs are written out ("[ \t]") and not \s, and letters as [A-Za-z], so the PowerShell twin agrees
 	// (.NET counts more characters as \s and \w than Go does). A flag with its value after a space or "=" ("--passphrase <v>"); an
 	// environment style name ending in _PASS or _PIN ("SIGN_PASS=<v>"); user:password in a URL or after curl's -u or --user.
-	flagRE     = regexp.MustCompile(`(?i)((?:^|[ \t])--?(?:pass(?:word|phrase|wd)?|pwd|token|secret|nonce|pin)(?:[ \t]+|=))[^ \t\r\n\f\v]+`)
-	envPassRE  = regexp.MustCompile(`(?i)([A-Za-z0-9_]*_(?:pass|pin)[ \t]*=[ \t]*)[^ \t\r\n\f\v]+`)
-	urlCredRE  = regexp.MustCompile(`(://)[^ \t\r\n\f\v/:@]+:[^ \t\r\n\f\v/@]+@`)
+	flagRE     = regexp.MustCompile(`(?i)((?:^|[ \t])--?(?:pass(?:word|phrase|wd)?|pwd|token|secret|nonce|pin)(?:[ \t]+|=))(?:"[^"]*"|'[^']*'|[^ \t\r\n\f\v]+)`)
+	envPassRE  = regexp.MustCompile(`(?i)([A-Za-z0-9_]*_(?:pass|passwd|pin)[ \t]*=[ \t]*)[^ \t\r\n\f\v]+`)
+	urlCredRE  = regexp.MustCompile(`(://)[^ \t\r\n\f\v/:@]+:[^ \t\r\n\f\v/]+@`)
 	userFlagRE = regexp.MustCompile(`((?:^|[ \t])--?(?:u|user)[ \t]+)[^ \t\r\n\f\v:]+:[^ \t\r\n\f\v]+`)
 	keyBeginR  = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
 	keyEndR    = regexp.MustCompile(`-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
@@ -52,6 +52,8 @@ var (
 	userDirRE = regexp.MustCompile(`(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"']+`)
 	maxLine   = 2000
 )
+
+const keyHidden = "<private key hidden>"
 
 const maxKeyLines = 400 // a 4096-bit key is about 30 lines; this only stops a runaway block
 

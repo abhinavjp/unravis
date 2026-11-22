@@ -351,7 +351,7 @@ func parsedTests(dir string, l LogRef, names []string) (TestResults, bool) {
 		return TestResults{}, false
 	}
 	key := logKey{path: path, names: strings.Join(names, "\x00"), size: fi.Size(), mod: fi.ModTime().UnixNano()}
-	res, err := testCache.get(key, func(TestResults) int { return 1 }, func() (TestResults, error) {
+	res, err := testCache.get(key, true, func(TestResults) int { return 1 }, func() (TestResults, error) {
 		rc, err := openCI(dir, l.Name)
 		if err != nil {
 			return TestResults{}, err

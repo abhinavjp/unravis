@@ -237,10 +237,12 @@ func redactText(s string, names []string) string {
 	}
 	r := NewRedactor(names...)
 	var parts []string
-	for _, ln := range strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n") {
-		if t := strings.TrimSpace(r.Line(ln)); t != "" {
-			parts = append(parts, t)
+	for _, ln := range strings.FieldsFunc(s, func(c rune) bool { return c == '\n' || c == '\r' }) {
+		t := strings.TrimSpace(r.Line(ln))
+		if t == "" || (t == keyHidden && len(parts) > 0 && parts[len(parts)-1] == t) { // one marker for a whole key block
+			continue
 		}
+		parts = append(parts, t)
 	}
 	return strings.Join(parts, " ")
 }
