@@ -29,7 +29,9 @@ function status(r) {
   return ['', 'mut'];
 }
 
-let snap = null, selected = '', timer = 0, busy = false, failed = false;
+const STEPS = ['Preflight', 'Tag', 'Build', 'Sign', 'Publish', 'Feed', 'Verify'];
+const NEXT = 'next'; // list key of the release that has no version yet (the script is still waiting for CI)
+let snap = null, selected = '', timer = 0, busy = false, failed = false, liveKey = '';
 try { selected = sessionStorage.getItem('rd.sel') || ''; } catch (e) { /* the choice just is not kept */ }
 
 async function load(refresh) {
@@ -44,7 +46,7 @@ async function load(refresh) {
 }
 function schedule() {
   clearTimeout(timer);
-  const running = snap && snap.run && snap.run.status === 'running';
+  const running = snap && ((snap.live && !snap.live.gone) || (snap.run && snap.run.status === 'running'));
   timer = setTimeout(() => { if (!document.hidden) load(false); else schedule(); }, running || failed ? 5000 : 30000);
 }
 
@@ -67,20 +69,29 @@ function render() {
   channelBox('chan-rc', 'rc', feed('rc'));
   channelBox('chan-stable', 'stable', feed('stable'));
   const run = $('run'); run.replaceChildren();
-  if (s.run) {
+  const lv = s.live;
+  if (lv) {
+    const who = lv.version ? 'Release ' + lv.version : 'A release';
+    if (lv.gone) run.append(el('span', 'off', who + ' stopped without saying why.'), ' ' + lv.label + '. Started ' + ago(lv.started) + '. Run Release.ps1 -Status on the release PC.');
+    else run.append(el('span', 'on', who + ' is running.'), ' ' + lv.label + '. Started ' + ago(lv.started) + '.');
+  } else if (s.run) {
     if (s.run.status === 'running') run.append(el('span', 'on', 'Release ' + s.run.version + ' is running.'), ' Last step finished: ' + (s.run.stage || 'none') + '.');
     else if (s.run.status === 'stopped') run.append(el('span', 'off', 'Release ' + s.run.version + ' stopped'), ' after ' + (s.run.stage || 'the start') + (s.run.reason ? ': ' + s.run.reason : '.'));
   }
-  const rels = s.releases || [];
+  const rels = (s.releases || []).slice();
+  if (lv && !lv.version) rels.unshift({ version: NEXT, label: 'Next release', channel: 'rc or stable', withdrawn: false, verify: 'unknown', onFeed: false, onGitHub: false, recorded: true, steps: STEPS.map((n) => ({ name: n, state: n === lv.step ? 'running' : 'pending' })) });
+  const key = lv ? (lv.version || NEXT) : '';
+  if (key && key !== liveKey) selected = key; // a release just started: show it
+  liveKey = key;
   if (!rels.some((r) => r.version === selected)) selected = rels.length ? rels[0].version : '';
   const ul = $('list'); ul.replaceChildren();
   if (!rels.length) ul.append(el('li', 'empty', 'No releases found yet.'));
   for (const r of rels) {
-    const li = el('li', r.withdrawn ? 'wd' : ''); li.id = 'r-' + r.version; li.setAttribute('role', 'option');
+    const li = el('li', r.withdrawn ? 'wd' : ''); li.id = 'r-' + r.version.replace(/[^A-Za-z0-9_.-]/g, '_'); li.setAttribute('role', 'option');
     li.setAttribute('aria-selected', String(r.version === selected)); li.dataset.v = r.version;
-    li.append(el('span', 'ver', r.version));
+    li.append(el('span', 'ver', r.label || r.version));
     const [word, kind] = status(r); li.append(el('span', 'tag ' + kind, word));
-    li.append(el('span', 'when', (r.published ? when(r.published) : 'Not published') + ' · ' + r.channel));
+    li.append(el('span', 'when', (r.published ? when(r.published) : (r.label ? 'Waiting to start' : 'Not published')) + ' · ' + r.channel));
     ul.append(li);
   }
   const sel = ul.querySelector('[aria-selected=true]'); if (sel) { ul.setAttribute('aria-activedescendant', sel.id); }
@@ -96,11 +107,13 @@ function render() {
 function renderDetail(r) {
   const d = $('detail'); d.replaceChildren();
   if (!r) { d.append(el('div', 'empty', 'Select a release.')); return; }
-  d.append(el('h1', '', r.version));
+  d.append(el('h1', '', r.label || r.version));
   const [word, kind] = status(r);
   const meta = el('div', 'meta'); meta.append(r.channel + ' channel · ');
   const t = el('span', 'tag ' + kind, word || 'Not published'); meta.append(t); d.append(meta);
 
+  const lv = snap && snap.live;
+  if (lv && (lv.version || NEXT) === r.version) d.append(el('p', lv.gone ? 'note bad' : 'note', lv.label + (lv.gone ? '' : '. This page reads again every 5 seconds.')));
   d.append(el('h2', '', 'Release steps'));
   const ol = el('ol', 'steps');
   for (const x of r.steps) {

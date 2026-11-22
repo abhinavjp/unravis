@@ -54,6 +54,7 @@ type Event struct {
 	Stage   string
 	Reason  string
 	Run     string // CI run id, digits only
+	From    string // run-start: the step this run began at
 }
 
 // Local is what was found in the release data folder.
@@ -62,6 +63,7 @@ type Local struct {
 	Dir    string
 	Run    *Run
 	Events []Event
+	Live   *Live // the release process on this PC right now, from the very start of Release.ps1
 }
 
 // pathRE hides file paths (they can hold a user name or a key file name) in free text from the log.
@@ -116,6 +118,7 @@ func ReadLocal(dir string) Local {
 		}
 	}
 	l.Events = readAuditTail(filepath.Join(dir, "audit.jsonl"))
+	l.Live = readLive(dir, l.Events, time.Now())
 	return l
 }
 
@@ -157,7 +160,7 @@ func readAuditTail(path string) []Event {
 		if _, err := time.Parse(time.RFC3339Nano, str(m, "ts")); err != nil {
 			continue
 		}
-		out = append(out, Event{At: str(m, "ts"), Name: clip(str(m, "event")), Version: clip(v), Stage: clip(str(m, "stage")), Reason: clip(str(m, "reason")), Run: digits(str(m, "run"))})
+		out = append(out, Event{At: str(m, "ts"), Name: clip(str(m, "event")), Version: clip(v), Stage: clip(str(m, "stage")), Reason: clip(str(m, "reason")), Run: digits(str(m, "run")), From: clip(str(m, "from"))})
 	}
 	return out
 }

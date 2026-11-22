@@ -11,13 +11,13 @@ The window is Microsoft Edge in app mode (the WebView2 engine Windows already ha
 - **Channel strip** (rc and stable, top): the version the signed feed offers, when it was signed and when it expires, pause, rollout and withdrawn versions from the signed control file. These are checked with the same code and trusted keys as the app. A failed check is shown as a failed check.
 - **Release list** (left): every release, newest first, one plain status word each (Live, verified / Verified / Published / Withdrawn / Verify failed / Stopped / Running). Up and Down (or j and k) move the selection, R reads again.
 - **Detail** (right): the seven release steps (Preflight, Tag, Build, Sign, Publish, Feed, Verify) with times and the reason when one failed, plus facts and links to the release page and the CI run.
-- **Run banner**: while `Release.ps1` is running, the step it is on. The page then re-reads the local files every 5 seconds.
+- **Run banner**: from the moment `Release.ps1` starts (waiting for master CI, before any version is chosen) until it ends, a banner says what it is doing: waiting for CI, tag, build, sign, publish, feed, verify. Before a version exists the list shows a "Next release" row. The step shows as running at once, not after the step before it is saved. If the process ends without a closing line the banner says it ended, never that it is running. The page re-reads the local files every 5 seconds while a release runs.
 
 ## Where the data comes from
 
 | Source | Used for | Network |
 |---|---|---|
-| `%LOCALAPPDATA%\Unravis\release\state.json` and `audit.jsonl` (override: `--data` or `UNRAVIS_RELEASE_DATA`) | step status, verify result, withdraw, stop reason | none |
+| `%LOCALAPPDATA%\Unravis\release\state.json` and `audit.jsonl` (override: `--data` or `UNRAVIS_RELEASE_DATA`) | step status, verify result, withdraw, stop reason; `lock-info.json` only for when the run started and its process id (to see it is still alive), never its nonce or requester | none |
 | GitHub releases list (public, no token) | version list, dates, links | at most one call per 5 minutes, ETag |
 | Signed feed (rc and stable) | what is offered, control file | at most one read per 5 minutes |
 
