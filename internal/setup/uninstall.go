@@ -155,11 +155,16 @@ func (p *Plan) removeShortcuts(ctx context.Context, t *Txn) error {
 	if !p.r.NoProfileLinks {
 		links = append(links, p.Layout.StartupLink, p.Layout.DesktopLink)
 	}
+	links = append(links, p.Layout.ReleasesLink)
 	for _, l := range links {
 		if l == "" || (p.r.NoProfileLinks && p.r.isProfileLink(l)) {
 			continue
 		}
-		exists, ours := linkIsOurs(l, p.Layout.AppExe)
+		target := p.Layout.AppExe
+		if l == p.Layout.ReleasesLink {
+			target = p.Layout.ReleasesExe
+		}
+		exists, ours := linkIsOurs(l, target)
 		if !exists {
 			continue
 		}
@@ -183,7 +188,7 @@ func (p *Plan) removeARP(ctx context.Context, t *Txn) error {
 
 func (p *Plan) removeProgramFiles(ctx context.Context, t *Txn) error {
 	dir := p.Layout.InstallDir
-	for _, f := range []string{p.Layout.AppExe, p.Layout.KeeperExe, p.Layout.BlackboxExe, p.Layout.StateFile} {
+	for _, f := range []string{p.Layout.AppExe, p.Layout.KeeperExe, p.Layout.BlackboxExe, p.Layout.ReleasesExe, p.Layout.StateFile} {
 		if f == "" {
 			continue
 		}

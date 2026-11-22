@@ -7,7 +7,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
+	"unsafe"
 )
+
+// showError opens a message box. The program has no console, so this is the only way a start-up error reaches the person.
+func showError(msg string) {
+	user32 := syscall.NewLazyDLL("user32.dll")
+	box := user32.NewProc("MessageBoxW")
+	text, _ := syscall.UTF16PtrFromString(msg)
+	title, _ := syscall.UTF16PtrFromString("Unravis Releases")
+	const mbOK, mbIconError = 0x0, 0x10
+	_, _, _ = box.Call(0, uintptr(unsafe.Pointer(text)), uintptr(unsafe.Pointer(title)), mbOK|mbIconError)
+}
 
 // appWindow opens link in its own window with no address bar or tabs, using the Microsoft Edge that Windows already has
 // (the same WebView2 engine other desktop apps use). It has its own profile folder, so closing the window ends this

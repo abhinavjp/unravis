@@ -24,13 +24,17 @@ var (
 )
 
 const (
-	stillActive         = 259 // STILL_ACTIVE
-	pipeIOBuffer        = 4096
-	defaultDialTimeout  = 5 * time.Second
-	waitNamedPipeSlice  = 250 * time.Millisecond
-	pipeNamePrefix      = `\\.\pipe\dotnet-diagnostic-`
-	connectAccess       = windows.GENERIC_READ | windows.GENERIC_WRITE
-	connectFlagsNoShare = windows.FILE_FLAG_OVERLAPPED | windows.SECURITY_SQOS_PRESENT | windows.SECURITY_IDENTIFICATION
+	stillActive        = 259 // STILL_ACTIVE
+	pipeIOBuffer       = 4096
+	defaultDialTimeout = 5 * time.Second
+	waitNamedPipeSlice = 250 * time.Millisecond
+	pipeNamePrefix     = `\\.\pipe\dotnet-diagnostic-`
+	connectAccess      = windows.GENERIC_READ | windows.GENERIC_WRITE
+	// SECURITY_EFFECTIVE_ONLY: of the identity the server may query, only the
+	// enabled groups and privileges are visible, not the disabled ones. Identification
+	// level already forbids impersonation; this narrows what the server can learn.
+	connectFlagsNoShare = windows.FILE_FLAG_OVERLAPPED | windows.SECURITY_SQOS_PRESENT |
+		windows.SECURITY_IDENTIFICATION | windows.SECURITY_EFFECTIVE_ONLY
 )
 
 // pipeName builds the diagnostic pipe name from a number only; no string from
@@ -46,9 +50,12 @@ type pipeDialer struct {
 	nameFor     func(pid uint32) string
 	allowSelf   bool
 	dialTimeout time.Duration
+	// ownerOverride replaces the read of the pipe's owner SID (tests only).
+	ownerOverride func(h windows.Handle) (*windows.SID, error)
 }
 
-func platformDialer() Dialer { return &pipeDialer{} }
+// platformDialer ignores cli: the Windows pipe name is built from a number only.
+func platformDialer(bool) Dialer { return &pipeDialer{} }
 
 func errno(err error) uint32 {
 	var en syscall.Errno
@@ -63,7 +70,7 @@ func errno(err error) uint32 {
 // are but cannot impersonate us), then check that the server of the pipe is the
 // process asked for. No byte is written before that last check.
 func (d *pipeDialer) Dial(ctx context.Context, t Target) (Conn, Peer, error) {
-	if t.PID == 0 || (!d.allowSelf && t.PID == uint32(os.Getpid())) {
+	if t.PID == 0 || (!d.allowSelf && t.PID == ownPID()) {
 		return nil, Peer{}, newErr(ReasonPeerMismatch, 0)
 	}
 	// 1-2. The process: alive, and created when the caller expects. While this
@@ -78,7 +85,7 @@ func (d *pipeDialer) Dial(ctx context.Context, t Target) (Conn, Peer, error) {
 		}
 		return nil, Peer{}, newErr(ReasonOther, errno(err))
 	}
-	defer windows.CloseHandle(ph)
+	defer func() { _ = windows.CloseHandle(ph) }()
 	var exit uint32
 	if err := windows.GetExitCodeProcess(ph, &exit); err != nil {
 		return nil, Peer{}, newErr(ReasonOther, errno(err))
@@ -132,11 +139,11 @@ func (d *pipeDialer) Dial(ctx context.Context, t Target) (Conn, Peer, error) {
 			if left > waitNamedPipeSlice {
 				left = waitNamedPipeSlice
 			}
-			ms := uint32(left.Milliseconds())
+			ms := uint32(left.Milliseconds()) //nolint:gosec // left is between 0 and 250 ms here
 			if ms == 0 {
 				ms = 1
 			}
-			procWaitNamedPipeW.Call(uintptr(unsafe.Pointer(name16)), uintptr(ms))
+			_, _, _ = procWaitNamedPipeW.Call(uintptr(unsafe.Pointer(name16)), uintptr(ms)) //nolint:gosec // WaitNamedPipeW takes the NUL-terminated name pointer; name16 outlives the call
 			continue
 		}
 		return nil, Peer{}, newErr(ReasonOther, errno(err))
@@ -145,14 +152,18 @@ func (d *pipeDialer) Dial(ctx context.Context, t Target) (Conn, Peer, error) {
 	// 4. THE PEER CHECK. The server of this pipe must be the process asked for.
 	var server uint32
 	if err := windows.GetNamedPipeServerProcessId(h, &server); err != nil || server != t.PID {
-		windows.CloseHandle(h)
+		_ = windows.CloseHandle(h)
 		return nil, Peer{}, newErr(ReasonPeerMismatch, 0)
 	}
-	// 5. The server is t.PID, whose creation time step 2 read and whose handle
-	// we still hold.
+	// 5. That pid is only the creator's pid at the time the instance was made.
+	// Check the pipe's owner and session against the real target process.
+	if e := d.checkServerIdentity(h, ph, t.PID); e != nil {
+		_ = windows.CloseHandle(h)
+		return nil, Peer{}, e
+	}
 	c, err := newPipeConn(h)
 	if err != nil {
-		windows.CloseHandle(h)
+		_ = windows.CloseHandle(h)
 		return nil, Peer{}, newErr(ReasonOther, errno(err))
 	}
 	return c, Peer{PID: server, StartTicks: ticks}, nil
@@ -185,7 +196,7 @@ func newPipeConn(h windows.Handle) (*pipeConn, error) {
 		e, err := windows.CreateEvent(nil, 1, 0, nil) // manual reset, not signalled, not inheritable
 		if err != nil {
 			for _, p := range ev[:i] {
-				windows.CloseHandle(p)
+				_ = windows.CloseHandle(p)
 			}
 			return nil, err
 		}
@@ -206,8 +217,8 @@ func (c *pipeConn) SetDeadline(t time.Time) error {
 	c.deadline = t
 	c.dmu.Unlock()
 	if !c.closed.Load() {
-		windows.SetEvent(c.wake[0])
-		windows.SetEvent(c.wake[1])
+		_ = windows.SetEvent(c.wake[0])
+		_ = windows.SetEvent(c.wake[1])
 	}
 	return nil
 }
@@ -259,7 +270,7 @@ func (c *pipeConn) finish(ov *windows.Overlapped, wake windows.Handle, started e
 		case windows.WAIT_OBJECT_0:
 			completed = true
 		case windows.WAIT_OBJECT_0 + 1:
-			windows.ResetEvent(wake)
+			_ = windows.ResetEvent(wake)
 		case uint32(windows.WAIT_TIMEOUT):
 			timedOut = true
 		}
@@ -268,7 +279,7 @@ func (c *pipeConn) finish(ov *windows.Overlapped, wake windows.Handle, started e
 		}
 	}
 	if !completed {
-		windows.CancelIoEx(c.h, ov)
+		_ = windows.CancelIoEx(c.h, ov)
 	}
 	var n uint32
 	err := windows.GetOverlappedResult(c.h, ov, &n, true)
@@ -310,7 +321,7 @@ func (c *pipeConn) Read(p []byte) (int, error) {
 	if want > len(c.rbuf) {
 		want = len(c.rbuf)
 	}
-	windows.ResetEvent(c.rov.HEvent)
+	_ = windows.ResetEvent(c.rov.HEvent)
 	var n uint32
 	err := windows.ReadFile(c.h, c.rbuf[:want], &n, c.rov)
 	n, err = c.finish(c.rov, c.wake[0], err)
@@ -337,7 +348,7 @@ func (c *pipeConn) Write(p []byte) (int, error) {
 			chunk = chunk[:len(c.wbuf)]
 		}
 		copy(c.wbuf, chunk)
-		windows.ResetEvent(c.wov.HEvent)
+		_ = windows.ResetEvent(c.wov.HEvent)
 		var n uint32
 		err := windows.WriteFile(c.h, c.wbuf[:len(chunk)], &n, c.wov)
 		n, err = c.finish(c.wov, c.wake[1], err)
@@ -359,13 +370,13 @@ func (c *pipeConn) Close() error {
 	if !c.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	windows.SetEvent(c.wake[0])
-	windows.SetEvent(c.wake[1])
+	_ = windows.SetEvent(c.wake[0])
+	_ = windows.SetEvent(c.wake[1])
 	c.rmu.Lock()
 	c.wmu.Lock()
-	windows.CloseHandle(c.h)
+	_ = windows.CloseHandle(c.h)
 	for _, e := range []windows.Handle{c.rov.HEvent, c.wov.HEvent, c.wake[0], c.wake[1]} {
-		windows.CloseHandle(e)
+		_ = windows.CloseHandle(e)
 	}
 	c.wmu.Unlock()
 	c.rmu.Unlock()

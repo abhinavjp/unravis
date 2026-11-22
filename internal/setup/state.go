@@ -139,7 +139,7 @@ type Payload struct {
 	Manifest Manifest
 }
 
-var payloadNames = map[string]bool{AppExeName: true, KeeperExeName: true, BlackboxExeName: true}
+var payloadNames = map[string]bool{AppExeName: true, KeeperExeName: true, BlackboxExeName: true, ReleasesExeName: true}
 
 // LoadPayload reads the manifest. Only the known program names are accepted, so a damaged manifest cannot make setup write anywhere
 // else.

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func testPID() uint32 { return uint32(os.Getpid()) + 1 }
+func testPID() uint32 { return pid32(os.Getpid()) + 1 }
 
 func testOptions() Options {
 	return Options{Duration: 50 * time.Millisecond, ReplyTimeout: 300 * time.Millisecond,
@@ -140,7 +140,7 @@ func TestProbeStopUsesSecondDial(t *testing.T) {
 
 func TestProbeRefusesBadTargets(t *testing.T) {
 	d := &fakeDialer{}
-	for _, pid := range []uint32{0, uint32(os.Getpid())} {
+	for _, pid := range []uint32{0, pid32(os.Getpid())} {
 		_, err := Probe(context.Background(), d, Target{PID: pid}, testOptions())
 		if !errors.Is(err, ErrBadTarget) {
 			t.Fatalf("pid %d: %v", pid, err)
@@ -189,5 +189,37 @@ func TestReasonSentencesAreFixed(t *testing.T) {
 	}
 	if Sentence("zzz") != sentences[ReasonOther] {
 		t.Error("unknown reason must read as other")
+	}
+}
+
+// noDeadlineConn is a Conn whose SetDeadline always fails.
+type noDeadlineConn struct{ Conn }
+
+func (noDeadlineConn) SetDeadline(time.Time) error { return errors.New("no deadlines here") }
+
+type noDeadlineDialer struct{ inner *fakeDialer }
+
+func (d noDeadlineDialer) Dial(ctx context.Context, t Target) (Conn, Peer, error) {
+	c, p, err := d.inner.Dial(ctx, t)
+	if err != nil {
+		return nil, p, err
+	}
+	return noDeadlineConn{c}, p, nil
+}
+
+// A Conn that cannot bound its reads is not used: nothing is written, the
+// probe stops with "other", and the connection is closed.
+func TestProbeRefusesAConnWithoutDeadlines(t *testing.T) {
+	pid := testPID()
+	inner := &fakeDialer{handler: newHonest(7, pid).handle}
+	res, err := Probe(context.Background(), noDeadlineDialer{inner}, Target{PID: pid}, testOptions())
+	if reasonOf(t, err) != ReasonOther || res.Reason != ReasonOther {
+		t.Fatalf("err %v result %+v", err, res)
+	}
+	if w := inner.conn(0).Written(); len(w) != 0 {
+		t.Fatalf("wrote %d bytes on a conn with no deadlines", len(w))
+	}
+	if !inner.conn(0).Closed() || inner.dials() != 1 {
+		t.Fatalf("closed %v, dials %d", inner.conn(0).Closed(), inner.dials())
 	}
 }

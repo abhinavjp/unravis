@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -54,6 +55,7 @@ type Event struct {
 	Stage   string
 	Reason  string
 	Run     string // CI run id, digits only
+	From    string // run-start: the step this run began at
 }
 
 // Local is what was found in the release data folder.
@@ -62,10 +64,12 @@ type Local struct {
 	Dir    string
 	Run    *Run
 	Events []Event
+	Live   *Live // the release process on this PC right now, from the very start of Release.ps1
 }
 
-// pathRE hides file paths (they can hold a user name or a key file name) in free text from the log.
-var pathRE = regexp.MustCompile(`(?:[A-Za-z]:[\\/]|\\\\|/)[^\s"']+`)
+// pathRE hides file paths (they can hold a user name or a key file name) in free text from the log. A Windows or share path
+// may hold spaces, so it is cut to the end of the sentence part: hiding too much is better than leaking a tail.
+var pathRE = regexp.MustCompile(`[A-Za-z]:[\\/][^"'<>|*?\r\n]*|\\\\[^"'<>|*?\r\n]*|\.{1,2}[\\/][^\s"']*|(?:^|\s)/[\w.~-]+(?:/[\w.~-]*)+|[\w.-]*\.key\.json|[\w.-]*\.pub\b`)
 
 func clip(s string) string {
 	s = strings.Map(func(r rune) rune {
@@ -74,7 +78,12 @@ func clip(s string) string {
 		}
 		return r
 	}, s)
-	s = pathRE.ReplaceAllString(s, "<path>")
+	s = pathRE.ReplaceAllStringFunc(s, func(m string) string {
+		if m != "" && (m[0] == ' ' || m[0] == '\t') { // a leading space belongs to the text, not to the path
+			return m[:1] + "<path>"
+		}
+		return "<path>"
+	})
 	if r := []rune(s); len(r) > maxReason {
 		s = string(r[:maxReason])
 	}
@@ -107,7 +116,7 @@ func ReadLocal(dir string) Local {
 	l.Found = true
 	sp := filepath.Join(dir, "state.json")
 	if fi, err := os.Stat(sp); err == nil && fi.Mode().IsRegular() && fi.Size() <= 64<<10 {
-		if b, err := os.ReadFile(sp); err == nil {
+		if b, err := readSmall(sp, 64<<10); err == nil {
 			var r Run
 			if json.Unmarshal(b, &r) == nil && r.Version != "" {
 				r.Reason, r.Stage, r.Status = clip(r.Reason), clip(r.Stage), clip(r.Status)
@@ -116,15 +125,26 @@ func ReadLocal(dir string) Local {
 		}
 	}
 	l.Events = readAuditTail(filepath.Join(dir, "audit.jsonl"))
+	l.Live = readLive(dir, l.Events, time.Now())
 	return l
 }
 
+// readSmall reads a whole small file without blocking the release script from replacing it.
+func readSmall(path string, max int64) ([]byte, error) {
+	f, err := openShared(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return io.ReadAll(io.LimitReader(f, max))
+}
+
 func readAuditTail(path string) []Event {
-	f, err := os.Open(path)
+	f, err := openShared(path)
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	fi, err := f.Stat()
 	if err != nil || !fi.Mode().IsRegular() {
 		return nil
@@ -157,7 +177,7 @@ func readAuditTail(path string) []Event {
 		if _, err := time.Parse(time.RFC3339Nano, str(m, "ts")); err != nil {
 			continue
 		}
-		out = append(out, Event{At: str(m, "ts"), Name: clip(str(m, "event")), Version: clip(v), Stage: clip(str(m, "stage")), Reason: clip(str(m, "reason")), Run: digits(str(m, "run"))})
+		out = append(out, Event{At: str(m, "ts"), Name: clip(str(m, "event")), Version: clip(v), Stage: clip(str(m, "stage")), Reason: clip(str(m, "reason")), Run: digits(str(m, "run")), From: clip(str(m, "from"))})
 	}
 	return out
 }

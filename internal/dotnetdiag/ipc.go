@@ -84,7 +84,7 @@ const (
 // with a final NUL. It is only ever called with the two constants above.
 func appendUTF16(b []byte, s string) []byte {
 	u := utf16.Encode([]rune(s))
-	b = binary.LittleEndian.AppendUint32(b, uint32(len(u)+1))
+	b = binary.LittleEndian.AppendUint32(b, uint32(len(u)+1)) //nolint:gosec // only called with the two short constants above (14 and 25 chars, 15 and 26 with the NUL)
 	for _, c := range u {
 		b = binary.LittleEndian.AppendUint16(b, c)
 	}
@@ -111,7 +111,7 @@ func encodeStart() []byte {
 	b = binary.LittleEndian.AppendUint32(b, 5)            // log level: verbose
 	b = appendUTF16(b, startProvider)
 	b = appendUTF16(b, startArgs)
-	binary.LittleEndian.PutUint16(b[ipcMagicLen:], uint16(len(b)))
+	binary.LittleEndian.PutUint16(b[ipcMagicLen:], uint16(len(b))) //nolint:gosec // the start message is a fixed 136 bytes
 	return b
 }
 

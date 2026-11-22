@@ -22,11 +22,14 @@ Test, read-only. Asks ONE running .NET process (5 or newer) for runtime counters
 for 20 seconds (or --seconds), then stops the session. It writes no file and
 prints nothing that came from the process. It sends only two fixed messages:
 start and stop. It does not change the Blackbox settings or service.
+
+For an IIS application pool process (w3wp), run it as SYSTEM. An administrator who
+is not SYSTEM may be refused (reported as denied).
 `
 
 // realDiagProbe runs the probe over this platform's real transport.
 func realDiagProbe(ctx context.Context, t dotnetdiag.Target, o dotnetdiag.Options) (dotnetdiag.Result, error) {
-	return dotnetdiag.Probe(ctx, dotnetdiag.DefaultDialer(), t, o)
+	return dotnetdiag.Probe(ctx, dotnetdiag.CLIDialer(), t, o)
 }
 
 // runDiagProbe is the diag-probe command. It is dispatched from run() before
@@ -34,9 +37,9 @@ func realDiagProbe(ctx context.Context, t dotnetdiag.Target, o dotnetdiag.Option
 func runDiagProbe(args []string, stdout, stderr io.Writer, d deps) int {
 	usage := func(msg string) int {
 		if msg != "" {
-			fmt.Fprintln(stderr, "diag-probe: "+msg)
+			_, _ = fmt.Fprintln(stderr, "diag-probe: "+msg)
 		}
-		fmt.Fprint(stderr, diagProbeUsage)
+		_, _ = fmt.Fprint(stderr, diagProbeUsage)
 		return exitUsage
 	}
 	// Own flag set: --pid, --seconds, --start-ticks, --json. No flag takes a
@@ -60,7 +63,7 @@ func runDiagProbe(args []string, stdout, stderr io.Writer, d deps) int {
 	if err != nil || pid == 0 {
 		return usage("--pid must be a process id from 1 to 4294967295")
 	}
-	if uint32(pid) == uint32(os.Getpid()) {
+	if pid == uint64(os.Getpid()) { //nolint:gosec // a process id is never negative
 		return usage("--pid must not be this program")
 	}
 	if *seconds < 5 || *seconds > 60 {
@@ -100,7 +103,7 @@ func runDiagProbe(args []string, stdout, stderr io.Writer, d deps) int {
 		if err != nil {
 			return exitFail
 		}
-		fmt.Fprintln(stdout, string(b))
+		_, _ = fmt.Fprintln(stdout, string(b))
 	} else {
 		printDiagProbe(stdout, res)
 	}
@@ -117,7 +120,7 @@ func yn(b bool) string {
 // printDiagProbe writes one labelled line per Result field and one fixed
 // sentence. Only numbers, yes/no and fixed words: no OS text, no path, no bytes.
 func printDiagProbe(w io.Writer, r dotnetdiag.Result) {
-	line := func(label string, v any) { fmt.Fprintf(w, "%-22s %v\n", label+":", v) }
+	line := func(label string, v any) { _, _ = fmt.Fprintf(w, "%-22s %v\n", label+":", v) }
 	line("Operating system", r.OS)
 	line("Transport", r.Transport)
 	line("Run as", r.RunAs)
@@ -125,10 +128,9 @@ func printDiagProbe(w io.Writer, r dotnetdiag.Result) {
 	line("Port opened", yn(r.PipeOpened))
 	line("Server process id", r.ServerPID)
 	line("Server start ticks", r.ServerStart)
-	switch {
-	case r.StartMatch == nil:
+	if r.StartMatch == nil {
 		line("Start ticks match", "not asked")
-	default:
+	} else {
 		line("Start ticks match", yn(*r.StartMatch))
 	}
 	line("Session id", r.SessionID)
@@ -149,5 +151,5 @@ func printDiagProbe(w io.Writer, r dotnetdiag.Result) {
 	}
 	line("Result", reason)
 	line("Code", r.Code)
-	fmt.Fprintln(w, dotnetdiag.Sentence(r.Reason))
+	_, _ = fmt.Fprintln(w, dotnetdiag.Sentence(r.Reason))
 }

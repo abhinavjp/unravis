@@ -11,3 +11,6 @@ import (
 func appWindow(link, profile string) (*exec.Cmd, error) {
 	return nil, errors.New("the app window is only available on Windows")
 }
+
+// showError has nowhere to show a box off Windows; the message was already printed to the console.
+func showError(string) {}

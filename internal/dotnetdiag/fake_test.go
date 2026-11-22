@@ -77,12 +77,12 @@ func (f *fakeDialer) Dial(ctx context.Context, t Target) (Conn, Peer, error) {
 	f.conns = append(f.conns, rc)
 	f.mu.Unlock()
 	go func() {
-		defer server.Close()
+		defer func() { _ = server.Close() }()
 		if f.handler != nil {
 			f.handler(i, server)
 		}
 	}()
-	peer := Peer{PID: t.PID, StartTicks: t.StartTicks}
+	peer := Peer(t)
 	if f.peer != nil {
 		peer = f.peer(i)
 	}
@@ -193,3 +193,9 @@ func (h *honest) handle(i int, s net.Conn) {
 }
 
 func hexDecode(s string) ([]byte, error) { return hex.DecodeString(s) }
+
+// pid32 converts a process id from the OS (an int) to the probe's uint32.
+func pid32(n int) uint32 { return uint32(n) } //nolint:gosec // process ids are positive and fit in 32 bits
+
+// u64 converts a byte count that is never negative.
+func u64(n int64) uint64 { return uint64(n) } //nolint:gosec // only called with non-negative sizes
