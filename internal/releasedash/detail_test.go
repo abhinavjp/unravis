@@ -229,3 +229,24 @@ func TestReleaseWithoutLogsHasEmptyList(t *testing.T) {
 		t.Fatalf("logs must be an empty list, got %#v", det.Logs)
 	}
 }
+
+func TestGitHubRoutesAnswer200WithErrorWhenUnreachable(t *testing.T) {
+	d := newDash(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) }))
+	srv.Close() // nothing listens any more
+	d.GH = &GH{Base: srv.URL}
+	mux := http.NewServeMux()
+	d.registerDetail(mux)
+	for _, p := range []string{"/api/release/checks?v=0.1.0-rc.55", "/api/release/changes?v=0.1.0-rc.55"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("GET", p, nil))
+		var b struct {
+			Data  any    `json:"data"`
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &b)
+		if rec.Code != 200 || b.Error == "" || b.Data != nil {
+			t.Errorf("%s: %d %s", p, rec.Code, rec.Body.String())
+		}
+	}
+}
