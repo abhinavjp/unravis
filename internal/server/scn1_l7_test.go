@@ -223,6 +223,8 @@ func TestScn1L7ScrubTypedNote(t *testing.T) {
 		"password=hunter2 failed":                                          "[removed]",
 		"Password=correct horse battery;Encrypt=true":                      "[removed];Encrypt=true",
 		"Server=db;User ID=sa;Password=correct horse battery;Encrypt=true": "[removed]Encrypt=true",
+		"Password:\n  hunter2\nnext":                                       "[removed]\nnext",
+		"Password='it''s';Encrypt=true":                                    "[removed];Encrypt=true",
 		"Password = {a;b c} then more":                                     "[removed] then more",
 		`Password: "hunter two" was wrong`:                                 "[removed] was wrong",
 		"api_key=abc123 and token=xyz":                                     "[removed] and [removed]",

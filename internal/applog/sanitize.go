@@ -20,6 +20,12 @@ import (
 //   - paths under the user profile, replaced with %USERPROFILE%.
 //
 // It is deliberately blunt: when a value might be a secret, it goes.
+// quotedOrBraced is a quoted or braced value. A quote inside a quoted value is
+// doubled (as in an apostrophe written twice), and "}}" is an escaped brace, as ADO writes
+// them. The closing mark is optional: a value that never closes runs to the end
+// of the text.
+const quotedOrBraced = `"(?:[^"]|"")*"?|'(?:[^']|'')*'?|\{(?:[^}]|\}\})*\}?`
+
 var (
 	reBearer     = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+`)
 	reBasicAuth  = regexp.MustCompile(`(?i)(\bauthorization\s*[:=]\s*)basic\s+[A-Za-z0-9._~+/=-]+`)
@@ -32,11 +38,12 @@ var (
 	// Password keys have their own rules below.
 	reKVSecret = regexp.MustCompile(`(?i)(\b(?:secret|token|api[-_]?key|key)|accountkey|sharedaccesskey)\s*=\s*(?:"[^"]*"?|'[^']*'?|\{[^}]*\}?|[^\s&;,]+)`)
 	// A password in a URL query string (?password=x&y=1) ends at "&", ";", "," or a space.
-	reKVPasswordQuery = regexp.MustCompile(`(?i)([?&](?:password|passwd|pwd))\s*=\s*(?:"[^"]*"?|'[^']*'?|\{[^}]*\}?|[^\s&;,]+)`)
+	reKVPasswordQuery = regexp.MustCompile(`(?i)([?&](?:password|passwd|pwd))\s*=\s*(?:` + quotedOrBraced + `|[^\s&;,]+)`)
 	// Any other password key (an ADO connection string, free text): a password may
 	// hold spaces, so an unquoted value runs to the next ";" or the end of the
-	// line, not to the next space. "}}" is an escaped brace in a braced value.
-	reKVPassword = regexp.MustCompile(`(?im)(^|[^?&\w])((?:password|passwd|pwd))[ \t]*=[ \t]*(?:"[^"]*"?|'[^']*'?|\{(?:[^}]|\}\})*\}?|[^;\r\n]*)`)
+	// line, not to the next space. When nothing follows the key on its line, the
+	// value is the next line.
+	reKVPassword = regexp.MustCompile(`(?im)(^|[^?&\w])((?:password|passwd|pwd))[ \t]*=[ \t]*(?:` + quotedOrBraced + `|[^;\r\n]+|(?:\r?\n\s*(?:` + quotedOrBraced + `|[^;\r\n]+))?)`)
 	reLongToken  = regexp.MustCompile(`[A-Za-z0-9+/_-]{25,}={0,2}`)
 )
 
