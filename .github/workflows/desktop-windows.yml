@@ -57,6 +57,8 @@ jobs:
         run: |
           cargo clippy --locked --workspace --all-targets -- -D warnings
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          cargo clippy --locked -p unravis-desktop --features e2e -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Tests (Job Object test included)
         shell: pwsh
@@ -92,6 +94,11 @@ jobs:
           $exe = 'target\release\unravis-desktop.exe'
           if (-not (Test-Path $exe)) { throw "$exe was not built" }
           "{0} bytes" -f (Get-Item $exe).Length
+
+      - name: PE hardening flags (CFG, CET, ASLR, high-entropy VA, NX)
+        shell: pwsh
+        working-directory: .
+        run: ./tools/desktop/Check-Pe.ps1 -Exe desktop\target\release\unravis-desktop.exe
 
       - name: Cargo.lock is unchanged
         shell: pwsh
