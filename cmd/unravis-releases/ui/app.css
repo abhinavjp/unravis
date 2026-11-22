@@ -1,5 +1,5 @@
 :root{
-  --bg:#f7f7f5;--panel:#fff;--ink:#1c1c1a;--mut:#6b6b66;--line:#e3e2dd;--sel:#ecebe6;
+  --bg:#f7f7f5;--panel:#fff;--ink:#1c1c1a;--mut:#5f5f5a;--line:#e3e2dd;--sel:#ecebe6;
   --ok:#17692f;--bad:#b3261e;--warn:#8a5a00;--run:#1f5fbf;--accent:#1f5fbf;
 }
 @media (prefers-color-scheme:dark){:root{

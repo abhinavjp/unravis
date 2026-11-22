@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Bad page</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; background: #fff; color: #111; }
+  .clip { width: 80px; overflow: hidden; white-space: nowrap; border: 1px solid #999; }
+  .ell { width: 80px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .chip { display: inline-block; width: 40px; white-space: nowrap; border: 1px solid #333; padding: 2px; }
+  .wide { width: 700px; height: 20px; background: #eee; }
+  .row { display: flex; gap: 8px; align-items: flex-start; margin: 10px; }
+  .ovl { position: relative; height: 60px; margin: 10px; }
+  .ovl button { position: absolute; width: 100px; height: 30px; }
+  .stack > div { height: 24px; border: 1px solid #ccc; margin-bottom: 4px; }
+  .faint { color: #bbb; }
+  .tiny { font-size: 9px; }
+  .dark { background: #111; color: #fff; padding: 4px; }
+</style></head>
+<body>
+<div class="clip" id="clipped">This sentence is far too long for its box</div>
+<div class="ell" id="ellipsis">This sentence is far too long for its box</div>
+<span class="chip" id="chip">Overflowing label text</span>
+<div class="wide" id="wide">wide</div>
+<div class="row" id="offrow">
+  <button style="height:30px;margin-top:0">Alpha</button>
+  <button style="height:30px;margin-top:3px">Beta</button>
+  <button style="height:30px;margin-top:6px">Gamma</button>
+</div>
+<div class="ovl" id="ovl"><button style="left:10px;top:0">First</button><button style="left:60px;top:10px">Second</button></div>
+<button id="tiny" style="width:14px;height:14px;padding:0">x</button>
+<button id="noname"><svg width="20" height="20"></svg></button>
+<input id="nolabel" type="text">
+<p class="faint" id="faint">Pale grey text on white is hard to read.</p>
+<p class="tiny" id="tinytext">Nine pixel text.</p>
+<p id="badword">Value: undefined</p>
+<div class="stack" id="stack"><div>one</div><div>two</div><div style="margin-left:3px">three</div><div>four</div><div>five</div></div>
+<img id="broken" src="data:image/png;base64,AAAA" width="20" height="20" alt="x">
+<div class="dark" style="width:100%;height:300px" id="darkslab">dark slab</div>
+<h1>Top</h1><h3>Jumped</h3>
+</body></html>
