@@ -394,6 +394,77 @@ try {
     }
     Assert-That 'train: a merge commit with the generated subject is not the generated commit' (@($sideG | Where-Object { $_.Sha -eq $script:dd.mergey -and $_.Kind -ne 'dist' }).Count -eq 1)
 
+    # ---- promotion safety (SUP-1): only the head that was built and checked is merged; "Merge master into" is a claim, not a proof ----
+    $sha40 = 'a' * 40; $other40 = 'b' * 40
+    Assert-That 'promote head: the expected head passes' ($null -eq (Get-ThrownMessage { Assert-PromotionHead $sha40 $sha40 'promote/aaaaaaa' }))
+    $msgHead = Get-ThrownMessage { Assert-PromotionHead $sha40 $other40 'promote/aaaaaaa' }
+    Assert-That 'promote head: a different head is refused with a clear message' ($msgHead -and $msgHead -match 'Someone pushed' -and $msgHead -match 'Nothing was merged') "$msgHead"
+    Assert-That 'promote head: an empty head is refused' ($null -ne (Get-ThrownMessage { Assert-PromotionHead $sha40 '' 'promote/aaaaaaa' }))
+    Assert-That 'promote head: no expected head is refused' ($null -ne (Get-ThrownMessage { Assert-PromotionHead '' $sha40 'promote/aaaaaaa' }))
+
+    $mr = Join-Path $root 'mergein'
+    New-Item -ItemType Directory -Path $mr | Out-Null
+    function M { git -C $mr -c user.name=t -c user.email=t@t -c commit.gpgsign=false @args; if ($LASTEXITCODE -ne 0) { throw "git $args failed" } }
+    M init -q -b master
+    Set-Content -LiteralPath (Join-Path $mr 'a.txt') 'a'; M add -A; M commit -q -m A
+    M checkout -q -b develop
+    Set-Content -LiteralPath (Join-Path $mr 'd.txt') 'd'; M add -A; M commit -q -m D1
+    $mDev = (M rev-parse HEAD).Trim()
+    M checkout -q master
+    Set-Content -LiteralPath (Join-Path $mr 'h.txt') 'h'; M add -A; M commit -q -m H
+    $mHot = (M rev-parse HEAD).Trim()
+    # good: what GitHub's merges API makes (a clean merge of master into the promote branch)
+    M checkout -q -b promote/good $mDev
+    M merge -q --no-ff -m 'Merge master into promote/good' master
+    $mGood = (M rev-parse HEAD).Trim()
+    # bad 1: a merge of master that also carries a file no pull request had, under the same subject
+    M checkout -q -b promote/extra $mDev
+    M merge -q --no-commit --no-ff master
+    Set-Content -LiteralPath (Join-Path $mr 'evil.txt') 'e'; M add -A; M commit -q -m 'Merge master into promote/extra'
+    $mExtra = (M rev-parse HEAD).Trim()
+    # bad 2: one parent, only the subject says "Merge master into" (code pushed by hand)
+    M checkout -q -b promote/plain $mDev
+    Set-Content -LiteralPath (Join-Path $mr 'evil2.txt') 'e'; M add -A; M commit -q -m 'Merge master into promote/plain'
+    $mPlain = (M rev-parse HEAD).Trim()
+    # bad 3: a merge whose second parent is not on master
+    M checkout -q -b side $mDev
+    Set-Content -LiteralPath (Join-Path $mr 's.txt') 's'; M add -A; M commit -q -m S
+    M checkout -q -b promote/side $mDev
+    M merge -q --no-ff -m 'Merge master into promote/side' side
+    $mSide = (M rev-parse HEAD).Trim()
+    foreach ($case in @(@('good', $mGood, $true), @('extra', $mExtra, $false), @('plain', $mPlain, $false), @('side', $mSide, $false))) {
+        $v = Test-RemoteMergeIns $mr "promote/$($case[0])" @($case[1]) ''
+        Assert-That "promote merge-in: '$($case[0])' is $(if ($case[2]) { 'accepted' } else { 'refused' })" ($v.ContainsKey($case[1]) -and ($v[$case[1]].Ok -eq $case[2])) ($v.Values | ForEach-Object { $_.Why }) 
+    }
+    Assert-That 'promote merge-in: a sha that is not on the branch is refused' (-not (Test-RemoteMergeIns $mr 'promote/good' @($sha40) '')[$sha40].Ok)
+    $envBefore = "$env:GIT_CONFIG_COUNT|$env:GIT_CONFIG_KEY_0|$env:GIT_CONFIG_VALUE_0|$env:GIT_TERMINAL_PROMPT"
+    $leftBefore = @(Get-ChildItem ([System.IO.Path]::GetTempPath()) -Filter 'unravis-mergein-*' -ErrorAction SilentlyContinue).Count
+    $v2 = Test-RemoteMergeIns $mr 'promote/good' @($mGood) 'tok-not-printed'
+    Assert-That 'promote merge-in: the throw-away repository is removed and the git environment is put back' ($v2[$mGood].Ok -and "$env:GIT_CONFIG_COUNT|$env:GIT_CONFIG_KEY_0|$env:GIT_CONFIG_VALUE_0|$env:GIT_TERMINAL_PROMPT" -eq $envBefore -and @(Get-ChildItem ([System.IO.Path]::GetTempPath()) -Filter 'unravis-mergein-*' -ErrorAction SilentlyContinue).Count -eq $leftBefore)
+
+    $pd = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Promote-Develop.ps1')
+    Assert-That 'promote: the merge is pinned to the expected head, not to the head read last' ($pd -match '--match-head-commit \$expectedHead' -and $pd -notmatch '--match-head-commit \$head\b')
+    Assert-That 'promote: the head is compared on every wait loop and once before the pull request' ($pd -match '(?s)\$head = .*?headRefOid.*?Assert-HeadIsExpected \$head' -and $pd -match '(?s)Assert-HeadIsExpected \(\(Invoke-Gh api[^\r\n]*git/ref/heads/\$branch')
+    Assert-That 'promote: the expected head is the DIST_COMMIT sha, else the head after the merge' ($pd -match '\$expectedHead = if \(\$distSha -ne ''none''\) \{ \$distSha \} else \{ \$headAfterMerge \}')
+    Assert-That 'promote: a "Merge master into" subject alone is not enough' ($pd -match 'Test-RemoteMergeIns' -and $pd -notmatch '(?m)^\s*if \(\$emsg -like "Merge master into \$branch\*"\) \{ continue \}')
+    Assert-That 'promote: the reused branch is judged at the commit read first, not at its name' ($pd -match 'compare/\$\{sha\}\.\.\.\$\{existing\}')
+
+    # ---- Make-Keys (SUP-3): the Go environment is neutralised and the key tool is built from a throw-away worktree of HEAD --------
+    $mk = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Make-Keys.ps1')
+    $mkTok = $null; $mkErr = $null
+    $mkAst = [System.Management.Automation.Language.Parser]::ParseInput($mk, [ref]$mkTok, [ref]$mkErr)
+    $mkCmds = @($mkAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true))
+    $dotLib = @($mkCmds | Where-Object { $_.InvocationOperator -eq 'Dot' -and $_.Extent.Text -match 'ReleaseLib\.ps1' })
+    $newWt = @($mkCmds | Where-Object { $_.GetCommandName() -eq 'New-ToolWorktree' })
+    $goBuild = @($mkCmds | Where-Object { $_.GetCommandName() -eq 'go' })
+    Assert-That 'make-keys: ReleaseLib (GOFLAGS, GOWORK, GOENV, GOTOOLCHAIN) is loaded before anything is built' ($dotLib.Count -eq 1 -and $newWt.Count -eq 1 -and $dotLib[0].Extent.StartOffset -lt $newWt[0].Extent.StartOffset)
+    Assert-That 'make-keys: it never runs go itself (no build in the working folder)' ($goBuild.Count -eq 0)
+    Assert-That 'make-keys: the throw-away worktree is made from the checked HEAD' ($newWt.Count -eq 1 -and $newWt[0].Extent.Text -match '\$head')
+    $hostPs = (Get-Process -Id $PID).Path
+    # What the dot-sourced file does to the environment, with hostile values set first (a child shell, so this run's own env is untouched).
+    $goEnv = & $hostPs -NoProfile -Command "`$env:GOFLAGS='-overlay=x.json'; `$env:GOWORK='x.work'; `$env:GOENV='x.env'; `$env:GOTOOLCHAIN='local'; . '$((Join-Path $PSScriptRoot 'ReleaseLib.ps1') -replace "'", "''")'; `"`$env:GOFLAGS|`$env:GOWORK|`$env:GOENV|`$env:GOTOOLCHAIN`""
+    Assert-That 'make-keys: the library neutralises hostile Go settings' ("$goEnv".Trim() -eq '|off|off|auto') "$goEnv"
+
     # ---- passphrase: never a prompt under -Yes; the pipe reaches the program ----------------------------------------------------
     $m = Get-ThrownMessage { Get-SigningPassphrase -ProtonPassRef '' -KeyFile 'k' -Yes }
     Assert-That 'passphrase: -Yes without a reference stops instead of asking' ($m -match 'never asks')

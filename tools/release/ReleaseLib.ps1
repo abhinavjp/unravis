@@ -200,6 +200,68 @@ function Get-TextSha256([string]$Text) {
 }
 function Get-FileSha256([string]$Path) { return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant() }
 
+# The "clean merge of master" rule, shared by Get-PromotionSideCommits and Promote-Develop.ps1 (the re-run of a promotion): Sha is a
+# two-parent merge whose second parent is already on MasterRef (an ancestor of it) and whose tree is exactly what git's own merge of
+# its parents gives (git merge-tree), so it brings in nothing that was not on master or develop. Returns @{ Ok; Why }.
+function Test-CleanMasterMerge([string]$RepoRoot, [string]$Sha, [string]$MasterRef) {
+    $ok = $false; $why = 'merge commit that is not a clean merge of master'
+    $sp = @((git -C $RepoRoot rev-list --parents -n 1 $Sha) -split ' ' | Select-Object -Skip 1)
+    if ($sp.Count -eq 2) {
+        git -C $RepoRoot merge-base --is-ancestor $sp[1] $MasterRef 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $mt = @(git -C $RepoRoot -c merge.renames=true -c diff.renames=true -c diff.renameLimit=0 merge-tree --write-tree $sp[0] $sp[1] 2>$null)   # all output first, so the exit code is git's
+            $clean = ($LASTEXITCODE -eq 0)
+            $tree = if ($mt.Count) { "$($mt[0])" } else { '' }
+            $have = (git -C $RepoRoot rev-parse "$Sha^{tree}").Trim()
+            if ($clean -and $tree -and $tree.Trim() -eq $have) { $ok = $true; $why = '' }
+            elseif (-not $clean) { $why = 'merge of master that git cannot redo cleanly' }
+            else { $why = 'merge of master with extra changes' }
+        } else { $why = 'merge whose second parent is not on master' }
+    }
+    return [pscustomobject]@{ Ok = $ok; Why = $why }
+}
+
+# Promote-Develop.ps1, re-run on a branch that already exists: the "Merge master into promote/<sha7>" commits the branch holds were
+# accepted by subject alone, so anyone with a push token could hide code in one. This fetches master and the branch into a throw-away
+# bare repository and applies Test-CleanMasterMerge to each. Returns a hashtable Sha -> @{ Ok; Why }. Token (GitHub remotes only) goes
+# in as one git header for this process, never in a URL or on a command line.
+function Test-RemoteMergeIns([string]$Remote, [string]$Branch, [string[]]$Shas, [string]$Token = '') {
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('unravis-mergein-' + [guid]::NewGuid().ToString('N'))
+    $saved = @{}; foreach ($k in 'GIT_TERMINAL_PROMPT', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0') { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+    $res = @{}
+    try {
+        git init --bare -q $dir 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'git init for the merge check failed.' }
+        $env:GIT_TERMINAL_PROMPT = '0'
+        if ($Token -and $Remote.StartsWith('https://github.com/')) {
+            $env:GIT_CONFIG_COUNT = '1'; $env:GIT_CONFIG_KEY_0 = 'http.https://github.com/.extraheader'
+            $env:GIT_CONFIG_VALUE_0 = 'AUTHORIZATION: basic ' + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$Token"))
+        }
+        $out = git -C $dir fetch -q --no-tags $Remote '+refs/heads/master:refs/remotes/o/master' "+refs/heads/${Branch}:refs/remotes/o/promote" 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "git fetch of master and $Branch for the merge check failed: $(($out | Out-String).Trim())" }
+        $master = (git -C $dir rev-parse refs/remotes/o/master).Trim()
+        foreach ($sha in $Shas) {
+            git -C $dir cat-file -e "$sha^{commit}" 2>$null
+            if ($LASTEXITCODE -ne 0) { $res[$sha] = [pscustomobject]@{ Ok = $false; Why = 'commit not found on the fetched branch' }; continue }
+            $res[$sha] = Test-CleanMasterMerge $dir $sha $master
+        }
+    } finally {
+        foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    return $res
+}
+
+# Promote-Develop.ps1: the head the script built and checked is the only head it may merge. Throws when the pull request head
+# (headRefOid) is not the expected one, so a commit pushed to promote/* during the CI wait is never merged unseen.
+function Assert-PromotionHead([string]$Expected, [string]$Actual, [string]$Branch) {
+    if ($Expected -notmatch '^[0-9a-f]{40}$') { throw "Internal error: no expected head for $Branch. Nothing was merged." }
+    if ($Actual -ne $Expected) {
+        $e7 = $Expected.Substring(0, 7); $a7 = if ("$Actual".Length -ge 7) { "$Actual".Substring(0, 7) } else { "$Actual" }
+        throw "The head of $Branch is $a7 but this run built and checked $e7. Someone pushed to the branch meanwhile. Nothing was merged. Look at what was pushed (git log $e7..$a7), delete the branch on GitHub if it is not yours, and run again."
+    }
+}
+
 # The develop side of a promotion merge (docs/ci/RELEASE-TRAIN.md). Master's first-parent commit $Commit with two parents is a
 # promotion: its second parent is promote/<sha>, which holds develop commits and, when master had moved, one "Merge master into
 # promote/<sha>" made by GitHub. Returns one entry per first-parent commit on that side (Commit^1..Commit^2):
@@ -242,19 +304,8 @@ function Get-PromotionSideCommits([string]$RepoRoot, [string]$Commit) {
             $top = $false
             $out += [pscustomobject]@{ Sha = $s; Kind = 'pr'; Ok = $false; Why = '' }; continue
         }
-        $ok = $false; $why = 'merge commit that is not a clean merge of master'
-        if ($sp.Count -eq 2) {
-            git -C $RepoRoot merge-base --is-ancestor $sp[1] $p1 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                $mt = @(git -C $RepoRoot -c merge.renames=true -c diff.renames=true -c diff.renameLimit=0 merge-tree --write-tree $sp[0] $sp[1] 2>$null)   # all output first, so the exit code is git's
-                $clean = ($LASTEXITCODE -eq 0)
-                $tree = if ($mt.Count) { "$($mt[0])" } else { '' }
-                $have = (git -C $RepoRoot rev-parse "$s^{tree}").Trim()
-                if ($clean -and $tree -and $tree.Trim() -eq $have) { $ok = $true; $why = '' }
-                elseif (-not $clean) { $why = 'merge of master that git cannot redo cleanly' }
-                else { $why = 'merge of master with extra changes' }
-            } else { $why = 'merge whose second parent is not on master' }
-        }
+        $v = Test-CleanMasterMerge $RepoRoot $s $p1
+        $ok = $v.Ok; $why = $v.Why
         # A merge commit may also be a pull request merged into develop with "merge commit": the caller tries that first.
         # Such a merge (not a clean merge of master) ends the tip end: a generated-looking commit below it is not accepted.
         if (-not $ok) { $top = $false }
