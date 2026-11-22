@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../api';
   import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing, panels } from '../appState.svelte';
+  import { pacedTimeout } from '../visibility';
   import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, closeCase, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { archiveButton, closeButton, closedEraseAt, readsCaseData, reopenButton, retryAction, retryServerName } from '../caseLifecycle';
   import { archiveFilePath, archivedActions, type ArchiveDrawerKind } from '../archiveModel';
@@ -411,8 +412,8 @@
     const now = info;
     const id = caseId;
     if (!id || !now || archiveDrawer || believedState(now) !== 'archiving') return;
-    const timer = setTimeout(() => { if (id === caseId && !archiveDrawer) void load(id, true); }, JOB_POLL_MS);
-    return () => clearTimeout(timer);
+    // Slower while the page is hidden, at once on show (BL-429).
+    return pacedTimeout(() => { if (id === caseId && !archiveDrawer) void load(id, true); }, JOB_POLL_MS);
   });
 
   // Every date on this page follows the time zone choice in the header (London by default), like the start screen's case list.

@@ -645,7 +645,7 @@ export function stripsOption(input: OptionInput) {
       const color = line.band ? pal.axisLine : pal.series[k % pal.series.length];
       const lone = lonePoints(line.points);
       series.push({
-        type: 'line', name: line.name, xAxisIndex: i, yAxisIndex: i, data: line.points, connectNulls: false, showSymbol: true,
+        type: 'line', name: line.name, xAxisIndex: i, yAxisIndex: i, data: line.points, connectNulls: false, showSymbol: lone.some(Boolean), // only a lone point shows a dot; no dot shapes for the rest (BL-429)
         symbolSize: (_value: unknown, params: { dataIndex: number }) => (lone[params.dataIndex] ? 5 : 0),
         z: line.band ? 1 : 3, lineStyle: line.band ? { opacity: 0 } : { color, width: 1.6 }, itemStyle: { color },
         ...(line.band ? { areaStyle: { color: withAlpha(pal.text2, 0.18) }, emphasis: { disabled: true } } : {})

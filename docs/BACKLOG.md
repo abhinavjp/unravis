@@ -346,6 +346,7 @@ Spec per area: `docs/desktop/spec/`. Items per area: `docs/desktop/groom/` (scop
 - [ ] **BL-427** Tray-hide: grace, suspend, destroy, recreate the window (size ?, ?; see `docs/desktop/groom/07-performance.md`)
 - [ ] **BL-428** WebView2 memory-target and suspend spike on Runtime 157 (size ?, ?; see `docs/desktop/groom/07-performance.md`)
 - [ ] **BL-429** Web UI idle behaviour (visibility pause, ECharts settings) (size ?, ?; see `docs/desktop/groom/07-performance.md`)
+  - Built, demo-verified (Linux, demo build, Playwright with a simulated hidden tab): polls pause or slow while the page is hidden (`web/src/lib/visibility.ts`), chart size watchers wait while hidden, symbols and large-series options cut chart work. Page presence is unchanged in meaning. Not ticked: still to prove on nachi's PC with the real app minimised (no requests in the access log for 5 minutes) and with the real WebView2 window.
 - [ ] **BL-430** M4 downsampling in Go for chart series (size ?, ?; see `docs/desktop/groom/07-performance.md`)
 - [ ] **BL-431** Chart client: binary series fetch and debounced zoom/pan (size ?, ?; see `docs/desktop/groom/07-performance.md`)
 - [ ] **BL-432** Bulk chart transport benchmark (pipe vs IPC vs loopback) (size ?, ?; see `docs/desktop/groom/07-performance.md`)

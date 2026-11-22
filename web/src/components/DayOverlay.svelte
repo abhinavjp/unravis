@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { watchSize } from '../lib/chartPerf';
   import { onMount } from 'svelte';
   import type { HourGridResponse } from '../lib/rollup';
   import { echarts, palette } from '../lib/charts';
@@ -32,8 +33,8 @@
   onMount(() => {
     if (!node) return;
     chart = echarts.init(node);
-    const observer = new ResizeObserver(() => chart?.resize()); observer.observe(node);
-    return () => { observer.disconnect(); chart?.dispose(); chart = undefined; };
+    const stopSize = watchSize(node, () => chart?.resize());
+    return () => { stopSize(); chart?.dispose(); chart = undefined; };
   });
   $effect(() => {
     void theme.epoch;
