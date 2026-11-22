@@ -333,6 +333,21 @@ try {
     G merge -q --no-ff --no-edit promote3
     $side3 = Get-PromotionSideCommits $g (G rev-parse HEAD).Trim()
     Assert-That 'train: a merge of a branch that is not master is refused' (@($side3 | Where-Object { $_.Sha -eq $bad3 -and -not $_.Ok }).Count -eq 1)
+    # The generated web files commit of a promotion (docs/pipeline/dist-on-promotion.md): accepted only with its subject AND only the three generated folders.
+    G checkout -q -b promote4 $d2
+    New-Item -ItemType Directory -Path (Join-Path $g 'web/dist') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $g 'web/dist/index.html') 'built'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'
+    $dist4 = (G rev-parse HEAD).Trim()
+    Set-Content -LiteralPath (Join-Path $g 'web/dist/index.html') 'built again'; Set-Content -LiteralPath (Join-Path $g 'sneaky.txt') 's'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'
+    $dist5 = (G rev-parse HEAD).Trim()
+    Set-Content -LiteralPath (Join-Path $g 'web/dist/index.html') 'built third'; G add -A; G commit -q -m 'Update the web files'
+    $dist6 = (G rev-parse HEAD).Trim()
+    G checkout -q -b master4 $h
+    G merge -q --no-ff --no-edit promote4
+    $side4 = Get-PromotionSideCommits $g (G rev-parse HEAD).Trim()
+    Assert-That 'train: the generated web files commit is accepted' (@($side4 | Where-Object { $_.Sha -eq $dist4 -and $_.Kind -eq 'dist' -and $_.Ok }).Count -eq 1) (($side4 | ForEach-Object { "$($_.Sha.Substring(0,7)) $($_.Kind) $($_.Ok)" }) -join '; ')
+    Assert-That 'train: that subject with another file in the commit is treated as a pull request commit' (@($side4 | Where-Object { $_.Sha -eq $dist5 -and $_.Kind -eq 'pr' -and -not $_.Ok }).Count -eq 1)
+    Assert-That 'train: generated files under another subject are treated as a pull request commit' (@($side4 | Where-Object { $_.Sha -eq $dist6 -and $_.Kind -eq 'pr' -and -not $_.Ok }).Count -eq 1)
 
     # ---- passphrase: never a prompt under -Yes; the pipe reaches the program ----------------------------------------------------
     $m = Get-ThrownMessage { Get-SigningPassphrase -ProtonPassRef '' -KeyFile 'k' -Yes }

@@ -110,8 +110,8 @@ To skip web dependency installation and rebuild only the Go executable using the
 .\build.ps1 -SkipWeb
 ```
 
-The built web files are committed: `web/dist`, `cmd/unravis-setup/ui` and `cmd/unravis-lite/ui`. A change to `web/src`, `web/index.html`, `web/setup`, `web/lite`, `docs/user/*.md` or `web/package-lock.json` must commit the rebuilt folders too. Run `npm run build` in `web`, then commit those three folders.
-CI rebuilds and compares them with the commit byte for byte (`node web/scripts/check-dist.cjs` does the same on your PC after a build). It fails when they differ.
+The built web files are committed: `web/dist`, `cmd/unravis-setup/ui` and `cmd/unravis-lite/ui` (the exe embeds them). **Do not commit them in a pull request into `develop`.** Change `web/src` (and the other inputs) only; the fast gate type checks, tests and builds the web, and fails a pull request that changes the generated folders. The promotion `tools/release/Promote-Develop.ps1` rebuilds them once with Node 22.23.5 and commits them on the promote branch, and CI compares them with a fresh build byte for byte on the promotion and on `master` (`node web/scripts/check-dist.cjs` does the same on your PC after a build). Details: `docs/pipeline/dist-on-promotion.md`.
+A hotfix pull request straight into `master` that changes the web inputs must still run `npm run build` in `web` and commit the three folders.
 If a Windows checkout shows those folders as modified only because of line endings, run `git checkout -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui` or build again.
 
 

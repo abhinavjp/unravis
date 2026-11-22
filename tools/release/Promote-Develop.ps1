@@ -8,8 +8,12 @@
     1. Reads the release lock (read only, never written here). A held lock with merges on hold stops it (or waits, -WaitMinutes).
     2. Picks the commit: the tip of develop, or -UpTo <sha> (a commit that is on develop).
     3. Refuses when master already contains that commit ("nothing to promote").
-    4. Creates the branch promote/<sha7> at that commit, merges master into it on GitHub (when master has commits it lacks),
-       opens a pull request into master listing every pull request being promoted.
+    4. Creates the branch promote/<sha7> at that commit, merges master into it on GitHub (when master has commits it lacks).
+    4b. Rebuilds the generated web files (web/dist, cmd/unravis-setup/ui, cmd/unravis-lite/ui) on THIS PC with Node 22.23.5 in a
+       temporary clone of the promote branch (tools/release/promote-dist.mjs), and pushes ONE extra commit when they differ from what
+       the branch holds. Pull requests into develop do not commit those files (docs/pipeline/dist-on-promotion.md). It builds twice and
+       runs web/scripts/check-dist.cjs, so a build that does not give the same bytes stops the promotion before any pull request exists.
+       Then opens a pull request into master listing every pull request being promoted.
     5. Waits for the required check `build` (the full ci.yml: Windows tests, race, exe build, screenshots, docs, ...).
     6. Merges with a MERGE commit, not a squash, so every develop commit stays in master's history (release notes read it).
   The release manager (Release.ps1) then cuts from master as before; its "CI green on master" wait is on the push run of the merge commit.
@@ -31,6 +35,8 @@ param(
     [string]$Repo = 'abhinavjp/unravis'
 )
 $ErrorActionPreference = 'Stop'
+# The Node version CI builds the web files with (ci.yml, release.yml, fast-gate.yml: node-version). tools/ci/test-promote-dist.mjs checks they agree.
+$DistNodeVersion = '22.23.5'
 function Stop-Here([string]$msg) { Write-Host $msg -ForegroundColor Red; exit 1 }
 # Not named Gh: PowerShell finds commands case-insensitively, so a function Gh made "& gh" call itself (call depth overflow).
 function Invoke-Gh { $out = & gh @args 2>&1; if ($LASTEXITCODE -ne 0) { throw "gh $($args -join ' ') failed: $($out | Out-String)" }; ($out | Out-String).Trim() }
@@ -92,6 +98,14 @@ Write-Host "Every one of the $walked first-parent commit(s) is the merge of a pu
 
 $allowMerge = Invoke-Gh api "repos/$Repo" --jq '.allow_merge_commit'
 if ($allowMerge -ne 'true') { Stop-Here 'This repository does not allow merge commits (Settings > General > Pull Requests > Allow merge commits). The promotion must be a merge commit so develop history stays in master. Turn it on once, then run again.' }
+
+# The web files are rebuilt on this PC (step 4b): Node must be the pinned version and git and npm must be there. Checked now, before
+# anything is created on GitHub, so a missing tool never leaves a half-made promotion.
+$nodeNow = ''
+try { $nodeNow = ((& node --version 2>$null) | Out-String).Trim() } catch { $nodeNow = '' }
+if ($nodeNow -ne "v$DistNodeVersion") { Stop-Here "Node $DistNodeVersion is needed to rebuild the web files for the promotion (found: '$nodeNow'). Install it (nvm, fnm, or the installer) and run again." }
+foreach ($tool in 'git', 'npm') { if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { Stop-Here "$tool is needed to rebuild the web files for the promotion and was not found." } }
+Write-Host "Web files: will be rebuilt with Node $DistNodeVersion and committed to the promote branch when they differ (docs/pipeline/dist-on-promotion.md)."
 if ($DryRun) { Write-Host 'Dry run: nothing created.'; exit 0 }
 
 # --- 4. branch, bring master in, pull request ------------------------------------------------------------------------
@@ -119,6 +133,12 @@ if ($cmp.behind -gt 0) {
     $null = & gh api "repos/$Repo/merges" -f "base=$branch" -f 'head=master' -f "commit_message=Merge master into $branch" 2>&1
     if ($LASTEXITCODE -ne 0) { Stop-Here "master could not be merged into $branch on GitHub (a conflict, most likely). Merge origin/master into develop by pull request, resolve it there, then run again. The branch $branch is left for you to delete." }
 }
+# --- 4b. the generated web files, built once for the whole promotion ------------------------------------------------------
+# Runs before the pull request is opened, so its CI run starts once, on the final head. Idempotent: a branch that already holds the
+# rebuilt files gets no new commit. A failure here stops the promotion (nothing is merged; the branch is left for the next run).
+& node (Join-Path $PSScriptRoot 'promote-dist.mjs') --repo $Repo --branch $branch --node-version $DistNodeVersion
+if ($LASTEXITCODE -ne 0) { Stop-Here "Rebuilding the web files for $branch failed (see above). Nothing was merged. Fix the cause and run again; the branch $branch is reused." }
+
 $prList = & gh pr list --repo $Repo --head $branch --base master --state open --json number --jq '.[0].number' 2>$null
 if ($prList) { $pr = [int]$prList; Write-Host "Pull request #$pr already open." }
 else {
@@ -126,6 +146,8 @@ else {
 Promotes develop up to ``$short`` to master (the release train, docs/ci/RELEASE-TRAIN.md). This is the one full CI run for these changes.
 
 Merge it with a merge commit (not a squash): the promotion script does that.
+
+The branch ends with one generated commit, "Rebuild web files for promotion", holding the rebuilt web/dist, cmd/unravis-setup/ui and cmd/unravis-lite/ui (pull requests into develop do not commit them). check-dist in this run proves they equal a fresh build.
 
 $($lines -join "`n")
 "@
