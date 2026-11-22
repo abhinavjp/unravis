@@ -260,12 +260,16 @@ jobs:
         run: |
           go test -count=1 -v ./internal/pipesrv/...
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          go test -count=1 -v -run 'Pipe|ListenerPort' ./cmd/audit-explorer/...
+          go test -count=1 -v -run '^(TestPipeOnlyNoListenerNoSessionFile|TestPipeServerLoopbackKeepsBrowserModeListener|TestPipeFlagRules|TestPipeRejectsRemoteFlag|TestServeOverPipeSameJSONAsLoopback|TestListenerPortNilIsZero|TestNoTCPListenerInPipeMode)$' ./cmd/audit-explorer/...
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Real exe in pipe-only mode (no port, no session file, both pipes)
         shell: pwsh
         run: ./tools/desktop/Test-Sidecar.ps1 -Check NoPort
+
+      - name: Real exe in pipe-only mode (a second listener on the same pipe name is refused)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check Squat
 
   linux-gates:
     # BL-441. Lint, vet, race tests against a known-failure baseline, and the web checks, on Linux.

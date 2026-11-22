@@ -82,6 +82,7 @@ type runFlags struct {
 	background          bool
 	pipeServer          bool
 	pipeOnly            bool
+	portSet             bool
 	loopback            bool
 }
 
@@ -108,6 +109,7 @@ func parseFlags(args []string) (runFlags, error) {
 	if err := flags.Parse(args); err != nil {
 		return runFlags{}, err
 	}
+	flags.Visit(func(x *flag.Flag) { f.portSet = f.portSet || x.Name == "port" })
 	if f.version {
 		// Asking for the version wins over every other flag, so it never fails on them.
 		return runFlags{version: true}, nil
@@ -345,10 +347,10 @@ func run(args []string, getenv func(string) string) error {
 		defer removeSession()
 	}
 	if pipes != nil {
-		group := pipesrv.Serve(pipes, pipesrv.Handler(served, token), newHTTPServer)
+		group := pipesrv.Serve(pipes, pipesrv.Handler(served), newHTTPServer)
 		stopServers = append(stopServers, group)
 		go func() { serveDone <- <-group.Done() }()
-		log.Printf("Serving over pipes ui=%s ag=%s", pipes.UIName, pipes.AGName)
+		log.Print("Serving over the ui and ag pipes")
 	}
 	afterServing(cancel)
 
@@ -550,10 +552,14 @@ func logStart(logFile *applog.File, getenv func(string) string, port int, demo b
 	if layout.Root != "" {
 		dataDir = layout.Root
 	}
+	var shownPort any = port
+	if port <= 0 {
+		shownPort = "none" // pipe-only mode has no TCP listener
+	}
 	logFile.Logger.Info("start",
 		"version", version.Version,
 		"os", runtime.GOOS+"/"+runtime.GOARCH,
-		"port", port,
+		"port", shownPort,
 		"data_dir", dataDir,
 		"demo", demo,
 		"launch", launch)
@@ -566,6 +572,8 @@ func awaitShutdown(signalContext context.Context, serveDone <-chan error, remove
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
+		// One server stopped on its own: stop the others now (the TCP server and both pipe servers), not at process exit.
+		_ = httpServer.Close()
 		return err
 	case <-signalContext.Done():
 		if err := shutdownOnSignal(removeSession, httpServer); err != nil {

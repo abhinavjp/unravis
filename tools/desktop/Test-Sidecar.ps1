@@ -5,9 +5,10 @@
   -Check NoPort: builds the exe, starts it with --pipe-only --demo and a temporary data folder, then requires that the process
   (1) is still running, (2) has no listening TCP socket, (3) wrote no session.json, and (4) serves one ui and one ag pipe
   (\\.\pipe\unravis.ui.<32hex>, \\.\pipe\unravis.ag.<32hex>). The process is always stopped at the end.
-  Later sidecar items add checks here (OtherUser, Squat, TenStarts ...). Not run on Linux.
+  -Check Squat: starts the same way, then tries to create a second listener with the name of each running pipe; both attempts must fail
+  (first-instance flag plus full instance pool, spec 01 BL-301). Later sidecar items add checks here (OtherUser, TenStarts ...). Not run on Linux.
 #>
-param([ValidateSet('NoPort')][string]$Check = 'NoPort')
+param([ValidateSet('NoPort', 'Squat')][string]$Check = 'NoPort')
 $ErrorActionPreference = 'Stop'
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $work = Join-Path ([IO.Path]::GetTempPath()) ("unravis-sidecar-" + [guid]::NewGuid().ToString('N'))
@@ -36,6 +37,20 @@ try {
     if ($listen.Count -ne 0) { throw "pipe-only process listens on TCP: $($listen | ForEach-Object LocalPort)" }
     $session = Get-ChildItem -Path $data -Recurse -Filter 'session.json' -ErrorAction SilentlyContinue
     if ($session) { throw "session file written: $($session.FullName)" }
+    if ($Check -eq 'Squat') {
+        foreach ($leaf in @($ui, $ag)) {
+            $squatted = $false
+            $srv = $null
+            try {
+                $srv = New-Object System.IO.Pipes.NamedPipeServerStream($leaf, [System.IO.Pipes.PipeDirection]::InOut, 254, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None)
+                $squatted = $true
+            } catch { }
+            finally { if ($srv) { $srv.Dispose() } }
+            if ($squatted) { throw "a second listener could be created on pipe $leaf" }
+        }
+        Write-Host "Squat OK: a second listener on $ui and on $ag is refused"
+        return
+    }
     Write-Host "NoPort OK: pid $($proc.Id), pipes $ui and $ag, no TCP listener, no session.json"
 } catch { $fail = $_ } finally {
     if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }

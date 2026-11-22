@@ -9,8 +9,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 
@@ -39,29 +41,35 @@ func RoleFrom(ctx context.Context) (Role, bool) {
 	return r, ok
 }
 
-// agPrefixes are the only paths the ag pipe passes on (spec 03 /mcp/v1/*, spec 05 /cli/v1/*). The GUI routes are never reachable there.
+// agPrefixes are the paths the ag pipe passes on (spec 03 /mcp/v1/*, spec 05 /cli/v1/*). The GUI routes are never reachable there.
 var agPrefixes = []string{"/mcp/v1/", "/cli/v1/"}
+
+// agRoutes are the exact read routes today's MCP bridge uses (internal/mcp), which the ag pipe serves until area 03 supplies its own
+// handler (spec 01 D5). Everything else, the GUI routes included, is a 404 there.
+var agRoutes = map[string]bool{
+	"/api/info": true, "/api/sources": true, "/api/analyze": true, "/api/requests": true,
+	"/api/activity": true, "/api/slowest": true, "/api/breakdown": true, "/api/session-proof": true,
+}
 
 const tokenHeader = "X-Audit-Token" //nolint:gosec // a header name, not a credential
 
 // Handler wraps the dashboard handler served for the pipes.
 //
-// A request with no pipe role is refused (fail closed). On the ui pipe the peer was verified by pipesec (same logon, same session,
-// Unravis image), so that check stands in for the session token: the owner's token is set on the request and any token the client sent
-// is dropped, which leaves every existing handler unchanged. The ag pipe never gets the token and reaches only agPrefixes.
-func Handler(served http.Handler, token string) http.Handler {
+// A request with no pipe role is refused (fail closed). The session token stays the client's to send, unchanged, on both pipes
+// (spec 01 D6): the shell and the CLI read it from the locator, so browser mode and pipe mode share one auth path and the peer check of
+// pipesec is not the only gate. The ag pipe reaches only agRoutes and agPrefixes, and only by their clean path.
+func Handler(served http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		role, ok := RoleFrom(r.Context())
 		if !ok {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		r.Header.Del(tokenHeader)
 		switch role {
 		case RoleUI:
-			r.Header.Set(tokenHeader, token)
 		case RoleAG:
-			if !hasAnyPrefix(r.URL.Path, agPrefixes) {
+			p := r.URL.Path
+			if path.Clean(p) != p || !(agRoutes[p] || hasAnyPrefix(p, agPrefixes)) {
 				http.NotFound(w, r)
 				return
 			}
@@ -80,6 +88,23 @@ func hasAnyPrefix(p string, prefixes []string) bool {
 		}
 	}
 	return false
+}
+
+// logf is the log sink for peer lines; tests replace it.
+var logf = log.Printf
+
+// logPeer records who connected: PID, image path and the last 8 characters of the logon SID, nothing else (spec 02 section 6).
+func logPeer(role Role, c net.Conn) {
+	pc, ok := c.(interface{ Peer() pipesec.Peer })
+	if !ok {
+		return
+	}
+	p := pc.Peer()
+	sid := p.LogonSID
+	if len(sid) > 8 {
+		sid = sid[len(sid)-8:]
+	}
+	logf("pipe %s peer pid=%d image=%s sid=...%s", role, p.PID, p.Image, sid)
 }
 
 // ListenFunc opens one pipe; pipesec.Listen in production.
@@ -136,7 +161,10 @@ func Serve(p *Pipes, h http.Handler, newServer func(http.Handler) *http.Server) 
 	g := &Group{done: make(chan error, 2)}
 	start := func(l net.Listener, role Role) *http.Server {
 		s := newServer(h)
-		s.ConnContext = func(ctx context.Context, _ net.Conn) context.Context { return WithRole(ctx, role) }
+		s.ConnContext = func(ctx context.Context, c net.Conn) context.Context {
+			logPeer(role, c)
+			return WithRole(ctx, role)
+		}
 		g.wg.Add(1)
 		go func() { defer g.wg.Done(); g.done <- s.Serve(l) }()
 		return s
@@ -149,9 +177,15 @@ func Serve(p *Pipes, h http.Handler, newServer func(http.Handler) *http.Server) 
 // Done delivers one result per server (buffered, never blocks the servers).
 func (g *Group) Done() <-chan error { return g.done }
 
-// Shutdown drains both servers.
+// Shutdown drains both servers at the same time, so neither keeps accepting while the other drains.
 func (g *Group) Shutdown(ctx context.Context) error {
-	return errors.Join(g.ui.Shutdown(ctx), g.ag.Shutdown(ctx))
+	var uiErr, agErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); uiErr = g.ui.Shutdown(ctx) }()
+	go func() { defer wg.Done(); agErr = g.ag.Shutdown(ctx) }()
+	wg.Wait()
+	return errors.Join(uiErr, agErr)
 }
 
 // Close stops both servers at once.

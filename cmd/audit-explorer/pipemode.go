@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 
 	"api-audit-explorer/internal/pipesec"
 	"api-audit-explorer/internal/pipesrv"
@@ -33,10 +34,13 @@ func checkPipeFlags(f runFlags) error {
 	if hostOS != "windows" {
 		return fmt.Errorf("--pipe-server and --pipe-only are only available on Windows")
 	}
+	if f.noBrowser {
+		return fmt.Errorf("--no-browser does not apply to --pipe-server and --pipe-only: they never open a browser")
+	}
 	if f.mcp || f.background {
 		return fmt.Errorf("--pipe-server and --pipe-only run the dashboard backend; do not combine them with --mcp or --background")
 	}
-	if f.port != defaultPort && !f.loopback {
+	if (f.portSet || f.port != defaultPort) && !f.loopback {
 		return fmt.Errorf("--port needs --loopback in pipe mode")
 	}
 	return nil
@@ -57,10 +61,13 @@ func listenerPort(l net.Listener) int {
 type stoppers []shutdowner
 
 func (s stoppers) Shutdown(ctx context.Context) error {
-	var errs []error
-	for _, x := range s {
-		errs = append(errs, x.Shutdown(ctx))
+	errs := make([]error, len(s))
+	var wg sync.WaitGroup
+	for i, x := range s {
+		wg.Add(1)
+		go func() { defer wg.Done(); errs[i] = x.Shutdown(ctx) }()
 	}
+	wg.Wait()
 	return errors.Join(errs...)
 }
 

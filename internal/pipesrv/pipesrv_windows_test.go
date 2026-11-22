@@ -29,7 +29,7 @@ func TestServeOverRealPipes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := Serve(p, Handler(echoToken(), tok), func(h http.Handler) *http.Server { return &http.Server{Handler: h, ReadHeaderTimeout: 5 * time.Second} })
+	g := Serve(p, Handler(echoToken()), func(h http.Handler) *http.Server { return &http.Server{Handler: h, ReadHeaderTimeout: 5 * time.Second} })
 	t.Cleanup(func() { _ = g.Close() })
 
 	var session uint32
@@ -50,7 +50,7 @@ func TestServeOverRealPipes(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, string(b)
 	}
-	if c, b := get(p.UIName, "/api/cases"); c != 200 || b != "token="+tok {
+	if c, b := get(p.UIName, "/api/cases"); c != 200 || b != "token=" {
 		t.Fatalf("ui: %d %q", c, b)
 	}
 	if c, _ := get(p.AGName, "/api/cases"); c != 404 {
