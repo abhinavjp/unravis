@@ -534,6 +534,27 @@ try {
         # The label must not print the raw case: a BEGIN header in a check name would itself be hidden by the redactor in the CI log.
         Assert-That "log redaction: a $($c[0].Length)-character case hides its secret" (-not $got.Contains($c[1])) "got '$got'"
     }
+    # More shapes (sweep 2026-11-22, REL-4): a flag with a space or =, env names that end in _PASS or _PIN, nonce, a key seed, user:password in a URL or after -u / --user.
+    foreach ($c in @(@('sigtool sign --passphrase hunter2hunter2 manifest.json', 'hunter2'), @('--token hunter2hunter2 at the start', 'hunter2'), @('tool --pin=4321 run', '4321'), @('set SIGN_PASS=hunter2hunter2', 'hunter2'), @('UNRAVIS_RELEASE_NONCE=hunter2hunter2', 'hunter2'), @('PROTON_PASS_PIN=4321', '4321'), @('{"key_seed":"hunter2hunter2"}', 'hunter2'), @('curl -u bob:hunter2hunter2 https://x.example', 'hunter2'), @('curl --user bob:hunter2hunter2 https://x.example', 'hunter2'), @('git clone https://bob:hunter2hunter2@host.example/r.git', 'hunter2'))) {
+        $got = Protect-LogLine $c[0] (New-LogRedactor)
+        Assert-That "log redaction: shape '$($c[0].Substring(0, 8))...' hides its secret" (-not $got.Contains($c[1])) "got '$got'"
+    }
+    foreach ($ok in @('git clone https://github.com/abhinavjp/unravis.git', 'shipping: 3 files, mapping ok, ping 12ms', 'go test -count=1 ./...', 'go get -u ./...', 'git add -u .', 'sort -u names.txt', '--- FAIL: TestPassword/seed=42 (0.00s)', 'jest Seed: 1234567 (use --seed to repeat)', 'TESTS_PASS: 120 of 120', 'pytest --passes 3 suite')) {
+        Assert-That "log redaction: ordinary line kept: $ok" ((Protect-LogLine $ok (New-LogRedactor)) -eq $ok) "got '$(Protect-LogLine $ok (New-LogRedactor))'"
+    }
+    # A reason of several lines (what Run throws) keeps its lines apart; one hidden line hides only itself; a key block is hidden whole.
+    $multi = "git fetch failed: fatal: unable to reach host`r`nremote: Support for password authentication was removed.`nAuthorization: token hunter2hunter2`nhint: run gh auth refresh`n-----BEGIN CERTIFICATE-----`nMIIBkTCB+wIJAKHBfpegPjMCMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBnVu`n-----END CERTIFICATE-----`nthe real cause is here"
+    $mr = Protect-ReasonText $multi
+    Assert-That 'reason text: lines stay apart (a space, not glued)' ($mr.Contains('unable to reach host remote:')) "got '$mr'"
+    Assert-That 'reason text: the lines after a hidden line are kept' ($mr.Contains('gh auth refresh') -and $mr.Contains('the real cause is here')) "got '$mr'"
+    Assert-That 'reason text: the secret and the certificate body are hidden' (-not ($mr.Contains('hunter2') -or $mr.Contains('MIIBkTCB'))) "got '$mr'"
+    foreach ($c in @(@('tool --password "two words here" run', 'words'), @("tool --token 'it is secret' run", 'secret'), @('git clone https://u:p@ss@host.example/', 'ss@'), @('MYSQL_PASSWD=hunter2hunter2', 'hunter2'))) {
+        $got = Protect-LogLine $c[0] (New-LogRedactor)
+        Assert-That "log redaction: quoted flag value, URL password with @, PASSWD env: '$($c[0].Substring(0, 10))...'" (-not $got.Contains($c[1])) "got '$got'"
+    }
+    $kr = Protect-ReasonText "step one`rstep two`r`n-----BEGIN PRIVATE KEY-----`nMIIBkTCB`nAAAA`n-----END PRIVATE KEY-----`nafter"
+    Assert-That 'reason text: a lone CR separates lines and a key block is one marker' ($kr -eq 'step one step two <private key hidden> after') "got '$kr'"
+    Assert-That 'reason text: an empty reason stays empty' ((Protect-ReasonText '') -eq '')
     $uk = New-LogRedactor
     $ukOut = '-----BEGIN PGP PRIVATE KEY BLOCK-----', 'ok   log redaction: nothing secret left', '--- PASS: TestX (0.00s)' | ForEach-Object { Protect-LogLine $_ $uk }
     Assert-That 'log redaction: a key header with no END line hides only itself' (($ukOut -join '|') -eq '<private key hidden>|ok   log redaction: nothing secret left|--- PASS: TestX (0.00s)') "got '$($ukOut -join '|')'"
