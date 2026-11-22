@@ -1405,7 +1405,10 @@ func (c *Case) BucketCounts(ctx context.Context, q casestore.BucketQuery) (cases
 	// One read transaction (one connection, one snapshot) for every chunk and both
 	// queries of each, so an import that commits meanwhile is seen by none of them
 	// and the error cell of a bucket always belongs to the same rows as its count.
-	tx, err := db.BeginTx(qctx, nil)
+	// ReadOnly is explicit: ncruces/go-sqlite3 0.37 began plain transactions with
+	// BEGIN IMMEDIATE, which would take the write lock for the whole read and
+	// make a writer between chunks wait out its busy timeout (docs/pipeline/SQLITE-0.37-IMMEDIATE-TX.md).
+	tx, err := db.BeginTx(qctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		switch {
 		case ctx.Err() != nil:
