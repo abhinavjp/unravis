@@ -43,6 +43,9 @@ type Suite struct {
 	Failures   []TestFailure `json:"failures,omitempty"`
 	Cases      []TestCase    `json:"cases,omitempty"`
 	CasesCut   bool          `json:"casesCut,omitempty"`
+
+	// fromSummary: every result came from a "N --- FAIL" count summary, which only a report-only step prints.
+	fromSummary bool
 }
 
 // TestResults is every suite found in one run log, plus the totals of the real ones (report only and package counts are left out).
@@ -113,7 +116,8 @@ func ParseTests(r io.Reader, names []string) TestResults {
 	for _, g := range order {
 		for _, parse := range []func(*logGroup) *Suite{parseGo, parseNode, parseVerify, parseScript} {
 			if s := parse(g); s != nil {
-				s.ReportOnly = strings.Contains(strings.ToLower(g.step), "report only")
+				// gh may print "UNKNOWN STEP" instead of the step name, so a count summary also marks a suite as report only.
+				s.ReportOnly = strings.Contains(strings.ToLower(g.step), "report only") || s.fromSummary
 				res.Suites = append(res.Suites, *s)
 				if !s.ReportOnly && s.Unit != "packages" {
 					res.Passed += s.Passed
@@ -160,7 +164,7 @@ func indented(g *logGroup, i int, minIndent int) []string {
 
 func parseGo(g *logGroup) *Suite {
 	s := g.suite("go")
-	var pkgOK, pkgFail, tests int
+	var pkgOK, pkgFail, tests, sums int
 	hdrRun := -1 // index of the last "=== RUN" line: output printed before a "--- FAIL" line follows it
 	for i, t := range g.raw {
 		if strings.HasPrefix(t, "=== RUN") {
@@ -170,6 +174,7 @@ func parseGo(g *logGroup) *Suite {
 		if m := goSumRE.FindStringSubmatch(t); m != nil { // the race report: "  3 --- FAIL: TestX (0.00s)"
 			tests++
 			s.Failed++
+			sums++
 			addFailure(s, TestFailure{Name: m[2], Output: []string{m[1] + " time(s) in the run"}})
 			addCase(s, m[2], "failed")
 			continue
@@ -208,6 +213,7 @@ func parseGo(g *logGroup) *Suite {
 	switch {
 	case tests > 0:
 		s.Unit = "tests"
+		s.fromSummary = sums == tests
 	case pkgOK+pkgFail > 0:
 		s.Unit, s.Passed, s.Failed = "packages", pkgOK, pkgFail
 	default:

@@ -92,3 +92,20 @@ func TestParseTestsFailures(t *testing.T) {
 		t.Fatalf("node failure: %+v", n.Failures)
 	}
 }
+
+// gh sometimes prints "UNKNOWN STEP" for the step name; the race report must still stay out of the totals.
+func TestParseTestsSummaryWithoutStepName(t *testing.T) {
+	log := "linux-gates\tUNKNOWN STEP\t2026-11-22T07:33:31.4316889Z       2 --- FAIL: TestA (0.00s)\n" +
+		"linux-gates\tUNKNOWN STEP\t2026-11-22T07:33:31.4317652Z       1 WARNING: DATA RACE\n" +
+		"linux-gates\tUNKNOWN STEP\t2026-11-22T07:33:31.4318210Z       1 --- FAIL: TestB (0.00s)\n" +
+		"build\tUNKNOWN STEP\t2026-11-22T07:28:55.1283356Z ok  \tpkg/a\t1.0s\n"
+	res := ParseTests(strings.NewReader(log), nil)
+	if res.Failed != 0 || len(res.Suites) != 2 {
+		t.Fatalf("failed=%d suites=%d", res.Failed, len(res.Suites))
+	}
+	for _, s := range res.Suites {
+		if s.Job == "linux-gates" && (!s.ReportOnly || s.Failed != 2) {
+			t.Fatalf("race suite: %+v", s)
+		}
+	}
+}
