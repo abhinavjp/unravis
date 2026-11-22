@@ -377,9 +377,11 @@ test('a lone sample (gaps on both sides) is drawn as a dot, a joined run is not'
   const pal = { text: '#111111', accent: '#2457c5', accentSoft: '#9db6ea', warn: '#96600a', bad: '#b02a3d', pending: '#5b6878', text2: '#4d5a6b', axisLine: '#d5dbe3', grid: '#e6eaf0', empty: '#eee', heat: [], series: ['#146b58'], surface: '#ffffff' };
   const option = r.stripsOption({ strips: [{ id: 'a', title: 'CPU', unit: '%', lines: [{ id: 'l', name: 'Host CPU', points: sparse }] }], view: { fromMs: T0, toMs: T0 + 60000 }, episodes: [], markers: [], zone: 'UTC', pal });
   const line = option.series.find((s) => s.name === 'Host CPU');
-  assert.equal(line.showSymbol, true);
-  assert.equal(line.symbolSize(4, { dataIndex: 0 }), 5, 'the dot is sized, not hidden');
-  assert.equal(line.symbolSize(null, { dataIndex: 1 }), 0, 'a gap entry has no dot');
+  assert.equal(line.showSymbol, false, 'the line builds no shape per point (BL-429)');
+  assert.equal(line.symbolSize, 5, 'the dot ECharts shows under the pointer is sized');
+  const dots = option.series.find((s) => s.type === 'scatter');
+  assert.deepEqual(dots.data, sparse.filter((p) => p[1] != null), 'every lone sample is drawn as a dot by the scatter of lone points');
+  assert.equal(dots.symbolSize, 5);
 });
 
 test('the chart tooltip escapes every name and value, and the option has one grid per strip', () => {

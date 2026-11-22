@@ -34,14 +34,39 @@ export function lonePointFlags(data: ArrayLike<Cell>): boolean[] {
 /**
  * Symbol options for one line series.
  *  - fewer than SYMBOL_MAX_POINTS points: a dot on every point (as before);
- *  - more: no dots, except a point that stands alone between gaps keeps its dot (nothing else would show it);
- * Hovering still shows the point under the pointer.
+ *  - from SYMBOL_MAX_POINTS: showSymbol false, so ECharts builds no shape per point. It still draws one dot, of `size`, on the point under
+ *    the axis pointer, so hovering shows where you are.
+ * A point that stands alone between gaps has no line to show it; lonePointSeries (below) draws just those, as a small scatter.
  */
-export function lineSeriesPerf(data: ArrayLike<Cell>, size: number): { showSymbol: boolean; symbolSize: number | ((value: unknown, params: { dataIndex: number }) => number) } {
-  if (data.length < SYMBOL_MAX_POINTS) return { showSymbol: true, symbolSize: size };
-  const lone = lonePointFlags(data);
-  if (lone.some(Boolean)) return { showSymbol: true, symbolSize: (_value, params) => (lone[params.dataIndex] ? size : 0) };
-  return { showSymbol: false, symbolSize: size };
+export function lineSeriesPerf(data: ArrayLike<Cell>, size: number): { showSymbol: boolean; symbolSize: number } {
+  return { showSymbol: data.length < SYMBOL_MAX_POINTS, symbolSize: size };
+}
+
+/** The points of `data` that stand alone, as [x, y] pairs: a pair is kept as it is, anything else is placed at its index (a category axis). */
+export function lonePairs(data: ArrayLike<Cell>): Array<[unknown, unknown]> {
+  const flags = lonePointFlags(data);
+  const out: Array<[unknown, unknown]> = [];
+  flags.forEach((alone, i) => {
+    if (!alone) return;
+    const cell = data[i];
+    out.push(Array.isArray(cell) ? [cell[0], cell[1]] : [i, valueOf(cell)]);
+  });
+  return out;
+}
+
+/**
+ * The scatter that carries the lone points of a line series that no longer draws a dot per point (see lineSeriesPerf): [] when the line
+ * is short enough to keep its dots (unless `always`) or has no lone point. The series is silent, has no name and no tooltip, so it adds
+ * nothing to the legend, the axis tooltip or the pointer events; it has the line's colour, z and axes.
+ */
+export function lonePointSeries(data: ArrayLike<Cell>, opts: { color: string; size: number; xAxisIndex?: number; yAxisIndex?: number; z?: number; always?: boolean }): unknown[] {
+  if (!opts.always && data.length < SYMBOL_MAX_POINTS) return [];
+  const pairs = lonePairs(data);
+  if (pairs.length === 0) return [];
+  return [{
+    type: 'scatter', name: '', silent: true, tooltip: { show: false }, data: pairs, symbolSize: opts.size, itemStyle: { color: opts.color }, z: opts.z ?? 3,
+    ...(opts.xAxisIndex === undefined ? {} : { xAxisIndex: opts.xAxisIndex }), ...(opts.yAxisIndex === undefined ? {} : { yAxisIndex: opts.yAxisIndex })
+  }];
 }
 
 /**

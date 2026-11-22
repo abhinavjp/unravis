@@ -6,6 +6,7 @@
  */
 import type { Palette } from './charts';
 import { chartTime } from './chartTime';
+import { lonePointSeries } from './chartPerf';
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Fixed words. Every string the panel shows that is not data lives here, so the copy lint can check all of it.
@@ -643,13 +644,13 @@ export function stripsOption(input: OptionInput) {
     titles.push({ text: strip.title + (strip.unit ? ' (' + strip.unit + ')' : ''), left: GRID_LEFT, top: top - 17, textStyle: { color: pal.text2, fontSize: 11, fontWeight: 600 } });
     strip.lines.forEach((line, k) => {
       const color = line.band ? pal.axisLine : pal.series[k % pal.series.length];
-      const lone = lonePoints(line.points);
       series.push({
-        type: 'line', name: line.name, xAxisIndex: i, yAxisIndex: i, data: line.points, connectNulls: false, showSymbol: lone.some(Boolean), // only a lone point shows a dot; no dot shapes for the rest (BL-429)
-        symbolSize: (_value: unknown, params: { dataIndex: number }) => (lone[params.dataIndex] ? 5 : 0),
+        type: 'line', name: line.name, xAxisIndex: i, yAxisIndex: i, data: line.points, connectNulls: false,
+        showSymbol: false, symbolSize: 5, // no shape per point (BL-429); a point alone between gaps is drawn by the scatter below; hover still shows a dot
         z: line.band ? 1 : 3, lineStyle: line.band ? { opacity: 0 } : { color, width: 1.6 }, itemStyle: { color },
         ...(line.band ? { areaStyle: { color: withAlpha(pal.text2, 0.18) }, emphasis: { disabled: true } } : {})
       });
+      series.push(...lonePointSeries(line.points, { color, size: 5, xAxisIndex: i, yAxisIndex: i, z: line.band ? 1 : 3, always: true }));
     });
     // A series with no data carries the bands and the rules for its grid.
     series.push({
