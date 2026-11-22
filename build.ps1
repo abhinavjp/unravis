@@ -9,11 +9,24 @@ param(
     # pin is empty or -Unpinned is also given. CI passes this.
     [switch]$Release,
     # Local development only: do not pin the app to the helper, so the helper can be rebuilt alone. The log says so loudly.
-    [switch]$Unpinned
+    [switch]$Unpinned,
+    # A script that signs the files it is given, in place (tools/release/Sign-Binaries.ps1). Called three times, in the one order
+    # that keeps the pin and the installer payload true: the Blackbox first (the pin is its SIGNED hash), then the app and keeper
+    # (before the installer embeds them), then the installer and Lite last. Without it nothing is signed.
+    [string]$SignScript
 )
 
 $ErrorActionPreference = 'Stop'
 $UtilityRoot = $PSScriptRoot
+if ($SignScript) {
+    if (-not (Test-Path -LiteralPath $SignScript -PathType Leaf)) { throw "-SignScript $SignScript does not exist." }
+    $SignScript = (Resolve-Path -LiteralPath $SignScript).Path   # build.ps1 changes folder later; use the full path
+}
+function Invoke-Sign([string[]]$Files) {
+    if (-not $SignScript) { return }
+    & $SignScript -Path $Files
+    if (-not $?) { throw "Signing failed for: $($Files -join ', ')" }
+}
 if ($Release -and $Unpinned) { throw 'A release build must be pinned: use -Release or -Unpinned, not both.' }
 
 # Walk up from the repo (including itself) to find a shared .dev\toolchains\go\bin\go.exe.
@@ -132,6 +145,7 @@ try {
     $HelperVersion = $Version.TrimStart('v')
     $HelperLdFlags = "-s -w $LdFlags -X main.version=$HelperVersion"
     Invoke-Checked $GoExe @('build', '-trimpath', '-ldflags', $HelperLdFlags, '-o', $HelperExe, './cmd/unravis-blackbox')
+    Invoke-Sign @($HelperExe)   # before the hash is taken: the app is pinned to the signed bytes
     $HelperSha = (Get-FileHash -LiteralPath $HelperExe -Algorithm SHA256).Hash.ToLowerInvariant()
     $AppLdFlags = $GuiLdFlags
     if ($Unpinned) {
@@ -149,16 +163,18 @@ try {
         $AppText = [System.Text.Encoding]::GetEncoding(28591).GetString($AppBytes)
         if (-not $AppText.Contains($HelperSha)) { throw 'unravis.exe does not contain the helper pin. The -ldflags -X for PinnedHelperSHA256 did not take effect.' }
     }
+    Invoke-Sign @((Join-Path $UtilityRoot 'dist\unravis.exe'))
     # Compatibility copy for MCP client configs that still point at dist\api-audit-explorer.exe.
     # Remove this copy and the MCP.md note after 2026-12-31 (one release after the rename).
     Copy-Item -LiteralPath (Join-Path $UtilityRoot 'dist\unravis.exe') -Destination (Join-Path $UtilityRoot 'dist\api-audit-explorer.exe') -Force
     Invoke-Checked $GoExe @('build', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-keeper.exe'), './cmd/unravis-keeper')
     # The releases window (read-only release status, its own icon). A GUI program like the app, so it opens no console; it ships inside the setup program and updates with it.
     Invoke-Checked $GoExe @('build', '-trimpath', '-ldflags', $GuiLdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-releases.exe'), './cmd/unravis-releases')
+    Invoke-Sign @((Join-Path $UtilityRoot 'dist\unravis-keeper.exe'), (Join-Path $UtilityRoot 'dist\unravis-releases.exe'))
 
     # The one-file installer comes last: it embeds the programs above with a manifest of their SHA-256, so setup refuses a
     # payload that was changed after the build. The payload folder is cleared first and is not committed (see its README.txt).
-    # Nothing is signed here; signing is a release step (docs: installer-and-releases.md).
+    # Nothing is signed unless -SignScript is given (stable releases only; see Invoke-Sign above).
     $PayloadDir = Join-Path $UtilityRoot 'cmd\unravis-setup\payload'
     Get-ChildItem -LiteralPath $PayloadDir -Force | Where-Object { $_.Name -notin @('README.txt', '.gitignore') } | Remove-Item -Recurse -Force
     $PayloadFiles = @()
@@ -179,6 +195,7 @@ try {
         Invoke-Checked $GoExe @('build', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-setup.exe'), './cmd/unravis-setup')
         # Unravis Lite: a small console viewer for one Blackbox (docs/auto-updater/SPEC.md). It stays a console program so it can print the one-time link.
         Invoke-Checked $GoExe @('build', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-lite.exe'), './cmd/unravis-lite')
+        Invoke-Sign @((Join-Path $UtilityRoot 'dist\unravis-setup.exe'), (Join-Path $UtilityRoot 'dist\unravis-lite.exe'))
         # Subsystem check: the app and the releases window must be GUI (2) so they open no console; every other program built here stays console (3).
         $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis.exe')
         if ($Subsystem -ne 2) { throw "unravis.exe: PE subsystem $Subsystem, expected 2" }

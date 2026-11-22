@@ -581,6 +581,8 @@ type FakeProcesses struct {
 	List_  []Process
 	Faults *Faults
 	nextID uint32
+	// OwnerSID is the account Run gives a new program, as the real list does (a program with no owner counts as someone else's).
+	OwnerSID string
 }
 
 func (p *FakeProcesses) List() ([]Process, error) {
@@ -628,7 +630,7 @@ func (p *FakeProcesses) Run(exe string) uint32 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.nextID += 100
-	p.List_ = append(p.List_, Process{PID: p.nextID, Exe: exe})
+	p.List_ = append(p.List_, Process{PID: p.nextID, Exe: exe, SID: p.OwnerSID})
 	return p.nextID
 }
 
@@ -713,7 +715,7 @@ func NewFakeSystem(version string) (*System, *Fakes) {
 	faults := &Faults{}
 	f := &Fakes{
 		Reg: &FakeRegistry{Faults: faults}, Svc: &FakeServices{Faults: faults}, FW: &FakeFirewall{Faults: faults},
-		Sec: &FakeSecurity{Faults: faults}, Proc: &FakeProcesses{Faults: faults},
+		Sec: &FakeSecurity{Faults: faults}, Proc: &FakeProcesses{Faults: faults, OwnerSID: "S-1-5-21-1000"},
 		Mach: &FakeMachine{Version: WindowsVersion{Major: 10, Build: 22631, Is64: true}, BrowserPath: `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`,
 			HasWebView2: true, Admin: true, Elevate: true},
 		Faults: faults, Versions: map[string]string{}, version: version, UserSID: "S-1-5-21-1000",
@@ -762,7 +764,7 @@ func (f *Fakes) UseAskQuit(s *System) {
 		if f.QuitRemovesApps {
 			kept := f.Proc.List_[:0:0]
 			for _, q := range f.Proc.List_ {
-				if q.SID != "" && !strings.EqualFold(q.SID, f.UserSID) {
+				if q.SID == "" || !strings.EqualFold(q.SID, f.UserSID) {
 					kept = append(kept, q)
 				}
 			}

@@ -3,6 +3,8 @@ package setup
 import (
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -158,19 +160,72 @@ func (r *Runner) programFolderProblem(dir string, old *Installed) (string, error
 }
 
 // splitApps divides the running Unravis programs into the ones of the person who ran setup and the ones of anyone else. A program
-// whose owner the list did not report counts as the person's; one whose owner cannot be read counts as someone else's.
+// whose owner the list did not report, or cannot be read, counts as someone else's: setup never closes a program it cannot show is the
+// person's own.
 func (r *Runner) splitApps(running []Process) (mine, others []Process) {
 	for _, q := range running {
 		switch {
-		case q.SID == "":
-			mine = append(mine, q)
-		case q.SID != UnknownOwner && r.UserSID != "" && strings.EqualFold(q.SID, r.UserSID):
+		case q.SID != "" && q.SID != UnknownOwner && r.UserSID != "" && strings.EqualFold(q.SID, r.UserSID):
 			mine = append(mine, q)
 		default:
 			others = append(others, q)
 		}
 	}
 	return mine, others
+}
+
+// ReadFileProven is the fake of FileSecurity.ReadFileProven. The file must be a plain file (not a link of any kind) of at most max
+// bytes; its list is its own when one was set, else the folder's (a file inherits, as on Windows); the owner must pass the owner rule
+// (system or administrators only) and nobody else may write it. The fake cannot count hard links: that proof is the Windows one's.
+func (f *FakeSecurity) ReadFileProven(path string, max int64) ([]byte, error) {
+	if err := f.Faults.check("sec.ReadFileProven:" + path); err != nil {
+		return nil, err
+	}
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: it is not a plain file", ErrNotProven)
+	}
+	if max <= 0 || max == math.MaxInt64 {
+		return nil, fmt.Errorf("%w: the size limit %d is not usable", ErrNotProven, max)
+	}
+	if fi.Size() > max {
+		return nil, fmt.Errorf("%w: it is too large (%d bytes, at most %d)", ErrNotProven, fi.Size(), max)
+	}
+	f.mu.Lock()
+	sddl, _, err := f.current(path)
+	if _, own := f.m[strings.ToLower(filepath.Clean(path))]; !own && err == nil {
+		sddl, _, err = f.current(filepath.Dir(path))
+	}
+	f.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	fs, err := ParseSDDL(sddl)
+	if err != nil {
+		return nil, err
+	}
+	if !journalFileOwnerOK(fs.Owner) {
+		return nil, fmt.Errorf("%w: it is owned by %s", ErrNotProven, fs.Owner)
+	}
+	if err := checkNoOthersWrite(path, fs); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNotProven, err)
+	}
+	in, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer in.Close()
+	data, err := io.ReadAll(io.LimitReader(in, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("%w: it is too large (more than %d bytes)", ErrNotProven, max)
+	}
+	return data, nil
 }
 
 // CreateFileSDDL is the fake of FileSecurity.CreateFileSDDL: the file is made new (never over an existing one), written, and given

@@ -689,10 +689,13 @@ func processSID(pid uint32) string {
 	}
 	defer tok.Close()
 	u, err := tok.GetTokenUser()
-	if err != nil || u.User.Sid == nil {
+	if err != nil || u.User.Sid == nil || !u.User.Sid.IsValid() {
 		return UnknownOwner
 	}
-	return u.User.Sid.String()
+	if s := u.User.Sid.String(); s != "" {
+		return s
+	}
+	return UnknownOwner
 }
 
 func imagePath(pid uint32) string {

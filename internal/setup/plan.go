@@ -991,14 +991,21 @@ func setupCanBeRolledBackTo(path string) bool {
 	return true
 }
 
-// checkAdminOnly refuses a folder that someone other than administrators, the system or a service may change.
+// checkAdminOnly refuses a folder that someone other than administrators, the system or a service may change: its owner must be the
+// system or the administrators, and checkNoOthersWrite must pass.
 func checkAdminOnly(name string, fs datadir.FolderSecurity) error {
-	const write = 0x2 | 0x4 | 0x10 | 0x40 | 0x100 | 0x10000 | 0x40000 | 0x80000 | 0x10000000 | 0x40000000
 	switch fs.Owner {
 	case "S-1-5-18", "S-1-5-32-544":
 	default:
 		return fmt.Errorf("%s is owned by %s", name, fs.Owner)
 	}
+	return checkNoOthersWrite(name, fs)
+}
+
+// checkNoOthersWrite is the access-list half of checkAdminOnly: the list must exist and give nobody but the system and the
+// administrators a right to write or change (or take ownership of) the item.
+func checkNoOthersWrite(name string, fs datadir.FolderSecurity) error {
+	const write = 0x2 | 0x4 | 0x10 | 0x40 | 0x100 | 0x10000 | 0x40000 | 0x80000 | 0x10000000 | 0x40000000
 	if fs.NullDACL {
 		return fmt.Errorf("%s has no access list", name)
 	}

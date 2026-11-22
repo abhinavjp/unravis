@@ -61,18 +61,44 @@ function Invoke-Checked([string]$what, [scriptblock]$cmd) {
 # commit. A stolen token that swapped files in the draft cannot produce one. Fails closed: no attestation, no signing.
 function Assert-Attested([string]$dir, [string]$repo, [string]$tag, [string]$commit) {
     $workflow = "$repo/.github/workflows/release.yml"
-    foreach ($f in Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Name -match '^(unravis-.*\.(zip|exe)|update-manifest\.json)$' }) {
-        $errFile = Join-Path $dir '.attest-err.txt'   # gh prints progress on stderr; keep it out of the JSON
-        $json = gh attestation verify $f.FullName --repo $repo --signer-workflow $workflow --format json 2>$errFile
-        if ($LASTEXITCODE -ne 0) { throw "No valid build attestation for $($f.Name) from $workflow : $(Get-Content -Raw -ErrorAction SilentlyContinue $errFile)" }
-        Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
-        $found = $false
-        foreach ($r in ($json | ConvertFrom-Json)) {
-            $c = $r.verificationResult.signature.certificate
-            if ($c.sourceRepositoryDigest -eq $commit -and $c.sourceRepositoryRef -eq "refs/tags/$tag") { $found = $true }
-        }
-        if (-not $found) { throw "The attestation for $($f.Name) is not for $tag at commit $commit. Do not sign." }
-        Write-Host "  attested: $($f.Name)"
+    $files = @(Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Name -match '^(unravis-.*\.(zip|exe)|update-manifest\.json)$' })
+    if (-not $files.Count) { throw 'No release files to check the attestation of. Do not sign.' }
+    # One gh call per file. The first one runs alone: gh sets up its Sigstore trust root on first use, and several calls doing that at
+    # the same moment failed on rc.56 ("no valid Sigstore verifiers could be initialized"). The rest run side by side (each is a round
+    # trip to GitHub). A file whose check failed side by side is checked once more on its own; every file is still checked, and one
+    # failure fails the lot. Each call writes its own error file so their output cannot mix.
+    $checkText = @'
+param($f, $dir, $repo, $workflow, $commit, $tag)
+$errFile = Join-Path $dir ('.attest-err-' + $f.Name + '.txt')   # gh prints progress on stderr; keep it out of the JSON
+$json = gh attestation verify $f.FullName --repo $repo --signer-workflow $workflow --format json 2>$errFile
+$code = $LASTEXITCODE
+$err = if (Test-Path -LiteralPath $errFile) { Get-Content -Raw -ErrorAction SilentlyContinue $errFile } else { '' }
+Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
+$found = $false
+if ($code -eq 0) {
+    foreach ($r in ($json | ConvertFrom-Json)) {
+        $c = $r.verificationResult.signature.certificate
+        if ($c.sourceRepositoryDigest -eq $commit -and $c.sourceRepositoryRef -eq "refs/tags/$tag") { $found = $true }
+    }
+}
+[pscustomobject]@{ Name = $f.Name; Code = $code; Found = $found; Err = $err }
+'@
+    $check = [scriptblock]::Create($checkText)
+    $first = & $check $files[0] $dir $repo $workflow $commit $tag
+    $results = @($first)
+    if ($files.Count -gt 1) {
+        $results += @($files[1..($files.Count - 1)] | ForEach-Object -ThrottleLimit 4 -Parallel {
+            & ([scriptblock]::Create($using:checkText)) $_ $using:dir $using:repo $using:workflow $using:commit $using:tag
+        })
+    }
+    $results = @($results | ForEach-Object {
+        if ($_ -and $_.Code -ne 0) { $name = $_.Name; & $check ($files | Where-Object { $_.Name -eq $name }) $dir $repo $workflow $commit $tag } else { $_ }
+    })
+    if ($results.Count -ne $files.Count) { throw 'The attestation checks did not all report back. Do not sign.' }
+    foreach ($r in $results) {
+        if ($r.Code -ne 0) { throw "No valid build attestation for $($r.Name) from $workflow : $($r.Err)" }
+        if (-not $r.Found) { throw "The attestation for $($r.Name) is not for $tag at commit $commit. Do not sign." }
+        Write-Host "  attested: $($r.Name)"
     }
 }
 function Confirm-Typed([string]$word, [string]$question) {
