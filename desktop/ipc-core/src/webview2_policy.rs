@@ -16,7 +16,15 @@ const DANGEROUS: &[&str] = &[
     "--no-sandbox",
     "--disable-gpu-sandbox",
     "--disable-site-isolation-trials",
-    "--disable-features",
+    "--inspect",
+    "--gpu-launcher",
+    "--renderer-cmd-prefix",
+    "--utility-cmd-prefix",
+    "--browser-subprocess-path",
+    "--single-process",
+    "--js-flags",
+    "--allow-file-access-from-files",
+    "--unsafely-treat-insecure-origin-as-secure",
     "--allow-running-insecure-content",
     "--ignore-certificate-errors",
     "--user-data-dir",
@@ -24,12 +32,29 @@ const DANGEROUS: &[&str] = &[
     "--enable-automation",
 ];
 
-/// The dangerous flags in one `AdditionalBrowserArguments` string. Flags are split on whitespace; `--name=value` is judged by its name;
-/// case is ignored. `--disable-features` is listed because it can switch off site isolation and other protections.
+/// Feature names whose removal weakens isolation. `--disable-features=RendererCodeIntegrity` (a common antivirus workaround that
+/// administrators push to every WebView2 host) is allowed; one of these names is not.
+const PROTECTIONS: &[&str] = &["isolateorigins", "site-per-process", "siteperprocess", "originkeyedprocessesbydefault", "strictorigin"];
+
+/// Chromium reads a switch with `--`, `-` or `/` in front, and strips quotes like `CommandLineToArgvW`: all spellings count.
+fn switch_name(tok: &str) -> Option<String> {
+    let t = tok.trim_matches('"');
+    let t = t.strip_prefix("--").or_else(|| t.strip_prefix('-')).or_else(|| t.strip_prefix('/'))?;
+    let name = t.split('=').next().unwrap_or(t).trim_matches('"');
+    Some(format!("--{}", name.to_ascii_lowercase()))
+}
+
+/// The dangerous flags in one `AdditionalBrowserArguments` string. Flags are split on whitespace and judged by name, ignoring case,
+/// quotes and the prefix style.
 pub fn dangerous_flags(args: &str) -> Vec<String> {
     args.split_whitespace()
         .filter_map(|tok| {
-            let name = tok.split('=').next().unwrap_or(tok).to_ascii_lowercase();
+            let name = switch_name(tok)?;
+            if name == "--disable-features" {
+                let value =
+                    tok.trim_matches('"').split_once('=').map(|(_, v)| v.trim_matches('"').to_ascii_lowercase()).unwrap_or_default();
+                return value.split(',').any(|f| PROTECTIONS.contains(&f.trim())).then_some(name);
+            }
             DANGEROUS.contains(&name.as_str()).then_some(name)
         })
         .collect()
@@ -53,6 +78,25 @@ mod tests {
         assert_eq!(dangerous_flags("--foo  --No-Sandbox   --disable-web-security"), vec!["--no-sandbox", "--disable-web-security"]);
         assert_eq!(dangerous_flags("--auto-open-devtools-for-tabs"), vec!["--auto-open-devtools-for-tabs"]);
         assert_eq!(dangerous_flags("--disable-features=IsolateOrigins,site-per-process"), vec!["--disable-features"]);
+    }
+
+    #[test]
+    fn other_prefixes_and_quotes_do_not_hide_a_flag() {
+        for s in [
+            "-remote-debugging-port=9222",
+            "/remote-debugging-port=9222",
+            "\"--remote-debugging-port=9222\"",
+            "\"/no-sandbox\"",
+            "--INSPECT=9229",
+        ] {
+            assert_eq!(dangerous_flags(s).len(), 1, "{s}");
+        }
+    }
+
+    #[test]
+    fn a_common_enterprise_workaround_is_allowed() {
+        assert!(dangerous_flags("--disable-features=RendererCodeIntegrity").is_empty());
+        assert!(dangerous_flags("--disable-features").is_empty());
     }
 
     #[test]

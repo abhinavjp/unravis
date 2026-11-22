@@ -7,6 +7,7 @@
 #>
 param([Parameter(Mandatory)][string]$Exe)
 $ErrorActionPreference = 'Stop'
+$Exe = Convert-Path -LiteralPath $Exe
 $b = [System.IO.File]::ReadAllBytes($Exe)
 function U16($o) { [BitConverter]::ToUInt16($b, $o) }
 function U32($o) { [BitConverter]::ToUInt32($b, $o) }
@@ -40,7 +41,7 @@ if ($dbgRva -ne 0 -and $dbgSize -ne 0) {
     }
     $off = & $rawOf $dbgRva
     if ($off -ge 0) {
-        for ($e = 0; $e -lt [int]($dbgSize / 28); $e++) {
+        for ($e = 0; $e -lt [int][Math]::Floor($dbgSize / 28); $e++) {
             $d = $off + 28 * $e
             $type = U32 ($d + 12)
             if ($type -eq 20) {

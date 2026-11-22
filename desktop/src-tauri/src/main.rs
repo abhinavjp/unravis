@@ -26,7 +26,7 @@ fn main() {
     use ipc_core::policy::parse_args;
 
     lockdown::env_strip();
-    hardening::set_process_mitigations();
+    let _mitigations = hardening::set_process_mitigations();
     let args = parse_args(std::env::args().skip(1));
     // `--quit` is a signal only: no window, no dialog, no elevation refusal. Exit 0 = asked (or nothing was running), 1 = could not ask.
     if args.quit {

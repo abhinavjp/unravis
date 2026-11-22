@@ -6,11 +6,10 @@
 use ipc_core::webview2_policy::first_violation;
 use std::ptr::null_mut;
 use windows_sys::Win32::System::Registry::{
-    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_WOW64_64KEY, REG_SZ, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
+    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_WOW64_64KEY, REG_EXPAND_SZ, REG_MULTI_SZ, REG_SZ, RegCloseKey,
+    RegOpenKeyExW, RegQueryValueExW,
 };
-use windows_sys::Win32::System::Threading::{
-    ProcessExtensionPointDisablePolicy, ProcessImageLoadPolicy, ProcessStrictHandleCheckPolicy, SetProcessMitigationPolicy,
-};
+use windows_sys::Win32::System::Threading::{ProcessExtensionPointDisablePolicy, ProcessImageLoadPolicy, SetProcessMitigationPolicy};
 
 const KEY: &str = "SOFTWARE\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments";
 const EXE_NAME: &str = "unravis-desktop.exe";
@@ -29,12 +28,13 @@ fn read_value(root: HKEY, name: &str) -> Option<String> {
         let (mut ty, mut bytes) = (0u32, 0u32);
         let probe = RegQueryValueExW(key, wname.as_ptr(), std::ptr::null(), &mut ty, null_mut(), &mut bytes);
         let mut out = None;
-        if probe == 0 && ty == REG_SZ && (2..=64 * 1024).contains(&bytes) {
-            let mut buf = vec![0u16; (bytes as usize).div_ceil(2)];
-            let mut n = bytes;
+        if probe == 0 && matches!(ty, REG_SZ | REG_EXPAND_SZ | REG_MULTI_SZ) && (2..=64 * 1024).contains(&bytes) {
+            let mut buf = vec![0u16; (bytes as usize).div_ceil(2) + 2];
+            let mut n = (buf.len() * 2) as u32;
             if RegQueryValueExW(key, wname.as_ptr(), std::ptr::null(), &mut ty, buf.as_mut_ptr().cast(), &mut n) == 0 {
-                let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-                out = Some(String::from_utf16_lossy(&buf[..len]));
+                // A multi-string holds several values separated by NULs: judge them all, as one text.
+                let used = (n as usize / 2).min(buf.len());
+                out = Some(String::from_utf16_lossy(&buf[..used]).replace('\0', " "));
             }
         }
         RegCloseKey(key);
@@ -58,20 +58,27 @@ pub fn webview2_policy_violation() -> Option<String> {
     }
     first_violation(&found).map(|(place, flags)| {
         format!(
-            "Windows policy gives the embedded browser unsafe options ({}) at {KEY}\\{place}. Ask your administrator to remove them.",
+            "Windows policy gives the embedded browser unsafe options ({}) at {KEY}\\{place}. Ask your administrator to remove them. Unravis still works in your web browser.",
             flags.join(", ")
         )
     })
 }
 
-/// Strict handle checks, no remote or low-integrity images and System32-first image search, extension points off. Failures are
-/// ignored: an older Windows may not know a policy, and the shell must still start.
-pub fn set_process_mitigations() {
+/// Which run-time policies were accepted. Logged by the caller; a refusal by an older Windows is not fatal.
+#[allow(dead_code)] // read by the security status command (BL-314)
+pub struct Applied {
+    pub image_load: bool,
+    pub extension_points: bool,
+}
+
+/// No remote or low-integrity images and System32-first image search; extension points off. The strict-handle policy of spec 02 (0x3) is
+/// NOT set yet: with permanent exceptions any bad handle in tao, wry, the WebView2 loader or an injected DLL becomes a crash, and nothing
+/// has launched the real shell with it on (BL-326 stays open for that). ACG is not set either (BL-327 trial).
+pub fn set_process_mitigations() -> Applied {
     // Each policy struct is one DWORD of flag bits.
-    let set = |policy, flags: u32| unsafe {
-        SetProcessMitigationPolicy(policy, (&flags as *const u32).cast(), size_of::<u32>());
-    };
-    set(ProcessStrictHandleCheckPolicy, 0x3); // RaiseExceptionOnInvalidHandleReference | HandleExceptionsPermanentlyEnabled
-    set(ProcessImageLoadPolicy, 0x7); // NoRemoteImages | NoLowMandatoryLabelImages | PreferSystem32Images
-    set(ProcessExtensionPointDisablePolicy, 0x1);
+    let set = |policy, flags: u32| unsafe { SetProcessMitigationPolicy(policy, (&flags as *const u32).cast(), size_of::<u32>()) != 0 };
+    Applied {
+        image_load: set(ProcessImageLoadPolicy, 0x7), // NoRemoteImages | NoLowMandatoryLabelImages | PreferSystem32Images
+        extension_points: set(ProcessExtensionPointDisablePolicy, 0x1),
+    }
 }
