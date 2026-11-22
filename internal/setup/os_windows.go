@@ -599,11 +599,32 @@ func openNoFollow(path string, access uint32) (windows.Handle, error) {
 		windows.CloseHandle(h)
 		return 0, err
 	}
-	if got := strings.TrimPrefix(windows.UTF16ToString(buf[:n]), `\\?\`); !samePath(got, path) {
+	if got := strings.TrimPrefix(windows.UTF16ToString(buf[:n]), `\\?\`); !samePath(got, longPath(path)) {
 		windows.CloseHandle(h)
 		return 0, fmt.Errorf("%s: %w", path, errIsLink)
 	}
 	return h, nil
+}
+
+// longPath is path with any 8.3 short names (RUNNER~1) spelled out, as GetFinalPathNameByHandle spells them. It returns path
+// unchanged when it cannot be expanded.
+func longPath(path string) string {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return path
+	}
+	buf := make([]uint16, 512)
+	n, err := windows.GetLongPathName(p, &buf[0], uint32(len(buf)))
+	if err != nil || n == 0 {
+		return path
+	}
+	if int(n) > len(buf) {
+		buf = make([]uint16, n+1)
+		if n, err = windows.GetLongPathName(p, &buf[0], uint32(len(buf))); err != nil || n == 0 {
+			return path
+		}
+	}
+	return windows.UTF16ToString(buf[:n])
 }
 
 // enableTakeOwnership turns on the privilege that lets an administrator set an owner. Best effort.
