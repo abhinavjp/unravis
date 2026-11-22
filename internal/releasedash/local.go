@@ -67,8 +67,9 @@ type Local struct {
 	Live   *Live // the release process on this PC right now, from the very start of Release.ps1
 }
 
-// pathRE hides file paths (they can hold a user name or a key file name) in free text from the log.
-var pathRE = regexp.MustCompile(`(?:[A-Za-z]:[\\/]|\\\\|/)[^\s"']+`)
+// pathRE hides file paths (they can hold a user name or a key file name) in free text from the log. A Windows or share path
+// may hold spaces, so it is cut to the end of the sentence part: hiding too much is better than leaking a tail.
+var pathRE = regexp.MustCompile(`[A-Za-z]:[\\/][^"'<>|*?\r\n]*|\\\\[^"'<>|*?\r\n]*|\.{1,2}[\\/][^\s"']*|(?:^|\s)/[\w.~-]+(?:/[\w.~-]*)+|[\w.-]*\.key\.json|[\w.-]*\.pub\b`)
 
 func clip(s string) string {
 	s = strings.Map(func(r rune) rune {
@@ -77,7 +78,12 @@ func clip(s string) string {
 		}
 		return r
 	}, s)
-	s = pathRE.ReplaceAllString(s, "<path>")
+	s = pathRE.ReplaceAllStringFunc(s, func(m string) string {
+		if m != "" && (m[0] == ' ' || m[0] == '\t') { // a leading space belongs to the text, not to the path
+			return m[:1] + "<path>"
+		}
+		return "<path>"
+	})
 	if r := []rune(s); len(r) > maxReason {
 		s = string(r[:maxReason])
 	}

@@ -44,6 +44,7 @@ func (r *Runner) ApplyProfileLinks(opts Options, res *Result, onLog func(string)
 	if res.AppExe != "" {
 		l.AppExe = res.AppExe
 		l.InstallDir = filepath.Dir(res.AppExe)
+		l.ReleasesExe = filepath.Join(l.InstallDir, ReleasesExeName) // the releases link follows a relocated install too
 	}
 	if err := r.WriteProfileLinks(l, opts.StartAtSignIn, onLog); err != nil {
 		log("shortcut: " + err.Error())

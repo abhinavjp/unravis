@@ -13,16 +13,19 @@ name: Supply chain
 # same PR that creates desktop/ (no Rust exists yet). Until then dependabot's cargo entry
 # is inert and osv-scanner skips the Cargo.lock.
 on:
+  # Pull requests into develop get the action-pin check in fast-gate.yml; the rest runs on the push to develop and on the
+  # pull request that promotes develop to master (docs/ci/RELEASE-TRAIN.md).
   push:
-    branches: [master]
+    branches: [master, develop]
   pull_request:
+    branches: [master]
 
 permissions:
   contents: read
 
 concurrency:
   group: supply-chain-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 env:
   GOVULNCHECK_VERSION: v1.10.0

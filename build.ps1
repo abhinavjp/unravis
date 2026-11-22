@@ -170,7 +170,9 @@ try {
     # Remove this copy and the MCP.md note after 2026-12-31 (one release after the rename).
     Copy-Item -LiteralPath (Join-Path $UtilityRoot 'dist\unravis.exe') -Destination (Join-Path $UtilityRoot 'dist\api-audit-explorer.exe') -Force
     Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-keeper.exe'), './cmd/unravis-keeper')
-    Invoke-Sign @((Join-Path $UtilityRoot 'dist\unravis-keeper.exe'))
+    # The releases window (read-only release status, its own icon). A GUI program like the app, so it opens no console; it ships inside the setup program and updates with it.
+    Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $GuiLdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-releases.exe'), './cmd/unravis-releases')
+    Invoke-Sign @((Join-Path $UtilityRoot 'dist\unravis-keeper.exe'), (Join-Path $UtilityRoot 'dist\unravis-releases.exe'))
 
     # The one-file installer comes last: it embeds the programs above with a manifest of their SHA-256, so setup refuses a
     # payload that was changed after the build. The payload folder is cleared first and is not committed (see its README.txt).
@@ -178,7 +180,7 @@ try {
     $PayloadDir = Join-Path $UtilityRoot 'cmd\unravis-setup\payload'
     Get-ChildItem -LiteralPath $PayloadDir -Force | Where-Object { $_.Name -notin @('README.txt', '.gitignore') } | Remove-Item -Recurse -Force
     $PayloadFiles = @()
-    foreach ($Name in @('unravis.exe', 'unravis-keeper.exe', 'unravis-blackbox.exe')) {
+    foreach ($Name in @('unravis.exe', 'unravis-keeper.exe', 'unravis-blackbox.exe', 'unravis-releases.exe')) {
         $Source = Join-Path $UtilityRoot "dist\$Name"
         Copy-Item -LiteralPath $Source -Destination (Join-Path $PayloadDir $Name) -Force
         $PayloadSha = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -196,9 +198,11 @@ try {
         # Unravis Lite: a small console viewer for one Blackbox (docs/auto-updater/SPEC.md). It stays a console program so it can print the one-time link.
         Invoke-Checked $GoExe @('build', '-mod=readonly', '-buildvcs=false', '-trimpath', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-lite.exe'), './cmd/unravis-lite')
         Invoke-Sign @((Join-Path $UtilityRoot 'dist\unravis-setup.exe'), (Join-Path $UtilityRoot 'dist\unravis-lite.exe'))
-        # Subsystem check: the app must be GUI (2) so it opens no console; every other program built here stays console (3).
+        # Subsystem check: the app and the releases window must be GUI (2) so they open no console; every other program built here stays console (3).
         $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis.exe')
         if ($Subsystem -ne 2) { throw "unravis.exe: PE subsystem $Subsystem, expected 2" }
+        $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis-releases.exe')
+        if ($Subsystem -ne 2) { throw "unravis-releases.exe: PE subsystem $Subsystem, expected 2" }
         $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis-keeper.exe')
         if ($Subsystem -ne 3) { throw "unravis-keeper.exe: PE subsystem $Subsystem, expected 3" }
         $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis-blackbox.exe')

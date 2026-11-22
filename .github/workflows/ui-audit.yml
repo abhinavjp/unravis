@@ -1,0 +1,90 @@
+name: UI audit
+
+# Opens every screen of the demo app in dark and light, at desktop and phone width, checks the layout and
+# writes tools/uiaudit/report/REPORT.md with screenshots. About 20 minutes, so it is NOT a check on every pull request:
+# it runs on pull requests that change the audit itself (tools/uiaudit, this file), by hand (Actions, UI audit, Run workflow)
+# and weekly. The verdict is in the job summary; the whole report is the artifact "ui-audit-report-<os>".
+# Runs on Linux and on Windows (the reference renderer of the screenshots, and where Windows-only screens can be reached).
+# See tools/uiaudit/README.md.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
+  pull_request:
+    paths:
+      - 'tools/uiaudit/**'
+      - '.github/workflows/ui-audit.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: audit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.5'
+          cache: npm
+          cache-dependency-path: tools/uiaudit/package-lock.json
+
+      - name: Install the audit tools and Chromium
+        working-directory: tools/uiaudit
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Checker tests
+        working-directory: tools/uiaudit
+        run: |
+          npm test
+          npm run selftest
+
+      - name: Run the audit
+        id: audit
+        working-directory: tools/uiaudit
+        run: node run-audit.mjs
+
+      - name: Verdict in the job summary
+        if: ${{ always() }}
+        working-directory: tools/uiaudit
+        run: |
+          if [ -f report/REPORT.md ]; then
+            sed -n '1,/^## Problems by kind/p' report/REPORT.md | head -n -1 >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The audit did not produce a report." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ui-audit-report-${{ matrix.os }}
+          path: |
+            tools/uiaudit/report/REPORT.md
+            tools/uiaudit/report/summary.json
+            tools/uiaudit/report/shots
+            tools/uiaudit/report/data
+          retention-days: 30
