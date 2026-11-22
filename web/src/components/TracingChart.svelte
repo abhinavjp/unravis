@@ -923,6 +923,8 @@
 
   .brush { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent) 24%, transparent); outline: 1px dashed var(--accent); pointer-events: none; }
   .canvas-bar { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; font-size: var(--fs-2); }
+  /* A bare <small> is 0.83em of its parent (10px here); the help lines keep the bar's own 12px so they stay readable (BL-478). */
+  .canvas-bar small { font-size: inherit; }
   .canvas-group { display: inline-flex; gap: var(--space-1); }
   .latency { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
   .latency .p95 { stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }

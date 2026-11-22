@@ -31,6 +31,8 @@
   .field-help-toggle:hover, .field-help-toggle[aria-expanded='true'] { color: var(--text); }
   .field-help-toggle:hover::before, .field-help-toggle[aria-expanded='true']::before { background: var(--surface-2); border-color: var(--accent); }
   @media (pointer: coarse), (max-width: 720px) { .field-help-toggle { width: 32px; height: 32px; margin-block: -8px; margin-inline-start: calc(var(--space-1) - 8px); } .field-help-toggle::before { inset: 8px; } }
+  /* After a "?" hint the two hit areas must not overlap (BL-474): the hint button is 24px and sits 4px into this one's space, so start 4px later. Wins over the touch rule above. */
+  :global(.hint-wrap ~ .field-help-toggle) { margin-inline-start: var(--space-1); }
   .field-help-toggle:disabled { cursor: default; }
   .field-help-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .field-help-block { flex: 0 0 100%; min-width: 0; margin-top: var(--space-1); padding: var(--space-2) var(--space-3); background: var(--surface-2); border-inline-start: var(--hairline-width) solid var(--accent); font-weight: 400; }

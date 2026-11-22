@@ -260,7 +260,7 @@
   .shell { position: relative; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; max-height: calc(100vh - 50px); max-height: calc(100dvh - 50px); min-height: 0; }
   /* The right side is kept clear for the close button (12px in, 40px wide, 8px gap), so the last dot never sits under it. A rail
      that is wider than what is left scrolls sideways. */
-  .shell-rail { min-width: 0; padding: var(--space-5) var(--space-6) 0 var(--space-6); }
+  .shell-rail { min-width: 0; padding: var(--space-5) calc(var(--space-3) + 40px + var(--space-2)) 0 var(--space-6); }
   .shell-head { display: grid; gap: var(--space-1); padding: var(--space-5) var(--space-6) var(--space-4); border-bottom: 1px solid var(--hairline); }
   .shell-body { display: grid; align-content: start; gap: var(--space-5); min-height: 0; padding: var(--space-6); overflow: auto; }
   .shell-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-4) var(--space-6); border-top: 1px solid var(--hairline); background: var(--surface); }
