@@ -86,7 +86,7 @@ jobs:
           "enabled=$(($stable -and $secret -and $vars).ToString().ToLower())" >> $env:GITHUB_OUTPUT
 
       - name: Check out the code at the tag
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.tag.outputs.tag }}
           fetch-depth: 0 # full history: the notes generator walks git log back to the previous tag
@@ -113,12 +113,12 @@ jobs:
           "tests_done=$skip" >> $env:GITHUB_OUTPUT
 
       - name: Set up Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
 
       - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22.23.5'
           cache: npm
@@ -338,7 +338,7 @@ jobs:
 
       - name: Attest the release files (built by this workflow from this commit)
         # Pinned to the commit of v2.4.0. Sign-Release.ps1 checks these attestations before the owner signs the manifest.
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/unravis-v*-windows-x64.zip
@@ -348,7 +348,7 @@ jobs:
             dist/update-manifest.json
 
       - name: Upload the release assets
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets
           # Only the release files; dist also holds the loose programs, which are not assets.
@@ -374,12 +374,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Check out the code at the tag
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.build.outputs.tag }}
 
       - name: Download the release assets
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-assets
           path: dist
@@ -390,7 +390,7 @@ jobs:
 
       - name: Keep the smoke log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: smoke-log-${{ matrix.os }}
           path: dist/smoke-*.log
@@ -407,12 +407,12 @@ jobs:
       contents: write
     steps:
       - name: Check out the code at the tag
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.build.outputs.tag }}
 
       - name: Download the release assets
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-assets
           path: dist
