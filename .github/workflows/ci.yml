@@ -68,18 +68,22 @@ jobs:
             tools/screens/package-lock.json
 
       - name: Web - install
+        if: ${{ !cancelled() }}
         working-directory: web
         run: npm ci
 
       - name: Web - type check
+        if: ${{ !cancelled() }}
         working-directory: web
         run: npm run check
 
       - name: Web - tests
+        if: ${{ !cancelled() }}
         working-directory: web
         run: npm test
 
       - name: Web - build
+        if: ${{ !cancelled() }}
         working-directory: web
         run: npm run build
 
@@ -144,6 +148,15 @@ jobs:
         # The web step above already built web/dist, so it is skipped here; the Go tests step above already ran go test, so they are skipped too.
         run: ./build.ps1 -SkipWeb -SkipTests -Version "ci-$($env:GITHUB_SHA.Substring(0, 7))"
 
+      - name: No UPX in dist (BL-421 guard and its self-test)
+        shell: pwsh
+        run: |
+          ./tools/release/Test-NoUpx.Tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Test-NoUpx self-test failed.' }
+          ./tools/release/Test-NoUpx.ps1 -Path dist
+          if ($LASTEXITCODE -ne 0) { throw 'a packed exe is in dist.' }
+          Get-ChildItem dist -Filter *.exe | Select-Object Name, Length
+
       - name: Screenshots - install
         working-directory: tools/screens
         run: |
@@ -203,6 +216,206 @@ jobs:
           path: tools/screens/test-results
           if-no-files-found: ignore
           retention-days: 14
+
+  desktop-sidecar:
+    # BL-330. The Windows-only tests of the desktop sidecar's pipe code (internal/pipesec: first instance, full instance pool,
+    # logon-SID DACL, remote reject, peer and server checks). Later sidecar items (BL-301 and on) add their packages here.
+    # Also builds with the `e2e` tag, which only tests use, so that variant cannot rot.
+    # Matrix windows-2022 and windows-2025 for the pipe tests, as spec 08 D2 says. The Windows `build` job also runs these tests (go test ./...).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Vet (default and e2e tags)
+        shell: pwsh
+        run: |
+          go vet ./internal/pipesec/... ./internal/pipesrv/... ./internal/locator/... ./internal/appdirs/... ./cmd/audit-explorer/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          go vet -tags e2e ./internal/pipesec/... ./internal/pipesrv/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Pipe security tests
+        shell: pwsh
+        run: |
+          go test -count=1 -v ./internal/pipesec/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          go test -count=1 -tags e2e ./internal/pipesec/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Pipe server tests (BL-301)
+        # internal/pipesrv serves the handler over the real ui and ag pipes; cmd/audit-explorer holds TestPipeOnlyNoListenerNoSessionFile
+        # and the flag rules. The Windows build job runs them too (go test ./...).
+        shell: pwsh
+        run: |
+          go test -count=1 -v ./internal/pipesrv/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          go test -count=1 -v -run '^(TestPipeOnlyNoListenerNoSessionFile|TestPipeServerLoopbackKeepsBrowserModeListener|TestPipeFlagRules|TestPipeRejectsRemoteFlag|TestServeOverPipeSameJSONAsLoopback|TestListenerPortNilIsZero|TestNoTCPListenerInPipeMode)$' ./cmd/audit-explorer/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Locator tests (BL-302)
+        # internal/locator: round trip, alive/dead/reused pid, real pipes through WaitNamedPipe, owner-only ACL (icacls).
+        # cmd/audit-explorer: ten concurrent real starts leave one owner (the rest exit 12); a killed owner's locator is replaced.
+        shell: pwsh
+        run: |
+          go test -count=1 -v ./internal/locator/... ./internal/appdirs/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          go test -count=1 -v -run '^(TestPipeModeSecondCopyExits12|TestPipeModeSecondCopyNoLocator|TestPipeModeWritesAndRemovesLocator|TestPipeModeLocatorFailureIsFatal|TestTenConcurrentStartsOneOwner|TestStaleLocatorReplacedAfterKill)$' ./cmd/audit-explorer/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Shutdown RPC tests (BL-303)
+        # Linux-portable proofs (route on the ui pipe only, token, WAL checkpoint on app-created cases) plus the Windows-only ones:
+        # TestShutdownCleanRealExe (real exe, real ui pipe, writers busy, exit 0 within 5 s, no -wal/-shm, integrity_check ok) and
+        # TestKillDuringWriteReopens (TerminateProcess mid-write, reopen, integrity_check ok, saved lines kept).
+        shell: pwsh
+        run: |
+          go test -count=1 -v -run '^(TestShutdown.*|TestKillDuringWriteReopens)$' ./cmd/audit-explorer/... ./internal/pipesrv/...
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Real exe in pipe-only mode (no port, no session file, both pipes)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check NoPort
+
+      - name: Real exe in pipe-only mode (a second listener on the same pipe name is refused)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check Squat
+
+      - name: Real exe, ten simultaneous starts (one owner)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check TenStarts
+
+      - name: Real exe, killed owner (stale locator replaced)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check Stale
+
+      - name: Real exe, locator file ACL (icacls)
+        shell: pwsh
+        run: ./tools/desktop/Test-Sidecar.ps1 -Check Acl
+
+  linux-gates:
+    # BL-441. Lint, vet, race tests against a known-failure baseline, and the web checks, on Linux.
+    # The Windows `build` job stays the correctness gate. A few tests are Windows-only and fail here;
+    # they are listed in docs/desktop/baseline-go-tests.txt and only a failure NOT in that file fails the job.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Full history: golangci-lint judges only code the change adds (new-from-merge-base).
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Go - vet
+        run: go vet ./...
+
+      - name: Go - install golangci-lint
+        # Built here with the module's Go, not downloaded: the released binaries are built with Go 1.26
+        # and refuse a module that says go 1.27 ("Go language version used to build golangci-lint is lower").
+        # Go from go.mod is first on PATH (setup-go), so this builds with it.
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+
+      - name: Go - lint (only code changed since the base branch or the previous head)
+        run: |
+          before="${{ github.event.before }}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # First push of a branch has an all-zero "before"; after a force-push it may not exist any more.
+            # Then fall back to the config (new-from-merge-base: origin/master). --new-from-rev wins over it when given.
+            if [ -n "$before" ] && ! echo "$before" | grep -Eq '^0+$' && git cat-file -e "$before^{commit}" 2>/dev/null; then
+              golangci-lint run --new-from-rev="$before"
+            else
+              echo "No usable previous head ($before); linting against the merge base with origin/master."
+              golangci-lint run
+            fi
+          else
+            golangci-lint run
+          fi
+
+      - name: Go - tests of the failure comparer
+        run: node tools/ci/test-compare.mjs
+
+      - name: Go - tests (compared with the baseline)
+        env:
+          CGO_ENABLED: "0"
+        # No -race here: budget tests (time, memory) fail under the race detector on the runner and made the gate flaky.
+        # The race run is the separate report-only step below.
+        # -skip: these two tests hang until the timeout on Linux (the blackbox host waits for a port that never frees).
+        # They are the only skips; every other Linux failure is in the baseline file.
+        # The baseline holds known failures, so go test exits 1 on every run. Tolerate that exit code here;
+        # the compare step below is the pass/fail gate. Fail here only when go test produced no JSON at all
+        # (build or setup problem) or exited with something other than a test failure (0 or 1).
+        run: |
+          set +e
+          go test -count=1 -timeout 25m -coverprofile=go-linux.cover -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' -json ./... > go-test.json
+          code=$?
+          echo "go test exit code: $code"
+          if [ ! -s go-test.json ]; then echo "go test produced no JSON"; exit 1; fi
+          if [ "$code" -gt 1 ]; then exit "$code"; fi
+          exit 0
+
+      - name: Go - race detector (report only)
+        # Report only until BL-460 fixes the data races found in internal/store tests and the
+        # budget tests that exceed their limits under -race. Fails the step, not the job.
+        continue-on-error: true
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          go test -race -count=1 -timeout 25m -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' ./... 2>&1 | grep -E 'DATA RACE|^--- FAIL' | sort | uniq -c | sort -rn | head -40 || true
+          true
+
+      - name: Go - keep the coverage profile
+        if: ${{ always() && hashFiles('go-linux.cover') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: go-linux-cover
+          path: go-linux.cover
+          retention-days: 14
+
+      - name: Web - install
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: npm ci
+
+      - name: Web - type check
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: npm run check
+
+      - name: Web - tests
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: npm test
+
+      - name: Web - build
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: npm run build
+
+      - name: Go - compare failures with the baseline
+        if: ${{ always() && hashFiles('go-test.json') != '' }}
+        run: node tools/ci/compare-go-failures.mjs --json go-test.json --baseline docs/desktop/baseline-go-tests.txt
+
 
   powershell-syntax:
     # The release and install scripts are PowerShell nobody can run on every push. This at least proves each one parses:

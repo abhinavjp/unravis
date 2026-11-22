@@ -118,6 +118,14 @@ func BuildGroups(d GroupDeps) []Group {
 		switch {
 		case errors.Is(err, errNoTargets):
 			continue
+		case errors.Is(err, errNotApplicable):
+			// This host cannot have the group's counters (for example no VMware
+			// Tools). The group stays silent and looks again every
+			// notApplicableRecheck.
+			built = &lazyGroup{
+				name: name, optional: regs[name].optional,
+				factory: regs[name].factory, deps: gd, dormant: true,
+			}
 		case err != nil:
 			built = &lazyGroup{
 				name: name, optional: regs[name].optional,
@@ -191,6 +199,11 @@ func (t *trackedGroup) Close() error {
 	return nil
 }
 
+// notApplicableRecheck is how often a group that is not applicable on this host
+// asks its factory again (a later install, for example VMware Tools, is then
+// picked up without a restart).
+const notApplicableRecheck = 30 * time.Minute
+
 // groupRetryMax caps the retry backoff for an unavailable group.
 const groupRetryMax = 5 * time.Minute
 
@@ -217,6 +230,9 @@ type lazyGroup struct {
 	real     Group
 	next     time.Time
 	failures int
+	// dormant is true while the last factory answer was errNotApplicable. A
+	// dormant group reports errNotApplicable (silent), not errGroupUnavailable.
+	dormant bool
 }
 
 func (g *lazyGroup) Name() string   { return g.name }
@@ -226,11 +242,26 @@ func (g *lazyGroup) Collect(now time.Time, dt float64) (any, error) {
 	if g.real != nil {
 		return g.real.Collect(now, dt)
 	}
+	if g.dormant && g.next.IsZero() {
+		// BuildGroups already asked the factory and got errNotApplicable: that
+		// answer counts as the first check, so wait a full interval.
+		g.next = now.Add(notApplicableRecheck)
+		return nil, errNotApplicable
+	}
 	if now.Before(g.next) {
+		if g.dormant {
+			return nil, errNotApplicable
+		}
 		return nil, errGroupUnavailable
 	}
 	real, err := g.factory(g.deps)
 	if err != nil {
+		if errors.Is(err, errNotApplicable) {
+			g.dormant, g.failures = true, 0
+			g.next = now.Add(notApplicableRecheck)
+			return nil, errNotApplicable
+		}
+		g.dormant = false
 		if !errors.Is(err, errNoTargets) {
 			g.failures++
 		}
@@ -305,6 +336,7 @@ func applyGroup(s *Sample, name string, v any) {
 // Fixed failure reasons. They never carry provider text (handoff §3).
 var (
 	errNoTargets        = errors.New("no selected targets")
+	errNotApplicable    = errors.New("not applicable on this host")
 	errGroupUnavailable = errors.New("counter group unavailable")
 	errGroupPanic       = errors.New("counter group panicked")
 	errHostBusy         = errors.New("host collection still running")
@@ -488,6 +520,11 @@ func (c *groupCollector) runGroup(i int, g Group, now time.Time, dt float64, s *
 		// A group that ran out of time is the slowest one, whatever else ran.
 		c.slowName, c.slowDur = name, budgetMaxGroup
 		c.gt = append(c.gt, groupTime{Name: name, Dur: budgetMaxGroup, Outcome: "timeout"})
+		return
+	}
+	if errors.Is(err, errNotApplicable) {
+		// The group does not apply to this host: leave no trace (no Missing, no
+		// timing, no budget count). The worker slot was already freed by run.
 		return
 	}
 	took := time.Since(start)

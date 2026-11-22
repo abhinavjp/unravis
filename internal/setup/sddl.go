@@ -53,6 +53,11 @@ const (
 // "undo" something they chose.
 const AdminOnlySDDL = "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
 
+// MachineJournalFileSDDL is the owner and list of the machine journal file itself: owner Administrators, SYSTEM and Administrators
+// full control, nothing inherited. The journal writer sets it in the create call, so ReadFileProven (owner SYSTEM or Administrators
+// only) accepts the file the real writer made; the same list as AdminOnlySDDL, without the inherit flags a file does not take.
+const MachineJournalFileSDDL = "O:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)"
+
 // AnchorKeySDDL is the access list of HKLM\SOFTWARE\Unravis.
 const AnchorKeySDDL = "O:BAD:P(A;CI;KA;;;SY)(A;CI;KA;;;BA)(A;CI;KR;;;BU)"
 

@@ -226,6 +226,7 @@ function Invoke-ReleaseBootstrap {
                 if ($ar -eq 'withdrawn') { Write-Host "v$nt holds this same commit and was WITHDRAWN. Releasing it again would build the same files. Merge the fix first, or pass -Again." -ForegroundColor Red; return 1 }
             }
             $null = Update-RemoteLock $Repo $id @{ commit = $pinned; stage = 'Pinned'; holdMerges = ((-not $CheckOnly) -and -not $fromTag) } "release lock: pinned $($pinned.Substring(0,7))"
+            Set-LockInfo $data @{ id = $id; pid = $PID; requester = $me; version = [string]$Version; stage = 'Pinned'; started = $runStart.ToString('o'); nonce = $nonce }   # same step name as the GitHub record
             # 4. a private worktree of exactly that commit; this script runs again from there
             $workRoot = Join-Path $data 'work'
             if (Test-Path -LiteralPath $workRoot) { foreach ($d in Get-ChildItem -LiteralPath $workRoot -Directory) { git worktree remove --force $d.FullName 2>&1 | Out-Null; Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue } }
@@ -322,7 +323,7 @@ function Find-Run([string]$workflow, [string]$branchOrTag, [string]$sha, [int]$t
 }
 # CI on a commit: waits while a run is queued or going (a release right after a merge used to stop here), fails on a red run.
 function Wait-CiGreen([string]$sha, [int]$minutes) {
-    $deadline = (Get-Date).AddMinutes($minutes); $said = $false; $seenAt = Get-Date; $n = 0
+    $deadline = (Get-Date).AddMinutes($minutes); $said = $false; $seenAt = Get-Date; $n = 0; $lastBeat = Get-Date
     while ($true) {
         $runs = @(gh run list --repo $Repo --workflow ci.yml --commit $sha --json conclusion,status,databaseId | ConvertFrom-Json)
         if ($LASTEXITCODE -ne 0) { Fail 'gh could not list CI runs.' }
@@ -335,6 +336,11 @@ function Wait-CiGreen([string]$sha, [int]$minutes) {
         if (-not $runs.Count -and ((Get-Date) - $seenAt).TotalMinutes -gt 5) { Fail "No CI run (ci.yml) on $($sha.Substring(0,7)) after 5 minutes. Was it pushed through a PR?" }
         if ((Get-Date) -gt $deadline) { Fail "CI on $($sha.Substring(0,7)) is still running after $minutes minutes." }
         if (-not $said) { Write-Host "CI on $($sha.Substring(0,7)) is still running; waiting (up to $minutes min)."; $said = $true }
+        # sign of life on the GitHub record every 4 minutes, so -Status does not show a long CI wait as a dead run
+        if (((Get-Date) - $lastBeat).TotalMinutes -ge 4) {
+            try { $null = Update-RemoteLock $Repo $LockId @{ stage = 'WaitCI' } 'release lock: waiting for CI'; $lastBeat = Get-Date }
+            catch { if ($_.Exception.Message -match 'lock lost') { Fail $_.Exception.Message } }
+        }
         $n++; Start-Sleep -Seconds (Get-BackoffSeconds $n 30)
     }
 }
@@ -547,6 +553,8 @@ try {
         $script:extra = @{ key = $chosen.Name; passref = "$passRef"; prev_feed = "$($feed.Tag)" }
         & (Join-Path $PSScriptRoot 'Test-Release.ps1') | Out-Host
         if ($LASTEXITCODE -ne 0) { Fail 'Test-Release.ps1 failed.' }
+        & (Join-Path $PSScriptRoot 'Test-NoUpx.Tests.ps1') | Out-Host
+        if ($LASTEXITCODE -ne 0) { Fail 'Test-NoUpx.Tests.ps1 failed.' }
         Write-Host "Preflight OK: $Branch at $($head.Substring(0,7)), CI green, $tag is free, key $($chosen.Name)." -ForegroundColor Green
         if ($CheckOnly) { Write-Host "`nCHECK ONLY. Would release $tag with key $($chosen.Name). Nothing was changed." -ForegroundColor Yellow; exit 0 }
         Write-AuditEntry $audit @{ event = 'preflight-ok'; version = $Version; commit = $head; go_installed = "$($script:report.go.installed)"; go_used = "$($script:report.go.used)"; key = $chosen.Name; key_pub = $chosen.Pub; feed = "$($feed.Tag)"; sensitive_prs = @($script:report.sensitive | Where-Object { $_ }) }

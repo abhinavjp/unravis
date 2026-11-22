@@ -63,23 +63,38 @@ function Assert-Attested([string]$dir, [string]$repo, [string]$tag, [string]$com
     $workflow = "$repo/.github/workflows/release.yml"
     $files = @(Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Name -match '^(unravis-.*\.(zip|exe)|update-manifest\.json)$' })
     if (-not $files.Count) { throw 'No release files to check the attestation of. Do not sign.' }
-    # One gh call per file, run side by side (each is a round trip to GitHub); every file is still checked on its own, and one failure
-    # fails the lot. Each call writes its own error file so their output cannot mix.
-    $results = @($files | ForEach-Object -ThrottleLimit 5 -Parallel {
-        $f = $_
-        $errFile = Join-Path $using:dir ('.attest-err-' + $f.Name + '.txt')   # gh prints progress on stderr; keep it out of the JSON
-        $json = gh attestation verify $f.FullName --repo $using:repo --signer-workflow $using:workflow --format json 2>$errFile
-        $code = $LASTEXITCODE
-        $err = if (Test-Path -LiteralPath $errFile) { Get-Content -Raw -ErrorAction SilentlyContinue $errFile } else { '' }
-        Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
-        $found = $false
-        if ($code -eq 0) {
-            foreach ($r in ($json | ConvertFrom-Json)) {
-                $c = $r.verificationResult.signature.certificate
-                if ($c.sourceRepositoryDigest -eq $using:commit -and $c.sourceRepositoryRef -eq "refs/tags/$($using:tag)") { $found = $true }
-            }
-        }
-        [pscustomobject]@{ Name = $f.Name; Code = $code; Found = $found; Err = $err }
+    # One gh call per file. The first one runs alone: gh sets up its Sigstore trust root on first use, and several calls doing that at
+    # the same moment failed on rc.56 ("no valid Sigstore verifiers could be initialized"). The rest run side by side (each is a round
+    # trip to GitHub). A file whose check failed side by side is checked once more on its own; every file is still checked, and one
+    # failure fails the lot. Each call writes its own error file so their output cannot mix.
+    $checkText = @'
+param($f, $dir, $repo, $workflow, $commit, $tag)
+$errFile = Join-Path $dir ('.attest-err-' + $f.Name + '.txt')   # gh prints progress on stderr; keep it out of the JSON
+# The certificate's identity must be exactly this workflow at exactly this tag (gh allows only one of --cert-identity and --signer-workflow),
+# and gh itself checks the commit and the ref; the JSON is checked again below.
+$json = gh attestation verify $f.FullName --repo $repo --cert-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$tag" --source-ref "refs/tags/$tag" --source-digest $commit --format json 2>$errFile
+$code = $LASTEXITCODE
+$err = if (Test-Path -LiteralPath $errFile) { Get-Content -Raw -ErrorAction SilentlyContinue $errFile } else { '' }
+Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
+$found = $false
+if ($code -eq 0) {
+    foreach ($r in ($json | ConvertFrom-Json)) {
+        $c = $r.verificationResult.signature.certificate
+        if ($c.sourceRepositoryDigest -eq $commit -and $c.sourceRepositoryRef -eq "refs/tags/$tag") { $found = $true }
+    }
+}
+[pscustomobject]@{ Name = $f.Name; Code = $code; Found = $found; Err = $err }
+'@
+    $check = [scriptblock]::Create($checkText)
+    $first = & $check $files[0] $dir $repo $workflow $commit $tag
+    $results = @($first)
+    if ($files.Count -gt 1) {
+        $results += @($files[1..($files.Count - 1)] | ForEach-Object -ThrottleLimit 4 -Parallel {
+            & ([scriptblock]::Create($using:checkText)) $_ $using:dir $using:repo $using:workflow $using:commit $using:tag
+        })
+    }
+    $results = @($results | ForEach-Object {
+        if ($_ -and $_.Code -ne 0) { $name = $_.Name; & $check ($files | Where-Object { $_.Name -eq $name }) $dir $repo $workflow $commit $tag } else { $_ }
     })
     if ($results.Count -ne $files.Count) { throw 'The attestation checks did not all report back. Do not sign.' }
     foreach ($r in $results) {

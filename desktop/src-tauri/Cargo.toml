@@ -1,0 +1,30 @@
+[package]
+name = "unravis-desktop"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Unravis desktop shell: a thin Tauri host for the Go sidecar. Zero Tauri plugins."
+
+[[bin]]
+name = "unravis-desktop"
+path = "src/main.rs"
+
+[dependencies]
+ipc-core = { path = "../ipc-core" }
+# Floor 2.12.7 (GHSA-w28w-mhc8-qvjv). Default features off: no plugin-style extras. CI checks the locked version and zero tauri-plugin-*.
+tauri = { version = "2.12.7", default-features = false, features = ["wry", "common-controls-v6"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[build-dependencies]
+tauri-build = { version = "2", default-features = false }

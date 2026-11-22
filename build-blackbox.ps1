@@ -59,7 +59,7 @@ if ($Reuse) {
 } else {
     Push-Location $Root
     try {
-        & $GoExe build -trimpath -ldflags "-s -w -X main.version=$Clean" -o $Exe ./cmd/unravis-blackbox
+        & $GoExe build -trimpath -ldflags "-s -w -buildid= -X main.version=$Clean" -o $Exe ./cmd/unravis-blackbox
         if ($LASTEXITCODE -ne 0) { throw "go build failed with exit code $LASTEXITCODE" }
     } finally {
         Pop-Location

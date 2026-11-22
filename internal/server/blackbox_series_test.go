@@ -252,3 +252,59 @@ func TestDemoRecordingCarriesWhatHappened(t *testing.T) {
 		t.Fatalf("a dump entry carries a path: %s", b)
 	}
 }
+
+// BL-113: the VMware balloon is charted in bytes, and a host that is not a VMware
+// guest (no vm group, nothing in Missing) leaves no cover for the chart note.
+func TestSeriesVMBalloon(t *testing.T) {
+	start := time.Date(2026, 11, 18, 6, 0, 0, 0, time.UTC)
+	win := bbWindow{Start: start, End: start.Add(time.Minute)}
+	man := blackbox.Manifest{IntervalSeconds: 30}
+	cover := func(ans bbSeriesAnswer) bbSeriesGroupCover {
+		for _, g := range ans.Groups {
+			if g.Group == "vm" {
+				return g
+			}
+		}
+		t.Fatal("no vm group cover")
+		return bbSeriesGroupCover{}
+	}
+
+	withVM := []blackbox.Sample{
+		{V: 1, Run: "r1", Seq: 1, T: start, CPU: f64(1), VM: &blackbox.VMGroup{BalloonBytes: u64(536870912)}},
+		{V: 1, Run: "r1", Seq: 2, T: start.Add(30 * time.Second), CPU: f64(1), VM: &blackbox.VMGroup{BalloonBytes: u64(0)}},
+	}
+	ans := buildBBSeries(man, withVM, blackbox.ReadReport{}, blackbox.StateInfo{}, win, 2)
+	var line *bbSeriesLine
+	for i := range ans.Lines {
+		if ans.Lines[i].Key == "vm.balloonBytes" {
+			line = &ans.Lines[i]
+		}
+	}
+	if line == nil {
+		t.Fatalf("no vm.balloonBytes series; have %v", keysOf(ans.Lines))
+	}
+	if line.Unit != "bytes" {
+		t.Errorf("unit = %q, want bytes", line.Unit)
+	}
+	if len(line.Points) != 2 || line.Points[0][1] != 536870912 || line.Points[1][1] != 0 {
+		t.Errorf("points = %v, want 536870912 then a real 0", line.Points)
+	}
+	if c := cover(ans); c.Read != 2 || c.Missing != 0 {
+		t.Errorf("vm cover = %+v, want read 2 missing 0", c)
+	}
+
+	// Not a VMware guest: no vm in the sample and no Missing entry.
+	without := []blackbox.Sample{
+		{V: 1, Run: "r1", Seq: 1, T: start, CPU: f64(1)},
+		{V: 1, Run: "r1", Seq: 2, T: start.Add(30 * time.Second), CPU: f64(1)},
+	}
+	ans = buildBBSeries(man, without, blackbox.ReadReport{}, blackbox.StateInfo{}, win, 2)
+	if c := cover(ans); c.Read != 0 || c.Missing != 0 || c.Slow != 0 || c.Busy != 0 || c.Partial != 0 {
+		t.Errorf("vm cover = %+v, want read 0, missing 0 (no chart note)", c)
+	}
+	for _, l := range ans.Lines {
+		if strings.HasPrefix(l.Key, "vm.") {
+			t.Errorf("series %s drawn without a reading", l.Key)
+		}
+	}
+}

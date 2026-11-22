@@ -70,8 +70,20 @@ jobs:
           # The secrets context cannot be read in a step "if", so only this step sees the secret
           # and passes on a plain true/false.
           SIGNPATH_SET: ${{ secrets.SIGNPATH != '' }}
+          SIGNPATH_ORG_SET: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && vars.SIGNPATH_PROJECT_SLUG != '' && vars.SIGNPATH_POLICY_SLUG != '' && vars.SIGNPATH_MODULE_VERSION != '' }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          "enabled=$($env:SIGNPATH_SET.ToLower())" >> $env:GITHUB_OUTPUT
+          # Authenticode is for STABLE releases only (a tag without "-"). A release candidate is never signed: it stays unsigned
+          # and its notes say so. A stable tag with the secret set but the three SignPath variables missing stops the build,
+          # so a stable release is never shipped unsigned by accident while signing looks configured.
+          $stable = -not $env:TAG.Contains('-')
+          $secret = $env:SIGNPATH_SET.ToLower() -eq 'true'
+          $vars = $env:SIGNPATH_ORG_SET.ToLower() -eq 'true'
+          if ($stable -and $secret -and -not $vars) {
+            Write-Host '::error title=SignPath variables missing::The SIGNPATH secret is set, but the repository variables SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG, SIGNPATH_POLICY_SLUG and SIGNPATH_MODULE_VERSION (an exact SignPath module version) are not all set. Set them, or delete the secret to ship this stable release unsigned.'
+            exit 1
+          }
+          "enabled=$(($stable -and $secret -and $vars).ToString().ToLower())" >> $env:GITHUB_OUTPUT
 
       - name: Check out the code at the tag
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -159,9 +171,26 @@ jobs:
         # build.ps1 also builds the keeper, the Blackbox and the installer with its embedded payload.
         # -Release makes build.ps1 build the Blackbox first and pin the app to its SHA-256 (SEC-FIX-01); it fails on an empty pin.
         shell: pwsh
+        env:
+          # Read only by tools/release/Sign-Binaries.ps1. Empty unless signing is enabled (stable tag + secret + variables), so a release candidate never has the token in its environment.
+          SIGNPATH_API_TOKEN: ${{ steps.signgate.outputs.enabled == 'true' && secrets.SIGNPATH || '' }}
+          SIGNPATH_ORGANIZATION_ID: ${{ steps.signgate.outputs.enabled == 'true' && vars.SIGNPATH_ORGANIZATION_ID || '' }}
+          SIGNPATH_PROJECT_SLUG: ${{ steps.signgate.outputs.enabled == 'true' && vars.SIGNPATH_PROJECT_SLUG || '' }}
+          SIGNPATH_POLICY_SLUG: ${{ steps.signgate.outputs.enabled == 'true' && vars.SIGNPATH_POLICY_SLUG || '' }}
+          SIGNPATH_MODULE_VERSION: ${{ steps.signgate.outputs.enabled == 'true' && vars.SIGNPATH_MODULE_VERSION || '' }}
+          SIGNPATH_ARTIFACT_CONFIG_SLUG: ${{ steps.signgate.outputs.enabled == 'true' && vars.SIGNPATH_ARTIFACT_CONFIG_SLUG || '' }}
+          SIGN: ${{ steps.signgate.outputs.enabled }}
         run: |
-          ./build.ps1 -SkipWeb -SkipTests -Release -Version "${{ steps.tag.outputs.version }}"
+          $sign = @{}
+          if ($env:SIGN -eq 'true') { $sign.SignScript = './tools/release/Sign-Binaries.ps1' }
+          ./build.ps1 -SkipWeb -SkipTests -Release -Version "${{ steps.tag.outputs.version }}" @sign
           Copy-Item -LiteralPath 'dist/unravis-setup.exe' -Destination "dist/unravis-setup-v${{ steps.tag.outputs.version }}-windows-x64.exe" -Force
+
+      - name: No UPX in dist (BL-421)
+        shell: pwsh
+        run: |
+          ./tools/release/Test-NoUpx.ps1 -Path dist
+          if ($LASTEXITCODE -ne 0) { throw 'a packed exe is in dist.' }
 
       - name: Build dist\unravis-blackbox.exe and its zip
         # The Blackbox is built once, by build.ps1 (with -trimpath and -X main.version), and the app is pinned to
@@ -169,9 +198,7 @@ jobs:
         # (SEC-FIX-01). A rebuild here would give a different file and break the pin.
         run: ./build-blackbox.ps1 -Reuse -Version "${{ steps.tag.outputs.version }}"
 
-      # When SignPath signing is wired up, sign unravis-blackbox.exe BEFORE the pin is computed and
-      # unravis.exe is built. Signing it afterwards changes its bytes and the app's pin (the helper
-      # hash check) would then refuse it on every elevation.
+      # Signing (stable only) already happened inside build.ps1, in the order that keeps the pin true.
       - name: Check the app is pinned to the packed Blackbox
         shell: pwsh
         run: |
@@ -182,24 +209,17 @@ jobs:
           if (-not $text.Contains($sha)) { throw "dist/unravis.exe is not pinned to dist/unravis-blackbox.exe ($sha). A release must not ship an unpinned app." }
           Write-Host "unravis.exe is pinned to unravis-blackbox.exe $sha"
 
-      - name: Sign the binaries (SignPath)
-        # Skipped entirely unless the SIGNPATH secret is set (see the signgate step). Until the
-        # SignPath client call is wired up, setting the secret fails the build instead of shipping
-        # unsigned files under a signed notice (installer-and-releases.md section 8).
+      - name: Check the programs are signed (stable releases only)
+        # build.ps1 signed them when signing is enabled. Here the result is checked, so a "signed" notice is never printed
+        # for a file that is not signed, and a stable release never ships with an unsigned program.
         if: ${{ steps.signgate.outputs.enabled == 'true' }}
         shell: pwsh
         run: |
-          # %0A is how a workflow annotation carries a line break.
-          $lines = @(
-            'The SIGNPATH repository secret is set, but this workflow has no SignPath signing step yet, so nothing was signed and the build is stopped on purpose.',
-            'Shipping now would mark the release as signed when it is not.',
-            'The owner must do ONE of these, then re-run this workflow (Actions > Release > Run workflow, enter the same tag):',
-            '1. Ship unsigned: delete the SIGNPATH secret (repository Settings > Secrets and variables > Actions > Repository secrets). The notes then carry the "not signed" notice.',
-            '2. Ship signed: add the SignPath signing step (buildout/plan/installer-and-releases.md section 8) so it signs dist/unravis-setup.exe, dist/unravis.exe, dist/unravis-blackbox.exe and dist/unravis-lite.exe before packaging, and set SIGNED to true in the "Write the release notes" step.'
-          )
-          Write-Host ('::error title=SignPath is set but signing is not wired up::' + ($lines -join '%0A'))
-          $lines | ForEach-Object { Write-Host $_ }
-          exit 1
+          foreach ($f in 'unravis.exe', 'unravis-blackbox.exe', 'unravis-keeper.exe', 'unravis-lite.exe', 'unravis-setup.exe') {
+            $sig = Get-AuthenticodeSignature -LiteralPath (Join-Path 'dist' $f)
+            if ($sig.Status -ne 'Valid') { throw "dist/$f is not signed (status $($sig.Status)). A signed release must not ship an unsigned program." }
+            Write-Host "$f signed by $($sig.SignerCertificate.Subject)"
+          }
 
       - name: Package the portable zip
         shell: pwsh
@@ -301,8 +321,8 @@ jobs:
       - name: Write the release notes
         shell: pwsh
         env:
-          # Becomes true only when the sign step really signs (it fails the build today).
-          SIGNED: 'false'
+          # True only when this stable release was signed and the check step above passed.
+          SIGNED: ${{ steps.signgate.outputs.enabled }}
           # The notes say "Not yet verified on a clean PC." unless this repository variable (Settings >
           # Secrets and variables > Actions > Variables) is the text true. Set it only after a person
           # has run the installer on a clean machine for this release.

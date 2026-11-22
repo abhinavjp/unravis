@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -522,7 +523,13 @@ func (osSecurity) Read(path string) (datadir.FolderSecurity, error) {
 }
 
 func (osSecurity) SDDL(path string) (string, error) {
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	// Read through a handle that does not follow a link, so the permissions put in the journal are those of this folder.
+	h, err := openNoFollow(path, windows.READ_CONTROL)
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(h)
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return "", err
 	}
@@ -538,7 +545,103 @@ func (osSecurity) SetSDDL(path, sddl string) error {
 	if err != nil {
 		return err
 	}
-	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, info, owner, nil, dacl, nil)
+	// The change goes through one handle opened without following a link, so a folder swapped for a junction or a symbolic
+	// link (by a user who can write the parent) is refused and can never be the target of the lock (SWP-1021-1).
+	if owner != nil {
+		enableTakeOwnership()
+	}
+	access := uint32(windows.READ_CONTROL | windows.WRITE_DAC)
+	if owner != nil {
+		access |= windows.WRITE_OWNER
+	}
+	h, err := openNoFollow(path, access)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(h)
+	err = windows.SetSecurityInfo(h, windows.SE_FILE_OBJECT, info, owner, nil, dacl, nil)
+	runtime.KeepAlive(sd)
+	return err
+}
+
+// errIsLink is returned when a folder to lock is a link (reparse point) and not the folder itself.
+var errIsLink = errors.New("it is a link, not the folder itself")
+
+// openNoFollow opens path (a folder or a file) without following a link and refuses a reparse point (junction, symbolic
+// link, mounted volume).
+func openNoFollow(path string, access uint32) (windows.Handle, error) {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
+	}
+	h, err := windows.CreateFile(p, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil,
+		windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return 0, err
+	}
+	var fi windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &fi); err != nil {
+		windows.CloseHandle(h)
+		return 0, err
+	}
+	if fi.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		windows.CloseHandle(h)
+		return 0, fmt.Errorf("%s: %w", path, errIsLink)
+	}
+	// Earlier parts of the path must not be links either: the handle must be at the place that was asked for.
+	buf := make([]uint16, 1024)
+	n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), 0)
+	if err == nil && int(n) > len(buf) {
+		buf = make([]uint16, n+1)
+		n, err = windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), 0)
+	}
+	if err != nil {
+		windows.CloseHandle(h)
+		return 0, err
+	}
+	if got := strings.TrimPrefix(windows.UTF16ToString(buf[:n]), `\\?\`); !samePath(got, longPath(path)) {
+		windows.CloseHandle(h)
+		return 0, fmt.Errorf("%s: %w", path, errIsLink)
+	}
+	return h, nil
+}
+
+// longPath is path with any 8.3 short names (RUNNER~1) spelled out, as GetFinalPathNameByHandle spells them. It returns path
+// unchanged when it cannot be expanded.
+func longPath(path string) string {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return path
+	}
+	buf := make([]uint16, 512)
+	n, err := windows.GetLongPathName(p, &buf[0], uint32(len(buf)))
+	if err != nil || n == 0 {
+		return path
+	}
+	if int(n) > len(buf) {
+		buf = make([]uint16, n+1)
+		if n, err = windows.GetLongPathName(p, &buf[0], uint32(len(buf))); err != nil || n == 0 {
+			return path
+		}
+	}
+	return windows.UTF16ToString(buf[:n])
+}
+
+// enableTakeOwnership turns on the privilege that lets an administrator set an owner. Best effort.
+func enableTakeOwnership() {
+	var tok windows.Token
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &tok); err != nil {
+		return
+	}
+	defer tok.Close()
+	name, _ := windows.UTF16PtrFromString("SeTakeOwnershipPrivilege")
+	var luid windows.LUID
+	if err := windows.LookupPrivilegeValue(nil, name, &luid); err != nil {
+		return
+	}
+	tp := windows.Tokenprivileges{PrivilegeCount: 1}
+	tp.Privileges[0] = windows.LUIDAndAttributes{Luid: luid, Attributes: windows.SE_PRIVILEGE_ENABLED}
+	_ = windows.AdjustTokenPrivileges(tok, false, &tp, uint32(unsafe.Sizeof(tp)), nil, nil)
 }
 
 func (osSecurity) MkdirSDDL(path, sddl string) error {
@@ -689,10 +792,13 @@ func processSID(pid uint32) string {
 	}
 	defer tok.Close()
 	u, err := tok.GetTokenUser()
-	if err != nil || u.User.Sid == nil {
+	if err != nil || u.User.Sid == nil || !u.User.Sid.IsValid() {
 		return UnknownOwner
 	}
-	return u.User.Sid.String()
+	if s := u.User.Sid.String(); s != "" {
+		return s
+	}
+	return UnknownOwner
 }
 
 func imagePath(pid uint32) string {
