@@ -1256,3 +1256,57 @@ func TestStopServiceErrorMessagesHaveOnePeriodAndTheRightFix(t *testing.T) {
 		})
 	}
 }
+
+// A password may hold spaces and semicolons: an unquoted value runs to the next
+// ";" or the end of the line, a quoted or braced value to its closing mark. In a
+// URL query string it still ends at "&" (OTA-2).
+func TestRedactPasswordValueShapes(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"report string (spaces, text after stays)", "Password=correct horse battery;Server=x", "Password=[hidden];Server=x"},
+		{"connection string", "Server=db;User ID=sa;Password=correct horse battery;Encrypt=true", "Server=db;User ID=sa;Password=[hidden];Encrypt=true"},
+		{"single quoted", "password='ab cd'", "password=[hidden]"},
+		{"double quoted", `password="ab cd";x=1`, `password=[hidden];x=1`},
+		{"braced with a semicolon and a space", "Password = {a;b c}", "Password = [hidden]"},
+		{"braced with }} escape", "pwd={a}}b c};Encrypt=true", "pwd=[hidden];Encrypt=true"},
+		{"value at end of line", "config pwd: correct horse battery", "config pwd: [hidden]"},
+		{"stops at a line break", "Password=correct horse\nnext line stays", "Password=[hidden]\nnext line stays"},
+		{"empty value: the next line is the value", "password:\n  hunter2", "password:[hidden]"},
+		{"empty value, equals", "password=\nhunter2", "password=[hidden]"},
+		{"empty value, lone CR", "Password=\rhunter2", "Password=[hidden]"},
+		{"empty value, lone CR then spaces", "Password= \r  hunter two", "Password= [hidden]"},
+		{"blank lines end the search", "Password:\n\n\nThe server crashed", "Password:[hidden]\n\n\nThe server crashed"},
+		{"empty value, CRLF, a line after stays", "password=\r\n  hunter2 x\nlater", "password=[hidden]\nlater"},
+		{"doubled single quote", "Password='it''s';Encrypt=true", "Password=[hidden];Encrypt=true"},
+		{"doubled single quote with spaces", "Password='O''Brien secret'", "Password=[hidden]"},
+		{"doubled double quote", `Password="say ""hi"" now";Encrypt=true`, "Password=[hidden];Encrypt=true"},
+		{"unclosed brace takes the rest", "Password={a;b c", "Password=[hidden]"},
+		{"unclosed double quote takes the rest", `Password="a;b c`, "Password=[hidden]"},
+		{"unclosed single quote takes the rest", "pwd='a;b c", "pwd=[hidden]"},
+		{"url query doubled quote", "http://h/x?pwd='a''b'&y=1", "http://h/x?pwd=[hidden]&y=1"},
+		{"url query form stops at &", "http://h/x?password=hunter2&y=1", "http://h/x?password=[hidden]&y=1"},
+		{"secret keeps the old rule, single quote now known", "secret='a b' next", "secret=[hidden] next"},
+		{"innocuous line is unchanged", "copy-files: ok; Encrypt=true", "copy-files: ok; Encrypt=true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Redact(tc.in); got != tc.want {
+				t.Errorf("Redact(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// Line folds a line break into a space after Redact, so a password that sits after a lone CR must already be gone.
+func TestFileLogHidesAPasswordAfterALoneCR(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "logs", "setup.log")
+	l, err := OpenFileLog(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Line("connect Password=\rhunter2")
+	l.Line("connect Password= \r  hunter two")
+	_ = l.Close()
+	data, _ := os.ReadFile(filepath.Clean(p))
+	if s := string(data); strings.Contains(s, "hunter") || !strings.Contains(s, "[hidden]") {
+		t.Fatalf("log %q", s)
+	}
+}
