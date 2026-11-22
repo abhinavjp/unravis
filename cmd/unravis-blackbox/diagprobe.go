@@ -22,11 +22,14 @@ Test, read-only. Asks ONE running .NET process (5 or newer) for runtime counters
 for 20 seconds (or --seconds), then stops the session. It writes no file and
 prints nothing that came from the process. It sends only two fixed messages:
 start and stop. It does not change the Blackbox settings or service.
+
+For an IIS application pool process (w3wp), run it as SYSTEM. An administrator who
+is not SYSTEM may be refused (reported as denied).
 `
 
 // realDiagProbe runs the probe over this platform's real transport.
 func realDiagProbe(ctx context.Context, t dotnetdiag.Target, o dotnetdiag.Options) (dotnetdiag.Result, error) {
-	return dotnetdiag.Probe(ctx, dotnetdiag.DefaultDialer(), t, o)
+	return dotnetdiag.Probe(ctx, dotnetdiag.CLIDialer(), t, o)
 }
 
 // runDiagProbe is the diag-probe command. It is dispatched from run() before

@@ -22,10 +22,10 @@ import (
 // seams.
 //
 // Where the socket lives: dir if set; else $TMPDIR, but ONLY when fromEnv is
-// true; else /tmp. fromEnv is set in one place, platformDialer, which is the
-// command-line path (the person running the probe chose that environment). Any
-// other construction, such as a future service path, leaves it false and never
-// reads the environment: a service must not take the socket directory from an
+// true; else /tmp. fromEnv is set only by CLIDialer (through platformDialer),
+// the command-line path (the person running the probe chose that environment).
+// DefaultDialer and any other construction leave it false and never read the
+// environment: a service must not take the socket directory from an
 // environment variable that someone else can influence.
 type socketDialer struct {
 	dir       string
@@ -35,11 +35,12 @@ type socketDialer struct {
 	startKey func(pid uint32) (int64, *Error)
 }
 
-// platformDialer is the command-line dialer: it may use the caller's $TMPDIR.
-func platformDialer() Dialer { return &socketDialer{fromEnv: true} }
+// platformDialer is the dialer of this platform. cli is true only for CLIDialer
+// and lets the dialer use the caller's $TMPDIR.
+func platformDialer(cli bool) Dialer { return &socketDialer{fromEnv: cli} }
 
 // socketDir returns the directory to look in. The environment is read only for
-// a dialer made by platformDialer.
+// a dialer made by CLIDialer.
 func (d *socketDialer) socketDir() string {
 	if d.dir != "" {
 		return d.dir

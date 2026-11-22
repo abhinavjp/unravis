@@ -34,7 +34,7 @@ func TestCaptureFixtures(t *testing.T) {
 	tg := Target{PID: uint32(pid64)}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	d := DefaultDialer()
+	d := CLIDialer()
 
 	c1, peer, err := d.Dial(ctx, tg)
 	if err != nil {
