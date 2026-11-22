@@ -234,7 +234,8 @@ func TestGitHubRoutesAnswer200WithErrorWhenUnreachable(t *testing.T) {
 	d := newDash(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) }))
 	srv.Close() // nothing listens any more
-	d.GH = &GH{Base: srv.URL}
+	// The release list is seeded, so this test never reaches the real GitHub: the previous release is known, and the compare call hits the closed server.
+	d.GH = &GH{Base: srv.URL, rels: []Rel{{Tag: "v0.1.0-rc.54"}, {Tag: "v0.1.0-rc.55"}}, at: time.Now()}
 	mux := http.NewServeMux()
 	d.registerDetail(mux)
 	for _, p := range []string{"/api/release/checks?v=0.1.0-rc.55", "/api/release/changes?v=0.1.0-rc.55"} {
