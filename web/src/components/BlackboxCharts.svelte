@@ -678,7 +678,8 @@
   .bbc-seg button.on, .bbc-tabs button.on { color: var(--text); background: var(--surface-2); font-weight: 600; }
   .bbc-main { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px minmax(0, 1fr); }
   .bbc-side { display: flex; flex-direction: column; gap: var(--space-2); min-height: 0; padding: var(--space-3); border-right: 1px solid var(--line); overflow: auto; }
-  .bbc-tabs { display: flex; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+  /* The side column is a scrolling flex column and this strip has overflow: hidden (so it has no minimum height): without flex-shrink 0 a long list squeezed it to 12px (BL-496). */
+  .bbc-tabs { display: flex; flex-shrink: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
   .bbc-tabs button { flex: 1; }
   .bbc-tabs button:last-child { border-right: 0; }
   .bbc-search, .bbc-field select { width: 100%; box-sizing: border-box; padding: 6px 8px; font: inherit; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); }

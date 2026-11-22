@@ -23,6 +23,13 @@
       "label": "The part of the strip the big chart shows*",
       "why": "The minimap box is 17 x 64 px on a phone. Found when the audit reached this screen (BL-483); filed as BL-492, not changed here.",
       "item": "BL-492"
+    },
+    {
+      "screen": "p12-update-available",
+      "check": "small-target",
+      "label": "Open the release page*",
+      "why": "In this documentation screen the Glossary drawer is open and its scrim lies over the update bar, so a press on the link goes to the scrim and the audit (since BL-497 it asks the browser who receives the press) no longer counts the link's grown hit area. The same link is audited with nothing in front of it in x-update-bar, where it passes. Not a defect of the page.",
+      "item": "BL-497"
     }
   ]
 }

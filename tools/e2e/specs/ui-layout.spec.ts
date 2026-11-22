@@ -12,6 +12,8 @@
 //   UIFIX-07  Add files on a phone: the column heads are painted nowhere, yet stay in the page for screen readers (BL-482). A guard only: the finding was a false positive of the audit, so the audit run proves the fix
 //   UIFIX-08  Phone header with "Choose sources" fits the window (BL-472); 390 and 360 px fail on the old header, 320 px is a no-regression case
 //   UIFIX-14  Tap targets of 24 x 24 px or more and desktop does not move: the "Change" link of the Review step (14a), the "Open the release page" link of the update bar (14b), the unfinished-request counts of Where is it? (14c), and the keyboard focus rings and rest pictures of those three, which stay the old ones (14f) (BL-475 group 4)
+//   UIFIX-15  Daily and hourly view: the four legend squares show the heat colours of the squares they stand for, dark and light (BL-493)
+//   UIFIX-16  Blackbox charts: the Counters / Programs tab strip is not squeezed (24 px or more) and nothing outside the side column moves (BL-496)
 //   UIFIX-10  Slow call screen: the time zone label, the peak and zero labels and the "drag" hint are at least 11px, the lanes and the minimap do not move, nothing collides (BL-483)
 //   UIFIX-17  Investigation timeline: the UTC times of the incident and comparison windows are drawn as visible text (not only a tooltip), stay UTC when "Times in" changes, fit at 320, 360 and 390 px, and the one-line readout does not grow on a wide desktop
 import { test, expect, type Page } from '../support/fixtures';
@@ -393,7 +395,7 @@ test('UIFIX-12d Zoom strip: a press 9px inside the edge grabs the handle (the gr
 // The rules of develop for the hour grid, its legend and the zoom handles, as they were before BL-475 groups 2 and 3 (copied from develop at e784a5f).
 // They are put back on the new build as a stylesheet in which every declaration is !important, followed by rules that switch the new
 // pseudo-elements off. The page must then look the same pixel for pixel: a rule that moves, resizes or recolours anything (the legend
-// squares included, which are grey on develop because `.hm-swatch` comes after `.level-N`) fails here.
+// squares excepted: they were grey on develop because `.hm-swatch` came after `.level-N`, and are now the heat colours, see UIFIX-15) fails here.
 const OLD_HEATMAP_CSS = `
   .hm-cell, .hm-gap { display: block; width: 100%; height: 20px; padding: 0; border-radius: 1px; }
   .hm-cell { border: 1px solid var(--line-soft); background: var(--surface-2); cursor: pointer; }
@@ -407,6 +409,11 @@ const OLD_HEATMAP_CSS = `
   .hm-cell:hover:not(.empty) { outline: 1px solid var(--text); outline-offset: 0; }
   .hm-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; position: relative; z-index: 1; }
   .hm-swatch { display: inline-block; width: 16px; height: 12px; border: 1px solid var(--control-line); border-radius: 1px; background: var(--surface-2); } /* PR 157 (ANALYSIS) gave the legend squares the control line colour on purpose */
+  /* BL-493 (UIFIX-15): the legend squares show the heat colours. This is the one rule of the old set that is NOT develop's: develop paints them grey (the bug), so the comparison would otherwise fail on exactly the intended change. Everything else of the legend is still compared. */
+  .hm-swatch.level-1 { background: var(--heat-1); }
+  .hm-swatch.level-2 { background: var(--heat-2); }
+  .hm-swatch.level-3 { background: var(--heat-3); }
+  .hm-swatch.level-4 { background: var(--heat-4); }
   .hm-swatch.noise { background: var(--surface-2); border: 1px dashed var(--text-2); margin-left: 8px; }
   .hm-swatch.empty { background: transparent; margin-left: 8px; }
   .nav-handle { position: absolute; top: 0; bottom: 0; width: 12px; margin-left: -6px; cursor: ew-resize; touch-action: pan-y; }
@@ -450,9 +457,7 @@ for (const scheme of ['dark', 'light'] as const) {
     });
     const names = ['rest', 'hover 0', 'focus 0', 'hover 3', 'focus 3', 'hover 7', 'focus 7'];
     now.forEach((shot, i) => expect(shot.equals(old[i]), names[i] + ': the picture differs from the old rules').toBe(true));
-    // and the legend squares, whatever colour develop gives them, stay the colour of the "few requests" square (grey, from `.hm-swatch`)
-    const colours = await page.locator('.hm-legend .hm-swatch').evaluateAll((els) => els.map((e) => getComputedStyle(e).backgroundColor));
-    expect(colours.slice(0, 4)).toEqual([colours[4], colours[4], colours[4], colours[4]]);
+    // The legend squares are the one intended difference from develop (BL-493): UIFIX-15 checks their colours.
   });
 
   test('UIFIX-13b Zoom strip: the strip, the grip and the focus ring look exactly as before (' + scheme + ')', async ({ page }) => {
@@ -522,6 +527,124 @@ test('UIFIX-12e Daily and hourly view: a press anywhere on a painted square, edg
 // BL-483: four labels of the Slow call screen were 10px, under the app's own 11px floor. Raising them must not move the lanes (Slow call lane
 // rule, BL-005: no inner scrolling, the lanes stay visible together) and the owner rule is that desktop wins over the phone. Like UIFIX-09
 // this puts the old 10px back as inline styles and compares the rectangles in one evaluation, so nothing moves in between.
+// BL-493: the legend under the hour grid. `.hm-swatch` (grey) used to come after `.level-N` and win, so all four squares were grey.
+for (const scheme of ['dark', 'light'] as const) {
+  test('UIFIX-15 Daily and hourly view: each legend square is the colour of the hour squares of its level (' + scheme + ')', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await openDailyHourly(page);
+    await page.locator('.hm').scrollIntoViewIfNeeded();
+    const facts = await page.evaluate(() => {
+      const bg = (e: Element | null, pseudo?: string) => (e ? getComputedStyle(e, pseudo).backgroundColor : null);
+      const swatches = [...document.querySelectorAll('.hm-legend .hm-swatch')];
+      // a colour as the browser computes it (a probe element, so var(--heat-N) and rgb() compare the same way)
+      const probe = document.createElement('span');
+      document.querySelector('.hm')!.appendChild(probe);
+      probe.style.transition = 'none'; // else the computed colour is still on its way from transparent
+      void probe.offsetWidth;
+      const resolve = (v: string) => { probe.style.background = v; return getComputedStyle(probe).backgroundColor; };
+      const out = [1, 2, 3, 4].map((n) => {
+        // A cell of this level if the demo data has one; if not, a copy of a real cell with the level class put on it, so the browser still applies the cell rules of that level.
+        let cell = document.querySelector('button.hm-cell.level-' + n);
+        const real = !!cell;
+        if (!cell) {
+          const model = document.querySelector('button.hm-cell:not(.empty)') as HTMLElement;
+          const copy = model.cloneNode(false) as HTMLElement;
+          copy.classList.remove('level-1', 'level-2', 'level-3', 'level-4', 'empty', 'noise');
+          copy.classList.add('level-' + n);
+          copy.style.transition = 'none';
+          model.parentElement!.appendChild(copy);
+          void copy.offsetWidth;
+          cell = copy;
+        }
+        const swatch = swatches.find((e) => e.classList.contains('level-' + n)) ?? null;
+        const r = { level: n, real, cell: bg(cell, '::before'), swatch: bg(swatch), token: resolve('var(--heat-' + n + ')'), index: swatch ? swatches.indexOf(swatch) : -1 };
+        if (!real) cell!.remove();
+        return r;
+      });
+      const grey = resolve('var(--surface-2)');
+      probe.remove();
+      return { out, grey, count: swatches.length };
+    });
+    expect(facts.count, 'legend squares: four levels, few requests, none').toBe(6);
+    for (const f of facts.out) {
+      expect(f.swatch, 'legend square of level ' + f.level + ' against an hour square of level ' + f.level).toBe(f.cell);
+      expect(f.swatch, 'legend square of level ' + f.level + ' is the heat colour').toBe(f.token);
+      expect(f.swatch, 'legend square of level ' + f.level + ' is not the grey of the "few requests" square').not.toBe(facts.grey);
+      expect(f.index, 'legend order: Lower to Higher').toBe(f.level - 1);
+    }
+    expect(new Set(facts.out.map((f) => f.swatch)).size, 'four different colours').toBe(4);
+  });
+}
+
+// BL-496: the side column of the Blackbox charts is a scrolling flex column, and the tab strip inside it has overflow: hidden (so no minimum
+// height). With a long list it was squeezed to 12 px (its buttons to 10 px) and the words were cut off. It must keep its own height; the
+// charts, the bar and the title must not move, and in the side column only what comes below the strip moves down.
+async function openCharts(page: Page): Promise<void> {
+  await openBlackbox(page);
+  await page.getByRole('button', { name: /^Open status: web-a/ }).first().click();
+  await page.getByRole('button', { name: 'Open charts' }).first().click();
+  await expect(page.locator('dialog.bbc[open] canvas').first()).toBeVisible();
+}
+
+test('UIFIX-16a Blackbox charts: the Counters and Programs tabs are 24 px or more tall and their words are not cut off', async ({ page }) => {
+  await openCharts(page);
+  const facts = await page.locator('.bbc-tabs').evaluate((tabs) => {
+    const side = tabs.parentElement!;
+    return {
+      tabsHeight: tabs.getBoundingClientRect().height,
+      clipped: tabs.scrollHeight > tabs.clientHeight,
+      buttons: [...tabs.querySelectorAll('button')].map((b) => ({ text: b.textContent, h: b.getBoundingClientRect().height, w: b.getBoundingClientRect().width, clipped: b.scrollHeight > b.clientHeight })),
+      sideScrolls: side.scrollHeight > side.clientHeight
+    };
+  });
+  expect(facts.buttons.length).toBe(2);
+  for (const b of facts.buttons) {
+    expect(b.h, b.text + ' tab height').toBeGreaterThanOrEqual(24);
+    expect(b.w, b.text + ' tab width').toBeGreaterThanOrEqual(24);
+    expect(b.clipped, b.text + ': text cut off').toBe(false);
+  }
+  expect(facts.clipped, 'the strip is shorter than its content').toBe(false);
+  expect(facts.tabsHeight).toBeGreaterThanOrEqual(24);
+  // The window of the demo has more in the side column than fits: that is the situation of the bug. Say so if the data ever stops doing that.
+  expect(facts.sideScrolls, 'precondition: the side column has more than fits (else this test cannot show the squeeze)').toBe(true);
+  // the Programs tab too
+  await page.locator('.bbc-tabs button').nth(1).click();
+  const programs = await page.locator('.bbc-tabs button').evaluateAll((bs) => bs.map((b) => b.getBoundingClientRect().height));
+  for (const h of programs) expect(h, 'tab height after opening Programs').toBeGreaterThanOrEqual(24);
+});
+
+test('UIFIX-16b Blackbox charts: nothing outside the side column moves, and the side column keeps its size', async ({ page }) => {
+  await openCharts(page);
+  const facts = await page.locator('dialog.bbc[open]').evaluate((dlg) => {
+    const side = dlg.querySelector('.bbc-side') as HTMLElement;
+    const tabs = dlg.querySelector('.bbc-tabs') as HTMLElement;
+    const snap = () => [...dlg.querySelectorAll('*')].filter((e) => !side.contains(e) && !e.closest('svg')).map((e) => {
+      const r = e.getBoundingClientRect();
+      return { name: e.tagName.toLowerCase() + '.' + (e.getAttribute('class') ?? '').split(' ')[0] + ' ' + (e.textContent ?? '').trim().slice(0, 20), box: [r.left, r.top, r.width, r.height] };
+    });
+    const sideBox = () => { const r = side.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; };
+    const inSide = () => [...side.children].map((e) => e.getBoundingClientRect().top);
+    const now = snap(), nowSide = sideBox(), nowIn = inSide(), nowH = tabs.getBoundingClientRect().height;
+    // the old rule put back: the strip may shrink again
+    const sheet = document.createElement('style');
+    sheet.textContent = '.bbc-tabs { flex-shrink: 1 !important; transition: none !important; }'; // no transition, or the computed value is still on its way from the new value
+    document.head.appendChild(sheet);
+    void document.body.offsetHeight;
+    const old = snap(), oldSide = sideBox(), oldIn = inSide(), oldH = tabs.getBoundingClientRect().height;
+    sheet.remove();
+    const moved = now.filter((n, i) => !old[i] || n.box.some((v, j) => Math.abs(v - old[i].box[j]) > 0.05)).map((n) => n.name);
+    return { moved, total: now.length, sideSame: nowSide.every((v, i) => Math.abs(v - oldSide[i]) < 0.05), nowH, oldH, shift: nowIn.map((t, i) => Math.round((t - oldIn[i]) * 10) / 10) };
+  });
+  expect(facts.total, 'boxes outside the side column that were compared').toBeGreaterThan(10);
+  expect(facts.oldH, 'precondition: with the old rule the strip is squeezed').toBeLessThan(24);
+  expect(facts.nowH).toBeGreaterThanOrEqual(24);
+  expect(facts.moved, 'boxes outside the side column that moved').toEqual([]);
+  expect(facts.sideSame, 'the side column itself keeps its place and size').toBe(true);
+  // inside the column: the strip stays put, everything below it moves down by exactly what the strip grew
+  expect(facts.shift[0], 'the strip starts where it did').toBe(0);
+  for (const d of facts.shift.slice(1)) expect(d, 'what comes below the strip moves down by the growth of the strip').toBeCloseTo(facts.nowH - facts.oldH, 1);
+});
+
 const SCALL_LABELS = ['.scall-zone', '.y-peak', '.y-zero', '.scall-map-drag'];
 
 async function openSlowCallScreen(page: Page): Promise<void> {
@@ -856,8 +979,8 @@ for (const scheme of ['dark', 'light'] as const) {
       const old = await take();
       await style.evaluate((el) => el.remove());
       // Byte for byte, except the rounded ring of the Review link: a positioned control rasterises the four arcs of its ring a hair differently
-      // (measured: 4 pixels, up to 7 of 255 colour levels, dark theme only), so there a handful of pixels may differ slightly. A moved or resized ring differs by far more.
-      const tolerance = name === 'Review Change link' ? { pixels: 8, levels: 8 } : { pixels: 0, levels: 0 };
+      // (measured: 4 to 9 pixels, up to 8 of 255 colour levels, differing from run to run on the same build), so there a handful of pixels may differ slightly. A moved or resized ring differs by far more.
+      const tolerance = name === 'Review Change link' ? { pixels: 12, levels: 8 } : { pixels: 0, levels: 0 };
       for (const [i, what] of ['at rest', 'focused'].entries()) {
         const d = await pictureDifference(page, now[i], old[i]);
         expect(d.pixels, what + ': pixels that differ from the old rules (largest step ' + d.levels + ')').toBeLessThanOrEqual(tolerance.pixels);
@@ -933,8 +1056,8 @@ for (const scheme of ['dark', 'light'] as const) {
     const incident = await utcEchoFacts(page, 'utc-echo-incident');
     const reference = await utcEchoFacts(page, 'utc-echo-reference');
     // The demo clock is 2026-10-20T09:00Z: incident 08:00-09:00 UTC, comparison 07:00-08:00 UTC (the same fields the tooltip reads).
-    expect(incident.text).toBe('UTC 2026-10-20T08:00:00Z \u2013 2026-10-20T09:00:00Z');
-    expect(reference.text).toBe('UTC 2026-10-20T07:00:00Z \u2013 2026-10-20T08:00:00Z');
+    expect(incident.text).toBe('UTC 2026-10-20T08:00Z \u2013 2026-10-20T09:00Z');
+    expect(reference.text).toBe('UTC 2026-10-20T07:00Z \u2013 2026-10-20T08:00Z');
     for (const [name, f] of [['incident', incident], ['comparison', reference]] as const) {
       expect(f.painted, name + ': text boxes painted').toBeGreaterThan(0);
       expect(f.narrowest, name + ': not a 1 px clipped box').toBeGreaterThan(20);
@@ -948,7 +1071,7 @@ for (const scheme of ['dark', 'light'] as const) {
     }
     // A quick range changes the visible text, so it is read live from the window boxes and not a constant.
     await page.locator('.trctl .chip[data-quick-id="4h"]').click();
-    await expect(page.getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-20T05:00:00Z \u2013 2026-10-20T09:00:00Z');
+    await expect(page.getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-20T05:00Z \u2013 2026-10-20T09:00Z');
     expect((await utcEchoFacts(page, 'utc-echo-incident')).painted).toBeGreaterThan(0);
   });
 }
@@ -986,14 +1109,21 @@ for (const width of [320, 360, 390]) {
   }
 }
 
-test('UIFIX-17d Investigation timeline on a wide desktop: the readout is still one line and the controls card is not taller', async ({ page }) => {
+test('UIFIX-17d Investigation timeline on a desktop: the readout is one line and the controls card is not taller at 1100, 1280, 1366, 1440 and 1920 px', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await openTimelineReadout(page);
-  const m = await page.evaluate(() => {
-    const line = document.querySelector<HTMLElement>('[data-testid="tp-metaline"]')!;
-    const lh = parseFloat(getComputedStyle(line).lineHeight) || parseFloat(getComputedStyle(line).fontSize) * 1.4;
-    return { h: line.getBoundingClientRect().height, lh, card: document.querySelector('.trctl')!.getBoundingClientRect().height };
-  });
-  expect(m.h, 'one line of text at 1440 px (measured 17 px before the change)').toBeLessThanOrEqual(m.lh * 1.5);
-  expect(m.card, 'the controls card keeps its measured height at 1440 px (320 px before the change)').toBeLessThanOrEqual(322);
+  const seen: string[] = [];
+  for (const width of [1920, 1440, 1366, 1280, 1100]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+    const m = await page.evaluate(() => {
+      const line = document.querySelector<HTMLElement>('[data-testid="tp-metaline"]')!;
+      const lh = parseFloat(getComputedStyle(line).lineHeight) || parseFloat(getComputedStyle(line).fontSize) * 1.4;
+      const sources = document.querySelector<HTMLElement>('[data-testid="trace-sources"]')!.getBoundingClientRect();
+      return { h: line.getBoundingClientRect().height, lh, card: document.querySelector('.trctl')!.getBoundingClientRect().height, line: line.getBoundingClientRect().bottom, sources: sources.top };
+    });
+    seen.push(width + ' px: readout ' + Math.round(m.h) + ' px, card ' + Math.round(m.card) + ' px');
+    expect(m.h, width + ' px: one line of text (measured 17 px before the change; seen so far: ' + seen.join('; ') + ')').toBeLessThanOrEqual(m.lh * 1.5);
+    expect(m.card, width + ' px: the controls card keeps its measured height of 320 px').toBeLessThanOrEqual(322);
+  }
 });

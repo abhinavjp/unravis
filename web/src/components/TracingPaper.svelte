@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { fetchTracing, nextRequestSeq, tracingErrorText, type TracingLaneKey, type TracingResponse } from '../lib/tracing/model';
-  import { WINDOW_TEXT, checkWindows, defaultWindows, fixOverlap, windowHasNoData, windowIsEmpty, windowNow, loadWindows, pickWindowFields, saveWindows, type WindowFields } from '../lib/tracing/windows';
+  import { WINDOW_TEXT, checkWindows, defaultWindows, fixOverlap, windowHasNoData, parseFieldUtc, windowIsEmpty, windowNow, loadWindows, pickWindowFields, saveWindows, type WindowFields } from '../lib/tracing/windows';
   import { TRACING_TEXT } from '../lib/copy/tracingCopy';
   import { WAIT_TEXT } from '../lib/copy/waitCopy';
   import { createSlowRead } from '../lib/slowRead.svelte';
@@ -104,7 +104,8 @@
   }
   const describedBy = $derived(problems.length > 0 ? 'tp-problems' : undefined);
   // The line under the two windows (the wireframe's UTC echo): what the boxes hold, in the one format the server is sent, so a typed 12-hour time is never a guess.
-  const echoUtc = (start: string, end: string): string => (start && end ? `UTC ${start}:00Z – ${end}:00Z` : `UTC ${WINDOW_TEXT.metaUnset}`);
+  // A box that holds no real moment (empty, or a day that does not exist) reads "not set", like an empty one; the problem list says what is wrong.
+  const echoUtc = (start: string, end: string): string => (Number.isFinite(parseFieldUtc(start)) && Number.isFinite(parseFieldUtc(end)) ? `UTC ${start}Z – ${end}Z` : `UTC ${WINDOW_TEXT.metaUnset}`);
   // The "Sources traced" choice (kept per case in this tab) and the sources the case is known to have. Nothing selected reads nothing.
   const startingSources = () => loadSources(caseId);
   let selection = $state.raw<SourceSelection>(startingSources()?.selection ?? app.savedTraceSources ?? ALL_SOURCES);
@@ -484,7 +485,7 @@
           </fieldset>
         </div>
       </div>
-      <p class="metaline" data-testid="tp-metaline" title={echoUtc(fields.incidentStart, fields.incidentEnd) + ' ' + WINDOW_TEXT.metaCompared + ' ' + echoUtc(fields.referenceStart, fields.referenceEnd)}><span class="utc-echo" data-testid="utc-echo-incident">{echoUtc(fields.incidentStart, fields.incidentEnd)}</span><span> {WINDOW_TEXT.metaCompared} </span><span class="utc-echo" data-testid="utc-echo-reference">{echoUtc(fields.referenceStart, fields.referenceEnd)}</span> {WINDOW_TEXT.metaZoneLead} <b>{timeZone.zone}</b> {WINDOW_TEXT.metaZoneTail}</p>
+      <p class="metaline" data-testid="tp-metaline" title={echoUtc(fields.incidentStart, fields.incidentEnd) + ' ' + WINDOW_TEXT.metaCompared + ' ' + echoUtc(fields.referenceStart, fields.referenceEnd) + '. ' + WINDOW_TEXT.metaStoresUtc}><span class="utc-echo" data-testid="utc-echo-incident">{echoUtc(fields.incidentStart, fields.incidentEnd)}</span><span> {WINDOW_TEXT.metaCompared} </span><span class="utc-echo" data-testid="utc-echo-reference">{echoUtc(fields.referenceStart, fields.referenceEnd)}</span>. {WINDOW_TEXT.metaZoneLead} <b>{timeZone.zone}</b> {WINDOW_TEXT.metaZoneTail}<span class="visually-hidden"> {WINDOW_TEXT.metaStoresUtc}</span></p>
       <div class="window-actions">
         <small>{WINDOW_TEXT.endNote}</small>
       </div>

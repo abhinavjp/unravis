@@ -130,6 +130,11 @@
   }
   .hm-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--text-2); font-size: 12px; }
   .hm-swatch { display: inline-block; width: 16px; height: 12px; border: 1px solid var(--control-line); border-radius: 1px; background: var(--surface-2); }
+  /* The legend shows the four heat colours of the squares above. They sit after .hm-swatch on purpose: a plain .level-N has the same weight as .hm-swatch and lost to its grey (BL-493). */
+  .hm-swatch.level-1 { background: var(--heat-1); }
+  .hm-swatch.level-2 { background: var(--heat-2); }
+  .hm-swatch.level-3 { background: var(--heat-3); }
+  .hm-swatch.level-4 { background: var(--heat-4); }
   .hm-swatch.noise { background: var(--surface-2); border: 1px dashed var(--text-2); margin-left: 8px; }
   .hm-swatch.empty { background: transparent; margin-left: 8px; }
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
