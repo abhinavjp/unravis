@@ -127,6 +127,8 @@ func TestSanitizePasswordValueShapes(t *testing.T) {
 		{"value at end of line", "login failed Password=correct horse battery", "login failed Password=[redacted]"},
 		{"stops at a line break", "Password=correct horse\nnext line stays", "Password=[redacted]\nnext line stays"},
 		{"empty value: the next line is the value", "password=\nhunter2", "password=[redacted]"},
+		{"empty value, lone CR", "Password=\rhunter2", "Password=[redacted]"},
+		{"blank lines end the search", "Password=\n\n\nThe server crashed", "Password=[redacted]\n\n\nThe server crashed"},
 		{"empty value, CRLF", "Password=\r\n  hunter2 x\nlater", "Password=[redacted]\nlater"},
 		{"doubled single quote", "Password='it''s';Encrypt=true", "Password=[redacted];Encrypt=true"},
 		{"doubled single quote with spaces", "Password='O''Brien secret'", "Password=[redacted]"},

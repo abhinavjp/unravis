@@ -1269,6 +1269,9 @@ func TestRedactPasswordValueShapes(t *testing.T) {
 		{"stops at a line break", "Password=correct horse\nnext line stays", "Password=[hidden]\nnext line stays"},
 		{"empty value: the next line is the value", "password:\n  hunter2", "password:[hidden]"},
 		{"empty value, equals", "password=\nhunter2", "password=[hidden]"},
+		{"empty value, lone CR", "Password=\rhunter2", "Password=[hidden]"},
+		{"empty value, lone CR then spaces", "Password= \r  hunter two", "Password= [hidden]"},
+		{"blank lines end the search", "Password:\n\n\nThe server crashed", "Password:[hidden]\n\n\nThe server crashed"},
 		{"empty value, CRLF, a line after stays", "password=\r\n  hunter2 x\nlater", "password=[hidden]\nlater"},
 		{"doubled single quote", "Password='it''s';Encrypt=true", "Password=[hidden];Encrypt=true"},
 		{"doubled single quote with spaces", "Password='O''Brien secret'", "Password=[hidden]"},
@@ -1286,5 +1289,21 @@ func TestRedactPasswordValueShapes(t *testing.T) {
 				t.Errorf("Redact(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// Line folds a line break into a space after Redact, so a password that sits after a lone CR must already be gone.
+func TestFileLogHidesAPasswordAfterALoneCR(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "logs", "setup.log")
+	l, err := OpenFileLog(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Line("connect Password=\rhunter2")
+	l.Line("connect Password= \r  hunter two")
+	_ = l.Close()
+	data, _ := os.ReadFile(p)
+	if s := string(data); strings.Contains(s, "hunter") || !strings.Contains(s, "[hidden]") {
+		t.Fatalf("log %q", s)
 	}
 }

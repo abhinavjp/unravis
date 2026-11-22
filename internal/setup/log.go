@@ -25,8 +25,8 @@ var redactions = []struct {
 	// A password in a URL query string (?password=x&y=1) ends at "&", ";", "," or a space.
 	{regexp.MustCompile(`(?i)([?&](?:password|passwd|pwd)[ \t]*[=:][ \t]*)(?:` + quotedOrBraced + `|[^\s&;,]+)`), "${1}[hidden]"},
 	// Any other password key: a password may hold spaces, so an unquoted value runs to the next ";" or the end of the line.
-	// When nothing follows the key on its line, the value is the next line.
-	{regexp.MustCompile(`(?im)(^|[^?&\w])((?:password|passwd|pwd)[ \t]*[=:][ \t]*)(?:` + quotedOrBraced + `|[^;\r\n]+|(?:\r?\n\s*(?:` + quotedOrBraced + `|[^;\r\n]+))?)`), "${1}${2}[hidden]"},
+	// When nothing follows the key on its line, the value is the text after one line break (CRLF, LF or a lone CR); blank lines end the search.
+	{regexp.MustCompile(`(?im)(^|[^?&\w])((?:password|passwd|pwd)[ \t]*[=:][ \t]*)(?:` + quotedOrBraced + `|[^;\r\n]+|(?:(?:\r\n?|\n)[ \t]*(?:` + quotedOrBraced + `|[^;\r\n]+))?)`), "${1}${2}[hidden]"},
 	{regexp.MustCompile(`(?i)\b(secret|readkey)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s;,]+)`), "${1}${2}[hidden]"},
 }
 

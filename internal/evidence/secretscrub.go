@@ -14,8 +14,9 @@ const quotedOrBraced = `"(?:[^"]|"")*"?|'(?:[^']|'')*'?|\{(?:[^}]|\}\})*\}?`
 // valueToSemicolon is the value of a login-password key. A password may hold
 // spaces, so an unquoted value runs to the next ";" or the end of the line (ADO
 // syntax), not to the next space. When nothing follows the key on its line, the
-// value is the next line ("Password:" then the password on its own line).
-const valueToSemicolon = `(?:` + quotedOrBraced + `|[^;\r\n]+|(?:\r?\n\s*(?:` + quotedOrBraced + `|[^;\r\n]+))?)`
+// value is the text after one line break (CRLF, LF or a lone CR) and any spaces
+// ("Password:" then the password on its own line). Blank lines end the search.
+const valueToSemicolon = `(?:` + quotedOrBraced + `|[^;\r\n]+|(?:(?:\r\n?|\n)[ \t]*(?:` + quotedOrBraced + `|[^;\r\n]+))?)`
 
 // loginKeyNames names the keys whose value is a login password.
 const loginKeyNames = `(?:password|passwd|pwd)`
