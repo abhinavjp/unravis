@@ -624,7 +624,7 @@ jobs:
 
 
   go-race:
-    # The race detector run, BLOCKING (BL-460 cleared the races it found). It is part of the required `build` gate, so it holds the
+    # The race detector run, BLOCKING (BL-441a cleared the races it found; the run on 2026-11-22 reported none). It is part of the required `build` gate, so it holds the
     # promotion pull request and shows red on develop. It fails on any "WARNING: DATA RACE" and on any test failure that is not in
     # docs/desktop/baseline-go-tests.txt (Linux known failures) or docs/desktop/baseline-go-race.txt (tests whose timing or budget
     # does not hold under -race; a known-slow test goes there, a real race never does).
