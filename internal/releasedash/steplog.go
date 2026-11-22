@@ -134,6 +134,9 @@ func ReadLog(dir, name string, names []string) (lines []LogLine, cut bool, err e
 			lines, cut = lines[len(lines)-maxLines:], true
 		}
 	}
+	if lines == nil {
+		lines = []LogLine{} // an empty log is an empty list for the page, not null
+	}
 	return lines, cut, nil
 }
 

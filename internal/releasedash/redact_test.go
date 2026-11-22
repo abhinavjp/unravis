@@ -52,3 +52,22 @@ func TestRedactorKeepsOrdinaryLines(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactorReviewCases(t *testing.T) {
+	r := NewRedactor("Abhinav")
+	for in, bad := range map[string]string{
+		"GH_TOKEN=abc123secret":                 "abc123secret",
+		"SIGNING_PASSPHRASE=hunter2":            "hunter2",
+		"keyPassword=hunter2":                   "hunter2",
+		"client_secret: s3cr3t-value":           "s3cr3t-value",
+		"passphrase: correct horse battery":     "battery",
+		"-----BEGIN PGP PRIVATE KEY BLOCK-----": "BEGIN PGP",
+	} {
+		if got := NewRedactor("Abhinav").Line(in); strings.Contains(got, bad) {
+			t.Errorf("%q -> %q still has %q", in, got, bad)
+		}
+	}
+	if got := r.Line("https://github.com/abhinavjp/unravis/actions/runs/1 by Abhinav"); !strings.Contains(got, "github.com/abhinavjp/unravis") || strings.Contains(got, "by Abhinav") {
+		t.Errorf("name hiding must keep repository names whole: %q", got)
+	}
+}

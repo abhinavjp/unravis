@@ -29,9 +29,9 @@ var (
 	ansiRE    = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07`)
 	tokenRE   = regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})`)
 	bearerRE  = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}`)
-	pairRE    = regexp.MustCompile(`(?i)\b(pass(?:word|phrase)?|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key)(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)`)
-	keyBeginR = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)-----`)
-	keyEndR   = regexp.MustCompile(`-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)-----`)
+	pairRE    = regexp.MustCompile(`(?i)([\w-]*(?:pass(?:word|phrase)?|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|.+)`)
+	keyBeginR = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
+	keyEndR   = regexp.MustCompile(`-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
 	keyFileRE = regexp.MustCompile(`(?i)[\w.-]+\.(?:key|pem|pfx|p12|ppk)\b`)
 	userDirRE = regexp.MustCompile(`(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"']+`)
 	maxLine   = 2000
@@ -83,14 +83,23 @@ func replaceFold(s, sub, with string) string {
 		return s
 	}
 	var b strings.Builder
+	alnum := func(c byte) bool { return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
+	from := 0
 	for {
-		i := strings.Index(ls, lsub)
+		i := strings.Index(ls[from:], lsub)
 		if i < 0 {
 			break
 		}
+		i += from
+		end := i + len(sub)
+		// Only a whole word: "abhinav" is hidden, the "abhinav" inside the repository name "abhinavjp" is not.
+		if (i > 0 && alnum(ls[i-1])) || (end < len(ls) && alnum(ls[end])) {
+			from = i + 1
+			continue
+		}
 		b.WriteString(s[:i])
 		b.WriteString(with)
-		s, ls = s[i+len(sub):], ls[i+len(sub):]
+		s, ls, from = s[end:], ls[end:], 0
 	}
 	b.WriteString(s)
 	return b.String()

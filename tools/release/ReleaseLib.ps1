@@ -709,9 +709,9 @@ $script:LogRx = @{
     Ctrl    = [regex]::new('[\x00-\x08\x0a-\x1f\x7f]', 'Compiled')
     Token   = [regex]::new('\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})', 'Compiled')
     Bearer  = [regex]::new('(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}', 'Compiled')
-    Pair    = [regex]::new('(?i)\b(pass(?:word|phrase)?|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key)(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|[^\s,;]+)', 'Compiled')
-    KeyBeg  = [regex]::new('-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)-----', 'Compiled')
-    KeyEnd  = [regex]::new('-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)-----', 'Compiled')
+    Pair    = [regex]::new('(?i)([\w-]*(?:pass(?:word|phrase)?|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|.+)', 'Compiled')
+    KeyBeg  = [regex]::new('-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
+    KeyEnd  = [regex]::new('-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
     KeyFile = [regex]::new('(?i)[\w.-]+\.(?:key|pem|pfx|p12|ppk)\b', 'Compiled')
     UserDir = [regex]::new('(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"'']+', 'Compiled')
 }
@@ -737,7 +737,7 @@ function Protect-LogLine([string]$Line, $Redactor, [switch]$KeepTabs) {
     $s = $rx.Pair.Replace($s, '$1$2<hidden>')
     $s = $rx.KeyFile.Replace($s, '<key file>')
     $s = $rx.UserDir.Replace($s, '${1}<user>')
-    foreach ($n in $Redactor.Names) { $s = [regex]::Replace($s, [regex]::Escape($n), '<name>', 'IgnoreCase') }
+    foreach ($n in $Redactor.Names) { $s = [regex]::Replace($s, '(?<![A-Za-z0-9])' + [regex]::Escape($n) + '(?![A-Za-z0-9])', '<name>', 'IgnoreCase') }
     if ($s.Length -gt 2000) { $s = $s.Substring(0, 2000) + ' ...(line cut)' }
     return $s.TrimEnd(' ')
 }
@@ -848,6 +848,24 @@ function Get-ReleaseAuditRuns([string]$AuditPath, [string]$Version, [datetime]$S
     return $r
 }
 
+# Runs gh with a time limit and returns its output, or $null when it failed or took too long. Never throws.
+function Invoke-GhCapture([string[]]$GhArgs, [int]$TimeoutSec = 30) {
+    $p = $null
+    try {
+        $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
+        if (-not $gh) { return $null }
+        $psi = [System.Diagnostics.ProcessStartInfo]::new($gh)
+        foreach ($a in $GhArgs) { $psi.ArgumentList.Add($a) }
+        $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $err = $p.StandardError.ReadToEndAsync(); $out = $p.StandardOutput.ReadToEndAsync()
+        if (-not $p.WaitForExit($TimeoutSec * 1000)) { try { $p.Kill($true) } catch {}; return $null }
+        $null = $out.Wait(5000)
+        if ($p.ExitCode -ne 0 -or -not $out.IsCompleted) { return $null }
+        return $out.Result
+    } catch { return $null }
+}
+
 # After a run: saves the logs of its CI run (on the released commit), its release.yml run and its verify run. Never throws, and never
 # takes longer than $BudgetSec in all.
 function Save-ReleaseRunLogs([string]$Repo, [string]$Dir, [string]$AuditPath, [string]$Version, [string]$Commit, [datetime]$Since, [string[]]$Names = @(), [int]$BudgetSec = 150) {
@@ -857,7 +875,7 @@ function Save-ReleaseRunLogs([string]$Repo, [string]$Dir, [string]$AuditPath, [s
         $ids = Get-ReleaseAuditRuns $AuditPath $Version $Since
         $todo = [System.Collections.Generic.List[object]]::new()
         if ($Commit -match '^[0-9a-f]{7,40}$') {
-            $runs = @(gh run list --repo $Repo --workflow ci.yml --commit $Commit --limit 10 --json databaseId,conclusion 2>$null | ConvertFrom-Json)
+            $runs = @(); try { $js = Invoke-GhCapture @('run', 'list', '--repo', $Repo, '--workflow', 'ci.yml', '--commit', $Commit, '--limit', '10', '--json', 'databaseId,conclusion') 30; if ($js) { $runs = @($js | ConvertFrom-Json) } } catch {}
             $pick = $runs | Where-Object { $_.conclusion -eq 'success' } | Select-Object -First 1
             if (-not $pick) { $pick = $runs | Select-Object -First 1 }
             if ($pick) { $todo.Add(@{ kind = 'ci'; id = "$($pick.databaseId)" }) }

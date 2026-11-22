@@ -314,6 +314,13 @@ try {
         Assert-That "log redaction: $($cases[$k])" ($got.Contains($cases[$k])) "got '$got'"
         Assert-That "log redaction: nothing secret left in '$($cases[$k])' case" (-not ($got -match 'ghp_a1B2|hunter2|release\.key|DESKTOP-ABC|nachi|abcdefghijklmnop1234')) "got '$got'"
     }
+    $red2 = New-LogRedactor @('Abhinav')
+    foreach ($c in @(@('GH_TOKEN=abc123secret', 'abc123secret'), @('SIGNING_PASSPHRASE=hunter2', 'hunter2'), @('keyPassword=hunter2', 'hunter2'), @('passphrase: correct horse battery', 'battery'), @('-----BEGIN PGP PRIVATE KEY BLOCK-----', 'BEGIN PGP'))) {
+        $got = Protect-LogLine $c[0] (New-LogRedactor)
+        Assert-That "log redaction: '$($c[0])' hides '$($c[1])'" (-not $got.Contains($c[1])) "got '$got'"
+    }
+    $gotUrl = Protect-LogLine 'https://github.com/abhinavjp/unravis/actions/runs/1 by Abhinav' $red2
+    Assert-That 'log redaction: a user name inside a repository name is kept, the name alone is hidden' ($gotUrl.Contains('github.com/abhinavjp/unravis') -and -not $gotUrl.Contains('by Abhinav')) "got '$gotUrl'"
     $kr = New-LogRedactor
     $blk = 'before', '-----BEGIN PRIVATE KEY-----', 'MIIEvQIBADANBgkqhkiG9w0B', '-----END PRIVATE KEY-----', 'after' | ForEach-Object { Protect-LogLine $_ $kr }
     Assert-That 'log redaction: a private key block is hidden line by line' (($blk -join '|') -eq 'before|<private key hidden>|<private key hidden>|<private key hidden>|after')
