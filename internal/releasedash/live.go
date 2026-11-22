@@ -3,6 +3,7 @@ package releasedash
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"path/filepath"
 	"strings"
 	"time"
@@ -26,7 +27,12 @@ type lockInfo struct {
 	PID     int    `json:"pid"`
 }
 
-const maxLiveAge = 24 * time.Hour
+const (
+	maxLiveAge = 24 * time.Hour
+	// The pid in lock-info.json is the launcher's. If the launcher window is closed, the worker it started can still be going
+	// (it holds run.lock, which is never probed). So a dead launcher only means "ended" once the run has also been silent this long.
+	quietAfterLauncherGone = 30 * time.Minute
+)
 
 // processAlive says whether pid is a running process that started no later than the lock did (a reused pid started later).
 // A variable so tests can stand in for it. It never opens release.lock or run.lock: those are share-none and a probe could make the
@@ -56,7 +62,7 @@ func readLive(dir string, events []Event, now time.Time) *Live {
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() > 16<<10 {
 		return nil
 	}
-	b, err := os.ReadFile(sp)
+	b, err := readSmall(sp, 16<<10)
 	if err != nil {
 		return nil
 	}
@@ -70,10 +76,14 @@ func readLive(dir string, events []Event, now time.Time) *Live {
 	}
 	lv := &Live{Step: "Preflight", Label: "Starting: waiting for CI on master to be green", Started: started.UTC().Format(time.RFC3339)}
 	finished := false
+	lastNews := started
 	for _, e := range events {
 		at, err := time.Parse(time.RFC3339Nano, e.At)
 		if err != nil || at.Before(started.Add(-2*time.Second)) { // only this run's lines
 			continue
+		}
+		if at.After(lastNews) {
+			lastNews = at
 		}
 		switch e.Name {
 		case "pinned":
@@ -97,8 +107,13 @@ func readLive(dir string, events []Event, now time.Time) *Live {
 		return nil
 	}
 	if !processAlive(li.PID, started) {
-		lv.Gone = true
-		lv.Label = "The release process ended without finishing (" + strings.ToLower(lv.Label[:1]) + lv.Label[1:] + ")"
+		quiet := now.Sub(lastNews)
+		if quiet > quietAfterLauncherGone {
+			lv.Gone = true
+			lv.Label = "The release process ended without finishing (" + strings.ToLower(lv.Label[:1]) + lv.Label[1:] + ")"
+		} else {
+			lv.Label += ". The window that started it was closed; it may still be running (last news " + strconv.Itoa(int(quiet.Minutes())) + " min ago)"
+		}
 	}
 	return lv
 }

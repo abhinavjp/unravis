@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -109,7 +110,7 @@ func ReadLocal(dir string) Local {
 	l.Found = true
 	sp := filepath.Join(dir, "state.json")
 	if fi, err := os.Stat(sp); err == nil && fi.Mode().IsRegular() && fi.Size() <= 64<<10 {
-		if b, err := os.ReadFile(sp); err == nil {
+		if b, err := readSmall(sp, 64<<10); err == nil {
 			var r Run
 			if json.Unmarshal(b, &r) == nil && r.Version != "" {
 				r.Reason, r.Stage, r.Status = clip(r.Reason), clip(r.Stage), clip(r.Status)
@@ -122,8 +123,18 @@ func ReadLocal(dir string) Local {
 	return l
 }
 
+// readSmall reads a whole small file without blocking the release script from replacing it.
+func readSmall(path string, max int64) ([]byte, error) {
+	f, err := openShared(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, max))
+}
+
 func readAuditTail(path string) []Event {
-	f, err := os.Open(path)
+	f, err := openShared(path)
 	if err != nil {
 		return nil
 	}

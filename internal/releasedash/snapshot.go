@@ -257,6 +257,17 @@ func merge(gh []Rel, feeds []Feed, loc Local) []Release {
 	return out
 }
 
+// supersededByLive: a stop or failure from an earlier attempt must not hide that the same release is running again now (a resume
+// starts at the step that failed). Steps that finished stay finished.
+func supersededByLive(e Event, version string, live *Live) bool {
+	if live == nil || live.Gone || live.Version != version || (e.Name != "stopped" && e.Name != "verify-failed") {
+		return false
+	}
+	at, err1 := time.Parse(time.RFC3339Nano, e.At)
+	st, err2 := time.Parse(time.RFC3339Nano, live.Started)
+	return err1 == nil && err2 == nil && at.Before(st)
+}
+
 func fillSteps(r *Release, ev []Event, run *Run, live *Live) {
 	st := map[string]*Step{}
 	for _, n := range StageNames {
@@ -269,6 +280,9 @@ func fillSteps(r *Release, ev []Event, run *Run, live *Live) {
 		}
 	}
 	for _, e := range ev {
+		if supersededByLive(e, r.Version, live) {
+			continue
+		}
 		if n, ok := eventStage[e.Name]; ok {
 			st[n].State, st[n].At = "done", e.At
 			if e.Run != "" && (n == "Build" || n == "Verify") {

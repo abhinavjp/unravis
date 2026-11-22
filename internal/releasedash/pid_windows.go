@@ -14,7 +14,7 @@ func pidAlive(pid int, startedBy time.Time) bool {
 	}
 	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
-		return false
+		return err == windows.ERROR_ACCESS_DENIED // alive, but not ours to look into
 	}
 	defer windows.CloseHandle(h)
 	var code uint32

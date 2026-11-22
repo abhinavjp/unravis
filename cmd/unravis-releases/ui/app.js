@@ -31,7 +31,7 @@ function status(r) {
 
 const STEPS = ['Preflight', 'Tag', 'Build', 'Sign', 'Publish', 'Feed', 'Verify'];
 const NEXT = 'next'; // list key of the release that has no version yet (the script is still waiting for CI)
-let snap = null, selected = '', timer = 0, busy = false, failed = false, liveKey = '';
+let shown = [], snap = null, selected = '', timer = 0, busy = false, failed = false, liveKey = '';
 try { selected = sessionStorage.getItem('rd.sel') || ''; } catch (e) { /* the choice just is not kept */ }
 
 async function load(refresh) {
@@ -80,6 +80,7 @@ function render() {
   }
   const rels = (s.releases || []).slice();
   if (lv && !lv.version) rels.unshift({ version: NEXT, label: 'Next release', channel: 'rc or stable', withdrawn: false, verify: 'unknown', onFeed: false, onGitHub: false, recorded: true, steps: STEPS.map((n) => ({ name: n, state: n === lv.step ? 'running' : 'pending' })) });
+  shown = rels;
   const key = lv ? (lv.version || NEXT) : '';
   if (key && key !== liveKey) selected = key; // a release just started: show it
   liveKey = key;
@@ -149,13 +150,14 @@ $('list').addEventListener('click', (e) => { const li = e.target.closest('li[dat
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'r' || e.key === 'R') { load(true); return; }
-  const i = snap ? snap.releases.findIndex((r) => r.version === selected) : -1;
+  const list = shown; // the same rows the page draws, including the Next release row
+  const i = list.findIndex((r) => r.version === selected);
   if (i < 0) return;
   let n = -1;
-  if (e.key === 'ArrowDown' || e.key === 'j') n = Math.min(i + 1, snap.releases.length - 1);
+  if (e.key === 'ArrowDown' || e.key === 'j') n = Math.min(i + 1, list.length - 1);
   else if (e.key === 'ArrowUp' || e.key === 'k') n = Math.max(i - 1, 0);
-  else if (e.key === 'Home') n = 0; else if (e.key === 'End') n = snap.releases.length - 1;
-  if (n >= 0) { e.preventDefault(); pick(snap.releases[n].version); }
+  else if (e.key === 'Home') n = 0; else if (e.key === 'End') n = list.length - 1;
+  if (n >= 0) { e.preventDefault(); pick(list[n].version); }
 });
 $('refresh').addEventListener('click', () => load(true));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) load(false); });

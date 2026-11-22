@@ -114,9 +114,15 @@ func TestLiveStoppedAndDeadAndStale(t *testing.T) {
 	if l := ReadLocal(liveDir(t, start, stopped)); l.Live != nil {
 		t.Fatalf("stopped release still live: %+v", l.Live)
 	}
-	// the process died with no closing line: shown as ended, never as running
+	// the launcher window is gone but news is recent: the worker may still run, so it is not called ended
 	withAlive(t, false)
-	l := ReadLocal(liveDir(t, start, ev(start.Add(time.Second), `"event":"run-start","version":"0.1.0-rc.58","from":"Preflight"`)))
+	soft := ReadLocal(liveDir(t, start, ev(start.Add(time.Second), `"event":"run-start","version":"0.1.0-rc.58","from":"Preflight"`)))
+	if soft.Live == nil || soft.Live.Gone || !strings.Contains(soft.Live.Label, "may still be running") {
+		t.Fatalf("got %+v", soft.Live)
+	}
+	// no news for a long time and no process: shown as ended, never as running
+	long := time.Now().Add(-3 * time.Hour)
+	l := ReadLocal(liveDir(t, long, ev(long.Add(time.Second), `"event":"run-start","version":"0.1.0-rc.58","from":"Preflight"`)))
 	if l.Live == nil || !l.Live.Gone || !strings.Contains(l.Live.Label, "ended without finishing") {
 		t.Fatalf("got %+v", l.Live)
 	}
@@ -169,6 +175,81 @@ func TestPidAliveSelf(t *testing.T) {
 func TestPidAliveReusedPidIsNotAlive(t *testing.T) {
 	if runtimeIsWindows() && pidAlive(os.Getpid(), time.Now().Add(-time.Hour)) {
 		t.Fatal("a process newer than the lock note is a reused pid")
+	}
+}
+
+func stepState(r Release, name string) string {
+	for _, st := range r.Steps {
+		if st.Name == name {
+			return st.State
+		}
+	}
+	return ""
+}
+
+// A resume after a failed attempt: the old stop line must not hide that the same release is running again.
+func TestLiveResumeAfterEarlierStopShowsRunning(t *testing.T) {
+	withAlive(t, true)
+	now := time.Now()
+	first := now.Add(-2 * time.Hour)
+	start := now.Add(-time.Minute)
+	audit := ev(first, `"event":"run-start","version":"0.1.0-rc.58","from":"Preflight"`) +
+		ev(first.Add(time.Second), `"event":"preflight-ok","version":"0.1.0-rc.58"`) +
+		ev(first.Add(2*time.Second), `"event":"tagged","version":"0.1.0-rc.58"`) +
+		ev(first.Add(time.Minute), `"event":"stopped","version":"0.1.0-rc.58","stage":"Build","reason":"CI red"`) +
+		ev(start.Add(time.Second), `"event":"run-start","version":"0.1.0-rc.58","from":"Build"`)
+	l := ReadLocal(liveDir(t, start, audit))
+	rels := merge(nil, nil, l)
+	if len(rels) != 1 || stepState(rels[0], "Build") != "running" || stepState(rels[0], "Tag") != "done" {
+		t.Fatalf("got %+v", rels)
+	}
+	if rels[0].LastReason != "" {
+		t.Fatalf("old stop reason still shown: %q", rels[0].LastReason)
+	}
+}
+
+// A live version with no GitHub release and no audit lines still gets a row.
+func TestLiveVersionWithoutOtherNewsGetsRow(t *testing.T) {
+	loc := Local{Live: &Live{Version: "0.1.0-rc.59", Step: "Preflight", Label: "x"}}
+	rels := merge(nil, nil, loc)
+	if len(rels) != 1 || rels[0].Version != "0.1.0-rc.59" || stepState(rels[0], "Preflight") != "running" {
+		t.Fatalf("got %+v", rels)
+	}
+}
+
+// A gone process with a state.json that still says running must not show a running step.
+func TestGoneIgnoresStateFileRunning(t *testing.T) {
+	loc := Local{
+		Run:    &Run{Version: "0.1.0-rc.58", Stage: "Preflight", Status: "running"},
+		Live:   &Live{Version: "0.1.0-rc.58", Step: "Tag", Gone: true},
+		Events: []Event{{At: time.Now().Format(time.RFC3339Nano), Name: "preflight-ok", Version: "0.1.0-rc.58"}},
+	}
+	rels := merge(nil, nil, loc)
+	for _, st := range rels[0].Steps {
+		if st.State == "running" {
+			t.Fatalf("gone process shown running: %+v", rels[0].Steps)
+		}
+	}
+}
+
+// The log is read even while the release script replaces files (share-delete on Windows).
+func TestReadSharedWhileHeldOpen(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "x.json")
+	os.WriteFile(p, []byte("hello"), 0o600)
+	f, err := openShared(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	b, err := readSmall(p, 100)
+	if err != nil || string(b) != "hello" {
+		t.Fatalf("got %q %v", b, err)
+	}
+	if runtimeIsWindows() { // moving or deleting a file someone reads must work (the release script does this to its files)
+		if err := os.Rename(p, p+".moved"); err != nil {
+			t.Fatalf("move while open: %v", err)
+		}
 	}
 }
 
