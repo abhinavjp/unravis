@@ -81,7 +81,8 @@ for (const screen of screens) {
     const write = (o: object) => writeFileSync(out, JSON.stringify({ id: screen.id, phase: screen.phase, note: screen.note ?? '', variant, size, scheme, ...o }, null, 1));
 
     if (screen.retired) return write({ status: 'skipped', reason: 'retired: ' + screen.retired });
-    if (screen.app === 'setup' && !env.setupUrl) return write({ status: 'skipped', reason: 'the setup window (capture build) was not started on this run' });
+    // Not being able to reach a screen is a gap, never a pass: only a retired screen is skipped.
+    if (screen.app === 'setup' && !env.setupUrl) return write({ status: 'unreachable', reason: 'the setup window (capture build) was not started on this run: it needs Go (go build -tags capture ./cmd/unravis-setup) or UNRAVIS_SETUP_EXE' });
 
     if (screen.app === 'setup') await freeSetup(env);
 
@@ -111,29 +112,40 @@ for (const screen of screens) {
     await page.clock.setFixedTime(env.demoNow);
 
     try {
-      await runSteps(page, screen.steps, env, screen.app);
-    } catch (err) {
-      const msg = String((err as Error).message).split('\n').slice(0, 3).join(' ').slice(0, 400);
-      return write({ status: 'unreachable', reason: msg });
+      try {
+        await runSteps(page, screen.steps, env, screen.app);
+      } catch (err) {
+        const msg = String((err as Error).message).split('\n').slice(0, 3).join(' ').slice(0, 400);
+        return write({ status: 'unreachable', reason: msg });
+      }
+      try {
+        await settle(page);
+        const height = await growToContent(page, width);
+        await page.evaluate(pageChecks);
+        const result = await page.evaluate((h) => (window as any).__uiaudit.run({ baseHeight: h }), baseHeight);
+        const rank = { error: 0, warn: 1, info: 2 } as const;
+        const findings: Issue[] = [...browserIssues, ...(result.findings as Issue[])].sort((a, b) => rank[a.severity] - rank[b.severity]);
+
+        // The page must really be in the look this run claims (a theme that did not apply would make two runs identical).
+        if ((scheme === 'dark') !== result.meta.darkSurface) {
+          findings.unshift({ check: 'theme-not-applied', severity: 'error', message: 'This run asked for the ' + scheme + ' theme but the page is drawn ' + (result.meta.darkSurface ? 'dark' : 'light') + '.', label: '', selector: '', rect: { x: 0, y: 0, w: 0, h: 0 } });
+        }
+
+        await page.evaluate((f) => (window as any).__uiaudit.annotate(f), findings);
+        await page.screenshot({ path: join(reportDir, shot), fullPage: true, animations: 'disabled', caret: 'hide' });
+        write({ status: 'checked', shot, findings, totals: result.totals, meta: { ...result.meta, shotHeight: height } });
+      } catch (err) {
+        // The screen was reached but the look could not be taken: a gap in the audit, reported as not reached.
+        write({ status: 'unreachable', reason: 'the look failed after the screen opened: ' + String((err as Error).message).split('\n')[0].slice(0, 300) });
+      }
+    } finally {
+      // Put back what the steps changed on the shared demo, whatever happened above (a screen that could not be reached included).
+      await page.setViewportSize({ width, height: baseHeight }).catch(() => undefined);
+      if (screen.after) {
+        await runSteps(page, screen.after, env, screen.app).catch((err) => {
+          throw new Error('The clean-up steps of ' + screen.id + ' failed, so later screens may start from the wrong state: ' + String((err as Error).message).split('\n')[0]);
+        });
+      }
     }
-
-    await settle(page);
-    const height = await growToContent(page, width);
-    await page.evaluate(pageChecks);
-    const result = await page.evaluate(() => (window as any).__uiaudit.run({}));
-    const rank = { error: 0, warn: 1, info: 2 } as const;
-    const findings: Issue[] = [...browserIssues, ...(result.findings as Issue[])].sort((a, b) => rank[a.severity] - rank[b.severity]);
-
-    // The page must really be in the look this run claims (a theme that did not apply would make two runs identical).
-    if ((scheme === 'dark') !== result.meta.darkSurface) {
-      findings.unshift({ check: 'theme-not-applied', severity: 'error', message: 'This run asked for the ' + scheme + ' theme but the page is drawn ' + (result.meta.darkSurface ? 'dark' : 'light') + '.', label: '', selector: '', rect: { x: 0, y: 0, w: 0, h: 0 } });
-    }
-
-    await page.evaluate((f) => (window as any).__uiaudit.annotate(f), findings);
-    await page.screenshot({ path: join(reportDir, shot), fullPage: true, animations: 'disabled', caret: 'hide' });
-    write({ status: 'checked', shot, findings, totals: result.totals, meta: { ...result.meta, shotHeight: height } });
-
-    await page.setViewportSize({ width, height: baseHeight });
-    if (screen.after) await runSteps(page, screen.after, env, screen.app).catch(() => undefined);
   });
 }

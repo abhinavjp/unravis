@@ -1,6 +1,6 @@
 // Starts the demo app (own empty data folder, fixed clock, demo cases) and, when it builds, the setup window in its capture mode
 // (it fakes every change). The addresses go to the tests through the environment. Stops both at the end.
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { startDemo, DEMO_NOW, type Demo } from '../../e2e/support/launcher';
 
@@ -10,9 +10,17 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   let demo: Demo | null = null;
   let setup: ChildProcess | null = null;
   const stop = async () => {
-    if (setup && setup.exitCode === null) setup.kill();
+    if (setup && setup.exitCode === null) {
+      try {
+        // Windows: end the whole tree, as the demo launcher does.
+        execFileSync('taskkill', ['/PID', String(setup.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+      } catch {
+        setup.kill();
+      }
+    }
     if (demo) await demo.stop();
   };
+  process.on('exit', () => { if (setup && setup.exitCode === null) setup.kill(); });
   try {
     demo = await startDemo({ cases: true });
     process.env.UNRAVIS_BASE_URL = demo.base;
@@ -21,7 +29,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
 
     const setupExe = process.env.UNRAVIS_SETUP_EXE;
     if (setupExe && existsSync(setupExe)) {
-      setup = spawn(setupExe, ['--capture', '--no-browser'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      setup = spawn(setupExe, ['--capture', '--no-browser'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       let text = '';
       const found = await new Promise<RegExpExecArray | null>((resolve) => {
         const timer = setTimeout(() => resolve(null), 30_000);

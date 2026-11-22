@@ -81,7 +81,7 @@
         var ar = rectOf(a);
         if (r.right <= ar.left + 0.5 || r.left >= ar.right - 0.5 || r.bottom <= ar.top + 0.5 || r.top >= ar.bottom - 0.5) {
           // Outside the clipping box: not on screen. (A scroller's off-screen items count as "not seen".)
-          if (/(hidden|clip)/.test(s.overflowX + s.overflowY) || true) return true;
+          return true;
         }
       }
     }
@@ -206,7 +206,7 @@
       counts[check] = (counts[check] || 0) + 1;
       if (counts[check] > CAP) return;
       var r = el ? rectOf(el) : { left: 0, top: 0, width: 0, height: 0 };
-      var f = { check: check, severity: severity, message: message, label: el ? nameOf(el) : '', selector: el ? selectorOf(el) : '', rect: docRect(r) };
+      var f = { check: check, severity: severity, message: message, label: el === document.documentElement ? 'page' : el ? nameOf(el) : '', selector: el ? selectorOf(el) : '', rect: docRect(r) };
       if (extra) for (var k in extra) f[k] = extra[k];
       findings.push(f);
     }
@@ -482,7 +482,7 @@
       var c = parseColor(s.backgroundColor);
       if (!c || c.a < 0.95) return;
       var r = rectOf(el);
-      if (r.width * r.height < innerWidth * innerHeight * 0.02) return;
+      if (r.width * r.height < innerWidth * (opts.baseHeight || innerHeight) * 0.02) return;
       var l = lum(c);
       if (dark && l > 0.8) add('theme-mismatch', 'warn', 'A big bright surface in the dark theme.', el);
       if (!dark && l < 0.08) add('theme-mismatch', 'warn', 'A big dark surface in the light theme.', el);

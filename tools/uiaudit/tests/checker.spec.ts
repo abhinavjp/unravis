@@ -29,7 +29,7 @@ test('the checker finds every planted fault in bad.html', async ({ page }) => {
   expect(has(r, 'bad-text', 'undefined'), 'code word').toBe(true);
   expect(has(r, 'misaligned-column', 'three'), 'stack edge').toBe(true);
   expect(has(r, 'broken-image'), 'broken picture').toBe(true);
-  expect(has(r, 'theme-mismatch') || true).toBe(true); // the slab is dark on a light page: reported as a warning
+  expect(has(r, 'theme-mismatch'), 'dark slab on a light page').toBe(true);
   expect(has(r, 'heading-jump'), 'heading jump').toBe(true);
 });
 

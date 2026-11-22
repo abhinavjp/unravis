@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classify, loadResults, renderReport, tally, verdict } from './lib/report.mjs';
+import { VARIANTS, classify, loadResults, renderReport, tally, verdict } from './lib/report.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '..', '..');
@@ -19,16 +19,19 @@ const value = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : 
 const reportDir = resolve(value('--report-dir') ?? join(here, 'report'));
 const dataDir = join(reportDir, 'data');
 const exeSuffix = process.platform === 'win32' ? '.exe' : '';
-const sh = (cmd, a, opt = {}) => spawnSync(cmd, a, { stdio: 'inherit', shell: process.platform === 'win32', ...opt });
+// Only npx needs a shell on Windows (it is a .cmd file). go is called without one, so paths with spaces stay whole.
+const sh = (cmd, a, opt = {}) => spawnSync(cmd, a, { stdio: 'inherit', shell: cmd === 'npx' && process.platform === 'win32', ...opt });
 
+let playwrightFailed = false;
 if (!flag('--report-only')) {
-  rmSync(reportDir, { recursive: true, force: true });
+  // Windows can hold a file for a moment after a process ends (an exe, a scanner): a few tries before giving up.
+  try { rmSync(reportDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch (e) { console.error('Could not clear ' + reportDir + ': ' + e.message + '\nA program from an earlier run may still be running. Close it and run again.'); process.exit(2); }
   mkdirSync(dataDir, { recursive: true });
   mkdirSync(join(reportDir, 'shots'), { recursive: true });
 
   const build = join(reportDir, '.build');
   mkdirSync(build, { recursive: true });
-  const haveGo = spawnSync('go', ['version'], { shell: process.platform === 'win32' }).status === 0;
+  const haveGo = spawnSync('go', ['version']).status === 0;
   if (!process.env.UNRAVIS_EXE) {
     if (!haveGo) { console.error('Set UNRAVIS_EXE to a demo-capable unravis exe, or install Go so it can be built.'); process.exit(2); }
     const out = join(build, 'unravis-demo' + exeSuffix);
@@ -45,11 +48,28 @@ if (!flag('--report-only')) {
   process.env.UIAUDIT_REPORT_DIR = reportDir;
   if (value('--only')) process.env.UIAUDIT_ONLY = value('--only');
   const pw = sh('npx', ['playwright', 'test', '--trace', 'off'], { cwd: here });
-  if (pw.status !== 0 && !existsSync(dataDir)) process.exit(2);
+  playwrightFailed = pw.status !== 0;
 }
 
 const baseline = JSON.parse(readFileSync(join(here, 'baseline.json'), 'utf8'));
-const results = classify(loadResults(dataDir), baseline);
+const loaded = loadResults(dataDir);
+
+// Every screen must have a result in all four looks. A look with no data file (a timeout, a crash, a setup that never started)
+// is a gap and is reported as not reached, never left out of the count.
+const screensWanted = [
+  ...JSON.parse(readFileSync(join(repo, 'tools', 'screens', 'screens.json'), 'utf8')).screens,
+  ...JSON.parse(readFileSync(join(here, 'extra-screens.json'), 'utf8')).screens
+].filter((x) => !value('--only') || value('--only').split(',').map((t) => t.trim()).includes(x.id));
+const have = new Set(loaded.map((r) => r.id + '|' + r.variant));
+for (const sc of screensWanted) {
+  for (const v of VARIANTS) {
+    if (have.has(sc.id + '|' + v)) continue;
+    const [size, scheme] = v.split('-');
+    loaded.push({ id: sc.id, phase: sc.phase, note: sc.note ?? '', variant: v, size, scheme, status: 'unreachable', reason: 'no result was written for this look (a timeout or a crash)' });
+  }
+}
+if (!screensWanted.length || !loaded.length) { console.error('No screens to check (is --only right?).'); process.exit(2); }
+const results = classify(loaded, baseline);
 const t = tally(results);
 const now = new Date();
 const pkg = JSON.parse(readFileSync(join(here, 'node_modules', '@playwright', 'test', 'package.json'), 'utf8'));
@@ -62,4 +82,8 @@ writeFileSync(join(reportDir, 'REPORT.md'), md);
 writeFileSync(join(reportDir, 'summary.json'), JSON.stringify({ verdict: verdict(t), ...t }, null, 1));
 console.log('\nReport: ' + join(reportDir, 'REPORT.md'));
 console.log('Verdict ' + verdict(t) + ': ' + t.newError + ' new errors, ' + t.newWarn + ' new warnings, ' + t.unreachableNew + ' newly unreachable, ' + t.knownError + '+' + t.knownWarn + ' known.');
+if (playwrightFailed) {
+  console.error('Playwright itself reported a failure (setup, or the clean-up steps of a screen). Read its output above: this run is not trustworthy.');
+  process.exit(2);
+}
 process.exit(verdict(t) === 'PASS' ? 0 : 1);

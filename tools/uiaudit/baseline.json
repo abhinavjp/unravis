@@ -38,7 +38,8 @@
     {
       "check": "low-contrast",
       "why": "Dimmed low-traffic rows and a few grey notes read at 3.9:1 or less (WCAG AA wants 4.5:1).",
-      "item": "BL-476"
+      "item": "BL-476",
+      "screen": "x-analysis-daily-hourly"
     },
     {
       "check": "misaligned-column",

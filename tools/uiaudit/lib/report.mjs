@@ -61,7 +61,7 @@ export function findKnown(baseline, result, f) {
 export function classify(results, baseline) {
   for (const r of results) {
     if (r.status !== 'checked') {
-      const e = (baseline.entries ?? []).find((x) => x.check === 'unreachable' && glob(x.screen, r.id) && glob(x.size, r.size));
+      const e = (baseline.entries ?? []).find((x) => (x.check === undefined || x.check === '*' || x.check === 'unreachable') && glob(x.screen, r.id) && glob(x.size, r.size));
       r.known = e ?? null;
       continue;
     }
