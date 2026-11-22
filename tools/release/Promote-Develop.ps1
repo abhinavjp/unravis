@@ -125,12 +125,12 @@ if ($LASTEXITCODE -eq 0 -and $existing) {
         # The generated web files commit of an earlier run of this script (step 4b; the same rule as Get-PromotionSideCommits in
         # ReleaseLib.ps1): the fixed subject, one parent, and only files under the three generated folders (case sensitive: -cnotmatch).
         # Without this a re-run after -NoMerge, a slow or failed CI run, or a refused merge would call that commit foreign and demand
-        # that the branch be deleted (closing the pull request and wasting a full CI run). The commit API lists at most 300 files: more is not trusted.
-        if ($emsg -like 'Rebuild web files for promotion*') {
+        # that the branch be deleted (closing the pull request and wasting a full CI run). The commit API pages its file list (read with --paginate) and holds at most 3000 files: more is not trusted.
+        if ($emsg -clike 'Rebuild web files for promotion*') {
             $np = [int](Invoke-Gh api "repos/$Repo/commits/$esha" --jq '.parents | length')
-            $gfiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$esha" --jq '.files[].filename')
+            $gfiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$esha" --paginate --jq '.files[].filename')
             $outside = @($gfiles | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' })
-            if ($np -eq 1 -and $gfiles.Count -gt 0 -and $gfiles.Count -lt 300 -and $outside.Count -eq 0) { continue }
+            if ($np -eq 1 -and $gfiles.Count -gt 0 -and $gfiles.Count -lt 3000 -and $outside.Count -eq 0) { continue }
         }
         if ([int](Invoke-Gh api "repos/$Repo/compare/master...$esha" --jq '.ahead_by') -eq 0) { continue }
         $foreign += $esha.Substring(0, 7)
@@ -141,7 +141,7 @@ if ($LASTEXITCODE -eq 0 -and $existing) {
 else { $null = Invoke-Gh api "repos/$Repo/git/refs" -f "ref=refs/heads/$branch" -f "sha=$sha" }
 if ($cmp.behind -gt 0) {
     $null = & gh api "repos/$Repo/merges" -f "base=$branch" -f 'head=master' -f "commit_message=Merge master into $branch" 2>&1
-    if ($LASTEXITCODE -ne 0) { Stop-Here "master could not be merged into $branch on GitHub (a conflict, most likely). Merge origin/master into develop by pull request (a merge commit), resolve it there (for the three generated web folders take master's files: git checkout origin/master -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui), then run again. The branch $branch is left for you to delete." }
+    if ($LASTEXITCODE -ne 0) { Stop-Here "master could not be merged into $branch on GitHub (a conflict, most likely). Merge origin/master into develop by pull request (a merge commit), resolve it there (for the three generated web folders take master's files: git restore --source=origin/master --staged --worktree -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui; it also deletes the files master does not have), then run again. The branch $branch is left for you to delete." }
 }
 # --- 4b. the generated web files, built once for the whole promotion ------------------------------------------------------
 # Runs before the pull request is opened, so its CI run starts once, on the final head. Idempotent: a branch that already holds the

@@ -184,18 +184,24 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         run: |
           set -euo pipefail
-          paths=(web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui)
-          bad="$(git diff --no-renames --name-only HEAD^1 HEAD -- "${paths[@]}")"
+          # Names are matched case-insensitively (a Windows checkout would put cmd/unravis-setup/UI/x.js inside the embedded ui folder).
+          pattern='^(web/dist|cmd/unravis-(setup|lite)/ui)/'
+          bad="$(git diff --no-renames --name-only HEAD^1 HEAD | grep -iE "$pattern" || true)"
           if [ -z "$bad" ]; then echo "No generated web files in this pull request."; exit 0; fi
+          # A back-merge of master is the one allowed case: after the merge the generated files must be master's, exactly (same names,
+          # same bytes, same letter case). The listing below includes every case variant, so one that master lacks cannot pass.
           git fetch --no-tags --depth=1 origin master
-          if git diff --quiet FETCH_HEAD HEAD -- "${paths[@]}"; then
+          differ="$(git diff --no-renames --name-only FETCH_HEAD HEAD | grep -iE "$pattern" || true)"
+          if [ -z "$differ" ]; then
             echo "The generated web folders equal master's (a back-merge of master): allowed."
             exit 0
           fi
           echo "::error::This pull request changes generated web files. Do not commit them: the promotion to master rebuilds them (docs/pipeline/dist-on-promotion.md)."
-          printf '%s\n' "$bad" | head -20 | sed 's/^/  /'
-          echo "Restore them: git checkout origin/develop -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui, then commit."
-          echo "A back-merge of master into develop is allowed only when these folders end up identical to master's: git checkout origin/master -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui."
+          { printf '%s\n' "$bad" | head -20 | sed 's/^/  /'; } || true
+          echo "Restore them (this also deletes the new hashed files; a plain checkout would not):"
+          echo "  git restore --source=origin/develop --staged --worktree -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui"
+          echo "  git clean -fd -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui     (removes files git did not track yet; check git status first)"
+          echo "A back-merge of master into develop is allowed only when these folders end up identical to master's: the same two commands with --source=origin/master."
           exit 1
 
       - name: Did the pull request touch web/?

@@ -227,8 +227,10 @@ function Get-PromotionSideCommits([string]$RepoRoot, [string]$Commit) {
             # rebuilt on the promote branch. It is no pull request. It passes only when its subject is the fixed one AND it changes nothing
             # but the three generated folders. That the bytes equal a fresh build is proved by check-dist in ci.yml (promotion pull request)
             # and release.yml (the tag); a commit with that subject that touches anything else falls through to 'pr' and is refused.
-            # It must also sit at the tip end of the promote branch: only other generated commits and merges of master may come after
-            # it (promote-dist.mjs runs last), so a generated-looking commit buried below a develop pull request is refused. The path
+            # It must also sit at the tip end of the promote branch: only other generated commits and CLEAN merges of master may come after
+            # it (promote-dist.mjs runs last). Any other commit above it, a squash commit or a "Merge pull request" merge commit of develop
+            # (a two-parent commit that is not a clean merge of master), ends the tip end, so a generated-looking commit buried below a
+            # develop pull request is refused. The path
             # test is case sensitive (-cnotmatch): "UI" is not "ui". Names are read unquoted (core.quotepath=off).
             $subject = (git -C $RepoRoot log -n 1 --format=%s $s)
             if ($top -and $LASTEXITCODE -eq 0 -and "$subject".StartsWith('Rebuild web files for promotion', [StringComparison]::Ordinal)) {
@@ -254,6 +256,8 @@ function Get-PromotionSideCommits([string]$RepoRoot, [string]$Commit) {
             } else { $why = 'merge whose second parent is not on master' }
         }
         # A merge commit may also be a pull request merged into develop with "merge commit": the caller tries that first.
+        # Such a merge (not a clean merge of master) ends the tip end: a generated-looking commit below it is not accepted.
+        if (-not $ok) { $top = $false }
         $out += [pscustomobject]@{ Sha = $s; Kind = 'mergein'; Ok = $ok; Why = $why }
     }
     return , $out

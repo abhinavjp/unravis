@@ -350,6 +350,17 @@ try {
     }
     Assert-That 'train: generated files under another subject are treated as a pull request commit' (@($sideA | Where-Object { $_.Sha -eq $script:dd.subject -and $_.Kind -eq 'pr' -and -not $_.Ok }).Count -eq 1)
     Assert-That 'train: a generated commit buried below another commit is refused' (@($sideA | Where-Object { $_.Sha -eq $script:dd.ok -and $_.Kind -eq 'pr' -and -not $_.Ok }).Count -eq 1)
+    # A direct-push generated commit with a develop pull request MERGE commit (two parents) on top of it: the position rule must see through
+    # the merge commit, as develop's own history is made of them.
+    $sideBuried = Get-Side 'promote11' {
+        Set-DistFile 'web/dist/evil.js' 'e'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'; $script:dd.buried = (G rev-parse HEAD).Trim()
+        G checkout -q -b feat11 $d2
+        Set-Content -LiteralPath (Join-Path $g 'feat11.txt') 'f'; G add -A; G commit -q -m 'F11'
+        G checkout -q promote11
+        G merge -q --no-ff -m 'Merge pull request #11 from x/feat11' feat11; $script:dd.prmerge = (G rev-parse HEAD).Trim()
+    }
+    Assert-That 'train: a generated commit buried below a pull request merge commit is refused' (@($sideBuried | Where-Object { $_.Sha -eq $script:dd.buried -and $_.Kind -eq 'pr' -and -not $_.Ok }).Count -eq 1) (($sideBuried | ForEach-Object { "$($_.Sha.Substring(0,7)) $($_.Kind) $($_.Ok)" }) -join '; ')
+    Assert-That 'train: the pull request merge commit itself is not taken for a merge of master' (@($sideBuried | Where-Object { $_.Sha -eq $script:dd.prmerge -and $_.Kind -eq 'mergein' -and -not $_.Ok }).Count -eq 1)
     $sideB = Get-Side 'promote5' {
         Set-DistFile 'web/dist/index.html' 'built'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'; $script:dd.first = (G rev-parse HEAD).Trim()
         G merge -q --no-edit $h   # a re-run after master moved: the merge of master comes after the generated commit

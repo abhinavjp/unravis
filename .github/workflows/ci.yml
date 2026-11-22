@@ -234,6 +234,15 @@ jobs:
           # Full history, so the formatting step can find where the pull request branched off.
           fetch-depth: 0
 
+      - name: Screenshot baselines are not regenerated on develop
+        # develop holds the last promoted web files, so a run here would photograph the old UI (docs/pipeline/dist-on-promotion.md).
+        # Run "Regenerate screenshot baselines" on a promote/* branch or on master.
+        if: ${{ inputs.regenerate_baselines == true && github.ref == 'refs/heads/develop' }}
+        shell: bash
+        run: |
+          echo "::error::Do not regenerate the screenshot baselines on develop: its exe embeds the last promoted web files, not the current source. Run it on a promote/* branch or on master."
+          exit 1
+
       - name: Set up Go
         uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
