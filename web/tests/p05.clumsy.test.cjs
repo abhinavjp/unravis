@@ -378,7 +378,7 @@ test('p05: the progress panel is announced, takes focus at the end, lists failur
   assert.match(progress, /role="alert"/);
   assert.match(progress, /box\?\.focus\(\)/);
   const landing = read('src/components/Landing.svelte');
-  assert.match(landing, /\{#if !caseMade\(\)\}<button type="button" class="primary-button" disabled=\{createView\.running \|\| blockers\(\)\.length > 0\}/);
+  assert.match(landing, /\{#if !caseMade\(\)\}[^\n]*<button type="button" class="primary-button" disabled=\{createView\.running \|\| blockers\(\)\.length > 0\}/);
 });
 
 test('p05: an empty selection makes an empty case, and a Mongo-only run needs no notice', async () => {

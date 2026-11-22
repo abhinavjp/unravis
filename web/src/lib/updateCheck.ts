@@ -12,7 +12,7 @@ export function updateCheckNote(reply: UpdateCheckReply): string {
       if (reply.held) return `You are on v${reply.current}. A newer version exists, but it is on hold: ${reply.held}.`;
       return `You are on the latest version (v${reply.current}).`;
     case 'available':
-      return `Version ${reply.latest} is available. You have v${reply.current}.`;
+      return `Version ${reply.latest} is available. You have version ${reply.current}.`;
     case 'dev':
       return 'This is a development build, so there is nothing to compare.';
     case 'unverified':
@@ -121,6 +121,13 @@ export function downloadPercent(done: number, total: number): number {
   return Math.min(100, Math.floor((done / total) * 100));
 }
 
+/** Why an update failed, in plain words. The one hash message from the server is rewritten; anything else is shown as it came. */
+export function failedReason(error: string | undefined): string {
+  const text = (error ?? '').trim();
+  if (/does not match the signed release/i.test(text)) return 'The downloaded file did not match the signed release, so it was deleted. Nothing was changed.';
+  return text;
+}
+
 /** The sentence for the download and install step. '' when there is nothing to say. */
 export function installNote(reply: UpdateCheckReply): string {
   const step = reply.install;
@@ -135,7 +142,7 @@ export function installNote(reply: UpdateCheckReply): string {
     case 'launched':
       return 'The update is being applied. Unravis closes and starts again by itself. If nothing happens, press Apply now again.';
     case 'failed':
-      return `The update did not go through. ${step.error ?? ''}`.trim();
+      return `Update failed. ${failedReason(step.error)}`.trim();
     default:
       return '';
   }

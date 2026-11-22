@@ -12,5 +12,7 @@
   .u-mark span:nth-child(1) { height: 7px; opacity: .55; }
   .u-mark span:nth-child(2) { height: 14px; }
   .u-mark span:nth-child(3) { height: 10px; opacity: .8; }
+  /* Forced colors removes backgrounds, so the three bars are drawn in the text colour instead of vanishing. */
+  @media (forced-colors: active) { .u-mark span { background: CanvasText; forced-color-adjust: none; opacity: 1; } }
   .u-word { font-size: 16px; font-weight: 600; color: var(--text); }
 </style>

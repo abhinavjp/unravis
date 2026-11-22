@@ -1,15 +1,15 @@
 import type { LintEntry } from './copylint';
 
 /**
- * Words for the Investigation Timeline (WP-16a): the entry card on the case home page, the screen shell, and
+ * Words for the Investigation timeline (WP-16a): the entry card on the case home page, the screen shell, and
  * the sentence shown for every refusal the tracing route can send. The screen itself is wired up in WP-16b.
  */
 const CLOSED_REASON = 'This case is closed. You can read it, but nothing can be added.';
 
 export const TRACING_TEXT = {
-  heading: 'Investigation Timeline',
+  heading: 'Investigation timeline',
   entryNote: 'See the API audit, SQL and IIS on one timeline for your time window, next to a period to compare with.',
-  entryButton: 'Open the Investigation Timeline',
+  entryButton: 'Open the Investigation timeline',
   backToCase: 'Case home',
   readingWindow: 'Reading the window…',
   retry: 'Try again',

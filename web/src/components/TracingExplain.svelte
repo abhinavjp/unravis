@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The explanation block of the Investigation Timeline: how to read the chart, what each lane shows, how the
+  // The explanation block of the Investigation timeline: how to read the chart, what each lane shows, how the
   // axis was worked out, and where each lane's data came from. Every word is built in `lib/tracing/explain.ts`.
   import { EXPLAIN_TEXT, LANE_SHOWS, axisLines, detailsRows } from '../lib/tracing/explain';
   import { LANE_ASK, LANE_NAME, LANE_ORDER } from '../lib/tracing/lanes';

@@ -143,8 +143,8 @@
         {/if}
         {#if failed}<p class="inline-error" role="alert">{failureText}</p>{/if}
         <div class="actions">
-          <button type="submit" class="primary-button" disabled={starting || !formOk}>{starting ? ARCHIVE_TEXT.archiveRunning : ARCHIVE_TEXT.archiveSubmit}</button>
           <button type="button" class="secondary-button" onclick={onClose}>{ARCHIVE_TEXT.archiveCancel}</button>
+          <button type="submit" class="primary-button" disabled={starting || !formOk}>{starting ? ARCHIVE_TEXT.archiveRunning : ARCHIVE_TEXT.archiveSubmit}</button>
         </div>
       </form>
     {/if}

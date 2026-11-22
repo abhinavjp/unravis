@@ -5,7 +5,7 @@ const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
 
-// The Investigation Timeline reading what it did not read: the banner, the chunked read, the "Sources traced" picker and the
+// The Investigation timeline reading what it did not read: the banner, the chunked read, the "Sources traced" picker and the
 // SQL / IIS empty state. Pure modules are run; the Svelte files are read as text.
 
 const root = path.resolve(__dirname, '..');
@@ -150,7 +150,7 @@ test('a SQL or IIS lane with no file says so, offers Add files, and does not cla
   assert.equal(lanes.laneNote(noFile), lanes.READ_TEXT.noFile);
   assert.match(lanes.READ_TEXT.noFile, /^This case has no file for this source\./);
   assert.doesNotMatch(lanes.READ_TEXT.noFile, /imported files only|not live connections/);
-  assert.match(lanes.READ_TEXT.noFile, /Add a file to see this lane\./);
+  assert.match(lanes.READ_TEXT.noFile, /Add files to see this lane\./);
   assert.equal(lanes.laneNote(lane({ key: 'iis', state: 'no-data' })), lanes.READ_TEXT.noFile);
   assert.equal(lanes.READ_TEXT.addFiles, 'Add files');
   // The audit lane has live sources; its empty answer keeps the server's words.

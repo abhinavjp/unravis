@@ -23,8 +23,8 @@ async function openFilters(page: Page, tab: string) {
 
 test('INV-10a: filters become chips, narrow the groups, and Clear all removes them', async ({ page }) => {
   await openFilters(page, 'What');
-  await page.getByLabel('Controller name').fill('Payroll');
-  await page.getByLabel('Action name').fill('Run');
+  await page.getByLabel('Controller name', { exact: true }).fill('Payroll');
+  await page.getByLabel('Action name', { exact: true }).fill('Run');
   await page.getByLabel('Status', { exact: true }).selectOption({ label: 'Success' });
   await expect(page.getByText('Filters changed. Click Run analysis to use the new window.')).toBeVisible();
   const list = await ops(page);
@@ -32,7 +32,7 @@ test('INV-10a: filters become chips, narrow the groups, and Clear all removes th
   await expect(list).not.toContainText('Employees.List');
   await expect(page.getByRole('button', { name: 'Remove Controller filter: Payroll' }).first()).toBeAttached();
   await openFilters(page, 'Request details');
-  await page.getByLabel('User IDs').fill('1003');
+  await page.getByLabel('User IDs', { exact: true }).fill('1003');
   await run(page);
   await page.getByRole('button', { name: 'Clear all' }).click();
   await expect(page.getByRole('button', { name: /^Remove .* filter/ })).toHaveCount(0);
@@ -42,7 +42,7 @@ test('INV-10a: filters become chips, narrow the groups, and Clear all removes th
 
 test('INV-10: an invalid Audit ID holds the run back instead of sending a bad request', async ({ page }) => {
   await openFilters(page, 'Request details');
-  await page.getByLabel('Audit ID').fill('not an id!!');
+  await page.getByLabel('Audit ID', { exact: true }).fill('not an id!!');
   // The field's own error and the hint beside Run analysis both say it.
   await expect(page.locator('#rf-audit-id-error')).toHaveText('An audit ID is exactly 24 hexadecimal characters.');
   let sent = 0;

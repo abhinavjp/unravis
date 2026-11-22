@@ -3,6 +3,7 @@ import { CaseApiError, casePath, isCaseGone, json, send } from './cases';
 import { reasonText } from './copy/importCopy';
 import { RUN_TEXT } from './copy/sourcesCopy';
 import type { SavedSqlConnection, SqlTestRequest } from './types';
+import { formatTime } from './time';
 
 /**
  * The SQL Server and MongoDB lanes of a case (P7): the four SQL checks, the Mongo profiler check, the grant scripts shown for the owner
@@ -217,6 +218,18 @@ function parseUtc(text: string): number | null {
   const d = new Date(t);
   // Date.UTC rolls 31 Feb over to March; a roll-over means the date was not real.
   return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3] ? t : null;
+}
+/** The ISO time (UTC) of a typed "YYYY-MM-DD HH:MM" text, or null when the text is not a real time. The echo under a box uses it to show the same moment in the header's zone (CASES-12). */
+export const utcTextToIso = (text: string): string | null => { const t = parseUtc(text); return t === null ? null : new Date(t).toISOString(); };
+/**
+ * One moment for a row of a case: the time in the zone the header chose, then the same moment in UTC in brackets, so the row agrees with the rest of the page and
+ * still matches the UTC the server and the typed boxes use ("18 Oct 2026 14:00 GMT+1 (2026-10-18 13:00 UTC)"). In UTC it is just the UTC text (CASES-13).
+ */
+export function zoneThenUtc(iso: string, zone: string): string {
+  const utc = Number.isNaN(Date.parse(iso)) ? iso.slice(0, 16).replace('T', ' ') + ' UTC' : new Date(iso).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+  if (!zone || zone === 'UTC') return utc;
+  const shown = formatTime(iso, { zone, precision: 'minute', year: true, fallback: '' });
+  return shown ? shown + ' (' + utc + ')' : utc;
 }
 /** The "YYYY-MM-DD HH:MM" UTC text of an ISO time, for an input (the same shape as the hint and the placeholder). */
 export const utcInput = (iso: string): string => (Number.isNaN(Date.parse(iso)) ? '' : new Date(iso).toISOString().slice(0, 16).replace('T', ' '));

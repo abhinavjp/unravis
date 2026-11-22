@@ -162,8 +162,8 @@ test('the tab title names the screen and goes back to the app name', () => {
   global.document = doc;
   try {
     const { setDocTitle } = loadTypeScript('src/lib/docTitle.ts');
-    const restore = setDocTitle('Investigation Timeline');
-    assert.equal(doc.title, 'Investigation Timeline - Unravis');
+    const restore = setDocTitle('Investigation timeline');
+    assert.equal(doc.title, 'Investigation timeline - Unravis');
     const next = setDocTitle('  Orders API stall ');
     assert.equal(doc.title, 'Orders API stall - Unravis');
     next();

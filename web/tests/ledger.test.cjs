@@ -60,7 +60,7 @@ test('every label, notice and fixed sentence passes the copy lint', () => {
 });
 
 test('the notice says the ledger keeps references only', () => {
-  assert.equal(ledger.ledgerCopy.notice, 'The ledger keeps hypotheses and references only. Do not paste request rows, ids, users or IPs.');
+  assert.equal(ledger.ledgerCopy.notice, 'The ledger keeps theories and references only. Do not paste request rows, ids, users or IPs.');
 });
 
 test('presenceText reads "k of n episodes" and is empty when nothing is stated', () => {

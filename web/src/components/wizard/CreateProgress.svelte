@@ -65,7 +65,7 @@
   const failures = $derived(summary.failures.filter((failure) => !(failure.step === 'import' && fileKeys.has(failure.key))).map((failure) => {
     const row = failure.step === 'import' ? submit.imports[failure.key] : undefined;
     const text = failureText(failure, row?.outcome ? rowOutcomeText(row.outcome) : undefined);
-    // A failed audit database names the collections the server offered, so the person can pick the right one from Add more data.
+    // A failed audit database names the collections the server offered, so the person can pick the right one from Add data.
     const offered = suggestionLine(failure.suggestions);
     return { key: failure.step + ':' + failure.key, text: offered === '' ? text : text + ' ' + offered };
   }));
@@ -251,7 +251,10 @@
   .live .note { color: var(--text-2); font-size: var(--fs-3); }
   .steps, .rows { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
   .step, .row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2) var(--space-4); padding: var(--space-2) var(--space-3); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-4); min-width: 0; }
-  .step[data-status='done'], .row[data-status='done'] { border-color: var(--accent); }
+  /* The row that is running is the one that stands out; a finished row only gets a check mark (CASES-18). */
+  .step[data-status='running'], .row[data-status='running'] { border-color: var(--accent); border-inline-start-width: 3px; background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+  .step[data-status='running'] .state, .row[data-status='running'] .state { color: var(--text); font-weight: 600; }
+  .step[data-status='done'] .state::before, .row[data-status='done'] .state::before { content: '\2713\00a0'; color: var(--accent); }
   .step[data-status='failed'], .row[data-status='failed'] { border-color: var(--bad); }
   .what { min-width: 0; overflow-wrap: anywhere; }
   .state { color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }

@@ -190,6 +190,7 @@ export const DRILL_TEXT = {
   notShownWholeDb: 'The database lane covers the whole database, not only this API.',
   notShownIis: 'The web server log keeps whole seconds and the time a request ended.',
   coverageNote: 'Hatched means that source has nothing recorded for that time.',
+  pretendSummary: 'Demo only',
   pretendLabel: 'Pretend the database is:',
   pretendNote: 'Demo only. This changes what the screen shows, not the data.',
   pretendReal: 'Real data',

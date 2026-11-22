@@ -15,6 +15,8 @@
   type Row = [string, string, string?];
   const stamp = (name: string, value: string | undefined | null): Row => [name, value ? formatTime(value, { zone: timeZone.zone, precision: 'ms', suffix: false, fallback: value }) : NONE, value ?? undefined];
   const zoneName = $derived(zoneAbbreviation(timeZone.zone, detail?.initiatedAt ?? Date.now()));
+  // The saving-time callout is for a record where saving was slow or not measured; a normal 52 ms saving is just a row in the table (ANALYSIS-17).
+  const AUDIT_NOTE_MIN_MS = 1000;
   const ms = (value: number | undefined | null) => value == null || !Number.isFinite(value) ? NONE : value + ' ms';
   const kb = (value: number | undefined | null) => value == null || !Number.isFinite(value) ? NONE : value + ' KB';
   let fields = $derived<Row[]>(detail ? [
@@ -42,7 +44,7 @@
       <div><h3>Record {detail.id}</h3><p class="record-note">Every field stored for this audit record. Payloads are limited by the server.</p></div>
       <button class="quiet-button" onclick={onClose} aria-label="Close record details">Close</button>
     </div>
-    {#if plain}<PlainLine result={plain} hints={['audit-create-time']} />{/if}
+    {#if plain && (detail.auditCreateTimeMs == null || !Number.isFinite(detail.auditCreateTimeMs) || detail.auditCreateTimeMs >= AUDIT_NOTE_MIN_MS)}<PlainLine result={plain} hints={['audit-create-time']} />{/if}
     <div class="record-tables">
       <table class="record-table" aria-label="Stored fields">
         <caption>Stored fields · times in {zoneName}</caption>

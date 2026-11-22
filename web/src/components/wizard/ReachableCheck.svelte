@@ -15,7 +15,8 @@
   let failed = $state(false);
   let field = $state<HTMLInputElement>();
 
-  const title = $derived(kind === 'redis' ? SOURCES_TEXT.addRedis : SOURCES_TEXT.addSql);
+  // "Redis address", not "Redis by address: address" (CASES-14).
+  const label = $derived(kindLabel(kind) + ' ' + SOURCES_TEXT.addrLabel.toLocaleLowerCase());
 
   async function add() {
     if (busy || !ADDRESS_KINDS.includes(kind)) return;
@@ -42,11 +43,11 @@
 </script>
 
 <div class="box">
-  <label for="{uid}-addr">{title}: {SOURCES_TEXT.addrLabel.toLocaleLowerCase()}</label>
+  <label for="{uid}-addr">{label}</label>
   <input id="{uid}-addr" type="text" bind:this={field} bind:value={text} maxlength="260" autocomplete="off" autocapitalize="off" spellcheck="false"
     aria-describedby="{uid}-hint {uid}-line" aria-invalid={failed && line !== '' ? true : undefined} onkeydown={onKey} />
   <p class="hint" id="{uid}-hint">{SOURCES_TEXT.addrHint}</p>
-  <div class="actions"><button type="button" class="primary-button" disabled={busy} aria-label="{SOURCES_TEXT.addrCheck}: {kindLabel(kind)}" onclick={() => void add()}>{busy ? SOURCES_TEXT.addrChecking : SOURCES_TEXT.addrCheck}</button></div>
+  <div class="actions"><button type="button" class="secondary-button" disabled={busy} aria-label="{SOURCES_TEXT.addrCheck}: {kindLabel(kind)}" onclick={() => void add()}>{busy ? SOURCES_TEXT.addrChecking : SOURCES_TEXT.addrCheck}</button></div>
   <p class="line" class:bad={failed} id="{uid}-line" role="status" hidden={line === ''}>{line}</p>
 </div>
 

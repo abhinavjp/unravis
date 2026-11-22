@@ -75,14 +75,14 @@ test('BL-048: importedPartial is kept without a range, and the lane says some fi
   });
   const parsed = model.parseTracing(response({ importedPartial: true })).lanes[0];
   assert.equal(parsed.importedPartial, true);
-  assert.match(lanes.laneRangeUnknownLine(parsed, win, at), /no recorded time range/);
+  assert.match(lanes.laneRangeUnknownLine(parsed, win, at), /have no time range/);
 });
 
 test('BL-048: the note also shows when one file covers the window and another was never imported', () => {
   const inside = { importedFrom: '2001-02-03T03:00:00Z', importedTo: '2001-02-03T06:00:00Z' };
   const events = lane({ ...inside, importedPartial: true, state: 'events', scanned: 5, buckets: [{ count: 3 }] });
   assert.equal(lanes.laneImportedLine(events, win, at), '', 'the range holds the window, so the "outside" sentence stays quiet');
-  assert.match(lanes.laneRangeUnknownLine(events, win, at), /no recorded time range, or were not imported/);
+  assert.match(lanes.laneRangeUnknownLine(events, win, at), /have no time range/);
 });
 
 test('BL-048: no second note when the lane line already speaks, when the lane is off, or when nothing is partial', () => {

@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { landingMayAutoRun } from '../lib/autorun';
   import { app, go, goHome, IMPORT_CASE_HINT, openCase, openCaseImport, openConnections, openCreatedCase, openKeySetup, openSidePanel, openTracing, restore, runAnalysis, scope, startCreate, startNewConnection } from '../lib/appState.svelte';
   import { resetWizard, wizard } from '../lib/wizard.svelte';
   import { blockers, caseMade, createNow, createView } from '../lib/wizardCreate.svelte';
-  import { createButtonText } from '../lib/copy/wizardCreateCopy';
+  import { createBlockedLine, createButtonText } from '../lib/copy/wizardCreateCopy';
   import { requestDiscover } from '../lib/discoverIntent';
   import DiscoverEntry from './DiscoverEntry.svelte';
   import StartScreen from './StartScreen.svelte';
@@ -31,6 +32,14 @@
   // The same, then straight to the timeline (the screen the files were added for), or to the import drawer to add more files.
   function openTimeline(id: string) { resetWizard(); void openCreatedCase(id).then(() => openTracing()); }
   function addMore(id: string) { resetWizard(); void openCreatedCase(id).then(() => openCaseImport()); }
+  // Add files with no case open sends the person here. Focus goes to the first case's Open button (or Create a new case), so the way on is one key away.
+  $effect(() => {
+    if (mode !== 'cases' || !app.importCaseHint) return;
+    void tick().then(() => {
+      const target = document.querySelector<HTMLElement>('.start .cases .case-row button:not(:disabled)') ?? document.querySelector<HTMLElement>('.start .cards .primary-button:not(:disabled)');
+      target?.focus();
+    });
+  });
 </script>
 
 {#if mode === 'loading'}
@@ -38,7 +47,7 @@
 {:else if mode === 'connect'}
   <div class="welcome-state no-connections-state"><h3>Connect an audit source</h3><p>Load saved settings or create a MongoDB connection, then choose databases that contain API audit logs.</p><div class="empty-actions"><button class="primary-button" onclick={startNewConnection}>New connection</button><button class="secondary-button" onclick={() => openConnections('saved')}>Saved connections</button><DiscoverEntry onOpen={openDiscover} /></div></div>
 {:else if mode === 'cases'}
-  {#if app.importCaseHint}<p class="import-hint" role="status">{IMPORT_CASE_HINT} <button type="button" class="quiet-button" onclick={() => { app.importCaseHint = false; }}>Dismiss</button></p>{/if}
+  {#if app.importCaseHint}<p class="notice import-hint" role="status"><strong>{IMPORT_CASE_HINT}</strong><button type="button" class="secondary-button" onclick={() => { app.importCaseHint = false; }}>Dismiss</button></p>{/if}
   <StartScreen onCreate={startCreate} onOpen={openCase} onSetup={openKeySetup} onAnalysis={() => go('running')}>
     {#snippet enter()}<EnterCase onOpen={openCase} onSetup={openKeySetup} />{/snippet}
   </StartScreen>
@@ -46,12 +55,12 @@
   <CreateWizard onLeave={goHome} busy={createView.running || caseMade()}>
     {#snippet sources()}<SourceStep />{/snippet}
     {#snippet review()}{#if createView.running || caseMade()}<CreateProgress onOpen={openCreated} onTimeline={openTimeline} onAddMore={addMore} />{:else}<ReviewStep />{/if}{/snippet}
-    {#snippet finish()}{#if !caseMade()}<button type="button" class="primary-button" disabled={createView.running || blockers().length > 0} onclick={() => void createNow()}>{createButtonText(wizard.sources.length, createView.running)}</button>{/if}{/snippet}
+    {#snippet finish()}{#if !caseMade()}{@const why = createBlockedLine(blockers())}{#if why && !createView.running}<span class="create-blocked" id="create-blocked">{why}</span>{/if}<button type="button" class="primary-button" disabled={createView.running || blockers().length > 0} aria-describedby={why && !createView.running ? 'create-blocked' : undefined} onclick={() => void createNow()}>{createButtonText(wizard.sources.length, createView.running)}</button>{/if}{/snippet}
   </CreateWizard>
 {:else if mode === 'unlock'}
-  {#if app.lockState === 'damaged'}<MasterKeyDamaged />{:else}<MasterKeyUnlock />{/if}
+  <div class="key-column">{#if app.lockState === 'damaged'}<MasterKeyDamaged />{:else}<MasterKeyUnlock />{/if}</div>
 {:else if mode === 'setup'}
-  <MasterKeySetup />
+  <div class="key-column"><MasterKeySetup /></div>
 {:else if mode === 'restoring'}
   <div class="skeleton" role="status" aria-label={CASE_RESTORE_TEXT.workingLabel}>
     <div class="skeleton-figures"><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div></div>
@@ -78,6 +87,11 @@
 {/if}
 
 <style>
+  /* The key screens sit in the same centred column as the case key page, not pinned to the left edge (CASES-17). */
+  .key-column { width: 100%; max-width: 560px; margin-inline: auto; }
+  .create-blocked { color: var(--text-2); font-size: var(--fs-3); }
   .restoring-note { margin: 0; color: var(--muted, inherit); text-align: center; }
-  .import-hint { margin: 0; padding: 8px 16px; text-align: center; }
+  /* The standard notice box, left aligned in the page gutter, with the way on pointed at (CASES-05). */
+  .import-hint { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 var(--space-3); padding: 10px 14px; color: var(--text); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); border-color: var(--accent); font-size: 14px; }
+  .import-hint button { margin: 0; }
 </style>

@@ -1,4 +1,4 @@
-// The Investigation Timeline against the tracing-paper wireframe, the last gaps: one controls card, the UTC readout under the pickers,
+// The Investigation timeline against the tracing-paper wireframe, the last gaps: one controls card, the UTC readout under the pickers,
 // 24-hour time boxes, "Each bar = ..." under the chart, and the Suspects rail. The demo clock is 2026-10-20T09:00Z, so the default
 // incident window is 08:00-09:00 UTC and the default comparison period 07:00-08:00; the demo audit lane (read live) rises at 08:30.
 //   TLGAP-01  The quick ranges, both windows, the UTC readout, the Sources traced row, Add evidence and Start tracing are in ONE card;
@@ -28,8 +28,8 @@ const WIN_EMPTY = ['2026-09-01T00:00', '2026-09-01T01:00', '2026-08-31T23:00', '
 async function openTimeline(page: Page): Promise<void> {
   await goHome(page);
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect(page.locator('.tracing-chart')).toBeVisible();
 }
 

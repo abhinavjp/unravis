@@ -65,8 +65,8 @@
   .imp-mini span { display: block; height: 100%; background: var(--accent); }
 
   .cancel-row { display: flex; justify-content: flex-end; margin-top: 14px; }
-  .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 8px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
-  .btn-secondary { color: var(--text); background: transparent; border: 1px solid var(--line); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 33px; padding: 8px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+  .btn-secondary { color: var(--text); background: transparent; border: 1px solid var(--control-line); }
   .btn-secondary:hover { border-color: var(--text-2); background: var(--surface-2); }
   .btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   @media (pointer: coarse) {

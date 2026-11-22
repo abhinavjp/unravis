@@ -196,11 +196,14 @@ test('minor 8: the tab row has one tab stop and answers the arrow keys, Home and
   assert.match(hub, /event\.preventDefault\(\);\s+tab = tabs\[to\]\.id;\s+document\.getElementById\('hub-tab-' \+ tab\)\?\.focus\(\)/, 'the tab it lands on opens and takes focus');
 });
 
-test('minor 10 and 11: the tab row is flush in the panel, and hover shows on the selected tab', () => {
+test('minor 10 and 11: the tab row looks like tabs (CASES-11), is flush in the panel, and hover shows on the selected tab', () => {
   const css = read('src/components/sources/sources.css');
-  assert.match(css, /\.src \.tabs \{[^}]*margin: 0 0 var\(--space-3\); padding: 0; overflow: visible; border-bottom: 0;/, 'the global .tabs margin, underline and scroll do not reach it');
+  assert.match(css, /\.src \.tabs \{[^}]*margin: 0 0 var\(--space-3\); padding: 0; overflow-x: auto;/, 'the global .tabs margin and padding do not reach it; a narrow panel scrolls the row');
   assert.match(css, /\.src \.tabs button\[aria-selected='true'\]:hover/, 'the selected tab has a hover of its own');
-  assert.match(css, /\.src \.tabs button\[aria-selected='true'\]:hover[^}]*background: color-mix/);
+  assert.match(css, /\.src \.tabs button\[aria-selected='true'\]:hover:not\(:disabled\)[^}]*background: var\(--surface-2\)/);
+  // CASES-11: the chosen tab is shown by a 3px bar and a heavier word, and by the system highlight in forced colours.
+  assert.match(css, /\.src \.tabs button\[aria-selected='true'\][^}]*border-bottom-color: var\(--accent\); font-weight: 700/);
+  assert.match(css, /@media \(forced-colors: active\) \{[^@]*\.src \.tabs button\[aria-selected='true'\][^}]*Highlight/);
 });
 
 // ---- minors 9, 14, 15 ----------------------------------------------------------------------------------------------------------------
@@ -216,10 +219,9 @@ test('minor 9: with no day yet, the read form comes before the long scripts', ()
 
 test('minor 14: the count says it is for SQL Server, and MongoDB is counted apart', () => {
   const page = comp('ConnectionsPage');
-  assert.match(page, /CONN_TEXT\.countSql\} \{sql\.length\} \/ \{CONNECTION_LIMIT\}\. \{CONN_TEXT\.countMongo\} \{mongo\.length\}/);
-  assert.match(copy.CONN_TEXT.countSql, /SQL Server/);
-  assert.match(copy.CONN_TEXT.countMongo, /MongoDB/);
-  assert.match(copy.CONN_TEXT.countMongo, /no limit/);
+  assert.match(page, /connectionCountText\(sql\.length, CONNECTION_LIMIT, mongo\.length\)/);
+  assert.equal(copy.connectionCountText(1, 20, 1), '1 of 20 SQL Server connections saved. 1 MongoDB connection saved.');
+  assert.equal(copy.connectionCountText(0, 20, 3), '0 of 20 SQL Server connections saved. 3 MongoDB connections saved.');
 });
 
 test('minor 15: the nothing-read table becomes a block per row on a narrow screen', () => {

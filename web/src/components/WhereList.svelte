@@ -27,7 +27,7 @@
       {@const read = lensRead(row, lens)}
       {@const line = points(sparkSeries(analysis, row, lens))}
       <li>
-        <button type="button" class="where-row" aria-current={openKey === keyOf(row)} onclick={() => onOpen(row)} aria-label={row.controller + '.' + row.action + ', ' + kindLabel(row.kind ?? 'unknown') + ', ' + read.value + ' ' + read.label + '. Open evidence'}>
+        <button type="button" class="where-row" aria-current={openKey === keyOf(row)} onclick={() => onOpen(row)} aria-label={(index + 1) + ' ' + row.controller + '.' + row.action + ' ' + kindLabel(row.kind ?? 'unknown') + ' ' + read.value + ' ' + read.label + (compare && read.delta !== '—' ? ' · ' + read.delta + ' vs earlier' : '') + '. Open evidence'}>
           <span class="where-rank">{index + 1}</span>
           <span class="where-name"><strong>{row.controller}.{row.action}</strong><small>{kindLabel(row.kind ?? 'unknown')}</small></span>
           {#if line}<svg class="spark" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" aria-hidden="true"><polyline points={line}></polyline></svg>{:else}<span class="spark-none" title="No chart series for this operation" aria-hidden="true"></span>{/if}

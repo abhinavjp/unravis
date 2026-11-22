@@ -8,7 +8,7 @@ Setup never asks for a password, never connects to a database, and holds no secr
 
 ## Checks
 
-Setup opens its window in Microsoft Edge or Google Chrome, in a plain app window. The first screen lists the checks it made, each with a sticker: **Ready**, **Partly ready** or **Failed**.
+Setup opens its window in Microsoft Edge or Google Chrome, in a plain app window. The first screen lists the checks it made, each with a sticker: **Ready**, **Partly ready** or **Failed**. A check that needs a look is listed first. The checks that are ready are folded into one line, such as "All 7 checks are ready"; open it to see each one.
 
 ![Install Unravis, checks all ready, dark](screenshots/P11/p11-welcome-dark.png)
 ![Install Unravis, checks all ready, light](screenshots/P11/p11-welcome-light.png)

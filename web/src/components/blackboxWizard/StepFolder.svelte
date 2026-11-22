@@ -325,7 +325,7 @@
   .tick { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; font-weight: 600; cursor: pointer; }
   .tick input { flex: 0 0 auto; width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
   .advanced { padding-top: var(--space-3); border-top: 1px solid var(--line); }
-  .advanced summary { display: flex; align-items: center; min-height: 40px; color: var(--text-2); font-weight: 500; cursor: pointer; }
+  .advanced summary { display: flex; align-items: center; min-height: 40px; color: var(--text); font-weight: 500; cursor: pointer; }
   .advanced summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-sm); }
   .advanced-body { display: grid; gap: var(--space-4); padding: var(--space-2) 0; }
   /* The port help takes its own row inside the Advanced hint, so the bind text under it never runs into it. */

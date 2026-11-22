@@ -5,7 +5,7 @@ const { createRequire } = require('node:module');
 const test = require('node:test');
 const ts = require('typescript');
 
-// Investigation Timeline gap 4: the Suspects rail. The engine (lib/tracing/suspects.ts) reads only the timeline's own counts, so it is tested with
+// Investigation timeline gap 4: the Suspects rail. The engine (lib/tracing/suspects.ts) reads only the timeline's own counts, so it is tested with
 // made-up responses (dates in 2001, no real data), for the live API-audit lane and the case-stored SQL and IIS lanes alike.
 
 const root = path.resolve(__dirname, '..');

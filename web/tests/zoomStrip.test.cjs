@@ -46,7 +46,7 @@ const HelpNote = loadComponent('src/components/HelpNote.svelte', (request) => ({
   '../lib/copy/helpCopy': { help }, '../lib/eli10.svelte': { eli10: { on: false } }
 })[request]);
 const Strip = loadComponent('src/components/ZoomStrip.svelte', (request) => ({
-  '../lib/zoom': z, '../lib/zoomBrush': brushLib, '../lib/copy/zoomCopy': { zoomCopy }, '../lib/copy/screenCopy': { ZOOM_NOTES }, './HelpNote.svelte': { default: HelpNote }
+  '../lib/zoom': z, '../lib/zoomBrush': brushLib, '../lib/copy/zoomCopy': { zoomCopy }, '../lib/copy/screenCopy': { ZOOM_NOTES }, '../lib/copy/helpCopy': { help }, './HelpNote.svelte': { default: HelpNote }
 })[request]);
 const { render } = require('svelte/server');
 const noop = () => {};
@@ -343,7 +343,7 @@ test('App wires the strip: investigate, back to the previous window, the brush, 
 
 test('the strip file imports nothing but the zoom libraries, the copy, the help note and Svelte', () => {
   const imports = [...source.matchAll(/^\s*import .* from '([^']+)'/gm)].map((match) => match[1]);
-  assert.deepEqual(imports.sort(), ['../lib/copy/screenCopy', '../lib/copy/zoomCopy', '../lib/zoom', '../lib/zoomBrush', './HelpNote.svelte']);
+  assert.deepEqual(imports.sort(), ['../lib/copy/helpCopy', '../lib/copy/screenCopy', '../lib/copy/zoomCopy', '../lib/zoom', '../lib/zoomBrush', './HelpNote.svelte']);
   assert.ok(DAY > 0);
 });
 
@@ -371,4 +371,13 @@ test('a pointer move does not read layout: the track box is taken once, when the
   const down = source.slice(source.indexOf('function down('), source.indexOf('function move('));
   assert.equal((down.match(/getBoundingClientRect/g) || []).length, 1);
   assert.match(down, /rect \}/);
+});
+
+test('SWEEP-F2-S7: the Back sentence is real text inside the "?" block, not only a tooltip', () => {
+  const out = html(topModel).replace(/<!--.*?-->/g, '');
+  const start = out.indexOf('zoom-more');
+  assert.ok(start > 0, 'the block is in the page');
+  const more = out.slice(start, out.indexOf('sr-only', start));
+  assert.ok(more.includes(help['drill-back'].plain), 'the Back sentence is read there');
+  assert.doesNotMatch(out, /<button[^>]*title="[^"]*"[^>]*>Back</, 'no title on the Back button');
 });

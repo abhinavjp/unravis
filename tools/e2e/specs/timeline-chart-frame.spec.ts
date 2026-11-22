@@ -1,4 +1,4 @@
-// The Investigation Timeline chart frame (phase 1): a readable Y axis, gridlines, a wider centre lane, a reason panel for empty
+// The Investigation timeline chart frame (phase 1): a readable Y axis, gridlines, a wider centre lane, a reason panel for empty
 // lanes and the explanation block under the chart. The demo clock is 2026-10-20T09:00Z; 19 Oct 09:00-10:00 has events in all three lanes.
 //   TLF-01  The explanation block sits under the chart: "How to read this chart" is open, the other three are closed and open on click.
 //   TLF-02  The left axis shows several ticks and a unit title, and the plot has gridlines.
@@ -20,8 +20,8 @@ const isTrace = (r: { url(): string; method(): string }) => r.url().includes('/t
 async function openTimeline(page: Page): Promise<void> {
   await goHome(page);
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect(page.locator('.tracing-chart')).toBeVisible();
 }
 

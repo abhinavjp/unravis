@@ -87,13 +87,16 @@ export const saveFailText = (reason: string): string => {
   }
 };
 
+/** The name of a computer as the person reads it: the stored plain name `this-pc` is shown as "This PC" (CASES-29e). */
+export const hostShown = (label: string): string => (label === 'this-pc' ? 'This PC' : label);
+
 /** One option of the list: the name, and its time zone when it has one. */
-export const hostOptionText = (entry: { label: string; tz: string }): string => (entry.tz.trim() === '' ? entry.label : entry.label + ' (' + entry.tz.trim() + ')');
+export const hostOptionText = (entry: { label: string; tz: string }): string => (entry.tz.trim() === '' ? hostShown(entry.label) : hostShown(entry.label) + ' (' + entry.tz.trim() + ')');
 
 export const hostPickLabel = (name: string): string => 'Which computer wrote ' + name;
 
 /** The computer and zone of a file, as one line for the review step and the result table. */
-export const hostSummaryText = (label: string, tz: string): string => (label === '' ? '' : tz.trim() === '' ? 'Computer: ' + label : 'Computer: ' + label + ', time zone ' + tz.trim());
+export const hostSummaryText = (label: string, tz: string): string => (label === '' ? '' : tz.trim() === '' ? 'Computer: ' + hostShown(label) : 'Computer: ' + hostShown(label) + ', time zone ' + tz.trim());
 
 /** The help line for a pick that is offered, not needed. IIS logs name their own computer, so a pick only stands in when the name in the
  * file is not in the list; a sql-xe export may name no computer, so there the pick also gives the file its name. */

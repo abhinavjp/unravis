@@ -41,7 +41,7 @@ const notSupportedRow = (page: Page, name: string) => popup(page).locator('.nots
 /** Opens the case, then the Import files popup from the case page's "Add a file". */
 async function openPopup(page: Page, title: string) {
   await openCase(page, title);
-  await page.getByRole('button', { name: 'Add a file' }).click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).click();
   await expect(popup(page)).toBeVisible();
   await expect(popup(page).getByRole('heading', { name: 'Add files', level: 2 })).toBeVisible();
 }
@@ -299,7 +299,7 @@ test('IMPORT-07: a closed case cannot open the popup', async ({ page, api }) => 
   expect(closed.status).toBe(200);
   await goHome(page);
   await openCase(page, 'QA Import Closed');
-  await expect(page.getByRole('button', { name: 'Add a file' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Add files', exact: true })).toBeDisabled();
   await expect(popup(page)).toHaveCount(0);
 });
 

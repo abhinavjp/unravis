@@ -454,7 +454,7 @@
     <div class="actions foot" aria-busy={reading}>
       <button type="button" class="secondary-button" bind:this={chooseButton} onclick={() => filesInput?.click()}>{FILES_TEXT.chooseFiles}</button>
       <button type="button" class="quiet-button" onclick={() => folderInput?.click()}>{FILES_TEXT.chooseFolder}</button>
-      <button type="button" class="quiet-button" data-cancel-files onclick={() => onCancel?.()}>{FILES_TEXT.cancel}</button>
+      <button type="button" class="secondary-button" data-cancel-files onclick={() => onCancel?.()}>{FILES_TEXT.cancel}</button>
     </div>
   {/if}
 </div>
@@ -466,11 +466,11 @@
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .cards { display: grid; gap: var(--space-2); min-width: 0; }
   .cards h6, .group-head { margin: 0; font-size: var(--fs-3); font-weight: 600; }
-  /* Wireframe w37: the four cards wrap three and one, each as tall as its own words (no equal-height empty gaps). */
-  .card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
-  .file-card { display: grid; align-content: start; gap: var(--space-2); min-width: 0; padding: var(--space-3); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  /* The cards in a row are as tall as the tallest one and each button sits on the same line at the bottom (CASES-16). */
+  .card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+  .file-card { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding: var(--space-3); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .file-card > * { margin: 0; }
-  .file-card button { justify-self: start; }
+  .file-card button { align-self: flex-start; margin-top: auto; }
   .card-title { font-size: var(--fs-4); font-weight: 600; overflow-wrap: anywhere; }
   .file-card p, .file-card .chip { max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
   .chip { display: inline-block; padding: 0 var(--space-2); color: var(--text-2); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); }
@@ -500,11 +500,11 @@
   .file-cell { display: grid; gap: var(--space-1); }
   .file-name { font-family: var(--mono); font-size: var(--fs-2); overflow-wrap: anywhere; }
   .row-note { color: var(--text-2); font-size: var(--fs-2); overflow-wrap: anywhere; }
-  .row-remove { display: block; margin-top: var(--space-1); }
+  .row-remove { display: block; min-height: 24px; margin-top: var(--space-1); }
   .zone { display: table-cell; min-width: 200px; color: var(--text-2); }
   .zone :global(.choice) { margin-top: var(--space-1); color: var(--text); }
   tr.refused .file-name { color: var(--text-2); text-decoration: line-through; }
-  select { box-sizing: border-box; width: 100%; min-width: 230px; max-width: 100%; min-height: 36px; padding: 4px 8px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-3); }
+  select { box-sizing: border-box; width: 100%; min-width: 27ch; max-width: 100%; min-height: 36px; padding: 4px 8px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-3); }
   select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
   .reads { display: grid; gap: var(--space-1); }
   .reads-title { margin: 0; font-size: var(--fs-3); font-weight: 600; }

@@ -4,6 +4,7 @@ import type { ParsedEnvs } from './wizardEnvs';
 import { newKeyProblem, type NewKeyProblem } from './caseKey';
 import { backStepOf, cleanTitle, isDirty as draftIsDirty, moveToStep, nextStepOf, resumeStep, titleProblem } from './wizardFlow';
 import type { DraftSource, StepId } from './wizardFlow';
+import { clearSavedDraft, readSavedDraft, saveDraft } from './wizardDraftStore';
 
 /**
  * The draft of the create wizard: what the person has typed and chosen so far. It lives in memory only and nothing here touches the server
@@ -28,6 +29,24 @@ const blank = (): WizardDraft => ({ step: 'name', title: '', envText: '', source
 /** The one draft. Bind the fields with `bind:value={wizard.title}`; change the step with `goToStep`, `nextStep` and `backStep`. */
 export const wizard = $state<WizardDraft>(blank());
 
+// A reload of the page would lose a typed name. The safe part of the draft (name, environments, own-key switch; never a key, a password or a
+// connection) is kept for this tab by wizardDraftStore and comes back the next time the guide is opened (CASES-25).
+function restoreDraft(): void {
+  const saved = readSavedDraft();
+  if (!saved) return;
+  wizard.title = saved.title;
+  wizard.envText = saved.envText;
+  if (saved.keyOn) wizard.caseKey.on = true;
+}
+
+/** Keeps the name and environments for a reload of this tab. An empty draft clears the stored copy, and so does a case that is already made (a reload must not offer its name again). */
+export function persistDraft(made = false): void {
+  if (made || !draftIsDirty(wizard)) { clearSavedDraft(); return; }
+  saveDraft({ title: wizard.title, envText: wizard.envText, keyOn: wizard.caseKey.on });
+}
+
+restoreDraft();
+
 const resetHooks: Array<() => void> = [];
 
 /**
@@ -41,6 +60,7 @@ export function onWizardReset(hook: () => void) {
 /** Throws the draft away (leave, or after the case was created). Held connections are forgotten too. */
 export function resetWizard() {
   Object.assign(wizard, blank());
+  clearSavedDraft();
   releaseConnections();
   for (const hook of resetHooks) hook();
 }

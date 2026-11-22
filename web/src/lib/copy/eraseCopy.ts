@@ -7,6 +7,8 @@ import type { LintEntry } from './copylint';
 
 export const ERASE_TEXT = {
   open: 'Erase this case',
+  forgot: 'Forgot the key?',
+  youAreErasing: 'You are erasing:',
   title: 'Erase this case',
   removes: 'This removes the working copy, notes, suspects and checklist from this computer.',
   stops: 'An import or recording for this case stops.',
@@ -45,8 +47,8 @@ export function eraseBody(archivePath?: string): string {
   return [ERASE_TEXT.removes, ERASE_TEXT.stops, kept, ERASE_TEXT.final].join(' ');
 }
 
-/** After the erase: "k7m2qx4a is removed from this computer. Any case file you saved was not touched." */
-export const eraseDoneText = (code: string): string => code + ' is removed from this computer. ' + ERASE_TEXT.doneKept;
+/** After the erase: "Report export timeouts is removed from this computer. Any case file you saved was not touched." The title names the case; the code stands in when the title is not known. */
+export const eraseDoneText = (code: string, title = ''): string => (title.trim() || code) + ' is removed from this computer. ' + ERASE_TEXT.doneKept;
 
 /** "Erased case q2w7exak · erased 20 Oct 09:12 UTC. Only this line is left." `when` is the formatted time. */
 export const erasedLineText = (code: string, when: string): string => 'Erased case ' + code + ' · erased ' + when + '. ' + ERASE_TEXT.onlyLine;

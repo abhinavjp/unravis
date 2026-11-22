@@ -34,7 +34,7 @@ test('UNLISTED-01: an IIS log from a server that is not in the host list is read
   await page.getByRole('button', { name: 'Add 1 file' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.locator('[data-hosts-summary]')).toHaveText('1 file under ISS-PROD-07.');
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
 
   // The result table: the file is Used, not Rejected.
@@ -64,7 +64,7 @@ test('UNLISTED-02: when the host list cannot be saved, the same log is refused a
 
   await page.getByRole('button', { name: 'Add 1 file' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
 
   const table = page.getByRole('table', { name: /result for each file/i });
@@ -85,7 +85,7 @@ test('UNLISTED-03: a log that names its own computer stays under that name, and 
   await expect(page.getByLabel('Which computer wrote u_ex261021.log')).toHaveCount(0);
   await page.locator('section.hosts').getByLabel('Use one computer for every file').selectOption('WEB-B');
   await expect(page.locator('[data-hosts-summary]')).toHaveText('1 file under ISS-PROD-07.');
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
 
   const line = page.getByRole('table', { name: /result for each file/i }).getByRole('row').filter({ hasText: 'u_ex261021.log' });

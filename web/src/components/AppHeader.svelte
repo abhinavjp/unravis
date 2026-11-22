@@ -30,7 +30,7 @@
     { id: 'patterns', label: 'Patterns', open: () => openSidePanel('patterns') },
     { id: 'ledger', label: 'Ledger', open: () => openSidePanel('ledger') },
     { id: 'export', label: 'Export', open: () => openSidePanel('export') },
-    { id: 'import', label: 'Import', open: () => openSidePanel('import') },
+    { id: 'import', label: 'Add files', open: () => openSidePanel('import') },
     { id: 'blackbox', label: 'Blackbox', open: () => openSidePanel('blackbox') },
     { id: 'glossary', label: 'Glossary', open: () => openGlossary() }
   ];
@@ -55,7 +55,7 @@
   const anyOpen = $derived(drawers.some(item => isOpen(item.id)));
   const ledgerTotal = $derived(ledger.items.length);
   // The folded Ledger count stays on the More button, so it is never hidden inside a closed menu.
-  const moreLabel = $derived('More' + (anyOpen ? ': a panel is open' : '') + (ledgerTotal ? ', ' + ledgerTotal + (ledgerTotal === 1 ? ' hypothesis' : ' hypotheses') + ' in the Ledger' : ''));
+  const moreLabel = $derived('More' + (anyOpen ? ': a panel is open' : '') + (ledgerTotal ? ', ' + ledgerTotal + (ledgerTotal === 1 ? ' theory' : ' theories') + ' in the ledger' : ''));
 
   onMount(() => {
     const query = window.matchMedia('(max-width: 1099px)');

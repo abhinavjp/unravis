@@ -33,7 +33,7 @@
 </script>
 
 <script lang="ts">
-  // The Investigation Timeline chart (WP-17b): one stacked row per lane (API audit, SQL, IIS) on one shared,
+  // The Investigation timeline chart (WP-17b): one stacked row per lane (API audit, SQL, IIS) on one shared,
   // server-floored UTC axis. Bars are exactly the buckets the server returned; nothing here sums, estimates
   // or recomputes the axis. WP-17c adds hover/focus text; WP-61 reads the bucket selector's onSelect.
   import { tick, untrack } from 'svelte';
@@ -842,7 +842,7 @@
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
   /* The label column is capped so the plot gets the rest; the right column holds the API lane's latency axis. */
-  .lanes-grid { --bars-h: 150px; position: relative; display: grid; grid-template-columns: minmax(6.5rem, 8.5rem) 3rem minmax(0, 1fr) 3rem; column-gap: var(--space-2); row-gap: var(--space-4); align-items: stretch; min-width: 0; }
+  .lanes-grid { --bars-h: 150px; position: relative; display: grid; grid-template-columns: minmax(8rem, 11.25rem) 3rem minmax(0, 1fr) 3rem; column-gap: var(--space-2); row-gap: var(--space-4); align-items: stretch; min-width: 0; }
 
   .lane-label, .axis, .panel, .axisrow { grid-row: var(--row); }
   .lane-label { grid-column: 1; display: grid; gap: 2px; align-content: start; min-width: 0; }
@@ -896,6 +896,8 @@
   .unread { position: absolute; top: 0; bottom: 0; display: grid; place-items: center; overflow: hidden; color: var(--text-2); background: repeating-linear-gradient(135deg, var(--line) 0 1px, transparent 1px 6px); border-left: var(--hairline-width) dashed var(--line); border-right: var(--hairline-width) dashed var(--line); font-size: var(--fs-2); pointer-events: none; }
   .unread span { padding: 0 var(--space-1); background: var(--surface-2); white-space: nowrap; }
   .lane-label .chunk-line { color: var(--text); font-weight: 600; }
+  /* The note about files with no time range is a plain sentence, not a bold block in the narrow label column (ANALYSIS-16). */
+  .lane-label .chunk-line[data-testid='range-unknown'] { color: var(--text-2); font-weight: 400; }
   .lane-label .read-from { overflow-wrap: anywhere; }
   .read-list { margin: 0; padding-left: var(--space-4); }
   /* Above the bucket-selector overlay, which covers every lane: without a stacking order of its own the button could not be clicked. */

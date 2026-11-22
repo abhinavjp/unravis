@@ -8,10 +8,11 @@
   import { filesMissing, importPlan, isFileSource, reviewCounts } from '../../lib/wizardSubmit';
   import { noAuditSourceChosen, sourceKey } from '../../lib/wizardSources';
   import { SOURCES_TEXT, kindLabel } from '../../lib/copy/wizardSourcesCopy';
-  import { ACK_LABEL, GATING_BANNER } from '../../lib/copy/importCopy';
+  import { ackLabelFor, GATING_BANNER } from '../../lib/copy/importCopy';
   import { windowChoiceLabel } from '../../lib/copy/discoverCopy';
   import { CREATE_TEXT, HOSTS_TEXT, chooseFileLabel, failureText, fileHeldText, hostSummaryText, summaryText, tagLine, whatHappens } from '../../lib/copy/wizardCreateCopy';
   import { formatBytes } from '../../lib/copy/importCopy';
+  import { hostShown } from '../../lib/copy/zoneChoiceCopy';
   import { hostNeed } from '../../lib/fileKinds';
   import HelpNote from '../HelpNote.svelte';
   import ZoneChoice from './ZoneChoice.svelte';
@@ -145,7 +146,7 @@
           <span>{HOSTS_TEXT.pickAllLabel}</span>
           <select aria-label={HOSTS_TEXT.pickAllLabel} value="" onchange={(event) => { if (event.currentTarget.value !== '') pickHostForAll(event.currentTarget.value); event.currentTarget.value = ''; }}>
             <option value="">{HOSTS_TEXT.pickAllNone}</option>
-            {#each hostsView.entries ?? [] as entry (entry.label)}<option value={entry.label}>{entry.label}</option>{/each}
+            {#each hostsView.entries ?? [] as entry (entry.label)}<option value={entry.label}>{hostShown(entry.label)}</option>{/each}
           </select>
         </label>
       {/if}
@@ -183,7 +184,7 @@
   {#if needsNotice}
     <div class="notice">
       <p class="gate" role="note" aria-label={CREATE_TEXT.noticeLabel}>{GATING_BANNER}</p>
-      <label class="ack"><input type="checkbox" checked={createView.ack} onchange={(event) => setAck(event.currentTarget.checked)} /> <span>{ACK_LABEL}</span></label>
+      <label class="ack"><input type="checkbox" checked={createView.ack} onchange={(event) => setAck(event.currentTarget.checked)} /> <span>{ackLabelFor(plan.files + plan.scan)}</span></label>
       <p class="hint" role="status">{#if !createView.ack && pending.includes('no-ack')}{CREATE_TEXT.needAck}{/if}</p>
     </div>
   {/if}

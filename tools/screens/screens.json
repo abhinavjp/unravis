@@ -3484,6 +3484,9 @@
           "waitFor": "role=heading[name=\"Install Unravis\"]"
         },
         {
+          "click": "summary"
+        },
+        {
           "waitFor": "text=41.0 GB free on C:."
         }
       ]
@@ -3517,7 +3520,7 @@
           "goto": "/?scenario=fresh"
         },
         {
-          "waitFor": "text=41.0 GB free on C:."
+          "waitFor": "role=heading[name=\"Install Unravis\"]"
         },
         {
           "click": "role=button[name=\"Next\"]"
@@ -3544,7 +3547,7 @@
           "goto": "/?scenario=done"
         },
         {
-          "waitFor": "text=41.0 GB free on C:."
+          "waitFor": "role=heading[name=\"Install Unravis\"]"
         },
         {
           "click": "role=button[name=\"Next\"]"
@@ -3577,7 +3580,7 @@
           "goto": "/?scenario=progress"
         },
         {
-          "waitFor": "text=41.0 GB free on C:."
+          "waitFor": "role=heading[name=\"Install Unravis\"]"
         },
         {
           "click": "role=button[name=\"Next\"]"
@@ -3604,7 +3607,7 @@
           "goto": "/?scenario=done"
         },
         {
-          "waitFor": "text=41.0 GB free on C:."
+          "waitFor": "role=heading[name=\"Install Unravis\"]"
         },
         {
           "click": "role=button[name=\"Next\"]"
@@ -3640,7 +3643,7 @@
           "goto": "/?scenario=failed"
         },
         {
-          "waitFor": "text=41.0 GB free on C:."
+          "waitFor": "role=heading[name=\"Install Unravis\"]"
         },
         {
           "click": "role=button[name=\"Next\"]"
@@ -3695,6 +3698,9 @@
         },
         {
           "waitFor": "role=heading[name=\"Repair Unravis 1.0.0\"]"
+        },
+        {
+          "click": "summary"
         },
         {
           "waitFor": "text=Unravis 1.0.0 is installed in"

@@ -22,7 +22,7 @@ test('SRC-09: at 20 saved SQL connections the button is off, a 21st is refused w
   const block = await savedConnections(page);
   await expect(block.getByRole('button', { name: '+ SQL Server', exact: true })).toBeDisabled();
   await expect(block).toContainText('You have 20 of 20 saved SQL Server connections. Forget one before you save another.');
-  await expect(block).toContainText('MongoDB connections listed (no limit): 1.');
+  await expect(block).toContainText('1 MongoDB connection saved.');
   expect((await api('DELETE', '/api/sql-connections/demo-sql-1')).status).toBe(204);
   expect((await save(20)).status).toBe(200);
 });

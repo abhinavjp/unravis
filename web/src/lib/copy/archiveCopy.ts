@@ -23,7 +23,7 @@ export const ARCHIVE_TEXT = {
   sealedCaseHint: 'The file opens with the case key, on this or any computer. Keep the key: without it the file cannot be opened.',
   passphraseLabel: 'Passphrase for this file',
   passphraseHint: 'At least 12 characters. Keep it: without it the file cannot be opened.',
-  archiveSubmit: 'Save the case file',
+  archiveSubmit: 'Save case file',
   archiveCancel: 'Cancel',
   archiveClose: 'Close',
   // Running (screen 128)
@@ -44,10 +44,12 @@ export const ARCHIVE_TEXT = {
   // The archived case page (screen 122)
   archivedNote: 'This case is saved to a case file. It is read-only here.',
   freedNote: 'The working copy was freed. The case file is the only copy.',
-  archivedWork: 'The analysis, the Investigation Timeline and the source checks are not available. You cannot add files. Restore the case first.',
+  archivedWork: 'The analysis, the Investigation timeline and the source checks are not available. You cannot add files. Restore the case first.',
   filesMade: 'Case files made earlier',
   caseFileLine: 'Case file',
   inFolder: 'in',
+  copyPath: 'Copy path',
+  copied: 'Copied',
   keyEnding: 'Key ending',
   code: 'code',
 

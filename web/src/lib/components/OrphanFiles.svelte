@@ -5,6 +5,7 @@
   import { ARCHIVE_TEXT } from '../copy/archiveCopy';
   import { formatBytes } from '../copy/importCopy';
   import { formatTime } from '../time';
+  import { timeZone } from '../timeZone.svelte';
 
   // Case files an archive finished but did not commit (Cancel at the last moment, or a stop at the wrong second). Unravis lists them and never deletes
   // or adopts one: the person keeps, moves or deletes them. The list is empty and silent when there are none.
@@ -14,7 +15,7 @@
   let failed = $state(false);
 
   const mine = $derived(report ? orphansFor(report, caseId) : []);
-  const when = (value: string): string => formatTime(value, { year: true, precision: 'minute', fallback: '' });
+  const when = (value: string): string => formatTime(value, { zone: timeZone.zone, year: true, precision: 'minute', fallback: '' });
 
   onMount(() => {
     const controller = new AbortController();

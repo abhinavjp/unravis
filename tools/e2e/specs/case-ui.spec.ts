@@ -9,8 +9,8 @@ test.beforeEach(async ({ page }) => {
 
 test('CASE-01: three cards, and one filled accent button only', async ({ page }) => {
   await expect(page.locator('#start-title')).toHaveText('Start an investigation');
-  await expect(page.locator('#card-existing')).toContainText('Use an existing case');
-  await expect(page.locator('#card-enter')).toContainText('Enter an existing case');
+  await expect(page.locator('#card-existing')).toContainText('Your cases on this computer');
+  await expect(page.locator('#card-enter')).toContainText('Open with a case code');
   await expect(page.locator('#card-create')).toContainText('Create a new one');
   const filled = page.locator('.primary-button:visible');
   await expect(filled).toHaveCount(1);
@@ -30,7 +30,7 @@ test('CASE-02: rows, stickers and the archived and erased lists', async ({ page,
   const list = await api('GET', '/api/cases');
   expect(list.json.cases).toHaveLength(8);
   expect(list.json.archivedTotal).toBe(2);
-  const card = page.getByRole('region', { name: 'Use an existing case' });
+  const card = page.getByRole('region', { name: 'Your cases on this computer' });
   await expect(card.getByRole('button', { name: 'Open case Checkout slowdown, 17 October' })).toBeVisible();
   await expect(card.getByRole('button', { name: 'Open case Night batch overrun, 10 October' })).toBeVisible();
   await expect(card.getByRole('button', { name: /^Open case Search index rebuild/ })).toHaveCount(0);
@@ -50,13 +50,13 @@ test('CASE-03: open a case and read its story, then come back with All cases', a
   await expect(page.getByText('Case started').first()).toBeVisible();
   await page.getByRole('button', { name: 'All cases' }).click();
   await expect(page.locator('#start-title')).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Use an existing case' })).toContainText('Checkout slowdown, 17 October');
+  await expect(page.getByRole('region', { name: 'Your cases on this computer' })).toContainText('Checkout slowdown, 17 October');
 });
 
 test('CASE-04: a case code is accepted in any layout and refused with one sentence', async ({ page, allow }) => {
   // The page asks the server about an erased code and the server says 404; the browser logs it. That is the test.
   allow(/Failed to load resource.*404.*api.cases/, 'provoked on purpose');
-  const field = page.getByLabel('Case code');
+  const field = page.getByLabel('Case code', { exact: true });
   const open = page.getByRole('button', { name: 'Open case', exact: true });
   const refused = page.getByText('That code does not match a case on this computer.');
   await field.fill(demoId('demoopen'));
@@ -64,7 +64,7 @@ test('CASE-04: a case code is accepted in any layout and refused with one senten
   await expect(page.getByRole('button', { name: /^All cases/ })).toBeVisible();
   await page.getByRole('button', { name: 'All cases' }).click();
   await expect(page.locator('#start-title')).toBeVisible();
-  await page.getByLabel('Case code').fill('DEMO-OPEN aaaa aaaa aaaa aaaa aa');
+  await page.getByLabel('Case code', { exact: true }).fill('DEMO-OPEN aaaa aaaa aaaa aaaa aa');
   await open.click();
   await expect(page.getByRole('button', { name: /^All cases/ })).toBeVisible();
   await page.getByRole('button', { name: 'All cases' }).click();
@@ -75,19 +75,19 @@ test('CASE-04: a case code is accepted in any layout and refused with one senten
     ['demoopen1aaaaaaaaaaaaaaaaaa', 'That has a character a case code never uses. Codes use letters and the numbers 2 to 7.']
   ];
   for (const [bad, sentence] of shapes) {
-    await page.getByLabel('Case code').fill(bad);
+    await page.getByLabel('Case code', { exact: true }).fill(bad);
     await field.blur();
     await expect(page.getByText(sentence), bad).toBeVisible();
     await expect(open, bad).toBeDisabled();
     expect(page.url(), 'the typed code is not put in the address').not.toContain(bad);
   }
   // A code of the right shape that matches no case on this computer (an erased one) is asked about and refused with one sentence.
-  await page.getByLabel('Case code').fill(demoId('k7m2qx4a'));
+  await page.getByLabel('Case code', { exact: true }).fill(demoId('k7m2qx4a'));
   await open.click();
   await expect(refused).toBeVisible();
   expect(page.url(), 'the typed code is not put in the address').not.toContain(demoId('k7m2qx4a'));
   // An empty field is not asked about (D-A-04): the button is off.
-  await page.getByLabel('Case code').fill('');
+  await page.getByLabel('Case code', { exact: true }).fill('');
   await expect(open).toBeDisabled();
   await expect(page.locator('#start-title')).toBeVisible();
 });

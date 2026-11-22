@@ -1,4 +1,4 @@
-﻿// A case made through the wizard with an IIS log must show that log on the Investigation Timeline. The wizard saves the file's source tag
+﻿// A case made through the wizard with an IIS log must show that log on the Investigation timeline. The wizard saves the file's source tag
 // before the import (import id 0, not yet linked to anything); the Web server (IIS) lane then said "This case has no file for this source"
 // although the file had imported. The server pairs such a tag to its import by file name.
 //   TLWIZ-01  A listed server, one IIS log through the wizard: the trace holds no "no file" warning, the IIS lane is not "no-data", and the page does not say it.
@@ -35,7 +35,7 @@ async function makeCaseWith(page: Page, title: string, file: { name: string; buf
   await page.getByRole('button', { name: 'Add 1 file' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   if (pick) await expect(page.getByLabel(`Which computer wrote ${file.name}`)).toHaveValue(pick);
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
 
   const table = page.getByRole('table', { name: /result for each file/i });
@@ -66,12 +66,12 @@ async function expectTraceHasTheFile(api: (m: string, p: string, b?: unknown) =>
   expect(iis!.state).not.toBe('no-data');
 }
 
-/** Opens the case on the Investigation Timeline and waits for the page's own trace; returns what that trace said. */
+/** Opens the case on the Investigation timeline and waits for the page's own trace; returns what that trace said. */
 async function openTimelineOf(page: Page): Promise<Trace> {
   // The wizard's own result screen offers the timeline: the path a person takes right after Create case.
   const answered = page.waitForResponse(isTrace);
   await page.getByRole('button', { name: 'Open the timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   const trace = (await (await answered).json()) as Trace;
   await expect(page.locator('.panel[data-lane=iis] .panel-title')).toBeVisible();
   return trace;

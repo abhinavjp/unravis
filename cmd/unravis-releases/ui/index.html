@@ -5,14 +5,14 @@
 <body>
 <div class="app">
   <header class="top">
-    <div class="brand">Unravis Releases</div>
+    <h1 class="brand">Unravis Releases</h1>
     <div class="chan" id="chan-rc"></div>
     <div class="chan" id="chan-stable"></div>
     <button id="refresh" type="button" title="Read again (R)">Refresh</button>
   </header>
   <div id="run" role="status"></div>
   <div class="body">
-    <nav class="list"><ul id="list" role="listbox" tabindex="0" aria-label="Releases"></ul></nav>
+    <nav class="list"><ul id="list" role="listbox" tabindex="0" aria-label="Releases"></ul><div id="nolist" class="nolist" hidden></div></nav>
     <section class="detail" id="detail"></section>
   </div>
   <footer class="foot" id="foot"></footer>

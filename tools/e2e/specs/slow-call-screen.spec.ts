@@ -18,8 +18,8 @@ const REPORT_DIR = join(__dirname, '..', 'report');
 async function openTimeline(page: Page): Promise<void> {
   await goHome(page);
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
 }
 
 /** Clicks the first red diamond of the API lane at its centre. */
@@ -267,6 +267,8 @@ test('SCALL-06: each pretend state shows its own sentence and never the words Qu
   const sqlLane = page.getByTestId('scall-lane-sql');
   await expect(state).toBeVisible();
   await expect(page.getByTestId('scall-pretend')).toBeVisible();
+  // The demo-only block is folded by default (ANALYSIS-15): open it once.
+  await page.getByTestId('scall-pretend').locator('summary').click();
 
   // The real sentence and whether the demo database lane actually draws a shape, before any pretend switch.
   const realText = (await state.innerText()).trim();

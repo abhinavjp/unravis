@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, tick } from 'svelte';
   import { go, noteKeyStatus } from '../lib/appState.svelte';
   import { canSubmitSetup, keysMatch, setupFailureOf, strengthHint } from '../lib/masterKey';
   import { rewrapCounts, rewrapCases, setupMasterKey } from '../lib/masterKeyApi';
@@ -19,6 +20,9 @@
   let older = $state(0);
   let rewrapNote = $state('');
   let rewrapBusy = $state(false);
+  let titleEl = $state<HTMLHeadingElement>();
+  // Focus lands on the heading, so a keyboard user starts at the top of the screen and not on the page behind it (CASES-17).
+  onMount(() => { void tick().then(() => titleEl?.focus()); });
 
   const ready = $derived(canSubmitSetup(pass, confirm, ack));
   const hint = $derived(strengthHint(pass));
@@ -74,7 +78,7 @@
 
 <section class="setup" aria-labelledby="setup-title">
   {#if phase === 'form'}
-    <h2 id="setup-title">{KEY_TEXT.setupTitle}</h2>
+    <h2 id="setup-title" tabindex="-1" bind:this={titleEl}>{KEY_TEXT.setupTitle}</h2>
     <p class="intro">{KEY_TEXT.setupIntro}</p>
     <ul class="facts">
       <li>{KEY_TEXT.protects}</li>
@@ -113,12 +117,13 @@
 <style>
   .setup { display: grid; gap: var(--space-3); max-width: 560px; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .setup h2 { margin: 0; font-size: 20px; font-weight: 600; }
+  .setup h2:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .intro, .hint { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .hint { font-size: var(--fs-2); }
   .facts { margin: 0; padding-left: var(--space-5); color: var(--text-2); font-size: var(--fs-3); }
   form { display: grid; gap: var(--space-2); justify-items: start; }
   label { font-size: var(--fs-3); font-weight: 600; }
-  input[type='password'] { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 36px; padding: 6px 10px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-3); }
+  input[type='password'] { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 44px; padding: 6px 10px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-3); }
   input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
   .ack { display: flex; align-items: flex-start; gap: var(--space-2); font-weight: 400; }
   .ack input { margin-top: 3px; }

@@ -134,7 +134,7 @@ function storedCallTarget(write?: SlowCallTarget | null): SlowCallTarget | null 
   } catch { /* storage blocked: the call is simply not remembered */ }
   return null;
 }
-// The case whose Investigation Timeline is open on the case page ('' when none). Lives here, not in the page, so Back and Forward can open and close it.
+// The case whose Investigation timeline is open on the case page ('' when none). Lives here, not in the page, so Back and Forward can open and close it.
 let tracingCase = $state('');
 // The slow call open on the Slow call screen, one level under the timeline (null when none).
 let slowCall = $state<SlowCallTarget | null>(null);
@@ -143,7 +143,7 @@ let lastSlowCall: SlowCallTarget | null = null;
 // One-shot: the Slow call hand-off asked for its own history entry to be replaced by the next screen, so the timeline entry below it is not duplicated (R2-01).
 // noteScreenHistory takes it, so a move that never reaches the history cannot leave it set for a later screen.
 let handoffReplacePending = false;
-// The bar the Investigation Timeline handed to the analysis, with a sentence for an empty analysis ('' when there is none to say).
+// The bar the Investigation timeline handed to the analysis, with a sentence for an empty analysis ('' when there is none to say).
 let tracingHandoff = $state.raw<{ start: number; end: number; text: string } | null>(null);
 // One-shot: the timeline handed a window over, so the analysis runs that window as soon as it opens instead of showing the last run (P46-01).
 let handoffRunPending = false;
@@ -224,7 +224,7 @@ let importPopup = $state<{ caseId: string; caseTitle: string; retryServerName: s
 let importPopupReturnFocus: HTMLElement | null = null;
 // The one line the start screen shows after Import was asked for with no case open (see showImportPopup).
 // On until a case is opened (setActiveCase) or the line is dismissed on the start screen.
-export const IMPORT_CASE_HINT = 'Pick a case first, then choose Add files.';
+export const IMPORT_CASE_HINT = 'Open a case first, then choose Add files.';
 let importCaseHint = $state(false);
 // The file import the person started that is still running on the server. It lives here, not in the import drawer, so closing and reopening the drawer finds it again.
 let runningImport = $state.raw<RunningImport | null>(null);
@@ -616,7 +616,7 @@ function setTracing(id: string) {
   if (!id) { slowCall = null; lastSlowCall = null; }
   if (screen === 'case') storedCaseView(id ? 'tracing' : 'case');
 }
-/** From the case page to its Investigation Timeline. It takes a history step, so Back returns to the case page and Forward to the timeline. */
+/** From the case page to its Investigation timeline. It takes a history step, so Back returns to the case page and Forward to the timeline. */
 export function openTracing() {
   if (screen !== 'case' || !activeCaseId) return;
   setTracing(activeCaseId);
@@ -979,7 +979,7 @@ export function openCaseHome() {
   if (activeCaseId) go('case');
 }
 /**
- * From the case home to the analysis. The case stays the active one. A window the Investigation Timeline handed over is run at once,
+ * From the case home to the analysis. The case stays the active one. A window the Investigation timeline handed over is run at once,
  * so the analysis opens on that bar instead of showing the last run's window (P46-01). The landing run only starts by itself once.
  */
 export function openAnalysis() {

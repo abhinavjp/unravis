@@ -126,7 +126,7 @@ test('FILES-04: the case is made, and the held IIS web log is read without choos
   await page.getByRole('button', { name: 'Add 1 file' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByText(/^File chosen: u_ex261020\.log/)).toBeVisible();
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
   // The case opens on whichever screen the app picks; what matters is that it exists and the file was read.
   await expect.poll(async () => ((await api('GET', '/api/cases')).json.cases as Array<{ title: string }>).some((c) => c.title === 'QA Import Files Create'), { timeout: 15000 }).toBe(true);
@@ -175,7 +175,7 @@ test('FILES-05: a file can be dropped from the list, and a source taken out late
   await expect(page.getByText('u_ex261022.log')).toHaveCount(0);
   await expect(page.getByText('httperr1.log')).toHaveCount(0);
 
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
   await expect.poll(async () => ((await api('GET', '/api/cases')).json.cases as Array<{ title: string }>).some((c) => c.title === 'QA Import Files Unselect'), { timeout: 15000 }).toBe(true);
   const made = (await api('GET', '/api/cases')).json.cases.find((c: { title: string }) => c.title === 'QA Import Files Unselect');
@@ -203,7 +203,7 @@ async function holdFiles(page: Page, title: string, files: string[]) {
 
 async function toCreate(page: Page) {
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
 }
 
 // A save of the computer list that fails, so the wizard cannot pick the computers itself and falls back to asking per file.
@@ -223,7 +223,7 @@ test('FILES-06: the computers are picked for the person, shown on the last step,
   const section = page.locator('section.hosts');
   await expect(section.locator('[data-hosts-summary]')).toHaveText('2 files under WEB-A.');
   await expect(page.getByLabel('Which computer wrote httperr1.log')).toHaveCount(0);
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await expect(page.getByRole('button', { name: 'Create case' })).toBeEnabled();
 
   // Change: one file at a time. A name the server would refuse is caught before any call, with the reason in words.
@@ -257,8 +257,10 @@ test('FILES-07: with no computer list at all, a file that names no computer stil
   await expect(page.locator('[data-hosts-summary]')).toContainText('1 file under');
   await expect(page.getByText(/needs a computer or a time zone/)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Create case' })).toBeEnabled();
-  const label = ((await page.locator('[data-hosts-summary]').innerText()).match(/under (\S+)\.$/) ?? [])[1];
-  expect(label).toBeTruthy();
+  // The summary shows the stored name this-pc as "This PC" (CASES-29e); the server records the stored name.
+  const shown = ((await page.locator('[data-hosts-summary]').innerText()).match(/under (.+)\.$/) ?? [])[1];
+  expect(shown).toBeTruthy();
+  const label = shown === 'This PC' ? 'this-pc' : shown;
   await page.getByRole('button', { name: 'Create case' }).click();
 
   // The result table: file, type, the result (Used, Partly used or Rejected) and why.
@@ -302,7 +304,7 @@ test('FILES-12: when the computer list cannot be saved, the last step says so, o
   await expect(page.getByText(/could not be read or saved/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Create case' })).toBeDisabled();
   await page.getByLabel('Which computer wrote httperr1.log').selectOption('WEB-H');
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await expect(page.getByRole('button', { name: 'Create case' })).toBeEnabled();
   await unblockHostSaves(page);
   await page.getByRole('button', { name: 'Try again' }).click();
@@ -318,7 +320,7 @@ test('FILES-08: a file that was not read tells why and can be tried again, and t
   await page.getByRole('button', { name: 'Add 2 files' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByLabel('Which computer wrote httperr1.log').selectOption('WEB-H');
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
 
   const table = page.getByRole('table', { name: /result for each file/i });
@@ -346,7 +348,7 @@ test('FILES-08: a file that was not read tells why and can be tried again, and t
   await expect.poll(async () => (await api('GET', `/api/cases/${made.id}`)).json.imports, { timeout: 20000 }).toBe(2);
 
   await page.getByRole('button', { name: 'Open the timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
 });
 
 test('FILES-09: a file that was not read can be left out, and Add more files opens the Import files popup on the case', async ({ page, api, allow }) => {
@@ -357,7 +359,7 @@ test('FILES-09: a file that was not read can be left out, and Add more files ope
   await page.getByRole('button', { name: 'Add 2 files' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByLabel('Which computer wrote httperr1.log').selectOption('WEB-H');
-  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('checkbox', { name: /I confirm (this file|these files)/ }).check();
   await page.getByRole('button', { name: 'Create case' }).click();
 
   const table = page.getByRole('table', { name: /result for each file/i });

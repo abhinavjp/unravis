@@ -109,9 +109,12 @@ test('HELP-08: a guide table is a named, focusable region only while it scrolls 
 });
 
 test('HELP-08a: arrow keys scroll a focused table, Tab moves on from it, and code blocks scroll instead of overflowing the drawer', async ({ page }) => {
+  // On a desktop window the guide tables wrap and fit (ANALYSIS-09), so no table scrolls there; the scrolling region is a narrow-window case.
   const dialog = await openGuide(page);
   await gotoPage(dialog, 'blackbox');
+  await page.setViewportSize({ width: 375, height: 812 });
   const region = dialog.getByTestId('guide-body').getByRole('region').first();
+  await expect(region).toBeVisible();
   await region.focus();
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
@@ -203,7 +206,7 @@ test('HELP-11: Help cycles focus inside, Shift+Tab from the first control goes t
     await page.keyboard.press('Tab');
     expect(await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')), 'press ' + (i + 1)).toBe(true);
   }
-  expect(new Set(seen).size, 'a short cycle: ' + seen.join(' > ')).toBeLessThanOrEqual(6);
+  expect(new Set(seen).size, 'a short cycle: ' + seen.join(' > ')).toBeLessThanOrEqual(8); // the search field, the Copy / Check buttons, Close, Open the user guide and the two jump links (Updates, Support logs)
   // Shift+Tab from the first control in the cycle order reaches the last one.
   await dialog.getByRole('button', { name: 'Close help and glossary' }).focus();
   await page.keyboard.press('Shift+Tab');

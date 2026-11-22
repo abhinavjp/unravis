@@ -1,5 +1,5 @@
 /**
- * A request to open the Sources tab of the Sources hub (packet P11). The Investigation Timeline asks for it from its time-zone notice; the hub
+ * A request to open the Sources tab of the Sources hub (packet P11). The Investigation timeline asks for it from its time-zone notice; the hub
  * reads the request when it is on screen and clears it. In memory only.
  */
 export const sourcesNav = $state<{ wantList: boolean; wantTab: '' | 'sql' | 'day' }>({ wantList: false, wantTab: '' });

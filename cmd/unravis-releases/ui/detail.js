@@ -193,7 +193,8 @@ function mountViewer(holder, v) { holder.replaceChildren(v.root); v.restore(); }
 // ---------- page skeleton ----------
 function renderDetail(r) {
   const d = $('detail');
-  if (!r) { d.replaceChildren(el('div', 'empty', 'Select a release.')); d.dataset.v = ''; ui.ver = ''; return; }
+  // No release at all: the list pane already says why, so this pane stays empty and does not ask for a choice that cannot be made.
+  if (!r) { d.replaceChildren(shown.length ? el('div', 'empty', 'Select a release.') : document.createDocumentFragment()); d.dataset.v = ''; ui.ver = ''; return; }
   if (ui.ver !== r.version) { // a different release: build the frame once
     ui.ver = r.version; ui.data = {}; ui.sig = {}; ui.busy = {}; ui.open = new Set(); ui.seen = false; ui.seenT = false; ui.failed = null;
     d.replaceChildren();
@@ -222,7 +223,7 @@ function renderDetail(r) {
 
 function drawHead(r) {
   const h = $('dhead'); h.replaceChildren();
-  h.append(el('h1', '', r.label || r.version));
+  h.append(el('h2', 'dtitle', r.label || r.version));
   const [word, kind] = status(r);
   const meta = el('div', 'meta'); meta.append(r.channel + ' channel · ', chip(kind, word || 'Not published'));
   h.append(meta);
@@ -276,7 +277,9 @@ function drawPanel() {
   p.replaceChildren();
   if (!data) {
     if (ui.failed && ui.failed.key === key) {
-      p.append(el('p', 'note bad', 'Could not read this: ' + ui.failed.msg));
+      // The program's own reason often starts "could not ..." already; say it once.
+      const why = String(ui.failed.msg || '').trim();
+      p.append(el('p', 'note bad', /^could not/i.test(why) ? why.charAt(0).toUpperCase() + why.slice(1) + (/[.!?]$/.test(why) ? '' : '.') : 'Could not read this: ' + why));
       const b = el('button', '', 'Try again'); b.type = 'button'; b.addEventListener('click', () => loadTab(true)); p.append(b);
     } else p.append(el('p', 'note', 'Reading...'));
     return;
@@ -288,7 +291,7 @@ function staleNote(p, j) { if (j && j.stale) p.append(el('p', 'note warn', 'GitH
 
 // ---------- steps ----------
 function stepsSimple(p, r) { // no version yet, or no saved detail: the plain list
-  p.append(el('h2', '', 'Release steps'));
+  p.append(el('h3', '', 'Release steps'));
   const ol = el('ol', 'steps simple');
   for (const x of r.steps) {
     const li = el('li'); const g = el('span', 'g tag ' + STEP_KIND[x.state], GLYPH[x.state]); g.setAttribute('aria-hidden', 'true');
@@ -305,17 +308,19 @@ function bindOpen(det, id) {
 function panelSteps(p, j, r) {
   if (j.failure) {
     const f = j.failure, box = el('div', 'fail'); box.setAttribute('role', 'alert');
-    box.append(el('div', 'ft', 'Stopped at ' + f.stage), el('div', 'fm', f.message));
+    box.append(el('div', 'ft', f.stage === 'Verify' ? 'Verify failed' : 'Stopped at ' + f.stage), el('div', 'fm', f.message));
     if (f.context && f.context.length) { const pre = el('div', 'fctx'); for (const c of f.context) pre.append(el('div', '', c)); pre.append(el('div', 'last', 'STOPPED at ' + f.stage + ' : ' + f.message)); box.append(pre); }
     if (f.log) {
       const b = el('button', '', 'Show this in the step log'); b.type = 'button';
       b.addEventListener('click', () => { ui.open.add('step-' + f.stage); drawPanel(); const t = document.getElementById('step-' + f.stage); if (t) t.scrollIntoView({ block: 'nearest' }); });
       box.append(b);
     }
+    // What to do next, so a stopped release is not a dead end. This page only reads; the script does the work.
+    box.append(el('p', 'fnext', 'To go on, fix the cause above, then run Release.ps1 -Channel ' + (r.channel === 'stable' ? 'stable' : 'rc') + ' on the release PC.'));
     p.append(box);
   }
   if (j.note) p.append(el('p', 'note', j.note));
-  p.append(el('h2', '', 'Release steps'));
+  p.append(el('h3', '', 'Release steps'));
   const list = el('div', 'stepl');
   let anyLog = false;
   for (const s of j.steps) {
@@ -333,7 +338,8 @@ function panelSteps(p, j, r) {
     right.textContent = bits.filter(Boolean).join(' · ');
     if (s.end) right.title = 'Finished ' + when(s.end);
     sum.append(g, nm, right); row.append(sum);
-    if (s.reason) row.append(el('div', 'reason', s.reason));
+    // The red box above already says why the release stopped; the same words are not repeated under the step.
+    if (s.reason && !(j.failure && j.failure.stage === s.name)) row.append(el('div', 'reason', s.reason));
     if (hasLog) {
       bindOpen(row, id);
       if (s.state === 'failed' && !ui.seen) ui.open.add(id);
@@ -354,7 +360,7 @@ function panelSteps(p, j, r) {
   if (!anyLog && j.recorded) p.append(el('p', 'note', 'No log was saved for these steps. Releases made before logs were saved only keep the time each step finished.'));
   if (!j.recorded) p.append(el('p', 'note', 'This PC has no release log for this version, so only Publish and Feed are worked out (from GitHub and the signed feed).'));
 
-  p.append(el('h2', '', 'Facts'));
+  p.append(el('h3', '', 'Facts'));
   const f = el('dl', 'facts');
   const add = (k, val) => { f.append(el('dt', '', k)); const dd = el('dd'); if (val instanceof Node) dd.append(val); else dd.textContent = val; f.append(dd); };
   add('Published', r.published ? when(r.published) : 'Not on GitHub');
@@ -372,7 +378,7 @@ function panelSteps(p, j, r) {
 
 // ---------- all logs ----------
 function panelLogs(p, j) {
-  p.append(el('h2', '', 'Saved logs for this release'));
+  p.append(el('h3', '', 'Saved logs for this release'));
   if (!j.logs.length) { p.append(el('p', 'note', 'No log was saved for this release. The release manager saves its own printout and the CI run logs when it runs, so releases made before that have none.')); return; }
   for (const l of j.logs) {
     const id = 'log-' + l.name;
@@ -392,7 +398,7 @@ function panelTests(p, rep) {
   if (!rep.runs.length) { p.append(el('p', 'note', rep.note || 'No test results were saved for this release.')); return; }
   for (const run of rep.runs) {
     const res = run.results, sec = el('section', 'trun');
-    const h = el('h2', '', KIND_WORD[run.kind] || run.kind);
+    const h = el('h3', '', KIND_WORD[run.kind] || run.kind);
     sec.append(h);
     const sum = el('div', 'tsum');
     const bad = res.failed > 0;
@@ -487,7 +493,7 @@ function panelFiles(p, info) {
   const f = el('dl', 'facts');
   if (info.keyId) { f.append(el('dt', '', 'Signing key id'), el('dd', 'mono', info.keyId)); }
   if (info.manifestSha) { f.append(el('dt', '', 'Signed feed file'), el('dd', 'mono', info.manifestSha)); }
-  if (f.childNodes.length) { p.append(el('h2', '', 'Signing')); p.append(f); p.append(el('p', 'note', 'The key id says which signing key made the release. The feed file hash is the SHA-256 of the signed answer installed apps read.')); }
+  if (f.childNodes.length) { p.append(el('h3', '', 'Signing')); p.append(f); p.append(el('p', 'note', 'The key id says which signing key made the release. The feed file hash is the SHA-256 of the signed answer installed apps read.')); }
 }
 
 // ---------- changes ----------

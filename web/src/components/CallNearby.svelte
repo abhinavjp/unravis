@@ -122,10 +122,10 @@
             onclick={() => onSelect(row)}
             onkeydown={(event) => rowKey(event, row)}
           >
-            <td class="time" data-label={DRILL_TEXT.colTime}>{formatTime(row.initiatedAt, { zone, precision: 'second', date: false, suffix: false })}</td>
+            <td class="time" data-label={DRILL_TEXT.colTime}>{formatTime(row.initiatedAt, { zone, precision: 'ms', date: false, suffix: false })}</td>
             <td data-label={DRILL_TEXT.colFromCall}>
-              {gapLabel(startMs(row), call, { thisCall: DRILL_TEXT.gapThis, during: DRILL_TEXT.gapDuring })}
-              {#if own}<strong class="mark">{DRILL_TEXT.thisCallMark}</strong>{/if}
+              <!-- The row of this call says so once; the gap words are for the other rows (ANALYSIS-15). -->
+              {#if own}<strong class="mark">{DRILL_TEXT.thisCallMark}</strong>{:else}{gapLabel(startMs(row), call, { thisCall: DRILL_TEXT.gapThis, during: DRILL_TEXT.gapDuring })}{/if}
             </td>
             <td data-label={DRILL_TEXT.colUser}>{userText(row)}</td>
             <td data-label={DRILL_TEXT.colApi}>{row.controller}.{row.action}</td>

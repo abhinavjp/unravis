@@ -26,6 +26,8 @@ export const zoomCopy = {
   minuteFloor: 'This is the smallest window.',
   tapToZoom: 'Press Enter to zoom in.',
   hint: 'Drag across a chart to zoom in.',
+  moreLabel: 'More about zooming',
+  asOfNote: 'That is when the zoomed read finished, by the clock of the computer reading it.',
   investigate: 'Investigate this window',
   investigateTitle: 'Rerun the full analysis on this window, compared with the same length of time just before it.',
   investigateTop: 'Zoom in first, then investigate the narrower window.',

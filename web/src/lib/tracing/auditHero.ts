@@ -1,5 +1,5 @@
 /**
- * The audit lane's hero layer (the Run Analysis "Requests over time" look on the Investigation Timeline):
+ * The audit lane's hero layer (the Run Analysis "Requests over time" look on the Investigation timeline):
  * a per-slot percentile line, a dashed bridge across slots with no timed requests, a dot per slot and a
  * mark for each slot's slowest request, with the far-above-usual ones flagged. Pure TypeScript, no Svelte
  * and no DOM: the component only positions what this module returns.

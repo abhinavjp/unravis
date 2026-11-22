@@ -20,13 +20,17 @@
 .src .tick { display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-4); }
 .src .tick input { width: 22px; height: 22px; margin: 0; accent-color: var(--accent); }
 .src button { font: inherit; }
-.src .btn, .src .btn-primary { min-height: 44px; padding: 0 var(--space-4); border-radius: var(--radius-sm); font-size: var(--fs-4); font-weight: 600; cursor: pointer; }
+.src .btn, .src .btn-primary { min-height: 33px; padding: 0 var(--space-3); border-radius: var(--radius-sm); font-size: var(--fs-3); font-weight: 600; cursor: pointer; }
+/* The same size as the app's own buttons on a desktop; the 44px target is for a touch screen or a narrow window (SETUP-A11Y-11). */
+@media (pointer: coarse), (max-width: 720px) { .src .btn, .src .btn-primary { min-height: 44px; padding: 0 var(--space-4); font-size: var(--fs-4); } }
 .src .btn { color: var(--text); background: transparent; border: var(--hairline-width, 1px) solid var(--control-line); }
 .src .btn:hover:not(:disabled) { border-color: var(--text-2); }
 .src .btn-primary { color: var(--accent-ink); background: var(--accent); border: 1px solid var(--accent); }
 .src .btn[aria-pressed='true'] { border-color: var(--accent); background: var(--surface-2); }
 .src .label { font-weight: 600; font-size: var(--fs-3); }
-.src .btn:disabled, .src .btn-primary:disabled { opacity: .55; cursor: not-allowed; }
+.src .btn:disabled { opacity: .55; cursor: not-allowed; }
+/* A disabled primary button is a neutral control, not a faded accent (the brand rule, as on the app's own primary button). */
+.src .btn-primary:disabled { opacity: 1; color: var(--text-2); background: var(--surface-2); border-color: var(--control-line); cursor: not-allowed; }
 .src .btn:focus-visible, .src .btn-primary:focus-visible, .src .link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .src .link { min-height: 44px; padding: 0 var(--space-1); color: var(--accent); background: transparent; border: 0; font-size: var(--fs-3); text-decoration: underline; cursor: pointer; }
 .src-sticker { display: inline-flex; align-items: center; padding: 1px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); font-weight: 600; white-space: nowrap; color: var(--text); background: var(--surface-2); }
@@ -64,12 +68,22 @@
   .src table.stack td::before { content: attr(data-label); display: block; color: var(--text-2); font-weight: 500; font-size: var(--fs-3); }
 }
 /* The global .tabs rule (app.css) pads, underlines and scrolls the app's own tab rows; this row sits flush in the panel instead. */
-.src .tabs { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-3); padding: 0; overflow: visible; border-bottom: 0; }
+/* A tab row looks like tabs, not like a row of action buttons (CASES-11): plain text on a hairline, and the chosen tab has a 3px bar under it and a heavier word. All seven hub tabs fit one row; a narrower panel scrolls the row sideways. */
+.src .tabs { display: flex; flex-wrap: nowrap; gap: 0; margin: 0 0 var(--space-3); padding: 0; overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid var(--line); scrollbar-width: thin; }
+.src .tabs button { flex: 0 0 auto; min-height: 40px; margin-bottom: -1px; padding: 0 var(--space-3); color: var(--text-2); background: transparent; border: 0; border-bottom: 3px solid transparent; border-radius: 0; white-space: nowrap; }
+.src .tabs button:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+.src .tabs button:focus-visible { outline-offset: -2px; }
 .src .tabs button[aria-selected='true'],
-.src .tabs button[aria-pressed='true'] { border-color: var(--accent); background: var(--surface-2); }
-/* Hover must also show on the selected tab: its rule above is more specific than the plain .btn hover. */
-.src .tabs button[aria-selected='true']:hover,
-.src .tabs button[aria-pressed='true']:hover { background: color-mix(in srgb, var(--accent) 14%, var(--surface-2)); }
+.src .tabs button[aria-pressed='true'] { color: var(--text); background: transparent; border-bottom-color: var(--accent); font-weight: 700; }
+/* Hover must also show on the selected tab: its rule above is more specific than the plain hover. */
+.src .tabs button[aria-selected='true']:hover:not(:disabled),
+.src .tabs button[aria-pressed='true']:hover:not(:disabled) { background: var(--surface-2); border-bottom-color: var(--accent); }
+@media (pointer: coarse), (max-width: 720px) { .src .tabs button { min-height: 44px; } }
+/* Windows high contrast drops colours: the chosen tab gets the system highlight pair, as in the app's own tab rows. */
+@media (forced-colors: active) {
+  .src .tabs button[aria-selected='true'], .src .tabs button[aria-pressed='true'],
+  .src .tabs button[aria-selected='true']:hover:not(:disabled), .src .tabs button[aria-pressed='true']:hover:not(:disabled) { forced-color-adjust: none; color: HighlightText; background: Highlight; border-bottom-color: HighlightText; }
+}
 .src .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-3); }
 /* Screen 112: three cards across, then two; one column on a narrow screen. */
 .src.add-data .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }

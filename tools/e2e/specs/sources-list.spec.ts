@@ -1,4 +1,4 @@
-// Packet P11 (the Sources list with tags and time-zone state, and the time-zone notice on the Investigation Timeline) and the audit database gaps
+// Packet P11 (the Sources list with tags and time-zone state, and the time-zone notice on the Investigation timeline) and the audit database gaps
 // on Add data > MongoDB (the readiness chip, the collection-name check, the notes on the database list, the permission link) with the fixes C3,
 // C4, C7, C8, C11 and P7 from the hub review.
 //   SRCLIST-01  The Sources tab lists each source with Environment / Portal / API tags and a lane sticker, and a time-zone state per source.
@@ -155,8 +155,8 @@ test('SRCLIST-04: a lane left out for its time zone shows the notice, and See th
   });
   await goHome(page);
   await openCase(page, CASE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   const notice = page.getByTestId('tp-tz-notice');
   await expect(notice).toContainText('Time zone needs checking');
   await expect(notice).toContainText('has no usable time zone');
@@ -169,8 +169,8 @@ test('SRCLIST-04: a lane left out for its time zone shows the notice, and See th
 test('SRCLIST-04b: with every lane read, no notice is shown', async ({ page }) => {
   await goHome(page);
   await openCase(page, CASE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start tracing' })).toBeVisible();
   await expect(page.getByTestId('tp-tz-notice')).toHaveCount(0);
 });

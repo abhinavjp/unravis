@@ -176,7 +176,7 @@
     {:else}
       <label class="field"><span>{HEALTH_TEXT.sqlPick}</span>
         <select value={sqlId} onchange={(e) => pickSql(e.currentTarget.value)}>
-          <option value="">–</option>
+          <option value="">{HEALTH_TEXT.sqlChoose}</option>
           {#each sqlKept as item (item.id)}<option value={item.id}>{item.label}</option>{/each}
         </select>
       </label>
@@ -193,7 +193,7 @@
     {:else}
       <label class="field"><span>{HEALTH_TEXT.mongoPick}</span>
         <select value={mongoId} onchange={(e) => pickMongo(e.currentTarget.value)}>
-          <option value="">–</option>
+          <option value="">{HEALTH_TEXT.mongoChoose}</option>
           {#each mongoKept as item (item.id)}<option value={item.id}>{item.label}</option>{/each}
         </select>
       </label>
@@ -281,8 +281,10 @@
   .line { margin: 0; font-size: var(--fs-3); font-weight: 600; overflow-wrap: anywhere; }
   .empty { margin: 0; padding: 8px 0; border-top: 1px solid var(--line); font-size: var(--fs-3); }
   .actions, .tabs { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  /* The page-wide .tabs rule adds a 20px margin and a rule under the strip, which pushed these two buttons in from the card edge (CASES-19). */
+  .tabs { margin: 0; overflow: visible; border-bottom: 0; }
   .tabs button[aria-pressed='true'] { border-color: var(--accent, currentColor); font-weight: 600; }
-  .field { display: grid; gap: 4px; min-width: 0; font-size: var(--fs-2); color: var(--text-2); }
+  .field { display: grid; gap: 4px; min-width: 0; font-size: 13px; color: var(--text-2); }
   .field select, .field input { min-width: 0; max-width: 28rem; }
   .field small { font-size: var(--fs-2); color: var(--text-2); }
   .findings, .history { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }

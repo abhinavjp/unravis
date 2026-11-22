@@ -11,6 +11,8 @@ export const HEALTH_TEXT = {
   sqlHeading: 'SQL Server',
   sqlNone: 'No SQL Server is kept yet. Add one on the Sources step, then come back.',
   sqlPick: 'Kept SQL Server',
+  sqlChoose: 'Choose a saved server',
+  mongoChoose: 'Choose a saved connection',
   sqlPassword: 'Password for this run',
   sqlPasswordHint: 'Only needed if no password was kept. It is used once and is not stored.',
   sqlDatabase: 'Database to check',

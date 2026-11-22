@@ -1,4 +1,4 @@
-// The Investigation Timeline screen on the demo case "Orders API stall, 19 October" (phases 03 and 04):
+// The Investigation timeline screen on the demo case "Orders API stall, 19 October" (phases 03 and 04):
 // window picker, three lanes on one UTC axis, lane toggles, zoom/brush/keyboard, scrub pill, latency selector,
 // tooltips, refusals, empty and error states, and the INV-3 / INV-4 privacy canaries.
 // The demo clock is 2026-10-20T09:00:00Z. The audit lane has 11 event bars on 19 Oct 16:00 to 17:00 (5 minute
@@ -21,8 +21,8 @@ const NAMES = ['API requests (audit log)', 'Database (SQL Server)', 'Web server 
 async function openTracing(page: Page) {
   await goHome(page);
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   // The screen traces once on open with the real "now" windows; wait for it so a later run is not confused with it.
   await expect(page.locator('.tracing-chart')).toBeVisible();
 }
@@ -53,7 +53,7 @@ test('TRACE-01: the screen opens with the picker, toolbar, chart and notes regio
   await expect(page.locator('input[type=datetime-local]')).toHaveCount(0);
   await expect(pickerButton(page, 'incident')).toBeVisible();
   await expect(pickerButton(page, 'comparison')).toBeVisible();
-  await expect(page.getByText('Times are typed in the zone chosen at the top.')).toBeVisible();
+  await expect(page.getByTestId('tp-metaline')).toContainText('Times are in');
   await expect(page.getByRole('button', { name: 'Start tracing' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Case home', exact: true })).toBeVisible();
   // The defaults are the hour before now, and the hour before that (real clock, so only the shape is checked).
@@ -67,7 +67,7 @@ test('TRACE-01: the screen opens with the picker, toolbar, chart and notes regio
   for (let i = 0; i < 3; i++) await expect(lanes.nth(i)).toHaveAttribute('aria-pressed', 'true');
   // Case home returns focus to the open button.
   await page.getByRole('button', { name: 'Case home', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Open the Investigation Timeline' })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Open the Investigation timeline' })).toBeFocused();
 });
 
 test('TRACE-02: three lanes in order with plain labels, one shared UTC axis and its caption', async ({ page }) => {
