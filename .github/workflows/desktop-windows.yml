@@ -75,7 +75,7 @@ jobs:
         shell: pwsh
         working-directory: .
         run: |
-          go build -o "$env:RUNNER_TEMP\sidecar\unravis.exe" ./cmd/audit-explorer
+          go build -tags e2e -o "$env:RUNNER_TEMP\sidecar\unravis.exe" ./cmd/audit-explorer
           if ($LASTEXITCODE -ne 0) { exit 1 }
           "UNRAVIS_TEST_SIDECAR=$env:RUNNER_TEMP\sidecar\unravis.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
