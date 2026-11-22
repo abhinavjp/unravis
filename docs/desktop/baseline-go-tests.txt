@@ -382,7 +382,5 @@ api-audit-explorer/internal/setup.TestWriteProfileLinksSkipsStartupWhenOff
 api-audit-explorer/internal/setup.TestWriteProfileLinksUserScopeAlsoWritesStartMenuAndQuit
 api-audit-explorer/internal/setup.TestWriteProfileLinksWritesDesktopAndStartup
 api-audit-explorer/internal/shelllink.TestSamePathIgnoresCaseAndRefusesEmpty
-api-audit-explorer/internal/store.TestActivityQueriesAllSourcesOnceWithOverlapAndNoPayload
-api-audit-explorer/internal/store.TestSlowestReadsEverySourceOnceAndRanksGlobally
 pkg.api-audit-explorer/internal/server
 pkg.api-audit-explorer/internal/setup
