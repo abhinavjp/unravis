@@ -292,7 +292,15 @@ test('the handles are 24px wide for every pointer and the page can still scroll 
   assert.match(style, /\.nav-handle::before \{[^}]*width: 4px/);
   assert.match(style, /touch-action: pan-y/);
   // a press anywhere on the handle grabs it, so the grab zone is as wide as the handle
-  assert.match(source, /const halfHit = \(\) => 12;/);
+  const half = Number(/const halfHit = \(\) => (\d+);/.exec(source)?.[1]);
+  assert.equal(half, 12);
+  // behaviour: on a 1000px track, a press 9px inside the start edge of the whole period grabs that edge (it was a "move" at the old 6px)
+  const whole = { left: 0, right: 1 };
+  assert.equal(brushLib.brushHit(9 / 1000, whole, half / 1000), 'start');
+  assert.equal(brushLib.brushHit(9 / 1000, whole, 6 / 1000), 'move');
+  assert.equal(brushLib.brushHit(1 - 9 / 1000, whole, half / 1000), 'end');
+  // and 13px in is still the body
+  assert.equal(brushLib.brushHit(13 / 1000, whole, half / 1000), 'move');
 });
 
 test('no transition or animation, no colour literal, radius and accent only from tokens', () => {

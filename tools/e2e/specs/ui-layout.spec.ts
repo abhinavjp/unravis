@@ -7,8 +7,8 @@
 //   UIFIX-05  The selected-lines notes of the timeline and the chart help line are at least 11px (BL-478)
 //   UIFIX-06  Tap targets of 24 x 24 px or more: Daily view, Show matching requests, Help guide index links, Stop showing, Mark the line (BL-475 group 1)
 //   UIFIX-09  Desktop does not move: tables that got bigger tap targets keep every row height and column width (BL-475 group 1)
-//   UIFIX-10  Tap targets of 24 x 24 px or more: the hour squares of the Daily and hourly view and the two zoom slider handles; a press 9px inside the edge grabs the handle (BL-475 groups 2 and 3)
-//   UIFIX-11  Desktop does not move: the hour grid and the zoom strip keep every size and position, the painted square and the grip keep their old size (BL-475 groups 2 and 3)
+//   UIFIX-10  Tap targets of 24 x 24 px or more: the hour squares of the Daily and hourly view and the two zoom slider handles; a press 9px inside the edge grabs the handle; a press on a painted square lands on that square (BL-475 groups 2 and 3)
+//   UIFIX-11  Desktop does not move: the hour grid, its legend and the zoom strip look the same pixel for pixel as with the old rules put back (BL-475 groups 2 and 3)
 //   UIFIX-07  Add files on a phone: the column heads are painted nowhere, yet stay in the page for screen readers (BL-482). A guard only: the finding was a false positive of the audit, so the audit run proves the fix
 //   UIFIX-08  Phone header with "Choose sources" fits the window (BL-472); 390 and 360 px fail on the old header, 320 px is a no-regression case
 import { test, expect, type Page } from '../support/fixtures';
@@ -386,57 +386,132 @@ test('UIFIX-10d Zoom strip: a press 9px inside the edge grabs the handle (the gr
   await page.mouse.up();
 });
 
-test('UIFIX-11a Daily and hourly view: the hour grid keeps every row and square where it was', async ({ page }) => {
-  await openDailyHourly(page);
-  const r = await page.locator('.hm-grid').evaluate((grid) => {
-    const box = (e: Element) => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; };
-    const slots = () => [...grid.querySelectorAll('.hm-cell-wrap')].map(box);
-    const rows = () => [...grid.querySelectorAll('.hm-row')].map(box);
-    const now = { grid: box(grid), slots: slots(), rows: rows() };
-    const cells = [...grid.querySelectorAll<HTMLElement>('button.hm-cell')];
-    const saved = cells.map((c) => c.getAttribute('style'));
-    // the old rules of the square: 20px tall, no margin, and its paint on the button itself
-    for (const c of cells) for (const [k, v] of Object.entries({ height: '20px', margin: '0' })) c.style.setProperty(k, v, 'important');
-    void document.body.offsetHeight;
-    const old = { grid: box(grid), slots: slots(), rows: rows() };
-    cells.forEach((c, i) => { if (saved[i] === null) c.removeAttribute('style'); else c.setAttribute('style', saved[i]!); });
-    // the painted square: a 20px high square, 2px in from the 24px button
-    const first = cells[0];
-    const cs = getComputedStyle(first, '::before');
-    return { now, old, paint: { top: cs.top, height: cs.height, width: cs.width, cell: first.getBoundingClientRect().width, cellH: first.getBoundingClientRect().height } };
+// The rules of develop for the hour grid, its legend and the zoom handles, as they were before BL-475 groups 2 and 3 (copied from develop at e784a5f).
+// They are put back on the new build as a stylesheet in which every declaration is !important, followed by rules that switch the new
+// pseudo-elements off. The page must then look the same pixel for pixel: a rule that moves, resizes or recolours anything (the legend
+// squares included, which are grey on develop because `.hm-swatch` comes after `.level-N`) fails here.
+const OLD_HEATMAP_CSS = `
+  .hm-cell, .hm-gap { display: block; width: 100%; height: 20px; padding: 0; border-radius: 1px; }
+  .hm-cell { border: 1px solid var(--line-soft); background: var(--surface-2); cursor: pointer; }
+  .hm-cell.empty { cursor: default; background: transparent; }
+  .hm-gap { border: 1px solid transparent; }
+  .level-1 { background: var(--heat-1); }
+  .level-2 { background: var(--heat-2); }
+  .level-3 { background: var(--heat-3); }
+  .level-4 { background: var(--heat-4); }
+  .hm-cell.noise { border: 1px dashed var(--text-2); }
+  .hm-cell:hover:not(.empty) { outline: 1px solid var(--text); outline-offset: 0; }
+  .hm-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; position: relative; z-index: 1; }
+  .hm-swatch { display: inline-block; width: 16px; height: 12px; border: 1px solid var(--line-soft); border-radius: 1px; background: var(--surface-2); }
+  .hm-swatch.noise { background: var(--surface-2); border: 1px dashed var(--text-2); margin-left: 8px; }
+  .hm-swatch.empty { background: transparent; margin-left: 8px; }
+  .nav-handle { position: absolute; top: 0; bottom: 0; width: 12px; margin-left: -6px; cursor: ew-resize; touch-action: pan-y; }
+  .nav-handle:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+`;
+const OFF_NEW_CSS = '.hm-cell { margin: 0 !important; position: static !important; pointer-events: auto !important; } .hm-cell:focus-visible { position: relative !important; } .hm-cell::before, .hm-cell::after, .nav-handle::after { content: none !important; }';
+const important = (css: string) => css.replace(/;(?=\s*(\}|$))/g, ';').replace(/([^{};\s][^{};]*?);/g, (m) => (m.includes('!important') ? m : m.slice(0, -1) + ' !important;'));
+
+/** The same screenshots with the new rules and with the old ones put back. */
+async function paintedBoth(page: Page, take: () => Promise<Buffer[]>): Promise<{ now: Buffer[]; old: Buffer[] }> {
+  const now = await take();
+  const style = await page.addStyleTag({ content: important(OLD_HEATMAP_CSS) + OFF_NEW_CSS });
+  const old = await take();
+  await style.evaluate((el) => el.remove());
+  return { now, old };
+}
+
+for (const scheme of ['dark', 'light'] as const) {
+  test('UIFIX-11a Daily and hourly view: the hour grid and its legend look exactly as before (' + scheme + ')', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await openDailyHourly(page);
+    const hm = page.locator('.hm');
+    await hm.scrollIntoViewIfNeeded();
+    const cells = page.locator('button.hm-cell:not(.empty)');
+    expect(await cells.count()).toBeGreaterThan(8);
+    const { now, old } = await paintedBoth(page, async () => {
+      const shots: Buffer[] = [];
+      await page.mouse.move(0, 0);
+      shots.push(await hm.screenshot());
+      for (const i of [0, 3, 7]) {
+        await cells.nth(i).hover();
+        shots.push(await hm.screenshot()); // hover ring
+        await cells.nth(i).focus();
+        await page.keyboard.press('ArrowRight');
+        await page.keyboard.press('ArrowLeft');
+        await page.mouse.move(0, 0);
+        shots.push(await hm.screenshot()); // focus ring
+      }
+      await page.locator('body').click({ position: { x: 1, y: 1 } });
+      return shots;
+    });
+    const names = ['rest', 'hover 0', 'focus 0', 'hover 3', 'focus 3', 'hover 7', 'focus 7'];
+    now.forEach((shot, i) => expect(shot.equals(old[i]), names[i] + ': the picture differs from the old rules').toBe(true));
+    // and the legend squares, whatever colour develop gives them, stay the colour of the "few requests" square (grey, from `.hm-swatch`)
+    const colours = await page.locator('.hm-legend .hm-swatch').evaluateAll((els) => els.map((e) => getComputedStyle(e).backgroundColor));
+    expect(colours.slice(0, 4)).toEqual([colours[4], colours[4], colours[4], colours[4]]);
   });
+
+  test('UIFIX-11b Zoom strip: the strip, the grip and the focus ring look exactly as before (' + scheme + ')', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await openDailyHourly(page);
+    const nav = page.locator('.navigator');
+    await nav.scrollIntoViewIfNeeded();
+    const { now, old } = await paintedBoth(page, async () => {
+      const shots: Buffer[] = [];
+      await page.mouse.move(0, 0);
+      shots.push(await nav.screenshot());
+      await page.locator('.nav-handle').first().focus();
+      await page.keyboard.press('Shift');
+      shots.push(await nav.screenshot()); // focus ring of the start handle
+      await page.locator('.nav-handle').nth(1).focus();
+      await page.keyboard.press('Shift');
+      shots.push(await nav.screenshot());
+      await page.locator('body').click({ position: { x: 1, y: 1 } });
+      return shots;
+    });
+    now.forEach((shot, i) => expect(shot.equals(old[i]), ['rest', 'focus start', 'focus end'][i] + ': the picture differs from the old rules').toBe(true));
+  });
+}
+
+test('UIFIX-11c Daily and hourly view: the size and place of every row and square equal the old rules', async ({ page }) => {
+  await openDailyHourly(page);
+  const grid = page.locator('.hm-grid');
+  const measure = () => grid.evaluate((g) => {
+    const box = (e: Element) => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; };
+    return { grid: box(g), slots: [...g.querySelectorAll('.hm-cell-wrap')].map(box), rows: [...g.querySelectorAll('.hm-row')].map(box) };
+  });
+  const now = await measure();
+  const style = await page.addStyleTag({ content: important(OLD_HEATMAP_CSS) + OFF_NEW_CSS });
+  const old = await measure();
+  await style.evaluate((el) => el.remove());
   const near = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.05);
-  expect(near(r.now.grid, r.old.grid), 'grid box now ' + r.now.grid + ' old ' + r.old.grid).toBe(true);
-  expect(r.now.slots.length).toBeGreaterThan(100);
-  r.now.slots.forEach((s, i) => expect(near(s, r.old.slots[i]), 'slot ' + i + ' now ' + s + ' old ' + r.old.slots[i]).toBe(true));
-  r.now.rows.forEach((s, i) => expect(near(s, r.old.rows[i]), 'row ' + i + ' now ' + s + ' old ' + r.old.rows[i]).toBe(true));
-  expect(r.paint.cellH).toBe(24);
-  expect(r.paint.top).toBe('2px');
-  expect(r.paint.height).toBe('20px');
-  expect(parseFloat(r.paint.width)).toBeCloseTo(r.paint.cell, 2);
+  expect(near(now.grid, old.grid), 'grid box now ' + now.grid + ' old ' + old.grid).toBe(true);
+  expect(now.slots.length).toBeGreaterThan(100);
+  now.slots.forEach((box, i) => expect(near(box, old.slots[i]), 'slot ' + i + ' now ' + box + ' old ' + old.slots[i]).toBe(true));
+  now.rows.forEach((box, i) => expect(near(box, old.rows[i]), 'row ' + i + ' now ' + box + ' old ' + old.rows[i]).toBe(true));
 });
 
-test('UIFIX-11b Zoom strip: the strip, the 4px grip and the focus ring keep their old size and place', async ({ page }) => {
+test('UIFIX-10e Daily and hourly view: a press anywhere on a painted square, edges included, lands on that square', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 3000 }); // elementFromPoint only sees what is on screen
   await openDailyHourly(page);
-  const r = await page.locator('.navigator').evaluate((nav) => {
-    const box = (e: Element) => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; };
-    const handles = [...nav.querySelectorAll<HTMLElement>('.nav-handle')];
-    const centres = () => handles.map((h) => { const b = h.getBoundingClientRect(); return b.x + b.width / 2; });
-    const now = { nav: box(nav), track: box(nav.querySelector('.nav-track')!), centres: centres() };
-    const saved = handles.map((h) => h.getAttribute('style'));
-    // the old rules of the handle: 12px wide, centred on the edge
-    for (const h of handles) for (const [k, v] of Object.entries({ width: '12px', 'margin-left': '-6px' })) h.style.setProperty(k, v, 'important');
-    void document.body.offsetHeight;
-    const old = { nav: box(nav), track: box(nav.querySelector('.nav-track')!), centres: centres() };
-    handles.forEach((h, i) => { if (saved[i] === null) h.removeAttribute('style'); else h.setAttribute('style', saved[i]!); });
-    const grip = getComputedStyle(handles[0], '::before');
-    const ring = getComputedStyle(handles[0], '::after');
-    return { now, old, grip: { w: grip.width, left: grip.left, ml: grip.marginLeft }, ring: { left: ring.left, right: ring.right, w: ring.width } };
+  const facts = await page.evaluate(() => {
+    const cells = [...document.querySelectorAll<HTMLElement>('button.hm-cell')];
+    const wrong: string[] = [];
+    let checked = 0;
+    for (const c of cells.filter((_, i) => i % 3 === 0)) {
+      const b = c.getBoundingClientRect(); // the 24px button; the painted square is 2px in from top and bottom
+      const x = b.x + b.width / 2, top = b.top + 2, bottom = b.bottom - 2;
+      // the whole height of the square, in half pixel steps and at both edges: no press may fall through to the hour above or below
+      const ys = [top + 0.05, bottom - 0.05];
+      for (let y = top; y < bottom; y += 0.5) ys.push(y + 0.05);
+      for (const y of ys) {
+        checked++;
+        const hit = document.elementFromPoint(x, y)?.closest('button.hm-cell');
+        if (hit !== c) wrong.push((c.getAttribute('aria-label') ?? '') + ' at ' + (y - top).toFixed(2));
+      }
+    }
+    return { wrong: wrong.slice(0, 5), checked };
   });
-  const near = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.05);
-  expect(near(r.now.nav, r.old.nav), 'strip box now ' + r.now.nav + ' old ' + r.old.nav).toBe(true);
-  expect(near(r.now.track, r.old.track), 'track box now ' + r.now.track + ' old ' + r.old.track).toBe(true);
-  expect(near(r.now.centres, r.old.centres), 'handle centres now ' + r.now.centres + ' old ' + r.old.centres).toBe(true);
-  expect(r.grip.w).toBe('4px');
-  expect(r.ring.w, 'the focus ring is still the old 12px wide').toBe('12px');
+  expect(facts.checked).toBeGreaterThan(500);
+  expect(facts.wrong).toEqual([]);
 });

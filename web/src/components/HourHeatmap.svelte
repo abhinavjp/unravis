@@ -100,8 +100,11 @@
   .hm-cell-wrap { display: block; min-width: 0; }
   .hm-gap { display: block; width: 100%; height: 20px; padding: 0; border-radius: 1px; border: 1px solid transparent; }
   /* The square is a 24px tall button (WCAG 2.2 target size, BL-475) whose 2px of extra height is cancelled by a negative margin, so the
-     rows keep their 20px pitch. Its painted square is the ::before, 2px in from top and bottom: same size, same place as before. */
-  .hm-cell { position: relative; display: block; width: 100%; height: 24px; margin: -2px 0; padding: 0; border: 0; border-radius: 1px; background: transparent; cursor: pointer; }
+     rows keep their 20px pitch. Its painted square is the ::before, 2px in from top and bottom: same size, same place as before.
+     The button itself takes no pointer; its ::after does, 1px beyond the painted square on top and bottom. The two halves of the 2px gap
+     between rows go to the square above and the square below, so no two hit areas overlap and the painted square is always inside its own. */
+  .hm-cell { position: relative; display: block; width: 100%; height: 24px; margin: -2px 0; padding: 0; border: 0; border-radius: 1px; background: transparent; cursor: pointer; pointer-events: none; }
+  .hm-cell::after { content: ''; position: absolute; inset: 1px 0; pointer-events: auto; }
   .hm-cell::before { content: ''; position: absolute; inset: 2px 0; box-sizing: border-box; border: 1px solid var(--line-soft); border-radius: 1px; background: var(--surface-2); pointer-events: none; }
   .hm-cell.empty { cursor: default; }
   .hm-cell.level-1::before { background: var(--heat-1); }
@@ -113,16 +116,13 @@
   .hm-cell:hover:not(.empty)::before { outline: 1px solid var(--text); outline-offset: 0; }
   .hm-cell:focus-visible { outline: none; z-index: 1; }
   .hm-cell:focus-visible::before { outline: 2px solid var(--focus); outline-offset: 1px; }
-  .hm-swatch.level-1 { background: var(--heat-1); }
-  .hm-swatch.level-2 { background: var(--heat-2); }
-  .hm-swatch.level-3 { background: var(--heat-3); }
-  .hm-swatch.level-4 { background: var(--heat-4); }
   /* Phone and touch: the squares are 24px wide too and the grid scrolls sideways inside its box, so no two targets overlap. */
   @media (pointer: coarse), (max-width: 720px) {
     .hm-row { grid-template-columns: 5.5rem repeat(24, minmax(24px, 1fr)); }
     .hm-grid { min-width: 712px; }
-    .hm-cell { height: 24px; margin: 0; }
+    .hm-cell { height: 24px; margin: 0; pointer-events: auto; }
     .hm-cell::before { inset: 0; }
+    .hm-cell::after { content: none; }
     .hm-gap { height: 24px; }
   }
   .hm-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--text-2); font-size: 12px; }
