@@ -1,24 +1,24 @@
 {
   "v": 1,
-  "state": "held",
+  "state": "free",
   "id": "5767fe43c82c40299f32bb8a1addd71c",
   "host": "9f484c6ac779",
   "pid": 42440,
   "requester": "ota",
   "started": "2026-11-22T00:47:40.6800051Z",
-  "heartbeat": "2026-11-22T01:04:25.0209993Z",
+  "heartbeat": "2026-11-22T01:08:22.9973978Z",
   "channel": "rc",
   "version": "0.1.0-rc.57",
-  "stage": "Verify",
+  "stage": "idle",
   "commit": "30560aa5649987837a7aa87f1a2c8634a7d4fec8",
   "holdMerges": false,
   "lease_minutes": 180,
   "reason": "",
   "last": {
-    "outcome": "done",
-    "version": "0.1.0-rc.56",
+    "at": "2026-11-22T01:08:22.5981672Z",
     "reason": "",
-    "at": "2026-11-21T23:58:34.6514248Z",
+    "version": "0.1.0-rc.57",
+    "outcome": "done",
     "requester": "ota"
   }
 }
