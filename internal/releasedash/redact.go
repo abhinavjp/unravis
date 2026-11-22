@@ -35,7 +35,7 @@ var (
 	keyEndR   = regexp.MustCompile(`-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
 	// A line that can still belong to a key block: nothing, base64, or a header such as "Proc-Type: 4,ENCRYPTED". After the CI prefix
 	// ("job<TAB>step<TAB>") and the time stamp are taken off. Anything else (a sentence, a test result) ends a block that never closed.
-	keyBodyR  = regexp.MustCompile(`^\s*$|^\s*[A-Za-z0-9+/=_-]{1,200}\s*$|^\s*[A-Za-z][A-Za-z0-9-]{0,30}:\s.*$`)
+	keyBodyR  = regexp.MustCompile(`^\s*$|^\s*[A-Za-z0-9+/=_-]+\s*$|^\s*[A-Za-z][A-Za-z0-9-]{0,30}:\s.*$`)
 	stampPfx  = regexp.MustCompile(`^\d{4}-\d\d-\d\dT[\d:.]+Z ?`)
 	keyFileRE = regexp.MustCompile(`(?i)[\w.-]+\.(?:key|pem|pfx|p12|ppk)\b`)
 	userDirRE = regexp.MustCompile(`(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"']+`)

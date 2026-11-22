@@ -801,7 +801,7 @@ $script:LogRx = @{
     KeyEnd  = [regex]::new('-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----', 'Compiled')
     # A line that can still belong to a key block (nothing, base64, or a header such as Proc-Type: ...), after the CI prefix and time stamp
     # are taken off. Anything else ends a block whose END line never came, so one stray BEGIN line cannot hide the rest of a log.
-    KeyBody = [regex]::new('^\s*$|^\s*[A-Za-z0-9+/=_-]{1,200}\s*$|^\s*[A-Za-z][A-Za-z0-9-]{0,30}:\s.*$', 'Compiled')
+    KeyBody = [regex]::new('^\s*$|^\s*[A-Za-z0-9+/=_-]+\s*$|^\s*[A-Za-z][A-Za-z0-9-]{0,30}:\s.*$', 'Compiled')
     StampPfx = [regex]::new('^\d{4}-\d\d-\d\dT[\d:.]+Z ?', 'Compiled')
     KeyFile = [regex]::new('(?i)[\w.-]+\.(?:key|pem|pfx|p12|ppk)\b', 'Compiled')
     UserDir = [regex]::new('(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"'']+', 'Compiled')

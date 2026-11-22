@@ -113,7 +113,7 @@ function makeViewer(file, from) {
     }
     if (!shownIdx.length) frag.append(el('div', 'vnone', v.err || (v.busy ? 'Reading the log...' : v.q ? 'No line has that text.' : 'This log is empty so far.')));
     body.append(frag);
-    const n = hi - v.from;
+    const n = Math.max(0, hi - v.from);
     info.textContent = v.q ? count(idx.length) + ' of ' + count(n) + ' lines match' : count(n) + ' lines';
     more.replaceChildren();
     if (idx.length > shownIdx.length) {
@@ -156,7 +156,10 @@ function makeViewer(file, from) {
       let guard = 0;
       while (v.lines.length < want && guard++ < 12) {
         const j = await getJSON('/api/log?file=' + encodeURIComponent(file) + '&from=' + v.lines.length + '&n=' + PAGE);
-        if (j.total < v.lines.length) { v.lines = []; v.markSeen = false; continue; } // the log was started again
+        if (j.total < v.lines.length) { v.lines = []; v.markSeen = false; v.rev = j.rev; continue; } // the log was started again
+        // A running log folds its older status blocks as new ones arrive, which rewrites lines already here: read it again from the top.
+        if (v.lines.length && j.rev !== v.rev) { v.lines = []; v.markSeen = false; v.rev = j.rev; continue; }
+        v.rev = j.rev;
         v.total = j.total; v.cut = !!j.cut; v.err = '';
         v.lines.push(...j.lines);
         if (!j.lines.length || v.lines.length >= j.total) break;

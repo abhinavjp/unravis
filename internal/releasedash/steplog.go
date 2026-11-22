@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -322,3 +323,18 @@ type ciReader struct {
 }
 
 func (c *ciReader) Close() error { _ = c.gz.Close(); return c.f.Close() }
+
+var foldNoteRE = regexp.MustCompile(`^\((\d+) earlier copies of this status block are folded away`)
+
+// foldRev is the number of status blocks folded away in the lines. While a release is still running every new block folds the
+// previous one, which rewrites lines the page already has; the page watches this number and reloads the log from the top when it changes.
+func foldRev(lines []LogLine) int {
+	n := 0
+	for _, l := range lines {
+		if m := foldNoteRE.FindStringSubmatch(l.Text); m != nil {
+			c, _ := strconv.Atoi(m[1])
+			n += c
+		}
+	}
+	return n
+}

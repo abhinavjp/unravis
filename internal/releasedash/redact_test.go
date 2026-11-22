@@ -118,3 +118,20 @@ func TestRedactorKeyBlockWithCIPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactorLongBase64LineStaysHidden(t *testing.T) {
+	r := NewRedactor()
+	long := strings.Repeat("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo", 20) // one unwrapped base64 line, 700 characters
+	for i, l := range []string{"-----BEGIN PRIVATE KEY-----", long, "-----END PRIVATE KEY-----"} {
+		if got := r.Line(l); got != "<private key hidden>" {
+			t.Errorf("line %d leaked: %q", i, got)
+		}
+	}
+	// and an unclosed block with a long line still ends at the first sentence
+	r = NewRedactor()
+	r.Line("-----BEGIN PRIVATE KEY-----")
+	r.Line(long)
+	if got := r.Line("ok   next step"); got != "ok   next step" {
+		t.Errorf("block did not end: %q", got)
+	}
+}

@@ -73,3 +73,53 @@ func TestReadLogRepairsAndFoldsStatusBlocks(t *testing.T) {
 		t.Fatalf("steps after folding: %+v", steps)
 	}
 }
+
+// A running log is read again every two seconds from the line the page already has. Until a new block folds the old one (the fold
+// count changes), each read must only add lines at the end.
+func TestReadLogLiveGrowthIsAppendOnlyWhileFoldCountHolds(t *testing.T) {
+	const ts = "2026-11-22T11:45:0"
+	head := []string{ts + "0Z [5/7] Wait for the release build"}
+	frame := func(i int, extra int) []string {
+		out := []string{fmt.Sprintf("%s%dZ Refreshing run status every 10 seconds. Press Ctrl+C to quit.", ts, i), fmt.Sprintf("%s%dZ JOBS", ts, i)}
+		for k := 0; k < extra; k++ {
+			out = append(out, fmt.Sprintf("%s%dZ   step %d.%d", ts, i, i, k))
+		}
+		return out
+	}
+	read := func(rows []string) ([]string, int) {
+		dir, name := writeRunLog(t, rows)
+		lines, _, err := ReadLog(dir, name, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var tx []string
+		for _, l := range lines {
+			tx = append(tx, l.Text)
+		}
+		return tx, foldRev(lines)
+	}
+	stages := [][]string{
+		append(append([]string{}, head...), frame(1, 1)...),
+		append(append([]string{}, head...), frame(1, 3)...),
+		append(append(append([]string{}, head...), frame(1, 3)...), frame(2, 0)...),
+		append(append(append([]string{}, head...), frame(1, 3)...), frame(2, 2)...),
+		append(append(append(append([]string{}, head...), frame(1, 3)...), frame(2, 3)...), frame(3, 1)...),
+	}
+	wantRev := []int{0, 0, 1, 1, 2}
+	var prev []string
+	prevRev := 0
+	for i, rows := range stages {
+		got, rev := read(rows)
+		if rev != wantRev[i] {
+			t.Fatalf("stage %d: fold count %d, want %d", i, rev, wantRev[i])
+		}
+		if i > 0 && rev == prevRev {
+			for k := range prev {
+				if k >= len(got) || got[k] != prev[k] {
+					t.Fatalf("stage %d: line %d changed without a fold-count change: %q -> %q", i, k, prev[k], got[k])
+				}
+			}
+		}
+		prev, prevRev = got, rev
+	}
+}
