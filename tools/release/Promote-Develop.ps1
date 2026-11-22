@@ -217,7 +217,8 @@ $until = (Get-Date).AddMinutes($CiWaitMinutes); $state = ''
 while ($true) {
     # Judge only the ci.yml run of THIS pull request (event pull_request, on the head commit), never the checks of other events or
     # workflows that happen to sit on the same commit (the push run of develop, the fast gate). Its job `build` is the gate.
-    $head = (Invoke-Gh pr view $pr --repo $Repo --json headRefOid --jq '.headRefOid').ToLowerInvariant()
+    # GitHub moves a pull request's head a moment after a push: read again (3 reads, 5 s apart) before calling a difference a push by someone else.
+    $head = Read-SettledPromotionHead { Invoke-Gh pr view $pr --repo $Repo --json headRefOid --jq '.headRefOid' } $expectedHead
     Assert-HeadIsExpected $head
     $runs = @(& gh run list --repo $Repo --workflow ci.yml --event pull_request --commit $head --json databaseId,status,createdAt | ConvertFrom-Json | Sort-Object createdAt -Descending)
     if ($runs.Count -and $runs[0].status -eq 'completed') {

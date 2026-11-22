@@ -252,6 +252,19 @@ function Test-RemoteMergeIns([string]$Remote, [string]$Branch, [string[]]$Shas, 
     return $res
 }
 
+# Promote-Develop.ps1: GitHub updates a pull request's head after a push a moment later, so one read that differs from the expected
+# head may only be stale. Reads (Read is a scriptblock giving the head sha) up to Reads times, PauseSeconds apart, and returns at once
+# when a read equals Expected. A mismatch that persists through every read is returned (the last value) for Assert-PromotionHead.
+function Read-SettledPromotionHead([scriptblock]$Read, [string]$Expected, [int]$Reads = 3, [int]$PauseSeconds = 5) {
+    $got = ''
+    for ($i = 1; $i -le $Reads; $i++) {
+        $got = "$(& $Read)".Trim().ToLowerInvariant()
+        if ($got -eq $Expected) { return $got }
+        if ($i -lt $Reads -and $PauseSeconds -gt 0) { Start-Sleep -Seconds $PauseSeconds }
+    }
+    return $got
+}
+
 # Promote-Develop.ps1: the head the script built and checked is the only head it may merge. Throws when the pull request head
 # (headRefOid) is not the expected one, so a commit pushed to promote/* during the CI wait is never merged unseen.
 function Assert-PromotionHead([string]$Expected, [string]$Actual, [string]$Branch) {
@@ -489,8 +502,15 @@ function New-ToolWorktree([string]$RepoRoot, [string]$Commit, [string]$Work) {
     git -C $RepoRoot worktree add --detach $dir $Commit 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "git worktree add for $Commit failed." }
     $tool = Join-Path $Work 'sigtool.exe'
-    Push-Location $dir
-    try { go build -mod=readonly -o $tool ./tools/release/sigtool; if ($LASTEXITCODE -ne 0) { throw 'building the signing tool failed.' } } finally { Pop-Location }
+    # A failed build must not leave the worktree registered in the repository (the caller never gets $dir back to remove it).
+    try {
+        Push-Location $dir
+        try { go build -mod=readonly -o $tool ./tools/release/sigtool; if ($LASTEXITCODE -ne 0) { throw 'building the signing tool failed.' } } finally { Pop-Location }
+    } catch {
+        $err = $_
+        Remove-ToolWorktree $RepoRoot $dir
+        throw $err
+    }
     return [pscustomobject]@{ Dir = $dir; Tool = $tool }
 }
 function Remove-ToolWorktree([string]$RepoRoot, [string]$Dir) {

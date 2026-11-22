@@ -449,6 +449,40 @@ try {
     Assert-That 'promote: a "Merge master into" subject alone is not enough' ($pd -match 'Test-RemoteMergeIns' -and $pd -notmatch '(?m)^\s*if \(\$emsg -like "Merge master into \$branch\*"\) \{ continue \}')
     Assert-That 'promote: the reused branch is judged at the commit read first, not at its name' ($pd -match 'compare/\$\{sha\}\.\.\.\$\{existing\}')
 
+    # A pull request head that GitHub shows late is not "someone pushed"; one that stays different is.
+    $seq = [System.Collections.Generic.Queue[string]]::new(); foreach ($x in @($other40, $other40, $sha40)) { $seq.Enqueue($x) }
+    $lag = Read-SettledPromotionHead { $seq.Dequeue() } $sha40 3 0
+    Assert-That 'promote head: a lagging head that catches up on a later read is accepted' ($lag -eq $sha40 -and $seq.Count -eq 0) "$lag"
+    $seq2 = [System.Collections.Generic.Queue[string]]::new(); foreach ($x in @($sha40, $other40)) { $seq2.Enqueue($x) }
+    $fast = Read-SettledPromotionHead { $seq2.Dequeue() } $sha40 3 0
+    Assert-That 'promote head: a matching first read stops reading' ($fast -eq $sha40 -and $seq2.Count -eq 1)
+    $rdCnt = [pscustomobject]@{ n = 0 }
+    $stuck = Read-SettledPromotionHead { $rdCnt.n++; $other40.ToUpperInvariant() } $sha40 3 0
+    Assert-That 'promote head: a head that stays different is read 3 times and then refused' ($rdCnt.n -eq 3 -and (Get-ThrownMessage { Assert-PromotionHead $sha40 $stuck 'promote/aaaaaaa' }) -match 'Someone pushed') "$($rdCnt.n) $stuck"
+    Assert-That 'promote head: the wait loop reads through Read-SettledPromotionHead' ((Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Promote-Develop.ps1')) -match 'Read-SettledPromotionHead \{ Invoke-Gh pr view')
+
+    # New-ToolWorktree: a build that fails leaves no registered worktree behind (Make-Keys, Set-Control and Refresh-Feed call it).
+    $tw = Join-Path $root 'toolwt'
+    New-Item -ItemType Directory -Path (Join-Path $tw 'tools/release/sigtool') -Force | Out-Null
+    function TW { git -C $tw -c user.name=t -c user.email=t@t -c commit.gpgsign=false @args; if ($LASTEXITCODE -ne 0) { throw "git $args failed" } }
+    TW init -q -b master
+    Set-Content -LiteralPath (Join-Path $tw 'go.mod') "module example.test/tw`n`ngo 1.21`n"
+    Set-Content -LiteralPath (Join-Path $tw 'tools/release/sigtool/main.go') "package main`nfunc main() { this is not go }`n"
+    TW add -A; TW commit -q -m broken
+    $twWork = Join-Path $root 'toolwt-work'; New-Item -ItemType Directory -Path $twWork | Out-Null
+    $twErr = Get-ThrownMessage { New-ToolWorktree $tw 'HEAD' $twWork }
+    Remove-Item -LiteralPath $twWork -Recurse -Force -ErrorAction SilentlyContinue   # what the callers' finally blocks do with their work folder
+    $twList = @(git -C $tw worktree list --porcelain)
+    Assert-That 'tool worktree: a failed build is reported' ($twErr -match 'building the signing tool failed') "$twErr"
+    Assert-That 'tool worktree: a failed build leaves no registered or prunable worktree' (@($twList | Where-Object { $_ -like 'worktree *' }).Count -eq 1 -and @($twList | Where-Object { $_ -like 'prunable*' }).Count -eq 0 -and -not (Test-Path (Join-Path $tw '.git/worktrees/src'))) ($twList -join '; ')
+    Set-Content -LiteralPath (Join-Path $tw 'tools/release/sigtool/main.go') "package main`nfunc main() {}`n"
+    TW add -A; TW commit -q -m fixed
+    $twWork2 = Join-Path $root 'toolwt-work2'; New-Item -ItemType Directory -Path $twWork2 | Out-Null
+    $twOk = New-ToolWorktree $tw 'HEAD' $twWork2
+    Assert-That 'tool worktree: a good build returns the tool and the worktree' ((Test-Path -LiteralPath $twOk.Tool) -and (Test-Path -LiteralPath $twOk.Dir))
+    Remove-ToolWorktree $tw $twOk.Dir
+    Assert-That 'tool worktree: Remove-ToolWorktree unregisters it' (@(git -C $tw worktree list --porcelain | Where-Object { $_ -like 'worktree *' }).Count -eq 1)
+
     # ---- Make-Keys (SUP-3): the Go environment is neutralised and the key tool is built from a throw-away worktree of HEAD --------
     $mk = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Make-Keys.ps1')
     $mkTok = $null; $mkErr = $null
