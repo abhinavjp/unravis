@@ -31,6 +31,17 @@ const (
 )
 
 type roleKey struct{}
+type peerImageKey struct{}
+
+// WithPeerImage returns ctx carrying the image path of the connected peer (empty when unknown).
+func WithPeerImage(ctx context.Context, image string) context.Context {
+	return context.WithValue(ctx, peerImageKey{}, image)
+}
+
+func peerImageFrom(ctx context.Context) string {
+	s, _ := ctx.Value(peerImageKey{}).(string)
+	return s
+}
 
 // WithRole returns ctx carrying role.
 func WithRole(ctx context.Context, role Role) context.Context {
@@ -58,6 +69,12 @@ const tokenHeader = "X-Audit-Token" //nolint:gosec // a header name, not a crede
 // ShutdownPath is the shutdown RPC (BL-303). It exists only on the ui pipe: loopback and the ag pipe never serve it.
 const ShutdownPath = "/api/internal/shutdown"
 
+// HelloPath is the shell's bootstrap call on the ui pipe: it returns the session token to the desktop shell only (peer image
+// unravis-desktop.exe, after the pipe's own peer check: DACL, logon SID, session, image in the install dir). The CLI and the MCP bridge may
+// use the ui pipe too; for them the route is a 403, so they still need the token from elsewhere. The locator carries no token (PLAN section 1), so an attaching shell has no
+// other way to learn it. The token is not the boundary (spec 01 D6); this route hands it only over the ui pipe, never on loopback or ag.
+const HelloPath = "/api/desktop/hello"
+
 // Option changes what Handler serves on the ui pipe.
 type Option func(*config)
 
@@ -70,6 +87,22 @@ type config struct {
 // every other API call); stop starts the normal quit, the one --quit and Ctrl+C run, and is called after the 202 is written.
 func WithShutdown(token string, stop func()) Option {
 	return func(c *config) { c.token, c.stop = token, stop }
+}
+
+// helloRoute answers GET HelloPath with {"token": ...}. It refuses a request that carries an Origin or comes from any image but the shell.
+func (c *config) helloRoute(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.Header.Get("Origin") != "" || !pipesec.IsShellImage(peerImageFrom(r.Context())) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"token": c.token})
 }
 
 // shutdownRoute answers the shutdown RPC. The caller has already put the request on the ui role.
@@ -104,7 +137,7 @@ func (c *config) shutdownRoute(w http.ResponseWriter, r *http.Request) {
 // Handler wraps the dashboard handler served for the pipes.
 //
 // A request with no pipe role is refused (fail closed). The session token stays the client's to send, unchanged, on both pipes
-// (spec 01 D6): the shell and the CLI read it from the locator, so browser mode and pipe mode share one auth path and the peer check of
+// (spec 01 D6): the shell gets it from the ui pipe's hello route (the locator carries none), so browser mode and pipe mode share one auth path and the peer check of
 // pipesec is not the only gate. The ag pipe reaches only agRoutes and agPrefixes, and only by their clean path.
 func Handler(served http.Handler, opts ...Option) http.Handler {
 	var cfg config
@@ -119,6 +152,10 @@ func Handler(served http.Handler, opts ...Option) http.Handler {
 		}
 		switch role {
 		case RoleUI:
+			if r.URL.Path == HelloPath && cfg.token != "" {
+				cfg.helloRoute(w, r)
+				return
+			}
 			if r.URL.Path == ShutdownPath && cfg.stop != nil {
 				cfg.shutdownRoute(w, r)
 				return
@@ -218,6 +255,9 @@ func Serve(p *Pipes, h http.Handler, newServer func(http.Handler) *http.Server) 
 		s := newServer(h)
 		s.ConnContext = func(ctx context.Context, c net.Conn) context.Context {
 			logPeer(role, c)
+			if pc, ok := c.(interface{ Peer() pipesec.Peer }); ok {
+				ctx = WithPeerImage(ctx, pc.Peer().Image)
+			}
 			return WithRole(ctx, role)
 		}
 		g.wg.Add(1)

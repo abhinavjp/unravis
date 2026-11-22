@@ -144,3 +144,11 @@ var denied atomic.Uint64
 
 // Metrics returns how many peers have been denied since the process started.
 func Metrics() (deniedCount uint64) { return denied.Load() }
+
+// IsShellImage says the image is the desktop shell: base name unravis-desktop.exe (or, in e2e test builds only, an image added with
+// TestAllow). The ui pipe's bootstrap route serves only this peer, so the CLI and the MCP bridge, which may also use the ui pipe, never get
+// the session token from it.
+func IsShellImage(image string) bool {
+	_, base := winSplit(image)
+	return strings.EqualFold(base, "unravis-desktop.exe") || extraAllowed(image)
+}

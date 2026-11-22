@@ -1,10 +1,28 @@
 name: CI
 
 # Runs on every push to master and on every pull request.
+#
+# Shape (BL-197 speed-up). The required status check is the job named `build` and nothing else:
+# it is a thin gate that needs the parallel jobs below and fails when any of them fails. Branch
+# protection keeps asking for `build`, so every gate that used to run in the one long Windows job
+# still has to pass before a merge. What changed is only how the work is laid out:
+#   changes     decides whether the pull request touches only notes (docs outside docs/user, .forge, root *.md).
+#               Notes-only pull requests skip the heavy jobs and the gate still passes. Anything else, a
+#               push to master and a manual run always run everything.
+#   web         web install, type check, tests, build, and the committed-build check (BL-031).
+#   go-tests    `go test ./...` split in 3 shards that run side by side (tools/ci/shard-go-packages.mjs).
+#               Every package is in exactly one shard; the split is computed from `go list ./...`.
+#   package     go vet, gofmt of changed files, go mod tidy, release script self-test, the exe build,
+#               the UPX guard, the screenshots and the docs check.
+#   build       the gate.
+# The Go build cache and the exe build's own cache (.dev/toolchains/cache) are restored on every run
+# and saved by pushes to master, once a week, so a pull request starts warm.
+#
 # Committed web build (BL-031): web/dist, cmd/unravis-setup/ui and cmd/unravis-lite/ui are committed and
 # embedded in the exe. A pull request that changes web/src, web/index.html, web/setup, web/lite, docs/user/*.md
 # or web/package-lock.json must commit the rebuilt folders (run `npm run build` in web). The step "Web - built
 # files match what is committed" compares the build output with the commit byte for byte and fails otherwise.
+# The exe is built from those committed files, which that step proves equal to a fresh build.
 #
 # The runner is pinned (windows-2022, not windows-latest): it is also the reference
 # renderer for the screenshots, so it must not change without anyone choosing it.
@@ -40,35 +58,71 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  changes:
+    # Notes-only pull requests (docs outside docs/user, .forge, root *.md, LICENSE, NOTICE) skip the heavy jobs.
+    # docs/user is heavy: it is embedded in the exe, read by Go tests and checked against the screenshots.
+    # docs/desktop/baseline-go-tests.txt is heavy: it is the Linux known-failure baseline.
+    # No pull request event, an empty diff or any other doubt means "run everything".
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # The checked-out commit of a pull request is the merge with the base branch; its first parent is the base tip.
+          fetch-depth: 2
+
+      - name: Do the changed files need the heavy jobs?
+        id: filter
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo "Not a pull request: running everything."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$(git diff --no-renames --name-only HEAD^1 HEAD || true)"
+          if [ -z "$files" ]; then
+            echo "No changed files found: running everything."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          code=false
+          while IFS= read -r f; do
+            if printf '%s\n' "$f" | grep -Eq '^(docs/user/|docs/desktop/baseline-go-tests\.txt$)'; then
+              code=true; echo "heavy: $f"
+            elif printf '%s\n' "$f" | grep -Eq '^(\.forge/|docs/|[^/]+\.md$|LICENSE$|NOTICE$)'; then
+              echo "notes: $f"
+            else
+              code=true; echo "heavy: $f"
+            fi
+          done <<< "$files"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = "false" ]; then echo "::notice::Only notes changed, so the heavy jobs are skipped. The build gate still passes."; fi
+
+  web:
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: windows-2022
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       # Third-party actions are pinned to a full commit SHA. The tag in the comment is
       # the release that SHA was checked against. To update one, look up the new SHA
       # (git ls-remote https://github.com/actions/<name>.git refs/tags/<tag>) and change both.
       - name: Check out the code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          # Full history, so the formatting step can find where the pull request branched off.
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version-file: go.mod
 
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.23.5'
           cache: npm
-          cache-dependency-path: |
-            web/package-lock.json
-            tools/screens/package-lock.json
+          cache-dependency-path: web/package-lock.json
 
       - name: Web - install
-        if: ${{ !cancelled() }}
         working-directory: web
         run: npm ci
 
@@ -95,6 +149,121 @@ jobs:
           node --version
           npm --version
           node scripts/check-dist.cjs
+
+  go-tests:
+    # `go test ./...` in 3 shards. tools/ci/shard-go-packages.mjs gives every package to exactly one shard
+    # (self-test: node tools/ci/test-shard.mjs). The weights in tools/ci/go-shard-weights.json only balance
+    # the load; a missing or stale number makes a shard slower, it never drops a package.
+    name: go-tests (${{ matrix.shard }}/3)
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
+    runs-on: windows-2022
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Go build cache - where and which week
+        id: cachekey
+        shell: bash
+        run: |
+          echo "dir=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Go build cache - restore
+        id: gocache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ steps.cachekey.outputs.dir }}
+          key: go-build-${{ runner.os }}-shard${{ matrix.shard }}-${{ hashFiles('go.sum') }}-${{ steps.cachekey.outputs.week }}
+          restore-keys: |
+            go-build-${{ runner.os }}-shard${{ matrix.shard }}-${{ hashFiles('go.sum') }}-
+            go-build-${{ runner.os }}-shard${{ matrix.shard }}-
+
+      - name: Go - tests (shard ${{ matrix.shard }} of 3)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The split itself is tested first, and a shard that comes back empty fails (it would otherwise run no tests and pass).
+          node tools/ci/test-shard.mjs
+          node tools/ci/shard-go-packages.mjs --check --of 3
+          packages="$(node tools/ci/shard-go-packages.mjs --shard "${{ matrix.shard }}" --of 3)"
+          [ -n "$packages" ] || { echo "::error::Shard ${{ matrix.shard }} has no packages."; exit 1; }
+          echo "$packages"
+          # shellcheck disable=SC2086
+          go test -p 2 -timeout 25m $packages
+
+      - name: Go build cache - save (master only, once a week)
+        if: ${{ success() && github.ref == 'refs/heads/master' && steps.gocache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ steps.cachekey.outputs.dir }}
+          key: go-build-${{ runner.os }}-shard${{ matrix.shard }}-${{ hashFiles('go.sum') }}-${{ steps.cachekey.outputs.week }}
+
+  package:
+    # Everything that is about the Go sources as a whole and about the exe: vet, formatting, tidy modules,
+    # release script self-test, the exe build, the UPX guard, the screenshots and the docs check.
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Full history, so the formatting step can find where the pull request branched off.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.5'
+          cache: npm
+          cache-dependency-path: tools/screens/package-lock.json
+
+      - name: Caches - which week
+        id: cachekey
+        shell: bash
+        run: |
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+          echo "dir=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+
+      - name: Exe build cache - restore
+        # build.ps1 keeps its own Go build and module caches under .dev/toolchains/cache (not the runner's default).
+        id: execache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            .dev/toolchains/cache/build
+            .dev/toolchains/cache/mod
+          key: go-exe-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cachekey.outputs.week }}
+          restore-keys: |
+            go-exe-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-exe-${{ runner.os }}-
+
+      - name: Go build cache (vet) - restore
+        id: vetcache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ steps.cachekey.outputs.dir }}
+          key: go-vet-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cachekey.outputs.week }}
+          restore-keys: |
+            go-vet-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-vet-${{ runner.os }}-
 
       - name: Go - vet
         run: go vet ./...
@@ -132,9 +301,6 @@ jobs:
           fi
           echo "All ${#files[@]} changed Go files are gofmt-clean."
 
-      - name: Go - tests
-        run: go test -p 2 -timeout 25m ./...
-
       - name: Go - modules are tidy
         run: |
           go mod tidy
@@ -145,7 +311,8 @@ jobs:
         run: ./tools/release/Test-Release.ps1
 
       - name: Build dist\unravis.exe
-        # The web step above already built web/dist, so it is skipped here; the Go tests step above already ran go test, so they are skipped too.
+        # The web files are the committed ones (the `web` job proves they equal a fresh build), so the web build is skipped here;
+        # the go-tests jobs already ran go test, so the tests are skipped too.
         run: ./build.ps1 -SkipWeb -SkipTests -Version "ci-$($env:GITHUB_SHA.Substring(0, 7))"
 
       - name: No UPX in dist (BL-421 guard and its self-test)
@@ -217,11 +384,54 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Exe build cache - save (master only, once a week)
+        if: ${{ success() && github.ref == 'refs/heads/master' && steps.execache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            .dev/toolchains/cache/build
+            .dev/toolchains/cache/mod
+          key: go-exe-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cachekey.outputs.week }}
+
+      - name: Go build cache (vet) - save (master only, once a week)
+        if: ${{ success() && github.ref == 'refs/heads/master' && steps.vetcache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ steps.cachekey.outputs.dir }}
+          key: go-vet-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cachekey.outputs.week }}
+
+  build:
+    # THE REQUIRED CHECK. Branch protection asks for a check named `build`; keep this job id and no `name:`.
+    # It passes when every heavy job passed, or when the changes job found only notes and the heavy jobs were skipped.
+    # It never skips itself, so a failed, cancelled or missing heavy job always fails it.
+    needs: [changes, web, go-tests, package]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      CHANGES: ${{ needs.changes.result }}
+      CODE: ${{ needs.changes.outputs.code }}
+      WEB: ${{ needs.web.result }}
+      GO_TESTS: ${{ needs.go-tests.result }}
+      PACKAGE: ${{ needs.package.result }}
+    steps:
+      - name: Every gate passed
+        shell: bash
+        run: |
+          echo "changes=$CHANGES code=$CODE web=$WEB go-tests=$GO_TESTS package=$PACKAGE"
+          if [ "$CHANGES" != "success" ]; then echo "::error::The changes job did not succeed ($CHANGES)."; exit 1; fi
+          if [ "$CODE" = "true" ]; then want=success; elif [ "$CODE" = "false" ]; then want=skipped; else echo "::error::The changes job gave no answer (code='$CODE')."; exit 1; fi
+          bad=0
+          for pair in "web=$WEB" "go-tests=$GO_TESTS" "package=$PACKAGE"; do
+            if [ "${pair#*=}" != "$want" ]; then echo "::error::${pair%%=*} is ${pair#*=}, expected $want."; bad=1; fi
+          done
+          exit $bad
+
   desktop-sidecar:
     # BL-330. The Windows-only tests of the desktop sidecar's pipe code (internal/pipesec: first instance, full instance pool,
     # logon-SID DACL, remote reject, peer and server checks). Later sidecar items (BL-301 and on) add their packages here.
     # Also builds with the `e2e` tag, which only tests use, so that variant cannot rot.
-    # Matrix windows-2022 and windows-2025 for the pipe tests, as spec 08 D2 says. The Windows `build` job also runs these tests (go test ./...).
+    # Matrix windows-2022 and windows-2025 for the pipe tests, as spec 08 D2 says. The go-tests shards of the `build` gate also run these tests (go test ./...).
     strategy:
       fail-fast: false
       matrix:
@@ -359,7 +569,7 @@ jobs:
         env:
           CGO_ENABLED: "0"
         # No -race here: budget tests (time, memory) fail under the race detector on the runner and made the gate flaky.
-        # The race run is the separate report-only step below.
+        # The race run is the separate report-only job go-race.
         # -skip: these two tests hang until the timeout on Linux (the blackbox host waits for a port that never frees).
         # They are the only skips; every other Linux failure is in the baseline file.
         # The baseline holds known failures, so go test exits 1 on every run. Tolerate that exit code here;
@@ -373,16 +583,6 @@ jobs:
           if [ ! -s go-test.json ]; then echo "go test produced no JSON"; exit 1; fi
           if [ "$code" -gt 1 ]; then exit "$code"; fi
           exit 0
-
-      - name: Go - race detector (report only)
-        # Report only until BL-460 fixes the data races found in internal/store tests and the
-        # budget tests that exceed their limits under -race. Fails the step, not the job.
-        continue-on-error: true
-        env:
-          CGO_ENABLED: "1"
-        run: |
-          go test -race -count=1 -timeout 25m -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' ./... 2>&1 | grep -E 'DATA RACE|^--- FAIL' | sort | uniq -c | sort -rn | head -40 || true
-          true
 
       - name: Go - keep the coverage profile
         if: ${{ always() && hashFiles('go-linux.cover') != '' }}
@@ -415,6 +615,34 @@ jobs:
       - name: Go - compare failures with the baseline
         if: ${{ always() && hashFiles('go-test.json') != '' }}
         run: node tools/ci/compare-go-failures.mjs --json go-test.json --baseline docs/desktop/baseline-go-tests.txt
+
+
+  go-race:
+    # The race detector run, report only (BL-460 fixes the races it finds). Its own job so its 7 minutes
+    # no longer hold up linux-gates. Not a required check.
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Go - race detector (report only)
+        # Report only until BL-460 fixes the data races found in internal/store tests and the
+        # budget tests that exceed their limits under -race. Fails the step, not the job.
+        continue-on-error: true
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          go test -race -count=1 -timeout 25m -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' ./... 2>&1 | grep -E 'DATA RACE|^--- FAIL' | sort | uniq -c | sort -rn | head -40 || true
+          true
+
 
 
   powershell-syntax:
