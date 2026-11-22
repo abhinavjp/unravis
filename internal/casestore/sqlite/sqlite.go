@@ -572,15 +572,45 @@ func (s *Store) openDB(ctx context.Context, dir string, keys casestore.Keys, cre
 	// read of the case (Events, Imports) would wait until the import finished.
 	// Readers see the last commit (WAL). The key is held per connection, an
 	// accepted cost. TestReadsDoNotWaitForImport pins this.
-	db.SetMaxOpenConns(4)
-	db.SetMaxIdleConns(2)
+	//
+	// The pool is bounded for memory (BL-423): each connection holds its own page
+	// cache (cacheKiB) and its own SQLite working memory, and that memory is not
+	// handed back while the connection lives. So at most maxOpenConns exist, two are
+	// kept idle for bursts, and an idle one is closed after poolIdleTime. A reconnect re-runs
+	// initConn (key, hardening), which is cheap; the open transactions of a writer
+	// or an import are on checked-out connections, which this never touches.
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(maxIdleConns)
 	db.SetConnMaxLifetime(0)
+	db.SetConnMaxIdleTime(poolIdleTime)
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, mapOpenErr(err)
 	}
 	return db, nil
 }
+
+// Pool and cache bounds of one open case (BL-423). Four connections stay: an
+// import keeps one for its whole run and the reads must not wait for it.
+const (
+	maxOpenConns = 4
+	// maxIdleConns stays at the old 2: with a handle held open (an import, a recording,
+	// overlapping requests) one idle slot made overlapping chart requests close and
+	// reopen connections and was 25 to 45 percent slower for the same peak memory;
+	// the two idle ones are closed after poolIdleTime (docs/desktop/bench-bl423.md).
+	maxIdleConns = 2
+	// cacheKiB is the page cache of each connection (negative cache_size means KiB).
+	// It was 64 MiB, so four connections could hold 256 MiB of cache; 16 MiB each
+	// bounds that to 64 MiB and read p95 does not change on the benchmark case
+	// (docs/desktop/bench-bl423.md).
+	cacheKiB = 16384
+	// importCacheKiB is the page cache of the one connection an import uses.
+	importCacheKiB = 65536
+)
+
+// poolIdleTime is how long an unused connection stays open. A variable so a test
+// can shorten it.
+var poolIdleTime = 30 * time.Second
 
 var errKeySetup = errors.New("setting the case database key failed")
 
@@ -602,7 +632,7 @@ func initConn(c *sqlite3.Conn, hexKey string, maxPages int64) error {
 		fmt.Sprintf("PRAGMA max_page_count=%d", maxPages),
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA journal_size_limit=67108864",
-		"PRAGMA cache_size=-65536",
+		fmt.Sprintf("PRAGMA cache_size=-%d", cacheKiB),
 		"PRAGMA synchronous=NORMAL",
 	} {
 		if err := c.Exec(stmt); err != nil {

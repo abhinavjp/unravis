@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -482,6 +483,7 @@ func (c *caseState) lockImport(ctx context.Context) error {
 	// before every wait, so the bound starts as soon as the holder is known to be
 	// an Import.
 	var deadline <-chan time.Time
+	// idle-ok: lives only while a call waits for a running import or index build (bounded by importWaitMax or ctx).
 	tick := time.NewTicker(5 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -739,6 +741,15 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 		return casestore.ImportResult{}, err
 	}
 	defer conn.Close()
+	// The import connection gets the large page cache (the bulk insert and its
+	// index maintenance are 30 to 40 percent slower with the read-sized one) and is
+	// then thrown away, not returned to the pool: its cache and SQLite working
+	// memory are released with it, and reads keep the small cache. Registered
+	// before the resets below, so it runs after them.
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA cache_size=-%d", importCacheKiB)); err != nil {
+		return casestore.ImportResult{}, err
+	}
+	defer func() { _ = conn.Raw(func(any) error { return driver.ErrBadConn }) }()
 	if _, err := conn.ExecContext(ctx, "PRAGMA synchronous=FULL"); err != nil {
 		return casestore.ImportResult{}, err
 	}

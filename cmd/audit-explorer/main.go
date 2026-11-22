@@ -16,7 +16,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -42,7 +41,6 @@ import (
 )
 
 const (
-	memorySoftLimit = 256 << 20
 	// defaultPort 0 lets the OS choose a free loopback port, so no other local
 	// process can claim a well-known port before the dashboard starts. The real
 	// address is printed and written to the session file for --mcp.
@@ -227,7 +225,7 @@ func run(args []string, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
-	debug.SetMemoryLimit(memorySoftLimit)
+	applyMemoryTuning()
 
 	logFile := openSupportLog(getenv, token)
 	if logFile != nil {
@@ -422,7 +420,7 @@ func runMCP(f runFlags, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
-	debug.SetMemoryLimit(memorySoftLimit)
+	applyMemoryTuning()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return bridge.Serve(ctx, os.Stdin, os.Stdout)
