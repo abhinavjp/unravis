@@ -164,6 +164,8 @@ func TestDemoSQLLaneScenarios(t *testing.T) {
 		{"AuditDb", "Ready", false},
 		{"NoGrantDb", "", true},
 		{"EmptyDb", "Cannot test yet", false},
+		{"OffKeptDb", "", false},
+		{"OffNoneDb", "Partly ready", true},
 	} {
 		t.Run(tc.database, func(t *testing.T) {
 			e, id := demoLaneEnv(t)
@@ -184,6 +186,61 @@ func TestDemoSQLLaneScenarios(t *testing.T) {
 				t.Fatalf("fix script offered = %v, want %v (%+v)", got, tc.fixes, day.Lane.Checks)
 			}
 		})
+	}
+}
+
+// An off database that still holds blocks goes through the same lane code as a real one: the day is saved with the off state, the kept range and
+// the series, a "no" is not given, and no switch-on script is offered. An off database with nothing kept gives the owner-run script and no series.
+func TestDemoSQLLaneOffDatabases(t *testing.T) {
+	e, id := demoLaneEnv(t)
+	if res := e.json(http.MethodPost, "/api/cases/"+id+"/lanes/sql", demoSQLBody("OffKeptDb")); res.Code != http.StatusOK {
+		t.Fatalf("run = %d %s", res.Code, res.Body)
+	}
+	lane := demoDayOf(t, e, id, "sql").Lane
+	qs := lane.QueryStore
+	if qs == nil || qs.State != dbhealth.QSStateOff || qs.FirstData == nil || qs.LastData == nil || qs.HistoryUnread || len(lane.Series) == 0 {
+		t.Fatalf("queryStore = %+v series %d", qs, len(lane.Series))
+	}
+	if !qs.LastData.Before(lane.Incident.End) {
+		t.Errorf("the newest block %v must start before the incident end %v", qs.LastData, lane.Incident.End)
+	}
+	for _, p := range lane.Series {
+		if p.T > qs.LastData.Unix() {
+			t.Errorf("a block after the newest kept one is drawn: %d", p.T)
+		}
+	}
+	if fixesOf(lane) != 0 {
+		t.Errorf("a switch-on script was offered for a database that kept history: %+v", lane.Checks)
+	}
+	for _, id := range []string{"D3", "D14", "D15"} { // the answers Query Store feeds
+		if v, ok := lane.Answers[id]; ok && v == dbhealth.AnswerNo {
+			t.Errorf("%s gave a no on a store that may have stopped mid-incident", id)
+		}
+	}
+	qsCheck := func(l *dbhealth.LaneResult) dbhealth.LaneCheck {
+		for _, c := range l.Checks {
+			if c.ID == dbhealth.CheckQueryStore {
+				return c
+			}
+		}
+		t.Fatalf("no Query Store check: %+v", l.Checks)
+		return dbhealth.LaneCheck{}
+	}
+	if c := qsCheck(lane); c.State != dbhealth.StateReady || !strings.Contains(c.Summary, "Query Store is off. It kept history from") || !strings.Contains(c.Summary, `A "no" is not given.`) {
+		t.Errorf("check = %+v", c)
+	}
+
+	e, id = demoLaneEnv(t)
+	if res := e.json(http.MethodPost, "/api/cases/"+id+"/lanes/sql", demoSQLBody("OffNoneDb")); res.Code != http.StatusOK {
+		t.Fatalf("run = %d %s", res.Code, res.Body)
+	}
+	lane = demoDayOf(t, e, id, "sql").Lane
+	qs = lane.QueryStore
+	if qs == nil || qs.State != dbhealth.QSStateOff || qs.FirstData != nil || qs.LastData != nil || qs.HistoryUnread || len(lane.Series) != 0 {
+		t.Fatalf("queryStore = %+v series %d", qs, len(lane.Series))
+	}
+	if c := qsCheck(lane); c.State != dbhealth.StateNotYet || c.Fix == nil || !strings.Contains(c.Fix.Script, "SET QUERY_STORE = ON") {
+		t.Errorf("check = %+v", c)
 	}
 }
 

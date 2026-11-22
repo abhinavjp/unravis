@@ -125,6 +125,9 @@ type LaneQueryStore struct {
 	LastData *time.Time `json:"lastData,omitempty"`
 	// IntervalMinutes is the block length Query Store is set to, when known.
 	IntervalMinutes int `json:"intervalMinutes,omitempty"`
+	// HistoryUnread is true when the database is off and a read of the history it may have kept failed or was refused. Then "no history" is not
+	// known: screens must not say the database saved none. Omitted otherwise, so older saved reports keep their shape.
+	HistoryUnread bool `json:"historyUnread,omitempty"`
 }
 
 // LaneSeriesPoint is one Query Store interval: when it started, how many

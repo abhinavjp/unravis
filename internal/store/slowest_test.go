@@ -23,14 +23,17 @@ func TestSlowestReadsEverySourceOnceAndRanksGlobally(t *testing.T) {
 	s := newStore(func(context.Context, string, *tls.Config) (clientHandle, error) { h = &fakeClient{}; return h, nil })
 	a := addFakeSource(t, s, "one")
 	b := addFakeSource(t, s, "two")
-	calls := 0
+	// The fan-out reads each source on its own goroutine, so the counter must be atomic.
+	var calls atomic.Int32
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	h.aggregateFn = func(_ context.Context, db, _ string, p mongo.Pipeline) (mongoCursor, error) {
-		calls++
+		calls.Add(1)
 		raw, _ := bson.MarshalExtJSON(bson.D{{Key: "pipeline", Value: p}}, false, false)
 		text := string(raw)
 		if !strings.Contains(text, `"durationMs":-1`) || strings.Contains(text, "RequestPayload") {
-			t.Fatal(text)
+			// Not t.Fatal: this runs on a fan-out goroutine, where FailNow is not allowed.
+			t.Error(text)
+			return nil, errors.New("unexpected pipeline")
 		}
 		duration := 100.
 		if db == b.Database {
@@ -43,8 +46,8 @@ func TestSlowestReadsEverySourceOnceAndRanksGlobally(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if calls != 2 || len(p.Rows) != 1 || *p.Rows[0].DurationMs != 900 || !p.Truncated || p.NextCursor == "" {
-		t.Fatalf("calls=%d page=%+v", calls, p)
+	if calls.Load() != 2 || len(p.Rows) != 1 || *p.Rows[0].DurationMs != 900 || !p.Truncated || p.NextCursor == "" {
+		t.Fatalf("calls=%d page=%+v", calls.Load(), p)
 	}
 }
 func TestLegacySlowestDoesNotReturnNewestInstead(t *testing.T) {

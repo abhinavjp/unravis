@@ -2,12 +2,13 @@
 name: desktop-windows
 
 on:
-  # Not per pull request into develop (docs/ci/RELEASE-TRAIN.md): it runs on every push to develop and on the pull request
-  # that promotes develop to master.
+  # Not per pull request into develop and not on every push to develop (docs/ci/RELEASE-TRAIN.md): it runs on the pull request
+  # that promotes develop to master and on the push to master. "Run workflow" runs it by hand on develop.
   pull_request:
     branches: [master]
   push:
-    branches: [master, develop]
+    branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -27,7 +28,7 @@ jobs:
         working-directory: desktop
     steps:
       - name: Check out the code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Format, lint, test (locked)
         run: |
@@ -45,7 +46,7 @@ jobs:
         working-directory: desktop
     steps:
       - name: Check out the code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Rust toolchain (version from desktop/rust-toolchain.toml)
         shell: pwsh
@@ -70,7 +71,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Set up Go (the real-sidecar test starts a real unravis.exe)
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
 

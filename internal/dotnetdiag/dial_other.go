@@ -6,7 +6,7 @@ import "context"
 
 // platformDialer on a platform with no transport (neither Windows nor Linux):
 // every Dial is ReasonUnsupported and nothing is opened.
-func platformDialer() Dialer { return unsupportedDialer{} }
+func platformDialer(bool) Dialer { return unsupportedDialer{} }
 
 type unsupportedDialer struct{}
 

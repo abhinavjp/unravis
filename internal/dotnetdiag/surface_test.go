@@ -15,7 +15,7 @@ import (
 // message encoders are unexported. Adding a name here is a security decision.
 var fixedSurface = []string{
 	// functions
-	"DefaultDialer", "DefaultOptions", "ExitCode", "ParsePreamble", "Probe", "RunAs", "Sentence",
+	"CLIDialer", "DefaultDialer", "DefaultOptions", "ExitCode", "ParsePreamble", "Probe", "RunAs", "Sentence",
 	// types
 	"Conn", "Dialer", "Error", "Options", "Peer", "Preamble", "Reason", "Result", "Target",
 	// consts

@@ -60,6 +60,16 @@ test('parseTracing does not keep the server event list on a lane', () => {
   assert.deepEqual(parsed.lanes[0].buckets, [{ start: INCIDENT.start, count: 3, errors: 0 }]);
 });
 
+test('parseTracing keeps a lane note only when the server sent readable text', () => {
+  const note = 'Query Store was off when this saved day was read, so these blocks are history it kept.';
+  const withNote = parseTracing({ window: WINDOW, lanes: [lane({ note })], allLanesStored: true });
+  assert.equal(withNote.lanes[0].note, note);
+  for (const bad of ['', '   ', 7, null, {}, undefined]) {
+    const parsed = parseTracing({ window: WINDOW, lanes: [lane({ note: bad })], allLanesStored: true });
+    assert.equal('note' in parsed.lanes[0], false, String(bad));
+  }
+});
+
 test('requestSeq is strictly increasing and stale responses are ignored', () => {
   const a = nextRequestSeq();
   const b = nextRequestSeq();

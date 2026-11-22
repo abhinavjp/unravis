@@ -226,6 +226,7 @@ export const DRILL_TEXT = {
       : 'Read from a Query Store export file. The import date was not recorded. It ends where the export ended.',
   dbMsgApi: "Query Store has no data for this period, so this lane shows the time this API's own calls spent inside the database. It leaves out other apps, so it can read lower than the real database load.",
   dbMsgOff: 'Query Store is switched off on this database, so it saved no history. Switching it on needs the database owner (the script is in Setup). Unravis never switches it on itself.',
+  dbMsgOffUnread: 'Query Store is switched off on this database, and Unravis could not read the history it may have kept, so whether it saved any is not known. Go back to the timeline and read the database again.',
   dbSrcOffKept: 'Query Store (off), kept history',
   dbMsgOffKept: (from: string | null, to: string | null): string =>
     from && to
@@ -260,6 +261,7 @@ export const DRILL_TEXT = {
     ' Gaps stay unknown, not zero.',
   dbShortOff: 'Not recorded: Query Store is off',
   dbShortOffKept: 'Kept history, Query Store is off',
+  dbShortOffUnread: 'Not read: Query Store is off',
   dbShortDenied: 'Not recorded: no permission',
   dbShortEvents: 'Not recorded: only events, no volumes',
   dbShortLate: 'Not recorded: Query Store has no history here',

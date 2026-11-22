@@ -663,6 +663,9 @@
           {#if lane.state === 'incomplete' || laneCutShort(lane)}
             <p role="status" class="lane-note {laneNoteTone(lane)}">{laneNote(lane)}</p>
           {/if}
+          {#if lane.note}
+            <p class="lane-note info" data-testid="lane-extra-note">{lane.note}</p>
+          {/if}
           <div class="bars">
             <div class="hgrid" aria-hidden="true">
               {#each yTicks(max) as value (value)}
@@ -903,7 +906,8 @@
   .lane-note.bad { color: var(--bad); text-align: left; }
   /* A lane cut short or capped is partial, not failed: the warm edge of the note banner, normal text colour. */
   .lane-note.warn { color: var(--text); text-align: left; padding-left: var(--space-2); border-left: var(--space-1) solid var(--warn); }
-  .panel > .lane-note:not(.bad):not(.warn) { margin-top: auto; margin-bottom: auto; }
+  .lane-note.info { text-align: left; }
+  .panel > .lane-note:not(.bad):not(.warn):not(.info) { margin-top: auto; margin-bottom: auto; }
 
   .axisrow { grid-column: 3; position: relative; height: var(--space-5); font-size: var(--fs-1); color: var(--text-2); }
   .axtick { position: absolute; top: 0; white-space: nowrap; transform: translateX(-50%); }
