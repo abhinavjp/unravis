@@ -200,36 +200,87 @@ function Get-TextSha256([string]$Text) {
 }
 function Get-FileSha256([string]$Path) { return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant() }
 
-# First-parent commits in Base..Head that are not the merge of a pull request on GitHub (a direct push to master).
-# Returns @{ Missing = sha[]; Prs = @{ sha = number } }. Uses gh (REST); any gh error counts as "not shown to be a PR".
+# The develop side of a promotion merge (docs/ci/RELEASE-TRAIN.md). Master's first-parent commit $Commit with two parents is a
+# promotion: its second parent is promote/<sha>, which holds develop commits and, when master had moved, one "Merge master into
+# promote/<sha>" made by GitHub. Returns one entry per first-parent commit on that side (Commit^1..Commit^2):
+#   Kind 'pr'      : must be the squash or merge commit of a pull request merged into develop (checked against GitHub by the caller)
+#   Kind 'mergein' : a merge whose second parent is already on master (Commit^1) and whose tree is exactly what git's own merge of
+#                    its parents gives (git merge-tree), so it brings in nothing that was not on master or develop. Ok tells.
+# A commit with one parent returns nothing (not a promotion).
+function Get-PromotionSideCommits([string]$RepoRoot, [string]$Commit) {
+    $parents = @((git -C $RepoRoot rev-list --parents -n 1 $Commit) -split ' ' | Select-Object -Skip 1)
+    if ($LASTEXITCODE -ne 0) { throw "git rev-list --parents $Commit failed." }
+    if ($parents.Count -lt 2) { return , @() }
+    if ($parents.Count -gt 2) { return , @([pscustomobject]@{ Sha = $Commit; Kind = 'mergein'; Ok = $false; Why = 'octopus merge' }) }
+    $p1 = $parents[0]; $p2 = $parents[1]
+    $side = @(git -C $RepoRoot rev-list --first-parent "$p1..$p2")
+    if ($LASTEXITCODE -ne 0) { throw "git rev-list $p1..$p2 failed." }
+    $out = @()
+    foreach ($s in $side) {
+        $sp = @((git -C $RepoRoot rev-list --parents -n 1 $s) -split ' ' | Select-Object -Skip 1)
+        if ($sp.Count -eq 1) { $out += [pscustomobject]@{ Sha = $s; Kind = 'pr'; Ok = $false; Why = '' }; continue }
+        $ok = $false; $why = 'merge commit that is not a clean merge of master'
+        if ($sp.Count -eq 2) {
+            git -C $RepoRoot merge-base --is-ancestor $sp[1] $p1 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $tree = (git -C $RepoRoot merge-tree --write-tree $sp[0] $sp[1] 2>$null | Select-Object -First 1)
+                $clean = ($LASTEXITCODE -eq 0)
+                $have = (git -C $RepoRoot rev-parse "$s^{tree}").Trim()
+                if ($clean -and $tree -and $tree.Trim() -eq $have) { $ok = $true; $why = '' }
+                elseif (-not $clean) { $why = 'merge of master that git cannot redo cleanly' }
+                else { $why = 'merge of master with extra changes' }
+            } else { $why = 'merge whose second parent is not on master' }
+        }
+        # A merge commit may also be a pull request merged into develop with "merge commit": the caller tries that first.
+        $out += [pscustomobject]@{ Sha = $s; Kind = 'mergein'; Ok = $ok; Why = $why }
+    }
+    return , $out
+}
+
+# First-parent commits in Base..Head that are not the merge of a pull request on GitHub (a direct push to master), and, inside each
+# promotion merge, develop commits that are not a pull request merged into develop (a direct push to develop) nor a clean merge of
+# master. Returns @{ Missing = sha[]; Prs = @{ sha = number }; Develop = sha[] (the develop-side commits checked) }.
+# Uses gh (REST); any gh error counts as "not shown to be a PR".
 function Get-CommitPullRequests([string]$RepoRoot, [string]$Repo, [string]$Base, [string]$Head) {
     $shas = @(git -C $RepoRoot rev-list --first-parent "$Base..$Head")
     if ($LASTEXITCODE -ne 0) { throw "git rev-list $Base..$Head failed." }
+    $want = @(foreach ($c in $shas) { [pscustomobject]@{ Sha = $c; Base = 'master' } })
+    $side = @()
+    foreach ($c in $shas) { $side += @(Get-PromotionSideCommits $RepoRoot $c) }
+    foreach ($s in $side) { $want += [pscustomobject]@{ Sha = $s.Sha; Base = 'develop' } }
     $missing = @(); $prs = @{}
     # One call per commit, run side by side (a release since the last one is often 10 to 40 commits). Nothing is cached on disk:
     # a cache file an agent could edit would let a direct push pass as "merged".
-    $found = @($shas | ForEach-Object -ThrottleLimit 8 -Parallel {
-        $c = $_
+    $found = @($want | ForEach-Object -ThrottleLimit 8 -Parallel {
+        $c = $_.Sha; $base = $_.Base
         # The commit must BE the PR's merge (squash) commit: a PR that GitHub marks merged only because its head was pushed straight
-        # to master names another merge commit. (Checked live 21 Nov 2026: every first-parent commit since rc.53 matches.) Branch
-        # rules on master (BL-197) are the real stop for direct pushes.
+        # to the branch names another merge commit. (Checked live 21 Nov 2026: every first-parent commit since rc.53 matches.) Branch
+        # rules on master and develop (BL-197) are the real stop for direct pushes.
         $json = gh api "repos/$($using:Repo)/commits/$c/pulls" 2>$null
         $n = $null
         if ($LASTEXITCODE -eq 0 -and $json) {
-            $n = @(($json -join "`n") | ConvertFrom-Json | Where-Object { $_.merged_at -and $_.base.ref -eq 'master' -and $_.merge_commit_sha -eq $c } | Select-Object -First 1).number
+            $n = @(($json -join "`n") | ConvertFrom-Json | Where-Object { $_.merged_at -and $_.base.ref -eq $base -and $_.merge_commit_sha -eq $c } | Select-Object -First 1).number
         }
-        [pscustomobject]@{ Sha = $c; N = $n }
+        [pscustomobject]@{ Sha = $c; Base = $base; N = $n }
     })
-    foreach ($c in $shas) {
-        $hit = $found | Where-Object { $_.Sha -eq $c } | Select-Object -First 1
-        if (-not $hit -or -not $hit.N) { $missing += $c } else { $prs[$c] = [int]$hit.N }
+    foreach ($w in $want) {
+        $hit = $found | Where-Object { $_.Sha -eq $w.Sha -and $_.Base -eq $w.Base } | Select-Object -First 1
+        if ($hit -and $hit.N) { $prs[$w.Sha] = [int]$hit.N; continue }
+        $s = $side | Where-Object { $_.Sha -eq $w.Sha } | Select-Object -First 1
+        if ($w.Base -eq 'develop' -and $s -and $s.Kind -eq 'mergein' -and $s.Ok) { continue }   # clean merge of master: nothing new
+        $missing += $w.Sha
     }
-    return [pscustomobject]@{ Missing = $missing; Prs = $prs }
+    return [pscustomobject]@{ Missing = @($missing | Select-Object -Unique); Prs = $prs; Develop = @($side | ForEach-Object { $_.Sha }) }
 }
 
-# PR numbers (from the map above) whose commit changed a sensitive path.
-function Get-SensitivePullRequests([string]$RepoRoot, [string]$Base, [string]$Head, $Prs) {
+# PR numbers (from the map above) whose commit changed a sensitive path: master's first-parent commits, and the develop commits
+# inside each promotion (so the report names the develop PR, not only "Promote develop ...").
+function Get-SensitivePullRequests([string]$RepoRoot, [string]$Base, [string]$Head, $Prs, [string[]]$Develop = @()) {
     $hits = @(git -C $RepoRoot rev-list --first-parent "$Base..$Head" -- $script:ReleaseSensitivePaths)
+    foreach ($d in $Develop) {
+        git -C $RepoRoot diff --quiet "$d^1" $d -- $script:ReleaseSensitivePaths 2>$null
+        if ($LASTEXITCODE -eq 1) { $hits += $d }
+    }
     return , @($hits | ForEach-Object { if ($Prs.ContainsKey($_)) { "#$($Prs[$_])" } else { $_.Substring(0, 7) } } | Select-Object -Unique)
 }
 
@@ -258,7 +309,7 @@ function Invoke-SigningGates {
             git -C $RepoRoot merge-base --is-ancestor $Baseline $Commit
             if ($LASTEXITCODE -ne 0) { throw "$Context ($($Commit.Substring(0, 7))) does not contain $Baseline, the release on the feed. Not signing an older or side commit." }
             $pr = Get-CommitPullRequests $RepoRoot $Repo $Baseline $Commit
-            if ($pr.Missing.Count) { throw "These commits on master since $Baseline did not come through a merged pull request: $(($pr.Missing | ForEach-Object { $_.Substring(0, 7) }) -join ', '). Not signing." }
+            if ($pr.Missing.Count) { throw "These commits on master since $Baseline (or, inside a promotion of develop, a pull request merged into develop or a clean merge of master) did not come through a merged pull request: $(($pr.Missing | ForEach-Object { $_.Substring(0, 7) }) -join ', '). Not signing." }
         }
         # SourceDir is a clean checkout of Commit (a throw-away worktree).
         $bad = Get-ForbiddenSigtoolDeps (Get-SigtoolNonStdDeps $SourceDir)

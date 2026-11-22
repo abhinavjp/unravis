@@ -28,7 +28,7 @@ Other switches: `-CheckOnly` (all checks, including the passphrase opening the k
    - tools: git, gh (signed in), go, pass-cli
    - the worktree is clean, at the pinned commit, and that commit is still part of `origin/master`
    - CI (`ci.yml`) on this commit: green (the bootstrap already waited for it; a check-only run waits here, up to 45 min), stops if it failed
-   - every first-parent commit since the release on the feed is a merged PR (no direct pushes)
+   - every first-parent commit since the release on the feed is a merged PR (no direct pushes). With the release train ([../ci/RELEASE-TRAIN.md](../ci/RELEASE-TRAIN.md)) master's commit is the promotion PR's merge commit; the release manager then also checks its develop side: every develop commit in it must be a PR merged into develop, or the one "Merge master into promote/..." commit, which must redo cleanly with git's own merge (same tree) and whose master parent is already on master. A direct push to develop stops the run. The sensitive-paths report names the develop PRs, not only the promotion.
    - version valid and newer than every tag; tag and release not used yet
    - feed: readable, its release tag is in this clone, it expires in more than 30 days (warns otherwise)
    - keys: key folder found; every key file readable and matching its `.pub`; the chosen key is for this channel and trusted by HEAD and by the feed's release; added keys in `trusted_keys.txt` since the feed's release all have a key file in the folder
