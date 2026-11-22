@@ -223,8 +223,9 @@ function Get-PromotionSideCommits([string]$RepoRoot, [string]$Commit) {
         if ($sp.Count -eq 2) {
             git -C $RepoRoot merge-base --is-ancestor $sp[1] $p1 2>$null
             if ($LASTEXITCODE -eq 0) {
-                $tree = (git -C $RepoRoot merge-tree --write-tree $sp[0] $sp[1] 2>$null | Select-Object -First 1)
+                $mt = @(git -C $RepoRoot merge-tree --write-tree $sp[0] $sp[1] 2>$null)   # all output first, so the exit code is git's
                 $clean = ($LASTEXITCODE -eq 0)
+                $tree = if ($mt.Count) { "$($mt[0])" } else { '' }
                 $have = (git -C $RepoRoot rev-parse "$s^{tree}").Trim()
                 if ($clean -and $tree -and $tree.Trim() -eq $have) { $ok = $true; $why = '' }
                 elseif (-not $clean) { $why = 'merge of master that git cannot redo cleanly' }
@@ -237,40 +238,59 @@ function Get-PromotionSideCommits([string]$RepoRoot, [string]$Commit) {
     return , $out
 }
 
+# For each commit, the pull request merged into $Base whose merge (squash) commit IS that commit: @{ sha = @{ N; HeadRef } }.
+# One gh call per commit, run side by side (a release since the last one is often 10 to 40 commits). Nothing is cached on disk: a
+# cache file an agent could edit would let a direct push pass as "merged". Any gh error counts as "not shown to be a PR".
+function Find-MergedPullRequests([string]$Repo, [string[]]$Shas, [string]$Base) {
+    $map = @{}
+    if (-not $Shas.Count) { return $map }
+    $found = @($Shas | ForEach-Object -ThrottleLimit 8 -Parallel {
+        $c = $_; $want = $using:Base
+        # The commit must BE the PR's merge (squash) commit: a PR that GitHub marks merged only because its head was pushed straight
+        # to the branch names another merge commit. (Checked live 21 Nov 2026: every first-parent commit since rc.53 matches.) Branch
+        # rules on master and develop (BL-197) are the real stop for direct pushes. GitHub answers this only for commits on the
+        # default branch, so master must stay the default branch.
+        $json = gh api "repos/$($using:Repo)/commits/$c/pulls" 2>$null
+        $hit = $null
+        if ($LASTEXITCODE -eq 0 -and $json) {
+            $hit = @(($json -join "`n") | ConvertFrom-Json | Where-Object { $_.merged_at -and $_.base.ref -eq $want -and $_.merge_commit_sha -eq $c } | Select-Object -First 1)[0]
+        }
+        [pscustomobject]@{ Sha = $c; N = $(if ($hit) { [int]$hit.number } else { $null }); HeadRef = $(if ($hit) { "$($hit.head.ref)" } else { '' }) }
+    })
+    foreach ($f in $found) { if ($f.N) { $map[$f.Sha] = $f } }
+    return $map
+}
+
+# A pull request into master from develop or a promote/ branch is a promotion of the release train.
+function Test-PromotionHeadRef([string]$HeadRef) { return ($HeadRef -ceq 'develop' -or $HeadRef.StartsWith('promote/', [StringComparison]::Ordinal)) }
+
 # First-parent commits in Base..Head that are not the merge of a pull request on GitHub (a direct push to master), and, inside each
-# promotion merge, develop commits that are not a pull request merged into develop (a direct push to develop) nor a clean merge of
-# master. Returns @{ Missing = sha[]; Prs = @{ sha = number }; Develop = sha[] (the develop-side commits checked) }.
-# Uses gh (REST); any gh error counts as "not shown to be a PR".
+# promotion (a PR into master from develop or promote/...), develop commits that are not a pull request merged into develop (a direct
+# push to develop) nor a clean merge of master. A promotion must be a merge commit: squashed or rebased, its develop commits could not
+# be checked, so it counts as missing. Other PRs into master are not walked (their inner commits were the PR's own review).
+# Returns @{ Missing = sha[]; Prs = @{ sha = number }; Develop = sha[] (develop-side commits that came through a PR) }.
 function Get-CommitPullRequests([string]$RepoRoot, [string]$Repo, [string]$Base, [string]$Head) {
     $shas = @(git -C $RepoRoot rev-list --first-parent "$Base..$Head")
     if ($LASTEXITCODE -ne 0) { throw "git rev-list $Base..$Head failed." }
-    $want = @(foreach ($c in $shas) { [pscustomobject]@{ Sha = $c; Base = 'master' } })
-    $side = @()
-    foreach ($c in $shas) { $side += @(Get-PromotionSideCommits $RepoRoot $c) }
-    foreach ($s in $side) { $want += [pscustomobject]@{ Sha = $s.Sha; Base = 'develop' } }
-    $missing = @(); $prs = @{}
-    # One call per commit, run side by side (a release since the last one is often 10 to 40 commits). Nothing is cached on disk:
-    # a cache file an agent could edit would let a direct push pass as "merged".
-    $found = @($want | ForEach-Object -ThrottleLimit 8 -Parallel {
-        $c = $_.Sha; $base = $_.Base
-        # The commit must BE the PR's merge (squash) commit: a PR that GitHub marks merged only because its head was pushed straight
-        # to the branch names another merge commit. (Checked live 21 Nov 2026: every first-parent commit since rc.53 matches.) Branch
-        # rules on master and develop (BL-197) are the real stop for direct pushes.
-        $json = gh api "repos/$($using:Repo)/commits/$c/pulls" 2>$null
-        $n = $null
-        if ($LASTEXITCODE -eq 0 -and $json) {
-            $n = @(($json -join "`n") | ConvertFrom-Json | Where-Object { $_.merged_at -and $_.base.ref -eq $base -and $_.merge_commit_sha -eq $c } | Select-Object -First 1).number
+    $missing = [System.Collections.Generic.List[string]]::new(); $prs = @{}; $develop = [System.Collections.Generic.List[string]]::new()
+    $onMaster = Find-MergedPullRequests $Repo $shas 'master'
+    $side = [System.Collections.Generic.List[object]]::new()
+    foreach ($c in $shas) {
+        if (-not $onMaster.ContainsKey($c)) { $missing.Add($c); continue }
+        $prs[$c] = $onMaster[$c].N
+        if (Test-PromotionHeadRef $onMaster[$c].HeadRef) {
+            $s = Get-PromotionSideCommits $RepoRoot $c
+            if (-not $s.Count) { $missing.Add($c); continue }   # promotion squashed or rebased: its develop side cannot be checked
+            foreach ($x in $s) { $side.Add($x) }
         }
-        [pscustomobject]@{ Sha = $c; Base = $base; N = $n }
-    })
-    foreach ($w in $want) {
-        $hit = $found | Where-Object { $_.Sha -eq $w.Sha -and $_.Base -eq $w.Base } | Select-Object -First 1
-        if ($hit -and $hit.N) { $prs[$w.Sha] = [int]$hit.N; continue }
-        $s = $side | Where-Object { $_.Sha -eq $w.Sha } | Select-Object -First 1
-        if ($w.Base -eq 'develop' -and $s -and $s.Kind -eq 'mergein' -and $s.Ok) { continue }   # clean merge of master: nothing new
-        $missing += $w.Sha
     }
-    return [pscustomobject]@{ Missing = @($missing | Select-Object -Unique); Prs = $prs; Develop = @($side | ForEach-Object { $_.Sha }) }
+    $onDevelop = Find-MergedPullRequests $Repo @($side | ForEach-Object { $_.Sha }) 'develop'
+    foreach ($x in $side) {
+        if ($onDevelop.ContainsKey($x.Sha)) { $prs[$x.Sha] = $onDevelop[$x.Sha].N; $develop.Add($x.Sha); continue }
+        if ($x.Kind -eq 'mergein' -and $x.Ok) { continue }   # clean merge of master: nothing new, and not named in the report
+        $missing.Add($x.Sha)
+    }
+    return [pscustomobject]@{ Missing = @($missing | Select-Object -Unique); Prs = $prs; Develop = @($develop) }
 }
 
 # PR numbers (from the map above) whose commit changed a sensitive path: master's first-parent commits, and the develop commits

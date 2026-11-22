@@ -305,14 +305,15 @@ try {
     G checkout -q master
     G merge -q --no-ff --no-edit promote                                                                 # the promotion pull request
     $p = (G rev-parse HEAD).Trim()
-    $side = @(Get-PromotionSideCommits $g $p)
+    $side = Get-PromotionSideCommits $g $p
     Assert-That 'train: a promotion lists every develop commit and the merge of master' ((($side | ForEach-Object Sha) -join ',') -eq "$mi,$d2,$d1") (($side | ForEach-Object Sha) -join ',')
     Assert-That 'train: develop commits must be pull requests' (@($side | Where-Object { $_.Kind -eq 'pr' }).Count -eq 2)
     Assert-That 'train: a clean merge of master is accepted' (@($side | Where-Object { $_.Sha -eq $mi -and $_.Kind -eq 'mergein' -and $_.Ok }).Count -eq 1)
-    Assert-That 'train: a plain commit is not a promotion' (@(Get-PromotionSideCommits $g $h).Count -eq 0)
+    Assert-That 'train: a plain commit is not a promotion' ((Get-PromotionSideCommits $g $h).Count -eq 0)
     $sens = Get-SensitivePullRequests $g $h $p @{ $p = 7 } @($side | ForEach-Object Sha)
     Assert-That 'train: the sensitive report names the develop commit, not only the promotion' ($sens -contains $d1.Substring(0, 7)) ($sens -join ',')
     Assert-That 'train: develop commits off the sensitive paths are not named' ($sens -notcontains $d2.Substring(0, 7)) ($sens -join ',')
+    Assert-That 'train: promotion head refs' ((Test-PromotionHeadRef 'develop') -and (Test-PromotionHeadRef 'promote/1a2b3c4') -and -not (Test-PromotionHeadRef 'feature/promote') -and -not (Test-PromotionHeadRef 'Develop'))
     # A "merge master in" that also changes a file (content no pull request carried) is refused.
     G checkout -q -b promote2 $d2
     G merge -q --no-commit $h
@@ -320,7 +321,7 @@ try {
     $bad = (G rev-parse HEAD).Trim()
     G checkout -q -b master2 $h
     G merge -q --no-ff --no-edit promote2
-    $side2 = @(Get-PromotionSideCommits $g (G rev-parse HEAD).Trim())
+    $side2 = Get-PromotionSideCommits $g (G rev-parse HEAD).Trim()
     Assert-That 'train: a merge of master with extra changes is refused' (@($side2 | Where-Object { $_.Sha -eq $bad -and -not $_.Ok }).Count -eq 1) (($side2 | ForEach-Object { "$($_.Sha.Substring(0,7)) $($_.Kind) $($_.Ok) $($_.Why)" }) -join '; ')
     # A merge on the develop side whose second parent is not on master (a side branch merged without a pull request) is refused.
     G checkout -q -b side $d1
@@ -330,7 +331,7 @@ try {
     $bad3 = (G rev-parse HEAD).Trim()
     G checkout -q -b master3 $h
     G merge -q --no-ff --no-edit promote3
-    $side3 = @(Get-PromotionSideCommits $g (G rev-parse HEAD).Trim())
+    $side3 = Get-PromotionSideCommits $g (G rev-parse HEAD).Trim()
     Assert-That 'train: a merge of a branch that is not master is refused' (@($side3 | Where-Object { $_.Sha -eq $bad3 -and -not $_.Ok }).Count -eq 1)
 
     # ---- passphrase: never a prompt under -Yes; the pipe reaches the program ----------------------------------------------------
