@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Each case names one secret shape and the value that must be absent from the
@@ -147,5 +148,67 @@ func TestSanitizePasswordValueShapes(t *testing.T) {
 				t.Errorf("Sanitize(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// A backslash escapes a quote (JSON, Python repr), the colon form and prefixed
+// keys count, and XML or web.config hold the password as text or an attribute.
+func TestSanitizeEscapesColonPrefixesAndXML(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"JSON value with an escaped quote", `{"password":"ab\"cd ef","user":"bob"}`, `{"password":"[redacted]","user":"bob"}`},
+		{"Python repr value with an escaped quote", `{'password': 'it\'s secret two'}`, `{'password': '[redacted]'}`},
+		{"JSON token with an escaped quote", `{"token":"a\"b c","x":1}`, `{"token":"[redacted]","x":1}`},
+		{"JSON prefixed key", `{"DB_PASSWORD":"a b"}`, `{"DB_PASSWORD":"[redacted]"}`},
+		{"colon form", "password: hunter two", "password: [redacted]"},
+		{"colon form, no space", "passwd:hunter two", "passwd:[redacted]"},
+		{"colon form, indented and quoted", `  password: "x y"`, "  password: [redacted]"},
+		{"colon form, value on the next line", "Password:\n  hunter2\nnext", "Password:[redacted]\nnext"},
+		{"colon form, lone CR", "Password:\rhunter2", "Password:[redacted]"},
+		{"colon form, blank line ends the search", "Password:\n\nThe server crashed", "Password:[redacted]\n\nThe server crashed"},
+		{"colon form after a brace", "{password: a b, user: bob}", "{password: [redacted]"},
+		{"prefixed key, equals", "DB_PASSWORD=hunter two", "DB_PASSWORD=[redacted]"},
+		{"prefixed key, quoted value", `export MYSQL_PWD="a b"`, "export MYSQL_PWD=[redacted]"},
+		{"prefixed key, colon", "DB_PASSWD: hunter two", "DB_PASSWD: [redacted]"},
+		{"dotted key", "spring.datasource.password=a b;x=1", "spring.datasource.password=[redacted];x=1"},
+		{"command line flag", "--password=a b", "--password=[redacted]"},
+		{"pass after a separator", "db_pass=hunter two", "db_pass=[redacted]"},
+		{"prefixed key in a URL query stops at &", "GET /x?db_password=a&y=1", "GET /x?db_password=[redacted]&y=1"},
+		{"XML element", "<password>hunter two</password>", "<password>[redacted]</password>"},
+		{"XML element with an attribute", `<Password attr="x">hunter two</Password>`, `<Password attr="x">[redacted]</Password>`},
+		{"XML element with CDATA", "<password><![CDATA[a b]]></password>", "<password>[redacted]</password>"},
+		// The older "key=" rule also takes the key attribute's own value; the tags and the attribute names stay.
+		{"web.config key first", `<add key="Password" value="hunter two"/>`, `<add key=[redacted] value="[redacted]"/>`},
+		{"web.config single quotes", `<add key='pwd' value='hunter two'/>`, `<add key=[redacted] value="[redacted]"/>`},
+		{"web.config value first", `<add value="hunter two" key="Password"/>`, `<add value="[redacted]" key=[redacted]/>`},
+		{"web.config name attribute", `<add name="DB_PASSWORD" value="hunter two" />`, `<add name="DB_PASSWORD" value="[redacted]" />`},
+		// Lines that must stay as they are.
+		{"prose with the word", "the password was wrong", "the password was wrong"},
+		{"policy text", "password policy: 8 chars min", "password policy: 8 chars min"},
+		{"plural", "passwords: none", "passwords: none"},
+		{"bypass is not pass", "bypass=1 and boarding-pass: gate 4", "bypass=1 and boarding-pass: gate 4"},
+		{"plain XML", "<user>bob</user><note>a b</note>", "<user>bob</user><note>a b</note>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Sanitize(tc.in); got != tc.want {
+				t.Errorf("Sanitize(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// Every new pattern stays linear on a megabyte of hostile text (RE2 only).
+func TestSanitizeStaysLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing test")
+	}
+	for _, unit := range []string{
+		`<password a="x">`, `<add key="Password" `, `<add value="a" `, `"password":"\\\"`, "DB_PASSWORD:\n ",
+	} {
+		in := strings.Repeat(unit, (1<<20)/len(unit))
+		start := time.Now()
+		_ = Sanitize(in)
+		if d := time.Since(start); d > 30*time.Second {
+			t.Errorf("Sanitize on 1 MB of %q took %v", unit, d)
+		}
 	}
 }

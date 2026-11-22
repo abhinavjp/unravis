@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/datadir"
@@ -1308,5 +1309,59 @@ func TestFileLogHidesAPasswordAfterALoneCR(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Clean(p))
 	if s := string(data); strings.Contains(s, "hunter") || !strings.Contains(s, "[hidden]") {
 		t.Fatalf("log %q", s)
+	}
+}
+
+// A backslash escapes a quote (JSON, Python repr), a key may carry a prefix or be
+// quoted, and XML or web.config hold the password as text or an attribute.
+func TestRedactEscapesJSONPrefixesAndXML(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"JSON value with an escaped quote", `{"password":"ab\"cd ef","user":"bob"}`, `{"password":[hidden],"user":"bob"}`},
+		{"Python repr value with an escaped quote", `{'password': 'it\'s secret two'}`, `{'password': [hidden]}`},
+		{"JSON prefixed key", `{"DB_PWD": "a b"}`, `{"DB_PWD": [hidden]}`},
+		{"colon form, no space", "passwd:hunter two", "passwd:[hidden]"},
+		{"colon form, indented and quoted", `  password: "x y"`, "  password: [hidden]"},
+		{"prefixed key, equals", "DB_PASSWORD=hunter two", "DB_PASSWORD=[hidden]"},
+		{"prefixed key, quoted value", `export MYSQL_PWD="a b"`, "export MYSQL_PWD=[hidden]"},
+		{"dotted key", "spring.datasource.password=a b;x=1", "spring.datasource.password=[hidden];x=1"},
+		{"pass after a separator", "db_pass=hunter two", "db_pass=[hidden]"},
+		{"prefixed key in a URL query stops at &", "http://h/x?db_password=a&y=1", "http://h/x?db_password=[hidden]&y=1"},
+		{"XML element", "<password>hunter two</password>", "<password>[hidden]</password>"},
+		{"XML element with an attribute", `<Password attr="x">hunter two</Password>`, `<Password attr="x">[hidden]</Password>`},
+		{"XML element with CDATA", "<password><![CDATA[a b]]></password>", "<password>[hidden]</password>"},
+		{"web.config key first", `<add key="Password" value="hunter two"/>`, `<add key="Password" value="[hidden]"/>`},
+		{"web.config single quotes", `<add key='pwd' value='hunter two'/>`, `<add key='pwd' value="[hidden]"/>`},
+		{"web.config value first", `<add value="hunter two" key="Password"/>`, `<add value="[hidden]" key="Password"/>`},
+		{"web.config name attribute", `<add name="DB_PASSWORD" value="hunter two" />`, `<add name="DB_PASSWORD" value="[hidden]" />`},
+		{"web.config other key stays", `<add key="PasswordPolicy" value="8 chars"/>`, `<add key="PasswordPolicy" value="8 chars"/>`},
+		// Lines that must stay as they are.
+		{"prose with the word", "the password was wrong", "the password was wrong"},
+		{"policy text", "password policy: 8 chars min", "password policy: 8 chars min"},
+		{"plural", "passwords: none", "passwords: none"},
+		{"bypass is not pass", "bypass=1 and boarding-pass: gate 4", "bypass=1 and boarding-pass: gate 4"},
+		{"plain XML", "<user>bob</user><note>a b</note>", "<user>bob</user><note>a b</note>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Redact(tc.in); got != tc.want {
+				t.Errorf("Redact(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// Every new pattern stays linear on a megabyte of hostile text (RE2 only).
+func TestRedactStaysLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing test")
+	}
+	for _, unit := range []string{
+		`<password a="x">`, `<add key="Password" `, `<add value="a" `, `"password":"\\\"`, "DB_PASSWORD:\n ",
+	} {
+		in := strings.Repeat(unit, (1<<20)/len(unit))
+		start := time.Now()
+		_ = Redact(in)
+		if d := time.Since(start); d > 30*time.Second {
+			t.Errorf("Redact on 1 MB of %q took %v", unit, d)
+		}
 	}
 }

@@ -190,6 +190,13 @@ func (h sanitizeHandler) WithGroup(name string) slog.Handler {
 
 func sanitizeAttr(a slog.Attr) slog.Attr {
 	a.Value = a.Value.Resolve()
+	if a.Value.Kind() != slog.KindGroup && isSecretKey(a.Key) {
+		// The key says the value is a secret, whatever its text looks like.
+		if a.Value.Kind() == slog.KindString && a.Value.String() == "" {
+			return a
+		}
+		return slog.String(a.Key, redacted)
+	}
 	switch a.Value.Kind() {
 	case slog.KindString:
 		return slog.String(a.Key, Sanitize(a.Value.String()))
@@ -231,4 +238,31 @@ func attrsToAny(attrs []slog.Attr) []any {
 		out[i] = a
 	}
 	return out
+}
+
+// secretKeySuffixes end the name of an attribute that holds a secret, once the
+// name is lower-cased and its "_", "-", "." and spaces are dropped: db_password,
+// MYSQL_PWD, clientSecret, access-token, X-Api-Key, Authorization.
+var secretKeySuffixes = []string{
+	"password", "passwd", "pwd", "secret", "token", "apikey", "accesskey",
+	"accountkey", "sharedaccesskey", "authorization",
+}
+
+// isSecretKey reports whether a slog attribute key names a secret. The check
+// is by suffix, so "db_password" and "refresh_token" count and "tokens" or
+// "passwordPolicy" do not. "pass" counts only after a separator (db_pass).
+func isSecretKey(key string) bool {
+	k := strings.ToLower(key)
+	for _, sep := range []string{"_", "-", "."} {
+		if strings.HasSuffix(k, sep+"pass") {
+			return true
+		}
+	}
+	k = strings.NewReplacer("_", "", "-", "", ".", "", " ", "").Replace(k)
+	for _, suf := range secretKeySuffixes {
+		if strings.HasSuffix(k, suf) {
+			return true
+		}
+	}
+	return false
 }

@@ -81,3 +81,53 @@ func TestSanitizeAttrKeepsPlainValuesReadable(t *testing.T) {
 		t.Fatalf("plain values changed: %q", got)
 	}
 }
+
+// The attribute key says the value is a secret, whatever the value looks like.
+func TestSanitizeAttrRedactsByKey(t *testing.T) {
+	for _, key := range []string{
+		"password", "Password", "passwd", "pwd", "secret", "token", "apikey", "api_key", "api-key", "ApiKey", "accesskey", "access_key",
+		"accountkey", "sharedaccesskey", "authorization", "Authorization", "DB_PASSWORD", "mysql.pwd", "client_secret", "refresh_token",
+		"X-Api-Key", "db_pass",
+	} {
+		t.Run(key, func(t *testing.T) {
+			var buf bytes.Buffer
+			slog.New(sanitizeHandler{inner: slog.NewTextHandler(&buf, nil)}).Info("x", key, "hunter two", "other", "kept")
+			got := buf.String()
+			if strings.Contains(got, "hunter") || !strings.Contains(got, key+"="+redacted) || !strings.Contains(got, "other=kept") {
+				t.Errorf("line %q", got)
+			}
+		})
+	}
+	t.Run("not a string", func(t *testing.T) {
+		var buf bytes.Buffer
+		slog.New(sanitizeHandler{inner: slog.NewTextHandler(&buf, nil)}).Info("x", "pin_token", 123456, "pwd", []byte("hunter two"))
+		if got := buf.String(); strings.Contains(got, "123456") || strings.Contains(got, "hunter") {
+			t.Errorf("line %q", got)
+		}
+	})
+	t.Run("With attributes and groups", func(t *testing.T) {
+		var buf bytes.Buffer
+		l := slog.New(sanitizeHandler{inner: slog.NewTextHandler(&buf, nil)}).With("password", "hunter two")
+		l.Info("x", slog.Group("db", "pwd", "a b", "host", "h1"))
+		got := buf.String()
+		if strings.Contains(got, "hunter") || strings.Contains(got, "a b") || !strings.Contains(got, "db.host=h1") {
+			t.Errorf("line %q", got)
+		}
+	})
+	for _, key := range []string{"tokens", "passwordPolicy", "bypass", "host", "key", "message", "tokenCount"} {
+		t.Run("stays "+key, func(t *testing.T) {
+			var buf bytes.Buffer
+			slog.New(sanitizeHandler{inner: slog.NewTextHandler(&buf, nil)}).Info("x", key, "plain")
+			if got := buf.String(); !strings.Contains(got, key+"=plain") {
+				t.Errorf("line %q", got)
+			}
+		})
+	}
+	t.Run("empty value stays visible", func(t *testing.T) {
+		var buf bytes.Buffer
+		slog.New(sanitizeHandler{inner: slog.NewTextHandler(&buf, nil)}).Info("x", "password", "")
+		if got := buf.String(); !strings.Contains(got, `password=""`) {
+			t.Errorf("line %q", got)
+		}
+	})
+}
