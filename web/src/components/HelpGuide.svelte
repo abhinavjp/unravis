@@ -179,6 +179,8 @@
   th, td { padding: 5px 8px; text-align: left; vertical-align: top; overflow-wrap: anywhere; border-bottom: 1px solid var(--line-soft); }
   th { color: var(--text-2); font-weight: 600; }
   .guide-link { display: inline; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; text-align: left; }
+  /* Inside a table cell (the guide index) a link is a target of its own: 24px tall, the line keeps its height. */
+  td .guide-link, th .guide-link { display: inline-block; padding: 3px 0; margin-block: -3px; }
   .guide-image { display: block; color: var(--text-2); font-style: italic; }
   .guide-missing { color: var(--text-2); }
 </style>

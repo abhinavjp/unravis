@@ -17,39 +17,58 @@
       "item": "BL-472"
     },
     {
-      "screen": "p9-wizard-*",
-      "check": "overlap",
-      "label": "Close set-up",
-      "why": "The close button of the Place a Blackbox pop-up sits on top of the last step name (Review).",
-      "item": "BL-473"
-    },
-    {
-      "screen": "x-analysis-more-filters",
-      "check": "overlap",
-      "label": "What does Reference period mean?",
-      "why": "The ? button next to Reference overlaps the i button beside it.",
-      "item": "BL-474"
-    },
-    {
       "check": "small-target",
-      "why": "Buttons, links and chart cells smaller than 24 x 24 px (WCAG 2.2 target size), listed by screen in the report.",
+      "label": "*GMT*",
+      "why": "Group 2 (BL-475): the hour cells and the day bars of the Daily view heat map are under 24 x 24 px.",
       "item": "BL-475"
     },
     {
-      "check": "low-contrast",
-      "why": "Dimmed low-traffic rows and a few grey notes read at 3.9:1 or less (WCAG AA wants 4.5:1).",
-      "item": "BL-476",
-      "screen": "x-analysis-daily-hourly"
+      "check": "small-target",
+      "label": "*of the zoomed window",
+      "why": "Group 3 (BL-475): the two zoom slider thumbs of the chart navigator are 12 x 34 px.",
+      "item": "BL-475"
     },
     {
-      "check": "misaligned-column",
-      "why": "A block is 6 px off the left edge of the blocks stacked with it (Sources pop-up footer note, pager rows).",
-      "item": "BL-477"
+      "check": "small-target",
+      "label": "",
+      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
+      "item": "BL-475"
     },
     {
-      "check": "small-text",
-      "why": "Chart help lines and the result row of the Slow call list use text under 11 px.",
-      "item": "BL-478"
+      "check": "small-target",
+      "label": "scope",
+      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
+      "item": "BL-475"
+    },
+    {
+      "check": "small-target",
+      "label": "Open the release page*",
+      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
+      "item": "BL-475"
+    },
+    {
+      "check": "small-target",
+      "label": "ChangeWhere",
+      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
+      "item": "BL-475"
+    },
+    {
+      "check": "small-target",
+      "label": "Opens the unfinished requests*",
+      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
+      "item": "BL-475"
+    },
+    {
+      "check": "small-target",
+      "label": "Pick Windows counters*",
+      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
+      "item": "BL-475"
+    },
+    {
+      "check": "small-target",
+      "label": "Show the programs*",
+      "why": "Group 4 (BL-475): other small targets (range inputs, the update bar link, the Change button, the unfinished-requests button, two Lite chart buttons).",
+      "item": "BL-475"
     },
     {
       "screen": "p10-files-*",

@@ -92,5 +92,5 @@
   .keeper-note { margin: 0 6px var(--space-2); color: var(--text-2); font-size: var(--fs-2); }
   /* A long source summary is cut with an ellipsis (the full text is in the aria-label) so the header row never overflows. */
   .header-button .label { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  @media (max-width: 720px) { .header-button .label { max-width: 11ch; } }
+  @media (max-width: 720px) { .popover-wrap > .header-button { max-width: 100%; min-width: 0; } .header-button .dot { flex: none; } .header-button .label { max-width: 11ch; min-width: 0; } }
 </style>
