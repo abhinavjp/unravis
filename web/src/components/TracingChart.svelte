@@ -45,8 +45,7 @@
   } from '../lib/tracing/lanes';
   import { formatTime } from '../lib/time';
   import { needsYear } from '../lib/chartTime';
-  import { formatDuration } from '../lib/format';
-  import { durationSet, tickLabels } from '../lib/chartAxis';
+  import { durationSet, durationText, tickLabels } from '../lib/chartAxis';
   import { TOOLTIP_TEXT, barTipLines, formatCount, isTouchPointer, laneHeadHint } from '../lib/tracing/tooltip';
   import { WAIT_TEXT } from '../lib/copy/waitCopy';
   import { SOURCES_TEXT } from '../lib/tracing/sources';
@@ -311,7 +310,7 @@
       const dot = laneHero.dots.find((d) => d.index === slot);
       const mark = laneHero.marks.find((m) => m.index === slot);
       const isSql = lane.key === 'sql';
-      // The line and the slowest request of one interval are read side by side, so they share one unit and one number of decimals.
+      // Every duration goes through durationText, so the line, the slowest request, the diamond, the notes and the screen-reader text read alike.
       const [dotText, markText] = durationSet([dot?.ms, mark?.ms]);
       const timing = [dot ? `${isSql ? HERO_TEXT.tipSqlAverage : `${PERCENTILE_LABEL[percentile]}:`} ${dotText}` : HERO_TEXT.tipNoTiming];
       if (mark) timing.push(`${isSql ? HERO_TEXT.tipSqlSlowest : HERO_TEXT.tipSlowest} ${markText}${mark.flagged ? ` (${isSql ? HERO_TEXT.tipSqlOutlier : HERO_TEXT.tipOutlier})` : ''}`);
@@ -720,7 +719,7 @@
                   <span class="mark-label" aria-hidden="true" style="left:{mark.leftPct}%;bottom:{mark.bottomPct}%">{mark.text}</span>
                 {/if}
               {/each}
-              <span class="latency-max">{lineName(lane.key)}: up to {formatDuration(peakOf(lane.key) > 0 ? peakOf(lane.key) : h.maxMs)}</span>
+              <span class="latency-max">{lineName(lane.key)}: up to {durationText(peakOf(lane.key) > 0 ? peakOf(lane.key) : h.maxMs)}</span>
             {/if}
           </div>
         {:else}

@@ -155,7 +155,10 @@ test('durationText: one rule for one value, whoever shows it: <1 ms, whole ms un
   assert.equal(t(65_700), '65.7 s');
   assert.equal(t(68_000), '68.0 s');
   assert.equal(t(60_000), '60.0 s', 'no false second decimal on a minute');
-  assert.equal(t(5_400_000), '5,400.0 s');
+  assert.equal(t(999_900), '999.9 s');
+  assert.equal(t(999_960), '1,000 s', 'a decimal that rounds to 1000 s drops the decimal');
+  assert.equal(t(5_400_000), '5,400 s', 'from 1,000 s on whole seconds');
+  assert.equal(t(86_400_000), '86,400 s');
   assert.equal(axis.durationText(68_000, 'de-DE'), '68,0 s');
   for (const bad of [null, undefined, NaN, -1, Infinity, '12']) assert.equal(axis.durationText(bad), null, String(bad));
 });
@@ -282,7 +285,7 @@ test('heroOption: empty, all-zero and NaN series build an option with finite axe
   assert.equal(heroOption([], 'UTC', true).tooltip.formatter([{ dataIndex: 0 }]), '');
 });
 
-test('heroOption: the diamond label uses the axis precision, and a slot with no timing says so', () => {
+test('heroOption: the diamond label uses the one duration rule, and a slot with no timing says so', () => {
   const windows = [slot(0, 10, 500, 500), slot(1, 10, 600, 68_000), slot(2, 4, null, null)];
   const o = heroOption(windows, 'UTC', true);
   const scatter = o.series.find(s => s.name === 'Slowest request');
@@ -315,4 +318,30 @@ test('heroOption: the right margin and the left margin follow the data (a count 
   const millions = heroOption([slot(0, 2_450_000, 200, 300)], 'UTC', true);
   assert.equal(small.grid.left, 46);
   assert.ok(millions.grid.left >= 92 && millions.grid.left <= 102, 'left margin ' + millions.grid.left);
+});
+
+test('durationAxis: the unit switches where durationText switches (a top of 999.6 ms is a second on the axis and on the diamond)', () => {
+  const a = axis.durationAxis(999.6, 4, 'en-GB');
+  assert.equal(a.unit, 's');
+  assert.equal(axis.durationText(999.6, 'en-GB'), '1.0 s');
+  assert.equal(axis.durationAxis(999.4).unit, 'ms');
+  assert.equal(axis.durationText(999.4, 'en-GB'), '999 ms');
+});
+
+test('screen-reader and visible duration text come from one rule: no chart file formats a duration with the old formatters', () => {
+  for (const file of ['src/components/TracingChart.svelte', 'src/components/Pulse.svelte', 'src/lib/tracing/auditHero.ts', 'src/lib/charts.ts']) {
+    const source = fs.readFileSync(path.join(root, file), 'utf8');
+    // charts.ts keeps axisDuration only for the other charts (response time, change versus reference); the Requests-over-time code must not use it.
+    if (file === 'src/lib/charts.ts') {
+      const hero = source.slice(source.indexOf('export const heroOption'), source.indexOf('export const histogramBinBounds'));
+      assert.ok(!/axisDuration|formatDuration/.test(hero), 'heroOption');
+    } else {
+      assert.ok(!/formatDuration|axisDuration/.test(source), file);
+    }
+  }
+  const lane = fs.readFileSync(path.join(root, 'src/components/TracingChart.svelte'), 'utf8');
+  assert.match(lane, /class="latency-max">\{lineName\(lane\.key\)\}: up to \{durationText\(/);
+  // The screen-reader text is the same string the tooltip and the diamond print for the same value.
+  assert.equal(axis.durationText(5.5, 'en-GB'), '6 ms');
+  assert.equal(axis.durationText(75_000, 'en-GB'), '75.0 s');
 });

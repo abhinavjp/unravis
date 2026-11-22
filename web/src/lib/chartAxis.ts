@@ -1,6 +1,7 @@
 /**
  * Axis scales and number text for the Requests-over-time chart (BL-495): one precision per axis, the unit named once in the axis title,
- * and the same unit and precision for the P95 and the slowest request in a tooltip. Pure TypeScript, no DOM, so edge values are unit-tested.
+ * and one rule (durationText) for every single duration on a chart: diamond, tooltip, note, lane text and screen-reader text.
+ * Pure TypeScript, no DOM, so edge values are unit-tested.
  *
  * Why the chart sets its own tick step: with ECharts' automatic ticks a label set can read "0, 500 ms, 1 s, 1.5 s", or "3" next to "3.5".
  * Here the step is chosen first (1, 2 or 5 times a power of ten), the number of decimals follows from the step, and every label of the axis
@@ -83,7 +84,8 @@ export interface DurationAxis {
  */
 export const durationAxis = (largestMs: number, wantedTicks = 4, locale?: string | string[]): DurationAxis => {
   const top = positive(largestMs);
-  const unit: DurationUnit = top >= 1000 ? 's' : 'ms';
+  // Seconds from the same point durationText switches (a top that rounds to 1000 ms is a second), so the axis and the diamond agree.
+  const unit: DurationUnit = Math.round(top) >= 1000 ? 's' : 'ms';
   const factor = unit === 's' ? 1000 : 1;
   const step = niceStep(top / factor / Math.max(1, wantedTicks), unit === 'ms' ? 1 : 0);
   const decimals = decimalsFor(step);
@@ -98,7 +100,7 @@ export const durationAxis = (largestMs: number, wantedTicks = 4, locale?: string
 
 /**
  * THE way one duration is written wherever a single request or interval figure is shown (a diamond label, a tooltip line, the sentence under a chart):
- * under 1 ms "<1 ms" (0 is "0 ms"), up to 999 ms whole milliseconds, from one second on seconds with one decimal ("65.7 s", "68.0 s", "1,204.5 s").
+ * under 1 ms "<1 ms" (0 is "0 ms"), up to 999 ms whole milliseconds, from one second on seconds with one decimal ("65.7 s", "68.0 s"), and from 1,000 s on whole seconds ("3,600 s"; a decimal there is false precision).
  * The unit depends on the value alone, never on its neighbours, so one request reads the same on every surface and never "68,000 ms".
  * Two figures that are both a second or more therefore share a unit and a precision. Missing, negative or not finite values give null.
  */
@@ -108,7 +110,8 @@ export const durationText = (ms: number | null | undefined, locale?: string | st
   if (ms < 1) return '<1 ms';
   // A value that rounds to 1000 ms is a second: 999.6 and 1000 must not read "1,000 ms" and "1.0 s".
   if (Math.round(ms) < 1000) return fixedNumber(ms, 0, locale) + ' ms';
-  return fixedNumber(ms / 1000, 1, locale) + ' s';
+  const seconds = ms / 1000;
+  return fixedNumber(seconds, Math.round(seconds * 10) / 10 >= 1000 ? 0 : 1, locale) + ' s';
 };
 
 /** `durationText` for several values (the P95 and the slowest request of one interval). */
