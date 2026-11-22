@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -302,5 +303,140 @@ func TestReadFileProvenHoldsTheFileWhileReading(t *testing.T) {
 	}
 	if b, err := os.ReadFile(p); err != nil || !bytes.Equal(b, want) {
 		t.Fatalf("the file changed during the read: %q, %v", b, err)
+	}
+}
+
+// BL-183 (a) review SHOULD: the machine journal the real writer makes must be one the real reader accepts. Nothing here forces an
+// owner: the file gets what Journal.save gives it on this runner (an elevated administrator).
+
+func realWriter() *journalWriter {
+	return &journalWriter{sec: osSecurity{}, sddl: MachineJournalFileSDDL}
+}
+
+// machineRig is a ProgramData-like folder with the real journal folder inside it, made as setup makes it.
+func machineRig(t *testing.T) (r *Runner, journalPath string) {
+	t.Helper()
+	pd := longTempDir(t)
+	r = &Runner{Sys: &System{Sec: osSecurity{}}, Dirs: Dirs{ProgramData: pd}}
+	dir := MachineJournalDir(r.Dirs)
+	if err := (osSecurity{}).MkdirSDDL(dir, AdminOnlySDDL); err != nil {
+		t.Fatal(err)
+	}
+	return r, filepath.Join(dir, JournalName)
+}
+
+func TestTheRealJournalWriterMakesAFileTheRealReaderAccepts(t *testing.T) {
+	_, p := machineRig(t)
+	j, err := NewJournalWith(p, OpUpgrade, "1.2.0", time.Now(), LoadJournal, realWriter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A second and a third write replace the file by a rename: the owner must survive that.
+	for _, name := range []string{"a.txt", "b.txt"} {
+		if err := j.Record(Undo{Step: "s", Kind: UndoRemoveFile, Path: filepath.Join(filepath.Dir(p), name)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := (osSecurity{}).ReadFileProven(p, maxJournalBytes)
+	if err != nil {
+		t.Fatalf("the reader refused the file the writer made: %v", err)
+	}
+	back, err := ParseJournal(data, p)
+	if err != nil || len(back.f.Undos) != 2 {
+		t.Fatalf("read back %v, %v", back, err)
+	}
+	sddl, err := (osSecurity{}).SDDL(p)
+	if err != nil || !strings.HasPrefix(sddl, "O:BA") {
+		t.Fatalf("owner of the real journal: %q, %v", sddl, err)
+	}
+	// Marking it finished writes it again; still readable.
+	if _, err := j.Commit(nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRecoverJournalOnRealNTFS(t *testing.T) {
+	r, p := machineRig(t)
+	victim := filepath.Join(longTempDir(t), "victim.txt")
+	if err := os.WriteFile(victim, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	j, err := NewJournalWith(p, OpUpgrade, "1.2.0", time.Now(), LoadJournal, realWriter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Record(Undo{Step: "s", Kind: UndoRemoveFile, Path: victim, Note: "test file"}); err != nil {
+		t.Fatal(err)
+	}
+	if !r.JournalPending(true) {
+		t.Fatal("a proven pending journal is not pending")
+	}
+	found, left, err := r.RecoverJournal(true)
+	if !found || err != nil || len(left) != 0 {
+		t.Fatalf("recover: %v %v %v", found, left, err)
+	}
+	if _, err := os.Stat(victim); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the listed file was not removed: %v", err)
+	}
+	if r.JournalPending(true) {
+		t.Fatal("the replayed journal is still pending")
+	}
+}
+
+func TestRecoverJournalOnRealNTFSRefusesWhatIsNotProven(t *testing.T) {
+	// Users can write the journal folder: nothing is read.
+	r, p := machineRig(t)
+	victim := filepath.Join(longTempDir(t), "victim.txt")
+	if err := os.WriteFile(victim, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	j, err := NewJournalWith(p, OpUpgrade, "1.2.0", time.Now(), LoadJournal, realWriter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Record(Undo{Step: "s", Kind: UndoRemoveFile, Path: victim}); err != nil {
+		t.Fatal(err)
+	}
+	if err := (osSecurity{}).SetSDDL(filepath.Dir(p), AdminOnlySDDL+"(A;OICI;FA;;;BU)"); err != nil {
+		t.Fatal(err)
+	}
+	if found, _, err := r.RecoverJournal(true); !found || err == nil {
+		t.Fatalf("a folder Users can write was used: %v %v", found, err)
+	}
+	if !r.JournalPending(true) {
+		t.Fatal("a refused journal does not count as pending")
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Fatalf("the refused journal was replayed: %v", err)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("the refused journal was deleted: %v", err)
+	}
+
+	// A journal written the old way (os.WriteFile as the token's default owner, with a Users-writable list) is refused too, and kept.
+	r2, p2 := machineRig(t)
+	if err := os.WriteFile(p2, []byte(`{"op":"upgrade"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := (osSecurity{}).SetSDDL(p2, "O:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;BU)"); err != nil {
+		t.Fatal(err)
+	}
+	if found, _, err := r2.RecoverJournal(true); !found || err == nil || !strings.Contains(err.Error(), "only administrators made") {
+		t.Fatalf("a Users-writable journal was used: %v %v", found, err)
+	}
+	if _, err := os.Stat(p2); err != nil {
+		t.Fatalf("the refused journal was deleted: %v", err)
+	}
+
+	// A hard link to the journal is refused (two names).
+	r3, p3 := machineRig(t)
+	if _, err := NewJournalWith(p3, OpUpgrade, "1.2.0", time.Now(), LoadJournal, realWriter()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(p3, p3+".2"); err != nil {
+		t.Fatal(err)
+	}
+	if found, _, err := r3.RecoverJournal(true); !found || err == nil {
+		t.Fatalf("a hard-linked journal was used: %v %v", found, err)
 	}
 }

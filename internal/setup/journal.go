@@ -76,6 +76,17 @@ type Journal struct {
 	// remove and rename stand for os.Remove and os.Rename (tests replace them to simulate a locked file).
 	remove func(string) error
 	rename func(string, string) error
+	// w, when set, makes every write create the file with an explicit owner and list (the machine journal); nil writes as the person.
+	w *journalWriter
+}
+
+// journalWriter makes the journal file itself: with sddl as owner and list, in the create call, through sec. The machine journal is
+// read back by ReadFileProven, which accepts only the system or the Administrators group as owner. A file made by os.WriteFile gets
+// the default owner of the process token, which is not always that group (UAC off, the built-in Administrator account, a policy that
+// makes the creator the owner), so the writer sets it instead of hoping.
+type journalWriter struct {
+	sec  FileSecurity
+	sddl string
 }
 
 func (j *Journal) removeFile(p string) error {
@@ -101,15 +112,24 @@ func MachineJournalDir(d Dirs) string { return filepath.Join(d.ProgramData, Mach
 // UserJournalDir is where a run without administrator rights keeps its journal.
 func UserJournalDir(d Dirs) string { return filepath.Join(d.LocalAppData, MachineJournalFolder) }
 
-// NewJournal starts a journal at path. A journal already there is an earlier run that did not finish: the caller rolls it back first.
+// NewJournal starts a journal at path, written as the person. A journal already there is an earlier run that did not finish: the
+// caller rolls it back first.
 func NewJournal(path string, op Op, version string, now time.Time) (*Journal, error) {
-	if _, err := os.Stat(path); err == nil {
+	return NewJournalWith(path, op, version, now, LoadJournal, nil)
+}
+
+// NewJournalWith is NewJournal with the two things the elevated run changes. load reads a journal already at path (it must return
+// os.ErrNotExist when there is none, and any other error means "there is one that cannot be used", which refuses the new journal).
+// w, when not nil, makes the journal file with an explicit owner and list (see journalWriter); nil writes it as the person.
+func NewJournalWith(path string, op Op, version string, now time.Time, load func(string) (*Journal, error), w *journalWriter) (*Journal, error) {
+	old, lerr := load(path)
+	switch {
+	case errors.Is(lerr, os.ErrNotExist):
+	case lerr != nil || !old.f.Committed:
 		// The journal of a run that finished (it could not be deleted) is not a run to roll back; it is simply replaced.
-		if old, lerr := LoadJournal(path); lerr != nil || !old.f.Committed {
-			return nil, fmt.Errorf("an earlier setup left a journal at %s", path)
-		}
+		return nil, fmt.Errorf("an earlier setup left a journal at %s", path)
 	}
-	j := &Journal{path: path, f: JournalFile{Op: op, Version: version, Started: now}}
+	j := &Journal{path: path, f: JournalFile{Op: op, Version: version, Started: now}, w: w}
 	return j, j.save()
 }
 
@@ -172,7 +192,24 @@ func (j *Journal) save() error {
 		return err
 	}
 	tmp := j.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	if j.w != nil {
+		// The file is made new, with its owner and list in the create call. The rename keeps them: a file moved within a folder keeps
+		// its own security descriptor.
+		// A temp file left by a write that was cut off is cleared; anything else in its place (a folder, a link) is not ours to remove.
+		if fi, err := os.Lstat(tmp); err == nil {
+			if !fi.Mode().IsRegular() {
+				return fmt.Errorf("%s is not a plain file, so the journal cannot be written", tmp)
+			}
+			if err := os.Remove(tmp); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := j.w.sec.CreateFileSDDL(tmp, j.w.sddl, data); err != nil {
+			return err
+		}
+	} else if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, j.path)

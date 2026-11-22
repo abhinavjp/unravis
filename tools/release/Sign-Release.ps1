@@ -70,7 +70,9 @@ function Assert-Attested([string]$dir, [string]$repo, [string]$tag, [string]$com
     $checkText = @'
 param($f, $dir, $repo, $workflow, $commit, $tag)
 $errFile = Join-Path $dir ('.attest-err-' + $f.Name + '.txt')   # gh prints progress on stderr; keep it out of the JSON
-$json = gh attestation verify $f.FullName --repo $repo --signer-workflow $workflow --format json 2>$errFile
+# The certificate's identity must be exactly this workflow at exactly this tag (gh allows only one of --cert-identity and --signer-workflow),
+# and gh itself checks the commit and the ref; the JSON is checked again below.
+$json = gh attestation verify $f.FullName --repo $repo --cert-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$tag" --source-ref "refs/tags/$tag" --source-digest $commit --format json 2>$errFile
 $code = $LASTEXITCODE
 $err = if (Test-Path -LiteralPath $errFile) { Get-Content -Raw -ErrorAction SilentlyContinue $errFile } else { '' }
 Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
