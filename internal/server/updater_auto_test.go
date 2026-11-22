@@ -1,6 +1,8 @@
 package server
 
 import (
+	"net/http"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -266,5 +268,75 @@ func TestAnImportJobStillRunningIsBusy(t *testing.T) {
 	j.m["b"].state = jobFailed
 	if j.anyRunning() {
 		t.Fatal("only finished jobs")
+	}
+}
+
+func idleNow(u *Updater) {
+	u.presence.mu.Lock()
+	u.presence.last = time.Now().Add(-10 * time.Minute)
+	u.presence.mu.Unlock()
+}
+
+func TestAutoStepRecheckHeldIsNotATry(t *testing.T) {
+	rg, applied := autoRig(t)
+	idleNow(rg.u)
+	rg.publishControl(rg.control(100, func(c *update.Control) { c.Pause = true }))
+	rg.u.autoStep()
+	if applied.Load() != 0 {
+		t.Fatal("applied while the publisher had paused it")
+	}
+	if n := rg.u.autoTries("0.1.0-rc.48"); n != 0 {
+		t.Fatalf("a refused re-check counted as %d tries", n)
+	}
+}
+
+func TestAutoStepRecheckOfflineBacksOff(t *testing.T) {
+	rg, applied := autoRig(t)
+	idleNow(rg.u)
+	rg.feed.code = http.StatusServiceUnavailable
+	rg.u.autoStep()
+	hits := rg.feed.hits.Load()
+	if applied.Load() != 0 || hits == 0 {
+		t.Fatalf("applied %d, hits %d", applied.Load(), hits)
+	}
+	rg.u.autoStep() // inside the wait: no call to the feed
+	if rg.feed.hits.Load() != hits {
+		t.Fatal("the feed was asked again inside the wait")
+	}
+	if n := rg.u.autoTries("0.1.0-rc.48"); n != 0 {
+		t.Fatalf("an unreachable feed counted as %d tries", n)
+	}
+	rg.u.auto.mu.Lock()
+	rg.u.auto.rcNext = time.Now().Add(-time.Second)
+	rg.u.auto.mu.Unlock()
+	rg.feed.code = 0
+	rg.u.autoStep()
+	if applied.Load() != 1 {
+		t.Fatalf("not applied after the wait (applied %d)", applied.Load())
+	}
+}
+
+// The downloaded file is hashed once, not every minute, while a failed Apply now stays on screen.
+func TestFileStillThereIsRemembered(t *testing.T) {
+	rg, _ := autoRig(t)
+	m := rg.u.availableManifest()
+	if m == nil || !rg.u.fileStillThere(m) {
+		t.Fatal("the downloaded file was not found")
+	}
+	got, ok := rg.u.dl.Recheck(m, update.AssetSetup)
+	if !ok {
+		t.Fatal("recheck")
+	}
+	if err := os.Remove(got.Path); err != nil {
+		t.Fatal(err)
+	}
+	if !rg.u.fileStillThere(m) { // the answer is remembered for ten minutes; Install hashes again before any start
+		t.Fatal("the remembered answer was dropped")
+	}
+	rg.u.auto.mu.Lock()
+	rg.u.auto.fileOKAt = time.Now().Add(-11 * time.Minute)
+	rg.u.auto.mu.Unlock()
+	if rg.u.fileStillThere(m) {
+		t.Fatal("a missing file was reported as there after the memory expired")
 	}
 }

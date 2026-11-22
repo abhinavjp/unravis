@@ -264,10 +264,10 @@ func TestOwnUnravisIsClosedAfterTheYes(t *testing.T) {
 	}
 }
 
-func TestAnOwnerThatCannotBeReadCountsAsAnotherPerson(t *testing.T) {
+func TestAnOwnerThatCannotBeReadOrIsMissingCountsAsAnotherPerson(t *testing.T) {
 	e := newEnv(t, "1.2.0")
 	mine, others := e.r.splitApps([]Process{{PID: 1, SID: UnknownOwner}, {PID: 2, SID: e.r.UserSID}, {PID: 3}})
-	if len(mine) != 2 || len(others) != 1 || others[0].PID != 1 {
+	if len(mine) != 1 || mine[0].PID != 2 || len(others) != 2 {
 		t.Fatalf("mine %v others %v", mine, others)
 	}
 }

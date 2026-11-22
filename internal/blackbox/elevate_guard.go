@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+// AnswerFileFlag is the helper argument that names the file its answer goes to.
+// It lives here, not in elevate_windows.go, because cmd/unravis-blackbox reads it on every OS
+// (without it that command did not build on Linux, so go vet ./... failed there).
+const AnswerFileFlag = "--answer-file"
+
 // PinnedHelperSHA256 is the SHA-256 (hex) of the unravis-blackbox.exe that was
 // built together with this program. A release build sets it with
 // -ldflags "-X api-audit-explorer/internal/blackbox.PinnedHelperSHA256=<hex>"

@@ -233,8 +233,12 @@ func TestAvailableSurvivesAFailedCheck(t *testing.T) {
 	if s.Status != "available" || s.Install == nil || s.Install.State != "ready" {
 		t.Fatalf("a failed check hid the update: %+v %+v", s, s.Install)
 	}
-	if code, _ := rg.post("/api/update/install"); code != http.StatusOK || rg.launch.Load() != 1 {
-		t.Fatalf("install after a failed check = %d, launched %d", code, rg.launch.Load())
+	// The last look at the feed fails closed: with the feed down, nothing starts, and the download stays ready.
+	if code, _ := rg.post("/api/update/install"); code != http.StatusConflict || rg.launch.Load() != 0 {
+		t.Fatalf("install with the feed down = %d, launched %d", code, rg.launch.Load())
+	}
+	if s := rg.u.Status(); s.Install == nil || s.Install.State != "ready" {
+		t.Fatalf("the download was lost: %+v", s.Install)
 	}
 	// a bad signature (unverified) leaves it on offer too
 	rg.feed.code = 0
@@ -446,5 +450,108 @@ func TestDoubleInstallStartsOnce(t *testing.T) {
 	}
 	if rg.launch.Load() != 1 {
 		t.Errorf("launched %d times", rg.launch.Load())
+	}
+}
+
+// publishControl signs a control file for the rc channel into the fake feed.
+func (rg *installRig) publishControl(c update.Control) {
+	rg.t.Helper()
+	b, _ := json.Marshal(c)
+	rg.feed.body["/rc-control.json"] = b
+	rg.feed.body["/rc-control.json.sig"] = []byte(update.FormatSignature(rg.key.Pub, signBytes(rg.priv, b)))
+}
+
+func (rg *installRig) control(seq uint64, mut func(*update.Control)) update.Control {
+	c := update.Control{Schema: update.ControlSchema, Product: update.Product, Channel: update.ChannelRC, Seq: seq,
+		Published: time.Now().Add(-time.Hour), Expires: time.Now().Add(30 * 24 * time.Hour), Blocked: []string{}}
+	if mut != nil {
+		mut(&c)
+	}
+	return c
+}
+
+func TestInstallRechecksAndRefusesAPause(t *testing.T) {
+	rg := newInstallRig(t)
+	rg.readyDownload()
+	rg.publishControl(rg.control(100, func(c *update.Control) { c.Pause = true }))
+	code, _ := rg.post("/api/update/install")
+	if code != http.StatusConflict || rg.launch.Load() != 0 {
+		t.Fatalf("install = %d, launched %d", code, rg.launch.Load())
+	}
+	s := rg.u.Status()
+	if !strings.Contains(s.Held, "paused") || s.Install != nil {
+		t.Fatalf("%+v %+v", s, s.Install)
+	}
+}
+
+func TestInstallRechecksAndRefusesAWithdrawal(t *testing.T) {
+	rg := newInstallRig(t)
+	rg.readyDownload()
+	rg.publishControl(rg.control(100, func(c *update.Control) { c.Blocked = []string{"0.1.0-rc.48"} }))
+	if code, _ := rg.post("/api/update/install"); code != http.StatusConflict || rg.launch.Load() != 0 {
+		t.Fatalf("install = %d, launched %d", code, rg.launch.Load())
+	}
+	if s := rg.u.Status(); !strings.Contains(s.Held, "withdrawn") {
+		t.Fatalf("%+v", s)
+	}
+}
+
+func TestInstallRefusedWhenFeedUnreachableAtRecheckThenWorks(t *testing.T) {
+	rg := newInstallRig(t)
+	rg.readyDownload()
+	rg.feed.code = http.StatusServiceUnavailable
+	rec := request(rg.h, http.MethodPost, "/api/update/install", "", true)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "Could not reach") || rg.launch.Load() != 0 {
+		t.Fatalf("%d %s launched %d", rec.Code, rec.Body.String(), rg.launch.Load())
+	}
+	rg.feed.code = 0
+	if code, _ := rg.post("/api/update/install"); code != http.StatusOK || rg.launch.Load() != 1 {
+		t.Fatalf("install after the feed came back = %d, launched %d", code, rg.launch.Load())
+	}
+}
+
+func TestInstallRefusedWhenRecheckAnswerIsRejected(t *testing.T) {
+	rg := newInstallRig(t)
+	rg.readyDownload()
+	rg.feed.body["/rc.json.sig"] = []byte("unravis-sig-v1 00 AAAA")
+	if code, _ := rg.post("/api/update/install"); code != http.StatusConflict || rg.launch.Load() != 0 {
+		t.Fatalf("install = %d, launched %d", code, rg.launch.Load())
+	}
+	if s := rg.u.Status(); s.Install == nil || s.Install.State != "ready" {
+		t.Fatalf("the download was lost: %+v", s.Install)
+	}
+}
+
+func TestInstallRunsAFreshCheck(t *testing.T) {
+	rg := newInstallRig(t)
+	rg.readyDownload()
+	before := rg.feed.hits.Load()
+	if code, _ := rg.post("/api/update/install"); code != http.StatusOK || rg.launch.Load() != 1 {
+		t.Fatalf("install = %d, launched %d", code, rg.launch.Load())
+	}
+	if rg.feed.hits.Load() <= before {
+		t.Fatal("the feed was not asked again before the start")
+	}
+}
+
+func TestInstallAfterAHoldIsLiftedReusesTheFile(t *testing.T) {
+	rg := newInstallRig(t)
+	rg.readyDownload()
+	rg.publishControl(rg.control(100, func(c *update.Control) { c.Pause = true }))
+	if code, _ := rg.post("/api/update/install"); code != http.StatusConflict {
+		t.Fatalf("install = %d", code)
+	}
+	rg.publishControl(rg.control(200, nil))
+	rg.u.CheckNow(t.Context())
+	s := rg.u.Status()
+	if s.Status != "available" {
+		t.Fatalf("%+v", s)
+	}
+	if code, _ := rg.post("/api/update/download"); code != http.StatusOK {
+		t.Fatalf("download = %d", code)
+	}
+	rg.waitFor("ready")
+	if code, _ := rg.post("/api/update/install"); code != http.StatusOK || rg.launch.Load() != 1 {
+		t.Fatalf("install = %d, launched %d", code, rg.launch.Load())
 	}
 }

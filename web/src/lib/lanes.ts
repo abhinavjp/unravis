@@ -27,7 +27,7 @@ export interface ProfilerGuide { title: string; why: string; cost: string; steps
 export interface LaneResult {
   incident: LaneWindow; reference: LaneWindow; era: string; checks: LaneCheck[]; answers: Record<string, string>;
   onset: string; sources: string[]; guide: ProfilerGuide | null; state: LaneState;
-  queryStore?: { state: 'on' | 'off' | 'read-only' | 'denied' | 'unknown'; firstData?: string | null; intervalMinutes?: number | null } | null;
+  queryStore?: { state: 'on' | 'off' | 'read-only' | 'denied' | 'unknown'; firstData?: string | null; lastData?: string | null; intervalMinutes?: number | null } | null;
 }
 export interface LaneDay { id: number; at: string; kind: 'sql' | 'mongo'; label: string; database: string; state: LaneState; incident: LaneWindow; reference: LaneWindow; lane: LaneResult | null }
 
@@ -73,7 +73,10 @@ const toQueryStore = (v: unknown): LaneResult['queryStore'] => {
   if (!state) return undefined;
   const firstData = typeof q.firstData === 'string' && !Number.isNaN(Date.parse(q.firstData)) ? q.firstData : null;
   const intervalMinutes = typeof q.intervalMinutes === 'number' && Number.isFinite(q.intervalMinutes) && q.intervalMinutes > 0 ? q.intervalMinutes : null;
-  return { state, firstData, intervalMinutes };
+  const out: NonNullable<LaneResult['queryStore']> = { state, firstData, intervalMinutes };
+  // lastData is added only when it is a readable date, so older saved reports keep exactly the shape they had.
+  if (typeof q.lastData === 'string' && !Number.isNaN(Date.parse(q.lastData))) out.lastData = q.lastData;
+  return out;
 };
 
 /** The word for a whole lane: Ready when every check is, Failed when every check failed, Cannot test yet when none could run, otherwise Partly ready. */
