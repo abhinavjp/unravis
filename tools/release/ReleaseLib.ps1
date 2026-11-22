@@ -698,3 +698,177 @@ function Get-ResumeStage([string[]]$Order, [string]$LastDone) {
     if ($i + 1 -ge $Order.Count) { return $null }
     return $Order[$i + 1]
 }
+
+# ---- run logs for the releases dashboard ------------------------------------------------------------------------------------------
+# Release.ps1 keeps what a run printed, and the GitHub Actions logs of its runs, in <data>\logs so the dashboard can show each step's
+# log and the tests that ran. Everything here is best effort: a failure only means there is no log, never a changed release. Every line
+# is redacted before it is written, and again when the dashboard reads it (internal/releasedash/redact.go: same rules).
+
+$script:LogRx = @{
+    Ansi    = [regex]::new('\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07', 'Compiled')
+    Ctrl    = [regex]::new('[\x00-\x08\x0a-\x1f\x7f]', 'Compiled')
+    Token   = [regex]::new('\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})', 'Compiled')
+    Bearer  = [regex]::new('(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}', 'Compiled')
+    Pair    = [regex]::new('(?i)\b(pass(?:word|phrase)?|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key)(["'']?\s*[:=]\s*)("[^"]*"|''[^'']*''|[^\s,;]+)', 'Compiled')
+    KeyBeg  = [regex]::new('-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)-----', 'Compiled')
+    KeyEnd  = [regex]::new('-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)-----', 'Compiled')
+    KeyFile = [regex]::new('(?i)[\w.-]+\.(?:key|pem|pfx|p12|ppk)\b', 'Compiled')
+    UserDir = [regex]::new('(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"'']+', 'Compiled')
+}
+
+# One redactor per log: it remembers that it is inside a private key block, which spans many lines. Names (this PC and this user)
+# are hidden too; names shorter than three characters are ignored.
+function New-LogRedactor([string[]]$Names = @()) {
+    $n = @(@($Names) + @([Environment]::MachineName, [Environment]::UserName) | Where-Object { $_ -and $_.Trim().Length -ge 3 } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
+    return [pscustomobject]@{ InKey = $false; Names = $n }
+}
+
+# Pure apart from the redactor's key-block memory. -KeepTabs keeps the tab separators of a "gh run view --log" line.
+function Protect-LogLine([string]$Line, $Redactor, [switch]$KeepTabs) {
+    $rx = $script:LogRx
+    $s = $Line.TrimStart([char]0xFEFF)
+    $s = $rx.Ansi.Replace($s, '')
+    if (-not $KeepTabs) { $s = $s.Replace("`t", ' ') }
+    $s = $rx.Ctrl.Replace($s, '')
+    if ($Redactor.InKey) { if ($rx.KeyEnd.IsMatch($s)) { $Redactor.InKey = $false }; return '<private key hidden>' }
+    if ($rx.KeyBeg.IsMatch($s)) { if (-not $rx.KeyEnd.IsMatch($s)) { $Redactor.InKey = $true }; return '<private key hidden>' }
+    $s = $rx.Token.Replace($s, '<token hidden>')
+    $s = $rx.Bearer.Replace($s, '$1 <hidden>')
+    $s = $rx.Pair.Replace($s, '$1$2<hidden>')
+    $s = $rx.KeyFile.Replace($s, '<key file>')
+    $s = $rx.UserDir.Replace($s, '${1}<user>')
+    foreach ($n in $Redactor.Names) { $s = [regex]::Replace($s, [regex]::Escape($n), '<name>', 'IgnoreCase') }
+    if ($s.Length -gt 2000) { $s = $s.Substring(0, 2000) + ' ...(line cut)' }
+    return $s.TrimEnd(' ')
+}
+
+function Get-ReleaseLogDir([string]$Dir) {
+    $p = Join-Path $Dir 'logs'
+    New-Item -ItemType Directory -Force -Path $p | Out-Null
+    return $p
+}
+
+function New-RunLogPath([string]$LogDir) { return (Join-Path $LogDir ('run-' + [DateTime]::UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'") + '.log')) }
+
+# Keeps the newest $Keep log files (run logs and saved CI logs together) and removes the rest.
+function Remove-OldReleaseLogs([string]$LogDir, [int]$Keep = 60) {
+    $files = @(Get-ChildItem -LiteralPath $LogDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(run-\d{8}T\d{6}Z\.log|ci-v[0-9A-Za-z.+-]+-(ci|release|verify)-\d+\.log\.gz)$' } | Sort-Object LastWriteTimeUtc -Descending)
+    if ($files.Count -gt $Keep) { $files | Select-Object -Skip $Keep | Remove-Item -Force -ErrorAction SilentlyContinue }
+}
+
+# A pipeline step that passes every line through unchanged and writes a redacted, time-stamped copy to -Path as it goes (flushed per
+# line, so the dashboard can show a run live). It starts no program, so $LASTEXITCODE of the command before it in the pipeline is
+# untouched. If the file cannot be written it stops logging and carries on passing lines through. After MaxLines it writes one note.
+function Write-ReleaseRunLog {
+    [CmdletBinding()]
+    param([Parameter(ValueFromPipeline = $true)] $InputObject, [Parameter(Mandatory)] [string]$Path, [string[]]$Names = @(), [int]$MaxLines = 20000)
+    begin {
+        $w = $null; $n = 0; $red = New-LogRedactor $Names
+        try {
+            $fs = [System.IO.FileStream]::new($Path, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+            $w = [System.IO.StreamWriter]::new($fs, [System.Text.UTF8Encoding]::new($false)); $w.AutoFlush = $true
+        } catch { $w = $null }
+    }
+    process {
+        $InputObject
+        if ($w) {
+            try {
+                if ($n -lt $MaxLines) {
+                    $n++
+                    $w.WriteLine([DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") + ' ' + (Protect-LogLine ([string]$InputObject) $red))
+                } elseif ($n -eq $MaxLines) {
+                    $n++
+                    $w.WriteLine([DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") + " (the log stops here: $MaxLines lines; the release carried on)")
+                }
+            } catch { try { $w.Dispose() } catch {}; $w = $null }
+        }
+    }
+    end { if ($w) { try { $w.Dispose() } catch {} } }
+}
+
+# Saves the log of one GitHub Actions run, redacted, as gzip: ci-<tag>-<ci|release|verify>-<run id>.log.gz. Needs the signed-in gh (the
+# public API does not serve run logs). Gives up after $TimeoutSec and keeps nothing then. Returns $true when a file was written.
+function Save-CiRunLog([string]$Repo, [string]$RunId, [string]$Tag, [string]$Kind, [string]$LogDir, [string[]]$Names = @(), [int]$TimeoutSec = 90, [long]$MaxBytes = 64MB) {
+    if ($RunId -notmatch '^\d{1,20}$' -or $Tag -notmatch '^v\d[0-9A-Za-z.+-]{0,40}$' -or $Kind -notin 'ci', 'release', 'verify') { return $false }
+    $dest = Join-Path $LogDir "ci-$Tag-$Kind-$RunId.log.gz"
+    if (Test-Path -LiteralPath $dest) { return $true }
+    $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
+    if (-not $gh) { return $false }
+    $tmp = "$dest.part"; $p = $null; $w = $null; $done = $false
+    try {
+        $psi = [System.Diagnostics.ProcessStartInfo]::new($gh)
+        foreach ($a in 'run', 'view', $RunId, '--repo', $Repo, '--log') { $psi.ArgumentList.Add($a) }
+        $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+        $psi.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $null = $p.StandardError.ReadToEndAsync()   # drained so gh never blocks on it
+        $fs = [System.IO.File]::Create($tmp)
+        $w = [System.IO.StreamWriter]::new([System.IO.Compression.GZipStream]::new($fs, [System.IO.Compression.CompressionLevel]::Optimal), [System.Text.UTF8Encoding]::new($false))
+        $w.WriteLine("# run $RunId $Kind https://github.com/$Repo/actions/runs/$RunId")
+        $red = New-LogRedactor $Names
+        $limit = [DateTime]::UtcNow.AddSeconds($TimeoutSec); $bytes = 0L; $count = 0; $eof = $false; $timedOut = $false; $capped = $false
+        while ($true) {
+            $t = $p.StandardOutput.ReadLineAsync()
+            while (-not $t.IsCompleted) { if ([DateTime]::UtcNow -gt $limit) { $timedOut = $true; break }; $null = $t.Wait(500) }
+            if ($timedOut) { break }
+            $line = $t.Result
+            if ($null -eq $line) { $eof = $true; break }
+            $out = Protect-LogLine $line $red -KeepTabs
+            $bytes += $out.Length + 1; $count++
+            if ($bytes -gt $MaxBytes -or $count -gt 400000) { $capped = $true; break }
+            $w.WriteLine($out)
+        }
+        if ($timedOut -or $capped) { try { $p.Kill($true) } catch {} } else { $null = $p.WaitForExit(10000) }
+        $okExit = ($timedOut -or $capped) -or ($p.HasExited -and $p.ExitCode -eq 0)
+        if ($capped) { $w.WriteLine('# the log was cut here (size limit)') }
+        $w.Dispose(); $w = $null
+        if ($eof -or $capped) { if ($okExit -and $count -gt 0) { Move-Item -LiteralPath $tmp -Destination $dest -Force; $done = $true } }
+    } catch { $done = $false }
+    finally {
+        if ($w) { try { $w.Dispose() } catch {} }
+        if ($p) { try { if (-not $p.HasExited) { $p.Kill($true) } } catch {}; $p.Dispose() }
+        if (-not $done) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+    return $done
+}
+
+# The GitHub Actions run ids this release's audit entries name (release.yml = built, verify-release.yml = verified or verify-failed),
+# newest of each, for entries written since $Since. Returns @{ release; verify } with '' for a missing one.
+function Get-ReleaseAuditRuns([string]$AuditPath, [string]$Version, [datetime]$Since) {
+    $r = @{ release = ''; verify = '' }
+    if (-not $Version -or -not (Test-Path -LiteralPath $AuditPath)) { return $r }
+    foreach ($l in (Get-Content -LiteralPath $AuditPath -Tail 600)) {
+        if (-not $l) { continue }
+        try { $e = $l | ConvertFrom-Json } catch { continue }
+        if ($e.version -ne $Version -or "$($e.run)" -notmatch '^\d{1,20}$') { continue }
+        try { if (([datetime]$e.ts).ToUniversalTime() -lt $Since.ToUniversalTime()) { continue } } catch { continue }
+        if ($e.event -eq 'built') { $r.release = "$($e.run)" }
+        elseif ($e.event -eq 'verified' -or $e.event -eq 'verify-failed') { $r.verify = "$($e.run)" }
+    }
+    return $r
+}
+
+# After a run: saves the logs of its CI run (on the released commit), its release.yml run and its verify run. Never throws, and never
+# takes longer than $BudgetSec in all.
+function Save-ReleaseRunLogs([string]$Repo, [string]$Dir, [string]$AuditPath, [string]$Version, [string]$Commit, [datetime]$Since, [string[]]$Names = @(), [int]$BudgetSec = 150) {
+    try {
+        if ($Version -notmatch '^\d[0-9A-Za-z.+-]{0,40}$') { return }
+        $tag = "v$Version"; $logDir = Get-ReleaseLogDir $Dir; $end = [DateTime]::UtcNow.AddSeconds($BudgetSec)
+        $ids = Get-ReleaseAuditRuns $AuditPath $Version $Since
+        $todo = [System.Collections.Generic.List[object]]::new()
+        if ($Commit -match '^[0-9a-f]{7,40}$') {
+            $runs = @(gh run list --repo $Repo --workflow ci.yml --commit $Commit --limit 10 --json databaseId,conclusion 2>$null | ConvertFrom-Json)
+            $pick = $runs | Where-Object { $_.conclusion -eq 'success' } | Select-Object -First 1
+            if (-not $pick) { $pick = $runs | Select-Object -First 1 }
+            if ($pick) { $todo.Add(@{ kind = 'ci'; id = "$($pick.databaseId)" }) }
+        }
+        if ($ids.release) { $todo.Add(@{ kind = 'release'; id = $ids.release }) }
+        if ($ids.verify) { $todo.Add(@{ kind = 'verify'; id = $ids.verify }) }
+        foreach ($t in $todo) {
+            $left = [int]($end - [DateTime]::UtcNow).TotalSeconds
+            if ($left -lt 10) { break }
+            if (Save-CiRunLog $Repo $t.id $tag $t.kind $logDir $Names ([Math]::Min($left, 90))) { Write-Host "Saved the $($t.kind) log of run $($t.id) for the releases dashboard." -ForegroundColor DarkGray }
+        }
+        Remove-OldReleaseLogs $logDir
+    } catch {}
+}
