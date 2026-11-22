@@ -346,7 +346,7 @@ func ttlFor(d *Dash, ctx context.Context, v string) time.Duration {
 // CI log takes seconds to unpack and parse.
 func parsedTests(dir string, l LogRef, names []string) (TestResults, bool) {
 	path := filepath.Join(dir, logsDir, l.Name)
-	fi, err := os.Stat(path) //nolint:gosec // l.Name comes from ListLogs: it matched the fixed log name pattern
+	fi, err := os.Stat(path)
 	if err != nil {
 		return TestResults{}, false
 	}
