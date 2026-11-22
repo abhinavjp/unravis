@@ -1,0 +1,14 @@
+version: "2"
+run:
+  timeout: 10m
+linters:
+  default: none
+  enable: [errcheck, govet, staticcheck, gosec, rowserrcheck, bodyclose, nilerr, nolintlint]
+  settings:
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+issues:
+  # Only code a PR adds or changes is judged. Old code is a separate pass.
+  # On push to master, ci.yml passes --new-from-rev=<before> instead.
+  new-from-merge-base: origin/master
