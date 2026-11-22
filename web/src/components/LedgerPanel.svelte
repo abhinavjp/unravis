@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../lib/api';
   import type { Hypothesis } from '../lib/types';
   import {
@@ -122,6 +122,13 @@
       confirming = null;
     } catch (error) { problem[h.id] = messageOf(error); }
     finally { busy[h.id] = undefined; }
+  }
+  // The remove question takes the focus when it opens, and gives it back to the Remove button when it is withdrawn.
+  function focusNow(node: HTMLElement) { node.focus(); }
+  async function withdrawRemove(id: string) {
+    confirming = null;
+    await tick();
+    document.querySelector<HTMLElement>('[data-ledger-remove="' + CSS.escape(id) + '"]')?.focus();
   }
   function toggle(id: string) { ledger.openId = ledger.openId === id ? null : id; confirming = null; attached = null; }
 
@@ -325,13 +332,15 @@
               {#if dirty}<button type="button" class="secondary-button" disabled={!!busy[h.id]} onclick={() => discard(h)}>{copy.discard}</button>{/if}
               <button type="button" class="secondary-button" disabled={!!busy[h.id]} onclick={() => reuse(h)}>{copy.reuse}</button>
               {#if confirming === h.id}
-                <span class="ledger-confirm" role="group" aria-label={copy.removeConfirm}>
+                <!-- The question takes the focus on the safe answer (listed first); Esc withdraws it and the focus goes back to Remove. -->
+                <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                <span class="ledger-confirm" role="group" aria-label={copy.removeConfirm} onkeydown={(event) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); void withdrawRemove(h.id); } }}>
                   <span>{copy.removeConfirm}</span>
+                  <button type="button" class="quiet-button" use:focusNow onclick={() => void withdrawRemove(h.id)}>{copy.removeNo}</button>
                   <button type="button" class="secondary-button" disabled={!!busy[h.id]} onclick={() => remove(h)}>{copy.removeYes}</button>
-                  <button type="button" class="quiet-button" onclick={() => (confirming = null)}>{copy.removeNo}</button>
                 </span>
               {:else}
-                <button type="button" class="quiet-button" disabled={!!busy[h.id]} onclick={() => (confirming = h.id)}>{copy.remove}</button>
+                <button type="button" class="quiet-button" data-ledger-remove={h.id} disabled={!!busy[h.id]} onclick={() => (confirming = h.id)}>{copy.remove}</button>
               {/if}
             </div>
             {#if strongBlocked}<p class="field-note" id={'l-save-note-' + h.id}>{copy.saveBlocked}</p>{/if}

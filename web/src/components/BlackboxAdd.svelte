@@ -129,7 +129,7 @@
   <div class="bb-actions">
     <button type="button" class="primary-button" disabled={busy} onclick={add}>{T.addButton}</button>
     <button type="button" class="secondary-button" disabled={busy} onclick={check}>{outcome.kind === 'checked' || outcome.kind === 'failed' ? T.addLookAgain : T.check}</button>
-    <button type="button" class="quiet-button" onclick={onCancel}>{T.cancel}</button>
+    <button type="button" class="secondary-button" onclick={onCancel}>{T.cancel}</button>
   </div>
 </div>
 

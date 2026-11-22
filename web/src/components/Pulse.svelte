@@ -52,6 +52,7 @@
 
 <section class="pulse" aria-label="Pulse">
 <HelpNote id="pulse" />
+  <h2 class="visually-hidden">Key figures</h2>
   <div class="figures">
     {#each figures as figure (figure.id)}
       <button type="button" class="figure" data-tone={toneOf(figure.id, figure.value)} title={figure.tip} onclick={() => onOpen(figure.id)}>
@@ -73,10 +74,12 @@
         {#if withLatency}
           <span><i class="swatch-p95"></i>P95 · {metricLabels[analysis.query.metric]}<Hint termId="p95" /></span>
           <span><i class="swatch-gap"></i>No timed requests between</span>
-          <span><i class="swatch-max"></i>Slowest request in the interval</span>
+          <span><i class="swatch-slowest"></i>Slowest request in the interval</span>
+          {#if outliers.flagged.length}<span><i class="swatch-max"></i>Far slower than usual</span>{/if}
         {/if}
       </div>
     </div>
+    <HelpNote id="pulse-chart" />
     <div class="hero-stage">
       <div class="hero-chart" class:chart-hidden={!hasData} bind:this={node} use:zoomable={{ chart: () => chart }} role="img" aria-hidden={!hasData} aria-label={'Requests per interval' + (withLatency ? ' with the 95th percentile and the slowest request of each interval' : '') + ', in ' + zone}></div>
       {#if !hasData}<div class="hero-empty" use:focusEmpty>{#if zoomView.emptyMessage}<strong>{zoomView.emptyMessage}</strong>{:else}<strong>No requests in this period</strong><p>Widen the range, or check that the selected sources have audit rows for it.</p>{/if}</div>{/if}
@@ -105,6 +108,7 @@
   .hero-legend span { display: inline-flex; align-items: center; }
   .hero-legend .swatch-count { background: var(--accent); opacity: .3; }
   .hero-legend .swatch-gap { width: 14px; height: 0; border-radius: 0; border-top: 1.5px dashed var(--accent); background: transparent; }
+  .hero-legend .swatch-slowest { width: 7px; height: 7px; border: var(--hairline-width) solid var(--text-2); border-radius: 50%; background: transparent; box-sizing: border-box; }
   .hero-legend .swatch-max { width: 8px; height: 8px; border-radius: 0; background: var(--bad); transform: rotate(45deg); }
   .hero-note { margin: var(--space-2) 0 0; }
 </style>

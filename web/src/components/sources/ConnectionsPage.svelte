@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { api } from '../../lib/api';
   import {
     CONNECTION_LIMIT, canSaveAnother, mongoRow, sqlRow, type ConnectionRow, type ConnectionWord
   } from '../../lib/lanes';
-  import { CONN_TEXT, HUB_TEXT, KEEPER_TEXT, NUTSHELL } from '../../lib/copy/sourcesCopy';
+  import { CONN_TEXT, HUB_TEXT, KEEPER_TEXT, NUTSHELL, connectionCountText } from '../../lib/copy/sourcesCopy';
   import { isKeeperDown, keeperPreview, keeperView, type KeeperStatus } from '../../lib/keeper';
   import { connectedText } from '../../lib/copy/healthCopy';
   import { sqlTestInput, formFromSaved } from '../../lib/sqlConnection';
@@ -106,6 +106,15 @@
     } finally { testing = ''; }
   }
 
+  // The question that replaces the Forget button takes the focus (a pressed button that goes away would drop it to the page).
+  function focusNow(node: HTMLElement) { node.focus(); }
+  // Keep it, or Esc: the question closes and the focus goes back to the row's Forget button.
+  async function withdraw(row: ConnectionRow) {
+    asking = '';
+    await tick();
+    document.querySelector<HTMLElement>('[data-forget="' + CSS.escape(row.key) + '"]')?.focus();
+  }
+
   async function forget(row: ConnectionRow) {
     asking = ''; note = ''; notice = '';
     try {
@@ -114,6 +123,9 @@
       announceConnectionsChanged();
     } catch (error) { note = error instanceof Error ? error.message : CONN_TEXT.loadFailed; }
     await load();
+    // The row that held the focus is gone: the list's heading takes it, so the next Tab starts at the list.
+    await tick();
+    document.getElementById('conn-head')?.focus();
   }
 
   function edit(row: ConnectionRow) {
@@ -136,7 +148,7 @@
 
 <section class="src" aria-labelledby="conn-head">
   <div class="nutshell"><b>{NUTSHELL}</b><p>{CONN_TEXT.intro}</p></div>
-  <h3 id="conn-head">{CONN_TEXT.heading}</h3>
+  <h3 id="conn-head" tabindex="-1">{CONN_TEXT.heading}</h3>
 
   <KeeperCard primary={promoted} status={offerMove || kView !== 'migrate' ? keeper : null} onStatus={(next) => void keeperChanged(next)} onRetry={() => load()} onLater={() => { moveLater = true; }} />
   {#if moveLater && kView === 'migrate'}<div class="actions" data-keeper-later><span class="hint">{KEEPER_TEXT.notNowNote}</span><button type="button" class="btn" onclick={() => { moveLater = false; }}>{KEEPER_TEXT.notNowUndo}</button></div>{/if}
@@ -149,7 +161,7 @@
       <button type="button" class="btn" disabled={readOnly || !onMongoAdd} onclick={() => { askedMongo = true; onMongoAdd?.(); }}>{CONN_TEXT.addMongo}</button>
       <button type="button" class="btn" onclick={() => void load()}>{CONN_TEXT.refresh}</button>
       {#if askedMongo}<span class="hint" data-after-mongo>{CONN_TEXT.refreshAfterMongo}</span>{/if}
-      <span class="hint" data-count>{CONN_TEXT.countSql} {sql.length} / {CONNECTION_LIMIT}. {CONN_TEXT.countMongo} {mongo.length}.</span>
+      <span class="hint" data-count>{connectionCountText(sql.length, CONNECTION_LIMIT, mongo.length)}</span>
     </div>
     {#if full}<p class="say bad" role="status" data-full>{CONN_TEXT.full}</p>{/if}
     <p class="hint">{onMongoAdd ? CONN_TEXT.mongoHere : CONN_TEXT.mongoNowhere}</p>
@@ -184,15 +196,17 @@
           <button type="button" class="btn" disabled={testing !== '' || readOnly} aria-label="{CONN_TEXT.test}: {row.label}" onclick={() => void test(row)}>{testing === row.key ? CONN_TEXT.testing : CONN_TEXT.test}</button>
           {#if row.kind === 'sql'}<button type="button" class="btn" disabled={readOnly} aria-label="{CONN_TEXT.edit}: {row.label}" onclick={() => edit(row)}>{CONN_TEXT.edit}</button>{/if}
           {#if asking === row.key}
-            <span class="what" role="alertdialog" aria-label={CONN_TEXT.forgetAsk}>
+            <!-- The question takes the focus on the safe answer ("Keep it", listed first) and Esc withdraws it, as the key keeper's question does. -->
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <span class="what" role="alertdialog" tabindex="-1" aria-label={CONN_TEXT.forgetAsk} onkeydown={(event) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); void withdraw(row); } }}>
               <span class="hint">{CONN_TEXT.forgetAsk}</span>
               <span class="actions">
+                <button type="button" class="btn" use:focusNow onclick={() => void withdraw(row)}>{CONN_TEXT.forgetNo}</button>
                 <button type="button" class="btn" onclick={() => void forget(row)}>{CONN_TEXT.forgetYes}</button>
-                <button type="button" class="btn" onclick={() => { asking = ''; }}>{CONN_TEXT.forgetNo}</button>
               </span>
             </span>
           {:else}
-            <button type="button" class="btn" disabled={readOnly} aria-label="{CONN_TEXT.forget}: {row.label}" onclick={() => { asking = row.key; }}>{CONN_TEXT.forget}</button>
+            <button type="button" class="btn" data-forget={row.key} disabled={readOnly} aria-label="{CONN_TEXT.forget}: {row.label}" onclick={() => { asking = row.key; }}>{CONN_TEXT.forget}</button>
           {/if}
         </li>
       {/each}
@@ -200,6 +214,5 @@
     {#if note !== ''}<p class="say bad" role="alert">{note}</p>{/if}
   {/if}
 
-  <p class="hint">{CONN_TEXT.wordsNote}</p>
   <p class="hint">{shared ? KEEPER_TEXT.origin : CONN_TEXT.origin}</p>
 </section>

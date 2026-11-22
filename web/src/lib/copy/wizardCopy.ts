@@ -60,7 +60,7 @@ export const stepOfText = (number: number, total: number, label: string): string
 /** The label a screen reader hears on a step in the strip. */
 export function stepButtonLabel(number: number, label: string, state: 'current' | 'done' | 'open' | 'locked'): string {
   const suffix = state === 'current' ? ', current step' : state === 'done' ? ', done' : state === 'locked' ? ', not available until the case has a name' : '';
-  return 'Step ' + number + ', ' + label + suffix;
+  return number + ' ' + label + suffix;
 }
 
 export const TITLE_PROBLEM_TEXT: Readonly<Record<TitleProblem, string>> = {

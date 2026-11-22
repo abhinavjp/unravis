@@ -6,7 +6,7 @@
   // Esc is not stopped here, as before: the page closes the drawer and hands focus back to the button that opened it.
 </script>
 
-<Drawer title="Connections" titleId="connections-title" intro="Saved settings and database sources" closeLabel="Close connections" focusable={'button:not(:disabled), input:not(:disabled), select:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'} stopEscape={false} bind:element={panels.drawerElement} onClose={closeConnections}>
+<Drawer title="Connections" titleId="connections-title" intro="Saved settings and database sources" closeLabel="Close connections" focusOnOpen focusable={'button:not(:disabled), input:not(:disabled), select:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'} stopEscape={false} bind:element={panels.drawerElement} onClose={closeConnections}>
   <div class="connection-tabs"><button class:active={panels.connectionTab === 'saved'} disabled={conn.sourceBusy || conn.connectionTesting || conn.historyMutationBusy} onclick={() => panels.connectionTab = 'saved'}>Saved connections</button><button class:active={panels.connectionTab === 'new'} disabled={conn.sourceBusy || conn.connectionTesting || conn.historyMutationBusy} onclick={startNewConnection}>New connection</button></div>
   {#if panels.connectionTab === 'saved'}
     <div class="saved-connections-panel">
