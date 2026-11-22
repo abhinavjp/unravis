@@ -532,6 +532,8 @@
     .scroll { overflow-x: visible; border: 0; }
     table, tbody, tr, th, td { display: block; }
     thead { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); }
+    /* The heads stay in the page for screen readers (each cell is labelled from them); clipped as well, so their no-wrap words cannot run out of the 1px box. */
+    thead th { clip-path: inset(50%); }
     tbody tr { margin-bottom: var(--space-2); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
     tbody th.file { min-width: 0; border-bottom: 0; background: transparent; }
     th, td { border-bottom: 0; padding-top: var(--space-1); padding-bottom: var(--space-1); }
