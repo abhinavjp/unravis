@@ -73,7 +73,7 @@ test('an archived case has no Reopen button (it would never work); Restore is th
 
 test('the case home reads the case first and asks for files, checks and theories only when it may', () => {
   const home = read('src/lib/components/CaseHome.svelte');
-  const load = home.match(/async function load\(id: string, quiet = false\) \{[\s\S]*?\n  \}\n/)[0];
+  const load = home.match(/async function loadPage\(id: string, quiet: boolean\) \{[\s\S]*?\n  \}\n/)[0];
   assert.match(load, /getCaseView\(id, mine\.signal\), getCaseKeyStatus\(id, mine\.signal\)\]\);[\s\S]*readsCaseData\(found\)/, 'the view is read before anything else');
   assert.match(load, /reads \? listImports\(/);
   assert.match(load, /reads \? fetchHealthRuns\(/);

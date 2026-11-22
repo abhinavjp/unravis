@@ -167,7 +167,18 @@
   function archiveChanged() { archiveDrawer = null; changed = true; void tick().then(() => reloadEl?.focus()); }
 
   // quiet: the page is read again after a move on the case (archive, restore, free), so it stays on screen and does not show the loading text.
+  // An add that lands while a read of the page is on its way is not dropped and does not race it: the re-read waits for that read to end, then runs once
+  // (so the read that started last is the one that shows, whichever way round they would have finished).
+  let loadsOpen = 0;
+  let rereadWanted = '';
   async function load(id: string, quiet = false) {
+    loadsOpen += 1;
+    try { await loadPage(id, quiet); } finally {
+      loadsOpen -= 1;
+      if (loadsOpen === 0 && rereadWanted) { const wanted = rereadWanted; rereadWanted = ''; if (wanted === caseId) void rereadFiles(); }
+    }
+  }
+  async function loadPage(id: string, quiet: boolean) {
     // The newest read wins: a quiet re-read that is still on its way (after an add) must not put its older answer over this one.
     rereadRun += 1;
     controller?.abort();
@@ -292,7 +303,9 @@
     const seq = caseAdded.seq;
     if (seq === seenAdd) return;
     seenAdd = seq;
-    if (caseAdded.caseId === untrack(() => caseId)) void untrack(() => rereadFiles());
+    const id = caseAdded.caseId;
+    if (id !== untrack(() => caseId)) return;
+    if (loadsOpen > 0) rereadWanted = id; else void untrack(() => rereadFiles());
   });
 
   async function rereadHealth() {
