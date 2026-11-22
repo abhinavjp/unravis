@@ -5,6 +5,8 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -127,14 +129,22 @@ func (d *Dash) Release(v string, now time.Time) (Detail, error) {
 		}
 		det.Steps = append(det.Steps, sd)
 	}
-	// The newest run log that holds a step gives its line range, and the exact time the script started it.
+	// The newest run log that holds a step gives its line range, and the exact time the script started it. Each log is read and cut
+	// into steps once for the whole page, not once for every step.
+	sliced := map[string][]StepLog{}
+	slicesOf := func(name string) []StepLog {
+		sl, ok := sliced[name]
+		if !ok {
+			if lines, _, err := ReadLog(d.DataDir, name, loc.Names); err == nil {
+				sl = SliceSteps(lines)
+			}
+			sliced[name] = sl
+		}
+		return sl
+	}
 	for i := range det.Steps {
 		for _, l := range runLogs {
-			lines, _, err := ReadLog(d.DataDir, l.Name, loc.Names)
-			if err != nil {
-				continue
-			}
-			for _, sl := range SliceSteps(lines) {
+			for _, sl := range slicesOf(l.Name) {
 				if sl.Stage != det.Steps[i].Name {
 					continue
 				}
@@ -248,12 +258,10 @@ func (d *Dash) Tests(v string) (TestReport, error) {
 		if l.Kind == "run" || l.Tag != "v"+v {
 			continue
 		}
-		rc, err := openCI(d.DataDir, l.Name)
-		if err != nil {
+		res, ok := parsedTests(d.DataDir, l, loc.Names)
+		if !ok {
 			continue
 		}
-		res := ParseTests(rc, loc.Names)
-		_ = rc.Close()
 		rep.Runs = append(rep.Runs, TestRun{Kind: l.Kind, Run: l.Run, URL: RepoURL + "actions/runs/" + l.Run, Results: res})
 	}
 	sort.SliceStable(rep.Runs, func(i, j int) bool { return rep.Runs[i].Kind < rep.Runs[j].Kind })
@@ -333,3 +341,25 @@ func ttlFor(d *Dash, ctx context.Context, v string) time.Duration {
 	}
 	return liveTTL
 }
+
+// parsedTests is ParseTests over one saved CI log, kept while the file is unchanged: the page asks again every few seconds, and a big
+// CI log takes seconds to unpack and parse.
+func parsedTests(dir string, l LogRef, names []string) (TestResults, bool) {
+	path := filepath.Join(dir, logsDir, l.Name)
+	fi, err := os.Stat(path)
+	if err != nil {
+		return TestResults{}, false
+	}
+	key := logKey{path: path, names: strings.Join(names, "\x00"), size: fi.Size(), mod: fi.ModTime().UnixNano()}
+	res, err := testCache.get(key, true, func(TestResults) int { return 1 }, func() (TestResults, error) {
+		rc, err := openCI(dir, l.Name)
+		if err != nil {
+			return TestResults{}, err
+		}
+		defer func() { _ = rc.Close() }()
+		return ParseTests(rc, names), nil
+	})
+	return res, err == nil
+}
+
+var testCache = memo[TestResults]{maxItems: 12, maxWeight: 12}

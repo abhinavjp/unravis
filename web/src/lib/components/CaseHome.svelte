@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { api, ApiError } from '../api';
-  import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing, panels } from '../appState.svelte';
+  import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing } from '../appState.svelte';
   import { pacedTimeout } from '../visibility';
   import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, closeCase, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { archiveButton, closeButton, closedEraseAt, readsCaseData, reopenButton, retryAction, retryServerName } from '../caseLifecycle';
@@ -14,6 +14,7 @@
   import { stateLabel } from '../ledger';
   import { holdLedger, ledger, refreshLedger } from '../ledgerStore.svelte';
   import { buildStory, shortText } from '../story';
+  import { caseAdded } from '../caseAdded.svelte';
   import { guidedOpenFor } from '../guided/stepModel';
   import GuidedAnalysis from './guided/GuidedAnalysis.svelte';
   import { TRACING_TEXT } from '../copy/tracingCopy';
@@ -76,6 +77,9 @@
   // The tab title names the screen: the timeline, else the case. The cleanup puts the plain app title back.
   $effect(() => { if (phase === 'ready') return setDocTitle(timelineShown ? TRACING_TEXT.heading : info?.title || caseCode(caseId)); });
   let controller: AbortController | null = null;
+  let rereadRun = 0;
+  // Set when the page goes away: a re-read that was held for a read of the page is not run for a page that is no longer there.
+  let destroyed = false;
   let loadedFor = '';
 
   // An archived case offers no analysis, files, checks or theories (spec section 9): the page shows its record and the way back.
@@ -166,7 +170,20 @@
   function archiveChanged() { archiveDrawer = null; changed = true; void tick().then(() => reloadEl?.focus()); }
 
   // quiet: the page is read again after a move on the case (archive, restore, free), so it stays on screen and does not show the loading text.
+  // An add that lands while a read of the page is on its way is not dropped and does not race it: the re-read waits for that read to end, then runs once
+  // (so the read that started last is the one that shows, whichever way round they would have finished).
+  let loadsOpen = 0;
+  let rereadWanted = '';
   async function load(id: string, quiet = false) {
+    loadsOpen += 1;
+    try { await loadPage(id, quiet); } finally {
+      loadsOpen -= 1;
+      if (loadsOpen === 0 && rereadWanted) { const wanted = rereadWanted; rereadWanted = ''; if (!destroyed && wanted === caseId) void rereadFiles(); }
+    }
+  }
+  async function loadPage(id: string, quiet: boolean) {
+    // The newest read wins: a quiet re-read that is still on its way (after an add) must not put its older answer over this one.
+    rereadRun += 1;
     controller?.abort();
     const mine = new AbortController();
     controller = mine;
@@ -189,7 +206,9 @@
     const reads = found ? readsCaseData(found) : !refused;
     holdLedger(id, !reads);
     const none = <T,>(value: T): Promise<T> => Promise.resolve(value);
-    const [files, runs, theory] = await Promise.allSettled([reads ? listImports(id, mine.signal) : none<ImportRecord[]>([]), reads ? fetchHealthRuns(id, mine.signal) : none<HealthRun[]>([]), reads ? refreshLedger() : none<void>(undefined)]);
+    // The theories read takes no signal: an aborted load stops waiting for it, so it never holds a re-read that is waiting for this load to end.
+    const aborted = new Promise<void>((resolve) => { if (mine.signal.aborted) resolve(); else mine.signal.addEventListener('abort', () => resolve(), { once: true }); });
+    const [files, runs, theory] = await Promise.allSettled([reads ? listImports(id, mine.signal) : none<ImportRecord[]>([]), reads ? fetchHealthRuns(id, mine.signal) : none<HealthRun[]>([]), reads ? Promise.race([refreshLedger(), aborted]) : none<void>(undefined)]);
     if (mine.signal.aborted || id !== caseId) return;
     if (files.status === 'rejected' && isCaseGone(files.reason)) { phase = 'gone'; return; }
     if (caseView.status === 'rejected' && isCaseGone(caseView.reason)) { phase = 'gone'; return; }
@@ -270,23 +289,28 @@
     }
   }
 
-  // Files added from the drawer show here once it closes: the list, the counts and the story are read again, without the loading screen.
-  let drawerWas: string | null = null;
+  // Whatever is added to this case (files in the Add files pop-up, or a source in Add data) shows in the story at once, without waiting for the pop-up
+  // to close: the case and its files are read again, quietly (no loading screen, no focus move). One read for each successful add, none for a failed one.
   async function rereadFiles() {
     const id = caseId;
-    if (!id || phase !== 'ready') return;
+    if (!id || phase !== 'ready' || destroyed) return;
+    const mine = ++rereadRun;
     try {
       const fresh = await getCaseView(id);
       const files = readsCaseData(fresh) ? await listImports(id) : [];
-      if (id !== caseId) return;
+      if (id !== caseId || mine !== rereadRun) return;
       info = fresh;
       imports = files;
     } catch (error) { lockedUnder(error); /* otherwise the page keeps the list it had */ }
   }
+  let seenAdd = caseAdded.seq;
   $effect(() => {
-    const now = panels.sidePanel;
-    if (drawerWas === 'import' && now === null) void rereadFiles();
-    drawerWas = now;
+    const seq = caseAdded.seq;
+    if (seq === seenAdd) return;
+    seenAdd = seq;
+    const id = caseAdded.caseId;
+    if (id !== untrack(() => caseId)) return;
+    if (loadsOpen > 0) rereadWanted = id; else void untrack(() => rereadFiles());
   });
 
   async function rereadHealth() {
@@ -405,7 +429,7 @@
     const id = caseId;
     if (id && id !== loadedFor) void load(id);
   });
-  onMount(() => () => controller?.abort());
+  onMount(() => () => { destroyed = true; controller?.abort(); });
 
   // An archive that runs while its drawer is closed (closed on purpose, or the page was reloaded) is followed here, so it never finishes unseen.
   $effect(() => {

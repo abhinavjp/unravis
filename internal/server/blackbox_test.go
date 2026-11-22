@@ -686,7 +686,11 @@ func TestBlackboxInstallOverAnEntryAddedByHand(t *testing.T) {
 func TestBlackboxThisPCActions(t *testing.T) {
 	b := newBBEnv(t, nil)
 	b.post("/api/blackbox/this-pc/install", `{"name":"web-a"}`)
-	it := b.list().Items[0]
+	items := b.list().Items
+	if len(items) == 0 {
+		t.Fatal("the install left no entry in the list")
+	}
+	it := items[0]
 
 	if res := b.post("/api/blackbox/this-pc/stop", ""); res.Code != http.StatusOK {
 		t.Fatalf("stop = %d %s", res.Code, res.Body)
