@@ -229,3 +229,86 @@ func TestPipeStatsPeerPIDLogged(t *testing.T) {
 		}
 	}
 }
+
+// shutdownReq posts (or uses method) to the shutdown route with an optional token.
+func shutdownReq(h http.Handler, role *Role, method, sentToken string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, ShutdownPath, nil)
+	if sentToken != "" {
+		r.Header.Set(tokenHeader, sentToken)
+	}
+	if role != nil {
+		r = r.WithContext(WithRole(r.Context(), *role))
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
+
+// TestShutdownRouteOnlyOnUIPipe: the ag pipe answers 404 (even with the right token), and a handler built without WithShutdown, which is
+// what loopback serves, does not have the route either; the served handler's own answer (here 200 from the echo) is not a shutdown.
+func TestShutdownRouteOnlyOnUIPipe(t *testing.T) {
+	var stops int
+	h := Handler(echoToken(), WithShutdown(tok, func() { stops++ }))
+	ag := RoleAG
+	if w := shutdownReq(h, &ag, "POST", tok); w.Code != 404 {
+		t.Fatalf("ag pipe: %d, want 404", w.Code)
+	}
+	if w := shutdownReq(h, nil, "POST", tok); w.Code != 403 {
+		t.Fatalf("no role: %d, want 403", w.Code)
+	}
+	bare := Handler(echoToken())
+	ui := RoleUI
+	if w := shutdownReq(bare, &ui, "POST", tok); w.Body.String() != "token="+tok {
+		t.Fatalf("without WithShutdown the request must reach the served handler untouched: %d %q", w.Code, w.Body.String())
+	}
+	if stops != 0 {
+		t.Fatalf("stop ran %d times without a valid ui request", stops)
+	}
+}
+
+func TestShutdownRequiresToken(t *testing.T) {
+	var stops int
+	h := Handler(echoToken(), WithShutdown(tok, func() { stops++ }))
+	ui := RoleUI
+	for name, sent := range map[string]string{"none": "", "wrong": "x" + tok[1:], "short": tok[:5], "long": tok + "0"} {
+		if w := shutdownReq(h, &ui, "POST", sent); w.Code != 401 {
+			t.Errorf("%s token: %d, want 401", name, w.Code)
+		}
+	}
+	if stops != 0 {
+		t.Fatalf("stop ran %d times without the token", stops)
+	}
+	// An empty configured token never matches, not even an empty header.
+	if w := shutdownReq(Handler(echoToken(), WithShutdown("", func() { stops++ })), &ui, "POST", ""); w.Code != 401 || stops != 0 {
+		t.Fatalf("empty configured token: %d, stops %d", w.Code, stops)
+	}
+}
+
+func TestShutdownMethodAndOrigin(t *testing.T) {
+	var stops int
+	h := Handler(echoToken(), WithShutdown(tok, func() { stops++ }))
+	ui := RoleUI
+	for _, m := range []string{"GET", "PUT", "DELETE"} {
+		if w := shutdownReq(h, &ui, m, tok); w.Code != 405 || w.Header().Get("Allow") != "POST" {
+			t.Errorf("%s: %d allow %q, want 405 POST", m, w.Code, w.Header().Get("Allow"))
+		}
+	}
+	r := httptest.NewRequest("POST", ShutdownPath, nil)
+	r.Header.Set(tokenHeader, tok)
+	r.Header.Set("Origin", "http://evil.example")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r.WithContext(WithRole(r.Context(), RoleUI)))
+	if w.Code != 403 || stops != 0 {
+		t.Fatalf("origin: %d stops %d, want 403 and no stop", w.Code, stops)
+	}
+}
+
+func TestShutdownAcceptedStopsOnce(t *testing.T) {
+	var stops int
+	h := Handler(echoToken(), WithShutdown(tok, func() { stops++ }))
+	ui := RoleUI
+	w := shutdownReq(h, &ui, "POST", tok)
+	if w.Code != 202 || strings.TrimSpace(w.Body.String()) != `{"state":"stopping"}` || stops != 1 {
+		t.Fatalf("%d %q stops %d, want 202 stopping and one stop", w.Code, w.Body.String(), stops)
+	}
+}

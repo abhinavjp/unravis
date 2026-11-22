@@ -7,6 +7,8 @@ package pipesrv
 
 import (
 	"context"
+	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -53,12 +55,62 @@ var agRoutes = map[string]bool{
 
 const tokenHeader = "X-Audit-Token" //nolint:gosec // a header name, not a credential
 
+// ShutdownPath is the shutdown RPC (BL-303). It exists only on the ui pipe: loopback and the ag pipe never serve it.
+const ShutdownPath = "/api/internal/shutdown"
+
+// Option changes what Handler serves on the ui pipe.
+type Option func(*config)
+
+type config struct {
+	token string
+	stop  func()
+}
+
+// WithShutdown turns on POST ShutdownPath on the ui pipe. A request must carry token in the session token header (the same token as
+// every other API call); stop starts the normal quit, the one --quit and Ctrl+C run, and is called after the 202 is written.
+func WithShutdown(token string, stop func()) Option {
+	return func(c *config) { c.token, c.stop = token, stop }
+}
+
+// shutdownRoute answers the shutdown RPC. The caller has already put the request on the ui role.
+func (c *config) shutdownRoute(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	got := r.Header.Get(tokenHeader)
+	if c.token == "" || len(got) != len(c.token) || subtle.ConstantTimeCompare([]byte(got), []byte(c.token)) != 1 {
+		http.Error(w, "invalid or missing session token", http.StatusUnauthorized)
+		return
+	}
+	// A browser page can never reach a pipe, but a request that claims to come from one is not the shell.
+	if r.Header.Get("Origin") != "" {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]string{"state": "stopping"})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	// The route answers before the served handler, so its request log never sees this call; leave the line here.
+	log.Print("Shutdown requested over the ui pipe")
+	c.stop()
+}
+
 // Handler wraps the dashboard handler served for the pipes.
 //
 // A request with no pipe role is refused (fail closed). The session token stays the client's to send, unchanged, on both pipes
 // (spec 01 D6): the shell and the CLI read it from the locator, so browser mode and pipe mode share one auth path and the peer check of
 // pipesec is not the only gate. The ag pipe reaches only agRoutes and agPrefixes, and only by their clean path.
-func Handler(served http.Handler) http.Handler {
+func Handler(served http.Handler, opts ...Option) http.Handler {
+	var cfg config
+	for _, o := range opts {
+		o(&cfg)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		role, ok := RoleFrom(r.Context())
 		if !ok {
@@ -67,9 +119,13 @@ func Handler(served http.Handler) http.Handler {
 		}
 		switch role {
 		case RoleUI:
+			if r.URL.Path == ShutdownPath && cfg.stop != nil {
+				cfg.shutdownRoute(w, r)
+				return
+			}
 		case RoleAG:
 			p := r.URL.Path
-			if path.Clean(p) != p || !(agRoutes[p] || hasAnyPrefix(p, agPrefixes)) {
+			if path.Clean(p) != p || (!agRoutes[p] && !hasAnyPrefix(p, agPrefixes)) {
 				http.NotFound(w, r)
 				return
 			}

@@ -347,7 +347,12 @@ func run(args []string, getenv func(string) string) error {
 	// Registered after the case store's close, so it runs first: background
 	// imports stop and roll back before the store closes.
 	defer server.CancelImports(served)
-	httpServer := newHTTPServer(served)
+	var running inflight
+	var servedHandler http.Handler = served
+	if pipeMode {
+		servedHandler = running.wrap(served)
+	}
+	httpServer := newHTTPServer(servedHandler)
 	serveDone := make(chan error, 3)
 	var stopServers stoppers
 	removeSession := func() {}
@@ -358,7 +363,7 @@ func run(args []string, getenv func(string) string) error {
 		defer removeSession()
 	}
 	if pipes != nil {
-		group := pipesrv.Serve(pipes, pipesrv.Handler(served), newHTTPServer)
+		group := pipesrv.Serve(pipes, running.wrap(pipesrv.Handler(served, pipesrv.WithShutdown(token, cancel))), newHTTPServer)
 		stopServers = append(stopServers, group)
 		go func() { serveDone <- <-group.Done() }()
 		log.Print("Serving over the ui and ag pipes")
@@ -395,7 +400,14 @@ func run(args []string, getenv func(string) string) error {
 	if logFile != nil {
 		logStart(logFile, getenv, listenerPort(listener), f.demo, launchOutcome(opened, printed))
 	}
-	err = awaitShutdown(signalContext, serveDone, removeSession, stopServers)
+	drain := shutdownTimeout
+	if pipeMode {
+		drain = pipeShutdownTimeout
+	}
+	err = awaitShutdownWithin(signalContext, drain, serveDone, removeSession, stopServers)
+	if pipeMode {
+		err = settlePipeShutdown(err, &running, pipeHandlerWait)
+	}
 	endHealth(err)
 	return err
 }
@@ -589,6 +601,11 @@ func logStart(logFile *applog.File, getenv func(string) string, port int, demo b
 
 // awaitShutdown blocks until the server stops by itself or a quit signal arrives, then shuts it down cleanly.
 func awaitShutdown(signalContext context.Context, serveDone <-chan error, removeSession func(), httpServer shutdowner) error {
+	return awaitShutdownWithin(signalContext, shutdownTimeout, serveDone, removeSession, httpServer)
+}
+
+// awaitShutdownWithin is awaitShutdown with the drain time of the http servers given.
+func awaitShutdownWithin(signalContext context.Context, drain time.Duration, serveDone <-chan error, removeSession func(), httpServer shutdowner) error {
 	select {
 	case err := <-serveDone:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -598,7 +615,7 @@ func awaitShutdown(signalContext context.Context, serveDone <-chan error, remove
 		_ = httpServer.Close()
 		return err
 	case <-signalContext.Done():
-		if err := shutdownOnSignal(removeSession, httpServer); err != nil {
+		if err := shutdownOnSignalWithin(drain, removeSession, httpServer); err != nil {
 			return err
 		}
 		if err := <-serveDone; err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -677,6 +694,10 @@ func startupLines(localURL, code string, life time.Duration, demo, opened bool) 
 // after its window is closed (CTRL_CLOSE_EVENT, delivered as SIGTERM).
 const shutdownTimeout = 4 * time.Second
 
+// pipeShutdownTimeout is the drain time in pipe mode. The desktop shell waits 5 s for a shutdown RPC (spec 01 BL-303); 2 s here leaves
+// the rest for the deferred import stop, the case checkpoint and close, and the process exit.
+const pipeShutdownTimeout = 2 * time.Second
+
 type shutdowner interface {
 	Shutdown(context.Context) error
 	Close() error
@@ -686,12 +707,17 @@ type shutdowner interface {
 // it drains requests never leaves a file pointing at a port it no longer
 // holds, then shuts the server down within shutdownTimeout.
 func shutdownOnSignal(removeSession func(), server shutdowner) error {
+	return shutdownOnSignalWithin(shutdownTimeout, removeSession, server)
+}
+
+// shutdownOnSignalWithin is shutdownOnSignal with the drain time given.
+func shutdownOnSignalWithin(drain time.Duration, removeSession func(), server shutdowner) error {
 	removeSession()
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), drain)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		_ = server.Close()
-		return fmt.Errorf("server shutdown did not finish cleanly")
+		return errDrainTimeout
 	}
 	return nil
 }
