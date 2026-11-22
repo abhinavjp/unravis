@@ -38,8 +38,8 @@ var (
 	// "[ \t\r\f\v]" and not \s: the PowerShell twin must agree, and .NET counts more characters as \s than Go does. A "*" is a value GitHub masked.
 	keyBodyR = regexp.MustCompile(`^[ \t\r\f\v]*$|^[ \t\r\f\v]*[A-Za-z0-9+/=_*-]+[ \t\r\f\v]*$|^[ \t\r\f\v]*[A-Za-z][A-Za-z0-9-]{0,30}:[ \t\r\f\v].*$`)
 	// What a tool puts in front of each line it echoes: BuildKit "#7 0.512 ", nl or cat -n "  12<TAB>", "> ", "+ ". A key printed that way stays hidden.
-	keyPfxR = regexp.MustCompile(`^(?:#\d+[ \t]+[\d.]+[ \t]+|[ \t]*\d+\t|[>+][ \t]?)`)
-	keyRunR = regexp.MustCompile(`[A-Za-z0-9+/=]{40,}`) // a long base64 run is key text wherever it sits on the line
+	keyPfxR   = regexp.MustCompile(`^(?:#\d+[ \t]+[\d.]+[ \t]+|[ \t]*\d+\t|[>+][ \t]?)`)
+	keyRunR   = regexp.MustCompile(`[A-Za-z0-9+/=]{40,}`) // a long base64 run is key text wherever it sits on the line
 	stampPfx  = regexp.MustCompile(`^\d{4}-\d\d-\d\dT[\d:.]+Z ?`)
 	keyFileRE = regexp.MustCompile(`(?i)[\w.-]+\.(?:key|pem|pfx|p12|ppk)\b`)
 	userDirRE = regexp.MustCompile(`(?i)([A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s"']+`)
