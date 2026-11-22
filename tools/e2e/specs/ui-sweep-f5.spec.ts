@@ -106,3 +106,20 @@ test('SWEEP-F5-02b: the Ledger remove question focuses Keep, lists it first, and
   await expect(ask).toHaveCount(0);
   await expect(drawer.getByRole('button', { name: /^Delete/ }).first()).toBeFocused();
 });
+
+test('SWEEP-F5-targets: the case home jump links, Erase this case and the Help links are at least 24 px tall', async ({ page }) => {
+  await openCaseHome(page);
+  const jump = page.getByRole('navigation', { name: /Jump to/ }).getByRole('button');
+  const count = await jump.count();
+  expect(count).toBeGreaterThan(3);
+  for (let i = 0; i < count; i++) {
+    const box = await jump.nth(i).boundingBox();
+    expect(box?.height ?? 0, 'jump link ' + i).toBeGreaterThanOrEqual(24);
+  }
+  const erase = page.getByRole('button', { name: 'Erase this case' }).first();
+  if (await erase.count()) expect((await erase.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(24);
+  await page.getByRole('button', { name: 'Glossary', exact: true }).first().click();
+  for (const id of ['jump-updates', 'jump-logs']) {
+    expect((await page.getByTestId(id).boundingBox())?.height ?? 0, id).toBeGreaterThanOrEqual(24);
+  }
+});

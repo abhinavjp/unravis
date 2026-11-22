@@ -194,7 +194,7 @@
   .update-button { border: 1px solid var(--control-line); background: transparent; color: var(--text); padding: 6px 12px; border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
   .guide-open { margin-top: 10px; }
   .help-jumps { margin: 10px 0 0; }
-  .link-button { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+  .link-button { display: inline-flex; align-items: center; min-height: 24px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
   .link-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .support-logs h3:focus-visible, .updates h3:focus-visible { outline-offset: 3px; border-radius: var(--radius-sm); }
   .guide-top { margin: 13px 0 12px; }

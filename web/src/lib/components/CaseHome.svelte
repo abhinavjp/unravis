@@ -681,7 +681,7 @@
   .after-actions { margin-top: 8px; max-width: 640px; }
   .case-file-line code { overflow-wrap: anywhere; }
   .forgot-key { margin: 0; }
-  .link-button { padding: 0; color: var(--accent); background: transparent; border: 0; font: inherit; text-decoration: underline; cursor: pointer; }
+  .link-button { display: inline-flex; align-items: center; min-height: 24px; padding: 0; color: var(--accent); background: transparent; border: 0; font: inherit; text-decoration: underline; cursor: pointer; }
   .link-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .jump-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 12px 0 0; font-size: 13px; }
   .jump-row span { color: var(--text-2); }
