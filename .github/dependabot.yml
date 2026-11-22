@@ -9,9 +9,6 @@ updates:
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps:" }
-    # go-sqlite3 0.37.0 breaks TestBucketCountsReadOneSnapshot (a writer between chunks changes the answer): bump it by hand
-    # after that is understood, not through the group.
-    ignore: [{ dependency-name: "github.com/ncruces/go-sqlite3" }]
     groups: { gomod: { patterns: ["*"] } }
   - package-ecosystem: npm
     directory: /web
