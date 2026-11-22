@@ -142,7 +142,7 @@ func ReadLocal(dir string) Local {
 		if b, err := readSmall(sp, 64<<10); err == nil {
 			var r Run
 			if json.Unmarshal(b, &r) == nil && r.Version != "" {
-				r.Reason, r.Stage, r.Status = clip(r.Reason), clip(r.Stage), clip(r.Status)
+				r.Stage, r.Status = clip(r.Stage), clip(r.Status) // r.Reason is cleaned by hideSecrets: it must be redacted before it is cut
 				l.Run = &r
 			}
 		}
@@ -209,27 +209,38 @@ func readAudit(path string) ([]Event, []string) {
 				names = append(names, n)
 			}
 		}
-		out = append(out, Event{At: str(m, "ts"), Name: clip(str(m, "event")), Version: clip(v), Stage: clip(str(m, "stage")), Reason: clip(str(m, "reason")), Run: digits(str(m, "run")), From: clip(str(m, "from")),
+		out = append(out, Event{At: str(m, "ts"), Name: clip(str(m, "event")), Version: clip(v), Stage: clip(str(m, "stage")), Reason: str(m, "reason"), Run: digits(str(m, "run")), From: clip(str(m, "from")),
 			Commit: hexOnly(str(m, "commit"), 7, 40), KeyPub: hexOnly(str(m, "key_pub"), 64), Manifest: hexOnly(str(m, "manifest_sha256"), 64)})
 	}
 	return out, names
 }
 
-// hideSecrets runs every free-text field read from state.json and audit.jsonl through the Redactor (with the machine and user names
-// found in the audit). The release script writes a stop reason as it got it, and that can be the output of a failed command, so a
-// token or passphrase printed by a tool must not reach the page by this road (the run log is redacted when it is read; these fields were not).
+// hideSecrets cleans the two free text fields read from state.json and audit.jsonl: the reason a run stopped. The release script writes
+// it as it got it, and that can be the output of a failed command, so a token or passphrase printed by a tool must not reach the page
+// by this road (a run log is redacted when it is read; these fields were not). Only the reason is touched: the event name, stage and
+// "from" are fixed words the program matches on, and a user or machine name equal to one of them must not change them. The text is
+// redacted first and cut second, so a secret that straddles the length limit is not left half showing.
 func (l *Local) hideSecrets() {
-	hide := func(s string) string {
-		if s == "" {
-			return s
-		}
-		return NewRedactor(l.Names...).Line(s)
-	}
 	if l.Run != nil {
-		l.Run.Reason, l.Run.Stage = hide(l.Run.Reason), hide(l.Run.Stage)
+		l.Run.Reason = clip(redactText(l.Run.Reason, l.Names))
 	}
 	for i := range l.Events {
-		e := &l.Events[i]
-		e.Name, e.Stage, e.Reason, e.From = hide(e.Name), hide(e.Stage), hide(e.Reason), hide(e.From)
+		l.Events[i].Reason = clip(redactText(l.Events[i].Reason, l.Names))
 	}
+}
+
+// redactText redacts a text that can run over several lines: each line goes through one Redactor (so a key block that spans lines is
+// hidden whole, and a hidden line hides only itself), empty lines are dropped and the rest is joined with a space.
+func redactText(s string, names []string) string {
+	if s == "" {
+		return ""
+	}
+	r := NewRedactor(names...)
+	var parts []string
+	for _, ln := range strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n") {
+		if t := strings.TrimSpace(r.Line(ln)); t != "" {
+			parts = append(parts, t)
+		}
+	}
+	return strings.Join(parts, " ")
 }

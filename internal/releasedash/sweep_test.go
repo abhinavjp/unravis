@@ -1,11 +1,14 @@
 package releasedash
 
 import (
+	"bytes"
 	"compress/gzip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -23,7 +26,7 @@ func TestReadLocalHidesSecretsInReasons(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte(st), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	au := `{"ts":"2026-11-22T10:00:00Z","event":"stopped","version":"9.9.9-rc.1","stage":"Sign","user":"bobsmith","machine":"BUILDBOX-7","from":"` + fakeToken + `","reason":"sign failed on BUILDBOX-7: SIGN_PASS=` + fakePass + ` ` + fakeToken + `"}` + "\n"
+	au := `{"ts":"2026-11-22T10:00:00Z","event":"stopped","version":"9.9.9-rc.1","stage":"Sign","user":"bobsmith","machine":"BUILDBOX-7","reason":"sign failed on BUILDBOX-7: SIGN_PASS=` + fakePass + ` ` + fakeToken + `"}` + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "audit.jsonl"), []byte(au), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -31,16 +34,62 @@ func TestReadLocalHidesSecretsInReasons(t *testing.T) {
 	if l.Run == nil || len(l.Events) != 1 {
 		t.Fatalf("run=%v events=%d", l.Run, len(l.Events))
 	}
-	all := []string{l.Run.Reason, l.Run.Stage, l.Events[0].Reason, l.Events[0].From, l.Events[0].Name, l.Events[0].Stage}
-	for _, s := range all {
+	for _, s := range []string{l.Run.Reason, l.Events[0].Reason} {
 		for _, bad := range []string{fakeToken, fakePass, "bobsmith", "BUILDBOX-7"} {
 			if strings.Contains(s, bad) {
-				t.Errorf("a field still holds a hidden value (%d chars): %q", len(bad), s)
+				t.Errorf("a reason still holds a hidden value (%d chars): %q", len(bad), s)
 			}
 		}
 	}
 	if !strings.Contains(l.Run.Reason, "sign failed") {
 		t.Errorf("the readable part was lost: %q", l.Run.Reason)
+	}
+}
+
+// The event name, stage and "from" are fixed words the program matches on: a user or machine called like one of them must not change them.
+func TestReadLocalKeepsEventWordsWhenANameIsTheSame(t *testing.T) {
+	dir := t.TempDir()
+	au := `{"ts":"2026-11-22T10:00:00Z","event":"tagged","version":"9.9.9-rc.1","stage":"Tag","from":"Sign","user":"sign","machine":"tagged"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "audit.jsonl"), []byte(au), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l := ReadLocal(dir)
+	if len(l.Events) != 1 || l.Events[0].Name != "tagged" || l.Events[0].Stage != "Tag" || l.Events[0].From != "Sign" {
+		t.Fatalf("%+v", l.Events)
+	}
+}
+
+// A reason of several lines (what Run throws: the command output) keeps its lines apart, and one hidden line hides only itself.
+func TestReasonTextWithSeveralLines(t *testing.T) {
+	in := "git fetch failed: fatal: unable to reach host\r\nremote: Support for password authentication was removed.\nAuthorization: token " + fakePass + "\nhint: run gh auth refresh\n" +
+		"-----BEGIN CERTIFICATE-----\nMIIBkTCB+wIJAKHBfpegPjMCMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBnVu\n-----END CERTIFICATE-----\nthe real cause is here"
+	got := redactText(in, nil)
+	for _, want := range []string{"fatal: unable to reach host remote:", "gh auth refresh", "the real cause is here"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lost %q in %q", want, got)
+		}
+	}
+	for _, bad := range []string{fakePass, "MIIBkTCB"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("still holds a hidden value in %q", got)
+		}
+	}
+}
+
+// A secret that sits over the 300 character limit must be hidden before the text is cut, not cut into a readable half.
+func TestReasonSecretOverTheLengthLimitIsNotLeftHalfShowing(t *testing.T) {
+	dir := t.TempDir()
+	reason := strings.Repeat("x", maxReason-15) + " " + fakeToken
+	au := `{"ts":"2026-11-22T10:00:00Z","event":"stopped","version":"9.9.9-rc.1","reason":"` + reason + `"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "audit.jsonl"), []byte(au), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l := ReadLocal(dir)
+	if len(l.Events) != 1 {
+		t.Fatalf("%d events", len(l.Events))
+	}
+	if strings.Contains(l.Events[0].Reason, "ghp_") {
+		t.Errorf("part of the token shows: %q", l.Events[0].Reason[len(l.Events[0].Reason)-30:])
 	}
 }
 
@@ -74,27 +123,37 @@ func TestParseTestsHidesSecretsInGoNames(t *testing.T) {
 	}
 }
 
-// REL-4: shapes the Redactor missed.
+// REL-4: shapes the Redactor missed, and ordinary lines it must leave alone.
 func TestRedactorMoreSecretShapes(t *testing.T) {
 	r := func() *Redactor { return NewRedactor() }
 	for in, bad := range map[string]string{
-		"sigtool sign --passphrase " + fakePass + " manifest.json":  fakePass,
+		"sigtool sign --passphrase " + fakePass + " manifest.json": fakePass,
+		"--token " + fakePass + " at the start of a line":          fakePass,
+		"tool --pin=4321 run":                                       "4321",
 		"set SIGN_PASS=" + fakePass:                                 fakePass,
 		"UNRAVIS_RELEASE_NONCE=" + fakePass:                         fakePass,
 		"PROTON_PASS_PIN=4321":                                      "4321",
-		`{"seed":"` + fakePass + `"}`:                               fakePass,
+		`{"key_seed":"` + fakePass + `"}`:                           fakePass,
 		"curl -u bob:" + fakePass + " https://x.example":            fakePass,
+		"curl --user bob:" + fakePass + " https://x.example":        fakePass,
 		"git clone https://bob:" + fakePass + "@host.example/r.git": fakePass,
 	} {
 		if got := r().Line(in); strings.Contains(got, bad) {
 			t.Errorf("%q -> %q still holds the value", in, got)
 		}
 	}
-	// Ordinary lines stay readable.
 	for _, ok := range []string{
 		"git clone https://github.com/abhinavjp/unravis.git",
 		"shipping: 3 files, mapping ok, ping 12ms",
 		"go test -count=1 ./...",
+		"go get -u ./...",
+		"git add -u .",
+		"sort -u names.txt",
+		"python -u build.py",
+		"--- FAIL: TestPassword/seed=42 (0.00s)",
+		"jest Seed: 1234567 (use --seed to repeat)",
+		"TESTS_PASS: 120 of 120",
+		"pytest --passes 3 suite",
 		"manifest sha256 " + strings.Repeat("ab", 32),
 	} {
 		if got := r().Line(ok); got != ok {
@@ -112,16 +171,7 @@ func TestReadLogIsCachedWhileFileIsUnchanged(t *testing.T) {
 	}
 	name := "ci-v9.9.9-rc.1-ci-123.log.gz"
 	path := filepath.Join(ld, name)
-	write := func(body string) {
-		f, err := os.Create(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		gz := gzip.NewWriter(f)
-		_, _ = gz.Write([]byte(body))
-		_ = gz.Close()
-		_ = f.Close()
-	}
+	write := func(body string) { writeGz(t, path, body) }
 	write("job\tstep\tone\njob\tstep\ttwo\n")
 	a, _, err := ReadLog(dir, name, nil)
 	if err != nil || len(a) != 2 {
@@ -155,4 +205,113 @@ func TestReadLogIsCachedWhileFileIsUnchanged(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func writeGz(t *testing.T, path, body string) {
+	t.Helper()
+	var b bytes.Buffer
+	gz := gzip.NewWriter(&b)
+	_, _ = gz.Write([]byte(body))
+	_ = gz.Close()
+	if err := os.WriteFile(path, b.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Least recently used: a log that keeps being asked for stays, even when many others are read in between.
+func TestReadLogCacheKeepsTheLogThatIsUsed(t *testing.T) {
+	dir := t.TempDir()
+	ld := filepath.Join(dir, logsDir)
+	if err := os.MkdirAll(ld, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	main := "ci-v9.9.9-rc.1-ci-1.log.gz"
+	writeGz(t, filepath.Join(ld, main), "job\tstep\tone\n")
+	first, _, _ := ReadLog(dir, main, nil)
+	for i := 0; i < logCache.maxItems+5; i++ { // more logs than the cache holds
+		name := "ci-v9.9.9-rc.1-ci-" + strconv.Itoa(100+i) + ".log.gz"
+		writeGz(t, filepath.Join(ld, name), "job\tstep\tx\n")
+		_, _, _ = ReadLog(dir, name, nil)
+		if again, _, _ := ReadLog(dir, main, nil); &again[0] != &first[0] { // the page keeps asking for its log
+			t.Fatalf("the log in use was dropped after %d other logs", i+1)
+		}
+	}
+}
+
+// A slow read must not hold up a quick one, and two callers for the same key share one read.
+func TestMemoSlowLoadDoesNotBlockOthersAndSameKeyIsShared(t *testing.T) {
+	var m memo[int]
+	weigh := func(int) int { return 1 }
+	m.maxItems, m.maxWeight = 10, 10
+	slow := logKey{path: "slow"}
+	release := make(chan struct{})
+	started := make(chan struct{})
+	var loads int32
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ { // two callers for the slow key
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			v, err := m.get(slow, weigh, func() (int, error) {
+				atomic.AddInt32(&loads, 1)
+				close(started)
+				<-release
+				return 7, nil
+			})
+			if err != nil || v != 7 {
+				t.Errorf("slow key: %v %v", v, err)
+			}
+		}()
+	}
+	<-started
+	done := make(chan int)
+	go func() { // another key while the slow one is still being made
+		v, _ := m.get(logKey{path: "quick"}, weigh, func() (int, error) { return 1, nil })
+		done <- v
+	}()
+	select {
+	case v := <-done:
+		if v != 1 {
+			t.Errorf("quick key = %d", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a quick read waited for the slow one")
+	}
+	close(release)
+	wg.Wait()
+	if n := atomic.LoadInt32(&loads); n != 1 {
+		t.Errorf("the slow key was made %d times, want 1", n)
+	}
+}
+
+// The dashboard polls /api/release every 5 s. With a big run log the second poll (file unchanged) must come from the kept lines: the
+// first poll reads and redacts the log, the next ones do not (measured before the fix: about 3.5 s of work per poll on 20 000 lines).
+func TestReleasePollsReuseTheReadLog(t *testing.T) {
+	d := newDash(t)
+	ld := filepath.Join(d.DataDir, "logs")
+	var sb strings.Builder
+	sb.WriteString("2026-11-21T09:59:00Z Pinned commit 0123456\n2026-11-21T10:00:01Z [1/7] Preflight\n")
+	for i := 0; i < 30000; i++ {
+		sb.WriteString("2026-11-21T10:00:30Z Preflight line " + strconv.Itoa(i) + " token=abc passphrase: not-a-secret path C:\\Users\\bob\\x\n")
+	}
+	if err := os.WriteFile(filepath.Join(ld, "run-20261121T095900Z.log"), []byte(sb.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	t0 := time.Now()
+	if _, err := d.Release("0.1.0-rc.55", now); err != nil {
+		t.Fatal(err)
+	}
+	first := time.Since(t0)
+	t0 = time.Now()
+	for i := 0; i < 5; i++ {
+		if _, err := d.Release("0.1.0-rc.55", now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	five := time.Since(t0)
+	t.Logf("first poll %v, five more %v", first, five)
+	if first > 300*time.Millisecond && five > first {
+		t.Errorf("five more polls took %v, more than the first one (%v): the log is read again", five, first)
+	}
 }

@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -99,51 +98,31 @@ type LogLine struct {
 //
 // The answer is kept for the next call while the file is unchanged (same size and time), because the page asks for a long log one
 // page at a time and every page used to unpack, redact and index the whole log again (a 64 MiB CI log took 22 s and 1.4 GB each time).
-// The returned lines are shared: callers must not change them.
+// See memo for how it is kept. The returned lines are shared: callers must not change them.
 func ReadLog(dir, name string, names []string) (lines []LogLine, cut bool, err error) {
 	if !validLogName(name) {
 		return nil, false, os.ErrNotExist
 	}
 	path := filepath.Join(dir, logsDir, name)
-	fi, err := os.Stat(path)
+	fi, err := os.Stat(path) //nolint:gosec // the name passed validLogName above; the folder is the release data folder
 	if err != nil {
 		return nil, false, err
 	}
 	key := logKey{path: path, names: strings.Join(names, "\x00"), size: fi.Size(), mod: fi.ModTime().UnixNano()}
-	logCache.mu.Lock() // one reader at a time: concurrent misses would each hold a whole log
-	defer logCache.mu.Unlock()
-	for _, e := range logCache.items {
-		if e.key == key {
-			return e.lines, e.cut, nil
-		}
-	}
-	lines, cut, err = readLogFile(path, name, names)
-	if err == nil {
-		logCache.items = append(logCache.items, logEntry{key, lines, cut})
-		if len(logCache.items) > logCacheEntries {
-			logCache.items = logCache.items[1:]
-		}
-	}
-	return lines, cut, err
+	r, err := logCache.get(key, func(r readLogResult) int { return len(r.lines) + 1 }, func() (readLogResult, error) {
+		l, c, e := readLogFile(path, name, names)
+		return readLogResult{l, c}, e
+	})
+	return r.lines, r.cut, err
 }
 
-const logCacheEntries = 3
-
-type logKey struct {
-	path, names string
-	size, mod   int64
-}
-
-type logEntry struct {
-	key   logKey
+type readLogResult struct {
 	lines []LogLine
 	cut   bool
 }
 
-var logCache struct {
-	mu    sync.Mutex
-	items []logEntry
-}
+// 24 logs and 600 000 lines: about one full CI log plus the run logs of a release, which the detail page reads on every poll.
+var logCache = memo[readLogResult]{maxItems: 24, maxWeight: 600000}
 
 func readLogFile(path, name string, names []string) (lines []LogLine, cut bool, err error) {
 	f, err := openShared(path)

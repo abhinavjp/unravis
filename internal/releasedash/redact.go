@@ -30,11 +30,14 @@ var (
 	ansiRE   = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07`)
 	tokenRE  = regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})`)
 	bearerRE = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}`)
-	pairRE   = regexp.MustCompile(`(?i)([\w-]*(?:pass(?:word|phrase)|_pass|_pin|nonce|seed|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|.+)`)
-	// A secret that follows a flag with a space and no colon or equals sign ("--passphrase <value>"), and user:password in a URL or after "-u".
-	flagRE     = regexp.MustCompile(`(?i)(\s--?(?:pass\w*|pwd|token|secret|nonce|pin)\s+)\S+`)
-	urlCredRE  = regexp.MustCompile(`(://)[^\s/:@]+:[^\s/@]+@`)
-	userFlagRE = regexp.MustCompile(`(\s-u\s+)\S+`)
+	pairRE   = regexp.MustCompile(`(?i)([\w-]*(?:pass(?:word|phrase)|nonce|seed[-_ ]?phrase|key[-_ ]?seed|_seed|mnemonic|pwd|secret|token|api[-_ ]?key|authorization|credential|private[-_ ]?key))(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|.+)`)
+	// More secret shapes. Spaces and tabs are written out ("[ \t]") and not \s, and letters as [A-Za-z], so the PowerShell twin agrees
+	// (.NET counts more characters as \s and \w than Go does). A flag with its value after a space or "=" ("--passphrase <v>"); an
+	// environment style name ending in _PASS or _PIN ("SIGN_PASS=<v>"); user:password in a URL or after curl's -u or --user.
+	flagRE     = regexp.MustCompile(`(?i)((?:^|[ \t])--?(?:pass(?:word|phrase|wd)?|pwd|token|secret|nonce|pin)(?:[ \t]+|=))[^ \t\r\n\f\v]+`)
+	envPassRE  = regexp.MustCompile(`(?i)([A-Za-z0-9_]*_(?:pass|pin)[ \t]*=[ \t]*)[^ \t\r\n\f\v]+`)
+	urlCredRE  = regexp.MustCompile(`(://)[^ \t\r\n\f\v/:@]+:[^ \t\r\n\f\v/@]+@`)
+	userFlagRE = regexp.MustCompile(`((?:^|[ \t])--?(?:u|user)[ \t]+)[^ \t\r\n\f\v:]+:[^ \t\r\n\f\v]+`)
 	keyBeginR  = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
 	keyEndR    = regexp.MustCompile(`-----END [A-Z0-9 ]*(?:PRIVATE KEY|SECRET KEY|CERTIFICATE)[A-Z ]*-----`)
 	// A line that can still belong to a key block: nothing, base64, or a header such as "Proc-Type: 4,ENCRYPTED". After the CI prefix
@@ -103,6 +106,7 @@ func (r *Redactor) Line(s string) string {
 	s = bearerRE.ReplaceAllString(s, "$1 <hidden>")
 	s = pairRE.ReplaceAllString(s, "$1$2<hidden>")
 	s = flagRE.ReplaceAllString(s, "$1<hidden>")
+	s = envPassRE.ReplaceAllString(s, "$1<hidden>")
 	s = urlCredRE.ReplaceAllString(s, "${1}<hidden>@")
 	s = userFlagRE.ReplaceAllString(s, "$1<hidden>")
 	s = keyFileRE.ReplaceAllString(s, "<key file>")
