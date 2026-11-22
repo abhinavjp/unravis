@@ -1,6 +1,6 @@
 # Release train: develop, a fast gate per pull request, full CI once per version
 
-Status: built, dormant until `develop` exists (see "Cutover"). Backlog: BL-462. Companion of the CI speed-up (BL-461).
+Status: live since 2026-11-22. `develop` exists and is the default branch (new pull requests open against it), its protection is set (required `fast-build`, strict off, merge commits allowed; conversation resolution not required). Backlog: BL-462. Companion of the CI speed-up (BL-461).
 
 ## The idea in four lines
 
@@ -55,12 +55,12 @@ Only one promotion at a time: it is a merge to `master`, so the same release-loc
 - A failing `develop` push run is everyone's priority: fix forward or revert before more merges pile on.
 - `docs/BACKLOG.md` items are ticked when the change reaches `master` and is verified on the real data path, not at the merge into `develop`.
 
-## Cutover (needs nachi's go; I create nothing until then)
+## Cutover (all steps done 2026-11-22 except the measured seconds, step 6)
 
 1. Merge the pull request that adds this train. It is dormant: `fast-gate.yml` triggers only on `develop`, and the `ci.yml` triggers still cover `master`.
 2. Create `develop` from `master` (one command, or the GitHub branch dialog).
 3. **Branch protection (nachi, in GitHub: Settings > Branches > Add branch ruleset, or classic rule), for `develop`:** require a pull request before merging; require status check `fast-build` (the Fast gate job; app GitHub Actions); require conversation resolution; block force pushes and deletion; **do not** require branches to be up to date (strict off), so merged pull requests do not each wait for a rebase; allow squash merge and merge commits (merge commits are for the master-into-develop sync and for promotion). Keep `master`'s rule exactly as it is (required `build`, strict, pull request required). The two gates have different names on purpose: `fast-build` on `develop`, `build` (the full `ci.yml`) on `master`. Also turn on **Allow merge commits** in Settings > General (promotion needs it), and set `develop` as the default branch only if you want new pull requests to open against it (optional).
-4. Retarget open pull requests: `gh pr edit <n> --base develop` (the sweep thread does it).
+4. Retarget open pull requests: `gh pr edit <n> --base develop`, then close and reopen each one (a retarget alone does not start the fast gate). Done for all open pull requests.
 5. A small pull request updates `CLAUDE.md` (rule line) and `dependabot.yml` (`target-branch: develop`).
 6. First real pull request into `develop`: measure the fast gate and write the seconds into the table above; tick BL-462.
 
@@ -69,3 +69,9 @@ Only one promotion at a time: it is a merge to `master`, so the same release-loc
 Stop using `develop`: set pull requests back to `master` (`gh pr edit --base master`). Changing the base does not start `ci.yml` by itself (a retarget is an `edited` event, which `ci.yml` does not listen to): push a commit to each retargeted pull request, or close and reopen it, so the full `build` runs and master's required check can pass. The `ci.yml` triggers still cover `master` pull requests, so nothing else to undo. Delete `develop` when empty.
 
 A promotion pull request must be merged with a merge commit (`Promote-Develop.ps1` does). Nothing stops a person from squashing it on the GitHub button: master would then hold the changes without develop's commits, and the next promotion would conflict. Do not squash a `promote/*` pull request.
+
+## develop is the default branch
+
+- Pull requests open against `develop` without `--base`. Scheduled workflows (`mirror-feed.yml`, `ui-audit.yml`) and a manual "Run workflow" use the workflow file on `develop`, not on `master`.
+- Releases are unaffected: `Release.ps1` names `master` explicitly (`-Branch master`, `origin/master`), `Promote-Develop.ps1` names `--base master` and `develop` explicitly, `release.yml` runs on the pushed tag, and the lock lives on its own branch `release-lock`.
+- Closing keywords ("Closes #123") act when a pull request merges into the default branch, so they fire at the merge into `develop`.
