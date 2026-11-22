@@ -148,3 +148,74 @@ func TestSettingsHandleProblemNamesTheCause(t *testing.T) {
 		}
 	}
 }
+
+// The by-path fallback is allowed for exactly two words (BL-140 PR 7, temporary until probe P1 passes); every other word, including
+// sharing and any word not in the list, stops the start. The list is the one allWords, so a new word is covered without editing this test.
+func TestFallbackAllowedOnlyForAccessAndUnreadable(t *testing.T) {
+	for _, w := range Words() {
+		want := w == WordAccess || w == WordUnreadable
+		if FallbackAllowed(w) != want {
+			t.Errorf("FallbackAllowed(%q) = %v, want %v", w, !want, want)
+		}
+		if got := FallbackAllowedFor(NewSettingsRefusal(w, errors.New("x"))); got != want {
+			t.Errorf("FallbackAllowedFor(%q) = %v, want %v", w, got, want)
+		}
+	}
+	for _, w := range []string{"", "anything else", `C:\secret`} {
+		if FallbackAllowed(w) || FallbackAllowedFor(NewSettingsRefusal(w, errors.New("x"))) {
+			t.Errorf("an unknown word %q must not allow the fallback", w)
+		}
+	}
+	if FallbackAllowedFor(nil) || FallbackAllowedFor(errors.New("untagged")) || FallbackAllowedFor(&SettingsRefusal{Word: WordAccess}) {
+		t.Error("nil, untagged and hand-built refusals must stop the start")
+	}
+}
+
+// ParseVerifiedSettings keeps the decision taken from the reader's own error: an untagged or unknown error is logged as unreadable but
+// must not fall back, while a real access refusal still can.
+func TestParseVerifiedSettingsFallbackDecisionIgnoresTheClampedWord(t *testing.T) {
+	for name, c := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"access":   {NewSettingsRefusal(WordAccess, errors.New("x")), true},
+		"sharing":  {NewSettingsRefusal(WordSharing, errors.New("x")), false},
+		"untagged": {errors.New("x"), false},
+		"unknown":  {NewSettingsRefusal("new-word", errors.New("x")), false},
+	} {
+		_, err := ParseVerifiedSettings(func(string) ([]byte, error) { return nil, c.err }, "p", nil)
+		if FallbackAllowedFor(err) != c.want {
+			t.Errorf("%s: FallbackAllowedFor = %v, want %v", name, !c.want, c.want)
+		}
+	}
+	if _, err := ParseVerifiedSettings(nil, "p", nil); FallbackAllowedFor(err) {
+		t.Error("a nil reader must not fall back")
+	}
+}
+
+// The refusal ParseVerifiedSettings returns wraps ErrSettingsNotProven, carries the fixed word, and leaks neither the cause nor free text.
+func TestParseVerifiedSettingsRefusalCarriesOnlyTheFixedWord(t *testing.T) {
+	cause := `CreateFile C:\secret\blackbox.json: Access is denied`
+	for _, c := range []struct {
+		err  error
+		word string
+	}{
+		{NewSettingsRefusal(WordOwner, errors.New(cause)), WordOwner},
+		{NewSettingsRefusal(`C:\secret free text`, errors.New(cause)), WordUnreadable},
+		{errors.New(cause), WordUnreadable},
+	} {
+		_, err := ParseVerifiedSettings(func(string) ([]byte, error) { return nil, c.err }, `C:\x\blackbox.json`, nil)
+		if !errors.Is(err, ErrSettingsNotProven) || RefusalWord(err) != c.word {
+			t.Fatalf("err=%v word=%q, want ErrSettingsNotProven and word %q", err, RefusalWord(err), c.word)
+		}
+		if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "denied") {
+			t.Fatalf("the refusal leaks: %q", err.Error())
+		}
+	}
+	if _, err := ParseVerifiedSettings(nil, "p", nil); RefusalWord(err) != WordNoReader {
+		t.Fatalf("a nil reader gave word %q, want %q", RefusalWord(err), WordNoReader)
+	}
+	if got := (&SettingsRefusal{Word: WordList}).Error(); !strings.Contains(got, WordList) {
+		t.Fatalf("a refusal with no cause printed %q", got)
+	}
+}

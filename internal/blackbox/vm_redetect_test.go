@@ -3,6 +3,7 @@ package blackbox
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -179,7 +180,7 @@ func TestVMGroupRedetectOtherErrorIsMissingThenRetries(t *testing.T) {
 	if s := tickVM(t, g, soon); *calls != 2 || !missingHas(s, "vm") {
 		t.Fatalf("calls=%d Missing=%v, want backoff respected and vm named", *calls, s.Missing)
 	}
-	if s := tickVM(t, g, soon.Add(groupRetryDelay(2)+time.Second)); *calls != 3 || s.VM == nil {
+	if s := tickVM(t, g, soon.Add(vmReopenDelay(1)+time.Second)); *calls != 3 || s.VM == nil {
 		t.Fatalf("calls=%d VM=%+v, want the retry to recover", *calls, s.VM)
 	}
 }
@@ -197,5 +198,139 @@ func TestVMGroupSharedSourceIsNeverRedetected(t *testing.T) {
 	}
 	if *calls != 0 || src.closed || g.Dormant() {
 		t.Fatalf("calls=%d closed=%v dormant=%v; a shared source must be left alone", *calls, src.closed, g.Dormant())
+	}
+}
+
+// S2: a counter that exists but never gives a reading must not reopen its query
+// once a minute forever. The gaps between reopens grow to the retry ceiling, and
+// the group stays visible in Missing the whole time.
+func TestVMGroupReopenBacksOffWhenTheCounterKeepsFailing(t *testing.T) {
+	var times []time.Time
+	var now time.Time
+	seamSources(t, func(int) (CounterSource, error) {
+		times = append(times, now)
+		return &memPressureFakeSource{err: errors.New("read failed")}, nil
+	})
+	t0 := time.Unix(1_000_000, 0)
+	now = t0
+	gi, _ := newVMGroup(GroupDeps{})
+	g := gi.(*vmGroup)
+	for i := 1; i <= 120; i++ { // 30 minutes of 15 s ticks
+		now = t0.Add(time.Duration(i) * 15 * time.Second)
+		if s := tickVM(t, g, now); !missingHas(s, "vm") {
+			t.Fatalf("tick %d: Missing = %v, want vm named while the counter keeps failing", i, s.Missing)
+		}
+	}
+	if len(times) < 4 || len(times) > 10 {
+		t.Fatalf("source opened %d times in 30 minutes, want 4 to 10 (a fixed 1/min would be about 30)", len(times))
+	}
+	var prev time.Duration
+	for i := 2; i < len(times); i++ {
+		gap := times[i].Sub(times[i-1])
+		if gap < prev-15*time.Second { // one tick of slack: gaps are measured on 15 s ticks
+			t.Errorf("gap %d = %v is shorter than the one before (%v): the backoff must not shrink", i, gap, prev)
+		}
+		prev = gap
+	}
+	if last := times[len(times)-1].Sub(times[len(times)-2]); last < 4*time.Minute {
+		t.Errorf("last gap = %v, want it to have grown to the ceiling (about %v)", last, groupRetryMax)
+	}
+	if prev > groupRetryMax+time.Minute {
+		t.Errorf("gap %v is past the ceiling %v", prev, groupRetryMax)
+	}
+}
+
+// A good reading ends the backoff: the next failure starts again at one minute.
+func TestVMGroupGoodReadingResetsTheReopenBackoff(t *testing.T) {
+	bad := &memPressureFakeSource{err: errors.New("read failed")}
+	seamSources(t, func(int) (CounterSource, error) { return bad, nil })
+	gi, _ := newVMGroup(GroupDeps{})
+	g := gi.(*vmGroup)
+	t0 := time.Unix(1_000_000, 0)
+	for i := 1; i <= 60; i++ {
+		tickVM(t, g, t0.Add(time.Duration(i)*15*time.Second))
+	}
+	if g.attempts < 2 {
+		t.Fatalf("attempts = %d, want the backoff to have grown", g.attempts)
+	}
+	bad.err = nil
+	bad.readings = vmReading(9)
+	for i := 61; i <= 80; i++ { // long enough to pass any retryAt
+		if s := tickVM(t, g, t0.Add(time.Duration(i)*15*time.Second)); i > 70 && s.VM == nil {
+			t.Fatalf("tick %d: VM nil with a healthy counter", i)
+		}
+	}
+	if g.attempts != 0 {
+		t.Fatalf("attempts = %d after a good reading, want 0", g.attempts)
+	}
+}
+
+func TestVMReopenDelayGrowsToTheCeiling(t *testing.T) {
+	want := []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, groupRetryMax, groupRetryMax}
+	for i, w := range want {
+		if got := vmReopenDelay(i + 1); got != w {
+			t.Errorf("vmReopenDelay(%d) = %v, want %v", i+1, got, w)
+		}
+	}
+}
+
+// S1: the vm group built after startup (through the lazy wrapper) whose Tools are
+// later removed must stay as quiet as one that was never built: a slow re-detect
+// shows no "vm: slow", no busy and no budget strike.
+func TestBuiltVMGroupThatGoesNotApplicableIsQuietWhenTheRecheckIsSlow(t *testing.T) {
+	good := &memPressureFakeSource{readings: vmReading(5)}
+	release := make(chan struct{})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	calls := seamSources(t, func(n int) (CounterSource, error) {
+		switch n {
+		case 1: // startup: no VMware Tools
+			return nil, absentErr()
+		case 2: // Tools installed later: the lazy wrapper builds the group
+			return good, nil
+		case 3: // Tools removed again
+			return nil, absentErr()
+		default: // a later recheck that is slower than the group budget
+			<-release
+			return nil, absentErr()
+		}
+	})
+	swapRegistry(t)
+	RegisterGroup("vm", true, newVMGroup)
+	b := NewBudget(15)
+	c := NewGroupCollector(&stubCollector{}, BuildGroups(GroupDeps{}), b).(*groupCollector)
+	t0 := time.Unix(1_000_000, 0)
+
+	_, _ = c.Collect(t0) // not applicable at startup
+	at := t0.Add(notApplicableRecheck + time.Minute)
+	if s, _ := c.Collect(at); s.VM == nil {
+		t.Fatalf("the lazy wrapper did not build and read the group: Missing = %v", s.Missing)
+	}
+	good.readings = nil // Tools removed
+	var s Sample
+	for i := 1; i <= vmRedetectAfter; i++ {
+		s, _ = c.Collect(at.Add(time.Duration(i) * 15 * time.Second))
+	}
+	if *calls != 3 || len(s.Missing) != 0 {
+		t.Fatalf("calls = %d, Missing = %v; want the re-detect to have made the group silent", *calls, s.Missing)
+	}
+	// Past the recheck interval the re-detect blocks longer than the 1 s budget.
+	later := at.Add(time.Duration(vmRedetectAfter)*15*time.Second + notApplicableRecheck + time.Second)
+	s, _ = c.Collect(later)
+	if len(s.Missing) != 0 || c.slowName != "" || len(c.GroupTimings()) != 0 {
+		t.Fatalf("slow recheck of a built group: Missing = %v slow = %q timings = %v, want silent", s.Missing, c.slowName, c.GroupTimings())
+	}
+	if _, ok := b.groups["vm"]; ok || len(b.SlowGroups()) != 0 {
+		t.Fatal("slow recheck of a built group took a budget strike")
+	}
+	s, _ = c.Collect(later.Add(15 * time.Second)) // the worker is still inside the recheck
+	if len(s.Missing) != 0 || len(c.GroupTimings()) != 0 {
+		t.Fatalf("busy slot: Missing = %v timings = %v, want silent", s.Missing, c.GroupTimings())
+	}
+	once.Do(func() { close(release) })
+	// Let the released worker finish before the seam is restored (no stray goroutine).
+	deadline := time.Now().Add(2 * time.Second)
+	for !c.slots[0].idle() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
 	}
 }

@@ -1,6 +1,7 @@
 import { CaseApiError, getHostEntries, putHostEntries } from './cases';
 import type { HostEntry } from './cases';
 import { labelProblem, zoneNameProblem } from './zoneChoice';
+import { listedLabel } from './hostDefault';
 
 /**
  * The list of computers the "Which computer wrote it?" choice offers (packet P4). The list is the server's own (GET and PUT /api/hosts), shared
@@ -84,6 +85,34 @@ export async function saveHost(label: string, tz: string, zoneOptional: boolean,
     });
   } catch (error) {
     return failure(error);
+  }
+}
+
+export type SaveHostsResult = { ok: true; labels: string[] } | { ok: false; reason: 'label' | 'locked' | 'failed' };
+
+/**
+ * Adds several computers with one read and one write (no time zone). Names already in the list (any case) are left as they are, so asking for
+ * a computer twice is harmless. Used when the wizard picks the computers for a batch of files by itself.
+ */
+export async function saveHosts(labels: readonly string[], api: HostsApi = realHostsApi): Promise<SaveHostsResult> {
+  const wanted: string[] = [];
+  for (const raw of labels) {
+    const name = raw.trim();
+    if (labelProblem(name, null) !== '') return { ok: false, reason: 'label' };
+    if (!wanted.some((have) => have.toLowerCase() === name.toLowerCase())) wanted.push(name);
+  }
+  try {
+    return await queued(async () => {
+      const fresh = await api.get();
+      const added = wanted.filter((name) => labelProblem(name, fresh) !== 'taken');
+      hostsView.entries = added.length === 0 ? fresh : await api.put([...fresh, ...added.map((name) => blankEntry(name, ''))]);
+      hostsView.failed = false;
+      // The spelling the list holds, which may differ in case from the one asked for.
+      return { ok: true, labels: wanted.map((name) => listedLabel(name, hostsView.entries) || name) } as const;
+    });
+  } catch (error) {
+    const failed = failure(error);
+    return { ok: false, reason: failed.ok ? 'failed' : failed.reason === 'locked' ? 'locked' : 'failed' };
   }
 }
 

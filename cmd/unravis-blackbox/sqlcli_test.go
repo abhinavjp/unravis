@@ -89,6 +89,8 @@ func newSQLRig(t *testing.T) *sqlRig {
 	r.d.sqlMgr = &blackbox.SQLManager{Svc: g.svc, Env: g.env}
 	r.d.elev = g.elev
 	r.d.sqlRun = g.runner.run
+	// The SQL service refuses to start without a reader (BL-140 PR 7); the settings are an ordinary file here.
+	r.d.readSettings = os.ReadFile
 	r.d.hostRun = func(context.Context, blackbox.HostOptions) error { g.hostRuns++; return nil }
 	return g
 }

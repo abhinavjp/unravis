@@ -262,7 +262,12 @@ func (g *lazyGroup) Optional() bool { return g.optional }
 
 func (g *lazyGroup) Collect(now time.Time, dt float64) (any, error) {
 	if g.real != nil {
-		return g.real.Collect(now, dt)
+		v, err := g.real.Collect(now, dt)
+		// The built group may itself go not applicable (VMware Tools removed). The
+		// tick asks this wrapper, so mirror the answer: a slow re-check of the real
+		// group must stay as quiet as one of an unbuilt group.
+		g.dormant.Store(errors.Is(err, errNotApplicable))
+		return v, err
 	}
 	if g.dormant.Load() && g.next.IsZero() {
 		// BuildGroups already asked the factory and got errNotApplicable: that
@@ -293,7 +298,9 @@ func (g *lazyGroup) Collect(now time.Time, dt float64) (any, error) {
 	}
 	g.dormant.Store(false) // before g.real: the tick reads dormant without a lock
 	g.real, g.failures = real, 0
-	return real.Collect(now, dt)
+	v, cerr := real.Collect(now, dt)
+	g.dormant.Store(errors.Is(cerr, errNotApplicable))
+	return v, cerr
 }
 
 // Close releases the real group once it exists; the placeholder owns nothing.

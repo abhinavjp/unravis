@@ -71,11 +71,12 @@ export function classify(results, baseline) {
 }
 
 export function tally(results) {
-  const t = { screens: new Set(), checked: 0, unreachable: 0, skipped: 0, newError: 0, newWarn: 0, knownError: 0, knownWarn: 0, info: 0, unreachableNew: 0 };
+  const t = { screens: new Set(), checked: 0, unreachable: 0, absent: 0, skipped: 0, newError: 0, newWarn: 0, knownError: 0, knownWarn: 0, info: 0, unreachableNew: 0 };
   for (const r of results) {
     t.screens.add(r.id);
     if (r.status === 'unreachable') { t.unreachable++; if (!r.known) t.unreachableNew++; continue; }
     if (r.status === 'skipped') { t.skipped++; continue; }
+    if (r.status === 'absent') { t.absent++; continue; }
     t.checked++;
     for (const f of r.findings) {
       if (f.severity === 'info') t.info++;
@@ -99,6 +100,7 @@ function cell(r) {
   if (!r) return '-';
   if (r.status === 'unreachable') return 'not reached';
   if (r.status === 'skipped') return 'skipped';
+  if (r.status === 'absent') return 'not on this build';
   const e = r.findings.filter((f) => f.severity === 'error' && !f.known).length;
   const w = r.findings.filter((f) => f.severity === 'warn' && !f.known).length;
   const k = r.findings.filter((f) => f.severity !== 'info' && f.known).length;
@@ -119,7 +121,7 @@ export function renderReport({ results, baseline, run }) {
   L.push('Run: ' + run.when + ' | Build: ' + run.build + ' | Demo clock: ' + run.demoNow + ' | Browser: ' + run.browser, '');
   L.push('Looks checked: desktop 1440 px and phone 390 px wide, each in dark and light theme. Data: the built-in demo (`--demo`), never real sources.', '');
   L.push('## Verdict: ' + v, '');
-  L.push('- Screens: ' + t.screens + '. Screen looks checked: ' + t.checked + '. Not reached: ' + t.unreachable + ' (' + t.unreachableNew + ' new). Skipped: ' + t.skipped + '.');
+  L.push('- Screens: ' + t.screens + '. Screen looks checked: ' + t.checked + '. Not reached: ' + t.unreachable + ' (' + t.unreachableNew + ' new). Skipped: ' + t.skipped + '. Not on this build: ' + t.absent + '.');
   L.push('- New errors: **' + t.newError + '**. New warnings: ' + t.newWarn + '. Known errors: ' + t.knownError + '. Known warnings: ' + t.knownWarn + '. Notes (info): ' + t.info + '.');
   L.push('- PASS means no new errors and no newly unreachable screen. "Known" means listed in `tools/uiaudit/baseline.json` with a reason or backlog item.', '');
 
@@ -190,6 +192,16 @@ export function renderReport({ results, baseline, run }) {
     L.push('A screen that is not reached is not checked. This is a gap in the audit, not a pass.', '');
     L.push('| Screen | Look | Status | Reason |', '| --- | --- | --- | --- |');
     for (const r of nr) L.push('| ' + r.id + ' | ' + r.variant + ' | ' + r.status + (r.known ? ' (known: ' + esc(r.known.why) + ')' : '') + ' | ' + esc(r.reason ?? '') + ' |');
+    L.push('');
+  }
+
+  // Parts of a screen this build does not have (a change that is not merged yet)
+  const ab = results.filter((r) => r.status === 'absent');
+  if (ab.length) {
+    L.push('## Screens not reachable on this build', '');
+    L.push('These look at a state that only newer builds have. They are not failures and not passes: they are checked as soon as a build has the state.', '');
+    L.push('| Screen | Look | Reason |', '| --- | --- | --- |');
+    for (const r of ab) L.push('| ' + r.id + ' | ' + r.variant + ' | ' + esc(r.reason ?? '') + ' |');
     L.push('');
   }
 
