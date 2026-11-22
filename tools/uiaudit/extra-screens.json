@@ -478,7 +478,7 @@
           "click": "css=li[data-v=\"0.1.0-rc.57\"]"
         },
         {
-          "waitFor": "text=The signing passphrase was not given in time."
+          "waitFor": "text=Stopped at"
         }
       ]
     },

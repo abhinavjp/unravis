@@ -12,6 +12,7 @@ assert.equal(c(['docs/user/guide.md']).notes, false);
 assert.deepEqual(keys(c(['docs/user/guide.md'])).dirs, ['.', 'internal/investigate']);
 // Baseline file: every package (it changes how failures are judged).
 assert.equal(c(['docs/desktop/baseline-go-tests.txt']).all, true);
+assert.equal(c(['docs/desktop/baseline-go-race.txt']).all, true);
 // A Go file maps to its package; a testdata file too; the root counts only for files directly in the root.
 assert.deepEqual(keys(c(['internal/store/q.go'])).dirs, ['internal/store']);
 assert.deepEqual(keys(c(['internal/store/testdata/a.json'])).dirs, ['internal/store']);
