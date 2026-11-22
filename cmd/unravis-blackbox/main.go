@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/blackbox"
+	"api-audit-explorer/internal/dotnetdiag"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -64,6 +65,7 @@ Commands that change the service (run as administrator):
 Other commands:
   snapshot    Copy the recordings into <folder>\snapshots\<name>-<date>-<time>.
   run         Record in this window instead of as a service (Ctrl+C to stop).
+  diag-probe  Test, read-only: ask one running .NET process for 20 s of runtime counters, then stop it. Needs --pid.
   version     Print the version.
 
 Options for every command:
@@ -97,6 +99,10 @@ type deps struct {
 	// this program IS the helper, and the SQL grant is run by the owner in
 	// SSMS. It stays nil; tests inject a fake to record that it is never called.
 	elev blackbox.Elevator
+	// diagProbe is the read-only .NET diagnostic probe (BL-110 step 1). Tests
+	// inject a fake; realDeps binds the real transport. Only the literal
+	// command diag-probe reaches it; the service entry points never do.
+	diagProbe func(ctx context.Context, t dotnetdiag.Target, o dotnetdiag.Options) (dotnetdiag.Result, error)
 }
 
 func realDeps() deps {
@@ -110,9 +116,10 @@ func realDeps() deps {
 		// internal/setup's bbSvc adapter drops Account/SIDUnrestricted and would
 		// create the SQL service as LocalSystem. RevokeScript stays empty: the
 		// remove-sql command prints the script through the answer writer.
-		sqlMgr: sqlMgr,
-		sqlRun: runSQLServiceLoop,
-		disk:   disk,
+		sqlMgr:    sqlMgr,
+		sqlRun:    runSQLServiceLoop,
+		diagProbe: realDiagProbe,
+		disk:      disk,
 		exeDir: func() string {
 			p, err := blackbox.OSEnv{}.ExePath()
 			if err != nil {
@@ -282,6 +289,10 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	if cmd == "version" || cmd == "--version" {
 		fmt.Fprintln(stdout, "unravis-blackbox "+version)
 		return exitOK
+	}
+	// diag-probe needs no config, key or manager: dispatch before all of that.
+	if cmd == "diag-probe" {
+		return runDiagProbe(rest, stdout, stderr, d)
 	}
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)

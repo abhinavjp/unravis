@@ -628,6 +628,9 @@ func buildCompReadings(s *compCounterSource) {
 	s.add(`\Memory\Pool Nonpaged Bytes`, 4096)
 	s.invalid[`\Memory\Pool Nonpaged Bytes`] = true
 	s.add(`\Paging File(_Total)\% Usage`, 12)
+	// vm: VMware balloon, 512 MB. Without this seed the shared source has no
+	// reading and the vm group would sit in Missing.
+	s.add(`\VM Memory\Memory Ballooned in MB`, 512)
 	// aspnet: fixed paths.
 	s.add(`\ASP.NET\Requests Queued`, 1)
 	s.addRate(`\ASP.NET\Requests Rejected`, 0, 0)
@@ -760,6 +763,12 @@ func TestCompositionFootprintGate(t *testing.T) {
 	}
 	if len(last.Procs) == 0 {
 		t.Error("host process list absent (Record.Processes=true)")
+	}
+	if last.VM == nil || last.VM.BalloonBytes == nil || *last.VM.BalloonBytes != 536870912 || last.VM.StealPct != nil {
+		t.Errorf("vm group did not record and read back balloonBytes 536870912: %+v (missing=%v)", last.VM, last.Missing)
+	}
+	if missingHas(last, "vm") {
+		t.Errorf("vm is in Missing although it was seeded: %v", last.Missing)
 	}
 	if last.MemPressure.PoolNonPagedBytes != nil {
 		t.Error("invalid reading emitted poolNonPagedBytes; missing must never be 0")
