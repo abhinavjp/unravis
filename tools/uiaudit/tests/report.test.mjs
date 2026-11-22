@@ -44,3 +44,14 @@ test('the report names every part and links the screenshots', () => {
     assert.ok(md.includes(part), 'missing: ' + part);
   }
 });
+
+test('a screen that is not on this build is listed, and neither fails nor passes the run', () => {
+  const results = classify([mk('a', 'desktop-dark', [], 'checked'), { ...mk('b', 'desktop-dark', undefined, 'absent'), reason: 'not reachable on this build: the Remove all button' }], { entries: [] });
+  const t = tally(results);
+  assert.equal(t.absent, 1);
+  assert.equal(t.unreachableNew, 0);
+  assert.equal(verdict(t), 'PASS');
+  const md = renderReport({ results, baseline: { entries: [] }, run: { when: 'now', build: 'b', demoNow: 'n', browser: 'c' } });
+  assert.ok(md.includes('## Screens not reachable on this build'));
+  assert.ok(md.includes('not on this build'));
+});

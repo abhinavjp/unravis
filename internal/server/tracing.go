@@ -458,15 +458,17 @@ type tracingEvent struct {
 }
 
 type tracingLane struct {
-	Key         string          `json:"key"`
-	Label       string          `json:"label"`
-	State       string          `json:"state"`
-	Origin      string          `json:"origin"`
-	AsOf        time.Time       `json:"asOf"`
-	Complete    bool            `json:"complete"`
-	Truncated   bool            `json:"truncated"`
-	ReasonCode  string          `json:"reasonCode"`
-	Reason      string          `json:"reason"`
+	Key        string    `json:"key"`
+	Label      string    `json:"label"`
+	State      string    `json:"state"`
+	Origin     string    `json:"origin"`
+	AsOf       time.Time `json:"asOf"`
+	Complete   bool      `json:"complete"`
+	Truncated  bool      `json:"truncated"`
+	ReasonCode string    `json:"reasonCode"`
+	Reason     string    `json:"reason"`
+	// Note is a second plain sentence the lane carries when it draws bars (Query Store was off when the saved day was read). The page shows it above the bars.
+	Note        string          `json:"note,omitempty"`
 	Scanned     int64           `json:"scanned"`
 	Consistency string          `json:"consistency"`
 	Disabled    string          `json:"disabled,omitempty"`
