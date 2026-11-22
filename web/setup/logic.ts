@@ -53,6 +53,38 @@ export interface RailStep { id: string; label: string }
 
 export const CONFIRM_DELETE_WORD = 'DELETE';
 
+/** The folded line over the checks that are ready: "6 more checks are ready", or "All 7 checks are ready" when nothing else needs a look. */
+export function readyLine(count: number, others: boolean): string {
+  if (others) return count === 1 ? '1 more check is ready' : count + ' more checks are ready';
+  return count === 1 ? 'The check is ready' : 'All ' + count + ' checks are ready';
+}
+
+const FIELD_NAMES: Readonly<Record<string, string>> = {
+  location: 'the folder', 'bb-name': 'the Blackbox name', 'bb-folder': 'the recordings folder', 'bb-keep': 'how long to keep recordings',
+  'bb-max': 'the size limit', 'bb-free': 'the free space to keep', 'bb-port': 'the port', firewall: 'the addresses'
+};
+
+/** Why a footer button is off, in words next to it ("Type DELETE in the box above to go on."). '' when nothing is holding it back. */
+export function uninstallWhy(u: Pick<UninstallOptions, 'deleteCases' | 'deleteRecordings' | 'confirmCases' | 'confirmRecordings'>, blackboxName: string): string {
+  const cases = !!u.deleteCases && u.confirmCases !== CONFIRM_DELETE_WORD;
+  const recordings = !!u.deleteRecordings && !(blackboxName !== '' && u.confirmRecordings === blackboxName);
+  if (cases && recordings) return 'Type both confirmations above to go on.';
+  if (cases) return 'Type ' + CONFIRM_DELETE_WORD + ' in the box above to go on.';
+  if (recordings) return 'Type the Blackbox name in the box above to go on.';
+  return '';
+}
+
+/** What the notice says when Next is pressed with something to fix: it names the fields in words, not by a colour ("Fix the folder, then press Next."). */
+export function problemNotice(problems: readonly Problem[]): string {
+  const names: string[] = [];
+  for (const problem of problems) {
+    const name = FIELD_NAMES[problem.field] ?? 'the marked item';
+    if (!names.includes(name)) names.push(name);
+  }
+  const list = names.length <= 1 ? (names[0] ?? 'the marked item') : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  return 'Fix ' + list + ', then press Next.';
+}
+
 export function checkWord(status: CheckStatus): string {
   return status === 'ready' ? 'Ready' : status === 'partly' ? 'Partly ready' : 'Failed';
 }
