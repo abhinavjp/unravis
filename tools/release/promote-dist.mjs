@@ -185,7 +185,7 @@ function run(cmd, args, opts = {}) {
 // Environment for git commands: the caller's, without the variables that send git to another repository or make it run another program
 // (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_SSH_COMMAND, GIT_ASKPASS, GIT_CONFIG_COUNT and its KEY/VALUE, ...), without variables that
 // carry a secret, and without replace refs. GIT_SSL_CAINFO and the like are kept (a PC may need them to reach github.com).
-const GIT_REDIRECTS = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|SSH|SSH_COMMAND|SSH_VARIANT|PROXY_COMMAND|ASKPASS|EXTERNAL_DIFF|PAGER|EDITOR|SEQUENCE_EDITOR|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+|CONFIG_PARAMETERS|EXEC_PATH|TEMPLATE_DIR|REPLACE_REF_BASE|TRACE\w*|CURL_VERBOSE)$/i;
+const GIT_REDIRECTS = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|SSH|SSH_COMMAND|SSH_VARIANT|PROXY_COMMAND|ASKPASS|EXTERNAL_DIFF|PAGER|EDITOR|SEQUENCE_EDITOR|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+|CONFIG_PARAMETERS|EXEC_PATH|TEMPLATE_DIR|DEFAULT_REF_FORMAT|REPLACE_REF_BASE|TRACE\w*|CURL_VERBOSE)$/i;
 // Names that carry a secret (GH_TOKEN, GITHUB_TOKEN, NPM_TOKEN, ...): git commands that do not push never get them, so a filter or hook
 // that something plants in the commit clone cannot read one. Clone and push get the token only as the one header in gitEnv.
 const SECRET_NAME = /(TOKEN|SECRET|PASSWORD|PASSPHRASE)/i;
@@ -273,6 +273,35 @@ function checkDist(repoDir) {
   return r.status === 0;
 }
 
+// Settings of the person running this that would make a fresh clone carry config the allow list refuses (git 2.45+ writes
+// extensions.refstorage for init.defaultRefFormat=reftable or feature.experimental; 2.54+ writes extensions.submodulepathconfig;
+// core.sharedRepository writes core.sharedrepository and receive.denynonfastforwards). Pinned for the commit clone only.
+export const CLONE_PINS = ['-c', 'init.defaultRefFormat=files', '-c', 'init.defaultSubmodulePathConfig=false', '-c', 'core.sharedRepository=false'];
+
+/**
+ * The fresh clone of `branch` from `remote` in tmp/repo, checked with assertFreshClone. `env` carries the token for a GitHub remote.
+ * `afterClone(dir)` is a test hook: it runs between the clone and the check (a stand-in for something that plants in the clone).
+ */
+export function makeCommitClone({ tmp, remote, branch, env, afterClone }) {
+  const dir = join(tmp, 'repo');
+  // --template= : no hooks or info files from the person's init.templateDir (they would make the freshness check refuse);
+  // --origin origin : a clone.defaultRemoteName of the person's would name the remote otherwise.
+  git(tmp, [...CLONE_PINS, 'clone', '--quiet', '--template=', '--origin', 'origin', '--single-branch', '--branch', branch, '--depth', '1', remote, dir], { env });
+  if (afterClone) afterClone(dir);
+  assertFreshClone(dir, { remote, branch });
+  return dir;
+}
+
+/**
+ * The push: the clone is checked again first (see assertFreshClone), then pushed to the URL itself. `beforePush(dir)` is a test hook
+ * that runs after the check and before the push (a stand-in for a change in that last moment: the push must not read it).
+ */
+export function pushBranch(dir, { remote, branch, env, beforePush }) {
+  assertFreshClone(dir, { remote, branch });
+  if (beforePush) beforePush(dir);
+  git(dir, pushArgs(remote, branch), { env });
+}
+
 export function main(argv, env = process.env) {
   const o = parseArgs(argv);
   const have = process.version.replace(/^v/, '');
@@ -309,6 +338,14 @@ export function main(argv, env = process.env) {
     if (!existsSync(join(buildDir, 'web', 'scripts', 'check-dist.cjs'))) throw new Stop(1, o.branch + ' has no web/scripts/check-dist.cjs.');
     const web = join(buildDir, 'web');
 
+    // A dry run of the commit clone, before the long build: a clone made the same way (from the build clone, on this disk) with this
+    // PC's real git settings must pass the same check. A personal git setting the check refuses then costs seconds, not a whole build.
+    console.log('> checking that a commit clone can be made with this PC\'s git settings (before the build)');
+    const dryTmp = join(buildTmp, 'dry');
+    mkdirSync(dryTmp, { recursive: true });
+    makeCommitClone({ tmp: dryTmp, remote: pathToFileURL(buildDir).href, branch: o.branch, env: gitBaseEnv(process.env) });
+    rmSync(dryTmp, { recursive: true, force: true, maxRetries: 3 });
+
     shellStep('install', o.install, web, stepEnv);
     shellStep('build', o.build, web, stepEnv);
     copyRoots(buildDir, out1);
@@ -327,11 +364,8 @@ export function main(argv, env = process.env) {
     if (existsSync(buildDir)) throw new Stop(1, 'The build clone could not be deleted (' + buildDir + '). Nothing was pushed.');
 
     tmp = mkdtempSync(join(tmpdir(), 'unravis-dist-'));
-    const dir = join(tmp, 'repo');
-    console.log('> cloning ' + o.branch + ' to commit in ' + dir);
-    // --template= : no hooks or info files from the person's init.templateDir (they would make the freshness check refuse).
-    git(tmp, ['clone', '--quiet', '--template=', '--origin', 'origin', '--single-branch', '--branch', o.branch, '--depth', '1', remote, dir], { env: gitEnv });
-    assertFreshClone(dir, { remote, branch: o.branch });
+    console.log('> cloning ' + o.branch + ' to commit in ' + join(tmp, 'repo'));
+    const dir = makeCommitClone({ tmp, remote, branch: o.branch, env: gitEnv });
     copyRoots(out1, dir);
 
     let made = 'none';
@@ -361,8 +395,7 @@ export function main(argv, env = process.env) {
         // can wait for the commit clone to appear) may have planted a setting since the first check. The push goes to the URL, not to
         // `origin`, and the allow list refuses any other remote.* or url.* setting. What is left: a change between this check and the
         // push, and anything that can read this process's environment anyway (same user).
-        assertFreshClone(dir, { remote, branch: o.branch });
-        git(dir, pushArgs(remote, o.branch), { env: gitEnv });
+        pushBranch(dir, { remote, branch: o.branch, env: gitEnv });
         console.log('Pushed to ' + o.branch + '.');
       } else console.log('--no-push: the commit stays in ' + dir + ' (--keep).');
     }

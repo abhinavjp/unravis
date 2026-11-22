@@ -6,7 +6,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { assertFreshClone, authEnv, buildEnv, pushArgs, copyRoots, gitBaseEnv, sameRoots } from '../release/promote-dist.mjs';
+import { assertFreshClone, authEnv, buildEnv, pushArgs, copyRoots, gitBaseEnv, makeCommitClone, pushBranch, sameRoots } from '../release/promote-dist.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..');
@@ -443,6 +443,133 @@ test('the push carries the token in the environment only: authEnv and pushArgs (
   assert.ok(!args.join(' ').includes(tok) && !args.includes('origin'), 'no token on the command line, no remote name');
 });
 
+test('personal git settings that change what a clone writes do not make the run refuse (it would be after the whole build)', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const cfg = join(f.base, 'gitconfig');
+    writeFileSync(cfg, '[feature]\n\texperimental = true\n[init]\n\tdefaultRefFormat = reftable\n\tdefaultSubmodulePathConfig = true\n[core]\n\tsharedRepository = group\n[clone]\n\tdefaultRemoteName = upstream\n[transfer]\n\tfsckObjects = true\n');
+    const before = remoteHead(f);
+    const r = promote(f, [], { env: { ...process.env, GIT_CONFIG_GLOBAL: cfg, GIT_DEFAULT_REF_FORMAT: 'reftable' } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.notEqual(remoteHead(f), before);
+    // The dry run of the commit clone is made before the install and the build (a refusal costs seconds, not a whole build).
+    assert.ok(r.stdout.indexOf("> checking that a commit clone can be made") > -1 && r.stdout.indexOf("> checking that a commit clone can be made") < r.stdout.indexOf('> install:'), 'dry run before the install');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('makeCommitClone checks the clone before anything is copied into it (the first check)', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const mk = (name, afterClone) => { const t = join(f.base, name); mkdirSync(t); return () => makeCommitClone({ tmp: t, remote: f.url, branch: 'promote/abc1234', env: gitBaseEnv(process.env), afterClone }); };
+    assert.ok(mk('a')().endsWith('repo'));
+    assert.throws(mk('b', (d) => sh(d, 'git', ['config', 'filter.x.clean', 'cat'])), /fresh clone/, 'a filter planted right after the clone');
+    assert.throws(mk('c', (d) => sh(d, 'git', ['config', 'core.fsmonitor', 'true'])), /fresh clone/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('pushBranch pushes to the URL: a pushurl and receivepack planted after the check are not read', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const t = join(f.base, 'pb');
+    mkdirSync(t);
+    const dir = makeCommitClone({ tmp: t, remote: f.url, branch: 'promote/abc1234', env: gitBaseEnv(process.env) });
+    writeFileSync(join(dir, 'web', 'dist', 'index.html'), '<p>pushed</p>\n');
+    sh(dir, 'git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-am', 'change']);
+    const want = sh(dir, 'git', ['rev-parse', 'HEAD']);
+    const other = join(f.base, 'other2.git');
+    sh(f.base, 'git', ['init', '-q', '--bare', other]);
+    const leak = join(f.base, 'rp.txt');
+    pushBranch(dir, {
+      remote: f.url, branch: 'promote/abc1234', env: gitBaseEnv(process.env),
+      beforePush: (d) => { sh(d, 'git', ['config', 'remote.origin.pushurl', pathToFileURL(other).href]); sh(d, 'git', ['config', 'remote.origin.receivepack', "sh -c 'env > " + leak + "'"]); },
+    });
+    assert.equal(remoteHead(f), want, 'the commit reached the URL that was passed');
+    assert.equal(existsSync(leak), false, 'the planted receivepack ran');
+    assert.equal(sh(other, 'git', ['for-each-ref', '--count=1']), '', 'the planted pushurl got nothing');
+    // and a plant BEFORE the check is refused
+    sh(dir, 'git', ['config', 'remote.origin.pushurl', 'file:///x']);
+    assert.throws(() => pushBranch(dir, { remote: f.url, branch: 'promote/abc1234', env: gitBaseEnv(process.env) }), /fresh clone/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('assertFreshClone: each value and shape rule is enforced (bare, format version, fetch, branch keys, duplicates)', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const B = 'promote/abc1234';
+    const plants = {
+      'core.bare=true': (d) => sh(d, 'git', ['config', 'core.bare', 'true']),
+      'repositoryformatversion=1': (d) => sh(d, 'git', ['config', 'core.repositoryformatversion', '1']),
+      'extensions.refstorage': (d) => sh(d, 'git', ['config', 'extensions.refstorage', 'reftable']),
+      'fetch of another branch': (d) => sh(d, 'git', ['config', 'remote.origin.fetch', '+refs/heads/other:refs/remotes/origin/other']),
+      'fetch of every branch': (d) => sh(d, 'git', ['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*']),
+      'fetch into a bare name': (d) => sh(d, 'git', ['config', 'remote.origin.fetch', '+refs/heads/' + B + ':refs/heads/' + B]),
+      'branch remote other': (d) => sh(d, 'git', ['config', 'branch.' + B + '.remote', 'evil']),
+      'branch merge other': (d) => sh(d, 'git', ['config', 'branch.' + B + '.merge', 'refs/heads/master']),
+      'a second branch': (d) => { sh(d, 'git', ['config', 'branch.other.remote', 'origin']); sh(d, 'git', ['config', 'branch.other.merge', 'refs/heads/other']); },
+      'duplicate fetch': (d) => sh(d, 'git', ['config', '--add', 'remote.origin.fetch', '+refs/heads/' + B + ':refs/remotes/origin/' + B]),
+      'duplicate filemode': (d) => sh(d, 'git', ['config', '--add', 'core.filemode', 'false']),
+    };
+    for (const [name, plant] of Object.entries(plants)) {
+      const d = join(f.base, 'v-' + name.replace(/\W/g, '_'));
+      sh(f.base, 'git', ['clone', '-q', '--template=', '--origin', 'origin', '--single-branch', '--branch', B, '--depth', '1', f.url, d]);
+      assertFreshClone(d, { remote: f.url, branch: B });
+      plant(d);
+      assert.throws(() => assertFreshClone(d, { remote: f.url, branch: B }), /fresh clone/, name);
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a clone.defaultRemoteName in the person\'s git settings does not rename origin (--origin origin)', () => {
+  const f = fixture('new', { dist: 'old' });
+  try {
+    const cfg = join(f.base, 'gitconfig3');
+    writeFileSync(cfg, '[clone]\n\tdefaultRemoteName = upstream\n');
+    const t = join(f.base, 'cr');
+    mkdirSync(t);
+    const dir = makeCommitClone({ tmp: t, remote: f.url, branch: 'promote/abc1234', env: { ...gitBaseEnv(process.env), GIT_CONFIG_GLOBAL: cfg } });
+    assert.equal(sh(dir, 'git', ['config', '--get', 'remote.origin.url']), f.url);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('the commit clone is made with the pins that keep personal git settings out of its config (checked on the command git receives)', () => {
+  if (process.platform === 'win32') return; // needs a shell wrapper
+  const f = fixture('new', { dist: 'old' });
+  try {
+    // A `git` first on PATH that records its arguments and runs the real one: works on any git version, including ones that would
+    // ignore init.defaultRefFormat (git before 2.45), so the test does not depend on the git of the machine.
+    const bin = join(f.base, 'recbin'), log = join(f.base, 'git-args.log');
+    mkdirSync(bin);
+    const real = sh(f.base, 'sh', ['-c', 'command -v git']);
+    writeFileSync(join(bin, 'git'), '#!/bin/sh\nprintf "%s\\n" "$*" >> ' + JSON.stringify(log) + '\nexec ' + JSON.stringify(real) + ' "$@"\n');
+    chmodSync(join(bin, 'git'), 0o755);
+    const t = join(f.base, 'rec');
+    mkdirSync(t);
+    makeCommitClone({ tmp: t, remote: f.url, branch: 'promote/abc1234', env: { ...gitBaseEnv(process.env), PATH: bin + ':' + process.env.PATH } });
+    const clone = readFileSync(log, 'utf8').split('\n').find((l) => / clone /.test(' ' + l + ' ')) || '';
+    for (const need of ['-c init.defaultRefFormat=files', '-c init.defaultSubmodulePathConfig=false', '-c core.sharedRepository=false', '--template=', '--origin origin', '--single-branch', '--depth 1']) assert.ok(clone.includes(need), need + ' missing in: ' + clone);
+    // push arguments reach git as the URL, not `origin`
+    const dir = join(t, 'repo');
+    writeFileSync(join(dir, 'web', 'dist', 'index.html'), '<p>x</p>\n');
+    sh(dir, 'git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-am', 'c']);
+    pushBranch(dir, { remote: f.url, branch: 'promote/abc1234', env: { ...gitBaseEnv(process.env), PATH: bin + ':' + process.env.PATH } });
+    const push = readFileSync(log, 'utf8').split('\n').filter((l) => / push /.test(' ' + l + ' ')).pop();
+    assert.ok(push.includes(' push --quiet ' + f.url + ' HEAD:refs/heads/promote/abc1234'), push);
+    assert.ok(!/ origin( |$)/.test(push), 'push names the remote origin: ' + push);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('the build clone is gone before the commit clone exists, and the commit clone is fresh', () => {
   const f = fixture('new', { dist: 'old' });
   try {
@@ -488,8 +615,8 @@ test('assertFreshClone refuses a filter, a hook, a proxy and an info/attributes 
 });
 
 test('gitBaseEnv drops variables that redirect git, keeps the rest', () => {
-  const e = gitBaseEnv({ GIT_DIR: '/x', GIT_WORK_TREE: '/y', GIT_INDEX_FILE: '/z', GIT_SSH_COMMAND: 'evil', GIT_ASKPASS: 'a', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'k', GIT_CONFIG_VALUE_0: 'v', GIT_CONFIG_GLOBAL: '/g', GIT_CONFIG_NOSYSTEM: '1', GIT_SSL_CAINFO: '/ca.pem', PATH: '/bin', GH_TOKEN: 't', GITHUB_TOKEN: 't', NPM_TOKEN: 't', MY_SECRET: 's' });
-  for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'NPM_TOKEN', 'MY_SECRET']) assert.equal(k in e, false, k);
+  const e = gitBaseEnv({ GIT_DIR: '/x', GIT_WORK_TREE: '/y', GIT_INDEX_FILE: '/z', GIT_SSH_COMMAND: 'evil', GIT_ASKPASS: 'a', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'k', GIT_CONFIG_VALUE_0: 'v', GIT_CONFIG_GLOBAL: '/g', GIT_CONFIG_NOSYSTEM: '1', GIT_DEFAULT_REF_FORMAT: 'reftable', GIT_SSL_CAINFO: '/ca.pem', PATH: '/bin', GH_TOKEN: 't', GITHUB_TOKEN: 't', NPM_TOKEN: 't', MY_SECRET: 's' });
+  for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'NPM_TOKEN', 'MY_SECRET', 'GIT_DEFAULT_REF_FORMAT']) assert.equal(k in e, false, k);
   for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_SSH_COMMAND', 'GIT_ASKPASS', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']) assert.equal(k in e, false, k);
   assert.deepEqual([e.GIT_CONFIG_GLOBAL, e.GIT_CONFIG_NOSYSTEM, e.GIT_SSL_CAINFO, e.PATH, e.GIT_NO_REPLACE_OBJECTS, e.GIT_TERMINAL_PROMPT], ['/g', '1', '/ca.pem', '/bin', '1', '0']);
 });
