@@ -320,6 +320,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); paddi
 .date-time-control { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; }
 .date-time-controls label { color: var(--text-2); font-size: 12px; }
 .date-time-controls input { width: 100%; min-height: 34px; font-variant-numeric: tabular-nums; }
+.date-time-controls input[aria-invalid='true'] { border-color: var(--bad); }
 .auth-options { min-width: 0; border-top: 1px solid var(--line); }
 .auth-options summary { display: flex; align-items: center; gap: 8px; list-style: none; padding: 9px 0; color: var(--text); font-size: 13px; font-weight: 600; }
 .auth-options summary::-webkit-details-marker { display: none; }

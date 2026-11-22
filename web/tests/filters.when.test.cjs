@@ -18,7 +18,7 @@ test('WhenGroup owns the date windows, keeps ids, and shows UTC without a disclo
   assert.doesNotMatch(src, /part !== 'bar'/);
   assert.doesNotMatch(src, /<details/);
   assert.match(src, /class="utc-echo"[\s\S]*?<time datetime=\{query\.start\}>/);
-  assert.match(src, /<p class="inline-error" role="alert">\{timeInputError\}<\/p>/);
+  assert.match(src, /<p class="inline-error" role="alert" id="when-time-error">\{timeInputError\}<\/p>/);
   assert.match(src, /Enter both a date and time for every range\./);
   assert.match(src, /Complete every date and time with a valid local value before running the comparison\./);
   assert.doesNotMatch(src.slice(src.indexOf('<style>')), /#[0-9a-fA-F]{3,8}\b|rgba?\(/);

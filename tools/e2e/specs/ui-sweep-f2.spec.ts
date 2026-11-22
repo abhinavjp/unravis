@@ -12,7 +12,7 @@ async function openWhen(page: Page) {
   await page.getByText('When', { exact: true }).first().click();
 }
 
-const timeBoxes = (page: Page) => page.locator('input[type=time]');
+const timeBoxes = (page: Page) => page.locator('input.time24');
 
 test('SWEEP-F2-01: the When boxes show the clock of the zone chosen in the header, and change with it', async ({ page }) => {
   await openWhen(page);
@@ -34,6 +34,7 @@ test('SWEEP-F2-01: typing a time in the header zone asks for that moment, not th
   const first = timeBoxes(page).first();
   const echo = page.locator('.utc-echo').first();
   await first.fill('10:00');
+  await first.blur(); // the 24-hour box takes the value when the person leaves it or presses Enter
   // 10:00 in India is 04:30 UTC.
   await expect(echo).toContainText('T04:30:00.000Z');
 });

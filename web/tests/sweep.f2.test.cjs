@@ -117,7 +117,7 @@ test('SWEEP-F2-01: the When group reads and writes in the header zone and says s
   // Each of the four boxes names its own zone at its own date.
   for (const field of ['start', 'end', 'baselineStart', 'baselineEnd']) assert.match(when, new RegExp('zone=\\{zoneAt\\(query\\.' + field + '\\)\\}'));
   const field = read('src/components/DateTimeField.svelte');
-  assert.match(field, /Time\{#if zone\} \(\{zone\}\)\{\/if\}/);
+  assert.match(field, /Time\{#if zone\}\{' '\}\(\{zone\}\)\{\/if\}/, 'the zone follows the word Time after a space (BL-495: the 24-hour box)');
   // The query itself stays in UTC and the raw UTC echo stays under each pair.
   assert.equal((when.match(/class="utc-echo"/g) ?? []).length, 2);
 });
