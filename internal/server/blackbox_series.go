@@ -403,7 +403,7 @@ func (h *handler) bbSeries(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	rp := rep
 	state := blackbox.DeriveState(blackbox.StateInput{Placed: true, Reading: &rd, Report: &rp})
-	writeJSON(w, http.StatusOK, buildBBSeriesShape(rd.Manifest, samples, rep, state, win, points, body.Shape == "m4"), maxResponseBytes)
+	writeJSON(w, http.StatusOK, buildBBSeriesShape(rd.Manifest, samples, rep, state, win, points, body.Shape == "m4", body.Width > 0 || body.Shape == "m4"), maxResponseBytes)
 }
 
 // bbSeriesPointCount is the number of buckets to answer: the asked points (the
@@ -426,13 +426,18 @@ func bbSeriesPointCount(points, width int) int {
 }
 
 func buildBBSeries(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.ReadReport, state blackbox.StateInfo, win bbWindow, points int) bbSeriesAnswer {
-	return buildBBSeriesShape(m, samples, rep, state, win, points, false)
+	return buildBBSeriesShape(m, samples, rep, state, win, points, false, false)
 }
 
 // buildBBSeriesShape is buildBBSeries; with m4 set every point also carries the
-// first and last value of its bucket (BL-430).
-func buildBBSeriesShape(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.ReadReport, state blackbox.StateInfo, win bbWindow, points int, m4 bool) bbSeriesAnswer {
+// first and last value of its bucket (BL-430). With bound set the answer never
+// holds more than points buckets (the default answer holds one more when the
+// window divides evenly, and stays as it was).
+func buildBBSeriesShape(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.ReadReport, state blackbox.StateInfo, win bbWindow, points int, m4, bound bool) bbSeriesAnswer {
 	width := win.End.Sub(win.Start) / time.Duration(points)
+	if bound {
+		width++ // span/width + 1 <= points, as M4BucketMs does for the case series
+	}
 	// A point is never narrower than the recorder's real cadence (it may be slowed to keep the PC light),
 	// so a normal reading is one bucket and a line only breaks where readings are really missing.
 	if floor := time.Duration(m.CadenceSeconds()) * time.Second; width < floor {

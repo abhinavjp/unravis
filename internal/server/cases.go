@@ -1850,7 +1850,7 @@ func (h *handler) caseSeries(w http.ResponseWriter, r *http.Request, raw string)
 	}
 	if v := query.Get("bucket"); v != "" || q.Width == 0 {
 		bucket, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
+		if err != nil || bucket < 1 {
 			writeCaseFailure(w, http.StatusBadRequest, casestore.SeriesBadBucket, "bucket must be a whole number of milliseconds.")
 			return
 		}

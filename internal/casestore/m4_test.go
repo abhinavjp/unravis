@@ -205,6 +205,15 @@ func TestM4WithWidthKeepsAWiderBucketAndNeverRefusesTooMany(t *testing.T) {
 	if err != nil || res.BucketMs != 1_000_000 || res.Buckets != 11 {
 		t.Fatalf("coarse bucket: %v %d %d", err, res.BucketMs, res.Buckets)
 	}
+	// An asked bucket below 1 is refused even with a width (0 means not asked).
+	q = seriesQuery(1000, -5, "kind=load")
+	q.Width = 100
+	if _, err := casestore.Series(context.Background(), fixedCase(nil), q); err == nil {
+		t.Fatal("negative bucket with a width accepted")
+	} else if se, ok := err.(*casestore.SeriesError); !ok || se.Reason != casestore.SeriesBadBucket {
+		t.Fatalf("negative bucket with a width: %v", err)
+	}
+	q = seriesQuery(10_000_000, 1_000_000, "kind=load")
 	q.Width = -1
 	if _, err := casestore.Series(context.Background(), fixedCase(nil), q); err == nil {
 		t.Fatal("negative width accepted")
@@ -229,7 +238,7 @@ func TestM4WithoutWidthTheAnswerIsUnchanged(t *testing.T) {
 
 // Random data against a brute force that never uses the package: per bucket the first, min, max, last, mean and count.
 func TestM4PropertyAgainstBruteForce(t *testing.T) {
-	rng := rand.New(rand.NewSource(430))
+	rng := rand.New(rand.NewSource(430)) //nolint:gosec // a fixed seed so the random rounds repeat; nothing here is secret
 	for round := 0; round < 40; round++ {
 		n := rng.Intn(3000)
 		span := int64(1 + rng.Intn(500_000))

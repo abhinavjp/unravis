@@ -73,6 +73,13 @@ func TestSeriesWidthCutsBucketsAndAddsFirstLast(t *testing.T) {
 			t.Errorf("width %s: %d %+v", name, res.Code, f)
 		}
 	}
+	// An explicit bucket below 1 is still refused when a width is given.
+	for _, bad := range []string{"0", "-5"} {
+		res := e.get(seriesURL(id, seriesFrom, seriesTo, bad, "kind=toy") + "&width=100")
+		if f := failureOf(t, res); res.Code != http.StatusBadRequest || f.Reason != "bad-bucket" {
+			t.Errorf("bucket %s with width: %d %+v", bad, res.Code, f)
+		}
+	}
 	// No bucket and no width is still bad-bucket.
 	if f := failureOf(t, e.get(seriesURL(id, seriesFrom, seriesTo, "", "kind=toy"))); f.Reason != "bad-bucket" {
 		t.Errorf("no bucket: %+v", f)
@@ -203,7 +210,7 @@ func TestBBSeriesM4FirstLastByTimeAndTies(t *testing.T) {
 	// One bucket (30 s cadence floor over a 60 s window with 2 points): three samples out of order, two on the same second.
 	samples := []blackbox.Sample{mk(20, 3), mk(2, 1), mk(2, 7), mk(10, 9)}
 	win := bbWindow{Start: start, End: start.Add(25 * time.Second)}
-	ans := buildBBSeriesShape(blackbox.Manifest{IntervalSeconds: 30}, samples, blackbox.ReadReport{}, blackbox.StateInfo{}, win, 1, true)
+	ans := buildBBSeriesShape(blackbox.Manifest{IntervalSeconds: 30}, samples, blackbox.ReadReport{}, blackbox.StateInfo{}, win, 1, true, true)
 	for _, l := range ans.Lines {
 		if l.Key != "cpu" {
 			continue
@@ -214,4 +221,38 @@ func TestBBSeriesM4FirstLastByTimeAndTies(t *testing.T) {
 		return
 	}
 	t.Fatal("no cpu line")
+}
+
+// A window the recording fills end to end: with width or shape m4 the answer holds at most `points` buckets, never one more.
+func TestBBSeriesM4NeverMoreBucketsThanPoints(t *testing.T) {
+	start := time.Date(2026, 11, 18, 6, 0, 0, 0, time.UTC)
+	var samples []blackbox.Sample
+	for i := 0; i <= 600; i++ { // one sample a second, 600 s, both ends included
+		s := fullSample(start.Add(time.Duration(i)*time.Second), i)
+		s.Seq = uint64(i + 1)
+		samples = append(samples, s)
+	}
+	win := bbWindow{Start: start, End: start.Add(600 * time.Second)}
+	man := blackbox.Manifest{IntervalSeconds: 1}
+	for _, points := range []int{60, 7, 600} {
+		ans := buildBBSeriesShape(man, samples, blackbox.ReadReport{}, blackbox.StateInfo{}, win, points, true, true)
+		found := false
+		for _, l := range ans.Lines {
+			if l.Key != "cpu" {
+				continue
+			}
+			found = true
+			if len(l.M4) == 0 || len(l.M4) > points {
+				t.Fatalf("points %d: %d cpu points", points, len(l.M4))
+			}
+			for _, p := range l.M4 {
+				if p[3] < p[2] {
+					t.Fatalf("bad point %v", p)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("no cpu line")
+		}
+	}
 }

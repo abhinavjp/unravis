@@ -128,7 +128,7 @@ type SeriesResult struct {
 	To       time.Time   `json:"to"`
 	BucketMs int64       `json:"bucketMs"`
 	Buckets  int         `json:"buckets"`
-	Width    int         `json:"width,omitempty"` // the pixel width the answer was cut for (M4), as echoed
+	Width    int         `json:"width,omitempty"` // the pixel width the answer was cut for (M4), after clamping
 	Partial  bool        `json:"partial"`
 	Scanned  int64       `json:"scanned"`
 	Series   []SeriesOut `json:"series"`
@@ -342,6 +342,10 @@ func Series(ctx context.Context, c Case, q SeriesQuery) (SeriesResult, error) {
 		return res, seriesErr(SeriesBadWidth, "The width must be a whole number of pixels, 1 or more.")
 	}
 	if q.Width > 0 {
+		// With a width, BucketMs 0 means "not asked"; an asked bucket below 1 is still refused.
+		if q.BucketMs < 0 {
+			return res, seriesErr(SeriesBadBucket, "The bucket must be a whole number of milliseconds, 1 or more.")
+		}
 		q.Width = M4Width(q.Width)
 		// Never finer than asked, never more buckets than pixels.
 		q.BucketMs = max(q.BucketMs, M4BucketMs(span, q.Width))
