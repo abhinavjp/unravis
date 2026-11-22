@@ -1,0 +1,51 @@
+name: Attest probe (throw-away)
+# One-off check that the bumped release actions (#127) still give attestations Sign-Release.ps1 accepts.
+# Runs only on pushes to this probe branch; never merged. Its signer identity is this file at refs/heads/claude/attest-probe,
+# which Sign-Release's --cert-identity (release.yml at refs/tags/<tag>) can never accept.
+on:
+  push:
+    branches: [claude/attest-probe]
+permissions:
+  contents: read
+jobs:
+  attest:
+    runs-on: windows-2022
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Make probe files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Set-Content dist/unravis-v0.0.0-probe-windows-x64.zip 'probe zip'
+          Set-Content dist/update-manifest.json '{"probe":true}'
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/unravis-v*-windows-x64.zip
+            dist/update-manifest.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: |
+            dist/unravis-v*-windows-x64.zip
+            dist/update-manifest.json
+          if-no-files-found: error
+  roundtrip:
+    needs: attest
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+      - name: Files arrive with their names, at the top of dist
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse dist | ForEach-Object { $_.FullName }
+          if (-not (Test-Path dist/unravis-v0.0.0-probe-windows-x64.zip) -or -not (Test-Path dist/update-manifest.json)) { throw 'layout changed' }
