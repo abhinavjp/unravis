@@ -458,3 +458,68 @@ jobs:
             if ($errs) { $bad++; $errs | ForEach-Object { Write-Host "$($f.FullName):$($_.Extent.StartLineNumber): $($_.Message)" } }
           }
           if ($bad) { throw "$bad script(s) do not parse." }
+
+  desktop-core:
+    # BL-320/321/322. The pure crate of the desktop shell (parsers, policy tables) and the repository policy tests: Tauri floor in
+    # Cargo.lock, zero tauri-plugin-*, capabilities and tauri.conf.json security block. No OS calls, so it runs on Linux.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Format, lint, test (locked)
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked -p ipc-core --all-targets -- -D warnings
+          cargo test --locked -p ipc-core
+
+  desktop-shell:
+    # BL-306. Builds and tests the Tauri shell itself on Windows: clippy with warnings denied, the Job Object test (a child dies when the
+    # job closes), and a locked release build. Cargo.lock must not change during the build.
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Rust toolchain (version from desktop/rust-toolchain.toml)
+        shell: pwsh
+        run: |
+          rustup show active-toolchain
+          if ($LASTEXITCODE -ne 0) { rustup toolchain install --profile minimal --component clippy --component rustfmt }
+          rustc --version
+          cargo --version
+
+      - name: Clippy (warnings are errors)
+        shell: pwsh
+        run: |
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Tests (Job Object test included)
+        shell: pwsh
+        run: |
+          cargo test --locked --workspace
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Release build (locked)
+        shell: pwsh
+        run: |
+          cargo build --locked --release -p unravis-desktop
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $exe = 'target\release\unravis-desktop.exe'
+          if (-not (Test-Path $exe)) { throw "$exe was not built" }
+          "{0} bytes" -f (Get-Item $exe).Length
+
+      - name: Cargo.lock is unchanged
+        shell: pwsh
+        run: |
+          git diff --exit-code -- Cargo.lock
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo.lock changed during the build' }
