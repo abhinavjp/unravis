@@ -304,7 +304,7 @@
      that is wider than what is left scrolls sideways. */
   .shell-rail { min-width: 0; padding: var(--space-5) calc(var(--space-3) + 40px + var(--space-2)) 0 var(--space-6); }
   .shell-head { display: grid; gap: var(--space-1); padding: var(--space-5) var(--space-6) var(--space-4); border-bottom: 1px solid var(--hairline); }
-  .shell-body { display: grid; align-content: start; gap: var(--space-5); min-height: 0; padding: var(--space-6); overflow: auto; }
+  .shell-body { position: relative; display: grid; align-content: start; gap: var(--space-5); min-height: 0; padding: var(--space-6); overflow: auto; }
   .shell-foot:empty { display: none; }
   /* BLACKBOX-11: the Place wizard keeps one height on every step, so Next does not move when the step changes. */
   dialog.pop.fixed .shell { height: min(700px, calc(100vh - 50px)); height: min(700px, calc(100dvh - 50px)); }

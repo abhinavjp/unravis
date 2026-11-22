@@ -394,3 +394,9 @@ test('SWEEP-F4-31: a click or a Tab away from a parked button is never undone wh
   // The pull-back needs focus to still be on the frame (or lost to the page).
   assert.match(src, /\(document\.activeElement === shell \|\| gone\(\)\)/);
 });
+
+test('SWEEP-F4-32: the wizard body is the containing block of its visually hidden text, so the pop-up reports no hidden overflow', () => {
+  const src = read('src/components/blackboxWizard/WizardDialog.svelte');
+  assert.match(src, /\.shell-body \{ position: relative;[^}]*overflow: auto/);
+  assert.match(read('src/components/blackboxWizard/FigureRow.svelte'), /\.visually-hidden \{ position: absolute;/);
+});

@@ -340,7 +340,7 @@
           "waitFor": "text=Case started"
         },
         {
-          "click": "role=button[name=\"Open the Investigation Timeline\"s]"
+          "click": "role=button[name=\"Open the Investigation timeline\"s]"
         },
         {
           "waitFor": ".panel[data-lane=audit] .mark.flagged"
@@ -468,7 +468,7 @@
           "goto": "/"
         },
         {
-          "waitFor": "css=#detail h1"
+          "waitFor": "css=#detail h2.dtitle"
         }
       ]
     },
