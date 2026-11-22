@@ -447,7 +447,9 @@ test('TSQL-04: with the toggle off nothing is read, it is offered instead, and t
   await traceEleven(page);
   await expect(sqlLine(page)).toHaveAttribute('data-kind', 'suggest');
   expect(mock.posts, 'only the first window was read').toHaveLength(1);
-  await openTimeline(page);
+  // The timeline draws no second "All cases" button (ANALYSIS-15), so the way back to it is a real reload, which is also what the title says.
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect(page.locator('[data-testid=sql-auto-toggle]')).not.toBeChecked();
 });
 

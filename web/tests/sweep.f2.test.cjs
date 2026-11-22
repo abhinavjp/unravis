@@ -233,8 +233,11 @@ test('SWEEP-F2-08: the episodes table drops the milliseconds and the zone suffix
 test('SWEEP-F2-09: guide tables wrap in the page text face, and the developer note is gone from the guide index', () => {
   const guide = read('src/components/HelpGuide.svelte');
   const style = guide.slice(guide.indexOf('<style>'));
-  assert.match(style, /table \{[^}]*width: 100%;[^}]*font-family: inherit;[^}]*white-space: normal;/);
-  assert.match(style, /th, td \{[^}]*white-space: normal;[^}]*font-family: inherit;/);
+  // Desktop windows wrap in the page text face; a narrow window keeps the scrolling table the guide script turns into a named region.
+  const wideRules = style.slice(style.indexOf('@media (min-width: 721px)'));
+  assert.match(wideRules, /table \{ font-family: inherit; white-space: normal; \}/);
+  assert.match(wideRules, /th, td \{ font-family: inherit; white-space: normal; \}/);
+  assert.doesNotMatch(style.slice(0, style.indexOf('@media (min-width: 721px)')), /table \{[^}]*white-space: normal/);
   const index = fs.readFileSync(path.join(repo, 'docs', 'user', 'index.md'), 'utf8');
   assert.doesNotMatch(index, /clean PC/i);
   assert.doesNotMatch(index, /Not yet (?:run|verified)/i);

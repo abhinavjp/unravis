@@ -175,9 +175,14 @@
   blockquote { margin: 0 0 8px; padding: 2px 0 2px 10px; border-left: 2px solid var(--control-line); color: var(--text-2); }
   blockquote :global(p:last-child) { margin-bottom: 0; }
   .guide-table { margin: 0 0 8px; max-width: 100%; overflow-x: auto; }
-  /* A guide table wraps inside the drawer and reads in the page's text face: the app's table rule (no wrapping, mono) cut the right column off (ANALYSIS-09). */
-  table { border-collapse: collapse; width: 100%; font-family: inherit; font-size: 13px; white-space: normal; }
-  th, td { padding: 5px 8px; text-align: left; vertical-align: top; overflow-wrap: anywhere; white-space: normal; font-family: inherit; border-bottom: 1px solid var(--line-soft); }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { padding: 5px 8px; text-align: left; vertical-align: top; overflow-wrap: anywhere; border-bottom: 1px solid var(--line-soft); }
+  /* On a desktop window a guide table wraps inside the drawer and reads in the page's text face: the app's table rule (no wrapping, mono) cut the right column off
+     (ANALYSIS-09). On a narrow window it keeps that rule and scrolls inside its own named, focusable region (the guide script adds the region only while it scrolls). */
+  @media (min-width: 721px) {
+    table { font-family: inherit; white-space: normal; }
+    th, td { font-family: inherit; white-space: normal; }
+  }
   th { color: var(--text-2); font-weight: 600; }
   .guide-link { display: inline; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; text-align: left; }
   /* Inside a table cell (the guide index) a link is a target of its own: 24px tall, the line keeps its height. */
