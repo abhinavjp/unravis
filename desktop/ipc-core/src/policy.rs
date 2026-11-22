@@ -4,12 +4,9 @@
 /// The origin of the bundled UI on Windows with `use_https_scheme(true)`.
 pub const APP_HOST: &str = "tauri.localhost";
 
-/// A navigation is allowed only inside the app origin (or the blank document WebView2 starts from). Anything else, including `http`,
+/// A navigation is allowed only inside the app origin. Anything else, including `about:blank` (it would inherit the app origin), `http`,
 /// `file`, `data`, `javascript`, other hosts, userinfo tricks and other ports, is refused.
 pub fn navigation_allowed(url: &str) -> bool {
-    if url == "about:blank" {
-        return true;
-    }
     let Some(rest) = url.strip_prefix("https://") else { return false };
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     rest[..end].eq_ignore_ascii_case(APP_HOST)
@@ -46,7 +43,7 @@ mod tests {
 
     #[test]
     fn navigation_blocked_external() {
-        for ok in ["https://tauri.localhost/", "https://tauri.localhost", "https://TAURI.localhost/x?y#z", "about:blank"] {
+        for ok in ["https://tauri.localhost/", "https://tauri.localhost", "https://TAURI.localhost/x?y#z"] {
             assert!(navigation_allowed(ok), "{ok}");
         }
         for bad in [
@@ -60,6 +57,7 @@ mod tests {
             "data:text/html,hi",
             "javascript:alert(1)",
             "ipc://localhost/x",
+            "about:blank",
             "",
         ] {
             assert!(!navigation_allowed(bad), "{bad}");

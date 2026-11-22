@@ -25,23 +25,24 @@ fn main() {
 
     lockdown::env_strip();
     let args = parse_args(std::env::args().skip(1));
+    // `--quit` is a signal only: no window, no dialog, no elevation refusal. Exit 0 = asked (or nothing was running), 1 = could not ask.
+    if args.quit {
+        std::process::exit(if singleton::enter("", Some(singleton::Signal::Quit)).is_ok() { 0 } else { 1 });
+    }
     if decide(elevation::token_facts()) == Decision::Refuse {
         elevation::show(MESSAGE);
         std::process::exit(EXIT_ADMIN);
     }
-    let signal = if args.quit { singleton::Signal::Quit } else { singleton::Signal::Open };
+    // A copy started with `--background` (sign-in start) must not pull the first copy's window forward: it asks for nothing.
+    let signal = if args.background { None } else { Some(singleton::Signal::Open) };
     let first = match singleton::enter("", signal) {
         Ok(singleton::Entry::First(f)) => f,
-        // `--quit` with no shell running has nothing to do either: the request went to nobody.
         Ok(singleton::Entry::Second) => return,
         Err(e) => {
             elevation::show(&format!("Unravis could not start.\n\n{e}"));
             std::process::exit(1);
         }
     };
-    if args.quit {
-        return;
-    }
     let backend = match locator::attach_or_spawn() {
         Ok(b) => b,
         Err(e) => {
