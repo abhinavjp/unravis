@@ -202,7 +202,50 @@ func (w *wire) call(name string, args any) (string, bool) {
 	result := res["result"].(map[string]any)
 	content := result["content"].([]any)
 	isError, _ := result["isError"].(bool)
-	return content[0].(map[string]any)["text"].(string), isError
+	return unwrapEnvelope(content[0].(map[string]any)["text"].(string), isError), isError
+}
+
+// callRaw is call without the unwrapping: the whole result object as the host receives it.
+func (w *wire) callRaw(name string, args any) map[string]any {
+	w.t.Helper()
+	body, _ := json.Marshal(args)
+	res := w.request("tools/call", `"name":"`+name+`","arguments":`+string(body))
+	if res["error"] != nil {
+		w.t.Fatalf("%s: protocol error %v", name, res["error"])
+	}
+	return res["result"].(map[string]any)
+}
+
+// envelopeKeys are the fields BL-343 adds to every tool result.
+var envelopeKeys = []string{"schemaVersion", "tool", "partial", "truncation", "untrusted"}
+
+// unwrapEnvelope gives the text the tool gave before BL-343, so the tests that compare the SDK loop with the hand-rolled one (which has no
+// envelope) keep comparing the tool's own answer: the message of an error, the result without the envelope fields otherwise. Text that is
+// not an envelope (the legacy loop's, the oversize replacement) comes back unchanged.
+func unwrapEnvelope(text string, isError bool) string {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(text), &fields) != nil || fields["schemaVersion"] == nil {
+		return text
+	}
+	if isError {
+		var e struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(text), &e) == nil && e.Error.Message != "" {
+			return e.Error.Message
+		}
+		return text
+	}
+	for _, k := range envelopeKeys {
+		delete(fields, k)
+	}
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return text
+	}
+	return string(out)
 }
 
 func resultOf(t *testing.T, m map[string]any) map[string]any {
@@ -402,11 +445,19 @@ func TestSDKCatalogParity(t *testing.T) {
 			if !reflect.DeepEqual(names, wantToolOrder) {
 				t.Fatalf("catalog order %v", names)
 			}
-			// Names, descriptions, input schemas and annotations: equal to the catalog the hand-rolled loop advertises, tool by tool.
+			// Names, descriptions, input schemas and annotations: equal to the catalog the hand-rolled loop advertises, tool by tool. The SDK
+			// loop adds the output schema (BL-343), and nothing else.
 			for i := range want {
-				if !reflect.DeepEqual(got[i], want[i]) {
+				expected := want[i]
+				if c.im.name == "sdk" {
+					expected = canonical(t, map[string]any{"name": names[i], "outputSchema": outputSchema(names[i])}).(map[string]any)
+					for k, v := range want[i].(map[string]any) {
+						expected.(map[string]any)[k] = v
+					}
+				}
+				if !reflect.DeepEqual(got[i], expected) {
 					g, _ := json.Marshal(got[i])
-					w, _ := json.Marshal(want[i])
+					w, _ := json.Marshal(expected)
 					t.Errorf("tool %s differs:\n got  %.600s\n want %.600s", names[i], g, w)
 				}
 			}

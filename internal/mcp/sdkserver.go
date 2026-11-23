@@ -233,7 +233,7 @@ func newSDKServer(b *Bridge, life context.Context, workers *sync.WaitGroup) *sdk
 		hints, _ := def["annotations"].(map[string]any)
 		destructive, openWorld := hints["destructiveHint"] == true, hints["openWorldHint"] == true
 		srv.AddTool(&sdk.Tool{
-			Name: name, Description: description, InputSchema: def["inputSchema"],
+			Name: name, Description: description, InputSchema: def["inputSchema"], OutputSchema: outputSchema(name),
 			Annotations: &sdk.ToolAnnotations{ReadOnlyHint: hints["readOnlyHint"] == true, DestructiveHint: &destructive, IdempotentHint: hints["idempotentHint"] == true, OpenWorldHint: &openWorld},
 		}, func(ctx context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
 			workers.Add(1)
@@ -242,15 +242,14 @@ func newSDKServer(b *Bridge, life context.Context, workers *sync.WaitGroup) *sdk
 			defer cancel()
 			defer context.AfterFunc(ctx, cancel)() // a cancel notification still ends the call
 			result, err := b.call(callCtx, req.Params.Name, req.Params.Arguments)
-			var text string
-			if err != nil {
-				text = err.Error()
-			} else if data, marshalErr := json.Marshal(result); marshalErr != nil {
-				text, err = "Could not encode audit results", marshalErr
-			} else {
-				text = string(data)
+			var body []byte
+			if err == nil {
+				body, err = encodeResult(name, result)
 			}
-			return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: text}}, IsError: err != nil}, nil
+			if err != nil {
+				return toolResult(encodeError(name, err), true), nil
+			}
+			return toolResult(body, false), nil
 		})
 	}
 	srv.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
@@ -258,7 +257,7 @@ func newSDKServer(b *Bridge, life context.Context, workers *sync.WaitGroup) *sdk
 			if call, ok := req.(*sdk.CallToolRequest); ok {
 				if _, known := order[call.Params.Name]; !known {
 					// Same answer as before, and the name the client sent is not echoed.
-					return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: "unknown tool; only the advertised read-only audit tools are available"}}, IsError: true}, nil
+					return toolResult(encodeError("unknown", coded(CodeInvalidArguments, "unknown tool; only the advertised read-only audit tools are available")), true), nil
 				}
 			}
 			result, err := next(ctx, method, req)
@@ -274,6 +273,12 @@ func newSDKServer(b *Bridge, life context.Context, workers *sync.WaitGroup) *sdk
 		}
 	})
 	return srv
+}
+
+// toolResult is the answer to a tools/call: the envelope as structuredContent and the same bytes as the text content. Hosts differ in which
+// of the two the model reads, so neither is ever the only one that holds the data.
+func toolResult(body []byte, isError bool) *sdk.CallToolResult {
+	return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: string(body)}}, StructuredContent: json.RawMessage(body), IsError: isError}
 }
 
 // Serve runs newline-delimited MCP over input and output until the input ends or parent is cancelled. Logs must never go to output.

@@ -267,7 +267,7 @@ func (b *Bridge) checkIdentifierFilters(q audit.Query) error {
 	if len(names) == 0 || b.identifiersAllowed() {
 		return nil
 	}
-	return errors.New("The " + strings.Join(names, ", ") + " filters are not available: the operator has not turned on --mcp-allow-identifiers. User ids, user agents, IP addresses, URLs and audit record ids are hidden, and filtering on them would reveal them")
+	return codedWire(CodeInvalidArguments, WirePermissionRequired, "The "+strings.Join(names, ", ")+" filters are not available: the operator has not turned on --mcp-allow-identifiers. User ids, user agents, IP addresses, URLs and audit record ids are hidden, and filtering on them would reveal them")
 }
 
 func boundedBody(r io.Reader, limit int) ([]byte, error) {
@@ -377,7 +377,7 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 			case 400:
 				return coded(CodeInvalidArguments, "audit query rejected; verify source IDs, date windows, filters and chart interval")
 			case 404:
-				return coded(CodeNotFound, "audit source or record is unavailable; list sources again")
+				return codedWire(CodeNotFound, WireSourceUnavailable, "audit source or record is unavailable; list sources again")
 			case 423:
 				return coded(CodeLocked, "Unravis is locked; unlock it in the app")
 			case 429:
