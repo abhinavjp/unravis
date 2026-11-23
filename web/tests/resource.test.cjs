@@ -360,9 +360,13 @@ test('coverage dots say how much data there is in words', () => {
 
 const hostile = '<img src=x onerror=alert(1)>"\'&';
 
-test('escapeHTML escapes the five characters', () => {
-  assert.equal(r.escapeHTML(hostile), '&lt;img src=x onerror=alert(1)&gt;&quot;&#39;&amp;');
-  assert.equal(r.escapeHTML('plain'), 'plain');
+test('the chart tooltip text is plain: rich-text control characters in a name are defused (BL-323)', () => {
+  const tip = loadTypeScript('src/lib/chartTooltip.ts');
+  assert.equal(tip.rt('plain'), 'plain');
+  assert.equal(tip.rt('a{b|c}d'), 'a｛b¦c｝d');
+  assert.equal(tip.rt(null), '');
+  assert.equal(tip.bold('x{y}'), '{b|x｛y｝}');
+  assert.equal(tip.tipLines(['one', '', null, false, undefined, 'two']), 'one\ntwo');
 });
 
 test('a lone sample (gaps on both sides) is drawn as a dot, a joined run is not', () => {
@@ -384,7 +388,7 @@ test('a lone sample (gaps on both sides) is drawn as a dot, a joined run is not'
   assert.equal(dots.symbolSize, 5);
 });
 
-test('the chart tooltip escapes every name and value, and the option has one grid per strip', () => {
+test('the chart tooltip is rich text with every name defused, and the option has one grid per strip', () => {
   const pal = { text: '#111111', accent: '#2457c5', accentSoft: '#9db6ea', warn: '#96600a', bad: '#b02a3d', pending: '#5b6878', text2: '#4d5a6b', axisLine: '#d5dbe3', grid: '#e6eaf0', empty: '#eee', heat: [], series: ['#146b58', '#2457c5'], surface: '#ffffff' };
   const strips = [
     { id: 'a', title: 'First', unit: '%', max: 100, lines: [{ id: 'l1', name: hostile, points: [[T0, 1]] }] },
@@ -401,9 +405,15 @@ test('the chart tooltip escapes every name and value, and the option has one gri
   assert.equal(carriers.length, 2, 'bands and markers are drawn on every strip');
   assert.equal(carriers[0].markArea.data.length, 1, 'a stall period outside the window is left out');
   assert.equal(carriers[0].markLine.data.length, 1, 'a marker outside the window is left out');
-  const html = option.tooltip.formatter([{ axisValue: T0, seriesName: hostile, value: [T0, 1], marker: '<span></span>' }, { axisValue: T0, seriesName: 'gap', value: [T0, null], marker: '' }]);
-  assert.doesNotMatch(html, /<img/);
-  assert.match(html, /&lt;img/);
+  assert.equal(option.tooltip.renderMode, 'richText', 'no HTML tooltip: its style attributes are blocked by the desktop policy');
+  const text = option.tooltip.formatter([{ axisValue: T0, seriesName: hostile + '{x|y}', value: [T0, 1], marker: '<span></span>' }, { axisValue: T0, seriesName: 'gap', value: [T0, null], marker: '' }]);
+  assert.doesNotMatch(text, /<span/, 'the HTML marker is never used');
+  assert.match(text, /^[^\n]+\n/, 'a time line, then one line for each series');
+  assert.match(text, /<img src=x onerror=alert\(1\)>/, 'the name is shown as it is: it is text, not markup');
+  assert.doesNotMatch(text, /\{x\|y\}/, 'a rich-text style tag in a name is defused');
+  const named = option.tooltip.formatter([{ axisValue: T0, seriesName: hostile, value: [T0, 1] }]);
+  assert.match(named, /\{s\d\|●\} /, 'the line starts with a bullet in the series colour');
+  assert.ok(option.tooltip.textStyle.rich.s0, 'the bullet style is declared');
   assert.equal(option.tooltip.formatter([{ axisValue: T0, seriesName: 'x', value: [T0, null], marker: '' }]), '');
   assert.ok(r.chartHeight(2) > r.chartHeight(1));
 });

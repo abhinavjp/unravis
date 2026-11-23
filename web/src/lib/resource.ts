@@ -7,6 +7,7 @@
 import type { Palette } from './charts';
 import { chartTime } from './chartTime';
 import { lonePointSeries } from './chartPerf';
+import { richTip, rt } from './chartTooltip';
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Fixed words. Every string the panel shows that is not data lives here, so the copy lint can check all of it.
@@ -127,11 +128,6 @@ export type ProcMetricId = (typeof PROC_METRICS)[number]['id'];
 export const TOP_PROCESSES = 5;
 
 // ---------------------------------------------------------------------------------------------------------------------------------
-// Escaping. Chart tooltips are HTML strings, so every name and value goes through this.
-
-export const escapeHTML = (value: string): string =>
-  String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char);
-
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Response shapes and their checks. A check returns null for an answer that is not the documented shape; the caller turns that into
 // "the server sent an answer that could not be read". Arrays are never null in the documented shape, so a null array is refused.
@@ -665,16 +661,25 @@ export function stripsOption(input: OptionInput) {
       }
     });
   });
+  // Rich-text styles of the tooltip bullets: one for each colour slot of the palette, and one for a band (the "all other" area).
+  const richKeys = { keyOf: new Map<string, string>(), rich: { b: { fontWeight: 'bold', fontSize: 12, color: pal.text }, sb: { color: pal.axisLine }, ...Object.fromEntries(pal.series.map((color, k) => ['s' + k, { color }])) } as Record<string, object> };
+  strips.forEach(strip => strip.lines.forEach((line, k) => { if (!richKeys.keyOf.has(line.name)) richKeys.keyOf.set(line.name, line.band ? 'sb' : 's' + (k % pal.series.length)); }));
   return {
     animation: false,
     grid: grids, xAxis: xAxes, yAxis: yAxes, title: titles, series,
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
     tooltip: {
-      trigger: 'axis', confine: true, backgroundColor: pal.surface, borderColor: pal.axisLine, textStyle: { color: pal.text, fontSize: 12 },
-      formatter: (items: Array<{ axisValue: number; seriesName: string; value: [number, number | null]; marker: string }>) => {
+      ...richTip(pal, { trigger: 'axis', confine: true }),
+      textStyle: { color: pal.text, fontSize: 12, rich: richKeys.rich },
+      // Plain text, one line for each series (richText mode, BL-323). The coloured dot of the HTML tooltip is a `style` attribute, so the line starts
+      // with a bullet in the series colour instead (a rich style named for the colour slot).
+      formatter: (items: Array<{ axisValue: number; seriesName: string; value: [number, number | null] }>) => {
         const shown = items.filter(item => item.seriesName && item.value && item.value[1] != null);
         if (shown.length === 0) return '';
-        return escapeHTML(chartTime(shown[0].axisValue, zone)) + '<br/>' + shown.map(item => item.marker + escapeHTML(item.seriesName) + ': ' + escapeHTML(String(item.value[1]))).join('<br/>');
+        return rt(chartTime(shown[0].axisValue, zone)) + '\n' + shown.map(item => {
+          const key = richKeys.keyOf.get(item.seriesName);
+          return (key ? '{' + key + '|●} ' : '') + rt(item.seriesName) + ': ' + rt(String(item.value[1]));
+        }).join('\n');
       }
     }
   };
