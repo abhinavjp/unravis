@@ -50,11 +50,17 @@ export function sameRead(before: unknown, after: unknown): boolean {
 }
 
 /**
- * "The read that started last wins" for one kind of answer (the health checks, say) that several reads can bring: the page's own read, the
- * read after an add, the read on return, and the one a finished check asks for. A read takes a number when it starts and puts its answer in only
- * while that number is still the newest, so an older list that was slow can never replace a newer one.
+ * "The newest answer wins" for one kind of answer (the health checks, say) that several reads can bring: the page's own read, the read after an
+ * add, the read on return, and the one a finished check asks for. A read takes a number when it starts (`begin`) and asks `accept` when its
+ * answer is in: it is put in only when no read that started later has already put its answer in, so an older list that was slow never replaces
+ * a newer one. A read that fails, or is thrown away, never calls `accept`, so it cannot hold back an answer that is right.
+ * A read takes its number only while it is still wanted (the page still shows its case): take it after that check, never before.
  */
-export function newestWins(): { begin: () => number; latest: (token: number) => boolean } {
-  let last = 0;
-  return { begin: () => ++last, latest: (token) => token === last };
+export function newestWins(): { begin: () => number; accept: (token: number) => boolean } {
+  let started = 0;
+  let shown = 0;
+  return {
+    begin: () => ++started,
+    accept: (token) => { if (token <= shown) return false; shown = token; return true; }
+  };
 }

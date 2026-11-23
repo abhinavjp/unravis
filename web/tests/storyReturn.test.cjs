@@ -70,25 +70,32 @@ test('Case home reads on return, keeps what it shows when the read fails, and re
 // ---- the newest read wins (health checks), and a theory saved here is not lost to an older read
 const { newestWins } = module_.exports;
 
-test('newestWins: only the read that started last may put its answer in', () => {
+test('newestWins: an answer is put in only while no read that started later has put its answer in', () => {
   const reads = newestWins();
   const slow = reads.begin();
   const finishedCheck = reads.begin();
-  assert.equal(reads.latest(finishedCheck), true);
-  assert.equal(reads.latest(slow), false, 'an older list that is slow never replaces the newer one');
+  assert.equal(reads.accept(finishedCheck), true);
+  assert.equal(reads.accept(slow), false, 'an older list that is slow never replaces the newer one');
   const next = reads.begin();
-  assert.equal(reads.latest(finishedCheck), false);
-  assert.equal(reads.latest(next), true);
+  assert.equal(reads.accept(next), true);
+  assert.equal(reads.accept(next), false, 'one answer is put in once');
+});
+
+test('newestWins: a read that fails or is thrown away holds nothing back', () => {
+  const reads = newestWins();
+  const pageRead = reads.begin();
+  reads.begin(); // a later read that never answers (it failed): it never asks to put anything in
+  assert.equal(reads.accept(pageRead), true, 'the page read is still put in');
 });
 
 test('Case home gives every read of the health checks a number, and a case erased elsewhere shows as gone', () => {
   assert.match(page, /const healthReads = newestWins\(\)/);
   const reread = page.slice(page.indexOf('async function rereadFiles'), page.indexOf('function backOnPage'));
   assert.match(reread, /healthReads\.begin\(\)[\s\S]*fetchHealthRuns\(id\)/);
-  assert.match(reread, /runs && healthReads\.latest\(healthToken\)/);
+  assert.match(reread, /runs && healthReads\.accept\(healthToken\)/);
   const finished = page.slice(page.indexOf('async function rereadHealth'), page.indexOf('// The case was locked'));
-  assert.match(finished, /healthReads\.begin\(\)[\s\S]*healthReads\.latest\(token\)\) health = runs/);
-  assert.match(page, /healthReads\.begin\(\);\n\s*const \[files, runs, theory\][\s\S]*if \(healthReads\.latest\(healthToken\)\) health = /, 'the page read takes a number too');
+  assert.match(finished, /healthReads\.begin\(\)[\s\S]*healthReads\.accept\(token\)\) health = runs/);
+  assert.match(page, /healthReads\.begin\(\);\n\s*const \[files, runs, theory\][\s\S]*if \(healthReads\.accept\(healthToken\)\) health = /, 'the page read takes a number too');
   assert.match(reread, /getCaseView\(id\)\.catch\(\(error: unknown\) => \{ if \(isCaseGone\(error\)\) return null; throw error; \}\);\s*if \(!fresh\) \{ if \(id === caseId && mine === rereadRun\) gone\(\); return; \}/);
 });
 
@@ -161,4 +168,14 @@ test('the ledger panel tells the store about each local write', () => {
   const panel = fs.readFileSync(path.join(root, 'src/components/LedgerPanel.svelte'), 'utf8');
   assert.match(panel, /function replace\(h: Hypothesis\) \{\n\s*noteLedgerWrite\(\);/);
   assert.match(panel, /noteLedgerWrite\(\);\n\s*ledger\.items = ledger\.items\.filter/);
+});
+
+test('a thrown-away re-read takes no health number, and another case starts with none of the last one\'s checks', () => {
+  const reread = page.slice(page.indexOf('async function rereadFiles'), page.indexOf('function backOnPage'));
+  // The case is read first; only then, while the read is still wanted (same case, newest re-read), does it take its number.
+  const guard = reread.indexOf('if (id !== caseId || mine !== rereadRun) return;');
+  const take = reread.indexOf('healthReads.begin()');
+  assert.ok(guard > reread.indexOf('await getCaseView') && guard < take, 'the guard comes before begin()');
+  // Opening another case on the same page (restore as new, then Open the new case) lets go of the last case's health checks and files at once.
+  assert.match(page, /if \(loadedFor !== id\) \{ health = \[\]; imports = \[\]; \}\n\s*loadedFor = id;/);
 });

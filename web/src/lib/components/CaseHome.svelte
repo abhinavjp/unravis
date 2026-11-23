@@ -190,6 +190,8 @@
     const mine = new AbortController();
     controller = mine;
     if (!quiet) phase = 'loading';
+    // Another case: what this page holds of the last one (its health checks) is let go at once, so it can never show in this case's story.
+    if (loadedFor !== id) { health = []; imports = []; }
     loadedFor = id;
     lastReadAt = Date.now();
     copyNote = '';
@@ -222,7 +224,7 @@
     if (caseView.status === 'rejected' && files.status === 'rejected') { phase = 'failed'; return; }
     info = found;
     imports = files.status === 'fulfilled' ? files.value : [];
-    if (healthReads.latest(healthToken)) health = runs.status === 'fulfilled' ? runs.value : [];
+    if (healthReads.accept(healthToken)) health = runs.status === 'fulfilled' ? runs.value : [];
     theoryProblem = theory.status === 'rejected';
     phase = 'ready';
     if (theory.status === 'fulfilled' && ledger.items.length === 0) void findShared(mine.signal);
@@ -312,13 +314,15 @@
       const fresh = await getCaseView(id).catch((error: unknown) => { if (isCaseGone(error)) return null; throw error; });
       if (!fresh) { if (id === caseId && mine === rereadRun) gone(); return; }
       const reads = readsCaseData(fresh);
+      // Gone from this page (another case was opened, or a newer read began) while the case was read: nothing more is read or taken.
+      if (id !== caseId || mine !== rereadRun) return;
       const healthToken = healthReads.begin();
       const [files, runs] = await Promise.all([reads ? listImports(id) : Promise.resolve([] as ImportRecord[]), reads ? fetchHealthRuns(id).catch(() => null) : Promise.resolve(null)]);
       const theoriesRead = everything && reads ? refreshLedger().catch(() => { /* the theories keep what they show */ }) : Promise.resolve();
       if (id !== caseId || mine !== rereadRun) return;
       if (!sameRead(info, fresh)) info = fresh;
       if (!sameRead(imports, files)) imports = files;
-      if (runs && healthReads.latest(healthToken) && !sameRead(health, runs)) health = runs;
+      if (runs && healthReads.accept(healthToken) && !sameRead(health, runs)) health = runs;
       await theoriesRead;
     } catch (error) { lockedUnder(error); /* otherwise the page keeps the list it had */ } finally { rereadsOpen -= 1; }
   }
@@ -347,7 +351,7 @@
     const token = healthReads.begin();
     try {
       const runs = await fetchHealthRuns(id);
-      if (id === caseId && healthReads.latest(token)) health = runs;
+      if (id === caseId && healthReads.accept(token)) health = runs;
     } catch (error) { lockedUnder(error); /* otherwise the story keeps the list it had */ }
   }
 

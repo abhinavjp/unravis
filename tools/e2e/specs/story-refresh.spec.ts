@@ -10,7 +10,8 @@
 //             when the person comes back to the page (tab shown, window focused): one read of the case and its files, no loading text, no focus move.
 //   STORY-06  A read on return that fails keeps the story as it was, shows nothing about it, and the next return reads again and shows the new file.
 //   STORY-08  A case erased elsewhere shows as gone when the person comes back (no loop of reads after that).
-//   STORY-09  A theory saved in the drawer while the read on return is slow is still in the list and in the story when that read answers.
+//   STORY-09  A theory saved in the drawer while the read on return is slow is still in the list and in the story when that read answers, and a theory another
+//             client added meanwhile shows too (the held answer is not put in; the list is read once more).
 //   STORY-07  No request storm: a return inside the gap, or while the page is hidden, reads nothing; five returns together read once.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
@@ -360,8 +361,15 @@ test('STORY-09: a theory saved while the read on return is slow is not lost when
   const row = drawer.locator('.theory-text').filter({ hasText: theory });
   await expect(row).toHaveCount(1);
 
+  // Another client adds a second theory through the real API while the read is still held: the held answer does not have it either.
+  const other = 'A second client saw the lock wait';
+  const added = await api('POST', `/api/cases/${id}/ledger`, { text: other }, 'open');
+  expect(added.status, added.text).toBeLessThan(300);
+
   release();
-  await page.waitForTimeout(800);
+  // The held answer is older than the save made here, so it is not put in; the list is read once more, which has both theories.
+  await expect(drawer.locator('.theory-text').filter({ hasText: other })).toHaveCount(1);
   await expect(row).toHaveCount(1);
   await expect(page.locator('ol.story li').filter({ hasText: theory })).toHaveCount(1);
+  await expect(page.locator('ol.story li').filter({ hasText: other })).toHaveCount(1);
 });
