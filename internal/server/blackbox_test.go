@@ -73,7 +73,10 @@ func jb(v any) string {
 }
 
 // newBBEnv builds the server. mod can change the deps (drop the helper, say).
-func newBBEnv(t *testing.T, mod func(*BlackboxDeps)) *bbEnv {
+func newBBEnv(t *testing.T, mod func(*BlackboxDeps)) *bbEnv { return newBBEnvWith(t, mod) }
+
+// newBBEnvWith is newBBEnv with more server options (a saved-SQL list, for example).
+func newBBEnvWith(t *testing.T, mod func(*BlackboxDeps), opts ...Option) *bbEnv {
 	t.Helper()
 	b := &bbEnv{t: t, nowT: invT0.Add(3*time.Hour + 10*time.Second), world: newSimWorld()}
 	b.path = filepath.Join(t.TempDir(), "cfg", "blackboxes.dat")
@@ -92,7 +95,7 @@ func newBBEnv(t *testing.T, mod func(*BlackboxDeps)) *bbEnv {
 		mod(&deps)
 	}
 	repo := &fakeRepository{requestPages: []audit.Page{okPage(invRows())}}
-	b.e = tagEnv(t, casestore.NewMemory(), repo, WithBlackbox(deps))
+	b.e = tagEnv(t, casestore.NewMemory(), repo, append([]Option{WithBlackbox(deps)}, opts...)...)
 	return b
 }
 

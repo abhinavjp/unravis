@@ -54,6 +54,9 @@ type BlackboxPC interface {
 	Remove(ctx context.Context, name string, deleteRecordings bool, confirmName string) (blackbox.RemoveOutcome, error)
 	Snapshot(ctx context.Context) (blackbox.SnapshotOutcome, error)
 	Update(ctx context.Context) (blackbox.UpdateOutcome, error)
+	// SetupSQL turns SQL collection on (one prompt); ClearSQLLogin deletes the saved SQL login.
+	SetupSQL(ctx context.Context, loginFile, loginSHA string, windows, enable bool) (blackbox.SQLSetupOutcome, error)
+	ClearSQLLogin(ctx context.Context) error
 }
 
 // BlackboxDeps wires the Blackbox pages. Only Store is required; a missing ThisPC
@@ -177,6 +180,8 @@ func init() {
 		bbRoute("/api/blackbox/this-pc/apply", bbExact("/api/blackbox/this-pc/apply"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbApply(w, r) })),
 		bbRoute("/api/blackbox/this-pc/remove", bbExact("/api/blackbox/this-pc/remove"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbRemoveThisPC(w, r) })),
 		bbRoute("/api/blackbox/this-pc/update", bbExact("/api/blackbox/this-pc/update"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbUpdate(w, r) })),
+		bbRoute("/api/blackbox/this-pc/sql/setup", bbExact("/api/blackbox/this-pc/sql/setup"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbSQLSetup(w, r) })),
+		bbRoute("/api/blackbox/this-pc/sql/login/clear", bbExact("/api/blackbox/this-pc/sql/login/clear"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbSQLClearLogin(w, r) })),
 		bbRoute("/api/blackbox/this-pc/snapshot", bbExact("/api/blackbox/this-pc/snapshot"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbSnapshot(w, r) })),
 		bbRoute("/api/blackbox/{id}/check", bbEntryPath("/check"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbCheck(w, r, id) })),
 		bbRoute("/api/blackbox/{id}/diagnostics", bbEntryPath("/diagnostics"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbDiagnostics(w, r, id) })),
