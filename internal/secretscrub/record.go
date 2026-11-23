@@ -17,8 +17,8 @@ import "strings"
 // maxRecordDepth bounds the stack of open objects. A deeper object is read as part of its parent: its members are not judged.
 const maxRecordDepth = 32
 
-// maxRecordString bounds a string read as a member name or value. A longer string is not a member of a record.
-const maxRecordString = 4096
+// maxRecordString bounds a string read as a member name or value (64 KiB: a PEM key or certificate fits). A longer string is cut there.
+const maxRecordString = 1 << 16
 
 // maxRecordLines bounds how many lines of a YAML record are read on each side of the name key.
 const maxRecordLines = 12
@@ -73,35 +73,47 @@ func (f *jframe) flush(edits []edit) []edit {
 	return edits
 }
 
-// jsonStringEnd returns the index of the closing quote of the string that opens at q, or -1 when there is none within
-// maxRecordString bytes (the quote is then an ordinary character).
-func jsonStringEnd(s string, q int) int {
-	return quotedEnd(s, q, s[q])
-}
-
-// quotedEnd is jsonStringEnd for either quote character.
-func quotedEnd(s string, q int, quote byte) int {
-	limit := q + 1 + maxRecordString
+// recordString reads the string that opens at i. Plain: a quote (" or ') and the next one of the same kind, with backslash escapes.
+// Escaped (JSON written inside a JSON string, \"name\":\"x\"): the two bytes backslash and quote open it and the next such pair
+// closes it. A string never runs over a line break and never over maxRecordString. It returns the text inside, the index after the
+// close, and how many bytes were read (charged by the caller, whether or not the string closed).
+func recordString(s string, i int, esc bool) (from, to, next, read int, ok bool) {
+	q := s[i]
+	from = i + 1
+	if esc {
+		from = i + 2
+	}
+	limit := from + maxRecordString
 	if limit > len(s) {
 		limit = len(s)
 	}
-	for k := q + 1; k < limit; k++ {
-		switch s[k] {
+	for k := from; k < limit; k++ {
+		c := s[k]
+		if c == '\n' {
+			return 0, 0, 0, k - i + 1, false
+		}
+		if esc {
+			if c == '\\' && k+1 < len(s) && s[k+1] == '"' {
+				return from, k, k + 2, k - i + 2, true
+			}
+			continue
+		}
+		switch c {
 		case '\\':
 			k++
-		case quote:
-			return k
+		case q:
+			return from, k, k + 1, k - i + 1, true
 		}
 	}
-	return -1
+	return 0, 0, 0, limit - i, false
 }
 
-// opensSingleQuoted says whether the apostrophe at i opens a string in a Python-style record ({'name': 'X', 'value': 'y'}): the
-// last mark before it is one of "{[,:". An apostrophe inside a word or a sentence ("it's") does not.
+// opensSingleQuoted says whether the apostrophe at i opens a string in a Python-style record ({'name': 'X', 'value': 'y'}, also over
+// several lines): the last mark before it is one of "{[,:". An apostrophe inside a word or a sentence ("it's") does not.
 func opensSingleQuoted(s string, i int) bool {
-	for k := i - 1; k >= 0 && i-k <= 8; k-- {
+	for k := i - 1; k >= 0 && i-k <= 64; k-- {
 		switch s[k] {
-		case ' ', '\t':
+		case ' ', '\t', '\r', '\n':
 			continue
 		case '{', '[', ',', ':':
 			return true
@@ -118,25 +130,62 @@ func skipSpace(s string, k int) int {
 	return k
 }
 
+// recordName says whether a setting name can be the name of a record: no white space inside ("Reset password" is a title).
+func recordName(v string) bool {
+	return v != "" && len(v) <= 4*maxIdent && !strings.ContainsAny(v, " \t\r\n")
+}
+
+// arrayEnd returns the index of the "]" that closes the array opening at v, or -1 (not within maxRecordString bytes). Strings inside are
+// not read: a bracket inside a value ends the span early, which masks less than the whole array but never more than the line.
+func arrayEnd(s string, v int) int {
+	depth := 0
+	limit := v + maxRecordString
+	if limit > len(s) {
+		limit = len(s)
+	}
+	for k := v; k < limit; k++ {
+		switch s[k] {
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				return k
+			}
+		}
+	}
+	return -1
+}
+
+// jsonRecords reads objects, and does it twice when the text has an escaped quote: once with plain quotes and once with the
+// backslash-quote pair as the quote (JSON inside a JSON string, as in a last-applied-configuration annotation).
 func jsonRecords(s string, edits []edit, w *work) []edit {
+	edits = jsonPass(s, edits, w, false)
+	if strings.Contains(s, "\\\"") {
+		edits = jsonPass(s, edits, w, true)
+	}
+	return edits
+}
+
+func jsonPass(s string, edits []edit, w *work, esc bool) []edit {
 	var stack []jframe
 	over := 0 // objects opened beyond maxRecordDepth
 	i := 0
 	for i < len(s) {
 		if w.out() {
-			return edits
+			break
 		}
 		c := s[i]
 		w.spend(1)
-		switch c {
-		case '{':
+		switch {
+		case c == '{':
 			if len(stack) < maxRecordDepth {
 				stack = append(stack, jframe{})
 			} else {
 				over++
 			}
 			i++
-		case '}':
+		case c == '}':
 			if over > 0 {
 				over--
 			} else if len(stack) > 0 {
@@ -144,24 +193,36 @@ func jsonRecords(s string, edits []edit, w *work) []edit {
 				stack = stack[:len(stack)-1]
 			}
 			i++
-		case '"', '\'':
-			if c == '\'' && !opensSingleQuoted(s, i) {
-				i++
+		case (!esc && c == '"') || (!esc && c == '\'' && opensSingleQuoted(s, i)) || (esc && c == '\\' && i+1 < len(s) && s[i+1] == '"'):
+			from, to, next, read, ok := recordString(s, i, esc)
+			w.spend(read)
+			if !ok {
+				// A string that does not close on its line (a cut log line, a value over the cap). As the value of a "value" member it is
+				// masked to the end of the line, because the record may still turn out to be a secret.
+				e := i + read
+				if len(stack) > 0 && over == 0 && stack[len(stack)-1].key == "value" {
+					top := &stack[len(stack)-1]
+					lineEnd := len(s)
+					if k := strings.IndexByte(s[i:], '\n'); k >= 0 {
+						lineEnd = i + k
+					}
+					top.vFrom, top.vTo, top.key = i+1, lineEnd, ""
+					w.spend(lineEnd - i)
+					e = lineEnd
+				}
+				if e <= i {
+					e = i + 1
+				}
+				i = e
 				continue
 			}
-			j := quotedEnd(s, i, c)
-			if j < 0 {
-				i++
-				continue
-			}
-			w.spend(j - i)
 			if over > 0 || len(stack) == 0 {
-				i = j + 1
+				i = next
 				continue
 			}
 			top := &stack[len(stack)-1]
-			content := s[i+1 : j]
-			k := skipSpace(s, j+1)
+			content := s[from:to]
+			k := skipSpace(s, next)
 			if k < len(s) && s[k] == ':' {
 				// A member name. Read the first byte of its value: a literal value of a "value" member is a span to mask as well.
 				top.key = strings.ToLower(content)
@@ -169,32 +230,40 @@ func jsonRecords(s string, edits []edit, w *work) []edit {
 					top.key = top.key[:maxIdent]
 				}
 				v := skipSpace(s, k+1)
-				if top.key == "value" && v < len(s) && s[v] != '"' && s[v] != '\'' && s[v] != '{' && s[v] != '[' {
-					e := v
-					for e < len(s) && e-v < maxRecordString && s[e] != ',' && s[e] != '}' && s[e] != ']' && s[e] != ' ' && s[e] != '\n' && s[e] != '\r' && s[e] != '\t' {
-						e++
+				if top.key == "value" && v < len(s) {
+					switch s[v] {
+					case '"', '\'', '{', '\\':
+					case '[':
+						if e := arrayEnd(s, v); e > v+1 {
+							w.spend(e - v)
+							top.vFrom, top.vTo, top.key = v+1, e, ""
+						}
+					default:
+						e := v
+						for e < len(s) && e-v < maxRecordString && s[e] != ',' && s[e] != '}' && s[e] != ']' && s[e] != ' ' && s[e] != '\n' && s[e] != '\r' && s[e] != '\t' {
+							e++
+						}
+						w.spend(e - v)
+						top.vFrom, top.vTo, top.key = v, e, ""
 					}
-					w.spend(e - v)
-					top.vFrom, top.vTo = v, e
-					top.key = ""
 				}
 				i = k + 1
 				continue
 			}
 			// A string value.
-			if nameKeys[top.key] && IsSecretKey(content) {
+			if nameKeys[top.key] && recordName(content) && IsSecretKey(content) {
 				top.secret = true
 			}
 			if top.key == "value" {
-				top.vFrom, top.vTo = i+1, j
+				top.vFrom, top.vTo = from, to
 			}
 			top.key = ""
-			i = j + 1
+			i = next
 		default:
 			i++
 		}
 	}
-	// Objects that never closed: the record is read as far as it goes.
+	// Objects still open, at the end of the text or where the budget ran out: the record is judged as far as it was read.
 	for n := len(stack) - 1; n >= 0; n-- {
 		edits = stack[n].flush(edits)
 	}
@@ -252,26 +321,60 @@ func plistRecords(s string, edits []edit, w *work) []edit {
 
 type yline struct {
 	start, end int // the line without its line break
+	next       int // where the next line starts (len(s)+1 after the last line)
 	indent     int
 }
 
-// yamlName reads "name:" (or "- name:") with a secret key name as its value from the line. dash says the line opens a list item.
-func yamlName(s string, l yline) (secret, dash bool) {
+// lineAt reads the line that starts at start.
+func lineAt(s string, start int) yline {
+	end, next := len(s), len(s)+1
+	if e := strings.IndexByte(s[start:], '\n'); e >= 0 {
+		end = start + e
+		next = end + 1
+	}
+	ee := end
+	if ee > start && s[ee-1] == '\r' {
+		ee--
+	}
+	ind := 0
+	for start+ind < ee && (s[start+ind] == ' ' || s[start+ind] == '\t') {
+		ind++
+	}
+	return yline{start, ee, next, ind}
+}
+
+// prevLine reads the line before the one that starts at start; ok is false at the top of the text.
+func prevLine(s string, start int) (yline, bool) {
+	if start <= 0 {
+		return yline{}, false
+	}
+	ps := strings.LastIndexByte(s[:start-1], '\n') + 1
+	return lineAt(s, ps), true
+}
+
+func (l yline) blank(s string) bool { return l.start+l.indent >= l.end }
+
+// yamlName reads "name:" (or "- name:") with a secret key name as its value from the line. keyCol is the column of the name key
+// itself: the indent of every other key of the same item.
+func yamlName(s string, l yline) (secret bool, keyCol int, dash bool) {
 	t := s[l.start+l.indent : l.end]
+	keyCol = l.indent
 	if strings.HasPrefix(t, "- ") {
 		dash = true
-		t = strings.TrimLeft(t[2:], " \t")
+		r := strings.TrimLeft(t[1:], " \t")
+		keyCol += len(t) - len(r)
+		t = r
 	}
 	if len(t) > 0 && (t[0] == '"' || t[0] == '\'') {
 		t = t[1:]
 	}
 	colon := strings.IndexByte(t, ':')
 	if colon <= 0 || colon > 16 {
-		return false, dash
+		return false, keyCol, dash
 	}
-	key := strings.ToLower(strings.TrimRight(t[:colon], "\"' "))
+	key := strings.ToLower(strings.TrimRight(t[:colon], "\"' \t"))
 	if !nameKeys[key] {
-		return false, dash
+		return false, keyCol, dash
 	}
 	v := strings.TrimSpace(t[colon+1:])
 	if h := strings.Index(v, " #"); h >= 0 {
@@ -280,7 +383,7 @@ func yamlName(s string, l yline) (secret, dash bool) {
 	if len(v) >= 2 && (v[0] == '"' || v[0] == '\'') && v[len(v)-1] == v[0] {
 		v = v[1 : len(v)-1]
 	}
-	return v != "" && len(v) <= 4*maxIdent && IsSecretKey(v), dash
+	return recordName(v) && IsSecretKey(v), keyCol, dash
 }
 
 // yamlValueLine reports whether the line is the "value:" member of a record, and where the text after the colon starts.
@@ -288,7 +391,7 @@ func yamlValueLine(s string, l yline) (rest int, ok bool) {
 	t := s[l.start+l.indent : l.end]
 	off := l.start + l.indent
 	if strings.HasPrefix(t, "- ") {
-		skip := 2
+		skip := 1
 		for skip < len(t) && (t[skip] == ' ' || t[skip] == '\t') {
 			skip++
 		}
@@ -304,88 +407,83 @@ func yamlValueLine(s string, l yline) (rest int, ok bool) {
 	if k < len(t) && (t[k] == '"' || t[k] == '\'') {
 		k++
 	}
+	for k < len(t) && (t[k] == ' ' || t[k] == '\t') {
+		k++
+	}
 	if k >= len(t) || t[k] != ':' {
 		return 0, false
 	}
 	return off + k + 1, true
 }
 
+// yamlRecords finds each "name:" line whose value is a secret key name and masks the "value:" member of its item. The text is read
+// line by line once, and the neighbours of a name line are read from its position: no table of lines is built, so a text of a few
+// million line breaks costs no memory.
 func yamlRecords(s string, edits []edit, w *work) []edit {
-	// Lines, read once.
-	var lines []yline
-	for start := 0; start <= len(s); {
-		e := strings.IndexByte(s[start:], '\n')
-		end := len(s)
-		next := len(s) + 1
-		if e >= 0 {
-			end = start + e
-			next = end + 1
-		}
-		ee := end
-		if ee > start && s[ee-1] == '\r' {
-			ee--
-		}
-		ind := 0
-		for start+ind < ee && (s[start+ind] == ' ' || s[start+ind] == '\t') {
-			ind++
-		}
-		lines = append(lines, yline{start, ee, ind})
-		start = next
-	}
 	w.spend(len(s))
-	blank := func(l yline) bool { return l.start+l.indent >= l.end }
-	for n, l := range lines {
+	for start := 0; start <= len(s); {
 		if w.out() {
 			return edits
 		}
-		if blank(l) {
+		l := lineAt(s, start)
+		start = l.next
+		if l.blank(s) {
 			continue
 		}
-		secret, dash := yamlName(s, l)
+		secret, keyCol, dash := yamlName(s, l)
 		if !secret {
 			continue
 		}
-		rec := l.indent
-		if dash {
-			rec += 2
-		}
-		w.spend(maxRecordLines * 4)
-		// After the name key.
-		for m := n + 1; m < len(lines) && m <= n+maxRecordLines; m++ {
-			x := lines[m]
-			if blank(x) {
+		w.spend(maxRecordLines * 8)
+		// After the name key: the rest of the item, the lines at the item's own indent (deeper lines belong to a member above them).
+		read := 0
+		for x, n := lineAt(s, min(l.next, len(s))), 0; l.next <= len(s) && n < 3*maxRecordLines && read < maxRecordLines; n++ {
+			if x.blank(s) {
+				if x.next > len(s) {
+					break
+				}
+				x = lineAt(s, x.next)
 				continue
 			}
-			if x.indent < rec || (x.indent == rec && strings.HasPrefix(s[x.start+x.indent:x.end], "- ")) {
+			read++
+			if x.indent < keyCol || (x.indent == keyCol && strings.HasPrefix(s[x.start+x.indent:x.end], "- ")) {
 				break
 			}
-			if x.indent == rec {
+			if x.indent == keyCol {
 				if rest, ok := yamlValueLine(s, x); ok {
-					edits = yamlMaskValue(s, lines, m, rest, x.indent, edits, w)
+					edits = yamlMaskValue(s, x, rest, x.indent, edits, w)
 				}
 			}
+			if x.next > len(s) {
+				break
+			}
+			x = lineAt(s, x.next)
 		}
 		// Before it, unless the name key opens the item.
 		if dash {
 			continue
 		}
-		for m := n - 1; m >= 0 && m >= n-maxRecordLines; m-- {
-			x := lines[m]
-			if blank(x) {
+		read = 0
+		for x, n, ok := l, 0, true; n < 3*maxRecordLines && read < maxRecordLines; n++ {
+			if x, ok = prevLine(s, x.start); !ok {
+				break
+			}
+			if x.blank(s) {
 				continue
 			}
+			read++
 			xs := s[x.start+x.indent : x.end]
-			if x.indent < rec {
-				if x.indent == rec-2 && strings.HasPrefix(xs, "- ") {
+			if x.indent < keyCol {
+				if strings.HasPrefix(xs, "- ") && dashKeyCol(xs, x.indent) == keyCol {
 					if rest, ok := yamlValueLine(s, x); ok {
-						edits = yamlMaskValue(s, lines, m, rest, rec, edits, w)
+						edits = yamlMaskValue(s, x, rest, keyCol, edits, w)
 					}
 				}
 				break
 			}
-			if x.indent == rec {
+			if x.indent == keyCol {
 				if rest, ok := yamlValueLine(s, x); ok {
-					edits = yamlMaskValue(s, lines, m, rest, x.indent, edits, w)
+					edits = yamlMaskValue(s, x, rest, x.indent, edits, w)
 				}
 			}
 		}
@@ -393,10 +491,16 @@ func yamlRecords(s string, edits []edit, w *work) []edit {
 	return edits
 }
 
-// yamlMaskValue masks the value of a "value:" line: a quoted scalar inside its quotes, a block scalar and its lines, a value on the
-// next indented line, or the plain rest of the line. keyIndent is the indent of the member (the indent its continuation lines exceed).
-func yamlMaskValue(s string, lines []yline, m, rest, keyIndent int, edits []edit, w *work) []edit {
-	l := lines[m]
+// dashKeyCol is the column of the key after the "- " that opens a list item on a line with the given indent.
+func dashKeyCol(t string, indent int) int {
+	r := strings.TrimLeft(t[1:], " \t")
+	return indent + len(t) - len(r)
+}
+
+// yamlMaskValue masks the value of a "value:" line: a quoted scalar inside its quotes (also over several lines), a block scalar and
+// its lines, a value on the next indented line, or the plain rest of the line. keyIndent is the column of the member (the indent that
+// its continuation lines exceed).
+func yamlMaskValue(s string, l yline, rest, keyIndent int, edits []edit, w *work) []edit {
 	k := rest
 	for k < l.end && (s[k] == ' ' || s[k] == '\t') {
 		k++
@@ -404,9 +508,10 @@ func yamlMaskValue(s string, lines []yline, m, rest, keyIndent int, edits []edit
 	w.spend(l.end - rest + 1)
 	if k >= l.end || s[k] == '#' {
 		// Nothing on the line: the value is on the next indented line.
-		for n := m + 1; n < len(lines) && n <= m+maxCommentLines+1; n++ {
-			x := lines[n]
-			if x.start+x.indent >= x.end || s[x.start+x.indent] == '#' {
+		x := l
+		for n := 0; n <= maxCommentLines+1 && x.next <= len(s); n++ {
+			x = lineAt(s, x.next)
+			if x.blank(s) || s[x.start+x.indent] == '#' {
 				continue
 			}
 			if x.indent > keyIndent {
@@ -418,36 +523,52 @@ func yamlMaskValue(s string, lines []yline, m, rest, keyIndent int, edits []edit
 	}
 	switch s[k] {
 	case '|', '>':
-		for n := m + 1; n < len(lines) && n <= m+maxBlockLines; n++ {
-			x := lines[n]
-			if x.start+x.indent >= x.end {
+		x := l
+		for n := 0; n < maxBlockLines && x.next <= len(s); n++ {
+			x = lineAt(s, x.next)
+			if x.blank(s) {
 				continue
 			}
 			if x.indent <= keyIndent {
 				break
 			}
+			w.spend(x.end - x.start)
 			edits = append(edits, edit{x.start + x.indent, x.end})
 		}
 		return edits
 	case '"', '\'':
 		q := s[k]
-		for e := k + 1; e < l.end; e++ {
-			if q == '"' && s[e] == '\\' {
-				e++
-				continue
-			}
-			if s[e] == q {
-				if q == '\'' && e+1 < l.end && s[e+1] == '\'' {
+		from := k + 1
+		x := l
+		for n := 0; n < maxBlockLines; n++ {
+			for e := from; e < x.end; e++ {
+				if q == '"' && s[e] == '\\' {
 					e++
 					continue
 				}
-				if e > k+1 {
-					edits = append(edits, edit{k + 1, e})
+				if s[e] == q {
+					if q == '\'' && e+1 < x.end && s[e+1] == '\'' {
+						e++
+						continue
+					}
+					if e > from {
+						edits = append(edits, edit{from, e})
+					}
+					return edits
 				}
-				return edits
 			}
+			// Not closed on this line: the line is masked and the scalar goes on over the next one.
+			if x.end > from {
+				edits = append(edits, edit{from, x.end})
+			}
+			if x.next > len(s) {
+				break
+			}
+			x = lineAt(s, x.next)
+			from = x.start + x.indent
+			w.spend(x.end - x.start)
 		}
-		return append(edits, edit{k + 1, l.end}) // unclosed: to the end of the line
+		return edits
 	}
 	e := l.end
 	if h := strings.Index(s[k:l.end], " #"); h >= 0 {

@@ -32,7 +32,7 @@
 //     zero-width or full-width letters in a key, URL-encoded "password%3Dx", headers such as Ocp-Apim-Subscription-Key and a SAS "sig="
 //     parameter, "--password x" flags (the Releases reader has its own pattern), and text nodes after the first in <Password>a<b/>c</Password>.
 //   - Records are read only on a whole text (Mask). The record readers keep to a name and a "value" member of one object, one YAML item or
-//     one plist pair (JSON also in the Python form with single quotes): a name and a value in two different objects, flow-style YAML ({name: DB_PASSWORD, value: x}), a value under another member name ("data", "secret"), a nested object
+//     one plist pair (JSON also in the Python form with single quotes, over several lines, and written inside a JSON string with escaped quotes): a name and a value in two different objects, flow-style YAML ({name: DB_PASSWORD, value: x}), objects nested deeper than maxRecordDepth (32), a name with white space in it ("Reset password" is a title, not a setting; a plist key may have spaces), a string longer than maxRecordString (64 KiB, cut there), a value under another member name ("data", "secret"), a nested object
 //     as the value, or more than maxRecordLines lines between the name and its "value:" line are not joined.
 //   - Readers that see one line at a time (the Releases log reader) use Carry, which does not read records (the name and the value are on
 //     different lines) and hides a YAML block scalar under "password: |" and a

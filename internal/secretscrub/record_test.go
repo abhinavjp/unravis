@@ -1,6 +1,7 @@
 package secretscrub
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -160,5 +161,85 @@ func TestMaskRecordsRandomInputNeverPanics(t *testing.T) {
 		if !strings.Contains(strings.ToLower(in), "pass") && !strings.Contains(in, "DB_PASSWORD") && out != in {
 			t.Fatalf("changed a text with no secret name:\n in: %q\nout: %q", in, out)
 		}
+	}
+}
+
+// Review of PR 203 (security): every shape that leaked or that cost too much.
+func TestMaskRecordsReviewFindings(t *testing.T) {
+	leak := func(name, in string, secrets ...string) {
+		t.Helper()
+		got := Mask(in, rm)
+		for _, sec := range secrets {
+			if strings.Contains(got, sec) {
+				t.Errorf("%s: %q is still in the text:\n%s", name, sec, got)
+			}
+		}
+	}
+	// 1. One stray quote on a line does not turn the reader off for the lines after it.
+	stray := "msg=\"truncated\n" + strings.Repeat(`{"env":[{"name":"DB_PASSWORD","value":"LEAKZ"}]}`+"\n", 50)
+	leak("stray quote", stray, "LEAKZ")
+	// 2. JSON inside a JSON string (kubectl last-applied-configuration).
+	leak("escaped json", `{"annotations":{"last":"{\"env\":[{\"name\":\"DB_PASSWORD\",\"value\":\"LEAKZ\"}]}"}}`, "LEAKZ")
+	leak("escaped json, value first", `x: "{\"value\":\"LEAKZ\",\"name\":\"DB_PASSWORD\"}"`, "LEAKZ")
+	// 5. Fail closed with the record still open: the value that came before its name is masked.
+	old := workFactor
+	workFactor = 0
+	leak("budget, open record", `{"value":"LEAKZ","name":"DB_PASSWORD"`+strings.Repeat(` `, 80<<10), "LEAKZ")
+	workFactor = old
+	// 6. Python repr over several lines.
+	leak("python multiline", "[{'name': 'DB_PASSWORD',\n  'value': 'LEAKZ'}]", "LEAKZ")
+	// 7. An array value.
+	leak("array value", `{"name":"DB_PASSWORD","value":["LEAKA","LEAKB"]}`, "LEAKA", "LEAKB")
+	// 8. A long value (a PEM key) and what follows it.
+	pem := strings.Repeat("A", 20000)
+	got := Mask(`{"name":"TLS_PRIVATE_KEY","value":"`+pem+`"},{"name":"DB_PASSWORD","value":"LEAKZ"}`, rm)
+	if strings.Contains(got, "AAAAAAAAAA") || strings.Contains(got, "LEAKZ") {
+		t.Errorf("long value or the record after it kept")
+	}
+	// 10. A quoted YAML scalar over two lines.
+	leak("yaml quoted two lines", "- name: DB_PASSWORD\n  value: \"first part\n    LEAKZ\"\n- name: X\n  value: keep\n", "LEAKZ", "first part")
+	if got := Mask("- name: DB_PASSWORD\n  value: \"first part\n    LEAKZ\"\n- name: X\n  value: keep\n", rm); !strings.Contains(got, "value: keep") {
+		t.Errorf("the next item was masked: %s", got)
+	}
+	// Nits: extra spaces after the dash and before the colon.
+	leak("dash spaces", "-   name: DB_PASSWORD\n    value: LEAKZ\n", "LEAKZ")
+	leak("space before colon", "- name: DB_PASSWORD\n  value : LEAKZ\n", "LEAKZ")
+	leak("value first, dash spaces", "-   value: LEAKZ\n    name: DB_PASSWORD\n", "LEAKZ")
+
+	// 9. Names that are titles or prose are not secret names.
+	for _, in := range []string{
+		`{"name":"Reset password","value":"improve UX"}`,
+		"- name: Password Reset Tool\n  value: improve UX\n",
+	} {
+		if got := Mask(in, rm); got != in {
+			t.Errorf("a title was taken for a secret name:\n in: %s\ngot: %s", in, got)
+		}
+	}
+}
+
+// 3 and 4: work and memory stay bounded for the shapes that cost more than they read.
+func TestMaskRecordsReviewCostShapes(t *testing.T) {
+	for name, in := range map[string]string{
+		"unclosed backslash quotes": `{"` + strings.Repeat(`"\`, 1<<20),
+		"quotes without close":      strings.Repeat(`{"a`, 1<<19),
+		"many blank lines":          "a:" + strings.Repeat("\n", 8<<20),
+		"names, many blank lines":   "- name: DB_PASSWORD" + strings.Repeat("\n", 4<<20),
+		"escaped quotes":            strings.Repeat(`\"`, 1<<20),
+	} {
+		t.Run(name, func(t *testing.T) {
+			start := time.Now()
+			_ = Mask(in, rm)
+			if d := time.Since(start); d > 3*time.Second {
+				t.Fatalf("%s: %s for %d bytes", name, d, len(in))
+			}
+		})
+	}
+	var m1, m2 runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m1)
+	_ = Mask("a:"+strings.Repeat("\n", 8<<20), rm)
+	runtime.ReadMemStats(&m2)
+	if grown := m2.TotalAlloc - m1.TotalAlloc; grown > 200<<20 {
+		t.Fatalf("a text of 8M line breaks allocated %d MiB", grown>>20)
 	}
 }
