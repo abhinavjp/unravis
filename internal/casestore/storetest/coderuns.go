@@ -303,8 +303,13 @@ func codeRunsContract(t *testing.T, f Factory, caps casestore.Caps) {
 	}
 	hc, _ := sa.RunCalls(ctx, hid.RunID)
 	if hc[0].ArgsState != casestore.ArgsWithheld || hc[0].ArgsJSON != "" || hc[0].BlobState != casestore.BlobWithheld || hc[0].BlobBytes != 0 ||
-		hc[0].ArgsHash == "" || hc[0].ResultHash != casestore.SHA256Hex(rec.Result) {
+		len(hc[0].ArgsHash) != 64 || len(hc[0].ResultHash) != 64 {
 		t.Errorf("hidden call with addresses: %+v", hc[0])
+	}
+	// A withheld value keeps a keyed hash, not the plain SHA-256: a plain one of
+	// {"ip":"203.0.113.9"} could be found by trying every address.
+	if hc[0].ArgsHash == casestore.SHA256Hex([]byte(`{"ip":"203.0.113.9"}`)) || hc[0].ResultHash == casestore.SHA256Hex(rec.Result) {
+		t.Errorf("a withheld value keeps its plain hash: %+v", hc[0])
 	}
 	if hc[1].ArgsState != casestore.ArgsKept || hc[1].BlobState != casestore.BlobKept {
 		t.Errorf("times, versions and C++ names were taken for addresses: %+v", hc[1])

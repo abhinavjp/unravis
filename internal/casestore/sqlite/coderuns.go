@@ -3,8 +3,11 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -104,7 +107,7 @@ CREATE TRIGGER IF NOT EXISTS code_runs_exists BEFORE INSERT ON code_runs
 WHEN EXISTS (SELECT 1 FROM code_runs WHERE run_id = NEW.run_id)
 BEGIN SELECT RAISE(ABORT, 'code_runs rows are never replaced'); END;
 CREATE TRIGGER IF NOT EXISTS code_runs_sealed BEFORE UPDATE ON code_runs
-WHEN OLD.status <> 'running' OR NEW.run_id <> OLD.run_id OR NEW.source_ts <> OLD.source_ts OR NEW.created_at_utc <> OLD.created_at_utc
+WHEN OLD.status <> 'running' OR NEW.rowid <> OLD.rowid OR NEW.run_id <> OLD.run_id OR NEW.source_ts <> OLD.source_ts OR NEW.created_at_utc <> OLD.created_at_utc
   OR NEW.surface <> OLD.surface OR NEW.caller_id <> OLD.caller_id OR NEW.allow_identifiers <> OLD.allow_identifiers
   OR NEW.keep_results <> OLD.keep_results OR NEW.reason <> OLD.reason OR NEW.seed <> OLD.seed OR NEW.clock_ms <> OLD.clock_ms
 BEGIN SELECT RAISE(ABORT, 'a sealed code run cannot change'); END;
@@ -123,7 +126,65 @@ BEGIN SELECT RAISE(ABORT, 'calls can only be added to a running run'); END;
 // The "exists" triggers close INSERT OR REPLACE (and an upsert): SQLite does not
 // fire a delete trigger for the row a REPLACE removes (unless recursive_triggers
 // is on), but it does fire BEFORE INSERT triggers first, and these refuse a key
-// that is already there.
+// that is already there. UPDATE OR REPLACE is the other way in: an update that
+// gives a row the rowid of another one deletes that one the same way. The
+// code_runs rowid is therefore frozen by code_runs_sealed (the other two tables
+// have no rowid that can be set: code_run_calls is WITHOUT ROWID, and the rowid
+// of code_chain is its n, which code_chain_no_update refuses to change).
+//
+// A trigger can also make a write do nothing without an error (RAISE(IGNORE)),
+// so every write checks that exactly one row was written (oneRow), and the
+// verifier reports any trigger on these tables that the store did not create.
+
+// legacyGuards are earlier texts of a guard whose current text is stronger. A
+// case written by a build that had the old text gets the new one at the next
+// BeginRun, and only an exact match is replaced: a trigger somebody else
+// changed stays as it is, for VerifyCodeChain to report.
+var legacyGuards = map[string][]string{
+	"code_runs_sealed": {normalizeSQL(`CREATE TRIGGER code_runs_sealed BEFORE UPDATE ON code_runs
+WHEN OLD.status <> 'running' OR NEW.run_id <> OLD.run_id OR NEW.source_ts <> OLD.source_ts OR NEW.created_at_utc <> OLD.created_at_utc
+  OR NEW.surface <> OLD.surface OR NEW.caller_id <> OLD.caller_id OR NEW.allow_identifiers <> OLD.allow_identifiers
+  OR NEW.keep_results <> OLD.keep_results OR NEW.reason <> OLD.reason OR NEW.seed <> OLD.seed OR NEW.clock_ms <> OLD.clock_ms
+BEGIN SELECT RAISE(ABORT, 'a sealed code run cannot change'); END`)},
+}
+
+// upgradeGuards replaces a guard that still has an earlier text (legacyGuards).
+func upgradeGuards(ctx context.Context, tx *sql.Tx) error {
+	for _, g := range codeGuards {
+		old := legacyGuards[g.name]
+		if len(old) == 0 {
+			continue
+		}
+		var have string
+		switch err := tx.QueryRowContext(ctx, "SELECT COALESCE(sql,'') FROM sqlite_master WHERE type='trigger' AND name=?", g.name).Scan(&have); {
+		case errors.Is(err, sql.ErrNoRows):
+			continue
+		case err != nil:
+			return err
+		}
+		have = normalizeSQL(have)
+		if have == g.sql || !slices.Contains(old, have) {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "DROP TRIGGER "+g.name); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, strings.Replace(g.sql, "CREATE TRIGGER ", "CREATE TRIGGER IF NOT EXISTS ", 1)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// oneRow checks that a write changed exactly one row. A trigger that was planted
+// with RAISE(IGNORE) turns a write into a silent no-op; this is how the store
+// notices instead of telling its caller that the row is safe.
+func oneRow(res sql.Result, what string) error {
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return fmt.Errorf("%w: the write of %s changed %d rows instead of one (a trigger the store did not create swallowed it)", casestore.ErrCodeTampered, what, n)
+	}
+	return nil
+}
 
 // codeGuard is one trigger: its name and the text it must have.
 type codeGuard struct{ name, sql string }
@@ -182,7 +243,12 @@ func (c *Case) codeGate(ctx context.Context, mode codeGateMode) (*sql.DB, func()
 	if mode != gateInflight && c.importRun.Load() {
 		return nil, nil, casestore.ErrImportRunning
 	}
-	release, err := sealedfile.Lock(c.dir)
+	var release func()
+	if mode == gateInflight {
+		release, err = c.waitFolderLock(ctx)
+	} else {
+		release, err = sealedfile.Lock(c.dir)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -202,6 +268,53 @@ func (c *Case) codeGate(ctx context.Context, mode codeGateMode) (*sql.DB, func()
 		return nil, nil, err
 	}
 	return db, release, nil
+}
+
+// waitFolderLock takes the folder lock for a write that must not be lost. It
+// waits for a long holder (an import) as long as ctx lives and no longer than
+// casestore.InflightWait, then returns ErrUnavailable; a cancelled or timed-out
+// ctx returns its own error. The lock belongs to the calling goroutine.
+func (c *Case) waitFolderLock(ctx context.Context) (func(), error) {
+	wctx, cancel := context.WithTimeout(ctx, casestore.InflightWait)
+	defer cancel()
+	release, err := sealedfile.LockWait(wctx, c.dir)
+	if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		return nil, fmt.Errorf("%w: the case folder stayed busy for %s", sealedfile.ErrUnavailable, casestore.InflightWait)
+	}
+	return release, err
+}
+
+// beginDurable starts a write transaction on a connection of its own that runs
+// with PRAGMA synchronous=FULL, so the commit of an audit write is on disk before
+// the broker answers the script (spec 04 3.5 step 6: write the row, then reply).
+// The pool's connections run NORMAL, which in WAL mode can lose the last commits
+// on power loss. done rolls back whatever is open, puts the connection back to
+// NORMAL and returns it; a connection that cannot be reset is thrown away.
+func (c *Case) beginDurable(ctx context.Context, db *sql.DB) (*sql.Tx, func(), error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := conn.ExecContext(ctx, "PRAGMA synchronous=FULL"); err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		_, rerr := conn.ExecContext(context.Background(), "PRAGMA synchronous=NORMAL")
+		if rerr != nil {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+		_ = conn.Close()
+		return nil, nil, err
+	}
+	return tx, func() {
+		_ = tx.Rollback()
+		if _, err := conn.ExecContext(context.Background(), "PRAGMA synchronous=NORMAL"); err != nil {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+		_ = conn.Close()
+	}, nil
 }
 
 // unreadable marks a row that does not read back as the schema says (a column
@@ -305,14 +418,50 @@ func chainTail(ctx context.Context, q txQuerier) (int64, string, error) {
 }
 
 // appendChain adds one chain row and moves the head kept beside the chain.
+// Each write must change exactly one row (oneRow).
 func appendChain(ctx context.Context, q txQuerier, row casestore.ChainRow) error {
-	if _, err := q.ExecContext(ctx, "INSERT INTO code_chain(n, run_id, phase, seq, record_json, prev_hash, record_hash) VALUES(?,?,?,?,?,?,?)",
-		row.N, row.RunID, row.Phase, row.Seq, row.RecordJSON, row.PrevHash, row.RecordHash); err != nil {
+	res, err := q.ExecContext(ctx, "INSERT INTO code_chain(n, run_id, phase, seq, record_json, prev_hash, record_hash) VALUES(?,?,?,?,?,?,?)",
+		row.N, row.RunID, row.Phase, row.Seq, row.RecordJSON, row.PrevHash, row.RecordHash)
+	if err != nil {
 		return err
 	}
-	_, err := q.ExecContext(ctx, "INSERT INTO meta(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+	if err := oneRow(res, "a chain record"); err != nil {
+		return err
+	}
+	res, err = q.ExecContext(ctx, "INSERT INTO meta(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
 		codeHeadKey, strconv.FormatInt(row.N, 10)+":"+row.RecordHash)
-	return err
+	if err != nil {
+		return err
+	}
+	return oneRow(res, "the chain head")
+}
+
+// codeHashKey is the meta row of the case secret that keys the hash of withheld values.
+const codeHashKey = "code.hash_key"
+
+// hashKey reads the case secret, making it first if the case has none.
+func hashKey(ctx context.Context, q txQuerier) ([]byte, error) {
+	for range 2 {
+		var v string
+		switch err := q.QueryRowContext(ctx, "SELECT v FROM meta WHERE k = ?", codeHashKey).Scan(&v); {
+		case err == nil:
+			key, derr := hex.DecodeString(v)
+			if derr != nil || len(key) != casestore.HashKeyBytes {
+				return nil, fmt.Errorf("%w: the case secret for withheld hashes is damaged", casestore.ErrCodeTampered)
+			}
+			return key, nil
+		case !errors.Is(err, sql.ErrNoRows):
+			return nil, err
+		}
+		fresh, err := casestore.NewHashKey()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := q.ExecContext(ctx, "INSERT OR IGNORE INTO meta(k, v) VALUES(?, ?)", codeHashKey, hex.EncodeToString(fresh)); err != nil {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("%w: the case secret for withheld hashes cannot be stored", casestore.ErrCodeTampered)
 }
 
 func b2i(b bool) int {
@@ -332,12 +481,15 @@ func (c *Case) BeginRun(ctx context.Context, in casestore.RunStart) (casestore.C
 		return casestore.CodeRun{}, err
 	}
 	defer release()
-	tx, err := db.BeginTx(ctx, nil)
+	tx, done, err := c.beginDurable(ctx, db)
 	if err != nil {
 		return casestore.CodeRun{}, c.mapDBErr(err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer done()
 	if _, err := tx.ExecContext(ctx, codeSQL); err != nil {
+		return casestore.CodeRun{}, c.mapDBErr(err)
+	}
+	if err := upgradeGuards(ctx, tx); err != nil {
 		return casestore.CodeRun{}, c.mapDBErr(err)
 	}
 	// A marker for a later build that has to change the tables (CREATE TABLE IF
@@ -367,14 +519,21 @@ func (c *Case) BeginRun(ctx context.Context, in casestore.RunStart) (casestore.C
 	if err != nil {
 		return casestore.CodeRun{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO code_runs(run_id, created_at_utc, surface, caller_id, caller_declared, allow_identifiers,
+	if _, err := hashKey(ctx, tx); err != nil { // the case secret exists from the first run on
+		return casestore.CodeRun{}, c.mapDBErrIfDB(err)
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO code_runs(run_id, created_at_utc, surface, caller_id, caller_declared, allow_identifiers,
 		keep_results, tool_schema_hash, reason, source_ts, seed, clock_ms, status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'running')`,
 		run.RunID, run.CreatedMS, run.Surface, run.CallerID, b2i(run.CallerDeclared), b2i(run.AllowIdentifiers), b2i(run.KeepResults),
-		run.ToolSchemaHash, run.Reason, run.Source, run.Seed, run.ClockMS); err != nil {
+		run.ToolSchemaHash, run.Reason, run.Source, run.Seed, run.ClockMS)
+	if err != nil {
 		return casestore.CodeRun{}, c.mapDBErr(err)
 	}
+	if err := oneRow(res, "a run"); err != nil {
+		return casestore.CodeRun{}, err
+	}
 	if err := appendChain(ctx, tx, row); err != nil {
-		return casestore.CodeRun{}, c.mapDBErr(err)
+		return casestore.CodeRun{}, c.mapDBErrIfDB(err)
 	}
 	if err := tx.Commit(); err != nil {
 		return casestore.CodeRun{}, c.mapDBErr(err)
@@ -391,11 +550,11 @@ func (c *Case) RecordCall(ctx context.Context, runID string, rec casestore.CallR
 		return err
 	}
 	defer release()
-	tx, err := db.BeginTx(ctx, nil)
+	tx, done, err := c.beginDurable(ctx, db)
 	if err != nil {
 		return c.mapDBErr(err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer done()
 	run, err := c.loadRun(ctx, tx, runID, runColsList)
 	if err != nil {
 		return err
@@ -411,7 +570,11 @@ func (c *Case) RecordCall(ctx context.Context, runID string, rec casestore.CallR
 	if count >= casestore.MaxCallsPerRun {
 		return casestore.ErrCapExceeded
 	}
-	call, err := casestore.NewCodeCall(run, rec, used)
+	key, err := hashKey(ctx, tx)
+	if err != nil {
+		return c.mapDBErrIfDB(err)
+	}
+	call, err := casestore.NewCodeCall(run, rec, used, key)
 	if err != nil {
 		return err
 	}
@@ -426,11 +589,15 @@ func (c *Case) RecordCall(ctx context.Context, runID string, rec casestore.CallR
 	if call.BlobState == casestore.BlobKept {
 		blob = call.Blob
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO code_run_calls(run_id, seq, done_seq, tool_name, args_json, args_hash, args_state,
+	res, err := tx.ExecContext(ctx, `INSERT INTO code_run_calls(run_id, seq, done_seq, tool_name, args_json, args_hash, args_state,
 		result_hash, result_bytes, result_blob, blob_state, status, duration_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		call.RunID, call.Seq, call.DoneSeq, call.Tool, call.ArgsJSON, call.ArgsHash, call.ArgsState,
-		call.ResultHash, call.ResultBytes, blob, call.BlobState, call.Status, call.DurationMS); err != nil {
+		call.ResultHash, call.ResultBytes, blob, call.BlobState, call.Status, call.DurationMS)
+	if err != nil {
 		return c.mapDBErr(err)
+	}
+	if err := oneRow(res, "a call"); err != nil {
+		return err
 	}
 	n, prev, err := chainTail(ctx, tx)
 	if err != nil {
@@ -441,7 +608,7 @@ func (c *Case) RecordCall(ctx context.Context, runID string, rec casestore.CallR
 		return err
 	}
 	if err := appendChain(ctx, tx, row); err != nil {
-		return c.mapDBErr(err)
+		return c.mapDBErrIfDB(err)
 	}
 	if err := tx.Commit(); err != nil {
 		return c.mapDBErr(err)
@@ -491,7 +658,11 @@ func (c *Case) sealRun(ctx context.Context, tx *sql.Tx, run casestore.CodeRun, e
 	if err != nil {
 		return casestore.CodeRun{}, err
 	}
-	fin, err := casestore.FinishCodeRun(run, calls, end, c.s.now())
+	key, err := hashKey(ctx, tx)
+	if err != nil {
+		return casestore.CodeRun{}, c.mapDBErrIfDB(err)
+	}
+	fin, err := casestore.FinishCodeRun(run, calls, end, c.s.now(), key)
 	if err != nil {
 		return casestore.CodeRun{}, err
 	}
@@ -512,10 +683,17 @@ func (c *Case) sealRun(ctx context.Context, tx *sql.Tx, run casestore.CodeRun, e
 		return casestore.CodeRun{}, c.mapDBErr(err)
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
+		// Nothing changed: either the run was sealed meanwhile, or a trigger the
+		// store did not create swallowed the update (RAISE(IGNORE)) and the row is
+		// still running, which is tampering, not a finished run.
+		var status string
+		if err := tx.QueryRowContext(ctx, "SELECT status FROM code_runs WHERE run_id = ?", run.RunID).Scan(&status); err == nil && status == casestore.RunRunning {
+			return casestore.CodeRun{}, fmt.Errorf("%w: the write that seals a run changed no row (a trigger the store did not create swallowed it)", casestore.ErrCodeTampered)
+		}
 		return casestore.CodeRun{}, casestore.ErrRunFinished
 	}
 	if err := appendChain(ctx, tx, row); err != nil {
-		return casestore.CodeRun{}, c.mapDBErr(err)
+		return casestore.CodeRun{}, c.mapDBErrIfDB(err)
 	}
 	return fin, nil
 }
@@ -529,11 +707,11 @@ func (c *Case) EndRun(ctx context.Context, runID string, end casestore.RunEnd) (
 		return casestore.CodeRun{}, err
 	}
 	defer release()
-	tx, err := db.BeginTx(ctx, nil)
+	tx, done, err := c.beginDurable(ctx, db)
 	if err != nil {
 		return casestore.CodeRun{}, c.mapDBErr(err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer done()
 	run, err := c.loadRun(ctx, tx, runID, runColsFull)
 	if err != nil {
 		return casestore.CodeRun{}, err
@@ -557,11 +735,11 @@ func (c *Case) CloseOrphanRuns(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	defer release()
-	tx, err := db.BeginTx(ctx, nil)
+	tx, done, err := c.beginDurable(ctx, db)
 	if err != nil {
 		return 0, c.mapDBErr(err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer done()
 	// Only runs older than the longest a run can last: a younger one may be live in another window.
 	cutoff := c.s.now().Add(-casestore.OrphanGrace).UnixMilli()
 	rows, err := tx.QueryContext(ctx, "SELECT "+runColsFull+" FROM code_runs WHERE status = 'running' AND created_at_utc <= ? ORDER BY rowid", cutoff)
@@ -878,31 +1056,58 @@ func (s codeSource) StoredHead(ctx context.Context) (int64, string, bool, error)
 
 func (s codeSource) MissingGuards(ctx context.Context) ([]string, error) {
 	var tables int
-	if err := s.q.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='code_chain'").Scan(&tables); err != nil || tables == 0 {
+	if err := s.q.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('code_chain','code_runs','code_run_calls')").Scan(&tables); err != nil {
 		return nil, err
 	}
-	rows, err := s.q.QueryContext(ctx, "SELECT name, COALESCE(sql,'') FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'code\\_%' ESCAPE '\\'")
+	if tables == 0 {
+		// Nothing was ever written, or everything was dropped: the markers tell which.
+		var marked int
+		if err := s.q.QueryRowContext(ctx, "SELECT COUNT(*) FROM meta WHERE k IN ('code.schema', ?, ?)", codeHeadKey, codeHashKey).Scan(&marked); err != nil {
+			return nil, err
+		}
+		if marked > 0 {
+			return []string{"the code tables are gone, but the case still marks them as created"}, nil
+		}
+		return nil, nil
+	}
+	var bad []string
+	if tables != 3 {
+		bad = append(bad, "one or more of the code tables is missing")
+	}
+	// Every trigger on a code table or on meta, with the name it has.
+	rows, err := s.q.QueryContext(ctx, `SELECT name, tbl_name, COALESCE(sql,'') FROM sqlite_master WHERE type = 'trigger'
+		AND tbl_name IN ('code_runs','code_run_calls','code_chain','meta')`)
 	if err != nil {
 		return nil, err
 	}
 	have := map[string]string{}
+	var names []string
 	for rows.Next() {
-		var name, text string
-		if err := rows.Scan(&name, &text); err != nil {
+		var name, tbl, text string
+		if err := rows.Scan(&name, &tbl, &text); err != nil {
 			_ = rows.Close()
 			return nil, unreadable(err)
 		}
 		have[name] = normalizeSQL(text)
+		names = append(names, name+"\x00"+tbl)
 	}
 	err = rows.Err()
 	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
-	var bad []string
+	known := map[string]bool{}
 	for _, g := range codeGuards {
+		known[g.name] = true
 		if have[g.name] != g.sql { // missing, or a trigger of that name that does something else
 			bad = append(bad, g.name)
+		}
+	}
+	slices.Sort(names)
+	for _, nt := range names {
+		name, tbl, _ := strings.Cut(nt, "\x00")
+		if !known[name] { // a trigger the store never made (RAISE(IGNORE) would switch the audit off)
+			bad = append(bad, "unexpected trigger "+name+" on "+tbl)
 		}
 	}
 	return bad, nil

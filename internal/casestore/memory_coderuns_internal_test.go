@@ -2,6 +2,8 @@ package casestore
 
 import (
 	"context"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -95,18 +97,57 @@ func TestNewRunIDIsUUIDv7(t *testing.T) {
 
 func TestReplaceAddresses(t *testing.T) {
 	for in, want := range map[string]string{
-		"from 10.1.2.3 to 8.8.8.8":                "from [ip] to [ip]",
-		"peer 2001:db8::1 ok":                     "peer [ip] ok",
-		"[fe80::1]:8080":                          "[[ip]]:8080",
-		"::1 loopback":                            "[ip] loopback",
-		"v1.2.3 at 12:30:45":                      "v1.2.3 at 12:30:45",
-		"std::bad Foo::Bar":                       "std::bad Foo::Bar",
-		"aa:bb:cc:dd:ee:ff":                       "aa:bb:cc:dd:ee:ff",
-		"999.1.1.1 and 1.2.3.4.5":                 "999.1.1.1 and [ip].5",
-		"2001:0db8:0000:0000:0000:0000:0000:0001": "[ip]",
+		"from 10.1.2.3 to 8.8.8.8":                   "from [ip] to [ip]",
+		"peer 2001:db8::1 ok":                        "peer [ip] ok",
+		"[fe80::1]:8080":                             "[[ip]]:8080",
+		"::1 loopback":                               "[ip] loopback",
+		"v1.2.3 at 12:30:45":                         "v1.2.3 at 12:30:45",
+		"std::bad Foo::Bar":                          "std::bad Foo::Bar",
+		"aa:bb:cc:dd:ee:ff":                          "aa:bb:cc:dd:ee:ff",
+		"999.1.1.1 and 1.2.3.4.5":                    "999.1.1.1 and [ip].5",
+		"IP 192.168.1.5.443 > 10.0.0.2.51234: Flags": "IP [ip].443 > [ip].51234: Flags",
+		"10.1.2.3.8080":                              "[ip].8080",
+		"host_10.0.0.1 srv10.1.2.3 10.0.0.1x":        "host_[ip] srv[ip] [ip]x",
+		"see 10.0.0.1. then 10.0.0.2, 10.0.0.3":      "see [ip]. then [ip], [ip]",
+		"1.2.3.4 5.6.7.8":                            "[ip] [ip]",
+		"x_fe80::1 and [2001:db8::1]:443":            "x_[ip] and [[ip]]:443",
+		"010.000.000.001":                            "[ip]",
+		"1234.1.1.1 and 1.1.1.1234":                  "1234.1.1.1 and 1.1.1.1234",
+		"2001:0db8:0000:0000:0000:0000:0000:0001":    "[ip]",
 	} {
 		if got, _ := ReplaceAddresses(in); got != want {
 			t.Errorf("ReplaceAddresses(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// N4: "::1" becomes "[ip]", which is longer, so a text cut at its cap could grow
+// past it; the cut is made again after the replacement. An address that starts
+// before the cap and ends after it is replaced whole, also when earlier
+// addresses shrink the text and pull the tail of the input into the kept part.
+func TestHideAndCutKeepsTheCapAndLeavesNoPartialAddress(t *testing.T) {
+	partial := regexp.MustCompile(`\d\.\d*$`) // a cut address ends in digits and dots
+	grown := hideAndCut(strings.Repeat("::1 ", 1000), 100, true)
+	if len(grown) > 100 || strings.Contains(grown, "::") {
+		t.Errorf("len %d: %q", len(grown), grown)
+	}
+	text := strings.Repeat("a", 94) + "192.168.10.77 more"
+	got := hideAndCut(text, 100, true)
+	if partial.MatchString(got) || len(got) > 100 {
+		t.Errorf("a cut address left a partial: %q", got[80:])
+	}
+	if plain := hideAndCut(text, 100, false); !strings.HasSuffix(plain, "192.16") {
+		t.Errorf("allow mode must only cut: %q", plain[80:])
+	}
+	// Six addresses shrink by 11 bytes each; the straddling address then sits
+	// where the kept part ends, however far into the input it started.
+	for _, n := range []int{1, 3, 6, 12, 30} {
+		shift := strings.Repeat("100.100.100.100 ", n) + strings.Repeat("a", 150-n) + "192.168.123.234 tail"
+		for pad := 0; pad < 40; pad++ {
+			got := hideAndCut(strings.Repeat("b", pad)+shift, 100, true)
+			if partial.MatchString(got) || len(got) > 100 {
+				t.Fatalf("n=%d pad=%d: a cut address left a partial: %q", n, pad, got)
+			}
 		}
 	}
 }

@@ -3,6 +3,7 @@
 package sealedfile
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -10,11 +11,13 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
-	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+// waitTimeout is what WaitForSingleObject returns when the wait ran out.
+const waitTimeout = 0x102
 
 var (
 	crypt32             = syscall.NewLazyDLL("crypt32.dll")
@@ -107,20 +110,47 @@ func mutexName(canonical string) (name string, global bool) {
 // Lock takes a named, per-path mutex that also serialises separate processes (and, inside the shared data folder, separate people).
 // The caller must call the returned function to release it.
 func Lock(path string) (func(), error) {
+	release, _, err := lockFor(path, 5000)
+	return release, err
+}
+
+// LockWait is Lock that keeps waiting until ctx ends: it takes the lock in short
+// waits and tries again after each one that timed out, so a long holder (an
+// import) does not make it give up after 5 s, and a cancelled ctx stops it. Like
+// Lock, the release function must be called on the goroutine that took the lock
+// (the lock belongs to an OS thread, which this goroutine keeps until release). A wait slice that has started is not interrupted, so it can overrun ctx by up to 250 ms.
+func LockWait(ctx context.Context, path string) (func(), error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		release, timedOut, err := lockFor(path, 250)
+		if err == nil {
+			return release, nil
+		}
+		if !timedOut {
+			return nil, err
+		}
+	}
+}
+
+// lockFor is Lock with a wait of its own (in milliseconds); timedOut says the only thing wrong was
+// that another holder kept the lock for the whole wait.
+func lockFor(path string, waitMS uintptr) (release func(), timedOut bool, err error) {
 	canonical, err := filepath.Abs(path)
 	if err != nil {
-		return nil, ErrUnavailable
+		return nil, false, ErrUnavailable
 	}
 	mutex, global := mutexName(canonical)
 	name, err := syscall.UTF16PtrFromString(mutex)
 	if err != nil {
-		return nil, ErrUnavailable
+		return nil, false, ErrUnavailable
 	}
 	var attrs *windows.SecurityAttributes
 	if global {
 		sd, err := windows.SecurityDescriptorFromString(lockSDDL)
 		if err != nil {
-			return nil, ErrUnavailable
+			return nil, false, ErrUnavailable
 		}
 		attrs = &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
 	}
@@ -130,28 +160,28 @@ func Lock(path string) (func(), error) {
 		h, err := windows.CreateMutexEx(attrs, name, 0, windows.SYNCHRONIZE|mutexModifyState)
 		runtime.KeepAlive(attrs)
 		if h == 0 {
-			return nil, fmt.Errorf("%w: the shared folder lock cannot be opened: %v", ErrUnavailable, err)
+			return nil, false, fmt.Errorf("%w: the shared folder lock cannot be opened: %v", ErrUnavailable, err)
 		}
 		handle = uintptr(h)
 	} else {
 		h, _, callErr := createMutex.Call(0, 0, uintptr(unsafe.Pointer(name)))
 		if h == 0 {
-			return nil, callErr
+			return nil, false, callErr
 		}
 		handle = h
 	}
 	runtime.LockOSThread()
-	result, _, _ := waitForSingleObject.Call(handle, uintptr((5*time.Second)/time.Millisecond))
+	result, _, _ := waitForSingleObject.Call(handle, waitMS)
 	if result != 0 && result != 0x80 {
 		closeHandle.Call(handle)
 		runtime.UnlockOSThread()
-		return nil, ErrUnavailable
+		return nil, result == waitTimeout, ErrUnavailable
 	}
 	return func() {
 		releaseMutex.Call(handle)
 		closeHandle.Call(handle)
 		runtime.UnlockOSThread()
-	}, nil
+	}, false, nil
 }
 
 // Replace moves from over to, replacing it, and flushes the move to disk.
