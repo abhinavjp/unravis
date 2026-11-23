@@ -44,6 +44,11 @@ jobs:
           - { target: FuzzMask, pkg: ./internal/secretscrub }
           - { target: FuzzMaskCanary, pkg: ./internal/secretscrub }
           - { target: FuzzMaskBounds, pkg: ./internal/secretscrub }
+          - { target: FuzzSweepText, pkg: ./internal/codemode/privacy }
+          - { target: FuzzSweepPlanted, pkg: ./internal/codemode/privacy }
+          - { target: FuzzScrubCanary, pkg: ./internal/codemode/privacy }
+          - { target: FuzzJSONSweep, pkg: ./internal/codemode/privacy }
+          - { target: FuzzGuardNoLeak, pkg: ./internal/codemode/privacy }
           - { target: FuzzOfflineManifest, pkg: ./internal/clioffline }
           - { target: FuzzOfflineFile, pkg: ./internal/clioffline }
     steps:
