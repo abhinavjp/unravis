@@ -33,6 +33,7 @@ import (
 	"api-audit-explorer/internal/locator"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/pipesrv"
+	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/server"
 	"api-audit-explorer/internal/store"
 	"api-audit-explorer/internal/tray"
@@ -367,7 +368,13 @@ func run(args []string, getenv func(string) string) error {
 		defer removeSession()
 	}
 	if pipes != nil {
-		group := pipesrv.Serve(pipes, running.wrap(pipesrv.Handler(served, pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(cliHandlerFor(f, served, token, cancel)))), newHTTPServer)
+		pipeOpts := []pipesrv.Option{pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(cliHandlerFor(f, served, token, cancel))}
+		mcpHandler, closeMCP := openMCPEndpoint(appCtx, getenv, served, token, f.demo, sealedfile.CurrentUser)
+		defer closeMCP() // runs after the servers have stopped (awaitShutdownWithin below)
+		if mcpHandler != nil {
+			pipeOpts = append(pipeOpts, pipesrv.WithMCP(mcpHandler))
+		}
+		group := pipesrv.Serve(pipes, running.wrap(pipesrv.Handler(served, pipeOpts...)), newHTTPServer)
 		stopServers = append(stopServers, group)
 		go func() { serveDone <- <-group.Done() }()
 		log.Print("Serving over the ui and ag pipes")

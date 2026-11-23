@@ -349,10 +349,16 @@ func encodeError(tool string, err error) []byte {
 			message = message[:len(message)-1]
 		}
 	}
+	return errorEnvelope(tool, code, message, errorActions[code])
+}
+
+// errorEnvelope is the one place an error answer is built: encodeError (a call that failed in this process) and ErrorEnvelope (a refusal
+// the backend makes before or after the tool ran) both end here, so the two shapes cannot differ.
+func errorEnvelope(tool, code, message, action string) []byte {
 	body, _ := json.Marshal(map[string]any{
 		"schemaVersion": SchemaVersion, "tool": tool, "partial": false, "truncation": nil,
 		"untrusted": untrusted{Paths: []string{}, Note: untrustedNote},
-		"error":     errorBody{Code: code, Message: message, Action: errorActions[code], Retryable: code == WireBackendUnavailable},
+		"error":     errorBody{Code: code, Message: message, Action: action, Retryable: code == WireBackendUnavailable},
 	})
 	return body
 }
