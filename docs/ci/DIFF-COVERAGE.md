@@ -15,12 +15,15 @@ The same command runs in the fast gate (`fast-build`, step "Go - diff coverage (
 
 ## Rules
 
-- Only lines the profile knows as code count. Comments, blank lines, docs, and files not in the profile (Windows-only files on the Linux runner) are not counted. So a Windows-only change is not judged here; the Windows job runs those tests.
+- Only lines the profile knows as code count. Blank lines and comment-only lines (even inside a covered function), docs, and files not in the profile (Windows-only files on the Linux runner) are not counted. So a Windows-only change is not judged here; the Windows job runs those tests.
 - Test files, `testdata`, and generated files (`// Code generated ... DO NOT EDIT.`, `@generated`) are left out.
 - Fails when coverage of counted lines is under `--min` (80) and there are at least `--min-lines` (10) of them. A 3-line change is not judged on a ratio. A docs-only change has no counted line and passes.
 - The fast gate runs it with `--report-only`: the table goes to the job summary and a `::warning::`, nothing blocks. Switching to blocking is removing one flag in `.github/workflows/fast-gate.yml`, after a few weeks of real reports show the threshold is fair.
 
 ## Not done yet
+
+- Helper and `main` packages with no tests of their own (`storetest`, `fake`, `pipesectest`, `litefixture`, `cmd/...`) show 0%, because the fast gate runs without `-coverpkg`: a package only gets credit from its own tests. Fix before blocking: `-coverpkg` over the affected packages, or leave those paths out.
+- A pure file move adds nothing (`git diff -M`); a move with edits counts only the edited lines.
 
 - Rust: the lcov reader is built and tested; no `cargo-llvm-cov` job feeds it (the desktop Rust is built on the Windows promotion job only).
 - Web: the web tests are `node --test` with no coverage output, so there is no JS profile to read. Nothing to gate until a coverage reporter is added.

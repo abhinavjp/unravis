@@ -5,6 +5,7 @@
 // Only lines that the profile knows as code count ("measurable"). A comment, a blank line, a declaration without statements, a file the
 // profile does not list (a Windows-only file on Linux, a docs file, a file with no tests run) is not counted. Test files and generated
 // files are left out. Old code is never judged: only added or changed lines.
+// A blank line or a comment line is not counted even inside a covered block.
 // Gate: fails when coverage of measurable changed lines is under --min percent AND there are at least --min-lines of them (a 3-line
 // change is not judged on a ratio). --report-only prints the same report and always exits 0 (how the fast gate runs it today).
 // Exit 0: pass or report-only. Exit 1: under the threshold. Exit 2: bad input (a missing file, no profile given).
@@ -13,26 +14,57 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-/** Added lines per file from a unified diff made with -U0: { 'dir/a.go': Set<number> }. Deleted files and pure deletions give nothing. */
+/** Undoes git's C-style quoting of a path ("a/\303\251.go", \t, \", \\). */
+export function unquote(p) {
+  if (!p.startsWith('"')) return p;
+  const bytes = [];
+  const body = p.slice(1, p.lastIndexOf('"'));
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] !== '\\') { bytes.push(...Buffer.from(body[i])); continue; }
+    const oct = /^[0-7]{3}/.exec(body.slice(i + 1));
+    if (oct) { bytes.push(parseInt(oct[0], 8)); i += 3; continue; }
+    const map = { n: 10, t: 9, r: 13, '"': 34, '\\': 92, a: 7, b: 8, f: 12, v: 11 };
+    bytes.push(map[body[i + 1]] ?? body.charCodeAt(i + 1));
+    i++;
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+/** Added lines per file from a unified diff made with -U0: Map<file, Map<line, text>>. Deleted files and pure deletions give nothing.
+ *  Hunks are read by their line counts, so an added line that looks like a header ("++ x") is never mistaken for one. */
 export function parseDiff(text) {
   const out = new Map();
   let file = null;
+  let oldLeft = 0;
+  let newLeft = 0;
+  let next = 0;
   for (const line of text.split(/\r?\n/)) {
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line.startsWith('+')) { newLeft--; if (file) out.get(file).set(next, line.slice(1)); next++; continue; }
+      if (line.startsWith('-')) { oldLeft--; continue; }
+      if (line.startsWith('\\')) continue;
+      oldLeft = 0; newLeft = 0; // a short hunk: fall through and read the line as a header
+    }
     if (line.startsWith('+++ ')) {
-      let p = line.slice(4).trim();
-      if (p.startsWith('"')) p = JSON.parse(p);
+      const p = unquote(line.slice(4).trim());
       file = p === '/dev/null' ? null : p.replace(/^b\//, '');
       continue;
     }
-    const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    const m = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
     if (m && file) {
-      const start = Number(m[1]);
-      const count = m[2] === undefined ? 1 : Number(m[2]);
-      if (!out.has(file)) out.set(file, new Set());
-      for (let i = 0; i < count; i++) out.get(file).add(start + i);
+      oldLeft = m[1] === undefined ? 1 : Number(m[1]);
+      newLeft = m[3] === undefined ? 1 : Number(m[3]);
+      next = Number(m[2]);
+      if (!out.has(file)) out.set(file, new Map());
     }
   }
   return out;
+}
+
+/** A line with no code in it: blank, or only a comment marker (a comment inside a counted block is not a statement). */
+export function isNoise(text) {
+  const t = text.trim();
+  return t === '' || /^(\/\/|\/\*|\*\/?|#)/.test(t);
 }
 
 /** Go cover profile -> Map<file, Map<line, covered>>. A line is covered when any block that touches it ran; `modulePath` is stripped from file names. */
@@ -91,8 +123,8 @@ export function diffCover(added, coverage, read) {
     if (!lines || isExcluded(file, read)) continue;
     const cov = [];
     const missed = [];
-    for (const n of [...changed].sort((a, b) => a - b)) {
-      if (!lines.has(n)) continue;
+    for (const n of [...changed.keys()].sort((a, b) => a - b)) {
+      if (!lines.has(n) || isNoise(changed.get(n))) continue;
       if (lines.get(n)) cov.push(n); else missed.push(n);
     }
     if (cov.length + missed.length === 0) continue;
@@ -148,6 +180,7 @@ function main(argv) {
   const min = Number(arg(argv, '--min') ?? 80);
   const minLines = Number(arg(argv, '--min-lines') ?? 10);
   const reportOnly = argv.includes('--report-only');
+  if (!Number.isFinite(min) || !Number.isFinite(minLines)) { console.error('--min and --min-lines must be numbers'); return 2; }
   try {
     let diff;
     const saved = arg(argv, '--diff');
@@ -155,7 +188,7 @@ function main(argv) {
     else {
       const base = arg(argv, '--base');
       if (!base) { console.error('give --diff <file> or --base <ref> [--head <ref>]'); return 2; }
-      diff = execFileSync('git', ['diff', '--no-renames', '--diff-filter=d', '-U0', '--no-color', base, arg(argv, '--head') ?? 'HEAD'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+      diff = execFileSync('git', ['-c', 'core.quotepath=false', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', 'diff', '--no-ext-diff', '-M', '--diff-filter=d', '-U0', '--no-color', base, arg(argv, '--head') ?? 'HEAD'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
     }
     const coverage = new Map();
     const merge = (m) => { for (const [f, l] of m) { const cur = coverage.get(f) || new Map(); for (const [n, c] of l) cur.set(n, (cur.get(n) || false) || c); coverage.set(f, cur); } };

@@ -152,8 +152,8 @@ jobs:
       # Only Linux-visible code is counted (a Windows-only file is not in the profile), and only the affected packages ran.
       - name: Go - diff coverage (report only)
         if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' && hashFiles('go.cover') != '' }}
-        continue-on-error: true
-        run: node tools/ci/diff-cover.mjs --base HEAD^1 --head HEAD --go go.cover --min 80 --min-lines 10 --report-only
+        # Exit 2 (the tool could not run) must not go unseen, and must not turn the gate red while this is a report.
+        run: node tools/ci/diff-cover.mjs --base HEAD^1 --head HEAD --go go.cover --min 80 --min-lines 10 --report-only || echo "::warning::diff-cover could not run (exit $?)"
 
       - name: Go - modules are tidy
         if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' }}
@@ -176,7 +176,7 @@ jobs:
           go vet ./...
           GOOS=windows go vet ./...
           # Compiles every test binary without running a test, so a pull request that tests a few packages finds them built.
-          go test -count=1 -run '^$' ./...
+          go test -count=1 -cover -run '^$' ./...
 
       - name: Go build cache - save (push to develop only)
         if: ${{ success() && github.event_name == 'push' && steps.gocache.outputs.cache-hit != 'true' }}
