@@ -23,6 +23,7 @@
 //   UIFIX-40  Clickable table rows are real buttons (BL-495 part): the Slow call lists of nearby calls (40a) and of all sources (40b) have one <button> per row (name, 24 px press area, nothing moves, no focus stop on the row itself); Tab, Enter and Space act once (40c, 40d); the mouse still takes the whole row (40d); a button press never goes on to the row (40c, 40d); on a phone a cell is not named twice (40f); "Show only" of the Request volume table stays a real button (40e)
 //   UIFIX-50  Row buttons of the All operations request list and "Show only" (BL-495 part): "Nearby activity" and "Inspect" are real <button type=button> of one size on one line each, named by their request (API, time to the millisecond, source and record id) with the visible words first (50a); the same Enter and Space act once, with the focus ring (50b, 50c); "Show only" of the Request volume table is a quiet button with a visible edge and one size, 24 px press area, and the table still fits its box (50d)
 //   UIFIX-51  Slowest tab (BL-495 part n): "Inspect window" of the exact time windows and "Nearby activity" of the slowest requests are real <button type=button> quiet buttons of one size with a visible edge, named by the window (start to end, zone) or by the request (API, time to the millisecond, source, record id) with the visible words first (51a); Enter and Space act once each, with the focus ring (51b, 51c)
+//   UIFIX-52  Slowest tab (BL-537): the small line under the API name of each slowest request is at least 11px (the audit's floor) and the two headings start their words where the controls and notes under them start; the heading boxes and the list's other columns stay where they were (52a, 52b)
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase } from '../support/ui';
 
@@ -2072,5 +2073,59 @@ for (const key of ['Enter', 'Space'] as const) {
     await page.keyboard.press(key);
     expect(await clicks(page), 'one click for one press').toBe(1);
     await expect(page.locator('#nearby-activity'), 'Nearby activity opened').toBeAttached();
+  });
+}
+
+// UIFIX-52 (BL-537): two pre-existing audit warnings of the Slowest tab of All operations, found by the audit screen x-all-slowest-loaded. On develop the small line under the
+// API name of each slowest request ("Demo East / demo.audit · synchronous · success") was 10.83 px (the browser's "smaller" of a 13 px heading cell) and the words of the two
+// headings started 2 px left of the controls and notes under them (the heading box has 12 px of padding, everything else 14 px). The first column of the slowest list also started
+// its words 6 px left of them on a phone (8 px of cell padding there). Only the words move: the heading boxes keep their left and width.
+const SLOW_SMALL = '.traffic-slowness .slow-result tbody th small';
+
+const wordsLeft = (page: Page, selector: string) => page.locator(selector).first().evaluate((e) => {
+  const range = document.createRange();
+  range.selectNodeContents(e);
+  return Math.round(range.getBoundingClientRect().left * 100) / 100;
+});
+
+for (const size of OP_SIZES) {
+  test('UIFIX-52a Slowest tab at ' + size.width + ' px: the line under each API name is at least 11 px', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowestLists(page);
+    const sizes = await page.locator(SLOW_SMALL).evaluateAll((els) => els.map((e) => ({ px: parseFloat(getComputedStyle(e).fontSize), text: (e.textContent ?? '').trim() })));
+    expect(sizes.length, 'one line per slowest request').toBeGreaterThan(2);
+    for (const f of sizes) {
+      expect(f.text, 'the line still names source, kind and outcome').toMatch(/^Demo (West|East) \/ \S+ · \w+ · \w+$/);
+      expect(f.px, 'font size of "' + f.text + '"').toBeGreaterThanOrEqual(11);
+    }
+    // it stays the quieter line: smaller than the API name above it
+    const [small, name] = await page.locator('.traffic-slowness .slow-result tbody th').first().evaluate((th) => [parseFloat(getComputedStyle(th.querySelector('small')!).fontSize), parseFloat(getComputedStyle(th).fontSize)]);
+    expect(small, 'the line under the name is smaller than the name').toBeLessThan(name);
+  });
+
+  test('UIFIX-52b Slowest tab at ' + size.width + ' px: the words of both headings start where the controls and notes start; the heading boxes and the list do not move sideways', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowestLists(page);
+    const notes = await wordsLeft(page, '.traffic-slowness > .activity-explanation > p');
+    const controls = await wordsLeft(page, '.traffic-slowness .volume-controls > label');
+    expect(notes, 'the note and the controls start on one line').toBe(controls);
+    const headings = page.locator('.traffic-slowness > .section-heading');
+    expect(await headings.count()).toBe(2);
+    for (let i = 0; i < 2; i++) {
+      const words = await headings.nth(i).evaluate((h) => [...h.querySelectorAll('h3, p')].map((e) => Math.round(e.getBoundingClientRect().left * 100) / 100));
+      for (const left of words) expect(left, 'heading ' + i + ' words start at ' + notes).toBe(notes);
+    }
+    // the boxes: each heading is still as wide as the section (the fix pads the words, it does not narrow or shift the box)
+    const [section, boxes] = await page.locator('.traffic-slowness').first().evaluate((sec) => [sec.getBoundingClientRect().left + ',' + sec.getBoundingClientRect().width, [...sec.querySelectorAll(':scope > .section-heading')].map((h) => h.getBoundingClientRect().left + ',' + h.getBoundingClientRect().width)] as const);
+    for (const b of boxes) expect(b, 'the heading box keeps the left and width of the section').toBe(section);
+    // the right end of a heading with a button is unchanged: the button still ends 12 px inside the box
+    const [boxRight, buttonRight] = await page.locator('.traffic-slowness > .section-heading').nth(1).evaluate((h) => [h.getBoundingClientRect().right, h.querySelector('button')!.getBoundingClientRect().right]);
+    if (size.width > 600) expect(Math.round(boxRight - buttonRight), 'the button keeps its 12 px of room on the right (on a phone the button wraps under the words)').toBe(12);
+    else expect(buttonRight, 'the wrapped button stays inside the box').toBeLessThanOrEqual(boxRight);
+    // the slowest list: its first column's words start with the summary line above it (on a phone they started 6 px left of it)
+    const summary = await wordsLeft(page, '.traffic-slowness .slow-result .volume-summary');
+    const firstColumn = await wordsLeft(page, '.traffic-slowness .slow-result tbody tr:first-child > :first-child');
+    expect(firstColumn, 'the first column starts under the summary line').toBe(summary);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow of the page').toBeLessThanOrEqual(0);
   });
 }
