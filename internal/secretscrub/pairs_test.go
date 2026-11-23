@@ -26,6 +26,24 @@ func TestPairRecordsMaskTheValue(t *testing.T) {
 		{"quote never closes", `{name: DB_PASSWORD, value: "SECRET15` + "\n"},
 		{"inside a json string", `{"cmd":"run(name=DB_PASSWORD, value=SECRET16)"}`},
 		{"cut and nested", `a{b(c[name:DB_PASSWORD value:SECRET17]`},
+		// Review: escaped quotes inside a JSON string, the common Go %#v print in a log message.
+		{"escaped go print", `{"msg": "{Name:\"DB_PASSWORD\", Value:\"SECRET18\"}"}`},
+		{"escaped python", `{"msg": "EnvVar(name=\"DB_PASSWORD\", value=\"SECRET19\")"}`},
+		{"escaped flow yaml", `{"msg": "{name: \"DB_PASSWORD\", value: \"SECRET20\"}"}`},
+		// Review: a bare value runs on over punctuation and white space.
+		{"comma in value", `map[name:DB_PASSWORD value:ab,SECRET21]`},
+		{"semicolon in value", `map[name:DB_PASSWORD value:ab;SECRET22]`},
+		{"other bracket in value", `[name:DB_PASSWORD value:ab)SECRET23]`},
+		{"nested bracket in value", `(name=DB_PASSWORD value=a(x)(y)SECRET24)`},
+		{"space in value", `{Name:DB_PASSWORD Value:hello SECRET25}`},
+		{"quote in value", `map[name:DB_PASSWORD value:ab'SECRET26]`},
+		{"value then name, comma in value", `{value: ab,SECRET27, name: DB_PASSWORD}`},
+		// Review: a bracket inside the quoted text of another member does not close the record.
+		{"bracket in other member", `EnvVar(note='a)', name='DB_PASSWORD', value='SECRET28')`},
+		{"heredoc", "env {\n  name = \"DB_PASSWORD\"\n  value = <<EOT\nSECRET29\nline two SECRET30\nEOT\n}"},
+		{"value on next line", "{name: DB_PASSWORD, value:\n  SECRET31}"},
+		{"yaml tag", `{name: DB_PASSWORD, value: !!str SECRET32}`},
+		{"unclosed quote in json string", `{"msg": "(name=DB_PASSWORD value='SECRET33)"}`},
 	} {
 		if out := Mask(tc.in, m); strings.Contains(out, "SECRET") {
 			t.Errorf("%s: leaked: %q -> %q", tc.name, tc.in, out)
@@ -42,6 +60,7 @@ func TestPairRecordsLeaveOtherThingsReadable(t *testing.T) {
 		{"url", `see (http://host/x name=Title)`},
 		{"comparison", `if (name == "DB_PASSWORD" && value == "x")`},
 		{"title", `{name: "Reset password", value: later}`},
+		{"value word in another member", `{description: "set value: notsecret", name: DB_PASSWORD_HINT_X}`},
 	} {
 		if out := Mask(tc.in, m); out != tc.in {
 			t.Errorf("%s: changed: %q -> %q", tc.name, tc.in, out)
@@ -57,6 +76,10 @@ func TestPairRecordsKeepJSONValid(t *testing.T) {
 		`{"cmd":"{name: API_TOKEN, value: SECRET3}"}`,
 		`{"cmd":"EnvVar(name='DB_PASSWORD', value='SECRET4')"}`,
 		`{"cmd":"(name=DB_PASSWORD value=SECRET5\"x)"}`,
+		`{"msg": "(name=DB_PASSWORD value='SECRET6)"}`,
+		`{"a":"x","msg":"[name:DB_PASSWORD value:'SECRET7","z":1}`,
+		`{"msg": "{Name:\"DB_PASSWORD\", Value:\"SECRET8\"}","z":1}`,
+		`{"msg": "map[name:DB_PASSWORD value:ab,SECRET9]","z":1}`,
 	} {
 		out := Mask(in, m)
 		if strings.Contains(out, "SECRET") {
@@ -75,6 +98,11 @@ func TestPairRecordsHostile(t *testing.T) {
 		"brackets":  strings.Repeat("[(", 300000),
 		"quotes":    "{" + strings.Repeat("name='", 200000),
 		"separator": "{" + strings.Repeat("a=", 400000),
+		"heredocs":  "{" + strings.Repeat("value = <<E\nx\n", 200000),
+		"spaces":    "{value: " + strings.Repeat("a b ", 400000),
+		"commas":    "{value: " + strings.Repeat("a,b;", 400000),
+		"nested":    strings.Repeat("(value=a(", 200000),
+		"strings":   strings.Repeat("{note: 'a)' value: ", 100000),
 	} {
 		start := time.Now()
 		out := Mask(in, m)

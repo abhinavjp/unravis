@@ -27,6 +27,8 @@ var canaries = []string{
 	"EnvVar(name='DB_PASSWORD', value='CANARYm2')\n",
 	"env {\n  name = \"DB_PASSWORD\"\n  value = \"CANARYn3\"\n}\n",
 	"map[name:DB_PASSWORD value:CANARYo4]\n",
+	`{"msg": "{Name:\"DB_PASSWORD\", Value:\"CANARYp5\"}"}` + "\n",
+	"[name:DB_PASSWORD value:ab,CANARYq6]\n",
 }
 
 // FuzzMaskCanary puts a planted secret after any text, on its own line: whatever came before (an open quote, a half tag, a comment, a

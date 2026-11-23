@@ -11,12 +11,16 @@ import "strings"
 //
 // One pass with a stack of open brackets, like the JSON reader. Quotes are not skipped: the same record can sit inside a JSON string. A member is a name, a ":" or "=", and a value (a quoted string or a word
 // that ends at white space, a comma, a semicolon or a bracket). Members count only inside a bracket. A record whose name member is a
-// secret name masks every "value" member. A value that is a bracket (a list, a nested record) is not read here. A bare value with white
-// space inside (a Go print of a string with spaces) is masked up to the first space. Every byte read is charged; over budget, the rest of
-// the text is masked.
+// secret name masks every "value" member. A quoted string, also in escaped form (\"x\" inside a JSON string), is a value as it is. A bare
+// "value" runs on until the bracket that closes the group, the end of the line, a quote or a backslash, or a separator that is followed by
+// the next member ("name:"), so a password with a comma, a space or a bracket in it is masked whole; the bracket of the group itself, and
+// a backslash, still end it. A value that starts with a bracket (a list, a nested record) is not read here. An HCL heredoc
+// (<<EOT) is masked up to its end line. A quoted value of any other member is skipped, so a bracket or "value:" inside it counts for
+// nothing. Every byte read is charged; over budget, the rest of the text is masked.
 
 func pairRecords(s string, edits []edit, w *work) ([]edit, int) {
 	var stack []jframe
+	var open []byte // the bracket that opened each frame
 	i := 0
 	stop := len(s)
 	for i < len(s) {
@@ -31,14 +35,15 @@ func pairRecords(s string, edits []edit, w *work) ([]edit, int) {
 			if len(stack) >= maxRecordDepth {
 				edits = stack[0].flush(edits)
 				copy(stack, stack[1:])
-				stack = stack[:len(stack)-1]
+				copy(open, open[1:])
+				stack, open = stack[:len(stack)-1], open[:len(open)-1]
 			}
-			stack = append(stack, jframe{})
+			stack, open = append(stack, jframe{}), append(open, c)
 			i++
 		case c == '}' || c == ')' || c == ']':
 			if len(stack) > 0 {
 				edits = stack[len(stack)-1].flush(edits)
-				stack = stack[:len(stack)-1]
+				stack, open = stack[:len(stack)-1], open[:len(open)-1]
 			}
 			i++
 		case isNameStart(c) && (i == 0 || !isIdent(s[i-1])):
@@ -58,15 +63,24 @@ func pairRecords(s string, edits []edit, w *work) ([]edit, int) {
 			top := &stack[len(stack)-1]
 			key := strings.ToLower(s[i:e])
 			isName, isValue := nameKeys[key], key == "value"
+			v := pairValueStart(s, k+1)
 			if !isName && !isValue {
-				i = e
+				// Another member: a quoted value is skipped whole, so a bracket or a "value:" inside it counts for nothing.
+				if v < len(s) && (s[v] == '"' || s[v] == '\'' || (s[v] == '\\' && escOpens(s, v))) {
+					_, _, next := pairQuoted(s, v)
+					w.spend(next - v + 1)
+					i = max(next, e)
+				} else {
+					i = e
+				}
 				continue
 			}
-			v := k + 1
-			for v < len(s) && (s[v] == ' ' || s[v] == '\t') {
-				v++
+			var from, to, next int
+			if isValue && v < len(s) && s[v] != '"' && s[v] != '\'' && s[v] != '\\' {
+				from, to, next = pairBare(s, v, open[len(open)-1], w)
+			} else {
+				from, to, next = pairValue(s, v)
 			}
-			from, to, next := pairValue(s, v)
 			w.spend(next - v + 1)
 			if to > from {
 				if isName && recordName(s[from:to]) && IsSecretKey(s[from:to]) {
@@ -91,31 +105,89 @@ func pairRecords(s string, edits []edit, w *work) ([]edit, int) {
 func pairSep(s string, k int) bool {
 	switch s[k] {
 	case ':':
-		return k+1 >= len(s) || (s[k+1] != ':' && s[k+1] != '=' && !(s[k+1] == '/' && k+2 < len(s) && s[k+2] == '/'))
+		return k+1 >= len(s) || (s[k+1] != ':' && s[k+1] != '=' && (s[k+1] != '/' || k+2 >= len(s) || s[k+2] != '/'))
 	case '=':
 		return k+1 >= len(s) || (s[k+1] != '=' && s[k+1] != '>')
 	}
 	return false
 }
 
-// pairValue reads the value that starts at v: a quoted string (inside its quotes) or a word. It returns the span and where to go on. A
-// quote that never closes on its line is read to the end of the line, since the record may still be a secret. A bracket or an empty
-// value gives an empty span.
+// pairValueStart returns where the value of a member begins: after white space, also over line breaks when no member starts there
+// ("value:" and the value on the next line), and after a YAML tag or anchor ("!!str x", "&a x").
+func pairValueStart(s string, v int) int {
+	for n := 0; n < 3; n++ {
+		for v < len(s) && (s[v] == ' ' || s[v] == '\t') {
+			v++
+		}
+		if v < len(s) && (s[v] == '\n' || s[v] == '\r') {
+			k := skipSpace(s, v)
+			if k >= len(s) || memberAt(s, k) {
+				return v
+			}
+			v = k
+		}
+		if v < len(s) && (s[v] == '!' || s[v] == '&') {
+			k := v
+			for k < len(s) && s[k] != ' ' && s[k] != '\t' && s[k] != '\n' && s[k] != '\r' {
+				k++
+			}
+			if k < len(s) && (s[k] == ' ' || s[k] == '\t') {
+				v = k
+				continue
+			}
+		}
+		break
+	}
+	return v
+}
+
+// memberAt says whether a member ("name:" or "name =") starts at k.
+func memberAt(s string, k int) bool {
+	if k >= len(s) || !isNameStart(s[k]) {
+		return false
+	}
+	e := k + 1
+	for e < len(s) && e-k <= maxIdent && isIdent(s[e]) {
+		e++
+	}
+	for e < len(s) && (s[e] == ' ' || s[e] == '\t') {
+		e++
+	}
+	return e < len(s) && pairSep(s, e)
+}
+
+// pairQuoted reads the quoted string that starts at v, in plain or escaped form (\"x\" inside a JSON string). A string that never
+// closes on its line is read up to the next double quote or the end of the line, since the record may still be a secret.
+func pairQuoted(s string, v int) (from, to, next int) {
+	esc := s[v] == '\\'
+	f, t, n, _, ok := recordString(s, v, esc)
+	if ok {
+		return f, t, n
+	}
+	if esc {
+		return v, v, v + 1
+	}
+	e := v + 1
+	for e < len(s) && s[e] != '\n' && s[e] != '\r' && s[e] != '"' {
+		e++
+	}
+	return v + 1, e, e
+}
+
+// pairValue reads the value that starts at v: a quoted string (inside its quotes) or a word that ends at white space, a comma, a
+// semicolon or a bracket. A bracket or an empty value gives an empty span.
 func pairValue(s string, v int) (from, to, next int) {
 	if v >= len(s) {
 		return v, v, v
 	}
 	switch s[v] {
 	case '"', '\'':
-		f, t, n, _, ok := recordString(s, v, false)
-		if ok {
-			return f, t, n
+		return pairQuoted(s, v)
+	case '\\':
+		if escOpens(s, v) {
+			return pairQuoted(s, v)
 		}
-		e := v + 1
-		for e < len(s) && s[e] != '\n' && s[e] != '\r' {
-			e++
-		}
-		return v + 1, e, e
+		return v, v, v
 	case '{', '(', '[', '}', ')', ']', ',', ';', '\n', '\r':
 		return v, v, v
 	}
@@ -124,4 +196,97 @@ func pairValue(s string, v int) (from, to, next int) {
 		e++
 	}
 	return v, e, e
+}
+
+// closerOf returns the bracket that closes the group opened by c.
+func closerOf(c byte) byte {
+	switch c {
+	case '(':
+		return ')'
+	case '[':
+		return ']'
+	}
+	return '}'
+}
+
+// pairBare reads a bare value of a "value" member, see the comment at the top of the file. opener is the bracket of the group.
+func pairBare(s string, v int, opener byte, w *work) (from, to, next int) {
+	if strings.HasPrefix(s[v:], "<<") {
+		return pairHeredoc(s, v, w)
+	}
+	switch s[v] {
+	case '{', '(', '[', '}', ')', ']', ',', ';', '\n', '\r':
+		return v, v, v
+	}
+	closer := closerOf(opener)
+	depth := 0
+	e := v
+loop:
+	for e < len(s) {
+		switch c := s[e]; c {
+		case '\n', '\r', '"', '\\':
+			break loop
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			} else if c == closer {
+				break loop
+			}
+		case ' ', '\t', ',', ';':
+			if depth == 0 && memberAhead(s, e+1) {
+				break loop
+			}
+		}
+		e++
+	}
+	w.spend(e - v)
+	to = e
+	for to > v && (s[to-1] == ' ' || s[to-1] == '\t' || s[to-1] == ',' || s[to-1] == ';') {
+		to--
+	}
+	return v, to, e
+}
+
+// memberAhead says whether the next member starts after white space at k: a separator before it ends a bare value.
+func memberAhead(s string, k int) bool {
+	for k < len(s) && (s[k] == ' ' || s[k] == '\t' || s[k] == ',' || s[k] == ';') {
+		k++
+	}
+	return memberAt(s, k)
+}
+
+// pairHeredoc masks the body of an HCL heredoc (value = <<EOT, up to the line that holds EOT alone). The marker stays readable. A
+// heredoc that never ends is masked to the end of the text.
+func pairHeredoc(s string, v int, w *work) (from, to, next int) {
+	k := v + 2
+	if k < len(s) && s[k] == '-' {
+		k++
+	}
+	t := k
+	for t < len(s) && isIdent(s[t]) {
+		t++
+	}
+	tag := s[k:t]
+	nl := strings.IndexByte(s[t:], '\n')
+	if tag == "" || nl < 0 {
+		return v, v, t
+	}
+	from = t + nl + 1
+	for ls := from; ls <= len(s); {
+		le := len(s)
+		if n := strings.IndexByte(s[ls:], '\n'); n >= 0 {
+			le = ls + n
+		}
+		w.spend(le - ls + 1)
+		if strings.TrimSpace(s[ls:le]) == tag {
+			return from, ls, le
+		}
+		if le >= len(s) {
+			break
+		}
+		ls = le + 1
+	}
+	return from, len(s), len(s)
 }
