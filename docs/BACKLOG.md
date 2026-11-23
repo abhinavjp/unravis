@@ -314,6 +314,7 @@ Spec per area: `docs/desktop/spec/`. Items per area: `docs/desktop/groom/` (scop
   - 389a data half built, not ticked: `internal/clicap` (v1 matrix, `Check`, `Permits`, `Register`, deny by default), tested on Linux. Not built: `clisrv.Register`, the `TestMatrixMatchesDoc` generated table, the check against `mcp.Catalog()` (no exported catalog yet; the test lists the ten names by hand), and all of 389b (automation grants).
 - [ ] **BL-390** `app status|stop|start --headless` and owner lease (size L, Parallel B (needs P1); see `docs/desktop/groom/05-cli.md`)
 - [ ] **BL-391** Explicit offline reader: `blackbox inspect --offline` (size M, Parallel B; see `docs/desktop/groom/05-cli.md`)
+  - Reader built, not ticked: `internal/clioffline` (`Inspect`: folder or one hourly file, read-only through the app's own reader, refuses case data with LIVE_CASE_REFUSED, size cap, `--samples`), tested on Linux against recordings written by the real recorder store, plus a nightly fuzz of the manifest. Not built: the `blackbox inspect` command in `cmd/unravis`, a real recording copied from a PC, the unchanged-hash check on the PC, UNC-path rules.
 - [ ] **BL-392** JSON Lines streaming for selected operations (size S, Parallel B; see `docs/desktop/groom/05-cli.md`)
 - [ ] **BL-393** Cross-adapter parity CI (size M, Parallel B; see `docs/desktop/groom/05-cli.md`)
 - [ ] **BL-394** Installer: PATH entry, shortcuts, process roles, legacy path (size L, P4; see `docs/desktop/groom/05-cli.md`)
