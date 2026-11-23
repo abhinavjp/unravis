@@ -13,7 +13,7 @@ import "strings"
 // that ends at white space, a comma, a semicolon or a bracket). Members count only inside a bracket. A record whose name member is a
 // secret name masks every "value" member. A quoted string, also in escaped form (\"x\" inside a JSON string), is a value as it is. A bare
 // "value" runs on until the bracket that closes the group, the end of the line, a quote or a backslash, or a separator that is followed by
-// the next member ("name:"), so a password with a comma, a space or a bracket in it is masked whole; the bracket of the group itself, and
+// the next member ("name:", so "pa, ss: x" is read as a value "pa" and a member), so a password with a comma, a space or a bracket in it is masked whole; the bracket of the group itself, and
 // a backslash, still end it. A value that starts with a bracket (a list, a nested record) is not read here. An HCL heredoc
 // (<<EOT) is masked up to its end line. A quoted value of any other member is skipped, so a bracket or "value:" inside it counts for
 // nothing. Every byte read is charged; over budget, the rest of the text is masked.
@@ -21,6 +21,7 @@ import "strings"
 func pairRecords(s string, edits []edit, w *work) ([]edit, int) {
 	var stack []jframe
 	var open []byte // the bracket that opened each frame
+	memo := ""      // a heredoc tag whose end line was searched for and not found
 	i := 0
 	stop := len(s)
 	for i < len(s) {
@@ -77,7 +78,7 @@ func pairRecords(s string, edits []edit, w *work) ([]edit, int) {
 			}
 			var from, to, next int
 			if isValue && v < len(s) && s[v] != '"' && s[v] != '\'' && s[v] != '\\' {
-				from, to, next = pairBare(s, v, open[len(open)-1], w)
+				from, to, next = pairBare(s, v, open[len(open)-1], w, &memo)
 			} else {
 				from, to, next = pairValue(s, v)
 			}
@@ -162,6 +163,11 @@ func pairQuoted(s string, v int) (from, to, next int) {
 	esc := s[v] == '\\'
 	f, t, n, _, ok := recordString(s, v, esc)
 	if ok {
+		if !esc && n < len(s) && !strings.ContainsRune(" \t\r\n,;)}]", rune(s[n])) {
+			// The closing quote is followed by a word ("value: ","b":1}"): this quote closed a JSON string and the "string" runs from
+			// there to the quote that opens the next member name. Not a value.
+			return v, v, v + 1
+		}
 		return f, t, n
 	}
 	if esc {
@@ -169,9 +175,12 @@ func pairQuoted(s string, v int) (from, to, next int) {
 	}
 	e := v + 1
 	for e < len(s) && s[e] != '\n' && s[e] != '\r' && s[e] != '"' {
+		if s[e] == '\\' && e+1 < len(s) && s[e+1] != '\n' && s[e+1] != '\r' {
+			e++ // an escaped character stays whole, so the text around a JSON string stays valid
+		}
 		e++
 	}
-	return v + 1, e, e
+	return v + 1, min(e, len(s)), min(e, len(s))
 }
 
 // pairValue reads the value that starts at v: a quoted string (inside its quotes) or a word that ends at white space, a comma, a
@@ -192,7 +201,7 @@ func pairValue(s string, v int) (from, to, next int) {
 		return v, v, v
 	}
 	e := v
-	for e < len(s) && !strings.ContainsRune(" \t\r\n,;)}]\"'\\", rune(s[e])) {
+	for e < len(s) && !strings.ContainsRune(" \t\r\n,;({[)}]\"'\\", rune(s[e])) {
 		e++
 	}
 	return v, e, e
@@ -210,15 +219,16 @@ func closerOf(c byte) byte {
 }
 
 // pairBare reads a bare value of a "value" member, see the comment at the top of the file. opener is the bracket of the group.
-func pairBare(s string, v int, opener byte, w *work) (from, to, next int) {
+func pairBare(s string, v int, opener byte, w *work, memo *string) (from, to, next int) {
 	if strings.HasPrefix(s[v:], "<<") {
-		return pairHeredoc(s, v, w)
+		return pairHeredoc(s, v, w, memo)
 	}
 	switch s[v] {
 	case '{', '(', '[', '}', ')', ']', ',', ';', '\n', '\r':
 		return v, v, v
 	}
 	closer := closerOf(opener)
+	var inner [16]byte // the closers still expected for the brackets opened inside the value
 	depth := 0
 	e := v
 loop:
@@ -227,17 +237,27 @@ loop:
 		case '\n', '\r', '"', '\\':
 			break loop
 		case '(', '[', '{':
-			depth++
+			if depth < len(inner) {
+				inner[depth] = closerOf(c)
+				depth++
+			}
 		case ')', ']', '}':
-			if depth > 0 {
+			if depth > 0 && inner[depth-1] == c {
 				depth--
 			} else if c == closer {
-				break loop
+				break loop // the bracket of the group itself, also when a bracket inside the value never closed
 			}
 		case ' ', '\t', ',', ';':
-			if depth == 0 && memberAhead(s, e+1) {
+			r := e
+			for r < len(s) && (s[r] == ' ' || s[r] == '\t' || s[r] == ',' || s[r] == ';') {
+				r++
+			}
+			w.spend(r - e)
+			if depth == 0 && memberAt(s, r) {
 				break loop
 			}
+			e = r
+			continue
 		}
 		e++
 	}
@@ -249,17 +269,10 @@ loop:
 	return v, to, e
 }
 
-// memberAhead says whether the next member starts after white space at k: a separator before it ends a bare value.
-func memberAhead(s string, k int) bool {
-	for k < len(s) && (s[k] == ' ' || s[k] == '\t' || s[k] == ',' || s[k] == ';') {
-		k++
-	}
-	return memberAt(s, k)
-}
-
 // pairHeredoc masks the body of an HCL heredoc (value = <<EOT, up to the line that holds EOT alone). The marker stays readable. A
-// heredoc that never ends is masked to the end of the text.
-func pairHeredoc(s string, v int, w *work) (from, to, next int) {
+// heredoc that never ends is masked to the end of the text, but the scan goes on after its first line, so a record after it is still
+// read. A heredoc tag that was searched for and not found is not searched for again (memo), so repeated unfinished heredocs stay linear.
+func pairHeredoc(s string, v int, w *work, memo *string) (from, to, next int) {
 	k := v + 2
 	if k < len(s) && s[k] == '-' {
 		k++
@@ -274,6 +287,9 @@ func pairHeredoc(s string, v int, w *work) (from, to, next int) {
 		return v, v, t
 	}
 	from = t + nl + 1
+	if *memo == tag {
+		return from, len(s), from
+	}
 	for ls := from; ls <= len(s); {
 		le := len(s)
 		if n := strings.IndexByte(s[ls:], '\n'); n >= 0 {
@@ -281,12 +297,17 @@ func pairHeredoc(s string, v int, w *work) (from, to, next int) {
 		}
 		w.spend(le - ls + 1)
 		if strings.TrimSpace(s[ls:le]) == tag {
-			return from, ls, le
+			to = ls
+			for to > from && (s[to-1] == '\n' || s[to-1] == '\r') {
+				to--
+			}
+			return from, to, le
 		}
 		if le >= len(s) {
 			break
 		}
 		ls = le + 1
 	}
-	return from, len(s), len(s)
+	*memo = tag
+	return from, len(s), from
 }

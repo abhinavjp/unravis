@@ -43,6 +43,12 @@ func TestPairRecordsMaskTheValue(t *testing.T) {
 		{"heredoc", "env {\n  name = \"DB_PASSWORD\"\n  value = <<EOT\nSECRET29\nline two SECRET30\nEOT\n}"},
 		{"value on next line", "{name: DB_PASSWORD, value:\n  SECRET31}"},
 		{"yaml tag", `{name: DB_PASSWORD, value: !!str SECRET32}`},
+		// Review round 2: an unmatched bracket in another value does not eat the next record.
+		{"unmatched bracket before", `[{name: A, value: a(b}, {name: DB_PASSWORD, value: SECRET34}]`},
+		{"unmatched bracket regex", `[{name: PATTERN, value: ^(a|b}, {name: DB_PASSWORD, value: SECRET35}]`},
+		{"heredoc never ends", "{name: A, value = <<EOT\nfoo\n}\n{name: DB_PASSWORD, value: SECRET36}"},
+		{"name before a bracket", `(name=DB_PASSWORD(x) value=SECRET37)`},
+		{"escaped quote in unclosed", `{"m": "(name=DB_PASSWORD value='ab\"SECRET38)"}`},
 		{"unclosed quote in json string", `{"msg": "(name=DB_PASSWORD value='SECRET33)"}`},
 	} {
 		if out := Mask(tc.in, m); strings.Contains(out, "SECRET") {
@@ -77,6 +83,9 @@ func TestPairRecordsKeepJSONValid(t *testing.T) {
 		`{"cmd":"EnvVar(name='DB_PASSWORD', value='SECRET4')"}`,
 		`{"cmd":"(name=DB_PASSWORD value=SECRET5\"x)"}`,
 		`{"msg": "(name=DB_PASSWORD value='SECRET6)"}`,
+		`{"msg":"set name=DB_PASSWORD value: ","b":1}`,
+		`{"m": "(name=DB_PASSWORD value='ab\"SECRET10)"}`,
+		`{"msg":"name: DB_PASSWORD value: ","b":{"c":"d"}}`,
 		`{"a":"x","msg":"[name:DB_PASSWORD value:'SECRET7","z":1}`,
 		`{"msg": "{Name:\"DB_PASSWORD\", Value:\"SECRET8\"}","z":1}`,
 		`{"msg": "map[name:DB_PASSWORD value:ab,SECRET9]","z":1}`,
@@ -93,16 +102,19 @@ func TestPairRecordsKeepJSONValid(t *testing.T) {
 
 func TestPairRecordsHostile(t *testing.T) {
 	for name, in := range map[string]string{
-		"openers":   strings.Repeat("{name: ", 200000),
-		"members":   "{" + strings.Repeat("name=a value=b ", 100000),
-		"brackets":  strings.Repeat("[(", 300000),
-		"quotes":    "{" + strings.Repeat("name='", 200000),
-		"separator": "{" + strings.Repeat("a=", 400000),
-		"heredocs":  "{" + strings.Repeat("value = <<E\nx\n", 200000),
-		"spaces":    "{value: " + strings.Repeat("a b ", 400000),
-		"commas":    "{value: " + strings.Repeat("a,b;", 400000),
-		"nested":    strings.Repeat("(value=a(", 200000),
-		"strings":   strings.Repeat("{note: 'a)' value: ", 100000),
+		"openers":    strings.Repeat("{name: ", 200000),
+		"members":    "{" + strings.Repeat("name=a value=b ", 100000),
+		"brackets":   strings.Repeat("[(", 300000),
+		"quotes":     "{" + strings.Repeat("name='", 200000),
+		"separator":  "{" + strings.Repeat("a=", 400000),
+		"heredocs":   "{" + strings.Repeat("value = <<E\nx\n", 200000),
+		"spaces":     "{value: " + strings.Repeat("a b ", 400000),
+		"commas":     "{value: " + strings.Repeat("a,b;", 400000),
+		"nested":     strings.Repeat("(value=a(", 200000),
+		"space run":  "{value: a" + strings.Repeat(" ", 1<<20),
+		"comma run":  "{value: a" + strings.Repeat(",", 1<<20),
+		"mixed runs": "{value: a" + strings.Repeat(", ;\t", 1<<18),
+		"strings":    strings.Repeat("{note: 'a)' value: ", 100000),
 	} {
 		start := time.Now()
 		out := Mask(in, m)
