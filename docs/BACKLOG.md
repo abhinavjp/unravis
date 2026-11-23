@@ -303,7 +303,7 @@ Spec per area: `docs/desktop/spec/`. Items per area: `docs/desktop/groom/` (scop
 - [ ] **BL-362** `unravis-sandbox.exe` worker: wazero + QuickJS, stdio protocol (size ?, ?; see `docs/desktop/groom/04-code-mode.md`)
 - [ ] **BL-363** Broker run pipeline: TS strip, wrapper, host-call dispatch (size L, Parallel C; see `docs/desktop/groom/04-code-mode.md`)
 - [ ] **BL-364** Typed bindings: `.d.ts` from MCP schemas plus `outputSchema` on the ten tools (size M, Parallel C (shares work with Parallel A); see `docs/desktop/groom/04-code-mode.md`)
-- [ ] **BL-365** Privacy: identifier tokenization, error scrubbing, clock (size M, Parallel C; see `docs/desktop/groom/04-code-mode.md`)
+- [ ] **BL-365** Privacy: identifier tokenization, error scrubbing, clock (size M, Parallel C; see `docs/desktop/groom/04-code-mode.md`) **Pure part built 2026-11-23 (PR #242), not ticked:** `internal/codemode/privacy` (per-run IP/user/UA tokens, JSON sweep, error and log scrub reusing secretscrub and querytext, 10 ms script clock, seeded Math.random), Linux tests, property and fuzz, needs the fresh security review. Owed: wiring in the broker (BL-363), the `hidden-N` and allow-mode run tests, a live check on "Brain Sandbox Slowdown".
 - [ ] **BL-366** Windows hardening layer A: Job Object, handle list, mitigation policies (size L, Parallel C; see `docs/desktop/groom/04-code-mode.md`)
 - [ ] **BL-367** Windows hardening layer B: LPAC token, verification, restricted-token fallback (size L, Parallel C; see `docs/desktop/groom/04-code-mode.md`)
 - [ ] **BL-368** Installer: sandbox exe placement and `S-1-15-2-2` ACL, kept through OTA and recover (size M, Parallel C, joins P4 (installer); see `docs/desktop/groom/04-code-mode.md`)
