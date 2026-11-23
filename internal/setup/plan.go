@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -409,6 +410,10 @@ const (
 	backupPrefix  = ".setup-backup-"
 )
 
+// stampName is the exact form of a working folder's name: the prefix and the UTC stamp (20060102-150405). A folder of the person's own
+// that merely starts with the prefix is not one of ours and is never removed.
+var stampName = regexp.MustCompile(`^\.setup-(staging|backup)-\d{8}-\d{6}$`)
+
 // clearStaleStaging removes the staging folders of earlier setups that never finished. They hold only copies of the programs, and
 // nothing reads them again. Backup folders are left: they may hold the files of an earlier version. A failure is only logged.
 func (p *Plan) clearStaleStaging() {
@@ -418,7 +423,8 @@ func (p *Plan) clearStaleStaging() {
 	}
 	now := stagingPrefix + p.stamp
 	for _, e := range ents {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), stagingPrefix) || e.Name() == now {
+		// A real folder only: a link or junction is skipped, so nothing outside the program folder is ever walked into.
+		if e.Type() != fs.ModeDir || !strings.HasPrefix(e.Name(), stagingPrefix) || !stampName.MatchString(e.Name()) || e.Name() == now {
 			continue
 		}
 		if rerr := os.RemoveAll(filepath.Join(p.Layout.InstallDir, e.Name())); rerr != nil {

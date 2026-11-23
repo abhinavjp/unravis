@@ -221,13 +221,16 @@ test('a failed Program folder check gets the folder actions and its own hint', (
   assert.equal(logic.showsFolderActions(folder('failed')), true);
   assert.equal(logic.showsFolderActions(folder('ready')), false);
   assert.equal(logic.showsFolderActions({ id: 'disk-app', status: 'failed' }), false);
-  assert.match(logic.blockedLine([folder('failed')]), /^1 check failed: Program folder\. Press Choose another folder/);
+  assert.match(logic.blockedLine([folder('failed')]), /^1 check failed: Program folder\. Fix it and press Check again; Next stays off until then\. For the Program folder, use Choose another folder/);
+  assert.doesNotMatch(logic.blockedLine([folder('failed')], false), /Choose another folder/, 'an upgrade or repair has no such button');
+  assert.doesNotMatch(logic.blockedLine([{ id: 'disk-app', title: 'Space', status: 'failed', detail: '' }]), /Choose another folder/);
 });
 
 test('the Welcome screen reaches the folder box and the folder from a failed Program folder row', () => {
   const app = read('setup/App.svelte');
   assert.match(app, /showsFolderActions\(check\)[\s\S]*Choose another folder[\s\S]*Open this folder/);
   assert.match(app, /data-folder/);
+  assert.match(app, /Setup cannot go on yet/, 'Options Next says why when a check still fails');
   const api = read('setup/api.ts');
   assert.match(api, /openFolder: \(folder: string\)[^\n]*'open-folder'/);
 });

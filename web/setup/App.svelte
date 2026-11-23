@@ -69,7 +69,7 @@
   const placeLabel = $derived(ui?.installed?.location ?? options.location);
   const hold = $derived(settling ? true : undefined);
   const orderedChecks = $derived(checksFailedFirst(checks));
-  const blockedNote = $derived(blockedLine(checks));
+  const blockedNote = $derived(blockedLine(checks, op === 'install'));
   const stepNumber = $derived(Math.max(0, rail.findIndex((step) => step.id === position.current)) + 1);
   const stepLabel = $derived(rail.find((step) => step.id === position.current)?.label ?? '');
   const deleting = $derived(op === 'uninstall' && (uninst.deleteCases || uninst.deleteRecordings));
@@ -183,7 +183,11 @@
       document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
       return;
     }
-    if (await check()) await proceed();
+    if (await check()) {
+      // Still blocked: say so here, where the person is, and the list of what is not ready sits under the form.
+      if (blocked(checks)) notice = 'Setup cannot go on yet. Fix what is listed under \u201cNot ready yet\u201d, then press Next again.';
+      else await proceed();
+    }
   });
 
   const removeNext = () => once(async () => {

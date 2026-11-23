@@ -338,15 +338,16 @@ export function checksFailedFirst(checks: Check[]): Check[] {
   return checks.map((check, index) => ({ check, index })).sort((a, b) => rank(a.check) - rank(b.check) || a.index - b.index).map((entry) => entry.check);
 }
 
-/** The one line under the Welcome heading that names what stops Next. */
-export function blockedLine(checks: Check[]): string {
+/**
+ * The one line under the Welcome heading that names what stops Next. canChoose says the page has the Choose another folder button
+ * (a new install does; an upgrade or repair keeps its folder), so the hint never names a button that is not there.
+ */
+export function blockedLine(checks: Check[], canChoose = true): string {
   const failed = checks.filter((check) => check.status === 'failed');
   if (!failed.length) return '';
   const names = failed.map((check) => check.title).join(', ');
-  if (failed.some((check) => showsFolderActions(check))) {
-    return (failed.length === 1 ? '1 check failed: ' : failed.length + ' checks failed: ') + names + '. Press Choose another folder under it, or empty that folder and press Check again; Next stays off until then.';
-  }
-  return (failed.length === 1 ? '1 check failed: ' : failed.length + ' checks failed: ') + names + '. Fix ' + (failed.length === 1 ? 'it' : 'them') + ' and press Check again; Next stays off until then.';
+  const hint = canChoose && failed.some((check) => showsFolderActions(check)) ? ' For the Program folder, use Choose another folder under it.' : '';
+  return (failed.length === 1 ? '1 check failed: ' : failed.length + ' checks failed: ') + names + '. Fix ' + (failed.length === 1 ? 'it' : 'them') + ' and press Check again; Next stays off until then.' + hint;
 }
 
 /** Remove is ready when every deletion that is ticked has its typed confirmation. */

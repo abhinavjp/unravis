@@ -275,9 +275,11 @@ func (s *UIServer) openFolder(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "The request could not be read: " + err.Error()})
 		return
 	}
-	dir := filepath.Clean(strings.TrimSpace(body.Folder))
-	if body.Folder == "" || !filepath.IsAbs(dir) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Give the full path of the folder."})
+	raw := strings.TrimSpace(body.Folder)
+	dir := filepath.Clean(raw)
+	// A network path (\\host\share) or a device path (\\?\) would make this PC contact another machine: only a local drive path is opened.
+	if raw == "" || !filepath.IsAbs(dir) || strings.HasPrefix(raw, `\\`) || strings.HasPrefix(raw, "//") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Give the full path of a folder on this PC."})
 		return
 	}
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {

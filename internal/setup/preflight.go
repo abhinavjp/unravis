@@ -420,7 +420,7 @@ func (r *Runner) checkMachineFolder(dir string, old *Installed) (Check, bool) {
 func installerOwned(e os.DirEntry) bool {
 	name := e.Name()
 	if e.IsDir() {
-		return strings.HasPrefix(name, stagingPrefix) || strings.HasPrefix(name, backupPrefix) || strings.EqualFold(name, update.PreviousDir)
+		return stampName.MatchString(name) || strings.EqualFold(name, update.PreviousDir)
 	}
 	// Windows itself drops these into a folder the person has opened in Explorer; they are not anybody's data.
 	for _, own := range []string{AppExeName, KeeperExeName, BlackboxExeName, ReleasesExeName, SetupExeName, StateFileName, "desktop.ini", "thumbs.db"} {
