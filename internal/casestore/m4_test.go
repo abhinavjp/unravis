@@ -39,6 +39,41 @@ func TestM4EdgesEmptyOnePointAndTies(t *testing.T) {
 	}
 }
 
+func TestM4EdgesTieBreakBySequence(t *testing.T) {
+	// BL-535: same time, arriving out of source order. The lowest sequence is first and the highest is last, whatever the arrival order.
+	var e casestore.M4Edges
+	e.AddSeq(10, 5, 50)
+	e.AddSeq(10, 2, 20)
+	e.AddSeq(10, 9, 90)
+	e.AddSeq(10, 7, 70)
+	if e.First != 20 || e.Last != 90 {
+		t.Fatalf("out of sequence: first=%v last=%v", e.First, e.Last)
+	}
+	// The same values in the reverse arrival order give the same answer.
+	var r casestore.M4Edges
+	for _, p := range [][2]float64{{7, 70}, {9, 90}, {2, 20}, {5, 50}} {
+		r.AddSeq(10, int64(p[0]), p[1])
+	}
+	if r.First != e.First || r.Last != e.Last {
+		t.Fatalf("arrival order changed the result: %+v vs %+v", r, e)
+	}
+	// A later time always wins over a higher sequence at an earlier time.
+	var w casestore.M4Edges
+	w.AddSeq(20, 1, 1)
+	w.AddSeq(10, 99, 2)
+	w.AddSeq(30, 0, 3)
+	if w.First != 2 || w.Last != 3 {
+		t.Fatalf("time before sequence: first=%v last=%v", w.First, w.Last)
+	}
+	// Same time and same sequence: arrival order, as Add always did.
+	var s casestore.M4Edges
+	s.AddSeq(10, 4, 1)
+	s.AddSeq(10, 4, 2)
+	if s.First != 1 || s.Last != 2 {
+		t.Fatalf("equal sequence: first=%v last=%v", s.First, s.Last)
+	}
+}
+
 func TestM4WidthAndBucketMs(t *testing.T) {
 	for _, tc := range []struct{ in, want int }{{-5, 1}, {0, 1}, {1, 1}, {600, 600}, {casestore.MaxM4Width, casestore.MaxM4Width}, {casestore.MaxM4Width + 1, casestore.MaxM4Width}, {1 << 30, casestore.MaxM4Width}} {
 		if got := casestore.M4Width(tc.in); got != tc.want {
@@ -184,6 +219,32 @@ func TestM4TiesAndDisorderKeepFirstAndLastByTime(t *testing.T) {
 	p := res.Series[0].Points[0]
 	if res.Buckets != 1 || *p.First != 1 || *p.Last != 4 || p.Min != 1 || p.Max != 9 || p.Count != 5 {
 		t.Fatalf("%+v first=%v last=%v", p, *p.First, *p.Last)
+	}
+}
+
+// BL-535: two events at one instant; the source line, not the delivery order, decides which is first and which is last.
+func TestM4SameInstantFollowsTheSourceLineNotTheDeliveryOrder(t *testing.T) {
+	type lv struct {
+		line int64
+		v    float64
+	}
+	for _, order := range [][]lv{
+		{{1, 10}, {2, 20}, {3, 30}},
+		{{3, 30}, {2, 20}, {1, 10}},
+		{{2, 20}, {3, 30}, {1, 10}},
+	} {
+		g := &genCase{n: len(order), make: func(i int) evidence.Event {
+			return evidence.Event{Kind: "load", Source: "contract", Host: "web-a", Unit: "ms", Line: order[i].line,
+				Start: seriesT0.Add(10 * time.Millisecond), Value: fl(order[i].v)}
+		}}
+		res, err := casestore.Series(context.Background(), g, m4Query(39, 1, "kind=load"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := res.Series[0].Points[0]
+		if *p.First != 10 || *p.Last != 30 || p.Min != 10 || p.Max != 30 || p.Count != 3 {
+			t.Fatalf("delivery %v: first=%v last=%v min=%v max=%v", order, *p.First, *p.Last, p.Min, p.Max)
+		}
 	}
 }
 
