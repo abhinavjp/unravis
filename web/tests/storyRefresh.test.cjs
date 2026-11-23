@@ -30,7 +30,8 @@ function load(relativePath) {
   new Function('require', 'module', 'exports', '$state', output)(req, module, module.exports, (value) => value);
   return module.exports;
 }
-const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
+// CRLF -> LF at the read point: a Windows checkout has CRLF, and the patterns below use \n.
+const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
 
 const { caseAdded, noteCaseAdded, landedCount } = load('src/lib/caseAdded.svelte.ts');
 const { createPopupState } = load('src/lib/components/importPopup/popupState.svelte.ts');
