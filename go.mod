@@ -3,6 +3,7 @@ module api-audit-explorer
 go 1.27.4
 
 require (
+	github.com/klauspost/compress v1.20.3
 	github.com/microsoft/go-mssqldb v1.12.0
 	github.com/ncruces/go-sqlite3 v0.38.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
@@ -21,7 +22,6 @@ require (
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/montanaflynn/stats v0.7.1 // indirect
 	github.com/ncruces/go-sqlite3-wasm/v6 v6.7.35401 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
