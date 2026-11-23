@@ -23,6 +23,12 @@ var canaries = []string{
 	`{"CommandLine":"sqlcmd -S x -P \"CANARYi9\""}` + "\n",
 	`<add key="password" value="CANARYj1" note="a<b"/>` + "\n",
 	"[\"--password\",\n  \"CANARYk2==\"]\n",
+	"env: [{name: DB_PASSWORD, value: CANARYl1}]\n",
+	"EnvVar(name='DB_PASSWORD', value='CANARYm2')\n",
+	"env {\n  name = \"DB_PASSWORD\"\n  value = \"CANARYn3\"\n}\n",
+	"map[name:DB_PASSWORD value:CANARYo4]\n",
+	`{"msg": "{Name:\"DB_PASSWORD\", Value:\"CANARYp5\"}"}` + "\n",
+	"[name:DB_PASSWORD value:ab,CANARYq6]\n",
 }
 
 // FuzzMaskCanary puts a planted secret after any text, on its own line: whatever came before (an open quote, a half tag, a comment, a
