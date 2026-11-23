@@ -21,7 +21,7 @@ import { onCasesLocked } from './lockSignal';
 import { requestCase, requestFilesView } from './startIntent';
 import { CASE_RESTORE_TEXT, restoreFailureNote } from './copy/caseRestoreCopy';
 import { isSourceExists } from './wizardAuditAdd';
-import { readSavedDraft } from './wizardDraftStore';
+import { draftHasContent, readSavedDraft } from './wizardDraftStore';
 import { holdLedger, setLedgerCase } from './ledgerStore.svelte';
 import { parseCallTarget, encodeCallTarget, withCall, type SlowCallTarget } from './drill/callTarget';
 import { forgetSources, parseStoredSourceChoice, type SourceSelection } from './tracing/sources';
@@ -402,8 +402,11 @@ export function startApp() {
       if (target === undefined) return;
       // A mark from before a reload is followed only when it names the case page, its timeline or the Slow call screen: those rebuild from
       // the open case. An older start, create or analysis mark is ignored, as an unmarked entry was, so it cannot clear the open case's state.
+      // One more: Back in the create guide that a reload brought back (BL-495h) leaves it for the start or analysis screen the entry before was made on,
+      // and the kept draft stays, as it does for Back without a reload. Without this the press did nothing and the only way out threw the draft away.
       const mark = viewHistory?.screen ?? '';
-      followHistoryMark(viewHistory?.inherited && parseScreenMark(mark).screen !== 'case' ? '' : mark);
+      const leavesGuide = screen === 'create' && (mark === 'start' || mark === 'running');
+      followHistoryMark(viewHistory?.inherited && parseScreenMark(mark).screen !== 'case' && !leavesGuide ? '' : mark);
       void applyView(target);
     };
     window.addEventListener('popstate', onPop);
@@ -704,7 +707,7 @@ async function chooseFirstScreen(demo: boolean, resume: boolean) {
     if (saved && saved.caseId === activeCaseId) slowCall = saved; else storedCaseView('tracing');
   }
   // A reload in the create guide goes back to it while the tab still holds a draft for it (the name, the environments; never a key or a source).
-  const createView = storedCreateView() && readSavedDraft() != null;
+  const createView = storedCreateView() && draftHasContent(readSavedDraft());
   const target = initialScreen({ demo, deepLink, resume, lock, caseView, createView });
   if (lock === 'locked' || lock === 'damaged') unlockOrigin = initialScreen({ demo, deepLink, resume, lock: 'unlocked', caseView, createView });
   go(target);

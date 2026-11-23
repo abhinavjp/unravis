@@ -41,7 +41,17 @@ test('the app remembers the guide only while it shows, and only goes back with a
   const state = read('src/lib/appState.svelte.ts');
   assert.match(state, /const CREATE_VIEW_KEY = 'unravis\.createView'/);
   assert.match(state, /storedCreateView\(to === 'create'\)/, 'written when the guide shows, cleared when the work moves to another working screen');
-  assert.match(state, /const createView = storedCreateView\(\) && readSavedDraft\(\) != null;/, 'no kept draft, no return to the guide');
+  assert.match(state, /const createView = storedCreateView\(\) && draftHasContent\(readSavedDraft\(\)\);/, 'no kept draft, no return to the guide');
+  assert.match(state, /const leavesGuide = screen === 'create' && \(mark === 'start' \|\| mark === 'running'\);/, 'Back in a guide a reload brought back leaves it');
   assert.match(state, /initialScreen\(\{ demo, deepLink, resume, lock, caseView, createView \}\)/);
   assert.match(state, /unlockOrigin = initialScreen\(\{ demo, deepLink, resume, lock: 'unlocked', caseView, createView \}\)/);
+});
+
+test('a kept draft is worth coming back to only with a name or environments (an own-key switch alone is not)', () => {
+  const store = load('src/lib/wizardDraftStore.ts');
+  assert.equal(store.draftHasContent(null), false);
+  assert.equal(store.draftHasContent({ title: '', envText: '', keyOn: true }), false);
+  assert.equal(store.draftHasContent({ title: '  ', envText: ' ', keyOn: false }), false);
+  assert.equal(store.draftHasContent({ title: 'A', envText: '', keyOn: false }), true);
+  assert.equal(store.draftHasContent({ title: '', envText: 'prod', keyOn: false }), true);
 });
