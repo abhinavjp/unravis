@@ -24,6 +24,7 @@
 //   UIFIX-50  Row buttons of the All operations request list and "Show only" (BL-495 part): "Nearby activity" and "Inspect" are real <button type=button> of one size on one line each, named by their request (API, time to the millisecond, source and record id) with the visible words first (50a); the same Enter and Space act once, with the focus ring (50b, 50c); "Show only" of the Request volume table is a quiet button with a visible edge and one size, 24 px press area, and the table still fits its box (50d)
 //   UIFIX-51  Slowest tab (BL-495 part n): "Inspect window" of the exact time windows and "Nearby activity" of the slowest requests are real <button type=button> quiet buttons of one size with a visible edge, named by the window (start to end, zone) or by the request (API, time to the millisecond, source, record id) with the visible words first (51a); Enter and Space act once each, with the focus ring (51b, 51c)
 //   UIFIX-52  Slowest tab (BL-537): the small line under the API name of each slowest request is at least 11px (the audit's floor) and the two headings start their words where the controls and notes under them start; the heading boxes and the list's other columns stay where they were (52a, 52b)
+//   UIFIX-53  Slowest tab (BL-538): the "API / source" column of the slowest-request list and the first column of the exact time windows have a sensible width: the API name stays on one line, the rows are short (the 50-row list was about 11,000 px tall at 1440 px), and at 1440 px the list fits its panel so "Nearby activity" is not pushed out
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase } from '../support/ui';
 
@@ -2127,5 +2128,46 @@ for (const size of OP_SIZES) {
     const firstColumn = await wordsLeft(page, '.traffic-slowness .slow-result tbody tr:first-child > :first-child');
     expect(firstColumn, 'the first column starts under the summary line').toBe(summary);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow of the page').toBeLessThanOrEqual(0);
+  });
+}
+
+// UIFIX-53 (BL-538): on develop the first column of `.volume-table` (`tbody th`, overflow-wrap: anywhere) got the table's smallest width, about 71 px at 1440 and 1100 px, so
+// "Payroll.Run" broke after a few letters, every row of the slowest list was 223 px tall (50 rows = 11,220 px) and the time-window column broke the same way at 1100 px. Now the column has a
+// minimum width (11rem in the slowest list, 9rem in the other `.volume-table` lists) and the Started and API / audit time cells may wrap at their spaces.
+for (const size of OP_SIZES) {
+  test('UIFIX-53a Slowest tab at ' + size.width + ' px: the API / source column is wide enough to read, rows are short, the name is not broken', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowestLists(page);
+    const facts = await page.locator('.traffic-slowness .slow-result tbody tr').evaluateAll((rows) => rows.map((tr) => {
+      const th = tr.querySelector('th')!;
+      const name = th.firstChild as Text;
+      const range = document.createRange();
+      range.selectNodeContents(name);
+      return { w: th.getBoundingClientRect().width, h: tr.getBoundingClientRect().height, nameLines: new Set([...range.getClientRects()].map((q) => Math.round(q.top))).size, name: (name.textContent ?? '').trim() };
+    }));
+    expect(facts.length, 'one row per slowest request').toBeGreaterThan(2);
+    for (const f of facts) {
+      expect(f.w, 'width of the API / source cell of ' + f.name).toBeGreaterThanOrEqual(150);
+      expect(f.nameLines, 'the API name ' + f.name + ' is on one line').toBe(1);
+      expect(f.h, 'row height of ' + f.name).toBeLessThanOrEqual(130);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow of the page').toBeLessThanOrEqual(0);
+    // On a wide window the list fits its panel, so the last column is whole; on narrower ones the table's own wrapper scrolls, as it did before.
+    const [need, have, buttonRight, wrapRight] = await page.locator('.traffic-slowness .slow-result .volume-table-wrap').evaluate((wrap) => [wrap.scrollWidth, wrap.clientWidth, wrap.querySelector('tbody td button')!.getBoundingClientRect().right, wrap.getBoundingClientRect().right]);
+    if (size.width >= 1280) {
+      expect(need, 'the list fits its panel').toBeLessThanOrEqual(have);
+      expect(buttonRight, '"Nearby activity" is whole').toBeLessThanOrEqual(wrapRight);
+    }
+  });
+
+  test('UIFIX-53b Slowest tab at ' + size.width + ' px: the time window column of the exact windows table keeps a readable width and the same row height or less', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowestLists(page);
+    const facts = await page.locator('.traffic-slowness .traffic-windows tbody tr').evaluateAll((rows) => rows.map((tr) => ({ w: tr.querySelector('th')!.getBoundingClientRect().width, h: tr.getBoundingClientRect().height })));
+    expect(facts.length).toBeGreaterThan(2);
+    for (const f of facts) {
+      expect(f.w, 'width of the time window cell').toBeGreaterThanOrEqual(120);
+      expect(f.h, 'row height of the time window').toBeLessThanOrEqual(100);
+    }
   });
 }

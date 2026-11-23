@@ -6,6 +6,7 @@
 //   UIFIX-18c  Typing short forms, pasting and the arrow keys; the box shows the normal form after
 //   UIFIX-18d  Empty, 12-hour and malformed text: the box and its message say so (aria-invalid, alert), the run is held back, and a fix clears it
 //   UIFIX-18f  Bad text then a date change: the box and its error stay, Run stays off, and the fixed time sends the new date and time together
+//   UIFIX-18h  A date change that lands in the hour the clocks skip (BL-506): the Date box keeps the date the person chose and is marked invalid with the Time box, the clock-change message shows, Run is off and nothing is sent; a valid time then sends the chosen date
 //   UIFIX-18e  Tap target 24 px or more, focus order Date then Time, labels, 320/360/390 px do not scroll sideways, both themes keep 4.5:1 text
 import { test, expect, type Page } from '../support/fixtures';
 import { layoutSettled } from '../support/ui';
@@ -276,6 +277,49 @@ test('UIFIX-18f Refused text stays refused when only the date changes; fixing th
   await page.keyboard.press('ArrowUp');
   await expect(input).toHaveValue('00:00:00.000');
   await expect(input).not.toHaveAttribute('aria-invalid', 'true');
+});
+
+test('UIFIX-18h A date that lands in the hour the clocks skip keeps what was typed, marks the pair invalid, never sends the old date; a valid time sends the chosen one', async ({ page }) => {
+  await openWhen(page);
+  await zoneSelect(page).selectOption({ label: 'London' });
+  const time = box(page, 'current-start');
+  const date = page.locator('#current-start-date');
+  let sent = 0;
+  page.on('request', (r) => { if (r.url().includes('/api/analyze')) sent++; });
+  // The other three dates move to that week first (a window is at most 7 days and the reference must end before the current window starts), so the start can follow
+  // without a "too long" or an order refusal getting in the way.
+  for (const [id, day] of [['reference-start', '2026-03-28'], ['reference-end', '2026-03-28'], ['current-end', '2026-03-29']]) {
+    await page.locator('#' + id + '-date').fill(day);
+    await page.locator('#' + id + '-date').blur();
+  }
+  await time.fill('01:30');
+  await time.blur();
+  await expect(time).toHaveValue('01:30:00.000');
+  const before = await date.inputValue();
+  // London skips 01:00 to 02:00 on 29 Mar 2026: 01:30 does not exist there that day.
+  await date.fill('2026-03-29');
+  await date.blur();
+  await expect(date, 'the box shows the date the person chose, not the date the query still holds').toHaveValue('2026-03-29');
+  expect(before).not.toBe('2026-03-29');
+  await expect(date).toHaveAttribute('aria-invalid', 'true');
+  await expect(time).toHaveAttribute('aria-invalid', 'true');
+  await expect(date).toHaveAttribute('aria-describedby', 'when-time-error');
+  await expect(page.locator('#when-time-error')).toContainText('the clocks change');
+  await expect(page.getByRole('button', { name: 'Run analysis' })).toBeDisabled();
+  expect(sent, 'nothing is sent while the pair is refused').toBe(0);
+  // A time that exists on that day takes the chosen date with it, and the marks go.
+  await time.fill('02:30');
+  await time.blur();
+  await expect(date).not.toHaveAttribute('aria-invalid', 'true');
+  await expect(time).not.toHaveAttribute('aria-invalid', 'true');
+  await expect(date).toHaveValue('2026-03-29');
+  const body = await runAndRead(page);
+  expect(body.start, '02:30 on 29 Mar is summer time (UTC+1): 01:30 UTC').toBe('2026-03-29T01:30:00.000Z');
+  // A bad time text marks the Time box only: the date is fine.
+  await time.fill('2:30 PM');
+  await time.blur();
+  await expect(time).toHaveAttribute('aria-invalid', 'true');
+  await expect(date).not.toHaveAttribute('aria-invalid', 'true');
 });
 
 test('UIFIX-18g The time box uses the same mono face as the Date box and a keypad that has a colon', async ({ page }) => {
