@@ -3,7 +3,6 @@
 package update
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -57,7 +56,7 @@ func LaunchSetup(path, sha256hex, version string) error {
 func LaunchRollback(path, sha256hex, version string) error {
 	extra := []string{"--allow-downgrade"}
 	// The kept setup is the OLD version's. Only one that knows --close-app can go back silently; an older one does it in its window.
-	if data, err := os.ReadFile(path); err == nil && bytes.Contains(data, []byte(closeAppMarker)) {
+	if FileHasAll(path, closeAppMarker) {
 		extra = append(extra, "--silent", "--close-app")
 	}
 	return launchSetup(path, sha256hex, version, extra)

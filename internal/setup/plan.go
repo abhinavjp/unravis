@@ -1,7 +1,6 @@
 package setup
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1016,16 +1015,7 @@ func (p *Plan) keepPrevious(ctx context.Context, t *Txn) error {
 // setupCanBeRolledBackTo says the setup program at path knows the flags a rollback passes to it. The flag names are plain strings in the
 // program, so this reads them from the file; a setup that lacks one is from before the hand-over checks.
 func setupCanBeRolledBackTo(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	for _, flagName := range []string{"expect-sha256", "expect-version", "allow-downgrade"} {
-		if !bytes.Contains(data, []byte(flagName)) {
-			return false
-		}
-	}
-	return true
+	return update.FileHasAll(path, "expect-sha256", "expect-version", "allow-downgrade")
 }
 
 // checkAdminOnly refuses a folder that someone other than administrators, the system or a service may change: its owner must be the
