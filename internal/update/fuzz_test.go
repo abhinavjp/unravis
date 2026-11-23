@@ -3,6 +3,7 @@ package update
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -44,6 +45,18 @@ func FuzzParseManifest(f *testing.F) {
 		if err := rejectDuplicateKeys(data); err != nil {
 			t.Fatalf("accepted a manifest with a duplicate key: %v", err)
 		}
+		// Round trip: what was accepted, written out again, is accepted again and reads the same.
+		again, err := json.Marshal(m)
+		if err != nil {
+			t.Fatalf("an accepted manifest cannot be written out: %v", err)
+		}
+		m2, err := ParseManifest(again)
+		if err != nil {
+			t.Fatalf("a manifest written out again is refused: %v", err)
+		}
+		if reflect.DeepEqual(m, m2) == false {
+			t.Fatalf("a manifest changed on a round trip: %+v then %+v", m, m2)
+		}
 	})
 }
 
@@ -51,7 +64,10 @@ func FuzzParseManifest(f *testing.F) {
 // stopped at the signature every time. It also feeds the raw bytes as a signature file.
 func FuzzVerify(f *testing.F) {
 	trust, priv := fuzzTrust()
+	// Seed signature files of the right shape and key id, signed over other bytes, so the fuzzer starts at ed25519.Verify and not at the format check.
+	other := []byte(FormatSignature(trust.Keys[0].Pub, ed25519.Sign(priv, []byte("some other bytes"))))
 	for _, seed := range manifestSeeds() {
+		f.Add(seed, other)
 		f.Add(seed, []byte("unravis-sig-v1 x y"))
 	}
 	f.Fuzz(func(t *testing.T, data []byte, sigFile []byte) {

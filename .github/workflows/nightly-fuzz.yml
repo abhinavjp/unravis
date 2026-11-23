@@ -22,9 +22,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: nightly-fuzz-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   fuzz:
     name: ${{ matrix.target }}
+    if: ${{ !inputs.seeded }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -38,18 +43,25 @@ jobs:
           - { target: FuzzBridgeServe, pkg: ./internal/mcp }
     steps:
       - name: Check out the code
-        if: ${{ !inputs.seeded }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
-        if: ${{ !inputs.seeded }}
         uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           cache: false
 
+      # The fuzzer keeps what it learned (inputs that reached new code) in the Go cache; carry it from night to night.
+      - name: Fuzz corpus - restore
+        id: corpus
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
       - name: Fuzz
-        if: ${{ !inputs.seeded }}
         env:
           CGO_ENABLED: "0"
           FUZZTIME: ${{ inputs.fuzztime || '2m' }}
@@ -57,8 +69,15 @@ jobs:
           PKG: ${{ matrix.pkg }}
         run: go test -run '^$' -fuzz "^${TARGET}\$" -fuzztime "${FUZZTIME}" "${PKG}"
 
+      - name: Fuzz corpus - save
+        if: ${{ always() }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+
       - name: Upload the crasher
-        if: ${{ failure() && !inputs.seeded }}
+        if: ${{ failure() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-crasher-${{ matrix.target }}
