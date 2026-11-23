@@ -122,6 +122,16 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if err := b.request(ctx, "/api/sources", nil, &sources); err != nil {
 			return nil, err
 		}
+		if b.scoped {
+			// A host sees only the sources of its grant, never the others' ids or labels.
+			kept := make([]audit.Source, 0, len(sources))
+			for _, s := range sources {
+				if _, ok := b.sources[s.ID]; ok {
+					kept = append(kept, s)
+				}
+			}
+			sources = kept
+		}
 		if sources == nil {
 			sources = []audit.Source{}
 		}

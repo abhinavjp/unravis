@@ -503,6 +503,21 @@ func (g *Grants) Recheck(ctx context.Context, pr Principal) error {
 	return err
 }
 
+// RecheckIdentifiers is Recheck for a call that may have returned identifiers: ranWithIdentifiers says the call ran while the identifiers
+// grant was in force. The grant is timed (IdentifiersUntil, up to seven days, usually an hour) and a call can run five minutes, so a call
+// that started inside the grant must not answer after the grant ended: it is refused like a changed grant, and the host retries without
+// identifiers. A call that ran without them is not affected by the clock here.
+func (g *Grants) RecheckIdentifiers(ctx context.Context, pr Principal, ranWithIdentifiers bool) error {
+	p, err := g.Scope(ctx, pr)
+	if err != nil {
+		return err
+	}
+	if ranWithIdentifiers && !IdentifiersAllowed(p, g.now().UTC()) {
+		return denied(ReasonRevision)
+	}
+	return nil
+}
+
 // Scope returns the profile as it is now, for the dispatcher to read what the person granted (tools, identifiers). It answers only for
 // the revision the caller authenticated at: a profile that changed since (revoked, reissued, approved again) is refused with the same
 // denials as Recheck, so a call never runs on a newer or older grant than the one it was admitted under.

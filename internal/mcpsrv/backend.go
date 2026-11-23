@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -33,6 +34,7 @@ type LocalBackend struct {
 type profileBridge struct {
 	rev         int
 	identifiers bool
+	sources     []string
 	b           *mcp.Bridge
 }
 
@@ -41,17 +43,18 @@ func NewLocalBackend(dashboard http.Handler, token string) *LocalBackend {
 	return &LocalBackend{dashboard: dashboard, token: token, bridges: map[string]*profileBridge{}}
 }
 
-// bridgeFor returns the bridge of the profile at its revision and identifiers state. A change of either makes a new bridge, which drops
+// bridgeFor returns the bridge of the profile at its revision, identifiers state and source scope. A change of either makes a new bridge, which drops
 // the old one's cached comparison: a handle made under an older grant never works under a newer one, and rows that carried identifiers
 // are not paged after the identifiers grant ended. At most MaxProfiles bridges exist, because only an authenticated profile gets one.
 func (l *LocalBackend) bridgeFor(p Profile, identifiers bool) *mcp.Bridge {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if e := l.bridges[p.ID]; e != nil && e.rev == p.Rev && e.identifiers == identifiers {
+	if e := l.bridges[p.ID]; e != nil && e.rev == p.Rev && e.identifiers == identifiers && slices.Equal(e.sources, p.Sources) {
 		return e.b
 	}
-	b := mcp.NewLocal(l.dashboard, l.token, mcp.WithIdentifiers(identifiers))
-	l.bridges[p.ID] = &profileBridge{rev: p.Rev, identifiers: identifiers, b: b}
+	// The source scope of the grant is part of the bridge: it can reach no other source, whatever a tool is asked.
+	b := mcp.NewLocal(l.dashboard, l.token, mcp.WithIdentifiers(identifiers), mcp.WithSources(p.Sources))
+	l.bridges[p.ID] = &profileBridge{rev: p.Rev, identifiers: identifiers, sources: slices.Clone(p.Sources), b: b}
 	return b
 }
 

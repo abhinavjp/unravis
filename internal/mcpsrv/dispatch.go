@@ -230,7 +230,8 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 	}
 	class := toolClass[req.Tool]
 	ev := mcpaudit.Event{ProfileID: pr.ProfileID, ProfileRev: pr.Rev, Tool: req.Tool, OpClass: class, CorrID: req.CallID}
-	if !slices.Contains(p.Tools, req.Tool) || class == "" {
+	// The tool must be in the grant's list and in the grant's tier: the tier is the ceiling even if a stored list names more.
+	if class == "" || !slices.Contains(p.Tools, req.Tool) || !slices.Contains(ToolsForTier(p.Tier), req.Tool) {
 		// A tool outside the grant (or outside the catalog) never reaches the backend. The ledger row is best effort: nothing ran.
 		ev.Kind, ev.Outcome, ev.Code = mcpaudit.KindDenied, mcpaudit.OutcomeDenied, mcp.WirePermissionRequired
 		if class == "" {
@@ -257,6 +258,7 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 	}
 	tctx, cancelTimeout := context.WithTimeout(runCtx, timeout)
 	defer cancelTimeout()
+	ranWithIdentifiers := IdentifiersAllowed(p, start) // what the backend is told: the identifiers switch of the bridge is this value
 	result, isError := s.d.Backend.Call(tctx, p, req.Tool, req.Args, start)
 	elapsed := s.d.Now().Sub(start)
 
@@ -265,7 +267,7 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 
 	// The revoke gate: nothing is written to the answer unless the profile is still the one that was admitted. This holds also for a
 	// backend that ignored its context and finished after the revoke.
-	if err := s.d.Grants.Recheck(ctx, pr); err != nil {
+	if err := s.d.Grants.RecheckIdentifiers(ctx, pr, ranWithIdentifiers); err != nil {
 		end.Outcome, end.Code = mcpaudit.OutcomeDenied, mcp.WirePermissionRequired
 		s.recordEnd(ctx, end)
 		return fromAuthError(err)
@@ -307,6 +309,8 @@ func outcomeOf(result []byte, isError bool, ctx context.Context) (outcome, code 
 		return mcpaudit.OutcomeCancelled, code
 	case mcp.WireDeadlineExceeded:
 		return mcpaudit.OutcomeTimeout, code
+	case mcp.WirePermissionRequired:
+		return mcpaudit.OutcomeDenied, code // the tool refused (an identifier filter, a source outside the grant): nothing was read
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return mcpaudit.OutcomeTimeout, code
