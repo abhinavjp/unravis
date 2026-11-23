@@ -415,7 +415,8 @@ func Series(ctx context.Context, c Case, q SeriesQuery) (SeriesResult, error) {
 			if a.edges == nil {
 				a.edges = make([]M4Edges, nb)
 			}
-			a.edges[b].Add(ev.Start.UnixNano(), v)
+			// Two events at one instant: the source line decides which is first and last, not the order the store happens to return them.
+			a.edges[b].AddSeq(ev.Start.UnixNano(), ev.Line, v)
 		}
 		if a.count[b] == 0 {
 			a.min[b], a.max[b] = v, v

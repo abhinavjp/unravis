@@ -48,6 +48,8 @@ export function classify(files, pkgDirs) {
     //   the web tests read internal/server/routes.go, internal/blackbox, internal/calltrace and tools/e2e/archive.
     if (f.startsWith('web/src/lib/copy/')) { out.dirs.add('internal/evidence'); out.dirs.add('internal/server'); }
     if (/^(cmd\/unravis-setup\/|internal\/setup\/)/.test(f)) out.dirs.add('cmd/audit-explorer');
+    // contracts/ (BL-445): schemas and golden answers, read by internal/server/contracts_test.go and by desktop/ipc-core/tests (promotion only).
+    if (f.startsWith('contracts/')) { out.dirs.add('internal/server'); out.reasons.push(`${f}: read by internal/server contract tests`); continue; }
     if (CROSS_WEB.test(f)) { out.web = true; out.reasons.push(`${f}: read by the web tests`); }
     if (f.startsWith('web/dist/')) { out.web = true; out.dirs.add('.'); out.reasons.push(`${f}: committed web build, embedded by the root package`); continue; }
     if (f.startsWith('web/')) { out.web = true; out.reasons.push(`${f}: web`); continue; }
