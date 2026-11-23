@@ -24,8 +24,10 @@
   // span is the time the case's files cover, when they said. When the window on screen holds no data, the panel offers to show that period.
   // That choice is the panel's own: it does not move the audit window, which other screens read. While it is on, the panel's whole period is
   // the files' period, so the zoom buttons and Whole period work inside it. The stall periods still come from the Patterns report.
-  let { caseId, query, zone, span = null, apiWindows = [], onGone }: {
+  let { caseId, query, zone, span = null, apiWindows = [], ownWindow = false, onGone }: {
     caseId: string; query: { start: string; end: string; sourceIds?: string[] }; zone: string; span?: Span | null;
+    /** The panel keeps its own window and zoom: it neither follows nor moves the analysis zoom (the case page, where that zoom is not on screen). */
+    ownWindow?: boolean;
     apiWindows?: ReadonlyArray<{ at: string; p95Ms: number | null }>; onGone?: () => void;
   } = $props();
 
@@ -42,9 +44,9 @@
   let period = $state.raw<ViewWindow | null>(null);
   // The window the panel counts as whole: the one on screen, or the files' period once the person asked for it.
   const base = $derived(period ? { start: new Date(period.fromMs).toISOString(), end: new Date(period.toMs).toISOString() } : query);
-  const usesStore = $derived(zoomView.slots.length > 0 && period == null);
+  const usesStore = $derived(!ownWindow && zoomView.slots.length > 0 && period == null);
   const whole = $derived(viewWindow({ local: null, zoomed: false, slots: [], query: base }));
-  const view = $derived(viewWindow({ local: usesStore ? null : local, zoomed: zoomView.zoomed, slots: zoomView.slots, query: base }));
+  const view = $derived(viewWindow({ local: usesStore ? null : local, zoomed: !ownWindow && zoomView.zoomed, slots: ownWindow ? [] : zoomView.slots, query: base }));
   const zoomedNow = $derived(usesStore ? zoomView.zoomed : local != null);
   // The newest Patterns report for this window. It is read again whenever a report is saved or cleared.
   let reportTick = $state(0);
@@ -239,25 +241,25 @@
 {#if drawer}<RuleDrawer title={drawer.title} rows={drawer.rows} {zone} onClose={closeDrawer} />{/if}
 
 <style>
-  .tools { display: grid; gap: var(--space-2); min-width: 0; padding-top: var(--space-4); border-top: 1px solid var(--hairline); }
+  .tools { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); min-width: 0; padding-top: var(--space-4); border-top: 1px solid var(--hairline); }
   h3 { margin: 0; font-size: var(--fs-4); font-weight: 600; letter-spacing: -.01em; }
   h4 { margin: var(--space-2) 0 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
   .note { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
-  .status { display: grid; gap: var(--space-1); }
+  .status { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
   .span-note { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
-  .chips-block { display: grid; gap: var(--space-1); }
-  .hosts { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
-  .host { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3) 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
+  .chips-block { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+  .hosts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; margin: 0; padding: 0; list-style: none; }
+  .host { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); min-width: 0; padding: var(--space-3) 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
   .host-row { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
   .host-text { display: grid; gap: 4px; min-width: 0; }
-  .host-text h4 { margin: 0; color: var(--text); font-size: var(--fs-3); font-weight: 600; }
+  .host-text h4 { overflow-wrap: anywhere; margin: 0; color: var(--text); font-size: var(--fs-3); font-weight: 600; }
   .line { margin: 0; font-size: var(--fs-3); line-height: 1.45; overflow-wrap: anywhere; }
   .toggle { flex: 0 0 auto; }
-  .expanded { display: grid; gap: var(--space-2); min-width: 0; padding-top: var(--space-2); border-top: 1px solid var(--hairline); }
+  .expanded { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); min-width: 0; padding-top: var(--space-2); border-top: 1px solid var(--hairline); }
   .zoom { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .range { flex: 1 1 100%; color: var(--text-2); font-size: var(--fs-2); font-variant-numeric: tabular-nums; }
-  .lists { display: grid; gap: 4px; }
-  .plain { display: grid; gap: 4px; margin: 0; padding: 0 0 0 18px; font-size: var(--fs-2); line-height: 1.5; }
+  .lists { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .plain { display: grid; gap: 4px; overflow-wrap: anywhere; margin: 0; padding: 0 0 0 18px; font-size: var(--fs-2); line-height: 1.5; }
   .link { padding: 0; color: var(--accent); font-size: var(--fs-2); text-decoration: underline; text-underline-offset: 3px; background: transparent; border: 0; }
   @media (max-width: 480px) {
     .host-row { flex-direction: column; }

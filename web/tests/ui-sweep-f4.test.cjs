@@ -330,16 +330,7 @@ test('SWEEP-F4-29 / BL-495j: ResourcePanel is mounted on the case page (the swee
   const files = walk(path.join(root, 'src')).filter((f) => /\.(svelte|ts)$/.test(f) && !f.endsWith('ResourcePanel.svelte') && !f.includes(path.sep + 'resource' + path.sep));
   const importers = files.filter((f) => /ResourcePanel/.test(fs.readFileSync(f, 'utf8')));
   assert.deepEqual(importers.map((f) => path.relative(root, f).split(path.sep).join('/')), ['src/lib/components/CaseHome.svelte']);
-  const home = read('src/lib/components/CaseHome.svelte');
-  assert.match(home, /lazyComponent\(\(\) => import\('\.\.\/\.\.\/components\/ResourcePanel\.svelte'\)\)/, 'its code and the chart library are read when the case page is on screen');
-  // The real data path: the case, the audit window on screen, the zone, the time the kept files cover, the API P95 of the analysis on screen.
-  assert.match(home, /<ResourcePanel \{caseId\} query=\{scope\.query\} zone=\{timeZone\.zone\} span=\{filesSpan\} \{apiWindows\} onGone=\{gone\} \/>/);
-  assert.match(home, /const filesSpan = \$derived\(caseSpan\(imports\)\)/);
-  assert.match(home, /\{#key caseId \+ ':' \+ keptFiles\.length\}<ResourcePanel/, 'read again when the kept files change');
-  // It is drawn only when the case holds counter data, and takes no room otherwise.
-  assert.match(home, /\.resource-slot:not\(:has\(> :global\(\.tools\)\)\) \{ display: none; \}/);
-  const panel = read('src/components/ResourcePanel.svelte');
-  assert.match(panel, /const shown = \$derived\(hosts\.length > 0 \|\| notice != null \|\| period != null \|\| \(resource == null && \(busy \|\| problem !== ''\)\)\);/);
+  // The behaviour (what shows for a case with and without counter files) is pinned by tools/e2e/specs/case-resource.spec.ts and web/tests/resource.mount.test.cjs.
 });
 
 test('BL-495j: the resource panel says what it is once (the plain line) and then how to open it', () => {

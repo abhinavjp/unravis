@@ -24,7 +24,7 @@
   import { lazyComponent } from '../lazy';
   import { formatTime } from '../time';
   import { timeZone } from '../timeZone.svelte';
-  import { caseSpan } from '../resourceSpan';
+  import { caseSpan, resourceFiles } from '../resourceSpan';
   import { getCaseKeyStatus } from '../caseKeyApi';
   import { keyEndingLabel, type CaseKeyStatus } from '../caseKey';
   import { CASE_KEY_TEXT } from '../copy/caseKeyCopy';
@@ -93,9 +93,11 @@
   const showJump = $derived(offersWork);
   const story = $derived(buildStory({ info, imports, health, theories, history: info?.history }));
   const keptFiles = $derived(imports.filter(record => record.status === 'ok'));
-  // What the resource counters panel reads: the audit window on screen, the time the kept files cover (for the "Show that period" offer), and the API P95 of the
-  // analysis already on screen (nothing more is asked for it). The panel is read again when the kept files change.
-  const filesSpan = $derived(caseSpan(imports));
+  // The Resource counters panel exists only for a case that holds counter files (Windows Performance Monitor, SQL, runtime, Redis, Mongo, Linux samples,
+  // the live recording): a case with only IIS or app logs mounts nothing, so it reads nothing, draws nothing and moves nothing. The panel reads the audit
+  // window on screen, the period those files cover (for its "Show that period" offer) and the API P95 of the analysis already on screen.
+  const counterFiles = $derived(resourceFiles(imports));
+  const filesSpan = $derived(caseSpan(counterFiles));
   const apiWindows = $derived((results.analysis?.loadWindows ?? []).map(item => ({ at: item.at, p95Ms: item.timing.p95?.valueMs ?? null })));
   // An archived case reads no files, so the header counts them from the case record until the working copy is freed; after that there is no count.
   const filesShown = $derived(offersWork ? keptFiles.length : info?.archive?.freed ? null : (info?.imports ?? 0));
@@ -691,10 +693,12 @@
       <HealthPanel {caseId} embedded onGone={gone} onRan={() => void rereadHealth()} />
     </section>
 
-    <!-- Resource counters (BL-495j): drawn only when the case holds counter files (Windows Performance Monitor, SQL, runtime); an empty slot takes no room. -->
-    <div class="resource-slot full">
-      {#key caseId + ':' + keptFiles.length}<ResourcePanel {caseId} query={scope.query} zone={timeZone.zone} span={filesSpan} {apiWindows} onGone={gone} />{/key}
-    </div>
+    <!-- Resource counters (BL-495j): only when the case holds counter files. The panel's window is its own here; it never moves the analysis zoom. -->
+    {#if counterFiles.length > 0}
+      <div class="resource-slot full">
+        {#key caseId + ':' + counterFiles.length}<ResourcePanel {caseId} query={scope.query} zone={timeZone.zone} span={filesSpan} {apiWindows} ownWindow onGone={gone} />{/key}
+      </div>
+    {/if}
 
     <section class="block full" aria-labelledby="home-sources">
       <h3 id="home-sources">{HUB_TEXT.heading}</h3>
@@ -770,9 +774,8 @@
   .counts dd { margin: 0; font-size: 15px; }
   .block { display: grid; align-content: start; gap: 10px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
   .block h3 { margin: 0; font-size: 16px; }
-  /* The resource panel brings its own section; it is dressed as a block here and takes no room while it draws nothing. */
+  /* The resource panel brings its own section; it is dressed as a block here. */
   .resource-slot { min-width: 0; }
-  .resource-slot:not(:has(> :global(.tools))) { display: none; }
   .resource-slot.full > :global(.tools) { padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
   .resource-slot :global(.tools h3) { font-size: 16px; }
   .note, .empty { margin: 0; color: var(--text-2); font-size: 14px; }
