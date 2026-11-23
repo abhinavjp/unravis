@@ -25,6 +25,7 @@ type work struct {
 	attrs []attr
 	// parseTag sets it when a tag ran past maxTag without closing: the attributes read so far are kept and the rest of the tag is text.
 	truncated bool
+	rescan    int // the first "<" inside a quoted value of the tag parseTag read last, or 0
 }
 
 func newWork(n int) *work { return &work{left: workFactor*n + workFloor, eolFrom: -1} }

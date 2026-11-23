@@ -188,10 +188,14 @@ func lineStartAfter(s string, k int) int {
 // (a backslash, a backtick or a caret at the end of the line), a comma (a JSON array of arguments) and, for a block list item
 // ("- --password" then "- x"), the item on the next line.
 func optionValue(s string, p int, listItem bool) (from, to, next int, ok bool) {
+	lines := 0 // line breaks crossed after a comma
 	for n := 0; n < 3; n++ {
 		comma := false
 		for p < len(s) && (s[p] == ' ' || s[p] == '\t' || s[p] == ',' || (comma && (s[p] == '\n' || s[p] == '\r'))) {
 			comma = comma || s[p] == ','
+			if s[p] == '\n' {
+				lines++
+			}
 			p++
 		}
 		if p < len(s) && (s[p] == '\\' || s[p] == '^' || s[p] == '`') && endsLine(s, p+1) {
@@ -215,7 +219,54 @@ func optionValue(s string, p int, listItem bool) (from, to, next int, ok bool) {
 	for p < len(s) && (s[p] == ' ' || s[p] == '\t') {
 		p++
 	}
-	return flagValue(s, p)
+	from, to, next, ok = flagValue(s, p)
+	if ok && lines > 0 && nextLineIsOwn(s, from, to) {
+		// A word on a later line, after a comma, that starts a secret setting ("password: x", "DB_PASSWORD=x") is a line of its own,
+		// not the value: it is read on its own. Any other word (a base64 value ends in "=" or "==") is the next array element.
+		return 0, 0, 0, false
+	}
+	return from, to, next, ok
+}
+
+// nextLineIsOwn says whether the word s[from:to] on a later line starts a line of its own. A quoted element of an array is a value
+// ("<Xk9!p", "secret:xyz") unless it is a key of a record ("password": "x"). An unquoted word is a line of its own when it starts a tag or a
+// secret setting.
+func nextLineIsOwn(s string, from, to int) bool {
+	if from > 0 && (s[from-1] == '"' || s[from-1] == '\'') {
+		e := to
+		if e < len(s) && s[e] == '\\' {
+			e++
+		}
+		return e+1 < len(s) && s[e+1] == ':' && keyClass(s[from:to]) != classNone
+	}
+	return nextLineKey(s[from:to])
+}
+
+// nextLineKey says whether a word starts a tag or a secret setting: a secret name before a ":" or an "=" ("password:", "DB_PASSWORD=x").
+func nextLineKey(v string) bool {
+	if strings.HasPrefix(v, "<") {
+		return true // a tag
+	}
+	k := strings.IndexAny(v, ":=")
+	return k > 0 && keyClass(strings.Trim(v[:k], "\"'")) != classNone
+}
+
+// commaBreak returns the position of the line break when the value at "from" was found on a later line, after a comma that ends the
+// line the option is on (an array of arguments). It is -1 otherwise.
+func commaBreak(s string, p, from int) int {
+	comma := false
+	for k := p; k < from && k < len(s); k++ {
+		switch s[k] {
+		case ',':
+			comma = true
+		case '\n', '\r':
+			if comma {
+				return k
+			}
+			return -1
+		}
+	}
+	return -1
 }
 
 // maskFlags masks the value words of secret command-line options.
@@ -375,6 +426,11 @@ func maskFlags(s, mask string, w *work) string {
 			edits = append(edits, edit{from, to})
 		}
 		w.spend(next - i)
+		if k := commaBreak(s, i, from); k >= 0 {
+			// The value came from the next line, after a comma: that line is read again from its start, so an option of its own
+			// ("-P" then a value) is not lost.
+			next = k
+		}
 		i = next
 	}
 	return apply(s, mask, sortEdits(edits))
