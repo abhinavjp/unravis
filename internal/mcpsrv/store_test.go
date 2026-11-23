@@ -136,30 +136,41 @@ func TestOpenWithoutProtectorFailsClosed(t *testing.T) {
 // No digest, secret, nonce or MAC is compared with == or bytes.Equal in the grant code: subtle.ConstantTimeCompare only.
 func TestNoBytesEqualOnSecrets(t *testing.T) {
 	fset := token.NewFileSet()
+	var files []string
 	for _, dir := range []string{".", "../mcpaudit"} {
-		pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+		m, err := filepath.Glob(filepath.Join(dir, "*.go"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, pkg := range pkgs {
-			for name, f := range pkg.Files {
-				ast.Inspect(f, func(n ast.Node) bool {
-					switch x := n.(type) {
-					case *ast.CallExpr:
-						if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
-							if id, ok := sel.X.(*ast.Ident); ok && id.Name == "bytes" && (sel.Sel.Name == "Equal" || sel.Sel.Name == "Compare") {
-								t.Errorf("%s: bytes.%s", fset.Position(x.Pos()), sel.Sel.Name)
-							}
-						}
-					case *ast.BinaryExpr:
-						if (x.Op == token.EQL || x.Op == token.NEQ) && (secretish(x.X) || secretish(x.Y)) {
-							t.Errorf("%s: %s compares a secret value with %s", fset.Position(x.Pos()), name, x.Op)
-						}
-					}
-					return true
-				})
+		for _, f := range m {
+			if !strings.HasSuffix(f, "_test.go") {
+				files = append(files, f)
 			}
 		}
+	}
+	if len(files) < 6 {
+		t.Fatalf("only %d source files found", len(files))
+	}
+	for _, name := range files {
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.CallExpr:
+				if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
+					if id, ok := sel.X.(*ast.Ident); ok && id.Name == "bytes" && (sel.Sel.Name == "Equal" || sel.Sel.Name == "Compare") {
+						t.Errorf("%s: bytes.%s", fset.Position(x.Pos()), sel.Sel.Name)
+					}
+				}
+			case *ast.BinaryExpr:
+				if (x.Op == token.EQL || x.Op == token.NEQ) && (secretish(x.X) || secretish(x.Y)) {
+					t.Errorf("%s: %s compares a secret value with %s", fset.Position(x.Pos()), name, x.Op)
+				}
+			}
+			return true
+		})
 	}
 }
 
