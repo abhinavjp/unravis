@@ -20,11 +20,16 @@ type memCode struct {
 	calls map[string][]CodeCall
 	chain []ChainRow
 	head  *ChainAnchor // the head kept beside the chain
+	key   []byte       // the case secret that keys the hash of withheld values
 }
 
 func (d *memData) codeLog() *memCode {
 	if d.code == nil {
-		d.code = &memCode{runs: map[string]*CodeRun{}, calls: map[string][]CodeCall{}}
+		key, err := NewHashKey()
+		if err != nil {
+			panic(err) // the system random source failed: nothing safe to do
+		}
+		d.code = &memCode{runs: map[string]*CodeRun{}, calls: map[string][]CodeCall{}, key: key}
 	}
 	return d.code
 }
@@ -117,7 +122,7 @@ func (c *memCase) RecordCall(ctx context.Context, runID string, rec CallRecord) 
 		}
 		used += int64(len(e.Blob))
 	}
-	call, err := NewCodeCall(*run, rec, used)
+	call, err := NewCodeCall(*run, rec, used, m.key)
 	if err != nil {
 		return err
 	}
@@ -140,7 +145,7 @@ func sortedCalls(in []CodeCall) []CodeCall {
 // endLocked seals one run; d.mu is held.
 func (c *memCase) endLocked(m *memCode, run *CodeRun, end RunEnd, now time.Time) error {
 	calls := sortedCalls(m.calls[run.RunID])
-	fin, err := FinishCodeRun(*run, calls, end, now)
+	fin, err := FinishCodeRun(*run, calls, end, now, m.key)
 	if err != nil {
 		return err
 	}

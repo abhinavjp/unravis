@@ -3,6 +3,7 @@ package casestore
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -46,15 +47,22 @@ import (
 // a changed byte, a missing or reordered row, a pasted row, a run row that
 // disagrees with its record. Cutting rows off the END of the chain, or restoring
 // an older copy of the case file, leaves a valid shorter chain: VerifyCodeChain
-// can only call that out against a head the user wrote down earlier (ChainAnchor),
-// or against the head kept in the case's meta table, which an edit that does not
-// know about it leaves behind. No claim of compliance with any standard is made.
+// can only call that out against a head the user wrote down earlier (ChainAnchor).
+// The head kept in the case's meta table (code.chain.head) catches a tail that was
+// cut by an edit that did not know about it; it does NOT catch a restore, because
+// an older copy of case.db brings its own matching head back with it (and so does
+// a crash that loses WAL frames that were not yet synced). No claim of compliance
+// with any standard is made.
 //
 // Privacy. The store never receives, and never keeps, anything it can leave out:
 // the sandbox and the broker hand it tool results that the tools already hid, and
 // when AllowIdentifiers is false the store adds a second check of its own (IP
 // addresses): it replaces them in the free texts and keeps a call's arguments or
-// result only as a hash. The script source is stored as written, because replay
+// result only as a hash, a keyed one (HMAC-SHA256 under a per-case secret in the
+// meta table), because an unkeyed hash of {"host":"10.1.2.3"} can be found by
+// trying every address. The key is not part of any chain row or export: whoever
+// reads only the chain cannot brute-force a withheld value; whoever holds the
+// case database (and so the key) is inside the documented limit anyway. The script source is stored as written, because replay
 // needs it. See the threat notes in the BL-369 handoff.
 
 const (
@@ -99,6 +107,11 @@ const (
 	// capped at 280 s), so a run younger than this may be live in another window
 	// and is left alone.
 	OrphanGrace = 15 * time.Minute
+
+	// InflightWait is the longest RecordCall and EndRun wait for the case folder
+	// (an import holds it for as long as it runs) before they give up with an
+	// "unavailable" error; a context that ends sooner ends the wait sooner.
+	InflightWait = 5 * time.Minute
 )
 
 // ChainZeroHash is the prev_hash of the first chain record.
@@ -171,8 +184,9 @@ func badRun(format string, a ...any) error {
 // ErrNotFound on an erased case. The sqlite store refuses BeginRun and
 // CloseOrphanRuns with ErrImportRunning while an import runs, but makes
 // RecordCall and EndRun wait for it, so a run that ends during an import is
-// sealed after it (on Windows the wait is 5 s, then sealedfile.ErrUnavailable:
-// the caller retries). Reads work on a closed case, and on a case that
+// sealed after it. The wait honours ctx on every platform and ends after
+// InflightWait with an error that wraps sealedfile.ErrUnavailable; the write has
+// not happened then, and the caller may retry it. Reads work on a closed case, and on a case that
 // never held a run they return empty results.
 type CodeRunStore interface {
 	// BeginRun inserts the run with status "running" and appends its "begin"
@@ -424,6 +438,27 @@ func sha256Hex(b []byte) string {
 // SHA256Hex is the hash every record uses: lowercase hex SHA-256.
 func SHA256Hex(b []byte) string { return sha256Hex(b) }
 
+// HashKeyBytes is the size of the per-case secret that keys the hash of a withheld value.
+const HashKeyBytes = 32
+
+// NewHashKey makes a fresh per-case secret for the hash of withheld values.
+func NewHashKey() ([]byte, error) {
+	k := make([]byte, HashKeyBytes)
+	if _, err := rand.Read(k); err != nil {
+		return nil, err
+	}
+	return k, nil
+}
+
+// keyedHash is the hash of a value the store withholds: HMAC-SHA256 under the
+// case secret, lowercase hex. It still shows that two values are equal, but
+// cannot be searched for by anyone who does not hold the key.
+func keyedHash(key, b []byte) string {
+	m := hmac.New(sha256.New, key)
+	_, _ = m.Write(b)
+	return hex.EncodeToString(m.Sum(nil))
+}
+
 // cutText cuts s to at most max bytes at a character boundary and replaces
 // invalid UTF-8, so the text is safe to store and to put in a JSON document.
 func cutText(s string, max int) string {
@@ -446,21 +481,69 @@ func runeLen(s string) int { return utf8.RuneCountInString(s) }
 // then parsed, so a time (12:30:45), a version (1.2.3) or a C++ name
 // (std::bad) is left alone.
 var (
-	ipv4Candidate = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
-	ipv6Candidate = regexp.MustCompile(`(?:^|[^0-9A-Za-z_:.])([0-9A-Fa-f:]{3,45}(?:\.\d{1,3}){0,3})`)
+	ipv4Shape     = regexp.MustCompile(`\d{1,3}(?:\.\d{1,3}){3}`)
+	ipv6Candidate = regexp.MustCompile(`(?:^|[^0-9A-Za-z:.])([0-9A-Fa-f:]{3,45}(?:\.\d{1,3}){0,3})`)
 )
+
+func isDigit(b byte) bool { return b >= '0' && b <= '9' }
+
+// ipv4Bounded reports whether s[start:end], a dotted shape, stands alone as a
+// number: no digit next to it and no further ".digit" part (1.2.3.4.5 is not an
+// address, a version string, or a longer number). A letter or an underscore next
+// to it is fine: host_10.0.0.1 and srv10.1.2.3 are addresses.
+func ipv4Bounded(s string, start, end int) bool {
+	if start > 0 {
+		if isDigit(s[start-1]) || (s[start-1] == '.' && start > 1 && isDigit(s[start-2])) {
+			return false
+		}
+	}
+	if end < len(s) {
+		if isDigit(s[end]) || (s[end] == '.' && end+1 < len(s) && isDigit(s[end+1])) {
+			return false
+		}
+	}
+	return true
+}
+
+// parseIPv4 parses a dotted shape; an octet with leading zeros (010.0.0.1, which
+// some tools read as octal) counts as an address too, read as decimal.
+func parseIPv4(m string) bool {
+	if a, err := netip.ParseAddr(m); err == nil && a.Is4() {
+		return true
+	}
+	parts := strings.Split(m, ".")
+	for i, p := range parts {
+		parts[i] = strings.TrimLeft(p, "0")
+		if parts[i] == "" {
+			parts[i] = "0"
+		}
+	}
+	a, err := netip.ParseAddr(strings.Join(parts, "."))
+	return err == nil && a.Is4()
+}
 
 // ReplaceAddresses replaces every IP address in s with "[ip]" and reports whether
 // there was one.
 func ReplaceAddresses(s string) (string, bool) {
 	found := false
-	out := ipv4Candidate.ReplaceAllStringFunc(s, func(m string) string {
-		if a, err := netip.ParseAddr(m); err == nil && a.Is4() {
+	out := s
+	if locs := ipv4Shape.FindAllStringIndex(s, -1); len(locs) > 0 {
+		var b strings.Builder
+		last := 0
+		for _, loc := range locs {
+			if !ipv4Bounded(s, loc[0], loc[1]) || !parseIPv4(s[loc[0]:loc[1]]) {
+				continue
+			}
+			b.WriteString(s[last:loc[0]])
+			b.WriteString("[ip]")
+			last = loc[1]
 			found = true
-			return "[ip]"
 		}
-		return m
-	})
+		if last > 0 {
+			b.WriteString(s[last:])
+			out = b.String()
+		}
+	}
 	if !strings.Contains(out, ":") {
 		return out, found
 	}
@@ -486,6 +569,21 @@ func ReplaceAddresses(s string) (string, bool) {
 	b.WriteString(out[last:])
 	return b.String(), found
 }
+
+// hideAndCut cuts s to max bytes. When hide is set it first scans up to max plus
+// scanSlack bytes (so an address that starts before the cap and ends after it is
+// replaced whole, not left as a partial), replaces the addresses, and cuts again
+// (a replacement such as "::1" to "[ip]" can be longer).
+func hideAndCut(s string, max int, hide bool) string {
+	if !hide {
+		return cutText(s, max)
+	}
+	s, _ = ReplaceAddresses(cutText(s, max+scanSlack))
+	return cutText(s, max)
+}
+
+// scanSlack is longer than any IP address text (45 bytes for IPv6 with a zone-less dotted tail).
+const scanSlack = 64
 
 // holdsAddress reports whether b contains an IP address.
 func holdsAddress(b []byte) bool {
@@ -527,6 +625,11 @@ func NewCodeRun(in RunStart, now time.Time) (CodeRun, error) {
 	if !in.AllowIdentifiers {
 		reason, _ = ReplaceAddresses(reason)
 		caller, _ = ReplaceAddresses(caller)
+		// "::1" becomes "[ip]", which is longer: keep the caps after the replacement.
+		if runeLen(reason) > MaxRunReason {
+			reason = string([]rune(reason)[:MaxRunReason])
+		}
+		caller = cutText(caller, MaxRunCallerID)
 	}
 	return CodeRun{
 		RunID: id, CreatedMS: now.UnixMilli(), Surface: in.Surface, CallerID: caller, CallerDeclared: in.CallerDeclared,
@@ -546,7 +649,10 @@ func hasControl(s string) bool {
 
 // NewCodeCall checks a CallRecord against its run and builds the row RecordCall
 // inserts. blobUsed is what the run's kept copies take so far (compressed).
-func NewCodeCall(run CodeRun, rec CallRecord, blobUsed int64) (CodeCall, error) {
+//
+// key is the case secret (NewHashKey) that keys the hash of a withheld value; it
+// is only used when the run does not allow identifiers.
+func NewCodeCall(run CodeRun, rec CallRecord, blobUsed int64, key []byte) (CodeCall, error) {
 	switch {
 	case rec.Seq < 1 || rec.Seq > MaxCallsPerRun, rec.DoneSeq < 1 || rec.DoneSeq > MaxCallsPerRun:
 		return CodeCall{}, badRun("call sequence")
@@ -577,15 +683,26 @@ func NewCodeCall(run CodeRun, rec CallRecord, blobUsed int64) (CodeCall, error) 
 		ResultHash: sha256Hex(rec.Result), ResultBytes: int64(len(rec.Result)),
 		Status: rec.Status, DurationMS: rec.DurationMS,
 	}
-	if !run.AllowIdentifiers && holdsAddress(canon) {
-		c.ArgsJSON, c.ArgsState = "", ArgsWithheld
+	holdsResult := false
+	if !run.AllowIdentifiers {
+		holdsArgs := holdsAddress(canon)
+		holdsResult = holdsAddress(rec.Result)
+		if (holdsArgs || holdsResult) && len(key) < HashKeyBytes {
+			return CodeCall{}, errors.New("casestore: no case secret for the hash of a withheld value")
+		}
+		if holdsArgs {
+			c.ArgsJSON, c.ArgsState, c.ArgsHash = "", ArgsWithheld, keyedHash(key, canon)
+		}
+		if holdsResult {
+			c.ResultHash = keyedHash(key, rec.Result)
+		}
 	}
 	switch {
 	case !run.KeepResults:
 		c.BlobState = BlobOff
 	case len(rec.Result) > MaxCallBlob:
 		c.BlobState = BlobOversize
-	case !run.AllowIdentifiers && holdsAddress(rec.Result):
+	case holdsResult:
 		c.BlobState = BlobWithheld
 	default:
 		blob := zstdEncode(rec.Result)
@@ -601,7 +718,8 @@ func NewCodeCall(run CodeRun, rec CallRecord, blobUsed int64) (CodeCall, error) 
 
 // FinishCodeRun applies RunEnd to a running run row. calls are the run's call
 // rows (any order). The result is the row the sealing UPDATE writes.
-func FinishCodeRun(run CodeRun, calls []CodeCall, end RunEnd, now time.Time) (CodeRun, error) {
+// key is the case secret that keys the hash of a run result that held an address.
+func FinishCodeRun(run CodeRun, calls []CodeCall, end RunEnd, now time.Time, key []byte) (CodeRun, error) {
 	switch {
 	case !finalStatuses[end.Status]:
 		return CodeRun{}, badRun("end status")
@@ -629,25 +747,32 @@ func FinishCodeRun(run CodeRun, calls []CodeCall, end RunEnd, now time.Time) (Co
 	out.SandboxMode, out.Runtime, out.WorkerSHA256, out.StrippedJSHash = end.SandboxMode, end.Runtime, end.WorkerSHA256, end.StrippedJSHash
 	out.DurationMS, out.ScriptMS = end.DurationMS, end.ScriptMS
 	out.CallCount = len(calls)
-	// Cut first, then replace addresses, so the scan never reads more than the cap.
-	errText, logs := cutText(end.ErrorText, MaxRunErrorText), cutText(end.ConsoleLogs, MaxRunLogs)
-	preview := cutText(string(end.Result[:min(len(end.Result), MaxRunPreview+4)]), MaxRunPreview)
-	if !run.AllowIdentifiers {
-		errText, _ = ReplaceAddresses(errText)
-		logs, _ = ReplaceAddresses(logs)
-		preview, _ = ReplaceAddresses(preview)
-	}
-	out.ErrorText, out.ConsoleLogs, out.ResultPreview = errText, logs, preview
-	if !run.AllowIdentifiers {
-		out.ErrorCode, _ = ReplaceAddresses(out.ErrorCode)
-		out.Runtime, _ = ReplaceAddresses(out.Runtime)
+	// Scan a little more than the cap, replace, then cut (hideAndCut).
+	hide := !run.AllowIdentifiers
+	out.ErrorText = hideAndCut(end.ErrorText, MaxRunErrorText, hide)
+	out.ConsoleLogs = hideAndCut(end.ConsoleLogs, MaxRunLogs, hide)
+	out.ResultPreview = hideAndCut(string(end.Result[:min(len(end.Result), MaxRunPreview+scanSlack+4)]), MaxRunPreview, hide)
+	if hide {
+		out.ErrorCode = cutText(replaced(out.ErrorCode), 64)
+		out.Runtime = cutText(replaced(out.Runtime), 64)
 	}
 	if len(end.Result) > 0 {
 		out.ResultHash, out.ResultBytes = sha256Hex(end.Result), int64(len(end.Result))
+		if hide && holdsAddress(end.Result) {
+			if len(key) < HashKeyBytes {
+				return CodeRun{}, errors.New("casestore: no case secret for the hash of a withheld value")
+			}
+			out.ResultHash = keyedHash(key, end.Result)
+		}
 	} else {
 		out.ResultHash, out.ResultBytes = "", 0
 	}
 	return out, nil
+}
+
+func replaced(s string) string {
+	out, _ := ReplaceAddresses(s)
+	return out
 }
 
 func slicesContains(list []string, s string) bool {
@@ -868,7 +993,10 @@ type CodeChainSource interface {
 	CountCalls(ctx context.Context) (int64, error)
 	// StoredHead returns the head the store keeps beside the chain, if any.
 	StoredHead(ctx context.Context) (n int64, hash string, ok bool, err error)
-	// Guards names the append-only guards that are missing (empty when intact).
+	// MissingGuards describes what is wrong with the guards: an append-only
+	// guard that is missing or changed, a trigger of a name the store never made
+	// on a code table or on meta, tables that are gone while the case says it made
+	// them (empty when intact).
 	MissingGuards(ctx context.Context) ([]string, error)
 }
 
@@ -888,6 +1016,8 @@ type verifier struct {
 type runChain struct {
 	begun, ended bool
 	loaded       bool
+	runKnown     bool // the run row was looked for (runFound: it exists)
+	runFound     bool
 	calls        map[int]CodeCall
 	order        []CodeCall // by seq
 	chained      map[int]bool
@@ -939,6 +1069,15 @@ func (v *verifier) unreadable(err error, n int64, runID string) error {
 		return nil
 	}
 	return err
+}
+
+// openRowHoldsOutcome reports whether a run row that is still "running" holds a
+// value only the end of a run writes: an honest open row has none of them, and
+// nothing else covers them until the end record exists.
+func openRowHoldsOutcome(r CodeRun) bool {
+	return r.EndedMS != 0 || r.DurationMS != 0 || r.ScriptMS != 0 || r.ResultBytes != 0 || r.ResultHash != "" || r.ResultPreview != "" ||
+		r.ConsoleLogs != "" || r.ErrorCode != "" || r.ErrorText != "" || r.SandboxMode != "" || r.Runtime != "" || r.WorkerSHA256 != "" ||
+		r.StrippedJSHash != ""
 }
 
 // textsValid reports whether every text of a run row is valid UTF-8. The records
@@ -1053,16 +1192,26 @@ func (v *verifier) row(ctx context.Context, src CodeChainSource, row ChainRow) e
 		v.problem(n, row.RunID, CheckRecordForm, "unknown phase")
 		return nil
 	}
-	run, found, err := src.LoadRun(ctx, row.RunID)
-	if err != nil {
-		return v.unreadable(err, n, row.RunID)
+	// The full run row (source and logs) is read for a begin or an end record,
+	// which are built from it. A call record needs only to know that the run
+	// exists, which the begin record's read already told: reading the row again
+	// for every call would cost a full source per chain row.
+	var run CodeRun
+	found := st.runFound
+	if row.Phase != phaseCall || !st.runKnown {
+		var err error
+		run, found, err = src.LoadRun(ctx, row.RunID)
+		if err != nil {
+			return v.unreadable(err, n, row.RunID)
+		}
+		st.runKnown, st.runFound = true, found
+		if found && !textsValid(run) {
+			v.problem(n, row.RunID, CheckTextUTF8, "a text of the run row is not valid UTF-8")
+		}
 	}
 	if !found {
 		v.problem(n, row.RunID, CheckRunMissing, "the chain names a run the case does not hold")
 		return nil
-	}
-	if !textsValid(run) {
-		v.problem(n, row.RunID, CheckTextUTF8, "a text of the run row is not valid UTF-8")
 	}
 	switch row.Phase {
 	case phaseBegin:
@@ -1130,6 +1279,9 @@ func (v *verifier) finish(ctx context.Context, src CodeChainSource) error {
 			if run.CallCount != 0 {
 				v.problem(0, id, CheckCallRow, "a running run row holds a call count")
 			}
+			if openRowHoldsOutcome(run) {
+				v.problem(0, id, CheckRunStatus, "a running run row holds an outcome (a result, logs, an error, a duration or a sandbox mode)")
+			}
 		}
 	}
 	// Run rows the chain never mentions were pasted in.
@@ -1174,7 +1326,7 @@ func (v *verifier) finish(ctx context.Context, src CodeChainSource) error {
 		return err
 	}
 	for _, m := range missing {
-		v.rep.Warnings = append(v.rep.Warnings, "append-only guard missing or changed: "+m)
+		v.rep.Warnings = append(v.rep.Warnings, "audit guard problem: "+m)
 	}
 	return nil
 }

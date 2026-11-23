@@ -2,6 +2,7 @@ package casestore
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,11 +103,35 @@ func TestReplaceAddresses(t *testing.T) {
 		"v1.2.3 at 12:30:45":                      "v1.2.3 at 12:30:45",
 		"std::bad Foo::Bar":                       "std::bad Foo::Bar",
 		"aa:bb:cc:dd:ee:ff":                       "aa:bb:cc:dd:ee:ff",
-		"999.1.1.1 and 1.2.3.4.5":                 "999.1.1.1 and [ip].5",
+		"999.1.1.1 and 1.2.3.4.5":                 "999.1.1.1 and 1.2.3.4.5",
+		"host_10.0.0.1 srv10.1.2.3 10.0.0.1x":     "host_[ip] srv[ip] [ip]x",
+		"see 10.0.0.1. then 10.0.0.2, 10.0.0.3":   "see [ip]. then [ip], [ip]",
+		"1.2.3.4 5.6.7.8":                         "[ip] [ip]",
+		"x_fe80::1 and [2001:db8::1]:443":         "x_[ip] and [[ip]]:443",
+		"010.000.000.001":                         "[ip]",
+		"1234.1.1.1 and 1.1.1.1234":               "1234.1.1.1 and 1.1.1.1234",
 		"2001:0db8:0000:0000:0000:0000:0000:0001": "[ip]",
 	} {
 		if got, _ := ReplaceAddresses(in); got != want {
 			t.Errorf("ReplaceAddresses(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// N4: "::1" becomes "[ip]", which is longer, so a text cut at its cap could grow
+// past it; the cut is made again after the replacement. An address that starts
+// before the cap and ends after it is replaced whole.
+func TestHideAndCutKeepsTheCapAndLeavesNoPartialAddress(t *testing.T) {
+	grown := hideAndCut(strings.Repeat("::1 ", 1000), 100, true)
+	if len(grown) > 100 || strings.Contains(grown, "::") {
+		t.Errorf("len %d: %q", len(grown), grown)
+	}
+	text := strings.Repeat("a", 94) + "192.168.10.77 more"
+	got := hideAndCut(text, 100, true)
+	if strings.Contains(got, "192.168") || len(got) > 100 {
+		t.Errorf("a cut address left a partial: %q", got[80:])
+	}
+	if plain := hideAndCut(text, 100, false); !strings.HasSuffix(plain, "192.16") {
+		t.Errorf("allow mode must only cut: %q", plain[80:])
 	}
 }
