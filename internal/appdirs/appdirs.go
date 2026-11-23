@@ -11,6 +11,7 @@ import (
 // and when it is set the run folder is its "run" subfolder, so a test that isolates its config also isolates its locator.
 const (
 	EnvRunDir    = "UNRAVIS_RUN_DIR"
+	EnvMCPDir    = "UNRAVIS_MCP_DIR"
 	envConfigDir = "AUDIT_CONFIG_DIR"
 	envLocalApp  = "LOCALAPPDATA"
 )
@@ -28,6 +29,24 @@ func RunDir(getenv func(string) string) (string, error) {
 	}
 	if d := getenv(envLocalApp); d != "" {
 		return filepath.Join(d, "Unravis", "run"), nil
+	}
+	return "", errors.New("appdirs: %LOCALAPPDATA% is not set")
+}
+
+// MCPDir is the folder of the MCP grant store (mcp.db, spec 03 D10): UNRAVIS_MCP_DIR, else <AUDIT_CONFIG_DIR>\mcp, else
+// %LOCALAPPDATA%\Unravis\mcp. Setup and uninstall leave it alone (user data).
+func MCPDir(getenv func(string) string) (string, error) {
+	if getenv == nil {
+		return "", errors.New("appdirs: no environment")
+	}
+	if d := getenv(EnvMCPDir); d != "" {
+		return d, nil
+	}
+	if d := getenv(envConfigDir); d != "" {
+		return filepath.Join(d, "mcp"), nil
+	}
+	if d := getenv(envLocalApp); d != "" {
+		return filepath.Join(d, "Unravis", "mcp"), nil
 	}
 	return "", errors.New("appdirs: %LOCALAPPDATA% is not set")
 }
