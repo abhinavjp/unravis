@@ -95,7 +95,7 @@ test('Case home gives every read of the health checks a number, and a case erase
   assert.match(reread, /runs && healthReads\.accept\(healthToken\)/);
   const finished = page.slice(page.indexOf('async function rereadHealth'), page.indexOf('// The case was locked'));
   assert.match(finished, /healthReads\.begin\(\)[\s\S]*healthReads\.accept\(token\)\) health = runs/);
-  assert.match(page, /healthReads\.begin\(\);\n\s*const \[files, runs, theory\][\s\S]*if \(healthReads\.accept\(healthToken\)\) health = /, 'the page read takes a number too');
+  assert.match(page, /healthReads\.begin\(\);\n\s*const \[files, runs, theory\][\s\S]*healthReads\.accept\(healthToken\)\) health = /, 'the page read takes a number too');
   assert.match(reread, /getCaseView\(id\)\.catch\(\(error: unknown\) => \{ if \(isCaseGone\(error\)\) return null; throw error; \}\);\s*if \(!fresh\) \{ if \(id === caseId && mine === rereadRun\) gone\(\); return; \}/);
 });
 
@@ -178,4 +178,17 @@ test('a thrown-away re-read takes no health number, and another case starts with
   assert.ok(guard > reread.indexOf('await getCaseView') && guard < take, 'the guard comes before begin()');
   // Opening another case on the same page (restore as new, then Open the new case) lets go of the last case's health checks and files at once.
   assert.match(page, /if \(loadedFor !== id\) \{ health = \[\]; imports = \[\]; \}\n\s*loadedFor = id;/);
+});
+
+test('the page read: a failed health read puts nothing in and takes no turn; an older answer does not overwrite a newer re-read', () => {
+  const load = page.slice(page.indexOf('async function loadPage'), page.indexOf('function refusedWith'));
+  assert.match(load, /if \(runs\.status === 'fulfilled' && healthReads\.accept\(healthToken\)\) health = runs\.value;/);
+  assert.doesNotMatch(load, /health = [^;]*: \[\]/, 'a failed read no longer blanks the checks');
+  assert.match(load, /const run = rereadRun;/);
+  assert.match(load, /const overtaken = phase === 'ready' && run !== rereadRun;\s*if \(!overtaken\) \{\s*info = found;\s*imports = /);
+});
+
+test('a finished check puts its list in only for the case the page still shows', () => {
+  const finished = page.slice(page.indexOf('async function rereadHealth'), page.indexOf('// The case was locked'));
+  assert.match(finished, /if \(id === caseId && healthReads\.accept\(token\)\) health = runs;/);
 });

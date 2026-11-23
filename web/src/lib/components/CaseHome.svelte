@@ -186,6 +186,7 @@
   async function loadPage(id: string, quiet: boolean) {
     // The newest read wins: a quiet re-read that is still on its way (after an add) must not put its older answer over this one.
     rereadRun += 1;
+    const run = rereadRun;
     controller?.abort();
     const mine = new AbortController();
     controller = mine;
@@ -222,9 +223,16 @@
     if (refusedWith(caseView, 'case-locked') || refusedWith(files, 'case-locked')) { phase = 'locked'; return; }
     if (refusedWith(caseView, 'untrusted-case')) { phase = 'untrusted'; return; }
     if (caseView.status === 'rejected' && files.status === 'rejected') { phase = 'failed'; return; }
-    info = found;
-    imports = files.status === 'fulfilled' ? files.value : [];
-    if (healthReads.accept(healthToken)) health = runs.status === 'fulfilled' ? runs.value : [];
+    // A re-read that began after this read started (a close, reopen or retry during a quiet reload) brings the newer case and file list: this read's
+    // older answer for those is not put over it. (The health checks have their own rule below.)
+    const overtaken = phase === 'ready' && run !== rereadRun;
+    if (!overtaken) {
+      info = found;
+      imports = files.status === 'fulfilled' ? files.value : [];
+    }
+    // A health read that failed puts nothing in and takes no turn: the checks already shown stay, and an older good answer is not held back.
+    // (A case opened afresh starts with none, see above.)
+    if (runs.status === 'fulfilled' && healthReads.accept(healthToken)) health = runs.value;
     theoryProblem = theory.status === 'rejected';
     phase = 'ready';
     if (theory.status === 'fulfilled' && ledger.items.length === 0) void findShared(mine.signal);
