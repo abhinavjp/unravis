@@ -263,8 +263,12 @@ func TestReadSQLSamplesBoundsALineAndTheWholeRead(t *testing.T) {
 	if !rep.Limited || len(f.opens) != maxSQLReadHours {
 		t.Fatalf("hours: limited=%v opened=%d", rep.Limited, len(f.opens))
 	}
-	if f.opens[len(f.opens)-1] != SQLFileNameFor(sqlT0.Add(time.Duration(maxSQLReadHours+4)*time.Hour)) {
-		t.Fatalf("newest hour not kept: %s", f.opens[len(f.opens)-1])
+	// The newest hour is read first, so a byte or line limit costs the start of the range, never the latest hours.
+	if f.opens[0] != SQLFileNameFor(sqlT0.Add(time.Duration(maxSQLReadHours+4)*time.Hour)) {
+		t.Fatalf("newest hour not read first: %s", f.opens[0])
+	}
+	if f.opens[len(f.opens)-1] != SQLFileNameFor(sqlT0.Add(5*time.Hour)) {
+		t.Fatalf("oldest kept hour: %s", f.opens[len(f.opens)-1])
 	}
 }
 
@@ -418,5 +422,15 @@ func TestHTTPSourceReadsSQLSamplesFromTheRecorder(t *testing.T) {
 	bad := NewHTTPSource(loc, "wrong", nil)
 	if _, _, err = ReadSQLSamples(context.Background(), bad, sqlT0, sqlT0.Add(time.Hour)); KindOf(err) != ReadKeyRefused {
 		t.Fatalf("wrong key: %v", err)
+	}
+}
+
+func TestDecodeSQLLineFromANewerWriterIsNewerNotDamaged(t *testing.T) {
+	_, res := decodeSQLLine([]byte(`{"v":2,"t":"2026-11-23T10:00:00Z","kind":"tempdb","rows":null,"addedLater":true}`))
+	if res != sqlLineNewer {
+		t.Fatalf("got %v", res)
+	}
+	if _, res := decodeSQLLine([]byte(`{"v":1,"t":"2026-11-23T10:00:00Z","kind":"tempdb","rows":null,"extra":1}`)); res != sqlLineBad {
+		t.Fatalf("v1 with an unknown field must stay damaged: %v", res)
 	}
 }

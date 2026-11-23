@@ -81,15 +81,16 @@ export function sqlDmvLine(key: string): SqlDmvName | null {
 /** What went wrong with the SQL part of an answer, in plain words, or null when nothing needs saying. */
 export interface SeriesSql {
   files: number; samples: number; missing: number; dropped: number; corrupt: number; torn: number; truncated: number;
-  locked?: boolean; unsupported?: boolean; limited?: boolean; newer?: boolean;
+  locked?: boolean; unsupported?: boolean; limited?: boolean; newer?: boolean; failed?: boolean;
 }
 
 export function sqlNote(s: SeriesSql | undefined): string | null {
   if (!s) return null;
-  if (s.locked) return 'the folder is locked to administrators, so this PC cannot read it. Open this Blackbox by its address (for example http://127.0.0.1:7788) to see them';
+  if (s.locked) return 'the folder is locked to administrators, so this PC cannot read it. Open this Blackbox by its address (the http:// address of the recorder) to see them';
   if (s.newer) return 'written by a newer version than this Unravis understands. Update Unravis to read them';
   if (s.unsupported) return 'this way of reaching the Blackbox cannot read them. Open it by its address instead';
   if (s.limited) return 'the range holds more than one read can take in, so the start of it is missing. Pick a shorter range';
+  if (s.failed) return 'the read stopped before it was done, so some points are missing. Try again, or pick a shorter range';
   if (s.dropped > 0 && s.files === 0) return 'could not be read from the Blackbox. Try again';
   if (s.dropped > 0) return 'part of the range could not be read, so some points are missing';
   if (s.corrupt > 0 || s.torn > 1) return 'some lines in the recording were damaged and were left out';

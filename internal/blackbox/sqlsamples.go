@@ -142,7 +142,10 @@ func ReadSQLSamples(ctx context.Context, src Source, from, to time.Time) ([]SQLS
 	}
 	var out []SQLSample
 	bytesLeft, linesLeft := int64(maxSQLReadBytes), maxSQLReadLines
-	for _, h := range hours {
+	// Newest hour first: when a byte or line limit stops the read, the part that is missing is the START of the range
+	// (the note says so), never the most recent hours. The result is sorted back into time order below.
+	for i := len(hours) - 1; i >= 0; i-- {
+		h := hours[i]
 		if err := ctx.Err(); err != nil {
 			return out, rep, readErr(ReadUnreachable, "The read was cancelled.", err)
 		}
@@ -299,12 +302,16 @@ func strictJSON(b []byte, v any) bool {
 
 // decodeSQLLine checks one line against everything the writer guarantees.
 func decodeSQLLine(b []byte) (SQLSample, sqlLineResult) {
+	// The version is read loosely first: a newer writer may add fields the strict decode below refuses, and that is "newer", not "damaged".
+	var head struct {
+		V int `json:"v"`
+	}
+	if json.Unmarshal(b, &head) == nil && head.V > 1 {
+		return SQLSample{}, sqlLineNewer
+	}
 	var l sqlLine
 	if !strictJSON(b, &l) {
 		return SQLSample{}, sqlLineBad
-	}
-	if l.V > 1 {
-		return SQLSample{}, sqlLineNewer
 	}
 	limit, known := bbsql.SampleKinds[l.Kind]
 	if l.V != 1 || !known || l.T.IsZero() {

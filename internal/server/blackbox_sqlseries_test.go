@@ -104,7 +104,7 @@ func TestSQLSeriesUnitsAreRight(t *testing.T) {
 
 func TestSQLSeriesNeverInventsAReading(t *testing.T) {
 	s := []blackbox.SQLSample{
-		{T: at(1), Kind: "requests"},   // nothing was running: no rows
+		{T: at(1), Kind: "requests"},   // nothing was running: no rows is a real zero (asserted below)
 		{T: at(1), Kind: "waits"},      // first cycle: no baseline
 		{T: at(1), Kind: "schedulers"}, // the sum was NULL
 		{T: at(1), Kind: "tempdb"},
@@ -120,7 +120,8 @@ func TestSQLSeriesNeverInventsAReading(t *testing.T) {
 			continue
 		}
 		switch l.Key {
-		case "sqlDmv.semaphores.pool1sem0.grantees", "sqlDmv.semaphores.pool1sem0.waiters", "sqlDmv.fileStats.reads", "sqlDmv.fileStats.writes":
+		case "sqlDmv.semaphores.pool1sem0.grantees", "sqlDmv.semaphores.pool1sem0.waiters", "sqlDmv.fileStats.reads", "sqlDmv.fileStats.writes",
+			"sqlDmv.requests.tasks", "sqlDmv.requests.blocked", "sqlDmv.requests.headBlockers", "sqlDmv.requests.maxWaitMs", "sqlDmv.requests.maxBlockMs":
 		default:
 			t.Errorf("a reading appeared from nothing: %s %v", l.Key, l.Points)
 		}
@@ -332,5 +333,33 @@ func TestBlackboxSeriesRouteSaysWhenTheSQLFolderIsLocked(t *testing.T) {
 	}
 	if lineOf(a, "cpu") == nil {
 		t.Fatal("a locked SQL folder must not take the host lines with it")
+	}
+}
+
+func TestSQLSeriesNothingRunningIsZeroAndAnIdleWaitTypeInAReadSampleIsZero(t *testing.T) {
+	s := []blackbox.SQLSample{
+		{T: at(1), Kind: "requests"}, // no rows: nothing was running
+		{T: at(2), Kind: "requests", Requests: []bbsql.Requests{{WaitType: "LCK_M_X", Tasks: 3, Blocked: 3}}},
+		{T: at(3), Kind: "requests"}, // blocking cleared: must show as 0, not a gap
+		{T: at(2), Kind: "waits", Waits: []bbsql.Waits{{WaitType: "PAGEIOLATCH_SH", DeltaMs: 100, DeltaTasks: 2}}},
+		{T: at(3), Kind: "waits", Waits: []bbsql.Waits{{WaitType: "WRITELOG", DeltaMs: 50, DeltaTasks: 1}}}, // PAGEIOLATCH_SH idle here
+		{T: at(4), Kind: "waits"}, // no rows: no baseline, counter reset or all idle: left missing
+	}
+	a := sqlAns(s, blackbox.SQLReadReport{Files: 1})
+	if l := lineOf(a, "sqlDmv.requests.blocked"); l == nil || len(l.Points) == 0 {
+		t.Fatal("no blocked line")
+	}
+	l := lineOf(a, "sqlDmv.waits.PAGEIOLATCH_SH.deltaMs")
+	if l == nil {
+		t.Fatal("no wait line")
+	}
+	// The idle sample counts as 0, so the average over the two read samples is not the single busy value.
+	var sum, n float64
+	for _, p := range l.Points {
+		sum += p[1]
+		n++
+	}
+	if n == 0 || sum/n >= 100 {
+		t.Fatalf("an idle sample was left out of the average: %v", l.Points)
 	}
 }

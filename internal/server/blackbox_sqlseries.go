@@ -29,6 +29,8 @@ const (
 type bbSQLRead struct {
 	Samples []blackbox.SQLSample
 	Report  blackbox.SQLReadReport
+	// Failed: the read stopped early (timeout, cancel, key refused, throttled); Samples holds what was read.
+	Failed bool
 }
 
 // bbSeriesSQL says what the SQL part of the answer rests on, so the view can say why a
@@ -45,6 +47,7 @@ type bbSeriesSQL struct {
 	Unsupported bool `json:"unsupported,omitempty"`
 	Limited     bool `json:"limited,omitempty"`
 	Newer       bool `json:"newer,omitempty"`
+	Failed      bool `json:"failed,omitempty"`
 }
 
 func bbSQLSummary(in *bbSQLRead) *bbSeriesSQL {
@@ -53,7 +56,7 @@ func bbSQLSummary(in *bbSQLRead) *bbSeriesSQL {
 	}
 	r := in.Report
 	out := &bbSeriesSQL{Files: r.Files, Samples: len(in.Samples), Missing: r.Missing, Dropped: r.Dropped, Corrupt: r.Corrupt, Torn: r.Torn,
-		Locked: r.Locked, Unsupported: r.Unsupported, Limited: r.Limited, Newer: r.Newer}
+		Locked: r.Locked, Unsupported: r.Unsupported, Limited: r.Limited, Newer: r.Newer, Failed: in.Failed}
 	for _, s := range in.Samples {
 		if s.Truncated {
 			out.Truncated++
@@ -119,10 +122,10 @@ func addSQLSeries(bk *bbBuckets, cover map[string]*bbSeriesGroupCover, in *bbSQL
 		}
 		switch s.Kind {
 		case "requests":
-			if len(s.Requests) == 0 {
-				continue
-			}
+			// The service writes no rows when nothing was running (a snapshot has no baseline to wait for), so no rows is a
+			// real reading of zero, not a missing one.
 			var tasks, blocked, heads, maxWait, maxBlock float64
+			seen := map[string]bool{}
 			for _, r := range s.Requests {
 				tasks += float64(r.Tasks)
 				blocked += float64(r.Blocked)
@@ -130,7 +133,13 @@ func addSQLSeries(bk *bbBuckets, cover map[string]*bbSeriesGroupCover, in *bbSQL
 				maxWait = maxF(maxWait, float64(r.MaxWaitMs))
 				maxBlock = maxF(maxBlock, float64(r.MaxBlockMs))
 				if reqKeep[r.WaitType] {
+					seen[r.WaitType] = true
 					add("requestsByWait."+r.WaitType+".tasks", s, float64(r.Tasks))
+				}
+			}
+			for w := range reqKeep {
+				if !seen[w] {
+					add("requestsByWait."+w+".tasks", s, 0) // this wait type had no request at that moment
 				}
 			}
 			add("requests.tasks", s, tasks)
@@ -139,10 +148,22 @@ func addSQLSeries(bk *bbBuckets, cover map[string]*bbSeriesGroupCover, in *bbSQL
 			add("requests.maxWaitMs", s, maxWait)
 			add("requests.maxBlockMs", s, maxBlock)
 		case "waits":
+			// A sample with rows had a baseline, and the service writes no row for an idle wait type: a kept wait type missing
+			// from it waited 0. A sample with no rows is ambiguous (first cycle, counter reset, or all idle): left missing.
+			seen := map[string]bool{}
 			for _, w := range s.Waits {
 				if waitKeep[w.WaitType] {
+					seen[w.WaitType] = true
 					add("waits."+w.WaitType+".deltaMs", s, float64(w.DeltaMs))
 					add("waits."+w.WaitType+".deltaTasks", s, float64(w.DeltaTasks))
+				}
+			}
+			if len(s.Waits) > 0 {
+				for w := range waitKeep {
+					if !seen[w] {
+						add("waits."+w+".deltaMs", s, 0)
+						add("waits."+w+".deltaTasks", s, 0)
+					}
 				}
 			}
 		case "schedulers":

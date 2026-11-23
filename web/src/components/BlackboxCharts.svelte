@@ -494,7 +494,7 @@
             <div class="bbc-legends" aria-hidden="true">
               {#each legends as lg, i (lg.unit)}
                 <ul class="bbc-legend" style:top={(TOP + i * (STRIP_H + GAP) - 24) + 'px'} style:left={LEFT + 'px'}>
-                  {#each lg.shown as n (n.key)}<li><span class="bbc-swatch {n.c?.dash ?? 'solid'}" style:--sw={n.c?.color ?? 'transparent'}></span><span class="bbc-lgt">{n.title}</span></li>{/each}
+                  {#each lg.shown as n (n.key)}<li><span class="bbc-swatch {n.c?.dash ?? 'solid'}" style:--sw={n.c?.color ?? 'transparent'}></span><span class="bbc-lgt" title={n.title}>{n.title}</span></li>{/each}
                   {#if lg.more}<li class="bbc-legend-more">{T.legendMore(lg.more)}</li>{/if}
                 </ul>
               {/each}

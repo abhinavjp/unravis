@@ -41,7 +41,7 @@ function readSql(v: unknown): SeriesSql | undefined {
   if (!isObj(v)) return undefined;
   return {
     files: num(v.files), samples: num(v.samples), missing: num(v.missing), dropped: num(v.dropped), corrupt: num(v.corrupt), torn: num(v.torn), truncated: num(v.truncated),
-    locked: v.locked === true, unsupported: v.unsupported === true, limited: v.limited === true, newer: v.newer === true
+    locked: v.locked === true, unsupported: v.unsupported === true, limited: v.limited === true, newer: v.newer === true, failed: v.failed === true
   };
 }
 

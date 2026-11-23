@@ -742,7 +742,7 @@ func (b *Backend) bbHTTP(ctx context.Context, c *Call) (any, error) {
 	}
 	c.Record = a.ID
 	if !bbPathAllowed(a.Path) {
-		return nil, &WireError{Code: CodeRefused, Message: "The key keeper reads only the manifest, the status and recording files of a Blackbox."}
+		return nil, &WireError{Code: CodeRefused, Message: "The key keeper reads only the manifest, the status, the recording files and the SQL sample files of a Blackbox."}
 	}
 	e, err := b.BB.Get(a.ID)
 	if err != nil {

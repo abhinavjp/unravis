@@ -81,7 +81,7 @@ test('units come from the server and the SQL lines use the units the server sets
 test('readSeriesAnswer reads the sql block as numbers and flags, and an answer without it still reads', () => {
   assert.equal(s.readSeriesAnswer(base()).sql, undefined);
   const a = s.readSeriesAnswer(base({ sql: { files: 2, samples: 40, missing: 1, dropped: 0, corrupt: 0, torn: 1, truncated: 3, locked: true, evil: 'x' } }));
-  assert.deepEqual(a.sql, { files: 2, samples: 40, missing: 1, dropped: 0, corrupt: 0, torn: 1, truncated: 3, locked: true, unsupported: false, limited: false, newer: false });
+  assert.deepEqual(a.sql, { files: 2, samples: 40, missing: 1, dropped: 0, corrupt: 0, torn: 1, truncated: 3, locked: true, unsupported: false, limited: false, newer: false, failed: false });
   const b = s.readSeriesAnswer(base({ sql: { files: 'x', samples: null } }));
   assert.equal(b.sql.files, 0);
   assert.equal(b.sql.samples, 0);
@@ -101,6 +101,7 @@ test('sqlNote says why SQL lines are missing, and says nothing when the service 
   assert.match(n.sqlNote({ ...ok, files: 3, corrupt: 2 }), /damaged/);
   assert.match(n.sqlNote({ ...ok, files: 3, truncated: 1 }), /one reading was cut/);
   assert.match(n.sqlNote({ ...ok, files: 3, truncated: 4 }), /4 readings were cut/);
+  assert.match(n.sqlNote({ ...ok, files: 3, failed: true }), /stopped before it was done/);
   // one torn file is the hour being written right now: normal
   assert.equal(n.sqlNote({ ...ok, files: 3, torn: 1 }), null);
 });
