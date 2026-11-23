@@ -60,7 +60,7 @@ const TOKEN_VALUE = /(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/;
  * clone and plant something in it, so: git commands that do not push get no token (neither GH_TOKEN nor the header), and the commit
  * clone's config, hooks and info/attributes are checked again right before the push, the only command that carries the token.
  * Settings in the person's own ~/.npmrc are not read (HOME is private): a registry mirror or CA must come in as npm_config_registry,
- * npm_config_cafile, HTTPS_PROXY, NODE_EXTRA_CA_CERTS or SSL_CERT_FILE, which are kept when they carry no password. The npm cache is
+ * npm_config_cafile, HTTPS_PROXY, NODE_EXTRA_CA_CERTS or SSL_CERT_FILE, which are kept when they carry no password (a proxy URL with user:pass@ is dropped, not passed to dependency code). The npm cache is
  * private and empty, so every promotion downloads every package.
  * Creates folders and files under `scratch`; returns the environment object.
  */
@@ -68,9 +68,12 @@ export function buildEnv(env, scratch) {
   const out = {};
   for (const [k, v] of Object.entries(env)) {
     if (typeof v !== 'string' || TOKEN_VALUE.test(v)) continue;
-    if (KEEP.test(k)) out[k] = v;
-    // npm settings a registry mirror or a company certificate need, kept only when the value carries no password (no user:pass@host).
-    else if (NPM_KEEP.test(k) && !/:\/\/[^/]*@/.test(v)) out[k] = v;
+    // Kept only when the value carries no password (no user:pass@host): that goes for HTTP_PROXY, HTTPS_PROXY and ALL_PROXY as much as
+    // for the npm settings a registry mirror or a company certificate need.
+    if (!KEEP.test(k) && !NPM_KEEP.test(k)) continue;
+    // An "@" in a proxy value may be a login with or without a scheme (user:pw@proxy:3128), so any proxy value with one is dropped.
+    if (/@/.test(v) && (/proxy/i.test(k) || /:\/\/[^/]*@/.test(v))) continue;
+    out[k] = v;
   }
   const home = join(scratch, 'home'), cfg = join(scratch, 'gh-config'), bin = join(scratch, 'bin'), cache = join(scratch, 'cache');
   for (const d of [home, cfg, bin, cache, join(home, 'AppData', 'Roaming'), join(home, 'AppData', 'Local')]) mkdirSync(d, { recursive: true });
