@@ -20,12 +20,87 @@ type claimReq struct {
 	ClaimNonce string `json:"claimNonce"`
 }
 
-// EnrollRoutes registers the two routes of spec 03 section 3.3 that need no credential: enroll and enroll/claim. BL-344 owns the rest
-// of the /mcp/v1/ mux (proof, call, cancel) and every other path stays a 404 there. Nothing is logged here: a request carries a nonce,
+// EnrollRoutes registers the two routes of spec 03 section 3.3 that need no credential: enroll and enroll/claim. Handler adds the rest of
+// the /mcp/v1/ mux (hello, call, cancel) and every other path stays a 404 there. Nothing is logged here: a request carries a nonce,
 // and a claim answer carries the secret.
 func (g *Grants) EnrollRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /mcp/v1/enroll", g.serveEnroll)
 	mux.HandleFunc("POST /mcp/v1/enroll/claim", g.serveClaim)
+}
+
+// Handler is the whole backend endpoint of MCP on the ag pipe (spec 03 D6): hello, enroll, enroll/claim, call and cancel, and nothing
+// else. Any other path, and any method the route does not take, is refused; there is no route to the dashboard's own API here, no
+// generic proxy and no dashboard token on the wire. A request that carries an Origin header came from a page in a browser and is
+// never a host: it is refused before anything is read.
+func Handler(d Deps) (http.Handler, error) {
+	disp, err := NewDispatcher(d)
+	if err != nil {
+		return nil, err
+	}
+	mux := http.NewServeMux()
+	d.Grants.EnrollRoutes(mux)
+	mux.HandleFunc("GET /mcp/v1/hello", disp.serveHello)
+	mux.HandleFunc("POST /mcp/v1/call", disp.serveCall)
+	mux.HandleFunc("POST /mcp/v1/cancel", disp.serveCancel)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") != "" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}), nil
+}
+
+func (s *Dispatcher) serveHello(w http.ResponseWriter, _ *http.Request) {
+	i := s.d.Info()
+	writeJSON(w, http.StatusOK, map[string]any{"v": 1, "pid": i.PID, "gen": i.Gen, "appVersion": i.AppVersion})
+}
+
+func (s *Dispatcher) serveCall(w http.ResponseWriter, r *http.Request) {
+	// Authenticated before the body is read, so a caller with no credential costs a digest compare and nothing more.
+	pr, err := s.d.Grants.Authenticate(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		st, a := fromAuthError(err)
+		writeJSON(w, st, a)
+		return
+	}
+	body, ok := readRaw(w, r, MaxRequestBytes)
+	if !ok {
+		return
+	}
+	st, a := s.CallAs(r.Context(), pr, body)
+	writeJSON(w, st, a)
+}
+
+func (s *Dispatcher) serveCancel(w http.ResponseWriter, r *http.Request) {
+	pr, err := s.d.Grants.Authenticate(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		st, a := fromAuthError(err)
+		writeJSON(w, st, a)
+		return
+	}
+	body, ok := readRaw(w, r, 4096)
+	if !ok {
+		return
+	}
+	st, a := s.Cancel(pr, body)
+	writeJSON(w, st, a)
+}
+
+// readRaw reads at most max bytes of the body. Over the limit is a 413 with fixed text.
+func readRaw(w http.ResponseWriter, r *http.Request, max int64) ([]byte, bool) {
+	b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, max))
+	if err == nil {
+		return b, true
+	}
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		writeErr(w, errBodyTooLarge)
+	} else {
+		writeErr(w, ErrBadRequest)
+	}
+	return nil, false
 }
 
 func (g *Grants) serveEnroll(w http.ResponseWriter, r *http.Request) {

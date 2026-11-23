@@ -499,24 +499,32 @@ func (g *Grants) touch(ctx context.Context, id string, now time.Time) {
 
 // Recheck is the revoke gate: a result is emitted only if the profile is still active at the same revision, not stopped, not expired.
 func (g *Grants) Recheck(ctx context.Context, pr Principal) error {
+	_, err := g.Scope(ctx, pr)
+	return err
+}
+
+// Scope returns the profile as it is now, for the dispatcher to read what the person granted (tools, identifiers). It answers only for
+// the revision the caller authenticated at: a profile that changed since (revoked, reissued, approved again) is refused with the same
+// denials as Recheck, so a call never runs on a newer or older grant than the one it was admitted under.
+func (g *Grants) Scope(ctx context.Context, pr Principal) (Profile, error) {
 	p, err := g.db.Get(ctx, pr.ProfileID)
 	if errors.Is(err, mcpaudit.ErrNotFound) {
-		return denied(ReasonRevoked)
+		return Profile{}, denied(ReasonRevoked)
 	}
 	if err != nil {
-		return err
+		return Profile{}, err
 	}
 	switch {
 	case p.State != mcpaudit.StateActive:
-		return denied(p.State)
+		return Profile{}, denied(p.State)
 	case g.stopped.Load():
-		return denied(ReasonStopped)
+		return Profile{}, denied(ReasonStopped)
 	case p.Rev != pr.Rev:
-		return denied(ReasonRevision)
+		return Profile{}, denied(ReasonRevision)
 	case expired(p, g.now().UTC()):
-		return denied(ReasonExpired)
+		return Profile{}, denied(ReasonExpired)
 	}
-	return nil
+	return p, nil
 }
 
 // BeginCall registers a running call of the profile: the returned context ends (cause ErrAccessEnded) when the profile is revoked,

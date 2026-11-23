@@ -160,3 +160,8 @@ func IsCLIImage(image string) bool {
 	_, base := winSplit(image)
 	return strings.EqualFold(base, "unravis.exe") || extraAllowed(image)
 }
+
+// IsMCPImage says the image may use the MCP routes (/mcp/v1/*) of the ag pipe: base name unravis.exe, which is the program a host starts
+// with --mcp (spec 03 D4, D8). The pipe's peer policy has already checked the folder, the user and the session. The image is only the
+// first gate: a call still needs the grant credential, which no image proves.
+func IsMCPImage(image string) bool { return IsCLIImage(image) }

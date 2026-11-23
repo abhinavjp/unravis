@@ -35,7 +35,7 @@ const (
 	metaServerKey = "serverKey"
 	metaRevFloor  = "revFloor" // the highest revision any removed profile had: a new profile starts above it (S3)
 	keyLen        = 32
-	schemaVersion = 2 // 2: profiles.contested
+	schemaVersion = 3 // 2: profiles.contested; 3: audit_events
 )
 
 // ErrNewerVersion means the file was written by a later version of Unravis (a downgrade). It is not set aside: the grants in it are
@@ -187,6 +187,23 @@ CREATE TABLE IF NOT EXISTS profiles(
   claim_digest BLOB,
   contested INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS audit_events(
+  id INTEGER PRIMARY KEY,
+  ts INTEGER NOT NULL,
+  profile_id TEXT NOT NULL,
+  profile_rev INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  tool TEXT NOT NULL DEFAULT '',
+  op_class TEXT NOT NULL DEFAULT '',
+  corr_id TEXT NOT NULL DEFAULT '',
+  dur_ms INTEGER NOT NULL DEFAULT 0,
+  outcome TEXT NOT NULL DEFAULT '',
+  code TEXT NOT NULL DEFAULT '',
+  bytes INTEGER NOT NULL DEFAULT 0,
+  fingerprint BLOB
+);
+CREATE INDEX IF NOT EXISTS audit_ts ON audit_events(ts);
+CREATE INDEX IF NOT EXISTS audit_profile ON audit_events(profile_id, ts);
 `
 
 func (d *DB) init(ctx context.Context, prot sealedfile.Protector) error {
