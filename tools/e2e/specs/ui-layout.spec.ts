@@ -20,6 +20,7 @@
 //   UIFIX-30  Requests over time (home): the left, right and bottom axes have a title with the unit, painted inside the same chart box, in both themes; the box and the rectangles around it do not move; 4.5:1 contrast (BL-495 part)
 //   UIFIX-31  Requests over time on real value ranges (also: one slow request reads the same in the tooltip and the note, 31e) (a busy hour in the millions, a slow hour in seconds, a sub-millisecond hour, no timing at all): one unit and one precision on each axis, tooltip with the interval's start and end and the P95 and slowest request alike, no NaN
 //   UIFIX-32  Requests over time on a phone (320, 360, 390 px): the axis titles are painted, the page does not scroll sideways and the chart box keeps its 220 px
+//   UIFIX-40  Clickable table rows are real buttons (BL-495 part): the Slow call lists of nearby calls (40a) and of all sources (40b) have one <button> per row (name, 24 px press area, nothing moves, no focus stop on the row itself); Tab, Enter and Space act once (40c, 40d); the mouse still takes the whole row (40d); a button press never goes on to the row (40c, 40d); on a phone a cell is not named twice (40f); "Show only" of the Request volume table stays a real button (40e)
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase } from '../support/ui';
 
@@ -1599,5 +1600,223 @@ for (const width of [320, 360, 390]) {
     expect(f.outer).toBe(0);
     const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(over, 'sideways overflow in px').toBeLessThanOrEqual(0);
+  });
+}
+
+// UIFIX-40 (BL-495 part): a clickable table row is a real button. On develop the Slow call lists were <tr tabindex="0"> with a click handler: no role,
+// no name, no pressed state. Now the API cell (Nearby calls) or the What cell (All sources) holds a <button type="button"> that looks like the text it
+// replaced; the row keeps its mouse press. The box of the button, the rows and the page are the ones the plain text made (40a, 40b measure it by
+// putting the plain text back), the press area grows with an invisible ::after, and the focus ring is the global 2 px ring.
+const ROW_BUTTONS = { calls: '[data-testid=scall-nearby-open]', all: '[data-testid=scall-all-open]' } as const;
+const ROW_TABLES = { calls: '[data-testid=scall-nearby]', all: '[data-testid=scall-all]' } as const;
+type RowList = keyof typeof ROW_BUTTONS;
+
+async function openRowList(page: Page, list: RowList): Promise<void> {
+  await openSlowCallScreen(page);
+  if (list === 'all') await page.getByTestId('scall-tab-all').click();
+  await expect(page.locator(ROW_TABLES[list])).toBeVisible();
+  await expect(page.locator(ROW_BUTTONS[list]).first()).toBeVisible();
+}
+
+/** Every row and cell box of the list, the table and the page, then the same with each row button replaced by the plain text it holds (the markup develop had). */
+async function rowListBoxesWithAndWithout(page: Page, list: RowList) {
+  return page.evaluate(({ table, button }) => {
+    const rects = () => {
+      const t = document.querySelector<HTMLElement>(table)!;
+      return [t, ...t.querySelectorAll('tr, td, th')].map((e) => { const r = e.getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map((v) => Math.round(v * 100) / 100); })
+        .concat([[document.documentElement.scrollWidth, document.documentElement.scrollHeight, 0, 0]]);
+    };
+    const withButtons = rects();
+    const buttons = [...document.querySelectorAll<HTMLElement>(button)];
+    buttons.forEach((b) => b.replaceWith(...b.childNodes));
+    const plain = rects();
+    return { n: buttons.length, withButtons, plain };
+  }, { table: ROW_TABLES[list], button: ROW_BUTTONS[list] });
+}
+
+for (const list of ['calls', 'all'] as const) {
+  for (const size of SCALL_SIZES) {
+    test('UIFIX-40' + (list === 'calls' ? 'a' : 'b') + ' Slow call screen at ' + size.width + ' px, ' + (list === 'calls' ? 'nearby calls' : 'all sources') + ': every row has one real button, a 24 px press area, and nothing moves', async ({ page }) => {
+      await page.setViewportSize(size);
+      await openRowList(page, list);
+      const rows = await page.locator(ROW_TABLES[list] + ' tbody tr').count();
+      expect(rows, 'rows of the list').toBeGreaterThan(2);
+      // a real button, with a name, one per row, and nothing else of the row takes focus
+      expect(await page.locator(ROW_BUTTONS[list]).count(), 'one row button per row').toBe(rows);
+      expect(await page.locator(ROW_TABLES[list] + ' tbody tr[tabindex]').count(), 'a row is not a focus stop of its own').toBe(0);
+      expect(await page.locator(ROW_TABLES[list] + ' tbody tr[aria-selected]').count(), 'a row has no aria-selected (it is not a grid row)').toBe(0);
+      const tags = await page.locator(ROW_BUTTONS[list]).evaluateAll((els) => els.map((e) => [e.tagName, e.getAttribute('type')].join(' ')));
+      expect([...new Set(tags)]).toEqual(['BUTTON button']);
+      const named = await page.getByRole('button', { name: list === 'calls' ? /: open this call, started \d/ : /\S/ }).evaluateAll((els, sel) => els.filter((e) => e.matches(sel)).length, ROW_BUTTONS[list]);
+      expect(named, 'row buttons reachable by role and name').toBe(rows);
+      if (list === 'all') {
+        expect(await page.locator(ROW_BUTTONS[list] + '[aria-pressed]').count(), 'a toggle says whether it is pressed').toBe(rows);
+        const names = await page.locator(ROW_BUTTONS[list]).evaluateAll((els) => els.map((e) => e.getAttribute('aria-label') ?? ''));
+        expect(names.filter((n) => !n), 'every All sources button has a name').toEqual([]);
+        expect(new Set(names).size, 'the demo rows get different names (what, source, time to the millisecond, duration): ' + names.join(' | ')).toBe(names.length);
+      }
+      // the press area is 24 x 24 px or more and no other control sits inside it
+      await expectScallHitArea(page, ROW_BUTTONS[list], 'Row button', 24);
+      // nothing moved: the same boxes as with the plain text the button replaced
+      // (Not for All sources on a phone: that table became a card list in this change (BL-521), and in a card the plain text next to a <strong> is two grid items, so the plain-text version is not a baseline there.)
+      if (list === 'calls' || size.width > 760) {
+        const f = await rowListBoxesWithAndWithout(page, list);
+        expect(f.n).toBe(rows);
+        expect(f.withButtons.length).toBe(f.plain.length);
+        expect(f.withButtons.filter((r, i) => r.some((v, k) => Math.abs(v - f.plain[i][k]) > 0.01)), 'boxes that differ from the plain-text version').toEqual([]);
+      }
+      // (BL-521: on develop the All sources table ran 39 px past a 390 px window; it is a card list on a phone now.)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow').toBeLessThanOrEqual(0);
+    });
+  }
+}
+
+/** Counts the real click events that reach the page (one per Enter or Space on a button), so a double activation cannot hide. */
+async function countClicks(page: Page, selector: string): Promise<void> {
+  await page.evaluate((sel) => {
+    (window as unknown as { __clicks: number }).__clicks = 0;
+    const w = window as unknown as { __clicks: number; __escaped: number };
+    w.__escaped = 0;
+    document.addEventListener('click', (e) => { if ((e.target as Element | null)?.closest(sel)) w.__clicks++; }, true);
+    // The app reacts to a click in its own handlers, which sit on the page root. A button that keeps its press to itself (stopPropagation) never lets it
+    // go on to the row's handler or on to the window; with that call removed the click arrives here and the row selects a second time.
+    window.addEventListener('click', (e) => { if ((e.target as Element | null)?.closest(sel)) w.__escaped++; });
+  }, selector);
+}
+const clicks = (page: Page) => page.evaluate(() => (window as unknown as { __clicks: number }).__clicks);
+/** Presses of a row button that went on past the app's handlers (to the row, or on to the window): must be 0, one press selects once. */
+const escaped = (page: Page) => page.evaluate(() => (window as unknown as { __escaped: number }).__escaped);
+
+/** Tab from the list's tab until a row button has focus (at most 12 presses). */
+async function tabToRowButton(page: Page, list: RowList): Promise<void> {
+  await page.getByTestId(list === 'calls' ? 'scall-tab-calls' : 'scall-tab-all').focus();
+  for (let i = 0; i < 12; i++) {
+    await page.keyboard.press('Tab');
+    if (await page.evaluate((sel) => document.activeElement?.matches(sel) ?? false, ROW_BUTTONS[list])) return;
+  }
+  throw new Error('Tab did not reach a row button within 12 presses');
+}
+
+/** The ring of the focused element once the colour and width transition has ended (the first frames still show the start of it). */
+async function focusRing(page: Page) {
+  const read = () => page.evaluate(() => { const s = getComputedStyle(document.activeElement!); return { style: s.outlineStyle, width: parseFloat(s.outlineWidth), color: s.outlineColor, offset: s.outlineOffset }; });
+  let last = JSON.stringify(await read());
+  for (let i = 0; i < 20; i++) {
+    await page.waitForTimeout(50);
+    const now = JSON.stringify(await read());
+    if (now === last) break;
+    last = now;
+  }
+  return JSON.parse(last) as { style: string; width: number; color: string; offset: string };
+}
+
+test('UIFIX-40c Slow call screen, nearby calls: Tab reaches the row button, it shows the focus ring, Enter and Space each open a call once', async ({ page }) => {
+  await openRowList(page, 'calls');
+  await countClicks(page, ROW_BUTTONS.calls);
+  await tabToRowButton(page, 'calls');
+  const ring = await focusRing(page);
+  expect(ring.style).toBe('solid');
+  expect(ring.width).toBe(2);
+  expect(ring.offset, 'the ring sits 2 px outside the button, like every other button').toBe('2px');
+  expect(ring.color, 'the ring is painted').not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+  // a row is one stop: Tab goes from one row button to the next. The first row may be the open call, so go down to a row that is not.
+  const label = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label'));
+  const isThis = () => page.evaluate(() => document.activeElement?.getAttribute('aria-current') === 'true');
+  let guard = 0;
+  while ((await isThis()) && guard++ < 6) await page.keyboard.press('Tab');
+  const first = (await label())!;
+  expect(first).toMatch(/: open this call, started \d/);
+  const current = page.locator(ROW_BUTTONS.calls + '[aria-current=true]');
+  await page.keyboard.press('Enter');
+  // Enter opened that call: the screen re-centres on it, so its row is now the one marked "this call", and the title takes focus
+  await expect(current, 'the opened call is marked this call').toHaveAttribute('aria-label', first);
+  await expect(page.locator('#scall-title'), 'focus goes to the title of the opened call').toBeFocused();
+  expect(await clicks(page), 'one click for one Enter').toBe(1);
+  // Space on a row button of another call
+  await tabToRowButton(page, 'calls');
+  guard = 0;
+  while (((await isThis()) || (await label()) === first) && guard++ < 8) await page.keyboard.press('Tab');
+  const second = (await label())!;
+  expect(second).not.toBe(first);
+  await page.keyboard.press('Space');
+  await expect(current, 'Space opened the second call').toHaveAttribute('aria-label', second);
+  expect(await clicks(page), 'one more click for one Space').toBe(2);
+  expect(await escaped(page), 'a button press stops at the button: the row does not select a second time').toBe(0);
+});
+
+test('UIFIX-40d Slow call screen, all sources: Tab, Enter and Space press a row button once; the pressed state moves; a mouse press on the row still selects it', async ({ page }) => {
+  await openRowList(page, 'all');
+  await countClicks(page, ROW_BUTTONS.all);
+  await tabToRowButton(page, 'all');
+  expect((await focusRing(page)).style).toBe('solid');
+  const pressed = page.locator(ROW_BUTTONS.all + '[aria-pressed=true]');
+  expect(await pressed.count(), 'nothing selected yet').toBe(0);
+  const buttons = page.locator(ROW_BUTTONS.all);
+  await page.keyboard.press('Enter');
+  expect(await clicks(page), 'one click for one Enter').toBe(1);
+  await expect(buttons.nth(0)).toHaveAttribute('aria-pressed', 'true');
+  expect(await pressed.count()).toBe(1);
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Space');
+  expect(await clicks(page), 'one click for one Space').toBe(2);
+  await expect(buttons.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  expect(await pressed.count(), 'only the last pressed row is selected').toBe(1);
+  await expect(page.locator(ROW_TABLES.all + ' tbody tr.selected')).toHaveCount(1);
+  // the mouse keeps the whole row: a press on the time cell of the third row selects it
+  const cell = page.locator(ROW_TABLES.all + ' tbody tr').nth(2).locator('td.time');
+  await cell.click();
+  await expect(buttons.nth(2)).toHaveAttribute('aria-pressed', 'true');
+  expect(await pressed.count()).toBe(1);
+  // a press on the button itself with the mouse selects once as well (the click event count counts button presses only; the press on the time cell above is no button press)
+  const clicksBefore = await clicks(page);
+  await buttons.nth(1).click();
+  await expect(buttons.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  expect(await pressed.count()).toBe(1);
+  expect(await clicks(page) - clicksBefore, 'one click for one mouse press on the button').toBe(1);
+  expect(await escaped(page), 'a press on a button (Enter, Space or mouse) stops at the button: the row does not select a second time').toBe(0);
+});
+
+test('UIFIX-40e Where is it?: "Show only" of the Request volume table is a real button; Tab and Enter filter the histogram once', async ({ page }) => {
+  await page.getByRole('button', { name: 'Where is it?', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Where is it?' })).toBeVisible();
+  await page.locator('summary', { hasText: 'Request volume' }).click();
+  const only = page.getByRole('button', { name: /^Show only .* in histogram$/ });
+  await expect(only.first()).toBeVisible();
+  const n = await only.count();
+  expect(n, 'one per row').toBeGreaterThan(1);
+  expect(await page.locator('.volume-table td button.quiet-button').evaluateAll((els) => els.map((e) => e.tagName + ' ' + e.getAttribute('type')).filter((t) => t !== 'BUTTON button')), 'every Show only is a <button type=button>').toEqual([]);
+  // Tab from the disclosure to the first Show only: the controls of the table come first (window, search), the rows after
+  await page.locator('summary', { hasText: 'Request volume' }).focus();
+  let reached = false;
+  for (let i = 0; i < 20 && !reached; i++) {
+    await page.keyboard.press('Tab');
+    reached = await page.evaluate(() => document.activeElement?.matches('.volume-table td button.quiet-button') ?? false);
+  }
+  expect(reached, 'Tab reaches a Show only button').toBe(true);
+  expect((await focusRing(page)).style).toBe('solid');
+  const label = await page.evaluate(() => document.activeElement?.getAttribute('aria-label'));
+  const api = label!.replace(/^Show only /, '').replace(/ in histogram$/, '');
+  await page.keyboard.press('Enter');
+  // the table now lists the one API (one row), once: the filter ran and did not toggle back
+  await expect(page.locator('.volume-table tbody tr')).toHaveCount(1);
+  await expect(page.locator('.volume-table tbody tr th')).toHaveText(api);
+});
+
+// UIFIX-40f: on a phone the lists are card lists whose lines carry the column name as CSS text. That text must stay out of the name of the cell (the
+// column header, kept for screen readers, already names the column), or a screen reader says "Time Time 08:00:00".
+for (const list of ['calls', 'all'] as const) {
+  test('UIFIX-40f Slow call screen on a 390 px phone, ' + (list === 'calls' ? 'nearby calls' : 'all sources') + ': a cell is named by its content, not by the column name drawn before it', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openRowList(page, list);
+    const heads = await page.locator(ROW_TABLES[list] + ' thead th').evaluateAll((els) => els.map((e) => (e.textContent ?? '').trim()));
+    expect(heads.length).toBeGreaterThan(2);
+    // the drawn label is still there (the cards stay labelled for the eye)...
+    const drawn = await page.locator(ROW_TABLES[list] + ' tbody tr').first().locator('td').first().evaluate((e) => getComputedStyle(e, '::before').content);
+    expect(drawn, 'the column name is drawn before the value').toContain(heads[0]);
+    // ...but the accessibility tree names the cell by its value only
+    const snapshot = await page.locator(ROW_TABLES[list]).ariaSnapshot();
+    const cells = [...snapshot.matchAll(/- cell "([^"]*)"/g)].map((m) => m[1]);
+    expect(cells.length, 'cells in the accessibility tree').toBeGreaterThan(4);
+    for (const name of cells) for (const head of heads) expect(name.startsWith(head + ' '), 'cell "' + name + '" repeats the column name "' + head + '"').toBe(false);
   });
 }
