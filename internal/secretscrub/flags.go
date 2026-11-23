@@ -21,6 +21,7 @@ const (
 	toolLDAP                  // ldapsearch and the other ldap tools: -w password
 	toolSchtasks              // schtasks: /RP password
 	toolSecure                // ConvertTo-SecureString: -String is the secret
+	toolRegistry              // docker, podman, nerdctl, helm, az: "login -p password"
 )
 
 var toolNames = map[string]int{
@@ -30,7 +31,7 @@ var toolNames = map[string]int{
 	"mongo":     toolMongo, "mongosh": toolMongo, "mongodump": toolMongo, "mongorestore": toolMongo, "mongoexport": toolMongo, "mongoimport": toolMongo,
 	"curl": toolCurl, "sshpass": toolPwdP, "psexec": toolPwdP, "psexec64": toolPwdP,
 	"ldapsearch": toolLDAP, "ldapmodify": toolLDAP, "ldapadd": toolLDAP, "ldapdelete": toolLDAP, "ldapwhoami": toolLDAP, "ldappasswd": toolLDAP,
-	"schtasks": toolSchtasks,
+	"schtasks": toolSchtasks, "docker": toolRegistry, "podman": toolRegistry, "nerdctl": toolRegistry, "helm": toolRegistry, "az": toolRegistry,
 }
 
 // extraSecretOptions are option names that hold a secret although the shared name classifier does not take them for one (it wants
@@ -84,6 +85,20 @@ func negated(name string) bool {
 	return false
 }
 
+// valueEnds says whether the unquoted value ends at k: white space, a quote (also a JSON-escaped one, \"), a closing bracket, or the
+// start of a closing tag. The structure around the value stays.
+func valueEnds(s string, k int) bool {
+	switch s[k] {
+	case ' ', '\t', '\r', '\n', '\f', '\v', '"', '\'', ')', ']', '}':
+		return true
+	case '\\':
+		return k+1 < len(s) && s[k+1] == '"'
+	case '<':
+		return k+1 < len(s) && s[k+1] == '/'
+	}
+	return false
+}
+
 // flagValue reads the value word that starts at p (after the white space that follows an option): a quoted string inside its quotes,
 // or the text up to the next white space. ok is false when there is no value on this line, or the word is another option.
 func flagValue(s string, p int) (from, to, next int, ok bool) {
@@ -93,6 +108,20 @@ func flagValue(s string, p int) (from, to, next int, ok bool) {
 	switch c := s[p]; c {
 	case '\n', '\r':
 		return 0, 0, p, false
+	case '\\':
+		if p+1 < len(s) && s[p+1] == '"' {
+			// JSON-escaped quotes (a command line inside a JSON string): \"value\"
+			for k := p + 2; k+1 < len(s) && s[k] != '\n' && s[k] != '\r'; k++ {
+				if s[k] == '\\' && s[k+1] == '"' {
+					return p + 2, k, k + 2, k > p+2
+				}
+			}
+			e := p + 2
+			for e < len(s) && s[e] != '\n' && s[e] != '\r' && s[e] != '"' {
+				e++
+			}
+			return p + 2, e, e, e > p+2
+		}
 	case '"', '\'':
 		for k := p + 1; k < len(s) && s[k] != '\n' && s[k] != '\r'; k++ {
 			if s[k] == '\\' && c == '"' && k+1 < len(s) {
@@ -115,7 +144,7 @@ func flagValue(s string, p int) (from, to, next int, ok bool) {
 		}
 	}
 	e := p
-	for e < len(s) && !isSpace(s[e]) && s[e] != '"' && s[e] != '\'' && !(s[e] == '<' && e+1 < len(s) && s[e+1] == '/') {
+	for e < len(s) && !valueEnds(s, e) {
 		e++ // a quote or a closing tag ends the word: the structure around the value stays
 	}
 	next = e
@@ -232,7 +261,7 @@ func maskFlags(s, mask string, w *work) string {
 				raw = raw[k+1:] // "<Arg>--password" reads as "--password"
 			}
 		}
-		word := strings.TrimLeft(raw, "\"'(`$[")
+		word := strings.TrimLeft(raw, "\"'(`$[\\")
 		a += len(raw) - len(word)
 		wordT := strings.TrimRight(word, "\"'`);]")
 		before := prev
@@ -250,13 +279,12 @@ func maskFlags(s, mask string, w *work) string {
 		if strings.HasSuffix(word, ";") {
 			tools = 0
 		}
+		if tools&toolRegistry != 0 && wordT == "login" {
+			tools |= toolPwdP // docker login -p x; "docker run -p 80:80" is a port and stays
+		}
 		if strings.EqualFold(wordT, "ConvertTo-SecureString") {
 			// ConvertTo-SecureString "hunter2" -AsPlainText: the first argument is the secret itself.
-			p := i
-			for p < len(s) && (s[p] == ' ' || s[p] == '\t') {
-				p++
-			}
-			if from, to, next, ok := flagValue(s, p); ok {
+			if from, to, next, ok := optionValue(s, i, false); ok {
 				edits = append(edits, edit{from, to})
 				w.spend(next - i)
 				i = next
@@ -268,8 +296,8 @@ func maskFlags(s, mask string, w *work) string {
 			continue
 		}
 		// An option with its value attached: sqlcmd -Phunter2, mysql -phunter2, redis-cli -ahunter2, curl -ubob:hunter2.
-		if len(word) > 2 && word[0] == '-' && word[1] != '-' {
-			if o := word[1]; (o == 'P' && tools&toolSQLServer != 0) || (o == 'a' && tools&toolRedis != 0) || (o == 'p' && tools&toolMySQL != 0) || (o == 'u' && tools&toolCurl != 0) {
+		if len(wordT) > 2 && wordT[0] == '-' && wordT[1] != '-' {
+			if o := wordT[1]; (o == 'P' && tools&toolSQLServer != 0) || (o == 'a' && tools&toolRedis != 0) || (o == 'p' && tools&toolMySQL != 0) || (o == 'u' && tools&toolCurl != 0) {
 				from, to, next, ok := flagValue(s, a+2)
 				if ok {
 					if o == 'u' {
@@ -291,7 +319,7 @@ func maskFlags(s, mask string, w *work) string {
 		if k := strings.IndexAny(wordT, "=:"); k > 0 {
 			// "--pass:x", "/pass:x", "--user=u:p": the options that maskKV does not take for secrets.
 			if n := lowerASCII(strings.TrimLeft(wordT[:k], "-/")); extraSecretOptions[n] || (tools&toolCurl != 0 && n == "user" && wordT[k] == '=') {
-				from, to := a+k+1, i
+				from, to := a+k+1, a+len(wordT)
 				if n == "user" {
 					c := strings.IndexByte(s[from:to], ':')
 					if c < 0 {

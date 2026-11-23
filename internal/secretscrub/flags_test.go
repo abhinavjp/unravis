@@ -1,6 +1,7 @@
 package secretscrub
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -218,6 +219,65 @@ func TestMaskFlagsReview2KeepsProseAndParameters(t *testing.T) {
 	} {
 		if got := Mask(in, rm); got != in {
 			t.Errorf("changed:\n in: %q\ngot: %q", in, got)
+		}
+	}
+}
+
+// Review of PR 208, round 3.
+func TestMaskFlagsReview3Findings(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"JSON-escaped quotes around the value", `{"CommandLine":"sqlcmd -S x -P \"hunter2\""}`, `{"CommandLine":"sqlcmd -S x -P \"[hidden]\""}`},
+		{"JSON-escaped quotes with a space", `{"CommandLine":"app --password \"hun ter2\" --x"}`, `{"CommandLine":"app --password \"[hidden]\" --x"}`},
+		{"escaped quote after the value", `{"CommandLine":"cmd /c \"sqlcmd -S x -P hunter2\"","Pid":4}`, `{"CommandLine":"cmd /c \"sqlcmd -S x -P [hidden]\"","Pid":4}`},
+		{"mysql attached, escaped quotes", `{"c":"mysql -p\"hunter2\" -h x"}`, `{"c":"mysql -p\"[hidden]\" -h x"}`},
+		{"colon form keeps the JSON", `{"CommandLine":"cmdkey /add:srv /user:bob /pass:hunter2","Pid":4}`, `{"CommandLine":"cmdkey /add:srv /user:bob /pass:[hidden]","Pid":4}`},
+		{"keytool colon in an array", `["keytool","-storepass:hunter2"]`, `["keytool","-storepass:[hidden]"]`},
+		{"curl --user= in JSON", `{"c":"curl --user=bob:hunter2","p":1}`, `{"c":"curl --user=bob:[hidden]","p":1}`},
+		{"docker login", `docker login -u bob -p hunter2 reg.io`, `docker login -u bob -p [hidden] reg.io`},
+		{"az login", `az login -u x -p hunter2`, `az login -u x -p [hidden]`},
+		{"helm registry login", `helm registry login reg.io -u bob -p hunter2`, `helm registry login reg.io -u bob -p [hidden]`},
+		{"subshell keeps the bracket", `x=$(mysql -uroot -phunter2)`, `x=$(mysql -uroot -p[hidden])`},
+		{"secure string in a JSON array", `["ConvertTo-SecureString","hunter2","-AsPlainText"]`, `["ConvertTo-SecureString","[hidden]","-AsPlainText"]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Mask(tc.in, rm); got != tc.want {
+				t.Fatalf("\n in: %q\ngot: %q\nwant: %q", tc.in, got, tc.want)
+			}
+		})
+	}
+	for _, in := range []string{`docker run -p 8080:80 nginx`, `docker ps -p x`, `az group list`} {
+		if got := Mask(in, rm); got != in {
+			t.Errorf("changed:\n in: %q\ngot: %q", in, got)
+		}
+	}
+}
+
+// A command line inside valid JSON must come out as valid JSON, whatever it holds (Sysmon, docker inspect, Kubernetes args).
+func TestMaskFlagsKeepsJSONValid(t *testing.T) {
+	cmds := []string{
+		`sqlcmd -S x -U sa -P hunter2 -Q "select 1"`, `cmd /c "sqlcmd -S x -P hunter2"`, `mysql -phunter2`, `mysql -p"hun ter2" -h x`,
+		`app --password hunter2`, `app --password "a b" --x`, `cmdkey /add:srv /user:bob /pass:hunter2`, `keytool -storepass:hunter2`,
+		`curl --user=bob:hunter2 https://x`, `curl -u bob:hunter2 https://x`, `docker login -p hunter2`, `x=$(mysql -phunter2)`,
+		`powershell -c "ConvertTo-SecureString 'hunter2' -AsPlainText"`, `app --token`, `app --token \`, `app -P`, `sqlcmd -P "`,
+	}
+	for _, c := range cmds {
+		for _, doc := range []any{
+			map[string]any{"CommandLine": c, "Pid": 4},
+			[]string{"a", c, "b"},
+			map[string]any{"Args": strings.Fields(c)},
+		} {
+			in, err := json.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out := Mask(string(in), rm)
+			var back any
+			if err := json.Unmarshal([]byte(out), &back); err != nil {
+				t.Errorf("not valid JSON any more:\n in: %s\nout: %s\nerr: %v", in, out, err)
+			}
+			if strings.Contains(out, "hunter2") {
+				t.Errorf("secret survived:\n in: %s\nout: %s", in, out)
+			}
 		}
 	}
 }
