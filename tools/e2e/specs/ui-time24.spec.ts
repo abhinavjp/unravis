@@ -8,6 +8,7 @@
 //   UIFIX-18f  Bad text then a date change: the box and its error stay, Run stays off, and the fixed time sends the new date and time together
 //   UIFIX-18e  Tap target 24 px or more, focus order Date then Time, labels, 320/360/390 px do not scroll sideways, both themes keep 4.5:1 text
 import { test, expect, type Page } from '../support/fixtures';
+import { layoutSettled } from '../support/ui';
 
 test.use({ viewport: { width: 1440, height: 900 }, locale: 'en-US' });
 
@@ -216,12 +217,8 @@ test('UIFIX-18e The boxes are 24 px or more, in order, readable in both themes, 
   }
   for (const width of [1440, 1100, 390, 360, 320]) {
     await page.setViewportSize({ width, height: 844 });
-    // The page lays itself out again after the resize (media queries, a wrapped row); measure once it has stopped moving, not in the middle of it.
-    await page.waitForFunction(() => new Promise<boolean>((done) => {
-      const width = () => document.documentElement.scrollWidth;
-      const before = width();
-      requestAnimationFrame(() => requestAnimationFrame(() => done(width() === before)));
-    }), undefined, { timeout: 5_000 }).catch(() => undefined);
+    // The page lays itself out again after the resize (media queries, a wrapped row, the .01 ms transitions of reduced motion); measure once it has stopped moving, not in the middle of it.
+    await layoutSettled(page);
     const facts = await page.evaluate(() => {
       const root = document.documentElement;
       const boxes = [...document.querySelectorAll<HTMLElement>('input.time24')].map((e) => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, w: r.width, h: r.height }; });

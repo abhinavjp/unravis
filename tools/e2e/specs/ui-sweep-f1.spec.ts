@@ -12,6 +12,7 @@
 //   SWEEP-F1-11  Secondary buttons and chips have a 3:1 border (SETUP-A11Y-10)
 //   SWEEP-F1-12  One button size: sources buttons as tall as the global ones (SETUP-A11Y-11)
 import { test, expect, type Page } from '../support/fixtures';
+import { layoutSettled } from '../support/ui';
 
 /** The relative luminance contrast of two "rgb(r, g, b)" strings. */
 function contrast(a: string, b: string): number {
@@ -42,16 +43,16 @@ test('SWEEP-F1-02 a field help opening does not move or stretch the field beside
   await openMoreFilters(page);
   await page.getByRole('tab', { name: /^What/ }).click();
   const measure = () => page.evaluate(() => {
-    // The label's place inside its own group of fields, not on the page: a shift of the whole filter panel between the two reads (CI saw one of 8.84 px, from something above
-    // the panel, on a run where the same CSS had passed) is not the field beside the help moving, which is what this test is about.
     const label = document.querySelector<HTMLElement>('label[for="rf-completion"]')!.getBoundingClientRect();
-    const grid = document.querySelector<HTMLElement>('label[for="rf-completion"]')!.closest('.field-grid')!.getBoundingClientRect();
     const select = document.querySelector<HTMLElement>('#rf-completion')!.getBoundingClientRect();
     const own = document.querySelector<HTMLElement>('#outcome')!.getBoundingClientRect();
-    return { labelTop: label.top - grid.top, selectHeight: select.height, ownHeight: own.height };
+    return { labelTop: label.top, selectHeight: select.height, ownHeight: own.height };
   });
+  // Opening More filters draws the whole panel 8.84 px higher for its first two frames (about 30 ms, BL-539), so the label is read from the page only once the page has settled, both times.
+  await layoutSettled(page);
   const before = await measure();
   await page.getByRole('button', { name: 'About Status' }).click();
+  await layoutSettled(page);
   const after = await measure();
   expect(after.labelTop).toBeCloseTo(before.labelTop, 0);
   expect(after.selectHeight).toBeCloseTo(before.selectHeight, 0);
