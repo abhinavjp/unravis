@@ -140,8 +140,8 @@
 {#if shown}
   <section class="tools" aria-labelledby="resource-heading" aria-busy={busy}>
     <h3 id="resource-heading">{resourceCopy.heading}</h3>
-    <p class="note">{resourceCopy.intro}</p>
     <HelpNote id="resource" />
+    <p class="note">{resourceCopy.intro}</p>
 
     <div aria-live="polite" class="status">
       {#if busy && hosts.length === 0 && !problem}<p class="note" role="status">{resourceCopy.loading}</p>{/if}

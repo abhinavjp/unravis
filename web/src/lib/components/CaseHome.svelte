@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { api, ApiError } from '../api';
-  import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing } from '../appState.svelte';
+  import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing, results, scope } from '../appState.svelte';
   import { pacedTimeout } from '../visibility';
   import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, closeCase, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { archiveButton, closeButton, closedEraseAt, readsCaseData, reopenButton, retryAction, retryServerName } from '../caseLifecycle';
@@ -24,6 +24,7 @@
   import { lazyComponent } from '../lazy';
   import { formatTime } from '../time';
   import { timeZone } from '../timeZone.svelte';
+  import { caseSpan } from '../resourceSpan';
   import { getCaseKeyStatus } from '../caseKeyApi';
   import { keyEndingLabel, type CaseKeyStatus } from '../caseKey';
   import { CASE_KEY_TEXT } from '../copy/caseKeyCopy';
@@ -38,6 +39,8 @@
   import { HUB_TEXT } from '../copy/sourcesCopy';
 
   const TracingPaper = lazyComponent(() => import('../../components/TracingPaper.svelte'));
+  // The resource counters of the case's host files (BL-495j): its code (and the chart library) is read only when the case page is on screen.
+  const ResourcePanel = lazyComponent(() => import('../../components/ResourcePanel.svelte'));
 
   // One page per case: the story (what happened, in order), the theories, the health checks, the analysis and the files.
   // Everything here is read from what the case already saved. Nothing runs by itself.
@@ -90,6 +93,10 @@
   const showJump = $derived(offersWork);
   const story = $derived(buildStory({ info, imports, health, theories, history: info?.history }));
   const keptFiles = $derived(imports.filter(record => record.status === 'ok'));
+  // What the resource counters panel reads: the audit window on screen, the time the kept files cover (for the "Show that period" offer), and the API P95 of the
+  // analysis already on screen (nothing more is asked for it). The panel is read again when the kept files change.
+  const filesSpan = $derived(caseSpan(imports));
+  const apiWindows = $derived((results.analysis?.loadWindows ?? []).map(item => ({ at: item.at, p95Ms: item.timing.p95?.valueMs ?? null })));
   // An archived case reads no files, so the header counts them from the case record until the working copy is freed; after that there is no count.
   const filesShown = $derived(offersWork ? keptFiles.length : info?.archive?.freed ? null : (info?.imports ?? 0));
   const hasIis = $derived(keptFiles.some(record => record.importer === 'iis-w3c'));
@@ -684,6 +691,11 @@
       <HealthPanel {caseId} embedded onGone={gone} onRan={() => void rereadHealth()} />
     </section>
 
+    <!-- Resource counters (BL-495j): drawn only when the case holds counter files (Windows Performance Monitor, SQL, runtime); an empty slot takes no room. -->
+    <div class="resource-slot full">
+      {#key caseId + ':' + keptFiles.length}<ResourcePanel {caseId} query={scope.query} zone={timeZone.zone} span={filesSpan} {apiWindows} onGone={gone} />{/key}
+    </div>
+
     <section class="block full" aria-labelledby="home-sources">
       <h3 id="home-sources">{HUB_TEXT.heading}</h3>
       <p class="note">{HUB_TEXT.intro}</p>
@@ -741,7 +753,7 @@
   @container (min-width: 1300px) {
     .home-cols { grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); gap: 32px; align-items: start; }
     .home-blocks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .home-blocks > .block.full { grid-column: 1 / -1; }
+    .home-blocks > .block.full, .home-blocks > .resource-slot.full { grid-column: 1 / -1; }
   }
   /* The side column stays in view while the blocks scroll; if it is taller than the window it scrolls on its own, so none of its buttons is out of reach. The padding keeps the focus ring inside the scrolling box. */
   @media (min-height: 760px) {
@@ -758,6 +770,11 @@
   .counts dd { margin: 0; font-size: 15px; }
   .block { display: grid; align-content: start; gap: 10px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
   .block h3 { margin: 0; font-size: 16px; }
+  /* The resource panel brings its own section; it is dressed as a block here and takes no room while it draws nothing. */
+  .resource-slot { min-width: 0; }
+  .resource-slot:not(:has(> :global(.tools))) { display: none; }
+  .resource-slot.full > :global(.tools) { padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .resource-slot :global(.tools h3) { font-size: 16px; }
   .note, .empty { margin: 0; color: var(--text-2); font-size: 14px; }
   .gap { font-size: 13px; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; }
