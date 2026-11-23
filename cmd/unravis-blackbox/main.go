@@ -99,6 +99,8 @@ type deps struct {
 	// reads; nil means the console. Both are test seams.
 	sealer func() (sealedfile.Protector, error)
 	stdin  io.Reader
+	// confirmDir proves the SQL data folder for a saved login (see sqlLoginDir); nil means SQLManager.ConfirmLoginDir. Test seam.
+	confirmDir func(cfg blackbox.Config, configPath string) (string, error)
 	// vmProbe is the vm-probe reading. nil means the real PDH probe (BL-113).
 	vmProbe func(n int) blackbox.VMProbeResult
 	// sqlRun is the SQL runner of the sql-service mode (BBX-5-10). Tests inject

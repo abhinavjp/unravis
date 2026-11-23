@@ -53,7 +53,9 @@ func hasControl(s string) bool {
 func (l Login) Validate() error {
 	if l.User == "" || l.Password == "" ||
 		len(l.User) > maxLoginUser || len(l.Password) > maxLoginPass ||
-		hasControl(l.User) || hasControl(l.Password) {
+		hasControl(l.User) || hasControl(l.Password) ||
+		// A name with a backslash (DOMAIN\user) makes the driver use Windows sign-in with these credentials, which is not a SQL login.
+		strings.ContainsRune(l.User, '\\') {
 		return errLoginInvalid
 	}
 	return nil

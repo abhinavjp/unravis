@@ -48,7 +48,9 @@ func loginRig(t *testing.T) (*loginRigT, string) {
 			mgr:    &blackbox.Manager{Svc: &memSvc{}, Env: env, Disk: bigDisk{}},
 			exeDir: func() string { return root },
 			sqlMgr: &blackbox.SQLManager{Env: env},
-			sealer: func() (sealedfile.Protector, error) { return xorSeal{}, nil },
+			// The folder proof is Windows-only (install record, locked settings, folder lock): here it hands back the temp folder.
+			confirmDir: func(blackbox.Config, string) (string, error) { return filepath.Join(root, "rec", "sql"), nil },
+			sealer:     func() (sealedfile.Protector, error) { return xorSeal{}, nil },
 		},
 	}
 	g.dir = blackbox.SQLDataDir(cfg.Folder)
@@ -109,7 +111,7 @@ func TestSetSQLLoginFromStdinSealsItAndPrintsNothing(t *testing.T) {
 	}
 }
 
-func TestSetSQLLoginFromFileNeedsTheHashAndWipesTheFile(t *testing.T) {
+func TestSetSQLLoginFromFileNeedsTheHashAndLeavesTheFileToUnravis(t *testing.T) {
 	g, dir := loginRig(t)
 	f := filepath.Join(t.TempDir(), "login.tmp")
 	sum := sha256.Sum256([]byte(loginDoc))
@@ -140,8 +142,9 @@ func TestSetSQLLoginFromFileNeedsTheHashAndWipesTheFile(t *testing.T) {
 	} else {
 		noLoginLeak(t, out, errs)
 	}
-	if _, err := os.Stat(f); err == nil {
-		t.Fatal("the login file was not removed")
+	// The elevated program only reads the file: it never writes or deletes a path it was handed. Unravis removes it.
+	if b, err := os.ReadFile(f); err != nil || string(b) != loginDoc { //nolint:gosec // test file
+		t.Fatal("the helper changed or removed the login file")
 	}
 	if !bbsql.HasLogin(dir) {
 		t.Fatal("not saved")
@@ -189,5 +192,24 @@ func TestSetSQLLoginRefusals(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); err == nil {
 		t.Error("the command created the folder")
+	}
+}
+
+// If the folder cannot be proved to be the locked SQL folder, nothing is read and nothing is saved.
+func TestSetSQLLoginRefusesAnUnprovenFolderWithoutReadingTheFile(t *testing.T) {
+	g, dir := loginRig(t)
+	g.d.confirmDir = func(blackbox.Config, string) (string, error) { return "", os.ErrPermission }
+	f := filepath.Join(t.TempDir(), "login.tmp")
+	if err := os.WriteFile(f, []byte(loginDoc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte(loginDoc))
+	c, out, errs := g.do("set-sql-login", "--login-file", f, "--login-sha256", hex.EncodeToString(sum[:]), "--json")
+	if c == 0 || bbsql.HasLogin(dir) {
+		t.Fatalf("saved into an unproven folder: %d %s", c, out)
+	}
+	noLoginLeak(t, out, errs)
+	if c, _, _ := g.do("clear-sql-login", "--json"); c == 0 {
+		t.Error("cleared in an unproven folder")
 	}
 }

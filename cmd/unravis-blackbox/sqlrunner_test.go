@@ -114,3 +114,14 @@ func TestSQLEnabledExtras(t *testing.T) {
 		t.Fatal("deep must hold at least what everything holds")
 	}
 }
+
+// A login "file" that cannot be read as a file (here a folder) is an error, never "no login".
+func TestSQLConnForRefusesALoginPathThatIsNotAFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, bbsql.LoginFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqlConnFor(dir, blackbox.Probe{}, xorProt); err == nil {
+		t.Fatal("an unreadable login path fell back to Windows sign-in")
+	}
+}

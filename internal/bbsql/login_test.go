@@ -50,7 +50,7 @@ func TestLoginNeverPrints(t *testing.T) {
 }
 
 func TestLoginValidate(t *testing.T) {
-	bad := []Login{{"", "x"}, {"u", ""}, {strings.Repeat("a", 129), "x"}, {"u", strings.Repeat("a", 129)}, {"u\n", "x"}, {"u", "p\x00"}}
+	bad := []Login{{"", "x"}, {"u", ""}, {strings.Repeat("a", 129), "x"}, {"u", strings.Repeat("a", 129)}, {"u\n", "x"}, {"u", "p\x00"}, {"DOMAIN\\user", "x"}}
 	for _, l := range bad {
 		if l.Validate() == nil {
 			t.Errorf("accepted %d/%d", len(l.User), len(l.Password))
@@ -248,5 +248,16 @@ func TestOpenRefusesRemoteWithoutLoginAndBadLogin(t *testing.T) {
 	var be *Error
 	if !errors.As(err, &be) || be.Code != CodeLoginInvalid || strings.Contains(err.Error(), "sql01") {
 		t.Fatalf("bad login: %v", err)
+	}
+}
+
+func TestIPv6LiteralGetsAPort(t *testing.T) {
+	dsn, err := connDSN(StoredLogin{Server: "2001:db8::1", Login: Login{"u", "p"}}.Conn(ConnConfig{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mc, err := msdsn.Parse(dsn)
+	if err != nil || mc.Host != "2001:db8::1" || mc.Port != 1433 {
+		t.Fatalf("%+v %v", mc, err)
 	}
 }

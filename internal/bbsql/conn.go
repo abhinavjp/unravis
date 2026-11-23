@@ -113,8 +113,10 @@ type ConnConfig struct {
 	// login.go) and allows a server on another machine. TLS stays on.
 	Login *Login
 	// TrustServerCertificate accepts an unverified certificate. It is honoured
-	// ONLY with a Login and no trust anchor, is the owner's explicit choice, and
-	// still encrypts the link (it does not stop an active man-in-the-middle).
+	// ONLY with a Login and no trust anchor, and is the owner's explicit choice.
+	// It encrypts the link but does not prove who answers: on a remote server
+	// anyone on the network path could read the login, so it is for a server
+	// the owner knows and a network the owner trusts.
 	TrustServerCertificate bool
 }
 
@@ -197,7 +199,8 @@ func connDSN(cfg ConnConfig) (string, error) {
 		if t.port != 0 {
 			u.Host = net.JoinHostPort(t.host, strconv.Itoa(t.port))
 		} else if strings.Contains(t.host, ":") {
-			u.Host = "[" + t.host + "]"
+			// An IPv6 literal must carry a port for the driver to read it as an address.
+			u.Host = net.JoinHostPort(t.host, "1433")
 		}
 		if t.instance != "" {
 			u.Path = "/" + t.instance

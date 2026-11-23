@@ -1018,6 +1018,60 @@ func (m *SQLManager) EnableSQL(cfg Config, configPath string) error {
 	return nil
 }
 
+// ConfirmLoginDir proves that the SQL data folder a saved login would go into is the one install-sql made and locked, and returns it.
+// A saved login is sealed with the machine key, so the folder's access list is its only protection: the folder is taken from the admin-locked
+// install record (never from a settings file alone), the settings file is proved administrator-locked, and the folder's lock is written again
+// before anything is saved into it. Any doubt refuses. It never starts, stops or changes the service.
+func (m *SQLManager) ConfirmLoginDir(cfg Config, configPath string) (string, error) {
+	if err := cfg.Validate(); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(configPath) == "" || !filepath.IsAbs(configPath) {
+		return "", &InstallError{Reason: ReasonOther, Message: "The SQL service needs the absolute settings-file path it was installed with (--config)."}
+	}
+	if !m.Env.IsAdmin() {
+		return "", msgNoAdmin()
+	}
+	st, serr := m.Svc.State(SQLServiceName)
+	if serr != nil {
+		return "", &InstallError{Reason: ReasonOther, Message: "Could not ask Windows about the SQL service.", Cause: serr}
+	}
+	if st == SvcNotInstalled {
+		return "", ErrNotSQLInstalled
+	}
+	progDir, perr := m.Env.ProgramDir()
+	if perr != nil {
+		return "", &InstallError{Reason: ReasonOther, Message: "Could not find the Program Files folder.", Cause: perr}
+	}
+	markerPath := sqlInstallMarkerPath(progDir)
+	if verr := verifySQLConfigFile(m.Env, markerPath); verr != nil {
+		return "", &InstallError{Reason: ReasonOther, Message: "The SQL service install record is not locked to administrators, so nothing was saved. Re-run install-sql.", Cause: verr}
+	}
+	installedFolder, merr := readSQLInstallMarker(markerPath)
+	if merr != nil {
+		return "", &InstallError{Reason: ReasonOther, Message: "The SQL service install record could not be read, so nothing was saved. Re-run install-sql.", Cause: merr}
+	}
+	if cfg.Folder != installedFolder {
+		return "", &InstallError{Reason: ReasonOther, Message: "The settings file does not match the folder the SQL service was installed with. Re-run install-sql."}
+	}
+	if verr := verifySQLConfigFile(m.Env, configPath); verr != nil {
+		return "", &InstallError{Reason: ReasonOther, Message: "The settings file for the SQL service is not locked to administrators, so nothing was saved. Re-run install-sql.", Cause: verr}
+	}
+	sec, ok := m.Env.(sqlDirSecurer)
+	if !ok {
+		return "", &InstallError{Reason: ReasonOther, Message: "This program cannot lock the SQL data folder on this system."}
+	}
+	sid, serr := sqlServiceSID(SQLServiceName)
+	if serr != nil {
+		return "", &InstallError{Reason: ReasonOther, Message: "Could not work out the SQL service account.", Cause: serr}
+	}
+	dir := SQLDataDir(cfg.Folder)
+	if serr := sec.SecureSQLDir(dir, sid); serr != nil {
+		return "", &InstallError{Reason: ReasonFolder, Message: "The SQL data folder could not be confirmed as locked for the SQL service only.", Cause: serr}
+	}
+	return dir, nil
+}
+
 // PublishSQLStopped writes the C11 off status into <folder>\sql\status.json so
 // a clean stop or remove never leaves the host advertising an old enabled:true
 // record (W8-04). The public field set stays exactly {enabled,state,lastOK,

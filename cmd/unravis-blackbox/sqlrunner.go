@@ -132,16 +132,18 @@ var loginProtector = func() (sealedfile.Protector, error) { return sealedfile.Lo
 // error: it never falls back to Windows sign-in by surprise.
 func sqlConnFor(dir string, p blackbox.Probe, prot func() (sealedfile.Protector, error)) (bbsql.ConnConfig, error) {
 	base := sqlConnConfig(p)
-	if !bbsql.HasLogin(dir) {
-		return base, nil
-	}
 	pr, err := prot()
 	if err != nil {
-		pr = nil // LoadLogin turns a missing protector into the fixed error
+		pr = nil // LoadLogin turns a missing protector into the fixed error when a login file is there
 	}
-	s, _, err := bbsql.LoadLogin(dir, pr)
+	// LoadLogin alone decides: "not there" is the only answer that means Windows sign-in. A file that is there but cannot be checked or read
+	// (access denied, a sharing violation, a damaged file) is an error, never a fall back.
+	s, found, err := bbsql.LoadLogin(dir, pr)
 	if err != nil {
 		return bbsql.ConnConfig{}, err
+	}
+	if !found {
+		return base, nil
 	}
 	return s.Conn(base), nil
 }

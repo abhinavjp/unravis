@@ -8,7 +8,7 @@ package main
 // fixed reason and a fixed sentence. The login arrives either on standard
 // input (an administrator at a console) or in a short-lived file that Unravis
 // made and hashed before the permission prompt (--login-file with
-// --login-sha256). The file is wiped and removed as soon as it is read.
+// --login-sha256). The file is only read here; Unravis removes it.
 
 import (
 	"bytes"
@@ -81,11 +81,16 @@ func (d deps) readLoginInput(file, sha string, stdin bool) ([]byte, error) {
 		if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxLoginInput {
 			return nil, loginErr(reasonLoginInvalid)
 		}
-		b, err := os.ReadFile(file) //nolint:gosec // the path is the one Unravis made; the hash below binds the content
-		// Wipe, then remove: the file existed only for this call.
-		_ = os.WriteFile(file, make([]byte, len(b)), 0o600)
-		_ = os.Remove(file)
+		// This program only READS the file: it never writes or deletes a path it was handed (a path in a folder an ordinary user can change
+		// could be swapped for a link). The hash binds the content, so a swapped file is refused; Unravis, which made the file, removes it.
+		f, err := os.Open(file) //nolint:gosec // the path Unravis made; the hash below binds the content
 		if err != nil {
+			return nil, loginErr(reasonLoginInvalid)
+		}
+		b, err := io.ReadAll(io.LimitReader(f, maxLoginInput+1))
+		_ = f.Close()
+		if err != nil || len(b) > maxLoginInput {
+			wipe(b)
 			return nil, loginErr(reasonLoginInvalid)
 		}
 		sum := sha256.Sum256(b)
@@ -115,6 +120,9 @@ func wipe(b []byte) {
 	}
 }
 
+// sqlLoginDir is the SQL data folder a login may be saved into or removed from. The administrator check comes first; then the folder is
+// proved to be the one install-sql made and locked (d.confirmDir, normally SQLManager.ConfirmLoginDir). A settings path an ordinary user
+// handed in cannot point the login at an open folder: the folder comes from the admin-locked install record.
 func (d deps) sqlLoginDir(configPath string) (string, error) {
 	if !d.sqlMgr.Env.IsAdmin() {
 		return "", blackbox.ErrNotAdmin
@@ -123,7 +131,10 @@ func (d deps) sqlLoginDir(configPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return blackbox.SQLDataDir(cfg.Folder), nil
+	if d.confirmDir != nil {
+		return d.confirmDir(cfg, configPath)
+	}
+	return d.sqlMgr.ConfirmLoginDir(cfg, configPath)
 }
 
 func runSetSQLLogin(a answer, d deps, configPath, file, sha string, stdin bool) int {
@@ -168,5 +179,5 @@ func runClearSQLLogin(a answer, d deps, configPath string) int {
 	if err := bbsql.RemoveLogin(dir); err != nil {
 		return a.failLogin(reasonLoginSave)
 	}
-	return a.ok("The saved SQL login is removed. The SQL service goes back to Windows sign-in on the next start.", map[string]any{"saved": false})
+	return a.ok("The saved SQL login is removed. Restart the SQL service (enable-sql) to go back to Windows sign-in; until then it keeps using the old login.", map[string]any{"saved": false})
 }

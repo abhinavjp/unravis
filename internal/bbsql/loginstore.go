@@ -95,7 +95,7 @@ func LoadLogin(dir string, p sealedfile.Protector) (s StoredLogin, found bool, e
 	path := loginPath(dir)
 	fi, serr := os.Lstat(path)
 	if errors.Is(serr, os.ErrNotExist) {
-		return s, false, nil
+		return s, false, nil // the only answer that means "no login saved"
 	}
 	if serr != nil || !fi.Mode().IsRegular() || fi.Size() > maxLoginFile || p == nil {
 		return s, true, errLoginUnreadable
