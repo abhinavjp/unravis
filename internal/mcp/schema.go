@@ -35,6 +35,7 @@ func object(properties map[string]any, required ...string) map[string]any {
 func textSchema(description string) map[string]any {
 	return map[string]any{"type": "string", "description": description}
 }
+
 // Catalog returns a copy of the tool definitions the server advertises (name, description, inputSchema, annotations), for readers that
 // describe them (the command line's schema command). Changing the copy changes nothing.
 func Catalog() []map[string]any {
