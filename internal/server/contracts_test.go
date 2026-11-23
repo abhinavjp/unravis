@@ -122,7 +122,7 @@ func TestWireContracts(t *testing.T) {
 			path := filepath.Join(contractsDir, "fixtures", c.name+".json")
 			want := pretty(t, live)
 			if update {
-				if err := os.WriteFile(path, want, 0o644); err != nil {
+				if err := os.WriteFile(path, want, 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -145,7 +145,7 @@ func TestWireContracts(t *testing.T) {
 // TestWireContractsCatchDrift proves the schemas have teeth: a renamed, dropped, extra or wrongly typed field is refused.
 func TestWireContractsCatchDrift(t *testing.T) {
 	info := compileContract(t, "info")
-	golden, err := os.ReadFile(filepath.Join(contractsDir, "fixtures", "info.demo.json")) //nolint:gosec // a fixed fixtures folder
+	golden, err := os.ReadFile(filepath.Join(contractsDir, "fixtures", "info.demo.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
