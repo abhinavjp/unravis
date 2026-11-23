@@ -226,6 +226,38 @@
       ]
     },
     {
+      "id": "x-all-slowest-loaded",
+      "phase": "X",
+      "note": "All operations, Slowest tab with the exact time windows open and one window picked with \"Inspect window\", so its slowest requests (and their Nearby activity buttons) are listed (a window keeps the page short: the 50 slowest of the whole comparison make the screen too tall for a picture).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"All operations\"s]"
+        },
+        {
+          "waitFor": "role=tab[name=\"Failures\"s]"
+        },
+        {
+          "click": "role=tab[name=\"Slowest\"s]"
+        },
+        {
+          "click": "summary:has-text(\"Exact time windows\")"
+        },
+        {
+          "waitFor": "role=button[name=/^Inspect window for/] >> nth=0"
+        },
+        {
+          "click": "role=button[name=/^Inspect window for/] >> nth=4"
+        },
+        {
+          "waitFor": "role=button[name=/^Nearby activity for/] >> nth=0"
+        }
+      ]
+    },
+    {
       "id": "x-all-breakdown",
       "phase": "X",
       "note": "All operations, Breakdown tab.",

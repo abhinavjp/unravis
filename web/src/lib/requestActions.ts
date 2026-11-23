@@ -1,14 +1,18 @@
 import type { RequestRecord } from './types';
 import { formatTime } from './time';
+import { chartRange } from './chartTime';
 
 // The names of the two buttons at the end of a row of the request list (All operations). The visible words come first (WCAG label in name), then the
 // request they belong to: its API, the time it started to the millisecond, the source it was read from and the record id, so that two rows never read
 // the same ("Nearby activity" twice in a column tells a screen reader user nothing about which call it opens). The id is what makes the name unique on live
 // data: the same API from the same source can start in the same millisecond, a list can span days (the clock time repeats) and the hour a clock change
 // repeats has the same clock time twice. The record id is what the old name of Inspect held.
+// The same names are used by the slowest-request list of the Slowest tab (TrafficSlowness: "Nearby activity") and its "Inspect window" buttons are named by the
+// time window they open (windowInspectName), since a window belongs to the whole comparison, not to one source.
 export const REQUEST_ACTION_TEXT = {
   nearby: 'Nearby activity',
   inspect: 'Inspect',
+  inspectWindow: 'Inspect window',
   loading: 'Loading…',
   unknownTime: 'unknown time'
 } as const;
@@ -28,3 +32,9 @@ export const nearbyActivityName = (row: Named, zone: string, source = ''): strin
 /** While the record loads the button shows "Loading…", so the name starts with those words too. */
 export const inspectName = (row: Named, zone: string, loading = false, source = ''): string =>
   `${loading ? REQUEST_ACTION_TEXT.loading + ' record' : REQUEST_ACTION_TEXT.inspect + ' record'} for ${requestLabel(row, zone, source)}`;
+
+type Window = { start: number; end: number; partial?: boolean };
+
+/** "Inspect window for 20 Oct 08:00:00 to 08:05:00 UTC (partial)": the window the row of the table of exact time windows shows (its start and end in the table's zone, the zone named once; a clock change names the zone at each end). Every window of one list starts at a different time, so no two names are the same. */
+export const windowInspectName = (row: Window, zone: string): string =>
+  `${REQUEST_ACTION_TEXT.inspectWindow} for ${chartRange(row.start, row.end, zone)}${row.partial ? ' (partial)' : ''}`;
