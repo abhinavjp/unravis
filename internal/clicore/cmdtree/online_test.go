@@ -315,7 +315,7 @@ func TestRequestInputs(t *testing.T) {
 	u16 := func(s string) []byte {
 		b := []byte{0xFF, 0xFE}
 		for _, c := range utf16.Encode([]rune(s)) {
-			b = append(b, byte(c), byte(c>>8))
+			b = append(b, byte(c&0xFF), byte((c>>8)&0xFF))
 		}
 		return b
 	}
@@ -457,7 +457,7 @@ func TestDefaultTimeoutOfCompare(t *testing.T) {
 	o := newOwner(t, nil)
 	deadline := func() float64 { s := o.opsSeen(); return s[len(s)-1]["deadlineMs"].(float64) }
 	o.run(append([]string{"audit", "compare", "--json"}, o.window()...)...)
-	if deadline() != float64(CompareTimeout.Milliseconds()) {
+	if deadline() != 330000 { // five minutes and thirty seconds, written out so the test cannot follow a changed constant
 		t.Errorf("compare: %v", deadline())
 	}
 	o.run("sources", "list", "--json")
@@ -494,8 +494,8 @@ func TestAttachFailures(t *testing.T) {
 	// a locator of a newer format
 	o = newOwner(t, nil)
 	p := locator.FilePath(o.runDir, false)
-	b, _ := os.ReadFile(p) //nolint:gosec // a file of this test
-	_ = os.WriteFile(p, bytes.Replace(b, []byte(`"version":2`), []byte(`"version":9`), 1), 0o600)
+	b, _ := os.ReadFile(p)                                                                        //nolint:gosec // a file of this test
+	_ = os.WriteFile(p, bytes.Replace(b, []byte(`"version":2`), []byte(`"version":9`), 1), 0o600) //nolint:gosec // a file of this test
 	if r := o.run("sources", "list", "--json"); r.code != 5 || errCode(t, r) != "VERSION_INCOMPATIBLE" {
 		t.Errorf("newer locator: %+v", r)
 	}

@@ -36,6 +36,9 @@ func Default(exe func() (string, error), userAgent string) clicore.Attacher {
 			if err != nil {
 				return nil, err
 			}
+			if real, rerr := filepath.EvalSymlinks(self); rerr == nil { // junctions and 8.3 short names would not match the server's image path
+				self = real
+			}
 			install := InstallDir(self)
 			var session uint32
 			if err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &session); err != nil {

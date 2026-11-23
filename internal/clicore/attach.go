@@ -73,7 +73,7 @@ func (a Attacher) Attach(ctx context.Context) (*Session, *Error) {
 	case errors.Is(err, locator.ErrNoLocator):
 		return nil, NewError(CodeAppNotRunning, "Unravis is not running. Start the app and try again.", "")
 	case errors.Is(err, locator.ErrUnknownSchema):
-		return nil, NewError(CodeVersionIncompatible, "Update Unravis: this command line is older than the running app.", "")
+		return nil, NewError(CodeVersionIncompatible, "This command line and the running Unravis do not match. Update Unravis.", "")
 	case err != nil:
 		return nil, NewError(CodeEndpointUnavailable, "The file that says where Unravis runs could not be read.", "Restart Unravis.")
 	}
@@ -81,9 +81,12 @@ func (a Attacher) Attach(ctx context.Context) (*Session, *Error) {
 		return nil, NewError(CodeStaleLocator, "Unravis is not running (the last session ended). Start the app and try again.", "")
 	}
 	s := &Session{a: a, rec: rec}
-	body, _, derr := s.get(ctx, "/cli/v1/hello")
+	body, status, derr := s.get(ctx, "/cli/v1/hello")
 	if derr != nil {
 		return nil, derr
+	}
+	if status != http.StatusOK {
+		return nil, NewError(CodeEndpointUntrusted, "Unravis did not prove who it is. Restart Unravis.", "")
 	}
 	if e := s.checkHello(body); e != nil {
 		return nil, e
@@ -121,6 +124,9 @@ func (s *Session) send(req *http.Request, afterWork bool) ([]byte, int, *Error) 
 	ctx := req.Context()
 	conn, err := s.a.Dial(ctx, s.rec)
 	if err != nil {
+		if ctx.Err() != nil { // the caller's own end (Ctrl+C, the deadline) wins over what the dial wrapped (a busy pipe)
+			return nil, 0, dialError(ctx.Err())
+		}
 		return nil, 0, dialError(unwrapAll(err))
 	}
 	defer func() { _ = conn.Close() }()
@@ -179,8 +185,7 @@ func unwrapAll(err error) error {
 func (s *Session) checkHello(body []byte) *Error {
 	untrusted := NewError(CodeEndpointUntrusted, "Unravis did not prove who it is. Restart Unravis.", "")
 	var h Hello
-	dec := json.NewDecoder(bytes.NewReader(body))
-	if dec.Decode(&h) != nil || h.V != 1 {
+	if json.Unmarshal(body, &h) != nil || h.V != 1 { // Unmarshal refuses text after the object
 		return untrusted
 	}
 	if h.PID != s.rec.PID {
@@ -281,7 +286,12 @@ func (s *Session) Do(ctx context.Context, c Call) (*Result, *Error) {
 		if a.Error == nil {
 			return nil, NewErrorAfterWork(CodeInternal, "Unravis failed without saying why.", "")
 		}
-		return nil, NewErrorAfterWork(ParseCode(a.Error.Code), clip(a.Error.Message), clip(a.Error.Action))
+		// An error the owner sent keeps the retry rule of its code (D27: a busy owner can be asked again). The output contract strips it for
+		// a live query, which a repeat would run again.
+		code := ParseCode(a.Error.Code)
+		e := NewErrorAfterWork(code, clip(a.Error.Message), clip(a.Error.Action))
+		e.Retryable = Retryable(code, false)
+		return nil, e
 	}
 	if a.Meta.Coverage != "complete" && a.Meta.Coverage != "partial" {
 		a.Meta.Coverage = "complete"

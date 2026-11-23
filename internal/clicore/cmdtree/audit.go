@@ -1,6 +1,7 @@
 package cmdtree
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -114,26 +115,28 @@ func buildCompare(c *cobra.Command, v compareFlagValues) (json.RawMessage, error
 	if len(v.sources) == 0 {
 		return nil, usage("--source is required (give it once for each source).")
 	}
-	q := map[string]any{"sourceIds": v.sources, "kind": v.kind, "outcome": v.outcome, "metric": v.metric, "bucketSeconds": v.bucket}
-	for _, p := range []struct{ flag, field, val string }{{"start", "start", v.start}, {"end", "end", v.end}, {"baseline-start", "baselineStart", v.bStart}, {"baseline-end", "baselineEnd", v.bEnd}} {
+	// Every key comes from compareFlags, the map that TestFlagsMatchToolSchemas checks against the tool's schema.
+	q := map[string]any{compareFlags["source"]: v.sources, compareFlags["kind"]: v.kind, compareFlags["outcome"]: v.outcome,
+		compareFlags["metric"]: v.metric, compareFlags["bucket-seconds"]: v.bucket}
+	for _, p := range []struct{ flag, val string }{{"start", v.start}, {"end", v.end}, {"baseline-start", v.bStart}, {"baseline-end", v.bEnd}} {
 		t, err := stamp(p.flag, p.val)
 		if err != nil {
 			return nil, err
 		}
-		q[p.field] = t
+		q[compareFlags[p.flag]] = t
 	}
-	for _, p := range []struct{ field, val string }{{"controller", v.controller}, {"action", v.action}, {"operation", v.operation}, {"userAgentContains", v.agent},
-		{"urlContains", v.url}, {"auditId", v.auditID}, {"completion", v.completion}} {
+	for _, p := range []struct{ flag, val string }{{"controller", v.controller}, {"action", v.action}, {"operation", v.operation}, {"user-agent-contains", v.agent},
+		{"url-contains", v.url}, {"audit-id", v.auditID}, {"completion", v.completion}} {
 		if p.val != "" {
-			q[p.field] = p.val
+			q[compareFlags[p.flag]] = p.val
 		}
 	}
 	for _, p := range []struct {
-		field string
-		val   []string
-	}{{"uiVersions", v.uiVersions}, {"userIps", v.userIPs}, {"statusCodes", v.statusCodes}} {
+		flag string
+		val  []string
+	}{{"ui-version", v.uiVersions}, {"user-ip", v.userIPs}, {"status-code", v.statusCodes}} {
 		if len(p.val) > 0 {
-			q[p.field] = p.val
+			q[compareFlags[p.flag]] = p.val
 		}
 	}
 	if len(v.userIDs) > 0 {
@@ -145,14 +148,14 @@ func buildCompare(c *cobra.Command, v compareFlagValues) (json.RawMessage, error
 			}
 			ids = append(ids, n)
 		}
-		q["userIds"] = ids
+		q[compareFlags["user-id"]] = ids
 	}
 	args := map[string]any{"query": q}
 	if c.Flags().Changed("limit") {
-		args["limit"] = v.limit
+		args[compareTop["limit"]] = v.limit
 	}
 	if v.sort != "" {
-		args["sort"] = v.sort
+		args[compareTop["sort"]] = v.sort
 	}
 	b, err := json.Marshal(args)
 	if err != nil {
@@ -251,16 +254,16 @@ func (st *state) groupsCmd() *cobra.Command {
 				if v.resultID == "" {
 					return nil, usage("--result-id is required (the id that 'unravis audit compare' printed).")
 				}
-				m := map[string]any{"resultId": v.resultID}
+				m := map[string]any{groupsFlags["result-id"]: v.resultID}
 				if c.Flags().Changed("offset") {
-					m["offset"] = v.offset
+					m[groupsFlags["offset"]] = v.offset
 				}
 				if c.Flags().Changed("limit") {
-					m["limit"] = v.limit
+					m[groupsFlags["limit"]] = v.limit
 				}
-				for k, s := range map[string]string{"search": v.search, "state": v.state, "sort": v.sort} {
+				for flag, s := range map[string]string{"search": v.search, "state": v.state, "sort": v.sort} {
 					if s != "" {
-						m[k] = s
+						m[groupsFlags[flag]] = s
 					}
 				}
 				return json.Marshal(m)
@@ -368,6 +371,10 @@ func (st *state) appCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var none bytes.Buffer // app status takes no arguments, running or not
+			if json.Compact(&none, a) != nil || none.String() != "{}" {
+				return usage("app status takes no arguments.")
+			}
 			statusTable := func(w io.Writer, data json.RawMessage) error {
 				var d struct {
 					Running bool   `json:"running"`
@@ -379,8 +386,11 @@ func (st *state) appCmd() *cobra.Command {
 				if json.Unmarshal(data, &d) != nil {
 					return pretty(w, data)
 				}
-				return clicore.WriteTable(w, []string{"FIELD", "VALUE"}, [][]string{{"running", strconv.FormatBool(d.Running)}, {"owner", d.Owner},
-					{"pid", strconv.Itoa(d.PID)}, {"version", d.Version}, {"state", d.State}})
+				rows := [][]string{{"running", strconv.FormatBool(d.Running)}, {"state", d.State}}
+				if d.Running { // the rest comes from a verified hello
+					rows = append(rows, []string{"owner", d.Owner}, []string{"pid", strconv.Itoa(d.PID)}, []string{"version", d.Version})
+				}
+				return clicore.WriteTable(w, []string{"FIELD", "VALUE"}, rows)
 			}
 			// Asking whether the app runs is not a failure when it does not: say so and exit 0.
 			sess, e := st.attach(st.ctx)

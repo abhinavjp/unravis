@@ -389,7 +389,21 @@ func (st *state) emit(op string, data any, meta clicore.Meta, table func(io.Writ
 	case clicore.ModeJSONL:
 		return clicore.NewError(clicore.CodeUnsupportedFormat, "This command has no JSON Lines form. Use -o json.", "")
 	}
-	return writeErr(table(st.io.Out))
+	err := writeErr(table(st.io.Out))
+	if err == nil {
+		st.notices(meta)
+	}
+	return err
+}
+
+// notices tells a person of a partial result in table mode: the table alone would look complete. It goes to stderr, cleaned.
+func (st *state) notices(meta clicore.Meta) {
+	if meta.Coverage == "partial" {
+		_, _ = io.WriteString(st.io.Err, "unravis: the result is partial.\n")
+	}
+	for _, w := range meta.Warnings {
+		_, _ = io.WriteString(st.io.Err, "unravis: "+clicore.Printable(w)+"\n")
+	}
 }
 
 // writeErr maps a failed write. A reader that closed the pipe (EPIPE; ERROR_BROKEN_PIPE and ERROR_NO_DATA on Windows) stops the program

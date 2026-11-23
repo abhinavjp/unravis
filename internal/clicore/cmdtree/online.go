@@ -77,28 +77,33 @@ func (st *state) runWith(sess *clicore.Session, op string, args json.RawMessage,
 // requestArgs reads --request (a file or "-" for the input) as the arguments of the operation. It checks that the text is one JSON
 // object; the owner checks the rest, field by field. A byte order mark and a UTF-16 file (what PowerShell 5.1 writes with ">") are read.
 func (st *state) requestArgs(path string) (json.RawMessage, error) {
-	var r io.Reader
+	var raw []byte
 	if path == "-" {
-		r = st.io.In
+		var err error
+		if raw, err = st.readAll(st.io.In); err != nil {
+			return nil, err
+		}
 	} else {
+		// Look before opening: a named pipe or a device would block the open past --timeout (and on Windows a \\.\pipe\ path is another program's).
+		if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
+			return nil, usage("The --request file cannot be read.")
+		}
 		f, err := os.Open(path) //nolint:gosec // the file the person named with --request
 		if err != nil {
 			return nil, usage("The --request file cannot be read.")
 		}
 		defer func() { _ = f.Close() }()
-		if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
-			return nil, usage("The --request file cannot be read.")
+		if raw, err = st.readAll(f); err != nil {
+			return nil, err
 		}
-		r = f
 	}
-	b, err := io.ReadAll(io.LimitReader(r, clicore.MaxRequestBytes+1))
-	if err != nil {
-		return nil, usage("The --request input cannot be read.")
+	b, ok := decodeText(raw)
+	if !ok {
+		return nil, usage("The --request input is not valid text (UTF-8 or UTF-16).")
 	}
 	if len(b) > clicore.MaxRequestBytes {
 		return nil, clicore.NewError(clicore.CodeRequestTooLarge, "The request is larger than 1 MiB.", "")
 	}
-	b = decodeText(b)
 	b = bytes.TrimSpace(b)
 	if len(b) == 0 || b[0] != '{' || !json.Valid(b) {
 		return nil, usage("The --request input must be one JSON object.")
@@ -106,14 +111,44 @@ func (st *state) requestArgs(path string) (json.RawMessage, error) {
 	return json.RawMessage(b), nil
 }
 
-// decodeText returns UTF-8 text for UTF-8 (with or without a byte order mark) and for UTF-16 with a byte order mark.
-func decodeText(b []byte) []byte {
+// readAll reads the request input, at most twice the limit (UTF-16 doubles the size of the text), and stops when the command's own
+// context ends: a reader that never answers (a terminal, a stalled pipe) cannot hold the program past --timeout.
+func (st *state) readAll(r io.Reader) ([]byte, error) {
+	type result struct {
+		b   []byte
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		b, err := io.ReadAll(io.LimitReader(r, 2*clicore.MaxRequestBytes+2))
+		ch <- result{b, err}
+	}()
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			return nil, usage("The --request input cannot be read.")
+		}
+		return res.b, nil
+	case <-st.ctx.Done():
+		if errors.Is(st.ctx.Err(), context.DeadlineExceeded) {
+			return nil, clicore.NewError(clicore.CodeTimeout, "The --request input did not arrive in time.", "")
+		}
+		return nil, clicore.NewError(clicore.CodeCanceled, "Canceled.", "")
+	}
+}
+
+// decodeText returns UTF-8 text for UTF-8 (with or without a byte order mark) and for UTF-16 with a byte order mark. ok is false for a
+// UTF-16 text of odd length or with a lone surrogate: it is cut or damaged, and the request is not guessed.
+func decodeText(b []byte) ([]byte, bool) {
 	switch {
 	case bytes.HasPrefix(b, []byte{0xEF, 0xBB, 0xBF}):
-		return b[3:]
+		return b[3:], true
 	case bytes.HasPrefix(b, []byte{0xFF, 0xFE}), bytes.HasPrefix(b, []byte{0xFE, 0xFF}):
 		le := b[0] == 0xFF
 		b = b[2:]
+		if len(b)%2 != 0 {
+			return nil, false
+		}
 		u := make([]uint16, 0, len(b)/2)
 		for i := 0; i+1 < len(b); i += 2 {
 			if le {
@@ -122,9 +157,20 @@ func decodeText(b []byte) []byte {
 				u = append(u, uint16(b[i])<<8|uint16(b[i+1]))
 			}
 		}
-		return []byte(string(utf16.Decode(u)))
+		for i := 0; i < len(u); i++ {
+			switch {
+			case u[i] >= 0xD800 && u[i] < 0xDC00:
+				if i+1 >= len(u) || u[i+1] < 0xDC00 || u[i+1] > 0xDFFF {
+					return nil, false
+				}
+				i++
+			case u[i] >= 0xDC00 && u[i] <= 0xDFFF:
+				return nil, false
+			}
+		}
+		return []byte(string(utf16.Decode(u))), true
 	}
-	return b
+	return b, true
 }
 
 // requestOr returns the --request arguments when given, else build() from the field flags. The two never mix: a field flag next to
@@ -144,6 +190,9 @@ func (st *state) requestOr(c *cobra.Command, fieldFlags []string, build func() (
 // preOnline is the check of the global flags that only the online commands take.
 func (st *state) preOnline(c *cobra.Command) error {
 	online := c.Annotations[onlineAnnotation] == "1"
+	if c.Flags().Changed("request") && st.opts.request == "" {
+		return usage("--request needs a file name, or - for the input.")
+	}
 	if st.opts.request != "" && !online {
 		return usage("--request goes with a command that calls the running app.")
 	}
