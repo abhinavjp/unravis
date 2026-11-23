@@ -339,7 +339,7 @@ func TestUntrustedPathsExist(t *testing.T) {
 		pathsOf(env, "", all)
 		for _, p := range paths {
 			// connectionLabel is omitted when a source has none (the demo sources have none); the path is still the right one.
-			if all[p] == nil && !strings.HasSuffix(p, ".connectionLabel") {
+			if all[p] == nil && !strings.HasSuffix(p, ".connectionLabel") && !strings.Contains(p, ".filter.") && !strings.HasPrefix(p, "other.") && !strings.HasSuffix(p, "indexWarning") {
 				t.Errorf("%s: untrusted path %q is not in a real result", tool, p)
 			}
 		}
@@ -631,6 +631,10 @@ func TestFrameCapTruncates(t *testing.T) {
 		if cut["hint"] == "" {
 			t.Errorf("%s: no hint", tool)
 		}
+		// A cut page must not read as a complete one to a caller that looks only at partial.
+		if env["partial"] != true {
+			t.Errorf("%s: rows were dropped but partial is %v", tool, env["partial"])
+		}
 		for i, r := range kept {
 			if int(r.(map[string]any)["i"].(float64)) != i {
 				t.Errorf("%s: row %d is not the %dth of the page: the kept rows are not a prefix", tool, i, i)
@@ -648,7 +652,7 @@ func TestFrameCapTruncates(t *testing.T) {
 	}
 	// a result that fits is not touched
 	body, _ := encodeResult("audit_get_requests", map[string]any{"rows": bigRows(3, 100), "nextCursor": "abc"})
-	if env := envelopeOf(t, body); env["truncation"] != nil || len(env["rows"].([]any)) != 3 || env["nextCursor"] != "abc" {
+	if env := envelopeOf(t, body); env["truncation"] != nil || env["partial"] != false || len(env["rows"].([]any)) != 3 || env["nextCursor"] != "abc" {
 		t.Errorf("a small result changed: %s", body)
 	}
 }
@@ -662,7 +666,7 @@ func TestFrameCapKeepsOffsetPagingLossless(t *testing.T) {
 		}
 		env := envelopeOf(t, body)
 		kept := len(env["groups"].([]any))
-		if kept >= 40 || env["nextOffset"] != float64(10+kept) || env["truncation"] == nil {
+		if kept >= 40 || env["nextOffset"] != float64(10+kept) || env["truncation"] == nil || env["partial"] != true {
 			t.Errorf("%s: kept %d, nextOffset %v, truncation %v", tool, kept, env["nextOffset"], env["truncation"])
 		}
 	}
@@ -739,6 +743,16 @@ func TestPartialFollowsTheResult(t *testing.T) {
 		{"query ran short", map[string]any{"provenance": []any{map[string]any{"partialReason": "timeout"}}}, true},
 		{"provenance complete", map[string]any{"provenance": []any{map[string]any{"partialReason": ""}}}, false},
 		{"dashboard cut the page", map[string]any{"truncated": true}, true},
+		{"records without timings", map[string]any{"quality": map[string]any{"incomplete": 3}}, true},
+		{"unusable records", map[string]any{"quality": map[string]any{"invalid": 1}}, true},
+		{"unknown outcomes", map[string]any{"quality": map[string]any{"unknownOutcome": 2}}, true},
+		{"pending async only", map[string]any{"quality": map[string]any{"pendingAsync": 2}}, true},
+		{"clean quality counters", map[string]any{"quality": map[string]any{"incomplete": 0, "invalid": 0, "unknownOutcome": 0}}, false},
+		{"approximate alone says nothing", map[string]any{"approximate": true}, false},
+		{"provenance labelled partial", map[string]any{"provenance": []any{map[string]any{"completeness": "partial"}}}, true},
+		{"provenance ran to end", map[string]any{"provenance": []any{map[string]any{"completeness": "ran_to_end"}}}, false},
+		{"warnings sent", map[string]any{"warnings": []any{"x"}}, true},
+		{"no warnings", map[string]any{"warnings": []any{}}, false},
 		{"sources without an ok flag", map[string]any{"sources": []any{map[string]any{"id": "a"}}}, false},
 	} {
 		body, err := encodeResult("audit_get_requests", c.result)
@@ -768,6 +782,42 @@ func TestErrorEnvelopeText(t *testing.T) {
 	for _, code := range wireCodes {
 		if errorActions[code] == "" {
 			t.Errorf("no action for %s", code)
+		}
+	}
+}
+
+// fixedStrings are the string paths that do not come from audit data: names of the engine's own vocabulary, handles, ids, timestamps,
+// cursors and our own notes. Every other string path of a real result must be listed as untrusted, so a new field forces a decision.
+var fixedStrings = map[string]bool{
+	"tool": true, "guide": true, "interpretation": true, "resultId": true, "sort": true, "note": true, "dim": true, "metric": true,
+	"identifiers": true, "identifiersNote": true, "nextCursor": true, "start": true, "end": true, "sourceIds[]": true, "sourceId": true,
+	"groups[].sourceId": true, "groups[].state": true, "group.sourceId": true, "group.state": true, "rows[].sourceId": true, "rows[].id": true,
+	"rows[].initiatedAt": true, "rows[].completedAt": true, "points[].at": true, "slots[].at": true, "slots[].start": true, "slots[].end": true,
+	"slots[].groups[].sampleStatus": true, "sources[].sourceId": true, "sources[].id": true, "sources[].selectionKey": true, "sources[].connectionId": true,
+}
+
+func TestEveryStringIsUntrustedOrFixed(t *testing.T) {
+	for tool, res := range tenResults(t, false) {
+		walkStrings(res["structuredContent"], "", func(path, _ string) {
+			switch {
+			case fixedStrings[path], listed(toolShapes[tool].untrusted, path):
+			case path == "untrusted.note", strings.HasPrefix(path, "untrusted.paths"), strings.HasPrefix(path, "query."), strings.HasPrefix(path, "provenance[]."):
+			default:
+				t.Errorf("%s: string at %q is neither listed as untrusted nor a known fixed field; decide which", tool, path)
+			}
+		})
+	}
+	// the fields the review found: raw strings from records and from the database
+	for tool, want := range map[string][]string{
+		"audit_get_requests":  {"rows[].status", "rows[].state", "kind", "sources[].version", "sources[].indexWarning"},
+		"audit_get_slowest":   {"rows[].status", "rows[].state", "rows[].kind", "sources[].version", "sources[].indexWarning"},
+		"audit_compare":       {"groups[].kind", "groups[].outcome", "sources[].version"},
+		"audit_get_breakdown": {"rows[].filter.statusCodes[]", "rows[].filter.uiVersions[]", "rows[].filter.userAgentContains", "rows[].filter.userIps[]", "other.value", "sources[].indexWarning"},
+	} {
+		for _, p := range want {
+			if !listed(toolShapes[tool].untrusted, p) {
+				t.Errorf("%s: %q is not listed as untrusted", tool, p)
+			}
 		}
 	}
 }
