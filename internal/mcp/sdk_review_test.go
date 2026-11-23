@@ -95,7 +95,7 @@ func TestSDKValidJSONKeepsSession(t *testing.T) {
 			if c.want != "" {
 				if first == nil {
 					t.Errorf("%s: %q got no answer, want %s", mode, c.name, c.want)
-				} else if class := answerClass(first); class != c.want && !(c.want == "result" && class == "empty") {
+				} else if class := answerClass(first); class != c.want && (c.want != "result" || class != "empty") {
 					t.Errorf("%s: %q answered %s, want %s", mode, c.name, class, c.want)
 				}
 			}
