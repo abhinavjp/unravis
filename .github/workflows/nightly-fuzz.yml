@@ -44,6 +44,8 @@ jobs:
           - { target: FuzzMask, pkg: ./internal/secretscrub }
           - { target: FuzzMaskCanary, pkg: ./internal/secretscrub }
           - { target: FuzzMaskBounds, pkg: ./internal/secretscrub }
+          - { target: FuzzOfflineManifest, pkg: ./internal/clioffline }
+          - { target: FuzzOfflineFile, pkg: ./internal/clioffline }
     steps:
       - name: Check out the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
