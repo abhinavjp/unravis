@@ -13,7 +13,7 @@ import (
 func TestFileSHA256HexOfALargeFile(t *testing.T) {
 	body := strings.Repeat("recorder", 1<<20) // 8 MiB
 	p := filepath.Join(t.TempDir(), "prog.exe")
-	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256([]byte(body))

@@ -60,7 +60,7 @@ func TestFileHasAllNeedsEveryTextAndFindsThemAcrossPieces(t *testing.T) {
 	big := strings.Repeat("x", 3<<20)
 	write := func(name, body string) string {
 		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		return p
