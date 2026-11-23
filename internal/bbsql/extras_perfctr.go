@@ -62,7 +62,8 @@ WHERE counter_name IN (N'Page life expectancy', N'Buffer cache hit ratio', N'Buf
   N'Longest Transaction Running Time', N'Snapshot Transactions', N'Errors/sec',
   N'Transactions/sec', N'Active Transactions', N'Log Flushes/sec', N'Log Bytes Flushed/sec', N'Log Growths', N'Log Shrinks',
   N'Percent Log Used', N'Data File(s) Size (KB)', N'Log File(s) Size (KB)', N'Log File(s) Used Size (KB)')
-ORDER BY pc_inst, pc_object, pc_counter, pc_db /* unravis:bb:perfctr */`
+  AND (RTRIM(instance_name) = N'' OR RTRIM(instance_name) = N'_Total' OR DB_ID(RTRIM(instance_name)) IS NOT NULL)
+ORDER BY pc_inst, pc_db, pc_object, pc_counter /* unravis:bb:perfctr */`
 
 // perfKind says how a counter is turned into a number.
 type perfKind uint8
@@ -99,6 +100,12 @@ type perfDef struct {
 	key             string // short key written to the sample
 	base            string // ratio only: the base counter's name (same object)
 }
+
+// Truncation. Rows are ordered server-wide first, then by database id, so a
+// server with more databases than the cap loses whole databases at the tail,
+// never one counter for every database. The WHERE keeps an instance row only
+// when it is empty, '_Total' or a real database, which drops lock types, buffer
+// nodes and the like in SQL instead of spending the row cap on them.
 
 // perfDefs is the fixed counter list. The key is what the charts read: keep it
 // stable. The order is the output order.
@@ -213,17 +220,22 @@ func (perfctrSampler) Interval() time.Duration { return ExtraEvery30s }
 
 func (s *perfctrSampler) Observe(o Observation) { s.obs = o }
 
-// typeFor is the cntr_type the table expects for a kind.
-func typeFor(k perfKind) int64 {
+// typeOK reports whether cntr_type is one the table accepts for a kind. A
+// delta kind accepts both the per-second type and the raw type: both are
+// cumulative since start, and which one a given counter reports (for example
+// the lock wait time) is the kind of detail a live check settles. A gauge,
+// ratio or base must match exactly, because a wrong guess there would change
+// the meaning of the number.
+func typeOK(k perfKind, t int64) bool {
 	switch k {
-	case pcRate:
-		return pcTypeRate
+	case pcRate, pcCum:
+		return t == pcTypeRate || t == pcTypeValue
 	case pcRatio:
-		return pcTypeRatio
+		return t == pcTypeRatio
 	case pcBase:
-		return pcTypeBase
+		return t == pcTypeBase
 	default:
-		return pcTypeValue
+		return t == pcTypeValue
 	}
 }
 
@@ -243,7 +255,7 @@ func (s *perfctrSampler) Decode(rows []Row) (any, bool, error) {
 			continue
 		}
 		d := perfDefs[i]
-		if r.Type != typeFor(d.kind) {
+		if !typeOK(d.kind, r.Type) {
 			continue
 		}
 		k := perfKey{def: i, db: -1}

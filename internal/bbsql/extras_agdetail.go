@@ -11,8 +11,9 @@
 //
 // Gated by bb:hadr exactly like bb:ag: an instance without availability groups
 // never has the DMV queried. Rows are grouped by database and by local/remote,
-// so a primary with several secondaries gets the worst queue and rate of its
-// remotes in one row; no replica id, server or availability group name is ever
+// so a primary with several secondaries gets the biggest queue and the slowest
+// rate of its remotes in one row (two rows per database: 64 databases fit the
+// cap); no replica id, server or availability group name is ever
 // selected (the lint refuses availability_replicas, and the replica id is not
 // in the select list).
 package bbsql
@@ -29,9 +30,9 @@ const stmtAGDetail = setPrefix + `SELECT TOP 129 database_id,
   MIN(synchronization_health) AS ag_health,
   MAX(CASE WHEN is_suspended = 1 THEN 1 ELSE 0 END) AS ag_suspended,
   MAX(log_send_queue_size) AS ag_send_q_kb,
-  MAX(log_send_rate) AS ag_send_rate_kbs,
+  MIN(log_send_rate) AS ag_send_rate_kbs,
   MAX(redo_queue_size) AS ag_redo_q_kb,
-  MAX(redo_rate) AS ag_redo_rate_kbs
+  MIN(redo_rate) AS ag_redo_rate_kbs
 FROM sys.dm_hadr_database_replica_states
 GROUP BY database_id, is_local
 ORDER BY database_id, is_local /* unravis:bb:agdetail */`
@@ -41,7 +42,7 @@ ORDER BY database_id, is_local /* unravis:bb:agdetail */`
 type AGDetail struct {
 	DatabaseID uint32  `json:"databaseId"`
 	Local      uint8   `json:"agLocal"`
-	Health     uint8   `json:"agHealth"`
+	Health     *uint8  `json:"agHealth,omitempty"`
 	Suspended  uint8   `json:"agSuspended"`
 	SendQKb    *uint64 `json:"agSendQKb,omitempty"`
 	SendRate   *uint64 `json:"agSendRateKbs,omitempty"`
@@ -66,7 +67,7 @@ func (agDetailSampler) Decode(rows []Row) (any, bool, error) {
 		return nil, false, err
 	}
 	for _, r := range out {
-		if r.Local > 1 || r.Suspended > 1 || r.Health > 2 {
+		if r.Local > 1 || r.Suspended > 1 || (r.Health != nil && *r.Health > 2) {
 			return nil, false, errEnumDomain
 		}
 	}
@@ -84,7 +85,7 @@ func init() {
 		"ag_redo_q_kb": "agRedoQKb", "ag_redo_rate_kbs": "agRedoRateKbs",
 	})
 	registerExtraRowSpec(reflect.TypeOf(AGDetail{}), rowSpec{cols: map[string]colRule{
-		"databaseId": req(), "agLocal": req(), "agHealth": req(), "agSuspended": req(),
+		"databaseId": req(), "agLocal": req(), "agHealth": reqNull(), "agSuspended": req(),
 		"agSendQKb": reqNull(), "agSendRateKbs": reqNull(), "agRedoQKb": reqNull(), "agRedoRateKbs": reqNull(),
 	}})
 	RegisterExtraFactory(TierEverything, func() Sampler { return &agDetailSampler{} })

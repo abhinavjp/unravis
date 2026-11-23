@@ -475,7 +475,7 @@ func TestPerfctrStatementMatchesTable(t *testing.T) {
 	if !ok {
 		t.Fatal("no IN list")
 	}
-	list, _, _ = strings.Cut(list, ")\nORDER BY")
+	list, _, _ = strings.Cut(list, ")\n  AND (")
 	names := map[string]bool{}
 	for _, m := range regexp.MustCompile(`N'([^']+)'`).FindAllStringSubmatch(list, -1) {
 		names[m[1]] = true
@@ -839,4 +839,67 @@ func TestBatchBExtrasAreNeverSentUnderStandard(t *testing.T) {
 		}
 	}
 	_ = fmt.Sprint(sent)
+}
+
+// TestPerfctrDeltaKindsAcceptEitherCumulativeType: a cumulative counter is
+// written as a delta whether the engine reports it as 272696576 or 65792; a
+// gauge still has to be 65792.
+func TestPerfctrDeltaKindsAcceptEitherCumulativeType(t *testing.T) {
+	mk := func(v, typ int64) []Row {
+		return []Row{
+			xbPC("Locks", "Lock Wait Time (ms)", "_Total", nil, v, typ),
+			xbPC("Buffer Manager", "Page life expectancy", "", nil, 9, pcTypeRate),
+		}
+	}
+	for _, typ := range []int64{pcTypeRate, pcTypeValue} {
+		s := xbSampler(t, "perfctr")
+		xbPerf(t, s, 1, mk(100, typ))
+		got := xbPerf(t, s, 1, mk(130, typ))
+		if got["lk.waitms"] != 30 {
+			t.Errorf("type %d: lock wait delta = %v", typ, got)
+		}
+		if _, ok := got["bm.ple"]; ok {
+			t.Errorf("a gauge with the wrong type was kept")
+		}
+	}
+}
+
+// TestPerfctrOrderAndFilterKeepWholeDatabases pins the SQL that decides what a
+// truncated reply loses: server-wide rows first, then databases by id, and only
+// instances that are empty, _Total or a real database.
+func TestPerfctrOrderAndFilterKeepWholeDatabases(t *testing.T) {
+	if !strings.Contains(stmtPerfctr, "ORDER BY pc_inst, pc_db, pc_object, pc_counter") {
+		t.Errorf("perfctr must order by instance kind, then database id")
+	}
+	if !strings.Contains(stmtPerfctr, "DB_ID(RTRIM(instance_name)) IS NOT NULL)") {
+		t.Errorf("perfctr must drop instances that are not a database in SQL")
+	}
+}
+
+// TestBatchBStatementsGuardTimeAndBlockers pins the SQL fixes found in review:
+// no negative ages across a clock change, and a task's own id or a negative
+// sentinel is never counted as a blocker.
+func TestBatchBStatementsGuardTimeAndBlockers(t *testing.T) {
+	for _, id := range []string{"bb:trans", "bb:conns", "bb:facts"} {
+		if !strings.Contains(stmtOf(id), "<= GETDATE()") {
+			t.Errorf("%s: DATEDIFF is not guarded against a clock that moved back", id)
+		}
+	}
+	w := stmtOf("bb:waiting")
+	if strings.Contains(w, "blocking_session_id IS NOT NULL") || strings.Count(w, "blocking_session_id > 0 AND blocking_session_id <> session_id") != 3 {
+		t.Errorf("bb:waiting must count only real blockers (positive id, not the task's own)")
+	}
+	if strings.Contains(stmtOf("bb:facts"), "SERVERPROPERTY(N'IsHadrEnabled') AS int) AS") {
+		t.Errorf("facts: a NULL IsHadrEnabled must not reach a non-null column")
+	}
+}
+
+func TestAGDetailNullHealthIsAbsent(t *testing.T) {
+	got, _, err := xbSampler(t, "agdetail").Decode([]Row{xbAGRow(5, 0, "ag_health", nil)})
+	if err != nil {
+		t.Fatalf("a NULL health must decode: %v", err)
+	}
+	if want := `[{"databaseId":5,"agLocal":0,"agSuspended":0}]`; xbMarshal(t, got) != want {
+		t.Errorf("agdetail = %s", xbMarshal(t, got))
+	}
 }

@@ -22,7 +22,7 @@ import (
 const CapTrans = CapSingleRow
 
 const stmtTrans = setPrefix + `SELECT COUNT(*) AS trans_open,
-  ISNULL(MAX(DATEDIFF(second, transaction_begin_time, GETDATE())), 0) AS trans_oldest_sec,
+  ISNULL(MAX(CASE WHEN transaction_begin_time <= GETDATE() THEN DATEDIFF(second, transaction_begin_time, GETDATE()) END), 0) AS trans_oldest_sec,
   ISNULL(SUM(CASE WHEN transaction_state = 7 THEN 1 ELSE 0 END), 0) AS trans_rolling_back
 FROM sys.dm_tran_active_transactions
 WHERE transaction_type IN (1, 4) /* unravis:bb:trans */`

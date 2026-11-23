@@ -20,6 +20,9 @@
 // STATE on SQL Server 2022 and later), VIEW ANY DATABASE for the database list.
 // Both are inside the C8 ceiling.
 //
+// An option SQL Server reports as NULL is written as 255 (unreadable), never as
+// a real value. The bit options are CASE-wrapped, so a NULL reads as 0.
+//
 // No server name, machine name, instance name, database name, collation text or
 // edition text is read. The edition is the numeric EngineEdition (2 Standard, 3
 // Enterprise including Developer and Evaluation, 4 Express). Settings and
@@ -42,8 +45,8 @@ const (
 
 const stmtFacts = setPrefix + `SELECT CAST(SERVERPROPERTY(N'ProductVersion') AS nvarchar(32)) AS f_version,
   CAST(SERVERPROPERTY(N'EngineEdition') AS int) AS f_engine_edition,
-  CAST(SERVERPROPERTY(N'IsClustered') AS int) AS f_clustered,
-  CAST(SERVERPROPERTY(N'IsHadrEnabled') AS int) AS f_hadr,
+  ISNULL(CAST(SERVERPROPERTY(N'IsClustered') AS int), 0) AS f_clustered,
+  ISNULL(CAST(SERVERPROPERTY(N'IsHadrEnabled') AS int), 0) AS f_hadr,
   cpu_count AS f_cpus,
   hyperthread_ratio AS f_ht_ratio,
   scheduler_count AS f_schedulers,
@@ -51,12 +54,12 @@ const stmtFacts = setPrefix + `SELECT CAST(SERVERPROPERTY(N'ProductVersion') AS 
   physical_memory_kb AS f_phys_kb,
   committed_target_kb AS f_target_kb,
   virtual_machine_type AS f_vm_type,
-  DATEDIFF(second, sqlserver_start_time, GETDATE()) AS f_uptime_sec
+  CASE WHEN sqlserver_start_time <= GETDATE() THEN DATEDIFF(second, sqlserver_start_time, GETDATE()) ELSE 0 END AS f_uptime_sec
 FROM sys.dm_os_sys_info /* unravis:bb:facts */`
 
-const stmtFactsDB = setPrefix + `SELECT TOP 513 database_id, compatibility_level AS fdb_compat,
-  recovery_model AS fdb_recovery, state AS fdb_state, user_access AS fdb_access,
-  page_verify_option AS fdb_page_verify, snapshot_isolation_state AS fdb_snapshot,
+const stmtFactsDB = setPrefix + `SELECT TOP 513 database_id, ISNULL(compatibility_level, 255) AS fdb_compat,
+  ISNULL(recovery_model, 255) AS fdb_recovery, ISNULL(state, 255) AS fdb_state, ISNULL(user_access, 255) AS fdb_access,
+  ISNULL(page_verify_option, 255) AS fdb_page_verify, ISNULL(snapshot_isolation_state, 255) AS fdb_snapshot,
   CASE WHEN is_read_only = 1 THEN 1 ELSE 0 END AS fdb_read_only,
   CASE WHEN is_auto_close_on = 1 THEN 1 ELSE 0 END AS fdb_auto_close,
   CASE WHEN is_auto_shrink_on = 1 THEN 1 ELSE 0 END AS fdb_auto_shrink,

@@ -25,7 +25,7 @@ const stmtConns = setPrefix + `SELECT COUNT(*) AS conns_total,
   ISNULL(SUM(CASE WHEN is_user_process = 1 AND status = N'running' THEN 1 ELSE 0 END), 0) AS conns_running,
   ISNULL(SUM(CASE WHEN is_user_process = 1 AND status = N'sleeping' THEN 1 ELSE 0 END), 0) AS conns_sleeping,
   ISNULL(SUM(CASE WHEN is_user_process = 1 AND open_transaction_count > 0 THEN 1 ELSE 0 END), 0) AS conns_in_tran,
-  ISNULL(MAX(CASE WHEN is_user_process = 1 AND status = N'sleeping' AND open_transaction_count > 0 THEN DATEDIFF(second, last_request_end_time, GETDATE()) ELSE 0 END), 0) AS conns_idle_tran_sec
+  ISNULL(MAX(CASE WHEN is_user_process = 1 AND status = N'sleeping' AND open_transaction_count > 0 AND last_request_end_time <= GETDATE() THEN DATEDIFF(second, last_request_end_time, GETDATE()) ELSE 0 END), 0) AS conns_idle_tran_sec
 FROM sys.dm_exec_sessions
 WHERE session_id <> @@SPID /* unravis:bb:conns */`
 

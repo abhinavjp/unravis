@@ -53,7 +53,7 @@ const stmtMemClerks = setPrefix + `SELECT TOP 11 type AS clerk_type, SUM(pages_k
   SUM(virtual_memory_committed_kb) AS clerk_vm_kb
 FROM sys.dm_os_memory_clerks
 GROUP BY type
-ORDER BY SUM(pages_kb) DESC /* unravis:bb:memclerks */`
+ORDER BY SUM(pages_kb) + SUM(virtual_memory_committed_kb) DESC /* unravis:bb:memclerks */`
 
 // memRaw is the decoded row; Mem is the payload with the page-fault delta.
 type memRaw struct {

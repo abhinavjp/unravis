@@ -3,7 +3,8 @@
 // Source: sys.dm_os_waiting_tasks. Columns checked on
 // https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-os-waiting-tasks-transact-sql
 // (wait_type nvarchar(60), wait_duration_ms bigint, blocking_session_id
-// smallint NULL when not blocked, session_id smallint NULL for system tasks).
+// smallint NULL when not blocked, and a task's own id or a negative sentinel
+// (-2, -3, -4) for waits that are not a blocker, which are not counted, session_id smallint NULL for system tasks).
 // Permission: VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE on SQL Server
 // 2022 and later), inside the C8 ceiling.
 //
@@ -25,9 +26,9 @@ const CapWaiting = 64 // bb:waiting fetches TOP 65, keeps 64
 const stmtWaiting = setPrefix + `SELECT TOP 65 wait_type,
   COUNT(*) AS wt_tasks,
   MAX(wait_duration_ms) AS wt_max_ms,
-  SUM(CASE WHEN blocking_session_id IS NOT NULL THEN 1 ELSE 0 END) AS wt_blocked,
-  COUNT(DISTINCT blocking_session_id) AS wt_blockers,
-  ISNULL(MAX(CASE WHEN blocking_session_id IS NOT NULL THEN wait_duration_ms END), 0) AS wt_max_block_ms
+  SUM(CASE WHEN blocking_session_id > 0 AND blocking_session_id <> session_id THEN 1 ELSE 0 END) AS wt_blocked,
+  COUNT(DISTINCT CASE WHEN blocking_session_id > 0 AND blocking_session_id <> session_id THEN blocking_session_id END) AS wt_blockers,
+  ISNULL(MAX(CASE WHEN blocking_session_id > 0 AND blocking_session_id <> session_id THEN wait_duration_ms END), 0) AS wt_max_block_ms
 FROM sys.dm_os_waiting_tasks
 WHERE wait_type IS NOT NULL AND session_id > 50 AND session_id <> @@SPID
 GROUP BY wait_type
