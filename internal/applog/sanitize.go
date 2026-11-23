@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	"api-audit-explorer/internal/secretscrub"
 )
 
 // quotedOrBraced is a quoted or braced value. A quote inside a quoted value is
@@ -155,6 +157,10 @@ func Sanitize(text string) string {
 	for _, dir := range profileDirs() {
 		out = replaceFold(out, dir, "%USERPROFILE%")
 	}
+	// The shared pass first (escaped quotes in JSON, prefixed keys such as DB_PASSWORD, XML forms, a login in a URL with an "@" in
+	// its password), then the older patterns below.
+	out = secretscrub.MaskURLUserinfo(out, redacted)
+	out = secretscrub.Mask(out, redacted)
 	out = reBearer.ReplaceAllString(out, "Bearer "+redacted)
 	out = reBasicAuth.ReplaceAllString(out, "${1}Basic "+redacted)
 	out = reXMLElement.ReplaceAllString(out, "${1}"+redacted+"${2}")

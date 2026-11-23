@@ -1,6 +1,10 @@
 package evidence
 
-import "regexp"
+import (
+	"regexp"
+
+	"api-audit-explorer/internal/secretscrub"
+)
 
 // secretRemoved is what ScrubSecrets puts in place of a secret.
 const secretRemoved = "[removed]"
@@ -97,6 +101,10 @@ var secretScrubbers = []*regexp.Regexp{
 // tokens with "[removed]". It is the one place both the case report and the
 // findings export take secrets out of text a person typed.
 func ScrubSecrets(s string) string {
+	// The shared pass first: it reads the forms the patterns below do not (backslash-escaped quotes in JSON, prefixed keys such as
+	// DB_PASSWORD, XML elements and attributes). The patterns then run over what is left.
+	s = secretscrub.MaskURLUserinfo(s, secretRemoved)
+	s = secretscrub.Mask(s, secretRemoved)
 	for _, r := range xmlScrubbers {
 		s = r.re.ReplaceAllString(s, r.repl)
 	}
