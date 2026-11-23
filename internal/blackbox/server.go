@@ -531,7 +531,7 @@ func (s *Server) handleSQLFile(w http.ResponseWriter, r *http.Request) {
 		s.errorJSON(w, http.StatusNotFound, "no such SQL sample file")
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
 	if err != nil {
 		s.errorJSON(w, http.StatusInternalServerError, "cannot read the file")

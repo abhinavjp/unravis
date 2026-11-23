@@ -295,10 +295,10 @@ func TestFolderSourceReadsTheSQLSubfolderAndWordsALockedOne(t *testing.T) {
 		t.Fatalf("no folder: %v %+v", err, rep)
 	}
 	sub := filepath.Join(dir, SQLDataSubdir)
-	if err := os.MkdirAll(sub, 0o755); err != nil {
+	if err := os.MkdirAll(sub, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sub, SQLFileNameFor(sqlT0)), []byte(good1), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sub, SQLFileNameFor(sqlT0)), []byte(good1), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, rep, err := ReadSQLSamples(context.Background(), src, sqlT0, sqlT0.Add(time.Hour))
@@ -314,7 +314,7 @@ func TestFolderSourceReadsTheSQLSubfolderAndWordsALockedOne(t *testing.T) {
 	// A link in place of the file is refused, never followed.
 	if err := os.Symlink(filepath.Join(sub, SQLFileNameFor(sqlT0)), filepath.Join(sub, SQLFileNameFor(sqlT0.Add(time.Hour)))); err == nil {
 		if rc, err := src.OpenSQLFile(context.Background(), SQLFileNameFor(sqlT0.Add(time.Hour))); err == nil {
-			rc.Close()
+			_ = rc.Close()
 			t.Error("a link was opened")
 		}
 	}
@@ -338,10 +338,10 @@ func (fakeAccess) Open(string) (io.ReadCloser, error) { return nil, fs.ErrNotExi
 func writeSQLFile(t *testing.T, g *srvRig, name, body string) {
 	t.Helper()
 	sub := SQLDataDir(g.s.Dir())
-	if err := os.MkdirAll(sub, 0o755); err != nil {
+	if err := os.MkdirAll(sub, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sub, name), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sub, name), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -350,14 +350,14 @@ func TestSQLFilesAreServedBehindTheReadKeyOnly(t *testing.T) {
 	g := newSrvRig(t)
 	name := SQLFileNameFor(sqlT0)
 	writeSQLFile(t, g, name, good1)
-	resp, body := g.get(t, "/sql/files/"+name, g.key)
-	if resp.StatusCode != http.StatusOK || string(body) != good1 {
-		t.Fatalf("with key: %d %q", resp.StatusCode, body)
+	code, body := sqlGet(t, g, "/sql/files/"+name, g.key)
+	if code != http.StatusOK || string(body) != good1 {
+		t.Fatalf("with key: %d %q", code, body)
 	}
 	for _, key := range []string{"", "wrong"} {
-		resp, body = g.get(t, "/sql/files/"+name, key)
-		if resp.StatusCode != http.StatusUnauthorized || strings.Contains(string(body), "internalPages") {
-			t.Fatalf("key %q: %d %q", key, resp.StatusCode, body)
+		code, body = sqlGet(t, g, "/sql/files/"+name, key)
+		if code != http.StatusUnauthorized || strings.Contains(string(body), "internalPages") {
+			t.Fatalf("key %q: %d %q", key, code, body)
 		}
 	}
 }
@@ -373,9 +373,9 @@ func TestOnlySQLSampleFilesAreServedFromTheLockedFolder(t *testing.T) {
 		"/files/" + SQLFileNameFor(sqlT0),                    // the host route must not serve it
 		"/sql/", "/sql/state.json",
 	} {
-		resp, body := g.get(t, p, g.key)
-		if resp.StatusCode == http.StatusOK || strings.Contains(string(body), "secret") || strings.Contains(string(body), "internalPages") {
-			t.Errorf("%s: %d %q", p, resp.StatusCode, body)
+		code, body := sqlGet(t, g, p, g.key)
+		if code == http.StatusOK || strings.Contains(string(body), "secret") || strings.Contains(string(body), "internalPages") {
+			t.Errorf("%s: %d %q", p, code, body)
 		}
 	}
 	// The host route still refuses an SQL file name, and the SQL route refuses a host file name.
@@ -388,7 +388,7 @@ func TestOnlySQLSampleFilesAreServedFromTheLockedFolder(t *testing.T) {
 func TestSQLRouteRefusesALinkedFolderOrFile(t *testing.T) {
 	g := newSrvRig(t)
 	outside := t.TempDir()
-	if err := os.WriteFile(filepath.Join(outside, SQLFileNameFor(sqlT0)), []byte("outside"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outside, SQLFileNameFor(sqlT0)), []byte("outside"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// The sql folder is a link to somewhere else.
@@ -433,4 +433,23 @@ func TestDecodeSQLLineFromANewerWriterIsNewerNotDamaged(t *testing.T) {
 	if _, res := decodeSQLLine([]byte(`{"v":1,"t":"2026-11-23T10:00:00Z","kind":"tempdb","rows":null,"extra":1}`)); res != sqlLineBad {
 		t.Fatalf("v1 with an unknown field must stay damaged: %v", res)
 	}
+}
+
+// sqlGet reads one path of the test server and closes the body itself.
+func sqlGet(t *testing.T, g *srvRig, path, key string) (int, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, g.ts.URL+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "" {
+		req.Header.Set(KeyHeader, key)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, b
 }
