@@ -34,7 +34,7 @@ func openLogHandle(path string) (*os.File, error) {
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
 		return bad()
 	}
-	if info.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 {
+	if info.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 || info.NumberOfLinks != 1 {
 		return bad()
 	}
 	buf := make([]uint16, 1024)

@@ -22,7 +22,7 @@ func utf16le(s string, bom bool) []byte {
 		out = append(out, 0xFF, 0xFE)
 	}
 	for _, u := range utf16.Encode([]rune(s)) {
-		out = append(out, byte(u&0xff), byte(u>>8)) //nolint:gosec // G115: the low and high byte of a 16-bit unit
+		out = append(out, byte(u&0xff), byte(u>>8))
 	}
 	return out
 }
@@ -619,5 +619,24 @@ func TestReadErrorLogOddUTF16TailWaits(t *testing.T) {
 	appendFile(t, p, line[len(line)-1:])
 	if r2 := readErrorLog(p, r.cur, 1<<20, utc); len(r2.events) != 1 {
 		t.Fatalf("after the byte arrives the line is read: %+v", r2)
+	}
+}
+
+func TestSQLLogWindowsPathShape(t *testing.T) {
+	ok := []string{`D:\Program Files\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQL\Log\ERRORLOG`, `c:\sql\errorlog`}
+	bad := []string{
+		`\\host\share\ERRORLOG`, `\\?\UNC\host\share\ERRORLOG`, `\??\UNC\host\share\ERRORLOG`, `\\?\GLOBALROOT\Device\x\ERRORLOG`,
+		`\/host/share/ERRORLOG`, `/\host\share\ERRORLOG`, `//host/share/ERRORLOG`, `\\.\pipe\ERRORLOG`,
+		`D:ERRORLOG`, `D:/x/ERRORLOG`, `D:\x\ERRORLOG:stream`, `D:\x\passwords.txt`, `1:\x\ERRORLOG`, ``,
+	}
+	for _, p := range ok {
+		if !sqlLogWindowsPathOK(p) {
+			t.Errorf("%q must be accepted", p)
+		}
+	}
+	for _, p := range bad {
+		if sqlLogWindowsPathOK(p) {
+			t.Errorf("%q must be refused", p)
+		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -324,17 +325,29 @@ func (g *sqlLogGroup) payload(p *sqlLogPending) *SQLLogGroup {
 	return &o
 }
 
+// sqlLogWinPathRe is the only Windows path shape accepted: a drive letter, a colon
+// and a backslash, then names with no further colon (no stream, no device, no share).
+var sqlLogWinPathRe = regexp.MustCompile(`^[A-Za-z]:\\[^:/<>"|?*]*$`)
+
+// sqlLogWindowsPathOK says a path is a plain local-drive path (D:\...\ERRORLOG).
+// A path that starts with any two separators or a device prefix (\\host\share,
+// \\?\UNC\..., \??\UNC\..., \/host/share) is refused: LocalSystem would reach out
+// to another machine as the computer account.
+func sqlLogWindowsPathOK(p string) bool {
+	return sqlLogWinPathRe.MatchString(p) && strings.EqualFold(p[strings.LastIndexByte(p, '\\')+1:], "ERRORLOG")
+}
+
 // sqlLogPathOK says a registry path is worth opening: absolute, and the file is
 // named ERRORLOG. The registry is written by administrators only, but the host
-// reads as LocalSystem, so it still refuses any other name.
+// reads as LocalSystem, so it still refuses any other name or shape.
 func sqlLogPathOK(p string) bool {
-	// A path that starts with two separators is a network share or a device path
-	// (\\host\share, \\?\UNC\..., \\.\...): LocalSystem would reach out to another
-	// machine as the computer account, so only a local drive path is accepted.
-	if strings.HasPrefix(p, `\\`) || strings.HasPrefix(p, "//") {
+	if p == "" || !filepath.IsAbs(p) || !strings.EqualFold(filepath.Base(p), "ERRORLOG") {
 		return false
 	}
-	return p != "" && filepath.IsAbs(p) && strings.EqualFold(filepath.Base(p), "ERRORLOG")
+	if runtime.GOOS == "windows" {
+		return sqlLogWindowsPathOK(p)
+	}
+	return !strings.HasPrefix(p, "//") && !strings.HasPrefix(p, `\\`)
 }
 
 // aggregateSQLLog counts rows by every field but time, keeps the latest time and
