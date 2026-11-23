@@ -19,41 +19,41 @@ func TestReview1IPv4DottedPortAndPrefix(t *testing.T) {
 		"1.1.1.1.1.1.1.1",
 		"x 172.16.0.9.80",
 	} {
-		out := NewSweeper(false).Text(in)
+		out := newSweeper(false).text(in)
 		if l := leakIP(out); l != "" {
 			t.Errorf("%q -> %q still holds %s", in, out, l)
 		}
 	}
 	// the build number stays: no four parts in a row read as an address
-	if got := NewSweeper(false).Text("build 10.0.19045.1234 ok"); got != "build 10.0.19045.1234 ok" {
+	if got := newSweeper(false).text("build 10.0.19045.1234 ok"); got != "build 10.0.19045.1234 ok" {
 		t.Errorf("build number changed: %q", got)
 	}
 	// the same address in two spellings shares a token
-	s := NewSweeper(false)
-	if a, b := s.Text("0192.168.000.001"), s.Text("192.168.0.1"); a != b {
+	s := newSweeper(false)
+	if a, b := s.text("0192.168.000.001"), s.text("192.168.0.1"); a != b {
 		t.Errorf("%q vs %q", a, b)
 	}
 }
 
 // MUST 2: Learn never drops a value quietly.
 func TestReview1LearnFailsClosed(t *testing.T) {
-	s := NewSweeper(false)
+	s := newSweeper(false)
 	for i := 0; i < maxLearned; i++ {
-		if err := s.Learn(KindUser, fmt.Sprintf("u%07d", i)); err != nil {
+		if err := s.learn(KindUser, fmt.Sprintf("u%07d", i)); err != nil {
 			t.Fatalf("value %d refused: %v", i, err)
 		}
 	}
-	if s.Incomplete() {
+	if s.isIncomplete() {
 		t.Fatal("incomplete before the limit")
 	}
-	err := s.Learn(KindUser, "victim.user@contoso.com")
-	if !errors.Is(err, ErrLearnFull) || !s.Incomplete() {
-		t.Fatalf("err %v incomplete %v", err, s.Incomplete())
+	err := s.learn(KindUser, "victim.user@contoso.com")
+	if !errors.Is(err, ErrLearnFull) || !s.isIncomplete() {
+		t.Fatalf("err %v incomplete %v", err, s.isIncomplete())
 	}
 
 	g := NewGuard(false)
 	long := "Mozilla/5.0 " + strings.Repeat("X", 1100) // the old limit was 1 KiB
-	if err := g.Learn(KindUA, long); err != nil {
+	if err := g.sw.learn(KindUA, long); err != nil {
 		t.Fatalf("1.1 KiB user agent refused: %v", err)
 	}
 	out, err := g.Result([]byte(`{"ua":"` + long + `"}`))
@@ -61,7 +61,7 @@ func TestReview1LearnFailsClosed(t *testing.T) {
 		t.Fatalf("raw user agent: %s %v", out, err)
 	}
 	huge := strings.Repeat("Y", maxLearnLen+1)
-	if err := g.Learn(KindUA, huge); !errors.Is(err, ErrLearnTooLong) || !g.Incomplete() {
+	if err := g.sw.learn(KindUA, huge); !errors.Is(err, ErrLearnTooLong) || !g.Incomplete() {
 		t.Fatalf("err %v incomplete %v", err, g.Incomplete())
 	}
 	// an Incomplete guard releases nothing
@@ -74,28 +74,28 @@ func TestReview1LearnFailsClosed(t *testing.T) {
 }
 
 func TestReview1LearnByteLimit(t *testing.T) {
-	s := NewSweeper(false)
+	s := newSweeper(false)
 	var err error
 	for i := 0; err == nil && i < 400; i++ {
-		err = s.Learn(KindUA, fmt.Sprintf("%05d", i)+strings.Repeat("a", 10000))
+		err = s.learn(KindUA, fmt.Sprintf("%05d", i)+strings.Repeat("a", 10000))
 	}
-	if !errors.Is(err, ErrLearnFull) || !s.Incomplete() {
+	if !errors.Is(err, ErrLearnFull) || !s.isIncomplete() {
 		t.Fatalf("err %v", err)
 	}
 }
 
 // MUST 3: a learned short id is hidden as a JSON number as well as a string.
 func TestReview1ShortIDAsNumber(t *testing.T) {
-	s := NewSweeper(false)
-	_ = s.Learn(KindUser, "4711")
-	out, err := s.JSON([]byte(`{"u":4711,"v":"4711","w":4712}`))
+	s := newSweeper(false)
+	_ = s.learn(KindUser, "4711")
+	out, err := s.json([]byte(`{"u":4711,"v":"4711","w":4712}`), true)
 	if err != nil || string(out) != `{"u":"[USER_1]","v":"[USER_1]","w":4712}` {
 		t.Fatalf("%s %v", out, err)
 	}
 	// SHOULD 4: the same number written another way
-	s = NewSweeper(false)
-	_ = s.Learn(KindUser, "1234567")
-	out, _ = s.JSON([]byte(`[1.234567e6,1234567.0,1234567.5,1234568]`))
+	s = newSweeper(false)
+	_ = s.learn(KindUser, "1234567")
+	out, _ = s.json([]byte(`[1.234567e6,1234567.0,1234567.5,1234568]`), true)
 	if string(out) != `["[USER_1]","[USER_1]",1234567.5,1234568]` {
 		t.Fatalf("%s", out)
 	}
@@ -105,24 +105,24 @@ func TestReview1ShortIDAsNumber(t *testing.T) {
 func TestReview1TokenOrderIsFirstSight(t *testing.T) {
 	ids := []string{"zzzzzzz9", "aaaaaaa1", "100002", "100001"}
 	for _, learnOrder := range [][]string{ids, {ids[3], ids[2], ids[1], ids[0]}, {ids[1], ids[3], ids[0], ids[2]}} {
-		s := NewSweeper(false)
+		s := newSweeper(false)
 		for _, id := range learnOrder {
-			_ = s.Learn(KindUser, id)
+			_ = s.learn(KindUser, id)
 		}
-		got := s.Text(strings.Join(ids, " "))
+		got := s.text(strings.Join(ids, " "))
 		if got != "[USER_1] [USER_2] [USER_3] [USER_4]" {
 			t.Fatalf("learn order %v: %q", learnOrder, got)
 		}
 	}
 	// the same with enough values to go through the automaton, not the pending list
-	s := NewSweeper(false)
+	s := newSweeper(false)
 	var in []string
 	for i := 0; i < 100; i++ {
 		v := fmt.Sprintf("id-%06d", (i*7919)%100000)
 		in = append(in, v)
-		_ = s.Learn(KindUser, v)
+		_ = s.learn(KindUser, v)
 	}
-	out := strings.Fields(s.Text(strings.Join(in, " ")))
+	out := strings.Fields(s.text(strings.Join(in, " ")))
 	for i, tok := range out {
 		if tok != fmt.Sprintf("[USER_%d]", i+1) {
 			t.Fatalf("token %d is %s", i, tok)
@@ -134,7 +134,7 @@ func TestReview1TokenOrderIsFirstSight(t *testing.T) {
 func TestReview1UserAgentWithURL(t *testing.T) {
 	ua := "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
 	g := NewGuard(false)
-	_ = g.Learn(KindUA, ua)
+	_ = g.sw.learn(KindUA, ua)
 	for name, out := range map[string]string{"error": g.Error("bad ua " + ua), "log": g.Log(ua)} {
 		for _, frag := range []string{"Mozilla", "Googlebot", "google.com", "bot.html"} {
 			if strings.Contains(out, frag) {
@@ -237,7 +237,7 @@ func TestReview1Paths(t *testing.T) {
 // SHOULD 1: an IPv6 address glued to a word byte, or with noise in front or behind, is still tokenized.
 func TestReview1IPv6Edges(t *testing.T) {
 	for _, in := range []string{"2001:db8::1x", "2001:db8::1_eth0", "a.b:2001:db8::5", "2001:db8::1.2.3.4.5", "ip=2001:db8::9,", "f::1y"} {
-		if out := NewSweeper(false).Text(in); leakIP(out) != "" || strings.Contains(out, "2001:db8") {
+		if out := newSweeper(false).text(in); leakIP(out) != "" || strings.Contains(out, "2001:db8") {
 			t.Errorf("%q -> %q", in, out)
 		}
 	}
@@ -246,7 +246,7 @@ func TestReview1IPv6Edges(t *testing.T) {
 		if in == "a::b::c" {
 			continue // a valid address shape; tokenized on purpose
 		}
-		if out := NewSweeper(false).Text(in); out != in {
+		if out := newSweeper(false).text(in); out != in {
 			t.Errorf("changed: %q -> %q", in, out)
 		}
 	}
@@ -255,7 +255,7 @@ func TestReview1IPv6Edges(t *testing.T) {
 // SHOULD 3: learned values match without regard to ASCII case.
 func TestReview1LearnedCaseFold(t *testing.T) {
 	g := NewGuard(false)
-	_ = g.Learn(KindUser, "alice.smith")
+	_ = g.sw.learn(KindUser, "alice.smith")
 	if out := g.Log("ALICE.SMITH logged in; Alice.Smith too"); strings.Contains(strings.ToLower(out), "alice") || out != "[USER_1] logged in; [USER_1] too" {
 		t.Fatalf("%q", out)
 	}
@@ -267,10 +267,10 @@ func TestReview1LearnedCaseFold(t *testing.T) {
 
 // SHOULD 5: data that looks like a token cannot pass for one; two names that end as one token stay two members.
 func TestReview1TokenSpoofAndDuplicateKeys(t *testing.T) {
-	s := NewSweeper(false)
-	_ = s.Learn(KindUser, "alice.smith")
-	_ = s.Learn(KindUser, "ALICE.SMITH2")
-	out, err := s.JSON([]byte(`{"a":"[USER_1]","b":"alice.smith","[USER_1]":1,"alice.smith":2,"Alice.Smith":3}`))
+	s := newSweeper(false)
+	_ = s.learn(KindUser, "alice.smith")
+	_ = s.learn(KindUser, "ALICE.SMITH2")
+	out, err := s.json([]byte(`{"a":"[USER_1]","b":"alice.smith","[USER_1]":1,"alice.smith":2,"Alice.Smith":3}`), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,17 +279,17 @@ func TestReview1TokenSpoofAndDuplicateKeys(t *testing.T) {
 		t.Fatalf("got  %s\nwant %s", out, want)
 	}
 	g := NewGuard(false)
-	if got := g.Log("fake [IP_1] and [UA_9]"); got != "fake [_IP_1] and [_UA_9]" {
+	if got := g.Error("fake [IP_1] and [UA_9] and [_IP_1] and [ip_1]"); got != "fake [_IP_1] and [_UA_9] and [__IP_1] and [_ip_1]" {
 		t.Fatalf("%q", got)
 	}
 }
 
 // SHOULD 6: Learn and Text in turn must not cost a rebuild each time.
 func TestReview1LearnTextAlternating(t *testing.T) {
-	s := NewSweeper(false)
+	s := newSweeper(false)
 	for i := 0; i < 4096; i++ {
-		_ = s.Learn(KindUser, fmt.Sprintf("user-%06d-%s", i, strings.Repeat("x", 80)))
-		if out := s.Text(fmt.Sprintf("seen user-%06d-%s here", i, strings.Repeat("x", 80))); strings.Contains(out, "user-") {
+		_ = s.learn(KindUser, fmt.Sprintf("user-%06d-%s", i, strings.Repeat("x", 80)))
+		if out := s.text(fmt.Sprintf("seen user-%06d-%s here", i, strings.Repeat("x", 80))); strings.Contains(out, "user-") {
 			t.Fatalf("leak at %d: %q", i, out)
 		}
 	}
@@ -300,28 +300,28 @@ func TestReview1WithheldBranch(t *testing.T) {
 	old := maxRounds
 	defer func() { maxRounds = old }()
 	maxRounds = 0
-	if got := NewSweeper(false).Text("10.0.0.1 and 0::1"); got != "[IP_WITHHELD]" {
+	if got := newSweeper(false).text("10.0.0.1 and 0::1"); got != "[IP_WITHHELD]" {
 		t.Fatalf("got %q", got)
 	}
 }
 
 // NIT: overlapping learned values, invalid UTF-8.
 func TestReview1OverlapAndUTF8(t *testing.T) {
-	s := NewSweeper(false)
-	_ = s.Learn(KindUser, "abcdef")
-	_ = s.Learn(KindUser, "cdefgh")
-	if got := s.Text("x abcdefgh y"); strings.Contains(got, "gh") || strings.Contains(got, "ab") {
+	s := newSweeper(false)
+	_ = s.learn(KindUser, "abcdef")
+	_ = s.learn(KindUser, "cdefgh")
+	if got := s.text("x abcdefgh y"); strings.Contains(got, "gh") || strings.Contains(got, "ab") {
 		t.Fatalf("part left: %q", got)
 	}
-	if _, err := s.JSON([]byte("{\"ua\":\"Bad\xffAgent/1.0\"}")); !errors.Is(err, ErrBadJSON) {
+	if _, err := s.json([]byte("{\"ua\":\"Bad\xffAgent/1.0\"}"), true); !errors.Is(err, ErrBadJSON) {
 		t.Fatalf("err %v", err)
 	}
 }
 
 func TestReview1HostileLearnedAndRuns(t *testing.T) {
-	s := NewSweeper(false)
+	s := newSweeper(false)
 	for k := 6; k <= 200; k += 7 {
-		_ = s.Learn(KindUser, strings.Repeat("a", k))
+		_ = s.learn(KindUser, strings.Repeat("a", k))
 	}
 	for name, in := range map[string]string{
 		"a-run":     strings.Repeat("a", 1<<20),
@@ -330,7 +330,7 @@ func TestReview1HostileLearnedAndRuns(t *testing.T) {
 		"v4-run":    strings.Repeat("1.", 1<<19) + "1",
 	} {
 		start := time.Now()
-		out := s.Text(in)
+		out := s.text(in)
 		if d := time.Since(start); d > 20*time.Second {
 			t.Errorf("%s: %v", name, d)
 		}

@@ -8,10 +8,10 @@ import (
 )
 
 func TestJSONSweepsValuesAndKeys(t *testing.T) {
-	s := NewSweeper(false)
-	_ = s.Learn(KindUser, "alice@example.com")
+	s := newSweeper(false)
+	_ = s.learn(KindUser, "alice@example.com")
 	in := `{"ip":"10.1.2.3","note":"from 10.1.2.3 and ::1","alice@example.com":1,"list":["10.1.2.4",{"a":"x"}],"n":12,"f":1.50e3,"t":true,"z":null}`
-	out, err := s.JSON([]byte(in))
+	out, err := s.json([]byte(in), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,17 +25,17 @@ func TestJSONSweepsValuesAndKeys(t *testing.T) {
 }
 
 func TestJSONUnchangedReturnsSameBytes(t *testing.T) {
-	s := NewSweeper(false)
+	s := newSweeper(false)
 	in := []byte("{ \"a\" : [1, 2,\n 3],  \"b\":\"x\" }")
-	out, err := s.JSON(in)
+	out, err := s.json(in, true)
 	if err != nil || string(out) != string(in) {
 		t.Fatalf("%q %v", out, err)
 	}
 }
 
 func TestJSONKeepsOrderAndDuplicates(t *testing.T) {
-	s := NewSweeper(false)
-	out, err := s.JSON([]byte(`{"z":"10.0.0.1","a":1,"z":2,"m":{"y":[],"x":{}}}`))
+	s := newSweeper(false)
+	out, err := s.json([]byte(`{"z":"10.0.0.1","a":1,"z":2,"m":{"y":[],"x":{}}}`), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestJSONKeepsOrderAndDuplicates(t *testing.T) {
 }
 
 func TestJSONScalarsAndEscapes(t *testing.T) {
-	s := NewSweeper(false)
+	s := newSweeper(false)
 	for in, want := range map[string]string{
 		`"10.0.0.1"`:         `"[IP_1]"`,
 		`"a<b>&\u0041"`:      `"a<b>&\u0041"`, // unchanged: original bytes kept
@@ -54,7 +54,7 @@ func TestJSONScalarsAndEscapes(t *testing.T) {
 		`7`:                  `7`,
 		`null`:               `null`,
 	} {
-		out, err := s.JSON([]byte(in))
+		out, err := s.json([]byte(in), true)
 		if err != nil || string(out) != want {
 			t.Errorf("%s: got %s err %v want %s", in, out, err, want)
 		}
@@ -62,44 +62,44 @@ func TestJSONScalarsAndEscapes(t *testing.T) {
 }
 
 func TestJSONLearnedNumber(t *testing.T) {
-	s := NewSweeper(false)
-	_ = s.Learn(KindUser, "12345678")
-	_ = s.Learn(KindUser, "42") // a number is always a whole value, however short: a count of 42 is hidden too (fail closed)
-	out, err := s.JSON([]byte(`{"id":12345678,"count":42,"other":43}`))
+	s := newSweeper(false)
+	_ = s.learn(KindUser, "12345678")
+	_ = s.learn(KindUser, "42") // a number is always a whole value, however short: a count of 42 is hidden too (fail closed)
+	out, err := s.json([]byte(`{"id":12345678,"count":42,"other":43}`), true)
 	if err != nil || string(out) != `{"id":"[USER_1]","count":"[USER_2]","other":43}` {
 		t.Fatalf("%s %v", out, err)
 	}
 }
 
 func TestJSONRefusals(t *testing.T) {
-	s := NewSweeper(false)
+	s := newSweeper(false)
 	bad := []string{``, `{`, `{"a":}`, `[1,]`, `{"a":1} x`, `1 2`, `{"a":1}{"b":2}`, `}`, `]`, `{"a" 1}`, `nul`, `"abc`, `{1:2}`}
 	for _, in := range bad {
-		if _, err := s.JSON([]byte(in)); !errors.Is(err, ErrBadJSON) {
+		if _, err := s.json([]byte(in), true); !errors.Is(err, ErrBadJSON) {
 			t.Errorf("%q: err %v", in, err)
 		}
-		if _, err := NewSweeper(true).JSON([]byte(in)); !errors.Is(err, ErrBadJSON) {
+		if _, err := newSweeper(true).json([]byte(in), true); !errors.Is(err, ErrBadJSON) {
 			t.Errorf("allow %q: err %v", in, err)
 		}
 	}
-	if _, err := s.JSON([]byte(strings.Repeat("[", maxDepth+1) + strings.Repeat("]", maxDepth+1))); !errors.Is(err, ErrTooDeep) {
+	if _, err := s.json([]byte(strings.Repeat("[", maxDepth+1)+strings.Repeat("]", maxDepth+1)), true); !errors.Is(err, ErrTooDeep) {
 		t.Errorf("deep: %v", err)
 	}
-	if _, err := s.JSON([]byte(strings.Repeat("[", maxDepth) + strings.Repeat("]", maxDepth))); err != nil {
+	if _, err := s.json([]byte(strings.Repeat("[", maxDepth)+strings.Repeat("]", maxDepth)), true); err != nil {
 		t.Errorf("at the limit: %v", err)
 	}
-	if _, err := s.JSON(make([]byte, MaxJSONBytes+1)); !errors.Is(err, ErrTooLarge) {
+	if _, err := s.json(make([]byte, MaxJSONBytes+1), true); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("large: %v", err)
 	}
 	var e *json.SyntaxError
-	if _, err := s.JSON([]byte(`{"ip":"10.9.9.9" x`)); errors.As(err, &e) || (err != nil && strings.Contains(err.Error(), "10.9.9.9")) {
+	if _, err := s.json([]byte(`{"ip":"10.9.9.9" x`), true); errors.As(err, &e) || (err != nil && strings.Contains(err.Error(), "10.9.9.9")) {
 		t.Errorf("error carries the text: %v", err)
 	}
 }
 
 func TestJSONAllowModeValidatesOnly(t *testing.T) {
 	in := []byte(`{"ip":"10.1.2.3"}`)
-	out, err := NewSweeper(true).JSON(in)
+	out, err := newSweeper(true).json(in, true)
 	if err != nil || string(out) != string(in) {
 		t.Fatal(string(out), err)
 	}
@@ -112,8 +112,8 @@ func FuzzJSONSweep(f *testing.F) {
 		f.Add([]byte(s))
 	}
 	f.Fuzz(func(t *testing.T, in []byte) {
-		s := NewSweeper(false)
-		out, err := s.JSON(in)
+		s := newSweeper(false)
+		out, err := s.json(in, true)
 		if err != nil {
 			return
 		}

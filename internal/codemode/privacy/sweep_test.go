@@ -29,11 +29,11 @@ func TestSweepIPv4Table(t *testing.T) {
 		{"", ""},
 	}
 	for _, c := range cases {
-		s := NewSweeper(false)
+		s := newSweeper(false)
 		if c.in == "010.001.002.003" {
-			s.Text("10.1.2.3") // first sight with the plain spelling
+			s.text("10.1.2.3") // first sight with the plain spelling
 		}
-		if got := s.Text(c.in); got != c.want {
+		if got := s.text(c.in); got != c.want {
 			t.Errorf("%q: got %q want %q", c.in, got, c.want)
 		}
 	}
@@ -46,7 +46,7 @@ func TestSweepIPv6Table(t *testing.T) {
 		{"peer [fe80::1%eth0]:443", "peer [[IP_1]]:443"},
 		{"peer 2001:db8::ff00:42:8329.", "peer [IP_1]."},
 		{"label:2001:db8::1", "label:[IP_1]"},
-		{"mapped ::ffff:10.1.2.3", "mapped [IP_1]"},
+		{"mapped ::ffff:10.1.2.3", "mapped [IP_2]:[IP_1]"}, // the v4 part is read first; the "::ffff" left in front is its own token
 		{"time 12:30:45 only", "time 12:30:45 only"},
 		{"std::vector<int>", "std::vector<int>"},
 		{"a::b", "[IP_1]"}, // a valid v6 address: a hex-looking pair is tokenized, which is the safe side
@@ -54,14 +54,14 @@ func TestSweepIPv6Table(t *testing.T) {
 		{"2001:db8:0:0:0:0:0:1", "[IP_1]"},
 	}
 	for _, c := range cases {
-		s := NewSweeper(false)
+		s := newSweeper(false)
 		if strings.HasPrefix(c.in, "peer 0:0") {
-			s.Text("::1")
+			s.text("::1")
 		}
 		if strings.HasPrefix(c.in, "mapped") {
-			s.Text("10.1.2.3")
+			s.text("10.1.2.3")
 		}
-		got := s.Text(c.in)
+		got := s.text(c.in)
 		if got != c.want {
 			t.Errorf("%q: got %q want %q", c.in, got, c.want)
 		}
@@ -69,19 +69,19 @@ func TestSweepIPv6Table(t *testing.T) {
 }
 
 func TestSweepFragmentLeftByReplacement(t *testing.T) {
-	s := NewSweeper(false)
-	out := s.Text("0::00.0.0.0")
+	s := newSweeper(false)
+	out := s.text("0::00.0.0.0")
 	if ContainsIP(out) || strings.Contains(out, "0::") {
 		t.Fatalf("got %q", out)
 	}
-	if s.Text(out) != out {
+	if s.text(out) != out {
 		t.Fatal("not idempotent")
 	}
 }
 
 func TestSweepIPv6Port(t *testing.T) {
-	s := NewSweeper(false)
-	out := s.Text("peer 2d46:c670:d3e1:5cea:b30e:f6a1:ce38:af1d:8080 gone")
+	s := newSweeper(false)
+	out := s.text("peer 2d46:c670:d3e1:5cea:b30e:f6a1:ce38:af1d:8080 gone")
 	if ContainsIP(out) || strings.Contains(out, "2d46") {
 		t.Fatalf("leak: %q", out)
 	}
@@ -91,25 +91,25 @@ func TestSweepIPv6Port(t *testing.T) {
 }
 
 func TestSweepAllowModeChangesNothing(t *testing.T) {
-	s := NewSweeper(true)
-	_ = s.Learn(KindUser, "alice@example.com")
+	s := newSweeper(true)
+	_ = s.learn(KindUser, "alice@example.com")
 	in := "10.1.2.3 ::1 alice@example.com"
-	if got := s.Text(in); got != in {
+	if got := s.text(in); got != in {
 		t.Fatal(got)
 	}
-	if !s.Allow() {
+	if !s.isAllow() {
 		t.Fatal("not allow")
 	}
 }
 
 func TestLearnedValues(t *testing.T) {
-	s := NewSweeper(false)
+	s := newSweeper(false)
 	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-	_ = s.Learn(KindUA, ua)
-	_ = s.Learn(KindUA, "Mozilla/5.0")
-	_ = s.Learn(KindUser, "u-4821")
-	_ = s.Learn(KindUser, "7") // short: whole-string only
-	got := s.Text("agent " + ua + " user u-4821 and Mozilla/5.0 and 7 of 70")
+	_ = s.learn(KindUA, ua)
+	_ = s.learn(KindUA, "Mozilla/5.0")
+	_ = s.learn(KindUser, "u-4821")
+	_ = s.learn(KindUser, "7") // short: whole-string only
+	got := s.text("agent " + ua + " user u-4821 and Mozilla/5.0 and 7 of 70")
 	for _, raw := range []string{ua, "u-4821", "Mozilla"} {
 		if strings.Contains(got, raw) {
 			t.Fatalf("raw %q left in %q", raw, got)
@@ -118,40 +118,40 @@ func TestLearnedValues(t *testing.T) {
 	if !strings.Contains(got, "7 of 70") {
 		t.Fatalf("short learned value damaged ordinary text: %q", got)
 	}
-	first := s.Text("7")
-	if first != s.Text("7") || first == "7" {
+	first := s.text("7")
+	if first != s.text("7") || first == "7" {
 		t.Fatal("whole-string short value not tokenized stably")
 	}
 	// the longest value wins over its prefix
-	if !strings.Contains(got, s.Token(KindUA, asciiLower(ua))) {
+	if !strings.Contains(got, s.token(KindUA, asciiLower(ua))) {
 		t.Fatalf("long user agent has no token: %q", got)
 	}
 }
 
 func TestLearnBounds(t *testing.T) {
-	s := NewSweeper(false)
-	_ = s.Learn(KindUser, "")
-	_ = s.Learn(KindUser, strings.Repeat("x", maxLearnLen+1))
+	s := newSweeper(false)
+	_ = s.learn(KindUser, "")
+	_ = s.learn(KindUser, strings.Repeat("x", maxLearnLen+1))
 	for i := 0; i < maxLearned+50; i++ {
-		_ = s.Learn(KindUser, fmt.Sprintf("user-%06d", i))
+		_ = s.learn(KindUser, fmt.Sprintf("user-%06d", i))
 	}
 	if len(s.exact) != maxLearned {
 		t.Fatalf("kept %d", len(s.exact))
 	}
-	if strings.Contains(s.Text("user-000001"), "user-000001") {
+	if strings.Contains(s.text("user-000001"), "user-000001") {
 		t.Fatal("learned value not replaced")
 	}
 }
 
 func TestTokenOverflowStaysBounded(t *testing.T) {
-	s := NewSweeper(false)
+	s := newSweeper(false)
 	for i := 0; i < maxTokens+10; i++ {
-		s.Token(KindUser, fmt.Sprintf("raw-%d", i))
+		s.token(KindUser, fmt.Sprintf("raw-%d", i))
 	}
-	if got := s.Token(KindUser, "raw-new"); got != "[USER_OVER]" {
+	if got := s.token(KindUser, "raw-new"); got != "[USER_OVER]" {
 		t.Fatalf("got %q", got)
 	}
-	if got := s.Token(KindUser, "raw-0"); got != "[USER_1]" {
+	if got := s.token(KindUser, "raw-0"); got != "[USER_1]" {
 		t.Fatalf("an earlier value changed token: %q", got)
 	}
 	if len(s.tokens[KindUser]) != maxTokens {
@@ -167,7 +167,7 @@ func TestPropertyIPTokens(t *testing.T) {
 	pre := []string{"", "from ", "ip=", "peer: ", "(", "[", "\"", "host ", "x -> "}
 	post := []string{"", " ok", ",", ".", ")", "]", ":8080", "\"", "; next"}
 	for round := 0; round < 40; round++ {
-		s := NewSweeper(false)
+		s := newSweeper(false)
 		byCanon := map[string]string{}
 		byToken := map[string]string{}
 		for n := 0; n < 300; n++ {
@@ -203,7 +203,7 @@ func TestPropertyIPTokens(t *testing.T) {
 				q = "" // "v6:port" without brackets is ambiguous; the sweeper takes the port into the token (see TestSweepIPv6Port)
 			}
 			in := p + spell + q
-			out := s.Text(in)
+			out := s.text(in)
 			if l := leakIP(out); l != "" {
 				t.Fatalf("sweep left an address (%s): %q -> %q", l, in, out)
 			}
@@ -222,7 +222,7 @@ func TestPropertyIPTokens(t *testing.T) {
 				t.Fatalf("collision: %s and %s share %s", other, canon, tok)
 			}
 			byToken[tok] = canon
-			if s.Text(out) != out {
+			if s.text(out) != out {
 				t.Fatalf("second sweep changed %q", out)
 			}
 		}
@@ -241,15 +241,15 @@ func fullV6(a netip.Addr) string {
 // Property: tokens are numbered by first sight in the run, so two runs that see different data number differently, and the token
 // says nothing about the value.
 func TestTokensAreNotDerivedFromTheValue(t *testing.T) {
-	a, b := NewSweeper(false), NewSweeper(false)
-	if a.Text("10.0.0.1 10.0.0.2") != "[IP_1] [IP_2]" || b.Text("10.0.0.2 10.0.0.1") != "[IP_1] [IP_2]" {
+	a, b := newSweeper(false), newSweeper(false)
+	if a.text("10.0.0.1 10.0.0.2") != "[IP_1] [IP_2]" || b.text("10.0.0.2 10.0.0.1") != "[IP_1] [IP_2]" {
 		t.Fatal("numbering is not by first sight")
 	}
 }
 
 func TestPropertyLearnedNoLeakNoCollision(t *testing.T) {
 	rng := rand.New(rand.NewPCG(7, 9)) //nolint:gosec // G404: seeded, reproducible test data
-	s := NewSweeper(false)
+	s := newSweeper(false)
 	raws := make([]string, 200)
 	seen := map[string]bool{}
 	for i := range raws {
@@ -260,17 +260,17 @@ func TestPropertyLearnedNoLeakNoCollision(t *testing.T) {
 				break
 			}
 		}
-		_ = s.Learn(KindUser, raws[i])
+		_ = s.learn(KindUser, raws[i])
 	}
 	toks := map[string]string{}
 	for n := 0; n < 2000; n++ {
 		r := raws[rng.IntN(len(raws))]
 		in := "a " + r + " b " + r + "."
-		out := s.Text(in)
+		out := s.text(in)
 		if strings.Contains(out, "usr_") {
 			t.Fatalf("raw left: %q", out)
 		}
-		tok := s.Token(KindUser, r)
+		tok := s.token(KindUser, r)
 		if out != "a "+tok+" b "+tok+"." {
 			t.Fatalf("got %q", out)
 		}
@@ -282,7 +282,7 @@ func TestPropertyLearnedNoLeakNoCollision(t *testing.T) {
 }
 
 func TestSweeperConcurrent(t *testing.T) {
-	s := NewSweeper(false)
+	s := newSweeper(false)
 	var wg sync.WaitGroup
 	res := make([]string, 8)
 	for g := 0; g < 8; g++ {
@@ -290,9 +290,9 @@ func TestSweeperConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 60; i++ {
-				res[g] = s.Text(fmt.Sprintf("a 10.0.%d.%d b", g, i%50))
-				_ = s.Learn(KindUser, fmt.Sprintf("user-%d-%d", g, i))
-				_ = s.Text("user-1-3 10.0.0.1")
+				res[g] = s.text(fmt.Sprintf("a 10.0.%d.%d b", g, i%50))
+				_ = s.learn(KindUser, fmt.Sprintf("user-%d-%d", g, i))
+				_ = s.text("user-1-3 10.0.0.1")
 			}
 		}()
 	}
@@ -314,8 +314,8 @@ func TestSweepLinearOnHostileInput(t *testing.T) {
 		"trailing": strings.Repeat("1:", 1<<19) + strings.Repeat(".", 1<<19),
 	} {
 		start := time.Now()
-		s := NewSweeper(false)
-		out := s.Text(in)
+		s := newSweeper(false)
+		out := s.text(in)
 		if d := time.Since(start); d > 20*time.Second {
 			t.Errorf("%s: %v", name, d)
 		}
@@ -332,18 +332,21 @@ func FuzzSweepText(f *testing.F) {
 		f.Add(s, uint8(1))
 	}
 	f.Fuzz(func(t *testing.T, in string, seed uint8) {
-		s := NewSweeper(false)
+		s := newSweeper(false)
 		if seed%2 == 0 && len(in) >= minLearnLen && len(in) < 40 {
-			_ = s.Learn(KindUser, in)
+			_ = s.learn(KindUser, in)
 		}
-		out := s.Text(in)
+		out := s.text(in)
 		if l := leakIP(out); l != "" {
 			t.Fatalf("address survives (%s): %q -> %q", l, in, out)
+		}
+		if l := leakTriple(in, out); l != "" {
+			t.Fatalf("octets survive (%s): %q -> %q", l, in, out)
 		}
 		if ContainsIP(out) {
 			t.Fatalf("scanner still sees an address: %q -> %q", in, out)
 		}
-		if again := s.Text(out); again != out {
+		if again := s.text(out); again != out {
 			t.Fatalf("not idempotent: %q -> %q -> %q", in, out, again)
 		}
 		if len(out) > 4*len(in)+64 {
@@ -365,9 +368,12 @@ func FuzzSweepPlanted(f *testing.F) {
 		addrs := []string{"10.20.30.40", "2001:db8::7", "::1", "fe80::abcd:1%eth0", "192.168.1.1", "192.168.001.001", "2001:db8:0:0:0:0:0:1"}
 		a := addrs[int(pick)%len(addrs)]
 		in := pre + a + post
-		out := NewSweeper(false).Text(in)
+		out := newSweeper(false).text(in)
 		if l := leakIP(out); l != "" {
 			t.Fatalf("leak (%s): %q -> %q", l, in, out)
+		}
+		if l := leakTriple(in, out); l != "" {
+			t.Fatalf("octets survive (%s): %q -> %q", l, in, out)
 		}
 	})
 }

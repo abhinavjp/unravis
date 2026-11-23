@@ -46,6 +46,7 @@ jobs:
           - { target: FuzzMaskBounds, pkg: ./internal/secretscrub }
           - { target: FuzzSweepText, pkg: ./internal/codemode/privacy }
           - { target: FuzzSweepPlanted, pkg: ./internal/codemode/privacy }
+          - { target: FuzzSweepPartial, pkg: ./internal/codemode/privacy }
           - { target: FuzzScrubCanary, pkg: ./internal/codemode/privacy }
           - { target: FuzzJSONSweep, pkg: ./internal/codemode/privacy }
           - { target: FuzzGuardNoLeak, pkg: ./internal/codemode/privacy }

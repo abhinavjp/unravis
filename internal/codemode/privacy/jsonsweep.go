@@ -2,7 +2,7 @@ package privacy
 
 import (
 	"bytes"
-	"encoding/json"
+	stdjson "encoding/json"
 	"errors"
 	"io"
 	"strconv"
@@ -31,15 +31,15 @@ type frame struct {
 	seen map[string]bool // names this sweep changed, so two names that end as one token do not make a duplicate member
 }
 
-// JSON returns raw with every string value and every member name swept (see Text), and text that already looks like a token
-// ("[USER_1]") escaped to "[_USER_1]" so data cannot pass for a token. Booleans and null are kept. A number that equals a learned
+// json returns raw with every string value and every member name swept (see text); with escape, text that looks like a token
+// ("[USER_1]") is first written "[_USER_1]" so data cannot pass for a token (host data on its way in; script output is not escaped). Booleans and null are kept. A number that equals a learned
 // value (as written, or as an integer when it is written "1.234567e6" or "1234567.0") becomes the token as a string, however short:
 // a number is always a whole value. When nothing changed it returns raw itself, byte for byte (so the hash of an unchanged result
 // does not move). When something changed the result is compact JSON with the members in their original order; a changed member name
 // that would repeat an earlier changed one gets "#2", "#3" ... after it, so a JSON parser that keeps the last duplicate does not
 // lose a count. Invalid JSON or invalid UTF-8, text after the value, nesting over maxDepth or a text over MaxJSONBytes is an error
 // and the caller must not pass the text on.
-func (s *Sweeper) JSON(raw []byte) ([]byte, error) {
+func (s *sweeper) json(raw []byte, escape bool) ([]byte, error) {
 	if len(raw) > MaxJSONBytes {
 		return nil, ErrTooLarge
 	}
@@ -47,16 +47,16 @@ func (s *Sweeper) JSON(raw []byte) ([]byte, error) {
 		return nil, ErrBadJSON
 	}
 	if s.allow {
-		if !json.Valid(raw) {
+		if !stdjson.Valid(raw) {
 			return nil, ErrBadJSON
 		}
 		return raw, nil
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec := stdjson.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var out bytes.Buffer
 	out.Grow(len(raw))
-	enc := json.NewEncoder(&out)
+	enc := stdjson.NewEncoder(&out)
 	enc.SetEscapeHTML(false)
 	var st []frame
 	changed := false
@@ -98,7 +98,7 @@ func (s *Sweeper) JSON(raw []byte) ([]byte, error) {
 			return nil, ErrBadJSON
 		}
 		switch v := tok.(type) {
-		case json.Delim:
+		case stdjson.Delim:
 			switch v {
 			case '{', '[':
 				before()
@@ -116,7 +116,11 @@ func (s *Sweeper) JSON(raw []byte) ([]byte, error) {
 				after()
 			}
 		case string:
-			sw := s.textSwept(escapeTokens(v))
+			in := v
+			if escape {
+				in = escapeTokens(v)
+			}
+			sw := s.textSwept(in)
 			if sw != v {
 				changed = true
 			}
@@ -143,7 +147,7 @@ func (s *Sweeper) JSON(raw []byte) ([]byte, error) {
 			before()
 			writeString(sw)
 			after()
-		case json.Number:
+		case stdjson.Number:
 			before()
 			if t, ok := s.numberToken(string(v)); ok {
 				changed = true
@@ -175,13 +179,13 @@ func (s *Sweeper) JSON(raw []byte) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-func (s *Sweeper) textSwept(v string) string {
+func (s *sweeper) textSwept(v string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.textLocked(v)
 }
 
-func (s *Sweeper) numberToken(num string) (string, bool) {
+func (s *sweeper) numberToken(num string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key, ok := s.numberKey(num)
@@ -192,7 +196,7 @@ func (s *Sweeper) numberToken(num string) (string, bool) {
 }
 
 // delimByte is the byte of a JSON delimiter token.
-func delimByte(d json.Delim) byte {
+func delimByte(d stdjson.Delim) byte {
 	switch d {
 	case '{':
 		return '{'

@@ -39,8 +39,8 @@ func TestHiddenModeNoRawIdentifiers(t *testing.T) {
 	rows := fixture(rng)
 	g := NewGuard(false)
 	for _, r := range rows {
-		_ = g.Learn(KindUser, r.User)
-		_ = g.Learn(KindUA, r.UA)
+		_ = g.sw.learn(KindUser, r.User)
+		_ = g.sw.learn(KindUA, r.UA)
 	}
 	raw, _ := json.Marshal(map[string]any{"rows": rows, "note": "peer 10.9.9.9 / ::1 saw " + rows[0].User})
 	out, err := g.Result(raw)
@@ -61,7 +61,7 @@ func TestHiddenModeNoRawIdentifiers(t *testing.T) {
 
 func TestAllowModeShowsIdentifiers(t *testing.T) {
 	g := NewGuard(true)
-	_ = g.Learn(KindUser, "usr_deadbeef")
+	_ = g.sw.learn(KindUser, "usr_deadbeef")
 	if !g.AllowIdentifiers() {
 		t.Fatal("mode")
 	}
@@ -90,7 +90,7 @@ func TestGroupByTokenEqualsGroupByRaw(t *testing.T) {
 	}
 	g := NewGuard(false)
 	for _, r := range rows {
-		_ = g.Learn(KindUser, r.User)
+		_ = g.sw.learn(KindUser, r.User)
 	}
 	// the rows arrive in several host calls
 	tokCounts := map[string]int{}
@@ -180,7 +180,7 @@ func FuzzGuardNoLeak(f *testing.F) {
 		learned := []string{"usr_cafe0001", "Alice.Smith@example.com", "Mozilla/5.0 (compatible; Bot/2.1; +http://bot.example.com/about)", "4711"}
 		g := NewGuard(false)
 		for _, l := range learned {
-			if err := g.Learn(KindUser, l); err != nil {
+			if err := g.sw.learn(KindUser, l); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -202,7 +202,14 @@ func FuzzGuardNoLeak(f *testing.F) {
 		walk(dec, func(str string) { sb.WriteString(str); sb.WriteByte('\n') })
 		outs["json"] = sb.String()
 		for name, out := range outs {
-			if l := leakIP(out); l != "" {
+			if name != "json" {
+				if l := leakIP(out); l != "" {
+					t.Fatalf("%s: address (%s): %q -> %q", name, l, in, out)
+				}
+				if l := leakTriple(in, out); l != "" {
+					t.Fatalf("%s: octets (%s): %q -> %q", name, l, in, out)
+				}
+			} else if l := leakIP(out); l != "" {
 				t.Fatalf("%s: address (%s): %q -> %q", name, l, in, out)
 			}
 			if l := leakLearned(out, learned[:3]); l != "" && !strings.Contains(strings.ToLower(pre+post), strings.ToLower(l)) {

@@ -23,9 +23,20 @@ func isWord(c byte) bool {
 // isV6Char is a byte that can be part of a run that may hold an IPv6 address.
 func isV6Char(c byte) bool { return isHex(c) || c == ':' || c == '.' }
 
+// budget counts the steps one text may cost; see scanBudgetPerByte.
+type budget struct{ left int }
+
+func (b *budget) charge(n int) bool {
+	b.left -= n
+	return b.left >= 0
+}
+
 // scanIPs walks in once, left to right, and calls tok for every address; the result is in with those spans replaced. v6 chooses
-// the IPv6 scan, otherwise the IPv4 scan. Every scanner moves forward only, and a long run is measured once.
-func scanIPs(in string, v6 bool, tok func(canon string) string) string {
+// the IPv6 scan, otherwise the IPv4 scan. Every scanner moves forward only, a long run is measured once, and every step is charged
+// to the budget: false means the budget ran out and the result must not be used.
+func scanIPs(in string, v6 bool, tok func(canon string) string, left *int) (string, bool) {
+	bg := &budget{left: *left}
+	defer func() { *left = bg.left }()
 	var b strings.Builder
 	last := 0
 	emit := func(from, to int, canon string) {
@@ -37,22 +48,27 @@ func scanIPs(in string, v6 bool, tok func(canon string) string) string {
 		last = to
 	}
 	if v6 {
-		scanV6(in, emit)
+		if !scanV6(in, emit, bg) {
+			return in, false
+		}
 	} else {
 		for i := 0; i < len(in); {
-			from, to, canon, ok := nextV4(in, i)
+			from, to, canon, ok := nextV4(in, i, bg)
 			if !ok {
 				break
 			}
 			emit(from, to, canon)
 			i = to
 		}
+		if bg.left < 0 {
+			return in, false
+		}
 	}
 	if last == 0 {
-		return in
+		return in, true
 	}
 	b.WriteString(in[last:])
-	return b.String()
+	return b.String(), true
 }
 
 // dottedEnd returns the end of the digits-and-dots number that starts at i (a "." counts only when a digit follows it).
@@ -84,7 +100,7 @@ func v4Part(p string) (int, bool) {
 // no window covers stays ("...3" then ".443"). A four-part number that does not read as an address ("10.0.19045.1234", a build
 // number) is left; that is the one over-redaction trade the other way. A letter next to the number does not stop it ("ip1.2.3.4").
 // Leading zeros are decimal: "010.001.002.003" is 10.1.2.3, and shares its token.
-func nextV4(s string, pos int) (from, to int, canon string, ok bool) {
+func nextV4(s string, pos int, bg *budget) (from, to int, canon string, ok bool) {
 	i := pos
 	for i < len(s) {
 		if !isDigit(s[i]) {
@@ -94,6 +110,9 @@ func nextV4(s string, pos int) (from, to int, canon string, ok bool) {
 		start := i
 		end := dottedEnd(s, start)
 		i = end
+		if !bg.charge(2 * (end - start)) {
+			return 0, 0, "", false
+		}
 		parts := strings.Split(s[start:end], ".")
 		if len(parts) < 4 {
 			continue
@@ -134,16 +153,19 @@ func nextV4(s string, pos int) (from, to int, canon string, ok bool) {
 	return 0, 0, "", false
 }
 
-// scanV6 finds the IPv6 addresses of in, left to right, and calls emit with the span and the canonical text of each. A candidate run
-// is a stretch of hex digits, colons and dots, measured once. Inside it every window that starts at the run start, right after a
-// ":" or "." or where the last address ended, and ends at the run end or right before a ":" or ".", is tried with net/netip, the
-// leftmost start first and, for that start, the longest end; so noise in front ("a.b:2001:db8::5", "label:::1"), behind
-// ("2001:db8::1.2.3.4.5") or a port without brackets ("2001:db8::1:8080" is read as one address, a ninth group is cut off) does
-// not hide an address. The window must hold a "::" or at least 6 colons (so a time "12:30:45" is never one). A window that touches
-// a word byte at the run edge ("std::vector", "Class::method") counts only when it holds a decimal digit (so "::1x" and "1_eth0"
-// are tokenized and "d::ec" is not). A zone ("%eth0") after the run end is part of the span. A v4-mapped address gets the token of
-// its v4 form.
-func scanV6(s string, emit func(from, to int, canon string)) {
+// scanV6 finds the IPv6 addresses of in, left to right, and calls emit with the span and the canonical text of each; it returns false
+// when the budget ran out. A candidate run is a stretch of hex digits, colons and dots, measured once. Inside it every window that
+// starts at the run start, right after a ":" or ".", or where the last address ended, and ends at the run end, right before a ":" or
+// ".", or four digits into a longer group, is tried with net/netip, the leftmost start first and, for that start, the longest end;
+// so noise in front ("a.b:2001:db8::5", "label:::1"), behind ("2001:db8::1.2.3.4.5", "2001:db8::1abcdef") or a port without
+// brackets ("2001:db8::1:8080" is read as one address, a ninth group is cut off) does not hide an address. The first group of a run
+// that follows a letter, when it is one byte ("src:fe80::1": the "c" ends "src"), is left to that word. A first group of more than
+// four digits ("02001:db8::1") is tried from its last four. The window must hold a "::" or at least 6 colons (so a time "12:30:45"
+// is never one). A window that touches a word byte at the run edge ("std::vector", "Class::method") counts only when it holds a
+// decimal digit (so "::1x" and "1_eth0" are tokenized and "d::ec" is not). A zone ("%eth0") after the run end is part of the span.
+// A v4-mapped address gets the token of its v4 form when it is written in the form netip reads; the v4 pass has taken every other
+// spelling before this scan runs (see replaceIPs).
+func scanV6(s string, emit func(from, to int, canon string), bg *budget) bool {
 	i := 0
 	for i < len(s) {
 		if !isV6Char(s[i]) {
@@ -161,35 +183,87 @@ func scanV6(s string, emit func(from, to int, canon string)) {
 		if colons < 2 {
 			continue
 		}
-		for l := start; l < end; {
-			f, e, c, ok := v6From(s, l, start, end)
-			if ok {
-				emit(f, e, c)
-				if e > i {
-					i = e // a zone ran past the run
-				}
-				if e >= end {
-					break
-				}
-				l = e
-				continue
+		if !bg.charge(end - start) {
+			return false
+		}
+		starts := []int{start}
+		if start > 0 && isWord(s[start-1]) {
+			if p := nextSep(s, start, end); p-start == 1 && !isDigit(s[start]) && s[p] == ':' && p+1 < end && s[p+1] != ':' {
+				// the lone letter belongs to the word in front; the run is read from the next group, and from the letter only when
+				// that finds nothing
+				starts = []int{p + 1, start}
 			}
-			// the next window start: right after the next ":" or "."
-			p := l
-			for p < end && s[p] != ':' && s[p] != '.' {
-				p++
+		}
+		found := false
+		for _, l0 := range starts {
+			if found {
+				break
 			}
-			l = p + 1
+			l := l0
+			for l < end {
+				f, e, c, ok, spent := v6From(s, l, start, end)
+				if !bg.charge(spent + 1) {
+					return false
+				}
+				if ok {
+					found = true
+					emit(f, e, c)
+					if e > i {
+						i = e // a zone ran past the run
+					}
+					if e >= end {
+						break
+					}
+					l = e
+					continue
+				}
+				p := nextSep(s, l, end)
+				if l == start && p-start > 4 && p < end {
+					// a first group of more than four digits: try its last four
+					if _, e, c, ok, spent := v6From(s, p-4, start, end); ok || spent >= 0 {
+						if !bg.charge(spent) {
+							return false
+						}
+						if ok {
+							found = true
+							emit(start, e, c) // the whole first group goes with it
+							if e > i {
+								i = e
+							}
+							if e >= end {
+								break
+							}
+							l = e
+							continue
+						}
+					}
+				}
+				l = p + 1
+			}
 		}
 	}
+	return true
 }
 
-func v6From(s string, l, start, end int) (from, to int, canon string, ok bool) {
+// nextSep returns the index of the next ":" or "." at or after l, or end.
+func nextSep(s string, l, end int) int {
+	for l < end && s[l] != ':' && s[l] != '.' {
+		l++
+	}
+	return l
+}
+
+func v6From(s string, l, start, end int) (from, to int, canon string, ok bool, spent int) {
 	colons := 0
 	dbl := false
 	bestH := -1
 	var best netip.Addr
+	gs := l // start of the group the window is in
 	for h := l + 1; h <= end && h-l <= maxV6Len; h++ {
+		spent++
+		if s[h-1] == ':' || s[h-1] == '.' {
+			gs = h
+		}
 		if s[h-1] == ':' {
 			colons++
 			if h-2 >= l && s[h-2] == ':' {
@@ -199,7 +273,7 @@ func v6From(s string, l, start, end int) (from, to int, canon string, ok bool) {
 				break
 			}
 		}
-		atEdge := h == end || s[h] == ':' || s[h] == '.'
+		atEdge := h == end || s[h] == ':' || s[h] == '.' || (h-gs == 4 && isHex(s[h]))
 		if !atEdge || colons < 2 || (!dbl && colons < 6) {
 			continue
 		}
@@ -214,9 +288,12 @@ func v6From(s string, l, start, end int) (from, to int, canon string, ok bool) {
 		}
 	}
 	if bestH < 0 {
-		return 0, 0, "", false
+		return 0, 0, "", false, spent
 	}
 	e := bestH
+	for e < end && isHex(s[e]) {
+		e++ // a cut inside a longer group takes the whole group
+	}
 	if e == end && end < len(s) && s[end] == '%' {
 		z := end + 1
 		for z < len(s) && z-end <= maxZone && (isWord(s[z]) || s[z] == '-' || s[z] == '.' || s[z] == '~') {
@@ -224,7 +301,7 @@ func v6From(s string, l, start, end int) (from, to int, canon string, ok bool) {
 		}
 		e = z
 	}
-	return l, e, best.Unmap().WithZone("").String(), true
+	return l, e, best.Unmap().WithZone("").String(), true, spent
 }
 
 func hasDigit(s string) bool {
