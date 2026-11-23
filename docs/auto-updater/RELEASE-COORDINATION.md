@@ -75,7 +75,7 @@ Measured on rc.56 (22 Nov 2026, from GitHub run times and the lock record): pref
 
 ### 4. BL-194: which Go builds the signing tool
 
-Preflight records two lines in the audit log (`preflight-ok`: `go_installed`, `go_used`). `go_installed` is `GOTOOLCHAIN=local go version`; `go_used` is the plain `go version` in the pinned worktree (what `go.mod` asks for). If they differ, Go fetched a toolchain and checked it against the Go checksum database (`GOTOOLCHAIN=auto`, set by `ReleaseLib.ps1`). On 21 Nov the PC had go1.27.4 and `go.mod` asks for 1.27.3, so a normal release does not switch. The fetch path itself was exercised with `GOTOOLCHAIN=go1.27.3` (see BACKLOG BL-194). The unmodified path (go.mod newer than the installed Go) is proven the first time that happens.
+Preflight records two lines in the audit log (`preflight-ok`: `go_installed`, `go_used`). `go_installed` is `GOTOOLCHAIN=local go version`; `go_used` is the plain `go version` in the pinned worktree (what `go.mod` asks for). If they differ, Go fetched a toolchain and checked it against the Go checksum database (`GOTOOLCHAIN=auto`, set by `ReleaseLib.ps1`). On 21 Nov the PC had go1.27.4 and `go.mod` asked for 1.27.3, so a release did not switch; since 23 Nov (BL-460) `go.mod` asks for 1.27.4 and the two agree. The fetch path itself was exercised with `GOTOOLCHAIN=go1.27.3` (see BACKLOG BL-194). The unmodified path (go.mod newer than the installed Go) is proven the first time that happens.
 
 ## Rules for other sessions
 
