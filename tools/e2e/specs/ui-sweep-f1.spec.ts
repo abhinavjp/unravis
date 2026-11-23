@@ -42,10 +42,13 @@ test('SWEEP-F1-02 a field help opening does not move or stretch the field beside
   await openMoreFilters(page);
   await page.getByRole('tab', { name: /^What/ }).click();
   const measure = () => page.evaluate(() => {
+    // The label's place inside its own group of fields, not on the page: a shift of the whole filter panel between the two reads (CI saw one of 8.84 px, from something above
+    // the panel, on a run where the same CSS had passed) is not the field beside the help moving, which is what this test is about.
     const label = document.querySelector<HTMLElement>('label[for="rf-completion"]')!.getBoundingClientRect();
+    const grid = document.querySelector<HTMLElement>('label[for="rf-completion"]')!.closest('.field-grid')!.getBoundingClientRect();
     const select = document.querySelector<HTMLElement>('#rf-completion')!.getBoundingClientRect();
     const own = document.querySelector<HTMLElement>('#outcome')!.getBoundingClientRect();
-    return { labelTop: label.top, selectHeight: select.height, ownHeight: own.height };
+    return { labelTop: label.top - grid.top, selectHeight: select.height, ownHeight: own.height };
   });
   const before = await measure();
   await page.getByRole('button', { name: 'About Status' }).click();
