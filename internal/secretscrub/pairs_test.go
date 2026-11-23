@@ -49,6 +49,11 @@ func TestPairRecordsMaskTheValue(t *testing.T) {
 		{"heredoc never ends", "{name: A, value = <<EOT\nfoo\n}\n{name: DB_PASSWORD, value: SECRET36}"},
 		{"name before a bracket", `(name=DB_PASSWORD(x) value=SECRET37)`},
 		{"escaped quote in unclosed", `{"m": "(name=DB_PASSWORD value='ab\"SECRET38)"}`},
+		// Review round 3: a quoted value followed by text is still a value.
+		{"quote then slash", `(name="DB_PASSWORD" value="SECRET39"/>`},
+		{"quote then comment", `{name: DB_PASSWORD, value: "SECRET40"#c}`},
+		{"quote then call", `Env(name='DB_PASSWORD', value='SECRET41'.strip())`},
+		{"quote then pipe", `{name: DB_PASSWORD, value: "SECRET42"|base64}`},
 		{"unclosed quote in json string", `{"msg": "(name=DB_PASSWORD value='SECRET33)"}`},
 	} {
 		if out := Mask(tc.in, m); strings.Contains(out, "SECRET") {
@@ -84,6 +89,9 @@ func TestPairRecordsKeepJSONValid(t *testing.T) {
 		`{"cmd":"(name=DB_PASSWORD value=SECRET5\"x)"}`,
 		`{"msg": "(name=DB_PASSWORD value='SECRET6)"}`,
 		`{"msg":"set name=DB_PASSWORD value: ","b":1}`,
+		`{"msg": "(name=DB_PASSWORD value: "}`,
+		`["name=DB_PASSWORD value=", 1]`,
+		`{"a": 1, "z": ["{name: DB_PASSWORD, value: "]}`,
 		`{"m": "(name=DB_PASSWORD value='ab\"SECRET10)"}`,
 		`{"msg":"name: DB_PASSWORD value: ","b":{"c":"d"}}`,
 		`{"a":"x","msg":"[name:DB_PASSWORD value:'SECRET7","z":1}`,

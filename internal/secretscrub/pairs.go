@@ -20,8 +20,8 @@ import "strings"
 
 func pairRecords(s string, edits []edit, w *work) ([]edit, int) {
 	var stack []jframe
-	var open []byte // the bracket that opened each frame
-	memo := ""      // a heredoc tag whose end line was searched for and not found
+	var open []byte           // the bracket that opened each frame
+	memo := map[string]bool{} // heredoc tags whose end line was searched for and not found
 	i := 0
 	stop := len(s)
 	for i < len(s) {
@@ -78,7 +78,7 @@ func pairRecords(s string, edits []edit, w *work) ([]edit, int) {
 			}
 			var from, to, next int
 			if isValue && v < len(s) && s[v] != '"' && s[v] != '\'' && s[v] != '\\' {
-				from, to, next = pairBare(s, v, open[len(open)-1], w, &memo)
+				from, to, next = pairBare(s, v, open[len(open)-1], w, memo)
 			} else {
 				from, to, next = pairValue(s, v)
 			}
@@ -162,25 +162,30 @@ func memberAt(s string, k int) bool {
 func pairQuoted(s string, v int) (from, to, next int) {
 	esc := s[v] == '\\'
 	f, t, n, _, ok := recordString(s, v, esc)
-	if ok {
-		if !esc && n < len(s) && !strings.ContainsRune(" \t\r\n,;)}]", rune(s[n])) {
-			// The closing quote is followed by a word ("value: ","b":1}"): this quote closed a JSON string and the "string" runs from
-			// there to the quote that opens the next member name. Not a value.
+	if !ok {
+		if esc {
 			return v, v, v + 1
 		}
-		return f, t, n
+		e := v + 1
+		for e < len(s) && s[e] != '\n' && s[e] != '\r' && s[e] != '"' {
+			if s[e] == '\\' && e+1 < len(s) && s[e+1] != '\n' && s[e+1] != '\r' {
+				e++ // an escaped character stays whole, so the text around a JSON string stays valid
+			}
+			e++
+		}
+		e = min(e, len(s))
+		f, t, n = v+1, e, e
 	}
-	if esc {
+	k := f
+	for k < t && (s[k] == ' ' || s[k] == '\t') {
+		k++
+	}
+	if k < t && strings.IndexByte(",:}]", s[k]) >= 0 {
+		// The text starts like what follows a JSON string ("value: ","b":1}" or "value: "}"): this quote closed a JSON string, it did
+		// not open a value. A secret does not start with one of these.
 		return v, v, v + 1
 	}
-	e := v + 1
-	for e < len(s) && s[e] != '\n' && s[e] != '\r' && s[e] != '"' {
-		if s[e] == '\\' && e+1 < len(s) && s[e+1] != '\n' && s[e+1] != '\r' {
-			e++ // an escaped character stays whole, so the text around a JSON string stays valid
-		}
-		e++
-	}
-	return v + 1, min(e, len(s)), min(e, len(s))
+	return f, t, n
 }
 
 // pairValue reads the value that starts at v: a quoted string (inside its quotes) or a word that ends at white space, a comma, a
@@ -219,7 +224,7 @@ func closerOf(c byte) byte {
 }
 
 // pairBare reads a bare value of a "value" member, see the comment at the top of the file. opener is the bracket of the group.
-func pairBare(s string, v int, opener byte, w *work, memo *string) (from, to, next int) {
+func pairBare(s string, v int, opener byte, w *work, memo map[string]bool) (from, to, next int) {
 	if strings.HasPrefix(s[v:], "<<") {
 		return pairHeredoc(s, v, w, memo)
 	}
@@ -228,8 +233,7 @@ func pairBare(s string, v int, opener byte, w *work, memo *string) (from, to, ne
 		return v, v, v
 	}
 	closer := closerOf(opener)
-	var inner [16]byte // the closers still expected for the brackets opened inside the value
-	depth := 0
+	inner := make([]byte, 0, 16) // the closers still expected for the brackets opened inside the value
 	e := v
 loop:
 	for e < len(s) {
@@ -237,13 +241,12 @@ loop:
 		case '\n', '\r', '"', '\\':
 			break loop
 		case '(', '[', '{':
-			if depth < len(inner) {
-				inner[depth] = closerOf(c)
-				depth++
+			if len(inner) < 16 {
+				inner = append(inner, closerOf(c))
 			}
 		case ')', ']', '}':
-			if depth > 0 && inner[depth-1] == c {
-				depth--
+			if n := len(inner); n > 0 && inner[n-1] == c {
+				inner = inner[:n-1]
 			} else if c == closer {
 				break loop // the bracket of the group itself, also when a bracket inside the value never closed
 			}
@@ -253,7 +256,7 @@ loop:
 				r++
 			}
 			w.spend(r - e)
-			if depth == 0 && memberAt(s, r) {
+			if len(inner) == 0 && memberAt(s, r) {
 				break loop
 			}
 			e = r
@@ -271,8 +274,8 @@ loop:
 
 // pairHeredoc masks the body of an HCL heredoc (value = <<EOT, up to the line that holds EOT alone). The marker stays readable. A
 // heredoc that never ends is masked to the end of the text, but the scan goes on after its first line, so a record after it is still
-// read. A heredoc tag that was searched for and not found is not searched for again (memo), so repeated unfinished heredocs stay linear.
-func pairHeredoc(s string, v int, w *work, memo *string) (from, to, next int) {
+// read. A heredoc tag that was searched for and not found is not searched for again (memo of up to 16 tags), so repeated unfinished heredocs stay linear.
+func pairHeredoc(s string, v int, w *work, memo map[string]bool) (from, to, next int) {
 	k := v + 2
 	if k < len(s) && s[k] == '-' {
 		k++
@@ -287,7 +290,7 @@ func pairHeredoc(s string, v int, w *work, memo *string) (from, to, next int) {
 		return v, v, t
 	}
 	from = t + nl + 1
-	if *memo == tag {
+	if memo[tag] {
 		return from, len(s), from
 	}
 	for ls := from; ls <= len(s); {
@@ -308,6 +311,8 @@ func pairHeredoc(s string, v int, w *work, memo *string) (from, to, next int) {
 		}
 		ls = le + 1
 	}
-	*memo = tag
+	if len(memo) < 16 {
+		memo[tag] = true
+	}
 	return from, len(s), from
 }
