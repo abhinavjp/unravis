@@ -162,8 +162,8 @@ func memberAt(s string, k int) bool {
 func pairQuoted(s string, v int) (from, to, next int) {
 	esc := s[v] == '\\'
 	f, t, n, _, ok := recordString(s, v, esc)
-	if ok && s[v] == '\'' && bareQuote(s[f:t]) {
-		ok = false // an apostrophe string that holds a double quote ran across the end of a JSON string: it never closed
+	if ok && (esc || s[v] == '\'') && endsJSONString(s[f:t]) {
+		ok = false // the string holds the end of a JSON string (a double quote and then "," or "}"): it ran across and never closed
 	}
 	if !ok {
 		if esc {
@@ -191,14 +191,21 @@ func pairQuoted(s string, v int) (from, to, next int) {
 	return f, t, n
 }
 
-// bareQuote says whether t holds a double quote that is not escaped.
-func bareQuote(t string) bool {
+// endsJSONString says whether t holds a double quote that is not escaped and is followed (after spaces) by the end of the text or by a
+// comma, colon, brace or bracket: the end of a JSON string. A double quote inside a Python string ('ab"cd') is not one.
+func endsJSONString(t string) bool {
 	for i := 0; i < len(t); i++ {
 		switch t[i] {
 		case '\\':
 			i++
 		case '"':
-			return true
+			k := i + 1
+			for k < len(t) && (t[k] == ' ' || t[k] == '\t') {
+				k++
+			}
+			if k >= len(t) || strings.IndexByte(",:}]", t[k]) >= 0 {
+				return true
+			}
 		}
 	}
 	return false

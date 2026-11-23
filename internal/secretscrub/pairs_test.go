@@ -54,6 +54,9 @@ func TestPairRecordsMaskTheValue(t *testing.T) {
 		{"quote then comment", `{name: DB_PASSWORD, value: "SECRET40"#c}`},
 		{"quote then call", `Env(name='DB_PASSWORD', value='SECRET41'.strip())`},
 		{"quote then pipe", `{name: DB_PASSWORD, value: "SECRET42"|base64}`},
+		// Review round 5: a double quote inside a Python string is part of the value.
+		{"python dq in value", `EnvVar(name='DB_PASSWORD', value='ab"SECRET43')`},
+		{"python escaped dq in value", `EnvVar(name='DB_PASSWORD', value='ab\\"SECRET44')`},
 		{"unclosed quote in json string", `{"msg": "(name=DB_PASSWORD value='SECRET33)"}`},
 	} {
 		if out := Mask(tc.in, m); strings.Contains(out, "SECRET") {
@@ -88,6 +91,8 @@ func TestPairRecordsKeepJSONValid(t *testing.T) {
 		`{"cmd":"EnvVar(name='DB_PASSWORD', value='SECRET4')"}`,
 		`{"cmd":"(name=DB_PASSWORD value=SECRET5\"x)"}`,
 		`{"msg": "(name=DB_PASSWORD value='SECRET6)"}`,
+		`{"a":"name=DB_PASSWORD value: \"","b":{"c":"name=DB_PASSWORD value: \""}}`,
+		`{"a":"value: \"name=DB_PASSWORD ","b":{"c":"value: \"name=DB_PASSWORD "}}`,
 		`{"msg": "{name: DB_PASSWORD, value: 'SECRET11", "n": "don't"}`,
 		`{"msg": "(name=DB_PASSWORD value: 'x", "note": "it's ok"}`,
 		`{"a":" Value:(value: 'name=DB_PASSWORD ","b":{"c":" Value:(value: 'name=DB_PASSWORD "}}`,
