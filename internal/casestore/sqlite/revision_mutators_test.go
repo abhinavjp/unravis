@@ -132,6 +132,32 @@ func revisionRules() map[string]revisionRule {
 		"SetWorkspaceBlob": {false, "the workspace blob is the user's screen state, not exported", func(t *testing.T, c *Case) func() {
 			return func() { mustNoErr(t, "SetWorkspaceBlob", c.SetWorkspaceBlob(ctx, []byte(`{"a":1}`))) }
 		}},
+		"BeginRun": {false, "the code-mode audit record is the case's own log of script runs, outside the case export", func(t *testing.T, c *Case) func() {
+			return func() {
+				_, err := c.BeginRun(ctx, casestore.RunStart{Surface: "cli", Source: "return 1"})
+				mustNoErr(t, "BeginRun", err)
+			}
+		}},
+		"RecordCall": {false, "a call row of the code-mode audit record, outside the case export", func(t *testing.T, c *Case) func() {
+			run, err := c.BeginRun(ctx, casestore.RunStart{Surface: "cli", Source: "return 1"})
+			mustNoErr(t, "BeginRun", err)
+			return func() {
+				mustNoErr(t, "RecordCall", c.RecordCall(ctx, run.RunID, casestore.CallRecord{Seq: 1, DoneSeq: 1, Tool: "audit_get_guide", Status: "ok"}))
+			}
+		}},
+		"EndRun": {false, "seals a run of the code-mode audit record, outside the case export", func(t *testing.T, c *Case) func() {
+			run, err := c.BeginRun(ctx, casestore.RunStart{Surface: "cli", Source: "return 1"})
+			mustNoErr(t, "BeginRun", err)
+			return func() {
+				_, err := c.EndRun(ctx, run.RunID, casestore.RunEnd{Status: "ok"})
+				mustNoErr(t, "EndRun", err)
+			}
+		}},
+		"CloseOrphanRuns": {false, "seals unfinished runs of the code-mode audit record, outside the case export", func(t *testing.T, c *Case) func() {
+			_, err := c.BeginRun(ctx, casestore.RunStart{Surface: "cli", Source: "return 1"})
+			mustNoErr(t, "BeginRun", err)
+			return func() { _, err := c.CloseOrphanRuns(ctx); mustNoErr(t, "CloseOrphanRuns", err) }
+		}},
 		"PutDiscoverMark": {false, "discovery watermarks are a read position, not case content", func(t *testing.T, c *Case) func() {
 			return func() {
 				mustNoErr(t, "PutDiscoverMark", c.PutDiscoverMark(ctx, casestore.DiscoverFileKey{VolumeSerial: 1, FileIndex: 2}, casestore.DiscoverMark{Offset: 5}))
@@ -158,6 +184,7 @@ var revisionReaders = map[string]bool{
 	"DiscoverKey": true, "DiscoverMark": true, "DiscoverReads": true, "HealthRuns": true, "LedgerBlob": true,
 	"SavedViews": true, "ChecklistItems": true, "Retries": true, "Revision": true, "Envs": true,
 	"Sources": true, "WorkspaceBlob": true,
+	"ListRuns": true, "GetRun": true, "RunCalls": true, "CallResult": true, "ChainRows": true, "VerifyCodeChain": true, "CodeRunStats": true,
 }
 
 // TestRevisionMutatorsAreAllClassified fails when *Case gains an exported
