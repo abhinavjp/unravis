@@ -149,6 +149,6 @@ test('the margin counts the sign: the widest label of a signed axis is the longe
   const ref = { p50: q(100), p90: q(150), p95: q(200), p99: q(300) };
   const a2 = analysisOf([row('a', ref)], [pt(0, { p95: q(1200) }), pt(1, { p95: q(1100) })]);
   const o = charts.multiTimelineOption(a2, ['a'], new Map(), 'UTC', 'percent', 'p95');
-  const bare = axis.valueAxis([1000, 500], 4, 10).widest;
-  assert.ok(o.yAxis.nameGap >= axis.labelWidth('+' + bare) + 14 - 1);
+  const bare = axis.valueAxis([500, 450], 4, 10).widest; // +500 % and +450 % against the reference of 200 ms
+  assert.equal(o.yAxis.nameGap, axis.labelWidth('+' + bare) + 14);
 });
