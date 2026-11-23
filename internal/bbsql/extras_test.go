@@ -221,7 +221,13 @@ func TestExtraClampedTimeoutsEventuallyStrike(t *testing.T) {
 // is a deliberate edit to this list, reviewed as a security change (a source
 // can expose client addresses, names or text that no column rule catches).
 func TestExtraSourcesArePinned(t *testing.T) {
-	want := map[string]bool{}
+	want := map[string]bool{
+		"sys.dm_exec_query_memory_grants":         true,
+		"sys.dm_io_pending_io_requests":           true,
+		"sys.dm_os_latch_stats":                   true,
+		"sys.dm_os_workers":                       true,
+		"sys.dm_resource_governor_resource_pools": true,
+	}
 	if !maps.Equal(extraSources, want) {
 		t.Errorf("extraSources = %v, want exactly %v", extraSources, want)
 	}
