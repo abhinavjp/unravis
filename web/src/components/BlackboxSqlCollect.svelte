@@ -4,7 +4,7 @@
   import { BlackboxError, blackboxApi, refusalText, type ThisPc } from '../lib/blackbox';
   import { BB_REFUSAL } from '../lib/copy/blackboxCopy';
   import { SQLC_TEXT as T } from '../lib/copy/blackboxSqlCopy';
-  import { SQL_PROFILES, loginChoices, profileOf, setupLine, withProfile, type SqlProfile } from '../lib/blackboxSql';
+  import { QUERY_TEXT_SIZES, SQL_PROFILES, keepsQueryText, loginChoices, profileOf, queryTextSizeOf, setupLine, sqlStatusLine, withProfile, type SqlProfile } from '../lib/blackboxSql';
   import type { SavedSqlConnection, SqlAccessReport } from '../lib/types';
   import SqlConnectionForm from './sources/SqlConnectionForm.svelte';
   import SqlAccessResult from './sources/SqlAccessResult.svelte';
@@ -20,7 +20,9 @@
   let savedId = $state('');
   let profile = $state<SqlProfile>('standard');
   // The profile applied during this visit; the list refreshes later, so this keeps a second press from asking for a second approval.
-  let applied = $state<SqlProfile | null>(null);
+  let applied = $state<{ profile: SqlProfile; text: boolean; size: number } | null>(null);
+  let textOn = $state(false);
+  let textSize = $state<number>(1000);
   let addOpen = $state(false);
   let busy = $state<'' | 'check' | 'on' | 'clear'>('');
   let report = $state<SqlAccessReport | null>(null);
@@ -30,13 +32,17 @@
   let copyNote = $state('');
 
   const choices = $derived(loginChoices(connections));
-  const current = $derived(applied ?? profileOf(thisPc.settings));
+  const current = $derived(applied ?? { profile: profileOf(thisPc.settings), text: keepsQueryText(thisPc.settings), size: queryTextSizeOf(thisPc.settings) });
+  const wantText = $derived(profile === 'deep' && textOn);
+  // What would change at Apply: the profile, the text flag, or (only while text is on) its size.
+  const changed = $derived(profile !== current.profile || wantText !== current.text || (wantText && textSize !== current.size));
+  const status = $derived(sqlStatusLine(thisPc));
 
   async function load() {
     try { connections = await api.sqlConnections(); } catch { connections = []; }
     if (!choices.some((c) => c.id === savedId)) savedId = choices[0]?.id ?? '';
   }
-  onMount(() => { profile = profileOf(thisPc.settings); void load(); });
+  onMount(() => { profile = profileOf(thisPc.settings); textOn = keepsQueryText(thisPc.settings); textSize = queryTextSizeOf(thisPc.settings); void load(); });
 
   const reset = () => { report = null; grant = ''; line = ''; bad = false; };
   $effect(() => { void mode; void savedId; reset(); });
@@ -52,11 +58,11 @@
 
   // The profile is read by the SQL service when it starts, so a changed choice is applied to the recorder first.
   async function applyProfile(): Promise<boolean> {
-    if (profile === current) return true;
+    if (!changed) return true;
     const base = thisPc.settings;
     if (!base) { bad = true; line = T.failed; return false; }
-    await blackboxApi.apply(withProfile(base, profile));
-    applied = profile;
+    await blackboxApi.apply(withProfile(base, profile, { on: wantText, size: textSize }));
+    applied = { profile, text: wantText, size: textSize };
     return true;
   }
 
@@ -92,6 +98,7 @@
 <section class="sqlc" aria-labelledby="{uid}-h">
   <h4 id="{uid}-h">{T.heading}</h4>
   <p class="note">{T.intro}</p>
+  {#if status}<p class="note" role="status">{status}</p>{/if}
 
   <fieldset class="modes">
     <legend>{T.howHeading}</legend>
@@ -114,7 +121,19 @@
   <label class="field"><span>{T.profileHeading}</span>
     <select bind:value={profile} id="{uid}-profile">{#each SQL_PROFILES as p (p)}<option value={p}>{T.profile[p]}</option>{/each}</select>
   </label>
-  {#if profile !== current}<p class="note">{T.profileWillApply}</p>{/if}
+  {#if profile === 'deep'}
+    <p class="note">{T.deepNote}</p>
+    <label class="opt"><input type="checkbox" bind:checked={textOn} aria-describedby="{uid}-text-warn" /> <span><b>{T.queryText}</b></span></label>
+    <p class="note warn" id="{uid}-text-warn">{T.queryTextWarn}</p>
+    {#if textOn}
+      <label class="field"><span>{T.queryTextSize}</span>
+        <select bind:value={textSize} id="{uid}-text-size">{#each QUERY_TEXT_SIZES as n (n)}<option value={n}>{T.queryTextChars(n)}</option>{/each}</select>
+      </label>
+    {/if}
+  {:else}
+    <p class="note">{T.queryTextDeepOnly}</p>
+  {/if}
+  {#if changed}<p class="note">{T.profileWillApply}</p>{/if}
 
   <div class="row">
     {#if mode === 'login'}
@@ -154,6 +173,7 @@
   .field { display: grid; gap: 4px; font-size: 13px; font-weight: 500; }
   .field select { width: 100%; max-width: 420px; padding: 6px 8px; font: inherit; font-weight: 400; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-sizing: border-box; }
   .row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+  .warn { color: var(--text); border-left: 3px solid var(--warn); padding-left: var(--space-2); }
   .say { margin: 0; font-size: 13px; font-weight: 600; }
   .say.bad { color: var(--bad); }
   .script { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; width: 100%; resize: vertical; box-sizing: border-box; }

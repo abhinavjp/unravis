@@ -1225,6 +1225,53 @@
           "waitFor": "role=textbox[name=\"Script to run in SSMS as an admin\"]"
         }
       ]
+    },
+    {
+      "id": "x-blackbox-sql-text",
+      "phase": "X",
+      "note": "Blackbox status: Collect SQL data with the Deep choice and the query text switch on (warning and size shown).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"Blackbox\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"Blackbox\"s]"
+        },
+        {
+          "waitFor": "#blackbox-title"
+        },
+        {
+          "click": "role=button[name=\"Open status: web-a\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Collect SQL data\"]"
+        },
+        {
+          "select": [
+            "role=combobox[name=\"What to collect\"]",
+            "deep"
+          ]
+        },
+        {
+          "click": "role=checkbox[name=/Also keep the text/]"
+        },
+        {
+          "waitFor": "role=combobox[name=\"Longest text kept for one query\"]"
+        }
+      ]
     }
   ]
 }

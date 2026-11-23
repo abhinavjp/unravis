@@ -524,10 +524,14 @@ type LocalFound struct {
 	Installed bool     `json:"installed"`
 	State     SvcState `json:"-"`
 	Running   bool     `json:"running"`
-	Name      string   `json:"name,omitempty"`
-	Folder    string   `json:"folder,omitempty"`
-	Port      int      `json:"port,omitempty"`
-	Bind      string   `json:"bind,omitempty"`
+	// SQLInstalled and SQLRunning are the state of the second service (UnravisBlackboxSql), read from the service manager only. Whether it
+	// holds a login is not readable by an ordinary user (the folder is locked), so it is not claimed here.
+	SQLInstalled bool   `json:"sqlInstalled,omitempty"`
+	SQLRunning   bool   `json:"sqlRunning,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Folder       string `json:"folder,omitempty"`
+	Port         int    `json:"port,omitempty"`
+	Bind         string `json:"bind,omitempty"`
 	// ConfigUnreadable is set when the service exists but its settings could not be read.
 	ConfigUnreadable bool `json:"configUnreadable,omitempty"`
 	// Settings is the whole blackbox.json that was read (it holds no secret). nil when unreadable.
@@ -545,6 +549,9 @@ func ScanThisPC(svc ServiceControl, env Env, load func(path string) (Config, err
 		return LocalFound{}, nil
 	}
 	f := LocalFound{Installed: true, State: st, Running: st == SvcRunning || st == SvcStartPending}
+	if ss, serr := svc.State(SQLServiceName); serr == nil && ss != SvcNotInstalled {
+		f.SQLInstalled, f.SQLRunning = true, ss == SvcRunning || ss == SvcStartPending
+	}
 	dir, err := env.ProgramDir()
 	if err != nil || load == nil {
 		f.ConfigUnreadable = true
