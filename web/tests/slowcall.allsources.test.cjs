@@ -63,7 +63,8 @@ test('this call and selected rows are marked; a press on the row or on its real 
   assert.match(markup, /class:selected=\{selectedKey === item\.key\}/);
   // the mouse keeps the whole row; the keyboard and screen reader get a real button (Enter and Space come from the browser, so no key handler is left)
   assert.match(markup, /<tr class:selected=\{selectedKey === item\.key\} onclick=\{\(\) => onSelect\(item\.key\)\}>/);
-  assert.match(markup, /<button type="button" class="row-btn" data-testid="scall-all-open" aria-pressed=\{selectedKey === item\.key\}/);
+  assert.match(markup, /<button type="button" class="row-btn" data-testid="scall-all-open" aria-label=\{DRILL_TEXT\.openSourceItem\(/);
+  assert.match(markup, /aria-pressed=\{selectedKey === item\.key\}/);
   assert.doesNotMatch(markup, /tabindex/);
   assert.doesNotMatch(src, /onkeydown|event\.key/);
   // the button keeps its press to itself: one press selects once

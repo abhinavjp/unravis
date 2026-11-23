@@ -277,6 +277,8 @@ export const DRILL_TEXT = {
   colUser: 'User',
   colApi: 'API',
   // The name of the button in the API cell of a nearby call: the visible words stay first, the time tells equal API names apart.
+  // The name of the button of an All sources row: the visible words first (with the "this call" mark when shown), then what tells equal rows apart.
+  openSourceItem: (what: string, source: string, time: string, took: string): string => [what, source, time, took ? `took ${took}` : ''].filter(Boolean).join(', '),
   openNearbyCall: (api: string, time: string): string => `${api}: open this call, started ${time}`,
   colTook: 'Took',
   colDatabase: 'Database',
@@ -387,6 +389,7 @@ const SAMPLE = {
   tabAllSources: 12,
   nearbyHint: ['10:00', '10:30', 12] as const,
   openNearbyCall: ['Orders.Get', '10:14:07.123'] as const,
+  openSourceItem: ['Orders.Get', 'API calls', '10:14:07', '1.2 s'] as const,
   windowCalls: [12, '10:00', '10:30'] as const,
   allHeading: 12,
   rowsCapped: [200, 450] as const,
@@ -457,6 +460,7 @@ export const drillCopyEntries = (): LintEntry[] => {
     ['tabAllSources', DRILL_TEXT.tabAllSources(SAMPLE.tabAllSources)],
     ['nearbyHint', DRILL_TEXT.nearbyHint(...SAMPLE.nearbyHint)],
     ['openNearbyCall', DRILL_TEXT.openNearbyCall(...SAMPLE.openNearbyCall)],
+    ['openSourceItem', DRILL_TEXT.openSourceItem(...SAMPLE.openSourceItem)],
     ['windowCalls', DRILL_TEXT.windowCalls(...SAMPLE.windowCalls)],
     ['allHeading', DRILL_TEXT.allHeading(SAMPLE.allHeading)],
     ['rowsCapped', DRILL_TEXT.rowsCapped(...SAMPLE.rowsCapped)],

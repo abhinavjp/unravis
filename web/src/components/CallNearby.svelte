@@ -295,6 +295,8 @@
     }
     .nearby td::before {
       content: attr(data-label);
+      /* the column name is already the name of the (clipped) column header: an empty alternative keeps it out of the cell's own name */
+      content: attr(data-label) / '';
       color: var(--text-2);
       text-align: left;
     }

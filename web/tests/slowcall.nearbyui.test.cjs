@@ -56,6 +56,19 @@ test('this call row, gap label and row selection', () => {
   assert.doesNotMatch(source, /tabindex|onkeydown|event\.key/);
 });
 
+test('BL-495: the All sources button names the visible words first, then source, time and duration, so equal rows differ', () => {
+  const { DRILL_TEXT } = loadCopy();
+  assert.equal(DRILL_TEXT.openSourceItem('Payroll / Run', 'API calls', '08:00:00 UTC', '60.0 s'), 'Payroll / Run, API calls, 08:00:00 UTC, took 60.0 s');
+  assert.equal(DRILL_TEXT.openSourceItem('Marker', 'SQL', '08:00:01 UTC', ''), 'Marker, SQL, 08:00:01 UTC');
+});
+
+test('BL-495: on a phone the column name is a CSS label with an empty alternative, so it is not read again in the cell name', () => {
+  for (const name of ['CallNearby', 'CallAllSources']) {
+    const css = fs.readFileSync(path.join(root, 'src/components/' + name + '.svelte'), 'utf8');
+    assert.match(css, /content: attr\(data-label\);\s*\/\*[^]*?\*\/\s*content: attr\(data-label\) \/ '';/, name);
+  }
+});
+
 test('BL-495: the row button names the visible API first and the start time after it', () => {
   const { DRILL_TEXT } = loadCopy();
   const name = DRILL_TEXT.openNearbyCall('Orders.Get', '10:14:07.123');

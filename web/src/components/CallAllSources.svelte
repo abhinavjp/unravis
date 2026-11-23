@@ -69,7 +69,7 @@
           <tr class:selected={selectedKey === item.key} onclick={() => onSelect(item.key)}>
             <td class="time" data-label={DRILL_TEXT.colTime}>{formatTime(item.startMs, { zone, date: false, precision: 'second' })}</td>
             <td class="source" data-label={DRILL_TEXT.colSource}><span><span class="dot" aria-hidden="true" style:background={SOURCE_COLOR[item.source]}></span>{SOURCE_NAME[item.source]}</span></td>
-            <td class="what" data-label={DRILL_TEXT.colWhat}><button type="button" class="row-btn" data-testid="scall-all-open" aria-pressed={selectedKey === item.key} aria-current={item.thisCall ? 'true' : undefined} onclick={(event) => pick(event, item.key)}>{item.what}{#if item.thisCall} <strong class="mark">{DRILL_TEXT.thisCallMark}</strong>{/if}</button></td>
+            <td class="what" data-label={DRILL_TEXT.colWhat}><button type="button" class="row-btn" data-testid="scall-all-open" aria-label={DRILL_TEXT.openSourceItem(item.what + (item.thisCall ? ' ' + DRILL_TEXT.thisCallMark : ''), SOURCE_NAME[item.source], formatTime(item.startMs, { zone, date: false, precision: 'second' }), took(item))} aria-pressed={selectedKey === item.key} aria-current={item.thisCall ? 'true' : undefined} onclick={(event) => pick(event, item.key)}>{item.what}{#if item.thisCall} <strong class="mark">{DRILL_TEXT.thisCallMark}</strong>{/if}</button></td>
             <td class="took" data-label={DRILL_TEXT.colTook}>{took(item)}</td>
           </tr>
         {/each}
@@ -163,8 +163,8 @@
     color: var(--text-2);
     font-size: 12px;
   }
-  /* Phone width: each item becomes a small card with labelled lines, as in Nearby calls, so the page never scrolls sideways (BL-521: the table was 55 px
-     wider than a 390 px window). Wide windows keep the table as it was. */
+  /* Phone width: each item becomes a small card with labelled lines, as in Nearby calls, so the page never scrolls sideways (BL-521: the table was 39 to 55 px
+     past a 390 px window (39 in the browser spec at 390 x 844, 55 in the audit's phone look)). Wide windows keep the table as it was. */
   @media (max-width: 760px) {
     table,
     tbody,
@@ -196,6 +196,8 @@
     }
     td::before {
       content: attr(data-label);
+      /* the column name is already the name of the (clipped) column header: an empty alternative keeps it out of the cell's own name */
+      content: attr(data-label) / '';
       color: var(--text-2);
       text-align: left;
     }
