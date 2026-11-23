@@ -280,7 +280,7 @@ Spec per area: `docs/desktop/spec/`. Items per area: `docs/desktop/groom/` (scop
 - [ ] **BL-336** SBOM and reproducible builds (size M, P4; see `docs/desktop/groom/02-security.md`)
 - [ ] **BL-337** Real-data hostile-content test (size M, P3 (core) with a rerun in P4; see `docs/desktop/groom/02-security.md`)
 - [ ] **BL-340** Baseline: current MCP bridge on six real hosts (size M, P0; see `docs/desktop/groom/03-mcp.md`)
-- [ ] **BL-341** Spike: official Go SDK parity, both wire lifecycles (size M, Parallel A; see `docs/desktop/groom/03-mcp.md`). Built 2026-11-23 (PR #246), not ticked: verdict GO in `docs/desktop/spikes/BL-341-go-sdk.md`; open: `govulncheck`, two real hosts on nachi's PC, official conformance harness
+- [ ] **BL-341** Spike: official Go SDK parity, both wire lifecycles (size M, Parallel A; see `docs/desktop/groom/03-mcp.md`). Built 2026-11-23 (PR #246), not ticked: verdict GO in `docs/desktop/spikes/BL-341-go-sdk.md`; open: `govulncheck` (spec gate, run before merge), two real hosts on nachi's PC, official conformance harness; doc corrected after review 1 of #247
 - [ ] **BL-342** Move MCP dispatch to the Go SDK, ten tools unchanged (size M, Parallel A; see `docs/desktop/groom/03-mcp.md`)
 - [ ] **BL-343** Structured results, compatible text, stable error codes (size M, Parallel A; see `docs/desktop/groom/03-mcp.md`)
 - [ ] **BL-344** Backend MCP endpoint on the pipe, audit-only dispatcher (size ?, ?; see `docs/desktop/groom/03-mcp.md`)
