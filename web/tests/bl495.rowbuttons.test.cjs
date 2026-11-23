@@ -16,7 +16,7 @@ const tagsOf = (text, tag) => [...text.matchAll(new RegExp('<' + tag + '\\b[^<>]
 
 test('"Show only" in the request volume table is a real button with a name that starts with the visible words', () => {
   const rv = files.find((f) => f.name === 'components/RequestVolume.svelte').text;
-  assert.match(rv, /<button type="button" class="quiet-button" aria-label=\{'Show only '/);
+  assert.match(rv, /<button type="button" class="quiet-button row-action" aria-label=\{'Show only '/);
   assert.match(rv, /\}\}>Show only<\/button>/);
   assert.doesNotMatch(rv, /<(div|span|td|tr)\b[^>]*Show only/);
 });

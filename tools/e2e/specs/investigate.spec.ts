@@ -3,6 +3,7 @@
 // ranked list, time zone toggle, multi-API compare. The demo opens already analysed
 // (Last 15 min, Sync, 20 Oct 08:45 to 09:00 UTC); nothing here changes demo data, so the
 // tests may run in any order.
+import type { Locator } from '@playwright/test';
 import { test, expect, type Page } from '../support/fixtures';
 
 async function run(page: Page) {
@@ -203,10 +204,13 @@ test('INV-07: request history is newest first and Export CSV hands over a file w
   expect(lines.slice(1).filter((l) => /(^|,)"?[=+@]/.test(l))).toEqual([]);
 });
 
+// The Inspect button names its request (API and start time), no longer the record id (BL-495): find it in the row that shows the id.
+const inspectOf = (panel: Page | Locator, id: string | RegExp) => panel.locator('tr', { hasText: id }).getByRole('button', { name: /^Inspect record for [\w.]+ at \d\d:\d\d:\d\d\.\d{3}, .+, record .+$/ });
+
 test('INV-08: Inspect opens the whole record and Close or Esc hands back the focus', async ({ page }) => {
   const panel = await openEvidence(page);
   await panel.getByRole('tab', { name: 'Slowest' }).click();
-  const inspect = panel.getByRole('button', { name: /^Inspect record demo-west-Payroll-current-124$/ });
+  const inspect = inspectOf(panel, 'demo-west-Payroll-current-124');
   await inspect.click();
   await expect(page.getByRole('heading', { name: 'Record demo-west-Payroll-current-124' })).toBeVisible();
   await expect(page.getByText('Every field stored for this audit record. Payloads are limited by the server.')).toBeVisible();
@@ -216,9 +220,9 @@ test('INV-08: Inspect opens the whole record and Close or Esc hands back the foc
   await expect(page.getByText('Illustrative demo response for demo-west-Payroll-current-124')).toBeVisible();
   await page.getByRole('button', { name: 'Close record details' }).click();
   await expect(page.getByRole('heading', { name: 'Record demo-west-Payroll-current-124' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /^Inspect record demo-west-Payroll-current-124$/ })).toBeFocused();
+  await expect(inspectOf(page, 'demo-west-Payroll-current-124')).toBeFocused();
   // Esc does the same.
-  await page.getByRole('button', { name: /^Inspect record demo-west-Payroll-current-124$/ }).click();
+  await inspectOf(page, 'demo-west-Payroll-current-124').click();
   await expect(page.getByRole('heading', { name: 'Record demo-west-Payroll-current-124' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('heading', { name: 'Record demo-west-Payroll-current-124' })).toHaveCount(0);
@@ -228,7 +232,7 @@ test('INV-08a: a record with no end time shows "not recorded", never a blank', a
   const panel = await openEvidence(page);
   await panel.getByRole('tab', { name: 'Incomplete' }).click();
   await panel.getByRole('button', { name: /^List incomplete, oldest first/ }).click();
-  await panel.getByRole('button', { name: /^Inspect record demo-.*-Payroll-stale-0$/ }).first().click();
+  await inspectOf(panel, /demo-.*-Payroll-stale-0/).first().click();
   await expect(page.getByRole('heading', { name: /^Record demo-.*-Payroll-stale-0$/ })).toBeVisible();
   await expect(page.getByText('not recorded', { exact: true }).first()).toBeVisible();
   // Every row of both tables has a value cell with text.
