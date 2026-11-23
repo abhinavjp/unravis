@@ -76,6 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           node tools/ci/test-fast-scope.mjs
+          node tools/ci/test-web-scope.mjs
           node tools/ci/test-compare.mjs
           node tools/ci/test-promote-dist.mjs
           node tools/ci/test-compare-e2e.mjs
@@ -216,18 +217,14 @@ jobs:
           echo "A back-merge of master into develop is allowed only when these folders end up identical to master's: the same two commands with --source=origin/master."
           exit 1
 
-      - name: Did the pull request touch web/?
+      - name: Did the pull request touch web/ or a file the web tests read?
         id: scope
         run: |
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then echo "web=false" >> "$GITHUB_OUTPUT"; exit 0; fi
-          files="$(git diff --no-renames --name-only HEAD^1 HEAD)"
-          # An empty diff is a doubt: run it. docs/user/*.md is read by the web build (BL-031).
-          if [ -z "$files" ] || printf '%s\n' "$files" | grep -Eq '^(web/|docs/user/|internal/(server|blackbox|calltrace)/|tools/e2e/)'; then
-            echo "web=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "web=false" >> "$GITHUB_OUTPUT"; echo "No web files changed: skipping the web checks."
-          fi
+          # The list of files outside web/ that the web tests read is tools/ci/web-scope.mjs; test-web-scope.mjs (go job) fails
+          # when a web test reads a path that list lacks. An empty diff is a doubt: it runs the web checks.
+          node tools/ci/web-scope.mjs --base HEAD^1 --head HEAD
 
       - name: Set up Node
         if: ${{ steps.scope.outputs.web == 'true' }}

@@ -15,8 +15,6 @@ export type Step = (
   | { aside: Step[] }
   /** Hands made-up fixture files (lib/fixtures.ts, by key) to a file input: [selector of the input, [fixture keys]]. */
   | { upload: [string, string[]] }
-  /** A part of the screen that only newer builds have: [selector, what it is]. When it is not there the screen is "not reachable on this build", not a failure. */
-  | { feature: [string, string] }
   /** Steps listed once under `macros` in extra-screens.json (see expandMacros). */
   | { macro: string }
 ) & { when?: 'narrow' | 'wide' };
@@ -38,9 +36,6 @@ export interface Screen {
   /** The steps change the list of computers on the shared demo (the add-files review does): it is read before and put back after. */
   restoreHosts?: boolean;
 }
-
-/** Thrown by a `feature` step: this build does not have that part of the screen yet. The audit records it, and does not fail. */
-export class NotOnBuild extends Error {}
 
 /** Replaces every `{ macro }` step by the steps of that name (macros may use other macros). */
 export function expandMacros(steps: Step[], macros: Record<string, Step[]>, depth = 0): Step[] {
@@ -131,9 +126,6 @@ async function runStep(page: Page, step: Step, env: Env, app?: AppName): Promise
   } else if ('upload' in step) {
     // The real file input of the screen (a visually hidden <input type=file>): the page takes the files as if they were chosen in the dialog.
     await page.locator(step.upload[0]).first().setInputFiles(makeUploads(step.upload[1]));
-  } else if ('feature' in step) {
-    const seen = await page.locator(step.feature[0]).first().waitFor({ state: 'visible', timeout: 2500 }).then(() => true, () => false);
-    if (!seen) throw new NotOnBuild(step.feature[1]);
   } else if ('theme' in step) {
     await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), step.theme);
   } else {
