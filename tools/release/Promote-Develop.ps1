@@ -208,7 +208,7 @@ if ($distSha -ne 'none') {
     # The web files commit must sit directly on the head this run checked (or a commit pushed during the build would ride under it) and
     # change only the three generated folders (a renamed file counts with its old name too): refused here, before a pull request, not
     # after the merge by Release.ps1. Assert-DistCommit (ReleaseLib.ps1) throws; there is no condition here to get the wrong way round.
-    $distParents = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$distSha" --jq '.parents[].sha')
+    $distParents = @(Split-Lines (Invoke-Gh api "repos/$Repo/commits/$distSha" --jq '.parents[].sha'))
     $distFiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$distSha" --paginate --jq '.files[] | .filename, (.previous_filename // empty)')
     try { Assert-DistCommit $distSha $headAfterMerge $distParents $distFiles $branch } catch { Stop-Here $_.Exception.Message }
 }
