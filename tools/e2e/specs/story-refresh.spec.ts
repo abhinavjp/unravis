@@ -12,6 +12,7 @@
 //   STORY-08  A case erased elsewhere shows as gone when the person comes back (no loop of reads after that).
 //   STORY-09  A theory saved in the drawer while the read on return is slow is still in the list and in the story when that read answers, and a theory another
 //             client added meanwhile shows too (the held answer is not put in; the list is read once more).
+//   STORY-10  A reload of the page whose health read fails keeps the health checks Story so far already shows (a failed read puts nothing in).
 //   STORY-07  No request storm: a return inside the gap, or while the page is hidden, reads nothing; five returns together read once.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
@@ -372,4 +373,33 @@ test('STORY-09: a theory saved while the read on return is slow is not lost when
   await expect(row).toHaveCount(1);
   await expect(page.locator('ol.story li').filter({ hasText: theory })).toHaveCount(1);
   await expect(page.locator('ol.story li').filter({ hasText: other })).toHaveCount(1);
+});
+
+test('STORY-10: a reload of the page whose health read fails keeps the health checks already in the story', async ({ page, api, allow }) => {
+  allow(/500|Internal Server Error|failed to load resource/i, 'the health read of the reload is answered 500 on purpose');
+  allow(/409|Conflict/i, 'the case was closed in another tab on purpose, so the page\'s own move is refused');
+  const title = 'QA Story Health Fail';
+  const id = await createCase(api, title);
+  // One saved health check, as the case would hold after a run (the real read is answered with it), so the story has a health line.
+  const run = { id: 1, at: '2026-10-20T08:30:00Z', kind: 'sql', label: 'Orders database', status: 'warn', report: null };
+  let failing = false;
+  await page.route(new RegExp(`/api/cases/${id}/health$`), async (route) => {
+    if (route.request().method() !== 'GET') { await route.fallback(); return; }
+    if (failing) await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'boom' }) });
+    else await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ runs: [run] }) });
+  });
+  await openStory(page, title);
+  const health = page.locator('ol.story li').filter({ hasText: 'Health check on SQL Server' });
+  await expect(health).toHaveCount(1);
+
+  // Another tab closes the case; the page's own Close is refused (409) and offers a Reload, which reads the page again.
+  const closed = await api('POST', `/api/cases/${id}/close`, undefined, 'open');
+  expect(closed.status, closed.text).toBeLessThan(300);
+  await page.getByRole('button', { name: 'Close this case' }).click();
+  failing = true;
+  await page.getByRole('button', { name: 'Reload', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Story so far' })).toBeVisible();
+  await expect(page.locator('.loading-state')).toHaveCount(0);
+  // The health read of the reload failed: the check stays in the story (it did not become "none").
+  await expect(health).toHaveCount(1);
 });
