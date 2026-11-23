@@ -43,6 +43,16 @@ struct ErrorBody {
     column: Option<String>,
     #[serde(default)]
     import_id: Option<i64>,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    retry_after_seconds: Option<u32>,
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    stage: Option<String>,
+    #[serde(default)]
+    collections: Option<Vec<String>>,
 }
 
 const INFO: &str = include_str!("../../../contracts/v1/fixtures/info.demo.json");
@@ -91,6 +101,13 @@ fn drifted_answers_are_refused() {
     assert!(serde_json::from_str::<Info>(&extra).is_err(), "extra field");
     let wrong_type = INFO.replace("\"maxPageSize\": 100", "\"maxPageSize\": \"100\"");
     assert!(serde_json::from_str::<Info>(&wrong_type).is_err(), "wrong type");
-    let dropped = INFO.replace("\"now\"", "\"nowish\"");
-    assert!(serde_json::from_str::<Info>(&dropped).is_err(), "dropped field");
+    // A required field that is only missing, not renamed.
+    for key in ["demo", "limits", "now"] {
+        let mut v: serde_json::Value = serde_json::from_str(INFO).unwrap();
+        v.as_object_mut().unwrap().remove(key);
+        assert!(serde_json::from_value::<Info>(v).is_err(), "dropped {key}");
+    }
+    // A throttled answer carries retryAfterSeconds, a source failure code, stage and collections: the error struct knows them.
+    let throttled = r#"{"error":"x","reason":"wrong-key","state":"locked","retryAfterSeconds":4,"code":"c","stage":"s","collections":["a"]}"#;
+    assert!(serde_json::from_str::<ErrorBody>(throttled).is_ok());
 }
