@@ -28,7 +28,7 @@ export const SQLC_TEXT = {
   oneApproval: 'Windows asks for one administrator approval.',
   clear: 'Remove the saved SQL login',
   clearing: 'Removing…',
-  clearHelp: 'Deletes the login stored on this PC and stops the SQL service. The recordings stay.',
+  clearHelp: 'Removing the saved login deletes it from this PC and stops the SQL service. The recordings stay.',
   cleared: 'The saved SQL login is removed and the SQL service is stopped.',
   needConnection: 'Pick a connection first.',
   notReady: 'This login is not ready for the Blackbox, so nothing was changed.',
