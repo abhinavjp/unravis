@@ -315,7 +315,7 @@ func jsonPass(s string, edits []edit, w *work, esc bool) ([]edit, int) {
 						top.key = ""
 					default:
 						// A bare value (number, true, null, or a mistake): a name on the next line after a cut "value": is not one.
-						if strings.IndexByte(s[k+1:v], '\n') >= 0 && !(s[v] == '-' || (s[v] >= '0' && s[v] <= '9')) {
+						if strings.IndexByte(s[k+1:v], '\n') >= 0 && s[v] != '-' && (s[v] < '0' || s[v] > '9') {
 							break
 						}
 						e := v
