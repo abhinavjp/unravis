@@ -1,8 +1,8 @@
 package privacy
 
 import (
-	"net/netip"
-	"sort"
+	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,64 +22,119 @@ const (
 	// ([IP_OVER]), so a hostile or huge result cannot grow the map without bound and still shows no raw value.
 	maxTokens = 1 << 16
 	// minLearnLen is the shortest value that is replaced inside longer text. A shorter learned value ("7") would damage every digit
-	// in the text, so it is replaced only when it is the whole string (a JSON string value or a key).
+	// in the text, so it is replaced only when it is the whole string (a JSON string value, a key, or a JSON number).
 	minLearnLen = 6
-	// maxLearnLen and maxLearned bound what Learn keeps.
-	maxLearnLen = 1 << 10
-	maxLearned  = 4096
-	// maxZone bounds the interface name after "%" in a v6 address.
-	maxZone = 64
-	// maxRounds bounds the repeat of the two address passes over one text.
-	maxRounds = 4
+	// The limits of Learn. A value or a count over them is refused with an error and the Sweeper is then Incomplete: the broker must
+	// not release anything from a run whose identifiers were not all taken in (see Guard).
+	maxLearnLen   = 16 << 10
+	maxLearned    = 16384
+	maxLearnBytes = 1 << 20
+	// pendMin and pendMax: learned values wait outside the automaton and are looked for one by one until there are pendMin of them
+	// and at least a quarter as many as the automaton holds (or pendMax), then all go into a new automaton. The build cost is paid
+	// on a geometric schedule, so N Learn calls cost O(N) builds of growing size, not N builds.
+	pendMin = 32
+	pendMax = 1024
+)
+
+// maxRounds bounds the repeat of the two address passes over one text. A variable so a test can reach the withheld branch.
+var maxRounds = 4
+
+// Learn errors. A Learn that fails leaves the Sweeper Incomplete.
+var (
+	ErrLearnTooLong = errors.New("privacy: identifier too long to track")
+	ErrLearnFull    = errors.New("privacy: too many identifiers to track")
 )
 
 // Sweeper finds identifiers in text and replaces each distinct one with a token that is the same for the life of the Sweeper (one
 // run). It is safe for concurrent use: four host calls may finish at once.
 //
-// A Sweeper in Hidden mode replaces IP addresses it finds by itself and the values it was told with Learn. In Allow mode it changes
-// nothing.
+// Tokens are numbered by first sight in the texts the Sweeper is given, in the order the calls reach it. They do not depend on the
+// value, on the order Learn was called in, or on its length.
+//
+// A Sweeper in Hidden mode replaces IP addresses it finds by itself and the values it was told with Learn (without regard to ASCII
+// case). In Allow mode it changes nothing.
 type Sweeper struct {
-	mu      sync.Mutex
-	allow   bool
-	tokens  map[Kind]map[string]string // kind -> canonical value -> token
-	counts  map[Kind]int
-	learned map[Kind][]string // values replaced inside text (at least minLearnLen bytes)
-	exact   map[string]Kind   // every learned value; a short one is replaced only as a whole string
-	repl    *strings.Replacer // built from learned values, nil when there are none
-	stale   bool
+	mu         sync.Mutex
+	allow      bool
+	incomplete bool
+	tokens     map[Kind]map[string]string // kind -> key -> token
+	counts     map[Kind]int
+	exact      map[string]Kind // every learned value, lower case: replaced when it is a whole string, a key or a JSON number
+	base       *matcher        // learned values (at least minLearnLen bytes) inside longer text
+	basePats   []pat
+	pend       []pat
+	nBytes     int
 }
 
 // NewSweeper returns a Sweeper. allow=true means the operator allowed identifiers: it then returns every text unchanged.
 func NewSweeper(allow bool) *Sweeper {
 	return &Sweeper{
-		allow:   allow,
-		tokens:  map[Kind]map[string]string{},
-		counts:  map[Kind]int{},
-		learned: map[Kind][]string{},
-		exact:   map[string]Kind{},
+		allow:  allow,
+		tokens: map[Kind]map[string]string{},
+		counts: map[Kind]int{},
+		exact:  map[string]Kind{},
 	}
 }
 
 // Allow reports whether the sweeper passes text unchanged.
 func (s *Sweeper) Allow() bool { return s.allow }
 
+// Incomplete reports that a Learn was refused, so some identifier may pass raw. The caller must withhold the run's output.
+func (s *Sweeper) Incomplete() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.incomplete
+}
+
 // Learn tells the sweeper a raw value that must not appear (a user id or a user agent the broker saw in a tool's raw answer). The
-// value is replaced by a token wherever it occurs in later text (or, when it is shorter than minLearnLen, where it is the whole
-// string). An empty or too long value is ignored; at most maxLearned values are kept.
-func (s *Sweeper) Learn(kind Kind, raw string) {
-	if s.allow || raw == "" || len(raw) > maxLearnLen {
-		return
+// value is replaced by a token wherever it occurs in later text (case is ignored for ASCII letters); a value shorter than
+// minLearnLen is replaced only where it is the whole string or a whole JSON number. An empty value is ignored. A value over
+// maxLearnLen bytes, or one that would pass maxLearned values or maxLearnBytes bytes, is refused with an error and the Sweeper
+// becomes Incomplete; it is never dropped quietly.
+func (s *Sweeper) Learn(kind Kind, raw string) error {
+	if s.allow || raw == "" {
+		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, dup := s.exact[raw]; dup || len(s.exact) >= maxLearned {
-		return
+	if len(raw) > maxLearnLen {
+		s.incomplete = true
+		return ErrLearnTooLong
 	}
-	s.exact[raw] = kind
-	if len(raw) >= minLearnLen {
-		s.learned[kind] = append(s.learned[kind], raw)
-		s.stale = true
+	low := asciiLower(raw)
+	if _, dup := s.exact[low]; dup {
+		return nil
 	}
+	if len(s.exact) >= maxLearned || s.nBytes+len(low) > maxLearnBytes {
+		s.incomplete = true
+		return ErrLearnFull
+	}
+	s.nBytes += len(low)
+	s.exact[low] = kind
+	if len(low) >= minLearnLen {
+		s.pend = append(s.pend, pat{low, kind})
+		if len(s.pend) >= pendMax || (len(s.pend) >= pendMin && len(s.pend)*4 >= len(s.basePats)) {
+			s.mergePendLocked()
+		}
+	}
+	return nil
+}
+
+// LearnAll is Learn for a list. It takes in every value it can and returns the first error.
+func (s *Sweeper) LearnAll(kind Kind, raws []string) error {
+	var first error
+	for _, r := range raws {
+		if err := s.Learn(kind, r); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+func (s *Sweeper) mergePendLocked() {
+	s.basePats = append(s.basePats, s.pend...)
+	s.pend = s.pend[:0]
+	s.base = buildMatcher(s.basePats)
 }
 
 // Token returns the token for a value of a kind, making one on first sight. The same value always gives the same token in one
@@ -108,8 +163,21 @@ func (s *Sweeper) tokenLocked(kind Kind, value string) string {
 	return t
 }
 
+// tokenReplacer writes the text of a token as the characters that cannot be mistaken for one.
+var tokenReplacer = strings.NewReplacer("[IP_", "[_IP_", "[USER_", "[_USER_", "[UA_", "[_UA_")
+
+// escapeTokens changes text that already looks like a token ("[USER_1]") into "[_USER_1]", so data cannot pass itself off as a
+// token a script then groups with a real value. Applied to raw input only (JSON, Guard.Log, Guard.Error), never to text a Sweeper
+// has already made.
+func escapeTokens(s string) string {
+	if !strings.Contains(s, "[") {
+		return s
+	}
+	return tokenReplacer.Replace(s)
+}
+
 // Text returns in with every IP address and every learned value replaced by its token. Text(Text(x)) == Text(x): a token is not an
-// address and holds no learned value.
+// address and holds no learned value. It does not escape text that looks like a token (the Guard and JSON do, on raw input).
 func (s *Sweeper) Text(in string) string {
 	if s.allow || in == "" {
 		return in
@@ -119,51 +187,75 @@ func (s *Sweeper) Text(in string) string {
 	return s.textLocked(in)
 }
 
-func (s *Sweeper) textLocked(in string) string {
-	if k, ok := s.exact[in]; ok {
-		return s.tokenLocked(k, in)
+// Learned is Text without the address pass: only the learned values. The Guard runs it first, before the scrubbers cut anything out
+// of a learned value (a user agent holds a URL), and runs Text last.
+func (s *Sweeper) Learned(in string) string {
+	if s.allow || in == "" {
+		return in
 	}
-	out := in
-	if r := s.replacerLocked(); r != nil {
-		out = r.Replace(out)
-	}
-	return s.replaceIPs(out)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.learnedLocked(in)
 }
 
-// replacerLocked rebuilds the replacer after Learn. Longest value first: strings.Replacer tries the pairs in the order given at each
-// position, so "Mozilla/5.0 (X11)" wins over "Mozilla". Tokens are made here, in that fixed order, so a token number does not depend
-// on where a value first shows up in the text.
-func (s *Sweeper) replacerLocked() *strings.Replacer {
-	if !s.stale {
-		return s.repl
+func (s *Sweeper) textLocked(in string) string {
+	return s.replaceIPs(s.learnedLocked(in))
+}
+
+// learnedLocked replaces the learned values. Overlapping finds are joined into one span, so no part of a learned value stays behind
+// ("abcdef" and "cdefgh" learned: "abcdefgh" is one token).
+func (s *Sweeper) learnedLocked(in string) string {
+	if len(s.exact) == 0 {
+		return in
 	}
-	s.stale = false
-	type pair struct {
-		raw  string
-		kind Kind
-	}
-	var ps []pair
-	for k, vs := range s.learned {
-		for _, v := range vs {
-			ps = append(ps, pair{v, k})
+	var low string
+	if len(in) <= maxLearnLen {
+		low = asciiLower(in)
+		if k, ok := s.exact[low]; ok {
+			return s.tokenLocked(k, low)
 		}
 	}
-	if len(ps) == 0 {
-		s.repl = nil
-		return nil
+	if s.base == nil && len(s.pend) == 0 {
+		return in
 	}
-	sort.Slice(ps, func(i, j int) bool {
-		if len(ps[i].raw) != len(ps[j].raw) {
-			return len(ps[i].raw) > len(ps[j].raw)
+	if low == "" {
+		low = asciiLower(in)
+	}
+	var sp []span
+	if s.base != nil {
+		sp = s.base.scan(low, nil)
+	}
+	for pi, p := range s.pend {
+		for from := 0; ; {
+			j := strings.Index(low[from:], p.lower)
+			if j < 0 {
+				break
+			}
+			at := from + j
+			sp = addSpan(sp, span{from: at, to: at + len(p.lower), p: -1 - pi})
+			from = at + 1
 		}
-		return ps[i].raw < ps[j].raw
-	})
-	args := make([]string, 0, len(ps)*2)
-	for _, p := range ps {
-		args = append(args, p.raw, s.tokenLocked(p.kind, p.raw))
 	}
-	s.repl = strings.NewReplacer(args...)
-	return s.repl
+	if len(sp) == 0 {
+		return in
+	}
+	sp = mergeSpans(sp)
+	var b strings.Builder
+	b.Grow(len(in))
+	last := 0
+	for _, x := range sp {
+		var pt pat
+		if x.p >= 0 {
+			pt = s.basePats[x.p]
+		} else {
+			pt = s.pend[-1-x.p]
+		}
+		b.WriteString(in[last:x.from])
+		b.WriteString(s.tokenLocked(pt.kind, pt.lower))
+		last = x.to
+	}
+	b.WriteString(in[last:])
+	return b.String()
 }
 
 // replaceIPs replaces every IPv6 then every IPv4 address. Addresses in different spellings of one address share a token
@@ -189,8 +281,7 @@ func (s *Sweeper) replaceIPs(in string) string {
 	return in
 }
 
-// ContainsIP reports whether text holds an IP address the sweeper would replace. The broker uses it as a last check after a sweep,
-// and the tests use it as the oracle.
+// ContainsIP reports whether text holds an IP address the sweeper would replace. The broker uses it as a last check after a sweep.
 func ContainsIP(in string) bool {
 	if !strings.ContainsAny(in, ".:") {
 		return false
@@ -202,184 +293,22 @@ func ContainsIP(in string) bool {
 	return found
 }
 
-func isDigit(c byte) bool { return c >= '0' && c <= '9' }
-func isHex(c byte) bool {
-	return isDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
-}
-
-// isV6Char is a byte that can be part of a run that may be an IPv6 address.
-func isV6Char(c byte) bool { return isHex(c) || c == ':' || c == '.' }
-func isWord(c byte) bool {
-	return isDigit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
-}
-
-// scanIPs walks in once, left to right, and calls tok for every address; the result is in with those spans replaced. v6 chooses
-// the IPv6 scan, otherwise the IPv4 scan. Every scanner moves forward only.
-func scanIPs(in string, v6 bool, tok func(canon string) string) string {
-	var b strings.Builder
-	last, i := 0, 0
-	for i < len(in) {
-		var from, to int
-		var canon string
-		var ok bool
-		if v6 {
-			from, to, canon, ok = nextV6(in, i)
-		} else {
-			from, to, canon, ok = nextV4(in, i)
-		}
-		if !ok {
-			break
-		}
-		if b.Cap() == 0 {
-			b.Grow(len(in))
-		}
-		b.WriteString(in[last:from])
-		b.WriteString(tok(canon))
-		last, i = to, to
+// numberKey finds the learned value a JSON number stands for: the number as written, or, for a whole number written with a point or
+// an exponent ("1.234567e6", "1234567.0"), as an integer.
+func (s *Sweeper) numberKey(num string) (string, bool) {
+	if _, ok := s.exact[num]; ok {
+		return num, true
 	}
-	if last == 0 {
-		return in
+	if len(num) > 40 || !strings.ContainsAny(num, ".eE") {
+		return "", false
 	}
-	b.WriteString(in[last:])
-	return b.String()
-}
-
-// dottedEnd returns the end of the digits-and-dots number that starts at i (a "." counts only when a digit follows it).
-func dottedEnd(s string, i int) int {
-	for i < len(s) && (isDigit(s[i]) || (s[i] == '.' && i+1 < len(s) && isDigit(s[i+1]))) {
-		i++
+	f, err := strconv.ParseFloat(num, 64)
+	if err != nil || math.IsInf(f, 0) || f != math.Trunc(f) || math.Abs(f) >= 1<<53 {
+		return "", false
 	}
-	return i
-}
-
-// nextV4 finds the next dotted quad at or after pos. Each of the four parts is 1 to 3 digits and at most 255 (leading zeros are
-// read as decimal: "001.002.003.004" is 1.2.3.4). A quad inside a longer dotted number ("10.0.19045.1234", "1.2.3.4.5") is not an
-// address. A letter next to it does not stop it ("ip1.2.3.4"): fail closed.
-func nextV4(s string, pos int) (from, to int, canon string, ok bool) {
-	i := pos
-	for i < len(s) {
-		if !isDigit(s[i]) {
-			i++
-			continue
-		}
-		start := i
-		end := dottedEnd(s, start) // the whole dotted number; the scan resumes here whatever the answer is
-		i = end
-		// a number that starts right after a "digit." is the tail of a longer dotted number that began before pos
-		if start >= 2 && s[start-1] == '.' && isDigit(s[start-2]) {
-			continue
-		}
-		var parts [4]int
-		j := start
-		good := true
-		for p := 0; p < 4 && good; p++ {
-			k := j
-			v := 0
-			for k < end && isDigit(s[k]) {
-				v = v*10 + int(s[k]-'0')
-				k++
-				if k-j > 3 {
-					break
-				}
-			}
-			if k == j || k-j > 3 || v > 255 {
-				good = false
-				break
-			}
-			parts[p] = v
-			j = k
-			if p < 3 {
-				if j >= end || s[j] != '.' {
-					good = false
-					break
-				}
-				j++
-			}
-		}
-		if good && j == end {
-			return start, end, strconv.Itoa(parts[0]) + "." + strconv.Itoa(parts[1]) + "." + strconv.Itoa(parts[2]) + "." + strconv.Itoa(parts[3]), true
-		}
+	n := strconv.FormatInt(int64(f), 10)
+	if _, ok := s.exact[n]; ok {
+		return n, true
 	}
-	return 0, 0, "", false
-}
-
-// nextV6 finds the next IPv6 address at or after pos. A candidate is a run of hex digits, colons and dots; it must parse as an
-// address with net/netip, hold a "::" or at least 7 colons (so a time "12:30:45" is never one), and must not touch a word character
-// on either side ("std::vector" holds no address). A zone ("%eth0") after it is part of the span. A v4-mapped address gets the
-// token of its v4 form.
-func nextV6(s string, pos int) (from, to int, canon string, ok bool) {
-	i := pos
-	for i < len(s) {
-		if !isV6Char(s[i]) {
-			i++
-			continue
-		}
-		start, colons := i, 0
-		for i < len(s) && isV6Char(s[i]) {
-			if s[i] == ':' {
-				colons++
-			}
-			i++
-		}
-		if colons < 2 {
-			continue
-		}
-		// Try the run, then the run without trailing ":" or "." (a sentence end), then the same without one leading ":" (a "label:"
-		// in front). At most 2 x 5 attempts per run, and runs do not overlap.
-		for lead := 0; lead <= 1; lead++ {
-			l := start
-			if lead == 1 {
-				if s[start] != ':' || (start+1 < i && s[start+1] == ':') {
-					break
-				}
-				l++
-			}
-			h := i
-			for t := 0; t <= 4 && h > l; t++ {
-				if f, e, c, good := tryV6(s, l, h); good {
-					return f, e, c, true
-				}
-				if s[h-1] != '.' && s[h-1] != ':' {
-					break
-				}
-				h--
-			}
-			// "addr:port" without brackets: the run has one group too many, so try it without the last group.
-			if k := strings.LastIndexByte(s[l:i], ':'); k > 0 && i-(l+k) <= 6 {
-				if f, e, c, good := tryV6(s, l, l+k); good {
-					return f, e, c, true
-				}
-			}
-		}
-	}
-	return 0, 0, "", false
-}
-
-func tryV6(s string, lo, hi int) (from, to int, canon string, ok bool) {
-	if hi-lo < 2 {
-		return
-	}
-	c := s[lo:hi]
-	n := strings.Count(c, ":")
-	if n < 2 || (!strings.Contains(c, "::") && n < 7) {
-		return
-	}
-	if lo > 0 && isWord(s[lo-1]) {
-		return
-	}
-	end := hi
-	if end < len(s) && s[end] == '%' {
-		z := end + 1
-		for z < len(s) && z-end <= maxZone && (isWord(s[z]) || s[z] == '-' || s[z] == '.' || s[z] == '~') {
-			z++
-		}
-		end = z
-	} else if end < len(s) && isWord(s[end]) {
-		return
-	}
-	a, err := netip.ParseAddr(c)
-	if err != nil {
-		return
-	}
-	return lo, end, a.Unmap().WithZone("").String(), true
+	return "", false
 }

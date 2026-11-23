@@ -53,7 +53,6 @@ func TestScrubTextKeepsOrdinaryText(t *testing.T) {
 		"result bigger than 1 MB, return a summary",
 		"call 3 of 50 timed out after 30000 ms",
 		"unknown field \"dim\" in breakdown request",
-		"Cannot read properties of undefined (reading 'rows')", // a JS error: quotes but no SQL
 		"it's fine, don't panic",
 		"GET https://api.example.com",
 	}

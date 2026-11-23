@@ -64,9 +64,9 @@ func TestJSONScalarsAndEscapes(t *testing.T) {
 func TestJSONLearnedNumber(t *testing.T) {
 	s := NewSweeper(false)
 	s.Learn(KindUser, "12345678")
-	s.Learn(KindUser, "42")
-	out, err := s.JSON([]byte(`{"id":12345678,"count":42}`))
-	if err != nil || string(out) != `{"id":"[USER_1]","count":42}` {
+	s.Learn(KindUser, "42") // a number is always a whole value, however short: a count of 42 is hidden too (fail closed)
+	out, err := s.JSON([]byte(`{"id":12345678,"count":42,"other":43}`))
+	if err != nil || string(out) != `{"id":"[USER_1]","count":"[USER_2]","other":43}` {
 		t.Fatalf("%s %v", out, err)
 	}
 }

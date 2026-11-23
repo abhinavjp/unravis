@@ -168,29 +168,49 @@ func TestResultRefusesBadJSON(t *testing.T) {
 	}
 }
 
+// FuzzGuardNoLeak joins learned identifiers, addresses and a secret to arbitrary text with nothing in between and checks every
+// output with the independent oracle.
 func FuzzGuardNoLeak(f *testing.F) {
-	f.Add("a", "b")
-	f.Add("\"", "\\")
-	f.Add("1.", ".2")
-	f.Fuzz(func(t *testing.T, pre, post string) {
+	f.Add("a", "b", uint8(0))
+	f.Add("\"", "\\", uint8(1))
+	f.Add("1.", ".2", uint8(2))
+	f.Add("'", "'", uint8(3))
+	f.Add("C:\\", ":", uint8(4))
+	f.Fuzz(func(t *testing.T, pre, post string, pick uint8) {
+		learned := []string{"usr_cafe0001", "Alice.Smith@example.com", "Mozilla/5.0 (compatible; Bot/2.1; +http://bot.example.com/about)", "4711"}
 		g := NewGuard(false)
-		g.Learn(KindUser, "usr_cafe0001")
-		in := pre + " usr_cafe0001 10.20.30.40 " + post
-		for _, out := range []string{g.Log(in), g.Error(in)} {
-			if strings.Contains(out, "usr_cafe0001") || strings.Contains(out, "10.20.30.40") {
-				t.Fatalf("leak: %q -> %q", in, out)
-			}
-			if !utf8.ValidString(out) {
-				t.Fatalf("invalid UTF-8 from %q", in)
+		for _, l := range learned {
+			if err := g.Learn(KindUser, l); err != nil {
+				t.Fatal(err)
 			}
 		}
+		planted := []string{"usr_cafe0001", "ALICE.SMITH@EXAMPLE.COM", learned[2], "10.20.30.40", "2001:db8::7", "10.1.2.3.443"}
+		p := planted[int(pick)%len(planted)]
+		in := pre + p + post
+		outs := map[string]string{"log": g.Log(in), "error": g.Error(in)}
 		raw, _ := json.Marshal(map[string]string{"k": in, in: "v"})
-		out, err := g.Result(raw)
+		res, err := g.Result(raw)
 		if err != nil {
 			t.Fatalf("own JSON refused: %v", err)
 		}
-		if strings.Contains(string(out), "usr_cafe0001") || strings.Contains(string(out), "10.20.30.40") {
-			t.Fatalf("leak in JSON: %s", out)
+		// the strings of the JSON, decoded: the oracle must not read the digits of a \u0026 escape as an address
+		var dec any
+		if err := json.Unmarshal(res, &dec); err != nil {
+			t.Fatalf("output does not decode: %v", err)
+		}
+		var sb strings.Builder
+		walk(dec, func(str string) { sb.WriteString(str); sb.WriteByte('\n') })
+		outs["json"] = sb.String()
+		for name, out := range outs {
+			if l := leakIP(out); l != "" {
+				t.Fatalf("%s: address (%s): %q -> %q", name, l, in, out)
+			}
+			if l := leakLearned(out, learned[:3]); l != "" && !strings.Contains(strings.ToLower(pre+post), strings.ToLower(l)) {
+				t.Fatalf("%s: learned %q: %q -> %q", name, l, in, out)
+			}
+			if !utf8.ValidString(out) {
+				t.Fatalf("%s: invalid UTF-8", name)
+			}
 		}
 	})
 }

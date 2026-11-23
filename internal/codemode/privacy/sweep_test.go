@@ -21,7 +21,7 @@ func TestSweepIPv4Table(t *testing.T) {
 		{"010.001.002.003", "[IP_1]"}, // leading zeros: same address as 10.1.2.3
 		{"999.1.1.1", "999.1.1.1"},
 		{"10.0.19045.1234", "10.0.19045.1234"}, // a build number
-		{"1.2.3.4.5", "1.2.3.4.5"},             // a five part version
+		{"1.2.3.4.5", "[IP_1]"},                // a window of four reads as an address: fail closed
 		{"1.2.3", "1.2.3"},
 		{"v6.1.7601.65", "v6.1.7601.65"},
 		{"192.168.0.1, 192.168.0.2", "[IP_1], [IP_2]"},
@@ -123,7 +123,7 @@ func TestLearnedValues(t *testing.T) {
 		t.Fatal("whole-string short value not tokenized stably")
 	}
 	// the longest value wins over its prefix
-	if !strings.Contains(got, s.Token(KindUA, ua)) {
+	if !strings.Contains(got, s.Token(KindUA, asciiLower(ua))) {
 		t.Fatalf("long user agent has no token: %q", got)
 	}
 }
@@ -204,8 +204,8 @@ func TestPropertyIPTokens(t *testing.T) {
 			}
 			in := p + spell + q
 			out := s.Text(in)
-			if ContainsIP(out) {
-				t.Fatalf("sweep left an address: %q -> %q", in, out)
+			if l := leakIP(out); l != "" {
+				t.Fatalf("sweep left an address (%s): %q -> %q", l, in, out)
 			}
 			if !strings.HasPrefix(out, p) || !strings.HasSuffix(out, q) {
 				t.Fatalf("surrounding text changed: %q -> %q", in, out)
@@ -337,8 +337,11 @@ func FuzzSweepText(f *testing.F) {
 			s.Learn(KindUser, in)
 		}
 		out := s.Text(in)
+		if l := leakIP(out); l != "" {
+			t.Fatalf("address survives (%s): %q -> %q", l, in, out)
+		}
 		if ContainsIP(out) {
-			t.Fatalf("address survives: %q -> %q", in, out)
+			t.Fatalf("scanner still sees an address: %q -> %q", in, out)
 		}
 		if again := s.Text(out); again != out {
 			t.Fatalf("not idempotent: %q -> %q -> %q", in, out, again)
@@ -349,20 +352,22 @@ func FuzzSweepText(f *testing.F) {
 	})
 }
 
-// FuzzSweepPlanted puts a real address in the middle of arbitrary text. The text may hide it only by touching it in a way the
-// scanner treats as part of a longer number or word, which the oracle below excludes.
+// FuzzSweepPlanted joins a real address to arbitrary text on both sides with nothing in between (no space, punctuation, digits,
+// letters, dots and colons all touch it). The independent oracle must find nothing in the output.
 func FuzzSweepPlanted(f *testing.F) {
 	f.Add("x", "y", uint8(0))
 	f.Add("a:", ":b", uint8(1))
 	f.Add("1.", ".2", uint8(2))
+	f.Add("n=5.", "", uint8(4))
+	f.Add("", ".443", uint8(0))
+	f.Add("0", "", uint8(4))
 	f.Fuzz(func(t *testing.T, pre, post string, pick uint8) {
-		addrs := []string{"10.20.30.40", "2001:db8::7", "::1", "fe80::abcd:1%eth0", "192.168.1.1"}
+		addrs := []string{"10.20.30.40", "2001:db8::7", "::1", "fe80::abcd:1%eth0", "192.168.1.1", "192.168.001.001", "2001:db8:0:0:0:0:0:1"}
 		a := addrs[int(pick)%len(addrs)]
-		s := NewSweeper(false)
-		out := s.Text(" " + pre + " " + a + " " + post + " ")
-		// pre and post may hold the same text themselves (not planted), so compare counts
-		if strings.Count(out, a) > strings.Count(pre+post, a) {
-			t.Fatalf("planted %q survives in %q", a, out)
+		in := pre + a + post
+		out := NewSweeper(false).Text(in)
+		if l := leakIP(out); l != "" {
+			t.Fatalf("leak (%s): %q -> %q", l, in, out)
 		}
 	})
 }

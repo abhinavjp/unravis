@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
+	"unicode/utf8"
 )
 
 const (
@@ -23,19 +25,26 @@ var (
 )
 
 type frame struct {
-	obj bool
-	n   int  // members written so far
-	key bool // an object frame: the next string is a member name
+	obj  bool
+	n    int             // members written so far
+	key  bool            // an object frame: the next string is a member name
+	seen map[string]bool // names this sweep changed, so two names that end as one token do not make a duplicate member
 }
 
-// JSON returns raw with every string value and every member name swept (see Text). Numbers, booleans and null are kept, except a
-// number of minLearnLen digits or more that equals a learned value, which becomes the token as a string. When nothing changed it
-// returns raw itself, byte for byte (so the hash of an unchanged result does not move). When something changed the result is
-// compact JSON with the members in their original order. Invalid JSON, text after the value, nesting over maxDepth or a text over
-// MaxJSONBytes is an error and the caller must not pass the text on.
+// JSON returns raw with every string value and every member name swept (see Text), and text that already looks like a token
+// ("[USER_1]") escaped to "[_USER_1]" so data cannot pass for a token. Booleans and null are kept. A number that equals a learned
+// value (as written, or as an integer when it is written "1.234567e6" or "1234567.0") becomes the token as a string, however short:
+// a number is always a whole value. When nothing changed it returns raw itself, byte for byte (so the hash of an unchanged result
+// does not move). When something changed the result is compact JSON with the members in their original order; a changed member name
+// that would repeat an earlier changed one gets "#2", "#3" ... after it, so a JSON parser that keeps the last duplicate does not
+// lose a count. Invalid JSON or invalid UTF-8, text after the value, nesting over maxDepth or a text over MaxJSONBytes is an error
+// and the caller must not pass the text on.
 func (s *Sweeper) JSON(raw []byte) ([]byte, error) {
 	if len(raw) > MaxJSONBytes {
 		return nil, ErrTooLarge
+	}
+	if !utf8.Valid(raw) {
+		return nil, ErrBadJSON
 	}
 	if s.allow {
 		if !json.Valid(raw) {
@@ -107,7 +116,7 @@ func (s *Sweeper) JSON(raw []byte) ([]byte, error) {
 				after()
 			}
 		case string:
-			sw := s.textSwept(v)
+			sw := s.textSwept(escapeTokens(v))
 			if sw != v {
 				changed = true
 			}
@@ -115,6 +124,16 @@ func (s *Sweeper) JSON(raw []byte) ([]byte, error) {
 				f := &st[len(st)-1]
 				if f.n > 0 {
 					out.WriteByte(',')
+				}
+				if sw != v {
+					if f.seen == nil {
+						f.seen = map[string]bool{}
+					}
+					base := sw
+					for k := 2; f.seen[sw]; k++ {
+						sw = base + "#" + strconv.Itoa(k)
+					}
+					f.seen[sw] = true
 				}
 				writeString(sw)
 				out.WriteByte(':')
@@ -163,16 +182,13 @@ func (s *Sweeper) textSwept(v string) string {
 }
 
 func (s *Sweeper) numberToken(num string) (string, bool) {
-	if len(num) < minLearnLen {
-		return "", false
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	k, ok := s.exact[num]
+	key, ok := s.numberKey(num)
 	if !ok {
 		return "", false
 	}
-	return s.tokenLocked(k, num), true
+	return s.tokenLocked(s.exact[key], key), true
 }
 
 // delimByte is the byte of a JSON delimiter token.

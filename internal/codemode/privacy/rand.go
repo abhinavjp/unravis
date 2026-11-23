@@ -8,7 +8,8 @@ import (
 )
 
 // Rand is the generator behind the script's Math.random (spec D12): xorshift128+ with a 128-bit seed that is stored in
-// code_runs.seed, so a replay draws the same numbers. It is not for secrets. The worker implements the same steps; the vectors in
+// code_runs.seed, so a replay draws the same numbers. It is not for secrets and not safe for concurrent use (one per run, used by
+// the worker's single script thread). The seed is read in either hex case into one state; store the lower case form. The worker implements the same steps; the vectors in
 // the tests are the contract between the two.
 //
 // The steps for one draw (all arithmetic on uint64, wrapping):
