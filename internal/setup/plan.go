@@ -427,7 +427,8 @@ func (p *Plan) clearStaleStaging() {
 		if e.Type() != fs.ModeDir || !strings.HasPrefix(e.Name(), stagingPrefix) || !stampName.MatchString(e.Name()) || e.Name() == now {
 			continue
 		}
-		if rerr := os.RemoveAll(filepath.Join(p.Layout.InstallDir, e.Name())); rerr != nil {
+		// Only when what is inside is ours too: a folder of the person's with such a name that holds their files is left alone.
+		if rerr := removeWorkFolder(p.Layout.InstallDir, e.Name()); rerr != nil {
 			p.r.logf("staging: could not remove the old %s: %v", e.Name(), rerr)
 		}
 	}
@@ -951,7 +952,8 @@ func (p *Plan) keepPrevious(ctx context.Context, t *Txn) error {
 	from, errFrom := update.ParseVersion(p.Old.Version)
 	to, errTo := update.ParseVersion(p.Version)
 	if errFrom != nil || errTo != nil || update.Compare(to, from) <= 0 {
-		if err := os.RemoveAll(dir); err != nil {
+		// Removed only when everything in it is ours: the name ".previous" alone does not make a folder the installer's.
+		if err := removeWorkFolder(p.Layout.InstallDir, update.PreviousDir); err != nil {
 			t.log("previous version: could not remove " + dir + ": " + err.Error())
 		}
 		return nil
@@ -970,10 +972,14 @@ func (p *Plan) keepPrevious(ctx context.Context, t *Txn) error {
 	// keeping it would only make a rollback that cannot work.
 	if !setupCanBeRolledBackTo(old) {
 		t.log("previous version: the old setup program is too old to be started for a rollback, so nothing is kept")
-		_ = os.RemoveAll(dir)
+		if err := removeWorkFolder(p.Layout.InstallDir, update.PreviousDir); err != nil {
+			t.log("previous version: could not remove " + dir + ": " + err.Error())
+		}
 		return nil
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	// A folder that is not ours (the person's own files under that name) is left as it is: nothing is kept, and the rollback never
+	// gets a record that could delete it.
+	if err := removeWorkFolder(p.Layout.InstallDir, update.PreviousDir); err != nil {
 		t.log("previous version: could not clear the earlier copy: " + err.Error())
 		return nil
 	}

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"api-audit-explorer/internal/blackbox"
-	"api-audit-explorer/internal/update"
 )
 
 // CheckStatus is the sticker of a preflight line.
@@ -417,10 +416,11 @@ func (r *Runner) checkMachineFolder(dir string, old *Installed) (Check, bool) {
 
 // installerOwned reports whether an entry of a program folder is one this installer, the updater or a stopped setup puts there: the
 // programs, the record of the setup choices, the working folders of a setup that was cut off, and the old setup the updater keeps.
-func installerOwned(e os.DirEntry) bool {
+func installerOwned(dir string, e os.DirEntry) bool {
 	name := e.Name()
 	if e.IsDir() {
-		return stampName.MatchString(name) || strings.EqualFold(name, update.PreviousDir)
+		// The name alone proves nothing: what is inside must be ours too (workFolderOwned), or it is somebody's folder.
+		return workFolderOwned(dir, name)
 	}
 	// Windows itself drops these into a folder the person has opened in Explorer; they are not anybody's data.
 	for _, own := range []string{AppExeName, KeeperExeName, BlackboxExeName, ReleasesExeName, SetupExeName, StateFileName, "desktop.ini", "thumbs.db"} {
@@ -432,10 +432,10 @@ func installerOwned(e os.DirEntry) bool {
 }
 
 // foreignEntries are the names in dir that the installer did not make: what makes a folder somebody's own.
-func foreignEntries(ents []os.DirEntry) []string {
+func foreignEntries(dir string, ents []os.DirEntry) []string {
 	var out []string
 	for _, e := range ents {
-		if !installerOwned(e) {
+		if !installerOwned(dir, e) {
 			out = append(out, e.Name())
 		}
 	}
@@ -459,7 +459,7 @@ func checkInstallFolder(dir string) (Check, bool) {
 	if err != nil || len(ents) == 0 {
 		return Check{}, false
 	}
-	other := foreignEntries(ents)
+	other := foreignEntries(dir, ents)
 	if len(other) == 0 {
 		return Check{}, false
 	}

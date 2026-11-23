@@ -18,8 +18,8 @@ func TestUserFolderWithOnlyInstallerFilesPasses(t *testing.T) {
 	e := newEnv(t, "1.2.0")
 	dir := e.userOpts().Location
 	writeFile(t, filepath.Join(dir, ".setup-staging-20261122-101010", "unravis.exe"), "x")
-	writeFile(t, filepath.Join(dir, ".setup-backup-20261122-101010", "unravis.exe"), "x")
-	writeFile(t, filepath.Join(dir, ".previous", "marker.json"), "{}")
+	writeFile(t, filepath.Join(dir, ".setup-backup-20261122-101010", "1-unravis.exe"), "x")
+	writeFile(t, filepath.Join(dir, ".previous", "pending.json"), "{}")
 	writeFile(t, filepath.Join(dir, SetupExeName), "x")
 	writeFile(t, filepath.Join(dir, "UNRAVIS-RELEASES.EXE"), "x") // name case does not matter
 	writeFile(t, filepath.Join(dir, "Desktop.ini"), "x")          // dropped by Explorer

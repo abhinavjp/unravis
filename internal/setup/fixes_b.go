@@ -147,7 +147,7 @@ func (r *Runner) programFolderProblem(dir string, old *Installed) (string, error
 		return "", err
 	}
 	if len(ents) > 0 {
-		if other := foreignEntries(ents); len(other) > 0 {
+		if other := foreignEntries(dir, ents); len(other) > 0 {
 			return dir + " already holds files that are not Unravis files (" + namesLine(other) + "), and it was not made by the Unravis installer.", nil
 		}
 		return dir + " already holds Unravis files, but this installer did not make it as a folder for everyone.", nil

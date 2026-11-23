@@ -277,6 +277,20 @@ test('buildEnv keeps registry and certificate settings that carry no password', 
   }
 });
 
+test('buildEnv drops proxy variables that carry a password and keeps the ones that do not', () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'pd-env3-'));
+  try {
+    const out = buildEnv({ PATH: '/usr/bin', HTTP_PROXY: 'http://user:pw@proxy.invalid:3128', https_proxy: 'http://tok@proxy.invalid:3128', ALL_PROXY: 'socks5://u:p@proxy.invalid:1080', NO_PROXY: 'localhost', HTTPS_PROXY: 'http://proxy.invalid:3128' }, scratch);
+    assert.equal('HTTP_PROXY' in out, false);
+    assert.equal('https_proxy' in out, false);
+    assert.equal('ALL_PROXY' in out, false);
+    assert.equal(out.HTTPS_PROXY, 'http://proxy.invalid:3128');
+    assert.equal(out.NO_PROXY, 'localhost');
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 test('a build that plants a git filter, attributes, proxy or config in any clone next to it does not run it with the token', () => {
   const f = fixture('new', { dist: 'old' });
   try {

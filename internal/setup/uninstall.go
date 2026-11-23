@@ -208,8 +208,9 @@ func (p *Plan) removeProgramFiles(ctx context.Context, t *Txn) error {
 	}
 	if ents, err := os.ReadDir(dir); err == nil {
 		for _, e := range ents {
-			if e.IsDir() && (stampName.MatchString(e.Name()) || e.Name() == update.PreviousDir) {
-				if rerr := os.RemoveAll(filepath.Join(dir, e.Name())); rerr != nil {
+			if e.IsDir() && (stampName.MatchString(e.Name()) || strings.EqualFold(e.Name(), update.PreviousDir)) {
+				// Removed only when what is inside is ours; a folder holding the person's own files stays, and the "Files you added" line below says so.
+				if rerr := removeWorkFolder(dir, e.Name()); rerr != nil && !errors.Is(rerr, errNotOurWorkFolder) {
 					p.leftf("Folder %s (%v)", filepath.Join(dir, e.Name()), rerr)
 				}
 			}
