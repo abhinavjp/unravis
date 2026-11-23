@@ -878,6 +878,106 @@
           "waitFor": "[data-testid=update-bar-link]"
         }
       ]
+    },
+    {
+      "id": "x-wizard-leave-form",
+      "phase": "X",
+      "note": "Add data, Redis card with a typed address: the Leave this form question after Back to the list.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "role=tab[name=\"Add data\"s]"
+        },
+        {
+          "click": "role=tab[name=\"Add data\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"What do you want to add to this case?\"]"
+        },
+        {
+          "click": "role=button[name=/^Redis/]"
+        },
+        {
+          "fill": [
+            "role=textbox[name=/Redis address/]",
+            "cache-1:6379"
+          ]
+        },
+        {
+          "click": "role=button[name=\"Back to the list\"]"
+        },
+        {
+          "waitFor": "role=dialog[name=\"Leave this form?\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-wizard-leave-tab",
+      "phase": "X",
+      "note": "Add data, Redis card with a typed address: the Leave Add data question after a click on another hub tab.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "role=tab[name=\"Add data\"s]"
+        },
+        {
+          "click": "role=tab[name=\"Add data\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"What do you want to add to this case?\"]"
+        },
+        {
+          "click": "role=button[name=/^Redis/]"
+        },
+        {
+          "fill": [
+            "role=textbox[name=/Redis address/]",
+            "cache-1:6379"
+          ]
+        },
+        {
+          "click": "role=tab[name=\"Sources\"s]"
+        },
+        {
+          "waitFor": "role=dialog[name=\"Leave Add data?\"]"
+        }
+      ]
     }
   ]
 }

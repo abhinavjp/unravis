@@ -532,6 +532,7 @@ func serve(o options, e env, be setup.UIBackend, scenarios map[string]setup.UIBa
 			if e.idleAfter < tick {
 				tick = e.idleAfter
 			}
+			// idle-ok: setup window only; 15 s (or the test's shorter idle limit), and the setup program is not the tray app.
 			t := time.NewTicker(tick)
 			defer t.Stop()
 			for {

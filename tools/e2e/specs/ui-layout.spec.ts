@@ -16,6 +16,10 @@
 //   UIFIX-16  Blackbox charts: the Counters / Programs tab strip is not squeezed (24 px or more) and nothing outside the side column moves (BL-496)
 //   UIFIX-10  Slow call screen: the time zone label, the peak and zero labels and the "drag" hint are at least 11px, the lanes and the minimap do not move, nothing collides (BL-483)
 //   UIFIX-17  Investigation timeline: the UTC times of the incident and comparison windows are drawn as visible text (not only a tooltip), stay UTC when "Times in" changes, fit at 320, 360 and 390 px, and the one-line readout does not grow on a wide desktop
+//   UIFIX-19  Slow call screen tap targets of 24 px (BL-492): the "Timeline" crumb button (19a), the minimap box on a phone (19b), the lane bars (19c); nothing moves and nothing is painted differently (19d, 19f); a press lands on the right bar and never on a neighbour (19e)
+//   UIFIX-30  Requests over time (home): the left, right and bottom axes have a title with the unit, painted inside the same chart box, in both themes; the box and the rectangles around it do not move; 4.5:1 contrast (BL-495 part)
+//   UIFIX-31  Requests over time on real value ranges (also: one slow request reads the same in the tooltip and the note, 31e) (a busy hour in the millions, a slow hour in seconds, a sub-millisecond hour, no timing at all): one unit and one precision on each axis, tooltip with the interval's start and end and the P95 and slowest request alike, no NaN
+//   UIFIX-32  Requests over time on a phone (320, 360, 390 px): the axis titles are painted, the page does not scroll sideways and the chart box keeps its 220 px
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase } from '../support/ui';
 
@@ -781,7 +785,8 @@ async function layoutMoves(page: Page, root: string, rules: Rules, hideCss = '')
   return page.locator(root).first().evaluate((container, [rs, css]) => {
     const targets = new Set<Element>();
     for (const [selector] of rs) container.querySelectorAll(selector).forEach((e) => targets.add(e));
-    const snap = () => [...container.querySelectorAll('*')].filter((e) => !e.closest('svg') || e.tagName.toLowerCase() === 'svg').map((e) => {
+    // Boxes inside a closed <details> are skipped: the browser lays them out only when something asks, so the first read can say 0 x 0 and the second a real size (seen in the Slow call screen's closed "How to read" notes). They are not on screen, so they cannot have moved.
+    const snap = () => [...container.querySelectorAll('*')].filter((e) => !e.closest('svg') || e.tagName.toLowerCase() === 'svg').filter((e) => { const d = e.closest('details:not([open])'); return !d || e === d || !!e.closest('summary'); }).map((e) => {
       const r = e.getBoundingClientRect();
       const m = targets.has(e) ? getComputedStyle(e) : null;
       const ml = m ? parseFloat(m.marginLeft) : 0, mt = m ? parseFloat(m.marginTop) : 0, mr = m ? parseFloat(m.marginRight) : 0, mb = m ? parseFloat(m.marginBottom) : 0;
@@ -1127,3 +1132,472 @@ test('UIFIX-17d Investigation timeline on a desktop: the readout is one line and
     expect(m.card, width + ' px: the controls card keeps its measured height of 320 px').toBeLessThanOrEqual(322);
   }
 });
+
+// UIFIX-19 (BL-492): the three small tap targets of the Slow call screen get 24 px press areas without moving anything (Slow call lane rule, BL-005:
+// the lanes keep their height, nothing scrolls inside, the lanes stay visible together). The crumb button and the minimap box grow with an invisible ::after
+// (box, layout and focus ring stay develop's); the lane bars grow with an invisible rectangle inside the bar's <g> that is cut so that no two areas
+// overlap (a bar in a stack of bar rows gets what its row allows, a bar with room reaches 24 px).
+const SCALL_SIZES = [{ width: 1440, height: 900 }, { width: 1100, height: 800 }, { width: 1024, height: 768 }, { width: 390, height: 844 }];
+
+/** The press area of every match (its box joined with its ::after) must be 24 x 24 px or more, answer a press at its centre and corners, and leave every other control alone. */
+async function expectScallHitArea(page: Page, selector: string, label: string, minWidth = 24): Promise<void> {
+  const facts = await page.locator(selector).evaluateAll((els) => els.map((e) => {
+    e.scrollIntoView({ block: 'center' });
+    const r = e.getBoundingClientRect(), cs = getComputedStyle(e), p = getComputedStyle(e, '::after');
+    let left = r.left, top = r.top, right = r.right, bottom = r.bottom;
+    if (p.content !== 'none' && p.position === 'absolute' && p.pointerEvents !== 'none') {
+      const x = r.left + (parseFloat(cs.borderLeftWidth) || 0) + parseFloat(p.left), y = r.top + (parseFloat(cs.borderTopWidth) || 0) + parseFloat(p.top);
+      left = Math.min(left, x); top = Math.min(top, y); right = Math.max(right, x + parseFloat(p.width)); bottom = Math.max(bottom, y + parseFloat(p.height));
+    }
+    const corners = (l: number, t: number, rr: number, b: number) => [[l + 1, t + 1], [rr - 1, t + 1], [l + 1, b - 1], [rr - 1, b - 1]];
+    const spots = [...corners(r.left, r.top, r.right, r.bottom), [(left + right) / 2, (top + bottom) / 2]];
+    if (right - left > r.width + 0.5 || bottom - top > r.height + 0.5) {
+      const x = r.left + (parseFloat(cs.borderLeftWidth) || 0) + parseFloat(p.left), y = r.top + (parseFloat(cs.borderTopWidth) || 0) + parseFloat(p.top);
+      spots.push(...corners(x, y, x + parseFloat(p.width), y + parseFloat(p.height)));
+    }
+    const wrong = spots.filter(([x, y]) => { const hit = document.elementFromPoint(x, y); return !(hit === e || (hit && e.contains(hit))); }).length;
+    // every other control of the page must stay out of the press area
+    const others = [...document.querySelectorAll('button, a[href], input, select, summary, [role=button], [role=slider], [tabindex]:not([tabindex="-1"])')]
+      .filter((o) => o !== e && !o.contains(e) && !e.contains(o) && !(o.closest('svg') && e.closest('svg')))
+      .filter((o) => { const b = o.getBoundingClientRect(); return Math.min(b.right, right) - Math.max(b.left, left) > 0.5 && Math.min(b.bottom, bottom) - Math.max(b.top, top) > 0.5; })
+      .map((o) => (o.getAttribute('aria-label') || o.textContent || o.tagName).trim().slice(0, 30));
+    return { w: right - left, h: bottom - top, wrong, others };
+  }));
+  expect(facts.length, label + ': nothing found').toBeGreaterThan(0);
+  for (const f of facts) {
+    expect(f.w, label + ' press area width').toBeGreaterThanOrEqual(minWidth);
+    expect(f.h, label + ' press area height').toBeGreaterThanOrEqual(24);
+    expect(f.wrong, label + ': corners and centre of the press area that miss the control').toBe(0);
+    expect(f.others, label + ': other controls inside the press area').toEqual([]);
+  }
+}
+
+const CRUMB_OLD: Rules = [['.scall-crumb .link', { position: 'static' }]];
+const CRUMB_HIDE = '.scall-crumb .link::after { content: none !important; }';
+const MAPBOX_OLD: Rules = [['.scall-map-box', { position: 'absolute' }]];
+const MAPBOX_HIDE = '.scall-map-box::after { content: none !important; }';
+
+for (const size of SCALL_SIZES) {
+  test('UIFIX-19a Slow call screen at ' + size.width + ' px: the "Timeline" crumb answers a press in 24 px or more and the header does not move', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowCallScreen(page);
+    await expectScallHitArea(page, '[data-testid=scall-back]', 'Timeline crumb');
+    await expectNothingMoved(page, '[data-testid=slow-call-screen]', CRUMB_OLD, 'Slow call screen', CRUMB_HIDE);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow').toBeLessThanOrEqual(0);
+  });
+}
+
+for (const width of [1440, 1100, 1024, 390, 360, 320]) {
+  test('UIFIX-19b Slow call screen at ' + width + ' px: the minimap box answers a press in 24 px or more' + (width >= 1024 ? ' (a wide box gets no extra area)' : '') + ' and nothing moves', async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await openSlowCallScreen(page);
+    const box = page.getByTestId('scall-map-box');
+    await expect(box).toBeVisible();
+    await expectScallHitArea(page, '[data-testid=scall-map-box]', 'Minimap box');
+    const own = await box.evaluate((e) => { const r = e.getBoundingClientRect(), p = getComputedStyle(e, '::after'); return { w: r.width, afterW: parseFloat(p.width), afterL: parseFloat(p.left) }; });
+    // a box that is 24 px or wider has no growth at all (::after is the padding box); a narrower one grows to exactly 24 px, evenly on both sides
+    if (own.w >= 24) expect(own.afterL, 'no growth on a wide box').toBeGreaterThanOrEqual(0);
+    else expect(own.afterW, 'the grown area is 24 px wide').toBeCloseTo(24, 1);
+    await expectNothingMoved(page, '[data-testid=slow-call-screen]', MAPBOX_OLD, 'Slow call screen', MAPBOX_HIDE);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow').toBeLessThanOrEqual(0);
+  });
+}
+
+test('UIFIX-19b2 Slow call screen on a phone: a press just outside the narrow minimap box (inside its press area) grabs the box and drags it', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openSlowCallScreen(page);
+  const box = page.getByTestId('scall-map-box');
+  await box.scrollIntoViewIfNeeded();
+  const r = await box.boundingBox();
+  if (!r) throw new Error('no box');
+  expect(r.width, 'the box is narrower than 24 px on a phone').toBeLessThan(24);
+  const before = await box.getAttribute('aria-valuenow');
+  const y = r.y + r.height / 2;
+  const x = r.x - (24 - r.width) / 2 + 1; // 1 px inside the left end of the press area, outside the drawn box
+  expect(x).toBeLessThan(r.x);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 20, y, { steps: 4 });
+  await expect(box).toHaveClass(/dragging/);
+  await page.mouse.up();
+  await expect.poll(async () => box.getAttribute('aria-valuenow'), 'the box moved with the drag').not.toBe(before);
+});
+
+/** The drawn bars with their press rectangles, in screen pixels, and the lane drawing each one sits in. */
+async function barFacts(page: Page) {
+  await page.getByTestId('scall-lanes').scrollIntoViewIfNeeded();
+  // the lanes measure their own drawing after the first paint: wait until two reads a moment apart agree
+  const read = () => page.evaluate(() => [...document.querySelectorAll('.bar-hit')].map((e) => { const b = e.getBoundingClientRect(); return [b.left, b.top, b.width, b.height].map((v) => Math.round(v * 10)); }).join('|'));
+  let last = await read();
+  for (let i = 0; i < 20; i++) { await page.waitForTimeout(150); const now = await read(); if (now === last) break; last = now; }
+  return page.evaluate(() => {
+    const rect = (e: Element) => { const b = e.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom }; };
+    return [...document.querySelectorAll('.bar-g')].map((g, i) => ({
+      i,
+      label: g.getAttribute('aria-label') ?? '',
+      bar: rect(g.querySelector('.bar')!),
+      hit: rect(g.querySelector('.bar-hit')!),
+      svg: rect(g.closest('svg')!),
+      lane: g.closest('[data-lane]')?.getAttribute('data-lane') ?? ''
+    }));
+  });
+}
+
+for (const size of SCALL_SIZES) {
+  test('UIFIX-19c Slow call screen at ' + size.width + 'x' + size.height + ': every lane bar has a press area that holds the bar, stays in its lane, never overlaps another and is as big as its neighbours allow', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowCallScreen(page);
+    const bars = await barFacts(page);
+    expect(bars.length, 'bars on the screen').toBeGreaterThan(1);
+    const eps = 0.6;
+    const overlapArea = (a: { l: number; t: number; r: number; b: number }, b: { l: number; t: number; r: number; b: number }) =>
+      Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l)) * Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t));
+    for (const b of bars) {
+      // holds its bar, inside its own lane drawing (never reaches the lane above or below)
+      expect(b.hit.l, b.label + ' left').toBeLessThanOrEqual(b.bar.l + eps);
+      expect(b.hit.r, b.label + ' right').toBeGreaterThanOrEqual(b.bar.r - eps);
+      expect(b.hit.t, b.label + ' top').toBeLessThanOrEqual(b.bar.t + eps);
+      expect(b.hit.b, b.label + ' bottom').toBeGreaterThanOrEqual(b.bar.b - eps);
+      expect(b.hit.t, b.label + ' inside the lane drawing (top)').toBeGreaterThanOrEqual(b.svg.t - eps);
+      expect(b.hit.b, b.label + ' inside the lane drawing (bottom)').toBeLessThanOrEqual(b.svg.b + eps);
+      expect(b.hit.l, b.label + ' inside the lane drawing (left)').toBeGreaterThanOrEqual(b.svg.l - eps);
+      expect(b.hit.r, b.label + ' inside the lane drawing (right)').toBeLessThanOrEqual(b.svg.r + eps);
+      // grew: taller than the bar by something, and as wide as 24 px
+      expect(b.hit.b - b.hit.t, b.label + ' taller than the bar').toBeGreaterThan(b.bar.b - b.bar.t + 1);
+      expect(b.hit.r - b.hit.l, b.label + ' width').toBeGreaterThanOrEqual(24 - eps);
+      // as big as the neighbours allow: 24 px tall, or each end that is short touches the drawing's edge or the area of the next bar
+      const height = b.hit.b - b.hit.t;
+      if (height < 24 - eps) {
+        for (const end of ['t', 'b'] as const) {
+          const edge = end === 't' ? b.svg.t : b.svg.b;
+          const atEdge = Math.abs(b.hit[end] - edge) <= eps;
+          const atNeighbour = bars.some((o) => o !== b && o.lane === b.lane && Math.min(o.hit.r, b.hit.r) - Math.max(o.hit.l, b.hit.l) > 0 && Math.abs(o.hit[end === 't' ? 'b' : 't'] - b.hit[end]) <= eps);
+          expect(atEdge || atNeighbour, b.label + ' is short (' + height.toFixed(1) + ' px) and its ' + (end === 't' ? 'top' : 'bottom') + ' end touches neither the lane edge nor another area').toBe(true);
+        }
+      }
+      for (const o of bars) {
+        if (o === b) continue;
+        expect(overlapArea(b.hit, o.hit), b.label + ' press area overlaps another bar\'s').toBeLessThan(0.5);
+        expect(overlapArea(b.hit, o.bar), b.label + ' press area covers another bar').toBeLessThan(0.5);
+      }
+    }
+    // the browser agrees: the middle and the four corners of each area answer for that bar
+    const wrong = await page.evaluate(() => {
+      const out: string[] = [];
+      document.querySelectorAll('.bar-g').forEach((g) => {
+        const b = g.querySelector('.bar-hit')!.getBoundingClientRect();
+        for (const [x, y] of [[b.left + 1, b.top + 1], [b.right - 1, b.top + 1], [b.left + 1, b.bottom - 1], [b.right - 1, b.bottom - 1], [(b.left + b.right) / 2, (b.top + b.bottom) / 2]]) {
+          const hit = document.elementFromPoint(x, y);
+          if (hit?.closest('.bar-g') !== g) out.push(g.getAttribute('aria-label') + ' at ' + Math.round(x) + ',' + Math.round(y) + ' goes to ' + (hit?.getAttribute('class') ?? hit?.tagName));
+        }
+      });
+      return out;
+    });
+    expect(wrong, 'presses inside an area that miss its bar').toEqual([]);
+    // at least the lowest bar of the stack reaches the full 24 px on the desktop sizes (a stack of three rows shares its room)
+    if (size.width >= 1024) expect(Math.max(...bars.map((b) => b.hit.b - b.hit.t)), 'the bar with room above and below').toBeGreaterThanOrEqual(24 - eps);
+  });
+}
+
+for (const scheme of ['dark', 'light'] as const) {
+  for (const size of SCALL_SIZES) {
+    test('UIFIX-19d Slow call screen at ' + size.width + ' px (' + scheme + '): with the press areas hidden every box of the screen is where it was, and the painted lanes are the same pixels', async ({ page }) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.setViewportSize(size);
+      await openSlowCallScreen(page);
+      const lanes = page.getByTestId('scall-lanes');
+      await lanes.scrollIntoViewIfNeeded();
+      await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }' });
+      await page.mouse.move(0, 0);
+      const snap = () => page.evaluate(() => [...document.querySelectorAll('[data-testid=slow-call-screen] *')]
+        .filter((e) => !e.matches('.bar-hit, .bar-g') && !e.closest('.bar-hit') && (!e.closest('details:not([open])') || e.matches('details, summary')))
+        .map((e) => { const r = e.getBoundingClientRect(); return [e.tagName + '.' + (e.getAttribute('class') ?? '').split(' ')[0], r.left, r.top, r.width, r.height] as [string, number, number, number, number]; }));
+      const clip = await lanes.boundingBox();
+      if (!clip) throw new Error('no lanes box');
+      const now = await snap();
+      const shotNow = await page.screenshot({ clip: { x: Math.max(0, clip.x), y: Math.max(0, clip.y), width: clip.width, height: clip.height } });
+      const sheet = await page.addStyleTag({ content: '.bar-hit { display: none !important; } .scall-crumb .link::after, .scall-map-box::after { content: none !important; }' });
+      const old = await snap();
+      const shotOld = await page.screenshot({ clip: { x: Math.max(0, clip.x), y: Math.max(0, clip.y), width: clip.width, height: clip.height } });
+      await sheet.evaluate((el) => el.remove());
+      expect(now.length, size.width + ' ' + scheme + ': boxes compared').toBeGreaterThan(50);
+      expect(now.length).toBe(old.length);
+      now.forEach((n, i) => { for (let k = 1; k < 5; k++) expect(Math.abs((n[k] as number) - (old[i][k] as number)), size.width + ' ' + scheme + ' ' + n[0] + ' value ' + k).toBeLessThan(0.05); });
+      const d = await pictureDifference(page, shotNow, shotOld);
+      expect(d.pixels, size.width + ' ' + scheme + ': pixels of the lanes that differ (largest step ' + d.levels + ')').toBe(0);
+    });
+  }
+}
+
+test('UIFIX-19e Slow call screen: a press goes to the bar it is nearest to, an area never takes a press from the chart outside it or from the next lane', async ({ page }) => {
+  await openSlowCallScreen(page);
+  const bars = await barFacts(page);
+  const stack = bars.filter((b) => b.lane === bars[0].lane).sort((a, b) => a.bar.t - b.bar.t);
+  expect(stack.length, 'a stack of bars in one lane').toBeGreaterThan(1);
+  const pressed = async () => page.evaluate(() => [...document.querySelectorAll('.bar-g')].map((g) => g.getAttribute('aria-pressed') === 'true'));
+  const click = async (x: number, y: number) => { await page.mouse.click(x, y); };
+  const cx = (b: typeof stack[number]) => (b.bar.l + b.bar.r) / 2;
+  // the gap between two stacked bars: 1 px on each side of the middle of the gap goes to the bar on that side
+  for (let k = 0; k + 1 < stack.length; k++) {
+    const upper = stack[k], lower = stack[k + 1];
+    const mid = (upper.bar.b + lower.bar.t) / 2;
+    await click(cx(upper), mid - 1);
+    expect((await pressed())[upper.i], 'just above the middle of the gap: the upper bar').toBe(true);
+    expect((await pressed())[lower.i], 'just above the middle of the gap: not the lower bar').toBe(false);
+    await click(cx(upper), mid + 1);
+    expect((await pressed())[lower.i], 'just below the middle of the gap: the lower bar').toBe(true);
+    expect((await pressed())[upper.i], 'just below the middle of the gap: not the upper bar').toBe(false);
+  }
+  // a press in the grown part below the lowest bar selects it; a press 2 px past its area belongs to the chart (the readout is pinned, the bar is not selected)
+  const lowest = stack[stack.length - 1];
+  const inside = Math.min(lowest.hit.b - 2, lowest.bar.b + 4);
+  await click(cx(lowest), inside);
+  expect((await pressed())[lowest.i], 'in the grown part below the bar').toBe(true);
+  await click(cx(stack[0]), stack[0].bar.t + 2); // a different bar is selected, so a press past the area that selects nothing leaves it as it is
+  expect((await pressed())[stack[0].i]).toBe(true);
+  const past = lowest.hit.b + 2;
+  expect(past, 'there is chart below the area').toBeLessThan(lowest.svg.b);
+  await click(cx(lowest), past);
+  expect((await pressed())[lowest.i], 'past the area the lowest bar is not selected (the chart takes the press)').toBe(false);
+  expect((await pressed())[stack[0].i], 'past the area the earlier selection stays').toBe(true);
+  await expect(page.locator('.scall-line.pinned')).toHaveCount(1);
+  // the lane boundary: one pixel below the drawing of a lane is not a bar of that lane
+  for (const b of bars) {
+    const below = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.bar-g')?.getAttribute('aria-label') ?? null, [(b.hit.l + b.hit.r) / 2, b.svg.b + 1] as [number, number]);
+    expect(below, 'one pixel below the lane drawing of ' + b.label).toBeNull();
+    const above = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.bar-g')?.getAttribute('aria-label') ?? null, [(b.hit.l + b.hit.r) / 2, b.svg.t - 1] as [number, number]);
+    expect(above, 'one pixel above the lane drawing of ' + b.label).toBeNull();
+  }
+});
+
+for (const scheme of ['dark', 'light'] as const) {
+  test('UIFIX-19f Slow call screen (' + scheme + '): the keyboard focus rings and the rest pictures of the crumb button, the minimap box and a lane bar are the old ones', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openSlowCallScreen(page);
+    await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }' });
+    for (const [name, selector] of [['crumb', '[data-testid=scall-back]'], ['minimap box', '[data-testid=scall-map-box]'], ['lane bar', '.bar-g']] as const) {
+      const target = page.locator(selector).first();
+      await target.scrollIntoViewIfNeeded();
+      const clip = await target.evaluate((e) => {
+        const r = e.getBoundingClientRect();
+        const fx = Math.max(0, Math.floor(r.left - 14)), fy = Math.max(0, Math.floor(r.top - 14));
+        return { x: fx, y: fy, width: Math.ceil(r.right + 14 - fx), height: Math.ceil(r.bottom + 14 - fy) };
+      });
+      const take = async (): Promise<Buffer[]> => {
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        await page.mouse.move(0, 0);
+        const rest = await page.screenshot({ clip });
+        await target.focus();
+        await page.keyboard.press('Shift');
+        const focused = await page.screenshot({ clip });
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        return [rest, focused];
+      };
+      const now = await take();
+      const style = await page.addStyleTag({ content: '.bar-hit { display: none !important; } .scall-crumb .link::after, .scall-map-box::after { content: none !important; } .scall-crumb .link { position: static !important; }' });
+      const old = await take();
+      await style.evaluate((el) => el.remove());
+      for (const [i, what] of ['at rest', 'focused'].entries()) {
+        const d = await pictureDifference(page, now[i], old[i]);
+        expect(d.pixels, name + ' ' + what + ': pixels that differ from the old rules (largest step ' + d.levels + ')').toBe(0);
+      }
+      expect(now[1].equals(now[0]), name + ' focused: nothing is drawn, so the ring is missing').toBe(false);
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// BL-495 part: axis titles and units on the Requests-over-time chart of the home screen (UIFIX-30 to 32).
+// The chart is a canvas, so these read it three ways: the accessible name (the axes in words), the pixels (a title is a long stretch of ink in
+// a strip no tick label reaches) and the hover text. The chart box and the boxes around it are compared with the sizes measured on develop.
+const HERO_SIZES = [{ width: 1440, height: 900 }, { width: 1280, height: 720 }, { width: 1100, height: 800 }];
+
+type HeroFacts = { stage: number[]; chart: number[]; canvas: number[]; head: number[]; legend: number[]; leftRows: number; rightRows: number; bottomCols: number; outer: number; label: string };
+
+/** Where the chart sits and what is painted in the strips that hold the axis titles. Strips are in canvas pixels (device scale 1). */
+async function heroFacts(page: Page): Promise<HeroFacts> {
+  await page.locator('.hero-chart canvas').first().waitFor();
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await page.waitForTimeout(300);
+  return page.evaluate(() => {
+    const r = (e: Element | null) => { const b = e!.getBoundingClientRect(); return [b.left, b.top, b.width, b.height]; };
+    const canvas = document.querySelector<HTMLCanvasElement>('.hero-chart canvas')!;
+    const w = canvas.width, h = canvas.height;
+    const data = canvas.getContext('2d')!.getImageData(0, 0, w, h).data;
+    const ink = (x: number, y: number) => data[(y * w + x) * 4 + 3] > 8;
+    // Rows with ink in a vertical strip (left title, right title) and columns with ink in the bottom strip, the middle half only (tick labels sit on the left and right).
+    const rowsIn = (x0: number, x1: number) => { let n = 0; for (let y = 0; y < h; y++) for (let x = x0; x < x1; x++) if (ink(x, y)) { n++; break; } return n; };
+    let bottom = 0;
+    for (let x = Math.floor(w * .45); x < Math.floor(w * .55); x++) for (let y = h - 22; y < h; y++) if (ink(x, y)) { bottom++; break; }
+    let outer = 0;
+    for (let y = 0; y < h; y++) for (const x of [0, 1, w - 2, w - 1]) if (ink(x, y)) outer++;
+    for (let x = 0; x < w; x++) for (const y of [0, 1, h - 2, h - 1]) if (ink(x, y)) outer++;
+    return {
+      stage: r(document.querySelector('.hero-stage')), chart: r(document.querySelector('.hero-chart')), canvas: [w, h], head: r(document.querySelector('.hero-head')), legend: r(document.querySelector('.hero-legend')),
+      leftRows: rowsIn(4, 26), rightRows: rowsIn(w - 24, w - 4), bottomCols: bottom, outer, label: document.querySelector('.hero-chart')!.getAttribute('aria-label') ?? ''
+    };
+  });
+}
+
+for (const scheme of ['dark', 'light'] as const) for (const size of HERO_SIZES) {
+  test('UIFIX-30a Requests over time at ' + size.width + 'x' + size.height + ' (' + scheme + '): axis titles are painted inside the chart box and the box does not move', async ({ page }) => {
+    await page.setViewportSize(size);
+    await page.emulateMedia({ colorScheme: scheme });
+    const f = await heroFacts(page);
+    // The box: measured on develop at these sizes, 280 px tall, as wide as the page content, the canvas as large as the box. Nothing around it moved.
+    expect(f.stage[3], 'chart box height (280 px on develop)').toBe(280);
+    expect(f.chart).toEqual(f.stage);
+    expect(f.canvas, 'canvas as large as its box').toEqual([Math.round(f.stage[2]), 280]);
+    expect(f.stage[0], 'the box starts at the content edge').toBe(24);
+    expect(f.stage[2], 'the box spans the content width (page width minus two 24 px gutters)').toBe(size.width - 48);
+    expect(f.legend[1] + f.legend[3], 'the key sits above the box').toBeLessThanOrEqual(f.stage[1]);
+    expect(f.head[1] + f.head[3], 'the heading sits above the box').toBeLessThanOrEqual(f.stage[1]);
+    // The three axis titles are long stretches of ink where no tick label reaches (a 22-letter title is well over 90 rows tall; three tick labels are about 30).
+    expect(f.leftRows, 'left title "Requests per interval"').toBeGreaterThan(90);
+    expect(f.rightRows, 'right title "Response time (ms)"').toBeGreaterThan(70);
+    expect(f.bottomCols, 'bottom title "Time (UTC)" in the middle of the bottom strip').toBeGreaterThan(20);
+    expect(f.outer, 'nothing is painted on the outermost 2 px of the box (titles fit inside it)').toBe(0);
+    expect(f.label).toContain('Left axis: requests per interval, whole requests.');
+    expect(f.label).toContain('Right axis: response time in milliseconds');
+    expect(f.label).toContain('Bottom axis: time, in UTC.');
+    // Same page, no sideways scroll.
+    const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(over).toBeLessThanOrEqual(0);
+  });
+}
+
+// Contrast of the colours the chart draws its text in (it reads these two tokens, see palette() in lib/charts.ts) against the page behind it.
+for (const scheme of ['dark', 'light'] as const) {
+  test('UIFIX-30b Requests over time (' + scheme + '): axis titles and tick labels have 4.5:1 contrast on the page', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.locator('.hero-chart canvas').first().waitFor();
+    const facts = await page.evaluate(() => {
+      const parse = (c: string) => { const m = /rgba?\(([^)]+)\)/.exec(c); if (m) { const p = m[1].split(/[ ,/]+/).map(Number); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; } const hex = c.trim().replace('#', ''); return { r: parseInt(hex.slice(0, 2), 16), g: parseInt(hex.slice(2, 4), 16), b: parseInt(hex.slice(4, 6), 16), a: 1 }; };
+      const lin = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+      const lum = (c: { r: number; g: number; b: number }) => 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+      let bg = { r: 255, g: 255, b: 255, a: 1 };
+      for (let e: Element | null = document.querySelector('.hero-stage'); e; e = e.parentElement) { const c = parse(getComputedStyle(e).backgroundColor); if (c.a > 0.99) { bg = c; break; } }
+      const root = getComputedStyle(document.documentElement);
+      const ratio = (token: string) => { const fg = parse(root.getPropertyValue(token)); const a = lum(fg), b = lum(bg); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); };
+      return { title: ratio('--text-2'), tick: ratio('--accent') };
+    });
+    expect(facts.title, 'axis title colour (--text-2)').toBeGreaterThanOrEqual(4.5);
+    expect(facts.tick, 'right axis tick colour (--accent)').toBeGreaterThanOrEqual(4.5);
+  });
+}
+
+type Window_ = { at: string; count: number; timing: { count: number; meanMs: number | null; minMs: number | null; maxMs: number | null; p50: null; p95: { valueMs: number; lowerMs: number; upperMs: number } | null; histogram: [] } };
+
+/** Run the analysis again with the load windows replaced by `make(index, slotStart)`: the page draws exactly what the server could send. */
+async function rerunWithWindows(page: Page, make: (i: number, at: number) => { count: number; p95: number | null; max: number | null }) {
+  await page.route('**/api/analyze', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const q = body.query;
+    const width = q.bucketSeconds * 1000, start = Math.floor(Date.parse(q.start) / width) * width;
+    const out: Window_[] = [];
+    for (let at = start, i = 0; at < Date.parse(q.end); at += width, i++) {
+      const w = make(i, at);
+      out.push({ at: new Date(at).toISOString(), count: w.count, timing: { count: w.p95 == null ? 0 : w.count, meanMs: null, minMs: null, maxMs: w.max, p50: null, p95: w.p95 == null ? null : { valueMs: w.p95, lowerMs: w.p95, upperMs: w.p95 }, histogram: [] } });
+    }
+    body.loadWindows = out;
+    await route.fulfill({ response, json: body });
+  });
+  const done = page.waitForResponse((r) => r.url().includes('/api/analyze'));
+  await page.getByRole('button', { name: 'Run analysis' }).click();
+  await done;
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.waitForTimeout(400);
+}
+
+/** Sweep the pointer across the plot until the tooltip text matches, and return it; fails with the last text seen. */
+async function heroTip(page: Page, wanted: RegExp): Promise<string> {
+  await page.locator('.hero-chart').scrollIntoViewIfNeeded();
+  const box = (await page.locator('.hero-chart').boundingBox())!;
+  let last = '';
+  for (let x = 56; x < box.width - 48; x += 3) {
+    await page.mouse.move(box.x + x, box.y + box.height / 2);
+    const text = await page.locator('.hero-chart').evaluate((el) => {
+      const tips = [...el.querySelectorAll<HTMLElement>('div')].filter((d) => d.textContent?.startsWith('20 Oct') && d.textContent.includes('Requests:') && !d.querySelector('div'));
+      const shown = tips.filter((d) => getComputedStyle(d.parentElement!).opacity !== '0' && getComputedStyle(d.parentElement!).visibility !== 'hidden');
+      return (shown[0] ?? tips[0])?.innerText.replace(/\s+/g, ' ') ?? '';
+    });
+    if (text) last = text;
+    if (wanted.test(text)) return text;
+  }
+  throw new Error('no tooltip matched ' + wanted + '; the last one was: ' + last);
+}
+
+test('UIFIX-31a Requests over time, a slow hour: P95 and the slowest request in seconds with one decimal each, interval start and end named', async ({ page }) => {
+  await rerunWithWindows(page, (i) => ({ count: 1200 + i, p95: i === 3 ? 65_700 : 900 + i * 10, max: i === 3 ? 68_000 : 1500 }));
+  const f = await heroFacts(page);
+  expect(f.label).toContain('Right axis: response time in seconds');
+  expect(f.rightRows, 'right title painted').toBeGreaterThan(70);
+  expect(f.outer).toBe(0);
+  const tip = await heroTip(page, /Slowest request: 68\.0 s/);
+  expect(tip).toMatch(/^20 Oct \d\d:\d\d:\d\d to \d\d:\d\d:\d\d UTC Requests: 1,203 P95: ≈ 65\.7 s Slowest request: 68\.0 s/);
+  expect(tip, 'no NaN or undefined').not.toMatch(/NaN|undefined|Infinity/);
+});
+
+// Millions of requests make the left labels wide ("3,000,000"): the left margin grows from 46 to about 96 px, and the title must still fit inside the same box.
+for (const size of [{ width: 1100, height: 800 }, { width: 1280, height: 720 }, { width: 1440, height: 900 }, { width: 1920, height: 1080 }, { width: 320, height: 800 }]) {
+  test('UIFIX-31b Requests over time, a busy hour at ' + size.width + ' px: counts in the millions keep whole numbers with separators and room for the title', async ({ page }) => {
+    await page.setViewportSize(size);
+    await rerunWithWindows(page, (i) => ({ count: 2_000_000 + i * 150_000, p95: 120 + i, max: 400 }));
+    const f = await heroFacts(page);
+    expect(f.stage[3], 'the box keeps its height').toBe(size.width < 500 ? 220 : 280);
+    expect(f.leftRows, 'left title painted beside millions').toBeGreaterThan(90);
+    expect(f.rightRows, 'right title painted').toBeGreaterThan(70);
+    expect(f.outer, 'title and wide labels stay inside the box').toBe(0);
+    const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(over, 'sideways overflow in px').toBeLessThanOrEqual(0);
+    const tip = await heroTip(page, /P95: ≈ 12\d ms/);
+    expect(tip).toMatch(/Requests: 2,\d{3},\d{3} P95: ≈ 12\d ms Slowest request: 400 ms/);
+  });
+}
+
+test('UIFIX-31e Requests over time, a fast P95 with one 68 s outlier: the tooltip and the note under the chart write the slowest request alike, never "68,000 ms"', async ({ page }) => {
+  await rerunWithWindows(page, (i) => ({ count: 30, p95: 43, max: i === 3 ? 68_000 : 80 }));
+  const tip = await heroTip(page, /Slowest request: 68\.0 s/);
+  expect(tip).toContain('P95: ≈ 43 ms');
+  expect(tip).not.toContain('68,000');
+  const note = page.locator('.hero-note');
+  await expect(note).toContainText('up to 68.0 s');
+  await expect(note).not.toContainText('68,000');
+});
+
+test('UIFIX-31c Requests over time, a sub-millisecond hour and an hour with no timing: no NaN, the axis starts at 0 and the title is there', async ({ page }) => {
+  await rerunWithWindows(page, (i) => i % 2 ? { count: 4, p95: null, max: null } : { count: 7, p95: 0.4, max: 0.9 });
+  const f = await heroFacts(page);
+  expect(f.label).toContain('Right axis: response time in milliseconds');
+  expect(f.leftRows).toBeGreaterThan(90);
+  expect(f.rightRows).toBeGreaterThan(70);
+  const noTiming = await heroTip(page, /P95: no timed requests/);
+  expect(noTiming).toContain('P95: no timed requests');
+  const tiny = await heroTip(page, /P95: ≈ <1 ms/);
+  expect(tiny).toContain('P95: ≈ <1 ms');
+  expect(tiny).toContain('Slowest request: <1 ms');
+  expect(tiny + noTiming).not.toMatch(/NaN|undefined|Infinity/);
+});
+
+test('UIFIX-31d Requests over time, a quiet hour (every interval zero): the empty message shows, not a chart of NaN', async ({ page }) => {
+  await rerunWithWindows(page, () => ({ count: 0, p95: null, max: null }));
+  await expect(page.locator('.hero-empty')).toBeVisible();
+  await expect(page.locator('.hero-empty')).toContainText('No requests in this period');
+  await expect(page.locator('.hero-chart')).toHaveAttribute('aria-hidden', 'true');
+});
+
+for (const width of [320, 360, 390]) {
+  test('UIFIX-32 Requests over time on a ' + width + ' px phone: titles painted, box 220 px, no sideways scroll', async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    const f = await heroFacts(page);
+    expect(f.stage[3], 'chart box height (220 px on develop)').toBe(220);
+    expect(f.stage[2], 'the box spans the content width (two 14 px gutters)').toBe(width - 28);
+    expect(f.leftRows).toBeGreaterThan(90);
+    expect(f.rightRows).toBeGreaterThan(70);
+    expect(f.outer).toBe(0);
+    const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(over, 'sideways overflow in px').toBeLessThanOrEqual(0);
+  });
+}

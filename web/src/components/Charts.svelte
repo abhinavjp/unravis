@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { watchSize } from '../lib/chartPerf';
   import { MIN_SAMPLE } from '../lib/thresholds';
   import { onMount } from 'svelte';
   import type { Analysis, Comparison } from '../lib/types';
@@ -27,9 +28,8 @@
   onMount(() => {
     if (!timeline || !ratio || !histogram) return;
     charts = [timeline, ratio, histogram].map(node => echarts.init(node, undefined, { renderer: 'canvas' }));
-    const observer = new ResizeObserver(() => charts.forEach(chart => chart.resize()));
-    [timeline, ratio, histogram].forEach(node => observer.observe(node));
-    return () => { observer.disconnect(); charts.forEach(chart => chart.dispose()); };
+    const stopSize = watchSize([timeline, ratio, histogram], () => charts.forEach(chart => chart.resize()));
+    return () => { stopSize(); charts.forEach(chart => chart.dispose()); };
   });
   $effect(() => {
     if (!charts.length) return;

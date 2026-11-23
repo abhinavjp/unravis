@@ -687,8 +687,9 @@ var errSQLSettingsNotLocked = errors.New("The SQL service did not start: its set
 // the fixed "not locked" sentence and logs the fixed word.
 //
 // TEMPORARY FALLBACK (removed once probe P1 passes on the PC, see docs/design/bl-140-settings-folder-proof.md decision 7): for those two
-// words only (this account cannot open or read the file, the open unknowns of P1) the service logs one line and uses the old by-path proof
-// plus a read by path. That path is weaker than the handle proof (no link count, no final path, no share-deny-write during the read, an
+// case only (the open of the file was refused with access or unreadable: this account cannot open the file, the open unknown of P1) the
+// service logs one line and uses the old by-path proof plus a read by path. A failure after the file was opened (a handle query, the final
+// path, the owner or list read, the read itself) never falls back, whatever its word: the one-handle proof was already running. That path is weaker than the handle proof (no link count, no final path, no share-deny-write during the read, an
 // unbounded read) and it re-opens the proof-to-read window; a person who controls a folder in the path can force "access" and so reach it.
 // It is allowed only where the verified read could not run at all. A missing by-path proof also refuses. Bytes that were proven but do not parse are a settings error and are returned as they are.
 func loadSQLSettings(path string, d deps, logf func(string, ...any)) (blackbox.Config, error) {
@@ -697,14 +698,15 @@ func loadSQLSettings(path string, d deps, logf func(string, ...any)) (blackbox.C
 		return cfg, err
 	}
 	word := blackbox.RefusalWord(err) // for the log only; the decision is taken from the reader's own error
+	stage := blackbox.RefusalStage(err)
 	if !blackbox.FallbackAllowedFor(err) {
 		if logf != nil {
-			logf("sql: settings-not-locked (%s)", word)
+			logf("sql: settings-not-locked (%s, %s)", word, stage)
 		}
 		return blackbox.Config{}, errSQLSettingsNotLocked
 	}
 	if logf != nil {
-		logf("sql: verified settings read refused (%s), using the temporary by-path fallback", word)
+		logf("sql: verified settings read refused (%s, %s), using the temporary by-path fallback", word, stage)
 	}
 	if d.verifyConfig == nil || d.verifyConfig(path) != nil {
 		if logf != nil {

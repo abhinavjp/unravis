@@ -9,6 +9,7 @@
   import type { CoverageReport } from '../lib/types';
   import Hint from './Hint.svelte';
   import ProvenanceNote from './ProvenanceNote.svelte';
+  import { visiblePoll } from '../lib/visibility';
 
   // The coverage census for one source. It reads every record in the period, so it never runs by itself: only the button starts it.
   // A refusal (a live source without --allow-broad-scans) shows the fixed sentence from lib/provenance.ts. A refusal is never kept.
@@ -62,8 +63,8 @@
   // Keeps "N min ago" honest while a saved report stays on screen.
   $effect(() => {
     if (savedAt === null) return;
-    const timer = setInterval(() => { now = Date.now(); }, 30_000);
-    return () => clearInterval(timer);
+    // Stops while the page is hidden; on show it is brought up to date at once (BL-429).
+    return visiblePoll(() => { now = Date.now(); }, 30_000);
   });
 </script>
 

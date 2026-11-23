@@ -143,10 +143,7 @@ func wordClass(id string, ws, we int) int {
 	lt := strings.ToLower(tail)
 	switch {
 	case lt == "s" || lt == "es":
-		if w == "token" {
-			return classNone // "tokens=3" counts tokens
-		}
-		return class
+		return classNone // "tokens=3" counts tokens; "passwords: none" is a sentence
 	case tail[0] == '_' || tail[0] == '.' || tail[0] == '-':
 		seg := lt[1:]
 		for i := 0; i < len(seg); i++ {
@@ -459,7 +456,7 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 	}
 	see(q)
 	if q < len(s) && (s[q] == '"' || s[q] == '\'') {
-		end, after := closingQuote(s, q, nest)
+		end, after := closingQuote(s, q, nest, !jsonKey)
 		see(after)
 		if nest == 0 && after <= len(s) && end < len(s) && !valueSeparator(s, after) {
 			// "x"y: text sticks to the closing quote, so the quote was not the end of the value (fail closed: take the rest of it).
@@ -502,8 +499,9 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 // value unless it is escaped with a backslash, or doubled (ADO). For a value written inside a JSON string (nest > 0) the closing
 // quote has the same number of backslashes. A value that never closes runs to the end of the text. It returns the end of the value
 // text and where reading goes on.
-func closingQuote(s string, q, nest int) (end, after int) {
+func closingQuote(s string, q, nest int, literal bool) (end, after int) {
 	qc := s[q]
+	firstEscaped := -1
 	for t := q + 1; t < len(s); t++ {
 		if s[t] != qc {
 			continue
@@ -514,6 +512,9 @@ func closingQuote(s string, q, nest int) (end, after int) {
 		}
 		if nest == 0 {
 			if r%2 == 1 {
+				if firstEscaped < 0 {
+					firstEscaped = t
+				}
 				continue // \" is an escaped quote
 			}
 			if t+1 < len(s) && s[t+1] == qc {
@@ -528,6 +529,12 @@ func closingQuote(s string, q, nest int) (end, after int) {
 			return t, t + 1
 		}
 		return t - r, t + 1
+	}
+	if literal && firstEscaped >= 0 {
+		// A value that never closes with a plain quote, and whose key was not quoted (ADO, an environment variable, a path such as
+		// "C:\dir\"): the backslash before the first quote is a character of the value, and that quote ends it. A quoted key (JSON) keeps
+		// the escape and the value runs to the end of the text.
+		return firstEscaped, firstEscaped + 1
 	}
 	return len(s), len(s)
 }

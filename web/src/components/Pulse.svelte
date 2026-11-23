@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { watchSize } from '../lib/chartPerf';
   import { onMount } from 'svelte';
   import type { Analysis } from '../lib/types';
   import { echarts, heroOption } from '../lib/charts';
@@ -10,7 +11,7 @@
   import { trafficData } from '../lib/traffic';
   import { heroHasData, pulseFigures, singleKind, topRiseName, type Lens } from '../lib/pulse';
   import { heroOutliers } from '../lib/chartHero';
-  import { axisDuration } from '../lib/chartScale';
+  import { durationAxis, durationText, requestsAxisTitle } from '../lib/chartAxis';
   import { metricLabels } from '../lib/presentation';
   import { plainIncomplete } from '../lib/copy/plainSummary';
   import { p95Sentence, periodLengthMs } from '../lib/copy/screenCopy';
@@ -39,15 +40,20 @@
   // When the P95 is clearly higher than in the earlier period, one sentence says so and points to the ranked view. It names the operation with the biggest rise, never a reason.
   const headline = $derived(p95Sentence(figures.find(figure => figure.id === 'p95')?.change ?? null, periodLengthMs(analysis.query.baselineStart, analysis.query.baselineEnd), topRiseName(analysis.rollups ?? [])));
   const toneOf = (id: Lens, value: string) => value === '0' || value === '—' ? (value === '—' ? 'muted' : '') : id === 'client' ? 'warn' : id === 'server' ? 'bad' : '';
+  // The axes in words, for the picture's name: what each axis counts and in which unit (the same words as the axis titles drawn on the chart).
+  const axisSummary = $derived.by(() => {
+    const unit = durationAxis(Math.max(0, ...windows.flatMap(window => [window.latency ?? 0, window.max ?? 0]))).unit === 's' ? 'seconds' : 'milliseconds';
+    return 'Left axis: ' + requestsAxisTitle.toLowerCase() + ', whole requests.' + (withLatency ? ' Right axis: response time in ' + unit + ' (the P95 line and the slowest request of each interval).' : '') + ' Bottom axis: ' + 'time, in ' + zone + '.';
+  });
   let node = $state<HTMLDivElement>();
   let chart = $state<ReturnType<typeof echarts.init>>();
   onMount(() => {
     if (!node) return;
     chart = echarts.init(node);
-    const observer = new ResizeObserver(() => chart?.resize()); observer.observe(node);
-    return () => { observer.disconnect(); chart?.dispose(); };
+    const stopSize = watchSize(node, () => chart?.resize());
+    return () => { stopSize(); chart?.dispose(); };
   });
-  $effect(() => { void theme.epoch; if (chart && hasData) chart.setOption(heroOption(windows, zone, withLatency), true); });
+  $effect(() => { void theme.epoch; if (chart && hasData) chart.setOption(heroOption(windows, zone, withLatency, 'P95'), true); });
 </script>
 
 <section class="pulse" aria-label="Pulse">
@@ -81,10 +87,10 @@
     </div>
     <HelpNote id="pulse-chart" />
     <div class="hero-stage">
-      <div class="hero-chart" class:chart-hidden={!hasData} bind:this={node} use:zoomable={{ chart: () => chart }} role="img" aria-hidden={!hasData} aria-label={'Requests per interval' + (withLatency ? ' with the 95th percentile and the slowest request of each interval' : '') + ', in ' + zone}></div>
+      <div class="hero-chart" class:chart-hidden={!hasData} bind:this={node} use:zoomable={{ chart: () => chart }} role="img" aria-hidden={!hasData} aria-label={'Requests per interval' + (withLatency ? ' with the 95th percentile and the slowest request of each interval' : '') + ', in ' + zone + '. ' + axisSummary}></div>
       {#if !hasData}<div class="hero-empty" use:focusEmpty>{#if zoomView.emptyMessage}<strong>{zoomView.emptyMessage}</strong>{:else}<strong>No requests in this period</strong><p>Widen the range, or check that the selected sources have audit rows for it.</p>{/if}</div>{/if}
     </div>
-    {#if withLatency && outliers.flagged.length}<p class="figure-hint hero-note">{outliers.flagged.length === 1 ? 'One interval holds' : outliers.flagged.length + ' intervals hold'} a request far slower than usual, up to {axisDuration(slowestSeen)}. They are marked with a red diamond. This shows when slow requests happened; it does not show why.</p>{/if}
+    {#if withLatency && outliers.flagged.length}<p class="figure-hint hero-note">{outliers.flagged.length === 1 ? 'One interval holds' : outliers.flagged.length + ' intervals hold'} a request far slower than usual, up to {durationText(slowestSeen)}. They are marked with a red diamond. This shows when slow requests happened; it does not show why.</p>{/if}
     {#if !withLatency}<p class="figure-hint">Latency is shown for one request type at a time. Choose Sync, Async, Hangfire or HTTP to add the P95 line.</p>{/if}
   </section>
 </section>

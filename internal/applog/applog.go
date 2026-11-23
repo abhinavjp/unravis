@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -23,7 +24,6 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/datadir"
-	"api-audit-explorer/internal/secretscrub"
 )
 
 // EnvLogLevel chooses the log level: UNRAVIS_LOG_LEVEL=debug turns on the
@@ -162,6 +162,9 @@ func Stat(dir string) Info {
 // cannot leak a secret into the log by forgetting to clean a value.
 type sanitizeHandler struct {
 	inner slog.Handler
+	// secretGroup is true once WithGroup opened a group named like a secret
+	// (password, token, ...): every attribute below it is hidden.
+	secretGroup bool
 }
 
 func (h sanitizeHandler) Enabled(ctx context.Context, level slog.Level) bool {
@@ -171,7 +174,7 @@ func (h sanitizeHandler) Enabled(ctx context.Context, level slog.Level) bool {
 func (h sanitizeHandler) Handle(ctx context.Context, r slog.Record) error {
 	clean := slog.NewRecord(r.Time, r.Level, Sanitize(r.Message), r.PC)
 	r.Attrs(func(a slog.Attr) bool {
-		clean.AddAttrs(sanitizeAttr(a))
+		clean.AddAttrs(cleanAttr(a, h.secretGroup))
 		return true
 	})
 	return h.inner.Handle(ctx, clean)
@@ -180,55 +183,108 @@ func (h sanitizeHandler) Handle(ctx context.Context, r slog.Record) error {
 func (h sanitizeHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	clean := make([]slog.Attr, len(attrs))
 	for i, a := range attrs {
-		clean[i] = sanitizeAttr(a)
+		clean[i] = cleanAttr(a, h.secretGroup)
 	}
-	return sanitizeHandler{inner: h.inner.WithAttrs(clean)}
+	return sanitizeHandler{inner: h.inner.WithAttrs(clean), secretGroup: h.secretGroup}
 }
 
 func (h sanitizeHandler) WithGroup(name string) slog.Handler {
-	return sanitizeHandler{inner: h.inner.WithGroup(name)}
+	return sanitizeHandler{inner: h.inner.WithGroup(name), secretGroup: h.secretGroup || isSecretKey(name)}
 }
 
-func sanitizeAttr(a slog.Attr) slog.Attr {
+func sanitizeAttr(a slog.Attr) slog.Attr { return cleanAttr(a, false) }
+
+// cleanAttr cleans one attribute. inSecret is true below a group whose name says
+// it holds secrets: every value in it is hidden, whatever its key.
+func cleanAttr(a slog.Attr, inSecret bool) slog.Attr {
 	a.Value = a.Value.Resolve()
-	// The value of an attribute named like a secret ("password", "db_password", "api_key") goes whatever it holds: its text may be a
-	// bare password that no pattern could tell from a word.
-	if a.Value.Kind() != slog.KindGroup && secretscrub.IsSecretKey(a.Key) {
-		return slog.String(a.Key, redacted)
-	}
-	switch a.Value.Kind() {
-	case slog.KindString:
-		return slog.String(a.Key, Sanitize(a.Value.String()))
-	case slog.KindGroup:
+	if a.Value.Kind() == slog.KindGroup {
+		inSecret = inSecret || isSecretKey(a.Key)
 		attrs := a.Value.Group()
 		clean := make([]slog.Attr, len(attrs))
 		for i, g := range attrs {
-			clean[i] = sanitizeAttr(g)
+			clean[i] = cleanAttr(g, inSecret)
 		}
 		return slog.Group(a.Key, attrsToAny(clean)...)
-	case slog.KindAny:
-		switch v := a.Value.Any().(type) {
-		case string:
-			return slog.String(a.Key, Sanitize(v))
-		case error:
-			return slog.String(a.Key, Sanitize(v.Error()))
-		case url.URL:
-			return slog.String(a.Key, Sanitize(v.String()))
-		case []byte:
-			return slog.String(a.Key, Sanitize(string(v)))
-		case encoding.TextMarshaler:
-			if text, err := v.MarshalText(); err == nil {
-				return slog.String(a.Key, Sanitize(string(text)))
-			}
-			return slog.String(a.Key, Sanitize(fmt.Sprintf("%+v", v)))
-		default:
-			// The handler would format any other value itself, unsanitized (a
-			// Stringer, a URL, a slice, a map, a struct). Render it the way the
-			// text handler does and clean the result.
-			return slog.String(a.Key, Sanitize(fmt.Sprintf("%+v", v)))
-		}
 	}
-	return a
+	if inSecret || isSecretKey(a.Key) {
+		// The key says the value is a secret, whatever its text looks like.
+		if a.Value.Kind() == slog.KindString && a.Value.String() == "" {
+			return a
+		}
+		return slog.String(a.Key, redacted)
+	}
+	if a.Value.Kind() != slog.KindAny {
+		if a.Value.Kind() == slog.KindString {
+			return slog.String(a.Key, Sanitize(a.Value.String()))
+		}
+		return a
+	}
+	switch v := a.Value.Any().(type) {
+	case string:
+		return slog.String(a.Key, Sanitize(v))
+	case error:
+		return slog.String(a.Key, Sanitize(safeText(func() string { return v.Error() })))
+	case url.URL:
+		return slog.String(a.Key, Sanitize(v.String()))
+	case []byte:
+		return slog.String(a.Key, Sanitize(string(v)))
+	case http.Header:
+		return slog.String(a.Key, Sanitize(fmt.Sprintf("%+v", hideSecretValues(v))))
+	case map[string][]string:
+		return slog.String(a.Key, Sanitize(fmt.Sprintf("%+v", hideSecretValues(v))))
+	case map[string]string:
+		clean := make(map[string]string, len(v))
+		for k, val := range v {
+			if isSecretKey(k) && val != "" {
+				val = redacted
+			}
+			clean[k] = val
+		}
+		return slog.String(a.Key, Sanitize(fmt.Sprintf("%+v", clean)))
+	case encoding.TextMarshaler:
+		text, ok := "", false
+		func() {
+			// A nil pointer whose MarshalText has a value receiver panics; slog's own
+			// handler prints "<nil>" for it, so do the same.
+			defer func() { _ = recover() }()
+			if b, err := v.MarshalText(); err == nil {
+				text, ok = string(b), true
+			}
+		}()
+		if ok {
+			return slog.String(a.Key, Sanitize(text))
+		}
+		return slog.String(a.Key, Sanitize(safeText(func() string { return fmt.Sprintf("%+v", v) })))
+	default:
+		// The handler would format any other value itself, unsanitized (a
+		// Stringer, a URL, a slice, a map, a struct). Render it the way the
+		// text handler does and clean the result.
+		return slog.String(a.Key, Sanitize(fmt.Sprintf("%+v", v)))
+	}
+}
+
+// safeText runs f and returns "<nil>" if it panics (a nil pointer receiver).
+func safeText(f func() string) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = "<nil>"
+		}
+	}()
+	return f()
+}
+
+// hideSecretValues copies header-like data with the values of secret keys
+// (Authorization, Cookie, X-Api-Key, ...) replaced.
+func hideSecretValues(m map[string][]string) map[string][]string {
+	clean := make(map[string][]string, len(m))
+	for k, vals := range m {
+		if isSecretKey(k) && len(vals) > 0 {
+			vals = []string{redacted}
+		}
+		clean[k] = vals
+	}
+	return clean
 }
 
 func attrsToAny(attrs []slog.Attr) []any {
@@ -237,4 +293,41 @@ func attrsToAny(attrs []slog.Attr) []any {
 		out[i] = a
 	}
 	return out
+}
+
+// secretKeySuffixes end the name of an attribute that holds a secret, once the
+// name is lower-cased and its "_", "-", "." and spaces are dropped: db_password,
+// MYSQL_PWD, clientSecret, access-token, X-Api-Key, Authorization, Set-Cookie,
+// private_key, connection_string.
+var secretKeySuffixes = []string{
+	"password", "passwd", "pwd", "secret", "token", "apikey", "accesskey",
+	"accountkey", "sharedaccesskey", "authorization", "cookie", "credential",
+	"credentials", "privatekey", "passphrase", "dsn", "connectionstring", "pgpass",
+}
+
+// secretKeyFolder drops the separators from a key. It is built once: isSecretKey
+// runs for every slog attribute.
+var secretKeyFolder = strings.NewReplacer("_", "", "-", "", ".", "", " ", "")
+
+// isSecretKey reports whether a slog attribute key names a secret. The check
+// is by suffix, so "db_password" and "refresh_token" count and "tokens" or
+// "passwordPolicy" do not. "pass" counts only after a separator (db_pass), and
+// "cred" only as the whole key.
+func isSecretKey(key string) bool {
+	k := strings.ToLower(key)
+	if k == "cred" {
+		return true
+	}
+	if n := len(k); n > 4 && strings.HasSuffix(k, "pass") && (k[n-5] == '_' || k[n-5] == '-' || k[n-5] == '.') {
+		return true
+	}
+	if strings.ContainsAny(k, "_-. ") {
+		k = secretKeyFolder.Replace(k)
+	}
+	for _, suf := range secretKeySuffixes {
+		if strings.HasSuffix(k, suf) {
+			return true
+		}
+	}
+	return false
 }

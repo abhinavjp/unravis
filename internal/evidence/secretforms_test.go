@@ -27,7 +27,7 @@ func TestScrubSecretsFormsFromTheSweep(t *testing.T) {
 		{"API_KEY", "API_KEY=FAKEPW", "[removed]"},
 		{"x-api-key colon", "x-api-key: FAKEPW", "x-[removed]"},
 		{"XML element", "<Password>FAKEPW a;b</Password>", "<Password>[removed]</Password>"},
-		{"XML element on its own lines", "<Password>\n  FAKEPW\n</Password>", "<Password>\n  [removed]\n</Password>"},
+		{"XML element on its own lines", "<Password>\n  FAKEPW\n</Password>", "<Password>[removed]</Password>"},
 		{"appSettings add key", `<add key="Password" value="FAKEPW x"/>`, `<add key="Password" value="[removed]"/>`},
 		{"password attribute", `<Login user="bob" password="FAKEPW x" />`, `<Login user="bob" [removed] />`},
 		{"connectionString attribute", `<add name="Db" connectionString="Server=a;User Id=sa;Password=FAKEPW;" providerName="p"/>`, `<add name="Db" connectionString="[removed]" providerName="p"/>`},
