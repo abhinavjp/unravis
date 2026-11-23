@@ -1181,6 +1181,50 @@
         }
       ],
       "note": "SQL connection form with the Blackbox access check run (demo answer: one right missing, script shown)."
+    },
+    {
+      "id": "x-blackbox-sql-collect",
+      "phase": "X",
+      "note": "Blackbox status: Collect SQL data (Windows sign-in, grant script shown).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"Blackbox\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"Blackbox\"s]"
+        },
+        {
+          "waitFor": "#blackbox-title"
+        },
+        {
+          "click": "role=button[name=\"Open status: web-a\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Collect SQL data\"]"
+        },
+        {
+          "click": "role=radio[name=/Windows sign-in/]"
+        },
+        {
+          "click": "role=button[name=\"Get the script\"]"
+        },
+        {
+          "waitFor": "role=textbox[name=\"Script to run in SSMS as an admin\"]"
+        }
+      ]
     }
   ]
 }

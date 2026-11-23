@@ -151,6 +151,8 @@ var routeCases = []routeCase{
 	{"/api/blackbox/this-pc/remove", "/api/blackbox/this-pc/remove", "POST"},
 	{"/api/blackbox/this-pc/snapshot", "/api/blackbox/this-pc/snapshot", "POST"},
 	{"/api/blackbox/this-pc/update", "/api/blackbox/this-pc/update", "POST"},
+	{"/api/blackbox/this-pc/sql/setup", "/api/blackbox/this-pc/sql/setup", "POST"},
+	{"/api/blackbox/this-pc/sql/login/clear", "/api/blackbox/this-pc/sql/login/clear", "POST"},
 	{"/api/blackbox/{id}/check", "/api/blackbox/bb-1/check", "POST"},
 	{"/api/blackbox/{id}/diagnostics", "/api/blackbox/bb-1/diagnostics", "GET"},
 	{"/api/blackbox/{id}/key", "/api/blackbox/bb-1/key", "PUT"},

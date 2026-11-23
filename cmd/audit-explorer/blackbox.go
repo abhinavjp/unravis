@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"api-audit-explorer/internal/bbsaved"
 	"api-audit-explorer/internal/blackbox"
@@ -45,7 +46,7 @@ func wireBlackbox(demo bool, cfg demoSettings, getenv func(string) string, kept 
 	}
 	if program, ok := blackbox.FindProgram(dirs...); ok {
 		deps.Program = program
-		deps.ThisPC = &blackbox.ThisPC{Elev: blackbox.OSElevator{}, Program: program.Path, Guard: blackbox.GuardHelper}
+		deps.ThisPC = &blackbox.ThisPC{Elev: blackbox.OSElevator{Timeout: 5 * time.Minute}, Program: program.Path, Guard: blackbox.GuardHelper}
 		// The version of the shipped program, asked once per file, so the status
 		// can offer "Update the recorder" when the installed one is older.
 		pv := &blackbox.ProgramVersioner{Elev: blackbox.OSElevator{}, Program: program.Path, Guard: blackbox.GuardHelper}

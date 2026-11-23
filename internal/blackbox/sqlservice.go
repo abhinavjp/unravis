@@ -912,6 +912,15 @@ func (m *SQLManager) InstallSQL(cfg Config, configPath string) (err error) {
 	return nil
 }
 
+// UnarmSQL leaves the SQL service switched off on disk (the same latch install-sql sets), so a reboot or an SCM start cannot run it until
+// the owner enables it again. It is used when the service goes back to Windows sign-in, which needs the owner's grant first.
+func (m *SQLManager) UnarmSQL(cfg Config) error {
+	unarmed := bbsql.NewState()
+	unarmed.AutoOff = true
+	unarmed.State = bbsql.StateAutoOff
+	return bbsql.Save(bbsql.StatePath(cfg.Folder), unarmed)
+}
+
 // EnableSQL is the administrator-only owner activation (W8-03): it confirms
 // the installed program and settings, checks the loaded folder against the
 // persisted INSTALL-TIME folder in the admin-locked install record (SEC-3),

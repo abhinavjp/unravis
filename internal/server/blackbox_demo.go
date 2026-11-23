@@ -3,10 +3,12 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -501,8 +503,12 @@ type simPC struct {
 	now       time.Time
 	installed bool
 	running   bool
-	cfg       blackbox.Config
-	keys      int
+	// sqlInstalled: the pretend SQL service was set up by a setup-sql call.
+	sqlInstalled bool
+	// loginFileOK: the last setup call was handed a login file whose hash matched (tests).
+	loginFileOK bool
+	cfg         blackbox.Config
+	keys        int
 
 	// failNext is returned by the next change, then cleared (tests).
 	failNext error
@@ -663,6 +669,36 @@ func (p *simPC) Update(ctx context.Context) (blackbox.UpdateOutcome, error) {
 	}
 	// The pretend recorder is always the shipped one.
 	return blackbox.UpdateOutcome{}, nil
+}
+
+// SetupSQL pretends to turn SQL collection on. Nothing is installed and no file is read.
+func (p *simPC) SetupSQL(ctx context.Context, loginFile, loginSHA string, windows, enable bool) (blackbox.SQLSetupOutcome, error) {
+	if err := p.enter(ctx, "setup-sql"); err != nil {
+		return blackbox.SQLSetupOutcome{}, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if loginFile != "" {
+		// The pretend helper checks what the real one checks: the file is there and is the bytes the app hashed.
+		if b, err := os.ReadFile(loginFile); err != nil || fmt.Sprintf("%x", sha256.Sum256(b)) != loginSHA { //nolint:gosec // G304: the demo helper reads the path the app just made
+			return blackbox.SQLSetupOutcome{}, &blackbox.ThisPCError{Reason: blackbox.ReasonInvalid, Message: "The SQL login settings are not valid."}
+		}
+		p.loginFileOK = true
+	}
+	out := blackbox.SQLSetupOutcome{Installed: !p.sqlInstalled, LoginSaved: !windows, Started: enable}
+	if windows {
+		out.GrantScript = "-- Run in SSMS as an admin. The Blackbox never runs this for you.\nCREATE LOGIN [NT SERVICE\\UnravisBlackboxSql] FROM WINDOWS WITH DEFAULT_DATABASE=master;\nGRANT VIEW SERVER PERFORMANCE STATE TO [NT SERVICE\\UnravisBlackboxSql];\n"
+	}
+	p.sqlInstalled = true
+	return out, nil
+}
+
+// ClearSQLLogin pretends to delete the saved login.
+func (p *simPC) ClearSQLLogin(ctx context.Context) error {
+	if err := p.enter(ctx, "clear-sql-login"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // cloneCfg copies the settings the simulated service runs with. The caller holds p.mu.

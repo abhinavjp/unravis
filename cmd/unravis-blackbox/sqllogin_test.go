@@ -47,7 +47,7 @@ func loginRig(t *testing.T) (*loginRigT, string) {
 		d: deps{
 			mgr:    &blackbox.Manager{Svc: &memSvc{}, Env: env, Disk: bigDisk{}},
 			exeDir: func() string { return root },
-			sqlMgr: &blackbox.SQLManager{Env: env},
+			sqlMgr: &blackbox.SQLManager{Env: env, Svc: &memSvc{state: blackbox.SvcStopped}},
 			// The folder proof is Windows-only (install record, locked settings, folder lock): here it hands back the temp folder.
 			confirmDir: func(blackbox.Config, string) (string, error) { return filepath.Join(root, "rec", "sql"), nil },
 			sealer:     func() (sealedfile.Protector, error) { return xorSeal{}, nil },
@@ -211,5 +211,125 @@ func TestSetSQLLoginRefusesAnUnprovenFolderWithoutReadingTheFile(t *testing.T) {
 	noLoginLeak(t, out, errs)
 	if c, _, _ := g.do("clear-sql-login", "--json"); c == 0 {
 		t.Error("cleared in an unproven folder")
+	}
+}
+
+// setup-sql with the SQL service already there: no install is attempted, so this runs on every platform.
+func setupRig(t *testing.T) (*loginRigT, string, string) {
+	t.Helper()
+	g, dir := loginRig(t)
+	f := filepath.Join(t.TempDir(), "login.tmp")
+	sum := sha256.Sum256([]byte(loginDoc))
+	return g, dir, f + "|" + hex.EncodeToString(sum[:])
+}
+
+func TestSetupSQLSavesTheLoginWithoutStartingIt(t *testing.T) {
+	g, dir, fs := setupRig(t)
+	f, sha, _ := strings.Cut(fs, "|")
+	if err := os.WriteFile(f, []byte(loginDoc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, out, errs := g.do("setup-sql", "--login-file", f, "--login-sha256", sha, "--json")
+	if c != 0 {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	noLoginLeak(t, out, errs)
+	if !strings.Contains(out, `"loginSaved":true`) || !strings.Contains(out, `"started":false`) || strings.Contains(out, `"installed"`) {
+		t.Fatalf("answer: %s", out)
+	}
+	if !bbsql.HasLogin(dir) {
+		t.Fatal("login not saved")
+	}
+	if _, err := os.Stat(f); err != nil {
+		t.Fatal("the helper must leave the login file to Unravis")
+	}
+}
+
+func TestSetupSQLWindowsSigninRemovesTheLoginAndPrintsTheGrant(t *testing.T) {
+	g, dir, _ := setupRig(t)
+	if err := bbsql.SaveLogin(dir, bbsql.StoredLogin{Server: "sql01", Login: bbsql.Login{User: "u", Password: "p"}}, xorSeal{}); err != nil {
+		t.Fatal(err)
+	}
+	c, out, errs := g.do("setup-sql", "--windows-signin", "--json")
+	if c != 0 {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	if bbsql.HasLogin(dir) || !strings.Contains(out, `"loginSaved":false`) || !strings.Contains(out, "grantScript") {
+		t.Fatalf("answer: %s", out)
+	}
+}
+
+func TestSetupSQLRefusals(t *testing.T) {
+	g, dir, fs := setupRig(t)
+	f, _, _ := strings.Cut(fs, "|")
+	// Neither or both ways of signing in.
+	if c, _, _ := g.do("setup-sql", "--json"); c == 0 {
+		t.Error("ran with no sign-in choice")
+	}
+	if c, _, _ := g.do("setup-sql", "--windows-signin", "--login-file", f, "--json"); c == 0 {
+		t.Error("ran with both sign-in choices")
+	}
+	// A wrong hash saves nothing.
+	if err := os.WriteFile(f, []byte(loginDoc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, out, errs := g.do("setup-sql", "--login-file", f, "--login-sha256", strings.Repeat("0", 64), "--json")
+	if c == 0 || bbsql.HasLogin(dir) {
+		t.Errorf("wrong hash: %d %s", c, out)
+	}
+	noLoginLeak(t, out, errs)
+	// Administrator only.
+	g.admin.admin = false
+	if c, _, _ := g.do("setup-sql", "--windows-signin", "--json"); c == 0 {
+		t.Error("ran without administrator rights")
+	}
+}
+
+// A running service keeps using the login it started with. Changing or removing the login stops it, so it never goes on with the old one.
+func TestAChangedLoginStopsARunningService(t *testing.T) {
+	g, dir, _ := setupRig(t)
+	svc := &memSvc{state: blackbox.SvcRunning}
+	g.d.sqlMgr.Svc = svc
+	if err := bbsql.SaveLogin(dir, bbsql.StoredLogin{Server: "sql01", Login: bbsql.Login{User: "u", Password: "p"}}, xorSeal{}); err != nil {
+		t.Fatal(err)
+	}
+	// Windows sign-in: the service is stopped and stays stopped (the grant comes first), the login is gone.
+	if c, out, errs := g.do("setup-sql", "--windows-signin", "--json"); c != 0 || !strings.Contains(out, `"started":false`) || svc.state != blackbox.SvcStopped || bbsql.HasLogin(dir) {
+		t.Fatalf("%d %s %s state=%v", c, out, errs, svc.state)
+	}
+	// Stopped is not enough for a service that starts by itself: it is also latched off until the owner enables it.
+	if st, _ := bbsql.Load(bbsql.StatePath(g.folder)); !st.AutoOff {
+		t.Fatal("Windows sign-in left the service armed")
+	}
+	// clear-sql-login on a running service stops it too.
+	svc.state = blackbox.SvcRunning
+	svc.calls = nil
+	if err := bbsql.SaveLogin(dir, bbsql.StoredLogin{Server: "sql01", Login: bbsql.Login{User: "u", Password: "p"}}, xorSeal{}); err != nil {
+		t.Fatal(err)
+	}
+	if c, out, errs := g.do("clear-sql-login", "--json"); c != 0 || svc.state != blackbox.SvcStopped || bbsql.HasLogin(dir) {
+		t.Fatalf("%d %s %s state=%v", c, out, errs, svc.state)
+	}
+	if len(svc.calls) != 1 || svc.calls[0] != "stop" {
+		t.Fatalf("calls %v", svc.calls)
+	}
+}
+
+// A login file that cannot be read or does not match its hash is found before anything is stopped: a working service stays running.
+func TestABadLoginFileLeavesARunningServiceRunning(t *testing.T) {
+	g, dir, fs := setupRig(t)
+	f, _, _ := strings.Cut(fs, "|")
+	svc := &memSvc{state: blackbox.SvcRunning}
+	g.d.sqlMgr.Svc = svc
+	if err := os.WriteFile(f, []byte(loginDoc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, out, errs := g.do("setup-sql", "--login-file", f, "--login-sha256", strings.Repeat("0", 64), "--json")
+	if c == 0 || svc.state != blackbox.SvcRunning || bbsql.HasLogin(dir) {
+		t.Fatalf("wrong hash: %d %s state=%v", c, out, svc.state)
+	}
+	noLoginLeak(t, out, errs)
+	if c, _, _ := g.do("setup-sql", "--login-file", f+".gone", "--login-sha256", strings.Repeat("0", 64), "--json"); c == 0 || svc.state != blackbox.SvcRunning {
+		t.Fatalf("missing file stopped the service: %d state=%v", c, svc.state)
 	}
 }

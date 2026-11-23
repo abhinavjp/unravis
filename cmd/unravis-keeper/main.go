@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 
 	"api-audit-explorer/internal/bbsaved"
+	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/datadir"
 	"api-audit-explorer/internal/history"
 	"api-audit-explorer/internal/keeper"
@@ -126,6 +127,8 @@ func serve(ctx context.Context, d deps, dir, pipe string, logf func(string, ...a
 		Log:     audit,
 		Limiter: keeper.NewRateLimiter(nil, 0),
 	})
+	// A login file an earlier run left behind (it stopped within the file's short life) is removed before anything else is served.
+	blackbox.SweepSQLLoginFiles("")
 	// The audit sources opened from saved MongoDB links (P14b) run on the same repository Unravis uses, with its default limits.
 	hosted := keeper.NewAuditHost(func() keeper.HostedRepo { return store.New() })
 	defer hosted.Close()
