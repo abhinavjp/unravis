@@ -12,12 +12,11 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// This file is the BL-341 prototype: the stdio loop on the official Go SDK, the way BL-342 would ship it. It lives in a test file so that the
-// spike changes no shipped code (verdict: docs/desktop/spikes/BL-341-go-sdk.md). The SDK speaks both wire lifecycles: the handshake of
-// 2024-11-05 to 2025-11-25 and the per-request lifecycle of 2026-07-28. The loop keeps in front of it the bounds the hand-rolled loop had,
-// which the SDK does not give: one JSON-RPC object per line of at most 1 MiB, a plain answer to a bad line instead of closing the session,
-// four calls in flight and no duplicate ids, only the methods of the tools capability, no echo of the client's input in errors, answers
-// capped at 1 MiB, and calls cancelled and awaited when the host goes away.
+// The stdio loop runs on the official Go MCP SDK (BL-342; spike and verdict in docs/desktop/spikes/BL-341-go-sdk.md). The SDK speaks both
+// wire lifecycles: the handshake of 2024-11-05 to 2025-11-25 and the per-request lifecycle of 2026-07-28. The loop keeps in front of it
+// the bounds the hand-rolled loop had, which the SDK does not give: one JSON-RPC object per line of at most 1 MiB, a plain answer to a bad
+// line instead of closing the session, four calls in flight and no duplicate ids, only the methods of the tools capability, no echo of the
+// client's input in errors, answers capped at 1 MiB, and calls cancelled and awaited when the host goes away.
 
 // inflight tracks the tools/call requests that have no answer yet, by decoded request id (the loop's 4-in-flight and duplicate-id rules).
 type inflight struct {
@@ -186,8 +185,8 @@ func newSDKServer(b *Bridge, life context.Context, workers *sync.WaitGroup) *sdk
 	return srv
 }
 
-// serveSDK runs newline-delimited MCP over input and output until the input ends or parent is cancelled. Logs must never go to output.
-func (b *Bridge) serveSDK(parent context.Context, input io.Reader, output io.Writer) error {
+// Serve runs newline-delimited MCP over input and output until the input ends or parent is cancelled. Logs must never go to output.
+func (b *Bridge) Serve(parent context.Context, input io.Reader, output io.Writer) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	var pending inflight

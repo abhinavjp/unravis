@@ -50,7 +50,8 @@ func TestProtocolLifecycleAndReadOnlyDiscovery(t *testing.T) {
 		}
 	}
 	guide := send(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"audit_get_guide","arguments":{}}}`)
-	if guide["result"].(map[string]any)["isError"] != false {
+	// The SDK leaves isError out of a successful result (the schema's default is false); the hand-rolled loop wrote isError:false.
+	if isError, _ := guide["result"].(map[string]any)["isError"].(bool); isError || guide["result"].(map[string]any)["content"] == nil {
 		t.Fatal("guide failed")
 	}
 	malformed := send(`not-json`)
