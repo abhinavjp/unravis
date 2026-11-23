@@ -57,9 +57,9 @@ pub fn parse(bytes: &[u8]) -> Result<Record, Error> {
     Ok(r)
 }
 
-/// A field of a timestamp: only ASCII digits (no sign, no space), at most `max` of them.
-fn digits(s: &str, max: usize) -> Option<i64> {
-    if s.is_empty() || s.len() > max || !s.bytes().all(|b| b.is_ascii_digit()) {
+/// A field of a timestamp: exactly `width` ASCII digits (no sign, no space), as Go writes it.
+fn digits(s: &str, width: usize) -> Option<i64> {
+    if s.len() != width || !s.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
     s.parse().ok()
@@ -82,9 +82,12 @@ pub fn start_unix_nanos(s: &str) -> Option<i128> {
         return None;
     }
     let (hms, frac) = time.split_once('.').unwrap_or((time, ""));
+    if time.contains('.') && frac.is_empty() {
+        return None; // a dot with no digits after it
+    }
     let mut t = hms.split(':');
     let (h, mi, sec) = (digits(t.next()?, 2)?, digits(t.next()?, 2)?, digits(t.next()?, 2)?);
-    if t.next().is_some() || h > 23 || mi > 59 || sec > 60 || frac.len() > 9 || !frac.bytes().all(|b| b.is_ascii_digit()) {
+    if t.next().is_some() || h > 23 || mi > 59 || sec > 59 || frac.len() > 9 || !frac.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
     let mut nanos: i64 = if frac.is_empty() { 0 } else { frac.parse().ok()? };
