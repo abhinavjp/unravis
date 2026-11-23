@@ -136,7 +136,7 @@
 
 </script>
 
-<Drawer class="ledger-drawer" title={copy.title} titleId="ledger-title" intro={copy.intro} closeLabel="Close ledger" focusable={'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'} {onClose}>
+<Drawer class="ledger-drawer" title={copy.title} titleId="ledger-title" closeLabel="Close ledger" focusable={'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'} {onClose}>
 <HelpNote id="ledger" />
   <p class="demo-note">{copy.notice}</p>
 
