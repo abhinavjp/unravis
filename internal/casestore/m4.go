@@ -18,27 +18,35 @@ package casestore
 // too-many-buckets refusal.
 const MaxM4Width = MaxSeriesBuckets
 
-// M4Edges holds the first and the last value of one bucket by time. A value
-// that arrives with the same time as the held one replaces the last and keeps
-// the first, so the result does not depend on how the store orders ties. The
-// zero value is an empty bucket.
+// M4Edges holds the first and the last value of one bucket by time. Two values
+// with the same time are told apart by their sequence (AddSeq: for events the
+// source line), so the result does not depend on how the store orders ties; with
+// the same time and the same sequence the one that arrives later is the later.
+// The zero value is an empty bucket.
 type M4Edges struct {
 	First, Last   float64
 	tFirst, tLast int64
+	sFirst, sLast int64
 	set           bool
 }
 
-// Add folds in one value at time t (any unit, the same for every call).
-func (e *M4Edges) Add(t int64, v float64) {
+// Add folds in one value at time t (any unit, the same for every call), with no
+// sequence: ties on t go by arrival order. Use it where values arrive in sample order.
+func (e *M4Edges) Add(t int64, v float64) { e.AddSeq(t, 0, v) }
+
+// AddSeq folds in one value at time t whose place among values of the same time
+// is seq (lower is earlier). Values of one time arriving out of sequence still
+// give the right first and last.
+func (e *M4Edges) AddSeq(t, seq int64, v float64) {
 	if !e.set {
-		e.First, e.Last, e.tFirst, e.tLast, e.set = v, v, t, t, true
+		e.First, e.Last, e.tFirst, e.tLast, e.sFirst, e.sLast, e.set = v, v, t, t, seq, seq, true
 		return
 	}
-	if t < e.tFirst {
-		e.First, e.tFirst = v, t
+	if t < e.tFirst || (t == e.tFirst && seq < e.sFirst) {
+		e.First, e.tFirst, e.sFirst = v, t, seq
 	}
-	if t >= e.tLast {
-		e.Last, e.tLast = v, t
+	if t > e.tLast || (t == e.tLast && seq >= e.sLast) {
+		e.Last, e.tLast, e.sLast = v, t, seq
 	}
 }
 
