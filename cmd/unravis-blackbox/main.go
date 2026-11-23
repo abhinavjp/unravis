@@ -22,6 +22,7 @@ import (
 
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/dotnetdiag"
+	"api-audit-explorer/internal/sealedfile"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -59,6 +60,12 @@ Commands that change the service (run as administrator):
   enable-sql  Activate the installed SQL service after the owner grant:
               confirms the installed settings and folder, clears the
               persisted off latch (owner-only) and starts the service.
+  set-sql-login    Save one SQL login (or a server on another machine) sealed
+              inside the locked SQL folder. Reads {"server","user","password",
+              "trustServerCertificate"} from --login-stdin, or from
+              --login-file with --login-sha256 (Unravis). Never printed.
+  clear-sql-login  Remove the saved login; the SQL service goes back to
+              Windows sign-in.
   remove-sql  Stop and remove the SQL service, then print the revoke script.
               --confirm-name <name>  the Blackbox name, required.
 
@@ -87,6 +94,13 @@ type deps struct {
 	snapOpt  blackbox.SnapshotOptions
 	driveOK  func(root string) bool
 	sqlMgr   *blackbox.SQLManager
+	// sealer is the machine-wide protector for the stored SQL login; nil means
+	// Windows DPAPI for this PC. stdin is where set-sql-login --login-stdin
+	// reads; nil means the console. Both are test seams.
+	sealer func() (sealedfile.Protector, error)
+	stdin  io.Reader
+	// confirmDir proves the SQL data folder for a saved login (see sqlLoginDir); nil means SQLManager.ConfirmLoginDir. Test seam.
+	confirmDir func(cfg blackbox.Config, configPath string) (string, error)
 	// vmProbe is the vm-probe reading. nil means the real PDH probe (BL-113).
 	vmProbe func(n int) blackbox.VMProbeResult
 	// sqlRun is the SQL runner of the sql-service mode (BBX-5-10). Tests inject
@@ -318,6 +332,9 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	port := fs.Int("port", 0, "status port (install)")
 	bind := fs.String("bind", "", "address the status page listens on (install)")
 	delRec := fs.Bool("delete-recordings", false, "also delete the recordings (remove)")
+	loginFile := fs.String("login-file", "", "file holding the SQL login, made by Unravis (set-sql-login)")
+	loginSHA := fs.String("login-sha256", "", "SHA-256 of that file (set-sql-login)")
+	loginStdin := fs.Bool("login-stdin", false, "read the SQL login from standard input (set-sql-login)")
 	confirm := fs.String("confirm-name", "", "the Blackbox name, to confirm deleting the recordings (remove)")
 	answerFile := fs.String(strings.TrimPrefix(blackbox.AnswerFileFlag, "--"), "", "write the answer to this file instead of the console (set by Unravis)")
 	expectSHA := fs.String("expect-sha256", "", "SHA-256 the new program must have (update)")
@@ -383,7 +400,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	// relative path would resolve against the SCM's different working
 	// directory at service startup and read a different (or no) file.
 	switch cmd {
-	case "install-sql", "remove-sql", "enable-sql":
+	case "install-sql", "remove-sql", "enable-sql", "set-sql-login", "clear-sql-login":
 		if abs, err := filepath.Abs(paths.ConfigPath); err == nil {
 			paths.ConfigPath = abs
 		}
@@ -562,6 +579,10 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		}
 		return ans.ok("The "+blackbox.SQLServiceName+" service is removed. The SQL data is kept.\n\nRun this revoke in SSMS (the Blackbox never runs it for you):\n"+revokeScript,
 			map[string]any{"serviceRemoved": true, "revokeScript": revokeScript})
+	case "set-sql-login":
+		return runSetSQLLogin(ans, d, paths.ConfigPath, *loginFile, *loginSHA, *loginStdin)
+	case "clear-sql-login":
+		return runClearSQLLogin(ans, d, paths.ConfigPath)
 	case "sql-service":
 		return runSQLForeground(paths, d, ans, stderr)
 	}

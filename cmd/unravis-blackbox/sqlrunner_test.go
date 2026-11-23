@@ -1,9 +1,14 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 
+	"api-audit-explorer/internal/bbsql"
 	"api-audit-explorer/internal/blackbox"
+	"api-audit-explorer/internal/sealedfile"
 )
 
 // C13 wiring: the SQL service must carry the owner's disk bounds, because host
@@ -46,5 +51,77 @@ func TestSQLFreePercentRange(t *testing.T) {
 	}
 	if free < 0 || free > 100 {
 		t.Errorf("free percent = %v, want 0..100", free)
+	}
+}
+
+type xorSeal struct{}
+
+func (xorSeal) Protect(b []byte) ([]byte, error) {
+	o := make([]byte, len(b))
+	for i := range b {
+		o[i] = b[i] ^ 0x5a
+	}
+	return o, nil
+}
+func (x xorSeal) Unprotect(b []byte) ([]byte, error) { return x.Protect(b) }
+
+func xorProt() (sealedfile.Protector, error) { return xorSeal{}, nil }
+
+func TestSQLConnForUsesStoredLoginOnlyWhenSaved(t *testing.T) {
+	dir := t.TempDir()
+	c, err := sqlConnFor(dir, blackbox.Probe{}, xorProt)
+	if err != nil || c.Login != nil || c.Server != sqlLocalServer {
+		t.Fatalf("no login saved: %+v %v", c, err)
+	}
+	s := bbsql.StoredLogin{Server: "sql01\\PROD", Login: bbsql.Login{User: "u", Password: "p"}, TrustServerCertificate: true}
+	if err := bbsql.SaveLogin(dir, s, xorSeal{}); err != nil {
+		t.Fatal(err)
+	}
+	probe := blackbox.Probe{ServerCertificate: filepath.Join(dir, "c.pem")}
+	c, err = sqlConnFor(dir, probe, xorProt)
+	if err != nil || c.Login == nil || c.Server != "sql01\\PROD" || !c.TrustServerCertificate || c.ServerCertificate != probe.ServerCertificate {
+		t.Fatalf("saved login: %v", err)
+	}
+}
+
+func TestSQLConnForNeverFallsBackWhenTheLoginCannotBeRead(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, bbsql.LoginFile), []byte("damaged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqlConnFor(dir, blackbox.Probe{}, xorProt); err == nil {
+		t.Fatal("a damaged login fell back to Windows sign-in")
+	}
+	if _, err := sqlConnFor(dir, blackbox.Probe{}, func() (sealedfile.Protector, error) { return nil, os.ErrInvalid }); err == nil {
+		t.Fatal("a missing sealer fell back to Windows sign-in")
+	}
+}
+
+func TestSQLEnabledExtras(t *testing.T) {
+	if got := sqlEnabledExtras(blackbox.Config{}); len(got) != 0 {
+		t.Fatalf("standard turned on %v", got)
+	}
+	everything := sqlEnabledExtras(blackbox.Config{SQL: &blackbox.SQLSettings{Profile: blackbox.SQLProfileEverything}})
+	if want := bbsql.ExtrasForProfile(bbsql.ProfileEverything); !slices.Equal(everything, want) {
+		t.Fatalf("everything = %v, want %v", everything, want)
+	}
+	// An unknown profile turns on nothing; names in sql.extras are added once, sorted.
+	got := sqlEnabledExtras(blackbox.Config{SQL: &blackbox.SQLSettings{Profile: "nope", Extras: []string{"zz", "aa", "zz"}}})
+	if !slices.Equal(got, []string{"aa", "zz"}) {
+		t.Fatalf("extras = %v", got)
+	}
+	if len(sqlEnabledExtras(blackbox.Config{SQL: &blackbox.SQLSettings{Profile: blackbox.SQLProfileDeep}})) < len(everything) {
+		t.Fatal("deep must hold at least what everything holds")
+	}
+}
+
+// A login "file" that cannot be read as a file (here a folder) is an error, never "no login".
+func TestSQLConnForRefusesALoginPathThatIsNotAFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, bbsql.LoginFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqlConnFor(dir, blackbox.Probe{}, xorProt); err == nil {
+		t.Fatal("an unreadable login path fell back to Windows sign-in")
 	}
 }
