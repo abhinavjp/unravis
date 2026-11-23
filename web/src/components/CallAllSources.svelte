@@ -41,9 +41,10 @@
   // Only the first rows are drawn (the heading still counts them all), so a very long window stays quick.
   const capped = $derived(capRows(items));
 
-  function onKey(event: KeyboardEvent, key: string): void {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
+  // The row stays pressable with a mouse (a press anywhere on it selects the item). The real control for a keyboard, a screen reader and a
+  // touch screen is the button in the "What" cell: it keeps its own press to itself, so one press never selects twice (BL-495).
+  function pick(event: MouseEvent, key: string): void {
+    event.stopPropagation();
     onSelect(key);
   }
 </script>
@@ -64,20 +65,12 @@
       </thead>
       <tbody>
         {#each capped.rows as item (item.key)}
-          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-          <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-          <tr
-            class:selected={selectedKey === item.key}
-            aria-selected={selectedKey === item.key}
-            aria-current={item.thisCall ? 'true' : undefined}
-            tabindex="0"
-            onclick={() => onSelect(item.key)}
-            onkeydown={(event) => onKey(event, item.key)}
-          >
-            <td class="time">{formatTime(item.startMs, { zone, date: false, precision: 'second' })}</td>
-            <td class="source"><span class="dot" aria-hidden="true" style:background={SOURCE_COLOR[item.source]}></span>{SOURCE_NAME[item.source]}</td>
-            <td class="what">{item.what}{#if item.thisCall} <strong class="mark">{DRILL_TEXT.thisCallMark}</strong>{/if}</td>
-            <td class="took">{took(item)}</td>
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+          <tr class:selected={selectedKey === item.key} onclick={() => onSelect(item.key)}>
+            <td class="time" data-label={DRILL_TEXT.colTime}>{formatTime(item.startMs, { zone, date: false, precision: 'second' })}</td>
+            <td class="source" data-label={DRILL_TEXT.colSource}><span><span class="dot" aria-hidden="true" style:background={SOURCE_COLOR[item.source]}></span>{SOURCE_NAME[item.source]}</span></td>
+            <td class="what" data-label={DRILL_TEXT.colWhat}><button type="button" class="row-btn" data-testid="scall-all-open" aria-label={DRILL_TEXT.openSourceItem(item.what + (item.thisCall ? ' ' + DRILL_TEXT.thisCallMark : ''), SOURCE_NAME[item.source], formatTime(item.startMs, { zone, date: false, precision: 'ms' }), took(item))} aria-pressed={selectedKey === item.key} aria-current={item.thisCall ? 'true' : undefined} onclick={(event) => pick(event, item.key)}>{item.what}{#if item.thisCall} <strong class="mark">{DRILL_TEXT.thisCallMark}</strong>{/if}</button></td>
+            <td class="took" data-label={DRILL_TEXT.colTook}>{took(item)}</td>
           </tr>
         {/each}
       </tbody>
@@ -116,9 +109,35 @@
   tbody tr:hover {
     background: var(--surface-2);
   }
-  tbody tr:focus-visible {
+  /* The real button of a row (BL-495). It looks like the plain cell text it replaced and moves nothing: no padding, no border, the font and the
+     line height of the cell. An invisible ::after grows its press area to the cell (24 px tall or more) without changing its box or its ring. */
+  .row-btn {
+    position: relative;
+    display: inline-block;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-align: inherit;
+    overflow-wrap: inherit;
+    word-break: inherit;
+    cursor: pointer;
+  }
+  .row-btn::after {
+    content: '';
+    position: absolute;
+    inset: -6px -8px;
+  }
+  .row-btn:focus-visible {
     outline: 2px solid var(--focus);
-    outline-offset: -2px;
+    outline-offset: 2px;
+  }
+  tbody tr:has(.row-btn:focus-visible) {
+    background: var(--surface-2);
   }
   tbody tr.selected {
     background: var(--surface-2);
@@ -143,5 +162,44 @@
   .muted {
     color: var(--text-2);
     font-size: 12px;
+  }
+  /* Phone width: each item becomes a small card with labelled lines, as in Nearby calls, so the page never scrolls sideways (BL-521: the table was 39 to 55 px
+     past a 390 px window (39 in the browser spec at 390 x 844, 55 in the audit's phone look)). Wide windows keep the table as it was. */
+  @media (max-width: 760px) {
+    table,
+    tbody,
+    tr,
+    td {
+      display: block;
+      width: 100%;
+    }
+    thead {
+      position: absolute;
+      width: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    tbody tr {
+      padding: 6px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    td {
+      display: grid;
+      grid-template-columns: minmax(0, 6.5rem) minmax(0, 1fr);
+      gap: 12px;
+      border-bottom: 0;
+      padding: 2px 8px;
+      text-align: right;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    td::before {
+      content: attr(data-label);
+      /* the column name is already the name of the (clipped) column header: an empty alternative keeps it out of the cell's own name */
+      content: attr(data-label) / '';
+      color: var(--text-2);
+      text-align: left;
+    }
   }
 </style>
