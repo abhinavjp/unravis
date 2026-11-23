@@ -6,9 +6,12 @@ import (
 	"context"
 	"os"
 
+	"api-audit-explorer/internal/cliattach"
 	"api-audit-explorer/internal/clicore/cmdtree"
+	"api-audit-explorer/internal/version"
 )
 
 func main() {
-	os.Exit(cmdtree.Run(context.Background(), os.Args[1:], cmdtree.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}))
+	attacher := cliattach.Default(os.Executable, "unravis-cli/"+version.Version)
+	os.Exit(cmdtree.Run(context.Background(), os.Args[1:], cmdtree.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr, Attach: attacher.Attach}))
 }
