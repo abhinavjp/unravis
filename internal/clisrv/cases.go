@@ -102,7 +102,7 @@ func (c *capture) Write(p []byte) (int, error) {
 type caseRow struct {
 	ID        string     `json:"id"`
 	Title     string     `json:"title"`
-	Created   time.Time  `json:"created"`
+	Created   *time.Time `json:"created"` // null for a row the store shows without a date (a locked or untrusted case)
 	Closed    *time.Time `json:"closed"`
 	Bytes     int64      `json:"bytes"`
 	Imports   int        `json:"imports"`
@@ -130,12 +130,12 @@ type caseWire struct {
 }
 
 func (w caseWire) row() caseRow {
-	return caseRow{ID: w.ID, Title: w.Title, Created: w.Created.UTC(), Closed: utc(w.Closed), Bytes: w.Bytes, Imports: w.Imports, OwnKey: w.OwnKey,
+	return caseRow{ID: w.ID, Title: w.Title, Created: utc(&w.Created), Closed: utc(w.Closed), Bytes: w.Bytes, Imports: w.Imports, OwnKey: w.OwnKey,
 		KeyLocked: w.KeyLocked, Archived: w.Archive != nil && w.Archive.Active, Missing: w.Missing, Untrusted: w.Untrusted}
 }
 
 func utc(t *time.Time) *time.Time {
-	if t == nil {
+	if t == nil || t.IsZero() {
 		return nil
 	}
 	u := t.UTC()
@@ -155,22 +155,44 @@ type caseShow struct {
 	History []history `json:"history"`
 }
 
+// busyReasons are the reasons of a 409 that pass by themselves: the case is being erased, freed, archived or imported into, or is held by
+// another call. The reason is compared with this closed list and never copied.
+var busyReasons = map[string]bool{"case-erasing": true, "case-freeing": true, "case-in-use": true, "archive-running": true, "case-import-running": true, "cancel-archive-first": true}
+
 // failFromStatus maps a failing answer of the dashboard to a command line error. The text is fixed: the body of the dashboard is never
-// copied, so no title, path or key text can leave through an error.
-func failFromStatus(status int) *clicore.Error {
+// copied, so no title, path or key text can leave through an error. Only the "reason" of a 409 is read, against a closed list.
+func failFromStatus(status int, body []byte) *clicore.Error {
+	if status == http.StatusConflict {
+		var f struct {
+			Reason string `json:"reason"`
+		}
+		_ = json.Unmarshal(body, &f)
+		if busyReasons[f.Reason] {
+			e := clicore.NewErrorAfterWork(clicore.CodeOwnerBusy, "The case is busy (being imported into, archived, freed or erased). Try again in a moment.", "")
+			e.Retryable = true
+			return e
+		}
+		return clicore.NewErrorAfterWork(clicore.CodeEndpointUnavailable, "This case cannot be read now. It needs attention in the app.", "Open the case in Unravis.")
+	}
 	code, bad := clicore.FromHTTPStatus(status)
 	if !bad {
 		return clicore.NewError(clicore.CodeInternal, "The case store gave an answer this command line does not understand.", "")
 	}
 	switch code {
 	case clicore.CodeCaseLocked:
-		return clicore.NewErrorAfterWork(code, "The cases are locked. Unlock them in the app.", "Open Unravis and unlock the cases or the case key.")
+		return clicore.NewErrorAfterWork(code, "Unravis is locked. Unlock it in the app.", "Open Unravis and unlock the cases or the case key.")
 	case clicore.CodeNotFound:
 		return clicore.NewErrorAfterWork(code, "There is no case with that id.", "Run 'unravis cases list' to see the ids.")
 	case clicore.CodeEndpointUnavailable:
 		return clicore.NewErrorAfterWork(code, "The case store is not available in this app.", "")
+	case clicore.CodeTimeout:
+		return clicore.NewErrorAfterWork(code, "The case store did not answer in time.", "")
+	case clicore.CodeInvalidArgument:
+		return clicore.NewErrorAfterWork(code, "The case store refused the request.", "")
+	case clicore.CodePermissionDenied:
+		return clicore.NewErrorAfterWork(code, "The case store refused the request.", "Restart Unravis.")
 	case clicore.CodeOwnerBusy:
-		e := clicore.NewErrorAfterWork(code, "The case is in use. Try again in a moment.", "")
+		e := clicore.NewErrorAfterWork(code, "The case store is busy. Try again in a moment.", "")
 		e.Retryable = true
 		return e
 	}
@@ -192,7 +214,7 @@ func (s *server) get(ctx context.Context, path string) ([]byte, *clicore.Error) 
 		return nil, clicore.NewErrorAfterWork(clicore.CodeInternal, "The case store failed.", "")
 	}
 	if status != http.StatusOK {
-		return nil, failFromStatus(status)
+		return nil, failFromStatus(status, body)
 	}
 	return body, nil
 }
@@ -272,7 +294,7 @@ func (s *server) casesShow(ctx context.Context, args json.RawMessage) (any, *cli
 	if json.Unmarshal(body, &wire) != nil {
 		return nil, clicore.NewErrorAfterWork(clicore.CodeInternal, "The case store gave an answer this command line does not understand.", "")
 	}
-	out := caseShow{caseRow: wire.caseWire.row(), Envs: wire.Envs, Sources: wire.Sources, History: make([]history, len(wire.History))}
+	out := caseShow{caseRow: wire.row(), Envs: wire.Envs, Sources: wire.Sources, History: make([]history, len(wire.History))}
 	for i, h := range wire.History {
 		out.History[i] = history{Kind: h.Kind, At: h.At.UTC()}
 	}

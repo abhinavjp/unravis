@@ -4,7 +4,7 @@
   "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "required": ["id"], "properties": {
     "id": {"type": "string", "pattern": "^[a-z2-7]{26}$", "description": "The case id from 'unravis cases list'"}}},
   "output": {"type": "object", "properties": {
-    "id": {"type": "string"}, "title": {"type": "string"}, "created": {"type": "string"}, "closed": {"type": ["string", "null"]}, "bytes": {"type": "integer"},
+    "id": {"type": "string"}, "title": {"type": "string"}, "created": {"type": ["string", "null"]}, "closed": {"type": ["string", "null"]}, "bytes": {"type": "integer"},
     "imports": {"type": "integer"}, "envs": {"type": "integer"}, "sources": {"type": "integer"}, "ownKey": {"type": "boolean"}, "keyLocked": {"type": "boolean"},
     "archived": {"type": "boolean"}, "missing": {"type": "boolean"}, "untrusted": {"type": "boolean"},
     "history": {"type": "array", "items": {"type": "object", "properties": {"kind": {"type": "string"}, "at": {"type": "string"}}}}}},

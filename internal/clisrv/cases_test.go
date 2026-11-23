@@ -6,13 +6,19 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/casestore/sqlite"
+	"api-audit-explorer/internal/casestore/storetest"
 	"api-audit-explorer/internal/clicore"
+	"api-audit-explorer/internal/masterkey"
 	dashboard "api-audit-explorer/internal/server"
 )
 
@@ -135,11 +141,16 @@ func TestCasesProjectionAndErrorsCarryNoExtraText(t *testing.T) {
 		t.Errorf("show: %v", s.Data)
 	}
 	// statuses of the dashboard
-	for code, want := range map[int]string{423: "CASE_LOCKED", 404: "NOT_FOUND", 503: "ENDPOINT_UNAVAILABLE", 429: "OWNER_BUSY", 500: "INTERNAL", 418: "INTERNAL"} {
+	for code, want := range map[int]string{423: "CASE_LOCKED", 404: "NOT_FOUND", 503: "ENDPOINT_UNAVAILABLE", 429: "OWNER_BUSY", 500: "INTERNAL", 418: "INTERNAL",
+		504: "TIMEOUT", 400: "INVALID_ARGUMENT", 401: "PERMISSION_DENIED", 403: "PERMISSION_DENIED", 409: "ENDPOINT_UNAVAILABLE"} {
 		status = code
 		for _, r := range []reply{op(t, h, "cases.list", ""), op(t, h, "cases.show", `{"id":"`+id+`"}`)} {
 			if r.OK || r.Error.Code != want || strings.Contains(r.Raw, marker) {
 				t.Errorf("status %d: %s", code, r.Raw)
+			}
+			retry := strings.Contains(r.Raw, `"retryable":true`)
+			if retry != (code == 429) {
+				t.Errorf("status %d: retryable is %v", code, retry)
 			}
 		}
 	}
@@ -216,4 +227,140 @@ func TestCasesDeadlineAndCancel(t *testing.T) {
 		t.Errorf("%s", w.Body.String())
 	}
 	_ = clicore.CodeTimeout
+}
+
+// A 409 says why in its reason: a busy case passes by itself (retryable); anything else needs the app. The reason is read against a list and
+// never copied.
+func TestCasesConflictReasons(t *testing.T) {
+	reason := ""
+	h := casesHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(409)
+		_, _ = io.WriteString(w, `{"error":"TEXT-FROM-DASHBOARD","reason":"`+reason+`"}`)
+	}))
+	for r, wantBusy := range map[string]bool{"case-erasing": true, "case-freeing": true, "case-in-use": true, "archive-running": true, "case-import-running": true,
+		"untrusted-case": false, "needs-rewrap": false, "case-archived": false, "": false, "SOMETHING-NEW": false} {
+		reason = r
+		got := op(t, h, "cases.show", `{"id":"abcdefghijklmnopqrstuvwxyz"}`)
+		busy := got.Error.Code == "OWNER_BUSY"
+		if got.OK || busy != wantBusy || strings.Contains(got.Raw, "TEXT-FROM-DASHBOARD") || strings.Contains(got.Raw, "SOMETHING-NEW") || (busy != strings.Contains(got.Raw, `"retryable":true`)) {
+			t.Errorf("reason %q: %s", r, got.Raw)
+		}
+		if !busy && got.Error.Code != "ENDPOINT_UNAVAILABLE" {
+			t.Errorf("reason %q: %s", r, got.Raw)
+		}
+	}
+}
+
+// The exact keys of what leaves: a field the dashboard adds later, or one this projection adds, must be added here on purpose.
+func TestCasesProjectionKeys(t *testing.T) {
+	id := "abcdefghijklmnopqrstuvwxyz"
+	var ua, token string
+	row := `{"id":"` + id + `","title":"T","created":"2026-11-20T10:00:00+02:00","closed":"2026-11-21T10:00:00+02:00","bytes":5,"imports":2,"ownKey":false,"keyLocked":false,"missing":true,` +
+		`"untrusted":false,"archive":{"active":false}}`
+	h := casesHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ua, token = r.Header.Get("User-Agent"), r.Header.Get("X-Audit-Token")
+		if r.URL.Path == "/api/cases" {
+			_, _ = io.WriteString(w, `{"cases":[`+row+`],"archivedTotal":3,"offset":50,"pageSize":25}`)
+			return
+		}
+		_, _ = io.WriteString(w, strings.TrimSuffix(row, "}")+`,"envs":1,"sources":2,"history":[{"at":"2026-11-20T10:00:00+02:00","kind":"closed"}]}`)
+	}))
+	keys := func(m map[string]any) string {
+		var ks []string
+		for k := range m {
+			ks = append(ks, k)
+		}
+		sort.Strings(ks)
+		return strings.Join(ks, ",")
+	}
+	l := op(t, h, "cases.list", "")
+	if got := keys(l.Data); got != "archivedTotal,cases,offset,pageSize" {
+		t.Errorf("list keys: %s", got)
+	}
+	if got := keys(l.Data["cases"].([]any)[0].(map[string]any)); got != "archived,bytes,closed,created,id,imports,keyLocked,missing,ownKey,title,untrusted" {
+		t.Errorf("row keys: %s", got)
+	}
+	c := l.Data["cases"].([]any)[0].(map[string]any)
+	if c["closed"] != "2026-11-21T08:00:00Z" || c["created"] != "2026-11-20T08:00:00Z" || c["archived"] != false || c["missing"] != true || c["untrusted"] != false || c["bytes"] != float64(5) || c["imports"] != float64(2) {
+		t.Errorf("row: %v", c)
+	}
+	if l.Data["offset"] != float64(50) || l.Data["pageSize"] != float64(25) || l.Data["archivedTotal"] != float64(3) {
+		t.Errorf("paging: %v", l.Data)
+	}
+	if ua != "unravis-mcp" || token != caseToken {
+		t.Errorf("the dashboard saw agent %q and token %q", ua, token)
+	}
+	s := op(t, h, "cases.show", `{"id":"`+id+`"}`)
+	if got := keys(s.Data); got != "archived,bytes,closed,created,envs,history,id,imports,keyLocked,missing,ownKey,sources,title,untrusted" {
+		t.Errorf("show keys: %s", got)
+	}
+	if hh := s.Data["history"].([]any)[0].(map[string]any); keys(hh) != "at,kind" || hh["at"] != "2026-11-20T08:00:00Z" {
+		t.Errorf("history: %v", hh)
+	}
+}
+
+// A row the store shows without a date (a locked or untrusted case) has a null date, not year 1.
+func TestCasesNoDateIsNull(t *testing.T) {
+	h := casesHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"cases":[{"id":"abcdefghijklmnopqrstuvwxyz","title":"(locked)","created":"0001-01-01T00:00:00Z","keyLocked":true,"ownKey":true}],"archivedTotal":0,"offset":0,"pageSize":50}`)
+	}))
+	c := op(t, h, "cases.list", "").Data["cases"].([]any)[0].(map[string]any)
+	if c["created"] != nil || c["title"] != "(locked)" || c["keyLocked"] != true {
+		t.Errorf("%v", c)
+	}
+}
+
+// The real handler with the real sqlite store and a real master key: what a locked case key and a locked master key look like.
+func TestCasesRealLocks(t *testing.T) {
+	sess := dashboard.NewMasterKeySession(t.TempDir())
+	store, err := sqlite.New(sqlite.Options{
+		Root: filepath.Join(t.TempDir(), "cases"), Protector: storetest.RandomProtector(), MinFreeBytes: -1,
+		Protectors: sess.Lookup, NewCaseKind: sess.NewCaseKind, LegacyCheck: sess.LegacyCheck, LegacyDone: sess.LegacyDone,
+		KeyParams: masterkey.Params{Time: 1, Memory: 16 << 10, Threads: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	dash := dashboard.New(audit.NewDemo(time.Now().UTC()), nil, caseToken, false, dashboard.WithCases(store, nil, nil), dashboard.WithMasterKey(sess))
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "http://127.0.0.1"+path, strings.NewReader(body))
+		r.Header.Set("X-Audit-Token", caseToken)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		dash.ServeHTTP(w, r)
+		return w
+	}
+	const pass, ck = "a long master key phrase for tests", "a case key phrase for tests ok"
+	if w := do("POST", "/api/master-key/setup", `{"passphrase":`+strconv.Quote(pass)+`,"confirm":`+strconv.Quote(pass)+`,"acknowledged":true}`); w.Code/100 != 2 {
+		t.Fatalf("setup %d %s", w.Code, w.Body)
+	}
+	w := do("POST", "/api/cases", `{"title":"Keyed SECRETTITLE","caseKey":`+strconv.Quote(ck)+`,"caseKeyConfirm":`+strconv.Quote(ck)+`}`)
+	if w.Code != 201 {
+		t.Fatalf("create %d %s", w.Code, w.Body)
+	}
+	id := w.Body.String()[strings.Index(w.Body.String(), `"id":"`)+6:][:26]
+	h := casesHandler(dash)
+	if s := op(t, h, "cases.show", `{"id":"`+id+`"}`); !s.OK || s.Data["title"] != "Keyed SECRETTITLE" || s.Data["ownKey"] != true {
+		t.Errorf("an open case with its own key: %s", s.Raw)
+	}
+	if w := do("POST", "/api/cases/"+id+"/key/lock", ""); w.Code/100 != 2 {
+		t.Fatalf("key lock %d %s", w.Code, w.Body)
+	}
+	l := op(t, h, "cases.list", "")
+	row := l.Data["cases"].([]any)[0].(map[string]any)
+	if !l.OK || strings.Contains(l.Raw, "SECRETTITLE") || row["title"] != "(locked)" || row["keyLocked"] != true || row["created"] != nil && row["created"] == "0001-01-01T00:00:00Z" {
+		t.Errorf("a locked case key: %s", l.Raw)
+	}
+	if s := op(t, h, "cases.show", `{"id":"`+id+`"}`); s.OK || s.Error.Code != "CASE_LOCKED" || strings.Contains(s.Raw, "SECRETTITLE") {
+		t.Errorf("show of a case with a locked key: %s", s.Raw)
+	}
+	if w := do("POST", "/api/master-key/lock", ""); w.Code/100 != 2 {
+		t.Fatalf("master key lock %d %s", w.Code, w.Body)
+	}
+	for _, r := range []reply{op(t, h, "cases.list", ""), op(t, h, "cases.show", `{"id":"`+id+`"}`), op(t, h, "cases.list", `{"archived":true}`)} {
+		if r.OK || r.Error.Code != "CASE_LOCKED" || strings.Contains(r.Raw, "SECRETTITLE") {
+			t.Errorf("a locked master key: %s", r.Raw)
+		}
+	}
 }

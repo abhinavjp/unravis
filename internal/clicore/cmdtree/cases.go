@@ -3,12 +3,16 @@ package cmdtree
 import (
 	"encoding/json"
 	"io"
+	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"api-audit-explorer/internal/clicore"
 )
+
+var caseIDRE = regexp.MustCompile(`^[a-z2-7]{26}$`)
 
 // casesListSpec is `cases list`. The fields are the arguments of the operation (internal/clicore/schemas/cases.list.json).
 var casesListSpec = readSpec{op: "cases.list", use: "list", short: "List the cases of the running app (the same list as its window)",
@@ -28,29 +32,40 @@ func (st *state) casesCmd() *cobra.Command {
 		Args:        cobra.MaximumNArgs(1),
 		Annotations: online("cases.show", ""),
 		RunE: func(c *cobra.Command, args []string) error {
+			if st.opts.request != "" && len(args) > 0 {
+				return usage("--request cannot be combined with a case id.")
+			}
 			a, err := st.requestOr(c, nil, func() (json.RawMessage, error) {
 				if len(args) != 1 || args[0] == "" {
 					return nil, usage("The case id is required (it is on the list: 'unravis cases list').")
+				}
+				if !caseIDRE.MatchString(args[0]) {
+					return nil, usage("That is not a case id (26 characters). Run 'unravis cases list' to see the ids.")
 				}
 				return json.Marshal(map[string]string{"id": args[0]})
 			})
 			if err != nil {
 				return err
 			}
-			if st.opts.request != "" && len(args) > 0 {
-				return usage("--request cannot be combined with a case id.")
-			}
 			return st.runOp("cases.show", a, caseTable)
 		},
 	}
-	g.AddCommand(casesListSpec.command(st), show)
+	list := casesListSpec.command(st)
+	run := list.RunE
+	list.RunE = func(c *cobra.Command, args []string) error {
+		if st.opts.request == "" && c.Flags().Changed("offset") && !c.Flags().Changed("archived") {
+			return usage("--offset goes with --archived.")
+		}
+		return run(c, args)
+	}
+	g.AddCommand(list, show)
 	return g
 }
 
 type caseRowOut struct {
 	ID        string  `json:"id"`
 	Title     string  `json:"title"`
-	Created   string  `json:"created"`
+	Created   *string `json:"created"`
 	Closed    *string `json:"closed"`
 	Bytes     int64   `json:"bytes"`
 	Imports   int     `json:"imports"`
@@ -93,9 +108,22 @@ func casesTable(w io.Writer, data json.RawMessage) error {
 	}
 	rows := make([][]string, len(d.Cases))
 	for i, c := range d.Cases {
-		rows[i] = []string{c.ID, c.Title, c.Created, strconv.FormatInt(c.Bytes, 10), strconv.Itoa(c.Imports), c.flagsOf()}
+		rows[i] = []string{c.ID, c.Title, shortTime(c.Created), strconv.FormatInt(c.Bytes, 10), strconv.Itoa(c.Imports), c.flagsOf()}
 	}
 	if err := clicore.WriteTable(w, []string{"ID", "TITLE", "CREATED", "BYTES", "IMPORTS", "STATE"}, rows); err != nil {
+		return err
+	}
+	// an archived page: say where the next one starts; the other list: say how many are archived
+	archivedPage := len(d.Cases) > 0
+	for _, c := range d.Cases {
+		archivedPage = archivedPage && c.Archived
+	}
+	if archivedPage {
+		foot := "\n" + strconv.Itoa(len(d.Cases)) + " archived cases shown (of " + strconv.Itoa(d.ArchivedTotal) + ").\n"
+		if next := d.Offset + len(d.Cases); next < d.ArchivedTotal {
+			foot += "More: add --archived --offset " + strconv.Itoa(next) + ".\n"
+		}
+		_, err := io.WriteString(w, foot)
 		return err
 	}
 	_, err := io.WriteString(w, "\n"+strconv.Itoa(len(d.Cases))+" cases shown; "+strconv.Itoa(d.ArchivedTotal)+" archived (use --archived).\n")
@@ -115,11 +143,7 @@ func caseTable(w io.Writer, data json.RawMessage) error {
 	if err := json.Unmarshal(data, &d); err != nil {
 		return pretty(w, data)
 	}
-	closed := ""
-	if d.Closed != nil {
-		closed = *d.Closed
-	}
-	rows := [][]string{{"id", d.ID}, {"title", d.Title}, {"created", d.Created}, {"closed", closed}, {"bytes", strconv.FormatInt(d.Bytes, 10)},
+	rows := [][]string{{"id", d.ID}, {"title", d.Title}, {"created", shortTime(d.Created)}, {"closed", shortTime(d.Closed)}, {"bytes", strconv.FormatInt(d.Bytes, 10)},
 		{"imports", strconv.Itoa(d.Imports)}, {"environments", strconv.Itoa(d.Envs)}, {"sources", strconv.Itoa(d.Sources)}, {"state", d.flagsOf()}}
 	if err := clicore.WriteTable(w, []string{"FIELD", "VALUE"}, rows); err != nil {
 		return err
@@ -129,10 +153,22 @@ func caseTable(w io.Writer, data json.RawMessage) error {
 	}
 	hr := make([][]string, len(d.History))
 	for i, h := range d.History {
-		hr[i] = []string{h.At, h.Kind}
+		hr[i] = []string{shortTime(&h.At), h.Kind}
 	}
 	if _, err := io.WriteString(w, "\n"); err != nil {
 		return err
 	}
 	return clicore.WriteTable(w, []string{"WHEN", "HISTORY"}, hr)
+}
+
+// shortTime is a time for a table: to the second, in UTC. Nothing (a locked case has no date) is empty.
+func shortTime(s *string) string {
+	if s == nil {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339Nano, *s)
+	if err != nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
