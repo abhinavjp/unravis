@@ -220,17 +220,21 @@ func optionValue(s string, p int, listItem bool) (from, to, next int, ok bool) {
 		p++
 	}
 	from, to, next, ok = flagValue(s, p)
-	if ok && lines > 0 && (lines > 1 || nextLineKey(s[from:to])) {
-		// A value on a later line, after a comma, is the next element of an array, not a new line of the text: not after a blank line,
-		// and not a word that starts a setting ("password: x", "KEY=x"), which is read on its own.
+	if ok && lines > 0 && nextLineKey(s[from:to]) {
+		// A word on a later line, after a comma, that starts a secret setting ("password: x", "DB_PASSWORD=x") is a line of its own,
+		// not the value: it is read on its own. Any other word (a base64 value ends in "=" or "==") is the next array element.
 		return 0, 0, 0, false
 	}
 	return from, to, next, ok
 }
 
-// nextLineKey says whether a word reads as the start of a setting ("password:", "DB_PASSWORD=x").
+// nextLineKey says whether a word starts a tag or a secret setting: a secret name before a ":" or an "=" ("password:", "DB_PASSWORD=x").
 func nextLineKey(v string) bool {
-	return strings.HasSuffix(v, ":") || strings.ContainsAny(v, "=")
+	if strings.HasPrefix(v, "<") {
+		return true // a tag
+	}
+	k := strings.IndexAny(v, ":=")
+	return k > 0 && keyClass(strings.Trim(v[:k], "\"'")) != classNone
 }
 
 // commaBreak returns the position of the line break when the value at "from" was found on a later line, after a comma that ends the

@@ -22,6 +22,7 @@ var canaries = []string{
 	`<add key="password" value="CANARYh8"/>` + "\n",
 	`{"CommandLine":"sqlcmd -S x -P \"CANARYi9\""}` + "\n",
 	`<add key="password" value="CANARYj1" note="a<b"/>` + "\n",
+	"[\"--password\",\n  \"CANARYk2==\"]\n",
 }
 
 // FuzzMaskCanary puts a planted secret after any text, on its own line: whatever came before (an open quote, a half tag, a comment, a
@@ -106,6 +107,18 @@ func TestMaskCommaThenNewline(t *testing.T) {
 		"`--password`,\n`CANARY3`",
 		"sqlcmd -P,\nCANARY4",
 		`["--password",` + "\n  " + `"CANARY5"]`,
+		// Review round 2: a value with "=" or ":" on the next line, and a value after a blank line.
+		"\"args\": [\n  \"--password\",\n  \"CANARY6==\"\n]",
+		"\"args\": [\n  \"--token\",\n  \"CANARY7=def\"\n]",
+		"\"args\": [\"sqlcmd\", \"-P\",\n  \"CANARY8=ss:w0rd\"]",
+		"\"args\": [\n  \"--password\",\n  \"CANARY9:\"\n]",
+		"args: [--client-secret,\n  CANARY10=]",
+		"--password,\n,\nCANARY11",
+		"sqlcmd -P,\n\nCANARY12",
+		`["--password",` + "\n\n" + `"CANARY13"]`,
+		// A key on the next line is a line of its own.
+		"-pW,\n\npassword: CANARY14",
+		"--password,\nDB_PASSWORD=CANARY15",
 	} {
 		if out := Mask(in, m); strings.Contains(out, "CANARY") {
 			t.Errorf("leaked: %q -> %q", in, out)
