@@ -19,9 +19,9 @@ func TestRepeatedReadersDoNotFillThePerAddressLimit(t *testing.T) {
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(TimeHeader, time.Now().UTC().Format(time.RFC3339Nano))
 		_, _ = w.Write([]byte("{}"))
-	}), IdleTimeout: 30 * time.Second}
+	}), IdleTimeout: 30 * time.Second, ReadHeaderTimeout: 3 * time.Second}
 	go func() { _ = srv.Serve(newLimitListener(inner, maxConnections, maxConnectionsPerAddr)) }()
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	loc, err := ParseLocation("http://" + inner.Addr().String())
 	if err != nil {
@@ -49,9 +49,9 @@ func TestConcurrentReadersStayUnderThePerAddressLimit(t *testing.T) {
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(20 * time.Millisecond)
 		_, _ = w.Write([]byte("{}"))
-	})}
+	}), ReadHeaderTimeout: 3 * time.Second}
 	go func() { _ = srv.Serve(newLimitListener(inner, maxConnections, maxConnectionsPerAddr)) }()
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	loc, _ := ParseLocation("http://" + inner.Addr().String())
 	errs := make(chan error, 30)
 	for i := 0; i < 30; i++ {
