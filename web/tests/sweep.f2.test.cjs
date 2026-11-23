@@ -130,6 +130,7 @@ const stateLabel = (value) => value;
 const RequestTable = loadComponent('src/components/RequestTable.svelte', (request) => ({
   '../lib/presentation': { stateLabel },
   '../lib/time': time,
+  '../lib/requestActions': loadTypeScript('src/lib/requestActions.ts'),
   '../lib/timeZone.svelte': { timeZone: zoneState },
   '../lib/format': { formatCount: (value) => String(value) }
 })[request]);
@@ -154,10 +155,13 @@ test('SWEEP-F2-02: rows that straddle a clock change name their zone in each cel
 
 test('SWEEP-F2-10: the two row buttons are one size, never wrap, and an empty Failures tab says so', () => {
   const html = tableHtml([row('a', '2026-10-20T08:59:52Z')]);
-  assert.match(html, /class="row-actions[^"]*"><button class="secondary-button"[^>]*>Nearby activity<\/button><button class="secondary-button payload-button"/);
-  assert.doesNotMatch(html, /quiet-button payload-button/);
+  // BL-495: both are real buttons (type="button"), the same quiet button with the same class, and each is named by its request
+  assert.match(html, /aria-label="Nearby activity for Payroll\.Run at 09:59:52\.000, Demo East"/, 'named by its request, in the zone of the table');
+  assert.match(html, /aria-label="Inspect record for Payroll\.Run at 09:59:52\.000, Demo East"/);
+  assert.match(html, /class="row-actions[^"]*"><button type="button" class="quiet-button row-action"[^>]*>Nearby activity<\/button><button type="button" class="quiet-button row-action"/);
   const style = read('src/components/RequestTable.svelte');
-  assert.match(style, /\.row-actions :global\(button\) \{ white-space: nowrap;/);
+  assert.match(style, /\.row-actions :global\(button\) \{ flex: 1 1 100%;/);
+  assert.match(read('src/app.css'), /\.row-action \{[^}]*white-space: nowrap;/);
   const evidence = read('src/components/EvidenceView.svelte');
   assert.match(evidence, /const noFailures = \$derived\(activeTab === 'failures' && failedTotal === 0 && !drillActive\)/);
   assert.match(evidence, /const showHistory = \$derived\(\(activeTab === 'failures' && !noFailures\)/);

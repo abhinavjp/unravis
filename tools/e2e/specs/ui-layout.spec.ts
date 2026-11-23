@@ -21,6 +21,7 @@
 //   UIFIX-31  Requests over time on real value ranges (also: one slow request reads the same in the tooltip and the note, 31e) (a busy hour in the millions, a slow hour in seconds, a sub-millisecond hour, no timing at all): one unit and one precision on each axis, tooltip with the interval's start and end and the P95 and slowest request alike, no NaN
 //   UIFIX-32  Requests over time on a phone (320, 360, 390 px): the axis titles are painted, the page does not scroll sideways and the chart box keeps its 220 px
 //   UIFIX-40  Clickable table rows are real buttons (BL-495 part): the Slow call lists of nearby calls (40a) and of all sources (40b) have one <button> per row (name, 24 px press area, nothing moves, no focus stop on the row itself); Tab, Enter and Space act once (40c, 40d); the mouse still takes the whole row (40d); a button press never goes on to the row (40c, 40d); on a phone a cell is not named twice (40f); "Show only" of the Request volume table stays a real button (40e)
+//   UIFIX-50  Row buttons of the All operations request list and "Show only" (BL-495 part): "Nearby activity" and "Inspect" are real <button type=button> of one size on one line each, named by their request with the visible words first (50a); the same Enter and Space act once, with the focus ring (50b, 50c); "Show only" of the Request volume table is a quiet button with a visible edge and one size, 24 px press area, and the table still fits its box (50d)
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase } from '../support/ui';
 
@@ -1141,8 +1142,9 @@ test('UIFIX-17d Investigation timeline on a desktop: the readout is one line and
 const SCALL_SIZES = [{ width: 1440, height: 900 }, { width: 1100, height: 800 }, { width: 1024, height: 768 }, { width: 390, height: 844 }];
 
 /** The press area of every match (its box joined with its ::after) must be 24 x 24 px or more, answer a press at its centre and corners, and leave every other control alone. */
-async function expectScallHitArea(page: Page, selector: string, label: string, minWidth = 24): Promise<void> {
-  const facts = await page.locator(selector).evaluateAll((els) => els.map((e) => {
+async function expectScallHitArea(page: Page, selector: string, label: string, minWidth = 24, within = ''): Promise<void> {
+  // within: look for other controls only inside the closest such ancestor (a table row), not in the whole page: behind a side drawer the page keeps its own controls
+  const facts = await page.locator(selector).evaluateAll((els, scopeSel) => els.map((e) => {
     e.scrollIntoView({ block: 'center' });
     const r = e.getBoundingClientRect(), cs = getComputedStyle(e), p = getComputedStyle(e, '::after');
     let left = r.left, top = r.top, right = r.right, bottom = r.bottom;
@@ -1158,12 +1160,12 @@ async function expectScallHitArea(page: Page, selector: string, label: string, m
     }
     const wrong = spots.filter(([x, y]) => { const hit = document.elementFromPoint(x, y); return !(hit === e || (hit && e.contains(hit))); }).length;
     // every other control of the page must stay out of the press area
-    const others = [...document.querySelectorAll('button, a[href], input, select, summary, [role=button], [role=slider], [tabindex]:not([tabindex="-1"])')]
+    const others = [...(scopeSel ? e.closest(scopeSel) ?? document : document).querySelectorAll('button, a[href], input, select, summary, [role=button], [role=slider], [tabindex]:not([tabindex="-1"])')]
       .filter((o) => o !== e && !o.contains(e) && !e.contains(o) && !(o.closest('svg') && e.closest('svg')))
       .filter((o) => { const b = o.getBoundingClientRect(); return Math.min(b.right, right) - Math.max(b.left, left) > 0.5 && Math.min(b.bottom, bottom) - Math.max(b.top, top) > 0.5; })
       .map((o) => (o.getAttribute('aria-label') || o.textContent || o.tagName).trim().slice(0, 30));
     return { w: right - left, h: bottom - top, wrong, others };
-  }));
+  }), within);
   expect(facts.length, label + ': nothing found').toBeGreaterThan(0);
   for (const f of facts) {
     expect(f.w, label + ' press area width').toBeGreaterThanOrEqual(minWidth);
@@ -1818,5 +1820,136 @@ for (const list of ['calls', 'all'] as const) {
     const cells = [...snapshot.matchAll(/- cell "([^"]*)"/g)].map((m) => m[1]);
     expect(cells.length, 'cells in the accessibility tree').toBeGreaterThan(4);
     for (const name of cells) for (const head of heads) expect(name.startsWith(head + ' '), 'cell "' + name + '" repeats the column name "' + head + '"').toBe(false);
+  });
+}
+
+// UIFIX-50 (BL-495 part): the buttons at the end of a table row. On develop "Nearby activity" (143 px) and "Inspect" (81 px) of the All operations request
+// list were two sizes stacked in one cell, both named only by their words (the first said nothing about WHICH request, the second the record id), and
+// "Show only" in the Request volume table was faint text with a transparent edge. Now they are quiet buttons with a visible edge, one size in a column,
+// named "Nearby activity for Payroll.Run at 08:59:52.123" / "Inspect record for ..." / "Show only Payroll.Run in histogram".
+const OP_SIZES = [{ width: 1440, height: 900 }, { width: 1280, height: 800 }, { width: 1100, height: 800 }, { width: 1024, height: 768 }, { width: 390, height: 844 }];
+const OP_BUTTONS = '.request-table .row-actions button';
+
+async function openRequestList(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'All operations', exact: true }).click();
+  await page.getByRole('tab', { name: 'Slowest' }).click();
+  await expect(page.locator(OP_BUTTONS).first()).toBeVisible();
+}
+
+for (const size of OP_SIZES) {
+  test('UIFIX-50a All operations at ' + size.width + ' px: Nearby activity and Inspect are real buttons of one size on one line each, named by their request', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openRequestList(page);
+    const rows = await page.locator('.request-table tbody tr').count();
+    expect(rows, 'rows of the request list').toBeGreaterThan(2);
+    expect(await page.locator(OP_BUTTONS).count(), 'two buttons per row').toBe(rows * 2);
+    const facts = await page.locator('.request-table tbody tr').evaluateAll((trs) => trs.map((tr) => {
+      const [near, inspect] = [...tr.querySelectorAll<HTMLElement>('.row-actions button')];
+      const read = (b: HTMLElement) => {
+        const r = b.getBoundingClientRect(), range = document.createRange();
+        range.selectNodeContents(b);
+        const cs = getComputedStyle(b);
+        return { tag: b.tagName + ' ' + b.getAttribute('type'), w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100, lines: new Set([...range.getClientRects()].map((q) => Math.round(q.top))).size, text: (b.textContent ?? '').trim(), name: b.getAttribute('aria-label') ?? '', edge: cs.borderTopStyle + ' ' + cs.borderTopWidth + ' ' + cs.borderTopColor, nowrap: cs.whiteSpace };
+      };
+      return { near: read(near), inspect: read(inspect) };
+    }));
+    for (const f of facts) {
+      expect([f.near.tag, f.inspect.tag], 'both are <button type=button>').toEqual(['BUTTON button', 'BUTTON button']);
+      expect(f.near.w, 'both buttons are as wide as each other').toBeCloseTo(f.inspect.w, 1);
+      expect(f.near.h, 'both buttons are as tall as each other').toBeCloseTo(f.inspect.h, 1);
+      expect(f.near.lines, 'Nearby activity stays on one line').toBe(1);
+      expect(f.inspect.lines, 'Inspect stays on one line').toBe(1);
+      expect(f.near.nowrap).toBe('nowrap');
+      expect(f.near.edge, 'a visible edge, not faint text').not.toMatch(/rgba\(0, 0, 0, 0\)|none|0px/);
+      // the name starts with the visible words (label in name) and says which request
+      expect(f.near.name).toMatch(/^Nearby activity for [\w.]+ at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+$/);
+      expect(f.inspect.name).toMatch(/^Inspect record for [\w.]+ at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+$/);
+      expect(f.near.name.startsWith(f.near.text)).toBe(true);
+      expect(f.inspect.name.startsWith(f.inspect.text)).toBe(true);
+    }
+    // the same sizes in every row of the column
+    expect(new Set(facts.map((f) => f.near.w + 'x' + f.near.h + '/' + f.inspect.w + 'x' + f.inspect.h)).size, 'every row has the same two boxes').toBe(1);
+    const names = facts.flatMap((f) => [f.near.name, f.inspect.name]);
+    expect(new Set(names).size, 'every button has its own name: ' + names.join(' | ')).toBe(names.length);
+    // the accessibility tree (what a screen reader gets)
+    const snapshot = await page.locator('.request-table tbody tr').first().ariaSnapshot();
+    expect(snapshot).toMatch(/- button "Nearby activity for Payroll\.Run at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+"/);
+    expect(snapshot).toMatch(/- button "Inspect record for Payroll\.Run at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+"/);
+    await expectScallHitArea(page, OP_BUTTONS, 'Row action', 24, 'tr');
+    if (size.width >= 1024) {
+      const [wide, box] = await page.locator('.request-scroll').first().evaluate((e) => [e.scrollWidth, e.clientWidth]);
+      expect(wide, 'the request list fits its box').toBeLessThanOrEqual(box);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow of the page').toBeLessThanOrEqual(0);
+  });
+}
+
+test('UIFIX-50b All operations: Tab reaches Nearby activity then Inspect of the same row; Enter and Space on Nearby activity act once each; the focus ring shows', async ({ page }) => {
+  await openRequestList(page);
+  const first = page.locator(OP_BUTTONS).nth(0);
+  await countClicks(page, OP_BUTTONS);
+  await first.focus();
+  await page.keyboard.press('Shift+Tab'); // arrive by keyboard, so the ring is the keyboard ring
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? '')).toMatch(/^Nearby activity for /);
+  const ring = await focusRing(page);
+  expect(ring.style).toBe('solid');
+  expect(ring.width).toBe(2);
+  expect(ring.color, 'the ring is painted').not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+  const nameOfFocus = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? '');
+  const firstName = await nameOfFocus();
+  expect(firstName).toMatch(/^Nearby activity for /);
+  await page.keyboard.press('Enter');
+  expect(await clicks(page), 'one click for one Enter').toBe(1);
+  await expect(page.locator('#nearby-activity'), 'Nearby activity opened').toBeAttached();
+  await page.keyboard.press('Space');
+  expect(await clicks(page), 'one more click for one Space').toBe(2);
+  expect(await nameOfFocus(), 'the press kept the focus on the button').toBe(firstName);
+  await page.keyboard.press('Tab');
+  expect(await nameOfFocus(), 'Tab goes on to the Inspect button of the same row').toBe(firstName.replace('Nearby activity for', 'Inspect record for'));
+});
+
+for (const key of ['Enter', 'Space'] as const) {
+  test('UIFIX-50c All operations: ' + key + ' on Inspect opens the record once', async ({ page }) => {
+    await openRequestList(page);
+    await countClicks(page, OP_BUTTONS);
+    const inspect = page.locator(OP_BUTTONS).nth(1);
+    await inspect.focus();
+    const name = (await inspect.getAttribute('aria-label'))!;
+    expect(name).toMatch(/^Inspect record for /);
+    await page.keyboard.press(key);
+    expect(await clicks(page), 'one click for one press').toBe(1);
+    await expect(page.getByRole('heading', { name: /^Record demo-/ })).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('heading', { name: /^Record demo-/ })).toHaveCount(0);
+    await expect(page.locator(OP_BUTTONS).nth(1), 'the button gets the focus back').toBeFocused();
+  });
+}
+
+for (const size of OP_SIZES) {
+  test('UIFIX-50d Where is it? at ' + size.width + ' px: "Show only" is a quiet button with a visible edge, one size in the column, a 24 px press area, and the table fits its box', async ({ page }) => {
+    await page.setViewportSize(size);
+    await page.getByRole('button', { name: 'Where is it?', exact: true }).first().click();
+    await page.locator('summary', { hasText: 'Request volume' }).click();
+    const sel = '.request-volume .volume-table td button[aria-label^="Show only"]';
+    await expect(page.locator(sel).first()).toBeVisible();
+    const facts = await page.locator(sel).evaluateAll((els) => els.map((e) => {
+      const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
+      return { w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100, edge: cs.borderTopStyle + ' ' + cs.borderTopWidth + ' ' + cs.borderTopColor, name: e.getAttribute('aria-label') ?? '', tag: e.tagName + ' ' + e.getAttribute('type'), nowrap: cs.whiteSpace };
+    }));
+    expect(facts.length, 'one per row').toBeGreaterThan(1);
+    expect(new Set(facts.map((f) => f.w + 'x' + f.h)).size, 'one size in the column').toBe(1);
+    for (const f of facts) {
+      expect(f.tag).toBe('BUTTON button');
+      expect(f.edge, 'a visible edge, not faint text').not.toMatch(/rgba\(0, 0, 0, 0\)|none|0px/);
+      expect(f.nowrap).toBe('nowrap');
+      expect(f.name).toMatch(/^Show only [\w.]+ in histogram$/);
+    }
+    const snapshot = await page.locator('.request-volume .volume-table tbody tr').first().ariaSnapshot();
+    expect(snapshot).toMatch(/- button "Show only Payroll\.Run in histogram"/);
+    await expectScallHitArea(page, sel, 'Show only', 24, 'tr');
+    const [wide, box] = await page.locator('.request-volume .volume-table-wrap').first().evaluate((e) => [e.scrollWidth, e.clientWidth]);
+    expect(wide, 'the table fits its box').toBeLessThanOrEqual(box);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow of the page').toBeLessThanOrEqual(0);
   });
 }

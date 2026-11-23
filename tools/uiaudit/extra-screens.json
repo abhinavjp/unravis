@@ -149,6 +149,26 @@
       ]
     },
     {
+      "id": "x-where-volume",
+      "phase": "X",
+      "note": "Where is it? with the Request volume table open (the Show only buttons).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"Where is it?\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Where is it?\"]"
+        },
+        {
+          "click": "summary:has-text(\"Request volume\")"
+        }
+      ]
+    },
+    {
       "id": "x-where-about",
       "phase": "X",
       "note": "Where is it? with the notes about the calculation open.",
