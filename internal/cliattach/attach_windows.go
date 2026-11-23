@@ -1,7 +1,7 @@
 //go:build windows
 
 // Package cliattach holds the platform part of the command line's attach to the app: where the locator lives, how the pipe is dialed
-// and checked. It reads no environment variable; it is the only part of the command line that imports the Windows packages.
+// and checked. It reads no environment variable to decide anything (the app that `app start` launches gets a cleaned copy of the environment); it is the only part of the command line that imports the Windows packages.
 package cliattach
 
 import (

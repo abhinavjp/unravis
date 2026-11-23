@@ -463,7 +463,7 @@ func TestModeMustMatchWhatWasParsed(t *testing.T) {
 func TestLegacyOptionsAnywhere(t *testing.T) {
 	for _, args := range [][]string{
 		{"-o", "json", "--mcp"}, {"--json", "--mcp"}, {"version", "--mcp", "-o", "json"}, {"--quit", "--json"}, {"--check-update", "--json"},
-		{"-port=1", "--json"}, {"version", "--background", "--json"},
+		{"-port=1", "--json"}, {"version", "--background", "--json"}, {"--owner=headless", "--json"}, {"app", "stop", "--owner", "headless", "--json"},
 	} {
 		r := run(t, nil, args...)
 		if r.code != 2 || errCode(t, r) != "LEGACY_OPTION" {

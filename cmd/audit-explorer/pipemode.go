@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"sync"
 
@@ -66,6 +67,15 @@ func writeLocator(path string, pipes *pipesrv.Pipes) (remove func(), err error) 
 // checkPipeFlags validates --pipe-server, --pipe-only and --loopback (BL-301).
 func checkPipeFlags(f runFlags) error {
 	pipe := f.pipeServer || f.pipeOnly
+	if f.ownerSet && f.owner == "" {
+		return fmt.Errorf("--owner needs a value: headless or shell")
+	}
+	if f.owner != "" && f.owner != "headless" && f.owner != "shell" {
+		return fmt.Errorf("--owner must be headless or shell")
+	}
+	if f.owner != "" && !pipe {
+		return fmt.Errorf("--owner is only valid with --pipe-server or --pipe-only")
+	}
 	if f.loopback && f.pipeOnly {
 		return fmt.Errorf("--pipe-only never opens a TCP port; do not combine it with --loopback")
 	}
@@ -141,4 +151,18 @@ func enterPipeSingleton(demo bool, getenv func(string) string) (release func(), 
 		return nil, "", instance.Names{}, errors.New("pipe mode: the singleton gate neither proceeded nor attached")
 	}
 	return gate.release, runDir, gate.names, nil
+}
+
+// ownerName is the owner that hello reports: the --owner value, or "app" for a copy that was not told.
+func ownerName(flag string) string {
+	if flag == "" {
+		return "app"
+	}
+	return flag
+}
+
+// cliHandlerFor is the command line route of this owner: hello says the --owner of this copy, and app.stop (which quits through
+// stop) works only when that is headless. The desktop shell's owner (--pipe-only with no --owner) is never stopped from the command line.
+func cliHandlerFor(f runFlags, dashboard http.Handler, token string, stop func()) http.Handler {
+	return newCLIHandler(dashboard, token, ownerName(f.owner), stop)
 }

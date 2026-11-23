@@ -251,10 +251,10 @@ type wireAnswer struct {
 	} `json:"error"`
 }
 
-// Do runs an operation. The state of the owner decides first: an owner in an update or locked refuses everything but app.status. When
+// Do runs an operation. The state of the owner decides first: an owner in an update or locked refuses everything but app.status and app.stop. When
 // ctx ends while the call runs, the owner is told to cancel (best effort) and the error is CANCELED or TIMEOUT.
 func (s *Session) Do(ctx context.Context, c Call) (*Result, *Error) {
-	if c.Op != "app.status" {
+	if c.Op != "app.status" && c.Op != "app.stop" { // a locked or updating app can still be asked its status and be stopped
 		switch s.Hello.State {
 		case "updating":
 			return nil, NewError(CodeUpdateInProgress, "Unravis is being updated. Try again in a minute.", "")

@@ -54,8 +54,11 @@ type Deps struct {
 	State   func() string // "ready", "locked" or "updating"
 	// Internal runs the allow-listed reads of the case routes (NewInternalGET). nil: the case operations answer ENDPOINT_UNAVAILABLE.
 	Internal InternalGET
-	Now      func() time.Time
-	Logf     func(format string, args ...any)
+	// Stop starts the normal quit of the owner (the one --quit and Ctrl+C run). nil: app.stop answers ENDPOINT_UNAVAILABLE. Only an owner
+	// that says "headless" is ever stopped from here (D20).
+	Stop func()
+	Now  func() time.Time
+	Logf func(format string, args ...any)
 }
 
 // Handler serves /cli/v1/hello, /cli/v1/op and /cli/v1/cancel.
@@ -192,8 +195,8 @@ func (s *server) run(parent context.Context, req request) (answer, int) {
 	if allowed, needsGrant := clicap.Gate(req.Op, clicap.CLIHuman); !allowed || needsGrant {
 		return fail(clicore.NewError(clicore.CodePermissionDenied, "That operation is not available to the command line.", "")), 0
 	}
-	if req.Op == "doctor" {
-		// doctor is the command line's own check of its link to the app (it asks hello); the owner has nothing to answer.
+	if req.Op == "doctor" || req.Op == "app.start" {
+		// doctor and app.start are the command line's own work (hello; starting a process): the owner has nothing to answer.
 		return fail(clicore.NewError(clicore.CodePermissionDenied, "That operation runs in the command line, not in the app.", "")), 0
 	}
 	if len(req.Args) > 0 {
@@ -230,6 +233,8 @@ func (s *server) run(parent context.Context, req request) (answer, int) {
 		data, cerr = s.d.Backend.Call(ctx, row.Tool, args)
 	case req.Op == "app.status":
 		data, cerr = s.appStatus(args)
+	case req.Op == "app.stop":
+		data, cerr = s.appStop(args)
 	case req.Op == "cases.list":
 		data, cerr = s.casesList(ctx, args)
 	case req.Op == "cases.show":
@@ -333,6 +338,27 @@ func (s *server) appStatus(args json.RawMessage) (any, *clicore.Error) {
 	}
 	return map[string]any{"running": true, "owner": i.Owner, "pid": i.PID, "version": i.AppVersion, "state": state,
 		"proto": protoBody{clicore.ProtoMajor, clicore.ProtoMinor}}, nil
+}
+
+// stopDelay is how long app.stop waits before it starts the quit, so the answer is on the wire first.
+var stopDelay = 100 * time.Millisecond
+
+// appStop answers app.stop (spec 05 D20): only an owner that is headless is stopped from the command line. The desktop shell supervises
+// its owner and would start it again, so the answer for that owner is PERMISSION_DENIED.
+func (s *server) appStop(args json.RawMessage) (any, *clicore.Error) {
+	var none struct{}
+	if e := decodeStrict(args, &none); e != nil {
+		return nil, e
+	}
+	i := s.d.Info()
+	if i.Owner != "headless" {
+		return nil, clicore.NewError(clicore.CodePermissionDenied, "Unravis is owned by the desktop app. Quit it from the tray.", "")
+	}
+	if s.d.Stop == nil {
+		return nil, clicore.NewError(clicore.CodeEndpointUnavailable, "This Unravis cannot be stopped from the command line.", "")
+	}
+	time.AfterFunc(stopDelay, s.d.Stop)
+	return map[string]any{"stopping": true, "pid": i.PID}, nil
 }
 
 // metaOf builds the meta of a success from the encoded data. A source that did not answer, or a page the owner says it cut, makes the

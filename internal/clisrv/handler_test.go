@@ -107,10 +107,11 @@ func TestGateIsTheMatrix(t *testing.T) {
 		called = false
 		r := op(t, h, row.Op, "")
 		switch {
-		case row.Op == "doctor":
-			// the command line's own check: the owner refuses it, whatever the matrix says of the human column
+		case row.Op == "doctor" || row.Op == "app.start" || row.Op == "app.stop":
+			// the command line's own work (doctor, app.start) is refused by the owner, whatever the matrix says of the human column; app.stop
+			// is refused for an owner that is not headless (this handler says "app")
 			if r.OK || r.Error.Code != "PERMISSION_DENIED" || called {
-				t.Errorf("doctor: %+v called=%v", r, called)
+				t.Errorf("%s: %+v called=%v", row.Op, r, called)
 			}
 		case row.Human == clicap.Deny:
 			if r.OK || r.Error.Code != "PERMISSION_DENIED" || called {
@@ -516,5 +517,51 @@ func TestHelloStateIsOneOfThree(t *testing.T) {
 		if !strings.Contains(w.Body.String(), `"state":"`+want+`"`) {
 			t.Errorf("%q: %s", state, w.Body.String())
 		}
+	}
+}
+
+func stopHandler(owner string, stop func()) http.Handler {
+	return Handler(Deps{Backend: echo(), Stop: stop, Info: func() Info { return Info{PID: 42, Gen: "133", AppVersion: "1.2.3", Owner: owner} }, Logf: func(string, ...any) {}})
+}
+
+// app.stop stops a headless owner after the answer is out, and no other owner (spec D20).
+func TestAppStopOnlyHeadless(t *testing.T) {
+	old := stopDelay
+	stopDelay = 20 * time.Millisecond
+	t.Cleanup(func() { stopDelay = old })
+	for _, owner := range []string{"app", "shell"} {
+		stopped := make(chan struct{}, 1)
+		r := op(t, stopHandler(owner, func() { stopped <- struct{}{} }), "app.stop", "")
+		if r.OK || r.Error.Code != "PERMISSION_DENIED" || !strings.Contains(r.Error.Message, "tray") {
+			t.Errorf("%s: %+v", owner, r)
+		}
+		select {
+		case <-stopped:
+			t.Errorf("%s was stopped", owner)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	stopped := make(chan struct{}, 2)
+	h := stopHandler("headless", func() { stopped <- struct{}{} })
+	r := op(t, h, "app.stop", "")
+	if !r.OK || r.Data["stopping"] != true || r.Data["pid"] != float64(42) {
+		t.Fatalf("%+v", r)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the owner was not stopped")
+	}
+	// arguments are refused and do not stop it; with no way to stop it, the answer says so
+	if r := op(t, h, "app.stop", `{"x":1}`); r.OK {
+		t.Errorf("args: %+v", r)
+	}
+	select {
+	case <-stopped:
+		t.Error("a refused request stopped the owner")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if r := op(t, stopHandler("headless", nil), "app.stop", ""); r.OK || r.Error.Code != "ENDPOINT_UNAVAILABLE" {
+		t.Errorf("no stop: %+v", r)
 	}
 }

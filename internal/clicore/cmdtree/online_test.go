@@ -69,17 +69,19 @@ type owner struct {
 	srv    *http.Server
 	now    time.Time
 
-	mu       sync.Mutex
-	state    string
-	helloPID int
-	helloGen time.Time
-	ops      []map[string]any // every op request the owner received
-	hellos   int
-	alive    bool
-	dialErr  error
-	killMid  bool            // close the connection of the next op without answering
-	store    casestore.Store // the case store behind the dashboard handler of the default owner
-	cases    http.Handler    // a dashboard handler for the case reads of an owner with its own backend (see withCases)
+	mu        sync.Mutex
+	state     string
+	helloPID  int
+	helloGen  time.Time
+	ops       []map[string]any // every op request the owner received
+	hellos    int
+	alive     bool
+	dialErr   error
+	killMid   bool            // close the connection of the next op without answering
+	store     casestore.Store // the case store behind the dashboard handler of the default owner
+	ownerName string          // what hello says of the owner ("" means app)
+	onStop    func()          // what the owner does when app.stop asks it to quit
+	cases     http.Handler    // a dashboard handler for the case reads of an owner with its own backend (see withCases)
 }
 
 type ownerOpt func(*owner)
@@ -116,7 +118,19 @@ func newOwner(t *testing.T, backend clisrv.Backend, opts ...ownerOpt) *owner {
 		Info: func() clisrv.Info {
 			o.mu.Lock()
 			defer o.mu.Unlock()
-			return clisrv.Info{PID: o.helloPID, Gen: o.helloGen.UTC().Format(time.RFC3339Nano), AppVersion: "1.2.3", Owner: "app"}
+			owner := o.ownerName
+			if owner == "" {
+				owner = "app"
+			}
+			return clisrv.Info{PID: o.helloPID, Gen: o.helloGen.UTC().Format(time.RFC3339Nano), AppVersion: "1.2.3", Owner: owner}
+		},
+		Stop: func() {
+			o.mu.Lock()
+			f := o.onStop
+			o.mu.Unlock()
+			if f != nil {
+				f()
+			}
 		},
 		State: func() string { o.mu.Lock(); defer o.mu.Unlock(); return o.state },
 		Logf:  func(string, ...any) {},

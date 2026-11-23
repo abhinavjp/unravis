@@ -30,6 +30,11 @@ type IO struct {
 	Exe    func() (string, error)
 	// Attach opens the session with the running app. Nil means the real one (the locator and the pipe); a test passes its own.
 	Attach func(context.Context) (*clicore.Session, *clicore.Error)
+	// StartHeadless starts the app program as a headless owner (`app start --headless`). Nil means this build cannot.
+	StartHeadless clicore.Starter
+	// ProcessGone tells whether the process pid that was started at the given time has ended (`app stop` waits for it). Nil means the
+	// locator alone says it.
+	ProcessGone func(pid int, started time.Time) bool
 }
 
 // Default and largest --timeout (spec 3.2).
@@ -81,7 +86,7 @@ func init() {
 // here; "--quit" and "--check-update" are forwarded to the app program in a later slice.
 var legacyFlags = map[string]bool{
 	"demo": true, "port": true, "no-browser": true, "mcp": true, "mcp-allow-identifiers": true, "allow-broad-scans": true,
-	"docs-examined-budget": true, "quit": true, "check-update": true, "background": true, "pipe-server": true, "pipe-only": true, "loopback": true,
+	"docs-examined-budget": true, "owner": true, "quit": true, "check-update": true, "background": true, "pipe-server": true, "pipe-only": true, "loopback": true,
 }
 
 // Run runs the command line and returns its exit code. Output goes to io; nothing else is written anywhere.

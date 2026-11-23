@@ -24,7 +24,7 @@ func TestCLIRouteIsWiredBehindThePipeHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	dash := server.New(audit.NewDemo(time.Now()), nil, token, false, server.WithCases(store, nil, nil))
-	h := pipesrv.Handler(dash, pipesrv.WithCLI(newCLIHandler(dash, token)))
+	h := pipesrv.Handler(dash, pipesrv.WithCLI(newCLIHandler(dash, token, "app", nil)))
 	call := func(role pipesrv.Role, image, method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r = r.WithContext(pipesrv.WithPeerImage(pipesrv.WithRole(context.Background(), role), image))
@@ -67,5 +67,65 @@ func TestCLIRouteIsWiredBehindThePipeHandler(t *testing.T) {
 	q := `{"op":"audit.compare","requestId":"req_0123456789abcdef","args":{"query":{"sourceIds":["demo-west"],"start":"` + f(-time.Hour) + `","end":"` + f(0) + `","baselineStart":"` + f(-25*time.Hour) + `","baselineEnd":"` + f(-24*time.Hour) + `","kind":"all","outcome":"all","metric":"total","bucketSeconds":60,"userIds":[7]}}}`
 	if w := call(pipesrv.RoleAG, cli, "POST", "/cli/v1/op", q); !strings.Contains(w.Body.String(), `"ok":true`) {
 		t.Errorf("identifier filter refused: %.300s", w.Body.String())
+	}
+}
+
+// The wiring main uses: the desktop shell's owner (--pipe-only, no --owner) says "app" and is never stopped from the command line; a copy
+// started with --owner=headless says so and quits when app.stop asks (review M4).
+func TestOwnerFlagReachesHelloAndStop(t *testing.T) {
+	old := hostOS
+	t.Cleanup(func() { hostOS = old })
+	hostOS = "windows"
+	const token = "tok-0123456789abcdef0123456789abcdef"
+	dash := server.New(audit.NewDemo(time.Now()), nil, token, false)
+	for _, c := range []struct {
+		args    []string
+		owner   string
+		stopped bool
+	}{
+		{[]string{"--pipe-only"}, "app", false},
+		{[]string{"--pipe-server"}, "app", false},
+		{[]string{"--pipe-only", "--owner=shell"}, "shell", false},
+		{[]string{"--pipe-server", "--owner=headless"}, "headless", true},
+	} {
+		f, err := parseFlags(c.args)
+		if err != nil {
+			t.Fatalf("%v: %v", c.args, err)
+		}
+		stopped := make(chan struct{}, 1)
+		h := cliHandlerFor(f, dash, token, func() { stopped <- struct{}{} })
+		do := func(method, path, body string) (int, string) {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(body)))
+			return w.Code, w.Body.String()
+		}
+		if code, body := do("GET", "/cli/v1/hello", ""); code != 200 || !strings.Contains(body, `"owner":"`+c.owner+`"`) {
+			t.Errorf("%v hello: %d %s", c.args, code, body)
+		}
+		_, body := do("POST", "/cli/v1/op", `{"op":"app.stop","args":{},"requestId":"req_0123456789abcdef"}`)
+		select {
+		case <-stopped:
+			if !c.stopped {
+				t.Errorf("%v: the owner was stopped: %s", c.args, body)
+			}
+		case <-time.After(700 * time.Millisecond):
+			if c.stopped {
+				t.Errorf("%v: the owner was not stopped: %s", c.args, body)
+			}
+		}
+		if !c.stopped && !strings.Contains(body, "PERMISSION_DENIED") {
+			t.Errorf("%v: %s", c.args, body)
+		}
+	}
+}
+
+func TestOwnerFlagNeedsAValue(t *testing.T) {
+	old := hostOS
+	t.Cleanup(func() { hostOS = old })
+	hostOS = "windows"
+	for _, args := range [][]string{{"--pipe-server", "--owner="}, {"--pipe-server", "--owner", ""}} {
+		if _, err := parseFlags(args); err == nil || !strings.Contains(err.Error(), "needs a value") {
+			t.Errorf("%v: %v", args, err)
+		}
 	}
 }
