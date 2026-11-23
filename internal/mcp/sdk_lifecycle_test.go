@@ -349,8 +349,7 @@ func TestSDKBothLifecycles(t *testing.T) {
 		}
 	})
 	t.Run("hand-rolled loop has no stateless lifecycle", func(t *testing.T) {
-		// Characterization of the loop BL-342 replaces: a 2026-07-28 client that skips initialize gets "initialize first".
-		// Once the SDK loop is the only loop this subtest goes with the old loop.
+		// Characterization of the loop BL-342 would replace: a 2026-07-28 client that skips initialize gets "initialize first".
 		w := dial(t, legacyImpl, bridgeFor(t, srv))
 		w.stateless = true
 		res := w.request("tools/list", "")

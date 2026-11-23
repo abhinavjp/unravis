@@ -46,6 +46,14 @@ func TestSDKOversizeFrameRejected(t *testing.T) {
 			if res := w.reply("big"); res["error"] != nil {
 				t.Fatalf("frame under the cap refused: %.200v", res)
 			}
+			// The largest frame the line reader takes, then another right behind it in the same write: both are answered.
+			fill := maxMessage - 2 - len(`{"jsonrpc":"2.0","id":"max","method":"ping","params":{"pad":""}}`)
+			w.send(`{"jsonrpc":"2.0","id":"max","method":"ping","params":{"pad":"` + pad(fill) + `"}}` + "\n" + `{"jsonrpc":"2.0","id":"after","method":"ping"}`)
+			for _, id := range []string{"max", "after"} {
+				if res := w.reply(id); res["error"] != nil {
+					t.Fatalf("%s: %.200v", id, res)
+				}
+			}
 		})
 	}
 }
