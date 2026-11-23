@@ -149,6 +149,26 @@
       ]
     },
     {
+      "id": "x-where-volume",
+      "phase": "X",
+      "note": "Where is it? with the Request volume table open (the Show only buttons).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"Where is it?\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Where is it?\"]"
+        },
+        {
+          "click": "summary:has-text(\"Request volume\")"
+        }
+      ]
+    },
+    {
       "id": "x-where-about",
       "phase": "X",
       "note": "Where is it? with the notes about the calculation open.",
@@ -350,6 +370,53 @@
         },
         {
           "waitFor": ".y-peak"
+        }
+      ]
+    },
+    {
+      "id": "x-slow-call-all",
+      "phase": "X",
+      "note": "The Slow call screen on its second tab, All sources in time order, whose rows are real buttons (BL-495 part, UIFIX-40). The default tab, Nearby calls, whose rows are real buttons too, is x-slow-call.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Orders API stall, 19 October\"]"
+        },
+        {
+          "waitFor": "text=Case started"
+        },
+        {
+          "click": "role=button[name=\"Open the Investigation timeline\"s]"
+        },
+        {
+          "waitFor": ".panel[data-lane=audit] .mark.flagged"
+        },
+        {
+          "clickCentre": ".panel[data-lane=audit] .mark.flagged"
+        },
+        {
+          "waitFor": ".y-peak"
+        },
+        {
+          "click": "role=tab[name=/^All sources in time order/]"
+        },
+        {
+          "waitFor": "[data-testid=scall-all-open]"
         }
       ]
     },
@@ -867,6 +934,106 @@
         },
         {
           "waitFor": "[data-testid=update-bar-link]"
+        }
+      ]
+    },
+    {
+      "id": "x-wizard-leave-form",
+      "phase": "X",
+      "note": "Add data, Redis card with a typed address: the Leave this form question after Back to the list.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "role=tab[name=\"Add data\"s]"
+        },
+        {
+          "click": "role=tab[name=\"Add data\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"What do you want to add to this case?\"]"
+        },
+        {
+          "click": "role=button[name=/^Redis/]"
+        },
+        {
+          "fill": [
+            "role=textbox[name=/Redis address/]",
+            "cache-1:6379"
+          ]
+        },
+        {
+          "click": "role=button[name=\"Back to the list\"]"
+        },
+        {
+          "waitFor": "role=dialog[name=\"Leave this form?\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-wizard-leave-tab",
+      "phase": "X",
+      "note": "Add data, Redis card with a typed address: the Leave Add data question after a click on another hub tab.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "role=tab[name=\"Add data\"s]"
+        },
+        {
+          "click": "role=tab[name=\"Add data\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"What do you want to add to this case?\"]"
+        },
+        {
+          "click": "role=button[name=/^Redis/]"
+        },
+        {
+          "fill": [
+            "role=textbox[name=/Redis address/]",
+            "cache-1:6379"
+          ]
+        },
+        {
+          "click": "role=tab[name=\"Sources\"s]"
+        },
+        {
+          "waitFor": "role=dialog[name=\"Leave Add data?\"]"
         }
       ]
     }

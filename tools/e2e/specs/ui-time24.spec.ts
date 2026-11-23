@@ -210,12 +210,22 @@ test('UIFIX-18e The boxes are 24 px or more, in order, readable in both themes, 
   }
   for (const width of [1440, 1100, 390, 360, 320]) {
     await page.setViewportSize({ width, height: 844 });
+    // The page lays itself out again after the resize (media queries, a wrapped row); measure once it has stopped moving, not in the middle of it.
+    await page.waitForFunction(() => new Promise<boolean>((done) => {
+      const width = () => document.documentElement.scrollWidth;
+      const before = width();
+      requestAnimationFrame(() => requestAnimationFrame(() => done(width() === before)));
+    }), undefined, { timeout: 5_000 }).catch(() => undefined);
     const facts = await page.evaluate(() => {
       const root = document.documentElement;
       const boxes = [...document.querySelectorAll<HTMLElement>('input.time24')].map((e) => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, w: r.width, h: r.height }; });
-      return { scrolls: root.scrollWidth > root.clientWidth, inner: window.innerWidth, boxes };
+      // Name the widest things when it scrolls, so a failure says what overflows.
+      const wide = root.scrollWidth > root.clientWidth
+        ? [...document.querySelectorAll<HTMLElement>('body *')].filter((e) => e.getBoundingClientRect().right > root.clientWidth + 0.5).slice(0, 5).map((e) => e.tagName.toLowerCase() + '.' + String(e.className).slice(0, 40) + ' ' + Math.round(e.getBoundingClientRect().right))
+        : [];
+      return { scrolls: root.scrollWidth > root.clientWidth, inner: window.innerWidth, boxes, wide };
     });
-    expect(facts.scrolls, width + ' px: the page scrolls sideways').toBe(false);
+    expect(facts.scrolls, width + ' px: the page scrolls sideways: ' + JSON.stringify(facts.wide)).toBe(false);
     for (const b of facts.boxes) {
       expect(b.left, width + ' px: box inside the window').toBeGreaterThanOrEqual(0);
       expect(b.right, width + ' px: box inside the window').toBeLessThanOrEqual(facts.inner + 0.5);

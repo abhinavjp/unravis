@@ -4,6 +4,7 @@
   import { formatTime, zoneAbbreviation } from '../lib/time';
   import { timeZone } from '../lib/timeZone.svelte';
   import { formatCount } from '../lib/format';
+  import { inspectName, nearbyActivityName, REQUEST_ACTION_TEXT } from '../lib/requestActions';
   let { rows, sourceLabels, loading, pageNumber, nextCursor, truncated, recordId, onFirst, onNext, onInspect, onContext }: {
     rows: RequestRecord[]; loading: boolean; nextCursor: string; truncated: boolean;
     sourceLabels: Map<string, string>;
@@ -29,7 +30,7 @@
           <td>{time(row.initiatedAt)}<small class="drawer-only">{sourceLabels.get(row.sourceId) ?? row.sourceId}</small></td><td>{sourceLabels.get(row.sourceId) ?? row.sourceId}</td><td><strong>{row.controller}.{row.action}</strong><small>{row.url}</small></td>
           <td>{row.status || 'N/A'}<small>{row.outcome}{#if row.state}{' · '}<span class={'state-badge state-' + row.state}>{stateLabel(row.state)}</span>{/if}</small></td><td><code class="record-id" title={row.id}>{row.id}</code></td><td>{number(row.durationMs)}</td><td>{number(row.apiTimeMs)}</td>
           <td>{number(row.auditCreateTimeMs)}</td><td>{row.userId ?? 'N/A'}</td><td>{row.uiVersion || 'N/A'}</td>
-          <td><div class="row-actions"><button class="secondary-button" disabled={!row.initiatedAt} onclick={() => onContext(row)}>Nearby activity</button><button class="secondary-button payload-button" aria-label={'Inspect record ' + row.id} disabled={recordId === row.id} onclick={() => onInspect(row)}>{recordId === row.id ? 'Loading…' : 'Inspect'}</button></div></td>
+          <td><div class="row-actions"><button type="button" class="quiet-button row-action" aria-label={nearbyActivityName(row, timeZone.zone, sourceLabels.get(row.sourceId) ?? row.sourceId)} disabled={!row.initiatedAt} onclick={() => onContext(row)}>{REQUEST_ACTION_TEXT.nearby}</button><button type="button" class="quiet-button row-action" aria-label={inspectName(row, timeZone.zone, recordId === row.id, sourceLabels.get(row.sourceId) ?? row.sourceId)} disabled={recordId === row.id} onclick={() => onInspect(row)}>{recordId === row.id ? REQUEST_ACTION_TEXT.loading : REQUEST_ACTION_TEXT.inspect}</button></div></td>
         </tr>
       {:else}<tr><td colspan="11" class="table-empty">{loading ? 'Loading request records…' : 'Select an API group or a quality count to inspect its requests.'}</td></tr>{/each}
     </tbody>
@@ -45,7 +46,8 @@
 
 
 <style>
-  /* Both row buttons are one size and never wrap (ANALYSIS-10). */
+  /* Both row buttons are one size, on a line each, and never wrap (ANALYSIS-10, BL-495). The container is the one it was (a wrapping row), so the
+     width the column asks for is unchanged; each button takes the whole line, so "Nearby activity" and "Inspect" are as wide as each other. */
   .row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-  .row-actions :global(button) { white-space: nowrap; margin: 0; }
+  .row-actions :global(button) { flex: 1 1 100%; margin: 0; padding: 6px 12px; font-size: 13px; }
 </style>

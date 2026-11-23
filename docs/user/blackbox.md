@@ -57,11 +57,11 @@ Every Blackbox is in one of nine states. The sticker carries the word, and the r
 | --- | --- | --- |
 | Running | Ready | Nothing to do. It is recording. |
 | Running late | Partly ready | No sample for more than three intervals. On the server, open Services, find UnravisBlackbox and restart it. |
-| Stopped | Partly ready | Start it again. On this PC press Start. On another server use Services. |
-| Disk low | Partly ready | Free space on that drive, or lower the size limit. Recording resumes by itself. If it is still recording, do this before it pauses. |
+| Stopped | Partly ready | Start it again. On this PC press Start. On another server use Services. For another server the app says: Start it from Services on that server. Unravis does not start another server. |
+| Disk low | Partly ready | Free space on that drive, or lower the size limit. Recording resumes by itself. If it is still recording, the app says: Free space on that drive, or lower the size limit, before it pauses. |
 | Clock differs | Partly ready | Fix the clock on that server. Until then, events less than a second apart are not put in order. |
 | Not found | Cannot test yet | Check the folder, share or address, then check again. |
-| Unreachable | Cannot test yet | Check that the server is on and that Unravis can reach and read it, then check again. |
+| Unreachable | Cannot test yet | Check that the server is on and that Unravis can reach and read it, then check again. For an address the app says: Check that the server is on and that the port is open to this PC, then check again. |
 | Incomplete | Partly ready | Some recording files could not be read to the end. Press Check again. If it stays, copy the files again. The recording has gaps. A gap of up to 2 minutes only warns. A longer gap makes the minutes inside it "Cannot test yet". |
 | Not placed | Cannot test yet | Place a Blackbox before you need it. Until then host steps say "Cannot test yet". |
 

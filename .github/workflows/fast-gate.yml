@@ -79,6 +79,8 @@ jobs:
           node tools/ci/test-web-scope.mjs
           node tools/ci/test-compare.mjs
           node tools/ci/test-promote-dist.mjs
+          node tools/ci/test-compare-e2e.mjs
+          node tools/ci/test-backlog-ids.mjs
           node tools/security/check-action-pins.mjs
 
       - name: Scope - what does this change affect?
@@ -117,6 +119,16 @@ jobs:
           # Compiles the Windows-only files too (a Windows test cannot run here, but a Windows compile error is caught).
           # shellcheck disable=SC2086
           GOOS=windows go vet $PACKAGES
+
+      # BL-422: the sidecar tag (no embedded dashboard) must keep compiling. Only the root package differs between the two builds.
+      - name: Go - build with the tauri_sidecar tag
+        if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' }}
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          go build -tags tauri_sidecar ./...
+          go test -count=1 -tags tauri_sidecar .
 
       - name: Go - tests of the affected packages (Linux, compared with the baseline)
         if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' }}

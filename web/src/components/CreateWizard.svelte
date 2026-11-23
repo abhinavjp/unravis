@@ -10,6 +10,8 @@
   import { STEP_TEXT, TITLE_PROBLEM_TEXT, WIZARD_TEXT, chosenText, envCountText, envNotes, nextBlockedLine, stepButtonLabel, stepOfText, titleCountText } from '../lib/copy/wizardCopy';
   import { caseMade } from '../lib/wizardCreate.svelte';
   import HelpNote from './HelpNote.svelte';
+  import ConfirmAsk from './sourcewiz/ConfirmAsk.svelte';
+  import { WIZ } from '../lib/copy/sourceWizardCopy';
 
   // The frame of the guide that creates a new case (layout B, Workspace): three steps (Name, Sources, Review), a progress strip, Back and Next,
   // and a draft that keeps every entry while the person moves between steps. Nothing here talks to the server; the case is made on the last step.
@@ -131,8 +133,11 @@
     if (askDialog?.open) askDialog.close();
   }
 
+  // "Start over" clears the name and every source, so it asks first (nothing is cleared while the case is being made: the button is off then).
+  let askStartOver = $state(false);
   function startOver() {
-    resetWizard();
+    askStartOver = false;
+    if (busy || !resetWizard()) return;
     resumed = false;
     titleTouched = false;
     void focusHeading();
@@ -148,9 +153,13 @@
     <p class="wiz-note">{WIZARD_TEXT.stepsNote}</p>
     <HelpNote id="wizard" />
     {#if resumed}
-      <p class="wiz-resumed" role="status">{WIZARD_TEXT.resumed} <button type="button" class="link-button" disabled={busy} onclick={startOver}>{WIZARD_TEXT.startOver}</button></p>
+      <p class="wiz-resumed" role="status">{WIZARD_TEXT.resumed} <button type="button" class="link-button" disabled={busy} onclick={() => { askStartOver = true; }}>{WIZARD_TEXT.startOver}</button></p>
     {/if}
   </header>
+
+  {#if askStartOver}
+    <ConfirmAsk id="start-over" title={WIZ.guard.startOverTitle} text={WIZ.guard.startOverText} keepLabel={WIZ.guard.startOverKeep} leaveLabel={WIZ.guard.startOverGo} onKeep={() => { askStartOver = false; }} onLeave={startOver} />
+  {/if}
 
   {#if leaving}
     <!-- A real pop-up: the page behind it is inert, Escape and the dark backdrop both mean "keep working". -->

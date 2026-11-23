@@ -318,7 +318,9 @@ func TestReadVerifiedSettingsRefusalStages(t *testing.T) {
 		{"a missing file (found by the chain check)", filepath.Join(dir, "none.json"), StagePreOpen, WordNotFound, false},
 		{"a file owned by Users", owner, StageAfterOpen, WordOwner, false},
 		{"a file over the limit", big, StageAfterOpen, WordTooLarge, false},
-		{"a folder above is a junction", filepath.Join(via, filepath.Base(good)), StageAfterOpen, WordMoved, false},
+		// Through the full reader the chain check sees the junction first (pre-open, chain); "moved" after the open is pinned by
+		// TestReadOpenedSettingsRefusesAPathThroughAJunction, which calls the opener directly.
+		{"a folder above is a junction", filepath.Join(via, filepath.Base(good)), StagePreOpen, WordChain, false},
 	} {
 		got, err := OSEnv{}.ReadVerifiedSettings(c.path)
 		mustRefuse(t, got, err, c.name, c.word)

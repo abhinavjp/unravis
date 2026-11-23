@@ -35,6 +35,8 @@ test('SEC-07: the listener is on 127.0.0.1 and never on all addresses', async ({
 test('SEC-08: a launch link that was already used explains itself, and the bare address gives no data', async ({ demo, page, api, allow }) => {
   // The browser logs the refused link as a failed resource; that is the point of this test (D-C-17).
   allow(/Failed to load resource.*launch/, 'D-C-17');
+  // The refusal page has no icon, so Chromium also asks for /favicon.ico and gets a 404.
+  allow(/Failed to load resource.*\/favicon\.ico/, 'D-C-17: the refusal page has no icon');
   const res = await page.goto(demo.link);
   const body = (await page.locator('body').innerText()).trim();
   // A plain 404 with no words is the defect: the person needs to be told the link was used.

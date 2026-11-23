@@ -30,7 +30,8 @@ function load(relativePath) {
   new Function('require', 'module', 'exports', '$state', output)(req, module, module.exports, (value) => value);
   return module.exports;
 }
-const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
+// CRLF -> LF at the read point: a Windows checkout has CRLF, and the patterns below use \n.
+const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
 
 const { caseAdded, noteCaseAdded, landedCount } = load('src/lib/caseAdded.svelte.ts');
 const { createPopupState } = load('src/lib/components/importPopup/popupState.svelte.ts');
@@ -142,7 +143,7 @@ test('the run of a new case (not an existing one) signals nothing', async () => 
 // ---- the page
 test('Case home reads the case again quietly for each signal, with no loading screen and no focus move', () => {
   const home = read('src/lib/components/CaseHome.svelte');
-  const reread = home.match(/async function rereadFiles\(\) \{[\s\S]*?\n  \}\n/)[0];
+  const reread = home.match(/async function rereadFiles\(everything = false\) \{[\s\S]*?\n  \}\n/)[0];
   assert.doesNotMatch(reread, /phase\s*=|focus\(|load\(/, 'the quiet read never shows the loading text or moves focus');
   assert.match(reread, /mine !== rereadRun/, 'an older read never overwrites a newer one');
   const loadPage = home.match(/async function loadPage\(id: string, quiet: boolean\) \{[\s\S]*?controller\?\.abort\(\);/)[0];
