@@ -137,38 +137,101 @@ func (d deps) sqlLoginDir(configPath string) (string, error) {
 	return d.sqlMgr.ConfirmLoginDir(cfg, configPath)
 }
 
-func runSetSQLLogin(a answer, d deps, configPath, file, sha string, stdin bool) int {
-	dir, err := d.sqlLoginDir(configPath)
-	if err != nil {
-		return a.failSQL(err)
-	}
+// saveLogin reads the login document and seals it into dir. It returns "" on success or the fixed reason of the failure.
+func saveLogin(d deps, dir, file, sha string, stdin bool) string {
 	if fi, serr := os.Stat(dir); serr != nil || !fi.IsDir() {
-		return a.failLogin(reasonLoginNoSQL)
+		return reasonLoginNoSQL
 	}
 	raw, err := d.readLoginInput(file, sha, stdin)
 	if err != nil {
-		return a.failLogin(reasonLoginInvalid)
+		return reasonLoginInvalid
 	}
 	defer wipe(raw)
 	var in loginInput
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if dec.Decode(&in) != nil {
-		return a.failLogin(reasonLoginInvalid)
+		return reasonLoginInvalid
 	}
 	s := bbsql.StoredLogin{Server: in.Server, Login: bbsql.Login{User: in.User, Password: in.Password}, TrustServerCertificate: in.TrustServerCertificate}
 	if s.Validate() != nil {
-		return a.failLogin(reasonLoginInvalid)
+		return reasonLoginInvalid
 	}
 	p, err := d.loginSealer()
 	if err != nil {
-		return a.failLogin(reasonLoginSave)
+		return reasonLoginSave
 	}
 	if err := bbsql.SaveLogin(dir, s, p); err != nil {
-		return a.failLogin(reasonLoginSave)
+		return reasonLoginSave
+	}
+	return ""
+}
+
+func runSetSQLLogin(a answer, d deps, configPath, file, sha string, stdin bool) int {
+	dir, err := d.sqlLoginDir(configPath)
+	if err != nil {
+		return a.failSQL(err)
+	}
+	if reason := saveLogin(d, dir, file, sha, stdin); reason != "" {
+		return a.failLogin(reason)
 	}
 	return a.ok("The SQL login is saved on this PC. Restart the SQL service (enable-sql) to use it. It is not in the settings file, the logs or any pack.",
 		map[string]any{"saved": true})
+}
+
+// runSetupSQL is the one elevated call the app makes to turn SQL collection on: it installs the SQL service when it is not there,
+// saves the login (or goes back to Windows sign-in with --windows-signin) and, with --enable, starts it. With Windows sign-in the owner
+// must run the printed grant first, so the app calls it without --enable and enables later; with a SQL login there is no grant.
+func runSetupSQL(a answer, d deps, configPath, file, sha string, windows, enable bool) int {
+	if (file == "") == !windows {
+		// exactly one of --login-file and --windows-signin
+		return a.failLogin(reasonLoginInvalid)
+	}
+	if !d.sqlMgr.Env.IsAdmin() {
+		return a.failSQL(blackbox.ErrNotAdmin)
+	}
+	cfg, err := loadInstalledConfig(configPath)
+	if err != nil {
+		return a.failSQL(err)
+	}
+	st, err := d.sqlMgr.Svc.State(blackbox.SQLServiceName)
+	if err != nil {
+		return a.failSQL(err)
+	}
+	fields := map[string]any{"service": blackbox.SQLServiceName}
+	if st == blackbox.SvcNotInstalled {
+		if err := d.sqlMgr.InstallSQL(cfg, configPath); err != nil {
+			return a.failSQL(err)
+		}
+		fields["installed"] = true
+	}
+	// The folder is proved only now: the install record and the folder lock exist once install-sql has run.
+	dir, err := d.sqlLoginDir(configPath)
+	if err != nil {
+		return a.failSQL(err)
+	}
+	if windows {
+		if err := bbsql.RemoveLogin(dir); err != nil {
+			return a.failLogin(reasonLoginSave)
+		}
+		fields["loginSaved"] = false
+		fields["account"] = blackbox.SQLServiceAccount
+		fields["grantScript"] = grantScript
+	} else {
+		if reason := saveLogin(d, dir, file, sha, false); reason != "" {
+			return a.failLogin(reason)
+		}
+		fields["loginSaved"] = true
+	}
+	if enable {
+		if err := d.sqlMgr.EnableSQL(cfg, configPath); err != nil {
+			return a.failSQL(err)
+		}
+		fields["started"] = true
+	} else {
+		fields["started"] = false
+	}
+	return a.ok("The SQL service is set up.", fields)
 }
 
 func runClearSQLLogin(a answer, d deps, configPath string) int {

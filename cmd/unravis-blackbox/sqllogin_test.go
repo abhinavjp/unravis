@@ -213,3 +213,75 @@ func TestSetSQLLoginRefusesAnUnprovenFolderWithoutReadingTheFile(t *testing.T) {
 		t.Error("cleared in an unproven folder")
 	}
 }
+
+// setup-sql with the SQL service already there: no install is attempted, so this runs on every platform.
+func setupRig(t *testing.T) (*loginRigT, string, string) {
+	t.Helper()
+	g, dir := loginRig(t)
+	g.d.sqlMgr.Svc = &memSvc{state: blackbox.SvcStopped}
+	f := filepath.Join(t.TempDir(), "login.tmp")
+	sum := sha256.Sum256([]byte(loginDoc))
+	return g, dir, f + "|" + hex.EncodeToString(sum[:])
+}
+
+func TestSetupSQLSavesTheLoginWithoutStartingIt(t *testing.T) {
+	g, dir, fs := setupRig(t)
+	f, sha, _ := strings.Cut(fs, "|")
+	if err := os.WriteFile(f, []byte(loginDoc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, out, errs := g.do("setup-sql", "--login-file", f, "--login-sha256", sha, "--json")
+	if c != 0 {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	noLoginLeak(t, out, errs)
+	if !strings.Contains(out, `"loginSaved":true`) || !strings.Contains(out, `"started":false`) || strings.Contains(out, `"installed"`) {
+		t.Fatalf("answer: %s", out)
+	}
+	if !bbsql.HasLogin(dir) {
+		t.Fatal("login not saved")
+	}
+	if _, err := os.Stat(f); err == nil {
+		t.Fatal("the login file was not removed")
+	}
+}
+
+func TestSetupSQLWindowsSigninRemovesTheLoginAndPrintsTheGrant(t *testing.T) {
+	g, dir, _ := setupRig(t)
+	if err := bbsql.SaveLogin(dir, bbsql.StoredLogin{Server: "sql01", Login: bbsql.Login{User: "u", Password: "p"}}, xorSeal{}); err != nil {
+		t.Fatal(err)
+	}
+	c, out, errs := g.do("setup-sql", "--windows-signin", "--json")
+	if c != 0 {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	if bbsql.HasLogin(dir) || !strings.Contains(out, `"loginSaved":false`) || !strings.Contains(out, "grantScript") {
+		t.Fatalf("answer: %s", out)
+	}
+}
+
+func TestSetupSQLRefusals(t *testing.T) {
+	g, dir, fs := setupRig(t)
+	f, _, _ := strings.Cut(fs, "|")
+	// Neither or both ways of signing in.
+	if c, _, _ := g.do("setup-sql", "--json"); c == 0 {
+		t.Error("ran with no sign-in choice")
+	}
+	if c, _, _ := g.do("setup-sql", "--windows-signin", "--login-file", f, "--json"); c == 0 {
+		t.Error("ran with both sign-in choices")
+	}
+	// A wrong hash saves nothing.
+	if err := os.WriteFile(f, []byte(loginDoc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, out, errs := g.do("setup-sql", "--login-file", f, "--login-sha256", strings.Repeat("0", 64), "--json")
+	if c == 0 || bbsql.HasLogin(dir) {
+		t.Errorf("wrong hash: %d %s", c, out)
+	}
+	noLoginLeak(t, out, errs)
+	// Administrator only.
+	g.admin.admin = false
+	if c, _, _ := g.do("setup-sql", "--windows-signin", "--json"); c == 0 {
+		t.Error("ran without administrator rights")
+	}
+}

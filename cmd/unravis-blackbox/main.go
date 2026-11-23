@@ -64,6 +64,9 @@ Commands that change the service (run as administrator):
               inside the locked SQL folder. Reads {"server","user","password",
               "trustServerCertificate"} from --login-stdin, or from
               --login-file with --login-sha256 (Unravis). Never printed.
+  setup-sql   One call for the app: install the SQL service if needed, save the
+              login (--login-file --login-sha256) or use Windows sign-in
+              (--windows-signin), and start it with --enable.
   clear-sql-login  Remove the saved login; the SQL service goes back to
               Windows sign-in.
   remove-sql  Stop and remove the SQL service, then print the revoke script.
@@ -334,6 +337,8 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	delRec := fs.Bool("delete-recordings", false, "also delete the recordings (remove)")
 	loginFile := fs.String("login-file", "", "file holding the SQL login, made by Unravis (set-sql-login)")
 	loginSHA := fs.String("login-sha256", "", "SHA-256 of that file (set-sql-login)")
+	windowsSignin := fs.Bool("windows-signin", false, "use Windows sign-in, not a saved SQL login (setup-sql)")
+	enableSQL := fs.Bool("enable", false, "start the SQL service when it is set up (setup-sql)")
 	loginStdin := fs.Bool("login-stdin", false, "read the SQL login from standard input (set-sql-login)")
 	confirm := fs.String("confirm-name", "", "the Blackbox name, to confirm deleting the recordings (remove)")
 	answerFile := fs.String(strings.TrimPrefix(blackbox.AnswerFileFlag, "--"), "", "write the answer to this file instead of the console (set by Unravis)")
@@ -400,7 +405,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	// relative path would resolve against the SCM's different working
 	// directory at service startup and read a different (or no) file.
 	switch cmd {
-	case "install-sql", "remove-sql", "enable-sql", "set-sql-login", "clear-sql-login":
+	case "install-sql", "remove-sql", "enable-sql", "set-sql-login", "clear-sql-login", "setup-sql":
 		if abs, err := filepath.Abs(paths.ConfigPath); err == nil {
 			paths.ConfigPath = abs
 		}
@@ -581,6 +586,8 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 			map[string]any{"serviceRemoved": true, "revokeScript": revokeScript})
 	case "set-sql-login":
 		return runSetSQLLogin(ans, d, paths.ConfigPath, *loginFile, *loginSHA, *loginStdin)
+	case "setup-sql":
+		return runSetupSQL(ans, d, paths.ConfigPath, *loginFile, *loginSHA, *windowsSignin, *enableSQL)
 	case "clear-sql-login":
 		return runClearSQLLogin(ans, d, paths.ConfigPath)
 	case "sql-service":
