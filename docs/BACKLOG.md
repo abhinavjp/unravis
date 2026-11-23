@@ -307,7 +307,7 @@ Spec per area: `docs/desktop/spec/`. Items per area: `docs/desktop/groom/` (scop
 - [ ] **BL-366** Windows hardening layer A: Job Object, handle list, mitigation policies (size L, Parallel C; see `docs/desktop/groom/04-code-mode.md`)
 - [ ] **BL-367** Windows hardening layer B: LPAC token, verification, restricted-token fallback (size L, Parallel C; see `docs/desktop/groom/04-code-mode.md`)
 - [ ] **BL-368** Installer: sandbox exe placement and `S-1-15-2-2` ACL, kept through OTA and recover (size M, Parallel C, joins P4 (installer); see `docs/desktop/groom/04-code-mode.md`)
-- [ ] **BL-369** Audit store: `code_runs` and `code_run_calls` in the sealed case DB with hash chain (size L, Parallel C; see `docs/desktop/groom/04-code-mode.md`)
+- [ ] **BL-369** Audit store: `code_runs` and `code_run_calls` in the sealed case DB with hash chain (size L, Parallel C; see `docs/desktop/groom/04-code-mode.md`) Built 2026-11-23 (PR #251), not ticked: store, chain and verify are done and tested on a real SQLite file (Linux); not run on Windows or on a live case, and the broker (BL-363) and the real identifier sweep (BL-365) that feed it are not built.
 - [ ] **BL-370** Replay and verify (`replay-divergence`) (size M, Parallel C; see `docs/desktop/groom/04-code-mode.md`)
 - [ ] **BL-371** CLI: `unravis code types | run | replay` (size M, Parallel C (after Parallel B contract; else P-flexible); see `docs/desktop/groom/04-code-mode.md`)
 - [ ] **BL-372** MCP: `unravis_types` and `unravis_execute` (size M, Parallel C (after Parallel A); see `docs/desktop/groom/04-code-mode.md`)
