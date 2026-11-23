@@ -90,16 +90,12 @@ func parseLogText(text string, loc *time.Location) []SQLLogEvent {
 }
 
 // openPlainLog opens a log file for reading: a regular file only (a link, junction
-// or device is refused), read only. It returns the size and the first bytes.
+// or device is refused), read only, opened so SQL Server can still rename or delete
+// it while it is open (log cycling). It returns the size and the first bytes. The
+// check is made on the OPEN handle (openLogHandle), so a file swapped in after a
+// path check cannot be read by mistake.
 func openPlainLog(path string) (f *os.File, size int64, head []byte, err error) {
-	li, err := os.Lstat(path)
-	if err != nil {
-		return nil, 0, nil, err
-	}
-	if !li.Mode().IsRegular() || li.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
-		return nil, 0, nil, fs.ErrInvalid
-	}
-	f, err = os.Open(path) //nolint:gosec // path comes from the SQL instance registry key and is checked by sqlLogPathOK
+	f, err = openLogHandle(path)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -155,6 +151,9 @@ func readChunk(f *os.File, off, size, budget int64, utf bool) (text string, cons
 		return "", 0, false
 	}
 	more = off+n < size
+	if utf && off+n+2 > size {
+		more = false // only half a character is left: it is still being written, not backlog
+	}
 	buf := make([]byte, n)
 	got, _ := f.ReadAt(buf, off)
 	buf = buf[:got]
@@ -203,7 +202,7 @@ func readErrorLog(path string, cur sqlLogCursor, budget int64, loc *time.Locatio
 		out.unreadable = true
 		return out
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if !cur.Seen {
 		h, n := newHead(head)
 		out.cur = sqlLogCursor{Seen: true, Offset: endPosition(size, head), Head: h, HeadLen: n}

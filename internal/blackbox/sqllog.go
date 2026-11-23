@@ -30,6 +30,15 @@ import (
 //   - Regular files only: a link, junction or device is refused. The file is
 //     opened read only and never written, moved or deleted.
 //
+// Known limits (said plainly): text that SQL Server itself writes into the ERRORLOG
+// (a failed login name with a line break, RAISERROR ... WITH LOG) can imitate an
+// "Error: N, Severity: S, State: T." line, so a count here is evidence, not proof;
+// nothing but digits of those fixed shapes can come out, and lines dated more than
+// two hours ahead are dropped. The cursor lives in memory only: after a recorder
+// restart the read starts at the end of the file, so a "SQL Server is starting" line
+// written before the recorder came up is not seen. A cycle can read the old tail and
+// the new file in one poll, so one poll reads at most twice sqlLogPollBytes.
+//
 // ERRORLOG is read forward from a cursor (file offset plus the first bytes of the
 // file, to notice a cycle). The cursor moves only after the recorder has durably
 // written the sample (Ack), the same rule as the Windows event log group. With no
@@ -44,7 +53,10 @@ const (
 	sqlLogPollBytes     = 256 << 10        // read at most this much of one ERRORLOG per poll
 	sqlLogMaxInstances  = 8
 	sqlLogMaxEvents     = 256
-	sqlLogHeadBytes     = 32
+	sqlLogHeadBytes     = 128 // the first line, with its fractional seconds: two logs cycled in the same minute still differ
+	// sqlLogFutureSlack is how far ahead of the clock a line's time may be (time zone
+	// and daylight saving differences) before the line is dropped.
+	sqlLogFutureSlack = 2 * time.Hour
 )
 
 // SQL host log item ids, as they appear in sql.extras (they are not SQL samplers).
@@ -87,13 +99,16 @@ type sqlLogCursor struct {
 
 // sqlLogCursors is the whole read position of the group.
 type sqlLogCursors struct {
+	// Gen counts emitted batches, so a batch whose positions did not move (only a
+	// flag such as Unreadable) is still told apart from the one before it.
+	Gen         uint64
 	Log         map[string]sqlLogCursor
 	HealthT     map[string]time.Time
 	HealthNoted bool
 }
 
 func (c sqlLogCursors) clone() sqlLogCursors {
-	out := sqlLogCursors{HealthNoted: c.HealthNoted, Log: map[string]sqlLogCursor{}, HealthT: map[string]time.Time{}}
+	out := sqlLogCursors{Gen: c.Gen, HealthNoted: c.HealthNoted, Log: map[string]sqlLogCursor{}, HealthT: map[string]time.Time{}}
 	for k, v := range c.Log {
 		out.Log[k] = v
 	}
@@ -104,7 +119,7 @@ func (c sqlLogCursors) clone() sqlLogCursors {
 }
 
 func (c sqlLogCursors) equal(o sqlLogCursors) bool {
-	return c.HealthNoted == o.HealthNoted && reflect.DeepEqual(c.Log, o.Log) && reflect.DeepEqual(c.HealthT, o.HealthT)
+	return c.Gen == o.Gen && c.HealthNoted == o.HealthNoted && reflect.DeepEqual(c.Log, o.Log) && reflect.DeepEqual(c.HealthT, o.HealthT)
 }
 
 // sqlLogCommitted holds the acknowledged cursors (written by the recorder goroutine
@@ -226,6 +241,9 @@ func (g *sqlLogGroup) Collect(now time.Time, dt float64) (any, error) {
 				out.Unreadable++
 			}
 			for _, e := range r.events {
+				if e.T.After(now.Add(sqlLogFutureSlack)) {
+					continue // a line dated in the future is not believed (clock or forged text)
+				}
 				e.Instance = in.Label
 				errRows = append(errRows, e)
 			}
@@ -238,12 +256,14 @@ func (g *sqlLogGroup) Collect(now time.Time, dt float64) (any, error) {
 			evs, err := g.decodeHealth(filepath.Dir(in.LogPath), since)
 			switch {
 			case err != nil:
-				out.HealthUnavailable = !next.HealthNoted
+				if !cur.HealthNoted {
+					out.HealthUnavailable = true // said once, whichever instance is read last
+				}
 				next.HealthNoted = true
 			default:
 				latest := since
 				for _, e := range evs {
-					if !e.T.After(since) {
+					if !sqlHealthKindOK(e.Kind) || !e.T.After(since) {
 						continue
 					}
 					healthRows = append(healthRows, SQLHealthEvent{Instance: in.Label, Kind: e.Kind, Count: 1, MaxMs: e.Ms, T: e.T.UTC()})
@@ -255,14 +275,29 @@ func (g *sqlLogGroup) Collect(now time.Time, dt float64) (any, error) {
 			}
 		}
 	}
-	out.Errors = aggregateSQLLog(errRows)
-	out.Health = aggregateSQLHealth(healthRows)
+	if out.Truncated {
+		g.lastPoll = time.Time{} // more is waiting: read on at the next tick, not a minute later
+	}
+	var cutE, cutH bool
+	out.Errors, cutE = aggregateSQLLog(errRows)
+	out.Health, cutH = aggregateSQLHealth(healthRows)
+	out.Truncated = out.Truncated || cutE || cutH // entries over the cap were dropped: said, not silent
 	if len(out.Errors) == 0 && len(out.Health) == 0 && !out.Truncated && out.Unreadable == 0 && out.Lost == 0 && !out.HealthUnavailable {
 		g.committed.store(next) // nothing to write: the position can move now
 		return nil, errQuiet
 	}
+	next.Gen = cur.Gen + 1
 	g.pending = &sqlLogPending{cursors: next, group: out}
 	return g.payload(g.pending), nil
+}
+
+// sqlHealthKindOK says a decoded event kind is one of the fixed words.
+func sqlHealthKindOK(k string) bool {
+	switch k {
+	case SQLHealthDeadlock, SQLHealthLongWait, SQLHealthNonYield, SQLHealthSlowIO, SQLHealthError:
+		return true
+	}
+	return false
 }
 
 func (g *sqlLogGroup) found() []sqlLogInstance {
@@ -293,12 +328,18 @@ func (g *sqlLogGroup) payload(p *sqlLogPending) *SQLLogGroup {
 // named ERRORLOG. The registry is written by administrators only, but the host
 // reads as LocalSystem, so it still refuses any other name.
 func sqlLogPathOK(p string) bool {
+	// A path that starts with two separators is a network share or a device path
+	// (\\host\share, \\?\UNC\..., \\.\...): LocalSystem would reach out to another
+	// machine as the computer account, so only a local drive path is accepted.
+	if strings.HasPrefix(p, `\\`) || strings.HasPrefix(p, "//") {
+		return false
+	}
 	return p != "" && filepath.IsAbs(p) && strings.EqualFold(filepath.Base(p), "ERRORLOG")
 }
 
 // aggregateSQLLog counts rows by every field but time, keeps the latest time and
 // caps the entries (newest first).
-func aggregateSQLLog(rows []SQLLogEvent) []SQLLogEvent {
+func aggregateSQLLog(rows []SQLLogEvent) ([]SQLLogEvent, bool) {
 	type key struct {
 		inst, kind string
 		num        uint32
@@ -340,13 +381,14 @@ func aggregateSQLLog(rows []SQLLogEvent) []SQLLogEvent {
 		}
 		return out[i].Number < out[j].Number
 	})
-	if len(out) > sqlLogMaxEvents {
+	cut := len(out) > sqlLogMaxEvents
+	if cut {
 		out = out[:sqlLogMaxEvents]
 	}
-	return out
+	return out, cut
 }
 
-func aggregateSQLHealth(rows []SQLHealthEvent) []SQLHealthEvent {
+func aggregateSQLHealth(rows []SQLHealthEvent) ([]SQLHealthEvent, bool) {
 	type key struct{ inst, kind string }
 	by := map[key]*SQLHealthEvent{}
 	for _, r := range rows {
@@ -358,7 +400,11 @@ func aggregateSQLHealth(rows []SQLHealthEvent) []SQLHealthEvent {
 			e = &c
 			by[k] = e
 		}
-		e.Count += r.Count
+		if e.Count+r.Count < e.Count {
+			e.Count = ^uint32(0)
+		} else {
+			e.Count += r.Count
+		}
 		if r.MaxMs > e.MaxMs {
 			e.MaxMs = r.MaxMs
 		}
@@ -379,8 +425,9 @@ func aggregateSQLHealth(rows []SQLHealthEvent) []SQLHealthEvent {
 		}
 		return out[i].Kind < out[j].Kind
 	})
-	if len(out) > sqlLogMaxEvents {
+	cut := len(out) > sqlLogMaxEvents
+	if cut {
 		out = out[:sqlLogMaxEvents]
 	}
-	return out
+	return out, cut
 }

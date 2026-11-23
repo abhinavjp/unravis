@@ -22,7 +22,7 @@ func utf16le(s string, bom bool) []byte {
 		out = append(out, 0xFF, 0xFE)
 	}
 	for _, u := range utf16.Encode([]rune(s)) {
-		out = append(out, byte(u), byte(u>>8))
+		out = append(out, byte(u&0xff), byte(u>>8)) //nolint:gosec // G115: the low and high byte of a 16-bit unit
 	}
 	return out
 }
@@ -36,11 +36,11 @@ func writeFile(t *testing.T, path string, b []byte) {
 
 func appendFile(t *testing.T, path string, b []byte) {
 	t.Helper()
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // G304: a test temp file
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Write(b); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestSQLLogNeverKeepsText(t *testing.T) {
 	p := filepath.Join(dir, "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	g := newTestLogGroup(p, true, false)
-	now := time.Unix(1_700_000_000, 0)
+	now := time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC)
 	if _, err := g.Collect(now, 15); !errors.Is(err, errQuiet) {
 		t.Fatalf("first look: %v", err)
 	}
@@ -286,16 +286,17 @@ func TestSQLLogAggregatesAndCountsLatest(t *testing.T) {
 		{Instance: "A", Kind: "error", Number: 18456, Severity: 14, State: 5, Count: 1, T: time.Unix(200, 0)},
 		{Instance: "A", Kind: "slowio", Seconds: 15, Database: 5, Count: 3, T: time.Unix(50, 0)},
 	}
-	out := aggregateSQLLog(rows)
-	if len(out) != 3 || out[0].Count != 2 || !out[0].T.Equal(time.Unix(300, 0)) {
+	out, cut := aggregateSQLLog(rows)
+	if cut || len(out) != 3 || out[0].Count != 2 || !out[0].T.Equal(time.Unix(300, 0)) {
 		t.Fatalf("out = %+v", out)
 	}
 	big := make([]SQLLogEvent, 0, 600)
 	for i := 0; i < 600; i++ {
 		big = append(big, SQLLogEvent{Instance: "A", Kind: "error", Number: uint32(i), Count: 1, T: time.Unix(int64(i), 0)})
 	}
-	if got := len(aggregateSQLLog(big)); got != sqlLogMaxEvents {
-		t.Fatalf("cap = %d", got)
+	capped, cut := aggregateSQLLog(big)
+	if len(capped) != sqlLogMaxEvents || !cut {
+		t.Fatalf("cap = %d cut = %v: dropped rows must be said", len(capped), cut)
 	}
 }
 
@@ -303,7 +304,7 @@ func TestSQLLogAckMovesTheCursorOnlyAfterTheWrite(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	g := newTestLogGroup(p, true, false)
-	now := time.Unix(1_700_000_000, 0)
+	now := time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC)
 	_, _ = g.Collect(now, 15) // first look
 	appendFile(t, p, utf16le("2026-11-23 10:15:32.12 Logon       Error: 18456, Severity: 14, State: 8.\r\n", false))
 	v, err := g.Collect(now.Add(time.Minute), 15)
@@ -340,12 +341,17 @@ func TestSQLLogQuietBetweenPolls(t *testing.T) {
 	g := newTestLogGroup(p, true, false)
 	inner := g.discover
 	g.discover = func() []sqlLogInstance { reads++; return inner() }
-	now := time.Unix(1_700_000_000, 0)
-	for i := 0; i < 8; i++ { // 8 ticks of 15 s: two polls at most
-		_, err := g.Collect(now.Add(time.Duration(i)*15*time.Second), 15)
-		if !errors.Is(err, errQuiet) {
-			t.Fatalf("tick %d: %v", i, err)
+	now := time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC)
+	_, _ = g.Collect(now, 15) // first look: the position is the end of the file
+	appendFile(t, p, utf16le("2026-11-23 10:30:05.00 Logon       Error: 18456, Severity: 14, State: 8.\r\n", false))
+	for _, d := range []time.Duration{15, 30, 45} {
+		if v, err := g.Collect(now.Add(d*time.Second), 15); !errors.Is(err, errQuiet) || v != nil {
+			t.Fatalf("+%ds: the file must not be read between polls: (%v, %v)", d, v, err)
 		}
+	}
+	v, err := g.Collect(now.Add(61*time.Second), 15)
+	if err != nil || v == nil {
+		t.Fatalf("the next poll must read the line: (%v, %v)", v, err)
 	}
 	if reads != 1 {
 		t.Fatalf("instances were looked up %d times, want 1 (every 10 minutes)", reads)
@@ -354,7 +360,7 @@ func TestSQLLogQuietBetweenPolls(t *testing.T) {
 
 func TestSQLLogUnreadableFileIsNamed(t *testing.T) {
 	g := newTestLogGroup(filepath.Join(t.TempDir(), "ERRORLOG"), true, false)
-	v, err := g.Collect(time.Unix(1_700_000_000, 0), 15)
+	v, err := g.Collect(time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC), 15)
 	if err != nil || v == nil || v.(*SQLLogGroup).Unreadable != 1 {
 		t.Fatalf("a file that cannot be read must show, not vanish: (%v, %v)", v, err)
 	}
@@ -383,7 +389,7 @@ func TestSQLLogSystemHealthNotAvailableIsNamedOnce(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
 	g := newTestLogGroup(p, false, true)
-	now := time.Unix(1_700_000_000, 0)
+	now := time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC)
 	v, err := g.Collect(now, 15)
 	if err != nil || v == nil || !v.(*SQLLogGroup).HealthUnavailable {
 		t.Fatalf("first answer must say not available: (%v, %v)", v, err)
@@ -397,7 +403,7 @@ func TestSQLLogSystemHealthNotAvailableIsNamedOnce(t *testing.T) {
 func TestSQLLogSystemHealthEventsAreCountedOnce(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "ERRORLOG")
 	writeFile(t, p, utf16le(logBanner, true))
-	now := time.Unix(1_700_000_000, 0)
+	now := time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC)
 	events := []rawHealth{
 		{Kind: SQLHealthDeadlock, T: now.Add(-time.Hour)}, // before the start: never backfilled
 		{Kind: SQLHealthDeadlock, T: now.Add(10 * time.Second)},
@@ -485,5 +491,133 @@ func TestSQLLogSampleRoundTripAndAck(t *testing.T) {
 	}
 	if strings.Contains(line, "commit") || strings.Contains(line, "pending") {
 		t.Fatalf("ack fields must not be written: %s", line)
+	}
+}
+
+func TestSQLLogDropsLinesDatedInTheFuture(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	writeFile(t, p, utf16le(logBanner, true))
+	g := newTestLogGroup(p, true, false)
+	now := time.Date(2026, 11, 23, 10, 0, 0, 0, time.UTC)
+	_, _ = g.Collect(now, 15)
+	appendFile(t, p, utf16le("2026-11-23 10:00:05.00 Logon       Error: 18456, Severity: 14, State: 8.\r\n2031-01-01 00:00:00.00 Logon       Error: 9999, Severity: 20, State: 1.\r\n", false))
+	v, err := g.Collect(now.Add(2*time.Minute), 15)
+	if err != nil || v == nil {
+		t.Fatalf("Collect: (%v, %v)", v, err)
+	}
+	es := v.(*SQLLogGroup).Errors
+	if len(es) != 1 || es[0].Number != 18456 {
+		t.Fatalf("a forged future line must be dropped: %+v", es)
+	}
+}
+
+func TestSQLLogPathOKRefusesNetworkAndDevicePaths(t *testing.T) {
+	for _, p := range []string{`\\host\share\ERRORLOG`, `\\?\UNC\host\share\ERRORLOG`, `\\?\GLOBALROOT\Device\x\ERRORLOG`, `\\.\pipe\ERRORLOG`, `//host/share/ERRORLOG`, ""} {
+		if sqlLogPathOK(p) {
+			t.Errorf("%q must be refused", p)
+		}
+	}
+}
+
+func TestSQLLogUnknownHealthKindIsDropped(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	writeFile(t, p, utf16le(logBanner, true))
+	now := time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC)
+	g := newTestLogGroup(p, false, true)
+	g.decodeHealth = func(string, time.Time) ([]rawHealth, error) {
+		return []rawHealth{{Kind: "password=hunter2", T: now.Add(time.Second)}, {Kind: SQLHealthDeadlock, T: now.Add(2 * time.Second)}}, nil
+	}
+	v, err := g.Collect(now, 15)
+	if err != nil || v == nil {
+		t.Fatalf("Collect: (%v, %v)", v, err)
+	}
+	h := v.(*SQLLogGroup).Health
+	if len(h) != 1 || h[0].Kind != SQLHealthDeadlock {
+		t.Fatalf("health = %+v", h)
+	}
+}
+
+func TestSQLLogNotAvailableIsSaidWithSeveralInstances(t *testing.T) {
+	root := t.TempDir()
+	a, b := filepath.Join(root, "a", "ERRORLOG"), filepath.Join(root, "b", "ERRORLOG")
+	for _, p := range []string{a, b} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, p, utf16le(logBanner, true))
+	}
+	g := newTestLogGroup(a, false, true)
+	g.discover = func() []sqlLogInstance {
+		return []sqlLogInstance{{Label: "A", LogPath: a}, {Label: "B", LogPath: b}}
+	}
+	v, err := g.Collect(time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC), 15)
+	if err != nil || v == nil || !v.(*SQLLogGroup).HealthUnavailable {
+		t.Fatalf("two instances must still say not available: (%v, %v)", v, err)
+	}
+}
+
+func TestSQLLogRepeatedFlagBatchesAreAckedOneByOne(t *testing.T) {
+	g := newTestLogGroup(filepath.Join(t.TempDir(), "ERRORLOG"), true, false) // missing file: Unreadable every poll
+	now := time.Date(2026, 11, 23, 10, 30, 0, 0, time.UTC)
+	v1, _ := g.Collect(now, 15)
+	if v1 == nil {
+		t.Fatal("no first batch")
+	}
+	// Not acked yet (the write failed): the same batch comes again.
+	if v, _ := g.Collect(now.Add(61*time.Second), 15); v == nil {
+		t.Fatal("an unacked batch must be re-sent")
+	}
+	v1.(*SQLLogGroup).Ack()
+	// After the ack the next poll makes a NEW batch, which is not acked by the old ack.
+	v2, _ := g.Collect(now.Add(122*time.Second), 15)
+	if v2 == nil {
+		t.Fatal("no second batch")
+	}
+	if v3, _ := g.Collect(now.Add(123*time.Second), 15); v3 == nil {
+		t.Fatal("the second batch was treated as acked before its write")
+	}
+}
+
+func TestReadErrorLogTwoLogsStartedInTheSameMinuteAreTold(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "ERRORLOG")
+	first := "2026-11-23 10:15:01.10 Server      Microsoft SQL Server 2019\r\n2026-11-23 10:15:01.11 Server      SQL Server is starting at normal priority base (=7).\r\n"
+	second := "2026-11-23 10:15:09.40 Server      Microsoft SQL Server 2019\r\n2026-11-23 10:15:09.41 Server      SQL Server is starting at normal priority base (=7).\r\n"
+	writeFile(t, p, utf16le(first, true))
+	cur := readErrorLog(p, sqlLogCursor{}, 1<<20, utc).cur
+	if err := os.Rename(p, p+".1"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, p, utf16le(second+strings.Repeat("x", 10)+"\r\n", true))
+	r := readErrorLog(p, cur, 1<<20, utc)
+	if r.lost != 0 || len(r.events) != 1 || r.events[0].Kind != SQLLogKindStartup {
+		t.Fatalf("a cycled log with the same start minute must be noticed and its startup line read: %+v", r)
+	}
+}
+
+func TestReadErrorLogTruncatedInPlaceReadsFromTheTop(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	writeFile(t, p, utf16le(logBanner+logBanner, true))
+	cur := readErrorLog(p, sqlLogCursor{}, 1<<20, utc).cur
+	writeFile(t, p, utf16le("2026-11-23 10:21:00.00 Logon       Error: 18456, Severity: 14, State: 5.\r\n", true))
+	r := readErrorLog(p, cur, 1<<20, utc)
+	if len(r.events) != 1 || r.lost != 1 {
+		t.Fatalf("a shrunk file starts again from the top and says it lost something: %+v", r)
+	}
+}
+
+func TestReadErrorLogOddUTF16TailWaits(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "ERRORLOG")
+	writeFile(t, p, utf16le(logBanner, true))
+	cur := readErrorLog(p, sqlLogCursor{}, 1<<20, utc).cur
+	line := utf16le("2026-11-23 10:15:32.12 Logon       Error: 18456, Severity: 14, State: 8.\r\n", false)
+	appendFile(t, p, line[:len(line)-1]) // the last byte of the final newline has not arrived
+	r := readErrorLog(p, cur, 1<<20, utc)
+	if len(r.events) != 0 || r.cur.Offset != cur.Offset || r.cur.Offset%2 != 0 {
+		t.Fatalf("an unfinished character must wait: %+v", r)
+	}
+	appendFile(t, p, line[len(line)-1:])
+	if r2 := readErrorLog(p, r.cur, 1<<20, utc); len(r2.events) != 1 {
+		t.Fatalf("after the byte arrives the line is read: %+v", r2)
 	}
 }
