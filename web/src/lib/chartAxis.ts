@@ -90,7 +90,9 @@ export const valueAxis = (values: ReadonlyArray<number | null | undefined>, want
   const top = high > 0 ? high : floorTop;
   const max = Number((Math.max(1, Math.ceil(Number((top / step).toPrecision(12)))) * step).toPrecision(12));
   const format = (value: number) => fixedNumber(value, decimals, locale);
-  return { min, max, interval: step, decimals, format, widest: format(Math.abs(min) > max ? min : max) };
+  // The longest of the two end labels: the bottom one carries a minus sign.
+  const bottom = format(min), topLabel = format(max);
+  return { min, max, interval: step, decimals, format, widest: bottom.length > topLabel.length ? bottom : topLabel };
 };
 
 /**

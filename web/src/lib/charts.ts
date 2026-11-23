@@ -402,7 +402,8 @@ export const multiTimelineOption = (analysis: Analysis, keys: string[], sources:
   const counts = countAxis(Math.max(0, ...shown));
   const changeMs = signedDurationAxis(shown), changePercent = valueAxis(shown, 4, 10);
   const yTitle = failure ? failuresAxisTitle : changeAxisTitle(mode === 'percent' ? '%' : changeMs.unit);
-  const yWidest = failure ? counts.widest : mode === 'percent' ? changePercent.widest : changeMs.widest;
+  // Positive ticks of the change axes carry a "+", so the margin counts one more character.
+  const yWidest = failure ? counts.widest : '+' + (mode === 'percent' ? changePercent.widest : changeMs.widest);
   return {
     animation: false,
     grid: { left: leftMargin(yWidest, 90), right: 78, top: 20, bottom: SLIDER_GRID_BOTTOM + 4 },

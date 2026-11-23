@@ -1,4 +1,4 @@
-import { countAxis, durationAxis, hourAxisTitle, labelWidth, requestsAxisTitle } from './chartAxis';
+import { countAxis, durationAxis, hourAxisTitle, labelWidth } from './chartAxis';
 import { HOURS_PER_ROW, dayLabel, gridRows, latencyText, whole, zoneNote, type GridRow, type HourCell, type HourGridResponse } from './rollup';
 
 /*
@@ -214,7 +214,7 @@ export function overlayOption(first: OverlayDay, second: OverlayDay, metric: Ove
     xAxis: { type: 'category', data: hours, boundaryGap: false, axisLabel: { color: p.text2, interval: 2, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } }, name: hourAxisTitle, nameLocation: 'middle', nameGap: 28, nameTextStyle: titleStyle },
     yAxis: {
       type: 'value', min: 0, ...(ms ? { max: times.maxMs, interval: times.intervalMs } : { max: counts.max, interval: counts.interval }),
-      name: ms ? 'P95 response time (' + times.unit + ')' : requestsAxisTitle, nameLocation: 'middle', nameGap: labelWidth(widest) + 14, nameTextStyle: titleStyle,
+      name: ms ? 'P95 response time (' + times.unit + ')' : 'Requests per hour', nameLocation: 'middle', nameGap: labelWidth(widest) + 14, nameTextStyle: titleStyle,
       axisLabel: { color: p.text2, formatter: (value: number) => ms ? times.format(value) : counts.format(value) }, splitLine: { lineStyle: { color: p.grid } }
     },
     series

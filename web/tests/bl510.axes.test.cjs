@@ -21,7 +21,8 @@ const analysisOf = (apis, points) => ({
 });
 const pt = (i, over = {}) => ({ at: at(i), count: 5, p50: q(100), p90: q(150), p95: q(200), p99: q(300), p95Ratio: 2, count4xx: 1, count5xx: 2, incomplete: 0, ...over });
 const ticksOf = (ax, values) => values.map(value => ax.axisLabel.formatter(value));
-const decimalsIn = (text) => (String(text).split(/[.,]/).length > 1 && /\.\d+$/.test(text) ? text.split('.').pop().length : 0);
+// Decimals of a tick label: the sign, the "×" and the unit are not digits.
+const decimalsIn = (text) => { const m = /\.(\d+)/.exec(String(text)); return m ? m[1].length : 0; };
 
 test('valueAxis: zero is inside, every tick has the same decimals, the top covers the largest value', () => {
   const a = axis.valueAxis([0.4, 1.7, null, NaN, undefined], 4, 2);
@@ -43,8 +44,7 @@ test('signedDurationAxis: milliseconds below a second at the farthest value, sec
   const s = axis.signedDurationAxis([-2500, 9000]);
   assert.equal(s.unit, 's');
   assert.ok(s.min <= -2500 && s.max >= 9000, 'min and max stay in milliseconds, the unit of the data');
-  assert.equal(s.format(s.max), s.format(9000 + (s.max - 9000)));
-  assert.doesNotMatch(s.format(1000), /s$/, 'the unit is in the axis title, not in the ticks');
+    assert.doesNotMatch(s.format(1000), /s$/, 'the unit is in the axis title, not in the ticks');
   // 999.6 ms is a second; the axis and durationText agree.
   assert.equal(axis.signedDurationAxis([999.6]).unit, 's');
   assert.equal(axis.signedDurationAxis([]).unit, 'ms');
@@ -131,9 +131,24 @@ test('daily overlay: both axes titled, count axis whole, P95 axis one unit', () 
   assert.equal(p95.xAxis.name, 'Hour of the day');
   assert.equal(p95.yAxis.name, 'P95 response time (s)', 'the slowest hour is 2.4 s');
   const count = overlay.overlayOption(a, b, 'count', palette);
-  assert.equal(count.yAxis.name, 'Requests per interval');
+  assert.equal(count.yAxis.name, 'Requests per hour');
   assert.ok(Number.isInteger(count.yAxis.interval));
   // Empty days still build.
   const empty = { ...a, points: a.points.map(point => ({ ...point, p95: null, count: null, exists: false })) };
   assert.doesNotThrow(() => overlay.overlayOption(empty, empty, 'p95', palette));
+});
+
+test('the margin counts the sign: the widest label of a signed axis is the longer end, with the plus sign on the change axes', () => {
+  const a = axis.valueAxis([-10, 20], 4, 10);
+  assert.equal(a.widest, a.format(a.min).length > a.format(a.max).length ? a.format(a.min) : a.format(a.max));
+  const n = axis.valueAxis([-900, 100], 4, 10);
+  assert.ok(n.widest.startsWith('-'), 'the bottom label is the longest: ' + n.widest);
+  const d = axis.signedDurationAxis([-900, 900]);
+  assert.ok(d.widest.length >= d.format(d.min).length);
+  // The compare chart reserves room for "+" on positive ticks: its title gap is wider than the bare label's by one character.
+  const ref = { p50: q(100), p90: q(150), p95: q(200), p99: q(300) };
+  const a2 = analysisOf([row('a', ref)], [pt(0, { p95: q(1200) }), pt(1, { p95: q(1100) })]);
+  const o = charts.multiTimelineOption(a2, ['a'], new Map(), 'UTC', 'percent', 'p95');
+  const bare = axis.valueAxis([1000, 500], 4, 10).widest;
+  assert.ok(o.yAxis.nameGap >= axis.labelWidth('+' + bare) + 14 - 1);
 });
