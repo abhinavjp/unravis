@@ -256,3 +256,13 @@ test('appendEvidence keeps existing references, adds new ones once', () => {
   assert.equal(ledger.appendEvidence('', ['x', 'x']), 'x');
   assert.equal(ledger.appendEvidence('a, b', []), 'a\nb');
 });
+
+test('BL-495g: the Ledger drawer has one plain line and the privacy notice before the list, not three intro lines', () => {
+  const panel = fs.readFileSync(path.join(root, 'src/components/LedgerPanel.svelte'), 'utf8');
+  const drawerTag = panel.match(/<Drawer [^>]*>/);
+  assert.ok(drawerTag, 'the panel opens a Drawer');
+  assert.doesNotMatch(drawerTag[0], /intro=/, 'the drawer heading carries no intro: the plain line under it (HelpNote) already says what the ledger is');
+  assert.equal('intro' in ledger.ledgerCopy, false, 'no unused intro sentence is kept in the copy');
+  assert.match(panel, /<HelpNote id="ledger" \/>/, 'the one plain line (with its "In simple words" button) stays');
+  assert.match(panel, /<p class="demo-note">\{copy\.notice\}<\/p>/, 'the privacy notice stays');
+});

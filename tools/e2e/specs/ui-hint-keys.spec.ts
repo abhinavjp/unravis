@@ -11,16 +11,30 @@ import { test, expect, type Page } from '../support/fixtures';
 const button = (page: Page) => page.getByRole('button', { name: /^What does .* mean\?$/ }).first();
 const popover = (page: Page) => page.locator('.hint-popover');
 
+/** Watches the page for `ms` and says whether a hint popover was ever in it (a MutationObserver sees one that shows and goes within a frame). */
+const popoverEverAppears = (page: Page, ms: number) =>
+  page.evaluate(
+    (wait) =>
+      new Promise<boolean>((done) => {
+        let seen = !!document.querySelector('.hint-popover');
+        const watch = new MutationObserver(() => { if (document.querySelector('.hint-popover')) seen = true; });
+        watch.observe(document.body, { childList: true, subtree: true });
+        setTimeout(() => { watch.disconnect(); done(seen); }, wait);
+      }),
+    ms
+  );
+
 test('HINTKEY-01 hover alone and focus alone do not open a hint', async ({ page }) => {
   const b = button(page);
   await expect(b).toBeVisible();
+  // "Nothing happens" is watched for 400 ms by an observer in the page, so a popover that shows and goes between two checks is seen too.
+  const hovered = popoverEverAppears(page, 400);
   await b.hover();
-  await page.waitForTimeout(400);
-  await expect(popover(page)).toHaveCount(0);
+  expect(await hovered).toBe(false);
   await page.mouse.move(5, 5);
+  const focused = popoverEverAppears(page, 400);
   await b.focus();
-  await page.waitForTimeout(400);
-  await expect(popover(page)).toHaveCount(0);
+  expect(await focused).toBe(false);
   await expect(b).toHaveAttribute('aria-expanded', 'false');
 });
 
@@ -56,6 +70,7 @@ test('HINTKEY-04 a click opens the hint, a click elsewhere closes it, and the bu
   await expect(b).toHaveAttribute('aria-haspopup', 'dialog');
   await b.click();
   await expect(popover(page)).toBeVisible();
-  await page.mouse.click(700, 880);
+  // A press on a neutral place (the page heading), not a coordinate that may hold a control after a layout change.
+  await page.getByRole('heading', { name: 'Unravis', level: 1 }).click();
   await expect(popover(page)).toHaveCount(0);
 });
