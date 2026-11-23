@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"api-audit-explorer/internal/audit"
+	"encoding/json"
 	"strconv"
 	"strings"
 )
@@ -34,6 +35,20 @@ func object(properties map[string]any, required ...string) map[string]any {
 func textSchema(description string) map[string]any {
 	return map[string]any{"type": "string", "description": description}
 }
+// Catalog returns a copy of the tool definitions the server advertises (name, description, inputSchema, annotations), for readers that
+// describe them (the command line's schema command). Changing the copy changes nothing.
+func Catalog() []map[string]any {
+	b, err := json.Marshal(tools())
+	if err != nil {
+		return nil
+	}
+	var out []map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
 func tools() []map[string]any {
 	integer := func(min, max int) map[string]any {
 		return map[string]any{"type": "integer", "minimum": min, "maximum": max}

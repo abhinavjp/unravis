@@ -1,0 +1,18 @@
+{
+  "operation": "blackbox.inspect",
+  "description": "Read a Blackbox recording folder or hourly file from disk, with no running app, and say what it holds.",
+  "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "required": ["input"], "properties": {
+    "input": {"type": "string", "description": "A Blackbox recordings folder, or one hourly file bb-YYYYMMDD-HH.ndjson"},
+    "from": {"type": "string", "format": "date-time"}, "to": {"type": "string", "format": "date-time"},
+    "maxBytes": {"type": "integer", "minimum": 1, "default": 268435456},
+    "samples": {"type": "integer", "minimum": 0, "maximum": 1000, "default": 0}}},
+  "output": {"type": "object", "required": ["input", "kind", "manifest", "samples", "warnings"], "properties": {
+    "input": {"type": "string"}, "kind": {"enum": ["folder", "file"]},
+    "manifest": {"type": ["object", "null"], "properties": {"version": {"type": "integer"}, "host": {"type": "string"}, "state": {"type": "string"},
+      "firstSample": {"type": ["string", "null"]}, "lastSample": {"type": ["string", "null"]}, "files": {"type": "integer"}, "gaps": {"type": "integer"},
+      "events": {"type": "integer"}, "samples": {"type": "integer"}}},
+    "samples": {"type": "object", "properties": {"count": {"type": "integer"}, "from": {"type": ["string", "null"]}, "to": {"type": ["string", "null"]}, "first": {"type": "array"}}},
+    "warnings": {"type": "array", "items": {"type": "string"}}}},
+  "errors": ["INVALID_ARGUMENT", "LIVE_CASE_REFUSED", "REQUEST_TOO_LARGE", "NOT_FOUND", "VERSION_INCOMPATIBLE", "TIMEOUT", "CANCELED", "PERMISSION_DENIED"],
+  "examples": [{"command": "unravis blackbox inspect --offline --input D:\\copy\\bb -o json"}]
+}

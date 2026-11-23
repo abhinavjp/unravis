@@ -31,6 +31,8 @@ type Options struct {
 	MaxBytes int64
 	// Samples is how many of the first parsed samples to return as well (0 to MaxSamples).
 	Samples int
+	// From and To limit the window that is read (To is exclusive); a zero time leaves that side open.
+	From, To time.Time
 }
 
 // Manifest is what an inspection says about manifest.json (counts and times, no process or file names).
@@ -162,6 +164,9 @@ func Inspect(ctx context.Context, input string, opt Options) (*Result, *clicore.
 	if opt.Samples < 0 || opt.Samples > MaxSamples {
 		return nil, clicore.NewError(clicore.CodeInvalidArgument, "--samples must be from 0 to 1000.", "")
 	}
+	if !opt.From.IsZero() && !opt.To.IsZero() && !opt.From.Before(opt.To) {
+		return nil, clicore.NewError(clicore.CodeInvalidArgument, "--from must be before --to.", "")
+	}
 	if input == "" || strings.ContainsRune(input, 0) {
 		return nil, clicore.NewError(clicore.CodeInvalidArgument, "Give the folder of a Blackbox recording, or one of its hourly files.", "")
 	}
@@ -273,6 +278,12 @@ func uniqueFiles(in []blackbox.FileEntry) []blackbox.FileEntry {
 }
 
 func readInto(ctx context.Context, src blackbox.Source, m blackbox.Manifest, from, to time.Time, opt Options, res *Result) (*Result, *clicore.Error) {
+	if !opt.From.IsZero() && opt.From.After(from) {
+		from = opt.From
+	}
+	if !opt.To.IsZero() && opt.To.Before(to) {
+		to = opt.To
+	}
 	bs := &budgetSource{Source: src, left: opt.MaxBytes}
 	samples, rep, err := blackbox.ReadSamples(ctx, bs, m, from, to)
 	if bs.exceeded {
@@ -294,7 +305,7 @@ func readInto(ctx context.Context, src blackbox.Source, m blackbox.Manifest, fro
 		res.Samples.First = append([]blackbox.Sample(nil), samples[:n]...) // a copy: the rest can be freed
 	}
 	res.Warnings = append(res.Warnings, warnings(rep, err)...)
-	if res.Manifest != nil && res.Manifest.Samples != res.Samples.Count {
+	if res.Manifest != nil && opt.From.IsZero() && opt.To.IsZero() && res.Manifest.Samples != res.Samples.Count {
 		res.Warnings = append(res.Warnings, "The manifest lists a different number of samples than the files hold.")
 	}
 	if res.Manifest != nil {

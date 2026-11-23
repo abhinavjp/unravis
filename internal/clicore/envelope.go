@@ -177,3 +177,9 @@ func WriteError(stderr io.Writer, mode Mode, operation, requestID string, e *Err
 	_, _ = io.WriteString(stderr, sb.String())
 	return ExitCode(e.Code)
 }
+
+// Protocol version of the command line against the app (spec D28). A change of major breaks; the owner's minor must be at least ours.
+const (
+	ProtoMajor = 1
+	ProtoMinor = 0
+)
