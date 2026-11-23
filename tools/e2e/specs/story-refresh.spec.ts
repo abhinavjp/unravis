@@ -6,6 +6,10 @@
 //             A source added this way (Redis, SQL, Mongo, Blackbox) has no line in "Story so far": the story is built from case history, files, health runs
 //             and theories, and the server writes no history for a source. Only files and found-on-this-PC logs (which are files) show a new line.
 //   STORY-04  A file added while a read of the page is slow (held on the case read) still ends up in the story: the re-read waits for the page read, then runs once.
+//   STORY-05  A file added through the real case API while the page is open (another browser tab or client: no signal reaches this page) shows in the story
+//             when the person comes back to the page (tab shown, window focused): one read of the case and its files, no loading text, no focus move.
+//   STORY-06  A read on return that fails keeps the story as it was, shows nothing about it, and the next return reads again and shows the new file.
+//   STORY-07  No request storm: a return inside the gap, or while the page is hidden, reads nothing; five returns together read once.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
 import { createCase, ensureHost, importFile, HOST } from '../support/api';
@@ -113,12 +117,22 @@ test('STORY-03: a source added in Add data makes one re-read of the case and the
   await hub.getByRole('button', { name: /^Check and add/ }).click();
   await expect(hub.locator('[data-added-note]')).toContainText('Added');
   await hub.getByRole('button', { name: 'Review', exact: true }).click();
+  // The wizard looks at the case once before it sends (to be sure it is still open), so only the reads after its first write are the page's re-read.
   const reads = watchReads(page, id);
+  let wrote = false;
+  let reread = 0;
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    if (!path.startsWith(`/api/cases/${id}`)) return;
+    if (request.method() !== 'GET') wrote = true;
+    else if (wrote && path === `/api/cases/${id}`) reread += 1;
+  });
   await hub.getByRole('button', { name: 'Add 1 source to case' }).click();
-  await expect.poll(() => reads.story, { timeout: 30_000 }).toBe(1);
+  await expect.poll(() => reread, { timeout: 30_000 }).toBe(1);
   await page.waitForTimeout(500);
-  // One read of the case (the Sources list that opens after the run reads the file list on its own, so only the case read is counted), no loading text, and the re-read does not pull focus onto the story (the hub itself moves on to the Sources list once the run ends, as before).
-  expect(reads.story).toBe(1);
+  // One read of the case after the add (the Sources list that opens after the run reads the file list on its own, so only the case read is counted), no loading text, and the re-read does not pull focus onto the story (the hub itself moves on to the Sources list once the run ends, as before).
+  expect(reread).toBe(1);
+  expect(reads.story).toBeLessThanOrEqual(2);
   await expect(page.locator('.loading-state')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Story so far' })).toBeVisible();
   expect(await page.evaluate(() => !!document.activeElement?.closest('section[aria-labelledby="home-story"]') || document.activeElement?.id === 'home-story')).toBe(false);
@@ -147,7 +161,8 @@ test('STORY-04: a file added while a read of the page is slow still ends up in t
     }
     const answer = await route.fetch();
     if (caseReads === 2) { held(); await gate; }
-    await route.fulfill({ response: answer });
+    // A read that is still on its way when the test ends cannot be answered any more: that is not a failure of what is checked here.
+    await route.fulfill({ response: answer }).catch(() => undefined);
   });
   await addOne(dialog, iisLog('04'));
   await heldSeen;
@@ -162,4 +177,122 @@ test('STORY-04: a file added while a read of the page is slow still ends up in t
   await expect(storyFiles(page)).toHaveCount(2);
   expect(caseReads).toBe(3);
   await expect(page.locator('.loading-state')).toHaveCount(0);
+});
+
+// ---- coming back to the page (a change this page has no signal for)
+const IIS_TEXT = (tag: string) => ['#Software: Microsoft Internet Information Services 10.0', '#Version: 1.0', '#Date: 2026-10-20 08:00:00', FIELDS,
+  ...[1, 2, 3].map((i) => `2026-10-20 08:00:0${i} W3SVC1 ${HOST} 192.0.2.10 GET /api/v1/${tag}/${i} - 443 - 192.0.2.77 Mozilla/5.0 - - 200 0 0 ${100 + i}`), ''].join('\n');
+
+/** The real case API adds a file, as another browser tab or another client would: nothing reaches the open page. */
+async function addByApi(api: Parameters<typeof importFile>[0], id: string, tag: string) {
+  const r = await importFile(api, id, IIS_TEXT(tag), { name: 'u_ex2610' + tag + '.log', importer: 'iis-w3c' });
+  expect(r.status, r.text).toBeLessThan(300);
+}
+/** The page is hidden (the browser tab is left). Only the visibility the page reads is changed; the real handler runs. */
+const away = (page: Page) => page.evaluate(() => {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+  document.dispatchEvent(new Event('visibilitychange'));
+});
+/** The person comes back: the tab is shown and the window gets focus (a browser fires both). */
+const back = (page: Page) => page.evaluate(() => {
+  delete (document as unknown as Record<string, unknown>).visibilityState;
+  document.dispatchEvent(new Event('visibilitychange'));
+  window.dispatchEvent(new Event('focus'));
+});
+// The page reads at most once in this long (RETURN_GAP_MS in web/src/lib/storyReturn.ts).
+const GAP = 2100;
+
+async function openStory(page: Page, title: string) {
+  await goHome(page);
+  await openCase(page, title);
+  await expect(page.getByRole('heading', { name: 'Story so far' })).toBeVisible();
+  await expect(page.locator('.loading-state')).toHaveCount(0);
+}
+
+test('STORY-05: a file added through the case API shows in Story so far when the person comes back to the page', async ({ page, api }) => {
+  await ensureHost(api);
+  const title = 'QA Story Return';
+  const id = await createCase(api, title);
+  await openStory(page, title);
+  await expect(storyFiles(page)).toHaveCount(0);
+  const headingBefore = await page.getByRole('heading', { name: 'Story so far' }).boundingBox();
+
+  await away(page);
+  await addByApi(api, id, '05');
+  await page.waitForTimeout(GAP);
+  // While the page is hidden nothing shows yet (and nothing was read).
+  await expect(storyFiles(page)).toHaveCount(0);
+  const reads = watchReads(page, id);
+  await back(page);
+  await expect(storyFiles(page)).toHaveCount(1);
+  await expect(storyFiles(page).first()).toContainText('u_ex261005.log');
+  // The visibility change and the focus together made one read of the case and one of its files; the page stayed on screen and focus did not move.
+  expect(reads).toEqual({ story: 1, files: 1 });
+  await expect(page.locator('.loading-state')).toHaveCount(0);
+  expect(await page.evaluate(() => document.activeElement === document.body || !document.activeElement?.closest('section[aria-labelledby="home-story"]'))).toBe(true);
+  // Nothing above the story moved: the new line only grows the list.
+  const headingAfter = await page.getByRole('heading', { name: 'Story so far' }).boundingBox();
+  expect(headingAfter?.y).toBe(headingBefore?.y);
+});
+
+test('STORY-06: a failed read on return keeps the story as it was and the next return shows the new file', async ({ page, api, allow }) => {
+  allow(/500|Internal Server Error|failed to load resource/i, 'the read on return is answered 500 on purpose');
+  await ensureHost(api);
+  const title = 'QA Story Return Fails';
+  const id = await createCase(api, title);
+  await addByApi(api, id, '06a');
+  await openStory(page, title);
+  await expect(storyFiles(page)).toHaveCount(1);
+  const before = await page.locator('ol.story').innerText();
+
+  await addByApi(api, id, '06b');
+  let failing = true;
+  await page.route(new RegExp(`/api/cases/${id}$`), async (route) => {
+    if (failing && route.request().method() === 'GET') { await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'boom' }) }); return; }
+    await route.fallback();
+  });
+  await page.waitForTimeout(GAP);
+  await away(page);
+  await back(page);
+  await page.waitForTimeout(500);
+  // The old story, word for word; no error text, no loading text, no alert.
+  expect(await page.locator('ol.story').innerText()).toBe(before);
+  await expect(page.locator('.loading-state')).toHaveCount(0);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(storyFiles(page)).toHaveCount(1);
+
+  failing = false;
+  await page.waitForTimeout(GAP);
+  await away(page);
+  await back(page);
+  await expect(storyFiles(page)).toHaveCount(2);
+});
+
+test('STORY-07: no request storm: a return inside the gap or while hidden reads nothing, five returns together read once', async ({ page, api }) => {
+  await ensureHost(api);
+  const title = 'QA Story Return Storm';
+  const id = await createCase(api, title);
+  await openStory(page, title);
+  const reads = watchReads(page, id);
+
+  // Just read: a return now reads nothing.
+  await back(page);
+  await page.waitForTimeout(300);
+  expect(reads).toEqual({ story: 0, files: 0 });
+
+  // Hidden: even after the gap a focus reads nothing.
+  await page.waitForTimeout(GAP);
+  await away(page);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await page.waitForTimeout(300);
+  expect(reads).toEqual({ story: 0, files: 0 });
+
+  // Five returns at once: one read.
+  await page.evaluate(() => {
+    delete (document as unknown as Record<string, unknown>).visibilityState;
+    for (let i = 0; i < 5; i++) { document.dispatchEvent(new Event('visibilitychange')); window.dispatchEvent(new Event('focus')); }
+  });
+  await expect.poll(() => reads.story).toBe(1);
+  await page.waitForTimeout(500);
+  expect(reads).toEqual({ story: 1, files: 1 });
 });

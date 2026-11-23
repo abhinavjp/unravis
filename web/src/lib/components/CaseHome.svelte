@@ -15,6 +15,8 @@
   import { holdLedger, ledger, refreshLedger } from '../ledgerStore.svelte';
   import { buildStory, shortText } from '../story';
   import { caseAdded } from '../caseAdded.svelte';
+  import { readOnReturn, sameRead, watchReturn } from '../storyReturn';
+  import { isHidden } from '../visibility';
   import { guidedOpenFor } from '../guided/stepModel';
   import GuidedAnalysis from './guided/GuidedAnalysis.svelte';
   import { TRACING_TEXT } from '../copy/tracingCopy';
@@ -189,6 +191,7 @@
     controller = mine;
     if (!quiet) phase = 'loading';
     loadedFor = id;
+    lastReadAt = Date.now();
     copyNote = '';
     copyProblem = '';
     sharedCount = 0;
@@ -290,18 +293,37 @@
   }
 
   // Whatever is added to this case (files in the Add files pop-up, or a source in Add data) shows in the story at once, without waiting for the pop-up
-  // to close: the case and its files are read again, quietly (no loading screen, no focus move). One read for each successful add, none for a failed one.
-  async function rereadFiles() {
+  // to close: the case, its files and its health checks are read again, quietly (no loading screen, no focus move). One read for each successful add,
+  // none for a failed one. `everything` (coming back to the page) also reads the theories, which another tab may have changed.
+  // A read that fails keeps what the page shows. An answer that says what the page already shows is not put in, so nothing is redrawn.
+  let lastReadAt = 0;
+  let rereadsOpen = 0;
+  async function rereadFiles(everything = false) {
     const id = caseId;
     if (!id || phase !== 'ready' || destroyed) return;
     const mine = ++rereadRun;
+    lastReadAt = Date.now();
+    rereadsOpen += 1;
     try {
       const fresh = await getCaseView(id);
-      const files = readsCaseData(fresh) ? await listImports(id) : [];
+      const reads = readsCaseData(fresh);
+      const [files, runs] = await Promise.all([reads ? listImports(id) : Promise.resolve([] as ImportRecord[]), reads ? fetchHealthRuns(id).catch(() => null) : Promise.resolve(null)]);
+      const theoriesRead = everything && reads ? refreshLedger().catch(() => { /* the theories keep what they show */ }) : Promise.resolve();
       if (id !== caseId || mine !== rereadRun) return;
-      info = fresh;
-      imports = files;
-    } catch (error) { lockedUnder(error); /* otherwise the page keeps the list it had */ }
+      if (!sameRead(info, fresh)) info = fresh;
+      if (!sameRead(imports, files)) imports = files;
+      if (runs && !sameRead(health, runs)) health = runs;
+      await theoriesRead;
+    } catch (error) { lockedUnder(error); /* otherwise the page keeps the list it had */ } finally { rereadsOpen -= 1; }
+  }
+  // Coming back to the page (the browser tab is shown again, the window is focused): something may have been added elsewhere (another tab, the API).
+  // At most one read per couple of seconds, never while another read or a move on the case is running, and not after another tab moved the case.
+  function backOnPage() {
+    if (!readOnReturn({
+      ready: phase === 'ready' && view === 'home' && !!caseId && !destroyed, hidden: isHidden(), changedElsewhere: changed,
+      busy: loadsOpen > 0 || rereadsOpen > 0 || reopening || closing || tryingId !== 0, lastReadAt, now: Date.now()
+    })) return;
+    void rereadFiles(true);
   }
   let seenAdd = caseAdded.seq;
   $effect(() => {
@@ -429,7 +451,10 @@
     const id = caseId;
     if (id && id !== loadedFor) void load(id);
   });
-  onMount(() => () => { destroyed = true; controller?.abort(); });
+  onMount(() => {
+    const stopWatching = watchReturn(backOnPage);
+    return () => { destroyed = true; stopWatching(); controller?.abort(); };
+  });
 
   // An archive that runs while its drawer is closed (closed on purpose, or the page was reloaded) is followed here, so it never finishes unseen.
   $effect(() => {
