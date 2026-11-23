@@ -1673,6 +1673,24 @@ func (b *blackboxHub) readSamples(ctx context.Context, e bbsaved.Entry, windows 
 	return rd, kept, rep, nil
 }
 
+// readSQLSamples reads the SQL service's samples for a window through the same source as the
+// host samples. It never fails the charts: a read that cannot be made (key refused, cancelled)
+// leaves the SQL part out, and the host read has already said what is wrong with the source.
+// nil means the SQL part was not read at all.
+func (b *blackboxHub) readSQLSamples(ctx context.Context, e bbsaved.Entry, win bbWindow) *bbSQLRead {
+	ctx, cancel := context.WithTimeout(ctx, bbReadTimeout)
+	defer cancel()
+	src, err := b.source(e)
+	if err != nil {
+		return nil
+	}
+	ss, rep, err := blackbox.ReadSQLSamples(ctx, src, win.Start, win.End)
+	if err != nil {
+		return nil
+	}
+	return &bbSQLRead{Samples: ss, Report: rep}
+}
+
 func summarize(r blackbox.ReadReport) bbReadSummary {
 	s := bbReadSummary{Files: r.Files, Samples: r.Samples, Torn: len(r.Torn), Dropped: r.Dropped, Missing: r.Missing}
 	if s.Dropped == nil {

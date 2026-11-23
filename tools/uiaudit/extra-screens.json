@@ -558,6 +558,60 @@
       ]
     },
     {
+      "id": "x-blackbox-charts-sql",
+      "phase": "X",
+      "note": "Blackbox charts with SQL Server lines ticked (demo SQL samples).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"Blackbox\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"Blackbox\"s]"
+        },
+        {
+          "waitFor": "#blackbox-title"
+        },
+        {
+          "click": "role=button[name=\"Open status: web-a\"s]"
+        },
+        {
+          "waitFor": "role=button[name=\"Close this Blackbox\"s]"
+        },
+        {
+          "click": "role=button[name=/charts/i]"
+        },
+        {
+          "waitFor": "role=dialog"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=/^Counters \\(/]"
+        },
+        {
+          "click": "summary:has-text(\"SQL Server: deeper checks\")"
+        },
+        {
+          "click": "role=checkbox[name=/Queries queued for a memory grant/]"
+        },
+        {
+          "click": "role=checkbox[name=/Tasks ready to run/]"
+        },
+        {
+          "click": "role=checkbox[name=/Time per read, all database files/]"
+        }
+      ]
+    },
+    {
       "id": "r1-releases-home",
       "phase": "R",
       "note": "Releases dashboard: list, the release that is running, the newest release selected.",

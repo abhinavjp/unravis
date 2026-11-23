@@ -31,6 +31,10 @@ type simBB struct {
 	files      map[string][]byte
 	key        string
 	down       error
+	// sqlFiles are the SQL service's hourly sample files (simRec.SQL); sqlLocked answers every one
+	// of them as a folder this account may not read.
+	sqlFiles  map[string][]byte
+	sqlLocked bool
 	// dropAt makes a file stop after that many bytes with a read error, the way a
 	// share drops part way through a read.
 	dropAt map[string]int
@@ -128,6 +132,9 @@ type simRec struct {
 	Dumps     []blackbox.DumpEntry
 	WinEvents []blackbox.EventEntry
 	Markers   []blackbox.Event
+	// SQL adds the SQL service's sample files (requests, waits, schedulers, memory grants, tempdb, file stalls,
+	// availability-group state). SQLLocked answers them as a folder this account may not read.
+	SQL, SQLLocked bool
 }
 
 func f64(v float64) *float64 { return &v }
@@ -255,6 +262,10 @@ func (r simRec) build() *simBB {
 		}
 	}
 	bb.man = m
+	if r.SQL && len(times) > 0 {
+		bb.sqlFiles = simSQLFiles(times[0], times[len(times)-1], r.CPU)
+		bb.sqlLocked = r.SQLLocked
+	}
 	now := r.Now
 	if now.IsZero() {
 		now = r.End
@@ -718,7 +729,7 @@ func demoBlackboxes(now time.Time) (*memBBStore, *simWorld, *simPC) {
 	boxes := []seedBox{
 		{name: "web-a", loc: "http://127.0.0.1:7788", thisPC: true, rec: simRec{
 			Name: "web-a", Start: four, End: now.Add(-5 * time.Second), Now: now, CPU: spike, Busy: "w3wp",
-			Key: "ubk-demo-a-NOT-A-REAL-KEY",
+			Key: "ubk-demo-a-NOT-A-REAL-KEY", SQL: true,
 			// A short hiccup (90 seconds) well before the busy stretch.
 			Skip: [][2]time.Time{{now.Add(-3 * time.Hour), now.Add(-3*time.Hour + 90*time.Second)}},
 			// Things that happened, for the "What happened" view: two crash dumps, a restart and some Windows events.

@@ -5,6 +5,7 @@
  */
 import type { SeriesLine, SeriesPoint, SeriesUnit } from './blackboxSeries';
 import { lineFigures, own, seriesUnit } from './blackboxSeries';
+import { sqlDmvLine } from './blackboxSqlNames';
 
 /** What a counter tells you, by the field name the recorder uses (the last part of its key). Plain words, no cause named. */
 const MEANING: Record<string, string> = {
@@ -104,6 +105,8 @@ const UNIT_MEANING: Record<SeriesUnit, string> = {
 export function meaningOf(key: string, serverUnit: string): string {
   const parts = key.split('.');
   const field = parts[parts.length - 1];
+  const dmv = sqlDmvLine(key);
+  if (dmv) return dmv.meaning;
   if (parts[0] === 'tcp' && parts[1] === 'states') return 'How many network connections are in the "' + field + '" state.';
   if (parts[0] === 'events' && own(LEVEL_MEANING, field)) return own(LEVEL_MEANING, field)!;
   return own(MEANING, field) ?? UNIT_MEANING[seriesUnit(key, serverUnit)];
