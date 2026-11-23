@@ -280,11 +280,11 @@ func callTokens(s string) []string {
 	var toks []string
 	i := 0
 	for i < len(s) {
-		switch c := s[i]; {
-		case c == ' ' || c == ',' || c == '\t':
+		switch s[i] {
+		case ' ', ',', '\t':
 			i++
-		case c == '=' || c == ';':
-			toks = append(toks, string(c))
+		case '=', ';':
+			toks = append(toks, s[i:i+1])
 			i++
 		default:
 			// One token runs to the next separator, and a [bracketed part] inside it (dbo.[My Proc]) never splits it.
