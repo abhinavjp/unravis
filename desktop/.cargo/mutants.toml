@@ -1,0 +1,11 @@
+# cargo-mutants (BL-452). Only mutants that cannot change what the code does are listed here, each with its reason and anchored on
+# file and function, so a later change cannot hide behind it. Anything else that survives is a missing test: write the test, do not
+# add a line here.
+examine_globs = ["ipc-core/src/**/*.rs"]
+exclude_re = [
+  # floor.rs `meets`: the line is only reached when `v != floor`, so `v > floor` and `v >= floor` give the same answer.
+  "^ipc-core/src/floor\\.rs:\\d+:\\d+: replace > with >= in meets$",
+  # supervisor.rs `Supervisor::on`: `Quit` is matched first and no later arm matches Stopping, so every Stopping event ends in the
+  # final `_ => Nothing` arm with or without the `(Stopping, _)` arm. It is kept for the reader.
+  "^ipc-core/src/supervisor\\.rs:\\d+:\\d+: delete match arm \\(Stopping, _\\) in Supervisor<J>::on$",
+]

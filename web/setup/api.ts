@@ -58,5 +58,6 @@ export const api = {
   cancel: () => request<{ ok: boolean }>('POST', 'cancel'),
   openApp: () => request<{ ok: boolean }>('POST', 'open-app'),
   openLogFolder: () => request<{ ok: boolean }>('POST', 'open-log-folder'),
+  openFolder: (folder: string) => request<{ ok: boolean }>('POST', 'open-folder', { folder }),
   close: () => request<{ ok: boolean }>('POST', 'close')
 };

@@ -149,6 +149,26 @@
       ]
     },
     {
+      "id": "x-where-volume",
+      "phase": "X",
+      "note": "Where is it? with the Request volume table open (the Show only buttons).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"Where is it?\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Where is it?\"]"
+        },
+        {
+          "click": "summary:has-text(\"Request volume\")"
+        }
+      ]
+    },
+    {
       "id": "x-where-about",
       "phase": "X",
       "note": "Where is it? with the notes about the calculation open.",
@@ -202,6 +222,38 @@
         },
         {
           "click": "role=tab[name=\"Slowest\"s]"
+        }
+      ]
+    },
+    {
+      "id": "x-all-slowest-loaded",
+      "phase": "X",
+      "note": "All operations, Slowest tab with the exact time windows open and one window picked with \"Inspect window\", so its slowest requests (and their Nearby activity buttons) are listed (a window keeps the page short: the 50 slowest of the whole comparison make the screen too tall for a picture). The step picks the 5th window (nth=4), so it needs at least 5 windows on the first page and slow requests in that window: if the demo data changes the screen turns unreachable (a loud failure), then pick another window.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "click": "role=button[name=\"All operations\"s]"
+        },
+        {
+          "waitFor": "role=tab[name=\"Failures\"s]"
+        },
+        {
+          "click": "role=tab[name=\"Slowest\"s]"
+        },
+        {
+          "click": "summary:has-text(\"Exact time windows\")"
+        },
+        {
+          "waitFor": "role=button[name=/^Inspect window for/] >> nth=0"
+        },
+        {
+          "click": "role=button[name=/^Inspect window for/] >> nth=4"
+        },
+        {
+          "waitFor": "role=button[name=/^Nearby activity for/] >> nth=0"
         }
       ]
     },
@@ -743,7 +795,7 @@
     {
       "id": "p10-files-4",
       "phase": "P10",
-      "note": "Add files: left-out files with the Remove all button (only builds that have the button; others are reported as not reachable on this build).",
+      "note": "Add files: left-out files with the Remove all button (a build without the button is reported as not reached, which fails the audit).",
       "narrow": true,
       "steps": [
         {
@@ -764,17 +816,14 @@
           "waitFor": "[data-file=\"blob.bin\"]"
         },
         {
-          "feature": [
-            "[data-remove-left-out]",
-            "the Remove all button for left-out files"
-          ]
+          "waitFor": "[data-remove-left-out]"
         }
       ]
     },
     {
       "id": "p10-files-5",
       "phase": "P10",
-      "note": "Add files: the list after Remove all was pressed for the left-out files (only builds that have the button).",
+      "note": "Add files: the list after Remove all was pressed for the left-out files.",
       "narrow": true,
       "steps": [
         {
@@ -795,10 +844,7 @@
           "waitFor": "[data-file=\"blob.bin\"]"
         },
         {
-          "feature": [
-            "[data-remove-left-out]",
-            "the Remove all button for left-out files"
-          ]
+          "waitFor": "[data-remove-left-out]"
         },
         {
           "click": "[data-remove-left-out]"
@@ -848,7 +894,7 @@
     {
       "id": "p10-files-7",
       "phase": "P10",
-      "note": "Create case, last step: the computers the wizard picked by itself, one line, and the Change choice open (only builds that pick the computer itself).",
+      "note": "Create case, last step: the computers the wizard picked by itself, one line, and the Change choice open (a build that does not pick the computer itself is reported as not reached, which fails the audit).",
       "narrow": true,
       "steps": [
         {
@@ -880,10 +926,7 @@
           "waitFor": "text=/^File chosen: u_ex261020\\.log/"
         },
         {
-          "feature": [
-            "[data-hosts-summary]",
-            "the computers picked by themselves, summed up on the last step"
-          ]
+          "waitFor": "[data-hosts-summary]"
         },
         {
           "click": "role=button[name=\"Change\"s]"

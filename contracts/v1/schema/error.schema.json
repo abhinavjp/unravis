@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unravis.local/contracts/v1/error.schema.json",
+  "title": "Error body of an /api answer (400, 401, 409, 423, 429, ...): the union of the failure shapes the handlers write",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["error"],
+  "properties": {
+    "error": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "description": "Machine-readable cause; present on case and master-key failures." },
+    "column": { "type": "string" },
+    "importId": { "type": "integer" },
+    "state": { "type": "string", "description": "Master-key failures: the key state (none, locked, damaged, ...)." },
+    "retryAfterSeconds": { "type": "integer", "minimum": 1, "description": "Throttled key attempts (429)." },
+    "code": { "type": "string", "description": "Source add failures: the fixed code (source-exists, collection_missing, ...)." },
+    "stage": { "type": "string" },
+    "collections": { "type": "array", "items": { "type": "string" } }
+  }
+}

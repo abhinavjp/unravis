@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unravis.local/contracts/v1/info.schema.json",
+  "title": "GET /api/info",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["demo", "limits", "now"],
+  "properties": {
+    "demo": { "type": "boolean" },
+    "captureCases": { "type": "boolean", "description": "Left out unless the demo has capture cases." },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxSources", "maxPageSize", "maxSummaryRows", "maxTimeBuckets"],
+      "properties": {
+        "maxSources": { "type": "integer", "minimum": 1 },
+        "maxPageSize": { "type": "integer", "minimum": 1 },
+        "maxSummaryRows": { "type": "integer", "minimum": 1 },
+        "maxTimeBuckets": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "now": { "type": "string", "format": "date-time" }
+  }
+}

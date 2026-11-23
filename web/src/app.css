@@ -259,6 +259,13 @@ input, textarea { caret-color: var(--accent); }
 .secondary-button:hover:not(:disabled) { border-color: var(--text-2); background: var(--surface-2); }
 .quiet-button { color: var(--text-2); background: transparent; border: 1px solid transparent; padding: 5px 8px; font-size: 12px; }
 .quiet-button:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+/* A button at the end of a table row that acts on that row ("Show only", "Nearby activity", "Inspect"): a quiet button with an edge you can see, not faint text
+   (BL-495). It keeps the size of the quiet button it is on (the box and the table around it do not move: only the colour of the text and the line around it change).
+   The invisible ::after keeps the press area at 24 x 24 px or more however small the box gets; it adds nothing (0 px) to a box that is already that big, which is every
+   box today (29 to 44 px high), so keep it: UIFIX-50d fails when it is removed from a small box. */
+.row-action { position: relative; border-color: var(--control-line); white-space: nowrap; text-align: center; }
+.row-action:hover:not(:disabled) { border-color: var(--text-2); }
+.row-action::after { content: ''; position: absolute; left: min(0px, calc((100% - 24px) / 2)); right: min(0px, calc((100% - 24px) / 2)); top: min(0px, calc((100% - 24px) / 2)); bottom: min(0px, calc((100% - 24px) / 2)); }
 .icon-button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; color: var(--text-2); background: transparent; border: 0; border-radius: var(--radius-sm); font-size: 18px; line-height: 1; }
 .icon-button:hover { color: var(--bad); background: var(--surface); }
 .full-button { width: 100%; margin-top: 5px; }
@@ -390,7 +397,6 @@ th.numeric { text-align: right; }
 .request-table td:nth-child(3) { max-width: 280px; }
 .request-table tbody tr:hover { background: var(--surface-2); }
 .record-id { font-family: var(--mono); font-size: 12px; color: var(--text-2); user-select: all; }
-.payload-button { border-color: var(--control-line); }
 .pagination-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; padding: 10px 12px; color: var(--text-2); font-size: 12px; border-top: 1px solid var(--line-soft); }
 .page-actions { display: flex; align-items: center; gap: 6px; }
 .comparison-table { min-width: 1000px; }
@@ -502,7 +508,9 @@ th.numeric { text-align: right; }
 .traffic-windows summary, .traffic-method summary { color: var(--accent); font-size: 13px; }
 .traffic-method p { margin: 10px 0; color: var(--text-2); font-size: 13px; }
 .traffic-windows .pagination-row { padding: 12px 0; }
-.traffic-slowness .volume-table th small { display: block; font-weight: 400; color: var(--text-2); margin-top: 4px; }
+.traffic-slowness .volume-table th small { display: block; font-weight: 400; font-size: var(--fs-1); color: var(--text-2); margin-top: 4px; }
+/* The two headings start where the text of the controls and notes under them starts (14 px), not 2 px to the left (BL-537, UIFIX-52). Only the left side moves. */
+.traffic-slowness .section-heading { padding-left: 14px; }
 .traffic-slow { color: var(--bad); font-weight: 600; }
 .multi-timeline .section-heading { align-items: start; }
 .multi-timeline .timeline-controls { display: flex; flex-wrap: wrap; gap: 10px 14px; flex-shrink: 0; }
@@ -708,6 +716,8 @@ th.numeric { text-align: right; }
   .volume-table-heading label { width: 100%; }
   .traffic-slowness .section-heading { flex-wrap: wrap; }
   .traffic-slowness .volume-table { min-width: 680px; }
+  /* The first column of the slowest-request list starts where the summary line above it starts (14 px of padding, as on desktop), not 6 px to the left (BL-537, UIFIX-52). */
+  .traffic-slowness .slow-result .volume-table tr > :first-child { padding-left: 14px; }
   .traffic-slowness .volume-controls input[type=number] { width: 100%; }
   .multi-timeline .section-heading { flex-direction: column; }
   .timeline-selected { grid-template-columns: 1fr; }

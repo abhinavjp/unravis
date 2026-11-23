@@ -57,19 +57,37 @@ pub fn parse(bytes: &[u8]) -> Result<Record, Error> {
     Ok(r)
 }
 
+/// A field of a timestamp: exactly `width` ASCII digits (no sign, no space), as Go writes it.
+fn digits(s: &str, width: usize) -> Option<i64> {
+    if s.len() != width || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
+}
+
 /// Process start time in Unix nanoseconds from the `Z` form Go writes (`2026-11-22T00:47:40.6800051Z`). Only UTC is accepted.
 pub fn start_unix_nanos(s: &str) -> Option<i128> {
     let s = s.strip_suffix('Z')?;
     let (date, time) = s.split_once('T')?;
     let mut d = date.split('-');
-    let (y, m, day): (i64, i64, i64) = (d.next()?.parse().ok()?, d.next()?.parse().ok()?, d.next()?.parse().ok()?);
-    if d.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&day) {
+    let (y, m, day) = (digits(d.next()?, 4)?, digits(d.next()?, 2)?, digits(d.next()?, 2)?);
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let month_days = match m {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    if d.next().is_some() || !(1..=12).contains(&m) || !(1..=month_days).contains(&day) {
         return None;
     }
     let (hms, frac) = time.split_once('.').unwrap_or((time, ""));
+    if time.contains('.') && frac.is_empty() {
+        return None; // a dot with no digits after it
+    }
     let mut t = hms.split(':');
-    let (h, mi, sec): (i64, i64, i64) = (t.next()?.parse().ok()?, t.next()?.parse().ok()?, t.next()?.parse().ok()?);
-    if t.next().is_some() || h > 23 || mi > 59 || sec > 60 || frac.len() > 9 || !frac.bytes().all(|b| b.is_ascii_digit()) {
+    let (h, mi, sec) = (digits(t.next()?, 2)?, digits(t.next()?, 2)?, digits(t.next()?, 2)?);
+    if t.next().is_some() || h > 23 || mi > 59 || sec > 59 || frac.len() > 9 || !frac.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
     let mut nanos: i64 = if frac.is_empty() { 0 } else { frac.parse().ok()? };

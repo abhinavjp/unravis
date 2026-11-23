@@ -31,6 +31,7 @@ const o = c(['desktop/src/main.rs', 'tools/ci/x.mjs', '.github/dependabot.yml'])
 assert.deepEqual(keys(o), { notes: false, all: false, web: false, dirs: [] });
 // A .go file under tools is still Go.
 assert.equal(c(['tools/release/x.go']).gofiles.length, 1);
+assert.deepEqual(keys(c(['contracts/v1/schema/info.schema.json'])), { notes: false, all: false, web: false, dirs: ['internal/server'] });
 // Tests that read other directories (found in the review of PR 126): web/src also tests the Go packages that read it; setup code also tests the gate test.
 assert.deepEqual(keys(c(['web/src/lib/copy/wordings.ts'])), { notes: false, all: false, web: true, dirs: ['internal/evidence', 'internal/server'] });
 assert.deepEqual(keys(c(['internal/setup/plan.go'])).dirs, ['cmd/audit-explorer', 'internal/setup']);
@@ -38,6 +39,13 @@ assert.deepEqual(keys(c(['cmd/unravis-setup/main.go'])).dirs, ['cmd/audit-explor
 assert.equal(c(['internal/server/routes.go']).web, true);   // web/tests/guidedKept reads it
 assert.equal(c(['internal/store/q.go']).web, false);
 assert.equal(CROSS_WEB.test('tools/e2e/archive/guided/x.json'), true);
+// guided.ui.test.cjs reads these two (sweep 2026-11-22 finding 3); a Go-only change to them must run the web job. test-web-scope.mjs checks every read.
+for (const f of ['internal/audit/models.go', 'internal/casestore/plan.go']) {
+  assert.equal(CROSS_WEB.test(f), true, f);
+  assert.equal(c([f]).web, true, f);
+}
+assert.equal(c(['internal/audit/other.go']).web, false);
+assert.equal(c(['docs/user/guide.md']).web, true);
 // Windows separators.
 assert.deepEqual(keys(c(['internal\\store\\q.go'])).dirs, ['internal/store']);
 

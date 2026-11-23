@@ -11,7 +11,11 @@
 //   - ADO, ODBC and JDBC values with spaces, ";" and doubled quotes, braced values ({a;b}}c}) and values on the next line;
 //   - XML: <Password>x</Password>, <ns:ApiKey><![CDATA[x]]></ApiKey>, <add key="password" value="x"/>, password="x" attributes,
 //     <setting name="Password"><value>x</value></setting>, and a connectionString attribute that holds a secret;
-//   - user:password@ in a URL, also when the password holds an "@" or a space (MaskURLUserinfo).
+//   - user:password@ in a URL, also when the password holds an "@" or a space (MaskURLUserinfo);
+//   - a secret whose name and value are two fields of one record (record.go): the value of {"name":"DB_PASSWORD","value":"x"} (either
+//     order, any other members around, also "Key" and "Value"), of the YAML list item "- name: DB_PASSWORD" with "value: x" on a line
+//     of the same item (before or after; inline, quoted, a block scalar, or on the next line), and of <key>Password</key> followed by
+//     <string>, <data>, <integer> or <real> in a property list.
 //
 // Rules the code keeps:
 //
@@ -26,12 +30,21 @@
 //     (token_count, password_min_length, max_tokens) are left alone.
 //   - Not covered (out of scope, listed so nobody assumes it): entity-escaped markup (&lt;Password&gt;), \u-escaped key names,
 //     zero-width or full-width letters in a key, URL-encoded "password%3Dx", headers such as Ocp-Apim-Subscription-Key and a SAS "sig="
-//     parameter, "--password x" flags (the Releases reader has its own pattern), and text nodes after the first in <Password>a<b/>c</Password>.
-//   - Not covered: a secret whose name and value are two separate fields of one record (BACKLOG SWP-1122-13): the Kubernetes and Helm
-//     list "- name: DB_PASSWORD" then "  value: x", JSON {"name":"DB_PASSWORD","value":"x"}, and the plist <key>Password</key><string>x</string>.
-//     Reading them needs the record around the key (the sibling line, the sibling JSON member, the sibling element), which is a second
-//     reader with its own budget and its own Carry state, so it is not part of this change.
-//   - Readers that see one line at a time (the Releases log reader) use Carry, which hides a YAML block scalar under "password: |" and a
+//     parameter, the Releases reader's own pattern, and text nodes after the first in <Password>a<b/>c</Password>.
+//   - Command lines (flags.go): "--password x", "-Password x" (PowerShell, Go flag), "--api-key x", "/token x" (an option whose name is a secret name, then
+//     the next word, also quoted, on the next line after a line continuation, in a JSON array of arguments and in a YAML block list), and the short options of the tools that take a secret there: sqlcmd/osql/bcp "-P x" "-Px" "/P x", mysql "-pX", redis-cli "-a x" "-aX",
+//     mongo tools "-p x", curl "-u user:x" "-uuser:x". Also keytool/openssl "-storepass x" "-passin pass:x", cmdkey "/pass:x", sshpass and psexec "-p x", ldap tools "-w x", schtasks "/RP x",
+//     curl "-sSu u:p" and "--user=u:p", PowerShell ConvertTo-SecureString "text", in a JSON or XML text as well. A value ends at white space,
+//     a quote or a closing tag, so the structure around it stays. Text that reads as help ("Use --password to set"), a request path
+//     ("POST /token"), PowerShell flags ("-PasswordNeverExpires $true") and option names that say what the word is (-TokenLifetime,
+//     --secret-store) are left alone. A tool name counts until the end of its command (";", "|", "&&", or a line end that is not continued). "-p" is a port for psql, so a short option is judged only after its tool on the same line.
+//     Not covered: other tools' short options, a password passed as a bare argument ("net use \\srv\share x"), "--no-password" style
+//     names (left alone on purpose).
+//   - Records are read only on a whole text (Mask). The record readers keep to a name and a "value" member of one object, one YAML item or
+//     one plist pair (JSON also in the Python form with single quotes, over several lines, and written inside a JSON string with escaped quotes): a name and a value in two different objects, flow-style YAML ({name: DB_PASSWORD, value: x}), objects nested deeper than maxRecordDepth (32), a name with white space in it ("Reset password" is a title, not a setting; a plist key may have spaces), double-escaped JSON (a quote written as three backslashes and a quote), Go `%+v` and `map[name:..]` prints, Python keyword form `EnvVar(name=.., value=..)`, HCL `env { name = .. value = .. }`, a value under another member name ("data", "secret"), a nested object
+//     as the value, or more than maxRecordLines lines between the name and its "value:" line are not joined.
+//   - Readers that see one line at a time (the Releases log reader) use Carry, which does not read records (the name and the value are on
+//     different lines) and hides a YAML block scalar under "password: |" and a
 //     value on the line after a key with nothing after it. They do not cover a quoted value or a JSON array that runs over several
 //     lines, or a tag split over lines.
 //   - A work budget (workFactor steps per byte plus a floor) bounds every call whatever the input: a text that costs more is not scanned
@@ -61,6 +74,10 @@
 //	blockHeader: comment to the end of the line                  charged once per line (remembered line end)
 //	blockText: key line start and key line indent                remembered and charged (lineStart, lineIndent)
 //	blockText: lines of the block, TrimRight, indent loop        charged per line; stops over budget
+//	maskFlags: one pass over the words of a line                charged per word and per value; no search runs back or forward over a line
+//	maskRecords: jsonRecords byte loop, string ends              charged (one step per byte, plus the string, read to its close or its line end); the open-array search and a bare value charged (a bare value ends at a quote or a separator); a full stack drops its oldest object (maxRecordDepth)
+//	maskRecords: plistRecords Index for "<key>", name, close    charged; the name search is capped at 2*maxIdent+8; the text up to a close tag is charged and consumed
+//	maskRecords: yamlRecords line table, neighbour lines         charged once per byte; neighbours capped at maxRecordLines each way (comment lines not counted), charged per name key; a value line is masked once
 //	maskXML: IndexByte for the next "<"                          consumed (the position moves past the tag name)
 //	maskXML: tag name loop                                       constant (maxIdent)
 //	maskXML: attribute loops                                     bounded by the tag (maxTag) and charged; a tag that parses is consumed

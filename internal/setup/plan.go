@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -42,7 +43,7 @@ type Plan struct {
 }
 
 func (p *Plan) backupDir() string {
-	return filepath.Join(p.Layout.InstallDir, ".setup-backup-"+p.stamp)
+	return filepath.Join(p.Layout.InstallDir, backupPrefix+p.stamp)
 }
 
 // KeeperAccount is the keeper service's own virtual account. Its saved passwords are sealed for this account (DPAPI), so setup never
@@ -403,8 +404,39 @@ func (p *Plan) wantReleases() bool {
 	return err == nil && fi.Mode().IsRegular()
 }
 
+// Names of the working folders a setup makes inside the program folder. A run that is cut off (killed, power loss) can leave them.
+const (
+	stagingPrefix = ".setup-staging-"
+	backupPrefix  = ".setup-backup-"
+)
+
+// stampName is the exact form of a working folder's name: the prefix and the UTC stamp (20060102-150405). A folder of the person's own
+// that merely starts with the prefix is not one of ours and is never removed.
+var stampName = regexp.MustCompile(`^\.setup-(staging|backup)-\d{8}-\d{6}$`)
+
+// clearStaleStaging removes the staging folders of earlier setups that never finished. They hold only copies of the programs, and
+// nothing reads them again. Backup folders are left: they may hold the files of an earlier version. A failure is only logged.
+func (p *Plan) clearStaleStaging() {
+	ents, err := os.ReadDir(p.Layout.InstallDir)
+	if err != nil {
+		return
+	}
+	now := stagingPrefix + p.stamp
+	for _, e := range ents {
+		// A real folder only: a link or junction is skipped, so nothing outside the program folder is ever walked into.
+		if e.Type() != fs.ModeDir || !strings.HasPrefix(e.Name(), stagingPrefix) || !stampName.MatchString(e.Name()) || e.Name() == now {
+			continue
+		}
+		// Only when what is inside is ours too: a folder of the person's with such a name that holds their files is left alone.
+		if rerr := removeWorkFolder(p.Layout.InstallDir, e.Name()); rerr != nil {
+			p.r.logf("staging: could not remove the old %s: %v", e.Name(), rerr)
+		}
+	}
+}
+
 func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
-	staging := filepath.Join(p.Layout.InstallDir, ".setup-staging-"+p.stamp)
+	p.clearStaleStaging()
+	staging := filepath.Join(p.Layout.InstallDir, stagingPrefix+p.stamp)
 	if err := t.WorkDir(staging); err != nil {
 		return err
 	}
@@ -920,7 +952,8 @@ func (p *Plan) keepPrevious(ctx context.Context, t *Txn) error {
 	from, errFrom := update.ParseVersion(p.Old.Version)
 	to, errTo := update.ParseVersion(p.Version)
 	if errFrom != nil || errTo != nil || update.Compare(to, from) <= 0 {
-		if err := os.RemoveAll(dir); err != nil {
+		// Removed only when everything in it is ours: the name ".previous" alone does not make a folder the installer's.
+		if err := removeWorkFolder(p.Layout.InstallDir, update.PreviousDir); err != nil {
 			t.log("previous version: could not remove " + dir + ": " + err.Error())
 		}
 		return nil
@@ -939,10 +972,14 @@ func (p *Plan) keepPrevious(ctx context.Context, t *Txn) error {
 	// keeping it would only make a rollback that cannot work.
 	if !setupCanBeRolledBackTo(old) {
 		t.log("previous version: the old setup program is too old to be started for a rollback, so nothing is kept")
-		_ = os.RemoveAll(dir)
+		if err := removeWorkFolder(p.Layout.InstallDir, update.PreviousDir); err != nil {
+			t.log("previous version: could not remove " + dir + ": " + err.Error())
+		}
 		return nil
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	// A folder that is not ours (the person's own files under that name) is left as it is: nothing is kept, and the rollback never
+	// gets a record that could delete it.
+	if err := removeWorkFolder(p.Layout.InstallDir, update.PreviousDir); err != nil {
 		t.log("previous version: could not clear the earlier copy: " + err.Error())
 		return nil
 	}

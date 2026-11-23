@@ -11,6 +11,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { touchesWeb } from './web-scope.mjs';
 
 // Same split as the `changes` job of ci.yml. docs/user and the Linux and race baselines are NOT notes: tests read them.
 export const HEAVY_DOCS = /^(docs\/user\/|docs\/desktop\/baseline-go-(tests|race)\.txt$)/;
@@ -18,8 +19,9 @@ export const NOTES = /^(\.forge\/|docs\/|[^/]+\.md$|LICENSE$|NOTICE$)/;
 // Files that can change the result of any test in any package.
 const WIDE = /^(go\.mod$|go\.sum$|go\.work(\.sum)?$|\.golangci[^/]*$|build\.ps1$|\.github\/workflows\/ci\.yml$)/;
 // Paths that are not Go and not read by the Go tests (the desktop shell has its own workflow; other tooling has its own checks).
-// Go and tool paths that the web tests read (web/tests/*.cjs). The web job of fast-gate.yml uses the same list.
-export const CROSS_WEB = /^(internal\/(server|blackbox|calltrace)\/|tools\/e2e\/)/;
+// Paths outside web/ that the web tests read: the list lives in web-scope.mjs, which the web job of fast-gate.yml also runs.
+// Kept as a name for the self-test: true when the path is one of them (web/ itself excluded).
+export const CROSS_WEB = { test: (f) => !f.replace(/\\/g, '/').startsWith('web/') && touchesWeb(f) };
 const OUTSIDE_GO = /^(desktop\/|tools\/(ci|e2e|screens|security|desktop|release)\/|\.github\/(?!workflows\/ci\.yml$))/;
 
 /** Path -> what it affects. Pure; `pkgDirs` is the set of directories (relative, '.' for the root) that hold a Go package. */
@@ -32,7 +34,7 @@ export function classify(files, pkgDirs) {
       anyCode = true;
       if (f.startsWith('docs/user/')) {
         // Read by the internal/investigate tests and embedded in the exe (root package).
-        out.dirs.add('internal/investigate'); out.dirs.add('.'); out.reasons.push(`${f}: read by internal/investigate tests, embedded in the exe`);
+        out.dirs.add('internal/investigate'); out.dirs.add('.'); out.web = true; out.reasons.push(`${f}: read by internal/investigate tests and the web tests, embedded in the exe`);
       } else { out.all = true; out.reasons.push(`${f}: changes how every Linux failure is judged, so every package`); }
       continue;
     }
@@ -46,6 +48,8 @@ export function classify(files, pkgDirs) {
     //   the web tests read internal/server/routes.go, internal/blackbox, internal/calltrace and tools/e2e/archive.
     if (f.startsWith('web/src/lib/copy/')) { out.dirs.add('internal/evidence'); out.dirs.add('internal/server'); }
     if (/^(cmd\/unravis-setup\/|internal\/setup\/)/.test(f)) out.dirs.add('cmd/audit-explorer');
+    // contracts/ (BL-445): schemas and golden answers, read by internal/server/contracts_test.go and by desktop/ipc-core/tests (promotion only).
+    if (f.startsWith('contracts/')) { out.dirs.add('internal/server'); out.reasons.push(`${f}: read by internal/server contract tests`); continue; }
     if (CROSS_WEB.test(f)) { out.web = true; out.reasons.push(`${f}: read by the web tests`); }
     if (f.startsWith('web/dist/')) { out.web = true; out.dirs.add('.'); out.reasons.push(`${f}: committed web build, embedded by the root package`); continue; }
     if (f.startsWith('web/')) { out.web = true; out.reasons.push(`${f}: web`); continue; }

@@ -21,6 +21,9 @@
 //   UIFIX-31  Requests over time on real value ranges (also: one slow request reads the same in the tooltip and the note, 31e) (a busy hour in the millions, a slow hour in seconds, a sub-millisecond hour, no timing at all): one unit and one precision on each axis, tooltip with the interval's start and end and the P95 and slowest request alike, no NaN
 //   UIFIX-32  Requests over time on a phone (320, 360, 390 px): the axis titles are painted, the page does not scroll sideways and the chart box keeps its 220 px
 //   UIFIX-40  Clickable table rows are real buttons (BL-495 part): the Slow call lists of nearby calls (40a) and of all sources (40b) have one <button> per row (name, 24 px press area, nothing moves, no focus stop on the row itself); Tab, Enter and Space act once (40c, 40d); the mouse still takes the whole row (40d); a button press never goes on to the row (40c, 40d); on a phone a cell is not named twice (40f); "Show only" of the Request volume table stays a real button (40e)
+//   UIFIX-50  Row buttons of the All operations request list and "Show only" (BL-495 part): "Nearby activity" and "Inspect" are real <button type=button> of one size on one line each, named by their request (API, time to the millisecond, source and record id) with the visible words first (50a); the same Enter and Space act once, with the focus ring (50b, 50c); "Show only" of the Request volume table is a quiet button with a visible edge and one size, 24 px press area, and the table still fits its box (50d)
+//   UIFIX-51  Slowest tab (BL-495 part n): "Inspect window" of the exact time windows and "Nearby activity" of the slowest requests are real <button type=button> quiet buttons of one size with a visible edge, named by the window (start to end, zone) or by the request (API, time to the millisecond, source, record id) with the visible words first (51a); Enter and Space act once each, with the focus ring (51b, 51c)
+//   UIFIX-52  Slowest tab (BL-537): the small line under the API name of each slowest request is at least 11px (the audit's floor) and the two headings start their words where the controls and notes under them start; the heading boxes and the list's other columns stay where they were (52a, 52b)
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase } from '../support/ui';
 
@@ -1141,8 +1144,9 @@ test('UIFIX-17d Investigation timeline on a desktop: the readout is one line and
 const SCALL_SIZES = [{ width: 1440, height: 900 }, { width: 1100, height: 800 }, { width: 1024, height: 768 }, { width: 390, height: 844 }];
 
 /** The press area of every match (its box joined with its ::after) must be 24 x 24 px or more, answer a press at its centre and corners, and leave every other control alone. */
-async function expectScallHitArea(page: Page, selector: string, label: string, minWidth = 24): Promise<void> {
-  const facts = await page.locator(selector).evaluateAll((els) => els.map((e) => {
+async function expectScallHitArea(page: Page, selector: string, label: string, minWidth = 24, within = ''): Promise<void> {
+  // within: look for other controls only inside the closest such ancestor (a table row), not in the whole page: behind a side drawer the page keeps its own controls
+  const facts = await page.locator(selector).evaluateAll((els, scopeSel) => els.map((e) => {
     e.scrollIntoView({ block: 'center' });
     const r = e.getBoundingClientRect(), cs = getComputedStyle(e), p = getComputedStyle(e, '::after');
     let left = r.left, top = r.top, right = r.right, bottom = r.bottom;
@@ -1158,12 +1162,12 @@ async function expectScallHitArea(page: Page, selector: string, label: string, m
     }
     const wrong = spots.filter(([x, y]) => { const hit = document.elementFromPoint(x, y); return !(hit === e || (hit && e.contains(hit))); }).length;
     // every other control of the page must stay out of the press area
-    const others = [...document.querySelectorAll('button, a[href], input, select, summary, [role=button], [role=slider], [tabindex]:not([tabindex="-1"])')]
+    const others = [...(scopeSel ? e.closest(scopeSel) ?? document : document).querySelectorAll('button, a[href], input, select, summary, [role=button], [role=slider], [tabindex]:not([tabindex="-1"])')]
       .filter((o) => o !== e && !o.contains(e) && !e.contains(o) && !(o.closest('svg') && e.closest('svg')))
       .filter((o) => { const b = o.getBoundingClientRect(); return Math.min(b.right, right) - Math.max(b.left, left) > 0.5 && Math.min(b.bottom, bottom) - Math.max(b.top, top) > 0.5; })
       .map((o) => (o.getAttribute('aria-label') || o.textContent || o.tagName).trim().slice(0, 30));
     return { w: right - left, h: bottom - top, wrong, others };
-  }));
+  }), within);
   expect(facts.length, label + ': nothing found').toBeGreaterThan(0);
   for (const f of facts) {
     expect(f.w, label + ' press area width').toBeGreaterThanOrEqual(minWidth);
@@ -1818,5 +1822,310 @@ for (const list of ['calls', 'all'] as const) {
     const cells = [...snapshot.matchAll(/- cell "([^"]*)"/g)].map((m) => m[1]);
     expect(cells.length, 'cells in the accessibility tree').toBeGreaterThan(4);
     for (const name of cells) for (const head of heads) expect(name.startsWith(head + ' '), 'cell "' + name + '" repeats the column name "' + head + '"').toBe(false);
+  });
+}
+
+// UIFIX-50 (BL-495 part): the buttons at the end of a table row. On develop "Nearby activity" (143 px) and "Inspect" (81 px) of the All operations request
+// list were two sizes stacked in one cell, both named only by their words (the first said nothing about WHICH request, the second the record id), and
+// "Show only" in the Request volume table was faint text with a transparent edge. Now they are quiet buttons with a visible edge, one size in a column,
+// named "Nearby activity for Payroll.Run at 08:59:52.123, Demo West / demo.audit, record <id>" / "Inspect record for ..." / "Show only Payroll.Run in histogram".
+const OP_SIZES = [{ width: 1440, height: 900 }, { width: 1280, height: 800 }, { width: 1100, height: 800 }, { width: 1024, height: 768 }, { width: 390, height: 844 }];
+const OP_BUTTONS = '.request-table .row-actions button';
+
+async function openRequestList(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'All operations', exact: true }).click();
+  await page.getByRole('tab', { name: 'Slowest' }).click();
+  await expect(page.locator(OP_BUTTONS).first()).toBeVisible();
+}
+
+for (const size of OP_SIZES) {
+  test('UIFIX-50a All operations at ' + size.width + ' px: Nearby activity and Inspect are real buttons of one size on one line each, named by their request', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openRequestList(page);
+    const rows = await page.locator('.request-table tbody tr').count();
+    expect(rows, 'rows of the request list').toBeGreaterThan(2);
+    expect(await page.locator(OP_BUTTONS).count(), 'two buttons per row').toBe(rows * 2);
+    const facts = await page.locator('.request-table tbody tr').evaluateAll((trs) => trs.map((tr) => {
+      const [near, inspect] = [...tr.querySelectorAll<HTMLElement>('.row-actions button')];
+      const read = (b: HTMLElement) => {
+        const r = b.getBoundingClientRect(), range = document.createRange();
+        range.selectNodeContents(b);
+        const cs = getComputedStyle(b);
+        return { tag: b.tagName + ' ' + b.getAttribute('type'), w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100, lines: new Set([...range.getClientRects()].map((q) => Math.round(q.top))).size, text: (b.textContent ?? '').trim(), name: b.getAttribute('aria-label') ?? '', edge: cs.borderTopStyle + ' ' + cs.borderTopWidth + ' ' + cs.borderTopColor, nowrap: cs.whiteSpace };
+      };
+      return { near: read(near), inspect: read(inspect), id: (tr.querySelector('.record-id')?.textContent ?? '').trim() };
+    }));
+    for (const f of facts) {
+      expect([f.near.tag, f.inspect.tag], 'both are <button type=button>').toEqual(['BUTTON button', 'BUTTON button']);
+      expect(f.near.w, 'both buttons are as wide as each other').toBeCloseTo(f.inspect.w, 1);
+      expect(f.near.h, 'both buttons are as tall as each other').toBeCloseTo(f.inspect.h, 1);
+      expect(f.near.lines, 'Nearby activity stays on one line').toBe(1);
+      expect(f.inspect.lines, 'Inspect stays on one line').toBe(1);
+      expect(f.near.nowrap).toBe('nowrap');
+      expect(f.near.edge, 'a visible edge, not faint text').not.toMatch(/rgba\(0, 0, 0, 0\)|none|0px/);
+      // the name starts with the visible words (label in name) and says which request
+      expect(f.near.name).toMatch(/^Nearby activity for [\w.]+ at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+, record \S+$/);
+      expect(f.inspect.name).toMatch(/^Inspect record for [\w.]+ at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+, record \S+$/);
+      expect(f.id, 'the row shows its record id').not.toBe('');
+      expect(f.near.name.endsWith(', record ' + f.id), 'the name ends with the record id of its row (the only part that is unique on live data)').toBe(true);
+      expect(f.inspect.name.endsWith(', record ' + f.id)).toBe(true);
+      expect(f.near.name.startsWith(f.near.text)).toBe(true);
+      expect(f.inspect.name.startsWith(f.inspect.text)).toBe(true);
+    }
+    // the same sizes in every row of the column
+    expect(new Set(facts.map((f) => f.near.w + 'x' + f.near.h + '/' + f.inspect.w + 'x' + f.inspect.h)).size, 'every row has the same two boxes').toBe(1);
+    const names = facts.flatMap((f) => [f.near.name, f.inspect.name]);
+    expect(new Set(names).size, 'every button has its own name: ' + names.join(' | ')).toBe(names.length);
+    // the accessibility tree (what a screen reader gets)
+    const snapshot = await page.locator('.request-table tbody tr').first().ariaSnapshot();
+    expect(snapshot).toMatch(/- button "Nearby activity for Payroll\.Run at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+, record \S+"/);
+    expect(snapshot).toMatch(/- button "Inspect record for Payroll\.Run at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+, record \S+"/);
+    await expectScallHitArea(page, OP_BUTTONS, 'Row action', 24, 'tr');
+    if (size.width >= 1024) {
+      const [wide, box] = await page.locator('.request-scroll').first().evaluate((e) => [e.scrollWidth, e.clientWidth]);
+      expect(wide, 'the request list fits its box').toBeLessThanOrEqual(box);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow of the page').toBeLessThanOrEqual(0);
+  });
+}
+
+test('UIFIX-50b All operations: Tab reaches Nearby activity then Inspect of the same row; Enter and Space on Nearby activity act once each; the focus ring shows', async ({ page }) => {
+  await openRequestList(page);
+  const first = page.locator(OP_BUTTONS).nth(0);
+  await countClicks(page, OP_BUTTONS);
+  await first.focus();
+  await page.keyboard.press('Shift+Tab'); // arrive by keyboard, so the ring is the keyboard ring
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? '')).toMatch(/^Nearby activity for /);
+  const ring = await focusRing(page);
+  expect(ring.style).toBe('solid');
+  expect(ring.width).toBe(2);
+  expect(ring.color, 'the ring is painted').not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+  const nameOfFocus = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? '');
+  const firstName = await nameOfFocus();
+  expect(firstName).toMatch(/^Nearby activity for /);
+  await page.keyboard.press('Enter');
+  expect(await clicks(page), 'one click for one Enter').toBe(1);
+  await expect(page.locator('#nearby-activity'), 'Nearby activity opened').toBeAttached();
+  await page.keyboard.press('Space');
+  expect(await clicks(page), 'one more click for one Space').toBe(2);
+  expect(await nameOfFocus(), 'the press kept the focus on the button').toBe(firstName);
+  await page.keyboard.press('Tab');
+  expect(await nameOfFocus(), 'Tab goes on to the Inspect button of the same row').toBe(firstName.replace('Nearby activity for', 'Inspect record for'));
+});
+
+for (const key of ['Enter', 'Space'] as const) {
+  test('UIFIX-50c All operations: ' + key + ' on Inspect opens the record once', async ({ page }) => {
+    await openRequestList(page);
+    await countClicks(page, OP_BUTTONS);
+    const inspect = page.locator(OP_BUTTONS).nth(1);
+    await inspect.focus();
+    const name = (await inspect.getAttribute('aria-label'))!;
+    expect(name).toMatch(/^Inspect record for /);
+    await page.keyboard.press(key);
+    expect(await clicks(page), 'one click for one press').toBe(1);
+    await expect(page.getByRole('heading', { name: /^Record demo-/ })).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('heading', { name: /^Record demo-/ })).toHaveCount(0);
+    await expect(page.locator(OP_BUTTONS).nth(1), 'the button gets the focus back').toBeFocused();
+  });
+}
+
+for (const size of OP_SIZES) {
+  test('UIFIX-50d Where is it? at ' + size.width + ' px: "Show only" is a quiet button with a visible edge, one size in the column, a 24 px press area, and the table fits its box', async ({ page }) => {
+    await page.setViewportSize(size);
+    await page.getByRole('button', { name: 'Where is it?', exact: true }).first().click();
+    await page.locator('summary', { hasText: 'Request volume' }).click();
+    const sel = '.request-volume .volume-table td button[aria-label^="Show only"]';
+    await expect(page.locator(sel).first()).toBeVisible();
+    const facts = await page.locator(sel).evaluateAll((els) => els.map((e) => {
+      const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
+      return { w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100, edge: cs.borderTopStyle + ' ' + cs.borderTopWidth + ' ' + cs.borderTopColor, name: e.getAttribute('aria-label') ?? '', tag: e.tagName + ' ' + e.getAttribute('type'), nowrap: cs.whiteSpace };
+    }));
+    expect(facts.length, 'one per row').toBeGreaterThan(1);
+    expect(new Set(facts.map((f) => f.w + 'x' + f.h)).size, 'one size in the column').toBe(1);
+    for (const f of facts) {
+      expect(f.tag).toBe('BUTTON button');
+      expect(f.edge, 'a visible edge, not faint text').not.toMatch(/rgba\(0, 0, 0, 0\)|none|0px/);
+      expect(f.nowrap).toBe('nowrap');
+      expect(f.name).toMatch(/^Show only [\w.]+ in histogram$/);
+    }
+    const snapshot = await page.locator('.request-volume .volume-table tbody tr').first().ariaSnapshot();
+    expect(snapshot).toMatch(/- button "Show only Payroll\.Run in histogram"/);
+    await expectScallHitArea(page, sel, 'Show only', 24, 'tr');
+    const [wide, box] = await page.locator('.request-volume .volume-table-wrap').first().evaluate((e) => [e.scrollWidth, e.clientWidth]);
+    expect(wide, 'the table fits its box').toBeLessThanOrEqual(box);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow of the page').toBeLessThanOrEqual(0);
+  });
+}
+
+// UIFIX-51 (BL-495 part n): the same fix as UIFIX-50 for the Slowest tab of All operations (TrafficSlowness). On develop "Inspect window" (10 of them in the table of
+// exact time windows) and "Nearby activity" (one per slowest request) were faint quiet buttons (a transparent edge) named only by their words, so a screen reader
+// user heard the same name ten or fifty times. Now they are quiet buttons with a visible edge, one size in a column, named "Inspect window for 20 Oct 08:00:00 to
+// 08:05:00 UTC" and "Nearby activity for Payroll.Run at 08:59:52.123, Demo West / demo.audit, record <id>".
+const WIN_BUTTONS = '.traffic-slowness .traffic-windows tbody td button';
+const SLOW_BUTTONS = '.traffic-slowness .slow-result tbody td button';
+const WIN_NAME = /^Inspect window for \d{1,2} \w{3} \d\d:\d\d:\d\d to (\d{1,2} \w{3} )?\d\d:\d\d:\d\d UTC( \(partial\))?$/;
+const NEAR_NAME = /^Nearby activity for [\w.]+ at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+, record \S+$/;
+
+async function openSlowestLists(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'All operations', exact: true }).click();
+  await page.getByRole('tab', { name: 'Slowest' }).click();
+  await page.getByRole('button', { name: 'Load 50 slowest requests' }).click();
+  if (!(await page.locator('.traffic-windows').evaluate((e) => (e as HTMLDetailsElement).open))) await page.locator('.traffic-slowness summary', { hasText: 'Exact time windows' }).click();
+  await expect(page.locator(SLOW_BUTTONS).first()).toBeVisible();
+  await expect(page.locator(WIN_BUTTONS).first()).toBeVisible();
+}
+
+const buttonFacts = (page: Page, selector: string) => page.locator(selector).evaluateAll((els) => els.map((e) => {
+  const r = e.getBoundingClientRect(), range = document.createRange();
+  range.selectNodeContents(e);
+  const cs = getComputedStyle(e);
+  return { tag: e.tagName + ' ' + e.getAttribute('type'), w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100, lines: new Set([...range.getClientRects()].map((q) => Math.round(q.top))).size, text: (e.textContent ?? '').trim(), name: e.getAttribute('aria-label') ?? '', edge: cs.borderTopStyle + ' ' + cs.borderTopWidth + ' ' + cs.borderTopColor, nowrap: cs.whiteSpace, api: ((e.closest('tr')?.querySelector('th')?.firstChild?.textContent) ?? '').trim(), clock: ((e.closest('tr')?.querySelector('td')?.textContent ?? '').match(/\d\d:\d\d:\d\d/) ?? [''])[0] };
+}));
+
+for (const size of OP_SIZES) {
+  test('UIFIX-51a Slowest tab at ' + size.width + ' px: Inspect window and Nearby activity are real quiet buttons of one size with a visible edge, named by their window or request', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowestLists(page);
+    const wins = await buttonFacts(page, WIN_BUTTONS), near = await buttonFacts(page, SLOW_BUTTONS);
+    expect(wins.length, 'a button per window row').toBeGreaterThan(2);
+    expect(near.length, 'a button per slowest request').toBeGreaterThan(2);
+    for (const [list, facts, pattern, words] of [['window', wins, WIN_NAME, 'Inspect window'], ['request', near, NEAR_NAME, 'Nearby activity']] as const) {
+      expect(new Set(facts.map((f) => f.w + 'x' + f.h)).size, list + ' buttons: one size in the column').toBe(1);
+      for (const f of facts) {
+        expect(f.tag, 'a real button').toBe('BUTTON button');
+        expect(f.text).toBe(words);
+        expect(f.lines, 'one line').toBe(1);
+        expect(f.nowrap).toBe('nowrap');
+        expect(f.edge, 'a visible edge, not faint text').not.toMatch(/rgba\(0, 0, 0, 0\)|none|0px/);
+        expect(f.name, 'the name').toMatch(pattern);
+        expect(f.name.startsWith(f.text), 'the visible words come first in the name').toBe(true);
+      }
+      const names = facts.map((f) => f.name);
+      expect(new Set(names).size, 'every ' + list + ' button has its own name: ' + names.join(' | ')).toBe(names.length);
+    }
+    // the name says which row it belongs to: the API (the row heading) and the start time (the Started cell, to the second) of its own row
+    for (const f of near) {
+      expect(f.api, 'the row shows its API').toMatch(/^[\w.]+\.[\w]+$/);
+      expect(f.clock, 'the row shows its start time').toMatch(/^\d\d:\d\d:\d\d$/);
+      expect(f.name.startsWith('Nearby activity for ' + f.api + ' at ' + f.clock + '.'), 'the name holds the API and start time of its own row: ' + f.name + ' / ' + f.api + ' ' + f.clock).toBe(true);
+    }
+    const windowRows = await page.locator('.traffic-windows tbody tr').evaluateAll((trs) => trs.map((tr) => ({ heading: (tr.querySelector('th')?.textContent ?? '').trim(), name: tr.querySelector('button')?.getAttribute('aria-label') ?? '' })));
+    for (const row of windowRows) {
+      const [from, to] = row.heading.replace(' (partial)', '').split('–');
+      expect(row.name.includes(from.trim()), 'the name holds the start the row shows: ' + row.heading + ' / ' + row.name).toBe(true);
+      expect(row.name.endsWith(to.trim().replace(/^\d{1,2} \w{3} /, '') + ' UTC' + (row.heading.includes('(partial)') ? ' (partial)' : '')), 'the name holds the end the row shows').toBe(true);
+    }
+    // the accessibility tree (what a screen reader gets)
+    const snapshot = await page.locator('.traffic-slowness').first().ariaSnapshot();
+    expect(snapshot).toMatch(/- button "Inspect window for \d{1,2} \w{3} \d\d:\d\d:\d\d to [^"]+ UTC"/);
+    expect(snapshot).toMatch(/- button "Nearby activity for Payroll\.Run at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+, record \S+"/);
+    await expectScallHitArea(page, WIN_BUTTONS, 'Inspect window', 24, 'tr');
+    await expectScallHitArea(page, SLOW_BUTTONS, 'Nearby activity', 24, 'tr');
+    // (both tables are wider than their box at 1440 px and below and scroll inside it, as before: the boxes are measured unchanged in the pull request)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow of the page').toBeLessThanOrEqual(0);
+  });
+}
+
+test('UIFIX-51b Slowest tab: Tab reaches Inspect window, the focus ring shows, Enter and Space each pick the window once and the list is read for it', async ({ page }) => {
+  await openSlowestLists(page);
+  await countClicks(page, WIN_BUTTONS);
+  const first = page.locator(WIN_BUTTONS).nth(2);
+  await first.focus();
+  await page.keyboard.press('Shift+Tab'); // arrive by keyboard, so the ring is the keyboard ring
+  await page.keyboard.press('Tab');
+  const nameOfFocus = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? '');
+  const name = await nameOfFocus();
+  expect(name).toMatch(WIN_NAME);
+  expect(name, 'Tab reached the button it left').toBe((await first.getAttribute('aria-label'))!);
+  const ring = await focusRing(page);
+  expect(ring.style).toBe('solid');
+  expect(ring.width).toBe(2);
+  expect(ring.color, 'the ring is painted').not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+  const heading = page.locator('.traffic-slowness .section-heading p', { hasText: /Selected window|Full investigation/ });
+  await expect(heading).toContainText('Full investigation');
+  await page.keyboard.press('Enter');
+  expect(await clicks(page), 'one click for one Enter').toBe(1);
+  await expect(heading, 'the window is picked').toContainText('Selected window');
+  await page.keyboard.press('Space');
+  expect(await clicks(page), 'one more click for one Space').toBe(2);
+  expect(await nameOfFocus(), 'the press kept the focus on the button').toBe(name);
+  await expect(heading).toContainText('Selected window');
+});
+
+for (const key of ['Enter', 'Space'] as const) {
+  test('UIFIX-51c Slowest tab: ' + key + ' on Nearby activity of a slowest request opens its surrounding activity once, with the focus ring', async ({ page }) => {
+    await openSlowestLists(page);
+    await countClicks(page, SLOW_BUTTONS);
+    const button = page.locator(SLOW_BUTTONS).nth(1);
+    await button.focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    const name = (await button.getAttribute('aria-label'))!;
+    expect(name).toMatch(NEAR_NAME);
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? ''), 'Tab reached it').toBe(name);
+    const ring = await focusRing(page);
+    expect(ring.style).toBe('solid');
+    expect(ring.width).toBe(2);
+    expect(ring.color, 'the ring is painted').not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+    await expect(page.locator('#nearby-activity')).toHaveCount(0);
+    await page.keyboard.press(key);
+    expect(await clicks(page), 'one click for one press').toBe(1);
+    await expect(page.locator('#nearby-activity'), 'Nearby activity opened').toBeAttached();
+  });
+}
+
+// UIFIX-52 (BL-537): two pre-existing audit warnings of the Slowest tab of All operations, found by the audit screen x-all-slowest-loaded. On develop the small line under the
+// API name of each slowest request ("Demo East / demo.audit · synchronous · success") was 10.83 px (the browser's "smaller" of a 13 px heading cell) and the words of the two
+// headings started 2 px left of the controls and notes under them (the heading box has 12 px of padding, everything else 14 px). The first column of the slowest list also started
+// its words 6 px left of them on a phone (8 px of cell padding there). Only the words move: the heading boxes keep their left and width.
+const SLOW_SMALL = '.traffic-slowness .slow-result tbody th small';
+
+const wordsLeft = (page: Page, selector: string) => page.locator(selector).first().evaluate((e) => {
+  const range = document.createRange();
+  range.selectNodeContents(e);
+  return Math.round(range.getBoundingClientRect().left * 100) / 100;
+});
+
+for (const size of OP_SIZES) {
+  test('UIFIX-52a Slowest tab at ' + size.width + ' px: the line under each API name is at least 11 px', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowestLists(page);
+    const sizes = await page.locator(SLOW_SMALL).evaluateAll((els) => els.map((e) => ({ px: parseFloat(getComputedStyle(e).fontSize), text: (e.textContent ?? '').trim() })));
+    expect(sizes.length, 'one line per slowest request').toBeGreaterThan(2);
+    for (const f of sizes) {
+      expect(f.text, 'the line still names source, kind and outcome').toMatch(/^\S.* · \S+ · \S+$/);
+      expect(f.px, 'font size of "' + f.text + '"').toBeGreaterThanOrEqual(11);
+    }
+    // it stays the quieter line: smaller than the API name above it
+    const [small, name] = await page.locator('.traffic-slowness .slow-result tbody th').first().evaluate((th) => [parseFloat(getComputedStyle(th.querySelector('small')!).fontSize), parseFloat(getComputedStyle(th).fontSize)]);
+    expect(small, 'the line under the name is smaller than the name').toBeLessThan(name);
+  });
+
+  test('UIFIX-52b Slowest tab at ' + size.width + ' px: the words of both headings start where the controls and notes start; the heading boxes and the list do not move sideways', async ({ page }) => {
+    await page.setViewportSize(size);
+    await openSlowestLists(page);
+    const notes = await wordsLeft(page, '.traffic-slowness > .activity-explanation > p');
+    const controls = await wordsLeft(page, '.traffic-slowness .volume-controls > label');
+    expect(notes, 'the note and the controls start on one line').toBe(controls);
+    const headings = page.locator('.traffic-slowness > .section-heading');
+    expect(await headings.count()).toBe(2);
+    for (let i = 0; i < 2; i++) {
+      const words = await headings.nth(i).evaluate((h) => [...h.querySelectorAll('h3, p')].map((e) => Math.round(e.getBoundingClientRect().left * 100) / 100));
+      for (const left of words) expect(left, 'heading ' + i + ' words start at ' + notes).toBe(notes);
+    }
+    // the boxes: each heading is still as wide as the section (the fix pads the words, it does not narrow or shift the box)
+    const [section, boxes] = await page.locator('.traffic-slowness').first().evaluate((sec) => [sec.getBoundingClientRect().left + ',' + sec.getBoundingClientRect().width, [...sec.querySelectorAll(':scope > .section-heading')].map((h) => h.getBoundingClientRect().left + ',' + h.getBoundingClientRect().width)] as const);
+    for (const b of boxes) expect(b, 'the heading box keeps the left and width of the section').toBe(section);
+    // the right end of a heading with a button is unchanged: the button still ends 12 px inside the box
+    const [boxRight, buttonRight] = await page.locator('.traffic-slowness > .section-heading').nth(1).evaluate((h) => [h.getBoundingClientRect().right, h.querySelector('button')!.getBoundingClientRect().right]);
+    if (size.width > 600) expect(Math.round(boxRight - buttonRight), 'the button keeps its 12 px of room on the right (on a phone the button wraps under the words)').toBe(12);
+    else expect(buttonRight, 'the wrapped button stays inside the box').toBeLessThanOrEqual(boxRight);
+    // the slowest list: its first column's words start with the summary line above it (on a phone they started 6 px left of it)
+    const summary = await wordsLeft(page, '.traffic-slowness .slow-result .volume-summary');
+    const firstColumn = await wordsLeft(page, '.traffic-slowness .slow-result tbody tr:first-child > :first-child');
+    expect(firstColumn, 'the first column starts under the summary line').toBe(summary);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'sideways overflow of the page').toBeLessThanOrEqual(0);
   });
 }

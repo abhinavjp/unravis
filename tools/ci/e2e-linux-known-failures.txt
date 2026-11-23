@@ -1,0 +1,3 @@
+# Tests of tools/e2e that fail on Linux with the demo app today, one per line: "<spec file> > <test title>" (as the nightly e2e job prints it).
+# The nightly e2e job (.github/workflows/nightly-e2e.yml) fails on any failure that is not listed here. Keep this file empty if you can:
+# a listed test is a defect or a stale spec, and the line says it is known, not that it is fine. Lines starting with # are notes.

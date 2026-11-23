@@ -1,0 +1,72 @@
+name: mutants
+
+# BL-452 (docs/desktop/groom/08-testing-repo.md). Mutation testing of the desktop Rust core (`desktop/ipc-core`: the IPC parsers, the
+# capability and floor checks, the supervisor). cargo-mutants changes one operator or one return value at a time and runs the tests; a
+# change that no test notices ("a surviving mutant") means the tests do not pin that line.
+#
+# - Pull request that touches desktop/ipc-core or the mutants config: only the mutants in the changed lines (`--in-diff`), so it is
+#   small. A surviving mutant fails this job. It is its own workflow, not part of `fast-build`: branch protection decides whether it
+#   blocks a merge (today it does not).
+# - "Run workflow" (any branch): every mutant of the crate, about 3 minutes locally. Use it after a bigger change to the crate.
+# Mutants that cannot change behaviour are listed with their reason in desktop/.cargo/mutants.toml; anything else that survives is a
+# missing test.
+on:
+  pull_request:
+    branches: [develop, master]
+    paths:
+      - "desktop/ipc-core/**"
+      - "desktop/.cargo/mutants.toml"
+      - ".github/workflows/mutants.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutants-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_MUTANTS_VERSION: 27.1.0
+
+jobs:
+  cargo-mutants:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Built from crates.io with --locked (the registry checks the crate hash), as cargo-deny is: no unchecked binary download.
+      # RUSTUP_TOOLCHAIN=stable: the tool is built with the runner's stable Rust, not the pinned 1.97.0 of the project.
+      - name: Install cargo-mutants
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: cargo install --locked --version "$CARGO_MUTANTS_VERSION" cargo-mutants
+      - name: Install the pinned Rust toolchain
+        working-directory: desktop
+        run: rustup show active-toolchain || rustup toolchain install --profile minimal
+      - name: cargo mutants
+        working-directory: desktop
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          EVENT: ${{ github.event_name }}
+        # --in-place: the contract test reads fixtures outside the Cargo workspace (../contracts), which a copied tree would not have.
+        # The diff is made relative to desktop/ (the workspace): cargo-mutants does not match repo-root paths.
+        run: |
+          set -euo pipefail
+          args=(-p ipc-core --no-shuffle --in-place --output "$RUNNER_TEMP/mutants")
+          if [ "$EVENT" = "pull_request" ]; then
+            git diff -U0 --relative "origin/${BASE_REF}...HEAD" > "$RUNNER_TEMP/changes.diff"
+            args+=(--in-diff "$RUNNER_TEMP/changes.diff")
+          fi
+          cargo mutants "${args[@]}"
+      - name: Surviving mutants
+        if: failure()
+        run: |
+          echo "### Surviving mutants" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/mutants/mutants.out/missed.txt" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "none listed" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

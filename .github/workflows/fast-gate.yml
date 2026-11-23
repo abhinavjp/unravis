@@ -58,7 +58,7 @@ jobs:
         id: cachekey
         run: |
           echo "dir=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)-$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
 
       - name: Go build cache - restore
         id: gocache
@@ -76,9 +76,13 @@ jobs:
         run: |
           set -euo pipefail
           node tools/ci/test-fast-scope.mjs
+          node tools/ci/test-diff-cover.mjs
+          node tools/ci/test-web-scope.mjs
           node tools/ci/test-compare.mjs
           node tools/ci/test-promote-dist.mjs
+          node tools/ci/test-compare-e2e.mjs
           node tools/ci/test-backlog-ids.mjs
+          node tools/ci/test-trufflehog-allowlist.mjs
           node tools/security/check-action-pins.mjs
 
       - name: Scope - what does this change affect?
@@ -138,12 +142,19 @@ jobs:
           # Same rules as the linux-gates job of ci.yml: the baseline holds the known Windows-only failures, so go test
           # exits 1 on a normal run; the compare below is the pass/fail. The two skipped tests hang on Linux.
           # shellcheck disable=SC2086
-          go test -count=1 -timeout 10m -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' -json $PACKAGES > go-test.json
+          go test -count=1 -timeout 10m -coverprofile=go.cover -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' -json $PACKAGES > go-test.json
           code=$?
           echo "go test exit code: $code"
           if [ ! -s go-test.json ]; then echo "go test produced no JSON"; exit 1; fi
           if [ "$code" -gt 1 ]; then exit "$code"; fi
           node tools/ci/compare-go-failures.mjs --json go-test.json --baseline docs/desktop/baseline-go-tests.txt
+
+      # BL-451: how much of the changed code do the tests run? A report in the job summary for now; it blocks nothing.
+      # Only Linux-visible code is counted (a Windows-only file is not in the profile), and only the affected packages ran.
+      - name: Go - diff coverage (report only)
+        if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' && hashFiles('go.cover') != '' }}
+        # Exit 2 (the tool could not run) must not go unseen, and must not turn the gate red while this is a report.
+        run: node tools/ci/diff-cover.mjs --base HEAD^1 --head HEAD --go go.cover --min 80 --min-lines 10 --report-only || echo "::warning::diff-cover could not run (exit $?)"
 
       - name: Go - modules are tidy
         if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' }}
@@ -166,7 +177,7 @@ jobs:
           go vet ./...
           GOOS=windows go vet ./...
           # Compiles every test binary without running a test, so a pull request that tests a few packages finds them built.
-          go test -count=1 -run '^$' ./...
+          go test -count=1 -cover -run '^$' ./...
 
       - name: Go build cache - save (push to develop only)
         if: ${{ success() && github.event_name == 'push' && steps.gocache.outputs.cache-hit != 'true' }}
@@ -215,18 +226,14 @@ jobs:
           echo "A back-merge of master into develop is allowed only when these folders end up identical to master's: the same two commands with --source=origin/master."
           exit 1
 
-      - name: Did the pull request touch web/?
+      - name: Did the pull request touch web/ or a file the web tests read?
         id: scope
         run: |
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then echo "web=false" >> "$GITHUB_OUTPUT"; exit 0; fi
-          files="$(git diff --no-renames --name-only HEAD^1 HEAD)"
-          # An empty diff is a doubt: run it. docs/user/*.md is read by the web build (BL-031).
-          if [ -z "$files" ] || printf '%s\n' "$files" | grep -Eq '^(web/|docs/user/|internal/(server|blackbox|calltrace)/|tools/e2e/)'; then
-            echo "web=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "web=false" >> "$GITHUB_OUTPUT"; echo "No web files changed: skipping the web checks."
-          fi
+          # The list of files outside web/ that the web tests read is tools/ci/web-scope.mjs; test-web-scope.mjs (go job) fails
+          # when a web test reads a path that list lacks. An empty diff is a doubt: it runs the web checks.
+          node tools/ci/web-scope.mjs --base HEAD^1 --head HEAD
 
       - name: Set up Node
         if: ${{ steps.scope.outputs.web == 'true' }}

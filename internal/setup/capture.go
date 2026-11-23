@@ -148,6 +148,13 @@ func CaptureScenarios() map[string]UIBackend {
 		Detail: "Windows is waiting for a restart from an earlier update.", Fix: "Setup can go on. If a step fails, restart the PC and run setup again."})
 	preflightFail := &ScriptedBackend{St: base, Checks: failChecks}
 
+	// A program folder that holds somebody's files: the line names them and the row offers the two buttons.
+	folderChecks := append([]Check{}, ready...)
+	folderChecks[5] = Check{ID: "install-folder", Title: "Program folder", Status: CheckFailed,
+		Detail: userLoc + " already holds files that are not Unravis files: notes.txt, old-build, report.xlsx.",
+		Fix:    "Pick an empty folder or a new one. Setup does not change or delete those files."}
+	folderInUse := &ScriptedBackend{St: base, Checks: folderChecks}
+
 	// The progress screen: three steps done, one running, the rest waiting. It holds until Cancel.
 	prog := all(userSteps, StepWaiting)
 	for _, s := range userSteps[:3] {
@@ -235,7 +242,7 @@ func CaptureScenarios() map[string]UIBackend {
 			Kept: []string{`Cases and saved connections of everyone on this PC in C:\ProgramData\Unravis`, `Blackbox recordings in D:\UnravisBlackbox`}}}
 
 	return map[string]UIBackend{
-		"fresh": fresh, "preflight-fail": preflightFail, "progress": progress, "done": done, "failed": failed,
+		"fresh": fresh, "preflight-fail": preflightFail, "folder-in-use": folderInUse, "progress": progress, "done": done, "failed": failed,
 		"upgrade": upgrade, "repair": repair, "uninstall": uninstall, "uninstall-left": uninstallLeft,
 	}
 }

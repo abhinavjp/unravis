@@ -9,7 +9,7 @@
   import {
     approvalReason, blockedLine, blocked, buildRequest, canFinish, checksFailedFirst, CONFIRM_DELETE_WORD, doneHeading, failedHeading, formatBytes, mergeEvents,
     parseAddresses, problemNotice, progressHeading, progressPercent, railPosition, railSteps, retryHelps, screenAfterResult, settleSteps, stepAnnouncement, uninstallReady,
-    showsCloseBox, uninstallWhy, validateOptions, welcomeHeading, welcomeNutshell,
+    showsCloseBox, showsFolderActions, uninstallWhy, validateOptions, welcomeHeading, welcomeNutshell,
     type BlackboxOptions, type Check, type Op, type Options, type Problem, type Result, type Scope, type Screen, type StepEvent,
     type UIChanges, type UIState, type UninstallOptions
   } from './logic.ts';
@@ -69,7 +69,7 @@
   const placeLabel = $derived(ui?.installed?.location ?? options.location);
   const hold = $derived(settling ? true : undefined);
   const orderedChecks = $derived(checksFailedFirst(checks));
-  const blockedNote = $derived(blockedLine(checks));
+  const blockedNote = $derived(blockedLine(checks, op === 'install'));
   const stepNumber = $derived(Math.max(0, rail.findIndex((step) => step.id === position.current)) + 1);
   const stepLabel = $derived(rail.find((step) => step.id === position.current)?.label ?? '');
   const deleting = $derived(op === 'uninstall' && (uninst.deleteCases || uninst.deleteRecordings));
@@ -183,7 +183,11 @@
       document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
       return;
     }
-    if (await check()) await proceed();
+    if (await check()) {
+      // Still blocked: say so here, where the person is, and the list of what is not ready sits under the form.
+      if (blocked(checks)) notice = 'Setup cannot go on yet. Fix what is listed under \u201cNot ready yet\u201d, then press Next again.';
+      else await proceed();
+    }
   });
 
   const removeNext = () => once(async () => {
@@ -305,6 +309,17 @@
     }
   }
 
+  // Under a failed Program folder check: Next is off, so the folder box on Options is reached from here, and the person can look inside.
+  function chooseAnotherFolder() {
+    notice = '';
+    go('options');
+    setTimeout(() => document.querySelector<HTMLInputElement>('input[data-folder]')?.focus(), 60);
+  }
+
+  async function openProgramFolder() {
+    try { await api.openFolder(options.location); } catch (err) { notice = message(err); }
+  }
+
   function backToOptions() {
     notice = '';
     go(op === 'install' ? 'options' : op === 'uninstall' ? 'uninstall' : 'welcome');
@@ -328,6 +343,12 @@
 {#snippet closeNote(check: Check)}
   {#if showsCloseBox(check)}
     <label class="tick under-row"><input type="checkbox" bind:checked={options.closeRunningApp} /> Close Unravis for me</label>
+  {/if}
+  {#if showsFolderActions(check)}
+    <div class="under-row actions">
+      {#if op === 'install'}<Button onclick={press(chooseAnotherFolder)} aria-disabled={hold}>Choose another folder</Button>{/if}
+      <Button onclick={press(openProgramFolder)} aria-disabled={hold}>Open this folder</Button>
+    </div>
   {/if}
 {/snippet}
 
@@ -378,7 +399,7 @@
               </fieldset>
               <label class="field">
                 <span>Folder</span>
-                <input type="text" class="mono" bind:value={options.location} aria-invalid={problemFor('location') ? 'true' : undefined} aria-describedby={problemFor('location') ? 'err-location' : undefined} spellcheck="false" />
+                <input type="text" class="mono" data-folder bind:value={options.location} aria-invalid={problemFor('location') ? 'true' : undefined} aria-describedby={problemFor('location') ? 'err-location' : undefined} spellcheck="false" />
               </label>
               {#if problemFor('location')}<p class="problem" id="err-location">{problemFor('location')}</p>{/if}
               <label class="tick"><input type="checkbox" bind:checked={options.startAtSignIn} /> Start Unravis when I sign in</label>
@@ -555,6 +576,7 @@
   .nutshell b { display: block; margin-bottom: 2px; font-size: 12px; color: var(--text-2); }
   .why { min-width: 0; font-size: 12px; color: var(--text-2); }
   .under-row { margin-top: 6px; min-height: 24px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .notice { padding: 8px 12px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 14%, var(--surface)); font-size: 13px; }
   .problem { color: var(--bad); font-size: 12px; }
   .blocked { padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--bad); font-size: 13px; }

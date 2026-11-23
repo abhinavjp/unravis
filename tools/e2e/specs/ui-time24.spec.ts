@@ -8,6 +8,7 @@
 //   UIFIX-18f  Bad text then a date change: the box and its error stay, Run stays off, and the fixed time sends the new date and time together
 //   UIFIX-18e  Tap target 24 px or more, focus order Date then Time, labels, 320/360/390 px do not scroll sideways, both themes keep 4.5:1 text
 import { test, expect, type Page } from '../support/fixtures';
+import { layoutSettled } from '../support/ui';
 
 test.use({ viewport: { width: 1440, height: 900 }, locale: 'en-US' });
 
@@ -203,19 +204,33 @@ test('UIFIX-18e The boxes are 24 px or more, in order, readable in both themes, 
     // The error colour is also visible against the background in this theme.
     await box(page, 'current-start').fill('x');
     await box(page, 'current-start').blur();
-    const border = await box(page, 'current-start').evaluate((e) => (getComputedStyle(e).borderTopColor.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number));
-    expect(contrast(border, facts.back), scheme + ' error border').toBeGreaterThanOrEqual(3);
+    // Switching the theme and marking the box invalid each start a colour transition (.01 ms under reduced motion, but still running until the next frame), so a colour read in the
+    // same frame is one the box is leaving: the grey edge (2.98:1 in light) or the background of the other theme. Wait until the page has settled, then read the final edge and
+    // background once and hold them to the 3:1 limit (unchanged). A poll would pass on the first sample that reached 3, which can be a colour the box is leaving.
+    await layoutSettled(page);
+    const final = await box(page, 'current-start').evaluate((e) => {
+      const rgb = (s: string) => (s.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+      const s = getComputedStyle(e);
+      return { border: rgb(s.borderTopColor), back: rgb(s.backgroundColor) };
+    });
+    expect(contrast(final.border, final.back), scheme + ' error border').toBeGreaterThanOrEqual(3);
     await box(page, 'current-start').fill('08:00');
     await box(page, 'current-start').blur();
   }
   for (const width of [1440, 1100, 390, 360, 320]) {
     await page.setViewportSize({ width, height: 844 });
+    // The page lays itself out again after the resize (media queries, a wrapped row, the .01 ms transitions of reduced motion); measure once it has stopped moving, not in the middle of it.
+    await layoutSettled(page);
     const facts = await page.evaluate(() => {
       const root = document.documentElement;
       const boxes = [...document.querySelectorAll<HTMLElement>('input.time24')].map((e) => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, w: r.width, h: r.height }; });
-      return { scrolls: root.scrollWidth > root.clientWidth, inner: window.innerWidth, boxes };
+      // Name the widest things when it scrolls, so a failure says what overflows.
+      const wide = root.scrollWidth > root.clientWidth
+        ? [...document.querySelectorAll<HTMLElement>('body *')].filter((e) => e.getBoundingClientRect().right > root.clientWidth + 0.5).slice(0, 5).map((e) => e.tagName.toLowerCase() + '.' + String(e.className).slice(0, 40) + ' ' + Math.round(e.getBoundingClientRect().right))
+        : [];
+      return { scrolls: root.scrollWidth > root.clientWidth, inner: window.innerWidth, boxes, wide };
     });
-    expect(facts.scrolls, width + ' px: the page scrolls sideways').toBe(false);
+    expect(facts.scrolls, width + ' px: the page scrolls sideways: ' + JSON.stringify(facts.wide)).toBe(false);
     for (const b of facts.boxes) {
       expect(b.left, width + ' px: box inside the window').toBeGreaterThanOrEqual(0);
       expect(b.right, width + ' px: box inside the window').toBeLessThanOrEqual(facts.inner + 0.5);
