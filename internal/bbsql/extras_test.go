@@ -222,7 +222,9 @@ func TestExtraClampedTimeoutsEventuallyStrike(t *testing.T) {
 // can expose client addresses, names or text that no column rule catches).
 func TestExtraSourcesArePinned(t *testing.T) {
 	want := map[string]bool{
-		"sys.dm_exec_query_memory_grants":         true,
+		"sys.dm_exec_query_memory_grants": true,
+		"sys.dm_exec_query_stats":         true,
+		"sys.dm_exec_query_stats AS qs CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st": true,
 		"sys.dm_io_pending_io_requests":           true,
 		"sys.dm_os_latch_stats":                   true,
 		"sys.dm_os_workers":                       true,

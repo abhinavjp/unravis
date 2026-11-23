@@ -245,6 +245,12 @@ type Runner struct {
 	// tick; changing it afterwards needs a new Runner.
 	EnabledExtras []string
 
+	// QueryTextMaxChars > 0 builds and unlocks the query-text sampler (bb:qtext),
+	// with that size cap for querytext.Scrub. The host sets it only from
+	// blackbox.Config.SQLQueryText() (deep profile with sql.queryText on); 0, the
+	// default, keeps the text statement unbuilt and refused at every send gate.
+	QueryTextMaxChars int
+
 	// KeepHours bounds the sample files; 0 means defaultKeepHours.
 	KeepHours int
 	// MinFreePercent is the owner's free-space floor for the drive holding Dir.
