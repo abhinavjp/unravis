@@ -144,3 +144,39 @@ func TestOrdinaryTextStaysReadable(t *testing.T) {
 		}
 	}
 }
+
+// Second review: procedure calls without EXEC, a variable that holds the procedure name, bracketed and parenthesised arguments, and a ; inside a name.
+func TestSecondReviewRegressions(t *testing.T) {
+	leaks := map[string][]string{
+		"usp_SignIn bob, Hunter2":                    {"bob", "Hunter2"},
+		"dbo.usp_SignIn @user = bob, @pin = Hunter2": {"bob", "Hunter2"},
+		"EXEC usp @p = N'x'; usp2 bob":               {"bob"},
+		"EXEC @proc Hunter2":                         {"Hunter2"},
+		"EXEC usp [Hunter2]":                         {"Hunter2"},
+		"EXEC usp [a;b], Hunter2":                    {"Hunter2"},
+		"EXEC usp @a = [;] , @b = Hunter2":           {"Hunter2"},
+		"EXEC usp @p = (Hunter2)":                    {"Hunter2"},
+		"EXEC @rc = @proc bob, Hunter2":              {"bob", "Hunter2"},
+		"SELECT 1; usp_SignIn bob":                   {"bob"},
+	}
+	for in, bad := range leaks {
+		got := Scrub(in, 0)
+		for _, b := range bad {
+			if strings.Contains(got, b) {
+				t.Errorf("%q leaks %q: %q", in, b, got)
+			}
+		}
+	}
+	keep := map[string]string{
+		"SELECT * FROM [Order Details] WHERE a = 1; SELECT 2": "SELECT * FROM [Order Details] WHERE a = ?; SELECT ?",
+		"EXEC @rc = [dbo].[usp_Do] @a = (?), @b = @c OUT":     "EXEC @rc = [dbo].[usp_Do] @a = (?), @b = @c OUT",
+		"EXEC @proc @a = 1":                      "EXEC @proc @a = ?",
+		"(SELECT 1) UNION (SELECT 2)":            "(SELECT ?) UNION (SELECT ?)",
+		"WITH c AS (SELECT 1 a) SELECT a FROM c": "WITH c AS (SELECT ? a) SELECT a FROM c",
+	}
+	for in, want := range keep {
+		if got := Scrub(in, 0); got != want {
+			t.Errorf("%q\n got  %q\n want %q", in, got, want)
+		}
+	}
+}

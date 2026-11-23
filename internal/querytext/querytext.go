@@ -254,38 +254,125 @@ func skipIdentTail(s string, i int) int {
 	return i
 }
 
-// execBareArgs says whether an EXEC/EXECUTE call passes a bare word as an argument. In T-SQL a procedure argument may be written without
-// quotes, so `EXEC usp bob, Hunter2` hands over two strings that no literal rule can see. The procedure name, @variables, = , ?, DEFAULT,
-// NULL, OUTPUT and bracketed or parenthesised parts are allowed; anything else after the name makes the whole text withheld. The text is the
-// output of shape (literals are already ?), single-spaced.
-func execBareArgs(s string) bool {
-	for _, seg := range strings.Split(s, ";") {
-		toks := strings.FieldsFunc(seg, func(r rune) bool { return r == ' ' || r == ',' || r == '=' })
-		at := -1
-		for k, t := range toks {
-			if l := strings.ToLower(t); l == "exec" || l == "execute" {
-				at = k
-				break
+// callKeywords are words a statement (or the piece of one a plan cache keeps) may start with. A statement that starts with anything
+// else is read as a procedure call without EXEC, which T-SQL allows as the first statement of a batch.
+var callKeywords = map[string]bool{}
+
+func init() {
+	for _, w := range strings.Fields(`select insert update delete merge with set declare if else while begin end create alter drop truncate use
+		print raiserror throw waitfor grant revoke deny dbcc backup restore from where and or not join inner left right full cross outer on
+		group order by having union except intersect values into top distinct option return goto try catch commit rollback save bulk open
+		close fetch deallocate kill checkpoint reconfigure shutdown case when then as is in exists between like all any some for output
+		offset next rows only apply pivot unpivot over partition cast convert count sum min max avg`) {
+		callKeywords[w] = true
+	}
+}
+
+// callTokens splits shaped text into tokens: white space and commas separate, = and ; are tokens of their own, and a [bracketed name] is one
+// token whatever it holds (a ; or a space inside it does not split it).
+func callTokens(s string) []string {
+	var toks []string
+	i := 0
+	for i < len(s) {
+		switch c := s[i]; {
+		case c == ' ' || c == ',' || c == '\t':
+			i++
+		case c == '=' || c == ';':
+			toks = append(toks, string(c))
+			i++
+		default:
+			// One token runs to the next separator, and a [bracketed part] inside it (dbo.[My Proc]) never splits it.
+			j := i
+			for j < len(s) && s[j] != ' ' && s[j] != ',' && s[j] != '=' && s[j] != ';' && s[j] != '\t' {
+				if s[j] == '[' {
+					j++
+					for j < len(s) {
+						if s[j] == ']' {
+							if j+1 < len(s) && s[j+1] == ']' {
+								j += 2
+								continue
+							}
+							j++
+							break
+						}
+						j++
+					}
+					continue
+				}
+				j++
 			}
-		}
-		if at < 0 {
-			continue
-		}
-		rest := toks[at+1:]
-		for len(rest) > 0 && strings.HasPrefix(rest[0], "@") {
-			rest = rest[1:] // EXEC @rc = proc: the variable that takes the return value
-		}
-		if len(rest) == 0 {
-			continue
-		}
-		for _, t := range rest[1:] { // rest[0] is the procedure name
-			l := strings.ToLower(t)
-			if t == "?" || strings.HasPrefix(t, "@") || strings.HasPrefix(t, "(") || strings.HasPrefix(t, "[") ||
-				l == "default" || l == "null" || l == "output" || l == "out" || l == "readonly" || l == "with" {
-				continue
-			}
-			return true
+			toks = append(toks, s[i:j])
+			i = j
 		}
 	}
+	return toks
+}
+
+// execBareArgs says whether a procedure call passes a bare word as an argument. In T-SQL an argument may be written without quotes
+// (`EXEC usp bob, Hunter2`, or `usp bob` as the first statement of a batch, or `[Hunter2]`), which hands over strings that no literal rule
+// can see. Allowed after the procedure name: ?, @variables, =, DEFAULT, NULL, OUTPUT, OUT, READONLY, WITH, and parts that hold only ? and
+// brackets of parentheses. Anything else (a bare word or a [bracketed] one) makes the whole text withheld. The text is the output of shape
+// (literals are already ?), single-spaced. The procedure name itself may be anything, including @variable and [bracketed].
+func execBareArgs(s string) bool {
+	toks := callTokens(s)
+	start := 0
+	for k := 0; k <= len(toks); k++ {
+		if k < len(toks) && toks[k] != ";" {
+			continue
+		}
+		if badCall(toks[start:k]) {
+			return true
+		}
+		start = k + 1
+	}
 	return false
+}
+
+func badCall(stmt []string) bool {
+	if len(stmt) == 0 {
+		return false
+	}
+	var rest []string
+	for k, t := range stmt {
+		if l := strings.ToLower(t); l == "exec" || l == "execute" {
+			rest = stmt[k+1:]
+			break
+		}
+	}
+	if rest == nil {
+		first := strings.ToLower(stmt[0])
+		if callKeywords[first] || strings.HasPrefix(first, "(") || strings.HasPrefix(first, "@") || strings.HasPrefix(first, "?") || strings.HasPrefix(first, "#") || strings.HasPrefix(first, "-") {
+			return false
+		}
+		rest = stmt // a statement that starts with a name: a call without EXEC
+	}
+	// EXEC @rc = proc ...: a leading variable that is followed by = takes the return value. Without =, it holds the procedure name.
+	if len(rest) >= 2 && strings.HasPrefix(rest[0], "@") && rest[1] == "=" {
+		rest = rest[2:]
+	}
+	if len(rest) <= 1 {
+		return false
+	}
+	for _, t := range rest[1:] { // rest[0] is the procedure name
+		l := strings.ToLower(t)
+		if t == "?" || t == "=" || strings.HasPrefix(t, "@") || onlyParens(t) ||
+			l == "default" || l == "null" || l == "output" || l == "out" || l == "readonly" || l == "with" {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// onlyParens says whether t is made of ( ) and ? and nothing else, such as (?) or ().
+func onlyParens(t string) bool {
+	if t == "" {
+		return false
+	}
+	for _, r := range t {
+		if r != '(' && r != ')' && r != '?' {
+			return false
+		}
+	}
+	return true
 }
