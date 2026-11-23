@@ -245,6 +245,7 @@ func maskPend(s, mask string) (string, int) {
 		return s, pendNone
 	}
 	w := newWork(len(s))
+	s = maskRecords(s, mask, w)
 	s, p1 := maskXML(s, mask, w)
 	s, p2 := maskKV(s, mask, w)
 	if p2 > p1 {
