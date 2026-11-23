@@ -1,6 +1,6 @@
 // conn.go opens the single local SQL connection (C4 timeouts, C5 one
 // connection, C12 local-only) and gates every send through the allowlist (C1).
-// Integrated auth only: no password is accepted or stored. Errors carry fixed
+// Integrated auth by default; a stored SQL login is optional (login.go). Errors carry fixed
 // codes and sentences, never driver text.
 //
 // W8-01: OpenContext threads the caller's context through the WHOLE connect
@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -108,6 +109,13 @@ type ConnConfig struct {
 	// HostNameInCertificate is the name the CA-issued certificate must carry
 	// (certificate=<CA PEM> + hostnameincertificate=<name>).
 	HostNameInCertificate string
+	// Login, when set, replaces integrated auth with a stored SQL login (see
+	// login.go) and allows a server on another machine. TLS stays on.
+	Login *Login
+	// TrustServerCertificate accepts an unverified certificate. It is honoured
+	// ONLY with a Login and no trust anchor, is the owner's explicit choice, and
+	// still encrypts the link (it does not stop an active man-in-the-middle).
+	TrustServerCertificate bool
 }
 
 // anchorHostRe is the certificate host-name shape: letters, digits, dots and
@@ -169,21 +177,43 @@ func validateAnchors(cfg ConnConfig) error {
 // shared-memory dialer is Windows-only and cannot be imported here, so the
 // same local host is reached over TCP. An owner-supplied trust anchor is added
 // as serverCertificate (byte-pin) or certificate+hostnameincertificate (CA
-// chain); trustservercertificate is NEVER set. Test seam.
+// chain); trustservercertificate is set only for a stored login the owner chose to trust. Test seam.
 func connDSN(cfg ConnConfig) (string, error) {
-	if err := CheckLocalTarget(cfg.Server); err != nil {
+	if err := CheckTarget(cfg); err != nil {
 		return "", err
 	}
 	if err := validateAnchors(cfg); err != nil {
 		return "", err
 	}
-	host, instance, _, _ := splitTarget(cfg.Server)
-	if host == "" {
-		host = "."
+	if cfg.Login != nil {
+		if err := cfg.Login.Validate(); err != nil {
+			return "", err
+		}
 	}
-	u := url.URL{Scheme: "sqlserver", Host: host}
-	if instance != "" {
-		u.Path = "/" + instance
+	var u url.URL
+	if remoteWithLogin(cfg) {
+		t, _ := splitRemote(cfg.Server) // CheckTarget proved it parses
+		u = url.URL{Scheme: "sqlserver", Host: t.host}
+		if t.port != 0 {
+			u.Host = net.JoinHostPort(t.host, strconv.Itoa(t.port))
+		} else if strings.Contains(t.host, ":") {
+			u.Host = "[" + t.host + "]"
+		}
+		if t.instance != "" {
+			u.Path = "/" + t.instance
+		}
+	} else {
+		host, instance, _, _ := splitTarget(cfg.Server)
+		if host == "" {
+			host = "."
+		}
+		u = url.URL{Scheme: "sqlserver", Host: host}
+		if instance != "" {
+			u.Path = "/" + instance
+		}
+	}
+	if cfg.Login != nil {
+		u.User = url.UserPassword(cfg.Login.User, cfg.Login.Password)
 	}
 	q := url.Values{}
 	q.Set("app name", appName)
@@ -195,6 +225,8 @@ func connDSN(cfg ConnConfig) (string, error) {
 	} else if cfg.Certificate != "" {
 		q.Set("certificate", cfg.Certificate)
 		q.Set("hostnameincertificate", cfg.HostNameInCertificate)
+	} else if cfg.Login != nil && cfg.TrustServerCertificate {
+		q.Set("trustservercertificate", "true")
 	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
@@ -257,6 +289,7 @@ var errNotLoopback = errors.New("bbsql: refusing a non-loopback SQL address")
 type loopbackDialer struct {
 	deadline time.Time    // absolute connect deadline; zero means no clamp
 	released *atomic.Bool // set once the connect lifecycle finished
+	remote   bool         // a stored login reaches another machine: no loopback assert
 }
 
 func (d loopbackDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -280,7 +313,13 @@ func (d loopbackDialer) DialContext(ctx context.Context, network, addr string) (
 		return nil, errNotLoopback
 	}
 	for _, ip := range ips {
-		if !ip.IsLoopback() {
+		if d.remote {
+			// A remote target is the owner's choice; only addresses that can
+			// never be a SQL server are refused.
+			if ip.IsUnspecified() || ip.IsMulticast() {
+				return nil, errNotLoopback
+			}
+		} else if !ip.IsLoopback() {
 			return nil, errNotLoopback
 		}
 	}
@@ -337,6 +376,9 @@ type ceilingConnector struct {
 	// inner builds the driver connector with the per-connect dialer. Test seam;
 	// nil means the real go-mssqldb connector.
 	inner func(d mssql.Dialer) driver.Connector
+	// remote replaces the loopback assert with the remote dial rules (a stored
+	// login and a server on another machine).
+	remote bool
 }
 
 func (c ceilingConnector) Driver() driver.Driver { return &mssql.Driver{} }
@@ -346,7 +388,7 @@ func (c ceilingConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	if !ok {
 		deadline = time.Now().Add(connectTimeout)
 	}
-	d := loopbackDialer{deadline: deadline, released: &atomic.Bool{}}
+	d := loopbackDialer{deadline: deadline, released: &atomic.Bool{}, remote: c.remote}
 	inner := c.inner
 	if inner == nil {
 		inner = func(dl mssql.Dialer) driver.Connector {
@@ -581,7 +623,7 @@ func Open(cfg ConnConfig) (*sql.DB, error) {
 // the approved, tagged ceiling controls. Failures are fixed-code errors; a
 // failed ceiling proof keeps its C8 origin (W9-03).
 func OpenContext(ctx context.Context, cfg ConnConfig) (*sql.DB, error) {
-	if err := CheckLocalTarget(cfg.Server); err != nil {
+	if err := CheckTarget(cfg); err != nil {
 		return nil, err
 	}
 	dsn, err := connDSN(cfg)
@@ -612,7 +654,7 @@ func OpenContext(ctx context.Context, cfg ConnConfig) (*sql.DB, error) {
 	case <-cctx.Done():
 		return nil, classified(CodeConnectTimeout)
 	}
-	db := openDB(ceilingConnector{cfg: mcfg, inner: connectInner})
+	db := openDB(ceilingConnector{cfg: mcfg, inner: connectInner, remote: remoteWithLogin(cfg)})
 	applyPool(db, pool)
 	// Acquire the physical connection WITHOUT a Ping: Connect runs the ceiling
 	// admission on it, and closing the handle returns it to the idle pool for

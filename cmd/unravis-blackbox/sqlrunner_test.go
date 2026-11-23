@@ -1,9 +1,13 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
+	"api-audit-explorer/internal/bbsql"
 	"api-audit-explorer/internal/blackbox"
+	"api-audit-explorer/internal/sealedfile"
 )
 
 // C13 wiring: the SQL service must carry the owner's disk bounds, because host
@@ -46,5 +50,48 @@ func TestSQLFreePercentRange(t *testing.T) {
 	}
 	if free < 0 || free > 100 {
 		t.Errorf("free percent = %v, want 0..100", free)
+	}
+}
+
+type xorSeal struct{}
+
+func (xorSeal) Protect(b []byte) ([]byte, error) {
+	o := make([]byte, len(b))
+	for i := range b {
+		o[i] = b[i] ^ 0x5a
+	}
+	return o, nil
+}
+func (x xorSeal) Unprotect(b []byte) ([]byte, error) { return x.Protect(b) }
+
+func xorProt() (sealedfile.Protector, error) { return xorSeal{}, nil }
+
+func TestSQLConnForUsesStoredLoginOnlyWhenSaved(t *testing.T) {
+	dir := t.TempDir()
+	c, err := sqlConnFor(dir, blackbox.Probe{}, xorProt)
+	if err != nil || c.Login != nil || c.Server != sqlLocalServer {
+		t.Fatalf("no login saved: %+v %v", c, err)
+	}
+	s := bbsql.StoredLogin{Server: "sql01\\PROD", Login: bbsql.Login{User: "u", Password: "p"}, TrustServerCertificate: true}
+	if err := bbsql.SaveLogin(dir, s, xorSeal{}); err != nil {
+		t.Fatal(err)
+	}
+	probe := blackbox.Probe{ServerCertificate: filepath.Join(dir, "c.pem")}
+	c, err = sqlConnFor(dir, probe, xorProt)
+	if err != nil || c.Login == nil || c.Server != "sql01\\PROD" || !c.TrustServerCertificate || c.ServerCertificate != probe.ServerCertificate {
+		t.Fatalf("saved login: %v", err)
+	}
+}
+
+func TestSQLConnForNeverFallsBackWhenTheLoginCannotBeRead(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, bbsql.LoginFile), []byte("damaged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqlConnFor(dir, blackbox.Probe{}, xorProt); err == nil {
+		t.Fatal("a damaged login fell back to Windows sign-in")
+	}
+	if _, err := sqlConnFor(dir, blackbox.Probe{}, func() (sealedfile.Protector, error) { return nil, os.ErrInvalid }); err == nil {
+		t.Fatal("a missing sealer fell back to Windows sign-in")
 	}
 }

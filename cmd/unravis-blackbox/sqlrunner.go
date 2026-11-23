@@ -23,6 +23,7 @@ import (
 
 	"api-audit-explorer/internal/bbsql"
 	"api-audit-explorer/internal/blackbox"
+	"api-audit-explorer/internal/sealedfile"
 )
 
 // sqlLocalServer is the only SQL target this build can reach. C12 keeps the
@@ -75,7 +76,12 @@ func runSQLServiceLoop(ctx context.Context, o sqlRunOptions) error {
 		log("sql: " + bbsql.CodeFolder)
 		return err
 	}
-	r := bbsql.NewRunner(o.Dir, sqlConnConfig(o.Config.Probe))
+	conn, err := sqlConnFor(o.Dir, o.Config.Probe, loginProtector)
+	if err != nil {
+		log("sql: " + bbsql.CodeLoginUnreadable) // the fixed code only, never a path or the login
+		return err
+	}
+	r := bbsql.NewRunner(o.Dir, conn)
 	r.MinFreePercent, r.KeepHours, r.MaxBytes = sqlDiskBounds(o.Config)
 	r.FreePercent = sqlFreePercent
 	r.Log = log
@@ -100,6 +106,30 @@ func sqlFreePercent(path string) (float64, error) {
 		return 0, err
 	}
 	return info.FreePercent(), nil
+}
+
+// loginProtector is the machine-wide protector the stored login is sealed with.
+// A test seam; nil-safe behaviour lives in bbsql.LoadLogin.
+var loginProtector = func() (sealedfile.Protector, error) { return sealedfile.LocalMachine() }
+
+// sqlConnFor is the connection the service uses: the stored login when one is
+// saved in the locked folder, else Windows sign-in on the local instance. A
+// login file that is there but cannot be read stops the service with a fixed
+// error: it never falls back to Windows sign-in by surprise.
+func sqlConnFor(dir string, p blackbox.Probe, prot func() (sealedfile.Protector, error)) (bbsql.ConnConfig, error) {
+	base := sqlConnConfig(p)
+	if !bbsql.HasLogin(dir) {
+		return base, nil
+	}
+	pr, err := prot()
+	if err != nil {
+		pr = nil // LoadLogin turns a missing protector into the fixed error
+	}
+	s, _, err := bbsql.LoadLogin(dir, pr)
+	if err != nil {
+		return bbsql.ConnConfig{}, err
+	}
+	return s.Conn(base), nil
 }
 
 // sqlConnConfig maps the probe block onto the connection settings. Empty
