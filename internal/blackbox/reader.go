@@ -622,6 +622,36 @@ type HTTPSource struct {
 	Client *http.Client
 }
 
+// NewSharedTransport builds the transport that every reader of a Blackbox address should share.
+// It never uses a proxy (the key travels in a header). It keeps at most 2 idle connections per
+// host for a short time and opens at most 4 at once per host, so a burst of checks waits its turn
+// instead of opening a connection each. The Blackbox allows only 8 open connections per address,
+// so a reader that opened a new pool per check was refused after a few checks.
+func NewSharedTransport() *http.Transport {
+	var t *http.Transport
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		t = dt.Clone()
+	} else {
+		t = &http.Transport{}
+	}
+	t.Proxy = nil
+	t.MaxIdleConns = 8
+	t.MaxIdleConnsPerHost = 2
+	t.MaxConnsPerHost = 4
+	t.IdleConnTimeout = 10 * time.Second
+	return t
+}
+
+var (
+	sharedTransportOnce sync.Once
+	sharedTransport     *http.Transport
+)
+
+func defaultTransport() *http.Transport {
+	sharedTransportOnce.Do(func() { sharedTransport = NewSharedTransport() })
+	return sharedTransport
+}
+
 // NewHTTPSource builds a source for a URL location. client may be nil.
 func NewHTTPSource(loc Location, key string, client *http.Client) *HTTPSource {
 	if client == nil {
@@ -632,11 +662,9 @@ func NewHTTPSource(loc Location, key string, client *http.Client) *HTTPSource {
 	// taken from the environment: the proxy would see the key over plain http.
 	switch t := c.Transport.(type) {
 	case nil:
-		if dt, ok := http.DefaultTransport.(*http.Transport); ok {
-			nt := dt.Clone()
-			nt.Proxy = nil
-			c.Transport = nt
-		}
+		// One shared pool for every source built here: a pool per source left an idle connection
+		// open per check until the Blackbox's per-address limit was full.
+		c.Transport = defaultTransport()
 	case *http.Transport:
 		nt := t.Clone()
 		nt.Proxy = nil
