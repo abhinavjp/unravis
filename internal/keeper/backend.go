@@ -45,6 +45,11 @@ type Backend struct {
 
 	busyMu sync.Mutex
 	busy   map[string]bool
+
+	// bbClient is the one reader used for every Blackbox call. Its connections are reused, so
+	// repeated checks never pile up open connections at the Blackbox (which caps them per address).
+	bbOnce   sync.Once
+	bbClient *http.Client
 }
 
 // Timeouts and limits of the keeper's operations.
@@ -707,9 +712,13 @@ func (b *Backend) httpClient() *http.Client {
 		c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		return &c
 	}
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.Proxy = nil
-	return &http.Client{Transport: t, Timeout: BBRequestTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	// One transport for the life of the keeper. A new one per call left its connection open
+	// after the answer, so a few checks in a row filled the Blackbox's per-address limit and
+	// the next one was refused ("Cannot reach this Blackbox").
+	b.bbOnce.Do(func() {
+		b.bbClient = &http.Client{Transport: blackbox.NewSharedTransport(), Timeout: BBRequestTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	})
+	return b.bbClient
 }
 
 // bbReadFailure is a transport failure reading a Blackbox, worded without the address or the request (which holds the key).
