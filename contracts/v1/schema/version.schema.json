@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unravis.local/contracts/v1/version.schema.json",
+  "title": "GET /api/version",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "commit", "date"],
+  "properties": {
+    "version": { "type": "string", "minLength": 1 },
+    "commit": { "type": "string", "description": "Empty on an unstamped build." },
+    "date": { "type": "string", "description": "Empty on an unstamped build." }
+  }
+}
