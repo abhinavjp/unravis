@@ -65,7 +65,7 @@ type globalFlags struct {
 const opAnnotation = "unravis.op"
 
 // emitsAnnotation marks a command that writes a result through emit (the others write help or a shell script, or nothing). Only
-// those take --output-file. No command has a JSON Lines form yet, so they refuse -o jsonl before they run.
+// those take --output-file. Only the commands marked with jsonlAnnotation have a JSON Lines form; the others refuse -o jsonl before they run.
 const emitsAnnotation = "unravis.emits"
 
 func emitting(op string) map[string]string {
@@ -262,7 +262,7 @@ func (st *state) root() *cobra.Command {
 			return usage("--output-file needs a file name (the next argument looks like a flag).")
 		}
 		emits := c.Annotations[emitsAnnotation] == "1"
-		if st.opts.outputFile != "" && (!emits || st.mode == clicore.ModeTable) {
+		if st.opts.outputFile != "" && (!emits || st.mode != clicore.ModeJSON) {
 			return usage("--output-file needs a command that writes a result, with -o json.")
 		}
 		if st.opts.overwrite && st.opts.outputFile == "" {
@@ -271,7 +271,7 @@ func (st *state) root() *cobra.Command {
 		if err := st.preOnline(c); err != nil {
 			return err
 		}
-		if emits && st.mode == clicore.ModeJSONL {
+		if emits && st.mode == clicore.ModeJSONL && c.Annotations[jsonlAnnotation] != "1" {
 			return clicore.NewError(clicore.CodeUnsupportedFormat, "This command has no JSON Lines form. Use -o json.", "")
 		}
 		st.ctx, st.cancel = context.WithTimeout(st.ctx, st.opts.timeout) // Run cancels it when the command ends
