@@ -35,11 +35,11 @@ func golden(t *testing.T, name, got string) {
 	t.Helper()
 	path := filepath.Join("testdata", name)
 	if *update {
-		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(got), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	want, err := os.ReadFile(path)
+	want, err := os.ReadFile(path) //nolint:gosec // test: fixed testdata path
 	if err != nil {
 		t.Fatalf("missing golden %s (run with -update): %v", path, err)
 	}
@@ -161,7 +161,7 @@ func TestFailureAndSuccessForms(t *testing.T) {
 
 // A schema is data from outside the file: nothing in it may end a comment, start a declaration or break a line.
 func TestHostileTextCannotEscape(t *testing.T) {
-	evil := "x */ declare const pwned: 1; /*   // \r\n  ‮ end"
+	evil := "x */ declare const pwned: 1; /* \u2028 // \r\n  \u202e end"
 	in := `{"type":"object","properties":{` +
 		string(mustJSON(evil)) + `:{"type":"string","description":` + string(mustJSON(evil)) + `,"pattern":` + string(mustJSON(evil)) + `,"enum":[` + string(mustJSON(evil)) + `]},
 		"ok":{"enum":[` + string(mustJSON("a\"; declare const pwned2: 1; \"")) + `]}}}`
@@ -172,7 +172,7 @@ func TestHostileTextCannotEscape(t *testing.T) {
 			t.Errorf("injected declaration: %q", line)
 		}
 	}
-	if strings.Contains(r.DTS, " ") || strings.Contains(r.DTS, "‮") || strings.Contains(r.DTS, "\r") {
+	if strings.Contains(r.DTS, "\u2028") || strings.Contains(r.DTS, "\u202e") || strings.Contains(r.DTS, "\r") {
 		t.Error("a line separator or bidi control survived")
 	}
 	re := regexp.MustCompile(`(?s)/\*\*.*?\*/`)

@@ -26,7 +26,7 @@ func TestGoldenDts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if *update {
-		if err := os.WriteFile(goldenPath, []byte(res.DTS), 0o644); err != nil {
+		if err := os.WriteFile(goldenPath, []byte(res.DTS), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -162,7 +162,7 @@ func compile(t *testing.T, tscPath, script string) (string, error) {
 	must(os.WriteFile(filepath.Join(dir, "script.ts"), []byte(script), 0o600))
 	cfg, _ := json.Marshal(map[string]any{"compilerOptions": map[string]any{"strict": true, "noEmit": true, "target": "ES2022", "lib": []string{"ES2022"}, "types": []string{}, "skipLibCheck": false}, "files": []string{"unravis.d.ts", "script.ts"}})
 	must(os.WriteFile(filepath.Join(dir, "tsconfig.json"), cfg, 0o600))
-	cmd := exec.Command(tscPath, "-p", dir)
+	cmd := exec.Command(tscPath, "-p", dir) //nolint:gosec // test: the pinned compiler from web/node_modules
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -172,7 +172,7 @@ func compile(t *testing.T, tscPath, script string) (string, error) {
 func TestDeclarationsCompileAndTypeAScript(t *testing.T) {
 	tscPath := tsc(t)
 	read := func(p string) string {
-		b, err := os.ReadFile(p)
+		b, err := os.ReadFile(p) //nolint:gosec // test: fixed testdata path
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -84,7 +84,7 @@ func TestNarrowingOnlyNarrows(t *testing.T) {
 			}
 			na, nn := typeSet(a), typeSet(n)
 			for typ := range nn {
-				if !na[typ] && !(typ == "integer" && na["number"]) {
+				if !na[typ] && (typ != "integer" || !na["number"]) {
 					t.Errorf("%s.%s: narrowed type %s is not advertised (%v)", tool.Name, name, typ, na)
 				}
 			}
