@@ -7,7 +7,7 @@ require (
 	github.com/ncruces/go-sqlite3 v0.38.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	go.mongodb.org/mongo-driver v1.17.10
-	go.mongodb.org/mongo-driver/v2 v2.10.0
+	go.mongodb.org/mongo-driver/v2 v2.10.1
 	golang.org/x/crypto v0.59.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/text v0.44.0
