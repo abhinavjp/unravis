@@ -252,7 +252,16 @@ func TestSecondEnrollCannotReplaceNonce(t *testing.T) {
 	if p.Exe == r.Exe {
 		t.Fatal("the second enroll changed the host description of the first")
 	}
-	if _, err := e.g.Approve(ctx, "default", appr()); err != nil {
+	// The person is told: two processes asked for this id. Approving needs the explicit acceptance (the one-click default never has it).
+	if p, _ = e.db.Get(ctx, "default"); p.Contested != 1 {
+		t.Fatalf("contested = %d", p.Contested)
+	}
+	if _, err := e.g.Approve(ctx, "default", appr()); !errors.Is(err, ErrContested) {
+		t.Fatalf("approve of a contested profile: %v", err)
+	}
+	ac := appr()
+	ac.AcceptContested = true
+	if _, err := e.g.Approve(ctx, "default", ac); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.g.Claim(ctx, "default", attacker); !errors.Is(err, ErrWrongNonce) {
@@ -582,9 +591,6 @@ func TestCancelAllLeavesProfilesActive(t *testing.T) {
 func TestDenyAndRemove(t *testing.T) {
 	e := newEnv(t)
 	_, _ = e.g.Enroll(ctx, req("h1", nonce(t)))
-	if err := e.g.Remove(ctx, "h1"); !errors.Is(err, ErrNotApprovable) {
-		t.Fatalf("remove pending: %v", err)
-	}
 	if p, err := e.g.Deny(ctx, "h1"); err != nil || p.State != "denied" {
 		t.Fatalf("deny: %+v %v", p, err)
 	}
@@ -596,6 +602,22 @@ func TestDenyAndRemove(t *testing.T) {
 	}
 	if n, _ := e.db.Count(ctx); n != 0 {
 		t.Fatalf("count %d", n)
+	}
+	// Junk pending rows can be cleared directly; an active profile cannot be removed (revoke first).
+	_, _ = e.g.Enroll(ctx, req("junk", nonce(t)))
+	if err := e.g.Remove(ctx, "junk"); err != nil {
+		t.Fatalf("remove pending: %v", err)
+	}
+	e.enrolled("live")
+	if err := e.g.Remove(ctx, "live"); !errors.Is(err, ErrNotApprovable) {
+		t.Fatalf("remove active: %v", err)
+	}
+	// Deny only applies to a pending profile.
+	if _, err := e.g.Deny(ctx, "live"); !errors.Is(err, ErrNotApprovable) {
+		t.Fatalf("deny active: %v", err)
+	}
+	if p, _ := e.db.Get(ctx, "live"); p.State != "active" {
+		t.Fatalf("deny changed an active profile: %+v", p)
 	}
 }
 

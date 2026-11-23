@@ -12,6 +12,8 @@ import (
 // maxEnrollBody bounds the two routes below. A real body is under 1 KiB (an exe path is the longest field).
 const maxEnrollBody = 8 << 10
 
+var errBodyTooLarge = errors.New("mcpsrv: request body too large")
+
 // claimReq is the body of POST /mcp/v1/enroll/claim.
 type claimReq struct {
 	Profile    string `json:"profile"`
@@ -59,6 +61,11 @@ func readBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxEnrollBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeErr(w, errBodyTooLarge)
+			return false
+		}
 		writeErr(w, ErrBadRequest)
 		return false
 	}
@@ -82,6 +89,8 @@ func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrBadRequest):
 		status, code, msg = http.StatusBadRequest, "invalid_arguments", "The request is not valid."
+	case errors.Is(err, errBodyTooLarge):
+		status, code, msg = http.StatusRequestEntityTooLarge, "invalid_arguments", "The request is too large."
 	case errors.Is(err, ErrTooManyProfiles):
 		status, code, msg = http.StatusTooManyRequests, "query_budget_exceeded", "Too many hosts are registered in Unravis."
 	case errors.Is(err, ErrClaimPending):
