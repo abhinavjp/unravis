@@ -261,7 +261,8 @@ input, textarea { caret-color: var(--accent); }
 .quiet-button:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
 /* A button at the end of a table row that acts on that row ("Show only", "Nearby activity", "Inspect"): a quiet button with an edge you can see, not faint text
    (BL-495). It keeps the size of the quiet button it is on (the box and the table around it do not move: only the colour of the text and the line around it change).
-   The invisible ::after keeps the press area at 24 x 24 px or more however small the box gets; it adds nothing to a box that is already that big. */
+   The invisible ::after keeps the press area at 24 x 24 px or more however small the box gets; it adds nothing (0 px) to a box that is already that big, which is every
+   box today (29 to 44 px high), so keep it: UIFIX-50d fails when it is removed from a small box. */
 .row-action { position: relative; border-color: var(--control-line); white-space: nowrap; text-align: center; }
 .row-action:hover:not(:disabled) { border-color: var(--text-2); }
 .row-action::after { content: ''; position: absolute; left: min(0px, calc((100% - 24px) / 2)); right: min(0px, calc((100% - 24px) / 2)); top: min(0px, calc((100% - 24px) / 2)); bottom: min(0px, calc((100% - 24px) / 2)); }

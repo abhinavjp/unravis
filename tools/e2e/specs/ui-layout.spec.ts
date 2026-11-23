@@ -21,7 +21,7 @@
 //   UIFIX-31  Requests over time on real value ranges (also: one slow request reads the same in the tooltip and the note, 31e) (a busy hour in the millions, a slow hour in seconds, a sub-millisecond hour, no timing at all): one unit and one precision on each axis, tooltip with the interval's start and end and the P95 and slowest request alike, no NaN
 //   UIFIX-32  Requests over time on a phone (320, 360, 390 px): the axis titles are painted, the page does not scroll sideways and the chart box keeps its 220 px
 //   UIFIX-40  Clickable table rows are real buttons (BL-495 part): the Slow call lists of nearby calls (40a) and of all sources (40b) have one <button> per row (name, 24 px press area, nothing moves, no focus stop on the row itself); Tab, Enter and Space act once (40c, 40d); the mouse still takes the whole row (40d); a button press never goes on to the row (40c, 40d); on a phone a cell is not named twice (40f); "Show only" of the Request volume table stays a real button (40e)
-//   UIFIX-50  Row buttons of the All operations request list and "Show only" (BL-495 part): "Nearby activity" and "Inspect" are real <button type=button> of one size on one line each, named by their request with the visible words first (50a); the same Enter and Space act once, with the focus ring (50b, 50c); "Show only" of the Request volume table is a quiet button with a visible edge and one size, 24 px press area, and the table still fits its box (50d)
+//   UIFIX-50  Row buttons of the All operations request list and "Show only" (BL-495 part): "Nearby activity" and "Inspect" are real <button type=button> of one size on one line each, named by their request (API, time to the millisecond, source and record id) with the visible words first (50a); the same Enter and Space act once, with the focus ring (50b, 50c); "Show only" of the Request volume table is a quiet button with a visible edge and one size, 24 px press area, and the table still fits its box (50d)
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase } from '../support/ui';
 
@@ -1826,7 +1826,7 @@ for (const list of ['calls', 'all'] as const) {
 // UIFIX-50 (BL-495 part): the buttons at the end of a table row. On develop "Nearby activity" (143 px) and "Inspect" (81 px) of the All operations request
 // list were two sizes stacked in one cell, both named only by their words (the first said nothing about WHICH request, the second the record id), and
 // "Show only" in the Request volume table was faint text with a transparent edge. Now they are quiet buttons with a visible edge, one size in a column,
-// named "Nearby activity for Payroll.Run at 08:59:52.123" / "Inspect record for ..." / "Show only Payroll.Run in histogram".
+// named "Nearby activity for Payroll.Run at 08:59:52.123, Demo West / demo.audit, record <id>" / "Inspect record for ..." / "Show only Payroll.Run in histogram".
 const OP_SIZES = [{ width: 1440, height: 900 }, { width: 1280, height: 800 }, { width: 1100, height: 800 }, { width: 1024, height: 768 }, { width: 390, height: 844 }];
 const OP_BUTTONS = '.request-table .row-actions button';
 
@@ -1851,7 +1851,7 @@ for (const size of OP_SIZES) {
         const cs = getComputedStyle(b);
         return { tag: b.tagName + ' ' + b.getAttribute('type'), w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100, lines: new Set([...range.getClientRects()].map((q) => Math.round(q.top))).size, text: (b.textContent ?? '').trim(), name: b.getAttribute('aria-label') ?? '', edge: cs.borderTopStyle + ' ' + cs.borderTopWidth + ' ' + cs.borderTopColor, nowrap: cs.whiteSpace };
       };
-      return { near: read(near), inspect: read(inspect) };
+      return { near: read(near), inspect: read(inspect), id: (tr.querySelector('.record-id')?.textContent ?? '').trim() };
     }));
     for (const f of facts) {
       expect([f.near.tag, f.inspect.tag], 'both are <button type=button>').toEqual(['BUTTON button', 'BUTTON button']);
@@ -1862,8 +1862,11 @@ for (const size of OP_SIZES) {
       expect(f.near.nowrap).toBe('nowrap');
       expect(f.near.edge, 'a visible edge, not faint text').not.toMatch(/rgba\(0, 0, 0, 0\)|none|0px/);
       // the name starts with the visible words (label in name) and says which request
-      expect(f.near.name).toMatch(/^Nearby activity for [\w.]+ at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+$/);
-      expect(f.inspect.name).toMatch(/^Inspect record for [\w.]+ at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+$/);
+      expect(f.near.name).toMatch(/^Nearby activity for [\w.]+ at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+, record \S+$/);
+      expect(f.inspect.name).toMatch(/^Inspect record for [\w.]+ at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+, record \S+$/);
+      expect(f.id, 'the row shows its record id').not.toBe('');
+      expect(f.near.name.endsWith(', record ' + f.id), 'the name ends with the record id of its row (the only part that is unique on live data)').toBe(true);
+      expect(f.inspect.name.endsWith(', record ' + f.id)).toBe(true);
       expect(f.near.name.startsWith(f.near.text)).toBe(true);
       expect(f.inspect.name.startsWith(f.inspect.text)).toBe(true);
     }
@@ -1873,8 +1876,8 @@ for (const size of OP_SIZES) {
     expect(new Set(names).size, 'every button has its own name: ' + names.join(' | ')).toBe(names.length);
     // the accessibility tree (what a screen reader gets)
     const snapshot = await page.locator('.request-table tbody tr').first().ariaSnapshot();
-    expect(snapshot).toMatch(/- button "Nearby activity for Payroll\.Run at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+"/);
-    expect(snapshot).toMatch(/- button "Inspect record for Payroll\.Run at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+"/);
+    expect(snapshot).toMatch(/- button "Nearby activity for Payroll\.Run at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+, record \S+"/);
+    expect(snapshot).toMatch(/- button "Inspect record for Payroll\.Run at \d\d:\d\d:\d\d\.\d{3}, Demo (West|East) \/ \S+, record \S+"/);
     await expectScallHitArea(page, OP_BUTTONS, 'Row action', 24, 'tr');
     if (size.width >= 1024) {
       const [wide, box] = await page.locator('.request-scroll').first().evaluate((e) => [e.scrollWidth, e.clientWidth]);

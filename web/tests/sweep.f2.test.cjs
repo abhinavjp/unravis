@@ -156,8 +156,8 @@ test('SWEEP-F2-02: rows that straddle a clock change name their zone in each cel
 test('SWEEP-F2-10: the two row buttons are one size, never wrap, and an empty Failures tab says so', () => {
   const html = tableHtml([row('a', '2026-10-20T08:59:52Z')]);
   // BL-495: both are real buttons (type="button"), the same quiet button with the same class, and each is named by its request
-  assert.match(html, /aria-label="Nearby activity for Payroll\.Run at 09:59:52\.000, Demo East"/, 'named by its request, in the zone of the table');
-  assert.match(html, /aria-label="Inspect record for Payroll\.Run at 09:59:52\.000, Demo East"/);
+  assert.match(html, /aria-label="Nearby activity for Payroll\.Run at 09:59:52\.000, Demo East, record a"/, 'named by its request, in the zone of the table');
+  assert.match(html, /aria-label="Inspect record for Payroll\.Run at 09:59:52\.000, Demo East, record a"/);
   assert.match(html, /class="row-actions[^"]*"><button type="button" class="quiet-button row-action"[^>]*>Nearby activity<\/button><button type="button" class="quiet-button row-action"/);
   const style = read('src/components/RequestTable.svelte');
   assert.match(style, /\.row-actions :global\(button\) \{ flex: 1 1 100%;/);

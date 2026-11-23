@@ -205,7 +205,7 @@ test('INV-07: request history is newest first and Export CSV hands over a file w
 });
 
 // The Inspect button names its request (API and start time), no longer the record id (BL-495): find it in the row that shows the id.
-const inspectOf = (panel: Page | Locator, id: string | RegExp) => panel.locator('tr', { hasText: id }).getByRole('button', { name: /^Inspect record for [\w.]+ at \d\d:\d\d:\d\d\.\d{3}, .+$/ });
+const inspectOf = (panel: Page | Locator, id: string | RegExp) => panel.locator('tr', { hasText: id }).getByRole('button', { name: /^Inspect record for [\w.]+ at \d\d:\d\d:\d\d\.\d{3}, .+, record .+$/ });
 
 test('INV-08: Inspect opens the whole record and Close or Esc hands back the focus', async ({ page }) => {
   const panel = await openEvidence(page);
