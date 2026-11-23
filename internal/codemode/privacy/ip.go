@@ -94,8 +94,8 @@ func v4Part(p string) (int, bool) {
 	return v, true
 }
 
-// nextV4 finds the next IPv4 address at or after pos. A dotted number is cut at its dots; every four parts in a row that each read as
-// 0 to 255 make an address, and when such windows overlap or touch ("5.192.168.0.1", "10.1.2.3.443", the port after a dot as tcpdump
+// nextV4 finds the next IPv4 address at or after pos. A dotted number is cut at its dots; every four parts in a row whose two middle
+// parts read as 0 to 255 make an address (the first and the last part may be longer, a digit glued to either end), and when such windows overlap or touch ("5.192.168.0.1", "10.1.2.3.443", the port after a dot as tcpdump
 // writes it) the whole stretch from the first window to the last is one span, so no octet of a window is left behind. The tail that
 // no window covers stays ("...3" then ".443"). A four-part number that does not read as an address ("10.0.19045.1234", a build
 // number) is left; that is the one over-redaction trade the other way. A letter next to the number does not stop it ("ip1.2.3.4").
@@ -121,10 +121,15 @@ func nextV4(s string, pos int, bg *budget) (from, to int, canon string, ok bool)
 		okp := make([]bool, len(parts))
 		for k, p := range parts {
 			vals[k], okp[k] = v4Part(p)
+			if !okp[k] {
+				vals[k] = tailVal(p)
+			}
 		}
 		first, lastW := -1, -1
 		for w := 0; w+4 <= len(parts); w++ {
-			if okp[w] && okp[w+1] && okp[w+2] && okp[w+3] {
+			// the two middle parts must read as 0 to 255; the first and the last may be longer (a digit glued to the address:
+			// "9218.250.173.149", "1.2.3.4" + "9"), they are taken whole into the span
+			if okp[w+1] && okp[w+2] {
 				if first < 0 {
 					first = w
 				}
@@ -151,6 +156,24 @@ func nextV4(s string, pos int, bg *budget) (from, to int, canon string, ok bool)
 		return off, endOff, key.String(), true
 	}
 	return 0, 0, "", false
+}
+
+// tailVal is the value of the last up to three digits of a part that is too long to be an octet (only its token identity depends
+// on it; the whole part goes into the span).
+func tailVal(p string) int {
+	for n := 3; n >= 1; n-- {
+		if n > len(p) {
+			continue
+		}
+		v := 0
+		for i := len(p) - n; i < len(p); i++ {
+			v = v*10 + int(p[i]-'0')
+		}
+		if v <= 255 {
+			return v
+		}
+	}
+	return 0
 }
 
 // scanV6 finds the IPv6 addresses of in, left to right, and calls emit with the span and the canonical text of each; it returns false

@@ -135,7 +135,7 @@ func TestTokensStablePerRunDifferAcrossRuns(t *testing.T) {
 		g := NewGuard(false)
 		m := map[string]string{}
 		for _, ip := range order {
-			m[ip] = g.Log(ip)
+			m[ip] = g.HostError(ip, IDs{})
 		}
 		return m
 	}
@@ -145,7 +145,7 @@ func TestTokensStablePerRunDifferAcrossRuns(t *testing.T) {
 		t.Fatal("the token of a value is the same in two runs with different data: it must come from first sight, not the value")
 	}
 	g := NewGuard(false)
-	if g.Log("10.0.0.1") != g.Log("x 10.0.0.1")[2:] {
+	if g.HostError("10.0.0.1", IDs{}) != g.HostError("x 10.0.0.1", IDs{})[2:] {
 		t.Fatal("not stable inside a run")
 	}
 }

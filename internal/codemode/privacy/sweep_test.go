@@ -18,8 +18,8 @@ func TestSweepIPv4Table(t *testing.T) {
 		{"ip=10.1.2.3,", "ip=[IP_1],"},
 		{"(10.1.2.3).", "([IP_1])."},
 		{"ip10.1.2.3", "ip[IP_1]"},
-		{"010.001.002.003", "[IP_1]"}, // leading zeros: same address as 10.1.2.3
-		{"999.1.1.1", "999.1.1.1"},
+		{"010.001.002.003", "[IP_1]"},          // leading zeros: same address as 10.1.2.3
+		{"999.1.1.1", "[IP_1]"},                // an over-long first part may hold a digit glued to an address (over-redaction on purpose)
 		{"10.0.19045.1234", "10.0.19045.1234"}, // a build number
 		{"1.2.3.4.5", "[IP_1]"},                // a window of four reads as an address: fail closed
 		{"1.2.3", "1.2.3"},

@@ -318,7 +318,7 @@ func TestReview2TokenTextAndLearned(t *testing.T) {
 	_ = line
 	_ = g.sw.learn(KindUser, "alice@example.com")
 	_ = g.sw.learn(KindUser, "user_1")
-	if got := g.Log("alice@example.com did it"); got != "[USER_1] did it" {
+	if got := g.HostError("alice@example.com did it", IDs{}); got != "[USER_1] did it" {
 		t.Fatalf("%q", got)
 	}
 	s := newSweeper(false)

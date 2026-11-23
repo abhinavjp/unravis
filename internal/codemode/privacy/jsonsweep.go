@@ -25,11 +25,17 @@ var (
 )
 
 type frame struct {
-	obj  bool
-	n    int             // members written so far
-	key  bool            // an object frame: the next string is a member name
-	seen map[string]bool // names this sweep changed, so two names that end as one token do not make a duplicate member
+	obj   bool
+	n     int              // members written so far
+	key   bool             // an object frame: the next string is a member name
+	names map[string]uint8 // names written so far: nameSeen, and nameChanged when this sweep changed it
+	next  map[string]int   // per name: where the search for a free "#k" suffix goes on (so each member costs O(1) on average)
 }
+
+const (
+	nameSeen    uint8 = 1
+	nameChanged uint8 = 2
+)
 
 // json returns raw with every string value and every member name swept (see text); with escape, text that looks like a token
 // ("[USER_1]") is first written "[_USER_1]" so data cannot pass for a token (host data on its way in; script output is not escaped). Booleans and null are kept. A number that equals a learned
@@ -116,11 +122,13 @@ func (s *sweeper) json(raw []byte, escape bool) ([]byte, error) {
 				after()
 			}
 		case string:
-			in := v
+			// normalise first, then escape: an invisible character between "[" and "USER_1" must not hide a token look-alike from
+			// the escape and then be removed
+			in := normalize(v)
 			if escape {
-				in = escapeTokens(v)
+				in = escapeTokens(in)
 			}
-			sw := s.textSwept(in)
+			sw := s.textSwept(in, !escape)
 			if sw != v {
 				changed = true
 			}
@@ -129,15 +137,32 @@ func (s *sweeper) json(raw []byte, escape bool) ([]byte, error) {
 				if f.n > 0 {
 					out.WriteByte(',')
 				}
-				if sw != v {
-					if f.seen == nil {
-						f.seen = map[string]bool{}
-					}
+				if f.names == nil {
+					f.names = map[string]uint8{}
+					f.next = map[string]int{}
+				}
+				// a member name this sweep changed (or one that equals a changed one) never repeats an earlier name; unchanged
+				// repeats of the input are left as they were
+				was := f.names[sw]
+				mine := sw != v
+				if was != 0 && (mine || was&nameChanged != 0) {
 					base := sw
-					for k := 2; f.seen[sw]; k++ {
-						sw = base + "#" + strconv.Itoa(k)
+					k := f.next[base]
+					if k < 2 {
+						k = 2
 					}
-					f.seen[sw] = true
+					for f.names[base+"#"+strconv.Itoa(k)] != 0 {
+						k++
+					}
+					f.next[base] = k + 1
+					sw = base + "#" + strconv.Itoa(k)
+					mine = true
+					changed = true
+				}
+				if mine {
+					f.names[sw] |= nameSeen | nameChanged
+				} else {
+					f.names[sw] |= nameSeen
 				}
 				writeString(sw)
 				out.WriteByte(':')
@@ -149,7 +174,7 @@ func (s *sweeper) json(raw []byte, escape bool) ([]byte, error) {
 			after()
 		case stdjson.Number:
 			before()
-			if t, ok := s.numberToken(string(v)); ok {
+			if t, ok := s.numberToken(string(v), !escape); ok {
 				changed = true
 				writeString(t)
 			} else {
@@ -179,20 +204,20 @@ func (s *sweeper) json(raw []byte, escape bool) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-func (s *sweeper) textSwept(v string) string {
+func (s *sweeper) textSwept(v string, out bool) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.textLocked(v)
+	return s.textLocked(v, out)
 }
 
-func (s *sweeper) numberToken(num string) (string, bool) {
+func (s *sweeper) numberToken(num string, out bool) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key, ok := s.numberKey(num)
-	if !ok {
+	if !ok || (out && len(key) < minOutLen) {
 		return "", false
 	}
-	return s.tokenLocked(s.exact[key], key), true
+	return s.learnTokenLocked(s.exact[key], key, out), true
 }
 
 // delimByte is the byte of a JSON delimiter token.

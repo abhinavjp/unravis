@@ -108,15 +108,20 @@ func (g *Guard) ScriptError(msg string) string {
 }
 
 // text runs the steps in this order. The input is cut first (at a place that cannot split an address, see capInput), so no step
-// costs more than a constant per byte of the cap and a cut cannot leave the front of an address. Then, in hidden mode, text that
-// looks like a token is escaped (host data only); the learned values go next (a user agent holds a URL, and a scrubber that cut the
-// URL would break the match and leave the rest of the agent); then the scrubbers; then the whole sweep as a last net for addresses.
+// costs more than a constant per byte of the cap and a cut cannot leave the front of an address. Then the one normalisation
+// (invisible characters, invalid bytes: see normalize), so every later step, and the learned values, see the same text. Then, in
+// hidden mode, text that looks like a token is escaped (host data only), after the normalisation so an invisible character cannot
+// hide a look-alike. The learned values go next (a user agent holds a URL, and a scrubber that cut the URL would break the match
+// and leave the rest of the agent); then the addresses, before the scrubbers, so a scrubber that stops at a ":" (a UNC host) cannot
+// cut the front off an address; then the scrubbers; then the addresses again as a last net, for what a scrubber joined.
 func (g *Guard) text(s string, host bool) string {
-	s = capInput(s)
+	out := !host
+	s = normalize(capInput(s))
 	if host && !g.sw.isAllow() {
 		s = escapeTokens(s)
 	}
-	s = g.sw.learned(s)
+	s = g.sw.learned(s, out)
+	s = g.sw.addresses(s, out)
 	s = ScrubText(s)
-	return g.sw.text(s)
+	return g.sw.addresses(s, out)
 }

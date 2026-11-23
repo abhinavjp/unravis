@@ -256,7 +256,7 @@ func TestReview1IPv6Edges(t *testing.T) {
 func TestReview1LearnedCaseFold(t *testing.T) {
 	g := NewGuard(false)
 	_ = g.sw.learn(KindUser, "alice.smith")
-	if out := g.Log("ALICE.SMITH logged in; Alice.Smith too"); strings.Contains(strings.ToLower(out), "alice") || out != "[USER_1] logged in; [USER_1] too" {
+	if out := g.HostError("ALICE.SMITH logged in; Alice.Smith too", IDs{}); strings.Contains(strings.ToLower(out), "alice") || out != "[USER_1] logged in; [USER_1] too" {
 		t.Fatalf("%q", out)
 	}
 	out, _ := g.Result([]byte(`{"Alice.Smith":"ALICE.SMITH"}`))

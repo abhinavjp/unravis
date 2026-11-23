@@ -39,7 +39,7 @@ var (
 	reFileURI = regexp.MustCompile(`(?i)\bfile:/{1,3}[^\s"'<>]*`)
 	// where the driver errors print a value without single quotes: the double-quoted value after "invalid input ...:", "value", "duplicate
 	// entry" and the double-quoted name after "for user", "role", "login" (Postgres, MySQL with ANSI quotes, SQL Server).
-	reDQValue = regexp.MustCompile(`(?i)(\b(?:invalid input (?:value|syntax)[^:\r\n"]*:|value|duplicate entry|for user|role|login|database|schema)\s*)"[^"\r\n]*"`)
+	reDQValue = regexp.MustCompile(`(?i)(\b(?:invalid input (?:value|syntax)[^:\r\n"]*:|value|duplicate entry|for user|role|login|database|schema|column)\s*)"[^"\r\n]*"`)
 	// the text before the "(" of a detail that lists values; see maskParen.
 	reRowDetail = regexp.MustCompile(`(?i)\bfailing row contains\s*\(`)
 	reKeyDetail = regexp.MustCompile(`(?i)\bkey\s*\(`)

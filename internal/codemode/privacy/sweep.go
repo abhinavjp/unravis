@@ -43,6 +43,11 @@ const (
 	// withheld whole (fail closed), so no input costs more than a constant per byte.
 	scanBudgetPerByte = 16
 	scanBudgetFloor   = 8192
+	// minOutLen: on the out side (what the script made) a learned value is matched only when it is at least this long. A script can
+	// write a guess per list entry and see which ones come back changed; for short ids (4711, alice) that would tell it the ids, so
+	// they are not matched on the out side at all. Long values (user agents, e-mail addresses) cannot be guessed that way, and
+	// matching them keeps a net under an identifier the broker forgot to pass in.
+	minOutLen = 12
 )
 
 // maxRounds bounds the repeat of the two address passes over one text. A variable so a test can reach the withheld branch.
@@ -103,10 +108,14 @@ func (s *sweeper) learn(kind Kind, raw string) error {
 	if s.allow || raw == "" {
 		return nil
 	}
-	err := s.learnOne(kind, raw)
-	if esc := escapeTokens(raw); esc != raw {
-		if e2 := s.learnOne(kind, esc); err == nil {
-			err = e2
+	f := normalize(raw) // the value as text sees it
+	if f == "" {
+		return nil
+	}
+	err := s.learnOne(kind, f)
+	if esc := escapeTokens(f); esc != f {
+		if e := s.learnOne(kind, esc); err == nil {
+			err = e
 		}
 	}
 	return err
@@ -166,6 +175,10 @@ func (s *sweeper) tokenLocked(kind Kind, value string) string {
 	m[value] = t
 	return t
 }
+
+// outToken is what the out side writes for a value it finds itself: no number, so it names no value, shows no order and is the same
+// on a replay.
+func outToken(kind Kind) string { return "[" + string(kind) + "_OUT]" }
 
 // tokenKinds are the names a token can carry, in lower case, each with the "_" after it.
 var tokenKinds = []string{"ip_", "user_", "ua_"}
@@ -238,46 +251,51 @@ func tokenSpans(s string) [][2]int {
 }
 
 // text returns in with every IP address and every learned value replaced by its token, and invisible format characters removed.
-// text(text(x)) == text(x): a token is not an address and no learned value matches inside one.
-func (s *sweeper) text(in string) string {
+// text(text(x)) == text(x): a token is not an address and no learned value matches inside one. This is the in side (host data).
+func (s *sweeper) text(in string) string { return s.textSide(in, false) }
+
+// textSide is text for the in side (out false: numbered tokens) or the out side (out true: fixed "_OUT" tokens, learned values only
+// from minOutLen bytes).
+func (s *sweeper) textSide(in string, out bool) string {
 	if s.allow || in == "" {
 		return in
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.textLocked(in)
+	return s.textLocked(in, out)
 }
 
 // learned is text without the address pass: only the learned values. The Guard runs it first, before the scrubbers cut anything out
-// of a learned value (a user agent holds a URL), and runs text last.
-func (s *sweeper) learned(in string) string {
+// of a learned value (a user agent holds a URL).
+func (s *sweeper) learned(in string, out bool) string {
 	if s.allow || in == "" {
 		return in
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.learnedLocked(stripInvisible(in))
+	return s.learnedLocked(normalize(in), out)
 }
 
-func (s *sweeper) textLocked(in string) string {
-	return s.replaceIPs(s.learnedLocked(stripInvisible(in)))
-}
-
-// stripInvisible removes the characters of category Cf (zero width space, joiners, soft hyphen, byte order mark): they split an
-// address or an identifier for the scanner and not for a reader.
-func stripInvisible(s string) string {
-	// removing a character can join the bytes around it into a new one ("\xd8" + U+0604 + "\x84" is U+0604 once the middle is
-	// gone), so it repeats until nothing changes; each round makes the text shorter
-	for {
-		t := stripInvisibleOnce(s)
-		if len(t) == len(s) {
-			return t
-		}
-		s = t
+// addresses is text without the learned values: only the address pass.
+func (s *sweeper) addresses(in string, out bool) string {
+	if s.allow || in == "" {
+		return in
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.replaceIPs(normalize(in), out)
 }
 
-func stripInvisibleOnce(s string) string {
+func (s *sweeper) textLocked(in string, out bool) string {
+	return s.replaceIPs(s.learnedLocked(normalize(in), out), out)
+}
+
+// normalize is the one normalisation of text and of learned values, so they meet in the same form. Bytes that are not valid UTF-8
+// become "?" (one pass, no cascade: removing a character below cannot make a new one out of valid text). Characters of category Cf
+// (zero width space, joiners, soft hyphen, byte order mark) are removed: they split an address or an identifier for a scanner and
+// not for a reader. One pass, linear, idempotent. (Removal can glue a digit to the end of an address, "1.2.3.4" + Cf + "5"; the
+// address reader takes the first three digits of an over-long last part, so that still ends as one token.)
+func normalize(s string) string {
 	ascii := true
 	for i := 0; i < len(s); i++ {
 		if s[i] >= 0x80 {
@@ -288,15 +306,16 @@ func stripInvisibleOnce(s string) string {
 	if ascii {
 		return s
 	}
+	if !utf8.ValidString(s) {
+		s = strings.ToValidUTF8(s, "?")
+	}
 	var b strings.Builder
 	b.Grow(len(s))
 	for i := 0; i < len(s); {
 		r, n := utf8.DecodeRuneInString(s[i:])
-		if (r != utf8.RuneError || n != 1) && unicode.Is(unicode.Cf, r) {
-			i += n
-			continue
+		if !unicode.Is(unicode.Cf, r) {
+			b.WriteString(s[i : i+n])
 		}
-		b.WriteString(s[i : i+n]) // invalid bytes are copied as they are
 		i += n
 	}
 	return b.String()
@@ -304,18 +323,18 @@ func stripInvisibleOnce(s string) string {
 
 // learnedLocked replaces the learned values. Overlapping finds are joined into one span, so no part of a learned value is left
 // ("abcdef" and "cdefgh" learned: "abcdefgh" is one token).
-func (s *sweeper) learnedLocked(in string) string {
+func (s *sweeper) learnedLocked(in string, out bool) string {
 	if len(s.exact) == 0 {
 		return in
 	}
 	var low string
 	if len(in) <= maxLearnLen {
 		low = asciiLower(in)
-		if k, ok := s.exact[low]; ok {
-			return s.tokenLocked(k, low)
+		if k, ok := s.exact[low]; ok && (!out || len(low) >= minOutLen) {
+			return s.learnTokenLocked(k, low, out)
 		}
 	}
-	if s.base == nil && len(s.pend) == 0 && !s.short {
+	if s.base == nil && len(s.pend) == 0 && !(s.short && !out) {
 		return in
 	}
 	if low == "" {
@@ -336,7 +355,7 @@ func (s *sweeper) learnedLocked(in string) string {
 			from = at + 1
 		}
 	}
-	if s.short {
+	if s.short && !out {
 		sp = s.shortWordSpans(low, sp)
 	}
 	if len(sp) == 0 {
@@ -351,7 +370,7 @@ func (s *sweeper) learnedLocked(in string) string {
 	b.Grow(len(in))
 	last := 0
 	for _, x := range sp {
-		if insideAny(toks, x.from, x.to) {
+		if insideAny(toks, x.from, x.to) || (out && x.to-x.from < minOutLen) {
 			continue
 		}
 		var key string
@@ -370,11 +389,19 @@ func (s *sweeper) learnedLocked(in string) string {
 			key, kind = s.pend[-1-x.p].lower, s.pend[-1-x.p].kind
 		}
 		b.WriteString(in[last:x.from])
-		b.WriteString(s.tokenLocked(kind, key))
+		b.WriteString(s.learnTokenLocked(kind, key, out))
 		last = x.to
 	}
 	b.WriteString(in[last:])
 	return b.String()
+}
+
+// learnTokenLocked is the token of a learned value: numbered on the in side, fixed on the out side.
+func (s *sweeper) learnTokenLocked(kind Kind, key string, out bool) string {
+	if out {
+		return outToken(kind)
+	}
+	return s.tokenLocked(kind, key)
 }
 
 func insideAny(toks [][2]int, from, to int) bool {
@@ -415,11 +442,14 @@ const shortP = -1 << 30
 // (::1 and 0:0:0:0:0:0:0:1; 001.002.003.004 and 1.2.3.4). The v4 pass runs first so an address with an embedded v4 tail
 // ("::ffff:192.168.001.050", "x::150.151.152.153A") is found by the lenient v4 reader and the "::ffff:" left in front is read on
 // its own; no octet is left behind.
-func (s *sweeper) replaceIPs(in string) string {
+func (s *sweeper) replaceIPs(in string, out bool) string {
 	if !strings.ContainsAny(in, ".:") {
 		return in
 	}
 	tok := func(canon string) string { return s.tokenLocked(KindIP, canon) }
+	if out {
+		tok = func(string) string { return outToken(KindIP) }
+	}
 	budget := scanBudgetFloor + scanBudgetPerByte*len(in)
 	// A replacement can leave a fragment that reads as an address ("0::00.0.0.0" holds the v4 part 0.0.0.0, and "0::" is left), so the
 	// two passes repeat until nothing is found. Each round removes at least one address, and a text that still holds one after
@@ -463,6 +493,12 @@ func (s *sweeper) numberKey(num string) (string, bool) {
 	}
 	if len(num) > 40 || !strings.ContainsAny(num, ".eE") {
 		return "", false
+	}
+	if i := strings.IndexByte(num, '.'); i > 0 && strings.Trim(num[i+1:], "0") == "" {
+		// "12345678901234567890.0" is the integer in front of the point (too big for a float to hold exactly)
+		if _, ok := s.exact[num[:i]]; ok {
+			return num[:i], true
+		}
 	}
 	f, err := strconv.ParseFloat(num, 64)
 	if err != nil || math.IsInf(f, 0) || f != math.Trunc(f) || math.Abs(f) >= 1<<53 {
