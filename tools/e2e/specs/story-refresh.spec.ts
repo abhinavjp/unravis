@@ -2,7 +2,7 @@
 //   STORY-01  A file added through the Add files pop-up shows in "Story so far" behind the pop-up as soon as it is kept (not after the pop-up closes),
 //             with one re-read of the case, the page not going back to its loading text, and focus staying inside the pop-up.
 //   STORY-02  A file the real server refuses as a duplicate (the same file went in by the API after the pop-up had checked it) adds nothing to the story and makes no re-read.
-//   STORY-03  A source added in Add data (Redis by address) makes one re-read of the case, with no loading text and focus not pulled onto the story.
+//   STORY-03  A source added in Add data (Redis by address) makes one guard read before the run (BL-520) and one quiet re-read after it, with no loading text and focus not pulled onto the story.
 //             A source added this way (Redis, SQL, Mongo, Blackbox) has no line in "Story so far": the story is built from case history, files, health runs
 //             and theories, and the server writes no history for a source. Only files and found-on-this-PC logs (which are files) show a new line.
 //   STORY-04  A file added while a read of the page is slow (held on the case read) still ends up in the story: the re-read waits for the page read, then runs once.
@@ -101,7 +101,7 @@ test('STORY-02: a file the server refuses as a duplicate adds nothing to the sto
   expect(reads).toEqual({ story: 0, files: 0 });
 });
 
-test('STORY-03: a source added in Add data makes one re-read of the case and the page keeps its place', async ({ page, api }) => {
+test('STORY-03: a source added in Add data makes one guard read and one quiet re-read of the case, and the page keeps its place', async ({ page, api }) => {
   const title = 'QA Story Add Data';
   const id = await createCase(api, title);
   await goHome(page);
@@ -115,10 +115,11 @@ test('STORY-03: a source added in Add data makes one re-read of the case and the
   await hub.getByRole('button', { name: 'Review', exact: true }).click();
   const reads = watchReads(page, id);
   await hub.getByRole('button', { name: 'Add 1 source to case' }).click();
-  await expect.poll(() => reads.story, { timeout: 30_000 }).toBe(1);
+  // Two reads of the case, both on purpose: the guard read the Add data run makes just before it sends anything (the case may have closed or moved elsewhere, BL-520),
+  // and the one quiet re-read once the add landed. The file list the Sources list opens with is read on its own and is not counted here.
+  await expect.poll(() => reads.story, { timeout: 30_000 }).toBe(2);
   await page.waitForTimeout(500);
-  // One read of the case (the Sources list that opens after the run reads the file list on its own, so only the case read is counted), no loading text, and the re-read does not pull focus onto the story (the hub itself moves on to the Sources list once the run ends, as before).
-  expect(reads.story).toBe(1);
+  expect(reads.story).toBe(2);
   await expect(page.locator('.loading-state')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Story so far' })).toBeVisible();
   expect(await page.evaluate(() => !!document.activeElement?.closest('section[aria-labelledby="home-story"]') || document.activeElement?.id === 'home-story')).toBe(false);

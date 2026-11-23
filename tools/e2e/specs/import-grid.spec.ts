@@ -44,7 +44,7 @@ async function noSidewaysScroll(page: Page) {
 
 // The header's Import is on the analysis screen, so the way there is the case page, then "Open the analysis". The page can be anywhere when this starts.
 async function openFromHeader(page: Page, title: string) {
-  const header = page.getByRole('button', { name: 'Add files', exact: true });
+  const header = page.getByRole('button', { name: 'Add files', exact: true }).first();
   const thisCase = page.getByRole('button', { name: 'This case', exact: true });
   // The header Import needs a case to be open: the demo screen shows it too, but no case is active there.
   if (!(await header.isVisible()) || !(await thisCase.isVisible())) {
@@ -95,7 +95,7 @@ test('GRID-01: the header Import and Add a file open the same popup with the wir
   await closeButton(page).click();
   await expect(popup(page)).toHaveCount(0);
   await page.getByRole('button', { name: 'This case', exact: true }).click();
-  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).first().click();
   await expect(dlg.getByRole('heading', { name: 'Add files', level: 2 })).toBeVisible();
   await expect(dlg.locator('.prog-line')).toContainText('Step 1 of 3 · Choose files to import');
   await expect(page.locator('[data-drawer-card]')).toHaveCount(0);

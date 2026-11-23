@@ -97,7 +97,7 @@ test('DOC-05: the Blackbox states table says what the app says for all nine stat
     await expect(region).toBeVisible();
     const state = (await page.locator('dialog.pop[open] .bb-sticker').first().innerText()).trim();
     const readiness = (await region.locator('.bb-ready strong').first().innerText()).trim();
-    const next = (await region.locator('p.bb-note').first().innerText()).trim();
+    const next = (await region.locator('p.bb-next').first().innerText()).trim();
     seen.add(state);
     const row = table.find((r) => r.state === state);
     if (!row) problems.push(`${name}: the app shows state "${state}", which is not in the table`);
