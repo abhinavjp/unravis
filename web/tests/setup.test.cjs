@@ -216,6 +216,22 @@ test('failed checks come first, with one line that names them', () => {
   assert.match(logic.blockedLine([check('b', 'failed')]), /^1 check failed: B\. Fix it/);
 });
 
+test('a failed Program folder check gets the folder actions and its own hint', () => {
+  const folder = (status) => ({ id: 'install-folder', title: 'Program folder', status, detail: '' });
+  assert.equal(logic.showsFolderActions(folder('failed')), true);
+  assert.equal(logic.showsFolderActions(folder('ready')), false);
+  assert.equal(logic.showsFolderActions({ id: 'disk-app', status: 'failed' }), false);
+  assert.match(logic.blockedLine([folder('failed')]), /^1 check failed: Program folder\. Press Choose another folder/);
+});
+
+test('the Welcome screen reaches the folder box and the folder from a failed Program folder row', () => {
+  const app = read('setup/App.svelte');
+  assert.match(app, /showsFolderActions\(check\)[\s\S]*Choose another folder[\s\S]*Open this folder/);
+  assert.match(app, /data-folder/);
+  const api = read('setup/api.ts');
+  assert.match(api, /openFolder: \(folder: string\)[^\n]*'open-folder'/);
+});
+
 test('Try again is offered only when repeating the run can change the result', () => {
   assert.equal(logic.retryHelps({ outcome: 'rolled-back', fix: 'Free the port and try again.' }), true);
   assert.equal(logic.retryHelps({ outcome: 'rolled-back', fix: 'Pick another port in Options, then press Next.' }), false);

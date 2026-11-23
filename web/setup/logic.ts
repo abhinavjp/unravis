@@ -58,6 +58,11 @@ export function showsCloseBox(check: Pick<Check, 'id' | 'status'>): boolean {
   return check.id === 'app-running' && check.status !== 'ready';
 }
 
+/** A failed Program folder check gets two buttons under it: pick another folder, and look at what is in this one. */
+export function showsFolderActions(check: Pick<Check, 'id' | 'status'>): boolean {
+  return check.id === 'install-folder' && check.status === 'failed';
+}
+
 /** The folded line over the checks that are ready: "6 more checks are ready", or "All 7 checks are ready" when nothing else needs a look. */
 export function readyLine(count: number, others: boolean): string {
   if (others) return count === 1 ? '1 more check is ready' : count + ' more checks are ready';
@@ -338,6 +343,9 @@ export function blockedLine(checks: Check[]): string {
   const failed = checks.filter((check) => check.status === 'failed');
   if (!failed.length) return '';
   const names = failed.map((check) => check.title).join(', ');
+  if (failed.some((check) => showsFolderActions(check))) {
+    return (failed.length === 1 ? '1 check failed: ' : failed.length + ' checks failed: ') + names + '. Press Choose another folder under it, or empty that folder and press Check again; Next stays off until then.';
+  }
   return (failed.length === 1 ? '1 check failed: ' : failed.length + ' checks failed: ') + names + '. Fix ' + (failed.length === 1 ? 'it' : 'them') + ' and press Check again; Next stays off until then.';
 }
 

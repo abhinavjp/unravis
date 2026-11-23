@@ -23,7 +23,7 @@ const problems = [];
 // Screens that are listed in screens.json but have no picture yet (the screenshot harness has not run on a
 // build with them). They need no picture in their page. See D-C-29. Remove an id from here when its pictures
 // are added to docs/user/screenshots and linked from its page.
-const PENDING = new Set(['p12-update-none', 'p12-update-available', 'p12-update-offline', 'p13-guide-index', 'p13-guide-page']);
+const PENDING = new Set(['p11-folder-in-use', 'p12-update-none', 'p12-update-available', 'p12-update-offline', 'p13-guide-index', 'p13-guide-page']);
 
 // Words that claim a cause or a proof. Code (fenced or in backticks) is not read.
 const BANNED = /\b(caused|waiting on|blocked by|due to|the database was waiting|the API waited for)\b/gi;

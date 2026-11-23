@@ -3510,6 +3510,24 @@
       ]
     },
     {
+      "id": "p11-folder-in-use",
+      "phase": "P11",
+      "doc": "install.md",
+      "narrow": false,
+      "app": "setup",
+      "steps": [
+        {
+          "goto": "/?scenario=folder-in-use"
+        },
+        {
+          "waitFor": "role=heading[name=\"Install Unravis\"]"
+        },
+        {
+          "waitFor": "role=button[name=\"Choose another folder\"]"
+        }
+      ]
+    },
+    {
       "id": "p11-options",
       "phase": "P11",
       "doc": "install.md",

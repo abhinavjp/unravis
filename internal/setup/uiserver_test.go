@@ -218,7 +218,7 @@ func TestSetupPageScenarioHeaderPicksTheFake(t *testing.T) {
 
 // Every screenshot scenario is a sane run: a version, a mode, checks where the screen shows them, and a result that ends.
 func TestCaptureScenariosAreSane(t *testing.T) {
-	want := []string{"fresh", "preflight-fail", "progress", "done", "failed", "upgrade", "repair", "uninstall", "uninstall-left"}
+	want := []string{"fresh", "preflight-fail", "folder-in-use", "progress", "done", "failed", "upgrade", "repair", "uninstall", "uninstall-left"}
 	sc := CaptureScenarios()
 	if len(sc) != len(want) {
 		t.Fatalf("%d scenarios", len(sc))
@@ -237,13 +237,13 @@ func TestCaptureScenariosAreSane(t *testing.T) {
 		if st.Mode != OpUninstall && len(checks) == 0 {
 			t.Fatalf("%s has no checks", name)
 		}
-		if (name == "preflight-fail") != Blocked(checks) {
+		if (name == "preflight-fail" || name == "folder-in-use") != Blocked(checks) {
 			t.Fatalf("%s: blocked=%v", name, Blocked(checks))
 		}
 		if ch := be.Changes(req); len(ch.WillChange) == 0 || len(ch.WillNotChange) == 0 {
 			t.Fatalf("%s: %+v", name, ch)
 		}
-		if name == "progress" || name == "preflight-fail" {
+		if name == "progress" || name == "preflight-fail" || name == "folder-in-use" {
 			continue
 		}
 		res := be.Run(context.Background(), req, func(StepEvent) {}, func(string) {})

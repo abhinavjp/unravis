@@ -42,7 +42,7 @@ type Plan struct {
 }
 
 func (p *Plan) backupDir() string {
-	return filepath.Join(p.Layout.InstallDir, ".setup-backup-"+p.stamp)
+	return filepath.Join(p.Layout.InstallDir, backupPrefix+p.stamp)
 }
 
 // KeeperAccount is the keeper service's own virtual account. Its saved passwords are sealed for this account (DPAPI), so setup never
@@ -403,8 +403,33 @@ func (p *Plan) wantReleases() bool {
 	return err == nil && fi.Mode().IsRegular()
 }
 
+// Names of the working folders a setup makes inside the program folder. A run that is cut off (killed, power loss) can leave them.
+const (
+	stagingPrefix = ".setup-staging-"
+	backupPrefix  = ".setup-backup-"
+)
+
+// clearStaleStaging removes the staging folders of earlier setups that never finished. They hold only copies of the programs, and
+// nothing reads them again. Backup folders are left: they may hold the files of an earlier version. A failure is only logged.
+func (p *Plan) clearStaleStaging() {
+	ents, err := os.ReadDir(p.Layout.InstallDir)
+	if err != nil {
+		return
+	}
+	now := stagingPrefix + p.stamp
+	for _, e := range ents {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), stagingPrefix) || e.Name() == now {
+			continue
+		}
+		if rerr := os.RemoveAll(filepath.Join(p.Layout.InstallDir, e.Name())); rerr != nil {
+			p.r.logf("staging: could not remove the old %s: %v", e.Name(), rerr)
+		}
+	}
+}
+
 func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
-	staging := filepath.Join(p.Layout.InstallDir, ".setup-staging-"+p.stamp)
+	p.clearStaleStaging()
+	staging := filepath.Join(p.Layout.InstallDir, stagingPrefix+p.stamp)
 	if err := t.WorkDir(staging); err != nil {
 		return err
 	}
