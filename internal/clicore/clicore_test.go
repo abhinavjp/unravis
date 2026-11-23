@@ -142,6 +142,9 @@ func TestMappingsFromOtherAreas(t *testing.T) {
 		{"backend_unavailable", false, "", CodeAppNotRunning},
 		{"backend_unavailable", false, "stale", CodeStaleLocator},
 		{"backend_unavailable", false, "untrusted", CodeEndpointUntrusted},
+		{"not_found", false, "", CodeNotFound},
+		{"locked", false, "", CodeCaseLocked},
+		{"busy", false, "", CodeOwnerBusy},
 		{"internal", false, "", CodeInternal},
 		{"something_new", false, "", CodeInternal},
 	} {

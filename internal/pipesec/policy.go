@@ -152,3 +152,11 @@ func IsShellImage(image string) bool {
 	_, base := winSplit(image)
 	return strings.EqualFold(base, "unravis-desktop.exe") || extraAllowed(image)
 }
+
+// IsCLIImage says the image may use the command line routes (/cli/v1/*) of the ag pipe: base name unravis.exe, the thin command line in
+// `<install>\bin` or the app program in the install directory. The pipe's own peer policy has already checked the folder, the user and
+// the session; this adds the name, so the desktop shell and any other Unravis image get no command line route (deny by default).
+func IsCLIImage(image string) bool {
+	_, base := winSplit(image)
+	return strings.EqualFold(base, "unravis.exe") || extraAllowed(image)
+}
