@@ -57,7 +57,7 @@ func (a answer) failLogin(reason string) int {
 	if a.asJSON {
 		_ = json.NewEncoder(a.out).Encode(map[string]any{"ok": false, "reason": reason, "message": msg})
 	} else {
-		fmt.Fprintln(a.err, msg)
+		_, _ = fmt.Fprintln(a.err, msg)
 	}
 	return exitFail
 }
@@ -77,7 +77,7 @@ func (d deps) readLoginInput(file, sha string, stdin bool) ([]byte, error) {
 		if sha == "" {
 			return nil, loginErr(reasonLoginInvalid)
 		}
-		fi, err := os.Lstat(file)
+		fi, err := os.Lstat(file) //nolint:gosec // G703: the path Unravis made; the hash below binds the content
 		if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxLoginInput {
 			return nil, loginErr(reasonLoginInvalid)
 		}

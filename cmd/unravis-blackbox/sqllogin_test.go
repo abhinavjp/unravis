@@ -98,7 +98,7 @@ func TestSetSQLLoginFromStdinSealsItAndPrintsNothing(t *testing.T) {
 		t.Fatalf("not readable back: %v", err)
 	}
 	// It is not in the settings file.
-	cfgBytes, _ := os.ReadFile(g.cfg) //nolint:gosec // test file
+	cfgBytes, _ := os.ReadFile(g.cfg)
 	if bytes.Contains(cfgBytes, []byte("bb_reader")) || bytes.Contains(cfgBytes, []byte(loginText)) {
 		t.Fatal("login reached blackbox.json")
 	}
@@ -153,7 +153,7 @@ func TestSetSQLLoginFromFileNeedsTheHashAndLeavesTheFileToUnravis(t *testing.T) 
 
 func TestSetSQLLoginRefusals(t *testing.T) {
 	g, dir := loginRig(t)
-	cases := map[string]string{
+	cases := map[string]string{ //nolint:gosec // G101: test input, not a credential
 		"unknown field": `{"server":"sql01","user":"u","password":"p","extra":1}`,
 		"bad server":    `{"server":"sql01;x=1","user":"u","password":"p"}`,
 		"no password":   `{"server":"sql01","user":"u"}`,

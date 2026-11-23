@@ -71,7 +71,7 @@ func SaveLogin(dir string, s StoredLogin, p sealedfile.Protector) error {
 	if err != nil || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
 		return errLoginUnreadable
 	}
-	raw, err := json.Marshal(loginDoc{V: 1, Server: s.Server, User: s.Login.User, Pass: s.Login.Password, Trust: s.TrustServerCertificate})
+	raw, err := json.Marshal(loginDoc{V: 1, Server: s.Server, User: s.Login.User, Pass: s.Login.Password, Trust: s.TrustServerCertificate}) //nolint:gosec // G117: the document is sealed before it is stored
 	if err != nil {
 		return errLoginUnreadable
 	}
