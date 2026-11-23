@@ -55,6 +55,20 @@ func maskXML(s, mask string, w *work) (string, int) {
 			continue
 		}
 		pos = end
+		trunc := w.truncated
+		if trunc {
+			// The tag is longer than maxTag: fail closed. What is left of it, up to the next "<", is masked like the text of a secret
+			// element, so a secret after a long attribute does not survive. The search moves pos past what it read (consumed).
+			to := len(s)
+			if k := strings.IndexByte(s[end:], '<'); k >= 0 {
+				to = end + k
+			}
+			w.spend(to - end + 1)
+			if to > end {
+				edits = append(edits, edit{end, to})
+			}
+			pos = to
+		}
 		if !plain && (len(attrs) != 1 || attrs[0].name != "hidden") {
 			// An attribute without a value ("<Password x>") is still a tag. Only "<token hidden>", which an earlier redaction leaves
 			// ("<private key hidden>" and the like have no secret name), is a marker and not a tag.
@@ -91,7 +105,7 @@ func maskXML(s, mask string, w *work) (string, int) {
 				}
 			}
 		}
-		if (keyHit || elementHit) && !selfClose {
+		if (keyHit || elementHit) && !selfClose && !trunc {
 			if from, to, found := textNode(s, end, w); found {
 				spans = append(spans, edit{from, to})
 				if to > pos {
@@ -141,22 +155,27 @@ func secretfulConnString(v string) bool {
 }
 
 // parseTag reads the attributes of a tag whose name ends at n. It returns the attributes, where the tag ends (after the ">"),
-// whether it is self-closing, and whether it is plain XML (every attribute has a value). ok is false when the tag does not end
-// within maxTag characters.
+// whether it is self-closing, and whether it is plain XML (every attribute has a value). The attributes live in a buffer that the next
+// call reuses. ok is false only when a new tag starts inside this one (it never closed). A tag that is longer than maxTag, or whose quote
+// does not close within reach, counts as closed at that point (fail closed): the attributes read so far and the text after it are masked.
 func parseTag(s string, n int, w *work) (attrs []attr, end int, selfClose, plain, ok bool) {
 	limit := n + maxTag
 	if limit > len(s) {
 		limit = len(s)
 	}
 	plain = true
+	w.truncated = false
+	full := n+maxTag <= len(s) // false when the text ends inside the tag: that is not a tag
 	i := n
 	defer func() { w.spend(i - n + 1) }()
+	attrs = w.attrs[:0] // reused; the caller reads it before the next parseTag call
+	defer func() { w.attrs = attrs[:0] }()
 	for i < limit {
 		for i < limit && isSpace(s[i]) {
 			i++
 		}
 		if i >= limit {
-			return nil, 0, false, false, false
+			return w.cut(attrs, i, plain, full)
 		}
 		switch {
 		case s[i] == '>':
@@ -164,7 +183,7 @@ func parseTag(s string, n int, w *work) (attrs []attr, end int, selfClose, plain
 		case s[i] == '/' && i+1 < len(s) && s[i+1] == '>':
 			return attrs, i + 2, true, plain, true
 		case s[i] == '<':
-			return nil, 0, false, false, false // a new tag starts: this one never closed
+			return attrs[:0], 0, false, false, false // a new tag starts: this one never closed
 		}
 		a := attr{}
 		st := i
@@ -190,8 +209,11 @@ func parseTag(s string, n int, w *work) (attrs []attr, end int, selfClose, plain
 				q := s[j]
 				c := strings.IndexByte(s[j+1:limit], q)
 				if c < 0 {
+					// The quote does not close within reach (a long certificate or description, or text that ends): the tag ends
+					// where this attribute starts, and what follows is read as the text after the tag.
+					end = st
 					i = limit // the search read up to the limit: charged
-					return nil, 0, false, false, false
+					return w.cut(attrs, end, plain, full)
 				}
 				a.hasValue, a.vFrom, a.vTo = true, j+1, j+1+c
 				i = j + 2 + c
@@ -208,7 +230,17 @@ func parseTag(s string, n int, w *work) (attrs []attr, end int, selfClose, plain
 		}
 		attrs = append(attrs, a)
 	}
-	return nil, 0, false, false, false
+	return w.cut(attrs, i, plain, full) // the limit was reached
+}
+
+// cut ends a tag that ran past the limit. With a full limit the tag is longer than maxTag: it counts as closed at end (fail closed), so
+// the attributes read so far are kept and the rest of it is masked. Without one the text ends inside the tag, which is not a tag.
+func (w *work) cut(attrs []attr, end int, plain, full bool) ([]attr, int, bool, bool, bool) {
+	if !full {
+		return attrs[:0], 0, false, false, false
+	}
+	w.truncated = true
+	return attrs, end, false, plain, true
 }
 
 // textNode finds the text that follows a tag that ends at p: the text up to the next "<", a CDATA section, or, when another tag

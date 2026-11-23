@@ -64,6 +64,12 @@ func (c *Carry) Line(line, mask string) string {
 //   - A bare word that is also a sentence word ("Password:", "token:"): only one word or quoted text; for "token:" and "secret:" only
 //     quoted text.
 func (c *Carry) nextLineIsValue(pend int, text string, ind int) bool {
+	if pend&pendColon != 0 {
+		if ind <= c.indent && looksLikeKey(text[ind:]) {
+			return false // after a colon the value is indented deeper than the key; this line is the next key
+		}
+		pend &^= pendColon
+	}
 	rest := text[ind:]
 	quoted := rest[0] == '"' || rest[0] == '\''
 	switch pend {

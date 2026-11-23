@@ -571,6 +571,12 @@ func TestMaskHostileInputIsFast(t *testing.T) {
 		"key after long indent":       strings.Repeat(" ", 1<<19) + rep("password: | #"),
 		"trailing spaces after tags":  rep("<Password>") + strings.Repeat(" ", 1<<19),
 		"many words in one name":      rep("password_token_secret_"),
+		"review 6 tag shape 1":        rep(`x="\a@b<_pass={"\'{'`),
+		"review 6 tag shape 2":        rep(`<key="password"x="` + "\n  />"),
+		"review 6 attribute pins":     rep("<a " + strings.Repeat("pin_", 1000) + `="1">`),
+		"many attributes no close":    rep("<a " + strings.Repeat(`b="1" `, 600)),
+		"long tag then secret":        rep("<Password " + strings.Repeat(`b="1" `, 800) + `>x</Password>`),
+		"long quote then password":    rep(`<add key="password" value="` + strings.Repeat("v", 5000) + `"/>`),
 	}
 	for name, in := range inputs {
 		t.Run(name, func(t *testing.T) {
@@ -674,4 +680,65 @@ func FuzzMask(f *testing.F) {
 			t.Fatalf("output grew from %d to %d", len(s), len(out))
 		}
 	})
+}
+
+// Review 6: a tag longer than maxTag fails closed (the secret and the rest of the tag go, the text after the tag stays).
+func TestMaskLongTagFailsClosed(t *testing.T) {
+	long := strings.Repeat("x", 5000)
+	for name, in := range map[string]string{
+		"long attribute after a key attribute": `<add key="password" value="FAKEPW" description="` + long + `"/><b>kept</b>`,
+		"long attribute on a secret element":   `<Password note="` + long + `">FAKEPW</Password><b>kept</b>`,
+		"long attribute before the key":        `<add description="` + long + `" key="password" value="FAKEPW"/><b>kept</b>`,
+		"many short attributes before the key": `<add ` + strings.Repeat(`a="1" `, 1000) + `key="password" value="FAKEPW"/><b>kept</b>`,
+		"long attribute on a secret attribute": `<add description="` + long + `" password="FAKEPW"/><b>kept</b>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := Mask(in, m)
+			if strings.Contains(got, fake) {
+				t.Errorf("a fake secret was left in the output")
+			}
+			if !strings.HasSuffix(got, "<b>kept</b>") {
+				t.Errorf("the text after the tag was not kept")
+			}
+			if len(got) >= len(in) {
+				t.Errorf("nothing was masked")
+			}
+		})
+	}
+	run(t, []tcase{
+		{"a text that ends inside a tag is not a tag", "if a <b and then c", "if a <b and then c"},
+	})
+}
+
+// Review 6: an empty YAML key does not mask the sibling key under it.
+func TestMaskEmptyKeyKeepsSibling(t *testing.T) {
+	run(t, []tcase{
+		{"empty client_secret then client_id", "auth:\n  client_secret:\n  client_id: abc123", "auth:\n  client_secret:\n  client_id: abc123"},
+		{"empty db_password then db_user", "  db_password:\n  db_user: sa", "  db_password:\n  db_user: sa"},
+		{"empty password then username", "datasource:\n    password:\n    username: sa", "datasource:\n    password:\n    username: sa"},
+		{"deeper value is masked", "db:\n  password:\n    FAKEPW", "db:\n  password:\n    [m]"},
+		{"password at indent 0 then a value", "password:\nFAKEPW", "password:\n[m]"},
+		{"password then a key one level up", "db:\n  password:\nhost: h", "db:\n  password:\nhost: h"},
+	})
+}
+
+func TestCarryEmptyKeyKeepsSibling(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		lines, want []string
+	}{
+		{"client_secret then client_id", []string{"auth:", "  client_secret:", "  client_id: abc123"}, []string{"auth:", "  client_secret:", "  client_id: abc123"}},
+		{"db_password then db_user", []string{"  db_password:", "  db_user: sa"}, []string{"  db_password:", "  db_user: sa"}},
+		{"password then username", []string{"datasource:", "    password:", "    username: sa"}, []string{"datasource:", "    password:", "    username: sa"}},
+		{"deeper value is masked", []string{"db:", "  client_secret:", "    FAKEPW"}, []string{"db:", "  client_secret:", "    [m]"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var c Carry
+			for i, l := range tc.lines {
+				if got := c.Line(l, m); got != tc.want[i] {
+					t.Errorf("line %d: got %q, want %q", i, shown(got), shown(tc.want[i]))
+				}
+			}
+		})
+	}
 }

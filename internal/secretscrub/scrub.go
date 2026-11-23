@@ -230,12 +230,13 @@ func Mask(s, mask string) string {
 // What a line leaves open for the next one (see Carry).
 const (
 	pendNone         = 0
-	pendBlock        = 1 // a YAML block scalar header ("password: |") ends the line: the indented lines after it are the value
-	pendNext         = 2 // a key ends the line with no value: the next line is the value
-	pendNextIndented = 3 // the same for a compound name after a colon ("client_secret:"): only an indented next line is the value
-	pendNextStrong   = 4 // the name is clearly a secret ("DB_PASSWORD=", "<Password>"): an indented, quoted or listed next line is the value
-	pendNextText     = 6 // an XML secret element ends the line: the next line is its text unless it starts a tag
-	pendNextQuoted   = 5 // a bare "token:" or "secret:" (also a sentence word): only a quoted next line is the value
+	pendBlock        = 1  // a YAML block scalar header ("password: |") ends the line: the indented lines after it are the value
+	pendNext         = 2  // a key ends the line with no value: the next line is the value
+	pendNextIndented = 3  // the same for a compound name after a colon ("client_secret:"): only an indented next line is the value
+	pendNextStrong   = 4  // the name is clearly a secret ("DB_PASSWORD=", "<Password>"): an indented, quoted or listed next line is the value
+	pendColon        = 16 // added to pendNext, pendNextStrong and pendNextIndented when the key ended with a colon: the value is indented deeper
+	pendNextText     = 6  // an XML secret element ends the line: the next line is its text unless it starts a tag
+	pendNextQuoted   = 5  // a bare "token:" or "secret:" (also a sentence word): only a quoted next line is the value
 )
 
 // maskPend is Mask that also says what the text leaves open at its end.
@@ -408,6 +409,9 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 			default:
 				*pend = pendNext
 			}
+			if colon {
+				*pend |= pendColon
+			}
 		}
 		quotedOnly := colon && class == classToken && !jsonKey && bare // "token:" is also a sentence word: only a quoted next line is a value
 		if j >= len(s) {
@@ -421,6 +425,7 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 		if !quotedOnly && colon && class != classPassword && !jsonKey && (j >= len(s) || (s[j] != ' ' && s[j] != '\t')) {
 			return 0, 0, 0, false // a name such as client_secret: with its value on the next line counts only when that line is indented (YAML)
 		}
+		ls2 := j // where the line that may hold the value starts
 		for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
 			j++
 		}
@@ -437,11 +442,17 @@ func readValue(s string, i int, class int, inQuery, bare bool, keyAt int, pend *
 			} else {
 				j++
 			}
+			ls2 = j
 			for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
 				j++
 			}
 		}
 		if j >= len(s) || s[j] == '\r' || s[j] == '\n' {
+			return 0, 0, 0, false
+		}
+		if colon && !jsonKey && j-ls2 <= w.lineIndent(s, w.lineStart(s, keyAt)) && looksLikeKey(s[j:]) {
+			// After a colon (YAML) the value is indented deeper than the key: a line at the same depth is the next key ("client_secret:"
+			// with no value, then "client_id: abc").
 			return 0, 0, 0, false
 		}
 		if quotedOnly && s[j] != '"' && s[j] != '\'' {
@@ -665,6 +676,30 @@ func valueSeparator(s string, i int) bool {
 		return true
 	}
 	return false
+}
+
+// looksLikeKey reports whether text starts with "name:" followed by a space, a tab or the end of the line: a YAML key.
+// It reads at most maxIdent+2 bytes.
+func looksLikeKey(t string) bool {
+	i := 0
+	if i < len(t) && (t[i] == '"' || t[i] == '\'') {
+		i++
+	}
+	st := i
+	for i < len(t) && i-st <= maxIdent && (isIdent(t[i]) || t[i] == '.' || t[i] == '-') {
+		i++
+	}
+	if i == st || i-st > maxIdent {
+		return false
+	}
+	if i < len(t) && (t[i] == '"' || t[i] == '\'') {
+		i++
+	}
+	if i >= len(t) || t[i] != ':' {
+		return false
+	}
+	i++
+	return i >= len(t) || t[i] == ' ' || t[i] == '\t' || t[i] == '\r' || t[i] == '\n'
 }
 
 // bracketEnd returns where the JSON array or object that opens at i ends: after the matching close, with quoted text skipped. One that

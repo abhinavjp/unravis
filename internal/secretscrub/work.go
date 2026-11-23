@@ -21,6 +21,10 @@ type work struct {
 	// The indent of the line that starts at indLs, when indOK.
 	indLs, indent int
 	indOK         bool
+	// The attributes of the tag parseTag read last. Reused for every tag, so a hostile text of unclosed tags allocates nothing.
+	attrs []attr
+	// parseTag sets it when a tag ran past maxTag without closing: the attributes read so far are kept and the rest of the tag is text.
+	truncated bool
 }
 
 func newWork(n int) *work { return &work{left: workFactor*n + workFloor, eolFrom: -1} }
