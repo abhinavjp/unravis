@@ -52,8 +52,10 @@ type Deps struct {
 	Backend Backend
 	Info    func() Info
 	State   func() string // "ready", "locked" or "updating"
-	Now     func() time.Time
-	Logf    func(format string, args ...any)
+	// Internal runs the allow-listed reads of the case routes (NewInternalGET). nil: the case operations answer ENDPOINT_UNAVAILABLE.
+	Internal InternalGET
+	Now      func() time.Time
+	Logf     func(format string, args ...any)
 }
 
 // Handler serves /cli/v1/hello, /cli/v1/op and /cli/v1/cancel.
@@ -190,6 +192,10 @@ func (s *server) run(parent context.Context, req request) (answer, int) {
 	if allowed, needsGrant := clicap.Gate(req.Op, clicap.CLIHuman); !allowed || needsGrant {
 		return fail(clicore.NewError(clicore.CodePermissionDenied, "That operation is not available to the command line.", "")), 0
 	}
+	if req.Op == "doctor" {
+		// doctor is the command line's own check of its link to the app (it asks hello); the owner has nothing to answer.
+		return fail(clicore.NewError(clicore.CodePermissionDenied, "That operation runs in the command line, not in the app.", "")), 0
+	}
 	if len(req.Args) > 0 {
 		if t := bytes.TrimSpace(req.Args); len(t) == 0 || t[0] != '{' {
 			return fail(clicore.NewError(clicore.CodeInvalidArgument, "The arguments must be an object.", "")), 0
@@ -224,6 +230,10 @@ func (s *server) run(parent context.Context, req request) (answer, int) {
 		data, cerr = s.d.Backend.Call(ctx, row.Tool, args)
 	case req.Op == "app.status":
 		data, cerr = s.appStatus(args)
+	case req.Op == "cases.list":
+		data, cerr = s.casesList(ctx, args)
+	case req.Op == "cases.show":
+		data, cerr = s.casesShow(ctx, args)
 	default:
 		return fail(clicore.NewError(clicore.CodeUnknownOperation, "This operation is not built in this version of Unravis.", "Update Unravis.")), 0
 	}

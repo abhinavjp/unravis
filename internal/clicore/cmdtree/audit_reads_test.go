@@ -252,7 +252,9 @@ func TestReadFlagsMatchToolSchemas(t *testing.T) {
 			names[f.name] = true
 		}
 		cmd.Flags().VisitAll(func(f *pflag.Flag) {
-			if !names[f.Name] {
+			// --max-rows and --max-bytes belong to the stream of the command (spec 3.3), not to a tool field
+			stream := sp.page > 0 && (f.Name == "max-rows" || f.Name == "max-bytes")
+			if !names[f.Name] && !stream {
 				t.Errorf("%s --%s is in no spec", sp.op, f.Name)
 			}
 		})
