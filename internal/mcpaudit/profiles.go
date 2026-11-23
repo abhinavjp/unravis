@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -43,11 +44,12 @@ type Profile struct {
 	CreatedAt            time.Time
 	LastCallAt           time.Time
 	Claimed              bool
+	Contested            int    // how many times another process enrolled this id with a different nonce (capped); the card warns on it
 	SecretDigest         []byte `json:"-"` // never serialised: a profile is shown to the screen as is
 	ClaimDigest          []byte `json:"-"`
 }
 
-const cols = `id,state,rev,host_name,host_version,exe,ppid,tier,tools,sources,identifiers,identifiers_until,requested_identifiers,idle_ttl_s,expires_at,approved_at,created_at,last_call_at,claimed,secret_digest,claim_digest`
+const cols = `id,state,rev,host_name,host_version,exe,ppid,tier,tools,sources,identifiers,identifiers_until,requested_identifiers,idle_ttl_s,expires_at,approved_at,created_at,last_call_at,claimed,secret_digest,claim_digest,contested`
 
 type scanner interface{ Scan(...any) error }
 
@@ -71,7 +73,7 @@ func scan(s scanner) (Profile, error) {
 	var ident, reqIdent, claimed int
 	var identUntil, idle, exp, appr, created, last int64
 	if err := s.Scan(&p.ID, &p.State, &p.Rev, &p.HostName, &p.HostVersion, &p.Exe, &p.PPID, &p.Tier, &tools, &sources, &ident, &identUntil,
-		&reqIdent, &idle, &exp, &appr, &created, &last, &claimed, &p.SecretDigest, &p.ClaimDigest); err != nil {
+		&reqIdent, &idle, &exp, &appr, &created, &last, &claimed, &p.SecretDigest, &p.ClaimDigest, &p.Contested); err != nil {
 		return Profile{}, err
 	}
 	if err := json.Unmarshal([]byte(tools), &p.Tools); err != nil {
@@ -98,7 +100,7 @@ func args(p Profile) []any {
 	sources, _ := json.Marshal(nonNil(p.Sources))
 	return []any{p.ID, p.State, p.Rev, p.HostName, p.HostVersion, p.Exe, p.PPID, p.Tier, string(tools), string(sources), b2i(p.Identifiers),
 		ms(p.IdentifiersUntil), b2i(p.RequestedIdentifiers), int64(p.IdleTTL / time.Second), ms(p.ExpiresAt), ms(p.ApprovedAt), ms(p.CreatedAt),
-		ms(p.LastCallAt), b2i(p.Claimed), p.SecretDigest, p.ClaimDigest}
+		ms(p.LastCallAt), b2i(p.Claimed), p.SecretDigest, p.ClaimDigest, p.Contested}
 }
 
 func nonNil(s []string) []string {
@@ -143,7 +145,7 @@ func (d *DB) Count(ctx context.Context) (n int, err error) {
 
 // Insert adds a new profile; ErrExists if the id is taken.
 func (d *DB) Insert(ctx context.Context, p Profile) error {
-	_, err := d.sql.ExecContext(ctx, "INSERT INTO profiles("+cols+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", args(p)...)
+	_, err := d.sql.ExecContext(ctx, "INSERT INTO profiles("+cols+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", args(p)...)
 	if err != nil {
 		if _, gerr := d.Get(ctx, p.ID); gerr == nil {
 			return ErrExists
@@ -174,7 +176,7 @@ func (d *DB) Update(ctx context.Context, id string, fn func(*Profile) error) (Pr
 	a := args(p)
 	// id is the key and does not change; the other twenty columns are set.
 	if _, err := tx.ExecContext(ctx, `UPDATE profiles SET state=?,rev=?,host_name=?,host_version=?,exe=?,ppid=?,tier=?,tools=?,sources=?,identifiers=?,
-identifiers_until=?,requested_identifiers=?,idle_ttl_s=?,expires_at=?,approved_at=?,created_at=?,last_call_at=?,claimed=?,secret_digest=?,claim_digest=? WHERE id=?`,
+identifiers_until=?,requested_identifiers=?,idle_ttl_s=?,expires_at=?,approved_at=?,created_at=?,last_call_at=?,claimed=?,secret_digest=?,claim_digest=?,contested=? WHERE id=?`,
 		append(a[1:], p.ID)...); err != nil {
 		return Profile{}, err
 	}
@@ -184,8 +186,51 @@ identifiers_until=?,requested_identifiers=?,idle_ttl_s=?,expires_at=?,approved_a
 	return p, nil
 }
 
-// Delete removes a profile row.
+// RevFloor is the highest revision of any profile that was removed. A profile made later starts above it, so a (profile id, revision)
+// pair that tokens of the old installation carry is never reused by a new one.
+func (d *DB) RevFloor(ctx context.Context) (int, error) {
+	v, ok, err := d.metaRaw(ctx, metaRevFloor)
+	if err != nil || !ok {
+		return 0, err
+	}
+	n, err := strconv.Atoi(string(v))
+	if err != nil || n < 0 {
+		return 0, errors.New("mcpaudit: bad revision floor")
+	}
+	return n, nil
+}
+
+// Delete removes a profile row and, in the same transaction, lifts the revision floor to its revision.
 func (d *DB) Delete(ctx context.Context, id string) error {
-	_, err := d.sql.ExecContext(ctx, "DELETE FROM profiles WHERE id=?", id)
-	return err
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var rev int
+	if err := tx.QueryRowContext(ctx, "SELECT rev FROM profiles WHERE id=?", id).Scan(&rev); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	var floor int
+	var raw []byte
+	switch err := tx.QueryRowContext(ctx, "SELECT v FROM meta WHERE k=?", metaRevFloor).Scan(&raw); {
+	case err == nil:
+		if floor, err = strconv.Atoi(string(raw)); err != nil || floor < 0 {
+			return errors.New("mcpaudit: bad revision floor")
+		}
+	case !errors.Is(err, sql.ErrNoRows):
+		return err
+	}
+	if rev > floor {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", metaRevFloor, []byte(strconv.Itoa(rev))); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM profiles WHERE id=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

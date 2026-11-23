@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	sqlite3 "github.com/ncruces/go-sqlite3"
@@ -32,9 +33,17 @@ const FileName = "mcp.db"
 
 const (
 	metaServerKey = "serverKey"
+	metaRevFloor  = "revFloor" // the highest revision any removed profile had: a new profile starts above it (S3)
 	keyLen        = 32
-	schemaVersion = 1
+	schemaVersion = 2 // 2: profiles.contested
 )
+
+// ErrNewerVersion means the file was written by a later version of Unravis (a downgrade). It is not set aside: the grants in it are
+// valid for the newer version, and the person decides.
+var ErrNewerVersion = errors.New("mcpaudit: the store was written by a newer version")
+
+// ErrBadFolder means the folder is not an absolute local path.
+var ErrBadFolder = errors.New("mcpaudit: the folder must be an absolute local path")
 
 // ErrNoProtector means the platform cannot seal the server key (not Windows, or a nil Protector was passed): the store does not
 // open, because an unsealed key in the file would make the digests forgeable by anyone who can read it.
@@ -43,10 +52,14 @@ var ErrNoProtector = errors.New("mcpaudit: sealing is not available, the grant s
 // DB is the open grant store. It is safe for concurrent use.
 type DB struct {
 	sql *sql.DB
+	kmu sync.RWMutex // guards key against Close wiping it while MAC runs
 	key []byte
 }
 
-// Open opens (and creates) dir/mcp.db. The folder is made 0700 and the file is restricted to the current user. If the file is
+// Open opens (and creates) dir/mcp.db. dir must be an absolute local path (no relative path, no UNC share). The folder gets the
+// current-user-only ACL of casestore.SecureDir before anything is written (on Windows an inheritable DACL, so mcp.db, -wal and -shm
+// created inside are covered; mode 0700 elsewhere), and the three files are restricted too. The caller passes the protector of the
+// current user (sealedfile.CurrentUser()); sealedfile.LocalMachine() would let every account on the PC unseal the server key. If the file is
 // unreadable (corrupt, or the server key cannot be unsealed because the file came from another account), it is renamed to
 // mcp.db.bad-<unix> and an empty store is made: every host must be approved again, which fails closed (spec 03 section 3.7). The
 // new name is returned as recovered, empty when nothing was set aside.
@@ -57,13 +70,22 @@ func Open(ctx context.Context, dir string, prot sealedfile.Protector, now func()
 	if now == nil {
 		now = time.Now
 	}
+	if !filepath.IsAbs(dir) || strings.HasPrefix(dir, `\\`) || strings.HasPrefix(dir, "//") {
+		return nil, "", ErrBadFolder
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, "", errors.New("mcpaudit: cannot create the folder")
+	}
+	if err := casestore.SecureDir(dir); err != nil {
+		return nil, "", errors.New("mcpaudit: restricting the folder failed")
 	}
 	path := filepath.Join(dir, FileName)
 	db, err = openFile(ctx, path, prot)
 	if err == nil {
 		return db, "", nil
+	}
+	if errors.Is(err, ErrNewerVersion) {
+		return nil, "", err
 	}
 	if _, serr := os.Stat(path); serr != nil {
 		return nil, "", err // nothing to set aside: a real failure (folder, disk)
@@ -83,6 +105,12 @@ func Open(ctx context.Context, dir string, prot sealedfile.Protector, now func()
 }
 
 func openFile(ctx context.Context, path string, prot sealedfile.Protector) (*DB, error) {
+	// Create the file 0600 before SQLite does: the -wal and -shm files it makes take the mode of the main file.
+	if f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600); err == nil { //nolint:gosec // the store's own file in its own folder
+		_ = f.Close()
+	} else {
+		return nil, errors.New("mcpaudit: creating the store failed")
+	}
 	dsn := "file:" + escapeURIPath(path) + "?mode=rwc"
 	sdb, err := driver.Open(dsn, initConn)
 	if err != nil {
@@ -96,10 +124,14 @@ func openFile(ctx context.Context, path string, prot sealedfile.Protector) (*DB,
 		_ = sdb.Close()
 		return nil, err
 	}
-	// Owner-only file. The -wal and -shm files inherit the folder (0700 / the profile folder ACL).
-	if err := casestore.SecureFile(path); err != nil {
-		_ = sdb.Close()
-		return nil, errors.New("mcpaudit: restricting the store file failed")
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		if _, serr := os.Stat(p); serr != nil {
+			continue // the -wal and -shm files exist only while the store is open
+		}
+		if err := casestore.SecureFile(p); err != nil {
+			_ = sdb.Close()
+			return nil, errors.New("mcpaudit: restricting the store file failed")
+		}
 	}
 	return d, nil
 }
@@ -152,7 +184,8 @@ CREATE TABLE IF NOT EXISTS profiles(
   last_call_at INTEGER NOT NULL DEFAULT 0,
   claimed INTEGER NOT NULL DEFAULT 0,
   secret_digest BLOB,
-  claim_digest BLOB
+  claim_digest BLOB,
+  contested INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 `
 
@@ -162,7 +195,7 @@ func (d *DB) init(ctx context.Context, prot sealedfile.Protector) error {
 		return errors.New("mcpaudit: the store is unreadable")
 	}
 	if ver > schemaVersion {
-		return errors.New("mcpaudit: the store was written by a newer version")
+		return ErrNewerVersion
 	}
 	var qc string
 	if err := d.sql.QueryRowContext(ctx, "PRAGMA quick_check(1)").Scan(&qc); err != nil || qc != "ok" {
@@ -170,6 +203,16 @@ func (d *DB) init(ctx context.Context, prot sealedfile.Protector) error {
 	}
 	if _, err := d.sql.ExecContext(ctx, schemaSQL); err != nil {
 		return errors.New("mcpaudit: creating the schema failed")
+	}
+	// Version 1 had no contested column.
+	var has int
+	if err := d.sql.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('profiles') WHERE name='contested'").Scan(&has); err != nil {
+		return errors.New("mcpaudit: the store is unreadable")
+	}
+	if has == 0 {
+		if _, err := d.sql.ExecContext(ctx, "ALTER TABLE profiles ADD COLUMN contested INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return errors.New("mcpaudit: upgrading the schema failed")
+		}
 	}
 	if _, err := d.sql.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
 		return errors.New("mcpaudit: creating the schema failed")
@@ -205,15 +248,19 @@ func (d *DB) init(ctx context.Context, prot sealedfile.Protector) error {
 
 // Close closes the store and wipes the key held in memory.
 func (d *DB) Close() error {
+	d.kmu.Lock()
 	for i := range d.key {
 		d.key[i] = 0
 	}
+	d.kmu.Unlock()
 	return d.sql.Close()
 }
 
 // MAC returns HMAC-SHA256(serverKey, domain || 0x00 || data). The domain keeps a digest made for one purpose from being replayed as
 // another (a claim nonce is never a valid grant secret).
 func (d *DB) MAC(domain string, data []byte) []byte {
+	d.kmu.RLock()
+	defer d.kmu.RUnlock()
 	m := hmac.New(sha256.New, d.key)
 	m.Write([]byte(domain))
 	m.Write([]byte{0})
@@ -223,7 +270,7 @@ func (d *DB) MAC(domain string, data []byte) []byte {
 
 // SetMeta and Meta keep small flags (the global stop). Values are not secrets.
 func (d *DB) SetMeta(ctx context.Context, k string, v []byte) error {
-	if k == metaServerKey {
+	if k == metaServerKey || k == metaRevFloor {
 		return errors.New("mcpaudit: reserved key")
 	}
 	_, err := d.sql.ExecContext(ctx, "INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", k, v)
@@ -231,9 +278,13 @@ func (d *DB) SetMeta(ctx context.Context, k string, v []byte) error {
 }
 
 func (d *DB) Meta(ctx context.Context, k string) ([]byte, bool, error) {
-	if k == metaServerKey {
+	if k == metaServerKey || k == metaRevFloor {
 		return nil, false, errors.New("mcpaudit: reserved key")
 	}
+	return d.metaRaw(ctx, k)
+}
+
+func (d *DB) metaRaw(ctx context.Context, k string) ([]byte, bool, error) {
 	var v []byte
 	err := d.sql.QueryRowContext(ctx, "SELECT v FROM meta WHERE k=?", k).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {

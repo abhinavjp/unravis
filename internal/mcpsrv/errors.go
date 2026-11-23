@@ -58,6 +58,10 @@ var (
 	ErrNotApprovable   = errors.New("mcpsrv: profile cannot be approved now")
 	ErrNoHostYet       = errors.New("mcpsrv: no host has connected to this profile yet")
 	ErrBadApproval     = errors.New("mcpsrv: approval not valid")
+	ErrStaleApproval   = errors.New("mcpsrv: the profile changed since the approval card was shown")
+	ErrContested       = errors.New("mcpsrv: another process tried to enroll this host, reissue it or accept the warning")
+	// ErrStopNotSaved: the global stop is in force in this run, but the flag could not be stored, so a restart of the owner lifts it.
+	ErrStopNotSaved = errors.New("mcpsrv: the stop is active but could not be saved")
 )
 
 func badRequest(what string) error { return fmt.Errorf("%w: %s", ErrBadRequest, what) }

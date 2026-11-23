@@ -305,12 +305,16 @@ func TestHTTPRefusalsEchoNothing(t *testing.T) {
 		"null":          `null`,
 		"array":         `[1]`,
 	} {
+		want := 400
+		if name == "too big" {
+			want = 413
+		}
 		st, _, raw := post(t, srv.URL+"/mcp/v1/enroll", body)
-		if st != 400 || strings.Contains(raw, "CANARY") || strings.Contains(raw, "zzz") {
+		if st != want || strings.Contains(raw, "CANARY") || strings.Contains(raw, "zzz") {
 			t.Errorf("%s: %d %s", name, st, raw)
 		}
 		st, _, raw = post(t, srv.URL+"/mcp/v1/enroll/claim", body)
-		if st != 400 || strings.Contains(raw, "CANARY") {
+		if st != want || strings.Contains(raw, "CANARY") {
 			t.Errorf("claim %s: %d %s", name, st, raw)
 		}
 	}

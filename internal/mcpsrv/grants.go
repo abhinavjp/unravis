@@ -25,12 +25,13 @@ type Profile = mcpaudit.Profile
 const (
 	MaxProfiles        = 64
 	DefaultIdleTTL     = 8 * time.Hour
-	MinIdleTTL         = time.Minute
+	MinIdleTTL         = 5 * time.Minute // more than touchEvery, so steady use always slides the expiry before it can fire
 	MaxIdleTTL         = 30 * 24 * time.Hour
 	AbsoluteCap        = 30 * 24 * time.Hour // from approval (or the last renew), whatever the idle time
 	DefaultIdentifiers = time.Hour
 	MaxIdentifiers     = 7 * 24 * time.Hour
 	ClaimTTL           = 10 * time.Minute
+	maxContested       = 100         // the contested counter stops here: a flood of enrolls makes no more writes
 	touchEvery         = time.Minute // LastCallAt and the sliding expiry are written at most this often
 
 	maxHostName, maxHostVersion, maxExe = 64, 32, 520
@@ -63,6 +64,12 @@ type Approval struct {
 	Identifiers    bool          // the identifiers grant; never taken from the host's request
 	IdentifiersFor time.Duration // zero means DefaultIdentifiers; at most MaxIdentifiers
 	IdleTTL        time.Duration // zero means DefaultIdleTTL
+	// ExpectRev, when not zero, is the revision of the profile the person was looking at: if the profile changed since (reissued in
+	// another window, a different host enrolled), the approval is refused with ErrStaleApproval.
+	ExpectRev int
+	// AcceptContested must be true to approve a profile that another process tried to enroll (Profile.Contested > 0). The card shows
+	// the warning and a separate box; the one-click "Approve with defaults" never sets it.
+	AcceptContested bool
 }
 
 // DefaultApproval is the one-click "Approve with defaults" of D11: tier aggregate, the given sources, 8 h idle expiry, no identifiers.
@@ -148,10 +155,10 @@ func (g *Grants) CreatePending(ctx context.Context, id string) error {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.insertPending(ctx, mcpaudit.Profile{ID: id})
+	return g.insertPending(ctx, &mcpaudit.Profile{ID: id})
 }
 
-func (g *Grants) insertPending(ctx context.Context, p mcpaudit.Profile) error {
+func (g *Grants) insertPending(ctx context.Context, p *mcpaudit.Profile) error {
 	n, err := g.db.Count(ctx)
 	if err != nil {
 		return err
@@ -159,8 +166,14 @@ func (g *Grants) insertPending(ctx context.Context, p mcpaudit.Profile) error {
 	if n >= MaxProfiles {
 		return ErrTooManyProfiles
 	}
-	p.State, p.Rev, p.CreatedAt = mcpaudit.StatePending, 1, g.now().UTC()
-	return g.db.Insert(ctx, p)
+	// A new profile starts above the revision of every profile ever removed, so a (profile id, revision) pair of an old installation
+	// is never valid for a new one (cursors, handles and aliases are bound to the pair).
+	floor, err := g.db.RevFloor(ctx)
+	if err != nil {
+		return err
+	}
+	p.State, p.Rev, p.CreatedAt = mcpaudit.StatePending, floor+1, g.now().UTC()
+	return g.db.Insert(ctx, *p)
 }
 
 // Enroll is the first call of a host. A new profile id (including the default one of a legacy `--mcp`) becomes pending and is never
@@ -185,20 +198,28 @@ func (g *Grants) Enroll(ctx context.Context, r EnrollReq) (EnrollResp, error) {
 	case errors.Is(err, mcpaudit.ErrNotFound):
 		np := mcpaudit.Profile{ID: r.Profile, HostName: r.HostName, HostVersion: r.HostVersion, Exe: r.Exe, PPID: r.PPID,
 			RequestedIdentifiers: r.RequestIdentifiers, ClaimDigest: digest}
-		if err := g.insertPending(ctx, np); err != nil {
+		if err := g.insertPending(ctx, &np); err != nil {
 			return EnrollResp{}, err
 		}
-		return EnrollResp{State: mcpaudit.StatePending, Rev: 1}, nil
+		return EnrollResp{State: mcpaudit.StatePending, Rev: np.Rev}, nil
 	case err != nil:
 		return EnrollResp{}, err
 	}
-	if p.State == mcpaudit.StatePending && (len(p.ClaimDigest) == 0 || subtle.ConstantTimeCompare(p.ClaimDigest, digest) == 1) {
+	same := subtle.ConstantTimeCompare(p.ClaimDigest, digest) == 1
+	if p.State == mcpaudit.StatePending && (len(p.ClaimDigest) == 0 || same) {
 		p, err = g.db.Update(ctx, p.ID, func(p *Profile) error {
 			p.HostName, p.HostVersion, p.Exe, p.PPID = r.HostName, r.HostVersion, r.Exe, r.PPID
 			p.RequestedIdentifiers = r.RequestIdentifiers
 			p.ClaimDigest = digest
 			return nil
 		})
+		if err != nil {
+			return EnrollResp{}, err
+		}
+	} else if len(p.ClaimDigest) != 0 && !same && p.Contested < maxContested && (p.State == mcpaudit.StatePending || p.State == mcpaudit.StateActive) {
+		// Another process enrolled this id with a nonce that is not the first one's. It changes nothing (the first enroller keeps the
+		// claim), but the person approving must be able to see that two processes asked: Reissue, not Approve, is the answer then.
+		p, err = g.db.Update(ctx, p.ID, func(p *Profile) error { p.Contested++; return nil })
 		if err != nil {
 			return EnrollResp{}, err
 		}
@@ -268,8 +289,14 @@ func (g *Grants) Approve(ctx context.Context, id string, a Approval) (Profile, e
 		if p.State != mcpaudit.StatePending {
 			return ErrNotApprovable
 		}
+		if a.ExpectRev != 0 && a.ExpectRev != p.Rev {
+			return ErrStaleApproval
+		}
 		if len(p.ClaimDigest) == 0 {
 			return ErrNoHostYet
+		}
+		if p.Contested > 0 && !a.AcceptContested {
+			return ErrContested
 		}
 		p.State, p.Rev = mcpaudit.StateActive, p.Rev+1
 		p.Tier, p.Tools, p.Sources = a.Tier, a.Tools, a.Sources
@@ -319,7 +346,7 @@ func (g *Grants) end(ctx context.Context, id, state string) (Profile, error) {
 	g.mu.Lock()
 	p, err := g.db.Update(ctx, id, func(p *Profile) error {
 		p.State, p.Rev = state, p.Rev+1
-		p.SecretDigest, p.ClaimDigest, p.Claimed = nil, nil, false
+		p.SecretDigest, p.ClaimDigest, p.Claimed, p.Contested = nil, nil, false, 0
 		p.ExpiresAt = time.Time{}
 		return nil
 	})
@@ -350,7 +377,8 @@ func (g *Grants) Renew(ctx context.Context, id string) (Profile, error) {
 	})
 }
 
-// Remove deletes the row of a revoked or denied profile (the list is capped at MaxProfiles).
+// Remove deletes the row of a profile that is not active (pending rows too, so junk enrolls can be cleared; the list is capped at
+// MaxProfiles). The revision floor keeps a later profile of the same id from reusing an old (id, revision) pair.
 func (g *Grants) Remove(ctx context.Context, id string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -358,33 +386,36 @@ func (g *Grants) Remove(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if p.State != mcpaudit.StateRevoked && p.State != mcpaudit.StateDenied {
-		return ErrNotApprovable
+	if p.State == mcpaudit.StateActive {
+		return ErrNotApprovable // revoke first: the host's credential must end through the revoke path
 	}
 	return g.db.Delete(ctx, id)
 }
 
-// Stop is the global stop: every call is refused with ReasonStopped, every running call is cancelled and every profile's hooks run, until Resume. The flag is
-// stored, so a restart does not lift it. Profiles keep their state.
+// Stop is the global stop: every call is refused with ReasonStopped, every running call is cancelled and every profile's hooks run,
+// until Resume. The flag is stored, so a restart does not lift it. Profiles keep their state.
+// If the flag cannot be stored (or the profile list cannot be read for the hooks) the stop is still in force in this run and Stop
+// returns ErrStopNotSaved: the caller tells the person that it will not survive a restart.
 func (g *Grants) Stop(ctx context.Context) error {
+	// Fail closed: the stop takes effect in memory first. If the flag cannot be written, the stop still holds until the owner
+	// restarts, and the error says only that.
 	g.mu.Lock()
-	if err := g.db.SetMeta(ctx, metaStop, []byte("1")); err != nil {
-		g.mu.Unlock()
-		return err
-	}
 	g.stopped.Store(true)
 	ids, cancels, hooks := g.takeAllRunning()
 	// Every profile's handles and aliases go, not only those of profiles with a call running: after Resume nothing from before is usable.
-	if all, err := g.db.List(ctx, MaxProfiles); err == nil {
-		for _, p := range all {
-			if _, ok := cancels[p.ID]; !ok {
-				ids = append(ids, p.ID)
-			}
+	all, listErr := g.db.List(ctx, MaxProfiles)
+	for _, p := range all {
+		if _, ok := cancels[p.ID]; !ok {
+			ids = append(ids, p.ID)
 		}
 	}
+	setErr := g.db.SetMeta(ctx, metaStop, []byte("1"))
 	g.mu.Unlock()
 	for _, id := range ids {
 		finish(cancels[id], hooks, id)
+	}
+	if setErr != nil || listErr != nil {
+		return ErrStopNotSaved
 	}
 	return nil
 }
@@ -417,7 +448,9 @@ func (g *Grants) List(ctx context.Context) ([]Profile, error) { return g.db.List
 
 // Authenticate checks the Authorization header of a call: "Unravis-Grant <profile>.<secret>". A profile that is not active answers
 // with its reason (the host is told to open the app); an active one must match the stored digest (constant time), then the global
-// stop and the idle expiry apply. Every credential failure is the same error, whether the id exists or not.
+// stop and the idle expiry apply. A profile that is not active answers with its state before the secret is checked (the host is told
+// what to do in the app; the id and its state are not secret, and enroll answers the same). A wrong secret and an unknown id of an
+// active-or-unknown profile are the same error.
 func (g *Grants) Authenticate(ctx context.Context, header string) (Principal, error) {
 	id, secret, ok := parseCredential(header)
 	digest := g.db.MAC(macGrant, []byte(secret))
@@ -590,13 +623,16 @@ func parseCredential(h string) (id, secret string, ok bool) {
 	return id, secret, true
 }
 
-// validText accepts printable UTF-8 of at most max bytes (host text shown on the card: no control characters, no line breaks).
+// validText accepts printable UTF-8 of at most max bytes: letters, marks, numbers, punctuation, symbols and spaces (Zs). It refuses
+// control characters, line and paragraph separators, format characters (bidi overrides U+202A to U+202E and U+2066 to U+2069,
+// zero-width U+200B to U+200F, U+FEFF), private-use, surrogate and unassigned code points: the text is shown on the approval card
+// for the person to judge, and a spoofed exe path or host name must not be possible.
 func validText(s string, max int) bool {
 	if len(s) > max || !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {
-		if unicode.IsControl(r) || r == ' ' || r == ' ' {
+		if !unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.P, unicode.S, unicode.Zs) {
 			return false
 		}
 	}
