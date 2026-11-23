@@ -10,7 +10,7 @@ test.beforeEach(async ({ api }) => {
 
 test('IP-17: header Import with no case open shows a hint on the start screen; with a case the popup opens', async ({ page, api }) => {
   // The app opens on the analysis with no case open yet.
-  const importButton = page.getByRole('button', { name: 'Add files', exact: true });
+  const importButton = page.getByRole('button', { name: 'Add files', exact: true }).first();
   await expect(importButton).toBeVisible();
   await importButton.click();
 

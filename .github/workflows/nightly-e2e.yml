@@ -1,0 +1,113 @@
+name: Nightly e2e
+
+# BL-030. The Playwright e2e suite in tools/e2e (about 690 tests) against the demo app, on Linux. About 20 minutes, so it is NOT a check on
+# every pull request: it runs each night, by hand (Actions, Nightly e2e, Run workflow; "grep" runs only the tests whose title matches),
+# and on pull requests that change this file or the compare tool. The job fails on any test that fails and is not listed in
+# tools/ci/e2e-linux-known-failures.txt (see tools/ci/compare-e2e-failures.mjs). The list is empty today: keep it that way.
+# Not the same list: tools/e2e/known-defects.json marks tests that are expected to fail until a defect is fixed (they count as passed).
+# Tests that need Windows (a netstat check, archive-to-folder, the Blackbox pack folder) skip themselves off Windows; the Windows
+# run of the same suite stays a by-hand run on the owner's PC (tools/e2e/run-e2e.ps1), so BL-182, BL-160 and BL-164 are not ticked by this job.
+# The report and, for a failure, the test-results folder (screenshot and page text of the failing step) are the artifact "e2e-report".
+on:
+  workflow_dispatch:
+    inputs:
+      grep:
+        description: 'Only tests whose title matches this regular expression (empty runs all)'
+        default: ''
+  schedule:
+    - cron: '47 1 * * *'
+  pull_request:
+    paths:
+      - '.github/workflows/nightly-e2e.yml'
+      - 'tools/ci/compare-e2e-failures.mjs'
+      - 'tools/ci/test-compare-e2e.mjs'
+      - 'tools/e2e/**'
+      - 'tools/ci/e2e-linux-known-failures.txt'
+
+permissions:
+  contents: read
+
+concurrency:
+  # A new push to a pull request replaces its run; a by-hand run never cancels the night's run.
+  group: nightly-e2e-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  e2e:
+    name: e2e (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.23.5'
+          cache: npm
+          cache-dependency-path: |
+            tools/uiaudit/package-lock.json
+            web/package-lock.json
+
+      - name: Tests of the compare tool
+        run: node tools/ci/test-compare-e2e.mjs
+
+      - name: Build the web files from the current source
+        # Pull requests into develop do not commit web/dist (docs/pipeline/dist-on-promotion.md), and the demo exe embeds it when it is built.
+        # Without this step the suite would test the last promoted UI. The files are built in the working copy only and never committed.
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build the demo app
+        env:
+          CGO_ENABLED: "0"
+        run: go build -o "$RUNNER_TEMP/unravis-demo" ./cmd/audit-explorer
+
+      # tools/e2e has no package.json dependencies of its own: it runs on the Playwright that tools/uiaudit installs (same lock file as the UI audit).
+      - name: Install Playwright and Chromium
+        working-directory: tools/uiaudit
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          ln -s ../uiaudit/node_modules ../e2e/node_modules
+
+      - name: Run the e2e suite
+        id: run
+        working-directory: tools/e2e
+        env:
+          UNRAVIS_EXE: ${{ runner.temp }}/unravis-demo
+          E2E_REPORT: ${{ github.workspace }}/tools/e2e/report/results.json
+          GREP: ${{ inputs.grep }}
+        # Playwright's own exit code is not the verdict: the compare step reads the report and the known-failure list.
+        continue-on-error: true
+        run: |
+          mkdir -p report
+          if [ -n "$GREP" ]; then
+            npx playwright test --trace off --grep "$GREP"
+          else
+            npx playwright test --trace off
+          fi
+
+      # The skip limit: 15 tests skip on Linux today (Windows-only checks). Raise it only on purpose.
+      - name: Compare the failures with the known list
+        if: ${{ !cancelled() && steps.run.conclusion != 'skipped' }}
+        run: node tools/ci/compare-e2e-failures.mjs --json tools/e2e/report/results.json --baseline tools/ci/e2e-linux-known-failures.txt --out tools/e2e/report/summary.md --max-skipped 25
+
+      - name: Upload the report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-report
+          path: |
+            tools/e2e/report
+            tools/e2e/test-results
+          if-no-files-found: warn
+          retention-days: 14
