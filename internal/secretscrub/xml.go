@@ -55,6 +55,7 @@ func maskXML(s, mask string, w *work) (string, int) {
 			continue
 		}
 		pos = end
+		resume := w.rescan // a "<" inside a quoted value of this tag, or 0
 		trunc := w.truncated
 		if trunc {
 			// The tag is longer than maxTag: fail closed. What is left of it, up to the next "<", is masked like the text of a secret
@@ -75,6 +76,9 @@ func maskXML(s, mask string, w *work) (string, int) {
 			plain = true
 		}
 		if !plain {
+			if resume > 0 && resume < pos {
+				pos = resume
+			}
 			continue
 		}
 		local := name
@@ -119,6 +123,9 @@ func maskXML(s, mask string, w *work) (string, int) {
 			if sp.to > sp.from {
 				edits = append(edits, sp)
 			}
+		}
+		if resume > 0 && resume < pos {
+			pos = resume
 		}
 	}
 	return apply(s, mask, sortEdits(edits)), pending
@@ -165,6 +172,7 @@ func parseTag(s string, n int, w *work) (attrs []attr, end int, selfClose, plain
 	}
 	plain = true
 	w.truncated = false
+	w.rescan = 0
 	full := n+maxTag <= len(s) // false when the text ends inside the tag: that is not a tag
 	i := n
 	defer func() { w.spend(i - n + 1) }()
@@ -215,11 +223,11 @@ func parseTag(s string, n int, w *work) (attrs []attr, end int, selfClose, plain
 					i = limit // the search read up to the limit: charged
 					return w.cut(attrs, end, plain, full)
 				}
-				if lt := strings.IndexByte(s[j+1:j+1+c], '<'); lt >= 0 {
-					// A "<" cannot be inside an attribute value: the quote opened by mistake (a stray quote in text), and the "closing"
-					// quote belongs to a later tag. The tag ends where this attribute starts, and the later tag is read on its own.
-					i = j + 1 + lt // read up to here: charged
-					return w.cut(attrs, st, plain, full)
+				if lt := strings.IndexByte(s[j+1:j+1+c], '<'); lt >= 0 && w.rescan == 0 {
+					// A "<" inside a quoted value is usually text ("a<b", a template). It can also mean the quote opened by mistake (a stray
+					// quote) and the closing quote belongs to a later tag. Both are read: the value stays an attribute of this tag, and the
+					// scan resumes at the "<", so the later tag is read on its own.
+					w.rescan = j + 1 + lt
 				}
 				a.hasValue, a.vFrom, a.vTo = true, j+1, j+1+c
 				i = j + 2 + c

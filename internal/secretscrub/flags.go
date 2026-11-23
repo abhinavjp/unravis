@@ -187,11 +187,15 @@ func lineStartAfter(s string, k int) int {
 // optionValue finds the value of an option whose name ends at p: the next word, also on the next line after a line continuation
 // (a backslash, a backtick or a caret at the end of the line), a comma (a JSON array of arguments) and, for a block list item
 // ("- --password" then "- x"), the item on the next line.
-func optionValue(s string, p int, listItem, quoted bool) (from, to, next int, ok bool) {
+func optionValue(s string, p int, listItem bool) (from, to, next int, ok bool) {
+	lines := 0 // line breaks crossed after a comma
 	for n := 0; n < 3; n++ {
 		comma := false
-		for p < len(s) && (s[p] == ' ' || s[p] == '\t' || s[p] == ',' || (comma && quoted && (s[p] == '\n' || s[p] == '\r'))) {
+		for p < len(s) && (s[p] == ' ' || s[p] == '\t' || s[p] == ',' || (comma && (s[p] == '\n' || s[p] == '\r'))) {
 			comma = comma || s[p] == ','
+			if s[p] == '\n' {
+				lines++
+			}
 			p++
 		}
 		if p < len(s) && (s[p] == '\\' || s[p] == '^' || s[p] == '`') && endsLine(s, p+1) {
@@ -215,7 +219,36 @@ func optionValue(s string, p int, listItem, quoted bool) (from, to, next int, ok
 	for p < len(s) && (s[p] == ' ' || s[p] == '\t') {
 		p++
 	}
-	return flagValue(s, p)
+	from, to, next, ok = flagValue(s, p)
+	if ok && lines > 0 && (lines > 1 || nextLineKey(s[from:to])) {
+		// A value on a later line, after a comma, is the next element of an array, not a new line of the text: not after a blank line,
+		// and not a word that starts a setting ("password: x", "KEY=x"), which is read on its own.
+		return 0, 0, 0, false
+	}
+	return from, to, next, ok
+}
+
+// nextLineKey says whether a word reads as the start of a setting ("password:", "DB_PASSWORD=x").
+func nextLineKey(v string) bool {
+	return strings.HasSuffix(v, ":") || strings.ContainsAny(v, "=")
+}
+
+// commaBreak returns the position of the line break when the value at "from" was found on a later line, after a comma that ends the
+// line the option is on (an array of arguments). It is -1 otherwise.
+func commaBreak(s string, p, from int) int {
+	comma := false
+	for k := p; k < from && k < len(s); k++ {
+		switch s[k] {
+		case ',':
+			comma = true
+		case '\n', '\r':
+			if comma {
+				return k
+			}
+			return -1
+		}
+	}
+	return -1
 }
 
 // maskFlags masks the value words of secret command-line options.
@@ -254,7 +287,6 @@ func maskFlags(s, mask string, w *work) string {
 			i++
 		}
 		w.spend(i - a + 1)
-		a0 := a // the first byte of the word as written: a quote means a JSON string
 		raw := s[a:i]
 		if raw[0] == '<' {
 			if k := strings.LastIndexByte(raw, '>'); k >= 0 {
@@ -285,7 +317,7 @@ func maskFlags(s, mask string, w *work) string {
 		}
 		if strings.EqualFold(wordT, "ConvertTo-SecureString") {
 			// ConvertTo-SecureString "hunter2" -AsPlainText: the first argument is the secret itself.
-			if from, to, next, ok := optionValue(s, i, false, false); ok {
+			if from, to, next, ok := optionValue(s, i, false); ok {
 				edits = append(edits, edit{from, to})
 				w.spend(next - i)
 				i = next
@@ -358,7 +390,7 @@ func maskFlags(s, mask string, w *work) string {
 		if before != "" && prose[lowerASCII(before)] && tools == 0 {
 			continue // "Use --password to set it": help text
 		}
-		from, to, next, ok := optionValue(s, i, listItem && before == "-", s[a0] == '"' || s[a0] == '\'')
+		from, to, next, ok := optionValue(s, i, listItem && before == "-")
 		if !ok || !valueLooksSecret(s[from:to]) {
 			continue
 		}
@@ -376,6 +408,11 @@ func maskFlags(s, mask string, w *work) string {
 			edits = append(edits, edit{from, to})
 		}
 		w.spend(next - i)
+		if k := commaBreak(s, i, from); k >= 0 {
+			// The value came from the next line, after a comma: that line is read again from its start, so an option of its own
+			// ("-P" then a value) is not lost.
+			next = k
+		}
 		i = next
 	}
 	return apply(s, mask, sortEdits(edits))
