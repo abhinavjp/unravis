@@ -26,7 +26,7 @@
 //   UIFIX-52  Slowest tab (BL-537): the small line under the API name of each slowest request is at least 11px (the audit's floor) and the two headings start their words where the controls and notes under them start; the heading boxes and the list's other columns stay where they were (52a, 52b)
 //   UIFIX-53  Slowest tab (BL-538): the "API / source" column of the slowest-request list and the first column of the exact time windows have a sensible width: the API name stays on one line, the rows are short (the 50-row list was about 11,000 px tall at 1440 px), and at 1440 px the list fits its panel so "Nearby activity" is not pushed out
 import { test, expect, type Page } from '../support/fixtures';
-import { openCase } from '../support/ui';
+import { openCase, layoutSettled } from '../support/ui';
 
 type Box = { x: number; y: number; w: number; h: number };
 
@@ -2138,6 +2138,7 @@ for (const size of OP_SIZES) {
   test('UIFIX-53a Slowest tab at ' + size.width + ' px: the API / source column is wide enough to read, rows are short, the name is not broken', async ({ page }) => {
     await page.setViewportSize(size);
     await openSlowestLists(page);
+    await layoutSettled(page);
     const facts = await page.locator('.traffic-slowness .slow-result tbody tr').evaluateAll((rows) => rows.map((tr) => {
       const th = tr.querySelector('th')!;
       const name = th.firstChild as Text;
@@ -2163,6 +2164,7 @@ for (const size of OP_SIZES) {
   test('UIFIX-53b Slowest tab at ' + size.width + ' px: the time window column of the exact windows table keeps a readable width and the same row height or less', async ({ page }) => {
     await page.setViewportSize(size);
     await openSlowestLists(page);
+    await layoutSettled(page);
     const facts = await page.locator('.traffic-slowness .traffic-windows tbody tr').evaluateAll((rows) => rows.map((tr) => ({ w: tr.querySelector('th')!.getBoundingClientRect().width, h: tr.getBoundingClientRect().height })));
     expect(facts.length).toBeGreaterThan(2);
     for (const f of facts) {

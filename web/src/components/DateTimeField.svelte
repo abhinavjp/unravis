@@ -29,7 +29,7 @@
   const dateNow = () => dateBox?.value ?? value.slice(0, 10);
   const hintId = $derived(`${id}-time-hint`);
   // BL-506: when a date change lands in the hour the clocks skip, the query keeps its old value and the box keeps the date the person chose (it is sent with the next
-  // valid time, never lost and never replaced by the old one). The refusal belongs to the pair, so the Date box is marked too, unless the time text itself is what is bad.
+  // valid time, never lost and never replaced by the old one). The refusal belongs to the pair, so the Date box is marked too for every refusal of the pair (the skipped hour, a cleared Date or Time box, a window that is too long or out of order), unless the time text itself is what is bad.
   const dateRefused = $derived(invalid && !bad);
 
   const commit = (typed: string) => {
