@@ -11,7 +11,7 @@ name: Supply chain
 #
 # Not here yet: the cargo-deny job and desktop/src-tauri/deny.toml. They are added in the
 # same PR that creates desktop/ (no Rust exists yet). Until then dependabot's cargo entry
-# is inert and osv-scanner skips the Cargo.lock.
+# is inert. osv-scanner reads desktop/Cargo.lock; its waivers are in desktop/osv-scanner.toml.
 on:
   # Pull requests into develop get the action-pin check in fast-gate.yml; the rest runs on the pull request that promotes
   # develop to master and on the push to master (docs/ci/RELEASE-TRAIN.md), not on every push to develop. "Run workflow" runs it by hand.
@@ -110,9 +110,25 @@ jobs:
           go-version-file: go.mod
       - name: Install osv-scanner
         run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION}
+      # The waivers in desktop/osv-scanner.toml rest on one fact: glib, proc-macro-error and chrono are not in the Windows build (the only one shipped).
+      # If a Tauri bump ever pulls one in, this step fails instead of the advisory staying waived until its expiry date.
+      - name: Waived Rust crates stay out of the Windows build
+        working-directory: desktop
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: |
+          set -euo pipefail
+          for crate in glib proc-macro-error chrono; do
+            found="$(cargo tree --locked -i "$crate" --target x86_64-pc-windows-msvc -e all 2>/dev/null || true)"
+            if [ -n "$found" ]; then
+              echo "::error::$crate is now in the Windows build; its waiver in desktop/osv-scanner.toml no longer holds."
+              echo "$found"
+              exit 1
+            fi
+          done
       - name: Scan lockfiles
-        # Non-blocking until BL-460a triages the three Rust findings (desktop/Cargo.lock) that exist on master today.
-        continue-on-error: true
+        # Blocking (BL-460a): a red check, nothing more (master requires only `build`). An osv.dev outage turns it red too; there is no retry yet.
+        # The three Rust findings that exist today are waived with reasons and expiry dates in desktop/osv-scanner.toml.
         run: |
           args="-L go.mod -L web/package-lock.json"
           if [ -f desktop/Cargo.lock ]; then args="$args -L desktop/Cargo.lock"; fi
@@ -129,7 +145,9 @@ jobs:
           fetch-depth: 0
       # verified (live) and unknown (could not be checked) as the spec says; the action
       # scans base..head of the PR. trufflehog v3.100.0 checked with git ls-remote.
+      # --exclude-paths: a short list of Go test files that hold fake credentials on purpose (the scrubber tests);
+      # one literal path per line, guarded by tools/ci/test-trufflehog-allowlist.mjs, see docs/ci/RELEASE-TRAIN.md (single lines: trufflehog:ignore tag).
       - name: trufflehog (verified and unknown)
         uses: trufflesecurity/trufflehog@d232362a64a09a9e7d58267b8f5acef00ae90e23 # v3.100.0
         with:
-          extra_args: --results=verified,unknown
+          extra_args: --results=verified,unknown --exclude-paths=.github/trufflehog-exclude-paths.txt
