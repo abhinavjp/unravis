@@ -180,3 +180,28 @@ func TestSecondReviewRegressions(t *testing.T) {
 		}
 	}
 }
+
+// Third review (all low): blocks, unreserved words as procedure names, invisible separators, account names.
+func TestThirdReviewRegressions(t *testing.T) {
+	leaks := map[string][]string{
+		"BEGIN usp bob END":                {"bob"},
+		"IF 1=1 SELECT 1 ELSE usp bob":     {"bob"},
+		"BEGIN TRY usp bob END TRY":        {"bob"},
+		"next bob, Hunter2":                {"bob", "Hunter2"},
+		"count bob":                        {"bob"},
+		"EXEC usp​Hunter2":                 {"Hunter2"},
+		"usp​Hunter2":                      {"Hunter2"},
+		"GRANT SELECT ON t TO [corp\\bob]": {"corp", "bob"},
+	}
+	for in, bad := range leaks {
+		got := Scrub(in, 0)
+		for _, b := range bad {
+			if strings.Contains(got, b) {
+				t.Errorf("%q leaks %q: %q", in, b, got)
+			}
+		}
+	}
+	if got := Scrub("BEGIN TRANSACTION t1; SELECT 1; COMMIT", 0); got != "BEGIN TRANSACTION t1; SELECT ?; COMMIT" {
+		t.Errorf("ordinary block text changed: %q", got)
+	}
+}

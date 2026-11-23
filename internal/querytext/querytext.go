@@ -50,7 +50,13 @@ func Scrub(text string, maxChars int) string {
 	if len(text) > maxInput {
 		text = text[:maxInput]
 	}
-	text = strings.ToValidUTF8(text, " ")
+	// Any kind of space, and invisible format characters (a zero-width space), count as a space: they cannot hide a word break.
+	text = strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) {
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(text, " "))
 	if withheld(strings.Join(strings.Fields(text), " ")) {
 		return Withheld
 	}
@@ -133,7 +139,7 @@ func shape(s string) string {
 			prevIdent = false
 		case c == '[':
 			// A bracketed identifier is kept, with ]] for a ] inside it. An unclosed one runs to the end (nothing after it is kept).
-			// One that holds an @ or starts with a digit is data posing as a name (a pivot column of e-mail addresses or dates): it is masked.
+			// One that holds an @ or a backslash, or starts with a digit, is data posing as a name (a pivot column of e-mail addresses or dates, a Windows account): it is masked.
 			j, closed := i+1, false
 			for j < len(s) {
 				if s[j] == ']' {
@@ -152,7 +158,7 @@ func shape(s string) string {
 				break
 			}
 			name := s[i+1 : j-1]
-			if strings.ContainsRune(name, '@') || (name != "" && isDigit(name[0])) {
+			if strings.ContainsAny(name, "@\\") || (name != "" && isDigit(name[0])) {
 				b.WriteString("[?]")
 			} else {
 				b.WriteString(s[i:j])
@@ -260,10 +266,10 @@ var callKeywords = map[string]bool{}
 
 func init() {
 	for _, w := range strings.Fields(`select insert update delete merge with set declare if else while begin end create alter drop truncate use
-		print raiserror throw waitfor grant revoke deny dbcc backup restore from where and or not join inner left right full cross outer on
+		print raiserror waitfor grant revoke deny dbcc backup restore from where and or not join inner left right full cross outer on
 		group order by having union except intersect values into top distinct option return goto try catch commit rollback save bulk open
-		close fetch deallocate kill checkpoint reconfigure shutdown case when then as is in exists between like all any some for output
-		offset next rows only apply pivot unpivot over partition cast convert count sum min max avg`) {
+		close fetch deallocate kill checkpoint reconfigure shutdown case when then as is in exists between like all any some for
+		tran transaction distributed`) {
 		callKeywords[w] = true
 	}
 }
@@ -331,6 +337,15 @@ func execBareArgs(s string) bool {
 func badCall(stmt []string) bool {
 	if len(stmt) == 0 {
 		return false
+	}
+	// A statement can start after BEGIN, ELSE, THEN, TRY or CATCH: judge each such piece as a statement of its own.
+	for k, t := range stmt[:len(stmt)-1] {
+		switch strings.ToLower(t) {
+		case "begin", "else", "then", "try", "catch":
+			if badCall(stmt[k+1:]) {
+				return true
+			}
+		}
 	}
 	var rest []string
 	for k, t := range stmt {
