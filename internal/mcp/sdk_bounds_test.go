@@ -73,7 +73,7 @@ func TestSDKOversizeAnswerReplaced(t *testing.T) {
 	for i := 0; i < 4000; i++ {
 		sources = append(sources, map[string]any{"id": fmt.Sprintf("s%d", i), "label": strings.Repeat("L", 400), "database": "d", "collection": "c"})
 	}
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { json.NewEncoder(w).Encode(sources) }))
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(sources) }))
 	defer upstream.Close()
 	var answers []string
 	for _, im := range bothImpls {
@@ -437,7 +437,7 @@ func TestSDKEOFExitsClean(t *testing.T) {
 		})
 		t.Run(im.name+" parent context", func(t *testing.T) {
 			input, writer := io.Pipe()
-			defer writer.Close()
+			defer func() { _ = writer.Close() }()
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan error, 1)
 			go func() { done <- im.serve(mustBridge(t), ctx, input, io.Discard) }()
@@ -454,10 +454,10 @@ func TestSDKEOFExitsClean(t *testing.T) {
 		})
 		t.Run(im.name+" stdout closed", func(t *testing.T) {
 			input, writer := io.Pipe()
-			defer writer.Close()
+			defer func() { _ = writer.Close() }()
 			done := make(chan error, 1)
 			go func() { done <- im.serve(mustBridge(t), context.Background(), input, failingWriter{}) }()
-			io.WriteString(writer, `{"jsonrpc":"2.0","id":1,"method":"ping"}`+"\n")
+			_, _ = io.WriteString(writer, `{"jsonrpc":"2.0","id":1,"method":"ping"}`+"\n")
 			select {
 			case err := <-done:
 				if err == nil || err.Error() != "MCP output could not be written" {
@@ -476,7 +476,7 @@ func (failingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 // Stdout carries one JSON-RPC object per line and nothing else, whatever arrives on stdin.
 func TestSDKStdoutOnlyJSONRPC(t *testing.T) {
-	rng := rand.New(rand.NewSource(341))
+	rng := rand.New(rand.NewSource(341)) //nolint:gosec // a fixed seed: the corpus must repeat
 	seeds := []string{
 		initLine + "\n" + readyLine + "\n" + `{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n",
 		`{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{` + statelessMeta + `}}` + "\n",
@@ -487,7 +487,7 @@ func TestSDKStdoutOnlyJSONRPC(t *testing.T) {
 	for i := 0; i < 300; i++ {
 		seed := []byte(seeds[rng.Intn(len(seeds))])
 		for n := rng.Intn(6); n > 0 && len(seed) > 0; n-- {
-			seed[rng.Intn(len(seed))] = byte(rng.Intn(256))
+			seed[rng.Intn(len(seed))] = byte(rng.Intn(256)) //nolint:gosec // below 256
 		}
 		checkStdout(t, sdkImpl, seed)
 	}

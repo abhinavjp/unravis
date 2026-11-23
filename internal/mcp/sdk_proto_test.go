@@ -196,7 +196,7 @@ func (b *Bridge) serveSDK(parent context.Context, input io.Reader, output io.Wri
 	pr, pw := io.Pipe()
 	scanErrors := make(chan error, 1)
 	go func() {
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 		scanner := bufio.NewScanner(input)
 		scanner.Buffer(make([]byte, 4096), maxMessage)
 		for scanner.Scan() {
@@ -252,7 +252,7 @@ func (b *Bridge) serveSDK(parent context.Context, input io.Reader, output io.Wri
 	// only backs the first one up.
 	_ = newSDKServer(b, ctx, &workers).Run(ctx, &sdk.IOTransport{Reader: pr, Writer: out, MaxLineLength: 2 * maxMessage})
 	cancel()
-	pr.Close()
+	_ = pr.Close()
 	workers.Wait()
 	if closer, ok := input.(io.Closer); ok {
 		_ = closer.Close()

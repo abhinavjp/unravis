@@ -69,8 +69,8 @@ func dial(t *testing.T, im impl, b *Bridge) *wire {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := newWire(t, in, out)
 	w.cancel = cancel
-	go func() { w.done <- im.serve(b, ctx, input, output); output.Close() }()
-	t.Cleanup(func() { cancel(); in.Close() })
+	go func() { w.done <- im.serve(b, ctx, input, output); _ = output.Close() }()
+	t.Cleanup(func() { cancel(); _ = in.Close() })
 	return w
 }
 
@@ -152,7 +152,7 @@ func (w *wire) silent(d time.Duration) bool {
 
 func (w *wire) finish() error {
 	w.t.Helper()
-	w.in.Close()
+	_ = w.in.Close()
 	select {
 	case err := <-w.done:
 		return err
@@ -425,7 +425,7 @@ func TestCatalogDigest(t *testing.T) {
 	got := hex.EncodeToString(sum[:])
 	path := "testdata/catalog.sha256"
 	if *updateGolden {
-		if err := os.WriteFile(path, []byte(got+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(got+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

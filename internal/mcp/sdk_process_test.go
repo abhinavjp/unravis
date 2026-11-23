@@ -106,7 +106,7 @@ func processTargets(srv *httptest.Server) []processTarget {
 	u, _ := url.Parse(srv.URL)
 	port := u.Port()
 	targets := []processTarget{{"sdk loop in a test process", func(identifiers bool) *exec.Cmd {
-		cmd := exec.Command(os.Args[0], "-test.run=^TestSDKChildProcess$")
+		cmd := exec.Command(os.Args[0], "-test.run=^TestSDKChildProcess$") //nolint:gosec // this test binary run again
 		cmd.Env = append(os.Environ(), childEnv+"="+port)
 		if identifiers {
 			cmd.Env = append(cmd.Env, childIdentEnv+"=1")
@@ -119,7 +119,7 @@ func processTargets(srv *httptest.Server) []processTarget {
 			if identifiers {
 				args = append(args, "--mcp-allow-identifiers")
 			}
-			cmd := exec.Command(bin, args...)
+			cmd := exec.Command(bin, args...) //nolint:gosec // a binary the person running the test names
 			cmd.Env = append(os.Environ(), "AUDIT_SESSION_TOKEN="+testSessionToken)
 			return cmd
 		}})
@@ -155,7 +155,7 @@ func startProcess(t *testing.T, cmd *exec.Cmd) *process {
 // stopOnEOF closes the process's stdin, as a host does when it goes, and requires a clean and prompt exit.
 func (p *process) stopOnEOF(t *testing.T) {
 	t.Helper()
-	p.stdin.Close()
+	_ = p.stdin.Close()
 	select {
 	case err := <-p.exited:
 		if err != nil {
