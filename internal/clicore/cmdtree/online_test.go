@@ -79,6 +79,7 @@ type owner struct {
 	dialErr   error
 	killMid   bool            // close the connection of the next op without answering
 	store     casestore.Store // the case store behind the dashboard handler of the default owner
+	dash      http.Handler    // the dashboard handler behind the default owner (what the GUI and the MCP bridge call)
 	ownerName string          // what hello says of the owner ("" means app)
 	onStop    func()          // what the owner does when app.stop asks it to quit
 	cases     http.Handler    // a dashboard handler for the case reads of an owner with its own backend (see withCases)
@@ -111,6 +112,7 @@ func newOwner(t *testing.T, backend clisrv.Backend, opts ...ownerOpt) *owner {
 		dash := dashboard.New(audit.NewDemo(o.now), nil, ownerToken, false, dashboard.WithCases(o.store, nil, nil))
 		backend = clisrv.MCPBackend(mcp.NewLocal(dash, ownerToken, mcp.WithIdentifiers(true)))
 		internal = clisrv.NewInternalGET(dash, ownerToken)
+		o.dash = dash
 	}
 	inner := clisrv.Handler(clisrv.Deps{
 		Backend:  backend,
