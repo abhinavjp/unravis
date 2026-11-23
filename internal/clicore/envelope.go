@@ -22,20 +22,26 @@ type Error struct {
 	Message   string `json:"message"`
 	Retryable bool   `json:"retryable"`
 	Action    string `json:"action,omitempty"`
+
+	local bool // made by this program before it sent anything (NewError); an error read back from the owner never has it
 }
 
 func (e *Error) Error() string { return string(e.Code) + ": " + e.Message }
 
-// NewError makes an error for a failure before any work started (the app is not running, the owner refused). Its retry rule is the
-// default for the code. For a failure after the owner may have begun the work (it died mid-call), use NewErrorAfterWork.
+// NewError makes an error for a failure on this side before the request was sent (the app is not running, the pipe is not there). Its
+// retry rule is the default for the code. An error that the owner sent back, or one after the owner may have started the work (it died
+// mid-call), must come from NewErrorAfterWork: a repeat of a live query would run it again.
 func NewError(c Code, message, action string) *Error {
-	return &Error{Code: c, Message: message, Retryable: Retryable(c, false), Action: action}
+	return &Error{Code: c, Message: message, Retryable: Retryable(c, false), Action: action, local: true}
 }
 
-// NewErrorAfterWork makes an error for a failure after the owner may have started the work of the request. It is never retryable.
+// NewErrorAfterWork makes an error for a failure after the request was sent. It is never retryable.
 func NewErrorAfterWork(c Code, message, action string) *Error {
-	return &Error{Code: c, Message: message, Retryable: Retryable(c, true), Action: action}
+	return &Error{Code: c, Message: message, Action: action}
 }
+
+// liveOps run a live query on the source: a repeat after the request was sent would run it again (spec D27).
+var liveOps = map[string]bool{"audit.compare": true, "audit.requests": true, "audit.slowest": true, "audit.breakdown": true, "audit.activity": true}
 
 // Meta is what travels next to the data of a success.
 type Meta struct {
@@ -83,7 +89,7 @@ func MarshalError(operation, requestID string, e *Error) ([]byte, error) {
 	if e == nil {
 		return nil, errors.New("clicore: no error to write")
 	}
-	return ASCIIJSON(errorEnvelope{SchemaVersion, safeOperation(operation), safeRequestID(requestID), contract(e)})
+	return ASCIIJSON(errorEnvelope{SchemaVersion, safeOperation(operation), safeRequestID(requestID), contract(e, operation)})
 }
 
 var (
@@ -108,13 +114,14 @@ func safeOperation(op string) string {
 }
 
 // contract returns a copy of e that obeys the output contract: a code that is not in the table becomes INTERNAL, and retryable is
-// never true for a code that cannot be retried, whatever the owner said.
-func contract(e *Error) *Error {
+// true only when the code can be retried and, for a live query, only when the failure was made here before the request was sent.
+// Whatever the owner said about retrying never makes it true.
+func contract(e *Error, operation string) *Error {
 	c := *e
 	if _, ok := codeExit[c.Code]; !ok {
 		c.Code = CodeInternal
 	}
-	c.Retryable = c.Retryable && Retryable(c.Code, false)
+	c.Retryable = c.Retryable && Retryable(c.Code, false) && (c.local || !liveOps[operation])
 	return &c
 }
 
@@ -150,8 +157,8 @@ func WriteError(stderr io.Writer, mode Mode, operation, requestID string, e *Err
 	if e == nil {
 		e = NewError(CodeInternal, "An unknown error happened.", "")
 	}
-	e = contract(e)
 	operation, requestID = safeOperation(operation), safeRequestID(requestID)
+	e = contract(e, operation)
 	if mode == ModeJSON || mode == ModeJSONL {
 		if b, err := MarshalError(operation, requestID, e); err == nil {
 			_, _ = stderr.Write(b)

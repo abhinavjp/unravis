@@ -2,6 +2,7 @@ package clicore
 
 import (
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -67,8 +68,13 @@ func PeekOutputMode(args []string, getenv func(string) string) Mode {
 		switch {
 		case a == "--":
 			i = len(args)
-		case a == "--json", a == "--json=true", a == "--json=1":
+		case a == "--json":
 			mode, found = ModeJSON, true
+		case strings.HasPrefix(a, "--json="):
+			// a boolean flag, read like pflag does ("1", "t", "T", "true", "TRUE", "True"); a false value changes nothing
+			if v, err := strconv.ParseBool(strings.TrimPrefix(a, "--json=")); err == nil && v {
+				mode, found = ModeJSON, true
+			}
 		case a == "--output":
 			if i+1 < len(args) {
 				i++
@@ -77,10 +83,15 @@ func PeekOutputMode(args []string, getenv func(string) string) Mode {
 		case strings.HasPrefix(a, "--output="):
 			set(strings.TrimPrefix(a, "--output="))
 		case len(a) > 1 && a[0] == '-' && a[1] != '-':
-			// A group of short flags: letters up to an "o" are switches; the rest of the group, or the next argument, is the value of -o.
-			if k := strings.IndexByte(a, 'o'); k > 0 {
-				if v := strings.TrimPrefix(a[k+1:], "="); a[k+1:] != "" {
-					set(v)
+			// A group of short flags: only the global switches (-q, -h) may stand before the "o"; the rest of the group, or the next
+			// argument, is the value of -o. Anything else that starts with one dash ("-Mozilla", "-json") is not read.
+			k := 1
+			for k < len(a) && (a[k] == 'q' || a[k] == 'h') {
+				k++
+			}
+			if k < len(a) && a[k] == 'o' {
+				if rest := a[k+1:]; rest != "" {
+					set(strings.TrimPrefix(rest, "="))
 				} else if i+1 < len(args) {
 					i++
 					set(args[i])

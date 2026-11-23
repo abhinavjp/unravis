@@ -95,11 +95,10 @@ func ExitCode(c Code) int {
 	return ExitInternal
 }
 
-// Retryable says whether repeating the same request is safe (spec D27). Only these codes can be: APP_NOT_RUNNING, OWNER_BUSY,
-// UPDATE_IN_PROGRESS, BUDGET_EXCEEDED and UPSTREAM_UNAVAILABLE. workStarted says the owner may have begun the work of the request (a
-// live query ran or may have run): then a repeat could run the query again, so nothing is retryable. A refusal that the owner sent
-// before it did any work (busy, updating, over budget) and an app that is not running are retryable with workStarted false, even
-// though the request body was sent. An owner that dies mid-call is UPSTREAM_UNAVAILABLE with workStarted true.
+// Retryable says whether repeating the same request can be safe (spec D27). Only these codes can be: APP_NOT_RUNNING, OWNER_BUSY,
+// UPDATE_IN_PROGRESS, BUDGET_EXCEEDED and UPSTREAM_UNAVAILABLE. workStarted says the request may have reached the owner and begun (a
+// live query ran or may have run): then a repeat could run the query again, so nothing is retryable. The output also checks the
+// operation (see contract): a live query is retryable only for a failure made on this side before the request was sent.
 func Retryable(c Code, workStarted bool) bool {
 	switch c {
 	case CodeAppNotRunning, CodeOwnerBusy, CodeUpdateInProgress, CodeBudgetExceeded, CodeUpstreamUnavailable:
@@ -144,8 +143,8 @@ func FromMCP(code string, pending bool, backend string) Code {
 	return CodeInternal
 }
 
-// FromHTTPStatus maps a failing answer of the owner's HTTP routes. 423 (locked) is CASE_LOCKED; 404 is NOT_FOUND; 403 is
-// PERMISSION_DENIED; 400 is INVALID_ARGUMENT; 413 is REQUEST_TOO_LARGE; 429 is OWNER_BUSY (a rate limit, retryable); 503 is
+// FromHTTPStatus maps a failing answer of the owner's HTTP routes. 423 (locked) is CASE_LOCKED; 404 is NOT_FOUND; 403 and 401 are
+// PERMISSION_DENIED; 504 is TIMEOUT; 400 is INVALID_ARGUMENT; 413 is REQUEST_TOO_LARGE; 429 is OWNER_BUSY (a rate limit, retryable); 503 is
 // ENDPOINT_UNAVAILABLE (the server uses it for lasting states, so it is not retryable). Anything else that is not a success is INTERNAL.
 func FromHTTPStatus(status int) (Code, bool) {
 	switch status {
@@ -163,6 +162,10 @@ func FromHTTPStatus(status int) (Code, bool) {
 		return CodeOwnerBusy, true
 	case 503:
 		return CodeEndpointUnavailable, true
+	case 504:
+		return CodeTimeout, true
+	case 401:
+		return CodePermissionDenied, true
 	}
 	if status >= 200 && status < 300 {
 		return "", false

@@ -11,30 +11,33 @@ import (
 // title or hide text; a bell; a carriage return that overwrites a line) becomes a space (a line break too). Text from
 // a log, a case title or a source name goes through it before it reaches a table or an error line. Invalid UTF-8 becomes U+FFFD.
 func Printable(s string) string {
-	if !strings.ContainsFunc(s, unsafeRune) {
+	if !strings.ContainsFunc(s, unsafeRune) && utf8.ValidString(s) {
 		return s
 	}
-	return strings.Map(func(r rune) rune {
-		if unsafeRune(r) && r != utf8.RuneError {
-			return ' '
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == utf8.RuneError:
+			b.WriteRune('\uFFFD')
+		case unicode.IsControl(r), unicode.Is(unicode.Zl, r), unicode.Is(unicode.Zp, r):
+			b.WriteByte(' ')
+		case invisible(r):
+			// dropped: it shows nothing, and it can hide text or carry text that only a program reads
+		default:
+			b.WriteRune(r)
 		}
-		return r
-	}, strings.ToValidUTF8(s, "\uFFFD"))
+	}
+	return b.String()
 }
 
-// unsafeRune is a control character, a character that changes the direction of the text (a right-to-left override can make a file name
-// read backwards on screen), an invisible character (zero width, line separator, tag characters), or an invalid byte.
 func unsafeRune(r rune) bool {
-	switch {
-	case unicode.IsControl(r), r == utf8.RuneError:
-		return true
-	case r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069, r == 0x200E, r == 0x200F, r == 0x061C:
-		return true
-	case r >= 0x200B && r <= 0x200D, r >= 0x2028 && r <= 0x2029, r >= 0x2060 && r <= 0x2064, r == 0xFEFF, r == 0x00AD, r == 0x180E,
-		r >= 0xE0000 && r <= 0xE007F, r >= 0xFE00 && r <= 0xFE0F:
-		return true // invisible characters: they can hide text, or carry text that only a program reads
-	}
-	return false
+	return unicode.IsControl(r) || r == utf8.RuneError || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) || invisible(r)
+}
+
+// invisible says whether r is a format character (bidirectional controls, zero-width space, word joiner, byte order mark, soft hyphen,
+// tag characters) that shows nothing but changes how text reads. U+200C and U+200D stay: emoji sequences and several scripts need them.
+func invisible(r rune) bool {
+	return unicode.Is(unicode.Cf, r) && r != 0x200C && r != 0x200D
 }
 
 // WriteTable writes a plain table: a header line, then the rows, columns padded with spaces to the widest cell (width counted in

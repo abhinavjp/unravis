@@ -286,6 +286,15 @@ func TestPeekOutputMode(t *testing.T) {
 		{[]string{"--output=json"}, "", ModeJSON},
 		{[]string{"--json", "-o", "table"}, "", ModeTable}, // the last one wins
 		{[]string{"-o", "table", "--json"}, "", ModeJSON},
+		{[]string{"--json=TRUE"}, "", ModeJSON},
+		{[]string{"--json=T"}, "", ModeJSON},
+		{[]string{"--json=1"}, "", ModeJSON},
+		{[]string{"--json=0"}, "", ModeTable},
+		{[]string{"--json=maybe"}, "", ModeTable},
+		{[]string{"--json", "--user-agent-contains", "-Mozilla"}, "", ModeJSON},
+		{[]string{"-json"}, "json", ModeJSON}, // not -o: the variable is still used
+		{[]string{"-Mozilla"}, "jsonl", ModeJSONL},
+		{[]string{"-hqo", "json"}, "", ModeJSON},
 		{[]string{"-qo", "json"}, "", ModeJSON},
 		{[]string{"-qojson"}, "", ModeJSON},
 		{[]string{"-qo=jsonl"}, "", ModeJSONL},
@@ -384,9 +393,9 @@ func TestPrintable(t *testing.T) {
 		"plain":              "plain",
 		"a\x1b]0;title\x07b": "a ]0;title b",
 		"line1\nline2\r\nx":  "line1 line2  x",
-		"name\u202egpj.exe":  "name gpj.exe", // right-to-left override
-		"zero\u200bwidth\u2028sep\ufeffbom\u00adsoft": "zero width sep bom soft",
-		"tag\U000E0041hidden":                         "tag hidden",
+		"name\u202egpj.exe":  "namegpj.exe", // right-to-left override
+		"zero\u200bwidth\u2028sep\ufeffbom\u00adsoft": "zerowidth sepbomsoft",
+		"tag\U000E0041hidden":                         "taghidden",
 		"bad\xffbyte":                                 "bad\uFFFDbyte",
 		"tab\there":                                   "tab here",
 		"\u0085next":                                  " next", // C1 control
@@ -394,5 +403,69 @@ func TestPrintable(t *testing.T) {
 		if got := Printable(in); got != want {
 			t.Errorf("%q: got %q want %q", in, got, want)
 		}
+	}
+}
+
+func TestMutationGuards(t *testing.T) {
+	// the owner's retryable:false is kept, and a live query from the owner is never retryable
+	for _, e := range []*Error{
+		{Code: CodeOwnerBusy, Message: "m", Retryable: false},
+	} {
+		b, _ := MarshalError("app.status", "req_0123456789abcdef", e)
+		if !strings.Contains(string(b), `"retryable":false`) {
+			t.Errorf("owner said false: %s", b)
+		}
+	}
+	live, _ := MarshalError("audit.compare", "req_0123456789abcdef", &Error{Code: CodeUpstreamUnavailable, Message: "m", Retryable: true})
+	if !strings.Contains(string(live), `"retryable":false`) {
+		t.Errorf("a live query error from the owner must not be retryable: %s", live)
+	}
+	local, _ := MarshalError("audit.compare", "req_0123456789abcdef", NewError(CodeAppNotRunning, "m", ""))
+	if !strings.Contains(string(local), `"retryable":true`) {
+		t.Errorf("not running, before anything was sent, is retryable: %s", local)
+	}
+	other, _ := MarshalError("sources.list", "req_0123456789abcdef", &Error{Code: CodeOwnerBusy, Message: "m", Retryable: true})
+	if !strings.Contains(string(other), `"retryable":true`) {
+		t.Errorf("a refusal for a non-live op may be retryable: %s", other)
+	}
+	// JSONL errors are one JSON line, like JSON
+	var jb bytes.Buffer
+	WriteError(&jb, ModeJSONL, "audit.requests", "req_0123456789abcdef", NewError(CodeNotFound, "m", "a"))
+	if !json.Valid(jb.Bytes()) || bytes.Count(jb.Bytes(), []byte("\n")) != 1 {
+		t.Errorf("jsonl error: %q", jb.String())
+	}
+	// the action line is clean too
+	var tb bytes.Buffer
+	WriteError(&tb, ModeTable, "x", "req_0123456789abcdef", NewError(CodeNotFound, "m", "do \x1b[2J this"))
+	if strings.Contains(tb.String(), "\x1b") {
+		t.Errorf("action: %q", tb.String())
+	}
+	// MarshalError cleans the operation and the id
+	mb, _ := MarshalError("bad\x1bop", "evil", NewError(CodeNotFound, "m", ""))
+	if strings.Contains(string(mb), "evil") || strings.Contains(string(mb), "bad") {
+		t.Errorf("marshal: %s", mb)
+	}
+	// every bidi control, joiner kept, variation selectors kept
+	for _, r := range []rune{0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069, 0x200E, 0x200F, 0x061C, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0x206A, 0xFFF9, 0x034F * 0, 0xE0100 * 0} {
+		if r == 0 {
+			continue
+		}
+		if got := Printable("a" + string(r) + "b"); got != "ab" {
+			t.Errorf("U+%04X: %q", r, got)
+		}
+	}
+	for _, keep := range []string{"\U0001F468\u200D\U0001F469\u200D\U0001F467", "\u2764\uFE0F", "\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645", "\u0915\u094D\u200D\u0937"} {
+		if got := Printable(keep); got != keep {
+			t.Errorf("%q changed to %q", keep, got)
+		}
+	}
+	if Printable("tag\U000E0041\U000E007Fx") != "tagx" || Printable("l1\u2028l2\u2029l3") != "l1 l2 l3" {
+		t.Error("tag characters are dropped, line and paragraph separators become spaces")
+	}
+	if c, _ := FromHTTPStatus(504); c != CodeTimeout {
+		t.Error("504")
+	}
+	if c, _ := FromHTTPStatus(401); c != CodePermissionDenied {
+		t.Error("401")
 	}
 }
