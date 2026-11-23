@@ -100,7 +100,7 @@ func LoadLogin(dir string, p sealedfile.Protector) (s StoredLogin, found bool, e
 	if serr != nil || !fi.Mode().IsRegular() || fi.Size() > maxLoginFile || p == nil {
 		return s, true, errLoginUnreadable
 	}
-	sealed, rerr := os.ReadFile(path)
+	sealed, rerr := os.ReadFile(path) //nolint:gosec // a fixed name inside the locked SQL folder
 	if rerr != nil {
 		return s, true, errLoginUnreadable
 	}

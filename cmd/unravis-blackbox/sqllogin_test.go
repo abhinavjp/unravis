@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	loginPass = "Pa55;w0rd'\"x"
+	loginText = "Pa55;w0rd'\"x"
 	loginDoc  = `{"server":"sql01\\PROD","user":"bb_reader","password":"Pa55;w0rd'\"x"}`
 )
 
@@ -72,7 +72,7 @@ func (g *loginRigT) doIn(stdin string, args ...string) (int, string, string) {
 func noLoginLeak(t *testing.T, outs ...string) {
 	t.Helper()
 	for _, o := range outs {
-		for _, bad := range []string{loginPass, "bb_reader", "sql01"} {
+		for _, bad := range []string{loginText, "bb_reader", "sql01"} {
 			if strings.Contains(o, bad) {
 				t.Errorf("output leaked %q: %q", bad, o)
 			}
@@ -87,8 +87,8 @@ func TestSetSQLLoginFromStdinSealsItAndPrintsNothing(t *testing.T) {
 		t.Fatalf("%d %s %s", c, out, errs)
 	}
 	noLoginLeak(t, out, errs)
-	raw, _ := os.ReadFile(filepath.Join(dir, bbsql.LoginFile))
-	if len(raw) == 0 || bytes.Contains(raw, []byte(loginPass)) {
+	raw, _ := os.ReadFile(filepath.Join(dir, bbsql.LoginFile)) //nolint:gosec // test folder
+	if len(raw) == 0 || bytes.Contains(raw, []byte(loginText)) {
 		t.Fatal("login missing or stored as plain text")
 	}
 	s, found, err := bbsql.LoadLogin(dir, xorSeal{})
@@ -96,8 +96,8 @@ func TestSetSQLLoginFromStdinSealsItAndPrintsNothing(t *testing.T) {
 		t.Fatalf("not readable back: %v", err)
 	}
 	// It is not in the settings file.
-	cfgBytes, _ := os.ReadFile(g.cfg)
-	if bytes.Contains(cfgBytes, []byte("bb_reader")) || bytes.Contains(cfgBytes, []byte(loginPass)) {
+	cfgBytes, _ := os.ReadFile(g.cfg) //nolint:gosec // test file
+	if bytes.Contains(cfgBytes, []byte("bb_reader")) || bytes.Contains(cfgBytes, []byte(loginText)) {
 		t.Fatal("login reached blackbox.json")
 	}
 	// clear

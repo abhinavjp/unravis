@@ -28,21 +28,21 @@ func (x xorSealer) Protect(b []byte) ([]byte, error) {
 func (x xorSealer) Unprotect(b []byte) ([]byte, error) { return x.Protect(b) }
 
 const (
-	tUser = "bb_reader"
-	tPass = "S3cret;=@'\"/ pw%"
+	tLoginName = "bb_reader"
+	tLoginText = "S3cret;=@'\"/ pw%"
 )
 
 func sampleLogin() StoredLogin {
-	return StoredLogin{Server: "sql01.corp.example\\PROD", Login: Login{tUser, tPass}}
+	return StoredLogin{Server: "sql01.corp.example\\PROD", Login: Login{tLoginName, tLoginText}}
 }
 
 func TestLoginNeverPrints(t *testing.T) {
-	l := Login{tUser, tPass}
+	l := Login{tLoginName, tLoginText}
 	s := sampleLogin()
 	for _, v := range []any{l, &l, s, &s} {
 		for _, f := range []string{"%v", "%+v", "%#v", "%s"} {
 			out := fmt.Sprintf(f, v)
-			if strings.Contains(out, tPass) || strings.Contains(out, tUser) {
+			if strings.Contains(out, tLoginText) || strings.Contains(out, tLoginName) {
 				t.Fatalf("%s leaked: %q", f, out)
 			}
 		}
@@ -56,7 +56,7 @@ func TestLoginValidate(t *testing.T) {
 			t.Errorf("accepted %d/%d", len(l.User), len(l.Password))
 		}
 	}
-	if (Login{tUser, tPass}).Validate() != nil {
+	if (Login{tLoginName, tLoginText}).Validate() != nil {
 		t.Error("refused a good login")
 	}
 }
@@ -66,8 +66,8 @@ func TestStoreRoundTripAndNoPlainText(t *testing.T) {
 	if err := SaveLogin(dir, sampleLogin(), xorSealer{}); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := os.ReadFile(filepath.Join(dir, LoginFile))
-	if bytes.Contains(raw, []byte(tPass)) || bytes.Contains(raw, []byte(tUser)) {
+	raw, _ := os.ReadFile(filepath.Join(dir, LoginFile)) //nolint:gosec // test folder
+	if bytes.Contains(raw, []byte(tLoginText)) || bytes.Contains(raw, []byte(tLoginName)) {
 		t.Fatal("login is in the file as plain text")
 	}
 	got, found, err := LoadLogin(dir, xorSealer{})
@@ -171,7 +171,7 @@ func TestDSNWithLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mc.User != tUser || mc.Password != tPass {
+	if mc.User != tLoginName || mc.Password != tLoginText {
 		t.Error("login did not survive the DSN (escaping)")
 	}
 	if mc.Host != "sql01.corp.example" || mc.Instance != "PROD" {

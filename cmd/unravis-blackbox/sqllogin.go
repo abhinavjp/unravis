@@ -81,7 +81,7 @@ func (d deps) readLoginInput(file, sha string, stdin bool) ([]byte, error) {
 		if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxLoginInput {
 			return nil, loginErr(reasonLoginInvalid)
 		}
-		b, err := os.ReadFile(file)
+		b, err := os.ReadFile(file) //nolint:gosec // the path is the one Unravis made; the hash below binds the content
 		// Wipe, then remove: the file existed only for this call.
 		_ = os.WriteFile(file, make([]byte, len(b)), 0o600)
 		_ = os.Remove(file)
