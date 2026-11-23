@@ -1,11 +1,12 @@
 package cmdtree
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -42,14 +43,30 @@ type doctorBackend struct {
 	Error     string     `json:"error,omitempty"` // the code of the failure when it is not reachable and the app was found
 }
 
-// installDirOf is the install folder for the path of this program: the thin command line sits in `<install>\bin`, the app program in
-// `<install>`.
-func installDirOf(exe string) string {
-	dir := filepath.Dir(exe)
-	if strings.EqualFold(filepath.Base(dir), "bin") {
-		return filepath.Dir(dir)
+// doctorAttachWait is how long doctor waits for the app before it reports what it has: a busy pipe or an app that does not answer is a
+// finding ("unknown", TIMEOUT), not a lost report. The command's own --timeout still ends the command as an error.
+var doctorAttachWait = 5 * time.Second
+
+// appProgram finds the install folder and the app program for the path of this program, the way the attach does: symbolic links and
+// short names are resolved first. A thin command line that sits in the install folder itself is not the app program.
+func appProgram(exe string) (installDir string, app doctorExe) {
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = r
 	}
-	return dir
+	installDir = clicore.InstallDir(exe)
+	app.Path = filepath.Join(installDir, "unravis.exe")
+	if !filepath.IsAbs(exe) {
+		return installDir, app
+	}
+	fi, err := os.Stat(app.Path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return installDir, app
+	}
+	if self, err := os.Stat(exe); err == nil && os.SameFile(self, fi) {
+		return installDir, app // this very file: the command line is not the app
+	}
+	app.Exists = true
+	return installDir, app
 }
 
 func (st *state) doctorCmd() *cobra.Command {
@@ -61,22 +78,23 @@ func (st *state) doctorCmd() *cobra.Command {
 		Args:        cobra.NoArgs,
 		Annotations: emitting("doctor"),
 		RunE: func(c *cobra.Command, args []string) error {
+			if st.opts.profile != "" || st.io.Getenv("UNRAVIS_PROFILE") != "" {
+				return usage("Automation profiles are not available in this version of the command line.")
+			}
 			d := doctorData{CLI: st.versionInfo()}
 			if d.CLI.Exe != "" {
-				d.InstallDir = installDirOf(d.CLI.Exe)
-				d.AppExe.Path = filepath.Join(d.InstallDir, "unravis.exe")
-				if fi, err := os.Stat(d.AppExe.Path); err == nil && fi.Mode().IsRegular() { //nolint:gosec // the path is built from this program's own location
-					d.AppExe.Exists = true
-				}
+				d.InstallDir, d.AppExe = appProgram(d.CLI.Exe)
 				d.MCP = d.AppExe.Path + " --mcp"
 			}
-			sess, e := st.attach(st.ctx)
+			ctx, cancel := context.WithTimeout(st.ctx, doctorAttachWait)
+			sess, e := st.attach(ctx)
+			cancel()
 			switch {
 			case e == nil:
 				d.Locator = doctorLocator{State: "running", Owner: sess.Hello.Owner, PID: sess.Hello.PID, AppVersion: sess.Hello.AppVersion}
 				d.Backend = doctorBackend{Reachable: true, Proto: &protoInfo{sess.Hello.Proto.Major, sess.Hello.Proto.Minor}, State: sess.Hello.State}
-			case e.Code == clicore.CodeCanceled || e.Code == clicore.CodeTimeout:
-				return e // the person stopped the check, or it ran out of time: that is not a finding
+			case st.ctx.Err() != nil:
+				return e // the person stopped the check, or the command ran out of time: that is not a finding
 			case e.Code == clicore.CodeAppNotRunning:
 				d.Locator = doctorLocator{State: "not_running"}
 			case e.Code == clicore.CodeStaleLocator:
@@ -118,7 +136,7 @@ func doctorTable(w io.Writer, d doctorData) error {
 	if err := clicore.WriteTable(w, []string{"CHECK", "RESULT"}, rows); err != nil {
 		return err
 	}
-	if d.CLI.Version != "" && d.Locator.AppVersion != "" && d.CLI.Version != d.Locator.AppVersion {
+	if d.CLI.Version != "dev" && d.CLI.Version != "" && d.Locator.AppVersion != "" && d.CLI.Version != d.Locator.AppVersion {
 		_, err := fmt.Fprintf(w, "\nThis command line is %s and the app is %s. Update both to the same version.\n", clicore.Printable(d.CLI.Version), clicore.Printable(d.Locator.AppVersion))
 		return err
 	}

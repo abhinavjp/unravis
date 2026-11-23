@@ -8,8 +8,6 @@ import (
 	"context"
 	"errors"
 	"net"
-	"path/filepath"
-	"strings"
 
 	"api-audit-explorer/internal/clicore"
 	"api-audit-explorer/internal/locator"
@@ -25,11 +23,5 @@ func Default(_ func() (string, error), userAgent string) clicore.Attacher {
 	}
 }
 
-// InstallDir is the install folder for the path of this program (see the Windows file).
-func InstallDir(exe string) string {
-	dir := filepath.Dir(exe)
-	if strings.EqualFold(filepath.Base(dir), "bin") {
-		return filepath.Dir(dir)
-	}
-	return dir
-}
+// InstallDir is the install folder for the path of this program (see clicore.InstallDir).
+func InstallDir(exe string) string { return clicore.InstallDir(exe) }

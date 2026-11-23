@@ -149,14 +149,14 @@ func (st *state) legacy(args []string) (int, bool) {
 	return 0, false
 }
 
-// appExe is the absolute path of the app program (unravis.exe): the folder above the one that holds this program (spec D5).
+// appExe is the absolute path of the app program (unravis.exe) in the install folder of this program (spec D5).
 func (st *state) appExe() string {
 	f := st.io.Exe
 	if f == nil {
 		f = os.Executable
 	}
 	if p, err := f(); err == nil && filepath.IsAbs(p) {
-		return filepath.Join(filepath.Dir(filepath.Dir(p)), "unravis.exe")
+		return filepath.Join(clicore.InstallDir(p), "unravis.exe")
 	}
 	return "unravis.exe in the Unravis folder"
 }
