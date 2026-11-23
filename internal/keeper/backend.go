@@ -14,6 +14,7 @@ import (
 
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/bbsaved"
+	"api-audit-explorer/internal/bbsql"
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/history"
@@ -74,6 +75,7 @@ func (b *Backend) Register(s *Server) {
 	s.Handle(OpSQLImport, classWrite, storeTimeout, b.sqlImport)
 	s.Handle(OpSQLTest, classReach, reachTimeout, b.sqlTest)
 	s.Handle(OpSQLAccess, classReach, runTimeout, b.sqlAccess)
+	s.Handle(OpSQLLoginFile, classWrite, storeTimeout, b.sqlLoginFile)
 	s.Handle(OpSQLHealth, classReach, runTimeout, b.sqlHealth)
 	s.Handle(OpSQLLane, classReach, dbhealth.LaneRunTimeout, b.sqlLane)
 
@@ -279,6 +281,37 @@ func (b *Backend) sqlAccess(ctx context.Context, c *Call) (any, error) {
 		return nil, err
 	}
 	return b.Runner.AccessSQL(ctx, t), nil
+}
+
+// loginFileLife is how long a login file made for the Blackbox helper may live. The helper only reads it; the keeper removes it, so the
+// password never needs to be handed to the app process, and a prompt nobody answers cannot leave it behind.
+const loginFileLife = 10 * time.Minute
+
+// writeLoginFile is the seam tests replace; the real one writes under the keeper's own temp folder.
+var writeLoginFile = func(s bbsql.StoredLogin) (blackbox.SQLLoginFile, error) { return blackbox.WriteSQLLoginFile("", s) }
+
+// sqlLoginFile writes the saved SQL login of a connection into a short-lived private file for the Blackbox helper. Only the file's place and
+// hash go back to the app, never the login. Windows sign-in has nothing to write and is refused.
+func (b *Backend) sqlLoginFile(_ context.Context, c *Call) (any, error) {
+	var ref SQLRef
+	if err := c.Decode(&ref); err != nil {
+		return nil, err
+	}
+	c.Record = ref.ID
+	t, _, err := b.sqlTarget(ref)
+	if err != nil {
+		return nil, err
+	}
+	s, err := sqlaccess.StoredLoginFor(t)
+	if err != nil {
+		return nil, &WireError{Code: CodeInvalid, Message: err.Error()}
+	}
+	f, err := writeLoginFile(s)
+	if err != nil {
+		return nil, &WireError{Code: CodeInternal, Message: "The login could not be prepared for the Blackbox."}
+	}
+	time.AfterFunc(loginFileLife, func() { blackbox.RemoveSQLLoginFile(f) })
+	return f, nil
 }
 
 func (b *Backend) sqlHealth(ctx context.Context, c *Call) (any, error) {

@@ -98,6 +98,13 @@ func (s *SQLStore) AccessSaved(ctx context.Context, ref SQLRef) (sqlaccess.Repor
 	return out, native(s.c.Call(ctx, OpSQLAccess, ref, &out), kindSQL)
 }
 
+// LoginFileSaved has the keeper write a saved SQL login into a short-lived private file for the Blackbox helper and returns where it is and
+// its hash. The login itself never reaches this process; the keeper removes the file after ten minutes.
+func (s *SQLStore) LoginFileSaved(ctx context.Context, ref SQLRef) (blackbox.SQLLoginFile, error) {
+	var out blackbox.SQLLoginFile
+	return out, native(s.c.Call(ctx, OpSQLLoginFile, ref, &out), kindSQL)
+}
+
 // HealthSaved runs the fixed SQL Server checks inside the keeper.
 func (s *SQLStore) HealthSaved(ctx context.Context, ref SQLRef, label string) (dbhealth.Report, error) {
 	var out dbhealth.Report

@@ -15,10 +15,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"api-audit-explorer/internal/bbsql"
 	"api-audit-explorer/internal/blackbox"
@@ -210,6 +212,15 @@ func runSetupSQL(a answer, d deps, configPath, file, sha string, windows, enable
 	if err != nil {
 		return a.failSQL(err)
 	}
+	// The service reads its login only when it starts. A running service is stopped here so it never goes on using the old login unnoticed;
+	// with a SQL login it is started again below (a restart), with Windows sign-in it stays stopped until the owner has run the grant.
+	wasRunning := st == blackbox.SvcRunning || st == blackbox.SvcStartPending
+	if wasRunning {
+		if err := stopSQLService(d, 30*time.Second); err != nil {
+			return a.failSQL(err)
+		}
+		fields["stopped"] = true
+	}
 	if windows {
 		if err := bbsql.RemoveLogin(dir); err != nil {
 			return a.failLogin(reasonLoginSave)
@@ -223,7 +234,7 @@ func runSetupSQL(a answer, d deps, configPath, file, sha string, windows, enable
 		}
 		fields["loginSaved"] = true
 	}
-	if enable {
+	if enable || (wasRunning && !windows) {
 		if err := d.sqlMgr.EnableSQL(cfg, configPath); err != nil {
 			return a.failSQL(err)
 		}
@@ -234,13 +245,41 @@ func runSetupSQL(a answer, d deps, configPath, file, sha string, windows, enable
 	return a.ok("The SQL service is set up.", fields)
 }
 
+// stopSQLService stops the SQL service and waits for it to be stopped.
+func stopSQLService(d deps, within time.Duration) error {
+	svc := d.sqlMgr.Svc
+	if err := svc.Stop(blackbox.SQLServiceName); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(within)
+	for {
+		st, err := svc.State(blackbox.SQLServiceName)
+		if err != nil {
+			return err
+		}
+		if st == blackbox.SvcStopped || st == blackbox.SvcNotInstalled {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("the SQL service did not stop")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
 func runClearSQLLogin(a answer, d deps, configPath string) int {
 	dir, err := d.sqlLoginDir(configPath)
 	if err != nil {
 		return a.failSQL(err)
 	}
+	// Stop a running service: it would go on using the old login until its next start. After the grant for Windows sign-in, enable-sql starts it.
+	if st, serr := d.sqlMgr.Svc.State(blackbox.SQLServiceName); serr == nil && (st == blackbox.SvcRunning || st == blackbox.SvcStartPending) {
+		if err := stopSQLService(d, 30*time.Second); err != nil {
+			return a.failSQL(err)
+		}
+	}
 	if err := bbsql.RemoveLogin(dir); err != nil {
 		return a.failLogin(reasonLoginSave)
 	}
-	return a.ok("The saved SQL login is removed. Restart the SQL service (enable-sql) to go back to Windows sign-in; until then it keeps using the old login.", map[string]any{"saved": false})
+	return a.ok("The saved SQL login is removed and the SQL service is stopped. Run the grant for Windows sign-in, then start it again (enable-sql).", map[string]any{"saved": false})
 }

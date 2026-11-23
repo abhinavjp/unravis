@@ -19,6 +19,7 @@ import (
 
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/bbsaved"
+	"api-audit-explorer/internal/bbsql"
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/history"
@@ -1321,5 +1322,41 @@ func TestSQLAccessCheckRunsInsideTheKeeperAndNeverReturnsThePassword(t *testing.
 	}
 	if _, err := s.AccessSaved(context.Background(), SQLRef{ID: "nope"}); err == nil {
 		t.Fatal("an unknown saved login must fail")
+	}
+}
+
+func TestSQLLoginFileIsWrittenByTheKeeperAndTheAnswerHoldsNoPassword(t *testing.T) {
+	h := newHarness(t, nil)
+	s := NewSQLStore(h.client)
+	rec := h.saveSQL(sqlconn.AuthSQL)
+	root := t.TempDir()
+	old := writeLoginFile
+	t.Cleanup(func() { writeLoginFile = old })
+	writeLoginFile = func(l bbsql.StoredLogin) (blackbox.SQLLoginFile, error) { return blackbox.WriteSQLLoginFile(root, l) }
+
+	f, err := s.LoginFileSaved(context.Background(), SQLRef{ID: rec.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(f)
+	if strings.Contains(string(raw), sqlSecret) || strings.Contains(string(raw), "auditor") {
+		t.Fatalf("the answer to the app holds the login: %s", raw)
+	}
+	b, err := os.ReadFile(f.Path) //nolint:gosec // test file
+	var doc struct{ Server, User, Password string }
+	if err != nil || json.Unmarshal(b, &doc) != nil || doc.Password != sqlSecret || doc.User != "auditor" || doc.Server != "sql01.example.test,1433" {
+		t.Fatalf("the file does not hold the saved login: %v", err)
+	}
+	blackbox.RemoveSQLLoginFile(f)
+
+	// Windows sign-in and an unknown id write nothing.
+	win := h.saveSQL(sqlconn.AuthWindows)
+	for _, id := range []string{win.ID, "nope"} {
+		if _, err := s.LoginFileSaved(context.Background(), SQLRef{ID: id}); err == nil {
+			t.Fatalf("%s: wrote a login file", id)
+		}
+	}
+	if ents, _ := os.ReadDir(root); len(ents) != 0 {
+		t.Fatalf("left %d folders behind", len(ents))
 	}
 }

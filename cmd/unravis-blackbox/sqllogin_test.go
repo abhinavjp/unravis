@@ -47,7 +47,7 @@ func loginRig(t *testing.T) (*loginRigT, string) {
 		d: deps{
 			mgr:    &blackbox.Manager{Svc: &memSvc{}, Env: env, Disk: bigDisk{}},
 			exeDir: func() string { return root },
-			sqlMgr: &blackbox.SQLManager{Env: env},
+			sqlMgr: &blackbox.SQLManager{Env: env, Svc: &memSvc{state: blackbox.SvcStopped}},
 			// The folder proof is Windows-only (install record, locked settings, folder lock): here it hands back the temp folder.
 			confirmDir: func(blackbox.Config, string) (string, error) { return filepath.Join(root, "rec", "sql"), nil },
 			sealer:     func() (sealedfile.Protector, error) { return xorSeal{}, nil },
@@ -218,7 +218,6 @@ func TestSetSQLLoginRefusesAnUnprovenFolderWithoutReadingTheFile(t *testing.T) {
 func setupRig(t *testing.T) (*loginRigT, string, string) {
 	t.Helper()
 	g, dir := loginRig(t)
-	g.d.sqlMgr.Svc = &memSvc{state: blackbox.SvcStopped}
 	f := filepath.Join(t.TempDir(), "login.tmp")
 	sum := sha256.Sum256([]byte(loginDoc))
 	return g, dir, f + "|" + hex.EncodeToString(sum[:])
@@ -283,5 +282,31 @@ func TestSetupSQLRefusals(t *testing.T) {
 	g.admin.admin = false
 	if c, _, _ := g.do("setup-sql", "--windows-signin", "--json"); c == 0 {
 		t.Error("ran without administrator rights")
+	}
+}
+
+// A running service keeps using the login it started with. Changing or removing the login stops it, so it never goes on with the old one.
+func TestAChangedLoginStopsARunningService(t *testing.T) {
+	g, dir, _ := setupRig(t)
+	svc := &memSvc{state: blackbox.SvcRunning}
+	g.d.sqlMgr.Svc = svc
+	if err := bbsql.SaveLogin(dir, bbsql.StoredLogin{Server: "sql01", Login: bbsql.Login{User: "u", Password: "p"}}, xorSeal{}); err != nil {
+		t.Fatal(err)
+	}
+	// Windows sign-in: the service is stopped and stays stopped (the grant comes first), the login is gone.
+	if c, out, errs := g.do("setup-sql", "--windows-signin", "--json"); c != 0 || !strings.Contains(out, `"started":false`) || svc.state != blackbox.SvcStopped || bbsql.HasLogin(dir) {
+		t.Fatalf("%d %s %s state=%v", c, out, errs, svc.state)
+	}
+	// clear-sql-login on a running service stops it too.
+	svc.state = blackbox.SvcRunning
+	svc.calls = nil
+	if err := bbsql.SaveLogin(dir, bbsql.StoredLogin{Server: "sql01", Login: bbsql.Login{User: "u", Password: "p"}}, xorSeal{}); err != nil {
+		t.Fatal(err)
+	}
+	if c, out, errs := g.do("clear-sql-login", "--json"); c != 0 || svc.state != blackbox.SvcStopped || bbsql.HasLogin(dir) {
+		t.Fatalf("%d %s %s state=%v", c, out, errs, svc.state)
+	}
+	if len(svc.calls) != 1 || svc.calls[0] != "stop" {
+		t.Fatalf("calls %v", svc.calls)
 	}
 }
