@@ -10,6 +10,7 @@ import "strings"
 //   - YAML list (Kubernetes and Helm env, Azure and ECS settings in YAML): "- name: DB_PASSWORD" with "value: x" on a line of the same
 //     record, before or after it. The record is the lines at the indent of the name key, read at most maxRecordLines each way.
 //   - Property list (plist): <key>Password</key> followed by the next element, <string>, <data> or <integer>.
+//   - Unquoted member names inside brackets (flow YAML, Go prints, Python keyword form, HCL): pairs.go.
 //
 // Every reader charges the work budget for what it reads; over budget, the rest of the text is masked (fail closed), as in the other
 // readers. They run on the whole text only: Carry sees one line at a time and does not carry a record from one line to the next.
@@ -36,6 +37,11 @@ func maskRecords(s, mask string, w *work) string {
 	if strings.IndexByte(s, '{') >= 0 && strings.ContainsAny(s, "\"'") {
 		var p int
 		edits, p = jsonRecords(s, edits, w)
+		stop = min(stop, p)
+	}
+	if strings.ContainsAny(s, "{([") && strings.ContainsAny(s, ":=") {
+		var p int
+		edits, p = pairRecords(s, edits, w)
 		stop = min(stop, p)
 	}
 	if strings.Contains(s, "</key>") {
