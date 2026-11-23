@@ -27,6 +27,7 @@
 //   UIFIX-53  Slowest tab (BL-538): the "API / source" column of the slowest-request list and the first column of the exact time windows have a sensible width: the API name stays on one line, the rows are short (the 50-row list was about 11,000 px tall at 1440 px), and at 1440 px the list fits its panel so "Nearby activity" is not pushed out
 import { test, expect, type Page } from '../support/fixtures';
 import { openCase, layoutSettled } from '../support/ui';
+import { sweepTip } from '../support/chart-tip';
 
 type Box = { x: number; y: number; w: number; h: number };
 
@@ -1517,22 +1518,9 @@ async function rerunWithWindows(page: Page, make: (i: number, at: number) => { c
   await page.waitForTimeout(400);
 }
 
-/** Sweep the pointer across the plot until the tooltip text matches, and return it; fails with the last text seen. */
+/** Sweep the pointer across the plot until the tooltip text matches, and return it; fails with the last text seen. The tooltip is drawn on the canvas (BL-323): support/chart-tip.ts reads it from the chart. */
 async function heroTip(page: Page, wanted: RegExp): Promise<string> {
-  await page.locator('.hero-chart').scrollIntoViewIfNeeded();
-  const box = (await page.locator('.hero-chart').boundingBox())!;
-  let last = '';
-  for (let x = 56; x < box.width - 48; x += 3) {
-    await page.mouse.move(box.x + x, box.y + box.height / 2);
-    const text = await page.locator('.hero-chart').evaluate((el) => {
-      const tips = [...el.querySelectorAll<HTMLElement>('div')].filter((d) => d.textContent?.startsWith('20 Oct') && d.textContent.includes('Requests:') && !d.querySelector('div'));
-      const shown = tips.filter((d) => getComputedStyle(d.parentElement!).opacity !== '0' && getComputedStyle(d.parentElement!).visibility !== 'hidden');
-      return (shown[0] ?? tips[0])?.innerText.replace(/\s+/g, ' ') ?? '';
-    });
-    if (text) last = text;
-    if (wanted.test(text)) return text;
-  }
-  throw new Error('no tooltip matched ' + wanted + '; the last one was: ' + last);
+  return sweepTip(page, '.hero-chart', wanted);
 }
 
 test('UIFIX-31a Requests over time, a slow hour: P95 and the slowest request in seconds with one decimal each, interval start and end named', async ({ page }) => {

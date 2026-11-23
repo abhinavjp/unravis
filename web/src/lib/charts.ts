@@ -1,4 +1,4 @@
-import * as echarts from 'echarts/core';
+import * as echartsCore from 'echarts/core';
 import { LineChart, BarChart, HeatmapChart, ScatterChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, LegendComponent, MarkLineComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
@@ -13,6 +13,19 @@ import { explain } from './copy/dictionary';
 import { bold, fitTip, richTip, rt, tipLineBudget, tipLines } from './chartTooltip';
 import { lineSeriesPerf, lonePointSeries } from './chartPerf';
 
+/**
+ * ECharts as the UI uses it: `use` and `init`. `init` also leaves the chart on its container (`container.__chart`). A rich-text tooltip (BL-323) is drawn on
+ * the canvas, not in the page, so the end-to-end specs read what it says from the chart (tools/e2e/support/chart-tip.ts); nothing in the app reads this.
+ */
+const coreInit = echartsCore.init;
+const echarts = {
+  use: echartsCore.use,
+  init: ((...args: Parameters<typeof coreInit>) => {
+    const chart = coreInit(...args);
+    try { (args[0] as unknown as { __chart?: unknown }).__chart = chart; } catch { /* a null container (server-side drawing in tests) */ }
+    return chart;
+  }) as typeof coreInit
+};
 echarts.use([LineChart, BarChart, HeatmapChart, ScatterChart, GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
 export { echarts };
 
