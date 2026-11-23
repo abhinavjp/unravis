@@ -9,7 +9,7 @@ import (
 
 func TestJSONSweepsValuesAndKeys(t *testing.T) {
 	s := NewSweeper(false)
-	s.Learn(KindUser, "alice@example.com")
+	_ = s.Learn(KindUser, "alice@example.com")
 	in := `{"ip":"10.1.2.3","note":"from 10.1.2.3 and ::1","alice@example.com":1,"list":["10.1.2.4",{"a":"x"}],"n":12,"f":1.50e3,"t":true,"z":null}`
 	out, err := s.JSON([]byte(in))
 	if err != nil {
@@ -63,8 +63,8 @@ func TestJSONScalarsAndEscapes(t *testing.T) {
 
 func TestJSONLearnedNumber(t *testing.T) {
 	s := NewSweeper(false)
-	s.Learn(KindUser, "12345678")
-	s.Learn(KindUser, "42") // a number is always a whole value, however short: a count of 42 is hidden too (fail closed)
+	_ = s.Learn(KindUser, "12345678")
+	_ = s.Learn(KindUser, "42") // a number is always a whole value, however short: a count of 42 is hidden too (fail closed)
 	out, err := s.JSON([]byte(`{"id":12345678,"count":42,"other":43}`))
 	if err != nil || string(out) != `{"id":"[USER_1]","count":"[USER_2]","other":43}` {
 		t.Fatalf("%s %v", out, err)

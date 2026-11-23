@@ -39,8 +39,8 @@ func TestHiddenModeNoRawIdentifiers(t *testing.T) {
 	rows := fixture(rng)
 	g := NewGuard(false)
 	for _, r := range rows {
-		g.Learn(KindUser, r.User)
-		g.Learn(KindUA, r.UA)
+		_ = g.Learn(KindUser, r.User)
+		_ = g.Learn(KindUA, r.UA)
 	}
 	raw, _ := json.Marshal(map[string]any{"rows": rows, "note": "peer 10.9.9.9 / ::1 saw " + rows[0].User})
 	out, err := g.Result(raw)
@@ -61,7 +61,7 @@ func TestHiddenModeNoRawIdentifiers(t *testing.T) {
 
 func TestAllowModeShowsIdentifiers(t *testing.T) {
 	g := NewGuard(true)
-	g.Learn(KindUser, "usr_deadbeef")
+	_ = g.Learn(KindUser, "usr_deadbeef")
 	if !g.AllowIdentifiers() {
 		t.Fatal("mode")
 	}
@@ -90,7 +90,7 @@ func TestGroupByTokenEqualsGroupByRaw(t *testing.T) {
 	}
 	g := NewGuard(false)
 	for _, r := range rows {
-		g.Learn(KindUser, r.User)
+		_ = g.Learn(KindUser, r.User)
 	}
 	// the rows arrive in several host calls
 	tokCounts := map[string]int{}

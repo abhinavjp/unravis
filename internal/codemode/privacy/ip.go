@@ -199,7 +199,8 @@ func v6From(s string, l, start, end int) (from, to int, canon string, ok bool) {
 				break
 			}
 		}
-		if !(h == end || s[h] == ':' || s[h] == '.') || colons < 2 || !(dbl || colons >= 6) {
+		atEdge := h == end || s[h] == ':' || s[h] == '.'
+		if !atEdge || colons < 2 || (!dbl && colons < 6) {
 			continue
 		}
 		w := s[l:h]

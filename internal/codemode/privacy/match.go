@@ -57,7 +57,7 @@ func buildMatcher(pats []pat) *matcher {
 			}
 			node = to
 		}
-		m.term[node] = int32(pi + 1) //nolint:gosec // G115: bounded by maxLearned
+		m.term[node] = int32(pi + 1)
 	}
 	// breadth first: the fail link of a child is found from the fail link of its parent
 	queue := make([]int32, 0, len(m.fail))

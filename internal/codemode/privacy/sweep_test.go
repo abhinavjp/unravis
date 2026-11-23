@@ -92,7 +92,7 @@ func TestSweepIPv6Port(t *testing.T) {
 
 func TestSweepAllowModeChangesNothing(t *testing.T) {
 	s := NewSweeper(true)
-	s.Learn(KindUser, "alice@example.com")
+	_ = s.Learn(KindUser, "alice@example.com")
 	in := "10.1.2.3 ::1 alice@example.com"
 	if got := s.Text(in); got != in {
 		t.Fatal(got)
@@ -105,10 +105,10 @@ func TestSweepAllowModeChangesNothing(t *testing.T) {
 func TestLearnedValues(t *testing.T) {
 	s := NewSweeper(false)
 	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-	s.Learn(KindUA, ua)
-	s.Learn(KindUA, "Mozilla/5.0")
-	s.Learn(KindUser, "u-4821")
-	s.Learn(KindUser, "7") // short: whole-string only
+	_ = s.Learn(KindUA, ua)
+	_ = s.Learn(KindUA, "Mozilla/5.0")
+	_ = s.Learn(KindUser, "u-4821")
+	_ = s.Learn(KindUser, "7") // short: whole-string only
 	got := s.Text("agent " + ua + " user u-4821 and Mozilla/5.0 and 7 of 70")
 	for _, raw := range []string{ua, "u-4821", "Mozilla"} {
 		if strings.Contains(got, raw) {
@@ -130,10 +130,10 @@ func TestLearnedValues(t *testing.T) {
 
 func TestLearnBounds(t *testing.T) {
 	s := NewSweeper(false)
-	s.Learn(KindUser, "")
-	s.Learn(KindUser, strings.Repeat("x", maxLearnLen+1))
+	_ = s.Learn(KindUser, "")
+	_ = s.Learn(KindUser, strings.Repeat("x", maxLearnLen+1))
 	for i := 0; i < maxLearned+50; i++ {
-		s.Learn(KindUser, fmt.Sprintf("user-%06d", i))
+		_ = s.Learn(KindUser, fmt.Sprintf("user-%06d", i))
 	}
 	if len(s.exact) != maxLearned {
 		t.Fatalf("kept %d", len(s.exact))
@@ -260,7 +260,7 @@ func TestPropertyLearnedNoLeakNoCollision(t *testing.T) {
 				break
 			}
 		}
-		s.Learn(KindUser, raws[i])
+		_ = s.Learn(KindUser, raws[i])
 	}
 	toks := map[string]string{}
 	for n := 0; n < 2000; n++ {
@@ -291,7 +291,7 @@ func TestSweeperConcurrent(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < 60; i++ {
 				res[g] = s.Text(fmt.Sprintf("a 10.0.%d.%d b", g, i%50))
-				s.Learn(KindUser, fmt.Sprintf("user-%d-%d", g, i))
+				_ = s.Learn(KindUser, fmt.Sprintf("user-%d-%d", g, i))
 				_ = s.Text("user-1-3 10.0.0.1")
 			}
 		}()
@@ -334,7 +334,7 @@ func FuzzSweepText(f *testing.F) {
 	f.Fuzz(func(t *testing.T, in string, seed uint8) {
 		s := NewSweeper(false)
 		if seed%2 == 0 && len(in) >= minLearnLen && len(in) < 40 {
-			s.Learn(KindUser, in)
+			_ = s.Learn(KindUser, in)
 		}
 		out := s.Text(in)
 		if l := leakIP(out); l != "" {

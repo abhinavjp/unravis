@@ -87,14 +87,14 @@ func TestReview1LearnByteLimit(t *testing.T) {
 // MUST 3: a learned short id is hidden as a JSON number as well as a string.
 func TestReview1ShortIDAsNumber(t *testing.T) {
 	s := NewSweeper(false)
-	s.Learn(KindUser, "4711")
+	_ = s.Learn(KindUser, "4711")
 	out, err := s.JSON([]byte(`{"u":4711,"v":"4711","w":4712}`))
 	if err != nil || string(out) != `{"u":"[USER_1]","v":"[USER_1]","w":4712}` {
 		t.Fatalf("%s %v", out, err)
 	}
 	// SHOULD 4: the same number written another way
 	s = NewSweeper(false)
-	s.Learn(KindUser, "1234567")
+	_ = s.Learn(KindUser, "1234567")
 	out, _ = s.JSON([]byte(`[1.234567e6,1234567.0,1234567.5,1234568]`))
 	if string(out) != `["[USER_1]","[USER_1]",1234567.5,1234568]` {
 		t.Fatalf("%s", out)
@@ -107,7 +107,7 @@ func TestReview1TokenOrderIsFirstSight(t *testing.T) {
 	for _, learnOrder := range [][]string{ids, {ids[3], ids[2], ids[1], ids[0]}, {ids[1], ids[3], ids[0], ids[2]}} {
 		s := NewSweeper(false)
 		for _, id := range learnOrder {
-			s.Learn(KindUser, id)
+			_ = s.Learn(KindUser, id)
 		}
 		got := s.Text(strings.Join(ids, " "))
 		if got != "[USER_1] [USER_2] [USER_3] [USER_4]" {
@@ -120,7 +120,7 @@ func TestReview1TokenOrderIsFirstSight(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		v := fmt.Sprintf("id-%06d", (i*7919)%100000)
 		in = append(in, v)
-		s.Learn(KindUser, v)
+		_ = s.Learn(KindUser, v)
 	}
 	out := strings.Fields(s.Text(strings.Join(in, " ")))
 	for i, tok := range out {
@@ -134,7 +134,7 @@ func TestReview1TokenOrderIsFirstSight(t *testing.T) {
 func TestReview1UserAgentWithURL(t *testing.T) {
 	ua := "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
 	g := NewGuard(false)
-	g.Learn(KindUA, ua)
+	_ = g.Learn(KindUA, ua)
 	for name, out := range map[string]string{"error": g.Error("bad ua " + ua), "log": g.Log(ua)} {
 		for _, frag := range []string{"Mozilla", "Googlebot", "google.com", "bot.html"} {
 			if strings.Contains(out, frag) {
@@ -255,7 +255,7 @@ func TestReview1IPv6Edges(t *testing.T) {
 // SHOULD 3: learned values match without regard to ASCII case.
 func TestReview1LearnedCaseFold(t *testing.T) {
 	g := NewGuard(false)
-	g.Learn(KindUser, "alice.smith")
+	_ = g.Learn(KindUser, "alice.smith")
 	if out := g.Log("ALICE.SMITH logged in; Alice.Smith too"); strings.Contains(strings.ToLower(out), "alice") || out != "[USER_1] logged in; [USER_1] too" {
 		t.Fatalf("%q", out)
 	}
@@ -268,8 +268,8 @@ func TestReview1LearnedCaseFold(t *testing.T) {
 // SHOULD 5: data that looks like a token cannot pass for one; two names that end as one token stay two members.
 func TestReview1TokenSpoofAndDuplicateKeys(t *testing.T) {
 	s := NewSweeper(false)
-	s.Learn(KindUser, "alice.smith")
-	s.Learn(KindUser, "ALICE.SMITH2")
+	_ = s.Learn(KindUser, "alice.smith")
+	_ = s.Learn(KindUser, "ALICE.SMITH2")
 	out, err := s.JSON([]byte(`{"a":"[USER_1]","b":"alice.smith","[USER_1]":1,"alice.smith":2,"Alice.Smith":3}`))
 	if err != nil {
 		t.Fatal(err)
@@ -288,7 +288,7 @@ func TestReview1TokenSpoofAndDuplicateKeys(t *testing.T) {
 func TestReview1LearnTextAlternating(t *testing.T) {
 	s := NewSweeper(false)
 	for i := 0; i < 4096; i++ {
-		s.Learn(KindUser, fmt.Sprintf("user-%06d-%s", i, strings.Repeat("x", 80)))
+		_ = s.Learn(KindUser, fmt.Sprintf("user-%06d-%s", i, strings.Repeat("x", 80)))
 		if out := s.Text(fmt.Sprintf("seen user-%06d-%s here", i, strings.Repeat("x", 80))); strings.Contains(out, "user-") {
 			t.Fatalf("leak at %d: %q", i, out)
 		}
@@ -308,8 +308,8 @@ func TestReview1WithheldBranch(t *testing.T) {
 // NIT: overlapping learned values, invalid UTF-8.
 func TestReview1OverlapAndUTF8(t *testing.T) {
 	s := NewSweeper(false)
-	s.Learn(KindUser, "abcdef")
-	s.Learn(KindUser, "cdefgh")
+	_ = s.Learn(KindUser, "abcdef")
+	_ = s.Learn(KindUser, "cdefgh")
 	if got := s.Text("x abcdefgh y"); strings.Contains(got, "gh") || strings.Contains(got, "ab") {
 		t.Fatalf("part left: %q", got)
 	}
@@ -321,7 +321,7 @@ func TestReview1OverlapAndUTF8(t *testing.T) {
 func TestReview1HostileLearnedAndRuns(t *testing.T) {
 	s := NewSweeper(false)
 	for k := 6; k <= 200; k += 7 {
-		s.Learn(KindUser, strings.Repeat("a", k))
+		_ = s.Learn(KindUser, strings.Repeat("a", k))
 	}
 	for name, in := range map[string]string{
 		"a-run":     strings.Repeat("a", 1<<20),
