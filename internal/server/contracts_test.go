@@ -121,7 +121,7 @@ func TestWireContracts(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			golden, err := os.ReadFile(path)
+			golden, err := os.ReadFile(path) //nolint:gosec // a fixed fixtures folder and names from this file
 			if err != nil {
 				t.Fatalf("golden missing (run with UPDATE_CONTRACTS=1): %v", err)
 			}
@@ -138,7 +138,7 @@ func TestWireContracts(t *testing.T) {
 // TestWireContractsCatchDrift proves the schemas have teeth: a renamed, dropped, extra or wrongly typed field is refused.
 func TestWireContractsCatchDrift(t *testing.T) {
 	info := compileContract(t, "info")
-	golden, err := os.ReadFile(filepath.Join(contractsDir, "fixtures", "info.demo.json"))
+	golden, err := os.ReadFile(filepath.Join(contractsDir, "fixtures", "info.demo.json")) //nolint:gosec // a fixed fixtures folder
 	if err != nil {
 		t.Fatal(err)
 	}
