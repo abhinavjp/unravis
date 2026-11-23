@@ -1,0 +1,16 @@
+{
+  "operation": "doctor",
+  "description": "Check this command line and its link to the running app: its version and place, the app program, and whether the app runs and answered. Nothing is changed and nothing leaves this PC. Not finding the app is an answer, not an error.",
+  "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "properties": {}},
+  "output": {"type": "object", "required": ["cli", "installDir", "appExe", "mcpCommand", "locator", "backend"], "properties": {
+    "cli": {"type": "object", "description": "The same fields as 'unravis version'"},
+    "installDir": {"type": "string"}, "appExe": {"type": "object", "properties": {"path": {"type": "string"}, "exists": {"type": "boolean"}}},
+    "mcpCommand": {"type": "string"},
+    "locator": {"type": "object", "required": ["state"], "properties": {"state": {"enum": ["running", "not_running", "stale", "unusable_version", "unknown"]},
+      "owner": {"type": "string"}, "pid": {"type": "integer"}, "appVersion": {"type": "string"}}},
+    "backend": {"type": "object", "required": ["reachable"], "properties": {"reachable": {"type": "boolean"},
+      "proto": {"type": "object", "properties": {"major": {"type": "integer"}, "minor": {"type": "integer"}}},
+      "state": {"enum": ["ready", "locked", "updating"]}, "error": {"type": "string", "description": "The error code when the app was found and did not answer in the expected way"}}}}},
+  "errors": ["CANCELED", "TIMEOUT"],
+  "examples": [{"command": "unravis doctor -o json"}]
+}
