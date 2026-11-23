@@ -50,7 +50,8 @@ func TestProtocolLifecycleAndReadOnlyDiscovery(t *testing.T) {
 		}
 	}
 	guide := send(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"audit_get_guide","arguments":{}}}`)
-	if guide["result"].(map[string]any)["isError"] != false {
+	// The SDK leaves isError out of a successful result (the schema's default is false); the hand-rolled loop wrote isError:false.
+	if isError, _ := guide["result"].(map[string]any)["isError"].(bool); isError || guide["result"].(map[string]any)["content"] == nil {
 		t.Fatal("guide failed")
 	}
 	malformed := send(`not-json`)
@@ -209,7 +210,13 @@ func TestRequestIDsUseDecodedIdentity(t *testing.T) {
 	if idKey(json.RawMessage(`1`)) == idKey(json.RawMessage(`"1"`)) {
 		t.Fatal("string and integer IDs collide")
 	}
-	if !validID(json.RawMessage(`9223372036854775807`)) || validID(json.RawMessage(`1.5`)) {
-		t.Fatal("integer ID bounds incorrect")
+	// The SDK carries ids as float64, so an integer above 2^53-1 would come back as another number (BL-342 review 1, S1).
+	for id, want := range map[string]bool{
+		`9007199254740991`: true, `-9007199254740991`: true, `9007199254740992`: false, `9007199254740993`: false,
+		`-9007199254740992`: false, `9223372036854775807`: false, `1.5`: false, `1e3`: false,
+	} {
+		if validID(json.RawMessage(id)) != want {
+			t.Fatalf("validID(%s) = %v", id, !want)
+		}
 	}
 }

@@ -33,7 +33,7 @@ func TestSDKChildProcess(t *testing.T) {
 	if err != nil {
 		os.Exit(2)
 	}
-	if err := b.serveSDK(t.Context(), os.Stdin, os.Stdout); err != nil {
+	if err := b.Serve(t.Context(), os.Stdin, os.Stdout); err != nil {
 		os.Exit(1)
 	}
 	os.Exit(0)
@@ -51,9 +51,6 @@ func TestSDKStdioProcess(t *testing.T) {
 				name = tg.name + " stateless"
 			}
 			t.Run(name, func(t *testing.T) {
-				if stateless && tg.name != processTargets(srv)[0].name && os.Getenv("UNRAVIS_MCP_BINARY_NO_STATELESS") != "" {
-					t.Skip("this binary predates the 2026-07-28 lifecycle (the hand-rolled loop has no stateless lifecycle)")
-				}
 				p := startProcess(t, tg.cmd(false))
 				p.stateless = stateless
 				started := time.Now()

@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -201,8 +203,9 @@ func TestSDKMalformedArgs(t *testing.T) {
 }
 
 func TestSDKDuplicateJSONKeys(t *testing.T) {
-	// The last key wins everywhere, as encoding/json does, and the SDK sees the line the checks saw: no case where the loop validates
-	// one reading of a frame and the SDK dispatches another.
+	// A key given twice, or twice with different case, is two readings of one line: the hand-rolled loop took the last (and matched keys
+	// without case), the SDK's decoder is case-sensitive. The loop refuses such a line instead of picking one, at any depth, and the
+	// session goes on (BL-342 review 1, M1; spec 03-mcp: "duplicate JSON keys refused").
 	lines := []string{
 		`{"jsonrpc":"2.0","id":"a","method":"tools/list","method":"tools/call","params":{"name":"audit_get_guide","arguments":{}}}`,
 		`{"jsonrpc":"2.0","id":1,"id":"b","method":"tools/call","params":{"name":"audit_get_guide","arguments":{}}}`,
@@ -210,28 +213,45 @@ func TestSDKDuplicateJSONKeys(t *testing.T) {
 		`{"jsonrpc":"2.0","id":"d","method":"tools/call","params":{"name":"audit_delete_source","name":"audit_get_guide","arguments":{}}}`,
 		`{"jsonrpc":"2.0","id":"e","method":"tools/call","params":{"name":"audit_get_guide","arguments":{"x":1},"arguments":{}}}`,
 		`{"jsonrpc":"2.0","id":"f","method":"tools/call","params":{"name":"audit_get_groups","arguments":{"resultId":"r","limit":500,"limit":0}}}`,
-		`{"jsonrpc":"2.0","id":"g","method":"tools/call","params":{"name":"audit_get_guide","params":{},"arguments":{}}}`,
+		// Case variants: invisible to the SDK, overriding for encoding/json.
+		`{"jsonrpc":"2.0","id":"h","method":"tools/call","METHOD":"ping","params":{"name":"audit_list_sources","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":"i","method":"resources/list","Method":"tools/list"}`,
+		`{"jsonrpc":"2.0","id":"j","method":"logging/setLevel","Method":"ping","params":{"level":"debug"}}`,
+		`{"jsonrpc":"2.0","id":"k","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2099-01-01"}},"PARAMS":{}}`,
+		`{"jsonrpc":"2.0","id":"l","method":"tools/call","params":{"name":"audit_get_guide","NAME":"audit_get_groups","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":"m","method":"tools/call","params":{"name":"audit_get_guide","arguments":{},"Arguments":{"x":1}}}`,
+		`{"jsonrpc":"2.0","id":"n","method":"tools/call","params":{"name":"audit_get_groups","arguments":{"resultId":"r","limit":1,"LIMIT":0}}}`,
+		`{"jsonrpc":"2.0","id":"o","ID":"p","method":"ping"}`,
+		`{"jsonrpc":"2.0","JSONRPC":"2.0","id":"q","method":"ping"}`,
+		`{"jsonrpc":"2.0","id":"r","method":"ping","params":{},"paramſ":{}}`, // U+017F folds to s
+		`{"jsonrpc":"2.0","id":"s","method":"tools/list","params":{"cursor":"","\u0043ursor":""}}`,
 	}
-	classes := map[string][]string{}
-	for _, im := range bothImpls {
-		w := dial(t, im, mustBridge(t))
-		w.handshake()
+	for _, withHandshake := range []bool{true, false} {
+		b, hits, _ := blockingUpstream(t)
+		w := dial(t, sdkImpl, b)
+		w.stateless = !withHandshake
+		if withHandshake {
+			w.handshake()
+		}
 		for _, line := range lines {
 			w.send(line)
 			m, ok := w.next(5 * time.Second)
 			if !ok {
-				t.Fatalf("%s: no answer to %s", im.name, line)
+				t.Fatalf("no answer to %s", line)
 			}
-			class := answerClass(m)
-			if len(class) > 60 {
-				class = class[:60]
+			if code := errorCode(m); code != -32600 {
+				t.Errorf("handshake=%v: %.120s: want -32600, got %v", withHandshake, line, m)
 			}
-			classes[im.name] = append(classes[im.name], class)
+			// The session is alive after every one of them.
+			if res := w.request("tools/list", ""); res["error"] != nil {
+				t.Fatalf("session broken after %.100s: %v", line, res)
+			}
 		}
-	}
-	for i := range lines {
-		if classes["legacy"][i] != classes["sdk"][i] {
-			t.Errorf("line %d: legacy %q, sdk %q", i, classes["legacy"][i], classes["sdk"][i])
+		if hits.Load() != 0 {
+			t.Fatalf("a refused line reached the dashboard: %d", hits.Load())
+		}
+		if err := w.finish(); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
@@ -382,18 +402,64 @@ func TestSDKErrorsScrubbed(t *testing.T) {
 			}
 		})
 	}
-	t.Run("version refusal echoes at most a date", func(t *testing.T) {
-		// SEP-2575 errors carry the version the client asked for. The SDK hands the string back as it came; the loop refuses anything
-		// longer than a date first, so an arbitrary client string never comes back.
+	t.Run("version refusal never echoes the version", func(t *testing.T) {
+		// SEP-2575 errors carry the version the client asked for. The SDK hands the string back as it came; the loop's answer is
+		// rewritten, so only the versions the server speaks come back.
 		w := dial(t, sdkImpl, mustBridge(t))
-		w.send(`{"jsonrpc":"2.0","id":"v","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2099-01-01-` + secret + secret + `","io.modelcontextprotocol/clientCapabilities":{}}}}`)
-		res := w.reply("v")
-		if code := errorCode(res); code != -32602 || strings.Contains(string(mustJSON(t, res)), secret) {
-			t.Fatalf("long version: %v", res)
+		for _, version := range []string{"2099-01-01-" + secret + secret, "2099-01-01", secret} {
+			w.send(`{"jsonrpc":"2.0","id":"v","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"` + version + `","io.modelcontextprotocol/clientCapabilities":{}}}}`)
+			res := w.reply("v")
+			if code := errorCode(res); code != -32022 || strings.Contains(string(mustJSON(t, res)), secret) || strings.Contains(string(mustJSON(t, res)), "2099") {
+				t.Fatalf("version %q: %v", version, res)
+			}
+			if data, _ := res["error"].(map[string]any)["data"].(map[string]any); len(data) != 1 || data["supported"] == nil {
+				t.Fatalf("the supported versions are the only data: %v", res)
+			}
 		}
-		w.send(`{"jsonrpc":"2.0","id":"w","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2099-01-01","io.modelcontextprotocol/clientCapabilities":{}}}}`)
-		if code := errorCode(w.reply("w")); code != -32022 {
-			t.Fatalf("unsupported date code %d", code)
+	})
+	t.Run("after a handshake, and without one, with params of the wrong shape", func(t *testing.T) {
+		// BL-342 review 1, M3: the SDK decodes params only on a live session, and its errors quote them back.
+		bad := []string{
+			`{"jsonrpc":"2.0","id":"e1","method":"tools/list","params":"` + secret + `"}`,
+			`{"jsonrpc":"2.0","id":"e2","method":"tools/list","params":{"cursor":{"` + secret + `":1}}}`,
+			`{"jsonrpc":"2.0","id":"e3","method":"ping","params":"` + secret + `"}`,
+			`{"jsonrpc":"2.0","id":"e4","method":"initialize","params":"` + secret + `"}`,
+			`{"jsonrpc":"2.0","id":"e5","method":"initialize","params":{"protocolVersion":{"` + secret + `":1},"capabilities":{},"clientInfo":{}}}`,
+			`{"jsonrpc":"2.0","id":"e6","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"` + secret + `"}}}`,
+			`{"jsonrpc":"2.0","id":"e7","method":"tools/call","params":{"name":"audit_get_guide","arguments":"` + secret + `"}}`,
+			`{"jsonrpc":"2.0","id":"e8","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":"` + secret + `","io.modelcontextprotocol/clientInfo":{"name":"x","version":"1"}}}}`,
+			`{"jsonrpc":"2.0","id":"e9","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{"` + secret + `":1},"io.modelcontextprotocol/clientInfo":{"` + secret + `":1}}}}`,
+			`{"jsonrpc":"2.0","id":"e10","method":"tools/call","params":{"name":"audit_get_guide","arguments":{},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":["` + secret + `"]},"io.modelcontextprotocol/clientCapabilities":{}}}}`,
+			`{"jsonrpc":"2.0","id":"e11","method":"tools/list","params":{"cursor":["` + secret + `"]}}`,
+			`{"jsonrpc":"2.0","id":"e12","method":"tools/list","params":{"cursor":{"a":{"` + secret + `":[1]}}}}`,
+		}
+		for _, mode := range []string{"handshake", "none", "stateless"} {
+			w := dial(t, sdkImpl, mustBridge(t))
+			if mode == "handshake" {
+				w.handshake()
+			}
+			for _, line := range bad {
+				w.send(line)
+				res, ok := w.next(5 * time.Second)
+				if !ok {
+					t.Fatalf("%s: no answer to %.80s", mode, line)
+				}
+				text := string(mustJSON(t, res))
+				if strings.Contains(text, secret) || strings.Contains(text, "mcp.") || strings.Contains(text, "unmarshaling") {
+					t.Errorf("%s: input or internals echoed for %.80s: %s", mode, line, text)
+				}
+				if res["error"] != nil {
+					// Every error text is one of ours.
+					message, _ := res["error"].(map[string]any)["message"].(string)
+					known := map[string]bool{}
+					for _, code := range []int{-32700, -32600, -32601, -32602, -32603, -32022, -32000, 0} {
+						known[errorText(code)] = true
+					}
+					if !known[message] && !strings.HasPrefix(message, "Request id") && !strings.HasPrefix(message, "Invalid tools/call") {
+						t.Errorf("%s: error text %q is not a fixed one", mode, message)
+					}
+				}
+			}
 		}
 	})
 	t.Run("dashboard down", func(t *testing.T) {
@@ -493,24 +559,109 @@ func TestSDKStdoutOnlyJSONRPC(t *testing.T) {
 	}
 }
 
-// checkStdout runs one input through the loop and checks what it wrote.
+// gaugeTransport is a dashboard that never answers: it counts the requests the bridge has open at once, so a test can see the in-flight bound
+// from the data path's side. A request ends when the bridge gives up on it (cancel, timeout, end of input).
+type gaugeTransport struct{ active, most atomic.Int32 }
+
+func (g *gaugeTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	n := g.active.Add(1)
+	defer g.active.Add(-1)
+	for {
+		seen := g.most.Load()
+		if n <= seen || g.most.CompareAndSwap(seen, n) {
+			break
+		}
+	}
+	<-r.Context().Done()
+	return nil, r.Context().Err()
+}
+
+// answers collects a loop's output and lets a test wait for the answer to one id.
+type answers struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (a *answers) Write(p []byte) (int, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.buf.Write(p)
+}
+
+func (a *answers) text() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.buf.String()
+}
+
+// answered returns the message with this id, if the loop has written it.
+func (a *answers) answered(id string) (map[string]any, bool) {
+	for _, line := range strings.Split(a.text(), "\n") {
+		var m map[string]any
+		if json.Unmarshal([]byte(line), &m) == nil && m["id"] == id {
+			return m, true
+		}
+	}
+	return nil, false
+}
+
+// fuzzMaxInput bounds a fuzz input: a mutated seed of this size takes about a millisecond, a 500 KB one a hundred times that, and the
+// size classes (the line cap, escaping growth) have their own tests. Measured with the target's own timing log: about 1,000 inputs a second.
+// The execs counter that "go test -fuzz" prints sits still for long stretches (a worker reports its count only when it returns), so
+// read it as a lower bound.
+const fuzzMaxInput = 64 << 10
+
+const survivalPing = `{"jsonrpc":"2.0","id":"fuzz-after","method":"ping"}`
+
+// checkStdout runs one input through the loop and checks what it wrote, and that the session lived through it: after the input, a ping with
+// a fixed id is still answered (the review of BL-342 found valid lines that ended the session, and bounds that a crafted line got around),
+// stdout carries only JSON-RPC objects under the cap, no more than four requests were open on the data path at once, and the loop stops
+// when its input ends.
 func checkStdout(t *testing.T, im impl, input []byte) {
 	t.Helper()
-	b, err := New(1, WithToken(testSessionToken))
-	if err != nil {
-		t.Skip()
+	if len(input) > fuzzMaxInput {
+		t.Skip("large lines are covered by TestSDKOversizeFrameRejected, TestSDKValidJSONKeepsSession and the growth tests")
 	}
-	var out bytes.Buffer
+	gauge := &gaugeTransport{}
+	b := newBridge(fixed("http://127.0.0.1:1"), &http.Client{Transport: gauge})
+	var out answers
+	pr, pw := io.Pipe()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	done := make(chan struct{})
-	go func() { defer close(done); _ = im.serve(b, ctx, bytes.NewReader(input), &out) }()
+	go func() { defer close(done); _ = im.serve(b, ctx, pr, &out) }()
+	survived := make(chan bool, 1)
+	go func() {
+		defer func() { _ = pw.Close() }()
+		line := append(append([]byte(nil), input...), '\n')
+		if _, err := pw.Write(append(line, []byte(survivalPing+"\n")...)); err != nil {
+			survived <- false
+			return
+		}
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+			if _, ok := out.answered("fuzz-after"); ok {
+				survived <- true
+				return
+			}
+		}
+		survived <- false
+	}()
 	select {
 	case <-done:
-	case <-time.After(15 * time.Second):
+		_ = pr.Close()
+	case <-time.After(20 * time.Second):
 		t.Fatalf("%s did not stop after its input ended: %.100q", im.name, input)
 	}
-	for _, line := range strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n") {
+	if !<-survived {
+		t.Fatalf("%s: the session did not live through the input: %.200q\nstdout: %.300q", im.name, input, out.text())
+	}
+	if reply, _ := out.answered("fuzz-after"); reply["result"] == nil {
+		t.Fatalf("%s: ping answered with %v after %.200q", im.name, reply, input)
+	}
+	if most := gauge.most.Load(); most > maxInFlight {
+		t.Fatalf("%s: %d requests open on the data path at once, cap %d: %.200q", im.name, most, maxInFlight, input)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(out.text(), "\n"), "\n") {
 		if line == "" {
 			continue
 		}
@@ -536,5 +687,36 @@ func FuzzServeSDK(f *testing.F) {
 	f.Add([]byte(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}` + "\n"))
 	f.Add([]byte("not-json\n\n\x00\xff\n"))
 	f.Add([]byte(`[{"jsonrpc":"2.0","id":1,"method":"tools/list"}]` + "\n"))
+	// The review's probes (BL-342 review 1): case-variant keys, lines valid for one parser and not the other, ids that round, bad shapes.
+	call := func(id string) string {
+		return `{"jsonrpc":"2.0","id":` + id + `,"method":"tools/call","params":{"name":"audit_list_sources","arguments":{}}}`
+	}
+	var burst string
+	for i := 0; i < 8; i++ {
+		burst += call(fmt.Sprint(i)) + "\n"
+		burst += `{"jsonrpc":"2.0","id":"c` + fmt.Sprint(i) + `","method":"tools/call","METHOD":"ping","params":{"name":"audit_list_sources","arguments":{}}}` + "\n"
+		burst += `{"jsonrpc":"2.0","ID":"u` + fmt.Sprint(i) + `","method":"tools/call","params":{"name":"audit_list_sources","arguments":{}}}` + "\n"
+	}
+	f.Add([]byte(start + burst))
+	// Review 2: keys read in another case. (The escaping-growth lines are in TestSDKValidJSONKeepsSession: too large to fuzz.)
+	f.Add([]byte(start + `{"jsonrpc":"2.0","id":"p1","method":"tools/call","params":{"name":"audit_get_guide","ARGUMENTS":{"bogus":1}}}` + "\n"))
+	f.Add([]byte(start + `{"jsonrpc":"2.0","id":"p1","method":"tools/call","params":{"nAme":"audit_get_guide","argumentſ":{}}}` + "\n"))
+	f.Add([]byte(start + call("9007199254740993") + "\n" + call("9007199254740995") + "\n" + call("9007199254740997") + "\n" + call("9007199254740999") + "\n"))
+	deep := strings.Repeat("[", 1001) + strings.Repeat("]", 1001)
+	for _, probe := range []string{
+		`{"jsonrpc":"2.0","id":"p1","method":"ping"} `, "{\"jsonrpc\":\"2.0\",\"id\":\"p1\",\"method\":\"ping\"}\t",
+		`{"JSONRPC":"2.0","id":"p1","method":"ping"}`, `{"jsonrpc":"2.0","id":"p1","method":"ping","params":{"x":` + deep + `}}`,
+		`{"jsonrpc":"2.0","id":"d1","method":"resources/list","Method":"tools/list"}`,
+		`{"jsonrpc":"2.0","id":"d3","method":"SECRET-` + strings.Repeat("Z", 3000) + `","Method":"ping"}`,
+		`{"jsonrpc":"2.0","id":"d4","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"SECRET"}},"PARAMS":{}}`,
+		`{"jsonrpc":"2.0","id":"e1","method":"tools/list","params":"private-password-7f3a9"}`,
+		`{"jsonrpc":"2.0","id":"e2","method":"tools/list","params":{"cursor":{"private-password-7f3a9":1}}}`,
+		`{"jsonrpc":"2.0","id":"e4","method":"initialize","params":"private-password-7f3a9"}`,
+		`{"jsonrpc":"2.0","id":"p1","method":"ping","params":{"x":"\ud800","y":1e999999}}`,
+		`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":{}}}`,
+	} {
+		f.Add([]byte(start + probe + "\n"))
+		f.Add([]byte(probe + "\n"))
+	}
 	f.Fuzz(func(t *testing.T, input []byte) { checkStdout(t, sdkImpl, input) })
 }

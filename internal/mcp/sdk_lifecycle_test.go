@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-// BL-341: parity of the official Go SDK loop (serveSDK, in sdk_proto_test.go) with the hand-rolled loop (Bridge.Serve), driven as
+// BL-341: parity of the official Go SDK loop (Bridge.Serve, in sdkserver.go) with the pre-BL-342 hand-rolled loop (legacyServe, in legacy_serve_test.go), driven as
 // a host would drive them: JSON-RPC lines in, JSON-RPC lines out. Each test runs the same script against both and compares.
 
 var updateGolden = flag.Bool("update", false, "rewrite the golden files of the catalog tests")
@@ -36,8 +36,8 @@ type impl struct {
 }
 
 var (
-	legacyImpl = impl{"legacy", (*Bridge).Serve}
-	sdkImpl    = impl{"sdk", (*Bridge).serveSDK}
+	legacyImpl = impl{"legacy", (*Bridge).legacyServe}
+	sdkImpl    = impl{"sdk", (*Bridge).Serve}
 	bothImpls  = []impl{legacyImpl, sdkImpl}
 )
 

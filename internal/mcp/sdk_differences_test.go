@@ -50,7 +50,7 @@ func TestSDKKnownWireDifferences(t *testing.T) {
 		for _, c := range []struct {
 			im   impl
 			code int
-		}{{legacyImpl, -32000}, {sdkImpl, 0}} {
+		}{{legacyImpl, -32000}, {sdkImpl, -32600}} {
 			w := dial(t, c.im, bridgeFor(t, srv))
 			w.send(`{"jsonrpc":"2.0","id":"early","method":"tools/list"}`)
 			res := w.reply("early")
@@ -68,8 +68,8 @@ func TestSDKKnownWireDifferences(t *testing.T) {
 		if res := open(legacyImpl).request("tools/list", `"cursor":"x"`); res["error"] != nil {
 			t.Errorf("hand-rolled loop refused a cursor: %v", res)
 		}
-		// The catalog has one page and no loop hands out a cursor, so a host never sends one; the SDK refuses a made-up one.
-		if res := open(sdkImpl).request("tools/list", `"cursor":"x"`); errorCode(res) != -32602 || !strings.Contains(string(mustJSON(t, res)), "invalid params") {
+		// The catalog has one page and no loop hands out a cursor, so a host never sends one; the SDK refuses a made-up one, with a fixed text.
+		if res := open(sdkImpl).request("tools/list", `"cursor":"x"`); errorCode(res) != -32602 || !strings.Contains(string(mustJSON(t, res)), "Invalid params") {
 			t.Errorf("sdk loop: %v", res)
 		}
 	})
