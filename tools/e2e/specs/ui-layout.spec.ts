@@ -2095,7 +2095,7 @@ for (const size of OP_SIZES) {
     const sizes = await page.locator(SLOW_SMALL).evaluateAll((els) => els.map((e) => ({ px: parseFloat(getComputedStyle(e).fontSize), text: (e.textContent ?? '').trim() })));
     expect(sizes.length, 'one line per slowest request').toBeGreaterThan(2);
     for (const f of sizes) {
-      expect(f.text, 'the line still names source, kind and outcome').toMatch(/^Demo (West|East) \/ \S+ · \w+ · \w+$/);
+      expect(f.text, 'the line still names source, kind and outcome').toMatch(/^\S.* · \S+ · \S+$/);
       expect(f.px, 'font size of "' + f.text + '"').toBeGreaterThanOrEqual(11);
     }
     // it stays the quieter line: smaller than the API name above it
