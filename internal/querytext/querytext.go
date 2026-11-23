@@ -52,6 +52,9 @@ func Scrub(text string, maxChars int) string {
 	}
 	// Any kind of space, and invisible format characters (a zero-width space), count as a space: they cannot hide a word break.
 	text = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' {
+			return r // kept for now: a -- comment ends at the line break, not at the end of the text
+		}
 		if unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) {
 			return ' '
 		}
@@ -96,6 +99,21 @@ func isIdent(r rune) bool {
 	return r == '_' || r == '@' || r == '#' || r == '$' || unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
+// inValueList reports whether the shaped text so far ends inside an IN ( list: since the last closing bracket there is an IN followed by
+// an opening one. Over-matching (a subquery after IN) only masks more, never less.
+func inValueList(out string) bool {
+	if i := strings.LastIndexByte(out, ')'); i >= 0 {
+		out = out[i+1:]
+	}
+	f := strings.Fields(strings.ToLower(strings.ReplaceAll(out, "(", " ( ")))
+	for i := 0; i+1 < len(f); i++ {
+		if f[i] == "in" && f[i+1] == "(" {
+			return true
+		}
+	}
+	return false
+}
+
 // shape drops comments and replaces literals with ?.
 func shape(s string) string {
 	var b strings.Builder
@@ -106,7 +124,7 @@ func shape(s string) string {
 		c := s[i]
 		switch {
 		case c == '-' && i+1 < len(s) && s[i+1] == '-':
-			for i < len(s) && s[i] != '\n' {
+			for i < len(s) && s[i] != '\n' && s[i] != '\r' {
 				i++
 			}
 			b.WriteByte(' ')
@@ -139,7 +157,7 @@ func shape(s string) string {
 			prevIdent = false
 		case c == '[':
 			// A bracketed identifier is kept, with ]] for a ] inside it. An unclosed one runs to the end (nothing after it is kept).
-			// One that holds an @ or a backslash, or starts with a digit, is data posing as a name (a pivot column of e-mail addresses or dates, a Windows account): it is masked.
+			// One that holds an @, a backslash or a quote, one with a space inside an IN ( list (a pivot column of person names), or starts with a digit, is data posing as a name (a pivot column of e-mail addresses or dates, a Windows account): it is masked.
 			j, closed := i+1, false
 			for j < len(s) {
 				if s[j] == ']' {
@@ -158,7 +176,7 @@ func shape(s string) string {
 				break
 			}
 			name := s[i+1 : j-1]
-			if strings.ContainsAny(name, "@\\") || (name != "" && isDigit(name[0])) {
+			if strings.ContainsAny(name, "@\\'") || (strings.Contains(name, " ") && inValueList(b.String())) || (name != "" && isDigit(name[0])) {
 				b.WriteString("[?]")
 			} else {
 				b.WriteString(s[i:j])
