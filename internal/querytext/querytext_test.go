@@ -189,8 +189,8 @@ func TestThirdReviewRegressions(t *testing.T) {
 		"BEGIN TRY usp bob END TRY":        {"bob"},
 		"next bob, Hunter2":                {"bob", "Hunter2"},
 		"count bob":                        {"bob"},
-		"EXEC usp\u200bHunter2":                 {"Hunter2"},
-		"usp\u200bHunter2":                      {"Hunter2"},
+		"EXEC usp\u200bHunter2":            {"Hunter2"},
+		"usp\u200bHunter2":                 {"Hunter2"},
 		"GRANT SELECT ON t TO [corp\\bob]": {"corp", "bob"},
 	}
 	for in, bad := range leaks {
