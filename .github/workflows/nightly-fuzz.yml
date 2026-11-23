@@ -1,0 +1,99 @@
+name: Nightly fuzz
+
+# BL-450. Go native fuzzing of the parsers that read a file or a message from outside: the update manifest and control file,
+# the locator file, and the MCP stdio loop. Every pull request already replays the committed seeds (a plain `go test` runs them);
+# this runs the real fuzzer for a few minutes each night. A crash fails the run and uploads the crasher file as the artifact
+# "fuzz-crasher-<target>"; a person commits it to testdata/fuzz/<Target>/ so it becomes a permanent test.
+# By hand: Actions, Nightly fuzz, Run workflow. "seeded" runs the test-only target with a planted bug (build tag fuzzseed) and
+# expects the fuzzer to find it: it proves that a crasher is found and uploaded.
+on:
+  workflow_dispatch:
+    inputs:
+      seeded:
+        description: 'Run only the planted-bug target and expect a crash (proof that a crasher is found and uploaded)'
+        type: boolean
+        default: false
+      fuzztime:
+        description: 'Time for each target (Go duration)'
+        default: '2m'
+  schedule:
+    - cron: '23 2 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: FuzzParseManifest, pkg: ./internal/update }
+          - { target: FuzzVerify, pkg: ./internal/update }
+          - { target: FuzzVerifyControl, pkg: ./internal/update }
+          - { target: FuzzLocatorRead, pkg: ./internal/locator }
+          - { target: FuzzBridgeServe, pkg: ./internal/mcp }
+    steps:
+      - name: Check out the code
+        if: ${{ !inputs.seeded }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        if: ${{ !inputs.seeded }}
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Fuzz
+        if: ${{ !inputs.seeded }}
+        env:
+          CGO_ENABLED: "0"
+          FUZZTIME: ${{ inputs.fuzztime || '2m' }}
+          TARGET: ${{ matrix.target }}
+          PKG: ${{ matrix.pkg }}
+        run: go test -run '^$' -fuzz "^${TARGET}\$" -fuzztime "${FUZZTIME}" "${PKG}"
+
+      - name: Upload the crasher
+        if: ${{ failure() && !inputs.seeded }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crasher-${{ matrix.target }}
+          path: |
+            internal/**/testdata/fuzz/${{ matrix.target }}/*
+          if-no-files-found: warn
+
+  seeded:
+    name: seeded bug is found
+    if: ${{ inputs.seeded }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Fuzz the planted bug and expect a crash
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          if go test -tags fuzzseed -run '^$' -fuzz '^FuzzSeededBug$' -fuzztime 90s ./internal/update; then
+            echo "::error::The fuzzer did not find the planted bug"
+            exit 1
+          fi
+          ls internal/update/testdata/fuzz/FuzzSeededBug/
+
+      - name: Upload the crasher
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crasher-seeded
+          path: internal/update/testdata/fuzz/FuzzSeededBug/*
+          if-no-files-found: error
