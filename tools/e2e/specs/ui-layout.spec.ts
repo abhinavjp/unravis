@@ -1980,7 +1980,7 @@ const buttonFacts = (page: Page, selector: string) => page.locator(selector).eva
   const r = e.getBoundingClientRect(), range = document.createRange();
   range.selectNodeContents(e);
   const cs = getComputedStyle(e);
-  return { tag: e.tagName + ' ' + e.getAttribute('type'), w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100, lines: new Set([...range.getClientRects()].map((q) => Math.round(q.top))).size, text: (e.textContent ?? '').trim(), name: e.getAttribute('aria-label') ?? '', edge: cs.borderTopStyle + ' ' + cs.borderTopWidth + ' ' + cs.borderTopColor, nowrap: cs.whiteSpace, rowText: (e.closest('tr')?.textContent ?? '') };
+  return { tag: e.tagName + ' ' + e.getAttribute('type'), w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100, lines: new Set([...range.getClientRects()].map((q) => Math.round(q.top))).size, text: (e.textContent ?? '').trim(), name: e.getAttribute('aria-label') ?? '', edge: cs.borderTopStyle + ' ' + cs.borderTopWidth + ' ' + cs.borderTopColor, nowrap: cs.whiteSpace, api: ((e.closest('tr')?.querySelector('th')?.firstChild?.textContent) ?? '').trim(), clock: ((e.closest('tr')?.querySelector('td')?.textContent ?? '').match(/\d\d:\d\d:\d\d/) ?? [''])[0] };
 }));
 
 for (const size of OP_SIZES) {
@@ -2004,8 +2004,12 @@ for (const size of OP_SIZES) {
       const names = facts.map((f) => f.name);
       expect(new Set(names).size, 'every ' + list + ' button has its own name: ' + names.join(' | ')).toBe(names.length);
     }
-    // the name says which row it belongs to: the record id is in the row, the window's first clock time is in the row heading
-    for (const f of near) expect(f.rowText, 'the row shows the record named by its button').toBeTruthy();
+    // the name says which row it belongs to: the API (the row heading) and the start time (the Started cell, to the second) of its own row
+    for (const f of near) {
+      expect(f.api, 'the row shows its API').toMatch(/^[\w.]+\.[\w]+$/);
+      expect(f.clock, 'the row shows its start time').toMatch(/^\d\d:\d\d:\d\d$/);
+      expect(f.name.startsWith('Nearby activity for ' + f.api + ' at ' + f.clock + '.'), 'the name holds the API and start time of its own row: ' + f.name + ' / ' + f.api + ' ' + f.clock).toBe(true);
+    }
     const windowRows = await page.locator('.traffic-windows tbody tr').evaluateAll((trs) => trs.map((tr) => ({ heading: (tr.querySelector('th')?.textContent ?? '').trim(), name: tr.querySelector('button')?.getAttribute('aria-label') ?? '' })));
     for (const row of windowRows) {
       const [from, to] = row.heading.replace(' (partial)', '').split('–');

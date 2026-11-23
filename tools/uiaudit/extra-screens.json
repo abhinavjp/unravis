@@ -228,7 +228,7 @@
     {
       "id": "x-all-slowest-loaded",
       "phase": "X",
-      "note": "All operations, Slowest tab with the exact time windows open and one window picked with \"Inspect window\", so its slowest requests (and their Nearby activity buttons) are listed (a window keeps the page short: the 50 slowest of the whole comparison make the screen too tall for a picture).",
+      "note": "All operations, Slowest tab with the exact time windows open and one window picked with \"Inspect window\", so its slowest requests (and their Nearby activity buttons) are listed (a window keeps the page short: the 50 slowest of the whole comparison make the screen too tall for a picture). The step picks the 5th window (nth=4), so it needs at least 5 windows on the first page and slow requests in that window: if the demo data changes the screen turns unreachable (a loud failure), then pick another window.",
       "narrow": true,
       "steps": [
         {
