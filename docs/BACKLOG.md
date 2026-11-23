@@ -305,11 +305,13 @@ Spec per area: `docs/desktop/spec/`. Items per area: `docs/desktop/groom/` (scop
 - [ ] **BL-382** Console `unravis.exe`, GUI launcher, legacy flag dispatch (size M, Parallel B (blocks BL-394); see `docs/desktop/groom/05-cli.md`)
 - [ ] **BL-383** Windows shell test harness (size M, Parallel B; see `docs/desktop/groom/05-cli.md`)
 - [ ] **BL-384** Output contract and offline commands (size M, Parallel B; see `docs/desktop/groom/05-cli.md`)
+  - Core built, not ticked: `internal/clicore` (error codes and exit map, envelopes, ASCII-only JSON, output-mode peek, env allowlist, safe table printing), tested on Linux. Not built: the `cmd/unravis` exe, the cobra spike (BL-381), `version` and `schema` commands, JSONL, `--output-file`, the Windows run.
 - [ ] **BL-385** Operation layer and first vertical slice: `audit compare` (size L, Parallel B; see `docs/desktop/groom/05-cli.md`)
 - [ ] **BL-386** Remaining audit commands (size M, Parallel B; see `docs/desktop/groom/05-cli.md`)
 - [ ] **BL-387** `sources`, `cases` read commands and `doctor` (size M, Parallel B; see `docs/desktop/groom/05-cli.md`)
 - [ ] **BL-388** Result handles and cursors in the backend store (size M, Parallel B; see `docs/desktop/groom/05-cli.md`)
 - [ ] **BL-389** Capability matrix, automation grant, deny-by-default test (size L, Parallel B; see `docs/desktop/groom/05-cli.md`)
+  - 389a data half built, not ticked: `internal/clicap` (v1 matrix, `Check`, `Permits`, `Register`, deny by default), tested on Linux. Not built: `clisrv.Register`, the `TestMatrixMatchesDoc` generated table, the check against `mcp.Catalog()` (no exported catalog yet; the test lists the ten names by hand), and all of 389b (automation grants).
 - [ ] **BL-390** `app status|stop|start --headless` and owner lease (size L, Parallel B (needs P1); see `docs/desktop/groom/05-cli.md`)
 - [ ] **BL-391** Explicit offline reader: `blackbox inspect --offline` (size M, Parallel B; see `docs/desktop/groom/05-cli.md`)
 - [ ] **BL-392** JSON Lines streaming for selected operations (size S, Parallel B; see `docs/desktop/groom/05-cli.md`)
