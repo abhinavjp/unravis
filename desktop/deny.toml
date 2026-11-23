@@ -5,15 +5,26 @@ targets = ["x86_64-pc-windows-msvc"]
 
 [advisories]
 # A known advisory fails the check. Waivers (id + reason + review date) go in `ignore` only after a look at whether the crate ships.
-# The three osv waivers (desktop/osv-scanner.toml) are Linux-only crates, so they do not appear in this Windows tree.
+# The osv waivers (desktop/osv-scanner.toml) cover glib and proc-macro-error (Linux-only) and chrono (in no compiled tree); none is in this Windows tree.
+# The two defaults changed between cargo-deny releases (`unmaintained` went from all to workspace in 0.22), so both are set here.
 version = 2
 yanked = "deny"
+unmaintained = "workspace"
+unsound = "workspace"
 ignore = []
 
 [licenses]
 version = 2
-# MPL-2.0 comes with cssparser, selectors, dtoa-short, option-ext (Tauri, webview): file-level copyleft, no change to them, so allowed.
-allow = ["Apache-2.0", "MIT", "MIT-0", "0BSD", "Zlib", "Unicode-3.0", "Unlicense", "CC0-1.0", "MPL-2.0"]
+allow = ["Apache-2.0", "MIT", "MIT-0", "0BSD", "Zlib", "Unicode-3.0", "Unlicense", "CC0-1.0"]
+# MPL-2.0 (file-level copyleft, we do not change these crates) is allowed for the five crates that carry it today, not globally:
+# a new MPL crate needs a reviewed line here.
+exceptions = [
+  { crate = "cssparser", allow = ["MPL-2.0"] },
+  { crate = "cssparser-macros", allow = ["MPL-2.0"] },
+  { crate = "dtoa-short", allow = ["MPL-2.0"] },
+  { crate = "option-ext", allow = ["MPL-2.0"] },
+  { crate = "selectors", allow = ["MPL-2.0"] },
+]
 confidence-threshold = 0.9
 
 [bans]
@@ -21,14 +32,19 @@ multiple-versions = "warn"
 wildcards = "deny"
 # Workspace members refer to each other by path (publish = false), which is not a wildcard on a registry crate.
 allow-wildcard-paths = true
-# BL-449 / spec 07: the shell has no plugins and no network client of its own. A plugin that talks to the network or updates
-# the app must go through a reviewed change to this file, not slip in through a dependency bump.
+# BL-449 / spec 07: the shell has no plugins and no network client of its own. A plugin or HTTP client must come in through a reviewed
+# change to this file, not slip in through a dependency bump. cargo-deny does not take a glob in a crate name (tried `tauri-plugin-*`:
+# nothing banned), so the plugins that reach the network or update the app are listed one by one. "Zero tauri-plugin-* crates" in
+# general is checked on the locked tree by desktop-windows.yml. The network clients below are not in the tree today.
 deny = [
   { crate = "tauri-plugin-updater", reason = "updates go through the Go sidecar's signed feed, not a Tauri plugin" },
-  { crate = "tauri-plugin-http", reason = "the shell makes no network calls" },
-  { crate = "tauri-plugin-upload", reason = "the shell makes no network calls" },
-  { crate = "tauri-plugin-websocket", reason = "the shell makes no network calls" },
-  { crate = "openssl-sys", reason = "no OpenSSL: TLS, if ever needed, is rustls or the OS" },
+  { crate = "tauri-plugin-http", reason = "the shell makes no network calls of its own" },
+  { crate = "tauri-plugin-upload", reason = "the shell makes no network calls of its own" },
+  { crate = "tauri-plugin-websocket", reason = "the shell makes no network calls of its own" },
+  { crate = "reqwest", reason = "the shell makes no network calls of its own" },
+  { crate = "hyper", reason = "the shell makes no network calls of its own" },
+  { crate = "ureq", reason = "the shell makes no network calls of its own" },
+  { crate = "openssl-sys", reason = "no OpenSSL; it would not appear on the Windows graph (schannel), so this only guards a later Linux build" },
 ]
 
 [sources]

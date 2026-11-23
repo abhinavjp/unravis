@@ -31,6 +31,7 @@ concurrency:
 env:
   GOVULNCHECK_VERSION: v1.10.0
   OSV_SCANNER_VERSION: v2.7.1
+  CARGO_DENY_VERSION: 0.22.0
 
 jobs:
   pins:
@@ -105,13 +106,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The action ships cargo-deny in its own image. `stable` overrides desktop/rust-toolchain.toml: the check only reads the lock and the metadata.
+      # cargo-deny is built from crates.io with --locked (the registry checks the crate hash), not downloaded as a binary: the
+      # EmbarkStudios action fetches its binary with no checksum, so pinning the action would not pin the tool. About 4 minutes.
+      # RUSTUP_TOOLCHAIN=stable overrides desktop/rust-toolchain.toml: the check only reads the lock and the metadata.
+      - name: Install cargo-deny
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: cargo install --locked --version "$CARGO_DENY_VERSION" cargo-deny
       - name: cargo deny check
-        uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
-        with:
-          manifest-path: desktop/Cargo.toml
-          command: check
-          rust-version: stable
+        working-directory: desktop
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: cargo deny --all-features check
 
   osv:
     runs-on: ubuntu-24.04
