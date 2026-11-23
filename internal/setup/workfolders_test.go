@@ -37,6 +37,13 @@ func TestWorkFolderOwnedNeedsOurNamesAndOurFiles(t *testing.T) {
 			t.Errorf("%s holding %s was taken for ours", dir, f)
 		}
 	}
+	// the files Explorer adds on its own do not make a folder theirs
+	writeFile(t, filepath.Join(root, ".setup-staging-20261122-141414", "unravis.exe"), "x")
+	writeFile(t, filepath.Join(root, ".setup-staging-20261122-141414", "Desktop.ini"), "x")
+	writeFile(t, filepath.Join(root, ".setup-staging-20261122-141414", "thumbs.db"), "x")
+	if !workFolderOwned(root, ".setup-staging-20261122-141414") {
+		t.Error("desktop.ini and Thumbs.db made a staging folder look foreign")
+	}
 	// a nested folder, or one foreign file among ours, is enough to make it theirs
 	writeFile(t, filepath.Join(root, ".setup-staging-20261122-121212", "unravis.exe"), "x")
 	writeFile(t, filepath.Join(root, ".setup-staging-20261122-121212", "sub", "a.txt"), "x")

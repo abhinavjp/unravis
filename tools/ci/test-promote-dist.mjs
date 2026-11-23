@@ -280,8 +280,9 @@ test('buildEnv keeps registry and certificate settings that carry no password', 
 test('buildEnv drops proxy variables that carry a password and keeps the ones that do not', () => {
   const scratch = mkdtempSync(join(tmpdir(), 'pd-env3-'));
   try {
-    const out = buildEnv({ PATH: '/usr/bin', HTTP_PROXY: 'http://user:pw@proxy.invalid:3128', https_proxy: 'http://tok@proxy.invalid:3128', ALL_PROXY: 'socks5://u:p@proxy.invalid:1080', NO_PROXY: 'localhost', HTTPS_PROXY: 'http://proxy.invalid:3128' }, scratch);
+    const out = buildEnv({ PATH: '/usr/bin', HTTP_PROXY: 'http://user:pw@proxy.invalid:3128', https_proxy: 'http://tok@proxy.invalid:3128', ALL_PROXY: 'socks5://u:p@proxy.invalid:1080', NO_PROXY: 'localhost', HTTPS_PROXY: 'http://proxy.invalid:3128', http_proxy: 'user:pw@proxy.invalid:3128' }, scratch);
     assert.equal('HTTP_PROXY' in out, false);
+    assert.equal('http_proxy' in out, false); // a login without a scheme
     assert.equal('https_proxy' in out, false);
     assert.equal('ALL_PROXY' in out, false);
     assert.equal(out.HTTPS_PROXY, 'http://proxy.invalid:3128');

@@ -70,7 +70,10 @@ export function buildEnv(env, scratch) {
     if (typeof v !== 'string' || TOKEN_VALUE.test(v)) continue;
     // Kept only when the value carries no password (no user:pass@host): that goes for HTTP_PROXY, HTTPS_PROXY and ALL_PROXY as much as
     // for the npm settings a registry mirror or a company certificate need.
-    if ((KEEP.test(k) || NPM_KEEP.test(k)) && !/:\/\/[^/]*@/.test(v)) out[k] = v;
+    if (!KEEP.test(k) && !NPM_KEEP.test(k)) continue;
+    // An "@" in a proxy value may be a login with or without a scheme (user:pw@proxy:3128), so any proxy value with one is dropped.
+    if (/@/.test(v) && (/proxy/i.test(k) || /:\/\/[^/]*@/.test(v))) continue;
+    out[k] = v;
   }
   const home = join(scratch, 'home'), cfg = join(scratch, 'gh-config'), bin = join(scratch, 'bin'), cache = join(scratch, 'cache');
   for (const d of [home, cfg, bin, cache, join(home, 'AppData', 'Roaming'), join(home, 'AppData', 'Local')]) mkdirSync(d, { recursive: true });

@@ -38,6 +38,11 @@ func previousName(name string) bool {
 	return false
 }
 
+// shellFile says name is a file Windows Explorer may add to any folder it has shown; it does not make a folder somebody's own.
+func shellFile(name string) bool {
+	return strings.EqualFold(name, "desktop.ini") || strings.EqualFold(name, "Thumbs.db")
+}
+
 // workFolderOwned reports whether name, a folder inside parent, is a working folder this installer or the updater made: the name has the
 // form of one, and it holds nothing but plain files with the names those programs write (no folder, no link, no other file). A folder
 // that cannot be read is not shown to be ours.
@@ -58,7 +63,7 @@ func workFolderOwned(parent, name string) bool {
 		return false
 	}
 	for _, e := range ents {
-		if !e.Type().IsRegular() || !allowed(e.Name()) {
+		if !e.Type().IsRegular() || !(allowed(e.Name()) || shellFile(e.Name())) {
 			return false
 		}
 	}
