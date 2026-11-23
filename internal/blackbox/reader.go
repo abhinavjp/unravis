@@ -702,9 +702,9 @@ func (s *HTTPSource) open(ctx context.Context, path string) (io.ReadCloser, http
 func (s *HTTPSource) netErr(err error) *ReadError {
 	var ne net.Error
 	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
-		return readErr(ReadUnreachable, "The Blackbox did not answer in time. Check that the server is on and the port is open to this PC.", err)
+		return readErr(ReadUnreachable, "The Blackbox did not answer in time. Check that the server is on, that Listens on is the server address, and that the port is open to this PC.", err)
 	}
-	return readErr(ReadUnreachable, "Nothing answered at that address. Check the name and port, that the Blackbox is running, and that its status page is open to this PC.", err)
+	return readErr(ReadUnreachable, "Nothing answered at that address. Check the name and port, that the Blackbox is running, that Listens on lets other PCs in, and that the port is open to this PC.", err)
 }
 
 func serverTime(h http.Header) time.Time {

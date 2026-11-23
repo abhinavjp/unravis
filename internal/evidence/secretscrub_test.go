@@ -132,3 +132,20 @@ func TestScrubSecretsStaysLinear(t *testing.T) {
 		}
 	}
 }
+
+// SWP-1122-13: a secret whose name and value are two fields of one record, through the real case-report scrubber.
+func TestScrubSecretsNameAndValueRecords(t *testing.T) {
+	for _, tc := range []struct{ name, in string }{
+		{"kubernetes env", "env:\n  - name: DB_PASSWORD\n    value: hunter2zz\n"},
+		{"json record", `{"name":"DB_PASSWORD","value":"hunter2zz"}`},
+		{"plist", "<key>Password</key>\n<string>hunter2zz</string>"},
+	} {
+		got := ScrubSecrets(tc.in)
+		if strings.Contains(got, "hunter2zz") {
+			t.Errorf("%s: the value is still in the text: %q", tc.name, got)
+		}
+		if !strings.Contains(got, "[removed]") {
+			t.Errorf("%s: no mask in %q", tc.name, got)
+		}
+	}
+}
