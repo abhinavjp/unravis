@@ -48,3 +48,13 @@ export function sameRead(before: unknown, after: unknown): boolean {
   if (before === after) return true;
   try { return JSON.stringify(before) === JSON.stringify(after); } catch { return false; }
 }
+
+/**
+ * "The read that started last wins" for one kind of answer (the health checks, say) that several reads can bring: the page's own read, the
+ * read after an add, the read on return, and the one a finished check asks for. A read takes a number when it starts and puts its answer in only
+ * while that number is still the newest, so an older list that was slow can never replace a newer one.
+ */
+export function newestWins(): { begin: () => number; latest: (token: number) => boolean } {
+  let last = 0;
+  return { begin: () => ++last, latest: (token) => token === last };
+}

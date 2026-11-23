@@ -9,6 +9,8 @@
 //   STORY-05  A file added through the real case API while the page is open (another browser tab or client: no signal reaches this page) shows in the story
 //             when the person comes back to the page (tab shown, window focused): one read of the case and its files, no loading text, no focus move.
 //   STORY-06  A read on return that fails keeps the story as it was, shows nothing about it, and the next return reads again and shows the new file.
+//   STORY-08  A case erased elsewhere shows as gone when the person comes back (no loop of reads after that).
+//   STORY-09  A theory saved in the drawer while the read on return is slow is still in the list and in the story when that read answers.
 //   STORY-07  No request storm: a return inside the gap, or while the page is hidden, reads nothing; five returns together read once.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
@@ -216,6 +218,7 @@ test('STORY-05: a file added through the case API shows in Story so far when the
   await openStory(page, title);
   await expect(storyFiles(page)).toHaveCount(0);
   const headingBefore = await page.getByRole('heading', { name: 'Story so far' }).boundingBox();
+  const panelBefore = await page.locator('section[aria-labelledby="home-story"]').boundingBox();
 
   await away(page);
   await addByApi(api, id, '05');
@@ -233,6 +236,10 @@ test('STORY-05: a file added through the case API shows in Story so far when the
   // Nothing above the story moved: the new line only grows the list.
   const headingAfter = await page.getByRole('heading', { name: 'Story so far' }).boundingBox();
   expect(headingAfter?.y).toBe(headingBefore?.y);
+  // The panel keeps its left edge, top and width; only its height grows, by the new line.
+  const panelAfter = await page.locator('section[aria-labelledby="home-story"]').boundingBox();
+  expect([panelAfter?.x, panelAfter?.y, panelAfter?.width]).toEqual([panelBefore?.x, panelBefore?.y, panelBefore?.width]);
+  expect(panelAfter!.height).toBeGreaterThan(panelBefore!.height);
 });
 
 test('STORY-06: a failed read on return keeps the story as it was and the next return shows the new file', async ({ page, api, allow }) => {
@@ -274,6 +281,8 @@ test('STORY-07: no request storm: a return inside the gap or while hidden reads 
   const id = await createCase(api, title);
   await openStory(page, title);
   const reads = watchReads(page, id);
+  const panel = page.locator('section[aria-labelledby="home-story"]');
+  const rectBefore = await panel.boundingBox();
 
   // Just read: a return now reads nothing.
   await back(page);
@@ -295,4 +304,64 @@ test('STORY-07: no request storm: a return inside the gap or while hidden reads 
   await expect.poll(() => reads.story).toBe(1);
   await page.waitForTimeout(500);
   expect(reads).toEqual({ story: 1, files: 1 });
+  // The read found nothing new: the Story so far panel has the same place and size to the pixel (no flicker, no layout shift).
+  expect(await panel.boundingBox()).toEqual(rectBefore);
+});
+
+test('STORY-08: a case erased in another tab shows as gone on return, and nothing is read after that', async ({ page, api, allow }) => {
+  allow(/404|Not Found/i, 'the case was erased on purpose, so the read on return is answered 404');
+  const title = 'QA Story Return Erased';
+  const id = await createCase(api, title);
+  await openStory(page, title);
+  const erase = await api('DELETE', `/api/cases/${id}`, { confirm: id }, 'open');
+  expect(erase.status, erase.text).toBeLessThan(300);
+  await page.waitForTimeout(GAP);
+  await away(page);
+  await back(page);
+  await expect(page.getByRole('alert').filter({ hasText: 'This case could not be found' })).toBeVisible();
+  const reads = watchReads(page, id);
+  await page.waitForTimeout(GAP);
+  await away(page);
+  await back(page);
+  await page.waitForTimeout(500);
+  expect(reads).toEqual({ story: 0, files: 0 });
+});
+
+test('STORY-09: a theory saved while the read on return is slow is not lost when that read answers', async ({ page, api }) => {
+  const title = 'QA Story Return Theory';
+  const id = await createCase(api, title);
+  await openStory(page, title);
+  const theory = 'The pool ran dry at 08:00';
+  // The first read of the theories on return is answered by the real server at once, but its answer (the list before the theory) is held back.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let held!: () => void;
+  const heldSeen = new Promise<void>((resolve) => (held = resolve));
+  let reads = 0;
+  await page.route(new RegExp(`/api/cases/${id}/ledger$`), async (route) => {
+    if (route.request().method() !== 'GET') { await route.fallback(); return; }
+    reads += 1;
+    if (reads !== 1) { await route.fallback(); return; }
+    const answer = await route.fetch();
+    held();
+    await gate;
+    await route.fulfill({ response: answer }).catch(() => undefined);
+  });
+  await page.waitForTimeout(GAP);
+  await away(page);
+  await back(page);
+  await heldSeen;
+
+  await page.getByRole('button', { name: 'Add a theory' }).click();
+  const drawer = page.getByRole('dialog', { name: 'Ledger' }).or(page.getByRole('complementary', { name: 'Ledger' }));
+  await drawer.locator('#ledger-new').fill(theory);
+  await drawer.locator('#ledger-new').press('Enter');
+  // The theory is in the list (its row is in the compare table, which is closed, so it is counted, not looked at).
+  const row = drawer.locator('.theory-text').filter({ hasText: theory });
+  await expect(row).toHaveCount(1);
+
+  release();
+  await page.waitForTimeout(800);
+  await expect(row).toHaveCount(1);
+  await expect(page.locator('ol.story li').filter({ hasText: theory })).toHaveCount(1);
 });

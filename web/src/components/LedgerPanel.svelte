@@ -9,7 +9,7 @@
   } from '../lib/ledger';
   import { theoriesCopy } from '../lib/copy/theoriesCopy';
   import { theoryRows } from '../lib/theories';
-  import { ledger, refreshLedger } from '../lib/ledgerStore.svelte';
+  import { ledger, noteLedgerWrite, refreshLedger } from '../lib/ledgerStore.svelte';
   import Drawer from './Drawer.svelte';
   import HelpNote from './HelpNote.svelte';
 
@@ -40,6 +40,7 @@
     delete problem[h.id];
   }
   function replace(h: Hypothesis) {
+    noteLedgerWrite();
     const at = ledger.items.findIndex((x) => x.id === h.id);
     if (at >= 0) ledger.items[at] = h; else ledger.items.unshift(h);
     adopt(h);
@@ -116,6 +117,7 @@
     try {
       await api.ledgerDelete(h.id, cid);
       if (ledger.caseId !== cid) return;
+      noteLedgerWrite();
       ledger.items = ledger.items.filter((x) => x.id !== h.id);
       delete ledger.editors[h.id];
       if (ledger.openId === h.id) ledger.openId = null;

@@ -61,8 +61,104 @@ test('Case home reads on return, keeps what it shows when the read fails, and re
   // The answers are put in only when they all came and say something new; a failure goes to the catch and puts in nothing.
   assert.ok(reread.indexOf('const fresh = await getCaseView') < reread.indexOf('info = fresh'));
   assert.match(reread, /if \(!sameRead\(info, fresh\)\) info = fresh/);
-  assert.match(reread, /catch \(error\) \{ lockedUnder\(error\)/);
+  assert.match(reread, /catch \(error\) \{[\s\S]*lockedUnder\(error\)/);
   // The last read starts the gap; the listeners are taken off when the page goes.
   assert.match(reread, /lastReadAt = Date\.now\(\)/);
   assert.match(page, /stopWatching\(\); controller\?\.abort\(\)/);
+});
+
+// ---- the newest read wins (health checks), and a theory saved here is not lost to an older read
+const { newestWins } = module_.exports;
+
+test('newestWins: only the read that started last may put its answer in', () => {
+  const reads = newestWins();
+  const slow = reads.begin();
+  const finishedCheck = reads.begin();
+  assert.equal(reads.latest(finishedCheck), true);
+  assert.equal(reads.latest(slow), false, 'an older list that is slow never replaces the newer one');
+  const next = reads.begin();
+  assert.equal(reads.latest(finishedCheck), false);
+  assert.equal(reads.latest(next), true);
+});
+
+test('Case home gives every read of the health checks a number, and a case erased elsewhere shows as gone', () => {
+  assert.match(page, /const healthReads = newestWins\(\)/);
+  const reread = page.slice(page.indexOf('async function rereadFiles'), page.indexOf('function backOnPage'));
+  assert.match(reread, /healthReads\.begin\(\)[\s\S]*fetchHealthRuns\(id\)/);
+  assert.match(reread, /runs && healthReads\.latest\(healthToken\)/);
+  const finished = page.slice(page.indexOf('async function rereadHealth'), page.indexOf('// The case was locked'));
+  assert.match(finished, /healthReads\.begin\(\)[\s\S]*healthReads\.latest\(token\)\) health = runs/);
+  assert.match(page, /healthReads\.begin\(\);\n\s*const \[files, runs, theory\][\s\S]*if \(healthReads\.latest\(healthToken\)\) health = /, 'the page read takes a number too');
+  assert.match(reread, /getCaseView\(id\)\.catch\(\(error: unknown\) => \{ if \(isCaseGone\(error\)\) return null; throw error; \}\);\s*if \(!fresh\) \{ if \(id === caseId && mine === rereadRun\) gone\(\); return; \}/);
+});
+
+function ledgerStore(listCalls) {
+  const file = path.join(root, 'src/lib/ledgerStore.svelte.ts');
+  const out = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const mod = { exports: {} };
+  const req = (request) => {
+    if (request === './api') return { api: { ledgerList: listCalls } };
+    if (request === './ledger') return { addCitation: (list) => list, editorFromHypothesis: (h) => ({ text: h.text }) };
+    if (request === './storyReturn') return module_.exports;
+    throw new Error('unexpected ' + request);
+  };
+  new Function('require', 'module', 'exports', '$state', out)(req, mod, mod.exports, (value) => value);
+  return mod.exports;
+}
+const entry = (id, text) => ({ id, text });
+
+test('a theory saved while a list read is on its way is not lost: the read is made once more', async () => {
+  const first = Promise.withResolvers();
+  const answers = [first.promise, Promise.resolve([entry('a', 'old'), entry('b', 'new')])];
+  let calls = 0;
+  const store = ledgerStore(() => answers[calls++]);
+  store.setLedgerCase('c1', false);
+  store.ledger.items = [entry('a', 'old')];
+  const reading = store.refreshLedger();
+  // The save finishes here (the entry joins the list) before the older answer comes back.
+  store.ledger.items.unshift(entry('b', 'new'));
+  store.noteLedgerWrite();
+  first.resolve([entry('a', 'old')]);
+  await reading;
+  assert.equal(calls, 2, 'read once more, not in a loop');
+  assert.deepEqual(store.ledger.items.map((h) => h.id).sort(), ['a', 'b']);
+});
+
+test('a write during the second read too: the list on screen stands and no third read is made', async () => {
+  const gates = [Promise.withResolvers(), Promise.withResolvers()];
+  let calls = 0;
+  const store = ledgerStore(() => gates[calls++].promise);
+  store.setLedgerCase('c1', false);
+  store.ledger.items = [entry('a', 'x')];
+  const reading = store.refreshLedger();
+  store.noteLedgerWrite();
+  gates[0].resolve([entry('a', 'x')]);
+  await new Promise((resolve) => setImmediate(resolve));
+  store.ledger.items.unshift(entry('b', 'y'));
+  store.noteLedgerWrite();
+  gates[1].resolve([entry('a', 'x')]);
+  await reading;
+  assert.equal(calls, 2);
+  assert.deepEqual(store.ledger.items.map((h) => h.id), ['b', 'a']);
+  assert.equal(store.ledger.loaded, true);
+});
+
+test('an unchanged theory list is not put in again; a changed one is', async () => {
+  const store = ledgerStore(() => Promise.resolve([entry('a', 'x')]));
+  store.setLedgerCase('c1', false);
+  await store.refreshLedger();
+  const shown = store.ledger.items;
+  await store.refreshLedger();
+  assert.equal(store.ledger.items, shown, 'same answer, same list object');
+  const changed = ledgerStore(() => Promise.resolve([entry('a', 'x'), entry('b', 'y')]));
+  changed.setLedgerCase('c1', false);
+  changed.ledger.items = [entry('a', 'x')];
+  await changed.refreshLedger();
+  assert.equal(changed.ledger.items.length, 2);
+});
+
+test('the ledger panel tells the store about each local write', () => {
+  const panel = fs.readFileSync(path.join(root, 'src/components/LedgerPanel.svelte'), 'utf8');
+  assert.match(panel, /function replace\(h: Hypothesis\) \{\n\s*noteLedgerWrite\(\);/);
+  assert.match(panel, /noteLedgerWrite\(\);\n\s*ledger\.items = ledger\.items\.filter/);
 });

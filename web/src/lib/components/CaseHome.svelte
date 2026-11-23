@@ -15,7 +15,7 @@
   import { holdLedger, ledger, refreshLedger } from '../ledgerStore.svelte';
   import { buildStory, shortText } from '../story';
   import { caseAdded } from '../caseAdded.svelte';
-  import { readOnReturn, sameRead, watchReturn } from '../storyReturn';
+  import { newestWins, readOnReturn, sameRead, watchReturn } from '../storyReturn';
   import { isHidden } from '../visibility';
   import { guidedOpenFor } from '../guided/stepModel';
   import GuidedAnalysis from './guided/GuidedAnalysis.svelte';
@@ -211,6 +211,7 @@
     const none = <T,>(value: T): Promise<T> => Promise.resolve(value);
     // The theories read takes no signal: an aborted load stops waiting for it, so it never holds a re-read that is waiting for this load to end.
     const aborted = new Promise<void>((resolve) => { if (mine.signal.aborted) resolve(); else mine.signal.addEventListener('abort', () => resolve(), { once: true }); });
+    const healthToken = healthReads.begin();
     const [files, runs, theory] = await Promise.allSettled([reads ? listImports(id, mine.signal) : none<ImportRecord[]>([]), reads ? fetchHealthRuns(id, mine.signal) : none<HealthRun[]>([]), reads ? Promise.race([refreshLedger(), aborted]) : none<void>(undefined)]);
     if (mine.signal.aborted || id !== caseId) return;
     if (files.status === 'rejected' && isCaseGone(files.reason)) { phase = 'gone'; return; }
@@ -221,7 +222,7 @@
     if (caseView.status === 'rejected' && files.status === 'rejected') { phase = 'failed'; return; }
     info = found;
     imports = files.status === 'fulfilled' ? files.value : [];
-    health = runs.status === 'fulfilled' ? runs.value : [];
+    if (healthReads.latest(healthToken)) health = runs.status === 'fulfilled' ? runs.value : [];
     theoryProblem = theory.status === 'rejected';
     phase = 'ready';
     if (theory.status === 'fulfilled' && ledger.items.length === 0) void findShared(mine.signal);
@@ -298,6 +299,8 @@
   // A read that fails keeps what the page shows. An answer that says what the page already shows is not put in, so nothing is redrawn.
   let lastReadAt = 0;
   let rereadsOpen = 0;
+  // Every read of the health checks (page read, re-read, return, a finished check) takes a number; only the newest read's answer is put in.
+  const healthReads = newestWins();
   async function rereadFiles(everything = false) {
     const id = caseId;
     if (!id || phase !== 'ready' || destroyed) return;
@@ -305,14 +308,17 @@
     lastReadAt = Date.now();
     rereadsOpen += 1;
     try {
-      const fresh = await getCaseView(id);
+      // The case was erased in another tab: say so (the page for a case that is gone, which reads nothing more) instead of showing it as if it were there.
+      const fresh = await getCaseView(id).catch((error: unknown) => { if (isCaseGone(error)) return null; throw error; });
+      if (!fresh) { if (id === caseId && mine === rereadRun) gone(); return; }
       const reads = readsCaseData(fresh);
+      const healthToken = healthReads.begin();
       const [files, runs] = await Promise.all([reads ? listImports(id) : Promise.resolve([] as ImportRecord[]), reads ? fetchHealthRuns(id).catch(() => null) : Promise.resolve(null)]);
       const theoriesRead = everything && reads ? refreshLedger().catch(() => { /* the theories keep what they show */ }) : Promise.resolve();
       if (id !== caseId || mine !== rereadRun) return;
       if (!sameRead(info, fresh)) info = fresh;
       if (!sameRead(imports, files)) imports = files;
-      if (runs && !sameRead(health, runs)) health = runs;
+      if (runs && healthReads.latest(healthToken) && !sameRead(health, runs)) health = runs;
       await theoriesRead;
     } catch (error) { lockedUnder(error); /* otherwise the page keeps the list it had */ } finally { rereadsOpen -= 1; }
   }
@@ -338,9 +344,10 @@
   async function rereadHealth() {
     const id = caseId;
     if (!id) return;
+    const token = healthReads.begin();
     try {
       const runs = await fetchHealthRuns(id);
-      if (id === caseId) health = runs;
+      if (id === caseId && healthReads.latest(token)) health = runs;
     } catch (error) { lockedUnder(error); /* otherwise the story keeps the list it had */ }
   }
 
