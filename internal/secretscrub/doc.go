@@ -30,7 +30,12 @@
 //     (token_count, password_min_length, max_tokens) are left alone.
 //   - Not covered (out of scope, listed so nobody assumes it): entity-escaped markup (&lt;Password&gt;), \u-escaped key names,
 //     zero-width or full-width letters in a key, URL-encoded "password%3Dx", headers such as Ocp-Apim-Subscription-Key and a SAS "sig="
-//     parameter, "--password x" flags (the Releases reader has its own pattern), and text nodes after the first in <Password>a<b/>c</Password>.
+//     parameter, the Releases reader's own pattern, and text nodes after the first in <Password>a<b/>c</Password>.
+//   - Command lines (flags.go): "--password x", "--api-key x", "/token x" (an option whose name is a secret name, then the next word, also
+//     quoted), and the short options of the tools that take a secret there: sqlcmd/osql/bcp "-P x", mysql "-pX", redis-cli "-a x",
+//     mongo tools "-p x", curl "-u user:x". "-p" is a port for psql, so a short option is judged only after its tool on the same line.
+//     Not covered: other tools' short options, a password passed as a bare argument ("net use \\srv\share x"), "--no-password" style
+//     names (left alone on purpose).
 //   - Records are read only on a whole text (Mask). The record readers keep to a name and a "value" member of one object, one YAML item or
 //     one plist pair (JSON also in the Python form with single quotes, over several lines, and written inside a JSON string with escaped quotes): a name and a value in two different objects, flow-style YAML ({name: DB_PASSWORD, value: x}), objects nested deeper than maxRecordDepth (32), a name with white space in it ("Reset password" is a title, not a setting; a plist key may have spaces), double-escaped JSON (a quote written as three backslashes and a quote), Go `%+v` and `map[name:..]` prints, Python keyword form `EnvVar(name=.., value=..)`, HCL `env { name = .. value = .. }`, a value under another member name ("data", "secret"), a nested object
 //     as the value, or more than maxRecordLines lines between the name and its "value:" line are not joined.
@@ -65,6 +70,7 @@
 //	blockHeader: comment to the end of the line                  charged once per line (remembered line end)
 //	blockText: key line start and key line indent                remembered and charged (lineStart, lineIndent)
 //	blockText: lines of the block, TrimRight, indent loop        charged per line; stops over budget
+//	maskFlags: one pass over the words of a line                charged per word and per value; no search runs back or forward over a line
 //	maskRecords: jsonRecords byte loop, string ends              charged (one step per byte, plus the string, read to its close or its line end); the open-array search and a bare value charged (a bare value ends at a quote or a separator); a full stack drops its oldest object (maxRecordDepth)
 //	maskRecords: plistRecords Index for "<key>", name, close    charged; the name search is capped at 2*maxIdent+8; the text up to a close tag is charged and consumed
 //	maskRecords: yamlRecords line table, neighbour lines         charged once per byte; neighbours capped at maxRecordLines each way (comment lines not counted), charged per name key; a value line is masked once
