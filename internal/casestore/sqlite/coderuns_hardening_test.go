@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -371,7 +372,7 @@ func TestHiddenModeCatchesGluedAddressesAndCutEdges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, a := range []string{"host_10.0.0.1", "srv10.1.2.3", "10.0.0.1x"} {
+	for i, a := range []string{"host_10.0.0.1", "srv10.1.2.3", "10.0.0.1x", "src 10.1.2.3.443", "10.1.2.3.8080", "IP 192.168.1.5.443 > 10.0.0.2.51234"} {
 		if err := c.RecordCall(cctx, run.RunID, call(i+1, "ok", `{"h":"`+a+`"}`, `{}`)); err != nil {
 			t.Fatal(err)
 		}
@@ -389,10 +390,15 @@ func TestHiddenModeCatchesGluedAddressesAndCutEdges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A plain cut leaves "192.16" at the end, which a check for "192.168" never sees.
+	partial := regexp.MustCompile(`\d\.\d*$`)
 	for _, text := range []string{fin.ResultPreview, fin.ErrorText} {
-		if strings.Contains(text, "192.168") || len(text) > casestore.MaxRunPreview {
+		if partial.MatchString(text) || strings.Contains(text, "192.168") || len(text) > casestore.MaxRunPreview {
 			t.Errorf("a cut left part of an address: ...%q", text[max(0, len(text)-20):])
 		}
+	}
+	if !strings.HasSuffix(fin.ResultPreview, "[ip]") && !strings.HasSuffix(fin.ErrorText, "[ip]") {
+		t.Errorf("the straddling address was not replaced: %q", fin.ResultPreview[max(0, len(fin.ResultPreview)-20):])
 	}
 }
 
@@ -418,5 +424,30 @@ func TestForgedTailRunIsOnlyCaughtByTheHead(t *testing.T) {
 	rawSQL(t, c, "UPDATE meta SET v=? WHERE k='code.chain.head'", strconvI(b.N)+":"+b.RecordHash)
 	if rep := verify(t, c, nil); !rep.OK {
 		t.Fatalf("a forgery that also moves the head is the documented limit and verifies: %+v", rep)
+	}
+}
+
+// A trigger that swallows the sealing UPDATE (RAISE(IGNORE)) leaves the row
+// "running": that is tampering, not "already ended", which a broker may take for
+// benign. A run that really ended still gets ErrRunFinished.
+func TestSwallowedSealIsTamperingNotFinished(t *testing.T) {
+	_, c, _ := newRunCase(t)
+	run, err := c.BeginRun(cctx, casestore.RunStart{Surface: "cli", Source: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawSQL(t, c, "CREATE TRIGGER zz_u BEFORE UPDATE ON code_runs BEGIN SELECT RAISE(IGNORE); END")
+	if _, err := c.EndRun(cctx, run.RunID, casestore.RunEnd{Status: casestore.RunOK}); !errors.Is(err, casestore.ErrCodeTampered) || errors.Is(err, casestore.ErrRunFinished) {
+		t.Fatalf("EndRun with a swallowed seal = %v, want ErrCodeTampered", err)
+	}
+	if got, _ := c.GetRun(cctx, run.RunID); got.Status != casestore.RunRunning {
+		t.Fatalf("run = %+v", got)
+	}
+	rawSQL(t, c, "DROP TRIGGER zz_u")
+	if _, err := c.EndRun(cctx, run.RunID, casestore.RunEnd{Status: casestore.RunOK}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.EndRun(cctx, run.RunID, casestore.RunEnd{Status: casestore.RunOK}); !errors.Is(err, casestore.ErrRunFinished) {
+		t.Fatalf("a second EndRun = %v", err)
 	}
 }

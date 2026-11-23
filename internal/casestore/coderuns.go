@@ -487,22 +487,14 @@ var (
 
 func isDigit(b byte) bool { return b >= '0' && b <= '9' }
 
-// ipv4Bounded reports whether s[start:end], a dotted shape, stands alone as a
-// number: no digit next to it and no further ".digit" part (1.2.3.4.5 is not an
-// address, a version string, or a longer number). A letter or an underscore next
-// to it is fine: host_10.0.0.1 and srv10.1.2.3 are addresses.
+// ipv4Bounded reports whether s[start:end], a dotted shape, has no digit
+// directly next to it (1234.5.6.7 and 1.2.3.4567 are not addresses). Anything
+// else may touch it: a letter or an underscore (host_10.0.0.1, srv10.1.2.3) and
+// a dot with digits after it (tcpdump and netstat print 10.1.2.3.443, a port,
+// and 1.2.3.4.5 is redacted as well: over-redacting a version string is the safe
+// direction).
 func ipv4Bounded(s string, start, end int) bool {
-	if start > 0 {
-		if isDigit(s[start-1]) || (s[start-1] == '.' && start > 1 && isDigit(s[start-2])) {
-			return false
-		}
-	}
-	if end < len(s) {
-		if isDigit(s[end]) || (s[end] == '.' && end+1 < len(s) && isDigit(s[end+1])) {
-			return false
-		}
-	}
-	return true
+	return (start == 0 || !isDigit(s[start-1])) && (end >= len(s) || !isDigit(s[end]))
 }
 
 // parseIPv4 parses a dotted shape; an octet with leading zeros (010.0.0.1, which
@@ -570,17 +562,22 @@ func ReplaceAddresses(s string) (string, bool) {
 	return b.String(), found
 }
 
-// hideAndCut cuts s to max bytes. When hide is set it first scans up to max plus
-// scanSlack bytes (so an address that starts before the cap and ends after it is
-// replaced whole, not left as a partial), replaces the addresses, and cuts again
-// (a replacement such as "::1" to "[ip]" can be longer).
+// hideAndCut cuts s to max bytes. When hide is set it first scans a window of
+// scanWindow(max) bytes, replaces the addresses, and cuts again. The window is
+// large enough that after the replacements (which shrink the text, "1.1.1.1" to
+// "[ip]" at most 7 to 4) it still reaches max plus scanSlack, so an address that
+// starts before the cap is replaced whole and what is cut off is never a partial
+// address; the second cut also covers a replacement that grows ("::1" to "[ip]").
 func hideAndCut(s string, max int, hide bool) string {
 	if !hide {
 		return cutText(s, max)
 	}
-	s, _ = ReplaceAddresses(cutText(s, max+scanSlack))
+	s, _ = ReplaceAddresses(cutText(s, scanWindow(max)))
 	return cutText(s, max)
 }
+
+// scanWindow is how many bytes of the input hideAndCut reads for a cap of max.
+func scanWindow(max int) int { return 2 * (max + scanSlack) }
 
 // scanSlack is longer than any IP address text (45 bytes for IPv6 with a zone-less dotted tail).
 const scanSlack = 64
@@ -751,7 +748,7 @@ func FinishCodeRun(run CodeRun, calls []CodeCall, end RunEnd, now time.Time, key
 	hide := !run.AllowIdentifiers
 	out.ErrorText = hideAndCut(end.ErrorText, MaxRunErrorText, hide)
 	out.ConsoleLogs = hideAndCut(end.ConsoleLogs, MaxRunLogs, hide)
-	out.ResultPreview = hideAndCut(string(end.Result[:min(len(end.Result), MaxRunPreview+scanSlack+4)]), MaxRunPreview, hide)
+	out.ResultPreview = hideAndCut(string(end.Result[:min(len(end.Result), scanWindow(MaxRunPreview)+4)]), MaxRunPreview, hide)
 	if hide {
 		out.ErrorCode = cutText(replaced(out.ErrorCode), 64)
 		out.Runtime = cutText(replaced(out.Runtime), 64)

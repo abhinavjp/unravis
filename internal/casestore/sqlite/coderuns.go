@@ -683,6 +683,13 @@ func (c *Case) sealRun(ctx context.Context, tx *sql.Tx, run casestore.CodeRun, e
 		return casestore.CodeRun{}, c.mapDBErr(err)
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
+		// Nothing changed: either the run was sealed meanwhile, or a trigger the
+		// store did not create swallowed the update (RAISE(IGNORE)) and the row is
+		// still running, which is tampering, not a finished run.
+		var status string
+		if err := tx.QueryRowContext(ctx, "SELECT status FROM code_runs WHERE run_id = ?", run.RunID).Scan(&status); err == nil && status == casestore.RunRunning {
+			return casestore.CodeRun{}, fmt.Errorf("%w: the write that seals a run changed no row (a trigger the store did not create swallowed it)", casestore.ErrCodeTampered)
+		}
 		return casestore.CodeRun{}, casestore.ErrRunFinished
 	}
 	if err := appendChain(ctx, tx, row); err != nil {

@@ -118,7 +118,7 @@ func Lock(path string) (func(), error) {
 // waits and tries again after each one that timed out, so a long holder (an
 // import) does not make it give up after 5 s, and a cancelled ctx stops it. Like
 // Lock, the release function must be called on the goroutine that took the lock
-// (the lock belongs to an OS thread, which this goroutine keeps until release).
+// (the lock belongs to an OS thread, which this goroutine keeps until release). A wait slice that has started is not interrupted, so it can overrun ctx by up to 250 ms.
 func LockWait(ctx context.Context, path string) (func(), error) {
 	for {
 		if err := ctx.Err(); err != nil {
