@@ -62,6 +62,52 @@ export const countAxis = (largest: number, wantedTicks = 4, locale?: string | st
   return { max, interval, format, widest: format(max) };
 };
 
+export interface ValueAxis {
+  /** The bottom and top of the axis: whole multiples of `interval`, covering every value and zero. */
+  min: number;
+  max: number;
+  interval: number;
+  /** Decimals on every tick: the same on all of them. */
+  decimals: number;
+  /** A tick label: the number only (the unit is in the axis title). */
+  format: (value: number) => string;
+  /** The longest label this axis can print, to size the margin. */
+  widest: string;
+}
+
+/**
+ * A signed number axis (a ratio, a percent change, a change in seconds): the step is chosen first (1, 2 or 5 times a power of ten), the decimals
+ * follow from the step, and every tick prints that many decimals, so one axis never reads "0.5, 1, 1.5" next to "2.00". Zero is always inside the axis
+ * (the reference line sits there). Values that are missing or not finite are ignored; no values give 0 to `floorTop`.
+ */
+export const valueAxis = (values: ReadonlyArray<number | null | undefined>, wantedTicks = 4, floorTop = 1, locale?: string | string[], floorStep = 0): ValueAxis => {
+  const finite = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  const low = Math.min(0, ...finite), high = Math.max(0, ...finite);
+  const range = high - low > 0 ? high - low : floorTop;
+  const step = niceStep(range / Math.max(1, wantedTicks), floorStep);
+  const decimals = decimalsFor(step);
+  const min = low < 0 ? Number((Math.floor(Number((low / step).toPrecision(12))) * step).toPrecision(12)) : 0;
+  const top = high > 0 ? high : floorTop;
+  const max = Number((Math.max(1, Math.ceil(Number((top / step).toPrecision(12)))) * step).toPrecision(12));
+  const format = (value: number) => fixedNumber(value, decimals, locale);
+  return { min, max, interval: step, decimals, format, widest: format(Math.abs(min) > max ? min : max) };
+};
+
+/**
+ * The axis for a change in response time in milliseconds, which may be negative: milliseconds below a second at the farthest value, seconds from there
+ * (the same switch as `durationAxis`). Ticks carry no unit, the axis title does (`latencyAxisTitle`).
+ */
+export const signedDurationAxis = (valuesMs: ReadonlyArray<number | null | undefined>, wantedTicks = 4, locale?: string | string[]): ValueAxis & { unit: DurationUnit; factor: number } => {
+  const farthest = Math.max(0, ...valuesMs.filter((value): value is number => typeof value === 'number' && Number.isFinite(value)).map(Math.abs));
+  const unit: DurationUnit = Math.round(farthest) >= 1000 ? 's' : 'ms';
+  const factor = unit === 's' ? 1000 : 1;
+  // Milliseconds are whole: the step is at least 1 ms.
+  const axis = valueAxis(valuesMs.map(value => typeof value === 'number' && Number.isFinite(value) ? value / factor : null), wantedTicks, 1, locale, unit === 'ms' ? 1 : 0);
+  // min, max and interval are in milliseconds, the unit of the data; `format` takes milliseconds too.
+  const ms = (value: number) => Number((value * factor).toPrecision(12));
+  return { ...axis, unit, factor, min: ms(axis.min), max: ms(axis.max), interval: ms(axis.interval), format: (value: number) => axis.format(value / factor) };
+};
+
 export type DurationUnit = 'ms' | 's';
 
 export interface DurationAxis {
@@ -123,6 +169,12 @@ export const requestsAxisTitle = 'Requests per interval';
 export const timeAxisTitle = (zone: string): string => 'Time (' + (zone.trim() || 'UTC') + ')';
 /** The right axis holds the P95 line and the slowest request of each interval, so it is titled for the response time, not for the P95 alone. */
 export const latencyAxisTitle = (unit: DurationUnit): string => 'Response time (' + unit + ')';
+/** The other time charts (BL-510): the zone follows the Time title; the failure axes count whole responses. */
+export const failuresAxisTitle = 'Responses per interval';
+/** Short on purpose: the ratio chart's plot is only about 100 px tall, and the chart heading and its note already say "versus reference". */
+export const ratioAxisTitle = 'Ratio (×)';
+export const changeAxisTitle = (unit: '%' | DurationUnit): string => 'Change from own reference (' + unit + ')';
+export const hourAxisTitle = 'Hour of the day';
 
 /**
  * Width in pixels of the widest label, for the margin beside an axis. Canvas text is not measured in tests, so this is an estimate: 7.2 px per

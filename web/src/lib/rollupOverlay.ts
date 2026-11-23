@@ -1,4 +1,4 @@
-import { axisDuration } from './chartScale';
+import { countAxis, durationAxis, hourAxisTitle, labelWidth, requestsAxisTitle } from './chartAxis';
 import { HOURS_PER_ROW, dayLabel, gridRows, latencyText, whole, zoneNote, type GridRow, type HourCell, type HourGridResponse } from './rollup';
 
 /*
@@ -180,6 +180,12 @@ export function overlayOption(first: OverlayDay, second: OverlayDay, metric: Ove
   const colors = [p.series[0] ?? p.text, p.series[1] ?? p.text2];
   const hours = Array.from({ length: HOURS_PER_ROW }, (_, hour) => hourText(hour));
   const ms = metric === 'p95';
+  // One unit and one precision on the value axis, the unit in its title (BL-510). Same rules as the Requests-over-time chart.
+  const values = days.flatMap(day => day.points.map(point => pointValue(point, metric))).filter((value): value is number => value != null && Number.isFinite(value));
+  const top = Math.max(0, ...values);
+  const times = durationAxis(top), counts = countAxis(top);
+  const widest = ms ? times.widest : counts.widest;
+  const titleStyle = { color: p.text2, fontSize: 12 };
   const series = days.flatMap((day, index) => {
     const look = overlayLook[index];
     const base = { type: 'line', connectNulls: false, symbol: look.symbol, symbolSize: look.size, z: 3 + index, itemStyle: { color: colors[index] } };
@@ -197,7 +203,7 @@ export function overlayOption(first: OverlayDay, second: OverlayDay, metric: Ove
     animation: false,
     color: colors,
     // No chart legend: the key above the chart (plain HTML) names both lines and the dashed style.
-    grid: { left: 62, right: 16, top: 30, bottom: 30 },
+    grid: { left: Math.max(62, labelWidth(widest) + 14 + 17), right: 16, top: 16, bottom: 48 },
     tooltip: {
       trigger: 'axis', confine: true, backgroundColor: p.surface, borderColor: p.axisLine, textStyle: { color: p.text, fontSize: 12 },
       formatter: (items: Array<{ dataIndex: number }>) => {
@@ -205,10 +211,11 @@ export function overlayOption(first: OverlayDay, second: OverlayDay, metric: Ove
         return '<b>' + hourText(hour) + '</b><br/>' + days.map(day => escapeHTML(day.label) + ': ' + escapeHTML(pointText(day.points[hour] ?? emptyPoint(hour), metric))).join('<br/>');
       }
     },
-    xAxis: { type: 'category', data: hours, boundaryGap: false, axisLabel: { color: p.text2, interval: 2, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } } },
+    xAxis: { type: 'category', data: hours, boundaryGap: false, axisLabel: { color: p.text2, interval: 2, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } }, name: hourAxisTitle, nameLocation: 'middle', nameGap: 28, nameTextStyle: titleStyle },
     yAxis: {
-      type: 'value', min: 0, minInterval: ms ? undefined : 1, name: ms ? 'P95 time' : 'Requests', nameTextStyle: { color: p.text2, align: 'left' },
-      axisLabel: { color: p.text2, ...(ms ? { formatter: (value: number) => axisDuration(value) } : {}) }, splitLine: { lineStyle: { color: p.grid } }
+      type: 'value', min: 0, ...(ms ? { max: times.maxMs, interval: times.intervalMs } : { max: counts.max, interval: counts.interval }),
+      name: ms ? 'P95 response time (' + times.unit + ')' : requestsAxisTitle, nameLocation: 'middle', nameGap: labelWidth(widest) + 14, nameTextStyle: titleStyle,
+      axisLabel: { color: p.text2, formatter: (value: number) => ms ? times.format(value) : counts.format(value) }, splitLine: { lineStyle: { color: p.grid } }
     },
     series
   };
