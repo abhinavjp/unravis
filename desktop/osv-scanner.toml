@@ -5,17 +5,12 @@
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0429"
 effectiveUntil = 2027-02-23
-reason = "glib 0.18.5 comes only from the GTK backend of Tauri (gtk, muda, tao, wry on Linux). `cargo tree -i glib --target x86_64-pc-windows-msvc -e all` is empty: the Windows build, the only one shipped, does not contain it. Goes away with a Tauri that uses a newer gtk-rs."
-
-[[IgnoredVulns]]
-id = "GHSA-wrw7-89jp-8q8g"
-effectiveUntil = 2027-02-23
-reason = "Same advisory as RUSTSEC-2024-0429 (glib, Linux GTK backend only, not in the Windows build)."
+reason = "(Also GHSA-wrw7-89jp-8q8g: osv-scanner groups the two ids, so one entry waives both.) glib 0.18.5 comes only from the GTK backend of Tauri (gtk, muda, tao, wry on Linux). `cargo tree -i glib --target x86_64-pc-windows-msvc -e all` is empty: the Windows build, the only one shipped, does not contain it. Goes away with a Tauri that uses a newer gtk-rs."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0370"
 effectiveUntil = 2027-02-23
-reason = "proc-macro-error 1.0.4 is unmaintained, not exploitable: a compile-time macro helper that only glib-macros pulls in, so it is only in the Linux GTK tree (`cargo tree -i proc-macro-error --target x86_64-pc-windows-msvc -e all` is empty)."
+reason = "proc-macro-error 1.0.4 is only an unmaintained notice (no vulnerability): a compile-time macro helper that only glib-macros pulls in, so it is only in the Linux GTK tree (`cargo tree -i proc-macro-error --target x86_64-pc-windows-msvc -e all` is empty)."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0543"
