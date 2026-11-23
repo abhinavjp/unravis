@@ -180,7 +180,7 @@ func New(port int, opts ...Option) (*Bridge, error) {
 	b.locate = func() (string, string, error) {
 		record, err := readSessionRecord(path)
 		if err != nil {
-			return "", "", errors.New(notRunning)
+			return "", "", coded(CodeBackendUnavailable, notRunning)
 		}
 		filePort, fileToken := record.Port, record.Token
 		if err := checkSessionProcess(path, record); err != nil {
@@ -206,7 +206,7 @@ func checkSessionProcess(path string, record sessionRecord) error {
 	}
 	if !processAlive(record.Pid) {
 		_ = RemoveSessionFile(path, record.Token)
-		return errors.New(notRunning)
+		return coded(CodeBackendUnavailable, notRunning)
 	}
 	owners, ok := listenerOwners(record.Port)
 	if !ok {
@@ -214,7 +214,7 @@ func checkSessionProcess(path string, record sessionRecord) error {
 	}
 	for _, owner := range owners {
 		if owner != record.Pid {
-			return errors.New(notOwner)
+			return coded(CodeBackendUnavailable, notOwner)
 		}
 	}
 	return nil
@@ -273,7 +273,7 @@ func (b *Bridge) checkIdentifierFilters(q audit.Query) error {
 func boundedBody(r io.Reader, limit int) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, int64(limit)+1))
 	if err != nil || len(data) > limit {
-		return nil, errors.New("audit response exceeded its read budget")
+		return nil, coded(CodeResultTooLarge, "audit response exceeded its read budget")
 	}
 	return data, nil
 }
@@ -282,14 +282,14 @@ func boundedBody(r io.Reader, limit int) ([]byte, error) {
 // the cached comparison belongs to another dashboard session and is dropped.
 func (b *Bridge) session() (string, string, error) {
 	if b.locate == nil {
-		return "", "", errors.New(notRunning)
+		return "", "", coded(CodeBackendUnavailable, notRunning)
 	}
 	base, token, err := b.locate()
 	if err != nil {
 		return "", "", err
 	}
 	if token == "" || len(token) > maxTokenBytes {
-		return "", "", errors.New(notRunning)
+		return "", "", coded(CodeBackendUnavailable, notRunning)
 	}
 	b.mu.Lock()
 	changed := b.token != token
@@ -310,14 +310,14 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 	switch path {
 	case "/api/info", "/api/sources", "/api/analyze", "/api/requests", "/api/activity", "/api/slowest", "/api/breakdown":
 	default:
-		return errors.New("audit operation is not allowed")
+		return coded(CodeInternal, "audit operation is not allowed")
 	}
 	var payload []byte
 	var err error
 	if input != nil {
 		payload, err = json.Marshal(input)
 		if err != nil {
-			return errors.New("invalid audit request")
+			return coded(CodeInternal, "invalid audit request")
 		}
 	}
 	for attempt := 0; attempt < 2; attempt++ {
@@ -342,12 +342,15 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 		res, err := b.client.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
-				return errors.New("audit operation cancelled or its five-minute deadline expired")
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					return coded(CodeDeadlineExceeded, "audit operation cancelled or its five-minute deadline expired")
+				}
+				return coded(CodeCancelled, "audit operation cancelled or its five-minute deadline expired")
 			}
 			if errors.Is(err, errUnproven) {
-				return errors.New(unproven)
+				return coded(CodeBackendUnavailable, unproven)
 			}
-			return errors.New("Unravis did not answer. Start the dashboard, then retry")
+			return coded(CodeBackendUnavailable, "Unravis did not answer. Start the dashboard, then retry")
 		}
 		data, readErr := boundedBody(res.Body, maxBody)
 		res.Body.Close()
@@ -368,27 +371,29 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 			// Never reflect arbitrary upstream text, URLs, credentials or driver errors.
 			switch res.StatusCode {
 			case 401:
-				return errors.New("Unravis refused the session. Restart the dashboard, then retry")
+				return coded(CodeBackendUnavailable, "Unravis refused the session. Restart the dashboard, then retry")
 			case 413:
-				return errors.New("audit processing limit reached; increase bucketSeconds, narrow controller/action or sources, and retry explicitly in the dashboard for its detailed limit message")
+				return coded(CodeBudgetExceeded, "audit processing limit reached; increase bucketSeconds, narrow controller/action or sources, and retry explicitly in the dashboard for its detailed limit message")
 			case 400:
-				return errors.New("audit query rejected; verify source IDs, date windows, filters and chart interval")
+				return coded(CodeInvalidArguments, "audit query rejected; verify source IDs, date windows, filters and chart interval")
 			case 404:
-				return errors.New("audit source or record is unavailable; list sources again")
+				return coded(CodeNotFound, "audit source or record is unavailable; list sources again")
+			case 423:
+				return coded(CodeLocked, "Unravis is locked; unlock it in the app")
 			case 429:
-				return errors.New("audit service is busy; wait and retry explicitly")
+				return coded(CodeBusy, "audit service is busy; wait and retry explicitly")
 			case 504:
-				return errors.New("audit operation exceeded its five-minute deadline")
+				return coded(CodeDeadlineExceeded, "audit operation exceeded its five-minute deadline")
 			default:
-				return fmt.Errorf("local audit operation failed (HTTP %d); check the dashboard", res.StatusCode)
+				return coded(CodeInternal, fmt.Sprintf("local audit operation failed (HTTP %d); check the dashboard", res.StatusCode))
 			}
 		}
 		if err = json.Unmarshal(data, output); err != nil {
-			return errors.New("local audit response was not valid data")
+			return coded(CodeInternal, "local audit response was not valid data")
 		}
 		return nil
 	}
-	return errors.New("local audit session changed; list sources and retry")
+	return coded(CodeBackendUnavailable, "local audit session changed; list sources and retry")
 }
 func strictArgs(data json.RawMessage, target any) error {
 	data = bytes.TrimSpace(data)

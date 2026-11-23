@@ -359,3 +359,43 @@ func TestHelloOnlyOnUIPipeAndOnlyGet(t *testing.T) {
 		t.Errorf("hello answered with no token configured: %q", w.Body.String())
 	}
 }
+
+func TestCLIRoutesNeedACLIImageAndOnlyOnAG(t *testing.T) {
+	cli := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "cli:"+r.Header.Get(tokenHeader)) //nolint:gosec // test echo into a recorder
+	})
+	h := Handler(echoToken(), WithCLI(cli))
+
+	req := func(role Role, image, p string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", p, nil)
+		r = r.WithContext(WithPeerImage(WithRole(r.Context(), role), image))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if w := req(RoleAG, `C:\App\bin\unravis.exe`, "/cli/v1/op"); w.Code != 200 || w.Body.String() != "cli:" {
+		t.Errorf("the command line image: %d %q", w.Code, w.Body.String())
+	}
+	if w := req(RoleAG, `C:\App\unravis-desktop.exe`, "/cli/v1/op"); w.Code != 403 {
+		t.Errorf("the shell image on a cli route: %d", w.Code)
+	}
+	if w := req(RoleAG, "", "/cli/v1/op"); w.Code != 403 {
+		t.Errorf("no image: %d", w.Code)
+	}
+	if w := req(RoleAG, `C:\App\bin\unravis.exe`, "/cli/v1/../api/cases"); w.Code != 404 {
+		t.Errorf("an unclean path: %d", w.Code)
+	}
+	// the ui pipe never reaches the cli handler
+	if w := req(RoleUI, `C:\App\bin\unravis.exe`, "/cli/v1/op"); strings.HasPrefix(w.Body.String(), "cli:") {
+		t.Errorf("the ui pipe reached the cli handler")
+	}
+	// without the option the prefix goes to the served handler, as before
+	plain := Handler(echoToken())
+	r := httptest.NewRequest("GET", "/cli/v1/op", nil)
+	r = r.WithContext(WithPeerImage(WithRole(r.Context(), RoleAG), `C:\App\bin\unravis.exe`))
+	w := httptest.NewRecorder()
+	plain.ServeHTTP(w, r)
+	if strings.HasPrefix(w.Body.String(), "cli:") {
+		t.Errorf("no option, but the cli handler answered")
+	}
+}

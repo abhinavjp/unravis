@@ -109,7 +109,9 @@ func Retryable(c Code, workStarted bool) bool {
 
 // FromMCP maps an error code of the MCP server (area 03) to a code of the command line. pending says the calling profile is waiting
 // for approval (permission_required then means APPROVAL_REQUIRED, otherwise PERMISSION_DENIED). backend says why the owner could not
-// be reached when the MCP code is backend_unavailable ("", "stale" or "untrusted"). A code that is not known maps to INTERNAL.
+// be reached when the MCP code is backend_unavailable ("", "stale" or "untrusted"). A code that is not known maps to INTERNAL. not_found,
+// locked and busy are codes of the owner side of the command line (internal/mcp, CodedError) for a missing source, a locked app and a
+// comparison that is already running.
 func FromMCP(code string, pending bool, backend string) Code {
 	switch code {
 	case "invalid_arguments":
@@ -131,6 +133,12 @@ func FromMCP(code string, pending bool, backend string) Code {
 		return CodeTimeout
 	case "result_too_large":
 		return CodeResultTooLarge
+	case "not_found":
+		return CodeNotFound
+	case "locked":
+		return CodeCaseLocked
+	case "busy":
+		return CodeOwnerBusy
 	case "backend_unavailable":
 		switch backend {
 		case "stale":

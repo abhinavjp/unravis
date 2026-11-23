@@ -93,7 +93,7 @@ func (b *Bridge) cached(id string) (*audit.Analysis, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if id == "" || b.result == nil || id != b.resultID || b.now().Sub(b.created) > resultTTL {
-		return nil, errors.New("result expired or was replaced; run audit_compare again. Results last ten minutes and only the latest successful comparison is retained")
+		return nil, coded(CodeResultExpired, "result expired or was replaced; run audit_compare again. Results last ten minutes and only the latest successful comparison is retained")
 	}
 	return b.result, nil
 }
@@ -103,7 +103,7 @@ func findGroup(result *audit.Analysis, key string) (audit.Comparison, error) {
 			return row, nil
 		}
 	}
-	return audit.Comparison{}, errors.New("API group is not in this result; use audit_get_groups to select its apiKey")
+	return audit.Comparison{}, coded(CodeNotFound, "API group is not in this result; use audit_get_groups to select its apiKey")
 }
 func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (any, error) {
 	switch name {
@@ -148,7 +148,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		b.mu.Lock()
 		if b.comparing {
 			b.mu.Unlock()
-			return nil, errors.New("a comparison is already running in this MCP session; wait or cancel it before starting another")
+			return nil, coded(CodeBusy, "a comparison is already running in this MCP session; wait or cancel it before starting another")
 		}
 		b.comparing = true
 		b.mu.Unlock()
@@ -159,7 +159,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		}
 		var random [16]byte
 		if _, err := rand.Read(random[:]); err != nil {
-			return nil, errors.New("could not create result handle")
+			return nil, coded(CodeInternal, "could not create result handle")
 		}
 		id := hex.EncodeToString(random[:])
 		b.mu.Lock()
@@ -282,6 +282,6 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 	case "audit_get_breakdown":
 		return b.breakdown(ctx, raw)
 	default:
-		return nil, errors.New("unknown tool; only the advertised read-only audit tools are available")
+		return nil, coded(CodeInternal, "unknown tool; only the advertised read-only audit tools are available")
 	}
 }
