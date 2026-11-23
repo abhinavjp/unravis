@@ -27,13 +27,16 @@ import (
 //	code_runs       one row per run: who asked, the source, the outcome
 //	code_run_calls  one row per host call the run made, with hashes and an
 //	                optional compressed copy of the result
-//	code_chain      an append-only hash chain with a "begin" and an "end" record
-//	                per run
+//	code_chain      an append-only hash chain with a "begin" record per run, a
+//	                "call" record for every call as it is written, and an "end"
+//	                record
 //
 // The chain is what makes the record tamper-evident. Each record is canonical
-// JSON (RFC 8785, internal/jcs) and carries the hash of the record before it;
-// the "end" record also carries the hash of every call row of the run and a hash
-// of every text the run row holds. VerifyCodeChain recomputes all of it from the
+// JSON (RFC 8785, internal/jcs) and carries the hash of the record before it.
+// A "call" record binds one call row the moment it is written, so the calls of a
+// run that is still open (or that crashed) are bound too; the "end" record also
+// carries the hash of every call row of the run and a hash of every text the run
+// row holds. VerifyCodeChain recomputes all of it from the
 // table rows, so editing, deleting, reordering or inserting a row anywhere shows
 // up as a named failed check at the first row it breaks.
 //
@@ -91,6 +94,11 @@ const (
 	MaxChainRowsPage = 1000
 	// MaxRunsPage is the most ListRuns returns in one call.
 	MaxRunsPage = 500
+	// OrphanGrace is how old a "running" run must be before CloseOrphanRuns takes
+	// it for a crashed one. No run lives this long (spec 04: the wall clock is
+	// capped at 280 s), so a run younger than this may be live in another window
+	// and is left alone.
+	OrphanGrace = 15 * time.Minute
 )
 
 // ChainZeroHash is the prev_hash of the first chain record.
@@ -121,6 +129,7 @@ const (
 	BlobOversize  = "oversize" // bigger than MaxCallBlob, or the run's copies reached MaxRunBlobTotal
 	BlobWithheld  = "withheld" // hidden mode, and the result held an address
 	phaseBegin    = "begin"
+	phaseCall     = "call"
 	phaseEnd      = "end"
 	recordVersion = 1
 )
@@ -154,12 +163,16 @@ func badRun(format string, a ...any) error {
 // It is a separate interface, like WorkspaceBlobStore, so it breaks no Case.
 // Only the broker writes to it.
 //
-// Write rules shared by every implementation: BeginRun and RecordCall are
-// refused with ErrCaseClosed once the case is closed; EndRun and CloseOrphanRuns
+// Write rules shared by every implementation: BeginRun is refused with
+// ErrCaseClosed once the case is closed; RecordCall, EndRun and CloseOrphanRuns
 // are still allowed on a closed case, so a run that was in flight when the case
-// closed can be sealed (they are refused while an archive is being made or after
+// closed can finish (all are refused while an archive is being made or after
 // it); every write is refused with ErrHandleClosed on a closed handle and
-// ErrNotFound on an erased case. Reads work on a closed case, and on a case that
+// ErrNotFound on an erased case. The sqlite store refuses BeginRun and
+// CloseOrphanRuns with ErrImportRunning while an import runs, but makes
+// RecordCall and EndRun wait for it, so a run that ends during an import is
+// sealed after it (on Windows the wait is 5 s, then sealedfile.ErrUnavailable:
+// the caller retries). Reads work on a closed case, and on a case that
 // never held a run they return empty results.
 type CodeRunStore interface {
 	// BeginRun inserts the run with status "running" and appends its "begin"
@@ -170,10 +183,11 @@ type CodeRunStore interface {
 	// EndRun seals the run: it fills the outcome, hashes the call rows and
 	// appends the "end" record. A second call returns ErrRunFinished.
 	EndRun(ctx context.Context, runID string, end RunEnd) (CodeRun, error)
-	// CloseOrphanRuns seals every run still "running" as "crashed" and returns
-	// how many. Call it where no run can be live: when the case is opened by the
-	// broker that owns it, before it accepts a run. A late EndRun for a run closed
-	// here gets ErrRunFinished, so a wrong call loses the outcome, not the chain.
+	// CloseOrphanRuns seals every run that is still "running" and older than
+	// OrphanGrace as "crashed" and returns how many. A younger run may be live in
+	// another window or process and is left alone, so call it at case open. A late
+	// EndRun for a run closed here gets ErrRunFinished: a wrong call loses the
+	// outcome, never forks the chain.
 	CloseOrphanRuns(ctx context.Context) (int, error)
 	// ListRuns returns runs newest first, without Source and ConsoleLogs.
 	ListRuns(ctx context.Context, q RunQuery) ([]CodeRun, error)
@@ -278,7 +292,7 @@ type CodeCall struct {
 	Seq         int
 	DoneSeq     int
 	Tool        string
-	ArgsJSON    string // canonical JSON; empty when ArgsState is "withheld"
+	ArgsJSON    string // canonical JSON (RFC 8785: numbers are doubles, so an integer above 2^53 is rounded); empty when ArgsState is "withheld"
 	ArgsHash    string // SHA-256 of the canonical argument document
 	ArgsState   string
 	ResultHash  string // SHA-256 of the result bytes
@@ -294,7 +308,8 @@ type CodeCall struct {
 type ChainRow struct {
 	N          int64
 	RunID      string
-	Phase      string // begin | end
+	Phase      string // begin | call | end
+	Seq        int    // the call's seq for a "call" row, 0 for the others
 	RecordJSON string // canonical JSON of the record
 	PrevHash   string
 	RecordHash string // hex SHA-256 of RecordJSON
@@ -355,6 +370,11 @@ const (
 	CheckCallRow        = "call_row"
 	CheckCallBlob       = "call_blob"
 	CheckUnreadable     = "unreadable"
+	CheckCallMismatch   = "call_mismatch"
+	CheckCallMissing    = "call_missing"
+	CheckCallUnchained  = "call_unchained"
+	CheckCallOrder      = "call_order"
+	CheckTextUTF8       = "text_utf8"
 	CheckRunUnchained   = "run_unchained"
 	CheckCallsOrphan    = "calls_orphan"
 	CheckHeadMissing    = "head_missing"
@@ -590,7 +610,8 @@ func FinishCodeRun(run CodeRun, calls []CodeCall, end RunEnd, now time.Time) (Co
 		return CodeRun{}, badRun("hash")
 	case end.SandboxMode != "" && !slicesContains(textModePats, end.SandboxMode):
 		return CodeRun{}, badRun("sandbox mode")
-	case len(end.Runtime) > 64 || hasControl(end.Runtime) || len(end.ErrorCode) > 64 || hasControl(end.ErrorCode):
+	case len(end.Runtime) > 64 || hasControl(end.Runtime) || len(end.ErrorCode) > 64 || hasControl(end.ErrorCode),
+		!utf8.ValidString(end.Runtime) || !utf8.ValidString(end.ErrorCode) || !utf8.ValidString(end.SandboxMode):
 		return CodeRun{}, badRun("runtime or error code")
 	case end.DurationMS < 0 || end.DurationMS > 1<<40 || end.ScriptMS < 0 || end.ScriptMS > 1<<40:
 		return CodeRun{}, badRun("duration")
@@ -617,6 +638,10 @@ func FinishCodeRun(run CodeRun, calls []CodeCall, end RunEnd, now time.Time) (Co
 		preview, _ = ReplaceAddresses(preview)
 	}
 	out.ErrorText, out.ConsoleLogs, out.ResultPreview = errText, logs, preview
+	if !run.AllowIdentifiers {
+		out.ErrorCode, _ = ReplaceAddresses(out.ErrorCode)
+		out.Runtime, _ = ReplaceAddresses(out.Runtime)
+	}
 	if len(end.Result) > 0 {
 		out.ResultHash, out.ResultBytes = sha256Hex(end.Result), int64(len(end.Result))
 	} else {
@@ -649,19 +674,31 @@ func b2i(b bool) int64 {
 	return 0
 }
 
+// canonRecord writes a record in canonical form. It refuses a string that is not
+// valid UTF-8: encoding/json would fold every invalid byte into U+FFFD, so two
+// different stored values would hash alike.
+func canonRecord(m map[string]any) (string, error) {
+	for k, v := range m {
+		if str, ok := v.(string); ok && !utf8.ValidString(str) {
+			return "", fmt.Errorf("%w: field %s is not valid UTF-8", ErrBadCodeRun, k)
+		}
+	}
+	b, err := jcs.Marshal(m)
+	return string(b), err
+}
+
 // BeginRecord is the canonical JSON of the "begin" record of a run row, with n and prev filled in.
 func BeginRecord(r CodeRun, n int64, prev string) (string, error) {
-	b, err := jcs.Marshal(map[string]any{
+	return canonRecord(map[string]any{
 		"v": recordVersion, "n": n, "phase": phaseBegin, "run_id": r.RunID, "prev_hash": prev,
 		"created_at_utc": r.CreatedMS, "surface": r.Surface, "caller_id": r.CallerID,
 		"caller_declared": b2i(r.CallerDeclared), "allow_identifiers": b2i(r.AllowIdentifiers), "keep_results": b2i(r.KeepResults),
 		"tool_schema_hash": r.ToolSchemaHash, "reason": r.Reason, "source_sha256": sha256Hex([]byte(r.Source)),
 		"seed": r.Seed, "clock_ms": r.ClockMS,
 	})
-	return string(b), err
 }
 
-// callEntry is what the calls hash covers of one call row.
+// callEntry is what the calls hash and a call record cover of one call row.
 func callEntry(c CodeCall) map[string]any {
 	return map[string]any{
 		"seq": c.Seq, "done_seq": c.DoneSeq, "tool_name": c.Tool, "args_hash": c.ArgsHash, "args_state": c.ArgsState,
@@ -673,6 +710,11 @@ func callEntry(c CodeCall) map[string]any {
 func CallsHash(calls []CodeCall) (string, error) {
 	entries := make([]map[string]any, 0, len(calls))
 	for _, c := range calls {
+		for _, f := range []string{c.Tool, c.ArgsHash, c.ArgsState, c.ResultHash, c.BlobState, c.Status} {
+			if !utf8.ValidString(f) {
+				return "", fmt.Errorf("%w: a call field is not valid UTF-8", ErrBadCodeRun)
+			}
+		}
 		entries = append(entries, callEntry(c))
 	}
 	b, err := jcs.Marshal(entries)
@@ -682,6 +724,15 @@ func CallsHash(calls []CodeCall) (string, error) {
 	return sha256Hex(b), nil
 }
 
+// CallRecordJSON is the canonical JSON of the "call" record of one call row. Every
+// call is chained when it is written, so a call of a run that is still open is
+// bound too.
+func CallRecordJSON(r CodeCall, n int64, prev string) (string, error) {
+	m := callEntry(r)
+	m["v"], m["n"], m["phase"], m["run_id"], m["prev_hash"] = recordVersion, n, phaseCall, r.RunID, prev
+	return canonRecord(m)
+}
+
 // EndRecord is the canonical JSON of the "end" record of a finished run row.
 // calls must be the run's call rows sorted by seq.
 func EndRecord(r CodeRun, calls []CodeCall, n int64, prev string) (string, error) {
@@ -689,7 +740,7 @@ func EndRecord(r CodeRun, calls []CodeCall, n int64, prev string) (string, error
 	if err != nil {
 		return "", err
 	}
-	b, err := jcs.Marshal(map[string]any{
+	return canonRecord(map[string]any{
 		"v": recordVersion, "n": n, "phase": phaseEnd, "run_id": r.RunID, "prev_hash": prev,
 		"ended_at_utc": r.EndedMS, "status": r.Status, "error_code": r.ErrorCode, "error_text": r.ErrorText,
 		"sandbox_mode": r.SandboxMode, "runtime": r.Runtime, "worker_sha256": r.WorkerSHA256,
@@ -698,24 +749,29 @@ func EndRecord(r CodeRun, calls []CodeCall, n int64, prev string) (string, error
 		"console_logs_sha256": sha256Hex([]byte(r.ConsoleLogs)), "call_count": r.CallCount, "calls_hash": ch,
 		"duration_ms": r.DurationMS, "script_ms": r.ScriptMS,
 	})
-	return string(b), err
 }
 
 // NewChainRow wraps a record into its chain row.
-func NewChainRow(n int64, runID, phase, record, prev string) ChainRow {
-	return ChainRow{N: n, RunID: runID, Phase: phase, RecordJSON: record, PrevHash: prev, RecordHash: sha256Hex([]byte(record))}
+func NewChainRow(n int64, runID, phase string, seq int, record, prev string) ChainRow {
+	return ChainRow{N: n, RunID: runID, Phase: phase, Seq: seq, RecordJSON: record, PrevHash: prev, RecordHash: sha256Hex([]byte(record))}
 }
 
 // BeginChainRow is the row appended by BeginRun.
 func BeginChainRow(r CodeRun, n int64, prev string) (ChainRow, error) {
 	rec, err := BeginRecord(r, n, prev)
-	return NewChainRow(n, r.RunID, phaseBegin, rec, prev), err
+	return NewChainRow(n, r.RunID, phaseBegin, 0, rec, prev), err
+}
+
+// CallChainRow is the row appended by RecordCall.
+func CallChainRow(c CodeCall, n int64, prev string) (ChainRow, error) {
+	rec, err := CallRecordJSON(c, n, prev)
+	return NewChainRow(n, c.RunID, phaseCall, c.Seq, rec, prev), err
 }
 
 // EndChainRow is the row appended by EndRun and CloseOrphanRuns.
 func EndChainRow(r CodeRun, calls []CodeCall, n int64, prev string) (ChainRow, error) {
 	rec, err := EndRecord(r, calls, n, prev)
-	return NewChainRow(n, r.RunID, phaseEnd, rec, prev), err
+	return NewChainRow(n, r.RunID, phaseEnd, 0, rec, prev), err
 }
 
 // ---------------------------------------------------------------------------
@@ -827,9 +883,14 @@ type verifier struct {
 	anchorHit string
 }
 
+// runChain is what the walk knows of one run. calls holds its call rows, read
+// once (without the stored copies) the first time a record of the run needs them.
 type runChain struct {
 	begun, ended bool
 	loaded       bool
+	calls        map[int]CodeCall
+	order        []CodeCall // by seq
+	chained      map[int]bool
 }
 
 func (v *verifier) problem(n int64, runID, check, detail string) {
@@ -880,6 +941,59 @@ func (v *verifier) unreadable(err error, n int64, runID string) error {
 	return err
 }
 
+// textsValid reports whether every text of a run row is valid UTF-8. The records
+// are built from the stored texts, and a text that is not valid would be folded
+// into U+FFFD there, hiding an edit.
+func textsValid(r CodeRun) bool {
+	for _, t := range []string{r.RunID, r.Surface, r.CallerID, r.SandboxMode, r.Runtime, r.WorkerSHA256, r.ToolSchemaHash, r.Reason, r.Source,
+		r.StrippedJSHash, r.Seed, r.Status, r.ErrorCode, r.ErrorText, r.ResultHash, r.ResultPreview, r.ConsoleLogs} {
+		if !utf8.ValidString(t) {
+			return false
+		}
+	}
+	return true
+}
+
+// loadCalls reads the call rows of a run once, checks each against its own
+// hashes and keeps them (without the stored copy) for the records that follow.
+func (v *verifier) loadCalls(ctx context.Context, src CodeChainSource, st *runChain, n int64, runID string) error {
+	if st.loaded {
+		return nil
+	}
+	st.loaded = true
+	calls, err := src.LoadCalls(ctx, runID)
+	if err != nil {
+		return v.unreadable(err, n, runID)
+	}
+	v.seenCalls += int64(len(calls))
+	st.calls = map[int]CodeCall{}
+	seqs, dones := map[int]bool{}, map[int]bool{}
+	for _, c := range calls {
+		if check, detail := VerifyCallRow(c); check != "" {
+			v.problem(n, runID, check, detail)
+		}
+		if seqs[c.Seq] || dones[c.DoneSeq] {
+			v.problem(n, runID, CheckCallRow, "a call sequence number is used twice")
+		}
+		seqs[c.Seq], dones[c.DoneSeq] = true, true
+		c.Blob = nil
+		st.calls[c.Seq] = c
+		st.order = append(st.order, c)
+	}
+	return nil
+}
+
+// checkChained compares the call rows of a run with the call records the chain
+// holds for it: each row needs its record and each record its row.
+func (v *verifier) checkChained(st *runChain, n int64, runID string) {
+	for seq := range st.calls {
+		if !st.chained[seq] {
+			v.problem(n, runID, CheckCallUnchained, "a call row has no call record in the chain")
+			return
+		}
+	}
+}
+
 func (v *verifier) row(ctx context.Context, src CodeChainSource, row ChainRow) error {
 	n := row.N
 	v.rep.Rows++
@@ -904,8 +1018,11 @@ func (v *verifier) row(ctx context.Context, src CodeChainSource, row ChainRow) e
 
 	st := v.runs[row.RunID]
 	if st == nil {
-		st = &runChain{}
+		st = &runChain{chained: map[int]bool{}}
 		v.runs[row.RunID] = st
+	}
+	if row.Phase != phaseCall && row.Seq != 0 {
+		v.problem(n, row.RunID, CheckRecordForm, "a begin or end row carries a call number")
 	}
 	switch row.Phase {
 	case phaseBegin:
@@ -914,6 +1031,16 @@ func (v *verifier) row(ctx context.Context, src CodeChainSource, row ChainRow) e
 		}
 		st.begun = true
 		v.rep.Runs++
+	case phaseCall:
+		switch {
+		case !st.begun:
+			v.problem(n, row.RunID, CheckCallOrder, "a call record with no begin record before it")
+		case st.ended:
+			v.problem(n, row.RunID, CheckCallOrder, "a call record after the run's end record")
+		case st.chained[row.Seq]:
+			v.problem(n, row.RunID, CheckCallOrder, "the call has two records")
+		}
+		st.chained[row.Seq] = true
 	case phaseEnd:
 		switch {
 		case !st.begun:
@@ -934,38 +1061,43 @@ func (v *verifier) row(ctx context.Context, src CodeChainSource, row ChainRow) e
 		v.problem(n, row.RunID, CheckRunMissing, "the chain names a run the case does not hold")
 		return nil
 	}
-	if row.Phase == phaseBegin {
+	if !textsValid(run) {
+		v.problem(n, row.RunID, CheckTextUTF8, "a text of the run row is not valid UTF-8")
+	}
+	switch row.Phase {
+	case phaseBegin:
 		want, err := BeginRecord(run, n, row.PrevHash)
 		if err != nil || want != row.RecordJSON {
 			v.problem(n, row.RunID, CheckBeginMismatch, "the run row does not match its begin record")
 		}
-		return nil
-	}
-	calls, err := src.LoadCalls(ctx, row.RunID)
-	if err != nil {
-		return v.unreadable(err, n, row.RunID)
-	}
-	st.loaded = true
-	v.seenCalls += int64(len(calls))
-	if run.Status == RunRunning {
-		v.problem(n, row.RunID, CheckRunStatus, "the run row says running although its end record exists")
-	}
-	if run.CallCount != len(calls) {
-		v.problem(n, row.RunID, CheckCallRow, "the number of call rows differs from the run's call count")
-	}
-	seqs, dones := map[int]bool{}, map[int]bool{}
-	for _, c := range calls {
-		if check, detail := VerifyCallRow(c); check != "" {
-			v.problem(n, row.RunID, check, detail)
+	case phaseCall:
+		if err := v.loadCalls(ctx, src, st, n, row.RunID); err != nil {
+			return err
 		}
-		if seqs[c.Seq] || dones[c.DoneSeq] {
-			v.problem(n, row.RunID, CheckCallRow, "a call sequence number is used twice")
+		call, ok := st.calls[row.Seq]
+		if !ok {
+			v.problem(n, row.RunID, CheckCallMissing, "the chain holds a call record whose call row is gone")
+			return nil
 		}
-		seqs[c.Seq], dones[c.DoneSeq] = true, true
-	}
-	want, err := EndRecord(run, calls, n, row.PrevHash)
-	if err != nil || want != row.RecordJSON {
-		v.problem(n, row.RunID, CheckEndMismatch, "the run row or its call rows do not match the end record")
+		want, err := CallRecordJSON(call, n, row.PrevHash)
+		if err != nil || want != row.RecordJSON {
+			v.problem(n, row.RunID, CheckCallMismatch, "the call row does not match its call record")
+		}
+	case phaseEnd:
+		if err := v.loadCalls(ctx, src, st, n, row.RunID); err != nil {
+			return err
+		}
+		v.checkChained(st, n, row.RunID)
+		if run.Status == RunRunning {
+			v.problem(n, row.RunID, CheckRunStatus, "the run row says running although its end record exists")
+		}
+		if run.CallCount != len(st.order) {
+			v.problem(n, row.RunID, CheckCallRow, "the number of call rows differs from the run's call count")
+		}
+		want, err := EndRecord(run, st.order, n, row.PrevHash)
+		if err != nil || want != row.RecordJSON {
+			v.problem(n, row.RunID, CheckEndMismatch, "the run row or its call rows do not match the end record")
+		}
 	}
 	return nil
 }
@@ -983,27 +1115,20 @@ func (v *verifier) finish(ctx context.Context, src CodeChainSource) error {
 			}
 			continue
 		}
-		calls, err := src.LoadCalls(ctx, id)
-		if err != nil {
-			if err := v.unreadable(err, 0, id); err != nil {
-				return err
-			}
-			continue
+		if err := v.loadCalls(ctx, src, st, 0, id); err != nil {
+			return err
 		}
-		v.seenCalls += int64(len(calls))
+		v.checkChained(st, 0, id)
 		switch {
 		case !found:
+		case !textsValid(run):
+			v.problem(0, id, CheckTextUTF8, "a text of the run row is not valid UTF-8")
 		case run.Status != RunRunning || run.EndedMS != 0:
 			v.problem(0, id, CheckRunStatus, "the run row is sealed but the chain has no end record for it")
 		default:
 			v.rep.OpenRuns++
 			if run.CallCount != 0 {
 				v.problem(0, id, CheckCallRow, "a running run row holds a call count")
-			}
-			for _, c := range calls {
-				if check, detail := VerifyCallRow(c); check != "" {
-					v.problem(0, id, check, detail)
-				}
 			}
 		}
 	}
@@ -1049,7 +1174,7 @@ func (v *verifier) finish(ctx context.Context, src CodeChainSource) error {
 		return err
 	}
 	for _, m := range missing {
-		v.rep.Warnings = append(v.rep.Warnings, "append-only guard missing: "+m)
+		v.rep.Warnings = append(v.rep.Warnings, "append-only guard missing or changed: "+m)
 	}
 	return nil
 }

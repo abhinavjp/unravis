@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/casestore"
 )
@@ -120,7 +121,7 @@ func codeRunsContract(t *testing.T, f Factory, caps casestore.Caps) {
 		t.Errorf("a call after the end: %v", err)
 	}
 	rep := mustVerify(t, ctx, sa, nil)
-	if !rep.OK || rep.Rows != 2 || rep.Runs != 1 || rep.OpenRuns != 0 || rep.HeadN != 2 || len(rep.Head) != 64 || len(rep.Warnings) != 0 {
+	if !rep.OK || rep.Rows != 4 || rep.Runs != 1 || rep.OpenRuns != 0 || rep.HeadN != 4 || len(rep.Head) != 64 || len(rep.Warnings) != 0 {
 		t.Fatalf("verify = %+v", rep)
 	}
 	if rep := mustVerify(t, ctx, sa, &casestore.ChainAnchor{N: 1, Hash: mustChain(t, ctx, sa)[0].RecordHash}); !rep.OK || !rep.AnchorChecked {
@@ -144,7 +145,8 @@ func codeRunsContract(t *testing.T, f Factory, caps casestore.Caps) {
 		t.Errorf("CallResult of no call: %v", err)
 	}
 	rows, err := sa.ChainRows(ctx, 0, 0)
-	if err != nil || len(rows) != 2 || rows[0].Phase != "begin" || rows[1].Phase != "end" || rows[1].PrevHash != rows[0].RecordHash || rows[0].PrevHash != casestore.ChainZeroHash {
+	if err != nil || len(rows) != 4 || rows[0].Phase != "begin" || rows[1].Phase != "call" || rows[1].Seq != 1 || rows[2].Seq != 2 || rows[3].Phase != "end" ||
+		rows[1].PrevHash != rows[0].RecordHash || rows[3].PrevHash != rows[2].RecordHash || rows[0].PrevHash != casestore.ChainZeroHash {
 		t.Fatalf("ChainRows = %+v %v", rows, err)
 	}
 	if page, _ := sa.ChainRows(ctx, 1, 1); len(page) != 1 || page[0].N != 2 {
@@ -336,6 +338,14 @@ func codeRunsContract(t *testing.T, f Factory, caps casestore.Caps) {
 	if err := sa.RecordCall(ctx, orphan.RunID, okCall(1)); err != nil {
 		t.Fatal(err)
 	}
+	// A run younger than the grace may be live in another window: it is left alone.
+	if n, err := sa.CloseOrphanRuns(ctx); err != nil || n != 0 {
+		t.Fatalf("CloseOrphanRuns on a young run = %d %v", n, err)
+	}
+	if got, _ := sa.GetRun(ctx, orphan.RunID); got.Status != casestore.RunRunning {
+		t.Fatalf("a young run was closed: %+v", got)
+	}
+	e.clock.add(casestore.OrphanGrace + time.Minute)
 	if n, err := sa.CloseOrphanRuns(ctx); err != nil || n != 1 {
 		t.Fatalf("CloseOrphanRuns = %d %v", n, err)
 	}
@@ -405,8 +415,9 @@ func codeRunsContract(t *testing.T, f Factory, caps casestore.Caps) {
 	if _, err := sa.BeginRun(ctx, casestore.RunStart{Surface: "cli", Source: "x"}); !errors.Is(err, casestore.ErrCaseClosed) {
 		t.Errorf("BeginRun on a closed case: %v", err)
 	}
-	if err := sa.RecordCall(ctx, last.RunID, okCall(1)); !errors.Is(err, casestore.ErrCaseClosed) {
-		t.Errorf("RecordCall on a closed case: %v", err)
+	// A run already begun still takes its calls and its end on a closed case.
+	if err := sa.RecordCall(ctx, last.RunID, okCall(1)); err != nil {
+		t.Errorf("RecordCall of a run in flight on a closed case: %v", err)
 	}
 	if _, err := sa.GetRun(ctx, last.RunID); err != nil {
 		t.Errorf("a closed case reads: %v", err)

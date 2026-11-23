@@ -17,6 +17,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 
 	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/sealedfile"
 )
 
 // BL-369: the audit record on a real, sealed SQLite case file. The damage tests
@@ -78,7 +79,7 @@ func newRunCase(t *testing.T) (*Store, *Case, casestore.CaseInfo) {
 func dropGuards(t *testing.T, c *Case) {
 	t.Helper()
 	for _, g := range codeGuards {
-		if _, err := c.db.ExecContext(cctx, "DROP TRIGGER IF EXISTS "+g); err != nil {
+		if _, err := c.db.ExecContext(cctx, "DROP TRIGGER IF EXISTS "+g.name); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -136,11 +137,11 @@ func TestChainVerifies(t *testing.T) {
 	_, c, _ := newRunCase(t)
 	runs := seedRuns(t, c)
 	rep := verify(t, c, nil)
-	if !rep.OK || rep.Rows != 6 || rep.Runs != 3 || rep.OpenRuns != 0 || rep.HeadN != 6 || len(rep.Head) != 64 || len(rep.Warnings) != 0 {
+	if !rep.OK || rep.Rows != 10 || rep.Runs != 3 || rep.OpenRuns != 0 || rep.HeadN != 10 || len(rep.Head) != 64 || len(rep.Warnings) != 0 {
 		t.Fatalf("verify = %+v", rep)
 	}
 	rows, err := c.ChainRows(cctx, 0, 0)
-	if err != nil || len(rows) != 6 || rows[5].RecordHash != rep.Head {
+	if err != nil || len(rows) != 10 || rows[9].RecordHash != rep.Head {
 		t.Fatalf("ChainRows: %v %v", len(rows), err)
 	}
 	for i, r := range rows {
@@ -159,14 +160,23 @@ func TestChainVerifies(t *testing.T) {
 	}
 	// The head is kept beside the chain too.
 	var v string
-	if err := c.db.QueryRow("SELECT v FROM meta WHERE k = ?", codeHeadKey).Scan(&v); err != nil || v != "6:"+rep.Head {
+	if err := c.db.QueryRow("SELECT v FROM meta WHERE k = ?", codeHeadKey).Scan(&v); err != nil || v != "10:"+rep.Head {
 		t.Errorf("meta head = %q %v", v, err)
 	}
 }
 
-// Appending to a case without the tables makes them; reading one without them is empty.
-func TestOldCaseWithoutTablesReadsEmptyAndKeepsItsSchemaVersion(t *testing.T) {
-	_, c, _ := newRunCase(t)
+// A case without the audit tables reads as empty; the first run makes them, with no
+// schema bump. Everything this build does to a case apart from the audit calls is
+// code this change does not touch (the diff holds no edit of the import, read,
+// integrity, close, export or erase paths), and that is the code a previous build
+// runs on the case: so a case holding audit rows, triggers and a chain must still
+// import, read, check, close and reopen through it, without disturbing the audit rows.
+// What no unit test can show is a real previous binary; that stays a manual check
+// (see the BL-369 handoff).
+func TestCaseWithAuditTablesStillWorksForTheExistingCode(t *testing.T) {
+	s, root := newTestStore(t)
+	info := mustCreate(t, s, "Compat")
+	c := mustOpen(t, s, info.ID)
 	ctx := cctx
 	if runs, err := c.ListRuns(ctx, casestore.RunQuery{}); err != nil || runs != nil {
 		t.Fatalf("ListRuns on a case without the tables = %v %v", runs, err)
@@ -181,24 +191,50 @@ func TestOldCaseWithoutTablesReadsEmptyAndKeepsItsSchemaVersion(t *testing.T) {
 		t.Fatalf("stats = %+v %v", st, err)
 	}
 	var before string
-	if err := c.db.QueryRow("SELECT v FROM meta WHERE k='schema_version'").Scan(&before); err != nil {
-		t.Skipf("no schema_version row to compare: %v", err)
+	if err := c.db.QueryRow("SELECT v FROM meta WHERE k='schema_version'").Scan(&before); err != nil || before != strconv.Itoa(schemaVersion) {
+		t.Fatalf("schema_version = %q %v", before, err)
 	}
 	seedRuns(t, c)
-	var after string
-	if err := c.db.QueryRow("SELECT v FROM meta WHERE k='schema_version'").Scan(&after); err != nil || after != before || after != strconv.Itoa(schemaVersion) {
-		t.Fatalf("schema version %q -> %q (build knows %d): the audit tables must not bump it", before, after, schemaVersion)
+	var after, marker string
+	if err := c.db.QueryRow("SELECT v FROM meta WHERE k='schema_version'").Scan(&after); err != nil || after != before {
+		t.Fatalf("schema version %q -> %q: the audit tables must not bump it", before, after)
 	}
-	// A build that knows the same schema version opens the case; the build before
-	// this one knows the same version and has no code for the tables, which the
-	// rest of the case does not reference.
-	if refusesSchema(schemaVersion, schemaVersion) {
-		t.Fatal("a case at this build's own version is refused")
+	if err := c.db.QueryRow("SELECT v FROM meta WHERE k='code.schema'").Scan(&marker); err != nil || marker != "1" {
+		t.Fatalf("the audit tables carry no version marker: %q %v", marker, err)
+	}
+	head := verify(t, c, nil)
+
+	// What the existing code does with such a case.
+	mustImport(t, c, "after-audit", 4)
+	if imports, events, _ := counts(t, c); imports != 1 || events != 4 {
+		t.Fatalf("import into a case with audit tables: %d imports %d events", imports, events)
+	}
+	if got, err := c.Events(ctx, casestore.EventQuery{Limit: 10}); err != nil || len(got) != 4 {
+		t.Fatalf("Events = %d %v", len(got), err)
 	}
 	if err := c.IntegrityCheck(ctx); err != nil {
-		t.Fatalf("IntegrityCheck with the audit tables: %v", err)
+		t.Fatalf("IntegrityCheck: %v", err)
 	}
-	rows, err := c.db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'code\\_%' ESCAPE '\\' ORDER BY name")
+	if err := c.SetWorkspaceBlob(ctx, []byte(`{"a":1}`)); err != nil {
+		t.Fatalf("a neighbouring write: %v", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CloseCase(ctx, info.ID); err != nil {
+		t.Fatalf("CloseCase: %v", err)
+	}
+	c2 := mustOpen(t, newStoreAt(t, root, s.opt.Protector), info.ID)
+	if err := c2.IntegrityCheck(ctx); err != nil {
+		t.Fatalf("IntegrityCheck after reopen: %v", err)
+	}
+	if rep := verify(t, c2, nil); !rep.OK || rep.Head != head.Head || rep.Rows != head.Rows {
+		t.Fatalf("the audit record changed under the existing code: %+v (was %+v)", rep, head)
+	}
+	if refusesSchema(schemaVersion, schemaVersion) || !refusesSchema(schemaVersion+1, schemaVersion) {
+		t.Fatal("the schema refusal rule changed")
+	}
+	rows, err := c2.db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'code\\_%' ESCAPE '\\' ORDER BY name")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +275,7 @@ func TestChainTriggersBlockUpdateDelete(t *testing.T) {
 			t.Errorf("%s was allowed", name)
 		}
 	}
-	if rep := verify(t, c, nil); !rep.OK || rep.Rows != 6 {
+	if rep := verify(t, c, nil); !rep.OK || rep.Rows != 10 {
 		t.Fatalf("a refused edit changed the record: %+v", rep)
 	}
 	// A running run may change, but never its identity or source.
@@ -269,7 +305,7 @@ func runsHead(t *testing.T, c *Case) string {
 
 // Every column of a run row is covered: change one byte of any and verify names it.
 func TestOneByteEditBreaksVerifyRunRow(t *testing.T) {
-	// begin-covered columns break row 1 (the run's begin record), the others row 2.
+	// begin-covered columns break row 1 (the run's begin record), the others row 4 (its end record).
 	cols := []struct {
 		name  string
 		text  bool
@@ -278,10 +314,10 @@ func TestOneByteEditBreaksVerifyRunRow(t *testing.T) {
 		{"created_at_utc", false, 1}, {"surface", true, 1}, {"caller_id", true, 1}, {"caller_declared", false, 1},
 		{"allow_identifiers", false, 1}, {"keep_results", false, 1}, {"tool_schema_hash", true, 1}, {"reason", true, 1},
 		{"source_ts", true, 1}, {"seed", true, 1}, {"clock_ms", false, 1},
-		{"ended_at_utc", false, 2}, {"sandbox_mode", true, 2}, {"runtime", true, 2}, {"worker_sha256", true, 2},
-		{"stripped_js_hash", true, 2}, {"error_code", true, 2}, {"error_text", true, 2}, {"result_hash", true, 2},
-		{"result_bytes", false, 2}, {"result_preview", true, 2}, {"console_logs", true, 2}, {"call_count", false, 2},
-		{"duration_ms", false, 2}, {"script_ms", false, 2},
+		{"ended_at_utc", false, 4}, {"sandbox_mode", true, 4}, {"runtime", true, 4}, {"worker_sha256", true, 4},
+		{"stripped_js_hash", true, 4}, {"error_code", true, 4}, {"error_text", true, 4}, {"result_hash", true, 4},
+		{"result_bytes", false, 4}, {"result_preview", true, 4}, {"console_logs", true, 4}, {"call_count", false, 4},
+		{"duration_ms", false, 4}, {"script_ms", false, 4},
 	}
 	for _, col := range cols {
 		t.Run(col.name, func(t *testing.T) {
@@ -308,14 +344,14 @@ func TestOneByteEditBreaksVerifyRunRow(t *testing.T) {
 		runs := seedRuns(t, c)
 		dropGuards(t, c)
 		rawSQL(t, c, "UPDATE code_runs SET status = 'running', ended_at_utc = 0 WHERE run_id = ?", runs[0].RunID)
-		mustBroken(t, verify(t, c, nil), 2, casestore.CheckRunStatus)
+		mustBroken(t, verify(t, c, nil), 4, casestore.CheckRunStatus)
 	})
 	t.Run("sealed status flipped", func(t *testing.T) {
 		_, c, _ := newRunCase(t)
 		runs := seedRuns(t, c)
 		dropGuards(t, c)
 		rawSQL(t, c, "UPDATE code_runs SET status = 'error' WHERE run_id = ?", runs[0].RunID)
-		mustBroken(t, verify(t, c, nil), 2, casestore.CheckEndMismatch)
+		mustBroken(t, verify(t, c, nil), 4, casestore.CheckEndMismatch)
 	})
 }
 
@@ -324,23 +360,24 @@ func TestOneByteEditBreaksVerifyCallRowAndBlob(t *testing.T) {
 		name  string
 		sql   string
 		check string
+		first int64 // the chain row where the damage shows (the call's own record, or the next one when the call is gone)
 	}
 	edits := []edit{
-		{"args_json", "UPDATE code_run_calls SET args_json = args_json || ' ' WHERE seq = 1", casestore.CheckCallRow},
-		{"args_json same hash", `UPDATE code_run_calls SET args_json = '{"a":9}' WHERE seq = 1`, casestore.CheckCallRow},
-		{"args_hash", "UPDATE code_run_calls SET args_hash = '" + strings.Repeat("1", 64) + "' WHERE seq = 1", casestore.CheckCallRow},
-		{"args_state", "UPDATE code_run_calls SET args_state = 'withheld' WHERE seq = 1", casestore.CheckCallRow},
-		{"tool_name", "UPDATE code_run_calls SET tool_name = 'audit_get_guide' WHERE seq = 1", casestore.CheckEndMismatch},
-		{"result_hash", "UPDATE code_run_calls SET result_hash = '" + strings.Repeat("2", 64) + "' WHERE seq = 1", casestore.CheckCallBlob},
-		{"result_bytes", "UPDATE code_run_calls SET result_bytes = result_bytes + 1 WHERE seq = 1", casestore.CheckCallBlob},
-		{"blob_state", "UPDATE code_run_calls SET blob_state = 'off' WHERE seq = 1", casestore.CheckCallBlob},
-		{"blob dropped", "UPDATE code_run_calls SET result_blob = NULL WHERE seq = 1", casestore.CheckCallBlob},
-		{"status", "UPDATE code_run_calls SET status = 'denied' WHERE seq = 1", casestore.CheckEndMismatch},
-		{"duration_ms", "UPDATE code_run_calls SET duration_ms = duration_ms + 1 WHERE seq = 1", casestore.CheckEndMismatch},
-		{"done_seq", "UPDATE code_run_calls SET done_seq = 7 WHERE seq = 1", casestore.CheckEndMismatch},
-		{"seq", "UPDATE code_run_calls SET seq = 5 WHERE seq = 1", casestore.CheckEndMismatch},
-		{"delete call", "DELETE FROM code_run_calls WHERE seq = 2", casestore.CheckEndMismatch},
-		{"move call to another run", "UPDATE code_run_calls SET run_id = (SELECT run_id FROM code_runs ORDER BY rowid DESC LIMIT 1), seq = 8, done_seq = 8 WHERE seq = 2", casestore.CheckEndMismatch},
+		{"args_json", "UPDATE code_run_calls SET args_json = args_json || ' ' WHERE seq = 1", casestore.CheckCallRow, 2},
+		{"args_json same hash", `UPDATE code_run_calls SET args_json = '{"a":9}' WHERE seq = 1`, casestore.CheckCallRow, 2},
+		{"args_hash", "UPDATE code_run_calls SET args_hash = '" + strings.Repeat("1", 64) + "' WHERE seq = 1", casestore.CheckCallRow, 2},
+		{"args_state", "UPDATE code_run_calls SET args_state = 'withheld' WHERE seq = 1", casestore.CheckCallRow, 2},
+		{"tool_name", "UPDATE code_run_calls SET tool_name = 'audit_get_guide' WHERE seq = 1", casestore.CheckCallMismatch, 2},
+		{"result_hash", "UPDATE code_run_calls SET result_hash = '" + strings.Repeat("2", 64) + "' WHERE seq = 1", casestore.CheckCallBlob, 2},
+		{"result_bytes", "UPDATE code_run_calls SET result_bytes = result_bytes + 1 WHERE seq = 1", casestore.CheckCallBlob, 2},
+		{"blob_state", "UPDATE code_run_calls SET blob_state = 'off' WHERE seq = 1", casestore.CheckCallBlob, 2},
+		{"blob dropped", "UPDATE code_run_calls SET result_blob = NULL WHERE seq = 1", casestore.CheckCallBlob, 2},
+		{"status", "UPDATE code_run_calls SET status = 'denied' WHERE seq = 1", casestore.CheckCallMismatch, 2},
+		{"duration_ms", "UPDATE code_run_calls SET duration_ms = duration_ms + 1 WHERE seq = 1", casestore.CheckCallMismatch, 2},
+		{"done_seq", "UPDATE code_run_calls SET done_seq = 7 WHERE seq = 1", casestore.CheckCallMismatch, 2},
+		{"seq", "UPDATE code_run_calls SET seq = 5 WHERE seq = 1", casestore.CheckCallMissing, 2},
+		{"delete call", "DELETE FROM code_run_calls WHERE seq = 2", casestore.CheckCallMissing, 3},
+		{"move call to another run", "UPDATE code_run_calls SET run_id = (SELECT run_id FROM code_runs ORDER BY rowid DESC LIMIT 1), seq = 8, done_seq = 8 WHERE seq = 2", casestore.CheckCallMissing, 3},
 	}
 	for _, e := range edits {
 		t.Run(e.name, func(t *testing.T) {
@@ -349,7 +386,7 @@ func TestOneByteEditBreaksVerifyCallRowAndBlob(t *testing.T) {
 			dropGuards(t, c)
 			rawSQL(t, c, strings.Replace(e.sql, "WHERE seq", "WHERE run_id = '"+runs[0].RunID+"' AND seq", 1))
 			rep := verify(t, c, nil)
-			mustBroken(t, rep, 2, e.check)
+			mustBroken(t, rep, e.first, e.check)
 		})
 	}
 	t.Run("calls swapped", func(t *testing.T) {
@@ -359,7 +396,7 @@ func TestOneByteEditBreaksVerifyCallRowAndBlob(t *testing.T) {
 		rawSQL(t, c, "UPDATE code_run_calls SET seq = 99 WHERE run_id = ? AND seq = 1", runs[0].RunID)
 		rawSQL(t, c, "UPDATE code_run_calls SET seq = 1 WHERE run_id = ? AND seq = 2", runs[0].RunID)
 		rawSQL(t, c, "UPDATE code_run_calls SET seq = 2 WHERE run_id = ? AND seq = 99", runs[0].RunID)
-		mustBroken(t, verify(t, c, nil), 2, casestore.CheckEndMismatch)
+		mustBroken(t, verify(t, c, nil), 2, casestore.CheckCallMismatch)
 	})
 	t.Run("one byte of the stored copy", func(t *testing.T) {
 		_, c, _ := newRunCase(t)
@@ -428,11 +465,11 @@ func TestOneByteEditBreaksVerifyChainRow(t *testing.T) {
 		seedRuns(t, c)
 		dropGuards(t, c)
 		var rec string
-		_ = c.db.QueryRow("SELECT record_json FROM code_chain WHERE n = 3").Scan(&rec)
+		_ = c.db.QueryRow("SELECT record_json FROM code_chain WHERE n = 1").Scan(&rec)
 		forged := strings.Replace(rec, `"surface":"cli"`, `"surface":"ui"`, 1)
-		rawSQL(t, c, "UPDATE code_chain SET record_json = ?, record_hash = ? WHERE n = 3", forged, casestore.SHA256Hex([]byte(forged)))
+		rawSQL(t, c, "UPDATE code_chain SET record_json = ?, record_hash = ? WHERE n = 1", forged, casestore.SHA256Hex([]byte(forged)))
 		// The row now hashes, but the run row disagrees and the next row's link is stale.
-		mustBroken(t, verify(t, c, nil), 3, casestore.CheckBeginMismatch)
+		mustBroken(t, verify(t, c, nil), 1, casestore.CheckBeginMismatch)
 		if rep := verify(t, c, nil); !hasCheck(rep, casestore.CheckPrevHash) {
 			t.Errorf("checks = %v", problemChecks(rep))
 		}
@@ -444,9 +481,9 @@ func TestDeletedMiddleRowIsFound(t *testing.T) {
 		_, c, _ := newRunCase(t)
 		seedRuns(t, c)
 		dropGuards(t, c)
-		rawSQL(t, c, "DELETE FROM code_chain WHERE n = 3")
+		rawSQL(t, c, "DELETE FROM code_chain WHERE n = 5")
 		rep := verify(t, c, nil)
-		mustBroken(t, rep, 4, casestore.CheckChainGap, casestore.CheckPrevHash)
+		mustBroken(t, rep, 6, casestore.CheckChainGap, casestore.CheckPrevHash)
 		if !hasCheck(rep, casestore.CheckRunUnchained) {
 			t.Errorf("a run lost its begin record unnoticed: %v", problemChecks(rep))
 		}
@@ -458,16 +495,16 @@ func TestDeletedMiddleRowIsFound(t *testing.T) {
 		rawSQL(t, c, "DELETE FROM code_chain WHERE run_id = ?", runs[1].RunID)
 		rawSQL(t, c, "DELETE FROM code_run_calls WHERE run_id = ?", runs[1].RunID)
 		rawSQL(t, c, "DELETE FROM code_runs WHERE run_id = ?", runs[1].RunID)
-		mustBroken(t, verify(t, c, nil), 5, casestore.CheckChainGap, casestore.CheckPrevHash)
+		mustBroken(t, verify(t, c, nil), 8, casestore.CheckChainGap, casestore.CheckPrevHash)
 	})
 	t.Run("renumbered to hide the gap", func(t *testing.T) {
 		_, c, _ := newRunCase(t)
 		runs := seedRuns(t, c)
 		dropGuards(t, c)
 		rawSQL(t, c, "DELETE FROM code_chain WHERE run_id = ?", runs[1].RunID)
-		rawSQL(t, c, "UPDATE code_chain SET n = n - 2 WHERE n > 2")
+		rawSQL(t, c, "UPDATE code_chain SET n = n - 3 WHERE n > 7")
 		rep := verify(t, c, nil)
-		mustBroken(t, rep, 3, casestore.CheckPrevHash, casestore.CheckBeginMismatch)
+		mustBroken(t, rep, 5, casestore.CheckPrevHash, casestore.CheckBeginMismatch)
 	})
 }
 
@@ -485,11 +522,11 @@ func TestReorderedRowsAreFound(t *testing.T) {
 		_, c, _ := newRunCase(t)
 		seedRuns(t, c)
 		dropGuards(t, c)
-		rawSQL(t, c, "UPDATE code_chain SET n = n + 100 WHERE n IN (3, 4)")
-		rawSQL(t, c, "UPDATE code_chain SET n = n - 2 WHERE n IN (5, 6)")
-		rawSQL(t, c, "UPDATE code_chain SET n = n - 96 WHERE n > 100")
+		rawSQL(t, c, "UPDATE code_chain SET n = n + 100 WHERE n IN (5, 6, 7)")
+		rawSQL(t, c, "UPDATE code_chain SET n = n - 3 WHERE n IN (8, 9, 10)")
+		rawSQL(t, c, "UPDATE code_chain SET n = n - 97 WHERE n > 100")
 		rep := verify(t, c, nil)
-		mustBroken(t, rep, 3)
+		mustBroken(t, rep, 5)
 		if !hasCheck(rep, casestore.CheckPrevHash) {
 			t.Errorf("checks = %v", problemChecks(rep))
 		}
@@ -501,7 +538,7 @@ func TestTruncatedTailIsFound(t *testing.T) {
 		_, c, _ := newRunCase(t)
 		seedRuns(t, c)
 		dropGuards(t, c)
-		rawSQL(t, c, "DELETE FROM code_chain WHERE n = 6")
+		rawSQL(t, c, "DELETE FROM code_chain WHERE n = 10")
 		rep := verify(t, c, nil)
 		mustBroken(t, rep, -1, casestore.CheckRunStatus, casestore.CheckHeadMismatch)
 	})
@@ -513,12 +550,12 @@ func TestTruncatedTailIsFound(t *testing.T) {
 		rawSQL(t, c, "DELETE FROM code_run_calls WHERE run_id = ?", runs[2].RunID)
 		rawSQL(t, c, "DELETE FROM code_runs WHERE run_id = ?", runs[2].RunID)
 		// A chain that looks whole is cut: only the head kept beside it, or one the user noted, can tell.
-		mustBroken(t, verify(t, c, nil), 4, casestore.CheckHeadMismatch)
+		mustBroken(t, verify(t, c, nil), 7, casestore.CheckHeadMismatch)
 	})
 	t.Run("and the head beside the chain rewritten too", func(t *testing.T) {
 		_, c, _ := newRunCase(t)
 		runs := seedRuns(t, c)
-		noted := verify(t, c, nil) // the user wrote down n=6 and its hash
+		noted := verify(t, c, nil) // the user wrote down n=10 and its hash
 		anchor := &casestore.ChainAnchor{N: noted.HeadN, Hash: noted.Head}
 		dropGuards(t, c)
 		rawSQL(t, c, "DELETE FROM code_chain WHERE run_id = ?", runs[2].RunID)
@@ -528,10 +565,10 @@ func TestTruncatedTailIsFound(t *testing.T) {
 		_ = c.db.QueryRow("SELECT n, record_hash FROM code_chain ORDER BY n DESC LIMIT 1").Scan(&last.N, &last.RecordHash)
 		rawSQL(t, c, "UPDATE meta SET v = ? WHERE k = ?", fmt.Sprintf("%d:%s", last.N, last.RecordHash), codeHeadKey)
 		// Honest limit: without a noted head this is a valid, shorter chain.
-		if rep := verify(t, c, nil); !rep.OK || rep.HeadN != 4 {
+		if rep := verify(t, c, nil); !rep.OK || rep.HeadN != 7 {
 			t.Fatalf("a cleanly cut chain is a valid chain, got %+v", rep)
 		}
-		mustBroken(t, verify(t, c, anchor), 6, casestore.CheckAnchorAhead)
+		mustBroken(t, verify(t, c, anchor), 10, casestore.CheckAnchorAhead)
 	})
 }
 
@@ -648,25 +685,36 @@ func TestKeyHolderRebuildingTheWholeChainIsOnlyFoundByANotedHead(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, phase := range []string{"begin", "end"} {
-			n++
-			var row casestore.ChainRow
-			if phase == "begin" {
-				row, _ = casestore.BeginChainRow(run, n, prev)
-			} else {
-				// The end record covers the call rows and the (unchanged) run row.
-				row, _ = casestore.EndChainRow(run, calls, n, prev)
+		beginRow, err := casestore.BeginChainRow(run, n+1, prev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		built := []casestore.ChainRow{beginRow}
+		last := beginRow.RecordHash
+		for i, call := range calls {
+			row, err := casestore.CallChainRow(call, n+2+int64(i), last)
+			if err != nil {
+				t.Fatal(err)
 			}
-			rawSQL(t, c, "INSERT INTO code_chain(n, run_id, phase, record_json, prev_hash, record_hash) VALUES(?,?,?,?,?,?)",
-				row.N, row.RunID, row.Phase, row.RecordJSON, row.PrevHash, row.RecordHash)
-			prev = row.RecordHash
+			built, last = append(built, row), row.RecordHash
+		}
+		// The end record covers the call rows and the (unchanged) run row.
+		endRow, err := casestore.EndChainRow(run, calls, n+2+int64(len(calls)), last)
+		if err != nil {
+			t.Fatal(err)
+		}
+		built = append(built, endRow)
+		for _, row := range built {
+			rawSQL(t, c, "INSERT INTO code_chain(n, run_id, phase, seq, record_json, prev_hash, record_hash) VALUES(?,?,?,?,?,?,?)",
+				row.N, row.RunID, row.Phase, row.Seq, row.RecordJSON, row.PrevHash, row.RecordHash)
+			n, prev = row.N, row.RecordHash
 		}
 	}
 	rawSQL(t, c, "UPDATE meta SET v = ? WHERE k = ?", fmt.Sprintf("%d:%s", n, prev), codeHeadKey)
 	if rep := verify(t, c, nil); !rep.OK {
 		t.Fatalf("a fully rebuilt chain verifies by design: %+v", rep)
 	}
-	mustBroken(t, verify(t, c, anchor), 6, casestore.CheckAnchorMismatch)
+	mustBroken(t, verify(t, c, anchor), 10, casestore.CheckAnchorMismatch)
 }
 
 func TestDroppedGuardsAreReportedAsWarnings(t *testing.T) {
@@ -693,7 +741,7 @@ func TestPastedRowsAreFound(t *testing.T) {
 		dropGuards(t, c)
 		rawSQL(t, c, "INSERT INTO code_run_calls(run_id, seq, done_seq, tool_name, args_hash, result_hash, blob_state, status) VALUES(?, 9, 9, 'audit_compare', ?, ?, 'off', 'ok')",
 			runs[0].RunID, strings.Repeat("a", 64), strings.Repeat("b", 64))
-		mustBroken(t, verify(t, c, nil), 2, casestore.CheckCallRow)
+		mustBroken(t, verify(t, c, nil), -1, casestore.CheckCallRow, casestore.CheckCallUnchained)
 	})
 	t.Run("a call row for no run", func(t *testing.T) {
 		_, c, _ := newRunCase(t)
@@ -709,10 +757,10 @@ func TestPastedRowsAreFound(t *testing.T) {
 		runs := seedRuns(t, c)
 		dropGuards(t, c)
 		rows := mustRows(t, c)
-		old := rows[1] // the end record of run 1
-		forged := casestore.NewChainRow(7, runs[0].RunID, "end", old.RecordJSON, rows[5].RecordHash)
-		if _, err := c.db.ExecContext(cctx, "INSERT INTO code_chain(n, run_id, phase, record_json, prev_hash, record_hash) VALUES(?,?,?,?,?,?)",
-			forged.N, forged.RunID, forged.Phase, forged.RecordJSON, forged.PrevHash, forged.RecordHash); err == nil {
+		old := rows[3] // the end record of run 1
+		forged := casestore.NewChainRow(11, runs[0].RunID, "end", 0, old.RecordJSON, rows[len(rows)-1].RecordHash)
+		if _, err := c.db.ExecContext(cctx, "INSERT INTO code_chain(n, run_id, phase, seq, record_json, prev_hash, record_hash) VALUES(?,?,?,?,?,?,?)",
+			forged.N, forged.RunID, forged.Phase, forged.Seq, forged.RecordJSON, forged.PrevHash, forged.RecordHash); err == nil {
 			t.Fatal("a second end record was accepted")
 		}
 	})
@@ -736,11 +784,18 @@ func TestUnreadableValuesFailClosed(t *testing.T) {
 			if err == nil && rep.OK {
 				t.Fatalf("a damaged value verified: %+v", rep)
 			}
-			if err == nil && !hasCheck(rep, casestore.CheckUnreadable) && !hasCheck(rep, casestore.CheckBeginMismatch) && !hasCheck(rep, casestore.CheckEndMismatch) {
+			if err == nil && !hasCheck(rep, casestore.CheckUnreadable) && !hasCheck(rep, casestore.CheckBeginMismatch) && !hasCheck(rep, casestore.CheckEndMismatch) && !hasCheck(rep, casestore.CheckTextUTF8) {
 				t.Errorf("checks = %v", problemChecks(rep))
 			}
 		})
 	}
+}
+
+// laterStore opens the store at root again with a clock past the orphan grace.
+func laterStore(t *testing.T, root string, s *Store) *Store {
+	t.Helper()
+	later := time.Now().Add(casestore.OrphanGrace + time.Hour)
+	return newStoreAt(t, root, s.opt.Protector, func(o *Options) { o.Now = func() time.Time { return later } })
 }
 
 func TestCrashLeavesCrashedRow(t *testing.T) {
@@ -759,7 +814,11 @@ func TestCrashLeavesCrashedRow(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	s2 := newStoreAt(t, root, s.opt.Protector)
+	soon := newStoreAt(t, root, s.opt.Protector)
+	if n, err := mustOpen(t, soon, info.ID).CloseOrphanRuns(cctx); err != nil || n != 0 {
+		t.Fatalf("a run younger than the grace was closed: %d %v", n, err)
+	}
+	s2 := laterStore(t, root, s)
 	c2 := mustOpen(t, s2, info.ID)
 	if rep := verify(t, c2, nil); !rep.OK || rep.OpenRuns != 1 {
 		t.Fatalf("an unfinished run is open, not broken: %+v", rep)
@@ -771,7 +830,7 @@ func TestCrashLeavesCrashedRow(t *testing.T) {
 	if err != nil || got.Status != casestore.RunCrashed || got.CallCount != 1 || got.EndedMS == 0 || got.ErrorText == "" {
 		t.Fatalf("closed run = %+v %v", got, err)
 	}
-	if rep := verify(t, c2, nil); !rep.OK || rep.OpenRuns != 0 || rep.Rows != 4 {
+	if rep := verify(t, c2, nil); !rep.OK || rep.OpenRuns != 0 || rep.Rows != 5 {
 		t.Fatalf("verify after = %+v", rep)
 	}
 	if res, err := c2.CallResult(cctx, dead.RunID, 1); err != nil || string(res) != `{"x":1}` {
@@ -793,7 +852,7 @@ func TestRowsSurviveReopen(t *testing.T) {
 	s2 := newStoreAt(t, root, s.opt.Protector)
 	c2 := mustOpen(t, s2, info.ID)
 	after := verify(t, c2, nil)
-	if !after.OK || after.Head != before.Head || after.Rows != 6 {
+	if !after.OK || after.Head != before.Head || after.Rows != 10 {
 		t.Fatalf("after reopen: %+v (before %+v)", after, before)
 	}
 	got, err := c2.GetRun(cctx, runs[0].RunID)
@@ -812,7 +871,7 @@ func TestRowsSurviveReopen(t *testing.T) {
 	}
 	// A run goes on from the head it found.
 	mustRun(t, c2, casestore.RunStart{Source: "return 4"}, nil, casestore.RunEnd{})
-	if rep := verify(t, c2, nil); !rep.OK || rep.Rows != 8 {
+	if rep := verify(t, c2, nil); !rep.OK || rep.Rows != 12 {
 		t.Fatalf("a run after the reopen: %+v", rep)
 	}
 }
@@ -833,7 +892,7 @@ func TestCodeRunsSurviveRewrap(t *testing.T) {
 	s2 := masterStore(t, root, kr)
 	c2 := mustOpen(t, s2, info.ID)
 	after := verify(t, c2, nil)
-	if !after.OK || after.Head != before.Head || after.Rows != 6 {
+	if !after.OK || after.Head != before.Head || after.Rows != 10 {
 		t.Fatalf("after Rewrap: %+v (before %+v)", after, before)
 	}
 	if res, err := c2.CallResult(cctx, mustRows2(t, c2)[0].RunID, 1); err != nil || len(res) == 0 {
@@ -889,7 +948,7 @@ func TestConcurrentRunsKeepOneChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	rep := verify(t, c, nil)
-	if !rep.OK || rep.Rows != workers*each*2 || rep.Runs != workers*each {
+	if !rep.OK || rep.Rows != workers*each*4 || rep.Runs != workers*each {
 		t.Fatalf("verify = %+v", rep)
 	}
 }
@@ -923,5 +982,303 @@ func TestRunWriteDuringImportDoesNotWait(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("BeginRun waited for the import")
+	}
+}
+
+func calls3(t *testing.T, c *Case) (casestore.CodeRun, []byte) {
+	t.Helper()
+	run, err := c.BeginRun(cctx, casestore.RunStart{Surface: "cli", Source: "x", KeepResults: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RecordCall(cctx, run.RunID, call(1, "ok", `{"a":1}`, `{"real":"result"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RecordCall(cctx, run.RunID, call(2, "ok", `{"a":2}`, `{"second":"call"}`)); err != nil {
+		t.Fatal(err)
+	}
+	forged := []byte(`{"forged":"result"}`)
+	return run, forged
+}
+
+const (
+	forgeReplaceSQL = `INSERT OR REPLACE INTO code_run_calls(run_id, seq, done_seq, tool_name, args_json, args_hash, args_state, result_hash, result_bytes, result_blob, blob_state, status, duration_ms)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	forgeInsertSQL = `INSERT INTO code_run_calls(run_id, seq, done_seq, tool_name, args_json, args_hash, args_state, result_hash, result_bytes, result_blob, blob_state, status, duration_ms)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`
+)
+
+// forgeCallArgs are the bound values of a call row holding the forged result; the
+// caller sets the run id (args[0]) and may move seq and done_seq.
+func forgeCallArgs(forged []byte) []any {
+	return []any{nil, 1, 1, "audit_compare", `{"a":1}`, casestore.SHA256Hex([]byte(`{"a":1}`)), "kept",
+		casestore.SHA256Hex(forged), len(forged), zstdBytes(forged), "kept", "ok", 11}
+}
+
+func zstdBytes(b []byte) []byte {
+	enc, _ := zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1))
+	defer func() { _ = enc.Close() }()
+	return enc.EncodeAll(b, nil)
+}
+
+// M1 of the first review: the calls of a run that is still open were bound to
+// nothing, and INSERT OR REPLACE swapped one with every trigger in place. Now every
+// call is chained when it is written and the triggers refuse a replaced key.
+func TestReplaceOfAnOpenRunsCallIsRefusedAndCannotBeLaundered(t *testing.T) {
+	t.Run("the guards refuse the replace", func(t *testing.T) {
+		_, c, _ := newRunCase(t)
+		seedRuns(t, c)
+		run, forged := calls3(t, c)
+		args := forgeCallArgs(forged)
+		args[0] = run.RunID
+		if _, err := c.db.ExecContext(cctx, forgeReplaceSQL, args...); err == nil {
+			t.Fatal("INSERT OR REPLACE over a call row of an open run was allowed")
+		}
+		// A row with seq 2 and done_seq 1 would have removed both old rows.
+		args[1], args[2] = 2, 1
+		if _, err := c.db.ExecContext(cctx, forgeReplaceSQL, args...); err == nil {
+			t.Fatal("INSERT OR REPLACE over two call rows was allowed")
+		}
+		if res, err := c.CallResult(cctx, run.RunID, 1); err != nil || string(res) != `{"real":"result"}` {
+			t.Fatalf("the call changed: %q %v", res, err)
+		}
+		if rep := verify(t, c, nil); !rep.OK || rep.OpenRuns != 1 || len(rep.Warnings) != 0 {
+			t.Fatalf("verify = %+v", rep)
+		}
+	})
+	t.Run("with the guards dropped, the forged call of an open run is found while open and after the close", func(t *testing.T) {
+		s, root := newTestStore(t)
+		info := mustCreate(t, s, "Open run")
+		c := mustOpen(t, s, info.ID)
+		seedRuns(t, c)
+		run, forged := calls3(t, c)
+		noted := verify(t, c, nil) // a head noted while the run is open
+		anchor := &casestore.ChainAnchor{N: noted.HeadN, Hash: noted.Head}
+		dropGuards(t, c)
+		args := forgeCallArgs(forged)
+		args[0] = run.RunID
+		rawSQL(t, c, forgeReplaceSQL, args...)
+		rep := verify(t, c, nil)
+		mustBroken(t, rep, 12, casestore.CheckCallMismatch) // the call record of seq 1 is row 12
+		// The app's own crash close must not seal it.
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+		c2 := mustOpen(t, laterStore(t, root, s), info.ID)
+		if n, err := c2.CloseOrphanRuns(cctx); err != nil || n != 1 {
+			t.Fatalf("CloseOrphanRuns = %d %v", n, err)
+		}
+		rep = verify(t, c2, nil)
+		mustBroken(t, rep, 12, casestore.CheckCallMismatch)
+		if res, _ := c2.CallResult(cctx, run.RunID, 1); !bytes.Equal(res, forged) {
+			t.Fatalf("setup: the forged row is not in place: %q", res)
+		}
+		// A head noted while the run was open still has to match after the close.
+		if rep := verify(t, c2, anchor); hasCheck(rep, casestore.CheckAnchorMismatch) || !rep.AnchorChecked {
+			t.Errorf("a head noted while the run was open is still a prefix of the history: %+v", rep)
+		}
+	})
+	t.Run("an honest close keeps a head noted while the run was open", func(t *testing.T) {
+		_, c, _ := newRunCase(t)
+		run, _ := calls3(t, c)
+		noted := verify(t, c, nil)
+		anchor := &casestore.ChainAnchor{N: noted.HeadN, Hash: noted.Head}
+		if noted.OpenRuns != 1 || noted.Rows != 3 {
+			t.Fatalf("setup: %+v", noted)
+		}
+		if _, err := c.EndRun(cctx, run.RunID, casestore.RunEnd{Status: casestore.RunOK}); err != nil {
+			t.Fatal(err)
+		}
+		if rep := verify(t, c, anchor); !rep.OK || !rep.AnchorChecked || rep.Rows != 4 {
+			t.Fatalf("verify against the head noted while open = %+v", rep)
+		}
+	})
+	t.Run("a call row nobody chained", func(t *testing.T) {
+		_, c, _ := newRunCase(t)
+		run, forged := calls3(t, c)
+		dropGuards(t, c)
+		args := forgeCallArgs(forged)
+		args[0], args[1], args[2] = run.RunID, 7, 7
+		rawSQL(t, c, forgeInsertSQL, args...)
+		mustBroken(t, verify(t, c, nil), -1, casestore.CheckCallUnchained)
+	})
+	t.Run("a call record whose row was deleted", func(t *testing.T) {
+		_, c, _ := newRunCase(t)
+		run, _ := calls3(t, c)
+		dropGuards(t, c)
+		rawSQL(t, c, "DELETE FROM code_run_calls WHERE run_id = ? AND seq = 2", run.RunID)
+		mustBroken(t, verify(t, c, nil), 3, casestore.CheckCallMissing)
+	})
+}
+
+// S1: INSERT OR REPLACE and an upsert get past the delete triggers of every table.
+func TestReplaceCannotOverwriteAnyAuditTable(t *testing.T) {
+	_, c, _ := newRunCase(t)
+	runs := seedRuns(t, c)
+	before := verify(t, c, nil)
+	head := before.Head
+	for name, q := range map[string]string{
+		"chain row (replace)": "INSERT OR REPLACE INTO code_chain(n, run_id, phase, seq, record_json, prev_hash, record_hash) VALUES(11, '" + runs[1].RunID + "', 'begin', 0, '{}', '" + head + "', 'zz')",
+		"chain row same n":    "INSERT OR REPLACE INTO code_chain(n, run_id, phase, seq, record_json, prev_hash, record_hash) VALUES(3, 'x', 'end', 0, '{}', 'p', 'h3')",
+		"chain row upsert":    "INSERT INTO code_chain(n, run_id, phase, seq, record_json, prev_hash, record_hash) VALUES(3, 'x', 'end', 0, '{}', 'p', 'h3') ON CONFLICT(n) DO UPDATE SET record_json = 'evil'",
+		"sealed run":          "INSERT OR REPLACE INTO code_runs(run_id, created_at_utc, surface, source_ts, status) VALUES('" + runs[0].RunID + "', 1, 'cli', 'evil', 'ok')",
+		"run upsert":          "INSERT INTO code_runs(run_id, created_at_utc, surface, source_ts, status) VALUES('" + runs[0].RunID + "', 1, 'cli', 'evil', 'ok') ON CONFLICT(run_id) DO UPDATE SET source_ts = 'evil'",
+		"call row":            "INSERT OR REPLACE INTO code_run_calls(run_id, seq, done_seq, tool_name, args_hash, result_hash, blob_state, status) VALUES('" + runs[0].RunID + "', 1, 1, 'x', 'a', 'b', 'off', 'ok')",
+	} {
+		if _, err := c.db.ExecContext(cctx, q); err == nil {
+			t.Errorf("%s was allowed", name)
+		}
+	}
+	if after := verify(t, c, nil); !after.OK || after.Head != head || after.Rows != before.Rows || len(after.Warnings) != 0 {
+		t.Fatalf("a refused replace changed the record: %+v", after)
+	}
+	if got, _ := c.GetRun(cctx, runs[0].RunID); got.Source != runs[0].Source {
+		t.Errorf("the sealed run changed: %q", got.Source)
+	}
+}
+
+// N1: a trigger replaced by one of the same name that does nothing is reported.
+func TestNeuteredGuardIsReported(t *testing.T) {
+	_, c, _ := newRunCase(t)
+	seedRuns(t, c)
+	rawSQL(t, c, "DROP TRIGGER code_chain_no_delete")
+	rawSQL(t, c, "CREATE TRIGGER code_chain_no_delete BEFORE DELETE ON code_chain WHEN 0 BEGIN SELECT 1; END")
+	rep := verify(t, c, nil)
+	if !rep.OK || len(rep.Warnings) != 1 || !strings.Contains(rep.Warnings[0], "code_chain_no_delete") {
+		t.Fatalf("verify = %+v", rep)
+	}
+}
+
+// S2: a second window opening the case must not kill the first window's live run.
+func TestCloseOrphanRunsSparesALiveRun(t *testing.T) {
+	s, root := newTestStore(t)
+	info := mustCreate(t, s, "Two windows")
+	c1 := mustOpen(t, s, info.ID)
+	live, err := c1.BeginRun(cctx, casestore.RunStart{Surface: "ui", Source: "live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2 := mustOpen(t, s, info.ID)
+	if n, err := c2.CloseOrphanRuns(cctx); err != nil || n != 0 {
+		t.Fatalf("a second handle closed %d live run(s): %v", n, err)
+	}
+	if err := c1.RecordCall(cctx, live.RunID, call(1, "ok", `{}`, `{}`)); err != nil {
+		t.Fatalf("the live run lost its place: %v", err)
+	}
+	// Another process, hours later, finds it abandoned.
+	if err := c1.Close(); err != nil {
+		t.Fatal(err)
+	}
+	c3 := mustOpen(t, laterStore(t, root, s), info.ID)
+	if n, err := c3.CloseOrphanRuns(cctx); err != nil || n != 1 {
+		t.Fatalf("an abandoned run was not closed: %d %v", n, err)
+	}
+	if got, _ := c3.GetRun(cctx, live.RunID); got.Status != casestore.RunCrashed || got.CallCount != 1 {
+		t.Fatalf("closed run = %+v", got)
+	}
+}
+
+// S3: a run that finishes while an import holds the case is sealed when the import
+// lets go; it is not marked crashed. A new run is refused during the import.
+func TestRunEndsDuringAnImportAndIsSealedAfterIt(t *testing.T) {
+	_, c, _ := newRunCase(t)
+	run, err := c.BeginRun(cctx, casestore.RunStart{Surface: "cli", Source: "x", KeepResults: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.importRun.Store(true)
+	defer c.importRun.Store(false)
+	release, err := sealedfile.Lock(c.dir) // what an import holds
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.BeginRun(cctx, casestore.RunStart{Surface: "cli", Source: "new"}); !errors.Is(err, casestore.ErrImportRunning) {
+		t.Fatalf("a new run during an import = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		if err := c.RecordCall(cctx, run.RunID, call(1, "ok", `{}`, `{"x":1}`)); err != nil {
+			done <- err
+			return
+		}
+		_, err := c.EndRun(cctx, run.RunID, casestore.RunEnd{Status: casestore.RunOK})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("the write did not wait for the import (%v)", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("after the import: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the write never finished")
+	}
+	got, _ := c.GetRun(cctx, run.RunID)
+	if got.Status != casestore.RunOK || got.CallCount != 1 {
+		t.Fatalf("run = %+v", got)
+	}
+	if rep := verify(t, c, nil); !rep.OK {
+		t.Fatalf("verify = %+v", rep)
+	}
+}
+
+// S5: a text that is not valid UTF-8 cannot be stored, and an edit that puts one
+// in is found (encoding/json would fold it into U+FFFD and hide the change).
+func TestInvalidUTF8IsRefusedAndFound(t *testing.T) {
+	_, c, _ := newRunCase(t)
+	run, err := c.BeginRun(cctx, casestore.RunStart{Surface: "cli", Source: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, end := range map[string]casestore.RunEnd{
+		"error code": {Status: casestore.RunError, ErrorCode: "e\xff"},
+		"runtime":    {Status: casestore.RunError, Runtime: "r\xfe"},
+	} {
+		if _, err := c.EndRun(cctx, run.RunID, end); !errors.Is(err, casestore.ErrBadCodeRun) {
+			t.Errorf("%s: EndRun = %v, want ErrBadCodeRun", name, err)
+		}
+	}
+	if _, err := c.EndRun(cctx, run.RunID, casestore.RunEnd{Status: casestore.RunError, ErrorCode: "e\ufffd", Runtime: "r\ufffd"}); err != nil {
+		t.Fatal(err)
+	}
+	if rep := verify(t, c, nil); !rep.OK {
+		t.Fatalf("the literal U+FFFD is a valid text: %+v", rep)
+	}
+	dropGuards(t, c)
+	for _, edit := range []string{
+		"UPDATE code_runs SET error_code = CAST(X'6580' AS TEXT) WHERE run_id = ?",
+		"UPDATE code_runs SET runtime = CAST(X'72FF' AS TEXT) WHERE run_id = ?",
+		"UPDATE code_runs SET reason = CAST(X'80' AS TEXT) WHERE run_id = ?",
+	} {
+		rawSQL(t, c, edit, run.RunID)
+		mustBroken(t, verify(t, c, nil), -1, casestore.CheckTextUTF8)
+		rawSQL(t, c, "UPDATE code_runs SET error_code = ?, runtime = ?, reason = '' WHERE run_id = ?", "e\ufffd", "r\ufffd", run.RunID)
+	}
+}
+
+// Nothing deletes a run by itself, however many there are (spec 04 D10).
+func TestNoAutoPrune(t *testing.T) {
+	_, c, _ := newRunCase(t)
+	var first casestore.CodeRun
+	for i := 0; i < 120; i++ {
+		r := mustRun(t, c, casestore.RunStart{Source: fmt.Sprintf("return %d", i), KeepResults: true}, []casestore.CallRecord{call(1, "ok", `{}`, `{"x":1}`)}, casestore.RunEnd{})
+		if i == 0 {
+			first = r
+		}
+	}
+	runs, err := c.ListRuns(cctx, casestore.RunQuery{Limit: casestore.MaxRunsPage})
+	if err != nil || len(runs) != 120 {
+		t.Fatalf("ListRuns = %d %v", len(runs), err)
+	}
+	if res, err := c.CallResult(cctx, first.RunID, 1); err != nil || string(res) != `{"x":1}` {
+		t.Fatalf("the oldest kept result: %q %v", res, err)
+	}
+	if rep := verify(t, c, nil); !rep.OK || rep.Rows != 120*3 {
+		t.Fatalf("verify = %+v", rep)
 	}
 }

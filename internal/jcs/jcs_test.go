@@ -128,3 +128,28 @@ func TestMarshalStructsAndRecords(t *testing.T) {
 		t.Fatalf("got %q %v", got, err)
 	}
 }
+
+// RFC 8785 wants well-formed strings. encoding/json would fold a lone surrogate
+// escape into U+FFFD, so two different documents would share one hash.
+func TestLoneSurrogatesAreRefused(t *testing.T) {
+	for _, in := range []string{`{"q":"\ud800"}`, `["\udc00"]`, `["\ud800\u0041"]`, `["a\ud800"]`, `["\ud800\ud800"]`, `["\uDBFF"]`, `{"\ud800":1}`} {
+		if _, err := Canonicalize([]byte(in)); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", in, err)
+		}
+	}
+	// A valid pair, an escaped backslash before the letter u, and the literal U+FFFD all stay.
+	for in, want := range map[string]string{
+		`["\ud83d\ude00"]`: "[\"\U0001F600\"]",
+		`["\\ud800"]`:      `["\\ud800"]`,
+		"[\"\uFFFD\"]":     "[\"\uFFFD\"]",
+	} {
+		got, err := Canonicalize([]byte(in))
+		if err != nil || string(got) != want {
+			t.Errorf("%s = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	a, _ := Canonicalize([]byte("[\"\uFFFD\"]"))
+	if _, err := Canonicalize([]byte(`["\ud800"]`)); err == nil || string(a) == "" {
+		t.Error("the lone surrogate must not fold into U+FFFD")
+	}
+}

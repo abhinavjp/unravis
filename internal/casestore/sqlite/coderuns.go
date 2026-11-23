@@ -77,31 +77,32 @@ CREATE TABLE IF NOT EXISTS code_run_calls(
 CREATE TABLE IF NOT EXISTS code_chain(
   n INTEGER PRIMARY KEY,
   run_id TEXT NOT NULL,
-  phase TEXT NOT NULL CHECK (phase IN ('begin','end')),
+  phase TEXT NOT NULL CHECK (phase IN ('begin','call','end')),
+  seq INTEGER NOT NULL DEFAULT 0,
   record_json TEXT NOT NULL,
   prev_hash TEXT NOT NULL,
   record_hash TEXT NOT NULL UNIQUE,
-  UNIQUE(run_id, phase)
+  UNIQUE(run_id, phase, seq)
 );
 ` + codeTriggersSQL
-
-// codeGuards names the triggers, so MissingGuards can tell when one was dropped.
-var codeGuards = []string{
-	"code_chain_no_update", "code_chain_no_delete", "code_chain_link", "code_runs_no_delete", "code_runs_sealed",
-	"code_calls_no_update", "code_calls_no_delete", "code_calls_running",
-}
 
 const codeTriggersSQL = `
 CREATE TRIGGER IF NOT EXISTS code_chain_no_update BEFORE UPDATE ON code_chain
 BEGIN SELECT RAISE(ABORT, 'code_chain is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS code_chain_no_delete BEFORE DELETE ON code_chain
 BEGIN SELECT RAISE(ABORT, 'code_chain is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS code_chain_exists BEFORE INSERT ON code_chain
+WHEN EXISTS (SELECT 1 FROM code_chain WHERE n = NEW.n OR record_hash = NEW.record_hash OR (run_id = NEW.run_id AND phase = NEW.phase AND seq = NEW.seq))
+BEGIN SELECT RAISE(ABORT, 'code_chain rows are never replaced'); END;
 CREATE TRIGGER IF NOT EXISTS code_chain_link BEFORE INSERT ON code_chain
 WHEN NEW.n <> COALESCE((SELECT MAX(n) FROM code_chain), 0) + 1
   OR NEW.prev_hash <> COALESCE((SELECT record_hash FROM code_chain ORDER BY n DESC LIMIT 1), '` + casestore.ChainZeroHash + `')
 BEGIN SELECT RAISE(ABORT, 'code_chain must continue the chain'); END;
 CREATE TRIGGER IF NOT EXISTS code_runs_no_delete BEFORE DELETE ON code_runs
 BEGIN SELECT RAISE(ABORT, 'code_runs is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS code_runs_exists BEFORE INSERT ON code_runs
+WHEN EXISTS (SELECT 1 FROM code_runs WHERE run_id = NEW.run_id)
+BEGIN SELECT RAISE(ABORT, 'code_runs rows are never replaced'); END;
 CREATE TRIGGER IF NOT EXISTS code_runs_sealed BEFORE UPDATE ON code_runs
 WHEN OLD.status <> 'running' OR NEW.run_id <> OLD.run_id OR NEW.source_ts <> OLD.source_ts OR NEW.created_at_utc <> OLD.created_at_utc
   OR NEW.surface <> OLD.surface OR NEW.caller_id <> OLD.caller_id OR NEW.allow_identifiers <> OLD.allow_identifiers
@@ -111,20 +112,66 @@ CREATE TRIGGER IF NOT EXISTS code_calls_no_update BEFORE UPDATE ON code_run_call
 BEGIN SELECT RAISE(ABORT, 'code_run_calls is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS code_calls_no_delete BEFORE DELETE ON code_run_calls
 BEGIN SELECT RAISE(ABORT, 'code_run_calls is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS code_calls_exists BEFORE INSERT ON code_run_calls
+WHEN EXISTS (SELECT 1 FROM code_run_calls WHERE run_id = NEW.run_id AND (seq = NEW.seq OR done_seq = NEW.done_seq))
+BEGIN SELECT RAISE(ABORT, 'code_run_calls rows are never replaced'); END;
 CREATE TRIGGER IF NOT EXISTS code_calls_running BEFORE INSERT ON code_run_calls
 WHEN COALESCE((SELECT status FROM code_runs WHERE run_id = NEW.run_id), '') <> 'running'
 BEGIN SELECT RAISE(ABORT, 'calls can only be added to a running run'); END;
 `
 
+// The "exists" triggers close INSERT OR REPLACE (and an upsert): SQLite does not
+// fire a delete trigger for the row a REPLACE removes (unless recursive_triggers
+// is on), but it does fire BEFORE INSERT triggers first, and these refuse a key
+// that is already there.
+
+// codeGuard is one trigger: its name and the text it must have.
+type codeGuard struct{ name, sql string }
+
+// codeGuards are the triggers of codeTriggersSQL, read from it so the two cannot drift.
+var codeGuards = parseGuards(codeTriggersSQL)
+
+func parseGuards(sqlText string) []codeGuard {
+	var out []codeGuard
+	for _, part := range strings.Split(sqlText, "CREATE TRIGGER IF NOT EXISTS ")[1:] {
+		name, _, _ := strings.Cut(part, " ")
+		out = append(out, codeGuard{name: name, sql: normalizeSQL("CREATE TRIGGER " + part)})
+	}
+	return out
+}
+
+// normalizeSQL makes two spellings of one statement equal: white space folded,
+// the closing semicolon and IF NOT EXISTS dropped.
+func normalizeSQL(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	s = strings.ReplaceAll(s, "IF NOT EXISTS ", "")
+	return strings.TrimSuffix(s, ";")
+}
+
 // codeHeadKey is the meta row that keeps the head of the chain (as "n:hash")
 // beside the chain, written in the transaction of every append.
 const codeHeadKey = "code.chain.head"
 
-// codeGate is tagGate for the audit writes: the same locks and checks, with one
-// difference. A write that seals a run already begun (seal true) is also allowed
-// on a closed case, so a run in flight when the case closed does not stay
-// "running" for ever; an archive in progress or finished still refuses it.
-func (c *Case) codeGate(ctx context.Context, seal bool) (*sql.DB, func(), error) {
+// codeGateMode says which rule a write follows.
+type codeGateMode int
+
+const (
+	// gateNew is a run's first write (BeginRun): refused on a closed case and
+	// while an import runs, like every other case write.
+	gateNew codeGateMode = iota
+	// gateInflight is a write for a run that was begun (RecordCall, EndRun). It
+	// must not be lost, so it waits for an import to release the folder lock
+	// (on Windows the lock gives up after 5 s with sealedfile.ErrUnavailable and
+	// the caller retries) and a closed case still takes it. An archive in
+	// progress or finished refuses it.
+	gateInflight
+	// gateSweep is CloseOrphanRuns: allowed on a closed case, but it does not
+	// wait for an import; the next open tries again.
+	gateSweep
+)
+
+// codeGate is tagGate for the audit writes, with the modes above.
+func (c *Case) codeGate(ctx context.Context, mode codeGateMode) (*sql.DB, func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -132,7 +179,7 @@ func (c *Case) codeGate(ctx context.Context, seal bool) (*sql.DB, func(), error)
 	if err != nil {
 		return nil, nil, err
 	}
-	if c.importRun.Load() {
+	if mode != gateInflight && c.importRun.Load() {
 		return nil, nil, casestore.ErrImportRunning
 	}
 	release, err := sealedfile.Lock(c.dir)
@@ -143,10 +190,12 @@ func (c *Case) codeGate(ctx context.Context, seal bool) (*sql.DB, func(), error)
 		release()
 		return nil, nil, err
 	}
-	if seal {
+	if mode == gateNew {
+		if c.isClosed() {
+			err = casestore.ErrCaseClosed
+		}
+	} else {
 		err = c.archiveRefusal()
-	} else if c.isClosed() {
-		err = casestore.ErrCaseClosed
 	}
 	if err != nil {
 		release()
@@ -257,8 +306,8 @@ func chainTail(ctx context.Context, q txQuerier) (int64, string, error) {
 
 // appendChain adds one chain row and moves the head kept beside the chain.
 func appendChain(ctx context.Context, q txQuerier, row casestore.ChainRow) error {
-	if _, err := q.ExecContext(ctx, "INSERT INTO code_chain(n, run_id, phase, record_json, prev_hash, record_hash) VALUES(?,?,?,?,?,?)",
-		row.N, row.RunID, row.Phase, row.RecordJSON, row.PrevHash, row.RecordHash); err != nil {
+	if _, err := q.ExecContext(ctx, "INSERT INTO code_chain(n, run_id, phase, seq, record_json, prev_hash, record_hash) VALUES(?,?,?,?,?,?,?)",
+		row.N, row.RunID, row.Phase, row.Seq, row.RecordJSON, row.PrevHash, row.RecordHash); err != nil {
 		return err
 	}
 	_, err := q.ExecContext(ctx, "INSERT INTO meta(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
@@ -278,7 +327,7 @@ func (c *Case) BeginRun(ctx context.Context, in casestore.RunStart) (casestore.C
 	if err != nil {
 		return casestore.CodeRun{}, err
 	}
-	db, release, err := c.codeGate(ctx, false)
+	db, release, err := c.codeGate(ctx, gateNew)
 	if err != nil {
 		return casestore.CodeRun{}, err
 	}
@@ -289,6 +338,11 @@ func (c *Case) BeginRun(ctx context.Context, in casestore.RunStart) (casestore.C
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, codeSQL); err != nil {
+		return casestore.CodeRun{}, c.mapDBErr(err)
+	}
+	// A marker for a later build that has to change the tables (CREATE TABLE IF
+	// NOT EXISTS can never add a column).
+	if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO meta(k, v) VALUES('code.schema', '1')"); err != nil {
 		return casestore.CodeRun{}, c.mapDBErr(err)
 	}
 	var have int
@@ -332,7 +386,7 @@ func (c *Case) RecordCall(ctx context.Context, runID string, rec casestore.CallR
 	if !casestore.ValidRunID(runID) {
 		return casestore.ErrRunNotFound
 	}
-	db, release, err := c.codeGate(ctx, false)
+	db, release, err := c.codeGate(ctx, gateInflight)
 	if err != nil {
 		return err
 	}
@@ -342,7 +396,7 @@ func (c *Case) RecordCall(ctx context.Context, runID string, rec casestore.CallR
 		return c.mapDBErr(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	run, err := c.loadRun(ctx, tx, runID, runColsFull)
+	run, err := c.loadRun(ctx, tx, runID, runColsList)
 	if err != nil {
 		return err
 	}
@@ -376,6 +430,17 @@ func (c *Case) RecordCall(ctx context.Context, runID string, rec casestore.CallR
 		result_hash, result_bytes, result_blob, blob_state, status, duration_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		call.RunID, call.Seq, call.DoneSeq, call.Tool, call.ArgsJSON, call.ArgsHash, call.ArgsState,
 		call.ResultHash, call.ResultBytes, blob, call.BlobState, call.Status, call.DurationMS); err != nil {
+		return c.mapDBErr(err)
+	}
+	n, prev, err := chainTail(ctx, tx)
+	if err != nil {
+		return c.mapDBErr(err)
+	}
+	row, err := casestore.CallChainRow(call, n+1, prev)
+	if err != nil {
+		return err
+	}
+	if err := appendChain(ctx, tx, row); err != nil {
 		return c.mapDBErr(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -459,7 +524,7 @@ func (c *Case) EndRun(ctx context.Context, runID string, end casestore.RunEnd) (
 	if !casestore.ValidRunID(runID) {
 		return casestore.CodeRun{}, casestore.ErrRunNotFound
 	}
-	db, release, err := c.codeGate(ctx, true)
+	db, release, err := c.codeGate(ctx, gateInflight)
 	if err != nil {
 		return casestore.CodeRun{}, err
 	}
@@ -487,7 +552,7 @@ func (c *Case) EndRun(ctx context.Context, runID string, end casestore.RunEnd) (
 }
 
 func (c *Case) CloseOrphanRuns(ctx context.Context) (int, error) {
-	db, release, err := c.codeGate(ctx, true)
+	db, release, err := c.codeGate(ctx, gateSweep)
 	if err != nil {
 		return 0, err
 	}
@@ -497,7 +562,9 @@ func (c *Case) CloseOrphanRuns(ctx context.Context) (int, error) {
 		return 0, c.mapDBErr(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, "SELECT "+runColsFull+" FROM code_runs WHERE status = 'running' ORDER BY rowid")
+	// Only runs older than the longest a run can last: a younger one may be live in another window.
+	cutoff := c.s.now().Add(-casestore.OrphanGrace).UnixMilli()
+	rows, err := tx.QueryContext(ctx, "SELECT "+runColsFull+" FROM code_runs WHERE status = 'running' AND created_at_utc <= ? ORDER BY rowid", cutoff)
 	if err != nil {
 		if noTable(err) {
 			return 0, nil
@@ -662,14 +729,14 @@ func (c *Case) mapDBErrIfDB(err error) error {
 }
 
 func chainEach(ctx context.Context, q txQuerier, tail string, args []any, fn func(casestore.ChainRow) error) error {
-	rows, err := q.QueryContext(ctx, "SELECT n, COALESCE(run_id,''), COALESCE(phase,''), COALESCE(record_json,''), COALESCE(prev_hash,''), COALESCE(record_hash,'') FROM code_chain "+tail, args...)
+	rows, err := q.QueryContext(ctx, "SELECT n, COALESCE(run_id,''), COALESCE(phase,''), COALESCE(seq,0), COALESCE(record_json,''), COALESCE(prev_hash,''), COALESCE(record_hash,'') FROM code_chain "+tail, args...)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var r casestore.ChainRow
-		if err := rows.Scan(&r.N, &r.RunID, &r.Phase, &r.RecordJSON, &r.PrevHash, &r.RecordHash); err != nil {
+		if err := rows.Scan(&r.N, &r.RunID, &r.Phase, &r.Seq, &r.RecordJSON, &r.PrevHash, &r.RecordHash); err != nil {
 			return unreadable(err)
 		}
 		if err := fn(r); err != nil {
@@ -810,33 +877,33 @@ func (s codeSource) StoredHead(ctx context.Context) (int64, string, bool, error)
 }
 
 func (s codeSource) MissingGuards(ctx context.Context) ([]string, error) {
-	rows, err := s.q.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'code\\_%' ESCAPE '\\'")
+	var tables int
+	if err := s.q.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='code_chain'").Scan(&tables); err != nil || tables == 0 {
+		return nil, err
+	}
+	rows, err := s.q.QueryContext(ctx, "SELECT name, COALESCE(sql,'') FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'code\\_%' ESCAPE '\\'")
 	if err != nil {
 		return nil, err
 	}
-	have := map[string]bool{}
+	have := map[string]string{}
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var name, text string
+		if err := rows.Scan(&name, &text); err != nil {
 			_ = rows.Close()
 			return nil, unreadable(err)
 		}
-		have[name] = true
+		have[name] = normalizeSQL(text)
 	}
 	err = rows.Err()
 	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
-	var tables int
-	if err := s.q.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='code_chain'").Scan(&tables); err != nil || tables == 0 {
-		return nil, err
-	}
-	var missing []string
+	var bad []string
 	for _, g := range codeGuards {
-		if !have[g] {
-			missing = append(missing, g)
+		if have[g.name] != g.sql { // missing, or a trigger of that name that does something else
+			bad = append(bad, g.name)
 		}
 	}
-	return missing, nil
+	return bad, nil
 }

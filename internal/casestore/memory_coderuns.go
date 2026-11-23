@@ -29,8 +29,8 @@ func (d *memData) codeLog() *memCode {
 	return d.code
 }
 
-// codeWrite is the gate of every write; d.mu is held and the handle was checked. seal is true for the writes that seal a
-// run already begun.
+// codeWrite is the gate of every write; d.mu is held and the handle was checked. seal is true for the writes that belong to
+// a run already begun (a call, the end, the crash close): a closed case still takes them.
 func (c *memCase) codeWrite(seal bool) error {
 	switch {
 	case c.d.erased:
@@ -95,7 +95,7 @@ func (c *memCase) RecordCall(ctx context.Context, runID string, rec CallRecord) 
 	}
 	c.d.mu.Lock()
 	defer c.d.mu.Unlock()
-	if err := c.codeWrite(false); err != nil {
+	if err := c.codeWrite(true); err != nil {
 		return err
 	}
 	m := c.d.codeLog()
@@ -121,7 +121,13 @@ func (c *memCase) RecordCall(ctx context.Context, runID string, rec CallRecord) 
 	if err != nil {
 		return err
 	}
+	n, prev := m.tail()
+	row, err := CallChainRow(call, n+1, prev)
+	if err != nil {
+		return err
+	}
 	m.calls[runID] = append(existing, call)
+	m.append(row)
 	return nil
 }
 
@@ -182,9 +188,10 @@ func (c *memCase) CloseOrphanRuns(ctx context.Context) (int, error) {
 	}
 	m := c.d.codeLog()
 	n := 0
+	now := c.s.now()
 	for _, id := range m.order {
-		if run := m.runs[id]; run.Status == RunRunning {
-			if err := c.endLocked(m, run, CrashedEnd(), c.s.now()); err != nil {
+		if run := m.runs[id]; run.Status == RunRunning && now.UnixMilli()-run.CreatedMS >= OrphanGrace.Milliseconds() {
+			if err := c.endLocked(m, run, CrashedEnd(), now); err != nil {
 				return n, err
 			}
 			n++
@@ -308,6 +315,10 @@ func (c *memCase) VerifyCodeChain(ctx context.Context, anchor *ChainAnchor) (Cha
 	if err := c.check(ctx); err != nil {
 		return ChainReport{}, err
 	}
+	// One read lock for the whole walk, so a write that lands meanwhile cannot make a
+	// sound record look torn (the sqlite store uses one read transaction).
+	c.d.mu.RLock()
+	defer c.d.mu.RUnlock()
 	return VerifyCodeChain(ctx, memSource{c}, anchor)
 }
 
@@ -338,15 +349,13 @@ func (c *memCase) CodeRunStats(ctx context.Context) (CodeStats, error) {
 // reading methods are not part of the case's own surface.
 type memSource struct{ c *memCase }
 
-// CodeChainSource, read under the lock the callers of VerifyCodeChain do not hold.
+// The CodeChainSource methods below read without locking: VerifyCodeChain holds the read lock.
 
 func (s memSource) EachChainRow(ctx context.Context, fn func(ChainRow) error) error {
-	s.c.d.mu.RLock()
 	var rows []ChainRow
 	if s.c.d.code != nil {
 		rows = append(rows, s.c.d.code.chain...)
 	}
-	s.c.d.mu.RUnlock()
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].N < rows[j].N })
 	for _, r := range rows {
 		if err := fn(r); err != nil {
@@ -357,12 +366,10 @@ func (s memSource) EachChainRow(ctx context.Context, fn func(ChainRow) error) er
 }
 
 func (s memSource) EachRunID(ctx context.Context, fn func(string) error) error {
-	s.c.d.mu.RLock()
 	var ids []string
 	if s.c.d.code != nil {
 		ids = append(ids, s.c.d.code.order...)
 	}
-	s.c.d.mu.RUnlock()
 	for _, id := range ids {
 		if err := fn(id); err != nil {
 			return err
@@ -372,8 +379,6 @@ func (s memSource) EachRunID(ctx context.Context, fn func(string) error) error {
 }
 
 func (s memSource) LoadRun(ctx context.Context, id string) (CodeRun, bool, error) {
-	s.c.d.mu.RLock()
-	defer s.c.d.mu.RUnlock()
 	if s.c.d.code == nil || s.c.d.code.runs[id] == nil {
 		return CodeRun{}, false, nil
 	}
@@ -381,8 +386,6 @@ func (s memSource) LoadRun(ctx context.Context, id string) (CodeRun, bool, error
 }
 
 func (s memSource) LoadCalls(ctx context.Context, id string) ([]CodeCall, error) {
-	s.c.d.mu.RLock()
-	defer s.c.d.mu.RUnlock()
 	if s.c.d.code == nil {
 		return nil, nil
 	}
@@ -390,8 +393,6 @@ func (s memSource) LoadCalls(ctx context.Context, id string) ([]CodeCall, error)
 }
 
 func (s memSource) CountCalls(ctx context.Context) (int64, error) {
-	s.c.d.mu.RLock()
-	defer s.c.d.mu.RUnlock()
 	var n int64
 	if s.c.d.code != nil {
 		for _, cs := range s.c.d.code.calls {
@@ -402,8 +403,6 @@ func (s memSource) CountCalls(ctx context.Context) (int64, error) {
 }
 
 func (s memSource) StoredHead(ctx context.Context) (int64, string, bool, error) {
-	s.c.d.mu.RLock()
-	defer s.c.d.mu.RUnlock()
 	if s.c.d.code == nil || s.c.d.code.head == nil {
 		return 0, "", false, nil
 	}

@@ -50,6 +50,9 @@ func Canonicalize(raw []byte) ([]byte, error) {
 	if !utf8.Valid(raw) {
 		return nil, invalid("not valid UTF-8")
 	}
+	if err := checkSurrogates(raw); err != nil {
+		return nil, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var out bytes.Buffer
@@ -60,6 +63,72 @@ func Canonicalize(raw []byte) ([]byte, error) {
 		return nil, invalid("data after the value")
 	}
 	return out.Bytes(), nil
+}
+
+// checkSurrogates refuses a \uD800-\uDFFF escape that is not half of a valid
+// pair. encoding/json folds such an escape into U+FFFD, so two different
+// documents would get one canonical form and one hash; RFC 8785 requires
+// well-formed (I-JSON) strings, which have no lone surrogates.
+func checkSurrogates(raw []byte) error {
+	inString := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if !inString {
+			inString = c == '"'
+			continue
+		}
+		switch c {
+		case '"':
+			inString = false
+		case '\\':
+			if i+1 >= len(raw) {
+				return nil // the syntax check reports it
+			}
+			if raw[i+1] != 'u' {
+				i++
+				continue
+			}
+			u, ok := hex4(raw, i+2)
+			if !ok {
+				return nil // the syntax check reports it
+			}
+			i += 5
+			switch {
+			case u >= 0xDC00 && u <= 0xDFFF:
+				return invalid("lone low surrogate escape")
+			case u >= 0xD800 && u <= 0xDBFF:
+				if i+2 < len(raw) && raw[i+1] == '\\' && raw[i+2] == 'u' {
+					if low, ok := hex4(raw, i+3); ok && low >= 0xDC00 && low <= 0xDFFF {
+						i += 6
+						continue
+					}
+				}
+				return invalid("lone high surrogate escape")
+			}
+		}
+	}
+	return nil
+}
+
+func hex4(raw []byte, at int) (uint16, bool) {
+	if at+4 > len(raw) {
+		return 0, false
+	}
+	var v uint16
+	for _, c := range raw[at : at+4] {
+		v <<= 4
+		switch {
+		case c >= '0' && c <= '9':
+			v |= uint16(c - '0')
+		case c >= 'a' && c <= 'f':
+			v |= uint16(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			v |= uint16(c-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return v, true
 }
 
 func writeValue(dec *json.Decoder, out *bytes.Buffer, depth int) error {

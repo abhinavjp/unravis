@@ -48,9 +48,9 @@ func TestMemReplayedEndRecordIsFound(t *testing.T) {
 	c, s := memRunCase(t)
 	m := c.d.code
 	// Paste the first run's old end record at the tail, correctly linked and hashed.
-	old := m.chain[1]
+	old := m.chain[2] // the first run: begin, call, end
 	tailN, tailHash := m.tail()
-	m.append(NewChainRow(tailN+1, old.RunID, old.Phase, old.RecordJSON, tailHash))
+	m.append(NewChainRow(tailN+1, old.RunID, old.Phase, 0, old.RecordJSON, tailHash))
 	rep, err := s.VerifyCodeChain(context.Background(), nil)
 	if err != nil || rep.OK {
 		t.Fatalf("verify = %+v %v", rep, err)
@@ -75,7 +75,7 @@ func TestMemEditedRunRowIsFound(t *testing.T) {
 func TestMemDeletedMiddleRowIsFound(t *testing.T) {
 	c, s := memRunCase(t)
 	m := c.d.code
-	m.chain = append(m.chain[:1:1], m.chain[2:]...)
+	m.chain = append(m.chain[:1:1], m.chain[2:]...) // the first run's call record
 	rep, _ := s.VerifyCodeChain(context.Background(), nil)
 	if rep.OK || !checks(rep)[CheckChainGap] {
 		t.Fatalf("verify = %+v", rep)
