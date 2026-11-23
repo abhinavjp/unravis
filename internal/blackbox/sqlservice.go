@@ -1130,10 +1130,16 @@ func (m *SQLManager) RemoveSQL(cfg Config, confirmName string) error {
 	if m.RevokeScript != "" {
 		fmt.Fprintln(os.Stdout, m.RevokeScript)
 	}
+	// A saved SQL login belongs to the removed service: it is deleted here even
+	// when the samples are kept. A failure is reported, never left silent.
+	loginErr := bbsql.RemoveLogin(SQLDataDir(cfg.Folder))
 	if m.DeleteData {
 		if rerr := os.RemoveAll(SQLDataDir(cfg.Folder)); rerr != nil {
 			return rerr
 		}
+	}
+	if loginErr != nil {
+		return &InstallError{Reason: ReasonOther, Message: "The SQL service was removed, but its saved SQL login could not be deleted. Delete the file " + bbsql.LoginFile + " in the SQL data folder.", Cause: loginErr}
 	}
 	if revokeErr != nil {
 		return &InstallError{Reason: ReasonOther, Message: "The SQL service was removed, but its launch permissions could not all be taken back. Remove them by hand: they grant read access to the service account alone.", Cause: revokeErr}

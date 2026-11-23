@@ -107,6 +107,10 @@ If the Blackbox's SQL service is on (an administrator runs `unravis-blackbox ins
 
 The service's folder can only be opened by administrators, so Unravis reads these files through the Blackbox's own address, with the same read key as the rest. A Blackbox added as a folder or share shows a note instead of the lines. A line is left out for a moment where the service took no reading (for example the first minute after it starts, when waits have nothing to be compared with); it is never drawn as 0.
 
+### A SQL login instead of Windows sign-in
+
+By default the SQL service signs in to the local SQL Server with its own Windows account. If it must use a SQL login instead, or the SQL Server is on another machine, an administrator runs `unravis-blackbox set-sql-login --login-stdin` and gives it `{"server":"...","user":"...","password":"..."}` (add `"trustServerCertificate":true` only if the server's certificate cannot be checked). The login is saved sealed inside the service's own folder. It is not in the settings file, the logs, a pack or a case, and Unravis never shows it. `clear-sql-login` and `remove-sql` delete it. The same limits apply: the login may only read performance data, and the service stops if it has more rights.
+
 ## Use in a case
 
 Step 9, Host and network, asks one question: was the web server or the SQL server short of CPU, memory or disk? A case that names a Blackbox as a source reads it once, for the incident window and the reference window. The case keeps only the Blackbox name. It never keeps the address, the folder or the read key.
