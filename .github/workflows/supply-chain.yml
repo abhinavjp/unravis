@@ -111,8 +111,7 @@ jobs:
       - name: Install osv-scanner
         run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION}
       - name: Scan lockfiles
-        # Non-blocking until BL-460a triages the three Rust findings (desktop/Cargo.lock) that exist on master today.
-        continue-on-error: true
+        # Blocking (BL-460a): the three Rust findings that exist today are waived with reasons and expiry dates in osv-scanner.toml.
         run: |
           args="-L go.mod -L web/package-lock.json"
           if [ -f desktop/Cargo.lock ]; then args="$args -L desktop/Cargo.lock"; fi
