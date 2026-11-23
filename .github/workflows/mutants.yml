@@ -38,12 +38,16 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       # Built from crates.io with --locked (the registry checks the crate hash), as cargo-deny is: no unchecked binary download.
       # RUSTUP_TOOLCHAIN=stable: the tool is built with the runner's stable Rust, not the pinned 1.97.0 of the project.
       - name: Install cargo-mutants
         env:
           RUSTUP_TOOLCHAIN: stable
         run: cargo install --locked --version "$CARGO_MUTANTS_VERSION" cargo-mutants
+      - name: Install the pinned Rust toolchain
+        working-directory: desktop
+        run: rustup show active-toolchain || rustup toolchain install --profile minimal
       - name: cargo mutants
         working-directory: desktop
         env:

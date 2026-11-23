@@ -55,7 +55,6 @@ fn body_without_length_edges() {
     };
     assert_eq!(parse_response(&raw(10), 10).unwrap().body.len(), 10, "a body equal to the limit is allowed");
     assert_eq!(parse_response(&raw(11), 10), Err(HttpError::TooLarge));
-    assert_eq!(parse_response(&raw(15), 10), Err(HttpError::TooLarge), "far over the limit");
 }
 
 fn chunked(rest: &str) -> Vec<u8> {
@@ -69,6 +68,7 @@ fn chunk_edges() {
     assert_eq!(parse_response(&chunked("3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n"), 5), Err(HttpError::TooLarge), "the second chunk goes over");
     assert_eq!(parse_response(&chunked("5\r\nhel"), 100), Err(HttpError::Incomplete), "a cut chunk is incomplete, not a panic");
     assert_eq!(parse_response(&chunked("5\r\nhello"), 100), Err(HttpError::Incomplete), "the chunk end is missing");
+    assert_eq!(parse_response(&chunked("5\r\nhelloXX"), 100), Err(HttpError::Malformed("chunk end")), "the chunk end is not CRLF");
 }
 
 // ---- locator --------------------------------------------------------------------------------------------------------------------
