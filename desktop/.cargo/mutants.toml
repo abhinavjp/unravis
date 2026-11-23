@@ -1,0 +1,11 @@
+# cargo-mutants (BL-452). Only mutants that cannot change what the code does are listed here, each with its reason. Anything else that
+# survives is a missing test: write the test, do not add a line here.
+examine_globs = ["ipc-core/src/**/*.rs"]
+exclude_re = [
+  # floor.rs `meets`: inside `if v != floor`, `v > floor` and `v >= floor` give the same answer.
+  "replace > with >= in meets",
+  # http.rs `dechunk`: `raw.len() < size + 2` or `<=` both end as Incomplete (the next loop turn finds no line end).
+  "replace < with <= in dechunk",
+  # supervisor.rs `Supervisor::on`: the `(Stopping, _)` arm gives what the final `_` arm gives; it is kept for the reader.
+  "delete match arm \\(Stopping, _\\) in",
+]

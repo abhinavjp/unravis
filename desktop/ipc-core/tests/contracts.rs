@@ -33,6 +33,8 @@ struct Version {
     date: String,
 }
 
+// The fields exist so that `deny_unknown_fields` accepts the shapes the handlers write; the test never reads them.
+#[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct ErrorBody {
@@ -108,6 +110,7 @@ fn drifted_answers_are_refused() {
         assert!(serde_json::from_value::<Info>(v).is_err(), "dropped {key}");
     }
     // A throttled answer carries retryAfterSeconds, a source failure code, stage and collections: the error struct knows them.
-    let throttled = r#"{"error":"x","reason":"wrong-key","state":"locked","retryAfterSeconds":4,"code":"c","stage":"s","collections":["a"]}"#;
+    let throttled =
+        r#"{"error":"x","reason":"wrong-key","state":"locked","retryAfterSeconds":4,"code":"c","stage":"s","collections":["a"]}"#;
     assert!(serde_json::from_str::<ErrorBody>(throttled).is_ok());
 }
