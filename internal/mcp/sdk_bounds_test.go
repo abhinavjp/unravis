@@ -69,7 +69,8 @@ func mustBridge(t *testing.T) *Bridge {
 	return b
 }
 
-// An answer over 1 MiB is replaced by the same tool error in both loops: the host never receives a line over the cap.
+// An answer over 1 MiB is replaced by a tool error in the hand-rolled loop: the host never receives a line over the cap. The SDK loop
+// never gets that far: the answer is cut to the frame budget first (BL-343, see TestFrameCapTruncates).
 func TestSDKOversizeAnswerReplaced(t *testing.T) {
 	var sources []map[string]any
 	for i := 0; i < 4000; i++ {
@@ -77,18 +78,21 @@ func TestSDKOversizeAnswerReplaced(t *testing.T) {
 	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(sources) }))
 	defer upstream.Close()
-	var answers []string
-	for _, im := range bothImpls {
-		w := dial(t, im, newBridge(fixed(upstream.URL), upstream.Client()))
-		w.handshake()
-		text, isError := w.call("audit_list_sources", map[string]any{})
-		if !isError || text != "Tool output exceeds 1 MiB. Reduce the requested page limit." {
-			t.Fatalf("%s: isError=%v text=%.120s", im.name, isError, text)
-		}
-		answers = append(answers, text)
+	w := dial(t, legacyImpl, newBridge(fixed(upstream.URL), upstream.Client()))
+	w.handshake()
+	text, isError := w.call("audit_list_sources", map[string]any{})
+	if !isError || text != "Tool output exceeds 1 MiB. Reduce the requested page limit." {
+		t.Fatalf("legacy: isError=%v text=%.120s", isError, text)
 	}
-	if answers[0] != answers[1] {
-		t.Fatal("loops disagree")
+	sw := dial(t, sdkImpl, newBridge(fixed(upstream.URL), upstream.Client()))
+	sw.handshake()
+	raw := sw.callRaw("audit_list_sources", map[string]any{})
+	if raw["isError"] == true {
+		t.Fatalf("sdk: %v", raw)
+	}
+	body, _ := json.Marshal(raw)
+	if len(body) > FrameBudget {
+		t.Fatalf("sdk answer is %d bytes, over the frame budget %d", len(body), FrameBudget)
 	}
 }
 
@@ -112,7 +116,7 @@ func TestSDKCancelDuringBlockedHandler(t *testing.T) {
 			eventually(t, "the call reaches the dashboard", func() bool { return hits.Load() == 1 })
 			w.send(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"slow"}}`)
 			res := w.reply("slow")
-			content := resultOf(t, res)["content"].([]any)[0].(map[string]any)["text"]
+			content := unwrapEnvelope(resultOf(t, res)["content"].([]any)[0].(map[string]any)["text"].(string), true)
 			if resultOf(t, res)["isError"] != true || content != "audit operation cancelled or its five-minute deadline expired" {
 				t.Fatalf("cancelled call answered %v", res)
 			}
@@ -139,7 +143,7 @@ func answerClass(m map[string]any) string {
 	}
 	if content, ok := r["content"].([]any); ok && len(content) > 0 {
 		isError, _ := r["isError"].(bool)
-		return fmt.Sprintf("tool isError=%v %v", isError, content[0].(map[string]any)["text"])
+		return fmt.Sprintf("tool isError=%v %v", isError, unwrapEnvelope(content[0].(map[string]any)["text"].(string), isError))
 	}
 	return "result"
 }

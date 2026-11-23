@@ -80,7 +80,7 @@ func (b *Bridge) breakdown(ctx context.Context, raw json.RawMessage) (any, error
 	if args.Dim == audit.BreakdownUserIP {
 		if !shown {
 			// includeIp is ignored while the operator switch is off.
-			return nil, errors.New(hiddenNote)
+			return nil, codedWire(CodeInvalidArguments, WirePermissionRequired, hiddenNote)
 		}
 		if !args.IncludeIP {
 			return nil, errors.New("the userIp dimension is hidden unless includeIp is true; IP addresses are personal data")
