@@ -33,6 +33,20 @@ type versionData struct {
 	Exe       string    `json:"exe"`
 }
 
+// versionInfo is the description of this command line (also the cli part of doctor).
+func (st *state) versionInfo() versionData {
+	exe := ""
+	f := st.io.Exe
+	if f == nil {
+		f = os.Executable
+	}
+	if p, err := f(); err == nil {
+		exe = p
+	}
+	return versionData{App: version.Short(), Version: version.Version, Commit: version.Commit, Date: version.Date,
+		CLISchema: clicore.SchemaVersion, Proto: protoInfo{clicore.ProtoMajor, clicore.ProtoMinor}, Role: "cli", Exe: exe}
+}
+
 func (st *state) versionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:         "version",
@@ -40,16 +54,7 @@ func (st *state) versionCmd() *cobra.Command {
 		Args:        cobra.NoArgs,
 		Annotations: emitting("version"),
 		RunE: func(c *cobra.Command, args []string) error {
-			exe := ""
-			f := st.io.Exe
-			if f == nil {
-				f = os.Executable
-			}
-			if p, err := f(); err == nil {
-				exe = p
-			}
-			d := versionData{App: version.Short(), Version: version.Version, Commit: version.Commit, Date: version.Date,
-				CLISchema: clicore.SchemaVersion, Proto: protoInfo{clicore.ProtoMajor, clicore.ProtoMinor}, Role: "cli", Exe: exe}
+			d := st.versionInfo()
 			return st.emit("version", d, clicore.Meta{Coverage: "complete", Identifiers: "hidden"}, func(w io.Writer) error {
 				rows := [][]string{{"app", d.App}, {"version", d.Version}, {"commit", d.Commit}, {"date", d.Date}, {"cliSchema", d.CLISchema},
 					{"proto", fmt.Sprintf("%d.%d", d.Proto.Major, d.Proto.Minor)}, {"role", d.Role}, {"exe", d.Exe}}

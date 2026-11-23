@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -181,6 +182,8 @@ func unwrapAll(err error) error {
 	return err
 }
 
+var reAppVersion = regexp.MustCompile(`^[0-9A-Za-z.+-]{1,64}$`)
+
 // checkHello is the whole verification of the owner's hello: the process, the generation and the protocol.
 func (s *Session) checkHello(body []byte) *Error {
 	untrusted := NewError(CodeEndpointUntrusted, "Unravis did not prove who it is. Restart Unravis.", "")
@@ -204,6 +207,10 @@ func (s *Session) checkHello(body []byte) *Error {
 	switch h.State {
 	case "ready", "locked", "updating":
 	default:
+		return untrusted
+	}
+	// What the owner says of itself is shown to the person (doctor, app status): a closed set and a plain version, nothing free.
+	if (h.Owner != "app" && h.Owner != "shell" && h.Owner != "headless") || !reAppVersion.MatchString(h.AppVersion) {
 		return untrusted
 	}
 	s.Hello = h

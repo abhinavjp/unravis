@@ -107,6 +107,11 @@ func TestGateIsTheMatrix(t *testing.T) {
 		called = false
 		r := op(t, h, row.Op, "")
 		switch {
+		case row.Op == "doctor":
+			// the command line's own check: the owner refuses it, whatever the matrix says of the human column
+			if r.OK || r.Error.Code != "PERMISSION_DENIED" || called {
+				t.Errorf("doctor: %+v called=%v", r, called)
+			}
 		case row.Human == clicap.Deny:
 			if r.OK || r.Error.Code != "PERMISSION_DENIED" || called {
 				t.Errorf("%s: %+v called=%v", row.Op, r, called)

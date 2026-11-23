@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
-	"strings"
 
 	"golang.org/x/sys/windows"
 
@@ -59,12 +58,5 @@ func Default(exe func() (string, error), userAgent string) clicore.Attacher {
 	}
 }
 
-// InstallDir is the install folder for the path of this program: the thin command line sits in `<install>\bin`, the app program in
-// `<install>`.
-func InstallDir(exe string) string {
-	dir := filepath.Dir(exe)
-	if strings.EqualFold(filepath.Base(dir), "bin") {
-		return filepath.Dir(dir)
-	}
-	return dir
-}
+// InstallDir is the install folder for the path of this program (see clicore.InstallDir).
+func InstallDir(exe string) string { return clicore.InstallDir(exe) }
