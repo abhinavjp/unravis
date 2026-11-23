@@ -17,6 +17,10 @@ const (
 	toolRedis                 // redis-cli: -a password
 	toolMongo                 // mongo, mongosh, mongodump, mongorestore, mongoexport, mongoimport: -p password
 	toolCurl                  // curl: -u user:password
+	toolPwdP                  // sshpass, psexec: -p password
+	toolLDAP                  // ldapsearch and the other ldap tools: -w password
+	toolSchtasks              // schtasks: /RP password
+	toolSecure                // ConvertTo-SecureString: -String is the secret
 )
 
 var toolNames = map[string]int{
@@ -24,14 +28,21 @@ var toolNames = map[string]int{
 	"mysql": toolMySQL, "mysqldump": toolMySQL, "mysqladmin": toolMySQL, "mariadb": toolMySQL, "mariadb-dump": toolMySQL,
 	"redis-cli": toolRedis,
 	"mongo":     toolMongo, "mongosh": toolMongo, "mongodump": toolMongo, "mongorestore": toolMongo, "mongoexport": toolMongo, "mongoimport": toolMongo,
-	"curl": toolCurl,
+	"curl": toolCurl, "sshpass": toolPwdP, "psexec": toolPwdP, "psexec64": toolPwdP,
+	"ldapsearch": toolLDAP, "ldapmodify": toolLDAP, "ldapadd": toolLDAP, "ldapdelete": toolLDAP, "ldapwhoami": toolLDAP, "ldappasswd": toolLDAP,
+	"schtasks": toolSchtasks,
 }
+
+// extraSecretOptions are option names that hold a secret although the shared name classifier does not take them for one (it wants
+// the whole word "pass"): keytool and openssl pass options, cmdkey and redis-cli "--pass".
+var extraSecretOptions = map[string]bool{"pass": true, "storepass": true, "keypass": true, "passin": true, "passout": true, "passwd": true,
+	"srcstorepass": true, "deststorepass": true, "srckeypass": true, "destkeypass": true, "pw": true}
 
 // toolOf names the tool kind a word is: the file name of a path, without quotes or ".exe", in lower case.
 func toolOf(word string) int {
 	word = strings.Trim(word, "\"'")
-	if i := strings.LastIndexAny(word, "(=`"); i >= 0 {
-		word = word[i+1:] // "$(mysql", "x=mysql"
+	if i := strings.LastIndexAny(word, "(=`|&;:\"'"); i >= 0 {
+		word = word[i+1:] // "$(mysql", "x=mysql", "a|sqlcmd", "\"cmd\":\"sqlcmd"
 	}
 	if i := strings.LastIndexAny(word, `/\`); i >= 0 {
 		word = word[i+1:]
@@ -59,8 +70,18 @@ func optionName(n string) bool {
 // negated says whether an option name turns a feature off ("--no-password", "--skip-token"): the word after it is not a secret.
 func negated(name string) bool {
 	n := lowerASCII(name)
-	return strings.HasPrefix(n, "no-") || strings.HasPrefix(n, "no_") || strings.HasPrefix(n, "skip-") || strings.HasPrefix(n, "disable") ||
-		strings.HasPrefix(n, "without-") || strings.HasPrefix(n, "ask-") || strings.HasPrefix(n, "prompt")
+	for _, p := range []string{"no-", "no_", "skip-", "disable", "without-", "ask-", "prompt"} {
+		if strings.HasPrefix(n, p) {
+			return true
+		}
+	}
+	// A name that says what kind of thing the word after it is, and that is not the secret itself.
+	for _, x := range []string{"store", "lifetime", "expires", "neverexpires", "expiry", "expiration", "timeout", "ttl", "name", "file", "path", "url", "id", "type", "provider", "policy", "length", "count"} {
+		if strings.HasSuffix(n, x) {
+			return true
+		}
+	}
+	return false
 }
 
 // flagValue reads the value word that starts at p (after the white space that follows an option): a quoted string inside its quotes,
@@ -94,8 +115,8 @@ func flagValue(s string, p int) (from, to, next int, ok bool) {
 		}
 	}
 	e := p
-	for e < len(s) && !isSpace(s[e]) {
-		e++
+	for e < len(s) && !isSpace(s[e]) && s[e] != '"' && s[e] != '\'' && !(s[e] == '<' && e+1 < len(s) && s[e+1] == '/') {
+		e++ // a quote or a closing tag ends the word: the structure around the value stays
 	}
 	next = e
 	if e > p && s[e-1] == '`' {
@@ -105,6 +126,9 @@ func flagValue(s string, p int) (from, to, next int, ok bool) {
 }
 
 var httpMethods = map[string]bool{"GET": true, "POST": true, "PUT": true, "DELETE": true, "PATCH": true, "HEAD": true, "OPTIONS": true, "CONNECT": true, "TRACE": true}
+
+// isWordBreak says whether c separates words besides white space: JSON punctuation, so ["--password","x"] reads as two words.
+func isWordBreak(c byte) bool { return c == ',' || c == '[' || c == ']' || c == '{' || c == '}' }
 
 // endsLine says whether only white space follows position k on its line.
 func endsLine(s string, k int) bool {
@@ -135,8 +159,10 @@ func lineStartAfter(s string, k int) int {
 // (a backslash, a backtick or a caret at the end of the line), a comma (a JSON array of arguments) and, for a block list item
 // ("- --password" then "- x"), the item on the next line.
 func optionValue(s string, p int, listItem bool) (from, to, next int, ok bool) {
-	for n := 0; n < 2; n++ {
-		for p < len(s) && (s[p] == ' ' || s[p] == '\t' || s[p] == ',') {
+	for n := 0; n < 3; n++ {
+		comma := false
+		for p < len(s) && (s[p] == ' ' || s[p] == '\t' || s[p] == ',' || (comma && (s[p] == '\n' || s[p] == '\r'))) {
+			comma = comma || s[p] == ','
 			p++
 		}
 		if p < len(s) && (s[p] == '\\' || s[p] == '^' || s[p] == '`') && endsLine(s, p+1) {
@@ -189,17 +215,23 @@ func maskFlags(s, mask string, w *work) string {
 			i++
 			continue
 		}
-		if isSpace(c) || c == ',' {
+		if isSpace(c) || isWordBreak(c) {
 			i++
 			continue
 		}
 		// One word.
 		a := i
-		for i < len(s) && !isSpace(s[i]) && s[i] != ',' {
+		for i < len(s) && !isSpace(s[i]) && !isWordBreak(s[i]) {
 			i++
 		}
 		w.spend(i - a + 1)
 		raw := s[a:i]
+		if raw[0] == '<' {
+			if k := strings.LastIndexByte(raw, '>'); k >= 0 {
+				a += k + 1
+				raw = raw[k+1:] // "<Arg>--password" reads as "--password"
+			}
+		}
 		word := strings.TrimLeft(raw, "\"'(`$[")
 		a += len(raw) - len(word)
 		wordT := strings.TrimRight(word, "\"'`);]")
@@ -218,11 +250,22 @@ func maskFlags(s, mask string, w *work) string {
 		if strings.HasSuffix(word, ";") {
 			tools = 0
 		}
-		if wordT == "" || (wordT[0] != '-' && wordT[0] != '/') {
+		if strings.EqualFold(wordT, "ConvertTo-SecureString") {
+			// ConvertTo-SecureString "hunter2" -AsPlainText: the first argument is the secret itself.
+			p := i
+			for p < len(s) && (s[p] == ' ' || s[p] == '\t') {
+				p++
+			}
+			if from, to, next, ok := flagValue(s, p); ok {
+				edits = append(edits, edit{from, to})
+				w.spend(next - i)
+				i = next
+			}
+			tools |= toolSecure
 			continue
 		}
-		if wordT[0] == '/' && httpMethods[before] {
-			continue // "POST /token HTTP/1.1": a request path, not an option
+		if wordT == "" || (wordT[0] != '-' && wordT[0] != '/') {
+			continue
 		}
 		// An option with its value attached: sqlcmd -Phunter2, mysql -phunter2, redis-cli -ahunter2, curl -ubob:hunter2.
 		if len(word) > 2 && word[0] == '-' && word[1] != '-' {
@@ -245,28 +288,53 @@ func maskFlags(s, mask string, w *work) string {
 				}
 			}
 		}
-		if strings.ContainsAny(wordT, "=:") {
-			continue // "--password=x" and "/password:x" are read by maskKV
+		if k := strings.IndexAny(wordT, "=:"); k > 0 {
+			// "--pass:x", "/pass:x", "--user=u:p": the options that maskKV does not take for secrets.
+			if n := lowerASCII(strings.TrimLeft(wordT[:k], "-/")); extraSecretOptions[n] || (tools&toolCurl != 0 && n == "user" && wordT[k] == '=') {
+				from, to := a+k+1, i
+				if n == "user" {
+					c := strings.IndexByte(s[from:to], ':')
+					if c < 0 {
+						continue
+					}
+					from += c + 1
+				}
+				if to > from {
+					edits = append(edits, edit{from, to})
+				}
+			}
+			continue // the rest ("--password=x", "/password:x") is read by maskKV
+		}
+		if wordT[0] == '/' && (httpMethods[before] || (tools == 0 && !isProgram(before))) {
+			continue // "POST /token HTTP/1.1", "See /token for details": a path or prose, not an option
 		}
 		name := strings.TrimLeft(wordT, "-/")
 		if !optionName(name) {
 			continue // a path ("/usr/lib/password-store/x"), not an option
 		}
+		lname := lowerASCII(name)
 		secret := false
 		switch {
 		case len(name) > 1:
-			secret = keyClass(name) != classNone && !negated(name)
+			secret = (keyClass(name) != classNone && !negated(name)) || extraSecretOptions[lname] ||
+				(lname == "string" && tools&toolSecure != 0) || (lname == "rp" && tools&toolSchtasks != 0)
 		case wordT[0] == '-' || tools&toolSQLServer != 0: // a one-letter option: "-P" or sqlcmd's "/P"
 			o := name[0]
-			secret = (o == 'P' && tools&toolSQLServer != 0) || (o == 'a' && tools&toolRedis != 0) || (o == 'p' && tools&toolMongo != 0)
+			secret = (o == 'P' && tools&toolSQLServer != 0) || (o == 'a' && tools&toolRedis != 0) || (o == 'p' && tools&(toolMongo|toolPwdP) != 0) || (o == 'w' && tools&toolLDAP != 0)
 		}
-		isUser := tools&toolCurl != 0 && (name == "u" || name == "user") && wordT[0] == '-'
+		isUser := tools&toolCurl != 0 && wordT[0] == '-' && (lname == "u" || lname == "user" || isCurlCluster(name))
 		if !secret && !isUser {
 			continue
 		}
+		if before != "" && prose[lowerASCII(before)] && tools == 0 {
+			continue // "Use --password to set it": help text
+		}
 		from, to, next, ok := optionValue(s, i, listItem && before == "-")
-		if !ok {
+		if !ok || !valueLooksSecret(s[from:to]) {
 			continue
+		}
+		if s[from] == '(' {
+			continue // "-AccountPassword (ConvertTo-SecureString ...)": the expression is read on its own
 		}
 		if isUser {
 			k := strings.IndexByte(s[from:to], ':')
@@ -282,4 +350,42 @@ func maskFlags(s, mask string, w *work) string {
 		i = next
 	}
 	return apply(s, mask, sortEdits(edits))
+}
+
+// prose are words that come before an option name in help text and sentences, not in a command line.
+var prose = map[string]bool{"use": true, "the": true, "see": true, "with": true, "option": true, "flag": true, "by": true, "using": true, "set": true,
+	"add": true, "specify": true, "via": true, "to": true, "and": true, "or": true, "of": true, "for": true, "in": true, "|": true, "location": true}
+
+// isProgram says whether a word names a program of Windows ("app.exe /password x").
+func isProgram(w string) bool {
+	w = lowerASCII(w)
+	return strings.HasSuffix(w, ".exe") || strings.HasSuffix(w, ".bat") || strings.HasSuffix(w, ".cmd") || strings.HasSuffix(w, ".com")
+}
+
+// isCurlCluster says whether an option name is a run of curl's one-letter options that ends in "u" ("-sSu").
+func isCurlCluster(n string) bool {
+	if len(n) < 2 || len(n) > 8 || n[len(n)-1] != 'u' {
+		return false
+	}
+	for i := 0; i < len(n); i++ {
+		if !isLower(n[i]) && !isUpper(n[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// valueLooksSecret says whether the word after an option can be the value: it holds a letter or a digit, and is not a PowerShell
+// literal such as $true.
+func valueLooksSecret(v string) bool {
+	switch lowerASCII(v) {
+	case "$true", "$false", "$null":
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if isIdent(v[i]) {
+			return true
+		}
+	}
+	return len(v) > 0 && v[0] > 127
 }

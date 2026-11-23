@@ -63,6 +63,10 @@ func TestMaskFlagsHostileInputIsFast(t *testing.T) {
 		"tool names":         strings.Repeat("mysql ", 300000) + "-pX",
 		"long word":          "--password " + strings.Repeat("a", 4<<20),
 		"slashes":            strings.Repeat("/a", 1<<20),
+		"json arrays":        strings.Repeat(`["--password","`, 200000),
+		"tags":               strings.Repeat("<Arg>--token ", 200000),
+		"secure strings":     strings.Repeat("ConvertTo-SecureString '", 200000),
+		"pipes":              strings.Repeat("a|sqlcmd -P ", 200000),
 	} {
 		t.Run(name, func(t *testing.T) {
 			start := time.Now()
@@ -95,7 +99,7 @@ func TestMaskFlagsMySQLAttachedWithMarks(t *testing.T) {
 }
 
 func TestMaskFlagsRandomInputNeverPanics(t *testing.T) {
-	pieces := []string{"--password", "-P", "-p", "-pX", "-a", "-u", "--user", "/token", "--api-key", "sqlcmd", "mysql", "redis-cli", "mongosh", "curl", "x", "a:b", `"`, "'", " ", "\t", "\n", "=", ":", "-", "--", "/", `\`, "(", "--no-password"}
+	pieces := []string{"--password", "-P", "-p", "-pX", "-a", "-u", "--user", "/token", "--api-key", "sqlcmd", "mysql", "redis-cli", "mongosh", "curl", "x", "a:b", `"`, "'", " ", "\t", "\n", "=", ":", "-", "--", "/", `\`, "(", "--no-password", "[", "]", "{", "}", ",", "<Arg>", "</Arg>", "ConvertTo-SecureString", "-AsPlainText", "|", "&&", ";", "-sSu", "--user=a:b", "/RP", "schtasks", "-w", "ldapsearch", "(", ")", "$true"}
 	seed := uint32(777)
 	next := func(n int) int { seed = seed*1664525 + 1013904223; return int(seed>>8) % n }
 	for round := 0; round < 4000; round++ {
@@ -165,5 +169,55 @@ func TestMaskFlagsFailsClosedOverBudget(t *testing.T) {
 	in := strings.Repeat("abc def\n", 20000) + "sqlcmd -S x -U sa -P hunter2\n"
 	if out := Mask(in, rm); strings.Contains(out, "hunter2") {
 		t.Fatal("over budget, a command line secret survived")
+	}
+}
+
+// Review of PR 208, round 2.
+func TestMaskFlagsReview2Findings(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"JSON array, no spaces", `"Args":["--password","hunter2"]`, `"Args":["--password","[hidden]"]`},
+		{"JSON array, pretty printed", "\"Args\": [\n    \"--password\",\n    \"hunter2\",\n    \"--x\"\n]", "\"Args\": [\n    \"--password\",\n    \"[hidden]\",\n    \"--x\"\n]"},
+		{"command line inside a JSON string", `{"cmd":"sqlcmd -P hunter2","pid":4}`, `{"cmd":"sqlcmd -P [hidden]","pid":4}`},
+		{"unquoted value keeps the quote", `{"CommandLine":"app.exe --token abc","Pid":4}`, `{"CommandLine":"app.exe --token [hidden]","Pid":4}`},
+		{"logfmt keeps the quote", `msg="app --token abc" level=info`, `msg="app --token [hidden]" level=info`},
+		{"secure string in a parameter", `New-ADUser -AccountPassword (ConvertTo-SecureString "hunter2" -AsPlainText -Force) -Name x`, `New-ADUser -AccountPassword (ConvertTo-SecureString "[hidden]" -AsPlainText -Force) -Name x`},
+		{"bare secure string", `$p = ConvertTo-SecureString 'hunter2' -AsPlainText -Force`, `$p = ConvertTo-SecureString '[hidden]' -AsPlainText -Force`},
+		{"secure string -String", `ConvertTo-SecureString -String "hunter2" -AsPlainText`, `ConvertTo-SecureString -String "[hidden]" -AsPlainText`},
+		{"keytool storepass", `keytool -importcert -storepass hunter2 -keypass k2`, `keytool -importcert -storepass [hidden] -keypass [hidden]`},
+		{"openssl passin", `openssl rsa -in k -passin pass:hunter2`, `openssl rsa -in k -passin [hidden]`},
+		{"cmdkey colon form", `cmdkey /add:srv /user:bob /pass:hunter2`, `cmdkey /add:srv /user:bob /pass:[hidden]`},
+		{"redis --pass", `redis-cli --pass hunter2 -h x`, `redis-cli --pass [hidden] -h x`},
+		{"sshpass", `sshpass -p hunter2 ssh bob@h`, `sshpass -p [hidden] ssh bob@h`},
+		{"psexec", `psexec \\srv -u bob -p hunter2 cmd`, `psexec \\srv -u bob -p [hidden] cmd`},
+		{"ldapsearch", `ldapsearch -x -D cn=a -w hunter2 -b dc=x`, `ldapsearch -x -D cn=a -w [hidden] -b dc=x`},
+		{"schtasks", `schtasks /Create /RU bob /RP hunter2 /TN t`, `schtasks /Create /RU bob /RP [hidden] /TN t`},
+		{"curl cluster", `curl -sSu bob:hunter2 https://x`, `curl -sSu bob:[hidden] https://x`},
+		{"curl --user=", `curl --user=bob:hunter2 https://x`, `curl --user=bob:[hidden] https://x`},
+		{"tool after a pipe, no spaces", `q|sqlcmd -P hunter2`, `q|sqlcmd -P [hidden]`},
+		{"tool after &&", `a&&mysql -phunter2`, `a&&mysql -p[hidden]`},
+		{"XML argument", `<Arg>--password hunter2</Arg>`, `<Arg>--password [hidden]</Arg>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Mask(tc.in, rm); got != tc.want {
+				t.Fatalf("\n in: %q\ngot: %q\nwant: %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMaskFlagsReview2KeepsProseAndParameters(t *testing.T) {
+	for _, in := range []string{
+		"See /token for details",
+		"Use --password to set the login",
+		"| --token | string | the API token |",
+		"location /token {",
+		"New-ADUser -TokenLifetime 3600 -PasswordNeverExpires $true -Name x",
+		"vault --secret-store vault1",
+		"app -Password $true",
+		"app --password-policy strict -MinPasswordLength 12",
+	} {
+		if got := Mask(in, rm); got != in {
+			t.Errorf("changed:\n in: %q\ngot: %q", in, got)
+		}
 	}
 }

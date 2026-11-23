@@ -33,7 +33,11 @@
 //     parameter, the Releases reader's own pattern, and text nodes after the first in <Password>a<b/>c</Password>.
 //   - Command lines (flags.go): "--password x", "-Password x" (PowerShell, Go flag), "--api-key x", "/token x" (an option whose name is a secret name, then
 //     the next word, also quoted, on the next line after a line continuation, in a JSON array of arguments and in a YAML block list), and the short options of the tools that take a secret there: sqlcmd/osql/bcp "-P x" "-Px" "/P x", mysql "-pX", redis-cli "-a x" "-aX",
-//     mongo tools "-p x", curl "-u user:x" "-uuser:x". A tool name counts until the end of its command (";", "|", "&&", or a line end that is not continued). "-p" is a port for psql, so a short option is judged only after its tool on the same line.
+//     mongo tools "-p x", curl "-u user:x" "-uuser:x". Also keytool/openssl "-storepass x" "-passin pass:x", cmdkey "/pass:x", sshpass and psexec "-p x", ldap tools "-w x", schtasks "/RP x",
+//     curl "-sSu u:p" and "--user=u:p", PowerShell ConvertTo-SecureString "text", in a JSON or XML text as well. A value ends at white space,
+//     a quote or a closing tag, so the structure around it stays. Text that reads as help ("Use --password to set"), a request path
+//     ("POST /token"), PowerShell flags ("-PasswordNeverExpires $true") and option names that say what the word is (-TokenLifetime,
+//     --secret-store) are left alone. A tool name counts until the end of its command (";", "|", "&&", or a line end that is not continued). "-p" is a port for psql, so a short option is judged only after its tool on the same line.
 //     Not covered: other tools' short options, a password passed as a bare argument ("net use \\srv\share x"), "--no-password" style
 //     names (left alone on purpose).
 //   - Records are read only on a whole text (Mask). The record readers keep to a name and a "value" member of one object, one YAML item or
