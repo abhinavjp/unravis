@@ -90,7 +90,7 @@ func TestClearStaleStagingSkipsALink(t *testing.T) {
 	o := e.userOpts()
 	target := filepath.Join(e.root, "elsewhere")
 	writeFile(t, filepath.Join(target, "precious.txt"), "x")
-	if err := os.MkdirAll(o.Location, 0o755); err != nil {
+	if err := os.MkdirAll(o.Location, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, filepath.Join(o.Location, ".setup-staging-20200101-000000")); err != nil {
