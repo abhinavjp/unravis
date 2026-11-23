@@ -240,6 +240,11 @@ type Runner struct {
 	Now            func() time.Time
 	Log            func(format string, args ...any)
 
+	// EnabledExtras lists the extra sampler kinds to run on top of the Standard
+	// set (extras.go). nil, the default, runs none. It is read on the first
+	// tick; changing it afterwards needs a new Runner.
+	EnabledExtras []string
+
 	// KeepHours bounds the sample files; 0 means defaultKeepHours.
 	KeepHours int
 	// MinFreePercent is the owner's free-space floor for the drive holding Dir.
@@ -293,6 +298,12 @@ type Runner struct {
 	// fsWriteFailures counts filesystem write/repair failures, tracked apart
 	// from SQL instance failures (W10-10). It never feeds State or auto-off.
 	fsWriteFailures int
+
+	// extras are the opt-in extra samplers built from EnabledExtras on the first
+	// tick; extraRuns is the per-extra health (extras.go).
+	extras      []Sampler
+	extraRuns   map[string]*extraRun
+	extrasReady bool
 }
 
 // NewRunner loads the persisted back-off state. A corrupt or unreadable state
@@ -504,6 +515,11 @@ func (r *Runner) tick(parent context.Context, now time.Time) error {
 		r.lastRun[s.Kind()] = now
 		r.lastOK = now
 		hadSuccess = true
+	}
+	// The extras run after the Standard samples, inside the same budget, and
+	// never touch State (extras.go).
+	if err := r.tickExtras(ctx, parent, now); err != nil {
+		return err
 	}
 	if partial {
 		// Due samplers that never ran miss a scheduled observation: the next
