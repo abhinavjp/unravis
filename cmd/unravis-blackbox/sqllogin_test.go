@@ -297,6 +297,10 @@ func TestAChangedLoginStopsARunningService(t *testing.T) {
 	if c, out, errs := g.do("setup-sql", "--windows-signin", "--json"); c != 0 || !strings.Contains(out, `"started":false`) || svc.state != blackbox.SvcStopped || bbsql.HasLogin(dir) {
 		t.Fatalf("%d %s %s state=%v", c, out, errs, svc.state)
 	}
+	// Stopped is not enough for a service that starts by itself: it is also latched off until the owner enables it.
+	if st, _ := bbsql.Load(bbsql.StatePath(g.folder)); !st.AutoOff {
+		t.Fatal("Windows sign-in left the service armed")
+	}
 	// clear-sql-login on a running service stops it too.
 	svc.state = blackbox.SvcRunning
 	svc.calls = nil
@@ -308,5 +312,24 @@ func TestAChangedLoginStopsARunningService(t *testing.T) {
 	}
 	if len(svc.calls) != 1 || svc.calls[0] != "stop" {
 		t.Fatalf("calls %v", svc.calls)
+	}
+}
+
+// A login file that cannot be read or does not match its hash is found before anything is stopped: a working service stays running.
+func TestABadLoginFileLeavesARunningServiceRunning(t *testing.T) {
+	g, dir, fs := setupRig(t)
+	f, _, _ := strings.Cut(fs, "|")
+	svc := &memSvc{state: blackbox.SvcRunning}
+	g.d.sqlMgr.Svc = svc
+	if err := os.WriteFile(f, []byte(loginDoc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, out, errs := g.do("setup-sql", "--login-file", f, "--login-sha256", strings.Repeat("0", 64), "--json")
+	if c == 0 || svc.state != blackbox.SvcRunning || bbsql.HasLogin(dir) {
+		t.Fatalf("wrong hash: %d %s state=%v", c, out, svc.state)
+	}
+	noLoginLeak(t, out, errs)
+	if c, _, _ := g.do("setup-sql", "--login-file", f+".gone", "--login-sha256", strings.Repeat("0", 64), "--json"); c == 0 || svc.state != blackbox.SvcRunning {
+		t.Fatalf("missing file stopped the service: %d state=%v", c, svc.state)
 	}
 }

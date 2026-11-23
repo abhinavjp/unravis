@@ -49,3 +49,22 @@ func TestWriteSQLLoginFileRefusesAnInvalidLogin(t *testing.T) {
 		t.Error("left a folder behind")
 	}
 }
+
+func TestSweepRemovesOnlyLeftoverLoginFolders(t *testing.T) {
+	root := t.TempDir()
+	f, err := WriteSQLLoginFile(root, bbsql.StoredLogin{Server: "sql01", Login: bbsql.Login{User: "u", Password: "p"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(root, "keep-me")
+	if err := os.MkdirAll(other, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	SweepSQLLoginFiles(root)
+	if _, err := os.Stat(f.Dir); err == nil {
+		t.Error("leftover login folder not removed")
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Error("an unrelated folder was removed")
+	}
+}

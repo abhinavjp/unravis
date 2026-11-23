@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"api-audit-explorer/internal/bbsql"
 )
@@ -33,7 +34,7 @@ func WriteSQLLoginFile(root string, s bbsql.StoredLogin) (SQLLoginFile, error) {
 	if s.Validate() != nil {
 		return SQLLoginFile{}, errors.New("the SQL login is not valid")
 	}
-	data, err := json.Marshal(sqlLoginFileDoc{Server: s.Server, User: s.Login.User, Password: s.Login.Password, TrustServerCertificate: s.TrustServerCertificate}) //nolint:gosec // G117: the file is written into the locked SQL folder and read back by the helper only
+	data, err := json.Marshal(sqlLoginFileDoc{Server: s.Server, User: s.Login.User, Password: s.Login.Password, TrustServerCertificate: s.TrustServerCertificate}) //nolint:gosec // G117: the file is private to the writer, short-lived, and read back by the helper only
 	if err != nil {
 		return SQLLoginFile{}, errors.New("the SQL login could not be written")
 	}
@@ -53,6 +54,25 @@ func WriteSQLLoginFile(root string, s bbsql.StoredLogin) (SQLLoginFile, error) {
 	}
 	sum := sha256.Sum256(data)
 	return SQLLoginFile{Dir: dir, Path: path, SHA: hex.EncodeToString(sum[:])}, nil
+}
+
+// SweepSQLLoginFiles removes login folders left in the temp folder by an earlier run that ended before it could remove them (a restart, an
+// update or a crash within the file's short life). It touches only folders named like the ones WriteSQLLoginFile makes, and never follows a link.
+func SweepSQLLoginFiles(root string) {
+	if root == "" {
+		root = os.TempDir()
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "unravis-sqllogin-") || e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		RemoveSQLLoginFile(SQLLoginFile{Dir: dir, Path: filepath.Join(dir, "login.json")})
+	}
 }
 
 // RemoveSQLLoginFile wipes and removes a login file made by WriteSQLLoginFile, and its folder.

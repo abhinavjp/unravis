@@ -284,8 +284,9 @@ func (b *Backend) sqlAccess(ctx context.Context, c *Call) (any, error) {
 }
 
 // loginFileLife is how long a login file made for the Blackbox helper may live. The helper only reads it; the keeper removes it, so the
-// password never needs to be handed to the app process, and a prompt nobody answers cannot leave it behind.
-const loginFileLife = 10 * time.Minute
+// password never needs to be handed to the app process, and a prompt nobody answers cannot leave it behind. It is the helper's time limit
+// plus a margin. A file a stopped keeper could not remove is swept when the keeper next starts (blackbox.SweepSQLLoginFiles).
+const loginFileLife = 5 * time.Minute
 
 // writeLoginFile is the seam tests replace; the real one writes under the keeper's own temp folder.
 var writeLoginFile = func(s bbsql.StoredLogin) (blackbox.SQLLoginFile, error) { return blackbox.WriteSQLLoginFile("", s) }

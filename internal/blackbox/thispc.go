@@ -86,7 +86,7 @@ type HelperRequest struct {
 	DeleteRecordings bool   // remove
 	ConfirmName      string // remove with DeleteRecordings: the name, typed
 
-	// setup-sql: the file holding the SQL login (made by the caller, wiped and removed by the helper) and its SHA-256, or SQLWindows to use
+	// setup-sql: the file holding the SQL login (made by the caller or by the key keeper; the helper only reads it and never writes or deletes it) and its SHA-256, or SQLWindows to use
 	// Windows sign-in instead; SQLEnable starts the service when it is set up.
 	SQLLoginFile string
 	SQLLoginSHA  string
@@ -292,8 +292,8 @@ func (t *ThisPC) do(ctx context.Context, req HelperRequest) (HelperAnswer, error
 		return HelperAnswer{}, &ThisPCError{Reason: ReasonConfirm, Message: ErrConfirmName.Error(), Cause: ErrConfirmName}
 	}
 	if req.SQLLoginFile != "" {
-		// The helper wipes and removes the login file when it reads it. This is for the call that never got that far (prompt declined,
-		// program refused): the file never outlives the call.
+		// The helper only reads the login file. A file the app wrote itself is removed here when the call ends, however it ends; one made by
+		// the key keeper is removed by the keeper (a short timer, and a sweep when it starts), because the app may not own it.
 		defer removeLoginFile(req.SQLLoginFile)
 	}
 	cfgPath := ""

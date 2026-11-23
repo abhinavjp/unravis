@@ -130,7 +130,7 @@ func (h *handler) bbSQLSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.bb.pcMu.Unlock()
-	ctx, cancel := context.WithTimeout(r.Context(), bbActionTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), bbSQLSetupTimeout)
 	defer cancel()
 	out, err := pc.SetupSQL(ctx, file.Path, file.SHA, req.Mode == "windows", req.Enable)
 	if err != nil {

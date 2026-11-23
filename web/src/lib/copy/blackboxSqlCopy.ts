@@ -17,7 +17,7 @@ export const SQLC_TEXT = {
     everything: 'Everything: all the safe figures the Blackbox knows.',
     deep: 'Deep: everything, plus the heavier checks. Uses more of the server.'
   } as Record<string, string>,
-  profileWillApply: 'The new choice is applied to the Blackbox first (one administrator approval).',
+  profileWillApply: 'The new choice is applied to the Blackbox first. That is one more administrator approval.',
   check: 'Check Blackbox access',
   checking: 'Checking…',
   turnOn: 'Turn on SQL collection',
@@ -25,7 +25,7 @@ export const SQLC_TEXT = {
   turnOnWindows: 'Get the script',
   windowsRan: 'I ran the script. Turn it on',
   windowsScriptIntro: 'Run this script in SSMS on the server as an admin, then press the button below.',
-  oneApproval: 'Windows asks for one administrator approval.',
+  oneApproval: 'Turning it on asks Windows for one administrator approval. A changed choice under What to collect asks for one more, first.',
   clear: 'Remove the saved SQL login',
   clearing: 'Removing…',
   clearHelp: 'Removing the saved login deletes it from this PC and stops the SQL service. The recordings stay.',

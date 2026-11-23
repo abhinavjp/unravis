@@ -128,10 +128,12 @@ const (
 	bbProbeTimeout  = 8 * time.Second
 	bbReadTimeout   = 40 * time.Second
 	bbActionTimeout = 3 * time.Minute
-	bbMaxBody       = 1 << 20
-	bbMaxSpan       = 7 * 24 * time.Hour
-	bbMaxName       = 200
-	bbNewestLook    = 10 * time.Minute
+	// bbSQLSetupTimeout bounds turning SQL collection on: install, a stop of up to 30 seconds and a start, after the person has answered the prompt.
+	bbSQLSetupTimeout = 5 * time.Minute
+	bbMaxBody         = 1 << 20
+	bbMaxSpan         = 7 * 24 * time.Hour
+	bbMaxName         = 200
+	bbNewestLook      = 10 * time.Minute
 )
 
 /* ------------------------------------------------------------- routes */
