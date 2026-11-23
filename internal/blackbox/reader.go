@@ -704,7 +704,7 @@ func (s *HTTPSource) netErr(err error) *ReadError {
 	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
 		return readErr(ReadUnreachable, "The Blackbox did not answer in time. Check that the server is on, that Listens on is the server address, and that the port is open to this PC.", err)
 	}
-	return readErr(ReadUnreachable, "Nothing answered at that address. Check the name and port, that the Blackbox is running, that Listens on is the server address, not 127.0.0.1, and that the port is open to this PC.", err)
+	return readErr(ReadUnreachable, "Nothing answered at that address. Check the name and port, that the Blackbox is running, that Listens on lets other PCs in, and that the port is open to this PC.", err)
 }
 
 func serverTime(h http.Header) time.Time {
