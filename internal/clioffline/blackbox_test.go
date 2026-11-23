@@ -218,7 +218,7 @@ func TestOfflineOversizeAndMalformed(t *testing.T) {
 	// a line longer than the reader allows: no panic, no hang, a warning or an error
 	huge := record(t, 3)
 	hf := filepath.Join(huge, "bb-20261027-11.ndjson")
-	hb, _ := os.ReadFile(hf)
+	hb, _ := os.ReadFile(hf) //nolint:gosec // a temp tree of this test
 	_ = os.WriteFile(hf, append(append([]byte(nil), hb...), []byte(strings.Repeat("a", 5<<20)+"\n")...), 0o600) //nolint:gosec // a temp tree of this test
 	if res, e := Inspect(ctx, huge, Options{}); e == nil && len(res.Warnings) == 0 && res.Samples.Count > 3 {
 		t.Errorf("huge line: %+v", res)
