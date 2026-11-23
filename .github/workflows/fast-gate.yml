@@ -78,6 +78,7 @@ jobs:
           node tools/ci/test-fast-scope.mjs
           node tools/ci/test-compare.mjs
           node tools/ci/test-promote-dist.mjs
+          node tools/ci/test-backlog-ids.mjs
           node tools/security/check-action-pins.mjs
 
       - name: Scope - what does this change affect?
