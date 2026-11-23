@@ -31,7 +31,7 @@ Setup opens its window in Microsoft Edge or Google Chrome, in a plain app window
 | Restart | A restart Windows is waiting for. Setup can go on. |
 | Earlier setup | An earlier setup that did not finish. Setup puts back what it changed before it starts. |
 | Shared data folder | For everyone on this PC: `C:\ProgramData\Unravis` is free, or was made by an earlier setup. |
-| Program folder | A new install does not go into a folder that already holds other files. For everyone on this PC, an existing folder is only used when an earlier Unravis setup made it, or when it is empty and only administrators own it. A folder that is a link to another place is refused, for this folder and for the data folders. |
+| Program folder | A new install does not go into a folder that already holds somebody's files; the line names them. A folder that holds only Unravis files (a program, the setup record, the working folder of a setup that was cut off) is fine, and setup goes on over it. When this check fails, the row has **Choose another folder** (opens Options, where you type one) and **Open this folder** (shows it in Explorer). Setup never changes or deletes those files. For everyone on this PC, an existing folder is only used when an earlier Unravis setup made it, or when it is empty and only administrators own it. A folder that is a link to another place is refused, for this folder and for the data folders. |
 | Read key file | Only with a Blackbox and a read key file in silent mode: the file does not exist yet. Setup never replaces a file. |
 
 A **Failed** check stops the install and says what to do. Fix it, then press **Check again**. A **Partly ready** check does not stop anything.

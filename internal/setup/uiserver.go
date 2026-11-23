@@ -240,6 +240,8 @@ func (s *UIServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	case "POST /api/open-folder":
+		s.openFolder(w, r)
 	case "POST /api/close":
 		s.mu.Lock()
 		running := s.running
@@ -255,6 +257,42 @@ func (s *UIServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown request"})
 	}
+}
+
+// openFolder shows the folder the Welcome screen names in Explorer, so the person can see what is in it. Only an existing folder given as a
+// full path is opened; it is shown, never run or changed.
+func (s *UIServer) openFolder(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Folder string `json:"folder"`
+	}
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "send JSON"})
+		return
+	}
+	dec := json.NewDecoder(io.LimitReader(r.Body, maxUIBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "The request could not be read: " + err.Error()})
+		return
+	}
+	raw := strings.TrimSpace(body.Folder)
+	dir := filepath.Clean(raw)
+	// A network path (\\host\share) or a device path (\\?\) would make this PC contact another machine: only a local drive path is opened.
+	if raw == "" || !filepath.IsAbs(dir) || strings.HasPrefix(raw, `\\`) || strings.HasPrefix(raw, "//") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Give the full path of a folder on this PC."})
+		return
+	}
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "That folder is not there."})
+		return
+	}
+	if s.OpenFolder != nil {
+		if err := s.OpenFolder(dir); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "The folder could not be opened: " + err.Error()})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // logFiler is implemented by a backend that knows its log file without building

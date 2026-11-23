@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"api-audit-explorer/internal/blackbox"
+	"api-audit-explorer/internal/update"
 )
 
 // CheckStatus is the sticker of a preflight line.
@@ -414,16 +415,55 @@ func (r *Runner) checkMachineFolder(dir string, old *Installed) (Check, bool) {
 	return Check{}, false
 }
 
+// installerOwned reports whether an entry of a program folder is one this installer, the updater or a stopped setup puts there: the
+// programs, the record of the setup choices, the working folders of a setup that was cut off, and the old setup the updater keeps.
+func installerOwned(e os.DirEntry) bool {
+	name := e.Name()
+	if e.IsDir() {
+		return stampName.MatchString(name) || strings.EqualFold(name, update.PreviousDir)
+	}
+	// Windows itself drops these into a folder the person has opened in Explorer; they are not anybody's data.
+	for _, own := range []string{AppExeName, KeeperExeName, BlackboxExeName, ReleasesExeName, SetupExeName, StateFileName, "desktop.ini", "thumbs.db"} {
+		if strings.EqualFold(name, own) {
+			return true
+		}
+	}
+	return false
+}
+
+// foreignEntries are the names in dir that the installer did not make: what makes a folder somebody's own.
+func foreignEntries(ents []os.DirEntry) []string {
+	var out []string
+	for _, e := range ents {
+		if !installerOwned(e) {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
+// namesLine writes up to four names, then "and N more", so the screen says what is in the way.
+func namesLine(names []string) string {
+	const show = 4
+	if len(names) <= show {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(names[:show], ", "), len(names)-show)
+}
+
+// checkInstallFolder is the program-folder check of a just-for-me install. A folder that is empty, new, or holds only what this
+// installer makes (a program, the setup record, a cut-off setup's working folder) is fine: it is an earlier or unfinished Unravis and
+// setup goes on over it. Anything else is somebody's files: setup names them and asks for another folder, and never touches them.
 func checkInstallFolder(dir string) (Check, bool) {
 	ents, err := os.ReadDir(dir)
 	if err != nil || len(ents) == 0 {
 		return Check{}, false
 	}
-	for _, e := range ents {
-		if strings.EqualFold(e.Name(), AppExeName) || strings.EqualFold(e.Name(), StateFileName) {
-			return Check{}, false
-		}
+	other := foreignEntries(ents)
+	if len(other) == 0 {
+		return Check{}, false
 	}
-	return Check{ID: "install-folder", Title: "Program folder", Status: CheckFailed, Detail: dir + " already holds other files.",
-		Fix: "Choose an empty folder, or a new one."}, true
+	return Check{ID: "install-folder", Title: "Program folder", Status: CheckFailed,
+		Detail: dir + " already holds files that are not Unravis files: " + namesLine(other) + ".",
+		Fix:    "Pick an empty folder or a new one. Setup does not change or delete those files."}, true
 }
