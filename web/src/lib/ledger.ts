@@ -24,7 +24,6 @@ export const SETTLING_MAX = 500;
 /** Every fixed sentence and label the drawer shows. The component reads these, and the tests lint them. */
 export const ledgerCopy = {
   title: 'Ledger',
-  intro: 'What we believe, what supports it, what contradicts it, and what is not yet known.',
   notice: 'The ledger keeps theories and references only. Do not paste request rows, ids, users or IPs.',
   empty: 'No theories yet. Add the first one below.',
   addLabel: 'New theory',
