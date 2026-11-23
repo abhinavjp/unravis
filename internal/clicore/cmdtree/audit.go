@@ -35,6 +35,7 @@ func (st *state) auditCmd() *cobra.Command {
 		RunE:  func(c *cobra.Command, args []string) error { return st.groupHelp(c) },
 	}
 	group.AddCommand(st.compareCmd(), st.groupsCmd(), st.guideCmd())
+	group.AddCommand(st.readCmds()...)
 	return group
 }
 
