@@ -1,0 +1,159 @@
+package mcpsrv
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+// BL-350 budget tests, on the real path: HTTP routes, SQLite, the real dashboard handler over the demo repository.
+
+func overBudget(a reply) bool {
+	return a.Status == 429 && !a.OK && a.Error != nil && a.Error.Code == "query_budget_exceeded" && a.Error.Action != "" && len(a.Result) == 0
+}
+
+func TestCompareRateIsPerHostAndPerHour(t *testing.T) {
+	r := newRig(t)
+	a := r.enroll("rate-a", r.approval(TierAggregate))
+	b := r.enroll("rate-b", r.approval(TierAggregate))
+	for i := 0; i < DefaultBudgets.CompareRate; i++ {
+		if c := r.call(a, "audit_compare", r.compareArgs()); !c.OK || c.IsError {
+			t.Fatalf("compare %d: %d %.300s", i+1, c.Status, c.Raw)
+		}
+		r.clk.Add(time.Minute) // twelve in twelve minutes
+	}
+	n := len(r.dash.hits())
+	c := r.call(a, "audit_compare", r.compareArgs())
+	if !overBudget(c) || strings.Contains(string(c.Raw), "12") {
+		t.Fatalf("the 13th comparison in an hour: %d %s", c.Status, c.Raw)
+	}
+	if len(r.dash.hits()) != n {
+		t.Error("a refused comparison reached the dashboard")
+	}
+	// cheap tools and other hosts are not affected
+	if g := r.call(a, "audit_get_guide", map[string]any{}); !g.OK {
+		t.Errorf("guide after the compare limit: %.200s", g.Raw)
+	}
+	if c := r.call(b, "audit_compare", r.compareArgs()); !c.OK || c.IsError {
+		t.Errorf("another host: %.300s", c.Raw)
+	}
+	// the hour passes: the oldest calls leave the window
+	r.clk.Add(time.Hour)
+	if c := r.call(a, "audit_compare", r.compareArgs()); !c.OK || c.IsError {
+		t.Errorf("after the hour: %d %.300s", c.Status, c.Raw)
+	}
+	// a new grant of the same host does not reset the rate
+	rows := 0
+	for _, e := range r.events() {
+		if e.Kind == "denied" && e.Code == "query_budget_exceeded" && e.ProfileID == "rate-a" {
+			rows++
+		}
+	}
+	if rows != 1 {
+		t.Errorf("%d denied rows for the refused comparison", rows)
+	}
+}
+
+func TestLiveRateAndCumulativeBytes(t *testing.T) {
+	small := DefaultBudgets
+	small.LiveRate, small.CumulativeBytes = 2, 40<<10
+	r := newRigBudgets(t, small)
+	h := r.enroll("live", r.approval(TierEvidence))
+	c := r.call(h, "audit_compare", r.compareArgs())
+	id := c.env["resultId"].(string)
+	for i := 0; i < 2; i++ {
+		if a := r.call(h, "audit_get_slowest", map[string]any{"resultId": id, "limit": 1}); !a.OK || a.IsError {
+			t.Fatalf("slowest %d: %.300s", i, a.Raw)
+		}
+	}
+	if a := r.call(h, "audit_get_slowest", map[string]any{"resultId": id, "limit": 1}); !overBudget(a) {
+		t.Errorf("third live read: %d %.300s", a.Status, a.Raw)
+	}
+	// cached tools are not live reads
+	if a := r.call(h, "audit_get_groups", map[string]any{"resultId": id}); !a.OK {
+		t.Errorf("groups: %.200s", a.Raw)
+	}
+	// bytes: pull answers until the 40 KiB of the window is used; then every tool is refused until the window passes
+	r.clk.Add(2 * time.Hour) // the rate window is over, the byte window too
+	var refused bool
+	for i := 0; i < 400 && !refused; i++ {
+		a := r.call(h, "audit_get_groups", map[string]any{"resultId": id, "limit": 100})
+		if a.IsError { // the handle expired with the clock
+			c = r.call(h, "audit_compare", r.compareArgs())
+			id = c.env["resultId"].(string)
+			r.clk.Add(time.Minute)
+			continue
+		}
+		refused = overBudget(a)
+	}
+	if !refused {
+		t.Fatal("the byte budget never ran out")
+	}
+	if g := r.call(h, "audit_get_guide", map[string]any{}); !overBudget(g) {
+		t.Errorf("guide after the byte budget: %.200s", g.Raw)
+	}
+	r.clk.Add(11 * time.Minute)
+	if g := r.call(h, "audit_get_guide", map[string]any{}); !g.OK {
+		t.Errorf("guide after the byte window: %.200s", g.Raw)
+	}
+}
+
+// One comparison at a time per host and two in all.
+func TestHeavyCallsAtOnce(t *testing.T) {
+	r := newRig(t)
+	a := r.enroll("heavy-a", r.approval(TierAggregate))
+	b := r.enroll("heavy-b", r.approval(TierAggregate))
+	c := r.enroll("heavy-c", r.approval(TierAggregate))
+	releaseA, outA := r.holdCompare(a, "aaaaaaaa-1")
+	if x := r.call(a, "audit_compare", r.compareArgs()); !overBudget(x) {
+		t.Errorf("a second comparison of the same host: %d %.300s", x.Status, x.Raw)
+	}
+	// another host may run one; the third host is over the global limit while both run
+	releaseB := r.dash.holdPath("/api/analyze") // replaces the hold on the path: A's request is already inside
+	outB := make(chan reply, 1)
+	go func() {
+		outB <- r.callRaw(b.header, map[string]any{"tool": "audit_compare", "args": r.compareArgs(), "callId": "bbbbbbbb-1"})
+	}()
+	select {
+	case <-r.dash.seen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second host's comparison never started")
+	}
+	third := make(chan reply, 1)
+	go func() { third <- r.callRaw(c.header, map[string]any{"tool": "audit_compare", "args": r.compareArgs()}) }()
+	select {
+	case x := <-third:
+		if !overBudget(x) {
+			t.Errorf("a third comparison in all: %d %.300s", x.Status, x.Raw)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("a third comparison in all was not refused (it is waiting on the dashboard)")
+	}
+	close(releaseA)
+	close(releaseB)
+	if got := waitReply(t, outA); !got.OK {
+		t.Errorf("first: %.200s", got.Raw)
+	}
+	if got := waitReply(t, outB); !got.OK {
+		t.Errorf("second: %.200s", got.Raw)
+	}
+	if x := r.call(c, "audit_compare", r.compareArgs()); !x.OK || x.IsError {
+		t.Errorf("after they ended: %.300s", x.Raw)
+	}
+}
+
+// The byte counter keeps one number per ten seconds, so a host cannot grow it by calling often.
+func TestByteCounterIsBounded(t *testing.T) {
+	l := newLimiter(DefaultBudgets)
+	now := time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)
+	for i := 0; i < 20000; i++ {
+		done, over := l.admit("p", ClassGuide, now.Add(time.Duration(i)*200*time.Millisecond))
+		if over != nil {
+			t.Fatalf("call %d refused: %v", i, over)
+		}
+		done(1)
+	}
+	if n := len(l.per["p"].bytes); n > 62 {
+		t.Errorf("%d byte buckets", n)
+	}
+}

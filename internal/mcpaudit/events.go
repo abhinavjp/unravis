@@ -28,8 +28,11 @@ const (
 	OutcomeTimeout   = "timeout"
 )
 
-// MaxEvents is the most rows kept; older rows are deleted as new ones come in (spec 03 D10: 100,000 events). The 90-day rule is BL-351's.
+// MaxEvents is the most rows kept; older rows are deleted as new ones come in (spec 03 D10: 100,000 events). RetainFor is how long a row
+// is kept: the ledger screen says "kept 90 days".
 const MaxEvents = 100_000
+
+const RetainFor = 90 * 24 * time.Hour
 
 const (
 	pruneEvery    = 1000 // rows between two cap checks
@@ -81,9 +84,30 @@ func (d *DB) Record(ctx context.Context, e Event) error {
 	}
 	if inserted.Add(1)%pruneEvery == 0 {
 		// A failed prune is not a failed call: the cap is checked again after the next thousand rows.
-		_, _ = d.sql.ExecContext(ctx, `DELETE FROM audit_events WHERE id <= (SELECT max(id) FROM audit_events) - ?`, MaxEvents)
+		_, _ = d.Prune(ctx, e.Time)
 	}
 	return nil
+}
+
+// Prune deletes the rows older than RetainFor (at now) and the rows beyond the newest MaxEvents, and returns how many it deleted. The
+// owner calls it when the store is opened; Record calls it every thousand rows.
+func (d *DB) Prune(ctx context.Context, now time.Time) (int64, error) {
+	var total int64
+	for _, q := range []struct {
+		sql string
+		arg any
+	}{
+		{`DELETE FROM audit_events WHERE ts < ?`, ms(now.Add(-RetainFor))},
+		{`DELETE FROM audit_events WHERE id <= (SELECT max(id) FROM audit_events) - ?`, MaxEvents},
+	} {
+		r, err := d.sql.ExecContext(ctx, q.sql, q.arg)
+		if err != nil {
+			return total, errors.New("mcpaudit: the ledger could not be pruned")
+		}
+		n, _ := r.RowsAffected()
+		total += n
+	}
+	return total, nil
 }
 
 // CountEvents returns how many ledger rows there are.

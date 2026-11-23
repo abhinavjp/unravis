@@ -71,6 +71,7 @@ type Deps struct {
 	Backend  Backend
 	Recorder Recorder
 	Info     func() Info
+	Budgets  Budgets // zero value: DefaultBudgets
 	Now      func() time.Time
 	Logf     func(format string, args ...any) // fixed text only
 }
@@ -117,6 +118,7 @@ var (
 type Dispatcher struct {
 	d Deps
 
+	lim     *limiter
 	mu      sync.Mutex
 	perProf map[string]int
 	total   int
@@ -139,7 +141,7 @@ func NewDispatcher(d Deps) (*Dispatcher, error) {
 		d.Info = func() Info { return Info{} }
 	}
 	d.Grants.OnRevoke(d.Backend.Forget)
-	return &Dispatcher{d: d, perProf: map[string]int{}, byCall: map[string]context.CancelFunc{}}, nil
+	return &Dispatcher{d: d, lim: newLimiter(d.Budgets), perProf: map[string]int{}, byCall: map[string]context.CancelFunc{}}, nil
 }
 
 // refuse is an answer that carries no result.
@@ -242,6 +244,17 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 	}
 	ev.Fingerprint = s.d.Recorder.Fingerprint(compact(req.Args))
 
+	// Budgets (BL-350): a host that may call is still limited in how much it asks of the repositories. Charged before the ledger row and
+	// before the run; a refusal is a denied row and says "do not loop".
+	budgetDone, over := s.lim.admit(pr.ProfileID, class, s.d.Now())
+	if over != nil {
+		ev.Kind, ev.Outcome, ev.Code = mcpaudit.KindDenied, mcpaudit.OutcomeDenied, mcp.WireBudgetExceeded
+		_ = s.d.Recorder.Record(context.WithoutCancel(runCtx), ev)
+		return refuse(http.StatusTooManyRequests, mcp.WireBudgetExceeded, "This host reached its limit for "+over.what+".", "Wait and retry later, or ask the person to review the limits in Unravis > AI access. Do not loop.")
+	}
+	budgetBytes := 0
+	defer func() { budgetDone(budgetBytes) }()
+
 	start := s.d.Now()
 	admit := ev
 	admit.Kind, admit.Time = mcpaudit.KindAdmit, start
@@ -280,6 +293,7 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 		return refuse(http.StatusUnauthorized, d.Code, d.Message, d.Action)
 	}
 	end.Bytes = len(result)
+	budgetBytes = len(result)
 	end.Outcome, end.Code = outcomeOf(result, isError, tctx)
 	s.recordEnd(ctx, end)
 	return http.StatusOK, Answer{OK: true, IsError: isError, ProfileRev: pr.Rev, Result: json.RawMessage(result), Ms: end.DurMs}

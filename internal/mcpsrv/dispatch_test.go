@@ -94,14 +94,16 @@ type rig struct {
 	now     time.Time
 }
 
-func newRig(t *testing.T) *rig {
+func newRig(t *testing.T) *rig { t.Helper(); return newRigBudgets(t, Budgets{}) }
+
+func newRigBudgets(t *testing.T, b Budgets) *rig {
 	t.Helper()
 	e := newEnv(t)
 	now := time.Now().UTC().Truncate(time.Hour)
 	r := &rig{env: e, t: t, dash: newDash(now), now: now}
 	r.led = &ledger{DB: e.db}
 	r.backend = NewLocalBackend(r.dash, dashToken)
-	deps := Deps{Grants: e.g, Backend: r.backend, Recorder: r.led, Now: e.clk.Now}
+	deps := Deps{Grants: e.g, Backend: r.backend, Recorder: r.led, Now: e.clk.Now, Budgets: b}
 	h, err := Handler(deps)
 	if err != nil {
 		t.Fatal(err)
