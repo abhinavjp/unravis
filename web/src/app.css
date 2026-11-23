@@ -1,10 +1,5 @@
 @import "./brand/tokens.css";
 
-/* Page width (one system for every screen):
-   --page-max  data pages (lists, charts, tables, timeline, case page): fill the window up to 2000px, then stay centred. Same as the Appian "Wide" cap.
-   --form-max  forms and one-question pages: stay narrow, so a field never runs across the window.
-   --read-max  prose: about 75 characters a line, whatever the window. Text paragraphs use it, containers do not. */
-:root { --page-max: 2000px; --form-max: 880px; --read-max: 78ch; }
 
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; min-height: 100%; }

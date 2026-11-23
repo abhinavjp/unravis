@@ -7,7 +7,8 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8').repla
 
 test('one page-width token, 2000px, used by the stage, the scope bar and the record page', () => {
   const css = read('src/app.css');
-  assert.match(css, /:root \{ --page-max: 2000px; --form-max: 880px; --read-max: 78ch; \}/);
+  const tokens = read('src/brand/tokens.css');
+  assert.match(tokens, /--page-max: 2000px;\n\s+--form-max: 880px;\n\s+--read-max: 78ch;/);
   assert.match(css, /\.stage-inner \{ max-width: var\(--page-max\);/);
   assert.match(css, /\.scope-main \{[^}]*max-width: var\(--page-max\);/);
   assert.match(css, /\.scope \.interval-note \{ max-width: var\(--page-max\);/);
