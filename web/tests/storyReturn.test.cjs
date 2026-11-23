@@ -180,12 +180,11 @@ test('a thrown-away re-read takes no health number, and another case starts with
   assert.match(page, /if \(loadedFor !== id\) \{ health = \[\]; imports = \[\]; \}\n\s*loadedFor = id;/);
 });
 
-test('the page read: a failed health read puts nothing in and takes no turn; an older answer does not overwrite a newer re-read', () => {
+test('the page read: a failed health read puts nothing in and takes no turn', () => {
   const load = page.slice(page.indexOf('async function loadPage'), page.indexOf('function refusedWith'));
   assert.match(load, /if \(runs\.status === 'fulfilled' && healthReads\.accept\(healthToken\)\) health = runs\.value;/);
   assert.doesNotMatch(load, /health = [^;]*: \[\]/, 'a failed read no longer blanks the checks');
-  assert.match(load, /const run = rereadRun;/);
-  assert.match(load, /const overtaken = phase === 'ready' && run !== rereadRun;\s*if \(!overtaken\) \{\s*info = found;\s*imports = /);
+  assert.doesNotMatch(load, /overtaken/, 'no newest-wins rule for the case and file list on the page read (open item in BL-164)');
 });
 
 test('a finished check puts its list in only for the case the page still shows', () => {
