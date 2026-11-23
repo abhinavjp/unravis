@@ -82,7 +82,7 @@ func (f *inflight) waitEmpty(ctx context.Context, d time.Duration) {
 
 // release frees the slot of the request the SDK just answered.
 func (f *inflight) release(id json.RawMessage) {
-	key := idKey(id)
+	key := canonicalID(id)
 	f.mu.Lock()
 	if call, held := f.ids[key]; held {
 		delete(f.ids, key)

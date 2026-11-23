@@ -591,3 +591,35 @@ func TestToolDescriptionsSayLiveOrCached(t *testing.T) {
 		}
 	}
 }
+
+// Review 3, S1: the SDK writes an id back in its own encoding, which can be longer than the client's (U+2028 and U+2029 are always escaped:
+// 3 bytes become 6). A slot is freed under the key it was admitted under, so such ids never fill the table.
+func TestSDKSlotsFreedForIdsTheSDKReEncodes(t *testing.T) {
+	longID := func(n int) string { return strings.Repeat("\u2028", n) + "00" } // 83 x 3 bytes + 3 + quotes = 254 bytes as sent, about 510 as answered
+	w := dial(t, sdkImpl, bridgeFor(t, demoDashboard(t)))
+	w.handshake()
+	for i := 0; i < maxTracked+6; i++ {
+		id := longID(83-i%2) + fmt.Sprint(i%10)
+		w.send(`{"jsonrpc":"2.0","id":"` + id + `","method":"ping"}`)
+		if res, ok := w.next(5 * time.Second); !ok || res["error"] != nil {
+			t.Fatalf("ping %d: %v", i, res)
+		}
+	}
+	// Four calls with such ids, answered: the per-call cap is not used up either.
+	for round := 0; round < 3; round++ {
+		for i := 0; i < maxInFlight; i++ {
+			w.send(`{"jsonrpc":"2.0","id":"` + longID(83) + fmt.Sprint(round*10+i) + `","method":"tools/call","params":{"name":"audit_get_guide","arguments":{}}}`)
+		}
+		for i := 0; i < maxInFlight; i++ {
+			if res, ok := w.next(5 * time.Second); !ok || res["error"] != nil {
+				t.Fatalf("round %d call %d: %v", round, i, res)
+			}
+		}
+	}
+	if text, isError := w.call("audit_get_guide", map[string]any{}); isError || !strings.Contains(text, "guide") {
+		t.Fatalf("a normal call afterwards: %q %v", text, isError)
+	}
+	if err := w.finish(); err != nil {
+		t.Fatal(err)
+	}
+}

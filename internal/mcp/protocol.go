@@ -26,10 +26,18 @@ type rpcRequest struct {
 func validID(id json.RawMessage) bool {
 	return idKey(id) != ""
 }
+
+// idKey is the canonical form of an id a client sent, or "" for an id the loop refuses (over 256 bytes as sent, not a string or integer, ...).
 func idKey(id json.RawMessage) string {
 	if len(id) == 0 || len(id) > 256 {
 		return ""
 	}
+	return canonicalID(id)
+}
+
+// canonicalID is the form an id is tracked under, whatever its length. An answer carries the id as the SDK encoded it, which can be longer
+// than the client's (U+2028 and U+2029 are always escaped, 3 bytes to 6), so a slot is freed by this, not by idKey (review 3, S1).
+func canonicalID(id json.RawMessage) string {
 	var value any
 	decoder := json.NewDecoder(bytes.NewReader(id))
 	decoder.UseNumber()

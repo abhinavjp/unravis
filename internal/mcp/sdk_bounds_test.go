@@ -605,6 +605,12 @@ func (a *answers) answered(id string) (map[string]any, bool) {
 	return nil, false
 }
 
+// fuzzMaxInput bounds a fuzz input: a mutated seed of this size takes about a millisecond, a 500 KB one a hundred times that, and the
+// size classes (the line cap, escaping growth) have their own tests. Measured with the target's own timing log: about 1,000 inputs a second.
+// The execs counter that "go test -fuzz" prints sits still for long stretches (a worker reports its count only when it returns), so
+// read it as a lower bound.
+const fuzzMaxInput = 64 << 10
+
 const survivalPing = `{"jsonrpc":"2.0","id":"fuzz-after","method":"ping"}`
 
 // checkStdout runs one input through the loop and checks what it wrote, and that the session lived through it: after the input, a ping with
@@ -613,8 +619,8 @@ const survivalPing = `{"jsonrpc":"2.0","id":"fuzz-after","method":"ping"}`
 // when its input ends.
 func checkStdout(t *testing.T, im impl, input []byte) {
 	t.Helper()
-	if len(input) > maxMessage/2 {
-		t.Skip("inputs near the line cap are covered by TestSDKOversizeFrameRejected")
+	if len(input) > fuzzMaxInput {
+		t.Skip("large lines are covered by TestSDKOversizeFrameRejected, TestSDKValidJSONKeepsSession and the growth tests")
 	}
 	gauge := &gaugeTransport{}
 	b := newBridge(fixed("http://127.0.0.1:1"), &http.Client{Transport: gauge})
@@ -692,8 +698,7 @@ func FuzzServeSDK(f *testing.F) {
 		burst += `{"jsonrpc":"2.0","ID":"u` + fmt.Sprint(i) + `","method":"tools/call","params":{"name":"audit_list_sources","arguments":{}}}` + "\n"
 	}
 	f.Add([]byte(start + burst))
-	// Review 2: escapable characters (< > &) that grow sixfold when a JSON encoder escapes them; keys read in another case.
-	f.Add([]byte(start + `{"jsonrpc":"2.0","id":"p1","method":"ping","params":{"x":"` + strings.Repeat("<", 350000) + `"}}` + "\n"))
+	// Review 2: keys read in another case. (The escaping-growth lines are in TestSDKValidJSONKeepsSession: too large to fuzz.)
 	f.Add([]byte(start + `{"jsonrpc":"2.0","id":"p1","method":"tools/call","params":{"name":"audit_get_guide","ARGUMENTS":{"bogus":1}}}` + "\n"))
 	f.Add([]byte(start + `{"jsonrpc":"2.0","id":"p1","method":"tools/call","params":{"nAme":"audit_get_guide","argumentſ":{}}}` + "\n"))
 	f.Add([]byte(start + call("9007199254740993") + "\n" + call("9007199254740995") + "\n" + call("9007199254740997") + "\n" + call("9007199254740999") + "\n"))
