@@ -24,6 +24,19 @@ export interface SpanNotice { text: string; window: ViewWindow }
 interface RecordLike { status?: string; quality?: { coverageFirst?: string | null; coverageLast?: string | null } | null }
 
 /**
+ * The importers whose files fill the Resource counters panel: the sources of the server's resource catalogue (`internal/resource/metrics.go`, the `source...`
+ * constants; a web test keeps the two lists equal). A case with files of none of these has nothing to show there, whatever else it holds (IIS, app logs).
+ */
+export const RESOURCE_IMPORTERS: readonly string[] = [
+  'win-counters', 'sql-pdh', 'win-procsnap', 'win-live', 'dotnet-counters', 'redis-info', 'linux-sadf', 'linux-pidstat', 'linux-vmstat', 'mongo-serverstatus', 'mongostat-json'
+];
+
+/** The kept imports that are resource counter files. */
+export function resourceFiles<T extends { status?: string; importer?: string }>(records: ReadonlyArray<T> | null | undefined): T[] {
+  return (records ?? []).filter(record => (!record.status || record.status === 'ok') && RESOURCE_IMPORTERS.includes(record.importer ?? ''));
+}
+
+/**
  * The first and last time the imported files cover: the earliest coverageFirst and the latest coverageLast among the imports that were kept.
  * An import that was refused or was a duplicate adds nothing, and one with no readable pair of times is skipped. Null when no import has a span.
  */

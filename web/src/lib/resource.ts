@@ -17,7 +17,7 @@ export const gapsShowAll = (n: number): string => `Show all ${n} gaps`;
 
 export const resourceCopy = {
   heading: 'Resource counters',
-  intro: 'What each host measured around the stalls: CPU, memory, queues and logs. Open a host to see the lines.',
+  intro: 'Open a host to see its lines on one time axis.',
   loading: 'Reading the resource counters.',
   loadingLines: 'Reading the lines for this window.',
   retry: 'Try again',

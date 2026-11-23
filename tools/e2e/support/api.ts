@@ -72,6 +72,12 @@ export async function ensureHost(api: ApiFn): Promise<void> {
   if (r.status !== 200) throw new Error('host map failed: ' + r.status + ' ' + r.text);
 }
 
+/** The same for any host label (a long one, to see how a name wraps). The demo host map is replaced, as ensureHost does. */
+export async function ensureHostLabel(api: ApiFn, label: string): Promise<void> {
+  const r = await api('PUT', '/api/hosts', { version: 1, hosts: [{ label, role: 'iis', tz: 'UTC' }] });
+  if (r.status !== 200) throw new Error('host map failed: ' + r.status + ' ' + r.text);
+}
+
 export interface ImportOptions {
   name?: string;
   importer?: string;
