@@ -82,7 +82,7 @@
       ]
     },
     "partial": {
-      "description": "True when a source failed, a query ran short (timeout, row cap or error) or the dashboard cut a page. Read it before trusting totals.",
+      "description": "True when a source failed, a query ran short (timeout, row cap or error), the dashboard cut a page, records have no usable timing (quality counters), or rows were dropped to fit one response (see truncation). Read it before trusting totals or treating a page as complete.",
       "type": "boolean"
     },
     "pooledKinds": {

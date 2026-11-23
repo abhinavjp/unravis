@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"api-audit-explorer/internal/audit"
 	"context"
 	"encoding/json"
 	"errors"
@@ -68,56 +69,62 @@ var toolShapes = map[string]shape{
 		rows:      "sources",
 		untrusted: []string{"sources[].label", "sources[].connectionLabel", "sources[].database", "sources[].collection"},
 		stable:    []string{"sources", "note"},
-		hint:      "disconnect sources you do not need in the dashboard",
+		hint:      "some sources are not listed; disconnect the ones you do not need in the dashboard",
 	},
 	"audit_compare": {
 		rows: "groups", offsetPaged: true,
-		untrusted: []string{"groups[].key", "groups[].controller", "groups[].action", "sources[].error"},
+		untrusted: withSources("groups[].key", "groups[].controller", "groups[].action", "groups[].kind", "groups[].outcome"),
 		stable:    []string{"groups", "matchedGroups", "totalGroups", "offset", "nextOffset", "sort", "resultId", "query", "sources", "quality", "comparableGroups", "groupsWithoutReliableRatio", "recordedEvents", "approximate", "expiresInSeconds", "interpretation"},
 		hint:      "read the rest with audit_get_groups from nextOffset, or lower limit",
 	},
 	"audit_get_groups": {
 		rows: "groups", offsetPaged: true,
-		untrusted: []string{"groups[].key", "groups[].controller", "groups[].action"},
+		untrusted: []string{"groups[].key", "groups[].controller", "groups[].action", "groups[].kind", "groups[].outcome"},
 		stable:    []string{"groups", "matchedGroups", "totalGroups", "offset", "nextOffset", "sort", "resultId"},
 		hint:      "read the rest from nextOffset, or lower limit",
 	},
 	"audit_get_timeline": {
 		rows:      "points",
-		untrusted: []string{"group.key", "group.controller", "group.action"},
+		untrusted: []string{"group.key", "group.controller", "group.action", "group.kind", "group.outcome"},
 		stable:    []string{"resultId", "query", "group", "points", "note"},
 		hint:      "run audit_compare again with a larger bucketSeconds or a shorter window",
 	},
 	"audit_compare_timelines": {
 		rows:      "slots",
-		untrusted: []string{"groups[].key", "groups[].controller", "groups[].action", "slots[].groups[].apiKey"},
+		untrusted: []string{"groups[].key", "groups[].controller", "groups[].action", "groups[].kind", "groups[].outcome", "slots[].groups[].apiKey"},
 		stable:    []string{"resultId", "query", "groups", "slots", "note"},
 		hint:      "compare fewer apiKeys, or run audit_compare again with a larger bucketSeconds",
 	},
 	"audit_get_requests": {
 		rows: "rows", cursorPaged: true,
-		untrusted: []string{"controller", "action", "sources[].error"},
+		untrusted: withSources("controller", "action", "kind", "outcome", "rows[].outcome", "rows[].state", "rows[].status"),
 		stable:    []string{"resultId", "sourceId", "controller", "action", "kind", "outcome", "query", "rows", "nextCursor", "sources", "truncated", "note"},
 		hint:      "repeat the same call with a smaller limit; rows after the last one shown were not returned",
 	},
 	"audit_get_slowest": {
 		rows: "rows", cursorPaged: true,
-		untrusted: []string{"rows[].controller", "rows[].action", "sources[].error"},
+		untrusted: withSources("rows[].controller", "rows[].action", "rows[].kind", "rows[].outcome", "rows[].state", "rows[].status"),
 		stable:    []string{"resultId", "metric", "query", "rows", "nextCursor", "sources", "truncated", "note"},
 		hint:      "repeat the same call with a smaller limit; rows after the last one shown were not returned",
 	},
 	"audit_get_breakdown": {
-		rows:      "rows",
-		untrusted: []string{"rows[].value", "sources[].error"},
-		stable:    []string{"resultId", "dim", "rows", "other", "total", "distinct", "sources", "query", "note", "identifiers"},
-		hint:      "repeat the call with a smaller top",
+		rows: "rows",
+		untrusted: withSources("rows[].value", "other.value", "rows[].filter.statusCodes[]", "rows[].filter.uiVersions[]", "rows[].filter.userAgentContains", "rows[].filter.userIps[]",
+			"other.filter.statusCodes[]", "other.filter.uiVersions[]", "other.filter.userAgentContains", "other.filter.userIps[]"),
+		stable: []string{"resultId", "dim", "rows", "other", "total", "distinct", "sources", "query", "note", "identifiers"},
+		hint:   "rows were cut: total and other still cover every row, so rows plus other no longer add up; repeat the call with a smaller top",
 	},
 	"audit_get_activity": {
 		rows: "rows", cursorPaged: true,
-		untrusted: []string{"rows[].controller", "rows[].action", "sources[].error"},
+		untrusted: withSources("rows[].controller", "rows[].action", "rows[].kind", "rows[].outcome"),
 		stable:    []string{"start", "end", "sourceIds", "rows", "sources", "nextCursor", "truncated", "note"},
 		hint:      "repeat the same call with a smaller limit; rows after the last one shown were not returned",
 	},
+}
+
+// withSources adds the strings of a source result (a failure text, a server version, an index warning: all from the database or its driver).
+func withSources(paths ...string) []string {
+	return append(paths, "sources[].error", "sources[].version", "sources[].indexWarning")
 }
 
 // truncation is the envelope's account of rows dropped to fit FrameBudget.
@@ -170,7 +177,8 @@ func encodeResult(tool string, result any) ([]byte, error) {
 			out[k] = v
 		}
 		// The envelope's names win over a tool field of the same name (none has one today; a test pins it).
-		out["schemaVersion"], out["tool"], out["partial"], out["untrusted"] = SchemaVersion, tool, partial, untrusted{Paths: paths, Note: untrustedNote}
+		// A page cut to fit the frame is not complete: partial says so even for a reader that does not look at truncation.
+		out["schemaVersion"], out["tool"], out["partial"], out["untrusted"] = SchemaVersion, tool, partial || cut != nil, untrusted{Paths: paths, Note: untrustedNote}
 		if cut != nil {
 			out["truncation"] = cut
 		} else {
@@ -231,8 +239,11 @@ func tooLarge() error {
 	return coded(CodeResultTooLarge, "one result row is larger than a response may be; narrow the filters or lower the limit")
 }
 
-// isPartial derives the envelope's partial flag from what the result already says: a source that failed, a provenance entry that ran
-// short (timeout, row cap or error), or a page the dashboard cut. It adds no data of its own.
+// isPartial derives the envelope's partial flag from what the result already says (spec 03, 3.4): a source that failed, a provenance entry
+// that ran short (timeout, row cap, error) or is labelled partial, a page the dashboard cut, records whose timings are missing or unusable
+// (quality: incomplete, invalid, unknown outcome, pending async) and any warnings the dashboard sent. It adds no data of its own.
+// "approximate" is not read: the dashboard sets it on every comparison (latency quantiles are histogram estimates), so it says nothing
+// about this answer; the tool's own interpretation text carries it.
 func isPartial(fields map[string]json.RawMessage) bool {
 	var sources []struct {
 		OK *bool `json:"ok"`
@@ -246,13 +257,27 @@ func isPartial(fields map[string]json.RawMessage) bool {
 	}
 	var provenance []struct {
 		PartialReason string `json:"partialReason"`
+		Completeness  string `json:"completeness"`
 	}
 	if json.Unmarshal(fields["provenance"], &provenance) == nil {
 		for _, p := range provenance {
-			if p.PartialReason != "" {
+			if p.PartialReason != "" || p.Completeness == audit.Partial {
 				return true
 			}
 		}
+	}
+	var quality struct {
+		Incomplete     int64 `json:"incomplete"`
+		Invalid        int64 `json:"invalid"`
+		UnknownOutcome int64 `json:"unknownOutcome"`
+		PendingAsync   int64 `json:"pendingAsync"`
+	}
+	if json.Unmarshal(fields["quality"], &quality) == nil && quality.Incomplete+quality.Invalid+quality.UnknownOutcome+quality.PendingAsync > 0 {
+		return true
+	}
+	var warnings []string
+	if json.Unmarshal(fields["warnings"], &warnings) == nil && len(warnings) > 0 {
+		return true
 	}
 	var cut bool
 	return json.Unmarshal(fields["truncated"], &cut) == nil && cut

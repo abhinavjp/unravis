@@ -68,7 +68,7 @@ func outputSchema(tool string) map[string]any {
 	properties := map[string]any{
 		"schemaVersion": map[string]any{"type": "integer", "const": SchemaVersion, "description": "Version of this envelope and schema. Changes only for a change that is not additive."},
 		"tool":          map[string]any{"type": "string", "const": tool},
-		"partial":       map[string]any{"type": "boolean", "description": "True when a source failed, a query ran short (timeout, row cap or error) or the dashboard cut a page. Read it before trusting totals."},
+		"partial":       map[string]any{"type": "boolean", "description": "True when a source failed, a query ran short (timeout, row cap or error), the dashboard cut a page, records have no usable timing (quality counters), or rows were dropped to fit one response (see truncation). Read it before trusting totals or treating a page as complete."},
 		"truncation": map[string]any{
 			"description": "null, or the account of rows dropped from the end of the list so the answer fits one response.",
 			"oneOf": []any{
