@@ -1,0 +1,11 @@
+# Files the supply-chain `secrets` job (trufflehog) does not scan. One anchored regex per line, matched against the
+# repo-relative path of the changed file. Every entry is a test file that holds FAKE credentials on purpose, to prove
+# the scrubbers redact them (fake password FAKEPW, host names that do not exist, no live account). See docs/ci/RELEASE-TRAIN.md
+# ("Secret scan allowlist") before adding a line; tools/ci/test-trufflehog-allowlist.mjs keeps this file narrow.
+^internal/applog/sanitize_test\.go$
+^internal/applog/secretforms_test\.go$
+^internal/evidence/secretforms_test\.go$
+^internal/evidence/secretscrub_test\.go$
+^internal/secretscrub/scrub_test\.go$
+^internal/setup/secretforms_test\.go$
+^tools/release/Test-ReleaseManager\.ps1$
