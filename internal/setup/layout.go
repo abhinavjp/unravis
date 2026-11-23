@@ -90,6 +90,9 @@ const (
 	// ReleasesExeName is the read-only releases window. It is an optional companion: a payload without it installs as before.
 	ReleasesExeName      = "unravis-releases.exe"
 	ReleasesShortcutName = "Unravis Releases.lnk"
+	// CLIInstalledName is the command line program as installed, in the CLIDirName folder (the one folder that goes on the PATH).
+	CLIInstalledName = "unravis.exe"
+	CLIDirName       = "bin"
 	SetupExeName         = "unravis-setup.exe"
 	StateFileName        = "setup-state.json"
 	ShortcutName         = "Unravis.lnk"
@@ -123,6 +126,9 @@ type Layout struct {
 	// ReleasesExe is the releases window kept beside the app; ReleasesLink is its Start-menu entry (next to StartMenuLink).
 	ReleasesExe  string
 	ReleasesLink string
+	// CLIDir is the folder added to the PATH; CLIExe is the command line program in it.
+	CLIDir string
+	CLIExe string
 	// BlackboxExe is the Blackbox program kept beside the app, which is where the app looks for it when it
 	// installs a Blackbox on this PC or builds a pack. It is always placed, whatever the Blackbox options are.
 	BlackboxExe string
@@ -150,6 +156,8 @@ func NewLayout(o Options, d Dirs) Layout {
 	l.AppExe = filepath.Join(l.InstallDir, AppExeName)
 	l.BlackboxExe = filepath.Join(l.InstallDir, BlackboxExeName)
 	l.ReleasesExe = filepath.Join(l.InstallDir, ReleasesExeName)
+	l.CLIDir = filepath.Join(l.InstallDir, CLIDirName)
+	l.CLIExe = filepath.Join(l.CLIDir, CLIInstalledName)
 	l.SetupExe = filepath.Join(l.InstallDir, SetupExeName)
 	l.StateFile = filepath.Join(l.InstallDir, StateFileName)
 	l.BlackboxDir = filepath.Join(d.ProgramFiles, BlackboxProgramFolder)

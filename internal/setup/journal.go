@@ -23,6 +23,7 @@ const (
 	UndoRemoveTree  UndoKind = "remove-tree"  // a working folder setup created (staging, backup): remove it with what is in it
 	UndoRegValue    UndoKind = "reg-value"    // a registry value setup set: put the old value back, or delete it
 	UndoRegKey      UndoKind = "reg-key"      // a registry key setup created: delete it
+	UndoPathEntry   UndoKind = "path-entry"   // a PATH entry setup added: remove only that entry
 	UndoSvcDelete   UndoKind = "svc-delete"   // a service setup created: stop and delete it
 	UndoSvcStart    UndoKind = "svc-start"    // a service setup stopped: start it again
 	UndoSvcStop     UndoKind = "svc-stop"     // a service setup started: stop it (before its old program is put back)
@@ -265,6 +266,8 @@ func leftText(u Undo) string {
 		return fmt.Sprintf("Registry value %s\\%s\\%s", u.Root, u.Key, u.Name)
 	case UndoRegKey:
 		return fmt.Sprintf("Registry key %s\\%s", u.Root, u.Key)
+	case UndoPathEntry:
+		return "PATH entry " + u.Path
 	case UndoSvcDelete, UndoSvcStart, UndoSvcStop, UndoSvcConfig:
 		return "Service " + u.Name
 	case UndoFwRemove, UndoFwRestore:
@@ -340,6 +343,13 @@ func undoOne(sys *System, u Undo) error {
 		return sys.Reg.DeleteValue(u.Root, u.Key, u.Name)
 	case UndoRegKey:
 		return sys.Reg.DeleteKey(u.Root, u.Key)
+	case UndoPathEntry:
+		// Only our entry goes; the old string is never put back, so a PATH change by another installer in between is kept.
+		if _, err := sys.Env.RemovePathEntry(u.Root, u.Path); err != nil {
+			return err
+		}
+		_ = sys.Env.BroadcastEnvChange()
+		return nil
 	case UndoSvcDelete:
 		st, err := sys.Svc.State(u.Name)
 		if err != nil {

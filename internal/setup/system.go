@@ -59,6 +59,18 @@ type Registry interface {
 	KeySecurity(root Root, key string) (datadir.FolderSecurity, error)
 }
 
+// Env is the PATH of this PC. REG_EXPAND_SZ values are read and written as they are (never expanded), and their type is kept.
+type Env interface {
+	HasPathEntry(root Root, entry string) (bool, error)
+	// AddPathEntry adds entry (or removes its duplicates). added says the entry was not there before.
+	AddPathEntry(root Root, entry string) (added bool, err error)
+	// RemovePathEntry removes every copy of entry; removed says there was one. A missing key or value is not an error (removed false).
+	RemovePathEntry(root Root, entry string) (removed bool, err error)
+	// BroadcastEnvChange tells running programs the environment changed: SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
+	// "Environment", SMTO_ABORTIFHUNG, 5000). Callers only log a failure.
+	BroadcastEnvChange() error
+}
+
 // ServiceSpec is a Windows service setup registers.
 type ServiceSpec struct {
 	Name        string   `json:"name"`
@@ -189,6 +201,7 @@ type Machine interface {
 // System is everything setup asks of the machine. Tests build one with NewFakeSystem.
 type System struct {
 	Reg  Registry
+	Env  Env
 	Svc  Services
 	FW   Firewall
 	Sec  FileSecurity

@@ -139,7 +139,11 @@ type Payload struct {
 	Manifest Manifest
 }
 
-var payloadNames = map[string]bool{AppExeName: true, KeeperExeName: true, BlackboxExeName: true, ReleasesExeName: true}
+// CLIExeName is the thin command line program in the payload. It is optional: a payload without it installs as before, with no bin
+// folder and no PATH entry. It is placed as bin\unravis.exe (CLIInstalledName).
+const CLIExeName = "unravis-cli.exe"
+
+var payloadNames = map[string]bool{AppExeName: true, KeeperExeName: true, BlackboxExeName: true, ReleasesExeName: true, CLIExeName: true}
 
 // LoadPayload reads the manifest. Only the known program names are accepted, so a damaged manifest cannot make setup write anywhere
 // else.

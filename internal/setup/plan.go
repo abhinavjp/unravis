@@ -130,6 +130,10 @@ func installSteps(p *Plan) []Step {
 		Step{ID: "program-folder", Title: "Make the program folder", Do: p.programFolder},
 		Step{ID: "copy-files", Title: "Copy the program files", Do: p.copyFiles},
 	)
+	// The command line program is optional in the payload: without it there is no bin folder and no PATH step.
+	if p.r.Payload != nil && p.r.Payload.Has(CLIExeName) {
+		steps = append(steps, Step{ID: "cli-path", Title: "Add the unravis command to the path", Do: p.cliPath})
+	}
 	if p.Opts.Scope == ScopeMachine {
 		steps = append(steps,
 			Step{ID: "shared-folder", Title: "Make the shared data folder", Do: p.sharedFolder},
@@ -451,6 +455,9 @@ func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
 	if _, ok := p.r.Payload.file(ReleasesExeName); ok && p.wantReleases() {
 		names = append(names, ReleasesExeName)
 	}
+	if _, ok := p.r.Payload.file(CLIExeName); ok {
+		names = append(names, CLIExeName)
+	}
 	for _, n := range names {
 		dst, err := p.stageFile(ctx, staging, n)
 		if err != nil {
@@ -481,6 +488,7 @@ func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
 		place = append(place, struct{ name, to string }{KeeperExeName, p.Layout.KeeperExe})
 	}
 	place = append(place, struct{ name, to string }{ReleasesExeName, p.Layout.ReleasesExe}) // skipped below when not staged
+	place = append(place, struct{ name, to string }{CLIExeName, p.Layout.CLIExe}) // skipped below when not staged
 	for _, f := range place {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -489,9 +497,35 @@ func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
 		if !ok {
 			continue
 		}
+		if f.name == CLIExeName {
+			if err := t.MkdirAll(p.Layout.CLIDir); err != nil {
+				return &StepError{Msg: "Could not make the folder " + p.Layout.CLIDir + ": " + err.Error() + ".", Fix: "Close any program using the Unravis folder, then run setup again.", Err: err}
+			}
+		}
 		if err := t.PlaceFile(staged, f.to); err != nil {
 			return &StepError{Msg: "Could not put " + f.to + " in place: " + err.Error() + ".", Fix: "Close any program using the Unravis folder, then run setup again.", Err: err}
 		}
+	}
+	return nil
+}
+
+// cliPath puts the bin folder on the PATH of this person (just for me) or of every person (for everyone). Only the bin folder goes
+// there, never the program folder.
+func (p *Plan) cliPath(ctx context.Context, t *Txn) error {
+	root := HKCU
+	if p.Opts.Scope == ScopeMachine {
+		root = HKLM
+	}
+	if err := t.AddPathEntry(root, p.Layout.CLIDir); err != nil {
+		if errors.Is(err, ErrPathTooLong) {
+			return &StepError{Msg: "The PATH of this PC is too long to add the unravis command.",
+				Fix: "Remove entries you no longer need from the PATH (Windows Settings > System > About > Advanced system settings > Environment Variables), then run setup again.", Err: err}
+		}
+		return &StepError{Msg: "Could not add the unravis command to the PATH: " + plainError(err) + ".",
+			Fix: "Run setup again. If it keeps failing, ask your IT support to check that the PATH can be changed.", Err: err}
+	}
+	if err := p.r.Sys.Env.BroadcastEnvChange(); err != nil {
+		t.Logf("cli-path: could not tell running programs about the new PATH: %v", err)
 	}
 	return nil
 }
