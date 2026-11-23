@@ -130,7 +130,7 @@ func TestEnvelopeFieldsPresent(t *testing.T) {
 		for _, p := range u["paths"].([]any) {
 			paths = append(paths, p.(string))
 		}
-		if !reflect.DeepEqual(append([]string{}, paths...), append([]string{}, toolShapes[tool].untrusted...)) && !(len(paths) == 0 && len(toolShapes[tool].untrusted) == 0) {
+		if len(paths) != len(toolShapes[tool].untrusted) || (len(paths) > 0 && !reflect.DeepEqual(paths, toolShapes[tool].untrusted)) {
 			t.Errorf("%s: untrusted paths %v", tool, paths)
 		}
 		if u["note"] != untrustedNote {
@@ -185,14 +185,14 @@ func canonicalIndent(t *testing.T, v any) []byte {
 func checkGolden(t *testing.T, path string, got []byte) {
 	t.Helper()
 	if *updateGolden {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, got, 0o644); err != nil {
+		if err := os.WriteFile(path, got, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	want, err := os.ReadFile(path)
+	want, err := os.ReadFile(path) //nolint:gosec // a fixed golden path under testdata
 	if err != nil {
 		t.Fatalf("%v (create it with: go test ./internal/mcp -run %s -update)", err, t.Name())
 	}
@@ -273,14 +273,14 @@ func TestResultShapesAdditive(t *testing.T) {
 		got := shapeText(results, tool)
 		path := filepath.Join("testdata", "shapes", tool+".txt")
 		if *updateGolden {
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(path, got, 0o644); err != nil {
+			if err := os.WriteFile(path, got, 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
-		want, err := os.ReadFile(path)
+		want, err := os.ReadFile(path) //nolint:gosec // a fixed golden path under testdata
 		if err != nil {
 			t.Fatalf("%v (create it with: go test ./internal/mcp -run TestResultShapesAdditive -update)", err)
 		}
