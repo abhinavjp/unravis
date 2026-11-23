@@ -76,7 +76,7 @@ test('the status line comes from the service manager only', () => {
 
 test('the query text switch carries a warning and shows only for deep', () => {
   const src = read('src/components/BlackboxSqlCollect.svelte');
-  assert.match(src, /\{#if profile === 'deep'\}\s*<label class="opt"><input type="checkbox" bind:checked=\{textOn\}/);
+  assert.match(src, /\{#if profile === 'deep'\}\s*(?:<p class="note">[^\n]*<\/p>\s*)?<label class="opt"><input type="checkbox" bind:checked=\{textOn\}/);
   assert.match(src, /aria-describedby="\{uid\}-text-warn"/);
   assert.match(SQLC_TEXT.queryTextWarn, /password/);
 });
