@@ -34,12 +34,15 @@ func (st *state) noArgs(c *cobra.Command, name string) (json.RawMessage, error) 
 	return a, nil
 }
 
-// noProfile refuses an automation profile on a command that only the person runs (spec D15).
-func (st *state) noProfile() error {
-	if st.opts.profile != "" || st.io.Getenv("UNRAVIS_PROFILE") != "" {
-		return usage("Automation profiles are not available in this version of the command line.")
+// stopped is the error of a command that was canceled or ran out of time, nil while it may go on.
+func (st *state) stopped() *clicore.Error {
+	switch st.ctx.Err() {
+	case nil:
+		return nil
+	case context.DeadlineExceeded:
+		return clicore.NewError(clicore.CodeTimeout, "The command ran out of time.", "")
 	}
-	return nil
+	return clicore.NewError(clicore.CodeCanceled, "Canceled.", "")
 }
 
 // sleep waits for d or until the command is stopped.
@@ -50,10 +53,7 @@ func (st *state) sleep(d time.Duration) *clicore.Error {
 	case <-t.C:
 		return nil
 	case <-st.ctx.Done():
-		if st.ctx.Err() == context.DeadlineExceeded {
-			return clicore.NewError(clicore.CodeTimeout, "The command ran out of time.", "")
-		}
-		return clicore.NewError(clicore.CodeCanceled, "Canceled.", "")
+		return st.stopped()
 	}
 }
 
@@ -77,11 +77,8 @@ func (st *state) appStartCmd() *cobra.Command {
 		Long: "Starts the app program with no window and no browser (an owner called headless) and waits until it answers. If the app already runs, " +
 			"nothing is started and the answer says so. The app runs on after this command ends; stop it with 'unravis app stop'.",
 		Args:        cobra.NoArgs,
-		Annotations: emitting("app.start"),
+		Annotations: online("app.start", ""),
 		RunE: func(c *cobra.Command, _ []string) error {
-			if err := st.noProfile(); err != nil {
-				return err
-			}
 			if _, err := st.noArgs(c, "app start"); err != nil {
 				return err
 			}
@@ -118,12 +115,16 @@ func (st *state) startHeadless() (startData, *clicore.Error) {
 		return startData{}, e
 	}
 	deadline := time.Now().Add(startWait)
+	busy := false // the child found another owner (exit 12): that owner is waited for, and is the answer when it comes
 	for {
-		// the code of a child that ended comes first: another start won the owner (12), or this one may not run (11, 13)
+		// the code of a child that ended comes first: 11 and 13 end the wait; 12 means another owner exists, so that one is attached to
 		select {
 		case code := <-child.Exit:
 			c := clicore.FromSidecarExit(code) // 0 and any other code are INTERNAL
-			return startData{}, clicore.NewError(c, sidecarText(c), "")
+			if c != clicore.CodeOwnerBusy {
+				return startData{}, clicore.NewError(c, sidecarText(c), sidecarAction(c))
+			}
+			busy = true
 		default:
 		}
 		sess, e := st.attach(st.ctx)
@@ -131,12 +132,15 @@ func (st *state) startHeadless() (startData, *clicore.Error) {
 		case e == nil:
 			return startData{Started: sess.Hello.PID == child.PID, AlreadyRunning: sess.Hello.PID != child.PID, PID: sess.Hello.PID, Owner: sess.Hello.Owner}, nil
 		case st.ctx.Err() != nil:
-			return startData{}, e
+			return startData{}, st.stopped()
 		case !absent(e) && e.Code != clicore.CodeOwnerBusy:
 			return startData{}, e
 		}
 		if time.Now().After(deadline) {
-			return startData{}, clicore.NewError(clicore.CodeTimeout, "The app did not answer within 15 seconds.", "Run 'unravis doctor'.")
+			if busy {
+				return startData{}, clicore.NewError(clicore.CodeOwnerBusy, sidecarText(clicore.CodeOwnerBusy), "Try again in a moment.")
+			}
+			return startData{}, clicore.NewError(clicore.CodeTimeout, "The app did not answer in time.", "Run 'unravis doctor'.")
 		}
 		if e := st.sleep(appPoll); e != nil {
 			return startData{}, e
@@ -149,11 +153,18 @@ func sidecarText(c clicore.Code) string {
 	case clicore.CodeElevationRefused:
 		return "Unravis does not run as administrator. Start it from a normal window."
 	case clicore.CodeOwnerBusy:
-		return "Another Unravis owner is starting or running."
+		return "Another Unravis owner is starting or running and did not answer."
 	case clicore.CodeUpstreamUnavailable:
-		return "The app could not open its pipes."
+		return "Another Unravis is running without command line access, or is still starting."
 	}
 	return "The app stopped before it answered."
+}
+
+func sidecarAction(c clicore.Code) string {
+	if c == clicore.CodeUpstreamUnavailable {
+		return "Quit it, then run 'unravis app start --headless' again."
+	}
+	return ""
 }
 
 type stopData struct {
@@ -168,11 +179,8 @@ func (st *state) appStopCmd() *cobra.Command {
 		Short:       "Stop a headless app",
 		Long:        "Stops the app that 'unravis app start --headless' started and waits until it is gone. An app that the desktop shell owns is not stopped from here: quit it from the tray. An app that does not run is already stopped.",
 		Args:        cobra.NoArgs,
-		Annotations: emitting("app.stop"),
+		Annotations: online("app.stop", ""),
 		RunE: func(c *cobra.Command, _ []string) error {
-			if err := st.noProfile(); err != nil {
-				return err
-			}
 			a, err := st.noArgs(c, "app stop")
 			if err != nil {
 				return err
@@ -201,6 +209,7 @@ func (st *state) stopHeadless(args json.RawMessage) (stopData, *clicore.Error) {
 		return stopData{}, e
 	}
 	pid := sess.Hello.PID
+	started, _ := time.Parse(time.RFC3339Nano, sess.Hello.Gen)
 	if sess.Hello.Owner != "headless" {
 		return stopData{}, clicore.NewError(clicore.CodePermissionDenied, "Unravis is owned by the desktop app. Quit it from the tray.", "")
 	}
@@ -213,15 +222,18 @@ func (st *state) stopHeadless(args json.RawMessage) (stopData, *clicore.Error) {
 	}
 	deadline := time.Now().Add(stopWait)
 	for {
-		s, e := st.attach(st.ctx)
-		switch {
-		case absent(e), e == nil && s.Hello.PID != pid:
-			return stopData{Stopped: true, PID: pid}, nil
-		case st.ctx.Err() != nil:
+		if e := st.stopped(); e != nil {
 			return stopData{}, e
 		}
+		s, e := st.attach(st.ctx)
+		if absent(e) || (e == nil && s.Hello.PID != pid) {
+			// the locator is gone before the process is: wait until the process is, so a start that follows finds the name free
+			if st.io.ProcessGone == nil || st.io.ProcessGone(pid, started) {
+				return stopData{Stopped: true, PID: pid}, nil
+			}
+		}
 		if time.Now().After(deadline) {
-			return stopData{}, clicore.NewError(clicore.CodeTimeout, "The app did not stop within 5 seconds.", "")
+			return stopData{}, clicore.NewError(clicore.CodeTimeout, "The app did not stop in time.", "")
 		}
 		if e := st.sleep(appPoll); e != nil {
 			return stopData{}, e

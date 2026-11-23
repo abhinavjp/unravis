@@ -4,6 +4,6 @@
   "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "properties": {}},
   "output": {"type": "object", "required": ["stopped", "alreadyStopped"], "properties": {
     "stopped": {"type": "boolean"}, "alreadyStopped": {"type": "boolean"}, "pid": {"type": "integer"}}},
-  "errors": ["PERMISSION_DENIED", "TIMEOUT", "ENDPOINT_UNAVAILABLE", "ENDPOINT_UNTRUSTED", "VERSION_INCOMPATIBLE"],
+  "errors": ["PERMISSION_DENIED", "TIMEOUT", "CANCELED", "OWNER_BUSY", "UPSTREAM_UNAVAILABLE", "ENDPOINT_UNAVAILABLE", "ENDPOINT_UNTRUSTED", "VERSION_INCOMPATIBLE", "INTERNAL"],
   "examples": [{"command": "unravis app stop -o json"}]
 }

@@ -2,8 +2,12 @@ package cmdtree
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -295,5 +299,149 @@ func TestOwnerRefusesStopAndStartOps(t *testing.T) {
 		if e == nil || e.Code != clicore.CodePermissionDenied {
 			t.Errorf("%s: %v", op, e)
 		}
+	}
+}
+
+// The locator goes before the process does: `app stop` waits for the process, so a start that follows finds the name free (review M1).
+func TestAppStopWaitsForTheProcess(t *testing.T) {
+	fastApp(t)
+	o := newOwnerHeadless(t)
+	var asked []int
+	var gone atomic.Bool
+	go func() { time.Sleep(150 * time.Millisecond); gone.Store(true) }()
+	var mu sync.Mutex
+	a := o.attacher()
+	r := runWithGone(t, a, func(pid int, started time.Time) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, pid)
+		if started.IsZero() {
+			t.Error("the start time of the process was not passed")
+		}
+		return gone.Load()
+	}, "app", "stop", "--json")
+	d := data(t, r)
+	if d["stopped"] != true || len(asked) < 2 || asked[0] != 4242 {
+		t.Errorf("%v asked %v", d, asked)
+	}
+	// a process that never goes is a TIMEOUT, even though the locator is gone
+	o = newOwnerHeadless(t)
+	r = runWithGone(t, o.attacher(), func(int, time.Time) bool { return false }, "app", "stop", "--json")
+	if r.code != 6 || errCode(t, r) != "TIMEOUT" {
+		t.Errorf("never gone: %+v", r)
+	}
+}
+
+func runWithGone(t *testing.T, a clicore.Attacher, gone func(int, time.Time) bool, args ...string) result {
+	t.Helper()
+	var out, errb strings.Builder
+	code := Run(context.Background(), args, IO{In: strings.NewReader(""), Out: &out, Err: &errb, Getenv: func(string) string { return "" },
+		Exe: func() (string, error) { return "/opt/unravis/bin/unravis.exe", nil }, Attach: a.Attach, ProcessGone: gone})
+	return result{code, out.String(), errb.String()}
+}
+
+// A child that exits 12 found another owner: that owner is the answer when it comes, and OWNER_BUSY only when it never does (review M2).
+func TestAppStartExit12AttachesToTheOtherOwner(t *testing.T) {
+	fastApp(t)
+	o := newOwner(t, nil)
+	o.down()
+	s := &starter{pid: 9999, exit: make(chan int, 1)}
+	s.exit <- 12
+	s.do = func() { go func() { time.Sleep(40 * time.Millisecond); o.up() }() }
+	d := data(t, runStart(t, o, s, "app", "start", "--headless", "--json"))
+	if d["started"] != false || d["alreadyRunning"] != true || d["pid"] != float64(4242) {
+		t.Errorf("%v", d)
+	}
+	o = newOwner(t, nil)
+	o.down()
+	s = &starter{pid: 9999, exit: make(chan int, 1)}
+	s.exit <- 12
+	r := runStart(t, o, s, "app", "start", "--headless", "--json")
+	if r.code != 3 || errCode(t, r) != "OWNER_BUSY" || !strings.Contains(r.err, "did not answer") {
+		t.Errorf("never answers: %+v", r)
+	}
+	// 13 says what to do
+	o = newOwner(t, nil)
+	o.down()
+	s = &starter{pid: 9999, exit: make(chan int, 1)}
+	s.exit <- 13
+	r = runStart(t, o, s, "app", "start", "--headless", "--json")
+	if r.code != 3 || errCode(t, r) != "UPSTREAM_UNAVAILABLE" || !strings.Contains(r.err, "without command line access") || !strings.Contains(r.err, "Quit it") {
+		t.Errorf("13: %+v", r)
+	}
+}
+
+func TestAppStartNamesTheOwnerThatAnswers(t *testing.T) {
+	fastApp(t)
+	o := newOwner(t, nil)
+	o.down()
+	o.set(func(o *owner) { o.ownerName = "headless" })
+	s := &starter{pid: 4242, do: o.up}
+	if d := data(t, runStart(t, o, s, "app", "start", "--headless", "--json")); d["owner"] != "headless" || d["started"] != true {
+		t.Errorf("%v", d)
+	}
+	o = newOwner(t, nil)
+	o.set(func(o *owner) { o.ownerName = "shell" })
+	if d := data(t, runStart(t, o, &starter{pid: 1}, "app", "start", "--headless", "--json")); d["owner"] != "shell" || d["alreadyRunning"] != true {
+		t.Errorf("shell: %v", d)
+	}
+}
+
+// --request goes with these commands like it does with app status: an empty object is fine, anything else is refused (review L2).
+func TestAppCommandsTakeAnEmptyRequest(t *testing.T) {
+	fastApp(t)
+	o := newOwnerHeadless(t)
+	r := runWith2(t, o.attacher(), nil, `{}`, nil, "app", "stop", "--request", "-", "--json")
+	if r.code != 0 {
+		t.Errorf("stop: %+v", r)
+	}
+	o = newOwner(t, nil)
+	r = runWith2(t, o.attacher(), (&starter{pid: 1}).start, `{}`, nil, "app", "start", "--headless", "--request", "-", "--json")
+	if r.code != 0 {
+		t.Errorf("start: %+v", r)
+	}
+	r = runWith2(t, o.attacher(), (&starter{pid: 1}).start, `{"a":1}`, nil, "app", "start", "--headless", "--request", "-", "--json")
+	if r.code != 2 || !strings.Contains(r.err, "takes no arguments") {
+		t.Errorf("extra: %+v", r)
+	}
+}
+
+// The waits end at their own time, not at the --timeout of the command (review L3), and an error of the stop call itself ends the
+// command at once (review L4). A command that is stopped while it waits is an error, never an empty success (review L1).
+func TestAppWaitsAndStops(t *testing.T) {
+	ow, os2, op := startWait, stopWait, appPoll
+	startWait, stopWait, appPoll = 150*time.Millisecond, 150*time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { startWait, stopWait, appPoll = ow, os2, op })
+	o := newOwner(t, nil)
+	o.down()
+	t0 := time.Now()
+	r := runStart(t, o, &starter{pid: 1}, "app", "start", "--headless", "--json", "--timeout", "30s")
+	if r.code != 6 || errCode(t, r) != "TIMEOUT" || time.Since(t0) > 5*time.Second || !strings.Contains(r.err, "did not answer in time") {
+		t.Errorf("start: %+v after %v", r, time.Since(t0))
+	}
+	o = newOwnerHeadless(t)
+	o.set(func(o *owner) { o.onStop = func() {} })
+	t0 = time.Now()
+	r = o.run("app", "stop", "--json", "--timeout", "30s")
+	if r.code != 6 || errCode(t, r) != "TIMEOUT" || time.Since(t0) > 5*time.Second || !strings.Contains(r.err, "did not stop in time") {
+		t.Errorf("stop: %+v after %v", r, time.Since(t0))
+	}
+	// the command's own time ends while it waits for the app to go
+	stopWait = time.Hour
+	o = newOwnerHeadless(t)
+	o.set(func(o *owner) { o.onStop = func() {} })
+	r = o.run("app", "stop", "--json", "--timeout", "300ms")
+	if r.code != 6 || errCode(t, r) != "TIMEOUT" {
+		t.Errorf("command time: %+v", r)
+	}
+	// an owner that says headless and answers the stop with an error
+	o = newOwner(t, nil)
+	o.serve(200, o.helloBody(func(m map[string]any) { m["owner"] = "headless" }), func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":false,"error":{"code":"ENDPOINT_UNAVAILABLE","message":"no"}}`)
+	})
+	t0 = time.Now()
+	r = o.run("app", "stop", "--json")
+	if r.code != 3 || errCode(t, r) != "ENDPOINT_UNAVAILABLE" || time.Since(t0) > time.Second {
+		t.Errorf("stop error: %+v", r)
 	}
 }

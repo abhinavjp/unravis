@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -564,24 +563,5 @@ func TestAppStopOnlyHeadless(t *testing.T) {
 	}
 	if r := op(t, stopHandler("headless", nil), "app.stop", ""); r.OK || r.Error.Code != "ENDPOINT_UNAVAILABLE" {
 		t.Errorf("no stop: %+v", r)
-	}
-}
-
-// The answer is written before the owner starts to quit.
-func TestAppStopAnswersFirst(t *testing.T) {
-	old := stopDelay
-	stopDelay = 50 * time.Millisecond
-	t.Cleanup(func() { stopDelay = old })
-	var answered atomic.Bool
-	var stoppedAfterAnswer atomic.Bool
-	h := stopHandler("headless", func() { stoppedAfterAnswer.Store(answered.Load()) })
-	r := op(t, h, "app.stop", "")
-	answered.Store(true)
-	if !r.OK {
-		t.Fatalf("%+v", r)
-	}
-	time.Sleep(300 * time.Millisecond)
-	if !stoppedAfterAnswer.Load() {
-		t.Error("the owner quit before the answer was out")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"sync"
 
@@ -66,6 +67,9 @@ func writeLocator(path string, pipes *pipesrv.Pipes) (remove func(), err error) 
 // checkPipeFlags validates --pipe-server, --pipe-only and --loopback (BL-301).
 func checkPipeFlags(f runFlags) error {
 	pipe := f.pipeServer || f.pipeOnly
+	if f.ownerSet && f.owner == "" {
+		return fmt.Errorf("--owner needs a value: headless or shell")
+	}
 	if f.owner != "" && f.owner != "headless" && f.owner != "shell" {
 		return fmt.Errorf("--owner must be headless or shell")
 	}
@@ -155,4 +159,10 @@ func ownerName(flag string) string {
 		return "app"
 	}
 	return flag
+}
+
+// cliHandlerFor is the command line route of this owner: hello says the --owner of this copy, and app.stop (which quits through
+// stop) works only when that is headless. The desktop shell's owner (--pipe-only with no --owner) is never stopped from the command line.
+func cliHandlerFor(f runFlags, dashboard http.Handler, token string, stop func()) http.Handler {
+	return newCLIHandler(dashboard, token, ownerName(f.owner), stop)
 }

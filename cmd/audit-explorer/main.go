@@ -83,6 +83,7 @@ type runFlags struct {
 	pipeOnly            bool
 	portSet             bool
 	loopback            bool
+	ownerSet            bool
 	owner               string // --owner: what hello says of this owner ("" means app)
 }
 
@@ -110,7 +111,10 @@ func parseFlags(args []string) (runFlags, error) {
 	if err := flags.Parse(args); err != nil {
 		return runFlags{}, err
 	}
-	flags.Visit(func(x *flag.Flag) { f.portSet = f.portSet || x.Name == "port" })
+	flags.Visit(func(x *flag.Flag) {
+		f.portSet = f.portSet || x.Name == "port"
+		f.ownerSet = f.ownerSet || x.Name == "owner"
+	})
 	if f.version {
 		// Asking for the version wins over every other flag, so it never fails on them.
 		return runFlags{version: true}, nil
@@ -363,7 +367,7 @@ func run(args []string, getenv func(string) string) error {
 		defer removeSession()
 	}
 	if pipes != nil {
-		group := pipesrv.Serve(pipes, running.wrap(pipesrv.Handler(served, pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(newCLIHandler(served, token, ownerName(f.owner), cancel)))), newHTTPServer)
+		group := pipesrv.Serve(pipes, running.wrap(pipesrv.Handler(served, pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(cliHandlerFor(f, served, token, cancel)))), newHTTPServer)
 		stopServers = append(stopServers, group)
 		go func() { serveDone <- <-group.Done() }()
 		log.Print("Serving over the ui and ag pipes")

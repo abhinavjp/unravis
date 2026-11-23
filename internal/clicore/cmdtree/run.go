@@ -32,6 +32,9 @@ type IO struct {
 	Attach func(context.Context) (*clicore.Session, *clicore.Error)
 	// StartHeadless starts the app program as a headless owner (`app start --headless`). Nil means this build cannot.
 	StartHeadless clicore.Starter
+	// ProcessGone tells whether the process pid that was started at the given time has ended (`app stop` waits for it). Nil means the
+	// locator alone says it.
+	ProcessGone func(pid int, started time.Time) bool
 }
 
 // Default and largest --timeout (spec 3.2).
