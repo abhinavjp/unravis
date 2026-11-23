@@ -680,7 +680,7 @@ func (p *simPC) SetupSQL(ctx context.Context, loginFile, loginSHA string, window
 	defer p.mu.Unlock()
 	if loginFile != "" {
 		// The pretend helper checks what the real one checks: the file is there and is the bytes the app hashed.
-		if b, err := os.ReadFile(loginFile); err != nil || fmt.Sprintf("%x", sha256.Sum256(b)) != loginSHA {
+		if b, err := os.ReadFile(loginFile); err != nil || fmt.Sprintf("%x", sha256.Sum256(b)) != loginSHA { //nolint:gosec // G304: the demo helper reads the path the app just made
 			return blackbox.SQLSetupOutcome{}, &blackbox.ThisPCError{Reason: blackbox.ReasonInvalid, Message: "The SQL login settings are not valid."}
 		}
 		p.loginFileOK = true

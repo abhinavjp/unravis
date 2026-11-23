@@ -1342,7 +1342,7 @@ func TestSQLLoginFileIsWrittenByTheKeeperAndTheAnswerHoldsNoPassword(t *testing.
 	if strings.Contains(string(raw), sqlSecret) || strings.Contains(string(raw), "auditor") {
 		t.Fatalf("the answer to the app holds the login: %s", raw)
 	}
-	b, err := os.ReadFile(f.Path) //nolint:gosec // test file
+	b, err := os.ReadFile(f.Path)
 	var doc struct{ Server, User, Password string }
 	if err != nil || json.Unmarshal(b, &doc) != nil || doc.Password != sqlSecret || doc.User != "auditor" || doc.Server != "sql01.example.test,1433" {
 		t.Fatalf("the file does not hold the saved login: %v", err)

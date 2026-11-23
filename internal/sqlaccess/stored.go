@@ -10,9 +10,9 @@ import (
 
 // Fixed sentences for a connection that cannot be saved for the Blackbox. They name no server, login or password.
 var (
-	ErrNotSQLLogin     = errors.New("Only a SQL login can be saved for the Blackbox. With Windows sign-in the SQL service uses its own Windows account.")
-	ErrEncryptOptional = errors.New("The Blackbox always encrypts the SQL connection. Set Encrypt to mandatory, then try again.")
-	ErrLoginShape      = errors.New("This SQL login or server name cannot be used by the Blackbox. Check the server name and the login.")
+	ErrNotSQLLogin     = errors.New("Only a SQL login can be saved for the Blackbox. With Windows sign-in the SQL service uses its own Windows account.") //nolint:staticcheck // ST1005: shown to the person as a sentence
+	ErrEncryptOptional = errors.New("The Blackbox always encrypts the SQL connection. Set Encrypt to mandatory, then try again.")                         //nolint:staticcheck // ST1005: shown to the person as a sentence
+	ErrLoginShape      = errors.New("This SQL login or server name cannot be used by the Blackbox. Check the server name and the login.")                 //nolint:staticcheck // ST1005: shown to the person as a sentence
 )
 
 // StoredLoginFor turns a SQL connection into the login the Blackbox's SQL service keeps. It never reads the network. Windows sign-in has no

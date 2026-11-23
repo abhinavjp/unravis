@@ -20,7 +20,7 @@ func TestWriteSQLLoginFileIsPrivateHashedAndRemovable(t *testing.T) {
 	if filepath.Dir(f.Dir) != root {
 		t.Errorf("folder %q is not under the given root", f.Dir)
 	}
-	b, err := os.ReadFile(f.Path) //nolint:gosec // test file
+	b, err := os.ReadFile(f.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
