@@ -213,9 +213,13 @@ test('UIFIX-18e The boxes are 24 px or more, in order, readable in both themes, 
     const facts = await page.evaluate(() => {
       const root = document.documentElement;
       const boxes = [...document.querySelectorAll<HTMLElement>('input.time24')].map((e) => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, w: r.width, h: r.height }; });
-      return { scrolls: root.scrollWidth > root.clientWidth, inner: window.innerWidth, boxes };
+      // Name the widest things when it scrolls, so a failure says what overflows.
+      const wide = root.scrollWidth > root.clientWidth
+        ? [...document.querySelectorAll<HTMLElement>('body *')].filter((e) => e.getBoundingClientRect().right > root.clientWidth + 0.5).slice(0, 5).map((e) => e.tagName.toLowerCase() + '.' + String(e.className).slice(0, 40) + ' ' + Math.round(e.getBoundingClientRect().right))
+        : [];
+      return { scrolls: root.scrollWidth > root.clientWidth, inner: window.innerWidth, boxes, wide };
     });
-    expect(facts.scrolls, width + ' px: the page scrolls sideways').toBe(false);
+    expect(facts.scrolls, width + ' px: the page scrolls sideways: ' + JSON.stringify(facts.wide)).toBe(false);
     for (const b of facts.boxes) {
       expect(b.left, width + ' px: box inside the window').toBeGreaterThanOrEqual(0);
       expect(b.right, width + ' px: box inside the window').toBeLessThanOrEqual(facts.inner + 0.5);
