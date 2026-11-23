@@ -96,14 +96,14 @@ func (s *Sweeper) JSON(raw []byte) ([]byte, error) {
 				if len(st) >= maxDepth {
 					return nil, ErrTooDeep
 				}
-				out.WriteByte(byte(v))
+				out.WriteByte(delimByte(v))
 				st = append(st, frame{obj: v == '{', key: v == '{'})
 			default: // '}' or ']'
 				if len(st) == 0 {
 					return nil, ErrBadJSON
 				}
 				st = st[:len(st)-1]
-				out.WriteByte(byte(v))
+				out.WriteByte(delimByte(v))
 				after()
 			}
 		case string:
@@ -173,4 +173,17 @@ func (s *Sweeper) numberToken(num string) (string, bool) {
 		return "", false
 	}
 	return s.tokenLocked(k, num), true
+}
+
+// delimByte is the byte of a JSON delimiter token.
+func delimByte(d json.Delim) byte {
+	switch d {
+	case '{':
+		return '{'
+	case '[':
+		return '['
+	case '}':
+		return '}'
+	}
+	return ']'
 }

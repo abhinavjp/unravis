@@ -118,7 +118,8 @@ func TestLearnedValues(t *testing.T) {
 	if !strings.Contains(got, "7 of 70") {
 		t.Fatalf("short learned value damaged ordinary text: %q", got)
 	}
-	if s.Text("7") != s.Text("7") || s.Text("7") == "7" {
+	first := s.Text("7")
+	if first != s.Text("7") || first == "7" {
 		t.Fatal("whole-string short value not tokenized stably")
 	}
 	// the longest value wins over its prefix
@@ -162,7 +163,7 @@ func TestTokenOverflowStaysBounded(t *testing.T) {
 // (2) the same address gets the same token in every spelling and place, (3) different addresses never share a token, (4) a second
 // sweep changes nothing, (5) text around the address is kept.
 func TestPropertyIPTokens(t *testing.T) {
-	rng := rand.New(rand.NewPCG(1, 2))
+	rng := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // G404: a seeded generator for reproducible test data
 	pre := []string{"", "from ", "ip=", "peer: ", "(", "[", "\"", "host ", "x -> "}
 	post := []string{"", " ok", ",", ".", ")", "]", ":8080", "\"", "; next"}
 	for round := 0; round < 40; round++ {
@@ -174,13 +175,13 @@ func TestPropertyIPTokens(t *testing.T) {
 			if rng.IntN(2) == 0 {
 				var b [4]byte
 				for i := range b {
-					b[i] = byte(rng.IntN(256))
+					b[i] = byte(rng.IntN(256)) //nolint:gosec // G115: the value is below 256
 				}
 				addr = netip.AddrFrom4(b)
 			} else {
 				var b [16]byte
 				for i := range b {
-					b[i] = byte(rng.IntN(256))
+					b[i] = byte(rng.IntN(256)) //nolint:gosec // G115: the value is below 256
 				}
 				if rng.IntN(3) == 0 { // sparse, so "::" forms occur
 					for i := 2; i < 14; i++ {

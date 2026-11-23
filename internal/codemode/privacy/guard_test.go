@@ -35,7 +35,7 @@ func fixture(rng *rand.Rand) []fixtureRow {
 }
 
 func TestHiddenModeNoRawIdentifiers(t *testing.T) {
-	rng := rand.New(rand.NewPCG(3, 4))
+	rng := rand.New(rand.NewPCG(3, 4)) //nolint:gosec // G404: seeded, reproducible test data
 	rows := fixture(rng)
 	g := NewGuard(false)
 	for _, r := range rows {
@@ -82,7 +82,7 @@ func TestAllowModeShowsIdentifiers(t *testing.T) {
 // Acceptance 2: grouping by the token gives the same counts as grouping by the raw value, because one value has one token for the
 // whole run, in any call, log or result.
 func TestGroupByTokenEqualsGroupByRaw(t *testing.T) {
-	rng := rand.New(rand.NewPCG(5, 6))
+	rng := rand.New(rand.NewPCG(5, 6)) //nolint:gosec // G404: seeded, reproducible test data
 	rows := fixture(rng)
 	rawCounts := map[string]int{}
 	for _, r := range rows {

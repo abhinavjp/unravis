@@ -206,6 +206,9 @@ func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 func isHex(c byte) bool {
 	return isDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
+
+// isV6Char is a byte that can be part of a run that may be an IPv6 address.
+func isV6Char(c byte) bool { return isHex(c) || c == ':' || c == '.' }
 func isWord(c byte) bool {
 	return isDigit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
 }
@@ -307,12 +310,12 @@ func nextV4(s string, pos int) (from, to int, canon string, ok bool) {
 func nextV6(s string, pos int) (from, to int, canon string, ok bool) {
 	i := pos
 	for i < len(s) {
-		if !(isHex(s[i]) || s[i] == ':' || s[i] == '.') {
+		if !isV6Char(s[i]) {
 			i++
 			continue
 		}
 		start, colons := i, 0
-		for i < len(s) && (isHex(s[i]) || s[i] == ':' || s[i] == '.') {
+		for i < len(s) && isV6Char(s[i]) {
 			if s[i] == ':' {
 				colons++
 			}
