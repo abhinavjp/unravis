@@ -1,6 +1,7 @@
 package bbsql
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"reflect"
@@ -147,7 +148,7 @@ func TestExtraPermissionDeniedSwitchesOnlyThatExtraOff(t *testing.T) {
 	}
 }
 
-func TestExtraInstanceLevelFailureGoesThroughFail(t *testing.T) {
+func TestExtraNetworkErrorStaysWithTheExtra(t *testing.T) {
 	now := time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)
 	q := &recQuery{replies: map[string][]Row{Statements["bb:waits"]: fakeWaitRows(1)}}
 	q.errFor = func(text string) error {
@@ -157,13 +158,72 @@ func TestExtraInstanceLevelFailureGoesThroughFail(t *testing.T) {
 		return nil
 	}
 	r := extraTestRunner(t, q, now, extraSampler("bb:semaphores", "xa"))
+	before := r.CurrentState()
+	if err := r.Tick(now); err != nil {
+		t.Fatalf("an extra's network-looking error must not fail the tick: %v", err)
+	}
+	if r.CurrentState() != before {
+		t.Errorf("State changed by an extra's error text: %+v", r.CurrentState())
+	}
+	if r.extraRuns["xa"].fails != 1 {
+		t.Errorf("extra fails = %d, want 1", r.extraRuns["xa"].fails)
+	}
+}
+
+func TestExtraLoginFailureGoesThroughFail(t *testing.T) {
+	now := time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)
+	q := &recQuery{replies: map[string][]Row{Statements["bb:waits"]: fakeWaitRows(1)}}
+	q.errFor = func(text string) error {
+		if text == Statements["bb:semaphores"] {
+			return errors.New("Login failed for user")
+		}
+		return nil
+	}
+	r := extraTestRunner(t, q, now, extraSampler("bb:semaphores", "xa"))
 	err := r.Tick(now)
 	var e *Error
-	if !errors.As(err, &e) || e.Code != CodeNetwork {
-		t.Fatalf("tick error = %v, want the fixed network error", err)
+	if !errors.As(err, &e) || e.Code != CodeLoginFailed {
+		t.Fatalf("tick error = %v, want the fixed login error", err)
 	}
-	if r.CurrentState().Failures != 1 {
-		t.Errorf("failures = %d, want 1 (instance failures count like Standard)", r.CurrentState().Failures)
+}
+
+// TestExtraClampedTimeoutsEventuallyStrike: a slow-cadence extra always runs
+// with less than its own limit, so its timeouts are forgiven only a few times in
+// a row; after that it backs off like any failing extra and keeps its cadence.
+func TestExtraClampedTimeoutsEventuallyStrike(t *testing.T) {
+	now := time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)
+	q := &recQuery{replies: map[string][]Row{}}
+	r := extraTestRunner(t, q, now, extraSampler("bb:semaphores", "xa"))
+	run := r.extraState("xa")
+	s := r.extras[0]
+	to := &Error{CodeTimeout, "The query did not finish within its time limit."}
+	for i := 0; i < extraMaxClamps-1; i++ {
+		if err := r.extraFailed(context.Background(), s, run, now, to, true); err != nil {
+			t.Fatal(err)
+		}
+		if run.fails != 0 {
+			t.Fatalf("clamped timeout %d struck early", i+1)
+		}
+		if got := r.lastRun["xa"]; !got.Equal(now) {
+			t.Fatalf("a clamped timeout must keep the extra's own cadence (lastRun %v)", got)
+		}
+	}
+	if err := r.extraFailed(context.Background(), s, run, now, to, true); err != nil {
+		t.Fatal(err)
+	}
+	if run.fails != 1 || run.skipUntil.IsZero() {
+		t.Errorf("after %d clamped timeouts the extra must strike and back off (fails %d)", extraMaxClamps, run.fails)
+	}
+}
+
+// TestExtraSourcesArePinned: registering an extra approves its FROM source for
+// the whole lint, so the set of sources extras read is pinned here. Adding one
+// is a deliberate edit to this list, reviewed as a security change (a source
+// can expose client addresses, names or text that no column rule catches).
+func TestExtraSourcesArePinned(t *testing.T) {
+	want := map[string]bool{}
+	if !maps.Equal(extraSources, want) {
+		t.Errorf("extraSources = %v, want exactly %v", extraSources, want)
 	}
 }
 

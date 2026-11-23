@@ -68,6 +68,13 @@ var extraCadenceOK = map[time.Duration]bool{
 // Standard samples.
 const extraMaxFailures = 10
 
+// extraMaxClamps is how many consecutive timeouts under a spent tick budget are
+// forgiven before the next one counts as a real failure. A 60 s-or-slower extra
+// always runs with less than its own limit (Standard already used part of the
+// shared budget), so without this bound a permanently slow DMV would never back
+// off and would be re-sent every tick.
+const extraMaxClamps = 5
+
 // extraBackoffBase and extraBackoffMax bound the retry delay after a failure of
 // one extra: base * 2^fails, capped.
 const (
@@ -271,6 +278,8 @@ type extraRun struct {
 	// off latches for the rest of the process (permission denied, or too many
 	// consecutive failures).
 	off bool
+	// clamps counts consecutive timeouts that happened under a clamped budget.
+	clamps int
 }
 
 func (r *Runner) extraState(kind string) *extraRun {
@@ -400,13 +409,18 @@ func (r *Runner) tickExtras(ctx, parent context.Context, now time.Time) error {
 			return err
 		}
 		run.fails = 0
+		run.clamps = 0
 		r.lastRun[kind] = now
 	}
 	return nil
 }
 
-// extraFailed routes one extra's failure. Instance-level failures go through
-// the Standard fail path; everything else stays with the extra.
+// extraFailed routes one extra's failure. Only a failure that is
+// provably instance-wide (the C8 ceiling, a login or rights error) goes through
+// the Standard fail path. Network, TLS and database codes are matched partly on
+// error text, so one extra's odd message must not count against the Standard
+// samples: those stay with the extra, and a really dead connection surfaces on
+// the next Standard query.
 func (r *Runner) extraFailed(parent context.Context, s Sampler, run *extraRun, now time.Time, err error, clamped bool) error {
 	e := Classify(err)
 	run.epoch++ // the next observation of this extra must rebaseline
@@ -417,7 +431,7 @@ func (r *Runner) extraFailed(parent context.Context, s Sampler, run *extraRun, n
 		return r.fail(err)
 	}
 	switch e.Code {
-	case CodeLoginFailed, CodeTooManyRights, CodeNetwork, CodeTLS, CodeDatabase:
+	case CodeLoginFailed, CodeTooManyRights:
 		return r.fail(err)
 	case CodePermission:
 		run.off = true
@@ -425,7 +439,14 @@ func (r *Runner) extraFailed(parent context.Context, s Sampler, run *extraRun, n
 		return nil
 	case CodeTimeout:
 		if clamped {
-			return nil // ran out of tick budget, not the extra's fault
+			// Ran short of tick budget: forgiven a few times in a row, and it
+			// keeps its own cadence so it is not re-sent every tick.
+			r.lastRun[s.Kind()] = now
+			run.clamps++
+			if run.clamps < extraMaxClamps {
+				return nil
+			}
+			run.clamps = 0
 		}
 	}
 	run.fails++
