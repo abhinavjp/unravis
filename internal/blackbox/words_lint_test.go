@@ -236,7 +236,7 @@ func wordsFromSource() []wordsCase {
 		{"reader.other-status", "That address answered with 418, which a Blackbox does not send."},
 		{"reader.dropped", "The connection dropped while reading. Try again."},
 		{"reader.too-much", "The address answered with more data than a Blackbox sends."},
-		{"reader.timeout", "The Blackbox did not answer in time. Check that the server is on and the port is open to this PC."},
+		{"reader.timeout", "The Blackbox did not answer in time. Check that the server is on, that Listens on is the server address, and that the port is open to this PC."},
 		{"reader.nothing-answered", "Nothing answered at that address. Check the name and port, that the Blackbox is running, that Listens on is the server address, not 127.0.0.1, and that the port is open to this PC."},
 		// thispc.go
 		{"thispc.no-answer", "The Blackbox program gave no readable answer, so Unravis cannot tell whether the change happened. Check the Blackbox status and try again."},

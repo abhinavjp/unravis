@@ -397,7 +397,7 @@ export const BB_TEXT = {
     'Wrong path. No share has that name. Check the server name and the share name.',
     'No access. The share exists but the account Unravis runs as may not read it. Give that account read access.',
     'No Blackbox there. The folder has no manifest, or the service is not running.',
-    'Listens on or firewall. A new Blackbox answers on its own server only until Listens on is the server address. Then the port must be open to this PC.',
+    'Listens on or firewall. A new Blackbox answers only on its own server until Listens on is set to the server address. Then the port must be open to this PC.',
     'Key refused. The address answered but the read key was not accepted. Type the new key and look again.'
   ],
   addLooksGood: 'Looks good. Press Add to the list to keep it.',
