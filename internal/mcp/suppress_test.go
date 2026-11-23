@@ -271,7 +271,7 @@ func TestBreakdownIsRefusedWhenItWouldGiveAHiddenGroupsCount(t *testing.T) {
 // top differs from the Other of another by whole rows of at least the minimum: no pair of answers gives a small count by subtraction.
 func TestBreakdownTopsCannotBeSubtracted(t *testing.T) {
 	b := newBridge(nil, nil, WithMinCohort(5))
-	rng := rand.New(rand.NewSource(7))
+	rng := rand.New(rand.NewSource(7)) //nolint:gosec // a fixed seed: the same distributions every run, not a secret
 	for trial := 0; trial < 3000; trial++ {
 		n := 1 + rng.Intn(9)
 		counts := make([]int64, n)
@@ -284,7 +284,6 @@ func TestBreakdownTopsCannotBeSubtracted(t *testing.T) {
 			total += counts[i]
 		}
 		sort.Slice(counts, func(i, j int) bool { return counts[i] > counts[j] })
-		var shownRows [][]int64
 		var others []int64
 		for top := 0; top <= n; top++ {
 			bd := audit.Breakdown{Total: total}
@@ -301,7 +300,7 @@ func TestBreakdownTopsCannotBeSubtracted(t *testing.T) {
 				bd.Other = &o
 			}
 			rows, other, got := b.shownBreakdown(bd)
-			if got != total && !(total < 5 && got == "<5") {
+			if got != any(total) && (total >= 5 || got != any("<5")) {
 				t.Fatalf("counts %v top %d: total %v", counts, top, got)
 			}
 			var sum int64
@@ -323,7 +322,7 @@ func TestBreakdownTopsCannotBeSubtracted(t *testing.T) {
 			if total >= 5 && sum+oc != total {
 				t.Fatalf("counts %v top %d: rows %v and Other %d do not add to %d", counts, top, r, oc, total)
 			}
-			shownRows, others = append(shownRows, r), append(others, oc)
+			others = append(others, oc)
 		}
 		for i := range others {
 			for j := range others {
