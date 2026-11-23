@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"api-audit-explorer/internal/ownerlease"
 )
 
 const (
@@ -262,9 +264,9 @@ func TestWriteRefusesToSecureAForeignFolder(t *testing.T) {
 	if called {
 		t.Fatal("SecureDir was called on a foreign folder")
 	}
-	// A folder with only locator files (a previous owner's file and temp file) is fine.
+	// A folder with only locator files (a previous owner's file and temp file) and the owner lease files is fine.
 	clean := t.TempDir()
-	for _, n := range []string{FileName, DemoFileName, FileName + ".1.tmp"} {
+	for _, n := range []string{FileName, DemoFileName, FileName + ".1.tmp", ownerlease.FileName, ownerlease.DemoFileName} {
 		if err := os.WriteFile(filepath.Join(clean, n), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}

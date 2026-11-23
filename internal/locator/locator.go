@@ -26,6 +26,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"api-audit-explorer/internal/ownerlease"
 )
 
 // Schema is the only locator version this build reads and writes.
@@ -158,14 +160,14 @@ func Write(path string, r Record, o Options) error {
 	return nil
 }
 
-// onlyLocatorFiles fails when dir holds an entry that is not a locator file or its temp file.
+// onlyLocatorFiles fails when dir holds an entry that is not a locator file, its temp file or an owner lease file.
 func onlyLocatorFiles(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("locator: read run folder: %w", err)
 	}
 	for _, e := range entries {
-		if n := e.Name(); e.IsDir() || !strings.HasPrefix(n, "backend") {
+		if n := e.Name(); e.IsDir() || !(strings.HasPrefix(n, "backend") || ownerlease.IsLeaseFile(n)) {
 			return fmt.Errorf("locator: run folder %s holds %q, which is not a locator file; refusing to restrict it", dir, n)
 		}
 	}
