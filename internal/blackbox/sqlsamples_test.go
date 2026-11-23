@@ -379,8 +379,7 @@ func TestOnlySQLSampleFilesAreServedFromTheLockedFolder(t *testing.T) {
 		}
 	}
 	// The host route still refuses an SQL file name, and the SQL route refuses a host file name.
-	resp, _ := g.get(t, "/sql/files/"+FileNameFor(g.clk.t), g.key)
-	if resp.StatusCode == http.StatusOK {
+	if code, _ := sqlGet(t, g, "/sql/files/"+FileNameFor(g.clk.t), g.key); code == http.StatusOK {
 		t.Error("the SQL route served a host recording")
 	}
 }
@@ -395,9 +394,9 @@ func TestSQLRouteRefusesALinkedFolderOrFile(t *testing.T) {
 	if err := os.Symlink(outside, SQLDataDir(g.s.Dir())); err != nil {
 		t.Skip("symlinks not available: " + err.Error())
 	}
-	resp, body := g.get(t, "/sql/files/"+SQLFileNameFor(sqlT0), g.key)
-	if resp.StatusCode == http.StatusOK || strings.Contains(string(body), "outside") {
-		t.Fatalf("linked folder served: %d %q", resp.StatusCode, body)
+	code, body := sqlGet(t, g, "/sql/files/"+SQLFileNameFor(sqlT0), g.key)
+	if code == http.StatusOK || strings.Contains(string(body), "outside") {
+		t.Fatalf("linked folder served: %d %q", code, body)
 	}
 }
 
