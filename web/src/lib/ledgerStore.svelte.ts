@@ -1,6 +1,7 @@
 // Shared ledger state, kept for as long as the tab lives. The drawer reads and writes it, and the header badge reads the count.
 // Drafts (editors), the open entry and the new-hypothesis text live here so closing the drawer does not lose typing.
 import { api } from './api';
+import { sameRead } from './storyReturn';
 import { addCitation, editorFromHypothesis, type CitedRef, type EditorState } from './ledger';
 import type { Hypothesis } from './types';
 
@@ -17,6 +18,11 @@ export const ledger = $state({
 });
 
 let inflight: { caseId: string; promise: Promise<void> } | null = null;
+// Counts the writes made on this page (an entry added, saved or removed). A list read that began before a write may not carry it, so its answer
+// must not replace the list the write has already changed: the read is made once more (once, never a loop) so the list ends up right.
+let writes = 0;
+/** Tells the store that the list was changed here (add, save, remove). A read that is on its way is then read again before it is shown. */
+export function noteLedgerWrite(): void { writes += 1; }
 // Cases known to be archived: their theories are not asked for (the server answers 409 for them), so the console stays clean.
 const held = new Set<string>();
 export function holdLedger(caseId: string, hold: boolean): void {
@@ -46,12 +52,19 @@ export function refreshLedger(): Promise<void> {
   if (held.has(caseId)) return Promise.resolve();
   if (inflight && inflight.caseId === caseId) return inflight.promise;
   const mine: { caseId: string; promise: Promise<void> } = { caseId, promise: Promise.resolve() };
+  let startedAt = writes;
   mine.promise = (async () => {
     try {
-      const list = (await api.ledgerList(caseId)) ?? [];
+      let list = (await api.ledgerList(caseId)) ?? [];
+      // A write was made here while this read was on its way: read once more, so the answer is not older than the write.
+      const before = writes;
+      if (before !== startedAt) { startedAt = before; list = (await api.ledgerList(caseId)) ?? []; }
       // The person moved to another case while this was in flight: its answer belongs to the old case, so it is dropped.
       if (ledger.caseId !== caseId) return;
-      ledger.items = list;
+      // Still a write after the second read began: the list on screen already carries it, and a third read is not made (no loop).
+      if (writes !== startedAt) { ledger.loaded = true; return; }
+      // An answer that says what is shown is not put in, so nothing is drawn again.
+      if (!sameRead(ledger.items, list)) ledger.items = list;
       for (const h of list) if (!ledger.editors[h.id]) ledger.editors[h.id] = editorFromHypothesis(h);
       ledger.loaded = true;
     } finally { if (inflight === mine) inflight = null; }
