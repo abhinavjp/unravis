@@ -34,9 +34,13 @@ Exit code: 0 = PASS (no new errors), 1 = FAIL, 2 = could not run.
 `npm run csp` (or `npx playwright test -c playwright.csp.config.ts`) opens the same screens of the full app, desktop width, dark, but answers every
 page document with the exact Content-Security-Policy of the desktop window (read from `desktop/src-tauri/tauri.conf.json`: no `unsafe-inline`, no `unsafe-eval`,
 `img-src 'self'`) and **fails on any `securitypolicyviolation`** (event, "Refused to ..." console line or script error). It sweeps the pointer over every chart, so hover
-tooltips are built too. It uses the same demo exe and the same environment variables as the audit (`UNRAVIS_EXE`, `PW_CHROMIUM`); `UIAUDIT_ONLY=p1-home,...` picks screens.
+tooltips are built too, and the screens listed in `TOOLTIP_SCREENS` fail when no chart on them drew a tooltip (compared with the resting canvas). It waits on conditions (no request in flight, two animation frames), never on a sleep or a silent time box. It uses the same demo exe and the same environment variables as the audit (`UNRAVIS_EXE`, `PW_CHROMIUM`); `UIAUDIT_ONLY=p1-home,...` picks screens.
 Build the web files first (`cd web && npm run build`), because the demo exe embeds them. The cheap static half of this check is `web/scripts/check-csp.cjs`
-(run by the web unit tests). The live WebView2 check stays with the owner's PC (BL-323 acceptance).
+(run by the web unit tests, so on every pull request). The run itself is **not** a check on every pull request: it needs the Go build of the demo app (about 30 s),
+`npm ci` and Chromium for the audit tools, and about 4 minutes for the screens, far more than the fast gate's budget; it runs in `ui-audit.yml` (pull requests that change `tools/uiaudit`,
+weekly, by hand), on Linux and Windows. A pull request that only changes `web/src` is covered by the static gate until the next run, so run `npm run csp` yourself after a UI change that
+touches markup, styles or chart options. `csp/tooltips.spec.ts` measures the rich-text tooltip of the multi-API timeline (3 and 8 groups, desktop and phone width) against its chart.
+The live WebView2 check stays with the owner's PC (BL-323 acceptance).
 
 ## What it checks
 

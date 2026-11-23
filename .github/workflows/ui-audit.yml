@@ -82,6 +82,8 @@ jobs:
 
       - name: Run the audit
         id: audit
+        # A failed CSP step must not hide the audit report of the same run.
+        if: ${{ !cancelled() }}
         working-directory: tools/uiaudit
         run: node run-audit.mjs
 

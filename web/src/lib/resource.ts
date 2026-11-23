@@ -624,6 +624,10 @@ export function stripsOption(input: OptionInput) {
   const { strips, view, episodes, markers, zone, pal } = input;
   const grids: unknown[] = [], xAxes: unknown[] = [], yAxes: unknown[] = [], titles: unknown[] = [], series: unknown[] = [];
   const last = strips.length - 1;
+  // The tooltip bullet of a line is drawn in the colour of that very series: a rich style per colour slot, found by the series id (never by name:
+  // the same name can sit at another position in another strip and have another colour).
+  const keyOf = new Map<string, string>();
+  const rich: Record<string, object> = { b: { fontWeight: 'bold', fontSize: 12, color: pal.text }, sb: { color: pal.axisLine }, ...Object.fromEntries(pal.series.map((color, k) => ['s' + k, { color }])) };
   strips.forEach((strip, i) => {
     const top = TOP + i * (ROW_HEIGHT + GAP);
     grids.push({ left: GRID_LEFT, right: GRID_RIGHT, top, height: ROW_HEIGHT });
@@ -640,8 +644,10 @@ export function stripsOption(input: OptionInput) {
     titles.push({ text: strip.title + (strip.unit ? ' (' + strip.unit + ')' : ''), left: GRID_LEFT, top: top - 17, textStyle: { color: pal.text2, fontSize: 11, fontWeight: 600 } });
     strip.lines.forEach((line, k) => {
       const color = line.band ? pal.axisLine : pal.series[k % pal.series.length];
+      const id = strip.id + '/' + line.id;
+      keyOf.set(id, line.band ? 'sb' : 's' + (k % pal.series.length));
       series.push({
-        type: 'line', name: line.name, xAxisIndex: i, yAxisIndex: i, data: line.points, connectNulls: false,
+        type: 'line', id, name: line.name, xAxisIndex: i, yAxisIndex: i, data: line.points, connectNulls: false,
         showSymbol: false, symbolSize: 5, // no shape per point (BL-429); a point alone between gaps is drawn by the scatter below; hover still shows a dot
         z: line.band ? 1 : 3, lineStyle: line.band ? { opacity: 0 } : { color, width: 1.6 }, itemStyle: { color },
         ...(line.band ? { areaStyle: { color: withAlpha(pal.text2, 0.18) }, emphasis: { disabled: true } } : {})
@@ -661,23 +667,20 @@ export function stripsOption(input: OptionInput) {
       }
     });
   });
-  // Rich-text styles of the tooltip bullets: one for each colour slot of the palette, and one for a band (the "all other" area).
-  const richKeys = { keyOf: new Map<string, string>(), rich: { b: { fontWeight: 'bold', fontSize: 12, color: pal.text }, sb: { color: pal.axisLine }, ...Object.fromEntries(pal.series.map((color, k) => ['s' + k, { color }])) } as Record<string, object> };
-  strips.forEach(strip => strip.lines.forEach((line, k) => { if (!richKeys.keyOf.has(line.name)) richKeys.keyOf.set(line.name, line.band ? 'sb' : 's' + (k % pal.series.length)); }));
   return {
     animation: false,
     grid: grids, xAxis: xAxes, yAxis: yAxes, title: titles, series,
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
     tooltip: {
       ...richTip(pal, { trigger: 'axis', confine: true }),
-      textStyle: { color: pal.text, fontSize: 12, rich: richKeys.rich },
+      textStyle: { color: pal.text, fontSize: 12, rich },
       // Plain text, one line for each series (richText mode, BL-323). The coloured dot of the HTML tooltip is a `style` attribute, so the line starts
-      // with a bullet in the series colour instead (a rich style named for the colour slot).
-      formatter: (items: Array<{ axisValue: number; seriesName: string; value: [number, number | null] }>) => {
+      // with a bullet in the series colour instead (a rich style named for the colour slot, found by series id).
+      formatter: (items: Array<{ axisValue: number; seriesId?: string; seriesName: string; value: [number, number | null] }>) => {
         const shown = items.filter(item => item.seriesName && item.value && item.value[1] != null);
         if (shown.length === 0) return '';
         return rt(chartTime(shown[0].axisValue, zone)) + '\n' + shown.map(item => {
-          const key = richKeys.keyOf.get(item.seriesName);
+          const key = item.seriesId ? keyOf.get(item.seriesId) : undefined;
           return (key ? '{' + key + '|●} ' : '') + rt(item.seriesName) + ': ' + rt(String(item.value[1]));
         }).join('\n');
       }

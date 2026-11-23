@@ -9,16 +9,13 @@
 // A violation is caught three ways, so none is missed: the `securitypolicyviolation` event (an init script in every frame that lets it run),
 // the browser's "Refused to ..." console line (frames a sandbox keeps scripts out of, such as the report preview), and `pageerror`.
 // CSSOM writes (`element.style.x = ...`, `style:left={v}` in Svelte, ECharts positioning) are not blocked by `style-src`; markup `style="..."` is.
-import { test, expect, type BrowserContext } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runSteps, expandMacros, type Screen, type Env, type Step } from '../lib/steps';
+import { CSP, CHARTS, arm, frames, hoverChart, trackRequests, type Violation } from './harness';
 
 const root = join(__dirname, '..');
-const repo = join(root, '..', '..');
-
-/** The exact policy of the desktop shell. */
-export const CSP: string = JSON.parse(readFileSync(join(repo, 'desktop', 'src-tauri', 'tauri.conf.json'), 'utf8')).app.security.csp;
 
 const base: Screen[] = JSON.parse(readFileSync(join(root, '..', 'screens', 'screens.json'), 'utf8')).screens;
 const extraFile: { macros?: Record<string, Step[]>; screens: Screen[] } = JSON.parse(readFileSync(join(root, 'extra-screens.json'), 'utf8'));
@@ -27,24 +24,8 @@ const only = (process.env.UIAUDIT_ONLY ?? '').split(',').map((s) => s.trim()).fi
 // The other programs (setup window, Releases dashboard, Lite) are not shown in the desktop shell: only the full app.
 const screens = [...base, ...extra].filter((s) => !s.app && !s.retired && (!only.length || only.includes(s.id)));
 
-interface Violation { directive: string; blocked: string; source: string; sample: string; page: string }
-
-async function arm(context: BrowserContext, found: Violation[], consoleLines: string[]): Promise<void> {
-  await context.exposeBinding('__cspViolation', (_src, v: Violation) => { found.push(v); });
-  await context.addInitScript(() => {
-    document.addEventListener('securitypolicyviolation', (e) => {
-      const v = { directive: e.effectiveDirective, blocked: e.blockedURI, source: e.sourceFile + ':' + e.lineNumber, sample: e.sample, page: location.href.replace(/#.*/, '') };
-      (window as unknown as { __cspViolation: (v: unknown) => void }).__cspViolation(v);
-    });
-  });
-  await context.route('**/*', async (route) => {
-    const request = route.request();
-    if (request.resourceType() !== 'document') return route.continue();
-    const response = await route.fetch();
-    await route.fulfill({ response, headers: { ...response.headers(), 'content-security-policy': CSP } });
-  });
-  context.on('console', (m) => { if (/Content Security Policy|Refused to (apply|load|execute|connect|create|frame|evaluate)/i.test(m.text())) consoleLines.push(m.text().slice(0, 400)); });
-}
+/** Screens whose charts must draw a hover tooltip in this run: a sweep that misses every chart fails them (a tooltip no one drew is a tooltip no one checked). */
+const TOOLTIP_SCREENS: string[] = ['x-case-analysis', 'x-analysis-daily-hourly', 'x-where-groups', 'x-where-volume', 'x-blackbox-charts', 'x-blackbox-charts-sql'];
 
 test('the policy under test is the strict one', () => {
   expect(CSP).toContain("script-src 'self'");
@@ -65,7 +46,7 @@ test('self-check: a markup style and a data: picture are blocked and reported; C
     ok.style.color = 'red'; ok.style.cssText = 'left: 3px'; ok.style.setProperty('--k', '1');
     document.body.appendChild(ok);
   });
-  await page.waitForTimeout(100);
+  await frames(page); // a violation event is a queued task: after two animation frames it has been delivered
   expect(found.map((v) => v.directive), 'CSSOM writes are not violations').toEqual([]);
   await page.evaluate(() => {
     const bad = document.createElement('div');
@@ -87,6 +68,7 @@ for (const screen of screens) {
     const consoleLines: string[] = [];
     const errors: string[] = [];
     await arm(context, found, consoleLines);
+    const requests = trackRequests(page);
     page.on('pageerror', (e) => errors.push(String(e.message).slice(0, 300)));
     await page.addInitScript(() => { try { localStorage.setItem('unravis.theme', 'dark'); } catch { /* blocked storage */ } });
     await page.clock.setFixedTime(env.demoNow);
@@ -97,19 +79,23 @@ for (const screen of screens) {
       throw new Error('The screen was not reached: ' + String((err as Error).message).split('\n').slice(0, 3).join(' '));
     }
     await page.evaluate(() => document.fonts.ready);
-    await page.waitForLoadState('networkidle', { timeout: 2500 }).catch(() => undefined);
-    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
-    // Hover tooltips (ECharts, the tracing chart) are built on the first pointer move over a chart: sweep the pointer across every chart on the screen.
-    for (const canvas of await page.locator('canvas, .tc-plot, .panel').all()) {
-      const box = await canvas.boundingBox().catch(() => null);
+    await requests.quiet(); // fails, with the open requests named, when the page never goes quiet: no silent time box
+    await frames(page);
+    // Hover tooltips (ECharts, the tracing chart) are built on the first pointer move over a chart: sweep the pointer across every chart on the screen and
+    // count the charts that drew a tooltip box (compared with the resting canvas).
+    let drawn = 0;
+    const charts = await page.locator(CHARTS).count();
+    for (let i = 0; i < charts; i++) if ((await hoverChart(page, i)).drawn) drawn++;
+    for (const plot of await page.locator('.tc-plot, .panel').all()) {
+      const box = await plot.boundingBox().catch(() => null);
       if (!box || box.width < 80 || box.height < 40) continue;
       for (const f of [0.25, 0.5, 0.75]) await page.mouse.move(box.x + box.width * f, box.y + box.height * 0.5, { steps: 3 });
-      await page.waitForTimeout(60);
+      await frames(page);
     }
     // CSP_SHOTS=<folder> keeps a picture of each screen with the pointer still over its last chart, to look at the rich-text tooltips.
     if (process.env.CSP_SHOTS) await page.screenshot({ path: join(process.env.CSP_SHOTS, screen.id + '.png') });
     await page.mouse.move(2, 2);
-    if (screen.after) await runSteps(page, screen.after, env).catch(() => undefined);
+    if (screen.after) await runSteps(page, screen.after, env);
 
     const lines = [
       ...found.map((v) => `${v.directive} blocked ${v.blocked || '(inline)'} at ${v.source} ${v.sample ? 'sample "' + v.sample + '"' : ''} on ${v.page}`),
@@ -118,5 +104,8 @@ for (const screen of screens) {
     ];
     expect(lines, 'Content-Security-Policy violations on ' + screen.id).toEqual([]);
     expect(errors, 'script errors on ' + screen.id).toEqual([]);
+    test.info().annotations.push({ type: 'tooltips', description: drawn + ' of ' + charts + ' charts drew one' });
+    if (process.env.CSP_TIPS) console.log('TIPS ' + screen.id + ' ' + drawn + '/' + charts);
+    if (TOOLTIP_SCREENS.includes(screen.id)) expect(drawn, 'charts that drew a hover tooltip on ' + screen.id + ' (of ' + charts + ')').toBeGreaterThan(0);
   });
 }

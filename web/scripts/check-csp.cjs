@@ -15,12 +15,14 @@
 //
 //   html-tag       `{@html ...}` in a template (it parses a string as markup).
 //   static-style   a static `style="..."` attribute in a template (no `{...}` in it and no `style:` directive on the same element), or any `style=` in an .html file.
-//   html-sink      innerHTML, outerHTML, insertAdjacentHTML, document.write, srcdoc= in code or templates (string to markup).
-//   eval           eval(...), new Function(...), setTimeout/setInterval with a string.
-//   style-sink     setAttribute('style', ...), createElement('style'), insertAdjacentHTML of a <style>.
-//   script-sink    createElement('script'), an inline <script> in an .html file.
-//   data-uri       a data: or blob: address as a picture, stylesheet or font source in code or markup (img-src and font-src are 'self').
-//   chart-tooltip  an ECharts `tooltip: {...}` that is not `renderMode: 'richText'` (the HTML tooltip writes `style="..."` markup). `show: false` is fine.
+//   html-sink      the words innerHTML / outerHTML (any spelling: `.innerHTML`, `["innerHTML"]`, `{ innerHTML }`), insertAdjacentHTML, setHTMLUnsafe,
+//                  createContextualFragment, DOMParser / parseFromString, document.write, and `srcdoc` in code or a template (a string becomes markup).
+//   eval           eval(...), Function(...) with or without `new`, setTimeout/setInterval with a string.
+//   style-sink     setAttribute('style' | "style" | `style`, ...), setAttribute with a name that is not a literal (it could be "style"), createElement('style').
+//   script-sink    createElement('script'), an inline <script> or an on...= handler in an .html file.
+//   data-uri       a data: or blob: address as a source in code, in markup, in a .css file or in a <style> block (img-src and font-src are 'self').
+//   chart-tooltip  an ECharts `tooltip` that is not an object literal with `renderMode: 'richText'` (or `show: false`): `tooltip: someVar`, `{ tooltip }`, any
+//                  renderMode other than 'richText'. (The HTML tooltip writes `style="..."` markup; `richTip()` of lib/chartTooltip.ts is the way.)
 //   chart-html     HTML in chart text: `<br/>`, `<b>`, `extraCssText`, `.marker` in the chart files.
 //   svg-renderer   the ECharts SVG renderer (the canvas renderer is the only one registered).
 //
@@ -33,7 +35,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SOURCE_EXT = new Set(['.svelte', '.ts', '.js', '.cjs', '.mjs']);
+const SOURCE_EXT = new Set(['.svelte', '.ts', '.js', '.cjs', '.mjs', '.css']);
 
 function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -95,15 +97,20 @@ function splitSvelte(text) {
   let code = ' '.repeat(0);
   const blank = (s) => s.replace(/[^\n]/g, ' ');
   let codeOnly = text.replace(/[^\n]/g, ' ');
+  let styles = text.replace(/[^\n]/g, ' ');
   template = text.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, (m, tag, offset) => {
     if (tag.toLowerCase() === 'script') {
       const open = m.indexOf('>') + 1;
       const close = m.lastIndexOf('</');
       codeOnly = codeOnly.slice(0, offset + open) + text.slice(offset + open, offset + close) + codeOnly.slice(offset + close);
+    } else {
+      const open = m.indexOf('>') + 1;
+      const close = m.lastIndexOf('</');
+      styles = styles.slice(0, offset + open) + text.slice(offset + open, offset + close) + styles.slice(offset + close);
     }
     return blank(m);
   });
-  return { template, code: codeOnly };
+  return { template, code: codeOnly, styles };
 }
 
 /** Reads the start tags of a template: { name, attrs: [{name, value|null, kind, offset}], offset }. Knows quotes and `{...}` so a `>` inside an expression does not end a tag. */
@@ -196,12 +203,13 @@ function balanced(text, open) {
   return text.slice(open, skipBraces(text, open));
 }
 
+const DATA_SRC = String.raw`(?:['"\x60]\s*|url\(\s*['"]?\s*)(?:data:[a-z]+\/|blob:)`;
 const CODE_RULES = [
-  { rule: 'html-sink', re: /\.(?:innerHTML|outerHTML)\b|\binsertAdjacentHTML\s*\(|\bdocument\.write(?:ln)?\s*\(/g, why: 'writes a string as markup' },
-  { rule: 'eval', re: /\beval\s*\(|\bnew\s+Function\s*\(|\b(?:setTimeout|setInterval)\s*\(\s*(['"`])/g, why: 'evaluates a string as code' },
-  { rule: 'style-sink', re: /\.setAttribute\s*\(\s*['"]style['"]|\bcreateElement(?:NS)?\s*\([^)]*['"]style['"]/g, why: 'makes an inline style or a style element' },
-  { rule: 'script-sink', re: /\bcreateElement(?:NS)?\s*\([^)]*['"]script['"]/g, why: 'makes a script element' },
-  { rule: 'data-uri', re: /(?:['"`]\s*|url\(\s*['"]?)(?:data:(?:image|font|text\/css|application\/font)|blob:)/g, why: 'a data: or blob: source (img-src and font-src are self only)' }
+  { rule: 'html-sink', re: /\b(?:innerHTML|outerHTML|setHTMLUnsafe|createContextualFragment|parseFromString|srcdoc)\b|\binsertAdjacentHTML\s*\(|\bDOMParser\b|\bdocument\.write(?:ln)?\s*\(/g, why: 'turns a string into markup (or sets a srcdoc frame)' },
+  { rule: 'eval', re: /\beval\s*\(|\bFunction\s*\(|\b(?:setTimeout|setInterval)\s*\(\s*(['"\x60])/g, why: 'evaluates a string as code' },
+  { rule: 'style-sink', re: /\.setAttribute\s*\(\s*['"\x60]style['"\x60]|\.setAttribute\s*\(\s*[^'"\x60\s)]|\bcreateElement(?:NS)?\s*\([^)]*['"\x60]style['"\x60]/g, why: 'makes an inline style or a style element (or sets an attribute whose name is not a literal)' },
+  { rule: 'script-sink', re: /\bcreateElement(?:NS)?\s*\([^)]*['"\x60]script['"\x60]/g, why: 'makes a script element' },
+  { rule: 'data-uri', re: new RegExp(DATA_SRC, 'gi'), why: 'a data: or blob: source (img-src and font-src are self only)' }
 ];
 
 function scanFile(file, rel) {
@@ -215,7 +223,13 @@ function scanFile(file, rel) {
   };
   let template = '';
   let code = text;
-  if (svelte) ({ template, code } = splitSvelte(text));
+  let styles = '';
+  if (ext === '.css') { code = ''; styles = text; }
+  if (svelte) ({ template, code, styles } = splitSvelte(text));
+  // Stylesheets (.css files and <style> blocks): a data: address in a url() is a picture or font the policy refuses.
+  const dataRule = CODE_RULES.find((r) => r.rule === 'data-uri');
+  for (const m of blankComments(styles, false).matchAll(new RegExp(dataRule.re.source, 'gi'))) add('data-uri', m.index, dataRule.why);
+  if (ext === '.css') return { found, dynamic: 0 };
   const bareCode = blankComments(code, false);
   for (const { rule, re, why } of CODE_RULES) {
     re.lastIndex = 0;
@@ -251,8 +265,9 @@ function scanFile(file, rel) {
 /** ECharts rules, for the code of any file that builds a chart option. */
 function chartRules(code, text, add) {
   if (/\bSVGRenderer\b/.test(code)) add('svg-renderer', code.search(/\bSVGRenderer\b/), 'only the canvas renderer is registered');
-  const chartFile = /\becharts\b|tooltip\s*:|\bsetOption\b/.test(code);
-  if (!chartFile) return;
+  for (const m of code.matchAll(/\btooltip\s*:\s*(?=[^\s{])/g)) add('chart-tooltip', m.index, "a tooltip that is not an object literal: the gate cannot see its renderMode (write `tooltip: { ...richTip(p, {}), ... }`)");
+  for (const m of code.matchAll(/[{,]\s*tooltip\s*[,}]/g)) add('chart-tooltip', m.index + m[0].indexOf('tooltip'), 'a shorthand tooltip: the gate cannot see its renderMode');
+  for (const m of code.matchAll(/\brenderMode\s*:\s*['"\x60](?!richText['"\x60])/g)) add('chart-tooltip', m.index, "a tooltip renderMode other than 'richText'");
   for (const m of code.matchAll(/\btooltip\s*:\s*\{/g)) {
     const open = m.index + m[0].length - 1;
     const body = balanced(code, open);

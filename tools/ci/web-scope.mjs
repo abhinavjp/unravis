@@ -20,7 +20,7 @@ export const WEB_READS = [
   /^internal\/importer\/reasons\.go$/,               // import.test
   /^tools\/e2e\//,                                   // guidedKept (archive)
   /^desktop\/src-tauri\/tauri\.conf\.json$/,          // cspGate.test.cjs: the policy the UI must run under (BL-323)
-  /^tools\/uiaudit\/csp\//,                            // cspGate.test.cjs: the strict-CSP Playwright spec reads that policy
+  /^tools\/uiaudit\/csp\//,                            // cspGate.test.cjs: the strict-CSP Playwright harness reads that policy
 ];
 
 /** True when this repo-relative path (any separator) can change the result of a web check. */

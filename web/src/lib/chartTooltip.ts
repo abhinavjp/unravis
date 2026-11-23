@@ -9,7 +9,7 @@
  * What the HTML tooltip had that this one does not: text selection (nobody used it: the box vanishes with the pointer), automatic line wrap of one
  * long line (the HTML box was `white-space: nowrap` too, so nothing changes), and `extraCssText` (rounded corners and no shadow: the canvas box has
  * a 4 px radius and no shadow by default). Colour dots from `item.marker` are drawn by ECharts itself in rich-text mode when it builds the text;
- * a custom formatter that wants a coloured mark names a rich style (see BlackboxCharts).
+ * a custom formatter that wants a coloured mark names a rich style (see `stripsOption` in resource.ts; BlackboxCharts builds its own the same way).
  */
 
 /** The palette fields the tooltip reads. `Palette` of charts.ts and `OverlayPalette` both fit. */
@@ -17,7 +17,9 @@ export interface TipPalette { surface: string; axisLine: string; text: string }
 
 /** Makes a value safe to put in rich text: the control characters become look-alikes, so the text stays readable and cannot open a style tag. */
 export const rt = (value: unknown): string =>
-  String(value ?? '').replace(/[{}|]/g, (char) => (char === '{' ? '｛' : char === '}' ? '｝' : '¦'));
+  String(value ?? '')
+    .replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ') // HTML folded these into one space; in rich text a newline is a new line and could fake one
+    .replace(/[{}|]/g, (char) => (char === '{' ? '｛' : char === '}' ? '｝' : '¦'));
 
 /** Bold text inside a tooltip line (the style `b` is set by `richTip`). */
 export const bold = (value: unknown): string => '{b|' + rt(value) + '}';
@@ -37,4 +39,24 @@ export function richTip<T extends object>(p: TipPalette, extra: T): T & { render
     textStyle: { color: p.text, fontSize: 12, rich: { b: { fontWeight: 'bold', fontSize: 12, color: p.text } } },
     ...extra
   };
+}
+
+/**
+ * A rich-text tooltip is drawn on the chart canvas, so it cannot be taller than the chart (the HTML box could hang out of it). ECharts 6 sets
+ * the rich-text line height to 22 px and the box padding is 6 px top and bottom, so a chart of height H holds this many lines (measured in
+ * Chromium with 3 and 8 compared groups, tools/uiaudit/csp).
+ */
+export const TIP_LINE_HEIGHT = 22;
+export const TIP_PADDING = 12;
+export const tipLineBudget = (chartHeight: number): number => Math.max(3, Math.floor((chartHeight - TIP_PADDING) / TIP_LINE_HEIGHT));
+
+/**
+ * The lines of a tooltip that lists rows between a head and a foot, cut to `budget` lines: when the rows do not all fit, the last line that
+ * would be a row says how many more there are ("and 3 more"), so nothing is cut off silently.
+ */
+export function fitTip(head: string[], rows: string[], foot: string[], budget: number): string[] {
+  const room = Math.max(0, budget - head.length - foot.length);
+  if (rows.length <= room) return [...head, ...rows, ...foot];
+  const keep = Math.max(0, room - 1);
+  return [...head, ...rows.slice(0, keep), 'and ' + (rows.length - keep) + ' more', ...foot];
 }

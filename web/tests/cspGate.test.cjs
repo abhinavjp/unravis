@@ -92,6 +92,55 @@ test('an ECharts tooltip must be rich text; "show: false" and richTip() pass', (
   assert.deepEqual(rulesOf(scanFiles({ 'src/q.ts': 'import { SVGRenderer } from "echarts/renderers";' })), ['svg-renderer']);
 });
 
+test('S2: every spelling of a markup sink is caught, not only `.innerHTML`', () => {
+  const sinks = {
+    'a.ts': 'el["innerHTML"] = x;',
+    'b.ts': 'Object.assign(el, { innerHTML: x });',
+    'c.ts': 'const { outerHTML } = el;',
+    'd.ts': 'el.setHTMLUnsafe(x);',
+    'e.ts': 'range.createContextualFragment(x);',
+    'f.ts': 'new DOMParser().parseFromString(x, "text/html");',
+    'g.ts': 'frame.srcdoc = html;',
+    'h.ts': 'el.insertAdjacentHTML("afterbegin", x);'
+  };
+  for (const [name, code] of Object.entries(sinks)) {
+    assert.deepEqual([...new Set(rulesOf(scanFiles({ ['src/' + name]: code })))], ['html-sink'], code);
+  }
+});
+
+test('S2: Function(...) without new, setAttribute with a template or a variable name, createElement(`style`)', () => {
+  const cases = {
+    'a.ts': ['eval', 'const f = Function("return 1");'],
+    'b.ts': ['eval', 'const f = globalThis.Function(`return 1`);'],
+    'c.ts': ['style-sink', 'el.setAttribute(`style`, "a:b");'],
+    'd.ts': ['style-sink', 'el.setAttribute(name, "a:b");'],
+    'e.ts': ['style-sink', 'document.createElement(`style`);'],
+    'f.ts': ['script-sink', 'document.createElement(`script`);']
+  };
+  for (const [name, [rule, code]] of Object.entries(cases)) assert.deepEqual(rulesOf(scanFiles({ ['src/' + name]: code })), [rule], code);
+  assert.deepEqual(scanFiles({ 'src/ok.ts': 'el.setAttribute("aria-label", x); el.setAttribute("role", "img");' }).violations, [], 'a literal attribute name is fine');
+});
+
+test('S2: a data: or blob: source in a .css file or a <style> block is caught', () => {
+  const r = scanFiles({
+    'src/brand/t.css': '.a { background: url("data:image/svg+xml,%3Csvg") }\n.b { background: url(data:application/octet-stream;base64,AA) }\n@font-face { src: url(\'../fonts/x.woff2\') }',
+    'src/S.svelte': '<p>x</p>\n<style>\n  .c { background-image: url(data:image/png;base64,AAA); }\n</style>',
+    'src/ok.css': '.a { background: url("../img/a.svg") } /* url(data:image/png;base64,AA) in a comment */'
+  });
+  assert.deepEqual(r.violations.map((v) => v.file + ':' + v.line + ' ' + v.rule).sort(), ['src/S.svelte:3 data-uri', 'src/brand/t.css:1 data-uri', 'src/brand/t.css:2 data-uri']);
+  assert.equal(scanFiles({ 'src/x.ts': 'export {};', 'src/c.css': '.a{color:red}' }).violations.length, 0);
+});
+
+test('S2: a tooltip that the gate cannot read, or any renderMode other than richText, is caught', () => {
+  const rules = (code) => rulesOf(scanFiles({ 'src/t.ts': code }));
+  assert.deepEqual(rules('const t = { trigger: "axis" }; export const o = { tooltip: t };'), ['chart-tooltip']);
+  assert.deepEqual(rules('const tooltip = {}; export const o = { tooltip, grid: {} };'), ['chart-tooltip']);
+  assert.deepEqual(rules('export const o = { tooltip: { ...richTip(p, {}), renderMode: "html", formatter: () => "a" } };'), ['chart-tooltip']);
+  assert.deepEqual(rules("export const o = { tooltip: { renderMode: 'html', formatter: () => 'a' } };"), ['chart-tooltip', 'chart-tooltip']);
+  assert.deepEqual(rules('export const o = { tooltip: { show: false }, series: [{ tooltip: { show: false } }] };'), []);
+  assert.deepEqual(rules('export const o = { tooltip: {\n  ...richTip(p, { confine: true }),\n  formatter: () => "a" } };'), []);
+});
+
 test('the allowlist lets a reviewed line through, and an entry that matches nothing fails the gate', () => {
   const files = { 'src/K.svelte': '<iframe sandbox="" srcdoc={html}></iframe>' };
   const entry = { file: 'src/K.svelte', rule: 'html-sink', match: 'srcdoc={html}', why: 'reviewed' };
@@ -130,7 +179,7 @@ test('the desktop policy the gate protects (tauri.conf.json) stays strict, and t
   const csp = conf.app.security.csp;
   assert.doesNotMatch(csp, /unsafe-inline|unsafe-eval|data:|blob:/);
   assert.match(csp, /style-src 'self'(;|$)/);
-  const spec = fs.readFileSync(path.join(root, '..', 'tools', 'uiaudit', 'csp', 'csp.spec.ts'), 'utf8');
+  const spec = fs.readFileSync(path.join(root, '..', 'tools', 'uiaudit', 'csp', 'harness.ts'), 'utf8');
   assert.match(spec, /tauri\.conf\.json/);
   assert.match(spec, /securitypolicyviolation/);
 });

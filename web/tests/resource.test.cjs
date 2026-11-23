@@ -367,6 +367,7 @@ test('the chart tooltip text is plain: rich-text control characters in a name ar
   assert.equal(tip.rt(null), '');
   assert.equal(tip.bold('x{y}'), '{b|x｛y｝}');
   assert.equal(tip.tipLines(['one', '', null, false, undefined, 'two']), 'one\ntwo');
+  assert.equal(tip.rt('a\r\nb\tc\u2028d'), 'a b c d', 'line breaks and tabs become one space (HTML did the same)');
 });
 
 test('a lone sample (gaps on both sides) is drawn as a dot, a joined run is not', () => {
@@ -411,8 +412,11 @@ test('the chart tooltip is rich text with every name defused, and the option has
   assert.match(text, /^[^\n]+\n/, 'a time line, then one line for each series');
   assert.match(text, /<img src=x onerror=alert\(1\)>/, 'the name is shown as it is: it is text, not markup');
   assert.doesNotMatch(text, /\{x\|y\}/, 'a rich-text style tag in a name is defused');
-  const named = option.tooltip.formatter([{ axisValue: T0, seriesName: hostile, value: [T0, 1] }]);
-  assert.match(named, /\{s\d\|●\} /, 'the line starts with a bullet in the series colour');
+  const named = option.tooltip.formatter([{ axisValue: T0, seriesId: 'a/l1', seriesName: hostile, value: [T0, 1] }]);
+  assert.match(named, /\{s0\|●\} /, 'the line starts with a bullet in the series colour');
+  const multi = option.tooltip.formatter([{ axisValue: T0, seriesId: 'a/l1', seriesName: 'x\ny\tz', value: [T0, 1] }]);
+  assert.equal(multi.split('\n').length, 2, 'a newline in a name does not make a line of its own');
+  assert.match(multi, /x y z/);
   assert.ok(option.tooltip.textStyle.rich.s0, 'the bullet style is declared');
   assert.equal(option.tooltip.formatter([{ axisValue: T0, seriesName: 'x', value: [T0, null], marker: '' }]), '');
   assert.ok(r.chartHeight(2) > r.chartHeight(1));
@@ -541,4 +545,17 @@ test('a long gap list shows the first few lines and a toggle reveals the rest', 
   assert.match(panel, /gaps\.length > GAPS_SHOWN/, 'the toggle shows only when lines were hidden');
   assert.equal(r.gapsShowAll(25), 'Show all 25 gaps');
   assert.equal(r.resourceCopy.gapsShowFewer, 'Show fewer');
+});
+
+test('the strips tooltip bullet takes the colour of its own series, even when a name repeats at another position (BL-323)', () => {
+  const pal = { text: '#111111', accent: '#2457c5', accentSoft: '#9db6ea', warn: '#96600a', bad: '#b02a3d', pending: '#5b6878', text2: '#4d5a6b', axisLine: '#d5dbe3', grid: '#e6eaf0', empty: '#eee', heat: [], series: ['#146b58', '#2457c5', '#aa0000'], surface: '#fff' };
+  const strips = [
+    { id: 'x', title: 'X', unit: '%', max: 100, lines: [{ id: 'p', name: 'Shared', points: [[T0, 1]] }] },
+    { id: 'y', title: 'Y', unit: '%', max: 100, lines: [{ id: 'q', name: 'Other', points: [[T0, 1]] }, { id: 'r', name: 'Shared', points: [[T0, 2]] }] }
+  ];
+  const option = r.stripsOption({ strips, view: { fromMs: T0, toMs: T0 + 60 * MIN }, episodes: [], markers: [], zone: 'UTC', pal });
+  const tip = (seriesId) => option.tooltip.formatter([{ axisValue: T0, seriesId, seriesName: 'Shared', value: [T0, 1] }]);
+  assert.match(tip('x/p'), /\{s0\|●\}/, 'first strip, first line: the first colour');
+  assert.match(tip('y/r'), /\{s1\|●\}/, 'second strip, second line: the second colour, not the first-seen one');
+  assert.equal(option.series.filter((s) => s.id).map((s) => s.id).join(), 'x/p,y/q,y/r');
 });

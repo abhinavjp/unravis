@@ -5,7 +5,7 @@
       "file": "src/lib/components/guided/ReportExport.svelte",
       "rule": "html-sink",
       "match": "srcdoc={preview}",
-      "why": "The report preview shows the saved report (its own <style> block) in a sandboxed iframe. A srcdoc frame inherits the page policy, so under the desktop policy the report would show unstyled. Guided analysis is unlisted (owner decision D-2, docs/guided-unlisted.md), so no screen reaches this component and the Playwright run cannot open it. If guided analysis comes back, serve the preview from a URL of its own that carries its own policy (BL-555)."
+      "why": "The report preview shows the saved report (its own <style> block) in a sandboxed iframe. A srcdoc frame inherits the page policy, so under the desktop policy the report would show unstyled. Guided analysis is unlisted (owner decision D-2, docs/guided-unlisted.md), so no screen reaches this component and the Playwright run cannot open it. If guided analysis comes back, serve the preview from a URL of its own that carries its own policy (BL-570)."
     }
   ]
 }

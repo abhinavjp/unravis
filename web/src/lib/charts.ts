@@ -10,7 +10,7 @@ import { gapBridge, heroOutliers, type HeroSlot } from './chartHero';
 import { MIN_SAMPLE } from './thresholds';
 import { lightFallback } from '../brand/fallback';
 import { explain } from './copy/dictionary';
-import { richTip, rt } from './chartTooltip';
+import { bold, fitTip, richTip, rt, tipLineBudget, tipLines } from './chartTooltip';
 import { lineSeriesPerf, lonePointSeries } from './chartPerf';
 
 echarts.use([LineChart, BarChart, HeatmapChart, ScatterChart, GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
@@ -385,7 +385,9 @@ export const timelineLineStyle = (index: number): { width: number; type: 'solid'
   ({ width: Math.max(1.5, 3.5 - index * .5), type: (['solid', 'dashed', 'dotted'] as const)[index % 3] });
 /** The same pattern as an SVG stroke-dasharray, for the key beside the chart. */
 export const timelineDashArray = (index: number) => ({ solid: '', dashed: '6 3', dotted: '1.5 3' })[timelineLineStyle(index).type];
-export const multiTimelineOption = (analysis: Analysis, keys: string[], sources: Map<string, string>, zone: string, mode: 'percent' | 'milliseconds', series: TimelineSeries = 'p95') => {
+/** The height of the multi-API timeline chart in CSS pixels (`.multi-chart` in app.css; a test keeps the two equal). */
+export const MULTI_CHART_HEIGHT = 340;
+export const multiTimelineOption = (analysis: Analysis, keys: string[], _sources: Map<string, string> /* the key under the chart names the source; the tooltip no longer does */, zone: string, mode: 'percent' | 'milliseconds', series: TimelineSeries = 'p95') => {
   const p = palette(), axis = p.text2;
   const failure = isFailureSeries(series);
   const seriesLabel = timelineSeriesOptions.find(item => item.value === series)?.label ?? series;
@@ -403,19 +405,30 @@ export const multiTimelineOption = (analysis: Analysis, keys: string[], sources:
   const yTitle = failure ? failuresAxisTitle : changeAxisTitle(mode === 'percent' ? '%' : changeMs.unit);
   // Positive ticks of the change axes carry a "+", so the margin counts one more character.
   const yWidest = failure ? counts.widest : '+' + (mode === 'percent' ? changePercent.widest : changeMs.widest);
+  const multiTimelineTip = (index: number): string => {
+    const head = [(displaySlots[index] ? tooltipTimestamp(displaySlots[index].at, zone) + ' · ' : '') + rt(seriesLabel)];
+    let cautious = false;
+    const lines = rows.map((row, i) => {
+      const point = aligned[i][index];
+      const name = bold((i + 1) + '. ' + row.controller + '.' + row.action);
+      if (failure) {
+        const missing = (point?.incomplete ?? 0) > 0 ? ' (' + rt(point?.incomplete) + ' missing timing)' : '';
+        return name + ' ' + (point?.count == null ? 'No observations' : rt(String(failureField(point, series as FailureSeries)))) + missing;
+      }
+      const change = baselineChange(row, point, mode, series as PercentileSeries);
+      const reliable = (point?.count ?? 0) >= MIN_SAMPLE && row.state === 'compared';
+      if (!reliable) cautious = true;
+      const now = finite(point?.[series as PercentileSeries]?.valueMs)?.toFixed(1) ?? 'N/A', ref = finite(row.reference[series as PercentileSeries]?.valueMs)?.toFixed(1) ?? 'N/A';
+      return name + ' ' + (change == null ? 'Unavailable' : (change > 0 ? '+' : '') + change.toFixed(1) + (mode === 'percent' ? '%' : ' ms') + ' (' + now + ' ms, ref ' + ref + ' ms)') + (reliable ? '' : ' *');
+    });
+    return tipLines(fitTip(head, lines, cautious ? ['* Few or missing samples: treat with care.'] : [], tipLineBudget(MULTI_CHART_HEIGHT)));
+  };
   return {
     animation: false,
     grid: { left: leftMargin(yWidest, 90), right: 78, top: 20, bottom: SLIDER_GRID_BOTTOM + 4 },
-    tooltip: { ...richTip(p, {}), trigger: 'axis', confine: true, formatter: (items: Array<{ dataIndex: number }>) => {
-      const index = items[0]?.dataIndex ?? 0;
-      return (displaySlots[index] ? tooltipTimestamp(displaySlots[index].at, zone) + '\n' : '') + rows.map((row, i) => {
-        const point = aligned[i][index];
-        const change = baselineChange(row, point, mode, failure ? 'p95' : series as PercentileSeries);
-        const reliable = (point?.count ?? 0) >= MIN_SAMPLE && row.state === 'compared';
-        if (failure) return `{b|${i + 1}. ${rt(row.controller)}.${rt(row.action)}}\n${rt(sources.get(row.sourceId) ?? row.sourceId)} · ${rt(row.kind)} · ${rt(row.outcome)}\n${seriesLabel}: ${point?.count == null ? 'No observations' : String(failureField(point, series as FailureSeries))}${(point?.incomplete ?? 0) > 0 ? ' · ' + point?.incomplete + ' missing timing (not counted as failures)' : ''}`;
-        return `{b|${i + 1}. ${rt(row.controller)}.${rt(row.action)}}\n${rt(sources.get(row.sourceId) ?? row.sourceId)} · ${rt(row.kind)} · ${rt(row.outcome)}\nChange: ${change == null ? 'Unavailable' : (change > 0 ? '+' : '') + change.toFixed(1) + (mode === 'percent' ? '%' : ' ms')} · Usable timings: ${point?.count ?? 0}\nCurrent ${series.toUpperCase()}: ${finite(point?.[series as PercentileSeries]?.valueMs)?.toFixed(1) ?? 'N/A'} ms · Reference ${series.toUpperCase()}: ${finite(row.reference[series as PercentileSeries]?.valueMs)?.toFixed(1) ?? 'N/A'} ms${reliable ? '' : '\nFew or missing samples — treat this point cautiously.'}`;
-      }).join('\n\n');
-    } },
+    // One line for each group (the list under the chart is the key: it names the source, kind and outcome). A rich-text tooltip is drawn on the
+    // canvas, so it must fit the chart's height: lines are counted against MULTI_CHART_HEIGHT and a long list ends in "and N more".
+    tooltip: { ...richTip(p, {}), trigger: 'axis', confine: true, formatter: (items: Array<{ dataIndex: number }>) => multiTimelineTip(items[0]?.dataIndex ?? 0) },
     xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, interval: 0, hideOverlap: true }, ...timeTitle(p, zone) },
     yAxis: {
       type: 'value', ...valueTitle(p, yTitle, yWidest),
