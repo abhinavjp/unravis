@@ -334,7 +334,7 @@ func (s *sweeper) learnedLocked(in string, out bool) string {
 			return s.learnTokenLocked(k, low, out)
 		}
 	}
-	if s.base == nil && len(s.pend) == 0 && !(s.short && !out) {
+	if s.base == nil && len(s.pend) == 0 && (!s.short || out) {
 		return in
 	}
 	if low == "" {
