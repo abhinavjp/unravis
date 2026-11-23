@@ -83,6 +83,7 @@ type runFlags struct {
 	pipeOnly            bool
 	portSet             bool
 	loopback            bool
+	owner               string // --owner: what hello says of this owner ("" means app)
 }
 
 // parseFlags parses and validates the command line. Every privacy and
@@ -105,6 +106,7 @@ func parseFlags(args []string) (runFlags, error) {
 	flags.BoolVar(&f.pipeServer, "pipe-server", false, "serve the dashboard over two secured named pipes (ui and ag) and open no TCP port unless --loopback is also given (Windows)")
 	flags.BoolVar(&f.pipeOnly, "pipe-only", false, "like --pipe-server, and never opens a TCP port or writes a session file; used by the desktop shell (Windows)")
 	flags.BoolVar(&f.loopback, "loopback", false, "with --pipe-server: also keep the loopback listener and the session file, as browser mode does")
+	flags.StringVar(&f.owner, "owner", "", "with --pipe-server or --pipe-only: who owns this copy, headless or shell (the command line reads it in hello; headless is the one 'unravis app stop' may stop)")
 	if err := flags.Parse(args); err != nil {
 		return runFlags{}, err
 	}
@@ -361,7 +363,7 @@ func run(args []string, getenv func(string) string) error {
 		defer removeSession()
 	}
 	if pipes != nil {
-		group := pipesrv.Serve(pipes, running.wrap(pipesrv.Handler(served, pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(newCLIHandler(served, token)))), newHTTPServer)
+		group := pipesrv.Serve(pipes, running.wrap(pipesrv.Handler(served, pipesrv.WithShutdown(token, cancel), pipesrv.WithCLI(newCLIHandler(served, token, ownerName(f.owner), cancel)))), newHTTPServer)
 		stopServers = append(stopServers, group)
 		go func() { serveDone <- <-group.Done() }()
 		log.Print("Serving over the ui and ag pipes")

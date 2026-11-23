@@ -24,7 +24,7 @@ func TestCLIRouteIsWiredBehindThePipeHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	dash := server.New(audit.NewDemo(time.Now()), nil, token, false, server.WithCases(store, nil, nil))
-	h := pipesrv.Handler(dash, pipesrv.WithCLI(newCLIHandler(dash, token)))
+	h := pipesrv.Handler(dash, pipesrv.WithCLI(newCLIHandler(dash, token, "app", nil)))
 	call := func(role pipesrv.Role, image, method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r = r.WithContext(pipesrv.WithPeerImage(pipesrv.WithRole(context.Background(), role), image))

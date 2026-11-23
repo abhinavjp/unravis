@@ -199,6 +199,11 @@ func TestPipeFlagRules(t *testing.T) {
 		{[]string{"--pipe-only", "--port", "0"}, "needs --loopback"},
 		{[]string{"--pipe-only", "--no-browser"}, "--no-browser"},
 		{[]string{"--pipe-server", "--no-browser"}, "--no-browser"},
+		{[]string{"--pipe-server", "--owner=headless"}, ""},
+		{[]string{"--pipe-only", "--owner", "shell"}, ""},
+		{[]string{"--pipe-server", "--owner=app"}, "headless or shell"},
+		{[]string{"--pipe-server", "--owner=other"}, "headless or shell"},
+		{[]string{"--owner=headless"}, "only valid with --pipe-server"},
 		{[]string{"--pipe-only", "--quit"}, "--quit"},
 		{[]string{"--pipe-server", "--check-update"}, "--check-update"},
 	} {
@@ -466,5 +471,13 @@ func TestPipeModeLocatorFailureIsFatal(t *testing.T) {
 	swapPipeSeams(t, func(cancel context.CancelFunc) { cancel() })
 	if err := run([]string{"--pipe-only", "--demo"}, getenv); err == nil {
 		t.Fatal("run succeeded without a locator")
+	}
+}
+
+func TestOwnerNameIsWhatHelloSays(t *testing.T) {
+	for in, want := range map[string]string{"": "app", "headless": "headless", "shell": "shell"} {
+		if got := ownerName(in); got != want {
+			t.Errorf("%q: %q", in, got)
+		}
 	}
 }

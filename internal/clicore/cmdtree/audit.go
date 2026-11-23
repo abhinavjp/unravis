@@ -411,5 +411,6 @@ func (st *state) appCmd() *cobra.Command {
 			return st.runWith(sess, "app.status", a, statusTable)
 		},
 	})
+	g.AddCommand(st.appStartCmd(), st.appStopCmd())
 	return g
 }

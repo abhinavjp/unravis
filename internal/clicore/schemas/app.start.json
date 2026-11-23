@@ -1,0 +1,9 @@
+{
+  "operation": "app.start",
+  "description": "Start the Unravis app with no window (a headless owner) and wait until it answers. If the app already runs, nothing is started. The app keeps running after the command ends.",
+  "input": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "properties": {}},
+  "output": {"type": "object", "required": ["started", "alreadyRunning", "pid", "owner"], "properties": {
+    "started": {"type": "boolean"}, "alreadyRunning": {"type": "boolean"}, "pid": {"type": "integer"}, "owner": {"type": "string"}}},
+  "errors": ["ELEVATION_REFUSED", "OWNER_BUSY", "UPSTREAM_UNAVAILABLE", "TIMEOUT", "ENDPOINT_UNAVAILABLE", "ENDPOINT_UNTRUSTED", "VERSION_INCOMPATIBLE", "INTERNAL"],
+  "examples": [{"command": "unravis app start --headless -o json"}]
+}
