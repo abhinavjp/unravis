@@ -78,3 +78,7 @@ npx playwright test -c playwright.selftest.config.ts   # lib/page-checks.js find
 pull requests that change `tools/uiaudit` or the workflow itself. It uploads `report/` as an artifact per system and prints the
 verdict in the job summary. It is not a check on every pull request (about 20 minutes). On Linux the Windows-only screens are
 reported as not reached (see BL-441 for the Linux test baseline).
+
+## Width survey (not part of the gate)
+
+`width/width-survey.spec.ts` with `width/playwright.width.config.ts` opens the same screens at 1920, 1440, 1280, 1024 and 390 px (dark) and writes how many pixels of the window the content really spans, plus a picture per screen and width (`WIDTH_OUT`, default `tools/uiaudit/width-report`). Use it to see a narrow centred column as a number. Findings and the width system: `docs/ui/WIDTH-SYSTEM.md`. The command is in the header of the spec file.

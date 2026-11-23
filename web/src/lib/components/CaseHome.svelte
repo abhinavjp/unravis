@@ -110,6 +110,8 @@
   // When a closed case will be erased: 30 days after it was closed. Said on the closed page, so the deadline is in view when it starts (CASES-10).
   const eraseAt = $derived(isClosed ? closedEraseAt(info?.closed) : null);
   const timelineShown = $derived(tracingOpen && !isArchived);
+  /* The case page proper (not the key, erase, locked or untrusted pages, which stay one narrow column): a side column with the case facts and a wide column of blocks. */
+  const homeShown = $derived(!!caseId && phase === 'ready' && view === 'home' && !timelineShown && !guidedOpen);
   const archivedMoves = $derived(info ? archivedActions(info) : null);
   const madeCount = $derived(info?.archive?.files?.length || info?.filesMade || 0);
   const currentFile = $derived(info?.archive?.current ?? null);
@@ -483,7 +485,7 @@
   const kindLabel = { case: CASE_HOME_TEXT.kindCase, file: CASE_HOME_TEXT.kindFile, health: CASE_HOME_TEXT.kindHealth, theory: CASE_HOME_TEXT.kindTheory } as const;
 </script>
 
-<div class="case-home" class:wide={timelineShown}>
+<div class="case-home" class:wide={timelineShown} class:home={homeShown}>
   <!-- On the timeline (and the slow call screen inside it) the one way back is the timeline's own button, so "All cases" is not drawn a second time (ANALYSIS-15). -->
   {#if !timelineShown}
   <div class="top">
@@ -525,6 +527,7 @@
       <GuidedAnalysis {caseId} closed={!!info?.closed} {readOnly} {hasIis} onAddData={openCaseImport} onClose={() => (guidedFor = '')} />
     {/key}
   {:else}
+    <div class="home-cols">
     <header class="head">
       <p class="eyebrow">{CASE_HOME_TEXT.heading} · {caseCode(caseId)}</p>
       <h2 tabindex="-1" bind:this={headingEl}>{info?.title || caseCode(caseId)}</h2>
@@ -579,8 +582,9 @@
       </div>
     </header>
 
+    <div class="home-blocks">
     {#if retries.length > 0}
-      <section class="block" aria-labelledby="home-retries">
+      <section class="block full" aria-labelledby="home-retries">
         <h3 id="home-retries">{CASE_HOME_TEXT.retryHeading}</h3>
         <p class="note">{CASE_HOME_TEXT.retryIntro}</p>
         <ul class="retries" bind:this={retriesEl}>
@@ -623,7 +627,7 @@
 
     {/if}
 
-    <section class="block" aria-labelledby="home-story">
+    <section class="block full" aria-labelledby="home-story">
       <h3 id="home-story">{CASE_HOME_TEXT.storyHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.storyIntro}</p>
       {#if story.length === 0}
@@ -645,7 +649,7 @@
     </section>
 
     {#if offersWork}
-    <section class="block" aria-labelledby="home-theories">
+    <section class="block full" aria-labelledby="home-theories">
       <h3 id="home-theories">{CASE_HOME_TEXT.theoriesHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.theoriesIntro}</p>
       <div aria-live="polite">
@@ -674,13 +678,13 @@
       </div>
     </section>
 
-    <section class="block" aria-labelledby="home-health">
+    <section class="block full" aria-labelledby="home-health">
       <h3 id="home-health">{CASE_HOME_TEXT.healthHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.healthText}</p>
       <HealthPanel {caseId} embedded onGone={gone} onRan={() => void rereadHealth()} />
     </section>
 
-    <section class="block" aria-labelledby="home-sources">
+    <section class="block full" aria-labelledby="home-sources">
       <h3 id="home-sources">{HUB_TEXT.heading}</h3>
       <p class="note">{HUB_TEXT.intro}</p>
       <SourcesHub {caseId} readOnly={readOnly || stale} onGone={gone} onAddFiles={openCaseImport} onAddMongo={() => void openConnections('new')} />
@@ -715,6 +719,8 @@
         <div class="actions"><button type="button" class="secondary-button danger" aria-haspopup="dialog" onclick={() => { view = 'erase'; }}>{ERASE_TEXT.open}</button></div>
       </section>
     {/if}
+    </div>
+    </div>
   {/if}
 </div>
 
@@ -723,9 +729,26 @@
 <style>
   /* width: 100% matters: a grid item with margin auto shrinks to its content, so its width (and everything inside) moved sideways
      whenever hover text or table rows changed. With a fixed width the column only ever stops at its max-width. */
-  .case-home { display: grid; gap: 20px; width: 100%; max-width: 880px; margin: 0 auto; padding: 8px 0 48px; }
+  .case-home { display: grid; gap: 20px; width: 100%; max-width: var(--form-max); margin: 0 auto; padding: 8px 0 48px; }
   /* The Investigation timeline needs room for its plot; the other pages of the case keep the narrow column. */
-  .case-home.wide { max-width: 1480px; }
+  .case-home.wide, .case-home.home { max-width: var(--page-max); }
+  /* The case page on a wide window: the case facts and actions stay in view in a side column; the blocks fill the rest, two across where they are short. */
+  .home-cols { display: grid; gap: 20px; min-width: 0; }
+  .home-blocks { display: grid; gap: 20px; min-width: 0; }
+  .home-blocks .block .note, .home-blocks .block .empty { max-width: var(--read-max); }
+  /* Decided by the width of the case page itself, not the window, so a narrower page (any panel beside it) never gets columns it has no room for. */
+  .case-home.home { container-type: inline-size; }
+  @container (min-width: 1300px) {
+    .home-cols { grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); gap: 32px; align-items: start; }
+    .home-blocks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .home-blocks > .block.full { grid-column: 1 / -1; }
+  }
+  /* The side column stays in view while the blocks scroll; if it is taller than the window it scrolls on its own, so none of its buttons is out of reach. The padding keeps the focus ring inside the scrolling box. */
+  @media (min-height: 760px) {
+    @container (min-width: 1300px) {
+      .head { position: sticky; top: 0; max-height: calc(100dvh - 180px); overflow-y: auto; padding: 4px; margin: -4px; scrollbar-width: thin; }
+    }
+  }
   .top { display: flex; }
   .head h2 { margin: 2px 0 6px; font-size: 24px; overflow-wrap: anywhere; }
   .eyebrow { margin: 0; color: var(--text-2); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
@@ -733,7 +756,7 @@
   .counts div { display: grid; gap: 2px; }
   .counts dt { color: var(--text-2); font-size: 12px; }
   .counts dd { margin: 0; font-size: 15px; }
-  .block { display: grid; gap: 10px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .block { display: grid; align-content: start; gap: 10px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
   .block h3 { margin: 0; font-size: 16px; }
   .note, .empty { margin: 0; color: var(--text-2); font-size: 14px; }
   .gap { font-size: 13px; }

@@ -171,6 +171,13 @@
   --dur: 180ms;
   --header-h: 56px;
   --drawer-w: min(720px, 56vw);
+  /* Page width (one system for every screen):
+     --page-max  data pages (lists, charts, tables, timeline, case page): fill the window up to 2000px, then stay centred (the Appian "Wide" cap).
+     --form-max  forms and one-question pages: stay narrow, so a field never runs across the window.
+     --read-max  prose: about 75 characters a line, whatever the window. Paragraphs use it, containers do not. */
+  --page-max: 2000px;
+  --form-max: 880px;
+  --read-max: 78ch;
   --hatch: repeating-linear-gradient(135deg, var(--pending) 0 2px, transparent 2px 6px);
   /* Layout scale for new and refreshed components. Existing rules keep their literal values until each one is restyled.
      Type: six sizes, caption to heading. Spacing: 4px steps. Radii: small (tags, bars) and the standard control radius.

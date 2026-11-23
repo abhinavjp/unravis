@@ -121,5 +121,5 @@ test('the case column has a fixed width, so hover text cannot change its width',
   const css = between(home, '<style>', '</style>');
   const block = between(css, '.case-home {', '}');
   assert.match(block, /width:\s*100%/);
-  assert.match(block, /max-width:\s*880px/);
+  assert.match(block, /max-width:\s*var\(--form-max\)/);
 });
