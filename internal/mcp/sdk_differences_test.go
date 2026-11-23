@@ -68,8 +68,8 @@ func TestSDKKnownWireDifferences(t *testing.T) {
 		if res := open(legacyImpl).request("tools/list", `"cursor":"x"`); res["error"] != nil {
 			t.Errorf("hand-rolled loop refused a cursor: %v", res)
 		}
-		// The catalog has one page and no loop hands out a cursor, so a host never sends one; the SDK refuses a made-up one.
-		if res := open(sdkImpl).request("tools/list", `"cursor":"x"`); errorCode(res) != -32602 || !strings.Contains(string(mustJSON(t, res)), "invalid params") {
+		// The catalog has one page and no loop hands out a cursor, so a host never sends one; the SDK refuses a made-up one, with a fixed text.
+		if res := open(sdkImpl).request("tools/list", `"cursor":"x"`); errorCode(res) != -32602 || !strings.Contains(string(mustJSON(t, res)), "Invalid params") {
 			t.Errorf("sdk loop: %v", res)
 		}
 	})

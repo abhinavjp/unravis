@@ -6,7 +6,10 @@ import (
 	"strconv"
 )
 
-const maxMessage = 1 << 20
+const (
+	maxMessage = 1 << 20
+	maxSafeID  = 1<<53 - 1
+)
 
 // serverInstructions is the text the server returns to every client on connect (initialize reply or server/discover).
 const serverInstructions = "Unravis: local read-only Brain Payroll audit investigations. Start with audit_get_guide and audit_list_sources. Do not infer browser filters. Use explicit source IDs and incident/reference windows. No credentials, payloads, connection writes or code execution are exposed."
@@ -36,7 +39,8 @@ func idKey(id json.RawMessage) string {
 		data, _ := json.Marshal(v)
 		return string(data)
 	case json.Number:
-		if n, err := v.Int64(); err == nil {
+		// Beyond 2^53 the SDK's float64 ids would answer a different number than the client sent, so such ids are refused.
+		if n, err := v.Int64(); err == nil && n >= -maxSafeID && n <= maxSafeID {
 			return strconv.FormatInt(n, 10)
 		}
 	}

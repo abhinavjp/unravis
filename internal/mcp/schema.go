@@ -115,7 +115,7 @@ func tools() []map[string]any {
 	}
 	result := make([]map[string]any, 0, len(definitions))
 	for _, d := range definitions {
-		result = append(result, map[string]any{"name": d.name, "description": d.description, "inputSchema": d.schema, "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}})
+		result = append(result, map[string]any{"name": d.name, "description": d.description, "inputSchema": d.schema, "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": d.name != "audit_compare", "openWorldHint": false}})
 	}
 	return result
 }
