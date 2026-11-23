@@ -88,10 +88,59 @@ func FuzzScrub(f *testing.F) {
 	for _, s := range []string{"SELECT 1", "'", "/*", "--", "[", "0x", "N'a", "\"", "1e+", "a" + strings.Repeat("'", 50)} {
 		f.Add(s)
 	}
+	for _, s := range []string{"/* /* a */ don't */ 1", "/* /* a */ [ */ x", "EXEC u bob, x", "$12.50", "12AB34", "[a@b]", "[x"} {
+		f.Add(s)
+	}
 	f.Fuzz(func(t *testing.T, s string) {
 		got := Scrub(s, 200)
 		if !utf8.ValidString(got) || utf8.RuneCountInString(got) > 200 {
 			t.Fatalf("bad output for %q: %q", s, got)
 		}
 	})
+}
+
+// Inputs from the security review of the first version. Each one leaked before.
+func TestReviewRegressions(t *testing.T) {
+	leaks := map[string][]string{
+		"/* /* note */ don't */ SELECT * FROM t WHERE c = 'alice@example.com' AND n = 'John Smith' AND z = 'x'": {"alice", "John", "Smith", "don"},
+		"/* /* x */ call Alice Smith at home */ 1":                                                              {"Alice", "Smith", "home"},
+		"SELECT [x FROM t WHERE ssn='123-45-6789'":                                                              {"123-45", "ssn"},
+		"/* /* a */ [ */ SELECT * FROM t WHERE ssn = '123-45-6789'":                                             {"123-45"},
+		"EXEC dbo.usp_SignIn bob, Hunter2":                                                                      {"bob", "Hunter2"},
+		"EXEC dbo.usp_Find @email = alice, @code = Zx9Q":                                                        {"alice", "Zx9Q"},
+		"EXEC sp_setapprole r, Hunter2":                                                                         {"Hunter2"},
+		"EXEC sp_addapprole r, Hunter2":                                                                         {"Hunter2"},
+		"SELECT * FROM t WHERE amount = $12.50":                                                                 {"$12", "12", "50"},
+		"SELECT [alice@example.com], [John@x] FROM t":                                                           {"alice@", "John@"},
+		"SELECT * FROM (SELECT 1 a) p PIVOT (MAX(a) FOR d IN ([2024-01-01]))":                                   {"2024"},
+		"CREATE  LOGIN [corp\\bob] FROM WINDOWS":                                                                {"corp", "bob"},
+		"CREATE/**/LOGIN [corp\\bob] FROM WINDOWS":                                                              {"corp", "bob"},
+		"EXECUTE\nAS LOGIN = 'sa'":                                                                              {"sa"},
+		"SELECT 12AB34":                                                                                         {"AB34", "12"},
+		"EXEC usp one; SELECT 1; EXEC usp @a = 1, two":                                                          {"two"},
+	}
+	for in, bad := range leaks {
+		got := Scrub(in, 0)
+		for _, b := range bad {
+			if strings.Contains(got, b) {
+				t.Errorf("%q leaks %q: %q", in, b, got)
+			}
+		}
+	}
+}
+
+// What stays readable: ordinary calls, names and the shape of a query.
+func TestOrdinaryTextStaysReadable(t *testing.T) {
+	cases := map[string]string{
+		"EXEC dbo.usp_Find @email = 'a@b.c', @n = 5, @out = @x OUTPUT": "EXEC dbo.usp_Find @email = ?, @n = ?, @out = @x OUTPUT",
+		"EXEC @rc = dbo.usp_Do @a = DEFAULT, @b = NULL":                "EXEC @rc = dbo.usp_Do @a = DEFAULT, @b = NULL",
+		"SELECT * FROM [Order Details] WHERE OrderID = 10248":          "SELECT * FROM [Order Details] WHERE OrderID = ?",
+		"SELECT amount FROM t WHERE c = $-3.5 AND x = 'y'":             "SELECT amount FROM t WHERE c = ? AND x = ?",
+		"/* outer /* inner */ still outer */ SELECT 1":                 "SELECT ?",
+	}
+	for in, want := range cases {
+		if got := Scrub(in, 0); got != want {
+			t.Errorf("%q\n got  %q\n want %q", in, got, want)
+		}
+	}
 }
