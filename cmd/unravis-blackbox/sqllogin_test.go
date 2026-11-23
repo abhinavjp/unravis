@@ -241,8 +241,8 @@ func TestSetupSQLSavesTheLoginWithoutStartingIt(t *testing.T) {
 	if !bbsql.HasLogin(dir) {
 		t.Fatal("login not saved")
 	}
-	if _, err := os.Stat(f); err == nil {
-		t.Fatal("the login file was not removed")
+	if _, err := os.Stat(f); err != nil {
+		t.Fatal("the helper must leave the login file to Unravis")
 	}
 }
 
