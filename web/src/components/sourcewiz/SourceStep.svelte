@@ -201,7 +201,7 @@
   .added-note { margin: var(--space-1) 0 0; color: var(--text-2); font-size: var(--fs-3); }
   .added-note:empty { display: none; }
   .main { display: grid; gap: var(--space-3); min-width: 0; align-content: start; }
-  .tiles { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); grid-auto-rows: 1fr; gap: var(--space-3); }
+  .tiles { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: var(--space-3); }
   @media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 520px) { .tiles { grid-template-columns: minmax(0, 1fr); } }
   .tiles li { display: grid; min-width: 0; }

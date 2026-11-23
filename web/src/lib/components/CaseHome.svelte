@@ -736,7 +736,7 @@
   .home-cols { display: grid; gap: 20px; min-width: 0; }
   .home-blocks { display: grid; gap: 20px; min-width: 0; }
   .home-blocks .block .note, .home-blocks .block .empty { max-width: var(--read-max); }
-  /* Decided by the width of the case page itself, not the window: an open side panel narrows the page and must not squeeze the blocks. */
+  /* Decided by the width of the case page itself, not the window, so a narrower page (any panel beside it) never gets columns it has no room for. */
   .case-home.home { container-type: inline-size; }
   @container (min-width: 1300px) {
     .home-cols { grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); gap: 32px; align-items: start; }

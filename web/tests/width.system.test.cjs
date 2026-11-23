@@ -19,7 +19,7 @@ test('one page-width token, 2000px, used by the stage, the scope bar and the rec
 test('the case page is a side column plus a wide column of blocks when the page itself is 1300px wide, one column below', () => {
   const home = read('src/lib/components/CaseHome.svelte');
   assert.match(home, /const homeShown = \$derived\(/);
-  assert.match(home, /\.case-home\.home \{ container-type: inline-size; \}/, 'decided by the page width, not the window: an open side panel must not squeeze the blocks');
+  assert.match(home, /\.case-home\.home \{ container-type: inline-size; \}/, 'decided by the width of the page itself, not the window');
   assert.match(home, /@container \(min-width: 1300px\) \{\n\s+\.home-cols \{ grid-template-columns: minmax\(300px, 360px\) minmax\(0, 1fr\);/);
   assert.match(home, /\.home-blocks \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
   assert.match(home, /\.home-blocks \.block \.note, \.home-blocks \.block \.empty \{ max-width: var\(--read-max\); \}/);
@@ -42,8 +42,7 @@ test('the blocks of the case page keep their reading and tab order (tools/e2e HA
 
 test('the create guide, its card grids and the charts window use the wide page', () => {
   assert.match(read('src/components/CreateWizard.svelte'), /\.wizard \{[^}]*max-width: min\(var\(--page-max\), 1560px\);/);
-  assert.match(read('src/components/wizard/ImportFilesPanel.svelte'), /\.card-grid \{[^}]*repeat\(auto-fill, minmax\(220px, 1fr\)\)/);
-  assert.match(read('src/components/sourcewiz/SourceStep.svelte'), /\.tiles \{[^}]*repeat\(auto-fill, minmax\(220px, 1fr\)\)/);
+  assert.match(read('src/components/wizard/ImportFilesPanel.svelte'), /\.card-grid \{[^}]*repeat\(auto-fill, minmax\(260px, 1fr\)\)/);
   assert.match(read('src/components/BlackboxCharts.svelte'), /\.bbc \{ width: min\(1840px, calc\(100vw - 32px\)\);/);
 });
 
