@@ -109,7 +109,7 @@ func stamp(name, v string) (string, error) {
 	if err != nil {
 		return "", usage("--" + name + " must be a time like 2026-11-23T09:00:00Z.")
 	}
-	return t.UTC().Format(time.RFC3339), nil
+	return t.UTC().Format(time.RFC3339Nano), nil // keeps fractions of a second: a window is judged by its exact length
 }
 
 func buildCompare(c *cobra.Command, v compareFlagValues) (json.RawMessage, error) {

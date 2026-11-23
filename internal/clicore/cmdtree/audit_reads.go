@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -60,7 +61,7 @@ var readSpecs = []readSpec{
 	{op: "audit.breakdown", use: "breakdown --result-id ID --dim DIM", short: "Count the comparison's requests by status code, user, UI version, user agent, polling type or IP",
 		flags: []fieldFlag{{"result-id", "resultId", resultIDUsage, kString, true},
 			{"dim", "dim", "statusCode, userId, uiVersion, userAgent, pollingType or userIp", kString, true},
-			{"top", "top", "values to list, 0 to 50 (default 20)", kInt, false}, {"include-ip", "includeIp", "needed for --dim userIp (the app must allow identifiers)", kBool, false}},
+			{"top", "top", "values to list, 1 to 50 (0 or unset: 20)", kInt, false}, {"include-ip", "includeIp", "needed for --dim userIp (the app must allow identifiers)", kBool, false}},
 		table: breakdownTable},
 	{op: "audit.activity", use: "activity --source ID --start T --end T", short: "Activity of the sources around a time, across their APIs and jobs (a live read, at most 24 hours)",
 		flags: []fieldFlag{{"source", "sourceIds", "source id (repeat for more, 1 to 8)", kStrings, true}, {"start", "start", "start of the window (RFC 3339)", kTime, true},
@@ -139,6 +140,9 @@ func (sp readSpec) build(c *cobra.Command, v values) (json.RawMessage, error) {
 		case kInt:
 			args[fl.field] = *v.i[fl.name]
 		case kFloat:
+			if f := *v.f[fl.name]; math.IsNaN(f) || math.IsInf(f, 0) {
+				return nil, usage("--" + fl.name + " must be a number.")
+			}
 			args[fl.field] = *v.f[fl.name]
 		case kBool:
 			args[fl.field] = *v.b[fl.name]
@@ -208,7 +212,7 @@ func dropEmpty(header []string, rows [][]string) ([]string, [][]string) {
 	keep := make([]int, 0, len(header))
 	for c := range header {
 		for _, r := range rows {
-			if r[c] != "" {
+			if c < len(r) && r[c] != "" {
 				keep = append(keep, c)
 				break
 			}
@@ -225,7 +229,9 @@ func dropEmpty(header []string, rows [][]string) ([]string, [][]string) {
 	for i, r := range rows {
 		out[i] = make([]string, len(keep))
 		for j, c := range keep {
-			out[i][j] = r[c]
+			if c < len(r) {
+				out[i][j] = r[c]
+			}
 		}
 	}
 	return h, out
@@ -271,21 +277,24 @@ func requestsTable(w io.Writer, data json.RawMessage) error {
 // breakdownTable prints the counts of `audit breakdown`; the Other row comes last.
 func breakdownTable(w io.Writer, data json.RawMessage) error {
 	var d struct {
-		Rows  []map[string]any `json:"rows"`
-		Other map[string]any   `json:"other"`
-		Total float64          `json:"total"`
+		Rows        []map[string]any `json:"rows"`
+		Other       map[string]any   `json:"other"`
+		Total       float64          `json:"total"`
+		Identifiers string           `json:"identifiers"`
 	}
 	if err := json.Unmarshal(data, &d); err != nil || d.Rows == nil {
 		return pretty(w, data)
 	}
 	rows := d.Rows
 	if d.Other != nil {
+		// the remainder is not a value: it is labelled by how many values it folds together, so a real value called "Other" is not confused with it
 		o := map[string]any{}
 		for k, v := range d.Other {
 			o[k] = v
 		}
-		if o["value"] == nil {
-			o["value"] = "(other)"
+		o["value"] = "(other)"
+		if n := cellText(d.Other["values"]); n != "" {
+			o["value"] = "(other: " + n + " values)"
 		}
 		rows = append(rows, o)
 	}
@@ -296,6 +305,12 @@ func breakdownTable(w io.Writer, data json.RawMessage) error {
 	if err := clicore.WriteTable(w, []string{"VALUE", "COUNT", "COMPLETE", "INCOMPLETE", "PENDING", "4XX", "5XX"}, tr); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "\n%s requests in total.\n", strconv.FormatFloat(d.Total, 'f', -1, 64))
-	return err
+	if _, err := fmt.Fprintf(w, "\n%s requests in total.\n", strconv.FormatFloat(d.Total, 'f', -1, 64)); err != nil {
+		return err
+	}
+	if d.Identifiers == "hidden" {
+		_, err := io.WriteString(w, "User ids and user agents are hidden (hidden-1, hidden-2, ...) until the app allows identifiers.\n")
+		return err
+	}
+	return nil
 }

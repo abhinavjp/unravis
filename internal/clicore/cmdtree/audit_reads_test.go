@@ -1,12 +1,15 @@
 package cmdtree
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/spf13/pflag"
 
 	"api-audit-explorer/internal/clicap"
+	"api-audit-explorer/internal/clicore"
 	"api-audit-explorer/internal/mcp"
 )
 
@@ -211,6 +214,22 @@ func TestReadFlagsMatchToolSchemas(t *testing.T) {
 			}
 			byField[f.field] = f
 		}
+		// the kind of each flag is the type of the field, and every field of the tool has a flag
+		for field, raw := range props {
+			f, ok := byField[field]
+			if !ok {
+				t.Errorf("%s: the tool field %s has no flag", sp.op, field)
+				continue
+			}
+			prop := raw.(map[string]any)
+			want := map[flagKind]string{kString: "string", kTime: "string", kStrings: "array", kInt: "integer", kFloat: "number", kBool: "boolean"}[f.kind]
+			if prop["type"] != want {
+				t.Errorf("%s --%s is a %s flag and the field %s is %v", sp.op, f.name, want, field, prop["type"])
+			}
+			if _, isEnum := prop["enum"]; isEnum && f.kind != kString {
+				t.Errorf("%s --%s: an enum field needs a string flag", sp.op, f.name)
+			}
+		}
 		for _, r := range required[row.Tool] {
 			if f, ok := byField[r.(string)]; !ok || !f.required {
 				t.Errorf("%s: the tool requires %v and the command has no required flag for it", sp.op, r)
@@ -247,5 +266,105 @@ func TestReadFlagsMatchToolSchemas(t *testing.T) {
 		if row.Tool != "" && !have[row.Op] {
 			t.Errorf("%s (%s) has no command", row.Op, row.Tool)
 		}
+	}
+}
+
+func TestReadArgumentsEdges(t *testing.T) {
+	o := newOwner(t, nil)
+	id, key := compareKey(t, o)
+	// zero values that were asked for are sent: the flag was set, so the tool sees it
+	o.run("audit", "breakdown", "--result-id", id, "--dim", "statusCode", "--top", "0", "--include-ip=false", "--json")
+	if a := lastArgs(o); a["top"] != float64(0) || a["includeIp"] != false || len(a) != 4 {
+		t.Errorf("zero values: %v", a)
+	}
+	if r := o.run("audit", "requests", "--result-id", id, "--api-key", key, "--limit", "0", "--json"); r.code != 2 || errCode(t, r) != "INVALID_ARGUMENT" || lastArgs(o)["limit"] != float64(0) {
+		t.Errorf("limit 0 is the owner's to refuse: %+v", r)
+	}
+	o.run("audit", "slowest", "--result-id", id, "--min-ms", "0", "--json")
+	if a := lastArgs(o); a["minMs"] != float64(0) || len(a) != 2 {
+		t.Errorf("min-ms 0: %v", a)
+	}
+	// numbers that JSON cannot carry are a usage error, before anything is sent
+	before := len(o.opsSeen())
+	for _, v := range []string{"NaN", "inf", "+Inf", "-Infinity"} {
+		if r := o.run("audit", "slowest", "--result-id", id, "--min-ms", v, "--json"); r.code != 2 || errCode(t, r) != "INVALID_ARGUMENT" {
+			t.Errorf("%s: %+v", v, r)
+		}
+	}
+	if len(o.opsSeen()) != before {
+		t.Error("a bad number reached the owner")
+	}
+	// a time with an offset and a fraction goes out as UTC with the fraction kept
+	o.run("audit", "activity", "--source", "demo-west", "--start", "2026-11-23T10:00:00.250+05:30", "--end", "2026-11-23T11:00:00.999+05:30", "--json")
+	if a := lastArgs(o); a["start"] != "2026-11-23T04:30:00.25Z" || a["end"] != "2026-11-23T05:30:00.999Z" {
+		t.Errorf("times: %v", a)
+	}
+	// the cursor of slowest and of activity is sent
+	o.run("audit", "slowest", "--result-id", id, "--cursor", "abc", "--json")
+	if lastArgs(o)["cursor"] != "abc" {
+		t.Errorf("slowest cursor: %v", lastArgs(o))
+	}
+	w := o.window()
+	o.run("audit", "activity", "--source", "demo-west", "--start", w[5], "--end", w[7], "--cursor", "xyz", "--json")
+	if lastArgs(o)["cursor"] != "xyz" {
+		t.Errorf("activity cursor: %v", lastArgs(o))
+	}
+}
+
+func TestReadTablesInDetail(t *testing.T) {
+	o := newOwner(t, nil)
+	id, key := compareKey(t, o)
+	// the source and the API come from the top of an answer that has no such column in its rows
+	req := o.run("audit", "requests", "--result-id", id, "--api-key", key, "--limit", "1")
+	if !strings.Contains(req.out, "SOURCE") || !strings.Contains(req.out, "demo-east") || !strings.Contains(req.out, "Employees.List") {
+		t.Errorf("requests: %q", req.out)
+	}
+	// activity rows have no id and no state, so those columns are not printed
+	w := o.window()
+	ac := o.run("audit", "activity", "--source", "demo-west", "--start", w[5], "--end", w[7], "--limit", "1")
+	head := strings.SplitN(ac.out, "\n", 2)[0]
+	if strings.Contains(head, "ID") || strings.Contains(head, "STATE") || !strings.Contains(head, "API") {
+		t.Errorf("activity header: %q", head)
+	}
+	// a breakdown with a remainder prints it last, labelled by how many values it folds
+	bd := o.run("audit", "breakdown", "--result-id", id, "--dim", "userAgent", "--top", "1")
+	if bd.code != 0 || !strings.Contains(bd.out, "(other: ") || !strings.Contains(bd.out, " values)") {
+		t.Errorf("remainder: %q", bd.out)
+	}
+	lines := strings.Split(strings.TrimSpace(bd.out), "\n")
+	cols := strings.Fields(lines[1])
+	if len(cols) < 3 || cols[1] == "" {
+		t.Fatalf("row: %q", lines[1])
+	}
+	// COUNT is the count of requests, not of the complete ones (in the demo data they differ for some rows or are equal: check the header order)
+	if !strings.HasPrefix(strings.Join(strings.Fields(lines[0]), " "), "VALUE COUNT COMPLETE INCOMPLETE PENDING 4XX 5XX") {
+		t.Errorf("header: %q", lines[0])
+	}
+}
+
+func TestDropEmpty(t *testing.T) {
+	h, r := dropEmpty([]string{"A", "B", "C"}, [][]string{{"x"}, {"y", "", "z"}})
+	if len(h) != 2 || h[0] != "A" || h[1] != "C" || r[0][0] != "x" || r[0][1] != "" || r[1][1] != "z" {
+		t.Errorf("%v %v", h, r)
+	}
+	h, r = dropEmpty([]string{"A", "B"}, nil)
+	if len(h) != 2 || len(r) != 0 {
+		t.Errorf("no rows keep the header: %v %v", h, r)
+	}
+}
+
+func TestBreakdownColumnsReadTheirOwnFields(t *testing.T) {
+	o := newOwner(t, fakeBackend(func(_ context.Context, _ string, _ json.RawMessage) (any, *clicore.Error) {
+		return map[string]any{"identifiers": "hidden", "total": 100, "rows": []map[string]any{
+			{"value": "hidden-1", "count": 11, "complete": 22, "incomplete": 33, "pending": 44, "count4xx": 55, "count5xx": 66},
+		}, "other": map[string]any{"value": "Other", "count": 7, "values": 3}}, nil
+	}))
+	r := o.run("audit", "breakdown", "--result-id", "x", "--dim", "userId")
+	row := strings.Fields(strings.Split(r.out, "\n")[1])
+	if r.code != 0 || strings.Join(row, " ") != "hidden-1 11 22 33 44 55 66" {
+		t.Errorf("columns: %q", r.out)
+	}
+	if !strings.Contains(r.out, "(other: 3 values)") || !strings.Contains(r.out, "hidden-1, hidden-2") || !strings.Contains(r.out, "100 requests in total") {
+		t.Errorf("%q", r.out)
 	}
 }
