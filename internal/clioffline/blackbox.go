@@ -63,21 +63,94 @@ type Result struct {
 	Warnings []string   `json:"warnings"`
 }
 
-// liveCaseName says whether a directory entry marks a case store (a live case, a sealed case file or a case key). The offline reader
-// never opens a folder that holds one.
+// liveCaseName says whether a directory entry marks a case store (a live case with its journal files, a sealed case file, a case key,
+// the case index). The offline reader never opens a folder that holds one.
 func liveCaseName(name string) bool {
 	l := strings.ToLower(name)
 	switch l {
-	case "case.db", "case.key", "cases":
+	case "cases", ".index", "manifest.dat", "unresolved.dat":
 		return true
 	}
-	for _, ext := range []string{".sqlite", ".sqlite3", ".db", ".unravis-case"} {
+	if strings.HasPrefix(l, "case.") {
+		return true // case.db, case.db-wal, case.key, case.wrap, ...
+	}
+	for _, ext := range []string{".sqlite", ".sqlite3", ".sqlite-wal", ".sqlite-shm", ".db", ".db-wal", ".db-shm", ".unravis-case", ".unravis-case.part"} {
 		if strings.HasSuffix(l, ext) {
 			return true
 		}
 	}
-	return strings.HasPrefix(l, "case.key.")
+	return false
 }
+
+// holdsCaseData looks at the names in dir, and one level below it, for case data. A folder that cannot be listed counts as clean here:
+// the reader reports it later.
+func holdsCaseData(dir string, entries []os.DirEntry) bool {
+	subs := 0
+	for _, e := range entries {
+		if liveCaseName(e.Name()) {
+			return true
+		}
+		if e.IsDir() && subs < 64 {
+			subs++
+			f, err := os.Open(filepath.Join(dir, e.Name())) //nolint:gosec // a folder inside the one the person named; only its names are read
+			if err != nil {
+				continue
+			}
+			sub, _ := f.ReadDir(1024)
+			_ = f.Close()
+			for _, se := range sub {
+				if liveCaseName(se.Name()) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// budgetSource counts the bytes that the reader takes from the files and fails them once the cap is passed, whatever the manifest says
+// and however large a file grows while it is read.
+type budgetSource struct {
+	blackbox.Source
+	left     int64
+	exceeded bool
+}
+
+func (b *budgetSource) OpenFile(ctx context.Context, name string) (io.ReadCloser, error) {
+	rc, err := b.Source.OpenFile(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return &budgetReader{rc: rc, b: b}, nil
+}
+
+type budgetReader struct {
+	rc io.ReadCloser
+	b  *budgetSource
+}
+
+func (r *budgetReader) Read(p []byte) (int, error) {
+	if r.b.left <= 0 {
+		// the cap is spent: one more byte is over it, the end of the file is not
+		var one [1]byte
+		if n, err := r.rc.Read(one[:]); n > 0 {
+			r.b.exceeded = true
+			return 0, errOverBudget
+		} else if err != nil {
+			return 0, err
+		}
+		return 0, nil
+	}
+	if int64(len(p)) > r.b.left {
+		p = p[:r.b.left]
+	}
+	n, err := r.rc.Read(p)
+	r.b.left -= int64(n)
+	return n, err
+}
+func (r *budgetReader) Close() error { return r.rc.Close() }
+
+var errOverBudget = errors.New("the size limit was reached")
 
 // Inspect reads a recordings folder, or one hourly file (bb-YYYYMMDD-HH.ndjson), and says what is in it. It opens files read-only
 // through the same reader the app uses, which refuses links and any name the recorder does not write. It refuses a folder that holds
@@ -93,26 +166,30 @@ func Inspect(ctx context.Context, input string, opt Options) (*Result, *clicore.
 		return nil, clicore.NewError(clicore.CodeInvalidArgument, "Give the folder of a Blackbox recording, or one of its hourly files.", "")
 	}
 	// The input itself must not be a link (Lstat does not follow it); the reader checks every name inside.
-	st, err := os.Lstat(input)
+	st, err := os.Lstat(filepath.Clean(input)) // Clean: "link/" must not follow the link
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, clicore.NewError(clicore.CodeNotFound, "That path does not exist.", "")
 		}
 		return nil, clicore.NewError(clicore.CodeInvalidArgument, "That path cannot be read.", "")
 	}
-	if st.Mode()&os.ModeSymlink != 0 || !(st.IsDir() || st.Mode().IsRegular()) {
-		return nil, clicore.NewError(clicore.CodeInvalidArgument, "That path is a link or not a plain folder or file.", "")
+	if st.Mode()&os.ModeSymlink != 0 || (!st.IsDir() && !st.Mode().IsRegular()) {
+		return nil, clicore.NewError(clicore.CodeInvalidArgument, "That path is a link, or not a plain folder or file.", "")
 	}
 	res := &Result{Input: input, Warnings: []string{}}
 	if st.IsDir() {
-		return inspectFolder(ctx, input, opt, res)
+		return inspectFolder(ctx, filepath.Clean(input), opt, res)
 	}
-	return inspectFile(ctx, input, st, opt, res)
+	return inspectFile(ctx, filepath.Clean(input), st, opt, res)
+}
+
+func caseRefused() *clicore.Error {
+	return clicore.NewError(clicore.CodeLiveCaseRefused, "That folder holds case data. The offline reader reads Blackbox recordings only.", "Copy the recording to a folder of its own and read that.")
 }
 
 func inspectFolder(ctx context.Context, dir string, opt Options, res *Result) (*Result, *clicore.Error) {
 	res.Kind = "folder"
-	f, err := os.Open(dir)
+	f, err := os.Open(dir) //nolint:gosec // the folder the person named; only its entry list is read
 	if err != nil {
 		return nil, clicore.NewError(clicore.CodeInvalidArgument, "That folder cannot be read.", "")
 	}
@@ -124,11 +201,11 @@ func inspectFolder(ctx context.Context, dir string, opt Options, res *Result) (*
 	if len(entries) > maxEntries {
 		return nil, clicore.NewError(clicore.CodeInvalidArgument, "That folder holds too many entries to be a recording.", "")
 	}
+	if holdsCaseData(dir, entries) {
+		return nil, caseRefused()
+	}
 	var total int64
 	for _, e := range entries {
-		if liveCaseName(e.Name()) {
-			return nil, clicore.NewError(clicore.CodeLiveCaseRefused, "That folder holds case data. The offline reader reads Blackbox recordings only.", "Copy the recording to a folder of its own and read that.")
-		}
 		if blackbox.ValidFileName(e.Name()) {
 			if info, err := e.Info(); err == nil && info.Mode().IsRegular() {
 				total += info.Size()
@@ -141,11 +218,12 @@ func inspectFolder(ctx context.Context, dir string, opt Options, res *Result) (*
 	src := blackbox.NewFolderSource(blackbox.Location{Kind: blackbox.LocFolder, Path: dir})
 	mr, rerr := src.Manifest(ctx)
 	if rerr != nil {
-		return nil, readError(rerr)
+		return nil, readError(ctx, rerr)
 	}
 	m := mr.Manifest
 	res.Manifest = &Manifest{Version: m.Format, Host: m.Host, State: m.State, FirstSample: m.FirstSample, LastSample: m.LastSample,
 		Files: len(m.Files), Gaps: len(m.Gaps), Events: len(m.Events), Samples: m.SampleCount()}
+	m.Files = uniqueFiles(m.Files)
 	var from, to time.Time
 	for i, fe := range m.Files {
 		if i == 0 || fe.Hour.Before(from) {
@@ -168,15 +246,40 @@ func inspectFile(ctx context.Context, path string, st os.FileInfo, opt Options, 
 	if st.Size() > opt.MaxBytes {
 		return nil, clicore.NewError(clicore.CodeRequestTooLarge, "The recording file is larger than the limit.", "Raise --max-bytes.")
 	}
-	src := blackbox.NewFolderSource(blackbox.Location{Kind: blackbox.LocFolder, Path: filepath.Dir(path)})
+	parent := filepath.Dir(path)
+	if pf, err := os.Open(parent); err == nil { //nolint:gosec // the folder of the file the person named; only its names are read
+		entries, _ := pf.ReadDir(maxEntries)
+		_ = pf.Close()
+		if holdsCaseData(parent, entries) {
+			return nil, caseRefused()
+		}
+	}
+	src := blackbox.NewFolderSource(blackbox.Location{Kind: blackbox.LocFolder, Path: parent})
 	m := blackbox.Manifest{Files: []blackbox.FileEntry{{Name: name, Hour: hour}}}
 	return readInto(ctx, src, m, hour, hour.Add(time.Hour), opt, res)
 }
 
+// uniqueFiles drops a file the manifest lists twice, so one file cannot be read again and again.
+func uniqueFiles(in []blackbox.FileEntry) []blackbox.FileEntry {
+	seen := make(map[string]bool, len(in))
+	out := make([]blackbox.FileEntry, 0, len(in))
+	for _, f := range in {
+		if !seen[f.Name] {
+			seen[f.Name] = true
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 func readInto(ctx context.Context, src blackbox.Source, m blackbox.Manifest, from, to time.Time, opt Options, res *Result) (*Result, *clicore.Error) {
-	samples, rep, err := blackbox.ReadSamples(ctx, src, m, from, to)
+	bs := &budgetSource{Source: src, left: opt.MaxBytes}
+	samples, rep, err := blackbox.ReadSamples(ctx, bs, m, from, to)
+	if bs.exceeded {
+		return nil, clicore.NewError(clicore.CodeRequestTooLarge, "The recording files are larger than the limit.", "Copy fewer hourly files to a folder, or raise --max-bytes.")
+	}
 	if err != nil && len(samples) == 0 {
-		return nil, readError(err)
+		return nil, readError(ctx, err)
 	}
 	res.Samples.Count = len(samples)
 	if len(samples) > 0 {
@@ -188,9 +291,16 @@ func readInto(ctx context.Context, src blackbox.Source, m blackbox.Manifest, fro
 		if n > len(samples) {
 			n = len(samples)
 		}
-		res.Samples.First = samples[:n]
+		res.Samples.First = append([]blackbox.Sample(nil), samples[:n]...) // a copy: the rest can be freed
 	}
 	res.Warnings = append(res.Warnings, warnings(rep, err)...)
+	if res.Manifest != nil && res.Manifest.Samples != res.Samples.Count {
+		res.Warnings = append(res.Warnings, "The manifest lists a different number of samples than the files hold.")
+	}
+	if res.Manifest != nil {
+		res.Manifest.Host = clicore.Printable(res.Manifest.Host)
+		res.Manifest.State = clicore.Printable(res.Manifest.State)
+	}
 	return res, nil
 }
 
@@ -215,7 +325,15 @@ func warnings(rep blackbox.ReadReport, err error) []string {
 }
 
 // readError maps a reader error to a command line error with a fixed sentence (never the path).
-func readError(err error) *clicore.Error {
+func readError(ctx context.Context, err error) *clicore.Error {
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return clicore.NewError(clicore.CodeTimeout, "The read ran out of time.", "")
+	case ctx.Err() != nil:
+		return clicore.NewError(clicore.CodeCanceled, "Canceled.", "")
+	case errors.Is(err, fs.ErrPermission):
+		return clicore.NewError(clicore.CodePermissionDenied, "This account may not read that folder.", "Ask for read access to it.")
+	}
 	switch blackbox.KindOf(err) {
 	case blackbox.ReadNotFound:
 		return clicore.NewError(clicore.CodeNotFound, "No Blackbox recording is in that folder (manifest.json is missing).", "")
@@ -223,6 +341,8 @@ func readError(err error) *clicore.Error {
 		return clicore.NewError(clicore.CodeInvalidArgument, "That is not a readable Blackbox recording.", "")
 	case blackbox.ReadNewerFormat:
 		return clicore.NewError(clicore.CodeVersionIncompatible, "The recording was written by a newer Unravis.", "Update Unravis.")
+	case blackbox.ReadBusy:
+		return clicore.NewError(clicore.CodeOwnerBusy, "Too many reads are running. Try again in a moment.", "")
 	}
 	return clicore.NewError(clicore.CodeInvalidArgument, "The recording could not be read.", "")
 }
