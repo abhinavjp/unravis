@@ -1,4 +1,4 @@
-// schema_sha256: 904278eff6d6a007277598fefd94a14e30f42532ee4e2ba8b0f182217531cd51
+// schema_sha256: 512c26dd1875a99acdad2b365833170b192be88a4b006b886a39e516227e38dc
 // Unravis code mode: tools are called as unravis.<tool>(input) and return a Promise of the same JSON the MCP
 // tool returns.
 // Limits of one run: at most 4 calls at the same time (more wait), at most 50 calls in all, 1024 KiB for each
@@ -501,7 +501,7 @@ declare namespace unravis {
     partial: boolean;
     pooledKinds?: boolean;
     provenance?: Provenance[];
-    query?: Query;
+    query?: EchoedQuery;
     resultId?: string;
     rows?: BreakdownRow[] | null;
     /**
@@ -710,7 +710,7 @@ declare namespace unravis {
      */
     partial: boolean;
     provenance?: Provenance[];
-    query?: Query;
+    query?: EchoedQuery;
     resultId?: string;
     rows?: {
       apiTimeMs: number | null;
@@ -808,7 +808,7 @@ declare namespace unravis {
      */
     partial: boolean;
     provenance?: Provenance[];
-    query?: Query;
+    query?: EchoedQuery;
     resultId?: string;
     rows?: {
       action: string;
@@ -1034,6 +1034,46 @@ declare namespace unravis {
     sourceId: string;
     state: string;
     totalTimeMs: number;
+  };
+  type EchoedQuery = {
+    action: string;
+    apiTimeMs?: Range;
+    auditCreateTimeMs?: Range;
+    auditId?: string;
+    /**
+     * [format date-time]
+     */
+    baselineEnd: string;
+    /**
+     * [format date-time]
+     */
+    baselineStart: string;
+    bucketSeconds: number;
+    completion?: string;
+    controller: string;
+    /**
+     * [format date-time]
+     */
+    end: string;
+    incompleteAgeMs?: Range;
+    kind: string;
+    metric: string;
+    observedMs?: Range;
+    operation?: string;
+    outcome: string;
+    queryMode?: string;
+    requestKb?: Range;
+    responseKb?: Range;
+    sourceIds: string[] | null;
+    /**
+     * [format date-time]
+     */
+    start: string;
+    statusCodes?: string[];
+    uiVersions?: string[];
+    urlContains?: string;
+    userAgentContains?: string;
+    userIds?: number[];
   };
   type IDMargin = {
     /**

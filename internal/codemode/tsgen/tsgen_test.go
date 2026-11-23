@@ -237,3 +237,20 @@ func TestOptionalInput(t *testing.T) {
 		t.Errorf("optional input wrong:\n%s", r.DTS)
 	}
 }
+
+// A definition named like a built-in type would change what Promise<...> or Record<...> mean for the whole file.
+func TestBuiltinTypeNamesAreRefused(t *testing.T) {
+	for _, name := range []string{"Promise", "Record", "Required", "Pick", "Array"} {
+		in := js(t, `{"type":"object","properties":{"a":{"$ref":"#/$defs/`+name+`"}},"$defs":{"`+name+`":{"type":"string"}}}`)
+		if _, err := Generate(Spec{Namespace: "unravis", Tools: []Tool{{Name: "t", Input: in}}}); err == nil {
+			t.Errorf("a definition called %s was accepted", name)
+		}
+	}
+	// A tool called promise gives the type PromiseInput, which is fine; a tool whose name makes the type Promise itself is not possible
+	// (the suffix), but a variant body must not collide with a definition either.
+	in := js(t, `{"type":"object","properties":{"a":{"$ref":"#/$defs/TOutputBase"}},"$defs":{"TOutputBase":{"type":"string"}}}`)
+	if _, err := Generate(Spec{Namespace: "unravis", Tools: []Tool{{Name: "t", Input: js(t, `{}`), Output: map[string]any{"type": "object", "properties": in["properties"], "$defs": in["$defs"],
+		"if": map[string]any{"required": []any{"a"}}, "else": map[string]any{"required": []any{"a"}}}}}}); err == nil {
+		t.Error("a definition sharing the name of a variant type was accepted")
+	}
+}

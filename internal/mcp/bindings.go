@@ -105,6 +105,7 @@ func narrowing(tool string, b *schemaBuilder) map[string]any {
 	of := func(v any) any { return b.of(reflect.TypeOf(v)) }
 	array := func(items any) any { return map[string]any{"type": "array", "items": items} }
 	comparison, query := of(audit.Comparison{}), of(audit.Query{})
+	echoed := b.echoedQuery()
 	sources, provenance := array(of(audit.SourceResult{})), array(of(audit.Provenance{}))
 	switch tool {
 	case "audit_list_sources":
@@ -128,17 +129,36 @@ func narrowing(tool string, b *schemaBuilder) map[string]any {
 			}, "apiKey", "count", "sampleStatus", "currentP95Ms", "baselineP95Ms", "increaseMs", "increasePercent")),
 		}, "at", "start", "end", "groups"))}
 	case "audit_get_requests":
-		return map[string]any{"query": query, "rows": array(b.projected(recordFields)), "sources": sources, "provenance": provenance}
+		return map[string]any{"query": echoed, "rows": array(b.projected(recordFields)), "sources": sources, "provenance": provenance}
 	case "audit_get_slowest":
-		return map[string]any{"query": query, "rows": array(b.projected(append(append([]string(nil), recordFields...), "sourceId", "controller", "action", "kind"))), "sources": sources, "provenance": provenance}
+		return map[string]any{"query": echoed, "rows": array(b.projected(append(append([]string(nil), recordFields...), "sourceId", "controller", "action", "kind"))), "sources": sources, "provenance": provenance}
 	case "audit_get_breakdown":
 		row := of(audit.BreakdownRow{})
-		return map[string]any{"rows": array(row), "other": row, "query": query, "sources": sources, "provenance": provenance}
+		return map[string]any{"rows": array(row), "other": row, "query": echoed, "sources": sources, "provenance": provenance}
 	case "audit_get_activity":
 		return map[string]any{"sourceIds": array(stringSchema()), "sources": sources,
 			"rows": array(b.projected([]string{"sourceId", "controller", "action", "kind", "outcome", "initiatedAt", "completedAt", "durationMs", "apiTimeMs", "auditCreateTimeMs", "payloadRecordTimeMs"}))}
 	}
 	return nil
+}
+
+// echoedQuery is the query as echoQuery reports it (breakdown.go): audit.Query without the IP address filter. audit_get_requests,
+// audit_get_slowest and audit_get_breakdown answer with it; the other tools echo the cached query whole.
+func (b *schemaBuilder) echoedQuery() any {
+	b.of(reflect.TypeOf(audit.Query{})) // makes sure the full definition exists
+	def := copyMap(b.defs["Query"])
+	delete(def["properties"].(map[string]any), "userIps")
+	if req, ok := def["required"].([]any); ok {
+		kept := req[:0]
+		for _, r := range req {
+			if r != "userIps" {
+				kept = append(kept, r)
+			}
+		}
+		def["required"] = kept
+	}
+	b.defs["EchoedQuery"] = def
+	return map[string]any{"$ref": "#/$defs/EchoedQuery"}
 }
 
 // recordFields are the fields projectRecord copies from audit.RequestRecord (breakdown.go): an allow-list, never the URL, IP, agent or headers.

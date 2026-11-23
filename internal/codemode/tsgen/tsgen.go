@@ -105,8 +105,8 @@ func Generate(spec Spec) (Result, error) {
 			if _, err := g.topType(out, tool.Output, false); err != nil {
 				return Result{}, fmt.Errorf("tsgen: %s output: %w", tool.Name, err)
 			}
-		} else {
-			g.addType(out, "unknown", "")
+		} else if err := g.addType(out, "unknown", ""); err != nil {
+			return Result{}, err
 		}
 		var doc []string
 		doc = append(doc, wrap(tool.Description, 100)...)
@@ -194,7 +194,18 @@ type pendingDef struct {
 	root   map[string]any
 }
 
+// builtinTypes are the global types the generated text itself uses or a script commonly names. A schema definition with one of these
+// names would shadow it inside the namespace and change what the rest of the file means, so the name is refused.
+var builtinTypes = map[string]bool{
+	"Promise": true, "Record": true, "Required": true, "Pick": true, "Array": true, "Partial": true, "Readonly": true, "Omit": true,
+	"Exclude": true, "Extract": true, "NonNullable": true, "String": true, "Number": true, "Boolean": true, "Object": true, "Date": true,
+	"Error": true, "Map": true, "Set": true, "Function": true, "Symbol": true, "BigInt": true, "RegExp": true, "JSON": true, "Math": true,
+}
+
 func (g *gen) reserve(name, owner string) error {
+	if builtinTypes[name] {
+		return fmt.Errorf("tsgen: %s needs the type name %s, which is a built-in type", owner, name)
+	}
 	if prev, ok := g.taken[name]; ok {
 		return fmt.Errorf("tsgen: %s and %s both need the type name %s", prev, owner, name)
 	}
@@ -202,12 +213,14 @@ func (g *gen) reserve(name, owner string) error {
 	return nil
 }
 
-func (g *gen) addType(name, body, doc string) {
+// addType writes one named type. A second type of the same name is an error, never a silent first-wins.
+func (g *gen) addType(name, body, doc string) error {
 	if _, ok := g.defs[name]; ok {
-		return
+		return fmt.Errorf("tsgen: the type name %s is written twice", name)
 	}
 	g.defs[name] = &def{name: name, body: body, doc: doc}
 	g.order = append(g.order, name)
+	return nil
 }
 
 func (g *gen) sorted() []*def {
@@ -224,7 +237,9 @@ func (g *gen) sorted() []*def {
 func (g *gen) topType(name string, schema map[string]any, input bool) (allOptional bool, err error) {
 	w := &walker{g: g, root: schema, name: name}
 	body, doc := w.top(schema)
-	g.addType(name, body, doc)
+	if err := g.addType(name, body, doc); err != nil {
+		return false, err
+	}
 	if input {
 		allOptional = w.noRequired(schema)
 	}
@@ -247,7 +262,9 @@ func (g *gen) drain() error {
 		if w.err != nil {
 			return w.err
 		}
-		g.addType(p.name, body, doc)
+		if err := g.addType(p.name, body, doc); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -483,6 +500,10 @@ func (w *walker) ref(ref string, depth int) string {
 		}
 	}
 	tsName := w.g.refName(name)
+	if builtinTypes[tsName] {
+		w.err = fmt.Errorf("tsgen: definition %q needs the type name %s, which is a built-in type", name, tsName)
+		return "unknown"
+	}
 	raw, _ := json.Marshal(schema)
 	if owner, taken := w.g.taken[tsName]; !taken {
 		w.g.taken[tsName] = "definition " + name
@@ -675,21 +696,24 @@ func (w *walker) variantObject(s, props map[string]any, required map[string]bool
 		success += " & { " + strings.Join(names, "; ") + " }"
 	}
 	// The shared body is its own type so a large output is not written twice; the two forms are named too.
-	baseName := w.name + "Base"
-	w.g.reserveQuiet(baseName, "variant body of "+w.name)
-	w.g.addType(baseName, base, "")
-	failName, okName := w.name+"Failure", w.name+"Success"
-	w.g.reserveQuiet(failName, "variant of "+w.name)
-	w.g.reserveQuiet(okName, "variant of "+w.name)
-	w.g.addType(failName, strings.ReplaceAll(failure, "BASE", baseName), "The call failed: error is set and the tool's own fields are absent.")
-	w.g.addType(okName, strings.ReplaceAll(success, "BASE", baseName), "The call worked: the fields the tool always returns are set.")
-	return failName + " | " + okName
-}
-
-func (g *gen) reserveQuiet(name, owner string) {
-	if _, ok := g.taken[name]; !ok {
-		g.taken[name] = owner
+	baseName, failName, okName := w.name+"Base", w.name+"Failure", w.name+"Success"
+	for _, n := range []string{baseName, failName, okName} {
+		if err := w.g.reserve(n, "variant of "+w.name); err != nil {
+			w.err = err
+			return "unknown"
+		}
 	}
+	for _, t := range [][3]string{
+		{baseName, base, ""},
+		{failName, strings.ReplaceAll(failure, "BASE", baseName), "The call failed: error is set and the tool's own fields are absent."},
+		{okName, strings.ReplaceAll(success, "BASE", baseName), "The call worked: the fields the tool always returns are set."},
+	} {
+		if err := w.g.addType(t[0], t[1], t[2]); err != nil {
+			w.err = err
+			return "unknown"
+		}
+	}
+	return failName + " | " + okName
 }
 
 // ---- names, comments, escaping ----

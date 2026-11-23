@@ -145,7 +145,7 @@ func TestRealAnswersValidateAgainstNarrowedSchemas(t *testing.T) {
 	}
 	covered := map[string][]string{
 		"audit_list_sources": {"sources"}, "audit_compare": {"groups", "sources"}, "audit_get_groups": {"groups"}, "audit_get_timeline": {"points"},
-		"audit_compare_timelines": {"slots", "groups"}, "audit_get_requests": {"rows"}, "audit_get_slowest": {"rows"}, "audit_get_breakdown": {"rows"},
+		"audit_compare_timelines": {"slots", "groups"}, "audit_get_requests": {"rows"}, "audit_get_slowest": {"rows"}, "audit_get_breakdown": {"rows"}, "audit_get_activity": {"rows", "sources"},
 	}
 	for tool, res := range tenResults(t, false) {
 		body := []byte(textOf(res))
@@ -270,5 +270,33 @@ func TestProjectedRowsMatchProjectRecord(t *testing.T) {
 	sort.Strings(want)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("projectRecord writes %v, the schema lists %v", got, want)
+	}
+}
+
+// echoQuery drops the IP filters, and the types of the three tools that use it do not declare them.
+func TestEchoedQueryHasNoIPFilters(t *testing.T) {
+	raw, _ := json.Marshal(echoQuery(audit.Query{UserIPs: []string{"10.0.0.1"}}))
+	if strings.Contains(string(raw), "userIps") || strings.Contains(string(raw), "10.0.0.1") {
+		t.Fatalf("echoQuery keeps the IP filter: %s", raw)
+	}
+	for _, tool := range BindingTools() {
+		q := tool.Output["properties"].(map[string]any)["query"]
+		if q == nil {
+			continue
+		}
+		ref, _ := q.(map[string]any)["$ref"].(string)
+		defs := tool.Output["$defs"].(map[string]any)
+		props := defs[strings.TrimPrefix(ref, "#/$defs/")].(map[string]any)["properties"].(map[string]any)
+		_, has := props["userIps"]
+		switch tool.Name {
+		case "audit_get_requests", "audit_get_slowest", "audit_get_breakdown":
+			if has || ref != "#/$defs/EchoedQuery" {
+				t.Errorf("%s: the echoed query declares userIps (%s)", tool.Name, ref)
+			}
+		default:
+			if !has {
+				t.Errorf("%s: the whole query should declare userIps (%s)", tool.Name, ref)
+			}
+		}
 	}
 }

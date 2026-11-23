@@ -21,6 +21,8 @@ export const WEB_READS = [
   /^internal\/resource\/metrics\.go$/,           // resource.mount.test.cjs: the importer list equals the catalogue's sources (BL-495j)
   /^tools\/e2e\//,                                   // guidedKept (archive)
   /^desktop\/src-tauri\/tauri\.conf\.json$/,          // cspGate.test.cjs: the policy the UI must run under (BL-323)
+  /^internal\/codemode\/bindings\/testdata\//,       // tools/codemode/check-dts.mjs compiles the committed unravis.d.ts and its sample scripts with the pinned TypeScript (BL-364)
+  /^tools\/codemode\//,                                // check-dts.mjs itself (BL-364)
   /^tools\/uiaudit\/csp\//,                            // cspGate.test.cjs: the strict-CSP Playwright harness reads that policy
 ];
 

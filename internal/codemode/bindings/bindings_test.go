@@ -135,21 +135,26 @@ func TestHeaderCarriesLimitsAndWarnings(t *testing.T) {
 	}
 }
 
-// tsc is the pinned compiler of the web build; it is a test tool only and is never shipped. The test skips where it is not installed
-// (the Go job without npm), and runs where web/node_modules exists.
-func tsc(t *testing.T) string {
+// tsc finds the pinned compiler of the web build (a test tool only, never shipped) and the node that runs it. It is started as
+// `node web/node_modules/typescript/bin/tsc`, the same way tools/codemode/check-dts.mjs does, because the .bin shim is a shell script on
+// Windows. The test skips where either is missing (the Go job without npm).
+func tsc(t *testing.T) []string {
 	t.Helper()
-	path, err := filepath.Abs("../../../web/node_modules/.bin/tsc")
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script, err := filepath.Abs("../../../web/node_modules/typescript/bin/tsc")
 	if err != nil {
 		t.Skip(err)
 	}
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(script); err != nil {
 		t.Skip("typescript is not installed (run npm ci in web)")
 	}
-	return path
+	return []string{nodePath, script}
 }
 
-func compile(t *testing.T, tscPath, script string) (string, error) {
+func compile(t *testing.T, tscCmd []string, script string) (string, error) {
 	t.Helper()
 	dir := t.TempDir()
 	res, _ := Types()
@@ -162,7 +167,7 @@ func compile(t *testing.T, tscPath, script string) (string, error) {
 	must(os.WriteFile(filepath.Join(dir, "script.ts"), []byte(script), 0o600))
 	cfg, _ := json.Marshal(map[string]any{"compilerOptions": map[string]any{"strict": true, "noEmit": true, "target": "ES2022", "lib": []string{"ES2022"}, "types": []string{}, "skipLibCheck": false}, "files": []string{"unravis.d.ts", "script.ts"}})
 	must(os.WriteFile(filepath.Join(dir, "tsconfig.json"), cfg, 0o600))
-	cmd := exec.Command(tscPath, "-p", dir) //nolint:gosec // test: the pinned compiler from web/node_modules
+	cmd := exec.Command(tscCmd[0], tscCmd[1], "-p", dir) //nolint:gosec // test: node and the pinned compiler from web/node_modules
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -170,7 +175,7 @@ func compile(t *testing.T, tscPath, script string) (string, error) {
 // The scripts under testdata/scripts are compiled against the declarations: ok.ts must pass, every file under bad/ must be refused.
 // tools/codemode/check-dts.mjs does the same on the committed golden file in the web CI job, where the compiler is installed.
 func TestDeclarationsCompileAndTypeAScript(t *testing.T) {
-	tscPath := tsc(t)
+	tscCmd := tsc(t)
 	read := func(p string) string {
 		b, err := os.ReadFile(p) //nolint:gosec // test: fixed testdata path
 		if err != nil {
@@ -178,7 +183,7 @@ func TestDeclarationsCompileAndTypeAScript(t *testing.T) {
 		}
 		return string(b)
 	}
-	if out, err := compile(t, tscPath, read("testdata/scripts/ok.ts")); err != nil {
+	if out, err := compile(t, tscCmd, read("testdata/scripts/ok.ts")); err != nil {
 		t.Fatalf("a correct script does not compile:\n%s", out)
 	}
 	bad, _ := filepath.Glob("testdata/scripts/bad/*.ts")
@@ -186,7 +191,7 @@ func TestDeclarationsCompileAndTypeAScript(t *testing.T) {
 		t.Fatalf("only %d wrong scripts", len(bad))
 	}
 	for _, p := range bad {
-		if out, err := compile(t, tscPath, read(p)); err == nil {
+		if out, err := compile(t, tscCmd, read(p)); err == nil {
 			t.Errorf("%s: the compiler accepted a wrong script:\n%s", p, out)
 		}
 	}
