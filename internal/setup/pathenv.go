@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode/utf16"
 )
 
 // The PATH of a PC is one text value in the registry. These functions edit that text and nothing else, so they run and are tested on
@@ -110,7 +111,7 @@ func addToPathValue(value, entry string) (out string, added bool, changed bool, 
 	default:
 		out = value + ";" + e
 	}
-	if len(out) > MaxPathValue {
+	if len(utf16.Encode([]rune(out))) > MaxPathValue {
 		return value, false, false, ErrPathTooLong
 	}
 	return out, true, true, nil
