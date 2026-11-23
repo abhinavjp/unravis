@@ -1,3 +1,5 @@
+//go:build !tauri_sidecar
+
 package explorer
 
 import (

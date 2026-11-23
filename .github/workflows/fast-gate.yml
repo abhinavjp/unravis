@@ -117,6 +117,16 @@ jobs:
           # shellcheck disable=SC2086
           GOOS=windows go vet $PACKAGES
 
+      # BL-422: the sidecar tag (no embedded dashboard) must keep compiling. Only the root package differs between the two builds.
+      - name: Go - build with the tauri_sidecar tag
+        if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' }}
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          go build -tags tauri_sidecar ./...
+          go test -count=1 -tags tauri_sidecar .
+
       - name: Go - tests of the affected packages (Linux, compared with the baseline)
         if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' }}
         env:
