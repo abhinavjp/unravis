@@ -86,7 +86,7 @@ export const BB_TEXT = {
   servicesSteps: 'On the server, open Services (services.msc). Find UnravisBlackbox. Choose Start, or Restart if it is late. Wait one minute. The state here changes to Running.',
   servicesTitle: 'Steps for the server',
   anotherServer: 'This is not the Blackbox installed on this PC, so Unravis does not offer Stop or Snapshot for it. Use the steps below.',
-  unreachableUrl: 'Check that the server is on and that the port is open to this PC, then check again.',
+  unreachableUrl: 'Check that the server is on. Check that Listens on is the server address, not 127.0.0.1. Check that the port is open to this PC. Then check again.',
   unreachableShare: 'Check the server name, the share name and that the account Unravis runs as may read the share, then check again.',
   stoppedThisPc: 'Press Start. The recordings are kept.',
   stoppedRemote: 'Start it from Services on that server. Unravis does not start another server.',
@@ -397,7 +397,7 @@ export const BB_TEXT = {
     'Wrong path. No share has that name. Check the server name and the share name.',
     'No access. The share exists but the account Unravis runs as may not read it. Give that account read access.',
     'No Blackbox there. The folder has no manifest, or the service is not running.',
-    'Firewall. For an address, the port may be blocked.',
+    'Listens on or firewall. A new Blackbox answers only on its own server until Listens on is set to the server address. Then the port must be open to this PC.',
     'Key refused. The address answered but the read key was not accepted. Type the new key and look again.'
   ],
   addLooksGood: 'Looks good. Press Add to the list to keep it.',
