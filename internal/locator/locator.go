@@ -167,7 +167,7 @@ func onlyLocatorFiles(dir string) error {
 		return fmt.Errorf("locator: read run folder: %w", err)
 	}
 	for _, e := range entries {
-		if n := e.Name(); e.IsDir() || !(strings.HasPrefix(n, "backend") || ownerlease.IsLeaseFile(n)) {
+		if n := e.Name(); e.IsDir() || (!strings.HasPrefix(n, "backend") && !ownerlease.IsLeaseFile(n)) {
 			return fmt.Errorf("locator: run folder %s holds %q, which is not a locator file; refusing to restrict it", dir, n)
 		}
 	}
