@@ -288,9 +288,9 @@ jobs:
       - name: Go - vet
         run: go vet ./...
 
-      # BL-422: the sidecar tag (no embedded dashboard) must keep compiling; only the root package differs.
-      - name: Go - vet (tauri_sidecar tag)
-        run: go vet -tags tauri_sidecar . && go test -tags tauri_sidecar .
+      # BL-422: the sidecar tag (no embedded dashboard) must keep compiling; only the root package has a tagged test.
+      - name: Go - build and root test with the tauri_sidecar tag
+        run: go build -tags tauri_sidecar ./... && go test -tags tauri_sidecar .
 
       # Only the Go files this pull request changes are checked, judged on the committed
       # text (not the working copy, whose line endings may differ). Older files on master
