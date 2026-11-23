@@ -29,6 +29,7 @@ func TestWorkFolderOwnedNeedsOurNamesAndOurFiles(t *testing.T) {
 	bad := map[string]string{
 		".setup-staging-20261122-111111": "thesis.docx",
 		".setup-backup-20261122-111111":  "thesis.docx", // no counter in front
+		".setup-backup-20261122-151515":  "1-tax-return.pdf", // a counter, but not a file setup ever backs up
 		"x" + update.PreviousDir:         "unravis-setup.exe",
 	}
 	for dir, f := range bad {

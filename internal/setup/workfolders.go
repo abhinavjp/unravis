@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/update"
 )
 
@@ -15,8 +16,28 @@ import (
 // So a working folder counts as ours only when the name fits AND everything in it is a plain file this installer or the updater writes.
 // One look at the inside decides both questions: "does this make the program folder somebody's own" and "may setup delete it".
 
-// backupEntry is a file in a backup folder: the run's counter, a dash, and the name of the file it replaced (txn.go backupPath).
-var backupEntry = regexp.MustCompile(`^\d+-[^\/]+$`)
+// backupCounter splits a backup file's name into the run's counter and the name of the file it replaced (txn.go backupPath).
+var backupCounter = regexp.MustCompile(`^\d+-(.+)$`)
+
+// backupEntry says name is a file a backup folder holds: the counter, a dash, and the name of a file setup replaced or removed, which is
+// one of the programs, a shortcut, the setup state, or a Blackbox settings, key or marker file. A copy being made carries ".part" until
+// it is complete.
+func backupEntry(name string) bool {
+	m := backupCounter.FindStringSubmatch(name)
+	if m == nil {
+		return false
+	}
+	orig := strings.TrimSuffix(m[1], ".part")
+	if stagedName(orig) {
+		return true
+	}
+	for _, own := range []string{ShortcutName, QuitShortcutName, ReleasesShortcutName, StateFileName, blackbox.KeyFileName, blackbox.ConfigFileName, blackbox.ConfigFileName + ".bak", blackbox.InstalledExeName, blackbox.ManagedMarkerName, blackbox.StoppedByUserMarkerName} {
+		if strings.EqualFold(orig, own) {
+			return true
+		}
+	}
+	return false
+}
 
 // stagedName says name is a file a staging folder holds: the programs setup places, and the second Blackbox copy it stages for the beside-app place.
 func stagedName(name string) bool {
@@ -52,7 +73,7 @@ func workFolderOwned(parent, name string) bool {
 	case stampName.MatchString(name) && strings.HasPrefix(name, stagingPrefix):
 		allowed = stagedName
 	case stampName.MatchString(name) && strings.HasPrefix(name, backupPrefix):
-		allowed = backupEntry.MatchString
+		allowed = backupEntry
 	case strings.EqualFold(name, update.PreviousDir):
 		allowed = previousName
 	default:
@@ -63,7 +84,7 @@ func workFolderOwned(parent, name string) bool {
 		return false
 	}
 	for _, e := range ents {
-		if !e.Type().IsRegular() || !(allowed(e.Name()) || shellFile(e.Name())) {
+		if !e.Type().IsRegular() || (!allowed(e.Name()) && !shellFile(e.Name())) {
 			return false
 		}
 	}
