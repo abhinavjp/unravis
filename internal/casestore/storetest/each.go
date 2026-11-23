@@ -13,6 +13,7 @@ import (
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/racedetect"
 )
 
 // Contract cases for Case.Each (the streaming read behind the series route) and
@@ -260,6 +261,9 @@ func eachBudget(t *testing.T, f Factory, caps casestore.Caps) {
 		if !errors.Is(err, tc.err) || (tc.err == nil && err != nil) || len(got) != tc.delivered {
 			t.Errorf("MaxScan %d: %d events, %v; want %d, %v", tc.max, len(got), err, tc.delivered, tc.err)
 		}
+	}
+	if racedetect.Enabled {
+		return // the time budget below is meaningless under the race detector (5 to 20 times slower); the normal run checks it
 	}
 	// A time budget stops a slow scan. The first event takes longer than the
 	// budget; a store may check the clock only every few hundred events, so the

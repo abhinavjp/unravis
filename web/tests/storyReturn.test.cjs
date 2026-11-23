@@ -12,7 +12,8 @@ const source = fs.readFileSync(path.join(root, 'src/lib/storyReturn.ts'), 'utf8'
 const module_ = { exports: {} };
 new Function('module', 'exports', ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(module_, module_.exports);
 const { RETURN_GAP_MS, readOnReturn, sameRead, watchReturn } = module_.exports;
-const page = fs.readFileSync(path.join(root, 'src/lib/components/CaseHome.svelte'), 'utf8');
+// CRLF -> LF at the read point: a Windows checkout has CRLF, and the patterns below use \n.
+const page = fs.readFileSync(path.join(root, 'src/lib/components/CaseHome.svelte'), 'utf8').replace(/\r\n/g, '\n');
 
 const base = { ready: true, hidden: false, busy: false, changedElsewhere: false, lastReadAt: 1000, now: 1000 + RETURN_GAP_MS };
 
@@ -165,7 +166,7 @@ test('an unchanged theory list is not put in again; a changed one is', async () 
 });
 
 test('the ledger panel tells the store about each local write', () => {
-  const panel = fs.readFileSync(path.join(root, 'src/components/LedgerPanel.svelte'), 'utf8');
+  const panel = fs.readFileSync(path.join(root, 'src/components/LedgerPanel.svelte'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(panel, /function replace\(h: Hypothesis\) \{\n\s*noteLedgerWrite\(\);/);
   assert.match(panel, /noteLedgerWrite\(\);\n\s*ledger\.items = ledger\.items\.filter/);
 });
