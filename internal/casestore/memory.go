@@ -67,6 +67,8 @@ type memData struct {
 	ledger  []byte // the case's theories ledger JSON (see LedgerBlobStore)
 	// workspace is the case's workspace note JSON (see WorkspaceBlobStore).
 	workspace []byte
+	// code is the code-mode audit record (see CodeRunStore, memory_coderuns.go).
+	code *memCode
 	// plan holds the saved views and checklist (see PlanStore, plan_memory.go).
 	plan      *memPlan
 	retries   []RetryItem // the needs-another-try list (see RetryStore)
