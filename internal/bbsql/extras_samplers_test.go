@@ -29,7 +29,7 @@ type xsDelta interface {
 
 // xsStep is one runner cycle: Observe with the given epoch, then Decode.
 func xsStep(s xsDelta, epoch uint64, rows []Row) (any, bool, error) {
-	s.Observe(Observation{Time: xsT0.Add(time.Duration(epoch) * time.Second), Epoch: epoch})
+	s.Observe(Observation{Time: xsT0.Add(time.Duration(epoch) * time.Second), Epoch: epoch}) //nolint:gosec // test epochs are tiny
 	return s.Decode(rows)
 }
 
@@ -325,8 +325,8 @@ func xsLatchRows(entries ...xsLatch) []Row {
 	for _, e := range entries {
 		rows = append(rows, Row{
 			"latch_class":            e.class,
-			"waiting_requests_count": int64(e.waits),
-			"latch_wait_ms":          int64(e.ms),
+			"waiting_requests_count": int64(e.waits), //nolint:gosec // test values are small
+			"latch_wait_ms":          int64(e.ms),    //nolint:gosec // test values are small
 		})
 	}
 	return rows
@@ -534,7 +534,7 @@ func TestXSLatchesAcceptsMixedCaseAndBoundaryNames(t *testing.T) {
 
 func TestXSLatchesJSONKeysAndInputContract(t *testing.T) {
 	s := &latchesSampler{}
-	xsStep(s, 1, xsLatchRows(xsLatch{"BUFFER", 1, 1}))
+	_, _, _ = xsStep(s, 1, xsLatchRows(xsLatch{"BUFFER", 1, 1}))
 	payload, _, err := xsStep(s, 1, xsLatchRows(xsLatch{"BUFFER", 3, 5}))
 	if err != nil {
 		t.Fatal(err)
@@ -581,7 +581,7 @@ func xsRGRow(id, cpu, timeouts, oom, used, target, waiters, active int64) Row {
 
 // xsP builds the expected output row; a negative delta means nil (absent).
 func xsP(id, cpu, timeouts, oom int64, used, target uint64, waiters, active uint32) ResourcePool {
-	p := ResourcePool{PoolID: uint32(id), UsedKb: used, TargetKb: target, Waiters: waiters, Active: active}
+	p := ResourcePool{PoolID: uint32(id), UsedKb: used, TargetKb: target, Waiters: waiters, Active: active} //nolint:gosec // test ids are small
 	ptr := func(v int64) *uint64 {
 		if v < 0 {
 			return nil
@@ -833,7 +833,7 @@ func TestXSRGNeverCarriesAPoolName(t *testing.T) {
 
 	// And the output of a good reply has no name-like key at all.
 	s := &rgSampler{}
-	xsStep(s, 1, []Row{xsRGRow(256, 1, 1, 1, 1, 1, 1, 1)})
+	_, _, _ = xsStep(s, 1, []Row{xsRGRow(256, 1, 1, 1, 1, 1, 1, 1)})
 	payload, _, err = xsStep(s, 1, []Row{xsRGRow(256, 2, 2, 2, 1, 1, 1, 1)})
 	if err != nil {
 		t.Fatal(err)
