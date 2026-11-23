@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"api-audit-explorer/internal/racedetect"
 )
 
 // Every secret in these tests is an obvious fake (FAKEPW...). A failing case prints its name and the output with the fake blanked, so
@@ -509,6 +511,9 @@ func TestMaskURLUserinfo(t *testing.T) {
 // Hostile input: long runs of every shape that could make a pattern backtrack or a look-ahead rescan. Each must finish well under the
 // bound, which is far above the measured time so a slow CI machine does not fail it.
 func TestMaskHostileInputIsFast(t *testing.T) {
+	if racedetect.Enabled {
+		t.Skip("timing test: the race detector slows the 1 MiB scans 5 to 20 times (see internal/racedetect)")
+	}
 	const size = 1 << 20
 	rep := func(unit string) string { return strings.Repeat(unit, size/len(unit)+1)[:size] }
 	inputs := map[string]string{

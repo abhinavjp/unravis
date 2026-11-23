@@ -12,7 +12,8 @@ const source = fs.readFileSync(path.join(root, 'src/lib/storyReturn.ts'), 'utf8'
 const module_ = { exports: {} };
 new Function('module', 'exports', ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(module_, module_.exports);
 const { RETURN_GAP_MS, readOnReturn, sameRead, watchReturn } = module_.exports;
-const page = fs.readFileSync(path.join(root, 'src/lib/components/CaseHome.svelte'), 'utf8');
+// CRLF -> LF at the read point: a Windows checkout has CRLF, and the patterns below use \n.
+const page = fs.readFileSync(path.join(root, 'src/lib/components/CaseHome.svelte'), 'utf8').replace(/\r\n/g, '\n');
 
 const base = { ready: true, hidden: false, busy: false, changedElsewhere: false, lastReadAt: 1000, now: 1000 + RETURN_GAP_MS };
 
@@ -95,7 +96,7 @@ test('Case home gives every read of the health checks a number, and a case erase
   assert.match(reread, /runs && healthReads\.accept\(healthToken\)/);
   const finished = page.slice(page.indexOf('async function rereadHealth'), page.indexOf('// The case was locked'));
   assert.match(finished, /healthReads\.begin\(\)[\s\S]*healthReads\.accept\(token\)\) health = runs/);
-  assert.match(page, /healthReads\.begin\(\);\n\s*const \[files, runs, theory\][\s\S]*if \(healthReads\.accept\(healthToken\)\) health = /, 'the page read takes a number too');
+  assert.match(page, /healthReads\.begin\(\);\n\s*const \[files, runs, theory\][\s\S]*healthReads\.accept\(healthToken\)\) health = /, 'the page read takes a number too');
   assert.match(reread, /getCaseView\(id\)\.catch\(\(error: unknown\) => \{ if \(isCaseGone\(error\)\) return null; throw error; \}\);\s*if \(!fresh\) \{ if \(id === caseId && mine === rereadRun\) gone\(\); return; \}/);
 });
 
@@ -165,7 +166,7 @@ test('an unchanged theory list is not put in again; a changed one is', async () 
 });
 
 test('the ledger panel tells the store about each local write', () => {
-  const panel = fs.readFileSync(path.join(root, 'src/components/LedgerPanel.svelte'), 'utf8');
+  const panel = fs.readFileSync(path.join(root, 'src/components/LedgerPanel.svelte'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(panel, /function replace\(h: Hypothesis\) \{\n\s*noteLedgerWrite\(\);/);
   assert.match(panel, /noteLedgerWrite\(\);\n\s*ledger\.items = ledger\.items\.filter/);
 });
@@ -178,4 +179,16 @@ test('a thrown-away re-read takes no health number, and another case starts with
   assert.ok(guard > reread.indexOf('await getCaseView') && guard < take, 'the guard comes before begin()');
   // Opening another case on the same page (restore as new, then Open the new case) lets go of the last case's health checks and files at once.
   assert.match(page, /if \(loadedFor !== id\) \{ health = \[\]; imports = \[\]; \}\n\s*loadedFor = id;/);
+});
+
+test('the page read: a failed health read puts nothing in and takes no turn', () => {
+  const load = page.slice(page.indexOf('async function loadPage'), page.indexOf('function refusedWith'));
+  assert.match(load, /if \(runs\.status === 'fulfilled' && healthReads\.accept\(healthToken\)\) health = runs\.value;/);
+  assert.doesNotMatch(load, /health = [^;]*: \[\]/, 'a failed read no longer blanks the checks');
+  assert.doesNotMatch(load, /overtaken/, 'no newest-wins rule for the case and file list on the page read (open item in BL-164)');
+});
+
+test('a finished check puts its list in only for the case the page still shows', () => {
+  const finished = page.slice(page.indexOf('async function rereadHealth'), page.indexOf('// The case was locked'));
+  assert.match(finished, /if \(id === caseId && healthReads\.accept\(token\)\) health = runs;/);
 });

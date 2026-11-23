@@ -13,6 +13,7 @@ import (
 
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/evidence"
+	"api-audit-explorer/internal/racedetect"
 )
 
 // bigCase imports n events (kind cpu on even seconds, wait on odd) in one go.
@@ -119,6 +120,9 @@ func TestEraseStopsALongScan(t *testing.T) {
 // A scan stopped by its time budget returns ErrScanBudget, not the context error
 // that the stop used.
 func TestEachTimeBudgetIsReportedAsABudget(t *testing.T) {
+	if racedetect.Enabled {
+		t.Skip("time-budget test: the race detector slows the scan 5 to 20 times (see internal/racedetect)")
+	}
 	s, _ := newTestStore(t)
 	c := bigCase(t, s, 3000)
 	delivered := 0

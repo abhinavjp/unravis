@@ -224,7 +224,9 @@
     if (caseView.status === 'rejected' && files.status === 'rejected') { phase = 'failed'; return; }
     info = found;
     imports = files.status === 'fulfilled' ? files.value : [];
-    if (healthReads.accept(healthToken)) health = runs.status === 'fulfilled' ? runs.value : [];
+    // A health read that failed puts nothing in and takes no turn: the checks already shown stay, and an older good answer is not held back.
+    // (A case opened afresh starts with none, see above.)
+    if (runs.status === 'fulfilled' && healthReads.accept(healthToken)) health = runs.value;
     theoryProblem = theory.status === 'rejected';
     phase = 'ready';
     if (theory.status === 'fulfilled' && ledger.items.length === 0) void findShared(mine.signal);
