@@ -76,6 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           node tools/ci/test-fast-scope.mjs
+          node tools/ci/test-diff-cover.mjs
           node tools/ci/test-web-scope.mjs
           node tools/ci/test-compare.mjs
           node tools/ci/test-promote-dist.mjs
@@ -140,12 +141,19 @@ jobs:
           # Same rules as the linux-gates job of ci.yml: the baseline holds the known Windows-only failures, so go test
           # exits 1 on a normal run; the compare below is the pass/fail. The two skipped tests hang on Linux.
           # shellcheck disable=SC2086
-          go test -count=1 -timeout 10m -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' -json $PACKAGES > go-test.json
+          go test -count=1 -timeout 10m -coverprofile=go.cover -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' -json $PACKAGES > go-test.json
           code=$?
           echo "go test exit code: $code"
           if [ ! -s go-test.json ]; then echo "go test produced no JSON"; exit 1; fi
           if [ "$code" -gt 1 ]; then exit "$code"; fi
           node tools/ci/compare-go-failures.mjs --json go-test.json --baseline docs/desktop/baseline-go-tests.txt
+
+      # BL-451: how much of the changed code do the tests run? A report in the job summary for now; it blocks nothing.
+      # Only Linux-visible code is counted (a Windows-only file is not in the profile), and only the affected packages ran.
+      - name: Go - diff coverage (report only)
+        if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' && hashFiles('go.cover') != '' }}
+        continue-on-error: true
+        run: node tools/ci/diff-cover.mjs --base HEAD^1 --head HEAD --go go.cover --min 80 --min-lines 10 --report-only
 
       - name: Go - modules are tidy
         if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' }}
