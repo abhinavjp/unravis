@@ -210,6 +210,12 @@ test('UIFIX-18e The boxes are 24 px or more, in order, readable in both themes, 
   }
   for (const width of [1440, 1100, 390, 360, 320]) {
     await page.setViewportSize({ width, height: 844 });
+    // The page lays itself out again after the resize (media queries, a wrapped row); measure once it has stopped moving, not in the middle of it.
+    await page.waitForFunction(() => new Promise<boolean>((done) => {
+      const width = () => document.documentElement.scrollWidth;
+      const before = width();
+      requestAnimationFrame(() => requestAnimationFrame(() => done(width() === before)));
+    }), undefined, { timeout: 5_000 }).catch(() => undefined);
     const facts = await page.evaluate(() => {
       const root = document.documentElement;
       const boxes = [...document.querySelectorAll<HTMLElement>('input.time24')].map((e) => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, w: r.width, h: r.height }; });
