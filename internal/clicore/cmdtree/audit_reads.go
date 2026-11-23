@@ -40,6 +40,7 @@ type readSpec struct {
 	long     string
 	flags    []fieldFlag
 	table    func(w io.Writer, data json.RawMessage) error
+	page     int // with -o jsonl: the page size when none is given (the most the tool takes); 0 means the command has no JSON Lines form
 }
 
 const (
@@ -53,11 +54,11 @@ var readSpecs = []readSpec{
 	{op: "audit.requests", use: "requests --result-id ID --api-key KEY", short: "A page of the newest requests of one group (a live read of metadata)",
 		flags: []fieldFlag{{"result-id", "resultId", resultIDUsage, kString, true}, {"api-key", "apiKey", apiKeyUsage, kString, true},
 			{"cursor", "cursor", "the nextCursor of the last page", kString, false}, {"limit", "limit", "rows on the page, 1 to 100", kInt, false}},
-		table: requestsTable},
+		table: requestsTable, page: 100},
 	{op: "audit.slowest", use: "slowest --result-id ID", short: "The slowest completed requests of the comparison (a live read of metadata)",
 		flags: []fieldFlag{{"result-id", "resultId", resultIDUsage, kString, true}, {"cursor", "cursor", "the nextCursor of the last page", kString, false},
 			{"limit", "limit", "rows on the page, 1 to 50", kInt, false}, {"min-ms", "minMs", "only requests at least this slow, in milliseconds", kFloat, false}},
-		table: requestsTable},
+		table: requestsTable, page: 50},
 	{op: "audit.breakdown", use: "breakdown --result-id ID --dim DIM", short: "Count the comparison's requests by status code, user, UI version, user agent, polling type or IP",
 		flags: []fieldFlag{{"result-id", "resultId", resultIDUsage, kString, true},
 			{"dim", "dim", "statusCode, userId, uiVersion, userAgent, pollingType or userIp", kString, true},
@@ -157,13 +158,24 @@ func (sp readSpec) build(c *cobra.Command, v values) (json.RawMessage, error) {
 
 func (sp readSpec) command(st *state) *cobra.Command {
 	var v values
+	var sf streamFlags
 	long := sp.long
 	if long == "" {
 		long = sp.short + ". Give the same arguments as one JSON object with --request FILE (or - for the input) to use every field of the tool ('unravis schema " + sp.op + "' lists them)."
 	}
+	ann := online(sp.op, "")
+	if sp.page > 0 {
+		ann[jsonlAnnotation] = "1"
+		long += " With -o jsonl it prints one line per row, page after page, up to --max-rows (1000 unless set) and 64 MiB; --limit is then the page size. A stream that stops at a limit ends with coverage partial and the nextCursor to continue from."
+	}
 	cmd := &cobra.Command{
-		Use: sp.use, Short: sp.short, Long: long, Args: cobra.NoArgs, Annotations: online(sp.op, ""),
+		Use: sp.use, Short: sp.short, Long: long, Args: cobra.NoArgs, Annotations: ann,
 		RunE: func(c *cobra.Command, _ []string) error {
+			if sp.page > 0 {
+				if err := sf.check(c, st.mode == clicore.ModeJSONL); err != nil {
+					return err
+				}
+			}
 			fields := make([]string, len(sp.flags))
 			for i, fl := range sp.flags {
 				fields[i] = fl.name
@@ -171,6 +183,9 @@ func (sp readSpec) command(st *state) *cobra.Command {
 			a, err := st.requestOr(c, fields, func() (json.RawMessage, error) { return sp.build(c, v) })
 			if err != nil {
 				return err
+			}
+			if st.mode == clicore.ModeJSONL {
+				return st.streamPages(sp.op, a, sp.page, sf)
 			}
 			table := sp.table
 			if table == nil {
@@ -180,6 +195,9 @@ func (sp readSpec) command(st *state) *cobra.Command {
 		},
 	}
 	v = sp.register(cmd.Flags())
+	if sp.page > 0 {
+		sf.register(cmd)
+	}
 	return cmd
 }
 
