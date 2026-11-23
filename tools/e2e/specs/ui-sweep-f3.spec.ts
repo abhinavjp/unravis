@@ -21,12 +21,17 @@ test('SWEEP-F3-02 (CASES-14): a closed case says on what day it will be erased',
   await expect(page.getByText(/It will be erased on .+ unless you reopen it\./).first()).toBeVisible();
 });
 
-test('SWEEP-F3-03 (CASES-25): a reload in the middle of the guide keeps the case name', async ({ page }) => {
+test('SWEEP-F3-03 (CASES-25): a reload in the middle of the guide comes back to the guide with the case name, and Back leaves it with the draft kept', async ({ page }) => {
+  page.on('dialog', (d) => void d.accept());
   await goHome(page);
   await page.getByRole('button', { name: 'Create a new case' }).click();
   await page.getByLabel('Case name').fill('Sweep draft name');
   await page.reload();
-  await goHome(page);
+  // BL-495h: the reload lands back in the guide (it used to land on the analysis screen and the draft came back only on the next open).
+  await expect(page.getByLabel('Case name')).toHaveValue('Sweep draft name');
+  // Back leaves the guide (the draft stays), and the next open offers it again.
+  await page.goBack();
+  await expect(page.locator('#start-title')).toBeVisible();
   await page.getByRole('button', { name: 'Create a new case' }).click();
   await expect(page.getByLabel('Case name')).toHaveValue('Sweep draft name');
   // The stored copy holds the name and environments only.

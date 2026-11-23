@@ -330,6 +330,94 @@
       ]
     },
     {
+      "id": "x-case-resource",
+      "phase": "X",
+      "note": "The case page with a Windows counters file in the case: the Resource counters panel closed (BL-495j). The case and its file are made through the real API and importer for this screen and erased after it.",
+      "narrow": true,
+      "restoreHosts": true,
+      "steps": [
+        {
+          "seedCounters": "Audit resource counters"
+        },
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Audit resource counters\"]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Resource counters\"]"
+        },
+        {
+          "scrollTo": "role=heading[name=\"Resource counters\"]"
+        }
+      ],
+      "after": [
+        {
+          "dropCase": "Audit resource counters"
+        }
+      ]
+    },
+    {
+      "id": "x-case-resource-lines",
+      "phase": "X",
+      "note": "The same panel with the lines of the host open: the three strips on one time axis, the zoom buttons and the lists under them (BL-495j).",
+      "narrow": true,
+      "restoreHosts": true,
+      "steps": [
+        {
+          "seedCounters": "Audit resource counters"
+        },
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Audit resource counters\"]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Resource counters\"]"
+        },
+        {
+          "scrollTo": "role=heading[name=\"Resource counters\"]"
+        },
+        {
+          "click": "role=button[name=/^Show the resource lines for/]"
+        },
+        {
+          "waitFor": ".resource-slot canvas"
+        }
+      ],
+      "after": [
+        {
+          "dropCase": "Audit resource counters"
+        }
+      ]
+    },
+    {
       "id": "x-case-timeline",
       "phase": "X",
       "note": "The case Investigation timeline.",

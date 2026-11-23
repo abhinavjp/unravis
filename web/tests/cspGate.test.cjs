@@ -183,3 +183,16 @@ test('the desktop policy the gate protects (tauri.conf.json) stays strict, and t
   assert.match(spec, /tauri\.conf\.json/);
   assert.match(spec, /securitypolicyviolation/);
 });
+
+test('rich-text tooltips are drawn on the canvas, so specs read them from the chart: charts.ts leaves the chart on its container and the e2e helper reads it there (BL-323)', () => {
+  const charts = fs.readFileSync(path.join(root, 'src', 'lib', 'charts.ts'), 'utf8');
+  assert.match(charts, /\.__chart\s*=\s*chart/);
+  const helper = fs.readFileSync(path.join(root, '..', 'tools', 'e2e', 'support', 'chart-tip.ts'), 'utf8');
+  assert.match(helper, /__chart/);
+  assert.match(helper, /getRoots\(\)/);
+  for (const spec of ['explorer.spec.ts', 'ui-layout.spec.ts']) {
+    const text = fs.readFileSync(path.join(root, '..', 'tools', 'e2e', 'specs', spec), 'utf8');
+    assert.match(text, /support\/chart-tip/, spec + ' reads the canvas tooltip through the helper');
+    assert.doesNotMatch(text, /getByText\(\/Response-time target/, spec + ' does not look for the old HTML tooltip');
+  }
+});
