@@ -18,6 +18,7 @@ export const WEB_READS = [
   /^internal\/casestore\/plan\.go$/,                 // guided.ui (MaxSavedViews, MaxChecklistItems)
   /^internal\/collect\/(collect\.go|testdata\/wording\.golden\.json)$/, // collect.test
   /^internal\/importer\/reasons\.go$/,               // import.test
+  /^internal\/resource\/metrics\.go$/,           // resource.mount.test.cjs: the importer list equals the catalogue's sources (BL-495j)
   /^tools\/e2e\//,                                   // guidedKept (archive)
   /^desktop\/src-tauri\/tauri\.conf\.json$/,          // cspGate.test.cjs: the policy the UI must run under (BL-323)
   /^tools\/uiaudit\/csp\//,                            // cspGate.test.cjs: the strict-CSP Playwright harness reads that policy
