@@ -248,7 +248,7 @@ func TestTokensAreNotDerivedFromTheValue(t *testing.T) {
 }
 
 func TestPropertyLearnedNoLeakNoCollision(t *testing.T) {
-	rng := rand.New(rand.NewPCG(7, 9))
+	rng := rand.New(rand.NewPCG(7, 9)) //nolint:gosec // G404: seeded, reproducible test data
 	s := NewSweeper(false)
 	raws := make([]string, 200)
 	seen := map[string]bool{}
