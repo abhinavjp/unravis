@@ -102,7 +102,11 @@ test('SWEEP-F1-05 with Explain simply on, a help block is open and its button st
 });
 
 test('SWEEP-F1-06 in forced colours the chosen range chip is drawn differently from the others', async ({ page }) => {
+  // The chips are drawn by the app after the page loads: wait for the chosen one (under load the read below found none), then switch the colours and let them settle.
+  await expect(page.locator('.quick-ranges .chip[aria-pressed="true"]')).toBeVisible();
+  await expect(page.locator('.quick-ranges .chip[aria-pressed="false"]').first()).toBeVisible();
   await page.emulateMedia({ forcedColors: 'active' });
+  await layoutSettled(page);
   const colours = await page.evaluate(() => {
     const on = document.querySelector<HTMLElement>('.quick-ranges .chip[aria-pressed="true"]')!;
     const off = document.querySelector<HTMLElement>('.quick-ranges .chip[aria-pressed="false"]')!;

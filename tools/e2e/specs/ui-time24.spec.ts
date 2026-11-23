@@ -205,13 +205,15 @@ test('UIFIX-18e The boxes are 24 px or more, in order, readable in both themes, 
     await box(page, 'current-start').fill('x');
     await box(page, 'current-start').blur();
     // Switching the theme and marking the box invalid each start a colour transition (.01 ms under reduced motion, but still running until the next frame), so a colour read in the
-    // same frame is one the box is leaving: the grey edge (2.98:1 in light) or the background of the other theme. Read the edge and the background together until the transitions have
-    // ended; the 3:1 limit is unchanged.
-    await expect.poll(() => box(page, 'current-start').evaluate((e) => {
+    // same frame is one the box is leaving: the grey edge (2.98:1 in light) or the background of the other theme. Wait until the page has settled, then read the final edge and
+    // background once and hold them to the 3:1 limit (unchanged). A poll would pass on the first sample that reached 3, which can be a colour the box is leaving.
+    await layoutSettled(page);
+    const final = await box(page, 'current-start').evaluate((e) => {
       const rgb = (s: string) => (s.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
       const s = getComputedStyle(e);
       return { border: rgb(s.borderTopColor), back: rgb(s.backgroundColor) };
-    }).then((now) => contrast(now.border, now.back)), { message: scheme + ' error border' }).toBeGreaterThanOrEqual(3);
+    });
+    expect(contrast(final.border, final.back), scheme + ' error border').toBeGreaterThanOrEqual(3);
     await box(page, 'current-start').fill('08:00');
     await box(page, 'current-start').blur();
   }
