@@ -8,8 +8,12 @@
     1. Reads the release lock (read only, never written here). A held lock with merges on hold stops it (or waits, -WaitMinutes).
     2. Picks the commit: the tip of develop, or -UpTo <sha> (a commit that is on develop).
     3. Refuses when master already contains that commit ("nothing to promote").
-    4. Creates the branch promote/<sha7> at that commit, merges master into it on GitHub (when master has commits it lacks),
-       opens a pull request into master listing every pull request being promoted.
+    4. Creates the branch promote/<sha7> at that commit, merges master into it on GitHub (when master has commits it lacks).
+    4b. Rebuilds the generated web files (web/dist, cmd/unravis-setup/ui, cmd/unravis-lite/ui) on THIS PC with Node 22.23.5 in a
+       temporary clone of the promote branch (tools/release/promote-dist.mjs), and pushes ONE extra commit when they differ from what
+       the branch holds. Pull requests into develop do not commit those files (docs/pipeline/dist-on-promotion.md). It builds twice and
+       runs web/scripts/check-dist.cjs, so a build that does not give the same bytes stops the promotion before any pull request exists.
+       Then opens a pull request into master listing every pull request being promoted.
     5. Waits for the required check `build` (the full ci.yml: Windows tests, race, exe build, screenshots, docs, ...).
     6. Merges with a MERGE commit, not a squash, so every develop commit stays in master's history (release notes read it).
   The release manager (Release.ps1) then cuts from master as before; its "CI green on master" wait is on the push run of the merge commit.
@@ -31,6 +35,8 @@ param(
     [string]$Repo = 'abhinavjp/unravis'
 )
 $ErrorActionPreference = 'Stop'
+# The Node version CI builds the web files with (ci.yml, release.yml, fast-gate.yml: node-version). tools/ci/test-promote-dist.mjs checks they agree.
+$DistNodeVersion = '22.23.5'
 function Stop-Here([string]$msg) { Write-Host $msg -ForegroundColor Red; exit 1 }
 # Not named Gh: PowerShell finds commands case-insensitively, so a function Gh made "& gh" call itself (call depth overflow).
 function Invoke-Gh { $out = & gh @args 2>&1; if ($LASTEXITCODE -ne 0) { throw "gh $($args -join ' ') failed: $($out | Out-String)" }; ($out | Out-String).Trim() }
@@ -92,6 +98,14 @@ Write-Host "Every one of the $walked first-parent commit(s) is the merge of a pu
 
 $allowMerge = Invoke-Gh api "repos/$Repo" --jq '.allow_merge_commit'
 if ($allowMerge -ne 'true') { Stop-Here 'This repository does not allow merge commits (Settings > General > Pull Requests > Allow merge commits). The promotion must be a merge commit so develop history stays in master. Turn it on once, then run again.' }
+
+# The web files are rebuilt on this PC (step 4b): Node must be the pinned version and git and npm must be there. Checked now, before
+# anything is created on GitHub, so a missing tool never leaves a half-made promotion.
+$nodeNow = ''
+try { $nodeNow = ((& node --version 2>$null) | Out-String).Trim() } catch { $nodeNow = '' }
+if ($nodeNow -ne "v$DistNodeVersion") { Stop-Here "Node $DistNodeVersion is needed to rebuild the web files for the promotion (found: '$nodeNow'). Install it (nvm, fnm, or the installer) and run again." }
+foreach ($tool in 'git', 'npm') { if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { Stop-Here "$tool is needed to rebuild the web files for the promotion and was not found." } }
+Write-Host "Web files: will be rebuilt with Node $DistNodeVersion and committed to the promote branch when they differ (docs/pipeline/dist-on-promotion.md)."
 if ($DryRun) { Write-Host 'Dry run: nothing created.'; exit 0 }
 
 # --- 4. branch, bring master in, pull request ------------------------------------------------------------------------
@@ -99,26 +113,86 @@ $branch = "promote/$short"
 $existing = & gh api "repos/$Repo/git/ref/heads/$branch" --jq '.object.sha' 2>$null
 if ($LASTEXITCODE -eq 0 -and $existing) {
     # Reuse only a branch that holds the chosen commit (it may also hold master merged in); anything else is somebody else's work.
-    $st = Invoke-Gh api "repos/$Repo/compare/${sha}...${branch}" --jq '.status'
+    # Judged at the commit read above ($existing), not at the branch name, so a push that lands during these checks is not covered by them.
+    $st = Invoke-Gh api "repos/$Repo/compare/${sha}...${existing}" --jq '.status'
     if ($st -notin 'identical', 'ahead') { Stop-Here "Branch $branch exists but does not contain $short. Delete it on GitHub (or use another -UpTo) and run again." }
     # What it holds beyond the chosen commit may be only commits master already has and this script's own "Merge master into ..."
     # commits; anything else is unreviewed code that would ride into master with the promotion.
-    $extra = Split-Lines (Invoke-Gh api "repos/$Repo/compare/${sha}...${branch}" --paginate --jq '.commits[] | .sha + " " + (.commit.message | split("\n")[0])')
+    $extra = Split-Lines (Invoke-Gh api "repos/$Repo/compare/${sha}...${existing}" --paginate --jq '.commits[] | .sha + " " + (.commit.message | split("\n")[0])')
     $foreign = @()
+    # The subject "Merge master into ..." is only a claim: anyone with a push token can write it on a commit that carries code. Such a
+    # commit is accepted only when it is a CLEAN merge of master (its second parent is on master and its tree is what git's own merge
+    # of its parents gives: Test-CleanMasterMerge, the rule Get-PromotionSideCommits applies when the release is signed). One fetch
+    # into a throw-away bare repository judges them all.
+    $mergeIns = @{}
+    $claimed = @($extra | Where-Object { ($_ -split ' ', 2)[1] -like "Merge master into $branch*" } | ForEach-Object { ($_ -split ' ', 2)[0] })
+    if ($claimed.Count) {
+        $tok = (& gh auth token 2>$null | Out-String).Trim()
+        if (-not $tok) { Stop-Here 'No GitHub token (gh auth token) to fetch the branch for the merge check.' }
+        try { $mergeIns = Test-RemoteMergeIns "https://github.com/$Repo.git" $branch $claimed $tok } catch { Stop-Here "Could not check the 'Merge master into' commits of ${branch}: $($_.Exception.Message)" }
+    }
     foreach ($e in $extra) {
         $esha, $emsg = $e -split ' ', 2
-        if ($emsg -like "Merge master into $branch*") { continue }
+        if ($emsg -like "Merge master into $branch*") {
+            if ($mergeIns.ContainsKey($esha) -and $mergeIns[$esha].Ok) { continue }
+            $foreign += "$($esha.Substring(0, 7)) ($(if ($mergeIns.ContainsKey($esha)) { $mergeIns[$esha].Why } else { 'not checked' }))"; continue
+        }
+        # The generated web files commit of an earlier run of this script (step 4b; the same rule as Get-PromotionSideCommits in
+        # ReleaseLib.ps1): the fixed subject, one parent, and only files under the three generated folders (case sensitive: -cnotmatch).
+        # Without this a re-run after -NoMerge, a slow or failed CI run, or a refused merge would call that commit foreign and demand
+        # that the branch be deleted (closing the pull request and wasting a full CI run). The commit API pages its file list (read with --paginate) and holds at most 3000 files: more is not trusted.
+        if ($emsg -clike 'Rebuild web files for promotion*') {
+            $np = [int](Invoke-Gh api "repos/$Repo/commits/$esha" --jq '.parents | length')
+            $gfiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$esha" --paginate --jq '.files[].filename')
+            $outside = @($gfiles | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' })
+            if ($np -eq 1 -and $gfiles.Count -gt 0 -and $gfiles.Count -lt 3000 -and $outside.Count -eq 0) { continue }
+        }
         if ([int](Invoke-Gh api "repos/$Repo/compare/master...$esha" --jq '.ahead_by') -eq 0) { continue }
         $foreign += $esha.Substring(0, 7)
     }
     if ($foreign.Count) { Stop-Here "Branch $branch has commits that are not on master and not 'Merge master into $branch': $($foreign -join ', '). Delete the branch on GitHub and run again." }
     Write-Host "Branch $branch already exists; reusing it."
+    $headAfterMerge = $existing.Trim().ToLowerInvariant()
 }
-else { $null = Invoke-Gh api "repos/$Repo/git/refs" -f "ref=refs/heads/$branch" -f "sha=$sha" }
+else { $null = Invoke-Gh api "repos/$Repo/git/refs" -f "ref=refs/heads/$branch" -f "sha=$sha"; $headAfterMerge = $sha.ToLowerInvariant() }
 if ($cmp.behind -gt 0) {
-    $null = & gh api "repos/$Repo/merges" -f "base=$branch" -f 'head=master' -f "commit_message=Merge master into $branch" 2>&1
-    if ($LASTEXITCODE -ne 0) { Stop-Here "master could not be merged into $branch on GitHub (a conflict, most likely). Merge origin/master into develop by pull request, resolve it there, then run again. The branch $branch is left for you to delete." }
+    $mergeOut = & gh api "repos/$Repo/merges" -f "base=$branch" -f 'head=master' -f "commit_message=Merge master into $branch" 2>&1
+    $mergeExit = $LASTEXITCODE
+    if ($mergeExit -eq 0) {
+        # 201 returns the new merge commit (its first parent must be the head this run checked); 204 (master already in) returns nothing.
+        $mj = $null; try { $mj = ($mergeOut | Out-String) | ConvertFrom-Json } catch { $mj = $null }
+        if ($mj -and $mj.sha) {
+            if (@($mj.parents).Count -ne 2 -or "$($mj.parents[0].sha)".ToLowerInvariant() -ne $headAfterMerge) { Stop-Here "The merge of master into $branch did not build on the head this run checked ($($headAfterMerge.Substring(0, 7))): someone pushed to the branch meanwhile. Nothing was merged. Delete the branch on GitHub if it is not yours, and run again." }
+            $headAfterMerge = "$($mj.sha)".ToLowerInvariant()
+        }
+    }
+    if ($mergeExit -ne 0) { Stop-Here "master could not be merged into $branch on GitHub (a conflict, most likely). Merge origin/master into develop by pull request (a merge commit), resolve it there (for the three generated web folders take master's files: git restore --source=origin/master --staged --worktree -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui; it also deletes the files master does not have), then run again. The branch $branch is left for you to delete." }
 }
+# $headAfterMerge: the head this run starts from (the branch as made or reused, with master merged in), tracked from the commits
+# checked above. Nothing may be added to it except by this script's own web files commit (step 4b); the pull request is merged only
+# at the head chosen below (SUP-1).
+# --- 4b. the generated web files, built once for the whole promotion ------------------------------------------------------
+# Runs before the pull request is opened, so its CI run starts once, on the final head. Idempotent: a branch that already holds the
+# rebuilt files gets no new commit. A failure here stops the promotion (nothing is merged; the branch is left for the next run).
+# The script's own output is shown as it comes and also read: it must end with DIST_COMMIT=none or DIST_COMMIT=<sha>. Without that line
+# (Node exited 0 without doing the work) the promotion stops here instead of opening a pull request that check-dist would fail.
+$distLines = @(& node (Join-Path $PSScriptRoot 'promote-dist.mjs') --repo $Repo --branch $branch --node-version $DistNodeVersion | ForEach-Object { Write-Host $_; $_ })
+$distExit = $LASTEXITCODE
+if ($distExit -ne 0) { Stop-Here "Rebuilding the web files for $branch failed (see above). Nothing was merged. Fix the cause and run again; the branch $branch is reused." }
+$distDone = @($distLines | Where-Object { "$_" -match '^DIST_COMMIT=(none|[0-9a-f]{40})\s*$' })
+if ($distDone.Count -ne 1) { Stop-Here "promote-dist.mjs did not report DIST_COMMIT=none or DIST_COMMIT=<sha>, so it is not known that the web files were rebuilt. Nothing was merged. Run it again, or ask for help; the branch $branch is reused." }
+
+# The one head this run may merge: the commit the web files step pushed, or (nothing to rebuild) the branch as it was before that step.
+$distSha = (("$($distDone[0])" -replace '^DIST_COMMIT=', '').Trim())
+$expectedHead = if ($distSha -ne 'none') { $distSha } else { $headAfterMerge }
+if ($distSha -ne 'none') {
+    # The web files commit must sit directly on the head this run checked, or a commit pushed during the build would ride under it.
+    $distParents = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$distSha" --jq '.parents[].sha')
+    if ($distParents.Count -ne 1 -or $distParents[0].ToLowerInvariant() -ne $headAfterMerge) { Stop-Here "The web files commit $($distSha.Substring(0, 7)) is not directly on the head this run checked ($($headAfterMerge.Substring(0, 7))): someone pushed to $branch meanwhile. Nothing was merged. Delete the branch on GitHub if it is not yours, and run again." }
+}
+function Assert-HeadIsExpected([string]$Actual) { try { Assert-PromotionHead $expectedHead $Actual $branch } catch { Stop-Here $_.Exception.Message } }
+Assert-HeadIsExpected ((Invoke-Gh api "repos/$Repo/git/ref/heads/$branch" --jq '.object.sha').ToLowerInvariant())
+
 $prList = & gh pr list --repo $Repo --head $branch --base master --state open --json number --jq '.[0].number' 2>$null
 if ($prList) { $pr = [int]$prList; Write-Host "Pull request #$pr already open." }
 else {
@@ -126,6 +200,8 @@ else {
 Promotes develop up to ``$short`` to master (the release train, docs/ci/RELEASE-TRAIN.md). This is the one full CI run for these changes.
 
 Merge it with a merge commit (not a squash): the promotion script does that.
+
+The branch ends with one generated commit, "Rebuild web files for promotion", holding the rebuilt web/dist, cmd/unravis-setup/ui and cmd/unravis-lite/ui (pull requests into develop do not commit them). check-dist in this run proves they equal a fresh build.
 
 $($lines -join "`n")
 "@
@@ -141,7 +217,9 @@ $until = (Get-Date).AddMinutes($CiWaitMinutes); $state = ''
 while ($true) {
     # Judge only the ci.yml run of THIS pull request (event pull_request, on the head commit), never the checks of other events or
     # workflows that happen to sit on the same commit (the push run of develop, the fast gate). Its job `build` is the gate.
-    $head = Invoke-Gh pr view $pr --repo $Repo --json headRefOid --jq '.headRefOid'
+    # GitHub moves a pull request's head a moment after a push: read again (3 reads, 5 s apart) before calling a difference a push by someone else.
+    $head = Read-SettledPromotionHead { Invoke-Gh pr view $pr --repo $Repo --json headRefOid --jq '.headRefOid' } $expectedHead
+    Assert-HeadIsExpected $head
     $runs = @(& gh run list --repo $Repo --workflow ci.yml --event pull_request --commit $head --json databaseId,status,createdAt | ConvertFrom-Json | Sort-Object createdAt -Descending)
     if ($runs.Count -and $runs[0].status -eq 'completed') {
         $jobs = (& gh run view $runs[0].databaseId --repo $Repo --json jobs | ConvertFrom-Json).jobs
@@ -158,6 +236,6 @@ Write-Host 'build is green.'
 # --- 6. lock again, then merge (a release may have started while CI ran) ---------------------------------------------
 $lock = Get-Lock
 if ($lock -and $lock.state -eq 'held' -and $lock.holdMerges) { Stop-Here "A release took the lock while CI ran (stage $($lock.stage)). Pull request #$pr stays open and green; run again after the release." }
-& gh pr merge $pr --repo $Repo --merge --match-head-commit $head 2>&1 | Out-Host
+& gh pr merge $pr --repo $Repo --merge --match-head-commit $expectedHead 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) { Stop-Here "The merge was refused (master may have moved: run again, it brings master in and waits for build once more)." }
 Write-Host "Promoted develop up to ${short} to master. The full CI run on master's new commit is the one the release manager waits for." -ForegroundColor Green

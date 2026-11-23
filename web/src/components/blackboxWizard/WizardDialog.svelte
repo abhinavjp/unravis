@@ -24,6 +24,7 @@
     onLeave,
     onPrimary,
     enterNeedsButton = false,
+    fixedHeight = false,
     header,
     rail,
     body,
@@ -36,6 +37,7 @@
     labels: Labels;
     onLeave: () => void;       // after the owner confirms Leave, or at once when finished
     onPrimary: () => void;     // Enter, when it is allowed
+    fixedHeight?: boolean;     // true for the Place wizard: one height for every step, so the buttons stay where the pointer is
     enterNeedsButton?: boolean; // true on the step whose primary button really does the work: Enter then acts only on that button itself
     header: Snippet;
     rail: Snippet;
@@ -55,6 +57,9 @@
   let beforeLeave: HTMLElement | null = null;  // what had focus before the leave question opened
   let noteTimer: ReturnType<typeof setTimeout> | undefined;
   let lastEscape = -Infinity;       // one key press must count once, even if the browser also fires "cancel"
+  let shell = $state<HTMLElement | null>(null);   // the pop-up's own frame: a safe place for focus while a button is off
+  let lastFocus: HTMLElement | null = null;       // the last control inside the pop-up that had focus
+  let parked: HTMLElement | null = null;          // a control that lost focus because it was turned off for a moment
 
   const leaveTitleId = $derived(titleId + '-leave-title');
   const leaveBodyId = $derived(titleId + '-leave-body');
@@ -111,6 +116,40 @@
       dialog.close();
       restoreOpener();
     }
+  });
+
+  // A button that is turned off while its action runs (Check again, Show, Read the host ...) would drop focus to the page
+  // behind, and the next Esc would then close the drawer as well. So focus waits on the pop-up's own frame, and goes back
+  // to the button when it is on again. A control that is replaced by another one handles its own focus.
+  $effect(() => {
+    if (!dialog) return;
+    const target = dialog;
+    const gone = () => { const a = document.activeElement; return !a || a === document.body || a === document.documentElement; };
+    const watch = new MutationObserver(() => {
+      if (!target.open || !shell) return;
+      if (lastFocus && lastFocus.isConnected && (lastFocus as HTMLButtonElement).disabled && (document.activeElement === lastFocus || gone())) {
+        parked = lastFocus;
+        shell.focus({ preventScroll: true });
+        return;
+      }
+      if (parked && parked.isConnected && !(parked as HTMLButtonElement).disabled && (document.activeElement === shell || gone())) {
+        const back = parked;
+        parked = null;
+        back.focus({ preventScroll: true });
+      } else if (parked && !parked.isConnected) {
+        parked = null;
+      }
+    });
+    const seen = (event: FocusEvent) => {
+      const t = event.target;
+      if (t instanceof HTMLElement && t !== shell) { lastFocus = t; if (t !== parked) parked = null; }
+    };
+    watch.observe(target, { subtree: true, attributes: true, attributeFilter: ['disabled'] });
+    // A click or touch is the person choosing where focus goes, so nothing is pulled back to the parked button afterwards (N6).
+    const chose = () => { parked = null; };
+    target.addEventListener('focusin', seen);
+    target.addEventListener('pointerdown', chose);
+    return () => { watch.disconnect(); target.removeEventListener('focusin', seen); target.removeEventListener('pointerdown', chose); };
   });
 
   // Work starting hides the leave question: nothing can be left while it runs.
@@ -216,9 +255,9 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<dialog class="pop" bind:this={dialog} aria-labelledby={titleId} oncancel={onCancel} onclose={onClose} onkeydown={onKey}>
+<dialog class="pop" class:fixed={fixedHeight} bind:this={dialog} aria-labelledby={titleId} oncancel={onCancel} onclose={onClose} onkeydown={onKey}>
   <div class="frame">
-    <div class="shell" inert={leaving}>
+    <div class="shell" inert={leaving} bind:this={shell} tabindex="-1">
       <button type="button" class="x" aria-label={labels.close} onclick={handleLeaveRequest}>&times;</button>
       <div class="shell-rail">{@render rail()}</div>
       <div class="shell-head">{@render header()}</div>
@@ -245,8 +284,10 @@
 <style>
   dialog.pop { font-size: 14px; width: min(680px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100vh - 48px); max-height: calc(100dvh - 48px); margin: auto; padding: 0; overflow: hidden; color: var(--text); background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-md); box-shadow: 0 24px 64px var(--scrim); }
   dialog.pop::backdrop { background: var(--scrim); }
-  /* The drawer styles every details/summary inside it with a chevron and a gap. This dialog sits inside the drawer, so undo that here. */
-  :global(dialog.pop.pop details > summary) { gap: 0; }
+  /* BLACKBOX-03: the one chevron for every disclosure row is the global one in app.css (summary::before). The drawer's own
+     chevron (summary::after) is switched off in this pop-up, so a row never shows two. The row text is the same size and
+     colour as the rest of the pop-up, so it does not look like a grey caption. */
+  :global(dialog.pop.pop details > summary) { gap: 0; min-height: 24px; color: var(--text); font-size: var(--fs-3); font-weight: 500; }
   :global(dialog.pop.pop details > summary::after) { content: none; display: none; }
   /* The shared target picker is made for the small settings panel. In the pop-up its rows are bigger, so a finger or a pointer can hit them. */
   :global(dialog.pop .bb-check) { align-items: center; min-height: 36px; font-size: var(--fs-4); }
@@ -257,12 +298,16 @@
   @keyframes pop-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
   .frame { position: relative; display: grid; max-height: inherit; }
+  .shell:focus { outline: none; }
   .shell { position: relative; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; max-height: calc(100vh - 50px); max-height: calc(100dvh - 50px); min-height: 0; }
   /* The right side is kept clear for the close button (12px in, 40px wide, 8px gap), so the last dot never sits under it. A rail
      that is wider than what is left scrolls sideways. */
-  .shell-rail { min-width: 0; padding: var(--space-5) var(--space-6) 0 var(--space-6); }
+  .shell-rail { min-width: 0; padding: var(--space-5) calc(var(--space-3) + 40px + var(--space-2)) 0 var(--space-6); }
   .shell-head { display: grid; gap: var(--space-1); padding: var(--space-5) var(--space-6) var(--space-4); border-bottom: 1px solid var(--hairline); }
-  .shell-body { display: grid; align-content: start; gap: var(--space-5); min-height: 0; padding: var(--space-6); overflow: auto; }
+  .shell-body { position: relative; display: grid; align-content: start; gap: var(--space-5); min-height: 0; padding: var(--space-6); overflow: auto; }
+  .shell-foot:empty { display: none; }
+  /* BLACKBOX-11: the Place wizard keeps one height on every step, so Next does not move when the step changes. */
+  dialog.pop.fixed .shell { height: min(700px, calc(100vh - 50px)); height: min(700px, calc(100dvh - 50px)); }
   .shell-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-4) var(--space-6); border-top: 1px solid var(--hairline); background: var(--surface); }
 
   /* The close button sits in the top corner, 40px square. */
@@ -288,6 +333,7 @@
     dialog.pop { width: 100vw; max-width: 100vw; height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }
     .frame { height: 100%; }
     .shell { height: 100%; max-height: none; }
+    dialog.pop.fixed .shell { height: 100%; }
     .shell-rail { padding: var(--space-4) calc(var(--space-3) + 40px + var(--space-2)) 0 var(--space-4); }
     .shell-head { padding-left: var(--space-4); padding-right: calc(var(--space-4) + 32px); }
     .shell-body { padding: var(--space-4); }

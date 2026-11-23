@@ -291,3 +291,76 @@ func TestReadOpenedSettingsHoldsTheFileWhileReading(t *testing.T) {
 		t.Fatalf("read %q, %v; want %q", got, err, want)
 	}
 }
+
+// The stage and fallback decision of every refusal the real reader can be made to give here. Only an open-stage access or unreadable may
+// fall back; a refusal before the open, and one after it, never do. (An after-open access or unreadable cannot be made on a CI runner, so
+// those two are pinned by TestWindowsReaderTagsOnlyTheOpenAsOpenStage and the pure tests, which run on every platform.)
+func TestReadVerifiedSettingsRefusalStages(t *testing.T) {
+	good := lockedSettings(t, []byte(`{}`))
+	owner := lockedWith(t, []byte(`{}`), "S-1-5-32-545", "D:PAI(A;;FA;;;SY)(A;;FA;;;BA)")
+	big := lockedSettings(t, bytes.Repeat([]byte("a"), maxConfigBytes+1))
+	via := filepath.Join(t.TempDir(), "via")
+	junction(t, via, filepath.Dir(good))
+	dir := filepath.Dir(good)
+	target := filepath.Join(dir, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	leaf := filepath.Join(dir, "settings.json")
+	junction(t, leaf, target)
+
+	for _, c := range []struct {
+		name, path, stage, word string
+		fallback                bool
+	}{
+		{"a relative path", `blackbox.json`, StagePreOpen, WordPath, false},
+		{"a junction leaf", leaf, StagePreOpen, WordChain, false},
+		{"a missing file (found by the chain check)", filepath.Join(dir, "none.json"), StagePreOpen, WordNotFound, false},
+		{"a file owned by Users", owner, StageAfterOpen, WordOwner, false},
+		{"a file over the limit", big, StageAfterOpen, WordTooLarge, false},
+		// Through the full reader the chain check sees the junction first (pre-open, chain); "moved" after the open is pinned by
+		// TestReadOpenedSettingsRefusesAPathThroughAJunction, which calls the opener directly.
+		{"a folder above is a junction", filepath.Join(via, filepath.Base(good)), StagePreOpen, WordChain, false},
+	} {
+		got, err := OSEnv{}.ReadVerifiedSettings(c.path)
+		mustRefuse(t, got, err, c.name, c.word)
+		if RefusalStage(err) != c.stage || FallbackAllowedFor(err) != c.fallback {
+			t.Errorf("%s: stage %q fallback %v, want %q and %v", c.name, RefusalStage(err), FallbackAllowedFor(err), c.stage, c.fallback)
+		}
+	}
+
+	// The open itself: a missing file and a junction at the handle are refused by CreateFile, so they are open-stage refusals. The junction is
+	// refused with access denied, the one case the temporary fallback is for; a missing file (not-found) never falls back.
+	_, err := readOpenedSettings(filepath.Join(dir, "none.json"))
+	if RefusalStage(err) != StageOpen || RefusalWord(err) != WordNotFound || FallbackAllowedFor(err) {
+		t.Errorf("a missing file at the open: stage %q word %q fallback %v", RefusalStage(err), RefusalWord(err), FallbackAllowedFor(err))
+	}
+	_, err = readOpenedSettings(leaf)
+	switch RefusalWord(err) {
+	case WordAccess: // CreateFile refused the folder: open stage, and the only case that may fall back
+		if RefusalStage(err) != StageOpen || !FallbackAllowedFor(err) {
+			t.Errorf("a junction refused at the open: stage %q fallback %v, want open and true", RefusalStage(err), FallbackAllowedFor(err))
+		}
+	case WordFolder, WordLink: // opened, then refused on the handle: after the open, never a fallback
+		if RefusalStage(err) != StageAfterOpen || FallbackAllowedFor(err) {
+			t.Errorf("a junction refused on the handle: stage %q fallback %v, want after-open and false", RefusalStage(err), FallbackAllowedFor(err))
+		}
+	default:
+		t.Errorf("a junction at the handle gave word %q", RefusalWord(err))
+	}
+
+	// A sharing violation that is never released: open stage, but never a fallback.
+	name, _ := windows.UTF16PtrFromString(good)
+	h, herr := windows.CreateFile(name, windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if herr != nil {
+		t.Fatal(herr)
+	}
+	t.Cleanup(func() { windows.CloseHandle(h) })
+	oldSleep := settingsSleep
+	settingsSleep = func(time.Duration) {}
+	t.Cleanup(func() { settingsSleep = oldSleep })
+	_, err = readOpenedSettings(good)
+	if RefusalStage(err) != StageOpen || RefusalWord(err) != WordSharing || FallbackAllowedFor(err) {
+		t.Errorf("a held file: stage %q word %q fallback %v, want open, sharing, false", RefusalStage(err), RefusalWord(err), FallbackAllowedFor(err))
+	}
+}

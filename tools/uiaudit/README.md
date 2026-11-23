@@ -35,6 +35,7 @@ Sideways scroll, elements past the window edge, cut-off or spilling text, overla
 (under 24 px, and under 44 px on a phone as a note), text contrast (WCAG AA), text under 11 px, controls in a row or blocks in a
 stack that are a few pixels off line, broken pictures, code words on screen (`undefined`, `NaN`), buttons and fields with no name,
 duplicate ids, heading jumps, big surfaces of the wrong brightness for the theme, console errors, failed requests and server errors.
+A tap target smaller than 24 px may be grown by an absolutely positioned `::before` or `::after` of the control, but only when the browser confirms it (`elementFromPoint` at the centre and the four corners of that rectangle, all inside the window, must answer with the control) and the rectangle touches the control's box: a far-off, clipped, covered or shrunk pseudo-element does not count.
 `lib/page-checks.js` does the looking inside the page. Closed `<details>` and hidden things are skipped.
 The window is stretched to the height of the content before the checks, because the app is a fixed-height shell with inner scrollers.
 
@@ -45,7 +46,7 @@ a person's taste. The report says so too.
 
 `tools/screens/screens.json` (the user-guide screens, so the guide and the audit cannot drift apart) plus `extra-screens.json`
 (screens the guide does not show: Where is it?, All operations, Patterns, Ledger, the case Timeline, Blackbox charts, and so on).
-Steps may also `upload` made-up fixture files (`lib/fixtures.ts`, generated in memory) to a real file input, use `macro` (steps listed once under `macros` in `extra-screens.json`), and mark a part of a screen that only newer builds have with `feature` (`[selector, what]`): when it is not there the screen is listed under "Screens not reachable on this build" and does not fail the run. A screen with `"restoreHosts": true` changes the demo's list of computers and has it put back afterwards. The add-files screens are p10-files-1 to 7 (BL-481).
+Steps may also `clickCentre` (a mouse click on the middle of an element that takes no pointer events itself, such as the red diamonds of the Timeline that open the Slow call screen, x-slow-call), `upload` made-up fixture files (`lib/fixtures.ts`, generated in memory) to a real file input, use `macro` (steps listed once under `macros` in `extra-screens.json`), and mark a part of a screen that only newer builds have with `feature` (`[selector, what]`): when it is not there the screen is listed under "Screens not reachable on this build" and does not fail the run. A screen with `"restoreHosts": true` changes the demo's list of computers and has it put back afterwards. The add-files screens are p10-files-1 to 7 (BL-481).
 A screen whose steps fail (a renamed button, a screen only Windows can reach) is listed as **not reached**: that is a gap, not a pass.
 
 To add a screen: add an entry to `extra-screens.json` (same step language as `tools/screens/capture.spec.ts`), run it with

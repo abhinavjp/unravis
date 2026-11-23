@@ -190,6 +190,7 @@ export const DRILL_TEXT = {
   notShownWholeDb: 'The database lane covers the whole database, not only this API.',
   notShownIis: 'The web server log keeps whole seconds and the time a request ended.',
   coverageNote: 'Hatched means that source has nothing recorded for that time.',
+  pretendSummary: 'Demo only',
   pretendLabel: 'Pretend the database is:',
   pretendNote: 'Demo only. This changes what the screen shows, not the data.',
   pretendReal: 'Real data',
@@ -275,6 +276,11 @@ export const DRILL_TEXT = {
   colFromCall: 'From this call',
   colUser: 'User',
   colApi: 'API',
+  // The name of the button in the API cell of a nearby call: the visible words stay first, the time (to the millisecond) tells equal API names apart.
+  openNearbyCall: (api: string, time: string): string => `${api}: open this call, started ${time}`,
+  // The name of the button of an All sources row: the visible words first (with the "this call" mark when shown), then the source, the time to the
+  // millisecond and the duration. Two rows with the same words, source and millisecond still share a name (the selected state tells them apart).
+  openSourceItem: (what: string, source: string, time: string, took: string): string => [what, source, time, took ? `took ${took}` : ''].filter(Boolean).join(', '),
   colTook: 'Took',
   colDatabase: 'Database',
   colRedis: 'Redis',
@@ -383,6 +389,8 @@ const SAMPLE = {
   tabNearbyCalls: 12,
   tabAllSources: 12,
   nearbyHint: ['10:00', '10:30', 12] as const,
+  openNearbyCall: ['Orders.Get', '10:14:07.123'] as const,
+  openSourceItem: ['Orders.Get', 'API calls', '10:14:07.123', '1.2 s'] as const,
   windowCalls: [12, '10:00', '10:30'] as const,
   allHeading: 12,
   rowsCapped: [200, 450] as const,
@@ -452,6 +460,8 @@ export const drillCopyEntries = (): LintEntry[] => {
     ['tabNearbyCalls', DRILL_TEXT.tabNearbyCalls(SAMPLE.tabNearbyCalls)],
     ['tabAllSources', DRILL_TEXT.tabAllSources(SAMPLE.tabAllSources)],
     ['nearbyHint', DRILL_TEXT.nearbyHint(...SAMPLE.nearbyHint)],
+    ['openNearbyCall', DRILL_TEXT.openNearbyCall(...SAMPLE.openNearbyCall)],
+    ['openSourceItem', DRILL_TEXT.openSourceItem(...SAMPLE.openSourceItem)],
     ['windowCalls', DRILL_TEXT.windowCalls(...SAMPLE.windowCalls)],
     ['allHeading', DRILL_TEXT.allHeading(SAMPLE.allHeading)],
     ['rowsCapped', DRILL_TEXT.rowsCapped(...SAMPLE.rowsCapped)],

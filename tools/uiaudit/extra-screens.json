@@ -280,7 +280,7 @@
     {
       "id": "x-case-timeline",
       "phase": "X",
-      "note": "The case Investigation Timeline.",
+      "note": "The case Investigation timeline.",
       "narrow": true,
       "steps": [
         {
@@ -305,10 +305,98 @@
           "waitFor": "text=Case started"
         },
         {
-          "click": "role=button[name=\"Open the Investigation Timeline\"s]"
+          "click": "role=button[name=\"Open the Investigation timeline\"s]"
         },
         {
           "waitFor": "role=button[name=\"Start tracing\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-slow-call",
+      "phase": "X",
+      "note": "The Slow call screen, opened from the first red diamond of the API lane in the case Timeline (BL-483). The audit reads the HTML labels of the lanes (time zone, peak, zero, drag hint) but not text inside the chart drawing itself.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Orders API stall, 19 October\"]"
+        },
+        {
+          "waitFor": "text=Case started"
+        },
+        {
+          "click": "role=button[name=\"Open the Investigation timeline\"s]"
+        },
+        {
+          "waitFor": ".panel[data-lane=audit] .mark.flagged"
+        },
+        {
+          "clickCentre": ".panel[data-lane=audit] .mark.flagged"
+        },
+        {
+          "waitFor": ".y-peak"
+        }
+      ]
+    },
+    {
+      "id": "x-slow-call-all",
+      "phase": "X",
+      "note": "The Slow call screen on its second tab, All sources in time order, whose rows are real buttons (BL-495 part, UIFIX-40). The default tab, Nearby calls, whose rows are real buttons too, is x-slow-call.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Orders API stall, 19 October\"]"
+        },
+        {
+          "waitFor": "text=Case started"
+        },
+        {
+          "click": "role=button[name=\"Open the Investigation timeline\"s]"
+        },
+        {
+          "waitFor": ".panel[data-lane=audit] .mark.flagged"
+        },
+        {
+          "clickCentre": ".panel[data-lane=audit] .mark.flagged"
+        },
+        {
+          "waitFor": ".y-peak"
+        },
+        {
+          "click": "role=tab[name=/^All sources in time order/]"
+        },
+        {
+          "waitFor": "[data-testid=scall-all-open]"
         }
       ]
     },
@@ -427,7 +515,7 @@
           "goto": "/"
         },
         {
-          "waitFor": "css=#detail h1"
+          "waitFor": "css=#detail h2.dtitle"
         }
       ]
     },
@@ -478,7 +566,7 @@
           "click": "css=li[data-v=\"0.1.0-rc.57\"]"
         },
         {
-          "waitFor": "text=Last stop reason"
+          "waitFor": "text=Stopped at"
         }
       ]
     },
@@ -805,6 +893,138 @@
         }
       ],
       "restoreHosts": true
+    },
+    {
+      "id": "x-update-bar",
+      "phase": "X",
+      "note": "The update bar with its \"Open the release page\" link and nothing in front of it: the Glossary drawer is opened to check for an update and closed again. In the documentation screen p12-update-available the drawer's scrim covers the bar, so the audit cannot tell there whether the link's hit area answers a press (BL-497).",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "goto": "#update=available"
+        },
+        {
+          "click": "role=button[name=\"Glossary\"]"
+        },
+        {
+          "waitFor": "#glossary-title"
+        },
+        {
+          "click": "[data-testid=update-check-button]"
+        },
+        {
+          "waitFor": "[data-testid=update-check-result]"
+        },
+        {
+          "click": ".glossary-drawer button.drawer-close"
+        },
+        {
+          "waitFor": "[data-testid=update-bar-link]"
+        }
+      ]
+    },
+    {
+      "id": "x-wizard-leave-form",
+      "phase": "X",
+      "note": "Add data, Redis card with a typed address: the Leave this form question after Back to the list.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "role=tab[name=\"Add data\"s]"
+        },
+        {
+          "click": "role=tab[name=\"Add data\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"What do you want to add to this case?\"]"
+        },
+        {
+          "click": "role=button[name=/^Redis/]"
+        },
+        {
+          "fill": [
+            "role=textbox[name=/Redis address/]",
+            "cache-1:6379"
+          ]
+        },
+        {
+          "click": "role=button[name=\"Back to the list\"]"
+        },
+        {
+          "waitFor": "role=dialog[name=\"Leave this form?\"]"
+        }
+      ]
+    },
+    {
+      "id": "x-wizard-leave-tab",
+      "phase": "X",
+      "note": "Add data, Redis card with a typed address: the Leave Add data question after a click on another hub tab.",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=\"More\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "role=tab[name=\"Add data\"s]"
+        },
+        {
+          "click": "role=tab[name=\"Add data\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"What do you want to add to this case?\"]"
+        },
+        {
+          "click": "role=button[name=/^Redis/]"
+        },
+        {
+          "fill": [
+            "role=textbox[name=/Redis address/]",
+            "cache-1:6379"
+          ]
+        },
+        {
+          "click": "role=tab[name=\"Sources\"s]"
+        },
+        {
+          "waitFor": "role=dialog[name=\"Leave Add data?\"]"
+        }
+      ]
     }
   ]
 }

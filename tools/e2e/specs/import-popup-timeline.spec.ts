@@ -1,5 +1,5 @@
-// After an import, "Open timeline" in the Import files popup closes it and shows the case's Investigation Timeline with the imported source in place.
-//   IP-15  Two IIS logs imported through the popup; Open timeline shows the Investigation Timeline, the IIS lane is not "no file for this source",
+// After an import, "Open timeline" in the Import files popup closes it and shows the case's Investigation timeline with the imported source in place.
+//   IP-15  Two IIS logs imported through the popup; Open timeline shows the Investigation timeline, the IIS lane is not "no file for this source",
 //          and the server's own answer for the day agrees.
 import { test, expect, type Page } from '../support/fixtures';
 import type { Locator } from '@playwright/test';
@@ -31,7 +31,7 @@ async function openPopup(page: Page, api: ApiFn, title: string): Promise<{ id: s
   const id = await createCase(api, title);
   await goHome(page);
   await openCase(page, title);
-  await page.getByRole('button', { name: 'Add a file' }).first().click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'Add files' });
   await expect(dialog).toBeVisible();
   return { id, dialog };
@@ -41,7 +41,7 @@ test.beforeEach(async ({ api }) => {
   await ensureHost(api);
 });
 
-test('IP-15: after an import, Open timeline shows the case Investigation Timeline with the imported source lines present', async ({ page, api }) => {
+test('IP-15: after an import, Open timeline shows the case Investigation timeline with the imported source lines present', async ({ page, api }) => {
   test.setTimeout(120_000);
   const { id, dialog } = await openPopup(page, api, 'QA Popup Timeline');
   await dialog.getByLabel('Choose files to import').setInputFiles([iis('u_ex261151.log', 'web-a'), iis('u_ex261152.log', 'web-a')]);
@@ -61,7 +61,7 @@ test('IP-15: after an import, Open timeline shows the case Investigation Timelin
   const answered = page.waitForResponse(isTrace);
   await dialog.getByRole('button', { name: 'Open timeline' }).click();
   await expect(dialog).toBeHidden();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
 
   // What the page asked for and was told: the IIS source has a file, so its lane is not the "no file" lane.
   const trace = (await (await answered).json()) as Trace;

@@ -1,4 +1,4 @@
-// The Investigation Timeline against the tracing-paper wireframe, the last gaps: one controls card, the UTC readout under the pickers,
+// The Investigation timeline against the tracing-paper wireframe, the last gaps: one controls card, the UTC readout under the pickers,
 // 24-hour time boxes, "Each bar = ..." under the chart, and the Suspects rail. The demo clock is 2026-10-20T09:00Z, so the default
 // incident window is 08:00-09:00 UTC and the default comparison period 07:00-08:00; the demo audit lane (read live) rises at 08:30.
 //   TLGAP-01  The quick ranges, both windows, the UTC readout, the Sources traced row, Add evidence and Start tracing are in ONE card;
@@ -28,8 +28,8 @@ const WIN_EMPTY = ['2026-09-01T00:00', '2026-09-01T01:00', '2026-08-31T23:00', '
 async function openTimeline(page: Page): Promise<void> {
   await goHome(page);
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect(page.locator('.tracing-chart')).toBeVisible();
 }
 
@@ -98,16 +98,16 @@ test('TLGAP-02: the UTC readout names both periods, follows a quick range and a 
   await openTimeline(page);
   const traces = countTraces(page);
   const echo = card(page).getByTestId('tp-metaline');
-  await expect(echo).toContainText('UTC 2026-10-20T08:00:00Z – 2026-10-20T09:00:00Z');
+  await expect(echo).toContainText('UTC 2026-10-20T08:00Z – 2026-10-20T09:00Z');
   await expect(echo).toContainText('compared with');
-  await expect(echo).toContainText('UTC 2026-10-20T07:00:00Z – 2026-10-20T08:00:00Z');
+  await expect(echo).toContainText('UTC 2026-10-20T07:00Z – 2026-10-20T08:00Z');
   await expect(echo).toContainText('Times are in');
   await expect(echo).toContainText('stores UTC');
   await card(page).locator('.chip[data-quick-id="4h"]').click();
-  await expect(card(page).getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-20T05:00:00Z – 2026-10-20T09:00:00Z');
-  await expect(card(page).getByTestId('utc-echo-reference')).toHaveText('UTC 2026-10-20T01:00:00Z – 2026-10-20T05:00:00Z');
+  await expect(card(page).getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-20T05:00Z – 2026-10-20T09:00Z');
+  await expect(card(page).getByTestId('utc-echo-reference')).toHaveText('UTC 2026-10-20T01:00Z – 2026-10-20T05:00Z');
   await setWindow(page, 'incident', '2026-10-19T22:30', '2026-10-20T01:30');
-  await expect(card(page).getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-19T22:30:00Z – 2026-10-20T01:30:00Z');
+  await expect(card(page).getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-19T22:30Z – 2026-10-20T01:30Z');
   expect(traces.count(), 'a quick range and a picker never read by themselves').toBe(0);
 });
 
@@ -132,7 +132,7 @@ test('TLGAP-03: the time boxes are 24-hour (hour 00-23 and minute) and the windo
   await expect(dialog).toBeHidden();
   await setWindow(page, 'incident', '2026-10-19T22:30', '2026-10-20T01:30');
   await expect(pickerButton(page, 'incident')).toContainText('22:30');
-  await expect(card(page).getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-19T22:30:00Z – 2026-10-20T01:30:00Z');
+  await expect(card(page).getByTestId('utc-echo-incident')).toHaveText('UTC 2026-10-19T22:30Z – 2026-10-20T01:30Z');
   // The box is a keyboard control: a drop-down takes the arrow keys and Escape still closes the picker.
   await openPicker(page, 'incident');
   await pickerTime(page, 'incident', 'end time').getByRole('combobox', { name: 'Incident window end time hour', exact: true }).focus();

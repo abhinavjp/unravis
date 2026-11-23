@@ -1,5 +1,8 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { addGuard } from '../../lib/wizardGuards.svelte';
+  import { holdsUnsavedInput, snapshotFields } from '../../lib/wizardGuards';
+  import ConfirmAsk from './ConfirmAsk.svelte';
   import { wizard } from '../../lib/wizard.svelte';
   import { sourcesView, removeChosen } from '../../lib/wizardSources.svelte';
   import { sourceKey, FILE_KINDS } from '../../lib/wizardSources';
@@ -23,7 +26,7 @@
 
   // The one "Add sources" step, for a new case and for an open one. Left: what is already chosen, grouped by type. Right: pick a kind, fill
   // its short card, come back to the list. Nothing is read here: the last button of the wizard does the reading.
-  let { adding = false, caseId = '', closed = false, existing = [], onFiles }: { adding?: boolean; caseId?: string; closed?: boolean; existing?: Array<{ kind: string; label: string }>; onFiles?: () => void } = $props();
+  let { adding = false, caseId = '', closed = false, closedNote = WIZ.closedCase, existing = [], onFiles }: { adding?: boolean; caseId?: string; closed?: boolean; closedNote?: string; existing?: Array<{ kind: string; label: string }>; onFiles?: () => void } = $props();
 
   type Card = '' | 'pc' | 'mongo' | 'sql' | 'redis' | 'files' | 'blackbox' | 'another';
   let card = $state<Card>('');
@@ -33,6 +36,17 @@
   let seed = $state<{ files: File[]; folder: boolean; says: string[] } | undefined>();
   let from = $state('');
   let connected = $state<string[]>([]);
+  // Typed or ticked input of the open card that is not added yet. Only the fact that it exists is kept (addGuard.entryDirty), never what it holds.
+  let touched = new WeakSet<Element>();
+  let askLeave = $state(false);
+  // The Files card is left out: what it stages is kept for the whole draft (wizardStaging), so leaving it loses nothing.
+  const holdsInput = (): boolean => card !== '' && card !== 'files' && !!cardEl && holdsUnsavedInput(snapshotFields(cardEl, touched));
+  function track(event: Event) {
+    if (event.target instanceof Element) touched.add(event.target);
+    addGuard.entryDirty = holdsInput();
+  }
+  function clearEntry() { touched = new WeakSet(); addGuard.entryDirty = false; askLeave = false; }
+  $effect(() => () => { addGuard.entryDirty = false; });
 
   const tiles: Array<{ id: Exclude<Card, ''>; name: string; sub: string; badge?: string }> = $derived([
     { id: 'pc', ...WIZ.tiles.pc }, { id: 'mongo', ...WIZ.tiles.mongo }, { id: 'sql', ...WIZ.tiles.sql }, { id: 'redis', ...WIZ.tiles.redis },
@@ -56,19 +70,24 @@
   let seenKeys: string[] = wizard.sources.map((s) => sourceKey(s));
   $effect(() => {
     const now = wizard.sources.map((s) => ({ key: sourceKey(s), kind: s.kind, label: s.label || s.ref }));
-    addedNote = addedLine(seenKeys, now, WIZ.added);
+    const line = addedLine(seenKeys, now, WIZ.added);
+    addedNote = line;
+    // What was typed in the open card has just been added: it is saved, not lost. (The local, not addedNote: reading it back would re-run this effect.)
+    if (line !== '') clearEntry();
     seenKeys = now.map((n) => n.key);
   });
   const existingGroups = $derived(railGroups(existing.map((e) => ({ ...e, ref: e.label })), (e) => kindLabel(e.kind)));
 
-  async function back() { card = ''; dropNote = ''; seed = undefined; await tick(); heading?.focus(); }
+  async function back() { clearEntry(); card = ''; dropNote = ''; seed = undefined; await tick(); heading?.focus(); }
+  // The person's own "Back to the list" asks first when the card holds typed input; a card that finished by itself goes back without asking.
+  function askBack() { if (holdsInput()) askLeave = true; else void back(); }
   async function open(c: Card, finding = '', dropped?: { files: File[]; folder: boolean; says: string[] }) {
     // On a case that exists, files go through the one Add files pop-up (it checks them with the server first). The new-case wizard has no case yet, so it stages them here.
     if (c === 'files' && adding && onFiles) { if (dropped) setImportSeed(dropped.files); onFiles(); return; }
-    seed = dropped; card = c; dropNote = ''; from = finding; await tick(); cardEl?.focus(); }
-  function leaveForm() { from = ''; card = 'pc'; }
+    clearEntry(); seed = dropped; card = c; dropNote = ''; from = finding; await tick(); cardEl?.focus(); }
+  function leaveForm() { clearEntry(); from = ''; card = 'pc'; }
   function markConnected() { if (from !== '' && !connected.includes(from)) connected = [...connected, from]; }
-  function connectedDone() { if (from !== '' && !connected.includes(from)) connected = [...connected, from]; from = ''; card = 'pc'; }
+  function connectedDone() { if (from !== '' && !connected.includes(from)) connected = [...connected, from]; clearEntry(); from = ''; card = 'pc'; }
   async function drop(event: DragEvent) {
     event.preventDefault();
     if (closed) return;
@@ -91,8 +110,8 @@
 </script>
 
 <div class="step">
-  <p class="nutshell"><strong>{WIZ.nutshell}:</strong> {WIZ.nutshellText}</p>
-  {#if closed}<p class="inline-error" role="alert">{WIZ.closedCase}</p>{/if}
+  <div class="nutshell"><b>{WIZ.nutshell}</b><p>{WIZ.nutshellText}</p></div>
+  {#if closed}<p class="inline-error" role="alert">{closedNote}</p>{/if}
 
   <div class="layout">
     <section class="rail" aria-label={WIZ.railHeading}>
@@ -136,8 +155,9 @@
           </details>
         {/if}
       {:else}
-        <div class="cardwrap" tabindex="-1" bind:this={cardEl}>
-        <div class="cardbar"><button type="button" class="secondary-button" onclick={() => void back()}>{WIZ.back}</button></div>
+        <!-- Typing or ticking anywhere in the card bubbles up here, so the card can tell whether leaving would lose something. -->
+        <div class="cardwrap" tabindex="-1" bind:this={cardEl} oninput={track} onchange={track}>
+        <div class="cardbar"><button type="button" class="secondary-button" onclick={askBack}>{WIZ.back}</button></div>
         {#if dropNote}<p class="hint" role="status">{dropNote}</p>{/if}
         {#if card === 'pc'}<FindOnPc {connected} onCard={(c, f) => void open(c, f ?? '')} onDone={() => void back()} />
         {:else if card === 'mongo'}{#if from !== ''}<p class="hint">{WIZ.find.mongoPrefill} <code>{connectPrefill('mongo')}</code></p>{/if}<MongoClassify prefill={from !== '' ? connectPrefill('mongo') : ''} onTested={markConnected} onDone={() => (from !== '' ? leaveForm() : void back())} />
@@ -151,14 +171,20 @@
       <p class="hint foot">{adding ? WIZ.footerAdd : WIZ.footer}</p>
     </section>
   </div>
+  {#if askLeave}
+    <ConfirmAsk id="leave-form" title={WIZ.guard.leaveFormTitle} text={WIZ.guard.leaveFormText} keepLabel={WIZ.guard.leaveFormKeep} leaveLabel={WIZ.guard.leaveFormLeave} onKeep={() => { askLeave = false; }} onLeave={() => void back()} />
+  {/if}
 </div>
 
 <style>
-  .step { display: grid; gap: var(--space-4); min-width: 0; max-width: 1000px; }
-  .nutshell { margin: 0; color: var(--text-2); font-size: var(--fs-4); max-width: 70ch; }
+  .step { display: grid; gap: var(--space-4); min-width: 0; max-width: none; }
+  /* The same boxed "In a nutshell" as the Sources hub (CASES-21): accent edge, small capital label, full width. */
+  .nutshell { display: grid; gap: var(--space-1); padding: var(--space-3) var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius-sm); }
+  .nutshell b { font-size: var(--fs-2); letter-spacing: .04em; text-transform: uppercase; color: var(--text-2); }
+  .nutshell p { margin: 0; color: var(--text); font-size: var(--fs-3); max-width: 70ch; }
   .layout { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr); gap: var(--space-5); align-items: start; }
-  @media (max-width: 720px) { .layout { grid-template-columns: minmax(0, 1fr); } }
-  .rail { display: grid; gap: var(--space-2); align-content: start; min-width: 0; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  @media (max-width: 720px) { .layout { grid-template-columns: minmax(0, 1fr); } .rail { position: static; } }
+  .rail { position: sticky; top: 8px; display: grid; gap: var(--space-2); align-content: start; min-width: 0; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .railtop { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
   .count { min-width: 22px; padding: 0 var(--space-2); text-align: center; color: var(--text-2); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); }
   .empty { margin: 0; padding: var(--space-3); color: var(--text-2); font-size: var(--fs-3); border: var(--hairline-width) dashed var(--control-line); border-radius: var(--radius-sm); }

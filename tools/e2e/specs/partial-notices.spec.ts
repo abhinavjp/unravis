@@ -92,11 +92,11 @@ test('PART-02: a step-change read cut short shows the notice in the Patterns dra
   await expect(notice).toBeVisible();
 });
 
-test('PART-03: a lane the server cut short with reasonCode timeout shows the cut-short line on the Investigation Timeline', async ({ page }) => {
+test('PART-03: a lane the server cut short with reasonCode timeout shows the cut-short line on the Investigation timeline', async ({ page }) => {
   await goHome(page);
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect(page.locator('.tracing-chart')).toBeVisible();
   await expect(page.locator('[data-testid=lanes-cut-short]')).toHaveCount(0);
 

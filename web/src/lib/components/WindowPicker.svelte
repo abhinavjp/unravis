@@ -296,7 +296,7 @@
 {#if variant === 'popover'}
   <div class="pkwrap" bind:this={wrap}>
     <button type="button" class="pkbtn" bind:this={trigger} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? `${uid}-dialog` : undefined}
-      aria-label={triggerLabel(label, summary, zoneName)} aria-describedby={describedAll} data-invalid={invalidStart || invalidEnd ? 'true' : undefined} disabled={off} onclick={toggle}>
+      aria-label={triggerLabel(label, summary, zoneName, span)} aria-describedby={describedAll} data-invalid={invalidStart || invalidEnd ? 'true' : undefined} disabled={off} onclick={toggle}>
       <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="3" width="13" height="11.5" rx="1" fill="none" stroke="currentColor" /><path d="M1.5 6.5h13M5 1.5v3M11 1.5v3" stroke="currentColor" fill="none" /></svg>
       <span class="pk-text">
         <b class="pk-main">{summary || PICKER_TEXT.choose}</b>

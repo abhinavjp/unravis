@@ -222,7 +222,7 @@
 </div>
 
 <style>
-  .gallery { display: grid; gap: var(--space-5); min-width: 0; max-width: 900px; }
+  .gallery { display: grid; gap: var(--space-5); min-width: 0; max-width: none; }
   .lead { margin: 0; max-width: 64ch; color: var(--text-2); font-size: var(--fs-5); overflow-wrap: anywhere; }
   .notices { display: grid; gap: var(--space-2); }
   .notice { margin: 0; padding: var(--space-2) var(--space-3); color: var(--text); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-3); overflow-wrap: anywhere; }

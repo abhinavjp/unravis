@@ -1,5 +1,5 @@
 /**
- * The trace toolbar (WP-10): lane visibility state for the Investigation Timeline and the exact words of the
+ * The trace toolbar (WP-10): lane visibility state for the Investigation timeline and the exact words of the
  * scrub pill. Pure TypeScript; the screen component is TraceToolbar.svelte and WP-11 mounts it.
  *
  * The scrub pill always states the real export setting in plain words. It never says stored data is altered:

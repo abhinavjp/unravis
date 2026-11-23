@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-// WP-16b: the case-home entry for the Investigation Timeline, and the TracingPaper shell it opens.
+// WP-16b: the case-home entry for the Investigation timeline, and the TracingPaper shell it opens.
 // These tests read the .svelte files as text, as tests/casehome.test.cjs does.
 
 const root = path.resolve(__dirname, '..');

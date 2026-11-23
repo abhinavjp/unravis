@@ -7,6 +7,7 @@
   import { cancelVerify, freeCase, getVerify, startVerify } from '../archiveApi';
   import { freeConfirmed, jobRunning, keyEndingOf, passphraseOk, type ArchiveFile, type FileJob } from '../archiveModel';
   import { CaseApiError, JOB_MAX_UNREACHABLE, JOB_POLL_MS, believedState, caseCode, isCaseChanged, isCaseGone, type CaseInfo } from '../cases';
+  import { pacedTimeout } from '../visibility';
   import { ARCHIVE_TEXT, archiveReasonText, jobFailureText, keyEndingText } from '../copy/archiveCopy';
 
   // Free the space in three stages: 1 the case file is checked by a real test restore, 2 the person types the case code, 3 the working copy is gone.
@@ -32,7 +33,7 @@
   let verified = $state(false);
   // No master key is set up yet: Free cannot go through, so the drawer says so up front instead of at the last step.
   let noKey = $state(false);
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelTimer: (() => void) | undefined;
   let alive = true;
 
   const needsPass = $derived(file?.keyKind === 'typed');
@@ -53,8 +54,9 @@
   }
 
   function schedule() {
-    clearTimeout(timer);
-    if (alive) timer = setTimeout(() => void poll(), JOB_POLL_MS);
+    cancelTimer?.();
+    // Slower while the page is hidden, at once on show (BL-429).
+    if (alive) cancelTimer = pacedTimeout(() => void poll(), JOB_POLL_MS);
   }
 
   function take(next: FileJob) {
@@ -127,7 +129,7 @@
         else if (now.state === 'done' && now.verified) { job = now; verified = true; }
       } catch { /* stage 1 simply shows */ }
     })();
-    return () => { alive = false; clearTimeout(timer); passphrase = ''; };
+    return () => { alive = false; cancelTimer?.(); passphrase = ''; };
   });
 </script>
 

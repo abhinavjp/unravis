@@ -170,6 +170,10 @@ export const help: Record<string, { plain: string; simple: string }> = {
     plain: 'Five headline figures and one timeline give the quick picture of the period.',
     simple: 'It is like the dashboard of a car, with a few dials and one line for the trip so far. Press a figure to open the ranked list for it.'
   },
+  'pulse-chart': {
+    plain: 'Bars count the requests in each interval, and with one request type chosen a line shows how slow the slower ones were.',
+    simple: 'It is like a shop counting customers every few minutes and noting how long the slowest waits were. A tall bar is a busy moment, and a high line is a slow one.'
+  },
   where: {
     plain: 'Operations ranked by the figure you chose, so you can open one and see the evidence behind it.',
     simple: 'It is like a list of shops sorted by how busy each one was. Open one to look through its receipts.'
@@ -187,11 +191,11 @@ export const help: Record<string, { plain: string; simple: string }> = {
     simple: 'Each group is an episode, like a cluster of raindrops on a window. Several separate episodes may mean the same thing keeps happening.'
   },
   ledger: {
-    plain: 'A list of ideas to check, each with its evidence, kept in a local file.',
-    simple: 'It is like a detective\'s notebook where each guess has its clues pinned beside it. An entry is an idea to test, not a finding.'
+    plain: 'A list of theories to check, each with its evidence, kept in a local file.',
+    simple: 'It is like a detective\'s notebook where each guess has its clues pinned beside it. A theory is an idea to test, not a finding.'
   },
   export: {
-    plain: 'Build a file of the findings in this window, and preview it before anything is saved.',
+    plain: 'The file holds this window\'s findings, plus your labels and theories if you tick them.',
     simple: 'It is like packing a folder to hand to a colleague, with a look inside first. Nothing is saved until you have seen the whole preview.'
   },
   import: {

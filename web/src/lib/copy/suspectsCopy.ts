@@ -1,5 +1,5 @@
 /**
- * The words of the Suspects rail on the Investigation Timeline (the wireframe's right-hand panel). Fixed text and the catalogue's own
+ * The words of the Suspects rail on the Investigation timeline (the wireframe's right-hand panel). Fixed text and the catalogue's own
  * sentences live here so one test lints all of it; the engine in `lib/tracing/suspects.ts` only chooses which sentence applies.
  * Nothing here names a cause: a suspect is a place to look, and the rail says so.
  */

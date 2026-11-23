@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/datadir"
 	"api-audit-explorer/internal/keeper"
+	"api-audit-explorer/internal/racedetect"
 )
 
 func t0ctx() context.Context { return context.Background() }
@@ -879,7 +881,10 @@ func TestCancelBetweenSteps(t *testing.T) {
 			cancel()
 		}
 	}
-	p, _ := e.r.NewPlan(OpInstall, e.withBlackbox(e.machineOpts(), false), UninstallOptions{}, nil)
+	p, err := e.r.NewPlan(OpInstall, e.withBlackbox(e.machineOpts(), false), UninstallOptions{}, nil)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
 	res := e.r.Execute(ctx, p)
 	if res.Outcome != OutcomeCancelled {
 		t.Fatalf("%+v", res)
@@ -1251,5 +1256,132 @@ func TestStopServiceErrorMessagesHaveOnePeriodAndTheRightFix(t *testing.T) {
 				t.Errorf("fix = %q, want %q", se.Fix, c.wantFix)
 			}
 		})
+	}
+}
+
+// A password may hold spaces and semicolons: an unquoted value runs to the next
+// ";" or the end of the line, a quoted or braced value to its closing mark. In a
+// URL query string it still ends at "&" (OTA-2).
+func TestRedactPasswordValueShapes(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"report string (spaces, text after stays)", "Password=correct horse battery;Server=x", "Password=[hidden];Server=x"},
+		{"connection string", "Server=db;User ID=sa;Password=correct horse battery;Encrypt=true", "Server=db;User ID=sa;Password=[hidden];Encrypt=true"},
+		{"single quoted", "password='ab cd'", "password=[hidden]"},
+		{"double quoted", `password="ab cd";x=1`, `password=[hidden];x=1`},
+		{"braced with a semicolon and a space", "Password = {a;b c}", "Password = [hidden]"},
+		{"braced with }} escape", "pwd={a}}b c};Encrypt=true", "pwd=[hidden];Encrypt=true"},
+		{"value at end of line", "config pwd: correct horse battery", "config pwd: [hidden]"},
+		{"stops at a line break", "Password=correct horse\nnext line stays", "Password=[hidden]\nnext line stays"},
+		{"empty value: the next line is the value", "password:\n  hunter2", "password:[hidden]"},
+		{"empty value, equals", "password=\nhunter2", "password=[hidden]"},
+		{"empty value, lone CR", "Password=\rhunter2", "Password=[hidden]"},
+		{"empty value, lone CR then spaces", "Password= \r  hunter two", "Password= [hidden]"},
+		{"blank lines end the search", "Password:\n\n\nThe server crashed", "Password:[hidden]\n\n\nThe server crashed"},
+		{"empty value, CRLF, a line after stays", "password=\r\n  hunter2 x\nlater", "password=[hidden]\nlater"},
+		{"doubled single quote", "Password='it''s';Encrypt=true", "Password=[hidden];Encrypt=true"},
+		{"doubled single quote with spaces", "Password='O''Brien secret'", "Password=[hidden]"},
+		{"doubled double quote", `Password="say ""hi"" now";Encrypt=true`, "Password=[hidden];Encrypt=true"},
+		{"unclosed brace takes the rest", "Password={a;b c", "Password=[hidden]"},
+		{"unclosed double quote takes the rest", `Password="a;b c`, "Password=[hidden]"},
+		{"unclosed single quote takes the rest", "pwd='a;b c", "pwd=[hidden]"},
+		{"url query doubled quote", "http://h/x?pwd='a''b'&y=1", "http://h/x?pwd=[hidden]&y=1"},
+		{"url query form stops at &", "http://h/x?password=hunter2&y=1", "http://h/x?password=[hidden]&y=1"},
+		{"secret keeps the old rule, single quote now known", "secret='a b' next", "secret=[hidden] next"},
+		{"innocuous line is unchanged", "copy-files: ok; Encrypt=true", "copy-files: ok; Encrypt=true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Redact(tc.in); got != tc.want {
+				t.Errorf("Redact(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// Line folds a line break into a space after Redact, so a password that sits after a lone CR must already be gone.
+func TestFileLogHidesAPasswordAfterALoneCR(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "logs", "setup.log")
+	l, err := OpenFileLog(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Line("connect Password=\rhunter2")
+	l.Line("connect Password= \r  hunter two")
+	_ = l.Close()
+	data, _ := os.ReadFile(filepath.Clean(p))
+	if s := string(data); strings.Contains(s, "hunter") || !strings.Contains(s, "[hidden]") {
+		t.Fatalf("log %q", s)
+	}
+}
+
+// A backslash escapes a quote (JSON, Python repr), a key may carry a prefix or be
+// quoted, and XML or web.config hold the password as text or an attribute.
+func TestRedactEscapesJSONPrefixesAndXML(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"JSON value with an escaped quote", `{"password":"ab\"cd ef","user":"bob"}`, `{"password":[hidden],"user":"bob"}`},
+		{"Python repr value with an escaped quote", `{'password': 'it\'s secret two'}`, `{'password': [hidden]}`},
+		{"JSON prefixed key", `{"DB_PWD": "a b"}`, `{"DB_PWD": [hidden]}`},
+		{"colon form, no space", "passwd:hunter two", "passwd:[hidden]"},
+		{"colon form, indented and quoted", `  password: "x y"`, "  password: [hidden]"},
+		{"prefixed key, equals", "DB_PASSWORD=hunter two", "DB_PASSWORD=[hidden]"},
+		{"prefixed key, quoted value", `export MYSQL_PWD="a b"`, "export MYSQL_PWD=[hidden]"},
+		{"dotted key", "spring.datasource.password=a b;x=1", "spring.datasource.password=[hidden];x=1"},
+		{"pass after a separator", "db_pass=hunter two", "db_pass=[hidden]"},
+		{"prefixed key in a URL query stops at &", "http://h/x?db_password=a&y=1", "http://h/x?db_password=[hidden]&y=1"},
+		{"XML element", "<password>hunter two</password>", "<password>[hidden]</password>"},
+		{"XML element with an attribute", `<Password attr="x">hunter two</Password>`, `<Password attr="x">[hidden]</Password>`},
+		{"XML element with CDATA", "<password><![CDATA[a b]]></password>", "<password>[hidden]</password>"},
+		{"web.config key first", `<add key="Password" value="hunter two"/>`, `<add key="Password" value="[hidden]"/>`},
+		{"web.config single quotes", `<add key='pwd' value='hunter two'/>`, `<add key='pwd' value="[hidden]"/>`},
+		{"web.config value first", `<add value="hunter two" key="Password"/>`, `<add value="[hidden]" key="Password"/>`},
+		{"web.config name attribute", `<add name="DB_PASSWORD" value="hunter two" />`, `<add name="DB_PASSWORD" value="[hidden]" />`},
+		{"web.config other key stays", `<add key="PasswordPolicy" value="8 chars"/>`, `<add key="PasswordPolicy" value="8 chars"/>`},
+		{"colon form after a semicolon", "user=sa;Password: Secr3t Two", "user=sa;Password: [hidden]"},
+		{"colon form after an equals sign", "err=password: x", "err=password: [hidden]"},
+		{"colon form after a pipe", "user|password: x", "user|password: [hidden]"},
+		{"colon form after an angle bracket", "<password: x", "<password: [hidden]"},
+		{"JSON number password", `{"password": 12345678, "user":"bob"}`, `{"password": [hidden]`},
+		{"JSON db_pass", `{"db_pass":"Secr3t Two"}`, `{"db_pass":[hidden]}`},
+		{"repr pass", `{'pass': 'x'}`, `{'pass': [hidden]}`},
+		{"JSON short client_secret, access_token, refresh_token", `{"client_secret":"x","access_token":"y","refresh_token":"z"}`, `{"client_secret":[hidden],"access_token":[hidden],"refresh_token":[hidden]}`},
+		{"JSON number token", `{"refresh_token": 12345}`, `{"refresh_token": [hidden]}`},
+		{"spaced value after a prefixed key in a query", "a?b.password=Secr3t Two", "a?b.password=[hidden]"},
+		{"prefixed key in a query stops at &, even with a space", "GET /x?db_password=a b&y=1", "GET /x?db_password=[hidden]&y=1"},
+		{"CDATA on its own line", "<password>\n  <![CDATA[Secr3tCD]]>\n</password>", "<password>[hidden]</password>"},
+		{"CDATA with spaces around it", "<Password> <![CDATA[Secr3tSp]]> </Password>", "<Password>[hidden]</Password>"},
+		{"Hibernate property", `<property name="hibernate.connection.password">Secr3tHib</property>`, `<property name="hibernate.connection.password">[hidden]</property>`},
+		{"Java properties entry", `<entry key="password">Secr3tEntry</entry>`, `<entry key="password">[hidden]</entry>`},
+		{"app.config setting with a value child", `<setting name="Password" serializeAs="String"><value>Secr3tSet</value></setting>`, `<setting name="Password" serializeAs="String"><value>[hidden]</value></setting>`},
+		{"self-closing entry does not eat the text after it", "<add key=\"Password\" value=\"x\"/>\n<add key=\"Other\" value=\"y\"/>", "<add key=\"Password\" value=\"[hidden]\"/>\n<add key=\"Other\" value=\"y\"/>"},
+		{"pass words stay", "passes=3 compass: north passwordless=true tokens=5 PasswordExpiry: 90 days", "passes=3 compass: north passwordless=true tokens=5 PasswordExpiry: 90 days"},
+		{"policy element and paths stay", `<PasswordPolicy>8</PasswordPolicy> /usr/lib/password-store/foo.go {"pass_count": 3}`, `<PasswordPolicy>8</PasswordPolicy> /usr/lib/password-store/foo.go {"pass_count": 3}`},
+		// Lines that must stay as they are.
+		{"prose with the word", "the password was wrong", "the password was wrong"},
+		{"policy text", "password policy: 8 chars min", "password policy: 8 chars min"},
+		{"plural", "passwords: none", "passwords: none"},
+		{"bypass is not pass", "bypass=1 and boarding-pass: gate 4", "bypass=1 and boarding-pass: gate 4"},
+		{"plain XML", "<user>bob</user><note>a b</note>", "<user>bob</user><note>a b</note>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Redact(tc.in); got != tc.want {
+				t.Errorf("Redact(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// Every new pattern stays linear on 256 KB of hostile text (RE2 only).
+func TestRedactStaysLinear(t *testing.T) {
+	if testing.Short() || racedetect.Enabled {
+		t.Skip("timing test; the race detector slows it 5 to 20 times (see internal/racedetect)")
+	}
+	for _, unit := range []string{
+		`<password a="x">`, `<add key="Password" `, `<add value="a" `, `"password":"\\\"`, "DB_PASSWORD:\n ",
+	} {
+		in := strings.Repeat(unit, (256<<10)/len(unit))
+		start := time.Now()
+		_ = Redact(in)
+		if d := time.Since(start); d > 10*time.Second {
+			t.Errorf("Redact on 256 KB of %q took %v", unit, d)
+		}
 	}
 }

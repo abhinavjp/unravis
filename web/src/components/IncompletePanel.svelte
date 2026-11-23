@@ -27,7 +27,7 @@
     <label>Stale after (minutes)<input type="text" inputmode="decimal" bind:value={minutesText} aria-invalid={minutes == null} aria-describedby="stale-threshold-note" /></label>
     <button type="button" class="secondary-button" disabled={minutes == null || !(totals.incomplete + totals.pending)} title={incompleteButton.tip} onclick={() => open(null, 'incomplete')}>{incompleteButton.text}</button>
     <button type="button" class="secondary-button" disabled={minutes == null || !totals.pending} title={pendingButton.tip} onclick={() => open(null, 'pending')}>{pendingButton.text}</button>
-    <span id="stale-threshold-note" class:stale-error={minutes == null}>{minutes == null ? 'Enter a number of minutes above 0 and up to ' + formatCount(MAX_STALE_MINUTES) + '.' : 'The ' + DEFAULT_STALE_MINUTES + ' minute default is a starting point taken from the code, not measured from live data; change it to suit your system.'}</span>
+    <span id="stale-threshold-note" class:stale-error={minutes == null}>{minutes == null ? 'Enter a number of minutes above 0 and up to ' + formatCount(MAX_STALE_MINUTES) + '.' : 'Default ' + DEFAULT_STALE_MINUTES + ' minutes. Change it to suit your system.'}</span>
   </div>
   <div class="table-scroll group-table-scroll">
     <table class="comparison-table incomplete-table">
@@ -60,4 +60,7 @@
   .incomplete-panel { margin-bottom: 14px; }
   .stale-error { color: var(--bad); }
   .incomplete-note { margin: 0; padding: 8px 12px; color: var(--text-2); font-size: 12px; }
+  /* 24px wide tap target (BL-475): a one-digit count is 8px wide. The hit area grows 8px each side in a pseudo-element, so the number, the column and the focus ring stay exactly as they were. */
+  td.numeric .api-select { position: relative; }
+  td.numeric .api-select::after { content: ''; position: absolute; inset: 0 -8px; }
 </style>

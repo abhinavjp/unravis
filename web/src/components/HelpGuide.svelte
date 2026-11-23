@@ -177,8 +177,16 @@
   .guide-table { margin: 0 0 8px; max-width: 100%; overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 12px; }
   th, td { padding: 5px 8px; text-align: left; vertical-align: top; overflow-wrap: anywhere; border-bottom: 1px solid var(--line-soft); }
+  /* On a desktop window a guide table wraps inside the drawer and reads in the page's text face: the app's table rule (no wrapping, mono) cut the right column off
+     (ANALYSIS-09). On a narrow window it keeps that rule and scrolls inside its own named, focusable region (the guide script adds the region only while it scrolls). */
+  @media (min-width: 721px) {
+    table { font-family: inherit; white-space: normal; }
+    th, td { font-family: inherit; white-space: normal; }
+  }
   th { color: var(--text-2); font-weight: 600; }
   .guide-link { display: inline; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; text-align: left; }
+  /* Inside a table cell (the guide index) a link is a target of its own: 24px tall, the line keeps its height. */
+  td .guide-link, th .guide-link { display: inline-block; box-sizing: border-box; min-height: 24px; padding: 3px 0; margin-block: -3px; }
   .guide-image { display: block; color: var(--text-2); font-style: italic; }
   .guide-missing { color: var(--text-2); }
 </style>

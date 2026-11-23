@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"api-audit-explorer/internal/racedetect"
 )
 
 // Each case names one secret shape and the value that must be absent from the
@@ -109,5 +112,125 @@ func TestSanitizeProfilePathBecomesPlaceholder(t *testing.T) {
 	out := Sanitize("could not read " + filepath.Join(home, "x.txt"))
 	if !strings.Contains(out, "%USERPROFILE%") {
 		t.Errorf("profile path not replaced: %q", out)
+	}
+}
+
+// A password may hold spaces and semicolons: an unquoted value runs to the next
+// ";" or the end of the line (ADO syntax), a quoted or braced value to its
+// closing mark. In a URL query string it still ends at "&" (OTA-2).
+func TestSanitizePasswordValueShapes(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"report string (spaces, text after stays)",
+			"Server=db;User ID=sa;Password=correct horse battery;Encrypt=true",
+			"Server=db;User ID=sa;Password=[redacted];Encrypt=true"},
+		{"braced with a semicolon and a space", "Password = {a;b c}", "Password=[redacted]"},
+		{"braced with }} escape", "pwd={a}}b c};Encrypt=true", "pwd=[redacted];Encrypt=true"},
+		{"double quoted", `Password="correct horse";Encrypt=true`, `Password=[redacted];Encrypt=true`},
+		{"single quoted", `pwd='correct horse';Encrypt=true`, `pwd=[redacted];Encrypt=true`},
+		{"value at end of line", "login failed Password=correct horse battery", "login failed Password=[redacted]"},
+		{"stops at a line break", "Password=correct horse\nnext line stays", "Password=[redacted]\nnext line stays"},
+		{"empty value: the next line is the value", "password=\nhunter2", "password=[redacted]"},
+		{"empty value, lone CR", "Password=\rhunter2", "Password=[redacted]"},
+		{"blank lines end the search", "Password=\n\n\nThe server crashed", "Password=[redacted]\n\n\nThe server crashed"},
+		{"empty value, CRLF", "Password=\r\n  hunter2 x\nlater", "Password=[redacted]\nlater"},
+		{"doubled single quote", "Password='it''s';Encrypt=true", "Password=[redacted];Encrypt=true"},
+		{"doubled single quote with spaces", "Password='O''Brien secret'", "Password=[redacted]"},
+		{"doubled double quote", `Password="say ""hi"" now";Encrypt=true`, "Password=[redacted];Encrypt=true"},
+		{"unclosed brace takes the rest", "Password={a;b c", "Password=[redacted]"},
+		{"unclosed double quote takes the rest", `Password="a;b c`, "Password=[redacted]"},
+		{"url query doubled quote", "GET /x?pwd='a''b'&y=1", "GET /x?pwd=[redacted]&y=1"},
+		{"url query form stops at &", "GET /x?password=hunter2&y=1 HTTP/1.1", "GET /x?password=[redacted]&y=1 HTTP/1.1"},
+		{"url query form, later parameter", "GET /x?a=1&Pwd=hunter2&y=1", "GET /x?a=1&Pwd=[redacted]&y=1"},
+		{"url query form with spaces ends at the space", "GET /x?password=hunter2 HTTP/1.1", "GET /x?password=[redacted] HTTP/1.1"},
+		{"token keeps the old rule", "token=abc and more", "token=[redacted] and more"},
+		{"innocuous line is unchanged", "the password was reset; Encrypt=true on db01", "the password was reset; Encrypt=true on db01"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Sanitize(tc.in); got != tc.want {
+				t.Errorf("Sanitize(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// A backslash escapes a quote (JSON, Python repr), the colon form and prefixed
+// keys count, and XML or web.config hold the password as text or an attribute.
+func TestSanitizeEscapesColonPrefixesAndXML(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"JSON value with an escaped quote", `{"password":"ab\"cd ef","user":"bob"}`, `{"password":"[redacted]","user":"bob"}`},
+		{"Python repr value with an escaped quote", `{'password': 'it\'s secret two'}`, `{'password': '[redacted]'}`},
+		{"JSON token with an escaped quote", `{"token":"a\"b c","x":1}`, `{"token":"[redacted]","x":1}`},
+		{"JSON prefixed key", `{"DB_PASSWORD":"a b"}`, `{"DB_PASSWORD":"[redacted]"}`},
+		{"colon form", "password: hunter two", "password: [redacted]"},
+		{"colon form, no space", "passwd:hunter two", "passwd:[redacted]"},
+		{"colon form, indented and quoted", `  password: "x y"`, "  password: [redacted]"},
+		{"colon form, value on the next line", "Password:\n  hunter2\nnext", "Password:[redacted]\nnext"},
+		{"colon form, lone CR", "Password:\rhunter2", "Password:[redacted]"},
+		{"colon form, blank line ends the search", "Password:\n\nThe server crashed", "Password:[redacted]\n\nThe server crashed"},
+		{"colon form after a brace", "{password: a b, user: bob}", "{password: [redacted]"},
+		{"prefixed key, equals", "DB_PASSWORD=hunter two", "DB_PASSWORD=[redacted]"},
+		{"prefixed key, quoted value", `export MYSQL_PWD="a b"`, "export MYSQL_PWD=[redacted]"},
+		{"prefixed key, colon", "DB_PASSWD: hunter two", "DB_PASSWD: [redacted]"},
+		{"dotted key", "spring.datasource.password=a b;x=1", "spring.datasource.password=[redacted];x=1"},
+		{"command line flag", "--password=a b", "--password=[redacted]"},
+		{"pass after a separator", "db_pass=hunter two", "db_pass=[redacted]"},
+		{"prefixed key in a URL query stops at &", "GET /x?db_password=a&y=1", "GET /x?db_password=[redacted]&y=1"},
+		{"XML element", "<password>hunter two</password>", "<password>[redacted]</password>"},
+		{"XML element with an attribute", `<Password attr="x">hunter two</Password>`, `<Password attr="x">[redacted]</Password>`},
+		{"XML element with CDATA", "<password><![CDATA[a b]]></password>", "<password>[redacted]</password>"},
+		// The older "key=" rule also takes the key attribute's own value; the tags and the attribute names stay.
+		{"web.config key first", `<add key="Password" value="hunter two"/>`, `<add key=[redacted] value="[redacted]"/>`},
+		{"web.config single quotes", `<add key='pwd' value='hunter two'/>`, `<add key=[redacted] value="[redacted]"/>`},
+		{"web.config value first", `<add value="hunter two" key="Password"/>`, `<add value="[redacted]" key=[redacted]/>`},
+		{"web.config name attribute", `<add name="DB_PASSWORD" value="hunter two" />`, `<add name="DB_PASSWORD" value="[redacted]" />`},
+		{"colon form after a semicolon", "user=sa;Password: Secr3t Two", "user=sa;Password: [redacted]"},
+		{"colon form after an equals sign", "err=password: x", "err=password: [redacted]"},
+		{"colon form after a pipe", "user|password: x", "user|password: [redacted]"},
+		{"colon form after an angle bracket", "<password: x", "<password: [redacted]"},
+		{"JSON number password", `{"password": 12345678, "user":"bob"}`, `{"password": [redacted], "user":"bob"}`},
+		{"JSON db_pass", `{"db_pass":"Secr3t Two"}`, `{"db_pass":"[redacted]"}`},
+		{"repr pass", `{'pass': 'x'}`, `{'pass': '[redacted]'}`},
+		{"JSON short client_secret, access_token, refresh_token", `{"client_secret":"x","access_token":"y","refresh_token":"z"}`, `{"client_secret":"[redacted]","access_token":"[redacted]","refresh_token":"[redacted]"}`},
+		{"JSON number token", `{"refresh_token": 12345}`, `{"refresh_token": [redacted]}`},
+		{"spaced value after a prefixed key in a query", "a?b.password=Secr3t Two", "a?b.password=[redacted]"},
+		{"prefixed key in a query stops at &, even with a space", "GET /x?db_password=a b&y=1", "GET /x?db_password=[redacted]&y=1"},
+		{"value that ends in a backslash", `secret="abc\" rest`, "secret=[redacted] rest"},
+		{"CDATA on its own line", "<password>\n  <![CDATA[Secr3tCD]]>\n</password>", "<password>[redacted]</password>"},
+		{"CDATA with spaces around it", "<Password> <![CDATA[Secr3tSp]]> </Password>", "<Password>[redacted]</Password>"},
+		{"Hibernate property", `<property name="hibernate.connection.password">Secr3tHib</property>`, `<property name="hibernate.connection.password">[redacted]</property>`},
+		{"Java properties entry (the key rule also takes the key value)", `<entry key="password">Secr3tEntry</entry>`, `<entry key=[redacted]>[redacted]</entry>`},
+		{"app.config setting with a value child", `<setting name="Password" serializeAs="String"><value>Secr3tSet</value></setting>`, `<setting name="Password" serializeAs="String"><value>[redacted]</value></setting>`},
+		{"X-Api-Key printed as a header map", "map[X-Api-Key:[Secr3tH] Accept:[*/*]]", "map[X-Api-Key:[redacted] Accept:[*/*]]"},
+		{"pass words stay", "passes=3 compass: north passwordless=true tokens=5 PasswordExpiry: 90 days", "passes=3 compass: north passwordless=true tokens=5 PasswordExpiry: 90 days"},
+		{"policy element and paths stay", `<PasswordPolicy>8</PasswordPolicy> /usr/lib/password-store/foo.go {"pass_count": 3}`, `<PasswordPolicy>8</PasswordPolicy> /usr/lib/password-store/foo.go {"pass_count": 3}`},
+		// Lines that must stay as they are.
+		{"prose with the word", "the password was wrong", "the password was wrong"},
+		{"policy text", "password policy: 8 chars min", "password policy: 8 chars min"},
+		{"plural", "passwords: none", "passwords: none"},
+		{"bypass is not pass", "bypass=1 and boarding-pass: gate 4", "bypass=1 and boarding-pass: gate 4"},
+		{"plain XML", "<user>bob</user><note>a b</note>", "<user>bob</user><note>a b</note>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Sanitize(tc.in); got != tc.want {
+				t.Errorf("Sanitize(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// Every new pattern stays linear on 256 KB of hostile text (RE2 only).
+func TestSanitizeStaysLinear(t *testing.T) {
+	if testing.Short() || racedetect.Enabled {
+		t.Skip("timing test; the race detector slows it 5 to 20 times (see internal/racedetect)")
+	}
+	for _, unit := range []string{
+		`<password a="x">`, `<add key="Password" `, `<add value="a" `, `"password":"\\\"`, "DB_PASSWORD:\n ",
+	} {
+		in := strings.Repeat(unit, (256<<10)/len(unit))
+		start := time.Now()
+		_ = Sanitize(in)
+		if d := time.Since(start); d > 10*time.Second {
+			t.Errorf("Sanitize on 256 KB of %q took %v", unit, d)
+		}
 	}
 }

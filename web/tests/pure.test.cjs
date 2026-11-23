@@ -1238,7 +1238,7 @@ test('the incomplete panel and the Completion % column use existing tokens and s
   assert.match(panel, /parseStaleMinutes/);
   const table = fs.readFileSync(path.join(root, 'src/components/ComparisonTable.svelte'), 'utf8');
   assert.match(table, /Completion %/);
-  assert.match(table, /colspan="15"/);
+  assert.match(table, /colspan="14"/);
   assert.equal(overviewRate(null), '—');
   assert.equal(overviewRate(undefined), '—');
   assert.equal(overviewRate(0), '0.0%');
@@ -1631,7 +1631,8 @@ test('the redesign keeps its contrast, status and navigation fixes in the source
 
 test('the run hint is a persistent status region tied to the run button, the back link has a full label, and no screen says "Run comparison"', () => {
   const app = appSource();
-  assert.match(app, /<span class="run-hint"[^>]* id="run-hint" role="status">\{loading && waiting\.slow \? WAIT_TEXT\.stillReading : runHint\}<\/span>/);
+  assert.match(app, /<span class="run-hint"[^>]* id="run-hint" role="status">\{hintText\}<\/span>/);
+  assert.match(app, /hintText = \$derived\(loading && waiting\.slow \? WAIT_TEXT\.stillReading : runHint\)/);
   assert.doesNotMatch(app, /\{#if runHint\}/);
   assert.match(app, /class="primary-button" aria-describedby="run-hint"/);
   assert.match(fs.readFileSync(path.join(root, 'src/components/Breadcrumb.svelte'), 'utf8'), /aria-label=\{'Back to ' \+ crumb\.label\}/);

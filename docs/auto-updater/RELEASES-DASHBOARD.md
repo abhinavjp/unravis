@@ -46,7 +46,7 @@ On a PC that does not make releases there is no release log. Steps then show "un
 - Logs and test results exist only for releases made after the capture was added (the next rc). Older releases show step times from the audit log, the CI checks, files and changes, and say plainly that no logs were saved.
 - Any action button (release, withdraw, pause). Release stays with the script.
 
-## Auto-update (BL-199)
+## Auto-update (BL-501, was BL-199)
 
 The releases app rides the Unravis OTA instead of being a second signed product. `build.ps1` builds `dist\unravis-releases.exe` and puts it in the setup payload (an optional companion, like the Blackbox helper): the same signed manifest, SHA-256 pin, key checks, silent-update rules and rollback cover it.
 

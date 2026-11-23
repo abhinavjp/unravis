@@ -80,6 +80,8 @@
 <style>
   /* The title row. The 32px close button clears the 24px minimum target size. */
   .drawer-header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-3); padding-bottom: var(--space-3); border-bottom: 1px solid var(--hairline); }
+  /* A modal drawer keeps its title row and close button in view while the body scrolls, also at 400 % zoom (SETUP-A11Y-20). It pins past the drawer's own padding, like the footer does at the bottom. */
+  .drawer-header:not(.panel) { position: sticky; top: -22px; z-index: 3; margin: -22px -26px 0; padding: 22px 26px var(--space-3); background: var(--surface); }
   .drawer-header.panel { flex: 0 0 auto; padding: var(--space-4) var(--space-5) 0; border-bottom: 0; }
   .drawer-header.panel:not(.has-extra) { padding-bottom: var(--space-3); border-bottom: 1px solid var(--hairline); }
   .drawer-heading { min-width: 0; }
@@ -95,6 +97,7 @@
   .drawer-footer.panel { flex: 0 0 auto; padding: var(--space-3) var(--space-5); background: var(--bg); }
   @media (max-width: 720px) {
     .drawer-footer:not(.panel) { bottom: -24px; margin: auto -15px -24px; padding: var(--space-3) 15px; }
+    .drawer-header:not(.panel) { top: -17px; margin: -17px -15px 0; padding: 17px 15px var(--space-3); }
   }
   @media (max-width: 899px) {
     .drawer-header.panel { padding-left: 0; padding-right: 0; }
@@ -103,10 +106,8 @@
 
   /* One look for what drawers hold, so a drawer need not restyle it: sections under hairlines, chevron disclosures and findings as plain rows. */
   :global(.connections-drawer .drawer-section) { padding-top: var(--space-4); border-top: 1px solid var(--hairline); }
-  :global(.connections-drawer details > summary) { display: flex; align-items: center; gap: var(--space-2); list-style: none; cursor: pointer; }
-  :global(.connections-drawer details > summary::-webkit-details-marker) { display: none; }
-  :global(.connections-drawer details > summary::after) { content: ""; flex: 0 0 auto; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; order: -1; transform: rotate(-45deg); transition: transform var(--dur) var(--ease); }
-  :global(.connections-drawer details[open] > summary::after) { transform: rotate(45deg); }
+  /* The chevron itself is the app-wide rule in app.css (summary::before); a drawer only lines it up with the text. */
+  :global(.connections-drawer details > summary) { display: flex; align-items: center; cursor: pointer; }
   :global(.connections-drawer .finding) { padding: var(--space-3) 0; background: transparent; border: 0; border-top: 1px solid var(--hairline); border-radius: 0; }
   :global(.connections-drawer .low-n) { padding: 0; color: var(--text-2); border: 0; border-radius: 0; font-style: italic; }
 </style>

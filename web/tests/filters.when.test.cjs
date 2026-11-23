@@ -18,7 +18,7 @@ test('WhenGroup owns the date windows, keeps ids, and shows UTC without a disclo
   assert.doesNotMatch(src, /part !== 'bar'/);
   assert.doesNotMatch(src, /<details/);
   assert.match(src, /class="utc-echo"[\s\S]*?<time datetime=\{query\.start\}>/);
-  assert.match(src, /<p class="inline-error" role="alert">\{timeInputError\}<\/p>/);
+  assert.match(src, /<p class="inline-error" role="alert" id="when-time-error">\{timeInputError\}<\/p>/);
   assert.match(src, /Enter both a date and time for every range\./);
   assert.match(src, /Complete every date and time with a valid local value before running the comparison\./);
   assert.doesNotMatch(src.slice(src.indexOf('<style>')), /#[0-9a-fA-F]{3,8}\b|rgba?\(/);
@@ -34,7 +34,7 @@ test('the UTC echo hides while its window is invalid', () => {
 test('WhenGroup is wrapped in a FilterGroup, keeps the copy and labels each window by its heading', () => {
   const src = read(SOURCE);
   assert.match(src, /<FilterGroup id="when" title="When">/);
-  assert.match(src, /Times use your browser time zone: <strong>\{browserZone\}<\/strong>\./);
+  assert.match(src, /Times are in <strong>\{zoneLabel\}<\/strong>, as set by Times in at the top of the page\./);
   assert.match(src, /Requests in the period you want to inspect\./);
   assert.match(src, /An earlier period to compare with\./);
   assert.match(src, /<section class="when-window" aria-labelledby="current-range-label">/);
@@ -66,6 +66,6 @@ test('WhenGroup keeps its window logic: quick-range repair state, interval notes
   assert.match(src, /if \(dateInputsValid\) untrack\(/);
   assert.match(src, /bucketForWindows\(query\.start, query\.end, query\.baselineStart, query\.baselineEnd\)/);
   assert.match(src, /intervalNote\.set\(typed \? intervalReplacedNote\(previous, query\) : ''\)/);
-  assert.match(src, /fromLocalParts\(datePart, timePart\)/);
+  assert.match(src, /fromZonedParts\(datePart, timePart, zone, query\[field\]\)/);
   assert.doesNotMatch(src, /onScopeChange/);
 });

@@ -179,7 +179,9 @@
   </section>
 
   {#if demo}
-    <div class="scall-pretend" data-testid="scall-pretend">
+    <!-- Demo only, so it stays folded: it must not look like part of a real call (ANALYSIS-15). -->
+    <details class="scall-pretend" data-testid="scall-pretend">
+      <summary>{DRILL_TEXT.pretendSummary}</summary>
       <span>{DRILL_TEXT.pretendLabel}</span>
       <div class="pretend-buttons">
         {#each PRETEND as option (option.id)}
@@ -193,7 +195,7 @@
         {/each}
       </div>
       <p class="insp-note">{DRILL_TEXT.pretendNote}</p>
-    </div>
+    </details>
   {/if}
 </aside>
 
@@ -243,6 +245,14 @@
   .scall-pretend {
     border-top: 1px dashed var(--line);
     padding-top: 10px;
+  }
+  .scall-pretend > summary {
+    cursor: pointer;
+    color: var(--text-2);
+    font-size: 13px;
+  }
+  .scall-pretend[open] > summary {
+    margin-bottom: 8px;
   }
   .scall-pretend > span {
     display: block;

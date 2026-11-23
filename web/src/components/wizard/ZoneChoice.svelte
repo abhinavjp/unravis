@@ -4,7 +4,7 @@
   import { hostsView, loadHosts, saveHost, saveHostZone } from '../../lib/wizardHosts.svelte';
   import { hostProblem, labelProblem, zoneNameProblem, zoneOf, zoneSuggestions } from '../../lib/zoneChoice';
   import {
-    ZONE_CHOICE_TEXT, hostOptionText, hostPickLabel, hostProblemText, labelProblemText, optionalHelpText, saveFailText, zoneProblemText
+    ZONE_CHOICE_TEXT, hostOptionText, hostPickLabel, hostShown, hostProblemText, labelProblemText, optionalHelpText, saveFailText, zoneProblemText
   } from '../../lib/copy/zoneChoiceCopy';
 
   // "Which computer wrote it?" for one file (packet P4, wireframe w38 and the review step). The server keeps one list of computers; an import
@@ -117,7 +117,7 @@
     <select bind:this={selectEl} class:invalid={problem !== ''} value={host} disabled={disabled || saving} aria-label={hostPickLabel(name)} aria-describedby={hint !== '' ? uid + '-hint' : undefined}
       aria-invalid={problem !== ''} onchange={onSelect}>
       <option value="">{need === 'optional' ? ZONE_CHOICE_TEXT.optionalNone : ZONE_CHOICE_TEXT.pick}</option>
-      {#if host !== '' && !(entries ?? []).some((entry) => entry.label === host)}<option value={host}>{host}</option>{/if}
+      {#if host !== '' && !(entries ?? []).some((entry) => entry.label === host)}<option value={host}>{hostShown(host)}</option>{/if}
       {#each entries ?? [] as entry (entry.label)}<option value={entry.label}>{hostOptionText(entry)}</option>{/each}
       <option value={ADD}>{ZONE_CHOICE_TEXT.add}</option>
     </select>
@@ -150,7 +150,7 @@
         {#if failure !== ''}<p class="hint bad" role="alert">{failure}</p>{/if}
         <div class="actions">
           <button type="button" class="secondary-button" disabled={saving || disabled} onclick={() => void save()}>{saving ? ZONE_CHOICE_TEXT.saving : ZONE_CHOICE_TEXT.save}</button>
-          <button type="button" class="quiet-button" disabled={saving || disabled} onclick={cancel}>{ZONE_CHOICE_TEXT.cancel}</button>
+          <button type="button" class="secondary-button" disabled={saving || disabled} onclick={cancel}>{ZONE_CHOICE_TEXT.cancel}</button>
         </div>
       </div>
     {:else if failure !== ''}

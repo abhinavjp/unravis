@@ -30,7 +30,7 @@
     { id: 'patterns', label: 'Patterns', open: () => openSidePanel('patterns') },
     { id: 'ledger', label: 'Ledger', open: () => openSidePanel('ledger') },
     { id: 'export', label: 'Export', open: () => openSidePanel('export') },
-    { id: 'import', label: 'Import', open: () => openSidePanel('import') },
+    { id: 'import', label: 'Add files', open: () => openSidePanel('import') },
     { id: 'blackbox', label: 'Blackbox', open: () => openSidePanel('blackbox') },
     { id: 'glossary', label: 'Glossary', open: () => openGlossary() }
   ];
@@ -55,7 +55,7 @@
   const anyOpen = $derived(drawers.some(item => isOpen(item.id)));
   const ledgerTotal = $derived(ledger.items.length);
   // The folded Ledger count stays on the More button, so it is never hidden inside a closed menu.
-  const moreLabel = $derived('More' + (anyOpen ? ': a panel is open' : '') + (ledgerTotal ? ', ' + ledgerTotal + (ledgerTotal === 1 ? ' hypothesis' : ' hypotheses') + ' in the Ledger' : ''));
+  const moreLabel = $derived('More' + (anyOpen ? ': a panel is open' : '') + (ledgerTotal ? ', ' + ledgerTotal + (ledgerTotal === 1 ? ' theory' : ' theories') + ' in the ledger' : ''));
 
   onMount(() => {
     const query = window.matchMedia('(max-width: 1099px)');
@@ -217,6 +217,9 @@
     .topbar { padding: 0 14px; gap: 8px; flex-wrap: nowrap; align-content: normal; }
     .actions { gap: 8px; }
     .utilities { padding-left: 8px; }
+    /* "Choose sources" is the widest the Sources button gets and pushed the row 23px past a 390px window (BL-472): the group may shrink here, and the Sources label gives way with its "..." (the full text is in the button's name). */
+    .actions, .status { flex-shrink: 1; min-width: 0; }
+    .status > :global(.popover-wrap) { flex-shrink: 1; min-width: 0; }
     .crumbbar { position: sticky; top: var(--header-h); padding: 2px 14px; }
   }
   @media (max-width: 379px) { .more-label { display: none; } .more-button { padding: 6px 9px; } }

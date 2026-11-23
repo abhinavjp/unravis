@@ -36,7 +36,9 @@ func (e *caseEnv) postAsync(path string, file *upload) importJobDTO {
 	}
 	var job importJobDTO
 	decodeBody(e.t, res, &job)
-	if job.ID == "" || (job.State != jobQueued && job.State != jobRunning) {
+	// A quick job can already be done or failed when the 202 answer is written (seen under -race).
+	// Tests that need it in flight park it with holdingImporter, so they still see queued or running.
+	if job.ID == "" || (job.State != jobQueued && job.State != jobRunning && job.State != jobDone && job.State != jobFailed) {
 		e.t.Fatalf("async answer = %s", res.Body)
 	}
 	return job

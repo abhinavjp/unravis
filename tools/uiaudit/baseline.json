@@ -3,85 +3,18 @@
   "note": "Problems the audit found that are known and tracked. An entry needs a reason and, where there is one, a backlog item (docs/BACKLOG.md). Entries may use * in screen, size, check and label. Do not add an entry to turn a run green: fix the screen or file the item first.",
   "entries": [
     {
-      "screen": "p14b-source-stopped",
-      "size": "phone",
-      "check": "page-overflow-x",
-      "why": "With the key keeper stopped, the phone header (the demo build adds a \"Demo data / reference time\" label) runs 23 px past the edge and the theme button is cut off.",
-      "item": "BL-472"
-    },
-    {
-      "screen": "p14b-source-stopped",
-      "size": "phone",
-      "check": "element-past-edge",
-      "why": "With the key keeper stopped, the phone header (the demo build adds a \"Demo data / reference time\" label) runs 23 px past the edge and the theme button is cut off.",
-      "item": "BL-472"
-    },
-    {
-      "screen": "p9-wizard-*",
-      "check": "overlap",
-      "label": "Close set-up",
-      "why": "The close button of the Place a Blackbox pop-up sits on top of the last step name (Review).",
-      "item": "BL-473"
-    },
-    {
-      "screen": "x-analysis-more-filters",
-      "check": "overlap",
-      "label": "What does Reference period mean?",
-      "why": "The ? button next to Reference overlaps the i button beside it.",
-      "item": "BL-474"
-    },
-    {
+      "screen": "x-slow-call*",
       "check": "small-target",
-      "why": "Buttons, links and chart cells smaller than 24 x 24 px (WCAG 2.2 target size), listed by screen in the report.",
-      "item": "BL-475"
+      "label": "Payroll.Run, *",
+      "why": "The bars of the lane charts are 4.5 to 9 px tall (by window height) and the Slow call lane rule (BL-005) keeps the lanes this height, so BL-492 gave each bar an invisible press area (UIFIX-19c). The bars of a stack of bar rows sit 13 drawing units apart and share the space between them: the upper bars of a stack are 12.7 to 13.7 px tall as a press area at 1440 x 900 (36 x 14 and 38 x 15 in this audit) and 6.5 to 9 px at 1100 x 800 and below; on a phone 11 to 12 px. The lowest bar of a stack and a lone bar reach 24 px: the entry is by label so it would also hide a loss of that, which UIFIX-19c guards (the lowest bar must reach 24 px). Remaining part of BL-492.",
+      "item": "BL-492"
     },
     {
-      "check": "low-contrast",
-      "why": "Dimmed low-traffic rows and a few grey notes read at 3.9:1 or less (WCAG AA wants 4.5:1).",
-      "item": "BL-476",
-      "screen": "x-analysis-daily-hourly"
-    },
-    {
-      "check": "misaligned-column",
-      "why": "A block is 6 px off the left edge of the blocks stacked with it (Sources pop-up footer note, pager rows).",
-      "item": "BL-477"
-    },
-    {
-      "check": "small-text",
-      "why": "Chart help lines and the result row of the Slow call list use text under 11 px.",
-      "item": "BL-478"
-    },
-    {
-      "screen": "p10-files-*",
-      "size": "phone",
-      "check": "text-spill",
-      "label": "File",
-      "why": "In the stacked phone layout of the add-files list the column heads spill out of their box (desktop is clean).",
-      "item": "BL-482"
-    },
-    {
-      "screen": "p10-files-*",
-      "size": "phone",
-      "check": "text-spill",
-      "label": "Size",
-      "why": "In the stacked phone layout of the add-files list the column heads spill out of their box (desktop is clean).",
-      "item": "BL-482"
-    },
-    {
-      "screen": "p10-files-*",
-      "size": "phone",
-      "check": "text-spill",
-      "label": "What it is",
-      "why": "In the stacked phone layout of the add-files list the column heads spill out of their box (desktop is clean).",
-      "item": "BL-482"
-    },
-    {
-      "screen": "p10-files-*",
-      "size": "phone",
-      "check": "text-spill",
-      "label": "Computer and time zone",
-      "why": "In the stacked phone layout of the add-files list the column heads spill out of their box (desktop is clean).",
-      "item": "BL-482"
+      "screen": "p12-update-available",
+      "check": "small-target",
+      "label": "Open the release page*",
+      "why": "In this documentation screen the Glossary drawer is open and its scrim lies over the update bar, so a press on the link goes to the scrim and the audit (since BL-497 it asks the browser who receives the press) no longer counts the link's grown hit area. The same link is audited with nothing in front of it in x-update-bar, where it passes. Not a defect of the page.",
+      "item": "BL-497"
     }
   ]
 }

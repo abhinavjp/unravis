@@ -634,7 +634,10 @@ func HoldCaseDB(ctx context.Context, dbPath string, dbKey []byte) (release func(
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	tx, err := conn.BeginTx(ctx, nil)
+	// ReadOnly keeps this a read transaction (deferred BEGIN) on ncruces/go-sqlite3
+	// 0.37+, whose default BEGIN is IMMEDIATE and would block every writer for the
+	// whole copy instead of only pinning the log.
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return fail(errCaseDB)
 	}

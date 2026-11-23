@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The Suspects rail of the Investigation Timeline (the wireframe's right-hand panel). It reads the answer the timeline already holds
+  // The Suspects rail of the Investigation timeline (the wireframe's right-hand panel). It reads the answer the timeline already holds
   // (no second request) through lib/tracing/suspects.ts and lists places to look, never causes.
   import type { TracingLaneKey, TracingResponse } from '../lib/tracing/model';
   import { LANE_NAME } from '../lib/tracing/lanes';

@@ -199,7 +199,7 @@ test('the picker words pass the copy lint and carry no banned word', () => {
   assert.equal(dayLabel('October 26, 2026', 'end'), 'October 26, 2026, end');
   assert.equal(dayLabel('October 26, 2026', 'none'), 'October 26, 2026');
   assert.equal(partLabel('Incident window', 'start date'), 'Incident window start date');
-  assert.equal(triggerLabel('Incident window', ''), 'Incident window: Choose a period, UTC');
+  assert.equal(triggerLabel('Incident window', ''), 'Incident window: Choose a period UTC');
   assert.equal(dialogLabel('Incident window'), 'Choose the incident window (UTC)');
 });
 

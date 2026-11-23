@@ -3,13 +3,18 @@ package releasedash
 import (
 	"bufio"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding/charmap"
 )
 
 // The release script keeps two kinds of log in <data folder>\logs:
@@ -90,11 +95,37 @@ type LogLine struct {
 
 // ReadLog reads and redacts a saved log. names are the machine and user names to hide too. For a run log that is too long, the
 // newest lines are kept. cut tells the page the log was shortened.
+//
+// The answer is kept for the next call while the file is unchanged (same size and time), because the page asks for a long log one
+// page at a time and every page used to unpack, redact and index the whole log again (a 64 MiB CI log took 22 s and 1.4 GB each time).
+// See memo for how it is kept. The returned lines are shared: callers must not change them.
 func ReadLog(dir, name string, names []string) (lines []LogLine, cut bool, err error) {
 	if !validLogName(name) {
 		return nil, false, os.ErrNotExist
 	}
-	f, err := openShared(filepath.Join(dir, logsDir, name))
+	path := filepath.Join(dir, logsDir, name)
+	fi, err := os.Stat(path) //nolint:gosec // the name passed validLogName above; the folder is the release data folder
+	if err != nil {
+		return nil, false, err
+	}
+	key := logKey{path: path, names: strings.Join(names, "\x00"), size: fi.Size(), mod: fi.ModTime().UnixNano()}
+	r, err := logCache.get(key, ciLogRE.MatchString(name), func(r readLogResult) int { return len(r.lines) + 1 }, func() (readLogResult, error) {
+		l, c, e := readLogFile(path, name, names)
+		return readLogResult{l, c}, e
+	})
+	return r.lines, r.cut, err
+}
+
+type readLogResult struct {
+	lines []LogLine
+	cut   bool
+}
+
+// 24 logs and 600 000 lines: about one full CI log plus the run logs of a release, which the detail page reads on every poll.
+var logCache = memo[readLogResult]{maxItems: 24, maxWeight: 600000}
+
+func readLogFile(path, name string, names []string) (lines []LogLine, cut bool, err error) {
+	f, err := openShared(path)
 	if err != nil {
 		return nil, false, err
 	}
@@ -127,12 +158,16 @@ func ReadLog(dir, name string, names []string) (lines []LogLine, cut bool, err e
 		ln := LogLine{}
 		if runLogRE.MatchString(name) {
 			ln.T, raw = splitStamp(raw)
+			raw = fixMojibake(raw)
 		}
 		ln.Text = red.Line(raw)
 		lines = append(lines, ln)
 		if len(lines) > maxLines {
 			lines, cut = lines[len(lines)-maxLines:], true
 		}
+	}
+	if runLogRE.MatchString(name) {
+		lines = collapseRefresh(lines)
 	}
 	if lines == nil {
 		lines = []LogLine{} // an empty log is an empty list for the page, not null
@@ -148,6 +183,76 @@ func splitStamp(s string) (string, string) {
 		}
 	}
 	return "", s
+}
+
+// fixMojibake repairs text that the release script's child process wrote as UTF-8 but the parent console read as the OEM code page
+// 437 ("✓" arriving as "Γ£ô", "·" as "┬╖"). It only acts when every character of the line fits code page 437 AND the resulting bytes
+// are valid UTF-8, so an honest "café" or "Γ" on its own is left alone.
+func fixMojibake(s string) string {
+	ascii := true
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return s
+	}
+	b, err := charmap.CodePage437.NewEncoder().String(s)
+	if err != nil || !utf8.ValidString(b) || b == s {
+		return s
+	}
+	return b
+}
+
+var refreshRE = regexp.MustCompile(`^Refreshing run status every \d+ seconds`)
+
+// collapseRefresh folds the repeated status blocks that "gh run watch" redraws every ten seconds (one "Refreshing run status ..."
+// line followed by the run and job list, tens of lines each time) into the last one, with a note where the others were. A block
+// ends at the next one or at the next "[n/7]" step heading. Done on the lines the page asks for, so line numbers stay consistent.
+func collapseRefresh(lines []LogLine) []LogLine {
+	var starts []int
+	for i, l := range lines {
+		if refreshRE.MatchString(l.Text) {
+			starts = append(starts, i)
+		}
+	}
+	if len(starts) < 2 {
+		return lines
+	}
+	dropEnd := map[int]int{} // frame start -> end (exclusive) for frames that are folded away
+	for k := 0; k+1 < len(starts); k++ {
+		heading := false
+		for j := starts[k] + 1; j < starts[k+1]; j++ {
+			if stepHdr.MatchString(lines[j].Text) {
+				heading = true
+				break
+			}
+		}
+		if !heading {
+			dropEnd[starts[k]] = starts[k+1]
+		}
+	}
+	if len(dropEnd) == 0 {
+		return lines
+	}
+	out := make([]LogLine, 0, len(lines))
+	folded := 0
+	for i := 0; i < len(lines); {
+		if e, ok := dropEnd[i]; ok {
+			folded++
+			i = e
+			continue
+		}
+		if folded > 0 && refreshRE.MatchString(lines[i].Text) {
+			out = append(out, LogLine{T: lines[i].T, Text: fmt.Sprintf("(%d earlier copies of this status block are folded away; the latest one follows)", folded)})
+			folded = 0
+		}
+		out = append(out, lines[i])
+		i++
+	}
+	return out
 }
 
 // StepLog is the part of a run log that belongs to one step.
@@ -244,3 +349,18 @@ type ciReader struct {
 }
 
 func (c *ciReader) Close() error { _ = c.gz.Close(); return c.f.Close() }
+
+var foldNoteRE = regexp.MustCompile(`^\((\d+) earlier copies of this status block are folded away`)
+
+// foldRev is the number of status blocks folded away in the lines. While a release is still running every new block folds the
+// previous one, which rewrites lines the page already has; the page watches this number and reloads the log from the top when it changes.
+func foldRev(lines []LogLine) int {
+	n := 0
+	for _, l := range lines {
+		if m := foldNoteRE.FindStringSubmatch(l.Text); m != nil {
+			c, _ := strconv.Atoi(m[1])
+			n += c
+		}
+	}
+	return n
+}

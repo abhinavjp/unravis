@@ -77,12 +77,13 @@
   .daily-table th, .daily-table td { padding: 6px 10px; border-bottom: 1px solid var(--line-soft); text-align: left; white-space: nowrap; }
   .daily-table thead th { color: var(--text-2); font-weight: 500; font-size: 12px; }
   .daily-table th.numeric, .daily-table td.numeric { text-align: right; }
-  .daily-table tbody th { font-weight: 600; }
+  /* The day cell is a row header, so the page's header fill and its inset line would set it apart: it takes the row's own line and no fill, and the day reads as part of its row (ANALYSIS-18). */
+  .daily-table tbody th { font-weight: 600; background: transparent; box-shadow: none; border-bottom: 1px solid var(--line-soft); }
   .day-name { margin-right: 6px; }
   .tag { display: inline-block; margin-left: 4px; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--text-2); font-size: 11px; font-weight: 500; }
   tr.low td, tr.low th { color: var(--text-2); }
   tr.low .day-name { font-weight: 500; }
-  tr.low td { opacity: .75; }
+  /* Dimmed by the muted text colour, a lighter day name and the "Few requests" tag only: a see-through row fell to 3.9:1 in the light theme (BL-476). */
   tr.partial .day-name { font-style: italic; }
   .trend { min-width: 7.5rem; }
   .trend-text { color: var(--text-2); font-size: 12px; }

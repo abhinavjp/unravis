@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import { blackboxApi, refusalText, type BlackboxItem } from '../lib/blackbox';
   import { copyKeyOnce, isKeeperHeldError, KEY_SHOW_MS, makeRevealGuard } from '../lib/blackboxKey';
   import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
@@ -15,6 +15,11 @@
   let problem = $state('');
   let held = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let showBtn = $state<HTMLButtonElement>();
+  let hideBtn = $state<HTMLButtonElement>();
+  // Show and Hide are two different buttons, so the one that was pressed is gone when the other appears. Focus follows
+  // the swap (BLACKBOX-02), or the next Esc would close the whole panel.
+  async function followFocus(to: () => HTMLButtonElement | undefined) { await tick(); to()?.focus({ preventScroll: true }); }
   // A Show whose answer lands after Hide, the timer or closing this screen must not put the key back.
   const guard = makeRevealGuard();
 
@@ -33,7 +38,9 @@
       const got = await blackboxApi.revealKey(item.id);
       if (!guard.valid(mine)) return;
       key = got;
-      timer = setTimeout(() => { letGo(); note = T.keyHiddenAgain; }, KEY_SHOW_MS);
+      const at = document.activeElement;
+      if (!at || at === document.body || at === showBtn || (at instanceof HTMLElement && at.classList.contains('shell'))) void followFocus(() => hideBtn);
+      timer = setTimeout(() => { const had = !!hideBtn && document.activeElement === hideBtn; letGo(); note = T.keyHiddenAgain; if (had) void followFocus(() => showBtn); }, KEY_SHOW_MS);
     } catch (error) {
       if (!guard.valid(mine)) return;
       letGo();
@@ -43,7 +50,7 @@
       busy = '';
     }
   }
-  function hide() { letGo(); note = ''; }
+  function hide() { letGo(); note = ''; void followFocus(() => showBtn); }
   async function copy() {
     if (busy) return;
     busy = T.keyWorking; note = ''; problem = '';
@@ -61,9 +68,9 @@
   <p class="bb-note">{T.keyHereOnly}</p>
   <div class="bb-actions">
     {#if key}
-      <button type="button" class="secondary-button" onclick={hide}>{T.keyHide}</button>
+      <button type="button" class="secondary-button" bind:this={hideBtn} onclick={hide}>{T.keyHide}</button>
     {:else}
-      <button type="button" class="secondary-button" disabled={!!busy || held} onclick={show}>{T.keyShow}</button>
+      <button type="button" class="secondary-button" bind:this={showBtn} disabled={!!busy || held} onclick={show}>{T.keyShow}</button>
     {/if}
     <button type="button" class="secondary-button" disabled={!!busy || held} onclick={copy}>{T.keyCopy}</button>
   </div>

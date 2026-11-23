@@ -32,6 +32,12 @@
   function onKey(event: KeyboardEvent) {
     if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); close(true); }
   }
+  // Tab (or Shift+Tab) out of the menu closes it, so it never stays open over the page while focus is elsewhere. A null target (the window lost
+  // focus, or a click on a non-focusable spot) is left to the pointer handler below.
+  function onFocusOut(event: FocusEvent) {
+    const next = event.relatedTarget as Node | null;
+    if (open && next && wrap && !wrap.contains(next)) close(false);
+  }
   // Opens the coverage drawer from the menu: focus goes back to the trigger first, so the drawer hands it back there when it closes.
   function showCoverage(source: Source) { close(true); onCoverage({ id: source.id, label: source.connectionLabel ? source.connectionLabel + ' / ' + source.database : source.database }); }
   $effect(() => {
@@ -45,7 +51,7 @@
   });
 </script>
 
-<div class="popover-wrap" bind:this={wrap} onkeydown={onKey} role="presentation">
+<div class="popover-wrap" bind:this={wrap} onkeydown={onKey} onfocusout={onFocusOut} role="presentation">
   <button type="button" class="header-button" bind:this={trigger} aria-haspopup="dialog" aria-expanded={open} aria-label={'Audit sources: ' + summary} title={summary} onclick={toggle}>
     <span class="dot" class:none={!selectedIds.length} aria-hidden="true"></span><span class="label">{summary}</span>
   </button>
@@ -92,5 +98,5 @@
   .keeper-note { margin: 0 6px var(--space-2); color: var(--text-2); font-size: var(--fs-2); }
   /* A long source summary is cut with an ellipsis (the full text is in the aria-label) so the header row never overflows. */
   .header-button .label { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  @media (max-width: 720px) { .header-button .label { max-width: 11ch; } }
+  @media (max-width: 720px) { .popover-wrap > .header-button { max-width: 100%; min-width: 0; } .header-button .dot { flex: none; } .header-button .label { max-width: 11ch; min-width: 0; } }
 </style>

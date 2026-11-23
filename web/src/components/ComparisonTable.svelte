@@ -100,17 +100,16 @@
   <label class="mobile-group-sort">Sort by<select value={sort + ':' + direction} onchange={(event) => { const [field, order] = event.currentTarget.value.split(':'); sort = field as RankField; direction = Number(order); page = 0; }}><option value="impact:-1">Largest total impact</option><option value="ratio:-1">Largest slowdown</option><option value="ratio:1">Smallest ratio</option><option value="delta:-1">Largest time increase</option><option value="count:-1">Most current requests</option></select></label>
   <span>Choose an API name to inspect its charts and requests below. These request counts include only requests with a usable response time, so they can be lower than the event counts in the overview and the Operation view.</span>
 </div>
-<div class="table-scroll group-table-scroll">
+<div class="table-scroll group-table-scroll scroll-cue">
   <table class="comparison-table">
     <thead><tr>
       <th>Timeline</th>
       <th title="Each group stays distinct by source, controller, and action.">API group</th>
       <th title="Request type and outcome remain separate parts of each group.">Kind and outcome</th>
-      <th aria-sort={sort === 'count' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button class="sort-button" title="Current-period requests with a valid response-time sample." onclick={() => sortBy('count')}>Current requests{sort === 'count' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button></th>
-      <th title="Reference-period requests with a valid response-time sample.">Reference requests<Hint termId="reference-period" /></th>
-      <th aria-sort={sort === 'impact' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button class="sort-button" title="About how much extra waiting all requests in this period added, compared with the average request in the earlier period. Clear shift means the whole spread of response times moved, not only a few requests." onclick={() => sortBy('impact')}>Extra waiting (total){sort === 'impact' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button></th>
-      <th aria-sort={sort === 'ratio' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button class="sort-button" title="P95 is the time within which about 95 of 100 requests finish. 2× means twice as long; 0.5× means half as long." onclick={() => sortBy('ratio')}>P95 vs reference{sort === 'ratio' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button><Hint termId="p95" /></th>
-      <th><button class="sort-button" title="Difference between current and earlier reference P95 estimates, in milliseconds. P95 is the estimated time within which about 95 of 100 requests with usable timings finish." onclick={() => sortBy('delta')}>P95 difference (ms)</button></th>
+      <th aria-sort={sort === 'count' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button type="button" class="sort-button" title="Current-period requests with a valid response-time sample. The line under each count is the reference period's count." onclick={() => sortBy('count')}>Current requests{sort === 'count' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button><Hint termId="reference-period" /></th>
+      <th aria-sort={sort === 'impact' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button type="button" class="sort-button" title="About how much extra waiting all requests in this period added, compared with the average request in the earlier period. Clear shift means the whole spread of response times moved, not only a few requests." onclick={() => sortBy('impact')}>Extra waiting (total){sort === 'impact' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button></th>
+      <th aria-sort={sort === 'ratio' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button type="button" class="sort-button" title="P95 is the time within which about 95 of 100 requests finish. 2× means twice as long; 0.5× means half as long." onclick={() => sortBy('ratio')}>P95 vs reference{sort === 'ratio' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button><Hint termId="p95" /></th>
+      <th><button type="button" class="sort-button" title="Difference between current and earlier reference P95 estimates, in milliseconds. P95 is the estimated time within which about 95 of 100 requests with usable timings finish." onclick={() => sortBy('delta')}>P95 difference (ms)</button></th>
       <th title="Share of current-period requests with a known result that were client errors (4xx), for the whole API. Needs the outcome filter set to All.">4xx %</th>
       <th title="Share of current-period requests with a known result that were server errors (5xx, including failed Hangfire jobs), for the whole API. Needs the outcome filter set to All.">5xx %</th>
       <th title="Completed requests as a share of completed, incomplete and pending ones, for the whole API. Unusable rows are counted apart and never in the share. A dash means there was nothing to measure, not 0%.">Completion %<Hint termId="completion-percent" /></th>
@@ -124,8 +123,8 @@
         {@const rates = statusRates(rollupFor(rollups, row), outcomeFilter, kindFilter)}
         <tr class:chosen={row.key === selectedKey}>
           <td class="timeline-choice"><label><input type="checkbox" checked={timelineKeys.includes(row.key)} disabled={timelineKeys.length >= 8 && !timelineKeys.includes(row.key)} aria-label={'Compare timeline for ' + row.controller + '.' + row.action + ' in ' + (sources.get(row.sourceId) ?? row.sourceId) + ' · ' + row.kind + ' · ' + row.outcome} onchange={() => onToggleTimeline(row.key)} /><span>Compare</span></label></td>
-          <td><button class="api-select" aria-pressed={row.key === selectedKey} onclick={() => onSelect(row.key)}>{row.controller}.{row.action}</button><small title={sources.get(row.sourceId) ?? row.sourceId}>{sources.get(row.sourceId) ?? row.sourceId}</small>{#if row.controller && row.action}<button type="button" class="daily-open" aria-label={STEP_TEXT.dailyOpen + ': ' + row.controller + '.' + row.action} onclick={(event) => openDaily(row.controller + '.' + row.action, event.currentTarget, row.sourceId)}>{STEP_TEXT.dailyOpen}</button>{/if}<PhaseBar phases={row.current.phases} delta={row.phaseDeltaMs} /></td>
-          <td class="group-kind" data-label="Kind and outcome" title={row.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(row.kind)}<small>{outcomeRateText(rows, row, outcomeFilter)}</small></td><td data-label="Current requests" title={observedPartialTip(row.current.observedPartial)}>{formatCount(row.current.count)}</td><td data-label="Reference requests" title={observedPartialTip(row.reference.observedPartial)}>{formatCount(row.reference.count)}</td>
+          <td><button type="button" class="api-select" aria-pressed={row.key === selectedKey} onclick={() => onSelect(row.key)}>{row.controller}.{row.action}</button><small title={sources.get(row.sourceId) ?? row.sourceId}>{sources.get(row.sourceId) ?? row.sourceId}</small>{#if row.controller && row.action}<button type="button" class="daily-open" aria-label={STEP_TEXT.dailyOpen + ': ' + row.controller + '.' + row.action} onclick={(event) => openDaily(row.controller + '.' + row.action, event.currentTarget, row.sourceId)}>{STEP_TEXT.dailyOpen}</button>{/if}<PhaseBar phases={row.current.phases} delta={row.phaseDeltaMs} compact /></td>
+          <td class="group-kind" data-label="Kind and outcome" title={row.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(row.kind)}<small>{outcomeRateText(rows, row, outcomeFilter)}</small></td><td data-label="Current requests" title={observedPartialTip(row.current.observedPartial)}>{formatCount(row.current.count)}<small title={observedPartialTip(row.reference.observedPartial) || 'Requests with a valid response-time sample in the reference period.'}>{formatCount(row.reference.count)} in reference</small></td>
           <td class="numeric" data-label="Extra waiting (total)" title={impactTip(row)}>{impactText(row.impactMs)}{#if row.significant}<small>clear shift</small>{/if}</td>
           <td class="numeric" data-label="P95 vs reference" title={p99Tip(row)}>{ratio(row.p95Ratio)}</td><td class="numeric" data-label="P95 difference (ms)">{row.p95DeltaMs == null ? 'N/A' : '≈ ' + row.p95DeltaMs.toFixed(1)}</td>
           <td class="numeric" data-label="4xx %" title={rates.tip}>{rates.client}</td>
@@ -136,12 +135,26 @@
           <td class="numeric" data-label="P99" title={p99Tip(row)}>{quantileText(row.current.p99, p99NeedsSamples)}</td>
           <td class="group-status" data-label="Comparison"><span class="state-pill" title={stateDetails[row.state] ?? 'Comparison status'}>{stateLabels[row.state] ?? row.state.replaceAll('_', ' ')}</span>{#if row.state === 'insufficient_data'}<Hint termId="low-sample" />{/if}{#if loadBadge(loadByKey.get(row.key))}<span class="state-pill" title={loadTip(loadByKey.get(row.key) ?? 0)}>{loadBadge(loadByKey.get(row.key))}</span>{/if}</td>
         </tr>
-      {:else}<tr><td colspan="15" class="table-empty">{rows.length ? 'No API groups match this search and view. Clear the search or choose All API groups.' : 'No API comparisons are available for this query.'}</td></tr>{/each}
+      {:else}<tr><td colspan="14" class="table-empty">{rows.length ? 'No API groups match this search and view. Clear the search or choose All API groups.' : 'No API comparisons are available for this query.'}</td></tr>{/each}
     </tbody>
   </table>
 </div>
 <div class="pagination-row group-pagination">
   <span aria-live="polite">{ordered.length ? currentPage * pageSize + 1 : 0}–{Math.min((currentPage + 1) * pageSize, ordered.length)} of {ordered.length} groups{filtered.length !== rows.length ? ` (${rows.length} total)` : ''} · Page {currentPage + 1} of {pageCount}</span>
-  <div class="page-actions"><button class="secondary-button" disabled={currentPage === 0} onclick={() => page = currentPage - 1}>Previous groups</button><button class="secondary-button" disabled={currentPage + 1 >= pageCount} onclick={() => page = currentPage + 1}>Next groups</button></div>
+  <div class="page-actions"><button type="button" class="secondary-button" disabled={currentPage === 0} onclick={() => page = currentPage - 1}>Previous groups</button><button type="button" class="secondary-button" disabled={currentPage + 1 >= pageCount} onclick={() => page = currentPage + 1}>Next groups</button></div>
 </div>
 {/if}
+
+<style>
+  /* The group table fits its box on a desktop screen (ANALYSIS-07): the kind and outcome note and the slowest-percentile and status cells wrap instead of
+     forcing one long line, and the first two columns are capped. On a phone the table turns into cards (app.css) and none of this applies. */
+  @media (min-width: 721px) {
+    :global(.group-table-scroll .comparison-table td:nth-child(2)) { min-width: 220px; max-width: 340px; }
+    :global(.group-table-scroll .comparison-table td.group-kind small) { max-width: 210px; overflow: visible; white-space: normal; }
+    :global(.group-table-scroll .comparison-table td.group-status), :global(.group-table-scroll .comparison-table td[data-label="P99"]) { white-space: normal; min-width: 90px; }
+    /* The sort buttons in the headings are at least 24px tall to press; the text stays where it was, and the Reference hint under it is not overlapped (SWEEP-F2 round 4). */
+    :global(.group-table-scroll .comparison-table th .sort-button) { display: inline-flex; align-items: center; min-height: 24px; box-sizing: border-box; margin-top: -4px; }
+    /* Eight pixels either side of each figure column (ten elsewhere) so the fourteen columns fit a 1440 screen without a sideways scroll. */
+    :global(.group-table-scroll .comparison-table th:not(:first-child)), :global(.group-table-scroll .comparison-table td:not(:first-child)) { padding-left: 8px; padding-right: 8px; }
+  }
+</style>

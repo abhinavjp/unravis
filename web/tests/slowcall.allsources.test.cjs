@@ -57,12 +57,18 @@ test('missing numbers say not recorded; markers leave the cell empty', () => {
   assert.match(src, /formatMs\(item\.tookMs\)/);
 });
 
-test('this call and selected rows are marked; click and Enter select', () => {
+test('this call and selected rows are marked; a press on the row or on its real button selects (BL-495)', () => {
   assert.match(markup, /aria-current=\{item\.thisCall \? 'true' : undefined\}/);
   assert.match(markup, /DRILL_TEXT\.thisCallMark/);
   assert.match(markup, /class:selected=\{selectedKey === item\.key\}/);
-  assert.match(markup, /onclick=\{\(\) => onSelect\(item\.key\)\}/);
-  assert.match(src, /event\.key !== 'Enter' && event\.key !== ' '/);
+  // the mouse keeps the whole row; the keyboard and screen reader get a real button (Enter and Space come from the browser, so no key handler is left)
+  assert.match(markup, /<tr class:selected=\{selectedKey === item\.key\} onclick=\{\(\) => onSelect\(item\.key\)\}>/);
+  assert.match(markup, /<button type="button" class="row-btn" data-testid="scall-all-open" aria-label=\{DRILL_TEXT\.openSourceItem\(/);
+  assert.match(markup, /aria-pressed=\{selectedKey === item\.key\}/);
+  assert.doesNotMatch(markup, /tabindex/);
+  assert.doesNotMatch(src, /onkeydown|event\.key/);
+  // the button keeps its press to itself: one press selects once
+  assert.match(src, /function pick\(event: MouseEvent, key: string\)[\s\S]*?event\.stopPropagation\(\);[\s\S]*?onSelect\(key\);/);
 });
 
 test('the list has no inner scroll box', () => {

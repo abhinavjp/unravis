@@ -52,7 +52,10 @@
   const recordLoadingId = $derived(evidence.recordLoadingId);
   const contextAnchor = $derived(evidence.contextAnchor);
   // The request history belongs to the tabs that list requests (B18); Breakdown shows it only once a breakdown filter is applied.
-  const showHistory = $derived(activeTab === 'failures' || activeTab === 'incomplete' || activeTab === 'slowest' || (activeTab === 'breakdown' && drillActive));
+  // With no failed request at all, the Failures tab says so instead of listing the successful ones (ANALYSIS-10).
+  const failedTotal = $derived(operation ? operation.failures : selected ? (selected.current.clientErrors ?? 0) + (selected.current.serverErrors ?? 0) : analysis.apis.reduce((sum, row) => sum + (row.current.clientErrors ?? 0) + (row.current.serverErrors ?? 0), 0));
+  const noFailures = $derived(activeTab === 'failures' && failedTotal === 0 && !drillActive);
+  const showHistory = $derived((activeTab === 'failures' && !noFailures) || activeTab === 'incomplete' || activeTab === 'slowest' || (activeTab === 'breakdown' && drillActive));
   const groupLabel = (row: Comparison) => (sourceLabels.get(row.sourceId) ?? 'Source unavailable') + ' · ' + row.outcome;
   // The Phases pane draws a split or a payload time; when it has neither, it says why instead of hiding the tab.
   const hasPhases = $derived(!!(selected && (phaseSegments(selected.current.phases ?? null) || (selected.current.phases?.payloadMs != null && Number.isFinite(selected.current.phases.payloadMs)))));
@@ -84,6 +87,7 @@
     </section>
   {:else if activeTab === 'failures' && scopedQuery}
     <FailurePanel {analysis} query={scopedQuery} {sourceLabels} {zone} onDrill={drillInto} cohortKeys={failureCohort} />
+    {#if noFailures}<p class="failure-none" role="status"><strong>No failed requests in this period.</strong> Nothing returned a 4xx or 5xx status and no background job failed.</p>{/if}
   {:else if activeTab === 'incomplete' && operation}
     <IncompletePanel rollups={[operation]} kindFilter={analysis.query.kind} onDrill={drillFromIncomplete} />
   {:else if activeTab === 'slowest'}
@@ -106,6 +110,8 @@
 </Inspector>
 
 <style>
+  .failure-none { margin: 0; padding: var(--space-3) 0; color: var(--text-2); font-size: var(--fs-3); border-top: 1px solid var(--hairline); }
+  .failure-none strong { color: var(--text); }
   /* A note in the evidence frame is a hatch dot and text between two hairlines: no box and no side stripe. */
   .comparison-wide-note { position: relative; margin: 0; padding: var(--space-2) 0 var(--space-2) var(--space-5); color: var(--text); font-size: var(--fs-3); line-height: 1.5; border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); }
   .comparison-wide-note::before { content: ""; position: absolute; left: 0; top: calc(var(--space-2) + 0.45em); width: 9px; height: 9px; border-radius: 50%; background: var(--hatch); box-shadow: 0 0 0 1px var(--pending); }

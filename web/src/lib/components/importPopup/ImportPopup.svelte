@@ -195,8 +195,9 @@
   <div class="popup-foot">
     {#if popup.step === 1}
       <div class="foot-row">
-        <span class="foot-spacer"></span>
         <span class="foot-note">{POPUP_TEXT.nothingSent}</span>
+        <span class="foot-spacer"></span>
+        <button type="button" class="btn btn-secondary" data-focus="cancel" onclick={ask}>{POPUP_TEXT.cancel}</button>
         <button type="button" class="btn btn-primary" data-focus="continue" disabled={popup.files.length === 0} onclick={() => popup.continueToCheck()}>{POPUP_TEXT.continueBtn}</button>
       </div>
     {:else if popup.step === 2 && !popup.checking && popup.checkError === ''}
@@ -212,6 +213,7 @@
           <span>{POPUP_TEXT.ack}</span>
         </label>
         <span class="foot-spacer"></span>
+        <button type="button" class="btn btn-secondary" data-focus="cancel" onclick={ask}>{POPUP_TEXT.cancel}</button>
         <button type="button" class="btn btn-primary" data-focus="import" disabled={!popup.canImport()} onclick={() => popup.startImport()}>{POPUP_TEXT.importBtn(count)}</button>
       </div>
     {:else if popup.step === 3 && popup.importing}
@@ -276,10 +278,10 @@
   .popup-body { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; padding: 18px 20px; scrollbar-width: thin; }
   .popup-foot { flex: 0 0 auto; display: flex; flex-direction: column; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--line); background: var(--surface); }
 
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 8px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 33px; padding: 8px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
   .btn-primary { color: var(--accent-ink); background: var(--accent); border: 1px solid var(--accent); }
   .btn-primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
-  .btn-secondary { color: var(--text); background: transparent; border: 1px solid var(--line); }
+  .btn-secondary { color: var(--text); background: transparent; border: 1px solid var(--control-line); }
   .btn-secondary:hover { border-color: var(--text-2); background: var(--surface-2); }
   .btn:disabled { cursor: not-allowed; }
   .btn-primary:disabled { color: var(--text-2); background: var(--surface-2); border-color: var(--control-line); }

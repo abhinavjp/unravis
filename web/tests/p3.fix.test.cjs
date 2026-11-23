@@ -73,14 +73,14 @@ test('an archived case has no Reopen button (it would never work); Restore is th
 
 test('the case home reads the case first and asks for files, checks and theories only when it may', () => {
   const home = read('src/lib/components/CaseHome.svelte');
-  const load = home.match(/async function load\(id: string, quiet = false\) \{[\s\S]*?\n  \}\n/)[0];
+  const load = home.match(/async function loadPage\(id: string, quiet: boolean\) \{[\s\S]*?\n  \}\n/)[0];
   assert.match(load, /getCaseView\(id, mine\.signal\), getCaseKeyStatus\(id, mine\.signal\)\]\);[\s\S]*readsCaseData\(found\)/, 'the view is read before anything else');
   assert.match(load, /reads \? listImports\(/);
   assert.match(load, /reads \? fetchHealthRuns\(/);
-  assert.match(load, /reads \? refreshLedger\(/);
+  assert.match(load, /reads \? Promise\.race\(\[refreshLedger\(\)/);
   assert.doesNotMatch(load, /Promise\.allSettled\(\[getCaseView\(id, mine\.signal\), listImports/, 'no read of an archived case in parallel with the view');
-  const reread = home.match(/async function rereadFiles\(\) \{[\s\S]*?\n  \}\n/)[0];
-  assert.match(reread, /readsCaseData\(fresh\) \? await listImports/, 'a reread of an archived case does not list files');
+  const reread = home.match(/async function rereadFiles\(everything = false\) \{[\s\S]*?\n  \}\n/)[0];
+  assert.match(reread, /const reads = readsCaseData\(fresh\);[\s\S]*reads \? listImports\(id\)/, 'a reread of an archived case does not list files');
 });
 
 test('after a move the whole page is read again, so an archived case shows as archived at once', () => {
@@ -147,7 +147,7 @@ test('an archive that runs with its drawer closed is shown and followed on the c
   assert.match(follow, /believedState\(now\) !== 'archiving'\) return/, 'polls only while the case is being archived');
   assert.match(follow, /archiveDrawer/, 'and not while the drawer (which polls itself) is open');
   assert.match(follow, /JOB_POLL_MS/);
-  assert.match(follow, /clearTimeout\(timer\)/);
+  assert.match(follow, /return pacedTimeout\(/, 'the wait is cancelled by the effect and slows down while the page is hidden');
   const at = home.indexOf('{:else if archivingNow}');
   assert.ok(at > 0 && /ARCHIVE_TEXT\.archivingNote/.test(home.slice(at, at + 400)) && /ARCHIVE_TEXT\.showProgress/.test(home.slice(at, at + 700)), 'a notice and a Show progress button');
   for (const key of ['archivingNote', 'showProgress']) assert.ok(copy.archiveLintEntries().some((entry) => entry.text === copy.ARCHIVE_TEXT[key]), key + ' is in the copy lint');

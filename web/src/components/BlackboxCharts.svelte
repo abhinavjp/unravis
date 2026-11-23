@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { watchSize } from '../lib/chartPerf';
   import { timeZone } from '../lib/timeZone.svelte';
   import { onMount, untrack } from 'svelte';
   import { MarkAreaComponent } from 'echarts/components';
@@ -10,7 +11,7 @@
   import { BBC_TEXT as T } from '../lib/copy/blackboxChartsCopy';
   import {
     PRESET_LABELS, UNIT_TITLES, axisValue, chartData, gapRanges, coverNote, defaultSelection, firstPreset, formatValue, lineFigures, pickerGroups,
-    alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES, own,
+    alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES, own, niceBinaryMax, biggestPlotted,
     type SeriesAnswer, type SeriesLine, type SeriesPoint, type SeriesUnit, type WindowPreset
   } from '../lib/blackboxSeries';
   import { MAX_DRAWN, eventDots, eventRows, happenedItems, healthRows, statusChips, type HappenedItem, type Happened } from '../lib/blackboxHappened';
@@ -70,7 +71,7 @@
     const target = node;
     if (!target) return;
     let made: ReturnType<typeof echarts.init> | undefined;
-    const observer = new ResizeObserver(() => {
+    const stopSize = watchSize(target, () => {
       if (!made) {
         if (target.clientWidth > 0 && target.clientHeight > 0) {
           made = echarts.init(target);
@@ -81,9 +82,8 @@
       }
       made.resize();
     });
-    observer.observe(target);
     return () => {
-      observer.disconnect();
+      stopSize();
       if (made) { made.off('datazoom', onZoom); made.dispose(); made = undefined; }
       chart = undefined;
     };
@@ -168,10 +168,20 @@
     return groups.map((g) => ({ ...g, lines: g.lines.filter((l) => (seriesTitle(l.key) + ' ' + l.key + ' ' + g.title).toLowerCase().includes(q)) })).filter((g) => g.lines.length);
   });
   const notRead = $derived((answer?.groups ?? []).map((c) => ({ c, note: answer && answer.samples > 0 ? coverNote(c) : null })).filter((x) => x.note));
+  // BLACKBOX-04: a colour is never used twice inside one chart. The colours run per chart (per unit), not across all of them; only a
+  // chart with more lines than the palette has colours goes on to dashed and then dotted lines, and the swatches show that too.
+  type Dash = 'solid' | 'dashed' | 'dotted';
   const colourOf = $derived.by(() => {
     const p = (void theme.epoch, palette());
-    return new Map(drawn.map((d, i) => [d.key, { color: p.series[i % p.series.length], dashed: i >= p.series.length }]));
+    const n = p.series.length;
+    const out = new Map<string, { color: string; dash: Dash }>();
+    for (const s of strips) s.keys.forEach((k, j) => out.set(k, { color: p.series[j % n], dash: j < n ? 'solid' : j < 2 * n ? 'dashed' : 'dotted' }));
+    return out;
   });
+  const legends = $derived(strips.map((s) => {
+    const names = s.keys.map((k) => ({ key: k, title: drawn.find((d) => d.key === k)?.title ?? k, c: colourOf.get(k) }));
+    return { unit: s.unit, shown: names.slice(0, 4), more: Math.max(0, names.length - 4) };
+  }));
   let hidden = $state(0);
   const MAX_LINES = 24;
   const chips = $derived(statusChips(answer));
@@ -194,8 +204,9 @@
   function pickFocus(k: string) { focusKey = focusKey === k ? '' : k; }
 
   const STRIP_H = 150;
-  const TOP = 22;
-  const GAP = 44;
+  const TOP = 30;
+  const GAP = 54;
+  const LEFT = 86;
   const BOTTOM = 56;
   const height = $derived(Math.max(1, strips.length) * (STRIP_H + GAP) - GAP + TOP + BOTTOM);
 
@@ -203,6 +214,37 @@
     const longSpan = w.endMs - w.startMs > 20 * 3_600_000;
     return (v: number) => chartTime(v, timeZone.zone, { seconds: false, zone: false, date: longSpan });
   };
+
+  // Zoom with buttons, for people who cannot drag (BLACKBOX-05). The same chart zoom as the bar and the wheel: it goes through
+  // the chart, which reports it back to onZoom, so the table and "Read this range in detail" follow.
+  function moveZoom(how: 'in' | 'out' | 'earlier' | 'later') {
+    if (!win || !chart) return;
+    const full = { startMs: win.startMs, endMs: win.endMs };
+    const cur = zoom ?? full;
+    const span = cur.endMs - cur.startMs;
+    const mid = (cur.startMs + cur.endMs) / 2;
+    let s = cur.startMs, e = cur.endMs;
+    if (how === 'in') { s = mid - span / 4; e = mid + span / 4; }
+    else if (how === 'out') { s = mid - span; e = mid + span; }
+    else { const step = span / 4 * (how === 'earlier' ? -1 : 1); s += step; e += step; }
+    const fullSpan = full.endMs - full.startMs;
+    if (e - s >= fullSpan * 0.98) { s = full.startMs; e = full.endMs; }
+    else if (s < full.startMs) { e += full.startMs - s; s = full.startMs; }
+    else if (e > full.endMs) { s -= e - full.endMs; e = full.endMs; }
+    chart.dispatchAction({ type: 'dataZoom', startValue: Math.round(s), endValue: Math.round(e) });
+    zoom = e - s < fullSpan * 0.98 ? { startMs: Math.round(s), endMs: Math.round(e) } : null;
+  }
+
+  // On a phone the list of counters is behind a button, and the chart comes first (BLACKBOX-24).
+  let narrow = $state(false);
+  let sideOpen = $state(false);
+  onMount(() => {
+    const q = window.matchMedia('(max-width: 639px)');
+    const set = () => { narrow = q.matches; };
+    set();
+    q.addEventListener('change', set);
+    return () => q.removeEventListener('change', set);
+  });
 
   $effect(() => {
     if (!chart) return;
@@ -221,16 +263,23 @@
     const markerLines = [...drawnNow.dumps.map((it) => ({ xAxis: it.t, name: T.markDump })), ...drawnNow.restarts.map((it) => ({ xAxis: it.t, name: T.markRestart }))];
     const focus = untrack(() => focusKey);
     let hiddenNow = 0;
-    const grids = strips.map((_, i) => ({ left: 86, right: 24, top: TOP + i * (STRIP_H + GAP), height: STRIP_H }));
+    const grids = strips.map((_, i) => ({ left: LEFT, right: 24, containLabel: false, top: TOP + i * (STRIP_H + GAP), height: STRIP_H }));
     const xAxes = strips.map((_, i) => ({
       type: 'time', gridIndex: i, min: Math.min(w.startMs, Date.parse(a.start) || w.startMs), max: Math.max(w.endMs, Date.parse(a.end) || w.endMs), ...axis, splitLine: { show: false },
       axisLabel: { color: p.text2, formatter: ticks(w), hideOverlap: true }
     }));
-    const yAxes = strips.map((s, i) => ({
-      type: log ? 'log' : 'value', gridIndex: i, name: UNIT_TITLES[s.unit], nameLocation: 'middle', nameGap: 70, scale: !log && s.unit !== 'pct',
-      min: !log && (s.unit === 'pct' || s.unit === 'count' || s.unit === 'perSec' || s.unit === 'bytes' || s.unit === 'bytesPerSec') ? 0 : undefined,
-      ...axis, axisLabel: { color: p.text2, formatter: (v: number) => axisValue(s.unit, v) }
-    }));
+    const yAxes = strips.map((s, i) => {
+      // Byte axes get a round top in binary units, so the grid reads 512 MB, 1 GB, 1.5 GB, 2 GB and not 954 MB, 1.86 GB.
+      const top = !log && (s.unit === 'bytes' || s.unit === 'bytesPerSec') ? niceBinaryMax(biggestPlotted(s.keys.map((k) => byKey.get(k)!).filter(Boolean)) ?? 0) : null;
+      return {
+        type: log ? 'log' : 'value', gridIndex: i, name: UNIT_TITLES[s.unit], nameLocation: 'middle', nameGap: 70, scale: !log && s.unit !== 'pct',
+        min: !log && (s.unit === 'pct' || s.unit === 'count' || s.unit === 'perSec' || s.unit === 'bytes' || s.unit === 'bytesPerSec') ? 0 : undefined,
+        ...(top ? { max: top, interval: top / 4 } : { splitNumber: 4 }),
+        // On the log scale the minor lines show where 2, 3 ... 9 times a step fall, so a value between two labels can still be read.
+        ...(log ? { minorTick: { show: true, splitNumber: 9 }, minorSplitLine: { show: true, lineStyle: { color: p.grid, opacity: 0.4 } } } : {}),
+        ...axis, axisLabel: { color: p.text2, formatter: (v: number) => axisValue(s.unit, v) }
+      };
+    });
     const series: unknown[] = [];
     strips.forEach((s, i) => {
       s.keys.forEach((k, j) => {
@@ -240,7 +289,7 @@
         hiddenNow += cd.hidden;
         series.push({
           type: 'line', name: d.title, id: k, xAxisIndex: i, yAxisIndex: i, data: cd.data, connectNulls: false, showSymbol: cd.data.length < 40, symbolSize: 4,
-          sampling: 'lttb', lineStyle: { width: focus === k ? 3 : 1.6, opacity: focus && focus !== k ? 0.35 : 1, color: c?.color, type: c?.dashed ? 'dashed' : 'solid' }, itemStyle: { color: c?.color },
+          sampling: 'lttb', lineStyle: { width: focus === k ? 3 : 1.6, opacity: focus && focus !== k ? 0.35 : 1, color: c?.color, type: c?.dash ?? 'solid' }, itemStyle: { color: c?.color },
           markArea: j === 0 && gapAreas.length ? { silent: true, itemStyle: { color: p.empty, opacity: 0.5 }, label: { show: i === 0 && gapAreas.length <= 6, position: 'insideBottom', color: p.text2, fontSize: 11 }, data: gapAreas } : undefined,
           markLine: j === 0 && markerLines.length ? { silent: true, symbol: 'none', lineStyle: { color: p.warn, type: 'dotted' }, label: { show: i === 0 && markerLines.length <= 6, formatter: '{b}', color: p.text2, fontSize: 11 }, data: markerLines } : undefined
         });
@@ -255,10 +304,13 @@
       axisPointer: { link: [{ xAxisIndex: 'all' }] },
       dataZoom: [
         { type: 'inside', xAxisIndex: all, filterMode: 'none', ...keep },
-        { type: 'slider', xAxisIndex: all, filterMode: 'none', ...keep, bottom: 8, height: 22, labelFormatter: ticks(w), textStyle: { color: p.text2 } }
+        { type: 'slider', xAxisIndex: all, filterMode: 'none', ...keep, bottom: 8, height: 22, left: LEFT, right: 40, labelFormatter: ticks(w), textStyle: { color: p.text2 } }
       ],
       tooltip: {
+        // BLACKBOX-18: the tooltip sits at the top of the chart, beside the pointer, so it does not cover the lines being read.
         trigger: 'axis', confine: true, renderMode: 'richText', axisPointer: { type: 'line' },
+        position: (pt: number[]) => [pt[0] + 16, 8],
+        textStyle: { rich: Object.fromEntries(drawn.map((d, i) => ['s' + i, { color: colourOf.get(d.key)?.color ?? p.text2 }])) },
         formatter: (raw: unknown) => {
           const items = (Array.isArray(raw) ? raw : [raw]) as Array<{ seriesId: string; seriesName: string; value: [number, number | null] }>;
           if (!items.length) return '';
@@ -267,9 +319,13 @@
             const d = byKey.get(it.seriesId);
             const pt = lookup.get(it.seriesId)?.get(t);
             if (!d) return '';
-            if (!pt) return it.seriesName + ': ' + T.notRead;
+            // A coloured line mark first, so a row can be matched to its line (and to the dash of a repeated colour).
+            const dash = colourOf.get(d.key)?.dash ?? 'solid';
+            const mark = '{s' + drawn.indexOf(d) + '|' + (dash === 'solid' ? '━━' : dash === 'dashed' ? '╍╍' : '┅┅') + '} ';
+            const name = it.seriesName.replace(/[{}|]/g, '');
+            if (!pt) return mark + name + ': ' + T.notRead;
             const range = pt[2] !== pt[3] ? ' (' + formatValue(d.unit, pt[2]) + ' to ' + formatValue(d.unit, pt[3]) + ')' : '';
-            return it.seriesName + ': ' + formatValue(d.unit, pt[1]) + range;
+            return mark + name + ': ' + formatValue(d.unit, pt[1]) + range;
           }).filter(Boolean);
           return chartTime(t, timeZone.zone) + '\n' + rows.join('\n');
         }
@@ -332,18 +388,32 @@
         <button type="button" class:on={view === 'everything'} aria-pressed={view === 'everything'} title={T.viewEverythingHint} onclick={() => { view = 'everything'; }}>{T.viewEverything}</button>
       </div>
       {#if view === 'charts'}
-        <div class="bbc-seg" role="group" aria-label={T.scale}>
-          <button type="button" class:on={!log} aria-pressed={!log} title={T.linearHelp} onclick={() => { log = false; }}>{T.linear}</button>
-          <button type="button" class:on={log} aria-pressed={log} title={T.logHelp} onclick={() => { log = true; }}>{T.log}</button>
+        <div class="bbc-labelled">
+          <span class="bbc-seg-label" aria-hidden="true" title={T.scaleHint}>{T.scale}</span>
+          <div class="bbc-seg" role="group" aria-label={T.scale}>
+            <button type="button" class:on={!log} aria-pressed={!log} title={T.linearHelp} onclick={() => { log = false; }}>{T.linear}</button>
+            <button type="button" class:on={log} aria-pressed={log} title={T.logHelp} onclick={() => { log = true; }}>{T.log}</button>
+          </div>
         </div>
+        {#if answer && drawn.length}
+          <div class="bbc-seg" role="group" aria-label={T.zoomGroup}>
+            <button type="button" title={T.zoomEarlierHint} onclick={() => moveZoom('earlier')}>{T.zoomEarlier}</button>
+            <button type="button" title={T.zoomLaterHint} onclick={() => moveZoom('later')}>{T.zoomLater}</button>
+            <button type="button" title={T.zoomInHint} onclick={() => moveZoom('in')}>{T.zoomIn}</button>
+            <button type="button" title={T.zoomOutHint} onclick={() => moveZoom('out')}>{T.zoomOut}</button>
+          </div>
+        {/if}
         {#if zoom}<button type="button" class="secondary-button" title={T.zoomReadHint} onclick={readZoom}>{T.zoomRead}</button>{/if}
+        {#if narrow}<button type="button" class="secondary-button" aria-expanded={sideOpen} title={T.sideToggleHint} onclick={() => { sideOpen = !sideOpen; }}>{T.sideToggle(tab === 'processes' ? drawn.length : keys.length)}</button>{/if}
       {/if}
       {#if back.length}<button type="button" class="quiet-button" title={T.zoomBackHint} onclick={goBack}>{T.zoomBack}</button>{/if}
     </div>
+    <!-- What the log scale means is written out while it is chosen, not only in a tooltip that keyboard and touch users never see (SWEEP-F2-S7). -->
+    {#if view === 'charts' && log}<p class="bbc-note">{T.scaleHint}</p>{/if}
 
     <div class="bbc-main" class:wide={view !== 'charts'}>
       {#if view === 'charts'}
-      <aside class="bbc-side">
+      <aside class="bbc-side" class:folded={narrow && !sideOpen}>
         <div class="bbc-tabs" role="group" aria-label={T.sideLabel}>
           <button type="button" aria-pressed={tab === 'counters'} class:on={tab === 'counters'} title={T.tabCountersHint} onclick={() => { tab = 'counters'; }}>{T.tabCounters}</button>
           <button type="button" aria-pressed={tab === 'processes'} class:on={tab === 'processes'} title={T.tabProcessesHint} onclick={() => { tab = 'processes'; }}>{T.tabProcesses}</button>
@@ -370,7 +440,7 @@
                   {@const c = colourOf.get(l.key)}
                   <label class="bbc-pick" title={meaningOf(l.key, l.unit)}>
                     <input type="checkbox" checked={keys.includes(l.key)} onchange={() => toggle(l.key)} />
-                    <span class="bbc-swatch" style:background={c?.color ?? 'transparent'}></span>
+                    <span class="bbc-swatch {c?.dash ?? 'solid'}" style:--sw={c?.color ?? 'transparent'} aria-hidden="true"></span>
                     <span>{seriesTitle(l.key)}</span>
                   </label>
                 {/each}
@@ -407,9 +477,27 @@
         {#if view === 'charts'}
           {#if answer && !problem}
             {#if answer.samples === 0}<p class="bbc-note">{T.noSamples}</p>
-            {:else if !drawn.length}<p class="bbc-note">{tab === 'processes' ? T.procNone : T.pickSome}</p>{/if}
+            {:else if !drawn.length}
+              <div class="bbc-empty">
+                <p class="bbc-empty-title">{tab === 'processes' ? T.procNone : T.pickSome}</p>
+                {#if tab !== 'processes'}
+                  <p class="bbc-empty-help">{T.pickSomeHelp}</p>
+                  <button type="button" class="secondary-button" onclick={() => { keys = answer ? defaultSelection(answer.lines) : []; }}>{T.useDefault}</button>
+                {/if}
+              </div>
+            {/if}
           {/if}
-          <div class="bbc-canvas" bind:this={node} style:height={height + 'px'} class:empty={!drawn.length || !!problem}></div>
+          <div class="bbc-canvas-wrap" role="img" aria-label={T.chartLabel(item.name, drawn.slice(0, 6).map((d) => d.title).join(', '), Math.max(0, drawn.length - 6))} style:height={height + 'px'} class:empty={!drawn.length || !!problem}>
+            <div class="bbc-canvas" bind:this={node}></div>
+            <div class="bbc-legends" aria-hidden="true">
+              {#each legends as lg, i (lg.unit)}
+                <ul class="bbc-legend" style:top={(TOP + i * (STRIP_H + GAP) - 24) + 'px'} style:left={LEFT + 'px'}>
+                  {#each lg.shown as n (n.key)}<li><span class="bbc-swatch {n.c?.dash ?? 'solid'}" style:--sw={n.c?.color ?? 'transparent'}></span>{n.title}</li>{/each}
+                  {#if lg.more}<li class="bbc-legend-more">{T.legendMore(lg.more)}</li>{/if}
+                </ul>
+              {/each}
+            </div>
+          </div>
           {#if answer && !problem && drawn.length}
             <p class="bbc-note">
               {T.bucket(bucketWords(answer.bucketSeconds), bucketWords(answer.intervalSeconds || answer.bucketSeconds))}
@@ -427,7 +515,7 @@
                 {#each figures as { d, f } (d.key)}
                   {@const c = colourOf.get(d.key)}
                   <tr class:focus={focusKey === d.key}>
-                    <td><span class="bbc-swatch" class:dashed={c?.dashed} style:background={c?.color}></span></td>
+                    <td><span class="bbc-swatch {c?.dash ?? 'solid'}" style:--sw={c?.color ?? 'transparent'} aria-hidden="true"></span></td>
                     <th scope="row"><button type="button" class="bbc-rowbtn" aria-pressed={focusKey === d.key} title={T.rowHint(d.title)} onclick={() => pickFocus(d.key)}>{d.title}</button></th>
                     <td>{formatValue(d.unit, f.last)}</td><td>{formatValue(d.unit, f.avg)}</td><td>{formatValue(d.unit, f.min)}</td><td>{formatValue(d.unit, f.max)}</td>
                     <td class="bbc-when">{whenText(f.maxAt)}</td>
@@ -501,10 +589,10 @@
             {#if !evRows.rows.length}<p class="bbc-note">{T.happenedEmpty}</p>
             {:else}
               <table class="bbc-list-table">
-                <thead><tr><th scope="col">{T.colLog}</th><th scope="col">{T.colLevel}</th><th scope="col">{T.colId}</th><th scope="col">{T.colCount}</th><th scope="col">{T.colMeaningShort}</th></tr></thead>
+                <thead><tr><th scope="col">{T.colLog}</th><th scope="col">{T.colLevel}</th><th scope="col" class="num">{T.colId}</th><th scope="col" class="num">{T.colCount}</th><th scope="col">{T.colMeaningShort}</th></tr></thead>
                 <tbody>
                   {#each evRows.rows as r (r.id)}
-                    <tr><td>{r.log}</td><td>{r.level}</td><td>{r.eventId}</td><td>{r.count}</td><td>{r.meaning}</td></tr>
+                    <tr><td>{r.log}</td><td>{r.level}</td><td class="num">{r.eventId}</td><td class="num">{r.count}</td><td>{r.meaning}</td></tr>
                   {/each}
                 </tbody>
               </table>
@@ -547,14 +635,14 @@
                 <summary>{g.title} <span class="bbc-count">{g.lines.length}</span></summary>
                 {#if openGroups.includes(g.group) || everySearch}
                   <table class="bbc-list-table bbc-every">
-                    <thead><tr><th scope="col">{T.colCounter}</th><th scope="col">{T.last}</th><th scope="col">{T.average}</th><th scope="col">{T.highest}</th><th scope="col">{T.colShape}</th><th scope="col">{T.colMeaning}</th></tr></thead>
+                    <thead><tr><th scope="col">{T.colCounter}</th><th scope="col" class="num">{T.last}</th><th scope="col" class="num">{T.average}</th><th scope="col" class="num">{T.highest}</th><th scope="col">{T.colShape}</th><th scope="col">{T.colMeaning}</th></tr></thead>
                     <tbody>
                       {#each g.lines as l (l.key)}
                         {@const u = seriesUnit(l.key, l.unit)}
                         {@const f = lineFigures(l.points)}
                         <tr>
                           <th scope="row">{seriesTitle(l.key)}</th>
-                          <td>{formatValue(u, f.last)}</td><td>{formatValue(u, f.avg)}</td><td>{formatValue(u, f.max)}</td>
+                          <td class="num">{formatValue(u, f.last)}</td><td class="num">{formatValue(u, f.avg)}</td><td class="num">{formatValue(u, f.max)}</td>
                           <td><svg class="bbc-spark" viewBox="0 0 80 18" aria-hidden="true"><path d={shapePath(l.points)} /></svg></td>
                           <td class="bbc-mean">{meaningOf(l.key, l.unit)}</td>
                         </tr>
@@ -590,7 +678,8 @@
   .bbc-seg button.on, .bbc-tabs button.on { color: var(--text); background: var(--surface-2); font-weight: 600; }
   .bbc-main { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px minmax(0, 1fr); }
   .bbc-side { display: flex; flex-direction: column; gap: var(--space-2); min-height: 0; padding: var(--space-3); border-right: 1px solid var(--line); overflow: auto; }
-  .bbc-tabs { display: flex; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+  /* The side column is a scrolling flex column and this strip has overflow: hidden (so it has no minimum height): without flex-shrink 0 a long list squeezed it to 12px (BL-496). */
+  .bbc-tabs { display: flex; flex-shrink: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
   .bbc-tabs button { flex: 1; }
   .bbc-tabs button:last-child { border-right: 0; }
   .bbc-search, .bbc-field select { width: 100%; box-sizing: border-box; padding: 6px 8px; font: inherit; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); }
@@ -600,18 +689,34 @@
   .bbc-list summary { cursor: pointer; font-size: 13px; font-weight: 600; padding: 4px 0; }
   .bbc-count { color: var(--text-2); font-weight: 400; font-size: 12px; }
   .bbc-pick { display: flex; align-items: center; gap: 6px; padding: 3px 0 3px 4px; font-size: 12.5px; line-height: 1.3; cursor: pointer; }
-  .bbc-swatch { display: inline-block; flex: 0 0 auto; width: 10px; height: 10px; border-radius: 2px; }
-  .bbc-swatch.dashed { height: 3px; }
+  /* A checkbox never shrinks beside a long name, so the names of all rows start at the same place. */
+  .bbc-pick input { flex: 0 0 auto; }
+  /* A swatch is the line itself: a solid bar, or a dashed or dotted one for a colour that a crowded chart has to use again. */
+  .bbc-swatch { --sw: currentColor; display: inline-block; flex: 0 0 auto; width: 16px; height: 0; border-top: 3px solid var(--sw); vertical-align: middle; }
+  .bbc-swatch.dashed { border-top-style: dashed; }
+  .bbc-swatch.dotted { border-top-style: dotted; }
+  .bbc-labelled { display: inline-flex; align-items: center; gap: var(--space-2); }
+  .bbc-seg-label { color: var(--text-2); font-size: 12px; font-weight: 500; }
+  .bbc-side.folded { display: none; }
+  .bbc-canvas-wrap { position: relative; width: 100%; }
+  .bbc-canvas-wrap .bbc-canvas { position: absolute; inset: 0; }
+  .bbc-canvas-wrap.empty { visibility: hidden; height: 0 !important; }
+  .bbc-legends { position: absolute; inset: 0; pointer-events: none; }
+  .bbc-legend { position: absolute; display: flex; flex-wrap: nowrap; gap: var(--space-4); margin: 0; padding: 0; list-style: none; max-width: calc(100% - 100px); overflow: hidden; color: var(--text-2); font-size: 12px; white-space: nowrap; }
+  .bbc-legend li { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .bbc-legend-more { color: var(--text-2); }
+  .bbc-empty { display: grid; justify-items: center; gap: var(--space-2); padding: var(--space-8, 48px) var(--space-4); text-align: center; }
+  .bbc-empty-title { margin: 0; font-size: 14px; font-weight: 600; }
+  .bbc-empty-help { margin: 0 0 var(--space-2); color: var(--text-2); font-size: 13px; }
   .bbc-notread { font-size: 12px; color: var(--text-2); border-left: 3px solid var(--warn); padding-left: var(--space-2); }
   .bbc-notread ul { margin: 4px 0 0; padding-left: 16px; }
   .bbc-chart-area { min-width: 0; min-height: 0; overflow: auto; padding: var(--space-3) var(--space-4); }
-  .bbc-canvas { width: 100%; }
-  .bbc-canvas.empty { visibility: hidden; height: 0 !important; }
+  .bbc-chart-area .bbc-note { max-width: 110ch; }
   .bbc-figs { font-family: inherit; background: transparent; width: 100%; margin-top: var(--space-3); border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
   .bbc-figs th, .bbc-figs td { font-family: inherit; background: transparent; letter-spacing: normal; text-transform: none; padding: 4px 8px; text-align: right; border-top: 1px solid var(--line); white-space: nowrap; }
   .bbc-figs th[scope="row"], .bbc-figs thead th:nth-child(2) { text-align: left; white-space: normal; font-weight: 500; }
   .bbc-figs thead th { color: var(--text-2); font-weight: 500; border-top: 0; }
-  .bbc-x { padding: 0 6px; color: var(--text-2); background: transparent; border: 0; font-size: 16px; cursor: pointer; }
+  .bbc-x { box-sizing: border-box; min-width: 24px; min-height: 24px; padding: 0.45px 7.5px; margin: -0.45px -1.5px; color: var(--text-2); background: transparent; border: 0; font-size: 16px; cursor: pointer; }
   .bbc-head-actions { display: flex; align-items: flex-start; gap: var(--space-2); }
   .bbc-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); list-style: none; margin: 6px 0 0; padding: 0; }
   .bbc-chip { display: inline-block; padding: 2px 10px; font-size: 12px; font-weight: 600; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; cursor: help; }
@@ -629,7 +734,7 @@
   .bbc-main.wide { grid-template-columns: minmax(0, 1fr); }
   .bbc-h { margin: var(--space-4) 0 0; font-size: var(--fs-5, 15px); font-weight: 600; }
   .bbc-cap { caption-side: top; text-align: left; padding: 0 8px 4px; color: var(--text-2); font-size: 12px; }
-  .bbc-rowbtn { padding: 0; font: inherit; color: inherit; text-align: left; background: transparent; border: 0; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+  .bbc-rowbtn { box-sizing: border-box; min-height: 24px; padding: 3.5px 0; margin-block: -3.5px; font: inherit; color: inherit; text-align: left; background: transparent; border: 0; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
   .bbc-rowbtn[aria-pressed='true'] { font-weight: 700; text-decoration: underline; }
   tr.focus { background: var(--surface-2); }
   .bbc-when { color: var(--text-2); }
@@ -653,6 +758,8 @@
   .bbc-list-table { width: 100%; margin-top: var(--space-2); border-collapse: collapse; font-size: 12.5px; background: transparent; font-family: inherit; }
   .bbc-list-table th, .bbc-list-table td { padding: 4px 8px; text-align: left; vertical-align: top; border-top: 1px solid var(--line); background: transparent; font-family: inherit; letter-spacing: normal; text-transform: none; overflow-wrap: anywhere; }
   .bbc-list-table thead th { color: var(--text-2); font-weight: 500; border-top: 0; }
+  .bbc-list-table th, .bbc-list-table td { border-bottom: 0; }
+  .bbc-list-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .bbc-list-table th[scope='row'] { font-weight: 500; }
   .bbc-what { display: flex; align-items: flex-start; gap: 6px; }
   .bbc-what .bbc-dot { margin: 5px 0 0; flex: 0 0 auto; }
@@ -662,8 +769,8 @@
   .bbc-dot.warn { background: var(--warn); }
   .bbc-cmp { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: grid; gap: var(--space-3); }
   .bbc-cmp-name { font-size: 13px; font-weight: 600; }
-  .bbc-bar-track { position: relative; height: 10px; margin: 6px 0 2px; background: linear-gradient(90deg, var(--surface-2), var(--line)); border: 1px solid var(--line); border-radius: 5px; }
-  .bbc-bar-mark { position: absolute; top: -4px; width: 4px; height: 16px; margin-left: -2px; background: var(--accent); border-radius: 2px; }
+  .bbc-bar-track { position: relative; height: 10px; margin: 6px 0 2px; background: var(--surface-2); border: 1px solid var(--control-line); border-radius: 5px; }
+  .bbc-bar-mark { position: absolute; top: -5px; width: 6px; height: 18px; margin-left: -3px; background: var(--accent); border: 1px solid var(--surface); border-radius: 2px; }
   .bbc-cmp-nums { display: flex; justify-content: space-between; gap: var(--space-2); font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
   .bbc-cmp-nums strong { color: var(--text); font-weight: 600; text-align: center; }
   .bbc-eg { border-top: 1px solid var(--line-soft, var(--line)); padding: 4px 0; }
@@ -673,9 +780,22 @@
   @media (max-width: 899px) {
     .bbc-intro { grid-template-columns: minmax(0, 1fr); }
     .bbc-intro ol { grid-template-columns: minmax(0, 1fr); gap: 2px; }
-    .bbc-main { grid-template-columns: 1fr; overflow: auto; }
-    .bbc-side { border-right: 0; border-bottom: 1px solid var(--line); max-height: 40vh; }
+    .bbc-main { grid-template-columns: 1fr; }
+    /* The chart comes first and the list of counters under it. */
+    .bbc-side { order: 2; border-right: 0; border-top: 1px solid var(--line); max-height: none; overflow: visible; }
     .bbc-lane { grid-template-columns: 84px minmax(0, 1fr); }
     .bbc-axis { margin-left: 92px; }
+  }
+  /* A small or zoomed window: the whole pop-up scrolls as one, so the chart is never squeezed between two small scrolling boxes (BLACKBOX-06). */
+  @media (max-width: 899px), (max-height: 799px) {
+    .bbc { display: block; overflow: auto; }
+    .bbc-head { position: static; }
+    .bbc-main { overflow: visible; }
+    .bbc-chart-area { overflow: visible; }
+    .bbc-side { overflow: visible; max-height: none; }
+  }
+  @media (max-width: 639px) {
+    .bbc { width: 100vw; height: 100vh; height: 100dvh; max-height: 100dvh; border-radius: 0; border: 0; }
+    .bbc-legend { max-width: calc(100% - 40px); }
   }
 </style>

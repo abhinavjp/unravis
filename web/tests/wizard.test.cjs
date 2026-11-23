@@ -263,7 +263,7 @@ test('the step labels tell a screen reader the state', () => {
   assert.match(copy.stepButtonLabel(1, 'Name', 'current'), /current step/);
   assert.match(copy.stepButtonLabel(2, 'Sources', 'locked'), /not available until the case has a name/);
   assert.match(copy.stepButtonLabel(1, 'Name', 'done'), /done/);
-  assert.equal(copy.stepButtonLabel(2, 'Sources', 'open'), 'Step 2, Sources');
+  assert.equal(copy.stepButtonLabel(2, 'Sources', 'open'), '2 Sources');
 });
 
 test('notes about changed environments are empty when nothing changed, and name each change otherwise', () => {

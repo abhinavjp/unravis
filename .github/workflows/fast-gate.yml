@@ -9,7 +9,10 @@ name: Fast gate
 #   go     scope (tools/ci/fast-scope.mjs: the changed packages plus every package that imports them), gofmt of changed
 #          files, go vet on Linux and cross-vet for Windows, tests of those packages on Linux compared with the Linux
 #          failure baseline, go mod tidy when go.mod or go.sum changed, the action-pin check.
-#   web    only when web/ changed: type check, tests, build and the committed-build check (BL-031).
+#   web    only when web/ changed: type check, tests and build (the build must succeed). It does NOT compare the build with committed
+#          files: pull requests into develop do not commit web/dist, cmd/unravis-setup/ui or cmd/unravis-lite/ui (they would conflict on
+#          nearly every merge). The promotion rebuilds and commits them once; check-dist runs there (ci.yml, release.yml).
+#          A cheap guard step fails a pull request that does change those folders (except a back-merge that makes them equal master's). See docs/pipeline/dist-on-promotion.md.
 #   lint   golangci-lint on the new code only. Advisory, like the lint step in ci.yml's linux-gates: not part of `build`.
 #   fast-build  the gate: passes only when go and web passed.
 # Not in this gate (it is in the full run on develop and on promotion): Windows tests, the race run, the exe build,
@@ -74,6 +77,8 @@ jobs:
           set -euo pipefail
           node tools/ci/test-fast-scope.mjs
           node tools/ci/test-compare.mjs
+          node tools/ci/test-promote-dist.mjs
+          node tools/ci/test-backlog-ids.mjs
           node tools/security/check-action-pins.mjs
 
       - name: Scope - what does this change affect?
@@ -112,6 +117,16 @@ jobs:
           # Compiles the Windows-only files too (a Windows test cannot run here, but a Windows compile error is caught).
           # shellcheck disable=SC2086
           GOOS=windows go vet $PACKAGES
+
+      # BL-422: the sidecar tag (no embedded dashboard) must keep compiling. Only the root package differs between the two builds.
+      - name: Go - build with the tauri_sidecar tag
+        if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' }}
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          go build -tags tauri_sidecar ./...
+          go test -count=1 -tags tauri_sidecar .
 
       - name: Go - tests of the affected packages (Linux, compared with the baseline)
         if: ${{ github.event_name == 'pull_request' && steps.scope.outputs.go == 'true' }}
@@ -171,6 +186,35 @@ jobs:
         with:
           fetch-depth: 2
 
+      - name: Generated web files are not part of this pull request
+        # Policy (docs/pipeline/dist-on-promotion.md): the promotion rebuilds and commits web/dist, cmd/unravis-setup/ui and
+        # cmd/unravis-lite/ui. A pull request that changes them would conflict with the promotion's rebuild. The one allowed case is a
+        # back-merge of master into develop (a hotfix, or the fix for a promotion conflict): there the three folders, as they are after
+        # the merge, must be byte for byte master's. That is a rule about content, not about a branch name or an author, so a pull
+        # request cannot get through with other files in those folders.
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          set -euo pipefail
+          # Names are matched case-insensitively (a Windows checkout would put cmd/unravis-setup/UI/x.js inside the embedded ui folder).
+          pattern='^(web/dist|cmd/unravis-(setup|lite)/ui)/'
+          bad="$(git diff --no-renames --name-only HEAD^1 HEAD | grep -iE "$pattern" || true)"
+          if [ -z "$bad" ]; then echo "No generated web files in this pull request."; exit 0; fi
+          # A back-merge of master is the one allowed case: after the merge the generated files must be master's, exactly (same names,
+          # same bytes, same letter case). The listing below includes every case variant, so one that master lacks cannot pass.
+          git fetch --no-tags --depth=1 origin master
+          differ="$(git diff --no-renames --name-only FETCH_HEAD HEAD | grep -iE "$pattern" || true)"
+          if [ -z "$differ" ]; then
+            echo "The generated web folders equal master's (a back-merge of master): allowed."
+            exit 0
+          fi
+          echo "::error::This pull request changes generated web files. Do not commit them: the promotion to master rebuilds them (docs/pipeline/dist-on-promotion.md)."
+          { printf '%s\n' "$bad" | head -20 | sed 's/^/  /'; } || true
+          echo "Restore them (this also deletes the new hashed files; a plain checkout would not):"
+          echo "  git restore --source=origin/develop --staged --worktree -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui"
+          echo "  git clean -fd -- web/dist cmd/unravis-setup/ui cmd/unravis-lite/ui     (removes files git did not track yet; check git status first)"
+          echo "A back-merge of master into develop is allowed only when these folders end up identical to master's: the same two commands with --source=origin/master."
+          exit 1
+
       - name: Did the pull request touch web/?
         id: scope
         run: |
@@ -178,7 +222,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then echo "web=false" >> "$GITHUB_OUTPUT"; exit 0; fi
           files="$(git diff --no-renames --name-only HEAD^1 HEAD)"
           # An empty diff is a doubt: run it. docs/user/*.md is read by the web build (BL-031).
-          if [ -z "$files" ] || printf '%s\n' "$files" | grep -Eq '^(web/|docs/user/|cmd/unravis-(setup|lite)/ui/|internal/(server|blackbox|calltrace)/|tools/e2e/)'; then
+          if [ -z "$files" ] || printf '%s\n' "$files" | grep -Eq '^(web/|docs/user/|internal/(server|blackbox|calltrace)/|tools/e2e/)'; then
             echo "web=true" >> "$GITHUB_OUTPUT"
           else
             echo "web=false" >> "$GITHUB_OUTPUT"; echo "No web files changed: skipping the web checks."
@@ -211,13 +255,6 @@ jobs:
         if: ${{ steps.scope.outputs.web == 'true' && !cancelled() }}
         working-directory: web
         run: npm run build
-
-      - name: Web - built files match what is committed
-        # BL-031. Fails when `npm run build` gives bytes other than the committed web/dist,
-        # cmd/unravis-setup/ui and cmd/unravis-lite/ui. Fix: run `npm run build` in web and commit them.
-        if: ${{ steps.scope.outputs.web == 'true' && !cancelled() }}
-        working-directory: web
-        run: node scripts/check-dist.cjs
 
   lint:
     # Advisory (not part of `build`), like the lint step of linux-gates in ci.yml. Only code the pull request adds is judged.

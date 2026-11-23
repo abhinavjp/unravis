@@ -88,6 +88,28 @@ export function tally(results) {
   return t;
 }
 
+/**
+ * One text line for every NEW error, every NEW warning and every newly unreachable screen, for the job log (a CI run keeps the report
+ * only as a zip, so the log has to name what the verdict line counts). Known findings and notes are left out.
+ * Format: `NEW warn  <screen> <look> <check> "<label>" <w>x<h> at <x>,<y> <selector> - <message>`.
+ */
+export function listNew(results) {
+  const lines = [];
+  for (const r of results) {
+    if (r.status === 'unreachable') {
+      if (!r.known) lines.push('NEW unreachable  ' + r.id + ' ' + r.variant + ' - ' + (r.reason ?? ''));
+      continue;
+    }
+    if (r.status !== 'checked') continue;
+    for (const f of r.findings) {
+      if (f.known || f.severity === 'info') continue;
+      const q = f.rect ?? {};
+      lines.push('NEW ' + (f.severity === 'error' ? 'ERROR' : 'warn ') + ' ' + r.id + ' ' + r.variant + ' ' + f.check + ' "' + String(f.label ?? '').replace(/\s+/g, ' ').slice(0, 80) + '" ' + (q.w ?? '?') + 'x' + (q.h ?? '?') + ' at ' + (q.x ?? '?') + ',' + (q.y ?? '?') + ' ' + String(f.selector ?? '').slice(0, 160) + ' - ' + String(f.message ?? '').replace(/\s+/g, ' ').slice(0, 200));
+    }
+  }
+  return lines;
+}
+
 /** Exit rule: any new error, or a screen that cannot be reached and is not on the baseline, fails the run. */
 export function verdict(t) {
   return t.newError === 0 && t.unreachableNew === 0 ? 'PASS' : 'FAIL';

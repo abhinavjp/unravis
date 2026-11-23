@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classify, tally, verdict, renderReport, findKnown } from '../lib/report.mjs';
+import { classify, tally, verdict, renderReport, findKnown, listNew } from '../lib/report.mjs';
 
 const mk = (id, variant, findings, status = 'checked') => ({ id, variant, size: variant.split('-')[0], scheme: variant.split('-')[1], phase: 'P1', status, shot: 'shots/' + id + '__' + variant + '.png', findings, reason: status === 'unreachable' ? 'no button' : undefined });
 const f = (check, severity, label = 'x') => ({ check, severity, label, message: 'm', selector: 's', rect: { x: 0, y: 0, w: 1, h: 1 } });
@@ -54,4 +54,19 @@ test('a screen that is not on this build is listed, and neither fails nor passes
   const md = renderReport({ results, baseline: { entries: [] }, run: { when: 'now', build: 'b', demoNow: 'n', browser: 'c' } });
   assert.ok(md.includes('## Screens not reachable on this build'));
   assert.ok(md.includes('not on this build'));
+});
+
+test('the job log names every new error, new warning and newly unreachable screen, and nothing else', () => {
+  const warn = { ...f('small-target', 'warn', 'Save  all\nnow'), message: 'Tap target is 40 x 19 px', selector: 'div > button.save', rect: { x: 12, y: 345, w: 40, h: 19 } };
+  const results = classify([
+    mk('p1-home', 'phone-dark', [warn, f('overlap', 'error', 'Close'), f('small-target', 'warn', 'Known one'), f('text-truncated', 'info', 'Note')]),
+    mk('p2-x', 'desktop-dark', undefined, 'unreachable'),
+    mk('p3-ok', 'desktop-dark', [])
+  ], { entries: [{ screen: '*', check: 'small-target', label: 'Known one', why: 'tracked' }] });
+  const lines = listNew(results);
+  assert.equal(lines.length, 3);
+  assert.equal(lines[0], 'NEW warn  p1-home phone-dark small-target "Save all now" 40x19 at 12,345 div > button.save - Tap target is 40 x 19 px');
+  assert.match(lines[1], /^NEW ERROR p1-home phone-dark overlap "Close" 1x1 at 0,0 s - m$/);
+  assert.equal(lines[2], 'NEW unreachable  p2-x desktop-dark - no button');
+  assert.deepEqual(listNew(classify([mk('a', 'desktop-dark', [])], { entries: [] })), []);
 });

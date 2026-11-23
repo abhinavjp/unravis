@@ -245,7 +245,7 @@ test('D-A-12: an archived case keeps its Files count until freed, and the file n
   assert.match(home, /\{#if filesShown !== null\}<div><dt>\{CASE_HOME_TEXT\.filesCount\}<\/dt><dd>\{filesShown\}<\/dd><\/div>\{\/if\}/);
   assert.doesNotMatch(home, /<dd>\{keptFiles\.length\}<\/dd>/, 'the header no longer counts the empty file list');
   assert.doesNotMatch(home, /archivedNotice|keyEndingOf/, 'the repeated archive note is gone');
-  assert.match(home, /\{ARCHIVE_TEXT\.caseFileLine\}: \{currentFile\.name\}/, 'the one place that names the file and folder stays');
+  assert.match(home, /\{ARCHIVE_TEXT\.caseFileLine\}: <code>\{currentFile\.name\}<\/code>/, 'the one place that names the file and folder stays');
   const moved = home.slice(home.indexOf('function archiveMoved'), home.indexOf('// The drawer hands focus back'));
   assert.match(moved, /else if \(kind === 'restore-as-new' && made\) archiveNote = restoredNewNotice\(/);
   assert.doesNotMatch(moved, /kind === 'archive'\) \{/);

@@ -33,7 +33,7 @@
 </script>
 
 <script lang="ts">
-  // The Investigation Timeline chart (WP-17b): one stacked row per lane (API audit, SQL, IIS) on one shared,
+  // The Investigation timeline chart (WP-17b): one stacked row per lane (API audit, SQL, IIS) on one shared,
   // server-floored UTC axis. Bars are exactly the buckets the server returned; nothing here sums, estimates
   // or recomputes the axis. WP-17c adds hover/focus text; WP-61 reads the bucket selector's onSelect.
   import { tick, untrack } from 'svelte';
@@ -45,7 +45,7 @@
   } from '../lib/tracing/lanes';
   import { formatTime } from '../lib/time';
   import { needsYear } from '../lib/chartTime';
-  import { formatDuration } from '../lib/format';
+  import { durationSet, durationText, tickLabels } from '../lib/chartAxis';
   import { TOOLTIP_TEXT, barTipLines, formatCount, isTouchPointer, laneHeadHint } from '../lib/tracing/tooltip';
   import { WAIT_TEXT } from '../lib/copy/waitCopy';
   import { SOURCES_TEXT } from '../lib/tracing/sources';
@@ -56,7 +56,6 @@
     type Percentile, type ZoomRange
   } from '../lib/tracing/canvas';
   import { HERO_TEXT, heroLayout, heroSentence, heroSqlSentence, type HeroLayout } from '../lib/tracing/auditHero';
-  import { axisDuration } from '../lib/chartScale';
   import { hitFlagged, type FlagMark } from '../lib/drill/hit';
 
   let { response, zone, onSelect, focus = null, visible = {}, unselected = [], readOnly = false, onAddFiles, onDiamond }: {
@@ -311,8 +310,10 @@
       const dot = laneHero.dots.find((d) => d.index === slot);
       const mark = laneHero.marks.find((m) => m.index === slot);
       const isSql = lane.key === 'sql';
-      const timing = [dot ? `${isSql ? HERO_TEXT.tipSqlAverage : `${PERCENTILE_LABEL[percentile]}:`} ${axisDuration(dot.ms)}` : HERO_TEXT.tipNoTiming];
-      if (mark) timing.push(`${isSql ? HERO_TEXT.tipSqlSlowest : HERO_TEXT.tipSlowest} ${axisDuration(mark.ms)}${mark.flagged ? ` (${isSql ? HERO_TEXT.tipSqlOutlier : HERO_TEXT.tipOutlier})` : ''}`);
+      // Every duration goes through durationText, so the line, the slowest request, the diamond, the notes and the screen-reader text read alike.
+      const [dotText, markText] = durationSet([dot?.ms, mark?.ms]);
+      const timing = [dot ? `${isSql ? HERO_TEXT.tipSqlAverage : `${PERCENTILE_LABEL[percentile]}:`} ${dotText}` : HERO_TEXT.tipNoTiming];
+      if (mark) timing.push(`${isSql ? HERO_TEXT.tipSqlSlowest : HERO_TEXT.tipSlowest} ${markText}${mark.flagged ? ` (${isSql ? HERO_TEXT.tipSqlOutlier : HERO_TEXT.tipOutlier})` : ''}`);
       // Right after the request count line (the time range is line 0, the count line 1).
       if ((bar?.count ?? 0) > 0) lines.splice(2, 0, ...timing);
     }
@@ -718,7 +719,7 @@
                   <span class="mark-label" aria-hidden="true" style="left:{mark.leftPct}%;bottom:{mark.bottomPct}%">{mark.text}</span>
                 {/if}
               {/each}
-              <span class="latency-max">{lineName(lane.key)}: up to {formatDuration(peakOf(lane.key) > 0 ? peakOf(lane.key) : h.maxMs)}</span>
+              <span class="latency-max">{lineName(lane.key)}: up to {durationText(peakOf(lane.key) > 0 ? peakOf(lane.key) : h.maxMs)}</span>
             {/if}
           </div>
         {:else}
@@ -733,15 +734,16 @@
       <div class="axis axis-right" data-lane={lane.key} style="--row:{laneIndex + 1}">
         {#if heroOf(lane.key)}
           {@const h = heroOf(lane.key) as HeroLayout}
+          {@const tickText = tickLabels(h.ticks.map((t) => t.ms))}
           <span class="y-title">slowness ({lineName(lane.key)})</span>
           <div class="scale">
-            {#each h.ticks as tick (tick.ms)}
+            {#each h.ticks as tick, tickIndex (tick.ms)}
               {#if tick.bottomPct === 100}
-                <span class="tick tick-top">{axisDuration(tick.ms)}</span>
+                <span class="tick tick-top">{tickText[tickIndex]}</span>
               {:else if tick.bottomPct === 0}
-                <span class="tick tick-bottom">{axisDuration(tick.ms)}</span>
+                <span class="tick tick-bottom">{tickText[tickIndex]}</span>
               {:else}
-                <span class="tick" style="bottom:{tick.bottomPct}%">{axisDuration(tick.ms)}</span>
+                <span class="tick" style="bottom:{tick.bottomPct}%">{tickText[tickIndex]}</span>
               {/if}
             {/each}
           </div>
@@ -842,7 +844,7 @@
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
   /* The label column is capped so the plot gets the rest; the right column holds the API lane's latency axis. */
-  .lanes-grid { --bars-h: 150px; position: relative; display: grid; grid-template-columns: minmax(6.5rem, 8.5rem) 3rem minmax(0, 1fr) 3rem; column-gap: var(--space-2); row-gap: var(--space-4); align-items: stretch; min-width: 0; }
+  .lanes-grid { --bars-h: 150px; position: relative; display: grid; grid-template-columns: minmax(8rem, 11.25rem) 3rem minmax(0, 1fr) 3rem; column-gap: var(--space-2); row-gap: var(--space-4); align-items: stretch; min-width: 0; }
 
   .lane-label, .axis, .panel, .axisrow { grid-row: var(--row); }
   .lane-label { grid-column: 1; display: grid; gap: 2px; align-content: start; min-width: 0; }
@@ -896,6 +898,8 @@
   .unread { position: absolute; top: 0; bottom: 0; display: grid; place-items: center; overflow: hidden; color: var(--text-2); background: repeating-linear-gradient(135deg, var(--line) 0 1px, transparent 1px 6px); border-left: var(--hairline-width) dashed var(--line); border-right: var(--hairline-width) dashed var(--line); font-size: var(--fs-2); pointer-events: none; }
   .unread span { padding: 0 var(--space-1); background: var(--surface-2); white-space: nowrap; }
   .lane-label .chunk-line { color: var(--text); font-weight: 600; }
+  /* The note about files with no time range is a plain sentence, not a bold block in the narrow label column (ANALYSIS-16). */
+  .lane-label .chunk-line[data-testid='range-unknown'] { color: var(--text-2); font-weight: 400; }
   .lane-label .read-from { overflow-wrap: anywhere; }
   .read-list { margin: 0; padding-left: var(--space-4); }
   /* Above the bucket-selector overlay, which covers every lane: without a stacking order of its own the button could not be clicked. */
@@ -923,6 +927,8 @@
 
   .brush { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent) 24%, transparent); outline: 1px dashed var(--accent); pointer-events: none; }
   .canvas-bar { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; font-size: var(--fs-2); }
+  /* A bare <small> is 0.83em of its parent (10px here); the help lines keep the bar's own 12px so they stay readable (BL-478). */
+  .canvas-bar small { font-size: inherit; }
   .canvas-group { display: inline-flex; gap: var(--space-1); }
   .latency { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
   .latency .p95 { stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }

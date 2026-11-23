@@ -1,4 +1,4 @@
-// The Investigation Timeline chart frame (phase 1): a readable Y axis, gridlines, a wider centre lane, a reason panel for empty
+// The Investigation timeline chart frame (phase 1): a readable Y axis, gridlines, a wider centre lane, a reason panel for empty
 // lanes and the explanation block under the chart. The demo clock is 2026-10-20T09:00Z; 19 Oct 09:00-10:00 has events in all three lanes.
 //   TLF-01  The explanation block sits under the chart: "How to read this chart" is open, the other three are closed and open on click.
 //   TLF-02  The left axis shows several ticks and a unit title, and the plot has gridlines.
@@ -20,8 +20,8 @@ const isTrace = (r: { url(): string; method(): string }) => r.url().includes('/t
 async function openTimeline(page: Page): Promise<void> {
   await goHome(page);
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect(page.locator('.tracing-chart')).toBeVisible();
 }
 
@@ -130,7 +130,7 @@ test('TLF-05: when the answer carries a slowness figure the API lane gets a righ
   await readWindow(page, WIN_ALL);
   const right = page.locator('.axis-right[data-lane="audit"]');
   await expect(right.locator('.tick')).toHaveCount(3);
-  await expect(right.locator('.tick-bottom')).toHaveText(/^0\s?ms$|^0$/);
+  await expect(right.locator('.tick-bottom')).toHaveText(/^0\s?(ms|s)$|^0$/);
   await expect(right.locator('.y-title')).toContainText('slowness');
   await page.setViewportSize({ width: 375, height: 900 });
   await expect(right).toBeHidden();
@@ -164,7 +164,7 @@ test('TLF-06: the API lane shows the Run Analysis chart with a legend, a red dia
   expect(await audit.locator('.dot').count(), 'a dot per interval with a P95').toBeGreaterThanOrEqual(2);
   expect(await audit.locator('.mark').count(), 'a mark per interval with a slowest request').toBeGreaterThanOrEqual(2);
   await expect(audit.locator('.mark.flagged')).toHaveCount(1);
-  await expect(audit.locator('.mark-label')).toHaveText('60 s');
+  await expect(audit.locator('.mark-label')).toHaveText('60.0 s');
 
   const legend = page.locator('.hero-legend:not(.web-legend):not(.sql-legend)');
   await expect(legend).toContainText('Requests per interval');
@@ -172,7 +172,7 @@ test('TLF-06: the API lane shows the Run Analysis chart with a legend, a red dia
   await expect(legend).toContainText('No timed requests between');
   await expect(legend).toContainText('Slowest request in the interval');
   await expect(page.getByTestId('hero-note')).toContainText('red diamond');
-  await expect(page.getByTestId('hero-note')).toContainText('60 s');
+  await expect(page.getByTestId('hero-note')).toContainText('60.0 s');
 
   await expect(page.locator('.axis-right[data-lane="audit"] .tick-top')).toHaveText(/ms|s/);
   await expect(page.locator('.axis-right[data-lane="audit"] .y-title')).toContainText('slowness (Slow end (P95))');
@@ -187,7 +187,10 @@ test('TLF-06: the API lane shows the Run Analysis chart with a legend, a red dia
   const tip = page.locator('#tc-tip');
   await expect(tip).toBeVisible();
   await expect(tip).toContainText('Slow end (P95)');
-  await expect(tip).toContainText('Slowest request: 60 s');
+  await expect(tip).toContainText('Slowest request: 60.0 s'); // the same text as the diamond (60.0 s) and the sentence under the chart; the P95 beside it is under a second, so it is whole milliseconds (BL-495)
+  await expect(tip).toContainText('Slow end (P95): 300 ms');
+  // The text a screen reader gets for the same lane (hidden, in the page) uses the same rule and so the same words as the visible tooltip (BL-495 review round 2).
+  await expect(page.locator('.panel[data-lane="audit"] .latency-max')).toHaveText('Slow end (P95): up to 300 ms');
   await expect(tip).toContainText('far above the usual P95');
 });
 
@@ -234,14 +237,14 @@ test('TLF-08: the web-server lane shows refused answers, a response-time line an
   expect(await iis.locator('[data-testid="bar-warn"]').count(), 'an amber part on bars with refused answers').toBeGreaterThanOrEqual(1);
   expect(await iis.locator('svg.latency polyline.p95').count(), 'a solid P95 line').toBeGreaterThanOrEqual(1);
   await expect(iis.locator('.mark.flagged')).toHaveCount(1);
-  await expect(iis.locator('.mark-label')).toHaveText('45 s');
+  await expect(iis.locator('.mark-label')).toHaveText('45.0 s');
 
   const legend = page.getByTestId('web-legend');
   await expect(legend).toContainText('Web-server requests per interval');
   await expect(legend).toContainText('Refused or not found (4xx)');
   await expect(legend).toContainText('Slow end (P95)');
   await expect(page.getByTestId('web-note')).toContainText('were refused or not found (4xx)');
-  await expect(page.getByTestId('web-outlier-note')).toContainText('45 s');
+  await expect(page.getByTestId('web-outlier-note')).toContainText('45.0 s');
 });
 
 // TLF-09  The SQL lane drawn from a saved Query Store day: statements per interval (bars), an average-time line, a red diamond for
@@ -275,5 +278,5 @@ test('TLF-09: the SQL lane shows statements per interval, an average-time line a
   await expect(legend).toContainText('Statements run per interval');
   await expect(legend).toContainText('Slowest statement');
   await expect(legend).toContainText('Far slower than usual');
-  await expect(page.getByTestId('sql-outlier-note')).toContainText('30 s');
+  await expect(page.getByTestId('sql-outlier-note')).toContainText('30.0 s');
 });

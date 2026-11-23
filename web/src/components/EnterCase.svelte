@@ -134,7 +134,7 @@
   </form>
 
   <div class="part restore">
-    <button type="button" class="quiet-button" aria-expanded={open} aria-controls="{uid}-restore" onclick={() => void toggle()}>{ENTER_TEXT.restoreToggle}</button>
+    <button type="button" class="secondary-button" aria-expanded={open} aria-controls="{uid}-restore" onclick={() => void toggle()}>{ENTER_TEXT.restoreToggle}</button>
     <div id="{uid}-restore" class="restore-body" hidden={!open}>
       {#if open}
         <p class="hint">{ENTER_TEXT.restoreIntro}</p>

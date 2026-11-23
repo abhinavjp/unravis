@@ -9,7 +9,7 @@
   // Screen 113: read another day of a SQL Server the case already holds. Only SQL can be read by day; MongoDB keeps just the latest profiler
   // entries, so it is listed as "Not by day" with the reason. The new range starts as the same hours on the next day. The days already held
   // are never replaced: a day is added next to them.
-  let { caseId, readOnly = false, onGone, onDone, onCancel }: { caseId: string; readOnly?: boolean; onGone?: () => void; onDone?: () => void; onCancel?: () => void } = $props();
+  let { caseId, readOnly = false, onGone, onDone, onCancel, onReadSql }: { caseId: string; readOnly?: boolean; onGone?: () => void; onDone?: () => void; onCancel?: () => void; onReadSql?: () => void } = $props();
 
   let days = $state.raw<LaneDay[]>([]);
   let loaded = $state(false);
@@ -41,7 +41,7 @@
   <h3 id="day-head">{DAY_TEXT.heading}</h3>
 
   {#if loaded && byDay.length === 0}
-    <div class="empty"><p>{DAY_TEXT.nothingHeld}</p><p class="hint">{DAY_TEXT.onlyByDay}</p></div>
+    <div class="empty"><p>{DAY_TEXT.nothingHeld}</p><p class="hint">{DAY_TEXT.onlyByDay}</p>{#if onReadSql}<div class="actions"><button type="button" class="btn-primary" data-read-first onclick={() => onReadSql?.()}>{DAY_TEXT.readFirst}</button></div>{/if}</div>
   {:else}
     <div class="field">
       <h4>{DAY_TEXT.holds}</h4>
@@ -84,5 +84,5 @@
     {/if}
     {#if said}<p class="say {said.good ? 'good' : 'bad'}" role={said.good ? 'status' : 'alert'} data-said>{said.text}</p>{/if}
   {/if}
-  {#if onCancel}<div class="actions"><button type="button" class="btn" onclick={() => onCancel?.()}>{DAY_TEXT.cancel}</button></div>{/if}
+  {#if onCancel && !(loaded && byDay.length === 0 && onReadSql)}<div class="actions"><button type="button" class="btn" onclick={() => onCancel?.()}>{DAY_TEXT.cancel}</button></div>{/if}
 </section>

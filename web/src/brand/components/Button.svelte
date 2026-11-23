@@ -4,11 +4,11 @@
 
   // The brand's three buttons. Outline means press me: primary (the one accent fill on a screen), secondary (outline) and quiet
   // (text only). A disabled button of any kind is a neutral control, never a faded accent.
-  type Props = Omit<HTMLButtonAttributes, 'children'> & { kind?: 'primary' | 'secondary' | 'quiet'; children: Snippet };
+  type Props = Omit<HTMLButtonAttributes, 'children'> & { kind?: 'primary' | 'secondary' | 'quiet' | 'danger'; children: Snippet };
   let { kind = 'secondary', type = 'button', children, ...rest }: Props = $props();
 </script>
 
-<button {type} class="u-button" class:primary={kind === 'primary'} class:secondary={kind === 'secondary'} class:quiet={kind === 'quiet'} {...rest}>{@render children()}</button>
+<button {type} class="u-button" class:primary={kind === 'primary'} class:secondary={kind === 'secondary'} class:quiet={kind === 'quiet'} class:danger={kind === 'danger'} {...rest}>{@render children()}</button>
 
 <style>
   .u-button {
@@ -23,8 +23,11 @@
   }
   .primary { color: var(--accent-ink); background: var(--accent); border: 1px solid var(--accent); }
   .primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
-  .secondary { color: var(--text); background: transparent; border: 1px solid var(--line); }
+  .secondary { color: var(--text); background: transparent; border: 1px solid var(--control-line); }
   .secondary:hover:not(:disabled) { border-color: var(--text-2); background: var(--surface-2); }
+  /* danger: the button that deletes for good. An outline in the bad colour, never the accent fill of the safe main button. */
+  .danger { color: var(--bad); background: transparent; border: 1px solid var(--bad); }
+  .danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 12%, transparent); }
   .quiet { color: var(--text-2); background: transparent; border: 1px solid transparent; }
   .quiet:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
   .u-button:disabled { color: var(--text-2); background: var(--surface-2); border-color: var(--control-line); cursor: not-allowed; }

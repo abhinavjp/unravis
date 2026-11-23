@@ -545,7 +545,9 @@
   .scall-crumb { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 13px; }
   .scall-head h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -.01em; outline: none; }
   .scall-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
-  .link { padding: 0; color: var(--text-2); background: none; border: 0; font: inherit; text-decoration: underline; cursor: pointer; }
+  /* BL-492: the crumb link is 19 px tall. The press area grows to 24 px with an invisible ::after (3 px above and below, inside the 8 px gap to the lines around it); the box, the line and the focus ring stay as they were. */
+  .link { position: relative; padding: 0; color: var(--text-2); background: none; border: 0; font: inherit; text-decoration: underline; cursor: pointer; }
+  .link::after { content: ''; position: absolute; left: 0; right: 0; top: -3px; bottom: -3px; }
   .link:hover { color: var(--text); }
   .link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   kbd { padding: 1px 6px; color: var(--text-2); border: 1px solid var(--line); border-radius: var(--radius); font: inherit; font-size: 11px; }
@@ -568,8 +570,8 @@
     [data-layout='w1'].scall-grid { grid-template-columns: minmax(0, 1fr); }
   }
 
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 8px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
-  .btn.outlined { color: var(--text); background: transparent; border: 1px solid var(--line); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 33px; padding: 8px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+  .btn.outlined { color: var(--text); background: transparent; border: 1px solid var(--control-line); }
   .btn.outlined:hover { border-color: var(--text-2); background: var(--surface-2); }
   .btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 

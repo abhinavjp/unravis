@@ -1,4 +1,4 @@
-// The Slow call screen on the Investigation Timeline: the slowest call in a slot, opened from a red diamond in the API lane.
+// The Slow call screen on the Investigation timeline: the slowest call in a slot, opened from a red diamond in the API lane.
 //   DRILL-01  A click on the first red diamond opens the Slow call screen with "Where the time went"; every visible hint line is filled in.
 //   DRILL-02  A call saved before the server recorded timings says so (the no-timings line).
 //   DRILL-03  Esc returns to the timeline without another read, with focus inside the chart region; "Open in Analysis" shows Analysis.
@@ -10,8 +10,8 @@ const CASE_TITLE = 'Orders API stall, 19 October';
 async function openTimeline(page: Page): Promise<void> {
   await goHome(page);
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
 }
 
 /** Clicks the first red diamond of the API lane at its centre. */

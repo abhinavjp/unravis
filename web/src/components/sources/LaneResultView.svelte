@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { nothingRead, type LaneDay } from '../../lib/lanes';
+  import { nothingRead, zoneThenUtc, type LaneDay } from '../../lib/lanes';
   import { formatTimeRange } from '../../lib/time';
   import { timeZone } from '../../lib/timeZone.svelte';
   import { STATE_NOTE, STEP_TEXT, GRANT_TEXT } from '../../lib/copy/sourcesCopy';
@@ -80,7 +80,7 @@
         {/each}
       </ul>
     {/if}
-    {#if lane && lane.onset !== ''}<p class="hint">{STEP_TEXT.onsetLabel} {lane.onset.slice(0, 16).replace('T', ' ')} UTC</p>{/if}
+    {#if lane && lane.onset !== ''}<p class="hint">{STEP_TEXT.onsetLabel} {zoneThenUtc(lane.onset, timeZone.zone)}</p>{/if}
     <p class="hint">{STEP_TEXT.conclusion}</p>
   </div>
 </div>

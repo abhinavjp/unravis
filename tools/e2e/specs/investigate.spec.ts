@@ -20,7 +20,7 @@ async function openWhere(page: Page) {
 
 async function openEvidence(page: Page, name = 'Payroll.Run') {
   await openWhere(page);
-  await page.getByRole('button', { name: new RegExp('^' + name.replace('.', '\\.') + ', synchronous') }).click();
+  await page.getByRole('button', { name: new RegExp('^\\d+ ' + name.replace('.', '\\.') + ' synchronous') }).click();
   const panel = page.getByRole('complementary', { name });
   await expect(panel).toBeVisible();
   return panel;
@@ -103,8 +103,8 @@ test('INV-02: the date and time fields are plain boxes and refuse bad windows', 
 test('INV-03: groups are ranked worst first, the rank chips reorder them, the note says these are estimates', async ({ page }) => {
   const list = await openWhere(page);
   const rows = list.getByRole('button');
-  await expect(rows.first()).toHaveAccessibleName(/^Payroll\.Run, synchronous, 256 requests/);
-  await expect(rows.nth(1)).toHaveAccessibleName(/^Employees\.List, synchronous, 252 requests/);
+  await expect(rows.first()).toHaveAccessibleName(/^1 Payroll\.Run synchronous 256 requests/);
+  await expect(rows.nth(1)).toHaveAccessibleName(/^2 Employees\.List synchronous 252 requests/);
   const rank = page.getByRole('group', { name: 'Rank by' });
   for (const label of ['Requests', 'Completion', 'P95', '4xx', '5xx']) {
     await expect(rank.getByRole('button', { name: new RegExp('^' + label) })).toBeVisible();
@@ -112,10 +112,10 @@ test('INV-03: groups are ranked worst first, the rank chips reorder them, the no
   // Requests rank puts the group with the most requests first.
   await rank.getByRole('button', { name: /^Requests/ }).click();
   await expect(rank.getByRole('button', { name: /^Requests/ })).toHaveAttribute('aria-pressed', 'true');
-  await expect(list.getByRole('button').first()).toHaveAccessibleName(/^Payroll\.Run/);
+  await expect(list.getByRole('button').first()).toHaveAccessibleName(/^\d+ Payroll\.Run/);
   // P95 puts the slow API first again.
   await rank.getByRole('button', { name: /^P95/ }).click();
-  await expect(list.getByRole('button').first()).toHaveAccessibleName(/^Payroll\.Run/);
+  await expect(list.getByRole('button').first()).toHaveAccessibleName(/^\d+ Payroll\.Run/);
   // The full table of groups is behind a disclosure; the estimates note is on the page.
   await expect(page.getByText('All 8 API groups').first()).toBeVisible();
   await expect(page.getByText('Response times are estimates. A comparison shows change, not a health verdict.').first()).toBeAttached();
@@ -255,14 +255,14 @@ test('INV-12: the Pulse P95 change and the Payroll.Run row tell the same story',
   await tile.click();
   const list = page.getByRole('list', { name: 'Operations, worst first' });
   await expect(list).toBeVisible();
-  await page.getByRole('button', { name: /^Payroll.Run, synchronous/ }).click();
+  await page.getByRole('button', { name: /^\d+ Payroll\.Run synchronous/ }).click();
   const panel = page.getByRole('complementary', { name: 'Payroll.Run' });
   await panel.getByRole('tab', { name: 'Slowest' }).click();
   // 256 ms now and about 205 ms more than before: the earlier time is about 51 ms, which is 5.0x.
   await expect(panel.getByText(/the typical request took about 256 milliseconds/)).toBeVisible();
   await expect(panel.getByText(/about 205 milliseconds longer than in the earlier period/)).toBeVisible();
   await panel.getByRole('button', { name: 'Close and go back' }).click();
-  await expect(list.getByRole('button').first()).toHaveAccessibleName(/^Payroll\.Run, synchronous, 256 ms P95/);
+  await expect(list.getByRole('button').first()).toHaveAccessibleName(/^1 Payroll\.Run synchronous 256 ms P95/);
 });
 
 test('INV-12a: a window with no data shows dashes, not zeros', async ({ page }) => {

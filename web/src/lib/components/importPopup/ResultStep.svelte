@@ -78,10 +78,10 @@
   .foot-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .foot-spacer { flex: 1 1 auto; }
 
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 8px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 33px; padding: 8px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
   .btn-primary { color: var(--accent-ink); background: var(--accent); border: 1px solid var(--accent); }
   .btn-primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
-  .btn-secondary { color: var(--text); background: transparent; border: 1px solid var(--line); }
+  .btn-secondary { color: var(--text); background: transparent; border: 1px solid var(--control-line); }
   .btn-secondary:hover { border-color: var(--text-2); background: var(--surface-2); }
 
   .linkbtn { padding: 0; color: var(--accent); background: none; border: 0; font: inherit; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }

@@ -4,7 +4,8 @@
 //   node scripts/check-dist.cjs [--repo <dir>]
 //
 // Exit 0: the three output folders on disk equal what is committed.
-// Exit 1: they differ (the first line says what to run).
+// Exit 1: they differ (the first line says what to run). Required on the promotion to master and on the release (ci.yml, release.yml),
+// not on pull requests into develop: docs/pipeline/dist-on-promotion.md.
 // Exit 2: the check could not run (no git, not a repository, not a sha1 repository).
 //
 // It compares git blob ids computed here from the raw bytes on disk. It does not use `git diff` or
@@ -123,8 +124,9 @@ function report(res, roots = ROOTS, annotate = !!process.env.GITHUB_ACTIONS) {
   if (res.ok) return 'web build output matches the commit (' + res.total + ' files)';
   const lines = [
     (annotate ? '::error::' : '') +
-      'The built web files differ from what is committed. Run `npm run build` in `web` and commit the three folders: ' +
-      roots.join(', ') + '.',
+      'The built web files differ from what is committed (' + roots.join(', ') + '). Pull requests into develop do not commit them: ' +
+      'the promotion does (tools/release/Promote-Develop.ps1 rebuilds them; see docs/pipeline/dist-on-promotion.md). ' +
+      'On a promotion or a hotfix into master, run `npm run build` in `web` and commit the three folders.',
     listLine('changed', res.changed),
     listLine('extra', res.extra),
     listLine('missing', res.missing),

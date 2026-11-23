@@ -115,7 +115,7 @@ export function historyStep(from: Screen, to: Screen, shown: string): HistorySte
   return 'push';
 }
 
-/** History mark of the case page while its Investigation Timeline is open, so Back returns to the case page and Forward to the timeline. */
+/** History mark of the case page while its Investigation timeline is open, so Back returns to the case page and Forward to the timeline. */
 export const CASE_TRACING_MARK = 'case/tracing';
 /** History mark of the Slow call screen, one level under the timeline, so Back returns to the timeline. */
 export const CASE_CALL_MARK = 'case/tracing/call';

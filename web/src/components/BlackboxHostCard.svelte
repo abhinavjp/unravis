@@ -63,12 +63,12 @@
   <p class="bb-note">{T.hostQuestion}</p>
 
   <details class="bb-windows" open>
-    <summary>{T.hostRead}: {item.name}</summary>
+    <summary>{T.hostRead}</summary>
     <div class="bb-grid">
-      <fieldset><legend>{T.hostIncident} ({timeZone.short})</legend>
+      <fieldset><legend>{T.hostIncident}</legend>
         <WindowPicker variant="inline" label={T.hostIncident} bind:start={incStart} bind:end={incEnd} zone={timeZone.zone} zoneName={timeZone.short} />
       </fieldset>
-      <fieldset><legend>{T.hostReference} ({timeZone.short})</legend>
+      <fieldset><legend>{T.hostReference}</legend>
         <WindowPicker variant="inline" label={T.hostReference} bind:start={refStart} bind:end={refEnd} zone={timeZone.zone} zoneName={timeZone.short} />
       </fieldset>
     </div>
@@ -80,7 +80,7 @@
     {#if problem}<div class="inline-error" role="alert">{problem}</div>{/if}
     {#if answer}
       <div class="bb-step">
-        <p class="bb-ready"><strong>{T.hostWords[answer.step.readiness] ?? answer.step.readiness}</strong></p>
+        <p class="bb-ready"><strong>{T.hostResultTitle(T.hostWords[answer.step.readiness] ?? answer.step.readiness)}</strong></p>
         <p class="bb-nutshell"><span class="bb-label">{T.hostNutshellLabel}</span> {T.hostNutshell}</p>
         {#if answer.step.reasons?.length}<ul class="bb-list">{#each answer.step.reasons as reason, i (i)}<li>{reason}</li>{/each}</ul>{/if}
 
@@ -113,12 +113,12 @@
   .bb-host { display: grid; gap: var(--space-3); min-width: 0; }
   .bb-host h3 { margin: 0; font-size: 14px; font-weight: 600; }
   .bb-host h4 { margin: var(--space-2) 0 0; font-size: 13px; font-weight: 600; }
-  .bb-windows summary { width: fit-content; color: var(--text-2); font-size: 13px; }
-  .bb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--space-3); margin: var(--space-2) 0; }
+  .bb-windows summary { width: fit-content; font-size: 13px; font-weight: 500; }
+  .bb-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); margin: var(--space-2) 0; }
   .bb-grid fieldset { display: grid; gap: var(--space-2); margin: 0; padding: 0; border: 0; min-width: 0; }
   .bb-grid legend { padding: 0 0 4px; font-size: 13px; font-weight: 500; }
   .bb-step { display: grid; gap: var(--space-2); min-width: 0; }
-  .bb-ready { margin: 0; font-size: 15px; }
+  .bb-ready { margin: 0; font-size: 14px; }
   .bb-nutshell { margin: 0; padding: var(--space-2) var(--space-3); font-size: 13px; background: var(--surface-2); border-radius: var(--radius-sm); }
   .bb-label { font-weight: 600; margin-right: 4px; }
   .bb-list { margin: 0; padding-left: 18px; display: grid; gap: 3px; font-size: 13px; overflow-wrap: anywhere; }

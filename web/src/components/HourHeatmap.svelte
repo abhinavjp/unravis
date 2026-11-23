@@ -2,6 +2,7 @@
   import { tick } from 'svelte';
   import { HOURS_PER_ROW, cellLabel, cellValue, cellWindow, dayLabel, gridMax, gridMetrics, gridRows, moveInGrid, rollupCopy, shadeLevel, slowNote, type GridMetric, type HourGridResponse, type RollupWindow } from '../lib/rollup';
   import { GRID_TEXT } from '../lib/copy/waitCopy';
+  import { formatDuration } from '../lib/format';
   let { grid, zone, onChoose }: { grid: HourGridResponse; zone: string; onChoose: (window: RollupWindow) => void } = $props();
 
   let metric = $state<GridMetric>('p95');
@@ -17,6 +18,8 @@
     return [0, 0];
   });
   const hourMarks = [0, 3, 6, 9, 12, 15, 18, 21];
+  // The legend says what the darkest square stands for in this grid, so the colours carry a value and not only "lower" and "higher" (ANALYSIS-18).
+  const maxText = $derived(max > 0 ? (metric === 'p95' ? '≈ ' + formatDuration(max) : Math.round(max * 100) + '% slow') : '');
 
   async function onKey(event: KeyboardEvent, row: number, col: number) {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
@@ -77,7 +80,7 @@
     <div class="hm-legend" aria-hidden="true">
       <span>{GRID_TEXT.lower}</span>
       {#each [1, 2, 3, 4] as level}<span class="hm-swatch level-{level}"></span>{/each}
-      <span>{GRID_TEXT.higher}</span>
+      <span>{GRID_TEXT.higher}{#if maxText} ({maxText}){/if}</span>
       <span class="hm-swatch noise"></span><span>{GRID_TEXT.fewRequests}</span>
       <span class="hm-swatch empty"></span><span>None</span>
     </div>
@@ -98,19 +101,40 @@
   .hm-partial { font-style: italic; margin-left: 4px; }
   .hm-mark { font-size: 11px; color: var(--text-2); text-align: left; line-height: 1; }
   .hm-cell-wrap { display: block; min-width: 0; }
-  .hm-cell, .hm-gap { display: block; width: 100%; height: 20px; padding: 0; border-radius: 1px; }
-  .hm-cell { border: 1px solid var(--line-soft); background: var(--surface-2); cursor: pointer; }
-  .hm-cell.empty { cursor: default; background: transparent; }
-  .hm-gap { border: 1px solid transparent; }
-  .level-1 { background: var(--heat-1); }
-  .level-2 { background: var(--heat-2); }
-  .level-3 { background: var(--heat-3); }
-  .level-4 { background: var(--heat-4); }
-  .hm-cell.noise { border: 1px dashed var(--text-2); }
-  .hm-cell:hover:not(.empty) { outline: 1px solid var(--text); outline-offset: 0; }
-  .hm-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; position: relative; z-index: 1; }
+  .hm-gap { display: block; width: 100%; height: 20px; padding: 0; border-radius: 1px; border: 1px solid transparent; }
+  /* The square is a 24px tall button (WCAG 2.2 target size, BL-475) whose 2px of extra height is cancelled by a negative margin, so the
+     rows keep their 20px pitch. Its painted square is the ::before, 2px in from top and bottom: same size, same place as before.
+     The button itself takes no pointer; its ::after does, 1px beyond the painted square on top and bottom. The two halves of the 2px gap
+     between rows go to the square above and the square below, so no two hit areas overlap and the painted square is always inside its own. */
+  .hm-cell { position: relative; display: block; width: 100%; height: 24px; margin: -2px 0; padding: 0; border: 0; border-radius: 1px; background: transparent; cursor: pointer; pointer-events: none; }
+  .hm-cell::after { content: ''; position: absolute; inset: 1px 0; pointer-events: auto; }
+  .hm-cell::before { content: ''; position: absolute; inset: 2px 0; box-sizing: border-box; border: 1px solid var(--line-soft); border-radius: 1px; background: var(--surface-2); pointer-events: none; }
+  .hm-cell.empty { cursor: default; }
+  .hm-cell.level-1::before { background: var(--heat-1); }
+  .hm-cell.level-2::before { background: var(--heat-2); }
+  .hm-cell.level-3::before { background: var(--heat-3); }
+  .hm-cell.level-4::before { background: var(--heat-4); }
+  .hm-cell.empty::before { background: transparent; }
+  .hm-cell.noise::before { border: 1px dashed var(--text-2); }
+  .hm-cell:hover:not(.empty)::before { outline: 1px solid var(--text); outline-offset: 0; }
+  .hm-cell:focus-visible { outline: none; z-index: 1; }
+  .hm-cell:focus-visible::before { outline: 2px solid var(--focus); outline-offset: 1px; }
+  /* Phone and touch: the squares are 24px wide too and the grid scrolls sideways inside its box, so no two targets overlap. */
+  @media (pointer: coarse), (max-width: 720px) {
+    .hm-row { grid-template-columns: 5.5rem repeat(24, minmax(24px, 1fr)); }
+    .hm-grid { min-width: 712px; }
+    .hm-cell { height: 24px; margin: 0; pointer-events: auto; }
+    .hm-cell::before { inset: 0; }
+    .hm-cell::after { content: none; }
+    .hm-gap { height: 24px; }
+  }
   .hm-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--text-2); font-size: 12px; }
-  .hm-swatch { display: inline-block; width: 16px; height: 12px; border: 1px solid var(--line-soft); border-radius: 1px; background: var(--surface-2); }
+  .hm-swatch { display: inline-block; width: 16px; height: 12px; border: 1px solid var(--control-line); border-radius: 1px; background: var(--surface-2); }
+  /* The legend shows the four heat colours of the squares above. They sit after .hm-swatch on purpose: a plain .level-N has the same weight as .hm-swatch and lost to its grey (BL-493). */
+  .hm-swatch.level-1 { background: var(--heat-1); }
+  .hm-swatch.level-2 { background: var(--heat-2); }
+  .hm-swatch.level-3 { background: var(--heat-3); }
+  .hm-swatch.level-4 { background: var(--heat-4); }
   .hm-swatch.noise { background: var(--surface-2); border: 1px dashed var(--text-2); margin-left: 8px; }
   .hm-swatch.empty { background: transparent; margin-left: 8px; }
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

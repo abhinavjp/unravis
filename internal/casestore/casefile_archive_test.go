@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/masterkey"
@@ -175,5 +176,40 @@ func TestExistingExportStillOpensWithThePassphrase(t *testing.T) {
 	res, _, err := casestore.CheckCaseFile(context.Background(), file, filepath.Join(filepath.Dir(file), ".verify"), casestore.PassphraseKey([]byte(cfPass)), nil)
 	if err != nil || res.Counts.Events != 3 {
 		t.Fatalf("%+v %v", res, err)
+	}
+}
+
+// The hold on a case file is a read transaction: a writer on another handle must
+// still commit while it is held (an import's closing checkpoint does wait for the
+// hold, so a plain write is used; go-sqlite3 0.37 began plain transactions IMMEDIATE,
+// which would have blocked every import for the whole copy).
+func TestHoldCaseDBDoesNotBlockWriters(t *testing.T) {
+	e := newCFEnv(t)
+	info := cfSeed(t, e, "Hold", 3)
+	c, err := e.st.Open(context.Background(), info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	release, err := arSource(t, e, info).Hold()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	done := make(chan struct{})
+	var werr error
+	go func() {
+		defer close(done)
+		werr = c.(interface {
+			SetEnvs(context.Context, []string) error
+		}).SetEnvs(context.Background(), []string{"prod"})
+	}()
+	select {
+	case <-done:
+		if werr != nil {
+			t.Fatalf("write while the case file was held: %v", werr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a write did not commit while the case file was held: the hold blocks writers")
 	}
 }

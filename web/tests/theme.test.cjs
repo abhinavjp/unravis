@@ -151,7 +151,9 @@ test('panel and group titles are mono with a decorative // prefix that is not re
 test('no glow, gradient, banner or glass is introduced by the theme', () => {
   const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
   assert.doesNotMatch(withoutComments, /backdrop-filter|text-shadow|radial-gradient/);
-  assert.doesNotMatch(withoutComments, /(^|[;{\s])background(-image)?:[^;}]*(linear|radial)-gradient/, 'no gradient fills');
+  // The one exception is the soft edge that says a wide table scrolls sideways (SWEEP-F2, ANALYSIS-07/08): two short fades at the box edge, never a fill.
+  const withoutScrollCue = withoutComments.replace(/\.table-scroll\.scroll-cue \{[^}]*\}/, '');
+  assert.doesNotMatch(withoutScrollCue, /(^|[;{\s])background(-image)?:[^;}]*(linear|radial)-gradient/, 'no gradient fills');
 });
 
 // ---- fonts ----

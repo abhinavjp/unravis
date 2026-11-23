@@ -5,6 +5,17 @@ import { believedState, type CaseInfo, type CaseState, type RetryItem } from './
  * Nothing here calls the server and nothing holds words.
  */
 
+/** A closed case is erased this many days after it was closed (the server's retention, internal/casestore Retention). */
+export const CLOSED_RETENTION_DAYS = 30;
+
+/** The moment a closed case will be erased: the close time plus 30 days, as an ISO time. null when the case has no valid close time. */
+export function closedEraseAt(closed: string | null | undefined): string | null {
+  if (!closed) return null;
+  const at = Date.parse(closed);
+  if (!Number.isFinite(at)) return null;
+  return new Date(at + CLOSED_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
 /** hidden: nothing to show (the case is open). enabled: press to reopen. busy: a reopen is running. disabled: shown, but the case cannot come back. */
 export type ReopenButton = 'hidden' | 'enabled' | 'busy' | 'disabled';
 

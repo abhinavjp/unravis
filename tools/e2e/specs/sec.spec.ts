@@ -215,11 +215,11 @@ test('SEC-04: using a Blackbox in a case and saving a typed key leave no key in 
   await a.region.getByRole('region', { name: 'Read key' }).getByRole('button', { name: 'Show', exact: true }).click();
   await expect(a.region.getByText('ubk-demo-a-NOT-A-REAL-KEY')).toBeVisible();
   await a.region.getByRole('button', { name: 'Use in this case' }).click();
-  await expect(a.region.getByText('This case uses this Blackbox for Step 9.')).toBeVisible();
+  await expect(a.region.getByRole('button', { name: 'Stop using it in this case' })).toBeVisible();
   await a.region.getByRole('button', { name: 'Stop using it in this case' }).click();
   await expect(a.region.getByRole('button', { name: 'Use in this case' })).toBeEnabled();
   await a.region.getByRole('button', { name: 'Use in this case' }).click();
-  await expect(a.region.getByText('This case uses this Blackbox for Step 9.')).toBeVisible();
+  await expect(a.region.getByRole('button', { name: 'Stop using it in this case' })).toBeVisible();
   await a.dialog.getByRole('button', { name: 'Close this Blackbox', exact: true }).click();
 
   const typed = 'ubk-demo-c-NOT-A-REAL-KEY';

@@ -17,6 +17,7 @@ export const CASE_HOME_TEXT = {
   retry: 'Try again',
   created: 'Started',
   filesCount: 'Files',
+  jumpLabel: 'Jump to',
   theoriesCount: 'Theories',
   checksCount: 'Health checks',
   untrusted: 'This case came from another place, so it is read-only here.',
@@ -38,7 +39,7 @@ export const CASE_HOME_TEXT = {
   retrying: 'Trying…',
   retryAddFile: 'Add the file again',
   retryDrop: 'Remove from list',
-  retryInPage: 'This one needs details only the wizard holds. Remove it, then add it again from Connections or Add a file.',
+  retryInPage: 'This one needs details only the wizard holds. Remove it, then add it again from Connections or Add data.',
   retryFailed: 'It did not go through again. It stays on the list.',
   retryEnvironments: 'Environments not saved',
   retryTag: 'Source not saved',
@@ -49,17 +50,17 @@ export const CASE_HOME_TEXT = {
   analysisHeading: 'Analysis',
   analysisText: 'Open the charts and the ranked list of operations for this case.',
   analysisButton: 'Open the analysis',
-  analysisHint: 'Open Nearby activity from the slowest list. It shows one call beside what SQL, Mongo, Redis and IIS did.',
+  analysisHint: 'Nearby activity, in the slowest list, shows one call beside what SQL, Mongo, Redis and IIS did.',
 
   storyHeading: 'Story so far',
   storyIntro: 'One list, oldest first. It shows only what this case has saved.',
-  storyNone: 'Nothing has happened in this case yet. Add a file or run a health check and it will show here.',
+  storyNone: 'Nothing has happened in this case yet. Add files or run a health check and it will show here.',
   storyGap: 'Analysis runs and connection tests are not saved in the case yet, so they are not in this list. Health checks stand in for them.',
 
   theoriesHeading: 'Theories',
   theoriesIntro: 'What you think may have happened. Each theory stays in this case and is tested against the evidence.',
   theoriesNone: 'No theories in this case yet. Write the first one when you have a guess to test.',
-  theoriesOpen: 'Open the theories',
+  theoriesOpen: 'Open the Ledger',
   theoriesAdd: 'Add a theory',
   theoriesFailed: 'The theories could not be read. Try again.',
   copyHeading: 'Earlier theories found',
@@ -74,7 +75,7 @@ export const CASE_HOME_TEXT = {
 
   filesHeading: 'Files',
   filesNone: 'No files have been added to this case yet.',
-  filesAdd: 'Add a file',
+  filesAdd: 'Add files',
   filesRows: 'rows',
   filesSkipped: 'skipped',
 
@@ -93,6 +94,9 @@ export const CASE_HOME_TEXT = {
   eventTheoryAdded: 'Theory added',
   eventTheoryChanged: 'Theory updated'
 } as const;
+
+/** The sentence a closed case shows about its erase date. `when` is the formatted time. */
+export const closedEraseText = (when: string): string => 'It will be erased on ' + when + ' unless you reopen it. Save a case file to keep it.';
 
 /** "1,204 rows from IIS log, 3 skipped." */
 export function fileDetail(fileName: string, rows: number, source: string, skipped: number): string {
@@ -117,6 +121,7 @@ export function theoryChangedDetail(stateText: string): string {
 
 export const caseHomeCopyEntries = (): LintEntry[] => [
   ...Object.entries(CASE_HOME_TEXT).map(([id, text]) => ({ id: 'caseHome.' + id, text })),
+  { id: 'caseHome.sample.erase', text: closedEraseText('19 Nov 2026 10:00 GMT+1') },
   { id: 'caseHome.sample.file', text: fileDetail('web-2026-10-24.log', 1204, 'IIS log', 3) },
   { id: 'caseHome.sample.theory', text: theoryChangedDetail('Supported by correlation') }
 ];

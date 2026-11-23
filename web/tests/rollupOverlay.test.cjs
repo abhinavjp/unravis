@@ -145,12 +145,14 @@ test('the chart option has two solid series, two dashed ones, 24 hours and a too
   assert.equal(option.series[1].lineStyle.type, 'dashed');
   assert.equal(option.series[3].data[4].itemStyle.borderColor, '#222');
   assert.equal(option.series[3].data[0].value, null);
-  assert.equal(option.yAxis.minInterval, 1);
+  assert.ok(Number.isInteger(option.yAxis.interval) && option.yAxis.interval >= 1, 'a count axis steps in whole requests');
   const evil = o.overlayOption({ ...a, label: '<b>x</b>' }, b, 'count', palette);
   assert.doesNotMatch(evil.tooltip.formatter([{ dataIndex: 4 }]), /<b>x<\/b>/);
   assert.match(evil.tooltip.formatter([{ dataIndex: 4 }]), /04:00/);
-  assert.equal(o.overlayOption(a, b, 'p95', palette).yAxis.minInterval, undefined);
-  assert.equal(o.overlayOption(a, b, 'p95', palette).yAxis.axisLabel.formatter(1500), '1.5 s');
+  // The P95 axis names its unit once in the title; its ticks are bare numbers with one precision (BL-510).
+  const p95 = o.overlayOption(a, b, 'p95', palette).yAxis;
+  assert.match(p95.name, /^P95 response time \((ms|s)\)$/);
+  assert.doesNotMatch(p95.axisLabel.formatter(p95.max), /ms|s$/);
 });
 
 test('the table rows have one line per hour', () => {

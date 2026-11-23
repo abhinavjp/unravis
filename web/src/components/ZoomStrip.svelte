@@ -4,6 +4,7 @@
   import { zoomCopy } from '../lib/copy/zoomCopy';
   import { ZOOM_NOTES } from '../lib/copy/screenCopy';
   import HelpNote from './HelpNote.svelte';
+  import { help } from '../lib/copy/helpCopy';
 
   // The zoom strip above the time charts. It only draws the model it is given (lib/zoom.ts stripModel) and reports what was pressed.
   // It is always visible. Top row: Back to ..., the trail, Back, Zoom in, Zoom out, Reset. Under it, the zoomed window in words and, once
@@ -18,6 +19,8 @@
 
   const uid = $props.id();
   const reasonId = 'investigate-reason-' + uid;
+  const moreId = 'zoom-more-' + uid;
+  let moreShown = $state(false);
   const KEY_COMMIT_MS = 300;
   const DRAG_PX = 4;
 
@@ -51,7 +54,8 @@
   $effect(() => () => clearTimeout(timer));
 
   const msAt = (clientX: number, rect: DOMRect) => brush.rootStart + Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1) * rootWidth;
-  const halfHit = () => (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 12 : 6);
+  // Half the handle's 24px width: a press where the pointer shows the resize cursor grabs the edge (it was 6 for a mouse, 12 for touch).
+  const halfHit = () => 12;
 
   /** The one place that reports a window to the page. An unchanged window reports nothing. */
   function emit(win: ZoomWindow) { if (!sameWindow(win, view)) onBrush(win); }
@@ -125,6 +129,7 @@
 <svelte:window onkeydowncapture={escape} />
 
 <section class="zoom-strip" aria-label={zoomCopy.heading}>
+  <h2 class="visually-hidden">{zoomCopy.heading}</h2>
   <div class="zoom-row">
     <div class="zoom-trail">
       {#if backLabel}<button type="button" class="quiet-button window-back" onclick={onWindowBack}>{backLabel}</button>{/if}
@@ -143,7 +148,6 @@
       <button type="button" class="quiet-button" disabled={!model.canReset} onclick={onReset}>{zoomCopy.reset}</button>
     </div>
   </div>
-  {#if model.canBack}<div class="zoom-help"><HelpNote id="drill-back" /></div>{/if}
 
   <div class="zoom-stage">
     <p class="zoom-line"><strong class="level">{model.levelName}</strong> {#if preview}<span class="readout">{previewText}</span>{:else}{model.rangeLine} {model.intervalLine}{/if}</p>
@@ -154,7 +158,6 @@
       </div>
     {/if}
   </div>
-  {#if !model.isRoot}<div class="zoom-help"><HelpNote id="drill-investigate" /></div>{/if}
   {#if model.message}<p class="zoom-message" data-tone={model.messageTone}>{model.message}</p>{/if}
   {#if model.notice}<p class="zoom-message" data-tone="info">{model.notice}</p>{/if}
   {#if dragNote}<p class="zoom-message" data-tone="info">{dragNote}</p>{/if}
@@ -176,11 +179,16 @@
     {#if !model.overview.hasData}<p class="zoom-note overview-empty">{emptyNote || zoomCopy.overviewEmpty}</p>{/if}
   </div>
 
-  <p class="zoom-note hint">{model.hint}</p>
-  {#if model.asOfLine}<p class="zoom-note">{model.asOfLine}</p>{/if}
-  {#if model.scopeLine}<p class="zoom-note">{model.scopeLine}</p>{/if}
-  {#if model.referenceLine}<p class="zoom-note">{model.referenceLine}</p>{/if}
-  <p class="zoom-note">{zoomCopy.howTo}</p>
+  <!-- One sentence says how to zoom. Everything else about the zoomed read sits behind the "?" (ANALYSIS-11). -->
+  <p class="zoom-note hint">{model.hint}
+    <button type="button" class="zoom-more-toggle" aria-expanded={moreShown} aria-controls={moreId} aria-label={zoomCopy.moreLabel} onclick={() => moreShown = !moreShown}>{'?'}</button></p>
+  <div class="zoom-more" id={moreId} hidden={!moreShown}>
+    <p class="zoom-note">{zoomCopy.howTo}</p>
+    <p class="zoom-note">{help['drill-back'].plain}</p>
+    {#if !model.isRoot}<p class="zoom-note">{help['drill-investigate'].plain}</p>{/if}
+    {#if model.scopeLine}<p class="zoom-note">{model.scopeLine} {model.referenceLine}</p>{/if}
+    {#if model.asOfLine}<p class="zoom-note">{model.asOfLine} {zoomCopy.asOfNote}</p>{/if}
+  </div>
   <p class="sr-only" role="status" aria-live="polite">{model.rangeLine} {model.message} {model.notice} {dragNote} {announcement} {previewText} {spoken}</p>
 </section>
 
@@ -212,19 +220,31 @@
   .overview .bar { fill: var(--text-2); opacity: .55; }
   .nav-body { position: absolute; top: 0; bottom: 0; min-width: 2px; box-sizing: border-box; background: color-mix(in srgb, var(--accent) 20%, transparent); border: var(--hairline-width) solid var(--accent); cursor: grab; }
   .nav-body:active { cursor: grabbing; }
-  .nav-handle { position: absolute; top: 0; bottom: 0; width: 12px; margin-left: -6px; cursor: ew-resize; touch-action: pan-y; }
+  /* The handle is 24px wide (WCAG 2.2 target size, BL-475) and centred on the edge; the grip and the focus ring keep their old 4px and 12px size. */
+  .nav-handle { position: absolute; top: 0; bottom: 0; width: 24px; margin-left: -12px; cursor: ew-resize; touch-action: pan-y; }
   /* The grip is a small outlined bar on the edge: no solid accent fill outside primary buttons. */
   .nav-handle::before { content: ''; position: absolute; top: 4px; bottom: 4px; left: 50%; width: 4px; margin-left: -2px; box-sizing: border-box; background: var(--surface); border: var(--hairline-width) solid var(--accent); border-radius: var(--radius-sm); }
-  .nav-handle:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+  .nav-handle::after { content: ''; position: absolute; top: 0; bottom: 0; left: 6px; right: 6px; pointer-events: none; }
+  .nav-handle:focus-visible { outline: none; }
+  .nav-handle:focus-visible::after { outline: 2px solid var(--focus); outline-offset: 0; }
   .zoom-note { color: var(--text-2); font-size: var(--fs-2); }
   .hint { color: var(--text-2); }
+  .zoom-more { display: grid; gap: var(--space-1); padding: var(--space-2) var(--space-3); background: var(--surface-2); border-inline-start: var(--hairline-width) solid var(--accent); }
+  .zoom-more[hidden] { display: none; }
+  /* The "?" is the same 24px tap target with a 16px ring as the help notes (32px on touch). */
+  .zoom-more-toggle { position: relative; display: inline-grid; place-items: center; width: 24px; height: 24px; margin: -4px 0 -4px calc(var(--space-1) - 4px); padding: 0; vertical-align: middle; color: var(--text-2); background: transparent; border: 0; border-radius: var(--radius-round, 50%); font: inherit; font-size: 12px; font-weight: 600; line-height: 1; cursor: pointer; isolation: isolate; }
+  .zoom-more-toggle::before { content: ""; position: absolute; z-index: -1; inset: 4px; border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-round, 50%); pointer-events: none; }
+  .zoom-more-toggle:hover, .zoom-more-toggle[aria-expanded='true'] { color: var(--text); }
+  .zoom-more-toggle:hover::before, .zoom-more-toggle[aria-expanded='true']::before { background: var(--surface-2); border-color: var(--accent); }
+  .zoom-more-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  @media (pointer: coarse), (max-width: 720px) { .zoom-more-toggle { width: 32px; height: 32px; margin-block: -8px; margin-inline-start: calc(var(--space-1) - 8px); } .zoom-more-toggle::before { inset: 8px; } }
   .zoom-message[data-tone='warn'] { color: var(--text); font-weight: 600; }
   .zoom-message[data-tone='error'] { color: var(--bad); font-weight: 600; }
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-  /* Touch: the handles get a 24px hit area (the grip stays the same size). */
+  /* Touch: a bigger margin for the track, and the focus ring follows the whole 24px handle. */
   @media (pointer: coarse) {
     .nav-track { margin: 0 var(--space-3); }
-    .nav-handle { width: 24px; margin-left: -12px; }
+    .nav-handle::after { left: 0; right: 0; }
     .nav-row .quiet-button { min-height: 32px; }
   }
   @media (max-width: 520px) {

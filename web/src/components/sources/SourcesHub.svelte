@@ -11,6 +11,9 @@
   import { SOURCES_LIST_TEXT } from '../../lib/copy/sourcesListCopy';
   import { sourcesNav } from '../../lib/sourcesNav.svelte';
   import { untrack } from 'svelte';
+  import { addGuard, dropKeptAddDraft } from '../../lib/wizardGuards.svelte';
+  import ConfirmAsk from '../sourcewiz/ConfirmAsk.svelte';
+  import { WIZ } from '../../lib/copy/sourceWizardCopy';
   import { tabAfterKey } from '../../lib/lanes';
   import './sources.css';
 
@@ -21,15 +24,25 @@
   let { caseId, readOnly = false, onGone, onAddFiles, onAddMongo }: { caseId: string; readOnly?: boolean; onGone?: () => void; onAddFiles?: () => void; onAddMongo?: () => void } = $props();
   type Tab = 'list' | 'connections' | 'sql' | 'mongo' | 'add' | 'day' | 'combos';
   let tab = $state<Tab>('connections');
-  // The Investigation Timeline asks for the Sources tab from its time-zone notice (packet P11).
-  $effect(() => { if (sourcesNav.wantList) { sourcesNav.wantList = false; tab = 'list'; } });
+  // The Investigation timeline asks for the Sources tab from its time-zone notice (packet P11).
+  $effect(() => { if (sourcesNav.wantList) { sourcesNav.wantList = false; untrack(() => goTab('list')); } });
   // The import drawer's Add data cards (screen 112) ask for the SQL tab, Add another day, or the page that adds a Mongo audit database.
   $effect(() => {
     const want = sourcesNav.wantTab;
     if (!want) return;
     sourcesNav.wantTab = '';
-    untrack(() => { tab = want === 'sql' ? 'sql' : want === 'day' ? 'day' : 'add'; });
+    untrack(() => goTab(want === 'sql' ? 'sql' : want === 'day' ? 'day' : 'add'));
   });
+  // A tab switch away from Add data asks first when the open card holds typed input that is not added (nothing typed is kept: the question only
+  // says it would be lost). An unfinished list of sources is not lost: the flow keeps it for the way back (see AddSourcesFlow).
+  let askTab = $state<Tab | ''>('');
+  function goTab(next: Tab) {
+    if (next === tab || addGuard.preparing) return;
+    if (tab === 'add' && addGuard.entryDirty) { askTab = next; return; }
+    tab = next;
+  }
+  // Leaving the case page, or opening another case, drops what the Add data tab kept.
+  $effect(() => { void caseId; return dropKeptAddDraft; });
   const tabs: { id: Tab; label: string }[] = [
     { id: 'connections', label: HUB_TEXT.connections }, { id: 'list', label: SOURCES_LIST_TEXT.tab }, { id: 'sql', label: HUB_TEXT.sql }, { id: 'mongo', label: HUB_TEXT.mongo },
     { id: 'add', label: HUB_TEXT.add }, { id: 'day', label: HUB_TEXT.day }, { id: 'combos', label: HUB_TEXT.combos }
@@ -39,15 +52,15 @@
     const to = tabAfterKey(event.key, tabs.findIndex(item => item.id === tab), tabs.length);
     if (to < 0) return;
     event.preventDefault();
-    tab = tabs[to].id;
-    document.getElementById('hub-tab-' + tab)?.focus();
+    goTab(tabs[to].id);
+    if (askTab === '') document.getElementById('hub-tab-' + tab)?.focus();
   }
 </script>
 
 <div class="src" data-sources-hub>
   <div class="tabs" role="tablist" aria-label={HUB_TEXT.label}>
     {#each tabs as item (item.id)}
-      <button type="button" role="tab" class="btn" id="hub-tab-{item.id}" aria-selected={tab === item.id} disabled={createView.running} tabindex={tab === item.id ? 0 : -1} aria-controls="hub-panel" onkeydown={roving} onclick={() => { tab = item.id; }}>{item.label}</button>
+      <button type="button" role="tab" class="btn" id="hub-tab-{item.id}" aria-selected={tab === item.id} disabled={createView.running || addGuard.preparing} tabindex={tab === item.id ? 0 : -1} aria-controls="hub-panel" onkeydown={roving} onclick={() => goTab(item.id)}>{item.label}</button>
     {/each}
   </div>
   <div id="hub-panel" role="tabpanel" aria-labelledby="hub-tab-{tab}">
@@ -62,9 +75,12 @@
     {:else if tab === 'add'}
       <AddSourcesFlow {caseId} {readOnly} onFiles={onAddFiles} onDone={() => { tab = 'list'; }} />
     {:else if tab === 'day'}
-      <AddAnotherDay {caseId} {readOnly} {onGone} onCancel={() => { tab = 'add'; }} />
+      <AddAnotherDay {caseId} {readOnly} {onGone} onCancel={() => { tab = 'add'; }} onReadSql={() => { tab = 'sql'; }} />
     {:else}
       <SourceCombinations {caseId} />
     {/if}
   </div>
+  {#if askTab !== ''}
+    <ConfirmAsk id="leave-tab" title={WIZ.guard.leaveTabTitle} text={WIZ.guard.leaveTabText} keepLabel={WIZ.guard.leaveFormKeep} leaveLabel={WIZ.guard.leaveFormLeave} onKeep={() => { askTab = ''; }} onLeave={() => { const next = askTab; askTab = ''; addGuard.entryDirty = false; if (next !== '') { tab = next; setTimeout(() => document.getElementById('hub-tab-' + next)?.focus(), 0); } }} />
+  {/if}
 </div>

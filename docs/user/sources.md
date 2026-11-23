@@ -15,7 +15,7 @@ The demo uses sample sources and does not let you add real ones, so the pictures
 
 A case can read a SQL Server and a MongoDB server on top of its audit logs. They answer two questions the logs cannot: did the database slow down, and when did it start. Unravis only reads. It never changes a server, never runs a grant for you and never switches a profiler on.
 
-The case page has a section called SQL Server and MongoDB. It holds seven tabs: Connections, Sources, Read SQL Server, Read MongoDB, Add data, Add another day and Combinations.
+The case page has a section called Sources and connections. It holds seven tabs: Connections, Sources, Read SQL Server, Read MongoDB, Add data, Add another day and Combinations.
 
 Pictures for this page come from the screenshot tool (see `screenshots.md`). Each screen below has a dark and a light picture. They were made on a developer PC and are replaced when the reference runner regenerates the baselines.
 
@@ -150,7 +150,7 @@ The same five cards open from the header's Import button, in the drawer. The Fil
 ![Add data in the Import drawer, dark](screenshots/P7/p7-import-drawer-dark.png)
 ![Add data in the Import drawer, light](screenshots/P7/p7-import-drawer-light.png)
 
-When the drawer closes on the Investigation Timeline and the sources there were picked by hand, a file that was just added is switched on too. A source you switched off stays off. At most 8 sources can be traced at once. If a switch would go past that, it is not made and a short note says to switch one off first.
+When the drawer closes on the Investigation timeline and the sources there were picked by hand, a file that was just added is switched on too. A source you switched off stays off. At most 8 sources can be traced at once. If a switch would go past that, it is not made and a short note says to switch one off first.
 
 ### The Sources list
 

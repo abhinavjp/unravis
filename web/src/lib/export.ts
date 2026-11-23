@@ -12,8 +12,8 @@ export const EXPORT_TEXT = {
   options: 'Options',
   pseudonymsLabel: 'Include user pseudonyms',
   pseudonymsNote: 'Adds labels such as user-3fa91c2e in place of user ids. A label holds only within this file: each preview uses a new key, and the key is never saved.',
-  ledgerLabel: 'Include my ledger',
-  ledgerNote: 'Adds your hypothesis text, state and evidence references. Nothing else from the ledger is added.',
+  ledgerLabel: 'Include my theories',
+  ledgerNote: 'Adds your theory text, state and evidence references. Nothing else from the ledger is added.',
   preview: 'Preview export',
   previewing: 'Building the preview…',
   previewAgain: 'Preview again',
@@ -28,8 +28,8 @@ export const EXPORT_TEXT = {
   sourceQuality: 'Source quality',
   pseudonyms: 'User pseudonyms',
   pseudonymsNone: 'No pseudonyms in this file.',
-  ledger: 'Ledger entries',
-  ledgerNone: 'No ledger entries in this file.',
+  ledger: 'Theories',
+  ledgerNone: 'No theories in this file.',
   noEvidenceIds: 'No evidence references',
   manifest: 'Manifest',
   hashLabel: 'Manifest and body SHA-256',
@@ -100,7 +100,7 @@ export function exportSummary(exp: EvidenceExport): ExportSummary {
   const ledger = exp.body.ledger?.length ?? 0;
   const parts = [plural(records, 'finding', 'findings'), `${lowN} low n`];
   if (exp.body.pseudonyms) parts.push(plural(pseudonyms, 'pseudonym', 'pseudonyms'));
-  if (exp.body.ledger) parts.push(plural(ledger, 'ledger entry', 'ledger entries'));
+  if (exp.body.ledger) parts.push(plural(ledger, 'theory', 'theories'));
   return {
     records, lowN, pseudonyms, ledger,
     hash: exp.manifest.bodySha256,

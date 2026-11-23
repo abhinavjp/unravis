@@ -169,6 +169,26 @@ export function formatValue(unit: SeriesUnit, v: number | null | undefined): str
   }
 }
 
+/**
+ * A round top for a byte axis (BLACKBOX-15). Labels are in binary units (KB, MB, GB are 1024 apart), so the grid has to be
+ * round in those units: a top of 2 GB split in four gives 512 MB, 1 GB, 1.5 GB, 2 GB, where the chart's own rounding in
+ * plain decimal gave 954 MB, 1.86 GB, 2.79 GB. The top is the next power of two in the unit of the biggest value, so the
+ * four steps are powers of two as well. Null when there is nothing to size.
+ */
+export function niceBinaryMax(value: number): number | null {
+  if (!Number.isFinite(value) || value <= 0) return null;
+  let unit = 1;
+  while (value >= unit * 1024) unit *= 1024;
+  return Math.pow(2, Math.ceil(Math.log2(value / unit))) * unit;
+}
+
+/** The biggest plotted value (the average of a bucket, which is what the line draws) among some lines, or null when none was read. */
+export function biggestPlotted(lines: Array<{ points: SeriesPoint[] }>): number | null {
+  let max = -Infinity;
+  for (const l of lines) for (const p of l.points) if (Number.isFinite(p[1]) && p[1] > max) max = p[1];
+  return Number.isFinite(max) ? max : null;
+}
+
 /** A short axis label (no long decimals). */
 export function axisValue(unit: SeriesUnit, v: number): string {
   if (!Number.isFinite(v)) return '';

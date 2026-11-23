@@ -34,7 +34,7 @@ test('D-C-07: storage is cleared too', () => {
 
 test('D-C-09: every update sentence has the exact wording and passes the copy lint', () => {
   const sentences = upd.updateCheckSentences();
-  assert.deepEqual(sentences, ['You are on the latest version (v1.2.0).', 'Version 1.3.0 is available. You have v1.2.0.', 'You are on v1.2.0. A newer version exists, but it is on hold: updates are paused.', 'This is a development build, so there is nothing to compare.', 'Could not check for updates. Check your connection and try again later.', 'An update answer came back, but it did not pass the safety check, so it was ignored.']);
+  assert.deepEqual(sentences, ['You are on the latest version (v1.2.0).', 'Version 1.3.0 is available. You have version 1.2.0.', 'You are on v1.2.0. A newer version exists, but it is on hold: updates are paused.', 'This is a development build, so there is nothing to compare.', 'Could not check for updates. Check your connection and try again later.', 'An update answer came back, but it did not pass the safety check, so it was ignored.']);
   assert.deepEqual(lintCopy(sentences.map((text, index) => ({ id: 'update-' + index, text })), deck.terms), []);
 });
 

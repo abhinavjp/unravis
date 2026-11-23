@@ -2,7 +2,7 @@ import { listCases } from './cases';
 import { windowFor } from './discover';
 import type { WindowChoice } from './discover';
 import { sourcesView, scanIsStale } from './wizardSources.svelte';
-import { draftCaseKey, draftSnapshot, onWizardReset, setSources, wipeCaseKey, wizard } from './wizard.svelte';
+import { draftCaseKey, draftSnapshot, onWizardReset, onWizardResetBlocked, setSources, wipeCaseKey, wizard } from './wizard.svelte';
 import { hostsView, loadHosts, saveHosts } from './wizardHosts.svelte';
 import type { HostsApi } from './wizardHosts.svelte';
 import { hostProblem } from './zoneChoice';
@@ -14,6 +14,7 @@ import { wizardSubmitApi } from './wizardSubmitApi';
 import { ackTextFor } from './copy/importCopy';
 import { sourceKey } from './wizardSources';
 import { forgetRequestId } from './createRequest';
+import { landedCount, noteCaseAdded } from './caseAdded.svelte';
 
 /**
  * The state of the last step of the create wizard (TSK-19): the choices made on the review (how far back to read, the ticked notice, the
@@ -239,6 +240,8 @@ export function resetCreate(): void {
   fileVersion++;
 }
 onWizardReset(resetCreate);
+// A run reads the list it was started from: nothing may reset the draft until it ends (BL-148).
+onWizardResetBlocked(() => createView.running);
 
 export const chooseWindow = (choice: WindowChoice): void => { createView.window = choice; };
 export const setAck = (on: boolean): void => { createView.ack = on; };
@@ -313,6 +316,7 @@ export async function createNow(api: SubmitApi = wizardSubmitApi, only?: readonl
   if (createView.running) return null;
   if (!caseMade() && blockers().length > 0) return null;
   createView.running = true;
+  const landedBefore = landedCount(createView.submit);
   try {
     let result = await submitWizard(buildInput(Date.now(), only), api, createView.submit);
     // Files refused only for lacking a computer are mended and read again once, without asking.
@@ -321,6 +325,8 @@ export async function createNow(api: SubmitApi = wizardSubmitApi, only?: readonl
       if (mended.length > 0) result = await submitWizard(buildInput(Date.now(), mended), api, createView.submit);
     }
     createView.result = result;
+    // Something went into a case that already existed: its page reads the story again. Nothing landed (a failed or locked run): nothing is read.
+    if (createView.appendOnly && result.caseId && landedCount(createView.submit) > landedBefore) noteCaseAdded(result.caseId);
     // The case could not be made (the reply may have been lost after the server made it): read the names again so the repeat warning is true.
     if (!result.caseId && !result.locked) { createView.titles = null; void loadTitles(); }
     return result;

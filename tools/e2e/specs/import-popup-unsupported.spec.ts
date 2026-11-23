@@ -16,7 +16,7 @@ async function openPopup(page: Page, api: ApiFn, title: string): Promise<Locator
   await createCase(api, title);
   await goHome(page);
   await openCase(page, title);
-  await page.getByRole('button', { name: 'Add a file' }).first().click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'Add files' });
   await expect(dialog).toBeVisible();
   return dialog;

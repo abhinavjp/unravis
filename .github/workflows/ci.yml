@@ -20,10 +20,13 @@ name: CI
 # and saved by pushes to master, once a week, so a pull request starts warm.
 #
 # Committed web build (BL-031): web/dist, cmd/unravis-setup/ui and cmd/unravis-lite/ui are committed and
-# embedded in the exe. A pull request that changes web/src, web/index.html, web/setup, web/lite, docs/user/*.md
-# or web/package-lock.json must commit the rebuilt folders (run `npm run build` in web). The step "Web - built
-# files match what is committed" compares the build output with the commit byte for byte and fails otherwise.
-# The exe is built from those committed files, which that step proves equal to a fresh build.
+# embedded in the exe, but pull requests into develop do NOT rebuild them (docs/pipeline/dist-on-promotion.md): the
+# promotion (tools/release/Promote-Develop.ps1) rebuilds and commits them once. So the step "Web - built files match
+# what is committed" compares the build output with the commit byte for byte on the promotion pull request and on
+# master (the release gate), and is skipped on pushes to develop, where the committed files are the last promoted ones.
+# On master the exe is built from the committed files, which that step proves equal to a fresh build. On develop the
+# exe (and so the screenshots, which only warn until RUNNER-BASELINES.txt exists) is built from the last promoted files:
+# no second web build is run per push (Windows minutes). The `web` job above still builds the current source on every run.
 #
 # The runner is pinned (windows-2022, not windows-latest): it is also the reference
 # renderer for the screenshots, so it must not change without anyone choosing it.
@@ -66,7 +69,7 @@ jobs:
   changes:
     # Notes-only pull requests (docs outside docs/user, .forge, root *.md, LICENSE, NOTICE) skip the heavy jobs.
     # docs/user is heavy: it is embedded in the exe, read by Go tests and checked against the screenshots.
-    # docs/desktop/baseline-go-tests.txt is heavy: it is the Linux known-failure baseline.
+    # docs/desktop/baseline-go-tests.txt and baseline-go-race.txt are heavy: the Linux and the race known-failure baselines.
     # No pull request event, an empty diff or any other doubt means "run everything".
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -97,7 +100,7 @@ jobs:
           fi
           code=false
           while IFS= read -r f; do
-            if printf '%s\n' "$f" | grep -Eq '^(docs/user/|docs/desktop/baseline-go-tests\.txt$)'; then
+            if printf '%s\n' "$f" | grep -Eq '^(docs/user/|docs/desktop/baseline-go-(tests|race)\.txt$)'; then
               code=true; echo "heavy: $f"
             elif printf '%s\n' "$f" | grep -Eq '^(\.forge/|docs/|[^/]+\.md$|LICENSE$|NOTICE$)'; then
               echo "notes: $f"
@@ -148,7 +151,10 @@ jobs:
 
       - name: Web - built files match what is committed
         # BL-031. Fails when `npm run build` gives bytes other than the committed web/dist,
-        # cmd/unravis-setup/ui and cmd/unravis-lite/ui. Fix: run `npm run build` in web and commit them.
+        # cmd/unravis-setup/ui and cmd/unravis-lite/ui. Runs on the promotion pull request and on master, not on develop
+        # (develop holds the last promoted files by design). Fix on a promotion: run Promote-Develop.ps1 again (it rebuilds
+        # and commits them); on a hotfix pull request into master: run `npm run build` in web and commit the three folders.
+        if: ${{ github.ref != 'refs/heads/develop' }}
         working-directory: web
         run: |
           node --version
@@ -228,6 +234,15 @@ jobs:
           # Full history, so the formatting step can find where the pull request branched off.
           fetch-depth: 0
 
+      - name: Screenshot baselines are not regenerated on develop
+        # develop holds the last promoted web files, so a run here would photograph the old UI (docs/pipeline/dist-on-promotion.md).
+        # Run "Regenerate screenshot baselines" on a promote/* branch or on master.
+        if: ${{ inputs.regenerate_baselines == true && github.ref == 'refs/heads/develop' }}
+        shell: bash
+        run: |
+          echo "::error::Do not regenerate the screenshot baselines on develop: its exe embeds the last promoted web files, not the current source. Run it on a promote/* branch or on master."
+          exit 1
+
       - name: Set up Go
         uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
@@ -273,6 +288,10 @@ jobs:
       - name: Go - vet
         run: go vet ./...
 
+      # BL-422: the sidecar tag (no embedded dashboard) must keep compiling; only the root package has a tagged test.
+      - name: Go - build and root test with the tauri_sidecar tag
+        run: go build -tags tauri_sidecar ./... && go test -tags tauri_sidecar .
+
       # Only the Go files this pull request changes are checked, judged on the committed
       # text (not the working copy, whose line endings may differ). Older files on master
       # that are not gofmt-clean are a separate pass (BL-032). gofmt -l exits 0 when it lists
@@ -316,8 +335,9 @@ jobs:
         run: ./tools/release/Test-Release.ps1
 
       - name: Build dist\unravis.exe
-        # The web files are the committed ones (the `web` job proves they equal a fresh build), so the web build is skipped here;
-        # the go-tests jobs already ran go test, so the tests are skipped too.
+        # The web files are the committed ones, so the web build is skipped. On master and on promotion the `web` job proves they
+        # equal a fresh build; on develop they are the last promoted ones (docs/pipeline/dist-on-promotion.md). The go-tests jobs
+        # already ran go test, so the tests are skipped too.
         run: ./build.ps1 -SkipWeb -SkipTests -Version "ci-$($env:GITHUB_SHA.Substring(0, 7))"
 
       - name: No UPX in dist (BL-421 guard and its self-test)
@@ -409,7 +429,7 @@ jobs:
     # THE REQUIRED CHECK. Branch protection asks for a check named `build`; keep this job id and no `name:`.
     # It passes when every heavy job passed, or when the changes job found only notes and the heavy jobs were skipped.
     # It never skips itself, so a failed, cancelled or missing heavy job always fails it.
-    needs: [changes, web, go-tests, package]
+    needs: [changes, web, go-tests, go-race, package]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -418,16 +438,17 @@ jobs:
       CODE: ${{ needs.changes.outputs.code }}
       WEB: ${{ needs.web.result }}
       GO_TESTS: ${{ needs.go-tests.result }}
+      GO_RACE: ${{ needs.go-race.result }}
       PACKAGE: ${{ needs.package.result }}
     steps:
       - name: Every gate passed
         shell: bash
         run: |
-          echo "changes=$CHANGES code=$CODE web=$WEB go-tests=$GO_TESTS package=$PACKAGE"
+          echo "changes=$CHANGES code=$CODE web=$WEB go-tests=$GO_TESTS go-race=$GO_RACE package=$PACKAGE"
           if [ "$CHANGES" != "success" ]; then echo "::error::The changes job did not succeed ($CHANGES)."; exit 1; fi
           if [ "$CODE" = "true" ]; then want=success; elif [ "$CODE" = "false" ]; then want=skipped; else echo "::error::The changes job gave no answer (code='$CODE')."; exit 1; fi
           bad=0
-          for pair in "web=$WEB" "go-tests=$GO_TESTS" "package=$PACKAGE"; do
+          for pair in "web=$WEB" "go-tests=$GO_TESTS" "go-race=$GO_RACE" "package=$PACKAGE"; do
             if [ "${pair#*=}" != "$want" ]; then echo "::error::${pair%%=*} is ${pair#*=}, expected $want."; bad=1; fi
           done
           exit $bad
@@ -574,7 +595,7 @@ jobs:
         env:
           CGO_ENABLED: "0"
         # No -race here: budget tests (time, memory) fail under the race detector on the runner and made the gate flaky.
-        # The race run is the separate report-only job go-race.
+        # The race run is the separate blocking job go-race.
         # -skip: these two tests hang until the timeout on Linux (the blackbox host waits for a port that never frees).
         # They are the only skips; every other Linux failure is in the baseline file.
         # The baseline holds known failures, so go test exits 1 on every run. Tolerate that exit code here;
@@ -623,8 +644,10 @@ jobs:
 
 
   go-race:
-    # The race detector run, report only (BL-460 fixes the races it finds). Its own job so its 7 minutes
-    # no longer hold up linux-gates. Not a required check.
+    # The race detector run, BLOCKING (BL-441a cleared the races it found; the run on 2026-11-22 reported none). It is part of the required `build` gate, so it holds the
+    # promotion pull request and shows red on develop. It fails on any "WARNING: DATA RACE" and on any test failure that is not in
+    # docs/desktop/baseline-go-tests.txt (Linux known failures) or docs/desktop/baseline-go-race.txt (tests whose timing or budget
+    # does not hold under -race; a known-slow test goes there, a real race never does).
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-24.04
@@ -638,16 +661,32 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Go - race detector (report only)
-        # Report only until BL-460 fixes the data races found in internal/store tests and the
-        # budget tests that exceed their limits under -race. Fails the step, not the job.
-        continue-on-error: true
+      - name: Go - race detector (compared with the baselines)
         env:
           CGO_ENABLED: "1"
         run: |
-          go test -race -count=1 -timeout 25m -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' ./... 2>&1 | grep -E 'DATA RACE|^--- FAIL' | sort | uniq -c | sort -rn | head -40 || true
-          true
+          set +e
+          go test -race -count=1 -timeout 25m -skip '^TestRunHost(KeepsRecordingWhenThePortIsBusyAndTakesItLater|StopWhileWaitingForAPortReturns)$' -json ./... > go-race.json
+          code=$?
+          echo "go test -race exit code: $code"
+          if [ ! -s go-race.json ]; then echo "::error::go test -race produced no JSON"; exit 1; fi
+          if [ "$code" -gt 1 ]; then exit "$code"; fi
+          bad=0
+          races=$(grep -c 'WARNING: DATA RACE' go-race.json)
+          echo "data races reported: $races"
+          if [ "$races" -gt 0 ]; then echo "::error::The race detector reported $races data race(s)."; grep -m5 'DATA RACE' go-race.json | cut -c1-300; bad=1; fi
+          cat docs/desktop/baseline-go-tests.txt docs/desktop/baseline-go-race.txt > race-baseline.txt
+          node tools/ci/compare-go-failures.mjs --json go-race.json --baseline race-baseline.txt || bad=1
+          exit $bad
 
+      # The JSON holds the output of every test, so a new failure can be read (the log shows only its name).
+      - name: Keep the race run output when it fails
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: go-race-json
+          path: go-race.json
+          retention-days: 7
 
 
   powershell-syntax:

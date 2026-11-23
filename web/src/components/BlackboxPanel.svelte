@@ -123,6 +123,7 @@
     // Leaving the pop-up from any of its screens goes back to the row it was opened from (D-C-22).
     const leavingStatus = view.kind !== 'list' && view.kind !== 'add' ? view.id : '';
     view = next;
+    pathNote = '';
     actionNote = '';
     actionError = '';
     keyOpen = false;
@@ -169,12 +170,15 @@
       if (list) list = { ...list, thisPc: found };
       scanNote = found.problem ? T.scanFailed : '';
       if (!found.problem && found.scanned && !found.installed) scanNote = T.thisPcNote;
+      // BLACKBOX-13: a scan that finds only what is already listed still says so, or the button seems to do nothing.
+      else if (!found.problem && found.scanned && found.installed && found.listed) scanNote = T.scanNothingNew(found.name ?? thisPcName());
     } catch (error) {
       scanNote = failed(error);
     } finally {
       scanning = false;
     }
   }
+  const thisPcName = () => items.find((i) => i.thisPc)?.name ?? T.rowThisPc;
   function replaceItem(updated: BlackboxItem) {
     if (!list) return;
     list = { ...list, items: list.items.map((i) => (i.id === updated.id ? updated : i)) };
@@ -226,6 +230,11 @@
     } finally {
       working = '';
     }
+  }
+  let pathNote = $state('');
+  async function copyPath(path: string) {
+    pathNote = '';
+    try { await navigator.clipboard.writeText(path); pathNote = T.snapshotPathCopied; } catch { pathNote = T.snapshotPathCopyFailed; }
   }
   async function saveKey(item: BlackboxItem) {
     if (working || !newKey) return;
@@ -282,6 +291,8 @@
     }
   }
 
+  // The time of the last look and the reassurance for another server, as one quiet line (BLACKBOX-09).
+  const footnote = (item: BlackboxItem) => [checkedAt ? T.checkedFootnote(checkedAt) : '', item.thisPc ? '' : T.statusReadOnly].filter(Boolean).join(' ');
   const kindWord = (item: BlackboxItem) => (item.kind === 'url' ? T.kindUrl : item.kind === 'share' ? T.kindShare : T.kindFolder);
   const intervalFor = (f: NonNullable<BlackboxItem['facts']>) => intervalWords(f.intervalSeconds, f.effectiveIntervalSeconds);
   // How old the last sample is, then the exact time: "2 minutes ago (2026-11-17 09:05 UTC)".
@@ -390,6 +401,10 @@
           <section class="bb-block" aria-label={T.snapshotTitle(current?.name ?? '')}>
             <h3 tabindex="-1">{T.snapshotTitle(current?.name ?? '')}</h3>
             <p role="status">{T.snapshotSaved(view.answer.dir, shownBytes(view.answer.bytes))}</p>
+            <div class="bb-actions">
+              <button type="button" class="secondary-button" onclick={() => copyPath(view.kind === 'snapshot' ? view.answer.dir : '')}>{T.snapshotCopyPath}</button>
+              {#if pathNote}<span class="bb-ok" role="status">{pathNote}</span>{/if}
+            </div>
             <p class="bb-note">{T.snapshotRecordings(view.answer.recordings)}</p>
             <p class="bb-note">{T.snapshotLogs(view.answer.logs)}</p>
             <p class="bb-note">{T.snapshotNot}</p>
@@ -422,11 +437,10 @@
         {:else if view.kind === 'status' && current}
           {@const item = current}
           <section class="bb-block" aria-labelledby="bb-pop-title">
-            <p class="bb-ready"><strong>{item.state.readiness}</strong></p>
+            <p class="bb-ready"><strong>{item.state.readiness}</strong>{#if item.state.state === 'unreachable' || item.state.state === 'not-found'}<span class="bb-ready-why">{T.failHeadline}</span>{/if}</p>
             <p>{item.state.detail}</p>
-            <p class="bb-note">{stateNextFor(item.state, item.thisPc)}</p>
-            {#if checkedAt}<p class="bb-note">{T.checkedAt} {checkedAt}.</p>{/if}
-            {#if !item.thisPc}<p class="bb-note">{T.statusReadOnly}</p>{/if}
+            <p class="bb-next">{stateNextFor(item.state, item.thisPc, item.kind)}</p>
+            {#if footnote(item)}<p class="bb-note bb-foot">{footnote(item)}</p>{/if}
             <dl class="bb-facts">
               <div><dt>{T.rowReachedBy}</dt><dd>{kindWord(item)}: {item.location}</dd></div>
               {#if item.facts}
@@ -486,7 +500,7 @@
                 </div>
               {/if}
             {:else}
-              <p class="bb-note">{T.anotherServer}</p>
+              {#if item.state.state !== 'not-found' && item.state.state !== 'not-placed'}<p class="bb-note">{T.anotherServer}</p>{/if}
               <div class="bb-actions">
                 <button type="button" class="primary-button" disabled={!!working} onclick={() => check(item)}>{T.check}</button>
                 {#if canChangeKey(item)}<button type="button" class="secondary-button" disabled={!!working} onclick={openKey} aria-expanded={keyOpen}>{T.changeKey}</button>{/if}
@@ -520,12 +534,12 @@
               </div>{/if}
               <HostCard {item} />
             {/if}
-            {#key item.id}<Diagnostics {item} />{/key}
+            {#if item.state.state !== 'not-found' && item.state.state !== 'not-placed' && item.state.state !== 'unreachable'}{#key item.id}<Diagnostics {item} />{/key}{/if}
           </section>
             {/if}
       {/snippet}
       {#snippet footer()}
-        <button type="button" class="secondary-button" disabled={!!working || removeBusy} onclick={() => pop?.requestLeave()}>{T.popClose}</button>
+        {#if view.kind === 'status'}<button type="button" class="secondary-button" disabled={!!working || removeBusy} onclick={() => pop?.requestLeave()}>{T.popClose}</button>{/if}
       {/snippet}
     </WizardDialog>
 
@@ -545,7 +559,10 @@
   .bb-block h3, .bb-empty h3 { margin: 0; font-size: var(--fs-5); font-weight: 600; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .bb-block p, .bb-empty p { margin: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
   .bb-block p.bb-note { font-size: 12px; }
-  .bb-block p.bb-ready { font-size: 15px; }
+  .bb-block p.bb-ready { font-size: 16px; font-weight: 600; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+  .bb-ready-why { color: var(--bad); font-size: 13px; font-weight: 500; }
+  .bb-block p.bb-next { color: var(--text); font-size: 13px; padding-left: var(--space-3); border-left: 3px solid var(--accent); }
+  .bb-block p.bb-foot { font-size: 12px; }
   .bb-warn { color: var(--text); border-left: 3px solid var(--warn); padding-left: var(--space-2); }
   .bb-nutshell { padding: var(--space-3); font-size: 13px; line-height: 1.5; background: var(--surface-2); border-radius: var(--radius-sm); }
   .bb-label { font-weight: 600; margin-right: 4px; }
@@ -565,6 +582,6 @@
   .bb-key { display: grid; gap: var(--space-2); justify-items: start; }
   .bb-field { display: grid; gap: 4px; font-size: 13px; font-weight: 500; }
   .bb-field input { width: 100%; max-width: 320px; padding: 6px 8px; font: inherit; font-weight: 400; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-sizing: border-box; }
-  .bb-services summary { width: fit-content; color: var(--text-2); font-size: 13px; }
+  .bb-services summary { width: fit-content; color: var(--text); font-size: 13px; font-weight: 500; }
   .notice p { margin: 0 0 var(--space-2); }
 </style>

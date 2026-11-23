@@ -1,4 +1,4 @@
-// The Investigation Timeline reading what it did not read, and the "Sources traced" row (the chip row of the tracing-paper wireframe).
+// The Investigation timeline reading what it did not read, and the "Sources traced" row (the chip row of the tracing-paper wireframe).
 // Answers are changed with page.route where the demo cannot make the state (a refused or half-read audit lane, a saved database that is not
 // connected, a case with no SQL or IIS file); the page and the request it sends are the code under test. Nothing here changes demo data.
 //   TSRC-01  A refused API lane on an 11-day window: the banner says what was not read, and the page never also says "No events in this window".
@@ -43,8 +43,8 @@ async function openTimeline(page: Page, width?: number): Promise<void> {
   await goHome(page);
   if (width) await page.setViewportSize({ width, height: 812 });
   await openCase(page, CASE_TITLE);
-  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open the Investigation timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
 }
 
 const isTrace = (r: Request) => r.url().includes('/tracing') && r.method() === 'POST';
@@ -172,7 +172,7 @@ test('TSRC-03: the row lists the live audit sources and the files; switching one
   const first = page.waitForRequest(isTrace);
   await page.reload();
   // The app comes back on the same screen of the same case.
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   expect(idsOf(sentBody(await first))).toEqual(['demo-west', 'imp_1', 'imp_2', 'imp_3']);
   await expect(chip(page, 'demo-east')).toHaveAttribute('aria-pressed', 'false');
   await expect(chip(page, 'demo-west')).toHaveAttribute('aria-pressed', 'true');
@@ -236,7 +236,7 @@ test('TSRC-05: with every source switched off nothing is read and the screen say
   // A reload keeps "none" and still sends nothing.
   const sentBeforeReload = traces.count();
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect(none).toBeVisible();
   for (const id of DEMO_IDS) await expect(chip(page, id)).toHaveAttribute('aria-pressed', 'false');
   await page.waitForTimeout(400);
@@ -284,7 +284,7 @@ test('TSRC-07: a SQL or IIS lane with no file says to add a file, and Add files 
   for (const lane of ['sql', 'iis']) {
     const status = page.locator(`.panel[data-lane=${lane}] [data-testid=lane-status]`);
     await expect(status).toContainText('This case has no file for this source.');
-    await expect(status).toContainText('Add a file to see this lane');
+    await expect(status).toContainText('Add files to see this lane');
     await expect(page.locator(`.panel[data-lane=${lane}] [data-testid=lane-add-files]`)).toHaveText('Add files');
   }
   // The API lane is a live lane and has no such button.
@@ -447,7 +447,9 @@ test('TSQL-04: with the toggle off nothing is read, it is offered instead, and t
   await traceEleven(page);
   await expect(sqlLine(page)).toHaveAttribute('data-kind', 'suggest');
   expect(mock.posts, 'only the first window was read').toHaveLength(1);
-  await openTimeline(page);
+  // The timeline draws no second "All cases" button (ANALYSIS-15), so the way back to it is a real reload, which is also what the title says.
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Investigation timeline' })).toBeVisible();
   await expect(page.locator('[data-testid=sql-auto-toggle]')).not.toBeChecked();
 });
 

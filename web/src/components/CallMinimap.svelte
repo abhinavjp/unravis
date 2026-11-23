@@ -363,6 +363,15 @@
     align-items: flex-end;
     justify-content: center;
   }
+  /* BL-492: on a phone the box can be 17 px wide. The press area grows to 24 px, equally on both sides, with an invisible ::after; the drawn box, its border and its focus ring stay as they were. A box that is already 24 px or wider gets no change. */
+  .scall-map-box::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: min(0px, calc((100% - 24px) / 2));
+    right: min(0px, calc((100% - 24px) / 2));
+  }
   .scall-map-box.dragging {
     cursor: grabbing;
   }
@@ -371,7 +380,7 @@
     outline-offset: 2px;
   }
   .scall-map-drag {
-    font-size: 10px;
+    font-size: 11px;
     line-height: 12px;
     padding: 0 3px;
     color: var(--text);

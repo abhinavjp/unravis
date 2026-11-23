@@ -12,8 +12,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-// Same split as the `changes` job of ci.yml. docs/user and the Linux baseline are NOT notes: tests read them.
-export const HEAVY_DOCS = /^(docs\/user\/|docs\/desktop\/baseline-go-tests\.txt$)/;
+// Same split as the `changes` job of ci.yml. docs/user and the Linux and race baselines are NOT notes: tests read them.
+export const HEAVY_DOCS = /^(docs\/user\/|docs\/desktop\/baseline-go-(tests|race)\.txt$)/;
 export const NOTES = /^(\.forge\/|docs\/|[^/]+\.md$|LICENSE$|NOTICE$)/;
 // Files that can change the result of any test in any package.
 const WIDE = /^(go\.mod$|go\.sum$|go\.work(\.sum)?$|\.golangci[^/]*$|build\.ps1$|\.github\/workflows\/ci\.yml$)/;

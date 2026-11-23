@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VARIANTS, classify, loadResults, renderReport, tally, verdict } from './lib/report.mjs';
+import { VARIANTS, classify, listNew, loadResults, renderReport, tally, verdict } from './lib/report.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '..', '..');
@@ -95,6 +95,7 @@ const md = renderReport({
 writeFileSync(join(reportDir, 'REPORT.md'), md);
 writeFileSync(join(reportDir, 'summary.json'), JSON.stringify({ verdict: verdict(t), ...t }, null, 1));
 console.log('\nReport: ' + join(reportDir, 'REPORT.md'));
+for (const line of listNew(results)) console.log(line);
 console.log('Verdict ' + verdict(t) + ': ' + t.newError + ' new errors, ' + t.newWarn + ' new warnings, ' + t.unreachableNew + ' newly unreachable, ' + t.knownError + '+' + t.knownWarn + ' known.');
 if (playwrightFailed) {
   console.error('Playwright itself reported a failure (setup, or the clean-up steps of a screen). Read its output above: this run is not trustworthy.');

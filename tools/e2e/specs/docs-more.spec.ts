@@ -190,7 +190,7 @@ test('DOC-07: the upgrade and uninstall page says what the update check, the ins
   const page = doc('upgrade-and-uninstall');
   const check = read('web', 'src', 'lib', 'updateCheck.ts');
   const answers = [
-    'You are on the latest version (v', ' is available. You have v',
+    'You are on the latest version (v', ' is available. You have version ',
     'Could not check for updates. Check your connection and try again later.',
     'This is a development build, so there is nothing to compare.',
   ];

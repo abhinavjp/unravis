@@ -5,14 +5,16 @@ import type { LintEntry } from './copylint';
  * Rule: say what the person can do next. Never name a cause the page did not observe.
  */
 
-export const STARTUP_TITLE = 'Explorer unavailable';
+export const STARTUP_TITLE = 'Unravis is not answering';
 
 export const STARTUP_TEXT = {
   noSession: 'This tab has no session. Open Unravis again from the launch link the app printed, or restart the app to get a new one.',
   sessionRefused: 'This session is no longer valid. The app may have been restarted. Open the newest launch link.',
   unreachable: 'Can’t reach the Unravis app. Check it is still running, then retry.',
   /** Used when nothing more specific is known and the error carries no text of its own. */
-  fallback: 'The request could not be completed.'
+  fallback: 'The request could not be completed.',
+  /** The empty page under the banner, so the screen is never blank (CASES-27). */
+  empty: 'Nothing to show until Unravis answers. Press Retry, or open the newest launch link.'
 } as const;
 
 export type StartupFailureKind = 'noSession' | 'sessionRefused' | 'unreachable' | 'other';

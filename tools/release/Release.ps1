@@ -250,10 +250,16 @@ function Invoke-ReleaseBootstrap {
             # copy is best effort: if the file cannot be made the run goes on exactly as before, and the exit code is the run's own.
             try { $runLog = New-RunLogPath (Get-ReleaseLogDir $data); Remove-OldReleaseLogs (Split-Path $runLog) } catch { $runLog = $null }
             $logNames = @($machine, [Environment]::UserName)
+            # The worker prints UTF-8 (the check marks and dots of gh and git). Read it as UTF-8, not as this console's OEM code page, or the
+            # screen and the saved log show "Γ£ô" for a check mark. Put the console back afterwards.
+            $prevEnc = $null; try { $prevEnc = [Console]::OutputEncoding; [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { $prevEnc = $null }
             try {
                 if ($runLog) { & $exe @fwd | Write-ReleaseRunLog -Path $runLog -Names $logNames | Out-Host }
                 else { & $exe @fwd | Out-Host }   # the run's own output goes to the screen, not into this function's result
-            } finally { Remove-Item Env:UNRAVIS_RELEASE_NONCE -ErrorAction SilentlyContinue }
+            } finally {
+                Remove-Item Env:UNRAVIS_RELEASE_NONCE -ErrorAction SilentlyContinue
+                if ($prevEnc) { try { [Console]::OutputEncoding = $prevEnc } catch {} }
+            }
             $code = $LASTEXITCODE
         } finally { Pop-Location }
     } finally {
@@ -282,6 +288,8 @@ if (-not $LockId) { throw '-Pinned and -LockId are set by the bootstrap only. Ru
 $li = try { Get-Content -Raw -LiteralPath (Join-Path $data 'lock-info.json') | ConvertFrom-Json } catch { $null }
 if (-not $env:UNRAVIS_RELEASE_NONCE -or -not $li -or $li.nonce -ne $env:UNRAVIS_RELEASE_NONCE -or $li.id -ne $LockId) { throw 'This run was not started by the release bootstrap on this PC (-Pinned and -LockId are not for typing). Run Release.ps1 without them.' }
 Remove-Item Env:UNRAVIS_RELEASE_NONCE -ErrorAction SilentlyContinue
+# gh and git print UTF-8; read it as UTF-8 here and print UTF-8 back to the bootstrap (see Invoke-ReleaseBootstrap).
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}
 $runLock = try { Enter-RunLock $data } catch { throw 'Another release process is already running on this PC (run.lock is held).' }
 
 $script:stage = 'Preflight'
@@ -306,8 +314,10 @@ function Done([string]$name) { if (-not $CheckOnly) { Set-ReleaseState $data $Ve
 function Fail([string]$msg, [string]$status = 'stopped') {
     Write-Host "`nSTOPPED at $script:stage : $msg" -ForegroundColor Red
     if ($script:ownsVersion -and -not $CheckOnly) {
-        Set-ReleaseState $data $Version (Get-LastDone) $status $msg $script:extra
-        try { Write-AuditEntry $audit @{ event = 'stopped'; version = $Version; stage = $script:stage; reason = $msg } } catch {}
+        # The reason can be the output of a failed command (Run throws it whole): it goes to state.json and audit.jsonl, which the Releases app shows.
+        $safe = Protect-ReasonText $msg   # the console line above is redacted when the run log is read
+        Set-ReleaseState $data $Version (Get-LastDone) $status $safe $script:extra
+        try { Write-AuditEntry $audit @{ event = 'stopped'; version = $Version; stage = $script:stage; reason = $safe } } catch {}
         if ($status -ne 'withdrawn') { Write-Host "Fix it, then run the same command again: it continues at $script:stage by itself." -ForegroundColor Yellow }
     }
     exit 1
