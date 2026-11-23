@@ -133,7 +133,7 @@ func (r *rig) post(path, header string, body any) (int, []byte) {
 	if err != nil {
 		r.t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	out, _ := io.ReadAll(res.Body)
 	return res.StatusCode, out
 }
@@ -263,7 +263,7 @@ func TestOnlyTheSevenReadRoutesAreReached(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			res.Body.Close()
+			_ = res.Body.Close()
 			if res.StatusCode != http.StatusNotFound {
 				t.Errorf("%s %s answered %d", m, p, res.StatusCode)
 			}
@@ -665,7 +665,7 @@ func TestRequestShapeIsStrictAndNeverEchoed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Body.Close()
+	_ = res.Body.Close()
 	if res.StatusCode != 403 {
 		t.Errorf("Origin: %d", res.StatusCode)
 	}
@@ -773,7 +773,7 @@ func TestHelloAndOnlyFiveRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := io.ReadAll(res.Body)
-	res.Body.Close()
+	_ = res.Body.Close()
 	if res.StatusCode != 200 || !strings.Contains(string(b), `"v":1`) {
 		t.Errorf("hello: %d %s", res.StatusCode, b)
 	}
@@ -783,7 +783,7 @@ func TestHelloAndOnlyFiveRoutes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		res.Body.Close()
+		_ = res.Body.Close()
 		if res.StatusCode != 405 && res.StatusCode != 404 {
 			t.Errorf("%s %s: %d", x.m, x.p, res.StatusCode)
 		}

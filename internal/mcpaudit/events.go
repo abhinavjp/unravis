@@ -114,7 +114,7 @@ func (d *DB) RecentEvents(ctx context.Context, limit int) ([]Event, error) {
 	if err != nil {
 		return nil, errors.New("mcpaudit: the ledger could not be read")
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Event
 	for rows.Next() {
 		var e Event

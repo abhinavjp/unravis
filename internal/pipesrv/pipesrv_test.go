@@ -401,7 +401,8 @@ func TestCLIRoutesNeedACLIImageAndOnlyOnAG(t *testing.T) {
 }
 
 func TestMCPRoutesNeedAnMCPImageAndOnlyOnAG(t *testing.T) {
-	mcpH := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "mcp:"+r.URL.Path) })
+	var reached string
+	mcpH := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached = r.URL.Path; _, _ = io.WriteString(w, "mcp") })
 	h := Handler(echoToken(), WithMCP(mcpH))
 	req := func(role Role, image, p string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", p, nil)
@@ -410,7 +411,7 @@ func TestMCPRoutesNeedAnMCPImageAndOnlyOnAG(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w
 	}
-	if w := req(RoleAG, `C:\App\unravis.exe`, "/mcp/v1/call"); w.Code != 200 || w.Body.String() != "mcp:/mcp/v1/call" {
+	if w := req(RoleAG, `C:\App\unravis.exe`, "/mcp/v1/call"); w.Code != 200 || w.Body.String() != "mcp" || reached != "/mcp/v1/call" {
 		t.Errorf("the host's program: %d %q", w.Code, w.Body.String())
 	}
 	for _, image := range []string{`C:\App\unravis-desktop.exe`, `C:\App\other.exe`, ""} {
@@ -425,7 +426,7 @@ func TestMCPRoutesNeedAnMCPImageAndOnlyOnAG(t *testing.T) {
 	if w := req(RoleAG, `C:\App\unravis.exe`, "/api/cases"); w.Code != 404 {
 		t.Errorf("a gui route on ag: %d", w.Code)
 	}
-	if w := req(RoleUI, `C:\App\unravis.exe`, "/mcp/v1/call"); strings.HasPrefix(w.Body.String(), "mcp:") {
+	if w := req(RoleUI, `C:\App\unravis.exe`, "/mcp/v1/call"); w.Body.String() == "mcp" {
 		t.Errorf("the ui pipe reached the mcp handler")
 	}
 	plain := Handler(echoToken())
@@ -433,7 +434,7 @@ func TestMCPRoutesNeedAnMCPImageAndOnlyOnAG(t *testing.T) {
 	r = r.WithContext(WithPeerImage(WithRole(r.Context(), RoleAG), `C:\App\unravis.exe`))
 	w := httptest.NewRecorder()
 	plain.ServeHTTP(w, r)
-	if strings.HasPrefix(w.Body.String(), "mcp:") {
+	if w.Body.String() == "mcp" {
 		t.Errorf("no option, but the mcp handler answered")
 	}
 }

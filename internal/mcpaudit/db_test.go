@@ -179,7 +179,7 @@ func TestLedgerRowsAreBoundedAndValidated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	long := string(bytes.Repeat([]byte("é"), 100)) // 200 bytes of two-byte characters
 	if err := db.Record(ctx, mcpaudit.Event{ProfileID: "p", Kind: mcpaudit.KindAdmit, Tool: long, CorrID: long, Fingerprint: db.Fingerprint([]byte("{}"))}); err != nil {
 		t.Fatal(err)
@@ -199,7 +199,7 @@ func TestLedgerRowsAreBoundedAndValidated(t *testing.T) {
 		t.Error("the fingerprint is not keyed")
 	}
 	db2, _, _ := mcpaudit.Open(ctx, t.TempDir(), prot{}, nil)
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 	if bytes.Equal(db.Fingerprint([]byte("{}")), db2.Fingerprint([]byte("{}"))) {
 		t.Error("two stores give one fingerprint")
 	}
@@ -213,7 +213,7 @@ func TestLedgerKeepsAtMostMaxEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	// Fill the table in one statement (the cap is checked by Record), then write until the check has run.
 	if _, err := mcpaudit.ExecForTest(db, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?) INSERT INTO audit_events(ts,profile_id,profile_rev,kind) SELECT 1,'p',1,'end' FROM n`, mcpaudit.MaxEvents+500); err != nil {
 		t.Fatal(err)
