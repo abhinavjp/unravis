@@ -243,3 +243,75 @@ func TestMaskRecordsReviewCostShapes(t *testing.T) {
 		t.Fatalf("a text of 8M line breaks allocated %d MiB", grown>>20)
 	}
 }
+
+// Round 2 of the security review (SWP-1122-13).
+func TestMaskRecordsRound2Findings(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"cut objects do not switch the reader off",
+			strings.Repeat(`{"a":{"b":{"c":{"d":{"e":"x`+"\n", 12) + `{"name":"DB_PASSWORD","value":"leak1"}`,
+			strings.Repeat(`{"a":{"b":{"c":{"d":{"e":"x`+"\n", 12) + `{"name":"DB_PASSWORD","value":"[hidden]"}`},
+		{"unbalanced braces in text",
+			strings.Repeat("tmpl ${ x\n", 40) + `{"name":"DB_PASSWORD","value":"leak2"}`,
+			strings.Repeat("tmpl ${ x\n", 40) + `{"name":"DB_PASSWORD","value":"[hidden]"}`},
+		{"escaped quote inside the inner value",
+			`{"a":"{\"name\":\"DB_PASSWORD\",\"value\":\"a\\\"b leak3\"}"}`,
+			`{"a":"{\"name\":\"DB_PASSWORD\",\"value\":\"[hidden]\"}"}`},
+		{"stray escaped quote outside a string",
+			`x \" y {"name":"DB_PASSWORD","value":"leak4"}`,
+			`x \" y {"name":"DB_PASSWORD","value":"[hidden]"}`},
+		{"string over 64 KiB on one line",
+			`{"name":"DB_PASSWORD","value":"` + strings.Repeat("a", 70000) + `"} {"name":"API_KEY","value":"leak5"}`,
+			`{"name":"DB_PASSWORD","value":"[hidden]"} {"name":"API_KEY","value":"[hidden]"}`},
+		{"bare and quoted span on one value",
+			`{"name":"DB_PASSWORD","value": abc LEAK6}`,
+			`{"name":"DB_PASSWORD","value": [hidden] LEAK6}`},
+		{"comment lines do not use the window",
+			"- name: DB_PASSWORD\n" + strings.Repeat("  # c\n", 30) + "  value: leak7\n",
+			"- name: DB_PASSWORD\n" + strings.Repeat("  # c\n", 30) + "  value: [hidden]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Mask(tc.in, rm); got != tc.want {
+				t.Fatalf("\n in: %.300s\ngot: %.300s\nwant: %.300s", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSortEditsJoinsOverlaps(t *testing.T) {
+	got := sortEdits([]edit{{10, 12}, {5, 8}, {5, 20}, {6, 7}, {20, 22}})
+	want := []edit{{5, 20}, {20, 22}}
+	if len(got) != len(want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v want %v", got, want)
+		}
+	}
+}
+
+func TestMaskRecordsRound2CostShapes(t *testing.T) {
+	// A bare "[" array that never closes, 100000 times: every search for the "]" is charged, so the scan ends over budget and fails closed.
+	for name, in := range map[string]string{
+		"open arrays":             strings.Repeat(`{"value":[}`, 100000),
+		"open arrays, escaped":    strings.Repeat(`{\"value\":[}`, 100000),
+		"names near one value":    strings.Repeat("- name: DB_PASSWORD\n", 100000) + "  value: x\n",
+		"same names, many values": strings.Repeat("- name: DB_PASSWORD\n  value: x\n", 100000),
+	} {
+		t.Run(name, func(t *testing.T) {
+			start := time.Now()
+			out := Mask(in, rm)
+			if d := time.Since(start); d > 3*time.Second {
+				t.Fatalf("%s: %s for %d bytes", name, d, len(in))
+			}
+			if len(out) > 2*len(in) {
+				t.Fatalf("%s: output %d bytes for %d", name, len(out), len(in))
+			}
+		})
+	}
+	// An over-budget scan masks from where the readers stopped, not from the last span they found.
+	in := strings.Repeat(`{"value":[}`, 100000) + `{"name":"DB_PASSWORD","value":"leak8"}`
+	if strings.Contains(Mask(in, rm), "leak8") {
+		t.Fatal("a secret after an over-budget scan survived")
+	}
+}

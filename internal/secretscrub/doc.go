@@ -32,7 +32,7 @@
 //     zero-width or full-width letters in a key, URL-encoded "password%3Dx", headers such as Ocp-Apim-Subscription-Key and a SAS "sig="
 //     parameter, "--password x" flags (the Releases reader has its own pattern), and text nodes after the first in <Password>a<b/>c</Password>.
 //   - Records are read only on a whole text (Mask). The record readers keep to a name and a "value" member of one object, one YAML item or
-//     one plist pair (JSON also in the Python form with single quotes, over several lines, and written inside a JSON string with escaped quotes): a name and a value in two different objects, flow-style YAML ({name: DB_PASSWORD, value: x}), objects nested deeper than maxRecordDepth (32), a name with white space in it ("Reset password" is a title, not a setting; a plist key may have spaces), a string longer than maxRecordString (64 KiB, cut there), a value under another member name ("data", "secret"), a nested object
+//     one plist pair (JSON also in the Python form with single quotes, over several lines, and written inside a JSON string with escaped quotes): a name and a value in two different objects, flow-style YAML ({name: DB_PASSWORD, value: x}), objects nested deeper than maxRecordDepth (32), a name with white space in it ("Reset password" is a title, not a setting; a plist key may have spaces), double-escaped JSON (a quote written as three backslashes and a quote), Go `%+v` and `map[name:..]` prints, Python keyword form `EnvVar(name=.., value=..)`, HCL `env { name = .. value = .. }`, a value under another member name ("data", "secret"), a nested object
 //     as the value, or more than maxRecordLines lines between the name and its "value:" line are not joined.
 //   - Readers that see one line at a time (the Releases log reader) use Carry, which does not read records (the name and the value are on
 //     different lines) and hides a YAML block scalar under "password: |" and a
@@ -65,9 +65,9 @@
 //	blockHeader: comment to the end of the line                  charged once per line (remembered line end)
 //	blockText: key line start and key line indent                remembered and charged (lineStart, lineIndent)
 //	blockText: lines of the block, TrimRight, indent loop        charged per line; stops over budget
-//	maskRecords: jsonRecords byte loop, string ends              charged (one step per byte, plus the string); strings capped at maxRecordString; depth at maxRecordDepth
+//	maskRecords: jsonRecords byte loop, string ends              charged (one step per byte, plus the string, read to its close or its line end); the open-array search and a bare value capped at maxRecordString and charged; a full stack drops its oldest object (maxRecordDepth)
 //	maskRecords: plistRecords Index for "<key>", name, close    charged; the name search is capped at 2*maxIdent+8; the text up to a close tag is charged and consumed
-//	maskRecords: yamlRecords line table, neighbour lines         charged once per byte; neighbours capped at maxRecordLines each way, charged per name key
+//	maskRecords: yamlRecords line table, neighbour lines         charged once per byte; neighbours capped at maxRecordLines each way (comment lines not counted), charged per name key; a value line is masked once
 //	maskXML: IndexByte for the next "<"                          consumed (the position moves past the tag name)
 //	maskXML: tag name loop                                       constant (maxIdent)
 //	maskXML: attribute loops                                     bounded by the tag (maxTag) and charged; a tag that parses is consumed

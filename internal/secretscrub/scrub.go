@@ -652,17 +652,24 @@ func nextIsSetting(s string, i int) bool {
 	return j > i && j < len(s) && s[j] == '=' && (isLower(s[i]) || isUpper(s[i]) || s[i] == '_')
 }
 
-// sortEdits orders spans and drops those that overlap an earlier one.
+// sortEdits orders spans (longer first on a tie) and joins those that overlap.
 func sortEdits(e []edit) []edit {
-	sort.Slice(e, func(a, b int) bool { return e[a].from < e[b].from })
+	sort.Slice(e, func(a, b int) bool {
+		if e[a].from != e[b].from {
+			return e[a].from < e[b].from
+		}
+		return e[a].to > e[b].to
+	})
 	out := e[:0]
-	end := 0
 	for _, x := range e {
-		if x.from < end {
+		if n := len(out); n > 0 && x.from < out[n-1].to {
+			// Overlapping spans are joined: the union is masked, never the shorter of the two.
+			if x.to > out[n-1].to {
+				out[n-1].to = x.to
+			}
 			continue
 		}
 		out = append(out, x)
-		end = x.to
 	}
 	return out
 }
