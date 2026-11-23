@@ -52,8 +52,10 @@ type Deps struct {
 	Backend Backend
 	Info    func() Info
 	State   func() string // "ready", "locked" or "updating"
-	Now     func() time.Time
-	Logf    func(format string, args ...any)
+	// Internal runs the allow-listed reads of the case routes (NewInternalGET). nil: the case operations answer ENDPOINT_UNAVAILABLE.
+	Internal InternalGET
+	Now      func() time.Time
+	Logf     func(format string, args ...any)
 }
 
 // Handler serves /cli/v1/hello, /cli/v1/op and /cli/v1/cancel.
@@ -224,6 +226,10 @@ func (s *server) run(parent context.Context, req request) (answer, int) {
 		data, cerr = s.d.Backend.Call(ctx, row.Tool, args)
 	case req.Op == "app.status":
 		data, cerr = s.appStatus(args)
+	case req.Op == "cases.list":
+		data, cerr = s.casesList(ctx, args)
+	case req.Op == "cases.show":
+		data, cerr = s.casesShow(ctx, args)
 	default:
 		return fail(clicore.NewError(clicore.CodeUnknownOperation, "This operation is not built in this version of Unravis.", "Update Unravis.")), 0
 	}
