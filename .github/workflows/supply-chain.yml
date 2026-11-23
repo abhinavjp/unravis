@@ -9,9 +9,9 @@ name: Supply chain
 #
 # osv-scanner reads go.mod (it has no go.sum extractor).
 #
-# Not here yet: the cargo-deny job and desktop/src-tauri/deny.toml. They are added in the
-# same PR that creates desktop/ (no Rust exists yet). Until then dependabot's cargo entry
-# is inert. osv-scanner reads desktop/Cargo.lock; its waivers are in desktop/osv-scanner.toml.
+# cargo-deny (BL-449) checks the desktop Rust tree: advisories, licence allowlist, banned crates (no Tauri network or updater
+# plugins, no openssl-sys), crates.io only. Policy: desktop/deny.toml (at the workspace root, not in src-tauri).
+# osv-scanner reads desktop/Cargo.lock; its waivers are in desktop/osv-scanner.toml.
 on:
   # Pull requests into develop get the action-pin check in fast-gate.yml; the rest runs on the pull request that promotes
   # develop to master and on the push to master (docs/ci/RELEASE-TRAIN.md), not on every push to develop. "Run workflow" runs it by hand.
@@ -99,6 +99,19 @@ jobs:
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o "$RUNNER_TEMP/unravis.exe" ./cmd/audit-explorer
       - name: Binary scan
         run: govulncheck -mode=binary "$RUNNER_TEMP/unravis.exe"
+
+  cargo-deny:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The action ships cargo-deny in its own image. `stable` overrides desktop/rust-toolchain.toml: the check only reads the lock and the metadata.
+      - name: cargo deny check
+        uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
+        with:
+          manifest-path: desktop/Cargo.toml
+          command: check
+          rust-version: stable
 
   osv:
     runs-on: ubuntu-24.04

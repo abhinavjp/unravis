@@ -1,0 +1,38 @@
+# cargo-deny policy for the desktop workspace (BL-449). Run: cargo deny --manifest-path desktop/Cargo.toml check
+# Judged on the tree that ships: the Windows build. Linux-only crates (GTK, glib) are not in it.
+[graph]
+targets = ["x86_64-pc-windows-msvc"]
+
+[advisories]
+# A known advisory fails the check. Waivers (id + reason + review date) go in `ignore` only after a look at whether the crate ships.
+# The three osv waivers (desktop/osv-scanner.toml) are Linux-only crates, so they do not appear in this Windows tree.
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# MPL-2.0 comes with cssparser, selectors, dtoa-short, option-ext (Tauri, webview): file-level copyleft, no change to them, so allowed.
+allow = ["Apache-2.0", "MIT", "MIT-0", "0BSD", "Zlib", "Unicode-3.0", "Unlicense", "CC0-1.0", "MPL-2.0"]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Workspace members refer to each other by path (publish = false), which is not a wildcard on a registry crate.
+allow-wildcard-paths = true
+# BL-449 / spec 07: the shell has no plugins and no network client of its own. A plugin that talks to the network or updates
+# the app must go through a reviewed change to this file, not slip in through a dependency bump.
+deny = [
+  { crate = "tauri-plugin-updater", reason = "updates go through the Go sidecar's signed feed, not a Tauri plugin" },
+  { crate = "tauri-plugin-http", reason = "the shell makes no network calls" },
+  { crate = "tauri-plugin-upload", reason = "the shell makes no network calls" },
+  { crate = "tauri-plugin-websocket", reason = "the shell makes no network calls" },
+  { crate = "openssl-sys", reason = "no OpenSSL: TLS, if ever needed, is rustls or the OS" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
