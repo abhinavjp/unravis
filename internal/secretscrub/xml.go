@@ -215,6 +215,12 @@ func parseTag(s string, n int, w *work) (attrs []attr, end int, selfClose, plain
 					i = limit // the search read up to the limit: charged
 					return w.cut(attrs, end, plain, full)
 				}
+				if lt := strings.IndexByte(s[j+1:j+1+c], '<'); lt >= 0 {
+					// A "<" cannot be inside an attribute value: the quote opened by mistake (a stray quote in text), and the "closing"
+					// quote belongs to a later tag. The tag ends where this attribute starts, and the later tag is read on its own.
+					i = j + 1 + lt // read up to here: charged
+					return w.cut(attrs, st, plain, full)
+				}
 				a.hasValue, a.vFrom, a.vTo = true, j+1, j+1+c
 				i = j + 2 + c
 			} else {
