@@ -131,22 +131,41 @@ if ($LASTEXITCODE -eq 0 -and $existing) {
         if (-not $tok) { Stop-Here 'No GitHub token (gh auth token) to fetch the branch for the merge check.' }
         try { $mergeIns = Test-RemoteMergeIns "https://github.com/$Repo.git" $branch $claimed $tok } catch { Stop-Here "Could not check the 'Merge master into' commits of ${branch}: $($_.Exception.Message)" }
     }
+    # The generated web files commit of an earlier run of this script (step 4b) is judged by the SAME rule as the release manager
+    # (Get-PromotionSideCommits in ReleaseLib.ps1): fixed subject, one parent, only files under the three generated folders (case
+    # sensitive: -cnotmatch), AND it sits at the tip end of the promote branch: only other generated commits and CLEAN merges of master
+    # may come after it. So the first-parent line of the branch is walked from its tip ($existing) down to the chosen commit, and the
+    # position rule is Get-BuriedGeneratedCommits (ReleaseLib.ps1, the same function the release manager's rule is written as). A
+    # branch that fails it is refused here, before a pull request is opened or merged, instead of being promoted and then refused by
+    # Release.ps1 as "Missing". A merge of master counts as one only when Test-RemoteMergeIns (above) found it clean. The commit API
+    # pages its file list (read with --paginate) and holds at most 3000 files: more is not trusted.
+    $readCommit = {
+        param($c)
+        $info = Invoke-Gh api "repos/$Repo/commits/$c" --jq '(.parents | map(.sha) | join(" ")) + "|" + (.commit.message | split("\n")[0])'
+        $parentText, $subject = "$info" -split '\|', 2
+        $isGenerated = $false
+        if ("$subject" -clike 'Rebuild web files for promotion*') {
+            $gfiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$c" --paginate --jq '.files[] | .filename, (.previous_filename // empty)')
+            $isGenerated = (Test-GeneratedFileList $gfiles).Ok
+        }
+        [pscustomobject]@{ Parents = @("$parentText" -split ' ' | Where-Object { $_ }); Subject = "$subject"; IsGenerated = $isGenerated }
+    }
+    try { $chain = @(Get-PromoteBranchChain ([string]$existing) $sha $readCommit $mergeIns) }
+    catch { Stop-Here "Branch ${branch}: $($_.Exception.Message). Delete the branch on GitHub and run again." }
+    $okDist = @{}   # sha -> true: generated-files commits on the first-parent line that pass the test, accepted in the loop below
+    foreach ($ch in $chain) { if ($ch.Kind -eq 'dist') { $okDist[$ch.Sha] = $true } }
+    $buried = @(Get-BuriedGeneratedCommits $chain)
+    if ($buried.Count -gt 0) {
+        Stop-Here "Branch $branch has the generated web files commit $(($buried | ForEach-Object { "$_".Substring(0, 7) }) -join ', ') BELOW another commit. The release manager accepts that commit only at the tip end of the promote branch (ReleaseLib.ps1 Get-PromotionSideCommits), so this promotion would merge and then be refused as Missing. Delete the branch $branch on GitHub and run again (a fresh branch gets the web files commit on top)."
+    }
     foreach ($e in $extra) {
         $esha, $emsg = $e -split ' ', 2
         if ($emsg -like "Merge master into $branch*") {
             if ($mergeIns.ContainsKey($esha) -and $mergeIns[$esha].Ok) { continue }
             $foreign += "$($esha.Substring(0, 7)) ($(if ($mergeIns.ContainsKey($esha)) { $mergeIns[$esha].Why } else { 'not checked' }))"; continue
         }
-        # The generated web files commit of an earlier run of this script (step 4b; the same rule as Get-PromotionSideCommits in
-        # ReleaseLib.ps1): the fixed subject, one parent, and only files under the three generated folders (case sensitive: -cnotmatch).
-        # Without this a re-run after -NoMerge, a slow or failed CI run, or a refused merge would call that commit foreign and demand
-        # that the branch be deleted (closing the pull request and wasting a full CI run). The commit API pages its file list (read with --paginate) and holds at most 3000 files: more is not trusted.
-        if ($emsg -clike 'Rebuild web files for promotion*') {
-            $np = [int](Invoke-Gh api "repos/$Repo/commits/$esha" --jq '.parents | length')
-            $gfiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$esha" --paginate --jq '.files[].filename')
-            $outside = @($gfiles | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' })
-            if ($np -eq 1 -and $gfiles.Count -gt 0 -and $gfiles.Count -lt 3000 -and $outside.Count -eq 0) { continue }
-        }
+        # A generated web files commit that passed the test AND the position rule above (it is on the first-parent line).
+        if ($okDist.ContainsKey($esha)) { continue }
         if ([int](Invoke-Gh api "repos/$Repo/compare/master...$esha" --jq '.ahead_by') -eq 0) { continue }
         $foreign += $esha.Substring(0, 7)
     }
@@ -186,9 +205,12 @@ if ($distDone.Count -ne 1) { Stop-Here "promote-dist.mjs did not report DIST_COM
 $distSha = (("$($distDone[0])" -replace '^DIST_COMMIT=', '').Trim())
 $expectedHead = if ($distSha -ne 'none') { $distSha } else { $headAfterMerge }
 if ($distSha -ne 'none') {
-    # The web files commit must sit directly on the head this run checked, or a commit pushed during the build would ride under it.
-    $distParents = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$distSha" --jq '.parents[].sha')
-    if ($distParents.Count -ne 1 -or $distParents[0].ToLowerInvariant() -ne $headAfterMerge) { Stop-Here "The web files commit $($distSha.Substring(0, 7)) is not directly on the head this run checked ($($headAfterMerge.Substring(0, 7))): someone pushed to $branch meanwhile. Nothing was merged. Delete the branch on GitHub if it is not yours, and run again." }
+    # The web files commit must sit directly on the head this run checked (or a commit pushed during the build would ride under it) and
+    # change only the three generated folders (a renamed file counts with its old name too): refused here, before a pull request, not
+    # after the merge by Release.ps1. Assert-DistCommit (ReleaseLib.ps1) throws; there is no condition here to get the wrong way round.
+    $distParents = @(Split-Lines (Invoke-Gh api "repos/$Repo/commits/$distSha" --jq '.parents[].sha'))
+    $distFiles = Split-Lines (Invoke-Gh api "repos/$Repo/commits/$distSha" --paginate --jq '.files[] | .filename, (.previous_filename // empty)')
+    try { Assert-DistCommit $distSha $headAfterMerge $distParents $distFiles $branch } catch { Stop-Here $_.Exception.Message }
 }
 function Assert-HeadIsExpected([string]$Actual) { try { Assert-PromotionHead $expectedHead $Actual $branch } catch { Stop-Here $_.Exception.Message } }
 Assert-HeadIsExpected ((Invoke-Gh api "repos/$Repo/git/ref/heads/$branch" --jq '.object.sha').ToLowerInvariant())

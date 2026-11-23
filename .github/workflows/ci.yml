@@ -188,7 +188,7 @@ jobs:
         shell: bash
         run: |
           echo "dir=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)-$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
 
       - name: Go build cache - restore
         id: gocache
@@ -259,7 +259,7 @@ jobs:
         id: cachekey
         shell: bash
         run: |
-          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)-$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
           echo "dir=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
 
       - name: Exe build cache - restore

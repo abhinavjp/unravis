@@ -327,6 +327,78 @@ function Get-PromotionSideCommits([string]$RepoRoot, [string]$Commit) {
     return , $out
 }
 
+# The position rule for the generated web files commit, as a pure function so Promote-Develop.ps1 (which reads the promote branch
+# through the GitHub API and cannot run git) and Get-PromotionSideCommits above (which reads it with git) apply the SAME rule.
+# $Chain is the first-parent line of the promote branch from its TIP DOWN to (not including) the chosen develop commit, one entry per
+# commit with Sha and Kind: 'dist' (passes the generated-files test: fixed subject, one parent, only the three generated folders),
+# 'mergein' (a clean merge of master) or anything else (a develop pull request commit, a merge that is not a clean merge of master, a
+# commit with the generated subject that fails the test). A 'dist' commit is accepted only while every commit above it (towards the
+# tip) is 'dist' or 'mergein'. Returns the Sha of every 'dist' commit that sits below another kind of commit (callers: @(Get-...));
+# nothing when the branch is acceptable. Get-PromotionSideCommits keeps the same state in $top.
+function Get-BuriedGeneratedCommits([object[]]$Chain) {
+    $buried = @()
+    $top = $true
+    foreach ($c in $Chain) {
+        if ($c.Kind -eq 'dist') { if (-not $top) { $buried += $c.Sha } }
+        elseif ($c.Kind -ne 'mergein') { $top = $false }
+    }
+    return $buried   # plain return: callers wrap the call in @() so zero, one or many results all have a true .Count
+}
+
+# Promote-Develop.ps1: the file rule of the generated web files commit, on the list of names the GitHub commit API gives (every
+# `filename`, and a renamed file's `previous_filename` too). Ok only when the list is not empty, has fewer than 3000 names (the API
+# stops listing there, so more is not trusted) and every name is under one of the three generated folders (case sensitive). The same
+# rule Get-PromotionSideCommits applies with git (`diff --no-renames --name-only`). Line ends are tolerated (a CRLF from gh on Windows).
+function Test-GeneratedFileList([string[]]$Files) {
+    $names = @($Files | ForEach-Object { "$_".TrimEnd("`r") } | Where-Object { $_ -ne '' })
+    $outside = @($names | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' })
+    return [pscustomobject]@{ Ok = ($names.Count -gt 0 -and $names.Count -lt 3000 -and $outside.Count -eq 0); Count = $names.Count; Outside = $outside }
+}
+
+# Promote-Develop.ps1, after promote-dist.mjs pushed the generated commit: throws (the message is shown as is) unless the commit sits
+# directly on the head this run checked (exactly one parent, equal to $ExpectedParent) and changes only the generated folders
+# (Test-GeneratedFileList on $Files, as the commit API lists them). A function that throws, so the call site has no condition to get wrong.
+function Assert-DistCommit([string]$DistSha, [string]$ExpectedParent, [string[]]$Parents, [string[]]$Files, [string]$Branch) {
+    $short = if ($DistSha.Length -ge 7) { $DistSha.Substring(0, 7) } else { $DistSha }
+    $parents = @($Parents | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    if ($parents.Count -ne 1 -or $parents[0].ToLowerInvariant() -ne $ExpectedParent.Trim().ToLowerInvariant()) {
+        throw "The web files commit $short is not directly on the head this run checked ($($ExpectedParent.Substring(0, [Math]::Min(7, $ExpectedParent.Length)))): someone pushed to $Branch meanwhile. Nothing was merged. Delete the branch on GitHub if it is not yours, and run again."
+    }
+    $check = Test-GeneratedFileList $Files
+    if (-not $check.Ok) {
+        throw "The web files commit $short changes files outside web/dist, cmd/unravis-setup/ui and cmd/unravis-lite/ui (or none, or too many to check): $(($check.Outside | Select-Object -First 5) -join ', '). Nothing was merged. Delete the branch $Branch on GitHub and run again."
+    }
+}
+
+# Promote-Develop.ps1, re-run on a branch that already exists: the first-parent line of the promote branch from its tip ($Tip) down to
+# the chosen develop commit ($Stop, not included), tip first, as the entries Get-BuriedGeneratedCommits reads. It is a function of its
+# own so Test-ReleaseManager.ps1 can run the very code Promote-Develop runs, over real git, and compare it with Get-PromotionSideCommits.
+#   $ReadCommit  scriptblock, called with a sha, returns @{ Parents = <shas>; Subject = <first line>; IsGenerated = <bool> }. IsGenerated
+#                is only read for a commit with the generated subject: it means "changes only the three generated folders" (case sensitive).
+#   $MergeIns    sha -> @{ Ok; Why } from Test-RemoteMergeIns / Test-CleanMasterMerge: only a CLEAN merge of master is kind 'mergein'.
+# Throws when the line has more than $MaxSteps commits or does not reach $Stop. Callers wrap the call in @().
+function Get-PromoteBranchChain([string]$Tip, [string]$Stop, [scriptblock]$ReadCommit, [hashtable]$MergeIns, [int]$MaxSteps = 200) {
+    $chain = @()
+    $cur = $Tip
+    $steps = 0
+    while ($cur -and $cur -ne $Stop) {
+        $steps++
+        if ($steps -gt $MaxSteps) { throw "it has more than $MaxSteps commits above the chosen commit on its first-parent line" }
+        $c = & $ReadCommit $cur
+        $parents = @($c.Parents | Where-Object { $_ })
+        if ($parents.Count -eq 0) { throw 'it does not reach the chosen commit along its first-parent line' }
+        $kind = 'other'
+        if ("$($c.Subject)".StartsWith('Rebuild web files for promotion', [StringComparison]::Ordinal)) {
+            if ($parents.Count -eq 1 -and $c.IsGenerated) { $kind = 'dist' }
+        }
+        elseif ($MergeIns.ContainsKey($cur) -and $MergeIns[$cur].Ok) { $kind = 'mergein' }
+        $chain += [pscustomobject]@{ Sha = $cur; Kind = $kind }
+        $cur = $parents[0]
+    }
+    if (-not $cur) { throw 'it does not reach the chosen commit along its first-parent line' }
+    return $chain
+}
+
 # For each commit, the pull request merged into $Base whose merge (squash) commit IS that commit: @{ sha = @{ N; HeadRef } }.
 # One gh call per commit, run side by side (a release since the last one is often 10 to 40 commits). Nothing is cached on disk: a
 # cache file an agent could edit would let a direct push pass as "merged". Any gh error counts as "not shown to be a PR".

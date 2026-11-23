@@ -394,6 +394,99 @@ try {
     }
     Assert-That 'train: a merge commit with the generated subject is not the generated commit' (@($sideG | Where-Object { $_.Sha -eq $script:dd.mergey -and $_.Kind -ne 'dist' }).Count -eq 1)
 
+    # ---- Promote-Develop.ps1 reuses a branch only when the generated commit sits where Get-PromotionSideCommits wants it ----------
+    # (sweep 2026-11-22, finding 5). Both sides use Get-BuriedGeneratedCommits for the position; Promote-Develop builds its chain with
+    # Get-PromoteBranchChain. Callers wrap the call in @(): zero, one and many results must all count right.
+    function New-Chain([string[]]$Kinds) { $list = @(); for ($i = 0; $i -lt $Kinds.Count; $i++) { $list += [pscustomobject]@{ Sha = "s$($i + 1)"; Kind = $Kinds[$i] } }; return , $list }
+    function Get-Buried([string[]]$Kinds) { return , @(Get-BuriedGeneratedCommits (New-Chain $Kinds)) }
+    Assert-That 'position rule: a clean chain (generated commit on top) buries nothing, and Count is 0' ((Get-Buried 'dist').Count -eq 0)
+    Assert-That 'position rule: merges of master and further generated commits above it are fine' ((Get-Buried 'dist', 'mergein', 'dist', 'mergein').Count -eq 0)
+    Assert-That 'position rule: a merge of master on top of a generated commit is fine (the re-run after master moved)' ((Get-Buried 'mergein', 'dist').Count -eq 0)
+    Assert-That 'position rule: a develop pull request commit above a generated commit buries exactly that one' ((Get-Buried 'other', 'dist').Count -eq 1 -and (Get-Buried 'other', 'dist')[0] -eq 's2')
+    Assert-That 'position rule: a merge that is not a clean merge of master (kind other) above it buries the ones below' (((Get-Buried 'dist', 'other', 'dist', 'dist') -join ',') -eq 's3,s4')
+    Assert-That 'position rule: an empty chain (branch equals the chosen commit) buries nothing' ((Get-Buried @()).Count -eq 0)
+    Assert-That 'position rule: Get-PromoteBranchChain of an empty line is empty, not an array holding an array' (@(Get-PromoteBranchChain 'x' 'x' { throw 'not called' } @{}).Count -eq 0)
+
+    # The code Promote-Develop runs (Get-PromoteBranchChain, then Get-BuriedGeneratedCommits) over real git, against the answer of
+    # Get-PromotionSideCommits (what Release.ps1 decides) for the same branch. $ReadCommit here is what the GitHub API gives there.
+    $readGit = {
+        param($c)
+        $cp = @((git -C $g rev-list --parents -n 1 $c) -split ' ' | Select-Object -Skip 1)
+        $subj = (git -C $g log -n 1 --format=%s $c)
+        $gen = $false
+        if ($cp.Count -eq 1) {
+            $names = @(git -C $g -c core.quotepath=off diff --no-renames --name-only "$c^1" $c)
+            $gen = ($names.Count -gt 0 -and @($names | Where-Object { $_ -cnotmatch '^(web/dist|cmd/unravis-setup/ui|cmd/unravis-lite/ui)/' }).Count -eq 0)
+        }
+        [pscustomobject]@{ Parents = $cp; Subject = "$subj"; IsGenerated = $gen }
+    }
+    function Get-PromoteDecision([string]$Branch, [string]$Master) {
+        $tip = (git -C $g rev-parse $Branch).Trim()
+        $mi = @{}
+        foreach ($c in @(git -C $g rev-list --first-parent "$d2..$tip")) { $mi[$c] = Test-CleanMasterMerge $g $c $Master }
+        $chain = @(Get-PromoteBranchChain $tip $d2 $readGit $mi)
+        return [pscustomobject]@{ Chain = $chain; Buried = @(Get-BuriedGeneratedCommits $chain) }
+    }
+    # The release manager's refusals of generated-looking commits: subject and shape right, yet not accepted as 'dist'.
+    function Get-ReleaseRefusedGenerated([object[]]$Side) {
+        return @($Side | Where-Object { $_.Kind -eq 'pr' -and -not $_.Ok -and (& $readGit $_.Sha).IsGenerated -and (& $readGit $_.Sha).Subject.StartsWith('Rebuild web files for promotion') } | ForEach-Object Sha)
+    }
+    # Branch, the scenario's side list from Get-PromotionSideCommits, the commits that must be refused as buried.
+    $sideH = Get-Side 'promote12' {
+        Set-DistFile 'web/dist/index.html' 'built'; G add -A; G commit -q -m 'Rebuild web files for promotion 1a2b3c4'; $script:dd.h1 = (G rev-parse HEAD).Trim()
+        G merge -q --no-edit --no-ff -m 'Merge master into promote/12' $h   # a clean merge of master ON TOP of the generated commit
+        $script:dd.h2 = (G rev-parse HEAD).Trim()
+    }
+    $scen = @(
+        @{ Name = 'promote4';  Side = $sideA;      Buried = @($script:dd.ok) },        # generated commit below a commit with another subject
+        @{ Name = 'promote11'; Side = $sideBuried; Buried = @($script:dd.buried) },    # below a pull request merge commit
+        @{ Name = 'promote5';  Side = $sideB;      Buried = @() },                     # generated, merge of master, generated
+        @{ Name = 'promote12'; Side = $sideH;      Buried = @() },                     # generated, then a clean merge of master on top
+        @{ Name = 'promote6';  Side = $sideC;      Buried = @() },                     # other file in the commit: it is 'other', nothing is below it
+        @{ Name = 'promote8';  Side = $sideE;      Buried = @() }
+    )
+    foreach ($sc in $scen) {
+        $dec = Get-PromoteDecision $sc.Name $h
+        $want = @($sc.Buried | Sort-Object)
+        $gotP = @($dec.Buried | Sort-Object)
+        $gotR = @(Get-ReleaseRefusedGenerated $sc.Side | Sort-Object)
+        Assert-That "position rule: $($sc.Name): Promote-Develop buries exactly [$($want -join ',')]" (($gotP -join ',') -eq ($want -join ',') -and $gotP.Count -eq $want.Count) "got [$($gotP -join ',')]"
+        # Release.ps1 refuses exactly the commits Promote-Develop calls buried (a generated commit that fails its own test is a pull request commit to both).
+        Assert-That "position rule: $($sc.Name): Release.ps1's refused generated commits equal Promote-Develop's" ((@($gotR | Where-Object { $want -contains $_ }) -join ',') -eq ($want -join ',')) "release refused [$($gotR -join ',')]"
+        Assert-That "position rule: $($sc.Name): both sides agree on accept or refuse" (($dec.Buried.Count -gt 0) -eq ($gotR.Count -gt 0)) "promote buried $($dec.Buried.Count), release refused $($gotR.Count)"
+    }
+    Assert-That 'position rule: the check is not vacuous (two scenarios are buried, four are clean)' (@($scen | Where-Object { $_.Buried.Count -gt 0 }).Count -eq 2 -and @($scen | Where-Object { $_.Buried.Count -eq 0 }).Count -eq 4)
+    $pd = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Promote-Develop.ps1')
+    Assert-That 'promote: branch reuse runs Get-PromoteBranchChain and Get-BuriedGeneratedCommits (wrapped in @()) before a pull request exists' ($pd -match '\$chain = @\(Get-PromoteBranchChain' -and $pd -match '\$buried = @\(Get-BuriedGeneratedCommits \$chain\)' -and $pd -match '\$buried\.Count -gt 0' -and $pd.IndexOf('$buried = @(Get-BuriedGeneratedCommits') -lt $pd.IndexOf('gh pr list'))
+    Assert-That 'promote: a generated-looking commit is accepted only through the position rule' ($pd -notmatch '\$np = \[int\]' -and $pd -match 'okDist')
+    # The file rule Promote-Develop applies to the generated commit (Test-GeneratedFileList), on lists as the commit API gives them.
+    function Test-List([string[]]$Files) { return Test-GeneratedFileList $Files }
+    Assert-That 'file list: only generated files is ok' ((Test-List 'web/dist/index.html', 'web/dist/assets/a.js', 'cmd/unravis-setup/ui/x.js', 'cmd/unravis-lite/ui/y.css').Ok)
+    Assert-That 'file list: an extra file outside the folders is refused and named' ((-not (Test-List 'web/dist/index.html', 'web/src/App.svelte').Ok) -and (Test-List 'web/dist/index.html', 'web/src/App.svelte').Outside[0] -eq 'web/src/App.svelte')
+    Assert-That 'file list: an empty list (no file changed) is refused' (-not (Test-List @()).Ok)
+    Assert-That 'file list: a null list is refused' (-not (Test-GeneratedFileList $null).Ok)
+    Assert-That 'file list: a rename from outside the folders into them is refused (previous_filename counts)' (-not (Test-List 'web/dist/a.js', 'web/src/a.js').Ok)
+    Assert-That 'file list: a rename inside the folders is ok' ((Test-List 'web/dist/assets/new.js', 'web/dist/assets/old.js', 'cmd/unravis-lite/ui/assets/new.js', 'web/dist/assets/old.js').Ok)
+    Assert-That 'file list: a rename from the folders to outside is refused' (-not (Test-List 'docs/a.js', 'web/dist/a.js').Ok)
+    Assert-That 'file list: letter case matters (Web/dist, web/Dist, cmd/unravis-setup/UI)' ((-not (Test-List 'Web/dist/a.js').Ok) -and (-not (Test-List 'web/Dist/a.js').Ok) -and (-not (Test-List 'cmd/unravis-setup/UI/a.js').Ok))
+    Assert-That 'file list: a name that only starts like a folder is refused (web/distance/x, web/dist)' ((-not (Test-List 'web/distance/x.js').Ok) -and (-not (Test-List 'web/dist').Ok))
+    Assert-That 'file list: line ends from a Windows gh are tolerated' ((Test-List "web/dist/a.js`r", "web/dist/b.js`r").Ok)
+    Assert-That 'file list: 3000 names or more is not trusted, 2999 is' ((-not (Test-List (1..3000 | ForEach-Object { "web/dist/f$_.js" })).Ok) -and (Test-List (1..2999 | ForEach-Object { "web/dist/f$_.js" })).Ok)
+    # The check on the pushed commit, as a function that throws (Promote-Develop calls it inside try/catch -> Stop-Here).
+    $head40 = 'c' * 40; $dist40 = 'd' * 40
+    function Get-DistProblem([string[]]$Parents, [string[]]$Files) { return Get-ThrownMessage { Assert-DistCommit $dist40 $head40 $Parents $Files 'promote/ddddddd' } }
+    Assert-That 'dist commit: on the checked head and only generated files: accepted' ($null -eq (Get-DistProblem @($head40) @('web/dist/index.html', 'cmd/unravis-lite/ui/a.js')))
+    Assert-That 'dist commit: another parent is refused (someone pushed meanwhile)' ((Get-DistProblem @('e' * 40) @('web/dist/index.html')) -match 'not directly on the head')
+    Assert-That 'dist commit: two parents is refused' ((Get-DistProblem @($head40, 'e' * 40) @('web/dist/index.html')) -match 'not directly on the head')
+    Assert-That 'dist commit: no parent is refused' ((Get-DistProblem @() @('web/dist/index.html')) -match 'not directly on the head')
+    Assert-That 'dist commit: an upper-case parent sha is the same sha' ($null -eq (Get-DistProblem @($head40.ToUpperInvariant()) @('web/dist/index.html')))
+    Assert-That 'dist commit: an extra file is refused and named' ((Get-DistProblem @($head40) @('web/dist/index.html', 'tools/x.ps1')) -match 'tools/x\.ps1')
+    Assert-That 'dist commit: a rename out of src is refused (previous_filename in the list)' ((Get-DistProblem @($head40) @('web/dist/a.js', 'web/src/a.js')) -match 'web/src/a\.js')
+    Assert-That 'dist commit: no changed file is refused' ($null -ne (Get-DistProblem @($head40) @()))
+    $pdRaw = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Promote-Develop.ps1')
+    Assert-That 'promote: the pushed commit is checked by Assert-DistCommit inside try/catch Stop-Here, before the pull request, with the previous_filename listing' ($pdRaw -match 'try \{ Assert-DistCommit \$distSha \$headAfterMerge \$distParents \$distFiles \$branch \} catch \{ Stop-Here' -and $pdRaw.IndexOf('Assert-DistCommit $distSha') -lt $pdRaw.IndexOf('gh pr list') -and ([regex]::Matches($pdRaw, 'previous_filename')).Count -eq 2)
+    Assert-That 'promote: the reuse check uses Test-GeneratedFileList' ($pdRaw -match '\$isGenerated = \(Test-GeneratedFileList \$gfiles\)\.Ok')
+
     # ---- promotion safety (SUP-1): only the head that was built and checked is merged; "Merge master into" is a claim, not a proof ----
     $sha40 = 'a' * 40; $other40 = 'b' * 40
     Assert-That 'promote head: the expected head passes' ($null -eq (Get-ThrownMessage { Assert-PromotionHead $sha40 $sha40 'promote/aaaaaaa' }))
