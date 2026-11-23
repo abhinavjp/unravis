@@ -25,6 +25,8 @@ export default defineConfig(({ command }) => {
     },
     preview: { host: '127.0.0.1' },
     build: {
+      // BL-323: the desktop window allows pictures and fonts from its own origin only (img-src 'self'), so no asset is inlined as a data: address.
+      assetsInlineLimit: 0,
       rollupOptions: {
         output: {
           // No manual vendor chunk for ECharts: with lazily loaded panels it made the vendor chunk
