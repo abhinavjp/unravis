@@ -266,9 +266,12 @@ type bbThisPC struct {
 	// Available is true when this build can change the Blackbox on this PC.
 	Available bool `json:"available"`
 	// Scanned is false when this PC could not be asked (nothing is claimed then).
-	Scanned          bool   `json:"scanned"`
-	Installed        bool   `json:"installed"`
-	Running          bool   `json:"running"`
+	Scanned   bool `json:"scanned"`
+	Installed bool `json:"installed"`
+	Running   bool `json:"running"`
+	// SQLInstalled and SQLRunning are the SQL service's state (UnravisBlackboxSql), from the service manager only.
+	SQLInstalled     bool   `json:"sqlInstalled,omitempty"`
+	SQLRunning       bool   `json:"sqlRunning,omitempty"`
 	Name             string `json:"name,omitempty"`
 	Folder           string `json:"folder,omitempty"`
 	Port             int    `json:"port,omitempty"`
@@ -530,6 +533,7 @@ func (b *blackboxHub) thisPCBlock(entries []bbsaved.Entry, found *blackbox.Local
 	case found != nil:
 		t.Scanned = true
 		t.Installed, t.Running = found.Installed, found.Running
+		t.SQLInstalled, t.SQLRunning = found.SQLInstalled, found.SQLRunning
 		t.Name, t.Folder, t.Port, t.Bind, t.ConfigUnreadable = found.Name, found.Folder, found.Port, found.Bind, found.ConfigUnreadable
 		t.Settings = found.Settings
 	}

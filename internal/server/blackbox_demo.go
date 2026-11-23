@@ -505,6 +505,7 @@ type simPC struct {
 	running   bool
 	// sqlInstalled: the pretend SQL service was set up by a setup-sql call.
 	sqlInstalled bool
+	sqlRunning   bool
 	// loginFileOK: the last setup call was handed a login file whose hash matched (tests).
 	loginFileOK bool
 	cfg         blackbox.Config
@@ -690,6 +691,7 @@ func (p *simPC) SetupSQL(ctx context.Context, loginFile, loginSHA string, window
 		out.GrantScript = "-- Run in SSMS as an admin. The Blackbox never runs this for you.\nCREATE LOGIN [NT SERVICE\\UnravisBlackboxSql] FROM WINDOWS WITH DEFAULT_DATABASE=master;\nGRANT VIEW SERVER PERFORMANCE STATE TO [NT SERVICE\\UnravisBlackboxSql];\n"
 	}
 	p.sqlInstalled = true
+	p.sqlRunning = enable
 	return out, nil
 }
 
@@ -698,6 +700,9 @@ func (p *simPC) ClearSQLLogin(ctx context.Context) error {
 	if err := p.enter(ctx, "clear-sql-login"); err != nil {
 		return err
 	}
+	p.mu.Lock()
+	p.sqlRunning = false
+	p.mu.Unlock()
 	return nil
 }
 
@@ -716,7 +721,7 @@ func (p *simPC) Scan() (blackbox.LocalFound, error) {
 		return blackbox.LocalFound{}, nil
 	}
 	return blackbox.LocalFound{
-		Installed: true, Running: p.running, Name: p.cfg.Name, Folder: p.cfg.Folder, Port: p.cfg.Port, Bind: p.cfg.Bind, Settings: p.cloneCfg(),
+		Installed: true, Running: p.running, SQLInstalled: p.sqlInstalled, SQLRunning: p.sqlRunning, Name: p.cfg.Name, Folder: p.cfg.Folder, Port: p.cfg.Port, Bind: p.cfg.Bind, Settings: p.cloneCfg(),
 	}, nil
 }
 

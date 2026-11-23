@@ -13,10 +13,19 @@ export const SQLC_TEXT = {
   hideAdd: 'Close',
   profileHeading: 'What to collect',
   profile: {
-    standard: 'Standard: the usual health figures.',
-    everything: 'Everything: all the safe figures the Blackbox knows.',
-    deep: 'Deep: everything, plus the heavier checks. Uses more of the server.'
+    standard: 'Standard: usual health figures',
+    everything: 'Everything: all the safe figures',
+    deep: 'Deep: everything, plus heavier checks'
   } as Record<string, string>,
+  statusNotInstalled: 'The SQL service is not set up on this PC yet.',
+  statusRunning: 'The SQL service is running.',
+  statusStopped: 'The SQL service is set up and stopped. Turn it on to start collecting.',
+  queryText: 'Also keep the text of the heaviest queries',
+  queryTextWarn: 'Query text can show what people searched for or typed into the system. Unravis removes values (strings and numbers), comments and anything that looks like a password, and withholds any statement that touches logins or keys. It still shows table, column and procedure names and the shape of each query. A name can itself hold data, so treat the text as sensitive. The text is stored in the recordings on this PC and goes into a pack or a case if you add them. Keep it off unless you need to see which query was slow.',
+  queryTextSize: 'Longest text kept for one query',
+  queryTextChars: (n: number): string => n + ' characters',
+  queryTextDeepOnly: 'Query text is part of the Deep choice only.',
+  deepNote: 'Deep uses more of the server than the other choices.',
   profileWillApply: 'The new choice is applied to the Blackbox first. That is one more administrator approval.',
   check: 'Check Blackbox access',
   checking: 'Checking…',

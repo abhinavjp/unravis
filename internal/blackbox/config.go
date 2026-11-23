@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"api-audit-explorer/internal/querytext"
 )
 
 // ServiceName is the Windows service the recorder runs as.
@@ -140,6 +142,22 @@ type SQLSettings struct {
 	Profile string `json:"profile,omitempty"`
 	// Extras are check ids added on top of the profile (a name that no check knows is ignored by the service).
 	Extras []string `json:"extras,omitempty"`
+	// QueryText is the opt-in text level: the SQL service also keeps the text of the heaviest statements, with literals and credentials
+	// removed (internal/querytext). It is honoured only when Profile is "deep"; Standard and Everything never keep query text.
+	QueryText bool `json:"queryText,omitempty"`
+	// QueryTextMaxChars caps one kept statement. 0 is the default (querytext.DefaultMaxChars).
+	QueryTextMaxChars int `json:"queryTextMaxChars,omitempty"`
+}
+
+// SQLQueryText says whether query text is kept and the size cap for one statement. Text is kept only for the "deep" profile with the flag set.
+func (c Config) SQLQueryText() (on bool, maxChars int) {
+	if c.SQL == nil || !c.SQL.QueryText || c.SQLProfileName() != SQLProfileDeep {
+		return false, 0
+	}
+	if c.SQL.QueryTextMaxChars == 0 {
+		return true, querytext.DefaultMaxChars
+	}
+	return true, c.SQL.QueryTextMaxChars
 }
 
 // SQLProfileName is the profile in force: a missing block or an empty profile is standard.
@@ -155,6 +173,9 @@ func (s SQLSettings) validate() error {
 	case "", SQLProfileStandard, SQLProfileEverything, SQLProfileDeep:
 	default:
 		return invalidf(`"sql.profile" must be "standard", "everything" or "deep"`)
+	}
+	if s.QueryTextMaxChars != 0 && (s.QueryTextMaxChars < querytext.MinMaxChars || s.QueryTextMaxChars > querytext.MaxMaxChars) {
+		return invalidf(`"sql.queryTextMaxChars" must be 0 or between %d and %d`, querytext.MinMaxChars, querytext.MaxMaxChars)
 	}
 	if len(s.Extras) > maxSQLExtras {
 		return invalidf(`"sql.extras" holds at most %d names`, maxSQLExtras)

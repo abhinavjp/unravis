@@ -69,3 +69,37 @@ func TestSQLBlockCarriesNoServerOrSecretField(t *testing.T) {
 		}
 	}
 }
+
+func TestQueryTextIsKeptOnlyForTheDeepProfileWithTheFlag(t *testing.T) {
+	cases := []struct {
+		name string
+		c    Config
+		on   bool
+		max  int
+	}{
+		{"no block", Config{}, false, 0},
+		{"flag on standard", Config{SQL: &SQLSettings{QueryText: true}}, false, 0},
+		{"flag on everything", Config{SQL: &SQLSettings{Profile: SQLProfileEverything, QueryText: true}}, false, 0},
+		{"deep without flag", Config{SQL: &SQLSettings{Profile: SQLProfileDeep}}, false, 0},
+		{"deep with flag", Config{SQL: &SQLSettings{Profile: SQLProfileDeep, QueryText: true}}, true, 1000},
+		{"deep with size", Config{SQL: &SQLSettings{Profile: SQLProfileDeep, QueryText: true, QueryTextMaxChars: 500}}, true, 500},
+	}
+	for _, tc := range cases {
+		if on, max := tc.c.SQLQueryText(); on != tc.on || max != tc.max {
+			t.Errorf("%s: %v %d", tc.name, on, max)
+		}
+	}
+}
+
+func TestQueryTextSizeIsBounded(t *testing.T) {
+	for _, n := range []int{0, 100, 1000, 4000} {
+		if err := (SQLSettings{Profile: "deep", QueryText: true, QueryTextMaxChars: n}).validate(); err != nil {
+			t.Errorf("%d: %v", n, err)
+		}
+	}
+	for _, n := range []int{-1, 50, 99, 4001, 1 << 20} {
+		if err := (SQLSettings{Profile: "deep", QueryText: true, QueryTextMaxChars: n}).validate(); err == nil {
+			t.Errorf("%d accepted", n)
+		}
+	}
+}

@@ -32,7 +32,7 @@ test('choosing a profile keeps the other settings and standard leaves no block',
 
 test('the words pass the copy checks', () => {
   const texts = [];
-  const walk = (o, id) => { for (const [k, v] of Object.entries(o)) { if (typeof v === 'string') texts.push({ id: id + '.' + k, text: v }); else if (typeof v === 'function') texts.push({ id: id + '.' + k, text: v({ installed: true, started: true }) }); else if (typeof v === 'object') walk(v, id + '.' + k); } };
+  const walk = (o, id) => { for (const [k, v] of Object.entries(o)) { if (typeof v === 'string') texts.push({ id: id + '.' + k, text: v }); else if (typeof v === 'function') texts.push({ id: id + '.' + k, text: String(v({ installed: true, started: true })) + ' ' + String(v(1000)) }); else if (typeof v === 'object') walk(v, id + '.' + k); } };
   walk(SQLC_TEXT, 'sqlc');
   assert.deepEqual(lintCopy(texts).filter((f) => f.rule === 'causal' || f.rule === 'wording'), []);
 });
@@ -51,4 +51,32 @@ test('the Blackbox page shows it only for the recorder on this PC', () => {
   const api = read('src/lib/blackbox.ts');
   assert.match(api, /sqlSetup:[^\n]*'\/this-pc\/sql\/setup'/);
   assert.match(api, /sqlClearLogin:[^\n]*'\/this-pc\/sql\/login\/clear'/);
+});
+
+test('query text exists only for the deep profile with the flag, and any other choice drops it', () => {
+  const deepText = { sql: { profile: 'deep', queryText: true, queryTextMaxChars: 2000 } };
+  assert.equal(m.keepsQueryText(deepText), true);
+  assert.equal(m.keepsQueryText({ sql: { profile: 'everything', queryText: true } }), false);
+  assert.equal(m.keepsQueryText({ sql: { profile: 'deep' } }), false);
+  assert.equal(m.queryTextSizeOf(deepText), 2000);
+  assert.equal(m.queryTextSizeOf({ sql: { queryTextMaxChars: 7 } }), 1000, 'an unknown size reads as the default');
+  assert.deepEqual(m.withProfile({ name: 'n' }, 'deep', { on: true, size: 500 }).sql, { profile: 'deep', queryText: true, queryTextMaxChars: 500 });
+  assert.deepEqual(m.withProfile({ name: 'n' }, 'deep').sql, { profile: 'deep' }, 'text is off unless asked for');
+  assert.equal(m.withProfile(deepText, 'standard').sql, undefined, 'leaving deep drops the flag and the size');
+  assert.deepEqual(m.withProfile(deepText, 'everything').sql, { profile: 'everything' });
+  assert.deepEqual(m.withProfile({ sql: { profile: 'deep', extras: ['waits'], queryText: true } }, 'everything', { on: true, size: 500 }).sql, { profile: 'everything', extras: ['waits'] }, 'text never rides along outside deep');
+});
+
+test('the status line comes from the service manager only', () => {
+  assert.equal(m.sqlStatusLine({ installed: false }), '');
+  assert.equal(m.sqlStatusLine({ installed: true }), SQLC_TEXT.statusNotInstalled);
+  assert.equal(m.sqlStatusLine({ installed: true, sqlInstalled: true }), SQLC_TEXT.statusStopped);
+  assert.equal(m.sqlStatusLine({ installed: true, sqlInstalled: true, sqlRunning: true }), SQLC_TEXT.statusRunning);
+});
+
+test('the query text switch carries a warning and shows only for deep', () => {
+  const src = read('src/components/BlackboxSqlCollect.svelte');
+  assert.match(src, /\{#if profile === 'deep'\}\s*(?:<p class="note">[^\n]*<\/p>\s*)?<label class="opt"><input type="checkbox" bind:checked=\{textOn\}/);
+  assert.match(src, /aria-describedby="\{uid\}-text-warn"/);
+  assert.match(SQLC_TEXT.queryTextWarn, /password/);
 });

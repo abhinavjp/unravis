@@ -87,6 +87,9 @@ export interface ThisPc {
   scanned: boolean;
   installed: boolean;
   running: boolean;
+  /** The SQL service (UnravisBlackboxSql), from the service manager. Whether it holds a login is not readable by an ordinary user. */
+  sqlInstalled?: boolean;
+  sqlRunning?: boolean;
   name?: string;
   folder?: string;
   port?: number;
@@ -214,7 +217,7 @@ export interface Settings {
   logPaths: string[];
   probe: { enabled: boolean };
   /** Which SQL checks the SQL service runs. Missing means the standard set. Settings only: no server, login or password lives here. */
-  sql?: { profile?: string; extras?: string[] };
+  sql?: { profile?: string; extras?: string[]; queryText?: boolean; queryTextMaxChars?: number };
   /** The app pools and services the owner picked for per-process detail. Empty means machine-wide only. */
   targets: TargetRef[];
 }
