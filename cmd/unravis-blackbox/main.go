@@ -385,7 +385,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 				return filepath.Join(progDir, name)
 			}
 		}
-		if cmd == "apply" || cmd == "remove" {
+		if cmd == "apply" || cmd == "remove" || cmd == "setup-sql" || cmd == "clear-sql-login" || cmd == "set-sql-login" {
 			// SEC-15: these run elevated from the app, whose folder an ordinary
 			// user can write to on a per-user install. Never take settings or a
 			// key file from there: use the installed copy (which may be missing,
