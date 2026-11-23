@@ -258,7 +258,7 @@ test('the shell shows Retry only when retrying can help', () => {
 const { SCREENS: SCREEN_LIST, canGo, go: moveScreen, initialScreen, afterUnlock, createRoute, leavesCaseWork, WIZARD_READY } = loadTypeScript('src/lib/screenFlow.ts');
 
 const LEGAL_MOVES = {
-  loading: ['unlock', 'start', 'running', 'case'],
+  loading: ['unlock', 'start', 'running', 'case', 'create'],
   unlock: ['start', 'running', 'create', 'case'],
   setup: ['start', 'unlock', 'case'],
   start: ['setup', 'create', 'running', 'unlock', 'case'],
@@ -308,6 +308,7 @@ test('the first screen: demo runs, a locked key unlocks, a link or remembered ta
   assert.equal(initialScreen(facts()), 'start');
   assert.equal(initialScreen(facts({ caseView: true })), 'case', 'a reload on a case page goes back to it');
   assert.equal(moveScreen('loading', 'case').ok, true, 'the first screen may be the case page');
+  assert.equal(moveScreen('loading', 'create').ok, true, 'the first screen may be the create guide (a reload with a kept draft, BL-495h)');
 });
 
 test('after unlock the person returns to the work that was interrupted, else the start screen', () => {
