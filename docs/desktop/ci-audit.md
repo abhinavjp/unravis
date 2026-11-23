@@ -28,5 +28,5 @@ Date 2026-11-21. Method: read `.github/workflows/*`, and ran the Linux gates in 
 - `pkg.<package>` entries may be in the baseline (spec: always new). Two packages panic on Linux today; without this the gate would be red from day one. Cost, stated plainly: `internal/setup` and `internal/server` (about 145 tests) are effectively ungated, because a new failure or panic there is invisible to the comparer. Tracked as BL-441b. Resolved 2026-11-22: both packages run to the end and their 195 Windows-only failures are listed per test, so a new failure or panic there is caught again.
 - `Test-PathFilters.ps1` not added: it checks `desktop-windows.yml`, which does not exist until BL-442.
 - `all-green` is not part of BL-441 (spec lists it only in the workflow-name section); not added.
-- Go 1.27.4 bump (D16): not done; no way to check `go.dev/dl` for 1.27.4 from here and the 1.27.3 toolchain is what ran.
+- Go 1.27.4 bump (D16): done 2026-11-23 (BL-460), `go.mod` asks for 1.27.4.
 - npm `tools/e2e` has no lockfile; Dependabot still reads its `package.json`.
