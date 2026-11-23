@@ -38,7 +38,7 @@ const (
 	nonceLen                            = 22 // 16 random bytes, base64url, no padding
 	secretLen                           = 43 // 32 random bytes, base64url, no padding
 
-	credScheme = "Unravis-Grant "
+	credScheme = "Unravis-Grant " //nolint:gosec // G101: the name of the Authorization scheme, not a credential
 	macGrant   = "grant"
 	macClaim   = "claim"
 	metaStop   = "stopped"

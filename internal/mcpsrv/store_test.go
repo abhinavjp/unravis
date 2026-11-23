@@ -25,7 +25,7 @@ func allBytes(t *testing.T, dir string) []byte {
 	t.Helper()
 	var all []byte
 	for _, name := range []string{mcpaudit.FileName, mcpaudit.FileName + "-wal", mcpaudit.FileName + "-shm"} {
-		b, err := os.ReadFile(filepath.Join(dir, name))
+		b, err := os.ReadFile(filepath.Join(dir, name)) //nolint:gosec // a file of this test's own temp folder
 		if err == nil {
 			all = append(all, b...)
 		}
@@ -89,7 +89,7 @@ func TestStoreOfAnotherAccountIsSetAside(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if rec == "" || !strings.Contains(rec, ".bad-") {
 		t.Fatalf("not set aside: %q", rec)
 	}
@@ -116,7 +116,7 @@ func TestCorruptStoreIsSetAside(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if rec == "" {
 		t.Fatal("corrupt file not set aside")
 	}
@@ -231,11 +231,11 @@ func post(t *testing.T, url string, body any) (int, map[string]any, string) {
 		j, _ := json.Marshal(b)
 		rd = bytes.NewReader(j)
 	}
-	resp, err := http.Post(url, "application/json", rd)
+	resp, err := http.Post(url, "application/json", rd) //nolint:gosec // the URL of this test's own httptest server
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -312,7 +312,7 @@ func TestHTTPRefusalsEchoNothing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != 404 {
 			t.Errorf("%s: %d", path, resp.StatusCode)
 		}
@@ -321,7 +321,7 @@ func TestHTTPRefusalsEchoNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 405 {
 		t.Errorf("GET enroll: %d", resp.StatusCode)
 	}

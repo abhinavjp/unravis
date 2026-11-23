@@ -123,7 +123,7 @@ func (d *DB) List(ctx context.Context, limit int) ([]Profile, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Profile
 	for rows.Next() {
 		p, err := scan(rows)

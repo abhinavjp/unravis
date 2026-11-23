@@ -336,8 +336,8 @@ func TestRevokeCancelsRunning(t *testing.T) {
 	finished := make(chan error, 1)
 	go func() { <-callCtx.Done(); finished <- context.Cause(callCtx) }()
 	select {
-	case <-finished:
-		t.Fatal("call ended before the revoke")
+	case err := <-finished:
+		t.Fatalf("call ended before the revoke: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
 	if _, err := e.g.Revoke(ctx, "h1"); err != nil {
