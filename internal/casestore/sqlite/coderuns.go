@@ -161,15 +161,18 @@ func unreadable(err error) error {
 	return fmt.Errorf("%w: a stored row cannot be read (%v)", casestore.ErrCodeTampered, err)
 }
 
-const runCols = `run_id, created_at_utc, COALESCE(ended_at_utc,0), COALESCE(surface,''), COALESCE(caller_id,''), COALESCE(caller_declared,0),
+const (
+	runColsPre = `run_id, created_at_utc, COALESCE(ended_at_utc,0), COALESCE(surface,''), COALESCE(caller_id,''), COALESCE(caller_declared,0),
  COALESCE(allow_identifiers,0), COALESCE(keep_results,0), COALESCE(sandbox_mode,''), COALESCE(runtime,''), COALESCE(worker_sha256,''),
- COALESCE(tool_schema_hash,''), COALESCE(reason,''), %s, COALESCE(stripped_js_hash,''), COALESCE(seed,''), COALESCE(clock_ms,0),
+ COALESCE(tool_schema_hash,''), COALESCE(reason,''), `
+	runColsMid = `, COALESCE(stripped_js_hash,''), COALESCE(seed,''), COALESCE(clock_ms,0),
  COALESCE(status,''), COALESCE(error_code,''), COALESCE(error_text,''), COALESCE(result_hash,''), COALESCE(result_bytes,0),
- COALESCE(result_preview,''), %s, COALESCE(call_count,0), COALESCE(duration_ms,0), COALESCE(script_ms,0)`
+ COALESCE(result_preview,''), `
+	runColsPost = `, COALESCE(call_count,0), COALESCE(duration_ms,0), COALESCE(script_ms,0)`
 
-var (
-	runColsFull = fmt.Sprintf(runCols, "COALESCE(source_ts,'')", "COALESCE(console_logs,'')")
-	runColsList = fmt.Sprintf(runCols, "''", "''")
+	// runColsFull reads the source and the logs; runColsList leaves them out.
+	runColsFull = runColsPre + `COALESCE(source_ts,'')` + runColsMid + `COALESCE(console_logs,'')` + runColsPost
+	runColsList = runColsPre + `''` + runColsMid + `''` + runColsPost
 )
 
 type rowScanner interface{ Scan(dest ...any) error }
@@ -204,12 +207,13 @@ func scanRun(s rowScanner, withSize bool) (casestore.CodeRun, error) {
 	return r, nil
 }
 
-const callCols = `run_id, seq, done_seq, COALESCE(tool_name,''), COALESCE(args_json,''), COALESCE(args_hash,''), COALESCE(args_state,''),
- COALESCE(result_hash,''), COALESCE(result_bytes,0), %s, COALESCE(blob_state,''), COALESCE(status,''), COALESCE(duration_ms,0)`
+const (
+	callColsPre = `run_id, seq, done_seq, COALESCE(tool_name,''), COALESCE(args_json,''), COALESCE(args_hash,''), COALESCE(args_state,''),
+ COALESCE(result_hash,''), COALESCE(result_bytes,0), `
+	callColsPost = `, COALESCE(blob_state,''), COALESCE(status,''), COALESCE(duration_ms,0)`
 
-var (
-	callColsFull = fmt.Sprintf(callCols, "result_blob")
-	callColsList = fmt.Sprintf(callCols, "NULL")
+	callColsFull = callColsPre + `result_blob` + callColsPost
+	callColsList = callColsPre + `NULL` + callColsPost
 )
 
 // scanCall scans the columns of callColsFull or callColsList; withSize says that
@@ -403,7 +407,7 @@ func (c *Case) loadCalls(ctx context.Context, q txQuerier, runID string, withBlo
 		}
 		return nil, c.mapDBErr(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []casestore.CodeCall
 	for rows.Next() {
 		call, err := scanCall(rows, false)
@@ -554,7 +558,7 @@ func (c *Case) ListRuns(ctx context.Context, q casestore.RunQuery) ([]casestore.
 		}
 		return nil, c.mapDBErr(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []casestore.CodeRun
 	for rows.Next() {
 		r, err := scanRun(rows, true)
@@ -592,7 +596,7 @@ func (c *Case) RunCalls(ctx context.Context, runID string) ([]casestore.CodeCall
 	if err != nil {
 		return nil, c.mapDBErr(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []casestore.CodeCall
 	for rows.Next() {
 		call, err := scanCall(rows, true)
@@ -662,7 +666,7 @@ func chainEach(ctx context.Context, q txQuerier, tail string, args []any, fn fun
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var r casestore.ChainRow
 		if err := rows.Scan(&r.N, &r.RunID, &r.Phase, &r.RecordJSON, &r.PrevHash, &r.RecordHash); err != nil {
@@ -797,12 +801,12 @@ func (s codeSource) StoredHead(ctx context.Context) (int64, string, bool, error)
 	if err != nil {
 		return 0, "", false, err
 	}
-	ns, hash, ok := strings.Cut(v, ":")
-	n, perr := strconv.ParseInt(ns, 10, 64)
-	if !ok || perr != nil {
-		return -1, v, true, nil // unreadable head: it will not match the chain
+	if ns, hash, ok := strings.Cut(v, ":"); ok {
+		if n, perr := strconv.ParseInt(ns, 10, 64); perr == nil {
+			return n, hash, true, nil
+		}
 	}
-	return n, hash, true, nil
+	return -1, v, true, nil // unreadable head: it will not match the chain
 }
 
 func (s codeSource) MissingGuards(ctx context.Context) ([]string, error) {

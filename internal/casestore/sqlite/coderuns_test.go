@@ -202,12 +202,15 @@ func TestOldCaseWithoutTablesReadsEmptyAndKeepsItsSchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var names []string
 	for rows.Next() {
 		var n string
 		_ = rows.Scan(&n)
 		names = append(names, n)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
 	}
 	if strings.Join(names, ",") != "code_chain,code_run_calls,code_runs" {
 		t.Errorf("tables = %v", names)
@@ -611,12 +614,13 @@ func copyDir(t *testing.T, from, to string) {
 			copyDir(t, filepath.Join(from, e.Name()), filepath.Join(to, e.Name()))
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(from, e.Name()))
+		b, err := os.ReadFile(filepath.Join(from, e.Name())) //nolint:gosec // a test copying its own temp folder
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(to, e.Name()), b, 0o600); err != nil {
-			t.Fatal(err)
+		werr := os.WriteFile(filepath.Join(to, e.Name()), b, 0o600) //nolint:gosec // a test copying its own temp folder
+		if werr != nil {
+			t.Fatal(werr)
 		}
 	}
 }
@@ -797,7 +801,7 @@ func TestRowsSurviveReopen(t *testing.T) {
 		t.Fatalf("run after reopen = %+v %v", got, err)
 	}
 	// And the file on disk holds none of it in the clear.
-	raw, err := os.ReadFile(filepath.Join(root, string(info.ID), dbName))
+	raw, err := os.ReadFile(filepath.Join(root, string(info.ID), dbName)) //nolint:gosec // the test reads its own case file
 	if err != nil {
 		t.Fatal(err)
 	}

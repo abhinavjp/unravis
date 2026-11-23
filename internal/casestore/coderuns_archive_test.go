@@ -59,7 +59,7 @@ func TestCodeRunsSurviveArchiveRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	rs := rc.(casestore.CodeRunStore)
 	after, err := rs.VerifyCodeChain(ctx, &casestore.ChainAnchor{N: before.HeadN, Hash: before.Head})
 	if err != nil || !after.OK || after.Head != before.Head || after.Rows != 7 || after.OpenRuns != 1 || !after.AnchorChecked {

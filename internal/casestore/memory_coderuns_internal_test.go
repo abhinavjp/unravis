@@ -88,7 +88,7 @@ func TestNewRunIDIsUUIDv7(t *testing.T) {
 		t.Fatalf("%q %v", a, err)
 	}
 	b, _ := NewRunID(time.UnixMilli(1700000000001))
-	if !(a[:13] < b[:13]) {
+	if a[:13] >= b[:13] {
 		t.Errorf("ids do not sort by time: %s %s", a, b)
 	}
 }

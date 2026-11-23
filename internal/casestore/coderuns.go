@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -386,10 +387,9 @@ func NewRunID(now time.Time) (string, error) {
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
 	}
-	ms := uint64(now.UnixMilli())
-	for i := 0; i < 6; i++ {
-		b[i] = byte(ms >> (8 * (5 - i)))
-	}
+	var stamp [8]byte
+	binary.BigEndian.PutUint64(stamp[:], uint64(max(now.UnixMilli(), 0)))
+	copy(b[:6], stamp[2:])
 	b[6] = b[6]&0x0f | 0x70
 	b[8] = b[8]&0x3f | 0x80
 	h := hex.EncodeToString(b[:])
