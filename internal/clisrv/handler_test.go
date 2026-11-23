@@ -120,6 +120,15 @@ func TestGateIsTheMatrix(t *testing.T) {
 			if !r.OK {
 				t.Errorf("%s: %+v", row.Op, r)
 			}
+		case row.Op == "cases.list" || row.Op == "cases.show":
+			// built: show wants an id first, and list finds no case store behind this handler
+			want := "ENDPOINT_UNAVAILABLE"
+			if row.Op == "cases.show" {
+				want = "INVALID_ARGUMENT"
+			}
+			if r.OK || r.Error.Code != want {
+				t.Errorf("%s: %+v", row.Op, r)
+			}
 		default:
 			if r.OK || r.Error.Code != "UNKNOWN_OPERATION" {
 				t.Errorf("%s (not built): %+v", row.Op, r)

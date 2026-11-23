@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/pipesrv"
 	"api-audit-explorer/internal/server"
 )
@@ -18,7 +19,11 @@ import (
 // gets through, and the call reaches the real dashboard handler.
 func TestCLIRouteIsWiredBehindThePipeHandler(t *testing.T) {
 	const token = "tok-0123456789abcdef0123456789abcdef"
-	dash := server.New(audit.NewDemo(time.Now()), nil, token, false)
+	store := casestore.NewMemory()
+	if _, err := store.Create(context.Background(), "Wired case"); err != nil {
+		t.Fatal(err)
+	}
+	dash := server.New(audit.NewDemo(time.Now()), nil, token, false, server.WithCases(store, nil, nil))
 	h := pipesrv.Handler(dash, pipesrv.WithCLI(newCLIHandler(dash, token)))
 	call := func(role pipesrv.Role, image, method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -46,6 +51,11 @@ func TestCLIRouteIsWiredBehindThePipeHandler(t *testing.T) {
 		if w := call(pipesrv.RoleAG, image, "POST", "/cli/v1/op", `{}`); w.Code != http.StatusForbidden {
 			t.Errorf("%q: %d", image, w.Code)
 		}
+	}
+	// the case reads go through the owner's own route to the dashboard handler, with the token the caller never sees
+	if w := call(pipesrv.RoleAG, cli, "POST", "/cli/v1/op", `{"op":"cases.list","args":{},"requestId":"req_0123456789abcdef"}`); !strings.Contains(w.Body.String(), `"ok":true`) ||
+		!strings.Contains(w.Body.String(), "Wired case") || strings.Contains(w.Body.String(), token) {
+		t.Errorf("cases.list: %.300s", w.Body.String())
 	}
 	// the dashboard's own routes stay unreachable on the ag pipe, with or without a token
 	if w := call(pipesrv.RoleAG, cli, "GET", "/api/cases", ""); w.Code != 404 {

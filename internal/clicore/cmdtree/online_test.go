@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/clicore"
 	"api-audit-explorer/internal/clisrv"
 	"api-audit-explorer/internal/locator"
@@ -76,10 +77,14 @@ type owner struct {
 	hellos   int
 	alive    bool
 	dialErr  error
-	killMid  bool // close the connection of the next op without answering
+	killMid  bool            // close the connection of the next op without answering
+	store    casestore.Store // the case store behind the dashboard handler of the default owner
+	cases    http.Handler    // a dashboard handler for the case reads of an owner with its own backend (see withCases)
 }
 
 type ownerOpt func(*owner)
+
+func withCases(h http.Handler) ownerOpt { return func(o *owner) { o.cases = h } }
 
 func newOwner(t *testing.T, backend clisrv.Backend, opts ...ownerOpt) *owner {
 	t.Helper()
@@ -95,12 +100,19 @@ func newOwner(t *testing.T, backend clisrv.Backend, opts ...ownerOpt) *owner {
 	if err := locator.Write(locator.FilePath(o.runDir, false), o.rec, locator.Options{}); err != nil {
 		t.Fatal(err)
 	}
+	var internal clisrv.InternalGET
+	if o.cases != nil {
+		internal = clisrv.NewInternalGET(o.cases, ownerToken)
+	}
 	if backend == nil {
-		dash := dashboard.New(audit.NewDemo(o.now), nil, ownerToken, false)
+		o.store = casestore.NewMemory()
+		dash := dashboard.New(audit.NewDemo(o.now), nil, ownerToken, false, dashboard.WithCases(o.store, nil, nil))
 		backend = clisrv.MCPBackend(mcp.NewLocal(dash, ownerToken, mcp.WithIdentifiers(true)))
+		internal = clisrv.NewInternalGET(dash, ownerToken)
 	}
 	inner := clisrv.Handler(clisrv.Deps{
-		Backend: backend,
+		Backend:  backend,
+		Internal: internal,
 		Info: func() clisrv.Info {
 			o.mu.Lock()
 			defer o.mu.Unlock()

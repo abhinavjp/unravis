@@ -20,7 +20,8 @@ func newCLIHandler(dashboard http.Handler, token string) http.Handler {
 	}
 	bridge := mcp.NewLocal(dashboard, token, mcp.WithIdentifiers(true))
 	return clisrv.Handler(clisrv.Deps{
-		Backend: clisrv.MCPBackend(bridge),
+		Backend:  clisrv.MCPBackend(bridge),
+		Internal: clisrv.NewInternalGET(dashboard, token),
 		Info: func() clisrv.Info {
 			return clisrv.Info{PID: os.Getpid(), Gen: gen, AppVersion: version.Version, Owner: "app"}
 		},
