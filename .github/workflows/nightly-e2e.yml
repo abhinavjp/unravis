@@ -4,6 +4,7 @@ name: Nightly e2e
 # every pull request: it runs each night, by hand (Actions, Nightly e2e, Run workflow; "grep" runs only the tests whose title matches),
 # and on pull requests that change this file or the compare tool. The job fails on any test that fails and is not listed in
 # tools/ci/e2e-linux-known-failures.txt (see tools/ci/compare-e2e-failures.mjs). The list is empty today: keep it that way.
+# Not the same list: tools/e2e/known-defects.json marks tests that are expected to fail until a defect is fixed (they count as passed).
 # Tests that need Windows (a netstat check, archive-to-folder, the Blackbox pack folder) skip themselves off Windows; the Windows
 # run of the same suite stays a by-hand run on the owner's PC (tools/e2e/run-e2e.ps1), so BL-182, BL-160 and BL-164 are not ticked by this job.
 # The report and, for a failure, the test-results folder (screenshot and page text of the failing step) are the artifact "e2e-report".
@@ -20,14 +21,16 @@ on:
       - '.github/workflows/nightly-e2e.yml'
       - 'tools/ci/compare-e2e-failures.mjs'
       - 'tools/ci/test-compare-e2e.mjs'
+      - 'tools/e2e/**'
       - 'tools/ci/e2e-linux-known-failures.txt'
 
 permissions:
   contents: read
 
 concurrency:
-  group: nightly-e2e-${{ github.ref }}
-  cancel-in-progress: true
+  # A new push to a pull request replaces its run; a by-hand run never cancels the night's run.
+  group: nightly-e2e-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   e2e:
@@ -93,9 +96,10 @@ jobs:
             npx playwright test --trace off
           fi
 
+      # The skip limit: 15 tests skip on Linux today (Windows-only checks). Raise it only on purpose.
       - name: Compare the failures with the known list
-        if: ${{ always() }}
-        run: node tools/ci/compare-e2e-failures.mjs --json tools/e2e/report/results.json --baseline tools/ci/e2e-linux-known-failures.txt --out tools/e2e/report/summary.md
+        if: ${{ !cancelled() && steps.run.conclusion != 'skipped' }}
+        run: node tools/ci/compare-e2e-failures.mjs --json tools/e2e/report/results.json --baseline tools/ci/e2e-linux-known-failures.txt --out tools/e2e/report/summary.md --max-skipped 25
 
       - name: Upload the report
         if: ${{ always() }}

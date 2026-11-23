@@ -95,7 +95,8 @@ test('GRID-01: the header Import and Add a file open the same popup with the wir
   await closeButton(page).click();
   await expect(popup(page)).toHaveCount(0);
   await page.getByRole('button', { name: 'This case', exact: true }).click();
-  await page.getByRole('button', { name: 'Add files', exact: true }).first().click();
+  // The case page's own button (in the page, not the header's one).
+  await page.getByRole('main').getByRole('button', { name: 'Add files', exact: true }).click();
   await expect(dlg.getByRole('heading', { name: 'Add files', level: 2 })).toBeVisible();
   await expect(dlg.locator('.prog-line')).toContainText('Step 1 of 3 · Choose files to import');
   await expect(page.locator('[data-drawer-card]')).toHaveCount(0);
