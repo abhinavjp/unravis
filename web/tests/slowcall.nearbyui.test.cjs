@@ -56,9 +56,9 @@ test('this call row, gap label and row selection', () => {
   assert.doesNotMatch(source, /tabindex|onkeydown|event\.key/);
 });
 
-test('BL-495: the All sources button names the visible words first, then source, time and duration, so equal rows differ', () => {
+test('BL-495: the All sources button names the visible words first, then source, time to the millisecond and duration', () => {
   const { DRILL_TEXT } = loadCopy();
-  assert.equal(DRILL_TEXT.openSourceItem('Payroll / Run', 'API calls', '08:00:00 UTC', '60.0 s'), 'Payroll / Run, API calls, 08:00:00 UTC, took 60.0 s');
+  assert.equal(DRILL_TEXT.openSourceItem('Payroll / Run', 'API calls', '08:00:00.123 UTC', '60.0 s'), 'Payroll / Run, API calls, 08:00:00.123 UTC, took 60.0 s');
   assert.equal(DRILL_TEXT.openSourceItem('Marker', 'SQL', '08:00:01 UTC', ''), 'Marker, SQL, 08:00:01 UTC');
 });
 

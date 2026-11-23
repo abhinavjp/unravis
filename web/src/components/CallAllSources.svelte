@@ -69,7 +69,7 @@
           <tr class:selected={selectedKey === item.key} onclick={() => onSelect(item.key)}>
             <td class="time" data-label={DRILL_TEXT.colTime}>{formatTime(item.startMs, { zone, date: false, precision: 'second' })}</td>
             <td class="source" data-label={DRILL_TEXT.colSource}><span><span class="dot" aria-hidden="true" style:background={SOURCE_COLOR[item.source]}></span>{SOURCE_NAME[item.source]}</span></td>
-            <td class="what" data-label={DRILL_TEXT.colWhat}><button type="button" class="row-btn" data-testid="scall-all-open" aria-label={DRILL_TEXT.openSourceItem(item.what + (item.thisCall ? ' ' + DRILL_TEXT.thisCallMark : ''), SOURCE_NAME[item.source], formatTime(item.startMs, { zone, date: false, precision: 'second' }), took(item))} aria-pressed={selectedKey === item.key} aria-current={item.thisCall ? 'true' : undefined} onclick={(event) => pick(event, item.key)}>{item.what}{#if item.thisCall} <strong class="mark">{DRILL_TEXT.thisCallMark}</strong>{/if}</button></td>
+            <td class="what" data-label={DRILL_TEXT.colWhat}><button type="button" class="row-btn" data-testid="scall-all-open" aria-label={DRILL_TEXT.openSourceItem(item.what + (item.thisCall ? ' ' + DRILL_TEXT.thisCallMark : ''), SOURCE_NAME[item.source], formatTime(item.startMs, { zone, date: false, precision: 'ms' }), took(item))} aria-pressed={selectedKey === item.key} aria-current={item.thisCall ? 'true' : undefined} onclick={(event) => pick(event, item.key)}>{item.what}{#if item.thisCall} <strong class="mark">{DRILL_TEXT.thisCallMark}</strong>{/if}</button></td>
             <td class="took" data-label={DRILL_TEXT.colTook}>{took(item)}</td>
           </tr>
         {/each}

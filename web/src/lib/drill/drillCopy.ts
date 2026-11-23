@@ -276,10 +276,11 @@ export const DRILL_TEXT = {
   colFromCall: 'From this call',
   colUser: 'User',
   colApi: 'API',
-  // The name of the button in the API cell of a nearby call: the visible words stay first, the time tells equal API names apart.
-  // The name of the button of an All sources row: the visible words first (with the "this call" mark when shown), then what tells equal rows apart.
-  openSourceItem: (what: string, source: string, time: string, took: string): string => [what, source, time, took ? `took ${took}` : ''].filter(Boolean).join(', '),
+  // The name of the button in the API cell of a nearby call: the visible words stay first, the time (to the millisecond) tells equal API names apart.
   openNearbyCall: (api: string, time: string): string => `${api}: open this call, started ${time}`,
+  // The name of the button of an All sources row: the visible words first (with the "this call" mark when shown), then the source, the time to the
+  // millisecond and the duration. Two rows with the same words, source and millisecond still share a name (the selected state tells them apart).
+  openSourceItem: (what: string, source: string, time: string, took: string): string => [what, source, time, took ? `took ${took}` : ''].filter(Boolean).join(', '),
   colTook: 'Took',
   colDatabase: 'Database',
   colRedis: 'Redis',
@@ -389,7 +390,7 @@ const SAMPLE = {
   tabAllSources: 12,
   nearbyHint: ['10:00', '10:30', 12] as const,
   openNearbyCall: ['Orders.Get', '10:14:07.123'] as const,
-  openSourceItem: ['Orders.Get', 'API calls', '10:14:07', '1.2 s'] as const,
+  openSourceItem: ['Orders.Get', 'API calls', '10:14:07.123', '1.2 s'] as const,
   windowCalls: [12, '10:00', '10:30'] as const,
   allHeading: 12,
   rowsCapped: [200, 450] as const,

@@ -1653,7 +1653,7 @@ for (const list of ['calls', 'all'] as const) {
         expect(await page.locator(ROW_BUTTONS[list] + '[aria-pressed]').count(), 'a toggle says whether it is pressed').toBe(rows);
         const names = await page.locator(ROW_BUTTONS[list]).evaluateAll((els) => els.map((e) => e.getAttribute('aria-label') ?? ''));
         expect(names.filter((n) => !n), 'every All sources button has a name').toEqual([]);
-        expect(new Set(names).size, 'equal rows get different names (what, source, time and duration): ' + names.join(' | ')).toBe(names.length);
+        expect(new Set(names).size, 'the demo rows get different names (what, source, time to the millisecond, duration): ' + names.join(' | ')).toBe(names.length);
       }
       // the press area is 24 x 24 px or more and no other control sits inside it
       await expectScallHitArea(page, ROW_BUTTONS[list], 'Row button', 24);
