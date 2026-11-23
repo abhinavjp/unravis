@@ -3,6 +3,8 @@ package releasedash
 import (
 	"regexp"
 	"strings"
+
+	"api-audit-explorer/internal/secretscrub"
 )
 
 // Redactor hides what must never reach the screen, the clipboard or a saved log: tokens, private keys, passphrase style
@@ -13,6 +15,7 @@ type Redactor struct {
 	inKey    bool
 	keyLines int // lines hidden in the current key block
 	names    []string
+	carry    secretscrub.Carry // a value that goes on over the next lines (a YAML block, a key with its value on the next line)
 }
 
 // NewRedactor hides the given machine and user names as well (names shorter than three characters are ignored).
@@ -77,15 +80,7 @@ func (r *Redactor) Line(s string) string {
 	s = strings.TrimPrefix(s, "\uFEFF")
 	s = ansiRE.ReplaceAllString(s, "")
 	body := keyBody(s)
-	s = strings.Map(func(c rune) rune {
-		if c == '\t' {
-			return ' '
-		}
-		if c < 32 || c == 127 {
-			return -1
-		}
-		return c
-	}, s)
+	s = cleanLine(s)
 	if r.inKey {
 		if keyEndR.MatchString(s) {
 			r.inKey = false
@@ -104,6 +99,14 @@ func (r *Redactor) Line(s string) string {
 		}
 		return "<private key hidden>"
 	}
+	// The shared pass first: the pair pattern below stops a quoted value at a backslash-escaped quote and does not read XML.
+	s = secretscrub.MaskURLUserinfo(s, "<hidden>")
+	// The text after the CI prefix and the time stamp goes through the carry, which also hides the lines under a block header.
+	if mb := cleanLine(body); mb != "" && strings.HasSuffix(s, mb) {
+		s = s[:len(s)-len(mb)] + r.carry.Line(mb, "<hidden>")
+	} else {
+		s = r.carry.Line(s, "<hidden>")
+	}
 	s = tokenRE.ReplaceAllString(s, "<token hidden>")
 	s = bearerRE.ReplaceAllString(s, "$1 <hidden>")
 	s = pairRE.ReplaceAllString(s, "$1$2<hidden>")
@@ -120,6 +123,19 @@ func (r *Redactor) Line(s string) string {
 		s = string(rs[:maxLine]) + " ...(line cut)"
 	}
 	return strings.TrimRight(s, " ")
+}
+
+// cleanLine turns tabs into spaces and drops the other control characters.
+func cleanLine(s string) string {
+	return strings.Map(func(c rune) rune {
+		if c == '\t' {
+			return ' '
+		}
+		if c < 32 || c == 127 {
+			return -1
+		}
+		return c
+	}, s)
 }
 
 func replaceFold(s, sub, with string) string {

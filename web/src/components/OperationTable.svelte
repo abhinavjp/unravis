@@ -36,12 +36,12 @@
     <thead><tr>
       <th>Operation</th>
       <th>Request type</th>
-      <th aria-sort={ariaSort('events')}><button class="sort-button" title="Events of this operation and request type in the current period that match the filters, including incomplete and pending ones. Rows whose request type is unknown are not added to the Synchronous or Asynchronous operations; they appear as their own HTTP (polling type unknown) operations." onclick={() => sortBy('events')}>Events{arrow('events')}</button></th>
-      <th aria-sort={ariaSort('trafficDelta')}><button class="sort-button" title="Change in events per minute against the reference period. +25% means a quarter more traffic." onclick={() => sortBy('trafficDelta')}>Δ traffic{arrow('trafficDelta')}</button></th>
-      <th aria-sort={ariaSort('p95DeltaMs')}><button class="sort-button" title="Change in the estimated P95 response time against the reference period, in milliseconds." onclick={() => sortBy('p95DeltaMs')}>Δ P95{arrow('p95DeltaMs')}</button></th>
-      <th aria-sort={ariaSort('clientErrorDelta')}><button class="sort-button" title="Change in the 4xx share of events with a known result, in percentage points." onclick={() => sortBy('clientErrorDelta')}>Δ 4xx{arrow('clientErrorDelta')}</button></th>
-      <th aria-sort={ariaSort('serverErrorDelta')}><button class="sort-button" title="Change in the 5xx share (including failed Hangfire jobs) of events with a known result, in percentage points." onclick={() => sortBy('serverErrorDelta')}>Δ 5xx{arrow('serverErrorDelta')}</button></th>
-      <th aria-sort={ariaSort('completionDelta')}><button class="sort-button" title="Change in the share of events that completed with a usable timing, in percentage points." onclick={() => sortBy('completionDelta')}>Δ completion{arrow('completionDelta')}</button></th>
+      <th aria-sort={ariaSort('events')}><button type="button" class="sort-button" title="Events of this operation and request type in the current period that match the filters, including incomplete and pending ones. Rows whose request type is unknown are not added to the Synchronous or Asynchronous operations; they appear as their own HTTP (polling type unknown) operations." onclick={() => sortBy('events')}>Events{arrow('events')}</button></th>
+      <th aria-sort={ariaSort('trafficDelta')}><button type="button" class="sort-button" title="Change in events per minute against the reference period. +25% means a quarter more traffic." onclick={() => sortBy('trafficDelta')}>Δ traffic{arrow('trafficDelta')}</button></th>
+      <th aria-sort={ariaSort('p95DeltaMs')}><button type="button" class="sort-button" title="Change in the estimated P95 response time against the reference period, in milliseconds." onclick={() => sortBy('p95DeltaMs')}>Δ P95{arrow('p95DeltaMs')}</button></th>
+      <th aria-sort={ariaSort('clientErrorDelta')}><button type="button" class="sort-button" title="Change in the 4xx share of events with a known result, in percentage points." onclick={() => sortBy('clientErrorDelta')}>Δ 4xx{arrow('clientErrorDelta')}</button></th>
+      <th aria-sort={ariaSort('serverErrorDelta')}><button type="button" class="sort-button" title="Change in the 5xx share (including failed Hangfire jobs) of events with a known result, in percentage points." onclick={() => sortBy('serverErrorDelta')}>Δ 5xx{arrow('serverErrorDelta')}</button></th>
+      <th aria-sort={ariaSort('completionDelta')}><button type="button" class="sort-button" title="Change in the share of events that completed with a usable timing, in percentage points." onclick={() => sortBy('completionDelta')}>Δ completion{arrow('completionDelta')}</button></th>
     </tr></thead>
     <tbody>
       {#each visible as row (row.controller + '|' + row.action + '|' + (row.kind ?? ''))}
@@ -61,5 +61,5 @@
 </div>
 <div class="pagination-row group-pagination">
   <span aria-live="polite">{ordered.length ? currentPage * pageSize + 1 : 0}–{Math.min((currentPage + 1) * pageSize, ordered.length)} of {ordered.length} operations · Page {currentPage + 1} of {pageCount}</span>
-  <div class="page-actions"><button class="secondary-button" disabled={currentPage === 0} onclick={() => page = currentPage - 1}>Previous operations</button><button class="secondary-button" disabled={currentPage + 1 >= pageCount} onclick={() => page = currentPage + 1}>Next operations</button></div>
+  <div class="page-actions"><button type="button" class="secondary-button" disabled={currentPage === 0} onclick={() => page = currentPage - 1}>Previous operations</button><button type="button" class="secondary-button" disabled={currentPage + 1 >= pageCount} onclick={() => page = currentPage + 1}>Next operations</button></div>
 </div>

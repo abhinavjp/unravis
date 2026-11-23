@@ -4,8 +4,8 @@ import { GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent,
 import { CanvasRenderer } from 'echarts/renderers';
 import type { Analysis, Comparison, Point } from './types';
 import { axisLabels, chartRange, chartTime } from './chartTime';
-import { axisDuration, niceHistogram } from './chartScale';
-import { countAxis, durationAxis, durationSet, durationText, fixedNumber, labelWidth, latencyAxisTitle, requestsAxisTitle, timeAxisTitle } from './chartAxis';
+import { niceHistogram } from './chartScale';
+import { changeAxisTitle, countAxis, durationAxis, durationSet, durationText, failuresAxisTitle, fixedNumber, labelWidth, latencyAxisTitle, ratioAxisTitle, requestsAxisTitle, signedDurationAxis, timeAxisTitle, valueAxis } from './chartAxis';
 import { gapBridge, heroOutliers, type HeroSlot } from './chartHero';
 import { MIN_SAMPLE } from './thresholds';
 import { lightFallback } from '../brand/fallback';
@@ -101,6 +101,15 @@ export const failureSeriesFor = (analysis: Analysis, keys: string[] | null, fiel
 /** The one zoom slider: a thin hairline track in the line colour, no readout, no chunky handles. Inside (wheel/drag) zoom is added next to it. */
 const zoomSlider = (p: Palette) => ({ type: 'slider', height: 14, bottom: 8, showDetail: false, borderColor: p.axisLine, backgroundColor: 'transparent', fillerColor: withAlpha(p.accent, .18), handleSize: 14, handleStyle: { color: p.accent, borderColor: p.accent }, moveHandleStyle: { color: p.axisLine }, dataBackground: { lineStyle: { opacity: 0 }, areaStyle: { opacity: 0 } }, selectedDataBackground: { lineStyle: { opacity: 0 }, areaStyle: { opacity: 0 } }, textStyle: { color: p.text2 } });
 const tipStyle = (p: Palette) => ({ backgroundColor: p.surface, borderColor: p.axisLine, borderWidth: 1, padding: [6, 10], extraCssText: 'border-radius:4px;box-shadow:none;backdrop-filter:none;', textStyle: { color: p.text, fontSize: 12 } });
+/**
+ * The time axis title of a chart that has the zoom strip (BL-510): the title sits 30 px under the axis line, so the margin under the plot holds the tick labels,
+ * the whole title and the strip (which starts 8 px from the bottom and is 14 px tall). 72 px keeps the title clear of the strip.
+ */
+const SLIDER_GRID_BOTTOM = 72;
+const timeTitle = (p: Palette, zone: string) => ({ name: timeAxisTitle(zone), nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: p.text2, fontSize: 12 } });
+/** A value axis title beside its tick labels: the gap is the widest label plus air, and the margin holds the gap, the title and 3 px (as `heroOption`). */
+const valueTitle = (p: Palette, name: string, widest: string) => ({ name, nameLocation: 'middle', nameGap: labelWidth(widest) + 14, nameTextStyle: { color: p.text2, fontSize: 12 } });
+const leftMargin = (widest: string, atLeast: number) => Math.max(atLeast, labelWidth(widest) + 14 + 17);
 const withAlpha =(color: string, alpha: number) => /^#[0-9a-f]{6}$/i.test(color) ? color + Math.round(alpha * 255).toString(16).padStart(2, '0') : color;
 
 export const failureTrendOption = (analysis: Analysis, zone: string, cohortKeys: string[] | null = null) => {
@@ -111,9 +120,10 @@ export const failureTrendOption = (analysis: Analysis, zone: string, cohortKeys:
   const server = failureSeriesFor(analysis, cohortKeys, 'count5xx');
   const incomplete = failureSeriesFor(analysis, cohortKeys, 'incomplete');
   const text = (value: number | null) => value == null ? 'No observations' : value.toLocaleString();
+  const counts = countAxis(Math.max(0, ...[...client, ...server].map(value => value ?? 0)));
   return {
     animation: false,
-    grid: { left: 76, right: 18, top: 40, bottom: 58 },
+    grid: { left: leftMargin(counts.widest, 76), right: 18, top: 40, bottom: SLIDER_GRID_BOTTOM },
     tooltip: {
       ...tipStyle(p), trigger: 'axis',
       formatter: (items: Array<{ dataIndex: number }>) => {
@@ -124,8 +134,8 @@ export const failureTrendOption = (analysis: Analysis, zone: string, cohortKeys:
       }
     },
     legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 76, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: p.text2, fontSize: 12 } },
-    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, interval: 0, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } } },
-    yAxis: { type: 'value', name: 'Responses per interval', nameLocation: 'middle', nameGap: 44, min: 0, minInterval: 1, axisLabel: { color: axis }, splitLine: { lineStyle: { color: p.grid } } },
+    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, interval: 0, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } }, ...timeTitle(p, zone) },
+    yAxis: { type: 'value', ...valueTitle(p, failuresAxisTitle, counts.widest), min: 0, max: counts.max, interval: counts.interval, axisLabel: { color: axis, formatter: (value: number) => counts.format(value) }, splitLine: { lineStyle: { color: p.grid } } },
     dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, zoomSlider(p)],
     series: [
       { name: '4xx client errors', type: 'line', connectNulls: false, ...lineSeriesPerf(client, 6), data: client, lineStyle: { color: p.warn, width: 2.5 }, itemStyle: { color: p.warn } },
@@ -235,9 +245,11 @@ export const timelineOption = (analysis: Analysis, selected: Comparison | null, 
   const labels = axisTimeLabels(points, zone);
   const chosen = selected;
   const current50 = points.map(point => finite(point.p50?.valueMs)), current95 = points.map(point => finite(point.p95?.valueMs));
+  // One unit and one precision on the whole axis (BL-510); the unit is in the title. The reference lines and the target count too, so none is clipped.
+  const times = durationAxis(Math.max(0, ...current50.map(value => value ?? 0), ...current95.map(value => value ?? 0), finite(chosen?.reference.p50?.valueMs) ?? 0, finite(chosen?.reference.p95?.valueMs) ?? 0, targetMs ?? 0));
   return {
     animation: false,
-    grid: { left: 84, right: 18, top: 62, bottom: 58 },
+    grid: { left: leftMargin(times.widest, 84), right: 18, top: 62, bottom: SLIDER_GRID_BOTTOM },
     tooltip: {
       ...tipStyle(p), trigger: 'axis',
       formatter: (items: Array<{ seriesName: string; data: number | null; dataIndex: number }>) => {
@@ -249,8 +261,8 @@ export const timelineOption = (analysis: Analysis, selected: Comparison | null, 
       }
     },
     legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 76, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: p.text2, fontSize: 12 } },
-    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, interval: 0, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } } },
-    yAxis: { type: 'value', name: 'Response time', nameLocation: 'middle', nameGap: 52, min: 0, minInterval: 1, axisLabel: { color: axis, formatter: (value: number) => axisDuration(value) }, splitLine: { lineStyle: { color: p.grid } } },
+    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, interval: 0, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } }, ...timeTitle(p, zone) },
+    yAxis: { type: 'value', ...valueTitle(p, latencyAxisTitle(times.unit), times.widest), min: 0, max: times.maxMs, interval: times.intervalMs, axisLabel: { color: axis, formatter: (value: number) => times.format(value) }, splitLine: { lineStyle: { color: p.grid } } },
     dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, zoomSlider(p)],
     series: [
       { name: 'Current median', type: 'line', connectNulls: false, ...lineSeriesPerf(current50, 6), data: current50, lineStyle: { color: p.text2, width: 2.5 }, itemStyle: { color: p.text2 } },
@@ -267,17 +279,19 @@ export const ratioOption = (analysis: Analysis, selected: Comparison | null, zon
   const p = palette(), axis = p.text2;
   const points = alignedPoints(analysis, selected?.key ?? null);
   const labels = axisTimeLabels(points, zone);
+  // A ratio axis: the same decimals on every tick, from 0, with 1 (the reference) always inside (BL-510).
+  const ratios = valueAxis([...points.map(point => finite(point.p95Ratio)), 1], 4, 2);
   return {
     animation: false,
-    grid: { left: 76, right: 18, top: 22, bottom: 58 },
+    grid: { left: leftMargin(ratios.widest + '×', 76), right: 18, top: 22, bottom: SLIDER_GRID_BOTTOM },
     tooltip: { ...tipStyle(p), trigger: 'axis', formatter: (items: Array<{ data: number | null; dataIndex: number }>) => {
       const item = items[0]; const point = points[item.dataIndex];
       return (point ? tooltipTimestamp(point.at, zone) + '<br/>' : '') +
         '95th-percentile response time vs reference: ' + (item.data == null ? 'N/A' : '≈ ' + item.data.toFixed(2) + '×') +
         '<br/>Observed requests: ' + (point?.count ?? 'N/A');
     } },
-    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, interval: 0, hideOverlap: true } },
-    yAxis: { type: 'value', name: 'Response time vs reference', nameLocation: 'middle', nameGap: 48, min: 0, axisLabel: { color: axis, formatter: (value: number) => Number(value.toFixed(2)) + '×' }, splitLine: { lineStyle: { color: p.grid } } },
+    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, interval: 0, hideOverlap: true }, ...timeTitle(p, zone) },
+    yAxis: { type: 'value', ...valueTitle(p, ratioAxisTitle, ratios.widest + '×'), min: 0, max: ratios.max, interval: ratios.interval, axisLabel: { color: axis, formatter: (value: number) => ratios.format(value) + '×' }, splitLine: { lineStyle: { color: p.grid } } },
     dataZoom: [{ type: 'inside' }, zoomSlider(p)],
     series: [{ type: 'line', name: 'Response time vs reference', showSymbol: false, connectNulls: false, data: points.map(point => finite(point.p95Ratio)), lineStyle: { color: p.accent, width: 2.5 }, markLine: { symbol: 'none', lineStyle: { type: 'dashed', color: p.pending }, data: [{ yAxis: 1 }] } }]
   };
@@ -383,9 +397,16 @@ export const multiTimelineOption = (analysis: Analysis, keys: string[], sources:
   const slots = aligned[0] ?? [];
   const displaySlots = slots.map(point => ({ ...point, at: new Date(Math.max(Date.parse(point.at), Date.parse(analysis.query.start))).toISOString() }));
   const labels = axisTimeLabels(slots, zone);
+  // The value axis: whole responses for a failure count, otherwise a signed change in one unit and one precision (BL-510).
+  const shown = rows.flatMap((row, i) => aligned[i].map(point => valueAt(row, point))).filter((value): value is number => value != null && Number.isFinite(value));
+  const counts = countAxis(Math.max(0, ...shown));
+  const changeMs = signedDurationAxis(shown), changePercent = valueAxis(shown, 4, 10);
+  const yTitle = failure ? failuresAxisTitle : changeAxisTitle(mode === 'percent' ? '%' : changeMs.unit);
+  // Positive ticks of the change axes carry a "+", so the margin counts one more character.
+  const yWidest = failure ? counts.widest : '+' + (mode === 'percent' ? changePercent.widest : changeMs.widest);
   return {
     animation: false,
-    grid: { left: 90, right: 78, top: 20, bottom: 64 },
+    grid: { left: leftMargin(yWidest, 90), right: 78, top: 20, bottom: SLIDER_GRID_BOTTOM + 4 },
     tooltip: { ...tipStyle(p), trigger: 'axis', confine: true, formatter: (items: Array<{ dataIndex: number }>) => {
       const index = items[0]?.dataIndex ?? 0;
       return (displaySlots[index] ? tooltipTimestamp(displaySlots[index].at, zone) + '<br/>' : '') + rows.map((row, i) => {
@@ -396,8 +417,13 @@ export const multiTimelineOption = (analysis: Analysis, keys: string[], sources:
         return `<b>${i + 1}. ${escapeHTML(row.controller)}.${escapeHTML(row.action)}</b><br/>${escapeHTML(sources.get(row.sourceId) ?? row.sourceId)} · ${escapeHTML(row.kind)} · ${escapeHTML(row.outcome)}<br/>Change: ${change == null ? 'Unavailable' : (change > 0 ? '+' : '') + change.toFixed(1) + (mode === 'percent' ? '%' : ' ms')} · Usable timings: ${point?.count ?? 0}<br/>Current ${series.toUpperCase()}: ${finite(point?.[series as PercentileSeries]?.valueMs)?.toFixed(1) ?? 'N/A'} ms · Reference ${series.toUpperCase()}: ${finite(row.reference[series as PercentileSeries]?.valueMs)?.toFixed(1) ?? 'N/A'} ms${reliable ? '' : '<br/>Few or missing samples — treat this point cautiously.'}`;
       }).join('<br/><br/>');
     } },
-    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, interval: 0, hideOverlap: true } },
-    yAxis: { type: 'value', name: failure ? 'Responses per interval' : mode === 'percent' ? 'Change from own reference (%)' : 'Change from own reference', nameLocation: 'middle', nameGap: 62, ...(failure ? { min: 0, minInterval: 1 } : mode === 'milliseconds' ? { minInterval: 1 } : {}), axisLabel: { color: axis, ...(!failure && mode === 'milliseconds' ? { formatter: (value: number) => (value > 0 ? '+' : '') + axisDuration(value) } : {}) }, splitLine: { lineStyle: { color: p.grid } } },
+    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, interval: 0, hideOverlap: true }, ...timeTitle(p, zone) },
+    yAxis: {
+      type: 'value', ...valueTitle(p, yTitle, yWidest),
+      ...(failure ? { min: 0, max: counts.max, interval: counts.interval } : mode === 'percent' ? { min: changePercent.min, max: changePercent.max, interval: changePercent.interval } : { min: changeMs.min, max: changeMs.max, interval: changeMs.interval }),
+      axisLabel: { color: axis, formatter: (value: number) => failure ? counts.format(value) : (value > 0 ? '+' : '') + (mode === 'percent' ? changePercent.format(value) : changeMs.format(value)) },
+      splitLine: { lineStyle: { color: p.grid } }
+    },
     dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, zoomSlider(p)],
     series: rows.map((row, i) => ({ name: `${i + 1}. ${row.controller}.${row.action}`, type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, z: 3 + i, lineStyle: { color: p.series[i], ...timelineLineStyle(i) }, itemStyle: { color: p.series[i] },
       data: aligned[i].map(point => ({ value: valueAt(row, point), symbol: !failure && ((point.count ?? 0) < MIN_SAMPLE || row.state !== 'compared') ? 'emptyCircle' : 'circle', itemStyle: { opacity: !failure && ((point.count ?? 0) < MIN_SAMPLE || row.state !== 'compared') ? .45 : 1 } })),
