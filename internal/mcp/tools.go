@@ -145,6 +145,11 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if err := strictArgs(raw, &args); err != nil {
 			return nil, err
 		}
+		if len(args.Query.SourceIDs) > 0 { // none named: validation says so, and request() still refuses it on a scoped bridge
+			if err := b.checkScope(args.Query); err != nil { // before validation: every id outside the grant, a blank one included, is refused alike
+				return nil, err
+			}
+		}
 		if err := audit.ValidateQuery(args.Query); err != nil {
 			return nil, err
 		}
@@ -179,23 +184,21 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		b.mu.Unlock()
 		page, _ := groupPage(result.APIs, pageArgs)
 		comparable, limited := 0, 0
-		var currentEvents, referenceEvents int64
 		for _, row := range result.APIs {
 			if row.State == "compared" {
 				comparable++
 			} else {
 				limited++
 			}
-			currentEvents += row.CurrentEvents
-			referenceEvents += row.ReferenceEvents
 		}
+		b.pageGroups(&result, page)
 		page["resultId"] = id
 		page["query"] = result.Query
 		page["sources"] = result.Sources
 		page["quality"] = result.Quality
 		page["comparableGroups"] = comparable
 		page["groupsWithoutReliableRatio"] = limited
-		page["recordedEvents"] = map[string]any{"current": currentEvents, "reference": referenceEvents, "currentPerSecond": float64(currentEvents) / args.Query.End.Sub(args.Query.Start).Seconds(), "referencePerSecond": float64(referenceEvents) / args.Query.BaselineEnd.Sub(args.Query.BaselineStart).Seconds()}
+		page["recordedEvents"] = b.recorded(&result, args.Query)
 		page["approximate"] = result.Approximate
 		withProvenance(page, result.Provenance)
 		page["expiresInSeconds"] = int(resultTTL.Seconds())
@@ -216,6 +219,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 			return nil, err
 		}
 		page["resultId"] = args.ResultID
+		b.pageGroups(result, page)
 		return page, nil
 	case "audit_get_timeline":
 		var args struct {
@@ -233,6 +237,9 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if err != nil {
 			return nil, err
 		}
+		if b.hiddenGroup(result, row) {
+			return nil, b.groupHidden()
+		}
 		points := []audit.Point{}
 		for _, series := range result.Timeline {
 			if series.Key == args.APIKey {
@@ -240,7 +247,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 				break
 			}
 		}
-		return map[string]any{"resultId": args.ResultID, "query": result.Query, "group": row, "points": points, "note": "Each point summarizes a time slot, not an individual request. Absent slots are missing observations, not zero duration. Reference statistics cover the whole fixed earlier period. Slot P95 values with few samples are unstable; inspect counts and narrow the interval before claiming precise incident boundaries."}, nil
+		return map[string]any{"resultId": args.ResultID, "query": result.Query, "group": row, "points": b.points(row, points), "note": "Each point summarizes a time slot, not an individual request. Absent slots are missing observations, not zero duration. Reference statistics cover the whole fixed earlier period. Slot P95 values with few samples are unstable; inspect counts and narrow the interval before claiming precise incident boundaries."}, nil
 	case "audit_compare_timelines":
 		var args struct {
 			ResultID string   `json:"resultId"`
@@ -253,7 +260,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if err != nil {
 			return nil, err
 		}
-		return compareTimelines(result, args.ResultID, args.APIKeys)
+		return b.compareTimelines(result, args.ResultID, args.APIKeys)
 	case "audit_get_requests":
 		var args struct {
 			ResultID string `json:"resultId"`
@@ -282,7 +289,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		}
 		rows := make([]map[string]any, 0, len(page.Rows))
 		for _, record := range page.Rows {
-			rows = append(rows, projectRecord(record))
+			rows = append(rows, b.projectRecord(record))
 		}
 		out := map[string]any{"resultId": args.ResultID, "sourceId": row.SourceID, "controller": row.Controller, "action": row.Action, "kind": row.Kind, "outcome": row.Outcome, "query": echoQuery(result.Query), "rows": rows, "nextCursor": page.NextCursor, "sources": page.Sources, "truncated": page.Truncated, "note": "Newest-first metadata page; not a random sample or a complete ranking of slow requests. AuditCreateTime plus ApiTime make up total latency; PayloadRecordTime happens after the response and is not latency. Do not infer database, network or queue wait from them without checking their instrumentation in code."}
 		withProvenance(out, page.Provenance)

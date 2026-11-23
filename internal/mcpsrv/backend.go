@@ -35,6 +35,7 @@ type profileBridge struct {
 	rev         int
 	identifiers bool
 	sources     []string
+	tier        string
 	b           *mcp.Bridge
 }
 
@@ -49,12 +50,18 @@ func NewLocalBackend(dashboard http.Handler, token string) *LocalBackend {
 func (l *LocalBackend) bridgeFor(p Profile, identifiers bool) *mcp.Bridge {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if e := l.bridges[p.ID]; e != nil && e.rev == p.Rev && e.identifiers == identifiers && slices.Equal(e.sources, p.Sources) {
+	if e := l.bridges[p.ID]; e != nil && e.rev == p.Rev && e.identifiers == identifiers && e.tier == p.Tier && slices.Equal(e.sources, p.Sources) {
 		return e.b
 	}
 	// The source scope of the grant is part of the bridge: it can reach no other source, whatever a tool is asked.
-	b := mcp.NewLocal(l.dashboard, l.token, mcp.WithIdentifiers(identifiers), mcp.WithSources(p.Sources))
-	l.bridges[p.ID] = &profileBridge{rev: p.Rev, identifiers: identifiers, sources: slices.Clone(p.Sources), b: b}
+	// The tier decides what a count looks like: an aggregate host never sees a count of fewer than MinCohort events, and no host without
+	// the identifiers grant sees the audit record id of a row.
+	opts := []mcp.Option{mcp.WithIdentifiers(identifiers), mcp.WithSources(p.Sources), mcp.WithHiddenRecordIDs(!identifiers)}
+	if p.Tier != TierEvidence {
+		opts = append(opts, mcp.WithMinCohort(MinCohort)) // any tier but evidence, an unknown one included: fail closed
+	}
+	b := mcp.NewLocal(l.dashboard, l.token, opts...)
+	l.bridges[p.ID] = &profileBridge{rev: p.Rev, identifiers: identifiers, sources: slices.Clone(p.Sources), tier: p.Tier, b: b}
 	return b
 }
 
