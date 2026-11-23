@@ -4,6 +4,8 @@ Date 2026-11-23, revised the same day after review 1 of PR #247 (section "Review
 
 ## Verdict: GO, on the official SDK, with the bounds kept in front of it
 
+Note on the groom item's "handwritten parser gone": the hand-rolled loop and its dispatch are gone, but `sdkline.go` is a new, small handwritten reader in front of the SDK (one strict parse per line, canonical message out). It is what makes the bounds hold, so it is security code and is covered by `TestSDKDecoderAgreesWithTheLoop` and `FuzzReadLine`.
+
 - SDK: `github.com/modelcontextprotocol/go-sdk` **v1.8.0** (newest release; `v1.9.0-pre.1` exists and is not used). It serves protocol 2026-07-28 (per-request lifecycle, SEP-2575) and falls back to the `initialize` handshake for 2024-11-05 to 2025-11-25, on stdio, with no HTTP code needed.
 - It cannot be used bare. Out of the box it misses several bounds of today's hand-rolled loop (list below). They are held by a thin loop in front of the SDK. The loop in this pull request (`serveSDK` in `sdk_proto_test.go`) is the spike's first version and is **not** the reference: review 1 found it checked one reading of a line and gave the SDK another (see "Review 1"). The reference is `sdkserver.go` and `sdkline.go` in BL-342 (PR #247), which sends the SDK only a message it built itself; the tests named below as "(#247)" are the ones that hold the bounds there. The spec allows exactly this: "or the failing bound can be enforced in a wrapper before the SDK".
 - Footprint is inside the limit: **+1.6 to +2.4 MiB** against the limit of +4 MiB (table below).
@@ -82,6 +84,21 @@ Parser note (corrected): `encoding/json` matches keys without regard to case and
 
 Found while fixing, not by the review: when the host wrote its requests and closed the pipe at once (a script, `echo ... | audit-explorer --mcp`), the first SDK loop ended the session before it had answered them, where the hand-rolled loop answered each one first. #247 now answers every request it has read (calls still running are abandoned, as before) and then ends: `TestSDKAnswersWhatWasReadBeforeEOF`. The fuzz harness and most tests keep the pipe open, which is why nothing had shown it.
 
+## Review 2 (2026-11-23, on PR #247 head `ad9cc654`): what changed
+
+Review 2 found that the text above ("the SDK is sent only a message re-encoded from the fields that passed") was still not true for `params`: the envelope was rebuilt but the client's own `params` bytes went on, so two things were wrong.
+
+| Finding | Was | Fix in #247 | Test |
+|---|---|---|---|
+| M1 a valid line under 1 MiB closed the session | the canonical message was built with `json.Marshal`, which escapes `<`, `>`, `&` to six bytes; about 350 KB of them made a message past the SDK's 2 MiB frame cap, the SDK's reader failed and the process exited | the message is built with `json.Compact` and a non-escaping string encoder; a message over 1 MiB is refused with -32600; the SDK's own cap stays at twice that, as a margin | `TestSDKValidJSONKeepsSession` (350 KB of `<`, 400 KB of `&`, 900 KB of `>` in a cursor, in tool arguments and in a method), size check in `checkDifferential` |
+| M2 the checks and the SDK read different `name` / `arguments` | `strictArgs` reads keys in any case (and Unicode folds such as U+017F); the SDK does not. `ARGUMENTS`, `Arguments`, `argumentſ`, `Name`, `_META` passed the checks and the SDK saw no arguments (the tool ran with defaults) or no name | for `tools/call`, params are rebuilt from the fields the checks read, under their exact names (`name`, `arguments`, `_meta`). For other methods the loop reads nothing from params except "is an object", so there is no second reading to differ | `TestSDKToolParamsKeyCaseMatchesLegacy` (same answers as the hand-rolled loop; arguments are never dropped), `checkTypedReading` (the SDK's case-sensitive decoder, `segmentio/encoding/json` with `DontMatchCaseInsensitiveStructFields`, against `strictArgs` on the client's line) in `FuzzReadLine` and `TestSDKDecoderAgreesWithTheLoop` |
+| S1 D24 prefixes | missing | every description starts `Live query.` (activity, compare, requests, slowest, breakdown) or `Cached, no query.` (guide, sources, groups, timeline, compare_timelines); catalog golden updated | `TestToolDescriptionsSayLiveOrCached`, `TestCatalogDigest` |
+| S2 unused code linked in | `oauth2`, `x/time/rate`, `uritemplate`, `jsonschema-go`, and the SDK's `auth` and `oauthex` packages are linked into `audit-explorer` and `unravis` because `go-sdk/mcp` imports them unconditionally; they cannot be left out without forking the SDK | accepted, and counted: stripped Linux build 39,915,783 B against 38,060,192 B today, +1.77 MiB, limit +4 MiB. They widen what `govulncheck` has to cover, so that gate matters more | `go list -deps ./cmd/audit-explorer` |
+| S4 ids rewritten | a string id with invalid UTF-8 or a lone surrogate came back as U+FFFD, and two such ids collided | refused with -32600 | `TestSDKValidJSONKeepsSession`, differential seeds |
+| nit | error code `0` | mapped to -32600 | `TestSDKKnownWireDifferences` |
+
+Other places where `encoding/json` and the SDK decoder can disagree were checked by a typed differential (`checkTypedReading`) and by seeds in `FuzzReadLine`: duplicate keys (refused by `strictShape`), case and Unicode-fold variants of keys (refused when duplicated; read by the loop and rebuilt under exact names for `tools/call`), `\u` escapes in keys and strings, a BOM (not valid JSON: -32700), number forms (`1.0E+2`, `-0`, `0.1e-400`, ids only plain integers up to 2^53-1), invalid UTF-8 and lone surrogates (ids refused; elsewhere passed through unchanged), depth (limit 256), trailing and leading blanks, and size growth by escaping. `govulncheck` is still not run (refused in this session too): it is a hard gate before merge, and its result goes into this document.
+
 Left as the spec describes and not built in BL-342: `upstream.go` and `legacy_transport.go` (the loop is still `Bridge.Serve`; the hand-rolled loop is kept only as the test reference `legacy_serve_test.go`), and a `runMCP` that builds `mcp.NewServer(upstream, opts)`. Listed here and in `docs/BACKLOG.md` so they are not read as done.
 
 ## Known differences (pinned by `TestSDKKnownWireDifferences`)
@@ -91,8 +108,8 @@ Left as the spec describes and not built in BL-342: `upstream.go` and `legacy_tr
 | Successful `tools/call` | `"isError": false` | `isError` left out | optional in the schema, default false |
 | Stateless results | n/a | `"resultType": "complete"`, `_meta` carries `serverInfo` | required by 2026-07-28; absent after a handshake |
 | `tools/list`, `server/discover` | no cache fields | `ttlMs: 0`, `cacheScope: "private"` | additive; this is the private zero-TTL metadata BL-342 asks for |
-| Request before `initialize` | `-32000 Initialize the MCP session first` | error with code `0`, "invalid during session initialization" | both are JSON-RPC errors for a host bug; message differs |
-| Second `initialize` | `-32600 Already initialized` | error with code `0` | same |
+| Request before `initialize` | `-32000 Initialize the MCP session first` | `-32600 Invalid request` (the SDK's own code `0` is mapped; its text is replaced) | both are JSON-RPC errors for a host bug; message differs |
+| Second `initialize` | `-32600 Already initialized` | `-32600 Invalid request` | same code, fixed text |
 | `tools/list` with a cursor | cursor ignored | `-32602 invalid params` | the catalog has one page and no cursor is ever handed out |
 | `ping` | answered | answered after a handshake, `-32601` on the stateless lifecycle | a stateless client has no session to ping; hosts do not ping a stdio server they just launched |
 | Key order in JSON | sorted | struct order | not meaningful |
@@ -102,7 +119,7 @@ Left as the spec describes and not built in BL-342: `upstream.go` and `legacy_tr
 | Integer id beyond +-(2^53-1) | exact | `-32600` | the SDK carries ids as float64 and would answer another number |
 | `params` that is not an object | ignored on `tools/list`, `ping` | `-32602 Invalid params` | fixed text instead of the SDK quoting it |
 | A second request with the id of a running request, of any method | answered | `-32600 Request id is already in flight` | a ping answer must not free a call's slot |
-| Error text | per case | fixed per code; code `0` (SDK) kept for "not initialized" cases | no echo of client input |
+| Error text | per case | fixed per code; the SDK's code `0` becomes `-32600` | no echo of client input |
 | `serverInfo.version` | `1.0.0` | build version (`internal/version`, "dev" when unstamped) | spec 03-mcp |
 | `audit_compare` `idempotentHint` | true | false | spec 03-mcp BL-342 |
 | `-32022` data | n/a | `supported` only | the version asked for is not sent back |
