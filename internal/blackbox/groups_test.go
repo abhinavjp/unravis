@@ -317,6 +317,7 @@ func TestApplyGroupAllFields(t *testing.T) {
 		{"memPressure", &MemPressureGroup{}, func(s *Sample) any { return s.MemPressure }},
 		{"vm", &VMGroup{}, func(s *Sample) any { return s.VM }},
 		{"dumps", &DumpsGroup{}, func(s *Sample) any { return s.Dumps }},
+		{"sqlLog", &SQLLogGroup{}, func(s *Sample) any { return s.SQLLog }},
 	}
 	for _, c := range cases {
 		var s Sample
