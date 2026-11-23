@@ -8,7 +8,8 @@ const { loadTypeScript } = require('./helpers/loadTs.cjs');
 
 const cp = loadTypeScript('src/lib/chartPerf.ts');
 const src = path.resolve(__dirname, '..', 'src');
-const read = (file) => fs.readFileSync(path.join(src, file), 'utf8');
+// CRLF -> LF at the read point: a Windows checkout has CRLF, and the patterns below use \n.
+const read = (file) => fs.readFileSync(path.join(src, file), 'utf8').replace(/\r\n/g, '\n');
 function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
