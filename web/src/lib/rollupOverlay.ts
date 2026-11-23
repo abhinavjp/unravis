@@ -1,5 +1,6 @@
 import { countAxis, durationAxis, hourAxisTitle, labelWidth } from './chartAxis';
 import { HOURS_PER_ROW, dayLabel, gridRows, latencyText, whole, zoneNote, type GridRow, type HourCell, type HourGridResponse } from './rollup';
+import { bold, richTip, rt } from './chartTooltip';
 
 /*
  * Two days laid over each other on one 0 to 23 hour axis (the "Compare two days" part of the daily and hourly view).
@@ -162,7 +163,6 @@ export function overlaySummary(first: OverlayDay, second: OverlayDay, metric: Ov
 /** The palette fields the option reads. `Palette` from charts.ts fits it. */
 export interface OverlayPalette { text: string; text2: string; axisLine: string; grid: string; surface: string; series: string[] }
 
-const escapeHTML = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char);
 
 /** The line looks of the first and second day. The second is thinner and drawn on top, with another dot shape, so two equal lines both show. */
 export const overlayLook = [
@@ -205,10 +205,10 @@ export function overlayOption(first: OverlayDay, second: OverlayDay, metric: Ove
     // No chart legend: the key above the chart (plain HTML) names both lines and the dashed style.
     grid: { left: Math.max(62, labelWidth(widest) + 14 + 17), right: 16, top: 16, bottom: 48 },
     tooltip: {
-      trigger: 'axis', confine: true, backgroundColor: p.surface, borderColor: p.axisLine, textStyle: { color: p.text, fontSize: 12 },
+      ...richTip(p, { trigger: 'axis', confine: true }),
       formatter: (items: Array<{ dataIndex: number }>) => {
         const hour = items[0]?.dataIndex ?? 0;
-        return '<b>' + hourText(hour) + '</b><br/>' + days.map(day => escapeHTML(day.label) + ': ' + escapeHTML(pointText(day.points[hour] ?? emptyPoint(hour), metric))).join('<br/>');
+        return bold(hourText(hour)) + '\n' + days.map(day => rt(day.label) + ': ' + rt(pointText(day.points[hour] ?? emptyPoint(hour), metric))).join('\n');
       }
     },
     xAxis: { type: 'category', data: hours, boundaryGap: false, axisLabel: { color: p.text2, interval: 2, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } }, name: hourAxisTitle, nameLocation: 'middle', nameGap: 28, nameTextStyle: titleStyle },

@@ -131,7 +131,7 @@ test('the caption names the zone and the summary names both days, the high and t
   assert.match(o.overlaySummary(none, none, 'p95', 'UTC'), /no values/);
 });
 
-test('the chart option has two solid series, two dashed ones, 24 hours and a tooltip that escapes', () => {
+test('the chart option has two solid series, two dashed ones, 24 hours and a rich-text tooltip that defuses names', () => {
   const grid = gridOf([dayRow('2001-03-01'), dayRow('2001-03-02')], [...fullDay('2001-03-01'), ...fullDay('2001-03-02', hour => hour === 4 ? { count: 2, noise: true, p95: null } : {})]);
   const a = o.overlayDay(grid, '2001-03-01'), b = o.overlayDay(grid, '2001-03-02');
   const palette = { text: '#000', text2: '#555', axisLine: '#ccc', grid: '#eee', surface: '#fff', series: ['#111', '#222'] };
@@ -146,8 +146,9 @@ test('the chart option has two solid series, two dashed ones, 24 hours and a too
   assert.equal(option.series[3].data[4].itemStyle.borderColor, '#222');
   assert.equal(option.series[3].data[0].value, null);
   assert.ok(Number.isInteger(option.yAxis.interval) && option.yAxis.interval >= 1, 'a count axis steps in whole requests');
-  const evil = o.overlayOption({ ...a, label: '<b>x</b>' }, b, 'count', palette);
-  assert.doesNotMatch(evil.tooltip.formatter([{ dataIndex: 4 }]), /<b>x<\/b>/);
+  const evil = o.overlayOption({ ...a, label: '{b|x}' }, b, 'count', palette);
+  assert.equal(evil.tooltip.renderMode, 'richText');
+  assert.doesNotMatch(evil.tooltip.formatter([{ dataIndex: 4 }]), /\{b\|x\}/, 'a rich-text style tag in a label is defused');
   assert.match(evil.tooltip.formatter([{ dataIndex: 4 }]), /04:00/);
   // The P95 axis names its unit once in the title; its ticks are bare numbers with one precision (BL-510).
   const p95 = o.overlayOption(a, b, 'p95', palette).yAxis;

@@ -73,8 +73,17 @@ jobs:
           npm test
           npm run selftest
 
+      - name: Strict-CSP run (BL-323)
+        # The demo app's pages under the desktop window's policy: any securitypolicyviolation fails. See tools/uiaudit/README.md.
+        working-directory: tools/uiaudit
+        run: |
+          go build -o ../../.csp-demo.exe ../../cmd/audit-explorer
+          UNRAVIS_EXE="$(cd ../.. && pwd)/.csp-demo.exe" npm run csp
+
       - name: Run the audit
         id: audit
+        # A failed CSP step must not hide the audit report of the same run.
+        if: ${{ !cancelled() }}
         working-directory: tools/uiaudit
         run: node run-audit.mjs
 
