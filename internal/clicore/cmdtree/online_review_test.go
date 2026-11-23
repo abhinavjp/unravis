@@ -255,7 +255,7 @@ func TestRequestInputEdges(t *testing.T) {
 func TestStdinThatNeverAnswersStopsAtTheDeadline(t *testing.T) {
 	o := newOwner(t, nil)
 	pr, pw := io.Pipe()
-	defer pw.Close()
+	defer func() { _ = pw.Close() }()
 	var out, errb bytes.Buffer
 	done := make(chan int, 1)
 	go func() {
