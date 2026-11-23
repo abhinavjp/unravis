@@ -113,7 +113,8 @@ func (f *frameWriter) failure() error {
 	return f.err
 }
 
-// Write sends one message the SDK produced.
+// Write sends one message the SDK produced. A server notification over the cap is dropped (the server sends none: no list-changed, no
+// logging, no progress).
 func (f *frameWriter) Write(p []byte) (int, error) {
 	var head struct {
 		ID     json.RawMessage `json:"id"`
@@ -165,6 +166,9 @@ func errorText(code int) string {
 // scrubbedError is the error answer for id with the SDK's code, a fixed text and no data, except the list of versions the server speaks
 // (SEP-2575), which a client needs to pick one. The version the client asked for is not sent back.
 func scrubbedError(id json.RawMessage, code int, data json.RawMessage) []byte {
+	if code == 0 {
+		code = -32600 // the SDK uses 0 for "not initialized" and "already initialized"; 0 is not a JSON-RPC code
+	}
 	answer := map[string]any{"code": code, "message": errorText(code)}
 	if code == -32022 {
 		var versions struct {

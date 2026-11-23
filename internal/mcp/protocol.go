@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -36,6 +38,10 @@ func idKey(id json.RawMessage) string {
 	}
 	switch v := value.(type) {
 	case string:
+		// A string with invalid UTF-8 or a lone surrogate would come back changed (U+FFFD), and two such ids would collide: refused.
+		if strings.ContainsRune(v, utf8.RuneError) {
+			return ""
+		}
 		data, _ := json.Marshal(v)
 		return string(data)
 	case json.Number:

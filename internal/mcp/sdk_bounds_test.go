@@ -692,6 +692,10 @@ func FuzzServeSDK(f *testing.F) {
 		burst += `{"jsonrpc":"2.0","ID":"u` + fmt.Sprint(i) + `","method":"tools/call","params":{"name":"audit_list_sources","arguments":{}}}` + "\n"
 	}
 	f.Add([]byte(start + burst))
+	// Review 2: escapable characters (< > &) that grow sixfold when a JSON encoder escapes them; keys read in another case.
+	f.Add([]byte(start + `{"jsonrpc":"2.0","id":"p1","method":"ping","params":{"x":"` + strings.Repeat("<", 350000) + `"}}` + "\n"))
+	f.Add([]byte(start + `{"jsonrpc":"2.0","id":"p1","method":"tools/call","params":{"name":"audit_get_guide","ARGUMENTS":{"bogus":1}}}` + "\n"))
+	f.Add([]byte(start + `{"jsonrpc":"2.0","id":"p1","method":"tools/call","params":{"nAme":"audit_get_guide","argumentſ":{}}}` + "\n"))
 	f.Add([]byte(start + call("9007199254740993") + "\n" + call("9007199254740995") + "\n" + call("9007199254740997") + "\n" + call("9007199254740999") + "\n"))
 	deep := strings.Repeat("[", 1001) + strings.Repeat("]", 1001)
 	for _, probe := range []string{

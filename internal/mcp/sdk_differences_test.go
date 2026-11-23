@@ -50,7 +50,7 @@ func TestSDKKnownWireDifferences(t *testing.T) {
 		for _, c := range []struct {
 			im   impl
 			code int
-		}{{legacyImpl, -32000}, {sdkImpl, 0}} {
+		}{{legacyImpl, -32000}, {sdkImpl, -32600}} {
 			w := dial(t, c.im, bridgeFor(t, srv))
 			w.send(`{"jsonrpc":"2.0","id":"early","method":"tools/list"}`)
 			res := w.reply("early")

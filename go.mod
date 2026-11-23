@@ -7,6 +7,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/ncruces/go-sqlite3 v0.38.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	github.com/segmentio/encoding v0.5.4
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
 	go.mongodb.org/mongo-driver v1.17.10
@@ -28,7 +29,6 @@ require (
 	github.com/ncruces/go-sqlite3-wasm/v6 v6.7.35401 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
-	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/xdg-go/scram v1.4.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect

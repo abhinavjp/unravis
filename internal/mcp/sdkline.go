@@ -139,6 +139,11 @@ func readLine(line []byte) (*sdkLine, *lineRefusal) {
 	if len(params) != 0 && params[0] != '{' {
 		return nil, &lineRefusal{id: id, code: -32602, message: "Invalid params", silent: !isRequest}
 	}
+	// What the SDK is sent as params. For tools/call it is rebuilt from the fields the checks read, under their exact names: the checks
+	// read keys without regard to case (encoding/json), the SDK does not, so the client's own bytes would be two different messages
+	// (review 2, M2). For the other methods the loop reads nothing from params beyond "is an object"; the SDK reads what it reads, and its
+	// errors are scrubbed. Either way the bytes are compacted without HTML escaping (review 2, M1: escaping made a valid line grow sixfold).
+	body := params
 	if request.Method == "tools/call" {
 		var call struct {
 			Name      string          `json:"name"`
@@ -148,17 +153,51 @@ func readLine(line []byte) (*sdkLine, *lineRefusal) {
 		if strictArgs(params, &call) != nil || call.Name == "" {
 			return nil, &lineRefusal{id: id, code: -32602, message: "Invalid tools/call parameters"}
 		}
+		var rebuilt bytes.Buffer
+		rebuilt.WriteString(`{"name":`)
+		rebuilt.Write(jsonText(call.Name))
+		for _, field := range []struct {
+			key   string
+			value json.RawMessage
+		}{{"arguments", call.Arguments}, {"_meta", call.Meta}} {
+			if len(field.value) != 0 {
+				rebuilt.WriteString(`,"` + field.key + `":`)
+				rebuilt.Write(field.value)
+			}
+		}
+		rebuilt.WriteByte('}')
+		body = rebuilt.Bytes()
 	}
-	message := map[string]any{"jsonrpc": "2.0", "method": request.Method}
+	var compact bytes.Buffer
+	if len(body) != 0 {
+		if json.Compact(&compact, body) != nil {
+			return nil, &lineRefusal{id: id, code: -32600, message: "Invalid request", silent: !isRequest}
+		}
+	}
+	var message bytes.Buffer
 	if isRequest {
-		message["id"] = id
+		message.WriteString(`{"id":` + string(id) + `,`)
+	} else {
+		message.WriteByte('{')
 	}
-	if len(params) != 0 {
-		message["params"] = json.RawMessage(params)
+	message.WriteString(`"jsonrpc":"2.0","method":` + string(jsonText(request.Method)))
+	if compact.Len() != 0 {
+		message.WriteString(`,"params":`)
+		message.Write(compact.Bytes())
 	}
-	data, err := json.Marshal(message)
-	if err != nil {
+	message.WriteByte('}')
+	if message.Len() > maxMessage {
+		// The SDK's frame cap is twice this; a message that grew past the line cap is refused rather than put near it.
 		return nil, &lineRefusal{id: id, code: -32600, message: "Invalid request", silent: !isRequest}
 	}
-	return &sdkLine{message: data, id: id, method: request.Method, params: params}, nil
+	return &sdkLine{message: message.Bytes(), id: id, method: request.Method, params: compact.Bytes()}, nil
+}
+
+// jsonText encodes a string as JSON without HTML escaping (and with invalid UTF-8 replaced, as encoding/json always does).
+func jsonText(s string) []byte {
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(s)
+	return bytes.TrimSuffix(out.Bytes(), []byte("\n"))
 }

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	segjson "github.com/segmentio/encoding/json"
 )
 
 // BL-342 review 1 (docs/desktop/spikes/BL-341-go-sdk.md): each test here fails against the loop as it was when the review was made.
@@ -70,12 +71,21 @@ func TestSDKValidJSONKeepsSession(t *testing.T) {
 		{"notification tools/call", `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"audit_get_guide","arguments":{}}}`, ""},
 		{"notification with a bad shape", `{"jsonrpc":"2.0","method":"notifications/cancelled","params":"x"}`, ""},
 		{"cancel with an object id", `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":{}}}`, ""},
-		{"initialize twice", initLine, "error 0"},
+		{"initialize twice", initLine, "error -32600"},
 		{"huge version", `{"jsonrpc":"2.0","id":"p1","method":"initialize","params":{"protocolVersion":"` + strings.Repeat("V", 5000) + `","capabilities":{},"clientInfo":{"name":"x","version":"1"}}}`, ""},
 		{"unicode escapes", `{"jsonrpc":"2.0","id":"p1","method":"ping"}`, "result"},
 		{"lone surrogate in params", `{"jsonrpc":"2.0","id":"p1","method":"ping","params":{"x":"\ud800"}}`, "result"},
 		{"big number in params", `{"jsonrpc":"2.0","id":"p1","method":"ping","params":{"x":1e999999}}`, "result"},
 		{"id past 2^53", `{"jsonrpc":"2.0","id":9007199254740993,"method":"ping"}`, "error -32600"},
+		// Review 2, S4: an id that would come back changed is refused.
+		{"id with invalid utf-8", "{\"jsonrpc\":\"2.0\",\"id\":\"\xff\",\"method\":\"ping\"}", "error -32600"},
+		{"id with a lone surrogate", `{"jsonrpc":"2.0","id":"\ud800","method":"ping"}`, "error -32600"},
+		// Review 2, M1: characters that a JSON encoder escapes (< > & become six bytes) must not push a line under 1 MiB over the SDK's cap.
+		{"350 KB of <", `{"jsonrpc":"2.0","id":"p1","method":"ping","params":{"x":"` + strings.Repeat("<", 350000) + `"}}`, "result"},
+		{"400 KB of &", `{"jsonrpc":"2.0","id":"p1","method":"ping","params":{"x":"` + strings.Repeat("&", 400000) + `"}}`, "result"},
+		{"900 KB of > in a cursor", `{"jsonrpc":"2.0","id":"p1","method":"tools/list","params":{"cursor":"` + strings.Repeat(">", 900000) + `"}}`, ""},
+		{"400 KB of > in tool arguments", `{"jsonrpc":"2.0","id":"p1","method":"tools/call","params":{"name":"audit_get_guide","arguments":{"x":"` + strings.Repeat(">", 400000) + `"}}}`, "tool isError=true invalid or unknown tool arguments; follow the tool input schema"},
+		{"900 KB of & in the method", `{"jsonrpc":"2.0","id":"p1","method":"` + strings.Repeat("&", 900000) + `"}`, "error -32601"},
 	}
 	for _, mode := range []string{"handshake", "stateless"} {
 		w := dial(t, sdkImpl, mustBridge(t))
@@ -247,6 +257,21 @@ func differentialLines() []string {
 		`{"jsonrpc":"2.0","id":"a","method":"ping","params":{"x":-0.0}}`,
 		"{\"jsonrpc\":\"2.0\",\"id\":\"a\\u2028\",\"method\":\"ping\",\"params\":{\"x\":\" \xff\"}}",
 		`{"jsonrpc":"2.0","id":"a","method":"ping","params":{"x":"</script>&"}}`,
+		// Review 2: keys read in another case by the checks and not by the SDK.
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"audit_get_guide","ARGUMENTS":{"bogus":1}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"audit_get_guide","Arguments":"not-an-object"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"audit_get_guide","argumentſ":{"bogus":1}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"Name":"audit_get_guide","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"nAme":"audit_get_guide","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"audit_get_guide","arguments":{},"_META":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"nAme":"0000000000000000000","Arguments":{"0":"00"}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"\u006eame":"audit_get_guide","arguments":null}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"a<b>&c","arguments":{"x":"<>&"}}}`,
+		`{"jsonrpc":"2.0","id":"<<<>>>&&&","method":"ping"}`,
+		"{\"jsonrpc\":\"2.0\",\"id\":\"\xff\",\"method\":\"ping\"}",
+		`{"jsonrpc":"2.0","id":"\ud800","method":"ping"}`,
+		"\ufeff" + `{"jsonrpc":"2.0","id":1,"method":"ping"}`,
+		`{"jsonrpc":"2.0","id":1,"method":"ping","params":{"x":1.0E+2,"y":-0,"z":0.1e-400}}`,
 	}
 }
 
@@ -257,6 +282,9 @@ func checkDifferential(t *testing.T, in string) {
 	if refusal != nil {
 		return // refused: nothing is forwarded
 	}
+	if len(line.message) > maxMessage {
+		t.Fatalf("%.80q: canonical message of %d bytes is over the %d cap", in, len(line.message), maxMessage)
+	}
 	if bytes.ContainsAny(line.message, "\n\r") {
 		t.Fatalf("%.80q: canonical message holds a line break: %q", in, line.message)
 	}
@@ -264,6 +292,7 @@ func checkDifferential(t *testing.T, in string) {
 	if err != nil {
 		t.Fatalf("%.80q: the SDK cannot read the canonical message %.120q: %v", in, line.message, err)
 	}
+	checkTypedReading(t, in, line)
 	var method string
 	var id jsonrpc.ID
 	var params json.RawMessage
@@ -300,11 +329,14 @@ func checkDifferential(t *testing.T, in string) {
 	}
 }
 
+// FuzzReadLine is the differential fuzz target: whatever the loop accepts, the SDK reads the same envelope, and for tools/call the same
+// name, arguments and _meta, from a message that fits the frame cap. Its seeds are the probes of both reviews.
 func FuzzReadLine(f *testing.F) {
 	for _, in := range differentialLines() {
 		f.Add([]byte(in))
 	}
 	f.Add([]byte(`{"jsonrpc":"2.0","id":"c0","method":"tools/call","METHOD":"ping","params":{"name":"audit_list_sources","arguments":{}}}`))
+	f.Add([]byte(`{"jsonrpc":"2.0","id":1,"method":"ping","params":{"x":"` + strings.Repeat("<", 350000) + `"}}`))
 	f.Fuzz(func(t *testing.T, in []byte) { checkDifferential(t, string(in)) })
 }
 
@@ -437,6 +469,125 @@ func TestSDKAnswersWhatWasReadBeforeEOF(t *testing.T) {
 					t.Fatalf("%s run %d: no answer to %q before EOF; output:\n%.400s", c.im.name, i, id, out.text())
 				}
 			}
+		}
+	}
+}
+
+// checkTypedReading: for tools/call, the SDK's case-sensitive decoder reads the same name, arguments and _meta from the message it is sent as
+// the loop's checks read from the client's line (encoding/json, strictArgs). A key the checks accept in another case, or through a Unicode
+// fold, must not turn into "absent" on the SDK's side (review 2, M2).
+func checkTypedReading(t *testing.T, in string, line *sdkLine) {
+	t.Helper()
+	if line.method != "tools/call" {
+		return
+	}
+	type typed struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+		Meta      json.RawMessage `json:"_meta"`
+	}
+	var original rpcRequest
+	if json.Unmarshal([]byte(in), &original) != nil {
+		t.Fatalf("%.80q: accepted by the loop but not readable", in)
+	}
+	var checked typed
+	if err := strictArgs(original.Params, &checked); err != nil {
+		t.Fatalf("%.80q: params the loop's check refuses reached the SDK: %v", in, err)
+	}
+	var message struct {
+		Params json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal(line.message, &message); err != nil {
+		t.Fatal(err)
+	}
+	var read typed
+	decoder := segjson.NewDecoder(bytes.NewReader(message.Params))
+	decoder.DontMatchCaseInsensitiveStructFields() // what the SDK's own decoder does
+	if err := decoder.Decode(&read); err != nil {
+		t.Fatalf("%.80q: the SDK cannot read the params %.120q: %v", in, message.Params, err)
+	}
+	same := func(a, b json.RawMessage) bool {
+		var x, y bytes.Buffer
+		if json.Compact(&x, a) != nil || json.Compact(&y, b) != nil {
+			return len(bytes.TrimSpace(a)) == 0 && len(bytes.TrimSpace(b)) == 0
+		}
+		return x.String() == y.String()
+	}
+	if checked.Name != read.Name || !same(checked.Arguments, read.Arguments) || !same(checked.Meta, read.Meta) {
+		t.Fatalf("%.100q: checks read name %q arguments %q _meta %q; the SDK reads %q %q %q", in, checked.Name, checked.Arguments, checked.Meta, read.Name, read.Arguments, read.Meta)
+	}
+}
+
+// Review 2, M2: a tools/call whose params use another case for a key, or a Unicode fold of it, is read as the hand-rolled loop read it (the
+// checks and the tool see the same arguments), not run with defaults.
+func TestSDKToolParamsKeyCaseMatchesLegacy(t *testing.T) {
+	bad := `{"resultId":"r","limit":"ten"}`
+	lines := []string{
+		`{"name":"audit_get_groups","ARGUMENTS":` + bad + `}`,
+		`{"name":"audit_get_groups","Arguments":` + bad + `}`,
+		`{"name":"audit_get_groups","argumentſ":` + bad + `}`,
+		`{"name":"audit_get_guide","Arguments":"not-an-object"}`,
+		`{"name":"audit_get_guide","ARGUMENTS":{"bogus":1}}`,
+		`{"Name":"audit_get_guide","arguments":{}}`,
+		`{"nAme":"audit_get_guide","arguments":{}}`,
+		`{"NAME":"audit_delete_source","arguments":{}}`,
+		`{"name":"audit_get_guide","arguments":{},"_META":{"x":1}}`,
+	}
+	for _, mode := range []string{"handshake", "stateless"} {
+		classes := map[string][]string{}
+		for _, im := range bothImpls {
+			if mode == "stateless" && im.name == "legacy" {
+				continue
+			}
+			w := dial(t, im, mustBridge(t))
+			w.stateless = mode == "stateless"
+			if !w.stateless {
+				w.handshake()
+			}
+			for i, params := range lines {
+				if w.stateless {
+					params = strings.TrimSuffix(params, "}") + "," + statelessMeta + "}"
+					if strings.Contains(params, `"_META"`) {
+						continue
+					}
+				}
+				id := fmt.Sprintf("k%d", i)
+				w.send(`{"jsonrpc":"2.0","id":"` + id + `","method":"tools/call","params":` + params + `}`)
+				class := answerClass(w.reply(id))
+				if len(class) > 70 {
+					class = class[:70]
+				}
+				classes[im.name] = append(classes[im.name], class)
+			}
+		}
+		if mode == "handshake" {
+			for i := range lines {
+				if classes["legacy"][i] != classes["sdk"][i] {
+					t.Errorf("%s: %s: legacy %q, sdk %q", mode, lines[i], classes["legacy"][i], classes["sdk"][i])
+				}
+			}
+		}
+		// Whatever the legacy loop did, the arguments the client sent are never dropped: the bad ones are refused.
+		for i, params := range lines[:5] {
+			class := classes["sdk"][i]
+			refused := strings.Contains(class, "tool arguments must be an object") || strings.Contains(class, "invalid or unknown tool arguments")
+			if !strings.HasPrefix(class, "tool isError=true") || !refused {
+				t.Errorf("%s: %s ran with the arguments dropped: %q", mode, params, classes["sdk"][i])
+			}
+		}
+	}
+}
+
+// D24 (spec 03-mcp): each description says whether the tool queries production.
+func TestToolDescriptionsSayLiveOrCached(t *testing.T) {
+	want := map[string]string{
+		"audit_get_activity": "Live query.", "audit_compare": "Live query.", "audit_get_requests": "Live query.", "audit_get_slowest": "Live query.", "audit_get_breakdown": "Live query.",
+		"audit_get_guide": "Cached, no query.", "audit_list_sources": "Cached, no query.", "audit_get_groups": "Cached, no query.", "audit_get_timeline": "Cached, no query.", "audit_compare_timelines": "Cached, no query.",
+	}
+	for _, def := range tools() {
+		name, _ := def["name"].(string)
+		if description, _ := def["description"].(string); !strings.HasPrefix(description, want[name]+" ") || want[name] == "" {
+			t.Errorf("%s: description starts %.40q, want prefix %q", name, description, want[name])
 		}
 	}
 }
