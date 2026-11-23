@@ -65,7 +65,7 @@
 //	blockHeader: comment to the end of the line                  charged once per line (remembered line end)
 //	blockText: key line start and key line indent                remembered and charged (lineStart, lineIndent)
 //	blockText: lines of the block, TrimRight, indent loop        charged per line; stops over budget
-//	maskRecords: jsonRecords byte loop, string ends              charged (one step per byte, plus the string, read to its close or its line end); the open-array search and a bare value capped at maxRecordString and charged; a full stack drops its oldest object (maxRecordDepth)
+//	maskRecords: jsonRecords byte loop, string ends              charged (one step per byte, plus the string, read to its close or its line end); the open-array search and a bare value charged (a bare value ends at a quote or a separator); a full stack drops its oldest object (maxRecordDepth)
 //	maskRecords: plistRecords Index for "<key>", name, close    charged; the name search is capped at 2*maxIdent+8; the text up to a close tag is charged and consumed
 //	maskRecords: yamlRecords line table, neighbour lines         charged once per byte; neighbours capped at maxRecordLines each way (comment lines not counted), charged per name key; a value line is masked once
 //	maskXML: IndexByte for the next "<"                          consumed (the position moves past the tag name)

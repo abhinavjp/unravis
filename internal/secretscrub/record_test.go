@@ -315,3 +315,81 @@ func TestMaskRecordsRound2CostShapes(t *testing.T) {
 		t.Fatal("a secret after an over-budget scan survived")
 	}
 }
+
+// Round 3 of the security review (SWP-1122-13).
+func TestMaskRecordsRound3Findings(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"apostrophe string holds JSON",
+			`payload: '{"name":"DB_PASSWORD","value":"leak1"}'`,
+			`payload: '{"name":"DB_PASSWORD","value":"[hidden]"}'`},
+		{"apostrophe array holds JSON",
+			`args: ['{"name":"DB_PASSWORD","value":"leak2"}']`,
+			`args: ['{"name":"DB_PASSWORD","value":"[hidden]"}']`},
+		{"apostrophe that never closes",
+			`note: 'x {"name":"DB_PASSWORD","value":"leak3"}`,
+			`note: 'x {"name":"DB_PASSWORD","value":"[hidden]"}`},
+		{"cut value, later value on the next line",
+			"{\"name\":\"DB_PASSWORD\",\"value\":\"leak4cut\nlater line \"value\":\"other\" done",
+			"{\"name\":\"DB_PASSWORD\",\"value\":\"[hidden]\nlater line \"value\":\"[hidden]\" done"},
+		{"duplicate value key",
+			`{"name":"DB_PASSWORD","value":"leak5","value":""}`,
+			`{"name":"DB_PASSWORD","value":"[hidden]","value":""}`},
+		{"odd quote earlier on the line",
+			`5" screen {"name":"DB_PASSWORD","value":"leak6"}`,
+			`5" screen {"name":"DB_PASSWORD","value":"[hidden]"}`},
+		{"JSON inside quotes with bare quotes",
+			`msg: "{"name":"DB_PASSWORD","value":"leak7"}"`,
+			`msg: "{"name":"DB_PASSWORD","value":"[hidden]"}"`},
+		{"bracket inside an array string",
+			`{"name":"DB_PASSWORD","value":["a]","leak8"]}`,
+			`{"name":"DB_PASSWORD","value":[[hidden]]}`},
+		{"cut value at line end",
+			"{\"name\":\"DB_PASSWORD\",\"value\":\nnext line word",
+			"{\"name\":\"DB_PASSWORD\",\"value\":\nnext line word"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Mask(tc.in, rm); got != tc.want {
+				t.Fatalf("\n in: %.300s\ngot: %.300s\nwant: %.300s", tc.in, got, tc.want)
+			}
+		})
+	}
+	long := strings.Repeat("z", 70000)
+	for name, in := range map[string]string{
+		"bare value over 64 KiB":  `{"name":"DB_PASSWORD","value":` + long + `}`,
+		"array value over 64 KiB": `{"name":"DB_PASSWORD","value":["` + long + `","` + long + `"]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if out := Mask(in, rm); strings.Contains(out, "zzzz") {
+				t.Fatalf("%s: a tail of the value survived", name)
+			}
+		})
+	}
+	// A cut array at the end of the text masks the rest of the text.
+	if out := Mask(`{"name":"DB_PASSWORD","value":["a","leak9`, rm); strings.Contains(out, "leak9") {
+		t.Fatalf("cut array leaked: %s", out)
+	}
+	// Ordinary prose with apostrophes and quotes stays.
+	for _, in := range []string{`it's fine, they said 'great' and "ok" {"name":"HOST","value":"db1"}`, `5" screen, a 6' pole`} {
+		if out := Mask(in, rm); out != in {
+			t.Fatalf("ordinary text changed: %s", out)
+		}
+	}
+}
+
+func TestMaskRecordsRound3CostShapes(t *testing.T) {
+	for name, in := range map[string]string{
+		"bare values":           strings.Repeat(`"value":x`, 200000),
+		"open arrays with text": strings.Repeat(`{"name":"DB_PASSWORD","value":["a`+"\n", 50000),
+		"apostrophes":           strings.Repeat(`a: '`, 300000),
+		"apostrophe json":       strings.Repeat(`k: '{"a":1} `, 100000),
+		"odd quotes and braces": strings.Repeat(`5" {"`, 200000),
+	} {
+		t.Run(name, func(t *testing.T) {
+			start := time.Now()
+			_ = Mask(in, rm)
+			if d := time.Since(start); d > 3*time.Second {
+				t.Fatalf("%s: %s for %d bytes", name, d, len(in))
+			}
+		})
+	}
+}

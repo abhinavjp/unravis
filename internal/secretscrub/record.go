@@ -14,12 +14,12 @@ import "strings"
 // Every reader charges the work budget for what it reads; over budget, the rest of the text is masked (fail closed), as in the other
 // readers. They run on the whole text only: Carry sees one line at a time and does not carry a record from one line to the next.
 
-// maxRecordDepth bounds the stack of open objects. A deeper object is read as part of its parent: its members are not judged.
+// maxRecordDepth bounds the stack of open objects. When it is full, the oldest open object is judged as read and dropped, so objects
+// that never closed (cut log lines) do not switch the reader off.
 const maxRecordDepth = 32
 
-// maxRecordString bounds a literal (unquoted) value and the search for the "]" that closes an array (64 KiB). A quoted string has no
-// cap: it runs to its closing quote or to the end of its line, and a string that does not close is read to the line end and left.
-const maxRecordString = 1 << 16
+// maxRecordSpans bounds the value spans kept for one object (a cut record can repeat "value"); more are joined into one span.
+const maxRecordSpans = 8
 
 // maxRecordLines bounds how many lines of a YAML record are read on each side of the name key.
 const maxRecordLines = 12
@@ -48,7 +48,7 @@ func maskRecords(s, mask string, w *work) string {
 		edits, p = yamlRecords(s, edits, w)
 		stop = min(stop, p)
 	}
-	if w.out() {
+	if w.out() && stop < len(s) {
 		// Over budget: fail closed from where the first reader stopped, so nothing a reader did not judge survives.
 		edits = append(edits, edit{stop, len(s)})
 	}
@@ -59,14 +59,30 @@ func maskRecords(s, mask string, w *work) string {
 }
 
 type jframe struct {
-	key        string // the member whose value is read next, lower case; "" between members
-	secret     bool   // a name member holds the name of a secret
-	vFrom, vTo int    // the span of the value member to mask; vTo <= vFrom: none yet
+	key    string // the member whose value is read next, lower case; "" between members
+	secret bool   // a name member holds the name of a secret
+	spans  []edit // the value members seen so far (a duplicate or a cut record can have more than one)
+}
+
+// addSpan notes a value span. Past maxRecordSpans the spans are joined into one, so a later value never hides an earlier one.
+func (f *jframe) addSpan(from, to int) {
+	if to <= from {
+		return
+	}
+	if len(f.spans) >= maxRecordSpans {
+		lo, hi := from, to
+		for _, e := range f.spans {
+			lo, hi = min(lo, e.from), max(hi, e.to)
+		}
+		f.spans = append(f.spans[:0], edit{lo, hi})
+		return
+	}
+	f.spans = append(f.spans, edit{from, to})
 }
 
 func (f *jframe) flush(edits []edit) []edit {
-	if f.secret && f.vTo > f.vFrom {
-		edits = append(edits, edit{f.vFrom, f.vTo})
+	if f.secret {
+		edits = append(edits, f.spans...)
 	}
 	return edits
 }
@@ -157,17 +173,27 @@ func recordName(v string) bool {
 	return v != "" && len(v) <= 4*maxIdent && !strings.ContainsAny(v, " \t\r\n")
 }
 
-// arrayEnd returns the index of the "]" that closes the array opening at v, or -1 (not within maxRecordString bytes). Strings inside are
-// not read: a bracket inside a value ends the span early, which masks less than the whole array but never more than the line.
-// Every byte it reads is charged, found or not.
+// arrayEnd returns the index of the "]" that closes the array opening at v, or -1 (the text ends first). Strings inside are skipped
+// (a "]" inside a string does not close it; a string ends at its line). Every byte read is charged, found or not.
 func arrayEnd(s string, v int, w *work) int {
 	depth := 0
-	limit := v + maxRecordString
-	if limit > len(s) {
-		limit = len(s)
-	}
-	for k := v; k < limit; k++ {
-		switch s[k] {
+	inStr := false
+	for k := v; k < len(s); k++ {
+		c := s[k]
+		if inStr {
+			switch c {
+			case '\\':
+				if k+1 < len(s) && s[k+1] != '\n' {
+					k++
+				}
+			case '"', '\n':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
 		case '[':
 			depth++
 		case ']':
@@ -178,7 +204,7 @@ func arrayEnd(s string, v int, w *work) int {
 			}
 		}
 	}
-	w.spend(limit - v + 1)
+	w.spend(len(s) - v + 1)
 	return -1
 }
 
@@ -226,6 +252,22 @@ func jsonPass(s string, edits []edit, w *work, esc bool) ([]edit, int) {
 		case (!esc && c == '"' && (i == 0 || s[i-1] != '\\')) || (!esc && c == '\'' && opensSingleQuoted(s, i)) || (esc && escOpens(s, i)):
 			from, to, next, read, ok := recordString(s, i, esc)
 			w.spend(read)
+			single := !esc && c == '\''
+			if single && ok && (strings.Contains(s[from:to], "{\"") || strings.HasPrefix(s[from:to], "[\"")) {
+				// An apostrophe string that holds JSON ('{"name":..}' in a log line): the record inside is read, not skipped.
+				i++
+				continue
+			}
+			if single && !ok && (len(stack) == 0 || stack[len(stack)-1].key != "value") {
+				i++ // an apostrophe in prose that never closes: not a string
+				continue
+			}
+			if !esc && ok && to > from && s[to-1] == '{' && next < len(s) && !strings.ContainsRune(",:}] \t\r\n", rune(s[next])) {
+				// A lone quote earlier on the line paired this string wrong: it ends on the quote that opens a member name. Read on from
+				// the brace.
+				i = to - 1
+				continue
+			}
 			if !ok {
 				// A string that does not close on its line (a cut log line). As the value of a "value" member it is
 				// masked to the end of the line, because the record may still turn out to be a secret.
@@ -236,7 +278,8 @@ func jsonPass(s string, edits []edit, w *work, esc bool) ([]edit, int) {
 					if k := strings.IndexByte(s[i:], '\n'); k >= 0 {
 						lineEnd = i + k
 					}
-					top.vFrom, top.vTo, top.key = i+1, lineEnd, ""
+					top.addSpan(i+1, lineEnd)
+					top.key = ""
 					w.spend(lineEnd - i)
 					e = lineEnd
 				}
@@ -264,16 +307,24 @@ func jsonPass(s string, edits []edit, w *work, esc bool) ([]edit, int) {
 					switch s[v] {
 					case '"', '\'', '{', '\\':
 					case '[':
-						if e := arrayEnd(s, v, w); e > v+1 {
-							top.vFrom, top.vTo, top.key = v+1, e, ""
+						e := arrayEnd(s, v, w)
+						if e < 0 {
+							e = len(s) // the array never closes (a cut record): the rest of the text, since the record may be a secret
 						}
+						top.addSpan(v+1, e)
+						top.key = ""
 					default:
+						// A bare value (number, true, null, or a mistake): a name on the next line after a cut "value": is not one.
+						if strings.IndexByte(s[k+1:v], '\n') >= 0 && !(s[v] == '-' || (s[v] >= '0' && s[v] <= '9')) {
+							break
+						}
 						e := v
-						for e < len(s) && e-v < maxRecordString && s[e] != ',' && s[e] != '}' && s[e] != ']' && s[e] != ' ' && s[e] != '\n' && s[e] != '\r' && s[e] != '\t' {
+						for e < len(s) && s[e] != ',' && s[e] != '}' && s[e] != ']' && s[e] != '"' && s[e] != ' ' && s[e] != '\n' && s[e] != '\r' && s[e] != '\t' {
 							e++
 						}
 						w.spend(e - v)
-						top.vFrom, top.vTo, top.key = v, e, ""
+						top.addSpan(v, e)
+						top.key = ""
 					}
 				}
 				i = k + 1
@@ -284,7 +335,7 @@ func jsonPass(s string, edits []edit, w *work, esc bool) ([]edit, int) {
 				top.secret = true
 			}
 			if top.key == "value" {
-				top.vFrom, top.vTo = from, to
+				top.addSpan(from, to)
 			}
 			top.key = ""
 			i = next
