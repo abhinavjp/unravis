@@ -284,7 +284,9 @@ test('STORY-07: no request storm: a return inside the gap or while hidden reads 
   await openStory(page, title);
   const reads = watchReads(page, id);
   const panel = page.locator('section[aria-labelledby="home-story"]');
-  const rectBefore = await panel.boundingBox();
+  // Measure once the page has stopped moving (fonts, scrollbar, late rows); the same two reads in a row are the place to hold to.
+  let rectBefore = await panel.boundingBox();
+  await expect.poll(async () => { const now = await panel.boundingBox(); const same = JSON.stringify(now) === JSON.stringify(rectBefore); rectBefore = now; return same; }, { intervals: [250] }).toBe(true);
 
   // Just read: a return now reads nothing.
   await back(page);
