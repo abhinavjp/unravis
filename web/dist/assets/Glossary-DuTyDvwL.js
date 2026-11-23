@@ -1,4 +1,4 @@
-import{$ as e,A as t,B as n,E as r,F as i,G as a,H as o,I as s,J as c,L as l,M as u,P as d,S as f,V as p,W as m,Y as h,at as g,b as _,c as v,et as y,f as b,g as x,h as S,ht as C,it as w,j as T,k as E,lt as ee,m as D,mt as O,n as k,nt as A,p as j,pt as M,r as N,st as P,tt as F,ut as te,w as ne,y as re}from"./disclose-version-CZXgZdlp.js";import{i as I}from"./api-DBWy2GEK.js";import{n as L,t as R}from"./lookup-DJrrBK1c.js";import{Cr as z,Dr as ie,Er as ae,Jn as B,Lt as oe,Or as se,Qn as ce,Tr as le,Zn as ue,cr as V,kr as de,lr as fe,sr as pe,tr as me,wr as he}from"./index-mH3DHC5I.js";function ge(e){let t=(e?.version??``).trim();if(!t)return``;let n=/^\d/.test(t)?`v`+t:t,r=[],i=(e?.commit??``).trim().slice(0,7);i&&r.push(`build `+i);let a=(e?.date??``).trim();return a&&r.push(a),`Unravis `+n+(r.length?` (`+r.join(`, `)+`)`:``)}var _e=`# Unravis Blackbox
+import{$ as e,A as t,B as n,E as r,F as i,G as a,H as o,I as s,J as c,L as l,M as u,P as d,S as f,V as p,W as m,Y as h,at as g,b as _,c as v,et as y,f as b,g as x,h as S,ht as C,it as w,j as T,k as E,lt as ee,m as D,mt as O,n as k,nt as A,p as j,pt as M,r as N,st as P,tt as F,ut as te,w as ne,y as re}from"./disclose-version-CZXgZdlp.js";import{i as I}from"./api-DBWy2GEK.js";import{n as L,t as R}from"./lookup-DJrrBK1c.js";import{Cr as z,Dr as ie,Er as ae,Jn as B,Lt as oe,Or as se,Qn as ce,Tr as le,Zn as ue,cr as V,kr as de,lr as fe,sr as pe,tr as me,wr as he}from"./index-ycJaz6b6.js";function ge(e){let t=(e?.version??``).trim();if(!t)return``;let n=/^\d/.test(t)?`v`+t:t,r=[],i=(e?.commit??``).trim().slice(0,7);i&&r.push(`build `+i);let a=(e?.date??``).trim();return a&&r.push(a),`Unravis `+n+(r.length?` (`+r.join(`, `)+`)`:``)}var _e=`# Unravis Blackbox
 
 The Blackbox is a small program that sits on a server and keeps a flight recorder of it. When an incident happens, Unravis reads the recording and shows what the server was doing at that minute. It only reads the server. It never changes anything on it except its own recordings folder.
 
@@ -57,11 +57,11 @@ Every Blackbox is in one of nine states. The sticker carries the word, and the r
 | --- | --- | --- |
 | Running | Ready | Nothing to do. It is recording. |
 | Running late | Partly ready | No sample for more than three intervals. On the server, open Services, find UnravisBlackbox and restart it. |
-| Stopped | Partly ready | Start it again. On this PC press Start. On another server use Services. |
-| Disk low | Partly ready | Free space on that drive, or lower the size limit. Recording resumes by itself. If it is still recording, do this before it pauses. |
+| Stopped | Partly ready | Start it again. On this PC press Start. On another server use Services. For another server the app says: Start it from Services on that server. Unravis does not start another server. |
+| Disk low | Partly ready | Free space on that drive, or lower the size limit. Recording resumes by itself. If it is still recording, the app says: Free space on that drive, or lower the size limit, before it pauses. |
 | Clock differs | Partly ready | Fix the clock on that server. Until then, events less than a second apart are not put in order. |
 | Not found | Cannot test yet | Check the folder, share or address, then check again. |
-| Unreachable | Cannot test yet | Check that the server is on and that Unravis can reach and read it, then check again. |
+| Unreachable | Cannot test yet | Check that the server is on and that Unravis can reach and read it, then check again. For an address the app says: Check that the server is on. Check that Listens on is the server address, not 127.0.0.1. Check that the port is open to this PC. Then check again. |
 | Incomplete | Partly ready | Some recording files could not be read to the end. Press Check again. If it stays, copy the files again. The recording has gaps. A gap of up to 2 minutes only warns. A longer gap makes the minutes inside it "Cannot test yet". |
 | Not placed | Cannot test yet | Place a Blackbox before you need it. Until then host steps say "Cannot test yet". |
 
@@ -921,7 +921,7 @@ Setup opens its window in Microsoft Edge or Google Chrome, in a plain app window
 | Restart | A restart Windows is waiting for. Setup can go on. |
 | Earlier setup | An earlier setup that did not finish. Setup puts back what it changed before it starts. |
 | Shared data folder | For everyone on this PC: \`C:\\ProgramData\\Unravis\` is free, or was made by an earlier setup. |
-| Program folder | A new install does not go into a folder that already holds other files. For everyone on this PC, an existing folder is only used when an earlier Unravis setup made it, or when it is empty and only administrators own it. A folder that is a link to another place is refused, for this folder and for the data folders. |
+| Program folder | A new install does not go into a folder that already holds somebody's files; the line names them. A folder that holds only Unravis files (a program, the setup record, the working folder of a setup that was cut off) is fine, and setup goes on over it. When this check fails, the row has **Choose another folder** (opens Options, where you type one) and **Open this folder** (shows it in Explorer). Setup never changes or deletes those files. For everyone on this PC, an existing folder is only used when an earlier Unravis setup made it, or when it is empty and only administrators own it. A folder that is a link to another place is refused, for this folder and for the data folders. |
 | Read key file | Only with a Blackbox and a read key file in silent mode: the file does not exist yet. Setup never replaces a file. |
 
 A **Failed** check stops the install and says what to do. Fix it, then press **Check again**. A **Partly ready** check does not stop anything.
