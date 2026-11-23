@@ -114,6 +114,15 @@ func endsLine(s string, k int) bool {
 	return k >= len(s) || s[k] == '\n'
 }
 
+// continued says whether the line that ends at the line break at nl ends with a continuation mark (backslash, caret or backtick).
+func continued(s string, nl int) bool {
+	k := nl - 1
+	if k >= 0 && s[k] == '\r' {
+		k--
+	}
+	return k >= 0 && (s[k] == '\\' || s[k] == '^' || s[k] == '`')
+}
+
 // lineStartAfter returns the start of the line after the one that holds k, or len(s).
 func lineStartAfter(s string, k int) int {
 	if i := strings.IndexByte(s[k:], '\n'); i >= 0 {
@@ -173,7 +182,7 @@ func maskFlags(s, mask string, w *work) string {
 		}
 		c := s[i]
 		if c == '\n' {
-			if k := i - 1; !(k >= 0 && (s[k] == '\\' || s[k] == '^' || s[k] == '`') || k >= 1 && s[k] == '\r' && (s[k-1] == '\\' || s[k-1] == '^' || s[k-1] == '`')) {
+			if !continued(s, i) {
 				tools = 0 // a line continuation keeps the tool of the line before
 			}
 			prev, first, listItem = "", true, false
