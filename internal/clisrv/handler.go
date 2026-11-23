@@ -17,6 +17,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,7 +42,7 @@ type Backend interface {
 // Info is what the owner says about itself in hello.
 type Info struct {
 	PID        int
-	Gen        string // creation time of the process as the locator spells it (FILETIME, decimal)
+	Gen        string // creation time of the process, RFC 3339 with nanoseconds in UTC: the locator's startTime
 	AppVersion string
 	Owner      string // "app" until a headless owner exists
 }
@@ -147,9 +148,9 @@ func (s *server) op(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxRequestBytes))
-	if err != nil {
-		writeJSON(w, http.StatusOK, fail(clicore.NewError(clicore.CodeRequestTooLarge, "The request is larger than 1 MiB.", "")))
+	body, e := readBody(w, r, MaxRequestBytes)
+	if e != nil {
+		writeJSON(w, http.StatusOK, fail(e))
 		return
 	}
 	var req request
@@ -185,32 +186,34 @@ func (s *server) run(parent context.Context, req request) (answer, int) {
 	if !ok {
 		return fail(clicore.NewError(clicore.CodeUnknownOperation, "That is not an operation.", "Run 'unravis schema' to list the operations.")), 0
 	}
-	if allowed, _ := clicap.Gate(req.Op, clicap.CLIHuman); !allowed {
+	// Only an Allow cell runs. A Scoped cell needs a grant (area 03, BL-389b), which this owner does not hold yet, so it is refused too.
+	if allowed, needsGrant := clicap.Gate(req.Op, clicap.CLIHuman); !allowed || needsGrant {
 		return fail(clicore.NewError(clicore.CodePermissionDenied, "That operation is not available to the command line.", "")), 0
 	}
 	if len(req.Args) > 0 {
 		if t := bytes.TrimSpace(req.Args); len(t) == 0 || t[0] != '{' {
 			return fail(clicore.NewError(clicore.CodeInvalidArgument, "The arguments must be an object.", "")), 0
 		}
-		if dup, bad := duplicateKeys(req.Args); bad || dup {
-			return fail(clicore.NewError(clicore.CodeInvalidArgument, "The arguments are not valid JSON, or repeat a name.", "")), 0
-		}
 	}
 	args := req.Args
 	if len(args) == 0 {
 		args = json.RawMessage(`{}`)
 	}
-	deadline := time.Duration(req.DeadlineMs) * time.Millisecond
-	if req.DeadlineMs <= 0 {
-		deadline = DefaultDeadline
-	}
-	if deadline > MaxDeadline {
-		deadline = MaxDeadline
+	deadline := DefaultDeadline
+	if req.DeadlineMs > 0 {
+		if req.DeadlineMs >= MaxDeadline.Milliseconds() {
+			deadline = MaxDeadline // clamped before the multiplication, so a huge number cannot overflow into a negative time
+		} else {
+			deadline = time.Duration(req.DeadlineMs) * time.Millisecond
+		}
 	}
 	ctx, cancel := context.WithTimeout(parent, deadline)
 	defer cancel()
-	if !s.begin(req.CallID, cancel) {
+	switch s.begin(req.CallID, cancel) {
+	case beginBusy:
 		return fail(clicore.NewError(clicore.CodeOwnerBusy, "Too many commands are running. Wait for one to finish.", "")), 0
+	case beginDuplicate:
+		return fail(clicore.NewError(clicore.CodeInvalidArgument, "That call id is already running.", "")), 0
 	}
 	defer s.end(req.CallID)
 
@@ -227,28 +230,45 @@ func (s *server) run(parent context.Context, req request) (answer, int) {
 	if cerr != nil {
 		return fail(cerr), 0
 	}
-	meta := metaOf(data)
-	out := answer{OK: true, Data: data, Meta: &meta}
-	// The size is checked here, so an answer the CLI would refuse is not sent at all.
-	if b, err := json.Marshal(out); err != nil {
+	// The data is encoded once, here: the size is checked on the bytes that are sent (with the newline), and meta is read from them.
+	raw, err := json.Marshal(data)
+	if err != nil {
 		return fail(clicore.NewError(clicore.CodeInternal, "The result could not be encoded.", "")), 0
-	} else if len(b) > MaxResponseBytes {
+	}
+	meta := metaOf(raw)
+	out := answer{OK: true, Data: json.RawMessage(raw), Meta: &meta}
+	if len(raw)+1024 > MaxResponseBytes {
 		return fail(clicore.NewError(clicore.CodeResultTooLarge, "The result is larger than 16 MiB. Narrow the request.", "")), 0
 	}
 	return out, 0
 }
 
-func (s *server) begin(callID string, cancel context.CancelFunc) bool {
+type beginResult int
+
+const (
+	beginOK beginResult = iota
+	beginBusy
+	beginDuplicate
+)
+
+// begin counts a call and, with an id, makes it cancellable. An id that is already running is refused, so one call can never hide
+// another from cancel.
+func (s *server) begin(callID string, cancel context.CancelFunc) beginResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if callID != "" {
+		if _, dup := s.inflight[callID]; dup {
+			return beginDuplicate
+		}
+	}
 	if s.running >= MaxInFlight {
-		return false
+		return beginBusy
 	}
 	s.running++
 	if callID != "" {
 		s.inflight[callID] = cancel
 	}
-	return true
+	return beginOK
 }
 
 func (s *server) end(callID string) {
@@ -271,11 +291,11 @@ func (s *server) cancel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4096))
+	body, rerr := readBody(w, r, 4096)
 	var req struct {
 		CallID string `json:"callId"`
 	}
-	if err != nil || decodeStrict(body, &req) != nil || !callIDRE.MatchString(req.CallID) {
+	if rerr != nil || decodeStrict(body, &req) != nil || !callIDRE.MatchString(req.CallID) {
 		writeJSON(w, http.StatusBadRequest, fail(clicore.NewError(clicore.CodeInvalidArgument, "The call id is not valid.", "")))
 		return
 	}
@@ -305,27 +325,30 @@ func (s *server) appStatus(args json.RawMessage) (any, *clicore.Error) {
 		"proto": protoBody{clicore.ProtoMajor, clicore.ProtoMinor}}, nil
 }
 
-// metaOf builds the meta of a success from the data. A source that did not answer makes the coverage partial. The identifiers of the
-// human command line are shown (the operator policy of the app).
-func metaOf(data any) clicore.Meta {
-	m := clicore.Meta{Coverage: "complete", Identifiers: "shown"}
-	b, err := json.Marshal(data)
-	if err != nil {
-		return m
-	}
+// metaOf builds the meta of a success from the encoded data. A source that did not answer, or a page the owner says it cut, makes the
+// coverage partial. The identifiers of the human command line are shown (the operator policy of the app). Warnings are never null.
+func metaOf(raw []byte) clicore.Meta {
+	m := clicore.Meta{Coverage: "complete", Identifiers: "shown", Warnings: []string{}}
 	var probe struct {
 		Sources []struct {
 			OK *bool `json:"ok"`
 		} `json:"sources"`
+		Truncated *bool `json:"truncated"`
 	}
-	if json.Unmarshal(b, &probe) == nil {
-		for _, s := range probe.Sources {
-			if s.OK != nil && !*s.OK {
-				m.Coverage = "partial"
-				m.Warnings = []string{"At least one source did not answer, so the result is partial."}
-				break
-			}
+	if json.Unmarshal(raw, &probe) != nil {
+		return m
+	}
+	for _, s := range probe.Sources {
+		if s.OK != nil && !*s.OK {
+			m.Coverage = "partial"
+			m.Warnings = append(m.Warnings, "At least one source did not answer, so the result is partial.")
+			break
 		}
+	}
+	if probe.Truncated != nil && *probe.Truncated {
+		m.Coverage = "partial"
+		m.Truncated = "page"
+		m.Warnings = append(m.Warnings, "The result was cut at its limit; page on to see the rest.")
 	}
 	return m
 }
@@ -338,6 +361,11 @@ func decodeStrict(b []byte, v any) *clicore.Error {
 	b = bytes.TrimSpace(b)
 	if len(b) == 0 || b[0] != '{' {
 		return bad()
+	}
+	// A name given twice is refused, also when the two differ only in case: the decoders here and in internal/mcp match names without
+	// regard to case, and the last one wins, so "op" and "OP" would say two things at once.
+	if dup, invalid := duplicateKeys(b); dup || invalid {
+		return clicore.NewError(clicore.CodeInvalidArgument, "The request is not valid JSON, or gives a name twice.", "")
 	}
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
@@ -389,10 +417,11 @@ func duplicateKeys(raw []byte) (dup, bad bool) {
 			}
 		case string:
 			if t := top(); t != nil && t.obj && t.key {
-				if t.keys[v] {
+				k := foldKey(v)
+				if t.keys[k] {
 					dup = true
 				}
-				t.keys[v] = true
+				t.keys[k] = true
 				t.key = false
 				continue
 			}
@@ -405,6 +434,24 @@ func duplicateKeys(raw []byte) (dup, bad bool) {
 			}
 		}
 	}
+}
+
+// foldKey folds a name the way encoding/json matches names: without regard to case, with the Kelvin sign (U+212A) equal to k and the
+// long s (U+017F) equal to s.
+func foldKey(k string) string { return strings.ToLower(strings.ToUpper(k)) }
+
+// readBody reads at most max bytes. Only a body over the limit is REQUEST_TOO_LARGE; any other failure (a dropped peer) is an internal
+// error.
+func readBody(w http.ResponseWriter, r *http.Request, max int64) ([]byte, *clicore.Error) {
+	b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, max))
+	if err == nil {
+		return b, nil
+	}
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		return nil, clicore.NewError(clicore.CodeRequestTooLarge, "The request is larger than 1 MiB.", "")
+	}
+	return nil, clicore.NewError(clicore.CodeInternal, "The request could not be read.", "")
 }
 
 func methodNotAllowed(w http.ResponseWriter, allow string) {

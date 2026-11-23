@@ -51,4 +51,11 @@ func TestCLIRouteIsWiredBehindThePipeHandler(t *testing.T) {
 	if w := call(pipesrv.RoleAG, cli, "GET", "/api/cases", ""); w.Code != 404 {
 		t.Errorf("/api/cases on ag: %d", w.Code)
 	}
+	// the app's own operator policy: identifier filters are allowed for the person at the command line
+	now := time.Now().UTC().Truncate(time.Hour)
+	f := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339) }
+	q := `{"op":"audit.compare","requestId":"req_0123456789abcdef","args":{"query":{"sourceIds":["demo-west"],"start":"` + f(-time.Hour) + `","end":"` + f(0) + `","baselineStart":"` + f(-25*time.Hour) + `","baselineEnd":"` + f(-24*time.Hour) + `","kind":"all","outcome":"all","metric":"total","bucketSeconds":60,"userIds":[7]}}}`
+	if w := call(pipesrv.RoleAG, cli, "POST", "/cli/v1/op", q); !strings.Contains(w.Body.String(), `"ok":true`) {
+		t.Errorf("identifier filter refused: %.300s", w.Body.String())
+	}
 }

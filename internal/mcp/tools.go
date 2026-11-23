@@ -103,7 +103,7 @@ func findGroup(result *audit.Analysis, key string) (audit.Comparison, error) {
 			return row, nil
 		}
 	}
-	return audit.Comparison{}, errors.New("API group is not in this result; use audit_get_groups to select its apiKey")
+	return audit.Comparison{}, coded(CodeNotFound, "API group is not in this result; use audit_get_groups to select its apiKey")
 }
 func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (any, error) {
 	switch name {
@@ -282,6 +282,6 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 	case "audit_get_breakdown":
 		return b.breakdown(ctx, raw)
 	default:
-		return nil, errors.New("unknown tool; only the advertised read-only audit tools are available")
+		return nil, coded(CodeInternal, "unknown tool; only the advertised read-only audit tools are available")
 	}
 }

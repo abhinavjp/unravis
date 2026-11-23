@@ -21,6 +21,10 @@ func (m mcpBackend) Call(ctx context.Context, tool string, args json.RawMessage)
 		return data, nil
 	}
 	code := clicore.FromMCP(mcp.Code(err), false, "")
+	if code == clicore.CodeAppNotRunning {
+		// this process is the owner and it is answering: its own dashboard did not, which is an upstream failure, not "the app is not running"
+		code = clicore.CodeUpstreamUnavailable
+	}
 	// The message is the fixed text of the tool code: it never repeats a connection string or a driver error (the bridge guarantees it
 	// for the MCP clients, and the same text goes out here). The work may have started, so it is never retryable.
 	return nil, clicore.NewErrorAfterWork(code, err.Error(), actionFor(code))
@@ -35,6 +39,8 @@ func actionFor(c clicore.Code) string {
 		return "Unlock Unravis in the app."
 	case clicore.CodeOwnerBusy:
 		return "Wait for the running command to finish."
+	case clicore.CodeNotFound:
+		return "Check the id and run the command again."
 	}
 	return ""
 }

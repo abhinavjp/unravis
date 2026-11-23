@@ -68,16 +68,28 @@ func NewLocal(handler http.Handler, token string, opts ...Option) *Bridge {
 // localTransport sends a request straight to a handler.
 type localTransport struct{ h http.Handler }
 
-func (t localTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (t localTransport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
+	if req.Body != nil {
+		defer func() { _ = req.Body.Close() }()
+	}
 	if err := req.Context().Err(); err != nil {
 		return nil, err
 	}
+	// A handler that panics must not take the owner down through this call: the panic becomes an internal error.
+	defer func() {
+		if p := recover(); p != nil {
+			resp, err = nil, coded(CodeInternal, "the dashboard handler failed")
+		}
+	}()
 	r := req.Clone(req.Context())
 	r.RemoteAddr = "127.0.0.1:0"
 	r.RequestURI = r.URL.RequestURI()
 	r.Host = r.URL.Host
 	rec := &recorder{header: http.Header{}, status: http.StatusOK}
 	t.h.ServeHTTP(rec, r)
+	if err := req.Context().Err(); err != nil {
+		return nil, err // the call was cancelled while the handler worked; the answer is not wanted
+	}
 	hdr := rec.header.Clone()
 	return &http.Response{
 		Status:        http.StatusText(rec.status),

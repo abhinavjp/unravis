@@ -154,3 +154,11 @@ func TestIsCLIImage(t *testing.T) {
 		}
 	}
 }
+
+func TestIsCLIImageIsAnExactName(t *testing.T) {
+	for _, img := range []string{`C:\A\xunravis.exe`, `C:\A\unravis.exe.bak`, `C:\A\unravis.exe `, `C:\A\unravis.exe\x.exe`, `C:\A\unravis-cli.exe`, `unravis.exe.exe`} {
+		if IsCLIImage(img) {
+			t.Errorf("%q", img)
+		}
+	}
+}

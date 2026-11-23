@@ -352,3 +352,155 @@ func TestRealPathOverTheDashboardHandler(t *testing.T) {
 		t.Errorf("the session token is in an answer")
 	}
 }
+
+// Names are matched without regard to case by the decoders here and in the tool code, and the last one wins: a name given twice in
+// two cases would say two things at once, so it is refused, in the envelope and in the arguments, also with the Kelvin sign and long s.
+func TestRepeatedNamesInAnyCaseAreRefused(t *testing.T) {
+	h := newHandler(echo())
+	for name, body := range map[string]string{
+		"op twice":                `{"op":"sources.list","op":"audit.guide","requestId":"` + rid + `"}`,
+		"op in two cases":         `{"op":"sources.list","OP":"audit.guide","requestId":"` + rid + `"}`,
+		"request id in two cases": `{"op":"audit.guide","requestId":"` + rid + `","RequestID":"` + rid + `"}`,
+		"args in two cases":       `{"op":"audit.groups","args":{"resultId":"a","RESULTID":"b"},"requestId":"` + rid + `"}`,
+		"Kelvin sign":             `{"op":"audit.guide","args":{"k":1,"K":2},"requestId":"` + rid + `"}`,
+		"long s":                  `{"op":"audit.guide","args":{"s":1,"ſ":2},"requestId":"` + rid + `"}`,
+		"deep, in two cases":      `{"op":"audit.guide","args":{"a":{"b":[{"X":1,"x":2}]}},"requestId":"` + rid + `"}`,
+	} {
+		if r := post(t, h, "/cli/v1/op", body); r.OK || r.Error.Code != "INVALID_ARGUMENT" {
+			t.Errorf("%s: %+v", name, r)
+		}
+	}
+	if c := post(t, h, "/cli/v1/cancel", `{"callId":"0123456789abcdef","CallID":"0123456789abcdef"}`); c.Status != 400 {
+		t.Errorf("cancel with a repeated name: %d", c.Status)
+	}
+	if dup, bad := duplicateKeys([]byte(`{"a":1,"A":2}`)); !dup || bad {
+		t.Errorf("fold: %v %v", dup, bad)
+	}
+	if dup, _ := duplicateKeys([]byte(`{"a":1,"b":2}`)); dup {
+		t.Error("distinct names")
+	}
+}
+
+func TestPrincipalNeverFromRequestJSON(t *testing.T) {
+	var gotTool string
+	h := newHandler(fakeBackend{func(_ context.Context, tool string, args json.RawMessage) (any, *clicore.Error) {
+		gotTool = tool
+		return map[string]any{}, nil
+	}})
+	for name, body := range map[string]string{
+		"in the envelope": `{"op":"audit.guide","principal":"cli-ci","requestId":"` + rid + `"}`,
+		"profile":         `{"op":"audit.guide","profile":"cli-ci","requestId":"` + rid + `"}`,
+		"hostName":        `{"op":"audit.guide","hostName":"cli","requestId":"` + rid + `"}`,
+	} {
+		gotTool = ""
+		if r := post(t, h, "/cli/v1/op", body); r.OK || gotTool != "" {
+			t.Errorf("%s: %+v", name, r)
+		}
+	}
+	// and in the arguments the tool code refuses it (checked on the real path in TestRealPathOverTheDashboardHandler)
+	if r := op(t, h, "audit.guide", `{"principal":"x"}`); !r.OK || gotTool != "audit_get_guide" {
+		t.Errorf("a fake backend accepts any arguments; the tool code is what refuses: %+v", r)
+	}
+}
+
+func TestSameCallIDCannotHideACall(t *testing.T) {
+	started := make(chan struct{})
+	stopped := make(chan struct{})
+	h := newHandler(fakeBackend{func(ctx context.Context, _ string, _ json.RawMessage) (any, *clicore.Error) {
+		close(started)
+		<-ctx.Done()
+		close(stopped)
+		return nil, clicore.NewErrorAfterWork(clicore.CodeCanceled, "stopped", "")
+	}})
+	done := make(chan reply)
+	body := `{"op":"audit.compare","args":{},"requestId":"` + rid + `","callId":"0123456789abcdef"}`
+	go func() { done <- post(t, h, "/cli/v1/op", body) }()
+	<-started
+	// the same id again is refused, so the first call stays cancellable
+	if r := post(t, h, "/cli/v1/op", body); r.OK || r.Error.Code != "INVALID_ARGUMENT" {
+		t.Errorf("second call with the same id: %+v", r)
+	}
+	if c := post(t, h, "/cli/v1/cancel", `{"callId":"0123456789abcdef"}`); !strings.Contains(c.Raw, "cancelling") {
+		t.Errorf("cancel after a refused duplicate: %+v", c)
+	}
+	<-stopped
+	if r := <-done; r.OK {
+		t.Errorf("%+v", r)
+	}
+}
+
+func TestMetaIsComplete(t *testing.T) {
+	h := newHandler(echo())
+	r := op(t, h, "audit.guide", "")
+	if !strings.Contains(r.Raw, `"warnings":[]`) || strings.Contains(r.Raw, `"warnings":null`) {
+		t.Errorf("warnings must be an empty list: %s", r.Raw)
+	}
+	h = newHandler(fakeBackend{func(context.Context, string, json.RawMessage) (any, *clicore.Error) {
+		return map[string]any{"rows": []any{}, "truncated": true}, nil
+	}})
+	r = op(t, h, "audit.requests", `{}`)
+	if r.Meta["coverage"] != "partial" || r.Meta["truncated"] == nil || len(r.Meta["warnings"].([]any)) != 1 {
+		t.Errorf("a cut page: %+v", r.Meta)
+	}
+	h = newHandler(fakeBackend{func(context.Context, string, json.RawMessage) (any, *clicore.Error) {
+		return map[string]any{"rows": []any{}, "truncated": false}, nil
+	}})
+	if r = op(t, h, "audit.requests", `{}`); r.Meta["coverage"] != "complete" || r.Meta["truncated"] != nil {
+		t.Errorf("a whole page: %+v", r.Meta)
+	}
+}
+
+func TestDeadlines(t *testing.T) {
+	var left time.Duration
+	h := newHandler(fakeBackend{func(ctx context.Context, _ string, _ json.RawMessage) (any, *clicore.Error) {
+		d, ok := ctx.Deadline()
+		if !ok {
+			left = -1
+		} else {
+			left = time.Until(d)
+		}
+		return map[string]any{}, nil
+	}})
+	for name, tc := range map[string]struct {
+		ms       string
+		min, max time.Duration
+	}{
+		"none":        {``, 25 * time.Second, 31 * time.Second},
+		"zero":        {`,"deadlineMs":0`, 25 * time.Second, 31 * time.Second},
+		"negative":    {`,"deadlineMs":-5`, 25 * time.Second, 31 * time.Second},
+		"two minutes": {`,"deadlineMs":120000`, 110 * time.Second, 121 * time.Second},
+		"huge":        {`,"deadlineMs":10000000000000`, 59 * time.Minute, 61 * time.Minute},
+		"just over":   {`,"deadlineMs":3600001`, 59 * time.Minute, 61 * time.Minute},
+	} {
+		left = 0
+		post(t, h, "/cli/v1/op", `{"op":"audit.guide","args":{},"requestId":"`+rid+`"`+tc.ms+`}`)
+		if left < tc.min || left > tc.max {
+			t.Errorf("%s: %v left", name, left)
+		}
+	}
+}
+
+func TestOriginAndIDsOnEveryRoute(t *testing.T) {
+	h := newHandler(echo())
+	for _, path := range []string{"/cli/v1/op", "/cli/v1/cancel"} {
+		if r := post(t, h, path, `{"op":"audit.guide","requestId":"`+rid+`","callId":"0123456789abcdef"}`, "Origin", "https://evil.example"); r.Status != 403 {
+			t.Errorf("%s with an Origin: %d", path, r.Status)
+		}
+	}
+	for _, id := range []string{"req_", "req_x", "req_0123456789abcdefg", "REQ_0123456789abcdef", "req_0123456789ABCDEF"} {
+		if r := post(t, h, "/cli/v1/op", `{"op":"audit.guide","requestId":"`+id+`"}`); r.OK || r.Error.Code != "INVALID_ARGUMENT" {
+			t.Errorf("request id %q: %+v", id, r)
+		}
+	}
+}
+
+func TestHelloStateIsOneOfThree(t *testing.T) {
+	for state, want := range map[string]string{"ready": "ready", "locked": "locked", "updating": "updating", "weird": "ready", "": "ready"} {
+		h := Handler(Deps{Backend: echo(), Info: func() Info { return Info{} }, State: func() string { return state }, Logf: func(string, ...any) {}})
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", "/cli/v1/hello", nil))
+		if !strings.Contains(w.Body.String(), `"state":"`+want+`"`) {
+			t.Errorf("%q: %s", state, w.Body.String())
+		}
+	}
+}
