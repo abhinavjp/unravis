@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"api-audit-explorer/internal/bbsql"
@@ -93,5 +94,23 @@ func TestSQLConnForNeverFallsBackWhenTheLoginCannotBeRead(t *testing.T) {
 	}
 	if _, err := sqlConnFor(dir, blackbox.Probe{}, func() (sealedfile.Protector, error) { return nil, os.ErrInvalid }); err == nil {
 		t.Fatal("a missing sealer fell back to Windows sign-in")
+	}
+}
+
+func TestSQLEnabledExtras(t *testing.T) {
+	if got := sqlEnabledExtras(blackbox.Config{}); len(got) != 0 {
+		t.Fatalf("standard turned on %v", got)
+	}
+	everything := sqlEnabledExtras(blackbox.Config{SQL: &blackbox.SQLSettings{Profile: blackbox.SQLProfileEverything}})
+	if want := bbsql.ExtrasForProfile(bbsql.ProfileEverything); !slices.Equal(everything, want) {
+		t.Fatalf("everything = %v, want %v", everything, want)
+	}
+	// An unknown profile turns on nothing; names in sql.extras are added once, sorted.
+	got := sqlEnabledExtras(blackbox.Config{SQL: &blackbox.SQLSettings{Profile: "nope", Extras: []string{"zz", "aa", "zz"}}})
+	if !slices.Equal(got, []string{"aa", "zz"}) {
+		t.Fatalf("extras = %v", got)
+	}
+	if len(sqlEnabledExtras(blackbox.Config{SQL: &blackbox.SQLSettings{Profile: blackbox.SQLProfileDeep}})) < len(everything) {
+		t.Fatal("deep must hold at least what everything holds")
 	}
 }

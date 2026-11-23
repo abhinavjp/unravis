@@ -20,6 +20,8 @@ package main
 import (
 	"context"
 	"os"
+	"slices"
+	"sort"
 
 	"api-audit-explorer/internal/bbsql"
 	"api-audit-explorer/internal/blackbox"
@@ -82,6 +84,7 @@ func runSQLServiceLoop(ctx context.Context, o sqlRunOptions) error {
 		return err
 	}
 	r := bbsql.NewRunner(o.Dir, conn)
+	r.EnabledExtras = sqlEnabledExtras(o.Config)
 	r.MinFreePercent, r.KeepHours, r.MaxBytes = sqlDiskBounds(o.Config)
 	r.FreePercent = sqlFreePercent
 	r.Log = log
@@ -106,6 +109,17 @@ func sqlFreePercent(path string) (float64, error) {
 		return 0, err
 	}
 	return info.FreePercent(), nil
+}
+
+// sqlEnabledExtras is the extra sampler kinds to run on top of Standard: the ones the profile turns on plus the names in sql.extras.
+// bbsql ignores a name no sampler knows, so a typo or a stale list cannot change what is sent. Standard (the default) adds nothing.
+func sqlEnabledExtras(c blackbox.Config) []string {
+	kinds := bbsql.ExtrasForProfile(c.SQLProfileName())
+	if c.SQL != nil {
+		kinds = append(kinds, c.SQL.Extras...)
+	}
+	sort.Strings(kinds)
+	return slices.Compact(kinds)
 }
 
 // loginProtector is the machine-wide protector the stored login is sealed with.
