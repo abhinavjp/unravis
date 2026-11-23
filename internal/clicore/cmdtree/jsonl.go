@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -19,6 +20,8 @@ const (
 	jsonlDefaultMaxRows = 1000
 	jsonlMaxRows        = 10000
 	jsonlMaxBytes       = 64 << 20 // the output cap; --max-bytes only lowers it
+	jsonlMaxCursor      = 1024     // the longest cursor of the owner that is passed on
+	jsonlEndReserve     = 1536     // room kept inside the output cap for the complete line (it holds one cursor)
 )
 
 type streamLine struct {
@@ -83,8 +86,10 @@ func objectFields(b json.RawMessage) (map[string]json.RawMessage, bool) {
 		if dec.Decode(&v) != nil {
 			return nil, false
 		}
-		if _, dup := m[key]; dup {
-			return nil, false
+		for k := range m {
+			if strings.EqualFold(k, key) { // the owner refuses a name that comes twice in any case
+				return nil, false
+			}
 		}
 		m[key] = v
 	}
@@ -104,6 +109,16 @@ func (st *state) streamPages(op string, args json.RawMessage, defaultPage int, s
 	if !ok {
 		return usage("The request must be one JSON object with no repeated names.")
 	}
+	// "Limit" and "CURSOR" mean the same to the owner: this program writes both, so it takes them under the lower-case name.
+	for k, v := range base {
+		if lk := strings.ToLower(k); (lk == "limit" || lk == "cursor") && k != lk {
+			delete(base, k)
+			base[lk] = v
+		}
+	}
+	if string(base["limit"]) == "null" {
+		delete(base, "limit") // the same as no limit
+	}
 	page, firstAsIs := defaultPage, false
 	if raw, has := base["limit"]; has {
 		var n int
@@ -117,6 +132,7 @@ func (st *state) streamPages(op string, args json.RawMessage, defaultPage int, s
 	if raw, has := base["cursor"]; has {
 		_ = json.Unmarshal(raw, &cursor) // a cursor that is not text is the owner's to refuse: it is sent as it is on the first page
 	}
+	seen := map[string]bool{cursor: true}
 	sess, e := st.attach(st.ctx)
 	if e != nil {
 		return e
@@ -132,8 +148,11 @@ func (st *state) streamPages(op string, args json.RawMessage, defaultPage int, s
 		for k, v := range base {
 			call[k] = v
 		}
-		if !(first && firstAsIs) {
-			call["limit"] = json.RawMessage(strconv.Itoa(min(page, sf.maxRows-total)))
+		ask := min(page, sf.maxRows-total)
+		if !first || !firstAsIs {
+			call["limit"] = json.RawMessage(strconv.Itoa(ask))
+		} else {
+			ask = sf.maxRows // a limit the owner is to judge: what it sends back must still fit the row cap
 		}
 		if !first {
 			call["cursor"], _ = json.Marshal(cursor)
@@ -158,9 +177,16 @@ func (st *state) streamPages(op string, args json.RawMessage, defaultPage int, s
 		if json.Unmarshal(res.Data, &p) != nil || p.Rows == nil {
 			return clicore.NewError(clicore.CodeInternal, "The app sent a page that this command line cannot read.", "")
 		}
-		if p.NextCursor != "" && (len(p.Rows) == 0 || p.NextCursor == cursor) {
+		if len(p.Rows) > ask {
+			if first && firstAsIs {
+				return clicore.NewError(clicore.CodeResultTooLarge, "The page is larger than --max-rows. Lower --limit or raise --max-rows.", "")
+			}
+			return clicore.NewError(clicore.CodeInternal, "The app sent more rows than were asked for.", "")
+		}
+		if p.NextCursor != "" && (len(p.Rows) == 0 || seen[p.NextCursor] || !plainCursor(p.NextCursor)) {
 			return clicore.NewError(clicore.CodeInternal, "The app sent a page that does not move on. Try again.", "")
 		}
+		seen[p.NextCursor] = true
 		var buf bytes.Buffer
 		if first {
 			b, err := clicore.ASCIIJSON(streamLine{clicore.SchemaVersion, op, st.reqID, "meta", nil})
@@ -174,12 +200,15 @@ func (st *state) streamPages(op string, args json.RawMessage, defaultPage int, s
 			if err != nil {
 				return clicore.NewError(clicore.CodeInternal, "The result could not be written.", "")
 			}
+			if len(r) == 0 || r[0] != '{' {
+				return clicore.NewError(clicore.CodeInternal, "The app sent a row that this command line cannot read.", "")
+			}
 			if len(b) > jsonlMaxLine {
 				return clicore.NewError(clicore.CodeResultTooLarge, "One row is larger than 64 KiB.", "")
 			}
 			buf.Write(b)
 		}
-		if written+int64(buf.Len()) > sf.maxBytes {
+		if written+int64(buf.Len())+jsonlEndReserve > sf.maxBytes { // the complete line is part of the cap
 			if wrote == 0 {
 				return clicore.NewError(clicore.CodeResultTooLarge, "The first page is larger than --max-bytes. Raise it or lower --limit.", "")
 			}
@@ -192,7 +221,7 @@ func (st *state) streamPages(op string, args json.RawMessage, defaultPage int, s
 		written += int64(buf.Len())
 		wrote++
 		total += len(p.Rows)
-		if res.Meta.Coverage == "partial" {
+		if pagePartial(res, p) {
 			partial = true
 		}
 		next = p.NextCursor
@@ -214,4 +243,37 @@ func (st *state) streamPages(op string, args json.RawMessage, defaultPage int, s
 	}
 	_, err = st.io.Out.Write(b)
 	return writeErr(err)
+}
+
+// plainCursor tells whether the owner's cursor is short, printable ASCII without quote or backslash: it is written in the complete line,
+// whose size is reserved inside the cap.
+func plainCursor(c string) bool {
+	if len(c) > jsonlMaxCursor {
+		return false
+	}
+	for i := 0; i < len(c); i++ {
+		if b := c[i]; b < 0x21 || b > 0x7e || b == '"' || b == '\\' {
+			return false
+		}
+	}
+	return true
+}
+
+// pagePartial tells whether a page makes the whole stream partial: a source that did not answer does. A page that was cut at its size
+// (truncated, with a cursor to go on) does not: the next page goes on, and only the last page, which has no cursor, can say the list
+// itself was cut.
+func pagePartial(res *clicore.Result, p pageOut) bool {
+	var probe struct {
+		Sources []struct {
+			OK *bool `json:"ok"`
+		} `json:"sources"`
+	}
+	if json.Unmarshal(res.Data, &probe) == nil {
+		for _, s := range probe.Sources {
+			if s.OK != nil && !*s.OK {
+				return true
+			}
+		}
+	}
+	return p.NextCursor == "" && res.Meta.Coverage == "partial"
 }

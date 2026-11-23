@@ -23,6 +23,10 @@ type pager struct {
 	row   func(i int) string
 	meta  string
 	calls []map[string]any
+	// metaFn, when set, makes the meta of call i (from 0); hasNext tells whether the page has a cursor. extra is added to the data.
+	metaFn    func(i int, hasNext bool) string
+	extra     string
+	deadlines []float64
 }
 
 func newPager(n int) *pager {
@@ -31,11 +35,13 @@ func newPager(n int) *pager {
 
 func (p *pager) handler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Args map[string]any `json:"args"`
+		Args       map[string]any `json:"args"`
+		DeadlineMs float64        `json:"deadlineMs"`
 	}
 	b, _ := io.ReadAll(r.Body)
 	_ = json.Unmarshal(b, &req)
 	p.calls = append(p.calls, req.Args)
+	p.deadlines = append(p.deadlines, req.DeadlineMs)
 	if len(p.calls)-1 == p.fail {
 		_, _ = io.WriteString(w, `{"ok":false,"error":{"code":"RESULT_EXPIRED","message":"gone"}}`)
 		return
@@ -58,10 +64,13 @@ func (p *pager) handler(w http.ResponseWriter, r *http.Request) {
 		next = fmt.Sprintf(`,"nextCursor":"c%d"`, end)
 	}
 	meta := p.meta
+	if p.metaFn != nil {
+		meta = p.metaFn(len(p.calls)-1, next != "")
+	}
 	if meta == "" {
 		meta = `{"coverage":"complete"}`
 	}
-	_, _ = io.WriteString(w, `{"ok":true,"data":{"rows":[`+strings.Join(rows, ",")+`]`+next+`},"meta":`+meta+`}`)
+	_, _ = io.WriteString(w, `{"ok":true,"data":{"rows":[`+strings.Join(rows, ",")+`]`+next+p.extra+`},"meta":`+meta+`}`)
 }
 
 func (p *pager) owner(t *testing.T) *owner {
@@ -151,29 +160,35 @@ func TestJSONLByteCapStopsBetweenPages(t *testing.T) {
 	p := newPager(7)
 	o := p.owner(t)
 	full := o.run(streamArgs("--limit", "3", "--max-rows", "3")...)
-	meta, item := 0, 0
-	for i, l := range strings.SplitAfter(full.out, "\n") {
-		if i == 0 {
-			meta = len(l)
-		}
-		if i == 1 {
-			item = len(l)
-		}
-	}
-	cap := meta + 3*item // the meta line and one page of three rows
+	parts := strings.SplitAfter(full.out, "\n")
+	meta, item := len(parts[0]), len(parts[1])
+	cap := meta + 3*item + jsonlEndReserve // the meta line, one page of three rows and the room of the complete line
 	r := o.run(streamArgs("--limit", "3", "--max-bytes", strconv.Itoa(cap))...)
 	ls := lines(t, r.out)
 	end := ls[len(ls)-1]
 	if r.code != 0 || strings.Join(ids(ls), ",") != "r0,r1,r2" || end["coverage"] != "partial" || end["nextCursor"] != "c3" || end["rows"] != float64(3) {
 		t.Fatalf("%+v", r)
 	}
-	if len(r.out)-len(strings.SplitAfter(r.out, "\n")[len(ls)-1]) > cap {
-		t.Errorf("more than the cap was written")
+	if len(r.out) > cap {
+		t.Errorf("the output (%d bytes) is over the cap (%d)", len(r.out), cap)
+	}
+	// one byte less and the first page does not fit
+	if r := o.run(streamArgs("--limit", "3", "--max-bytes", strconv.Itoa(cap-1))...); r.code == 0 && len(ids(lines(t, r.out))) == 3 {
+		t.Errorf("a page that does not fit was printed: %s", r.out)
 	}
 	// a first page that does not fit is an error, with nothing on stdout
 	r = o.run(streamArgs("--limit", "3", "--max-bytes", "10")...)
 	if r.code != 5 || errCode2(t, r) != "RESULT_TOO_LARGE" || r.out != "" {
 		t.Errorf("first page: %+v", r)
+	}
+	// the whole output, the complete line with a long cursor included, stays inside the cap whatever the cursor
+	p = newPager(50)
+	o = p.owner(t)
+	for c := 1500; c < 1800; c += 7 {
+		r = o.run(streamArgs("--limit", "1", "--max-bytes", strconv.Itoa(c))...)
+		if len(r.out) > c {
+			t.Fatalf("cap %d, output %d", c, len(r.out))
+		}
 	}
 }
 
@@ -394,4 +409,198 @@ func TestFollowUpAfterRestartIsExpired(t *testing.T) {
 	if r := a.run("audit", "slowest", "--result-id", id, "--json"); r.code != 0 {
 		t.Errorf("the owner that made it still has it: %+v", r)
 	}
+}
+
+// The owner marks every slowest page that has a cursor as cut (truncated): that is paging, not a cut list. Only a source that failed, or
+// a last page that is partial, makes the stream partial.
+func TestJSONLCoverageIgnoresPagingCuts(t *testing.T) {
+	cut := `{"coverage":"partial","truncated":"page"}`
+	p := newPager(7)
+	p.metaFn = func(i int, hasNext bool) string {
+		if hasNext {
+			return cut
+		}
+		return `{"coverage":"complete"}`
+	}
+	ls := lines(t, p.owner(t).run(streamArgs("--limit", "3")...).out)
+	if e := ls[len(ls)-1]; e["coverage"] != "complete" || e["nextCursor"] != nil || e["rows"] != float64(7) {
+		t.Errorf("paging cuts only: %v", e)
+	}
+	// the last page is partial: the list itself was cut
+	p = newPager(7)
+	p.metaFn = func(i int, hasNext bool) string {
+		if hasNext {
+			return `{"coverage":"complete"}`
+		}
+		return cut
+	}
+	if e := lines(t, p.owner(t).run(streamArgs("--limit", "3")...).out); e[len(e)-1]["coverage"] != "partial" {
+		t.Errorf("last page partial: %v", e[len(e)-1])
+	}
+	// a source that did not answer on the first page
+	p = newPager(7)
+	p.extra = `,"sources":[{"sourceId":"a","ok":false}]`
+	if e := lines(t, p.owner(t).run(streamArgs("--limit", "3", "--max-rows", "3")...).out); e[len(e)-1]["coverage"] != "partial" {
+		t.Errorf("source failed: %v", e[len(e)-1])
+	}
+	// the real thing: audit slowest paged to its end on the demo owner is complete
+	o := newOwner(t, nil)
+	id, _ := compareKey(t, o)
+	sl := o.run("audit", "slowest", "--result-id", id, "-o", "jsonl", "--limit", "20", "--max-rows", "10000")
+	ls = lines(t, sl.out)
+	end := ls[len(ls)-1]
+	if sl.code != 0 || end["nextCursor"] != nil || end["coverage"] != "complete" || len(ids(ls)) < 3 {
+		t.Errorf("slowest to the end: %s", end)
+	}
+}
+
+func TestJSONLRowCapHoldsAgainstTheOwner(t *testing.T) {
+	// a limit of null is no limit: the stream asks for what it may print
+	p := newPager(30)
+	r := runOn(t, p.owner(t).attacher(), `{"resultId":"r","apiKey":"k","limit":null}`, nil, "audit", "requests", "-o", "jsonl", "--max-rows", "2", "--request", "-")
+	if got := ids(lines(t, r.out)); r.code != 0 || len(got) != 2 {
+		t.Errorf("null limit: %+v", r)
+	}
+	// an owner that sends more rows than were asked for is an error, not extra output
+	o := newOwner(t, nil)
+	o.serve(200, o.helloBody(nil), func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true,"data":{"rows":[{"id":"a"},{"id":"b"},{"id":"c"}]}}`)
+	})
+	if r := o.run(streamArgs("--limit", "2")...); r.code != 1 || errCode2(t, r) != "INTERNAL" || r.out != "" {
+		t.Errorf("too many rows: %+v", r)
+	}
+	// a limit the stream does not understand goes to the owner as it is; what comes back must still fit the row cap
+	r = o.run(streamArgs("--limit", "0", "--max-rows", "2")...)
+	if r.code != 5 || errCode2(t, r) != "RESULT_TOO_LARGE" || r.out != "" {
+		t.Errorf("limit 0: %+v", r)
+	}
+}
+
+func TestJSONLRequestNamesInAnyCase(t *testing.T) {
+	p := newPager(7)
+	o := p.owner(t)
+	for _, req := range []string{`{"resultId":"r","apiKey":"k","Limit":3}`, `{"resultId":"r","apiKey":"k","LIMIT":3,"Cursor":"c1"}`, `{"resultId":"r","apiKey":"k","cursor":"c1"}`} {
+		p.calls = nil
+		r := runOn(t, o.attacher(), req, nil, "audit", "requests", "-o", "jsonl", "--request", "-", "--max-rows", "10")
+		if r.code != 0 {
+			t.Errorf("%s: %+v", req, r)
+			continue
+		}
+		for _, c := range p.calls {
+			if len(c) < 3 { // resultId, apiKey, limit (and cursor after the first page)
+				t.Errorf("%s: call %v", req, c)
+			}
+			for k := range c {
+				if k != strings.ToLower(k) && k != "resultId" && k != "apiKey" {
+					t.Errorf("%s: the name %q reached the owner", req, k)
+				}
+			}
+		}
+	}
+	// the cursor of the request is the start of the stream
+	p.calls = nil
+	r := runOn(t, o.attacher(), `{"resultId":"r","apiKey":"k","cursor":"c5"}`, nil, "audit", "requests", "-o", "jsonl", "--request", "-")
+	if got := strings.Join(ids(lines(t, r.out)), ","); got != "r5,r6" || p.calls[0]["cursor"] != "c5" {
+		t.Errorf("cursor: %s %v", got, p.calls)
+	}
+	// two names that differ only in case are refused, not merged
+	r = runOn(t, o.attacher(), `{"resultId":"r","apiKey":"k","limit":3,"LIMIT":4}`, nil, "audit", "requests", "-o", "jsonl", "--request", "-")
+	if r.code != 2 {
+		t.Errorf("case twins: %+v", r)
+	}
+}
+
+func TestJSONLDefaultPageSizeIsTheMostTheToolTakes(t *testing.T) {
+	for op, want := range map[string][]string{"requests": {"100", "100"}, "slowest": {"50", "50"}} {
+		p := newPager(2)
+		o := p.owner(t)
+		args := []string{"audit", op, "--result-id", "r", "-o", "jsonl"}
+		if op == "requests" {
+			args = append(args, "--api-key", "k")
+		}
+		if r := o.run(args...); r.code != 0 {
+			t.Fatalf("%s: %+v", op, r)
+		}
+		if p.calls[0]["limit"] != mustNum(want[0]) {
+			t.Errorf("%s asks for %v", op, p.calls[0]["limit"])
+		}
+	}
+}
+
+func mustNum(s string) float64 { n, _ := strconv.Atoi(s); return float64(n) }
+
+func TestJSONLOddOwnerPages(t *testing.T) {
+	// cursors that go round, a row that is not an object, a cursor that is long or has a quote in it
+	n := 0
+	o := newOwner(t, nil)
+	cyc := []string{"A", "B", "A", "B"}
+	o.serve(200, o.helloBody(nil), func(w http.ResponseWriter, _ *http.Request) {
+		n++
+		_, _ = io.WriteString(w, `{"ok":true,"data":{"rows":[{"id":"x"}],"nextCursor":"`+cyc[(n-1)%len(cyc)]+`"}}`)
+	})
+	if r := o.run(streamArgs("--limit", "1", "--max-rows", "100")...); r.code != 1 || errCode2(t, r) != "INTERNAL" || n > 4 {
+		t.Errorf("cycle: %+v after %d calls", r, n)
+	}
+	for name, body := range map[string]string{
+		"row is a number": `{"ok":true,"data":{"rows":[5]}}`,
+		"row is text":     `{"ok":true,"data":{"rows":["a"]}}`,
+		"row is null":     `{"ok":true,"data":{"rows":[null]}}`,
+		"long cursor":     `{"ok":true,"data":{"rows":[{"id":"a"}],"nextCursor":"` + strings.Repeat("a", 1025) + `"}}`,
+		"cursor quote":    `{"ok":true,"data":{"rows":[{"id":"a"}],"nextCursor":"a\"b"}}`,
+		"cursor escape":   `{"ok":true,"data":{"rows":[{"id":"a"}],"nextCursor":"a\u001bb"}}`,
+		"cursor space":    `{"ok":true,"data":{"rows":[{"id":"a"}],"nextCursor":"a b"}}`,
+	} {
+		o = newOwner(t, nil)
+		o.serve(200, o.helloBody(nil), func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) })
+		if r := o.run(streamArgs()...); r.code != 1 || errCode2(t, r) != "INTERNAL" || r.out != "" {
+			t.Errorf("%s: %+v", name, r)
+		}
+	}
+	// a long but plain cursor is passed on
+	o = newOwner(t, nil)
+	long := strings.Repeat("a", 1024)
+	o.serve(200, o.helloBody(nil), func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true,"data":{"rows":[{"id":"a"}],"nextCursor":"`+long+`"}}`)
+	})
+	ls := lines(t, o.run(streamArgs("--max-rows", "1")...).out)
+	if ls[len(ls)-1]["nextCursor"] != long {
+		t.Errorf("the cursor was changed")
+	}
+}
+
+func TestJSONLLimitsAtTheEdgeAndTimesAndWrites(t *testing.T) {
+	o := newPager(3).owner(t)
+	if r := o.run(streamArgs("--max-rows", "10000")...); r.code != 0 {
+		t.Errorf("10000 is allowed: %+v", r)
+	}
+	if r := o.run(streamArgs("--max-rows", "10001")...); r.code != 2 {
+		t.Errorf("10001 is not: %+v", r)
+	}
+	// each page gets the time that is left, never more than the command has
+	p := newPager(9)
+	if r := p.owner(t).run(streamArgs("--limit", "3", "--timeout", "20s")...); r.code != 0 {
+		t.Fatalf("%+v", r)
+	}
+	if len(p.deadlines) != 3 || p.deadlines[0] > 20000 || p.deadlines[2] > p.deadlines[0] || p.deadlines[0] <= 0 {
+		t.Errorf("deadlines: %v", p.deadlines)
+	}
+	// a failed write of the complete line stops the command too
+	p = newPager(3)
+	var errb bytes.Buffer
+	w := &failAt{at: 2}
+	code := Run(context.Background(), streamArgs("--limit", "3"), IO{In: strings.NewReader(""), Out: w, Err: &errb,
+		Getenv: func(string) string { return "" }, Exe: func() (string, error) { return "/opt/unravis/bin/unravis.exe", nil }, Attach: p.owner(t).attacher().Attach})
+	if code != clicore.ExitStopped || errb.Len() != 0 || w.n != 2 {
+		t.Errorf("code %d, stderr %q, writes %d", code, errb.String(), w.n)
+	}
+}
+
+type failAt struct{ n, at int }
+
+func (w *failAt) Write(p []byte) (int, error) {
+	w.n++
+	if w.n >= w.at {
+		return 0, syscall.EPIPE
+	}
+	return len(p), nil
 }
