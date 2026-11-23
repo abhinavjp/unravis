@@ -116,9 +116,13 @@ func TestMaskCommaThenNewline(t *testing.T) {
 		"--password,\n,\nCANARY11",
 		"sqlcmd -P,\n\nCANARY12",
 		`["--password",` + "\n\n" + `"CANARY13"]`,
+		// Review round 3: a quoted element that starts like a tag or a setting is still a value.
+		"\"args\": [\"--password\",\n  \"secret:CANARY16\"]",
+		"\"args\": [\"--password\",\n  \"<CANARY17\"]",
 		// A key on the next line is a line of its own.
 		"-pW,\n\npassword: CANARY14",
 		"--password,\nDB_PASSWORD=CANARY15",
+		`["--password",` + "\n" + `"password": "CANARY18"]`,
 	} {
 		if out := Mask(in, m); strings.Contains(out, "CANARY") {
 			t.Errorf("leaked: %q -> %q", in, out)

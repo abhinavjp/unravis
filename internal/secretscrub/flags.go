@@ -220,12 +220,26 @@ func optionValue(s string, p int, listItem bool) (from, to, next int, ok bool) {
 		p++
 	}
 	from, to, next, ok = flagValue(s, p)
-	if ok && lines > 0 && nextLineKey(s[from:to]) {
+	if ok && lines > 0 && nextLineIsOwn(s, from, to) {
 		// A word on a later line, after a comma, that starts a secret setting ("password: x", "DB_PASSWORD=x") is a line of its own,
 		// not the value: it is read on its own. Any other word (a base64 value ends in "=" or "==") is the next array element.
 		return 0, 0, 0, false
 	}
 	return from, to, next, ok
+}
+
+// nextLineIsOwn says whether the word s[from:to] on a later line starts a line of its own. A quoted element of an array is a value
+// ("<Xk9!p", "secret:xyz") unless it is a key of a record ("password": "x"). An unquoted word is a line of its own when it starts a tag or a
+// secret setting.
+func nextLineIsOwn(s string, from, to int) bool {
+	if from > 0 && (s[from-1] == '"' || s[from-1] == '\'') {
+		e := to
+		if e < len(s) && s[e] == '\\' {
+			e++
+		}
+		return e+1 < len(s) && s[e+1] == ':' && keyClass(s[from:to]) != classNone
+	}
+	return nextLineKey(s[from:to])
 }
 
 // nextLineKey says whether a word starts a tag or a secret setting: a secret name before a ":" or an "=" ("password:", "DB_PASSWORD=x").
