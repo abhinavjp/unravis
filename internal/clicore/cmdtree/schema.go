@@ -92,7 +92,7 @@ func (st *state) schemaCmd() *cobra.Command {
 		Use:         "schema [operation]",
 		Short:       "List the operations, or describe one (its input, output and errors)",
 		Args:        cobra.MaximumNArgs(1),
-		Annotations: map[string]string{opAnnotation: "schema"},
+		Annotations: emitting("schema"),
 		RunE: func(c *cobra.Command, args []string) error {
 			meta := clicore.Meta{Coverage: "complete", Identifiers: "hidden"}
 			if len(args) == 0 {

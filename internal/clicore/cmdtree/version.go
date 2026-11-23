@@ -38,7 +38,7 @@ func (st *state) versionCmd() *cobra.Command {
 		Use:         "version",
 		Short:       "Print the version of this command line",
 		Args:        cobra.NoArgs,
-		Annotations: map[string]string{opAnnotation: "version"},
+		Annotations: emitting("version"),
 		RunE: func(c *cobra.Command, args []string) error {
 			exe := ""
 			f := st.io.Exe

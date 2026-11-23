@@ -4,17 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/clicap"
@@ -190,7 +194,7 @@ func TestSchemaListsAndDescribesEveryOperation(t *testing.T) {
 	if u := run(t, nil, "schema", `../x`, "--json"); u.code != 2 {
 		t.Errorf("path: %+v", u)
 	}
-	if tb := run(t, nil, "schema", "audit.compare"); tb.code != 0 || !strings.Contains(tb.out, `"inputSchema"`) == false && !strings.Contains(tb.out, `"input"`) {
+	if tb := run(t, nil, "schema", "audit.compare"); tb.code != 0 || tb.err != "" || !strings.Contains(tb.out, `"operation": "audit.compare"`) || !strings.Contains(tb.out, `"input"`) {
 		t.Errorf("table schema: %+v", tb)
 	}
 }
@@ -238,6 +242,11 @@ func TestOutputFile(t *testing.T) {
 		t.Error("a byte order mark")
 	}
 	decode(t, string(b))
+	if runtime.GOOS != "windows" {
+		if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != 0o600 {
+			t.Errorf("mode %v (%v)", fi, err)
+		}
+	}
 	// the file exists now: refused, and unchanged
 	r = run(t, nil, "version", "-o", "json", "--output-file", p)
 	if r.code != 2 || errCode(t, r) != "INVALID_ARGUMENT" {
@@ -311,6 +320,9 @@ func TestBlackboxInspect(t *testing.T) {
 	if w.code != 0 || decode(t, w.out)["data"].(map[string]any)["samples"].(map[string]any)["count"] != float64(4) {
 		t.Errorf("window: %+v", w)
 	}
+	if w := run(t, nil, "blackbox", "inspect", "--offline", "--input", dir, "--to", "2026-10-27T11:00:00Z", "--json"); w.code != 0 || decode(t, w.out)["data"].(map[string]any)["samples"].(map[string]any)["count"] != float64(2) {
+		t.Errorf("window to: %+v", w)
+	}
 	tb := run(t, nil, "blackbox", "inspect", "--offline", "--input", dir, "--samples", "1")
 	if tb.code != 0 || !strings.Contains(tb.out, "samples read") || !strings.Contains(tb.out, "CPU%") || !strings.Contains(tb.out, "HOST1") {
 		t.Errorf("table: %+v", tb)
@@ -331,8 +343,12 @@ func TestBlackboxInspect(t *testing.T) {
 	} {
 		a := append(tc.args, "--json")
 		r := run(t, nil, a...)
-		if r.code != 2 && r.code != 5 {
-			t.Errorf("%v: exit %d", tc.args, r.code)
+		want := 2
+		if tc.code == "NOT_FOUND" {
+			want = 5
+		}
+		if r.code != want {
+			t.Errorf("%v: exit %d, want %d", tc.args, r.code, want)
 			continue
 		}
 		if got := errCode(t, r); got != tc.code {
@@ -349,24 +365,29 @@ func TestBlackboxInspect(t *testing.T) {
 }
 
 func TestCompletionIsStatic(t *testing.T) {
-	for _, sh := range []string{"bash", "zsh", "fish", "powershell"} {
+	for _, sh := range shells {
 		r := run(t, nil, "completion", sh)
-		if r.code != 0 || len(r.out) < 100 {
+		if r.code != 0 || len(r.out) < 100 || r.err != "" {
 			t.Errorf("%s: exit %d, %d bytes (%q)", sh, r.code, len(r.out), r.err)
 		}
 	}
-	// no command or flag asks for a candidate list from a function (D24): the shell offers file names itself, we never read anything
+	// no command or flag asks for a candidate list from a function (D24)
 	var walk func(c *cobra.Command)
-	st := &state{}
 	walk = func(c *cobra.Command) {
 		if c.ValidArgsFunction != nil {
 			t.Errorf("%s has a ValidArgsFunction", c.CommandPath())
 		}
+		c.Flags().VisitAll(func(f *pflag.Flag) {
+			if fn, ok := c.GetFlagCompletionFunc(f.Name); ok && fn != nil {
+				t.Errorf("%s --%s has a completion function", c.CommandPath(), f.Name)
+			}
+		})
 		for _, sub := range c.Commands() {
 			walk(sub)
 		}
 	}
-	walk(st.root())
+	walk((&state{}).root())
+	// what the shell asks for is only fixed names; no file name appears
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "marker-file-name"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -374,9 +395,147 @@ func TestCompletionIsStatic(t *testing.T) {
 	old, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(old) })
 	_ = os.Chdir(dir)
-	r := run(t, nil, "__complete", "blackbox", "inspect", "--input", "")
-	if strings.Contains(r.out+r.err, "marker-file-name") {
-		t.Errorf("completion listed a file: %q", r.out)
+	r := run(t, nil, "__complete", "blackbox", "")
+	if !strings.Contains(r.out, "inspect") || strings.Contains(r.out+r.err, "marker-file-name") {
+		t.Errorf("completion of a group: %q", r.out)
+	}
+	// a wrong shell, no shell, JSON mode and a file are errors (exit 2), never a script with exit 0
+	for _, args := range [][]string{{"completion", "nosuch", "--json"}, {"completion", "--json"}, {"completion", "bash", "--json"}, {"completion", "bash", "-o", "json", "--output-file", filepath.Join(dir, "c.json")}} {
+		r := run(t, nil, args...)
+		if r.code != 2 || r.out != "" {
+			t.Errorf("%v: %+v", args, r)
+		}
+	}
+	if r := run(t, nil, "completion", "nosuch"); r.code != 2 || r.out != "" {
+		t.Errorf("table, wrong shell: %+v", r)
+	}
+}
+
+func TestGroupsAndHelpNeverSucceedOnATypo(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		code string
+	}{
+		{[]string{"help", "nosuch", "--json"}, "UNKNOWN_OPERATION"},
+		{[]string{"blackbox", "nosuch", "--json"}, "UNKNOWN_OPERATION"},
+		{[]string{"blackbox", "--json"}, "INVALID_ARGUMENT"},
+		{[]string{"--json"}, "INVALID_ARGUMENT"},
+		{[]string{"help", "version", "--json"}, "INVALID_ARGUMENT"},
+	} {
+		r := run(t, nil, tc.args...)
+		if r.code != 2 || errCode(t, r) != tc.code {
+			t.Errorf("%v: %+v", tc.args, r)
+		}
+	}
+	if r := run(t, nil, "help", "nosuch"); r.code != 2 || r.out != "" {
+		t.Errorf("table: %+v", r)
+	}
+	if r := run(t, nil, "help", "blackbox"); r.code != 0 || !strings.Contains(r.out, "inspect") {
+		t.Errorf("help of a group: %+v", r)
+	}
+}
+
+// A flag that takes another flag as its value changes what the person meant: it is refused, and no file named like a flag appears.
+func TestModeMustMatchWhatWasParsed(t *testing.T) {
+	dir := t.TempDir()
+	old, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(old) })
+	_ = os.Chdir(dir)
+	for _, args := range [][]string{
+		{"schema", "--output-file", "--json"},
+		{"blackbox", "inspect", "--offline", "--input", "--json"},
+		{"version", "--json", "--json=false"},
+		{"version", "-o", "table", "--json"},
+	} {
+		r := run(t, nil, args...)
+		if r.code != 2 || errCode(t, r) != "INVALID_ARGUMENT" {
+			t.Errorf("%v: %+v", args, r)
+		}
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, "*")); len(left) != 0 {
+		t.Errorf("files were made: %v", left)
+	}
+	if r := run(t, nil, "version", "--json", "--output-file", "-x"); r.code != 2 {
+		t.Errorf("file name that looks like a flag: %+v", r)
+	}
+}
+
+func TestLegacyOptionsAnywhere(t *testing.T) {
+	for _, args := range [][]string{
+		{"-o", "json", "--mcp"}, {"--json", "--mcp"}, {"version", "--mcp", "-o", "json"}, {"--quit", "--json"}, {"--check-update", "--json"},
+		{"-port=1", "--json"}, {"version", "--background", "--json"},
+	} {
+		r := run(t, nil, args...)
+		if r.code != 2 || errCode(t, r) != "LEGACY_OPTION" {
+			t.Errorf("%v: %+v", args, r)
+			continue
+		}
+		if !strings.Contains(r.err, "/opt/unravis/unravis.exe") {
+			t.Errorf("%v: the path of the app program is missing: %s", args, r.err)
+		}
+	}
+	// the app path in the table text is one line plus the code
+	if r := run(t, nil, "--mcp"); r.code != 2 || strings.Count(r.err, "\n") != 2 || !strings.Contains(r.err, "/opt/unravis/unravis.exe") {
+		t.Errorf("table: %+v", r)
+	}
+	// --version is answered wherever it stands, but not with a value or a third dash; and nothing after "--" is read
+	if r := run(t, nil, "--json", "--version"); r.code != 0 || !strings.Contains(r.out, version.Short()) {
+		t.Errorf("--version: %+v", r)
+	}
+	for _, args := range [][]string{{"---version", "--json"}, {"--version=x", "--json"}, {"version", "--json", "--", "--mcp"}} {
+		if r := run(t, nil, args...); r.code != 2 || errCode(t, r) != "INVALID_ARGUMENT" {
+			t.Errorf("%v: %+v", args, r)
+		}
+	}
+}
+
+func TestTimeoutIsApplied(t *testing.T) {
+	dir := record(t)
+	r := run(t, nil, "blackbox", "inspect", "--offline", "--input", dir, "--timeout", "1ns", "--json")
+	if r.code != 6 || errCode(t, r) != "TIMEOUT" {
+		t.Errorf("flag: %+v", r)
+	}
+	r = run(t, map[string]string{"UNRAVIS_TIMEOUT": "1ns"}, "blackbox", "inspect", "--offline", "--input", dir, "--json")
+	if r.code != 6 || errCode(t, r) != "TIMEOUT" {
+		t.Errorf("variable: %+v", r)
+	}
+	// the flag beats the variable
+	if r = run(t, map[string]string{"UNRAVIS_TIMEOUT": "1ns"}, "blackbox", "inspect", "--offline", "--input", dir, "--timeout", "30s", "--json"); r.code != 0 {
+		t.Errorf("flag beats variable: %+v", r)
+	}
+	if r = run(t, map[string]string{"UNRAVIS_TIMEOUT": "soon"}, "version", "--json"); r.code != 2 || errCode(t, r) != "INVALID_ARGUMENT" {
+		t.Errorf("bad variable: %+v", r)
+	}
+}
+
+func TestWriteErrorKinds(t *testing.T) {
+	if err := writeErr(nil); err != nil {
+		t.Error(err)
+	}
+	if err := writeErr(&os.PathError{Op: "write", Path: "x", Err: syscall.EPIPE}); !errors.Is(err, errOutputClosed) {
+		t.Errorf("a closed pipe: %v", err)
+	}
+	var ce *clicore.Error
+	if err := writeErr(errors.New("no space left")); !errors.As(err, &ce) || ce.Code != clicore.CodeInternal {
+		t.Errorf("a full disk: %v", err)
+	}
+}
+
+func TestNilArgsDoNotReadTheProcessArguments(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := Run(context.Background(), nil, IO{In: strings.NewReader(""), Out: &out, Err: &errb, Getenv: func(string) string { return "" }})
+	if code != 0 || !strings.Contains(out.String(), "unravis") {
+		t.Errorf("%d %q %q", code, out.String(), errb.String())
+	}
+}
+
+func TestUnknownOptionNamesAreNotEchoedWhenOdd(t *testing.T) {
+	r := run(t, nil, "version", "--ghp_secretTOKEN123456789012345678901234567890", "--json")
+	if r.code != 2 || strings.Contains(r.err, "secret") || strings.Contains(r.err, "TOKEN") {
+		t.Errorf("%+v", r)
+	}
+	if r := run(t, nil, "version", "--bogus", "--json"); !strings.Contains(r.err, "--bogus") {
+		t.Errorf("a plain name is repeated: %+v", r)
 	}
 }
 
@@ -413,5 +572,17 @@ func TestErrorsNeverLeakTheRequestedPath(t *testing.T) {
 	if strings.Contains(r.err, "very-secret-folder-name") {
 		t.Errorf("the path is in the error: %s", r.err)
 	}
-	_ = clicore.CodeInternal
+	for _, args := range [][]string{
+		{"version", "--json", "--output-file", filepath.Join(filepath.Dir(secret), "very-secret-folder-name", "x.json")},
+		{"version", "--output-file", secret + "-t"},
+	} {
+		if r := run(t, nil, args...); strings.Contains(r.err, "very-secret-folder-name") {
+			t.Errorf("%v: the path is in the error: %s", args, r.err)
+		}
+	}
+	d := record(t)
+	_ = os.WriteFile(filepath.Join(d, "case.db"), []byte("x"), 0o600)
+	if r := run(t, nil, "blackbox", "inspect", "--offline", "--input", d, "--json"); strings.Contains(r.err, d) || strings.Contains(r.err, "case.db") {
+		t.Errorf("the case file or folder is in the error: %s", r.err)
+	}
 }

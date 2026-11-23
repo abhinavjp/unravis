@@ -21,7 +21,7 @@ func build(t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		exe += ".exe"
 	}
-	out, err := exec.Command("go", "build", "-o", exe, ".").CombinedOutput()
+	out, err := exec.Command("go", "build", "-o", exe, ".").CombinedOutput() //nolint:gosec // the go tool and a path made by this test
 	if err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
@@ -30,8 +30,8 @@ func build(t *testing.T) string {
 
 func runExe(t *testing.T, exe string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	cmd := exec.Command(exe, args...)
-	cmd.Env = []string{} // an empty environment: nothing is needed
+	cmd := exec.Command(exe, args...) //nolint:gosec // the program this test just built
+	cmd.Env = []string{}              // an empty environment: nothing is needed
 	var o, e bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &o, &e
 	err := cmd.Run()
@@ -74,8 +74,8 @@ func TestClosedOutputPipeStopsQuietly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = r.Close() // nobody reads
-	cmd := exec.Command(exe, "schema", "--json")
+	_ = r.Close()                                // nobody reads
+	cmd := exec.Command(exe, "schema", "--json") //nolint:gosec // the program this test just built
 	cmd.Env = []string{}
 	var e bytes.Buffer
 	cmd.Stdout, cmd.Stderr = w, &e

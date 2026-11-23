@@ -17,7 +17,7 @@ func (st *state) blackboxCmd() *cobra.Command {
 		Use:   "blackbox",
 		Short: "Blackbox recordings",
 		Args:  cobra.NoArgs,
-		RunE:  func(c *cobra.Command, args []string) error { return c.Help() },
+		RunE:  func(c *cobra.Command, args []string) error { return st.groupHelp(c) },
 	}
 	var (
 		offline  bool
@@ -31,7 +31,7 @@ func (st *state) blackboxCmd() *cobra.Command {
 		Short:       "Read a Blackbox recording from disk, with no running app, and say what it holds",
 		Long:        "Reads a recordings folder, or one hourly file (bb-YYYYMMDD-HH.ndjson), read-only. It never starts a service, never writes, and refuses a folder that holds case data. Copy a recording to a folder of its own first if it sits next to cases.",
 		Args:        cobra.NoArgs,
-		Annotations: map[string]string{opAnnotation: "blackbox.inspect"},
+		Annotations: emitting("blackbox.inspect"),
 		RunE: func(c *cobra.Command, args []string) error {
 			if !offline {
 				return usage("blackbox inspect needs --offline: it reads files and does not ask the running app.")

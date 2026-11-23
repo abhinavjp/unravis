@@ -7,13 +7,16 @@ import (
 	"path/filepath"
 )
 
-// WriteNewFile writes data to path for --output-file: it makes a temporary file in the same folder and renames it into place, so a
-// reader never sees half a file. An existing file is refused unless overwrite is set, and a path that is a folder or a link is
-// refused always. The file is private to the account (0600). The check for an existing file and the rename are two steps, so another
-// process that creates the same name in between can lose its file only when overwrite is set; without it the rename of a name that
-// appeared in that moment is refused as well (checked again after the temporary file is ready).
+// WriteNewFile writes data to path for --output-file: it makes a temporary file in the same folder and puts it in place, so a reader
+// never sees half a file. An existing file is refused unless overwrite is set, and a path that is a folder or a link is refused
+// always. The file is private to the account (0600). Without overwrite the file is put in place with a hard link, which fails when the
+// name exists, so a file that another process made in the meantime is never replaced; on a file system with no hard links the check
+// is made twice and then renamed (a narrow window remains there). With overwrite, the replaced file's mode and owner are not kept.
+// A link in a parent folder is followed. A problem with the arguments is INVALID_ARGUMENT (exit 2); a failure of the disk after that
+// is INTERNAL (exit 1).
 func WriteNewFile(path string, data []byte, overwrite bool) *Error {
 	bad := func(msg string) *Error { return NewError(CodeInvalidArgument, msg, "") }
+	failed := func() *Error { return NewError(CodeInternal, "The output file could not be written.", "") }
 	if path == "" {
 		return bad("--output-file needs a file name.")
 	}
@@ -40,18 +43,31 @@ func WriteNewFile(path string, data []byte, overwrite bool) *Error {
 		return bad("The output file cannot be created in that folder.")
 	}
 	name := tmp.Name()
-	cleanup := func() { _ = tmp.Close(); _ = os.Remove(name) }
 	if _, err := tmp.Write(data); err != nil {
-		cleanup()
-		return bad("The output file could not be written.")
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return failed()
 	}
 	if err := tmp.Sync(); err != nil {
-		cleanup()
-		return bad("The output file could not be written.")
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return failed()
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(name)
-		return bad("The output file could not be written.")
+		return failed()
+	}
+	if !overwrite {
+		err := os.Link(name, path)
+		switch {
+		case err == nil:
+			_ = os.Remove(name)
+			return nil
+		case errors.Is(err, fs.ErrExist):
+			_ = os.Remove(name)
+			return bad("The output file exists. Add --overwrite to replace it.")
+		}
+		// no hard links here: check again and rename
 	}
 	if e := check(); e != nil {
 		_ = os.Remove(name)
@@ -59,7 +75,7 @@ func WriteNewFile(path string, data []byte, overwrite bool) *Error {
 	}
 	if err := os.Rename(name, path); err != nil {
 		_ = os.Remove(name)
-		return bad("The output file could not be put in place.")
+		return failed()
 	}
 	return nil
 }
