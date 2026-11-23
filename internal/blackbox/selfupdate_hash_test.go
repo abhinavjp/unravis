@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// SWP-1021-3: the hash of a staged program is taken from the open file, not from the whole file in memory.
+// SWP-1021-3: the hash of a staged program is right for a large file (the code reads the open file with io.Copy; this pins the value).
 func TestFileSHA256HexOfALargeFile(t *testing.T) {
 	body := strings.Repeat("recorder", 1<<20) // 8 MiB
 	p := filepath.Join(t.TempDir(), "prog.exe")

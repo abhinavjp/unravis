@@ -16,7 +16,7 @@ func SetupCanRecover(path string) bool { return FileHasAll(path, RecoverMarker) 
 
 // FileHasAll says whether the regular file at path holds every one of the texts. It reads the file in pieces of 1 MiB and keeps one
 // piece in memory, however large the file is (a setup program is tens of MB), and it stops as soon as every text has been seen. A text
-// that runs over the end of one piece is found. With no texts it is true for a readable regular file.
+// that runs over the end of one piece is found. With no texts it is true for any regular file that opens (nothing is read).
 func FileHasAll(path string, texts ...string) bool {
 	f, err := os.Open(path)
 	if err != nil {

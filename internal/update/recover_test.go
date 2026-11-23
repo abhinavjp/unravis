@@ -82,9 +82,17 @@ func TestFileHasAllNeedsEveryTextAndFindsThemAcrossPieces(t *testing.T) {
 	if !FileHasAll(write("none", "x")) || FileHasAll(filepath.Join(dir, "missing")) {
 		t.Error("no texts: a readable file passes, a missing one does not")
 	}
-	// a short text that is split by the piece end by one byte
-	long := big[:1<<20-1] + a
-	if !FileHasAll(write("edge", long), a) {
-		t.Error("a text that starts one byte before the piece end was not found")
+	// A text split by the piece end at every offset, also the longest one of several (the overlap kept between pieces must be the
+	// longest text minus one byte, not the shortest and not one less).
+	for cut := 1; cut < len(c); cut++ {
+		if !FileHasAll(write("cut-one", big[:1<<20-cut]+c), c) {
+			t.Errorf("a text cut %d bytes before the piece end was not found", cut)
+		}
+		if !FileHasAll(write("cut-all", big[:1<<20-cut]+c+a), a, c) {
+			t.Errorf("the longest of two texts, cut %d bytes before the piece end, was not found", cut)
+		}
+	}
+	if !FileHasAll(write("cut-12", big[:1<<20-12]+a), a) || !FileHasAll(write("cut-14", big[:1<<20-14]+c+a), a, c) {
+		t.Error("a split of 12 and 1, or of 14 and 1, was not found")
 	}
 }
