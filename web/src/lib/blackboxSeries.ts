@@ -4,6 +4,7 @@
  * same Windows counters as Perfmon (PDH), so these charts show the same numbers Perfmon would, downsampled by the server.
  * A value that was not read is absent in the answer and stays absent here: a line breaks, it never drops to 0.
  */
+import { SQL_DMV_GROUP, sqlDmvLine, type SeriesSql } from './blackboxSqlNames';
 
 export type SeriesUnit = 'pct' | 'bytes' | 'bytesPerSec' | 'ms' | 'sec' | 'perSec' | 'count';
 /** [bucket start in ms, average, lowest, highest]. */
@@ -22,6 +23,8 @@ export interface SeriesAnswer {
   lines: SeriesLine[]; groups: SeriesGroupCover[]; processes: SeriesProc[]; eventIds: SeriesEventId[]; dumps: SeriesDump[];
   gaps: SeriesGap[]; markers: SeriesMarker[]; truncated?: boolean; state?: { state: string; label: string; detail: string; tone: string };
   read: { files: number; samples: number; torn: number; dropped: string[] | null; missing: string[] | null };
+  /** What the SQL service's part of the answer rests on. Absent from an older server. */
+  sql?: SeriesSql;
 }
 export interface SeriesRequest { start: string; end: string; points?: number }
 
@@ -31,6 +34,16 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 const isArr = Array.isArray;
 const isPoint = (p: unknown): p is SeriesPoint => isArr(p) && p.length === 4 && p.every((x) => typeof x === 'number' && Number.isFinite(x));
 const points = (v: unknown): SeriesPoint[] | null => (isArr(v) && v.every(isPoint) ? (v as SeriesPoint[]) : null);
+
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+/** The SQL part of an answer when it is an object (every count read as a number, never a guess), else undefined. */
+function readSql(v: unknown): SeriesSql | undefined {
+  if (!isObj(v)) return undefined;
+  return {
+    files: num(v.files), samples: num(v.samples), missing: num(v.missing), dropped: num(v.dropped), corrupt: num(v.corrupt), torn: num(v.torn), truncated: num(v.truncated),
+    locked: v.locked === true, unsupported: v.unsupported === true, limited: v.limited === true, newer: v.newer === true, failed: v.failed === true
+  };
+}
 
 /** The answer when it has the documented shape, else null (the view then says the answer could not be read, never draws a blank chart). */
 export function readSeriesAnswer(v: unknown): SeriesAnswer | null {
@@ -53,6 +66,7 @@ export function readSeriesAnswer(v: unknown): SeriesAnswer | null {
     state: isObj(v.state) && typeof v.state.label === 'string' ? { state: typeof v.state.state === 'string' ? v.state.state : '', label: v.state.label, detail: typeof v.state.detail === 'string' ? v.state.detail : '', tone: typeof v.state.tone === 'string' ? v.state.tone : '' } : undefined,
     gaps: (v.gaps as unknown[]).filter((g): g is SeriesGap => isObj(g) && typeof g.from === 'string' && typeof g.to === 'string' && typeof g.seconds === 'number'),
     markers: (isArr(v.markers) ? v.markers : []).filter((m): m is SeriesMarker => isObj(m) && typeof m.t === 'string' && typeof m.kind === 'string'), truncated: v.truncated === true,
+    sql: readSql(v.sql),
     read: {
       files: typeof read.files === 'number' ? read.files : 0, samples: typeof read.samples === 'number' ? read.samples : 0,
       torn: typeof read.torn === 'number' ? read.torn : 0,
@@ -67,7 +81,7 @@ export function readSeriesAnswer(v: unknown): SeriesAnswer | null {
 export const GROUP_TITLES: Record<string, string> = {
   host: 'Machine', diskCpu: 'Disks and processor detail', memPressure: 'Memory pressure', vm: 'Virtual machine', tcp: 'Network (TCP)',
   http: 'HTTP.sys request queues', iis: 'IIS worker processes', aspnet: 'ASP.NET', clr: '.NET runtime', proc10: 'Watched programs',
-  procIO: 'Watched programs: disk and memory', sqlHost: 'SQL Server', events: 'Windows events'
+  procIO: 'Watched programs: disk and memory', sqlHost: 'SQL Server', sqlDmv: 'SQL Server: deeper checks', events: 'Windows events'
 };
 export const GROUP_ORDER = Object.keys(GROUP_TITLES);
 
@@ -124,6 +138,10 @@ function split(key: string): { group: string; where: string; field: string } {
 /** The plain name of a measurement and, for a named thing (pool, instance, disk, program), whose it is. */
 export function seriesName(key: string): { name: string; where: string; group: string } {
   const { group, where, field } = split(key);
+  if (group === SQL_DMV_GROUP) {
+    const l = sqlDmvLine(key);
+    if (l) return { name: l.name, where: l.where, group };
+  }
   if (group === 'tcp' && where === 'states') return { name: 'Connections in state ' + field, where: '', group };
   if (group === 'events' && /^level\d$/.test(field)) return { name: (own(EVENT_LEVELS, field.slice(5)) ?? 'Level ' + field.slice(5)) + ' events', where: '', group };
   if (group === 'diskCpu' && where === 'cpu') return { name: own(FIELD_NAMES, field) ?? field, where: '', group };
@@ -281,6 +299,8 @@ export function unitStrips(keys: string[], lines: SeriesLine[]): Array<{ unit: S
 
 /** A group with samples but no readings in the window: why, in plain words. Null when it was read at least once or never asked for. */
 export function coverNote(c: SeriesGroupCover): string | null {
+  // The SQL service's part has its own notes (sqlNote): its "partial" is a cut at the row limit, not adapters.
+  if (c.group === SQL_DMV_GROUP) return null;
   if (c.read > 0) {
     const p = c.partial ?? 0;
     if (p <= 0) return null;

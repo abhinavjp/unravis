@@ -425,6 +425,16 @@ func (k keyedSource) OpenFile(ctx context.Context, name string) (io.ReadCloser, 
 	return rc, keeperReadErr(err)
 }
 
+// OpenSQLFile opens one SQL sample file through the keeper (the recorder serves it behind the same read key).
+func (k keyedSource) OpenSQLFile(ctx context.Context, name string) (io.ReadCloser, error) {
+	ss, ok := k.inner.(blackbox.SQLSource)
+	if !ok {
+		return nil, &blackbox.ReadError{Kind: blackbox.ReadNotFound, Message: "No SQL samples are served here."}
+	}
+	rc, err := ss.OpenSQLFile(ctx, name)
+	return rc, keeperReadErr(err)
+}
+
 // Diagnostics reads the recorder's diagnostics log through the keeper.
 func (k keyedSource) Diagnostics(ctx context.Context) ([]byte, error) {
 	d, ok := k.inner.(blackbox.DiagSource)

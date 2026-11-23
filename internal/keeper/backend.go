@@ -697,10 +697,13 @@ func (b *Backend) bbImport(_ context.Context, c *Call) (any, error) {
 	return ImportResult{Imported: n}, err
 }
 
-// bbPathAllowed is the whole list of what the keeper GETs from a Blackbox: the manifest, the status, the diagnostics log and one recording file.
+// bbPathAllowed is the whole list of what the keeper GETs from a Blackbox: the manifest, the status, the diagnostics log, one recording file and one SQL sample file.
 func bbPathAllowed(p string) bool {
 	if p == "/manifest" || p == "/status" || p == "/diag" {
 		return true
+	}
+	if name, ok := strings.CutPrefix(p, "/sql/files/"); ok {
+		return blackbox.ValidSQLFileName(name)
 	}
 	name, ok := strings.CutPrefix(p, "/files/")
 	return ok && blackbox.ValidFileName(name)
@@ -739,7 +742,7 @@ func (b *Backend) bbHTTP(ctx context.Context, c *Call) (any, error) {
 	}
 	c.Record = a.ID
 	if !bbPathAllowed(a.Path) {
-		return nil, &WireError{Code: CodeRefused, Message: "The key keeper reads only the manifest, the status and recording files of a Blackbox."}
+		return nil, &WireError{Code: CodeRefused, Message: "The key keeper reads only the manifest, the status, the recording files and the SQL sample files of a Blackbox."}
 	}
 	e, err := b.BB.Get(a.ID)
 	if err != nil {

@@ -9,6 +9,7 @@
   import { blackboxApi, refusalText, shownTime, type BlackboxItem } from '../lib/blackbox';
   import { BB_REFUSAL } from '../lib/copy/blackboxCopy';
   import { BBC_TEXT as T } from '../lib/copy/blackboxChartsCopy';
+  import { sqlNote } from '../lib/blackboxSqlNames';
   import {
     PRESET_LABELS, UNIT_TITLES, axisValue, chartData, gapRanges, coverNote, defaultSelection, firstPreset, formatValue, lineFigures, pickerGroups,
     alignedRequest, presetWindow, readSeriesAnswer, seriesTitle, seriesUnit, unitStrips, GROUP_TITLES, own, niceBinaryMax, biggestPlotted,
@@ -167,6 +168,7 @@
     if (!q) return groups;
     return groups.map((g) => ({ ...g, lines: g.lines.filter((l) => (seriesTitle(l.key) + ' ' + l.key + ' ' + g.title).toLowerCase().includes(q)) })).filter((g) => g.lines.length);
   });
+  const sqlNoteText = $derived(answer && answer.samples > 0 ? sqlNote(answer.sql) : null);
   const notRead = $derived((answer?.groups ?? []).map((c) => ({ c, note: answer && answer.samples > 0 ? coverNote(c) : null })).filter((x) => x.note));
   // BLACKBOX-04: a colour is never used twice inside one chart. The colours run per chart (per unit), not across all of them; only a
   // chart with more lines than the palette has colours goes on to dashed and then dotted lines, and the swatches show that too.
@@ -449,10 +451,10 @@
               {#if answer}<p class="bbc-note">{T.noMatch}</p>{/if}
             {/each}
           </div>
-          {#if notRead.length}
+          {#if notRead.length || sqlNoteText}
             <div class="bbc-notread">
               <strong>{T.notReadGroups}</strong>
-              <ul>{#each notRead as x (x.c.group)}<li>{own(GROUP_TITLES, x.c.group) ?? x.c.group}: {x.note}</li>{/each}</ul>
+              <ul>{#each notRead as x (x.c.group)}<li>{own(GROUP_TITLES, x.c.group) ?? x.c.group}: {x.note}</li>{/each}{#if sqlNoteText}<li>{own(GROUP_TITLES, 'sqlDmv')}: {sqlNoteText}</li>{/if}</ul>
             </div>
           {/if}
         {:else}
@@ -492,7 +494,7 @@
             <div class="bbc-legends" aria-hidden="true">
               {#each legends as lg, i (lg.unit)}
                 <ul class="bbc-legend" style:top={(TOP + i * (STRIP_H + GAP) - 24) + 'px'} style:left={LEFT + 'px'}>
-                  {#each lg.shown as n (n.key)}<li><span class="bbc-swatch {n.c?.dash ?? 'solid'}" style:--sw={n.c?.color ?? 'transparent'}></span>{n.title}</li>{/each}
+                  {#each lg.shown as n (n.key)}<li><span class="bbc-swatch {n.c?.dash ?? 'solid'}" style:--sw={n.c?.color ?? 'transparent'}></span><span class="bbc-lgt" title={n.title}>{n.title}</span></li>{/each}
                   {#if lg.more}<li class="bbc-legend-more">{T.legendMore(lg.more)}</li>{/if}
                 </ul>
               {/each}
@@ -703,7 +705,8 @@
   .bbc-canvas-wrap.empty { visibility: hidden; height: 0 !important; }
   .bbc-legends { position: absolute; inset: 0; pointer-events: none; }
   .bbc-legend { position: absolute; display: flex; flex-wrap: nowrap; gap: var(--space-4); margin: 0; padding: 0; list-style: none; max-width: calc(100% - 100px); overflow: hidden; color: var(--text-2); font-size: 12px; white-space: nowrap; }
-  .bbc-legend li { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .bbc-legend li { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; }
+  .bbc-lgt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .bbc-legend-more { color: var(--text-2); }
   .bbc-empty { display: grid; justify-items: center; gap: var(--space-2); padding: var(--space-8, 48px) var(--space-4); text-align: center; }
   .bbc-empty-title { margin: 0; font-size: 14px; font-weight: 600; }

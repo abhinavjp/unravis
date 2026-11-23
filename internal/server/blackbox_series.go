@@ -154,6 +154,8 @@ type bbSeriesAnswer struct {
 	Read            bbReadSummary        `json:"read"`
 	State           blackbox.StateInfo   `json:"state"`
 	Truncated       bool                 `json:"truncated,omitempty"` // more measurements than the answer carries
+	// SQL says what the SQL service's part of the answer rests on (absent when it was not asked for).
+	SQL *bbSeriesSQL `json:"sql,omitempty"`
 }
 
 // bbAcc is the sum, lowest, highest and count of one bucket of one measurement.
@@ -403,7 +405,8 @@ func (h *handler) bbSeries(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	rp := rep
 	state := blackbox.DeriveState(blackbox.StateInput{Placed: true, Reading: &rd, Report: &rp})
-	writeJSON(w, http.StatusOK, buildBBSeriesShape(rd.Manifest, samples, rep, state, win, points, body.Shape == "m4", body.Width > 0 || body.Shape == "m4"), maxResponseBytes)
+	sqlRead := b.readSQLSamples(r.Context(), e, win)
+	writeJSON(w, http.StatusOK, buildBBSeriesWith(rd.Manifest, samples, rep, state, win, points, body.Shape == "m4", body.Width > 0 || body.Shape == "m4", sqlRead), maxResponseBytes)
 }
 
 // bbSeriesPointCount is the number of buckets to answer: the asked points (the
@@ -434,6 +437,12 @@ func buildBBSeries(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.
 // holds more than points buckets (the default answer holds one more when the
 // window divides evenly, and stays as it was).
 func buildBBSeriesShape(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.ReadReport, state blackbox.StateInfo, win bbWindow, points int, m4, bound bool) bbSeriesAnswer {
+	return buildBBSeriesWith(m, samples, rep, state, win, points, m4, bound, nil)
+}
+
+// buildBBSeriesWith is buildBBSeriesShape with the SQL service's samples for the same window
+// (nil when they were not read: the answer then has no "sql" part and no sqlDmv lines).
+func buildBBSeriesWith(m blackbox.Manifest, samples []blackbox.Sample, rep blackbox.ReadReport, state blackbox.StateInfo, win bbWindow, points int, m4, bound bool, sqlIn *bbSQLRead) bbSeriesAnswer {
 	width := win.End.Sub(win.Start) / time.Duration(points)
 	if bound {
 		width++ // span/width + 1 <= points, as M4BucketMs does for the case series
@@ -538,6 +547,12 @@ func buildBBSeriesShape(m blackbox.Manifest, samples []blackbox.Sample, rep blac
 			}
 		}
 	}
+
+	if sqlIn != nil {
+		// The SQL service's part is not a group of the host sample: it has its own cover, only when it was read.
+		cover[bbDmvGroup] = &bbSeriesGroupCover{Group: bbDmvGroup}
+	}
+	addSQLSeries(bk, cover, sqlIn)
 
 	keys := make([]string, 0, len(bk.byKey))
 	for k := range bk.byKey {
@@ -644,10 +659,13 @@ func buildBBSeriesShape(m blackbox.Manifest, samples []blackbox.Sample, rep blac
 	for _, g := range bbSeriesGroups {
 		groups = append(groups, *cover[g])
 	}
+	if c := cover[bbDmvGroup]; c != nil {
+		groups = append(groups, *c)
+	}
 	ans := bbSeriesAnswer{
 		Start: win.Start, End: win.End, BucketSeconds: int(width / time.Second), IntervalSeconds: m.CadenceSeconds(),
 		Samples: len(samples), Lines: lines, Groups: groups, Processes: procs, EventIDs: evs, Dumps: dl,
-		Gaps: gaps, Markers: marks, Read: summarize(rep), State: state, Truncated: bk.over,
+		Gaps: gaps, Markers: marks, Read: summarize(rep), State: state, Truncated: bk.over, SQL: bbSQLSummary(sqlIn),
 	}
 	if len(samples) > 0 {
 		f, l := samples[0].T.UTC(), samples[len(samples)-1].T.UTC()

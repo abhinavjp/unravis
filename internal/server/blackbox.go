@@ -1673,6 +1673,23 @@ func (b *blackboxHub) readSamples(ctx context.Context, e bbsaved.Entry, windows 
 	return rd, kept, rep, nil
 }
 
+// readSQLSamples reads the SQL service's samples for a window through the same source as the
+// host samples. It never fails the charts: a read that cannot be made (key refused, cancelled)
+// keeps the samples already read and sets Failed.
+// nil means the SQL part was not read at all.
+func (b *blackboxHub) readSQLSamples(ctx context.Context, e bbsaved.Entry, win bbWindow) *bbSQLRead {
+	ctx, cancel := context.WithTimeout(ctx, bbReadTimeout)
+	defer cancel()
+	src, err := b.source(e)
+	if err != nil {
+		return nil
+	}
+	ss, rep, err := blackbox.ReadSQLSamples(ctx, src, win.Start, win.End)
+	// A read that stopped early (timeout, cancel, key refused, throttled) keeps what was read and says so: the view then
+	// tells the person some points are missing instead of acting as if the server were older.
+	return &bbSQLRead{Samples: ss, Report: rep, Failed: err != nil}
+}
+
 func summarize(r blackbox.ReadReport) bbReadSummary {
 	s := bbReadSummary{Files: r.Files, Samples: r.Samples, Torn: len(r.Torn), Dropped: r.Dropped, Missing: r.Missing}
 	if s.Dropped == nil {
