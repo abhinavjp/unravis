@@ -62,9 +62,10 @@
     return row.userId === null || row.userId === undefined ? DRILL_TEXT.notRecorded : String(row.userId);
   }
 
-  function rowKey(event: KeyboardEvent, row: NearbyRow): void {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
+  // The row stays pressable with a mouse (a press anywhere on it opens the call). The real control for a keyboard, a screen reader and a
+  // touch screen is the button in the API cell: it keeps its own press to itself, so one press never selects twice (BL-495).
+  function pick(event: MouseEvent, row: NearbyRow): void {
+    event.stopPropagation();
     onSelect(row);
   }
 </script>
@@ -114,21 +115,15 @@
         {#each capped.rows as row (row.sourceId + '|' + row.id)}
           {@const light = lightCells(row)}
           {@const own = isThisCall(row, call)}
-          <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-          <tr
-            class:thiscall={own}
-            aria-current={own ? 'true' : undefined}
-            tabindex="0"
-            onclick={() => onSelect(row)}
-            onkeydown={(event) => rowKey(event, row)}
-          >
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+          <tr class:thiscall={own} onclick={() => onSelect(row)}>
             <td class="time" data-label={DRILL_TEXT.colTime}>{formatTime(row.initiatedAt, { zone, precision: 'ms', date: false, suffix: false })}</td>
             <td data-label={DRILL_TEXT.colFromCall}>
               <!-- The row of this call says so once; the gap words are for the other rows (ANALYSIS-15). -->
               {#if own}<strong class="mark">{DRILL_TEXT.thisCallMark}</strong>{:else}{gapLabel(startMs(row), call, { thisCall: DRILL_TEXT.gapThis, during: DRILL_TEXT.gapDuring })}{/if}
             </td>
             <td data-label={DRILL_TEXT.colUser}>{userText(row)}</td>
-            <td data-label={DRILL_TEXT.colApi}>{row.controller}.{row.action}</td>
+            <td data-label={DRILL_TEXT.colApi}><button type="button" class="row-btn" data-testid="scall-nearby-open" aria-current={own ? 'true' : undefined} aria-label={DRILL_TEXT.openNearbyCall(`${row.controller}.${row.action}`, formatTime(row.initiatedAt, { zone, precision: 'ms', date: false, suffix: false }))} onclick={(event) => pick(event, row)}>{row.controller}.{row.action}</button></td>
             <td class="num" data-label={DRILL_TEXT.colTook}>{ms(row.durationMs)}</td>
             {#if light === null}
               <td colspan="3" class="muted" data-testid="scall-light-none">{DRILL_TEXT.notRecorded}</td>
@@ -192,10 +187,39 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
-  .chip:focus-visible,
-  tbody tr:focus-visible {
+  .chip:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 2px;
+  }
+  /* The real button of a row (BL-495). It looks like the plain cell text it replaced and moves nothing: no padding, no border, the font and the
+     line height of the cell. An invisible ::after grows its press area to the cell (24 px tall or more) without changing its box or its ring. */
+  .row-btn {
+    position: relative;
+    display: inline-block;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-align: inherit;
+    overflow-wrap: inherit;
+    word-break: inherit;
+    cursor: pointer;
+  }
+  .row-btn::after {
+    content: '';
+    position: absolute;
+    inset: -5px -8px;
+  }
+  .row-btn:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  tbody tr:has(.row-btn:focus-visible) {
+    background: var(--surface-2);
   }
   .nearby {
     width: 100%;

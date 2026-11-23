@@ -123,10 +123,12 @@ test('UI-10: both tables cap their rows and say so', () => {
   assert.match(near, /DRILL_TEXT\.rowsCapped\(capped\.rows\.length, capped\.total\)/);
 });
 
-test('UI-10: all-sources rows take Space as well as Enter, and mark the selected row', () => {
+test('UI-10 (BL-495): all-sources rows take Space as well as Enter through a real button, and mark the selected row', () => {
   const all = read('src/components/CallAllSources.svelte');
-  assert.match(all, /event\.key !== 'Enter' && event\.key !== ' '/);
-  assert.match(all, /aria-selected=\{selectedKey === item\.key\}/);
+  // a <button> answers Enter and Space itself; the old row key handler is gone
+  assert.match(all, /<button type="button" class="row-btn"/);
+  assert.doesNotMatch(all, /event\.key/);
+  assert.match(all, /aria-pressed=\{selectedKey === item\.key\}/);
   assert.match(all, /class:selected=\{selectedKey === item\.key\}/);
 });
 
