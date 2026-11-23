@@ -1,4 +1,5 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
+import type { SqlAccessReport } from './types';
 import { utcToWall } from './zoneStamp';
 import { zoneAbbreviation } from './time';
 
@@ -212,9 +213,16 @@ export interface Settings {
   record: { processes: boolean; logsCatalogue: boolean; copyLogsOnSnapshot: boolean };
   logPaths: string[];
   probe: { enabled: boolean };
+  /** Which SQL checks the SQL service runs. Missing means the standard set. Settings only: no server, login or password lives here. */
+  sql?: { profile?: string; extras?: string[] };
   /** The app pools and services the owner picked for per-process detail. Empty means machine-wide only. */
   targets: TargetRef[];
 }
+
+/** What "turn SQL collection on" sends: how the SQL service signs in, the saved connection (login mode), and whether to start the service now. */
+export interface SqlSetupRequest { mode: 'login' | 'windows'; savedId?: string; enable: boolean }
+/** What a finished setup says. `grantScript` is set only for Windows sign-in. */
+export interface SqlSetupAnswer { ok: boolean; installed: boolean; loginSaved: boolean; started: boolean; grantScript?: string }
 
 export interface Refusal {
   status: number;
@@ -224,6 +232,8 @@ export interface Refusal {
   next?: string;
   state?: StateInfo;
   existing?: BlackboxItem;
+  /** Set when "turn SQL collection on" stopped because the login is not ready: the access report, with the script for what is missing. */
+  report?: SqlAccessReport;
 }
 
 /** A refused Blackbox call. `refusal` holds what the server said, with no key in it. */
@@ -340,7 +350,7 @@ async function readRefusal(response: Response): Promise<Refusal> {
     status: response.status,
     error: typeof body.error === 'string' && body.error ? body.error : 'The Blackbox request failed (' + response.status + ').',
     reason: typeof body.reason === 'string' && body.reason ? body.reason : 'other',
-    what: body.what, next: body.next, state: body.state, existing: body.existing
+    what: body.what, next: body.next, state: body.state, existing: body.existing, report: body.report
   };
 }
 
@@ -389,6 +399,13 @@ export const blackboxApi = {
   apply: (settings: Settings) => call<{ ok: boolean; restarted: boolean; sqlWarning?: string }>('POST', '/this-pc/apply', settings),
   remove: (deleteRecordings: boolean, confirmName: string) => call<RemoveAnswer>('POST', '/this-pc/remove', { deleteRecordings, confirmName }),
   snapshot: () => call<SnapshotAnswer>('POST', '/this-pc/snapshot', {}),
+  /**
+   * Turns SQL collection on, on this PC. Mode "login" uses a saved SQL connection (its password stays with the key keeper); "windows" uses the
+   * SQL service's own Windows account and prints a grant script first. A login that is not ready is refused with 409 and its access report.
+   */
+  sqlSetup: (body: SqlSetupRequest) => call<SqlSetupAnswer>('POST', '/this-pc/sql/setup', body),
+  /** Deletes the SQL login saved on this PC and stops the SQL service. */
+  sqlClearLogin: () => call<{ ok: boolean }>('POST', '/this-pc/sql/login/clear', {}),
   /** Replaces the recorder program installed on this PC with the one that ships with Unravis. One administrator approval. */
   updateThisPc: () => call<UpdateAnswer>('POST', '/this-pc/update', {}),
   hostReading: (id: string, body: { incident: { start: string; end: string }; reference: { start: string; end: string } }) =>

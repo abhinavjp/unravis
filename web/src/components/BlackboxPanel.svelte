@@ -18,6 +18,7 @@
   import ReadKey from './BlackboxReadKey.svelte';
   import Diagnostics from './BlackboxDiagnostics.svelte';
   import BlackboxCharts from './BlackboxCharts.svelte';
+  import SqlCollect from './BlackboxSqlCollect.svelte';
   import { BBC_TEXT } from '../lib/copy/blackboxChartsCopy';
   import WizardDialog from './blackboxWizard/WizardDialog.svelte';
 
@@ -535,6 +536,7 @@
               <HostCard {item} />
             {/if}
             {#if item.state.state !== 'not-found' && item.state.state !== 'not-placed' && item.state.state !== 'unreachable'}{#key item.id}<Diagnostics {item} />{/key}{/if}
+            {#if item.thisPc && thisPc.installed}{#key item.id}<SqlCollect {thisPc} />{/key}{/if}
           </section>
             {/if}
       {/snippet}

@@ -1,0 +1,43 @@
+/** Words for "Collect SQL data" on a Blackbox that runs on this PC. Plain words, no causes named. */
+export const SQLC_TEXT = {
+  heading: 'Collect SQL data',
+  intro: 'The Blackbox can also record how a SQL Server on this PC or another one is doing: waits, running requests, blocking and more. It only reads. It never changes data.',
+  howHeading: 'How the SQL service signs in',
+  modeLogin: 'A SQL login (recommended)',
+  modeLoginHelp: 'Unravis checks the login first. The password is kept sealed on this PC, never shown, never written to a case or a log.',
+  modeWindows: 'Windows sign-in',
+  modeWindowsHelp: 'The SQL service signs in as its own Windows account. You run one script on the server to allow it, then turn it on. Only for a server on this PC.',
+  connection: 'SQL connection',
+  noLogin: 'No saved connection has a stored SQL login yet. Add one below and tick Remember password.',
+  addConnection: 'Add a connection',
+  hideAdd: 'Close',
+  profileHeading: 'What to collect',
+  profile: {
+    standard: 'Standard: the usual health figures.',
+    everything: 'Everything: all the safe figures the Blackbox knows.',
+    deep: 'Deep: everything, plus the heavier checks. Uses more of the server.'
+  } as Record<string, string>,
+  profileWillApply: 'The new choice is applied to the Blackbox first (one administrator approval).',
+  check: 'Check Blackbox access',
+  checking: 'Checking…',
+  turnOn: 'Turn on SQL collection',
+  turningOn: 'Turning on…',
+  turnOnWindows: 'Get the script',
+  windowsRan: 'I ran the script. Turn it on',
+  windowsScriptIntro: 'Run this script in SSMS on the server as an admin, then press the button below.',
+  oneApproval: 'Windows asks for one administrator approval.',
+  clear: 'Remove the saved SQL login',
+  clearing: 'Removing…',
+  clearHelp: 'Deletes the login stored on this PC and stops the SQL service. The recordings stay.',
+  cleared: 'The saved SQL login is removed and the SQL service is stopped.',
+  needConnection: 'Pick a connection first.',
+  notReady: 'This login is not ready for the Blackbox, so nothing was changed.',
+  failed: 'It could not be turned on. Nothing was left half done. Try again.',
+  otherPcs: 'Another PC: the SQL login is set when the Blackbox is installed there. You can still check the server from this PC with Check Blackbox access.',
+  done: (a: { installed: boolean; started: boolean }): string =>
+    (a.installed ? 'The SQL service is installed. ' : '') + (a.started ? 'SQL collection is on. The first samples show in a minute.' : 'SQL collection is set up and not started yet.'),
+  copy: 'Copy script',
+  copied: 'Copied.',
+  copyFailed: 'Select the script and copy it by hand.',
+  scriptLabel: 'Script to run in SSMS as an admin'
+};
