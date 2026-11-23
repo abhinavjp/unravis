@@ -46,17 +46,20 @@ func ParseMode(s string) (Mode, bool) {
 }
 
 // PeekOutputMode finds the output mode in the arguments before any command parser runs, so that even a usage error ("unravis audit
-// nosuch --json") is reported as JSON. The last of "-o X", "-oX", "--output X", "--output=X" and "--json" wins; arguments after "--"
-// are not read; the variable UNRAVIS_OUTPUT is used only when no flag names a mode. A value that is not a mode is ignored here (the
-// command reports UNSUPPORTED_FORMAT, and it does so as a table). getenv is os.Getenv-like; nil means the real, allowed variables.
+// nosuch --json") is reported as JSON. The last of "-o X", "-oX", "--output X", "--output=X", "--json" and "--json=true" wins, also
+// inside a group of short flags ("-qo json", "-qojson"); arguments after "--" are not read; the variable UNRAVIS_OUTPUT is used only
+// when no flag names a mode. A flag with a value that is not a mode wins too and gives a table (the command then reports
+// UNSUPPORTED_FORMAT, as a table). Known limit: the peek does not know the flags of a command, so the value of a flag that takes one
+// ("--search --json") is read as a flag. getenv is os.Getenv-like; nil means the real, allowed variables.
 func PeekOutputMode(args []string, getenv func(string) string) Mode {
 	if getenv == nil {
 		getenv = Getenv
 	}
 	mode, found := ModeTable, false
 	set := func(v string) {
+		mode, found = ModeTable, true
 		if m, ok := ParseMode(v); ok {
-			mode, found = m, true
+			mode = m
 		}
 	}
 	for i := 0; i < len(args); i++ {
@@ -64,21 +67,32 @@ func PeekOutputMode(args []string, getenv func(string) string) Mode {
 		switch {
 		case a == "--":
 			i = len(args)
-		case a == "--json":
+		case a == "--json", a == "--json=true", a == "--json=1":
 			mode, found = ModeJSON, true
-		case a == "-o" || a == "--output":
+		case a == "--output":
 			if i+1 < len(args) {
 				i++
 				set(args[i])
 			}
 		case strings.HasPrefix(a, "--output="):
 			set(strings.TrimPrefix(a, "--output="))
-		case strings.HasPrefix(a, "-o") && len(a) > 2 && !strings.HasPrefix(a, "--"):
-			set(strings.TrimPrefix(strings.TrimPrefix(a, "-o"), "="))
+		case len(a) > 1 && a[0] == '-' && a[1] != '-':
+			// A group of short flags: letters up to an "o" are switches; the rest of the group, or the next argument, is the value of -o.
+			if k := strings.IndexByte(a, 'o'); k > 0 {
+				if v := strings.TrimPrefix(a[k+1:], "="); a[k+1:] != "" {
+					set(v)
+				} else if i+1 < len(args) {
+					i++
+					set(args[i])
+				}
+			}
 		}
 	}
 	if !found {
-		set(getenv("UNRAVIS_OUTPUT"))
+		set2 := getenv("UNRAVIS_OUTPUT")
+		if m, ok := ParseMode(set2); ok {
+			mode = m
+		}
 	}
 	return mode
 }

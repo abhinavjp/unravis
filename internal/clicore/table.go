@@ -23,13 +23,16 @@ func Printable(s string) string {
 }
 
 // unsafeRune is a control character, a character that changes the direction of the text (a right-to-left override can make a file name
-// read backwards on screen), or an invalid byte.
+// read backwards on screen), an invisible character (zero width, line separator, tag characters), or an invalid byte.
 func unsafeRune(r rune) bool {
 	switch {
 	case unicode.IsControl(r), r == utf8.RuneError:
 		return true
 	case r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069, r == 0x200E, r == 0x200F, r == 0x061C:
 		return true
+	case r >= 0x200B && r <= 0x200D, r >= 0x2028 && r <= 0x2029, r >= 0x2060 && r <= 0x2064, r == 0xFEFF, r == 0x00AD, r == 0x180E,
+		r >= 0xE0000 && r <= 0xE007F, r >= 0xFE00 && r <= 0xFE0F:
+		return true // invisible characters: they can hide text, or carry text that only a program reads
 	}
 	return false
 }

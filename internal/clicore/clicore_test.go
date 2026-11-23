@@ -3,9 +3,9 @@ package clicore
 import (
 	"bytes"
 	"encoding/json"
+	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -44,22 +44,82 @@ func TestExitMapComplete(t *testing.T) {
 	}
 }
 
-func TestRetryableOnlyBeforeTheBodyWasSent(t *testing.T) {
+func TestRetryableOnlyBeforeWorkStarted(t *testing.T) {
 	yes := []Code{CodeAppNotRunning, CodeOwnerBusy, CodeUpdateInProgress, CodeBudgetExceeded, CodeUpstreamUnavailable}
 	isYes := map[Code]bool{}
 	for _, c := range yes {
 		isYes[c] = true
 		if !Retryable(c, false) {
-			t.Errorf("%s should be retryable before the body is sent", c)
+			t.Errorf("%s should be retryable when no work started", c)
 		}
 		if Retryable(c, true) {
-			t.Errorf("%s must not be retryable after the body was sent (a repeat would run the query again)", c)
+			t.Errorf("%s must not be retryable after work started (a repeat would run the query again)", c)
 		}
 	}
 	for _, c := range Codes() {
 		if !isYes[c] && (Retryable(c, false) || Retryable(c, true)) {
 			t.Errorf("%s must never be retryable", c)
 		}
+	}
+	// Defaults of the two constructors: an owner that died mid-call is not retryable; a refusal is.
+	if !NewError(CodeOwnerBusy, "m", "").Retryable || !NewError(CodeBudgetExceeded, "m", "").Retryable {
+		t.Error("a refusal before work is retryable")
+	}
+	if NewErrorAfterWork(CodeUpstreamUnavailable, "m", "").Retryable || NewErrorAfterWork(CodeOwnerBusy, "m", "").Retryable {
+		t.Error("an error after work started is never retryable")
+	}
+}
+
+// TestRetryableNeverTrustsTheOwner: a wrong "retryable":true from the owner does not reach the output.
+func TestRetryableNeverTrustsTheOwner(t *testing.T) {
+	e := &Error{Code: CodeResultExpired, Message: "m", Retryable: true}
+	b, err := MarshalError("audit.groups", "req_0123456789abcdef", e)
+	if err != nil || !strings.Contains(string(b), `"retryable":false`) {
+		t.Errorf("%s %v", b, err)
+	}
+	if !e.Retryable {
+		t.Error("the caller's value must not be changed")
+	}
+}
+
+func TestExitMapGolden(t *testing.T) {
+	golden := map[Code]int{
+		CodeInternal:        1,
+		CodeInvalidArgument: 2, CodeUnknownOperation: 2, CodeUnsupportedFormat: 2, CodeRequestTooLarge: 2, CodeLegacyOption: 2, CodeLiveCaseRefused: 2,
+		CodeAppNotRunning: 3, CodeEndpointUnavailable: 3, CodeEndpointUntrusted: 3, CodeStaleLocator: 3, CodeOwnerBusy: 3, CodeUpdateInProgress: 3,
+		CodeUpstreamUnavailable: 3, CodeBudgetExceeded: 3,
+		CodePermissionDenied: 4, CodeApprovalRequired: 4, CodeCaseLocked: 4, CodeElevationRefused: 4,
+		CodeResultExpired: 5, CodeNotFound: 5, CodeResultTooLarge: 5, CodeVersionIncompatible: 5,
+		CodeCanceled: 6, CodeTimeout: 6,
+		CodeIncomplete: 7,
+	}
+	if len(golden) != len(Codes()) {
+		t.Errorf("%d codes in the golden table, %d in Codes()", len(golden), len(Codes()))
+	}
+	for c, want := range golden {
+		if got := ExitCode(c); got != want {
+			t.Errorf("%s: exit %d, want %d", c, got, want)
+		}
+	}
+}
+
+func TestWriteErrorSanitizesCodeAndIDs(t *testing.T) {
+	var b bytes.Buffer
+	WriteError(&b, ModeTable, "x", "req_0123456789abcdef", &Error{Code: "X\x1b[2J", Message: "m"})
+	if strings.ContainsAny(b.String(), "\x1b") || !strings.Contains(b.String(), "Code: INTERNAL") {
+		t.Errorf("a code outside the contract: %q", b.String())
+	}
+	b.Reset()
+	if n := WriteError(&b, ModeJSON, "bad op\x1b", "evil\x1b[2J", &Error{Code: "NOPE", Message: "m"}); n != 1 {
+		t.Errorf("exit %d", n)
+	}
+	if !json.Valid(b.Bytes()) || strings.Contains(b.String(), "NOPE") || strings.Contains(b.String(), "evil") || !strings.Contains(b.String(), `"operation":"unknown"`) {
+		t.Errorf("json: %q", b.String())
+	}
+	b.Reset()
+	WriteError(&b, ModeTable, "x", "evil\x1b[2J", NewError(CodeInternal, "m", ""))
+	if strings.Contains(b.String(), "\x1b") || !regexp.MustCompile(`Request: req_[0-9a-f]{16}\n`).MatchString(b.String()) {
+		t.Errorf("table: %q", b.String())
 	}
 }
 
@@ -89,7 +149,7 @@ func TestMappingsFromOtherAreas(t *testing.T) {
 			t.Errorf("%+v: got %s", tc, got)
 		}
 	}
-	for status, want := range map[int]Code{423: CodeCaseLocked, 404: CodeNotFound, 403: CodePermissionDenied, 429: CodeBudgetExceeded, 503: CodeUpstreamUnavailable, 500: CodeInternal} {
+	for status, want := range map[int]Code{423: CodeCaseLocked, 404: CodeNotFound, 403: CodePermissionDenied, 429: CodeOwnerBusy, 503: CodeEndpointUnavailable, 400: CodeInvalidArgument, 413: CodeRequestTooLarge, 500: CodeInternal, 302: CodeInternal} {
 		if got, ok := FromHTTPStatus(status); !ok || got != want {
 			t.Errorf("HTTP %d: %s %v", status, got, ok)
 		}
@@ -226,7 +286,15 @@ func TestPeekOutputMode(t *testing.T) {
 		{[]string{"--output=json"}, "", ModeJSON},
 		{[]string{"--json", "-o", "table"}, "", ModeTable}, // the last one wins
 		{[]string{"-o", "table", "--json"}, "", ModeJSON},
-		{[]string{"-o", "yaml"}, "", ModeTable}, // not a mode: the command reports UNSUPPORTED_FORMAT
+		{[]string{"-qo", "json"}, "", ModeJSON},
+		{[]string{"-qojson"}, "", ModeJSON},
+		{[]string{"-qo=jsonl"}, "", ModeJSONL},
+		{[]string{"-q"}, "json", ModeJSON},
+		{[]string{"--json=true"}, "", ModeJSON},
+		{[]string{"--json=false"}, "", ModeTable},
+		{[]string{"--json", "-o", "yaml"}, "", ModeTable}, // a later invalid value wins, as a table
+		{[]string{"-o", "yaml"}, "json", ModeTable},       // a flag beats the variable, even when its value is wrong
+		{[]string{"-o", "yaml"}, "", ModeTable},           // not a mode: the command reports UNSUPPORTED_FORMAT
 		{[]string{"-o", "yaml", "--json"}, "", ModeJSON},
 		{[]string{"--", "--json"}, "", ModeTable},               // after "--" nothing is read
 		{[]string{"version"}, "json", ModeJSON},                 // the variable, when no flag names a mode
@@ -250,28 +318,40 @@ func TestOnlyAllowlistedEnvRead(t *testing.T) {
 	if Getenv("PATH_SECRET_TEST") != "" || Getenv("UNRAVIS_OUTPUT") != "json" {
 		t.Error("Getenv must read the allowed names only")
 	}
-	// No other file of this package reads the environment on its own.
+	// No code of this package reads the environment by any other way: scan the syntax, not the text.
 	files, _ := filepath.Glob("*.go")
 	fset := token.NewFileSet()
+	reads := 0
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
 		}
-		src, err := os.ReadFile(f)
+		file, err := parser.ParseFile(fset, f, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := parser.ParseFile(fset, f, src, 0); err != nil {
-			t.Fatal(err)
-		}
-		n := strings.Count(string(src), "os.Getenv(") + strings.Count(string(src), "os.LookupEnv(") + strings.Count(string(src), "os.Environ(")
-		if f == "peek.go" {
-			if n != 1 {
-				t.Errorf("peek.go: %d environment reads, want exactly the one in Getenv", n)
+		for _, imp := range file.Imports {
+			if p := strings.Trim(imp.Path.Value, `"`); p == "syscall" || p == "golang.org/x/sys/windows" || p == "golang.org/x/sys/unix" {
+				t.Errorf("%s imports %s, which can read the environment", f, p)
 			}
-		} else if n != 0 {
-			t.Errorf("%s reads the environment", f)
 		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			switch sel.Sel.Name {
+			case "Getenv", "LookupEnv", "Environ", "ExpandEnv", "Expand", "Clearenv", "Setenv", "Unsetenv":
+				reads++
+				if pk, ok := sel.X.(*ast.Ident); !ok || pk.Name != "os" || f != "peek.go" || sel.Sel.Name != "Getenv" {
+					t.Errorf("%s: %s reads or changes the environment", fset.Position(sel.Pos()), sel.Sel.Name)
+				}
+			}
+			return true
+		})
+	}
+	if reads != 1 {
+		t.Errorf("%d environment accesses, want exactly the one in Getenv", reads)
 	}
 }
 
@@ -305,9 +385,11 @@ func TestPrintable(t *testing.T) {
 		"a\x1b]0;title\x07b": "a ]0;title b",
 		"line1\nline2\r\nx":  "line1 line2  x",
 		"name\u202egpj.exe":  "name gpj.exe", // right-to-left override
-		"bad\xffbyte":        "bad\uFFFDbyte",
-		"tab\there":          "tab here",
-		"\u0085next":         " next", // C1 control
+		"zero\u200bwidth\u2028sep\ufeffbom\u00adsoft": "zero width sep bom soft",
+		"tag\U000E0041hidden":                         "tag hidden",
+		"bad\xffbyte":                                 "bad\uFFFDbyte",
+		"tab\there":                                   "tab here",
+		"\u0085next":                                  " next", // C1 control
 	} {
 		if got := Printable(in); got != want {
 			t.Errorf("%q: got %q want %q", in, got, want)

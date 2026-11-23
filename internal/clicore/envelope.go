@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 )
 
@@ -25,9 +26,15 @@ type Error struct {
 
 func (e *Error) Error() string { return string(e.Code) + ": " + e.Message }
 
-// NewError makes an error with its default retry rule (the body was not sent).
+// NewError makes an error for a failure before any work started (the app is not running, the owner refused). Its retry rule is the
+// default for the code. For a failure after the owner may have begun the work (it died mid-call), use NewErrorAfterWork.
 func NewError(c Code, message, action string) *Error {
 	return &Error{Code: c, Message: message, Retryable: Retryable(c, false), Action: action}
+}
+
+// NewErrorAfterWork makes an error for a failure after the owner may have started the work of the request. It is never retryable.
+func NewErrorAfterWork(c Code, message, action string) *Error {
+	return &Error{Code: c, Message: message, Retryable: Retryable(c, true), Action: action}
 }
 
 // Meta is what travels next to the data of a success.
@@ -76,7 +83,39 @@ func MarshalError(operation, requestID string, e *Error) ([]byte, error) {
 	if e == nil {
 		return nil, errors.New("clicore: no error to write")
 	}
-	return ASCIIJSON(errorEnvelope{SchemaVersion, operation, requestID, e})
+	return ASCIIJSON(errorEnvelope{SchemaVersion, safeOperation(operation), safeRequestID(requestID), contract(e)})
+}
+
+var (
+	requestIDRE = regexp.MustCompile(`^req_[0-9a-f]{16}$`)
+	operationRE = regexp.MustCompile(`^[a-z][a-z0-9.]{0,63}$`)
+)
+
+// safeRequestID returns id when it has the form of a request id, else a new one: the text reaches a terminal in table mode.
+func safeRequestID(id string) string {
+	if requestIDRE.MatchString(id) {
+		return id
+	}
+	return NewRequestID()
+}
+
+// safeOperation returns op when it looks like an operation id, else "unknown".
+func safeOperation(op string) string {
+	if operationRE.MatchString(op) {
+		return op
+	}
+	return "unknown"
+}
+
+// contract returns a copy of e that obeys the output contract: a code that is not in the table becomes INTERNAL, and retryable is
+// never true for a code that cannot be retried, whatever the owner said.
+func contract(e *Error) *Error {
+	c := *e
+	if _, ok := codeExit[c.Code]; !ok {
+		c.Code = CodeInternal
+	}
+	c.Retryable = c.Retryable && Retryable(c.Code, false)
+	return &c
 }
 
 // ASCIIJSON encodes v as one JSON line made of 7-bit characters only: every character above U+007F is written as \uXXXX (a surrogate
@@ -94,7 +133,7 @@ func ASCIIJSON(v any) ([]byte, error) {
 	for _, r := range string(bytes.TrimSuffix(in, []byte("\n"))) {
 		switch {
 		case r < 0x80:
-			out = append(out, byte(r))
+			out = append(out, byte(r&0x7F)) // r is below 0x80 here
 		case r < 0x10000:
 			out = append(out, fmt.Sprintf(`\u%04x`, r)...)
 		default:
@@ -111,6 +150,8 @@ func WriteError(stderr io.Writer, mode Mode, operation, requestID string, e *Err
 	if e == nil {
 		e = NewError(CodeInternal, "An unknown error happened.", "")
 	}
+	e = contract(e)
+	operation, requestID = safeOperation(operation), safeRequestID(requestID)
 	if mode == ModeJSON || mode == ModeJSONL {
 		if b, err := MarshalError(operation, requestID, e); err == nil {
 			_, _ = stderr.Write(b)

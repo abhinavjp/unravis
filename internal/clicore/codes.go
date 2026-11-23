@@ -14,6 +14,7 @@ const (
 	CodeUnsupportedFormat Code = "UNSUPPORTED_FORMAT"
 	CodeRequestTooLarge   Code = "REQUEST_TOO_LARGE"
 	CodeLegacyOption      Code = "LEGACY_OPTION"
+	CodeLiveCaseRefused   Code = "LIVE_CASE_REFUSED"
 
 	CodeAppNotRunning       Code = "APP_NOT_RUNNING"
 	CodeEndpointUnavailable Code = "ENDPOINT_UNAVAILABLE"
@@ -56,7 +57,7 @@ var codeExit = map[Code]int{
 	CodeInternal: ExitInternal,
 
 	CodeInvalidArgument: ExitUsage, CodeUnknownOperation: ExitUsage, CodeUnsupportedFormat: ExitUsage,
-	CodeRequestTooLarge: ExitUsage, CodeLegacyOption: ExitUsage,
+	CodeRequestTooLarge: ExitUsage, CodeLegacyOption: ExitUsage, CodeLiveCaseRefused: ExitUsage,
 
 	CodeAppNotRunning: ExitDependency, CodeEndpointUnavailable: ExitDependency, CodeEndpointUntrusted: ExitDependency,
 	CodeStaleLocator: ExitDependency, CodeOwnerBusy: ExitDependency, CodeUpdateInProgress: ExitDependency,
@@ -75,7 +76,7 @@ var codeExit = map[Code]int{
 func Codes() []Code {
 	return []Code{
 		CodeInternal,
-		CodeInvalidArgument, CodeUnknownOperation, CodeUnsupportedFormat, CodeRequestTooLarge, CodeLegacyOption,
+		CodeInvalidArgument, CodeUnknownOperation, CodeUnsupportedFormat, CodeRequestTooLarge, CodeLegacyOption, CodeLiveCaseRefused,
 		CodeAppNotRunning, CodeEndpointUnavailable, CodeEndpointUntrusted, CodeStaleLocator, CodeOwnerBusy, CodeUpdateInProgress,
 		CodeUpstreamUnavailable, CodeBudgetExceeded,
 		CodePermissionDenied, CodeApprovalRequired, CodeCaseLocked, CodeElevationRefused,
@@ -94,13 +95,15 @@ func ExitCode(c Code) int {
 	return ExitInternal
 }
 
-// Retryable says whether repeating the same request is safe (spec D27). It is true only for the codes in which the owner did no work
-// (not running, busy, updating, over budget, upstream down). A live query whose request body was already sent is never retryable,
-// because a repeat would run the query again; bodySent says the body went out.
-func Retryable(c Code, bodySent bool) bool {
+// Retryable says whether repeating the same request is safe (spec D27). Only these codes can be: APP_NOT_RUNNING, OWNER_BUSY,
+// UPDATE_IN_PROGRESS, BUDGET_EXCEEDED and UPSTREAM_UNAVAILABLE. workStarted says the owner may have begun the work of the request (a
+// live query ran or may have run): then a repeat could run the query again, so nothing is retryable. A refusal that the owner sent
+// before it did any work (busy, updating, over budget) and an app that is not running are retryable with workStarted false, even
+// though the request body was sent. An owner that dies mid-call is UPSTREAM_UNAVAILABLE with workStarted true.
+func Retryable(c Code, workStarted bool) bool {
 	switch c {
 	case CodeAppNotRunning, CodeOwnerBusy, CodeUpdateInProgress, CodeBudgetExceeded, CodeUpstreamUnavailable:
-		return !bodySent
+		return !workStarted
 	}
 	return false
 }
@@ -141,8 +144,9 @@ func FromMCP(code string, pending bool, backend string) Code {
 	return CodeInternal
 }
 
-// FromHTTPStatus maps the answer of a case or master-key lock gate. 423 (locked) is CASE_LOCKED; 404 is NOT_FOUND; 403 is
-// PERMISSION_DENIED; 429 and 503 are BUDGET_EXCEEDED and UPSTREAM_UNAVAILABLE. Anything else that is not a success is INTERNAL.
+// FromHTTPStatus maps a failing answer of the owner's HTTP routes. 423 (locked) is CASE_LOCKED; 404 is NOT_FOUND; 403 is
+// PERMISSION_DENIED; 400 is INVALID_ARGUMENT; 413 is REQUEST_TOO_LARGE; 429 is OWNER_BUSY (a rate limit, retryable); 503 is
+// ENDPOINT_UNAVAILABLE (the server uses it for lasting states, so it is not retryable). Anything else that is not a success is INTERNAL.
 func FromHTTPStatus(status int) (Code, bool) {
 	switch status {
 	case 423:
@@ -151,10 +155,14 @@ func FromHTTPStatus(status int) (Code, bool) {
 		return CodeNotFound, true
 	case 403:
 		return CodePermissionDenied, true
+	case 400:
+		return CodeInvalidArgument, true
+	case 413:
+		return CodeRequestTooLarge, true
 	case 429:
-		return CodeBudgetExceeded, true
+		return CodeOwnerBusy, true
 	case 503:
-		return CodeUpstreamUnavailable, true
+		return CodeEndpointUnavailable, true
 	}
 	if status >= 200 && status < 300 {
 		return "", false

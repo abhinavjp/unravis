@@ -27,7 +27,7 @@ func TestEveryRowHasAllFiveColumns(t *testing.T) {
 func TestUnlistedOpDenied(t *testing.T) {
 	for _, op := range []string{"", "nosuch", "cases.delete", "audit.compare ", "AUDIT.COMPARE", "audit.*", "code", "app"} {
 		for _, s := range Surfaces() {
-			if Check(op, s) != Deny || Permits(op, s) {
+			if Check(op, s) != Deny || permits(op, s) {
 				t.Errorf("%q on %s must be denied", op, s)
 			}
 		}
@@ -49,11 +49,11 @@ func TestCodeIsDeniedEverywhere(t *testing.T) {
 
 func TestCasesAndAdminAreHumanOnly(t *testing.T) {
 	for _, op := range []string{"cases.list", "cases.show", "doctor", "app.start", "app.stop", "grant.list", "grant.approve", "grant.revoke"} {
-		if !Permits(op, CLIHuman) {
+		if !permits(op, CLIHuman) {
 			t.Errorf("%s should be allowed for a person", op)
 		}
 		for _, s := range []Surface{CLIAuto, MCP, Sandbox} {
-			if Permits(op, s) {
+			if permits(op, s) {
 				t.Errorf("%s must be denied for %s", op, s)
 			}
 		}
@@ -82,7 +82,7 @@ func TestAutomationMayOnlyRunAuditToolsSourcesAndStatus(t *testing.T) {
 			if got != w {
 				t.Errorf("%s for cli_auto: %s, want %s", r.Op, got, w)
 			}
-		} else if Permits(r.Op, CLIAuto) {
+		} else if permits(r.Op, CLIAuto) {
 			t.Errorf("%s must not be permitted for cli_auto", r.Op)
 		}
 	}
@@ -121,10 +121,10 @@ func TestToolNamesAreTheTenOfTheMCPCatalog(t *testing.T) {
 
 func TestOfflineOpsAreNotGatedForAutomation(t *testing.T) {
 	for _, op := range []string{"version", "schema", "blackbox.inspect"} {
-		if Check(op, CLIAuto) != NA || Permits(op, CLIAuto) {
+		if Check(op, CLIAuto) != NA || permits(op, CLIAuto) {
 			t.Errorf("%s: n/a for cli_auto, and a call that reaches the owner for it is refused", op)
 		}
-		if !Permits(op, CLIHuman) {
+		if !permits(op, CLIHuman) {
 			t.Errorf("%s: a person may run it", op)
 		}
 	}
@@ -148,5 +148,67 @@ func TestRowsIsACopy(t *testing.T) {
 	}
 	if (Row{Op: "x", Gui: Allow, Human: Allow, Auto: Allow, MCP: Allow}).Complete() {
 		t.Error("a row with an empty column is not complete")
+	}
+}
+
+func permits(op string, s Surface) bool { ok, _ := Gate(op, s); return ok }
+
+func TestGateTellsWhenAGrantIsNeeded(t *testing.T) {
+	if ok, grant := Gate("audit.compare", MCP); !ok || !grant {
+		t.Errorf("a scoped call needs a grant: %v %v", ok, grant)
+	}
+	if ok, grant := Gate("audit.compare", CLIHuman); !ok || grant {
+		t.Errorf("a person needs no grant: %v %v", ok, grant)
+	}
+	if ok, grant := Gate("cases.list", CLIAuto); ok || grant {
+		t.Errorf("denied: %v %v", ok, grant)
+	}
+	if ok, _ := Gate("nosuch", GUI); ok {
+		t.Error("unlisted")
+	}
+}
+
+// TestMatrixIsTheSpecTable pins every cell to the table of spec 05-cli section 3.6 (written out again here, on purpose: a changed cell
+// must be changed in two places). Columns: gui, cli_human, cli_auto, mcp, sandbox.
+func TestMatrixIsTheSpecTable(t *testing.T) {
+	const (
+		a, s, d, n = Allow, Scoped, Deny, NA
+	)
+	golden := map[string][5]Access{
+		"version":                 {n, a, n, n, n},
+		"schema":                  {n, a, n, n, n},
+		"sources.list":            {a, a, s, s, d},
+		"audit.guide":             {a, a, s, s, d},
+		"audit.compare":           {a, a, s, s, d},
+		"audit.groups":            {a, a, s, s, d},
+		"audit.timeline":          {a, a, s, s, d},
+		"audit.timelines.compare": {a, a, s, s, d},
+		"audit.requests":          {a, a, s, s, d},
+		"audit.slowest":           {a, a, s, s, d},
+		"audit.breakdown":         {a, a, s, s, d},
+		"audit.activity":          {a, a, s, s, d},
+		"cases.list":              {a, a, d, d, d},
+		"cases.show":              {a, a, d, d, d},
+		"doctor":                  {n, a, d, d, d},
+		"app.status":              {n, a, a, d, d},
+		"app.start":               {n, a, d, d, d},
+		"app.stop":                {n, a, d, d, d},
+		"grant.list":              {a, a, d, d, d},
+		"grant.approve":           {a, a, d, d, d},
+		"grant.revoke":            {a, a, d, d, d},
+		"blackbox.inspect":        {n, a, n, n, n},
+		"code.run":                {d, d, d, d, d},
+		"code.types":              {d, d, d, d, d},
+		"code.replay":             {d, d, d, d, d},
+	}
+	if len(Rows()) != len(golden) {
+		t.Errorf("%d rows, %d in the spec table", len(Rows()), len(golden))
+	}
+	for op, want := range golden {
+		for i, sf := range Surfaces() {
+			if got := Check(op, sf); got != want[i] {
+				t.Errorf("%s on %s: %s, want %s", op, sf, got, want[i])
+			}
+		}
 	}
 }

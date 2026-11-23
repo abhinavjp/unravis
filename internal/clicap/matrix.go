@@ -131,15 +131,17 @@ func Check(op string, s Surface) Access {
 	return Deny
 }
 
-// Permits says whether the call may go on at the gate. Allow and Scoped let it through (a scoped call still needs its grant, which the
-// caller checks); Deny stops it. NA means the surface has no gate for this operation (an offline operation), and the owner never sees
-// such a call, so a call that does arrive for it is refused.
-func Permits(op string, s Surface) bool {
+// Gate says whether a call may go on at the gate, and whether it needs a grant first. An Allow goes on with no grant. A Scoped call goes
+// on only with a grant (area 03), so the caller must check it: needsGrant is true then. Deny stops the call. NA means the surface has
+// no gate for this operation (an offline operation), the owner never sees such a call, and a call that does arrive for it is refused.
+func Gate(op string, s Surface) (ok, needsGrant bool) {
 	switch Check(op, s) {
-	case Allow, Scoped:
-		return true
+	case Allow:
+		return true, false
+	case Scoped:
+		return true, true
 	}
-	return false
+	return false, false
 }
 
 // Register is for an operation handler: it panics if the operation has no complete row. Call it at start-up, so an operation
