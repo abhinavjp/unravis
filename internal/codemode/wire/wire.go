@@ -47,7 +47,7 @@ func WriteFrame(w io.Writer, payload []byte) error {
 		return ErrFrameTooLarge
 	}
 	buf := make([]byte, 4+len(payload))
-	binary.LittleEndian.PutUint32(buf, uint32(len(payload)))
+	binary.LittleEndian.PutUint32(buf, uint32(len(payload))) //nolint:gosec // len(payload) <= MaxFrame, checked above
 	copy(buf[4:], payload)
 	_, err := w.Write(buf)
 	return err

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -627,11 +626,7 @@ func TestBrokerPackageStartsNoProcess(t *testing.T) {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
 		}
-		src, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		file, err := parser.ParseFile(fset, f, src, parser.ImportsOnly)
+		file, err := parser.ParseFile(fset, f, nil, parser.ImportsOnly)
 		if err != nil {
 			t.Fatal(err)
 		}
