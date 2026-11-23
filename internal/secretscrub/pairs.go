@@ -162,6 +162,9 @@ func memberAt(s string, k int) bool {
 func pairQuoted(s string, v int) (from, to, next int) {
 	esc := s[v] == '\\'
 	f, t, n, _, ok := recordString(s, v, esc)
+	if ok && s[v] == '\'' && bareQuote(s[f:t]) {
+		ok = false // an apostrophe string that holds a double quote ran across the end of a JSON string: it never closed
+	}
 	if !ok {
 		if esc {
 			return v, v, v + 1
@@ -186,6 +189,19 @@ func pairQuoted(s string, v int) (from, to, next int) {
 		return v, v, v + 1
 	}
 	return f, t, n
+}
+
+// bareQuote says whether t holds a double quote that is not escaped.
+func bareQuote(t string) bool {
+	for i := 0; i < len(t); i++ {
+		switch t[i] {
+		case '\\':
+			i++
+		case '"':
+			return true
+		}
+	}
+	return false
 }
 
 // pairValue reads the value that starts at v: a quoted string (inside its quotes) or a word that ends at white space, a comma, a
