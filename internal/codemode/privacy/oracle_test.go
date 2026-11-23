@@ -153,11 +153,11 @@ func standalone(s, tri string) bool {
 		}
 		a := from + j
 		b := a + len(tri)
-		leftOK := a == 0 || s[a-1] == ']' || !(s[a-1] >= '0' && s[a-1] <= '9' || s[a-1] == '.')
+		leftOK := a == 0 || s[a-1] == ']' || ((s[a-1] < '0' || s[a-1] > '9') && s[a-1] != '.')
 		if a > 0 && s[a-1] == '.' && a > 1 && s[a-2] == ']' {
 			leftOK = true
 		}
-		rightOK := b == len(s) || !(s[b] >= '0' && s[b] <= '9' || (s[b] == '.' && b+1 < len(s) && (s[b+1] >= '0' && s[b+1] <= '9' || s[b+1] == '[')))
+		rightOK := b == len(s) || ((s[b] < '0' || s[b] > '9') && (s[b] != '.' || b+1 >= len(s) || ((s[b+1] < '0' || s[b+1] > '9') && s[b+1] != '[')))
 		if leftOK && rightOK {
 			return true
 		}
