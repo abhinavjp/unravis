@@ -649,7 +649,7 @@
     </section>
 
     {#if offersWork}
-    <section class="block" aria-labelledby="home-theories">
+    <section class="block full" aria-labelledby="home-theories">
       <h3 id="home-theories">{CASE_HOME_TEXT.theoriesHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.theoriesIntro}</p>
       <div aria-live="polite">
@@ -678,6 +678,18 @@
       </div>
     </section>
 
+    <section class="block full" aria-labelledby="home-health">
+      <h3 id="home-health">{CASE_HOME_TEXT.healthHeading}</h3>
+      <p class="note">{CASE_HOME_TEXT.healthText}</p>
+      <HealthPanel {caseId} embedded onGone={gone} onRan={() => void rereadHealth()} />
+    </section>
+
+    <section class="block full" aria-labelledby="home-sources">
+      <h3 id="home-sources">{HUB_TEXT.heading}</h3>
+      <p class="note">{HUB_TEXT.intro}</p>
+      <SourcesHub {caseId} readOnly={readOnly || stale} onGone={gone} onAddFiles={openCaseImport} onAddMongo={() => void openConnections('new')} />
+    </section>
+
     <section class="block" aria-labelledby="home-files">
       <h3 id="home-files">{CASE_HOME_TEXT.filesHeading}</h3>
       {#if keptFiles.length === 0}
@@ -690,18 +702,6 @@
         </ul>
       {/if}
       <div class="actions"><button type="button" class="secondary-button" aria-haspopup="dialog" disabled={readOnly} onclick={openCaseImport}>{CASE_HOME_TEXT.filesAdd}</button></div>
-    </section>
-
-    <section class="block full" aria-labelledby="home-health">
-      <h3 id="home-health">{CASE_HOME_TEXT.healthHeading}</h3>
-      <p class="note">{CASE_HOME_TEXT.healthText}</p>
-      <HealthPanel {caseId} embedded onGone={gone} onRan={() => void rereadHealth()} />
-    </section>
-
-    <section class="block full" aria-labelledby="home-sources">
-      <h3 id="home-sources">{HUB_TEXT.heading}</h3>
-      <p class="note">{HUB_TEXT.intro}</p>
-      <SourcesHub {caseId} readOnly={readOnly || stale} onGone={gone} onAddFiles={openCaseImport} onAddMongo={() => void openConnections('new')} />
     </section>
 
     <section class="block" aria-labelledby="home-key">
@@ -729,20 +729,25 @@
 <style>
   /* width: 100% matters: a grid item with margin auto shrinks to its content, so its width (and everything inside) moved sideways
      whenever hover text or table rows changed. With a fixed width the column only ever stops at its max-width. */
-  .case-home { display: grid; gap: 20px; width: 100%; max-width: 880px; margin: 0 auto; padding: 8px 0 48px; }
+  .case-home { display: grid; gap: 20px; width: 100%; max-width: var(--form-max); margin: 0 auto; padding: 8px 0 48px; }
   /* The Investigation timeline needs room for its plot; the other pages of the case keep the narrow column. */
   .case-home.wide, .case-home.home { max-width: var(--page-max); }
   /* The case page on a wide window: the case facts and actions stay in view in a side column; the blocks fill the rest, two across where they are short. */
   .home-cols { display: grid; gap: 20px; min-width: 0; }
   .home-blocks { display: grid; gap: 20px; min-width: 0; }
-  .block .note, .block .empty { max-width: var(--read-max); }
-  @media (min-width: 1100px) {
-    .home-cols { grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 32px; align-items: start; }
-  }
-  @media (min-width: 1100px) and (min-height: 760px) { .head { position: sticky; top: 0; } }
-  @media (min-width: 1360px) {
+  .home-blocks .block .note, .home-blocks .block .empty { max-width: var(--read-max); }
+  /* Decided by the width of the case page itself, not the window: an open side panel narrows the page and must not squeeze the blocks. */
+  .case-home.home { container-type: inline-size; }
+  @container (min-width: 1300px) {
+    .home-cols { grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); gap: 32px; align-items: start; }
     .home-blocks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .home-blocks > .block.full { grid-column: 1 / -1; }
+  }
+  /* The side column stays in view while the blocks scroll; if it is taller than the window it scrolls on its own, so none of its buttons is out of reach. The padding keeps the focus ring inside the scrolling box. */
+  @media (min-height: 760px) {
+    @container (min-width: 1300px) {
+      .head { position: sticky; top: 0; max-height: calc(100dvh - 180px); overflow-y: auto; padding: 4px; margin: -4px; scrollbar-width: thin; }
+    }
   }
   .top { display: flex; }
   .head h2 { margin: 2px 0 6px; font-size: 24px; overflow-wrap: anywhere; }
@@ -751,7 +756,7 @@
   .counts div { display: grid; gap: 2px; }
   .counts dt { color: var(--text-2); font-size: 12px; }
   .counts dd { margin: 0; font-size: 15px; }
-  .block { display: grid; gap: 10px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .block { display: grid; align-content: start; gap: 10px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
   .block h3 { margin: 0; font-size: 16px; }
   .note, .empty { margin: 0; color: var(--text-2); font-size: 14px; }
   .gap { font-size: 13px; }

@@ -156,10 +156,10 @@ test('the header count and the reload do not ask for theories before the case pa
 });
 
 // UI-R4-04
-test('only the timeline gets the wide column and the note banner has the amber edge', () => {
+test('the timeline and the case page get the page width, the narrow form column stays for the rest, and the note banner has the amber edge', () => {
   const home = read('src/lib/components/CaseHome.svelte');
   assert.match(home, /<div class="case-home" class:wide=\{timelineShown\} class:home=\{homeShown\}>/);
-  assert.match(home, /\.case-home \{[^}]*max-width: 880px/);
+  assert.match(home, /\.case-home \{[^}]*max-width: var\(--form-max\)/);
   // The narrow column stays for the key, erase, locked and untrusted pages; the timeline and the case page proper use the page width (width system, 23 Nov).
   assert.match(home, /\.case-home\.wide, \.case-home\.home \{ max-width: var\(--page-max\); \}/);
   const chart = read('src/components/TracingChart.svelte');

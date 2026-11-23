@@ -16,7 +16,7 @@ Findings, research and before/after pictures: project folder `ui-audit/WIDTH-FIN
 
 ## Case page
 
-At 1100 px and wider: a side column (title, facts, jump links, actions; sticky when the window is 760 px or more tall) and a wide column of blocks. From 1360 px the short blocks (Analysis, Timeline, Theories, Files, Case key, Erase) sit two across; long blocks (retries, story, health checks, sources) span the column. Below 1100 px it is one column, as before.
+When the case page itself is 1300 px or wider (a container query, so an open side panel does not squeeze it): a side column (title, facts, jump links, actions; sticky and scrolling on its own when the window is 760 px or more tall) and a wide column of blocks. The short blocks (Analysis, Timeline, Files, Case key) sit two across; long blocks (retries, story, theories, health checks, sources) span the column. Narrower pages are one column, as before, and the block order is the same in both.
 
 ## Adding a screen
 

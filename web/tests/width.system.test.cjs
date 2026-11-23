@@ -12,27 +12,38 @@ test('one page-width token, 2000px, used by the stage, the scope bar and the rec
   assert.match(css, /\.stage-inner \{ max-width: var\(--page-max\);/);
   assert.match(css, /\.scope-main \{[^}]*max-width: var\(--page-max\);/);
   assert.match(css, /\.scope \.interval-note \{ max-width: var\(--page-max\);/);
-  assert.doesNotMatch(css, /max-width: 1560px/, 'no screen keeps the old 1560px cap');
+  assert.doesNotMatch(css, /max-width: 1560px/, 'the stage and the scope bar no longer keep the old 1560px cap');
+  // Two screens still have their own cap, min(--page-max, 1560px): the record page and the create guide.
 });
 
-test('the case page is a side column plus a wide column of blocks on a wide window, one column below 1100px', () => {
+test('the case page is a side column plus a wide column of blocks when the page itself is 1300px wide, one column below', () => {
   const home = read('src/lib/components/CaseHome.svelte');
   assert.match(home, /const homeShown = \$derived\(/);
-  assert.match(home, /\.home-cols \{ display: grid; gap: 20px; min-width: 0; \}/);
-  assert.match(home, /@media \(min-width: 1100px\) \{\n\s+\.home-cols \{ grid-template-columns: minmax\(300px, 380px\) minmax\(0, 1fr\);/);
-  assert.match(home, /@media \(min-width: 1360px\) \{\n\s+\.home-blocks \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
-  assert.match(home, /\.block \.note, \.block \.empty \{ max-width: var\(--read-max\); \}/);
-  // The key, erase, locked and untrusted pages keep the narrow column.
-  assert.match(home, /\.case-home \{[^}]*max-width: 880px/);
+  assert.match(home, /\.case-home\.home \{ container-type: inline-size; \}/, 'decided by the page width, not the window: an open side panel must not squeeze the blocks');
+  assert.match(home, /@container \(min-width: 1300px\) \{\n\s+\.home-cols \{ grid-template-columns: minmax\(300px, 360px\) minmax\(0, 1fr\);/);
+  assert.match(home, /\.home-blocks \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(home, /\.home-blocks \.block \.note, \.home-blocks \.block \.empty \{ max-width: var\(--read-max\); \}/);
+  assert.match(home, /\.block \{ display: grid; align-content: start;/, 'a short block next to a tall one must not stretch its content');
+  assert.match(home, /max-height: calc\(100dvh - 180px\); overflow-y: auto;/, 'a tall side column scrolls on its own, so its buttons stay reachable');
+  // The key, erase, locked and untrusted pages keep the narrow form column.
+  assert.match(home, /\.case-home \{[^}]*max-width: var\(--form-max\)/);
   // The long blocks span the wide column; the short ones sit side by side.
-  for (const id of ['home-retries', 'home-story', 'home-health', 'home-sources']) assert.match(home, new RegExp('<section class="block full" aria-labelledby="' + id + '">'));
-  for (const id of ['home-analysis', 'home-tracing', 'home-theories', 'home-files', 'home-key']) assert.match(home, new RegExp('<section class="block" aria-labelledby="' + id + '">'));
+  for (const id of ['home-retries', 'home-story', 'home-theories', 'home-health', 'home-sources']) assert.match(home, new RegExp('<section class="block full" aria-labelledby="' + id + '">'));
+  for (const id of ['home-analysis', 'home-tracing', 'home-files', 'home-key']) assert.match(home, new RegExp('<section class="block" aria-labelledby="' + id + '">'));
+});
+
+test('the blocks of the case page keep their reading and tab order (tools/e2e HAND-16)', () => {
+  const home = read('src/lib/components/CaseHome.svelte');
+  const order = ['home-retries', 'home-analysis', 'home-tracing', 'home-story', 'home-theories', 'home-health', 'home-sources', 'home-files', 'home-key', 'home-erase'];
+  const at = order.map((id) => home.indexOf('aria-labelledby="' + id + '"'));
+  assert.ok(at.every((n) => n > 0), 'every block is there');
+  assert.deepEqual([...at].sort((x, y) => x - y), at, 'in this order, as before the width change');
 });
 
 test('the create guide, its card grids and the charts window use the wide page', () => {
   assert.match(read('src/components/CreateWizard.svelte'), /\.wizard \{[^}]*max-width: min\(var\(--page-max\), 1560px\);/);
-  assert.match(read('src/components/wizard/ImportFilesPanel.svelte'), /\.card-grid \{[^}]*repeat\(auto-fill, minmax\(260px, 1fr\)\)/);
-  assert.match(read('src/components/sourcewiz/SourceStep.svelte'), /\.tiles \{[^}]*repeat\(auto-fill, minmax\(240px, 1fr\)\)/);
+  assert.match(read('src/components/wizard/ImportFilesPanel.svelte'), /\.card-grid \{[^}]*repeat\(auto-fill, minmax\(220px, 1fr\)\)/);
+  assert.match(read('src/components/sourcewiz/SourceStep.svelte'), /\.tiles \{[^}]*repeat\(auto-fill, minmax\(220px, 1fr\)\)/);
   assert.match(read('src/components/BlackboxCharts.svelte'), /\.bbc \{ width: min\(1840px, calc\(100vw - 32px\)\);/);
 });
 
