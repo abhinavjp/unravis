@@ -31,9 +31,9 @@
 //   - Not covered (out of scope, listed so nobody assumes it): entity-escaped markup (&lt;Password&gt;), \u-escaped key names,
 //     zero-width or full-width letters in a key, URL-encoded "password%3Dx", headers such as Ocp-Apim-Subscription-Key and a SAS "sig="
 //     parameter, the Releases reader's own pattern, and text nodes after the first in <Password>a<b/>c</Password>.
-//   - Command lines (flags.go): "--password x", "--api-key x", "/token x" (an option whose name is a secret name, then the next word, also
-//     quoted), and the short options of the tools that take a secret there: sqlcmd/osql/bcp "-P x", mysql "-pX", redis-cli "-a x",
-//     mongo tools "-p x", curl "-u user:x". "-p" is a port for psql, so a short option is judged only after its tool on the same line.
+//   - Command lines (flags.go): "--password x", "-Password x" (PowerShell, Go flag), "--api-key x", "/token x" (an option whose name is a secret name, then
+//     the next word, also quoted, on the next line after a line continuation, in a JSON array of arguments and in a YAML block list), and the short options of the tools that take a secret there: sqlcmd/osql/bcp "-P x" "-Px" "/P x", mysql "-pX", redis-cli "-a x" "-aX",
+//     mongo tools "-p x", curl "-u user:x" "-uuser:x". A tool name counts until the end of its command (";", "|", "&&", or a line end that is not continued). "-p" is a port for psql, so a short option is judged only after its tool on the same line.
 //     Not covered: other tools' short options, a password passed as a bare argument ("net use \\srv\share x"), "--no-password" style
 //     names (left alone on purpose).
 //   - Records are read only on a whole text (Mask). The record readers keep to a name and a "value" member of one object, one YAML item or

@@ -17,7 +17,7 @@ func TestMaskFlags(t *testing.T) {
 		{"sqlcmd -P", `sqlcmd -S srv -U sa -P hunter2 -Q "select 1"`, `sqlcmd -S srv -U sa -P [hidden] -Q "select 1"`},
 		{"sqlcmd by path", `C:\Program Files\x\SQLCMD.EXE -P "hun ter2" -d x`, `C:\Program Files\x\SQLCMD.EXE -P "[hidden]" -d x`},
 		{"mysql attached", `mysql -phunter2 -h db`, `mysql -p[hidden] -h db`},
-		{"mysql attached, quoted", `mysql -p"hunter2" -h db`, `mysql -p[hidden]" -h db`},
+		{"mysql attached, quoted", `mysql -p"hunter2" -h db`, `mysql -p"[hidden]" -h db`},
 		{"redis", `redis-cli -a hunter2 -h x`, `redis-cli -a [hidden] -h x`},
 		{"mongo", `mongosh -u a -p hunter2 host`, `mongosh -u a -p [hidden] host`},
 		{"curl user", `curl -u bob:hunter2 https://x`, `curl -u bob:[hidden] https://x`},
@@ -111,5 +111,59 @@ func TestMaskFlagsRandomInputNeverPanics(t *testing.T) {
 		if len(out) > len(in)+len(rm)*(len(in)/2+1) {
 			t.Fatalf("output grew too much for %q: %q", in, out)
 		}
+	}
+}
+
+// Review of PR 208, round 1.
+func TestMaskFlagsReviewFindings(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"one dash, long name (PowerShell, Go flag)", `Invoke-Sqlcmd -Server x -Password hunter2 -Query q`, `Invoke-Sqlcmd -Server x -Password [hidden] -Query q`},
+		{"one dash token", `unravis.exe -token hunter2 -v`, `unravis.exe -token [hidden] -v`},
+		{"sqlcmd attached", `sqlcmd -S x -Phunter2 -d db`, `sqlcmd -S x -P[hidden] -d db`},
+		{"bcp attached", `bcp t out f -U sa -Phunter2`, `bcp t out f -U sa -P[hidden]`},
+		{"redis attached", `redis-cli -ahunter2 -h x`, `redis-cli -a[hidden] -h x`},
+		{"curl attached", `curl -ubob:hunter2 https://x`, `curl -ubob:[hidden] https://x`},
+		{"mysql attached with a space in quotes", `mysql -p"hun ter2" -h db`, `mysql -p"[hidden]" -h db`},
+		{"sqlcmd slash form", `sqlcmd /S srv /U sa /P hunter2 /d db`, `sqlcmd /S srv /U sa /P [hidden] /d db`},
+		{"backslash continuation", "sqlcmd -S x \\\n  -P hunter2", "sqlcmd -S x \\\n  -P [hidden]"},
+		{"powershell backtick continuation", "sqlcmd -S x `\n  -P hunter2", "sqlcmd -S x `\n  -P [hidden]"},
+		{"cmd caret continuation", "sqlcmd -S x ^\r\n  -P hunter2", "sqlcmd -S x ^\r\n  -P [hidden]"},
+		{"value on the line after a backslash", "app --password \\\n  hunter2 --x", "app --password \\\n  [hidden] --x"},
+		{"tool in markdown code", "run `sqlcmd -S x -P hunter2` now", "run `sqlcmd -S x -P [hidden]` now"},
+		{"tool in a subshell", `x=$(mysql -phunter2 -e q)`, `x=$(mysql -p[hidden] -e q)`},
+		{"JSON argument array", `"Args": ["--password", "hunter2", "--x"]`, `"Args": ["--password", "[hidden]", "--x"]`},
+		{"JSON argument array, no spaces", `["app","--token","hunter2"]`, `["app","--token","[hidden]"]`},
+		{"YAML block argument list", "args:\n  - --password\n  - hunter2\n  - --x", "args:\n  - --password\n  - [hidden]\n  - --x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Mask(tc.in, rm); got != tc.want {
+				t.Fatalf("\n in: %q\ngot: %q\nwant: %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMaskFlagsReviewKeepsOrdinaryText(t *testing.T) {
+	for _, in := range []string{
+		`"POST /token HTTP/1.1" 200 12`,
+		`GET /secret HTTP/2 200`,
+		"mysql -e q; find . -perm 644",
+		"curl https://x | grep -u foo:bar",
+		"mysql -e q && ls -pa",
+		"sqlcmd -S x\nfind -perm 644",
+	} {
+		if got := Mask(in, rm); got != in {
+			t.Errorf("changed:\n in: %q\ngot: %q", in, got)
+		}
+	}
+}
+
+func TestMaskFlagsFailsClosedOverBudget(t *testing.T) {
+	old := workFactor
+	workFactor = 0
+	defer func() { workFactor = old }()
+	in := strings.Repeat("abc def\n", 20000) + "sqlcmd -S x -U sa -P hunter2\n"
+	if out := Mask(in, rm); strings.Contains(out, "hunter2") {
+		t.Fatal("over budget, a command line secret survived")
 	}
 }

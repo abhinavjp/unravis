@@ -30,6 +30,9 @@ var toolNames = map[string]int{
 // toolOf names the tool kind a word is: the file name of a path, without quotes or ".exe", in lower case.
 func toolOf(word string) int {
 	word = strings.Trim(word, "\"'")
+	if i := strings.LastIndexAny(word, "(=`"); i >= 0 {
+		word = word[i+1:] // "$(mysql", "x=mysql"
+	}
 	if i := strings.LastIndexAny(word, `/\`); i >= 0 {
 		word = word[i+1:]
 	}
@@ -94,7 +97,61 @@ func flagValue(s string, p int) (from, to, next int, ok bool) {
 	for e < len(s) && !isSpace(s[e]) {
 		e++
 	}
-	return p, e, e, e > p
+	next = e
+	if e > p && s[e-1] == '`' {
+		e-- // the end of markdown code: `sqlcmd -P x`
+	}
+	return p, e, next, e > p
+}
+
+var httpMethods = map[string]bool{"GET": true, "POST": true, "PUT": true, "DELETE": true, "PATCH": true, "HEAD": true, "OPTIONS": true, "CONNECT": true, "TRACE": true}
+
+// endsLine says whether only white space follows position k on its line.
+func endsLine(s string, k int) bool {
+	for k < len(s) && (s[k] == ' ' || s[k] == '\t' || s[k] == '\r') {
+		k++
+	}
+	return k >= len(s) || s[k] == '\n'
+}
+
+// lineStartAfter returns the start of the line after the one that holds k, or len(s).
+func lineStartAfter(s string, k int) int {
+	if i := strings.IndexByte(s[k:], '\n'); i >= 0 {
+		return k + i + 1
+	}
+	return len(s)
+}
+
+// optionValue finds the value of an option whose name ends at p: the next word, also on the next line after a line continuation
+// (a backslash, a backtick or a caret at the end of the line), a comma (a JSON array of arguments) and, for a block list item
+// ("- --password" then "- x"), the item on the next line.
+func optionValue(s string, p int, listItem bool) (from, to, next int, ok bool) {
+	for n := 0; n < 2; n++ {
+		for p < len(s) && (s[p] == ' ' || s[p] == '\t' || s[p] == ',') {
+			p++
+		}
+		if p < len(s) && (s[p] == '\\' || s[p] == '^' || s[p] == '`') && endsLine(s, p+1) {
+			p = lineStartAfter(s, p)
+			continue
+		}
+		break
+	}
+	if listItem && (p >= len(s) || s[p] == '\n' || s[p] == '\r') {
+		q := lineStartAfter(s, min(p, len(s)))
+		for q < len(s) && (s[q] == ' ' || s[q] == '\t') {
+			q++
+		}
+		if q+1 < len(s) && s[q] == '-' && s[q+1] == ' ' {
+			p = q + 2
+			for p < len(s) && (s[p] == ' ' || s[p] == '\t') {
+				p++
+			}
+		}
+	}
+	for p < len(s) && (s[p] == ' ' || s[p] == '\t') {
+		p++
+	}
+	return flagValue(s, p)
 }
 
 // maskFlags masks the value words of secret command-line options.
@@ -105,95 +162,115 @@ func maskFlags(s, mask string, w *work) string {
 	var edits []edit
 	tools := 0
 	i := 0
+	prev := ""        // the word before, on this line
+	first := true     // no word read yet on this line
+	listItem := false // the line is a block list item ("- ...")
 	for i < len(s) {
 		if w.out() {
+			// Over budget: fail closed. The edits found so far stay and the rest of the text goes.
+			edits = append(edits, edit{i, len(s)})
 			break
 		}
 		c := s[i]
-		if c == '\n' || c == '\r' {
-			tools = 0
+		if c == '\n' {
+			if k := i - 1; !(k >= 0 && (s[k] == '\\' || s[k] == '^' || s[k] == '`') || k >= 1 && s[k] == '\r' && (s[k-1] == '\\' || s[k-1] == '^' || s[k-1] == '`')) {
+				tools = 0 // a line continuation keeps the tool of the line before
+			}
+			prev, first, listItem = "", true, false
 			i++
 			continue
 		}
-		if isSpace(c) {
+		if isSpace(c) || c == ',' {
 			i++
 			continue
 		}
 		// One word.
 		a := i
-		for i < len(s) && !isSpace(s[i]) {
+		for i < len(s) && !isSpace(s[i]) && s[i] != ',' {
 			i++
 		}
 		w.spend(i - a + 1)
-		word := strings.TrimLeft(s[a:i], "\"'(")
-		if word == "" {
+		raw := s[a:i]
+		word := strings.TrimLeft(raw, "\"'(`$[")
+		a += len(raw) - len(word)
+		wordT := strings.TrimRight(word, "\"'`);]")
+		before := prev
+		prev = wordT
+		if wordT == "-" && first {
+			listItem = true
+		}
+		first = false
+		switch wordT {
+		case "|", "||", "&&", "&", ";":
+			tools = 0
 			continue
 		}
-		a += len(s[a:i]) - len(word)
-		tools |= toolOf(word)
-		if word[0] != '-' && word[0] != '/' {
+		tools |= toolOf(wordT)
+		if strings.HasSuffix(word, ";") {
+			tools = 0
+		}
+		if wordT == "" || (wordT[0] != '-' && wordT[0] != '/') {
 			continue
 		}
-		if len(word) > 2 && word[0] == '-' && word[1] == 'p' && tools&toolMySQL != 0 {
-			// mysql -phunter2: the password is attached to the option.
-			from := a + 2
-			to := i
-			if q := strings.TrimRight(s[from:to], "\"'"); len(q) < to-from {
-				to = from + len(q)
+		if wordT[0] == '/' && httpMethods[before] {
+			continue // "POST /token HTTP/1.1": a request path, not an option
+		}
+		// An option with its value attached: sqlcmd -Phunter2, mysql -phunter2, redis-cli -ahunter2, curl -ubob:hunter2.
+		if len(word) > 2 && word[0] == '-' && word[1] != '-' {
+			if o := word[1]; (o == 'P' && tools&toolSQLServer != 0) || (o == 'a' && tools&toolRedis != 0) || (o == 'p' && tools&toolMySQL != 0) || (o == 'u' && tools&toolCurl != 0) {
+				from, to, next, ok := flagValue(s, a+2)
+				if ok {
+					if o == 'u' {
+						k := strings.IndexByte(s[from:to], ':')
+						if k < 0 {
+							continue
+						}
+						from += k + 1
+					}
+					if to > from {
+						edits = append(edits, edit{from, to})
+					}
+					w.spend(next - a)
+					i = max(i, next)
+					continue
+				}
 			}
-			if to > from {
-				edits = append(edits, edit{from, to})
-			}
-			continue
 		}
-		if strings.ContainsAny(word, "=:") {
+		if strings.ContainsAny(wordT, "=:") {
 			continue // "--password=x" and "/password:x" are read by maskKV
 		}
-		name := strings.TrimLeft(word, "-/")
+		name := strings.TrimLeft(wordT, "-/")
 		if !optionName(name) {
 			continue // a path ("/usr/lib/password-store/x"), not an option
 		}
-		long := strings.HasPrefix(word, "--") || word[0] == '/'
+		secret := false
 		switch {
-		case long && len(name) > 1 && keyClass(name) != classNone && !negated(name):
-			p := i
-			for p < len(s) && (s[p] == ' ' || s[p] == '\t') {
-				p++
-			}
-			if from, to, next, ok := flagValue(s, p); ok {
-				edits = append(edits, edit{from, to})
-				w.spend(next - p)
-				i = next
-			}
-		case !long && len(name) == 1 && name[0] == 'P' && tools&toolSQLServer != 0,
-			!long && len(name) == 1 && name[0] == 'a' && tools&toolRedis != 0,
-			!long && len(name) == 1 && name[0] == 'p' && tools&toolMongo != 0:
-			p := i
-			for p < len(s) && (s[p] == ' ' || s[p] == '\t') {
-				p++
-			}
-			if from, to, next, ok := flagValue(s, p); ok {
-				edits = append(edits, edit{from, to})
-				w.spend(next - p)
-				i = next
-			}
-		case !long && len(name) == 1 && name[0] == 'u' && tools&toolCurl != 0, long && name == "user" && tools&toolCurl != 0:
-			// curl -u user:password: the part after the first colon.
-			p := i
-			for p < len(s) && (s[p] == ' ' || s[p] == '\t') {
-				p++
-			}
-			if from, to, next, ok := flagValue(s, p); ok {
-				if k := strings.IndexByte(s[from:to], ':'); k >= 0 && from+k+1 < to {
-					edits = append(edits, edit{from + k + 1, to})
-				}
-				w.spend(next - p)
-				i = next
-			}
+		case len(name) > 1:
+			secret = keyClass(name) != classNone && !negated(name)
+		case wordT[0] == '-' || tools&toolSQLServer != 0: // a one-letter option: "-P" or sqlcmd's "/P"
+			o := name[0]
+			secret = (o == 'P' && tools&toolSQLServer != 0) || (o == 'a' && tools&toolRedis != 0) || (o == 'p' && tools&toolMongo != 0)
 		}
-	}
-	if w.out() {
-		return s // the later readers still run; maskKV fails closed on its own budget
+		isUser := tools&toolCurl != 0 && (name == "u" || name == "user") && wordT[0] == '-'
+		if !secret && !isUser {
+			continue
+		}
+		from, to, next, ok := optionValue(s, i, listItem && before == "-")
+		if !ok {
+			continue
+		}
+		if isUser {
+			k := strings.IndexByte(s[from:to], ':')
+			if k < 0 {
+				continue
+			}
+			from += k + 1
+		}
+		if to > from && !strings.HasPrefix(s[from:], "HTTP/") {
+			edits = append(edits, edit{from, to})
+		}
+		w.spend(next - i)
+		i = next
 	}
 	return apply(s, mask, sortEdits(edits))
 }
