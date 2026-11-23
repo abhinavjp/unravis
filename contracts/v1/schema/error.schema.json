@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unravis.local/contracts/v1/error.schema.json",
+  "title": "Error body of an /api answer (401, 400, 423, ...)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["error"],
+  "properties": {
+    "error": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "description": "Machine-readable cause; present on case and master-key failures." },
+    "column": { "type": "string" },
+    "importId": { "type": "integer" }
+  }
+}
