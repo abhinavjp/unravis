@@ -628,7 +628,7 @@ try {
         Assert-That "log redaction: a $($c[0].Length)-character case hides its secret" (-not $got.Contains($c[1])) "got '$got'"
     }
     # More shapes (sweep 2026-11-22, REL-4): a flag with a space or =, env names that end in _PASS or _PIN, nonce, a key seed, user:password in a URL or after -u / --user.
-    foreach ($c in @(@('sigtool sign --passphrase hunter2hunter2 manifest.json', 'hunter2'), @('--token hunter2hunter2 at the start', 'hunter2'), @('tool --pin=4321 run', '4321'), @('set SIGN_PASS=hunter2hunter2', 'hunter2'), @('UNRAVIS_RELEASE_NONCE=hunter2hunter2', 'hunter2'), @('PROTON_PASS_PIN=4321', '4321'), @('{"key_seed":"hunter2hunter2"}', 'hunter2'), @('curl -u bob:hunter2hunter2 https://x.example', 'hunter2'), @('curl --user bob:hunter2hunter2 https://x.example', 'hunter2'), @('git clone https://bob:hunter2hunter2@host.example/r.git', 'hunter2'))) {
+    foreach ($c in @(@('sigtool sign --passphrase hunter2hunter2 manifest.json', 'hunter2'), @('--token hunter2hunter2 at the start', 'hunter2'), @('tool --pin=4321 run', '4321'), @('set SIGN_PASS=hunter2hunter2', 'hunter2'), @('UNRAVIS_RELEASE_NONCE=hunter2hunter2', 'hunter2'), @('PROTON_PASS_PIN=4321', '4321'), @('{"key_seed":"hunter2hunter2"}', 'hunter2'), @('curl -u bob:hunter2hunter2 https://x.example', 'hunter2'), @('curl --user bob:hunter2hunter2 https://x.example', 'hunter2'), @('git clone https://bob:hunter2hunter2@host.example/r.git', 'hunter2'))) {  # trufflehog:ignore (fake password on purpose: the scrubber test)
         $got = Protect-LogLine $c[0] (New-LogRedactor)
         Assert-That "log redaction: shape '$($c[0].Substring(0, 8))...' hides its secret" (-not $got.Contains($c[1])) "got '$got'"
     }

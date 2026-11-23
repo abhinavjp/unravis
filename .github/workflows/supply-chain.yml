@@ -145,7 +145,9 @@ jobs:
           fetch-depth: 0
       # verified (live) and unknown (could not be checked) as the spec says; the action
       # scans base..head of the PR. trufflehog v3.100.0 checked with git ls-remote.
+      # --exclude-paths: a short list of Go test files that hold fake credentials on purpose (the scrubber tests);
+      # one literal path per line, guarded by tools/ci/test-trufflehog-allowlist.mjs, see docs/ci/RELEASE-TRAIN.md (single lines: trufflehog:ignore tag).
       - name: trufflehog (verified and unknown)
         uses: trufflesecurity/trufflehog@d232362a64a09a9e7d58267b8f5acef00ae90e23 # v3.100.0
         with:
-          extra_args: --results=verified,unknown
+          extra_args: --results=verified,unknown --exclude-paths=.github/trufflehog-exclude-paths.txt
