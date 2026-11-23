@@ -24,7 +24,7 @@ All in `internal/mcp`, run with `go test ./internal/mcp -race`. A "host" is a te
 | Oversize frame (> 1 MiB) | `TestSDKOversizeFrameRejected`: same error text as today, no echo, no hang; a frame just under the cap, and one at the cap followed by another in the same write, are answered | pass |
 | Oversize answer | `TestSDKOversizeAnswerReplaced`: same tool error text as today | pass |
 | Cancel during a blocked call | `TestSDKCancelDuringBlockedHandler`: same answer text, dashboard request abandoned, session still usable; handshake and stateless | pass |
-| Malformed input | `TestSDKMalformedArgs`: 27 cases (not JSON, truncated, NUL, `{}`, `[]`, batch, 5000-deep array, wrong version, no method, fractional/null/object/bool id, unknown and unoffered methods, bad `tools/call` params, bad argument types, unknown tool). Both loops give the same answer class for every case and keep running after each | pass |
+| Malformed input | `TestSDKMalformedArgs`: 28 cases (not JSON, truncated, NUL, `{}`, `[]`, batch, 5000-deep array, wrong version, no method, fractional/null/object/bool id, unknown and unoffered methods, bad `tools/call` params, bad argument types, unknown tool). Both loops give the same answer class for every case and keep running after each | pass |
 | Duplicate JSON keys | `TestSDKDuplicateJSONKeys`: last key wins in both loops, and the SDK dispatches the line the checks looked at (no parser differential in the cases tried) | pass |
 | Capabilities only tools | `TestSDKCapabilitiesOnlyTools`: `{"tools":{}}` exactly on `initialize` and `server/discover` (no logging, no `listChanged`, no resources or prompts); eleven other methods refused with -32601; no unsolicited message after the handshake | pass |
 | Cache scope private | `TestSDKCacheScopePrivate`: `ttlMs: 0`, `cacheScope: "private"` on `server/discover` and `tools/list`; the word "public" never on the wire | pass |
@@ -34,7 +34,7 @@ All in `internal/mcp`, run with `go test ./internal/mcp -race`. A "host" is a te
 | Stdout only JSON-RPC | `TestSDKStdoutOnlyJSONRPC` (300 mutated inputs) and `FuzzServeSDK` (same invariant as `FuzzBridgeServe`: one JSON-RPC object per line, each under 1 MiB). `go test -fuzz FuzzServeSDK -fuzztime 60s` ran clean | pass |
 | Known differences pinned | `TestSDKKnownWireDifferences` | pass |
 
-The existing suite (`FuzzBridgeServe` seeds, `secfix_test.go`, identifier filter and output audit tests, the `bridge_test.go` tests) passes unchanged in this pull request, because nothing shipped changes in it.
+The existing suite (`FuzzBridgeServe` seeds, `secfix_test.go`, identifier filter and output audit tests, the `bridge_test.go` tests) passes unchanged in this pull request. Shipped code changes only by `go.mod` and one extracted constant (`serverInstructions` in `protocol.go`); the SDK loop in this pull request is test-only.
 
 Mutation check: breaking each of the order fix, the cache options, the explicit capabilities, the in-flight cap, the method allowlist and the unknown-tool answer in the prototype makes the matching test fail.
 
@@ -51,15 +51,15 @@ The test skips the stateless row for the old binary when `UNRAVIS_MCP_BINARY_NO_
 
 Each was seen in a probe or test run against v1.8.0 directly, and is held by the loop (and tested):
 
-1. **A bad line ends the session.** A non-JSON line makes the SDK's reader fail and the session close; today it answers `-32700` and carries on. Same for batches, wrong `jsonrpc`, null or fractional ids (today `-32600`). The loop reads lines itself (1 MiB scanner, as today), checks them with the same rules, answers bad ones, and passes only good lines on.
-2. **Frame cap.** The SDK's `MaxLineLength` counts bytes the decoder reads ahead, not the line. The loop enforces the 1 MiB line cap on the line; the SDK's own cap is set to twice that and only backs it up.
+1. **A bad line ends the session.** A non-JSON line makes the SDK's reader fail and the session close (seen); today it answers `-32700` and carries on. The SDK's read path hands decode errors up the same way for JSON that is not a valid request (batches, wrong `jsonrpc`, null or fractional ids; today `-32600`). The loop reads lines itself (1 MiB scanner, as today), checks them with the same rules, answers bad ones, and passes only good lines on.
+2. **Frame cap.** By reading the SDK source: its `MaxLineLength` counts every byte the decoder reads since the last frame, read-ahead included, so a frame near the cap could fail on the next frame's bytes. The loop enforces the 1 MiB line cap on the line; the SDK's own cap is set to twice that and only backs it up.
 3. **Duplicate request id in flight** is dropped silently by the SDK. The loop answers `-32600 Request id is already in flight`.
 4. **No in-flight cap** in the SDK. The loop keeps 4 `tools/call` requests in flight and answers `-32000` for the fifth. A slot is freed before the answer is written (the hand-rolled loop freed it just after, so a host that sent its next call on receiving an answer could meet its own old slot).
 5. **Extra keys in `tools/call` params** are ignored by the SDK; today they give `-32602`. The loop runs the same `strictArgs` check, and tool arguments still go through `strictArgs` in `Bridge.call` untouched.
 6. **Unknown tool**: the SDK answers `-32602 unknown tool "<name>"`, echoing the name. Today it is a tool error with a fixed text. A receiving middleware keeps the fixed text.
 7. **Methods outside the tools capability** are not all refused with the same answer (an empty `resources/list` result was seen), and error texts echo the method name. The loop passes only `initialize`, `ping`, `server/discover`, `tools/list`, `tools/call` and the two notifications; anything else gets `-32601 Method not found` (notifications are dropped).
 8. **Catalog order.** The SDK lists tools sorted by name; the catalog has a fixed order of its own (`audit_get_activity`, `audit_get_guide`, `audit_list_sources`, `audit_compare`, ...). A receiving middleware re-sorts the `tools/list` result to the catalog order.
-9. **Host closes the pipe with a call running.** `Run` returned while the dashboard request was still open (the dashboard saw an active connection for minutes). The loop ties every call to its own context, cancels it on exit and waits for the calls, as the hand-rolled loop did. A `notifications/cancelled` still ends one call.
+9. **Host closes the pipe with a call running.** `Run` returned while the dashboard request was still open (the test dashboard was still holding the connection when it was closed). The loop ties every call to its own context, cancels it on exit and waits for the calls, as the hand-rolled loop did. A `notifications/cancelled` still ends one call.
 10. **No output cap.** The loop's writer replaces any message over 1 MiB with today's tool error, so no line over the cap leaves the process.
 11. **Version echo.** For an unsupported 2026-07-28 version the SDK puts the client's string back in the error data. The loop refuses a version string longer than 32 bytes first; a date-sized string can still come back to the client that sent it.
 12. **Defaults to switch off.** The SDK's default capabilities include `logging`; tools bring `listChanged`; cache scope defaults to `public`. The server sets `Capabilities{Tools: {}}` and a `SetCacheable` that writes `ttlMs 0`, `cacheScope private`.
@@ -76,7 +76,7 @@ Parser note: the loop validates a line with `encoding/json`, then hands the same
 | Request before `initialize` | `-32000 Initialize the MCP session first` | error with code `0`, "invalid during session initialization" | both are JSON-RPC errors for a host bug; message differs |
 | Second `initialize` | `-32600 Already initialized` | error with code `0` | same |
 | `tools/list` with a cursor | cursor ignored | `-32602 invalid params` | the catalog has one page and no cursor is ever handed out |
-| `ping` | answered | answered after handshake, `-32601` on the stateless lifecycle | `ping` is gone from 2026-07-28 |
+| `ping` | answered | answered after a handshake, `-32601` on the stateless lifecycle | a stateless client has no session to ping; hosts do not ping a stdio server they just launched |
 | Key order in JSON | sorted | struct order | not meaningful |
 
 ## Footprint (Linux amd64 build in this sandbox; Windows build cross-compiled, not run)
