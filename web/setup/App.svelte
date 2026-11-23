@@ -565,8 +565,8 @@
   aside { padding: 16px 10px; border-right: 1px solid var(--line); background: var(--bg); }
   main { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
   main.solo { padding: 24px; }
-  .content { flex: 1; min-height: 0; min-width: 0; overflow: auto; overflow-wrap: anywhere; padding: 20px 24px 16px; display: flex; flex-direction: column; gap: 12px; }
-  footer { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 12px 24px; border-top: 1px solid var(--line); }
+  .content { flex: 1; min-height: 0; min-width: 0; overflow: auto; overflow-wrap: anywhere; padding: 20px max(24px, calc((100% - 1040px) / 2)) 16px; display: flex; flex-direction: column; gap: 12px; }
+  footer { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 12px max(24px, calc((100% - 1040px) / 2)); border-top: 1px solid var(--line); }
   .grow { flex: 1; }
   h1 { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.3; }
   h2 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--text-2); }

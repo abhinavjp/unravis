@@ -54,3 +54,5 @@ Thumbs.db
 /tools/uiaudit/report/
 /tools/uiaudit/test-results/
 /tools/uiaudit/test-results-selftest/
+/tools/uiaudit/test-results-width/
+/tools/uiaudit/width-report/
