@@ -1,23 +1,23 @@
-# osv-scanner waivers (read by .github/workflows/supply-chain.yml, job "osv"). BL-460a, checked 2026-11-23.
+# osv-scanner waivers for desktop/Cargo.lock (read by .github/workflows/supply-chain.yml, job "osv"; osv-scanner applies the config that sits next to the scanned lock file, so it lives here and not in the repo root). BL-460a, checked 2026-11-23.
 # Each waiver names why it is safe and ends on a date, so it comes back for a new look. Cargo checks were run in desktop/ with
 # `cargo tree --locked -i <crate> --target all -e all` (every target, every kind of dependency).
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0429"
-ignoreUntil = 2027-02-23
+effectiveUntil = 2027-02-23
 reason = "glib 0.18.5 comes only from the GTK backend of Tauri (gtk, muda, tao, wry on Linux). `cargo tree -i glib --target x86_64-pc-windows-msvc -e all` is empty: the Windows build, the only one shipped, does not contain it. Goes away with a Tauri that uses a newer gtk-rs."
 
 [[IgnoredVulns]]
 id = "GHSA-wrw7-89jp-8q8g"
-ignoreUntil = 2027-02-23
+effectiveUntil = 2027-02-23
 reason = "Same advisory as RUSTSEC-2024-0429 (glib, Linux GTK backend only, not in the Windows build)."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0370"
-ignoreUntil = 2027-02-23
+effectiveUntil = 2027-02-23
 reason = "proc-macro-error 1.0.4 is unmaintained, not exploitable: a compile-time macro helper that only glib-macros pulls in, so it is only in the Linux GTK tree (`cargo tree -i proc-macro-error --target x86_64-pc-windows-msvc -e all` is empty)."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0543"
-ignoreUntil = 2027-02-23
+effectiveUntil = 2027-02-23
 reason = "chrono 0.4.45 is in Cargo.lock only as an optional dependency of serde_with that no enabled feature uses: `cargo tree -i chrono --target all -e all` prints nothing, so it is not compiled for any target. No fixed version exists yet; take it up again when one is published."
