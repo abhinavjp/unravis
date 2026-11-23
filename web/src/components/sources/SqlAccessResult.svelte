@@ -9,6 +9,9 @@
   const uid = $props.id();
   const script = $derived(scriptToShow(report));
   let note = $state('');
+  let heading: HTMLElement | undefined = $state();
+  // The result appears after a button press: move focus to its heading so a screen reader reads it.
+  $effect(() => { heading?.focus({ preventScroll: false }); });
 
   async function copy() {
     try { await navigator.clipboard.writeText(script); note = ACCESS_TEXT.copied; } catch { note = ACCESS_TEXT.copyFailed; }
@@ -16,8 +19,8 @@
 </script>
 
 <section class="access" aria-labelledby="{uid}-h">
-  <h5 id="{uid}-h">{ACCESS_TEXT.heading}</h5>
-  <ul class="checks">
+  <h5 id="{uid}-h" tabindex="-1" bind:this={heading}>{ACCESS_TEXT.heading}</h5>
+  <ul class="checks" role="list">
     {#each report.checks as c (c.id + c.label)}
       <li data-state={c.state}>
         <span class="word {c.state}">{stateWord(c.state)}</span>
@@ -26,7 +29,7 @@
     {/each}
   </ul>
   {#if report.writableNames && report.writableNames.length}<p class="detail">{ACCESS_TEXT.writable(report.writableNames, report.writableDatabases)}</p>{/if}
-  <p class="verdict" class:good={isReady(report)} role="status">{verdictLine(report)}</p>
+  <p class="verdict" class:good={isReady(report)}>{verdictLine(report)}</p>
   {#if script}
     <label class="script-label" for="{uid}-script">{ACCESS_TEXT.scriptLabel}</label>
     <textarea id="{uid}-script" class="script" readonly rows={Math.min(8, script.split('\n').length)}>{script}</textarea>

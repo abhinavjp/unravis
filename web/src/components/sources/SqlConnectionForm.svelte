@@ -19,6 +19,10 @@
   let form = $state<SqlForm>(blankSqlForm());
   let busy = $state<'' | 'test' | 'save' | 'access'>('');
   let access = $state<SqlAccessReport | null>(null);
+  // The access result belongs to the form it was run on: any change to the form drops it, so a green result never stays beside another server.
+  const formKey = $derived(JSON.stringify(sqlTestInput(form)));
+  let accessKey = '';
+  $effect(() => { if (formKey !== accessKey) access = null; });
   let line = $state('');
   let word = $state<'' | 'Works' | 'Failed'>('');
   let failed = $state(false);
@@ -37,7 +41,7 @@
   async function test() {
     if (busy || invalid()) return;
     if (form.auth === 'sql' && form.password === '' && !usesKeptPassword(form)) { failed = true; word = 'Failed'; line = SOURCES_TEXT.sqlTestNeedPassword; return; }
-    busy = 'test'; failed = false; word = ''; line = '';
+    busy = 'test'; failed = false; word = ''; line = ''; access = null;
     try {
       const result = await api.testSqlConnection(sqlTestInput(form));
       word = 'Works'; line = connectedText(result.version, result.edition) + (usesKeptPassword(form) ? ' ' + SOURCES_TEXT.sqlTestKeptPassword : '');
@@ -51,7 +55,11 @@
     if (busy || invalid()) return;
     if (form.auth === 'sql' && form.password === '' && !usesKeptPassword(form)) { failed = true; word = 'Failed'; line = ACCESS_TEXT.needPassword; return; }
     busy = 'access'; failed = false; word = ''; line = ''; access = null;
-    try { access = await api.checkSqlAccess(sqlTestInput(form)); }
+    const key = formKey;
+    try {
+      const report = await api.checkSqlAccess(sqlTestInput(form));
+      if (key === formKey) { accessKey = key; access = report; }
+    }
     catch (error) { failed = true; line = error instanceof Error && error.message ? error.message : ACCESS_TEXT.failed; }
     finally { busy = ''; }
   }

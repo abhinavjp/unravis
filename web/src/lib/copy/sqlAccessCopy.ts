@@ -1,7 +1,7 @@
 /** Words for the Blackbox access check on a SQL Server login (screen 54, SQL connection form). Plain words, no causes named. */
 export const ACCESS_TEXT = {
   button: 'Check Blackbox access',
-  checking: 'Checking...',
+  checking: 'Checking…',
   heading: 'Blackbox access check',
   note: 'The check only reads. It changes nothing on the server. Unravis never runs a script for you.',
   needPassword: 'Type the password to check this login.',

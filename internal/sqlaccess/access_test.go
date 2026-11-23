@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"api-audit-explorer/internal/bbsql"
+	"api-audit-explorer/internal/dbhealth"
 )
 
 // fake answers by the tag comment each fixed statement carries.
@@ -16,6 +17,7 @@ type fake struct {
 	perms    []map[string]any
 	writable []map[string]any
 	deny     map[string]bool // statement tag -> permission error
+	broken   map[string]bool // statement tag -> an error that is not a permission refusal
 	whoErr   error
 	sent     []string
 }
@@ -31,6 +33,9 @@ func tag(text string) string {
 func (f *fake) Query(_ context.Context, text string) ([]map[string]any, error) {
 	t := strings.TrimSpace(tag(text))
 	f.sent = append(f.sent, t)
+	if f.broken[t] {
+		return nil, errors.New("something else went wrong")
+	}
 	if f.deny[t] {
 		return nil, errors.New("The SELECT permission was denied on the object")
 	}
@@ -57,8 +62,9 @@ func goodRole() map[string]any {
 
 func goodFake() *fake {
 	return &fake{
-		who:  map[string]any{"login_name": "unravis_reader", "major": int64(15), "version": "15.0.4123.1", "view_state": int64(1), "view_any_db": int64(1)},
-		role: goodRole(), deny: map[string]bool{},
+		broken: map[string]bool{},
+		who:    map[string]any{"login_name": "unravis_reader", "major": int64(15), "version": "15.0.4123.1", "view_state": int64(1), "view_any_db": int64(1)},
+		role:   goodRole(), deny: map[string]bool{},
 	}
 }
 
@@ -244,6 +250,70 @@ func TestOwnDetailsUnreadableStopsEarly(t *testing.T) {
 	f.whoErr = errors.New("boom")
 	r := Run(context.Background(), f, nil)
 	if !r.Reached || r.Ready || r.Verdict != VerdictUnreadable || len(r.Checks) != 1 {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// The connect step reports *dbhealth.ConnectError values with fixed codes; each one must give its own sentence.
+func TestConnectErrorCodesGiveTheirOwnSentence(t *testing.T) {
+	cases := map[string]string{
+		"login_failed": "refused this login",
+		"certificate":  "secure connection",
+		"tls":          "secure connection",
+		"timeout":      "could not be reached",
+		"network":      "could not be reached",
+		"database":     "cannot open the database",
+		"windows_auth": "Windows sign-in",
+		"invalid":      "not valid",
+		"failed":       "Could not connect",
+	}
+	for code, want := range cases {
+		r := Run(context.Background(), nil, &dbhealth.ConnectError{Code: code, Message: "host db-prod-01 login sa password=Hunter2"})
+		d := r.Checks[0].Detail
+		if !strings.Contains(d, want) || strings.Contains(d, "db-prod") || strings.Contains(d, "Hunter2") {
+			t.Errorf("%s: %q", code, d)
+		}
+	}
+}
+
+// A refusal while the login does hold the right is not fixed by a grant: no script.
+func TestRefusedWhileHoldingTheRightShowsNoScript(t *testing.T) {
+	f := goodFake()
+	f.deny["bb:tempdb"] = true
+	r := Run(context.Background(), f, nil)
+	if r.Ready || r.Verdict != VerdictUnreadable || r.Script != "" || state(r, CheckRead) != Failed {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// A statement that fails for a reason other than permission is unreadable, with no script and no leaked text.
+func TestOtherSamplerFailureIsUnreadableWithoutScript(t *testing.T) {
+	f := goodFake()
+	f.broken["bb:waits"] = true
+	r := Run(context.Background(), f, nil)
+	if r.Ready || r.Verdict != VerdictUnreadable || r.Script != "" {
+		t.Fatalf("%+v", r)
+	}
+	for _, c := range r.Checks {
+		if strings.Contains(c.Detail, "something else") {
+			t.Fatalf("leaks error text: %q", c.Detail)
+		}
+	}
+}
+
+// The "every database" failure has its own id, so the report never carries two checks with one id.
+func TestCheckIdsAreUnique(t *testing.T) {
+	f := goodFake()
+	f.who["view_any_db"] = int64(0)
+	r := Run(context.Background(), f, nil)
+	seen := map[string]bool{}
+	for _, c := range r.Checks {
+		if seen[c.ID] {
+			t.Fatalf("duplicate id %q", c.ID)
+		}
+		seen[c.ID] = true
+	}
+	if state(r, CheckDatabases) != Failed {
 		t.Fatalf("%+v", r)
 	}
 }

@@ -55,3 +55,10 @@ test('the result component renders text, never HTML, and the script sits in a re
   assert.ok(!/\{@html/.test(src));
   assert.match(src, /<textarea[^>]*readonly/);
 });
+
+test('the result is dropped when the form changes, so a green result never stays beside another server', () => {
+  const form = read('src/components/sources/SqlConnectionForm.svelte');
+  assert.match(form, /const formKey = \$derived\(JSON\.stringify\(sqlTestInput\(form\)\)\)/);
+  assert.match(form, /\$effect\(\(\) => \{ if \(formKey !== accessKey\) access = null; \}\)/);
+  assert.match(form, /if \(key === formKey\) \{ accessKey = key; access = report; \}/);
+});

@@ -38,11 +38,12 @@ const (
 
 // Check ids, in the order they run.
 const (
-	CheckConnect  = "connect"
-	CheckRights   = "rights"
-	CheckRead     = "read"
-	CheckWrite    = "write"
-	CheckGroupsAG = "ag"
+	CheckConnect   = "connect"
+	CheckRights    = "rights"
+	CheckRead      = "read"
+	CheckWrite     = "write"
+	CheckDatabases = "databases"
+	CheckGroupsAG  = "ag"
 )
 
 // Check is one line of the answer.
@@ -179,7 +180,7 @@ func Run(ctx context.Context, q Querier, connectErr error) Report {
 			other = append(other, s.label)
 		}
 	}
-	missingState := !viewState || len(denied) > 0
+	missingState := !viewState
 	switch {
 	case len(denied) == 0 && len(other) == 0 && viewState:
 		rep.Checks = append(rep.Checks, Check{CheckRead, Passed, "Can read the activity views", "Running requests, waits, schedulers, memory grants, tempdb and file times were all readable."})
@@ -189,6 +190,9 @@ func Run(ctx context.Context, q Querier, connectErr error) Report {
 			d = "Refused: " + strings.Join(denied, ", ") + ". The login is missing the right to view server state."
 		}
 		rep.Checks = append(rep.Checks, Check{CheckRead, Failed, "Can read the activity views", d})
+	case len(denied) > 0:
+		// The login holds the right but a statement was still refused: a DENY or another restriction. A grant would not help, so no script.
+		rep.Checks = append(rep.Checks, Check{CheckRead, Failed, "Can read the activity views", "Refused: " + strings.Join(denied, ", ") + ". The login holds the right to view server state, but something on the server still blocks these. Ask the server's admin."})
 	default:
 		rep.Checks = append(rep.Checks, Check{CheckRead, Failed, "Can read the activity views", "These could not be read: " + strings.Join(other, ", ") + "."})
 	}
@@ -227,14 +231,14 @@ func Run(ctx context.Context, q Querier, connectErr error) Report {
 	case missingState || missingAnyDB:
 		rep.Verdict = VerdictNeedsGrant
 		rep.Script = GrantScript(login, major, missingState, missingAnyDB)
-	case len(other) > 0:
+	case len(denied) > 0 || len(other) > 0:
 		rep.Verdict = VerdictUnreadable
 	default:
 		rep.Verdict = VerdictReady
 		rep.Ready = true
 	}
 	if missingAnyDB && !missingState && !tooMany && !rightsUnread {
-		rep.Checks = append(rep.Checks, Check{CheckRead, Failed, "Can see every database", "The login cannot see all databases, so file times would be left out for some."})
+		rep.Checks = append(rep.Checks, Check{CheckDatabases, Failed, "Can see every database", "The login cannot see all databases, so file times would be left out for some."})
 	}
 	return rep
 }
@@ -246,18 +250,24 @@ func versionWords(v string) string {
 	return " (SQL Server " + v + ")"
 }
 
-// connectWords maps a connect failure to one fixed sentence. The error is classified by the Blackbox classifier, so
-// no driver text, host name or login reaches the answer.
+// connectWords maps a connect failure to one fixed sentence. The connect step reports *dbhealth.ConnectError with a fixed code; any other
+// error is classified first, so no driver text, host name or login ever reaches the answer.
 func connectWords(err error) string {
-	switch bbsql.Classify(err).Code {
-	case bbsql.CodeLoginFailed:
+	switch dbhealth.ClassifyConnect(err).Code {
+	case "login_failed":
 		return "The server refused this login. Check the name and password."
-	case bbsql.CodeTLS:
+	case "certificate", "tls":
 		return "The secure connection could not be set up. Check the encryption setting and the server certificate."
-	case bbsql.CodeConnectTimeout, bbsql.CodeNetwork:
+	case "timeout", "network":
 		return "The server could not be reached. Check the name, the port and that the server is running and open to this PC."
-	case bbsql.CodeDatabase:
+	case "database":
 		return "The login cannot open the database."
+	case "windows_auth":
+		return "Windows sign-in did not work. Check that this PC and account can reach the server, or use a SQL login."
+	case "invalid":
+		return "The server name or login is not valid. Check what was typed."
+	}
+	switch bbsql.Classify(err).Code {
 	case bbsql.CodePermission:
 		return "The login is missing a permission it needs to connect."
 	}
@@ -311,8 +321,8 @@ func bracket(name string) string {
 		}
 		b.WriteRune(r)
 	}
-	s := strings.TrimSpace(b.String())
-	if s == "" {
+	s := b.String()
+	if strings.TrimSpace(s) == "" {
 		s = "<login name>"
 	}
 	return "[" + s + "]"
