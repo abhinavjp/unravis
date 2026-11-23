@@ -33,7 +33,7 @@ func WriteSQLLoginFile(root string, s bbsql.StoredLogin) (SQLLoginFile, error) {
 	if s.Validate() != nil {
 		return SQLLoginFile{}, errors.New("the SQL login is not valid")
 	}
-	data, err := json.Marshal(sqlLoginFileDoc{Server: s.Server, User: s.Login.User, Password: s.Login.Password, TrustServerCertificate: s.TrustServerCertificate})
+	data, err := json.Marshal(sqlLoginFileDoc{Server: s.Server, User: s.Login.User, Password: s.Login.Password, TrustServerCertificate: s.TrustServerCertificate}) //nolint:gosec // G117: the file is written into the locked SQL folder and read back by the helper only
 	if err != nil {
 		return SQLLoginFile{}, errors.New("the SQL login could not be written")
 	}
