@@ -94,6 +94,7 @@ const (
 	OpSQLDelete   = "sql.delete"
 	OpSQLDescribe = "sql.describe"
 	OpSQLTest     = "sql.test"
+	OpSQLAccess   = "sql.access"
 	OpSQLHealth   = "sql.health"
 	OpSQLLane     = "sql.lane"
 	OpSQLImport   = "sql.import"

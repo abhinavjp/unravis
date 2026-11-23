@@ -1122,6 +1122,65 @@
           "waitFor": "role=dialog[name=\"Leave Add data?\"]"
         }
       ]
+    },
+    {
+      "id": "x-sql-access-check",
+      "phase": "X",
+      "narrow": false,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=/^More/]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "#home-sources"
+        },
+        {
+          "click": "role=button[name=\"+ SQL Server\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"SQL Server connection\"]"
+        },
+        {
+          "fill": [
+            "role=textbox[name=\"Server name\"]",
+            "demo-sql.example.invalid"
+          ]
+        },
+        {
+          "fill": [
+            "role=textbox[name=\"User name\"]",
+            "unravis_ro"
+          ]
+        },
+        {
+          "fill": [
+            "input[type=password]",
+            "demo-only"
+          ]
+        },
+        {
+          "click": "role=button[name=\"Check Blackbox access\"s]"
+        },
+        {
+          "waitFor": "text=One step left"
+        }
+      ],
+      "note": "SQL connection form with the Blackbox access check run (demo answer: one right missing, script shown)."
     }
   ]
 }

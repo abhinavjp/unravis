@@ -22,6 +22,7 @@ import (
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/history"
+	"api-audit-explorer/internal/sqlaccess"
 	"api-audit-explorer/internal/sqlconn"
 )
 
@@ -115,6 +116,11 @@ func (f *fakeRunner) TestSQL(_ context.Context, t dbhealth.SQLTarget) (dbhealth.
 		return dbhealth.TestResult{}, err
 	}
 	return dbhealth.TestResult{Version: "16.0", Edition: "Developer", Databases: []string{"Payroll"}}, nil
+}
+
+func (f *fakeRunner) AccessSQL(_ context.Context, t dbhealth.SQLTarget) sqlaccess.Report {
+	_ = f.sawSQL(t)
+	return sqlaccess.Report{Reached: true, Ready: true, Verdict: sqlaccess.VerdictReady, Checks: []sqlaccess.Check{}}
 }
 
 func (f *fakeRunner) HealthSQL(ctx context.Context, t dbhealth.SQLTarget, label string) (dbhealth.Report, error) {
@@ -1295,5 +1301,25 @@ func TestMigrationDoesNotTakeSomeoneElsesRecordAsVerified(t *testing.T) {
 	}
 	if err := m.RemoveOld(true); err != nil || m.OldFilesPresent() {
 		t.Fatalf("confirmed removal: %v", err)
+	}
+}
+
+func TestSQLAccessCheckRunsInsideTheKeeperAndNeverReturnsThePassword(t *testing.T) {
+	h := newHarness(t, nil)
+	s := NewSQLStore(h.client)
+	rec := h.saveSQL(sqlconn.AuthSQL)
+	rep, err := s.AccessSaved(context.Background(), SQLRef{ID: rec.ID})
+	if err != nil || !rep.Ready {
+		t.Fatalf("access: %+v %v", rep, err)
+	}
+	if got := h.runner.lastSQL(); got.Password != sqlSecret || got.Username != "auditor" {
+		t.Fatalf("the keeper must check with the stored password: %+v", got)
+	}
+	raw, _ := json.Marshal(rep)
+	if strings.Contains(string(raw), sqlSecret) {
+		t.Fatalf("password in the answer: %s", raw)
+	}
+	if _, err := s.AccessSaved(context.Background(), SQLRef{ID: "nope"}); err == nil {
+		t.Fatal("an unknown saved login must fail")
 	}
 }

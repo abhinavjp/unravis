@@ -22,6 +22,7 @@ import (
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/history"
 	"api-audit-explorer/internal/keeper"
+	"api-audit-explorer/internal/sqlaccess"
 	"api-audit-explorer/internal/sqlconn"
 )
 
@@ -47,6 +48,11 @@ func (f *keeperRunner) sawMongo(in audit.ConnectionInput) {
 func (f *keeperRunner) TestSQL(_ context.Context, t dbhealth.SQLTarget) (dbhealth.TestResult, error) {
 	f.sawSQL(t)
 	return dbhealth.TestResult{Version: "16.0", Edition: "Developer", Databases: []string{"Payroll"}}, nil
+}
+
+func (f *keeperRunner) AccessSQL(_ context.Context, t dbhealth.SQLTarget) sqlaccess.Report {
+	f.sawSQL(t)
+	return sqlaccess.Report{Reached: true, Ready: true, Verdict: sqlaccess.VerdictReady, Checks: []sqlaccess.Check{}}
 }
 
 func (f *keeperRunner) HealthSQL(_ context.Context, t dbhealth.SQLTarget, label string) (dbhealth.Report, error) {

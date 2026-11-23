@@ -29,6 +29,13 @@ export interface SavedSqlConnection {
 export interface SqlTestResult { ok: boolean; version: string; edition: string; databases: string[]; listError?: string }
 /** What the server accepts for a test or a check: a typed login, or a kept one (savedId) with a password or database typed for this run only. */
 export interface SqlTestRequest extends Partial<SqlConnectionInput> { savedId?: string }
+/** One line of the Blackbox access check. */
+export interface SqlAccessCheck { id: string; state: 'passed' | 'failed' | 'warning' | 'skipped'; label: string; detail: string }
+/** The answer to "Check Blackbox access": what the login can read, whether it holds more than needed, and (only when something is missing) the script to run. */
+export interface SqlAccessReport {
+  reached: boolean; version?: string; checks: SqlAccessCheck[]; ready: boolean;
+  verdict: 'ready' | 'needs-grant' | 'too-many-rights' | 'unreadable'; script?: string; writableDatabases: number; writableNames?: string[];
+}
 export interface RememberConnectionInput { label: string; connection: ConnectionInput; collection: string; rememberPassword: boolean }
 export interface SourceResult { sourceId: string; ok: boolean; error: string; version: string; indexWarning: string }
 export interface Info {

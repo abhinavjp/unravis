@@ -118,6 +118,7 @@ var routes = []route{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.saveSQLConnection(w, r) },
 	}},
 	{pattern: "/api/sql-connections/test", match: exactPath("/api/sql-connections/test"), methods: post((*handler).testSQLConnection)},
+	{pattern: "/api/sql-connections/access", match: exactPath("/api/sql-connections/access"), methods: post((*handler).accessSQLConnection)},
 	{pattern: "/api/keeper/status", match: exactPath("/api/keeper/status"), methods: get((*handler).keeperStatus)},
 	{pattern: "/api/keeper/migrate", match: exactPath("/api/keeper/migrate"), methods: post((*handler).keeperMigrate)},
 	{pattern: "/api/keeper/remove-old", match: exactPath("/api/keeper/remove-old"), methods: post((*handler).keeperRemoveOld)},

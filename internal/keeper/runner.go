@@ -6,6 +6,7 @@ import (
 
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/dbhealth"
+	"api-audit-explorer/internal/sqlaccess"
 	"api-audit-explorer/internal/store"
 )
 
@@ -26,6 +27,10 @@ func (f commandFunc) Command(ctx context.Context, database, commandJSON string) 
 
 func (r *RealRunner) TestSQL(ctx context.Context, t dbhealth.SQLTarget) (dbhealth.TestResult, error) {
 	return dbhealth.TestSQL(ctx, t)
+}
+
+func (r *RealRunner) AccessSQL(ctx context.Context, t dbhealth.SQLTarget) sqlaccess.Report {
+	return sqlaccess.CheckTarget(ctx, t)
 }
 
 func (r *RealRunner) HealthSQL(ctx context.Context, t dbhealth.SQLTarget, label string) (dbhealth.Report, error) {

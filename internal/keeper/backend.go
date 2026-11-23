@@ -17,6 +17,7 @@ import (
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/history"
+	"api-audit-explorer/internal/sqlaccess"
 	"api-audit-explorer/internal/sqlconn"
 )
 
@@ -24,6 +25,7 @@ import (
 // SQL Server and MongoDB drivers; tests give a fake so nothing ever connects.
 type Runner interface {
 	TestSQL(ctx context.Context, t dbhealth.SQLTarget) (dbhealth.TestResult, error)
+	AccessSQL(ctx context.Context, t dbhealth.SQLTarget) sqlaccess.Report
 	HealthSQL(ctx context.Context, t dbhealth.SQLTarget, label string) (dbhealth.Report, error)
 	LaneSQL(ctx context.Context, t dbhealth.SQLTarget, label string, req dbhealth.LaneRequest) (dbhealth.Report, error)
 	TestMongo(ctx context.Context, in audit.ConnectionInput) (audit.ConnectionResult, error)
@@ -71,6 +73,7 @@ func (b *Backend) Register(s *Server) {
 	s.Handle(OpSQLDelete, classWrite, storeTimeout, b.sqlDelete)
 	s.Handle(OpSQLImport, classWrite, storeTimeout, b.sqlImport)
 	s.Handle(OpSQLTest, classReach, reachTimeout, b.sqlTest)
+	s.Handle(OpSQLAccess, classReach, runTimeout, b.sqlAccess)
 	s.Handle(OpSQLHealth, classReach, runTimeout, b.sqlHealth)
 	s.Handle(OpSQLLane, classReach, dbhealth.LaneRunTimeout, b.sqlLane)
 
@@ -261,6 +264,21 @@ func (b *Backend) sqlTest(ctx context.Context, c *Call) (any, error) {
 		out.ListError = ce.Message
 	}
 	return out, nil
+}
+
+// sqlAccess runs the Blackbox access check with a saved login inside the keeper: the password never leaves it. The answer holds
+// fixed words, numbers and at most ten database names the login can already see; no driver text.
+func (b *Backend) sqlAccess(ctx context.Context, c *Call) (any, error) {
+	var ref SQLRef
+	if err := c.Decode(&ref); err != nil {
+		return nil, err
+	}
+	c.Record = ref.ID
+	t, _, err := b.sqlTarget(ref)
+	if err != nil {
+		return nil, err
+	}
+	return b.Runner.AccessSQL(ctx, t), nil
 }
 
 func (b *Backend) sqlHealth(ctx context.Context, c *Call) (any, error) {
