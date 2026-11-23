@@ -92,14 +92,12 @@ jobs:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: "0"
-        # Non-blocking until BL-460 clears the findings that exist on master today.
-        continue-on-error: true
+        # Blocking (BL-460): the one finding master had, GO-2026-6859 in net/http, is fixed by go 1.27.4 in go.mod.
         run: govulncheck ./...
       - name: Build the Windows release binary with the release flags
         run: |
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o "$RUNNER_TEMP/unravis.exe" ./cmd/audit-explorer
       - name: Binary scan
-        continue-on-error: true
         run: govulncheck -mode=binary "$RUNNER_TEMP/unravis.exe"
 
   osv:
