@@ -20,8 +20,10 @@ const MaxM4Width = MaxSeriesBuckets
 
 // M4Edges holds the first and the last value of one bucket by time. Two values
 // with the same time are told apart by their sequence (AddSeq: for events the
-// source line), so the result does not depend on how the store orders ties; with
-// the same time and the same sequence the one that arrives later is the later.
+// source line), so the result does not depend on how the store orders them. Two
+// values with the same time and the same sequence (line 1 of two files, or one
+// line that yields several events) still go by arrival order: the later arrival
+// is the later.
 // The zero value is an empty bucket.
 type M4Edges struct {
 	First, Last   float64
