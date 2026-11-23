@@ -79,8 +79,8 @@ test('the case home reads the case first and asks for files, checks and theories
   assert.match(load, /reads \? fetchHealthRuns\(/);
   assert.match(load, /reads \? Promise\.race\(\[refreshLedger\(\)/);
   assert.doesNotMatch(load, /Promise\.allSettled\(\[getCaseView\(id, mine\.signal\), listImports/, 'no read of an archived case in parallel with the view');
-  const reread = home.match(/async function rereadFiles\(\) \{[\s\S]*?\n  \}\n/)[0];
-  assert.match(reread, /readsCaseData\(fresh\) \? await listImports/, 'a reread of an archived case does not list files');
+  const reread = home.match(/async function rereadFiles\(everything = false\) \{[\s\S]*?\n  \}\n/)[0];
+  assert.match(reread, /const reads = readsCaseData\(fresh\);[\s\S]*reads \? listImports\(id\)/, 'a reread of an archived case does not list files');
 });
 
 test('after a move the whole page is read again, so an archived case shows as archived at once', () => {
