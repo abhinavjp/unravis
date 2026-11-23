@@ -16,6 +16,7 @@ import (
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/history"
+	"api-audit-explorer/internal/sqlaccess"
 	"api-audit-explorer/internal/sqlconn"
 )
 
@@ -89,6 +90,12 @@ func (s *SQLStore) TestSaved(ctx context.Context, ref SQLRef) (dbhealth.TestResu
 		return dbhealth.TestResult{}, "", native(err, kindSQL)
 	}
 	return out.Result, out.ListError, nil
+}
+
+// AccessSaved runs the Blackbox access check with a saved login inside the keeper.
+func (s *SQLStore) AccessSaved(ctx context.Context, ref SQLRef) (sqlaccess.Report, error) {
+	var out sqlaccess.Report
+	return out, native(s.c.Call(ctx, OpSQLAccess, ref, &out), kindSQL)
 }
 
 // HealthSaved runs the fixed SQL Server checks inside the keeper.

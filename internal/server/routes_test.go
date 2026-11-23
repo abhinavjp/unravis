@@ -29,6 +29,7 @@ var routeCases = []routeCase{
 	{"/api/connections/recent/{id}", "/api/connections/recent/c1", "DELETE"},
 	{"/api/sql-connections", "/api/sql-connections", "GET, POST"},
 	{"/api/sql-connections/test", "/api/sql-connections/test", "POST"},
+	{"/api/sql-connections/access", "/api/sql-connections/access", "POST"},
 	{"/api/keeper/status", "/api/keeper/status", "GET"},
 	{"/api/keeper/migrate", "/api/keeper/migrate", "POST"},
 	{"/api/keeper/remove-old", "/api/keeper/remove-old", "POST"},
