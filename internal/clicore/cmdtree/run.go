@@ -28,6 +28,8 @@ type IO struct {
 	Err    io.Writer
 	Getenv func(string) string // nil means the allowed environment variables only
 	Exe    func() (string, error)
+	// Attach opens the session with the running app. Nil means the real one (the locator and the pipe); a test passes its own.
+	Attach func(context.Context) (*clicore.Session, *clicore.Error)
 }
 
 // Default and largest --timeout (spec 3.2).
@@ -55,6 +57,8 @@ type globalFlags struct {
 	noColor    bool
 	outputFile string
 	overwrite  bool
+	request    string
+	profile    string
 }
 
 // opAnnotation names the operation id of a command, for the error envelope of a usage error.
@@ -228,6 +232,8 @@ func (st *state) root() *cobra.Command {
 	f.BoolVar(&st.opts.noColor, "no-color", false, "no colour (there is none yet)")
 	f.StringVar(&st.opts.outputFile, "output-file", "", "write JSON output to a new file (json mode only)")
 	f.BoolVar(&st.opts.overwrite, "overwrite", false, "with --output-file: replace an existing file")
+	f.StringVar(&st.opts.request, "request", "", "the arguments of the operation as one JSON object, from a file or - for the input")
+	f.StringVar(&st.opts.profile, "profile", "", "run as an automation profile (not available yet)")
 	root.PersistentPreRunE = func(c *cobra.Command, args []string) error {
 		fl := c.Flags()
 		st.flagSet = fl.Changed("output") || fl.Changed("json")
@@ -262,13 +268,16 @@ func (st *state) root() *cobra.Command {
 		if st.opts.overwrite && st.opts.outputFile == "" {
 			return usage("--overwrite goes with --output-file.")
 		}
+		if err := st.preOnline(c); err != nil {
+			return err
+		}
 		if emits && st.mode == clicore.ModeJSONL {
 			return clicore.NewError(clicore.CodeUnsupportedFormat, "This command has no JSON Lines form. Use -o json.", "")
 		}
 		st.ctx, st.cancel = context.WithTimeout(st.ctx, st.opts.timeout) // Run cancels it when the command ends
 		return nil
 	}
-	root.AddCommand(st.versionCmd(), st.schemaCmd(), st.blackboxCmd(), st.completionCmd())
+	root.AddCommand(st.versionCmd(), st.schemaCmd(), st.blackboxCmd(), st.completionCmd(), st.auditCmd(), st.sourcesCmd(), st.appCmd())
 	return root
 }
 

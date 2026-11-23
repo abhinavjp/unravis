@@ -49,7 +49,7 @@ func TestRealProgram(t *testing.T) {
 	if code != 0 || errs != "" || !json.Valid([]byte(out)) || !strings.Contains(out, `"role":"cli"`) {
 		t.Errorf("version: %d %q %q", code, out, errs)
 	}
-	out, errs, code = runExe(t, exe, "audit", "--json")
+	out, errs, code = runExe(t, exe, "nosuch", "--json")
 	if code != 2 || out != "" || !strings.Contains(errs, `"code":"UNKNOWN_OPERATION"`) {
 		t.Errorf("unknown command: %d %q %q", code, out, errs)
 	}
