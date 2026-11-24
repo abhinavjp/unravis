@@ -344,7 +344,7 @@ func TestScopeNoteSurvivesTheStoresOwnCleaningOfAnyReason(t *testing.T) {
 	scopes := [][]string{nil, {}, {"demo-west"}, {"demo-west2"}, {"10.0.0.1"}, {"a]b", "c"}, {strings.Repeat("s", 90)}}
 	b := &Broker{minTime: MinTimeout}
 	rnd := uint64(88172645463325252)
-	next := func(n int) int { rnd ^= rnd << 13; rnd ^= rnd >> 7; rnd ^= rnd << 17; return int(rnd % uint64(n)) }
+	next := func(n int) int { rnd ^= rnd << 13; rnd ^= rnd >> 7; rnd ^= rnd << 17; return int(rnd % uint64(max(n, 1))) } //nolint:gosec // n is a small positive count
 	for i := 0; i < 20000; i++ {
 		var sb strings.Builder
 		for j, n := 0, next(60); j < n; j++ {
