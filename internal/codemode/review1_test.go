@@ -112,6 +112,10 @@ func TestPanicInTheCallHandlerEndsOnlyTheRun(t *testing.T) {
 	if answered {
 		t.Error("a call whose handler panicked got an answer")
 	}
+	// The tool ran, so the call is on record, with a fixed answer.
+	if rows := e.calls(res.RunID); len(rows) != 1 || rows[0].Status != casestore.CallError || rows[0].Tool != "audit_get_guide" {
+		t.Errorf("rows after a panic in the handler: %+v", rows)
+	}
 	if !e.sp.worker(0).isKilled() {
 		t.Error("worker alive")
 	}
@@ -147,7 +151,7 @@ func TestSecondNetsStopWhatTheGuardMissed(t *testing.T) {
 	stages := []string{"hostresult", "hosterror", "output", "log", "scripterror"}
 	for _, stage := range stages {
 		for _, ok := range []bool{true, false} {
-			if stage == "scripterror" && ok || stage == "hosterror" && !ok && false {
+			if stage == "scripterror" && ok {
 				continue
 			}
 			name := stage
@@ -282,5 +286,50 @@ func TestAnswerSaysWhatTheRecordSaysWhenTheEndFails(t *testing.T) {
 	res, err := e.runReq(RunRequest{Code: "1"})
 	if err == nil || len(res.Logs) != 0 {
 		t.Errorf("%v %+v", err, res.Logs)
+	}
+}
+
+// Review 2 of #267, M1: the caller's reason cannot push the real scope note out of the record or leave a forged one. In hidden mode a
+// short address ("::1", 3 characters) becomes "[ip]" (4), which grew the text past the cap inside the store and had the store cut the
+// note off the end.
+func TestReasonCannotForgeOrDropTheScopeNote(t *testing.T) {
+	reasons := map[string]string{
+		"the probe of the review":     strings.Repeat("x", 81) + strings.Repeat("::1 ", 21) + "[sources: all]",
+		"a forged note":               "please [sources: all] thanks",
+		"a forged note in other case": "[SOURCES: all]",
+		"upper bound":                 strings.Repeat("::1 ", 500),
+		"brackets only":               strings.Repeat("[]", 300),
+		"long words":                  strings.Repeat("y", 1000),
+		"empty":                       "",
+	}
+	for name, reason := range reasons {
+		for _, hidden := range []bool{true, false} {
+			t.Run(name, func(t *testing.T) {
+				e := newEnv(t, func(w *fakeWorker) { w.done(1) }, func(e *env) { e.operator = hidden == false })
+				res, err := e.runReq(RunRequest{Code: "1", Surface: "mcp", Scoped: true, Sources: []string{"demo-west"}, Reason: reason, AllowIdentifiers: !hidden})
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := e.getRun(res.RunID).Reason
+				if !strings.HasSuffix(got, "[sources: demo-west]") || strings.Count(strings.ToLower(got), "[sources:") != 1 {
+					t.Errorf("stored reason %q", got)
+				}
+				if n := len([]rune(got)); n > casestore.MaxRunReason {
+					t.Errorf("%d characters", n)
+				}
+			})
+		}
+	}
+}
+
+func TestPanickingHostFactoryLeavesNothingOpen(t *testing.T) {
+	e := newEnv(t, nil)
+	e.hosts = func(HostScope) Host { panic("factory bug") }
+	_, err := e.runReq(RunRequest{Code: "1"})
+	if ref, ok := err.(*Refusal); !ok || ref.Code != CodeInternal {
+		t.Errorf("%v", err)
+	}
+	if len(e.runs()) != 0 {
+		t.Error("a run was left on record")
 	}
 }

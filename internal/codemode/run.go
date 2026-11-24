@@ -220,6 +220,12 @@ func (b *Broker) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		return RunResult{}, refuse(CodeBadRequest, plain[CodeBadRequest])
 	}
 
+	// The tool host is made before the begin row, so a host that cannot be made leaves nothing open.
+	host, err := safeHosts(b.cfg.Hosts, HostScope{AllowIdentifiers: req.AllowIdentifiers, Scoped: req.Scoped, Sources: slices.Clone(req.Sources)})
+	if err != nil {
+		return RunResult{}, refuse(CodeInternal, plain[CodeInternal])
+	}
+
 	// Audit begin: nothing runs before this row and its chain record are on disk (spec 3.5 step 3).
 	if _, err := store.BeginRun(ctx, casestore.RunStart{
 		RunID: runID, Surface: req.Surface, CallerID: req.CallerID, CallerDeclared: req.CallerDeclared, AllowIdentifiers: req.AllowIdentifiers,
@@ -235,7 +241,7 @@ func (b *Broker) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 
 	r := &run{b: b, id: runID, store: store, req: req, allow: req.AllowIdentifiers, start: now, parent: ctx, usedIDs: map[int64]bool{},
-		guard: privacy.NewGuard(req.AllowIdentifiers), host: b.cfg.Hosts(HostScope{AllowIdentifiers: req.AllowIdentifiers, Scoped: req.Scoped, Sources: slices.Clone(req.Sources)})}
+		guard: privacy.NewGuard(req.AllowIdentifiers), host: host}
 	r.timer.now = b.cfg.Now
 	r.timer.kick = make(chan struct{}, 1)
 	r.ctx, r.cancel = context.WithTimeout(ctx, b.runCap)
@@ -839,10 +845,15 @@ func cleanArgs(raw json.RawMessage) ([]byte, string) {
 // handleCall runs one host call (or only records its denial) and answers the worker. The audit row is written before the answer is sent.
 func (r *run) handleCall(id int64, seq int, tool string, args []byte, den *denial) {
 	defer r.wg.Done()
+	recorded := false
 	defer func() {
-		// A panic here (the Guard reading hostile text) ends this run, not the app; the call gets no answer.
+		// A panic here (the Guard reading hostile text) ends this run, not the app; the call gets no answer. The call is on record
+		// all the same: the tool may have run.
 		if p := recover(); p != nil {
 			r.fail(CodeInternal, "")
+			if !recorded {
+				r.recordPanicked(seq, tool, args)
+			}
 		}
 	}()
 	started := time.Now()
@@ -872,6 +883,7 @@ func (r *run) handleCall(id int64, seq int, tool string, args []byte, den *denia
 	rec := casestore.CallRecord{Seq: seq, DoneSeq: r.doneSeq, Tool: tool, Args: args, Result: reply, Status: status, DurationMS: dur}
 	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(r.parent), AuditWait)
 	err := r.store.RecordCall(auditCtx, r.id, rec)
+	recorded = true
 	cancel()
 	if err != nil {
 		// Fail closed: a call that is not on record does not get its answer.
@@ -898,6 +910,20 @@ func (r *run) handleCall(id int64, seq int, tool string, args []byte, den *denia
 		return
 	}
 	r.timer.resume()
+}
+
+// recordPanicked is the best-effort row of a call whose handler panicked before its row was written: a fixed error answer, nothing the
+// panic touched. It runs after the handler's own defers, so the lock is free; a panic inside it is swallowed.
+func (r *run) recordPanicked(seq int, tool string, args []byte) {
+	defer func() { _ = recover() }()
+	r.serial.Lock()
+	defer r.serial.Unlock()
+	r.doneSeq++
+	rec := casestore.CallRecord{Seq: seq, DoneSeq: r.doneSeq, Tool: tool, Args: args, Status: casestore.CallError,
+		Result: mcp.ErrorEnvelope(tool, mcp.WireInternal, "The call failed inside the broker.", "")}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.parent), AuditWait)
+	defer cancel()
+	_ = r.store.RecordCall(ctx, r.id, rec)
 }
 
 // safeHostCall runs the tool and turns a panic of the host into an internal error answer, never into a dead broker.
@@ -954,4 +980,18 @@ func (r *run) answer(tool string, envelope []byte, isErr bool, den *denial) (rep
 		return fixed(mcp.WireInternal, "The answer was withheld."), casestore.CallError, CodeIdentifierLimit
 	}
 	return swept, casestore.CallOK, ""
+}
+
+// safeHosts makes the run's host and turns a panic of the factory into an error.
+func safeHosts(f HostFactory, scope HostScope) (h Host, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			h, err = nil, errors.New("codemode: host factory failed")
+		}
+	}()
+	h = f(scope)
+	if h == nil {
+		err = errors.New("codemode: no host")
+	}
+	return h, err
 }

@@ -223,11 +223,29 @@ func (b *Broker) cleanRequest(req *RunRequest) *Refusal {
 		return refuse(CodeDenied, "A run from MCP must carry the source scope of its grant.")
 	}
 	req.CallerID = cleanText(req.CallerID, casestore.MaxRunCallerID, false)
-	// The scope is written into the run's record with the reason (the begin record has no field of its own for it), so the audit trail
-	// says what the run could reach. The user's words are cut to leave room for it.
-	suffix := scopeNote(req)
-	req.Reason = strings.TrimSpace(cleanText(req.Reason, casestore.MaxRunReason-utf8.RuneCountInString(suffix), true) + suffix)
+	req.Reason = composeReason(req)
 	return nil
+}
+
+// composeReason is the reason the record gets: the caller's words, then the scope note, which is always last and always whole. The scope
+// is written here because the begin record has no field of its own for it (a field is BL-574). The caller's text is model-controlled on
+// the MCP surface, so it cannot be allowed to forge or push out the note:
+//   - square brackets in it become round ones, so it can hold no "[sources: ...]" of its own;
+//   - in hidden mode the addresses in it are replaced here, before it is measured (the store replaces them again and a short address
+//     like ::1 becomes the longer [ip], which would grow the text past the cap and have the store cut the note off the end);
+//   - the caller's part is cut to what is left of the cap after the note, and the note is appended to that.
+func composeReason(req *RunRequest) string {
+	user := strings.NewReplacer("[", "(", "]", ")").Replace(cleanText(req.Reason, 4*casestore.MaxRunReason, true))
+	note := scopeNote(req)
+	if !req.AllowIdentifiers {
+		user, _ = casestore.ReplaceAddresses(user)
+		note, _ = casestore.ReplaceAddresses(note)
+	}
+	room := casestore.MaxRunReason - utf8.RuneCountInString(note)
+	if r := []rune(user); len(r) > room {
+		user = string(r[:max(room, 0)])
+	}
+	return strings.TrimSpace(user + note)
 }
 
 // scopeNote is the fixed tail of the reason: the sources the run could reach, at most 80 characters.
