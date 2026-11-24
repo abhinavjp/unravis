@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/clicore"
 )
@@ -510,6 +512,47 @@ func TestJSONLRequestNamesInAnyCase(t *testing.T) {
 	}
 }
 
+func TestJSONLRejectsLimitAboveToolMaximumBeforeCallingOwner(t *testing.T) {
+	for op, maximum := range map[string]int{"requests": 100, "slowest": 50} {
+		p := newPager(1)
+		o := p.owner(t)
+		args := []string{"audit", op, "--result-id", "r", "-o", "jsonl", "--limit", strconv.Itoa(maximum + 1), "--max-rows", "1"}
+		if op == "requests" {
+			args = append(args, "--api-key", "k")
+		}
+		r := o.run(args...)
+		if r.code != 2 || errCode2(t, r) != "INVALID_ARGUMENT" || r.out != "" || len(p.calls) != 0 {
+			t.Errorf("%s: %+v, owner calls %v", op, r, p.calls)
+		}
+	}
+}
+
+func TestJSONLOwnerWarningsGoOnceToStderr(t *testing.T) {
+	p := newPager(4)
+	p.metaFn = func(i int, _ bool) string {
+		warnings := `["source slow","source slow"]`
+		if i > 0 {
+			warnings = `["source slow","source slow\ninjected"]`
+		}
+		return `{"coverage":"complete","warnings":` + warnings + `}`
+	}
+	r := p.owner(t).run(streamArgs("--limit", "2")...)
+	if r.code != 0 {
+		t.Fatalf("%+v", r)
+	}
+	if want := "unravis: source slow\nunravis: source slow injected\n"; r.err != want {
+		t.Errorf("stderr = %q, want %q", r.err, want)
+	}
+	for _, line := range lines(t, r.out) {
+		if _, has := line["warnings"]; has {
+			t.Errorf("a warning field entered the stream: %v", line)
+		}
+	}
+	if end := lines(t, r.out)[5]; end["type"] != "complete" || end["coverage"] != "complete" {
+		t.Errorf("complete line: %v", end)
+	}
+}
+
 func TestJSONLDefaultPageSizeIsTheMostTheToolTakes(t *testing.T) {
 	for op, want := range map[string][]string{"requests": {"100", "100"}, "slowest": {"50", "50"}} {
 		p := newPager(2)
@@ -603,4 +646,79 @@ func (w *failAt) Write(p []byte) (int, error) {
 		return 0, syscall.EPIPE
 	}
 	return len(p), nil
+}
+
+type blockAt struct {
+	at, n         int
+	started       chan struct{}
+	release, done chan struct{}
+	once          sync.Once
+	buf           bytes.Buffer
+}
+
+func newBlockAt(at int) *blockAt {
+	return &blockAt{at: at, started: make(chan struct{}), release: make(chan struct{}), done: make(chan struct{})}
+}
+
+func (w *blockAt) Write(p []byte) (int, error) {
+	w.n++
+	if w.n < w.at {
+		return w.buf.Write(p)
+	}
+	w.once.Do(func() { close(w.started) })
+	defer close(w.done)
+	<-w.release
+	return len(p), nil
+}
+
+func runBlockedWrite(t *testing.T, p *pager, at int, args ...string) result {
+	t.Helper()
+	o := p.owner(t)
+	w := newBlockAt(at)
+	var errb bytes.Buffer
+	finished := make(chan int, 1)
+	go func() {
+		finished <- Run(context.Background(), args, IO{In: strings.NewReader(""), Out: w, Err: &errb,
+			Getenv: func(string) string { return "" }, Exe: func() (string, error) { return "/opt/unravis/bin/unravis.exe", nil }, Attach: o.attacher().Attach})
+	}()
+	select {
+	case <-w.started:
+	case code := <-finished:
+		close(w.release)
+		t.Fatalf("the command ended before its blocked write: code %d, stderr %q", code, errb.String())
+	}
+	var code int
+	select {
+	case code = <-finished:
+	case <-time.After(2 * time.Second):
+		close(w.release)
+		<-w.done
+		t.Fatal("a blocked write outlived --timeout")
+	}
+	close(w.release)
+	<-w.done
+	if code != clicore.ExitStopped || errCode2(t, result{err: errb.String()}) != "TIMEOUT" {
+		t.Errorf("code %d, stderr %q", code, errb.String())
+	}
+	return result{code: code, out: w.buf.String(), err: errb.String()}
+}
+
+func TestJSONAndJSONLBlockedWritesHonorTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		p    *pager
+		at   int
+		args []string
+	}{
+		{"jsonl first page", newPager(1), 1, streamArgs("--timeout", "50ms")},
+		{"jsonl complete", newPager(0), 2, streamArgs("--timeout", "50ms")},
+		{"json", newPager(1), 1, []string{"audit", "requests", "--result-id", "r", "--api-key", "k", "--json", "--timeout", "50ms"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := runBlockedWrite(t, tc.p, tc.at, tc.args...)
+			if !strings.Contains(r.err, `"code":"TIMEOUT"`) {
+				t.Errorf("stderr: %q", r.err)
+			}
+		})
+	}
 }

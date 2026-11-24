@@ -176,6 +176,18 @@ func continued(s string, nl int) bool {
 	return k >= 0 && (s[k] == '\\' || s[k] == '^' || s[k] == '`')
 }
 
+// commaContinued keeps a tool's short-option context across a wrapped argument list, such as "sqlcmd -P,\n-P x".
+func commaContinued(s string, nl int) bool {
+	k := nl - 1
+	if k >= 0 && s[k] == '\r' {
+		k--
+	}
+	for k >= 0 && (s[k] == ' ' || s[k] == '\t') {
+		k--
+	}
+	return k >= 0 && s[k] == ','
+}
+
 // lineStartAfter returns the start of the line after the one that holds k, or len(s).
 func lineStartAfter(s string, k int) int {
 	if i := strings.IndexByte(s[k:], '\n'); i >= 0 {
@@ -288,7 +300,7 @@ func maskFlags(s, mask string, w *work) string {
 		}
 		c := s[i]
 		if c == '\n' {
-			if !continued(s, i) {
+			if !continued(s, i) && !commaContinued(s, i) {
 				tools = 0 // a line continuation keeps the tool of the line before
 			}
 			prev, first, listItem = "", true, false

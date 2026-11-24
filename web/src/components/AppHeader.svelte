@@ -105,7 +105,7 @@
 
 <a class="skip-link" href="#main-content" onclick={skipToMain}>Skip to main content</a>
 <header class="topbar">
-  <div class="brand-lockup"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><h1>Unravis</h1></div>
+  <div class="brand-lockup"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><span class="brand-name">Unravis</span></div>
   {#if !compact && working}
     <div class="nav-items">
       {#if showHome}<button type="button" class="header-button nav-button" title={KEY_TEXT.homeLabel} onclick={goHome}>{KEY_TEXT.home}</button>{/if}
@@ -231,7 +231,7 @@
     .utilities > :global(.zone-toggle) { margin: 0; }
   }
   @media (max-width: 400px) {
-    /* Keeps the brand mark and gives the Sources button the room; the heading stays for screen readers. */
-    .brand-lockup h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    /* Keeps the brand mark and gives the Sources button the room; the brand name stays for screen readers. */
+    .brand-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   }
 </style>

@@ -73,7 +73,7 @@
     <div class="bar" role="img" aria-label={DRILL_TEXT.barLabel} data-testid="drill-bar" title={DRILL_HELP.bar}>
       {#each where.parts as part (part.key)}
         {#if part.ms !== null && part.share !== null && part.share > 0}
-          <span class="seg seg-{part.key}" style="width: {Math.min(100, Math.max(0, part.share))}%" data-testid="drill-bar-{part.key}"></span>
+          <span class="seg seg-{part.key}" style:width="{Math.min(100, Math.max(0, part.share))}%" data-testid="drill-bar-{part.key}"></span>
         {/if}
       {/each}
     </div>

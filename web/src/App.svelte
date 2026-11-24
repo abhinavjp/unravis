@@ -52,6 +52,11 @@
   const analysis = $derived(results.analysis);
   const loading = $derived(results.loading);
   const depth = $derived(navigation.depth);
+  const pageHeading = $derived.by(() => {
+    if (app.initError || app.screen === 'loading') return 'Unravis';
+    if (app.screen === 'case') return 'Case home';
+    return screenTitle(app.screen, depth) || 'Unravis';
+  });
   // Each screen names the tab ("All cases - Unravis"); the case page names itself. When the app moves to another screen (or climbs a level of the
   // analysis) the new heading takes the keyboard focus unless a screen has already placed it, so Tab does not start again at the skip link.
   $effect(() => {
@@ -129,6 +134,7 @@
 
     <main id="main-content" tabindex="-1" class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={panels.modalOpen}>
       <div class="stage-inner">
+        <h1 class="visually-hidden">{pageHeading}</h1>
         {#if !app.initError && (!info || app.screen === 'loading')}
           <Landing mode="loading" />
         {:else if app.screen === 'unlock'}

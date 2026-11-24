@@ -133,6 +133,8 @@ func TestMaskFlagsReviewFindings(t *testing.T) {
 		{"backslash continuation", "sqlcmd -S x \\\n  -P hunter2", "sqlcmd -S x \\\n  -P [hidden]"},
 		{"powershell backtick continuation", "sqlcmd -S x `\n  -P hunter2", "sqlcmd -S x `\n  -P [hidden]"},
 		{"cmd caret continuation", "sqlcmd -S x ^\r\n  -P hunter2", "sqlcmd -S x ^\r\n  -P [hidden]"},
+		{"comma-wrapped short option", "sqlcmd -P,\n-P hunter2", "sqlcmd -P,\n-P [hidden]"},
+		{"comma-wrapped short option with space", "sqlcmd -P, \r\n  -P hunter2", "sqlcmd -P, \r\n  -P [hidden]"},
 		{"value on the line after a backslash", "app --password \\\n  hunter2 --x", "app --password \\\n  [hidden] --x"},
 		{"tool in markdown code", "run `sqlcmd -S x -P hunter2` now", "run `sqlcmd -S x -P [hidden]` now"},
 		{"tool in a subshell", `x=$(mysql -phunter2 -e q)`, `x=$(mysql -p[hidden] -e q)`},
@@ -156,6 +158,7 @@ func TestMaskFlagsReviewKeepsOrdinaryText(t *testing.T) {
 		"curl https://x | grep -u foo:bar",
 		"mysql -e q && ls -pa",
 		"sqlcmd -S x\nfind -perm 644",
+		"sqlcmd -S x\n-P 1433",
 	} {
 		if got := Mask(in, rm); got != in {
 			t.Errorf("changed:\n in: %q\ngot: %q", in, got)

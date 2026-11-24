@@ -7,6 +7,10 @@ const root = path.resolve(__dirname, '..');
 const src = path.join(root, 'src');
 const norm = (text) => text.replace(/\r\n/g, '\n');
 const tokensCss = norm(fs.readFileSync(path.join(src, 'brand', 'tokens.css'), 'utf8'));
+const customNames = (text) => new Set([
+  ...text.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g),
+  ...text.matchAll(/\bstyle:(--[a-zA-Z0-9-]+)\s*=/g)
+].map((match) => match[1]));
 
 function walk(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -60,13 +64,17 @@ test('the scanner catches the shapes it is meant to catch', () => {
   assert.deepEqual(hits('&#9670; {#each rows as row} #app { } a#bad'), []);
 });
 
+test('custom property definitions include Svelte CSSOM style directives', () => {
+  assert.deepEqual([...customNames('.a { --row: 1; } <div style:--row={n}></div>')], ['--row']);
+});
+
 // A var() that names a fallback (var(--x, inherit)) is a deliberate optional hook and may be undefined; one without a fallback must exist.
 test('every var(--name) without a fallback used in web/src or web/setup is defined in tokens.css or in the same file', () => {
-  const globalNames = new Set([...tokensCss.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map((match) => match[1]));
+  const globalNames = customNames(tokensCss);
   const missing = [];
   for (const file of files) {
     const text = norm(fs.readFileSync(file, 'utf8'));
-    const localNames = new Set([...text.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map((match) => match[1]));
+    const localNames = customNames(text);
     for (const match of text.matchAll(/var\(\s*(--[a-zA-Z0-9-]+)\s*\)/g)) {
       const name = match[1];
       if (!globalNames.has(name) && !localNames.has(name)) missing.push(rel(file) + ' ' + name);

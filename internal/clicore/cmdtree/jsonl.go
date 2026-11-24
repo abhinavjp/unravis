@@ -123,6 +123,9 @@ func (st *state) streamPages(op string, args json.RawMessage, defaultPage int, s
 	if raw, has := base["limit"]; has {
 		var n int
 		if json.Unmarshal(raw, &n) == nil && n >= 1 {
+			if n > defaultPage {
+				return usage("--limit must be from 1 to " + strconv.Itoa(defaultPage) + " with -o jsonl.")
+			}
 			page = n
 		} else {
 			firstAsIs = true // the owner says what is wrong with it
@@ -133,6 +136,7 @@ func (st *state) streamPages(op string, args json.RawMessage, defaultPage int, s
 		_ = json.Unmarshal(raw, &cursor) // a cursor that is not text is the owner's to refuse: it is sent as it is on the first page
 	}
 	seen := map[string]bool{cursor: true}
+	warnings := map[string]bool{}
 	sess, e := st.attach(st.ctx)
 	if e != nil {
 		return e
@@ -215,9 +219,10 @@ func (st *state) streamPages(op string, args json.RawMessage, defaultPage int, s
 			partial, next = true, cursor // this page is not printed: continue from the cursor that fetched it
 			break
 		}
-		if _, err := st.io.Out.Write(buf.Bytes()); err != nil {
-			return writeErr(err)
+		if err := writeErr(writeContext(st.ctx, st.io.Out, buf.Bytes())); err != nil {
+			return err
 		}
+		st.warnings(res.Meta.Warnings, warnings)
 		written += int64(buf.Len())
 		wrote++
 		total += len(p.Rows)
@@ -241,8 +246,7 @@ func (st *state) streamPages(op string, args json.RawMessage, defaultPage int, s
 	if err != nil {
 		return clicore.NewError(clicore.CodeInternal, "The result could not be written.", "")
 	}
-	_, err = st.io.Out.Write(b)
-	return writeErr(err)
+	return writeErr(writeContext(st.ctx, st.io.Out, b))
 }
 
 // plainCursor tells whether the owner's cursor is short, printable ASCII without quote or backslash: it is written in the complete line,

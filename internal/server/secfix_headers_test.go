@@ -26,9 +26,13 @@ func TestSecurityHeadersOnEveryKindOfReply(t *testing.T) {
 	}
 	for name, res := range replies {
 		csp := res.Header().Get("Content-Security-Policy")
-		for _, want := range []string{"default-src 'self'", "script-src 'self'", "form-action 'none'", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'none'"} {
-			if !strings.Contains(csp, want) {
-				t.Errorf("%s: CSP %q lacks %q", name, csp, want)
+		want := "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		if csp != want {
+			t.Errorf("%s: CSP = %q, want %q", name, csp, want)
+		}
+		for _, forbidden := range []string{"'unsafe-inline'", "'unsafe-eval'", "data:", "blob:"} {
+			if strings.Contains(csp, forbidden) {
+				t.Errorf("%s: CSP %q allows %q", name, csp, forbidden)
 			}
 		}
 		if got := res.Header().Get("Cross-Origin-Opener-Policy"); got != "same-origin" {
