@@ -94,7 +94,14 @@ type rig struct {
 	now     time.Time
 }
 
-func newRig(t *testing.T) *rig { t.Helper(); return newRigBudgets(t, Budgets{}) }
+// newRig has budgets no test run can reach (the sweeps of project_test.go make hundreds of comparisons on one fake clock); the budget
+// tests ask for DefaultBudgets.
+func newRig(t *testing.T) *rig {
+	t.Helper()
+	open := DefaultBudgets
+	open.CompareRate, open.LiveRate, open.CumulativeBytes = 1_000_000, 1_000_000, 1<<40
+	return newRigBudgets(t, open)
+}
 
 func newRigBudgets(t *testing.T, b Budgets) *rig {
 	t.Helper()

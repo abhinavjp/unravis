@@ -13,7 +13,7 @@ func overBudget(a reply) bool {
 }
 
 func TestCompareRateIsPerHostAndPerHour(t *testing.T) {
-	r := newRig(t)
+	r := newRigBudgets(t, DefaultBudgets)
 	a := r.enroll("rate-a", r.approval(TierAggregate))
 	b := r.enroll("rate-b", r.approval(TierAggregate))
 	for i := 0; i < DefaultBudgets.CompareRate; i++ {
@@ -100,7 +100,7 @@ func TestLiveRateAndCumulativeBytes(t *testing.T) {
 
 // One comparison at a time per host and two in all.
 func TestHeavyCallsAtOnce(t *testing.T) {
-	r := newRig(t)
+	r := newRigBudgets(t, DefaultBudgets)
 	a := r.enroll("heavy-a", r.approval(TierAggregate))
 	b := r.enroll("heavy-b", r.approval(TierAggregate))
 	c := r.enroll("heavy-c", r.approval(TierAggregate))
