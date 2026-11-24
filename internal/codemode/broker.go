@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"api-audit-explorer/internal/casestore"
@@ -227,13 +228,14 @@ func (b *Broker) cleanRequest(req *RunRequest) *Refusal {
 	return nil
 }
 
-// composeReason is the reason the record gets: the caller's words, then the scope note, which is always last and always whole. The scope
-// is written here because the begin record has no field of its own for it (a field is BL-574). The caller's text is model-controlled on
-// the MCP surface, so it cannot be allowed to forge or push out the note:
+// composeReason is the reason the record gets: the scope note FIRST and whole, then the caller's words. The scope is written here because
+// the begin record has no field of its own for it (a field is BL-574). The caller's text is model-controlled on the MCP surface, and
+// the store changes the reason after the broker (in hidden mode it replaces addresses again, and a short one such as ::f becomes the
+// longer [ip]; then it cuts the text to the cap from the END). So the note stands in front: whatever the store does, it can only shorten
+// the caller's part. And the caller's text cannot forge a note:
 //   - square brackets in it become round ones, so it can hold no "[sources: ...]" of its own;
-//   - in hidden mode the addresses in it are replaced here, before it is measured (the store replaces them again and a short address
-//     like ::1 becomes the longer [ip], which would grow the text past the cap and have the store cut the note off the end);
-//   - the caller's part is cut to what is left of the cap after the note, and the note is appended to that.
+//   - invisible, bidi and control characters are dropped (cleanText);
+//   - in hidden mode the addresses in it are replaced here, and the caller's part is cut to the room that is left.
 func composeReason(req *RunRequest) string {
 	user := strings.NewReplacer("[", "(", "]", ")").Replace(cleanText(req.Reason, 4*casestore.MaxRunReason, true))
 	note := scopeNote(req)
@@ -241,26 +243,26 @@ func composeReason(req *RunRequest) string {
 		user, _ = casestore.ReplaceAddresses(user)
 		note, _ = casestore.ReplaceAddresses(note)
 	}
-	room := casestore.MaxRunReason - utf8.RuneCountInString(note)
+	room := casestore.MaxRunReason - utf8.RuneCountInString(note) - 1
 	if r := []rune(user); len(r) > room {
 		user = string(r[:max(room, 0)])
 	}
-	return strings.TrimSpace(user + note)
+	return strings.TrimSpace(note + " " + user)
 }
 
 // scopeNote is the fixed tail of the reason: the sources the run could reach, at most 80 characters.
 func scopeNote(req *RunRequest) string {
 	if !req.Scoped {
-		return " [sources: all]"
+		return "[sources: all]"
 	}
 	if len(req.Sources) == 0 {
-		return " [sources: none]"
+		return "[sources: none]"
 	}
 	list := cleanText(strings.Join(req.Sources, ","), 60, true)
 	if len(strings.Join(req.Sources, ",")) > len(list) {
 		list += ",..."
 	}
-	return " [sources: " + list + "]"
+	return "[sources: " + list + "]"
 }
 
 // cleanText drops control characters and cuts to max bytes (or max characters when chars is set) at a character boundary.
@@ -268,7 +270,9 @@ func cleanText(s string, max int, chars bool) string {
 	var out []rune
 	size := 0
 	for _, r := range strings.ToValidUTF8(s, "") {
-		if r < 0x20 || r == 0x7f {
+		// Control characters, and the invisible ones that can reorder or hide text: bidi overrides and isolates, zero-width and
+		// other format characters (Cf), line and paragraph separators.
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
 			continue
 		}
 		if chars {

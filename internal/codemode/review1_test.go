@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/codemode/privacy"
@@ -47,7 +48,7 @@ func TestScopedRunReachesOnlyItsSources(t *testing.T) {
 		t.Errorf("a query inside the scope failed: %.300s", west)
 	}
 	row := e.getRun(res.RunID)
-	if !strings.Contains(row.Reason, "[sources: demo-west]") || !strings.HasPrefix(row.Reason, "scope test") {
+	if !strings.HasPrefix(row.Reason, "[sources: demo-west] ") || !strings.HasSuffix(row.Reason, "scope test") {
 		t.Errorf("the record does not say what the run could reach: %q", row.Reason)
 	}
 	e.verify()
@@ -55,7 +56,7 @@ func TestScopedRunReachesOnlyItsSources(t *testing.T) {
 	// The owner's own run says "all".
 	e2 := newEnv(t, func(w *fakeWorker) { w.done(1) })
 	res = e2.run("1")
-	if r := e2.getRun(res.RunID).Reason; !strings.HasSuffix(r, "[sources: all]") {
+	if r := e2.getRun(res.RunID).Reason; !strings.HasPrefix(r, "[sources: all]") {
 		t.Errorf("reason %q", r)
 	}
 }
@@ -94,7 +95,7 @@ func TestEmptyScopeReachesNothingAndMCPNeedsAScope(t *testing.T) {
 	if ref := e.b.cleanRequest(&req); ref != nil {
 		t.Fatal(ref)
 	}
-	if n := len([]rune(req.Reason)); n > casestore.MaxRunReason || !strings.HasSuffix(req.Reason, ",...]") {
+	if n := len([]rune(req.Reason)); n > casestore.MaxRunReason || !strings.Contains(req.Reason, ",...] ") {
 		t.Errorf("%d runes: %q", n, req.Reason)
 	}
 }
@@ -301,6 +302,8 @@ func TestReasonCannotForgeOrDropTheScopeNote(t *testing.T) {
 		"brackets only":               strings.Repeat("[]", 300),
 		"long words":                  strings.Repeat("y", 1000),
 		"empty":                       "",
+		"the probe of review 3":       strings.Repeat("x", 174) + " ::ffff:1.2.3.4",
+		"bidi and invisible":          "a\u202e[sources: all]\u202c\u200b\u2028b",
 	}
 	for name, reason := range reasons {
 		for _, hidden := range []bool{true, false} {
@@ -311,7 +314,7 @@ func TestReasonCannotForgeOrDropTheScopeNote(t *testing.T) {
 					t.Fatal(err)
 				}
 				got := e.getRun(res.RunID).Reason
-				if !strings.HasSuffix(got, "[sources: demo-west]") || strings.Count(strings.ToLower(got), "[sources:") != 1 {
+				if !strings.HasPrefix(got, "[sources: demo-west]") || strings.Count(strings.ToLower(got), "[sources:") != 1 {
 					t.Errorf("stored reason %q", got)
 				}
 				if n := len([]rune(got)); n > casestore.MaxRunReason {
@@ -331,5 +334,48 @@ func TestPanickingHostFactoryLeavesNothingOpen(t *testing.T) {
 	}
 	if len(e.runs()) != 0 {
 		t.Error("a run was left on record")
+	}
+}
+
+// Review 3 of #267: whatever the store does after the broker (it replaces addresses again and cuts to the cap from the end), the note
+// stays whole at the front. The store's own step is run on thousands of reasons built from the pieces that grew or shrank text.
+func TestScopeNoteSurvivesTheStoresOwnCleaningOfAnyReason(t *testing.T) {
+	pieces := []string{"x", "xx", " ", "::1", "::f", "::ffff:1.2.3.4", "::ffff:", "1.2.3.4", "10.0.0.1.443", "[", "]", "[ip]", "[sources: all]", "fe80::1%eth0", "\u202e", "\u200b", "\u2028", "é", "😀", "0:0:0:0:0:0:0:1", "a::", "::", "1.1.1.1"}
+	scopes := [][]string{nil, {}, {"demo-west"}, {"demo-west2"}, {"10.0.0.1"}, {"a]b", "c"}, {strings.Repeat("s", 90)}}
+	b := &Broker{minTime: MinTimeout}
+	rnd := uint64(88172645463325252)
+	next := func(n int) int { rnd ^= rnd << 13; rnd ^= rnd >> 7; rnd ^= rnd << 17; return int(rnd % uint64(n)) }
+	for i := 0; i < 20000; i++ {
+		var sb strings.Builder
+		for j, n := 0, next(60); j < n; j++ {
+			sb.WriteString(pieces[next(len(pieces))])
+		}
+		if i%7 == 0 {
+			sb.WriteString(strings.Repeat("x", 100+next(110)))
+			sb.WriteString(pieces[next(len(pieces))])
+		}
+		sc := scopes[next(len(scopes))]
+		req := RunRequest{Surface: "cli", Reason: sb.String(), Scoped: sc != nil, Sources: sc, AllowIdentifiers: next(2) == 0}
+		if ref := b.cleanRequest(&req); ref != nil {
+			t.Fatal(ref)
+		}
+		row, err := casestore.NewCodeRun(casestore.RunStart{Surface: "cli", Reason: req.Reason, AllowIdentifiers: req.AllowIdentifiers}, time.Now())
+		if err != nil {
+			t.Fatalf("the store refused %q: %v", req.Reason, err)
+		}
+		want := scopeNote(&req)
+		if !req.AllowIdentifiers {
+			want, _ = casestore.ReplaceAddresses(want)
+		}
+		if !strings.HasPrefix(row.Reason, want) || strings.Count(strings.ToLower(row.Reason), "[sources:") != 1 || len([]rune(row.Reason)) > casestore.MaxRunReason {
+			t.Fatalf("scope %v allow %v: stored %q, want it to start with %q", sc, req.AllowIdentifiers, row.Reason, want)
+		}
+	}
+}
+
+func TestInvisibleAndBidiCharactersAreDroppedFromTheCaller(t *testing.T) {
+	got := cleanText("a\u202eb\u2066c\u200bd\u2028e\u2029f\x00g\u0085h\ufeffi", 100, true)
+	if got != "abcdefghi" {
+		t.Errorf("%q", got)
 	}
 }
