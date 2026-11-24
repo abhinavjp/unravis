@@ -25,8 +25,20 @@ func (b *Bridge) activity(ctx context.Context, raw json.RawMessage) (any, error)
 	if _, err := audit.ActivityQuery(input); err != nil {
 		return nil, err
 	}
+	// What the cursor pages through is the window and sources, not the page size or the cursor itself.
+	paging := input
+	paging.Cursor, paging.Limit = "", 0
+	fp := fingerprint("audit_get_activity", paging)
+	pos, err := b.openCursor("audit_get_activity", fp, input.Cursor)
+	if err != nil {
+		return nil, err
+	}
+	input.Cursor = pos
 	var page audit.Page
 	if err := b.request(ctx, "/api/activity", input, &page); err != nil {
+		return nil, err
+	}
+	if page.NextCursor, err = b.sealCursor("audit_get_activity", fp, page.NextCursor); err != nil {
 		return nil, err
 	}
 	rows := make([]map[string]any, 0, len(page.Rows))

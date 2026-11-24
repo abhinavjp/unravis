@@ -95,6 +95,7 @@ func (b *Bridge) cached(id string) (*audit.Analysis, error) {
 	if id == "" || b.result == nil || id != b.resultID || b.now().Sub(b.created) > resultTTL {
 		return nil, coded(CodeResultExpired, "result expired or was replaced; run audit_compare again. Results last ten minutes and only the latest successful comparison is retained")
 	}
+	b.used = b.now()
 	return b.result, nil
 }
 func findGroup(result *audit.Analysis, key string) (audit.Comparison, error) {
@@ -177,10 +178,20 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 			return nil, coded(CodeInternal, "could not create result handle")
 		}
 		id := hex.EncodeToString(random[:])
+		size := 0
+		if b.resultCap > 0 {
+			// A host's bridge keeps a result only up to its cap (the backend bounds what all hosts hold together).
+			raw, merr := json.Marshal(&result)
+			if merr != nil || len(raw) > b.resultCap {
+				return nil, coded(CodeBudgetExceeded, "the comparison is too large to keep for paging; narrow the sources, filters or window and run it again")
+			}
+			size = len(raw)
+		}
 		b.mu.Lock()
 		b.result = &result
 		b.resultID = id
 		b.created = b.now()
+		b.used, b.resultSize = b.created, size
 		b.mu.Unlock()
 		page, _ := groupPage(result.APIs, pageArgs)
 		comparable, limited := 0, 0
@@ -287,13 +298,24 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if err != nil {
 			return nil, err
 		}
+		fp := fingerprint("audit_get_requests", result.Query, args.APIKey)
+		pos, err := b.openCursor("audit_get_requests", fp, args.Cursor)
+		if err != nil {
+			return nil, err
+		}
 		var page audit.Page
-		if err = b.request(ctx, "/api/requests", audit.PageInput{Query: result.Query, APIKey: args.APIKey, Cursor: args.Cursor, Limit: args.Limit}, &page); err != nil {
+		if err = b.request(ctx, "/api/requests", audit.PageInput{Query: result.Query, APIKey: args.APIKey, Cursor: pos, Limit: args.Limit}, &page); err != nil {
 			return nil, err
 		}
 		rows := make([]map[string]any, 0, len(page.Rows))
 		for _, record := range page.Rows {
 			rows = append(rows, b.projectRecord(record))
+		}
+		if err = b.evidenceRefs(ctx, page.Rows, rows, row.SourceID); err != nil {
+			return nil, err
+		}
+		if page.NextCursor, err = b.sealCursor("audit_get_requests", fp, page.NextCursor); err != nil {
+			return nil, err
 		}
 		out := map[string]any{"resultId": args.ResultID, "sourceId": row.SourceID, "controller": row.Controller, "action": row.Action, "kind": row.Kind, "outcome": row.Outcome, "query": echoQuery(result.Query), "rows": rows, "nextCursor": page.NextCursor, "sources": page.Sources, "truncated": page.Truncated, "note": "Newest-first metadata page; not a random sample or a complete ranking of slow requests. AuditCreateTime plus ApiTime make up total latency; PayloadRecordTime happens after the response and is not latency. Do not infer database, network or queue wait from them without checking their instrumentation in code."}
 		withProvenance(out, page.Provenance)

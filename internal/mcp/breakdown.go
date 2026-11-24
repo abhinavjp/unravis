@@ -46,8 +46,13 @@ func (b *Bridge) slowest(ctx context.Context, raw json.RawMessage) (any, error) 
 	if err != nil {
 		return nil, err
 	}
+	fp := fingerprint("audit_get_slowest", result.Query, args.MinMs)
+	pos, err := b.openCursor("audit_get_slowest", fp, args.Cursor)
+	if err != nil {
+		return nil, err
+	}
 	var page audit.Page
-	if err = b.request(ctx, "/api/slowest", audit.PageInput{Query: result.Query, Cursor: args.Cursor, Limit: args.Limit, MinMs: args.MinMs}, &page); err != nil {
+	if err = b.request(ctx, "/api/slowest", audit.PageInput{Query: result.Query, Cursor: pos, Limit: args.Limit, MinMs: args.MinMs}, &page); err != nil {
 		return nil, err
 	}
 	rows := make([]map[string]any, 0, len(page.Rows))
@@ -56,7 +61,13 @@ func (b *Bridge) slowest(ctx context.Context, raw json.RawMessage) (any, error) 
 		row["sourceId"], row["controller"], row["action"], row["kind"] = record.SourceID, record.Controller, record.Action, record.Kind
 		rows = append(rows, row)
 	}
-	out := map[string]any{"resultId": args.ResultID, "metric": result.Query.Metric, "query": echoQuery(result.Query), "rows": rows, "nextCursor": page.NextCursor, "sources": page.Sources, "truncated": page.Truncated, "note": "Slowest completed requests by the comparison's metric, current period, all of its sources and filters. Incomplete and pending requests are never ranked and are never fast or successful. Cite the id with its sourceId. AuditCreateTime plus ApiTime make up total latency; PayloadRecordTime happens after the response and is not latency. Do not infer database, network or queue wait from them without checking their instrumentation in code."}
+	if err = b.evidenceRefs(ctx, page.Rows, rows, ""); err != nil {
+		return nil, err
+	}
+	if page.NextCursor, err = b.sealCursor("audit_get_slowest", fp, page.NextCursor); err != nil {
+		return nil, err
+	}
+	out := map[string]any{"resultId": args.ResultID, "metric": result.Query.Metric, "query": echoQuery(result.Query), "rows": rows, "nextCursor": page.NextCursor, "sources": page.Sources, "truncated": page.Truncated, "note": "Slowest completed requests by the comparison's metric, current period, all of its sources and filters. Incomplete and pending requests are never ranked and are never fast or successful. Cite the evidenceRef (and the id, when a row carries it) with its sourceId. AuditCreateTime plus ApiTime make up total latency; PayloadRecordTime happens after the response and is not latency. Do not infer database, network or queue wait from them without checking their instrumentation in code."}
 	withProvenance(out, page.Provenance)
 	return out, nil
 }

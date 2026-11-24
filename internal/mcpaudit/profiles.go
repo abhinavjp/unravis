@@ -232,5 +232,8 @@ func (d *DB) Delete(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM profiles WHERE id=?", id); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM aliases WHERE profile_id=?", id); err != nil {
+		return err
+	}
 	return tx.Commit()
 }

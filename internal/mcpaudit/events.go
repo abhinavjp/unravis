@@ -107,6 +107,12 @@ func (d *DB) Prune(ctx context.Context, now time.Time) (int64, error) {
 		n, _ := r.RowsAffected()
 		total += n
 	}
+	// The evidence aliases that ended or whose profile is gone or changed (BL-349) go with the ledger rows.
+	n, err := d.pruneAliases(ctx, now)
+	total += n
+	if err != nil {
+		return total, err
+	}
 	return total, nil
 }
 

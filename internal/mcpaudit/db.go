@@ -35,7 +35,7 @@ const (
 	metaServerKey = "serverKey"
 	metaRevFloor  = "revFloor" // the highest revision any removed profile had: a new profile starts above it (S3)
 	keyLen        = 32
-	schemaVersion = 3 // 2: profiles.contested; 3: audit_events
+	schemaVersion = 4 // 2: profiles.contested; 3: audit_events; 4: aliases
 )
 
 // ErrNewerVersion means the file was written by a later version of Unravis (a downgrade). It is not set aside: the grants in it are
@@ -54,6 +54,7 @@ type DB struct {
 	sql *sql.DB
 	kmu sync.RWMutex // guards key against Close wiping it while MAC runs
 	key []byte
+	amu sync.Mutex // one writer of the aliases table at a time
 }
 
 // Open opens (and creates) dir/mcp.db. dir must be an absolute local path (no relative path, no UNC share). The folder gets the
@@ -218,7 +219,7 @@ func (d *DB) init(ctx context.Context, prot sealedfile.Protector) error {
 	if err := d.sql.QueryRowContext(ctx, "PRAGMA quick_check(1)").Scan(&qc); err != nil || qc != "ok" {
 		return errors.New("mcpaudit: the store is damaged")
 	}
-	if _, err := d.sql.ExecContext(ctx, schemaSQL); err != nil {
+	if _, err := d.sql.ExecContext(ctx, schemaSQL+aliasSchemaSQL); err != nil {
 		return errors.New("mcpaudit: creating the schema failed")
 	}
 	// Version 1 had no contested column.

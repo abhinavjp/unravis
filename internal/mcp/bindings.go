@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -330,5 +331,10 @@ func (b *schemaBuilder) projected(names []string) any {
 	}
 	sorted := append([]string(nil), names...)
 	sort.Strings(sorted)
+	if slices.Contains(names, "state") {
+		// BL-349: the rows of audit_get_requests and audit_get_slowest may carry an alias of the record. A host's bridge adds it to every
+		// row that has a record id; the stdio server does not, so it is not required.
+		props["evidenceRef"] = map[string]any{"type": "string", "pattern": "^ev1_[a-z2-7]{26}$"}
+	}
 	return strictObject(props, sorted...)
 }
