@@ -57,7 +57,7 @@ func (b *Bridge) slowest(ctx context.Context, raw json.RawMessage) (any, error) 
 		rows = append(rows, row)
 	}
 	out := map[string]any{"resultId": args.ResultID, "metric": result.Query.Metric, "query": echoQuery(result.Query), "rows": rows, "nextCursor": page.NextCursor, "sources": page.Sources, "truncated": page.Truncated, "note": "Slowest completed requests by the comparison's metric, current period, all of its sources and filters. Incomplete and pending requests are never ranked and are never fast or successful. Cite the id with its sourceId. AuditCreateTime plus ApiTime make up total latency; PayloadRecordTime happens after the response and is not latency. Do not infer database, network or queue wait from them without checking their instrumentation in code."}
-	withProvenance(out, page.Provenance)
+	b.withProvenance(out, page.Provenance)
 	return out, nil
 }
 
@@ -124,7 +124,7 @@ func (b *Bridge) breakdown(ctx context.Context, raw json.RawMessage) (any, error
 	} else {
 		response["identifiers"], response["identifiersNote"] = "hidden", b.hiddenNote()
 	}
-	withProvenance(response, out.Provenance)
+	b.withProvenance(response, out.Provenance)
 	return response, nil
 }
 
@@ -171,11 +171,12 @@ func hideIdentifiers(out *audit.Breakdown, dim string) {
 }
 
 // withProvenance forwards provenance when the dashboard supplied any, so output
-// from an older dashboard is unchanged.
-func withProvenance(out map[string]any, p []audit.Provenance) {
-	if len(p) > 0 {
-		out["provenance"] = p
+// from an older dashboard is unchanged. A suppressing bridge shows it without its record counts.
+func (b *Bridge) withProvenance(out map[string]any, p []audit.Provenance) {
+	if len(p) == 0 {
+		return
 	}
+	out["provenance"] = b.provenance(p)
 }
 
 // projectRecord is the free projectRecord of a bridge that may have to hide the audit record id.
