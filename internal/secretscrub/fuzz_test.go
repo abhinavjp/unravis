@@ -39,7 +39,7 @@ func FuzzMaskCanary(f *testing.F) {
 	f.Add("{", uint8(2))
 	f.Add("<A!=\"", uint8(7))
 	f.Add("-pW,", uint8(5))
-	f.Add("", uint8(len(canaries)-1))
+	f.Add("", uint8(18))
 	f.Fuzz(func(t *testing.T, s string, k uint8) {
 		in := s + "\n\n" + canaries[int(k)%len(canaries)]
 		// The fuzzer may write the word into the text itself: count it, so only a planted one that survives fails.

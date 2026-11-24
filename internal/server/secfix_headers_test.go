@@ -78,10 +78,30 @@ func wantGonePage(t *testing.T, name string, res *httptest.ResponseRecorder, sec
 	if !strings.Contains(body, "already been used") {
 		t.Errorf("%s: body has no explanation: %q", name, body)
 	}
-	for _, s := range append(secrets, testToken, "<script") {
+	if !strings.Contains(body, `<link rel="stylesheet" href="/launch.css">`) {
+		t.Errorf("%s: body has no same-origin stylesheet: %q", name, body)
+	}
+	for _, s := range append(secrets, testToken, "<script", "<style", " style=") {
 		if strings.Contains(body, s) {
 			t.Errorf("%s: body contains %q", name, s)
 		}
+	}
+}
+
+func TestLaunchRefusalStylesheetIsPublic(t *testing.T) {
+	h := New(&fakeRepository{}, testAssets(), testToken, false)
+	res := request(h, http.MethodGet, launchStylePath, "", false)
+	if res.Code != http.StatusOK {
+		t.Fatalf("stylesheet = %d, want 200", res.Code)
+	}
+	if got := res.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/css") {
+		t.Errorf("Content-Type = %q", got)
+	}
+	if got := res.Body.String(); got != launchGoneCSS {
+		t.Errorf("stylesheet body = %q", got)
+	}
+	if got := res.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q", got)
 	}
 }
 
