@@ -9,6 +9,10 @@ const (
 	TierEvidence  = "evidence"
 )
 
+// MinCohort is the smallest count an aggregate-tier host is shown (spec 03 D13, set by the BL-354 spike on a real case; 5 until then).
+// A count above zero and below it is shown as "<5".
+const MinCohort = 5
+
 var aggregateTools = []string{
 	"audit_get_guide", "audit_list_sources", "audit_compare", "audit_get_groups", "audit_get_timeline", "audit_compare_timelines",
 	"audit_get_breakdown",

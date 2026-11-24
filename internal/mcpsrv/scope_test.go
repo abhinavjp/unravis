@@ -73,11 +73,8 @@ func TestSourceScopeKeepsAHostToItsSources(t *testing.T) {
 	for name, ids := range outside {
 		for tool, args := range map[string]map[string]any{"audit_compare": r.compareFor(ids...), "audit_get_activity": r.activityFor(ids...)} {
 			a := r.call(h, tool, args)
-			want := "permission_required"
-			if name == "empty" {
-				want = "invalid_arguments" // a blank id is refused by the query's own validation before the scope is looked at
-			}
-			if !a.OK || !a.IsError || errCode(a.env) != want {
+			// the scope is looked at before the query is validated: no id outside the grant, a blank one included, gets another answer
+			if !a.OK || !a.IsError || errCode(a.env) != "permission_required" {
 				t.Errorf("%s %s: %.300s", name, tool, a.Raw)
 			}
 			for _, leak := range []string{"demo-east", "no-such-source", "DEMO-WEST"} {
