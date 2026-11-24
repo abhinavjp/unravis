@@ -210,7 +210,7 @@ func TestCancelKillsTheWorkerAndSealsTheRun(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 			cancel()
 		}()
-		res, err := e.b.Run(ctx, RunRequest{Code: "for(;;){}", Surface: "mcp"})
+		res, err := e.b.Run(ctx, RunRequest{Code: "for(;;){}", Surface: "mcp", Scoped: true, Sources: []string{"demo-west"}})
 		if err != nil {
 			t.Fatal(err)
 		}

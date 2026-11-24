@@ -85,11 +85,13 @@ type Broker struct {
 	// learn names the identifiers of an answer that the tools did not hide, so the Guard can learn them before it lets the answer
 	// out. Nil in production: in hidden mode the tools return hidden-<rank> and no address, and the sweep finds addresses by itself.
 	// A test sets it to reach the Guard's Incomplete state.
-	learn    func(tool string, answer []byte) privacy.IDs
-	mu       sync.Mutex
-	active   map[string]*run
-	swept    map[string]bool
-	runCount int
+	learn func(tool string, answer []byte) privacy.IDs
+	// tamper, in tests only, edits what a Guard call returned (stage names the call), so a test can prove that the second nets that
+	// stand behind the Guard really stop an address the Guard let through. Nil in production.
+	tamper func(stage, text string) string
+	mu     sync.Mutex
+	active map[string]*run
+	swept  map[string]bool
 }
 
 // New builds a Broker. It reads the tool catalog once (the same source tools/list and unravis.d.ts come from), so the tool names a
@@ -126,6 +128,10 @@ type RunRequest struct {
 	CallerID         string
 	CallerDeclared   bool // the name is the caller's own word (MCP clientInfo)
 	AllowIdentifiers bool
+	// Scoped limits the run's tool calls to Sources (the source scope of the caller's grant). A run on the "mcp" surface must be scoped:
+	// a host that reaches the broker through MCP has a grant, and the grant says which sources. An empty list reaches none.
+	Scoped  bool
+	Sources []string
 }
 
 // Stats are the numbers of a run.
@@ -213,9 +219,30 @@ func (b *Broker) cleanRequest(req *RunRequest) *Refusal {
 	if !utf8.ValidString(req.Code) || strings.ContainsRune(req.Code, 0) {
 		return refuse(CodeSyntaxError, "The script is not valid text (UTF-8 without NUL).")
 	}
+	if req.Surface == "mcp" && !req.Scoped {
+		return refuse(CodeDenied, "A run from MCP must carry the source scope of its grant.")
+	}
 	req.CallerID = cleanText(req.CallerID, casestore.MaxRunCallerID, false)
-	req.Reason = cleanText(req.Reason, casestore.MaxRunReason, true)
+	// The scope is written into the run's record with the reason (the begin record has no field of its own for it), so the audit trail
+	// says what the run could reach. The user's words are cut to leave room for it.
+	suffix := scopeNote(req)
+	req.Reason = strings.TrimSpace(cleanText(req.Reason, casestore.MaxRunReason-utf8.RuneCountInString(suffix), true) + suffix)
 	return nil
+}
+
+// scopeNote is the fixed tail of the reason: the sources the run could reach, at most 80 characters.
+func scopeNote(req *RunRequest) string {
+	if !req.Scoped {
+		return " [sources: all]"
+	}
+	if len(req.Sources) == 0 {
+		return " [sources: none]"
+	}
+	list := cleanText(strings.Join(req.Sources, ","), 60, true)
+	if len(strings.Join(req.Sources, ",")) > len(list) {
+		list += ",..."
+	}
+	return " [sources: " + list + "]"
 }
 
 // cleanText drops control characters and cuts to max bytes (or max characters when chars is set) at a character boundary.

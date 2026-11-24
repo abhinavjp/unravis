@@ -29,6 +29,7 @@ const (
 	CodeIdentifierLimit     = "identifier_limit"
 	CodeAuditFailed         = "audit_failed"
 	CodeBadRequest          = "bad_request"
+	CodeInternal            = "internal_error"
 )
 
 // Refusal is a request the broker refuses before it writes anything to the audit record (spec 3.5 step 1). A run that was accepted
@@ -65,4 +66,6 @@ var plain = map[string]string{
 	CodeBusy:                "Two code runs are already in progress. Try again when one has finished.",
 	CodeDenied:              "This request is not allowed.",
 	CodeBadRequest:          "The request is not valid.",
+	CodeInternal:            "The app hit an internal problem and stopped the run. The app is unaffected.",
+	CodeSyntaxError:         "The script could not be read.",
 }

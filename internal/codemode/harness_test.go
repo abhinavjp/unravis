@@ -317,11 +317,11 @@ func newEnv(t *testing.T, script fakeScript, opts ...envOpt) *env {
 	}
 	cfg := Config{
 		Spawner: e.sp,
-		Hosts: func(allow bool) Host {
+		Hosts: func(scope HostScope) Host {
 			if e.hosts != nil {
-				return e.hosts(allow)
+				return e.hosts(scope)
 			}
-			return DashboardHosts(handler, testToken)(allow)
+			return DashboardHosts(handler, testToken)(scope)
 		},
 		Settings:            func() Settings { return e.set },
 		AllowIdentifiers:    e.operator,
@@ -448,7 +448,7 @@ func (f hostFunc) Call(ctx context.Context, tool string, args json.RawMessage) (
 
 // withHost replaces the tool host (for answers the demo repository cannot give: a huge answer, a hostile text, a stall).
 func withHost(fn func(ctx context.Context, tool string, args json.RawMessage) ([]byte, bool)) envOpt {
-	return func(e *env) { e.hosts = func(bool) Host { return hostFunc(fn) } }
+	return func(e *env) { e.hosts = func(HostScope) Host { return hostFunc(fn) } }
 }
 
 // withOperatorIdentifiers is the operator's switch (--mcp-allow-identifiers).

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -234,7 +235,7 @@ func (b *Broker) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 
 	r := &run{b: b, id: runID, store: store, req: req, allow: req.AllowIdentifiers, start: now, parent: ctx, usedIDs: map[int64]bool{},
-		guard: privacy.NewGuard(req.AllowIdentifiers), host: b.cfg.Hosts(req.AllowIdentifiers)}
+		guard: privacy.NewGuard(req.AllowIdentifiers), host: b.cfg.Hosts(HostScope{AllowIdentifiers: req.AllowIdentifiers, Scoped: req.Scoped, Sources: slices.Clone(req.Sources)})}
 	r.timer.now = b.cfg.Now
 	r.timer.kick = make(chan struct{}, 1)
 	r.ctx, r.cancel = context.WithTimeout(ctx, b.runCap)
@@ -248,6 +249,28 @@ func (b *Broker) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		b.mu.Unlock()
 	}()
 	return r.execute(ctx, set, seed, clock.BaseMs())
+}
+
+// guardedRun is runWorker under a recover: a panic anywhere in the run (a bug in the Guard on hostile text, say) ends this run as
+// internal_error and the run is still sealed. It never reaches the app.
+func (r *run) guardedRun(set Settings, seed string, baseMs int64) (out outcome) {
+	defer func() {
+		if p := recover(); p != nil {
+			r.fail(CodeInternal, "")
+			r.mu.Lock()
+			out = outcome{fail: r.cause}
+			r.mu.Unlock()
+			r.killWorker()
+		}
+	}()
+	return r.runWorker(set, seed, baseMs)
+}
+
+// killWorker kills the worker if there is one (after a panic the usual reaping did not run to its end).
+func (r *run) killWorker() {
+	if wk := r.worker; wk != nil {
+		wk.Kill()
+	}
 }
 
 // outcome is what the run ended with.
@@ -264,7 +287,7 @@ type outcome struct {
 }
 
 func (r *run) execute(ctx context.Context, set Settings, seed string, baseMs int64) (RunResult, error) {
-	out := r.runWorker(set, seed, baseMs)
+	out := r.guardedRun(set, seed, baseMs)
 	r.finishWatchers()
 
 	// Every call is on disk (handlers finished) before the end record seals them.
@@ -312,13 +335,13 @@ func (r *run) execute(ctx context.Context, set Settings, seed string, baseMs int
 			DurationMS: end.DurationMS})
 		if err == nil {
 			// The answer says what the record says.
-			res.Status, res.Result = casestore.RunError, json.RawMessage("null")
+			res.Status, res.Result, res.Logs = casestore.RunError, json.RawMessage("null"), []string{}
 			res.Error = &RunError{Code: CodeAuditFailed, Message: plain[CodeAuditFailed]}
 		}
 	}
 	if err != nil {
 		res.Status = casestore.RunError
-		res.Result = json.RawMessage("null")
+		res.Result, res.Logs = json.RawMessage("null"), []string{}
 		res.Error = &RunError{Code: CodeAuditFailed, Message: plain[CodeAuditFailed]}
 		return res, fmt.Errorf("codemode: the run ended but its record could not be sealed: %w", err)
 	}
@@ -379,7 +402,14 @@ func (r *run) runWorker(set Settings, seed string, baseMs int64) (out outcome) {
 
 	js, sf := strip(r.req.Code)
 	if sf != nil {
-		out.fail = &failure{code: sf.code, detail: r.guard.ScriptError(sf.msg)}
+		detail := r.g("strip", r.guard.ScriptError(sf.msg))
+		if !r.allow && privacy.ContainsIP(detail) {
+			detail = plain[sf.code] // the words of the parser held an address: say the fixed thing
+			if detail == "" {
+				detail = plain[CodeSyntaxError]
+			}
+		}
+		out.fail = &failure{code: sf.code, detail: detail}
 		return out
 	}
 	out.strip = hashHex(js)
@@ -426,6 +456,11 @@ func (r *run) runWorker(set Settings, seed string, baseMs int64) (out outcome) {
 
 	runFrame, err := wire.Marshal(wire.Run{T: wire.TypeRun, JS: js, Tools: r.b.tools, Limits: workerLimits(),
 		Clock: wire.Clock{Mode: string(privacy.ClockLive), BaseMs: baseMs}, Seed: seed})
+	if errors.Is(err, wire.ErrFrameTooLarge) {
+		// The script is within the source limit, but its JavaScript does not fit one frame once it is written out.
+		out.fail = &failure{code: CodeSourceTooLarge}
+		return out
+	}
 	if err != nil || wire.WriteFrame(wk.Stdin(), runFrame) != nil {
 		r.fail(CodeWorkerCrashed, "")
 		return out
@@ -464,7 +499,13 @@ func (r *run) runWorker(set Settings, seed string, baseMs int64) (out outcome) {
 				r.fail(CodeBadFrame, "")
 				return out
 			}
-			r.onCall(c)
+			if r.onCall(c) {
+				// A call that ends the run: nothing more is read, so no later frame becomes a goroutine or a row. The denial's own row is
+				// written and the run is failed by its handler.
+				<-r.ctx.Done()
+				r.settleCause()
+				return out
+			}
 		case wire.TypeDone:
 			var d wire.Done
 			if wire.Decode(fr.data, &d) != nil {
@@ -599,7 +640,9 @@ func (r *run) takeDone(d *wire.Done, out *outcome) {
 	defer r.serial.Unlock()
 	logs, cut := r.sweepLogs(d.Logs)
 	out.logs, out.logsCut = logs, cut || d.LogsTruncated
-	if r.guard.Incomplete() {
+	if r.guard.Incomplete() || leaks(r.allow, nil, logs) {
+		// Logs are returned and stored whether the script succeeded or not, so the last check on them is made on every path.
+		out.logs = nil
 		out.fail = &failure{code: CodeIdentifierLimit}
 		return
 	}
@@ -616,7 +659,7 @@ func (r *run) takeDone(d *wire.Done, out *outcome) {
 		}
 		detail := ""
 		if d.Error.Code == CodeScriptError {
-			detail = r.guard.ScriptError(d.Error.Message)
+			detail = r.g("scripterror", r.guard.ScriptError(d.Error.Message))
 			if r.guard.Incomplete() {
 				out.fail = &failure{code: CodeIdentifierLimit}
 				return
@@ -642,6 +685,7 @@ func (r *run) takeDone(d *wire.Done, out *outcome) {
 		return
 	}
 	swept, err := r.guard.Output(raw)
+	swept = r.gb("output", swept)
 	switch {
 	case errors.Is(err, privacy.ErrIncomplete):
 		out.fail = &failure{code: CodeIdentifierLimit}
@@ -672,7 +716,7 @@ func (r *run) sweepLogs(lines []string) ([]string, bool) {
 			cut = true
 			break
 		}
-		swept := r.guard.Log(line)
+		swept := r.g("log", r.guard.Log(line))
 		if size+len(swept)+1 > MaxLogBytes {
 			cut = true
 			break
@@ -684,6 +728,21 @@ func (r *run) sweepLogs(lines []string) ([]string, bool) {
 }
 
 // leaks is the last check before a result and its logs are stored: in hidden mode none of them may hold an IP address.
+// g and gb pass what a Guard call returned through the test seam (a no-op in production).
+func (r *run) g(stage, text string) string {
+	if r.b.tamper != nil {
+		return r.b.tamper(stage, text)
+	}
+	return text
+}
+
+func (r *run) gb(stage string, b []byte) []byte {
+	if r.b.tamper != nil && b != nil {
+		return []byte(r.b.tamper(stage, string(b)))
+	}
+	return b
+}
+
 func leaks(allow bool, result []byte, logs []string) bool {
 	if allow {
 		return false
@@ -711,12 +770,12 @@ type denial struct {
 
 // onCall takes one call frame. It runs on the read loop, so the counters it checks are exact. It either starts a handler or, for a call
 // it will not run, a handler that only records the denial.
-func (r *run) onCall(c wire.Call) {
+func (r *run) onCall(c wire.Call) (stops bool) {
 	r.mu.Lock()
 	if c.ID <= 0 || c.ID > 1<<31 || r.usedIDs[c.ID] {
 		r.mu.Unlock()
 		r.fail(CodeBadFrame, "")
-		return
+		return true
 	}
 	r.usedIDs[c.ID] = true
 	r.seq++
@@ -743,6 +802,7 @@ func (r *run) onCall(c wire.Call) {
 	}
 	r.wg.Add(1)
 	go r.handleCall(c.ID, seq, tool, args, den)
+	return den != nil && den.stop != ""
 }
 
 func (r *run) idsOf(tool string, answer []byte) privacy.IDs {
@@ -779,6 +839,12 @@ func cleanArgs(raw json.RawMessage) ([]byte, string) {
 // handleCall runs one host call (or only records its denial) and answers the worker. The audit row is written before the answer is sent.
 func (r *run) handleCall(id int64, seq int, tool string, args []byte, den *denial) {
 	defer r.wg.Done()
+	defer func() {
+		// A panic here (the Guard reading hostile text) ends this run, not the app; the call gets no answer.
+		if p := recover(); p != nil {
+			r.fail(CodeInternal, "")
+		}
+	}()
 	started := time.Now()
 	var envelope []byte
 	var isErr bool
@@ -862,18 +928,20 @@ func (r *run) answer(tool string, envelope []byte, isErr bool, den *denial) (rep
 		if json.Unmarshal(envelope, &e) != nil || e.Error == nil {
 			return fixed(mcp.WireInternal, "The tool failed."), casestore.CallError, ""
 		}
-		msg := r.guard.HostError(e.Error.Message, privacy.IDs{})
-		action := r.guard.HostError(e.Error.Action, privacy.IDs{})
-		if r.guard.Incomplete() {
+		msg := r.g("hosterror", r.guard.HostError(e.Error.Message, privacy.IDs{}))
+		action := r.g("hosterror", r.guard.HostError(e.Error.Action, privacy.IDs{}))
+		rebuilt := mcp.ErrorEnvelope(tool, e.Error.Code, msg, action)
+		if r.guard.Incomplete() || (!r.allow && privacy.ContainsIP(string(rebuilt))) {
 			return fixed(mcp.WireInternal, "The answer was withheld."), casestore.CallError, CodeIdentifierLimit
 		}
-		return mcp.ErrorEnvelope(tool, e.Error.Code, msg, action), casestore.CallError, ""
+		return rebuilt, casestore.CallError, ""
 	}
 	if len(envelope) > MaxResultBytes {
 		r.truncated = true
 		return fixed(mcp.WireResultTooLarge, plain[CodeResultTooLarge]), casestore.CallError, ""
 	}
 	swept, err := r.guard.HostResult(envelope, r.idsOf(tool, envelope))
+	swept = r.gb("hostresult", swept)
 	switch {
 	case errors.Is(err, privacy.ErrIncomplete) || r.guard.Incomplete():
 		return fixed(mcp.WireInternal, "The answer was withheld."), casestore.CallError, CodeIdentifierLimit

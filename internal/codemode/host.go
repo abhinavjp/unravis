@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 
 	"api-audit-explorer/internal/mcp"
 )
@@ -15,8 +16,18 @@ type Host interface {
 	Call(ctx context.Context, tool string, args json.RawMessage) (envelope []byte, isError bool)
 }
 
-// HostFactory makes the Host of one run. allowIdentifiers is the operator's choice for this run (never the script's).
-type HostFactory func(allowIdentifiers bool) Host
+// HostScope is what one run's tool calls may reach, fixed by the caller before the run starts (never by the script).
+type HostScope struct {
+	// AllowIdentifiers is the operator's choice for this run.
+	AllowIdentifiers bool
+	// Scoped says the run is limited to Sources (the source scope of a host's grant, BL-348); an empty list then reaches no source.
+	// Unscoped is the owner's own command line and screen.
+	Scoped  bool
+	Sources []string
+}
+
+// HostFactory makes the Host of one run.
+type HostFactory func(scope HostScope) Host
 
 type bridgeHost struct{ b *mcp.Bridge }
 
@@ -28,7 +39,12 @@ func (h bridgeHost) Call(ctx context.Context, tool string, args json.RawMessage)
 // owns the sources), with the dashboard's own session token. The bridge reaches only the read routes of its allow-list, and it is the
 // same code the MCP server and the command line run, so a script gets the answer a direct tool call gets.
 func DashboardHosts(dashboard http.Handler, token string) HostFactory {
-	return func(allowIdentifiers bool) Host {
-		return bridgeHost{b: mcp.NewLocal(dashboard, token, mcp.WithIdentifiers(allowIdentifiers))}
+	return func(scope HostScope) Host {
+		opts := []mcp.Option{mcp.WithIdentifiers(scope.AllowIdentifiers)}
+		if scope.Scoped {
+			// Same rule as the MCP dispatcher: the scope is part of the bridge, so no tool can reach another source whatever it is asked.
+			opts = append(opts, mcp.WithSources(slices.Clone(scope.Sources)))
+		}
+		return bridgeHost{b: mcp.NewLocal(dashboard, token, opts...)}
 	}
 }

@@ -29,6 +29,9 @@ var (
 	// import.meta is always one of these two spellings. A string that holds the same text matches as well; that is refused too,
 	// because over-refusing is the safe direction and the worker removes import() anyway.
 	dynamicImport = regexp.MustCompile(`\bimport\s*[(.]`)
+	// Code built from text at run time. This is hygiene, not a boundary: (async()=>{}).constructor("...") builds code without these
+	// words. The boundary is the worker (BL-362), which must have no eval, no Function constructor and no module loader (spec 04, BL-362).
+	runtimeCode = regexp.MustCompile(`\b(?:eval\s*\(|new\s+Function\b|Function\s*\()`)
 )
 
 // strip wraps the TypeScript or JavaScript source and has esbuild remove the types. It runs no script. The result is plain ES2023
@@ -71,6 +74,9 @@ func strip(source string) (js string, fail *stripFailure) {
 	}
 	if dynamicImport.MatchString(out) {
 		return "", &stripFailure{code: CodeImportNotAllowed, msg: "import() and import.meta are not allowed."}
+	}
+	if runtimeCode.MatchString(out) {
+		return "", &stripFailure{code: CodeImportNotAllowed, msg: "eval and the Function constructor are not available."}
 	}
 	if strings.ContainsRune(out, 0) {
 		return "", &stripFailure{code: CodeSyntaxError, msg: "The script holds a NUL character."}

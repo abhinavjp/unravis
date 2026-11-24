@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -211,7 +213,7 @@ func checkObject(frame []byte) error {
 		if err != nil || !ok {
 			return ErrBadFrame
 		}
-		folded := foldASCII(key)
+		folded := foldKey(key)
 		if seen[folded] {
 			return ErrBadFrame
 		}
@@ -232,22 +234,32 @@ func checkObject(frame []byte) error {
 	return nil
 }
 
-func foldASCII(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if c >= 'A' && c <= 'Z' {
-			b[i] = c + 32
+// foldKey maps a name to one representative of its case-folding orbit, as encoding/json matches names ("K" and the Kelvin sign are one
+// name; so are "s" and the long s).
+func foldKey(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		low := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if f < low {
+				low = f
+			}
 		}
+		b.WriteRune(low)
 	}
-	return string(b)
+	return b.String()
 }
 
-// Marshal encodes a frame and refuses one over MaxFrame.
+// Marshal encodes a frame and refuses one over MaxFrame. Text is not HTML-escaped, so a result reaches the worker with the same bytes
+// the audit record holds.
 func Marshal(v any) ([]byte, error) {
-	b, err := json.Marshal(v)
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
 		return nil, fmt.Errorf("wire: %w", err)
 	}
+	b := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 	if len(b) > MaxFrame {
 		return nil, ErrFrameTooLarge
 	}
