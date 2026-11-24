@@ -99,6 +99,7 @@ func (r *run) failed() bool {
 
 // scriptTimer counts the time the script itself runs: it stands still while any host call is in flight (spec D3 a).
 type scriptTimer struct {
+	kick    chan struct{} // signalled when the clock starts or stops, so the watcher recomputes its sleep
 	mu      sync.Mutex
 	now     func() time.Time
 	acc     time.Duration
@@ -109,10 +110,28 @@ type scriptTimer struct {
 
 func (t *scriptTimer) running() bool { return t.started && t.paused == 0 }
 
+func (t *scriptTimer) wake() {
+	select {
+	case t.kick <- struct{}{}:
+	default:
+	}
+}
+
+// left is the script time still allowed and whether the clock is running.
+func (t *scriptTimer) left(limit time.Duration) (time.Duration, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.running() {
+		return limit - t.acc, false
+	}
+	return limit - t.acc - t.now().Sub(t.since), true
+}
+
 func (t *scriptTimer) begin() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.started, t.since = true, t.now()
+	t.wake()
 }
 
 func (t *scriptTimer) pause() {
@@ -122,6 +141,7 @@ func (t *scriptTimer) pause() {
 		t.acc += t.now().Sub(t.since)
 	}
 	t.paused++
+	t.wake()
 }
 
 func (t *scriptTimer) resume() {
@@ -133,6 +153,7 @@ func (t *scriptTimer) resume() {
 	if t.running() {
 		t.since = t.now()
 	}
+	t.wake()
 }
 
 func (t *scriptTimer) elapsed() time.Duration {
@@ -215,6 +236,7 @@ func (b *Broker) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	r := &run{b: b, id: runID, store: store, req: req, allow: req.AllowIdentifiers, start: now, parent: ctx, usedIDs: map[int64]bool{},
 		guard: privacy.NewGuard(req.AllowIdentifiers), host: b.cfg.Hosts(req.AllowIdentifiers)}
 	r.timer.now = b.cfg.Now
+	r.timer.kick = make(chan struct{}, 1)
 	r.ctx, r.cancel = context.WithTimeout(ctx, b.runCap)
 	r.callsCtx, r.callsCancel = context.WithCancel(r.ctx)
 	b.mu.Lock()
@@ -518,31 +540,42 @@ func (r *run) awaitHello(frames <-chan frameResult) (wire.Hello, bool) {
 	return h, true
 }
 
-// watchScriptTime ends the run with wall when the script itself (not its waits for host calls) has run for limit.
+// watchScriptTime ends the run with wall when the script itself (not its waits for host calls) has run for limit. It sleeps on one
+// timer set to the time that is left and wakes early only when a call starts or ends (no polling: nothing runs while a call is in
+// flight, and nothing at all runs when no run is live).
 func (r *run) watchScriptTime(limit time.Duration) (stop func()) {
 	quit := make(chan struct{})
 	var once sync.Once
 	go func() {
-		tick := time.NewTicker(scriptPoll)
-		defer tick.Stop()
+		timer := time.NewTimer(limit)
+		defer timer.Stop()
 		for {
+			left, running := r.timer.left(limit)
+			if running && left <= 0 {
+				r.fail(CodeWall, "")
+				return
+			}
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			if running {
+				timer.Reset(left)
+			}
 			select {
 			case <-quit:
 				return
 			case <-r.ctx.Done():
 				return
-			case <-tick.C:
-				if r.timer.elapsed() >= limit {
-					r.fail(CodeWall, "")
-					return
-				}
+			case <-r.timer.kick:
+			case <-timer.C:
 			}
 		}
 	}()
 	return func() { once.Do(func() { close(quit) }) }
 }
-
-const scriptPoll = 20 * time.Millisecond
 
 // reap kills the worker, closes its pipes and waits (bounded) for it to be gone.
 func (r *run) reap(wk Worker) {
