@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/mcpaudit"
 	"api-audit-explorer/internal/pipesrv"
 	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/server"
@@ -86,5 +87,42 @@ func TestOwnerServesMCPOnTheAgPipeOnlyWhenTheStoreCanOpen(t *testing.T) {
 	closeDemo()
 	if demo != nil {
 		t.Error("a demo run opened the real store")
+	}
+}
+
+// BL-351: opening the store prunes the ledger, so rows older than 90 days are gone after a restart whatever the call rate.
+func TestOpeningTheStorePrunesTheLedger(t *testing.T) {
+	const token = "tok-0123456789abcdef0123456789abcdef"
+	dash := server.New(audit.NewDemo(time.Now()), nil, token, true)
+	dir := filepath.Join(t.TempDir(), "mcp")
+	getenv := func(k string) string {
+		if k == "UNRAVIS_MCP_DIR" {
+			return dir
+		}
+		return ""
+	}
+	ctx := context.Background()
+	db, _, err := mcpaudit.Open(ctx, dir, testSeal{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, age := range []time.Duration{120 * 24 * time.Hour, 91 * 24 * time.Hour, time.Hour} {
+		if err := db.Record(ctx, mcpaudit.Event{ProfileID: "p", Kind: mcpaudit.KindEnd, Time: time.Now().Add(-age)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = db.Close()
+	h, closeFn := openMCPEndpoint(ctx, getenv, dash, token, false, func() (sealedfile.Protector, error) { return testSeal{}, nil })
+	if h == nil {
+		t.Fatal("no handler")
+	}
+	closeFn()
+	db, _, err = mcpaudit.Open(ctx, dir, testSeal{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if n, err := db.CountEvents(ctx); err != nil || n != 1 {
+		t.Errorf("%d rows after the open (want 1): %v", n, err)
 	}
 }

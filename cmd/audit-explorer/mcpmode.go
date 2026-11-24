@@ -44,6 +44,9 @@ func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard 
 	if recovered != "" {
 		log.Print("The MCP grant store was unreadable and was set aside; every host must be approved again")
 	}
+	if _, err := db.Prune(ctx, time.Now()); err != nil {
+		log.Print("The MCP call ledger could not be pruned")
+	}
 	grants, err := mcpsrv.NewGrants(ctx, db, time.Now)
 	if err != nil {
 		_ = db.Close()
