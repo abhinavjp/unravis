@@ -3,6 +3,7 @@ package codemode
 import (
 	"context"
 	"encoding/json"
+	"math/rand/v2"
 	"strings"
 	"testing"
 	"time"
@@ -343,13 +344,8 @@ func TestScopeNoteSurvivesTheStoresOwnCleaningOfAnyReason(t *testing.T) {
 	pieces := []string{"x", "xx", " ", "::1", "::f", "::ffff:1.2.3.4", "::ffff:", "1.2.3.4", "10.0.0.1.443", "[", "]", "[ip]", "[sources: all]", "fe80::1%eth0", "\u202e", "\u200b", "\u2028", "é", "😀", "0:0:0:0:0:0:0:1", "a::", "::", "1.1.1.1"}
 	scopes := [][]string{nil, {}, {"demo-west"}, {"demo-west2"}, {"10.0.0.1"}, {"a]b", "c"}, {strings.Repeat("s", 90)}}
 	b := &Broker{minTime: MinTimeout}
-	rnd := uint64(88172645463325252)
-	next := func(n int) int {
-		rnd ^= rnd << 13
-		rnd ^= rnd >> 7
-		rnd ^= rnd << 17
-		return int(rnd % uint64(max(n, 1)))
-	} //nolint:gosec // n is a small positive count
+	rng := rand.New(rand.NewPCG(88172645463325252, 1))
+	next := func(n int) int { return rng.IntN(max(n, 1)) }
 	for i := 0; i < 20000; i++ {
 		var sb strings.Builder
 		for j, n := 0, next(60); j < n; j++ {
