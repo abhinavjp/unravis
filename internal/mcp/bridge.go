@@ -42,10 +42,13 @@ type Bridge struct {
 	allowIdentifiers bool
 	// scoped says the bridge may reach only the sources in sources (a host's grant, BL-348). A nil set with scoped false is the
 	// unscoped bridge of the stdio server and the command line. Scoped with an empty set reaches no source at all.
-	scoped      bool
-	sources     map[string]struct{}
-	sessionFile string
-	envToken    string
+	// minCohort is the smallest count shown (suppress.go); zero shows every count. hideRecordIDs removes the audit record id from rows.
+	minCohort     int
+	hideRecordIDs bool
+	scoped        bool
+	sources       map[string]struct{}
+	sessionFile   string
+	envToken      string
 	// proven is set by New: the client's transport runs the session proof on
 	// each connection, with the token passed through the request context.
 	proven bool
@@ -253,6 +256,16 @@ func (b *Bridge) identifiersAllowed() bool {
 	return b.allowIdentifiers
 }
 
+// noIdentifiers is the reason text of a refused identifier filter. On the stdio server the switch is the operator's flag; a bridge
+// scoped to a host's grant has no flag, the permission is the person's choice in Unravis, so the text must not point at a flag that does
+// nothing for that host.
+func (b *Bridge) noIdentifiers() string {
+	if b.scoped {
+		return "the identifiers permission is not on for this host. Ask the person to allow it in Unravis > AI access."
+	}
+	return "the operator has not turned on --mcp-allow-identifiers."
+}
+
 // identifierFilterNames lists the record filters of q that match on a user id,
 // a user agent, an IP address, a URL or an audit record id. URLs can carry
 // personal data in paths and query strings, and an audit id pins one person's
@@ -285,7 +298,7 @@ func (b *Bridge) checkIdentifierFilters(q audit.Query) error {
 	if len(names) == 0 || b.identifiersAllowed() {
 		return nil
 	}
-	return codedWire(CodeInvalidArguments, WirePermissionRequired, "The "+strings.Join(names, ", ")+" filters are not available: the operator has not turned on --mcp-allow-identifiers. User ids, user agents, IP addresses, URLs and audit record ids are hidden, and filtering on them would reveal them")
+	return codedWire(CodeInvalidArguments, WirePermissionRequired, "The "+strings.Join(names, ", ")+" filters are not available: "+b.noIdentifiers()+" User ids, user agents, IP addresses, URLs and audit record ids are hidden, and filtering on them would reveal them")
 }
 
 // scopeRefused is the answer to a request that names a source outside the grant. It never repeats the ids that were asked for.
