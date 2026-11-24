@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -215,7 +216,7 @@ func TestLedgerKeepsAtMostMaxEvents(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 	// Fill the table in one statement (the cap is checked by Record), then write until the check has run.
-	if _, err := mcpaudit.ExecForTest(db, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?) INSERT INTO audit_events(ts,profile_id,profile_rev,kind) SELECT 1,'p',1,'end' FROM n`, mcpaudit.MaxEvents+500); err != nil {
+	if _, err := mcpaudit.ExecForTest(db, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?) INSERT INTO audit_events(ts,profile_id,profile_rev,kind) SELECT CAST(strftime('%s','now') AS INTEGER)*1000,'p',1,'end' FROM n`, mcpaudit.MaxEvents+500); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 1000; i++ {
@@ -233,3 +234,34 @@ func TestLedgerKeepsAtMostMaxEvents(t *testing.T) {
 }
 
 const pruneSlack = 1000
+
+// BL-351: a row older than 90 days goes, a younger one stays, and the cap still holds.
+func TestPruneByAgeAndCount(t *testing.T) {
+	db, _, err := mcpaudit.Open(ctx, t.TempDir(), prot{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	now := time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)
+	for _, age := range []time.Duration{91 * 24 * time.Hour, 90*24*time.Hour + time.Minute, 89 * 24 * time.Hour, time.Hour, 0} {
+		if err := db.Record(ctx, mcpaudit.Event{ProfileID: "p", Kind: mcpaudit.KindEnd, Time: now.Add(-age), Tool: age.String()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := db.Prune(ctx, now)
+	if err != nil || n != 2 {
+		t.Fatalf("pruned %d: %v", n, err)
+	}
+	rows, _ := db.RecentEvents(ctx, 10)
+	if len(rows) != 3 {
+		t.Fatalf("%d rows kept", len(rows))
+	}
+	for _, r := range rows {
+		if now.Sub(r.Time) > mcpaudit.RetainFor {
+			t.Errorf("a row of %v is kept", now.Sub(r.Time))
+		}
+	}
+	if n, err := db.Prune(ctx, now); err != nil || n != 0 {
+		t.Errorf("second prune: %d %v", n, err)
+	}
+}

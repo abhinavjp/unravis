@@ -94,14 +94,23 @@ type rig struct {
 	now     time.Time
 }
 
+// newRig has budgets no test run can reach (the sweeps of project_test.go make hundreds of comparisons on one fake clock); the budget
+// tests ask for DefaultBudgets.
 func newRig(t *testing.T) *rig {
+	t.Helper()
+	open := DefaultBudgets
+	open.CompareRate, open.LiveRate, open.CumulativeBytes = 1_000_000, 1_000_000, 1<<40
+	return newRigBudgets(t, open)
+}
+
+func newRigBudgets(t *testing.T, b Budgets) *rig {
 	t.Helper()
 	e := newEnv(t)
 	now := time.Now().UTC().Truncate(time.Hour)
 	r := &rig{env: e, t: t, dash: newDash(now), now: now}
 	r.led = &ledger{DB: e.db}
 	r.backend = NewLocalBackend(r.dash, dashToken)
-	deps := Deps{Grants: e.g, Backend: r.backend, Recorder: r.led, Now: e.clk.Now}
+	deps := Deps{Grants: e.g, Backend: r.backend, Recorder: r.led, Now: e.clk.Now, Budgets: b}
 	h, err := Handler(deps)
 	if err != nil {
 		t.Fatal(err)
