@@ -170,7 +170,14 @@ func gridQuery(n int) audit.Query {
 func shownPoints(t *testing.T, b *Bridge, total int64, counts ...int64) (shown []audit.Point, ok bool) {
 	t.Helper()
 	g := audit.Comparison{Current: audit.Stats{Count: total}}
-	list, ok := b.points(g, gridQuery(len(counts)), pts(counts...))
+	// a slot of 0 is a position with no observation: it is not in the list of points the dashboard gives, only in the grid
+	var observed []audit.Point
+	for _, p := range pts(counts...) {
+		if p.Count > 0 {
+			observed = append(observed, p)
+		}
+	}
+	list, ok := b.points(g, gridQuery(len(counts)), observed)
 	if !ok {
 		return nil, false
 	}
@@ -450,5 +457,70 @@ func TestBreakdownTopsCannotBeSubtracted(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// Review 2 of #266, M1': a slot with no valid timing but 5 or more failures is shown (count 0), so the host knows that position holds no
+// hidden timings. If it were counted as a position the hidden timings could be in, the check would be one position too lenient.
+func TestShownSlotWithOnlyFailuresIsAKnownPosition(t *testing.T) {
+	b := newBridge(nil, nil, WithMinCohort(5))
+	failOnly := audit.Point{Count: 0, Count5xx: 8}
+	// grid of 3: [failures only (shown), 4, 4], group count 8: the 8 left over sit in the 2 positions the host cannot see, 4 each
+	g := audit.Comparison{Current: audit.Stats{Count: 8}}
+	if list, ok := b.points(g, gridQuery(3), []audit.Point{failOnly, {Count: 4}, {Count: 4}}); ok {
+		t.Errorf("each hidden slot would be exactly 4, yet a timeline is shown: %v", list)
+	}
+	// grid of 5: two failure-only slots shown, three slots of 4, group count 12
+	g = audit.Comparison{Current: audit.Stats{Count: 12}}
+	if list, ok := b.points(g, gridQuery(5), []audit.Point{failOnly, {Count: 4}, failOnly, {Count: 4}, {Count: 4}}); ok {
+		t.Errorf("12 over 3 positions: %v", list)
+	}
+	// one more position that could hold the timings: two values are possible again
+	if _, ok := b.points(audit.Comparison{Current: audit.Stats{Count: 8}}, gridQuery(4), []audit.Point{failOnly, {Count: 4}, {Count: 4}}); !ok {
+		t.Error("a position the host cannot see anything about was treated as known")
+	}
+}
+
+// The same rule in a comparison of timelines: when no safe set of cells exists, the whole call is refused, for every key asked about.
+func TestCompareTimelinesRefusedWhenNoSafeCellsExist(t *testing.T) {
+	b := newBridge(nil, nil, WithMinCohort(5))
+	q := gridQuery(3)
+	at := func(i int) time.Time { return q.Start.Add(time.Duration(i) * 10 * time.Second) }
+	mk := func(total int64, pts ...audit.Point) *audit.Analysis {
+		for i := range pts {
+			pts[i].At = at(i)
+		}
+		return &audit.Analysis{
+			Query:    q,
+			APIs:     []audit.Comparison{{Key: "k", State: "compared", CurrentEvents: total, Current: audit.Stats{Count: total}}},
+			Timeline: []audit.Series{{Key: "k", Points: pts}},
+		}
+	}
+	// two hidden slots of exactly 4 beside one with no timing: refused
+	if _, err := b.compareTimelines(mk(8, audit.Point{Count5xx: 8}, audit.Point{Count: 4}, audit.Point{Count: 4}), "r", []string{"k"}); err == nil || !strings.Contains(err.Error(), "fewer than 5") {
+		t.Errorf("no safe cells: %v", err)
+	}
+	// plain: three slots of 4 and nothing else, 12 over 3 positions
+	if _, err := b.compareTimelines(mk(12, audit.Point{Count: 4}, audit.Point{Count: 4}, audit.Point{Count: 4}), "r", []string{"k"}); err == nil {
+		t.Error("12 over 3 positions: every cell would be exactly 4")
+	}
+	// a safe case is answered, and the hidden cell is a cell of no observation
+	wide := mk(60, audit.Point{Count: 25}, audit.Point{Count: 3}, audit.Point{Count: 32})
+	wide.Query = gridQuery(10)
+	out, err := b.compareTimelines(wide, "r", []string{"k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cells := out.(map[string]any)["slots"].([]map[string]any)
+	hidden := 0
+	for _, s := range cells {
+		for _, v := range s["groups"].([]map[string]any) {
+			if v["count"] == int64(0) && v["sampleStatus"] == "missing" {
+				hidden++
+			}
+		}
+	}
+	if hidden == 0 {
+		t.Errorf("the slot of 3 is still in the comparison: %v", cells)
 	}
 }

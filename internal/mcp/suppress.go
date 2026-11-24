@@ -156,14 +156,14 @@ func slotGrid(q audit.Query) int {
 }
 
 // maskPlan says which slots of a group's timeline are not shown. total is the group's own count (shown next to the slots), counts the
-// slots' valid timings, small which slots rest on a small count, n the number of slot positions. A hidden slot is not marked: it is left
+// slots' valid timings, small which slots rest on a small count, observed which have a point at all, n the number of slot positions. A hidden slot is not marked: it is left
 // out of a timeline and shown as a missing slot in a comparison, so the host cannot count the hidden slots. What the hidden slots hold
 // together is total minus the shown ones, and the host can work that out. Two things would still give a slot away:
 //   - that sum is 1 to 4: it would be the count of a single slot, so the smallest shown slot is hidden too (a shown slot has at least
 //     the minimum, so one step is enough);
 //   - that sum is 4 times the positions the host cannot see a count for (the slots that look missing, hidden ones included): then each of
 //     them would hold exactly 4. Hiding more shown slots only raises the sum, so nothing can be done: ok is false and no timeline is shown.
-func (b *Bridge) maskPlan(total int64, counts []int64, small []bool, n int) (hide []bool, ok bool) {
+func (b *Bridge) maskPlan(total int64, counts []int64, small, observed []bool, n int) (hide []bool, ok bool) {
 	hide = append([]bool(nil), small...)
 	for {
 		var shown int64
@@ -171,7 +171,9 @@ func (b *Bridge) maskPlan(total int64, counts []int64, small []bool, n int) (hid
 		for i, c := range counts {
 			if !hide[i] && c > 0 {
 				shown += c
-				seen++
+			}
+			if !hide[i] && observed[i] {
+				seen++ // a slot with data is a position the host knows: one with no timing (only failures) holds no hidden timings either
 			}
 		}
 		rest := total - shown
@@ -201,11 +203,11 @@ func (b *Bridge) points(g audit.Comparison, q audit.Query, points []audit.Point)
 		return points, true
 	}
 	counts := make([]int64, len(points))
-	small := make([]bool, len(points))
+	small, observed := make([]bool, len(points)), make([]bool, len(points))
 	for i, p := range points {
-		counts[i], small[i] = p.Count, b.slotSmall(p)
+		counts[i], small[i], observed[i] = p.Count, b.slotSmall(p), true
 	}
-	hide, ok := b.maskPlan(g.Current.Count, counts, small, max(slotGrid(q), len(points)))
+	hide, ok := b.maskPlan(g.Current.Count, counts, small, observed, max(slotGrid(q), len(points)))
 	if !ok {
 		return nil, false
 	}
@@ -373,7 +375,7 @@ func (b *Bridge) compareTimelines(result *audit.Analysis, id string, keys []stri
 	for gi, g := range groups {
 		var cells []map[string]any
 		var counts []int64
-		var small []bool
+		var small, observed []bool
 		points := map[int64]audit.Point{}
 		for _, series := range result.Timeline {
 			if series.Key == g.Key {
@@ -389,11 +391,11 @@ func (b *Bridge) compareTimelines(result *audit.Analysis, id string, keys []stri
 				continue
 			}
 			at, _ := slot["at"].(time.Time)
-			p := points[at.UnixNano()]
+			p, has := points[at.UnixNano()]
 			n, _ := values[gi]["count"].(int64)
-			cells, counts, small = append(cells, values[gi]), append(counts, n), append(small, b.slotSmall(p))
+			cells, counts, small, observed = append(cells, values[gi]), append(counts, n), append(small, b.slotSmall(p)), append(observed, has)
 		}
-		hide, ok := b.maskPlan(g.Current.Count, counts, small, len(cells))
+		hide, ok := b.maskPlan(g.Current.Count, counts, small, observed, len(cells))
 		if !ok {
 			return nil, b.groupHidden()
 		}
