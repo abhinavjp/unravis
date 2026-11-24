@@ -1,8 +1,10 @@
 package mcpsrv
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -152,8 +154,10 @@ func TestHiddenGroupsHaveNoTimeline(t *testing.T) {
 	}
 }
 
-// Slots of a timeline that rest on fewer than five requests show "<5" and no timings; slots of enough requests are the evidence figures.
-func TestTimelineSlotsBelowTheMinimumAreSuppressed(t *testing.T) {
+// Slots of a timeline that rest on fewer than five requests are not there at all: no "<5" mark, nothing that tells a hidden slot from a
+// slot with no observation (review 1 of #266: the number of marks and the group's own count gave exact counts). Slots of enough requests
+// are the evidence figures.
+func TestTimelineSlotsBelowTheMinimumAreLeftOut(t *testing.T) {
 	r := newRig(t)
 	agg, ev := r.pair("pt")
 	args := r.queryFor(time.Hour, nil, 30) // 250 events per group in 60 slots of 30 s: slots hold 4 or 5 (demo events come every 14.4 s)
@@ -167,97 +171,240 @@ func TestTimelineSlotsBelowTheMinimumAreSuppressed(t *testing.T) {
 	if !at.OK || at.IsError || !et.OK || et.IsError {
 		t.Fatalf("%.300s | %.300s", at.Raw, et.Raw)
 	}
+	if strings.Contains(string(at.Raw), `"<5"`) || strings.Contains(string(at.Raw), `"suppressed"`) {
+		t.Errorf("a hidden slot leaves a mark: %.400s", at.Raw)
+	}
 	truth := map[string]map[string]any{}
 	for _, p := range et.env["points"].([]any) {
 		truth[p.(map[string]any)["at"].(string)] = p.(map[string]any)
 	}
-	var small, kept int
+	shown := map[string]bool{}
+	var sum float64
 	for _, p := range at.env["points"].([]any) {
 		m := p.(map[string]any)
 		want := truth[m["at"].(string)]
-		if isSmall(want["count"]) {
-			small++
-			if m["count"] != "<5" || m["suppressed"] != true || m["p95"] != nil {
-				t.Errorf("a slot of %v requests: %v", want["count"], m)
-			}
-		} else {
-			kept++
-			if m["count"] != want["count"] {
-				t.Errorf("a slot of enough requests changed: %v vs %v", m, want)
-			}
+		shown[m["at"].(string)] = true
+		sum += m["count"].(float64)
+		if isSmall(want["count"]) || fmt.Sprint(m) != fmt.Sprint(want) {
+			t.Errorf("a slot of %v requests, shown as %v", want["count"], m)
 		}
 	}
-	if small == 0 || kept == 0 {
-		t.Errorf("the window holds no mix of slots: %d small, %d kept", small, kept)
+	var small, left int
+	for at, want := range truth {
+		if isSmall(want["count"]) {
+			small++
+			if shown[at] {
+				t.Errorf("a slot of %v is shown", want["count"])
+			}
+		}
+		if !shown[at] {
+			left++
+		}
 	}
-	// the same in the comparison of several groups
+	if small == 0 || len(shown) == 0 {
+		t.Fatalf("the window holds no mix of slots: %d small, %d shown", small, len(shown))
+	}
+	// what the host can work out: the rest, and the positions it can see no count for
+	total := ak["current"].(map[string]any)["count"].(float64)
+	positions := float64(slotsIn(r.now, time.Hour, 30)) - float64(len(shown))
+	if rest := total - sum; rest != 0 && (rest < MinCohort || rest >= 4*positions) {
+		t.Errorf("the hidden slots hold %v among %v positions", rest, positions)
+	}
+	// the same in the comparison of several groups: a hidden slot is a cell of a slot with no observation
 	ct := r.call(agg, "audit_compare_timelines", map[string]any{"resultId": a.env["resultId"], "apiKeys": []string{ak["key"].(string)}})
 	if !ct.OK || ct.IsError {
 		t.Fatalf("%.300s", ct.Raw)
 	}
+	if strings.Contains(string(ct.Raw), `"<5"`) || strings.Contains(string(ct.Raw), `"suppressed"`) {
+		t.Errorf("a hidden cell leaves a mark: %.400s", ct.Raw)
+	}
+	var hiddenCells int
 	for _, s := range ct.env["slots"].([]any) {
-		for _, v := range s.(map[string]any)["groups"].([]any) {
-			if isSmall(v.(map[string]any)["count"]) {
-				t.Errorf("a slot count of 1 to 4 is shown: %v", v)
+		slot := s.(map[string]any)
+		for _, v := range slot["groups"].([]any) {
+			cell := v.(map[string]any)
+			if cell["count"] == float64(0) {
+				if cell["sampleStatus"] != "missing" || cell["currentP95Ms"] != nil || cell["increaseMs"] != nil || cell["increasePercent"] != nil {
+					t.Errorf("a cell of no observation carries figures: %v", cell)
+				}
+				if truth[slot["at"].(string)] != nil { // a slot that has data in the evidence view, and is a cell of no observation here
+					hiddenCells++
+				}
 			}
 		}
+	}
+	if hiddenCells == 0 {
+		t.Error("no cell was left out")
 	}
 }
 
-// Breakdown: rows and Other are never small, and the rows still add up to the total the host is shown.
-func TestBreakdownRowsBelowTheMinimumAreFolded(t *testing.T) {
+func slotsIn(now time.Time, win time.Duration, bucket int) int {
+	return int(win / (time.Duration(bucket) * time.Second))
+}
+
+// The attack of review 1 of #266, run as the reviewer ran it: an aggregate host and an evidence host on the same query over the demo,
+// every window and filter of the sweep, timeline buckets of 10 s. The host counts the slots it is not shown, subtracts what it is shown
+// from the group's own count, and reads each hidden count off the range left. It must never get a single possible value, and the
+// number of hidden slots must not be on the page.
+func TestTimelineAttackRecoversNothing(t *testing.T) {
 	r := newRig(t)
-	agg, ev := r.pair("bd")
-	var sawFold, sawNarrow bool
+	agg, ev := r.pair("atk")
+	var tried, refused int
 	for _, s := range sweep {
-		args := r.queryFor(s.win, s.uv, 60)
+		args := r.queryFor(s.win, s.uv, 10)
 		a, e := r.call(agg, "audit_compare", args), r.call(ev, "audit_compare", args)
-		if len(e.env["groups"].([]any)) == 0 {
+		if a.IsError || e.IsError { // a window the dashboard does not take at this bucket
 			continue
 		}
-		for _, dim := range []string{"statusCode", "uiVersion", "pollingType", "userId", "userAgent"} {
-			ab := r.call(agg, "audit_get_breakdown", map[string]any{"resultId": a.env["resultId"], "dim": dim})
-			eb := r.call(ev, "audit_get_breakdown", map[string]any{"resultId": e.env["resultId"], "dim": dim})
-			if !eb.OK || eb.IsError {
-				t.Fatalf("%v %s: %.300s", s.win, dim, eb.Raw)
-			}
-			etotal := eb.env["total"].(float64)
-			if etotal > 0 && etotal < MinCohort {
-				sawNarrow = true
-				// the whole selection is small: the breakdown would give the size of the hidden groups, so it is refused
-				if !ab.IsError || errCode(ab.env) != "permission_required" || strings.Contains(string(ab.Raw), `"rows"`) {
-					t.Errorf("%v %s: a selection of %v requests: %.400s", s.win, dim, etotal, ab.Raw)
-				}
+		for gi, g := range a.env["groups"].([]any) {
+			m := g.(map[string]any)
+			if m["suppressed"] == true {
 				continue
 			}
-			if !ab.OK || ab.IsError {
-				t.Fatalf("%v %s: %.300s", s.win, dim, ab.Raw)
+			tried++
+			at := r.call(agg, "audit_get_timeline", map[string]any{"resultId": a.env["resultId"], "apiKey": m["key"]})
+			et := r.call(ev, "audit_get_timeline", map[string]any{"resultId": e.env["resultId"], "apiKey": e.env["groups"].([]any)[gi].(map[string]any)["key"]})
+			if at.IsError {
+				refused++
+				continue
+			}
+			if et.IsError {
+				t.Fatalf("%v %v: %.300s", s.win, s.uv, et.Raw)
+			}
+			if strings.Contains(string(at.Raw), `"<5"`) || strings.Contains(string(at.Raw), `"suppressed"`) {
+				t.Fatalf("%v %v: a hidden slot leaves a mark", s.win, s.uv)
 			}
 			var sum float64
-			for _, row := range ab.env["rows"].([]any) {
-				c := row.(map[string]any)["count"].(float64)
-				if isSmall(c) {
-					t.Errorf("%v %s: a row of %v is listed", s.win, dim, c)
+			shown := 0
+			for _, p := range at.env["points"].([]any) {
+				c := p.(map[string]any)["count"].(float64)
+				if c > 0 {
+					shown++
 				}
 				sum += c
 			}
-			if o, ok := ab.env["other"].(map[string]any); ok {
-				c := o["count"].(float64)
-				if isSmall(c) {
-					t.Errorf("%v %s: Other is %v", s.win, dim, c)
-				}
-				sum += c
-				if len(ab.env["rows"].([]any)) < len(eb.env["rows"].([]any)) {
-					sawFold = true
+			total := m["current"].(map[string]any)["count"].(float64)
+			positions := float64(slotsIn(r.now, s.win, 10)) - float64(shown)
+			rest := total - sum
+			// the hidden slots of the evidence host's truth
+			var hidden []float64
+			for _, p := range et.env["points"].([]any) {
+				if c := p.(map[string]any)["count"].(float64); isSmall(c) {
+					hidden = append(hidden, c)
 				}
 			}
-			if sum != ab.env["total"].(float64) || ab.env["total"] != eb.env["total"] {
-				t.Errorf("%v %s: rows and Other add up to %v, total %v (evidence %v)", s.win, dim, sum, ab.env["total"], eb.env["total"])
+			if rest != 0 && (rest < MinCohort || rest >= 4*positions) {
+				t.Errorf("%v %v: the host reads off %v among %v positions (the truth: %v)", s.win, s.uv, rest, positions, hidden)
+			}
+			if rest == 0 && len(hidden) != 0 {
+				t.Errorf("%v %v: hidden slots %v but nothing left over", s.win, s.uv, hidden)
 			}
 		}
 	}
-	if !sawFold || !sawNarrow {
-		t.Errorf("the sweep did not reach every case: fold %v narrow %v", sawFold, sawNarrow)
+	if tried < 10 {
+		t.Errorf("only %d groups tried", tried)
+	}
+	t.Logf("%d groups tried, %d timelines refused", tried, refused)
+}
+
+// Breakdown: rows and Other are never small, the rows still add up to the total the host is shown, and the breakdown is refused whenever
+// it would give a hidden group away (review 1 of #266: five hidden groups of 1 event add up to 5, and the total minus the shown groups
+// is then exactly 1 each). Two sources give six groups, so the sweep reaches that case at 10 s with one UI version.
+func TestBreakdownRowsBelowTheMinimumAreFolded(t *testing.T) {
+	r := newRig(t)
+	var sawFold, sawNarrow, sawAllOnes, sawRefusedByRange, sawAllowedHidden bool
+	for n, srcs := range [][]string{{"demo-west"}, {"demo-west", "demo-east"}} {
+		agg, ev := r.scoped(fmt.Sprint("agg-bd", n), TierAggregate, srcs...), r.scoped(fmt.Sprint("ev-bd", n), TierEvidence, srcs...)
+		for _, s := range sweep {
+			q := r.queryFor(s.win, s.uv, 60)
+			qq := q["query"].(audit.Query)
+			qq.SourceIDs = srcs
+			args := map[string]any{"query": qq}
+			a, e := r.call(agg, "audit_compare", args), r.call(ev, "audit_compare", args)
+			if len(e.env["groups"].([]any)) == 0 {
+				continue
+			}
+			// what the host can see of the groups: how many are hidden, and what the evidence view says they hold
+			var k int
+			var hiddenSum float64
+			for _, g := range e.env["groups"].([]any) {
+				if c := g.(map[string]any)["currentEvents"].(float64); isSmall(c) {
+					k++
+					hiddenSum += c
+				}
+			}
+			for _, dim := range []string{"statusCode", "uiVersion", "pollingType", "userId", "userAgent"} {
+				ab := r.call(agg, "audit_get_breakdown", map[string]any{"resultId": a.env["resultId"], "dim": dim})
+				eb := r.call(ev, "audit_get_breakdown", map[string]any{"resultId": e.env["resultId"], "dim": dim})
+				if !eb.OK || eb.IsError {
+					t.Fatalf("%v %s: %.300s", s.win, dim, eb.Raw)
+				}
+				etotal := eb.env["total"].(float64)
+				// the rule, written out again: refused when a hidden group would be known
+				refuse := false
+				if k > 0 {
+					lo, hi := math.Max(1, hiddenSum-4*float64(k-1)), math.Min(4, hiddenSum-float64(k-1))
+					refuse = isSmall(hiddenSum) || dim == "statusCode" || dim == "pollingType" || hi <= lo
+				}
+				if refuse {
+					if !ab.OK || !ab.IsError || errCode(ab.env) != "permission_required" || strings.Contains(string(ab.Raw), `"rows"`) {
+						t.Errorf("%v %v %s: %d hidden groups holding %v must be refused: %.300s", s.win, s.uv, dim, k, hiddenSum, ab.Raw)
+					}
+					sawNarrow = sawNarrow || (etotal > 0 && etotal < MinCohort)
+					sawAllOnes = sawAllOnes || (k >= 5 && hiddenSum == float64(k))
+					sawRefusedByRange = sawRefusedByRange || (k > 1 && !isSmall(hiddenSum) && dim != "statusCode" && dim != "pollingType")
+					continue
+				}
+				if !ab.OK || ab.IsError {
+					t.Fatalf("%v %v %s: %.300s", s.win, s.uv, dim, ab.Raw)
+				}
+				sawAllowedHidden = sawAllowedHidden || k > 0
+				var sum float64
+				for _, row := range ab.env["rows"].([]any) {
+					c := row.(map[string]any)["count"].(float64)
+					if isSmall(c) {
+						t.Errorf("%v %s: a row of %v is listed", s.win, dim, c)
+					}
+					sum += c
+				}
+				if o, ok := ab.env["other"].(map[string]any); ok {
+					c := o["count"].(float64)
+					if isSmall(c) {
+						t.Errorf("%v %s: Other is %v", s.win, dim, c)
+					}
+					if _, has := o["values"]; has {
+						t.Errorf("%v %s: Other says how many values it holds: %v", s.win, dim, o)
+					}
+					sum += c
+					if len(ab.env["rows"].([]any)) < len(eb.env["rows"].([]any)) {
+						sawFold = true
+					}
+				}
+				if sum != ab.env["total"].(float64) || ab.env["total"] != eb.env["total"] {
+					t.Errorf("%v %s: rows and Other add up to %v, total %v (evidence %v)", s.win, dim, sum, ab.env["total"], eb.env["total"])
+				}
+			}
+		}
+	}
+	if !sawFold || !sawNarrow || !sawAllOnes || !sawAllowedHidden {
+		t.Errorf("the sweep did not reach every case: fold %v narrow %v all ones %v allowed with hidden groups %v (range %v)", sawFold, sawNarrow, sawAllOnes, sawAllowedHidden, sawRefusedByRange)
+	}
+}
+
+// An unknown tier is suppressed: the bridge asks for the evidence tier by name, not for the aggregate tier.
+func TestUnknownTierIsSuppressed(t *testing.T) {
+	r := newRig(t)
+	for tier, wantSuppressed := range map[string]bool{TierAggregate: true, "something-new": true, "": true, TierEvidence: false} {
+		p := Profile{ID: "tier-" + tier, Rev: 1, Tier: tier, Sources: []string{"demo-west"}}
+		raw, _ := json.Marshal(r.queryFor(10*time.Second, nil, 60))
+		body, isErr := r.backend.Call(context.Background(), p, "audit_compare", raw, r.now)
+		var env map[string]any
+		if isErr || json.Unmarshal(body, &env) != nil {
+			t.Fatalf("tier %q: %.300s", tier, body)
+		}
+		if got := env["suppression"] != nil; got != wantSuppressed {
+			t.Errorf("tier %q: suppressed %v, want %v", tier, got, wantSuppressed)
+		}
 	}
 }
 

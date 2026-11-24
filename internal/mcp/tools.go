@@ -247,7 +247,11 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 				break
 			}
 		}
-		return map[string]any{"resultId": args.ResultID, "query": result.Query, "group": row, "points": b.points(row, points), "note": "Each point summarizes a time slot, not an individual request. Absent slots are missing observations, not zero duration. Reference statistics cover the whole fixed earlier period. Slot P95 values with few samples are unstable; inspect counts and narrow the interval before claiming precise incident boundaries."}, nil
+		shownPoints, ok := b.points(row, result.Query, points)
+		if !ok {
+			return nil, b.groupHidden()
+		}
+		return map[string]any{"resultId": args.ResultID, "query": result.Query, "group": row, "points": shownPoints, "note": "Each point summarizes a time slot, not an individual request. Absent slots are missing observations, not zero duration. Reference statistics cover the whole fixed earlier period. Slot P95 values with few samples are unstable; inspect counts and narrow the interval before claiming precise incident boundaries."}, nil
 	case "audit_compare_timelines":
 		var args struct {
 			ResultID string   `json:"resultId"`

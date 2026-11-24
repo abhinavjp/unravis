@@ -94,7 +94,7 @@ func (b *Bridge) breakdown(ctx context.Context, raw json.RawMessage) (any, error
 	if err != nil {
 		return nil, err
 	}
-	if b.small(b.hiddenSum(result)) {
+	if b.suppressing() && !b.breakdownAllowed(result, args.Dim) {
 		return nil, b.breakdownHidden()
 	}
 	var out audit.Breakdown

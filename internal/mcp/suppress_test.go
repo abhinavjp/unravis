@@ -161,44 +161,58 @@ func pts(counts ...int64) []audit.Point {
 	return out
 }
 
-func shownPoints(t *testing.T, b *Bridge, total int64, counts ...int64) (shown []int64, hidden int) {
-	t.Helper()
-	g := audit.Comparison{Current: audit.Stats{Count: total}}
-	for _, p := range b.points(g, pts(counts...)).([]any) {
-		switch v := p.(type) {
-		case audit.Point:
-			shown = append(shown, v.Count)
-		case map[string]any:
-			if v["count"] != "<5" || v["p95"] != nil {
-				t.Errorf("a hidden slot carries %v", v)
-			}
-			hidden++
-		}
-	}
-	return shown, hidden
+func gridQuery(n int) audit.Query {
+	t0 := time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)
+	return audit.Query{Start: t0, End: t0.Add(time.Duration(n) * 10 * time.Second), BucketSeconds: 10}
 }
 
-// The slots of a timeline plus the total of the group must not give the count of one hidden slot.
-func TestTimelineSlotsCannotBeSubtracted(t *testing.T) {
+// shownPoints runs the slots of a group of the given total through the bridge. ok false means no timeline is shown.
+func shownPoints(t *testing.T, b *Bridge, total int64, counts ...int64) (shown []audit.Point, ok bool) {
+	t.Helper()
+	g := audit.Comparison{Current: audit.Stats{Count: total}}
+	list, ok := b.points(g, gridQuery(len(counts)), pts(counts...))
+	if !ok {
+		return nil, false
+	}
+	p, isPoints := list.([]audit.Point)
+	if !isPoints {
+		t.Fatalf("points are %T: a hidden slot must not be a marker of another type", list)
+	}
+	return p, true
+}
+
+// What the host can work out from a timeline: the sum of the slots that are not shown (the group's own count minus the shown slots) and
+// how many positions that sum can sit in (the slots it cannot see a count for). Review 1 of #266 recovered 36 exact counts on the demo
+// from the number of "<5" marks and that sum; there are no marks now, so the number of hidden slots is unknown, and the sum must leave
+// every position at least two possible values.
+func TestTimelineHiddenSlotsCannotBeCountedOrSubtracted(t *testing.T) {
 	b := newBridge(nil, nil, WithMinCohort(5))
-	// one small slot among shown ones: total minus the shown slots would be 3, so a shown slot is hidden as well
-	shown, hidden := shownPoints(t, b, 3+5+7+9, 5, 3, 7, 9)
-	var sum int64
-	for _, c := range shown {
-		sum += c
+	// the reviewer's two cases: all ones, and all fours
+	if shown, ok := shownPoints(t, b, 6, 1, 1, 1, 1, 1, 1); !ok || len(shown) != 0 {
+		t.Errorf("six slots of 1: ok %v shown %v", ok, shown)
 	}
-	if hidden != 2 || 24-sum < 5 {
-		t.Errorf("hidden %d, the hidden slots hold %d: %v", hidden, 24-sum, shown)
+	if _, ok := shownPoints(t, b, 4+4+100, 4, 4, 100); ok {
+		t.Error("two slots of 4 beside one of 100: the two positions left would each hold exactly 4, no timeline may be shown")
 	}
-	// two small slots that already add to five or more are left alone
-	if _, hidden := shownPoints(t, b, 3+4+8, 3, 4, 8); hidden != 2 {
-		t.Errorf("hidden %d", hidden)
+	if _, ok := shownPoints(t, b, 4*6, 4, 4, 4, 4, 4, 4); ok {
+		t.Error("six slots of 4 and nothing else: every position would hold exactly 4")
+	}
+	// a hidden slot leaves no trace: the list holds only the slots that are shown, untouched
+	shown, ok := shownPoints(t, b, 3+5+7+9, 5, 3, 7, 9, 0, 0)
+	withData := 0
+	for _, p := range shown {
+		if p.Count > 0 {
+			withData++
+		}
+	}
+	if !ok || withData != 2 { // 3 is small; 5 is hidden with it, so the hidden slots hold 8, not 3
+		t.Fatalf("ok %v shown %v", ok, shown)
 	}
 	// nothing small: nothing hidden
-	if _, hidden := shownPoints(t, b, 20, 10, 10); hidden != 0 {
-		t.Errorf("hidden %d", hidden)
+	if shown, ok := shownPoints(t, b, 20, 10, 10); !ok || len(shown) != 2 {
+		t.Errorf("ok %v shown %v", ok, shown)
 	}
-	// every combination of up to six slots of 0 to 8 requests: the hidden slots always hold zero or at least five between them
+	// every combination of up to five slots of 0 to 8 requests, with an 8-position window
 	var try func(prefix []int64)
 	try = func(prefix []int64) {
 		if len(prefix) > 0 {
@@ -209,13 +223,27 @@ func TestTimelineSlotsCannotBeSubtracted(t *testing.T) {
 			if total < 5 {
 				return // a group of fewer than five has no timeline at all (hiddenGroup)
 			}
-			shown, _ := shownPoints(t, b, total, prefix...)
-			var sum int64
-			for _, c := range shown {
-				sum += c
+			counts := append(append([]int64(nil), prefix...), 0, 0, 0)[:len(prefix)+3]
+			shown, ok := shownPoints(t, b, total, counts...)
+			if !ok {
+				return
 			}
-			if rest := total - sum; rest != 0 && rest < 5 {
-				t.Fatalf("slots %v: the hidden slots hold %d (shown %v)", prefix, rest, shown)
+			var sum int64
+			seen := 0
+			for _, p := range shown {
+				if p.Count == 0 {
+					continue
+				}
+				seen++
+				sum += p.Count
+				if p.Count < 5 {
+					t.Fatalf("slots %v: a slot of %d is shown", prefix, p.Count)
+				}
+			}
+			rest := total - sum
+			positions := int64(len(counts) - seen) // the slots the host sees no count for
+			if rest != 0 && (rest < 5 || rest >= 4*positions) {
+				t.Fatalf("slots %v: the hidden slots hold %d among %d positions: a position is known (shown %v)", prefix, rest, positions, shown)
 			}
 		}
 		if len(prefix) < 5 {
@@ -225,6 +253,23 @@ func TestTimelineSlotsCannotBeSubtracted(t *testing.T) {
 		}
 	}
 	try(nil)
+}
+
+// A slot with no valid timing but 1 to 4 failed or unfinished requests is a small slot too.
+func TestSlotWithOnlyFailuresIsSmall(t *testing.T) {
+	b := newBridge(nil, nil, WithMinCohort(5))
+	list, ok := b.points(audit.Comparison{Current: audit.Stats{Count: 30}}, gridQuery(4), []audit.Point{{Count: 10}, {Count: 0, Count5xx: 2}, {Count: 0, Incomplete: 3}, {Count: 20, Count5xx: 1}})
+	if !ok {
+		t.Fatal("no timeline")
+	}
+	for _, p := range list.([]audit.Point) {
+		if p.Count == 0 {
+			t.Errorf("a slot with no timing but a small failure count is shown: %+v", p)
+		}
+	}
+	if n := len(list.([]audit.Point)); n != 2 {
+		t.Errorf("%d slots shown", n)
+	}
 }
 
 // A fake dashboard for the breakdown route, to read the bridge's own answers over a cached result.
@@ -243,27 +288,101 @@ func bridgeWithResult(t *testing.T, bd audit.Breakdown, groups ...audit.Comparis
 	return b
 }
 
-// The breakdown counts the whole selection: with the groups it was shown, the host could subtract and read a hidden group.
-func TestBreakdownIsRefusedWhenItWouldGiveAHiddenGroupsCount(t *testing.T) {
-	bd := audit.Breakdown{Dim: "statusCode", Total: 203, Rows: []audit.BreakdownRow{row("200", 203)}}
+// The breakdown counts the whole selection: with the groups it was shown, the host could subtract and read the hidden groups.
+func TestBreakdownIsRefusedWhenItWouldGiveHiddenGroupsAway(t *testing.T) {
 	big := audit.Comparison{Key: "big", CurrentEvents: 200}
-	one := audit.Comparison{Key: "one", CurrentEvents: 3}
-	two := audit.Comparison{Key: "two", CurrentEvents: 4}
-	call := func(groups ...audit.Comparison) (map[string]any, error) {
-		out, err := bridgeWithResult(t, bd, groups...).call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"r","dim":"statusCode"}`))
-		if err != nil {
-			return nil, err
+	hidden := func(counts ...int64) []audit.Comparison {
+		out := []audit.Comparison{big}
+		for i, c := range counts {
+			out = append(out, audit.Comparison{Key: fmt.Sprint("h", i), CurrentEvents: c})
 		}
-		return asJSON(t, out), nil
+		return out
 	}
-	if _, err := call(big, one); err == nil || !strings.Contains(err.Error(), "fewer than 5") || strings.Contains(err.Error(), "203") {
-		t.Errorf("a hidden group of 3: %v", err)
+	ones := func(k int) []int64 {
+		out := make([]int64, k)
+		for i := range out {
+			out[i] = 1
+		}
+		return out
 	}
-	if _, err := call(big, one, two); err != nil { // together they hold 7: the host learns 7, not 3 or 4
-		t.Errorf("two hidden groups of 3 and 4: %v", err)
+	fours := func(k int) []int64 {
+		out := ones(k)
+		for i := range out {
+			out[i] = 4
+		}
+		return out
 	}
-	if _, err := call(big); err != nil {
-		t.Errorf("no hidden group: %v", err)
+	sum := func(c []int64) (n int64) {
+		for _, x := range c {
+			n += x
+		}
+		return n
+	}
+	for name, tc := range map[string]struct {
+		hidden  []int64
+		dim     string
+		allowed bool
+	}{
+		"nothing hidden":                   {nil, "statusCode", true},
+		"one group of 3":                   {[]int64{3}, "uiVersion", false},
+		"two groups holding 7 (3 and 4)":   {[]int64{3, 4}, "uiVersion", true},
+		"two groups holding 3 (1 and 2)":   {[]int64{1, 2}, "uiVersion", false}, // the sum is 1 to 4
+		"five groups of 1 (the reviewer)":  {ones(5), "uiVersion", false},
+		"five groups of 4":                 {fours(5), "userId", false},
+		"six groups holding 9":             {[]int64{1, 2, 1, 2, 2, 1}, "userAgent", true},
+		"three groups holding 7":           {[]int64{2, 2, 3}, "uiVersion", true},
+		"hidden groups, status code rows":  {[]int64{3, 4}, "statusCode", false},
+		"hidden groups, polling type rows": {[]int64{3, 4}, "pollingType", false},
+		"hidden groups, user id rows":      {[]int64{3, 4}, "userId", true},
+	} {
+		groups := hidden(tc.hidden...)
+		bd := audit.Breakdown{Dim: tc.dim, Total: 200 + sum(tc.hidden), Rows: []audit.BreakdownRow{row("x", 200+sum(tc.hidden))}}
+		_, err := bridgeWithResult(t, bd, groups...).call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"r","dim":"`+tc.dim+`"}`))
+		if (err == nil) != tc.allowed {
+			t.Errorf("%s: allowed should be %v, got %v", name, tc.allowed, err)
+		}
+		if err != nil && (!strings.Contains(err.Error(), "fewer than 5") || strings.Contains(err.Error(), "200")) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// Whatever the host can subtract, a hidden group must keep at least two possible values.
+func TestHiddenGroupsKeepTwoPossibleValues(t *testing.T) {
+	for k := 1; k <= 8; k++ {
+		for sum := int64(k); sum <= int64(4*k); sum++ {
+			lo, hi := valuesRange(k, sum)
+			if lo < 1 || hi > 4 || lo > hi {
+				t.Fatalf("k %d sum %d: range %d to %d", k, sum, lo, hi)
+			}
+			exact := hi == lo
+			if exact != (k == 1 || sum == int64(k) || sum == int64(4*k)) {
+				t.Errorf("k %d sum %d: range %d to %d", k, sum, lo, hi)
+			}
+		}
+	}
+}
+
+// The timings of a shown row of fewer than 5 completed requests are dropped, and Other does not say how many values it folded.
+func TestBreakdownRowTimingsAndOtherValues(t *testing.T) {
+	b := newBridge(nil, nil, WithMinCohort(5))
+	r := row("a", 50)
+	r.Stats = audit.Stats{Count: 3, MeanMs: ptr(77)}
+	other := row("Other", 12)
+	other.Values = 12
+	rows, o, _ := b.shownBreakdown(audit.Breakdown{Rows: []audit.BreakdownRow{r}, Other: &other, Total: 62})
+	if got := rows[0].(audit.BreakdownRow); got.Stats.Count != 0 || got.Stats.MeanMs != nil {
+		t.Errorf("timings of 3 completed requests are shown: %+v", got.Stats)
+	}
+	if o.(audit.BreakdownRow).Values != 0 {
+		t.Errorf("Other says how many values it holds: %+v", o)
+	}
+	// folded rows too
+	o2 := row("Other", 2)
+	o2.Values = 2
+	_, merged, _ := b.shownBreakdown(audit.Breakdown{Rows: []audit.BreakdownRow{row("a", 50), row("b", 4)}, Other: &o2, Total: 56})
+	if merged.(audit.BreakdownRow).Values != 0 {
+		t.Errorf("a merged Other says how many values it holds: %+v", merged)
 	}
 }
 

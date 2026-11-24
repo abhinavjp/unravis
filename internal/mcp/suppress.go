@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"fmt"
+	"time"
 
 	"api-audit-explorer/internal/audit"
 )
@@ -128,21 +129,58 @@ func (b *Bridge) recorded(result *audit.Analysis, q audit.Query) map[string]any 
 	return out
 }
 
-// maskPlan says which slots of a timeline are not shown. total is the group's own count (shown next to the slots); counts are the slots'.
-// A slot below the minimum is hidden. What the hidden slots hold together is total minus the shown ones, and the host can work that out;
-// while it is a positive number below the minimum it would give the count of a single hidden slot, so the smallest shown slot is hidden
-// too. A shown slot has at least the minimum, so one step is enough, and it stops when no slot is left.
-func (b *Bridge) maskPlan(total int64, counts []int64) []bool {
-	hide := make([]bool, len(counts))
-	var shown int64
-	for i, c := range counts {
-		if b.small(c) {
-			hide[i] = true
-		} else {
-			shown += c
-		}
+// slotSmall says a timeline slot rests on a small count: its valid timings are 1 to 4, or it has none and the counters that cover every
+// document of the slot (4xx, 5xx, incomplete) are 1 to 4.
+func (b *Bridge) slotSmall(p audit.Point) bool {
+	if b.small(p.Count) {
+		return true
 	}
-	for rest := total - shown; rest > 0 && rest < int64(b.minCohort); {
+	return p.Count == 0 && (b.small(p.Count4xx) || b.small(p.Count5xx) || b.small(p.Incomplete))
+}
+
+// slotGrid is the number of slot positions the host can count in the window of a query (the times it would see in a full timeline).
+func slotGrid(q audit.Query) int {
+	if q.BucketSeconds <= 0 {
+		return 0
+	}
+	width := int64(q.BucketSeconds)
+	first := q.Start.Unix() / width
+	if q.Start.Unix()%width < 0 {
+		first--
+	}
+	n := 0
+	for at := first * width; at < q.End.Unix() && n < 100000; at += width {
+		n++
+	}
+	return n
+}
+
+// maskPlan says which slots of a group's timeline are not shown. total is the group's own count (shown next to the slots), counts the
+// slots' valid timings, small which slots rest on a small count, n the number of slot positions. A hidden slot is not marked: it is left
+// out of a timeline and shown as a missing slot in a comparison, so the host cannot count the hidden slots. What the hidden slots hold
+// together is total minus the shown ones, and the host can work that out. Two things would still give a slot away:
+//   - that sum is 1 to 4: it would be the count of a single slot, so the smallest shown slot is hidden too (a shown slot has at least
+//     the minimum, so one step is enough);
+//   - that sum is 4 times the positions the host cannot see a count for (the slots that look missing, hidden ones included): then each of
+//     them would hold exactly 4. Hiding more shown slots only raises the sum, so nothing can be done: ok is false and no timeline is shown.
+func (b *Bridge) maskPlan(total int64, counts []int64, small []bool, n int) (hide []bool, ok bool) {
+	hide = append([]bool(nil), small...)
+	for {
+		var shown int64
+		seen := 0
+		for i, c := range counts {
+			if !hide[i] && c > 0 {
+				shown += c
+				seen++
+			}
+		}
+		rest := total - shown
+		if rest <= 0 {
+			return hide, true
+		}
+		if rest >= int64(b.minCohort) {
+			return hide, rest < 4*int64(max(n-seen, 1))
+		}
 		pick := -1
 		for i, c := range counts {
 			if !hide[i] && c > 0 && (pick < 0 || c < counts[pick]) {
@@ -150,49 +188,79 @@ func (b *Bridge) maskPlan(total int64, counts []int64) []bool {
 			}
 		}
 		if pick < 0 {
-			break
+			return hide, false
 		}
 		hide[pick] = true
-		rest += counts[pick]
 	}
-	return hide
 }
 
-// points shows the slots of a group's timeline: a hidden slot is its time and "<n" only.
-func (b *Bridge) points(g audit.Comparison, points []audit.Point) any {
+// points shows the slots of a group's timeline: a hidden slot is not in the list (as a slot with no observation is not). ok is false
+// when no safe list exists (see maskPlan).
+func (b *Bridge) points(g audit.Comparison, q audit.Query, points []audit.Point) (list any, ok bool) {
 	if !b.suppressing() {
-		return points
+		return points, true
 	}
 	counts := make([]int64, len(points))
+	small := make([]bool, len(points))
 	for i, p := range points {
-		counts[i] = p.Count
+		counts[i], small[i] = p.Count, b.slotSmall(p)
 	}
-	hide := b.maskPlan(g.Current.Count, counts)
-	out := make([]any, 0, len(points))
+	hide, ok := b.maskPlan(g.Current.Count, counts, small, max(slotGrid(q), len(points)))
+	if !ok {
+		return nil, false
+	}
+	out := make([]audit.Point, 0, len(points))
 	for i, p := range points {
-		if hide[i] {
-			out = append(out, map[string]any{"at": p.At, "count": b.hiddenCount(), "suppressed": true})
-		} else {
+		if !hide[i] {
 			out = append(out, p)
 		}
 	}
-	return out
+	return out, true
 }
 
 // hiddenCount is the text that stands for a count the host may not see.
 func (b *Bridge) hiddenCount() string { return fmt.Sprintf("<%d", b.minCohort) }
 
-// hiddenSum is the number of current-period events in the groups whose count is hidden. A breakdown reports the events of the whole
-// selection, so the host could subtract the groups it was shown and read this number: when it is positive and below the minimum it is the
-// count of a hidden group (or of a few), and the breakdown is refused.
-func (b *Bridge) hiddenSum(result *audit.Analysis) int64 {
-	var sum int64
+// hiddenGroups is how many groups have a hidden current count and what they hold together. A breakdown reports the events of the whole
+// selection, so the host could subtract the groups it was shown and read this sum.
+func (b *Bridge) hiddenGroups(result *audit.Analysis) (k int, sum int64) {
 	for _, g := range result.APIs {
 		if b.small(g.CurrentEvents) {
-			sum += g.CurrentEvents
+			k, sum = k+1, sum+g.CurrentEvents
 		}
 	}
-	return sum
+	return k, sum
+}
+
+// valuesRange is what the host can tell about one of k hidden counts of 1 to 4 that add up to sum: the lowest and highest it can be.
+func valuesRange(k int, sum int64) (lo, hi int64) {
+	lo = max(1, sum-4*int64(k-1))
+	hi = min(4, sum-int64(k-1))
+	return lo, hi
+}
+
+// breakdownAllowed says whether a breakdown of the comparison may be shown. The hidden groups are named in the groups the host was
+// shown, and the breakdown counts the whole selection, so total minus the shown groups is the sum of the hidden ones:
+//   - 1 to 4 events: the count of a hidden group (or of a few);
+//   - a sum that leaves a hidden group a single possible value (k groups holding k, or 4k): every one is known;
+//   - the status code and the polling type split the groups by outcome and kind, so their rows give the sum of just those groups: no
+//     hidden group is allowed at all. (hourOfDay is not offered to hosts; uiVersion, userId and userAgent cut across groups.)
+func (b *Bridge) breakdownAllowed(result *audit.Analysis, dim string) bool {
+	k, sum := b.hiddenGroups(result)
+	if k == 0 {
+		return true
+	}
+	if b.small(sum) || dim == audit.BreakdownStatusCode || dim == audit.BreakdownPollingType {
+		return false
+	}
+	lo, hi := valuesRange(k, sum)
+	return hi > lo
+}
+
+// breakdownHidden is the refusal for a breakdown that would give away the size of a hidden group.
+func (b *Bridge) breakdownHidden() error {
+	return codedWire(CodeInvalidArguments, WirePermissionRequired,
+		fmt.Sprintf("A breakdown of this comparison would reveal the size of a group of fewer than %d events. Run audit_compare on a wider window or with fewer filters, or ask the person for evidence access.", b.minCohort))
 }
 
 // shownBreakdown returns the rows of a breakdown as they may be shown. Rows below the minimum are folded into Other; while Other is itself
@@ -254,7 +322,9 @@ func (b *Bridge) shownBreakdown(out audit.Breakdown) (rows []any, other any, tot
 		if out.Other == nil {
 			return list, nil, out.Total
 		}
-		return list, *out.Other, out.Total
+		o := *out.Other
+		o.Values = 0 // "values" equal to "count" would say every value in Other had one request
+		return list, o, out.Total
 	}
 	merged := audit.BreakdownRow{Value: audit.BreakdownOtherLabel}
 	if out.Other != nil {
@@ -270,7 +340,7 @@ func (b *Bridge) shownBreakdown(out audit.Breakdown) (rows []any, other any, tot
 		merged.Count5xx += r.Count5xx
 		merged.Values += max(r.Values, 1)
 	}
-	merged.Stats, merged.Filter = audit.Stats{}, nil
+	merged.Stats, merged.Filter, merged.Values = audit.Stats{}, nil, 0
 	return list, merged, out.Total
 }
 
@@ -278,13 +348,6 @@ func (b *Bridge) shownBreakdown(out audit.Breakdown) (rows []any, other any, tot
 func (b *Bridge) groupHidden() error {
 	return codedWire(CodeInvalidArguments, WirePermissionRequired,
 		fmt.Sprintf("That group has fewer than %d events in a period (or the selection does), so this host gets no timeline for it. Ask the person for evidence access, or run audit_compare on a wider window.", b.minCohort))
-}
-
-// breakdownHidden is the refusal for a breakdown over a comparison whose hidden groups together hold fewer than the minimum of events: the
-// breakdown counts the whole selection, so the host could subtract the groups it was shown and read their count.
-func (b *Bridge) breakdownHidden() error {
-	return codedWire(CodeInvalidArguments, WirePermissionRequired,
-		fmt.Sprintf("A breakdown of this comparison would reveal the size of a group of fewer than %d events. Run audit_compare on a wider window or with fewer filters, or ask the person for evidence access.", b.minCohort))
 }
 
 // compareTimelines is the free function of timelines.go with the suppression of this bridge: a hidden group refuses the whole call, and a
@@ -310,16 +373,34 @@ func (b *Bridge) compareTimelines(result *audit.Analysis, id string, keys []stri
 	for gi, g := range groups {
 		var cells []map[string]any
 		var counts []int64
-		for _, slot := range slots {
-			values, _ := slot["groups"].([]map[string]any)
-			if gi < len(values) {
-				n, _ := values[gi]["count"].(int64)
-				cells, counts = append(cells, values[gi]), append(counts, n)
+		var small []bool
+		points := map[int64]audit.Point{}
+		for _, series := range result.Timeline {
+			if series.Key == g.Key {
+				for _, p := range series.Points {
+					points[p.At.UnixNano()] = p
+				}
+				break
 			}
 		}
-		for i, hide := range b.maskPlan(g.Current.Count, counts) {
-			if hide {
-				cells[i]["count"], cells[i]["suppressed"] = b.hiddenCount(), true
+		for _, slot := range slots {
+			values, _ := slot["groups"].([]map[string]any)
+			if gi >= len(values) {
+				continue
+			}
+			at, _ := slot["at"].(time.Time)
+			p := points[at.UnixNano()]
+			n, _ := values[gi]["count"].(int64)
+			cells, counts, small = append(cells, values[gi]), append(counts, n), append(small, b.slotSmall(p))
+		}
+		hide, ok := b.maskPlan(g.Current.Count, counts, small, len(cells))
+		if !ok {
+			return nil, b.groupHidden()
+		}
+		for i, h := range hide {
+			if h {
+				// the cell of a slot with no observation, whatever it held
+				cells[i]["count"], cells[i]["sampleStatus"] = int64(0), "missing"
 				cells[i]["currentP95Ms"], cells[i]["increaseMs"], cells[i]["increasePercent"] = nil, nil, nil
 			}
 		}
