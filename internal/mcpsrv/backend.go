@@ -165,8 +165,9 @@ func (l *LocalBackend) Sweep() {
 		if total <= l.maxAll {
 			break
 		}
-		h.b.DropResult()
-		total -= h.n
+		if h.b.DropResultIf(h.used) { // not a result that was stored since it was counted
+			total -= h.n
+		}
 	}
 }
 

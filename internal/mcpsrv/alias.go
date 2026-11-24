@@ -14,7 +14,7 @@ import (
 // for the row, bound to (profile, revision, source), and the person resolves it in the app. Three things end an alias: its own expiry
 // (7 days idle, 30 at most), any change of the profile's revision (revoke, reissue, a new approval: the revision changes each time,
 // and a profile that was removed and enrolled again starts above the revision floor), and the hooks that drop a profile's aliases on
-// revoke, reissue, stop and the case lock. The resolver checks the grant as it is now, so a failed delete is not a way to keep an alias
+// revoke, reissue, stop, the master-key lock and the owner's shutdown (the last two for every host). The resolver checks the grant as it is now, so a failed delete is not a way to keep an alias
 // alive.
 
 // ErrAliasNotFound is the one answer for every alias that cannot be used.
@@ -29,6 +29,8 @@ type Aliases struct {
 	grants *Grants
 	now    func() time.Time
 	logf   func(string, ...any)
+	// beforeMint is a test seam, run between the stop check and the mint (nil in the app).
+	beforeMint func()
 }
 
 // NewAliases builds the alias store and hooks it to the grants, so the aliases of a profile are deleted when its access ends.
@@ -66,7 +68,20 @@ func (a *Aliases) Minter(p Profile) mcp.EvidenceMinter {
 			}
 			ks[i] = mcpaudit.EvidenceKey{SourceID: k.SourceID, RecordID: k.RecordID}
 		}
-		return a.db.MintAliases(ctx, id, rev, ks, a.now())
+		if a.grants.Stopped() {
+			return nil, ErrAliasNotFound
+		}
+		if a.beforeMint != nil {
+			a.beforeMint()
+		}
+		out, err := a.db.MintAliases(ctx, id, rev, ks, a.now())
+		// A global stop sets its flag before it deletes the aliases. A mint that committed after that delete would leave aliases that
+		// work again after Resume, so a mint that sees the flag after its commit takes its aliases back.
+		if err == nil && a.grants.Stopped() {
+			a.Drop(id)
+			return nil, ErrAliasNotFound
+		}
+		return out, err
 	}
 }
 

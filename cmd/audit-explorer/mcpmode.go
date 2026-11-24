@@ -58,7 +58,7 @@ func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard 
 	if start, serr := selfStart(); serr == nil && !start.IsZero() {
 		gen = start.UTC().Format(time.RFC3339Nano)
 	}
-	// BL-349: evidence aliases (hooked to the grants: they go with a revoke, a reissue, the stop and the case lock), cursors signed with
+	// BL-349: evidence aliases (hooked to the grants: they go with a revoke, a reissue, the stop, the master-key lock and the shutdown), cursors signed with
 	// the server key of the store, and the resolver the app's own route uses. The route is the dashboard's (token), not the ag pipe's.
 	aliases := mcpsrv.NewAliases(db, grants, time.Now, log.Printf)
 	backend := mcpsrv.NewLocalBackend(dashboard, token, mcpsrv.WithAliases(aliases), mcpsrv.WithCursorKey(db.MAC))
@@ -69,6 +69,7 @@ func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard 
 		}
 		return server.EvidenceTarget{SourceID: e.SourceID, RecordID: e.RecordID, Host: e.ProfileID, ExpiresAt: e.ExpiresAt}, true
 	})
+	server.SetMasterKeyLockHook(dashboard, grants.CancelAll) // the master-key lock ends every host's handles and aliases
 	h, err = mcpsrv.Handler(mcpsrv.Deps{
 		Grants:   grants,
 		Backend:  backend,
@@ -78,6 +79,7 @@ func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard 
 	})
 	if err != nil {
 		server.SetEvidenceResolver(dashboard, nil)
+		server.SetMasterKeyLockHook(dashboard, nil)
 		_ = db.Close()
 		log.Print("MCP access is off: the endpoint could not be built")
 		return nil, noop
@@ -109,6 +111,7 @@ func openMCPEndpoint(ctx context.Context, getenv func(string) string, dashboard 
 		<-stopped
 		grants.CancelAll()
 		server.SetEvidenceResolver(dashboard, nil)
+		server.SetMasterKeyLockHook(dashboard, nil)
 		_ = db.Close()
 	}
 }

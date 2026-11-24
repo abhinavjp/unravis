@@ -58,7 +58,7 @@ func WithClock(now func() time.Time) Option {
 }
 
 const (
-	maxSealedPos = 2048 // the largest dashboard cursor a sealed cursor wraps
+	maxSealedPos = 1024 // the largest dashboard cursor a sealed cursor wraps
 	// cursorGone is the fixed answer to a cursor that does not open. It never says why (expired, changed, another host, another query).
 	cursorGone = "that cursor is not valid any more; repeat the call without a cursor to start again"
 )
@@ -167,6 +167,18 @@ func (b *Bridge) DropResult() {
 	b.mu.Lock()
 	b.result, b.resultID, b.resultSize = nil, "", 0
 	b.mu.Unlock()
+}
+
+// DropResultIf forgets the held result only if it was last used at used (the time ResultUsedAt gave), so a newer result stored in
+// between is kept. It reports whether it dropped.
+func (b *Bridge) DropResultIf(used time.Time) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.result == nil || !b.used.Equal(used) {
+		return false
+	}
+	b.result, b.resultID, b.resultSize = nil, "", 0
+	return true
 }
 
 // ExpireResult drops the held result if its ten minutes are over, and reports whether it did.

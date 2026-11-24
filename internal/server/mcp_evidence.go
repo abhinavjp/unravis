@@ -27,7 +27,33 @@ type EvidenceResolver func(ctx context.Context, alias string) (t EvidenceTarget,
 
 type evidenceHolder struct {
 	fn atomic.Pointer[EvidenceResolver]
+	// onLock runs after the master key was locked (the aliases of every host end with it).
+	onLock atomic.Pointer[func()]
 }
+
+// SetMasterKeyLockHook sets what runs after the master-key lock has detached the key: the owner ends every MCP host's handles and
+// aliases there. nil removes it.
+func SetMasterKeyLockHook(served http.Handler, fn func()) {
+	h, ok := served.(*handler)
+	if !ok || h == nil {
+		return
+	}
+	if fn == nil {
+		h.evidence.onLock.Store(nil)
+		return
+	}
+	h.evidence.onLock.Store(&fn)
+}
+
+func (h *handler) runLockHook() {
+	if fn := h.evidence.onLock.Load(); fn != nil {
+		(*fn)()
+	}
+}
+
+// mcpEvidencePattern is the route of the resolver; it is gated like the case routes (423 while the master key is locked or damaged),
+// because what it resolves is the person's own evidence of a case-sized investigation and the lock means "Unravis is closed".
+const mcpEvidencePattern = "/api/mcp/evidence/{alias}"
 
 const maxAliasText = 64
 

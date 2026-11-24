@@ -431,10 +431,20 @@ func (g *Grants) Resume(ctx context.Context) error {
 	return nil
 }
 
-// CancelAll cancels every running call and runs the hooks, without changing any profile. The case lock and the owner's shutdown use it.
+// CancelAll cancels every running call and runs the revoke hooks for every profile, without changing any profile: the master-key lock and
+// the owner's shutdown use it. Every profile's handles and aliases go, not only those of profiles with a call running; the grants stay,
+// and a host that calls again gets new ones.
 func (g *Grants) CancelAll() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	g.mu.Lock()
 	ids, cancels, hooks := g.takeAllRunning()
+	all, _ := g.db.List(ctx, MaxProfiles) // a list that fails leaves the running ones, which are the ones with state to cancel
+	for _, p := range all {
+		if _, ok := cancels[p.ID]; !ok {
+			ids = append(ids, p.ID)
+		}
+	}
 	g.mu.Unlock()
 	for _, id := range ids {
 		finish(cancels[id], hooks, id)

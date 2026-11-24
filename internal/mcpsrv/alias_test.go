@@ -3,6 +3,8 @@ package mcpsrv
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -233,18 +235,14 @@ func TestResolverChecksEachGrantConditionAlone(t *testing.T) {
 		}
 	})
 	t.Run("stopped only", func(t *testing.T) {
-		r, _ := setup(t)
-		if err := r.g.Stop(ctx); err != nil {
-			t.Fatal(err)
-		}
-		// a call that finished after the stop still made its aliases (the profile is unchanged): they must not resolve while stopped
-		p, _ := r.db.Get(ctx, "host-1")
-		got, err := r.aliases.Minter(p)(ctx, []mcp.EvidenceKey{{SourceID: "demo-west", RecordID: "0123456789abcdef01234567"}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := r.aliases.ResolveOwner(ctx, got[0]); err != ErrAliasNotFound {
+		r, ref := setup(t)
+		r.g.stopped.Store(true) // the flag alone: the hooks do not run, so the rows are still there
+		if _, err := r.aliases.ResolveOwner(ctx, ref); err != ErrAliasNotFound {
 			t.Errorf("%v", err)
+		}
+		r.g.stopped.Store(false)
+		if _, err := r.aliases.ResolveOwner(ctx, ref); err != nil {
+			t.Errorf("after the flag is lifted: %v", err)
 		}
 	})
 }
@@ -406,16 +404,16 @@ func TestSignedCursorPagesAndIsNotTheDashboardCursor(t *testing.T) {
 	if a[0]["evidenceRef"] == b[0]["evidenceRef"] || a[1]["evidenceRef"] == b[0]["evidenceRef"] {
 		t.Error("the second page repeats a row of the first")
 	}
-	// the dashboard's own cursor is inside; sent as it is, it is refused (the host cannot talk to the dashboard's paging directly)
+	// the dashboard's own cursor is inside, sealed: the host cannot read it and cannot send it to the dashboard's paging directly
 	payload, _, _ := strings.Cut(c1, ".")
 	raw, _ := base64.RawURLEncoding.DecodeString(payload)
-	var inner struct{ Pos string }
+	var inner struct{ X string }
 	_ = json.Unmarshal(raw, &inner)
-	if inner.Pos == "" {
-		t.Fatal("no pos in the cursor")
+	if inner.X == "" || strings.Contains(string(raw), `"pos"`) {
+		t.Fatalf("the cursor carries no sealed position: %s", raw)
 	}
-	if a := r.slowest(h, id, map[string]any{"cursor": inner.Pos}); !isGone(a) {
-		t.Errorf("a raw dashboard cursor was accepted: %.300s", a.Raw)
+	if a := r.slowest(h, id, map[string]any{"cursor": inner.X}); !isGone(a) {
+		t.Errorf("a raw position was accepted: %.300s", a.Raw)
 	}
 	// the sealed cursor is no echo of the host's input and the refusal repeats nothing
 	bad := r.slowest(h, id, map[string]any{"cursor": "attacker-text-123"})
@@ -691,5 +689,165 @@ func TestBridgeWithoutOptionsKeepsRawIDsAndCursors(t *testing.T) {
 	row := page["rows"].([]any)[0].(map[string]any)
 	if row["id"] == nil || row["evidenceRef"] != nil || strings.Contains(page["nextCursor"].(string), ".") {
 		t.Errorf("row %v cursor %v", row, page["nextCursor"])
+	}
+}
+
+// layers returns the cursor as the host can see it at every level of base64 and JSON: the text, the payload, and each string field of
+// the payload decoded as base64 when it is.
+func layers(t *testing.T, cursor string) []string {
+	t.Helper()
+	out := []string{cursor}
+	payload, sig, _ := strings.Cut(cursor, ".")
+	for _, part := range []string{payload, sig} {
+		raw, err := base64.RawURLEncoding.DecodeString(part)
+		if err != nil {
+			t.Fatalf("cursor part is not base64url: %v", err)
+		}
+		out = append(out, string(raw))
+	}
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(out[1]), &fields); err != nil {
+		t.Fatalf("payload is not JSON: %v", err)
+	}
+	for _, v := range fields {
+		if str, ok := v.(string); ok {
+			if raw, err := base64.RawURLEncoding.DecodeString(str); err == nil {
+				out = append(out, string(raw))
+			}
+		}
+	}
+	return out
+}
+
+// M1 of the review of PR 269: the dashboard's cursor holds the raw id and the source of the last row, so a signed cursor that wraps it in
+// the clear gives a host without the identifiers grant the id of a row it holds an evidenceRef for. No level of the cursor may show the
+// id or the source id, on each of the three paged tools. This test fails when the position is put in the payload as text.
+func TestCursorShowsNoRecordIDNorSourceID(t *testing.T) {
+	r := newRig(t)
+	plain, pid := r.evidenceHost("plain", false)
+	truth, tid := r.evidenceHost("truth", true)
+	// the ids a host with the identifiers grant sees for the same rows: all of them, and any slice of 6 or more characters
+	var ids []string
+	for _, row := range rowsOf(t, r.slowest(truth, tid, map[string]any{"limit": 20})) {
+		ids = append(ids, row["id"].(string))
+	}
+	groups := r.call(plain, "audit_get_groups", map[string]any{"resultId": pid, "limit": 1})
+	key := groups.env["groups"].([]any)[0].(map[string]any)["key"].(string)
+	act := r.activityFor("demo-west")
+	act["limit"] = 1
+	cursors := map[string]string{
+		"audit_get_slowest":  nextCursor(t, r.slowest(plain, pid, map[string]any{"limit": 1})),
+		"audit_get_requests": nextCursor(t, r.call(plain, "audit_get_requests", map[string]any{"resultId": pid, "apiKey": key, "limit": 1})),
+		"audit_get_activity": nextCursor(t, r.call(plain, "audit_get_activity", act)),
+	}
+	for tool, c := range cursors {
+		for i, layer := range layers(t, c) {
+			if strings.Contains(layer, "demo-west") || strings.Contains(layer, "demo-east") {
+				t.Errorf("%s layer %d shows a source id", tool, i)
+			}
+			for _, id := range ids {
+				for n := 0; n+8 <= len(id); n++ {
+					if strings.Contains(layer, id[n:n+8]) {
+						t.Fatalf("%s layer %d shows part of the record id %q", tool, i, id)
+					}
+				}
+			}
+		}
+	}
+}
+
+// The sealed position opens only inside its own cursor: moved into another cursor of the same host (another tool, query or expiry),
+// it does not open, even with a valid signature on the new payload.
+func TestSealedPositionIsBoundToItsPayload(t *testing.T) {
+	now := time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)
+	key := func(domain string, data []byte) []byte {
+		m := hmac.New(sha256.New, []byte("k"))
+		m.Write([]byte(domain))
+		m.Write([]byte{0})
+		m.Write(data)
+		return m.Sum(nil)
+	}
+	c := &cursorCodec{sign: key, now: func() time.Time { return now }, profile: "h", rev: 1, binding: newBinding([]string{"a"}, TierEvidence, false, newGen())}
+	cur, err := c.Seal("audit_get_slowest", "fp", "secret-position")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _, _ := strings.Cut(cur, ".")
+	raw, _ := base64.RawURLEncoding.DecodeString(payload)
+	if bytes.Contains(raw, []byte("secret-position")) {
+		t.Fatal("the position is in the payload as text")
+	}
+	var p cursorPayload
+	_ = json.Unmarshal(raw, &p)
+	p.T, p.Q = "audit_get_requests", "fp2" // a forger with the signing key (the app itself) still cannot re-use a position elsewhere
+	raw2, _ := json.Marshal(p)
+	pl2 := base64.RawURLEncoding.EncodeToString(raw2)
+	forged := pl2 + "." + base64.RawURLEncoding.EncodeToString(c.mac(pl2))
+	if _, ok := c.Open("audit_get_requests", "fp2", forged); ok {
+		t.Error("a sealed position opened in another payload")
+	}
+}
+
+// S3 of the review of PR 269: Stop sets its flag, then deletes the aliases. A mint that ran its check before the flag and committed after
+// the delete must not leave aliases that work again after Resume. The seam stops the grants between the stop check and the mint.
+func TestMintRacingTheGlobalStopLeavesNothing(t *testing.T) {
+	r := newRig(t)
+	h, _ := r.evidenceHost("host-1", false)
+	pr, _ := r.g.Authenticate(ctx, h.header)
+	p, _ := r.g.Scope(ctx, pr)
+	r.aliases.beforeMint = func() {
+		if err := r.g.Stop(ctx); err != nil {
+			t.Error(err)
+		}
+	}
+	_, err := r.aliases.Minter(p)(ctx, []mcp.EvidenceKey{{SourceID: "demo-west", RecordID: "0123456789abcdef01234567"}})
+	if err == nil {
+		t.Fatal("a mint that lost to the stop was answered")
+	}
+	if n, _ := r.db.CountAliases(ctx, ""); n != 0 {
+		t.Fatalf("%d aliases are left after the stop", n)
+	}
+	r.aliases.beforeMint = nil
+	if err := r.g.Resume(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := r.db.CountAliases(ctx, ""); n != 0 {
+		t.Errorf("%d aliases work again after Resume", n)
+	}
+	// and a mint while stopped is refused outright
+	r.g.stopped.Store(true)
+	if _, err := r.aliases.Minter(p)(ctx, []mcp.EvidenceKey{{SourceID: "demo-west", RecordID: "0123456789abcdef01234567"}}); err == nil {
+		t.Error("a mint while stopped")
+	}
+	r.g.stopped.Store(false)
+}
+
+// S2 of the review of PR 269: the owner's shutdown and the master-key lock end the aliases of every host, not only of hosts with a call
+// running. (Every host's grant stays: a host that calls again gets new aliases.)
+func TestCancelAllEndsTheAliasesOfEveryHost(t *testing.T) {
+	r := newRig(t)
+	h1, id1 := r.evidenceHost("host-1", false)
+	h2, id2 := r.evidenceHost("host-2", false)
+	ref1 := rowsOf(t, r.slowest(h1, id1, nil))[0]["evidenceRef"].(string)
+	ref2 := rowsOf(t, r.slowest(h2, id2, nil))[0]["evidenceRef"].(string)
+	if n, _ := r.db.CountAliases(ctx, ""); n == 0 {
+		t.Fatal("no aliases to end")
+	}
+	r.g.CancelAll() // nothing is running
+	if n, _ := r.db.CountAliases(ctx, ""); n != 0 {
+		t.Errorf("%d aliases survive CancelAll", n)
+	}
+	for _, ref := range []string{ref1, ref2} {
+		if _, err := r.aliases.ResolveOwner(ctx, ref); err != ErrAliasNotFound {
+			t.Errorf("%s: %v", ref, err)
+		}
+	}
+	// the grants are untouched, and a new call mints new aliases
+	if p, err := r.db.Get(ctx, "host-2"); err != nil || p.State != mcpaudit.StateActive {
+		t.Fatalf("host-2 after CancelAll: %+v %v", p, err)
+	}
+	again := rowsOf(t, r.slowest(h2, r.compareHandle(h2), nil))[0]["evidenceRef"].(string)
+	if _, err := r.aliases.ResolveOwner(ctx, again); err != nil {
+		t.Errorf("a new alias after CancelAll: %v", err)
 	}
 }

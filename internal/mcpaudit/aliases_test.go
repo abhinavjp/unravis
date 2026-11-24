@@ -2,7 +2,9 @@ package mcpaudit_test
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -301,5 +303,27 @@ func TestAliasCapChecked(t *testing.T) {
 	}
 	if _, err := db.GetAlias(ctx, a[0], t0.Add(mcpaudit.AliasCap)); err != mcpaudit.ErrAliasNotFound {
 		t.Errorf("at the cap: %v", err)
+	}
+}
+
+// N2 of the review of PR 269: after Close the key is wiped, and a digest under the zero key would be one anyone can make. MAC then
+// answers fresh random bytes, so nothing signed or sealed after a close can be checked against a known key.
+func TestMACAfterCloseIsNotAKnownKey(t *testing.T) {
+	dir := t.TempDir()
+	db, _, err := mcpaudit.Open(ctx, dir, prot{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := db.MAC("cursor", []byte("x"))
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	a, b := db.MAC("cursor", []byte("x")), db.MAC("cursor", []byte("x"))
+	zero := hmac.New(sha256.New, make([]byte, 32))
+	zero.Write([]byte("cursor"))
+	zero.Write([]byte{0})
+	zero.Write([]byte("x"))
+	if len(a) != 32 || bytes.Equal(a, b) || bytes.Equal(a, before) || bytes.Equal(a, zero.Sum(nil)) {
+		t.Errorf("MAC after Close: %x %x", a, b)
 	}
 }

@@ -51,10 +51,11 @@ var ErrNoProtector = errors.New("mcpaudit: sealing is not available, the grant s
 
 // DB is the open grant store. It is safe for concurrent use.
 type DB struct {
-	sql *sql.DB
-	kmu sync.RWMutex // guards key against Close wiping it while MAC runs
-	key []byte
-	amu sync.Mutex // one writer of the aliases table at a time
+	sql    *sql.DB
+	kmu    sync.RWMutex // guards key against Close wiping it while MAC runs
+	closed bool         // Close wiped the key: MAC answers random bytes from then on
+	key    []byte
+	amu    sync.Mutex // one writer of the aliases table at a time
 }
 
 // Open opens (and creates) dir/mcp.db. dir must be an absolute local path (no relative path, no UNC share). The folder gets the
@@ -270,6 +271,7 @@ func (d *DB) Close() error {
 	for i := range d.key {
 		d.key[i] = 0
 	}
+	d.closed = true
 	d.kmu.Unlock()
 	return d.sql.Close()
 }
@@ -279,6 +281,13 @@ func (d *DB) Close() error {
 func (d *DB) MAC(domain string, data []byte) []byte {
 	d.kmu.RLock()
 	defer d.kmu.RUnlock()
+	if d.closed {
+		// The key is wiped: a digest under the zero key would be one anyone can make. A fresh random answer matches nothing and
+		// opens nothing.
+		out := make([]byte, sha256.Size)
+		_, _ = rand.Read(out)
+		return out
+	}
 	m := hmac.New(sha256.New, d.key)
 	m.Write([]byte(domain))
 	m.Write([]byte{0})
