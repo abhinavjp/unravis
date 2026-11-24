@@ -151,9 +151,67 @@ func TestByteCounterIsBounded(t *testing.T) {
 		if over != nil {
 			t.Fatalf("call %d refused: %v", i, over)
 		}
-		done(1)
+		done(1, now.Add(time.Duration(i)*200*time.Millisecond))
 	}
 	if n := len(l.per["p"].bytes); n > 62 {
 		t.Errorf("%d byte buckets", n)
+	}
+}
+
+// A reissue (and a revoke, and Remove with a new enrolment of the same id) does not give the host a fresh budget: the key is the profile id.
+func TestReissueKeepsTheRateCounters(t *testing.T) {
+	r := newRigBudgets(t, DefaultBudgets)
+	h := r.enroll("again", r.approval(TierAggregate))
+	for i := 0; i < DefaultBudgets.CompareRate; i++ {
+		if c := r.call(h, "audit_compare", r.compareArgs()); !c.OK || c.IsError {
+			t.Fatalf("compare %d: %.300s", i+1, c.Raw)
+		}
+	}
+	if c := r.call(h, "audit_compare", r.compareArgs()); !overBudget(c) {
+		t.Fatalf("the 13th: %d %.200s", c.Status, c.Raw)
+	}
+	if _, err := r.g.Reissue(ctx, "again"); err != nil {
+		t.Fatal(err)
+	}
+	h2 := r.enroll("again", r.approval(TierAggregate)) // enroll again, approve, claim: a new credential and revision
+	n := len(r.dash.hits())
+	if c := r.call(h2, "audit_compare", r.compareArgs()); !overBudget(c) {
+		t.Errorf("after the reissue: %d %.300s", c.Status, c.Raw)
+	}
+	if len(r.dash.hits()) != n {
+		t.Error("a refused comparison reached the dashboard")
+	}
+	// a revoke and a new approval of the same id too
+	if _, err := r.g.Revoke(ctx, "again"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.g.Remove(ctx, "again"); err != nil {
+		t.Fatal(err)
+	}
+	h3 := r.enroll("again", r.approval(TierAggregate))
+	if c := r.call(h3, "audit_compare", r.compareArgs()); !overBudget(c) {
+		t.Errorf("after revoke, remove and a new enrolment: %d %.300s", c.Status, c.Raw)
+	}
+}
+
+// The bytes of a long call are charged when it ends. Ten minutes after the start, nine of them spent running, the answer still counts.
+func TestBytesAreChargedWhereTheyAreDelivered(t *testing.T) {
+	small := DefaultBudgets
+	small.CumulativeBytes = 1 << 10
+	r := newRigBudgets(t, small)
+	h := r.enroll("slow", r.approval(TierAggregate))
+	release, out := r.holdCompare(h, "cccccccc-1")
+	r.clk.Add(9 * time.Minute) // the call runs for nine minutes (the clock is the test's own)
+	close(release)
+	if got := waitReply(t, out); !got.OK || len(got.Result) < 1<<10 {
+		t.Fatalf("the comparison: %d %.200s", got.Status, got.Raw)
+	}
+	r.clk.Add(5 * time.Minute) // 14 minutes after the start, 5 after the end
+	if g := r.call(h, "audit_get_guide", map[string]any{}); !overBudget(g) {
+		t.Errorf("5 minutes after the answer was delivered: %d %.200s", g.Status, g.Raw)
+	}
+	r.clk.Add(6 * time.Minute)
+	if g := r.call(h, "audit_get_guide", map[string]any{}); !g.OK {
+		t.Errorf("11 minutes after the answer: %.200s", g.Raw)
 	}
 }

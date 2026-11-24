@@ -65,8 +65,9 @@ func trim(ts []time.Time, now time.Time, win time.Duration) []time.Time {
 // budgetRefusal says which limit was reached. The text never names a number the host could not already know.
 type budgetRefusal struct{ what string }
 
-// admit counts one call of the class and says whether it may run. done must be called when it ends, with the size of what it returned.
-func (l *limiter) admit(profile, class string, now time.Time) (done func(bytes int), refused *budgetRefusal) {
+// admit counts one call of the class and says whether it may run. done must be called when it ends, with the size of what it returned
+// and the time it ended: the bytes of a long call are charged where they were delivered, not where the call started.
+func (l *limiter) admit(profile, class string, now time.Time) (done func(bytes int, at time.Time), refused *budgetRefusal) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	pb := l.per[profile]
@@ -91,8 +92,12 @@ func (l *limiter) admit(profile, class string, now time.Time) (done func(bytes i
 	heavy := class == ClassLiveCompare
 	switch {
 	case heavy:
-		if pb.heavy >= l.b.MaxLiveHeavy || l.heavyAl >= l.b.MaxLiveHeavyAll {
+		if pb.heavy >= l.b.MaxLiveHeavy {
 			return nil, &budgetRefusal{"comparisons running at once"}
+		}
+		if l.heavyAl >= l.b.MaxLiveHeavyAll {
+			// not "comparisons running at once": that would tell a host with nothing running that other hosts are comparing
+			return nil, &budgetRefusal{"what Unravis can run now"}
 		}
 		if len(pb.compares) >= l.b.CompareRate {
 			return nil, &budgetRefusal{"comparisons in the last hour"}
@@ -106,7 +111,7 @@ func (l *limiter) admit(profile, class string, now time.Time) (done func(bytes i
 		}
 		pb.lives = append(pb.lives, now)
 	}
-	return func(n int) {
+	return func(n int, end time.Time) {
 		l.mu.Lock()
 		defer l.mu.Unlock()
 		if heavy {
@@ -116,7 +121,7 @@ func (l *limiter) admit(profile, class string, now time.Time) (done func(bytes i
 		if n <= 0 {
 			return
 		}
-		at := now.Truncate(bucket)
+		at := end.Truncate(bucket)
 		if m := len(pb.bytes); m > 0 && pb.bytes[m-1].at.Equal(at) {
 			pb.bytes[m-1].n += n
 		} else {

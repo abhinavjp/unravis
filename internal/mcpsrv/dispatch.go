@@ -253,7 +253,7 @@ func (s *Dispatcher) CallAs(ctx context.Context, pr Principal, body []byte) (int
 		return refuse(http.StatusTooManyRequests, mcp.WireBudgetExceeded, "This host reached its limit for "+over.what+".", "Wait and retry later, or ask the person to review the limits in Unravis > AI access. Do not loop.")
 	}
 	budgetBytes := 0
-	defer func() { budgetDone(budgetBytes) }()
+	defer func() { budgetDone(budgetBytes, s.d.Now()) }()
 
 	start := s.d.Now()
 	admit := ev
