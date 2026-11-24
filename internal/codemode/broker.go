@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/codemode/bindings"
 	"api-audit-explorer/internal/codemode/privacy"
+	"api-audit-explorer/internal/mcpsrv"
 )
 
 // Settings are the user's code-mode settings (code-mode.json), read at the start of every run.
@@ -133,6 +135,10 @@ type RunRequest struct {
 	// a host that reaches the broker through MCP has a grant, and the grant says which sources. An empty list reaches none.
 	Scoped  bool
 	Sources []string
+	// Tier is the tier of the caller's grant (mcpsrv.TierAggregate or mcpsrv.TierEvidence). A scoped run must carry a known one: it limits
+	// the tools the run may call and the detail it sees (counts below the cohort floor, record ids), as the grant does for the host's own
+	// tool calls. It is written into the scope note of the audit record.
+	Tier string
 }
 
 // Stats are the numbers of a run.
@@ -221,7 +227,13 @@ func (b *Broker) cleanRequest(req *RunRequest) *Refusal {
 		return refuse(CodeSyntaxError, "The script is not valid text (UTF-8 without NUL).")
 	}
 	if req.Surface == "mcp" && !req.Scoped {
-		return refuse(CodeDenied, "A run from MCP must carry the source scope of its grant.")
+		return refuse(CodeDenied, "A run from MCP must carry the source scope and tier of its grant.")
+	}
+	if req.Scoped && mcpsrv.ToolsForTier(req.Tier) == nil {
+		return refuse(CodeDenied, "A run with a source scope must carry the tier of its grant (aggregate or evidence).")
+	}
+	if !req.Scoped && req.Tier != "" {
+		return refuse(CodeBadRequest, "A tier goes with a source scope.")
 	}
 	req.CallerID = cleanText(req.CallerID, casestore.MaxRunCallerID, false)
 	req.Reason = composeReason(req)
@@ -250,19 +262,37 @@ func composeReason(req *RunRequest) string {
 	return strings.TrimSpace(note + " " + user)
 }
 
-// scopeNote is the fixed tail of the reason: the sources the run could reach, at most 80 characters.
+// scopeNote is the fixed head of the reason: the sources the run could reach and, for a grant, its tier. The tier is one of the two
+// known words (cleanRequest refused any other), so it adds a fixed length; the whole note is at most 100 characters.
 func scopeNote(req *RunRequest) string {
 	if !req.Scoped {
 		return "[sources: all]"
 	}
+	tier := "; tier: " + req.Tier
 	if len(req.Sources) == 0 {
-		return "[sources: none]"
+		return "[sources: none" + tier + "]"
 	}
 	list := cleanText(strings.Join(req.Sources, ","), 60, true)
 	if len(strings.Join(req.Sources, ",")) > len(list) {
 		list += ",..."
 	}
-	return "[sources: " + list + "]"
+	return "[sources: " + list + tier + "]"
+}
+
+// toolsFor lists the tools a run may call: all ten for the owner's own run, and for a run that carries a grant only the tools of its
+// tier (in catalog order). The run frame names exactly these, and a call to any other tool is a protocol violation.
+func (b *Broker) toolsFor(req *RunRequest) []string {
+	if !req.Scoped {
+		return b.tools
+	}
+	allowed := mcpsrv.ToolsForTier(req.Tier)
+	out := make([]string, 0, len(allowed))
+	for _, t := range b.tools {
+		if slices.Contains(allowed, t) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // cleanText drops control characters and cuts to max bytes (or max characters when chars is set) at a character boundary.

@@ -63,6 +63,7 @@ type run struct {
 	seq      int
 	inflight int
 	usedIDs  map[int64]bool
+	tools    []string // the tools this run may call: all ten for the owner, the tier's own for a grant (fixed before the run starts)
 	timer    scriptTimer
 	wg       sync.WaitGroup
 }
@@ -221,7 +222,7 @@ func (b *Broker) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 
 	// The tool host is made before the begin row, so a host that cannot be made leaves nothing open.
-	host, err := safeHosts(b.cfg.Hosts, HostScope{AllowIdentifiers: req.AllowIdentifiers, Scoped: req.Scoped, Sources: slices.Clone(req.Sources)})
+	host, err := safeHosts(b.cfg.Hosts, HostScope{AllowIdentifiers: req.AllowIdentifiers, Scoped: req.Scoped, Sources: slices.Clone(req.Sources), Tier: req.Tier})
 	if err != nil {
 		return RunResult{}, refuse(CodeInternal, plain[CodeInternal])
 	}
@@ -240,7 +241,7 @@ func (b *Broker) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		return RunResult{}, refuse(CodeAuditFailed, plain[CodeAuditFailed])
 	}
 
-	r := &run{b: b, id: runID, store: store, req: req, allow: req.AllowIdentifiers, start: now, parent: ctx, usedIDs: map[int64]bool{},
+	r := &run{b: b, id: runID, store: store, req: req, allow: req.AllowIdentifiers, start: now, parent: ctx, usedIDs: map[int64]bool{}, tools: b.toolsFor(&req),
 		guard: privacy.NewGuard(req.AllowIdentifiers), host: host}
 	r.timer.now = b.cfg.Now
 	r.timer.kick = make(chan struct{}, 1)
@@ -460,7 +461,7 @@ func (r *run) runWorker(set Settings, seed string, baseMs int64) (out outcome) {
 	}
 	out.runtime = hello.Runtime
 
-	runFrame, err := wire.Marshal(wire.Run{T: wire.TypeRun, JS: js, Tools: r.b.tools, Limits: workerLimits(),
+	runFrame, err := wire.Marshal(wire.Run{T: wire.TypeRun, JS: js, Tools: r.tools, Limits: workerLimits(),
 		Clock: wire.Clock{Mode: string(privacy.ClockLive), BaseMs: baseMs}, Seed: seed})
 	if errors.Is(err, wire.ErrFrameTooLarge) {
 		// The script is within the source limit, but its JavaScript does not fit one frame once it is written out.
@@ -798,6 +799,10 @@ func (r *run) onCall(c wire.Call) (stops bool) {
 		den = &denial{status: casestore.CallDenied, wire: mcp.WireInvalidArguments, msg: plain[CodeCallBudget], stop: CodeCallBudget}
 	case inflight > MaxInFlight:
 		den = &denial{status: casestore.CallDenied, wire: mcp.WireInvalidArguments, msg: "Too many calls at the same time.", stop: CodeBadFrame}
+	case len(tool) <= maxToolNameBytes && slices.Contains(r.b.tools, tool) && !r.known(tool):
+		// A real tool the grant's tier does not include. The run frame never named it, so a worker that calls it broke the protocol: the
+		// call is recorded under its own name, as denied, and the run ends. Nothing reaches the host.
+		den = &denial{status: casestore.CallDenied, wire: mcp.WireInvalidArguments, msg: "That tool is outside the tier of the grant.", stop: CodeBadFrame}
 	case len(tool) > maxToolNameBytes || !r.known(tool):
 		tool = "unknown"
 		den = &denial{status: casestore.CallDenied, wire: mcp.WireInvalidArguments, msg: "Unknown tool.", stop: CodeBadFrame}
@@ -819,12 +824,7 @@ func (r *run) idsOf(tool string, answer []byte) privacy.IDs {
 }
 
 func (r *run) known(tool string) bool {
-	for _, t := range r.b.tools {
-		if t == tool {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(r.tools, tool)
 }
 
 // cleanArgs returns the argument document to record and a reason when the arguments are not acceptable. The audit record keeps a short

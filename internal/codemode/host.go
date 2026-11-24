@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"api-audit-explorer/internal/mcp"
+	"api-audit-explorer/internal/mcpsrv"
 )
 
 // Host runs one of the ten read-only tools for a script. The answer is the tool's envelope (the same bytes the MCP server sends as
@@ -24,6 +25,9 @@ type HostScope struct {
 	// Unscoped is the owner's own command line and screen.
 	Scoped  bool
 	Sources []string
+	// Tier is the tier of the grant (mcpsrv.TierAggregate or mcpsrv.TierEvidence). A scoped run must have one: it sets the smallest count
+	// the run sees, hides record ids and limits the tools, exactly as it does for the host's own tool calls.
+	Tier string
 }
 
 // HostFactory makes the Host of one run.
@@ -42,8 +46,10 @@ func DashboardHosts(dashboard http.Handler, token string) HostFactory {
 	return func(scope HostScope) Host {
 		opts := []mcp.Option{mcp.WithIdentifiers(scope.AllowIdentifiers)}
 		if scope.Scoped {
-			// Same rule as the MCP dispatcher: the scope is part of the bridge, so no tool can reach another source whatever it is asked.
-			opts = append(opts, mcp.WithSources(slices.Clone(scope.Sources)))
+			// The same options the MCP dispatcher builds for a grant (one shared function, no copy), so a script cannot read through the
+			// broker what the host's own tool calls refuse: other sources, counts below the cohort floor, record ids. An unknown tier
+			// fails closed to the aggregate rules.
+			opts = mcpsrv.BridgeOptions(scope.AllowIdentifiers, slices.Clone(scope.Sources), scope.Tier)
 		}
 		return bridgeHost{b: mcp.NewLocal(dashboard, token, opts...)}
 	}

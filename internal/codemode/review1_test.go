@@ -12,6 +12,7 @@ import (
 	"api-audit-explorer/internal/codemode/privacy"
 	"api-audit-explorer/internal/codemode/wire"
 	"api-audit-explorer/internal/mcp"
+	"api-audit-explorer/internal/mcpsrv"
 )
 
 // Review 1 of #267 (/mnt/project-files/reviews/pr267-review-1.md): one test or more per finding.
@@ -29,7 +30,7 @@ func TestScopedRunReachesOnlyItsSources(t *testing.T) {
 		none, _ = w.Call("audit_compare", map[string]any{"query": q, "limit": 3})
 		w.done(1)
 	})
-	res, err := e.runReq(RunRequest{Code: "1", Surface: "mcp", Scoped: true, Sources: []string{"demo-west"}, Reason: "scope test"})
+	res, err := e.runReq(RunRequest{Code: "1", Surface: "mcp", Scoped: true, Tier: mcpsrv.TierEvidence, Sources: []string{"demo-west"}, Reason: "scope test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,7 @@ func TestScopedRunReachesOnlyItsSources(t *testing.T) {
 		t.Errorf("a query inside the scope failed: %.300s", west)
 	}
 	row := e.getRun(res.RunID)
-	if !strings.HasPrefix(row.Reason, "[sources: demo-west] ") || !strings.HasSuffix(row.Reason, "scope test") {
+	if !strings.HasPrefix(row.Reason, "[sources: demo-west; tier: evidence] ") || !strings.HasSuffix(row.Reason, "scope test") {
 		t.Errorf("the record does not say what the run could reach: %q", row.Reason)
 	}
 	e.verify()
@@ -68,14 +69,14 @@ func TestEmptyScopeReachesNothingAndMCPNeedsAScope(t *testing.T) {
 		listed, _ = w.Call("audit_list_sources", map[string]any{})
 		w.done(1)
 	})
-	res, err := e.runReq(RunRequest{Code: "1", Surface: "mcp", Scoped: true})
+	res, err := e.runReq(RunRequest{Code: "1", Surface: "mcp", Scoped: true, Tier: mcpsrv.TierAggregate})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(listed), "demo-") {
 		t.Errorf("an empty scope listed sources: %.300s", listed)
 	}
-	if !strings.Contains(e.getRun(res.RunID).Reason, "[sources: none]") {
+	if !strings.Contains(e.getRun(res.RunID).Reason, "[sources: none; tier: aggregate]") {
 		t.Error("the empty scope is not on record")
 	}
 	// A run from MCP with no scope at all is refused and writes nothing.
@@ -92,11 +93,11 @@ func TestEmptyScopeReachesNothingAndMCPNeedsAScope(t *testing.T) {
 	for i := range long {
 		long[i] = "source-number-" + strings.Repeat("x", 8)
 	}
-	req := RunRequest{Surface: "mcp", Scoped: true, Sources: long, Reason: strings.Repeat("r", 500)}
+	req := RunRequest{Surface: "mcp", Scoped: true, Tier: mcpsrv.TierAggregate, Sources: long, Reason: strings.Repeat("r", 500)}
 	if ref := e.b.cleanRequest(&req); ref != nil {
 		t.Fatal(ref)
 	}
-	if n := len([]rune(req.Reason)); n > casestore.MaxRunReason || !strings.Contains(req.Reason, ",...] ") {
+	if n := len([]rune(req.Reason)); n > casestore.MaxRunReason || !strings.Contains(req.Reason, ",...; tier: aggregate] ") {
 		t.Errorf("%d runes: %q", n, req.Reason)
 	}
 }
@@ -310,12 +311,12 @@ func TestReasonCannotForgeOrDropTheScopeNote(t *testing.T) {
 		for _, hidden := range []bool{true, false} {
 			t.Run(name, func(t *testing.T) {
 				e := newEnv(t, func(w *fakeWorker) { w.done(1) }, func(e *env) { e.operator = hidden == false })
-				res, err := e.runReq(RunRequest{Code: "1", Surface: "mcp", Scoped: true, Sources: []string{"demo-west"}, Reason: reason, AllowIdentifiers: !hidden})
+				res, err := e.runReq(RunRequest{Code: "1", Surface: "mcp", Scoped: true, Tier: mcpsrv.TierEvidence, Sources: []string{"demo-west"}, Reason: reason, AllowIdentifiers: !hidden})
 				if err != nil {
 					t.Fatal(err)
 				}
 				got := e.getRun(res.RunID).Reason
-				if !strings.HasPrefix(got, "[sources: demo-west]") || strings.Count(strings.ToLower(got), "[sources:") != 1 {
+				if !strings.HasPrefix(got, "[sources: demo-west; tier: evidence]") || strings.Count(strings.ToLower(got), "[sources:") != 1 {
 					t.Errorf("stored reason %q", got)
 				}
 				if n := len([]rune(got)); n > casestore.MaxRunReason {
@@ -356,7 +357,7 @@ func TestScopeNoteSurvivesTheStoresOwnCleaningOfAnyReason(t *testing.T) {
 			sb.WriteString(pieces[next(len(pieces))])
 		}
 		sc := scopes[next(len(scopes))]
-		req := RunRequest{Surface: "cli", Reason: sb.String(), Scoped: sc != nil, Sources: sc, AllowIdentifiers: next(2) == 0}
+		req := RunRequest{Surface: "cli", Reason: sb.String(), Scoped: sc != nil, Sources: sc, Tier: tierOf(sc != nil, next(2)), AllowIdentifiers: next(2) == 0}
 		if ref := b.cleanRequest(&req); ref != nil {
 			t.Fatal(ref)
 		}
@@ -379,4 +380,15 @@ func TestInvisibleAndBidiCharactersAreDroppedFromTheCaller(t *testing.T) {
 	if got != "abcdefghi" {
 		t.Errorf("%q", got)
 	}
+}
+
+// tierOf is the tier a fuzzed request carries: none without a scope, one of the two known tiers with one.
+func tierOf(scoped bool, pick int) string {
+	switch {
+	case !scoped:
+		return ""
+	case pick == 0:
+		return mcpsrv.TierAggregate
+	}
+	return mcpsrv.TierEvidence
 }

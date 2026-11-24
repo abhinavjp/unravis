@@ -20,6 +20,7 @@ import (
 	"api-audit-explorer/internal/codemode/privacy"
 	"api-audit-explorer/internal/codemode/wire"
 	"api-audit-explorer/internal/mcp"
+	"api-audit-explorer/internal/mcpsrv"
 )
 
 // bigJSON is a JSON object of exactly n bytes.
@@ -210,7 +211,7 @@ func TestCancelKillsTheWorkerAndSealsTheRun(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 			cancel()
 		}()
-		res, err := e.b.Run(ctx, RunRequest{Code: "for(;;){}", Surface: "mcp", Scoped: true, Sources: []string{"demo-west"}})
+		res, err := e.b.Run(ctx, RunRequest{Code: "for(;;){}", Surface: "mcp", Scoped: true, Tier: mcpsrv.TierEvidence, Sources: []string{"demo-west"}})
 		if err != nil {
 			t.Fatal(err)
 		}
