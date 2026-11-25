@@ -93,9 +93,9 @@ const (
 	// CLIInstalledName is the command line program as installed, in the CLIDirName folder (the one folder that goes on the PATH).
 	CLIInstalledName = "unravis.exe"
 	CLIDirName       = "bin"
-	SetupExeName         = "unravis-setup.exe"
-	StateFileName        = "setup-state.json"
-	ShortcutName         = "Unravis.lnk"
+	SetupExeName     = "unravis-setup.exe"
+	StateFileName    = "setup-state.json"
+	ShortcutName     = "Unravis.lnk"
 	// QuitShortcutName is the Start-menu entry that asks the running Unravis to quit.
 	QuitShortcutName = "Quit Unravis.lnk"
 	ProductName      = "Unravis"

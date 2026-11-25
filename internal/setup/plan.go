@@ -488,7 +488,7 @@ func (p *Plan) copyFiles(ctx context.Context, t *Txn) error {
 		place = append(place, struct{ name, to string }{KeeperExeName, p.Layout.KeeperExe})
 	}
 	place = append(place, struct{ name, to string }{ReleasesExeName, p.Layout.ReleasesExe}) // skipped below when not staged
-	place = append(place, struct{ name, to string }{CLIExeName, p.Layout.CLIExe}) // skipped below when not staged
+	place = append(place, struct{ name, to string }{CLIExeName, p.Layout.CLIExe})           // skipped below when not staged
 	for _, f := range place {
 		if err := ctx.Err(); err != nil {
 			return err
