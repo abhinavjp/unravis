@@ -1,0 +1,11 @@
+# Local pipeline (unravis-ci) overrides. The workflows stay the single source; this file only says
+# what differs when a job runs on a developer PC instead of a GitHub runner.
+# See docs/ci/LOCAL-PIPELINE.md.
+jobs:
+  fast-gate.yml:
+    lint:
+      step-env:
+        # The GitHub runner is Linux, so lint sees the Linux build. On a Windows PC, lint the same
+        # build (only for this step: the install step above must build a binary that runs here).
+        "Go - lint (only code changed since develop)":
+          GOOS: linux
