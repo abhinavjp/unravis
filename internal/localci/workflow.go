@@ -887,3 +887,24 @@ func TopoLevels(w *Workflow) ([][]string, error) {
 	}
 	return out, nil
 }
+
+// RunnableAsEvent says whether a hand run of this workflow as the given event (the run command's --event flag) may plan or run it.
+// That command has no base-branch map to say which workflow serves what (RunPR and RunRef do: there the map is
+// the gate and `on:` is not asked, BL-586d), so the file's own on: is the only evidence. A workflow is runnable
+// as an event it lists, and as a pull_request or push when it lists workflow_dispatch, which is how a gate
+// that GitHub no longer starts by itself is declared after the cutover. A workflow with no triggers at all
+// (on: {} or no on: key) has always been runnable as any event and stays so. Anything else, for example a
+// schedule-only workflow asked to run as a pull request, is refused.
+func (w *Workflow) RunnableAsEvent(event string) bool {
+	if len(w.On) == 0 {
+		return true
+	}
+	if _, ok := w.On[event]; ok {
+		return true
+	}
+	if event == "pull_request" || event == "push" {
+		_, ok := w.On["workflow_dispatch"]
+		return ok
+	}
+	return false
+}

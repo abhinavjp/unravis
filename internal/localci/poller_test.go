@@ -321,30 +321,66 @@ func TestPollerPushWaitsForTheQuietPeriod(t *testing.T) {
 	}
 }
 
-func TestPollerPushOnlyWhenTheWorkflowRunsOnPush(t *testing.T) {
-	p, h, q, _, log := newTestPoller(t)
+// The push map, not the workflow's own on:, says which workflow serves a branch (BL-586d, Blocker R): a gate that
+// GitHub no longer starts on a push (pull_request only, or workflow_dispatch only) is still queued for its branch
+// tip. The branch filter of a push trigger, when there is one, still applies.
+func TestPollerPushRunsAConfiguredWorkflowWhateverItsOnSays(t *testing.T) {
+	const dispatchOnlyWF = "name: gate\non:\n  workflow_dispatch:\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n"
+	for name, wf := range map[string]string{"pull_request only": prOnlyWF, "workflow_dispatch only": dispatchOnlyWF} {
+		t.Run(name, func(t *testing.T) {
+			p, h, q, clk, log := newTestPoller(t)
+			p.PRWorkflows = map[string]string{"develop": "gate.yml"}
+			p.PushWorkflows = pushOf(p.PRWorkflows)
+			h.files["*:.github/workflows/gate.yml"] = wf
+			h.setTip("develop", sha1)
+			if err := p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			got := queuedOf(t, q)
+			if len(got) != 1 || got[0].Kind != KindPush || got[0].SHA != sha1 || got[0].Ref != "develop" || got[0].Workflow != "gate.yml" {
+				t.Fatalf("queued %+v\n%s", got, log)
+			}
+			if !strings.Contains(log.String(), "has no push trigger; it is named for pushes to this branch") {
+				t.Fatalf("the log does not say why a workflow without a push trigger runs:\n%s", log)
+			}
+			// the note is made once, and the tip is queued once
+			clk.Advance(5 * time.Minute)
+			_ = p.Poll(context.Background())
+			if n := len(queuedOf(t, q)); n != 1 || strings.Count(log.String(), "has no push trigger") != 1 {
+				t.Fatalf("queued %d, note repeated:\n%s", n, log)
+			}
+		})
+	}
+}
+
+// A push to a branch the push map does not name is never queued, whatever the workflow says.
+func TestPollerPushIgnoresABranchTheMapDoesNotName(t *testing.T) {
+	p, h, q, _, _ := newTestPoller(t)
 	p.PRWorkflows = map[string]string{"develop": "gate.yml"}
-	p.PushWorkflows = pushOf(p.PRWorkflows)
-	h.files["*:.github/workflows/gate.yml"] = prOnlyWF
+	p.PushWorkflows = map[string][]string{"release": {"gate.yml"}}
+	h.files["*:.github/workflows/gate.yml"] = pushWF
 	h.setTip("develop", sha1)
+	h.setTip("release", sha1)
 	if err := p.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(queuedOf(t, q)); n != 0 {
-		t.Fatalf("%d queued for a workflow that has no push trigger", n)
+	for _, r := range queuedOf(t, q) {
+		if r.Kind == KindPush && r.Ref == "develop" { // release is queued, develop is not
+			t.Fatalf("a push to a branch outside the push map was queued: %+v", r)
+		}
 	}
-	if !strings.Contains(log.String(), "does not run on push") {
-		t.Fatalf("no explanation in the log:\n%s", log)
-	}
-	// a branch filter that excludes the branch
-	p2, h2, q2, _, log2 := newTestPoller(t)
-	p2.PRWorkflows = map[string]string{"develop": "gate.yml"}
-	p2.PushWorkflows = pushOf(p2.PRWorkflows)
-	h2.files["*:.github/workflows/gate.yml"] = strings.Replace(pushWF, "push:\n    branches: [develop]", "push:\n    branches: [release/**]", 1)
-	h2.setTip("develop", sha1)
-	_ = p2.Poll(context.Background())
-	if n := len(queuedOf(t, q2)); n != 0 || !strings.Contains(log2.String(), "only for release/**") {
-		t.Fatalf("queued %d\n%s", n, log2)
+}
+
+// A push trigger's own branch filter still applies when the workflow has one.
+func TestPollerPushBranchFilterStillApplies(t *testing.T) {
+	p, h, q, _, log := newTestPoller(t)
+	p.PRWorkflows = map[string]string{"develop": "gate.yml"}
+	p.PushWorkflows = pushOf(p.PRWorkflows)
+	h.files["*:.github/workflows/gate.yml"] = strings.Replace(pushWF, "push:\n    branches: [develop]", "push:\n    branches: [release/**]", 1)
+	h.setTip("develop", sha1)
+	_ = p.Poll(context.Background())
+	if n := len(queuedOf(t, q)); n != 0 || !strings.Contains(log.String(), "only for release/**") {
+		t.Fatalf("queued %d\n%s", n, log)
 	}
 }
 

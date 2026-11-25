@@ -170,7 +170,12 @@ func RunRef(ctx context.Context, o RefOptions) (res *PRResult, err error) {
 		}
 		return finish(nil, "", fmt.Errorf("unsupported: %s has items this runner does not support; nothing was run: %s", file, strings.Join(msgs, "; ")))
 	}
-	if len(wf.On) > 0 {
+	// A push run is for a workflow the push map names (Poller.PushWorkflows / --push-workflow): that map, not the
+	// workflow's own on:, decides, so a gate that GitHub no longer starts on a push (on: workflow_dispatch only)
+	// still runs for the branch tip (BL-586d, Blocker R in docs/ci/CUTOVER.md). The github context stays that of a
+	// push (event_name push, see refGitHubContext). A schedule run keeps the check: the schedule trigger is what
+	// says when it fires, and the poller only queues one for a workflow that has it.
+	if o.Event == "schedule" && len(wf.On) > 0 {
 		if _, ok := wf.On[o.Event]; !ok {
 			return finish(nil, "", fmt.Errorf("%s does not run on %s", file, o.Event))
 		}

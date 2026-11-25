@@ -293,11 +293,15 @@ func RunPR(ctx context.Context, o PROptions) (res *PRResult, err error) {
 		}
 		return finish(nil, wt.Commit, "", fmt.Errorf("unsupported: %s has items this runner does not support; nothing was run: %s", file, strings.Join(msgs, "; ")))
 	}
-	if len(wf.On) > 0 {
-		if _, ok := wf.On["pull_request"]; !ok {
-			return finish(nil, wt.Commit, "", fmt.Errorf("%s does not run on pull_request", file))
-		}
-	}
+	// The workflow's own on: is NOT a gate here (BL-586d, "Blocker R" in docs/ci/CUTOVER.md). The base-branch map
+	// (Workflows / --workflow-for, or the operator's --workflow), which workflowFor read above, already decides
+	// which workflow serves which base; a base with no entry never reaches this point. So a gate workflow that
+	// GitHub no longer starts by itself (on: workflow_dispatch only) runs exactly like one with pull_request.
+	// The github context stays that of a pull request (event_name pull_request, see prGitHubContext): the steps
+	// are written for the merge commit of a pull request, and the manual-run-only steps (event_name ==
+	// 'workflow_dispatch') must stay skipped because RunPR has already built that merge commit.
+	// Every other trust check above and in the checkout (fork and stranger refusal, FromBase files, protected
+	// paths, the environment allow-list) is unchanged.
 	var cfgData []byte
 	if p := filepath.Join(wt.Path, ".github", "local-ci.yml"); fileIsRegular(p) {
 		if cfgData, err = os.ReadFile(p); err != nil { //nolint:gosec // path inside the worktree
