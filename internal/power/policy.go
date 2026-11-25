@@ -143,8 +143,13 @@ func (p *Policy) isBusy() bool {
 }
 
 func (p *Policy) Run(ctx context.Context) {
+	// tick is the one pending check. A wake (every request signals) keeps it instead of arming a new one: re-arming on each
+	// wake slid the deadline with the clock and left a stray timer per request, and made the time a check fires depend on
+	// when the loop happened to run. It is armed again only after it fires, or after idle mode ends.
+	var tick <-chan time.Time
 	for {
 		if p.Mode() == Idle {
+			tick = nil
 			select {
 			case <-ctx.Done():
 				return
@@ -158,12 +163,16 @@ func (p *Policy) Run(ctx context.Context) {
 			}
 			continue
 		}
+		if tick == nil {
+			tick = p.after(p.check)
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-p.wake:
 			continue
-		case <-p.after(p.check):
+		case <-tick:
+			tick = nil
 			if !p.tryIdle() {
 				continue
 			}

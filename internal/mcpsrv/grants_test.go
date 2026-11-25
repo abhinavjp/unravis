@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -766,13 +765,9 @@ func TestToolsMatchTheCatalog(t *testing.T) {
 
 func TestOpenSetsFileModeAndFolder(t *testing.T) {
 	e := newEnv(t)
-	st, err := os.Stat(filepath.Join(e.dir, mcpaudit.FileName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Mode().Perm()&0o077 != 0 {
-		t.Fatalf("mcp.db mode %v", st.Mode())
-	}
+	// Mode bits on unix, the protected current-user-and-SYSTEM DACL on Windows (see assertOwnerOnly).
+	assertOwnerOnly(t, e.dir, true)
+	assertOwnerOnly(t, filepath.Join(e.dir, mcpaudit.FileName), true)
 }
 
 // A result computed under one approval is not delivered under a later one, even though the profile is active both times.
