@@ -123,7 +123,7 @@ func TestAppStartMapsTheExitOfTheChild(t *testing.T) {
 		code int
 		want string
 		exit int
-	}{{11, "ELEVATION_REFUSED", 4}, {12, "OWNER_BUSY", 3}, {13, "UPSTREAM_UNAVAILABLE", 3}, {0, "INTERNAL", 1}, {7, "INTERNAL", 1}} {
+	}{{11, "ELEVATION_REFUSED", 4}, {12, "OWNER_BUSY", 3}, {13, "UPSTREAM_UNAVAILABLE", 3}, {14, "UPSTREAM_UNAVAILABLE", 3}, {0, "INTERNAL", 1}, {7, "INTERNAL", 1}} {
 		o := newOwner(t, nil)
 		o.down()
 		s := &starter{pid: 1, exit: make(chan int, 1)}
@@ -443,5 +443,18 @@ func TestAppWaitsAndStops(t *testing.T) {
 	r = o.run("app", "stop", "--json")
 	if r.code != 3 || errCode(t, r) != "ENDPOINT_UNAVAILABLE" || time.Since(t0) > time.Second {
 		t.Errorf("stop error: %+v", r)
+	}
+}
+
+// Exit 14 (the lease is held in another sign-in session) is not a wait: the answer names the cause and what to do.
+func TestAppStartOtherSessionSaysWhatToDo(t *testing.T) {
+	fastApp(t)
+	o := newOwner(t, nil)
+	o.down()
+	s := &starter{pid: 9999, exit: make(chan int, 1)}
+	s.exit <- 14
+	r := runStart(t, o, s, "app", "start", "--headless", "--json")
+	if r.code != 3 || errCode(t, r) != "UPSTREAM_UNAVAILABLE" || !strings.Contains(r.err, "another Windows sign-in session") || !strings.Contains(r.err, "Quit it there") {
+		t.Errorf("14: %+v", r)
 	}
 }

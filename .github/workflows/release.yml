@@ -214,7 +214,7 @@ jobs:
         if: ${{ steps.signgate.outputs.enabled == 'true' }}
         shell: pwsh
         run: |
-          foreach ($f in 'unravis.exe', 'unravis-blackbox.exe', 'unravis-keeper.exe', 'unravis-lite.exe', 'unravis-setup.exe') {
+          foreach ($f in 'unravis.exe', 'unravis-blackbox.exe', 'unravis-keeper.exe', 'unravis-cli.exe', 'unravis-lite.exe', 'unravis-setup.exe') {
             $sig = Get-AuthenticodeSignature -LiteralPath (Join-Path 'dist' $f)
             if ($sig.Status -ne 'Valid') { throw "dist/$f is not signed (status $($sig.Status)). A signed release must not ship an unsigned program." }
             Write-Host "$f signed by $($sig.SignerCertificate.Subject)"
