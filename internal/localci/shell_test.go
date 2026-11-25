@@ -1,12 +1,17 @@
 package localci
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 func TestParseCommandFile(t *testing.T) {
@@ -135,5 +140,72 @@ func TestLookPathEnv(t *testing.T) {
 	}
 	if _, err := lookPathEnv(name, []string{"PATH=" + t.TempDir()}); err == nil {
 		t.Fatal("want not found")
+	}
+}
+
+func TestLineWriterBigLineWithoutNewlineIsLinearAndCapped(t *testing.T) {
+	var pieces []string
+	total := 0
+	w := &lineWriter{emit: func(s string) { pieces = append(pieces, s); total += len(s) }}
+	chunk := bytes.Repeat([]byte("x"), 1000)
+	start := time.Now()
+	for i := 0; i < 1049; i++ { // a bit over 1 MiB, never a newline
+		_, _ = w.Write(chunk)
+	}
+	w.Flush()
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("took %v: the writer is not linear", d)
+	}
+	if total != 1049*1000 {
+		t.Fatalf("lost bytes: %d", total)
+	}
+	for _, p := range pieces {
+		if len(p) > maxLineBytes {
+			t.Fatalf("piece of %d bytes exceeds the cap", len(p))
+		}
+	}
+	if len(pieces) < 16 {
+		t.Fatalf("only %d pieces for 1 MiB", len(pieces))
+	}
+}
+
+func TestLineWriterNeverSplitsARuneAndKeepsShortLines(t *testing.T) {
+	var pieces []string
+	w := &lineWriter{emit: func(s string) { pieces = append(pieces, s) }}
+	_, _ = w.Write([]byte(strings.Repeat("é", maxLineBytes))) // 2 bytes per rune, no newline
+	_, _ = w.Write([]byte("\nshort\r\nlast"))
+	w.Flush()
+	for _, p := range pieces {
+		if !utf8.ValidString(p) || len(p) > maxLineBytes {
+			t.Fatalf("bad piece: valid=%v len=%d", utf8.ValidString(p), len(p))
+		}
+	}
+	n := len(pieces)
+	if pieces[n-1] != "last" || pieces[n-2] != "short" {
+		t.Fatalf("tail %q", pieces[n-2:])
+	}
+	if got := strings.Join(pieces[:n-2], ""); got != strings.Repeat("é", maxLineBytes) {
+		t.Fatalf("content changed: %d bytes", len(got))
+	}
+}
+
+func TestCmdScriptPathWithSpacesAndAmpersandRuns(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("cmd.exe only")
+	}
+	dir := filepath.Join(t.TempDir(), "my dir & more")
+	sc, err := writeScript("cmd", "@echo off\necho hello from cmd", dir, "step-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sc.RawLine, `CALL "`+sc.File+`"`) {
+		t.Fatalf("the script path must be quoted in the CALL line: %s", sc.RawLine)
+	}
+	cmd := exec.Command(sc.Path, sc.Args...) //nolint:gosec // running the generated test script is the point
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	started, err := runTree(context.Background(), cmd, sc.RawLine)
+	if !started || err != nil || !strings.Contains(out.String(), "hello from cmd") {
+		t.Fatalf("started=%v err=%v out=%q", started, err, out.String())
 	}
 }

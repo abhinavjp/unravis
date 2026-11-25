@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func runtimeIsWindows() bool { return runtime.GOOS == "windows" }
@@ -341,5 +342,110 @@ func TestShimTrufflehogArgs(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(*logs, "\n"), "scanning") {
 		t.Fatalf("output not logged: %v", *logs)
+	}
+}
+
+func TestCollectFilesRejectsDotDot(t *testing.T) {
+	s, _ := newShimEnv(t, nil)
+	writeFiles(t, s.Workdir, map[string]string{"a/x.txt": "x", "..foo/y.txt": "y", "..bar": "b"})
+	for _, pat := range []string{"../x", "../*.yml", "a/../../x", "a/../x.txt", "./../x", "!a\n../x"} {
+		if _, err := collectFiles(s.Workdir, strings.Split(pat, "\n")); err == nil {
+			t.Errorf("pattern %q must be rejected", pat)
+		}
+	}
+	got, err := collectFiles(s.Workdir, []string{"..foo", "..bar"})
+	if err != nil || !reflect.DeepEqual(got, []string{"..bar", "..foo/y.txt"}) {
+		t.Fatalf("..foo and ..bar are ordinary names: %v %v", got, err)
+	}
+	// an absolute path that climbs out is refused, one that stays inside works
+	if _, err := collectFiles(s.Workdir, []string{filepath.Join(s.Workdir, "a", "..", "..", "x")}); err == nil {
+		t.Error("absolute path leaving the workspace must be rejected")
+	}
+	if got, err := collectFiles(s.Workdir, []string{filepath.Join(s.Workdir, "a", "x.txt")}); err != nil || len(got) != 1 {
+		t.Errorf("absolute path inside the workspace: %v %v", got, err)
+	}
+}
+
+func TestUploadAndDownloadRejectTraversal(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newShimEnv(t, map[string]string{"name": "n", "path": "../x"})
+	if _, err := shimUpload(ctx, s); err == nil {
+		t.Fatal("upload of ../x must fail")
+	}
+	s.With = map[string]string{"name": ".", "path": "a"}
+	if _, err := shimUpload(ctx, s); err == nil {
+		t.Fatal(`artifact name "." must be refused`)
+	}
+	writeFiles(t, s.Workdir, map[string]string{"a.txt": "A"})
+	s.With = map[string]string{"name": "ok", "path": "a.txt"}
+	if _, err := shimUpload(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"../out", "sub/../../out", filepath.Join(t.TempDir(), "elsewhere")} {
+		s.With = map[string]string{"name": "ok", "path": p}
+		if _, err := shimDownload(ctx, s); err == nil {
+			t.Errorf("download to %q must be refused", p)
+		}
+	}
+	s.With = map[string]string{"name": "ok", "path": filepath.Join(s.Workdir, "inside")}
+	if _, err := shimDownload(ctx, s); err != nil {
+		t.Fatalf("an absolute target inside the workspace is fine: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.Workdir, "inside", "a.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := joinInside(s.StateDir, "../x"); err == nil {
+		t.Fatal("joinInside must refuse ..")
+	}
+	if p, err := joinInside(s.StateDir, "..foo/x"); err != nil || !strings.HasPrefix(p, s.StateDir) {
+		t.Fatalf("..foo is legal: %q %v", p, err)
+	}
+}
+
+// fakeTrufflehog puts a tiny scanner on a PATH folder and returns that folder.
+func fakeTrufflehog(t *testing.T, body string) string {
+	t.Helper()
+	bin := t.TempDir()
+	name, script := "trufflehog", "#!/bin/sh\n"+body+"\n"
+	if runtime.GOOS == "windows" {
+		name, script = "trufflehog.cmd", "@echo off\r\n"+strings.ReplaceAll(body, "\n", "\r\n")+"\r\n"
+	}
+	if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil { //nolint:gosec // executable file the test needs to run
+		t.Fatal(err)
+	}
+	return bin
+}
+
+func TestShimTrufflehogRunsToCompletionInsideItsTree(t *testing.T) {
+	body := "echo scanning\nexit 0"
+	if runtime.GOOS == "windows" {
+		body = "echo scanning\nexit /b 0"
+	}
+	bin := fakeTrufflehog(t, body)
+	s, logs := newShimEnv(t, nil)
+	s.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	done := make(chan error, 1)
+	go func() {
+		_, err := shimTrufflehog(context.Background(), s)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the scanner hung: its process was never resumed or released")
+	}
+	if !strings.Contains(strings.Join(*logs, "\n"), "scanning") {
+		t.Fatalf("logs %v", *logs)
+	}
+}
+
+func TestRunCaptureReturnsOutput(t *testing.T) {
+	s, _ := newShimEnv(t, nil)
+	out, err := s.runCapture(context.Background(), "go", "version")
+	if err != nil || !strings.HasPrefix(out, "go version") {
+		t.Fatalf("%q %v", out, err)
 	}
 }

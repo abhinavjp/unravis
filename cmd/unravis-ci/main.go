@@ -276,6 +276,7 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer, enviro
 	opts := localci.RunOptions{
 		Workflow: wf, Config: cfg, Workdir: workdir, StateDir: stateDir, GitHub: gh, Inputs: inMap, Vars: varMap,
 		Env: scrubEnv(environ), Only: only, Slots: *slots, Log: stdout, DryRun: *dry,
+		Redact: newRedactor(secretValues(environ)),
 	}
 	if !*dry {
 		_, _ = fmt.Fprintf(stdout, "running %s (%s) in %s\nstate: %s\n", wf.Name, *event, workdir, stateDir)
@@ -426,6 +427,42 @@ func scrubEnv(environ []string) []string {
 		out = append(out, kv)
 	}
 	return out
+}
+
+// minSecretLen is the shortest value that is masked: shorter ones ("1", "true") would blank ordinary text.
+const minSecretLen = 6
+
+// secretValues returns the values of the variables scrubEnv drops (taken before the scrub), longest first.
+func secretValues(environ []string) []string {
+	seen := map[string]bool{}
+	var vals []string
+	for _, kv := range environ {
+		if kv == "" {
+			continue
+		}
+		i := strings.Index(kv[1:], "=")
+		if i < 0 {
+			continue
+		}
+		name, val := kv[:i+1], kv[i+2:]
+		if secretName(name) && len(val) >= minSecretLen && !seen[val] {
+			seen[val] = true
+			vals = append(vals, val)
+		}
+	}
+	sort.SliceStable(vals, func(a, b int) bool { return len(vals[a]) > len(vals[b]) })
+	return vals
+}
+
+// newRedactor returns the one redactor the runner applies to every sink (step logs, console, summary.md,
+// run.json): it replaces each secret value by ***.
+func newRedactor(vals []string) func(string) string {
+	return func(s string) string {
+		for _, v := range vals {
+			s = strings.ReplaceAll(s, v, "***")
+		}
+		return s
+	}
 }
 
 func secretName(name string) bool {

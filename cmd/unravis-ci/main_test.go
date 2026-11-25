@@ -212,3 +212,70 @@ func TestDefaultStateDir(t *testing.T) {
 		t.Fatalf("fallback %s", got)
 	}
 }
+
+func TestSecretValuesAndRedactor(t *testing.T) {
+	env := []string{"NPM_TOKEN=abcdef123", "SHORT_TOKEN=abc", "PATH=/bin:/usr/bin", "DB_PASSWORD=longer-password-value", "=weird", "NOEQ"}
+	vals := secretValues(env)
+	if len(vals) != 2 || vals[0] != "longer-password-value" || vals[1] != "abcdef123" {
+		t.Fatalf("values %q: want the two long secret values, longest first", vals)
+	}
+	red := newRedactor(vals)
+	if got := red("a abcdef123 b longer-password-value c abc"); got != "a *** b *** c abc" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestRunNeverWritesScrubbedSecretsAnywhere(t *testing.T) {
+	needBash(t)
+	const secret = "leakyvalue123"
+	work := checkout(t)
+	wf := writeWF(t, "s.yml", `name: s
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    outputs:
+      o: ${{ steps.s.outputs.v }}
+    steps:
+      - id: s
+        run: |
+          v=leaky; v="${v}value123"
+          echo "out $v"
+          echo "err $v" >&2
+          echo "::error::bad $v"
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+          echo "sum $v" >> "$GITHUB_STEP_SUMMARY"
+      - run: |
+          echo clean
+          exit 1
+`)
+	state := filepath.Join(t.TempDir(), "st")
+	code, out, errOut := cli(t, append(os.Environ(), "NPM_TOKEN="+secret), "run", wf, "--event", "push", "--local", work, "--state", state)
+	if code != exitFailed {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
+	}
+	if strings.Contains(out, secret) || strings.Contains(errOut, secret) {
+		t.Fatalf("console leaked the secret:\n%s\n%s", out, errOut)
+	}
+	n := 0
+	err := filepath.WalkDir(state, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		n++
+		b, rerr := os.ReadFile(p) //nolint:gosec // reading the test's own state folder
+		if rerr != nil {
+			return rerr
+		}
+		if strings.Contains(string(b), secret) {
+			t.Errorf("%s leaked the secret:\n%s", p, b)
+		}
+		return nil
+	})
+	if err != nil || n == 0 {
+		t.Fatalf("walk: %v (%d files)", err, n)
+	}
+	if b, _ := os.ReadFile(filepath.Join(state, "run.json")); !strings.Contains(string(b), `"o": "***"`) { //nolint:gosec // reading the test's own state folder
+		t.Fatalf("job output must be masked in run.json: %s", b)
+	}
+}

@@ -2,6 +2,7 @@ package localci
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // shimEnv is what a `uses:` shim gets: the step's interpolated inputs and the runner facts.
@@ -58,7 +60,7 @@ func (s *shimEnv) runCapture(ctx context.Context, name string, args ...string) (
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, p, args...) //nolint:gosec // running the workflow command is the point of the runner
+	cmd := exec.Command(p, args...) //nolint:gosec // running the workflow command is the point of the runner
 	cmd.Dir = s.Workdir
 	cmd.Env = s.Env
 	if name == "go" {
@@ -68,11 +70,14 @@ func (s *shimEnv) runCapture(ctx context.Context, name string, args ...string) (
 			cmd.Dir = s.TmpDir
 		}
 	}
-	out, err := cmd.CombinedOutput()
-	if err != nil && len(out) > 0 {
-		err = fmt.Errorf("%w: %s", err, firstLine(string(out)))
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.WaitDelay = 3 * time.Second
+	_, err = runTree(ctx, cmd, "")
+	if err != nil && out.Len() > 0 {
+		err = fmt.Errorf("%w: %s", err, firstLine(out.String()))
 	}
-	return strings.TrimSpace(string(out)), err
+	return strings.TrimSpace(out.String()), err
 }
 
 // ---------------------------------------------------------------- checkout
@@ -307,6 +312,39 @@ func matchSegs2(pat, name []string) bool {
 	return len(name) == 0
 }
 
+// hasDotDot reports whether a slash- or OS-separated path has a ".." segment ("..foo" is a normal name).
+func hasDotDot(p string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(p), "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// joinInside joins a relative path under root and fails when it would leave root.
+func joinInside(root, rel string) (string, error) {
+	r := filepath.FromSlash(rel)
+	if !filepath.IsLocal(r) {
+		return "", fmt.Errorf("path %s is outside %s", rel, root)
+	}
+	return filepath.Join(root, r), nil
+}
+
+// workspacePath resolves a workflow-given file or folder (relative to the workspace, or absolute) and fails
+// when it is not inside the workspace.
+func workspacePath(workdir, p string) (string, error) {
+	abs := p
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(workdir, p)
+	}
+	rel, err := filepath.Rel(workdir, abs)
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("path %s is outside the workspace", p)
+	}
+	return abs, nil
+}
+
 // collectFiles resolves patterns (files, directories or globs, relative to root; ! negates) to
 // slash-separated relative file paths.
 func collectFiles(root string, patterns []string) ([]string, error) {
@@ -324,10 +362,12 @@ func collectFiles(root string, patterns []string) ([]string, error) {
 		p = filepath.ToSlash(p)
 		if filepath.IsAbs(raw) {
 			rel, err := filepath.Rel(root, raw)
-			if err != nil || strings.HasPrefix(rel, "..") {
+			if err != nil || !filepath.IsLocal(rel) {
 				return nil, fmt.Errorf("path %s is outside the workspace", raw)
 			}
 			p = filepath.ToSlash(rel)
+		} else if hasDotDot(p) {
+			return nil, fmt.Errorf("path %s is outside the workspace (.. is not allowed)", raw)
 		}
 		p = strings.TrimPrefix(p, "./")
 		if strings.ContainsAny(p, "*?[") {
@@ -416,7 +456,7 @@ func shimUpload(ctx context.Context, s *shimEnv) (map[string]string, error) {
 	if name == "" {
 		name = "artifact"
 	}
-	if strings.ContainsAny(name, `/\`) || name == ".." {
+	if strings.ContainsAny(name, `/\`) || name == ".." || name == "." {
 		return nil, fmt.Errorf("upload-artifact: invalid artifact name %q", name)
 	}
 	files, err := collectFiles(s.Workdir, strings.Split(s.With["path"], "\n"))
@@ -435,7 +475,15 @@ func shimUpload(ctx context.Context, s *shimEnv) (map[string]string, error) {
 	}
 	dest := filepath.Join(s.StateDir, "artifacts", name)
 	for _, f := range files {
-		if err := copyFile(filepath.Join(s.Workdir, filepath.FromSlash(f)), filepath.Join(dest, filepath.FromSlash(f))); err != nil {
+		src, err := joinInside(s.Workdir, f)
+		if err != nil {
+			return nil, fmt.Errorf("upload-artifact: %w", err)
+		}
+		to, err := joinInside(dest, f)
+		if err != nil {
+			return nil, fmt.Errorf("upload-artifact: %w", err)
+		}
+		if err := copyFile(src, to); err != nil {
 			return nil, fmt.Errorf("upload-artifact: %w", err)
 		}
 	}
@@ -449,9 +497,16 @@ func copyTree(src, dst string) (int, error) {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		rel, _ := filepath.Rel(src, fp)
+		rel, rerr := filepath.Rel(src, fp)
+		if rerr != nil {
+			return rerr
+		}
+		to, jerr := joinInside(dst, rel)
+		if jerr != nil {
+			return jerr
+		}
 		n++
-		return copyFile(fp, filepath.Join(dst, rel))
+		return copyFile(fp, to)
 	})
 	return n, err
 }
@@ -459,15 +514,15 @@ func copyTree(src, dst string) (int, error) {
 func shimDownload(ctx context.Context, s *shimEnv) (map[string]string, error) {
 	dst := s.Workdir
 	if p := strings.TrimSpace(s.With["path"]); p != "" {
-		dst = p
-		if !filepath.IsAbs(dst) {
-			dst = filepath.Join(s.Workdir, dst)
+		var err error
+		if dst, err = workspacePath(s.Workdir, p); err != nil {
+			return nil, fmt.Errorf("download-artifact: %w", err)
 		}
 	}
 	root := filepath.Join(s.StateDir, "artifacts")
 	name := artifactName(s)
 	if name != "" {
-		if strings.ContainsAny(name, `/\`) || name == ".." {
+		if strings.ContainsAny(name, `/\`) || name == ".." || name == "." {
 			return nil, fmt.Errorf("download-artifact: invalid artifact name %q", name)
 		}
 		src := filepath.Join(root, name)
@@ -555,33 +610,25 @@ func shimTrufflehog(ctx context.Context, s *shimEnv) (map[string]string, error) 
 	cmd := exec.Command(exe, args...) //nolint:gosec // running the scanner binary is the point of this shim
 	cmd.Dir = s.Workdir
 	cmd.Env = s.Env
-	prepareCmd(cmd)
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("trufflehog: %w", err)
-	}
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			killTree(cmd)
-		case <-done:
-		}
-	}()
+	cmd.WaitDelay = 3 * time.Second
 	scanDone := make(chan struct{})
 	go func() {
+		defer close(scanDone)
 		sc := bufio.NewScanner(pr)
 		sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 		for sc.Scan() {
 			s.Logf("%s", sc.Text())
 		}
-		close(scanDone)
+		_, _ = io.Copy(io.Discard, pr) // a too-long line must not leave the scanner blocked on a full pipe
 	}()
-	werr := cmd.Wait()
-	close(done)
+	started, werr := runTree(ctx, cmd, "")
 	_ = pw.Close()
 	<-scanDone
+	if !started {
+		return nil, fmt.Errorf("trufflehog: %w", werr)
+	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}

@@ -37,6 +37,10 @@ type RunOptions struct {
 
 	// stepTimeoutOverride replaces every step timeout (test hook).
 	stepTimeoutOverride time.Duration
+	// jobTimeoutOverride replaces the job timeout-minutes (test hook).
+	jobTimeoutOverride time.Duration
+	// waitDelayOverride replaces how long a step's output pipes are drained after it exits (test hook).
+	waitDelayOverride time.Duration
 }
 
 // StepResult is the result of one step. Index is 1-based.
@@ -64,6 +68,8 @@ type JobResult struct {
 	Outputs map[string]string `json:"outputs,omitempty"`
 	Start   time.Time         `json:"start"`
 	End     time.Time         `json:"end"`
+
+	coe bool // continue-on-error, evaluated for this instance
 }
 
 // RunResult is the result of a whole workflow run.
@@ -130,11 +136,35 @@ func (r *runState) now() time.Time {
 	return time.Now()
 }
 
+// mask is the one redactor every sink goes through: the ::add-mask:: values and the caller's Redact (which
+// the command line fills with the values of the environment variables it scrubbed).
+func (r *runState) mask(s string) string {
+	s = r.masks.apply(s)
+	if r.o.Redact != nil {
+		s = r.o.Redact(s)
+	}
+	return s
+}
+
+// maskResult masks everything in the result that is written to run.json or printed.
+func (r *runState) maskResult(res *RunResult) {
+	for _, j := range res.Jobs {
+		j.Reason = r.mask(j.Reason)
+		for k, v := range j.Outputs {
+			j.Outputs[k] = r.mask(v)
+		}
+		for i := range j.Steps {
+			j.Steps[i].Name = r.mask(j.Steps[i].Name)
+			j.Steps[i].Err = r.mask(j.Steps[i].Err)
+		}
+	}
+}
+
 func (r *runState) logf(format string, a ...any) {
 	if r.o.Log == nil {
 		return
 	}
-	line := r.masks.apply(fmt.Sprintf(format, a...))
+	line := r.mask(fmt.Sprintf(format, a...))
 	r.logMu.Lock()
 	defer r.logMu.Unlock()
 	_, _ = fmt.Fprintln(r.o.Log, line)
@@ -277,6 +307,7 @@ func Run(ctx context.Context, o RunOptions) (*RunResult, error) {
 		}
 	}
 	res.End = r.now()
+	r.maskResult(res)
 	res.Conclusion = "success"
 	for _, a := range r.table {
 		if a.result == "failure" || (a.result == "not_run_locally" && !a.accepted) {
@@ -395,13 +426,17 @@ func interpEnv(m map[string]string, c *ExprContext) (map[string]string, error) {
 
 // ---------------------------------------------------------------- jobs
 
-func aggregate(jrs []*JobResult, coe bool, override JobOverride) *jobAgg {
+func aggregate(jrs []*JobResult, override JobOverride) *jobAgg {
 	a := &jobAgg{outputs: map[string]string{}}
 	var failed, cancelled, notRun, skipped, ok int
 	for _, jr := range jrs {
 		switch jr.Status {
 		case "failure":
-			failed++
+			if jr.coe {
+				ok++ // continue-on-error: the failure does not fail the job
+			} else {
+				failed++
+			}
 		case "cancelled":
 			cancelled++
 		case "not_run_locally":
@@ -418,8 +453,6 @@ func aggregate(jrs []*JobResult, coe bool, override JobOverride) *jobAgg {
 		}
 	}
 	switch {
-	case failed > 0 && coe:
-		a.result = "success"
 	case failed > 0:
 		a.result = "failure"
 	case cancelled > 0:
@@ -468,11 +501,6 @@ func (r *runState) runJob(ctx context.Context, job *Job) []*JobResult {
 	jobCtx, cancelJob := context.WithCancel(ctx)
 	defer cancelJob()
 	failFast := job.Strategy != nil && job.Strategy.FailFast && len(combos) > 1
-	coe := false
-	if job.ContinueOnError != "" {
-		v, err := Interpolate(job.ContinueOnError, &ExprContext{Vars: r.baseVars(job, nil)})
-		coe = err == nil && strings.TrimSpace(v) == "true"
-	}
 	out := make([]*JobResult, len(combos))
 	var wg sync.WaitGroup
 	for i := range combos {
@@ -481,14 +509,14 @@ func (r *runState) runJob(ctx context.Context, job *Job) []*JobResult {
 			defer wg.Done()
 			jr := r.runInstance(jobCtx, job, combos[i], keys[i], labels[i], needStatus)
 			out[i] = jr
-			if jr.Status == "failure" && failFast && !coe {
+			if jr.Status == "failure" && failFast && !jr.coe {
 				cancelJob()
 			}
 		}(i)
 	}
 	wg.Wait()
 	ov := r.o.Config.Override(r.file, job.ID)
-	agg := aggregate(out, coe, ov)
+	agg := aggregate(out, ov)
 	r.tblMu.Lock()
 	r.table[job.ID] = agg
 	r.tblMu.Unlock()
@@ -522,6 +550,13 @@ func (r *runState) runInstance(ctx context.Context, job *Job, combo map[string]a
 			reason = "a needed job did not succeed"
 		}
 		return fin("skipped", reason)
+	}
+	if job.ContinueOnError != "" {
+		v, err := Interpolate(job.ContinueOnError, ec)
+		if err != nil {
+			return fin("failure", "continue-on-error: "+err.Error())
+		}
+		jr.coe = strings.TrimSpace(v) == "true"
 	}
 	runsOn, err := Interpolate(job.RunsOn, ec)
 	if err != nil {
@@ -576,6 +611,9 @@ type instance struct {
 	status   string // success|failure|cancelled
 	tmpDir   string
 	summed   bool
+
+	deadline     time.Time // the job-wide timeout-minutes deadline
+	deadlineDesc string
 }
 
 func (in *instance) envCtx(extra map[string]string) map[string]any {
@@ -618,6 +656,14 @@ func (in *instance) run(ctx context.Context) {
 	r, job := in.r, in.job
 	in.tmpDir = filepath.Join(r.o.StateDir, "tmp", in.key)
 	in.steps = map[string]any{}
+	jobTimeout, jobDesc := 360*time.Minute, "360 minutes"
+	if m := job.TimeoutMinutes; m > 0 {
+		jobTimeout, jobDesc = time.Duration(m)*time.Minute, fmt.Sprintf("%d minutes", m)
+	}
+	if r.o.jobTimeoutOverride > 0 {
+		jobTimeout, jobDesc = r.o.jobTimeoutOverride, r.o.jobTimeoutOverride.String()
+	}
+	in.deadline, in.deadlineDesc = time.Now().Add(jobTimeout), jobDesc
 	if err := os.MkdirAll(filepath.Join(in.tmpDir, "temp"), 0o750); err != nil {
 		in.fail(err.Error())
 		return
@@ -639,13 +685,19 @@ func (in *instance) run(ctx context.Context) {
 	default:
 		in.jr.Status = "success"
 	}
-	if len(job.Outputs) > 0 && in.jr.Status == "success" {
+	// job outputs are published whatever the job status, so an if: always() job can read needs.x.outputs
+	if len(job.Outputs) > 0 {
 		in.jr.Outputs = map[string]string{}
-		ec := in.exprCtx("success", nil)
+		ec := in.exprCtx(in.jr.Status, nil)
 		for name, expr := range job.Outputs {
 			v, err := Interpolate(expr, ec)
 			if err != nil {
-				in.fail("outputs." + name + ": " + err.Error())
+				msg := "outputs." + name + ": " + err.Error()
+				if in.jr.Status == "success" {
+					in.fail(msg)
+				} else if in.jr.Reason == "" {
+					in.jr.Reason = msg
+				}
 				break
 			}
 			in.jr.Outputs[name] = v
@@ -720,7 +772,7 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 	}
 	sr.Name = name
 	stepFail := func(msg string) {
-		sr.Err = r.masks.apply(msg)
+		sr.Err = r.mask(msg)
 		sr.Outcome, sr.Conclusion = "failure", "failure"
 		in.status = "failure"
 	}
@@ -764,11 +816,20 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 	desc := "360 minutes"
 	if m := st.TimeoutMinutes; m > 0 {
 		timeout, desc = time.Duration(m)*time.Minute, fmt.Sprintf("%d minutes", m)
-	} else if m := in.job.TimeoutMinutes; m > 0 {
-		timeout, desc = time.Duration(m)*time.Minute, fmt.Sprintf("%d minutes", m)
 	}
 	if r.o.stepTimeoutOverride > 0 {
 		timeout, desc = r.o.stepTimeoutOverride, r.o.stepTimeoutOverride.String()
+	}
+	// the job timeout is one deadline for the whole job; a step gets the smaller of its own limit and what is left
+	if rem := time.Until(in.deadline); rem <= 0 {
+		if in.status == "success" {
+			stepFail("job timed out after " + in.deadlineDesc)
+			finish()
+			return
+		}
+		// a cleanup step (always(), failure()) still runs after the deadline, bounded by its own limit
+	} else if rem < timeout {
+		timeout, desc = rem, "the job limit of "+in.deadlineDesc
 	}
 	stepCtx, cancel := context.WithTimeout(runCtx, timeout)
 	defer cancel()
@@ -788,10 +849,7 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 			r.masks.add(rest)
 			return
 		}
-		if r.o.Redact != nil {
-			line = r.o.Redact(line)
-		}
-		line = r.masks.apply(line)
+		line = r.mask(line)
 		lfMu.Lock()
 		_, _ = fmt.Fprintln(lf, line)
 		lfMu.Unlock()
@@ -841,11 +899,11 @@ func (in *instance) step(ctx context.Context, n int, st *Step) {
 		sr.Err = "timed out after " + desc
 		sr.Outcome, sr.Conclusion = "failure", "failure"
 	case ctx.Err() != nil:
-		sr.Err = r.masks.apply(runErr.Error())
+		sr.Err = r.mask(runErr.Error())
 		sr.Outcome, sr.Conclusion = "cancelled", "cancelled"
 		in.status = "cancelled"
 	default:
-		sr.Err = r.masks.apply(runErr.Error())
+		sr.Err = r.mask(runErr.Error())
 		sr.Outcome, sr.Conclusion = "failure", "failure"
 	}
 	if sr.Outcome == "failure" {
@@ -955,7 +1013,7 @@ func (in *instance) applyFiles(files map[string]string, st *Step, outputs *map[s
 				_, _ = fmt.Fprintf(f, "## %s\n\n", in.label)
 				in.summed = true
 			}
-			text := in.r.masks.apply(string(data))
+			text := in.r.mask(string(data))
 			if !strings.HasSuffix(text, "\n") {
 				text += "\n"
 			}
@@ -1005,31 +1063,15 @@ func (in *instance) runScript(ctx context.Context, st *Step, ec *ExprContext, n 
 	cmd := exec.Command(sc.Path, sc.Args...) //nolint:gosec // running the workflow command is the point of the runner
 	cmd.Dir = dir
 	cmd.Env = env.items
-	prepareCmd(cmd)
-	if sc.RawLine != "" {
-		setCmdLine(cmd, sc.RawLine)
-	}
 	cmd.Stdout, cmd.Stderr = lw, lw
 	cmd.WaitDelay = 3 * time.Second
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("cannot start %s: %w", shell, err)
+	if r.o.waitDelayOverride > 0 {
+		cmd.WaitDelay = r.o.waitDelayOverride
 	}
-	if err := afterStart(cmd); err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return fmt.Errorf("cannot contain %s: %w", shell, err)
+	started, werr := runTree(ctx, cmd, sc.RawLine)
+	if !started {
+		return fmt.Errorf("cannot start %s: %w", shell, werr)
 	}
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			killTree(cmd)
-		case <-done:
-		}
-	}()
-	werr := cmd.Wait()
-	close(done)
-	releaseTree(cmd)
 	if werr != nil {
 		var ee *exec.ExitError
 		if errors.As(werr, &ee) {

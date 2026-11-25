@@ -15,7 +15,33 @@ import (
 // Every step runs inside its own Windows Job Object (KILL_ON_JOB_CLOSE). The process starts suspended, is put into
 // the job, then resumed, so no child it spawns can escape the job. killTree terminates the whole job.
 
-var jobs sync.Map // *exec.Cmd -> windows.Handle
+// stepJob is one step's job object handle. The mutex makes terminate and close mutually exclusive, so the
+// handle is closed exactly once and never used after that.
+type stepJob struct {
+	mu     sync.Mutex
+	h      windows.Handle
+	closed bool
+}
+
+func (j *stepJob) terminate() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if !j.closed {
+		_ = windows.TerminateJobObject(j.h, 1)
+	}
+}
+
+func (j *stepJob) terminateAndClose() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if !j.closed {
+		j.closed = true
+		_ = windows.TerminateJobObject(j.h, 1)
+		_ = windows.CloseHandle(j.h)
+	}
+}
+
+var jobs sync.Map // *exec.Cmd -> *stepJob
 
 var (
 	ntdll               = windows.NewLazySystemDLL("ntdll.dll")
@@ -27,7 +53,8 @@ func prepareCmd(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED | windows.CREATE_NEW_PROCESS_GROUP}
 }
 
-// afterStart puts the started (still suspended) process into a new job and resumes it.
+// afterStart puts the started (still suspended) process into a new job and resumes it. On any failure the job
+// is closed and forgotten, so nothing leaks.
 func afterStart(cmd *exec.Cmd) error {
 	h, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
@@ -36,23 +63,24 @@ func afterStart(cmd *exec.Cmd) error {
 	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 	if _, err := windows.SetInformationJobObject(h, windows.JobObjectExtendedLimitInformation,
-		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
-		windows.CloseHandle(h)
+		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil { //nolint:gosec // the Windows API takes a pointer to the struct
+		_ = windows.CloseHandle(h)
 		return fmt.Errorf("configure job object: %w", err)
 	}
 	ph, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE|windows.PROCESS_SUSPEND_RESUME|windows.PROCESS_QUERY_INFORMATION,
-		false, uint32(cmd.Process.Pid))
+		false, uint32(cmd.Process.Pid)) //nolint:gosec // a process id always fits in 32 bits
 	if err != nil {
-		windows.CloseHandle(h)
+		_ = windows.CloseHandle(h)
 		return fmt.Errorf("open step process: %w", err)
 	}
-	defer windows.CloseHandle(ph)
+	defer func() { _ = windows.CloseHandle(ph) }()
 	if err := windows.AssignProcessToJobObject(h, ph); err != nil {
-		windows.CloseHandle(h)
+		_ = windows.CloseHandle(h)
 		return fmt.Errorf("assign step to job object: %w", err)
 	}
-	jobs.Store(cmd, h)
+	jobs.Store(cmd, &stepJob{h: h})
 	if r, _, e := procNtResumeProcess.Call(uintptr(ph)); r != 0 {
+		releaseTree(cmd) // terminates the suspended process, closes the job and drops the map entry
 		return fmt.Errorf("resume step process: status 0x%x (%v)", r, e)
 	}
 	return nil
@@ -64,7 +92,7 @@ func killTree(cmd *exec.Cmd) {
 		return
 	}
 	if v, ok := jobs.Load(cmd); ok {
-		_ = windows.TerminateJobObject(v.(windows.Handle), 1)
+		v.(*stepJob).terminate()
 	}
 	if cmd.Process != nil {
 		_ = cmd.Process.Kill()
@@ -77,9 +105,7 @@ func releaseTree(cmd *exec.Cmd) {
 		return
 	}
 	if v, ok := jobs.LoadAndDelete(cmd); ok {
-		h := v.(windows.Handle)
-		_ = windows.TerminateJobObject(h, 1)
-		_ = windows.CloseHandle(h)
+		v.(*stepJob).terminateAndClose()
 	}
 }
 

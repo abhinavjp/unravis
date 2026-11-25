@@ -788,3 +788,249 @@ func TestDryRunDoesNotCreateState(t *testing.T) {
 		t.Fatal("dry run must not create the state dir")
 	}
 }
+
+func TestStepExitZeroWithBackgroundProcessSucceedsFast(t *testing.T) {
+	needBash(t)
+	h := newHarness(t, `
+name: bg
+on: push
+jobs:
+  ok:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          sleep 30 &
+          echo done
+  bad:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          sleep 30 &
+          exit 3
+`)
+	h.opts.waitDelayOverride = 500 * time.Millisecond
+	start := time.Now()
+	res := h.run()
+	if d := time.Since(start); d > 20*time.Second {
+		t.Fatalf("took %v: the background process held the step", d)
+	}
+	if j := job(t, res, "ok"); j.Status != "success" || !strings.Contains(stepLog(t, j.Steps[0]), "done") {
+		t.Fatalf("exit 0 with a background process must succeed: %+v", j)
+	}
+	if j := job(t, res, "bad"); j.Status != "failure" || !strings.Contains(j.Steps[0].Err, "exit code 3") {
+		t.Fatalf("a real failure must stay a failure: %+v", j)
+	}
+}
+
+func TestJobContinueOnErrorIsEvaluatedPerInstance(t *testing.T) {
+	needBash(t)
+	h := newHarness(t, `
+name: coe
+on: push
+jobs:
+  tolerant:
+    runs-on: ubuntu-24.04
+    continue-on-error: ${{ matrix.exp }}
+    strategy:
+      matrix:
+        exp: [true]
+    steps:
+      - run: exit 1
+  strict:
+    runs-on: ubuntu-24.04
+    continue-on-error: ${{ matrix.exp }}
+    strategy:
+      matrix:
+        exp: [false]
+    steps:
+      - run: exit 1
+  next:
+    runs-on: ubuntu-24.04
+    needs: tolerant
+    steps:
+      - run: echo after
+`)
+	res := h.run()
+	if j := job(t, res, "tolerant-true"); j.Status != "failure" || !j.coe {
+		t.Fatalf("tolerant instance: %+v", j)
+	}
+	if j := job(t, res, "next"); j.Status != "success" {
+		t.Fatalf("a continue-on-error failure must not block needs: %+v", j)
+	}
+	if j := job(t, res, "strict-false"); j.coe {
+		t.Fatalf("matrix.exp=false must not tolerate the failure")
+	}
+	if res.Conclusion != "failure" {
+		t.Fatalf("the strict job fails the run, got %s", res.Conclusion)
+	}
+}
+
+func TestJobContinueOnErrorOnlyJobSucceeds(t *testing.T) {
+	needBash(t)
+	h := newHarness(t, `
+name: coe
+on: push
+jobs:
+  tolerant:
+    runs-on: ubuntu-24.04
+    continue-on-error: ${{ matrix.exp }}
+    strategy:
+      matrix:
+        exp: [true]
+    steps:
+      - run: exit 1
+`)
+	if res := h.run(); res.Conclusion != "success" {
+		t.Fatalf("conclusion %s: %+v", res.Conclusion, res.Jobs[0])
+	}
+}
+
+func TestJobContinueOnErrorExpressionErrorIsLoud(t *testing.T) {
+	needBash(t)
+	h := newHarness(t, `
+name: coe
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    continue-on-error: ${{ fromJSON('{') }}
+    steps:
+      - run: echo hi
+`)
+	res := h.run()
+	j := job(t, res, "j")
+	if j.Status != "failure" || !strings.Contains(j.Reason, "continue-on-error") {
+		t.Fatalf("an unevaluable continue-on-error must fail the job with a clear reason: %+v", j)
+	}
+	if res.Conclusion != "failure" {
+		t.Fatalf("conclusion %s", res.Conclusion)
+	}
+}
+
+func TestJobTimeoutIsOneDeadlineForTheWholeJob(t *testing.T) {
+	needBash(t)
+	h := newHarness(t, `
+name: jt
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - run: sleep 1
+      - run: sleep 1
+      - run: sleep 1
+      - run: echo never
+`)
+	h.opts.jobTimeoutOverride = 2500 * time.Millisecond
+	start := time.Now()
+	res := h.run()
+	if d := time.Since(start); d > 30*time.Second {
+		t.Fatalf("took %v", d)
+	}
+	j := job(t, res, "j")
+	if j.Status != "failure" {
+		t.Fatalf("the job must fail at its deadline: %+v", j)
+	}
+	limited := 0
+	for _, s := range j.Steps {
+		if strings.Contains(s.Err, "job limit") || strings.Contains(s.Err, "job timed out") {
+			limited++
+		}
+	}
+	if limited != 1 {
+		t.Fatalf("exactly one step hits the job deadline: %+v", j.Steps)
+	}
+	if last := j.Steps[len(j.Steps)-1]; last.Conclusion == "success" {
+		t.Fatalf("no step may run to success after the deadline: %+v", last)
+	}
+}
+
+func TestJobOutputsPublishedWhenJobFails(t *testing.T) {
+	needBash(t)
+	h := newHarness(t, `
+name: out
+on: push
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    outputs:
+      v: ${{ steps.s.outputs.v }}
+    steps:
+      - id: s
+        run: |
+          echo "v=hello" >> "$GITHUB_OUTPUT"
+          exit 1
+  b:
+    runs-on: ubuntu-24.04
+    needs: a
+    if: always()
+    steps:
+      - run: echo "got=${{ needs.a.outputs.v }}"
+`)
+	res := h.run()
+	a := job(t, res, "a")
+	if a.Status != "failure" || a.Outputs["v"] != "hello" {
+		t.Fatalf("outputs must be published whatever the status: %+v", a)
+	}
+	b := job(t, res, "b")
+	if b.Status != "success" || !strings.Contains(stepLog(t, b.Steps[0]), "got=hello") {
+		t.Fatalf("an always() job must read needs.a.outputs: %+v", b)
+	}
+}
+
+func TestRedactMasksEverySink(t *testing.T) {
+	needBash(t)
+	h := newHarness(t, `
+name: r
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    outputs:
+      o: ${{ steps.s.outputs.v }}
+    steps:
+      - id: s
+        run: |
+          v=top; v="${v}secretvalue"
+          echo "out $v"
+          echo "err $v" >&2
+          echo "::warning::w $v"
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+          echo "sum $v" >> "$GITHUB_STEP_SUMMARY"
+      - run: echo clean
+`)
+	h.opts.Redact = func(s string) string { return strings.ReplaceAll(s, "topsecretvalue", "***") }
+	res := h.run()
+	if j := job(t, res, "j"); j.Status != "success" || j.Outputs["o"] != "***" {
+		t.Fatalf("job outputs must be masked: %+v", j)
+	}
+	if strings.Contains(h.logText(), "topsecretvalue") {
+		t.Fatalf("console leaked:\n%s", h.logText())
+	}
+	err := filepath.WalkDir(h.state, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, rerr := os.ReadFile(p) //nolint:gosec // reading the test's own state folder
+		if rerr != nil {
+			return rerr
+		}
+		if strings.Contains(string(b), "topsecretvalue") {
+			t.Errorf("%s leaked the secret:\n%s", p, b)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(h.state, "summary.md")); !strings.Contains(string(b), "sum ***") {
+		t.Fatalf("summary %q", b)
+	}
+	if err := WriteRunRecord(h.state, res); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(h.state, "run.json")); strings.Contains(string(b), "topsecretvalue") {
+		t.Fatalf("run.json leaked: %s", b)
+	}
+}

@@ -1,6 +1,7 @@
 package localci
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // knownShell reports whether the runner can run a step with this shell.
@@ -105,8 +107,10 @@ func writeScript(shell, script, dir, stem string) (*shellCmd, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &shellCmd{Path: exe, Args: []string{"/D", "/E:ON", "/V:OFF", "/S", "/C", `"CALL ` + f + `"`},
-			RawLine: `"` + exe + `" /D /E:ON /V:OFF /S /C "CALL ` + f + `"`, File: f}, nil
+		// with /S cmd strips the outer quotes and keeps CALL "script", so a path with spaces or & works
+		line := `"CALL "` + f + `""`
+		return &shellCmd{Path: exe, Args: []string{"/D", "/E:ON", "/V:OFF", "/S", "/C", line},
+			RawLine: `"` + exe + `" /D /E:ON /V:OFF /S /C ` + line, File: f}, nil
 	}
 	return nil, fmt.Errorf("unsupported: shell %s", shell)
 }
@@ -189,11 +193,30 @@ func (m *masker) apply(s string) string {
 	return s
 }
 
-// lineWriter splits written bytes into lines and calls emit for each complete line.
+// maxLineBytes caps one emitted line: a program that prints without newlines cannot grow the buffer.
+const maxLineBytes = 64 * 1024
+
+// lineWriter splits written bytes into lines and calls emit for each complete line. A line longer than
+// maxLineBytes is emitted in pieces of at most that size.
 type lineWriter struct {
 	mu   sync.Mutex
 	buf  []byte
 	emit func(string)
+}
+
+// cutAt returns where to cut a line of n bytes at the start of b: n, or maxLineBytes moved back to a rune start.
+func cutAt(b []byte, n int) int {
+	if n <= maxLineBytes {
+		return n
+	}
+	c := maxLineBytes
+	for c > 0 && !utf8.RuneStart(b[c]) {
+		c--
+	}
+	if c == 0 {
+		return maxLineBytes
+	}
+	return c
 }
 
 func (w *lineWriter) Write(p []byte) (int, error) {
@@ -201,12 +224,27 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 	defer w.mu.Unlock()
 	w.buf = append(w.buf, p...)
 	for {
-		i := strings.IndexByte(string(w.buf), '\n')
+		i := bytes.IndexByte(w.buf, '\n')
 		if i < 0 {
-			break
+			if len(w.buf) <= maxLineBytes {
+				break
+			}
+			c := cutAt(w.buf, len(w.buf))
+			w.emit(string(w.buf[:c]))
+			w.buf = w.buf[c:]
+			continue
+		}
+		if i > maxLineBytes {
+			c := cutAt(w.buf, i)
+			w.emit(string(w.buf[:c]))
+			w.buf = w.buf[c:]
+			continue
 		}
 		w.emit(strings.TrimSuffix(string(w.buf[:i]), "\r"))
 		w.buf = w.buf[i+1:]
+	}
+	if len(w.buf) == 0 {
+		w.buf = nil // do not keep a big backing array alive
 	}
 	return len(p), nil
 }
