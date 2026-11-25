@@ -79,14 +79,28 @@ func Canaries() []string {
 	return all
 }
 
-// FindIn returns the canary tokens in a string. It also looks inside a string that is base64 (a cohort key, a cursor, a handle), so a
-// hostile name hidden in an encoded value is seen too.
+// b64Run finds the runs of base64 characters inside a larger text (a JSON blob, a store file, an error message).
+var b64Run = regexp.MustCompile(`[A-Za-z0-9_+/=-]{16,}`)
+
+var encodings = []*base64.Encoding{base64.RawURLEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.StdEncoding}
+
+func decodedCanaries(s string) []string {
+	for _, enc := range encodings {
+		if raw, err := enc.DecodeString(s); err == nil {
+			return tokenPattern.FindAllString(string(raw), -1)
+		}
+	}
+	return nil
+}
+
+// FindIn returns the canary tokens in a text. It also looks inside base64 (a cohort key, a cursor, a handle), both when the whole text is
+// base64 and when an encoded value sits inside a larger text, so a hostile name hidden in an encoded value is seen too.
 func FindIn(text string) []string {
 	found := tokenPattern.FindAllString(text, -1)
-	for _, enc := range []*base64.Encoding{base64.RawURLEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.StdEncoding} {
-		if raw, err := enc.DecodeString(text); err == nil {
-			found = append(found, tokenPattern.FindAllString(string(raw), -1)...)
-			break
+	found = append(found, decodedCanaries(text)...)
+	for _, run := range b64Run.FindAllString(text, -1) {
+		if run != text {
+			found = append(found, decodedCanaries(run)...)
 		}
 	}
 	return found

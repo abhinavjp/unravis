@@ -403,6 +403,10 @@ func TestCanaryFinderReadsInsideBase64(t *testing.T) {
 	if got := hostiletest.FindIn(base64.StdEncoding.EncodeToString([]byte(`{"a":"CNRY-y"}`))); len(got) != 1 {
 		t.Errorf("FindIn(std base64) = %v", got)
 	}
+	embedded := `{"key":"` + key + `","other":"plain"}`
+	if got := hostiletest.FindIn(embedded); len(got) != 1 || got[0] != "CNRY-ctrl-x" {
+		t.Errorf("FindIn(key inside a JSON blob) = %v", got)
+	}
 	if got := hostiletest.FindIn("nothing here"); len(got) != 0 {
 		t.Errorf("FindIn(plain) = %v", got)
 	}
