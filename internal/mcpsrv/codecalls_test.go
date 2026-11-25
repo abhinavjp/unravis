@@ -103,7 +103,7 @@ func TestCodeCallToolOutsideTheGrantIsDeniedAndRecorded(t *testing.T) {
 	if _, end, refused := r.disp.AdmitCodeCall(ctx, r.principal("cc-tier"), "audit_get_guide", []byte(`{}`), false); refused != nil {
 		t.Errorf("a tool of the list: %v", refused)
 	} else {
-		end(nil, false)
+		_ = end(nil, false)
 	}
 	if r.disp.total != 0 {
 		t.Errorf("in-flight total %d", r.disp.total)
@@ -264,7 +264,7 @@ func TestCodeCallEndGivesTheSlotBack(t *testing.T) {
 		if refused != nil {
 			t.Fatalf("call %d: %v", i+1, refused)
 		}
-		end([]byte(`{}`), false)
+		_ = end([]byte(`{}`), false)
 	}
 	if r.disp.total != 0 {
 		t.Errorf("in-flight total %d", r.disp.total)

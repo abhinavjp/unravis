@@ -303,7 +303,7 @@ func TestCodeRunCallsHonourAtOnceAndBytes(t *testing.T) {
 	if _, _, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", []byte(`{}`), false); refused == nil || refused.Code != mcp.WireBudgetExceeded {
 		t.Errorf("a second comparison at once: %v", refused)
 	}
-	end1(make([]byte, 2000), false) // the answer was bigger than the 10-minute budget
+	_ = end1(make([]byte, 2000), false) // the answer was bigger than the 10-minute budget
 	if _, _, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_get_guide", []byte(`{}`), false); refused == nil || refused.Code != mcp.WireBudgetExceeded {
 		t.Errorf("after the byte budget: %v", refused)
 	}
@@ -315,7 +315,7 @@ func TestCodeRunCallsHonourAtOnceAndBytes(t *testing.T) {
 	if _, end, refused := r.disp.AdmitCodeCall(ctx, pr, "audit_compare", []byte(`{}`), false); refused != nil {
 		t.Errorf("after the window: %v", refused)
 	} else {
-		end(nil, true)
+		_ = end(nil, true)
 	}
 }
 
