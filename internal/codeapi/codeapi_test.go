@@ -1081,7 +1081,13 @@ func TestCaseRoutesEndLiveRuns(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			sp := &spawn{gate: make(chan struct{}), entered: make(chan struct{}, 2)}
-			t.Cleanup(func() { select { case <-sp.gate: default: close(sp.gate) } })
+			t.Cleanup(func() {
+				select {
+				case <-sp.gate:
+				default:
+					close(sp.gate)
+				}
+			})
 			r := newRig(t, rigOpts{spawner: sp})
 			id := r.newCase("Lifecycle " + c.name)
 			r.enable()
@@ -1102,7 +1108,13 @@ func TestCaseRoutesEndLiveRuns(t *testing.T) {
 // While the master key is locked the run route answers 423; a run that is live when it locks is ended.
 func TestRunRoute423WhileMasterKeyLocked(t *testing.T) {
 	sp := &spawn{gate: make(chan struct{}), entered: make(chan struct{}, 2)}
-	t.Cleanup(func() { select { case <-sp.gate: default: close(sp.gate) } })
+	t.Cleanup(func() {
+		select {
+		case <-sp.gate:
+		default:
+			close(sp.gate)
+		}
+	})
 	mk := server.NewMasterKeySession(t.TempDir())
 	r := newRig(t, rigOpts{spawner: sp, masterKey: mk})
 	pass := "correct horse battery staple 42"
