@@ -222,7 +222,7 @@ func (c *Carry) tagLine(line, mask string) string {
 	}
 	sub, subIndent, subLines, subComments := c.sub, c.subIndent, c.subLines, c.subComments
 	if len(c.tag)+len(line)+1 > 2*maxTag {
-		c.pend, c.sub = pendNone, pendNone
+		c.dropTag()
 		return mask
 	}
 	n := c.lines + 1
@@ -236,7 +236,7 @@ func (c *Carry) tagLine(line, mask string) string {
 			c.sub, c.subIndent, c.subLines, c.subComments = sub, subIndent, subLines, subComments
 		}
 		if n >= maxTagLines {
-			c.pend, c.sub = pendNone, pendNone
+			c.dropTag()
 		}
 	}
 	if c.pend == pendNone && c.sub == pendNone && hok && sub != pendNone {
@@ -250,6 +250,16 @@ func (c *Carry) tagLine(line, mask string) string {
 		return out[at+1:]
 	}
 	return mask
+}
+
+// dropTag drops a split tag that is not a tag. The block or next-line value that this tag carried goes on as a state of its own, so
+// a key opened on a line inside the tag still masks its value.
+func (c *Carry) dropTag() {
+	c.pend = pendNone
+	if c.sub != pendNone {
+		c.pend, c.indent, c.lines, c.comments = c.sub, c.subIndent, c.subLines, c.subComments
+		c.sub = pendNone
+	}
 }
 
 // nextLineIsValue says whether the line after a key with no value is that key's value.

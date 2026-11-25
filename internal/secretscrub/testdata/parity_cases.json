@@ -319,6 +319,58 @@
    "secrets": [
     "FAKEPW"
    ]
+  },
+  {
+   "name": "R3-1 key opened inside a dropped tag (next line)",
+   "lines": [
+    "see <a",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "DB_PASSWORD=",
+    "FAKEPW"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
+  },
+  {
+   "name": "R3-1 key opened inside a dropped tag (block)",
+   "lines": [
+    "see <a",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "o",
+    "password: |",
+    "  FAKEPW"
+   ],
+   "secrets": [
+    "FAKEPW"
+   ]
   }
  ],
  "expectUnchanged": [
