@@ -201,6 +201,24 @@ func (b *Broker) Cancel(runID string) bool {
 	return true
 }
 
+// CancelCase ends every live run recorded in the case (cancelled), for a route that is about to move the case (close, key change, archive,
+// erase) or lock the master key; caseID empty ends the runs of every case. It returns how many it told to stop. A run ends within a moment of
+// its cancel; the caller waits for the case to be let go of (it holds the case until the run has returned).
+func (b *Broker) CancelCase(caseID string) int {
+	b.mu.Lock()
+	var hit []*run
+	for _, r := range b.active {
+		if caseID == "" || r.caseID == caseID {
+			hit = append(hit, r)
+		}
+	}
+	b.mu.Unlock()
+	for _, r := range hit {
+		r.fail(CodeCancelled, "")
+	}
+	return len(hit)
+}
+
 // OnCaseOpen closes the runs of a case that were left open by a crash (spec 3.5 step 9). The app calls it when a case is opened; Run
 // also calls it once per case before its first run, so a caller that forgets cannot leave an old open run behind. It only closes runs
 // older than casestore.OrphanGrace, so a live run in another window is left alone.

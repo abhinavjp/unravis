@@ -364,7 +364,7 @@ func WithMasterKey(s *MasterKeySession) Option { return func(h *handler) { h.mk 
 // route is gated by its pattern, so a route added under /api/cases cannot
 // forget it; the route-table test walks the table to prove it.
 func (h *handler) lockedGate(rt *route) bool {
-	if h.mk == nil || (!gatedByMasterKey(rt) && (rt.public || rt.pattern != mcpEvidencePattern)) {
+	if h.mk == nil || (!gatedByMasterKey(rt) && (rt.public || (rt.pattern != mcpEvidencePattern && rt.pattern != codeRunPath))) {
 		return false
 	}
 	// A damaged key file keeps the cases closed exactly like a locked key: the
@@ -952,7 +952,8 @@ func (h *handler) masterKeyLock(w http.ResponseWriter, r *http.Request) {
 	h.stopSamplerAll()
 	h.jobs.cancelAll()
 	h.caseFiles().jobs.stopAll()
-	h.mk.lock(h.closeCaseHandles)
+	h.stopCodeRunsAll()
+	h.mk.lock(func() { h.stopCodeRunsAll(); h.closeCaseHandles() })
 	// Lock locks all of Unravis: a case with its own key asks for that key again.
 	if ck, ok := h.cases.(casestore.CaseKeyer); ok {
 		ck.LockAllCaseKeys()
