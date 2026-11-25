@@ -1140,6 +1140,43 @@ test('failureSeries returns null for missing slots, never zero', () => {
   assert.equal(trend.series.every(item => item.connectNulls === false), true);
 });
 
+test('multi-timeline tooltip (richText, drawn on the canvas) fits the 340 px chart with 8 groups, one line each (BL-323)', () => {
+  const tip = loadTypeScript('src/lib/chartTooltip.ts');
+  const css = fs.readFileSync(path.join(root, 'src/app.css'), 'utf8');
+  assert.match(css, new RegExp('\\.multi-chart \\{[^}]*height: ' + charts.MULTI_CHART_HEIGHT + 'px'), 'MULTI_CHART_HEIGHT is the CSS height of .multi-chart');
+  const start = '2026-10-22T12:00:00.000Z';
+  const q = (valueMs) => ({ lowerMs: valueMs - 1, upperMs: valueMs + 1, valueMs });
+  const keys = 'abcdefgh'.split('');
+  const rows = keys.map(key => ({ ...comparison(key, key.toUpperCase()), state: 'compared', reference: { ...stats({ p50: q(100), p95: q(200) }), p90: q(150), p99: null } }));
+  const sample = failurePoint(start, { p50: q(110), p90: q(180), p95: q(300), p99: q(400), count5xx: 4, count: 50 });
+  const result = analysis({ start, end: '2026-10-22T12:20:00.000Z', bucketSeconds: 600, apis: rows, timeline: keys.map(key => ({ key, points: [sample] })) });
+  const height = (lines) => lines * tip.TIP_LINE_HEIGHT + tip.TIP_PADDING;
+  for (const count of [1, 3, 8]) {
+    for (const [mode, series] of [['percent', 'p95'], ['milliseconds', 'p95'], ['milliseconds', 'count5xx']]) {
+      const option = charts.multiTimelineOption(result, keys.slice(0, count), new Map(), 'UTC', mode, series);
+      assert.equal(option.tooltip.renderMode, 'richText');
+      const lines = option.tooltip.formatter([{ dataIndex: 0 }]).split('\n');
+      assert.ok(height(lines.length) <= charts.MULTI_CHART_HEIGHT, count + ' groups, ' + mode + '/' + series + ': ' + lines.length + ' lines need ' + height(lines.length) + ' px');
+      assert.equal(lines.filter(line => line.startsWith('{b|')).length, count, 'one line for each group');
+      assert.ok(lines[0].includes(series === 'p95' ? 'P95' : '5xx'), 'the first line names the time and the series');
+    }
+  }
+  const text = charts.multiTimelineOption(result, ['a'], new Map(), 'UTC', 'percent', 'p95').tooltip.formatter([{ dataIndex: 0 }]);
+  assert.match(text, /\{b\|1\. A\.\w+\} \+50\.0% \(300\.0 ms, ref 200\.0 ms\)/, text);
+});
+
+test('fitTip cuts a long list to the line budget and says how many more there are', () => {
+  const tip = loadTypeScript('src/lib/chartTooltip.ts');
+  const rows = Array.from({ length: 12 }, (_, i) => 'row ' + (i + 1));
+  assert.deepEqual(tip.fitTip(['head'], rows.slice(0, 3), ['foot'], 14), ['head', 'row 1', 'row 2', 'row 3', 'foot']);
+  const cut = tip.fitTip(['head'], rows, ['foot'], 6);
+  assert.equal(cut.length, 6, 'never more lines than the budget');
+  assert.deepEqual(cut, ['head', 'row 1', 'row 2', 'row 3', 'and 9 more', 'foot']);
+  assert.deepEqual(tip.fitTip(['head'], rows, [], 1), ['head', 'and 12 more'], 'a budget with no room still says so');
+  assert.equal(tip.tipLineBudget(340), 14);
+  assert.equal(tip.tipLineBudget(10), 3);
+});
+
 test('multi-timeline series toggle: percentiles change from their own reference, failure counts are absolute and null in gaps', () => {
   const start = '2026-10-22T12:00:00.000Z';
   const end = '2026-10-22T12:20:00.000Z';

@@ -7,6 +7,7 @@
 import type { Palette } from './charts';
 import { chartTime } from './chartTime';
 import { lonePointSeries } from './chartPerf';
+import { richTip, rt } from './chartTooltip';
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Fixed words. Every string the panel shows that is not data lives here, so the copy lint can check all of it.
@@ -16,7 +17,7 @@ export const gapsShowAll = (n: number): string => `Show all ${n} gaps`;
 
 export const resourceCopy = {
   heading: 'Resource counters',
-  intro: 'What each host measured around the stalls: CPU, memory, queues and logs. Open a host to see the lines.',
+  intro: 'Open a host to see its lines on one time axis.',
   loading: 'Reading the resource counters.',
   loadingLines: 'Reading the lines for this window.',
   retry: 'Try again',
@@ -127,11 +128,6 @@ export type ProcMetricId = (typeof PROC_METRICS)[number]['id'];
 export const TOP_PROCESSES = 5;
 
 // ---------------------------------------------------------------------------------------------------------------------------------
-// Escaping. Chart tooltips are HTML strings, so every name and value goes through this.
-
-export const escapeHTML = (value: string): string =>
-  String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char);
-
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Response shapes and their checks. A check returns null for an answer that is not the documented shape; the caller turns that into
 // "the server sent an answer that could not be read". Arrays are never null in the documented shape, so a null array is refused.
@@ -628,6 +624,10 @@ export function stripsOption(input: OptionInput) {
   const { strips, view, episodes, markers, zone, pal } = input;
   const grids: unknown[] = [], xAxes: unknown[] = [], yAxes: unknown[] = [], titles: unknown[] = [], series: unknown[] = [];
   const last = strips.length - 1;
+  // The tooltip bullet of a line is drawn in the colour of that very series: a rich style per colour slot, found by the series id (never by name:
+  // the same name can sit at another position in another strip and have another colour).
+  const keyOf = new Map<string, string>();
+  const rich: Record<string, object> = { b: { fontWeight: 'bold', fontSize: 12, color: pal.text }, sb: { color: pal.axisLine }, ...Object.fromEntries(pal.series.map((color, k) => ['s' + k, { color }])) };
   strips.forEach((strip, i) => {
     const top = TOP + i * (ROW_HEIGHT + GAP);
     grids.push({ left: GRID_LEFT, right: GRID_RIGHT, top, height: ROW_HEIGHT });
@@ -644,8 +644,10 @@ export function stripsOption(input: OptionInput) {
     titles.push({ text: strip.title + (strip.unit ? ' (' + strip.unit + ')' : ''), left: GRID_LEFT, top: top - 17, textStyle: { color: pal.text2, fontSize: 11, fontWeight: 600 } });
     strip.lines.forEach((line, k) => {
       const color = line.band ? pal.axisLine : pal.series[k % pal.series.length];
+      const id = strip.id + '/' + line.id;
+      keyOf.set(id, line.band ? 'sb' : 's' + (k % pal.series.length));
       series.push({
-        type: 'line', name: line.name, xAxisIndex: i, yAxisIndex: i, data: line.points, connectNulls: false,
+        type: 'line', id, name: line.name, xAxisIndex: i, yAxisIndex: i, data: line.points, connectNulls: false,
         showSymbol: false, symbolSize: 5, // no shape per point (BL-429); a point alone between gaps is drawn by the scatter below; hover still shows a dot
         z: line.band ? 1 : 3, lineStyle: line.band ? { opacity: 0 } : { color, width: 1.6 }, itemStyle: { color },
         ...(line.band ? { areaStyle: { color: withAlpha(pal.text2, 0.18) }, emphasis: { disabled: true } } : {})
@@ -670,11 +672,17 @@ export function stripsOption(input: OptionInput) {
     grid: grids, xAxis: xAxes, yAxis: yAxes, title: titles, series,
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
     tooltip: {
-      trigger: 'axis', confine: true, backgroundColor: pal.surface, borderColor: pal.axisLine, textStyle: { color: pal.text, fontSize: 12 },
-      formatter: (items: Array<{ axisValue: number; seriesName: string; value: [number, number | null]; marker: string }>) => {
+      ...richTip(pal, { trigger: 'axis', confine: true }),
+      textStyle: { color: pal.text, fontSize: 12, rich },
+      // Plain text, one line for each series (richText mode, BL-323). The coloured dot of the HTML tooltip is a `style` attribute, so the line starts
+      // with a bullet in the series colour instead (a rich style named for the colour slot, found by series id).
+      formatter: (items: Array<{ axisValue: number; seriesId?: string; seriesName: string; value: [number, number | null] }>) => {
         const shown = items.filter(item => item.seriesName && item.value && item.value[1] != null);
         if (shown.length === 0) return '';
-        return escapeHTML(chartTime(shown[0].axisValue, zone)) + '<br/>' + shown.map(item => item.marker + escapeHTML(item.seriesName) + ': ' + escapeHTML(String(item.value[1]))).join('<br/>');
+        return rt(chartTime(shown[0].axisValue, zone)) + '\n' + shown.map(item => {
+          const key = item.seriesId ? keyOf.get(item.seriesId) : undefined;
+          return (key ? '{' + key + '|●} ' : '') + rt(item.seriesName) + ': ' + rt(String(item.value[1]));
+        }).join('\n');
       }
     }
   };

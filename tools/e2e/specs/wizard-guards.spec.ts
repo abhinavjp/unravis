@@ -24,14 +24,17 @@ async function openAddData(page: Page, title: string) {
   await expect(hub(page).getByRole('heading', { name: 'What do you want to add to this case?' })).toBeVisible();
 }
 
-/** Leaves an unfinished new-case draft behind: a name typed in the create wizard, a reload (the name is kept for the tab), back to the start screen. */
+/**
+ * Leaves an unfinished new-case draft behind: a name typed in the create wizard, then the browser's Back to the start screen (the guide stays in memory with
+ * the name). It used a reload for this before BL-495h; a reload now brings the guide back (WIZR-01), and "Leave the guide" throws the draft away.
+ */
 async function leaveDraft(page: Page, name: string) {
   page.on('dialog', (d) => void d.accept());
   await goHome(page);
   await page.getByRole('button', { name: 'Create a new case' }).click();
   await page.getByLabel('Case name').fill(name);
-  await page.reload();
-  await goHome(page);
+  await page.goBack();
+  await expect(page.locator('#start-title')).toBeVisible();
 }
 
 /** Opens the Redis card and types an address into it (not added). */

@@ -353,7 +353,7 @@
       {@const concentration = concentrationSection(report)}
       {#if concentration.kind !== 'hidden'}
         <section class="patterns-detail" aria-label={PATTERNS_TEXT.concTitle}>
-          <h3>{PATTERNS_TEXT.concTitle}<Hint termId="concentration" /></h3>
+          <div class="heading-with-hint"><h3>{PATTERNS_TEXT.concTitle}</h3><Hint termId="concentration" /></div>
           <p class="patterns-note">{PATTERNS_TEXT.concIntro}</p>
           {#if concentration.kind === 'note'}
             <p class="patterns-note">{concentration.text}</p>
@@ -567,6 +567,8 @@
   .patterns-quality { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
   .patterns-detail { margin-top: var(--space-4); min-width: 0; }
   .patterns-detail h3 { margin: 0 0 8px; font-size: var(--fs-4); font-weight: 600; }
+  .heading-with-hint { display: flex; align-items: center; margin-bottom: 8px; }
+  .heading-with-hint h3 { margin: 0; }
   .patterns-detail h4 { margin: 10px 0 6px; color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
   .patterns-empty { padding: var(--space-4); }
   .table-scroll { overflow-x: auto; border: 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); border-radius: 0; }

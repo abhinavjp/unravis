@@ -4,6 +4,7 @@ package sealedfile
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -81,5 +82,44 @@ func TestSharedFolderLocksAreMachineWide(t *testing.T) {
 	unlock()
 	if err := <-got; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// LockWait outlasts the 5 s wait of Lock: a holder (an import) that keeps the
+// folder longer does not make it give up, and a context that ends first ends it.
+func TestLockWaitOutlastsFiveSeconds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "case")
+	held, stop := make(chan struct{}), make(chan struct{})
+	go func() {
+		unlock, err := Lock(path)
+		if err != nil {
+			close(held)
+			return
+		}
+		close(held)
+		<-stop
+		unlock() // the goroutine that took the lock releases it (the lock belongs to its OS thread)
+	}()
+	<-held
+	if _, err := Lock(path); err == nil {
+		t.Fatal("Lock must give up after 5 s while another thread holds it")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	if _, err := LockWait(ctx, path); !errors.Is(err, context.DeadlineExceeded) {
+		cancel()
+		t.Fatalf("LockWait with a short context = %v", err)
+	}
+	cancel()
+	go func() { time.Sleep(6 * time.Second); close(stop) }()
+	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	release, err := LockWait(ctx, path)
+	if err != nil {
+		t.Fatalf("LockWait = %v", err)
+	}
+	release()
+	if time.Since(start) < 5*time.Second {
+		t.Fatalf("LockWait returned after %v, before the holder let go", time.Since(start))
 	}
 }

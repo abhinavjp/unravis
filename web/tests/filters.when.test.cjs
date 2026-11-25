@@ -40,7 +40,8 @@ test('WhenGroup is wrapped in a FilterGroup, keeps the copy and labels each wind
   assert.match(src, /<section class="when-window" aria-labelledby="current-range-label">/);
   assert.match(src, /<section class="when-window" aria-labelledby="reference-range-label">/);
   assert.match(src, /<h3 id="current-range-label">Investigate<\/h3>/);
-  assert.match(src, /<h3 id="reference-range-label">Reference<Hint termId="reference-period" \/><\/h3>/);
+  assert.match(src, /<div class="heading-with-hint"><h3 id="reference-range-label">Reference<\/h3><Hint termId="reference-period" \/><\/div>/);
+  assert.doesNotMatch(src, /<h3[^>]*>[^<]*<Hint/);
   assert.equal(src.split('<DateTimeField ').length - 1, 4);
   assert.equal(src.split('label="From"').length - 1, 2);
   assert.equal(src.split('label="To"').length - 1, 2);

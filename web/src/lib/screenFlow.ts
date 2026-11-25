@@ -4,7 +4,7 @@ import type { LockState } from './masterKey';
  * Which screen the app shows, and the moves between them. Pure: no DOM, no fetch, no state of its own.
  * appState.svelte.ts holds the current screen and asks `go` whether a move is allowed.
  *
- *   loading -> unlock | start | running | case  (case: a reload on a case page goes back to it)
+ *   loading -> unlock | start | running | case | create  (case: a reload on a case page goes back to it; create: a reload in the create guide with a saved draft)
  *   unlock  -> start | running | create | case  (after the right key; back to the work it interrupted: the analysis, the case home, or the create guide)
  *   setup   -> start | unlock | case   (case: only when set-up was opened from a case page, so it can go back there)
  *   start   -> setup | create | running | unlock | case
@@ -19,7 +19,7 @@ export type Screen = 'loading' | 'unlock' | 'setup' | 'start' | 'create' | 'runn
 export const SCREENS: readonly Screen[] = ['loading', 'unlock', 'setup', 'start', 'create', 'running', 'case'];
 
 const MOVES: Readonly<Record<Screen, readonly Screen[]>> = {
-  loading: ['unlock', 'start', 'running', 'case'],
+  loading: ['unlock', 'start', 'running', 'case', 'create'],
   unlock: ['start', 'running', 'create', 'case'],
   setup: ['start', 'unlock', 'case'],
   start: ['setup', 'create', 'running', 'unlock', 'case'],
@@ -52,6 +52,8 @@ export interface StartFacts {
   lock: LockState | 'unknown';
   /** This tab was on a case page (the case home or its timeline) and still remembers which case, so a reload goes back to that page. */
   caseView?: boolean;
+  /** This tab was in the create guide and kept a draft for it (the name, the environments), so a reload goes back to the guide and the draft is offered again (CASES-25, BL-495h). */
+  createView?: boolean;
 }
 
 /** The first screen once the app has started. A locked key comes first; demo data, a link and a remembered investigation skip the start screen. */
@@ -59,6 +61,7 @@ export function initialScreen(facts: StartFacts): Screen {
   if (facts.lock === 'locked' || facts.lock === 'damaged') return facts.demo ? 'running' : 'unlock';
   if (facts.deepLink) return 'running';
   if (facts.caseView) return 'case';
+  if (facts.createView) return 'create';
   if (facts.demo || facts.resume) return 'running';
   return 'start';
 }
