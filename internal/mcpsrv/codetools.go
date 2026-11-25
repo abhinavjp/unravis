@@ -24,7 +24,8 @@ import (
 //
 // The slot is not the per-profile call slot of CallAs: a run can last 280 seconds and its own tool calls are admitted through
 // AdmitCodeCall, which uses that same counter, so a run holding one would leave its script three of the four calls it may have at once.
-// unravis_execute takes a slot of its own (one run at a time for a profile); unravis_types is short and takes the ordinary one.
+// unravis_execute is counted by the budget limiter as class ClassCode (one run at once per host, two in all, runs per hour, result bytes);
+// unravis_types is short and takes the ordinary slot.
 
 // ClassCode is the ledger class of the two tools. A run is live work (it reads the repositories through the tool calls it makes, which are
 // charged and recorded one by one), so a run whose admit row cannot be written does not start.
@@ -101,10 +102,14 @@ func (s *Dispatcher) callCode(ctx context.Context, pr Principal, req *callReq) (
 	ev.Fingerprint = s.d.Recorder.Fingerprint(compact(req.Args))
 
 	// BL-574 L1: a code run is charged to the same limiter as every other call of the host (runs at once per host and in all, runs per
-	// hour, bytes per ten minutes), after the gates above so a refused call does not use up a run.
+	// hour, bytes per ten minutes), after the gates above. A call that is refused before a script started (the broker's own refusals, or a
+	// ledger that could not take the row) gives its place in the hourly count back, so a host is not locked out by refusals. Result bytes are
+	// charged on top of the bytes of the script's own tool calls (AdmitCodeCall): a script that returns what it read is charged for both.
 	budgetBytes := 0
+	admittedAt := s.d.Now()
+	started := false
 	if execute {
-		budgetDone, over := s.lim.admit(pr.ProfileID, ClassCode, s.d.Now())
+		budgetDone, over := s.lim.admit(pr.ProfileID, ClassCode, admittedAt)
 		if over != nil {
 			if over.busy {
 				return refuse(http.StatusTooManyRequests, mcp.WireBudgetExceeded, "A code run of this host is already running or Unravis is busy.", "Wait for it to finish, then retry. Do not loop.")
@@ -113,7 +118,12 @@ func (s *Dispatcher) callCode(ctx context.Context, pr Principal, req *callReq) (
 			_ = s.d.Recorder.Record(context.WithoutCancel(runCtx), ev)
 			return refuse(http.StatusTooManyRequests, mcp.WireBudgetExceeded, "This host reached its limit for "+over.what+".", "Wait and retry later, or ask the person to review the limits in Unravis > AI access. Do not loop.")
 		}
-		defer func() { budgetDone(budgetBytes, s.d.Now()) }()
+		defer func() {
+			if !started {
+				s.lim.refundCodeRun(pr.ProfileID, admittedAt)
+			}
+			budgetDone(budgetBytes, s.d.Now())
+		}()
 	}
 
 	start := s.d.Now()
@@ -131,6 +141,7 @@ func (s *Dispatcher) callCode(ctx context.Context, pr Principal, req *callReq) (
 	tctx, cancelTimeout := context.WithTimeout(runCtx, timeout)
 	defer cancelTimeout()
 	result, isError, ranWithIdentifiers := s.d.Code.CallCode(tctx, req.Tool, pr, p, req.Args, start)
+	started = !isError || startedRun(result)
 	elapsed := s.d.Now().Sub(start)
 
 	end := ev
@@ -154,6 +165,14 @@ func (s *Dispatcher) callCode(ctx context.Context, pr Principal, req *callReq) (
 	end.Outcome, end.Code = outcomeOf(result, isError, tctx)
 	s.recordEnd(ctx, end)
 	return http.StatusOK, Answer{OK: true, IsError: isError, ProfileRev: pr.Rev, Result: json.RawMessage(result), Ms: end.DurMs}
+}
+
+// startedRun says whether an error answer of the broker is the outcome of a run that started (it carries a run id) and not a refusal.
+func startedRun(result []byte) bool {
+	var r struct {
+		RunID string `json:"runId"`
+	}
+	return json.Unmarshal(result, &r) == nil && r.RunID != ""
 }
 
 // registerCall makes a running call reachable by the cancel route under its id. It says false when that id is already running for the

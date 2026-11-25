@@ -193,3 +193,92 @@ func TestRefusedCodeCallsDoNotUseUpARun(t *testing.T) {
 		t.Errorf("refused calls were counted: %d runs, %d running", len(pb.codeRuns), pb.code)
 	}
 }
+
+// funcCode is a CodeBackend that answers with whatever its function says.
+type funcCode func(ctx context.Context) ([]byte, bool, bool)
+
+func (f funcCode) CallCode(ctx context.Context, _ string, _ Principal, _ Profile, _ []byte, _ time.Time) ([]byte, bool, bool) {
+	return f(ctx)
+}
+
+// A run the broker refused before a script started (code mode off, bad arguments, no sandbox, no case) gives its place in the hourly
+// count back; a run that started (its answer carries a run id) keeps it, also when it ended in an error.
+func TestBrokerRefusalsDoNotUseUpTheHourlyRuns(t *testing.T) {
+	r := newRig(t)
+	refuse := funcCode(func(context.Context) ([]byte, bool, bool) {
+		return CodeRefusalBody("sandbox_unavailable", "no sandbox"), true, false
+	})
+	d := r.codeDispatcherB(refuse, Budgets{})
+	r.enrollCode("refused")
+	for i := 0; i < DefaultBudgets.CodeRate+5; i++ {
+		if st, a := r.execute(d, "refused", mcp.ToolExecute); st != 200 || !a.OK || !a.IsError {
+			t.Fatalf("call %d: %d %+v", i, st, a)
+		}
+	}
+	started := funcCode(func(context.Context) ([]byte, bool, bool) {
+		return []byte(`{"runId":"r1","status":"ERROR","error":{"code":"script_error","message":"x"}}`), true, false
+	})
+	d = r.codeDispatcherB(started, Budgets{})
+	r.enrollCode("started")
+	for i := 0; i < DefaultBudgets.CodeRate; i++ {
+		if st, a := r.execute(d, "started", mcp.ToolExecute); st != 200 || !a.OK {
+			t.Fatalf("started run %d: %d %+v", i, st, a)
+		}
+	}
+	if st, a := r.execute(d, "started", mcp.ToolExecute); !overCodeBudget(st, a) {
+		t.Errorf("a started run that failed must keep its place in the hourly count: %d %+v", st, a)
+	}
+}
+
+// A busy refusal writes no ledger row, and the slot is given back when the backend panics or the run is cancelled.
+func TestCodeSlotIsGivenBackAndBusyWritesNoRow(t *testing.T) {
+	r := newRig(t)
+	g := newGateCode(10)
+	d := r.codeDispatcherB(g, Budgets{})
+	r.enrollCode("slot")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.execute(d, "slot", mcp.ToolExecute)
+	}()
+	<-g.started
+	before := len(r.events())
+	if st, a := r.execute(d, "slot", mcp.ToolExecute); !overCodeBudget(st, a) {
+		t.Fatalf("a second run at once: %d %+v", st, a)
+	}
+	if n := len(r.events()); n != before {
+		t.Errorf("a busy refusal wrote %d ledger rows", n-before)
+	}
+	// The same call id twice at once is refused before it reaches the limiter.
+	body, _ := json.Marshal(map[string]any{"tool": mcp.ToolExecute, "args": map[string]any{"code": "1"}, "callId": "0000dd01"})
+	b2 := DefaultBudgets
+	b2.CodeRate = 100
+	d2 := r.codeDispatcherB(g, b2)
+	r.enrollCode("dup")
+	dupDone := make(chan struct{})
+	go func() {
+		defer close(dupDone)
+		d2.CallAs(ctx, r.principal("dup"), body)
+	}()
+	<-g.started
+	if st, _ := d2.CallAs(ctx, r.principal("dup"), body); st != 400 {
+		t.Errorf("the same call id running twice: status %d, want 400", st)
+	}
+	close(g.release)
+	<-done
+	<-dupDone
+	if len(d.byCall) != 0 || len(d2.byCall) != 0 {
+		t.Errorf("call ids leaked: %v %v", d.byCall, d2.byCall)
+	}
+
+	boom := funcCode(func(context.Context) ([]byte, bool, bool) { panic("backend failed") })
+	d3 := r.codeDispatcherB(boom, Budgets{})
+	r.enrollCode("panic")
+	func() {
+		defer func() { _ = recover() }()
+		r.execute(d3, "panic", mcp.ToolExecute)
+	}()
+	if pb := d3.lim.per["panic"]; pb == nil || pb.code != 0 || d3.lim.codeAl != 0 {
+		t.Errorf("the slot was not given back after a panic: %+v, all=%d", pb, d3.lim.codeAl)
+	}
+}

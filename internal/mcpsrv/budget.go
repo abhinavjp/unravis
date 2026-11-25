@@ -86,6 +86,22 @@ type budgetRefusal struct {
 	busy bool // a limit on what runs at once, not on how much was asked: it is not written to the ledger
 }
 
+// refundCodeRun takes back the place one code run admitted at that time took in the hourly count (the run was refused before a script started).
+func (l *limiter) refundCodeRun(profile string, at time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	pb := l.per[profile]
+	if pb == nil {
+		return
+	}
+	for i, t := range pb.codeRuns {
+		if t.Equal(at) {
+			pb.codeRuns = append(pb.codeRuns[:i], pb.codeRuns[i+1:]...)
+			return
+		}
+	}
+}
+
 // admit counts one call of the class and says whether it may run. done must be called when it ends, with the size of what it returned
 // and the time it ended: the bytes of a long call are charged where they were delivered, not where the call started.
 func (l *limiter) admit(profile, class string, now time.Time) (done func(bytes int, at time.Time), refused *budgetRefusal) {
